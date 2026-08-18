@@ -63,11 +63,37 @@ class FausseCollection:
             raise Exception("E11000 duplicate key error")
         self.docs.append(dict(doc))
 
-    async def update_one(self, filtre, maj):
+    async def update_one(self, filtre, maj, upsert=False):
+        """Rend un resultat porteur de `matched_count`, comme le vrai pilote.
+
+        C'est indispensable : G4 decide QUI a gagne la course d'approbation en
+        lisant `matched_count`. Un faux qui rend `None` ferait passer le test
+        alors que la vraie base dirait l'inverse — ou l'echouerait a tort.
+        `$unset` est gere parce que le retour en attente efface les marques de
+        revue ; `upsert` parce que `t1_version_active` archive la version.
+        """
+        class _Res:
+            def __init__(self, n, up=None):
+                self.matched_count = n
+                self.modified_count = n
+                self.upserted_id = up
         for d in self.docs:
             if self._match(d, filtre):
                 d.update(maj.get("$set", {}))
-                return
+                for k in (maj.get("$unset") or {}):
+                    d.pop(k, None)
+                for k, v in (maj.get("$inc") or {}).items():
+                    d[k] = (d.get(k) or 0) + v
+                return _Res(1)
+        if upsert:
+            neuf = dict(maj.get("$setOnInsert", {}))
+            neuf.update(maj.get("$set", {}))
+            for k, v in (filtre or {}).items():
+                if not isinstance(v, dict):
+                    neuf.setdefault(k, v)
+            self.docs.append(neuf)
+            return _Res(0, up=neuf.get("_id"))
+        return _Res(0)
     async def delete_one(self, filtre):
         self.docs = [d for d in self.docs if not self._match(d, filtre)]
     async def to_list(self, n=None):
@@ -91,6 +117,10 @@ class FausseBase:
         self.chat_participants = FausseCollection()
         self.free_trial_claims = FausseCollection(unique_id=True)
         self.users = FausseCollection()
+        # Conditions : le texte publie, et l'archive des versions acceptees.
+        self.concept = FausseCollection()
+        self.terms_versions = FausseCollection()
+        self.comments = FausseCollection()
     def __getitem__(self, nom):
         return getattr(self, nom)
 
@@ -150,8 +180,27 @@ def construire(base):
            "SUPER_ADMIN_EMAILS": ["coach@test.ch"],
            "FRONTEND_URL": "https://exemple.test",
            "os": os, "re": re}
+    # ESSAI CONDITIONS — on charge les VRAIES fonctions du socle T1, pas des
+    # imitations : c'est `t1_preuve` qui decide du refus, et `t1_version_active`
+    # qui calcule l'empreinte figee sur la demande. Un doublon de test aurait
+    # pu diverger du serveur sans que rien ne le dise.
+    for fn in ("t1_empreinte", "t1_bloc_captation", "t1_cours_filme",
+               "t1_captation_applicable", "t1_version_active", "t1_preuve"):
+        exec(compile(extraire(SERVEUR, fn), "<t1>", "exec"), esp)
+    exec(compile("T1_MESSAGE_REFUS = \"Merci d'accepter les conditions de participation.\"\n"
+                 "T1_RAISON_REFUS = 'terms_not_accepted'", "<t1c>", "exec"), esp)
     for fn in ("submit_social_proof", "review_social_proof"):
         exec(compile(extraire(SERVEUR, fn), "<s>", "exec"), esp)
+    # `essai2_tracer_octroi` (G6) est importe depuis api.routes.shared : on pose
+    # un module espion pour verifier qu'il est bien appele, sans reseau.
+    import types as _t
+    faux_shared = _t.ModuleType("api.routes.shared")
+    appels_octroi = []
+    async def _octroi(db_, email="", offer_id="", sessions=0):
+        appels_octroi.append({"email": email, "offer_id": offer_id, "sessions": sessions})
+    faux_shared.essai2_tracer_octroi = _octroi
+    sys.modules["api.routes.shared"] = faux_shared
+    esp["_appels_octroi"] = appels_octroi
     return esp, esp_ck
 
 
@@ -159,6 +208,11 @@ class Req:
     def __init__(self, corps): self._c = corps
     async def json(self): return self._c
     headers = {}
+
+
+class R2(Req):
+    """La requete du coach : meme forme, nom distinct pour la lisibilite."""
+    pass
 
 
 OFFRE = {"id": "off-1", "name": "🎁 Cours d'essai GRATUIT", "price": 0,
@@ -203,10 +257,6 @@ async def scenario():
 
     # --- 4. demande refusee -> on peut recommencer --------------------------
     pid = base.social_proofs.docs[0]["id"]
-    class R2:
-        def __init__(self, c): self._c = c
-        async def json(self): return self._c
-        headers = {}
     await review(pid, R2({"action": "reject"}))
     verifier("4a. la demande est refusee",
              base.social_proofs.docs[0]["status"] == "rejected",
@@ -281,9 +331,212 @@ async def scenario():
              [getattr(r, 'status_code', r) for r in res])
     verifier("8c. UN SEUL claim", len(base3.free_trial_claims.docs) == 1)
 
+    # --- 8d. deux approbations de LA MEME demande : la barriere d'etat -------
+    #
+    # Le cas 8 ci-dessus fait courir DEUX demandes ; c'est le verrou d'essai qui
+    # tranche. Ici les deux appels visent LE MEME document : c'est la transition
+    # d'etat conditionnelle (G4) qui doit designer un seul gagnant, avant meme
+    # que le verrou n'entre en jeu.
+    base8 = FausseBase()
+    await base8.offers.insert_one(dict(OFFRE))
+    esp8, _ = construire(base8)
+    await esp8["submit_social_proof"](Req(demande("ivan@exemple.ch")))
+    d8 = base8.social_proofs.docs[0]["id"]
+    res8 = await asyncio.gather(
+        esp8["review_social_proof"](d8, R2({"action": "approve"})),
+        esp8["review_social_proof"](d8, R2({"action": "approve"})),
+        return_exceptions=True,
+    )
+    refus8 = [r for r in res8 if isinstance(r, HTTPException)]
+    verifier("8d. meme demande approuvee deux fois -> UN SEUL code",
+             len(base8.discount_codes.docs) == 1,
+             f"{len(base8.discount_codes.docs)} code(s)")
+    verifier("8e. le perdant recoit 409 « deja traitee »",
+             len(refus8) == 1 and refus8[0].status_code == 409
+             and "traitée" in (refus8[0].detail or ""),
+             [getattr(r, "detail", r) for r in res8])
+    verifier("8f. UN SEUL abonnement", len(base8.subscriptions.docs) == 1)
+
     # --- 10. aucun code AFR expose publiquement -----------------------------
     verifier("10. la reponse publique de soumission n'expose aucun code",
              "granted_code" not in extraire(SERVEUR, "submit_social_proof"))
+
+    # --- 9. un refus laisse le DROIT a l'essai intact ------------------------
+    #
+    # Verification directe sur la fonction qui decide, pas sur un effet de bord :
+    # apres un refus, `_essai1_essai_deja_accorde` doit repondre NON, sinon la
+    # personne serait privee d'un essai qu'elle n'a jamais recu.
+    base9 = FausseBase()
+    await base9.offers.insert_one(dict(OFFRE))
+    esp9, esp_ck9 = construire(base9)
+    await esp9["submit_social_proof"](Req(demande("dora@exemple.ch")))
+    p9 = base9.social_proofs.docs[0]["id"]
+    await esp9["review_social_proof"](p9, R2({"action": "reject"}))
+    verifier("9a. apres refus, AUCUN claim",
+             len(base9.free_trial_claims.docs) == 0, base9.free_trial_claims.docs)
+    verifier("9b. apres refus, le droit a l'essai est INTACT",
+             (await esp_ck9["_essai1_essai_deja_accorde"]("dora@exemple.ch")) is False)
+
+    # --- 11. panne APRES la pose du claim : le claim est rendu ---------------
+    #
+    # On casse volontairement la seconde ecriture (l'abonnement). Le claim a
+    # deja ete pose par la garde : s'il n'etait pas rendu, cette personne
+    # perdrait son essai sans jamais l'avoir recu. L'etat de la demande doit
+    # aussi revenir en attente, sinon plus personne ne pourrait rejouer.
+    base11 = FausseBase()
+    await base11.offers.insert_one(dict(OFFRE))
+    esp11, _ = construire(base11)
+    await esp11["submit_social_proof"](Req(demande("eve@exemple.ch")))
+    p11 = base11.social_proofs.docs[0]["id"]
+    async def _casse(doc):
+        raise Exception("panne simulee a l'ecriture de l'abonnement")
+    base11.subscriptions.insert_one = _casse
+    try:
+        await esp11["review_social_proof"](p11, R2({"action": "approve"}))
+        verifier("11. panne apres claim -> l'erreur remonte", False, "aucune erreur")
+    except Exception as e:
+        verifier("11. panne apres claim -> l'erreur remonte", not isinstance(e, HTTPException)
+                 or e.status_code != 409, type(e).__name__)
+    verifier("11a. le claim a ete RENDU",
+             len(base11.free_trial_claims.docs) == 0, base11.free_trial_claims.docs)
+    verifier("11b. la demande est revenue EN ATTENTE",
+             base11.social_proofs.docs[0]["status"] == "pending",
+             base11.social_proofs.docs[0]["status"])
+    verifier("11c. les marques de revue ont ete effacees",
+             "reviewed_by" not in base11.social_proofs.docs[0],
+             sorted(base11.social_proofs.docs[0].keys()))
+    verifier("11d. AUCUN code orphelin ne subsiste",
+             len(base11.discount_codes.docs) == 0,
+             [d.get("code") for d in base11.discount_codes.docs])
+    # ET LA PREUVE QUE CA COMPTE : la personne doit pouvoir etre approuvee
+    # a la reprise. Un code orphelin l'aurait bannie definitivement.
+    base11.subscriptions.insert_one = FausseCollection().insert_one.__get__(
+        base11.subscriptions, FausseCollection)
+    p11b = base11.social_proofs.docs[0]["id"]
+    try:
+        await esp11["review_social_proof"](p11b, R2({"action": "approve"}))
+        verifier("11e. la reprise apres panne aboutit", len(base11.discount_codes.docs) == 1,
+                 base11.discount_codes.docs)
+    except HTTPException as e:
+        verifier("11e. la reprise apres panne aboutit", False, f"{e.status_code} {e.detail}")
+
+    # --- 13. le funnel voit l'octroi social ---------------------------------
+    #
+    # DEUX lectures, parce qu'il y a deux funnels :
+    #   - ESSAI-3 lit la BASE : le code doit porter `source: social_proof`, seul
+    #     marqueur reconnu par ESSAI2_FILTRE_GRATUIT ;
+    #   - PostHog lit l'evenement : `free_trial_granted` doit etre emis, comme
+    #     sur /checkout/free.
+    base13 = FausseBase()
+    await base13.offers.insert_one(dict(OFFRE))
+    esp13, _ = construire(base13)
+    await esp13["submit_social_proof"](Req(demande("flo@exemple.ch")))
+    p13 = base13.social_proofs.docs[0]["id"]
+    await esp13["review_social_proof"](p13, R2({"action": "approve"}))
+    verifier("13a. le code porte le marqueur reconnu par ESSAI-3",
+             base13.discount_codes.docs[0].get("source") == "social_proof",
+             base13.discount_codes.docs[0].get("source"))
+    verifier("13b. l'abonnement porte le marqueur",
+             base13.subscriptions.docs[0].get("source") == "social_proof")
+    verifier("13c. free_trial_granted est emis (G6)",
+             len(esp13["_appels_octroi"]) == 1, esp13["_appels_octroi"])
+    if esp13["_appels_octroi"]:
+        _a = esp13["_appels_octroi"][0]
+        verifier("13d. la mesure ne porte que l'offre et le nombre de seances",
+                 _a["offer_id"] == "off-1" and _a["sessions"] == 1, _a)
+
+
+TEXTE_CONDITIONS = "CONDITIONS DE PARTICIPATION\n\n1. Vous reservez une place."
+
+
+async def scenario_conditions():
+    """ESSAI CONDITIONS — le parcours preuve sociale recueille l'acceptation."""
+    base = FausseBase()
+    await base.offers.insert_one(dict(OFFRE))
+    await base.concept.insert_one({"id": "concept", "termsText": TEXTE_CONDITIONS})
+    esp, _ = construire(base)
+    submit, review = esp["submit_social_proof"], esp["review_social_proof"]
+
+    version_attendue = esp["t1_empreinte"](TEXTE_CONDITIONS)
+
+    # --- 6. conditions publiees, case NON cochee : refus ---------------------
+    try:
+        await submit(Req(demande("gaia@exemple.ch")))
+        verifier("6. demande SANS acceptation -> refusee", False, "acceptee a tort")
+    except HTTPException as e:
+        verifier("6. demande SANS acceptation -> refusee (409)", e.status_code == 409,
+                 f"{e.status_code} {e.detail}")
+    verifier("6a. aucune demande enregistree",
+             len(base.social_proofs.docs) == 0, len(base.social_proofs.docs))
+    verifier("6b. aucun claim pose par un refus de conditions",
+             len(base.free_trial_claims.docs) == 0)
+
+    # --- 6c. `terms_accepted` falsifie (chaine, pas True) : refuse aussi -----
+    for valeur in ("true", 1, "oui"):
+        try:
+            d = demande("gaia@exemple.ch"); d["terms_accepted"] = valeur
+            await submit(Req(d))
+            verifier("6c. acceptation non booleenne refusee (%r)" % valeur, False, "acceptee")
+        except HTTPException as e:
+            verifier("6c. acceptation non booleenne refusee (%r)" % valeur,
+                     e.status_code == 409, e.status_code)
+
+    # --- 7. case cochee : demande creee, version FIGEE -----------------------
+    d = demande("gaia@exemple.ch"); d["terms_accepted"] = True
+    await submit(Req(d))
+    doc = base.social_proofs.docs[0]
+    verifier("7a. la demande est enregistree", len(base.social_proofs.docs) == 1)
+    verifier("7b. terms_accepted fige a True", doc.get("terms_accepted") is True)
+    verifier("7c. terms_version = empreinte du texte publie",
+             doc.get("terms_version") == version_attendue,
+             f"{doc.get('terms_version')} vs {version_attendue}")
+    verifier("7d. terms_accepted_at horodate par le SERVEUR",
+             bool(doc.get("terms_accepted_at")))
+    verifier("7e. filmed_at_booking False — une demande ne vise aucune seance",
+             doc.get("filmed_at_booking") is False, doc.get("filmed_at_booking"))
+    verifier("7f. la version est archivee dans terms_versions",
+             any(v.get("version") == version_attendue for v in base.terms_versions.docs))
+    verifier("7g. la reponse ne renvoie AUCUN code",
+             len(base.discount_codes.docs) == 0)
+
+    # --- 7h. approbation d'une demande qui PORTE la preuve : ca passe --------
+    await review(doc["id"], R2({"action": "approve"}))
+    verifier("7h. demande avec preuve -> approuvee et code emis",
+             len(base.discount_codes.docs) == 1, base.discount_codes.docs)
+
+    # --- 6d. demande ANCIENNE, sans preuve : approbation REFUSEE -------------
+    #
+    # Le cas des demandes deposees avant ce correctif. Le coach ne doit pas
+    # pouvoir accorder un essai sur un consentement qui n'existe pas — et la
+    # demande doit RESTER exploitable (en attente), pas rester bloquee.
+    base2 = FausseBase()
+    await base2.offers.insert_one(dict(OFFRE))
+    await base2.concept.insert_one({"id": "concept", "termsText": TEXTE_CONDITIONS})
+    esp2, _ = construire(base2)
+    await base2.social_proofs.insert_one({
+        "id": "vieille", "offer_id": "off-1", "client_email": "hugo@exemple.ch",
+        "client_name": "Hugo", "coach_id": "coach@test.ch", "status": "pending",
+        "created_at": "2026-01-01T00:00:00+00:00",
+    })
+    try:
+        await esp2["review_social_proof"]("vieille", R2({"action": "approve"}))
+        verifier("6d. ancienne demande sans preuve -> refusee", False, "approuvee a tort")
+    except HTTPException as e:
+        verifier("6d. ancienne demande sans preuve -> refusee (409)",
+                 e.status_code == 409
+                 and (e.headers or {}).get("X-Refus-Raison") == "social_proof_sans_conditions",
+                 f"{e.status_code} {e.headers}")
+    verifier("6e. aucun code emis pour une demande sans preuve",
+             len(base2.discount_codes.docs) == 0)
+    verifier("6f. aucun claim pose", len(base2.free_trial_claims.docs) == 0)
+    verifier("6g. la demande RESTE en attente (rejouable)",
+             base2.social_proofs.docs[0]["status"] == "pending",
+             base2.social_proofs.docs[0]["status"])
+
+    # --- 6h. un REFUS reste possible sur une ancienne demande ----------------
+    await esp2["review_social_proof"]("vieille", R2({"action": "reject"}))
+    verifier("6h. le coach peut toujours REFUSER une ancienne demande",
+             base2.social_proofs.docs[0]["status"] == "rejected")
 
 
 # ---------------------------------------------------------------------------
@@ -305,14 +558,66 @@ def perimetre():
              '"status": "pending"' in _sub)
     verifier("P3. G2 appelle la garde atomique", "_essai1_garde as _g2_garde" in _rev)
     verifier("P4. G2 libere le claim si la creation echoue", "_g2_liberer" in _rev)
-    verifier("P5. les Conditions restent HORS de ce lot",
-             "t1_preuve" not in _sub and "t1_preuve" not in _rev)
+    verifier("P5. les Conditions sont recueillies AU DEPOT, par t1_preuve",
+             "t1_preuve(" in _sub, "absent de submit_social_proof")
+    verifier("P5b. le DEPOT ne pose toujours aucun claim (invariant du lot)",
+             "_essai1_garde" not in _sub and "free_trial_claims" not in _sub)
+    verifier("P5c. l'approbation RELIT la preuve, elle n'en fabrique pas",
+             "t1_preuve(" not in _rev and "terms_version" in _rev)
+    verifier("P5d. la transition d'etat est CONDITIONNELLE (concurrence)",
+             '"id": proof_id, "status": "pending"' in _rev)
+    verifier("P5e. l'echec d'octroi rend la demande en attente",
+             _rev.count("_g4_rendre_en_attente()") >= 3,
+             _rev.count("_g4_rendre_en_attente()"))
+    verifier("P5f. l'octroi social alimente le meme funnel",
+             "essai2_tracer_octroi" in _rev)
+    verifier("P5g. un octroi echoue ne laisse aucun code derriere lui",
+             "discount_codes.delete_one" in _rev)
     verifier("P6. aucun index cree par ce lot", SERVEUR.count("create_index") == 7,
              SERVEUR.count("create_index"))
     verifier("P7. maxPoolSize inchange", "maxPoolSize=3" in SERVEUR)
 
+    # --- 14/15/16 : ce que ce lot NE DOIT PAS avoir touche ------------------
+    #
+    # Verifications STRUCTURELLES, sur le code lui-meme : elles tiennent hors
+    # ligne et disent quelque chose de vrai, contrairement a un « je n'y ai pas
+    # touche » sur parole.
+    _free = code_seul(extraire(CHECKOUT, "free_checkout") or "")
+    verifier("14a. /checkout/free exige toujours les Conditions",
+             "_t1_preuve_checkout(" in _free)
+    verifier("14b. /checkout/free garde son anti-double et son filet",
+             "_essai1_garde(" in _free and "_essai1_liberer(" in _free)
+    verifier("14c. /checkout/free mesure toujours l'octroi",
+             "essai2_tracer_octroi" in _free)
+    verifier("14d. les quatre fonctions ESSAI-1 sont intactes",
+             all(extraire(CHECKOUT, f) for f in
+                 ("_essai1_essai_deja_accorde", "_essai1_reclamer",
+                  "_essai1_liberer", "_essai1_garde")))
+
+    _t3 = code_seul(extraire(SERVEUR, "t3_eligibilite") or "")
+    _t3s = code_seul(extraire(SERVEUR, "t3_soumettre") or "")
+    verifier("15a. les temoignages restent un systeme separe",
+             "social_proof" not in _t3 and "social_proof" not in _t3s)
+    verifier("15b. l'eligibilite au temoignage vient toujours du coach",
+             "contact_type" in _t3)
+    verifier("15c. accepter les Conditions n'accorde AUCUN temoignage",
+             "consent" not in _sub and "temoignage" not in _sub.lower())
+
+    _t1p = extraire(SERVEUR, "t1_preuve") or ""
+    verifier("16a. t1_preuve garde sa signature",
+             "async def t1_preuve(accepte, course_id: str = \"\", coach_id: str = \"\")" in _t1p)
+    verifier("16b. les Conditions restent facultatives tant que rien n'est publie",
+             "if not _version:" in _t1p and "return {}" in _t1p)
+    verifier("16c. la version reste l'empreinte du contenu",
+             "hashlib.sha256" in (extraire(SERVEUR, "t1_empreinte") or ""))
+    verifier("16d. la reservation reste le mur final",
+             "t1_preuve" in io.open(os.path.join(RACINE, "api", "routes",
+                                                 "reservation_routes.py"),
+                                    encoding="utf-8").read())
+
 
 asyncio.run(scenario())
+asyncio.run(scenario_conditions())
 perimetre()
 
 print("=" * 78)

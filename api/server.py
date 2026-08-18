@@ -7379,6 +7379,37 @@ async def submit_social_proof(request: Request):
     if not _link.lower().startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Le lien doit commencer par https://")
 
+    # ===================================================================
+    # G3 — LES CONDITIONS, AVANT LA MOINDRE ECRITURE
+    # ===================================================================
+    #
+    # Ce parcours accordait un acces sans qu'aucune acceptation n'ait jamais
+    # ete recueillie : la demande partait nue, et l'approbation creait le droit.
+    # La RESERVATION restait verrouillee par `t1_preuve` (409), donc personne ne
+    # participait sans accepter — mais l'e-mail « Essai gratuit valide ! »
+    # partait a quelqu'un qui n'avait rien accepte, et la demande ne portait
+    # AUCUNE trace de consentement. C'est cette trace qui manque.
+    #
+    # ON APPELLE LA MEME FONCTION QUE LES TROIS AUTRES CHEMINS, `t1_preuve` :
+    #   - aucune condition publiee -> dict VIDE, rien n'est exige, rien ne
+    #     change pour personne (c'est ce qui rend ce correctif inoffensif) ;
+    #   - conditions publiees et `terms_accepted` absent ou faux -> 409 ;
+    #   - accepte -> les quatre champs de preuve, TOUS decides par le serveur :
+    #     la version, l'heure, et l'etat filme.
+    #
+    # `course_id` VOLONTAIREMENT VIDE. Une demande d'essai ne designe aucune
+    # seance — elle porte sur une offre. `filmed_at_booking` vaut donc False, ce
+    # qui est la verite : rien n'a encore ete annonce comme filme a cette
+    # personne. L'annonce de captation sera faite, et prouvee, au moment de la
+    # RESERVATION, qui elle connait son cours (`reservation_routes.py:765`).
+    #
+    # Le coach est identifie par l'OFFRE relue en base, jamais par le corps.
+    _t1_champs = await t1_preuve(
+        body.get("terms_accepted"),
+        "",
+        offer.get("coach_id") or DEFAULT_COACH_ID,
+    )
+
     proof = SocialProof(
         offer_id=offer_id,
         offer_name=offer.get("name", ""),
@@ -7393,6 +7424,11 @@ async def submit_social_proof(request: Request):
         created_at=datetime.now(timezone.utc).isoformat(),
     )
     doc = proof.model_dump()
+    # G3 — la preuve est FIGEE sur la demande : version acceptee, horodatage,
+    # etat filme. C'est elle que relira l'approbation ; le coach ne refabrique
+    # rien et ne consent a la place de personne. Meme geste que
+    # `reservation_data.update(_t1_champs)` (reservation_routes.py:785).
+    doc.update(_t1_champs)
     await db.social_proofs.insert_one(doc)
     logger.info(f"[V260] Preuve sociale recue de {proof.client_email} pour l'offre {offer_id}")
 
@@ -7568,15 +7604,55 @@ async def review_social_proof(proof_id: str, request: Request):
     if proof.get("status") != "pending":
         raise HTTPException(status_code=409, detail="Cette demande a déjà été traitée")
 
+    # ===================================================================
+    # G4 — LA TRANSITION D'ETAT EST ATOMIQUE, ET ELLE DESIGNE LE GAGNANT
+    # ===================================================================
+    #
+    # La lecture `status != "pending"` juste au-dessus ne serialise RIEN : deux
+    # approbations simultanees la passent toutes les deux, puis ecrivent toutes
+    # les deux « approved ». On ajoute donc `status: "pending"` AU FILTRE de
+    # l'ecriture : MongoDB n'applique la mise a jour qu'a un document encore en
+    # attente, et `matched_count` dit qui a gagne. Le perdant repart en 409 sans
+    # avoir rien touche. Meme motif que le drapeau `trial_credit_restored`
+    # (`t1_restituer_essais_non_honores`), pose par une ecriture conditionnelle
+    # sur sa propre absence.
+    #
+    # C'est la PREMIERE des deux barrieres de concurrence. La seconde est le
+    # verrou d'essai lui-meme (`free_trial_claims`), qui protege contre les
+    # doublons venus d'UNE AUTRE demande ou d'un autre chemin.
     new_status = "approved" if action == "approve" else "rejected"
-    await db.social_proofs.update_one(
-        {"id": proof_id},
+    _g4_maintenant = datetime.now(timezone.utc).isoformat()
+    _g4_pris = await db.social_proofs.update_one(
+        {"id": proof_id, "status": "pending"},
         {"$set": {
             "status": new_status,
-            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "reviewed_at": _g4_maintenant,
             "reviewed_by": user_email
         }}
     )
+    if not getattr(_g4_pris, "matched_count", 0):
+        # Quelqu'un d'autre l'a traitee entre la lecture et ici.
+        raise HTTPException(status_code=409, detail="Cette demande a déjà été traitée")
+
+    async def _g4_rendre_en_attente() -> None:
+        """Remet la demande EN ATTENTE quand l'octroi n'a pas abouti.
+
+        Sans cela, un refus de la garde d'essai (ou une panne d'ecriture)
+        laisserait une demande marquee « approuvee » SANS code : le coach la
+        verrait validee, la personne n'aurait rien, et plus personne ne pourrait
+        rejouer l'approbation — l'etat `approved` interdit toute reprise.
+        On efface aussi les marques de revue : cette demande n'a pas ete revue,
+        elle a echoue.
+        """
+        try:
+            await db.social_proofs.update_one(
+                {"id": proof_id},
+                {"$set": {"status": "pending"},
+                 "$unset": {"reviewed_at": "", "reviewed_by": ""}},
+            )
+        except Exception as _err:
+            logger.error("[V260] demande %s bloquee en 'approved' sans code : %s",
+                         proof_id, _err)
 
     granted_code = None
     if action == "approve":
@@ -7586,6 +7662,37 @@ async def review_social_proof(proof_id: str, request: Request):
             sessions_count = int(offer.get("pack_sessions") or 0) or 1
         except (TypeError, ValueError):
             sessions_count = 1
+
+        # ===================================================================
+        # G5 — ON RELIT LA PREUVE, ON N'EN FABRIQUE AUCUNE
+        # ===================================================================
+        #
+        # La preuve d'acceptation a ete recueillie AUPRES DU DEMANDEUR, au depot
+        # (G3). Ici on ne fait que la RELIRE. Le coach n'accepte rien a la place
+        # de personne, et aucun champ de preuve n'est invente.
+        #
+        # LE CAS DES DEMANDES ANTERIEURES A CE CORRECTIF. Une demande deposee
+        # avant G3 ne porte aucune preuve. Si des conditions sont publiees, elle
+        # ne peut PAS etre approuvee en silence : ce serait fabriquer un
+        # consentement. Elle est refusee avec un message qui dit quoi faire —
+        # redeposer la demande, qui passera cette fois par la case.
+        # (Mesure du 18 aout 2026, lecture seule : 0 demande en attente en
+        # production. Ce chemin est un filet, pas une migration.)
+        #
+        # ON N'EXIGE PAS LA DERNIERE VERSION. La preuve figee vaut pour la
+        # version qu'elle nomme ; exiger la version courante invaliderait toutes
+        # les demandes en attente des que le coach corrige une virgule.
+        _g5_version, _ = await t1_version_active(proof.get("coach_id") or "")
+        if _g5_version and not (proof.get("terms_accepted") is True
+                                and str(proof.get("terms_version") or "").strip()):
+            await _g4_rendre_en_attente()
+            raise HTTPException(
+                status_code=409,
+                detail=("Cette demande a été déposée avant la mise en place des "
+                        "conditions de participation : elle ne porte aucune "
+                        "acceptation. Demandez à la personne de la redéposer."),
+                headers={"X-Refus-Raison": "social_proof_sans_conditions"},
+            )
 
         # ===================================================================
         # G2 — LA GARDE ESSAI-1, ICI ET NULLE PART AILLEURS
@@ -7610,7 +7717,15 @@ async def review_social_proof(proof_id: str, request: Request):
             _essai1_garde as _g2_garde,
             _essai1_liberer as _g2_liberer,
         )
-        await _g2_garde(proof.get("client_email", ""), proof.get("offer_id", ""))
+        # G2 + G4 — un refus de la garde d'essai NE DOIT PAS laisser la demande
+        # marquee « approuvee ». On la rend a l'etat d'attente avant de propager
+        # le 409 : le coach garde une demande lisible, et la personne un droit
+        # intact si le refus venait d'une erreur.
+        try:
+            await _g2_garde(proof.get("client_email", ""), proof.get("offer_id", ""))
+        except Exception:
+            await _g4_rendre_en_attente()
+            raise
 
         granted_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -7642,10 +7757,54 @@ async def review_social_proof(proof_id: str, request: Request):
                 "social_proof_id": proof_id,
             })
         except Exception:
+            # G7 — LE CODE ORPHELIN, LE PIEGE QU'ON A FAILLI LAISSER.
+            #
+            # Si `discount_codes` a ete ecrit et `subscriptions` a echoue, le
+            # code survit seul. Il porte `source: "social_proof"`, donc
+            # `_essai1_essai_deja_accorde` le compte comme un essai DEJA ACCORDE :
+            # rendre le claim ne suffirait pas, la personne serait refusee pour
+            # toujours par un code qui ne lui a jamais servi et qu'aucun ecran
+            # n'affiche (l'abonnement, lui, n'existe pas).
+            #
+            # On defait donc dans l'ordre inverse : le code d'abord, le verrou
+            # ensuite, l'etat en dernier. Chaque etape est protegee — un
+            # nettoyage qui echoue ne doit pas masquer l'erreur d'origine, qui
+            # est la seule information utile dans les journaux.
+            try:
+                await db.discount_codes.delete_one({"code": granted_code})
+            except Exception as _err:
+                logger.error("[V260] code orphelin %s non retire : %s",
+                             granted_code, _err)
             await _g2_liberer(proof.get("client_email", ""))
+            await _g4_rendre_en_attente()
             raise
         await db.social_proofs.update_one({"id": proof_id}, {"$set": {"granted_code": granted_code}})
         logger.info(f"[V260] Preuve {proof_id} approuvee -> code {granted_code} pour {proof.get('client_email')}")
+
+        # ===================================================================
+        # G6 — LE MEME FUNNEL QUE L'AUTRE PORTE
+        # ===================================================================
+        #
+        # `/checkout/free` emet `free_trial_granted` a l'octroi ; ce chemin ne
+        # l'emettait pas. Le funnel du dashboard (ESSAI-3) lit la BASE et
+        # comptait donc bien les deux portes, mais PostHog n'en voyait qu'une :
+        # « accorde » y etait systematiquement sous-compte, et les taux
+        # d'aval — reservation, presence, conversion — mesures contre un
+        # denominateur faux.
+        #
+        # AUCUNE DONNEE PERSONNELLE : `posthog_capture` ne recoit qu'un
+        # identifiant d'offre et un nombre de seances ; l'adresse sert au
+        # rapprochement d'identite, comme sur l'autre porte, et ne part pas en
+        # propriete d'evenement.
+        #
+        # NON BLOQUANT, comme partout : un octroi reussi ne doit jamais echouer
+        # sur sa mesure. L'acces est deja cree a ce stade.
+        try:
+            from api.routes.shared import essai2_tracer_octroi as _g6_octroi
+            await _g6_octroi(db, proof.get("client_email", ""),
+                             proof.get("offer_id", ""), sessions_count)
+        except Exception as _g6err:
+            logger.warning(f"[ESSAI-2] octroi social non mesure: {_g6err}")
 
     # Email au client (jamais bloquant : la decision est deja enregistree)
     if RESEND_AVAILABLE and RESEND_API_KEY and proof.get("client_email"):

@@ -3817,6 +3817,11 @@ const SocialProofFormModal = ({ offer, onClose }) => {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  // ESSAI CONDITIONS — la meme case que les trois autres chemins de reservation.
+  // `requis` vient du SERVEUR (`/api/terms/active`) : sans conditions publiees,
+  // le composant ne s'affiche pas et ne bloque rien.
+  const [accepteConditions, setAccepteConditions] = useState(false);
+  const [conditionsRequises, setConditionsRequises] = useState(false);
 
   const inputStyle = {
     width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #333',
@@ -3833,7 +3838,14 @@ const SocialProofFormModal = ({ offer, onClose }) => {
     setError('');
     try {
       // `offer.id` — les offres portent un uuid en chaine, pas un ObjectId.
-      await axios.post(`${API}/social-proofs`, { ...formData, offer_id: offer.id });
+      // ESSAI CONDITIONS — on n'envoie QUE « j'accepte ». La version, l'heure et
+      // l'etat filme sont decides par le serveur : le navigateur n'a pas voix au
+      // chapitre sur ce qui a ete accepte.
+      await axios.post(`${API}/social-proofs`, {
+        ...formData,
+        offer_id: offer.id,
+        terms_accepted: accepteConditions,
+      });
       setSuccess(true);
     } catch (err) {
       setError(err?.response?.data?.detail || "L'envoi a échoué. Réessayez.");
@@ -3937,6 +3949,23 @@ const SocialProofFormModal = ({ offer, onClose }) => {
           onChange={(e) => setFormData({ ...formData, motivation: e.target.value })}
           style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }} />
 
+        {/* ESSAI CONDITIONS — MEME composant que la vitrine, l'espace abonne et
+            le ChatWidget. `courseId` est vide : une demande d'essai porte sur une
+            OFFRE, pas sur une seance. L'annonce de captation, qui depend du
+            cours, sera faite et prouvee au moment de la reservation.
+
+            Accepter les conditions n'est PAS accepter de temoigner
+            publiquement : le consentement des temoignages (ESSAI-5a-2) est
+            recueilli separement, dans son propre ecran. */}
+        <div style={{ margin: '4px 0 12px' }}>
+          <ConditionsParticipation
+            courseId=""
+            accepte={accepteConditions}
+            onChange={setAccepteConditions}
+            onRequired={setConditionsRequises}
+          />
+        </div>
+
         {error && (
           <div style={{ color: '#f87171', fontSize: '0.8rem', marginBottom: 8 }}>{error}</div>
         )}
@@ -3944,11 +3973,14 @@ const SocialProofFormModal = ({ offer, onClose }) => {
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={loading}
+          disabled={loading || (conditionsRequises && !accepteConditions)}
           style={{
             width: '100%', padding: '12px', borderRadius: 25,
-            background: loading ? '#666' : 'var(--primary-color, #D91CD2)',
-            color: '#fff', border: 'none', cursor: loading ? 'wait' : 'pointer',
+            background: (loading || (conditionsRequises && !accepteConditions))
+              ? '#666' : 'var(--primary-color, #D91CD2)',
+            color: '#fff', border: 'none',
+            cursor: loading ? 'wait'
+              : (conditionsRequises && !accepteConditions) ? 'not-allowed' : 'pointer',
             fontWeight: 700, fontSize: '0.95rem', marginTop: 8
           }}
           data-testid="social-proof-submit"
