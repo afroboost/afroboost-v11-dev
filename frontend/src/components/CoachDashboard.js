@@ -1128,28 +1128,105 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     return () => clearTimeout(timer);
   }, [coachUser]);
 
+  // === P1 — L'ETAT DU PUSH, DIT A L'ECRAN ===
+  // `inconnu` tant qu'on n'a pas regarde ; ensuite `ok`, `denied`, `default`
+  // ou `non_supporte`. Cet etat ne sert QU'A informer : il ne declenche
+  // aucune demande de permission.
+  const [p1EtatPush, setP1EtatPush] = useState('inconnu');
+  const [p1Occupe, setP1Occupe] = useState(false);
+  const P1_CLE_ENDPOINT = 'af_push_last_endpoint';
+
+  // P1-b — ENREGISTRE L'ABONNEMENT ET DECLARE CELUI QU'IL REMPLACE.
+  //
+  // Le serveur ne peut pas savoir que deux endpoints appartiennent au meme
+  // navigateur : rien dans `push_subscriptions` ne le dit. Le navigateur, lui,
+  // le sait — il garde en memoire locale le dernier endpoint qu'il a fait
+  // enregistrer. S'il en presente un nouveau, il nomme l'ancien, et le serveur
+  // met CELUI-LA au rebut. Aucun autre appareil n'est touche.
+  //
+  // On depose aussi l'identifiant du proprietaire dans un cache lisible par le
+  // Service Worker : sans session, c'est le seul moyen pour lui de savoir au nom
+  // de qui declarer une rotation (voir `pushsubscriptionchange`, sw.js).
+  const p1Enregistrer = useCallback(async (sub, email) => {
+    const pid = `coach_${email}`;
+    let precedent = null;
+    try { precedent = localStorage.getItem(P1_CLE_ENDPOINT) || null; } catch (e) { /* mode prive */ }
+    const endpoint = sub && sub.endpoint;
+    await axios.post(`${API}/push/subscribe`, {
+      participant_id: pid,
+      subscription: sub.toJSON(),
+      role: 'coach',
+      email,
+      // Jamais l'endpoint courant : le serveur refuse deja ce cas, mais on ne
+      // lui demande pas de nous proteger de nous-memes.
+      previous_endpoint: precedent && precedent !== endpoint ? precedent : null
+    });
+    try { localStorage.setItem(P1_CLE_ENDPOINT, endpoint); } catch (e) { /* mode prive */ }
+    try {
+      const c = await caches.open('afroboost-push-owner');
+      await c.put('owner', new Response(pid));
+    } catch (e) { /* le cache n'est qu'un relais pour le SW */ }
+    return endpoint;
+  }, []);
+
+  // P1-d — ACTIVATION A LA DEMANDE, JAMAIS AUTOMATIQUE.
+  // La popup native ne s'ouvre plus qu'apres un clic explicite : c'est ce que
+  // les navigateurs attendent, et cela evite de harceler quiconque.
+  const p1Activer = useCallback(async () => {
+    if (p1Occupe) return;
+    setP1Occupe(true);
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { setP1EtatPush(perm); return; }
+      const registration = await navigator.serviceWorker.ready;
+      let sub = await registration.pushManager.getSubscription();
+      if (!sub) {
+        const vapidRes = await axios.get(`${API}/push/vapid-key`);
+        const cle = vapidRes.data.publicKey;
+        if (!cle) return;
+        const enTableau = (b64) => {
+          const pad = '='.repeat((4 - b64.length % 4) % 4);
+          const base = (b64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+          const brut = window.atob(base);
+          const out = new Uint8Array(brut.length);
+          for (let i = 0; i < brut.length; ++i) out[i] = brut.charCodeAt(i);
+          return out;
+        };
+        sub = await registration.pushManager.subscribe({
+          userVisibleOnly: true, applicationServerKey: enTableau(cle)
+        });
+      }
+      await p1Enregistrer(sub, coachUser.email);
+      setP1EtatPush('ok');
+    } catch (err) {
+      console.warn('[PUSH-COACH] activation echouee:', err.message);
+    } finally {
+      setP1Occupe(false);
+    }
+  }, [coachUser, p1Enregistrer, p1Occupe]);
+
   // V120: Auto-subscribe coach aux notifications push
   useEffect(() => {
     if (!coachUser?.email || !dashboardReady) return;
     const autoSubscribeCoach = async () => {
       try {
-        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-        if (Notification.permission === 'denied') return;
-        // Demander permission si pas encore accordée
-        if (Notification.permission === 'default') {
-          const perm = await Notification.requestPermission();
-          if (perm !== 'granted') return;
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+          setP1EtatPush('non_supporte');
+          return;
         }
+        // P1-d — CAS 6 : bloque. Aucune boucle possible, on le DIT au coach au
+        // lieu de sortir en silence comme avant.
+        if (Notification.permission === 'denied') { setP1EtatPush('denied'); return; }
+        // P1-d — CAS 7 : jamais de popup automatique. On affiche un bouton, et
+        // c'est le clic qui declenchera la demande.
+        if (Notification.permission === 'default') { setP1EtatPush('default'); return; }
         const registration = await navigator.serviceWorker.ready;
         const existingSub = await registration.pushManager.getSubscription();
         if (existingSub) {
-          // Déjà souscrit — s'assurer que le backend a le role=coach
-          await axios.post(`${API}/push/subscribe`, {
-            participant_id: `coach_${coachUser.email}`,
-            subscription: existingSub.toJSON(),
-            role: 'coach',
-            email: coachUser.email
-          });
+          // CAS 1/2/4 — le backend recoit l'endpoint COURANT, et apprend lequel
+          // il remplace. C'est ici que l'accumulation s'arrete.
+          await p1Enregistrer(existingSub, coachUser.email);
+          setP1EtatPush('ok');
           console.log('[PUSH-COACH] Re-enregistré comme coach');
           return;
         }
@@ -1169,19 +1246,17 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(vapidKey)
         });
-        await axios.post(`${API}/push/subscribe`, {
-          participant_id: `coach_${coachUser.email}`,
-          subscription: subscription.toJSON(),
-          role: 'coach',
-          email: coachUser.email
-        });
+        // CAS 3 — recreation automatique. La permission est DEJA accordee : ce
+        // `subscribe` n'ouvre aucune popup.
+        await p1Enregistrer(subscription, coachUser.email);
+        setP1EtatPush('ok');
         console.log('[PUSH-COACH] Souscription push OK');
       } catch (err) {
         console.warn('[PUSH-COACH] Auto-subscribe erreur:', err.message);
       }
     };
     autoSubscribeCoach();
-  }, [coachUser, dashboardReady]);
+  }, [coachUser, dashboardReady, p1Enregistrer]);
   
   // === PANNEAU SUPER ADMIN ===
   const [showAdminPanel, setShowAdminPanel] = useState(false);
@@ -6961,6 +7036,57 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 <polyline points="6 9 12 15 18 9" />
               </svg>
             </button>
+
+            {/* P1-d — L'ETAT DU PUSH, DIT PLUTOT QUE SUBI.
+                Avant, un navigateur qui bloquait les notifications produisait un
+                `return` silencieux : le coach n'avait aucun moyen de savoir
+                pourquoi il ne recevait rien. Le bandeau n'apparait QUE dans les
+                deux cas ou une action humaine est techniquement obligatoire ;
+                quand tout va bien (`ok`) il reste invisible.
+                Icones en SVG, jamais d'emoji — regle du projet. */}
+            {p1EtatPush === 'denied' && (
+              <div data-testid="p1-push-bloque" style={{
+                marginTop: '6px', padding: '12px 14px', borderRadius: '12px',
+                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.28)',
+                display: 'flex', alignItems: 'flex-start', gap: '10px'
+              }}>
+                <span style={{ color: '#ef4444', flexShrink: 0, marginTop: '1px' }}>
+                  <SvgIcon name="warning" size={16} />
+                </span>
+                <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: '12.5px', lineHeight: 1.45 }}>
+                  <strong style={{ color: '#fff' }}>Notifications désactivées.</strong><br />
+                  Votre navigateur bloque les notifications Afroboost. Réactivez-les
+                  dans ses réglages pour recevoir vos nouvelles réservations.
+                </span>
+              </div>
+            )}
+            {p1EtatPush === 'default' && (
+              <div data-testid="p1-push-a-activer" style={{
+                marginTop: '6px', padding: '12px 14px', borderRadius: '12px',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.28)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap'
+              }}>
+                <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: '12.5px', lineHeight: 1.45 }}>
+                  Soyez prévenu dès qu'une place est réservée.
+                </span>
+                <button
+                  type="button"
+                  onClick={p1Activer}
+                  disabled={p1Occupe}
+                  data-testid="p1-push-activer"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    background: 'var(--primary-color, #D91CD2)', color: '#fff',
+                    border: 'none', borderRadius: '10px', padding: '8px 14px',
+                    fontSize: '12.5px', fontWeight: 700,
+                    cursor: p1Occupe ? 'wait' : 'pointer', opacity: p1Occupe ? 0.6 : 1
+                  }}>
+                  <SvgIcon name="bell" size={14} />
+                  {p1Occupe ? 'Activation…' : 'Activer les notifications'}
+                </button>
+              </div>
+            )}
 
             {c17jOuvert && (
               <div style={{

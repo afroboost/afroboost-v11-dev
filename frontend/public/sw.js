@@ -17,7 +17,7 @@
 // rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
 // Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
 // a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
-var CACHE_NAME = 'afroboost-v445'; // V445: petite icone de notification Android — purge des anciens caches
+var CACHE_NAME = 'afroboost-v450'; // V445: petite icone de notification Android — purge des anciens caches
 var SW_VERSION = 268;
 
 var PRECACHE_URLS = [
@@ -264,6 +264,61 @@ self.addEventListener('push', function(event) {
   } catch (e) {
     // Protection totale — ne jamais crasher le SW
   }
+});
+
+// -----------------------------------------------------------------
+// P1-a — LA ROTATION D'ENDPOINT SE DECLARE ELLE-MEME
+// -----------------------------------------------------------------
+// FCM fait tourner l'endpoint d'un navigateur en permanence. Sans ce
+// gestionnaire, Afroboost apprenait le nouvel endpoint SEULEMENT au prochain
+// chargement du dashboard : entre les deux, tout push partait vers l'ancien,
+// que FCM accepte encore silencieusement. Mesure du 18/08/2026 : 196 endpoints
+// enregistres pour un ou deux appareils reels, dont 185 encore actifs.
+//
+// `pushsubscriptionchange` est le mecanisme PREVU PAR LA SPECIFICATION pour ce
+// cas precis, et il etait absent. Le Service Worker est le seul a connaitre le
+// couple (ancien endpoint, nouveau endpoint) : c'est donc lui qui le declare.
+// Le serveur ne devine rien.
+//
+// `oldSubscription` n'est pas fourni par tous les navigateurs : on l'envoie
+// quand il existe, et son absence n'empeche jamais l'enregistrement du nouveau.
+// Si `newSubscription` manque, on se reabonne avec la MEME cle applicative que
+// l'ancienne — aucune permission n'est redemandee, la spec l'interdit ici.
+self.addEventListener('pushsubscriptionchange', function(event) {
+  event.waitUntil(
+    (function () {
+      var ancien = event.oldSubscription ? event.oldSubscription.endpoint : null;
+      var pNouveau = event.newSubscription
+        ? Promise.resolve(event.newSubscription)
+        : self.registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: event.oldSubscription
+              && event.oldSubscription.options
+              && event.oldSubscription.options.applicationServerKey
+          });
+      return pNouveau.then(function (nouveau) {
+        if (!nouveau) return;
+        // L'identifiant du proprietaire est celui pose au dernier
+        // enregistrement : le Service Worker n'a pas de session.
+        return caches.open('afroboost-push-owner').then(function (c) {
+          return c.match('owner').then(function (r) {
+            return (r ? r.text() : Promise.resolve('')).then(function (pid) {
+              if (!pid) return;
+              return fetch('/api/push/subscribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  participant_id: pid,
+                  subscription: nouveau.toJSON(),
+                  previous_endpoint: ancien
+                })
+              });
+            });
+          });
+        });
+      });
+    })().catch(function () { /* jamais casser le Service Worker */ })
+  );
 });
 
 self.addEventListener('notificationclick', function(event) {

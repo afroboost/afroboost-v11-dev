@@ -473,6 +473,116 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
         logger.warning(f"[EMAIL] Erreur envoi confirmation: {e}")
         return False
 
+
+# ===========================================================================
+# N2 — L'E-MAIL DU COACH POUR UNE NOUVELLE RESERVATION
+# ===========================================================================
+#
+# Le coach recevait un e-mail pour une souscription et pour une annulation, mais
+# AUCUN pour une reservation. Ce n'etait pas une panne de livraison : le canal
+# n'existait pas.
+#
+# ECRITE UNE SEULE FOIS, INJECTEE PAR LES DEUX ROUTES. `POST /reservations` et
+# l'espace abonne appellent le meme moteur (`notifier_reservation_creee`) ; ils
+# lui passent donc le meme envoyeur. Aucune duplication de gabarit.
+#
+# LE DESTINATAIRE EST LE COACH RESOLU, PAS UNE CONSTANTE. L'e-mail d'annulation
+# (l.1078) envoie a `SUPER_ADMIN_EMAIL` : un coach partenaire ne recoit donc
+# jamais les siens. On ne recopie pas ce defaut — le moteur a deja resolu le
+# proprietaire via `resoudre_coach_de_reservation`, et c'est lui qu'on sert.
+#
+# CE QU'IL CONTIENT : participant, cours, date, heure, lieu, offre. Le prenom
+# suffit a identifier ; l'e-mail du client est utile au coach pour repondre et
+# figure deja dans son CRM. Aucun code d'acces, aucun jeton, aucun QR.
+async def _send_coach_reservation_email(coach_email: str, reservation: dict) -> bool:
+    """Previent le coach qu'une seance vient d'etre reservee. True si Resend accepte."""
+    _dest = (coach_email or "").strip()
+    if not _dest or "@" not in _dest:
+        logger.warning("[EMAIL-COACH] destinataire invalide — e-mail non envoye")
+        return False
+    if not _RESEND_OK or not _RESEND_KEY:
+        logger.warning("[EMAIL-COACH] Resend non disponible — e-mail non envoye")
+        return False
+    resend.api_key = _RESEND_KEY
+
+    from html import escape as _esc
+    _nom = _esc(str(reservation.get("userName") or "Un client").strip()[:60], quote=True)
+    _mail = _esc(str(reservation.get("userEmail") or "").strip()[:120], quote=True)
+    _cours = _esc(str(reservation.get("courseName")
+                      or reservation.get("offerName") or "une seance")[:120], quote=True)
+    _offre = _esc(str(reservation.get("offerName") or "")[:120], quote=True)
+    _lieu = _esc(str(reservation.get("locationName")
+                     or reservation.get("location") or "")[:160], quote=True)
+    _code = _esc(str(reservation.get("reservationCode") or "")[:20], quote=True)
+    try:
+        _q = max(1, int(reservation.get("quantity") or 1))
+    except (TypeError, ValueError):
+        _q = 1
+
+    # DATE ET HEURE DE L'OCCURRENCE RESERVEE, jamais celle du cours recurrent.
+    # `datetime` porte l'instant exact choisi (ISO naif en heure suisse, cf.
+    # V196) : une reservation du mercredi 19 ne doit pas annoncer « chaque
+    # mercredi ». Lecture defensive — un format inattendu ne doit pas empecher
+    # l'envoi, il se contente de ne pas embellir la date.
+    _brut = str(reservation.get("datetime") or "")
+    _quand = _brut[:16].replace("T", " a ")
+    try:
+        from datetime import datetime as _dt
+        _JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+        _MOIS = ["janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet",
+                 "aout", "septembre", "octobre", "novembre", "decembre"]
+        _d = _dt.fromisoformat(_brut.replace("Z", "+00:00").split("+")[0])
+        _quand = "%s %d %s a %02d:%02d" % (_JOURS[_d.weekday()], _d.day,
+                                           _MOIS[_d.month - 1], _d.hour, _d.minute)
+    except (ValueError, TypeError, IndexError):
+        pass
+    _quand = _esc(_quand, quote=True)
+
+    try:
+        primary_color = await get_primary_color(db, _dest)
+    except Exception:
+        primary_color = "#D91CD2"
+
+    _lignes = [("Participant", _nom + (f" ({_mail})" if _mail else "")),
+               ("Cours", _cours), ("Quand", _quand)]
+    if _lieu:
+        _lignes.append(("Lieu", _lieu))
+    if _offre and _offre != _cours:
+        _lignes.append(("Offre", _offre))
+    if _q > 1:
+        _lignes.append(("Places", str(_q)))
+    if _code:
+        _lignes.append(("Code reservation", _code))
+    _bloc = "".join(
+        f'<p style="color:#a1a1aa;font-size:12px;margin:10px 0 2px;">{_c}</p>'
+        f'<p style="color:#fff;font-size:14px;margin:0;">{_v}</p>'
+        for _c, _v in _lignes)
+
+    _url = (os.environ.get("FRONTEND_URL") or "https://afroboost.com").rstrip("/")
+    try:
+        await asyncio.to_thread(resend.Emails.send, {
+            "from": "Afroboost <notifications@afroboost.com>",
+            "to": [_dest],
+            "subject": f"Nouvelle réservation Afroboost — {reservation.get('courseName') or reservation.get('offerName') or 'séance'}",
+            "html": f"""<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;background:#0a0a0a;border-radius:12px;overflow:hidden;">
+                <div style="background:{primary_color};padding:18px;text-align:center;">
+                    <h2 style="color:#fff;margin:0;font-size:18px;">Nouvelle réservation</h2>
+                </div>
+                <div style="padding:20px;">{_bloc}
+                    <p style="margin:22px 0 0;text-align:center;">
+                        <a href="{_url}/" style="display:inline-block;background:{primary_color};color:#fff;padding:12px 26px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">Voir mes réservations</a>
+                    </p>
+                </div>
+            </div>"""
+        })
+        logger.info("[EMAIL-COACH] reservation %s annoncee a %s", _code or "?", _dest[:24])
+        # Comme pour l'e-mail client : « Resend a ACCEPTE », pas « delivre ».
+        return True
+    except Exception as e:
+        logger.warning("[EMAIL-COACH] envoi echoue: %s", e)
+        return False
+
+
 # v9.5.8: Liste des Super Admins
 SUPER_ADMIN_EMAILS = [
     "contact.artboost@gmail.com",
@@ -874,6 +984,9 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
             db, reservation_data,
             envoyer_email_client=_rc_email_client,
             envoyer_push_coach=_rc_push_coach,
+            # N2 : le coach est resolu PAR LE MOTEUR et passe en premier
+            # argument — on ne devine pas le destinataire ici.
+            envoyer_email_coach=_send_coach_reservation_email,
         ))
 
     # V180: Notification push à l'abonné après réservation réussie

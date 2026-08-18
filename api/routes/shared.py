@@ -1021,10 +1021,23 @@ async def resoudre_coach_de_reservation(db, reservation: dict) -> str:
 
 
 async def notifier_reservation_creee(
-    db, reservation: dict, envoyer_email_client=None, envoyer_push_coach=None
+    db, reservation: dict, envoyer_email_client=None, envoyer_push_coach=None,
+    envoyer_email_coach=None
 ) -> dict:
-    """`reservation_created` : confirme le client ET previent le coach proprietaire."""
-    bilan = {"client_email": None, "coach_inapp": None, "coach_push": None}
+    """`reservation_created` : confirme le client ET previent le coach proprietaire.
+
+    N2 — QUATRIEME CANAL, `coach_email`. Le coach recevait un e-mail pour une
+    souscription et pour une annulation, mais AUCUN pour une reservation : le
+    canal n'existait pas. Il suit exactement le motif des trois autres — jeton
+    d'idempotence, envoyeur injecte par l'appelant, non bloquant. L'envoyeur est
+    injecte et non code ici pour la meme raison que les autres : ce module ne
+    connait ni Resend, ni les couleurs du coach, ni les gabarits.
+
+    Retro-compatible : un appelant qui ne passe pas `envoyer_email_coach` obtient
+    EXACTEMENT le comportement d'avant, `coach_email` restant a None.
+    """
+    bilan = {"client_email": None, "coach_inapp": None, "coach_push": None,
+             "coach_email": None}
     try:
         rid = (reservation.get("id") or "").strip()
         if not rid:
@@ -1087,16 +1100,60 @@ async def notifier_reservation_creee(
         # --- 4. COACH : push ---
         if envoyer_push_coach is not None:
             if await _rc_reserver_jeton(db, rid, "coach_push", maintenant):
-                ok = False
+                # P2 — « ECHEC » NE DOIT PLUS COUVRIR DEUX CHOSES DIFFERENTES.
+                #
+                # Un coach sans aucun appareil inscrit et un coach dont tous les
+                # appareils refusent produisaient le MEME mot. On lit donc
+                # d'abord s'il existe au moins un abonnement actif : sans
+                # abonnement, il n'y a rien a tenter, et ce n'est pas une panne.
+                #
+                # LIMITE ASSUMEE : cette lecture couvre l'inscription du
+                # dashboard (`coach_<email>`) et celles portant `email`. Elle ne
+                # reconstitue PAS les 25 identifiants candidats que
+                # `send_push_by_email` explore — les dupliquer ici les ferait
+                # diverger au premier changement. Elle sert a distinguer un cas
+                # franc, pas a predire l'envoi.
+                _a_un_appareil = True
                 try:
-                    ok = bool(await envoyer_push_coach(coach, titre, message,
-                                                       {"type": "new_reservation", "reservation_id": rid}))
-                except Exception as e:
-                    logger.warning("[RESA] push coach echoue: %s", type(e).__name__)
-                await _rc_cloturer_jeton(db, rid, "coach_push", ok)
-                bilan["coach_push"] = "envoye" if ok else "echec"
+                    _c = (coach or "").strip().lower()
+                    _a_un_appareil = bool(await db.push_subscriptions.find_one(
+                        {"active": True,
+                         "$or": [{"participant_id": "coach_" + _c}, {"email": _c}]},
+                        {"_id": 1}))
+                except Exception as _err:
+                    logger.warning("[RESA] abonnements push illisibles: %s", type(_err).__name__)
+
+                if not _a_un_appareil:
+                    await _rc_cloturer_jeton(db, rid, "coach_push", False)
+                    bilan["coach_push"] = "aucun_abonnement"
+                else:
+                    ok = False
+                    try:
+                        ok = bool(await envoyer_push_coach(coach, titre, message,
+                                                           {"type": "new_reservation", "reservation_id": rid}))
+                    except Exception as e:
+                        logger.warning("[RESA] push coach echoue: %s", type(e).__name__)
+                    await _rc_cloturer_jeton(db, rid, "coach_push", ok)
+                    bilan["coach_push"] = "envoye" if ok else "echec"
             else:
                 bilan["coach_push"] = "deja_traite"
+
+        # --- 5. COACH : e-mail (N2) ---
+        # Le jeton est pose comme pour les trois autres : une reservation reelle
+        # donne UN e-mail, un rejeu technique donne « deja_traite » et n'envoie
+        # rien. Une panne d'envoi laisse la reservation intacte — on est deja
+        # dans une tache detachee, et le garde-fou global est plus bas.
+        if envoyer_email_coach is not None:
+            if await _rc_reserver_jeton(db, rid, "coach_email", maintenant):
+                ok = False
+                try:
+                    ok = bool(await envoyer_email_coach(coach, reservation))
+                except Exception as e:
+                    logger.warning("[RESA] e-mail coach echoue: %s", type(e).__name__)
+                await _rc_cloturer_jeton(db, rid, "coach_email", ok)
+                bilan["coach_email"] = "envoye" if ok else "echec"
+            else:
+                bilan["coach_email"] = "deja_traite"
 
         logger.info("[RESA] reservation_created %s -> %s", rid[:8], bilan)
     except Exception as e:

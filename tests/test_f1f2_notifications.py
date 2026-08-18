@@ -308,13 +308,23 @@ def perimetre():
     # --- ce qui ne doit PAS avoir bouge ---
     verifier("HP1. le moteur de rappels n'est pas touche",
              "cron_reservation_reminders" in SERVEUR and "reminders_enabled" in SERVEUR)
-    # TROIS canaux, ni plus ni moins — on compte les CLES, pas les affectations
-    # (chacune apparait deux fois : envoye/echec et deja_traite).
+    # LES CANAUX DU MOTEUR — mis a jour, et voici pourquoi.
+    #
+    # Ce lot-ci (F1/F2) garantissait « aucun canal ajoute » : c'etait son
+    # perimetre, et l'assertion etait juste. Le lot SUIVANT (N2) ajoute
+    # deliberement `coach_email`, sur decision produit explicite — le coach ne
+    # recevait aucun e-mail lors d'une reservation, alors qu'il en recoit pour
+    # une souscription et pour une annulation.
+    #
+    # On ne desactive pas l'assertion : on la reformule sur ce qui reste vrai et
+    # qui compte encore — l'ensemble des canaux est CONNU et ferme, et
+    # `client_push` n'a toujours pas ete introduit dans ce moteur (le push
+    # participant passe par l'appelant, pas par un canal du bilan).
     _canaux = sorted(set(re.findall(r'bilan\["(\w+)"\]', _notif)))
-    verifier("HP2. exactement les trois canaux d'origine, aucun ajoute",
-             _canaux == ["client_email", "coach_inapp", "coach_push"], _canaux)
-    verifier("HP2b. ni `client_push` ni `coach_email` ne sont introduits",
-             all(x not in _notif for x in ("client_push", "coach_email")))
+    verifier("HP2. l'ensemble des canaux est connu et ferme",
+             _canaux == ["client_email", "coach_email", "coach_inapp", "coach_push"], _canaux)
+    verifier("HP2b. `client_push` n'est toujours pas un canal du moteur",
+             "client_push" not in _notif)
     verifier("HP3. la recurrence n'est pas touchee",
              "_v184_next_occurrences" in SERVEUR)
     verifier("HP4. le moteur ESSAI n'est pas touche",

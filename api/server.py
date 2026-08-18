@@ -13022,6 +13022,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     try:
         from api.routes.shared import notifier_reservation_creee as _rc_notifier
         from api.routes.reservation_routes import _send_reservation_email as _rc_email
+        from api.routes.reservation_routes import _send_coach_reservation_email as _rc_email_coach
 
         async def _rc_email_client(_resa):
             # F1 — meme correction que sur `POST /reservations` : le verdict de
@@ -13036,7 +13037,38 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
             db, reservation_doc,
             envoyer_email_client=_rc_email_client,
             envoyer_push_coach=send_push_by_email,
+            # N2 : MEME envoyeur que `POST /reservations`. Un seul gabarit, une
+            # seule fonction — la source de la reservation ne change ni le
+            # contenu ni le destinataire.
+            envoyer_email_coach=_rc_email_coach,
         ))
+
+        # === N1 — LE PUSH DU PARTICIPANT, ABSENT DE CE CHEMIN ===
+        #
+        # `POST /reservations` envoie depuis toujours « Reservation confirmee »
+        # au participant (`_send_push_to_email`). L'espace abonne, lui, ne l'a
+        # jamais fait : deux routes, deux resultats, pour la meme action. On
+        # appelle donc le MEME envoyeur — aucun moteur nouveau, aucun gabarit
+        # duplique.
+        #
+        # ON UTILISE `send_push_by_email`, PAS `_send_push_to_email`. Le depot le
+        # dit noir sur blanc (reservation_routes.py, commentaire du push coach) :
+        # c'est celui-la qui porte V433 (tri des abonnements par recence) et V434
+        # (TTL 3600). L'autre existe encore mais ne doit plus etre appele.
+        #
+        # Detache et silencieux : un participant sans abonnement push n'est pas
+        # une panne, et rien ici ne peut toucher la reservation.
+        try:
+            _n1_cours = course.get("name") or subscription.get("offer_name") or "ton cours"
+            asyncio.create_task(send_push_by_email(
+                user_email,
+                "Reservation confirmee",
+                "Ta place pour " + str(_n1_cours) + " est reservee. A tres vite !",
+                {"type": "reservation_confirmed", "courseName": _n1_cours,
+                 "datetime": occurrence_iso or ""}
+            ))
+        except Exception as _n1err:
+            logger.warning("[N1] push participant ignore: %s", type(_n1err).__name__)
     except Exception as _e:
         logger.warning(f'[RESA] notification ignoree: {type(_e).__name__}')
 
@@ -23697,6 +23729,57 @@ async def subscribe_push(request: Request):
         await db.push_subscriptions.update_one({"subscription.endpoint": endpoint}, {"$set": {"participant_id": participant_id, "subscription": subscription, "active": True, "updated_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
     else:
         await db.push_subscriptions.update_one({"participant_id": participant_id}, {"$set": {"subscription": subscription, "active": True}}, upsert=True)
+    # ===================================================================
+    # P1-c — L'ENDPOINT REMPLACE EST MIS AU REBUT
+    # ===================================================================
+    #
+    # LE PROBLEME MESURE. FCM fait tourner l'endpoint d'un navigateur en
+    # permanence — 1 a 10 nouveaux par jour sur un seul compte. Chaque rotation
+    # creait un document et laissait le precedent `active: True` A JAMAIS :
+    # 196 endpoints pour un ou deux appareils reels, dont 185 actifs et 11
+    # seulement retires (tous via 404/410). Le serveur pariait ensuite sur les
+    # trois plus RECEMMENT ENREGISTRES — et l'enregistrement n'a lieu qu'au
+    # chargement du dashboard. Un push parti entre deux chargements visait donc
+    # un endpoint deja peime du MEME navigateur, que FCM accepte encore
+    # silencieusement. Constat du 18/08/2026 : l'endpoint vivant a ete inscrit
+    # 1 min 49 s APRES le push.
+    #
+    # LA SEULE PREUVE DISPONIBLE, ET ELLE VIENT DU NAVIGATEUR. Rien dans
+    # `push_subscriptions` ne dit qu'un endpoint appartient au meme appareil
+    # qu'un autre : ni identifiant d'appareil, ni empreinte, ni rien. On
+    # n'invente donc AUCUN rapprochement cote serveur. C'est le navigateur —
+    # seul a connaitre le couple (ancien, nouveau) — qui le declare, via
+    # `previous_endpoint`. Deux emetteurs possibles, tous deux cote client :
+    # l'evenement `pushsubscriptionchange` du Service Worker, et le dashboard
+    # qui memorise le dernier endpoint enregistre.
+    #
+    # UNE PREUVE TECHNIQUE, PAS DE L'ANCIENNETE. On ne desactive jamais sur
+    # l'age : une tablette inutilisee des mois reste parfaitement valide.
+    # `stale != invalid`.
+    #
+    # PORTEE STRICTEMENT LIMITEE. La desactivation exige le MEME
+    # `participant_id` : cette route n'a aucune authentification, et sans cette
+    # condition quiconque connaitrait un endpoint pourrait eteindre l'appareil
+    # d'un autre. Et elle refuse d'eteindre l'endpoint qu'on vient d'enregistrer
+    # — un client qui enverrait deux fois le meme se couperait lui-meme.
+    #
+    # LES AUTRES APPAREILS NE SONT PAS TOUCHES : un seul endpoint, nomme.
+    _prec = str(body.get("previous_endpoint") or "").strip()
+    if _prec and endpoint and _prec != endpoint:
+        try:
+            _r = await db.push_subscriptions.update_one(
+                {"subscription.endpoint": _prec, "participant_id": participant_id},
+                {"$set": {"active": False,
+                          "superseded_at": datetime.now(timezone.utc).isoformat(),
+                          "superseded_by": endpoint}},
+            )
+            if getattr(_r, "modified_count", 0):
+                logger.info("[PUSH] endpoint remplace mis au rebut pour %s", participant_id[:24])
+        except Exception as _e:
+            # Le nettoyage ne doit jamais faire echouer un enregistrement :
+            # mieux vaut un endpoint mort de trop qu'un appareil non inscrit.
+            logger.warning("[PUSH] mise au rebut impossible: %s", type(_e).__name__)
+
     logger.debug(f"[PUSH] Subscribe OK: {participant_id[:8]}...")
     return {"success": True}
 
