@@ -1371,6 +1371,79 @@ export default function OfferWizard({
                   </button>
                 </div>
 
+                {/* ===== RECURRENCE — LE CHOIX QUI MANQUAIT =====
+                    Le moteur d'occurrences sait DEJA faire les deux depuis V246
+                    (`_v184_next_occurrences`, server.py) : un cours porteur d'une
+                    `date` a lieu une fois, un cours sans date se repete chaque
+                    semaine sur son `weekday`. Mais cet ecran — le seul encore
+                    affiche, la section « Cours » du dashboard etant fermee
+                    (SHOW_COURSES_SECTION, V373) — n'offrait QUE l'input date.
+                    Tout horaire cree ici etait donc une date unique, a refaire
+                    chaque semaine.
+
+                    ON N'INVENTE AUCUN ETAT. Le type reste decide par `date`,
+                    exactement comme le backend le lit : ces deux boutons ne font
+                    que montrer le bon champ et vider la date quand on passe en
+                    hebdomadaire. Rien de nouveau n'est stocke, aucune migration.
+
+                    Plusieurs jours = plusieurs horaires. « Mercredi 18:30 » et
+                    « Dimanche 18:30 » sont deux cours — c'est deja ainsi que
+                    fonctionnent les deux seances reellement vendues. */}
+                {(() => {
+                  const estPonctuel = !!(typeof course.date === 'string' && course.date.trim());
+                  const BTN = (actif) => ({
+                    flex: 1, padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
+                    fontSize: 12, fontWeight: 700,
+                    background: actif ? 'var(--primary-color, #D91CD2)' : 'transparent',
+                    color: actif ? '#fff' : 'rgba(255,255,255,0.6)',
+                    border: `1px solid ${actif ? 'var(--primary-color, #D91CD2)' : '#333'}`,
+                  });
+                  return (
+                    <div className="flex gap-2 mt-2" data-testid={`recurrence-${course.id}`}>
+                      <button
+                        type="button"
+                        style={BTN(estPonctuel)}
+                        data-testid={`recurrence-ponctuel-${course.id}`}
+                        onClick={() => {
+                          if (estPonctuel) return;
+                          // On ne POSE pas de date a la place du coach : on
+                          // revele le champ, vide. Tant qu'il ne le remplit pas,
+                          // le cours reste hebdomadaire — c'est la regle du
+                          // backend, et l'ecran ne doit pas raconter autre chose.
+                          markDirty(course.id);
+                          setLinkedCourses(prev => prev.map(c =>
+                            c.id === course.id ? { ...c, date: '' } : c));
+                        }}
+                      >
+                        Date unique
+                      </button>
+                      <button
+                        type="button"
+                        style={BTN(!estPonctuel)}
+                        data-testid={`recurrence-hebdo-${course.id}`}
+                        onClick={() => {
+                          if (!estPonctuel) return;
+                          // Passage en hebdomadaire : la date est EFFACEE, et le
+                          // jour de la semaine retenu est celui de cette date —
+                          // le coach retrouve le creneau qu'il avait deja choisi
+                          // plutot qu'un dimanche par defaut (piege V255b).
+                          const derive = weekdayFromDate(course.date);
+                          markDirty(course.id);
+                          setLinkedCourses(prev => prev.map(c =>
+                            c.id === course.id
+                              ? { ...c, date: '',
+                                  weekday: derive != null
+                                    ? derive
+                                    : (Number.isInteger(c.weekday) ? c.weekday : 0) }
+                              : c));
+                        }}
+                      >
+                        Chaque semaine
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 {/* V246: date complete (jour/mois/annee) via l'input date natif,
                     a la place du seul jour de la semaine. Choisir une date pose
                     `date` et neutralise `weekday` — le cours devient ponctuel.
@@ -1378,6 +1451,24 @@ export default function OfferWizard({
                     recurrent actuel » sous le champ tant qu'aucune date n'est
                     saisie : sa reservation continue de fonctionner. */}
                 <div className="grid grid-cols-2 gap-2 mt-2">
+                  {!(typeof course.date === 'string' && course.date.trim()) ? (
+                    <select
+                      value={Number.isInteger(course.weekday) ? course.weekday : 0}
+                      data-testid={`weekday-${course.id}`}
+                      onChange={(e) => {
+                        markDirty(course.id);
+                        setLinkedCourses(prev => prev.map(c =>
+                          c.id === course.id
+                            ? { ...c, weekday: parseInt(e.target.value, 10), date: '' }
+                            : c));
+                        if (coursesError) setCoursesError('');
+                      }}
+                      style={INPUT_STYLE}
+                      className="text-sm v224-input"
+                    >
+                      {WEEKDAYS.map((j, i) => <option key={i} value={i} style={{ background: '#000' }}>{j}</option>)}
+                    </select>
+                  ) : (
                   <input
                     type="date"
                     value={course.date || ''}
@@ -1401,6 +1492,7 @@ export default function OfferWizard({
                     style={INPUT_STYLE}
                     className="text-sm v224-input"
                   />
+                  )}
                   <input
                     type="time"
                     value={course.time || ''}
@@ -1425,7 +1517,8 @@ export default function OfferWizard({
                 })()}
                 {!course.date && Number.isInteger(course.weekday) && (
                   <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                    Cours récurrent actuel : {WEEKDAYS[course.weekday]}. Choisissez une date pour le fixer.
+                    Chaque {WEEKDAYS[course.weekday].toLowerCase()} — configuré une fois,
+                    les prochaines séances sont proposées automatiquement.
                   </p>
                 )}
 
