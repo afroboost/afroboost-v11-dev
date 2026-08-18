@@ -208,14 +208,23 @@ verifier("13. les compteurs Contacts V2 se calculent encore",
 # ---------------------------------------------------------------------------
 # Garde-fous de perimetre
 # ---------------------------------------------------------------------------
-verifier("14. le FILTRE coach_id est conserve (isolation intacte)",
-         '{"coach_id": caller_email}, _P1A_CHAMPS_CONTACT' in SERVEUR)
+# P1-A.2 a hisse les lectures dans un `asyncio.gather` : le filtre d'isolation
+# est desormais calcule dans `_filtre_participants` juste avant. L'INVARIANT
+# verifie ici est le meme — un coach non-admin reste borne a ses propres fiches.
+verifier("14. le FILTRE d'isolation coach_id est conserve",
+         '_filtre_participants = {} if is_super_admin(caller_email) else {"coach_id": caller_email}' in SERVEUR)
+verifier("14b. et il est bien celui passe a la lecture",
+         "db.chat_participants.find(_filtre_participants, _P1A_CHAMPS_CONTACT)" in SERVEUR)
 _FONCTION = SERVEUR.split("async def get_all_contacts_unified")[1].split("\n@api_router")[0]
 verifier("15. dans /contacts/all, plus aucune lecture sans projection",
          'db.chat_participants.find({}, {"_id": 0})' not in _FONCTION)
-verifier("15b. les deux branches (admin et coach) sont projetees",
-         _FONCTION.count("_P1A_CHAMPS_CONTACT") == 3,
-         "declaration + 2 usages attendus, trouve %d" % _FONCTION.count("_P1A_CHAMPS_CONTACT"))
+# P1-A.2 a fusionne les deux branches (admin / coach) en un seul appel dont le
+# filtre varie : il n'y a donc plus qu'une declaration et un usage.
+verifier("15b. la projection est declaree puis utilisee une seule fois",
+         _FONCTION.count("_P1A_CHAMPS_CONTACT") == 2,
+         "declaration + 1 usage attendus, trouve %d" % _FONCTION.count("_P1A_CHAMPS_CONTACT"))
+verifier("15d. les DEUX cas d'isolation restent couverts par le filtre unique",
+         'is_super_admin(caller_email) else {"coach_id": caller_email}' in _FONCTION)
 # Hors perimetre, mais consigne : /chat/participants lit encore le document
 # entier (limite a 1000). Ce lot ne le touche PAS.
 verifier("15c. /chat/participants reste inchange (hors perimetre de ce lot)",
@@ -228,8 +237,11 @@ verifier("18. maxPoolSize INCHANGE (hors perimetre de ce lot)",
          "maxPoolSize=3" in SERVEUR)
 verifier("19. aucun index cree par ce lot",
          SERVEUR.count("create_index") == 7, str(SERVEUR.count("create_index")))
-verifier("20. les six lectures restent sequentielles (gather NON implemente)",
-         "asyncio.gather" not in SERVEUR.split("get_all_contacts_unified")[1][:6000])
+# Cette verification existait pour prouver que P1-A.1 n'embarquait PAS le
+# gather. P1-A.2 l'implemente volontairement : l'assertion s'inverse donc, et
+# c'est `test_p1a2_gather_contacts.py` qui en verifie desormais la correction.
+verifier("20. le gather de P1-A.2 est en place (couvert par son propre test)",
+         "await asyncio.gather(" in SERVEUR.split("get_all_contacts_unified")[1][:8000])
 
 # ---------------------------------------------------------------------------
 print("=" * 78)

@@ -14766,11 +14766,85 @@ async def get_all_contacts_unified(request: Request):
         seen_emails = set()
         seen_phones = set()
 
+        # =============================================================
+        # P1-A.2 — LES SIX LECTURES PARTENT ENSEMBLE
+        # =============================================================
+        #
+        # Elles etaient AWAITEES l'une apres l'autre, dispersees dans la
+        # fonction : le temps total valait leur SOMME. Or aucune ne consomme le
+        # resultat d'une autre — verifie argument par argument :
+        #
+        #   chat_sessions      aucun argument variable
+        #   chat_participants  filtre sur `caller_email` (venu du JWT)
+        #   users              aucun argument
+        #   subscriber_infos   filtre `_si_query`, derive de `caller_email` par
+        #                      `is_super_admin()` — fonction PURE, aucune lecture
+        #   subscriptions      `c2_index_abonnements()`  — ZERO argument
+        #   subscribers        `c2_index_consentements()` — ZERO argument
+        #
+        # Le temps devient donc leur MAXIMUM. L'ORDRE DU TRAITEMENT, lui, est
+        # rigoureusement conserve plus bas : groupes, puis participants (source
+        # PRIORITAIRE pour la deduplication), puis users. Paralleliser les
+        # lectures ne change pas qui gagne un doublon.
+        #
+        # `return_exceptions=True` preserve la degradation gracieuse existante :
+        # un echec sur `subscriber_infos` ou sur les index Contacts V2 doit
+        # seulement PRIVER DE L'ENRICHISSEMENT, comme avant, pas vider la liste.
+        # Les trois lectures structurantes, elles, remontent leur exception au
+        # `except` global — comportement inchange lui aussi.
+        # P1-A.1 — NE FAIRE DESCENDRE QUE CE QU'ON LIT.
+        #
+        # Cette lecture ramenait le document ENTIER (`{"_id": 0}` n'exclut que
+        # `_id`). Mesure sur la base reelle : 667 Ko pour 1 353 fiches, dont
+        # 398 Ko (60 %) de champs que cette fonction ne lit JAMAIS. Le cout etant
+        # PROPORTIONNEL AUX OCTETS (debit constant vers Atlas, ~75 Ko/s), cette
+        # seule lecture pesait 6,8 s sur les 8,5 s de la fonction.
+        #
+        # La liste ci-dessous est EXACTEMENT celle des huit champs lus plus bas
+        # (`p.get(...)`). Chaque champ ecarte l'a ete apres verification :
+        #   - photo_url / photoUrl / created_at / last_seen_at / updated_at /
+        #     link_token : jamais lus ici ;
+        #   - coach_id : sert au FILTRE, pas a la reponse ;
+        #   - birthday / code / subscriptionCode : la reponse les tire de
+        #     `subscriber_infos` (enrichissement V300 plus bas) ;
+        #   - isSubscriber : `c2_index_abonnements` refuse deliberement de s'y fier ;
+        #   - categories / contact_type_set_at / contact_type_set_by / objectifs /
+        #     show_age_public / birthday_updated_at : jamais recopies dans la fiche.
+        #
+        # CONTACTS V2 EST INTACT : `contact_type` est conserve, et les quatre
+        # dimensions derivees se calculent depuis `email`, `whatsapp` et `phone`.
+        _P1A_CHAMPS_CONTACT = {
+            "_id": 0, "id": 1, "name": 1, "email": 1, "whatsapp": 1,
+            "phone": 1, "source": 1, "contact_type": 1, "tags": 1,
+        }
+
+        _si_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email}
+        _filtre_participants = {} if is_super_admin(caller_email) else {"coach_id": caller_email}
+
+        (
+            sessions, participants, all_users, infos, _abos, _cons,
+        ) = await asyncio.gather(
+            db.chat_sessions.find(
+                {"is_deleted": {"$ne": True}},
+                {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1, "updated_at": 1}
+            ).sort("updated_at", -1).to_list(500),
+            db.chat_participants.find(_filtre_participants, _P1A_CHAMPS_CONTACT).to_list(5000),
+            db.users.find({}, {"_id": 0, "id": 1, "name": 1, "email": 1, "created_at": 1}).to_list(5000),
+            db.subscriber_infos.find(
+                _si_query, {"_id": 0, "email": 1, "whatsapp": 1, "birthday": 1, "code": 1}
+            ).to_list(5000),
+            c2_index_abonnements(),
+            c2_index_consentements(),
+            return_exceptions=True,
+        )
+
+        # Les trois lectures STRUCTURANTES : une exception se comporte comme avant,
+        # c'est-a-dire qu'elle remonte au `except` global de la fonction.
+        for _lecture in (sessions, participants, all_users):
+            if isinstance(_lecture, BaseException):
+                raise _lecture
+
         # 1. GROUPES — Sessions avec titre ou mode groupe
-        sessions = await db.chat_sessions.find(
-            {"is_deleted": {"$ne": True}},
-            {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1, "updated_at": 1}
-        ).sort("updated_at", -1).to_list(500)
 
         for session in sessions:
             title = (session.get("title") or "").strip()
@@ -14833,16 +14907,8 @@ async def get_all_contacts_unified(request: Request):
         # CONTACTS V2 EST INTACT : `contact_type` est conserve, et les quatre
         # dimensions derivees (statut_abonnement, pays/zone, canaux, consentement)
         # se calculent a partir de `email`, `whatsapp` et `phone`, tous conserves.
-        _P1A_CHAMPS_CONTACT = {
-            "_id": 0, "id": 1, "name": 1, "email": 1, "whatsapp": 1,
-            "phone": 1, "source": 1, "contact_type": 1, "tags": 1,
-        }
-        if is_super_admin(caller_email):
-            participants = await db.chat_participants.find({}, _P1A_CHAMPS_CONTACT).to_list(5000)
-        else:
-            participants = await db.chat_participants.find(
-                {"coach_id": caller_email}, _P1A_CHAMPS_CONTACT
-            ).to_list(5000)
+        # P1-A.2 : la lecture elle-meme est desormais lancee plus haut, avec les
+        # cinq autres. La projection et le filtre d'isolation sont INCHANGES.
 
         for p in participants:
             pid = p.get("id", "")
@@ -14880,7 +14946,9 @@ async def get_all_contacts_unified(request: Request):
 
         # 3. USERS — Utilisateurs de l'app (ceux pas déjà dans participants)
         # v108: Dedup par ID ET email pour éviter les doublons cross-collections
-        all_users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "email": 1, "created_at": 1}).to_list(5000)
+        # P1-A.2 : `all_users` est deja arrive (lecture lancee en tete avec les
+        # cinq autres). L'ordre de traitement, lui, est INCHANGE : les users sont
+        # fusionnes APRES les participants, qui restent la source prioritaire.
         for u in all_users:
             uid = u.get("id", "")
             email = (u.get("email") or "").strip().lower()
@@ -14911,10 +14979,11 @@ async def get_all_contacts_unified(request: Request):
         # Champs AJOUTÉS uniquement ; aucun champ existant modifié. Isolation coach :
         # un coach partenaire ne voit que ses abonnés (coach_id), l'admin voit tout.
         try:
-            _si_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email}
-            infos = await db.subscriber_infos.find(
-                _si_query, {"_id": 0, "email": 1, "whatsapp": 1, "birthday": 1, "code": 1}
-            ).to_list(5000)
+            # P1-A.2 : `infos` est deja arrive (lecture lancee en tete). Si cette
+            # lecture-la a echoue, on saute l'enrichissement — exactement comme
+            # le faisait le `except` ci-dessous auparavant.
+            if isinstance(infos, BaseException):
+                raise infos
             info_by_email = {}
             for _info in infos:
                 _em = (_info.get("email") or "").strip().lower()
@@ -14941,8 +15010,12 @@ async def get_all_contacts_unified(request: Request):
         # CONTACTS V2 — les quatre dimensions derivees, en DEUX lectures
         # groupees, quel que soit le nombre de contacts. Aucune ecriture.
         try:
-            _abos = await c2_index_abonnements()
-            _cons = await c2_index_consentements()
+            # P1-A.2 : les deux index sont deja arrives. Un echec sur l'un d'eux
+            # prive de l'enrichissement, sans jamais vider la liste — inchange.
+            if isinstance(_abos, BaseException):
+                raise _abos
+            if isinstance(_cons, BaseException):
+                raise _cons
             for c in contacts:
                 if c.get("type") != "group":
                     c2_enrichir(c, _abos, _cons)
