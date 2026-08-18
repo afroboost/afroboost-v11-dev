@@ -7336,6 +7336,40 @@ async def submit_social_proof(request: Request):
     if missing:
         raise HTTPException(status_code=400, detail="Champs obligatoires manquants")
 
+    # ===================================================================
+    # G1 — UNE SEULE DEMANDE EN ATTENTE PAR PERSONNE
+    # ===================================================================
+    #
+    # Rien n'empechait la meme adresse de deposer autant de demandes qu'elle
+    # voulait : le coach voyait la meme personne plusieurs fois, et deux
+    # approbations successives auraient emis deux acces.
+    #
+    # CE QUE CETTE GARDE N'EST PAS. Elle ne touche PAS au droit a l'essai :
+    # aucun `free_trial_claims` n'est pose ici. Deposer une demande ne consomme
+    # rien, et une demande REFUSEE n'empeche pas de recommencer — la recherche
+    # ci-dessous ne retient que `status == "pending"`.
+    #
+    # Le message le dit tel quel : « deja en cours de validation », et surtout
+    # PAS « vous avez deja utilise votre essai », qui serait faux et definitif.
+    #
+    # ATOMICITE : volontairement non garantie ici. Deux depots simultanes
+    # pourraient creer deux demandes en attente — sans consequence, puisque
+    # G2 (a l'approbation) garantit qu'UNE SEULE deviendra un acces. La
+    # correctness vit en G2 ; G1 est une garde d'usage.
+    _g1_email = (body.get("client_email") or "").strip().lower()
+    _g1_coach = offer.get("coach_id") or DEFAULT_COACH_ID
+    if _g1_email:
+        _g1_deja = await db.social_proofs.find_one(
+            {"client_email": _g1_email, "coach_id": _g1_coach, "status": "pending"},
+            {"_id": 0, "id": 1},
+        )
+        if _g1_deja:
+            raise HTTPException(
+                status_code=409,
+                detail="Votre demande d'essai est déjà en cours de validation.",
+                headers={"X-Refus-Raison": "social_proof_pending"},
+            )
+
     # GARDE XSS — `video_link` vient d'un inconnu (endpoint public) et finit en
     # `href` dans le DASHBOARD DU COACH. Une valeur `javascript:...` s'y
     # executerait au clic, dans la session du coach. On n'accepte donc que
@@ -7553,30 +7587,63 @@ async def review_social_proof(proof_id: str, request: Request):
         except (TypeError, ValueError):
             sessions_count = 1
 
+        # ===================================================================
+        # G2 — LA GARDE ESSAI-1, ICI ET NULLE PART AILLEURS
+        # ===================================================================
+        #
+        # C'est le SEUL endroit de ce parcours ou un droit est reellement emis.
+        # `_essai1_garde` fait deux choses, dans cet ordre :
+        #   1. refuse si cette adresse a DEJA recu un essai gratuit — le filtre
+        #      couvre les deux chemins (`payment_method: free` du checkout ET
+        #      `source: social_proof`), ce qui ferme le trou par lequel un essai
+        #      pris via /checkout/free n'empechait pas un second par ici ;
+        #   2. RESERVE l'essai de facon ATOMIQUE (`free_trial_claims`, cle `_id`).
+        #      Deux approbations simultanees ne peuvent donc pas produire deux
+        #      codes : la seconde se prend un doublon et leve 409.
+        #
+        # POURQUOI PAS PLUS TOT. L'etape 2 est une ECRITURE. L'appeler au depot
+        # de la demande poserait un verrou sur quelqu'un a qui rien n'a encore
+        # ete accorde : le coach refuserait, et la personne serait privee de son
+        # premier essai POUR TOUJOURS. Une demande refusee ne doit jamais
+        # consommer le droit — c'est l'invariant, et il impose cette position.
+        from api.routes.checkout_routes import (
+            _essai1_garde as _g2_garde,
+            _essai1_liberer as _g2_liberer,
+        )
+        await _g2_garde(proof.get("client_email", ""), proof.get("offer_id", ""))
+
         granted_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
         now_iso = datetime.now(timezone.utc).isoformat()
-        # Meme forme que admin_create_code (~l.4823) : c'est ce document que lit
-        # GET /subscriber/{code}.
-        await db.discount_codes.insert_one({
-            "id": str(uuid.uuid4()), "code": granted_code, "type": "100%", "value": 100,
-            "assignedEmail": proof.get("client_email", ""), "maxUses": sessions_count, "used": 0,
-            "active": True, "courses": [], "created_at": now_iso,
-            "source": "social_proof",
-        })
-        await db.subscriptions.insert_one({
-            "id": str(uuid.uuid4()), "email": proof.get("client_email", ""),
-            "name": proof.get("client_name", ""), "whatsapp": proof.get("client_phone", ""),
-            "code": granted_code, "offer_name": offer.get("name") or proof.get("offer_name", ""),
-            "coach_id": proof.get("coach_id") or DEFAULT_COACH_ID,
-            "total_sessions": sessions_count, "used_sessions": 0,
-            "remaining_sessions": sessions_count, "expires_at": None, "status": "active",
-            "created_at": now_iso, "updated_at": now_iso,
-            "source": "social_proof", "auto_renew": False,
-            "renewal_price": 0, "renewal_sessions": sessions_count,
-            "renewal_warnings_sent": [], "stripe_customer_id": None,
-            "stripe_payment_method": None, "last_renewal_date": None,
-            "social_proof_id": proof_id,
-        })
+        # G2 — LE FILET. La reservation d'essai est posee ; si l'une des deux
+        # ecritures echoue, il faut la RENDRE, sinon une panne au milieu
+        # priverait cette personne de son essai pour toujours. C'est exactement
+        # ce que fait deja le checkout gratuit (`_essai1_liberer`).
+        try:
+            # Meme forme que admin_create_code (~l.4823) : c'est ce document que lit
+            # GET /subscriber/{code}.
+            await db.discount_codes.insert_one({
+                "id": str(uuid.uuid4()), "code": granted_code, "type": "100%", "value": 100,
+                "assignedEmail": proof.get("client_email", ""), "maxUses": sessions_count, "used": 0,
+                "active": True, "courses": [], "created_at": now_iso,
+                "source": "social_proof",
+            })
+            await db.subscriptions.insert_one({
+                "id": str(uuid.uuid4()), "email": proof.get("client_email", ""),
+                "name": proof.get("client_name", ""), "whatsapp": proof.get("client_phone", ""),
+                "code": granted_code, "offer_name": offer.get("name") or proof.get("offer_name", ""),
+                "coach_id": proof.get("coach_id") or DEFAULT_COACH_ID,
+                "total_sessions": sessions_count, "used_sessions": 0,
+                "remaining_sessions": sessions_count, "expires_at": None, "status": "active",
+                "created_at": now_iso, "updated_at": now_iso,
+                "source": "social_proof", "auto_renew": False,
+                "renewal_price": 0, "renewal_sessions": sessions_count,
+                "renewal_warnings_sent": [], "stripe_customer_id": None,
+                "stripe_payment_method": None, "last_renewal_date": None,
+                "social_proof_id": proof_id,
+            })
+        except Exception:
+            await _g2_liberer(proof.get("client_email", ""))
+            raise
         await db.social_proofs.update_one({"id": proof_id}, {"$set": {"granted_code": granted_code}})
         logger.info(f"[V260] Preuve {proof_id} approuvee -> code {granted_code} pour {proof.get('client_email')}")
 
