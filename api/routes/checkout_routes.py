@@ -1659,9 +1659,62 @@ async def _process_successful_payment(
                     f"(achat vitrine {items_product_name or ''})")
 
     # 4. Créer les réservations pour chaque item de type "course"
+    #
+    # LOT 1 — CE CHEMIN N'ECRIVAIT NI `courseId` NI `datetime`. Il ne posait que
+    # `courseName`, une chaine libre : la reservation etait structurellement
+    # irrattachable a une seance. Zero document en production a ce jour (mesure
+    # du 19/08/2026 : 0 reservation `checkout_vitrine` sur 137), donc rien a
+    # reparer — mais la premiere vente aurait cree le defaut.
+    #
+    # POURQUOI ON NE REFUSE PAS ICI, alors que le meme defaut vaut un 400 sur
+    # `POST /reservations`. On est APRES l'encaissement : le paiement est
+    # accepte, le forfait cree, le code d'acces emis. Refuser maintenant ferait
+    # perdre au client la trace de son achat sans lui rendre son argent. La
+    # garde `fail closed` protege ce qui n'est pas encore ecrit ; elle n'a pas
+    # a punir ce qui est deja paye.
+    #
+    # CE QU'ON FAIT A LA PLACE — resoudre ce qui est PROUVABLE, omettre le reste :
+    #   * `courseId` : verifie cote SERVEUR contre la collection `courses`.
+    #     L'identifiant vient du panier, mais son existence n'est jamais prise
+    #     pour argent comptant.
+    #   * `datetime` : ecrit UNIQUEMENT pour un cours PONCTUEL, dont la date est
+    #     portee par le cours lui-meme — la seule occurrence possible, donc rien
+    #     n'est devine. Pour un cours RECURRENT, la caisse ne demande aucune
+    #     date : il n'y a rien a ecrire, et inventer « la prochaine fois »
+    #     fabriquerait une seance a laquelle personne n'a dit vouloir venir.
+    #     Le champ reste ABSENT — c'est deja le mot que le lecteur du bilan
+    #     comprend comme « seance non rattachee », et cela n'exige aucun champ
+    #     nouveau.
+    from api.routes.reservation_routes import (
+        lot1_identifiant as _l1_id,
+        LOT1_PREFIXE as _L1P,
+    )
     for item in items:
         item_data = item.dict() if hasattr(item, 'dict') else item
         if item_data.get("type") == "course":
+            _l1_course_id = _l1_id(item_data.get("id"))
+            _l1_cours = None
+            if _l1_course_id:
+                _l1_cours = await db["courses"].find_one(
+                    {"id": _l1_course_id},
+                    {"_id": 0, "id": 1, "date": 1, "time": 1, "archived": 1})
+            if not _l1_cours or _l1_cours.get("archived") is True:
+                if _l1_course_id:
+                    logger.warning("%s checkout_vitrine : cours %r introuvable ou archive, "
+                                   "reservation ecrite sans rattachement", _L1P, _l1_course_id[:48])
+                _l1_course_id = ""
+            _l1_occurrence = ""
+            if _l1_cours:
+                _l1_date = str(_l1_cours.get("date") or "").strip()[:10]
+                _l1_heure = str(_l1_cours.get("time") or "").strip()
+                if len(_l1_date) == 10 and ":" in _l1_heure:
+                    # Cours PONCTUEL : une seule occurrence possible, portee par
+                    # le cours. Meme format naif local que partout ailleurs.
+                    _l1_occurrence = "%sT%s:00" % (_l1_date, _l1_heure[:5])
+                else:
+                    logger.info("%s checkout_vitrine : cours %r recurrent, aucune date choisie "
+                                "en caisse — `datetime` volontairement absent",
+                                _L1P, _l1_course_id[:48])
             _resa_doc = {
                 "id": str(uuid.uuid4()),
                 "userName": customer_name,
@@ -1683,6 +1736,14 @@ async def _process_successful_payment(
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "isProduct": item_data.get("type") == "product"
             }
+            # LOT 1 : les deux moities de l'identite de seance, quand elles sont
+            # PROUVEES. Posees par `if` plutot qu'en litteral : une cle absente
+            # dit « je ne sais pas », une cle a `None` dit « je sais que c'est
+            # vide » — et ce n'est pas la meme chose pour qui lira le bilan.
+            if _l1_course_id:
+                _resa_doc["courseId"] = _l1_course_id
+            if _l1_occurrence:
+                _resa_doc["datetime"] = _l1_occurrence
             # ESSAI-5a-1 : la preuve suit la reservation qu'elle couvre.
             _resa_doc.update(terms_fields or {})
             await db["reservations"].insert_one(_resa_doc)

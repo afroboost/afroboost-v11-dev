@@ -3683,7 +3683,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     }
 
     // Cas B: Contact DÉJÀ abonné → ouvrir directement le sélecteur de sessions
-    loadAvailableCourses();
+    // LOT 1 : le code d'abonne est passe en ARGUMENT plutot que lu depuis une
+    // dependance du `useCallback`. Faire dependre ce rappel de
+    // `afroboostProfile.code` le recreerait a chaque nouvelle reference d'objet
+    // et relancerait les effets qui l'utilisent — la boucle d'appels V305 (502).
+    loadAvailableCourses(afroboostProfile && afroboostProfile.code);
     setShowReservationPanel(true);
     setSelectedCourse(null);
     setReservationError('');
@@ -3741,7 +3745,24 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       setReservationError('Veuillez sélectionner un cours.');
       return;
     }
-    
+
+    // LOT 1 — LES DEUX MOITIES DE L'IDENTITE DE SEANCE, OU RIEN.
+    //
+    // Meme partage des roles que pour les conditions, quelques lignes plus haut :
+    // refus cote client pour EXPLIQUER, refus cote serveur pour DECIDER. Ce test
+    // ne remplace pas la garde serveur (`lot1_verifier_seance`) — il evite juste
+    // a la personne un aller-retour pour s'entendre dire non.
+    //
+    // Aucun repli sur `new Date()` : c'etait le defaut. Une occurrence absente
+    // signifie que la liste vient d'une source qu'on ne maitrise pas — on
+    // s'arrete, on ne fabrique pas une date.
+    var lot1Cours = String(selectedCourse.courseId || '').trim();
+    var lot1Quand = String(selectedCourse.occurrenceDatetime || '').trim();
+    if (!lot1Cours || lot1Quand.length < 16) {
+      setReservationError('Séance non identifiée : refermez puis rouvrez le panneau et choisissez une date.');
+      return;
+    }
+
     // Reset error state
     setReservationError('');
     setReservationLoading(true);
@@ -3752,16 +3773,21 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       userEmail: (afroboostProfile?.email || leadData?.email || '').trim(),
       userWhatsapp: (afroboostProfile?.whatsapp || leadData?.whatsapp || '').trim(),
       userId: participantId || `guest-${Date.now()}`, // ID utilisateur requis
-      courseId: selectedCourse.id,
+      // LOT 1 : le cours REEL (`selectedCourse.id` porte desormais la cle
+      // d'occurrence « cours@datetime », qui n'est pas un identifiant de cours).
+      courseId: lot1Cours,
       courseName: selectedCourse.name,
       courseTime: selectedCourse.time,
-      datetime: new Date().toISOString(),
+      // LOT 1 : l'occurrence CHOISIE, celle-la meme qui est affichee a l'ecran.
+      // Remplace `new Date().toISOString()` — l'instant du clic, cause des 39
+      // reservations non rattachables de ce parcours.
+      datetime: lot1Quand,
       promoCode: (selectedSubscription?.code || afroboostProfile?.code || '').trim().toUpperCase(),
       subscriptionId: selectedSubscription?.id || null,
       terms_accepted: conditionsOk,
       source: 'chat_widget_abonne',
       type: 'abonné',
-      offerId: selectedCourse.id,
+      offerId: lot1Cours,
       offerName: selectedCourse.name,
       price: selectedCourse.price || 0,
       totalPrice: selectedCourse.price || 0
@@ -4148,18 +4174,89 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     }
   };
 
-  // Charger les cours disponibles
-  const loadAvailableCourses = useCallback(async () => {
-    setLoadingCourses(true);
-    try {
-      const res = await axios.get(`${API}/courses`);
-      const courses = res.data || [];
-      setAvailableCourses(courses);
-      console.log('[COURSES] Chargés:', courses.length);
-    } catch (err) {
-      console.error('[COURSES] Erreur:', err);
+  // === LOT 1 — CHARGER DES OCCURRENCES, PLUS UN CATALOGUE ===
+  //
+  // CE QUI N'ALLAIT PAS. Cet appel lisait `GET /api/courses` : le CATALOGUE.
+  // Un cours y porte un `weekday` et une heure, jamais une date. Le panneau
+  // n'avait donc aucune occurrence a envoyer, et `handleConfirmReservation`
+  // ecrivait `new Date().toISOString()` — L'INSTANT DU CLIC. Mesure du
+  // 19/08/2026 : sur les 39 reservations de ce parcours, ZERO ne tombe sur une
+  // heure ronde. Aucune ne designait une seance.
+  //
+  // PIRE, ET C'EST LE VRAI SUJET. `BookingPanel` affichait quand meme une date,
+  // calculee DANS LE NAVIGATEUR par `zurichTime.courseOccurrenceDate()`. La
+  // personne lisait « mer. 26 aout · 18:30 », cliquait, et le serveur
+  // enregistrait tout autre chose. Ce qui etait VU n'a jamais ete ce qui etait
+  // ENREGISTRE. Et comme ce calcul ne rend QUE la prochaine occurrence, il etait
+  // impossible de reserver le mercredi suivant tant que celui-ci n'etait pas
+  // passe : deux seances du meme cours n'etaient meme pas exprimables.
+  //
+  // LA SOURCE DE VERITE EST DESORMAIS LE SERVEUR — et c'est EXACTEMENT celle de
+  // l'espace abonne (`upcoming_courses`, produit par `_v184_next_occurrences`,
+  // 76 reservations sur 76 correctes). Une seule definition de « les prochaines
+  // seances » pour les deux ecrans : ils ne peuvent plus diverger. Chaque
+  // occurrence arrive avec son `course_id` ET son `datetime` naif local — les
+  // deux moities de l'identite de seance, deja calculees, rien a inventer ici.
+  //
+  // ECHEC DE L'APPEL -> AUCUNE SEANCE PROPOSEE. Pas de repli sur le catalogue :
+  // ce repli est precisement le defaut qu'on ferme. Mieux vaut un panneau vide
+  // qui le dit qu'une reservation datee de l'heure du clic.
+  var loadAvailableCourses = useCallback(function (accessCode) {
+    var code = String(accessCode || '').trim();
+    if (!code) {
+      setAvailableCourses([]);
+      setReservationError("Code d'abonné introuvable : impossible d'afficher les séances.");
+      return Promise.resolve();
     }
-    setLoadingCourses(false);
+    setLoadingCourses(true);
+    return axios.get(API + '/subscriber/space/' + encodeURIComponent(code))
+      .then(function (res) {
+        var data = (res && res.data) || {};
+        var brutes = data.upcoming_courses || [];
+        var seances = [];
+        for (var i = 0; i < brutes.length; i++) {
+          var occ = brutes[i] || {};
+          var quelCours = String(occ.course_id || '').trim();
+          var quand = String(occ.datetime || '').trim();
+          // Fail closed jusque dans la liste : une occurrence sans ses deux
+          // moities n'est pas affichee, donc pas cliquable, donc jamais envoyee.
+          if (!quelCours || quand.length < 16) continue;
+          seances.push({
+            // `id` = la cle de L'OCCURRENCE, pas du cours. Deux mercredis a
+            // 18:30 sont deux lignes distinctes : sans cela React leur donnerait
+            // la meme cle et le panneau en selectionnerait deux a la fois.
+            id: quelCours + '@' + quand,
+            // Le cours REEL, celui qui part au serveur.
+            courseId: quelCours,
+            // L'occurrence REELLE, telle que le serveur l'a produite. Recopiee,
+            // jamais recalculee : c'est tout l'objet du lot.
+            occurrenceDatetime: quand,
+            name: occ.name || 'Cours',
+            time: occ.time || quand.slice(11, 16),
+            // `date` renseigne fait lire a `zurichTime.courseOccurrenceDate()` la
+            // branche « cours ponctuel » : la date AFFICHEE devient la date
+            // RECUE, sans qu'aucun calcul ne subsiste cote navigateur.
+            date: occ.date || quand.slice(0, 10),
+            locationName: occ.locationName || '',
+            weekday: occ.weekday
+          });
+        }
+        setAvailableCourses(seances);
+        // V393 : un forfait expire ou epuise ne propose rien — et dit pourquoi,
+        // au lieu de laisser croire a un planning vide.
+        if (data.forfait_bloque && data.forfait_message) {
+          setReservationError(data.forfait_message);
+        }
+        console.log('[LOT1] Occurrences chargées:', seances.length);
+      })
+      .catch(function (err) {
+        console.error('[LOT1] Occurrences indisponibles:', err);
+        setAvailableCourses([]);
+        setReservationError('Séances indisponibles pour le moment. Réessayez dans un instant.');
+      })
+      .then(function () {
+        setLoadingCourses(false);
+      });
   }, []);
 
   // === CHARGER LA PHOTO DEPUIS LA DB (pas localStorage) ===
@@ -4651,7 +4748,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         console.log('[SOCKET.IO] 🗑️ Cours supprimé:', data.courseId);
         
         // 1. Retirer le cours de la liste locale
-        setAvailableCourses(prev => prev.filter(course => course.id !== data.courseId));
+        // LOT 1 : filtrer sur `courseId` — `id` est maintenant la cle
+        // d'occurrence, jamais l'identifiant du cours. Un cours supprime doit
+        // retirer TOUTES ses occurrences de la liste, pas aucune.
+        setAvailableCourses(prev => prev.filter(course => course.courseId !== data.courseId));
         
         // 2. HARD DELETE: Vider le cache local pour forcer un rafraîchissement
         if (data.hardDelete) {
@@ -4681,7 +4781,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       socket.on('courses_purged', (data) => {
         console.log('[SOCKET.IO] 🧹 Purge cours archivés:', data.count, 'cours supprimés');
         // Retirer tous les cours purgés
-        setAvailableCourses(prev => prev.filter(course => !data.purgedIds.includes(course.id)));
+        // LOT 1 : meme raison — la purge porte sur des identifiants de COURS.
+        setAvailableCourses(prev => prev.filter(course => !data.purgedIds.includes(course.courseId)));
         // Vider tout le cache
         try {
           sessionStorage.clear();
@@ -11530,7 +11631,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       {selectedCourse && (
                         <div style={{ marginTop: 12 }}>
                           <ConditionsParticipation
-                            courseId={selectedCourse.id || ''}
+                            /* LOT 1 : le COURS reel. `selectedCourse.id` porte
+                               desormais la cle d'occurrence (« cours@datetime ») ;
+                               l'annonce de captation, elle, se lit sur le cours. */
+                            courseId={selectedCourse.courseId || ''}
                             accepte={conditionsOk}
                             onChange={setConditionsOk}
                             onRequired={setConditionsRequises}

@@ -828,11 +828,289 @@ async def get_reservations(request: Request, page: int = 1, limit: int = 20, all
             res['createdAt'] = datetime.fromisoformat(res['createdAt'].replace('Z', '+00:00'))
     return {"data": reservations, "pagination": {"page": page, "limit": limit, "total": total_count, "pages": (total_count + limit - 1) // limit}}
 
+# ============================================================================
+# LOT 1 — LE RATTACHEMENT : « QUEL COURS » NE SUFFIT PAS, IL FAUT « QUELLE FOIS »
+# ============================================================================
+#
+# CE QUE CE LOT CORRIGE — mesure du 19/08/2026 sur les 137 reservations de
+# production, chemin par chemin :
+#
+#   source                n   courseId   forme de `datetime`        heure ronde
+#   subscriber_space     76   76 OK      naif local (occurrence)          76/76
+#   qr_scan_coach         3    3 OK      naif local (+1 en ISO offset)      2/3
+#   chat_widget_abonne   39    0 KO      UTC .mmmZ = INSTANT DU CLIC        0/39
+#   website              18    0 KO      UTC .mmmZ                        18/18
+#   (null)                1    0 KO      absent                               -
+#
+#   Presences validees : 13. Rattachables a une occurrence : 4.
+#
+# QUATRE DEFAUTS, DONT UN DEJA REGLE.
+#
+# D0 — REGLE le 17/08 (commit 8beb5c0, ESSAI-5a-1). `courseId` n'existait pas
+#   sur `ReservationBase` : Pydantic jetait SILENCIEUSEMENT le champ envoye par
+#   le navigateur. C'est l'explication des 57 documents amputes — et la raison
+#   pour laquelle ils s'arretent TOUS avant le 17/08. Rien a faire ici.
+#
+# D1 — `datetime` vaut l'instant du clic sur le chemin ChatWidget. Zero valeur
+#   sur 39 ne tombe sur une heure ronde : ce n'est pas une hypothese, c'est une
+#   mesure. Cause de fond, cote navigateur : le panneau de reservation lisait
+#   `GET /api/courses` — le CATALOGUE — et n'avait donc aucune occurrence a
+#   envoyer. Il AFFICHAIT une date calculee dans le navigateur et en
+#   ENREGISTRAIT une autre. Ce que l'abonne voyait n'a jamais ete ce qui partait.
+#
+# D2 — TROIS conventions pour un seul champ (naif local, UTC « .mmmZ », ISO avec
+#   decalage). Regrouper par occurrence est impossible tant que la cle n'a pas
+#   une forme unique.
+#
+# D3 — `courseId: selectedCourse?.id || 'N/A'` (App.js). `'N/A'` est TRUTHY :
+#   il franchissait la garde `if reservation.courseId:` et s'ecrivait en base.
+#   Une reservation qui A L'AIR rattachee est pire qu'une reservation nue — la
+#   premiere se compte a tort, la seconde se voit.
+#
+# LA REGLE, ET SON UNIQUE EXCEPTION.
+#
+# Une reservation qui represente une SEANCE porte les deux moities de son
+# identite : QUEL cours, et QUELLE occurrence de ce cours. Sans les deux, elle
+# est refusee — `fail closed`. Le mercredi 19/08 a 18:30 et le mercredi 26/08 a
+# 18:30 sont deux seances distinctes, et `courseId` seul ne les separe pas.
+#
+# L'EXCEPTION est nommee, fermee, et limitee a ce qui n'est PAS une seance :
+# produit physique, achat audio, panier sans le moindre contexte de cours. Ces
+# cas passent sans occurrence parce qu'ils n'en ont pas — pas parce qu'on
+# renonce a la verifier.
+#
+# CE QUE CE LOT NE FAIT PAS. Aucune ecriture sur l'existant, aucun backfill,
+# aucun champ nouveau. Les 57 reservations historiques restent EXACTEMENT
+# telles quelles : sans identifiant de cours il n'existe aucun moyen HONNETE de
+# retrouver la seance qu'elles designaient, et en deviner une serait pire que
+# de ne rien savoir. L'exception « courseId absent -> on garde » de
+# `_a1b_occurrences_reelles` reste donc ouverte, volontairement : ce lot tarit
+# la source, il ne reecrit pas le passe.
+
+LOT1_PREFIXE = "[LOT1]"
+
+# Ce que le navigateur envoie pour dire « je ne sais pas ». Toutes ces valeurs
+# sont TRUTHY : c'est precisement pour cela que la garde historique
+# `if reservation.courseId:` les laissait passer. Comparaison en minuscules,
+# apres `strip()`.
+LOT1_NON_VALEURS = frozenset({
+    "n/a", "n.a.", "na", "null", "none", "nil", "undefined", "nan",
+    "-", "--", "?", "0", "false",
+})
+
+# Raisons de refus — codes STABLES, pensés pour être cherchés dans les journaux
+# (`grep "raison=occurrence_hors_jour"`). Ne jamais les traduire ni les renommer
+# sans mettre a jour la procedure de diagnostic.
+LOT1_MSGS = {
+    "courseId_absent": "Séance non identifiée : cette réservation ne dit pas de quel cours il s'agit.",
+    "courseId_non_valeur": "Séance non identifiée : l'identifiant du cours est invalide.",
+    "cours_introuvable": "Ce cours n'existe plus.",
+    "cours_archive": "Ce cours a été archivé et n'accepte plus de réservation.",
+    "occurrence_absente": "Date de séance manquante : la réservation doit désigner un jour ET une heure précis.",
+    "occurrence_illisible": "Date de séance illisible : la réservation doit désigner un jour ET une heure précis.",
+    "occurrence_hors_jour": "Ce cours n'a pas lieu à cette date.",
+}
+
+
+def lot1_garde_stricte() -> bool:
+    """La garde refuse-t-elle, ou se contente-t-elle de journaliser ?
+
+    `LOT1_GARDE_STRICTE` vaut TRUE par defaut : l'absence de variable donne le
+    comportement sur, jamais le comportement permissif. Une variable oubliee
+    dans Coolify ne doit pas rouvrir le defaut en silence.
+
+    RELUE A CHAQUE APPEL, jamais mise en cache au chargement du module.
+    C'est tout l'interet d'un interrupteur de secours : basculer la variable
+    doit agir tout de suite. Un interrupteur qui exige un redeploiement de
+    quatre minutes ne sert a rien le jour ou on en a besoin.
+
+    CE N'EST PAS UN REGLAGE METIER. `false` est un MODE DE SECOURS TEMPORAIRE :
+    on l'utilise pour debloquer un parcours legitime imprevu, on diagnostique
+    avec les journaux `GARDE DESACTIVEE`, on corrige le parcours, on remet
+    `true`. Le laisser a `false` revient a reouvrir le defaut que ce lot ferme.
+    """
+    return str(os.environ.get("LOT1_GARDE_STRICTE", "true")).strip().lower() not in (
+        "0", "false", "no", "off", "non"
+    )
+
+
+def lot1_identifiant(valeur) -> str:
+    """L'identifiant de cours utilisable, ou "" — jamais une non-valeur.
+
+    Nettoie TOUJOURS, seance ou pas : `'N/A'` n'a rien a faire en base, meme
+    sur l'achat d'un t-shirt. Un champ vide dit « je ne sais pas » ; `'N/A'`
+    fait croire a un rattachement.
+    """
+    _v = str(valeur or "").strip()
+    if not _v or _v.lower() in LOT1_NON_VALEURS:
+        return ""
+    return _v
+
+
+def lot1_occurrence_iso(valeur) -> str:
+    """L'occurrence au format NAIF local Europe/Zurich, ou "" si illisible.
+
+    UNE SEULE convention dans toute la base : « 2026-08-26T18:30:00 ». C'est
+    deja celle de `_v184_next_occurrences` (V196), de `_a1_datetime_occurrence`
+    et des 78 reservations correctes — on aligne les autres sur elle, jamais
+    l'inverse.
+
+    UNE VALEUR AVEC FUSEAU EST CONVERTIE, PAS TRONQUEE. « 2026-06-17T16:30:00Z »
+    designe bien 18:30 a Zurich en ete ; couper le suffixe donnerait 16:30, soit
+    une seance decalee de deux heures. Sans base de fuseaux disponible on
+    declare la valeur illisible plutot que de deviner un decalage : mieux vaut
+    un refus visible qu'une heure fausse en silence.
+
+    UNE DATE SEULE (« 2026-08-26 ») EST REFUSEE. On saurait la completer avec
+    l'heure du cours, mais ce serait RECONSTRUIRE — et ce lot existe pour que
+    l'occurrence soit choisie, jamais reconstituee.
+    """
+    _v = str(valeur or "").strip()
+    if len(_v) < 16:  # « 2026-08-26 » (10) et « 2026-08-26T18 » (13) sont refuses
+        return ""
+    try:
+        _dt = datetime.fromisoformat(_v.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return ""
+    if _dt.tzinfo is not None:
+        try:
+            from zoneinfo import ZoneInfo
+            _dt = _dt.astimezone(ZoneInfo("Europe/Zurich")).replace(tzinfo=None)
+        except Exception as _err:
+            logger.warning("%s zoneinfo indisponible, occurrence declaree illisible : %s",
+                           LOT1_PREFIXE, _err)
+            return ""
+    return _dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def lot1_concerne_une_seance(donnees: dict) -> bool:
+    """Cette reservation represente-t-elle une seance ?
+
+    NON pour les cas nommes, et pour eux seuls :
+      * produit physique (`isProduct`) — un t-shirt n'a pas d'horaire ;
+      * achat audio (`isAudio`) — un fichier non plus ;
+      * panier sans le moindre contexte de cours.
+
+    OUI des qu'un `courseId` OU un `courseTime` apparait.
+
+    POURQUOI PAS `courseName` DANS LE DECLENCHEUR — et c'est un choix, pas un
+    oubli. Ce champ est rempli par REPLI cote navigateur : sans cours choisi, il
+    recoit le nom de l'offre, « Achat Audio », ou « Produit physique ». Le
+    prendre pour signal ferait refuser l'achat d'un forfait sans seance — une
+    regression sur un parcours qui PAIE. `courseTime` n'a pas de repli : il est
+    vide quand aucun cours n'est choisi, et vaut « 18:30 » sur 100 % des 57
+    reservations de seance mesurees en production. C'est le signal fiable.
+    """
+    if donnees.get("isProduct") or donnees.get("isAudio"):
+        return False
+    return bool(lot1_identifiant(donnees.get("courseId"))
+                or str(donnees.get("courseTime") or "").strip())
+
+
+async def lot1_verifier_seance(donnees: dict, source: str = "") -> dict:
+    """La garde. Rend les champs a ecrire, ou refuse — jamais d'ecriture muette.
+
+    QUATRE VERIFICATIONS, chacune refusant, dans cet ordre :
+      1. `courseId` present et exploitable (ni vide, ni `'N/A'`) ;
+      2. le cours EXISTE et n'est pas archive ;
+      3. `datetime` lisible et normalisable en occurrence ;
+      4. le cours A REELLEMENT LIEU ce jour-la.
+
+    La verification 4 reutilise `_a1_a_lieu_aujourdhui`, le helper deja en place
+    sur le chemin du scanner : il n'existe qu'UNE definition de « ce cours a lieu
+    ce jour-la » dans ce fichier, et elle gere les deux formes (`date` ponctuel,
+    prioritaire ; `weekday` recurrent en convention JavaScript).
+
+    AUCUNE CORRECTION DEVINEE. La garde nettoie (non-valeurs) et normalise
+    (fuseau) — deux operations sans perte, dont le resultat est verifiable. Elle
+    ne complete jamais un champ manquant, ne choisit jamais une date « probable »,
+    ne retombe jamais sur « aujourd'hui ».
+    """
+    _brut_id = donnees.get("courseId")
+    _brut_occ = donnees.get("datetime")
+    _id = lot1_identifiant(_brut_id)
+    _occ = lot1_occurrence_iso(_brut_occ)
+
+    if not lot1_concerne_une_seance(donnees):
+        # Hors seance : rien n'est exige, mais la non-valeur est retiree et
+        # l'occurrence normalisee si elle est lisible. On ne laisse pas entrer
+        # `'N/A'` sous pretexte qu'on ne verifie pas le reste.
+        return {"courseId": _id, "datetime": _occ or _brut_occ, "parcours": "hors_seance",
+                "raison": ""}
+
+    _raison = ""
+    if not _id:
+        _raison = "courseId_non_valeur" if str(_brut_id or "").strip() else "courseId_absent"
+    elif not _occ:
+        _raison = "occurrence_illisible" if str(_brut_occ or "").strip() else "occurrence_absente"
+    else:
+        _cours = await db.courses.find_one(
+            {"id": _id}, {"_id": 0, "id": 1, "date": 1, "weekday": 1, "archived": 1})
+        if not _cours:
+            _raison = "cours_introuvable"
+        elif _cours.get("archived") is True:
+            _raison = "cours_archive"
+        else:
+            _jour_iso = _occ[:10]
+            try:
+                _jour = datetime.strptime(_jour_iso, "%Y-%m-%d")
+            except ValueError:
+                _raison = "occurrence_illisible"
+            else:
+                if not _a1_a_lieu_aujourdhui(_cours, _jour_iso, _a1_jour_js(_jour)):
+                    _raison = "occurrence_hors_jour"
+
+    if not _raison:
+        return {"courseId": _id, "datetime": _occ, "parcours": "seance", "raison": ""}
+
+    # AUCUNE DONNEE PERSONNELLE DANS LE JOURNAL. Ni email, ni nom, ni telephone :
+    # un identifiant de cours et un horodatage suffisent au diagnostic, et ces
+    # lignes sont conservees longtemps.
+    _trace = ("source=%s parcours=seance raison=%s courseId=%r occurrence=%r"
+              % (source or "?", _raison, str(_brut_id or "")[:48], str(_brut_occ or "")[:48]))
+
+    if lot1_garde_stricte():
+        logger.warning("%s REFUS %s", LOT1_PREFIXE, _trace)
+        raise HTTPException(status_code=400, detail=LOT1_MSGS.get(_raison, LOT1_MSGS["courseId_absent"]))
+
+    # Garde desactivee : on TOLERE, mais on le DIT. Sans cette ligne, un mode de
+    # secours laisse en place deviendrait un defaut invisible — exactement ce que
+    # ce lot corrige. Elle permet aussi de compter ce qui aurait ete bloque.
+    logger.warning("%s GARDE DESACTIVEE — reservation ambigue toleree %s", LOT1_PREFIXE, _trace)
+    return {"courseId": _id, "datetime": _occ or _brut_occ, "parcours": "seance",
+            "raison": _raison}
+
+
 @reservation_router.post("/reservations", response_model=Reservation)
 async def create_reservation(reservation: ReservationCreate, request: Request):
     """Créer une réservation - Vérifie la validité du code et déduit 1 séance v11.4"""
     promo_code = reservation.promoCode or reservation.discountCode
     user_email = reservation.userEmail.lower().strip() if reservation.userEmail else ""
+
+    # === LOT 1 : LE RATTACHEMENT, AVANT LA MOINDRE ECRITURE ===
+    #
+    # PLACE ICI, ET PAS PLUS BAS. Refuser apres la deduction de seance laisserait
+    # le client DEBITE d'une seance sans reservation en echange — exactement le
+    # raisonnement de V430 quelques lignes plus bas.
+    #
+    # `isAudio` n'est pas declare sur `ReservationBase` : Pydantic l'ignore, donc
+    # `getattr` rend None. Ce n'est pas un oubli et rien ne l'exige — un achat
+    # audio n'a pas de `courseTime`, il sort donc deja par « hors seance ». On ne
+    # declare pas le champ juste pour le lire : le declarer l'ecrirait en base,
+    # et ce lot n'ajoute AUCUN champ.
+    _lot1 = await lot1_verifier_seance({
+        "courseId": reservation.courseId,
+        "datetime": reservation.datetime,
+        "courseTime": reservation.courseTime,
+        "isProduct": reservation.isProduct,
+        "isAudio": getattr(reservation, "isAudio", None),
+    }, source=reservation.source or "website")
+    # On repose les valeurs NETTOYEES sur le modele plutot que de les appliquer
+    # au dict final : tout ce qui suit — la preuve de conditions (`t1_preuve`),
+    # le constructeur, l'evenement `trial_booked` — lit `reservation.courseId`.
+    # Une seule valeur, lue au meme endroit par tout le monde.
+    reservation.courseId = _lot1["courseId"]
+    reservation.datetime = _lot1["datetime"]
 
     # === V430 : un code assigné n'appartient qu'à son propriétaire ===
     #

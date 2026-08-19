@@ -6503,6 +6503,23 @@ function App() {
       dt = new Date(selectedDate);
       dt.setHours(parseInt(h), parseInt(m), 0, 0);
     }
+
+    // LOT 1 — L'OCCURRENCE PART TELLE QU'ELLE EST AFFICHEE, SANS CONVERSION.
+    //
+    // Ce bloc calculait deja la bonne occurrence (date choisie + heure du cours)
+    // puis l'envoyait en `dt.toISOString()`, donc en UTC. Le serveur la
+    // reconvertit vers Europe/Zurich : aller-retour exact depuis un navigateur
+    // suisse, mais FAUX depuis un autre fuseau — `setHours(18, 30)` pose 18:30
+    // dans le fuseau DU NAVIGATEUR, pas a Zurich. Depuis Dakar (UTC+0), 18:30
+    // devenait 20:30 a l'arrivee : la seance changeait d'heure en chemin.
+    //
+    // On envoie desormais les composantes LOCALES telles quelles — « le jour et
+    // l'heure que la personne a vus a l'ecran » — au format naif local, la seule
+    // convention de la base (`_v184_next_occurrences`, `_a1_datetime_occurrence`,
+    // espace abonne). Plus de conversion, donc plus rien a decaler.
+    const v2pad = (n) => String(n).padStart(2, '0');
+    const occurrenceLocale = `${dt.getFullYear()}-${v2pad(dt.getMonth() + 1)}-${v2pad(dt.getDate())}`
+      + `T${v2pad(dt.getHours())}:${v2pad(dt.getMinutes())}:00`;
     
     // Nombre de dates sélectionnées (pour le calcul du prix)
     const dateCount = selectedDates.length || 1;
@@ -6530,7 +6547,12 @@ function App() {
       variantsText: variantsText || null, // Texte formaté des variantes
       selectedDates: selectedDates, // Toutes les dates sélectionnées
       selectedDatesText: selectedDatesText || null, // Texte formaté des dates
-      courseId: selectedCourse?.id || 'N/A',
+      // LOT 1 — `|| 'N/A'` RETIRE. `'N/A'` est TRUTHY : il franchissait la garde
+      // `if reservation.courseId:` du serveur et s'ecrivait en base. Une
+      // reservation qui a L'AIR rattachee a un cours inexistant est pire qu'une
+      // reservation nue : la premiere se compte a tort dans un bilan, la seconde
+      // se voit. Une chaine vide dit ce qu'elle veut dire — « aucun cours ».
+      courseId: selectedCourse?.id || '',
       // V225: repli sur le nom de l'offre avant « Produit physique ». Depuis que
       // les offres gratuites atteignent ce chemin sans cours selectionne, le
       // repli historique libellait une offre de SERVICE gratuite « Produit
@@ -6538,7 +6560,7 @@ function App() {
       // et la vue coach.
       courseName: selectedCourse?.name || (isAudioPurchase ? 'Achat Audio' : (selectedOffer?.name || 'Produit physique')),
       courseTime: selectedCourse?.time || '', 
-      datetime: dt.toISOString(),
+      datetime: occurrenceLocale, // LOT 1 : naif local, jamais UTC
       offerId: selectedOffer.id, 
       offerName: selectedOffer.name,
       price: v223UnitPrice(selectedOffer), 

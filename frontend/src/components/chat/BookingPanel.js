@@ -57,6 +57,18 @@ const BookingPanel = ({
     });
   };
 
+  // LOT 1 — ATTENTION : `availableCourses` porte desormais des OCCURRENCES, pas
+  // des cours. Chaque element a :
+  //   * `id`      = la cle de l'occurrence (« <courseId>@<datetime> ») — c'est
+  //                 elle qui sert de cle React et de cle de masquage, pour que
+  //                 deux mercredis a 18:30 restent deux lignes distinctes ;
+  //   * `courseId`= le cours reel, celui qui part au serveur ;
+  //   * `date`    = la date REELLE de cette occurrence, calculee par le serveur.
+  //
+  // C'est ce dernier champ qui rend ce composant juste sans le modifier :
+  // `courseOccurrenceDate()` prend sa branche « date fixe » et affiche donc
+  // exactement la date recue, au lieu de recalculer « le prochain mercredi »
+  // dans le navigateur. Ce que la personne LIT est ce que le serveur ENREGISTRE.
   const formattedCourses = useMemo(() => {
     return availableCourses
       .filter(course => hiddenPastIds.indexOf(course.id) === -1) // masquer ce que l'abonné a effacé

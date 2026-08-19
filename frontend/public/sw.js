@@ -17,8 +17,10 @@
 // rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
 // Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
 // a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
-var CACHE_NAME = 'afroboost-v450'; // V445: petite icone de notification Android — purge des anciens caches
-var SW_VERSION = 268;
+var CACHE_NAME = 'afroboost-v451'; // LOT 1 : le front change (ChatWidget, App, BookingPanel)
+                                   // -> sans ce bump, un appareil deja installe garderait l'ancien
+                                   // bundle et continuerait d'envoyer l'instant du clic comme date.
+var SW_VERSION = 269;
 
 var PRECACHE_URLS = [
   '/',
