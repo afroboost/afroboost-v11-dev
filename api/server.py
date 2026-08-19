@@ -63,6 +63,10 @@ from api.routes.contact_segments_routes import segments_router, init_segments_db
 # d'offre du dépôt (`?offre=<id>`, V371/V434) ; en faire une seconde copie ici
 # garantirait qu'un jour les deux divergent.
 from api.routes.bot_whatsapp_routes import bot_router, init_bot_db, _lien_offre as v440_lien_offre
+# P1-bis-a : ADHESIONS (memberships). Collection isolee, saisie manuelle.
+# Aucun autre module ne la lit : ni caisse, ni Stripe, ni reservation, ni essai,
+# ni promotion, ni lecture financiere A/B, ni conversion LOT A.
+from api.routes.membership_routes import membership_router, init_membership_db
 # V223: Calcul prix progressif (module pur, sans accès DB)
 from api.pricing import compute_active_price  # V223
 
@@ -29596,6 +29600,12 @@ init_segments_db(db)
 # BOT_MENU_ENABLED est à OFF (défaut), le bot n'existe pas pour l'extérieur.
 fastapi_app.include_router(bot_router, prefix="/api")
 init_bot_db(db)
+
+# P1-bis-a : Adhesions. JWT coach strict (ces routes renvoient des adresses).
+# Deux routes seulement — creer, lister — et une collection que RIEN d'autre
+# ne lit : le retrait de ces deux lignes suffit a annuler le lot.
+fastapi_app.include_router(membership_router, prefix="/api")
+init_membership_db(db)
 
 # V433 : réponses de VENTE sur WhatsApp (lien de paiement réel) + assainissement
 # de la signature. Le module ne fait qu'OUTILLER : il ne s'abonne à aucun

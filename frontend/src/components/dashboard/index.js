@@ -18,3 +18,4 @@ export { default as BrandingManager } from './BrandingManager';
 export { default as SEOManager } from './SEOManager';
 export { default as FAQManager } from './FAQManager';
 export { default as ContactsManager } from './ContactsManager';
+export { default as AdhesionsManager } from './AdhesionsManager';  // P1-bis-a

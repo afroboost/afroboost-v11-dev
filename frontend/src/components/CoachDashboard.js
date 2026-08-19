@@ -34,7 +34,7 @@ import SmartLinksSection from "./coach/SmartLinksSection"; // v98: Liens Intelli
 import { parseMediaUrl, getMediaThumbnail } from "../services/MediaParser"; // Media Parser
 import SuperAdminPanel from "./SuperAdminPanel"; // v8.9 Super Admin Panel
 // v13.5: Composants extraits pour alléger CoachDashboard
-import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab, BrandingManager, SEOManager, FAQManager, ContactsManager, InvoiceGenerator } from "./dashboard";
+import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab, BrandingManager, SEOManager, FAQManager, ContactsManager, InvoiceGenerator, AdhesionsManager } from "./dashboard";
 // V199: Accordéon paiements (5 sections pliables)
 import V199BoutiqueAccordion from "./dashboard/V199BoutiqueAccordion";
 // V366 : dépliage des groupes en personnes (partagé avec la duplication)
@@ -7347,7 +7347,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   // V411 : les echanges WhatsApp recus sur le numero Afroboost.
                   // V441 : le badge compte les messages ENTRANTS non lus. Il etait
                   // code en dur a 0, donc la pastille n'apparaissait jamais.
-                  { id: 'whatsapp', icon: 'phone', label: 'WhatsApp', badge: v441NonLusWhatsApp }
+                  { id: 'whatsapp', icon: 'phone', label: 'WhatsApp', badge: v441NonLusWhatsApp },
+                  // P1-bis-a : saisie des adhesions. Pas de badge — un compteur
+                  // d'adhesions n'appelle aucune action, il ferait du bruit.
+                  { id: 'adhesions', icon: 'crown', label: 'Adhésions', badge: 0 }
                 ];
               })().map(sub => (
                 <button
@@ -8189,6 +8192,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               <div style={{ marginTop: 12 }}>
                 <MessagesWhatsApp />
               </div>
+            )}
+
+            {/* P1-bis-a : « Adhésions ». Saisie manuelle et relecture, rien d'autre.
+                Aucun prix, aucun avantage, aucun parcours d'achat n'en dépend :
+                retirer ce bloc et l'entrée de navigation annule tout l'écran.
+                L'isolation par coach est faite par le SERVEUR (règle symétrique). */}
+            {offersSubTab === 'adhesions' && (
+              <AdhesionsManager API={API} />
             )}
 
             {offersSubTab === 'vitrine' && (
