@@ -1721,7 +1721,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", termsTextPartners: "", termsTextRecording: "", googleReviewsUrl: "", defaultLandingSection: "sessions", vitrineSectionOrder: "sessions-first", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "" });
   const [discountCodes, setDiscountCodes] = useState([]);
   const [codesSearch, setCodesSearch] = useState(''); // Recherche locale codes promo
-  const [newCode, setNewCode] = useState({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "" });
+  const [newCode, setNewCode] = useState({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "", montant_encaisse: "", origine_paiement: "" });
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [batchLoading, setBatchLoading] = useState(false);
   const [selectedBeneficiaries, setSelectedBeneficiaries] = useState([]); // Multi-select pour bénéficiaires
@@ -2570,6 +2570,17 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           multi_member: !!newCode.multi_member,
           shared_sessions: newCode.shared_sessions !== false,
           stripe_amount: newCode.stripe_amount ? parseFloat(newCode.stripe_amount) : null,
+          // LOT B : la trace de l'encaissement. Le serveur l'EXIGE des qu'un
+          // beneficiaire est designe (une souscription est alors creee) ; il
+          // refuse aussi un montant sur un acces declare « offert », et un
+          // montant a 0 qui ne serait pas declare offert. On envoie donc les
+          // deux champs ensemble, jamais l'un sans l'autre.
+          montant_encaisse: (newCode.origine_paiement === 'offert')
+            ? 0
+            : (String(newCode.montant_encaisse ?? '').trim() !== ''
+                ? parseFloat(newCode.montant_encaisse)
+                : (newCode.stripe_amount ? parseFloat(newCode.stripe_amount) : null)),
+          origine_paiement: newCode.origine_paiement || null,
         };
         // V206: Modifier le compteur d'utilisations (valeur exacte ou remise à 0)
         if (newCode.resetUsed) {
@@ -2592,7 +2603,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           setDiscountCodes(prev => prev.map(c => c.id === editingCode ? { ...c, ...updates } : c));
         }
         setEditingCode(null);
-        setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "" });
+        setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "", montant_encaisse: "", origine_paiement: "" });
         setSelectedBeneficiaries([]);
         setValidationMessage('✅ Code mis à jour !');
         setTimeout(() => setValidationMessage(''), 3000);
@@ -2626,9 +2637,20 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         multi_member: !!newCode.multi_member,
         shared_sessions: newCode.shared_sessions !== false,
         stripe_amount: newCode.stripe_amount ? parseFloat(newCode.stripe_amount) : null,
+        // LOT B : la trace de l'encaissement. Le serveur l'EXIGE des qu'un
+        // beneficiaire est designe (une souscription est alors creee) ; il
+        // refuse aussi un montant sur un acces declare « offert », et un
+        // montant a 0 qui ne serait pas declare offert. On envoie donc les
+        // deux champs ensemble, jamais l'un sans l'autre.
+        montant_encaisse: (newCode.origine_paiement === 'offert')
+          ? 0
+          : (String(newCode.montant_encaisse ?? '').trim() !== ''
+              ? parseFloat(newCode.montant_encaisse)
+              : (newCode.stripe_amount ? parseFloat(newCode.stripe_amount) : null)),
+        origine_paiement: newCode.origine_paiement || null,
       });
       setDiscountCodes([...discountCodes, response.data]);
-      setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "" });
+      setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "", montant_encaisse: "", origine_paiement: "" });
       setSelectedBeneficiaries([]);
     } catch (error) {
       console.error('[PROMO] Erreur création/édition code:', error);
@@ -2668,13 +2690,22 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           courses: newCode.courses, // Cours ET produits autorisés
           maxUses: newCode.maxUses ? parseInt(newCode.maxUses) : null,
           expiresAt: newCode.expiresAt || null,
-          offerName: (newCode.courses && newCode.courses.length > 0 && offers.find(function(o) { return o.id === newCode.courses[0]; })) ? offers.find(function(o) { return o.id === newCode.courses[0]; }).name : null
+          offerName: (newCode.courses && newCode.courses.length > 0 && offers.find(function(o) { return o.id === newCode.courses[0]; })) ? offers.find(function(o) { return o.id === newCode.courses[0]; }).name : null,
+          // LOT B : la meme declaration pour chaque code du lot. Une serie
+          // adressee a des beneficiaires nommes cree autant de souscriptions —
+          // elles doivent porter la meme trace que les codes crees a l'unite.
+          montant_encaisse: (newCode.origine_paiement === 'offert')
+            ? 0
+            : (String(newCode.montant_encaisse ?? '').trim() !== ''
+                ? parseFloat(newCode.montant_encaisse)
+                : (newCode.stripe_amount ? parseFloat(newCode.stripe_amount) : null)),
+          origine_paiement: newCode.origine_paiement || null
         });
         createdCodes.push(response.data);
       }
       
       setDiscountCodes(prev => [...prev, ...createdCodes]);
-      setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "" });
+      setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "", montant_encaisse: "", origine_paiement: "" });
       setSelectedBeneficiaries([]);
       setIsBatchMode(false);
       alert(`✅ ${count} codes créés avec succès !`);
@@ -2781,6 +2812,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       multi_member: !!code.multi_member,
       shared_sessions: code.shared_sessions !== false,
       stripe_amount: code.stripe_amount || "",
+      // LOT B : on repart de ce qui a ete declare, pas d'un formulaire vide —
+      // rouvrir un code pour changer sa date d'expiration ne doit pas effacer
+      // son encaissement.
+      montant_encaisse: (code.montant_encaisse !== undefined && code.montant_encaisse !== null)
+        ? code.montant_encaisse : (code.stripe_amount || ""),
+      origine_paiement: code.origine_paiement || "",
       // V206: Charger le compteur d'utilisations — modifiable directement
       currentUsed: code.usedCount || code.used || 0,
       customUsed: undefined,

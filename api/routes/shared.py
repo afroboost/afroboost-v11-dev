@@ -1378,3 +1378,238 @@ async def essai2_tracer_octroi(db, email: str, offer_id: str = "",
         })
     except Exception as _err:
         logger.warning(f"[ESSAI-2] free_trial_granted ignore: {_err}")
+
+
+# ============================================================================
+# LOT B — LA TRACE FINANCIERE D'UN DROIT ACCORDE A LA MAIN
+# ============================================================================
+#
+# CE QUE CE LOT REPARE. Mesure du 19/08/2026 sur la production : sur 59
+# souscriptions, 41 ne portent AUCUN montant, et 28 d'entre elles ont ete
+# creees a la main par le coach. Le formulaire de creation d'un code ne
+# demandait nulle part ce qui avait ete encaisse, ni comment. Resultat, sur les
+# 133 reservations : 41 % « droit connu, montant inconnu ». On ne pouvait pas
+# dire si une souscription avait ete payee, offerte, ou reglee ailleurs.
+#
+# CE LOT NE REPARE PAS LE PASSE, ET C'EST VOULU. Aucun backfill, aucune
+# migration. Les documents anterieurs restent sans montant, et se lisent
+# « Montant non enregistre » — jamais « CHF 0 », qui est un montant REEL.
+# `B_ORIGINE_INCONNUE` sert a cette lecture seule ; il n'est JAMAIS ecrit.
+#
+# POURQUOI SUR LE CODE, ET PAS SUR LA SOUSCRIPTION. Le code est cree UNE fois,
+# par le coach, au moment ou l'argent change de main. La souscription, elle,
+# nait a trois endroits differents de `promo_routes` — a la creation du code, a
+# la premiere utilisation du code, et via la synchronisation manuelle. Poser la
+# declaration sur le code et la RECOPIER sur chaque souscription qui en decoule
+# (`b_champs_depuis_code`) donne une seule saisie et trois documents coherents.
+#
+# POURQUOI PAS `stripe_amount`. Ce champ existe deja, mais il melange deux
+# choses incomparables : 8 montants adosses a une session Stripe reelle, et 11
+# poses a la main ou retro-calcules — dont certains par le repli « prix du
+# catalogue » de `/admin/fix-all-stripe`, neutralise dans ce meme lot. Un
+# montant sans provenance ne peut pas etre distingue d'un montant invente.
+# `stripe_amount` continue d'etre ecrit a l'identique (aucun ecran ne regresse),
+# mais la verite est desormais dans les champs ci-dessous, qui portent leur
+# provenance avec eux.
+
+B_DEVISE_DEFAUT = "CHF"
+
+# Les origines REELLEMENT supportees. Les quatre premieres sont saisissables
+# par le coach ; les deux suivantes sont posees par les moteurs de paiement.
+B_ORIGINES_MANUELLES = ("especes", "twint", "virement", "offert")
+B_ORIGINES_AUTOMATIQUES = ("stripe", "mobile_money")
+B_ORIGINES_PAIEMENT = B_ORIGINES_MANUELLES + B_ORIGINES_AUTOMATIQUES
+
+# LECTURE SEULE. Valeur rendue pour un document anterieur a ce lot. Ecrire cette
+# valeur reviendrait a fabriquer une declaration qui n'a jamais eu lieu.
+B_ORIGINE_INCONNUE = "inconnu"
+
+B_LIBELLES_ORIGINE = {
+    "especes": "espèces",
+    "twint": "TWINT",
+    "virement": "virement",
+    "offert": "offert",
+    "stripe": "carte / TWINT (Stripe)",
+    "mobile_money": "Mobile Money",
+    B_ORIGINE_INCONNUE: "origine non enregistrée",
+}
+
+B_MSG_MONTANT_REQUIS = (
+    "Montant encaissé requis. Indique ce qui a été encaissé et comment "
+    "(espèces, TWINT, virement), ou coche « offert » si l'accès est gratuit."
+)
+B_MSG_ORIGINE_REQUISE = (
+    "Moyen de paiement requis : espèces, TWINT, virement, ou « offert »."
+)
+B_MSG_OFFERT_PAYANT = (
+    "Un accès déclaré « offert » ne peut pas porter de montant encaissé."
+)
+B_MSG_ZERO_NON_OFFERT = (
+    "Un montant de 0 doit être déclaré « offert » — sinon on ne sait pas si "
+    "l'accès a été payé ailleurs."
+)
+
+
+def b_normaliser_origine(valeur) -> str:
+    """L'origine telle qu'elle sera stockee, ou "" si elle n'est pas reconnue.
+
+    Tolerante a la saisie (casse, espaces, accents usuels) mais ferme sur le
+    vocabulaire : ce qui n'est pas dans `B_ORIGINES_PAIEMENT` ne rentre pas.
+    """
+    _v = (str(valeur or "")).strip().lower()
+    _v = (_v.replace("è", "e").replace("é", "e").replace("ê", "e")
+            .replace(" ", "_").replace("-", "_"))
+    _alias = {"cash": "especes", "espece": "especes", "liquide": "especes",
+              "bank": "virement", "banque": "virement", "iban": "virement",
+              "gratuit": "offert", "free": "offert", "cadeau": "offert",
+              "carte": "stripe", "card": "stripe"}
+    _v = _alias.get(_v, _v)
+    return _v if _v in B_ORIGINES_PAIEMENT else ""
+
+
+def b_valider_encaissement(montant, origine, devise=None, saisi_par: str = "",
+                           seances=None, exiger: bool = True) -> dict:
+    """Valide une declaration d'encaissement et renvoie les champs a stocker.
+
+    `exiger=False` : la declaration reste FACULTATIVE (code promo sans
+    beneficiaire — aucun droit nominatif n'est accorde, aucune souscription
+    n'est creee, donc aucun argent n'est cense changer de main). Rien n'est
+    exige, mais tout ce qui est fourni est valide de la meme facon : on ne
+    stocke jamais une declaration a moitie vraie.
+
+    Leve `HTTPException(400)` sur toute incoherence — jamais de correction
+    silencieuse : si le coach se trompe, il doit le voir.
+    """
+    # Import local : meme convention que le reste de ce module, qui ne depend
+    # pas de FastAPI au chargement (il est importe par des scripts hors serveur).
+    from fastapi import HTTPException
+
+    _origine = b_normaliser_origine(origine)
+    _brute = str(origine or "").strip()
+    if _brute and not _origine:
+        raise HTTPException(
+            status_code=400,
+            detail="Moyen de paiement inconnu : « %s ». Valeurs acceptées : %s."
+                   % (_brute[:40], ", ".join(B_ORIGINES_MANUELLES)))
+
+    _montant = None
+    if montant is not None and str(montant).strip() != "":
+        try:
+            _montant = round(float(montant), 2)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=B_MSG_MONTANT_REQUIS)
+        if _montant < 0:
+            raise HTTPException(status_code=400, detail="Le montant encaissé ne peut pas être négatif.")
+
+    if _montant is None and not _origine:
+        if exiger:
+            raise HTTPException(status_code=400, detail=B_MSG_MONTANT_REQUIS)
+        return {}
+
+    if not _origine:
+        raise HTTPException(status_code=400, detail=B_MSG_ORIGINE_REQUISE)
+
+    if _origine == "offert":
+        # Un geste commercial se declare a 0, sans ambiguite. Un montant non nul
+        # est REFUSE plutot que force a 0 : forcer effacerait une vraie recette.
+        if _montant:
+            raise HTTPException(status_code=400, detail=B_MSG_OFFERT_PAYANT)
+        _montant = 0.0
+    else:
+        if _montant is None:
+            raise HTTPException(status_code=400, detail=B_MSG_MONTANT_REQUIS)
+        if _montant == 0:
+            raise HTTPException(status_code=400, detail=B_MSG_ZERO_NON_OFFERT)
+
+    _champs = {
+        "montant_encaisse": _montant,
+        "devise": (str(devise or "").strip().upper() or B_DEVISE_DEFAUT)[:8],
+        "origine_paiement": _origine,
+        "encaissement_saisi_par": (saisi_par or "").strip().lower()[:120],
+        "encaissement_saisi_le": datetime.now(timezone.utc).isoformat(),
+    }
+    # DENOMINATEUR FIGE. `total_sessions` ne peut pas jouer ce role : la
+    # reconduction automatique (V195) l'incremente (`$inc`), si bien qu'apres un
+    # renouvellement il ne decrit plus l'achat mais leur cumul. Cette valeur-ci
+    # n'est ecrite qu'ici, a la creation, et n'est jamais reecrite.
+    try:
+        _n = int(seances) if seances is not None else 0
+        if _n > 0:
+            _champs["seances_a_l_achat"] = _n
+    except (TypeError, ValueError):
+        pass
+    return _champs
+
+
+# Correspondance entre le vocabulaire des moteurs de paiement et `origine_paiement`.
+# `card` et `paypal` passent tous deux par Stripe/checkout dans ce code ; seul
+# `mobile_money` a son propre moteur (pawaPay).
+B_ORIGINE_PAR_MOTEUR = {
+    "free": "offert",
+    "card": "stripe",
+    "paypal": "stripe",
+    "stripe": "stripe",
+    "mobile_money": "mobile_money",
+}
+
+
+def b_champs_automatiques(moteur: str, montant, devise=None, seances=None) -> dict:
+    """La meme trace, posee AUTOMATIQUEMENT par un moteur de paiement.
+
+    Pas de validation ici : le montant vient de Stripe ou de pawaPay, pas d'une
+    saisie. On refuse seulement d'inventer une origine pour un moteur inconnu —
+    mieux vaut un champ absent qu'une provenance fausse.
+    """
+    _origine = B_ORIGINE_PAR_MOTEUR.get((str(moteur or "")).strip().lower(), "")
+    if not _origine:
+        return {}
+    try:
+        _montant = round(float(montant or 0), 2)
+    except (TypeError, ValueError):
+        return {}
+    _champs = {
+        "montant_encaisse": _montant,
+        "devise": (str(devise or "").strip().upper() or B_DEVISE_DEFAUT)[:8],
+        "origine_paiement": _origine,
+        "encaissement_saisi_par": "",          # personne : c'est le moteur
+        "encaissement_saisi_le": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        _n = int(seances or 0)
+        if _n > 0:
+            _champs["seances_a_l_achat"] = _n
+    except (TypeError, ValueError):
+        pass
+    return _champs
+
+
+def b_champs_depuis_code(code_doc: dict, seances=None) -> dict:
+    """Les champs financiers a RECOPIER d'un code vers la souscription qu'il ouvre.
+
+    Recopie, et non recalcul : la declaration a ete faite une fois, au moment ou
+    l'argent a change de main. Un document anterieur au lot B n'en porte aucun —
+    on renvoie alors {} et la souscription reste sans montant, ce qui est la
+    verite.
+    """
+    if not isinstance(code_doc, dict):
+        return {}
+    _origine = b_normaliser_origine(code_doc.get("origine_paiement"))
+    if not _origine:
+        return {}
+    _champs = {
+        "montant_encaisse": code_doc.get("montant_encaisse"),
+        "devise": code_doc.get("devise") or B_DEVISE_DEFAUT,
+        "origine_paiement": _origine,
+        "encaissement_saisi_par": code_doc.get("encaissement_saisi_par") or "",
+        "encaissement_saisi_le": code_doc.get("encaissement_saisi_le") or "",
+    }
+    _n = code_doc.get("seances_a_l_achat")
+    if _n is None:
+        _n = seances
+    try:
+        _n = int(_n) if _n is not None else 0
+        if _n > 0:
+            _champs["seances_a_l_achat"] = _n
+    except (TypeError, ValueError):
+        pass
+    return _champs

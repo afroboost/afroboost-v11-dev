@@ -151,6 +151,16 @@ class DiscountCode(BaseModel):
     multi_member: bool = False
     shared_sessions: bool = True
     stripe_amount: Optional[float] = None
+    # B — la trace financiere. `stripe_amount` continue d'exister a l'identique
+    # (aucun ecran ne regresse), mais il ne dit pas D'OU vient le montant : sur
+    # les 19 codes qui en portent un, 8 seulement sont adosses a une session
+    # Stripe reelle. Ces champs-ci portent leur provenance avec eux.
+    montant_encaisse: Optional[float] = None
+    devise: Optional[str] = None
+    origine_paiement: Optional[str] = None
+    seances_a_l_achat: Optional[int] = None
+    encaissement_saisi_par: Optional[str] = None
+    encaissement_saisi_le: Optional[str] = None
 
 
 class DiscountCodeCreate(BaseModel):
@@ -168,6 +178,12 @@ class DiscountCodeCreate(BaseModel):
     multi_member: bool = False
     shared_sessions: bool = True
     stripe_amount: Optional[float] = None
+    # B — declaration d'encaissement, saisie par le coach au moment ou l'argent
+    # change de main. Obligatoire des que le code accorde un droit NOMINATIF
+    # (`assignedEmail` renseigne -> une souscription est creee).
+    montant_encaisse: Optional[float] = None
+    devise: Optional[str] = None
+    origine_paiement: Optional[str] = None
 
 
 # === v104: HELPER — Résoudre les détails de l'offre liée à un code ===
@@ -347,8 +363,39 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
     # v162: Stocker le nom de l'offre dans le code promo
     if code.offerName:
         code_data["offerName"] = code.offerName
+
+    # ── B : LA DECLARATION D'ENCAISSEMENT, AVANT LA MOINDRE ECRITURE ────────
+    #
+    # Un code assigne a quelqu'un ouvre une SOUSCRIPTION (plus bas, `if
+    # assigned_email`) : c'est un droit nominatif, donc de l'argent — encaisse,
+    # ou explicitement offert. On exige la declaration LA, et seulement la : un
+    # code promo sans beneficiaire (remise de 20 %, code de campagne) ne cree
+    # aucune souscription et n'encaisse rien, il reste libre.
+    #
+    # Place ICI, avant l'insertion : un refus ne doit laisser NI code, NI
+    # souscription, NI e-mail parti. Valider apres coup laisserait exactement le
+    # trou que ce lot vient fermer.
+    from api.routes.shared import b_valider_encaissement as _b_valider
+    _b_exiger = bool((code.assignedEmail or "").strip())
+    _b_champs = _b_valider(
+        code_data.pop("montant_encaisse", None),
+        code_data.pop("origine_paiement", None),
+        code_data.pop("devise", None),
+        saisi_par=user_email,
+        seances=code.maxUses,
+        exiger=_b_exiger,
+    )
+    code_data.update(_b_champs)
+    # `stripe_amount` reste ecrit EXACTEMENT comme avant. Deux ecrans le lisent
+    # deja (l'espace abonne V207h, le badge de la liste des codes) ; le laisser
+    # vide les ferait regresser. Il n'est plus la source de verite, il en est le
+    # reflet — et pour un acces offert il reste nul, comme aujourd'hui.
+    if _b_champs.get("montant_encaisse"):
+        code_data["stripe_amount"] = _b_champs["montant_encaisse"]
+
     code_obj = DiscountCode(**code_data)
-    await _db.discount_codes.insert_one(code_obj.model_dump())
+    _code_stocke = code_obj.model_dump()
+    await _db.discount_codes.insert_one(_code_stocke)
 
     # v96: Auto-créer la subscription si un bénéficiaire est assigné
     # v104: Résolution dynamique des séances via l'article lié
@@ -390,6 +437,11 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "source": "admin_manual"
             }
+            # B : la declaration faite sur le code suit le droit qu'il ouvre.
+            # RECOPIE, pas recalcul — elle a ete etablie une seule fois, au
+            # moment ou l'argent a change de main.
+            from api.routes.shared import b_champs_depuis_code as _b_copie
+            sub_data.update(_b_copie(_code_stocke, seances=total_sessions))
             await _db.subscriptions.insert_one(sub_data)
             logger.info(f"[PROMO] Subscription auto-créée: {assigned_email} - {code_str} ({total_sessions} séances)")
             # Envoyer email de bienvenue
@@ -430,10 +482,55 @@ async def update_discount_code(code_id: str, updates: dict):
         raise HTTPException(status_code=404, detail=f"Code {code_id} not found")
 
     logger.info(f"[V200c] PUT /discount-codes/{code_id}: Found code '{existing.get('code')}', applying updates: {list(updates.keys())}")
+
+    # ── B : LA MODIFICATION D'UN MONTANT PASSE PAR LA MEME PORTE ────────────
+    #
+    # Cette route ecrit `$set: updates` tel quel, sans modele : sans ce garde,
+    # un montant pose ici echapperait entierement a la validation de la
+    # creation, et la garantie du lot B aurait un trou de la taille du
+    # formulaire d'edition. On ne valide QUE si l'edition touche a l'argent —
+    # une modification de date d'expiration ou de `maxUses` n'a rien a declarer.
+    _b_cles = ("montant_encaisse", "origine_paiement", "devise")
+    _b_champs_maj = {}
+    if isinstance(updates, dict) and any(k in updates for k in _b_cles):
+        from api.routes.shared import b_valider_encaissement as _b_valider
+        # Vue FUSIONNEE : modifier le seul moyen de paiement d'un code deja
+        # declare ne doit pas obliger a resaisir le montant.
+        _b_montant = updates.get("montant_encaisse", existing.get("montant_encaisse"))
+        _b_origine = updates.get("origine_paiement", existing.get("origine_paiement"))
+        _b_devise = updates.get("devise", existing.get("devise"))
+        _b_champs_maj = _b_valider(
+            _b_montant, _b_origine, _b_devise,
+            saisi_par=str(existing.get("encaissement_saisi_par") or ""),
+            seances=updates.get("seances_a_l_achat", existing.get("seances_a_l_achat")
+                                or existing.get("maxUses")),
+            exiger=bool(str(existing.get("assignedEmail") or "").strip()),
+        )
+        updates = dict(updates)
+        for _k in _b_cles:
+            updates.pop(_k, None)
+        updates.update(_b_champs_maj)
+        if _b_champs_maj.get("montant_encaisse"):
+            updates["stripe_amount"] = _b_champs_maj["montant_encaisse"]
+
     await _db.discount_codes.update_one({"_id": existing["_id"]}, {"$set": updates})
     updated = await _db.discount_codes.find_one({"_id": existing["_id"]}, {"_id": 0})
     logger.info(f"[V200c] PUT /discount-codes/{code_id}: Updated OK — expiresAt is now '{updated.get('expiresAt')}'")
 
+
+    # B : la declaration corrigee suit les souscriptions deja ouvertes par ce
+    # code. Sans cette propagation, le code dirait « 150 CHF, TWINT » et la
+    # souscription resterait muette — deux verites pour un seul achat.
+    if _b_champs_maj:
+        _b_code_str = (existing.get("code") or updated.get("code") or "").strip()
+        if _b_code_str:
+            _b_res = await _db.subscriptions.update_many(
+                {"code": {"$regex": f"^{re.escape(_b_code_str)}$", "$options": "i"}},
+                {"$set": dict(_b_champs_maj,
+                              updated_at=datetime.now(timezone.utc).isoformat())},
+            )
+            logger.info("[B] %s : encaissement propage a %d souscription(s)",
+                        _b_code_str, _b_res.modified_count)
 
     # V206: Propagation used → subscriptions liées (synchroniser le compteur)
     if isinstance(updates, dict) and "used" in updates:
@@ -663,6 +760,11 @@ async def validate_discount_code(data: dict):
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }
+                # B : meme recopie depuis le code. Un code anterieur au lot n'en
+                # porte aucune -> {} -> la souscription reste sans montant, ce
+                # qui est la verite et non « CHF 0 ».
+                from api.routes.shared import b_champs_depuis_code as _b_copie
+                subscription_data.update(_b_copie(code, seances=total_sessions))
                 await _db.subscriptions.insert_one(subscription_data)
                 logger.info(f"[SUBSCRIPTION] Créé: {user_email} - {offer_name} ({total_sessions} séances)")
                 # v96: Email de bienvenue à la première activation
@@ -1019,6 +1121,10 @@ async def sync_subscriptions_for_email(data: dict, request: Request):
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "source": "manual_sync"
         }
+        # B : troisieme et derniere porte de creation d'une souscription dans ce
+        # fichier — meme recopie, pour qu'aucune ne puisse diverger.
+        from api.routes.shared import b_champs_depuis_code as _b_copie
+        sub.update(_b_copie(code, seances=total))
         await _db.subscriptions.insert_one(sub)
         created.append({"code": code_str, "sessions": total})
         logger.info(f"[SYNC] Subscription créée: {email} - {code_str} ({total} séances)")

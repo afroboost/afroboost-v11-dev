@@ -86,6 +86,17 @@ const PromoCodesTab = ({
   // V193: filtre dédié pour la grille des bénéficiaires (chips)
   const [beneficiariesFilter, setBeneficiariesFilter] = useState('');
 
+  // ── LOT B — L'ETAT DE LA DECLARATION D'ENCAISSEMENT ────────────────────────
+  // La regle est la MEME que celle du serveur, ecrite une fois ici : un code
+  // n'a rien a declarer tant qu'il ne designe personne (code promo, remise de
+  // campagne). Des qu'un beneficiaire est choisi, une souscription sera creee —
+  // c'est un droit nominatif, donc de l'argent, encaisse ou explicitement offert.
+  // L'interface ne fait qu'ANNONCER cette regle : c'est le serveur qui refuse.
+  const bRequisB = (selectedBeneficiaries?.length > 0) || (newCode.assignedEmails?.length > 0);
+  const bOffertB = newCode.origine_paiement === 'offert';
+  const bMontantB = String(newCode.montant_encaisse ?? newCode.stripe_amount ?? '').trim();
+  const bCompletB = bOffertB || (!!newCode.origine_paiement && parseFloat(bMontantB) > 0);
+
   // V154: Category targeting for promo codes
   var [promoCategories, setPromoCategories] = useState([]);
   var [selectedTargetCategories, setSelectedTargetCategories] = useState([]);
@@ -647,19 +658,70 @@ const PromoCodesTab = ({
             />
           </div>
 
-          {/* V202: Montant Stripe (CHF) */}
+          {/* LOT B — LA TRACE DE L'ENCAISSEMENT.
+              Ce champ s'appelait « Prix Stripe » et etait facultatif : sur 59
+              souscriptions, 41 n'ont jamais porte de montant, et on ne pouvait
+              plus dire si un acces avait ete paye, offert, ou regle ailleurs.
+              Il devient « Montant encaisse », accompagne de son moyen de
+              paiement, et le serveur l'EXIGE des qu'un beneficiaire est
+              designe — c'est a ce moment-la, et seulement a ce moment-la,
+              qu'une souscription est creee. */}
           <div>
-            <label className="block text-white text-xs mb-1 opacity-70"><span className="inline-flex items-center gap-1.5"><SvgIcon name="creditCard" size={14} /> Prix Stripe (CHF)</span></label>
+            <label className="block text-white text-xs mb-1 opacity-70">
+              <span className="inline-flex items-center gap-1.5">
+                <SvgIcon name="creditCard" size={14} /> Montant encaissé (CHF)
+                {bRequisB && <span style={{ color: 'var(--primary-color, #D91CD2)' }}>*</span>}
+              </span>
+            </label>
             <input
               type="number" step="0.01" min="0"
-              placeholder="Laisser vide si gratuit"
-              value={newCode.stripe_amount || ''}
-              onChange={e => setNewCode({ ...newCode, stripe_amount: e.target.value })}
+              placeholder={bOffertB ? '0 — offert' : 'Ex. 250'}
+              disabled={bOffertB}
+              value={bOffertB ? '' : (newCode.montant_encaisse ?? newCode.stripe_amount ?? '')}
+              onChange={e => setNewCode({ ...newCode, montant_encaisse: e.target.value, stripe_amount: e.target.value })}
               className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+              style={bOffertB ? { opacity: 0.45 } : undefined}
               data-testid="stripe-amount-input"
             />
           </div>
+
+          {/* LOT B — le moyen de paiement. Vocabulaire ferme, identique cote
+              serveur : ce qui n'est pas dans cette liste est refuse. */}
+          <div>
+            <label className="block text-white text-xs mb-1 opacity-70">
+              <span className="inline-flex items-center gap-1.5">
+                <SvgIcon name="dollarSign" size={14} /> Moyen de paiement
+                {bRequisB && <span style={{ color: 'var(--primary-color, #D91CD2)' }}>*</span>}
+              </span>
+            </label>
+            <select
+              value={newCode.origine_paiement || ''}
+              onChange={e => {
+                const v = e.target.value;
+                setNewCode(v === 'offert'
+                  ? { ...newCode, origine_paiement: v, montant_encaisse: '', stripe_amount: '' }
+                  : { ...newCode, origine_paiement: v });
+              }}
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+              data-testid="origine-paiement-select"
+            >
+              <option value="">— choisir —</option>
+              <option value="especes">Espèces</option>
+              <option value="twint">TWINT</option>
+              <option value="virement">Virement</option>
+              <option value="offert">Offert (gratuit)</option>
+            </select>
+          </div>
         </div>
+
+        {bRequisB && !bCompletB && (
+          <p className="text-xs mb-4" data-testid="b-encaissement-hint"
+             style={{ color: 'var(--primary-color, #D91CD2)' }}>
+            <SvgIcon name="warning" size={14} className="mr-1.5" />
+            Un bénéficiaire est désigné : indique le montant encaissé et son moyen
+            de paiement, ou choisis « Offert » si l'accès est gratuit.
+          </p>
+        )}
 
         {/* V202: Options multi-membre */}
         <div className="flex flex-wrap gap-4 mb-4 p-3 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>

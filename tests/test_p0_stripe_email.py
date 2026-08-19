@@ -249,6 +249,20 @@ class _FauxModuleShared:
     async def posthog_capture(*a, **k):
         return None
 
+    # LOT B : le webhook pose desormais la trace financiere (montant, devise,
+    # origine) sur le code et sur la souscription. Le VRAI helper est utilise —
+    # il est pur, sans base ni reseau — pour que ce test continue de mesurer le
+    # webhook tel qu'il tourne en production.
+    @staticmethod
+    def b_champs_automatiques(moteur, montant, devise=None, seances=None):
+        import importlib.util as _iu, os as _os
+        _p = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                           "api", "routes", "shared.py")
+        _sp = _iu.spec_from_file_location("_shared_b_p0", _p)
+        _m = _iu.module_from_spec(_sp)
+        _sp.loader.exec_module(_m)
+        return _m.b_champs_automatiques(moteur, montant, devise, seances)
+
 
 sys.modules.setdefault("api", type(sys)("api"))
 sys.modules.setdefault("api.routes", type(sys)("api.routes"))

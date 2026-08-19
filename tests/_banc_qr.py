@@ -128,6 +128,16 @@ class _Collection:
                 return _MajResultat(1)
         return _MajResultat(0)
 
+    async def update_many(self, filtre, maj):
+        n = 0
+        for d in self.docs:
+            if _match(d, filtre):
+                d.update(maj.get("$set", {}))
+                n += 1
+        if n:
+            self.ecritures.append(("update_many", dict(filtre), maj))
+        return _MajResultat(n)
+
     async def insert_one(self, doc):
         self.docs.append(dict(doc))
         self.ecritures.append(("insert", dict(doc), None))
@@ -142,6 +152,14 @@ class _Base:
         self.courses = _Collection()
         self.code_members = _Collection()
         self.users = _Collection()
+        # B : le catalogue. Present pour PROUVER qu'il n'est plus lu comme
+        # source de prix historique — le test le remplit et verifie qu'aucun de
+        # ses prix ne ressort.
+        self.offers = _Collection()
+
+    def __getitem__(self, nom):
+        """Certaines routes accedent aux collections par `db["nom"]`."""
+        return getattr(self, nom)
 
 
 # ═══════════════════════ environnement d'execution ═══════════════════════════

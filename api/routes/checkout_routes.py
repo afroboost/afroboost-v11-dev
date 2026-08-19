@@ -1540,6 +1540,10 @@ async def _process_successful_payment(
     if sessions_count <= 0:
         sessions_count = 1
 
+    # B : la trace financiere, dans la meme forme que pour un encaissement saisi
+    # a la main. Import local, comme les autres imports de ce helper.
+    from api.routes.shared import b_champs_automatiques as _b_auto
+
     # 3. Stocker le code dans discount_codes (champs compatibles avec subscriber check)
     await db["discount_codes"].insert_one({
         "id": str(uuid.uuid4()),
@@ -1558,7 +1562,13 @@ async def _process_successful_payment(
         "payment_method": payment_method,
         "total_paid": total,
         "currency": currency,
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        # B : meme vocabulaire que les codes crees a la main. `payment_method`
+        # et `total_paid` existaient deja ici et ne bougent pas ; ces champs-ci
+        # les redisent dans la forme UNIQUE que la lecture financiere attend,
+        # pour qu'un achat en ligne et un encaissement en especes se lisent
+        # exactement de la meme facon.
+        **_b_auto(payment_method, total, currency, sessions_count)
     })
 
     # V216: Créer la subscription (suivi séances restantes)
@@ -1586,6 +1596,8 @@ async def _process_successful_payment(
         "renewal_price": total,
         "renewal_sessions": sessions_count,
         "renewal_warnings_sent": [],
+        # B : la souscription porte la meme trace que son code.
+        **_b_auto(payment_method, total, currency, sessions_count),
     })
     logger.info(f"[CHECKOUT] Code {access_code} + subscription crees pour {customer_email} ({sessions_count} seances)")
 

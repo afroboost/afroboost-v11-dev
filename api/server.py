@@ -6588,6 +6588,14 @@ async def stripe_webhook(request: Request):
                                  # Cree VIDE : sa presence signe un document ne du code
                                  # corrige, son absence signe un document historique.
                                  "emails_envoyes": {}}
+                # B : la trace financiere, meme forme que pour un encaissement
+                # saisi a la main. `stripe_amount` / `paid_currency` restent
+                # ecrits a l'identique ; ces champs-ci ajoutent la PROVENANCE,
+                # que `stripe_amount` seul ne porte pas — 11 des 19 codes qui en
+                # avaient un ne venaient pas de Stripe.
+                from api.routes.shared import b_champs_automatiques as _b_auto
+                discount_doc.update(_b_auto("stripe", _montant_paye,
+                                            (session.currency or "chf"), sessions_count))
                 await db.discount_codes.insert_one(discount_doc)
                 logger.info(f"[PAYMENT] Code {new_code} cree pour {customer_email} ({sessions_count} seances)")
                 # v95.2: Auto-créer la subscription après paiement Stripe
@@ -6669,6 +6677,9 @@ async def stripe_webhook(request: Request):
                     "stripe_payment_method": stripe_payment_method,
                     "last_renewal_date": None,
                 }
+                # B : la souscription porte la meme trace que son code.
+                subscription_data.update(_b_auto("stripe", amount_chf or _montant_paye,
+                                                 (session.currency or "chf"), sessions_count))
                 await db.subscriptions.insert_one(subscription_data)
                 logger.info(f"[PAYMENT] Subscription auto-creee: {customer_email} - {product_name} ({sessions_count} seances) auto_renew={subscription_data['auto_renew']}")
 
@@ -11791,6 +11802,12 @@ async def fix_all_stripe_amounts():
     """V207i: Corrige TOUS les codes — gère les doublons.
     Étape 1: Grouper par code, trouver le meilleur stripe_amount
     Étape 2: Propager à TOUS les documents du même code (update_many)
+
+    B — CETTE ROUTE N'INVENTE PLUS AUCUN MONTANT. Elle ne fait que RECOPIER
+    entre documents jumeaux un montant qu'un humain ou Stripe a deja pose. Son
+    repli sur `offers.price` (le prix du catalogue au moment de l'appel) a ete
+    retire : il fabriquait un prix historique faux, indiscernable d'un vrai.
+    Un code sans montant ressort `no_price`, et c'est la bonne reponse.
     """
     from collections import defaultdict
     all_codes = await db.discount_codes.find({}).to_list(1000)
@@ -11819,20 +11836,23 @@ async def fix_all_stripe_amounts():
                 except (TypeError, ValueError):
                     pass
 
-        # Fallback: offres liées
-        if not best_amount:
-            for d in docs:
-                for cid in (d.get("courses") or []):
-                    offer = await db.offers.find_one({"id": cid}, {"_id": 0, "price": 1})
-                    if offer and offer.get("price"):
-                        try:
-                            best_amount = float(offer["price"])
-                        except (TypeError, ValueError):
-                            pass
-                        if best_amount and best_amount > 0:
-                            break
-                if best_amount:
-                    break
+        # ── B : LE REPLI « PRIX DU CATALOGUE » EST RETIRE ──────────────────
+        #
+        # Ce bloc lisait `offers.price` — le prix D'AUJOURD'HUI — et l'ECRIVAIT
+        # dans `discount_codes.stripe_amount` via un `update_many`. Un client
+        # ayant paye 250 CHF un pack passe depuis a 270 se serait vu attribuer
+        # 270 retroactivement, et rien n'aurait plus distingue ce montant
+        # fabrique d'un paiement reel.
+        #
+        # Ce n'est pas une crainte theorique : sur les 19 codes portant un
+        # `stripe_amount` en production, 8 seulement sont adosses a une session
+        # Stripe. Les 11 autres ont ete poses a la main ou par cette route.
+        #
+        # La regle est desormais : si le montant ENCAISSE n'existe pas, il reste
+        # inconnu. Un trou se voit et se corrige ; un chiffre invente, non.
+        # Les deux sources conservees ci-dessous sont, elles, des montants
+        # REELLEMENT saisis : `stripe_amount` d'un document jumeau, et
+        # `offer_price` fige a la creation du code.
 
         # Fallback: subscription offer_price
         if not best_amount:
