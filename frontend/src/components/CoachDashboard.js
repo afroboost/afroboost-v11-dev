@@ -3359,7 +3359,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // meme sans preuve », ce qui desactiverait le choix sans le dire.
         social_proof_price: (src.social_proof_price === '' || src.social_proof_price === null || src.social_proof_price === undefined)
           ? null
-          : (parseFloat(src.social_proof_price) || null)
+          : (parseFloat(src.social_proof_price) || null),
+        // LOT A : la case « proposer apres l'essai gratuit ». MEME PIEGE DE
+        // LISTE BLANCHE que tous les champs ci-dessus — absente d'ici, la case
+        // cochee dans le wizard ne partirait jamais, et le `$set:
+        // offer.model_dump()` du PUT la remettrait a `false` en base a chaque
+        // sauvegarde d'offre. `!!` : le backend attend un vrai booleen.
+        first_purchase_eligible: !!src.first_purchase_eligible
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 
@@ -3402,7 +3408,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       duration_minutes: '', location: '', max_participants: '',
       // V256: idem — le lien partenaire ne doit pas se reporter sur l'offre suivante.
       external_link_url: '', external_link_label: '', external_link_enabled: false,
-      social_proof_price: '' // V260
+      social_proof_price: '', // V260
+      // LOT A : sans ce reset, la case « apres l'essai » resterait cochee pour
+      // l'offre suivante — exactement le defaut corrige en V225 et V256.
+      first_purchase_eligible: false
       });
       return true; // V224: enregistrement reussi
     } catch (err) {

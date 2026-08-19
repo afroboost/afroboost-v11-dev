@@ -6,6 +6,7 @@ import React, { useEffect, useMemo, useState, useCallback, useRef, lazy, Suspens
 import axios from "axios";
 import ConditionsParticipation from './ConditionsParticipation'; // ESSAI-5a-1
 import InvitationTemoignage, { enRepos } from './InvitationTemoignage'; // ESSAI-5a-2
+import ConversionApresEssai from './ConversionApresEssai'; // LOT A
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { copyToClipboard } from "../utils/clipboard";
@@ -692,6 +693,15 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             prenom={firstName}
             offerId={data?.offer?.id || ''}
           />
+        )}
+
+        {/* ===== LOT A : la suite, apres un essai REELLEMENT effectue =====
+            `etatEssai === "done"` n'est qu'un INDICE pour eviter un appel
+            inutile : c'est le serveur qui decide de l'eligibilite, des offres
+            et des prix, et qui refuse l'achat le cas echeant. Le composant se
+            rend lui-meme invisible si le serveur ne lui ouvre rien. */}
+        {estEssai && etatEssai === "done" && (
+          <ConversionApresEssai code={subscription.code || accessCode} prenom={firstName} />
         )}
 
         {/* ===== Mes séances restantes ===== */}

@@ -1023,6 +1023,33 @@ export default function OfferWizard({
         </div>
       </div>
 
+      {/* LOT A : la SEULE chose qui autorise cette offre a apparaitre apres une
+          seance decouverte. Rien n'est deduit du prix, du nom ni du nombre de
+          seances : le serveur ne propose QUE ce qui est coche ici, et refuse
+          l'achat de tout le reste dans ce parcours — meme si l'identifiant de
+          l'offre lui est envoye directement.
+          Decochee par defaut : tant que rien n'est declare, l'ecran
+          d'apres-essai ne propose rien du tout. */}
+      <div className="p-4 rounded-lg" style={{ background: '#000', border: `1px solid ${ACCENT_BORDER}` }}>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!form.first_purchase_eligible}
+            onChange={(e) => set('first_purchase_eligible', e.target.checked)}
+            className="w-4 h-4 v224-input" style={{ accentColor: 'var(--primary-color, #D91CD2)' }}
+            data-testid="offer-first-purchase-eligible"
+          />
+          <span className="text-white text-sm font-medium inline-flex items-center gap-1.5">
+            <SvgIcon name="sparkles" size={14} /> Proposer après la séance découverte
+          </span>
+        </label>
+        <p className="text-xs mt-1 ml-7" style={{ color: 'rgba(255,255,255,0.5)' }}>
+          Cette offre sera présentée au participant une fois sa séance découverte
+          réellement effectuée (présence validée au scan). L'ordre d'affichage suit
+          la position de l'offre ; la première est mise en avant.
+        </p>
+      </div>
+
       {/* Description */}
       <div>
         <div className="flex items-center justify-between mb-1">
