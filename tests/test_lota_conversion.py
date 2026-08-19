@@ -322,8 +322,8 @@ def _js(decalage=0):
     return (datetime.now(TZ_CH) + timedelta(days=decalage)).isoweekday() % 7
 
 
-def code_gratuit(code="AFR-ESSAI", email=ANA):
-    return {"code": code, "assignedEmail": email, "coach_id": COACH,
+def code_gratuit(code="AFR-ESSAI", email=ANA, coach_id=COACH):
+    return {"code": code, "assignedEmail": email, "coach_id": coach_id,
             "payment_method": "free", "total_paid": 0}
 
 
@@ -754,6 +754,151 @@ async def scenarios():
     verifier("T16g. `_process_successful_payment` appelle bien ce chainon",
              "_essai2_convertir_si_paye(customer_email, total, payment_method," in _corps
              and "subscription_id)" in _corps, "")
+
+    # ───────── 8. LE FILTRE COACH : SYMETRIQUE, ET SANS FUITE ──────────────
+    # Cause racine mesuree le 19/08/2026 : les 8 offres de production portent
+    # `coach_id` nul et le forfait d'essai comme son code portent la chaine
+    # vide. Le repli « proprietaire de la plateforme » cherchait donc un
+    # `coach_id` que RIEN ne porte : zero offre, quoi que le coach coche.
+    PARTENAIRE = "partenaire@coach.ch"
+
+    def _sans_proprio(oid, nom, prix, forme, **extra):
+        """La MEME offre, dans les trois formes reelles de « sans proprietaire »."""
+        d = {"id": oid, "name": nom, "price": prix, "visible": True,
+             "first_purchase_eligible": True, "position": 1}
+        if forme == "nul":
+            d["coach_id"] = None
+        elif forme == "vide":
+            d["coach_id"] = ""
+        # forme == "absent" : la cle n'existe pas du tout
+        d.update(extra)
+        return d
+
+    def _bac_orphelin(offres):
+        """Essai sans proprietaire — l'etat reel de la production."""
+        # Le CODE aussi porte la chaine vide : c'est l'etat reel releve en
+        # production, et c'est ce qui fait tomber les deux replis de
+        # `_conv_contexte` l'un apres l'autre.
+        return bac(codes=[code_gratuit(coach_id="")], subs=[forfait(coach_id="")],
+                   resas=[resa(validee=True)], courses=[cours_recurrent()],
+                   offers=offres)
+
+    for _forme in ("nul", "vide", "absent"):
+        ns, nsr, base = _bac_orphelin([_sans_proprio("o1", "Pack", 250, _forme)])
+        _r = await ns["conv_offres_premier_achat"](base, "")
+        verifier("T17-%s. essai sans proprietaire + offre coach_id %s -> remonte"
+                 % (_forme, _forme), [o["id"] for o in _r] == ["o1"], str(_r))
+
+    # T18. LA GARDE ANTI-FUITE : une offre explicitement possedee par un
+    #      partenaire n'est JAMAIS projetee pour un essai sans proprietaire.
+    ns, nsr, base = _bac_orphelin([
+        _sans_proprio("o-lib", "Pack maison", 250, "nul"),
+        offre("o-part", "Pack du partenaire", 250, coach_id=PARTENAIRE),
+    ])
+    _r = await ns["conv_offres_premier_achat"](base, "")
+    verifier("T18. essai sans proprietaire -> l'offre d'un partenaire est EXCLUE",
+             [o["id"] for o in _r] == ["o-lib"], str([o["id"] for o in _r]))
+
+    # T19. SYMETRIE INVERSE : un essai qui declare un partenaire ne voit que ses
+    #      offres a lui — jamais le catalogue historique sans proprietaire.
+    ns, nsr, base = bac(
+        codes=[code_gratuit(email=ANA)], subs=[forfait(coach_id=PARTENAIRE)],
+        resas=[resa(validee=True)], courses=[cours_recurrent()],
+        offers=[_sans_proprio("o-lib", "Pack maison", 250, "nul"),
+                offre("o-part", "Pack du partenaire", 250, coach_id=PARTENAIRE)])
+    _r = await ns["conv_offres_premier_achat"](base, PARTENAIRE)
+    verifier("T19. essai d'un partenaire -> uniquement SES offres",
+             [o["id"] for o in _r] == ["o-part"], str([o["id"] for o in _r]))
+
+    # T20. LE SUPER-ADMIN N'EST JAMAIS INJECTE COMME PROPRIETAIRE. C'est le
+    #      defaut exact qui vidait l'ecran : `_conv_contexte` doit rendre la
+    #      chaine vide, pas `SUPER_ADMIN_EMAILS[0]`.
+    ns, nsr, base = _bac_orphelin(catalogue_complet())
+    _code, _forf, _coach = await nsr["_conv_contexte"]("AFR-ESSAI")
+    verifier("T20. proprietaire inconnu -> chaine vide, jamais le super-admin",
+             _coach == "" and _coach != "admin@test", repr(_coach))
+
+    # T20b. ... et le coach REEL, quand il existe, reste retenu tel quel.
+    ns, nsr, base = bac(codes=[code_gratuit()], subs=[forfait(coach_id=PARTENAIRE)],
+                        resas=[resa(validee=True)], courses=[cours_recurrent()],
+                        offers=catalogue_complet())
+    _c, _f, _coach2 = await nsr["_conv_contexte"]("AFR-ESSAI")
+    verifier("T20b. proprietaire declare -> retenu tel quel",
+             _coach2 == PARTENAIRE, repr(_coach2))
+
+    # T20c. Repli sur le CODE quand le forfait ne declare rien.
+    ns, nsr, base = bac(codes=[code_gratuit(coach_id=PARTENAIRE)],
+                        subs=[forfait(coach_id="")],
+                        resas=[resa(validee=True)], courses=[cours_recurrent()],
+                        offers=catalogue_complet())
+    _c, _f, _coach3 = await nsr["_conv_contexte"]("AFR-ESSAI")
+    verifier("T20c. forfait muet, code declarant -> le code fait autorite",
+             _coach3 == PARTENAIRE, repr(_coach3))
+
+    # ───────── 9. LE CATALOGUE REEL DE PRODUCTION, A L'IDENTIQUE ────────────
+    # Formes exactes relevees le 19/08/2026 : `coach_id` nul partout, PULSE en
+    # position 2, « Cours a l'unite » en 3, « Membres » en 2 et non cochee.
+    PROD = [
+        {"id": "a687ce86", "name": "PULSE x10 cours", "price": 250.0, "position": 2,
+         "pack_sessions": 10, "coach_id": None, "first_purchase_eligible": True},
+        {"id": "fea0ab6a", "name": "Cours à l'unité", "price": 30.0, "position": 3,
+         "pack_sessions": None, "coach_id": None, "first_purchase_eligible": True},
+        {"id": "484c4519", "name": "Membres", "price": 150.0, "position": 2,
+         "pack_sessions": 10, "coach_id": None, "first_purchase_eligible": False},
+        {"id": "tshirt", "name": "T-shirt + 1 cours offert!", "price": 59.99,
+         "position": 4, "coach_id": None},
+        {"id": "vidy", "name": "Silent Dance & Fitness au bord du Lac de Vidy",
+         "price": 25.0, "position": None, "coach_id": None},
+        {"id": "lakeside", "name": "SILENT LAKESIDE", "price": 0.0, "position": 0,
+         "coach_id": None, "first_purchase_eligible": True},
+        {"id": "billet", "name": " Afroboost Silent avec Bassi", "price": 0.0,
+         "position": 1, "coach_id": None},
+        {"id": "essai", "name": "Cours d'essai GRATUIT", "price": 0.0, "position": 3,
+         "coach_id": None},
+    ]
+    ns, nsr, base = _bac_orphelin(PROD)
+    _rep = await nsr["get_conversion_apres_essai"]("AFR-ESSAI")
+    _conv = _rep["conversion"]
+    _off = _conv["offers"]
+    verifier("T21. catalogue de production -> EXACTEMENT 2 offres projetees",
+             len(_off) == 2, str([o["id"] for o in _off]))
+    verifier("T21a. PULSE x10 : 250 CHF, 10 seances, recommandee, en premier",
+             _off[0] == {"id": "a687ce86", "name": "PULSE x10 cours", "price": 250.0,
+                         "currency": "CHF", "sessions": 10, "description": "",
+                         "thumbnail": "", "recommended": True}, str(_off[0]))
+    verifier("T21b. Cours a l'unite : 30 CHF, non recommandee, en second",
+             _off[1]["id"] == "fea0ab6a" and _off[1]["price"] == 30.0
+             and _off[1]["recommended"] is False, str(_off[1]))
+    verifier("T21c. Membres 150 ABSENTE de la projection",
+             not any(o["id"] == "484c4519" for o in _off), str(_off))
+    verifier("T21d. aucune autre offre : ni t-shirt, ni event, ni gratuite cochee",
+             {o["id"] for o in _off} == {"a687ce86", "fea0ab6a"}, str(_off))
+    verifier("T21e. l'offre gratuite COCHEE reste ecartee (ce serait un 2e essai)",
+             not any(o["id"] == "lakeside" for o in _off), str(_off))
+
+    # T22. La garde de niveau 2 n'a pas bouge : l'offre 150 reste refusee a la
+    #      caisse, apres correction du filtre coach comme avant.
+    ns, nsr, base = _bac_orphelin(PROD)
+    try:
+        await nsr["post_conversion_checkout"]("AFR-ESSAI", _Requete({"offer_id": "484c4519"}))
+        verifier("T22. offre 150 falsifiee -> toujours refusee apres correctif",
+                 False, "acceptee")
+    except _HTTPException as ex:
+        verifier("T22. offre 150 falsifiee -> toujours refusee apres correctif",
+                 ex.status_code == 403 and not CAISSE, str(ex.status_code))
+
+    # T22b. ... et l'achat legitime passe, lui.
+    ns, nsr, base = _bac_orphelin(PROD)
+    _rep = await nsr["post_conversion_checkout"]("AFR-ESSAI", _Requete({"offer_id": "a687ce86"}))
+    verifier("T22b. PULSE x10 -> caisse existante, 250 CHF du catalogue",
+             _rep.get("checkout_url") and CAISSE[0].items[0].price == 250.0, str(_rep))
+
+    # T23. FAIL CLOSED CONSERVE : aucune offre cochee -> ecran vide, aucun crash.
+    ns, nsr, base = _bac_orphelin([dict(o, first_purchase_eligible=False) for o in PROD])
+    _rep = await nsr["get_conversion_apres_essai"]("AFR-ESSAI")
+    verifier("T23. aucune offre cochee -> ouverte mais vide, aucun crash",
+             _rep["conversion"]["state"] == "open"
+             and _rep["conversion"]["offers"] == [], str(_rep))
 
     # T-code. Un code inconnu ne fabrique pas d'eligibilite.
     ns, nsr, base = base_essai_effectue()

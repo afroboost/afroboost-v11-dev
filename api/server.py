@@ -12778,10 +12778,20 @@ async def subscriber_stripe_checkout(access_code: str, request: Request):
 async def _conv_contexte(access_code: str):
     """(code normalise, forfait, coach proprietaire) — la base des deux routes.
 
-    Le coach vient du forfait, puis du code, puis — a defaut seulement — du
-    proprietaire de la plateforme. Ce dernier repli reprend celui deja retenu
-    pour l'amorcage du catalogue (V241) : `DEFAULT_COACH_ID` n'est l'e-mail
-    d'aucun compte et ne resoudrait aucune offre.
+    Le coach vient du forfait, puis du code. S'IL N'Y EN A NI SUR L'UN NI SUR
+    L'AUTRE, ON REND LA CHAINE VIDE — et surtout pas le proprietaire de la
+    plateforme.
+
+    Le repli precedent le faisait, par analogie avec l'amorcage du catalogue
+    (V241). C'etait faux ICI : mesure du 19/08/2026, les 8 offres de production
+    portent `coach_id` nul et le forfait d'essai comme son code portent la
+    chaine vide. La projection cherchait donc `contact.artboost@gmail.com`, que
+    RIEN ne porte — zero offre, quoi que le coach coche.
+
+    « Vide » ne veut pas dire « pas de filtre » : c'est
+    `conv_offres_premier_achat` qui traduit cette absence en « uniquement les
+    offres sans proprietaire », symetriquement. Le catalogue d'un partenaire
+    identifie n'est jamais projete de ce fait.
     """
     code_upper = (access_code or "").strip().upper()
     if not code_upper:
@@ -12799,8 +12809,6 @@ async def _conv_contexte(access_code: str):
             {"_id": 0, "coach_id": 1},
         )
         coach_id = ((_dc or {}).get("coach_id") or "").strip()
-    if not coach_id:
-        coach_id = SUPER_ADMIN_EMAILS[0]
     return code_upper, forfait, coach_id
 
 

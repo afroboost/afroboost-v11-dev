@@ -1950,8 +1950,13 @@ async def conv_offres_premier_achat(db, coach_id: str = "") -> list:
          chose qui autorise. Absent ou faux -> l'offre n'existe pas pour cet
          ecran. C'est ce qui exclut l'offre « Membres / renouvellement » sans
          jamais nommer son prix ni son libelle.
-      2. le coach proprietaire — on ne propose pas le catalogue d'un autre
-         partenaire a l'occasion d'un essai qui ne le concerne pas.
+      2. le coach proprietaire, SYMETRIQUEMENT — et c'est tout le sujet du
+         repli ci-dessous. Un essai qui declare un coach ne voit QUE les offres
+         de ce coach. Un essai qui n'en declare AUCUN — cas de tout le stock
+         historique — ne voit que les offres qui n'en declarent aucun non plus.
+         Jamais celles d'un partenaire identifie : une offre explicitement
+         possedee n'est pas « sans proprietaire », et la projeter serait une
+         fuite entre catalogues.
       3. un prix STRICTEMENT positif. Un ecran de conversion propose un ACHAT ;
          une offre a 0 CHF y serait un second essai gratuit, que les gardes
          ESSAI-1 / ESSAI-4 refuseraient de toute facon au passage en caisse.
@@ -1977,6 +1982,23 @@ async def conv_offres_premier_achat(db, coach_id: str = "") -> list:
     _cid = (coach_id or "").strip()
     if _cid:
         _q["coach_id"] = _cid
+    else:
+        # PROPRIETAIRE INCONNU -> CATALOGUE SANS PROPRIETAIRE, ET RIEN D'AUTRE.
+        #
+        # Mesure du 19/08/2026 : les 8 offres de production portent `coach_id`
+        # nul, et le forfait d'essai comme son code portent la chaine vide. Le
+        # repli precedent — se rabattre sur le compte proprietaire de la
+        # plateforme — cherchait donc un `coach_id` que RIEN ne porte : la
+        # projection etait vide quoi que le coach coche.
+        #
+        # La regle est desormais SYMETRIQUE : sans proprietaire d'un cote, on ne
+        # regarde que ce qui n'a pas de proprietaire de l'autre. Un partenaire
+        # identifie garde son catalogue pour lui — c'est le sens du `$or`
+        # ci-dessous, qui enumere les trois formes reelles de « sans
+        # proprietaire » et AUCUNE autre. Fail closed conserve : l'offre doit de
+        # toute facon etre cochee.
+        _q["$or"] = [{"coach_id": None}, {"coach_id": ""},
+                     {"coach_id": {"$exists": False}}]
     try:
         _rows = await db["offers"].find(_q, {"_id": 0}).to_list(50)
     except Exception as _err:
