@@ -1082,7 +1082,7 @@ async def validate_reservation(reservation_code: str, request: Request):
     reservation) a partir du seul code de reservation. Mesure du 19/08/2026 sur
     la production : `POST /api/reservations/<code>/validate` sans aucun en-tete
     repondait 404 « Réservation non trouvée » — donc la route etait ATTEINTE,
-    et un vrai code aurait ete valide.
+    et un vrai code aurait ete validé.
     Aucun ecran ne l'appelle (verifie sur tout `frontend/src`) : la fermer ne
     retire donc aucun parcours a personne.
     """
@@ -1090,13 +1090,12 @@ async def validate_reservation(reservation_code: str, request: Request):
     reservation = await db.reservations.find_one({"reservationCode": reservation_code}, {"_id": 0})
     if not reservation:
         raise HTTPException(status_code=404, detail="Réservation non trouvée")
-    _r11_verifier_proprietaire(_scanneur, reservation, "réservation")
     _c9_deja = bool(reservation.get("validated"))   # C9-A : lu AVANT l'écriture
-    await db.reservations.update_one(
-        {"reservationCode": reservation_code},
-        {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
-    )
-    await _c9_presence(reservation, _c9_deja)
+    if _c9_deja:
+        # Comportement inchange : on renvoie le meme succes qu'avant, sans
+        # reecrire l'horodatage ni reemettre d'evenement.
+        return {"success": True, "message": "Réservation validée", "reservation": reservation}
+    await _a0_marquer_presente(reservation, _scanneur)
     return {"success": True, "message": "Réservation validée", "reservation": reservation}
 
 @reservation_router.delete("/reservations/{reservation_id}")
@@ -1362,16 +1361,9 @@ async def staff_validate_reservation(request: Request):
     reservation = await db.reservations.find_one({"reservationCode": code}, {"_id": 0})
     if not reservation:
         raise HTTPException(status_code=404, detail="Réservation non trouvée")
-    _r11_verifier_proprietaire(_scanneur, reservation, "réservation")
     if reservation.get("validated"):
         return {"success": False, "message": "Déjà validé", "userName": reservation.get("userName", ""), "validatedAt": reservation.get("validatedAt", "")}
-    await db.reservations.update_one(
-        {"reservationCode": code},
-        {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
-    )
-    # C9-A : ce chemin refuse déjà les re-scans plus haut (« Déjà validé »),
-    # on arrive donc toujours sur une vraie transition.
-    await _c9_presence(reservation, False)
+    await _a0_marquer_presente(reservation, _scanneur)
     return {"success": True, "message": "Réservation validée", "userName": reservation.get("userName", ""), "courseName": reservation.get("courseName", "")}
 
 
@@ -1411,14 +1403,9 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
             # Valider toutes les réservations non-validées du groupe pour aujourd'hui
             names = []
             for r in today_reservations:
-                _r11_verifier_proprietaire(scanneur, r, "réservation")
-                await db.reservations.update_one(
-                    {"id": r.get("id")},
-                    {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
-                )
-                # C9-A : la requête ci-dessus filtre déjà `validated != True`,
-                # chaque tour de boucle est donc une transition réelle.
-                await _c9_presence(r, False)
+                # R11/A0 : meme helper que partout ailleurs — propriete verifiee,
+                # transition atomique, evenement de presence emis une seule fois.
+                await _a0_marquer_presente(r, scanneur)
                 names.append(r.get("userName", "?"))
             logger.info(f"[QR-SCAN-V213] Groupe {code}: {len(today_reservations)} présences validées")
             return {"success": True, "type": "subscription",
@@ -1457,11 +1444,9 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
                                    "remaining": discount.get("remaining_sessions", 0),
                                    "total": discount.get("total_sessions", 0)}}
         # Valider la réservation
-        _r11_verifier_proprietaire(scanneur, reservation, "réservation")
-        await db.reservations.update_one(
-            {"id": reservation.get("id")},
-            {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
-        )
+        # R11/A0 : propriete verifiee, transition atomique, funnel alimente —
+        # ce chemin n'emettait AUCUN evenement de presence jusqu'ici.
+        await _a0_marquer_presente(reservation, scanneur)
         remaining = discount.get("remaining_sessions", 0)
         total = discount.get("total_sessions", 0)
         # Pour les groupes avec sessions individuelles, lire depuis code_members
@@ -1511,11 +1496,9 @@ async def _validate_user_access_code(code: str, user: dict, forced_course_id: st
                     "reservation": {"userName": reservation.get("userName", user_name),
                                     "reservationCode": reservation.get("reservationCode", code),
                                     "courseName": reservation.get("courseName", "")}}
-        _r11_verifier_proprietaire(scanneur, reservation, "réservation")
-        await db.reservations.update_one(
-            {"id": reservation.get("id")},
-            {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
-        )
+        # R11/A0 : propriete verifiee, transition atomique, funnel alimente —
+        # ce chemin n'emettait AUCUN evenement de presence jusqu'ici.
+        await _a0_marquer_presente(reservation, scanneur)
         logger.info(f"[QR-SCAN-V213] Validé via AFRO code: {user_name} ({code}) -> {reservation.get('courseName')}")
         return {"success": True, "type": "reservation", "message": "Présence validée !",
                 "reservation": {"userName": reservation.get("userName", user_name),
@@ -1636,6 +1619,295 @@ def _r11_verifier_proprietaire(scanneur: str, document: dict, quoi: str = "rése
         raise HTTPException(status_code=403, detail=R11_MSG_AUTRE_COACH)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# A0 — LE SCAN A L'ENTREE DIT LA VERITE SUR LA PRESENCE
+#
+# Constat du 19 aout 2026, sur la production : 9 reservations validees sur 132,
+# la derniere le 12 avril. Le scan ne marchait plus, et trois defauts distincts
+# s'y ajoutaient. A0 repare le CHEMIN, il ne change AUCUNE regle metier :
+# ni le prix, ni les credits, ni ESSAI, ni les rappels, ni les notifications.
+#
+#   A0-1  Une reservation DEJA PAYEE se valide sans redemander un credit.
+#         Reserver depuis l'espace debite deja la seance : au moment du scan,
+#         un essai (1 seance) est donc a 0 et le portier repondait « Plus de
+#         seances disponibles ». La presence etait INVALIDABLE pour tout
+#         participant ayant reserve a l'avance — mesure du 19/08 : 3 des 4
+#         reservations a venir etaient dans ce cas, toutes payantes.
+#
+#   A0-2  Le QR de l'e-mail de confirmation devient scannable. Il encode une
+#         URL (`https://afroboost.com/chat?code=...&res=...`) ; le scanner du
+#         tableau de bord lui appliquait /AF[A-Z0-9]{6,}/i, dont la premiere
+#         correspondance est « AFROBOOST » — pris dans le nom de domaine. Tout
+#         scan d'un QR d'e-mail partait donc en 404. La normalisation est faite
+#         ICI, cote serveur, et non dans les scanners : il y en a DEUX
+#         (CoachDashboard et ChatWidget, ce dernier n'analysant rien du tout),
+#         plus la saisie manuelle. Un seul endroit, un seul comportement.
+#
+#   A0-3  La presence entre enfin dans le funnel. `_c9_presence` n'etait appele
+#         par AUCUN des deux chemins reellement empruntes par le scanner,
+#         contrairement a ce qu'affirmait sa docstring.
+#
+# HORS PERIMETRE, ASSUME ET CONSIGNE : `/qr/scan-validate` n'a toujours AUCUNE
+# AUTHENTIFICATION (dette R11). A0 ne l'aggrave pas — voir la note detaillee
+# au-dessus de la route.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Tolerance de rattachement quand une personne a PLUSIEURS reservations le meme
+# jour. Reprise a l'identique de la detection de cours deja en service plus bas
+# (« diff <= 90 »), pour que le scan ne connaisse qu'une seule tolerance.
+A0_TOLERANCE_MIN = 90
+
+
+def _a0_maintenant_ch():
+    """L'instant present a l'heure suisse, meme convention que le reste de ce
+    fichier (UTC+2 en dur).
+
+    ⚠️ Cette convention est FAUSSE en heure d'hiver (UTC+1) : elle decale d'une
+    heure la frontiere de minuit. Le defaut est ANTERIEUR a A0 et present dans
+    quatre autres endroits de ce fichier ; le corriger changerait le jour
+    retenu pour des scans nocturnes, ce qui n'est pas le sujet d'A0. On reprend
+    donc la convention existante a l'identique plutot que d'en introduire une
+    seconde, et le point est consigne comme anomalie.
+    """
+    from datetime import timedelta as _td
+    return datetime.now(timezone(_td(hours=2)))
+
+
+def _a0_code_depuis_qr(texte: str) -> str:
+    """Le code porte par un QR, qu'il soit brut ou enrobe dans une URL.
+
+    Ne touche a RIEN d'autre : un code brut (`AFR-XXXXXX`, `AF1234ABCD`,
+    `CODE::slug`) ressort identique. Seul un texte qui commence par http(s) est
+    analyse, et uniquement pour y lire un parametre.
+
+    Ordre de preference — du plus precis au plus large :
+      `res`  identifiant de LA reservation (donc de L'OCCURRENCE) -> CAS A ;
+      `qr`   convention V156 des QR d'abonnement ;
+      `code` code d'acces de l'abonne -> CAS B.
+
+    Le repli est le texte d'origine : si l'URL ne porte aucun de ces trois
+    parametres, on ne devine pas — le scan echouera avec le message habituel,
+    ce qui reste preferable a une validation approximative.
+    """
+    _t = (texte or "").strip()
+    if not _t.lower().startswith(("http://", "https://")):
+        return _t
+    try:
+        from urllib.parse import urlparse, parse_qs
+        _params = parse_qs(urlparse(_t).query)
+    except Exception as _err:
+        logger.warning("[A0] URL de QR illisible : %s", _err)
+        return _t
+    for _cle in ("res", "qr", "code"):
+        _valeurs = _params.get(_cle) or []
+        if _valeurs and str(_valeurs[0]).strip():
+            _extrait = str(_valeurs[0]).strip()
+            logger.info("[A0] QR-URL : parametre '%s' retenu -> '%s'", _cle, _extrait)
+            return _extrait
+    logger.warning("[A0] QR-URL sans parametre exploitable — texte conserve tel quel")
+    return _t
+
+
+def _a0_horodatage(valeur):
+    """La date/heure d'une reservation, en aware UTC, ou None si illisible.
+
+    Les dates de cette base sont tantot des chaines ISO naives
+    (« 2026-08-22T18:30:00 », l'heure locale du cours), tantot des chaines avec
+    fuseau, tantot des `datetime`. Une valeur naive est lue comme suisse, pour
+    rester coherent avec `_a0_maintenant_ch`.
+    """
+    from datetime import timedelta as _td
+    _tz_ch = timezone(_td(hours=2))
+    if isinstance(valeur, datetime):
+        _d = valeur if valeur.tzinfo else valeur.replace(tzinfo=_tz_ch)
+        return _d.astimezone(timezone.utc)
+    try:
+        _d = datetime.fromisoformat(str(valeur).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if _d.tzinfo is None:
+        _d = _d.replace(tzinfo=_tz_ch)
+    return _d.astimezone(timezone.utc)
+
+
+def _a0_est_aujourdhui(valeur) -> bool:
+    """Cette reservation concerne-t-elle la journee suisse en cours ?
+
+    C'est la garde qui protege l'invariant « ne pas valider une autre
+    occurrence du meme cours » : un cours recurrent du mercredi produit une
+    reservation par occurrence, chacune avec son propre code. Sans cette garde,
+    scanner l'e-mail du 19/08 le 26/08 validerait la seance du 19/08.
+    """
+    _d = _a0_horodatage(valeur)
+    if _d is None:
+        return False
+    from datetime import timedelta as _td
+    _tz_ch = timezone(_td(hours=2))
+    return _d.astimezone(_tz_ch).date() == _a0_maintenant_ch().date()
+
+
+async def _a0_marquer_presente(reservation: dict, scanneur: str = "") -> bool:
+    """Pose la presence sur UNE reservation. Renvoie True si c'est une
+    transition reelle (non-validee -> validee), False si elle l'etait deja.
+
+    PRISE DE DROIT ATOMIQUE, et non « lire puis ecrire ». Le filtre porte la
+    condition `validated != True` : deux scans simultanes du meme QR — un
+    double-tap, deux telephones a la porte — n'en font gagner qu'un seul. Le
+    perdant lit `matched_count == 0` et ne produit AUCUN second effet : pas de
+    second `validatedAt`, pas de second evenement de funnel. C'est le motif
+    deja en service pour le verrou de renouvellement (V447) et pour
+    `launch_campaign`.
+
+    A0-3 : l'evenement de presence est emis ICI, donc exactement une fois par
+    transition, et jamais sur un re-scan.
+    """
+    # R11 : la propriete se verifie AVANT l'ecriture, sur le document reel.
+    # `scanneur` vide = appelant interne qui a deja verifie (aucun aujourd'hui).
+    if scanneur:
+        _r11_verifier_proprietaire(scanneur, reservation, "réservation")
+    _id = reservation.get("id")
+    _quand = datetime.now(timezone.utc).isoformat()
+    if not _id:
+        # Donnee ancienne sans `id` : on retombe sur le code de reservation,
+        # qui est unique. Meme condition, meme atomicite.
+        _filtre = {"reservationCode": reservation.get("reservationCode"),
+                   "validated": {"$ne": True}}
+    else:
+        _filtre = {"id": _id, "validated": {"$ne": True}}
+    _res = await db.reservations.update_one(
+        _filtre, {"$set": {"validated": True, "validatedAt": _quand}})
+    if not getattr(_res, "matched_count", 0):
+        return False
+    await _c9_presence(reservation, False)
+    return True
+
+
+async def _a0_reservations_du_jour(subscription: dict, code: str, member_slug: str = None) -> list:
+    """Les reservations de CET abonnement pour la journee en cours.
+
+    DEUX PASSES, de la plus precise a la plus large — et jamais l'inverse :
+      1. le lien explicite : `subscriptionId`, ou le code porte par la
+         reservation (`discountCode` / `promoCode`) ;
+      2. a defaut seulement, l'adresse e-mail.
+    L'ordre compte : une personne peut detenir DEUX forfaits (un essai et un
+    pack). Chercher d'abord par e-mail validerait la reservation rattachee a
+    l'autre forfait. La passe 2 n'existe que pour les reservations anciennes,
+    qui ne portent ni `subscriptionId` ni code (37 des 132 reservations de
+    production portent `subscriptionId`).
+
+    La fenetre de la requete couvre TROIS jours (hier, aujourd'hui, demain) et
+    le tri fin est fait en Python par `_a0_est_aujourdhui`. Raison : le champ
+    `datetime` existe en DEUX formats en base — « 2026-08-22T18:30:00 » (heure
+    locale du cours) et « 2026-03-11T09:21:01.887Z » (UTC). Un simple prefixe
+    de date sur le second se trompe de jour pour les seances de fin de soiree.
+    """
+    from datetime import timedelta as _td
+    _maintenant = _a0_maintenant_ch()
+    _jours = [(_maintenant + _td(days=_d)).strftime("%Y-%m-%d") for _d in (-1, 0, 1)]
+    _fenetre = {"datetime": {"$regex": "^(" + "|".join(re.escape(_j) for _j in _jours) + ")"}}
+
+    _precis = []
+    _sid = str(subscription.get("id") or "").strip()
+    if _sid:
+        _precis.append({"subscriptionId": _sid})
+    _code = (code or "").strip()
+    if _code:
+        _motif = {"$regex": f"^{re.escape(_code)}$", "$options": "i"}
+        _precis.append({"discountCode": _motif})
+        _precis.append({"promoCode": _motif})
+
+    async def _chercher(criteres):
+        _q = dict(_fenetre)
+        _q["$or"] = criteres
+        if member_slug:
+            _q["member_slug"] = {"$regex": f"^{re.escape(member_slug)}$", "$options": "i"}
+        _rows = await db.reservations.find(_q, {"_id": 0}).to_list(20)
+        return [r for r in _rows if _a0_est_aujourdhui(r.get("datetime"))]
+
+    _trouvees = await _chercher(_precis) if _precis else []
+    if _trouvees:
+        return _trouvees
+
+    _email = (subscription.get("email") or "").lower().strip()
+    if not _email:
+        return []
+    return await _chercher([{"userEmail": {"$regex": f"^{re.escape(_email)}$", "$options": "i"}}])
+
+
+def _a0_choisir_occurrence(reservations: list):
+    """LA reservation que ce scan concerne, ou None si le choix est ambigu.
+
+    Une seule candidate -> c'est elle, sans condition d'heure : le staff scanne
+    a la porte, la personne n'a qu'une seance ce jour-la, il n'y a rien a
+    departager. Imposer une fenetre ici refuserait une validation faite un peu
+    apres la fin du cours — le cas le plus banal.
+
+    Plusieurs candidates (deux cours le meme jour) -> on prend la plus proche
+    de l'instant du scan, et seulement si elle tombe dans la tolerance deja en
+    service pour la detection de cours. Au-dela, on ne devine pas : on renvoie
+    None et le chemin historique reprend la main.
+    """
+    _valides = [r for r in (reservations or []) if _a0_horodatage(r.get("datetime")) is not None]
+    if not _valides:
+        return None
+    if len(_valides) == 1:
+        return _valides[0]
+    _maintenant = _a0_maintenant_ch().astimezone(timezone.utc)
+    _classees = sorted(
+        _valides,
+        key=lambda r: abs((_a0_horodatage(r.get("datetime")) - _maintenant).total_seconds()))
+    _ecart_min = abs((_a0_horodatage(_classees[0].get("datetime")) - _maintenant).total_seconds()) / 60
+    if _ecart_min > A0_TOLERANCE_MIN:
+        logger.info("[A0] %d reservations aujourd'hui, la plus proche a %d min — trop loin, "
+                    "on laisse le chemin historique decider", len(_valides), int(_ecart_min))
+        return None
+    return _classees[0]
+
+
+async def _a0_presence_deja_reservee(subscription: dict, code: str, member_slug: str = None,
+                                     scanneur: str = ""):
+    """A0-1 — VALIDER UNE PRESENCE DEJA PAYEE, SANS REDEMANDER DE CREDIT.
+
+    Renvoie la reponse du scan, ou None pour laisser le chemin historique
+    (detection du cours, creation de la reservation, debit) reprendre la main.
+
+    LE DEFAUT QUE CECI CORRIGE. Reserver depuis l'espace abonne DEBITE la
+    seance immediatement. Au moment du scan, un essai gratuit (1 seance) est
+    donc a 0, et le portier repondait « Plus de seances disponibles » — la
+    presence etait invalidable pour QUICONQUE avait reserve a l'avance. Mesure
+    du 19/08/2026 : 3 des 4 reservations a venir, toutes payantes.
+
+    Le credit a deja ete pris a la reservation : constater la presence n'en
+    consomme pas un second. Aucune ecriture sur `subscriptions`, aucune
+    creation de reservation — uniquement `validated` / `validatedAt` sur la
+    reservation qui existe deja.
+    """
+    _candidates = await _a0_reservations_du_jour(subscription, code, member_slug)
+    _resa = _a0_choisir_occurrence(_candidates)
+    if not _resa:
+        return None
+
+    _nom = _resa.get("userName") or subscription.get("name") or "Abonné"
+    _restant = subscription.get("remaining_sessions", 0)
+    _total = subscription.get("total_sessions", _restant)
+    _corps = {
+        "success": True, "type": "subscription",
+        "reservation": {"userName": _nom,
+                        "reservationCode": _resa.get("reservationCode", code),
+                        "courseName": _resa.get("courseName", "")},
+        "subscriber": {"name": _nom, "remaining": _restant, "total": _total},
+    }
+    if _resa.get("validated"):
+        # Re-scan du meme QR : aucun second effet metier, aucun evenement.
+        _corps["message"] = "Déjà validé"
+        return _corps
+    await _a0_marquer_presente(_resa, scanneur)
+    logger.info("[A0] Presence validee sans debit : %s -> %s (%s)",
+                code, _resa.get("courseName"), _resa.get("reservationCode"))
+    _corps["message"] = "Présence validée (réservation déjà payée)"
+    return _corps
+
+
 @reservation_router.post("/qr/scan-validate")
 async def qr_scan_validate(request: Request):
     """V176/V213d: Scan QR coach — gère TOUS les types de codes."""
@@ -1656,7 +1928,12 @@ async def _qr_scan_validate_inner(request: Request):
     _scanneur = await _r11_scanneur(request)
 
     body = await request.json()
-    code = body.get("code", "").strip().upper()
+    # A0-2 : le QR peut porter une URL (celui de l'e-mail de confirmation en
+    # porte une). On en extrait le code AVANT toute normalisation de casse :
+    # `.upper()` d'abord aurait casse les parametres d'URL sensibles a la casse.
+    _brut = body.get("code", "") or ""
+    _issu_url = str(_brut).strip().lower().startswith(("http://", "https://"))
+    code = _a0_code_depuis_qr(_brut).strip().upper()
     if not code:
         raise HTTPException(status_code=400, detail="Code requis")
 
@@ -1680,9 +1957,30 @@ async def _qr_scan_validate_inner(request: Request):
             return {"success": True, "type": "reservation", "message": "Déjà validé",
                     "reservation": {"userName": reservation.get("userName", ""), "reservationCode": code,
                                     "courseName": reservation.get("courseName", ""), "validatedAt": reservation.get("validatedAt", "")}}
-        _r11_verifier_proprietaire(_scanneur, reservation, "réservation")
-        await db.reservations.update_one({"reservationCode": code},
-            {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}})
+        # A0-2 : UNE PRESENCE SCANNEE SE CONSTATE LE JOUR MEME.
+        #
+        # PORTEE STRICTEMENT LIMITEE AU CHEMIN QU'A0 OUVRE (`_issu_url`), et
+        # c'est delibere : un code saisi ou scanne BRUT garde exactement le
+        # comportement d'avant, y compris la validation tardive d'une seance
+        # d'hier — un geste volontaire du coach, que rien ne doit lui retirer.
+        #
+        # Ce qui change, c'est le QR de l'e-mail. Tant qu'il etait inexploitable
+        # (il partait en « AFROBOOST », cf. l'en-tete A0), le cas ne se posait
+        # pas ; le reparer l'ouvre. Or un cours RECURRENT produit une
+        # reservation par occurrence, chacune avec SON e-mail et SON code :
+        # presenter a la porte l'e-mail du 19/08 le 26/08 marquerait presente la
+        # seance du 19/08 — exactement l'invariant « ne pas valider une autre
+        # occurrence du meme cours ». Le refus est explicite : le staff doit
+        # comprendre sans lire les journaux, et peut toujours saisir le code a
+        # la main s'il veut vraiment valider une autre date.
+        if _issu_url and not _a0_est_aujourdhui(reservation.get("datetime")):
+            _jour = str(reservation.get("datetime") or "")[:10] or "une autre date"
+            logger.info("[A0] Scan refuse : reservation %s datee du %s, pas d'aujourd'hui", code, _jour)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cette réservation concerne le {_jour}, pas aujourd'hui.")
+        # A0-3 : transition atomique + evenement de presence, exactement une fois.
+        await _a0_marquer_presente(reservation, _scanneur)
         return {"success": True, "type": "reservation", "message": "Réservation validée",
                 "reservation": {"userName": reservation.get("userName", ""), "reservationCode": code,
                                 "courseName": reservation.get("courseName", "")}}
@@ -1693,9 +1991,23 @@ async def _qr_scan_validate_inner(request: Request):
     # périmé) et refusait l'entrée d'un abonné à jour.
     from api.routes.shared import lire_abonnement_par_code as _v391_lire
     subscription = await _v391_lire(db, code)
-    # V393 — le scan a l'entree DEBITE une seance : expiré ou épuisé -> refus net,
-    # affiché au staff qui scanne. Sans ce garde, un forfait périmé passait la porte.
     if subscription:
+        # A0-1 — LA PRESENCE D'ABORD, LE CREDIT ENSUITE.
+        #
+        # Si une reservation existe deja pour aujourd'hui, la seance a ete
+        # debitee au moment de la reserver : on constate la presence et on
+        # s'arrete la. Aucun credit relu, aucun credit consomme.
+        _presence = await _a0_presence_deja_reservee(subscription, code, member_slug_from_qr,
+                                                     _scanneur)
+        if _presence is not None:
+            return _presence
+
+        # V393 — INCHANGE, mais desormais a sa vraie place : on ne l'atteint
+        # que si le scan s'apprete a CREER une reservation, donc a DEBITER.
+        # C'est la raison d'etre du garde, ecrite dans son commentaire d'origine
+        # (« le scan a l'entree DEBITE une seance »). L'appliquer avant la
+        # recherche ci-dessus refusait a l'entree des gens dont la seance etait
+        # deja payee et deja decomptee.
         from api.routes.shared import forfait_utilisable as _v393_ok
         _ok, _pourquoi = _v393_ok(subscription, 1)
         if not _ok:
@@ -1766,11 +2078,8 @@ async def _qr_scan_validate_inner(request: Request):
         }, {"_id": 0})
         if direct_res:
             if not direct_res.get("validated"):
-                _r11_verifier_proprietaire(_scanneur, direct_res, "réservation")
-                await db.reservations.update_one(
-                    {"id": direct_res.get("id")},
-                    {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
-                )
+                # R11/A0 : meme helper — propriete, atomicite, funnel.
+                await _a0_marquer_presente(direct_res, _scanneur)
                 logger.info(f"[QR-V213] CAS E: Réservation trouvée directement par code '{code}'")
                 return {"success": True, "type": "reservation", "message": "Présence validée !",
                         "reservation": {"userName": direct_res.get("userName", ""), "reservationCode": direct_res.get("reservationCode", code),
@@ -1840,10 +2149,13 @@ async def _qr_scan_validate_inner(request: Request):
     existing = await db.reservations.find_one({"userEmail": user_email, "courseId": course_id, "datetime": {"$regex": today_str}}, {"_id": 0})
 
     if existing:
+        # A0-1/A0-3 : ce filet reste en place (aucun code retire). Il n'est
+        # atteint que si `_a0_presence_deja_reservee` a renonce — deux seances
+        # le meme jour et aucune dans la tolerance. La validation passe par le
+        # meme helper atomique, pour que l'evenement de presence parte ici aussi
+        # et exactement une fois.
         if not existing.get("validated"):
-            _r11_verifier_proprietaire(_scanneur, existing, "réservation")
-            await db.reservations.update_one({"id": existing.get("id")},
-                {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}})
+            await _a0_marquer_presente(existing, _scanneur)
         return {"success": True, "type": "subscription", "message": "Présence validée (résa déjà existante)",
                 "reservation": {"userName": user_name, "reservationCode": existing.get("reservationCode", code), "courseName": course_name},
                 "subscriber": {"name": user_name, "remaining": remaining, "total": subscription.get("total_sessions", remaining)}}
@@ -1868,6 +2180,12 @@ async def _qr_scan_validate_inner(request: Request):
     }
     await db.reservations.insert_one(new_reservation)
     logger.info(f"[QR-SCAN-V176] Création résa + déduction: {user_email} -> {course_name} ({new_remaining} restantes)")
+    # A0-3 : ce chemin cree une reservation DEJA validee — c'est une presence
+    # constatee, elle doit entrer dans le funnel comme les autres. On appelle
+    # `_c9_presence` directement (et non `_a0_marquer_presente`) : le document
+    # vient d'etre insere avec `validated: True`, il n'y a pas de transition a
+    # arbitrer. `_c9_presence` n'echoue jamais et ne bloque rien.
+    await _c9_presence(new_reservation, False)
 
     return {"success": True, "type": "subscription", "message": "Réservation créée + séance déduite",
             "reservation": {"userName": user_name, "reservationCode": new_res_code, "courseName": course_name},
