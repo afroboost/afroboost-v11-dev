@@ -31,8 +31,13 @@ def cours_du_moment(coach_id="coach.a@test", cid="cours-1"):
     fait que cette suite vaut sur les DEUX commits.
     """
     _m = B.datetime.now(B.TZ_CH)
+    # A1/A1b : `courses.weekday` est en convention JAVASCRIPT (Dim=0), comme en
+    # base. Cette fixture posait `_m.weekday()`, convention PYTHON (Lun=0) —
+    # elle portait donc le decalage d'un jour que le lot A1 corrige. `%w` de la
+    # bibliotheque standard donne exactement la convention JS, sans passer par
+    # le code teste.
     return {"id": cid, "name": "Silent Mercredi", "time": _m.strftime("%H:%M"),
-            "weekday": _m.weekday(), "visible": True, "archived": False,
+            "weekday": int(_m.strftime("%w")), "visible": True, "archived": False,
             "coach_id": coach_id}
 
 

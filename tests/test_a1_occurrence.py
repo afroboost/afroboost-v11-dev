@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tests._banc_qr import (  # noqa: E402
     RESULTATS, TZ_CH, verifier, construire, faux_shared, faux_api_server,
-    scanner, resa, forfait, cours, _Base, COACH_TEST, _HTTPException,
+    scanner, resa, forfait, cours, aujourdhui, _Base, COACH_TEST, _HTTPException,
 )
 
 
@@ -345,6 +345,150 @@ def test_source():
              " const " not in bloc and " let " not in bloc and "=>" not in bloc, bloc[:120])
 
 
+
+# ═════ 11. A1b — UNE RESERVATION HISTORIQUE NE REDEVIENT PAS UNE SEANCE ═════
+#
+# Constate en production le 19/08/2026 : le scan de BASSBOOSTX-11 repondait
+# « Deja valide — Diner canadien », alors que « Diner canadien » est un cours
+# PONCTUEL du 09/08. A1 protegeait la CREATION ; l'APPARIEMENT — quelles
+# reservations existantes comptent comme presence du jour — n'avait aucune garde.
+async def test_a1b_garde_appariement():
+    js = _js_aujourdhui()
+    du_jour = cours(id="c-jour", name="Silent du jour", weekday=js, time=_heure(0))
+    # Le cas reel : un ponctuel du passe, TOUJOURS present, TOUJOURS visible,
+    # TOUJOURS non archive — c'est exactement l'etat de « Diner canadien ».
+    diner = cours(id="c-diner", name="Dîner canadien", weekday=js,
+                  date=_jour_iso(-10), time="12:00", visible=True, archived=False)
+    archive = cours(id="c-arch", name="Session Cardio", weekday=js, archived=True)
+    masque = cours(id="c-masq", name="Cours masqué", weekday=js, time=_heure(0), visible=False)
+    sub = forfait(remaining_sessions=5, total_sessions=10, used_sessions=5, coach_id=COACH_TEST)
+    faux_shared(abonnement=sub)
+    faux_api_server(COACH_TEST)
+
+    async def filtre(db, resas):
+        return await construire(db)["_a1b_occurrences_reelles"](resas)
+
+    # ── le cas terrain, a l'identique ───────────────────────────────────────
+    db = _base([du_jour, diner], sub=sub)
+    fupq = resa(code="AFRO-FUPQ", courseId="c-diner", courseName="Dîner canadien",
+                datetime=aujourdhui("10:16"), validated=True, promoCode="BASSBOOSTX-11")
+    verifier("11. AFRO-FUPQ / « Dîner canadien » : ECARTEE du scan du jour",
+             await filtre(db, [fupq]) == [], "elle est encore candidate")
+
+    # ── et le scan complet ne la ressort plus ──────────────────────────────
+    db = _base([du_jour, diner], sub=sub, resas=[dict(fupq)])
+    ns = construire(db)
+    r = await scanner(ns, "AFR-ESSAI1")
+    verifier("11b. le scan ne repond plus « Déjà validé » sur un cours d'un autre jour",
+             r.get("message") != "Déjà validé", str(r.get("message")))
+    verifier("11c. il bascule sur le cours qui a REELLEMENT lieu aujourd'hui",
+             db.reservations.docs[-1].get("courseId") == "c-jour",
+             str(db.reservations.docs[-1].get("courseId")))
+    verifier("11d. la reservation historique n'est PAS modifiee",
+             db.reservations.docs[0].get("reservationCode") == "AFRO-FUPQ"
+             and db.reservations.docs[0].get("validated") is True, "")
+    verifier("11e. AUCUNE suppression : elle reste en base pour l'historique",
+             any(x.get("reservationCode") == "AFRO-FUPQ" for x in db.reservations.docs), "")
+
+    # ── les autres motifs d'exclusion ──────────────────────────────────────
+    db = _base([du_jour, diner, archive], sub=sub)
+    verifier("12. cours ARCHIVE : reservation ecartee",
+             await filtre(db, [resa(code="AF-ARCH", courseId="c-arch")]) == [], "")
+    verifier("12b. cours ABSENT de la collection : reservation ecartee",
+             await filtre(db, [resa(code="AF-ABS", courseId="c-supprime-pour-de-bon")]) == [], "")
+    # 13 : une occurrence PRECEDENTE du meme cours recurrent. Attention au piege
+    # de raisonnement : un cours hebdomadaire A BIEN LIEU il y a 7 jours — ce
+    # n'est donc pas la garde d'occurrence qui l'ecarte, mais le filtre du JOUR
+    # en amont. On le verifie donc la ou il agit : dans la route complete.
+    _vieille = resa(code="AF-VIEUX", courseId="c-jour", validated=False,
+                    datetime=_jour_iso(-7) + "T18:30:00")
+    _vieille_validee = resa(code="AF-VLD", courseId="c-jour", validated=True,
+                            datetime=_jour_iso(-30) + "T18:30:00")
+    db13 = _base([du_jour], sub=forfait(remaining_sessions=5, total_sessions=10,
+                                        used_sessions=5, coach_id=COACH_TEST),
+                 resas=[_vieille, _vieille_validee])
+    faux_shared(abonnement=db13.subscriptions.docs[0])
+    ns13 = construire(db13)
+    await scanner(ns13, "AFR-ESSAI1")
+    verifier("13. occurrence PRECEDENTE du meme cours : jamais validee par le scan du jour",
+             _vieille["validated"] is False, "")
+    verifier("13b. ancienne reservation DEJA VALIDEE : ne ressort pas comme seance actuelle",
+             db13.reservations.docs[-1].get("reservationCode") not in ("AF-VIEUX", "AF-VLD"),
+             str(db13.reservations.docs[-1].get("reservationCode")))
+
+    # ── ce qui doit PASSER ─────────────────────────────────────────────────
+    db = _base([du_jour, masque], sub=sub)
+    ok = await filtre(db, [resa(code="AF-OK", courseId="c-jour")])
+    verifier("14. cours actif + reservation du jour : conservee",
+             len(ok) == 1 and ok[0]["reservationCode"] == "AF-OK", str(ok))
+    masquee = await filtre(db, [resa(code="AF-MASQ", courseId="c-masq")])
+    verifier("15. DECISION : `visible: false` n'invalide PAS une reservation legitime",
+             len(masquee) == 1, "un cours masque a ete traite comme invalide")
+    sans_cid = await filtre(db, [resa(code="AF-SANSCID", courseId="")])
+    verifier("16. reservation SANS courseId : conservee (repli assume, 58/133 en prod)",
+             len(sans_cid) == 1, str(sans_cid))
+
+    # ── ponctuel du jour + recurrent du jour ───────────────────────────────
+    ponctuel = cours(id="c-ponct", name="Laff Festival", date=_jour_iso(), time="19:00",
+                     weekday=(js + 3) % 7)
+    db = _base([du_jour, ponctuel], sub=sub)
+    verifier("17. cours PONCTUEL du jour : conservee (la date prime sur weekday)",
+             len(await filtre(db, [resa(code="AF-PONCT", courseId="c-ponct",
+                                        datetime=aujourdhui("19:00"))])) == 1, "")
+    verifier("17b. cours RECURRENT du jour : conservee",
+             len(await filtre(db, [resa(code="AF-REC", courseId="c-jour")])) == 1, "")
+
+    # ── aucun repli catalogue, aucun debit sur une seance historique ───────
+    db = _base([diner], sub=sub, resas=[dict(fupq)])
+    ns = construire(db)
+    try:
+        await scanner(ns, "AFR-ESSAI1")
+        verifier("18. aucun cours du jour : 422 attendu", False, "accepte !")
+    except _HTTPException as e:
+        d = e.detail if isinstance(e.detail, dict) else {}
+        verifier("18. aucun cours reel aujourd'hui : 422, aucun repli catalogue",
+                 e.status_code == 422 and d.get("courses") == [], str(e.detail))
+    verifier("18b. AUCUN debit sur une seance historique",
+             not db.subscriptions.ecritures, str(db.subscriptions.ecritures))
+    verifier("18c. AUCUNE reservation creee", len(db.reservations.docs) == 1, "")
+    verifier("18d. la reservation historique reste intacte",
+             db.reservations.docs[0].get("validated") is True, "")
+
+
+# ═════ 12. LE CODE SOURCE — LA GARDE EST BIEN AUX DEUX ENDROITS ═════════════
+def test_a1b_source():
+    import io as _io
+    racine = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = _io.open(os.path.join(racine, "api", "routes", "reservation_routes.py"),
+                   encoding="utf-8").read()
+    verifier("19. la garde est appliquee au chemin d'appariement (A0)",
+             "return await _a1b_occurrences_reelles(_dujour)" in src, "")
+    verifier("19b. ... et au dernier recours (CAS E)",
+             "_cas_e = await _a1b_occurrences_reelles(_cas_e)" in src, "")
+    # On analyse le CODE EXECUTE, docstring et commentaires exclus : la
+    # docstring DECRIT la regle (« `visible` n'est pas une garde ») et
+    # contiendrait sinon tous les mots qu'on cherche a ne pas trouver.
+    import ast as _ast
+    _fn = next(n for n in _ast.walk(_ast.parse(src))
+               if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+               and n.name == "_a1b_occurrences_reelles")
+    _lignes = src.splitlines(True)
+    _debut = _fn.body[1].lineno - 1 if _ast.get_docstring(_fn) else _fn.body[0].lineno - 1
+    corps = "".join(_lignes[_debut:_fn.end_lineno])
+    code = "\n".join(l for l in corps.splitlines() if not l.strip().startswith("#"))
+    verifier("20. PREUVE : `visible` n'est utilise nulle part comme garde",
+             "visible" not in code, [l for l in code.splitlines() if "visible" in l][:1])
+    verifier("20b. la garde repose sur `archived` et sur l'occurrence reelle",
+             'get("archived")' in code and "_a1_a_lieu_aujourdhui(" in code, "")
+    verifier("21. LECTURE SEULE : la garde n'ecrit rien",
+             not any(x in code for x in ("insert_one", "update_one", "update_many",
+                                         "delete_one", "delete_many")), "")
+    verifier("22. une seule requete groupee, jamais un find_one par ligne",
+             code.count("db.courses.find(") == 1 and "find_one" not in code, "")
+    verifier("23. aucun statut d'annulation invente (le champ n'existe pas en base)",
+             "cancelled" not in code and '"status"' not in code, "")
+
+
 async def principal():
     test_convention_jour()
     test_a_lieu_aujourdhui()
@@ -355,6 +499,8 @@ async def principal():
     await test_route_chemin_legitime()
     await test_route_auto_detection()
     await test_non_regression_a0()
+    await test_a1b_garde_appariement()
+    test_a1b_source()
     test_source()
 
 

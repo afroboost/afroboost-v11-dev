@@ -176,13 +176,25 @@ class _Base:
         self.reservations = _Collection()
         self.subscriptions = _Collection()
         self.discount_codes = _Collection()
-        self.courses = _Collection()
         self.code_members = _Collection()
         self.users = _Collection()
         # B : le catalogue. Present pour PROUVER qu'il n'est plus lu comme
         # source de prix historique — le test le remplit et verifie qu'aucun de
         # ses prix ne ressort.
         self.offers = _Collection()
+        # A1b : le monde par defaut contient le cours designe par `resa()`, et
+        # il a lieu AUJOURD'HUI. Les deux fixtures vont ensemble : une
+        # reservation qui pointe vers un `courseId` decrit forcement un cours
+        # qui existe. Sans lui, la garde d'appariement ecarterait — a juste
+        # titre — toutes les reservations du banc d'essai.
+        # `weekday` en convention JAVASCRIPT (Dim=0), comme en base ; `%w` de la
+        # bibliotheque standard donne exactement cette convention.
+        self.courses = _Collection([{
+            "id": "cours-1", "name": "Silent Mercredi",
+            "weekday": int(datetime.now(TZ_CH).strftime("%w")),
+            "time": "18:30", "visible": True, "archived": False,
+            "coach_id": COACH_TEST,
+        }])
 
     def __getitem__(self, nom):
         """Certaines routes accedent aux collections par `db["nom"]`."""
@@ -233,6 +245,8 @@ def construire(db):
                 # la (`obligatoire=False`) : R11 et A0 restent testables seuls.
                 "_a1_jour_js", "_a1_a_lieu_aujourdhui", "_a1_datetime_occurrence",
                 "_a1_etiquette", "_a1_occurrences_du_jour",
+                # A1b — la garde d'appariement, absente des commits anterieurs
+                "_a1b_occurrences_reelles",
                 "_qr_scan_validate_inner"):
         _code = extraire(nom, obligatoire=False)
         if _code:

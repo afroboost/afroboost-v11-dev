@@ -1888,6 +1888,118 @@ async def _a0_marquer_presente(reservation: dict, scanneur: str = "") -> bool:
     return True
 
 
+async def _a1b_occurrences_reelles(reservations: list) -> list:
+    """A1b — NE GARDE QUE LES RESERVATIONS QUI DESIGNENT UNE SEANCE REELLE.
+
+    ═══════════════════════════════════════════════════════════════════════
+    CE QUE CECI CORRIGE — constate en production le 19/08/2026.
+    ═══════════════════════════════════════════════════════════════════════
+    Le coach scanne `BASSBOOSTX-11` : le portier repond « Deja valide — Diner
+    canadien ». Or « Diner canadien » est un cours PONCTUEL du 2026-08-09 : il
+    n'a pas lieu ce jour-la, et n'aura plus jamais lieu.
+
+    La reservation appariee (`AFRO-FUPQ`) est datee du 19/08 parce qu'elle a ete
+    creee le matin meme par l'ANCIEN scanner, qui datait la reservation de
+    l'instant du scan au lieu de l'occurrence — c'est exactement le defaut A1-3.
+    A1 empeche d'en creer une nouvelle, mais ne protegeait que le chemin de
+    CREATION. Le chemin d'APPARIEMENT — quelles reservations existantes comptent
+    comme la presence du jour — n'avait, lui, aucune garde : il ne regardait que
+    le lien au forfait et la date portee par la reservation.
+
+    Consequence generale, independante de ce residu : n'importe quelle
+    reservation datee d'aujourd'hui restait candidate meme si son cours avait
+    ete archive, ou n'avait pas lieu ce jour-la.
+
+    ═══════════════════════════════════════════════════════════════════════
+    LA REGLE
+    ═══════════════════════════════════════════════════════════════════════
+    Une reservation reste candidate si — ET SEULEMENT SI elle porte un
+    `courseId` — le cours designe :
+      * existe encore dans la collection ;
+      * n'est pas `archived` ;
+      * A LIEU le jour de la reservation (`_a1_a_lieu_aujourdhui`, le meme
+        helper que le chemin de creation : une seule definition de « ce cours a
+        lieu ce jour-la » dans tout le fichier).
+
+    `visible` N'EST PAS UNE GARDE — DECISION EXPLICITE. C'est un drapeau
+    d'AFFICHAGE, pas de cycle de vie : masquer un cours de la vitrine ne doit
+    pas rendre invalides les reservations deja prises dessus. Mesure du
+    19/08/2026 : 7 cours sur 22 sont invisibles, et AUCUNE reservation n'en
+    designe un — la garde n'aurait donc rien filtre aujourd'hui, mais elle
+    aurait pu invalider demain une seance parfaitement legitime.
+
+    `courseId` ABSENT -> ON GARDE. Repli assume et mesure : 58 reservations sur
+    133 n'en portent aucune (`chat_widget_abonne` 39, `website` 18 — ces deux
+    parcours ne l'ecrivent pas). Fermer ici retirerait la validation de presence
+    a tout ce stock, pour un gain nul : sans identifiant de cours, il n'y a
+    aucune occurrence a verifier. C'est le SEUL ecart au « refus par defaut »,
+    et il est nomme.
+
+    ═══════════════════════════════════════════════════════════════════════
+    CE QUE CECI NE FAIT PAS
+    ═══════════════════════════════════════════════════════════════════════
+    Aucune ecriture, aucune suppression, aucun nettoyage. Les reservations
+    ecartees restent INTACTES en base et continuent d'apparaitre dans
+    l'historique, la liste des reservations, les transactions et le suivi de
+    l'abonne. Elles cessent seulement d'etre proposees comme SEANCE ACTUELLE.
+
+    Il n'existe aujourd'hui AUCUN statut d'annulation sur `reservations` (ni
+    `status`, ni `cancelled`, ni `deleted` — 0 document sur 133 en porte un) :
+    la garde « reservation non annulee » est donc impossible a ecrire ici, et
+    n'est pas inventee. Manque consigne, hors de ce lot.
+
+    UNE SEULE REQUETE pour toute la liste (`$in` groupe), jamais un `find_one`
+    par ligne — meme regle que partout ailleurs dans ce projet.
+    """
+    if not reservations:
+        return reservations
+    _ids = sorted({(r.get("courseId") or "").strip()
+                   for r in reservations if (r.get("courseId") or "").strip()})
+    if not _ids:
+        return reservations
+    try:
+        _docs = await db.courses.find(
+            {"id": {"$in": _ids}},
+            {"_id": 0, "id": 1, "name": 1, "weekday": 1, "date": 1, "archived": 1},
+        ).to_list(200)
+    except Exception as _err:
+        # Cours illisibles : on ne durcit pas sur une panne de lecture. Le
+        # comportement d'avant A1b reprend la main, il n'est pas pire.
+        logger.warning("[A1b] Cours illisibles, garde ignoree — %s: %s",
+                       type(_err).__name__, _err)
+        return reservations
+    _par_id = {c.get("id"): c for c in _docs if c.get("id")}
+
+    _gardees = []
+    for _r in reservations:
+        _cid = (_r.get("courseId") or "").strip()
+        if not _cid:
+            _gardees.append(_r)                       # repli assume, cf. docstring
+            continue
+        _c = _par_id.get(_cid)
+        if _c is None:
+            logger.info("[A1b] %s ecartee : cours %s absent de la collection",
+                        _r.get("reservationCode"), _cid)
+            continue
+        if _c.get("archived"):
+            logger.info("[A1b] %s ecartee : cours « %s » archive",
+                        _r.get("reservationCode"), _c.get("name"))
+            continue
+        _d = _a0_horodatage(_r.get("datetime"))
+        if _d is None:
+            logger.info("[A1b] %s ecartee : date illisible", _r.get("reservationCode"))
+            continue
+        from datetime import timedelta as _td_a1b
+        _jour_local = _d.astimezone(timezone(_td_a1b(hours=2)))
+        _jour_iso = _jour_local.strftime("%Y-%m-%d")
+        if not _a1_a_lieu_aujourdhui(_c, _jour_iso, _a1_jour_js(_jour_local)):
+            logger.info("[A1b] %s ecartee : « %s » n'a pas lieu le %s",
+                        _r.get("reservationCode"), _c.get("name"), _jour_iso)
+            continue
+        _gardees.append(_r)
+    return _gardees
+
+
 async def _a0_reservations_du_jour(subscription: dict, code: str, member_slug: str = None) -> list:
     """Les reservations de CET abonnement pour la journee en cours.
 
@@ -1928,7 +2040,13 @@ async def _a0_reservations_du_jour(subscription: dict, code: str, member_slug: s
         if member_slug:
             _q["member_slug"] = {"$regex": f"^{re.escape(member_slug)}$", "$options": "i"}
         _rows = await db.reservations.find(_q, {"_id": 0}).to_list(20)
-        return [r for r in _rows if _a0_est_aujourdhui(r.get("datetime"))]
+        _dujour = [r for r in _rows if _a0_est_aujourdhui(r.get("datetime"))]
+        # A1b : une reservation du jour ne suffit pas — encore faut-il qu'elle
+        # designe une seance qui a REELLEMENT lieu. Filtre ICI, donc sur les
+        # DEUX passes : si la passe precise ne laisse que des candidates
+        # invalides, la passe e-mail reprend la main, comme si elle n'avait rien
+        # trouve. C'est le comportement voulu.
+        return await _a1b_occurrences_reelles(_dujour)
 
     _trouvees = await _chercher(_precis) if _precis else []
     if _trouvees:
@@ -2312,13 +2430,21 @@ async def _qr_scan_validate_inner(request: Request):
         from datetime import timedelta as _td_e
         _swiss = timezone(_td_e(hours=2))
         _today = datetime.now(_swiss).strftime("%Y-%m-%d")
-        direct_res = await db.reservations.find_one({
+        # A1b : ce dernier recours cherchait UNE reservation du jour portant ce
+        # code, sans rien verifier d'autre — exactement le trou repare plus haut
+        # dans le chemin d'appariement. On lit desormais les candidates, on les
+        # passe par la meme garde, et on retient la premiere qui designe une
+        # seance reelle. `find_one` est devenu `find(...).to_list(20)` : meme
+        # requete, meme filtre, seule la garde s'ajoute.
+        _cas_e = await db.reservations.find({
             "$or": [
                 {"discountCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}},
                 {"promoCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}}
             ],
             "datetime": {"$regex": _today}
-        }, {"_id": 0})
+        }, {"_id": 0}).to_list(20)
+        _cas_e = await _a1b_occurrences_reelles(_cas_e)
+        direct_res = _cas_e[0] if _cas_e else None
         if direct_res:
             if not direct_res.get("validated"):
                 # R11/A0 : meme helper — propriete, atomicite, funnel.
