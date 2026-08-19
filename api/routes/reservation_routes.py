@@ -659,6 +659,104 @@ class Reservation(ReservationBase):
     coach_id: Optional[str] = None
 
 # === ENDPOINTS RÉSERVATIONS ===
+# ═══════════════════════════════════════════════════════════════════════════
+# A — L'ORIGINE ECONOMIQUE D'UNE RESERVATION, EN LECTURE SEULE
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# La carte du tableau de bord affichait le client, le cours, le code et le
+# statut — mais ni l'offre utilisee, ni le moindre montant. `totalPrice` vaut 0
+# sur toute reservation issue d'un forfait (c'est normal : la seance a ete payee
+# a l'achat du pack, pas a la reservation), si bien que le prix ne s'affichait
+# JAMAIS.
+#
+# L'argent ne vit pas sur la reservation. Il vit sur les deux documents jumeaux
+# qui portent le droit — le forfait (`subscriptions`) et le code
+# (`discount_codes`) — relies par `subscriptionId` et par `promoCode`.
+#
+# DEUX REQUETES POUR TOUTE LA PAGE, jamais une par ligne : la regle « pas de
+# find_one dans une boucle » de ce projet vaut ici comme ailleurs. La casse est
+# geree par COLLATION Mongo et non par une regex construite depuis une valeur
+# stockee — `SHANNON2026` en base est ecrit `Shannon2026` sur son code, les deux
+# doivent se rejoindre sans jamais fabriquer de motif.
+#
+# CE BLOC N'ECRIT RIEN. Il ne lit pas non plus `offers` : le prix du catalogue
+# est celui d'AUJOURD'HUI, l'afficher en face d'un achat d'hier reecrirait
+# l'histoire.
+_A_COLLATION_INSENSIBLE = {"locale": "en", "strength": 2}
+
+
+async def _a_enrichir_finance(reservations: list) -> list:
+    """Ajoute a chaque reservation un objet `finance`. Jamais d'exception."""
+    if not reservations:
+        return reservations
+    try:
+        from api.routes.shared import a_finance_du_droit as _a_resoudre
+
+        _ids, _codes = set(), set()
+        for r in reservations:
+            _sid = (r.get("subscriptionId") or "").strip()
+            if _sid:
+                _ids.add(_sid)
+            for _c in (r.get("promoCode"), r.get("discountCode")):
+                _c = (str(_c or "")).strip()
+                if _c:
+                    _codes.add(_c.upper())
+
+        _subs, _dcs = [], []
+        if _ids or _codes:
+            _ou = []
+            if _ids:
+                _ou.append({"id": {"$in": sorted(_ids)}})
+            if _codes:
+                _ou.append({"code": {"$in": sorted(_codes)}})
+            _subs = await db.subscriptions.find(
+                {"$or": _ou},
+                {"_id": 0, "id": 1, "code": 1, "offer_name": 1, "offer_price": 1,
+                 "renewal_price": 1, "renewal_sessions": 1, "total_sessions": 1,
+                 "remaining_sessions": 1, "used_sessions": 1, "status": 1,
+                 "montant_encaisse": 1, "devise": 1, "origine_paiement": 1,
+                 "seances_a_l_achat": 1},
+            ).collation(_A_COLLATION_INSENSIBLE).to_list(500)
+        if _codes:
+            _dcs = await db.discount_codes.find(
+                {"code": {"$in": sorted(_codes)}},
+                {"_id": 0, "code": 1, "offerName": 1, "maxUses": 1, "stripe_amount": 1,
+                 "total_paid": 1, "paid_currency": 1, "currency": 1, "session_id": 1,
+                 "transaction_id": 1, "payment_method": 1, "source": 1,
+                 "montant_encaisse": 1, "devise": 1, "origine_paiement": 1,
+                 "seances_a_l_achat": 1},
+            ).collation(_A_COLLATION_INSENSIBLE).to_list(500)
+
+        _par_id = {s.get("id"): s for s in _subs if s.get("id")}
+        _par_code = {}
+        for s in _subs:
+            _k = (str(s.get("code") or "")).strip().upper()
+            if _k:
+                _par_code.setdefault(_k, s)
+        _codes_idx = {}
+        for d in _dcs:
+            _k = (str(d.get("code") or "")).strip().upper()
+            if _k:
+                _codes_idx.setdefault(_k, d)
+
+        for r in reservations:
+            _sid = (r.get("subscriptionId") or "").strip()
+            _cle = (str(r.get("promoCode") or r.get("discountCode") or "")).strip().upper()
+            _sub = _par_id.get(_sid) if _sid else None
+            if _sub is None and _cle:
+                _sub = _par_code.get(_cle)
+            if not _cle and _sub:
+                _cle = (str(_sub.get("code") or "")).strip().upper()
+            r["finance"] = _a_resoudre(_sub, _codes_idx.get(_cle), r)
+        return reservations
+    except Exception as _err:
+        # Une reservation reste lisible sans son bloc financier. Ce qui n'est
+        # jamais acceptable, c'est de faire echouer la liste du coach pour ca.
+        logger.warning("[A] Enrichissement financier ignore — %s: %s",
+                       type(_err).__name__, _err)
+        return reservations
+
+
 @reservation_router.get("/reservations")
 async def get_reservations(request: Request, page: int = 1, limit: int = 20, all_data: bool = False):
     """Get reservations with pagination - Filtré par coach_id"""
@@ -710,6 +808,11 @@ async def get_reservations(request: Request, page: int = 1, limit: int = 20, all
         # V191: Casques Silent Disco + accompagnants (visible dans le dashboard coach)
         "headphone_status": 1, "headphone_updated_at": 1,
         "guests": 1, "guest_headphones": 1,
+        # A : sans ces trois champs, la liste paginee — l'appel PRINCIPAL du
+        # tableau de bord — ne pouvait meme pas savoir a quel forfait une
+        # reservation se rattachait. Le badge « (abo lie) » de la carte, ecrit
+        # depuis longtemps, ne s'affichait donc jamais sur cet ecran.
+        "subscriptionId": 1, "discountCode": 1, "courseId": 1,
     }
     if all_data:
         reservations = await db.reservations.find(base_query, {"_id": 0}).sort("createdAt", -1).to_list(10000)
@@ -717,6 +820,9 @@ async def get_reservations(request: Request, page: int = 1, limit: int = 20, all
         skip = (page - 1) * limit
         reservations = await db.reservations.find(base_query, projection).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
     total_count = await db.reservations.count_documents(base_query)
+    # A : l'origine economique de chaque ligne — deux requetes pour toute la
+    # page, aucune ecriture, aucune lecture du catalogue.
+    await _a_enrichir_finance(reservations)
     for res in reservations:
         if isinstance(res.get('createdAt'), str):
             res['createdAt'] = datetime.fromisoformat(res['createdAt'].replace('Z', '+00:00'))

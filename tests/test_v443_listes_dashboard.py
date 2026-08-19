@@ -92,6 +92,15 @@ def construire(docs):
         "is_super_admin": lambda e: (e or "").lower().strip() == ADMIN,
         "reservation_router": type("r", (), {"get": staticmethod(lambda *a, **k: (lambda f: f))}),
     }
+    # LOT A : `get_reservations` appelle desormais `_a_enrichir_finance`, qui
+    # ajoute l'origine economique de chaque ligne. Ce test-ci mesure le
+    # CHARGEMENT et l'isolation par coach, pas la finance : on extrait donc le
+    # helper reel (il ne fait aucune ecriture) pour que la route s'execute telle
+    # qu'en production, sans rien simuler de ce qu'elle produit.
+    exec(compile(extraire("_a_enrichir_finance"), "<v443-extrait>", "exec"), bac)
+    bac["logger"] = type("L", (), {"info": lambda *a, **k: None,
+                                   "warning": lambda *a, **k: None,
+                                   "error": lambda *a, **k: None})()
     exec(compile(extraire("get_reservations"), "<v443-extrait>", "exec"), bac)
     return bac, base
 

@@ -28389,16 +28389,77 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
 
     all_items = []
 
+    # A — L'ARGENT SE RESOUT UNE FOIS, POUR LES TROIS TYPES DE LIGNES.
+    #
+    # Reservations, souscriptions et paiements repondaient chacun a leur facon a
+    # « combien ? » : un `totalPrice` a 0, un zero ECRIT EN DUR, et une division
+    # par 100 sur un champ absent de 171 documents sur 182. Trois reponses
+    # differentes pour la meme question, dans le meme tableau.
+    #
+    # Un seul resolveur, partage avec l'onglet Reservations, y repond desormais —
+    # et repond « non enregistre » quand c'est la verite, plutot que « 0 ».
+    from api.routes.shared import (
+        a_finance_du_droit as _a_finance,
+        a_montant_transaction as _a_montant_tx,
+        a_libelle_montant as _a_libelle,
+    )
+
     # 1. Reservations (from reservations collection)
     res_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email} if caller_email else {"coach_id": "__no_access__"}
     reservations = await db.reservations.find(res_query, {"_id": 0}).sort("createdAt", -1).to_list(200)
+
+    # A : les documents porteurs de l'argent, en DEUX requetes pour tout
+    # l'ecran — jamais une par ligne. Collation Mongo pour la casse (le code
+    # « SHANNON2026 » est stocke « Shannon2026 » sur son document jumeau).
+    _tx_cles = set()
+    for _r in reservations:
+        for _c in (_r.get("promoCode"), _r.get("discountCode")):
+            _c = (str(_c or "")).strip().upper()
+            if _c:
+                _tx_cles.add(_c)
+    _tx_collation = {"locale": "en", "strength": 2}
+    _tx_subs_tous = await db.subscriptions.find(
+        {} if is_super_admin(caller_email) else {"$or": [
+            {"coach_id": caller_email}, {"coach_id": {"$exists": False}}]},
+        {"_id": 0}).to_list(1000)
+    _tx_subs_par_id = {x.get("id"): x for x in _tx_subs_tous if x.get("id")}
+    _tx_subs_par_code = {}
+    for _x in _tx_subs_tous:
+        _k = (str(_x.get("code") or "")).strip().upper()
+        if _k:
+            _tx_subs_par_code.setdefault(_k, _x)
+    for _x in _tx_subs_tous:
+        _k = (str(_x.get("code") or "")).strip().upper()
+        if _k:
+            _tx_cles.add(_k)
+    _tx_codes = {}
+    if _tx_cles:
+        _tx_docs = await db.discount_codes.find(
+            {"code": {"$in": sorted(_tx_cles)}}, {"_id": 0}
+        ).collation(_tx_collation).to_list(1000)
+        for _d in _tx_docs:
+            _k = (str(_d.get("code") or "")).strip().upper()
+            if _k:
+                _tx_codes.setdefault(_k, _d)
+
     for r in reservations:
         r["_tx_type"] = "reservation"
         r["_tx_date"] = r.get("createdAt", "")
         r["_tx_name"] = r.get("userName", "Inconnu")
         r["_tx_email"] = r.get("userEmail", "")
         r["_tx_offer"] = r.get("courseName") or r.get("offerName", "")
-        r["_tx_price"] = r.get("totalPrice", 0)
+        # A : une reservation issue d'un forfait porte `totalPrice: 0` — la
+        # seance a ete payee a l'ACHAT DU PACK, pas ici. Afficher ce 0 laissait
+        # croire a une vente a zero franc. On resout donc l'origine economique
+        # (le forfait, le code) comme partout ailleurs, et `_tx_est_droit_utilise`
+        # dit a l'interface qu'il s'agit d'un droit CONSOMME, pas d'une recette.
+        _r_cle = (str(r.get("promoCode") or r.get("discountCode") or "")).strip().upper()
+        _r_sub = _tx_subs_par_id.get((r.get("subscriptionId") or "").strip()) \
+            or _tx_subs_par_code.get(_r_cle)
+        _r_fin = _a_finance(_r_sub, _tx_codes.get(_r_cle), r)
+        r["_tx_price"] = _r_fin.get("montant")
+        r["_tx_finance"] = _r_fin
+        r["_tx_est_droit_utilise"] = bool(_r_sub or _r_cle)
         r["_tx_status"] = "valid\u00e9" if r.get("validated") else "en attente"
         all_items.append(r)
 
@@ -28412,18 +28473,22 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
     # documents anterieurs a V237 n'ont pas encore ete migres, et les exclure
     # ferait DISPARAITRE d'un coup l'historique de chaque coach. Une fois
     # /admin/migrate-subscriptions-coach-id passe, ce cas ne se presente plus.
+    #
+    # A : `sub_query` a disparu — les souscriptions sont chargees UNE fois en
+    # tete de route, avec ce filtre a l'identique (super-admin : tout ; coach :
+    # les siennes plus les documents anterieurs a V237). Le laisser ici en
+    # double aurait fait deux sources pour un meme filtre, donc une divergence
+    # en attente. `pay_query` reste, il ne concerne que les paiements.
     if is_super_admin(caller_email):
-        sub_query = {}
         pay_query = {"payment_status": "paid"}
-    elif caller_email:
-        _legacy_or = [{"coach_id": caller_email}, {"coach_id": {"$exists": False}}]
-        sub_query = {"$or": _legacy_or}
-        pay_query = {"payment_status": "paid", "$or": _legacy_or}
     else:
-        sub_query = {"id": "__no_access__"}
-        pay_query = {"id": "__no_access__"}
+        _legacy_or = [{"coach_id": caller_email}, {"coach_id": {"$exists": False}}]
+        pay_query = {"payment_status": "paid", "$or": _legacy_or}
 
-    subscriptions = await db.subscriptions.find(sub_query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # A : deja chargees plus haut avec EXACTEMENT le meme filtre — on ne
+    # repose pas la question a Mongo. Le tri par date reste celui d'avant.
+    subscriptions = sorted(_tx_subs_tous, key=lambda x: str(x.get("created_at") or ""),
+                           reverse=True)[:200]
     for s in subscriptions:
         # Avoid duplicates: skip if a reservation already exists with this subscription ID
         sub_id = s.get("id", "")
@@ -28435,7 +28500,20 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
         s["_tx_name"] = s.get("name", "Inconnu")
         s["_tx_email"] = s.get("email", "")
         s["_tx_offer"] = s.get("offer_name", "")
-        s["_tx_price"] = 0
+        # A — CE ZERO ETAIT ECRIT EN DUR.
+        #
+        # Toute souscription s'affichait « 0 CHF » dans l'onglet Transactions,
+        # y compris un pack a 250 CHF paye par Stripe, alors que le montant
+        # etait EN BASE (`renewal_price`, pose par le webhook depuis
+        # `session.amount_total`). Le coach voyait donc zero recette sur ses
+        # ventes de forfaits.
+        #
+        # `_a_finance` resout le montant depuis la souscription ET son code, et
+        # dit s'il est PROUVE. Quand rien n'est enregistre, `_tx_price` reste
+        # None — surtout pas 0, qui est un montant reel signifiant « offert ».
+        _s_fin = _a_finance(s, _tx_codes.get((str(s.get("code") or "")).strip().upper()))
+        s["_tx_price"] = _s_fin.get("montant")
+        s["_tx_finance"] = _s_fin
         s["_tx_status"] = s.get("status", "active")
         s["_tx_sessions"] = f"{s.get('remaining_sessions', 0)}/{s.get('total_sessions', 0)}"
         s["_tx_code"] = s.get("code", "")
@@ -28452,6 +28530,11 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
         except (TypeError, ValueError):
             s["_tx_total"] = 0
         s["_tx_sub_id"] = sub_id
+        # A : « seances achetees » et « seances restantes » sont deux choses
+        # differentes, et le coach doit voir les deux. `_tx_total` (donc
+        # `total_sessions`) grandit a chaque reconduction : il ne dit PAS combien
+        # a ete achete. Le denominateur fige, lui, ne bouge jamais.
+        s["_tx_seances_achetees"] = _s_fin.get("seances_achetees")
         if not already_in_reservations:
             all_items.append(s)
 
@@ -28469,7 +28552,28 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
         p["_tx_name"] = meta.get("customer_name", "Client")
         p["_tx_email"] = meta.get("customer_email", "")
         p["_tx_offer"] = meta.get("product_name", "Paiement Stripe")
-        p["_tx_price"] = (p.get("amount_total", 0) or 0) / 100
+        # A — CHF ou centimes : la table est etablie par les DONNEES.
+        #
+        # Cette ligne lisait `amount_total` — reellement en centimes — mais ce
+        # champ n'existe que sur 11 documents sur 182 : il est pose APRES coup
+        # par l'enrichissement V224 du webhook. Partout ailleurs elle affichait
+        # 0, alors que `amount` (en CHF, prix UNITAIRE) etait bien present sur
+        # les 182. `a_montant_transaction` traite les deux cas explicitement,
+        # champ par champ, sans jamais deviner d'apres l'ordre de grandeur.
+        _p_montant, _p_prouve = _a_montant_tx(p)
+        p["_tx_price"] = _p_montant
+        p["_tx_finance"] = {
+            "montant": _p_montant,
+            "devise": (p.get("currency") or "chf").upper(),
+            "montant_prouve": _p_prouve,
+            "montant_source": "stripe" if _p_prouve else "checkout",
+            "origine_paiement": p.get("payment_method") or "stripe",
+            "offre": meta.get("product_name", ""),
+            "gratuit": _p_montant == 0 and _p_prouve,
+            "seances_achetees": None,
+            "valeur_par_seance": None,
+        }
+        p["_tx_finance"]["libelle"] = _a_libelle(p["_tx_finance"])
         p["_tx_status"] = "pay\u00e9"
         all_items.append(p)
 

@@ -1613,3 +1613,234 @@ def b_champs_depuis_code(code_doc: dict, seances=None) -> dict:
     except (TypeError, ValueError):
         pass
     return _champs
+
+
+# ============================================================================
+# LOT A — LIRE L'ARGENT SANS JAMAIS L'INVENTER
+# ============================================================================
+#
+# Ce lot n'ecrit RIEN. Il repond a une seule question, pour une reservation, une
+# transaction ou une souscription : « combien, et comment le sait-on ? »
+#
+# TROIS REPONSES POSSIBLES, ET TROIS SEULEMENT :
+#   * un montant PROUVE   — adosse a une session Stripe, une transaction de
+#                           checkout, ou une declaration d'encaissement (lot B) ;
+#   * un montant DECLARE  — saisi a la main autrefois, ou tarif fige a la
+#                           creation du code : plausible, mais rien ne prouve
+#                           qu'il a ete encaisse. Il est affiche AVEC sa reserve ;
+#   * RIEN                — et alors on ecrit « Montant non enregistre ».
+#
+# « CHF 0 » N'EST JAMAIS UNE REPONSE PAR DEFAUT. Zero est un montant REEL : il
+# veut dire offert ou essai gratuit, et n'est rendu que lorsque la gratuite est
+# etablie. Un trou se dit, il ne s'arrondit pas.
+#
+# AUCUNE LECTURE DU CATALOGUE. `offers.price` est le prix D'AUJOURD'HUI ; le
+# faire apparaitre en face d'un achat d'hier reecrirait l'histoire. Le catalogue
+# n'est jamais consulte ici — c'est la garantie du point G de l'audit.
+
+# ── CHF ou centimes : la table, etablie par les DONNEES, pas par l'intuition ──
+#
+# Mesure du 19/08/2026 sur `payment_transactions` (11 documents portant les deux
+# champs) : amount=150.0 / amount_total=15000, amount=2.0 / amount_total=200,
+# amount=10.0 / amount_total=4000 (4 unites a 10 CHF).
+# On en tire DEUX faits, et on n'extrapole pas au-dela :
+#   `amount`       — CHF, et c'est le prix UNITAIRE (V225) ;
+#   `amount_total` — CENTIMES, et c'est le total REELLEMENT encaisse par Stripe.
+# Tous les autres champs monetaires de la base sont en CHF :
+#   discount_codes.stripe_amount / total_paid, subscriptions.renewal_price /
+#   offer_price, reservations.totalPrice, et `montant_encaisse` (lot B).
+# Aucune conversion n'est appliquee « au cas ou » : seul `amount_total` est
+# divise par 100, parce que lui seul est en centimes.
+A_CHAMPS_EN_CENTIMES = ("amount_total",)
+
+
+def a_nombre(valeur):
+    """Un float, ou None. Ne confond jamais 0 et « absent »."""
+    if valeur is None or valeur is True or valeur is False:
+        return None
+    if isinstance(valeur, str) and not valeur.strip():
+        return None
+    try:
+        return round(float(valeur), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def a_montant_transaction(tx: dict) -> tuple:
+    """Le montant d'une `payment_transactions`, en CHF, et sa fiabilite.
+
+    Renvoie `(montant, prouve)`. `amount_total` vient du webhook Stripe : c'est
+    ce que Stripe a REELLEMENT encaisse, donc une preuve. `amount` est le prix
+    unitaire annonce AU MOMENT du checkout — il faut le multiplier par la
+    quantite, et il ne prouve pas l'encaissement (165 transactions sur 182 sont
+    restees `pending`, donc jamais payees).
+    """
+    if not isinstance(tx, dict):
+        return (None, False)
+    _cts = a_nombre(tx.get("amount_total"))
+    if _cts is not None:
+        return (round(_cts / 100.0, 2), True)
+    _unit = a_nombre(tx.get("amount"))
+    if _unit is None:
+        return (None, False)
+    try:
+        _q = int(tx.get("quantity") or 1)
+    except (TypeError, ValueError):
+        _q = 1
+    return (round(_unit * max(1, _q), 2), False)
+
+
+# ── Le denominateur d'une valeur par seance ─────────────────────────────────
+#
+# Il doit etre le nombre de seances ACHETEES, fige au moment de la transaction.
+# `total_sessions` est EXCLU : la reconduction automatique (V195) l'incremente
+# (`$inc`), si bien qu'apres un renouvellement il decrit un cumul, pas un achat.
+# `remaining_sessions` est exclu pour la meme raison, en pire : les boutons +/-
+# du tableau de bord (V236) le modifient a la main.
+# Restent, par ordre de fiabilite decroissante :
+#   `seances_a_l_achat`  (lot B) — ecrit une seule fois, jamais reecrit ;
+#   `renewal_sessions`            — pose a l'achat par les moteurs de paiement,
+#                                   jamais reecrit (verifie : la reconduction ne
+#                                   touche que `total_sessions`) ;
+#   `maxUses` du code             — pose a la creation, mais MODIFIABLE ensuite
+#                                   par le formulaire d'edition. D'ou le « ≈ »
+#                                   systematique sur la valeur par seance.
+def a_seances_achetees(souscription: dict, code: dict):
+    for _src, _cle in ((souscription, "seances_a_l_achat"),
+                       (souscription, "renewal_sessions"),
+                       (code, "seances_a_l_achat"),
+                       (code, "maxUses")):
+        try:
+            _n = int((_src or {}).get(_cle) or 0)
+        except (TypeError, ValueError):
+            _n = 0
+        if _n > 0:
+            return _n
+    return None
+
+
+def a_est_gratuit_prouve(code: dict) -> bool:
+    """La gratuite est-elle ETABLIE ? Meme signal qu'ESSAI-1/ESSAI-2.
+
+    On ne se fie ni au nom de l'offre (« Essai gratuit! » a deja derive) ni a
+    l'absence de montant, qui ne prouve rien.
+    """
+    if not isinstance(code, dict):
+        return False
+    if b_normaliser_origine(code.get("origine_paiement")) == "offert":
+        return True
+    if code.get("source") == "social_proof":
+        return True
+    return code.get("payment_method") == "free" and code.get("total_paid") == 0
+
+
+# Les sources de montant, de la plus sure a la moins sure. `prouve` dit si un
+# encaissement est ADOSSE a une trace (session Stripe, transaction, declaration
+# explicite) — c'est lui qui autorise le calcul d'une valeur par seance.
+A_LIBELLES_SOURCE = {
+    "encaissement": "encaissement déclaré",
+    "stripe": "paiement Stripe",
+    "checkout": "paiement en ligne",
+    "saisie_ancienne": "montant saisi à la main",
+    "tarif_creation": "tarif de l'offre à la création — pas une preuve de paiement",
+    "reservation": "montant porté par la réservation",
+}
+
+
+def a_finance_du_droit(souscription: dict, code: dict, reservation: dict = None) -> dict:
+    """Ce qu'on sait de l'argent derriere UN droit d'acces. Lecture pure.
+
+    `souscription` et `code` sont les deux documents jumeaux qui portent le
+    droit ; `reservation` n'est utilisee qu'en dernier recours, pour les achats
+    directs qui ne creent ni l'un ni l'autre.
+    """
+    _sub = souscription if isinstance(souscription, dict) else {}
+    _code = code if isinstance(code, dict) else {}
+    _resa = reservation if isinstance(reservation, dict) else {}
+
+    _res = {
+        "offre": (_sub.get("offer_name") or _code.get("offerName")
+                  or _resa.get("offerName") or ""),
+        "code": (_sub.get("code") or _code.get("code") or _resa.get("promoCode")
+                 or _resa.get("discountCode") or ""),
+        "montant": None,
+        "devise": (_sub.get("devise") or _code.get("devise")
+                   or _code.get("paid_currency") or _code.get("currency")
+                   or B_DEVISE_DEFAUT),
+        "montant_source": "",
+        "montant_prouve": False,
+        "origine_paiement": "",
+        "gratuit": False,
+        "seances_achetees": a_seances_achetees(_sub, _code),
+        "valeur_par_seance": None,
+    }
+
+    # 1. La declaration du lot B — la seule qui porte sa provenance avec elle.
+    for _doc in (_sub, _code):
+        _origine = b_normaliser_origine(_doc.get("origine_paiement"))
+        _montant = a_nombre(_doc.get("montant_encaisse"))
+        if _origine and _montant is not None:
+            _res.update(montant=_montant, montant_source="encaissement",
+                        montant_prouve=True, origine_paiement=_origine,
+                        gratuit=(_montant == 0))
+            _res["devise"] = _doc.get("devise") or _res["devise"]
+            break
+
+    # 2. Un paiement en ligne ADOSSE a sa session / sa transaction.
+    if not _res["montant_source"]:
+        _stripe = a_nombre(_code.get("stripe_amount"))
+        _paid = a_nombre(_code.get("total_paid"))
+        if _stripe is not None and _code.get("session_id"):
+            _res.update(montant=_stripe, montant_source="stripe",
+                        montant_prouve=True, origine_paiement="stripe")
+        elif _paid is not None and _code.get("transaction_id"):
+            _res.update(montant=_paid, montant_source="checkout", montant_prouve=True,
+                        origine_paiement=b_normaliser_origine(_code.get("payment_method")))
+            _res["gratuit"] = (_paid == 0)
+
+    # 3. La gratuite etablie autrement (essai de la vitrine, preuve sociale).
+    if not _res["montant_source"] and a_est_gratuit_prouve(_code):
+        _res.update(montant=0.0, montant_source="encaissement", montant_prouve=True,
+                    origine_paiement="offert", gratuit=True)
+
+    # 4. Montants DECLARES : plausibles, mais rien ne prouve l'encaissement.
+    #    Ils sont rendus avec `montant_prouve=False` — l'interface le dit, et
+    #    aucune valeur par seance n'en est tiree.
+    if not _res["montant_source"]:
+        _renouv = a_nombre(_sub.get("renewal_price"))
+        _stripe = a_nombre(_code.get("stripe_amount"))
+        _tarif = a_nombre(_sub.get("offer_price"))
+        _resa_prix = a_nombre(_resa.get("totalPrice"))
+        if _renouv:                      # 0 exclu : ce n'est pas une gratuite prouvee
+            _res.update(montant=_renouv, montant_source="saisie_ancienne")
+        elif _stripe:
+            _res.update(montant=_stripe, montant_source="saisie_ancienne")
+        elif _tarif:
+            _res.update(montant=_tarif, montant_source="tarif_creation")
+        elif _resa_prix:
+            _res.update(montant=_resa_prix, montant_source="reservation")
+
+    # 5. La valeur indicative par seance — jamais sur un montant non prouve, et
+    #    jamais sur un pack d'une seule seance (elle n'apprendrait rien).
+    if (_res["montant_prouve"] and _res["montant"] and _res["seances_achetees"]
+            and _res["seances_achetees"] > 1):
+        _res["valeur_par_seance"] = round(_res["montant"] / _res["seances_achetees"], 2)
+
+    _res["libelle"] = a_libelle_montant(_res)
+    return _res
+
+
+def a_libelle_montant(fin: dict) -> str:
+    """La phrase que le coach lit. Une seule ecriture pour les deux interfaces."""
+    if not isinstance(fin, dict) or fin.get("montant") is None:
+        return "Montant non enregistré"
+    _dev = fin.get("devise") or B_DEVISE_DEFAUT
+    if fin.get("gratuit"):
+        _quoi = B_LIBELLES_ORIGINE.get(fin.get("origine_paiement"), "")
+        return "GRATUIT — %s" % (_quoi or "offert")
+    _txt = "%s %.2f" % (_dev, fin["montant"])
+    if not fin.get("montant_prouve"):
+        _txt += (" — tarif à la création, non confirmé"
+                 if fin.get("montant_source") == "tarif_creation"
+                 else " — saisi à la main")
+    return _txt

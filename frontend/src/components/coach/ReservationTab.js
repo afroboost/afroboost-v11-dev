@@ -13,7 +13,7 @@
  * - t: Fonction de traduction
  */
 
-import React, { memo } from 'react';
+import React, { memo, useState } from 'react';
 import SvgIcon from '../SvgIcon';
 
 const ReservationTab = ({
@@ -348,6 +348,90 @@ const HeadphoneRow = memo(({ reservation, onCycle, compact }) => {
 });
 HeadphoneRow.displayName = 'HeadphoneRow';
 
+// ═══════════════════════════════════════════════════════════════════════════
+// LOT A — L'ORIGINE ECONOMIQUE D'UNE RESERVATION
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Le bloc `finance` est calcule PAR LE SERVEUR (`a_finance_du_droit`) : il sait
+// seul remonter au forfait et au code, et surtout dire si un montant est PROUVE
+// ou seulement declare. Cet ecran ne fait que le rendre — il ne calcule aucun
+// prix, ne lit aucun catalogue, et n'affiche jamais « CHF 0 » par defaut.
+//
+// Hierarchie mobile demandee : Nom, Cours, Date, Offre, Montant. Le reste
+// (moyen de paiement, seances achetees, reserve sur la fiabilite) s'ouvre au
+// clic — la carte reste compacte sur telephone.
+const FinanceBloc = memo(({ finance, compact }) => {
+  const [ouvert, setOuvert] = useState(false);
+  if (!finance) return null;
+  const f = finance;
+  const inconnu = f.montant === null || f.montant === undefined;
+  const aDesDetails = !!(f.origine_paiement || f.seances_achetees || !f.montant_prouve);
+
+  return (
+    <div className="mt-2 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+      {/* OFFRE — le droit qui a ete utilise, pas le nom du cours */}
+      {(f.offre || f.code) && (
+        <p className="text-white/70">
+          <SvgIcon name="ticket" size={14} className="mr-1.5" />
+          <span className="text-white/45">Droit utilisé :</span>{' '}
+          <span className="text-white/85">{f.offre || 'Accès'}</span>
+          {f.code && <span className="text-white/40"> · {f.code}</span>}
+        </p>
+      )}
+
+      {/* MONTANT — jamais fabrique. « Non enregistre » est une reponse. */}
+      <p className={inconnu ? 'text-white/35 italic' : 'text-white/85'}>
+        <SvgIcon name="creditCard" size={14} className="mr-1.5" />
+        {f.gratuit ? (
+          <span style={{ color: 'var(--primary-color, #D91CD2)' }}>{f.libelle}</span>
+        ) : (
+          <span>{f.libelle}</span>
+        )}
+        {f.valeur_par_seance != null && (
+          <span className="text-white/45">
+            {' '}· ≈ {f.devise} {f.valeur_par_seance.toFixed(2)} / séance
+          </span>
+        )}
+      </p>
+
+      {aDesDetails && (
+        <button
+          type="button"
+          onClick={() => setOuvert(!ouvert)}
+          className="mt-1 text-[11px] underline"
+          style={{ color: 'var(--primary-color, #D91CD2)', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+          data-testid="finance-details-toggle"
+        >
+          {ouvert ? 'Masquer le détail' : 'Détail du paiement'}
+        </button>
+      )}
+
+      {ouvert && (
+        <div className="mt-1.5 pl-1 space-y-0.5 text-[11px] text-white/55">
+          {f.origine_paiement && <p>Moyen : {f.origine_paiement}</p>}
+          {f.seances_achetees != null && <p>Séances achetées : {f.seances_achetees}</p>}
+          {!inconnu && !f.montant_prouve && (
+            <p className="text-yellow-400/70">
+              Ce montant n'est adossé à aucun paiement enregistré — il a été saisi
+              à la main ou figé à la création du code.
+            </p>
+          )}
+          {inconnu && (
+            <p className="text-white/40">
+              Aucun montant n'a été enregistré pour cet accès. Rien n'est
+              reconstruit à partir du tarif actuel de l'offre.
+            </p>
+          )}
+          {!compact && f.montant_prouve && !inconnu && (
+            <p className="text-green-400/60">Montant adossé à un paiement enregistré.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+FinanceBloc.displayName = 'FinanceBloc';
+
 const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete, onCycleHeadphone, onUpdateTracking, formatDateTime }) => (
   <div className={`p-4 rounded-lg glass ${r.validated ? 'border border-green-500/30' : 'border border-purple-500/20'}`}>
     <div className="flex justify-between items-start mb-3">
@@ -399,7 +483,9 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
       )}
       <p><SvgIcon name="calendar" size={14} className="mr-1.5" /><span className="text-purple-300">Session :</span> {formatDateTime(r.datetime)}</p>
       {r.courseName && <p><SvgIcon name="book" size={14} className="mr-1.5" />{r.courseName}</p>}
-      {r.promoCode && (
+      {/* LOT A : offre utilisee + montant, juste sous le cours. */}
+      <FinanceBloc finance={r.finance} />
+      {r.promoCode && !r.finance && (
         <p><SvgIcon name="ticket" size={14} className="mr-1.5" />Code: <span className="text-yellow-400 font-medium">{r.promoCode}</span>
           {r.subscriptionId && <span className="text-purple-400 ml-1">(abo lié)</span>}
         </p>
@@ -509,6 +595,9 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
         {r.subscriptionInfo && (
           <span className="text-[10px] text-green-400/70">{r.subscriptionInfo.remaining}/{r.subscriptionInfo.total} séances</span>
         )}
+        {/* LOT A : sur desktop, l'origine economique tient dans la colonne
+            « Type » — c'est deja la ou vivent le code et le droit utilise. */}
+        <FinanceBloc finance={r.finance} compact />
         {r.source === 'qr_scan' && (
           <span className="text-[10px] text-green-400">Check-in QR</span>
         )}

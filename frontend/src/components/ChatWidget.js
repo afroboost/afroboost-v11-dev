@@ -9757,6 +9757,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           var txStatus = r._tx_status || (r.validated ? 'validé' : 'en attente');
                           var txDate = r._tx_date || r.createdAt || '';
                           var txSessions = r._tx_sessions || '';
+                          // LOT A : tout vient du serveur, y compris la phrase.
+                          var txFin = r._tx_finance || null;
+                          var txMontantTxt = txFin
+                            ? (txFin.libelle || 'Montant non enregistré')
+                            : (txPrice > 0 ? 'CHF ' + Number(txPrice).toFixed(2) : 'Montant non enregistré');
+                          var txDroitUtilise = !!r._tx_est_droit_utilise && txType === 'reservation';
                           var txCode = r._tx_code || r.reservationCode || '';
                           // V236: donnees NUMERIQUES du pack. `_tx_sessions` est
                           // la chaine "7/10" — inexploitable pour une barre de
@@ -9806,9 +9812,36 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                                 background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)', color: '#F0A8EE'
                               }
                             }, '× ' + qty + ' places'),
+                            // LOT A : l'origine economique de la ligne. Le bloc
+                            // `_tx_finance` est calcule COTE SERVEUR — lui seul
+                            // remonte au forfait et au code, et lui seul sait si
+                            // un montant est PROUVE ou seulement declare. Cet
+                            // ecran n'invente aucun prix et n'affiche jamais
+                            // « 0 CHF » par defaut : un montant absent se DIT.
                             React.createElement('div', { style: { color: '#aaa', fontSize: '11px', marginTop: '4px' } },
-                              txOffer + (txPrice > 0 ? ' • ' + txPrice + ' CHF' : '') + (txSessions ? ' • ' + txSessions + ' séances' : '')
+                              txOffer + (txSessions ? ' • ' + txSessions + ' séances' : '')
                             ),
+                            React.createElement('div', {
+                              style: {
+                                color: (txFin && txFin.gratuit) ? 'var(--primary-color, #D91CD2)'
+                                  : ((txFin && txFin.montant == null) ? '#777' : '#ddd'),
+                                fontSize: '11px', marginTop: '2px',
+                                fontStyle: (txFin && txFin.montant == null) ? 'italic' : 'normal'
+                              }
+                            },
+                              txMontantTxt
+                              + ((txFin && txFin.valeur_par_seance != null)
+                                  ? '  ≈ ' + (txFin.devise || 'CHF') + ' ' + Number(txFin.valeur_par_seance).toFixed(2) + ' / séance'
+                                  : '')
+                            ),
+                            // Une seance prise sur un pack n'est PAS une nouvelle
+                            // recette : le pack a ete paye a l'achat. Sans cette
+                            // mention, la colonne des montants se lirait comme un
+                            // chiffre d'affaires et le meme argent serait compte
+                            // deux fois.
+                            txDroitUtilise && React.createElement('div', {
+                              style: { color: '#8a8a8a', fontSize: '10px', marginTop: '2px' }
+                            }, 'Droit utilisé — aucun nouveau paiement'),
                             // V236: pack multi-seances — solde, barre de progression et
                             // ajustement manuel. Rendu uniquement si le pack a un total
                             // connu ET un identifiant : sans identifiant les boutons

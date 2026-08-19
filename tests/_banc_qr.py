@@ -52,10 +52,15 @@ def _cmp_regex(valeur, cond):
     return re.search(motif, valeur, drapeaux) is not None
 
 
-def _match(doc, filtre):
+def _pli(v, ci):
+    """Repli de casse — simule `collation(strength: 2)` de Mongo."""
+    return v.upper() if (ci and isinstance(v, str)) else v
+
+
+def _match(doc, filtre, ci=False):
     for cle, cond in filtre.items():
         if cle == "$or":
-            if not any(_match(doc, c) for c in cond):
+            if not any(_match(doc, c, ci) for c in cond):
                 return False
             continue
         val = doc.get(cle, KeyError)
@@ -76,25 +81,47 @@ def _match(doc, filtre):
                     if val in ref:
                         return False
                 elif op == "$in":
-                    if val not in ref:
+                    if _pli(val, ci) not in [_pli(x, ci) for x in ref]:
                         return False
                 else:
                     raise AssertionError("operateur non simule : %s" % op)
         else:
-            if val is KeyError or val != cond:
+            if val is KeyError or _pli(val, ci) != _pli(cond, ci):
                 return False
     return True
 
 
 class _Curseur:
-    def __init__(self, docs):
-        self._docs = docs
+    """Filtrage PARESSEUX : `collation()` peut arriver apres `find()`, comme
+    avec Motor. Sans cela, la casse serait deja tranchee au moment du find."""
+
+    def __init__(self, source, filtre=None):
+        self._source = source
+        self._filtre = filtre
+        self._ci = False
+        self._sauter = 0
 
     def sort(self, *a, **k):
         return self
 
+    def collation(self, *a, **k):
+        self._ci = True
+        return self
+
+    def skip(self, n):
+        self._sauter = int(n or 0)
+        return self
+
+    def limit(self, *a, **k):
+        return self
+
+    def _resolus(self):
+        if self._filtre is None:
+            return list(self._source)
+        return [d for d in self._source if _match(d, self._filtre, self._ci)]
+
     async def to_list(self, n):
-        return [dict(d) for d in self._docs[:n]]
+        return [dict(d) for d in self._resolus()[self._sauter:self._sauter + n]]
 
 
 class _MajResultat:
@@ -115,7 +142,7 @@ class _Collection:
         return None
 
     def find(self, filtre, projection=None):
-        return _Curseur([d for d in self.docs if _match(d, filtre)])
+        return _Curseur(self.docs, filtre)
 
     async def count_documents(self, filtre):
         return len([d for d in self.docs if _match(d, filtre)])
