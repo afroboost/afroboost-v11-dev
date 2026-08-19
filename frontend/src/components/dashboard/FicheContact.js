@@ -61,6 +61,26 @@ export default function FicheContact({ contact, estMobile, onFermer, onClasser }
     </div>
   );
 
+  // LOT 2 — L'ETAT MEMBRE, TEL QUE LE SERVEUR LE CALCULE.
+  //
+  // `adhesion.statut` est DEDUIT des dates par le serveur a chaque lecture, il
+  // n'est jamais stocke (lecon V393 : un `status: active` perime laissait
+  // reserver un forfait expire). On l'affiche, on ne le recalcule pas ici —
+  // sinon deux verites cohabiteraient, celle du serveur et celle du navigateur.
+  const MOTS_ADHESION = {
+    active: { texte: 'Membre Afroboost', couleur: PRIMAIRE },
+    future: { texte: 'Adhésion à venir', couleur: 'rgba(255,255,255,0.55)' },
+    expiree: { texte: 'Adhésion expirée', couleur: 'rgba(255,255,255,0.45)' },
+    invalide: { texte: 'Adhésion illisible', couleur: 'rgba(255,255,255,0.45)' },
+  };
+
+  const enDateSuisse = (iso) => {
+    const v = String(iso || '').slice(0, 10);
+    if (v.length !== 10) return '—';
+    const [a, m, j] = v.split('-');
+    return `${j}.${m}.${a}`;
+  };
+
   const boutonCopier = (valeur, quoi) => valeur ? (
     <button type="button" data-testid={`copier-${quoi}`} onClick={() => copier(valeur, quoi)}
       style={{ padding: '4px 9px', borderRadius: 7, cursor: 'pointer', background: 'transparent',
@@ -160,6 +180,28 @@ export default function FicheContact({ contact, estMobile, onFermer, onClasser }
             {c.source ? ligne('Source', c.source) : null}
           </>
         ))}
+
+        {/* LOT 2 — ADHESION. La section n'apparait QUE si le serveur a renvoye
+            quelque chose : pas d'adhesion, pas de bloc — plutot que d'afficher
+            « aucune », qui laisserait croire a une information alors que c'est
+            une absence. Aucun appel reseau ici : cette fiche est purement
+            presentative, la donnee arrive avec le contact. */}
+        {c.adhesion ? section('Adhésion', (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0 8px' }}>
+              <span data-testid="fiche-adhesion-statut" style={{
+                fontSize: 13, fontWeight: 700,
+                color: (MOTS_ADHESION[c.adhesion.statut] || MOTS_ADHESION.invalide).couleur,
+              }}>
+                {(MOTS_ADHESION[c.adhesion.statut] || MOTS_ADHESION.invalide).texte}
+              </span>
+            </div>
+            {c.adhesion.statut === 'active'
+              ? ligne('Actif jusqu\u2019au', enDateSuisse(c.adhesion.date_fin))
+              : ligne('Période', `${enDateSuisse(c.adhesion.date_debut)} \u2192 ${enDateSuisse(c.adhesion.date_fin)}`)}
+            {ligne('Origine', c.adhesion.source === 'achat' ? 'Achat en ligne' : 'Saisie manuelle')}
+          </>
+        )) : null}
 
         {section('Canaux disponibles', (
           <>

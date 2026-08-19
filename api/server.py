@@ -780,6 +780,9 @@ class Offer(BaseModel):
     # `response_model=List[Offer]` de GET /offers filtrerait le champ en
     # silence et la case du dashboard reviendrait decochee a chaque relecture.
     first_purchase_eligible: bool = False
+    # LOT 2 : « acheter cette offre ouvre une adhesion d'un an ». MEME symetrie
+    # obligatoire que ci-dessus, et pour la meme raison exactement.
+    creates_membership: bool = False
 
 class OfferCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -851,6 +854,24 @@ class OfferCreate(BaseModel):
     # C'est ce qui tient l'offre « Membres / renouvellement » hors de ce parcours
     # tant qu'aucun moteur d'adhesion n'existe pour la justifier.
     first_purchase_eligible: bool = False
+
+    # LOT 2 — « acheter cette offre ouvre une adhesion d'un an ».
+    #
+    # Booleen EXPLICITE, pose a la main par le coach, FAUX par defaut. Aucune
+    # offre existante ne devient adherente par migration : tant que la case
+    # n'est pas cochee, rien ne change (« fail closed »).
+    #
+    # POURQUOI PAS LE PRIX. `if price == 250` serait faux le jour ou le prix
+    # passe a 260 — et le depot a deja tranche ce point deux fois, ici meme
+    # (« le prix n'est pas une identite metier ») et dans membership_routes
+    # (« aucune adhesion n'est creee a partir d'un nom ou d'un montant »).
+    #
+    # POURQUOI PAS `first_purchase_eligible`. Ce voisin dit « proposable a
+    # quelqu'un qui n'a encore rien achete » — une autre question. Une offre
+    # peut etre l'une sans etre l'autre. Le depot annoncait d'ailleurs
+    # explicitement (shared.py, LOT A) que le lot adhesion poserait « sa propre
+    # dimension » : la voici.
+    creates_membership: bool = False
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -6699,6 +6720,39 @@ async def stripe_webhook(request: Request):
                                                  (session.currency or "chf"), sessions_count))
                 await db.subscriptions.insert_one(subscription_data)
                 logger.info(f"[PAYMENT] Subscription auto-creee: {customer_email} - {product_name} ({sessions_count} seances) auto_renew={subscription_data['auto_renew']}")
+
+                # === LOT 2 — CHEMIN D'AUTORITE A : L'ADHESION QUI NAIT DE CET ACHAT ===
+                #
+                # PLACE ICI, ET PAS AILLEURS. Trois raisons :
+                #   * on est APRES la garde d'idempotence V384 (« session deja
+                #     traitee -> return », plus haut) : un rejeu Stripe ne
+                #     parvient meme pas jusqu'ici ;
+                #   * le forfait vient d'etre insere, donc `subscription_data["id"]`
+                #     existe — c'est la cle du verrou anti-doublon ;
+                #   * l'argent a change de main. Aucun clic, aucun retour de
+                #     navigateur, aucune requete non authentifiee n'atteint ce point.
+                #
+                # `offer_id` vient de la metadata POSEE PAR LE SERVEUR a la creation
+                # de la session ; le helper relit l'offre en base de toute facon, et
+                # c'est ELLE qui decide (case cochee) et qui donne le proprietaire.
+                # Rien n'est cru sur parole cote navigateur.
+                #
+                # NON BLOQUANT : `lot2_creer_adhesion_apres_achat` ne leve jamais.
+                # Une adhesion manquee se rattrape a la main ; un paiement perdu, non.
+                try:
+                    from api.routes.shared import lot2_creer_adhesion_apres_achat as _lot2
+                    await _lot2(
+                        db,
+                        email=customer_email,
+                        offre_id=(metadata or {}).get("offer_id") or "",
+                        subscription_id=subscription_data["id"],
+                        nom=subscription_data.get("name") or "",
+                        moteur="stripe",
+                        montant=amount_chf or _montant_paye,
+                        devise=(session.currency or "chf"),
+                    )
+                except Exception as _lot2e:
+                    logger.error(f"[LOT2] adhesion ignoree (chemin Stripe): {_lot2e}")
 
                 # C9-A : `pulse_purchased` — la SEULE preuve d'achat acceptable.
                 # Placé ici, donc APRÈS la garde d'idempotence V384 (server.py:6090,
@@ -15500,6 +15554,67 @@ async def get_all_contacts_unified(request: Request):
             # L'enrichissement est un confort : s'il echoue, la liste doit
             # rester utilisable telle qu'avant.
             logger.warning("[C2] enrichissement ignore : %s", _c2err)
+
+        # LOT 2 — L'ETAT MEMBRE, en UNE lecture groupee. Aucune ecriture.
+        #
+        # TROISIEME enrichissement de cette route, et volontairement bati sur le
+        # meme moule que les deux au-dessus : tolerant a l'echec (la liste reste
+        # utilisable si la lecture tombe), champs AJOUTES uniquement, jointure
+        # par e-mail — la seule cle commune, stockee en minuscules des deux cotes.
+        #
+        # ⚠️ LE FILTRE DE PROPRIETE N'EST PAS CELUI DE CETTE ROUTE. `/contacts/all`
+        # filtre sur `{"coach_id": caller_email}` et laisse le super-admin TOUT
+        # voir ; le module adhesions applique la regle SYMETRIQUE, ou un contexte
+        # sans proprietaire ne voit que les adhesions sans proprietaire. Recopier
+        # le filtre local ferait diverger le badge de l'ecran Adhesions — le
+        # defaut exact corrige par `2c8a831`. On importe donc la paire du module
+        # et on ne la reecrit pas.
+        #
+        # UNE SEULE REQUETE (`$in` groupe) quel que soit le nombre de contacts,
+        # jamais un `find_one` par ligne : meme regle que partout dans ce projet.
+        #
+        # Le statut est RECALCULE a la lecture (`p1a_statut`), jamais lu depuis
+        # un champ — lecon V393. Un document ecrit il y a un an se lit juste.
+        try:
+            from api.routes.membership_routes import (
+                p1a_coach_id_contexte as _p1a_ctx,
+                p1a_filtre_proprietaire as _p1a_filtre,
+                p1a_statut as _p1a_statut,
+            )
+            _adh_emails = sorted({(c.get("email") or "").strip().lower()
+                                  for c in contacts
+                                  if c.get("type") != "group" and (c.get("email") or "").strip()})
+            if _adh_emails:
+                _adh_requete = dict(_p1a_filtre(
+                    _p1a_ctx(caller_email, is_super_admin(caller_email))))
+                _adh_requete["email"] = {"$in": _adh_emails}
+                _adh_lignes = await db["memberships"].find(
+                    _adh_requete,
+                    {"_id": 0, "email": 1, "date_debut": 1, "date_fin": 1, "source": 1}
+                ).to_list(5000)
+                # Une personne peut porter plusieurs adhesions successives (une
+                # expiree, une active). On garde CELLE QUI COMPTE : l'active si
+                # elle existe, sinon la plus recente — jamais les deux.
+                _adh_par_email = {}
+                for _a in _adh_lignes:
+                    _em = (_a.get("email") or "").strip().lower()
+                    if not _em:
+                        continue
+                    _a["statut"] = _p1a_statut(_a.get("date_debut"), _a.get("date_fin"))
+                    _prec = _adh_par_email.get(_em)
+                    if (_prec is None
+                            or (_a["statut"] == "active" and _prec["statut"] != "active")
+                            or (_prec["statut"] != "active"
+                                and str(_a.get("date_fin") or "") > str(_prec.get("date_fin") or ""))):
+                        _adh_par_email[_em] = _a
+                for c in contacts:
+                    if c.get("type") == "group":
+                        continue
+                    _em = (c.get("email") or "").strip().lower()
+                    if _em and _em in _adh_par_email:
+                        c["adhesion"] = _adh_par_email[_em]
+        except Exception as _adherr:
+            logger.warning("[LOT2] etat membre ignore : %s", _adherr)
 
         # Sort: groupes d'abord, puis contacts par nom
         contacts.sort(key=lambda x: (0 if x["type"] == "group" else 1, (x.get("name") or "").lower()))

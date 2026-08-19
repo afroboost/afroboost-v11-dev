@@ -1050,6 +1050,33 @@ export default function OfferWizard({
         </p>
       </div>
 
+      {/* LOT 2 : la SEULE chose qui fait naitre une adhesion a l'achat. Rien
+          n'est deduit du prix — ni 250, ni aucun autre montant : le jour ou le
+          prix change, cette case ne bouge pas. Decochee par defaut : une offre
+          existante ne devient jamais adherente toute seule.
+          DISTINCTE de la case ci-dessus : « proposable apres l'essai » et
+          « ouvre une adhesion » sont deux questions differentes, et une offre
+          peut etre l'une sans etre l'autre. */}
+      <div className="p-4 rounded-lg" style={{ background: '#000', border: `1px solid ${ACCENT_BORDER}` }}>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!form.creates_membership}
+            onChange={(e) => set('creates_membership', e.target.checked)}
+            className="w-4 h-4 v224-input" style={{ accentColor: 'var(--primary-color, #D91CD2)' }}
+            data-testid="offer-creates-membership"
+          />
+          <span className="text-white text-sm font-medium inline-flex items-center gap-1.5">
+            <SvgIcon name="crown" size={14} /> Ouvre une adhésion d'un an
+          </span>
+        </label>
+        <p className="text-xs mt-1 ml-7" style={{ color: 'rgba(255,255,255,0.5)' }}>
+          À l'achat de cette offre, le participant devient membre pour un an, sans
+          aucune saisie de votre part. Si son adhésion est encore valide, rien n'est
+          créé ni prolongé — l'offre reste celle d'un nouveau membre.
+        </p>
+      </div>
+
       {/* Description */}
       <div>
         <div className="flex items-center justify-between mb-1">

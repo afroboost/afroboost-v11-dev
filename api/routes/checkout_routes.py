@@ -184,6 +184,11 @@ async def create_checkout_session(req: CreateCheckoutRequest):
     _t1_champs = await _t1_preuve_checkout(req.terms_accepted, req.items,
                                            req.coach_email, exiger=False)
 
+    # LOT 2 : le vendeur declare a-t-il le droit de vendre ces articles ? Pose
+    # AVANT le calcul du total et avant la branche gratuite — donc avant la
+    # premiere ecriture, quelle que soit la suite du parcours.
+    await _lot2_verifier_vendeur(req.items, req.coach_email)
+
     # ESSAI-1B : le total qui DECIDE vient du catalogue. `discount_amount`,
     # fourni par le navigateur, n'est plus une autorite metier.
     total, _prix_resolus = await _essai1b_total_autorite(req.items)
@@ -705,6 +710,75 @@ class FreeCheckoutRequest(BaseModel):
 # reecrit ici.
 
 
+# ============================================================================
+# LOT 2 — LE VENDEUR DECLARE DOIT ETRE CELUI DE L'OFFRE
+# ============================================================================
+#
+# LA FAILLE FERMEE ICI. `coach_email` est un champ libre du corps de requete.
+# Il n'etait confronte a RIEN : ni au proprietaire de l'offre achetee, ni a une
+# identite serveur. ESSAI-1B avait bien retire le PRIX au navigateur en le
+# relisant en base — mais sa projection ne demande que `price` et
+# `active_price`, jamais `coach_id`. Aucune ligne de ce fichier ne comparait le
+# vendeur declare au proprietaire reel.
+#
+# Consequence, avant ce lot : un POST sur `/checkout/free` declarant
+# `coach_email: "<coach B>"` avec l'identifiant d'une offre du coach A creait un
+# code d'acces, un forfait, une reservation, une transaction et un contact CRM
+# ATTRIBUES AU COACH B. Le coach B voyait apparaitre un client qu'il n'a jamais
+# vendu ; le coach A ne le voyait pas. Et demain, une adhesion.
+#
+# IMPACT REEL A CE JOUR : NUL — il n'y a qu'un seul compte coach en base. C'est
+# precisement pour cela qu'on la ferme maintenant, pendant qu'elle ne coute
+# rien, et non le jour ou un partenaire arrive.
+#
+# LA REGLE, FAIL CLOSED :
+#   * l'offre a un proprietaire reel -> le vendeur declare doit etre LUI ;
+#   * l'offre n'a pas de proprietaire (les 8 offres de production sont dans ce
+#     cas) -> le vendeur declare doit etre vide, ou un super-admin. Ces deux
+#     valeurs sont exactement celles que les deux ecrans de l'application
+#     envoient aujourd'hui (`App.js` -> "", `CoachVitrine.js` -> l'adresse de
+#     l'admin) : la garde ferme la faille SANS casser un parcours existant.
+#     Ce qu'elle refuse desormais, c'est un partenaire qui revendiquerait une
+#     offre qui n'est pas la sienne.
+#   * l'offre est introuvable -> on ne tranche pas, on laisse passer : le
+#     panier peut contenir un article libre, et ce n'est pas le role de cette
+#     garde d'en decider. Le prix, lui, est deja traite par ESSAI-1B.
+#
+# CE QU'ELLE NE FAIT PAS. Elle ne change AUCUN `coach_id` ecrit en base et ne
+# touche pas au routage de l'argent : `coach_email` continue de choisir le
+# compte de paiement via `get_payment_keys`. Elle verifie seulement qu'il a le
+# DROIT d'etre celui-la.
+
+LOT2_MSG_VENDEUR = ("Cette offre n'appartient pas au vendeur indiqué. "
+                    "Rechargez la page et réessayez.")
+
+
+async def _lot2_verifier_vendeur(items, coach_email: str):
+    """Refuse (403) si le vendeur declare ne peut pas vendre l'un des articles."""
+    _declare = str(coach_email or "").strip().lower()
+    for _it in (items or []):
+        _d = _it.dict() if hasattr(_it, "dict") else dict(_it)
+        _oid = str(_d.get("id") or "").strip()
+        if not _oid:
+            continue
+        try:
+            _o = await db["offers"].find_one({"id": _oid}, {"_id": 0, "coach_id": 1})
+        except Exception as _err:
+            logger.warning(f"[LOT2] proprietaire de l'offre {_oid[:32]} illisible: {_err}")
+            continue
+        if not _o:
+            continue
+        _reel = str(_o.get("coach_id") or "").strip().lower()
+        if _reel:
+            _ok = (_declare == _reel)
+        else:
+            _ok = (not _declare) or is_super_admin(_declare)
+        if not _ok:
+            logger.warning("[LOT2] REFUS vendeur — offre=%s proprietaire=%r declare=%r",
+                           _oid[:32], _reel or "(aucun)", _declare or "(vide)")
+            raise HTTPException(status_code=403, detail=LOT2_MSG_VENDEUR)
+
+
 async def _essai1b_prix_unitaire(item):
     """Rend (prix unitaire faisant autorite, a-t-il ete resolu en base ?).
 
@@ -1017,6 +1091,12 @@ async def free_checkout(req: FreeCheckoutRequest):
     # gratuite : un refus ici ne laisse rien derriere lui.
     _t1_champs = await _t1_preuve_checkout(req.terms_accepted, req.items,
                                            req.coach_email)
+
+    # LOT 2 : meme garde que sur `/create-session`. Elle doit exister sur LES
+    # DEUX portes — la poser sur une seule la rendrait contournable en changeant
+    # d'URL, exactement comme ESSAI-1 l'a appris.
+    await _lot2_verifier_vendeur(req.items, req.coach_email)
+
     await _essai1b_exiger_gratuit(req.items)
     if not req.customer_email or "@" not in req.customer_email:
         raise HTTPException(status_code=400, detail="Email client requis.")
@@ -1639,6 +1719,40 @@ async def _process_successful_payment(
         **_b_auto(payment_method, total, currency, sessions_count),
     })
     logger.info(f"[CHECKOUT] Code {access_code} + subscription crees pour {customer_email} ({sessions_count} seances)")
+
+    # === LOT 2 — CHEMIN D'AUTORITE B : L'ADHESION QUI NAIT DE CET ACHAT ===
+    #
+    # POURQUOI DEUX BRANCHEMENTS DANS LE DEPOT. Ce fichier reconnait un paiement
+    # reussi pour QUATRE webhooks (Stripe vitrine, CinetPay, PayPal, PawaPay) et
+    # deux chemins gratuits, tous convergeant ici ; le webhook Stripe « client »
+    # de server.py est, lui, un second moteur, avec ses propres champs. Un achat
+    # depuis la vitrine ou depuis l'ecran d'apres-essai passe par ICI. N'en
+    # brancher qu'un aurait manque la moitie des achats — d'ou le MEME helper
+    # appele aux deux endroits, et une seule definition de la regle.
+    #
+    # LE PROPRIETAIRE N'EST PAS `coach_email`. Cette variable vient du corps de
+    # la requete, donc du navigateur : deux ecrans de cette application y
+    # mettent aujourd'hui des valeurs differentes pour le meme achat. Le helper
+    # relit `offers.coach_id` en base et n'utilise QUE cela. `coach_email`
+    # continue de servir a ce a quoi il sert vraiment ici — le routage de
+    # l'argent (`get_payment_keys`) — et a rien d'autre pour l'adhesion.
+    #
+    # NON BLOQUANT, et place APRES l'ecriture du forfait : l'argent est encaisse,
+    # le code d'acces est emis. Une adhesion manquee se rattrape a la main.
+    try:
+        from api.routes.shared import lot2_creer_adhesion_apres_achat as _lot2
+        await _lot2(
+            db,
+            email=customer_email,
+            offre_id=items_offer_id,
+            subscription_id=subscription_id,
+            nom=customer_name or "",
+            moteur=payment_method,
+            montant=total,
+            devise=currency,
+        )
+    except Exception as _lot2e:
+        logger.error(f"[LOT2] adhesion ignoree (chemin checkout): {_lot2e}")
 
     # V397 : ferme l'ancien forfait (expiré ou épuisé) du même client. Non bloquant :
     # le paiement est déjà encaissé, une erreur ici ne doit rien faire échouer.

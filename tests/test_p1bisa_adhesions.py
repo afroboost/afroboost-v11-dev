@@ -21,7 +21,7 @@ Ce que ces tests garantissent :
 AUCUNE BASE REELLE, AUCUN RESEAU. Les modules sont charges par chemin, avec un
 `fastapi` bouchon, comme `tests/test_b_encaissement.py`.
 """
-import asyncio, importlib.util, io, os, sys, types
+import ast, asyncio, importlib.util, io, os, sys, types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -432,40 +432,98 @@ def test_aucune_autre_lecture():
         if "memberships" in texte or "membership_router" in texte:
             porteurs[os.path.relpath(chemin, RACINE)] = texte
 
-    attendus = {"api/routes/membership_routes.py", "api/server.py"}
-    verifier("10-14. seuls le module d'adhesions et l'enregistrement des routes "
-             "nomment `memberships`",
+    # LOT 2 A LEVE CETTE ISOLATION — VOLONTAIREMENT, ET SEULEMENT ICI.
+    #
+    # P1-bis-a garantissait « `memberships` n'est lu par personne » : c'etait la
+    # preuve que la saisie manuelle ne changeait rien a la production. LOT 2 est
+    # precisement le lot qui branche cette collection sur un achat. L'invariant
+    # ne disparait pas, il se DEPLACE : la liste des fichiers autorises est
+    # desormais fermee a TROIS, et toute quatrieme apparition reste un echec.
+    #
+    #   membership_routes.py  le module proprietaire (saisie manuelle, lectures)
+    #   shared.py             le helper LOT 2, appele par les DEUX points
+    #                         d'autorite du paiement — une seule definition
+    #   server.py             enregistrement du routeur + champ d'offre +
+    #                         enrichissement de `/contacts/all` (lecture seule)
+    attendus = {"api/routes/membership_routes.py", "api/routes/shared.py",
+                "api/server.py"}
+    verifier("10-14. la liste des fichiers qui nomment `memberships` reste fermee "
+             "(3 depuis LOT 2, jamais 4)",
              set(porteurs) == attendus, str(sorted(porteurs)))
 
-    # Dans server.py, les seules occurrences sont les lignes d'enregistrement :
-    # import, include_router, init. Aucune logique metier.
-    lignes = [l.strip() for l in porteurs.get("api/server.py", "").splitlines()
-              if "membership" in l and not l.strip().startswith("#")]
-    verifier("10-14b. server.py ne fait qu'enregistrer le routeur (3 lignes)",
-             len(lignes) == 3 and all(
-                 ("import" in l) or ("include_router" in l) or ("init_membership_db" in l)
-                 for l in lignes), str(lignes))
+    # 10-14b. CE QUI COMPTE MAINTENANT : server.py peut LIRE les adhesions
+    # (l'etat membre dans la fiche contact) mais ne doit JAMAIS en ecrire. Une
+    # seule fabrique d'adhesion dans le depot — le helper de shared.py — sinon
+    # deux regles de dates et deux verrous d'idempotence cohabiteraient.
+    _srv = porteurs.get("api/server.py", "")
+    _ecritures_srv = [l.strip() for l in _srv.splitlines()
+                      if "memberships" in l and not l.strip().startswith("#")
+                      and any(op in l for op in ("insert_one", "update_one", "update_many",
+                                                 "delete_one", "delete_many", "replace_one"))]
+    verifier("10-14b. server.py LIT les adhesions mais n'en ECRIT jamais",
+             not _ecritures_srv, str(_ecritures_srv))
+
+    _shared = porteurs.get("api/routes/shared.py", "")
+    _ecritures_shared = [l.strip() for l in _shared.splitlines()
+                         if "memberships" in l and not l.strip().startswith("#")
+                         and any(op in l for op in ("insert_one", "update_one", "update_many",
+                                                    "delete_one", "delete_many", "replace_one"))]
+    verifier("10-14b2. une SEULE ecriture d'adhesion dans tout le depot, et c'est "
+             "un `insert_one` (jamais une modification d'un document existant)",
+             len(_ecritures_shared) == 1 and "insert_one" in _ecritures_shared[0],
+             str(_ecritures_shared))
 
     # 10-14c. Les chemins nommement proteges par le cahier des charges.
-    surveilles = {
-        "10. checkout / prix": ["api/routes/checkout_routes.py", "api/pricing.py"],
-        "11. LOT A conversion": ["api/routes/shared.py"],
-        "12. ESSAI gratuit": ["api/routes/checkout_routes.py"],
-        "13. Finance A/B": ["api/routes/shared.py"],
-        "14. Stripe": ["api/routes/stripe_routes.py", "api/routes/reservation_routes.py"],
-    }
-    # On cherche des REFERENCES, pas le mot « adhesion » : shared.py en parle
-    # deja en francais depuis le LOT A (« aucun moteur d'adhesion dans ce
-    # depot ») — c'est du commentaire, pas un appel.
+    #
+    # DEPUIS LOT 2, LA MESURE PORTE SUR LES FONCTIONS, PLUS SUR LES FICHIERS.
+    # `shared.py` heberge desormais le helper d'adhesion A COTE de LOT A et de
+    # la finance B : un grep sur le fichier entier rendrait donc « coupable »
+    # tout ce qui l'habite, et la mesure ne voudrait plus rien dire. On extrait
+    # les fonctions une par une et on verifie qu'AUCUNE d'elles ne nomme les
+    # adhesions. C'est plus strict que la version precedente, pas moins : une
+    # seule fonction fautive suffit desormais a faire echouer, meme noyee dans
+    # un fichier qui a par ailleurs le droit de citer `memberships`.
     references = ("memberships", "membership_routes", "membership_router",
                   "init_membership_db")
-    for libelle, fichiers in surveilles.items():
+
+    def _corps_des_fonctions(chemin_relatif, prefixes):
+        """Le source des fonctions dont le nom commence par l'un des prefixes."""
+        _t = io.open(os.path.join(RACINE, chemin_relatif), encoding="utf-8").read()
+        _arbre = ast.parse(_t)
+        _out = []
+        for _n in ast.walk(_arbre):
+            if isinstance(_n, (ast.FunctionDef, ast.AsyncFunctionDef)) and \
+                    any(_n.name.startswith(_p) for _p in prefixes):
+                _out.append((_n.name, ast.get_source_segment(_t, _n) or ""))
+        return _out
+
+    surveilles_fichiers = {
+        "10. checkout / prix": ["api/pricing.py"],
+        "12. ESSAI gratuit": ["api/routes/checkout_routes.py"],
+        "14. Stripe": ["api/routes/stripe_routes.py", "api/routes/reservation_routes.py"],
+    }
+    for libelle, fichiers in surveilles_fichiers.items():
         coupables = []
         for f in fichiers:
             texte = io.open(os.path.join(RACINE, f), encoding="utf-8").read()
             coupables += [r for r in references if r in texte]
         verifier("%s : aucun appel aux adhesions" % libelle,
                  not coupables, ",".join(coupables))
+
+    surveilles_fonctions = {
+        "11. LOT A conversion": ("api/routes/shared.py", ("conv_", "essai2_")),
+        "13. Finance A/B": ("api/routes/shared.py", ("b_", "a_")),
+    }
+    for libelle, (fichier, prefixes) in surveilles_fonctions.items():
+        coupables = []
+        _fonctions = _corps_des_fonctions(fichier, prefixes)
+        for _nom, _corps in _fonctions:
+            for _r in references:
+                if _r in _corps:
+                    coupables.append("%s -> %s" % (_nom, _r))
+        verifier("%s : aucune de ses %d fonctions ne nomme les adhesions"
+                 % (libelle, len(_fonctions)),
+                 not coupables and len(_fonctions) > 0, ",".join(coupables))
 
 
 def test_interface_coach():

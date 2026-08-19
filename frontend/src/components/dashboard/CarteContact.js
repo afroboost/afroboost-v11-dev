@@ -57,6 +57,10 @@ export default function CarteContact({ contact, onOuvrir, onClasser }) {
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
         {puce(libelleType(c), !nonClasse)}
         {puce(libelleStatut(c), c.statut_abonnement === 'actif')}
+        {/* LOT 2 : meme regle que la ligne desktop — seule une adhesion ACTIVE
+            fait apparaitre la puce. Meme composant `puce`, donc meme forme et
+            memes couleurs personnalisees que ses voisines. */}
+        {c.adhesion && c.adhesion.statut === 'active' ? puce('Membre', true) : null}
         <span style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap' }}>
           {drapeau(c) ? `${drapeau(c)} ` : ''}{libelleZone(c)}
         </span>

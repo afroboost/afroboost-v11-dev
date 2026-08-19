@@ -1307,6 +1307,21 @@ export default function ContactsManager({ API, coachEmail }) {
                 }}>
                   {c.source === 'google' ? 'Google' : c.source === 'app' ? 'App' : c.source === 'stripe_payment' ? 'Stripe' : c.source || 'Import'}
                 </span>
+                {/* LOT 2 : badge « Membre ». Affiche UNIQUEMENT sur une adhesion
+                    ACTIVE — une adhesion expiree ou a venir ne fait pas un membre,
+                    et un badge qui mentirait sur ce point vaut moins que pas de
+                    badge du tout. Le statut est celui CALCULE par le serveur. */}
+                {!isGroup && c.adhesion && c.adhesion.statut === 'active' && (
+                  <span data-testid="badge-membre" style={{
+                    padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 700,
+                    background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
+                    color: 'var(--primary-color, #D91CD2)',
+                    border: '1px solid var(--primary-color, #D91CD2)',
+                    flexShrink: 0
+                  }}>
+                    Membre
+                  </span>
+                )}
                 {/* V184: Bouton "Partager lien d'accès abonné" — visible si l'individu a un email */}
                 {!isGroup && c.email && (() => {
                   const status = shareLinkStatus[c.email];

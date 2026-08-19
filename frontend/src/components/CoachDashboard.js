@@ -3372,7 +3372,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // cochee dans le wizard ne partirait jamais, et le `$set:
         // offer.model_dump()` du PUT la remettrait a `false` en base a chaque
         // sauvegarde d'offre. `!!` : le backend attend un vrai booleen.
-        first_purchase_eligible: !!src.first_purchase_eligible
+        first_purchase_eligible: !!src.first_purchase_eligible,
+        // LOT 2 : normalise au chargement, comme son voisin. Sans cette ligne la
+        // case reviendrait decochee a la reouverture du formulaire.
+        creates_membership: !!src.creates_membership
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 
@@ -3418,7 +3421,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       social_proof_price: '', // V260
       // LOT A : sans ce reset, la case « apres l'essai » resterait cochee pour
       // l'offre suivante — exactement le defaut corrige en V225 et V256.
-      first_purchase_eligible: false
+      first_purchase_eligible: false,
+      // LOT 2 : faux par defaut a la creation — « fail closed ».
+      creates_membership: false
       });
       return true; // V224: enregistrement reussi
     } catch (err) {

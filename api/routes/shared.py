@@ -2174,3 +2174,376 @@ async def conv_marquer_vue(db, forfait: dict, offres: int = 0) -> bool:
     except Exception as _err:
         logger.warning(f"[LOT-A] conversion_viewed non emis: {_err}")
     return True
+
+
+# ============================================================================
+# LOT 2 — L'ADHESION QUI NAIT D'UN ACHAT
+# ============================================================================
+#
+# CE QUE CE LOT AJOUTE. Jusqu'ici une adhesion ne pouvait exister que par la
+# main du coach (`POST /memberships`, source « saisie_manuelle ») — et il y en
+# avait ZERO en production, la collection n'etant meme pas creee. Desormais un
+# achat de l'offre d'entree en cree une, seul, une fois, pour un an.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# QUATRE DECISIONS, ET CE QU'ELLES REFUSENT
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# 1. AUCUNE DEDUCTION PAR LE PRIX. Pas de `if price == 250`. Le prix bouge, la
+#    regle non. C'est un booleen EXPLICITE pose a la main par le coach sur
+#    l'offre (`creates_membership`), faux par defaut — meme patron que
+#    `first_purchase_eligible` (LOT A), et pour la meme raison : le jour ou
+#    l'offre passe a 260, rien ne doit changer. Le depot avait deja tranche ce
+#    point deux fois (server.py « le prix n'est pas une identite metier »,
+#    membership_routes.py « aucune adhesion n'est creee a partir d'un nom ou
+#    d'un montant »). On ne le retranche pas ici.
+#
+#    A NE PAS CONFONDRE avec `_C9_PULSE = ("a687ce86", "484c4519")`
+#    (server.py) : deux identifiants d'offre codes en dur, qui servent
+#    UNIQUEMENT a etiqueter un evenement d'analytique. Aucune decision metier
+#    n'en depend, et ce lot n'en ajoute pas.
+#
+# 2. UN SEUL POINT D'ENTREE POUR DEUX CHEMINS D'AUTORITE. Le depot reconnait un
+#    paiement reussi a DEUX endroits : le webhook Stripe « client »
+#    (server.py, branche `checkout.session.completed`) et
+#    `_process_successful_payment` (checkout_routes.py), lui-meme servi par
+#    QUATRE webhooks (Stripe vitrine, CinetPay, PayPal, PawaPay) et deux
+#    chemins gratuits. Un achat depuis la vitrine ou depuis l'ecran
+#    d'apres-essai passe par le SECOND. Brancher l'adhesion sur un seul aurait
+#    manque la moitie des achats — d'ou cette fonction unique, appelee des
+#    deux. Une seule definition de « cet achat ouvre une adhesion ».
+#
+# 3. LE PROPRIETAIRE VIENT DE L'OFFRE EN BASE, JAMAIS DU NAVIGATEUR, JAMAIS
+#    D'UN REPLI. `req.coach_email` est une chaine libre du corps de requete :
+#    deux ecrans de cette meme application y mettent aujourd'hui des valeurs
+#    DIFFERENTES pour le meme achat (mesure du 19/08/2026 : 7 souscriptions
+#    `checkout_vitrine` a `coach_id: ""` contre 1 a l'adresse de l'admin). On
+#    ne s'en sert donc pas. Et surtout on n'emprunte PAS `DEFAULT_COACH_ID` :
+#    depuis V244 cette constante ne vaut plus la sentinelle « bassi_default »
+#    mais L'ADRESSE REELLE DU SUPER-ADMIN. Une adhesion ecrite avec cette
+#    adresse serait INVISIBLE dans l'ecran Adhesions, dont le filtre « sans
+#    proprietaire » ne cherche que None / "" / champ absent : les deux
+#    vocabulaires sont mutuellement aveugles. Offre sans proprietaire ->
+#    adhesion sans proprietaire. Strictement symetrique, comme `2c8a831`.
+#
+# 4. UNE ADHESION ACTIVE N'EST NI DOUBLEE NI PROLONGEE. L'offre d'entree est
+#    l'offre d'un NOUVEAU membre. Prolonger serait du renouvellement, et le
+#    renouvellement appartient a l'offre suivante — qui n'existe pas encore
+#    comme parcours. Creer un second document ferait deux adhesions qui se
+#    chevauchent, ce que le proprietaire a explicitement refuse : il veut UNE
+#    continuite. Donc : rien, et on le dit dans les journaux.
+
+LOT2_PREFIXE = "[LOT2]"
+
+# `source` du document. La saisie a la main garde « saisie_manuelle » : on doit
+# pouvoir distinguer d'un coup d'oeil ce que le systeme a decide de ce que le
+# coach a declare.
+LOT2_SOURCE = "achat"
+
+# Prefixe du VERROU (voir `lot2_creer_adhesion_apres_achat`). Lisible a l'oeil
+# dans la base, et impossible a confondre avec un uuid.
+LOT2_VERROU = "adh:"
+
+# Motifs de non-creation. Codes STABLES, pensés pour etre cherches dans les
+# journaux (`grep "motif=deja_membre"`). Ne jamais les traduire.
+LOT2_MOTIFS = (
+    "donnees_incompletes",     # il manque l'e-mail, l'offre ou le forfait
+    "offre_introuvable",       # l'identifiant ne designe aucune offre
+    "offre_non_adherente",     # la case n'est pas cochee — LE CAS NORMAL
+    "deja_membre",             # une adhesion est encore valide : on ne touche a rien
+    "rejeu",                   # le meme paiement, une seconde fois
+    "echec_ecriture",          # la base a refuse, pour une autre raison
+)
+
+
+def lot2_proprietaire(coach_id_de_loffre):
+    """Le proprietaire a inscrire sur l'adhesion : celui de l'offre, ou personne.
+
+    Traduit les TROIS formes de « sans proprietaire » reellement presentes en
+    base (None, "", champ absent) vers la SEULE que le module adhesions
+    reconnait : None. Sans cette traduction, une offre portant `coach_id: ""`
+    produirait une adhesion a `""` que `p1a_filtre_proprietaire` retrouverait
+    — mais une offre a `coach_id` absent produirait `None`, et les deux
+    coexisteraient pour la meme realite. Une seule forme, decidee ici.
+
+    JAMAIS `DEFAULT_COACH_ID` : voir la decision 3 en tete de section.
+    """
+    if not isinstance(coach_id_de_loffre, str):
+        return None
+    _c = coach_id_de_loffre.strip().lower()
+    return _c or None
+
+
+def lot2_fin_adhesion(date_debut_iso: str) -> str:
+    """La fin d'une adhesion d'un an : « debut + 1 an - 1 jour », AAAA-MM-JJ.
+
+    POURQUOI MOINS UN JOUR. `p1a_statut` inclut les DEUX bornes : une adhesion
+    du 01/01 au 31/12 est active le 01/01 comme le 31/12. « Un an » se termine
+    donc la veille du meme jour l'annee suivante — 365 jours bornes incluses.
+    C'est la convention du proprietaire, et elle reproduit ses trois exemples :
+        19/08/2026 -> 18/08/2027       01/01/2026 -> 31/12/2026
+        et, pour une prolongation, 31/12/2026 -> 31/12/2027 (voir plus bas).
+
+    LE 29 FEVRIER. `date.replace(year=+1)` leve sur une annee non bissextile.
+    Le proprietaire a tranche : la fin est le 28/02 de l'annee suivante — soit
+    une annee pleine (29/02/2028 -> 28/02/2029 = 365 jours bornes incluses),
+    et non le 27/02 qu'un « -1 jour » applique apres un repli au 28 donnerait.
+
+    Une date illisible rend "" : l'appelant refuse alors de creer, plutot que
+    de poser une adhesion dont personne ne saurait dire quand elle finit.
+    """
+    from datetime import date as _date
+    _v = str(date_debut_iso or "").strip()[:10]
+    try:
+        _d = _date.fromisoformat(_v)
+    except (TypeError, ValueError):
+        return ""
+    try:
+        return (_d.replace(year=_d.year + 1) - timedelta(days=1)).isoformat()
+    except ValueError:
+        # Seul cas possible : le 29 fevrier. Decision du proprietaire.
+        return _date(_d.year + 1, 2, 28).isoformat()
+
+
+def lot2_prolonger_fin(date_fin_iso: str) -> str:
+    """CAS A — prolonger une adhesion ENCORE VALIDE : date_fin + 1 an.
+
+    ⚠️ ECRITE ET TESTEE, MAIS VOLONTAIREMENT INACTIVE DANS CE LOT.
+    AUCUN chemin de production ne l'appelle, et un test le PROUVE. Elle existe
+    pour que le lot du renouvellement (l'offre suivante) n'ait pas a
+    reinventer la regle sous pression, et pour qu'elle soit deja eprouvee le
+    jour ou on la branchera.
+
+    La regle, validee par le proprietaire : `date_debut` NE BOUGE PAS, seule
+    `date_fin` avance d'un an. Une seule continuite d'adhesion, jamais deux
+    periodes qui se chevauchent. Exemple : une adhesion 01/01/2026 -> 31/12/2026
+    renouvelee le 15/12/2026 devient 01/01/2026 -> 31/12/2027.
+
+    Pas de « -1 jour » ici, a la difference de `lot2_fin_adhesion` : on ne
+    calcule pas une duree depuis un debut, on DEPLACE une fin d'exactement un
+    an. Le 31/12 reste le 31/12.
+    """
+    from datetime import date as _date
+    _v = str(date_fin_iso or "").strip()[:10]
+    try:
+        _f = _date.fromisoformat(_v)
+    except (TypeError, ValueError):
+        return ""
+    try:
+        return _f.replace(year=_f.year + 1).isoformat()
+    except ValueError:
+        return _date(_f.year + 1, 2, 28).isoformat()
+
+
+def lot2_est_doublon(erreur) -> bool:
+    """Cette erreur d'ecriture est-elle « ce document existe deja » ?
+
+    Reconnue par le code MongoDB 11000 ET par le nom de la classe : le premier
+    couvre le vrai pilote, le second les doubles de test. Aucun des deux ne
+    depend d'un message traduit.
+    """
+    if getattr(erreur, "code", None) == 11000:
+        return True
+    return "duplicatekey" in type(erreur).__name__.replace("_", "").lower()
+
+
+async def lot2_offre_adherente(db, offre_id: str):
+    """Rend `(offre, "")` si elle ouvre une adhesion, sinon `(None, motif)`.
+
+    DEUX MOTIFS DISTINCTS, et ce n'est pas de la coquetterie : « l'offre
+    n'existe pas » est une anomalie a corriger, « la case n'est pas cochee »
+    est le cas NORMAL de la quasi-totalite des achats. Les confondre rendrait
+    le premier introuvable dans les journaux, noye sous le second.
+
+    `creates_membership is True` — comparaison stricte, jamais `truthy` : une
+    chaine « false » venue d'un import maladroit ne doit pas ouvrir une
+    adhesion d'un an.
+
+    Offre ILLISIBLE (panne de lecture) -> `offre_introuvable`, donc AUCUNE
+    adhesion. Fail closed : on ne cree pas un droit d'un an sur une base qui
+    n'a pas repondu.
+    """
+    _oid = str(offre_id or "").strip()
+    if not _oid:
+        return None, "offre_introuvable"
+    try:
+        _o = await db["offers"].find_one(
+            {"id": _oid},
+            {"_id": 0, "id": 1, "name": 1, "coach_id": 1, "creates_membership": 1})
+    except Exception as _err:
+        logger.warning("%s offre %s illisible: %s", LOT2_PREFIXE, _oid[:32], _err)
+        return None, "offre_introuvable"
+    if not _o:
+        return None, "offre_introuvable"
+    if _o.get("creates_membership") is not True:
+        return None, "offre_non_adherente"
+    return _o, ""
+
+
+async def lot2_adhesion_active(db, email: str, coach_id):
+    """L'adhesion ACTIVE de cette personne chez ce proprietaire, ou None.
+
+    Le statut est RECALCULE ici a partir des dates (`p1a_statut`), jamais lu
+    depuis un champ : c'est la lecon V393, et c'est aussi ce qui rend cette
+    lecture juste sur un document ecrit hier comme sur un document ecrit il y
+    a un an.
+
+    Le filtre de propriete est celui du module adhesions, importe et non
+    recopie : si les deux divergeaient un jour, une adhesion pourrait etre
+    invisible ici et visible la — donc creee en double.
+    """
+    _email = normaliser_email(email)
+    if not _email:
+        return None
+    try:
+        from api.routes.membership_routes import (
+            p1a_filtre_proprietaire as _filtre, p1a_statut as _statut)
+    except Exception as _err:
+        # Fail closed : sans la regle de propriete, on ne peut pas affirmer
+        # qu'il n'existe pas d'adhesion — donc on n'en cree pas.
+        logger.error("%s regle de propriete indisponible: %s", LOT2_PREFIXE, _err)
+        raise
+    _requete = dict(_filtre(coach_id))
+    _requete["email"] = _email
+    try:
+        _lignes = await db["memberships"].find(_requete, {"_id": 0}).to_list(50)
+    except Exception as _err:
+        logger.error("%s adhesions illisibles pour ce contexte: %s", LOT2_PREFIXE, _err)
+        raise
+    for _l in (_lignes or []):
+        if _statut(_l.get("date_debut"), _l.get("date_fin")) == "active":
+            return _l
+    return None
+
+
+async def lot2_creer_adhesion_apres_achat(db, email, offre_id, subscription_id,
+                                          nom="", moteur="", montant=None,
+                                          devise=None):
+    """LE POINT D'ENTREE UNIQUE. Rend toujours un dict, ne leve jamais.
+
+    Appele depuis les DEUX points d'autorite du paiement, et depuis eux seuls.
+    Il n'est jamais atteint depuis un clic, un retour de navigateur ni une
+    requete non authentifiee : quand il s'execute, l'argent a change de main
+    et le forfait existe deja en base.
+
+    ═══════════════════════════════════════════════════════════════════════
+    L'IDEMPOTENCE, ET POURQUOI ELLE EST ATOMIQUE
+    ═══════════════════════════════════════════════════════════════════════
+    `_id = "adh:" + subscription_id`. Le forfait est cree UNE fois par paiement
+    reussi, sur les deux chemins ; son identifiant est donc la cle naturelle de
+    « cet achat-la ». L'unicite du `_id` est garantie par MongoDB lui-meme :
+    un webhook rejoue trois fois leve deux fois `DuplicateKeyError`, sans
+    aucune lecture prealable et sans fenetre de course.
+
+    C'est le motif de `free_trial_claims` — le SEUL mecanisme reellement
+    atomique du domaine paiement de ce depot. Tout le reste (la garde
+    `session_id` du webhook client, la garde `transaction_id` du checkout) est
+    un `find_one` suivi d'un `insert_one` : fiable contre un rejeu sequentiel,
+    faillible en concurrence, et sans aucun index unique pour le rattraper —
+    mesure du 19/08/2026 : AUCUNE collection de ce depot ne porte d'index en
+    dehors de `_id_`. On ne reproduit pas ce defaut sur une brique neuve.
+
+    ═══════════════════════════════════════════════════════════════════════
+    CE QU'IL NE FAIT JAMAIS
+    ═══════════════════════════════════════════════════════════════════════
+    Aucune ecriture hors de `memberships`. Aucune modification d'un document
+    existant — pas meme d'une adhesion : `insert_one` seulement, jamais
+    `update_one`. Aucun retro-remplissage. Une erreur ici ne fait echouer NI le
+    paiement, NI le forfait, NI le code d'acces : l'appelant encaisse d'abord,
+    l'adhesion est un effet, pas une condition.
+    """
+    _resultat = {"cree": False, "motif": "", "membership": None}
+    try:
+        _email = normaliser_email(email)
+        _sid = str(subscription_id or "").strip()
+        _oid = str(offre_id or "").strip()
+        if not _email or not _sid or not _oid:
+            _resultat["motif"] = "donnees_incompletes"
+            return _resultat
+
+        _offre, _pourquoi_pas = await lot2_offre_adherente(db, _oid)
+        if not _offre:
+            # `offre_non_adherente` est LE CAS NORMAL, et de loin le plus
+            # frequent : cette offre ne cree pas d'adhesion, il n'y a rien a
+            # signaler. `offre_introuvable`, lui, est une anomalie — on le dit.
+            if _pourquoi_pas == "offre_introuvable":
+                logger.warning("%s adhesion NON creee — motif=offre_introuvable offre=%s",
+                               LOT2_PREFIXE, _oid[:32])
+            _resultat["motif"] = _pourquoi_pas
+            return _resultat
+
+        _coach = lot2_proprietaire(_offre.get("coach_id"))
+
+        _actif = await lot2_adhesion_active(db, _email, _coach)
+        if _actif:
+            # DECISION DU PROPRIETAIRE : ni second document, ni prolongation.
+            # L'offre d'entree est celle d'un NOUVEAU membre ; le renouvellement
+            # viendra de l'offre suivante, avec sa propre regle.
+            logger.info("%s adhesion NON creee — motif=deja_membre offre=%s "
+                        "proprietaire=%s fin_en_cours=%s",
+                        LOT2_PREFIXE, _oid[:32], _coach or "(aucun)",
+                        _actif.get("date_fin"))
+            _resultat["motif"] = "deja_membre"
+            _resultat["membership"] = _actif
+            return _resultat
+
+        from api.routes.membership_routes import p1a_jour_suisse as _jour
+        _debut = _jour()
+        _fin = lot2_fin_adhesion(_debut)
+        if not _fin:
+            logger.error("%s date de fin incalculable depuis %r", LOT2_PREFIXE, _debut)
+            _resultat["motif"] = "donnees_incompletes"
+            return _resultat
+
+        _maintenant = datetime.now(timezone.utc).isoformat()
+        _doc = {
+            # LE VERROU. Voir le bloc d'idempotence ci-dessus.
+            "_id": LOT2_VERROU + _sid,
+            "id": str(__import__("uuid").uuid4()),
+            "email": _email,
+            "name": str(nom or "").strip()[:120],
+            "coach_id": _coach,
+            "date_debut": _debut,
+            "date_fin": _fin,
+            "source": LOT2_SOURCE,
+            # LA PREUVE D'ACHAT : le forfait ne par le meme paiement, et
+            # l'offre qui l'a declenchee. On ne recopie pas le montant depuis
+            # l'offre — il vient du moteur de paiement, ci-dessous.
+            "subscription_id": _sid,
+            "offer_id": _oid,
+            "created_by": LOT2_SOURCE,
+            "created_at": _maintenant,
+            "updated_at": _maintenant,
+        }
+        # `seances=None` : une adhesion n'ouvre AUCUNE seance — c'est
+        # precisement ce qui la distingue d'un forfait. Meme argument que
+        # `membership_routes.creer_adhesion`.
+        _doc.update(b_champs_automatiques(moteur, montant, devise, seances=None))
+        # AUCUN `statut` en base : il est deduit des dates a chaque lecture.
+        _doc.pop("statut", None)
+
+        try:
+            await db["memberships"].insert_one(_doc)
+        except Exception as _err:
+            if lot2_est_doublon(_err):
+                logger.info("%s adhesion NON creee — motif=rejeu forfait=%s",
+                            LOT2_PREFIXE, _sid[:32])
+                _resultat["motif"] = "rejeu"
+                return _resultat
+            raise
+
+        logger.info("%s adhesion CREEE %s -> %s au %s (offre=%s proprietaire=%s)",
+                    LOT2_PREFIXE, _doc["id"][:8], _debut, _fin,
+                    _oid[:32], _coach or "(aucun)")
+        _doc.pop("_id", None)
+        _resultat["cree"] = True
+        _resultat["membership"] = _doc
+        return _resultat
+
+    except Exception as _err:
+        # Un achat encaisse ne doit JAMAIS echouer parce que l'adhesion n'a pas
+        # pu s'ecrire. On trace fort, et on rend la main.
+        logger.error("%s adhesion NON creee — motif=echec_ecriture : %s",
+                     LOT2_PREFIXE, _err)
+        _resultat["motif"] = "echec_ecriture"
+        return _resultat
