@@ -1073,11 +1073,24 @@ async def _c9_presence(reservation: dict, etait_deja_validee: bool):
 
 
 @reservation_router.post("/reservations/{reservation_code}/validate")
-async def validate_reservation(reservation_code: str):
-    """Validate a reservation by QR code scan"""
+async def validate_reservation(reservation_code: str, request: Request):
+    """Validate a reservation by QR code scan
+
+    R11 — MEME GARDE QUE `/qr/scan-validate`, ET C'EST INDISPENSABLE.
+    Fermer le scanner en laissant cette route ouverte n'aurait rien ferme du
+    tout : elle produit EXACTEMENT la meme ecriture (`validated` sur une
+    reservation) a partir du seul code de reservation. Mesure du 19/08/2026 sur
+    la production : `POST /api/reservations/<code>/validate` sans aucun en-tete
+    repondait 404 « Réservation non trouvée » — donc la route etait ATTEINTE,
+    et un vrai code aurait ete valide.
+    Aucun ecran ne l'appelle (verifie sur tout `frontend/src`) : la fermer ne
+    retire donc aucun parcours a personne.
+    """
+    _scanneur = await _r11_scanneur(request)
     reservation = await db.reservations.find_one({"reservationCode": reservation_code}, {"_id": 0})
     if not reservation:
         raise HTTPException(status_code=404, detail="Réservation non trouvée")
+    _r11_verifier_proprietaire(_scanneur, reservation, "réservation")
     _c9_deja = bool(reservation.get("validated"))   # C9-A : lu AVANT l'écriture
     await db.reservations.update_one(
         {"reservationCode": reservation_code},
@@ -1333,6 +1346,15 @@ async def update_reservation_headphone_post(reservation_id: str, request: Reques
 async def staff_validate_reservation(request: Request):
     """Endpoint simplifié pour le staff — valide une réservation par code QR.
     Le staff n'a accès qu'à ce endpoint, pas aux conversations ni aux réglages."""
+    # R11 — TROISIEME PORTE SUR LA MEME ECRITURE, fermee par la meme garde.
+    # Mesure du 19/08/2026 : `POST /api/staff/validate` sans en-tete repondait
+    # 404 — la route etait atteinte. Le nom « staff » ne protegeait rien :
+    # `/staff/login` n'emet aucun jeton, il ne fait que basculer une session
+    # coach DEJA authentifiee en mode restreint cote navigateur. Le staff scanne
+    # donc avec le jeton du coach, qui reste valide : aucun parcours ferme.
+    # Aucun ecran n'appelle cette route aujourd'hui (verifie sur tout
+    # `frontend/src`).
+    _scanneur = await _r11_scanneur(request)
     body = await request.json()
     code = body.get("code", "").strip()
     if not code:
@@ -1340,6 +1362,7 @@ async def staff_validate_reservation(request: Request):
     reservation = await db.reservations.find_one({"reservationCode": code}, {"_id": 0})
     if not reservation:
         raise HTTPException(status_code=404, detail="Réservation non trouvée")
+    _r11_verifier_proprietaire(_scanneur, reservation, "réservation")
     if reservation.get("validated"):
         return {"success": False, "message": "Déjà validé", "userName": reservation.get("userName", ""), "validatedAt": reservation.get("validatedAt", "")}
     await db.reservations.update_one(
@@ -1352,7 +1375,8 @@ async def staff_validate_reservation(request: Request):
     return {"success": True, "message": "Réservation validée", "userName": reservation.get("userName", ""), "courseName": reservation.get("courseName", "")}
 
 
-async def _validate_discount_code_presence(code: str, discount: dict, member_slug: str = None, forced_course_id: str = None):
+async def _validate_discount_code_presence(code: str, discount: dict, member_slug: str = None,
+                                           forced_course_id: str = None, scanneur: str = ""):
     """V213: Valider la présence d'un membre via code promo/groupe.
     Cherche une réservation existante pour aujourd'hui et la valide."""
     from datetime import timedelta as _td
@@ -1387,6 +1411,7 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
             # Valider toutes les réservations non-validées du groupe pour aujourd'hui
             names = []
             for r in today_reservations:
+                _r11_verifier_proprietaire(scanneur, r, "réservation")
                 await db.reservations.update_one(
                     {"id": r.get("id")},
                     {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
@@ -1432,6 +1457,7 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
                                    "remaining": discount.get("remaining_sessions", 0),
                                    "total": discount.get("total_sessions", 0)}}
         # Valider la réservation
+        _r11_verifier_proprietaire(scanneur, reservation, "réservation")
         await db.reservations.update_one(
             {"id": reservation.get("id")},
             {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
@@ -1457,7 +1483,8 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
                         detail=f"{member_name} n'a pas de réservation pour aujourd'hui. Demande-lui de réserver d'abord.")
 
 
-async def _validate_user_access_code(code: str, user: dict, forced_course_id: str = None):
+async def _validate_user_access_code(code: str, user: dict, forced_course_id: str = None,
+                                     scanneur: str = ""):
     """V213 CAS D: Valider la présence via code d'accès AFRO-XXXX.
     Cherche une réservation existante pour aujourd'hui et la valide."""
     from datetime import timedelta as _td
@@ -1484,6 +1511,7 @@ async def _validate_user_access_code(code: str, user: dict, forced_course_id: st
                     "reservation": {"userName": reservation.get("userName", user_name),
                                     "reservationCode": reservation.get("reservationCode", code),
                                     "courseName": reservation.get("courseName", "")}}
+        _r11_verifier_proprietaire(scanneur, reservation, "réservation")
         await db.reservations.update_one(
             {"id": reservation.get("id")},
             {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
@@ -1512,6 +1540,102 @@ async def _validate_user_access_code(code: str, user: dict, forced_course_id: st
                         detail=f"{user_name} n'a pas de réservation pour aujourd'hui.")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# R11 — VALIDER UNE PRESENCE EXIGE UNE IDENTITE PROUVEE
+#
+# `/qr/scan-validate` n'avait AUCUNE authentification. La route ecrit
+# `validated` sur une reservation, et, quand personne n'a reserve, CREE une
+# reservation et DEBITE une seance. Connaitre un code suffisait donc a marquer
+# quelqu'un present, ou a lui consommer une seance, depuis n'importe ou.
+#
+# DEUX AUTRES PORTES FONT LA MEME ECRITURE, et elles sont fermees ici aussi —
+# sans elles ce lot n'aurait rien ferme du tout. Mesure du 19/08/2026 sur la
+# production, sans le moindre en-tete :
+#     POST /api/reservations/<code>/validate  -> 404 (route ATTEINTE)
+#     POST /api/staff/validate                -> 404 (route ATTEINTE)
+# Un vrai code aurait ete valide. Aucun ecran n'appelle ces deux routes
+# (verifie sur tout `frontend/src`) : les fermer ne retire aucun parcours.
+#
+# POURQUOI MAINTENANT. La presence est le declencheur metier du futur ecran de
+# conversion apres essai. Falsifiable, elle rendrait faux tout ce qui se
+# construira dessus. On ferme donc AVANT de batir.
+#
+# AUCUN MECANISME NEUF. On reprend `_v309_require_coach_or_admin`, exactement
+# la garde qui protege deja `/api/users`, `/api/contacts/all` et
+# `/api/coach/notifications` : JWT SIGNE verifie (HS256), jetons abonne rejetes,
+# puis verification que l'e-mail correspond a un compte coach ou super-admin
+# REEL. `X-User-Email` ne participe pas — il est falsifiable (mode transitoire
+# V265) et ne prouve rien.
+#
+# LE CHEMIN LEGITIME EST PROUVE AVANT DE DURCIR (regle V310c). Mesure du
+# 19/08/2026 sur la production :
+#     GET /api/users         sans jeton -> 403
+#     GET /api/contacts/all  sans jeton -> 403
+#     GET /api/coach/notifications      -> 403
+# Ces trois routes portent DEJA cette garde et le tableau de bord du
+# proprietaire les consomme sans probleme : sa session emet donc bien un jeton
+# signe. Le drapeau `REQUIRE_COACH_JWT` est par ailleurs a True en base.
+#
+# LE SCANNER MOBILE NE CHANGE PAS D'UN GESTE. Les deux scanners
+# (CoachDashboard.js:2449 et ChatWidget.js:5671) passent par l'instance axios
+# globale, dont l'intercepteur (App.js:14-20) pose deja
+# `Authorization: Bearer <afroboost_jwt>` sur CHAQUE requete. Rien a saisir,
+# rien a copier, aucun ecran de plus.
+#
+# LE MODE STAFF RESTE OUVERT. `/staff/login` n'emet aucun jeton : il ne fait que
+# basculer une session coach DEJA authentifiee en mode restreint (drapeau
+# `afroboost_staff_mode` cote navigateur). Le staff scanne donc avec le jeton du
+# coach, qui reste valide. Aucun parcours staff n'est ferme.
+# ═══════════════════════════════════════════════════════════════════════════
+
+R11_MSG_ANONYME = "Authentification coach requise pour valider une présence — reconnecte-toi."
+R11_MSG_AUTRE_COACH = "Cette réservation ne relève pas de ton compte."
+
+
+async def _r11_scanneur(request) -> str:
+    """L'e-mail du coach/admin qui scanne, PROUVE par un jeton signe. 403 sinon.
+
+    Import PARESSEUX : `server.py` importe ce module au chargement, un import en
+    tete de fichier creerait un cycle. Meme motif que `t1_preuve` (l. 884) et
+    `send_push_by_email` (l. 968), deja en service ici.
+    """
+    from api.server import _v309_require_coach_or_admin as _garde
+    try:
+        return await _garde(request)
+    except HTTPException as _e:
+        # On reecrit le message pour le staff qui scanne a la porte : il doit
+        # comprendre quoi faire sans lire les journaux. Le CODE reste 403.
+        if _e.status_code == 403:
+            raise HTTPException(status_code=403, detail=R11_MSG_ANONYME)
+        raise
+
+
+def _r11_verifier_proprietaire(scanneur: str, document: dict, quoi: str = "réservation") -> None:
+    """Ce coach a-t-il le droit d'agir sur CE document ? 403 sinon.
+
+    LE MODELE, tel qu'il existe — rien n'est invente ici :
+      * un super-admin voit et valide tout (`is_super_admin`, deja la regle de
+        `/reservations`, l. 697, et de tout le cloisonnement multi-coach) ;
+      * sinon, `coach_id` du document doit etre celui de l'appelant.
+
+    DONNEE ORPHELINE (`coach_id` absent ou vide) -> on LAISSE PASSER. C'est un
+    choix, pas un oubli : l'appelant est deja un coach authentifie, et refuser
+    bloquerait une validation legitime sur une donnee ancienne. Mesure du
+    19/08/2026 : 132 reservations sur 132 et 22 cours sur 22 portent un
+    `coach_id`, donc ce repli ne s'applique aujourd'hui a rien. Un `coach_id`
+    RENSEIGNE ET DIFFERENT, lui, refuse toujours.
+    """
+    if is_super_admin(scanneur):
+        return
+    _proprio = ((document or {}).get("coach_id") or "").lower().strip()
+    if not _proprio:
+        return
+    if _proprio != (scanneur or "").lower().strip():
+        logger.warning("[R11] REFUS %s : %s n'est pas le proprietaire (%s)",
+                       quoi, scanneur, _proprio)
+        raise HTTPException(status_code=403, detail=R11_MSG_AUTRE_COACH)
+
+
 @reservation_router.post("/qr/scan-validate")
 async def qr_scan_validate(request: Request):
     """V176/V213d: Scan QR coach — gère TOUS les types de codes."""
@@ -1526,6 +1650,11 @@ async def qr_scan_validate(request: Request):
 
 async def _qr_scan_validate_inner(request: Request):
     """V213d: Logique interne du scan QR."""
+    # R11 — PREMIERE CHOSE FAITE, AVANT MEME DE LIRE LE CORPS : qui scanne ?
+    # Un anonyme n'ecrit rien, ne cree rien, ne debite rien. La garde est unique
+    # et couvre donc TOUS les cas de cette route (A a E), presents et futurs.
+    _scanneur = await _r11_scanneur(request)
+
     body = await request.json()
     code = body.get("code", "").strip().upper()
     if not code:
@@ -1551,6 +1680,7 @@ async def _qr_scan_validate_inner(request: Request):
             return {"success": True, "type": "reservation", "message": "Déjà validé",
                     "reservation": {"userName": reservation.get("userName", ""), "reservationCode": code,
                                     "courseName": reservation.get("courseName", ""), "validatedAt": reservation.get("validatedAt", "")}}
+        _r11_verifier_proprietaire(_scanneur, reservation, "réservation")
         await db.reservations.update_one({"reservationCode": code},
             {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}})
         return {"success": True, "type": "reservation", "message": "Réservation validée",
@@ -1583,7 +1713,8 @@ async def _qr_scan_validate_inner(request: Request):
         )
         if discount:
             logger.info(f"[QR-V213] CAS C trouvé: discount code '{code}', multi_member={discount.get('multi_member')}, slug={member_slug_from_qr}")
-            return await _validate_discount_code_presence(code, discount, member_slug_from_qr, forced_course_id)
+            return await _validate_discount_code_presence(code, discount, member_slug_from_qr,
+                                                          forced_course_id, _scanneur)
 
         # CAS C bis: discount_code inactif ?
         discount_any = await db.discount_codes.find_one(
@@ -1609,7 +1740,8 @@ async def _qr_scan_validate_inner(request: Request):
                         {"code": {"$regex": f"^{re.escape(member_code)}$", "$options": "i"}, "active": True}, {"_id": 0}
                     )
                     if real_discount:
-                        return await _validate_discount_code_presence(member_code, real_discount, member_slug_from_qr, forced_course_id)
+                        return await _validate_discount_code_presence(member_code, real_discount, member_slug_from_qr,
+                                                                     forced_course_id, _scanneur)
 
         # CAS D (V213): Code d'accès utilisateur AFRO-XXXX — cherche dans users
         logger.info(f"[QR-V213] CAS C échoué, recherche CAS D (users.accessCode) pour code='{code}'")
@@ -1617,7 +1749,7 @@ async def _qr_scan_validate_inner(request: Request):
             {"accessCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}}, {"_id": 0}
         )
         if user_by_access:
-            return await _validate_user_access_code(code, user_by_access, forced_course_id)
+            return await _validate_user_access_code(code, user_by_access, forced_course_id, _scanneur)
 
         # CAS E (V213c): Chercher dans les réservations par discountCode ou promoCode
         # Au cas où le code serait stocké sous un nom de champ différent
@@ -1634,6 +1766,7 @@ async def _qr_scan_validate_inner(request: Request):
         }, {"_id": 0})
         if direct_res:
             if not direct_res.get("validated"):
+                _r11_verifier_proprietaire(_scanneur, direct_res, "réservation")
                 await db.reservations.update_one(
                     {"id": direct_res.get("id")},
                     {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
@@ -1695,6 +1828,10 @@ async def _qr_scan_validate_inner(request: Request):
                 detail={"error": "no_course_now", "message": "Aucun cours en cours actuellement. Sélectionnez un cours manuellement."}
             )
 
+    # R11 : creer une reservation et DEBITER une seance sur le cours d'un autre
+    # coach est le geste le plus lourd de cette route. La propriete se verifie
+    # ici sur le COURS (22 cours sur 22 portent un `coach_id` en production).
+    _r11_verifier_proprietaire(_scanneur, target_course, "cours")
     course_id = target_course.get("id")
     course_name = target_course.get("name") or "Cours"
     course_time = target_course.get("time") or ""
@@ -1704,6 +1841,7 @@ async def _qr_scan_validate_inner(request: Request):
 
     if existing:
         if not existing.get("validated"):
+            _r11_verifier_proprietaire(_scanneur, existing, "réservation")
             await db.reservations.update_one({"id": existing.get("id")},
                 {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}})
         return {"success": True, "type": "subscription", "message": "Présence validée (résa déjà existante)",
