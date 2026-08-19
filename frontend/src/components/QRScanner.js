@@ -287,10 +287,42 @@ export const QRScannerModal = ({ onClose, onValidate, scanResult, scanError, onM
                 </p>
                 <p className="text-green-300 text-lg">{scanResult.reservation?.userName}</p>
                 <p className="text-green-300 text-sm">{scanResult.reservation?.reservationCode}</p>
+                {/* SCAN : le COURS SUIVI et le DROIT UTILISE sont DEUX
+                    informations. Confondues, elles faisaient lire « a achete
+                    Cours a l'unite » la ou la personne y participait au titre
+                    d'un essai gratuit. Le libelle et la date viennent du
+                    serveur — une seule source de verite pour les deux
+                    scanners. */}
+                {scanResult.reservation?.courseName && (
+                  <div className="mt-2" data-testid="scan-cours">
+                    <p className="text-green-200/60 text-[10px] tracking-widest">COURS</p>
+                    <p className="text-white text-sm">{scanResult.reservation.courseName}</p>
+                    {scanResult.reservation?.quand && (
+                      <p className="text-green-200/80 text-xs">{scanResult.reservation.quand}</p>
+                    )}
+                  </div>
+                )}
+                {scanResult.acces?.libelle && (
+                  <div className="mt-2" data-testid="scan-acces">
+                    <p className="text-green-200/60 text-[10px] tracking-widest">ACCÈS</p>
+                    <p
+                      className="text-sm"
+                      style={{
+                        color: scanResult.acces.essai ? 'var(--primary-color, #D91CD2)' : '#fff',
+                        fontWeight: scanResult.acces.essai ? 700 : 400,
+                      }}
+                    >
+                      {scanResult.acces.libelle}
+                    </p>
+                  </div>
+                )}
                 {scanResult.subscriptionInfo && (
-                  <p className="text-green-200 text-sm font-bold mt-1">
-                    {scanResult.subscriptionInfo.remaining}/{scanResult.subscriptionInfo.total} séances restantes
-                  </p>
+                  <div className="mt-2" data-testid="scan-seances">
+                    <p className="text-green-200/60 text-[10px] tracking-widest">SÉANCES</p>
+                    <p className="text-green-200 text-sm font-bold">
+                      {scanResult.subscriptionInfo.remaining}/{scanResult.subscriptionInfo.total} restante{scanResult.subscriptionInfo.total > 1 ? 's' : ''}
+                    </p>
+                  </div>
                 )}
                 {scanResult.message && !scanResult.subscriptionInfo && (
                   <p className="text-green-200 text-xs mt-1">{scanResult.message}</p>

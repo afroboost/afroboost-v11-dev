@@ -10016,15 +10016,47 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           {qrScanResult.success ? '✅ ' : '❌ '}
                           {qrScanResult.message}
                           {(qrScanResult.userName || (qrScanResult.reservation && qrScanResult.reservation.userName)) && (
-                            <div style={{ color: '#fff', marginTop: '4px', fontSize: '12px' }}>
+                            <div style={{ color: '#fff', marginTop: '4px', fontSize: '13px', fontWeight: 600 }}>
                               {qrScanResult.userName || qrScanResult.reservation.userName}
-                              {(qrScanResult.courseName || (qrScanResult.reservation && qrScanResult.reservation.courseName))
-                                ? ' — ' + (qrScanResult.courseName || qrScanResult.reservation.courseName) : ''}
+                            </div>
+                          )}
+                          {/* SCAN : le COURS SUIVI et le DROIT UTILISE sont DEUX
+                              informations. Elles etaient fondues en une seule ligne
+                              « nom — cours », ou le coach lisait un achat la ou il
+                              avait un essai. Le libelle et la date viennent du
+                              serveur : ES5 strict ici, et surtout une seule source
+                              de verite pour les deux scanners. */}
+                          {(qrScanResult.courseName || (qrScanResult.reservation && qrScanResult.reservation.courseName)) && (
+                            <div style={{ marginTop: '8px', textAlign: 'left' }} data-testid="scan-cours">
+                              <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '9px', letterSpacing: '0.08em' }}>COURS</div>
+                              <div style={{ color: '#fff', fontSize: '12px' }}>
+                                {qrScanResult.courseName || qrScanResult.reservation.courseName}
+                              </div>
+                              {qrScanResult.reservation && qrScanResult.reservation.quand && (
+                                <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '11px' }}>
+                                  {qrScanResult.reservation.quand}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {qrScanResult.acces && qrScanResult.acces.libelle && (
+                            <div style={{ marginTop: '8px', textAlign: 'left' }} data-testid="scan-acces">
+                              <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '9px', letterSpacing: '0.08em' }}>ACCÈS</div>
+                              <div style={{
+                                color: qrScanResult.acces.essai ? 'var(--primary-color, #D91CD2)' : '#fff',
+                                fontSize: '12px',
+                                fontWeight: qrScanResult.acces.essai ? 700 : 400
+                              }}>
+                                {qrScanResult.acces.libelle}
+                              </div>
                             </div>
                           )}
                           {qrScanResult.subscriber && (
-                            <div style={{ color: '#86efac', marginTop: '4px', fontSize: '11px', fontWeight: 600 }}>
-                              {qrScanResult.subscriber.remaining}/{qrScanResult.subscriber.total} séances restantes
+                            <div style={{ marginTop: '8px', textAlign: 'left' }} data-testid="scan-seances">
+                              <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '9px', letterSpacing: '0.08em' }}>SÉANCES</div>
+                              <div style={{ color: '#86efac', fontSize: '12px', fontWeight: 600 }}>
+                                {qrScanResult.subscriber.remaining}/{qrScanResult.subscriber.total} restante{qrScanResult.subscriber.total > 1 ? 's' : ''}
+                              </div>
                             </div>
                           )}
                         </div>

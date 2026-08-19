@@ -247,6 +247,9 @@ def construire(db):
                 "_a1_etiquette", "_a1_occurrences_du_jour",
                 # A1b — la garde d'appariement, absente des commits anterieurs
                 "_a1b_occurrences_reelles",
+                # SCAN — le droit utilise a cote du cours suivi. Absent des
+                # commits anterieurs, donc simplement ignore la aussi.
+                "_scan_quand", "_scan_enrichir",
                 "_qr_scan_validate_inner"):
         _code = extraire(nom, obligatoire=False)
         if _code:
@@ -255,7 +258,7 @@ def construire(db):
     for n in ast.walk(ARBRE):
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in (
                 "A0_TOLERANCE_MIN", "R11_MSG_ANONYME", "R11_MSG_AUTRE_COACH",
-                "A1_JOURS_JS"):
+                "A1_JOURS_JS", "SCAN_LIBELLE_ESSAI"):
             exec(compile("".join(LIGNES[n.lineno - 1:n.end_lineno]), FICHIER, "exec"), ns)
     return ns
 
@@ -288,6 +291,14 @@ def faux_shared(forfait_ok=(True, ""), abonnement=None):
 
     m.lire_abonnement_par_code = lire_abonnement_par_code
     m.forfait_utilisable = forfait_utilisable
+    # SCAN : la SEULE regle qui dit « c'est un essai ». Recopiee ici a
+    # l'identique de shared.py — le test la compare a la vraie ci-dessous.
+    m.ESSAI2_FILTRE_GRATUIT = {
+        "$or": [
+            {"payment_method": "free", "total_paid": 0},
+            {"source": "social_proof"},
+        ]
+    }
     sys.modules["api.routes.shared"] = m
     sys.modules.setdefault("api", types.ModuleType("api"))
     sys.modules.setdefault("api.routes", types.ModuleType("api.routes"))

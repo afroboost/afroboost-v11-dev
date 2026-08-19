@@ -2451,17 +2451,24 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
       if (data.success) {
         if (data.type === 'reservation') {
-          setScanResult({ success: true, reservation: data.reservation });
+          // SCAN : `acces` porte le DROIT utilise, distinct du cours suivi.
+          setScanResult({ success: true, reservation: data.reservation, acces: data.acces });
           setReservations(reservations.map(r =>
             r.reservationCode === code ? { ...r, validated: true } : r
           ));
         } else if (data.type === 'subscription') {
+          // SCAN : ce bloc RECONSTRUISAIT `reservation` a la main et perdait
+          // au passage le cours, sa date et le droit utilise — l'ecran ne
+          // montrait donc ni l'un ni l'autre pour un abonnement. On repart de
+          // ce que le serveur envoie, et on ne surcharge que ce qui manque.
           setScanResult({
             success: true,
             reservation: {
-              userName: data.subscriber?.name || 'Abonné',
-              reservationCode: code,
+              ...(data.reservation || {}),
+              userName: data.reservation?.userName || data.subscriber?.name || 'Abonné',
+              reservationCode: data.reservation?.reservationCode || code,
             },
+            acces: data.acces,
             subscriptionInfo: data.subscriber,
             message: data.message,
           });

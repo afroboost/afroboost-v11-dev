@@ -2269,11 +2269,152 @@ async def _a1_occurrences_du_jour(coach_id: str, jour_iso: str, jour_js: int) ->
     return [c for c in _tous if _a1_a_lieu_aujourdhui(c, jour_iso, jour_js)]
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# SCAN — LE COURS SUIVI ET LE DROIT UTILISE, COTE A COTE
+#
+# CE QUE CECI CORRIGE — constate en production le 19/08/2026. Le coach scanne
+# `AFR-248AJR` et lit « test01 — Cours a l'unite / 0/1 seances restantes ». Or
+# « Cours a l'unite » est le COURS SUIVI ; le DROIT consomme, lui, est
+# « Cours d'essai GRATUIT ». Rien a l'ecran ne permettait de le savoir : le
+# coach voyait un acheteur la ou il avait un essayeur.
+#
+# Ce n'etait pas un melange, c'etait une OMISSION : la reponse du scan ne
+# portait que `courseName`. Le droit existe en base, il n'etait pas transmis.
+#
+# UNE SEULE PLACE, ET C'EST LE POINT. `_qr_scan_validate_inner` construit sa
+# reponse a HUIT endroits (cas A, B, E, deja-valide, resa existante, creation…).
+# Enrichir chacun garantissait qu'ils divergent un jour. On enrichit donc la
+# reponse APRES coup, dans l'enveloppe que tous traversent : tous les chemins
+# presents ET futurs sont couverts par construction.
+#
+# NON BLOQUANT, SANS EXCEPTION. Ceci est de l'affichage. Une lecture qui echoue
+# ne doit JAMAIS empecher une presence d'etre validee a la porte : toute erreur
+# est avalee et le scan repond exactement comme avant.
+#
+# COUT : au plus TROIS `find_one` a document unique, jamais une boucle. Pour un
+# essai — le cas qui motive ce lot — DEUX suffisent, la nature du droit rendant
+# le libelle du forfait inutile.
+# ═══════════════════════════════════════════════════════════════════════════
+
+SCAN_LIBELLE_ESSAI = "Essai gratuit"
+
+
+def _scan_quand(datetime_iso: str, heure: str = "") -> str:
+    """« Mer 19 aout · 18:30 » — construit COTE SERVEUR, comme `_a1_etiquette`.
+
+    Meme raison qu'A1 : les deux interfaces de scan indexaient chacune leur
+    propre tableau de jours et se trompaient de jour. Une seule source de
+    verite supprime la classe de bug entiere, et evite d'ecrire du formatage de
+    date en ES5 dans ChatWidget.
+    """
+    _iso = str(datetime_iso or "").strip()
+    if not _iso:
+        return (heure or "").strip()
+    _d = _a0_horodatage(_iso)
+    if _d is None:
+        return (heure or "").strip()
+    _mois = ("janv.", "fevr.", "mars", "avr.", "mai", "juin",
+             "juil.", "aout", "sept.", "oct.", "nov.", "dec.")
+    _jour = A1_JOURS_JS[(_d.weekday() + 1) % 7]
+    _h = (heure or "").strip() or _iso[11:16]
+    return ("%s %d %s%s" % (_jour, _d.day, _mois[_d.month - 1],
+                            (" · " + _h) if _h else "")).strip()
+
+
+async def _scan_enrichir(request: Request, reponse):
+    """Ajoute `acces` (le DROIT) et la date de la seance a la reponse du scan.
+
+    `acces.essai` NE SE DEDUIT NI DU NOM DU COURS, NI DU PRIX, NI DU NOMBRE DE
+    SEANCES, NI D'UNE CHAINE LIBRE. Il vient de `ESSAI2_FILTRE_GRATUIT` — le
+    marqueur pose par le moteur de paiement (`payment_method: free` +
+    `total_paid: 0`, ou `source: social_proof`), la meme regle qu'ESSAI-2,
+    ESSAI-3, l'espace abonne et LOT A. Une seule definition de « c'est un
+    essai » dans tout le depot.
+
+    `acces.libelle` pour un droit PAYANT est `subscriptions.offer_name`, RENDU
+    TEL QUEL. Ce champ a derive : 25 reservations de production portent
+    « Abonnement », d'autres un code brut. On affiche cette verite pauvre
+    plutot que d'inventer un nom precis a partir du prix ou du cours — c'est
+    exactement l'erreur que ce lot corrige. Vide reste vide : l'ecran n'affiche
+    alors pas de ligne « Acces » du tout.
+
+    `reservations.offerName` N'EST PAS UTILISE, et c'est mesure : sur les 135
+    reservations il repete `courseName` dans 41 cas, et sur 10 des 11 presences
+    validees il ne porte pas le droit mais le cours. Il ne serait fiable que
+    par accident.
+    """
+    if not isinstance(reponse, dict) or not reponse.get("success"):
+        return reponse
+    try:
+        _bloc = reponse.get("reservation")
+        if not isinstance(_bloc, dict):
+            return reponse
+
+        # 1. La reservation reelle : elle porte la date de la seance et le code
+        #    du droit. Absente (scan de groupe), on continue sans elle.
+        _resa = None
+        _rcode = (_bloc.get("reservationCode") or "").strip()
+        if _rcode:
+            _resa = await db.reservations.find_one(
+                {"reservationCode": _rcode},
+                {"_id": 0, "datetime": 1, "courseTime": 1, "courseName": 1,
+                 "promoCode": 1, "discountCode": 1},
+            )
+        if _resa:
+            _bloc.setdefault("courseName", _resa.get("courseName") or "")
+            _bloc["datetime"] = _resa.get("datetime") or ""
+            _bloc["courseTime"] = _resa.get("courseTime") or ""
+            _bloc["quand"] = _scan_quand(_resa.get("datetime"), _resa.get("courseTime"))
+
+        # 2. Le code du DROIT. Celui porte par la reservation d'abord — il est
+        #    explicite — puis le code scanne lui-meme, qui EST le code d'acces
+        #    dans les cas B a E.
+        _code = ((_resa or {}).get("promoCode")
+                 or (_resa or {}).get("discountCode") or "").strip()
+        if not _code:
+            try:
+                _corps = await request.json()      # deja lu : Starlette le garde en cache
+                _code = _a0_code_depuis_qr(str((_corps or {}).get("code") or "")).strip()
+                if "::" in _code:
+                    _code = _code.split("::", 1)[0]
+            except Exception:
+                _code = ""
+        _code = _code.strip().upper()
+        if not _code:
+            return reponse
+
+        # 3. Est-ce un essai ? La seule regle qui fasse foi.
+        from api.routes.shared import ESSAI2_FILTRE_GRATUIT as _GRATUIT
+        _q = {"code": {"$regex": f"^{re.escape(_code)}$", "$options": "i"}}
+        _q.update(_GRATUIT)
+        _essai = await db.discount_codes.find_one(_q, {"_id": 1}) is not None
+
+        if _essai:
+            # Le libelle du forfait n'apprendrait rien de plus : une requete
+            # economisee sur le chemin le plus frequent de ce lot.
+            reponse["acces"] = {"libelle": SCAN_LIBELLE_ESSAI, "essai": True}
+            return reponse
+
+        _sub = await db.subscriptions.find_one(
+            {"code": {"$regex": f"^{re.escape(_code)}$", "$options": "i"}},
+            {"_id": 0, "offer_name": 1},
+        )
+        reponse["acces"] = {"libelle": ((_sub or {}).get("offer_name") or "").strip(),
+                            "essai": False}
+    except Exception as _err:
+        # L'affichage ne fait jamais echouer une presence a la porte.
+        logger.warning("[SCAN] acces non resolu, reponse inchangee — %s: %s",
+                       type(_err).__name__, _err)
+    return reponse
+
+
 @reservation_router.post("/qr/scan-validate")
 async def qr_scan_validate(request: Request):
     """V176/V213d: Scan QR coach — gère TOUS les types de codes."""
     try:
-        return await _qr_scan_validate_inner(request)
+        # L'enveloppe que TOUS les chemins de reponse traversent : c'est la
+        # qu'on ajoute le droit utilise, pour qu'aucun cas ne puisse diverger.
+        return await _scan_enrichir(request, await _qr_scan_validate_inner(request))
     except HTTPException:
         raise
     except Exception as e:
