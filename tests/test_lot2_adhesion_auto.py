@@ -886,10 +886,18 @@ def test_14_aucune_nouvelle_page():
 
     # CoachDashboard : `creates_membership` n'apparait QUE dans l'enregistrement
     # et la remise a zero d'une offre — jamais dans une entree de navigation.
+    # LOT 2 FIX : TROIS lignes, et non deux. La troisieme est le RECHARGEMENT
+    # dans `startEditOffer` — son absence etait un bug : rouvrir une offre
+    # `creates_membership: true` affichait la case DECOCHEE, et la sauvegarde
+    # suivante remettait le champ a `false` en base. Les trois roles, et il n'y
+    # en a pas d'autre : (1) relecture a l'ouverture du formulaire,
+    # (2) envoi a l'enregistrement, (3) remise a zero pour l'offre suivante.
+    # La garde qui compte reste la seconde : jamais dans une entree de
+    # navigation.
     lignes = [l.strip() for l in dashboard.splitlines() if "creates_membership" in l]
     verifier("14a. `creates_membership` n'apparait que dans le formulaire d'offre "
-             "(2 lignes), jamais dans un onglet",
-             len(lignes) == 2 and not any(
+             "(3 lignes : relecture, envoi, remise a zero), jamais dans un onglet",
+             len(lignes) == 3 and not any(
                  ("id:" in l) or ("label:" in l) or ("icon:" in l) for l in lignes),
              str(lignes))
 

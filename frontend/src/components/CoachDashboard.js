@@ -3223,6 +3223,19 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       external_link_enabled: !!offer.external_link_enabled,
       // V260: sans ce report, rouvrir l'offre viderait le prix alternatif.
       social_proof_price: offer.social_proof_price ?? '',
+      // LOT 2 FIX : le SIXIEME cas du meme piege — apres les paliers (V223),
+      // les libelles (V225), le lien partenaire (V256) et le prix alternatif
+      // (V260). Les deux cases partaient BIEN a l'enregistrement (elles sont
+      // dans `offerData`, plus bas), mais n'etaient JAMAIS relues ici : rouvrir
+      // une offre qui les portait a `true` en base affichait deux cases
+      // DECOCHEES, et le `$set: offer.model_dump()` de PUT /offers/{id} les
+      // remettait alors a `false` a la premiere sauvegarde — perte silencieuse.
+      // Aucune logique metier ajoutee : on relit ce que la base contient deja.
+      // `!!` pour la meme raison que dans `offerData` : le champ peut etre
+      // absent des documents anciens (`undefined`), et la case attend un
+      // booleen, pas `undefined`.
+      first_purchase_eligible: !!offer.first_purchase_eligible,
+      creates_membership: !!offer.creates_membership,
     });
     setEditingOfferId(offer.id);
     // Scroll vers le formulaire

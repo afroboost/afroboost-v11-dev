@@ -148,7 +148,18 @@ const REPLI = {
   tracks: [], comments: [], publications: [],
 };
 
-export function demarrer({ racine, etat }) {
+/**
+ * @param persisterOffres  false par DEFAUT — le bouchon reste alors en lecture
+ *   seule stricte, exactement comme avant, et tous les tests existants sont
+ *   inchanges. A `true`, et A CETTE SEULE CONDITION, un `PUT /api/offers/{id}`
+ *   est accepte : le document correspondant de `etat.offers` est fusionne avec
+ *   le corps recu, EN MEMOIRE UNIQUEMENT. C'est indispensable pour verifier
+ *   qu'une case cochee SURVIT a un aller-retour « enregistrer puis rouvrir » —
+ *   sans cela, l'aller-retour ne peut pas etre teste du tout.
+ *   Aucune base n'est jamais touchee : `etat` est un objet JavaScript, et le
+ *   processus meurt avec le test. Toute autre ecriture reste refusee en 405.
+ */
+export function demarrer({ racine, etat, persisterOffres = false }) {
   const journal = [];
 
   const serveur = http.createServer((req, res) => {
@@ -156,8 +167,28 @@ export function demarrer({ racine, etat }) {
     const chemin = decodeURIComponent(url.pathname);
 
     if (chemin.startsWith('/api/')) {
-      // GARDE-FOU : aucune ecriture, jamais. Un POST/PUT/DELETE est refuse ET
-      // consigne, de sorte que le test puisse affirmer « rien n'a ete ecrit »
+      // Seule breche, fermee par defaut : la sauvegarde d'une offre EN MEMOIRE.
+      const ecritureOffre = persisterOffres
+        && req.method === 'PUT'
+        && /^\/api\/offers\/[^/]+$/.test(chemin);
+      if (ecritureOffre) {
+        const id = chemin.split('/').pop();
+        let brut = '';
+        req.on('data', (c) => { brut += c; });
+        req.on('end', () => {
+          let corps = {};
+          try { corps = JSON.parse(brut || '{}'); } catch (e) { corps = {}; }
+          const i = (etat.offers || []).findIndex((o) => o.id === id);
+          // Fusion, et non remplacement : le vrai serveur fait un `$set` du
+          // model_dump, donc les champs ABSENTS du corps gardent leur valeur.
+          if (i >= 0) etat.offers[i] = { ...etat.offers[i], ...corps, id };
+          journal.push({ methode: 'PUT', chemin, statut: 200, champsRecus: Object.keys(corps) });
+          json(res, 200, etat.offers[i] || { id, ...corps });
+        });
+        return undefined;
+      }
+      // GARDE-FOU : aucune autre ecriture, jamais. Un POST/PUT/DELETE est refuse
+      // ET consigne, de sorte que le test puisse affirmer « rien n'a ete ecrit »
       // sur une mesure, pas sur une intention.
       if (req.method !== 'GET') {
         journal.push({ methode: req.method, chemin, statut: 405 });
