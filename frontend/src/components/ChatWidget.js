@@ -5677,17 +5677,19 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         var status = err.response && err.response.status;
         var detail = err.response && err.response.data && err.response.data.detail;
         if (status === 422 && typeof detail === 'object' && detail && detail.error === 'no_course_now') {
-          axios.get(API + '/courses').then(function(cr) {
-            var vc = (cr.data || []).filter(function(c) { return c.visible && !c.archived; });
-            if (vc.length === 0) {
-              setQrScanResult({ success: false, message: 'Aucun cours configuré.' });
-              return;
-            }
-            // V179: Affichage du modal aux couleurs Afroboost (au lieu de window.prompt)
-            setQrCourseSelector(vc);
-          }).catch(function() {
-            setQrScanResult({ success: false, message: 'Impossible de charger les cours.' });
-          });
+          // A1 : la liste des cours DU JOUR vient du serveur, deja etiquetee.
+          // Cet ecran chargeait tout le catalogue et fabriquait le libelle du
+          // jour en indexant ['Lun'..'Dim'] avec `course.weekday`, ecrit en
+          // convention JavaScript (Dim=0) : le jour affiche etait faux, et un
+          // cours ponctuel deja passe restait selectionnable — le serveur creait
+          // alors une reservation et DEBITAIT une seance.
+          var dayCourses = (detail.courses && detail.courses.length) ? detail.courses : [];
+          if (dayCourses.length === 0) {
+            setQrScanResult({ success: false, message: detail.message || "Aucun cours a l'agenda d'aujourd'hui." });
+            return;
+          }
+          // V179: Affichage du modal aux couleurs Afroboost (au lieu de window.prompt)
+          setQrCourseSelector(dayCourses);
           return;
         }
         var msg = 'Erreur de validation';
@@ -12275,11 +12277,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
               ✨ Choisir le cours
             </h3>
             <p style={{ color: '#aaa', fontSize: '13px', marginBottom: '20px', textAlign: 'center', margin: '0 0 20px' }}>
-              Aucun cours détecté à cette heure. Sélectionne le cours :
+              Aucun cours détecté à cette heure. Sélectionne le cours du jour :
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '60vh', overflowY: 'auto' }}>
               {qrCourseSelector.map(function(course, idx) {
-                var days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+                // A1 : `course.label` est calcule cote serveur (jour + heure).
+                // Le tableau de jours local a ete retire : c'etait lui qui
+                // decalait l'affichage d'un cran.
                 return (
                   <button
                     key={course.id || idx}
@@ -12296,7 +12300,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                     onMouseOut={function(e) { e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)'; }}
                   >
                     <div style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '11px', fontWeight: '700', marginBottom: '4px', letterSpacing: '0.5px' }}>
-                      {days[course.weekday] || '?'} • {course.time}
+                      {course.label || course.time || ''}
                     </div>
                     <div>{course.name}</div>
                   </button>

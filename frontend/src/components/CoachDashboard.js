@@ -2481,27 +2481,32 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // V177: Si pas de cours auto-détecté → propose au coach de choisir
       if (status === 422 && typeof detail === 'object' && detail?.error === 'no_course_now') {
         try {
-          const coursesResp = await axios.get(`${API}/courses`);
-          const visibleCourses = (coursesResp.data || []).filter(c => c.visible && !c.archived);
-          if (visibleCourses.length === 0) {
-            setScanError("Aucun cours configuré. Crée un cours d'abord.");
+          // A1 : la liste vient du SERVEUR, deja filtree sur les cours du jour et
+          // deja etiquetee. Cet ecran chargeait auparavant TOUT le catalogue
+          // (`GET /courses`) et fabriquait lui-meme le libelle du jour en
+          // indexant ['Lun'..'Dim'] avec `c.weekday` — une donnee ecrite en
+          // convention JavaScript (Dim=0). Les 22 cours s'affichaient donc sous
+          // un jour faux, et un cours ponctuel deja passe restait selectionnable
+          // (le serveur creait alors une reservation et DEBITAIT une seance).
+          const dayCourses = Array.isArray(detail.courses) ? detail.courses : [];
+          if (dayCourses.length === 0) {
+            setScanError(detail.message || "Aucun cours à l'agenda d'aujourd'hui.");
             setTimeout(() => setScanError(null), 4000);
             return;
           }
-          const days = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
-          const list = visibleCourses.map((c, i) => `${i+1}. ${c.name} (${days[c.weekday] || '?'} ${c.time})`).join('\n');
-          const choice = window.prompt(`Aucun cours en cours détecté.\nQuel cours valider ?\n\n${list}\n\nEntre le numéro :`);
+          const list = dayCourses.map((c, i) => `${i + 1}. ${c.name} (${c.label || c.time || ''})`).join('\n');
+          const choice = window.prompt(`${detail.message || 'Aucun cours en cours détecté.'}\nQuel cours valider ?\n\n${list}\n\nEntre le numéro :`);
           if (choice) {
             const idx = parseInt(choice, 10) - 1;
-            if (idx >= 0 && idx < visibleCourses.length) {
-              return await validateReservation(code, visibleCourses[idx].id);
+            if (idx >= 0 && idx < dayCourses.length) {
+              return await validateReservation(code, dayCourses[idx].id);
             }
           }
           setScanError('Validation annulée.');
           setTimeout(() => setScanError(null), 3000);
         } catch (e) {
-          console.error('[V177] Failed to load courses:', e);
-          setScanError("Impossible de charger les cours.");
+          console.error('[A1] Sélecteur de cours du jour:', e);
+          setScanError("Impossible d'afficher les cours du jour.");
           setTimeout(() => setScanError(null), 4000);
         }
       } else {

@@ -183,14 +183,20 @@ def construire(db):
                 "_a0_maintenant_ch", "_a0_code_depuis_qr", "_a0_horodatage",
                 "_a0_est_aujourdhui", "_a0_marquer_presente",
                 "_a0_reservations_du_jour", "_a0_choisir_occurrence",
-                "_a0_presence_deja_reservee", "_qr_scan_validate_inner"):
+                "_a0_presence_deja_reservee",
+                # A1 — absents des commits anterieurs, donc simplement ignores
+                # la (`obligatoire=False`) : R11 et A0 restent testables seuls.
+                "_a1_jour_js", "_a1_a_lieu_aujourdhui", "_a1_datetime_occurrence",
+                "_a1_etiquette", "_a1_occurrences_du_jour",
+                "_qr_scan_validate_inner"):
         _code = extraire(nom, obligatoire=False)
         if _code:
             exec(compile(_code, FICHIER, "exec"), ns)
     # constantes de module (pas des fonctions)
     for n in ast.walk(ARBRE):
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in (
-                "A0_TOLERANCE_MIN", "R11_MSG_ANONYME", "R11_MSG_AUTRE_COACH"):
+                "A0_TOLERANCE_MIN", "R11_MSG_ANONYME", "R11_MSG_AUTRE_COACH",
+                "A1_JOURS_JS"):
             exec(compile("".join(LIGNES[n.lineno - 1:n.end_lineno]), FICHIER, "exec"), ns)
     return ns
 
@@ -252,6 +258,15 @@ def resa(code="AF0000001", **kw):
          "courseName": "Silent Mercredi", "datetime": aujourdhui(),
          "validated": False, "discountCode": "AFR-ESSAI1",
          "coach_id": COACH_TEST}
+    d.update(kw)
+    return d
+
+
+def cours(**kw):
+    """Un cours du catalogue. `weekday` est en convention JAVASCRIPT (Dim=0),
+    comme en base — c'est tout l'objet d'A1."""
+    d = {"id": "cours-1", "name": "Silent Mercredi", "weekday": 3, "time": "18:30",
+         "visible": True, "archived": False, "coach_id": COACH_TEST}
     d.update(kw)
     return d
 

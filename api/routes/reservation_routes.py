@@ -1908,6 +1908,143 @@ async def _a0_presence_deja_reservee(subscription: dict, code: str, member_slug:
     return _corps
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# A1 — LE SCAN VALIDE UNE OCCURRENCE REELLE, PAS « UN COURS »
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Trois defauts distincts violaient le meme invariant : « le scan a l'entree
+# constate LA seance du jour, et n'en debite qu'une ».
+#
+# A1-1  CONVENTION DU JOUR DE LA SEMAINE.
+#       `courses.weekday` est stocke en convention JAVASCRIPT (Dim=0..Sam=6) :
+#       c'est `Date.getDay()`, cote site, qui l'ecrit. La preuve est en base et
+#       ne depend d'aucune lecture de code — les cours A DATE FIXE portent les
+#       DEUX informations, et elles ne concordent qu'en convention JS :
+#           « Laff Festival » date=2026-08-21 (un VENDREDI)  weekday=5
+#               -> JS : 5 = vendredi  ✔      Python : 5 = samedi  ✘
+#           « Silent Dance »  date=2026-08-23 (un DIMANCHE)  weekday=0
+#               -> JS : 0 = dimanche  ✔      Python : 0 = lundi   ✘
+#       Or le scanner interrogeait Mongo avec `datetime.weekday()`, convention
+#       PYTHON (Lun=0..Dim=6) : decalage systematique d'un jour. Le mercredi, il
+#       cherchait `weekday: 2` quand les cours du mercredi portent `3`.
+#       `_v184_next_occurrences` (V196) fait deja la conversion dans l'autre
+#       sens ; on reprend sa formule EXACTEMENT inversee pour que les deux
+#       endroits ne puissent plus diverger :
+#           V196   py = (js - 1) % 7        A1   js = (py + 1) % 7
+#
+# A1-2  UNE DATE FIXE N'EST PAS UNE RECURRENCE.
+#       Un cours ponctuel (`date` renseignee) n'a lieu QU'UNE fois. Filtre sur
+#       le seul `weekday`, « Diner canadien » du 2026-08-09 restait proposable
+#       tous les dimanches suivants — et un scan pouvait y debiter une seance.
+#
+# A1-3  L'OCCURRENCE, PAS L'INSTANT DU SCAN.
+#       La reservation creee etait datee `now` (l'heure du scan). Elle ne
+#       designait donc AUCUNE occurrence : tout rapprochement ulterieur
+#       (`_a0_est_aujourdhui`, recherche de doublon, agenda de l'abonne) portait
+#       sur une date sans rapport avec la seance. On date desormais la
+#       reservation a l'heure REELLE du cours, au format NAIF local — la meme
+#       convention que `_v184_next_occurrences` (V196) et que l'espace abonne,
+#       pour qu'il n'y en ait qu'une seule dans toute la base.
+#
+# Ce qui n'est PAS touche : le credit (un seul debit, garde par A0), la
+# propriete (R11), l'idempotence, et le CAS A — un code de reservation saisi a
+# la main garde exactement le comportement d'avant.
+
+A1_JOURS_JS = ("Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam")
+
+
+def _a1_jour_js(maintenant) -> int:
+    """Le jour de la semaine en convention JavaScript (Dim=0..Sam=6).
+
+    Inverse EXACT de la conversion V196 de `_v184_next_occurrences`
+    (`py = (js - 1) % 7`). Les deux formules sont ecrites l'une en face de
+    l'autre volontairement : c'est le seul endroit du fichier ou la convention
+    de `courses.weekday` est interpretee.
+    """
+    return (maintenant.weekday() + 1) % 7
+
+
+def _a1_a_lieu_aujourdhui(cours: dict, jour_iso: str, jour_js: int) -> bool:
+    """Ce cours a-t-il REELLEMENT lieu aujourd'hui ?
+
+    Deux formes coexistent en base, exactement comme dans
+    `_v184_next_occurrences` : `date` (ponctuel, prioritaire) et `weekday`
+    (recurrent). Une `date` renseignee ferme la question — le cours n'a lieu
+    que ce jour-la, et jamais chaque semaine.
+    """
+    _date = cours.get("date")
+    if isinstance(_date, str) and _date.strip():
+        return _date.strip()[:10] == jour_iso
+    try:
+        _w = int(cours.get("weekday"))
+    except (TypeError, ValueError):
+        return False
+    return _w == jour_js
+
+
+def _a1_datetime_occurrence(cours: dict, jour_iso: str, repli) -> str:
+    """L'horodatage de l'occurrence du jour : la date du jour + l'heure du cours.
+
+    Format NAIF local (« 2026-08-19T18:30:00 »), identique a celui de
+    `_v184_next_occurrences` et des reservations de l'espace abonne. `_a0_horodatage`
+    lit une valeur naive comme suisse : le moment designe est donc le bon.
+
+    `repli` (l'instant du scan) ne sert que si le cours n'a pas d'heure
+    exploitable — on prefere une reservation datee de l'instant du scan a une
+    reservation sans date du tout.
+    """
+    _t = (cours.get("time") or "").strip()
+    try:
+        _h, _m = _t.split(":")[:2]
+        _h, _m = int(_h), int(_m)
+        if not (0 <= _h <= 23 and 0 <= _m <= 59):
+            raise ValueError(_t)
+    except (TypeError, ValueError):
+        logger.warning("[A1] Cours %s sans heure exploitable (« %s ») — repli sur l'instant du scan",
+                       cours.get("id"), _t)
+        return repli.strftime("%Y-%m-%dT%H:%M:%S")
+    return "%sT%02d:%02d:00" % (jour_iso, _h, _m)
+
+
+def _a1_etiquette(cours: dict, jour_iso: str, jour_js: int) -> str:
+    """Le libelle pret a afficher d'une occurrence — « Mer 18:30 · Silent ».
+
+    Construit COTE SERVEUR, et c'est le point : les deux interfaces de scan
+    (CoachDashboard et ChatWidget) indexaient chacune leur propre tableau de
+    jours avec `courses.weekday`, en convention Python. Les 22 cours du
+    catalogue s'affichaient donc sous un jour FAUX, decale d'un cran. Une seule
+    source de verite supprime la classe de bug entiere.
+    """
+    _date = cours.get("date")
+    if isinstance(_date, str) and _date.strip():
+        _j = _date.strip()[:10]
+    else:
+        _j = jour_iso
+    try:
+        _d = datetime.strptime(_j, "%Y-%m-%d")
+        _lib = A1_JOURS_JS[(_d.weekday() + 1) % 7]
+    except (TypeError, ValueError):
+        _lib = A1_JOURS_JS[jour_js]
+    _heure = (cours.get("time") or "").strip()
+    return ("%s %s" % (_lib, _heure)).strip()
+
+
+async def _a1_occurrences_du_jour(coach_id: str, jour_iso: str, jour_js: int) -> list:
+    """Les cours qui ont REELLEMENT lieu aujourd'hui, pour ce coach.
+
+    Le filtre `weekday` n'est PAS pousse dans Mongo : les deux formes (`date`
+    ponctuelle et `weekday` recurrent) ne se decrivent pas par le meme critere,
+    et un `$or` sur des documents heterogenes serait plus fragile que 22
+    documents tries en Python. Le repli « tous coachs » d'origine est conserve
+    tel quel — le retirer ferait disparaitre les cours anterieurs a V244.
+    """
+    _base = {"visible": True, "archived": False}
+    _tous = await db.courses.find(dict(_base, coach_id=coach_id), {"_id": 0}).to_list(200)
+    if not _tous:
+        _tous = await db.courses.find(dict(_base), {"_id": 0}).to_list(200)
+    return [c for c in _tous if _a1_a_lieu_aujourdhui(c, jour_iso, jour_js)]
+
+
 @reservation_router.post("/qr/scan-validate")
 async def qr_scan_validate(request: Request):
     """V176/V213d: Scan QR coach — gère TOUS les types de codes."""
@@ -2102,19 +2239,29 @@ async def _qr_scan_validate_inner(request: Request):
     from datetime import timedelta as _td
     swiss_tz = timezone(_td(hours=2))
     now_swiss = datetime.now(swiss_tz)
-    today_weekday = now_swiss.weekday()
     coach_id = subscription.get("coach_id") or DEFAULT_COACH_ID  # V244
 
-    courses = await db.courses.find({"weekday": today_weekday, "visible": True, "archived": False, "coach_id": coach_id}, {"_id": 0}).to_list(50)
-    if not courses:
-        courses = await db.courses.find({"weekday": today_weekday, "visible": True, "archived": False}, {"_id": 0}).to_list(50)
+    # A1-1/A1-2 : les cours qui ont REELLEMENT lieu aujourd'hui — bonne
+    # convention de jour, et une date fixe passee ne revient plus chaque semaine.
+    _a1_jour_iso = now_swiss.strftime("%Y-%m-%d")
+    _a1_js = _a1_jour_js(now_swiss)
+    courses = await _a1_occurrences_du_jour(coach_id, _a1_jour_iso, _a1_js)
 
     target_course = None
     # V177: si le coach a forcé un cours via UI, on l'utilise direct
     if forced_course_id:
-        target_course = await db.courses.find_one({"id": forced_course_id, "archived": False}, {"_id": 0})
+        # A1-2 : le choix manuel est borne A LA MEME LISTE que l'auto-detection.
+        # Il acceptait auparavant N'IMPORTE QUEL cours non archive du catalogue :
+        # le coach pouvait, sans le vouloir, creer une reservation et DEBITER une
+        # seance sur un cours qui n'avait pas lieu ce jour-la. Le scan constate
+        # une presence — il ne peut la constater que sur une seance du jour.
+        target_course = next((c for c in courses if c.get("id") == forced_course_id), None)
         if not target_course:
-            raise HTTPException(status_code=404, detail="Cours sélectionné introuvable ou archivé")
+            _a1_existe = await db.courses.find_one({"id": forced_course_id}, {"_id": 0, "name": 1})
+            raise HTTPException(
+                status_code=400 if _a1_existe else 404,
+                detail=("Ce cours n'a pas lieu aujourd'hui — impossible d'y valider une présence."
+                        if _a1_existe else "Cours sélectionné introuvable"))
     else:
         best_diff = 9999
         for c in courses:
@@ -2132,9 +2279,22 @@ async def _qr_scan_validate_inner(request: Request):
             except Exception:
                 continue
         if not target_course:
+            # A1-1 : la liste de secours est construite ICI, deja filtree sur le
+            # jour et deja etiquetee. Les deux interfaces de scan la rendaient
+            # chacune de leur cote, en indexant un tableau de jours francais avec
+            # `courses.weekday` — donc en convention Python sur une donnee ecrite
+            # en convention JavaScript : les 22 cours s'affichaient sous un jour
+            # faux. Une seule source de verite supprime la classe de bug.
             raise HTTPException(
                 status_code=422,
-                detail={"error": "no_course_now", "message": "Aucun cours en cours actuellement. Sélectionnez un cours manuellement."}
+                detail={"error": "no_course_now",
+                        "message": ("Aucun cours en cours actuellement. Sélectionnez un cours du jour."
+                                    if courses else
+                                    "Aucun cours ne figure à l'agenda d'aujourd'hui."),
+                        "courses": [{"id": c.get("id"), "name": c.get("name") or "Cours",
+                                     "time": (c.get("time") or "").strip(),
+                                     "label": _a1_etiquette(c, _a1_jour_iso, _a1_js)}
+                                    for c in courses]}
             )
 
     # R11 : creer une reservation et DEBITER une seance sur le cours d'un autre
@@ -2144,7 +2304,10 @@ async def _qr_scan_validate_inner(request: Request):
     course_id = target_course.get("id")
     course_name = target_course.get("name") or "Cours"
     course_time = target_course.get("time") or ""
-    today_str = now_swiss.strftime("%Y-%m-%d")
+    # A1 : un seul calcul du jour dans cette route (`_a1_jour_iso`). `today_str`
+    # en etait une seconde copie — deux sources pour la meme date, c'est une
+    # divergence en attente.
+    today_str = _a1_jour_iso
 
     existing = await db.reservations.find_one({"userEmail": user_email, "courseId": course_id, "datetime": {"$regex": today_str}}, {"_id": 0})
 
@@ -2172,7 +2335,11 @@ async def _qr_scan_validate_inner(request: Request):
         "id": str(uuid.uuid4()), "reservationCode": new_res_code,
         "userId": subscription.get("userId", ""), "userName": user_name, "userEmail": user_email,
         "userWhatsapp": subscription.get("whatsapp", ""), "courseId": course_id, "courseName": course_name,
-        "courseTime": course_time, "datetime": now_swiss.isoformat(),
+        # A1-3 : la reservation designe L'OCCURRENCE (date du jour + heure du
+        # cours), plus l'instant du scan. Format naif local, comme V196 et comme
+        # l'espace abonne — une seule convention dans toute la base.
+        "courseTime": course_time,
+        "datetime": _a1_datetime_occurrence(target_course, _a1_jour_iso, now_swiss),
         "offerId": course_id, "offerName": course_name, "price": 0, "quantity": 1, "totalPrice": 0,
         "subscriptionId": sub_id, "promoCode": code, "source": "qr_scan_coach", "type": "abonné",
         "validated": True, "validatedAt": datetime.now(timezone.utc).isoformat(),
