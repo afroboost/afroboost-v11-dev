@@ -145,10 +145,24 @@ def test_parcours():
              f["montant"] == 250.0 and "non confirmé" in f["libelle"], f["libelle"])
 
 
+# Le bloc financier s'arretait « a la fin du fichier » : hypothese vraie tant
+# qu'il etait le dernier de shared.py, fausse des qu'une section a ete ajoutee
+# apres lui (LOT A — L'APRES-ESSAI). On le borne desormais a la BANNIERE
+# SUIVANTE : les interdits ci-dessous portent sur le resolveur financier, et
+# sur lui seul — exactement ce qu'ils ont toujours voulu dire.
+_BANNIERE = "# " + "=" * 76 + "\n"
+
+
+def _bloc_finance(src):
+    # [0] = la fin de la banniere du titre, [1] = le corps de la section,
+    # [2...] = les sections suivantes, qui ne sont pas jugees ici.
+    return src.split("LOT A — LIRE L'ARGENT SANS JAMAIS L'INVENTER")[1].split(_BANNIERE)[1]
+
+
 # ═══════════ 2. LE PRIX DU CATALOGUE N'EXISTE PAS ICI ═══════════════════════
 def test_pas_de_catalogue():
     src = io.open(os.path.join(RACINE, "api", "routes", "shared.py"), encoding="utf-8").read()
-    bloc = src.split("LOT A — LIRE L'ARGENT SANS JAMAIS L'INVENTER")[1]
+    bloc = _bloc_finance(src)
     _code_seul = "\n".join(l for l in bloc.splitlines() if not l.strip().startswith("#"))
     verifier("14. le resolveur ne lit jamais la collection `offers`",
              "offers" not in _code_seul, [l for l in _code_seul.splitlines() if "offers" in l][:1])
@@ -351,7 +365,7 @@ def test_non_regression():
              "_v311_coach_email_from_jwt(request)" in srv, "")
 
     shared = io.open(os.path.join(RACINE, "api", "routes", "shared.py"), encoding="utf-8").read()
-    bloc_a = shared.split("LOT A — LIRE L'ARGENT SANS JAMAIS L'INVENTER")[1]
+    bloc_a = _bloc_finance(shared)
     for interdit in ("insert_one", "update_one", "update_many", "delete_one"):
         verifier("34. le lot A n'ecrit rien : aucun `%s`" % interdit,
                  interdit not in bloc_a, "")

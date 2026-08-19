@@ -1844,3 +1844,311 @@ def a_libelle_montant(fin: dict) -> str:
                  if fin.get("montant_source") == "tarif_creation"
                  else " — saisi à la main")
     return _txt
+
+
+# ============================================================================
+# LOT A — L'APRES-ESSAI : CE QU'ON PROPOSE, ET CE QU'ON REFUSE
+# ============================================================================
+#
+# CE QUE CE LOT AJOUTE. Quelqu'un vient de faire sa seance decouverte. Jusqu'ici
+# son espace lui disait « Essai effectue » et s'arretait la : aucune suite, aucun
+# tarif, aucun bouton. Ce lot rend l'ecran qui manquait, et RIEN d'autre.
+#
+# CE QUE CE LOT N'EST PAS. Il n'y a AUCUN moteur d'adhesion dans ce depot :
+# ni statut de membre, ni duree d'adhesion, ni renouvellement, ni reduction
+# events. Tant qu'il n'existe pas, l'offre « Membres / renouvellement » ne peut
+# etre ni promise ni vendue par ce parcours — non pas parce qu'elle coute 150,
+# mais parce que RIEN ne sait dire qui est membre.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# POURQUOI UN CHAMP EXPLICITE, ET PAS UNE DEDUCTION
+# ═══════════════════════════════════════════════════════════════════════════
+# Audit des champs existants de `offers` (server.py, classe `Offer`) : `price`,
+# `name`, `description`, `pack_sessions`, `category`, `isProduct`, `visible`,
+# `position`. AUCUN ne porte la distinction « premier achat » / « reserve a un
+# membre ». `category` est une chaine libre remplie a la main (« service »,
+# « tshirt »…), `visible` est un drapeau d'AFFICHAGE vitrine, et le prix n'est
+# pas une identite metier : le jour ou le pack passe a 260 ou l'adhesion a 140,
+# une regle ecrite sur les montants vendrait la mauvaise offre en silence.
+#
+# On ajoute donc UN booleen explicite, `first_purchase_eligible`, pose par le
+# coach depuis le formulaire d'offre. Par defaut FAUX : tant que personne n'a
+# rien declare, cet ecran ne propose RIEN. C'est le sens de « fail closed » —
+# une offre oubliee ne se vend pas, au lieu de se vendre par accident.
+#
+# QUAND LE LOT ADHESION ARRIVERA, il posera sa propre dimension (« reserve aux
+# membres actifs ») et decidera lui-meme du renouvellement. Ce booleen n'aura
+# pas a etre defait : il continuera de dire ce qu'il dit — « cette offre est
+# proposable a quelqu'un qui n'a encore rien achete ».
+
+CONV_INELIGIBLE = "not_eligible"
+CONV_OUVERTE = "open"
+CONV_TERMINEE = "purchased"
+
+
+async def conv_presence_reelle(db, forfait: dict):
+    """La presence d'essai qui OUVRE le droit a la conversion, ou None.
+
+    Plus stricte que `essai2_presence_essai`, et volontairement : celle-ci se
+    contente de `validated: True`. Ici on exige EN PLUS que la reservation
+    designe une seance qui a REELLEMENT eu lieu — meme garde A1/A1b que le
+    portier d'entree (`_a1b_occurrences_reelles`), donc :
+      * le cours existe encore dans la collection ;
+      * il n'est pas archive ;
+      * il a bien lieu le jour porte par la reservation.
+
+    C'est ce qui empeche un cours HISTORIQUE — un ponctuel passe, un cours
+    supprime — d'ouvrir une conversion. Le defaut existe : c'est exactement le
+    residu « Diner canadien » constate le 19/08/2026, ou une reservation datee
+    du jour designait un cours qui n'avait pas lieu.
+
+    UNE SEULE DEFINITION de « cette reservation designe une vraie seance » dans
+    tout le depot : on importe celle du portier au lieu de la recopier. L'import
+    est differe (`reservation_routes` importe deja ce module).
+
+    ECHEC D'IMPORT -> AUCUNE CONVERSION. C'est le seul comportement acceptable
+    ici : une conversion manquee coute une vente, une conversion accordee a
+    tort encaisse de l'argent sur un droit qui n'existe pas.
+    """
+    if not forfait:
+        return None
+    _sid = (forfait.get("id") or "").strip()
+    _code = (forfait.get("code") or "").strip().upper()
+    _ou = []
+    if _sid:
+        _ou.append({"subscriptionId": _sid})
+    if _code:
+        _ou.append({"promoCode": _code})
+        _ou.append({"discountCode": _code})
+    if not _ou:
+        return None
+    try:
+        _rows = await db["reservations"].find(
+            {"validated": True, "$or": _ou}, {"_id": 0}).to_list(20)
+    except Exception as _err:
+        logger.warning(f"[LOT-A] presences illisibles: {_err}")
+        return None
+    if not _rows:
+        return None
+    try:
+        from api.routes.reservation_routes import _a1b_occurrences_reelles as _a1b
+        _rows = await _a1b(_rows)
+    except Exception as _err:
+        logger.error("[LOT-A] garde A1b indisponible, conversion refusee: %s", _err)
+        return None
+    if not _rows:
+        return None
+    _rows.sort(key=lambda x: str(x.get("validatedAt") or ""))
+    return _rows[0]
+
+
+async def conv_offres_premier_achat(db, coach_id: str = "") -> list:
+    """Les offres proposables APRES un essai, dans l'ordre d'affichage.
+
+    QUATRE FILTRES, tous explicites :
+      1. `first_purchase_eligible: True` — la declaration du coach, et la seule
+         chose qui autorise. Absent ou faux -> l'offre n'existe pas pour cet
+         ecran. C'est ce qui exclut l'offre « Membres / renouvellement » sans
+         jamais nommer son prix ni son libelle.
+      2. le coach proprietaire — on ne propose pas le catalogue d'un autre
+         partenaire a l'occasion d'un essai qui ne le concerne pas.
+      3. un prix STRICTEMENT positif. Un ecran de conversion propose un ACHAT ;
+         une offre a 0 CHF y serait un second essai gratuit, que les gardes
+         ESSAI-1 / ESSAI-4 refuseraient de toute facon au passage en caisse.
+         Ce n'est pas une regle sur les montants : c'est la definition meme de
+         « convertir ».
+      4. rien d'autre. `visible` N'EST PAS consulte — decision explicite, meme
+         raisonnement qu'A1b : c'est un drapeau de vitrine, pas de cycle de vie.
+         Une offre que le coach a explicitement declaree « apres essai » ne doit
+         pas disparaitre de cet ecran parce qu'il l'a masquee de sa page
+         d'accueil. Pour la retirer d'ici, on decoche la case d'ici.
+
+    L'ORDRE vient de `position` (le champ de tri deja utilise par la vitrine et
+    le glisser-deposer du dashboard), les offres sans position passant en
+    dernier, puis du nom pour que deux positions egales ne s'inversent pas d'un
+    chargement a l'autre. La PREMIERE porte `recommended` : cette regle vit ici
+    et nulle part ailleurs, pour que l'ecran n'ait rien a decider.
+
+    LE PRIX RENDU EST CELUI QUE LA CAISSE DEBITERA — `offers.price`, la valeur
+    que `_essai1b_prix_unitaire` retient. Surtout pas le prix progressif calcule
+    a la lecture : l'ecran et la caisse diraient alors deux montants differents.
+    """
+    _q = {"first_purchase_eligible": True}
+    _cid = (coach_id or "").strip()
+    if _cid:
+        _q["coach_id"] = _cid
+    try:
+        _rows = await db["offers"].find(_q, {"_id": 0}).to_list(50)
+    except Exception as _err:
+        logger.warning(f"[LOT-A] catalogue de conversion illisible: {_err}")
+        return []
+
+    _utiles = []
+    for _o in _rows:
+        try:
+            _prix = float(_o.get("price") or 0)
+        except (TypeError, ValueError):
+            continue
+        if _prix <= 0:
+            continue
+        _utiles.append((_o, _prix))
+
+    def _rang(couple):
+        _o = couple[0]
+        _p = _o.get("position")
+        try:
+            _p = int(_p)
+        except (TypeError, ValueError):
+            _p = 10 ** 6
+        return (_p, str(_o.get("name") or ""))
+
+    _utiles.sort(key=_rang)
+
+    _sortie = []
+    for _i, (_o, _prix) in enumerate(_utiles):
+        try:
+            _seances = int(_o.get("pack_sessions") or 0)
+        except (TypeError, ValueError):
+            _seances = 0
+        _sortie.append({
+            "id": _o.get("id"),
+            "name": _o.get("name") or "",
+            "price": _prix,
+            "currency": B_DEVISE_DEFAUT,
+            "sessions": _seances or None,
+            "description": (_o.get("description") or "")[:280],
+            "thumbnail": _o.get("thumbnail") or "",
+            "recommended": _i == 0,
+        })
+    return _sortie
+
+
+async def conv_offre_autorisee(db, offer_id: str, coach_id: str = ""):
+    """L'offre demandee SI elle est proposable apres un essai, sinon None.
+
+    LA GARDE DE NIVEAU 2. Le niveau 1 (ce que l'ecran montre) n'est pas une
+    barriere : n'importe qui peut poster l'identifiant d'une autre offre. Cette
+    fonction relit la MEME regle que `conv_offres_premier_achat`, sur la base,
+    au moment de l'achat. Un identifiant d'offre non declaree — celle du
+    renouvellement a 150 comme n'importe quelle autre — ressort None, et
+    l'appelant refuse.
+
+    Elle est CONTEXTUELLE : elle n'est appelee que par le passage en caisse de
+    la conversion. Les parcours existants (vitrine, boutique, renouvellement)
+    ne la traversent jamais et ne changent pas d'un octet.
+    """
+    _oid = (offer_id or "").strip()
+    if not _oid:
+        return None
+    _autorisees = await conv_offres_premier_achat(db, coach_id)
+    for _o in _autorisees:
+        if _o.get("id") == _oid:
+            return _o
+    return None
+
+
+async def conv_etat(db, forfait: dict, coach_id: str = "") -> dict:
+    """L'etat de conversion d'un forfait. LECTURE PURE — aucune ecriture.
+
+    LA REGLE D'ELIGIBILITE, en entier et dans cet ordre :
+      1. le forfait existe ;
+      2. son code est un code d'ESSAI (`ESSAI2_FILTRE_GRATUIT`, la meme
+         definition qu'ESSAI-2 et que l'ecran d'etat d'essai — un forfait payant
+         n'est jamais un prospect a convertir) ;
+      3. une reservation rattachee a ce forfait est `validated` ET designe une
+         seance reelle (A1/A1b) ;
+      4. si `converted_at` est deja pose, la conversion est TERMINEE : l'ecran
+         cesse de traiter la personne comme un prospect.
+
+    Ce qui NE declenche RIEN, et c'est l'essentiel : une reservation seule, un
+    compteur tombe a zero, une date passee, un cours archive ou supprime, une
+    vieille reservation, l'ouverture de l'espace. Aucun de ces signaux n'entre
+    dans la regle ci-dessus.
+    """
+    _vide = {"eligible": False, "state": CONV_INELIGIBLE, "offers": [],
+             "reason": "no_subscription"}
+    if not forfait:
+        return _vide
+
+    _code = (forfait.get("code") or "").strip().upper()
+    if not _code:
+        return dict(_vide, reason="no_code")
+    try:
+        _q = {"code": _code}
+        _q.update(ESSAI2_FILTRE_GRATUIT)
+        if not await db["discount_codes"].find_one(_q, {"_id": 1}):
+            return dict(_vide, reason="not_a_trial")
+    except Exception as _err:
+        logger.warning("[LOT-A] nature du code indeterminee: %s", _err)
+        return dict(_vide, reason="unreadable")
+
+    _presence = await conv_presence_reelle(db, forfait)
+    if not _presence:
+        return dict(_vide, reason="not_attended")
+
+    if forfait.get("converted_at"):
+        return {"eligible": True, "state": CONV_TERMINEE, "offers": [],
+                "reason": "already_converted",
+                "attended_at": _presence.get("validatedAt") or ""}
+
+    return {
+        "eligible": True,
+        "state": CONV_OUVERTE,
+        "reason": "",
+        "attended_at": _presence.get("validatedAt") or "",
+        "offers": await conv_offres_premier_achat(db, coach_id),
+    }
+
+
+async def conv_marquer_vue(db, forfait: dict, offres: int = 0) -> bool:
+    """`conversion_viewed`, UNE SEULE FOIS. Rend True si c'est cet appel qui a
+    marque.
+
+    L'IDEMPOTENCE EST PORTEE PAR MONGO, pas par le navigateur ni par un compteur
+    applicatif : le filtre exige l'ABSENCE de `conversion_first_viewed_at`, et
+    la base ne l'accorde qu'a un seul ecrivain. Dix rafraichissements, deux
+    onglets simultanes, deux scans du meme QR : un evenement metier, et un seul.
+    C'est le meme motif que `converted_at` (ESSAI-2) et que le verrou de
+    renouvellement (V447).
+
+    LE GET N'ECRIT PAS A CHAQUE LECTURE. L'appelant ne passe ici que lorsque la
+    date est ABSENTE du document deja charge ; une fois posee, il n'y a plus
+    aucune tentative d'ecriture — zero write par rafraichissement ensuite.
+
+    DEUX DATES, POSEES ENSEMBLE. `conversion_eligible_at` dit « le droit s'est
+    ouvert », `conversion_first_viewed_at` dit « l'ecran a ete montre ». Elles
+    sont egales aujourd'hui parce que la SEULE chose qui constate l'eligibilite
+    est l'ecran lui-meme. Le jour ou un autre chemin la constatera — un rappel
+    post-cours, par exemple — la date de vue ne mentira pas pour autant.
+
+    `trial_attended` N'EST PAS EMIS ICI, et ce n'est pas un oubli : il existe
+    deja sous le nom `attendance_checked_in` avec `is_free_trial: true` (C9-A,
+    reservation_routes), emis exactement une fois par transition de presence, au
+    scan — c'est-a-dire au moment ou la presence a REELLEMENT lieu. Le reemettre
+    ici le ferait dependre de l'ouverture de l'espace : la mesure serait fausse
+    pour quiconque vient au cours sans ouvrir son telephone apres.
+    """
+    if not forfait or not forfait.get("id"):
+        return False
+    _quand = datetime.now(timezone.utc).isoformat()
+    try:
+        _res = await db["subscriptions"].update_one(
+            {"id": forfait.get("id"),
+             "conversion_first_viewed_at": {"$exists": False}},
+            {"$set": {"conversion_eligible_at": _quand,
+                      "conversion_first_viewed_at": _quand}},
+        )
+        if not getattr(_res, "matched_count", 0):
+            return False            # deja vu : rien a mesurer une seconde fois
+    except Exception as _err:
+        logger.warning(f"[LOT-A] premiere vue non marquee: {_err}")
+        return False
+
+    try:
+        await posthog_capture("conversion_viewed",
+                              email=(forfait.get("email") or ""),
+                              props={"offers_shown": int(offres or 0),
+                                     "trial_offer_id": str(forfait.get("offer_id") or "")[:64]})
+    except Exception as _err:
+        logger.warning(f"[LOT-A] conversion_viewed non emis: {_err}")
+    return True

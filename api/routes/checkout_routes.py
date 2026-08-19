@@ -1431,6 +1431,45 @@ async def checkout_paypal_webhook(request: Request):
 
 # ===== PAYMENT SUCCESS HANDLER =====
 
+async def _essai2_convertir_si_paye(email: str, total, payment_method: str,
+                                    offer_id: str = "", sub_id: str = "") -> bool:
+    """LOT A — LE CHAINON MANQUANT : cet achat convertit-il un essai honore ?
+
+    LE TROU QUE CECI BOUCHE. `converted_at` n'etait pose que par le webhook de
+    `api/server.py`. Or l'URL reellement declaree chez Stripe est
+    `/api/checkout/webhook/stripe`, qui traite LUI-MEME les achats vitrine
+    (`type: vitrine_purchase`) via `_process_successful_payment` et ne delegue
+    au gestionnaire client que le RESTE. Un achat de la vitrine — donc tout
+    achat issu de l'ecran d'apres-essai — n'a jamais converti personne : le
+    funnel d'ESSAI-3 affichait 0, et l'ecran aurait continue a vendre a
+    quelqu'un qui venait d'acheter.
+
+    UNIQUEMENT SUR UN PAIEMENT REEL. ESSAI-2 definit la conversion comme « le
+    premier achat PAYANT qui suit une presence d'essai ». `_process_successful_payment`
+    sert aussi les parcours GRATUITS (`/free`, et la branche a 0 CHF de
+    `create-session`) : sans cette garde, obtenir un second acces offert apres
+    un essai honore serait compte comme une conversion, et le taux du tableau de
+    bord deviendrait faux dans le sens flatteur.
+
+    AUCUNE NOUVELLE REGLE DE CONVERSION : c'est `essai2_marquer_conversion` qui
+    juge, avec son ecriture atomique. Deux webhooks qui arriveraient tous les
+    deux n'en produiraient qu'une. Non bloquant : le paiement est deja encaisse,
+    une mesure ratee ne doit rien faire echouer.
+    """
+    try:
+        _montant = float(total or 0)
+    except (TypeError, ValueError):
+        _montant = 0.0
+    if _montant <= 0 or (payment_method or "").lower() == "free":
+        return False
+    try:
+        from api.routes.shared import essai2_marquer_conversion as _e2_conv
+        return await _e2_conv(db, email, str(offer_id or ""), str(sub_id or ""))
+    except Exception as _err:
+        logger.warning(f"[ESSAI-2] conversion non evaluee (caisse vitrine): {_err}")
+        return False
+
+
 async def _process_successful_payment(
     transaction_id: str,
     coach_email: str,
@@ -1609,6 +1648,15 @@ async def _process_successful_payment(
             logger.info(f"[V397-VITRINE] {len(_fermes)} ancien(s) forfait(s) ferme(s) pour {customer_email}")
     except Exception as _e397:
         logger.warning(f"[V397-VITRINE] Cloture ignoree: {_e397}")
+
+    # ESSAI-2 / LOT A : le forfait achete existe, la conversion peut etre jugee.
+    # Placee ICI et pas plus haut : `essai2_marquer_conversion` renseigne
+    # `converted_by_subscription_id`, qui n'a de sens qu'une fois l'identifiant
+    # du nouveau forfait connu.
+    if await _essai2_convertir_si_paye(customer_email, total, payment_method,
+                                       items_offer_id, subscription_id):
+        logger.info(f"[ESSAI-2] Conversion actee pour {customer_email} "
+                    f"(achat vitrine {items_product_name or ''})")
 
     # 4. Créer les réservations pour chaque item de type "course"
     for item in items:

@@ -772,6 +772,10 @@ class Offer(BaseModel):
     # l'offre propose le choix « gratuit contre preuve » ou « payer ce prix ».
     # None ou 0 => comportement inchange (gratuit direct, ou payant normal).
     social_proof_price: Optional[float] = None
+    # LOT A : symetrie OBLIGATOIRE avec OfferCreate ci-dessous. Absent ici, le
+    # `response_model=List[Offer]` de GET /offers filtrerait le champ en
+    # silence et la case du dashboard reviendrait decochee a chaque relecture.
+    first_purchase_eligible: bool = False
 
 class OfferCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -834,6 +838,15 @@ class OfferCreate(BaseModel):
     # le `$set: offer.model_dump()` de PUT /offers l'effacerait a chaque
     # sauvegarde d'offre (meme piege que les libelles de paliers, V225).
     social_proof_price: Optional[float] = None
+    # LOT A — LA SEULE CHOSE QUI AUTORISE UNE OFFRE APRES UN ESSAI GRATUIT.
+    # Booleen EXPLICITE, pose a la main par le coach dans le formulaire d'offre.
+    # Faux par defaut : tant que rien n'est declare, l'ecran d'apres-essai ne
+    # propose RIEN (« fail closed »). Aucune migration, aucun retro-remplissage —
+    # les offres existantes restent a faux jusqu'a ce que le coach coche la case.
+    # Ce champ ne DEDUIT rien : ni du prix, ni du nom, ni du nombre de seances.
+    # C'est ce qui tient l'offre « Membres / renouvellement » hors de ce parcours
+    # tant qu'aucun moteur d'adhesion n'existe pour la justifier.
+    first_purchase_eligible: bool = False
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -12735,6 +12748,178 @@ async def subscriber_stripe_checkout(access_code: str, request: Request):
     except Exception as e:
         logger.error(f"[V202] Stripe checkout error for {code_upper}: {e}")
         raise HTTPException(status_code=500, detail="Erreur lors de la création du paiement")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LOT A — L'ECRAN D'APRES-ESSAI, ET LA PORTE QUI VA AVEC
+#
+# DEUX ROUTES, DEUX NIVEAUX DE GARDE, ET LA SECONDE NE FAIT PAS CONFIANCE A LA
+# PREMIERE :
+#   NIVEAU 1  GET .../conversion         — ce que l'ecran a le droit de MONTRER
+#   NIVEAU 2  POST .../conversion/checkout — ce que le serveur a le droit de VENDRE
+#
+# Le niveau 1 n'est pas une securite : n'importe qui peut modifier le navigateur
+# et poster l'identifiant d'une offre qui ne lui a jamais ete proposee. Le
+# niveau 2 relit donc la MEME regle, sur la base, au moment de l'achat.
+#
+# CES DEUX ROUTES SONT NOUVELLES. Aucun parcours existant ne les traverse : la
+# vitrine, la boutique et le renouvellement (`/stripe-checkout`) ne changent pas
+# d'un octet. C'est ce qui rend la garde CONTEXTUELLE au seul apres-essai, comme
+# demande — et c'est aussi ce qui rend le retrait de l'ecran (rollback UI seul)
+# sans effet sur les protections serveur, qui restent en place.
+#
+# AUCUNE DONNEE PERSONNELLE N'EST RENDUE : ni e-mail, ni WhatsApp, ni nom, ni
+# historique. Le GET ne rend qu'un etat et un catalogue public. Le POST lit
+# l'identite de l'acheteur SUR LE SERVEUR, dans le forfait — jamais dans le
+# corps de la requete, qui ne porte donc rien a falsifier.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+async def _conv_contexte(access_code: str):
+    """(code normalise, forfait, coach proprietaire) — la base des deux routes.
+
+    Le coach vient du forfait, puis du code, puis — a defaut seulement — du
+    proprietaire de la plateforme. Ce dernier repli reprend celui deja retenu
+    pour l'amorcage du catalogue (V241) : `DEFAULT_COACH_ID` n'est l'e-mail
+    d'aucun compte et ne resoudrait aucune offre.
+    """
+    code_upper = (access_code or "").strip().upper()
+    if not code_upper:
+        raise HTTPException(status_code=400, detail="Code d'accès requis")
+    from api.routes.shared import lire_abonnement_par_code as _lire
+    forfait = await _lire(db, code_upper)
+    if not forfait:
+        forfait = await db.subscriptions.find_one(
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
+        )
+    coach_id = ((forfait or {}).get("coach_id") or "").strip()
+    if not coach_id:
+        _dc = await db.discount_codes.find_one(
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}},
+            {"_id": 0, "coach_id": 1},
+        )
+        coach_id = ((_dc or {}).get("coach_id") or "").strip()
+    if not coach_id:
+        coach_id = SUPER_ADMIN_EMAILS[0]
+    return code_upper, forfait, coach_id
+
+
+@api_router.get("/subscriber/space/{access_code}/conversion")
+async def get_conversion_apres_essai(access_code: str):
+    """LOT A — NIVEAU 1 : ce que le participant a le droit de voir apres son essai.
+
+    L'ETAT EST PERSISTANT PAR CONSTRUCTION : il est derive des documents en base
+    (le code d'essai, la reservation validee, `converted_at`), pas d'un etat
+    d'ecran. Fermer le navigateur et revenir demain redonne exactement le meme
+    resultat.
+
+    LE MARQUAGE DE PREMIERE VUE N'A LIEU QU'UNE FOIS, et l'ecriture n'est meme
+    TENTEE que si la date est absente du document deja charge : passe la
+    premiere fois, ce GET est en lecture seule, quel que soit le nombre de
+    rafraichissements.
+    """
+    code_upper, forfait, coach_id = await _conv_contexte(access_code)
+    from api.routes.shared import (conv_etat as _etat, conv_marquer_vue as _vue,
+                                   CONV_OUVERTE as _OUVERTE)
+    etat = await _etat(db, forfait, coach_id)
+    if etat.get("state") == _OUVERTE and not (forfait or {}).get("conversion_first_viewed_at"):
+        await _vue(db, forfait, len(etat.get("offers") or []))
+    return {"success": True, "conversion": etat}
+
+
+@api_router.post("/subscriber/space/{access_code}/conversion/checkout")
+async def post_conversion_checkout(access_code: str, request: Request):
+    """LOT A — NIVEAU 2 : la seule porte par laquelle cet achat peut passer.
+
+    TROIS REFUS, DANS CET ORDRE, ET AUCUN NE DEPEND DU NAVIGATEUR :
+      1. essai non effectue (ou cours historique, cf. garde A1/A1b) -> 403 ;
+      2. essai deja converti -> 409, on ne revend pas deux fois la meme suite ;
+      3. offre non declaree « proposable au premier achat » -> 403. C'est ici
+         que l'identifiant de l'offre « Membres / renouvellement » est refuse,
+         qu'il vienne de l'ecran ou d'un `curl`.
+
+    AUCUN NOUVEAU MOTEUR FINANCIER. Une fois les gardes passees, l'achat part
+    dans `checkout/create-session`, le moteur de caisse existant : c'est lui qui
+    resout le prix depuis le catalogue (ESSAI-1B), cree la session Stripe, et
+    c'est son webhook qui creera le forfait, la trace financiere (LOT B) et
+    posera `converted_at` via ESSAI-2. Rien de tout cela n'est reecrit ici.
+    """
+    code_upper, forfait, coach_id = await _conv_contexte(access_code)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    offer_id = str(body.get("offer_id") or "").strip()
+    # L'ORIGINE DE RETOUR NE VIENT PAS DU CLIENT. Elle est lue sur le serveur
+    # (`FRONTEND_URL`). La prendre dans le corps de la requete — ce que fait
+    # encore `/stripe-checkout`, dette consignee — en ferait une REDIRECTION
+    # OUVERTE : l'URL repart telle quelle en `success_url` chez Stripe, qui y
+    # renvoie le navigateur apres paiement. N'importe qui pourrait alors faire
+    # atterrir un client sur un site tiers au sortir d'un paiement Afroboost.
+    origin_url = _v184_public_origin()
+
+    from api.routes.shared import (conv_etat as _etat, conv_offre_autorisee as _autorisee,
+                                   posthog_capture as _ph,
+                                   CONV_OUVERTE as _OUVERTE, CONV_TERMINEE as _TERMINEE)
+    etat = await _etat(db, forfait, coach_id)
+    if etat.get("state") == _TERMINEE:
+        raise HTTPException(status_code=409, detail="Cette séance découverte a déjà été convertie.")
+    if etat.get("state") != _OUVERTE:
+        logger.info("[LOT-A] achat refuse pour %s — %s", code_upper[:6], etat.get("reason"))
+        raise HTTPException(
+            status_code=403,
+            detail="Cette offre s'ouvre après une séance découverte réellement effectuée.")
+
+    offre = await _autorisee(db, offer_id, coach_id)
+    if not offre:
+        # Journalise le REFUS, pas l'offre convoitee en clair : cette ligne sert
+        # a detecter une tentative, pas a fabriquer une liste de cibles.
+        logger.warning("[LOT-A] offre non proposable au premier achat refusee (code %s)",
+                       code_upper[:6])
+        raise HTTPException(
+            status_code=403,
+            detail="Cette offre n'est pas proposée après une séance découverte.")
+
+    try:
+        await _ph("conversion_offer_clicked", email=(forfait or {}).get("email") or "",
+                  props={"offer_id": str(offre.get("id") or "")[:64],
+                         "price": offre.get("price")})
+    except Exception as _err:
+        logger.warning(f"[LOT-A] conversion_offer_clicked ignore: {_err}")
+
+    from api.routes.checkout_routes import (
+        create_checkout_session as _caisse, CreateCheckoutRequest as _Req,
+        CheckoutItem as _Item)
+    _succes = f"{origin_url}/espace/{code_upper}?payment=success"
+    _annule = f"{origin_url}/espace/{code_upper}?payment=cancelled"
+    _requete = _Req(
+        coach_email=coach_id,
+        payment_method="card",
+        items=[_Item(type="offer", id=offre.get("id"), name=offre.get("name") or "Offre",
+                     price=float(offre.get("price") or 0), currency="CHF", quantity=1)],
+        # L'identite vient du FORFAIT, jamais du corps de la requete : personne
+        # ne peut faire encaisser un achat au nom d'un autre par cette porte.
+        customer_name=(forfait or {}).get("name") or "",
+        customer_email=(forfait or {}).get("email") or "",
+        customer_phone=(forfait or {}).get("whatsapp") or "",
+        success_url=_succes,
+        cancel_url=_annule,
+    )
+    reponse = await _caisse(_requete)
+    _url = (reponse or {}).get("payment_url") or ""
+
+    try:
+        await _ph("checkout_started", email=(forfait or {}).get("email") or "",
+                  props={"offer_id": str(offre.get("id") or "")[:64],
+                         "price": offre.get("price"),
+                         "transaction_id": str((reponse or {}).get("transaction_id") or "")[:64]})
+    except Exception as _err:
+        logger.warning(f"[LOT-A] checkout_started ignore: {_err}")
+
+    return {"success": True, "checkout_url": _url,
+            "transaction_id": (reponse or {}).get("transaction_id")}
 
 
 @api_router.post("/subscriber/space/{access_code}/reserve/{course_id}")
