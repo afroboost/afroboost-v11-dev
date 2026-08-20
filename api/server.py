@@ -13516,8 +13516,27 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         }
 
     # V202: Déterminer les séances disponibles (partagées ou individuelles)
+    #
+    # PREALABLE LOT 3 FINANCE — LA PROJECTION VIDAIT LE DOCUMENT DE CE QUI COMPTE.
+    #
+    # Elle ne gardait que `shared_sessions`. C'etait suffisant tant que ce
+    # document ne servait qu'a repondre « seances partagees ou individuelles ? ».
+    # Mais LOT 3c-0c l'a aussi confie au snapshot tarifaire — et la, il arrivait
+    # VIDE : `a_finance_du_droit` cherche `stripe_amount`, `session_id`,
+    # `total_paid`, `transaction_id` et `payment_method`, qui vivent tous ici.
+    # Le correctif de LOT 3c-0c etait donc INOPERANT sur ce chemin, celui qui
+    # porte 74 des 132 reservations — 56 % du trafic reel. Mesure : 4 snapshots
+    # produits sur 63 souscriptions avec la projection, 13 sans elle.
+    #
+    # L'echec etait SILENCIEUX, et c'est ce qui le rend dangereux pour un bilan :
+    # il ne produisait pas un chiffre faux, il produisait MOINS de chiffres. Un
+    # total incomplet qui a l'air complet est pire qu'un total qui manque.
+    #
+    # On lit donc le document ENTIER. Il est lu une seule fois par reservation,
+    # sur un champ indexe : le cout est nul, et `shared_sessions` se lit
+    # exactement comme avant.
     discount_for_mode = await db.discount_codes.find_one(
-        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0, "shared_sessions": 1}
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
     )
     shared_mode = (discount_for_mode or {}).get("shared_sessions", True)
 

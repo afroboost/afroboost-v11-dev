@@ -776,11 +776,31 @@ async def _a_enrichir_finance(reservations: list, perimetre: dict = None) -> lis
             if _k:
                 _groupes.setdefault(_k, []).append(s)
         _par_code = {_k: _l3c0c_choisir(_lot) for _k, _lot in _groupes.items()}
+        # ── PREALABLE LOT 3 FINANCE : LE DOCUMENT CANONIQUE, PAS LE PREMIER ──
+        #
+        # `setdefault` retenait le PREMIER document rendu par Mongo. Or quand un
+        # code porte plusieurs documents, l'argent n'est presque jamais sur le
+        # premier. Mesure du 20/08/2026 : quatre codes de production
+        # (`BASSBOOSTX-09`, `-15`, `-31`, `-02`) portent leur `stripe_amount` sur
+        # le document marque `canonical`, et RIEN sur le premier — soit 900 CHF
+        # de recettes reelles invisibles du futur calcul.
+        #
+        # ⚠️ ON NE FABRIQUE AUCUN `canonical`. Ce marqueur existe deja en base
+        # (5 documents) ; on se contente de le LIRE. Aucune fusion, aucune
+        # suppression de doublon, aucune donnee touchee — ce lot ne repare pas
+        # les doublons, il cesse de lire le mauvais document.
+        #
+        # SANS marqueur, le comportement d'avant est conserve a l'identique : le
+        # premier rencontre. On n'introduit aucun nouvel arbitrage arbitraire —
+        # departager des doublons NON marques serait un autre lot, avec sa
+        # propre preuve.
         _codes_idx = {}
         for d in _dcs:
             _k = (str(d.get("code") or "")).strip().upper()
-            if _k:
-                _codes_idx.setdefault(_k, d)
+            if not _k:
+                continue
+            if _k not in _codes_idx or (d.get("canonical") and not _codes_idx[_k].get("canonical")):
+                _codes_idx[_k] = d
 
         for r in reservations:
             _sid = (r.get("subscriptionId") or "").strip()
