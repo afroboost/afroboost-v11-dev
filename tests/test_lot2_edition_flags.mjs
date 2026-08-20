@@ -49,7 +49,14 @@ const CHEMIN_PLAYWRIGHT = '/Users/afroboost/.claude/skills/gstack/node_modules/p
 const { chromium } = require_(CHEMIN_PLAYWRIGHT);
 
 const TRAVAIL = path.join(os.tmpdir(), 'afroboost-lot2-navigateur');
-const BUILD = path.join(TRAVAIL, 'build');
+// AFROBOOST_BUNDLE permet de viser un bundle AUTRE que celui construit ici —
+// en pratique celui REELLEMENT SERVI par la production, aspire au prealable.
+// Tester le code deploye vaut mieux que tester une reconstruction locale.
+const BUILD = process.env.AFROBOOST_BUNDLE || path.join(TRAVAIL, 'build');
+// `--sans-sauvegarde` s'arrete apres l'etape 6 (ouvrir / fermer / rouvrir) et
+// n'enregistre RIEN. C'est le mode a utiliser contre un bundle de production :
+// on verifie l'affichage sans jamais declencher d'ecriture.
+const SANS_SAUVEGARDE = process.argv.includes('--sans-sauvegarde');
 const CAPTURES = path.join(TRAVAIL, 'captures-edition');
 
 /** Libelles REELS a l'ecran (OfferWizard.js). Le test lit ce que le coach lit. */
@@ -217,7 +224,7 @@ async function principal() {
   const etat = etatInitial();
   etat.offers = JSON.parse(JSON.stringify(offres));
   // Seule breche, explicite : la sauvegarde de l'etape 8, EN MEMOIRE.
-  const serveur = await demarrer({ racine: BUILD, etat, persisterOffres: true });
+  const serveur = await demarrer({ racine: BUILD, etat, persisterOffres: !SANS_SAUVEGARDE });
   const navigateur = await chromium.launch({ headless: true });
   const erreursPage = [];
 
@@ -253,6 +260,12 @@ async function principal() {
       verifier(`E6 « ${cas.nom} » : apres fermeture SANS sauvegarde, ${attendu}`,
         lu2.adhesion === cas.adhesion && lu2.conversion === cas.conversion,
         `lu : adhesion=${lu2.adhesion} conversion=${lu2.conversion}`);
+
+      if (SANS_SAUVEGARDE) {
+        console.log('    capture : ' + await capture(page, `1-${cas.nom.slice(0, 12)}-reouverture`));
+        await contexte.close();
+        continue;
+      }
 
       // --- ETAPES 7-8 : modifier un champ sans rapport, enregistrer ------
       const motsClesAttendus = await modifierPuisEnregistrer(page, ' lot2fix');

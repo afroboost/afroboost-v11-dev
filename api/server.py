@@ -866,6 +866,13 @@ class OfferCreate(BaseModel):
     # (« le prix n'est pas une identite metier ») et dans membership_routes
     # (« aucune adhesion n'est creee a partir d'un nom ou d'un montant »).
     #
+    # LOT 2.1 : cette case ne SUFFIT plus. Le serveur refuse desormais de
+    # creer une adhesion si le prix de vente resolu de l'offre est nul, si le
+    # moteur est « free », ou si rien n'a ete encaisse (shared.py,
+    # `lot2_creer_adhesion_apres_achat`). Cocher la case sur une offre
+    # gratuite est donc sans effet — l'interface l'empeche, le serveur le
+    # garantit. Le prix n'identifie toujours rien : il ne sert que de borne.
+    #
     # POURQUOI PAS `first_purchase_eligible`. Ce voisin dit « proposable a
     # quelqu'un qui n'a encore rien achete » — une autre question. Une offre
     # peut etre l'une sans etre l'autre. Le depot annoncait d'ailleurs

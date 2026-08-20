@@ -2198,6 +2198,14 @@ async def conv_marquer_vue(db, forfait: dict, offres: int = 0) -> bool:
 #    membership_routes.py « aucune adhesion n'est creee a partir d'un nom ou
 #    d'un montant »). On ne le retranche pas ici.
 #
+#    LOT 2.1 — PRECISION, ET NON RENVERSEMENT. Le prix est desormais LU, mais
+#    jamais pour IDENTIFIER une offre : aucune comparaison a 250, ni a aucun
+#    autre palier, n'existe dans ce fichier (le test 7e le verifie par AST).
+#    Il sert uniquement de BORNE BASSE : ce qui est donne n'ouvre pas un droit
+#    d'un an. Identifier et borner sont deux usages differents. La regle « le
+#    prix bouge, la regle non » reste donc entiere : le jour ou PULSE passe a
+#    260, la garde ne bronche pas — elle ne se declenche qu'a zero.
+#
 #    A NE PAS CONFONDRE avec `_C9_PULSE = ("a687ce86", "484c4519")`
 #    (server.py) : deux identifiants d'offre codes en dur, qui servent
 #    UNIQUEMENT a etiqueter un evenement d'analytique. Aucune decision metier
@@ -2253,6 +2261,12 @@ LOT2_MOTIFS = (
     "deja_membre",             # une adhesion est encore valide : on ne touche a rien
     "rejeu",                   # le meme paiement, une seconde fois
     "echec_ecriture",          # la base a refuse, pour une autre raison
+    # LOT 2.1 — DEUX motifs distincts, et ce n'est pas de la coquetterie :
+    # « l'offre se donne » est une CONFIGURATION a corriger dans le dashboard,
+    # « rien n'a ete encaisse » est un fait comptable sur CET achat-la. Les
+    # confondre rendrait le premier introuvable dans les journaux.
+    "offre_gratuite",          # LOT 2.1 : prix de vente resolu a 0 -> jamais d'adhesion
+    "montant_nul",             # LOT 2.1 : offre payante, mais 0 reellement encaisse
 )
 
 
@@ -2367,9 +2381,20 @@ async def lot2_offre_adherente(db, offre_id: str):
     if not _oid:
         return None, "offre_introuvable"
     try:
+        # LOT 2.1 : la projection ramene aussi de quoi RESOUDRE LE PRIX DE
+        # VENTE. Surtout pas le seul `price` : l'offre « Afroboost Silent »
+        # porte `price: 0.0` en base et se vend pourtant 15 CHF aujourd'hui,
+        # 25 CHF une fois son compte a rebours passe (tarif progressif V223).
+        # Se fier a `price` brut refuserait l'adhesion d'un client qui a paye
+        # — le faux refus exactement inverse du defaut qu'on ferme ici.
+        # Ces champs sont ceux, et seulement ceux, que lit `compute_active_price`.
         _o = await db["offers"].find_one(
             {"id": _oid},
-            {"_id": 0, "id": 1, "name": 1, "coach_id": 1, "creates_membership": 1})
+            {"_id": 0, "id": 1, "name": 1, "coach_id": 1, "creates_membership": 1,
+             "price": 1, "progressive_pricing": 1, "countdown_date": 1,
+             "countdown_time": 1, "early_bird_days_before": 1,
+             "standard_hours_before": 1, "price_early_bird": 1,
+             "price_standard": 1, "price_last_minute": 1})
     except Exception as _err:
         logger.warning("%s offre %s illisible: %s", LOT2_PREFIXE, _oid[:32], _err)
         return None, "offre_introuvable"
@@ -2378,6 +2403,51 @@ async def lot2_offre_adherente(db, offre_id: str):
     if _o.get("creates_membership") is not True:
         return None, "offre_non_adherente"
     return _o, ""
+
+
+def lot2_prix_de_vente(offre) -> float:
+    """LOT 2.1 — Le prix REELLEMENT DEMANDE pour cette offre, aujourd'hui.
+
+    POURQUOI PAS `offre["price"]`. Parce que ce champ n'est PAS le prix de
+    vente des qu'une offre est en tarif progressif (V223) : mesure du
+    20/08/2026 sur la production, l'offre « Afroboost Silent » porte
+    `price: 0.0` et se vend 15 CHF (palier `standard`), 25 CHF une fois son
+    compte a rebours passe. Une garde posee sur `price` brut lui refuserait
+    son adhesion alors que le client a paye — le faux refus symetrique, et
+    plus grave, du defaut qu'on ferme ici.
+
+    `compute_active_price` est le SEUL endroit du depot qui sache repondre a
+    la question « combien coute cette offre maintenant », et c'est un module
+    PUR : aucun acces base, aucun import de `server.py`. L'importer ici ne
+    cree donc aucun cycle. Import LOCAL malgre tout, par symetrie avec les
+    autres emprunts de ce fichier.
+
+    Ne leve jamais. EN CAS D'ECHEC, ON REPLIE SUR `offre["price"]`, PAS SUR 0.
+    C'est un choix delibere, et la premiere version faisait l'inverse : rendre
+    0.0 quand le module ne se charge pas transforme TOUTES les offres en
+    gratuites d'un coup — plus destructeur que le trou qu'on ferme. Le repli
+    sur le prix brut se trompe au pire sur une offre en tarif progressif
+    (refus au lieu de creation), jamais dans le sens dangereux. Un prix
+    illisible jusqu'au bout rend 0.0, et la refuser est correct.
+
+    ATTENTION, ce n'est PAS un retour en arriere sur « le prix n'est pas une
+    identite metier » (server.py, membership_routes.py). Cette regle-la
+    interdit d'IDENTIFIER une offre par son montant (`if price == 250`), et
+    elle reste entiere : rien ici ne compare a 250, ni a aucun autre palier.
+    On ne pose qu'une BORNE : ce qui est donne ne peut pas ouvrir un droit
+    d'un an. Identifier et borner sont deux usages differents du meme champ.
+    """
+    try:
+        from api.pricing import compute_active_price as _prix_actif
+        return float((_prix_actif(offre or {}) or {}).get("price") or 0)
+    except Exception as _err:  # noqa: BLE001
+        try:
+            _brut = float((offre or {}).get("price") or 0)
+        except (TypeError, ValueError):
+            _brut = 0.0
+        logger.warning("%s tarif progressif illisible (%s) — repli sur le prix "
+                       "brut %s", LOT2_PREFIXE, type(_err).__name__, _brut)
+        return _brut
 
 
 async def lot2_adhesion_active(db, email: str, coach_id):
@@ -2471,6 +2541,56 @@ async def lot2_creer_adhesion_apres_achat(db, email, offre_id, subscription_id,
                                LOT2_PREFIXE, _oid[:32])
             _resultat["motif"] = _pourquoi_pas
             return _resultat
+
+        # ═══ LOT 2.1 — CE QUI EST DONNE N'OUVRE PAS UN DROIT D'UN AN ═══════
+        #
+        # Trois signaux, evalues AVANT toute autre lecture : inutile
+        # d'interroger la base pour une adhesion qu'on ne creera pas.
+        #
+        # 1. LE PRIX DE VENTE RESOLU. C'est le fail-safe demande : meme si une
+        #    offre porte deja `creates_membership: true` avec un prix a 0 —
+        #    par erreur de saisie, ou parce qu'elle date d'avant cette garde —
+        #    aucune adhesion ne naitra. Aucune migration, aucun nettoyage de
+        #    donnees n'est necessaire : la regle vit dans le code, pas dans la
+        #    base. Resolu par `lot2_prix_de_vente`, JAMAIS `offre["price"]`
+        #    brut (voir la docstring : une offre a `price: 0` peut se vendre
+        #    15 CHF).
+        #
+        # 2. LE MOTEUR. Les deux portes gratuites du depot
+        #    (`POST /checkout/free` et la branche gratuite de
+        #    `/checkout/create-session`) passent `payment_method="free"`. Le
+        #    signal est independant du montant : il tient meme le jour ou l'un
+        #    de ces chemins oublierait de transmettre `total=0`.
+        #
+        # 3. LE MONTANT REELLEMENT ENCAISSE, et lui seul quand il est CONNU.
+        #    `montant is not None` d'abord, et ce n'est pas une precaution de
+        #    style : le defaut de la signature est `None`, et `None <= 0`
+        #    leverait un TypeError que le catch-all du bas transformerait en
+        #    `echec_ecriture` — un faux refus maquille en panne de base.
+        #    Mesure du 20/08/2026 : aucun chemin reellement paye n'arrive a
+        #    zero. Cote Stripe, `montant = amount_chf or _montant_paye`
+        #    (server.py:6749) ou `_montant_paye` est calcule depuis l'objet de
+        #    L'EVENEMENT, sans appel reseau (server.py:6611-6615) : une panne
+        #    du `Session.retrieve` laisse `amount_chf` a 0.0 et le `or`
+        #    bascule sur le montant de l'evenement. Un achat a 250 CHF ne peut
+        #    donc pas se presenter ici comme gratuit.
+        _prix_vente = lot2_prix_de_vente(_offre)
+        _moteur_gratuit = str(moteur or "").strip().lower() == "free"
+        _montant_nul = montant is not None and float(montant) <= 0
+        if _prix_vente <= 0 or _moteur_gratuit or _montant_nul:
+            # WARNING et non INFO : contrairement a `offre_non_adherente`, ce
+            # n'est PAS un cas de routine. Soit une offre est mal configuree
+            # (case cochee sur une gratuite), soit un achat cense etre payant
+            # n'a rien encaisse. Les deux meritent d'etre vus dans les journaux.
+            _motif = "offre_gratuite" if _prix_vente <= 0 else "montant_nul"
+            logger.warning(
+                "%s adhesion NON creee — motif=%s offre=%s prix_vente=%s "
+                "moteur=%s montant=%s",
+                LOT2_PREFIXE, _motif, _oid[:32], _prix_vente,
+                str(moteur or "(aucun)")[:24], montant)
+            _resultat["motif"] = _motif
+            return _resultat
+        # ═══════════════════════════════════════════════════════════════════
 
         _coach = lot2_proprietaire(_offre.get("coach_id"))
 

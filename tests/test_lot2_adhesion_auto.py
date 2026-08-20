@@ -98,7 +98,30 @@ MEMBRES_SRC = _Source("api", "routes", "membership_routes.py")
 
 LOT2_FONCTIONS = ("lot2_proprietaire", "lot2_fin_adhesion", "lot2_prolonger_fin",
                   "lot2_est_doublon", "lot2_offre_adherente", "lot2_adhesion_active",
-                  "lot2_creer_adhesion_apres_achat")
+                  "lot2_creer_adhesion_apres_achat", "lot2_prix_de_vente")
+
+
+def _fonctions_lisant_le_prix():
+    """Les fonctions LOT 2 qui mentionnent `price`, quelle qu'en soit la forme.
+
+    LOT 2.1 en autorise UNE SEULE : `lot2_prix_de_vente`. Si une autre se met
+    un jour a lire le prix, la frontiere entre « borner » et « decider par le
+    montant » s'efface — c'est precisement ce que le depot avait refuse.
+    La projection Mongo de `lot2_offre_adherente` est exclue : demander un
+    champ a la base n'est pas s'en servir pour decider.
+    """
+    import ast as _ast
+    _trouvees = set()
+    for _nom in LOT2_FONCTIONS:
+        if _nom == "lot2_offre_adherente":
+            continue
+        _noeud = SHARED_SRC.noeud(_nom)
+        for _n in _ast.walk(_noeud):
+            if isinstance(_n, _ast.Constant) and _n.value in ("price", "active_price"):
+                _trouvees.add(_nom)
+            if isinstance(_n, _ast.Attribute) and _n.attr in ("price", "active_price"):
+                _trouvees.add(_nom)
+    return _trouvees
 
 
 # ═══════════════════ chargement des VRAIS modules, hors ligne ═══════════════
@@ -152,6 +175,13 @@ def _charger(nom, *chemin):
     spec.loader.exec_module(module)
     return module
 
+
+# LOT 2.1 : `api.pricing` est charge POUR DE VRAI, pas bouchonne. C'est lui qui
+# resout le prix de vente d'une offre en tarif progressif, et le laisser absent
+# ferait tomber `lot2_prix_de_vente` sur son repli — le test mesurerait alors
+# le chemin de secours en croyant mesurer le chemin normal. Le module est pur
+# (aucun acces base, aucun import de server.py) : il se charge tel quel.
+P = _charger("api.pricing", "api", "pricing.py")
 
 # shared AVANT membership_routes : le second importe le premier au chargement.
 S = _charger("api.routes.shared", "api", "routes", "shared.py")
@@ -441,13 +471,58 @@ async def test_7_le_prix_ne_decide_rien():
     verifier("7b. aucun champ `price` n'est recopie sur l'adhesion",
              "price" not in base.memberships.docs[0])
 
-    # Une offre a 0 CHF cochee cree une adhesion : la preuve que le montant ne
-    # sert a rien — ni comme seuil, ni comme condition.
+    # LOT 2.1 — RENVERSEMENT ASSUME DE CE SEUL POINT. Cette verification
+    # affirmait l'inverse (« une offre a 0 CHF cochee cree une adhesion »).
+    # Elle disait vrai du LOT 2, et c'etait le trou : un coach qui cochait la
+    # case sur son essai gratuit offrait un an d'adhesion a chaque visiteur.
+    # Ce qui l'entoure n'a PAS change : le prix ne sert toujours pas a
+    # identifier une offre (7, 7a, 7e), il ne sert que de borne basse.
     base.offers.docs.append(_offre("gratuite", price=0, creates_membership=True))
     r3 = await _acheter(base, email="c@test.ch", offre_id="gratuite", sid="sub-c",
                         moteur="free", montant=0)
-    verifier("7c. une offre a 0 CHF cochee cree une adhesion (aucun seuil de prix)",
-             r3["cree"] is True)
+    verifier("7c. LOT 2.1 : une offre a 0 CHF cochee ne cree AUCUNE adhesion",
+             r3["cree"] is False and r3["motif"] == "offre_gratuite",
+             str(r3))
+    verifier("7c1. ... et rien n'est ecrit en base",
+             len(base.memberships.docs) == 2)
+
+    # Un achat PAYANT qui n'encaisse rien est refuse LUI AUSSI, mais sous un
+    # motif DIFFERENT : « l'offre se donne » est une configuration a corriger,
+    # « rien n'a ete encaisse » est un fait comptable sur cet achat-la.
+    r4 = await _acheter(base, email="d@test.ch", offre_id="pulse", sid="sub-d",
+                        moteur="stripe", montant=0)
+    verifier("7c2. offre payante mais 0 encaisse -> refus, motif `montant_nul`",
+             r4["cree"] is False and r4["motif"] == "montant_nul", str(r4))
+
+    # LE FAUX REFUS, qui serait pire que le defaut corrige : un montant INCONNU
+    # (None) ne doit jamais etre pris pour une gratuite. `None <= 0` leverait
+    # d'ailleurs un TypeError, maquille en `echec_ecriture` par le catch-all.
+    r5 = await _acheter(base, email="e@test.ch", offre_id="pulse", sid="sub-e",
+                        moteur="stripe", montant=None)
+    verifier("7c3. montant INCONNU (None) sur offre payante -> adhesion creee",
+             r5["cree"] is True, str(r5))
+
+    # Le moteur « free » est un signal INDEPENDANT du montant : il tient meme
+    # si un chemin gratuit oubliait un jour de transmettre `total=0`.
+    r6 = await _acheter(base, email="f@test.ch", offre_id="pulse", sid="sub-f",
+                        moteur="free", montant=250)
+    verifier("7c4. moteur `free` sur offre payante -> refus malgre le montant",
+             r6["cree"] is False and r6["motif"] == "montant_nul", str(r6))
+
+    # LE PIEGE QUE LA GARDE NE DOIT PAS TOMBER : une offre en tarif progressif
+    # porte `price: 0` en base et se vend pourtant. Mesure du 20/08/2026 sur la
+    # production : « Afroboost Silent » -> price 0.0, prix reel 15 CHF. Se fier
+    # a `price` brut lui refuserait son adhesion.
+    _progressive = _offre("progressive", price=0, creates_membership=True)
+    _progressive.update({"progressive_pricing": True, "countdown_date": "2099-01-01",
+                         "countdown_time": "00:00", "price_early_bird": 15,
+                         "price_standard": 20, "price_last_minute": 25})
+    base.offers.docs.append(_progressive)
+    r7 = await _acheter(base, email="g@test.ch", offre_id="progressive", sid="sub-g",
+                        moteur="stripe", montant=15)
+    verifier("7c5. offre a `price: 0` mais vendue 15 CHF (tarif progressif) "
+             "-> adhesion CREEE, aucun faux refus",
+             r7["cree"] is True, str(r7))
 
     # Mesure sur le CODE : aucune fonction LOT 2 ne lit un prix, ni ne compare
     # a un montant. Les commentaires en parlent — le code, jamais.
@@ -463,14 +538,27 @@ async def test_7_le_prix_ne_decide_rien():
             if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) \
                     and not isinstance(n.value, bool) and n.value in (30, 150, 250, 260):
                 nombres.add(n.value)
-    verifier("7d. aucune fonction LOT 2 ne lit `price` ni `active_price`",
-             not lus, str(sorted(lus)))
+    # LOT 2.1 : le prix EST desormais lu — mais par UNE seule fonction, celle
+    # qui resout le prix de vente. Aucune autre n'y touche : c'est la
+    # difference entre « borner » et « decider a partir du montant ».
+    verifier("7d. LOT 2.1 : seule `lot2_prix_de_vente` lit le prix, "
+             "aucune autre fonction LOT 2 n'y touche",
+             lus <= {"price"} and _fonctions_lisant_le_prix() == {"lot2_prix_de_vente"},
+             f"champs lus={sorted(lus)} fonctions={sorted(_fonctions_lisant_le_prix())}")
+    # CELLE-CI NE CHANGE PAS, et c'est elle qui garantit que le prix ne sert
+    # pas d'identite : aucune comparaison a un montant precis.
     verifier("7e. aucun montant en dur (250 / 260 / 150) dans le code LOT 2",
              not nombres, str(sorted(nombres)))
-    # La projection de lecture d'offre ne demande meme pas le prix a Mongo.
-    verifier("7f. la lecture d'offre ne demande pas le prix a la base",
-             "\"price\"" not in SHARED_SRC.extraire("lot2_offre_adherente")
-             and "'price'" not in SHARED_SRC.extraire("lot2_offre_adherente"))
+    # LOT 2.1 : la projection demande maintenant le prix ET de quoi resoudre un
+    # tarif progressif — sans ces champs, une offre a `price: 0` vendue 15 CHF
+    # serait prise pour gratuite (cas reel « Afroboost Silent », 20/08/2026).
+    _proj = SHARED_SRC.extraire("lot2_offre_adherente")
+    verifier("7f. LOT 2.1 : la lecture d'offre demande le prix ET les champs "
+             "de tarif progressif",
+             all(c in _proj for c in ('"price"', '"progressive_pricing"',
+                                      '"price_early_bird"', '"price_standard"',
+                                      '"price_last_minute"', '"countdown_date"')),
+             "projection incomplete : un tarif progressif serait lu comme gratuit")
 
 
 # ═══════════ 8 / 9. LE PROPRIETAIRE VIENT DE L'OFFRE, ET DE LA SEULE ════════
@@ -858,7 +946,14 @@ async def test_ecritures_reelles_et_jamais_de_levee():
     verifier("E8. le vocabulaire des motifs est ferme et documente",
              set(S.LOT2_MOTIFS) == {"donnees_incompletes", "offre_introuvable",
                                     "offre_non_adherente", "deja_membre", "rejeu",
-                                    "echec_ecriture"}, str(S.LOT2_MOTIFS))
+                                    "echec_ecriture",
+                                    # LOT 2.1 : deux refus de plus, volontairement
+                                    # DISTINCTS l'un de l'autre — « l'offre se
+                                    # donne » se corrige dans le dashboard,
+                                    # « rien n'a ete encaisse » est un fait
+                                    # comptable sur cet achat-la.
+                                    "offre_gratuite", "montant_nul"},
+             str(S.LOT2_MOTIFS))
 
 
 # ═══════════════════ 14. AUCUNE NOUVELLE PAGE, AUCUN ONGLET ═════════════════

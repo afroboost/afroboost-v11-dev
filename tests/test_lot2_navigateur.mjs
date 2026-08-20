@@ -517,6 +517,18 @@ async function principal() {
         const libelle = await page.locator('label', { has: casePw }).innerText();
         verifier('S8.4 le libelle annonce « Ouvre une adhésion d\'un an »',
           /Ouvre une adh[ée]sion d['’]un an/i.test(libelle), `lu : ${libelle}`);
+        // LOT 2.1 : une offre NEUVE nait a 0 CHF, et la case y est desormais
+        // DESACTIVEE — une offre gratuite ne peut pas ouvrir une adhesion.
+        // On verifie ce garde-fou, puis on donne un prix a l'offre : la case
+        // redevient utilisable. C'est exactement le geste du coach.
+        verifier('S8.4b a 0 CHF la case est desactivee (offre gratuite)',
+          (await casePw.isDisabled()) === true);
+        verifier('S8.4c ... et l\'explication est affichee',
+          (await page.locator('[data-testid="offer-membership-gratuite"]').count()) === 1);
+        await page.getByPlaceholder('30').first().fill('250');
+        await page.waitForTimeout(300);
+        verifier('S8.4d des qu\'un prix est saisi, la case redevient utilisable',
+          (await casePw.isDisabled()) === false);
         await casePw.check();
         verifier('S8.5 la case est reellement cochable', (await casePw.isChecked()) === true);
       } else {

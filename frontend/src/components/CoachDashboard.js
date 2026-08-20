@@ -3386,9 +3386,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // offer.model_dump()` du PUT la remettrait a `false` en base a chaque
         // sauvegarde d'offre. `!!` : le backend attend un vrai booleen.
         first_purchase_eligible: !!src.first_purchase_eligible,
-        // LOT 2 : normalise au chargement, comme son voisin. Sans cette ligne la
-        // case reviendrait decochee a la reouverture du formulaire.
-        creates_membership: !!src.creates_membership
+        // LOT 2 : normalise au chargement, comme son voisin.
+        // LOT 2.1 : et JAMAIS `true` sur une offre a 0 CHF. La case du wizard
+        // est deja desactivee dans ce cas, mais une offre peut arriver ici avec
+        // le drapeau deja pose (offre ancienne, ou prix ramene a 0 pendant la
+        // saisie) — on ne reecrit pas en base une valeur que le serveur
+        // refusera d'honorer. Meme definition de « gratuite » que le wizard :
+        // prix a 0. Ceinture cote client ; le serveur reste l'autorite et
+        // refuse la creation de toute facon.
+        creates_membership: !!src.creates_membership && (parseFloat(src.price) || 0) > 0
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 

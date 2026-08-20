@@ -849,6 +849,11 @@ export default function OfferWizard({
 
   const linkedIds = form.linked_course_ids || [];
 
+  // LOT 2.1 : « gratuite » = prix a 0, exactement comme le bloc « preuve
+  // sociale » plus bas. Une seule definition dans ce fichier, pour que les deux
+  // ne puissent pas diverger.
+  const v21OffreGratuite = (parseFloat(form.price) || 0) === 0;
+
   const renderStep1 = () => (
     <div className="space-y-4">
       {/* Nom */}
@@ -1057,16 +1062,28 @@ export default function OfferWizard({
           DISTINCTE de la case ci-dessus : « proposable apres l'essai » et
           « ouvre une adhesion » sont deux questions differentes, et une offre
           peut etre l'une sans etre l'autre. */}
+      {/* LOT 2.1 : une offre GRATUITE ne peut pas ouvrir une adhesion d'un an.
+          Meme condition exacte que le bloc « preuve sociale » ci-dessus
+          (`(parseFloat(form.price) || 0) === 0`), pour que les deux blocs ne
+          puissent jamais diverger sur ce qu'est une offre gratuite.
+          La case est DESACTIVEE, pas masquee : masquer laisserait le coach
+          sans explication et donnerait l'impression que la fonction a disparu.
+          Et le reglage n'est PAS efface tout seul — s'il redonne un prix a
+          l'offre, il retrouve sa case telle qu'il l'avait laissee, et c'est lui
+          qui decide. Le serveur reste de toute facon l'autorite : il refuse de
+          creer l'adhesion, que cette case dise oui ou non. */}
       <div className="p-4 rounded-lg" style={{ background: '#000', border: `1px solid ${ACCENT_BORDER}` }}>
-        <label className="flex items-center gap-3 cursor-pointer">
+        <label className={`flex items-center gap-3 ${v21OffreGratuite ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
           <input
             type="checkbox"
-            checked={!!form.creates_membership}
+            checked={!!form.creates_membership && !v21OffreGratuite}
+            disabled={v21OffreGratuite}
             onChange={(e) => set('creates_membership', e.target.checked)}
             className="w-4 h-4 v224-input" style={{ accentColor: 'var(--primary-color, #D91CD2)' }}
             data-testid="offer-creates-membership"
           />
-          <span className="text-white text-sm font-medium inline-flex items-center gap-1.5">
+          <span className="text-white text-sm font-medium inline-flex items-center gap-1.5"
+                style={v21OffreGratuite ? { opacity: 0.45 } : undefined}>
             <SvgIcon name="crown" size={14} /> Ouvre une adhésion d'un an
           </span>
         </label>
@@ -1075,6 +1092,18 @@ export default function OfferWizard({
           aucune saisie de votre part. Si son adhésion est encore valide, rien n'est
           créé ni prolongé — l'offre reste celle d'un nouveau membre.
         </p>
+        {v21OffreGratuite && (
+          <p className="text-xs mt-2 ml-7 p-2 rounded" data-testid="offer-membership-gratuite"
+             style={{ color: PINK, border: `1px solid ${ACCENT_BORDER}`,
+                      background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)' }}>
+            <SvgIcon name="warning" size={12} />{' '}
+            Une offre gratuite ne peut pas ouvrir une adhésion.
+            {!!form.creates_membership && (
+              <> Ce réglage était activé : il ne s’appliquera pas tant que le prix
+              reste à 0. Redonnez un prix à l’offre pour le réactiver.</>
+            )}
+          </p>
+        )}
       </div>
 
       {/* Description */}
