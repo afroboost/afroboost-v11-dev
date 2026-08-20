@@ -1143,24 +1143,78 @@ async def get_subscription_status(request: Request, email: str = "", code: str =
 
 
 @promo_router.post("/subscriptions/deduct")
-async def deduct_session(data: dict):
-    """Déduit une séance de l'abonnement v11.4"""
+async def deduct_session(data: dict, request: Request):
+    """Déduit une séance de l'abonnement v11.4
+
+    CORRECTIF 1 — LA CINQUIEME PORTE. LOT 3c-0b en a ferme quatre dans ce
+    fichier ; celle-ci est restee ouverte, et c'etait la seule dont la signature
+    ne recevait MEME PAS la requete HTTP : s'y authentifier etait materiellement
+    impossible. C'est le defaut de naissance des portes A et C.
+
+    CE QU'ELLE LAISSAIT FAIRE. Un anonyme, muni de la seule adresse e-mail d'un
+    abonne, detruisait ses seances payees une par une, jusqu'a clore le forfait
+    (`status: "completed"`). Le `code` etant FACULTATIF, un corps reduit a
+    `{"email": ...}` suffisait a bruler une seance du PREMIER forfait actif
+    trouve. Elle falsifiait aussi `used_sessions` — le champ meme dont V394 se
+    sert pour departager les doublons. Et le journal ne nommait que la victime,
+    jamais l'appelant.
+
+    ELLE EST ORPHELINE, et c'est PROUVE par deux mesures independantes :
+    `git log --all -S "subscriptions/deduct" -- frontend/` rend ZERO commit — le
+    navigateur ne l'a JAMAIS appelee dans toute l'histoire du depot — et la
+    chaine est ABSENTE du bundle servi en production. Les deux seuls appelants
+    vivent dans `backend/tests/`, dossier mort et non deploye, avec un
+    `BASE_URL` vide qui les rend deja inoperants. Aucun parcours legitime a
+    preserver : la configuration la plus favorable au regard de la regle V310c.
+
+    ⚠️ CE QUI N'EST PAS TOUCHE : la SELECTION DE CIBLE. `find_one` sans tri
+    reste indetermine quand la personne detient plusieurs forfaits actifs — et
+    ce n'est pas un oubli. Le corriger supposerait de passer par
+    `choisir_abonnement` et de rendre le debit atomique : deux changements de
+    comportement qui appartiennent a LOT 3c-0c. Ce lot ferme une porte, il ne
+    recompte rien. La verification H8 du banc echouerait si on y touchait.
+    """
+    # ── CORRECTIF 1 : LA MEME PORTE QUE `update_subscription` JUSTE EN DESSOUS ──
+    # Jeton SIGNE uniquement, jamais `require_auth` : son repli `X-User-Email`
+    # (V265) se fabrique avec un `curl`, et c'est un solde de seances qui est en
+    # jeu. Le role est RELU EN BASE, jamais decide par le navigateur.
+    caller = (coach_jwt_email(request) or "").lower().strip()
+    _autorise = is_super_admin(caller)
+    if not _autorise and caller:
+        if await _db.coaches.find_one({"email": caller}, {"_id": 1}) or \
+           await _db.coach_auth.find_one({"email": caller}, {"_id": 1}):
+            _autorise = True
+    if not _autorise:
+        raise HTTPException(status_code=403,
+                            detail="Authentification coach requise — reconnectez-vous")
+
     email = data.get("email", "").lower().strip()
     code = data.get("code", "").upper().strip()
-    
+
     if not email:
         return {"success": False, "message": "Email requis"}
-    
+
     # Chercher l'abonnement actif
     query = {"email": email, "status": "active"}
     if code:
         query["code"] = code
-    
+
     subscription = await _db.subscriptions.find_one(query, {"_id": 0})
-    
+
     if not subscription:
         return {"success": False, "message": "Aucun abonnement actif", "remaining": 0}
-    
+
+    # ── CORRECTIF 1 : CLOISONNEMENT — legacy VOLONTAIREMENT DEDUCTIBLE ───────
+    # Meme reglage que `update_subscription` (LOT 3c-0b) et que V237, dicte par
+    # la donnee : 8 souscriptions sur 63 (13 %) n'ont pas de `coach_id`, et 4
+    # des 7 chemins de creation n'en posent pas. Refuser le stock sans
+    # proprietaire bloquerait le coach sur son PROPRE historique.
+    _proprio = str(subscription.get("coach_id") or "").strip().lower()
+    if not is_super_admin(caller) and _proprio and _proprio != caller:
+        logger.warning("[CORRECTIF1] %s refuse : souscription d'un autre coach", caller)
+        raise HTTPException(status_code=403,
+                            detail="Cette souscription appartient à un autre coach")
+
     remaining = subscription.get("remaining_sessions", 0)
     if remaining <= 0:
         return {"success": False, "message": "Plus de séances disponibles", "remaining": 0}
@@ -1184,7 +1238,9 @@ async def deduct_session(data: dict):
         {"$set": update_data}
     )
     
-    logger.info(f"[SUBSCRIPTION] Déduction: {email} - {new_used}/{subscription.get('total_sessions')} séances utilisées")
+    # CORRECTIF 1 : la trace nomme desormais QUI a debite. Elle ne nommait que
+    # la VICTIME — un debit anonyme ne laissait donc aucune piste exploitable.
+    logger.info(f"[SUBSCRIPTION] Déduction: {email} par {caller} - {new_used}/{subscription.get('total_sessions')} séances utilisées")
     
     return {
         "success": True,
