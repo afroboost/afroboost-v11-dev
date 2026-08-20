@@ -5769,7 +5769,7 @@ async def lot3b_estimation_tarifaire(corps: Lot3bEstimationRequest,
 
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest,
-                                  http_request: Optional[Request] = None):
+                                  http_request: Request = None):
     """
     V220/V221: Crée une session Stripe Checkout.
     Lit la clé Stripe depuis partner_payment_config (dashboard admin) d'abord,
