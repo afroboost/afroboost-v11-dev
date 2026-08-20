@@ -13537,9 +13537,28 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     # etre rendu, et l'operation est idempotente.
     try:
         if await t1_restituer_essais_non_honores(code_upper):
-            subscription = await db.subscriptions.find_one(
-                {"code": {"": f"^{re.escape(code_upper)}$", "off on off off off off off off off off on off on off off off off off on off off off on on off off off off on off off off off off off off off off off off off on off off off off off off off on off on on off off off on off off on off off on off off on off on off off on off on off off off off on off off off on off off on off off off off off off off off on off on off off on off off off off off off off off off off off off on off on off on off on off on on off off off off on on on off on on off on off on on off off off off on on off off on off off off off off on off off on off off off off off off off off off on off off off off on on off on off off off off off on off on off off off off off off off off off off on on off on off off off": "i"}},
-                {"_id": 0}) or subscription
+            # CORRECTIF 2 — LA RELECTURE PASSE PAR LA MEME REGLE QUE LA PREMIERE.
+            #
+            # Cette ligne portait une requete CORROMPUE : `$regex` y avait ete
+            # remplace par une cle vide `""` et `$options` par une chaine
+            # parasite. MongoDB ne LEVE PAS dessus — aucune cle ne commence par
+            # `$`, donc il traite le sous-document comme une egalite exacte, qui
+            # ne correspond jamais. La relecture rendait `None` EN SILENCE, le
+            # `or subscription` conservait la valeur d'AVANT restitution, et
+            # l'abonne recevait « Toutes les seances ont ete utilisees » alors
+            # que la base venait de le recrediter.
+            #
+            # ON REUTILISE `_v391_lire2`, deja importe 50 lignes plus haut pour
+            # la premiere lecture, PLUTOT QUE DE REPARER LA REGEX : le forfait de
+            # reference a ete choisi par cette regle (V391/V394). Un `find_one`
+            # rendrait le premier document arbitraire — sur un code portant
+            # plusieurs souscriptions, la relecture pourrait REMPLACER le bon
+            # forfait par un autre. C'est le defaut exact que V391 a corrige.
+            # Une seule regle, un seul endroit.
+            #
+            # Le `or subscription` est CONSERVE : il couvre le cas `_is_virtual`
+            # (souscription reconstruite depuis `discount_codes`, sans `id`).
+            subscription = await _v391_lire2(db, code_upper) or subscription
     except Exception as _t1err:
         logger.warning("[T1] restitution ignoree : %s", _t1err)
 
