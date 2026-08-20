@@ -26,7 +26,11 @@ import { demarrer, etatInitial, EMAIL_COACH } from './serveur_bouchon_lot2.mjs';
 const require_ = createRequire(import.meta.url);
 const { chromium } = require_('/Users/afroboost/.claude/skills/gstack/node_modules/playwright-core');
 
-const BUILD = path.join(os.tmpdir(), 'afroboost-lot2-navigateur', 'build');
+// AFROBOOST_BUNDLE permet de viser le bundle REELLEMENT SERVI par la
+// production plutot qu'une reconstruction locale : c'est ce qui transforme ce
+// test en verification de ce qui est EN LIGNE.
+const BUILD = process.env.AFROBOOST_BUNDLE
+  || path.join(os.tmpdir(), 'afroboost-lot2-navigateur', 'build');
 const CAPTURES = path.join(os.tmpdir(), 'afroboost-lot2-navigateur', 'captures-lot21');
 
 const PULSE = 'PULSE x10 cours';          // 250 CHF, case cochee

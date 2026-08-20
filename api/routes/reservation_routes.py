@@ -1172,6 +1172,12 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     # v158.8: Ne déduire du pack QUE si l'utilisateur utilise EXPLICITEMENT son abonnement
     # (via subscriptionId ou promoCode qui est son code de pack). Pas d'auto-déduction
     # pour les réservations d'essai gratuit, achats à l'unité, etc.
+    # LOT 3a : on RETIENT les deux documents jumeaux (forfait + code) pour le
+    # snapshot tarifaire, sans rien changer a la logique de deduction. Ils sont
+    # lus dans des blocs conditionnels plus bas ; sans ces deux variables, ils
+    # seraient hors de portee au moment de l'insertion.
+    _lot3_sub = None
+    _lot3_code = None
     subscription_id = getattr(reservation, 'subscriptionId', None)
     offer_price = float(getattr(reservation, 'totalPrice', 0) or 0)
     # Une reservation "essai gratuit" ou "achat à l'unité" NE DOIT PAS déduire d'un pack existant
@@ -1186,7 +1192,7 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
             query = {"email": user_email, "status": "active", "code": promo_code.upper().strip()}
 
         subscription = await db.subscriptions.find_one(query, {"_id": 0})
-        
+        _lot3_sub = subscription          # LOT 3a : lecture seule, pour le snapshot
         if subscription:
             remaining = subscription.get("remaining_sessions", 0)
             # V393 — expiré OU épuisé -> refus. Ce chemin ne testait que l'épuisement :
@@ -1242,6 +1248,7 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
 
     if promo_code:
         discount = await db.discount_codes.find_one({"code": {"$regex": f"^{re.escape(promo_code)}$", "$options": "i"}, "active": True}, {"_id": 0})
+        _lot3_code = discount             # LOT 3a : lecture seule, pour le snapshot
         if discount:
             # V430 : l'autorisation a été vérifiée EN TÊTE de route, avant toute
             # écriture. Rien à refaire ici.
@@ -1288,6 +1295,20 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     reservation_data.update(_t1_champs)
     if reservation.courseId:
         reservation_data["courseId"] = reservation.courseId
+    # LOT 3a : le tarif fige. Pose ICI, a cote de `_t1_champs` qui fige deja les
+    # conditions acceptees — meme geste, meme instant, avant l'unique ecriture.
+    # Ne change AUCUN montant : `totalPrice` reste exactement ce qu'il etait.
+    # L'IMPORT AUSSI est protege, pas seulement l'appel. `lot3_champs_forfait`
+    # ne leve jamais — mais l'instruction qui va la chercher, si. Sans ce
+    # `try`, une reservation echouait des que le module n'exposait pas le
+    # symbole (constate le 20/08/2026 sur le banc QR). Un snapshot est une
+    # trace, pas une condition : le client ne perd pas sa place parce qu'une
+    # ligne d'historique n'a pas pu s'ecrire.
+    try:
+        from api.routes.shared import lot3_champs_forfait as _lot3_champs
+        reservation_data.update(_lot3_champs(_lot3_sub, _lot3_code, reservation_data))
+    except Exception as _l3e:
+        logger.warning("[LOT3a] snapshot reservation ignore (%s)", type(_l3e).__name__)
     await db.reservations.insert_one(reservation_data)
     reservation_data.pop("_id", None)
     logger.info(f"[RESERVATION] Créée: {reservation_data.get('reservationCode')} pour {user_email}")
@@ -2996,6 +3017,13 @@ async def _qr_scan_validate_inner(request: Request):
         "validated": True, "validatedAt": datetime.now(timezone.utc).isoformat(),
         "createdAt": datetime.now(timezone.utc).isoformat(), "coach_id": coach_id
     }
+    # LOT 3a : la presence constatee au scan vaut UNE seance du forfait. La
+    # valeur vient du forfait deja paye, jamais du catalogue du jour.
+    try:
+        from api.routes.shared import lot3_champs_forfait as _lot3_champs
+        new_reservation.update(_lot3_champs(subscription, None, new_reservation))
+    except Exception as _l3e:
+        logger.warning("[LOT3a] snapshot scan ignore (%s)", type(_l3e).__name__)
     await db.reservations.insert_one(new_reservation)
     logger.info(f"[QR-SCAN-V176] Création résa + déduction: {user_email} -> {course_name} ({new_remaining} restantes)")
     # A0-3 : ce chemin cree une reservation DEJA validee — c'est une presence

@@ -2667,3 +2667,213 @@ async def lot2_creer_adhesion_apres_achat(db, email, offre_id, subscription_id,
                      LOT2_PREFIXE, _err)
         _resultat["motif"] = "echec_ecriture"
         return _resultat
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LOT 3a — LE TARIF FIGE : CE QUI A ETE DEMANDE, ET POURQUOI
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# CE QUE CE BLOC NE FAIT PAS, ET C'EST L'ESSENTIEL : il ne change AUCUN prix.
+# Pas un montant affiche, pas un centime debite. Il n'ajoute que des champs a
+# des documents qui allaient etre ecrits de toute facon. Un client qui reserve
+# avant et apres ce lot paie exactement la meme chose.
+#
+# LE PROBLEME QU'IL FERME. Aujourd'hui, le prix d'une seance passee n'est
+# stocke nulle part : il est RECONSTITUE a chaque affichage par
+# `a_finance_du_droit`, en remontant au forfait et au code. Cette
+# reconstitution lit des documents qui BOUGENT — le coach change un prix, edite
+# un `maxUses`, archive une offre — et l'historique change avec eux. Une
+# presence de mars peut donc valoir 25 CHF aujourd'hui et 30 demain, sans que
+# rien ne se soit passe en mars.
+#
+# LE PATRON EST CELUI DU DEPOT, PAS UN NOUVEAU. Quatre precedents disent la
+# meme chose : `seances_a_l_achat` (« DENOMINATEUR FIGE »), `b_champs_depuis_code`
+# (« recopie, et non recalcul »), `t1_preuve` (« fige l'etat annonce AU MOMENT
+# de la reservation ») et le document d'adhesion de LOT 2. Tous suivent cinq
+# regles, reprises ici sans en inventer une sixieme :
+#   1. une fonction PURE, qui rend un dict PLAT (jamais imbrique) ;
+#   2. appelee AVANT la premiere ecriture, fusionnee par `.update()` ;
+#   3. qui rend `{}` plutot que d'inventer quand elle ne sait pas ;
+#   4. dont les champs ne sont JAMAIS reecrits ensuite ;
+#   5. et dont le lecteur DIT SA CONFIANCE au lieu de retomber sur le catalogue.
+#
+# POURQUOI PAS DE `tarif_avantage_pct` NI DE `tarif_membership_id` ICI. Ils
+# appartiennent a LOT 3b. Les poser maintenant, toujours vides, ferait croire a
+# une decision « pas d'avantage » la ou il n'y a eu AUCUNE evaluation d'avantage.
+# Une cle absente dit « ce lot ne savait pas poser la question » ; une cle a
+# `None` dirait « la question a ete posee et la reponse est non ». Ce n'est pas
+# la meme chose, et c'est exactement la distinction que LOT 1 a deja tranchee
+# pour `courseId` / `datetime`.
+
+LOT3_PREFIXE = "[LOT3a]"
+
+# Vocabulaire FERME. Codes stables, cherchables dans les journaux
+# (`grep "tarif_raison.*forfait"`), jamais traduits. `membre` n'y figure pas :
+# il arrivera avec LOT 3b, et l'y mettre d'avance laisserait croire que ce lot
+# sait deja reconnaitre un membre.
+LOT3_RAISONS = (
+    "public",     # plein tarif du catalogue, paye
+    "promo",      # un code de reduction a reellement joue
+    "forfait",    # seance consommee sur un pack deja paye
+    "essai",      # droit d'essai gratuit consomme (ESSAI-1)
+    "offert",     # accorde par le coach, rien encaisse
+    "inconnu",    # le montant est la, sa raison ne se prouve pas
+)
+
+
+def lot3_raison_du_droit(souscription, code) -> str:
+    """La raison tarifaire d'une seance consommee sur un forfait.
+
+    Aucune deduction depuis le MONTANT : 15 CHF peut etre un forfait, une
+    promo ou un plein tarif. La raison se lit sur des signaux explicites, ou
+    elle vaut `inconnu`. C'est la regle que le proprietaire a posee, et c'est
+    aussi celle que `a_est_gratuit_prouve` applique deja (« on ne se fie ni au
+    nom de l'offre ni a l'absence de montant, qui ne prouve rien »).
+    """
+    _sub = souscription if isinstance(souscription, dict) else {}
+    _code = code if isinstance(code, dict) else {}
+
+    # La gratuite ETABLIE d'abord — sinon un essai passerait pour un forfait a
+    # 0, ce que le proprietaire a explicitement refuse.
+    #
+    # Interrogee sur LES DEUX documents jumeaux, et pas seulement sur le code :
+    # le lot B ecrit `origine_paiement` sur la souscription ET sur le code, et
+    # certains points d'ecriture n'ont que l'un des deux en main (le scan QR
+    # n'a que la souscription — son cas « code promo » sort par un `return`
+    # separe). Ne regarder que le code y ferait passer un essai pour un forfait.
+    _gratuit = a_est_gratuit_prouve(_code) or a_est_gratuit_prouve(_sub)
+    if _gratuit:
+        if _sub.get("source") == "social_proof":
+            return "essai"
+        if _sub.get("payment_method") == "free":
+            return "essai"
+        if b_normaliser_origine(_sub.get("origine_paiement")) == "offert" and not _code:
+            return "offert"
+        # `social_proof` et `free` sont deux gratuites differentes : la
+        # premiere a ete GAGNEE (partage, Instagram, motivation), la seconde
+        # ACCORDEE. Les confondre effacerait le travail du participant.
+        if _code.get("source") == "social_proof":
+            return "essai"
+        if _code.get("payment_method") == "free":
+            return "essai"      # les deux portes gratuites brulent le droit
+                                # d'essai (`_essai1_garde`) : c'en est un.
+        return "offert"
+
+    # Un forfait paye : la seance est tiree d'un pack, quel que soit son prix.
+    if _sub or _code:
+        return "forfait"
+    return "inconnu"
+
+
+def lot3_snapshot_tarifaire(tarif_applique, raison, tarif_public=None,
+                            devise=None, palier=None, offre_id=None) -> dict:
+    """La decision tarifaire, a plat, telle qu'elle etait CE JOUR-LA.
+
+    Rend `{}` — donc n'ecrit rien — si le montant applique est inconnu ou si
+    la raison n'appartient pas au vocabulaire. Mieux vaut une reservation sans
+    snapshot qu'un snapshot faux : le premier se lit « on ne sait pas », le
+    second ment pour toujours.
+
+    `tarif_public` n'est pose que s'il est REELLEMENT connu. Le reconstituer
+    depuis le catalogue serait exactement ce que LOT A interdit (« AUCUNE
+    LECTURE DU CATALOGUE : `offers.price` est le prix D'AUJOURD'HUI ») — et
+    ce que ce lot existe pour empecher.
+    """
+    try:
+        _applique = float(tarif_applique)
+    except (TypeError, ValueError):
+        return {}
+    if _applique < 0:
+        return {}
+    _raison = str(raison or "").strip().lower()
+    if _raison not in LOT3_RAISONS:
+        _raison = "inconnu"
+
+    _doc = {
+        "tarif_applique": round(_applique, 2),
+        "tarif_raison": _raison,
+        "tarif_devise": (str(devise or "").strip().upper() or B_DEVISE_DEFAUT)[:8],
+        "tarif_fige_le": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Les trois champs FACULTATIFS. Poses par `if`, jamais en litteral : une
+    # cle absente dit « je ne sais pas », une cle a `None` dirait « je sais que
+    # c'est vide ». Meme convention que LOT 1 pour `courseId` / `datetime`.
+    if tarif_public is not None:
+        try:
+            _doc["tarif_public"] = round(float(tarif_public), 2)
+        except (TypeError, ValueError):
+            pass
+    if palier:
+        _doc["tarif_palier"] = str(palier).strip()[:32]
+    if offre_id:
+        _doc["tarif_offre_id"] = str(offre_id).strip()[:64]
+    return _doc
+
+
+def lot3_snapshot_du_forfait(souscription, code, reservation=None) -> dict:
+    """Le snapshot d'une seance tiree d'un forfait deja paye.
+
+    LE MONTANT VIENT DE `a_finance_du_droit`, ET DE NULLE PART AILLEURS. Cette
+    fonction est deja l'autorite du depot sur « ce qu'on sait de l'argent
+    derriere un droit d'acces » : elle classe sa source (`montant_source`),
+    dit si elle est prouvee (`montant_prouve`), et ne divise par le nombre de
+    seances QUE sur un montant prouve et un pack de plus d'une seance
+    (`valeur_par_seance`). Recalculer ici en parallele creerait une seconde
+    verite financiere — le defaut que le lot B a precisement supprime.
+
+    En particulier : `total_sessions` et `remaining_sessions` ne sont jamais
+    touches. Le premier est incremente par la reconduction, le second est
+    modifiable a la main par les boutons +/-. Le denominateur est
+    `seances_a_l_achat`, fige a l'achat (`a_seances_achetees`).
+    """
+    _fin = a_finance_du_droit(souscription, code, reservation)
+    _raison = lot3_raison_du_droit(souscription, code)
+
+    # Une gratuite etablie vaut 0, et on le dit. Sans cette branche, un essai
+    # tomberait dans la valeur par seance et vaudrait `None` faute de montant.
+    if _raison in ("essai", "offert"):
+        return lot3_snapshot_tarifaire(0, _raison, devise=_fin.get("devise"))
+
+    # Un pack : la valeur d'UNE seance, jamais le montant du pack entier.
+    _valeur = _fin.get("valeur_par_seance")
+    if _valeur is None and _fin.get("montant_prouve") and _fin.get("montant") is not None \
+            and (_fin.get("seances_achetees") or 0) == 1:
+        # Pack d'une seule seance : `a_finance_du_droit` ne divise pas (la
+        # division n'apprendrait rien), mais la valeur de la seance EST le
+        # montant. Ne pas le poser perdrait le cas le plus simple.
+        _valeur = _fin.get("montant")
+    if _valeur is None:
+        # Montant non prouve, ou denominateur inconnu. On ne devine pas : pas
+        # de snapshot. La lecture retombera sur `a_finance_du_droit`, comme
+        # avant ce lot, et l'ecran dira « tarif historique incomplet ».
+        return {}
+    return lot3_snapshot_tarifaire(_valeur, _raison, devise=_fin.get("devise"))
+
+
+def lot3_champs_forfait(souscription=None, code=None, reservation=None) -> dict:
+    """Enveloppe qui NE LEVE JAMAIS, pour les points d'ecriture.
+
+    Un snapshot est une trace, pas une condition : s'il echoue, la reservation
+    doit se creer quand meme. Le lot A a pris la meme precaution sur son
+    enrichissement (`/contacts/all` : « tolerant a l'echec, la liste reste
+    utilisable ») et LOT 2 sur son adhesion. Un client ne perd pas sa place
+    parce qu'une ligne d'historique n'a pas pu s'ecrire.
+    """
+    try:
+        return lot3_snapshot_du_forfait(souscription, code, reservation)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s snapshot ignore (%s)", LOT3_PREFIXE, type(_err).__name__)
+        return {}
+
+
+def lot3_champs_achat(tarif_applique, raison, tarif_public=None, devise=None,
+                      palier=None, offre_id=None) -> dict:
+    """Meme enveloppe, pour un achat : le montant est connu, il vient d'etre paye."""
+    try:
+        return lot3_snapshot_tarifaire(tarif_applique, raison,
+                                       tarif_public=tarif_public, devise=devise,
+                                       palier=palier, offre_id=offre_id)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s snapshot ignore (%s)", LOT3_PREFIXE, type(_err).__name__)
+        return {}

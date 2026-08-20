@@ -6966,6 +6966,26 @@ async def stripe_webhook(request: Request):
                             "coach_id": _coach_id,
                             "stripe_session_id": session.id,
                         }
+                        # LOT 3a : le tarif fige de cet achat direct. Le montant
+                        # vient de Stripe (`_amount_total`), donc prouve. Le prix
+                        # public n'est pas relu ici : la metadata ne le porte pas
+                        # et une requete de plus dans un webhook n'en vaut pas la
+                        # peine — la cle sera simplement absente, ce qui se lit
+                        # « on ne sait pas », jamais « c'etait gratuit ».
+                        #
+                        # Pose dans `$setOnInsert` avec le reste : au rejeu du
+                        # webhook, l'upsert ne reecrit rien. Le snapshot herite
+                        # donc de l'idempotence deja en place, sans en ajouter.
+                        try:
+                            from api.routes.shared import lot3_champs_achat as _lot3_achat
+                            _l3q = max(1, int(purchased_qty or 1))
+                            _reservation_doc.update(_lot3_achat(
+                                round(float(_amount_total or 0) / _l3q, 2),
+                                "public",
+                                devise=(session.get("currency") or "chf").upper()))
+                        except Exception as _l3e:
+                            logger.warning("[LOT3a] snapshot achat direct ignore (%s)",
+                                           type(_l3e).__name__)
                         # Upsert sur la session Stripe: Stripe rejoue ses webhooks,
                         # et un insert sec creerait une commande en double.
                         await db.reservations.update_one(
@@ -13283,6 +13303,15 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         "guest_headphones": [None] * len(guests),
     }
     reservation_doc.update(_t1_champs)
+    # LOT 3a : la seance est tiree du forfait de l'abonne. Sa valeur vient du
+    # montant REELLEMENT encaisse a l'achat divise par les seances achetees —
+    # jamais du prix affiche aujourd'hui. Ne change aucun montant : `totalPrice`
+    # reste a 0.0 comme avant.
+    try:
+        from api.routes.shared import lot3_champs_forfait as _lot3_champs
+        reservation_doc.update(_lot3_champs(subscription, None, reservation_doc))
+    except Exception as _l3e:
+        logger.warning("[LOT3a] snapshot espace abonne ignore (%s)", type(_l3e).__name__)
     await db.reservations.insert_one(reservation_doc)
     reservation_doc.pop("_id", None)
     logger.info(f"[SUBSCRIBER_SPACE V187] Réservation {reservation_doc['reservationCode']} pour {user_email} ({course.get('name')}) × {quantity} guests={guests}")

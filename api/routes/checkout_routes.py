@@ -1618,6 +1618,8 @@ async def _process_successful_payment(
     # essai VALIDE, et il n'en existe aucun. Toute preuve qu'elle lira sera creee
     # a partir de maintenant.
     items_offer_id = ""
+    _lot3_public = None      # LOT 3a : prix public du jour de l'achat
+    _lot3_palier = None      # LOT 3a : palier progressif actif ce jour-la
     for item in items:
         item_data = item.dict() if hasattr(item, 'dict') else item
         item_name = item_data.get("name", "")
@@ -1631,9 +1633,32 @@ async def _process_successful_payment(
         item_id = item_data.get("id")
         if item_id:
             try:
+                # LOT 3a : projection ELARGIE aux champs de tarif. C'est la
+                # meme requete — aucun cout supplementaire — et elle donne le
+                # prix public du jour de l'achat, seul moment ou lire le
+                # catalogue est legitime (apres, ce serait le prix d'aujourd'hui,
+                # ce que LOT A interdit).
                 _offer_doc = await db["offers"].find_one(
-                    {"id": item_id}, {"_id": 0, "pack_sessions": 1}
+                    {"id": item_id},
+                    {"_id": 0, "pack_sessions": 1, "price": 1,
+                     "progressive_pricing": 1, "countdown_date": 1,
+                     "countdown_time": 1, "early_bird_days_before": 1,
+                     "standard_hours_before": 1, "price_early_bird": 1,
+                     "price_standard": 1, "price_last_minute": 1}
                 )
+                # `if _offer_doc` : sur une offre INTROUVABLE,
+                # `compute_active_price({})` rend 0.0 — et ecrire
+                # `tarif_public: 0.0` se lirait « le prix public etait nul »
+                # la ou la regle du lot veut qu'une cle absente dise « on ne
+                # sait pas ». Les deux ne se ressemblent que de loin.
+                if _lot3_public is None and _offer_doc:
+                    try:
+                        from api.pricing import compute_active_price as _cap
+                        _r = _cap(_offer_doc or {}) or {}
+                        _lot3_public = float(_r.get("price") or 0)
+                        _lot3_palier = _r.get("tier")
+                    except Exception:
+                        _lot3_public, _lot3_palier = None, None
                 _ps = (_offer_doc or {}).get("pack_sessions")
                 # `int(...)` et non `isinstance` : une valeur stockee en 10.0 ou
                 # "10" doit compter comme un pack de 10, pas etre ignoree.
@@ -1860,6 +1885,34 @@ async def _process_successful_payment(
                 _resa_doc["datetime"] = _l1_occurrence
             # ESSAI-5a-1 : la preuve suit la reservation qu'elle couvre.
             _resa_doc.update(terms_fields or {})
+            # LOT 3a : le tarif fige de cet achat.
+            #
+            # LE MONTANT VIENT DU PAIEMENT, PAS DU PANIER. `item_data["price"]`
+            # est la valeur envoyee par le NAVIGATEUR (elle est d'ailleurs deja
+            # recopiee telle quelle dans `totalPrice`, dette connue) ; `total`
+            # est ce que la caisse a reellement encaisse. On fige le second.
+            #
+            # UN SEUL ARTICLE, sinon RIEN. Repartir un total entre plusieurs
+            # lignes demanderait une cle de repartition qui n'existe pas : on
+            # inventerait. Mieux vaut pas de snapshot qu'un montant fabrique.
+            try:
+                from api.routes.shared import lot3_champs_achat as _lot3_achat
+                if len(items) == 1:
+                    _q = max(1, int(item_data.get("quantity", 1) or 1))
+                    _pm = str(payment_method or "").strip().lower()
+                    if _pm == "free":
+                        # Les deux portes gratuites brulent le droit d'essai
+                        # (`_essai1_garde`) : c'en est un, pas un « public a 0 ».
+                        _lot3_raison, _lot3_du = "essai", 0.0
+                    else:
+                        _lot3_raison = "promo" if discount_code else "public"
+                        _lot3_du = round(float(total or 0) / _q, 2)
+                    _resa_doc.update(_lot3_achat(
+                        _lot3_du, _lot3_raison,
+                        tarif_public=_lot3_public, devise=currency,
+                        palier=_lot3_palier, offre_id=items_offer_id or None))
+            except Exception as _l3:
+                logger.warning("[LOT3a] snapshot vitrine ignore (%s)", type(_l3).__name__)
             await db["reservations"].insert_one(_resa_doc)
 
     # 5. QR Code URL
