@@ -351,14 +351,63 @@ async def get_discount_codes(request: Request):
 
 @promo_router.post("")
 async def create_discount_code(code: DiscountCodeCreate, request: Request):
-    """Crée un nouveau code promo avec coach_id — v96: auto-crée la subscription si bénéficiaire assigné"""
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
-    is_super_admin = user_email == SUPER_ADMIN_EMAIL.lower()
+    """Crée un nouveau code promo avec coach_id — v96: auto-crée la subscription si bénéficiaire assigné
+
+    LOT 3c-0b — CETTE ROUTE ETAIT OUVERTE AUX ANONYMES.
+
+    L'identite venait de l'en-tete `X-User-Email`, et AUCUN refus n'existait.
+    Trois consequences, toutes atteignables sans le moindre compte :
+      * anonyme -> la condition `and user_email` etait fausse, donc le
+        `coach_id` du CORPS passait intact : l'appelant choisissait le
+        proprietaire du code ;
+      * en-tete forge = coach B -> le code etait cree AU NOM DU COACH B ;
+      * en-tete forge = super-admin -> le `coach_id` du corps etait respecte
+        sans le moindre controle.
+    Et la creation n'est pas inerte : avec un `assignedEmail` elle ouvre une
+    SOUSCRIPTION ACTIVE puis lance DEUX e-mails (bienvenue vers une adresse
+    arbitraire, « preuve de vente » vers un coach que l'appelant designe).
+    C'etait donc aussi un relais de spam sur le domaine, sans limite de debit.
+
+    AUCUN CHEMIN SERVEUR N'APPELLE CETTE ROUTE (verifie) : les six createurs de
+    codes apres paiement — Stripe, CinetPay, PawaPay, checkout, admin, essai —
+    font tous un `insert_one` DIRECT en base. Le durcissement ne peut donc pas
+    casser le tunnel d'achat, et aucune exemption serveur-a-serveur n'est
+    necessaire. Les trois appelants legitimes sont sur le MEME ecran que
+    `GET /discount-codes`, JWT-strict depuis V311k : un coach qui voit sa liste
+    de codes possede forcement un jeton signe.
+    """
+    # ── LOT 3c-0b : LA MEME PORTE QUE LE PUT/DELETE VOISINS ─────────────────
+    caller = (coach_jwt_email(request) or "").lower().strip()
+    _autorise = is_super_admin(caller)
+    if not _autorise and caller:
+        if await _db.coaches.find_one({"email": caller}, {"_id": 1}) or \
+           await _db.coach_auth.find_one({"email": caller}, {"_id": 1}):
+            _autorise = True
+    if not _autorise:
+        raise HTTPException(status_code=403,
+                            detail="Authentification coach requise — reconnectez-vous")
+
+    # `user_email` conserve son nom : il alimente plus bas la trace « qui a
+    # saisi ». Il vaut desormais l'identite PROUVEE, plus l'en-tete declaree.
+    user_email = caller
 
     code_data = code.model_dump()
-    # v9.3.0: Assigner le coach_id si pas Super Admin
-    if not is_super_admin and user_email:
-        code_data["coach_id"] = user_email
+    # ── LOT 3c-0b : LE PROPRIETAIRE VIENT DU JETON, JAMAIS DU CORPS ─────────
+    #
+    # ⚠️ `is_super_admin` etait ici MASQUE par une variable booleenne locale
+    # (`is_super_admin = user_email == SUPER_ADMIN_EMAIL.lower()`), qui ne
+    # reconnaissait QU'UNE adresse alors que `shared.is_super_admin()` en
+    # reconnait deux : `afroboost.bassi@gmail.com` etait traite comme un coach
+    # ordinaire. On supprime l'ombre et on appelle la vraie fonction.
+    code_data.pop("coach_id", None)
+    code_data["coach_id"] = caller
+    if is_super_admin(caller):
+        # Le super-admin peut creer POUR un coach — a condition qu'il existe.
+        # Sans ce controle, on rouvrirait par le haut la porte qu'on ferme.
+        _cible = str(getattr(code, "coach_id", "") or "").strip().lower()
+        if _cible and (await _db.coaches.find_one({"email": _cible}, {"_id": 1})
+                       or await _db.coach_auth.find_one({"email": _cible}, {"_id": 1})):
+            code_data["coach_id"] = _cible
 
     # v162: Stocker le nom de l'offre dans le code promo
     if code.offerName:
@@ -1241,11 +1290,55 @@ async def sync_subscriptions_for_email(data: dict, request: Request):
 
 # === V156: Admin — update subscription by id ===
 @promo_router.put("/subscriptions/{sub_id}")
-async def update_subscription(sub_id: str, updates: dict):
-    """Met à jour un abonnement par son id"""
+async def update_subscription(sub_id: str, updates: dict, request: Request):
+    """Met à jour un abonnement par son id
+
+    LOT 3c-0b — CETTE ROUTE N'AVAIT AUCUNE AUTHENTIFICATION, et ne pouvait pas
+    en avoir : sa signature ne recevait meme pas la requete HTTP. Elle laisse
+    ecrire `remaining_sessions`, `used_sessions` et `offer_price` — c'est-a-dire
+    le solde de seances d'un client ET le montant que la trace financiere
+    relira (`shared.a_finance_du_droit` lit `offer_price`). Un anonyme
+    connaissant un `subscriptions.id` pouvait donc se recrediter des seances,
+    effacer sa consommation, rouvrir un forfait clos ou falsifier une recette.
+
+    ELLE EST ORPHELINE : aucun appelant, ni dans frontend/, ni dans api/, ni
+    dans les tests (verifie). Il n'y a donc AUCUN parcours legitime a preserver
+    — le cas le plus favorable qui soit au regard de la regle V310c.
+
+    La liste blanche existante n'est PAS touchee : elle bornait deja ce qui est
+    ecrivable, et on ne connait aucun appelant dont on saurait les champs.
+    """
+    # ── LOT 3c-0b : LA MEME PORTE QUE LE PUT/DELETE /discount-codes VOISINS ──
+    caller = (coach_jwt_email(request) or "").lower().strip()
+    _autorise = is_super_admin(caller)
+    if not _autorise and caller:
+        if await _db.coaches.find_one({"email": caller}, {"_id": 1}) or \
+           await _db.coach_auth.find_one({"email": caller}, {"_id": 1}):
+            _autorise = True
+    if not _autorise:
+        raise HTTPException(status_code=403,
+                            detail="Authentification coach requise — reconnectez-vous")
+
     existing = await _db.subscriptions.find_one({"id": sub_id})
     if not existing:
-        return {"error": "Subscription not found"}
+        # LOT 3c-0b : un 404 franc. Renvoyer `{"error": ...}` en HTTP 200 faisait
+        # passer un echec pour un succes — le defaut que ce depot combat depuis V443.
+        raise HTTPException(status_code=404, detail="Subscription introuvable")
+
+    # ── LOT 3c-0b : CLOISONNEMENT — legacy VOLONTAIREMENT MODIFIABLE ─────────
+    # On reprend le modele V237 (`server.py`, PUT /subscriptions/{id}/sessions),
+    # PAS celui des codes promo. La difference est dictee par la donnee, mesuree
+    # le 20/08/2026 : 8 souscriptions sur 63 (13 %) n'ont pas de `coach_id`, et
+    # 4 des 7 chemins de creation n'en posent pas. Refuser le stock sans
+    # proprietaire bloquerait le coach sur son PROPRE historique. Sur les codes
+    # promo, l'inverse est vrai (100 % sont sans proprietaire, et seul le
+    # super-admin les gere) : d'ou deux reglages differents, chacun justifie.
+    _proprio = str(existing.get("coach_id") or "").strip().lower()
+    if not is_super_admin(caller) and _proprio and _proprio != caller:
+        logger.warning("[LOT3c-0b] %s refuse : souscription d'un autre coach", caller)
+        raise HTTPException(status_code=403,
+                            detail="Cette souscription appartient à un autre coach")
+
     allowed = {"remaining_sessions", "used_sessions", "status", "updated_at", "offer_name", "offer_price"}
     safe_updates = {k: v for k, v in updates.items() if k in allowed}
     safe_updates["updated_at"] = datetime.now(timezone.utc).isoformat()

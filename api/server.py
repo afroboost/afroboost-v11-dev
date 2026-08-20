@@ -13951,9 +13951,34 @@ async def toggle_subscription_auto_renew(subscription_id: str, request: Request)
 # meme convention que /auto-renew ci-dessus.
 @api_router.put("/subscriptions/{subscription_id}/sessions")
 async def adjust_subscription_sessions(subscription_id: str, request: Request):
-    # require_auth : tout coach connecte, conformement a la demande. Il ne
-    # s'agit pas d'une route super-admin.
-    coach_email = require_auth(request)
+    # LOT 3c-0b — L'IDENTITE DOIT ETRE SIGNEE, PAS DECLAREE.
+    #
+    # Cette route utilisait `require_auth`, qui accepte encore le repli
+    # `X-User-Email` (mode transitoire V265). Or elle ecrit `remaining_sessions`
+    # et `used_sessions` : le solde de seances d'un client, et demain la base du
+    # calcul financier. Une identite falsifiable par un simple `curl` n'est pas
+    # une identite quand c'est de l'argent qui est en jeu.
+    #
+    # PREUVE V310c, MESUREE EN PRODUCTION LE 20/08/2026 — le chemin legitime
+    # emet DEJA un jeton signe :
+    #     GET /api/feature-flags -> REQUIRE_COACH_JWT: true, SUPERADMIN_JWT_STRICT: true
+    # Et l'intercepteur axios (`App.js:14-20`) pose `Authorization: Bearer` sur
+    # TOUTES les requetes, y compris quand l'appelant fournit son propre objet
+    # `headers` — c'est le cas de l'unique appelant, `ChatWidget.js:5512`, qui
+    # ne met que `X-User-Email`. Le jeton PART deja sur cette route ; elle
+    # l'ignorait, simplement. Le durcissement ne retire donc rien a personne.
+    # `_v311_coach_email_from_jwt` est l'equivalent local de `coach_jwt_email` :
+    # JWT signe UNIQUEMENT, jamais `X-User-Email`, et il rejette les jetons
+    # abonne. C'est celui qu'emploient deja les routes durcies de ce fichier.
+    coach_email = (_v311_coach_email_from_jwt(request) or "").lower().strip()
+    _autorise = is_super_admin(coach_email)
+    if not _autorise and coach_email:
+        if await db.coaches.find_one({"email": coach_email}, {"_id": 1}) or \
+           await db.coach_auth.find_one({"email": coach_email}, {"_id": 1}):
+            _autorise = True
+    if not _autorise:
+        raise HTTPException(status_code=403,
+                            detail="Authentification coach requise — reconnectez-vous")
 
     try:
         body = await request.json()
@@ -14089,11 +14114,61 @@ class SubscriberProfileUpdate(BaseModel):
     # « tour de taille », qui est une mesure par entrée. La hauteur ne bouge pas :
     # elle vit au profil, saisie une fois puis pré-remplie — comme la date de naissance.
     taille_cm: Optional[float] = None
+    # LOT 3c-0b : le code de l'abonne, sa preuve d'identite. FACULTATIF — le
+    # parcours existant ne l'envoie pas et la route retombe alors sur celui de
+    # l'URL, donc rien ne casse. Meme motif que V446 sur `/auto-renew`.
+    code: Optional[str] = None
 
 
 @api_router.put("/subscriptions/{code}/profile")
-async def update_subscriber_profile(code: str, payload: SubscriberProfileUpdate):
+async def update_subscriber_profile(code: str, payload: SubscriberProfileUpdate,
+                                    request: Request):
+    """LOT 3c-0b — LA ROUTE N'AVAIT AUCUNE AUTHENTIFICATION.
+
+    Elle n'avait meme pas de parametre `request` : impossible de savoir QUI
+    ecrivait, impossible de limiter le debit. Elle ecrit pourtant des DONNEES
+    PERSONNELLES (`name`, `whatsapp`, `objectifs`, `taille_cm`) — ce que la
+    regle « aucune donnee personnelle sans authentification » interdit.
+
+    CE QUI CHANGE, ET CE QUI NE CHANGE PAS. On ajoute UNIQUEMENT le controle
+    d'acces ; aucune logique de profil n'est touchee. La garde est
+    `_v334_autoriser`, deja en service sur 7 routes — on n'en invente pas une.
+
+    L'APPORT REEL : un coach authentifie qui n'est PAS celui de cet abonne est
+    desormais REFUSE (`_v334_autoriser` leve 403). Avant, n'importe quel coach
+    — et n'importe qui — pouvait reecrire le nom et le WhatsApp de l'abonne
+    d'un autre. L'action devient aussi attribuable : on sait quel role a ecrit.
+
+    ⚠️ CE QUE CE LOT NE PREND PAS : l'abonne prouve son identite en presentant
+    SON CODE, et ce code est deja le parametre d'URL. Un tiers qui le connait
+    reste donc capable d'ecrire. Le fermer supposerait d'emettre un jeton
+    d'appareil depuis `SubscriberSpace` — or cet ecran n'en demande JAMAIS
+    (seul le ChatWidget en pose, `ChatWidget.js:1801/2642`). Exiger le jeton ici
+    casserait l'onboarding de l'abonne : c'est le piege V310c exact. Ce chantier
+    est un LOT SEPARE, pas un durcissement aveugle glisse dans celui-ci.
+
+    Le code est accepte depuis le CORPS quand il y est (meme motif que V446 sur
+    `/auto-renew`), sinon depuis l'URL — ce qui laisse passer, a l'identique,
+    le parcours legitime de `SubscriberOnboarding.js:42`.
+    """
     code_upper = (code or "").strip().upper()
+    # ⚠️ LE CODE VIENT DU CORPS, ET DE LUI SEUL — JAMAIS DE L'URL.
+    #
+    # La premiere version de ce lot retombait sur le code de l'URL quand le
+    # corps n'en fournissait pas. Le test en navigateur l'a prise en faute :
+    # comme le code EST le parametre d'URL, cette tolerance rendait le chemin
+    # « abonne » toujours satisfait, et le cloisonnement inter-coach ne servait
+    # plus a rien — un coach etranger passait en se faisant prendre pour
+    # l'abonne. C'est la separation minimale entre les deux editions :
+    #   * l'ABONNE prouve en PRESENTANT son code dans le corps (le volet
+    #     frontend de ce lot l'ajoute, une ligne, comme V446 l'a fait pour
+    #     `/auto-renew`) ;
+    #   * le COACH prouve par son jeton signe, et doit posseder cet abonne.
+    _code_fourni = str(getattr(payload, "code", "") or "").strip().upper()
+    # Leve 403 (coach d'un autre abonne, ou rien d'exploitable) ou 404.
+    _role, _identite, _coach_cible = await _v334_autoriser(request, code_upper, _code_fourni)
+    logger.info("[LOT3c-0b] profil abonne %s modifie par role=%s", code_upper, _role)
+
     subscription = await db.subscriptions.find_one({"code": code_upper}, {"_id": 0})
     if not subscription:
         raise HTTPException(status_code=404, detail="Code introuvable")

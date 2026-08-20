@@ -43,6 +43,14 @@ export default function SubscriberOnboarding({ code, subscription, onDone }) {
         name: name.trim(),
         whatsapp: whatsapp.trim(),
         objectifs: objectifs.trim(),
+        // LOT 3c-0b : l'abonné présente le code qu'il a déjà dans son URL.
+        // La route exige désormais une identité (garde `_v334_autoriser`) :
+        // sans ce `code`, l'abonné ne pourrait plus remplir SON profil — il n'a
+        // pas de jeton d'appareil, SubscriberSpace n'en demande jamais. Le code
+        // n'est PAS lu depuis l'URL côté serveur : ce serait accepter n'importe
+        // quel appelant comme étant l'abonné, et le cloisonnement inter-coach
+        // ne vaudrait plus rien. Même motif que V446 sur `/auto-renew`.
+        code,
       });
 
       // V333 : inscription aux actualités WhatsApp, seulement si la case est cochée

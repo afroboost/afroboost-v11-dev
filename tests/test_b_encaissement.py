@@ -115,6 +115,13 @@ def _ns_promo(db, coach="coach@test"):
 
 
 async def _creer(db, coach="coach@test", **champs):
+    # LOT 3c-0b : la CREATION d'un code exige desormais une identite signee et
+    # un coach REELLEMENT enregistre — un anonyme y creait un code gratuit au
+    # nom du coach de son choix, souscription et e-mails compris. On inscrit
+    # donc le coach appelant, comme la partie « modification » le fait deja.
+    # C'est le parcours LEGITIME, celui qui doit continuer de passer.
+    if not any(c.get("email") == coach for c in db.coaches.docs):
+        db.coaches.docs.append({"email": coach})
     ns = _ns_promo(db, coach)
     corps = dict(code="TESTB-01", type="100%", value=100, assignedEmail=None,
                  expiresAt=None, courses=[], maxUses=10, coach_id=None,
