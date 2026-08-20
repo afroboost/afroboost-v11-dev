@@ -6183,8 +6183,13 @@ function App() {
   // objets `selectedOffer` / `selectedDates` eux-memes : un objet neuf a chaque
   // rendu relancerait l'effet en boucle et saturerait le serveur — c'est la
   // panne V305, et la regle du depot est explicite la-dessus.
+  // `userEmail` EN FAIT PARTIE, et ce n'est pas un detail : sans lui, changer
+  // l'adresse dans le formulaire ne redemandait pas de devis. Un membre
+  // connecte qui reserve pour son conjoint gardait donc a l'ecran le tarif
+  // membre obtenu pour LUI, alors que la caisse allait facturer le plein
+  // tarif. L'ecran promettait ce que la caisse n'aurait pas tenu.
   const memberQuoteKey = `${selectedOffer?.id || ''}|${selectedCourse?.id || ''}`
-    + `|${selectedDates.join(',')}|${appliedDiscount?.code || ''}`;
+    + `|${selectedDates.join(',')}|${appliedDiscount?.code || ''}|${userEmail || ''}`;
   useEffect(() => {
     const offerId = selectedOffer?.id;
     if (!offerId || !selectedCourse?.id || selectedDates.length === 0) {
@@ -6205,7 +6210,10 @@ function App() {
       courseId: selectedCourse.id,
       occurrenceDates: dates,
       quantity: selectedDates.length,
-      promoCode: appliedDiscount?.code || null
+      promoCode: appliedDiscount?.code || null,
+      // L'acheteur declare. Le serveur ne s'en sert QUE pour verifier qu'il
+      // est bien le porteur du jeton — exactement la regle de la caisse.
+      customerEmail: userEmail || null
     }).then((r) => {
       if (annule) return;
       // Comparaison AVANT setState : reposer un objet neuf identique

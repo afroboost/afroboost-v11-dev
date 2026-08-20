@@ -5600,6 +5600,20 @@ class Lot3bEstimationRequest(BaseModel):
     occurrenceDates: Optional[List[str]] = None
     quantity: Optional[int] = 1
     promoCode: Optional[str] = None
+    # LOT 3b — l'e-mail de l'ACHETEUR, et il ne sert QU'A UNE EGALITE.
+    #
+    # POURQUOI CE N'EST PAS UN ORACLE, malgre la regle « aucun e-mail en
+    # entree ». Cette valeur n'interroge RIEN : elle est seulement comparee a
+    # l'e-mail du jeton que l'appelant detient deja. La reponse ne lui apprend
+    # donc rien qu'il ne sache — il connait sa propre adresse. Sans jeton
+    # valide, ce champ est purement ignore : la reponse reste le prix public.
+    #
+    # POURQUOI IL EST NECESSAIRE. La caisse exige que l'acheteur SOIT le
+    # porteur du jeton (`_l3b_achete_pour_soi`). Sans cette meme exigence ici,
+    # un membre connecte qui reserve pour son conjoint voyait « Avantage
+    # membre -50% / CHF 15 » a l'ecran et etait debite CHF 30. L'ecran doit
+    # promettre ce que la caisse tiendra, jamais davantage.
+    customerEmail: Optional[str] = None
 
 
 # LOT 3b — limitation de debit, en memoire du processus.
@@ -5704,6 +5718,16 @@ async def lot3b_estimation_tarifaire(corps: Lot3bEstimationRequest,
         # permet au navigateur d'inviter a se connecter sans rien deviner.
         _reponse["identification_requise"] = True
         return _reponse
+
+    # LOT 3b — ON N'ACHETE PAS AU TARIF MEMBRE POUR QUELQU'UN D'AUTRE.
+    # Meme regle que la caisse (`_l3b_achete_pour_soi`), au meme endroit de la
+    # decision. Un e-mail absent ne declenche rien : le formulaire n'est
+    # peut-etre pas encore rempli, et la caisse reste l'autorite finale.
+    _acheteur = str(corps.customerEmail or "").strip().lower()
+    if _acheteur and _acheteur != _email:
+        _reponse["acheteur_different"] = True
+        return _reponse
+
     if not _lot3b_debit_ok((_tok or {}).get("code") or _email):
         raise HTTPException(status_code=429, detail="Trop de demandes — reessayez dans une minute")
 

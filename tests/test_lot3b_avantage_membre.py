@@ -674,10 +674,23 @@ def partie_6_securite():
     print("\n=== 6. AUCUN ORACLE, AUCUN TARIF MEMBRE SANS JETON SIGNE ===")
     champs = _champs_de_classe(SERVER_ARBRE, "Lot3bEstimationRequest")
     verifier("6a. le modele d'estimation existe", champs is not None, str(champs))
-    verifier("6b. il n'accepte AUCUN e-mail : personne ne peut demander "
-             "« est-ce que telle adresse est membre ? »",
-             champs is not None and not any(
-                 "email" in c.lower() or "mail" in c.lower() for c in champs),
+    # LOT 3b — L'ASSERTION EST RETOURNEE, ET RENFORCEE.
+    #
+    # Elle exigeait « aucun e-mail en entree », pour qu'on ne puisse pas
+    # demander « est-ce que telle adresse est membre ? ». Le champ
+    # `customerEmail` a ete ajoute depuis — mais il ne SERT QU'A UNE EGALITE
+    # avec l'e-mail du jeton que l'appelant detient deja. La reponse ne lui
+    # apprend donc rien : il connait sa propre adresse. Ce qu'il faut prouver
+    # n'est plus « aucun e-mail », c'est « cet e-mail n'interroge RIEN ».
+    #
+    # Il est necessaire : sans lui, un membre connecte qui reserve pour un
+    # tiers voyait le tarif membre et etait debite du plein tarif — l'ecran
+    # promettait ce que la caisse n'aurait pas tenu.
+    verifier("6b. le SEUL e-mail accepte est celui de l'acheteur, et il ne "
+             "sert qu'a une egalite (aucun oracle)",
+             champs is not None
+             and sorted(c for c in champs
+                        if "mail" in c.lower()) == ["customerEmail"],
              str(sorted(champs or [])))
     verifier("6c. il n'accepte pas davantage un code d'abonnement ni un "
              "membership_id",
@@ -687,6 +700,21 @@ def partie_6_securite():
              str(sorted(champs or [])))
 
     route = _fonction(SERVER_ARBRE, SERVER_SRC, "lot3b_estimation_tarifaire")
+    verifier("6b2. ... il est compare a l'e-mail du JETON, jamais utilise "
+             "pour interroger la base",
+             "_acheteur != _email" in route
+             and "corps.customerEmail" in route
+             and not any(
+                 f"{_r}(corps.customerEmail" in route
+                 for _r in ("find_one", "find", "lot3b_adhesions")))
+    verifier("6b3. ... et sans jeton valide il est purement IGNORE : la "
+             "reponse reste le prix public",
+             route.find("identification_requise")
+             < route.find("_acheteur"))
+    verifier("6b4. la meme regle qu'a la caisse : on n'achete pas au tarif "
+             "membre pour quelqu'un d'autre",
+             "_l3b_achete_pour_soi" in SERVER_SRC
+             and "acheteur_different" in route)
     verifier("6d. l'identite de la route vient du JETON D'APPAREIL SIGNE, et "
              "de lui seul",
              "subscriber_from_request as _jeton" in route
