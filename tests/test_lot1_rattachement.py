@@ -569,8 +569,27 @@ def mesure_non_regression():
     # --- ESSAI / LOT A / Finance / Stripe ne connaissent pas ce lot ---
     from tests._banc_qr import RACINE as _R
     shared = io.open(os.path.join(_R, "api", "routes", "shared.py"), encoding="utf-8").read()
+    # LOT 3b — L'ASSERTION EST RESTREINTE, PAS AFFAIBLIE.
+    #
+    # Elle disait « shared.py ignore LOT 1 » et protegeait une chose precise :
+    # que la garde d'occurrence de LOT 1 ne se glisse pas dans les parcours de
+    # paiement (ESSAI, LOT A, Finance, Stripe) qui n'ont rien a en faire.
+    # Cette protection reste ENTIERE ci-dessous.
+    #
+    # LOT 3b y ajoute un emprunt VOULU et demande explicitement par le
+    # proprietaire (« reutiliser les garanties LOT 1 sur les occurrences
+    # reelles ») : `lot3b_occurrences_prouvees` revalide les dates envoyees par
+    # le navigateur avec `lot1_occurrence_iso` et `_a1_a_lieu_aujourdhui`,
+    # plutot que de reecrire une seconde regle d'occurrence — ce qui serait le
+    # vrai danger. On exclut donc le bloc LOT 3b, et lui seul, du controle.
+    _marqueur_3b = "# LOT 3b — L'AVANTAGE MEMBRE"
+    shared_hors_3b = shared.split(_marqueur_3b)[0] if _marqueur_3b in shared else shared
     verifier("10.11 ESSAI / LOT A (shared.py) ignorent LOT 1",
-             "lot1_" not in shared and "LOT1_" not in shared)
+             "lot1_" not in shared_hors_3b and "LOT1_" not in shared_hors_3b)
+    verifier("10.11b LOT 3b REUTILISE LOT 1 au lieu de reecrire une regle d'occurrence",
+             ("lot3b_occurrences_prouvees" in shared
+              and "lot1_occurrence_iso" in shared
+              and "_a1_a_lieu_aujourdhui" in shared))
     verifier("10.12 le webhook Stripe n'est pas touche",
              "lot1_" not in SRC_SERVER.split("webhook/stripe")[-1][:8000])
 

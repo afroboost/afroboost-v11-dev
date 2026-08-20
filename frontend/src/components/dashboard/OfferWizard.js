@@ -836,7 +836,20 @@ export default function OfferWizard({
       setCoursesSaving(false);
     }
 
-    onSave(form);
+    // LOT 3b — LA GARDE PULSE EST POSEE ICI, A LA SOURCE.
+    //
+    // Une offre qui ouvre une adhesion d'un an, ou un produit physique, part
+    // toujours SANS avantage membre : on n'achete pas son adhesion au tarif
+    // membre, et un prix reduit pourrait passer sous la borne de LOT 2.1 et
+    // faire disparaitre la creation d'adhesion.
+    //
+    // La case du formulaire est deja desactivee dans ce cas ; ceci couvre
+    // l'offre qui portait DEJA une valeur avant que la case soit cochee. Le
+    // serveur reste l'autorite : `lot3b_avantage_de_l_offre` refuse ces deux
+    // familles quoi qu'il arrive. Ceinture, bretelles, et serveur.
+    onSave((form.creates_membership === true || form.isProduct === true)
+      ? { ...form, member_discount_pct: 0 }
+      : form);
   };
 
   // V224: filtre par coach repris de OffersManager.js l.798-799.
@@ -881,6 +894,67 @@ export default function OfferWizard({
           className="text-sm v224-input"
         />
       </div>
+
+      {/* LOT 3b — AVANTAGE MEMBRE.
+          Pose juste sous le prix, parce qu'il ne se comprend que par rapport a
+          lui. Aucun nouvel onglet, aucune nouvelle page : le coach regle son
+          tarif membre la ou il regle son tarif public.
+
+          Vide ou 0 = AUCUN avantage. C'est le defaut, et il le reste : aucune
+          offre existante ne devient reduite par migration.
+
+          Le bloc DISPARAIT sur une offre gratuite (rien a reduire) et se
+          VERROUILLE sur une offre qui ouvre une adhesion : on n'achete pas son
+          adhesion au tarif membre, et un prix reduit pourrait passer sous la
+          borne de LOT 2.1 et faire disparaitre la creation d'adhesion. */}
+      {(parseFloat(form.price) || 0) > 0 && !form.isProduct && (
+        <div>
+          <label className="block text-xs mb-1" style={LABEL_STYLE}>
+            Avantage membre (%)
+          </label>
+          <input
+            type="number"
+            min="0"
+            max="99"
+            step="5"
+            disabled={form.creates_membership === true}
+            value={form.member_discount_pct ?? ''}
+            /* On envoie 0 et JAMAIS null pour effacer : les routes de mise a
+               jour filtrent les valeurs nulles (`if v is not None`), un null
+               serait donc ignore et le champ ne pourrait plus jamais etre
+               remis a zero. C'est le bug V255b, deja paye une fois. */
+            onChange={(e) => set('member_discount_pct',
+              e.target.value === '' ? 0 : (parseFloat(e.target.value) || 0))}
+            placeholder="Ex : 50"
+            data-testid="offer-member-discount-pct"
+            style={{ ...INPUT_STYLE, opacity: form.creates_membership === true ? 0.4 : 1 }}
+            className="text-sm v224-input"
+          />
+          {form.creates_membership === true ? (
+            <p className="text-xs mt-1 flex items-start gap-1.5" style={HINT_STYLE}>
+              <SvgIcon name="warning" size={12} />
+              <span>
+                Indisponible : cette offre ouvre elle-meme l'adhesion d'un an.
+                On ne peut pas acheter son adhesion au tarif membre.
+              </span>
+            </p>
+          ) : (
+            <p className="text-xs mt-1" style={HINT_STYLE}>
+              S'applique uniquement aux membres actifs a la date du cours.
+              Laisser vide = aucun avantage.
+              {(parseFloat(form.member_discount_pct) || 0) > 0
+                && (parseFloat(form.price) || 0) > 0 && (
+                <span className="block mt-0.5" style={{ color: PINK }}>
+                  Tarif membre : CHF {(
+                    (parseFloat(form.price) || 0)
+                    * (1 - (parseFloat(form.member_discount_pct) || 0) / 100)
+                  ).toFixed(2)}
+                </span>
+              )}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* V260: prix alternatif, propose au visiteur qui ne veut PAS faire la
           preuve sociale. Le bloc n'apparait que sur une offre a 0 CHF — sur une

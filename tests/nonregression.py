@@ -1910,6 +1910,307 @@ def t93_v410_pont_spordateur():
            pont_ok and page_ok, f"{detail_a} | {detail_b}")
 
 
+# ---------------------------------------------------------------------------
+# LOT 3b — L'AVANTAGE TARIFAIRE MEMBRE, et l'ADHÉSION qui le fonde.
+#
+# POURQUOI CES PARCOURS EXISTENT. Jusqu'ici la collection `memberships` et ses
+# deux routes n'étaient couvertes par AUCUN test : une régression d'authentifi-
+# cation y aurait ouvert des adresses e-mail sans que rien ne le signale. Et le
+# tarif membre est la première fonctionnalité du dépôt où une identité MAL
+# prouvée change un MONTANT — le silence n'était plus tenable.
+#
+# AUCUNE ÉCRITURE EN PRODUCTION. Uniquement des GET, des POST dont on ATTEND
+# l'échec (403/404), et l'estimation tarifaire qui est en lecture seule. Aucune
+# adhésion n'est créée, aucun drapeau n'est basculé : le PUT testé au parcours
+# #104 est précisément celui qu'on attend REFUSÉ.
+# ---------------------------------------------------------------------------
+LOT3B_FLAG = "MEMBER_PRICING_ENABLED"
+
+
+def _lot3b_spa(resp):
+    """La réponse vient-elle du catch-all SPA plutôt que de l'API ?
+
+    PIÈGE MESURÉ le 20/08/2026 sur la production : un GET vers un chemin `/api`
+    INCONNU ne renvoie pas 404 — `_serve_spa` (server.py) sert `index.html` en
+    **200**. Prendre ce 200 pour une réponse d'API ferait dire « la route
+    répond » d'une route qui n'existe pas. On tranche sur le type de contenu.
+    (En POST le problème ne se pose pas : le catch-all ne sert que les GET, un
+    POST hors route retombe en 405 — mesuré aussi.)
+    """
+    return "text/html" in (resp.headers.get("content-type") or "").lower()
+
+
+# Un POST vers une route absente : 405 (catch-all GET seulement) ou 404 selon le
+# proxy. Les deux disent la même chose — « cette version n'est pas en ligne ».
+LOT3B_POST_ABSENTE = (404, 405)
+
+
+def _lot3b_drapeaux():
+    """Les drapeaux tels que la PRODUCTION les expose (None si illisibles)."""
+    try:
+        r = requests.get(_url("/api/feature-flags"), timeout=TIMEOUT)
+        return r.json() if r.status_code == 200 else None
+    except Exception:
+        return None
+
+
+def _lot3b_deploye():
+    """LOT 3b est-il EN LIGNE ? True / False / None (drapeaux illisibles).
+
+    La PRÉSENCE du drapeau `MEMBER_PRICING_ENABLED` sert de marqueur de version :
+    `get_feature_flags` le complète À LA LECTURE avec sa valeur par défaut, il
+    apparaît donc dès que le code est déployé, sans aucune écriture en base.
+    C'est le seul témoin non ambigu — un 404 sur l'estimation, lui, se confond
+    avec le résultat ATTENDU du parcours #106 (offre introuvable).
+    """
+    d = _lot3b_drapeaux()
+    if d is None:
+        return None
+    return LOT3B_FLAG in d
+
+
+_lot3b_offre = []   # cache d'un id d'offre réel, lu une seule fois
+
+
+def _lot3b_offre_reelle():
+    """L'id d'une offre RÉELLE, lue publiquement. "" si le catalogue est vide."""
+    if _lot3b_offre:
+        return _lot3b_offre[0]
+    try:
+        r = requests.get(_url("/api/offers"), timeout=TIMEOUT)
+        offres = r.json() if r.status_code == 200 else []
+        for o in (offres if isinstance(offres, list) else []):
+            if isinstance(o, dict) and o.get("id"):
+                _lot3b_offre.append(o["id"])
+                return o["id"]
+    except Exception:
+        pass
+    return ""
+
+
+def t99_adhesions_lecture_sans_auth():
+    """P1-bis-a : `GET /memberships` renvoie des ADRESSES E-MAIL. Sans identité
+    prouvée côté serveur -> 403, exactement comme /users et /discount-codes
+    (parcours #21 et #22). « Aucune donnée personnelle sans authentification »."""
+    try:
+        r = requests.get(_url("/api/memberships"), timeout=TIMEOUT)
+        if _lot3b_spa(r):
+            return skip(99, "GET /api/memberships sans auth -> 403",
+                        "route absente (catch-all SPA) — adhésions pas encore déployées")
+        record(99, "GET /api/memberships sans auth -> 403",
+               r.status_code == 403, f"HTTP {r.status_code}")
+    except Exception as e:
+        record(99, "GET /api/memberships sans auth", False, str(e))
+
+
+def t100_adhesions_usurpation_email():
+    """P1-bis-a — L'USURPATION. `X-User-Email: <admin>` SANS jeton signé ne vaut
+    pas identité coach : `_p1a_appelant` n'accepte QUE le JWT. Le rôle coach ne
+    se décide jamais côté navigateur. Même mesure que #15, #25, #26 et #62."""
+    try:
+        r = requests.get(_url("/api/memberships"),
+                         headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+        if _lot3b_spa(r):
+            return skip(100, "GET /api/memberships usurpation X-User-Email -> 403",
+                        "route absente (catch-all SPA) — adhésions pas encore déployées")
+        record(100, "GET /api/memberships usurpation X-User-Email -> 403",
+               r.status_code == 403, f"HTTP {r.status_code}")
+    except Exception as e:
+        record(100, "GET /api/memberships usurpation X-User-Email", False, str(e))
+
+
+def t101_adhesions_ecriture_sans_auth():
+    """P1-bis-a : `POST /memberships` CRÉE une adhésion. Sans auth -> 403, et
+    l'appel s'arrête AVANT toute écriture (`_p1a_appelant` est la première
+    ligne de la route). Corps vide : rien à créer même si la garde tombait."""
+    try:
+        r = requests.post(_url("/api/memberships"), json={}, timeout=TIMEOUT)
+        if r.status_code in LOT3B_POST_ABSENTE:
+            return skip(101, "POST /api/memberships sans auth -> 403",
+                        f"route absente (HTTP {r.status_code}) — adhésions pas encore déployées")
+        record(101, "POST /api/memberships sans auth -> 403",
+               r.status_code == 403, f"HTTP {r.status_code} {_short(r)}")
+    except Exception as e:
+        record(101, "POST /api/memberships sans auth", False, str(e))
+
+
+def t102_adhesions_acces_legitime():
+    """P1-bis-a — LA CONTRE-PREUVE (règle V310c). Durcir une route sans prouver
+    que son propriétaire y garde l'accès, c'est reproduire V310 FIX 1 : le
+    tableau de bord était revenu VIDE, en 403, parce que le chemin légitime
+    n'avait jamais été mesuré. Avec le VRAI jeton signé -> 200 exigé.
+
+    Le SKIP n'est PAS neutre ici : il INTERDIT LA LIVRAISON. Un durcissement
+    dont le parcours légitime est en SKIP est exactement ce que la règle
+    proscrit (« Tests #15/#32 étaient en SKIP faute de jeton »)."""
+    if not ADMIN_JWT:
+        return skip(102, "GET /api/memberships avec JWT légitime -> 200",
+                    "ADMIN_JWT non fourni — ⛔ CE SKIP INTERDIT LA LIVRAISON : "
+                    "un durcissement JWT dont le chemin légitime n'est pas prouvé "
+                    "(200 AVEC jeton, 403 SANS) ne se livre pas (règle V310c).")
+    try:
+        r = requests.get(_url("/api/memberships"),
+                         headers={"Authorization": "Bearer " + ADMIN_JWT},
+                         timeout=TIMEOUT)
+        if _lot3b_spa(r):
+            return skip(102, "GET /api/memberships avec JWT légitime -> 200",
+                        "route absente (catch-all SPA) — adhésions pas encore déployées")
+        d = r.json() if r.status_code == 200 else {}
+        # `success` et `memberships` : un 200 sans l'enveloppe attendue serait un
+        # 200 de façade, pas un accès. Une liste VIDE reste licite (aucune
+        # adhésion n'a jamais été saisie — le lot interdit tout backfill).
+        ok = (r.status_code == 200 and d.get("success") is True
+              and isinstance(d.get("memberships"), list))
+        record(102, "GET /api/memberships avec JWT légitime -> 200 (contre-preuve V310c)",
+               ok, f"HTTP {r.status_code} total={d.get('total')} {_short(r)}")
+    except Exception as e:
+        record(102, "GET /api/memberships avec JWT légitime", False, str(e))
+
+
+def t103_drapeau_tarif_membre_expose():
+    """LOT 3b : le coupe-circuit doit être LISIBLE au curl. Sans cela, impossible
+    de prouver qu'une version est déployée ni de vérifier dans quel état est le
+    lot — c'est la leçon V319 (un drapeau ajouté après coup restait invisible)."""
+    d = _lot3b_drapeaux()
+    if d is None:
+        return record(103, f"GET /api/feature-flags expose {LOT3B_FLAG}", False,
+                      "drapeaux illisibles")
+    if LOT3B_FLAG not in d:
+        return skip(103, f"GET /api/feature-flags expose {LOT3B_FLAG}",
+                    "drapeau absent — LOT 3b pas encore déployé")
+    record(103, f"GET /api/feature-flags expose {LOT3B_FLAG}", True,
+           f"{LOT3B_FLAG}={d.get(LOT3B_FLAG)}")
+
+
+def t104_drapeau_tarif_membre_admin_seul():
+    """LOT 3b : ce drapeau commande des MONTANTS. Le basculer exige un JWT
+    super-admin ; `X-User-Email` seul (usurpable) -> 403. Même exigence que #59
+    et #61. On envoie `False`, la valeur PAR DÉFAUT : même si la garde tombait,
+    la production ne changerait pas d'état."""
+    try:
+        r = requests.put(_url("/api/feature-flags"), json={LOT3B_FLAG: False},
+                         headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+        if r.status_code in LOT3B_POST_ABSENTE:
+            return skip(104, f"PUT {LOT3B_FLAG} sans JWT super-admin -> 403",
+                        f"route absente (HTTP {r.status_code})")
+        record(104, f"PUT {LOT3B_FLAG} sans JWT super-admin -> 403",
+               r.status_code == 403, f"HTTP {r.status_code}")
+    except Exception as e:
+        record(104, f"PUT {LOT3B_FLAG} sans JWT super-admin", False, str(e))
+
+
+def t105_estimation_sans_jeton_prix_public():
+    """LOT 3b : sans identité prouvée, le tarif affiché est le PRIX PUBLIC.
+
+    Pas une erreur — une erreur serait déjà une information — mais `membre:
+    false` et `votre_tarif == prix_public`. Aucun avantage ne s'obtient sans
+    jeton d'appareil signé. Lecture seule : cette route ne crée rien."""
+    if _lot3b_deploye() is not True:
+        return skip(105, "Estimation sans jeton -> prix public (membre: false)",
+                    "LOT 3b pas encore déployé (drapeau absent des feature-flags)")
+    oid = _lot3b_offre_reelle()
+    if not oid:
+        return skip(105, "Estimation sans jeton -> prix public (membre: false)",
+                    "aucune offre lisible via GET /api/offers")
+    try:
+        r = requests.post(_url("/api/tarif/estimation"), json={"offerId": oid},
+                          timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        pub, votre = d.get("prix_public"), d.get("votre_tarif")
+        aligne = (pub is not None and votre is not None
+                  and abs(float(pub) - float(votre)) < 0.01)
+        ok = r.status_code == 200 and d.get("membre") is False and aligne
+        record(105, "Estimation sans jeton -> prix public (membre: false)", ok,
+               f"HTTP {r.status_code} membre={d.get('membre')} "
+               f"prix_public={pub} votre_tarif={votre}")
+    except Exception as e:
+        record(105, "Estimation sans jeton -> prix public", False, str(e))
+
+
+def t106_estimation_offre_inconnue():
+    """LOT 3b : un `offerId` qui n'existe pas -> 404 franc. Pas de 200 sur un
+    tarif inventé : un prix affiché doit toujours correspondre à une offre
+    RÉELLE, sinon l'écran promet un montant que la caisse ne connaît pas."""
+    if _lot3b_deploye() is not True:
+        return skip(106, "Estimation offre inconnue -> 404",
+                    "LOT 3b pas encore déployé (drapeau absent des feature-flags)")
+    try:
+        r = requests.post(_url("/api/tarif/estimation"),
+                          json={"offerId": "zz-lot3b-offre-inexistante"},
+                          timeout=TIMEOUT)
+        record(106, "Estimation offre inconnue -> 404", r.status_code == 404,
+               f"HTTP {r.status_code} {_short(r)}")
+    except Exception as e:
+        record(106, "Estimation offre inconnue -> 404", False, str(e))
+
+
+def t107_estimation_aucun_oracle_par_email():
+    """LOT 3b — PAS D'ORACLE « telle adresse est-elle membre ? ».
+
+    Le modèle `Lot3bEstimationRequest` est en `extra="ignore"` : un champ
+    `email` glissé dans le corps est SILENCIEUSEMENT IGNORÉ, il n'identifie
+    personne. Seul le jeton d'appareil signé désigne un membre. Sans ce test,
+    rien n'empêcherait un futur ajout de « lire l'e-mail du corps s'il est
+    fourni » — et la route deviendrait un annuaire des membres interrogeable
+    par n'importe qui."""
+    if _lot3b_deploye() is not True:
+        return skip(107, "Estimation : le champ `email` du corps est ignoré",
+                    "LOT 3b pas encore déployé (drapeau absent des feature-flags)")
+    oid = _lot3b_offre_reelle()
+    if not oid:
+        return skip(107, "Estimation : le champ `email` du corps est ignoré",
+                    "aucune offre lisible via GET /api/offers")
+    sonde = SUB_EMAIL or "lot3b-oracle-probe@example.com"
+    try:
+        r = requests.post(_url("/api/tarif/estimation"),
+                          json={"offerId": oid, "email": sonde}, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        blob = json.dumps(d).lower()
+        pub, votre = d.get("prix_public"), d.get("votre_tarif")
+        aligne = (pub is not None and votre is not None
+                  and abs(float(pub) - float(votre)) < 0.01)
+        # L'adresse sondée ne doit pas non plus RESSORTIR dans la réponse : un
+        # écho suffirait à confirmer qu'elle a été prise en compte.
+        ok = (r.status_code == 200 and d.get("membre") is False and aligne
+              and sonde.lower() not in blob)
+        record(107, "Estimation : le champ `email` du corps est ignoré (aucun oracle)",
+               ok, f"HTTP {r.status_code} membre={d.get('membre')} "
+                   f"prix_public={pub} votre_tarif={votre} echo_email="
+                   f"{sonde.lower() in blob}")
+    except Exception as e:
+        record(107, "Estimation : le champ `email` du corps est ignoré", False, str(e))
+
+
+def t108_offres_exposent_avantage_membre():
+    """LOT 3b — LA SYMÉTRIE `Offer` / `OfferCreate`, piège du dépôt six fois.
+
+    `GET /offers` a un `response_model=List[Offer]` : un champ absent du modèle
+    est filtré EN SILENCE, et la case du dashboard revient décochée à chaque
+    relecture sans qu'aucune erreur n'apparaisse. On vérifie donc que la CLÉ
+    `member_discount_pct` est bien présente dans les documents rendus — sa
+    valeur peut être `null` (aucun avantage), c'est sa PRÉSENCE qui prouve la
+    symétrie."""
+    etat = _lot3b_deploye()
+    try:
+        r = requests.get(_url("/api/offers"), timeout=TIMEOUT)
+        offres = r.json() if r.status_code == 200 else []
+        offres = [o for o in (offres if isinstance(offres, list) else []) if isinstance(o, dict)]
+        if not offres:
+            return skip(108, "GET /api/offers expose member_discount_pct",
+                        f"aucune offre lisible (HTTP {r.status_code})")
+        manquantes = [o.get("id") for o in offres if "member_discount_pct" not in o]
+        if manquantes and etat is not True:
+            return skip(108, "GET /api/offers expose member_discount_pct",
+                        "champ absent ET drapeau absent — LOT 3b pas encore déployé")
+        # Drapeau présent mais champ absent = la régression que ce test existe
+        # pour attraper : le lot est en ligne, mais `Offer` filtre le champ.
+        record(108, "GET /api/offers expose member_discount_pct (symétrie Offer/OfferCreate)",
+               not manquantes,
+               f"{len(offres)} offre(s), {len(manquantes)} sans le champ : {manquantes[:5]}")
+    except Exception as e:
+        record(108, "GET /api/offers expose member_discount_pct", False, str(e))
+
+
 TEST_CAPTION_MARK = "TEST non-régression"
 
 
@@ -2067,6 +2368,12 @@ def main():
                    t93_v410_pont_spordateur,
                    t94_v411_fils_prives_fermes, t95_v411_acces_legitime_admin,
                    t96_v412_range_206, t97_v413_stockage_disque, t98_v425_orphelins_ferme,
+                   t99_adhesions_lecture_sans_auth, t100_adhesions_usurpation_email,
+                   t101_adhesions_ecriture_sans_auth, t102_adhesions_acces_legitime,
+                   t103_drapeau_tarif_membre_expose, t104_drapeau_tarif_membre_admin_seul,
+                   t105_estimation_sans_jeton_prix_public, t106_estimation_offre_inconnue,
+                   t107_estimation_aucun_oracle_par_email,
+                   t108_offres_exposent_avantage_membre,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

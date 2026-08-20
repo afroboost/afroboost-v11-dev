@@ -4760,6 +4760,11 @@ function App() {
 
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [selectedDates, setSelectedDates] = useState([]); // MULTI-SELECT: Array de dates sélectionnées
+  // LOT 3b — le tarif rendu par le SERVEUR pour cette selection. Le navigateur
+  // ne calcule jamais un tarif membre : il le DEMANDE, et affiche la reponse.
+  // `null` = aucune estimation (offre non concernee, ou serveur muet) : on
+  // retombe alors sur l'affichage public, exactement comme avant ce lot.
+  const [memberQuote, setMemberQuote] = useState(null);
   const [selectedOffer, setSelectedOffer] = useState(null);
   const [pendingOffer, setPendingOffer] = useState(null); // v159: offre cliquée en attente d'une session
   const [selectedSession, setSelectedSession] = useState(null);
@@ -6099,8 +6104,64 @@ function App() {
       else if (appliedDiscount.type === "%") total = total * (1 - parseFloat(appliedDiscount.value) / 100);
       else if (appliedDiscount.type === "CHF") total = Math.max(0, total - parseFloat(appliedDiscount.value));
     }
+    // LOT 3b — quand le SERVEUR a repondu que l'avantage membre l'emporte, on
+    // affiche SON total, pas le notre.
+    //
+    // Ce n'est pas le navigateur qui decide : `memberQuote` est la reponse de
+    // /api/tarif/estimation, produite par les memes fonctions que la caisse.
+    // On relaie une decision serveur, on n'en fabrique pas une. Et la caisse
+    // reste l'autorite finale : elle recalcule tout et ignore ce montant
+    // (V429, « total client ignore »).
+    if (memberQuote && memberQuote.membre && memberQuote.votre_tarif != null
+        && !isPhysicalProduct) {
+      return parseFloat(memberQuote.votre_tarif).toFixed(2);
+    }
     return total.toFixed(2);
   };
+
+  // LOT 3b — DEMANDER le tarif au serveur des que la selection change.
+  //
+  // Dependances PRIMITIVES uniquement (identifiants et chaines), jamais les
+  // objets `selectedOffer` / `selectedDates` eux-memes : un objet neuf a chaque
+  // rendu relancerait l'effet en boucle et saturerait le serveur — c'est la
+  // panne V305, et la regle du depot est explicite la-dessus.
+  const memberQuoteKey = `${selectedOffer?.id || ''}|${selectedCourse?.id || ''}`
+    + `|${selectedDates.join(',')}|${appliedDiscount?.code || ''}`;
+  useEffect(() => {
+    const offerId = selectedOffer?.id;
+    if (!offerId || !selectedCourse?.id || selectedDates.length === 0) {
+      setMemberQuote((prev) => (prev === null ? prev : null));
+      return;
+    }
+    let annule = false;
+    const dates = selectedDates.map((d) => {
+      const [oh, om] = (selectedCourse.time || '00:00').split(':');
+      const od = new Date(d);
+      od.setHours(parseInt(oh, 10) || 0, parseInt(om, 10) || 0, 0, 0);
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${od.getFullYear()}-${pad(od.getMonth() + 1)}-${pad(od.getDate())}`
+        + `T${pad(od.getHours())}:${pad(od.getMinutes())}:00`;
+    });
+    axios.post(`${API}/tarif/estimation`, {
+      offerId,
+      courseId: selectedCourse.id,
+      occurrenceDates: dates,
+      quantity: selectedDates.length,
+      promoCode: appliedDiscount?.code || null
+    }).then((r) => {
+      if (annule) return;
+      // Comparaison AVANT setState : reposer un objet neuf identique
+      // relancerait tous les effets qui en dependent (regle anti-boucle).
+      setMemberQuote((prev) => (
+        JSON.stringify(prev) === JSON.stringify(r.data) ? prev : r.data));
+    }).catch(() => {
+      // Silence volontaire : une estimation indisponible n'est pas une erreur
+      // pour le client, c'est simplement le prix public.
+      if (!annule) setMemberQuote((prev) => (prev === null ? prev : null));
+    });
+    return () => { annule = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberQuoteKey]);
 
   const resetForm = () => {
     setPendingReservation(null); setSelectedCourse(null); setSelectedDates([]);
@@ -6521,6 +6582,28 @@ function App() {
     const occurrenceLocale = `${dt.getFullYear()}-${v2pad(dt.getMonth() + 1)}-${v2pad(dt.getDate())}`
       + `T${v2pad(dt.getHours())}:${v2pad(dt.getMinutes())}:00`;
     
+    // LOT 3b — TOUTES les occurrences choisies, au meme format naif local que
+    // `occurrenceLocale` ci-dessus (« 2026-08-26T18:30:00 »).
+    //
+    // POURQUOI TOUTES, ET PAS SEULEMENT LA PREMIERE. Une adhesion couvre une
+    // PERIODE : sur un panier de trois seances, la reponse « membre ou pas »
+    // peut differer d'une date a l'autre. N'envoyer que la premiere ferait
+    // payer les trois au tarif de la premiere.
+    //
+    // CE QUE LE SERVEUR EN FAIT. Il ne les croit PAS : il les revalide contre
+    // les occurrences reelles du cours (`lot3b_occurrences_prouvees`, garanties
+    // LOT 1). Une date inventee est jetee et la seance reste au plein tarif.
+    // Ces valeurs servent donc a DEMANDER, jamais a decider.
+    const occurrenceDatesLocale = (selectedCourse && selectedDates.length)
+      ? selectedDates.map((d) => {
+          const [oh, om] = (selectedCourse.time || '00:00').split(':');
+          const od = new Date(d);
+          od.setHours(parseInt(oh, 10) || 0, parseInt(om, 10) || 0, 0, 0);
+          return `${od.getFullYear()}-${v2pad(od.getMonth() + 1)}-${v2pad(od.getDate())}`
+            + `T${v2pad(od.getHours())}:${v2pad(od.getMinutes())}:00`;
+        })
+      : [];
+
     // Nombre de dates sélectionnées (pour le calcul du prix)
     const dateCount = selectedDates.length || 1;
 
@@ -6546,6 +6629,10 @@ function App() {
       selectedVariants: Object.keys(selectedVariants).length > 0 ? selectedVariants : null, // Variantes choisies
       variantsText: variantsText || null, // Texte formaté des variantes
       selectedDates: selectedDates, // Toutes les dates sélectionnées
+      // LOT 3b : les memes dates, au format naif local attendu par le serveur.
+      // Portees par la reservation pour que les DEUX points d'appel du
+      // paiement (direct et TWINT differe) les transmettent a l'identique.
+      occurrenceDates: occurrenceDatesLocale,
       selectedDatesText: selectedDatesText || null, // Texte formaté des dates
       // LOT 1 — `|| 'N/A'` RETIRE. `'N/A'` est TRUTHY : il franchissait la garde
       // `if reservation.courseId:` du serveur et s'ecrivait en base. Une
@@ -6676,6 +6763,8 @@ function App() {
           // n'est plus une source de verite.
           quantity: reservation.quantity,
           promoCode: reservation.discountCode || null,
+          // LOT 3b : les occurrences, revalidees cote serveur avant tout tarif membre.
+          occurrenceDates: reservation.occurrenceDates || [],
           reservationData: {
             id: reservation.userId,
             courseId: reservation.courseId,
@@ -6730,6 +6819,9 @@ function App() {
         offerId: pendingReservation.offerId || null,
         quantity: pendingReservation.quantity,
         promoCode: pendingReservation.discountCode || null,
+        // LOT 3b : idem sur le parcours TWINT differe — sans cette ligne, le
+        // meme achat obtiendrait deux prix selon le moyen de paiement choisi.
+        occurrenceDates: pendingReservation.occurrenceDates || [],
         reservationData: {
           id: pendingReservation.userId,
           courseId: pendingReservation.courseId,
@@ -9024,6 +9116,51 @@ function App() {
                         </div>
                       )}
                       
+                      {/* LOT 3b — L'AVANTAGE MEMBRE, EN DEUX LIGNES.
+                          Le total ci-dessous porte deja « votre tarif » : on
+                          n'ajoute donc que ce qu'il faut pour le comprendre,
+                          le prix public barre et le pourcentage obtenu.
+                          Rien ne s'affiche pour un non-membre — inutile de lui
+                          montrer un avantage qu'il n'a pas. */}
+                      {memberQuote?.membre && memberQuote?.avantage_pct > 0 && (
+                        <>
+                          <div className="flex justify-between text-white text-sm mb-1 opacity-60">
+                            <span>Prix public</span>
+                            <span style={{ textDecoration: 'line-through' }}>
+                              CHF {parseFloat(memberQuote.prix_public).toFixed(2)}
+                            </span>
+                          </div>
+                          <div
+                            className="flex justify-between text-sm mb-1 font-medium"
+                            style={{ color: 'var(--primary-color, #D91CD2)' }}
+                            data-testid="member-advantage-line"
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                   stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                                   strokeLinejoin="round" aria-hidden="true">
+                                <path d="M12 2l2.4 7.4H22l-6 4.6 2.3 7.4-6.3-4.6L5.7 21.4 8 14 2 9.4h7.6z" />
+                              </svg>
+                              Avantage membre
+                            </span>
+                            <span>-{memberQuote.avantage_pct}%</span>
+                          </div>
+                        </>
+                      )}
+
+                      {/* LOT 3b — le membre qui n'est pas identifie voit le prix
+                          public, par construction : l'avantage exige une preuve
+                          d'identite, jamais une adresse tapee. On le lui DIT,
+                          sinon il croit avoir perdu son avantage. */}
+                      {memberQuote?.identification_requise
+                        && memberQuote?.avantage_offre_pct > 0 && (
+                        <div className="text-xs mb-1 opacity-70"
+                             style={{ color: 'var(--primary-color, #D91CD2)' }}
+                             data-testid="member-identification-hint">
+                          Membre Afroboost ? Ouvrez votre espace pour voir votre tarif.
+                        </div>
+                      )}
+
                       {appliedDiscount && (
                         <div className="flex justify-between text-green-400 text-sm mb-1">
                           <span>Réduction ({appliedDiscount.code})</span>

@@ -112,12 +112,20 @@ def partie_1_snapshot():
              S.lot3_snapshot_tarifaire(-5, "public") == {})
     verifier("1g. zero est une valeur VALIDE (un essai vaut 0, et on le dit)",
              S.lot3_snapshot_tarifaire(0, "essai")["tarif_applique"] == 0.0)
-    verifier("1h. une raison hors vocabulaire retombe sur `inconnu`",
-             S.lot3_snapshot_tarifaire(10, "membre")["tarif_raison"] == "inconnu",
-             "« membre » appartient a LOT 3b, pas a ce lot")
-    verifier("1i. le vocabulaire est ferme et ne contient PAS `membre`",
-             set(S.LOT3_RAISONS) == {"public", "promo", "forfait", "essai",
-                                     "offert", "inconnu"}, str(S.LOT3_RAISONS))
+    # LOT 3b — CES DEUX ASSERTIONS SONT RETOURNEES, PAS SUPPRIMEES.
+    #
+    # Elles disaient « `membre` n'existe pas encore », ce qui etait la
+    # specification NEGATIVE de LOT 3a : le vocabulaire ne devait pas nommer ce
+    # qu'aucun code ne savait produire. LOT 3b sait desormais reconnaitre un
+    # membre, donc le mot entre — et ce qu'il faut verifier devient : il est
+    # bien la, ET rien d'autre n'est entre avec lui.
+    verifier("1h. une raison hors vocabulaire retombe toujours sur `inconnu`",
+             S.lot3_snapshot_tarifaire(10, "cadeau-du-coach")["tarif_raison"] == "inconnu")
+    verifier("1h2. `membre` est desormais une raison VALIDE (LOT 3b)",
+             S.lot3_snapshot_tarifaire(15, "membre")["tarif_raison"] == "membre")
+    verifier("1i. le vocabulaire reste FERME, et n'a gagne que `membre`",
+             set(S.LOT3_RAISONS) == {"public", "promo", "membre", "forfait",
+                                     "essai", "offert", "inconnu"}, str(S.LOT3_RAISONS))
 
 
 # ═══════════════ 2. LA RAISON NE SE DEDUIT JAMAIS DU MONTANT ════════════════
@@ -301,7 +309,13 @@ def partie_6_perimetre():
     print("\n=== 6. LE PERIMETRE EST TENU : AUCUN AVANTAGE MEMBRE ===")
     shared = _src("api", "routes", "shared.py")
     _debut = shared.find("LOT 3a — LE TARIF FIGE")
-    bloc = shared[_debut:] if _debut > 0 else ""
+    # LOT 3b — LE BLOC DE CE LOT S'ARRETE OU COMMENCE LE SUIVANT.
+    # Sans cette borne, `bloc` avalait le bloc LOT 3b ajoute a la suite dans le
+    # meme fichier, et les assertions de perimetre de LOT 3a lui reprochaient
+    # le travail de LOT 3b. On mesure bien LOT 3a, et lui seul.
+    _fin = shared.find("# LOT 3b — L'AVANTAGE MEMBRE")
+    bloc = (shared[_debut:_fin] if _fin > _debut else shared[_debut:]) \
+        if _debut > 0 else ""
     verifier("6a. le bloc LOT 3a existe", bool(bloc))
     # On cherche les CLES REELLEMENT POSEES, pas les mentions : le bloc parle
     # explicitement de ces deux champs pour dire qu'il ne les pose PAS, et un
@@ -312,14 +326,30 @@ def partie_6_perimetre():
             for _k in _n.keys:
                 if isinstance(_k, ast.Constant) and isinstance(_k.value, str):
                     _cles_posees.add(_k.value)
-    verifier("6b. le champ `tarif_avantage_pct` n'est POSE nulle part "
-             "(il appartient a LOT 3b)",
-             "tarif_avantage_pct" not in _cles_posees, str(sorted(
-                 c for c in _cles_posees if c.startswith("tarif_"))))
-    verifier("6c. le champ `tarif_membership_id` n'est POSE nulle part (idem)",
-             "tarif_membership_id" not in _cles_posees)
-    verifier("6d. le lot ne lit AUCUNE adhesion",
+    # LOT 3b — MEME RETOURNEMENT QU'EN 1h/1i. Ces trois assertions gardaient la
+    # frontiere entre les deux lots tant que LOT 3b n'existait pas. Maintenant
+    # qu'il existe, ce qu'il faut prouver n'est plus « ces champs sont absents »
+    # mais « ils ne sont poses QUE sur une decision membre, jamais a vide ».
+    _bloc_3b = shared.split("# LOT 3b — L'AVANTAGE MEMBRE")[-1] if \
+        "# LOT 3b — L'AVANTAGE MEMBRE" in shared else ""
+    verifier("6b. `tarif_avantage_pct` n'est pose que SOUS CONDITION, jamais en litteral",
+             ('_doc["tarif_avantage_pct"] = _pct' in shared
+              and "if avantage_pct is not None:" in shared
+              and "0 < _pct < 100" in shared))
+    verifier("6c. `tarif_membership_id` n'est pose que SOUS CONDITION (idem)",
+             ('_doc["tarif_membership_id"]' in shared
+              and "if membership_id:" in shared))
+    verifier("6c2. sur un achat plein tarif, les deux cles restent ABSENTES",
+             ("tarif_avantage_pct" not in S.lot3_snapshot_tarifaire(30, "public")
+              and "tarif_membership_id" not in S.lot3_snapshot_tarifaire(30, "public")))
+    verifier("6d. LOT 3a lui-meme ne lit toujours AUCUNE adhesion "
+             "(c'est LOT 3b qui les lit, dans son propre bloc)",
              "memberships" not in bloc and "lot2_adhesion_active" not in bloc)
+    verifier("6d2. LOT 3b lit les adhesions, et ne les ECRIT jamais",
+             (bool(_bloc_3b) and 'db["memberships"].find(' in _bloc_3b
+              and not any(m in _bloc_3b for m in
+                          ("insert_one", "update_one", "delete_one",
+                           "update_many", "delete_many", "replace_one"))))
     verifier("6e. aucun pourcentage code en dur",
              not any(x in bloc for x in ("* 0.5", "*0.5", "/ 2", "0.50 *", "50 /")))
 

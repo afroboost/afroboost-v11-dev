@@ -3236,6 +3236,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // booleen, pas `undefined`.
       first_purchase_eligible: !!offer.first_purchase_eligible,
       creates_membership: !!offer.creates_membership,
+      // LOT 3b : relu depuis la base, comme ses deux voisins. Sans cette
+      // ligne, rouvrir une offre afficherait un avantage VIDE alors que la
+      // base en porte un, et la premiere sauvegarde l'effacerait.
+      member_discount_pct: parseFloat(offer.member_discount_pct) || 0,
     });
     setEditingOfferId(offer.id);
     // Scroll vers le formulaire
@@ -3265,7 +3269,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // V256: sans ce reset, le lien partenaire de l'offre precedente resterait
       // pre-rempli — et publie — sur l'offre suivante.
       external_link_url: '', external_link_label: '', external_link_enabled: false,
-      social_proof_price: '' // V260
+      social_proof_price: '', // V260
+      // LOT 3b : sans ce reset, l'avantage membre de l'offre qu'on vient
+      // d'abandonner resterait pre-rempli sur la suivante.
+      member_discount_pct: 0
     });
     setEditingOfferId(null);
   };
@@ -3394,7 +3401,26 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // refusera d'honorer. Meme definition de « gratuite » que le wizard :
         // prix a 0. Ceinture cote client ; le serveur reste l'autorite et
         // refuse la creation de toute facon.
-        creates_membership: !!src.creates_membership && (parseFloat(src.price) || 0) > 0
+        creates_membership: !!src.creates_membership && (parseFloat(src.price) || 0) > 0,
+        // LOT 3b : l'avantage membre. TROISIEME champ de cette liste blanche
+        // soumis a la meme regle que ses deux voisins — sans cette ligne, le
+        // pourcentage saisi dans le wizard ne partirait jamais, et le
+        // `$set: offer.model_dump()` du PUT le remettrait a vide en base a
+        // chaque sauvegarde. Le depot a paye ce meme oubli six fois.
+        //
+        // Toujours un NOMBRE, jamais `null` : les mises a jour filtrent les
+        // valeurs nulles, donc un `null` rendrait le champ ineffacable (V255b).
+        // Toujours 0 quand l'offre ouvre une adhesion ou est un produit : le
+        // serveur refusera l'avantage de toute facon, autant ne pas ecrire en
+        // base une valeur qu'il n'honorera pas.
+        //
+        // La garde « offre adherente / produit » n'est PAS rejouee ici : elle
+        // est posee a la source par `OfferWizard.handleSave`, et le serveur la
+        // garantit de toute facon (`lot3b_avantage_de_l_offre`). La repeter
+        // ici ferait de ce fichier un second endroit ou lire le drapeau
+        // d'adhesion — or LOT 2 a pose la regle qu'il ne vit qu'en trois
+        // lignes dans ce fichier, et son test la verifie.
+        member_discount_pct: Math.max(0, Math.min(99, parseFloat(src.member_discount_pct) || 0))
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 
@@ -3442,7 +3468,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // l'offre suivante — exactement le defaut corrige en V225 et V256.
       first_purchase_eligible: false,
       // LOT 2 : faux par defaut a la creation — « fail closed ».
-      creates_membership: false
+      creates_membership: false,
+      // LOT 3b : remis a zero, sinon l'avantage de l'offre precedente se
+      // reporterait en silence sur la suivante (defaut V225 / V256).
+      member_discount_pct: 0
       });
       return true; // V224: enregistrement reussi
     } catch (err) {

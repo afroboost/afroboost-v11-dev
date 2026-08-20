@@ -17,7 +17,7 @@
 // rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
 // Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
 // a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
-var CACHE_NAME = 'afroboost-v454'; // LOT 2.1 : la case adhesion est desactivee sur une offre gratuite (OfferWizard, CoachDashboard) // LOT 2 FIX : CoachDashboard change (startEditOffer relit les deux cases) // LOT 2 : le front change (OfferWizard, FicheContact, Contacts) // LOT 1 : le front change (ChatWidget, App, BookingPanel)
+var CACHE_NAME = 'afroboost-v455'; // LOT 3b : le front change (OfferWizard, CoachDashboard, App) — sans ce bump, un navigateur garderait l'ancien bundle, qui n'envoie PAS les dates d'occurrence et ne verrait donc jamais son tarif membre // LOT 2.1 : la case adhesion est desactivee sur une offre gratuite (OfferWizard, CoachDashboard) // LOT 2 FIX : CoachDashboard change (startEditOffer relit les deux cases) // LOT 2 : le front change (OfferWizard, FicheContact, Contacts) // LOT 1 : le front change (ChatWidget, App, BookingPanel)
                                    // -> sans ce bump, un appareil deja installe garderait l'ancien
                                    // bundle et continuerait d'envoyer l'instant du clic comme date.
 var SW_VERSION = 270;

@@ -783,6 +783,17 @@ class Offer(BaseModel):
     # LOT 2 : « acheter cette offre ouvre une adhesion d'un an ». MEME symetrie
     # obligatoire que ci-dessus, et pour la meme raison exactement.
     creates_membership: bool = False
+    # LOT 3b : pourcentage de reduction reserve aux MEMBRES ACTIFS a la date de
+    # la seance. TROISIEME champ soumis a la meme symetrie obligatoire que ses
+    # deux voisins — absent d'`Offer`, il serait filtre en silence par le
+    # `response_model=List[Offer]` de GET /offers ; absent d'`OfferCreate`, il
+    # serait efface en base a chaque `PUT /offers`. Le depot s'est fait piéger
+    # six fois par cet oubli, ceci est la septieme occasion de ne pas l'etre.
+    #
+    # `None` ou 0 = AUCUN avantage. Il n'y a donc rien a migrer : les offres
+    # existantes n'en ont pas, et n'en auront pas tant que le coach ne l'a pas
+    # saisi. Bornes utiles STRICTES ]0, 100[ — voir `lot3b_avantage_de_l_offre`.
+    member_discount_pct: Optional[float] = None
 
 class OfferCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -879,6 +890,10 @@ class OfferCreate(BaseModel):
     # explicitement (shared.py, LOT A) que le lot adhesion poserait « sa propre
     # dimension » : la voici.
     creates_membership: bool = False
+    # LOT 3b — MIROIR STRICT du champ declare dans `Offer` ci-dessus. Les deux
+    # declarations doivent rester identiques : c'est `OfferCreate` qui est
+    # serialise par le `$set: offer.model_dump()` de PUT /offers.
+    member_discount_pct: Optional[float] = None
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1209,6 +1224,16 @@ class FeatureFlags(BaseModel):
     # produites : une fusion PostHog est irreversible (« Split IDs » ne garantit
     # rien sur le passe).
     POSTHOG_IDENTIFY_ENABLED: bool = False
+    # LOT 3b : interrupteur de l'AVANTAGE MEMBRE. Defaut FALSE = le lot est
+    # invisible (aucun tarif reduit, aucun champ de snapshot pose, la route
+    # d'estimation repond « pas d'avantage »). True = un membre actif a la date
+    # de la seance paie le pourcentage configure sur l'offre.
+    #
+    # Basculable SANS redeploiement, dans les deux sens : c'est le coupe-circuit
+    # du lot. LOT 1, 2, 2.1 et 3a n'en ont pas — leur seul recours est
+    # `git revert` et 4 minutes de build Coolify. Celui-ci s'eteint en une
+    # requete, ce qui compte pour un lot qui touche a des montants.
+    MEMBER_PRICING_ENABLED: bool = False
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1224,6 +1249,7 @@ class FeatureFlagsUpdate(BaseModel):
     CHAT_READ_STRICT: Optional[bool] = None  # V349
     BOT_MENU_ENABLED: Optional[bool] = None  # V367
     POSTHOG_IDENTIFY_ENABLED: Optional[bool] = None  # C9-B
+    MEMBER_PRICING_ENABLED: Optional[bool] = None  # LOT 3b
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -5383,6 +5409,20 @@ class CreateCheckoutRequest(BaseModel):
     # lui-meme et calcule la remise ; le navigateur ne transmet plus de montant
     # faisant foi. Absent du parcours progressif, qui delegue a Stripe (V224).
     promoCode: Optional[str] = None
+    # LOT 3b : les dates d'occurrence REELLEMENT choisies par le client.
+    #
+    # POURQUOI CE CHAMP N'EXISTAIT PAS. Jusqu'ici le serveur n'avait besoin que
+    # de `quantity` : trois dates a 30 CHF font 90 CHF, peu importe lesquelles.
+    # L'avantage membre change cela — une adhesion couvre une PERIODE, donc la
+    # reponse depend de CHAQUE date. Sans elles, la regle « validite a la date
+    # de l'occurrence » serait inapplicable et on jugerait au jour de l'achat,
+    # ce qui offrirait le tarif membre sur une seance de l'annee suivante.
+    #
+    # CE CHAMP N'EST PAS CRU SUR PAROLE. `lot3b_occurrences_prouvees` le
+    # revalide contre le cours en base avec les garanties de LOT 1 : une date
+    # qui ne correspond a aucune occurrence reelle est jetee, et le client paie
+    # plein tarif. Le navigateur propose, le serveur dispose.
+    occurrenceDates: Optional[List[str]] = None
     # V224: affiche le champ « Code promo » de Stripe Checkout.
     #
     # Réservé au parcours progressif, qui n'a pas de formulaire et donc aucun
@@ -5552,8 +5592,160 @@ async def _v429_remise_serveur(code_promo: str, offer: dict, course_id: str, ema
     return (doc.get("type"), float(doc.get("value") or 0)), meta
 
 
+class Lot3bEstimationRequest(BaseModel):
+    """LOT 3b — ce que le navigateur demande pour AFFICHER un tarif."""
+    model_config = ConfigDict(extra="ignore")
+    offerId: str
+    courseId: Optional[str] = None
+    occurrenceDates: Optional[List[str]] = None
+    quantity: Optional[int] = 1
+    promoCode: Optional[str] = None
+
+
+# LOT 3b — limitation de debit, en memoire du processus.
+#
+# POURQUOI SI LEGER. Cette route n'accepte AUCUN e-mail : elle ne repond que
+# sur le porteur du jeton, qui ne peut donc interroger que lui-meme. Il n'y a
+# pas d'oracle a proteger, seulement une charge a borner — d'ou un compteur en
+# memoire plutot qu'une collection et une ecriture par affichage de prix.
+# (Le depot n'a aucun rate limiting global : `slowapi` n'est pas installe.)
+_LOT3B_DEBIT = {}
+_LOT3B_DEBIT_MAX = 60          # appels
+_LOT3B_DEBIT_FENETRE = 60.0    # secondes
+
+
+def _lot3b_debit_ok(cle: str) -> bool:
+    import time as _t
+    _now = _t.monotonic()
+    _hist = [h for h in _LOT3B_DEBIT.get(cle, []) if _now - h < _LOT3B_DEBIT_FENETRE]
+    if len(_hist) >= _LOT3B_DEBIT_MAX:
+        _LOT3B_DEBIT[cle] = _hist
+        return False
+    _hist.append(_now)
+    _LOT3B_DEBIT[cle] = _hist
+    if len(_LOT3B_DEBIT) > 5000:      # borne memoire, jamais une fuite
+        for _k in list(_LOT3B_DEBIT.keys())[:1000]:
+            _LOT3B_DEBIT.pop(_k, None)
+    return True
+
+
+@api_router.post("/tarif/estimation")
+async def lot3b_estimation_tarifaire(corps: Lot3bEstimationRequest,
+                                     http_request: Request):
+    """LOT 3b — le tarif que ce visiteur paierait REELLEMENT, decide par le serveur.
+
+    POURQUOI CETTE ROUTE EXISTE. Le navigateur doit pouvoir afficher « Prix
+    public / Avantage membre / Votre tarif » sans jamais CALCULER ce tarif :
+    il appelle exactement les memes fonctions que la caisse. Un seul calcul,
+    deux appelants — il devient impossible que l'affiche diverge du facture.
+    C'est la lecon de V429, ou le total du navigateur et celui du serveur
+    avaient fini par se contredire.
+
+    CE QU'ELLE NE DIVULGUE JAMAIS. Aucun e-mail n'est accepte en entree. Le
+    membre est identifie par SON jeton d'appareil signe, et par lui seul :
+    personne ne peut demander « est-ce que telle adresse est membre ? ».
+    Sans jeton valide, la reponse est le prix public — jamais une erreur, qui
+    serait deja une information.
+    """
+    _pub = {"membre": False, "avantage_pct": None, "raison": "public"}
+    try:
+        _offre = await db.offers.find_one({"id": str(corps.offerId or "").strip()},
+                                          {"_id": 0})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[LOT3b] offre illisible pour estimation (%s)", type(_err).__name__)
+        _offre = None
+    if not _offre:
+        raise HTTPException(status_code=404, detail="Offre introuvable")
+
+    _qte = max(1, min(5, int(corps.quantity or 1)))
+    _prix_unitaire = float(compute_active_price(_offre)["price"])
+    _base = _prix_unitaire * _qte
+    _reponse = dict(_pub)
+    _reponse.update({
+        "offer_id": _offre.get("id"),
+        "quantity": _qte,
+        "devise": "CHF",
+        "prix_public_unitaire": round(_prix_unitaire, 2),
+        "prix_public": round(_base, 2),
+        "votre_tarif": round(_base, 2),
+    })
+
+    try:
+        _actif = bool((await get_feature_flags()).get("MEMBER_PRICING_ENABLED"))
+    except Exception:  # noqa: BLE001
+        _actif = False
+    if not _actif:
+        return _reponse
+
+    try:
+        from api.routes.shared import (
+            subscriber_from_request as _jeton,
+            lot2_proprietaire as _proprio,
+            lot3b_avantage_de_l_offre as _avantage,
+            lot3b_adhesions as _lire_adhesions,
+            lot3b_couverture as _couvre,
+            lot3b_occurrences_prouvees as _occurrences,
+            lot3b_arbitrer as _arbitrer,
+        )
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[LOT3b] estimation indisponible (%s) — prix public",
+                       type(_err).__name__)
+        return _reponse
+
+    _pct = _avantage(_offre)
+    _reponse["avantage_offre_pct"] = _pct or None
+    if _pct <= 0:
+        return _reponse
+
+    _tok = _jeton(http_request)
+    _email = ((_tok or {}).get("email") or "").strip().lower()
+    if not _email:
+        # Membre non identifie : prix public, et on le DIT — c'est ce qui
+        # permet au navigateur d'inviter a se connecter sans rien deviner.
+        _reponse["identification_requise"] = True
+        return _reponse
+    if not _lot3b_debit_ok((_tok or {}).get("code") or _email):
+        raise HTTPException(status_code=429, detail="Trop de demandes — reessayez dans une minute")
+
+    _dates = await _occurrences(db, corps.courseId or "", corps.occurrenceDates)
+    _adh = await _lire_adhesions(db, _email, _proprio(_offre.get("coach_id")))
+    _couvertes = 0
+    for _d in _dates[:_qte]:
+        if _couvre(_adh, _d):
+            _couvertes += 1
+    _reponse["dates_prouvees"] = len(_dates)
+    _reponse["dates_couvertes"] = _couvertes
+
+    # La promo, revalidee par le MEME moteur que la caisse.
+    (_pt, _pv), _ = await _v429_remise_serveur(
+        corps.promoCode, _offre, corps.courseId or "", _email)
+    if _pt == "100%" or (_pt == "%" and _pv >= 100):
+        _total_promo = 0.0
+    elif _pt == "%":
+        _total_promo = _base * (1 - _pv / 100.0)
+    elif _pt == "CHF":
+        _total_promo = max(0.0, _base - _pv)
+    else:
+        _total_promo = _base
+
+    _total_membre = None
+    if _couvertes > 0:
+        _total_membre = (_prix_unitaire * (_qte - _couvertes)
+                         + _prix_unitaire * (1 - _pct / 100.0) * _couvertes)
+
+    _verdict = _arbitrer(_base, _total_promo, total_membre=_total_membre,
+                         pct_membre=_pct, promo_type=_pt)
+    _reponse["raison"] = _verdict.get("raison") or "public"
+    _reponse["membre"] = _verdict.get("raison") == "membre"
+    _reponse["avantage_pct"] = _verdict.get("avantage_pct")
+    if _verdict.get("total") is not None:
+        _reponse["votre_tarif"] = round(float(_verdict["total"]), 2)
+    return _reponse
+
+
 @api_router.post("/create-checkout-session")
-async def create_checkout_session(request: CreateCheckoutRequest):
+async def create_checkout_session(request: CreateCheckoutRequest,
+                                  http_request: Optional[Request] = None):
     """
     V220/V221: Crée une session Stripe Checkout.
     Lit la clé Stripe depuis partner_payment_config (dashboard admin) d'abord,
@@ -5598,6 +5790,24 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     # de produit qui pilotait la regex de crédits) et elle n'est pas aggravée.
     server_pack_sessions = ""
     server_tier = ""
+    # LOT 3b — LIAISON PREALABLE, defaut sur pour toutes les branches.
+    #
+    # `_offer` n'etait affecte QUE dans le `if request.offerId:` ci-dessous,
+    # alors qu'il est teste inconditionnellement plus bas (`elif _offer is not
+    # None ...`). Une requete sans `offerId` levait donc `UnboundLocalError`
+    # avant d'atteindre la branche legacy, qui etait de fait inatteignable.
+    # Defaut prexistant, mais ce lot ajoute une lecture de plus sur ce chemin :
+    # le corriger d'abord evite d'en heriter.
+    _offer = None
+    # LOT 3b — etat de la decision d'avantage membre. Defaut : AUCUNE.
+    # Ces variables sont lues plus bas par la metadata de la transaction, y
+    # compris sur les branches ou l'avantage ne s'applique pas : elles doivent
+    # donc exister avant le premier `if`.
+    _lot3b_raison = None          # "membre" quand l'avantage a gagne
+    _lot3b_pct = None             # le pourcentage REELLEMENT applique
+    _lot3b_membership_id = None   # l'adhesion qui a ouvert le droit
+    _lot3b_dates_prouvees = 0     # dates revalidees par le serveur
+    _lot3b_dates_couvertes = 0    # dont celles couvertes par l'adhesion
     if request.offerId:
         try:
             _offer = await db.offers.find_one({"id": request.offerId}, {"_id": 0})
@@ -5747,6 +5957,124 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             _v429_total = max(0.0, _v429_base - _pv)
         else:
             _v429_total = _v429_base
+
+        # ------------------------------------------------------------------
+        # LOT 3b — L'AVANTAGE MEMBRE
+        #
+        # Se place ICI, apres le moteur promo et avant la conversion en
+        # centimes, parce que c'est le SEUL endroit du depot ou une remise est
+        # decidee par le serveur. Les deux remises se comparent donc dans le
+        # meme bloc, sur la meme base, sans creer de seconde autorite.
+        #
+        # NE LEVE JAMAIS : tout est sous `try`. Un avantage membre qui echoue
+        # doit rendre le PLEIN TARIF, jamais une erreur au moment de payer.
+        # ------------------------------------------------------------------
+        try:
+            _l3b_on = bool((await get_feature_flags()).get("MEMBER_PRICING_ENABLED"))
+        except Exception:  # noqa: BLE001
+            # Une panne de lecture ne change JAMAIS un prix (lecon V310c :
+            # la panne ne doit pas devenir une decision).
+            _l3b_on = False
+        if _l3b_on:
+            try:
+                from api.routes.shared import (
+                    subscriber_from_request as _l3b_jeton,
+                    lot2_proprietaire as _l3b_proprio,
+                    lot3b_avantage_de_l_offre as _l3b_avantage,
+                    lot3b_adhesions as _l3b_lire_adhesions,
+                    lot3b_couverture as _l3b_couvre,
+                    lot3b_occurrences_prouvees as _l3b_occurrences,
+                    lot3b_arbitrer as _l3b_arbitrer,
+                    normaliser_email as _l3b_mail,
+                )
+                _l3b_pct_offre = _l3b_avantage(_offer)
+
+                # IDENTITE — LA REGLE NON NEGOCIABLE DU LOT.
+                #
+                # Le tarif membre n'est accorde que sur un JETON D'APPAREIL
+                # ABONNE SIGNE (V296). Jamais sur `customerEmail`, qui est un
+                # champ de formulaire libre : l'accepter offrirait le tarif
+                # membre a quiconque tape l'adresse d'un membre — exactement la
+                # faille V390, sur un montant cette fois.
+                #
+                # Le jeton doit en outre DESIGNER L'ACHETEUR : un membre ne
+                # paie pas les seances d'un tiers a son tarif.
+                # `http_request` vaut None sur les appels INTERNES de cette
+                # fonction (le bot WhatsApp l'appelle directement en Python,
+                # `bot_whatsapp_routes.py`). Pas de requete HTTP = pas
+                # d'en-tete = pas de jeton = plein tarif. C'est aussi la raison
+                # pour laquelle le parametre a un defaut : le rendre
+                # obligatoire aurait casse cet appelant.
+                _l3b_tok = (_l3b_jeton(http_request)
+                            if (_l3b_pct_offre > 0 and http_request is not None)
+                            else None)
+                _l3b_email = _l3b_mail((_l3b_tok or {}).get("email"))
+                _l3b_achete_pour_soi = bool(
+                    _l3b_email and _l3b_email == _l3b_mail(request.customerEmail))
+
+                if _l3b_pct_offre > 0 and _l3b_achete_pour_soi:
+                    # DATES — le navigateur propose, le serveur dispose.
+                    _l3b_dates = await _l3b_occurrences(
+                        db, (request.reservationData or {}).get("courseId") or "",
+                        request.occurrenceDates)
+                    _lot3b_dates_prouvees = len(_l3b_dates)
+
+                    # Une seule requete d'adhesions pour tout le panier.
+                    _l3b_adh = await _l3b_lire_adhesions(
+                        db, _l3b_email, _l3b_proprio(_offer.get("coach_id")))
+
+                    _l3b_couvertes = 0
+                    _l3b_mid = None
+                    for _l3b_d in _l3b_dates[:_v429_qte]:
+                        _l3b_a = _l3b_couvre(_l3b_adh, _l3b_d)
+                        if _l3b_a:
+                            _l3b_couvertes += 1
+                            if not _l3b_mid:
+                                _l3b_mid = _l3b_a.get("id")
+                    _lot3b_dates_couvertes = _l3b_couvertes
+
+                    # Le total membre est calcule ICI, pas dans l'arbitre :
+                    # seul cet endroit sait combien de dates du panier sont
+                    # REELLEMENT dans la periode de validite. Trois seances
+                    # dont une seule couverte = deux pleins tarifs + un tarif
+                    # membre. C'est la seule lecture honnete de « validite a
+                    # la date de l'occurrence ».
+                    _l3b_total = None
+                    if _l3b_couvertes > 0:
+                        _l3b_total = (
+                            _v428c_prix_serveur * (_v429_qte - _l3b_couvertes)
+                            + _v428c_prix_serveur * (1 - _l3b_pct_offre / 100.0)
+                            * _l3b_couvertes)
+
+                    _l3b_verdict = _l3b_arbitrer(
+                        _v429_base, _v429_total,
+                        total_membre=_l3b_total, pct_membre=_l3b_pct_offre,
+                        promo_type=_pt)
+
+                    if _l3b_verdict.get("raison") == "membre":
+                        _v429_total = float(_l3b_verdict["total"])
+                        _lot3b_raison = "membre"
+                        _lot3b_pct = _l3b_verdict.get("avantage_pct")
+                        _lot3b_membership_id = _l3b_mid
+                        logger.info(
+                            "[LOT3b] avantage membre applique : %s -> %s CHF "
+                            "(offre %s, -%s%%, %s/%s dates couvertes, adhesion %s)",
+                            round(_v429_base, 2), round(_v429_total, 2),
+                            request.offerId, _lot3b_pct,
+                            _l3b_couvertes, _v429_qte, str(_l3b_mid or "?")[:8])
+                    elif _l3b_couvertes > 0:
+                        logger.info(
+                            "[LOT3b] avantage membre ecarte : la promo est plus "
+                            "avantageuse (%s CHF contre %s CHF, offre %s)",
+                            round(_v429_total, 2), round(_l3b_total or 0, 2),
+                            request.offerId)
+            except Exception as _l3b_err:  # noqa: BLE001
+                # Plein tarif, et on le dit. Aucune exception ne remonte : un
+                # client ne doit pas voir son paiement echouer parce qu'une
+                # ligne d'avantage n'a pas pu etre evaluee.
+                logger.warning("[LOT3b] avantage membre non evalue (%s) — plein tarif",
+                               type(_l3b_err).__name__)
+
         if abs(float(request.amount or 0) - _v429_total) > 0.01:
             logger.warning(
                 f"[V429] total client ignore : {request.amount} -> {round(_v429_total, 2)} "
@@ -5869,6 +6197,36 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                 logger.warning(f"[V237] Resolution coach_id paiement echouee: {_pay_err}")
 
         # Créer l'entrée dans payment_transactions
+        # LOT 3b + LOT 3a — LE SNAPSHOT DE LA DECISION TARIFAIRE.
+        #
+        # GARDE C4 : le montant fige DERIVE de `amount_cents`, c'est-a-dire du
+        # nombre exact de centimes envoye a Stripe. Surtout pas d'un second
+        # calcul en parallele : `round()` est un arrondi BANQUIER
+        # (`round(12.5) == 12`, `round(13.5) == 14`), et deux arrondis
+        # independants sur un demi-centime divergent. Un snapshot qui annonce
+        # un montant que Stripe n'a pas debite est precisement le mensonge
+        # permanent que LOT 3a existe pour empecher.
+        #
+        # OU EST ECRIT CE SNAPSHOT. Dans `payment_transactions`, et non dans la
+        # reservation : sur ce parcours la reservation est creee APRES le
+        # paiement par `POST /api/reservations`, route que le proprietaire a
+        # explicitement placee HORS de ce lot (option A). La decision est donc
+        # figee la ou elle est prise et prouvee — au moment de l'encaissement.
+        _lot3b_trace = {}
+        try:
+            from api.routes.shared import lot3_champs_achat as _l3_achat
+            _l3_qte = max(1, int(safe_quantity or 1))
+            _lot3b_trace = _l3_achat(
+                round((amount_cents / 100.0) / _l3_qte, 2),
+                _lot3b_raison or ("promo" if _v429_meta.get("promo_code") else "public"),
+                tarif_public=_v428c_prix_serveur,
+                devise="CHF", palier=server_tier or None,
+                offre_id=request.offerId or None,
+                avantage_pct=_lot3b_pct,
+                membership_id=_lot3b_membership_id)
+        except Exception as _l3e:  # noqa: BLE001
+            logger.warning("[LOT3b] snapshot transaction ignore (%s)", type(_l3e).__name__)
+
         transaction = {
             "id": str(uuid.uuid4()),
             "session_id": session.id,
@@ -5903,6 +6261,12 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             "promo_source": _v429_meta.get("promo_source"),
             "promo_canonical_id": _v429_meta.get("promo_canonical_id"),
             "quota_guard_result": _v429_meta.get("quota_guard_result"),
+            # LOT 3b : le snapshot tarifaire (`tarif_applique`, `tarif_raison`,
+            # `tarif_avantage_pct`, `tarif_membership_id`...) et la tracabilite
+            # des dates revalidees par le serveur.
+            **_lot3b_trace,
+            "member_dates_proven": _lot3b_dates_prouvees,
+            "member_dates_covered": _lot3b_dates_couvertes,
             "payment_status": "pending",
             "payment_methods": payment_methods,
             "created_at": datetime.now(timezone.utc).isoformat()
@@ -16126,6 +16490,7 @@ async def get_feature_flags():
             "SUPERADMIN_JWT_STRICT": False,    # V344 : défaut OFF (repli X-User-Email encore accepté)
             "CHAT_READ_STRICT": False,         # V349 : défaut OFF (lecture du chat encore ouverte)
             "POSTHOG_IDENTIFY_ENABLED": False, # C9-B : défaut OFF (aucune identification)
+            "MEMBER_PRICING_ENABLED": False,   # LOT 3b : défaut OFF (aucun tarif membre)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -16141,7 +16506,8 @@ async def get_feature_flags():
                          ("REQUIRE_COACH_JWT", False), ("PAWAPAY_ENABLED", False),
                          ("PUBLICATIONS_NO_EXPIRY", False), ("SUPERADMIN_JWT_STRICT", False),
                          ("CHAT_READ_STRICT", False), ("BOT_MENU_ENABLED", False),
-                         ("POSTHOG_IDENTIFY_ENABLED", False)):
+                         ("POSTHOG_IDENTIFY_ENABLED", False),
+                         ("MEMBER_PRICING_ENABLED", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags

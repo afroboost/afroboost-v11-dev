@@ -2697,23 +2697,27 @@ async def lot2_creer_adhesion_apres_achat(db, email, offre_id, subscription_id,
 #   4. dont les champs ne sont JAMAIS reecrits ensuite ;
 #   5. et dont le lecteur DIT SA CONFIANCE au lieu de retomber sur le catalogue.
 #
-# POURQUOI PAS DE `tarif_avantage_pct` NI DE `tarif_membership_id` ICI. Ils
-# appartiennent a LOT 3b. Les poser maintenant, toujours vides, ferait croire a
-# une decision « pas d'avantage » la ou il n'y a eu AUCUNE evaluation d'avantage.
-# Une cle absente dit « ce lot ne savait pas poser la question » ; une cle a
-# `None` dirait « la question a ete posee et la reponse est non ». Ce n'est pas
-# la meme chose, et c'est exactement la distinction que LOT 1 a deja tranchee
-# pour `courseId` / `datetime`.
+# `tarif_avantage_pct` ET `tarif_membership_id` SONT ARRIVES AVEC LOT 3b, et la
+# regle d'attente qui les retenait ici reste vraie apres coup : ils ne sont
+# poses QUE lorsqu'un avantage membre a reellement gagne l'arbitrage. Une cle
+# absente dit « aucune evaluation d'avantage n'a eu lieu » ; une cle a `None`
+# dirait « la question a ete posee et la reponse est non ». Ce n'est pas la
+# meme chose, et c'est exactement la distinction que LOT 1 a deja tranchee
+# pour `courseId` / `datetime`. Sur un achat plein tarif, les deux cles restent
+# donc ABSENTES — jamais posees a 0.
 
 LOT3_PREFIXE = "[LOT3a]"
 
 # Vocabulaire FERME. Codes stables, cherchables dans les journaux
-# (`grep "tarif_raison.*forfait"`), jamais traduits. `membre` n'y figure pas :
-# il arrivera avec LOT 3b, et l'y mettre d'avance laisserait croire que ce lot
-# sait deja reconnaitre un membre.
+# (`grep "tarif_raison.*forfait"`), jamais traduits.
+#
+# LOT 3b ajoute `membre`, comme LOT 3a l'avait annonce. Il n'y figurait pas
+# tant qu'aucun code ne savait reconnaitre un membre : un vocabulaire qui
+# nomme ce que le programme ne sait pas produire est un mensonge en attente.
 LOT3_RAISONS = (
     "public",     # plein tarif du catalogue, paye
     "promo",      # un code de reduction a reellement joue
+    "membre",     # LOT 3b : l'avantage membre a gagne l'arbitrage
     "forfait",    # seance consommee sur un pack deja paye
     "essai",      # droit d'essai gratuit consomme (ESSAI-1)
     "offert",     # accorde par le coach, rien encaisse
@@ -2766,7 +2770,8 @@ def lot3_raison_du_droit(souscription, code) -> str:
 
 
 def lot3_snapshot_tarifaire(tarif_applique, raison, tarif_public=None,
-                            devise=None, palier=None, offre_id=None) -> dict:
+                            devise=None, palier=None, offre_id=None,
+                            avantage_pct=None, membership_id=None) -> dict:
     """La decision tarifaire, a plat, telle qu'elle etait CE JOUR-LA.
 
     Rend `{}` — donc n'ecrit rien — si le montant applique est inconnu ou si
@@ -2808,6 +2813,25 @@ def lot3_snapshot_tarifaire(tarif_applique, raison, tarif_public=None,
         _doc["tarif_palier"] = str(palier).strip()[:32]
     if offre_id:
         _doc["tarif_offre_id"] = str(offre_id).strip()[:64]
+
+    # LOT 3b — les deux cles de l'avantage membre. Memes regles que les trois
+    # au-dessus : posees par `if`, jamais en litteral, jamais a 0.
+    #
+    # `tarif_avantage_pct` est le pourcentage REELLEMENT APPLIQUE a cet achat,
+    # pas celui que porte l'offre aujourd'hui. C'est toute la raison d'etre du
+    # lot : le coach peut passer de 50 % a 30 % demain, cette reservation-ci
+    # gardera 50 — exactement comme `tarif_applique` garde son montant.
+    if avantage_pct is not None:
+        try:
+            _pct = round(float(avantage_pct), 2)
+        except (TypeError, ValueError):
+            _pct = None
+        # Un avantage hors de ]0, 100[ n'est pas un avantage : on n'ecrit rien
+        # plutot que d'inscrire une valeur qui ne s'est pas appliquee.
+        if _pct is not None and 0 < _pct < 100:
+            _doc["tarif_avantage_pct"] = _pct
+    if membership_id:
+        _doc["tarif_membership_id"] = str(membership_id).strip()[:64]
     return _doc
 
 
@@ -2868,12 +2892,300 @@ def lot3_champs_forfait(souscription=None, code=None, reservation=None) -> dict:
 
 
 def lot3_champs_achat(tarif_applique, raison, tarif_public=None, devise=None,
-                      palier=None, offre_id=None) -> dict:
+                      palier=None, offre_id=None, avantage_pct=None,
+                      membership_id=None) -> dict:
     """Meme enveloppe, pour un achat : le montant est connu, il vient d'etre paye."""
     try:
         return lot3_snapshot_tarifaire(tarif_applique, raison,
                                        tarif_public=tarif_public, devise=devise,
-                                       palier=palier, offre_id=offre_id)
+                                       palier=palier, offre_id=offre_id,
+                                       avantage_pct=avantage_pct,
+                                       membership_id=membership_id)
     except Exception as _err:  # noqa: BLE001
         logger.warning("%s snapshot ignore (%s)", LOT3_PREFIXE, type(_err).__name__)
         return {}
+
+
+# =============================================================================
+# LOT 3b — L'AVANTAGE MEMBRE
+# =============================================================================
+#
+# CE QUE FAIT CE LOT, EN UNE PHRASE : un membre dont l'adhesion couvre LA DATE
+# DE LA SEANCE paie le pourcentage que le coach a pose sur CETTE offre-la.
+#
+# CINQ REGLES, reprises de LOT 3a sans en inventer une sixieme :
+#   1. les fonctions de decision sont PURES et rendent un dict PLAT ;
+#   2. la lecture d'adhesion NE LEVE JAMAIS — un tarif qui plante vaut
+#      moins qu'un plein tarif ;
+#   3. quand la preuve manque, on rend le PLEIN TARIF, jamais un rabais ;
+#   4. le pourcentage applique est FIGE dans la reservation, jamais relu ;
+#   5. le vocabulaire reste ferme (`LOT3_RAISONS`).
+#
+# CE QUE CE LOT NE FAIT PAS, ET C'EST VOLONTAIRE :
+#   * il n'ECRIT JAMAIS dans `memberships`. Ni creation, ni prolongation, ni
+#     correction. LOT 2 / LOT 2.1 restent seuls maitres de l'adhesion.
+#   * il ne touche pas a `compute_active_price`. Ce module PUR nourrit
+#     `lot2_prix_de_vente`, qui BORNE la creation d'adhesion (LOT 2.1) : y
+#     injecter un rabais membre ferait passer des offres sous la borne et
+#     supprimerait des adhesions en silence. C'est le pire endroit du depot.
+#   * il ne touche pas a `_essai1b_prix_unitaire`, qui decide GRATUIT vs
+#     PAYANT : un total tombe a 0 y bascule dans la branche gratuite, brule
+#     le droit d'essai et fait refuser l'adhesion par LOT 2.1.
+
+LOT3B_PREFIXE = "[LOT3b]"
+
+# Le champ porte par l'offre. Nomme en anglais comme ses deux voisins
+# (`creates_membership`, `first_purchase_eligible`), pour rester coherent avec
+# le reste du modele `Offer`.
+LOT3B_CHAMP_AVANTAGE = "member_discount_pct"
+
+# GARDE C1 — les seuls types de remise COMPARABLES a un avantage membre.
+#
+# `"100%"` en est EXCLU, et ce n'est pas un oubli : dans cette base, un code
+# `type: "100%"` n'est presque jamais une promo. C'est le code d'acces AFR-
+# d'un forfait DEJA PAYE (`maxUses` y porte le nombre de seances). Le compter
+# comme une promo ferait ecrire `tarif_raison: "promo"` sur une seance de
+# pack — le mensonge permanent que LOT 3a existe pour empecher.
+LOT3B_PROMOS_COMPARABLES = ("%", "CHF")
+
+
+def lot3b_avantage_de_l_offre(offre) -> float:
+    """Le pourcentage d'avantage membre de cette offre, ou 0.0.
+
+    Rend 0.0 — donc « aucun avantage » — dans TOUS les cas douteux. Une offre
+    qui n'a jamais ete configuree n'a pas de champ : elle vaut 0, sans
+    migration et sans backfill. C'est la convention `filmed` (ESSAI-5a-1) et
+    `creates_membership` (LOT 2) : absent vaut NON.
+    """
+    _o = offre if isinstance(offre, dict) else {}
+    if not _o:
+        return 0.0
+
+    # REGLE BLOQUANTE — ON N'ACHETE PAS SON ADHESION AU TARIF MEMBRE.
+    #
+    # PULSE 250 et le renouvellement portent `creates_membership: True`. Leur
+    # accorder un avantage serait un cercle vicieux (il faut etre membre pour
+    # payer moins cher ce qui vous rend membre), et surtout : un prix reduit
+    # peut passer sous la borne de LOT 2.1 et faire DISPARAITRE la creation
+    # d'adhesion. Le proprietaire a pose cette regle comme bloquante.
+    if _o.get("creates_membership") is True:
+        return 0.0
+
+    # Hors perimetre V1 : la boutique physique. TVA, frais de port et
+    # variantes composent le prix ailleurs que dans `price` — un pourcentage
+    # pose ici ne s'appliquerait pas a ce que le client paie vraiment.
+    if _o.get("isProduct") is True or _o.get("isPhysicalProduct") is True:
+        return 0.0
+
+    try:
+        _pct = float(_o.get(LOT3B_CHAMP_AVANTAGE) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+    # GARDE C2 — bornes STRICTES. 0 exclu (rien a faire), 100 exclu (un total
+    # a 0 basculerait l'achat dans la branche gratuite : code offert, droit
+    # d'essai brule, adhesion refusee par LOT 2.1). Une valeur negative ou
+    # aberrante vaut « pas d'avantage », jamais une majoration.
+    if not (0 < _pct < 100):
+        return 0.0
+    return round(_pct, 2)
+
+
+async def lot3b_adhesions(db, email, coach_id) -> list:
+    """Les adhesions de cette personne chez ce proprietaire. NE LEVE JAMAIS.
+
+    UNE SEULE REQUETE, volontairement separee du jugement de date : un panier
+    de cinq seances demande cinq verdicts, pas cinq allers-retours en base.
+    C'est la regle du depot sur les gros groupes (« batch `$in`, jamais des
+    `find_one` en boucle »), appliquee ici a l'echelle d'un panier.
+    """
+    _email = normaliser_email(email)
+    if not _email:
+        return []
+    try:
+        from api.routes.membership_routes import p1a_filtre_proprietaire as _filtre
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s regle de propriete indisponible (%s) — plein tarif",
+                     LOT3B_PREFIXE, type(_err).__name__)
+        return []
+
+    # La REGLE SYMETRIQUE de `2c8a831`, importee et jamais recopiee : un
+    # proprietaire reel ne voit que ses adhesions, un contexte sans
+    # proprietaire ne voit que les adhesions sans proprietaire. C'est ce qui
+    # empeche le coach A d'appliquer l'adhesion ouverte chez le coach B.
+    _requete = dict(_filtre(coach_id))
+    _requete["email"] = _email
+    try:
+        return await db["memberships"].find(_requete, {"_id": 0}).to_list(50) or []
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s adhesions illisibles (%s) — plein tarif",
+                     LOT3B_PREFIXE, type(_err).__name__)
+        return []
+
+
+def lot3b_couverture(adhesions, occurrence_iso):
+    """L'adhesion qui couvre CETTE date-la, ou None. Fonction PURE.
+
+    LA DATE EST UN JOUR CALENDAIRE SUISSE. `p1a_statut` accepte deja un
+    horodatage complet — `p1a_date_iso` tronque a `[:10]`. On tronque quand
+    meme explicitement : compter sur l'effet de bord d'une autre fonction est
+    la facon dont les fuseaux finissent par se decaler d'un jour.
+
+    Bornes INCLUSES aux deux extremites (`debut <= jour <= fin`), parce que
+    c'est ce que `p1a_statut` garantit depuis P1-bis-a et qu'un membre dont
+    l'adhesion s'acheve le jour du cours est encore membre ce jour-la.
+    """
+    _jour = str(occurrence_iso or "").strip()[:10]
+    if len(_jour) != 10:
+        return None
+    try:
+        from api.routes.membership_routes import p1a_statut as _statut
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s statut d'adhesion indisponible (%s) — plein tarif",
+                     LOT3B_PREFIXE, type(_err).__name__)
+        return None
+    for _l in (adhesions or []):
+        if not isinstance(_l, dict):
+            continue
+        if _statut(_l.get("date_debut"), _l.get("date_fin"), aujourdhui=_jour) == "active":
+            return _l
+    return None
+
+
+async def lot3b_adhesion_a_la_date(db, email, coach_id, occurrence_iso):
+    """L'adhesion qui couvre CETTE date-la, ou None. NE LEVE JAMAIS.
+
+    POURQUOI PAS `lot2_adhesion_active`. Cette voisine repond a « cette
+    personne est-elle membre AUJOURD'HUI » et LEVE en cas de panne (fail
+    closed volontaire : mieux vaut refuser une adhesion que d'en creer une
+    fausse). Les deux comportements sont faux ici. Une seance du 10/01/2027
+    doit etre jugee au 10/01/2027, et une base momentanement illisible doit
+    donner le PLEIN TARIF, pas une erreur 500 au moment de payer.
+
+    LA DATE EST UN JOUR CALENDAIRE SUISSE. `p1a_statut` accepte deja un
+    horodatage complet — `p1a_date_iso` tronque a `[:10]`. On tronque quand
+    meme explicitement : compter sur l'effet de bord d'une autre fonction est
+    la facon dont les fuseaux finissent par se decaler d'un jour.
+    """
+    return lot3b_couverture(await lot3b_adhesions(db, email, coach_id),
+                            occurrence_iso)
+
+
+async def lot3b_occurrences_prouvees(db, course_id, dates) -> list:
+    """Les dates qui correspondent REELLEMENT a une occurrence de ce cours.
+
+    LE NAVIGATEUR PROPOSE, LE SERVEUR DISPOSE. Sans cette revalidation, il
+    suffirait d'envoyer une date situee a l'interieur de son adhesion pour
+    obtenir le tarif membre sur une seance qui n'a pas lieu ce jour-la.
+
+    Reutilise les garanties de LOT 1, sans les reecrire :
+      * `lot1_occurrence_iso` normalise en naif local Europe/Zurich et REFUSE
+        une date seule ou une valeur illisible ;
+      * `_a1_a_lieu_aujourdhui` tranche entre cours ponctuel (`date`,
+        prioritaire) et cours recurrent (`weekday`, convention JS Dim=0).
+
+    Rend une liste — possiblement vide. Une liste vide vaut « aucune date
+    prouvee », donc plein tarif : c'est le sens sur lequel il faut se tromper.
+    """
+    _cid = str(course_id or "").strip()
+    _brutes = [d for d in (dates or []) if str(d or "").strip()]
+    if not _cid or not _brutes:
+        return []
+    try:
+        from api.routes.reservation_routes import (
+            lot1_occurrence_iso as _iso, _a1_a_lieu_aujourdhui as _a_lieu,
+            _a1_jour_js as _jour_js)
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s garanties LOT 1 indisponibles (%s) — aucune date prouvee",
+                     LOT3B_PREFIXE, type(_err).__name__)
+        return []
+    try:
+        _cours = await db["courses"].find_one({"id": _cid}, {"_id": 0})
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s cours illisible (%s) — aucune date prouvee",
+                     LOT3B_PREFIXE, type(_err).__name__)
+        return []
+    if not _cours or _cours.get("archived") is True:
+        return []
+
+    _prouvees = []
+    for _d in _brutes[:5]:  # meme plafond que `safe_quantity` (V225)
+        _norm = _iso(_d)
+        if not _norm:
+            continue
+        try:
+            _dt = datetime.fromisoformat(_norm)
+        except (TypeError, ValueError):
+            continue
+        if not _a_lieu(_cours, _norm[:10], _jour_js(_dt)):
+            continue
+        if _norm not in _prouvees:
+            _prouvees.append(_norm)
+    return _prouvees
+
+
+def lot3b_arbitrer(base, total_promo, total_membre=None, pct_membre=None,
+                   promo_type=None) -> dict:
+    """UNE seule remise s'applique : la plus avantageuse pour le client.
+
+    Fonction PURE — elle se teste sans base, comme `api/pricing.py`, « le seul
+    [module] a porter un risque financier direct ».
+
+    `total_promo` est le total DEJA calcule par le moteur promo existant
+    (V429), passe tel quel. On ne le recalcule pas : reproduire sa formule ici
+    creerait une seconde autorite sur le prix, exactement ce que V429 a
+    supprime. Sans promo, l'appelant passe `total_promo == base`.
+
+    `total_membre` est calcule par l'APPELANT, et non ici, parce que lui seul
+    sait combien de dates sont REELLEMENT couvertes par l'adhesion. Un panier
+    de trois seances dont une seule tombe dans la periode de validite paie
+    deux pleins tarifs et un tarif membre — c'est la seule lecture honnete de
+    « validite a la date de l'occurrence ». `None` = aucun avantage.
+
+    EGALITE : le membre gagne (`<=`). C'est la regle du proprietaire, et elle
+    est aussi la plus lisible pour le client — « votre avantage membre a bien
+    ete applique » vaut mieux qu'un code promo qui donne le meme montant.
+
+    Rend {"total", "raison", "avantage_pct"}. `avantage_pct` n'est renseigne
+    QUE si le membre a gagne : LOT 3a ne pose jamais une cle a 0.
+    """
+    try:
+        _base = float(base)
+        _promo = float(total_promo)
+    except (TypeError, ValueError):
+        return {"total": None, "raison": "inconnu", "avantage_pct": None}
+    _t = str(promo_type or "").strip()
+
+    def _sans_membre():
+        # GARDE C1 — un `"100%"` n'est pas une promo, c'est un forfait paye.
+        if _t == "100%":
+            return {"total": _promo, "raison": "forfait", "avantage_pct": None}
+        if _t in LOT3B_PROMOS_COMPARABLES and _promo < _base:
+            return {"total": _promo, "raison": "promo", "avantage_pct": None}
+        return {"total": _promo, "raison": "public", "avantage_pct": None}
+
+    try:
+        _pct = float(pct_membre or 0)
+    except (TypeError, ValueError):
+        _pct = 0.0
+    if total_membre is None or not (0 < _pct < 100) or _base <= 0:
+        return _sans_membre()
+    try:
+        _membre = float(total_membre)
+    except (TypeError, ValueError):
+        return _sans_membre()
+
+    # GARDE C2 — un avantage membre ne rend JAMAIS un achat gratuit. Si
+    # l'arrondi au centime tombe a zero (prix public deja minuscule), on
+    # renonce a l'avantage plutot que de basculer l'achat dans la branche
+    # gratuite, qui brulerait le droit d'essai et ferait refuser l'adhesion.
+    #
+    # Meme garde contre une valeur negative ou superieure au plein tarif :
+    # un avantage qui MAJORE n'est pas un avantage.
+    if round(_membre * 100) <= 0 or _membre > _base:
+        return _sans_membre()
+
+    if _membre <= _promo:
+        return {"total": _membre, "raison": "membre",
+                "avantage_pct": round(_pct, 2)}
+    return _sans_membre()
