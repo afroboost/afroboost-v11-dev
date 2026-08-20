@@ -749,6 +749,14 @@ async def _a_enrichir_finance(reservations: list, perimetre: dict = None) -> lis
                  "total_paid": 1, "paid_currency": 1, "currency": 1, "session_id": 1,
                  "transaction_id": 1, "payment_method": 1, "source": 1,
                  "montant_encaisse": 1, "devise": 1, "origine_paiement": 1,
+                 # LOT 3 prealable : SANS ce champ, la preference pour le
+                 # document `canonical` juste en dessous est INERTE — elle lit
+                 # une cle que la projection n'a pas ramenee, donc toujours
+                 # `None`. Le correctif est parti en production une premiere
+                 # fois sans lui, et le banc en memoire ne l'a pas vu : le faux
+                 # Mongo du depot IGNORE les projections. Mesure : `seances
+                 # achetees` restait a 47 (le doublon) au lieu de 10.
+                 "canonical": 1,
                  "seances_a_l_achat": 1},
             ).collation(_A_COLLATION_INSENSIBLE).to_list(500)
 

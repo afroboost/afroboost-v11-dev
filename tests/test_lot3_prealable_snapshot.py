@@ -201,6 +201,42 @@ async def partie_a_projection():
 # ═══════════════════════════════════════════════════════════════════════════
 # CAS B — LE DOCUMENT CANONIQUE, pas le premier rendu par Mongo
 # ═══════════════════════════════════════════════════════════════════════════
+async def partie_b0_projection_des_codes():
+    """LA LECON DU 20/08/2026 — un banc en memoire NE PEUT PAS voir une projection.
+
+    Le premier jet de ce lot a ajoute la preference pour le document `canonical`
+    dans `_a_enrichir_finance`... sans ajouter `canonical` a la PROJECTION de la
+    requete qui alimente l'index. `d.get("canonical")` valait donc toujours
+    `None`, la condition etait toujours fausse, et le premier document gagnait
+    quand meme. Le correctif est parti en production INOPERANT, et le banc est
+    reste vert : le faux Mongo du depot IGNORE les projections, il rend les
+    documents entiers.
+
+    C'est la meme erreur que le CAS A, commise une seconde fois — d'ou cette
+    verification, qui lit la projection REELLE dans le source. Elle coute une
+    ligne et elle aurait suffi.
+    """
+    arbre = ast.parse(_extraire(SRC_RESA, "_a_enrichir_finance"))
+    projection = None
+    for n in ast.walk(arbre):
+        if not isinstance(n, ast.Assign):
+            continue
+        if getattr(n.targets[0], "id", "") != "_dcs":
+            continue
+        appel = n.value
+        while isinstance(appel, (ast.Await, ast.Attribute)):
+            appel = appel.value if isinstance(appel, ast.Await) else appel.value
+        for sous in ast.walk(n.value):
+            if isinstance(sous, ast.Call) and getattr(
+                    getattr(sous.func, "attr", ""), "__str__", lambda: "")() == "find":
+                if len(sous.args) >= 2:
+                    projection = ast.literal_eval(sous.args[1])
+    verifier("B0. la projection des codes DEMANDE `canonical` — sans lui, la "
+             "preference pour le document canonique est inerte",
+             bool(projection) and projection.get("canonical") == 1,
+             "projection : %r" % (sorted(projection.keys()) if projection else None))
+
+
 async def partie_b_canonical():
     db = _Base()
     # Le stock reel : quatre codes de production ont exactement cette forme —
@@ -304,6 +340,7 @@ def partie_c_perimetre():
 
 async def principal():
     await partie_a_projection()
+    await partie_b0_projection_des_codes()
     await partie_b_canonical()
     partie_c_perimetre()
 
