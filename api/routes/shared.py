@@ -3386,3 +3386,192 @@ async def lot3c0_proprietaire_de_la_seance(db, course_id=None, coach_id_declare=
                      "-> repli plateforme", LOT3C0_PREFIXE, _motif, _cid,
                      str(coach_id_declare or "")[:120])
     return lot3c0_proprietaire_canonique(None)
+
+
+# =====================================================================
+# LOT 3 FINANCE — LA VALEUR D'UNE PRESENCE, PUIS LE TOTAL D'UNE SEANCE
+# =====================================================================
+#
+# LA QUESTION : pour un participant REELLEMENT PRESENT a une occurrence precise,
+# quelle valeur financiere correspond a CETTE presence ? Puis, pour l'occurrence
+# entiere : combien vaut la seance ?
+#
+# DEUX FONCTIONS PURES, ET UN SEUL ENDROIT. Elles ne lisent aucune base et
+# n'ecrivent rien : l'appelant fournit les documents deja lus. C'est ce qui rend
+# le calcul testable sans Mongo, et c'est surtout ce qui empeche qu'une seconde
+# implementation du meme calcul apparaisse dans une autre route — le depot
+# comptait deja six regles de propriete divergentes avant LOT 3c-0.
+#
+# TROIS INTERDITS, chacun garde par un test :
+#   1. INVENTER UNE VALEUR. « prix du pack / nombre de seances » n'est PAS une
+#      regle : un forfait a 250 pour 10 seances ne vaut pas mecaniquement 25 la
+#      seance — certaines presences valent reellement 15. La verite est
+#      `tarif_applique`, FIGE a la reservation par LOT 3a.
+#   2. ECRIRE 0 QUAND ON NE SAIT PAS. Zero est un montant REEL qui veut dire
+#      « gratuit prouve » (essai, offert). Une valeur absente vaut « inconnu ».
+#      Le total ne doit jamais grossir d'un zero invente, ni maigrir d'une
+#      valeur qu'on aurait tue.
+#   3. COMPTER UN ABSENT. Seul `validated: true` est une presence.
+
+LOT3F_CONNU = "connu"
+LOT3F_INCONNU = "inconnu"
+
+# D'ou vient la valeur, quand elle est connue. Deux sources, et on les NOMME —
+# un repli ne doit jamais se faire passer pour un tarif fige.
+LOT3F_SOURCE_SNAPSHOT = "snapshot"        # `tarif_applique`, fige a la reservation
+LOT3F_SOURCE_ENCAISSEMENT = "encaissement_prouve"   # deduit d'un encaissement PROUVE
+
+
+def lot3f_valeur_presence(reservation, souscription=None, code=None,
+                          occurrence=None) -> dict:
+    """La valeur financiere d'UNE presence. Lecture pure, ne leve jamais.
+
+    L'ORDRE DES SOURCES, ET POURQUOI IL EST DANS CET ORDRE :
+
+    1. `tarif_applique`, fige sur la reservation par LOT 3a. C'est la seule
+       source qui dit ce que cette seance-la a REELLEMENT coute, le jour ou elle
+       a ete reservee. Un prix d'offre peut changer ensuite ; un snapshot, non.
+
+    2. A defaut, la valeur par seance deduite d'un encaissement PROUVE
+       (`a_finance_du_droit`). Ce n'est PAS la division interdite : cette
+       fonction ne divise que sur un montant prouve et un denominateur fige, et
+       elle ne lit JAMAIS le catalogue. La source est nommee `encaissement_prouve`
+       pour qu'un ecran puisse la distinguer d'un tarif fige — un repli qui se
+       ferait passer pour une preuve serait un mensonge de plus a demeler.
+
+    3. Sinon : `inconnu`. On ne devine pas.
+
+    `occurrence` permet a l'appelant de fournir la cle d'occurrence deja
+    normalisee (`lot1_occurrence_iso`). Sans elle, on rend `datetime` tel quel :
+    cette fonction ne fait pas de conversion de fuseau, et n'en invente pas.
+    """
+    _r = reservation if isinstance(reservation, dict) else {}
+    _presente = _r.get("validated") is True
+
+    _res = {
+        "participant": (_r.get("userName") or _r.get("userEmail") or "").strip(),
+        "participant_email": (_r.get("userEmail") or "").strip().lower(),
+        "reservation_id": _r.get("id") or _r.get("reservationCode") or "",
+        "course_id": _r.get("courseId") or "",
+        "occurrence": occurrence if occurrence is not None else (_r.get("datetime") or ""),
+        "coach_id": (_r.get("coach_id") or "").strip().lower(),
+        "presente": _presente,
+        "tarif_applique": None,
+        "tarif_raison": _r.get("tarif_raison") or "",
+        "valeur": None,
+        "statut_valeur": LOT3F_INCONNU,
+        "source_valeur": "",
+    }
+
+    # ── 1. LE TARIF FIGE ────────────────────────────────────────────────────
+    # `is not None` et pas un test de verite : 0.0 est FAUX en Python, et c'est
+    # precisement la valeur d'un essai ou d'un cadeau. Un `if _fige:` ferait
+    # basculer toutes les gratuites prouvees dans « inconnu ».
+    _fige = _r.get("tarif_applique")
+    if _fige is not None:
+        try:
+            _v = round(float(_fige), 2)
+        except (TypeError, ValueError):
+            _v = None
+        if _v is not None and _v >= 0:
+            _res["tarif_applique"] = _v
+            _res["valeur"] = _v
+            _res["statut_valeur"] = LOT3F_CONNU
+            _res["source_valeur"] = LOT3F_SOURCE_SNAPSHOT
+            return _res
+
+    # ── 2. LE REPLI, UNIQUEMENT SUR UN ENCAISSEMENT PROUVE ──────────────────
+    try:
+        _fin = a_finance_du_droit(souscription, code, _r)
+    except Exception:  # noqa: BLE001
+        _fin = {}
+    if _fin.get("montant_prouve"):
+        _par_seance = _fin.get("valeur_par_seance")
+        if _par_seance is None and _fin.get("montant") is not None \
+                and (_fin.get("seances_achetees") or 0) == 1:
+            # Un droit d'UNE seance : la valeur de la seance EST le montant.
+            # `a_finance_du_droit` ne divise pas ce cas (la division n'apprendrait
+            # rien) — ne pas le poser perdrait le cas le plus simple.
+            _par_seance = _fin.get("montant")
+        if _par_seance is not None:
+            try:
+                _res["valeur"] = round(float(_par_seance), 2)
+                _res["statut_valeur"] = LOT3F_CONNU
+                _res["source_valeur"] = LOT3F_SOURCE_ENCAISSEMENT
+            except (TypeError, ValueError):
+                pass
+
+    # La raison, si elle n'a pas ete figee, se lit sur les documents jumeaux —
+    # jamais deduite du montant (15 CHF peut etre un forfait, une promo ou un
+    # plein tarif).
+    if not _res["tarif_raison"]:
+        try:
+            _res["tarif_raison"] = lot3_raison_du_droit(souscription, code)
+        except Exception:  # noqa: BLE001
+            _res["tarif_raison"] = ""
+    return _res
+
+
+def lot3f_bilan_occurrence(lignes, occurrence=None, coach_id=None) -> dict:
+    """Le bilan d'UNE occurrence, a partir de lignes deja calculees. Pure.
+
+    TROIS FILTRES, dans cet ordre, et chacun pour une raison :
+
+      * `presente` — un absent n'est pas un present. Il peut figurer ailleurs
+        comme absent ; il n'entre ni dans le compte, ni dans le total.
+      * `occurrence` — deux seances du meme cours sont deux bilans. Sans ce
+        filtre, le mardi et le mardi suivant se melangeraient.
+      * `coach_id` — la valeur ne franchit pas la frontiere d'un proprietaire.
+        C'est la meme regle que `lot3c0_perimetre` : sur une chaine d'argent,
+        la generosite s'appelle une fuite.
+
+    ANTI-DOUBLE COMPTAGE. Le risque, ICI, n'est pas celui d'un achat compte deux
+    fois — on ne somme pas des achats, on somme des PRESENCES. C'est qu'une
+    meme personne apparaisse deux fois a la meme occurrence (deux reservations
+    pour un seul corps dans la salle). On dedoublonne donc par identite +
+    occurrence, en gardant la premiere ligne rencontree.
+    ⚠️ La regle de deduplication des ACHATS (souscription + paiement Stripe,
+    rapproches par `session_id`) reste necessaire pour un futur bilan
+    d'ENCAISSEMENT — elle ne s'applique pas a ce calcul-ci, qui ne compte pas
+    d'achats. Ne pas confondre les deux, c'est tout l'objet de la distinction
+    « argent encaisse » / « valeur de presence ».
+    """
+    _lignes = [l for l in (lignes or []) if isinstance(l, dict)]
+    _coach = (str(coach_id or "")).strip().lower()
+
+    _retenues, _vues = [], set()
+    for _l in _lignes:
+        if not _l.get("presente"):
+            continue
+        if occurrence is not None and str(_l.get("occurrence") or "") != str(occurrence):
+            continue
+        if _coach and (_l.get("coach_id") or "") != _coach:
+            continue
+        _cle = ((_l.get("participant_email") or _l.get("participant") or "").lower(),
+                str(_l.get("occurrence") or ""))
+        if _cle in _vues:
+            continue
+        _vues.add(_cle)
+        _retenues.append(_l)
+
+    _connues = [l for l in _retenues if l.get("statut_valeur") == LOT3F_CONNU]
+    _total = 0.0
+    for _l in _connues:
+        try:
+            _total += float(_l.get("valeur") or 0)
+        except (TypeError, ValueError):
+            pass
+
+    return {
+        "occurrence": occurrence if occurrence is not None else (
+            _retenues[0].get("occurrence") if _retenues else ""),
+        "course_id": _retenues[0].get("course_id") if _retenues else "",
+        "participants_presents": len(_retenues),
+        "participants_valeur_connue": len(_connues),
+        "participants_valeur_inconnue": len(_retenues) - len(_connues),
+        # Arrondi APRES la somme, jamais ligne a ligne : arrondir chaque valeur
+        # puis additionner ferait deriver le total de quelques centimes.
+        "total_connu": round(_total, 2),
+        "devise": B_DEVISE_DEFAUT,
+        "lignes": _retenues,
+    }
