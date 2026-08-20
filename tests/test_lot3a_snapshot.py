@@ -361,8 +361,37 @@ def partie_6_perimetre():
                 t = io.open(os.path.join(dossier, nom), encoding="utf-8").read()
                 if "tarif_applique" in t or "tarif_raison" in t:
                     trouve.append(nom)
-    verifier("6f. AUCUN ecran n'est modifie — le lot est invisible cote client",
-             not trouve, str(trouve))
+    # ── 6f A CHANGE DE CIBLE, ET IL FAUT DIRE POURQUOI ──────────────────────
+    #
+    # Elle exigeait qu'AUCUN fichier du frontend ne mentionne `tarif_applique`
+    # ni `tarif_raison` : LOT 3a ecrivait un snapshot que personne ne lisait, et
+    # cette assertion garantissait qu'il restait invisible.
+    #
+    # Le BILAN DE SEANCE existe precisement pour le rendre visible — c'est sa
+    # raison d'etre, demandee explicitement. L'assertion d'origine ne peut donc
+    # plus tenir telle quelle sans interdire le lot qu'elle precede.
+    #
+    # ELLE N'EST PAS SUPPRIMEE, ELLE EST REMISE SUR SA CIBLE. Ce qu'elle
+    # protegeait vraiment, et qui reste vrai : le navigateur AFFICHE ces champs,
+    # il n'en CALCULE jamais rien. Une arithmetique cote client creerait une
+    # seconde verite financiere — exactement ce que LOT 3 FINANCE empeche.
+    _AUTORISES = ("ChatWidget.js", "BilanSeance.test.js")
+    _hors_bilan = [n for n in trouve if n not in _AUTORISES]
+    verifier("6f. seul le Bilan de seance lit le snapshot — aucun autre ecran",
+             not _hors_bilan, str(_hors_bilan))
+
+    _calculs = []
+    for _dossier, _, _fichiers in os.walk(front):
+        for _nom in _fichiers:
+            if not _nom.endswith((".js", ".jsx")):
+                continue
+            _t = io.open(os.path.join(_dossier, _nom), encoding="utf-8").read()
+            for _motif in ("tarif_applique *", "tarif_applique /",
+                           "tarif_applique+", "tarif_applique -"):
+                if _motif in _t:
+                    _calculs.append(_nom + " : " + _motif)
+    verifier("6f2. le navigateur AFFICHE le tarif fige, il n'en calcule rien",
+             not _calculs, str(_calculs))
 
 
 def principal():

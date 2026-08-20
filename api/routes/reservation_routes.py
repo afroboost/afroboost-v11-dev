@@ -3364,3 +3364,144 @@ async def check_reservation_eligibility(request: Request):
         if subscriber and subscriber.get("isSubscriber"):
             return {"eligible": True, "subscriber": {"name": subscriber.get("name"), "email": subscriber.get("email")}, "type": "subscriber"}
     return {"eligible": False, "reason": "Aucun abonnement ou code valide trouvé"}
+
+
+# =============================================================================
+# BILAN DE SEANCE — QUI ETAIT LA, ET CE QUE VAUT CETTE SEANCE
+# =============================================================================
+#
+# Pour UNE occurrence precise : les presents, le droit qui a servi, la valeur de
+# chaque presence, et le total. Aucun pourcentage partenaire — ce sera le lot
+# suivant, et cette route est faite pour l'accueillir sans changer de forme.
+#
+# ELLE NE CALCULE RIEN ELLE-MEME. Tout le calcul vit dans `lot3f_valeur_presence`
+# et `lot3f_bilan_occurrence` (LOT 3 FINANCE). La route LIT des documents et les
+# leur passe. Une seconde implementation du meme calcul dans une route serait
+# exactement ce que ce depot combat depuis LOT 3c-0 — six regles de propriete
+# divergentes avaient fini par coexister.
+#
+# L'OCCURRENCE EST UNE CLE, PAS UN LIBELLE. On compare des occurrences
+# NORMALISEES par `lot1_occurrence_iso` : « 2026-08-26T18:30:00Z » et
+# « 2026-08-26T18:30:00 » designent la meme seance, et une comparaison de
+# chaines brutes les separerait. Deux dates du meme cours restent DEUX bilans ;
+# on ne regroupe jamais par nom de cours.
+@reservation_router.get("/reservations/bilan-seance")
+async def get_bilan_seance(request: Request, courseId: str = "",
+                           occurrence: str = ""):
+    """Le bilan financier d'une occurrence. Lecture pure, jamais d'ecriture."""
+    # ── L'IDENTITE D'ABORD, ET UN REFUS FRANC ───────────────────────────────
+    # Une liste vide est une AFFIRMATION (« il n'y a personne »). Quand
+    # l'identite manque, la verite est « je ne sais pas qui tu es » : on refuse.
+    # C'est la lecon V443, et c'est aussi ce qui empeche un anonyme de lire les
+    # noms et les montants d'une seance.
+    # ⚠️ `_v311_coach_email_from_jwt` vit dans `api/server.py`, pas ici : il faut
+    # l'IMPORTER, comme le font les quatre autres routes de ce fichier qui
+    # lisent un jeton. Sans cet import la route levait un `NameError` — donc un
+    # 500, pas un 403 — et le banc en memoire ne pouvait pas le voir puisqu'il
+    # FOURNISSAIT la fonction dans son espace de noms. C'est le banc navigateur
+    # qui l'a attrape, et c'est precisement pour ca qu'il existe.
+    from api.server import _v311_coach_email_from_jwt as _bs_jwt
+    caller_email = (_bs_jwt(request) or "").lower().strip()
+    if not caller_email:
+        raise HTTPException(status_code=403,
+                            detail="Authentification coach requise — reconnectez-vous")
+
+    _cid = (courseId or "").strip()
+    _occ = lot1_occurrence_iso(occurrence) or (occurrence or "").strip()
+    if not _cid or not _occ:
+        raise HTTPException(status_code=400,
+                            detail="Cours et date de la séance requis")
+
+    from api.routes.shared import (lot3c0_perimetre, lot3f_valeur_presence,
+                                   lot3f_bilan_occurrence, choisir_abonnement,
+                                   V20AccesRefuse)
+    try:
+        _perim = lot3c0_perimetre(caller_email, is_super_admin(caller_email))
+    except V20AccesRefuse:
+        raise HTTPException(status_code=403, detail="Authentification coach requise")
+
+    # ── LES RESERVATIONS DE CE COURS, DANS LE PERIMETRE DE L'APPELANT ───────
+    # `lot3c0_perimetre` rend `{}` ou `{"coach_id": ...}`, jamais un operateur :
+    # fusionner les cles equivaut exactement a un `$and`, en plus lisible.
+    _q = dict(_perim)
+    _q["courseId"] = _cid
+    _resas = await db.reservations.find(_q, {"_id": 0}).to_list(500)
+
+    # On filtre l'occurrence APRES lecture, sur la cle normalisee : deux formats
+    # coexistent en base (57 avec fuseau, 74 sans), et un filtre Mongo sur la
+    # chaine brute en manquerait la moitie.
+    _resas = [r for r in _resas
+              if (lot1_occurrence_iso(r.get("datetime")) or "") == _occ]
+
+    _presentes = [r for r in _resas if r.get("validated") is True]
+    _absents = len(_resas) - len(_presentes)
+
+    # ── LES DEUX DOCUMENTS JUMEAUX, EN DEUX REQUETES POUR TOUTE LA PAGE ─────
+    # Jamais un `find_one` par ligne : c'est la regle du depot sur les gros
+    # groupes, et une seance de 40 personnes la rendrait visible.
+    _ids = {(r.get("subscriptionId") or "").strip() for r in _presentes}
+    _ids.discard("")
+    _codes = {(str(r.get("promoCode") or r.get("discountCode") or "")).strip().upper()
+              for r in _presentes}
+    _codes.discard("")
+
+    _subs, _dcs = [], []
+    if _ids or _codes:
+        _ou = []
+        if _ids:
+            _ou.append({"id": {"$in": sorted(_ids)}})
+        if _codes:
+            _ou.append({"code": {"$in": sorted(_codes)}})
+        _q_subs = dict(_perim)
+        _q_subs["$or"] = _ou
+        _subs = await db.subscriptions.find(_q_subs, {"_id": 0}).to_list(500)
+    if _codes:
+        # ⚠️ PAS de perimetre sur les CODES : 100 % des `discount_codes` de
+        # production n'ont pas de `coach_id` (mesure du 20/08/2026). Le filtrer
+        # ici ne cacherait pas une fuite — il rendrait le montant INTROUVABLE
+        # pour tout le monde. Le cloisonnement est deja tenu par les
+        # reservations et les souscriptions, en amont.
+        _dcs = await db.discount_codes.find(
+            {"code": {"$in": sorted(_codes)}}, {"_id": 0}).to_list(500)
+
+    _sub_par_id = {s.get("id"): s for s in _subs if s.get("id")}
+    # Le MEME departage que le debit et que Finance (LOT 3c-0c) : sur un code a
+    # plusieurs souscriptions, c'est `choisir_abonnement` qui tranche, jamais
+    # « le premier rendu par Mongo ».
+    _groupes = {}
+    for s in _subs:
+        _k = (str(s.get("code") or "")).strip().upper()
+        if _k:
+            _groupes.setdefault(_k, []).append(s)
+    _sub_par_code = {_k: choisir_abonnement(_lot) for _k, _lot in _groupes.items()}
+    # ... et le document CANONIQUE pour le code, jamais le premier venu.
+    _code_idx = {}
+    for d in _dcs:
+        _k = (str(d.get("code") or "")).strip().upper()
+        if not _k:
+            continue
+        if _k not in _code_idx or (d.get("canonical") and not _code_idx[_k].get("canonical")):
+            _code_idx[_k] = d
+
+    _lignes = []
+    for r in _presentes:
+        _cle = (str(r.get("promoCode") or r.get("discountCode") or "")).strip().upper()
+        _sub = _sub_par_id.get((r.get("subscriptionId") or "").strip()) \
+            or _sub_par_code.get(_cle)
+        _lignes.append(lot3f_valeur_presence(r, _sub, _code_idx.get(_cle),
+                                             occurrence=_occ))
+
+    _bilan = lot3f_bilan_occurrence(_lignes, occurrence=_occ,
+                                    coach_id=None if is_super_admin(caller_email)
+                                    else caller_email)
+
+    _cours = await db.courses.find_one({"id": _cid}, {"_id": 0}) or {}
+    _bilan["course_name"] = _cours.get("name") or (
+        _presentes[0].get("courseName") if _presentes else "")
+    _bilan["course_time"] = _cours.get("time") or ""
+    _bilan["participants_absents"] = _absents
+    # PROVISOIRE tant qu'une seule valeur manque. Le mot compte : un total qui
+    # se presente comme definitif alors qu'il ignore des presences est un
+    # mensonge poli — celui que ce depot combat depuis V443.
+    _bilan["provisoire"] = _bilan.get("participants_valeur_inconnue", 0) > 0
+    return _bilan

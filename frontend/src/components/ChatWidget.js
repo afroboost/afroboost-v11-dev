@@ -2202,6 +2202,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   // V242: texte de recherche de l'ecran Transactions. Filtrage cote client, sur
   // les 100 transactions deja chargees — aucun appel reseau a la frappe.
   var _cTxQ = useState(''); var v242TxQuery = _cTxQ[0]; var setV242TxQuery = _cTxQ[1];
+  // BILAN DE SEANCE : le bilan ouvert, ou `null`. `bilanCharge` distingue
+  // « en cours de chargement » de « charge mais vide » — une seance sans
+  // personne est un resultat, pas une attente.
+  var _cBil = useState(null); var bilanSeance = _cBil[0]; var setBilanSeance = _cBil[1];
+  var _cBilC = useState(false); var bilanCharge = _cBilC[0]; var setBilanCharge = _cBilC[1];
+  var _cBilE = useState(''); var bilanErreur = _cBilE[0]; var setBilanErreur = _cBilE[1];
   var _cqr = useState(''); var qrScanCode = _cqr[0]; var setQrScanCode = _cqr[1];
   var _cqrR = useState(null); var qrScanResult = _cqrR[0]; var setQrScanResult = _cqrR[1];
   // v162e: QR camera scanner
@@ -5489,6 +5495,43 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     });
   };
 
+  // ═══ BILAN DE SEANCE — ouverture, chargement, fermeture ═══════════════════
+  //
+  // Le bilan est attache a UN cours ET UNE occurrence. Deux seances du meme
+  // cours sont deux bilans : on passe donc toujours les deux, jamais le seul
+  // nom du cours.
+  //
+  // AUCUN MONTANT N'EST CALCULE ICI. Le navigateur affiche ce que le serveur
+  // rend — total, valeurs, statuts. Recalculer cote client creerait une seconde
+  // verite financiere, exactement ce que LOT 3 FINANCE existe pour empecher.
+  var bilanOuvrir = function(courseId, occurrence) {
+    if (!courseId || !occurrence) return;
+    setBilanCharge(false);
+    setBilanErreur('');
+    setBilanSeance({ course_id: courseId, occurrence: occurrence, lignes: [] });
+    var headers = {};
+    var ce = getCoachEmail();
+    if (ce) headers['X-User-Email'] = ce;
+    axios.get(API + '/reservations/bilan-seance?courseId='
+      + encodeURIComponent(courseId) + '&occurrence=' + encodeURIComponent(occurrence),
+      { headers: headers }).then(function(res) {
+        setBilanSeance(res.data || null);
+        setBilanCharge(true);
+      }).catch(function(err) {
+        // On DIT que ca a echoue. Un panneau vide laisserait croire « personne
+        // n'etait la » — une affirmation fausse, et c'est le defaut que V443 a
+        // corrige ailleurs dans ce fichier.
+        var st = err && err.response ? err.response.status : 0;
+        setBilanErreur(st === 403
+          ? 'Session expirée — reconnecte-toi pour voir le bilan.'
+          : 'Bilan indisponible pour le moment.');
+        setBilanCharge(true);
+      });
+  };
+  var bilanFermer = function() {
+    setBilanSeance(null); setBilanCharge(false); setBilanErreur('');
+  };
+
   // V236: ajoute ou retire une seance sur un pack, depuis l'onglet Transactions.
   //
   // La liste est mise a jour a partir de la REPONSE du serveur, pas de facon
@@ -5562,6 +5605,21 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     if (!query) return true;
     var q = String(query).toLowerCase().trim();
     if (!q) return true;
+    // BILAN : la recherche doit retrouver une SEANCE, pas seulement un achat.
+    // `_tx_date` est la date d'ACHAT (`createdAt`) ; `datetime` est la date de
+    // la SEANCE. Les deux sont interrogees, mais c'est la seconde qui compte
+    // pour retrouver « le cours du 21/08 » — les confondre ferait chercher le
+    // jour ou la personne a paye, pas celui ou elle est venue.
+    //
+    // On expose plusieurs ECRITURES de la meme date, parce que le coach tape
+    // « 21/08 » et non « 2026-08-21 ». Aucune conversion de fuseau ici : on
+    // reformule ce qui est deja stocke, on n'en deduit rien.
+    var v242Dates = function(brut) {
+      var s = String(brut || '');
+      if (s.length < 10) return [];
+      var a = s.slice(0, 4), m = s.slice(5, 7), j = s.slice(8, 10);
+      return [s, j + '/' + m + '/' + a, j + '/' + m, j + '.' + m, a + '-' + m + '-' + j];
+    };
     var fields = [
       item._tx_name, item.userName, item.name,
       item._tx_email, item.userEmail, item.email,
@@ -5569,7 +5627,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       item._tx_code, item.reservationCode, item.code,
       item.discountCode, item.promoCode,
       item.id
-    ];
+    ].concat(v242Dates(item.datetime)).concat(v242Dates(item._tx_date));
     for (var i = 0; i < fields.length; i++) {
       if (fields[i] && String(fields[i]).toLowerCase().indexOf(q) !== -1) return true;
     }
@@ -9905,6 +9963,26 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                                 txLabel
                               )
                             ),
+                            // BILAN DE SEANCE : le point d'entree. Visible
+                            // seulement sur une reservation qui sait A QUELLE
+                            // SEANCE elle appartient — sans `courseId` ni
+                            // occurrence, un bilan serait un regroupement
+                            // approximatif, et le proprietaire les a exclus.
+                            (isReservation && r.courseId && r.datetime) && React.createElement('button', {
+                              type: 'button',
+                              'data-testid': 'ouvrir-bilan',
+                              onClick: function(e) {
+                                e.stopPropagation();
+                                bilanOuvrir(r.courseId, r.datetime);
+                              },
+                              style: {
+                                marginTop: '6px', padding: '4px 10px', borderRadius: '10px',
+                                fontSize: '10px', fontWeight: 600, cursor: 'pointer',
+                                color: 'var(--primary-color, #D91CD2)',
+                                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
+                                border: '1px solid var(--primary-color, #D91CD2)'
+                              }
+                            }, 'Bilan de la séance'),
                             // V191b: badge × N places
                             (qty > 1) && React.createElement('div', {
                               style: {
@@ -12202,6 +12280,174 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         </div>,
         document.body
       )}
+
+      {/* BILAN DE SEANCE — QUI ETAIT LA, ET CE QUE VAUT CETTE SEANCE.
+          Rendu dans un PORTAIL sur document.body, et non dans l'onglet :
+          le conteneur du widget est en overflow:hidden et large de 380 px
+          hors plein ecran — un panneau rendu dedans serait decoupe. C'est
+          l'incident V350, deja resolu de cette facon pour la roue des langues.
+          Desktop : panneau ancre a DROITE, la liste reste visible a gauche.
+          Mobile  : plein ecran, avec un retour explicite. */}
+      {bilanSeance && ReactDOM.createPortal(
+        React.createElement('div', {
+          'data-testid': 'bilan-voile',
+          style: {
+            position: 'fixed', inset: 0, zIndex: 10000002,
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex',
+            justifyContent: isMobileView ? 'center' : 'flex-end',
+            alignItems: isMobileView ? 'stretch' : 'stretch'
+          },
+          onClick: function() { bilanFermer(); }
+        },
+          React.createElement('div', {
+            'data-testid': 'bilan-panneau',
+            onClick: function(e) { e.stopPropagation(); },
+            style: {
+              background: '#1a1a1a',
+              width: isMobileView ? '100vw' : 'min(460px, 92vw)',
+              height: '100vh', overflowY: 'auto',
+              padding: isMobileView ? '18px 16px 32px' : '22px 20px 32px',
+              borderLeft: isMobileView ? 'none' : '1px solid rgba(255,255,255,0.12)',
+              boxShadow: isMobileView ? 'none' : '-8px 0 28px rgba(0,0,0,0.45)'
+            }
+          },
+            // ── En-tete : le retour d'abord, comme partout ailleurs ──────────
+            React.createElement('div', {
+              style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }
+            },
+              React.createElement('button', {
+                type: 'button', 'data-testid': 'bilan-fermer',
+                onClick: function(e) { e.stopPropagation(); bilanFermer(); },
+                style: {
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: '#aaa', fontSize: '13px', padding: '4px 0'
+                }
+              }, isMobileView ? '← Transactions' : '← Fermer'),
+              React.createElement('span', {
+                style: { color: '#666', fontSize: '10px', letterSpacing: '0.08em', textTransform: 'uppercase' }
+              }, 'Bilan de séance')
+            ),
+
+            // ── Cours et date : la priorite visuelle n° 1 ────────────────────
+            React.createElement('div', { style: { color: '#fff', fontSize: '18px', fontWeight: 600 } },
+              bilanSeance.course_name || 'Séance'),
+            React.createElement('div', { style: { color: '#aaa', fontSize: '12px', marginTop: '2px' } },
+              String(bilanSeance.occurrence || '').replace('T', ' · ').slice(0, 16)),
+
+            // ── Erreur : on la DIT, on ne rend pas un panneau vide ───────────
+            bilanErreur && React.createElement('div', {
+              'data-testid': 'bilan-erreur',
+              style: {
+                marginTop: '16px', padding: '10px 12px', borderRadius: '8px',
+                background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+                color: '#fca5a5', fontSize: '12px'
+              }
+            }, bilanErreur),
+
+            (!bilanCharge && !bilanErreur) && React.createElement('div', {
+              style: { color: '#666', fontSize: '12px', marginTop: '18px' }
+            }, 'Chargement…'),
+
+            // ── Presents / absents ──────────────────────────────────────────
+            (bilanCharge && !bilanErreur) && React.createElement('div', {
+              style: { display: 'flex', gap: '18px', marginTop: '16px' }
+            },
+              React.createElement('div', null,
+                React.createElement('div', { 'data-testid': 'bilan-presents',
+                  style: { color: '#fff', fontSize: '22px', fontWeight: 700 } },
+                  String(bilanSeance.participants_presents || 0)),
+                React.createElement('div', { style: { color: '#aaa', fontSize: '11px' } }, 'présents')
+              ),
+              React.createElement('div', null,
+                React.createElement('div', { style: { color: '#aaa', fontSize: '22px', fontWeight: 700 } },
+                  String(bilanSeance.participants_absents || 0)),
+                React.createElement('div', { style: { color: '#666', fontSize: '11px' } }, 'absents')
+              )
+            ),
+
+            // ── LE TOTAL. Provisoire tant qu'une valeur manque : un total qui
+            //    se dit definitif en ignorant des presences est un mensonge poli.
+            (bilanCharge && !bilanErreur) && React.createElement('div', {
+              style: {
+                marginTop: '16px', padding: '12px 14px', borderRadius: '10px',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.10)',
+                border: '1px solid var(--primary-color, #D91CD2)'
+              }
+            },
+              React.createElement('div', {
+                style: { color: '#aaa', fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase' }
+              }, bilanSeance.provisoire ? 'Total provisoire' : 'Total de la séance'),
+              React.createElement('div', {
+                'data-testid': 'bilan-total',
+                style: { color: 'var(--primary-color, #D91CD2)', fontSize: '24px', fontWeight: 700, marginTop: '2px' }
+              }, String(bilanSeance.total_connu != null ? bilanSeance.total_connu : 0)
+                 + ' ' + (bilanSeance.devise || 'CHF')),
+              (bilanSeance.participants_valeur_inconnue > 0) && React.createElement('div', {
+                'data-testid': 'bilan-a-verifier',
+                style: { color: '#fbbf24', fontSize: '11px', marginTop: '4px' }
+              }, String(bilanSeance.participants_valeur_inconnue)
+                 + (bilanSeance.participants_valeur_inconnue > 1
+                    ? ' présences à vérifier' : ' présence à vérifier')),
+              // La distinction que le proprietaire a posee : ce total est la
+              // VALEUR DES PRESENCES, pas l'argent encaisse aujourd'hui. Un
+              // pack paye la semaine derniere vaut 15 CHF ce soir et 0 CHF
+              // d'encaissement du jour. Ne jamais additionner les deux.
+              React.createElement('div', {
+                style: { color: '#666', fontSize: '10px', marginTop: '6px', lineHeight: 1.4 }
+              }, 'Valeur des présences — pas l’encaissement du jour.')
+            ),
+
+            // ── Les participants presents, une ligne chacun ──────────────────
+            (bilanCharge && !bilanErreur) && React.createElement('div', { style: { marginTop: '18px' } },
+              (bilanSeance.lignes || []).length === 0
+                ? React.createElement('div', { style: { color: '#666', fontSize: '12px' } },
+                    'Aucun participant validé pour cette séance.')
+                : (bilanSeance.lignes || []).map(function(l, i) {
+                    var inconnue = l.statut_valeur !== 'connu';
+                    return React.createElement('div', {
+                      key: (l.reservation_id || '') + '-' + i,
+                      'data-testid': 'bilan-ligne',
+                      style: {
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '9px 0', borderBottom: '1px solid rgba(255,255,255,0.08)'
+                      }
+                    },
+                      React.createElement('div', { style: { minWidth: 0, paddingRight: '10px' } },
+                        React.createElement('div', {
+                          style: { color: '#fff', fontSize: '13px', whiteSpace: 'nowrap',
+                                   overflow: 'hidden', textOverflow: 'ellipsis' }
+                        }, l.participant || '—'),
+                        React.createElement('div', { style: { color: '#666', fontSize: '10px', marginTop: '1px' } },
+                          l.tarif_raison || '')
+                      ),
+                      React.createElement('div', {
+                        style: {
+                          color: inconnue ? '#fbbf24' : '#fff',
+                          fontSize: '13px', fontWeight: 600, whiteSpace: 'nowrap'
+                        }
+                      }, inconnue ? 'À vérifier'
+                                  : (String(l.valeur) + ' ' + (bilanSeance.devise || 'CHF')))
+                    );
+                  })
+            ),
+
+            // ── La place du lot suivant, nommee et vide ──────────────────────
+            //    Le partage partenaire viendra ICI, dans ce meme panneau : le
+            //    proprietaire a exclu toute nouvelle page.
+            (bilanCharge && !bilanErreur) && React.createElement('div', {
+              'data-testid': 'bilan-zone-partenaire',
+              style: {
+                marginTop: '20px', paddingTop: '14px',
+                borderTop: '1px solid rgba(255,255,255,0.12)',
+                color: '#666', fontSize: '11px'
+              }
+            }, 'Partage partenaire — bientôt disponible')
+          )
+        ),
+        document.body
+      )}
+      {/* FIN BILAN DE SEANCE */}
 
       {/* V295 (Fix 0) : MODALE DE PUBLICATION rendue GLOBALEMENT (coach ET abonné).
           Avant, elle vivait dans la branche coach -> jamais montée pour un abonné,
