@@ -89,6 +89,14 @@ def _ns_promo(db, coach="coach@test"):
         # annotation de signature, evaluee au moment du `def`
         "DiscountCodeCreate": _Corps,
         "Request": object, "Optional": None, "List": list, "dict": dict, "str": str,
+        # LOT 3c-0 : `PUT /discount-codes/{id}` est passe JWT-strict, avec la
+        # meme garde que le DELETE voisin. Le banc fournit donc les deux
+        # fonctions d'identite que cette garde appelle. `coach_jwt_email` lit
+        # ici l'en-tete de la fausse requete : c'est le SEUL endroit ou une
+        # signature est simulee, et le test choisit deliberement qui appelle.
+        "is_super_admin": lambda e: (e or "").lower().strip() == "admin@test",
+        "coach_jwt_email": lambda r: (
+            (getattr(r, "headers", {}) or {}).get("X-User-Email", "") if r is not None else ""),
     }
 
     async def _resolve_offer_details(courses_list, max_uses, offer_name_override=None):
@@ -244,9 +252,16 @@ async def test_route_modification():
                  origine_paiement="especes", maxUses=10)
     db.discount_codes.docs[0]["_id"] = "oid-1"
     ns = _ns_promo(db)
+    # LOT 3c-0 : la route exige desormais une identite SIGNEE, et ne laisse
+    # modifier que SES codes. Le code cree ci-dessus appartient a « coach@test »
+    # (`create_discount_code` lui pose son `coach_id`) : on appelle donc en tant
+    # que ce coach, inscrit en base comme le veut la garde. C'est le parcours
+    # LEGITIME — celui qui doit continuer de passer (regle V310c).
+    db.coaches.docs.append({"email": "coach@test"})
+    _req = _Requete({"X-User-Email": "coach@test"})
 
     await ns["update_discount_code"]("TESTB-01", {"montant_encaisse": 150,
-                                                 "origine_paiement": "twint"})
+                                                 "origine_paiement": "twint"}, _req)
     verifier("14. correction du montant : le code est mis a jour",
              db.discount_codes.docs[0].get("montant_encaisse") == 150.0
              and db.discount_codes.docs[0].get("origine_paiement") == "twint",
@@ -257,20 +272,20 @@ async def test_route_modification():
              str(db.subscriptions.docs[0]))
 
     # changer le seul moyen : le montant deja declare n'est pas a resaisir
-    await ns["update_discount_code"]("TESTB-01", {"origine_paiement": "virement"})
+    await ns["update_discount_code"]("TESTB-01", {"origine_paiement": "virement"}, _req)
     verifier("14c. changer le seul moyen conserve le montant declare",
              db.discount_codes.docs[0].get("montant_encaisse") == 150.0
              and db.discount_codes.docs[0].get("origine_paiement") == "virement", "")
 
     # une edition qui ne touche pas a l'argent n'exige rien
-    await ns["update_discount_code"]("TESTB-01", {"expiresAt": "2027-01-01"})
+    await ns["update_discount_code"]("TESTB-01", {"expiresAt": "2027-01-01"}, _req)
     verifier("14d. editer une date n'exige aucune redeclaration",
              db.discount_codes.docs[0].get("expiresAt") == "2027-01-01", "")
 
     # le formulaire d'edition ne contourne pas la regle
     try:
         await ns["update_discount_code"]("TESTB-01", {"montant_encaisse": 0,
-                                                     "origine_paiement": "especes"})
+                                                     "origine_paiement": "especes"}, _req)
         verifier("15. l'edition ne contourne pas la regle : refus attendu", False, "accepte !")
     except _HTTPException as e:
         verifier("15. l'edition ne contourne pas la regle (0 non offert refuse)",
@@ -314,10 +329,19 @@ async def test_pas_de_prix_catalogue():
     db = _Base()
     db.discount_codes.docs = [{"code": "VIEUXCODE", "courses": ["off-1"], "stripe_amount": None}]
     db.offers.docs = [{"id": "off-1", "name": "PULSE x10 cours", "price": 270.0}]
+    # LOT 3c-0 : la route a pris un parametre `request` — elle n'en avait AUCUN,
+    # donc s'y authentifier etait impossible alors qu'elle ecrit `stripe_amount`
+    # sur TOUS les codes d'un coup (`update_many`). Elle exige desormais un
+    # super-admin SIGNE. Le banc fournit l'annotation `Request` (evaluee au `def`)
+    # et l'identite, puis appelle par le parcours LEGITIME : le super-admin.
     ns = {"db": db, "re": __import__("re"), "logger": _Journal(),
-          "HTTPException": _HTTPException, "datetime": datetime, "timezone": timezone}
+          "HTTPException": _HTTPException, "datetime": datetime, "timezone": timezone,
+          "Request": object,
+          "is_super_admin": lambda e: (e or "").lower().strip() == "admin@test",
+          "_v311_coach_email_from_jwt": lambda r: (
+              (getattr(r, "headers", {}) or {}).get("X-User-Email", "") if r is not None else "")}
     exec(compile(bloc, "server.py", "exec"), ns)
-    res = await ns["fix_all_stripe_amounts"]()
+    res = await ns["fix_all_stripe_amounts"](_Requete({"X-User-Email": "admin@test"}))
     verifier("18. un code sans montant ressort « no_price », pas « 270 »",
              res["results"][0]["status"] == "no_price", str(res))
     verifier("18b. aucun montant n'a ete ecrit",
@@ -333,7 +357,7 @@ async def test_pas_de_prix_catalogue():
     ]
     ns["db"] = db
     exec(compile(bloc, "server.py", "exec"), ns)
-    res = await ns["fix_all_stripe_amounts"]()
+    res = await ns["fix_all_stripe_amounts"](_Requete({"X-User-Email": "admin@test"}))
     verifier("19. recopie entre documents jumeaux : toujours possible",
              all(d.get("stripe_amount") == 250.0 for d in db.discount_codes.docs), str(db.discount_codes.docs))
 

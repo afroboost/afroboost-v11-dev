@@ -178,6 +178,13 @@ class _Base:
         self.discount_codes = _Collection()
         self.code_members = _Collection()
         self.users = _Collection()
+        # LOT 3c-0 : les gardes d'authentification des routes promo verifient
+        # que l'appelant EXISTE (`coaches` ou `coach_auth`) avant de lui ouvrir
+        # une ecriture. Le banc doit donc porter ces deux collections, sinon
+        # une route gardee echoue sur un `AttributeError` au lieu d'etre testee.
+        # Vides par defaut : aucune suite existante ne les lit.
+        self.coaches = _Collection()
+        self.coach_auth = _Collection()
         # B : le catalogue. Present pour PROUVER qu'il n'est plus lu comme
         # source de prix historique — le test le remplit et verifie qu'aucun de
         # ses prix ne ressort.

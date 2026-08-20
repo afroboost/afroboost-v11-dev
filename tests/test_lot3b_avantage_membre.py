@@ -165,9 +165,26 @@ def _champs_de_classe(arbre, nom):
     return champs
 
 
-# Le bloc LOT 3b de shared.py : du titre de section jusqu'a la fin du fichier.
+# Le bloc LOT 3b de shared.py : du titre de section jusqu'a LA BANNIERE DE
+# SECTION SUIVANTE.
+#
+# Il allait auparavant « jusqu'a la fin du fichier ». Tant que LOT 3b etait la
+# DERNIERE section, les deux definitions se confondaient — mais elles ne
+# disaient pas la meme chose, et le premier lot ajoute apres l'a montre : les
+# fonctions de LOT 3c-0, ecrites en fin de fichier, se retrouvaient comptees
+# comme du LOT 3b. La verification 8i, qui interdit un filtre Mongo reconstruit
+# A LA MAIN *dans le bloc LOT 3b*, echouait alors sur le `{"coach_id": ...}` de
+# `lot3c0_perimetre` — lequel est justement la regle de propriete CENTRALISEE
+# que ce lot-la publie. On mesure desormais le bloc, pas le reste du fichier.
 _DEBUT_3B = SHARED_SRC.find("LOT 3b — L'AVANTAGE MEMBRE")
-BLOC_3B = SHARED_SRC[_DEBUT_3B:] if _DEBUT_3B > 0 else ""
+_BANNIERE = "\n# " + "=" * 20
+# La 1re banniere apres le titre le REFERME ; c'est la 2e qui ouvre la section
+# suivante, et donc elle qui borne le bloc.
+_FERMETURE_TITRE_3B = SHARED_SRC.find(_BANNIERE, _DEBUT_3B) if _DEBUT_3B > 0 else -1
+_FIN_3B = (SHARED_SRC.find(_BANNIERE, _FERMETURE_TITRE_3B + 1)
+           if _FERMETURE_TITRE_3B > 0 else -1)
+BLOC_3B = (SHARED_SRC[_DEBUT_3B:_FIN_3B if _FIN_3B > 0 else len(SHARED_SRC)]
+           if _DEBUT_3B > 0 else "")
 
 
 # `lot3b_occurrences_prouvees` importe TROIS garanties de LOT 1 depuis
@@ -552,6 +569,19 @@ def partie_4_snapshot():
 def partie_5_perimetre():
     print("\n=== 5. LE LOT LIT LES ADHESIONS, IL N'EN ECRIT AUCUNE ===")
     verifier("5a. le bloc LOT 3b de shared.py existe", bool(BLOC_3B))
+    # SONDE DU DECOUPAGE LUI-MEME. Sans elle, une section ajoutee apres LOT 3b
+    # serait de nouveau mesuree comme du LOT 3b, et toutes les verifications
+    # « absent du bloc » deviendraient faussement rouges — ou pire, faussement
+    # vertes le jour ou on relacherait la borne. On verifie donc que le bloc
+    # s'arrete bien AVANT la section suivante, et qu'il ne contient rien
+    # d'etranger a LOT 3b.
+    verifier("5a2. le bloc s'arrete a la section suivante, pas a la fin du fichier",
+             bool(BLOC_3B) and len(BLOC_3B) < len(SHARED_SRC[_DEBUT_3B:]),
+             "le bloc court jusqu'a EOF : une section a ete ajoutee apres LOT 3b "
+             "sans banniere, ou la borne a saute")
+    verifier("5a3. ... et il ne contient aucune fonction d'un autre lot",
+             "lot3c0_" not in BLOC_3B and "def lot2_" not in BLOC_3B,
+             BLOC_3B[-200:])
 
     ecritures = []
     for n in ast.walk(SHARED_ARBRE):

@@ -314,8 +314,16 @@ def test_projection():
     for champ in ("subscriptionId", "discountCode", "courseId"):
         verifier("27. la liste paginee renvoie `%s` (elle ne le faisait pas)" % champ,
                  '"%s": 1' % champ in proj, proj[:120])
+    # LOT 3c-0 : l'appel prend desormais un SECOND argument, le perimetre de
+    # propriete deja calcule pour la requete principale. On ne cherche donc plus
+    # la parenthese fermante — cette assertion mesurait la FORME de l'appel, pas
+    # son existence. Ce qui compte reste vrai, et on verifie en plus que le
+    # perimetre est bien transmis : sans lui, la resolution de l'argent
+    # traverserait les coachs.
     verifier("27b. l'enrichissement est bien appele sur la liste",
-             "_a_enrichir_finance(reservations)" in src, "")
+             "_a_enrichir_finance(reservations" in src, "")
+    verifier("27c. et il recoit le perimetre de propriete de la requete",
+             "_a_enrichir_finance(reservations, base_query)" in src, "")
 
 
 # ═══════════ 7. L'INTERFACE — MOBILE ET DESKTOP ═════════════════════════════

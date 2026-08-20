@@ -3189,3 +3189,200 @@ def lot3b_arbitrer(base, total_promo, total_membre=None, pct_membre=None,
         return {"total": _membre, "raison": "membre",
                 "avantage_pct": round(_pct, 2)}
     return _sans_membre()
+
+
+# =============================================================================
+# LOT 3c-0 — LA PROPRIETE DE LA CHAINE FINANCIERE
+# =============================================================================
+#
+# CE LOT NE CALCULE RIEN. Il ne change ni un prix, ni une presence, ni un
+# snapshot tarifaire. Il repond a une seule question, partout de la meme
+# facon : A QUI APPARTIENT CE DOCUMENT, et QUI a le droit de le lire.
+#
+# POURQUOI IL PASSE AVANT LE BILAN. Le futur partage partenaire calculera de
+# l'argent. Une somme exacte dont on ne sait pas a qui elle revient ne vaut
+# rien — pire, elle donne une fausse assurance. On ferme donc la chaine
+# AVANT de la faire compter.
+#
+# CE QUE LE DEPOT AVAIT DEJA, ET QUI ETAIT LE PROBLEME : SIX regles de
+# propriete qui se contredisent (`p1a_filtre_proprietaire`,
+# `v20_perimetre_contacts`, le filtre local de `/contacts/all`, celui de
+# `GET /reservations`, le « legacy_or » de `/dashboard/all-transactions`, et
+# `conv_offres_premier_achat`). Elles ne donnent pas la meme reponse a
+# « que voit le super-admin ? » ni a « qui voit les orphelins ? ».
+# On n'en ajoute PAS une septieme : les deux fonctions ci-dessous sont
+# IMPORTEES par leurs appelants, jamais recopiees, et un test l'exige.
+
+LOT3C0_PREFIXE = "[LOT3c-0]"
+
+
+def lot3c0_proprietaire_canonique(coach_id=None) -> str:
+    """Le proprietaire a ECRIRE. Jamais `None`, jamais la chaine vide.
+
+    DECISION DU PROPRIETAIRE : `None` cesse d'etre une facon normale de
+    designer un proprietaire. `None` veut dire « on ne sait pas » ; ce lot
+    veut pouvoir dire « cette donnee appartient reellement a la plateforme ».
+    C'est indispensable avant l'arrivee de partenaires : le jour ou deux
+    coachs se partagent une recette, un document sans proprietaire n'est pas
+    une donnee neutre, c'est une donnee litigieuse.
+
+    Ne s'applique QU'AUX NOUVELLES ECRITURES. Le stock ancien n'est pas
+    touche — voir `lot3c0_perimetre` pour la facon dont il reste lisible.
+    """
+    _c = coach_id.strip().lower() if isinstance(coach_id, str) else ""
+    return _c or DEFAULT_COACH_ID
+
+
+def lot3c0_perimetre(appelant, est_admin: bool) -> dict:
+    """Le filtre Mongo de LECTURE. LEVE plutot que de rendre un filtre vide.
+
+    Trois comportements, et trois seulement :
+
+      * PAS D'IDENTITE  -> `V20AccesRefuse`. On ne rend JAMAIS un filtre qui
+        ne remonte rien : une liste vide est une AFFIRMATION (« il n'y a
+        rien »), et la faire sans pouvoir la verifier est le defaut que V443 a
+        deja paye une fois sur cette meme route — le coach a lu « aucune
+        reservation » alors que la base en contenait 128, toutes a son nom.
+
+      * PROPRIETAIRE / SUPER-ADMIN -> `{}`. Il voit TOUT, y compris le stock
+        historique sans proprietaire. C'est la reponse a la compatibilite des
+        anciennes donnees : elle est obtenue SANS BACKFILL et sans reecrire
+        une seule ligne. Les documents a `coach_id` absent, `None` ou vides
+        restent tels quels et restent lisibles par lui.
+
+      * COACH PARTENAIRE -> `{"coach_id": <son email>}`, strictement. Ni les
+        orphelins, ni le stock d'un autre. C'est volontairement plus etroit
+        que le « legacy_or » de `/dashboard/all-transactions`, qui offre les
+        orphelins a tout coach : sur une chaine d'argent, cette generosite-la
+        s'appelle une fuite.
+
+    L'identite qu'on lui passe doit venir d'un JWT SIGNE. Cette fonction ne
+    verifie rien : elle ne sait pas d'ou vient l'e-mail qu'on lui donne. C'est
+    a l'appelant d'exiger la preuve — d'ou `_v309_require_coach_or_admin`.
+    """
+    _e = appelant.strip().lower() if isinstance(appelant, str) else ""
+    if not _e:
+        raise V20AccesRefuse("identité requise")
+    if est_admin:
+        return {}
+    return {"coach_id": _e}
+
+
+async def lot3c0_coach_enregistre(db, email) -> bool:
+    """Cet e-mail designe-t-il un coach REELLEMENT enregistre ?
+
+    Meme regle que `_v309_is_coach_or_admin` (api/server.py) : super-admin, ou
+    presence dans `coaches` ou `coach_auth`. Elle est REECRITE ici et non
+    importee parce que `shared.py` est volontairement en dessous de
+    `api.server` — il ne l'importe nulle part, et lui faire remonter la
+    dependance creerait un cycle a l'import. C'est la seule duplication du lot,
+    elle est assumee, et un test verifie que les deux versions repondent
+    pareil.
+
+    Ne leve jamais : une base illisible rend `False`, c'est-a-dire « je ne peux
+    pas le prouver », jamais « c'est bon ».
+    """
+    _e = str(email or "").strip().lower()
+    if not _e:
+        return False
+    if is_super_admin(_e):
+        return True
+    try:
+        if await db["coaches"].find_one({"email": _e}, {"_id": 1}):
+            return True
+        if await db["coach_auth"].find_one({"email": _e}, {"_id": 1}):
+            return True
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s annuaire coach illisible (%s) — non prouve",
+                       LOT3C0_PREFIXE, type(_err).__name__)
+    return False
+
+
+async def lot3c0_proprietaire_de_la_seance(db, course_id=None, coach_id_declare=None) -> str:
+    """A QUI APPARTIENT CETTE RESERVATION ? La reponse est LUE EN BASE.
+
+    LE DEFAUT D'ORIGINE. `POST /api/reservations` resolvait le proprietaire
+    ainsi : en-tete `X-User-Email`, sinon le CORPS de la requete, sinon le
+    defaut. Or cette route n'a aucune authentification — et ne peut pas en
+    avoir, c'est elle qui enregistre la reservation d'un VISITEUR apres son
+    paiement. N'importe qui pouvait donc s'attribuer la reservation d'un autre,
+    l'adresse a inscrire etant publiee sans authentification par
+    `GET /api/courses`.
+
+    L'ORDRE DE CONFIANCE, du plus sur au moins sur :
+
+      1. LE COURS. `courseId` -> `courses.coach_id`. C'est la seule source
+         AUTORITAIRE : elle est en base, le navigateur ne peut pas la
+         reecrire. Un menteur qui reserve le cours de A en se declarant B est
+         donc enregistre chez A — le cours tranche, pas la declaration.
+
+      2. LE COACH DECLARE, MAIS SEULEMENT S'IL EST VERIFIE. `coach_id` du
+         corps n'est retenu QUE s'il designe un coach reellement enregistre
+         (`lot3c0_coach_enregistre`). C'est la compatibilite dont les
+         parcours SANS cours ont besoin — produit physique, offre libre —
+         et ou le cours ne peut, par construction, rien trancher. Un
+         `coach_id` invente ne passe pas : il est journalise et ecarte.
+
+      3. LA PLATEFORME, ET SEULEMENT QUAND RIEN N'A ETE DECLARE. Aucune
+         designation de cours, aucune designation de coach : la reservation
+         a bien ete prise sur la vitrine principale, elle appartient
+         reellement a la plateforme.
+
+    CE QUI A DISPARU, ET POURQUOI. La branche « offre » a ete RETIREE. Elle ne
+    pouvait pas s'executer : `offerId` n'est pas un champ de `ReservationBase`,
+    Pydantic l'ecarte en silence, et le seul appelant qui en envoie un
+    (`ChatWidget`) y met en realite un identifiant de COURS. Une regle
+    documentee « cours -> offre -> defaut » alors que le maillon du milieu est
+    inatteignable est une regle qui ment ; on decrit desormais ce qui tourne.
+
+    « INCONNU » N'EST JAMAIS « LA PLATEFORME », ET N'EST JAMAIS SILENCIEUX.
+    Quand une designation existe mais ne se resout pas — cours introuvable,
+    cours sans proprietaire, coach declare inconnu — on retombe sur la
+    plateforme MAIS on le journalise en ERREUR, avec un motif stable et
+    cherchable (`grep "motif=cours_sans_proprietaire"`). C'est la difference
+    entre une attribution par defaut et une attribution silencieuse : la
+    premiere se voit dans les journaux et se corrige, la seconde se decouvre
+    six mois plus tard dans un bilan faux.
+
+    NE LEVE JAMAIS. Une lecture d'appoint ratee ne doit pas faire echouer un
+    parcours qui PAIE.
+    """
+    _motif = ""
+
+    # ── 1. LE COURS — la seule source autoritaire ───────────────────────────
+    _cid = str(course_id or "").strip()
+    if _cid:
+        try:
+            _c = await db["courses"].find_one({"id": _cid}, {"_id": 0, "coach_id": 1})
+            if _c is None:
+                _motif = "cours_introuvable"
+            elif str(_c.get("coach_id") or "").strip():
+                return lot3c0_proprietaire_canonique(_c.get("coach_id"))
+            else:
+                # Le cours existe mais n'a pas de proprietaire (stock ancien,
+                # ou cours cree sans en-tete d'identite). On NE consulte PAS la
+                # declaration du navigateur ici : ce serait rouvrir le vol,
+                # puisqu'un cours orphelin est designable par n'importe qui.
+                _motif = "cours_sans_proprietaire"
+        except Exception as _err:  # noqa: BLE001
+            _motif = "cours_illisible_%s" % type(_err).__name__
+
+    # ── 2. LE COACH DECLARE, VERIFIE EN BASE ────────────────────────────────
+    # Uniquement quand le cours n'a rien tranche. Si le cours a designe un
+    # proprietaire, on est deja sorti ; s'il a ete designe mais reste muet, on
+    # ne laisse pas la declaration prendre sa place (voir ci-dessus).
+    if not _motif:
+        _declare = str(coach_id_declare or "").strip().lower()
+        if _declare:
+            if await lot3c0_coach_enregistre(db, _declare):
+                return lot3c0_proprietaire_canonique(_declare)
+            _motif = "coach_declare_inconnu"
+
+    # ── 3. LA PLATEFORME ────────────────────────────────────────────────────
+    if _motif:
+        # Une designation existait et ne s'est pas resolue : ce n'est PAS un
+        # cas normal, et cela ne doit pas passer inapercu.
+        logger.error("%s proprietaire NON PROUVE — motif=%s courseId=%r coach_declare=%r "
+                     "-> repli plateforme", LOT3C0_PREFIXE, _motif, _cid,
+                     str(coach_id_declare or "")[:120])
+    return lot3c0_proprietaire_canonique(None)

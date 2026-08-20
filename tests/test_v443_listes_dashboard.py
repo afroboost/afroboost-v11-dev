@@ -8,9 +8,33 @@ verifications frontend portent sur le texte reellement compile, relu par AST.
 Aucun reseau, aucune base reelle, aucun envoi.
 Lancement :  python3 tests/test_v443_listes_dashboard.py
 """
-import ast, asyncio, io, os, re, sys
+import ast, asyncio, importlib.util, io, os, re, sys, types
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, RACINE)
+
+# ── LOT 3c-0 : la route IMPORTE sa regle de propriete, elle ne la recopie pas ─
+# `get_reservations` fait desormais, en plein corps de fonction :
+#     from api.routes.shared import lot3c0_perimetre
+# C'est le motif deja employe 18 fois dans ce fichier de routes. Extraite et
+# executee hors du paquet, la fonction ne trouvait plus `api` -> ModuleNotFoundError.
+#
+# On ne bouchonne PAS cette regle : on charge le VRAI shared.py par chemin (avec
+# un `fastapi` bouchon, comme le font deja test_a_finance et test_b_encaissement)
+# et on le publie sous son nom de paquet. Le test execute donc la vraie regle de
+# cloisonnement — et cela verifie du meme coup qu'elle est bien IMPORTEE, ce que
+# le lot exige explicitement pour ne pas creer une septieme regle divergente.
+_fa = types.ModuleType("fastapi")
+_fa.APIRouter = object
+_fa.Request = object
+sys.modules.setdefault("fastapi", _fa)
+_spec = importlib.util.spec_from_file_location(
+    "v443_shared", os.path.join(RACINE, "api", "routes", "shared.py"))
+SHARED = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(SHARED)
+sys.modules.setdefault("api", types.ModuleType("api"))
+sys.modules.setdefault("api.routes", types.ModuleType("api.routes"))
+sys.modules["api.routes.shared"] = SHARED
 BACK = os.path.join(RACINE, "api", "routes", "reservation_routes.py")
 FRONT = os.path.join(RACINE, "frontend", "src", "components", "CoachDashboard.js")
 
@@ -73,6 +97,37 @@ def _sans_commentaires(js):
     return "\n".join(l for l in js.splitlines() if not l.strip().startswith("//"))
 
 FRONT_EXEC = _sans_commentaires(SOURCE_FRONT)
+
+
+def _sans_commentaires_py(source):
+    """Le Python reellement EXECUTE : commentaires neutralises, NUMEROTATION DES
+    LIGNES PRESERVEE (on blanchit sur place, on ne supprime pas de ligne).
+
+    Meme precaution que `_sans_commentaires` cote JS, et pour la meme raison :
+    les commentaires de LOT 3c-0 CITENT « Authorization: Bearer » pour expliquer
+    pourquoi le durcissement est sur. Une recherche de texte brute y verrait un
+    changement d'authentification qui n'existe pas dans le code execute.
+    """
+    lignes = source.splitlines(True)
+    try:
+        import tokenize
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+            if tok.type == tokenize.COMMENT:
+                (l1, c1), (_l2, c2) = tok.start, tok.end
+                ligne = lignes[l1 - 1]
+                lignes[l1 - 1] = ligne[:c1] + " " * (c2 - c1) + ligne[c2:]
+    except Exception:          # noqa: BLE001 — un extrait non tokenisable reste lisible tel quel
+        return source
+    return "".join(lignes)
+
+
+def _lignes_du_bloc_drapeau(source, drapeau="_l3c0_strict"):
+    """Les numeros de ligne du seul `if <drapeau>:` — tout le reste est le
+    parcours PAR DEFAUT, celui que la production emprunte aujourd'hui."""
+    for n in ast.walk(ast.parse(source)):
+        if isinstance(n, ast.If) and isinstance(n.test, ast.Name) and n.test.id == drapeau:
+            return set(range(n.lineno, (n.end_lineno or n.lineno) + 1))
+    return set()
 
 ADMIN = "contact.artboost@gmail.com"
 COACH = "coach.partenaire@example.com"
@@ -156,13 +211,33 @@ async def scenario():
     verifier("5. le refus precede toute construction de requete",
              src.index("raise HTTPException") < src.index("base_query ="), "")
 
-    # --- 6. la strategie d'AUTH n'a pas change (point 4 NON touche)
+    # --- 6. LOT 3c-0 : LE DURCISSEMENT JWT EXISTE, MAIS SOUS DRAPEAU
+    #
+    # V443 verifiait ici que la strategie d'authentification n'avait PAS change.
+    # LOT 3c-0 la change — volontairement, et seulement quand le drapeau
+    # `RESERVATIONS_JWT_STRICT` est a `true`. L'invariant est donc REECRIT, pas
+    # supprime : ce qui doit rester vrai, c'est que DRAPEAU ETEINT — son defaut,
+    # et l'etat de la production — le parcours du proprietaire est EXACTEMENT
+    # celui d'avant. C'est litteralement la regle V310c : on ne durcit pas le
+    # chemin legitime sans preuve, et la preuve est ici que le chemin par defaut
+    # ne contient aucune autre source d'identite que l'en-tete.
+    SRC_EXEC = _sans_commentaires_py(src)
+    _bloc = _lignes_du_bloc_drapeau(src)
+    verifier("6-0. le durcissement est bien un bloc conditionnel identifiable",
+             bool(_bloc), "aucun `if _l3c0_strict:` trouve")
+    _hors_drapeau = "".join(l for i, l in enumerate(SRC_EXEC.splitlines(True), 1)
+                            if i not in _bloc)
     for interdit in ("coach_jwt_email", "_v311_coach_email_from_jwt", "_v319_coach_identity",
-                     "v20_exiger_coach_signe", "Authorization", "jwt", "Bearer"):
-        verifier("6. auth inchangee : %s absent de get_reservations" % interdit,
-                 interdit not in src, interdit)
+                     "v20_exiger_coach_signe", "_v309_require_coach_or_admin",
+                     "Authorization", "jwt", "Bearer"):
+        verifier("6. drapeau eteint : %s absent du parcours par defaut" % interdit,
+                 interdit not in _hors_drapeau, interdit)
     verifier("6b. l'identite reste X-User-Email, comme avant",
-             'request.headers.get("X-User-Email"' in src, "")
+             'request.headers.get("X-User-Email"' in SRC_EXEC, "")
+    verifier("6c. drapeau allume : la garde est une garde JWT SIGNEE, pas un en-tete",
+             "_v309_require_coach_or_admin" in SRC_EXEC, "")
+    verifier("6d. une panne de lecture du drapeau laisse la porte OUVERTE (V310c)",
+             "_l3c0_strict = False" in SRC_EXEC, "")
 
 
 def tests_frontend():

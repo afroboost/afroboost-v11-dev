@@ -508,8 +508,16 @@ const PromoCodesTab = ({
         {/* Champ code unique */}
         {!isBatchMode && (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            {/* LOT 3c-0 : en ÉDITION, le code est une identité, pas un champ.
+                Il sert de clé à l'abonnement, aux QR déjà envoyés et à l'espace
+                abonné : le renommer casserait ces liens, et le serveur le
+                refuse. Le bandeau « Mode Édition » ci-dessus l'affiche déjà en
+                lecture seule — l'input restait modifiable par simple héritage
+                du formulaire de création. Pour un autre nom : dupliquer. */}
             <input type="text" placeholder={t('codePromo')} value={newCode.code} onChange={e => setNewCode({ ...newCode, code: e.target.value })}
-              className="px-3 py-2 rounded-lg neon-input text-sm" data-testid="new-code-name" />
+              disabled={!!editingCode} readOnly={!!editingCode}
+              title={editingCode ? "Le nom d'un code ne peut pas être modifié — dupliquez-le pour en créer un autre" : undefined}
+              className={`px-3 py-2 rounded-lg neon-input text-sm${editingCode ? ' opacity-60 cursor-not-allowed' : ''}`} data-testid="new-code-name" />
             <select value={newCode.type} onChange={e => setNewCode({ ...newCode, type: e.target.value })} className="px-3 py-2 rounded-lg neon-input text-sm" data-testid="new-code-type">
               <option value="">{t('type')}</option>
               <option value="100%">100% (Gratuit)</option>

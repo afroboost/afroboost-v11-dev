@@ -1234,6 +1234,17 @@ class FeatureFlags(BaseModel):
     # `git revert` et 4 minutes de build Coolify. Celui-ci s'eteint en une
     # requete, ce qui compte pour un lot qui touche a des montants.
     MEMBER_PRICING_ENABLED: bool = False
+    # LOT 3c-0 : interrupteur du durcissement de `GET /api/reservations`.
+    #
+    # Defaut FALSE = comportement actuel (l'en-tete `X-User-Email` suffit).
+    # True = SEUL un JWT coach SIGNE ouvre la liste des reservations.
+    #
+    # POURQUOI UN DRAPEAU ICI, et pas sur les autres routes du lot. Cette
+    # route-la a un CHEMIN LEGITIME a preserver : le tableau de bord du
+    # proprietaire. Le durcir sans preuve a deja vide ce dashboard une fois
+    # (V310c). Les autres routes du lot ferment des ECRITURES ANONYMES : il
+    # n'y a aucun chemin legitime a proteger, donc aucun drapeau a prevoir.
+    RESERVATIONS_JWT_STRICT: bool = False
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1250,6 +1261,7 @@ class FeatureFlagsUpdate(BaseModel):
     BOT_MENU_ENABLED: Optional[bool] = None  # V367
     POSTHOG_IDENTIFY_ENABLED: Optional[bool] = None  # C9-B
     MEMBER_PRICING_ENABLED: Optional[bool] = None  # LOT 3b
+    RESERVATIONS_JWT_STRICT: Optional[bool] = None  # LOT 3c-0
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -12268,6 +12280,19 @@ async def migrate_subscriptions_coach_id(request: Request, dry_run: bool = True,
 @api_router.post("/admin/fix-stripe-amount/{access_code}")
 async def fix_stripe_amount(access_code: str, request: Request):
     """V207c: Fix ponctuel — écrire stripe_amount en base pour un code existant."""
+    # LOT 3c-0 — CETTE ROUTE ECRIT UN MONTANT FACTURE, SANS AUCUNE GARDE.
+    #
+    # `stripe_amount` est l'un des champs que `a_finance_du_droit` consulte
+    # pour etablir la valeur d'un droit. Un tiers pouvait donc falsifier,
+    # retroactivement, le montant qu'affichera le futur bilan. Le nom
+    # « /admin/ » ne protegeait rien : il n'y avait pas une ligne de controle.
+    #
+    # Super-admin SIGNE exige — c'est un correctif ponctuel d'exploitation,
+    # personne d'autre n'a de raison de l'appeler.
+    _l3c0_appelant = _v311_coach_email_from_jwt(request)
+    if not _l3c0_appelant or not is_super_admin(_l3c0_appelant):
+        raise HTTPException(status_code=403, detail="Super-admin requis")
+
     body = await request.json()
     amount = body.get("stripe_amount")
     if amount is None:
@@ -12284,7 +12309,7 @@ async def fix_stripe_amount(access_code: str, request: Request):
 
 
 @api_router.get("/admin/fix-all-stripe")
-async def fix_all_stripe_amounts():
+async def fix_all_stripe_amounts(request: Request):
     """V207i: Corrige TOUS les codes — gère les doublons.
     Étape 1: Grouper par code, trouver le meilleur stripe_amount
     Étape 2: Propager à TOUS les documents du même code (update_many)
@@ -12294,7 +12319,16 @@ async def fix_all_stripe_amounts():
     repli sur `offers.price` (le prix du catalogue au moment de l'appel) a ete
     retire : il fabriquait un prix historique faux, indiscernable d'un vrai.
     Un code sans montant ressort `no_price`, et c'est la bonne reponse.
+
+    LOT 3c-0 : elle n'avait pas meme de parametre `request` — s'authentifier y
+    etait impossible. Elle ecrit pourtant `stripe_amount` sur TOUS les codes
+    d'un coup (`update_many`), c'est-a-dire sur la source des montants du futur
+    bilan. Super-admin signe exige, comme sa jumelle ponctuelle.
     """
+    _l3c0_appelant = _v311_coach_email_from_jwt(request)
+    if not _l3c0_appelant or not is_super_admin(_l3c0_appelant):
+        raise HTTPException(status_code=403, detail="Super-admin requis")
+
     from collections import defaultdict
     all_codes = await db.discount_codes.find({}).to_list(1000)
 
@@ -16515,6 +16549,7 @@ async def get_feature_flags():
             "CHAT_READ_STRICT": False,         # V349 : défaut OFF (lecture du chat encore ouverte)
             "POSTHOG_IDENTIFY_ENABLED": False, # C9-B : défaut OFF (aucune identification)
             "MEMBER_PRICING_ENABLED": False,   # LOT 3b : défaut OFF (aucun tarif membre)
+            "RESERVATIONS_JWT_STRICT": False,  # LOT 3c-0 : défaut OFF (en-tête encore accepté)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -16531,7 +16566,8 @@ async def get_feature_flags():
                          ("PUBLICATIONS_NO_EXPIRY", False), ("SUPERADMIN_JWT_STRICT", False),
                          ("CHAT_READ_STRICT", False), ("BOT_MENU_ENABLED", False),
                          ("POSTHOG_IDENTIFY_ENABLED", False),
-                         ("MEMBER_PRICING_ENABLED", False)):
+                         ("MEMBER_PRICING_ENABLED", False),
+                         ("RESERVATIONS_JWT_STRICT", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags

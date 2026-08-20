@@ -685,10 +685,26 @@ class Reservation(ReservationBase):
 _A_COLLATION_INSENSIBLE = {"locale": "en", "strength": 2}
 
 
-async def _a_enrichir_finance(reservations: list) -> list:
-    """Ajoute a chaque reservation un objet `finance`. Jamais d'exception."""
+async def _a_enrichir_finance(reservations: list, perimetre: dict = None) -> list:
+    """Ajoute a chaque reservation un objet `finance`. Jamais d'exception.
+
+    LOT 3c-0 — `perimetre` BORNE LA RESOLUTION FINANCIERE.
+
+    Cette fonction resolvait `subscriptions` et `discount_codes` par `id` et
+    par `code`, SANS aucun filtre de proprietaire. Le cloisonnement s'arretait
+    donc aux reservations : la resolution de l'ARGENT, elle, traversait les
+    coachs. Si une reservation du coach A portait un code appartenant au coach
+    B, A lisait les donnees financieres de B — montant encaisse compris.
+
+    Le perimetre est celui que l'appelant a deja calcule pour sa requete
+    principale (`lot3c0_perimetre`) : `{}` pour le proprietaire, qui voit tout,
+    y compris le stock historique sans `coach_id` ; `{"coach_id": <email>}`
+    pour un partenaire. On INTERSECTE, on ne recalcule pas — et le defaut
+    `None` preserve le comportement pour tout appelant qui ne le passe pas.
+    """
     if not reservations:
         return reservations
+    _perim = perimetre if isinstance(perimetre, dict) else {}
     try:
         from api.routes.shared import a_finance_du_droit as _a_resoudre
 
@@ -709,8 +725,14 @@ async def _a_enrichir_finance(reservations: list) -> list:
                 _ou.append({"id": {"$in": sorted(_ids)}})
             if _codes:
                 _ou.append({"code": {"$in": sorted(_codes)}})
+            # LOT 3c-0 : le perimetre du coach, intersecte avec la recherche
+            # par cle. Un `{}` (proprietaire) ne restreint rien, exactement
+            # comme avant ce lot.
+            _q_subs = {"$or": _ou}
+            if _perim:
+                _q_subs = {"$and": [_perim, _q_subs]}
             _subs = await db.subscriptions.find(
-                {"$or": _ou},
+                _q_subs,
                 {"_id": 0, "id": 1, "code": 1, "offer_name": 1, "offer_price": 1,
                  "renewal_price": 1, "renewal_sessions": 1, "total_sessions": 1,
                  "remaining_sessions": 1, "used_sessions": 1, "status": 1,
@@ -718,8 +740,11 @@ async def _a_enrichir_finance(reservations: list) -> list:
                  "seances_a_l_achat": 1},
             ).collation(_A_COLLATION_INSENSIBLE).to_list(500)
         if _codes:
+            _q_dcs = {"code": {"$in": sorted(_codes)}}
+            if _perim:
+                _q_dcs = {"$and": [_perim, _q_dcs]}
             _dcs = await db.discount_codes.find(
-                {"code": {"$in": sorted(_codes)}},
+                _q_dcs,
                 {"_id": 0, "code": 1, "offerName": 1, "maxUses": 1, "stripe_amount": 1,
                  "total_paid": 1, "paid_currency": 1, "currency": 1, "session_id": 1,
                  "transaction_id": 1, "payment_method": 1, "source": 1,
@@ -777,22 +802,50 @@ async def get_reservations(request: Request, page: int = 1, limit: int = 20, all
     # C'est le principe déjà retenu par V2-0 sur quatre autres routes — « refuser
     # au lieu de filtrer ».
     #
-    # ⚠️ PÉRIMÈTRE VOLONTAIREMENT ÉTROIT : la STRATÉGIE d'authentification n'est
-    # PAS touchée. L'identité reste exactement ce qu'elle était avant — l'en-tête
-    # `X-User-Email`, avec les mêmes droits, le même super-admin, le même
-    # filtrage par `coach_id`. Aucun JWT n'est exigé ici, aucune garde n'est
-    # ajoutée ni retirée : un appelant qui passait AVANT passe encore, à
-    # l'identique. Seule change la réponse faite à celui qui ne présentait RIEN,
-    # et qui recevait un mensonge poli. Rendre cette route JWT-strict est un lot
-    # distinct (P0-AUTH-COHERENCE), qui devra d'abord PROUVER — appel réel à
-    # l'appui — que le chemin légitime du propriétaire émet bien un jeton signé
-    # (règle V310c : un durcissement non prouvé a déjà vidé ce dashboard une fois).
+    # LOT 3c-0 — C'EST LE LOT ANNONCE CI-DESSUS (« P0-AUTH-COHERENCE »).
+    #
+    # LE DEFAUT, MESURE EN PRODUCTION LE 20/08/2026 :
+    #     GET /api/reservations                                    -> 403
+    #     GET /api/reservations -H "X-User-Email: <n'importe quoi>" -> 200
+    # L'en-tete ETAIT l'authentification. Et `GET /api/courses` publie sans
+    # authentification l'adresse a inscrire dedans. Le site donnait donc
+    # lui-meme la cle de son propre carnet de reservations — noms, e-mails,
+    # numeros WhatsApp — et `all_data=true` en rend 10 000 d'un coup.
+    #
+    # CE QUI REND LE DURCISSEMENT SUR : la preuve exigee par V310c est deja
+    # acquise, et pour deux raisons mesurables. `REQUIRE_COACH_JWT` et
+    # `SUPERADMIN_JWT_STRICT` sont DEJA a `true` en production — le tableau de
+    # bord du proprietaire fonctionne donc deja avec un jeton signe. Et
+    # l'intercepteur axios (`App.js:14-20`) pose `Authorization: Bearer` sur
+    # TOUTES les requetes. Le jeton est donc deja present sur cette route :
+    # elle l'ignorait, simplement.
+    #
+    # LE DRAPEAU RESTE, malgre cela. `REQUIRE_COACH_JWT` a ete pose de la meme
+    # facon, et c'est ce qui a permis de le basculer sans redeployer. Un lot
+    # qui touche a la porte d'entree d'un dashboard garde son coupe-circuit.
+    _l3c0_strict = False
+    try:
+        from api.server import get_feature_flags as _l3c0_flags
+        _l3c0_strict = bool((await _l3c0_flags()).get("RESERVATIONS_JWT_STRICT"))
+    except Exception:  # noqa: BLE001
+        # Une panne de lecture ne FERME jamais une porte : elle laisserait le
+        # proprietaire dehors sans qu'il comprenne pourquoi (lecon V310c).
+        _l3c0_strict = False
+
+    if _l3c0_strict:
+        from api.server import _v309_require_coach_or_admin as _l3c0_garde
+        caller_email = await _l3c0_garde(request)   # 403 si pas de JWT coach signe
+
     if not caller_email:
         raise HTTPException(status_code=403, detail="Authentification coach requise")
 
-    # V206: Super admin voit tout (y compris bassi_default)
-    # V244: isolation stricte — le sentinelle bassi_default a ete migre, plus aucun doc ne le porte.
-    base_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email}
+    # LOT 3c-0 : le perimetre vient d'UNE seule fonction, importee et jamais
+    # recopiee. Le depot comptait deja six regles de propriete divergentes ;
+    # on n'en ajoute pas une septieme. Le proprietaire voit tout — y compris le
+    # stock historique sans `coach_id`, ce qui rend la compatibilite des
+    # anciennes donnees acquise SANS BACKFILL. Un partenaire ne voit que le sien.
+    from api.routes.shared import lot3c0_perimetre as _l3c0_perimetre
+    base_query = _l3c0_perimetre(caller_email, is_super_admin(caller_email))
     projection = {
         "_id": 0, "id": 1, "reservationCode": 1, "userName": 1, "userEmail": 1,
         "userWhatsapp": 1, "courseName": 1, "courseTime": 1, "datetime": 1,
@@ -822,7 +875,7 @@ async def get_reservations(request: Request, page: int = 1, limit: int = 20, all
     total_count = await db.reservations.count_documents(base_query)
     # A : l'origine economique de chaque ligne — deux requetes pour toute la
     # page, aucune ecriture, aucune lecture du catalogue.
-    await _a_enrichir_finance(reservations)
+    await _a_enrichir_finance(reservations, base_query)
     for res in reservations:
         if isinstance(res.get('createdAt'), str):
             res['createdAt'] = datetime.fromisoformat(res['createdAt'].replace('Z', '+00:00'))
@@ -1261,14 +1314,39 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         else:
             logger.info(f"[RESERVATION] Code promo invalide: {promo_code}")
 
-    # V206: Créer la réservation — coach_id depuis header OU body OU défaut
-    caller_email = request.headers.get("X-User-Email", "").lower().strip() if request else None
-    # Priorité: 1) header X-User-Email, 2) body coach_id, 3) "bassi_default"
-    effective_coach_id = caller_email if caller_email and not is_super_admin(caller_email) else None
-    if not effective_coach_id and reservation.coach_id:
-        effective_coach_id = reservation.coach_id.lower().strip()
-    if not effective_coach_id:
-        effective_coach_id = DEFAULT_COACH_ID  # V244
+    # LOT 3c-0 — LE PROPRIETAIRE NE SE DECLARE PLUS, IL SE DEDUIT.
+    #
+    # CE QUE FAISAIT CE BLOC : en-tete `X-User-Email`, sinon le CORPS de la
+    # requete, sinon le defaut. Or cette route n'a AUCUNE authentification — et
+    # elle ne peut pas en avoir : c'est elle qui enregistre la reservation d'un
+    # VISITEUR apres son paiement. N'importe qui pouvait donc creer une
+    # reservation attribuee au coach de son choix, et `GET /api/courses` publie
+    # l'adresse a inscrire, sans authentification. Le maillon central de la
+    # chaine financiere etait ouvert des deux cotes.
+    #
+    # CE QU'IL FAIT MAINTENANT : le proprietaire est LU EN BASE, depuis le cours
+    # reserve. L'en-tete `X-User-Email` ne pese PLUS RIEN — c'etait elle, la
+    # faille. Le `coach_id` du corps, lui, reste consulte, mais UNIQUEMENT en
+    # second rang et UNIQUEMENT s'il designe un coach reellement enregistre :
+    # sans cela, les parcours qui n'ont pas de cours (produit physique, offre
+    # libre) perdraient leur proprietaire au profit de la plateforme, et la
+    # recette d'un partenaire finirait comptee chez quelqu'un d'autre.
+    #
+    # L'ORDRE COMPTE, ET IL EST DELIBERE : le cours AVANT la declaration. Un
+    # visiteur qui reserve le cours de A en se declarant B est enregistre chez
+    # A. La declaration ne sert que la ou le cours est muet, jamais contre lui.
+    #
+    # ON N'INVENTE PAS UNE REGLE : l'espace abonne resout deja son proprietaire
+    # exactement ainsi (`subscription.coach_id` -> `course.coach_id` -> defaut).
+    # On etend la regle qui existe au parcours qui ne l'avait pas.
+    #
+    # LA ROUTE RESTE PUBLIQUE. Un visiteur doit pouvoir reserver. Ce lot ne
+    # ferme pas cette porte : il l'empeche seulement de choisir chez qui elle
+    # donne. C'est aussi pourquoi cette fonction ne leve jamais — une lecture
+    # d'appoint ratee ne doit pas faire echouer un parcours qui PAIE.
+    from api.routes.shared import lot3c0_proprietaire_de_la_seance as _l3c0_proprio
+    effective_coach_id = await _l3c0_proprio(
+        db, reservation.courseId, reservation.coach_id)
     # ESSAI-5a-1 — la preuve d'acceptation, AVANT la moindre ecriture.
     # Sans conditions publiees, `t1_preuve` rend un dict vide et rien n'est exige.
     try:

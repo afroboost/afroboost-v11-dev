@@ -2566,7 +2566,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       if (editingCode) {
         const beneficiaryEmail = selectedBeneficiaries.length > 0 ? selectedBeneficiaries[0] : null;
         const updates = {
-          code: newCode.code,
+          // LOT 3c-0 : `code` n'est PLUS envoyé en édition. Ce n'est pas un
+          // libellé mais la clé qui relie l'abonnement, les membres du groupe,
+          // l'historique, l'espace abonné et le QR déjà envoyé. Le serveur
+          // refuse désormais un renommage ; l'envoyer ne servait qu'à faire
+          // croire qu'il était modifiable. Pour un autre nom : dupliquer.
           type: newCode.type,
           value: parseFloat(newCode.value),
           assignedEmail: beneficiaryEmail,

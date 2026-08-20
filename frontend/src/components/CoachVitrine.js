@@ -334,6 +334,15 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           userEmail: bookingForm.email,
           userWhatsapp: bookingForm.whatsapp,
           userLanguage: userLang, // v158: pour email/WhatsApp multilingue
+          // LOT 3c-0 : le cours RÉEL, seule source de vérité du propriétaire.
+          // ⚠️ Ce composant n'est plus monté (App.js:225-226, layout unifié
+          // depuis v160.3) — la ligne est donc sans effet aujourd'hui. Elle est
+          // posée quand même parce que sans elle, quiconque le remonterait
+          // verrait ses réservations REFUSÉES en 400 par la garde LOT 1
+          // (« Séance non identifiée ») et, avant elle, attribuées au mauvais
+          // coach. `booking.course` est l'objet cours intact venu de l'API :
+          // son `.id` est déjà utilisé plus haut comme clé d'identité (l.255).
+          courseId: booking.course.id,
           courseName: booking.course.name || booking.course.title,
           courseTime: booking.course.time,
           datetime: booking.date.toISOString(),

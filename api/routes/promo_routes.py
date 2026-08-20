@@ -460,12 +460,33 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
 
 
 @promo_router.put("/{code_id}")
-async def update_discount_code(code_id: str, updates: dict):
+async def update_discount_code(code_id: str, updates: dict, request: Request):
     """Met à jour un code promo — cherche par id OU par code.
     V194: Si maxUses change, propage à toutes les subscriptions actives
     liées (total_sessions/remaining_sessions/status). Sinon le badge
     affichait l'ancien total (ex. maxUses=9 mais sub.total_sessions=13).
+
+    LOT 3c-0 : CETTE ROUTE N'AVAIT AUCUNE AUTHENTIFICATION, et elle ne pouvait
+    pas en avoir — sa signature ne recevait meme pas la requete HTTP. Elle
+    ecrivait `$set: updates` BRUT, sans liste blanche : un anonyme pouvait donc
+    poser `coach_id` (changer le proprietaire d'un code), `montant_encaisse`
+    (falsifier une recette) ou `maxUses` (offrir des seances) sur n'importe
+    quel code. Le `GET` et le `DELETE` voisins etaient, eux, JWT-strict depuis
+    V311k et V313 — l'incoherence sautait aux yeux.
+
+    On reprend EXACTEMENT la garde du DELETE voisin, sans en inventer une.
     """
+    # ── LOT 3c-0 : LA MEME PORTE QUE LE DELETE VOISIN ───────────────────────
+    caller = (coach_jwt_email(request) or "").lower().strip()
+    _autorise = is_super_admin(caller)
+    if not _autorise and caller:
+        if await _db.coaches.find_one({"email": caller}, {"_id": 1}) or \
+           await _db.coach_auth.find_one({"email": caller}, {"_id": 1}):
+            _autorise = True
+    if not _autorise:
+        raise HTTPException(status_code=403,
+                            detail="Authentification coach requise — reconnectez-vous")
+
     # V200c: Try by id first, then by code (case-insensitive), then by _id string
     existing = await _db.discount_codes.find_one({"id": code_id})
     if not existing:
@@ -512,6 +533,87 @@ async def update_discount_code(code_id: str, updates: dict):
         updates.update(_b_champs_maj)
         if _b_champs_maj.get("montant_encaisse"):
             updates["stripe_amount"] = _b_champs_maj["montant_encaisse"]
+
+    # ── LOT 3c-0 : CLOISONNEMENT ────────────────────────────────────────────
+    # Un partenaire ne modifie que SES codes. Le super-admin passe partout, y
+    # compris sur le stock historique sans proprietaire — ce qui rend la
+    # compatibilite des anciennes donnees acquise sans reecrire une seule ligne.
+    #
+    # REFUS PAR DEFAUT SUR LE LEGACY, exactement comme le DELETE voisin (V313b).
+    # Un code sans `coach_id` n'appartient a AUCUN coach : il est donc reserve
+    # au super-admin, deja court-circuite ci-dessus. La premiere version de ce
+    # lot ecrivait `and _l3c0_proprio and ...`, ce qui laissait passer les
+    # orphelins — un partenaire pouvait MODIFIER (`maxUses`, `used`,
+    # `montant_encaisse`) un code qu'il n'a pas le droit de SUPPRIMER. Sur une
+    # chaine d'argent, cette dissymetrie-la est une faille, pas une souplesse.
+    _l3c0_proprio = str(existing.get("coach_id") or "").strip().lower()
+    if not is_super_admin(caller) and (not _l3c0_proprio or _l3c0_proprio != caller):
+        logger.warning("[LOT3c-0] %s refuse : code d'un autre coach ou sans proprietaire", caller)
+        raise HTTPException(status_code=403, detail="Ce code ne vous appartient pas")
+
+    # ── LOT 3c-0 : LISTE BLANCHE ────────────────────────────────────────────
+    #
+    # `$set: updates` acceptait N'IMPORTE QUELLE cle. Meme authentifiee, une
+    # route qui laisse ecrire `coach_id` laisse un coach s'approprier le code
+    # d'un autre — l'authentification seule ne suffit donc pas, il faut borner
+    # CE QUI est modifiable. Les champs retenus sont exactement ceux du
+    # formulaire d'edition existant, plus ceux que le lot B pose lui-meme
+    # (`_b_champs_maj`) juste au-dessus.
+    #
+    # `coach_id` en est ABSENT, volontairement : la propriete d'un code se
+    # decide a sa creation, jamais par une mise a jour.
+    _L3C0_CHAMPS_MODIFIABLES = {
+        "type", "value", "assignedEmail", "assignedName", "expiresAt", "courses",
+        "targetCategories", "maxUses", "used", "active", "offerName",
+        "multi_member", "shared_sessions",
+        # poses par la validation du lot B ci-dessus, jamais par le navigateur seul
+        "montant_encaisse", "devise", "origine_paiement", "seances_a_l_achat",
+        "encaissement_saisi_par", "encaissement_saisi_le", "stripe_amount",
+    }
+    # ── LOT 3c-0 : LE NOM D'UN CODE EST UNE CLE, DONC IL NE CHANGE PAS ──────
+    #
+    # `code` n'est pas un libelle : c'est la CLE ETRANGERE de tout le reste.
+    # Six collections le referencent PAR SA VALEUR TEXTE — `subscriptions.code`,
+    # `code_members.code`, `reservations.promoCode` / `.discountCode`,
+    # `publications.subscriber_code`, `progress_entries.subscriber_code`,
+    # `subscriber_infos.code` — et AUCUNE propagation n'existe (aucun `$set`
+    # sur `code` dans tout le depot). S'y ajoutent deux porteurs hors base,
+    # impossibles a rattraper : le jeton abonne signe, valable 90 jours, qui
+    # embarque le code en clair (`make_subscriber_token`), et les QR deja
+    # imprimes ou envoyes par e-mail, que le scanner d'entree lit.
+    #
+    # Renommer ne « ne fait rien » aujourd'hui — c'est un FAUX SUCCES, la route
+    # repondait 200 sans rien ecrire. Mais renommer POUR DE VRAI casserait, en
+    # silence, l'abonnement, les membres du groupe, l'historique, l'espace
+    # abonne et le QR d'entree. Il n'y a pas non plus de controle d'unicite ni
+    # d'index unique : un renommage pourrait fabriquer le doublon que V391 a
+    # deja paye en production.
+    #
+    # Le besoin legitime « je veux un autre nom » est deja servi par la
+    # duplication de code, qui cree une nouvelle cle proprement.
+    #
+    # On REFUSE donc explicitement, plutot que d'ignorer : un faux succes est
+    # exactement ce que ce depot combat depuis V443. Renvoyer la meme valeur
+    # (ce que fait le formulaire d'edition) reste evidemment accepte.
+    if "code" in updates:
+        _l3c0_avant = str(existing.get("code") or "").strip().lower()
+        _l3c0_apres = str(updates.get("code") or "").strip().lower()
+        if _l3c0_apres and _l3c0_apres != _l3c0_avant:
+            logger.warning("[LOT3c-0] renommage refuse : %r -> %r", _l3c0_avant, _l3c0_apres)
+            raise HTTPException(
+                status_code=400,
+                detail="Le nom d'un code ne peut pas être modifié : il sert de clé à "
+                       "l'abonnement, aux QR déjà envoyés et à l'espace abonné. "
+                       "Dupliquez le code pour en créer un autre.")
+        updates.pop("code", None)
+
+    _l3c0_refuses = sorted(set(updates) - _L3C0_CHAMPS_MODIFIABLES)
+    if _l3c0_refuses:
+        logger.warning("[LOT3c-0] champs non modifiables ignores sur %s : %s",
+                       code_id, _l3c0_refuses)
+    updates = {k: v for k, v in updates.items() if k in _L3C0_CHAMPS_MODIFIABLES}
+    if not updates:
+        raise HTTPException(status_code=400, detail="Aucun champ modifiable fourni")
 
     await _db.discount_codes.update_one({"_id": existing["_id"]}, {"$set": updates})
     updated = await _db.discount_codes.find_one({"_id": existing["_id"]}, {"_id": 0})
