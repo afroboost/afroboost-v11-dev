@@ -20,6 +20,17 @@ CE QUE CE LOT PROMET, ET QUE CES TESTS VERROUILLENT
    existant (partie 5). Il lit `memberships`, il ne l'ecrit pas.
 6. AUCUN ORACLE : la route d'estimation n'accepte AUCUN e-mail, le checkout
    exige un jeton d'appareil signe QUI DESIGNE L'ACHETEUR (partie 6).
+7. LE NAVIGATEUR PROPOSE, LE SERVEUR DISPOSE. Une date qui ne correspond a
+   aucune occurrence REELLE du cours interroge est rejetee — date falsifiee
+   (H) comme occurrence empruntee a un autre cours (I) (partie 7).
+8. L'ADHESION DU COACH B NE PAIE JAMAIS CHEZ LE COACH A (partie 8, scenario
+   J). Le filtre vient de `p1a_filtre_proprietaire`, importe et jamais recopie.
+9. LE FORFAIT N'EST PAS DOUBLEMENT FACTURE (partie 9, scenario K) : un membre
+   qui consomme une seance de son PULSE x10 ne paie RIEN de plus.
+10. LE DRAPEAU ETEINT REND LE SITE D'AVANT, au pixel et au centime — serveur
+   ET navigateur, panne de lecture comprise (partie 10).
+11. LA REOUVERTURE DU CHOIX DE DATE EST UNE BRECHE, PAS UNE PORTE : quatre
+   conditions cumulatives, les deux verrous conserves (partie 11).
 
     python3 tests/test_lot3b_avantage_membre.py
 """
@@ -98,6 +109,7 @@ M = _charger("api.routes.membership_routes", "api", "routes", "membership_routes
 # Faux Mongo asynchrone du depot (`tests/_banc_qr.py`), pour les deux seules
 # fonctions `async` touchees ici.
 from tests._banc_qr import _Base, _Collection  # noqa: E402
+import tests._banc_qr as BQ  # noqa: E402
 
 
 def _src(*chemin):
@@ -114,6 +126,20 @@ def _fonction(arbre, source, nom):
     for n in ast.walk(arbre):
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == nom:
             return ast.get_source_segment(source, n) or ""
+    return ""
+
+
+def _corps_sans_docstring(arbre, source, nom):
+    """Le CODE d'une fonction, docstring exclue. Une docstring qui EXPLIQUE une
+    convention n'est pas une seconde lecture de cette convention."""
+    for n in ast.walk(arbre):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == nom:
+            _corps = n.body
+            if _corps and isinstance(_corps[0], ast.Expr) \
+                    and isinstance(getattr(_corps[0], "value", None), ast.Constant) \
+                    and isinstance(_corps[0].value.value, str):
+                _corps = _corps[1:]
+            return "\n".join(ast.get_source_segment(source, s) or "" for s in _corps)
     return ""
 
 
@@ -142,6 +168,59 @@ def _champs_de_classe(arbre, nom):
 # Le bloc LOT 3b de shared.py : du titre de section jusqu'a la fin du fichier.
 _DEBUT_3B = SHARED_SRC.find("LOT 3b — L'AVANTAGE MEMBRE")
 BLOC_3B = SHARED_SRC[_DEBUT_3B:] if _DEBUT_3B > 0 else ""
+
+
+# `lot3b_occurrences_prouvees` importe TROIS garanties de LOT 1 depuis
+# `api/routes/reservation_routes.py`. Ce fichier ne s'importe pas hors ligne
+# (il exige `pydantic`), on rejoue donc la technique de `tests/_banc_qr.py` :
+# les fonctions REELLES sont extraites du VRAI source et exécutées dans un
+# module minimal. Rien n'est recopie — si LOT 1 change, ce test change avec.
+class _Silence(object):
+    def info(self, *a, **k): pass
+    def warning(self, *a, **k): pass
+    def error(self, *a, **k): pass
+
+
+def _module_reservation_routes():
+    from datetime import datetime as _dt
+    mod = types.ModuleType("api.routes.reservation_routes")
+    ns = mod.__dict__
+    ns.update({"datetime": _dt, "logger": _Silence(), "dict": dict,
+               "str": str, "int": int})
+    # les constantes de module dont dependent les fonctions extraites
+    for n in ast.walk(BQ.ARBRE):
+        if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in (
+                "LOT1_PREFIXE", "LOT1_NON_VALEURS", "A1_JOURS_JS"):
+            exec(compile("".join(BQ.LIGNES[n.lineno - 1:n.end_lineno]),
+                         BQ.FICHIER, "exec"), ns)
+    for nom in ("lot1_occurrence_iso", "_a1_jour_js", "_a1_a_lieu_aujourdhui"):
+        exec(compile(BQ.extraire(nom), BQ.FICHIER, "exec"), ns)
+    sys.modules["api.routes.reservation_routes"] = mod
+    return mod
+
+
+RR = _module_reservation_routes()
+
+APP_SRC = _src("frontend", "src", "App.js")
+RESA_SRC = _src("api", "routes", "reservation_routes.py")
+CHECKOUT_SRC = _src("api", "routes", "checkout_routes.py")
+
+# Le predicat de reouverture, decoupe du VRAI App.js.
+_I_PRED = APP_SRC.find("const lot3bChoixDateRequis")
+_F_PRED = APP_SRC.find("\n  };", _I_PRED) if _I_PRED > 0 else -1
+PREDICAT_JS = APP_SRC[_I_PRED:_F_PRED] if _I_PRED > 0 and _F_PRED > 0 else ""
+
+
+def _si_drapeau_checkout():
+    """Le `if _l3b_on:` de `create_checkout_session`, en tant que NOEUD."""
+    for n in ast.walk(SERVER_ARBRE):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and n.name == "create_checkout_session":
+            for m in ast.walk(n):
+                if isinstance(m, ast.If) and isinstance(m.test, ast.Name) \
+                        and m.test.id == "_l3b_on":
+                    return ast.get_source_segment(SERVER_SRC, m) or ""
+    return ""
 
 
 # ═══════════════ 1. L'AVANTAGE DE L'OFFRE ═══════════════════════════════════
@@ -658,6 +737,530 @@ def partie_6_securite():
              and "normaliser_email(email)" in BLOC_3B)
 
 
+
+# ═══════════════ 7. LA SECURITE DE L'OCCURRENCE ════════════════════
+# Le navigateur PROPOSE une date, le serveur DISPOSE. Sans cette revalidation,
+# il suffirait d'envoyer une date situee a l'interieur de son adhesion pour
+# obtenir le tarif membre sur une seance qui n'a pas lieu ce jour-la.
+#
+# 2026-08-26, 09-02, 09-09, 09-16, 09-23 et 09-30 sont des MERCREDIS ;
+# 2026-08-27 est un JEUDI ; 2026-09-15 est un MARDI.
+MER = ("2026-08-26", "2026-09-02", "2026-09-09", "2026-09-16", "2026-09-23",
+       "2026-09-30")
+JEU = "2026-08-27"
+
+
+def _base_cours():
+    base = _Base()
+    base.courses = _Collection([
+        # recurrent, MERCREDI (convention JavaScript : Dim=0 -> Mer=3)
+        {"id": "cours-mer", "name": "Silent Mercredi", "weekday": 3,
+         "time": "18:30", "visible": True, "archived": False},
+        # recurrent, JEUDI
+        {"id": "cours-jeu", "name": "Silent Jeudi", "weekday": 4,
+         "time": "19:00", "visible": True, "archived": False},
+        # PONCTUEL : `date` est prioritaire sur `weekday` (regle A1)
+        {"id": "cours-ponctuel", "name": "Masterclass", "date": "2026-09-15",
+         "weekday": 3, "time": "19:00", "visible": True, "archived": False},
+        # archive : il ne doit plus prouver aucune date
+        {"id": "cours-archive", "name": "Ancien", "weekday": 3,
+         "time": "18:30", "visible": True, "archived": True},
+    ])
+    return base
+
+
+async def partie_7_occurrence():
+    print("\n=== 7. LE NAVIGATEUR PROPOSE, LE SERVEUR DISPOSE (dates H et I) ===")
+    O = S.lot3b_occurrences_prouvees
+    base = _base_cours()
+
+    verifier("7a. une date REELLE du cours est prouvee",
+             await O(base, "cours-mer", [MER[0] + "T18:30:00"])
+             == [MER[0] + "T18:30:00"],
+             str(await O(base, "cours-mer", [MER[0] + "T18:30:00"])))
+
+    # ---- H. LA DATE FALSIFIEE ----
+    h1 = await O(base, "cours-mer", [JEU + "T18:30:00"])
+    verifier("7H1. DATE FALSIFIEE — un JEUDI envoye sur un cours du MERCREDI "
+             "est REJETE (sinon il suffisait de viser une date interieure a "
+             "son adhesion)", h1 == [], str(h1))
+    h2 = await O(base, "cours-ponctuel", ["2026-09-16T19:00:00"])
+    verifier("7H2. DATE FALSIFIEE — un cours PONCTUEL du 15/09 ne prouve pas "
+             "le 16/09", h2 == [], str(h2))
+    h3 = await O(base, "cours-ponctuel", ["2026-09-15T19:00:00"])
+    verifier("7H3. ... et il prouve bien SA date a lui",
+             h3 == ["2026-09-15T19:00:00"], str(h3))
+    h4 = await O(base, "cours-ponctuel", [MER[1] + "T19:00:00"])
+    verifier("7H4. ... meme si ce jour-la tombe un mercredi : `date` est "
+             "PRIORITAIRE sur `weekday`, un ponctuel n'a pas lieu chaque "
+             "semaine", h4 == [], str(h4))
+    h5 = await O(base, "cours-mer", [JEU + "T18:30:00", MER[0] + "T18:30:00"])
+    verifier("7H5. dans un panier mixte, SEULE la date reelle survit",
+             h5 == [MER[0] + "T18:30:00"], str(h5))
+
+    # ---- I. L'OCCURRENCE D'UN AUTRE COURS ----
+    i1 = await O(base, "cours-mer", [JEU + "T19:00:00"])
+    verifier("7I1. OCCURRENCE D'UN AUTRE COURS — la date est valide pour le "
+             "cours B (jeudi), on interroge le cours A (mercredi) : REJETEE",
+             i1 == [], str(i1))
+    i2 = await O(base, "cours-jeu", [JEU + "T19:00:00"])
+    verifier("7I2. ... et la MEME date, posee sur SON cours, est acceptee",
+             i2 == [JEU + "T19:00:00"], str(i2))
+    i3 = await O(base, "cours-jeu", [MER[0] + "T18:30:00"])
+    verifier("7I3. ... symetriquement, la date du cours A sur le cours B est "
+             "rejetee", i3 == [], str(i3))
+
+    # ---- LE COURS LUI-MEME ----
+    verifier("7b. `courseId` inexistant -> liste vide (donc PLEIN TARIF)",
+             await O(base, "cours-fantome", [MER[0] + "T18:30:00"]) == [])
+    verifier("7c. `courseId` vide / None -> liste vide, aucune requete",
+             await O(base, "", [MER[0] + "T18:30:00"]) == []
+             and await O(base, None, [MER[0] + "T18:30:00"]) == [])
+    verifier("7d. cours ARCHIVE -> liste vide : on ne brade pas une seance "
+             "qui n'existe plus",
+             await O(base, "cours-archive", [MER[0] + "T18:30:00"]) == [])
+
+    # ---- LES GARANTIES DE LOT 1, REUTILISEES ET NON RECOPIEES ----
+    d1 = await O(base, "cours-mer", [MER[0]])
+    verifier("7e. une DATE SEULE (\u00ab 2026-08-26 \u00bb, sans heure) est REJETEE — "
+             "LOT 1 refuse de RECONSTRUIRE une heure", d1 == [], str(d1))
+    d2 = await O(base, "cours-mer", [MER[0] + "T18"])
+    verifier("7f. une date tronquee (\u00ab ...T18 \u00bb) est rejetee de meme",
+             d2 == [], str(d2))
+    for valeur, libelle in (("hier", "illisible"), ("", "vide"), (None, "None"),
+                            (12345, "non-chaine"), ("2026-13-45T18:30:00",
+                                                    "mois/jour impossibles")):
+        r = await O(base, "cours-mer", [valeur])
+        verifier("7g. date %s -> aucune date prouvee (jamais un rabais devine)"
+                 % libelle, r == [], str(r))
+    verifier("7h. une liste de dates vide / None -> liste vide",
+             await O(base, "cours-mer", []) == []
+             and await O(base, "cours-mer", None) == [])
+
+    # ---- LE PLAFOND ET LES DOUBLONS ----
+    six = [j + "T18:30:00" for j in MER]          # six mercredis REELS
+    p = await O(base, "cours-mer", six)
+    verifier("7i. PLAFOND — six dates envoyees, cinq au plus retenues "
+             "(meme borne que `safe_quantity`, V225)",
+             len(p) == 5 and p == six[:5], str(p))
+    d = await O(base, "cours-mer", [six[0], six[0], six[1], six[0]])
+    verifier("7j. DOUBLONS — la meme date envoyee trois fois n'est comptee "
+             "qu'une fois (sinon le panier paierait un tarif membre trois "
+             "fois sur une seule seance)",
+             d == [six[0], six[1]], str(d))
+    mix = await O(base, "cours-mer", [six[0], JEU + "T18:30:00", six[0],
+                                      "", None, six[1]])
+    verifier("7k. plafond, doublons et rejets se composent sans lever",
+             mix == [six[0], six[1]], str(mix))
+
+    # ---- LA CONVENTION `weekday` JAVASCRIPT, LE PIEGE HISTORIQUE (A1) ----
+    verifier("7l. CONVENTION JS (Dim=0) — `weekday: 3` accepte un MERCREDI",
+             await O(base, "cours-mer", [MER[3] + "T18:30:00"])
+             == [MER[3] + "T18:30:00"])
+    verifier("7m. ... et REFUSE un JEUDI. En convention Python (Lun=0), 3 "
+             "vaudrait jeudi : c'est exactement le decalage d'un cran que A1 "
+             "a supprime", await O(base, "cours-mer", [JEU + "T19:00:00"]) == [])
+    verifier("7n. ... `weekday: 4` accepte le JEUDI, et refuse le mercredi",
+             await O(base, "cours-jeu", [JEU + "T19:00:00"]) == [JEU + "T19:00:00"]
+             and await O(base, "cours-jeu", [MER[0] + "T18:30:00"]) == [])
+
+    # ---- LA PANNE ----
+    class _BasePanne(object):
+        def __getitem__(self, nom):
+            raise RuntimeError("Atlas injoignable")
+
+    verifier("7o. PANNE DE BASE -> liste vide et AUCUNE exception : le client "
+             "paie le PLEIN TARIF, il ne voit pas une erreur au moment de payer",
+             await O(_BasePanne(), "cours-mer", [MER[0] + "T18:30:00"]) == [])
+
+    class _CoursIllisible(object):
+        def __getitem__(self, nom):
+            class _C(object):
+                async def find_one(self, *a, **k):
+                    raise RuntimeError("curseur casse")
+            return _C()
+
+    verifier("7p. ... idem si c'est la LECTURE du cours qui echoue",
+             await O(_CoursIllisible(), "cours-mer", [MER[0] + "T18:30:00"]) == [])
+
+    # ---- LA PREUVE QUE LOT 1 EST IMPORTE, PAS RECOPIE ----
+    corps = _fonction(SHARED_ARBRE, SHARED_SRC, "lot3b_occurrences_prouvees")
+    verifier("7q. la revalidation IMPORTE les garanties de LOT 1 / A1 au lieu "
+             "de les reecrire",
+             "from api.routes.reservation_routes import" in corps
+             and "lot1_occurrence_iso" in corps
+             and "_a1_a_lieu_aujourdhui" in corps and "_a1_jour_js" in corps)
+    verifier("7r. ... et n'interprete JAMAIS `weekday` elle-meme (la "
+             "docstring l'EXPLIQUE, le code ne le LIT pas)",
+             "weekday" not in _corps_sans_docstring(
+                 SHARED_ARBRE, SHARED_SRC, "lot3b_occurrences_prouvees"),
+             "une seconde lecture de la convention JS ferait renaitre le "
+             "decalage d'un cran")
+    verifier("7s. elle ne lit que `courses`, et n'ecrit rien",
+             'db["courses"]' in corps
+             and not any(op in corps for op in
+                         ("insert_one", "update_one", "delete_one")))
+
+
+# ═══════════════ 8. CROSS-COACH (scenario J) ══════════════════════
+def _base_adhesions():
+    base = _Base()
+    base.memberships = _Collection([
+        {"id": "sans-none", "email": "marie@test.ch", "coach_id": None,
+         "date_debut": "2026-01-01", "date_fin": "2026-12-31"},
+        {"id": "sans-vide", "email": "marie@test.ch", "coach_id": "",
+         "date_debut": "2026-01-01", "date_fin": "2026-12-31"},
+        {"id": "sans-absent", "email": "marie@test.ch",
+         "date_debut": "2026-01-01", "date_fin": "2026-12-31"},
+        {"id": "chez-a", "email": "marie@test.ch", "coach_id": "coach-a@x.ch",
+         "date_debut": "2026-01-01", "date_fin": "2026-12-31"},
+        {"id": "chez-b", "email": "marie@test.ch", "coach_id": "coach-b@x.ch",
+         "date_debut": "2026-01-01", "date_fin": "2026-12-31"},
+        {"id": "autre-personne", "email": "jean@test.ch",
+         "coach_id": "coach-a@x.ch",
+         "date_debut": "2026-01-01", "date_fin": "2026-12-31"},
+    ])
+    return base
+
+
+async def partie_8_cross_coach():
+    print("\n=== 8. L'ADHESION DU COACH B NE PAIE JAMAIS CHEZ LE COACH A ===")
+    base = _base_adhesions()
+
+    async def _ids(coach_id, email="marie@test.ch"):
+        return sorted(a["id"] for a in await S.lot3b_adhesions(base, email, coach_id))
+
+    a = await _ids("coach-a@x.ch")
+    verifier("8J1. CROSS-COACH — chez le coach A, l'adhesion ouverte chez le "
+             "coach B est INVISIBLE",
+             a == ["chez-a"] and "chez-b" not in a, str(a))
+    b = await _ids("coach-b@x.ch")
+    verifier("8J2. ... et symetriquement chez le coach B",
+             b == ["chez-b"], str(b))
+    verifier("8J3. ... aucun des deux ne voit le stock SANS proprietaire",
+             not any(i.startswith("sans-") for i in a + b), str(a + b))
+
+    sans = await _ids(None)
+    verifier("8a. le contexte SANS proprietaire voit les TROIS formes de "
+             "\u00ab sans proprietaire \u00bb : None, chaine vide, champ absent",
+             sans == ["sans-absent", "sans-none", "sans-vide"], str(sans))
+    verifier("8b. ... et JAMAIS le catalogue d'un partenaire",
+             "chez-a" not in sans and "chez-b" not in sans, str(sans))
+    verifier("8c. `\"\"` et `None` designent le meme contexte sans proprietaire",
+             await _ids("") == sans and await _ids("   ") == sans)
+
+    verifier("8d. le proprietaire est normalise (casse, espaces) : "
+             "\u00ab Coach-A@X.ch \u00bb reste le coach A",
+             await _ids("  Coach-A@X.ch  ") == ["chez-a"])
+    verifier("8e. un coach TIERS ne voit rien du tout (fail closed)",
+             await _ids("coach-c@x.ch") == [])
+    verifier("8f. l'adhesion d'une AUTRE personne ne remonte jamais, meme "
+             "chez le bon coach",
+             "autre-personne" not in a
+             and await _ids("coach-a@x.ch", "jean@test.ch") == ["autre-personne"])
+
+    # LA PREUVE QUE LE FILTRE EST IMPORTE, ET NON RECOPIE : on remplace la
+    # vraie fonction par un espion et on verifie qu'elle est REELLEMENT appelee.
+    _appels = []
+    _vrai = M.p1a_filtre_proprietaire
+
+    def _espion(coach_id):
+        _appels.append(coach_id)
+        return _vrai(coach_id)
+
+    M.p1a_filtre_proprietaire = _espion
+    try:
+        await S.lot3b_adhesions(base, "marie@test.ch", "coach-a@x.ch")
+    finally:
+        M.p1a_filtre_proprietaire = _vrai
+    verifier("8g. PREUVE VIVANTE — la regle de propriete vient de "
+             "`p1a_filtre_proprietaire`, appele a l'execution",
+             _appels == ["coach-a@x.ch"], str(_appels))
+
+    verifier("8h. ... et le source l'IMPORTE explicitement",
+             "from api.routes.membership_routes import p1a_filtre_proprietaire"
+             in BLOC_3B)
+    verifier("8i. ... sans jamais reconstruire le filtre a la main : ni `$or`, "
+             "ni liste de \u00ab sans proprietaire \u00bb dans le bloc LOT 3b",
+             "$or" not in BLOC_3B and "P1A_SANS_PROPRIETAIRE" not in BLOC_3B
+             and '{"coach_id"' not in BLOC_3B)
+
+    verifier("8j. la regle indisponible -> aucune adhesion, donc PLEIN TARIF "
+             "(fail closed, jamais un rabais par defaut)",
+             "regle de propriete indisponible" in BLOC_3B
+             and "return []" in BLOC_3B)
+
+    # Le coach de l'offre est resolu par `lot2_proprietaire`, aux DEUX
+    # appelants : c'est ce qui garantit la symetrie du filtre cote serveur.
+    for nom in ("lot3b_estimation_tarifaire", "create_checkout_session"):
+        corps = _fonction(SERVER_ARBRE, SERVER_SRC, nom)
+        verifier("8k. `%s` resout le proprietaire de l'OFFRE (`lot2_proprietaire`), "
+                 "jamais celui de l'acheteur" % nom,
+                 "lot2_proprietaire" in corps
+                 and ('_offer.get("coach_id")' in corps
+                      or '_offre.get("coach_id")' in corps), nom)
+
+
+# ══════════ 9. LE FORFAIT N'EST PAS DOUBLEMENT FACTURE (K) ══════════
+def partie_9_forfait():
+    print("\n=== 9. UN MEMBRE QUI CONSOMME UNE SEANCE DE SON PULSE x10 NE "
+          "PAIE RIEN DE PLUS ===")
+    espace = _fonction(SERVER_ARBRE, SERVER_SRC, "reserve_course_from_space")
+    verifier("9a. le chemin \u00ab espace abonne \u00bb existe et ecrit bien "
+             "`source: subscriber_space`",
+             bool(espace) and '"source": "subscriber_space"' in espace)
+    verifier("9K1. il ecrit `price: 0.0` ET `totalPrice: 0.0` — consommer une "
+             "seance de son forfait ne declenche AUCUN encaissement",
+             '"price": 0.0' in espace and '"totalPrice": 0.0' in espace)
+    verifier("9K2. LOT 3b n'y a pas mis les pieds : aucun symbole `lot3b_`, "
+             "`LOT3B` ni `MEMBER_PRICING` dans ce chemin",
+             not any(mot in espace for mot in
+                     ("lot3b", "LOT3B", "MEMBER_PRICING", "member_discount")),
+             "un avantage membre applique ici facturerait une seance DEJA payee")
+    verifier("9K3. la trace tarifaire y est celle du FORFAIT "
+             "(`lot3_champs_forfait`), jamais celle d'un achat",
+             "lot3_champs_forfait" in espace
+             and "lot3_champs_achat" not in espace)
+
+    verifier("9K4. `reservation_routes.py` (POST /reservations, scan QR) "
+             "ignore totalement LOT 3b",
+             not any(mot in RESA_SRC for mot in
+                     ("lot3b", "LOT3B", "MEMBER_PRICING")))
+    verifier("9K5. `checkout_routes.py` aussi",
+             not any(mot in CHECKOUT_SRC for mot in
+                     ("lot3b", "LOT3B", "MEMBER_PRICING")))
+
+    # LA RAISON TARIFAIRE D'UNE SEANCE DE FORFAIT, VERIFIEE EN L'APPELANT.
+    # Le PULSE x10 du proprietaire : 250 CHF encaisses pour 10 seances.
+    # `seances_a_l_achat` est le denominateur fige a l'achat (lot B), jamais
+    # `total_sessions` que la reconduction incremente.
+    sub = {"id": "sub-1", "code": "AFR-PULSE", "email": "marie@test.ch",
+           "seances_a_l_achat": 10, "montant_encaisse": 250.0,
+           "origine_paiement": "stripe",
+           "total_sessions": 10, "remaining_sessions": 7}
+    code = {"code": "AFR-PULSE", "maxUses": 10, "total_paid": 250.0,
+            "origine_paiement": "stripe"}
+    raison = S.lot3_raison_du_droit(sub, code)
+    verifier("9K6. une souscription PAYEE donne la raison `forfait`",
+             raison == "forfait", str(raison))
+    verifier("9K7. ... et JAMAIS `membre` : l'avantage membre porte sur "
+             "l'ACHAT du forfait, pas sur chacune de ses seances",
+             raison != "membre"
+             and S.lot3_raison_du_droit(sub, None) != "membre"
+             and S.lot3_raison_du_droit(None, code) != "membre")
+    verifier("9K8. le mot `membre` n'apparait meme pas dans la fonction",
+             "membre" not in _fonction(SHARED_ARBRE, SHARED_SRC,
+                                       "lot3_raison_du_droit"))
+
+    # Le snapshot ecrit sur cette seance porte le prix REELLEMENT paye a
+    # l'achat (250 / 10 = 25), et aucune cle d'avantage membre.
+    snap = S.lot3_champs_forfait(sub, code, None)
+    verifier("9K9. la seance vaut 250/10 = 25 CHF (le prix D'ACHAT du pack), "
+             "et le document ne porte AUCUNE cle d'avantage membre",
+             snap.get("tarif_applique") == 25.0
+             and snap.get("tarif_raison") == "forfait"
+             and "tarif_avantage_pct" not in snap
+             and "tarif_membership_id" not in snap, str(snap))
+    verifier("9K10. CONCLUSION — un membre qui consomme une seance de son "
+             "PULSE x10 ne paie RIEN de plus : prix 0, raison `forfait`, "
+             "aucun tarif membre applique une seconde fois",
+             snap.get("tarif_raison") == "forfait"
+             and '"totalPrice": 0.0' in espace
+             and "lot3b" not in espace)
+
+
+# ══════════════ 10. LE DRAPEAU, DANS LES DEUX POSITIONS ═════════════
+def partie_10_drapeau():
+    print("\n=== 10. DRAPEAU ETEINT = LE SITE D'AVANT, AU PIXEL ET AU CENTIME ===")
+    # --- le defaut, dans le modele ---
+    noeud = _classe(SERVER_ARBRE, "FeatureFlags")
+    defaut = None
+    for n in (noeud.body if noeud else []):
+        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) \
+                and n.target.id == "MEMBER_PRICING_ENABLED":
+            defaut = getattr(n.value, "value", "absent")
+    verifier("10a. `MEMBER_PRICING_ENABLED` vaut FALSE par defaut dans "
+             "`FeatureFlags` — le lot naît eteint", defaut is False, str(defaut))
+
+    # --- le checkout : TOUT le bloc est sous `if _l3b_on:` ---
+    checkout = _fonction(SERVER_ARBRE, SERVER_SRC, "create_checkout_session")
+    dedans = _si_drapeau_checkout()
+    verifier("10b. le `if _l3b_on:` du checkout existe et n'est pas vide",
+             len(dedans) > 500, str(len(dedans)))
+    verifier("10c. TOUTE lecture d'adhesion est DEDANS : hors du `if`, il ne "
+             "reste que les deux affectations du drapeau lui-meme",
+             checkout.count("_l3b_") - dedans.count("_l3b_") == 2,
+             "hors du if : %d occurrences"
+             % (checkout.count("_l3b_") - dedans.count("_l3b_")))
+    for symbole in ("_l3b_lire_adhesions", "_l3b_occurrences", "_l3b_arbitrer",
+                    "_l3b_jeton", "_l3b_avantage"):
+        verifier("10d. `%s` n'existe QUE sous le drapeau allume" % symbole,
+                 symbole in dedans
+                 and checkout.count(symbole) == dedans.count(symbole))
+    verifier("10e. DRAPEAU ETEINT = `_v429_total` INCHANGE : sa seule "
+             "reaffectation LOT 3b est a l'interieur du `if`",
+             '_v429_total = float(_l3b_verdict["total"])' in dedans
+             and checkout.count('_v429_total = float(_l3b_verdict')
+             == dedans.count('_v429_total = float(_l3b_verdict') == 1)
+    verifier("10f. ... et les trois variables de trace naissent a None AVANT "
+             "le bloc : eteint, la reservation n'ecrit aucune cle membre",
+             "_lot3b_raison = None" in checkout
+             and "_lot3b_pct = None" in checkout
+             and "_lot3b_membership_id = None" in checkout)
+
+    # --- la route d'estimation : reponse publique AVANT toute lecture ---
+    route = _fonction(SERVER_ARBRE, SERVER_SRC, "lot3b_estimation_tarifaire")
+    i_court = route.find("if not _actif:")
+    i_lire = route.find("lot3b_adhesions as _lire_adhesions")
+    i_appel = route.find("await _lire_adhesions(")
+    verifier("10g. la route d'estimation REND la reponse publique avant toute "
+             "lecture d'adhesion quand le drapeau est eteint",
+             0 < i_court < i_lire and i_court < i_appel,
+             "court-circuit=%d import=%d appel=%d" % (i_court, i_lire, i_appel))
+    verifier("10h. ... et ce qu'elle rend alors est bien le PRIX PUBLIC, pas "
+             "une erreur",
+             "return _reponse" in route[i_court:i_court + 120]
+             and '"votre_tarif": round(_base, 2)' in route[:i_court])
+
+    # --- la panne de lecture du drapeau vaut ETEINT, aux DEUX endroits ---
+    verifier("10i. PANNE — dans le checkout, un drapeau illisible vaut ETEINT "
+             "(`except` -> `_l3b_on = False`)",
+             "except Exception:" in checkout and "_l3b_on = False" in checkout
+             and checkout.find("except Exception:") < checkout.find("_l3b_on = False"))
+    verifier("10j. PANNE — dans l'estimation, idem (`_actif = False`)",
+             "_actif = False" in route
+             and route.find("except Exception:") < route.find("_actif = False"))
+    verifier("10k. ... la panne n'est JAMAIS une decision tarifaire "
+             "(lecon V310c, commentee dans le code)",
+             "la panne ne doit pas devenir une decision" in checkout)
+
+    # --- cote navigateur ---
+    verifier("10l. NAVIGATEUR — `lot3bChoixDateRequis` commence par le "
+             "drapeau : eteint, le parcours d'achat ne bouge pas d'un pixel",
+             PREDICAT_JS.split("\n")[1].strip()
+             == "if (!memberPricingEnabled || !offer) return false;",
+             PREDICAT_JS.split("\n")[1].strip())
+    verifier("10m. NAVIGATEUR — l'etat naît a `false`",
+             "useState(false);" in APP_SRC[
+                 APP_SRC.find("const [memberPricingEnabled"):
+                 APP_SRC.find("const [memberPricingEnabled") + 160])
+    verifier("10n. NAVIGATEUR — le drapeau est lu sur la requete "
+             "`/feature-flags` DEJA existante (aucun appel reseau ajoute)",
+             "setMemberPricingEnabled(response.data?.MEMBER_PRICING_ENABLED || false)"
+             in APP_SRC and APP_SRC.count("axios.get(`${API}/feature-flags`)") == 1)
+    verifier("10o. NAVIGATEUR — l'ECHEC de lecture des drapeaux pose "
+             "`setMemberPricingEnabled(false)`",
+             "setMemberPricingEnabled(false);" in APP_SRC)
+    _bloc_catch = APP_SRC[APP_SRC.find("Feature flags not available"):
+                          APP_SRC.find("Feature flags not available") + 400]
+    verifier("10p. ... et c'est bien dans le `catch`, pas ailleurs",
+             "setMemberPricingEnabled(false);" in _bloc_catch, _bloc_catch[:80])
+
+
+# ═══════════ 11. LE PREDICAT DE REOUVERTURE EST ETROIT ════════════
+def partie_11_predicat():
+    print("\n=== 11. LA REOUVERTURE DU CHOIX DE DATE EST UNE BRECHE, PAS UNE "
+          "PORTE ===")
+    verifier("11a. le predicat existe dans App.js", bool(PREDICAT_JS))
+
+    conditions = (
+        ("1. le drapeau est allume", "!memberPricingEnabled"),
+        ("2. l'offre est PAYANTE", "v223UnitPrice(offer) > 0"),
+        ("3. elle porte un AVANTAGE membre",
+         "parseFloat(offer.member_discount_pct)"),
+        ("4. elle est LIEE a des cours", "offer.linked_course_ids"),
+    )
+    for libelle, motif in conditions:
+        verifier("11b. condition cumulative %s -> presente" % libelle,
+                 motif in PREDICAT_JS, motif)
+    verifier("11c. les QUATRE conditions sortent chacune par `return false;` "
+             "— elles sont CUMULATIVES, pas alternatives",
+             PREDICAT_JS.count("return false;") == 4,
+             str(PREDICAT_JS.count("return false;")))
+    verifier("11d. la condition 4 exige une liste NON VIDE",
+             "linked_course_ids.length === 0" in PREDICAT_JS
+             and "Array.isArray(offer.linked_course_ids)" in PREDICAT_JS)
+    verifier("11e. une CINQUIEME garde ferme la breche d'une grille VIDE : au "
+             "moins un cours lie doit etre reellement affichable",
+             "courses.some(" in PREDICAT_JS
+             and "c.visible !== false" in PREDICAT_JS
+             and "c.archived !== true" in PREDICAT_JS,
+             "sinon le visiteur devrait choisir une date inexistante et ne "
+             "pourrait PLUS acheter du tout")
+
+    # --- VERROU 1 : l'achat direct est CONSERVE pour tout le reste ---
+    #
+    # IL Y A DEUX AIGUILLAGES, PAS UN. Le test navigateur l'a prouve a nos
+    # depens : `handleSelectOffer` avait ete corrige, mais le bouton
+    # « Réserver » de la carte testait encore `v225IsDirectCheckout` SEUL et
+    # court-circuitait le formulaire. L'ecran etait donc juste et inatteignable
+    # par le CTA principal. On exige desormais la condition AUX DEUX endroits.
+    verrou = "if (v225IsDirectCheckout(offer) && !lot3bChoixDateRequis(offer)) {"
+    verifier("11f. VERROU 1 — l'achat direct est CONDITIONNE, jamais supprime",
+             verrou in APP_SRC, "la condition doit etre `&& !lot3bChoixDateRequis`")
+    verifier("11f2. ... et la condition est posee sur LES DEUX aiguillages "
+             "(le bouton « Réserver » ET handleSelectOffer)",
+             APP_SRC.count(verrou) == 2, str(APP_SRC.count(verrou)))
+    _apres = APP_SRC[APP_SRC.rfind(verrou):APP_SRC.rfind(verrou) + 220]
+    verifier("11g. ... et handleSelectOffer appelle toujours "
+             "`startProgressiveCheckout` puis sort : toutes les autres offres "
+             "gardent le parcours d'avant",
+             "startProgressiveCheckout(offer, 1);" in _apres
+             and "return;" in _apres, _apres[:120])
+    _bouton = APP_SRC[APP_SRC.find(verrou):APP_SRC.find(verrou) + 220]
+    verifier("11g2. ... et le bouton de la carte passe par `v226BuyDirect`, "
+             "le point d'entree unique de l'achat direct",
+             "v226BuyDirect();" in _bouton, _bouton[:120])
+    verifier("11g3. ... lequel se garde LUI AUSSI, pour qu'aucun appelant ne "
+             "puisse contourner la regle par inadvertance",
+             "if (lot3bChoixDateRequis(offer)) return;" in APP_SRC)
+    verifier("11h. `startProgressiveCheckout` n'a pas ete supprime du fichier",
+             APP_SRC.count("startProgressiveCheckout") >= 3,
+             str(APP_SRC.count("startProgressiveCheckout")))
+    verifier("11i. le point de decision historique `v225IsDirectCheckout` est "
+             "toujours le premier terme du verrou (aucune redérivation a la "
+             "main)", verrou.startswith("if (v225IsDirectCheckout(offer)"))
+
+    # --- VERROU 2 : showSessions derive du predicat ---
+    verifier("11j. VERROU 2 — `showSessions` n'est plus `false` EN DUR",
+             "const showSessions = false" not in APP_SRC)
+    verifier("11k. ... il derive du MEME predicat, applique a l'offre active",
+             "const showSessions = lot3bChoixDateRequis(activeOffer);" in APP_SRC)
+    verifier("11l. ... et il n'existe qu'UNE seule definition de `showSessions`",
+             APP_SRC.count("const showSessions =") == 1,
+             str(APP_SRC.count("const showSessions =")))
+
+    # --- LE CALCUL HISTORIQUE V225, TOUJOURS LA ET TOUJOURS NON CONSOMME ---
+    verifier("11m. le calcul historique `showSessionsLegacy` (V225) est "
+             "TOUJOURS present — aucune suppression de code",
+             "const showSessionsLegacy =" in APP_SRC)
+    verifier("11n. ... et TOUJOURS non consomme : il n'apparait qu'une fois, "
+             "a sa declaration (aucune regression de lisibilite, aucune "
+             "seconde autorite sur l'affichage)",
+             APP_SRC.count("showSessionsLegacy") == 1,
+             str(APP_SRC.count("showSessionsLegacy")))
+    verifier("11o. ... et il reste explicitement marque comme non utilise",
+             "eslint-disable-next-line no-unused-vars" in APP_SRC[
+                 APP_SRC.find("const showSessionsLegacy") - 200:
+                 APP_SRC.find("const showSessionsLegacy")])
+
+    # --- LE PREDICAT EST APPELE AUX DEUX VERROUS, ET NULLE PART AILLEURS ---
+    # Le predicat est RELAYE (prop) jusqu'au bouton, jamais REDERIVE. Compter
+    # les occurrences serait fragile ; ce qui compte est qu'il n'existe qu'UNE
+    # definition, et qu'aucun autre endroit ne recalcule la regle a la main.
+    verifier("11p. le predicat n'a qu'UNE definition",
+             APP_SRC.count("const lot3bChoixDateRequis = (offer) =>") == 1,
+             str(APP_SRC.count("const lot3bChoixDateRequis = (offer) =>")))
+    verifier("11p2. il est RELAYE en prop, avec un defaut qui preserve "
+             "l'existant pour tout appelant qui ne le passe pas",
+             APP_SRC.count("lot3bChoixDateRequis = () => false") == 2,
+             str(APP_SRC.count("lot3bChoixDateRequis = () => false")))
+    verifier("11p3. la regle n'est REDERIVEE nulle part : `member_discount_pct` "
+             "n'est compare qu'a l'interieur du predicat",
+             APP_SRC.count("member_discount_pct") == 1
+             and "member_discount_pct" in PREDICAT_JS,
+             str(APP_SRC.count("member_discount_pct")))
+
 # ══════════════════════════════ execution ═══════════════════════════════════
 def principal():
     partie_1_avantage_de_l_offre()
@@ -667,6 +1270,12 @@ def principal():
     partie_4_snapshot()
     partie_5_perimetre()
     partie_6_securite()
+    _boucle = asyncio.get_event_loop()
+    _boucle.run_until_complete(partie_7_occurrence())
+    _boucle.run_until_complete(partie_8_cross_coach())
+    partie_9_forfait()
+    partie_10_drapeau()
+    partie_11_predicat()
 
 
 def rapport():

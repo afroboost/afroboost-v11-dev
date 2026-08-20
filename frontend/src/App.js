@@ -1591,7 +1591,7 @@ const V223_TIERS = {
 // NOTE V224: le bouton se desactive sur `checkoutBusy`, PAS sur `loading` — voir
 // la declaration de checkoutBusy dans App. `loading` reste relaye tel quel pour
 // ne rien retirer a l'API du composant.
-const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false }) => {
+const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false, lot3bChoixDateRequis = () => false }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -1870,6 +1870,14 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // le contourner par inadvertance.
   const v226BuyDirect = () => {
     if (!v225IsDirectCheckout(offer)) return;
+    // LOT 3b — une offre a avantage membre a besoin d'une DATE, donc du
+    // formulaire. La garde est posee ICI, dans le point d'entree unique de
+    // l'achat direct, pour la meme raison que les deux autres : un appelant ne
+    // doit pas pouvoir la contourner par inadvertance. C'est exactement ce qui
+    // vient d'arriver — le bouton « Réserver » testait `v225IsDirectCheckout`
+    // seul et court-circuitait le formulaire alors que `handleSelectOffer`,
+    // lui, etait deja corrige.
+    if (lot3bChoixDateRequis(offer)) return;
     if (v226MissingDims.length > 0) {
       // V226: ce chemin etait SILENCIEUX. Un visiteur qui clique la photo ou le
       // titre n'obtenait aucun retour : le libelle du bouton dit quoi faire,
@@ -2898,7 +2906,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   // regle divergeraient a la premiere evolution.
                   // V226: l'achat direct passe par v226BuyDirect, qui relaie la
                   // quantite ET les variantes et re-teste les deux gardes.
-                  if (v225IsDirectCheckout(offer)) {
+                  // LOT 3b : meme condition que `handleSelectOffer`. Le
+                  // predicat est RECU en prop, jamais redérivé ici — le
+                  // commentaire V225 ci-dessus avertissait deja que deux copies
+                  // de la regle divergeraient, et c'est ce qui s'est produit.
+                  if (v225IsDirectCheckout(offer) && !lot3bChoixDateRequis(offer)) {
                     v226BuyDirect();
                   } else if (typeof onClick === 'function') {
                     onClick(offer);
@@ -2965,7 +2977,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
 // Carrousel horizontal avec défilement automatique pour montrer qu'il y a plusieurs offres
 // V224: `courses`, `lang`, `startProgressiveCheckout`, `loading` et `checkoutBusy`
 // ne sont que relayes vers OfferCardSlider — ce composant ne s'en sert pas lui-meme.
-const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOffer, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false }) => {
+const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOffer, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false, lot3bChoixDateRequis = () => false }) => {
   const sliderRef = useRef(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -3242,6 +3254,7 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
             startProgressiveCheckout={startProgressiveCheckout}
             loading={loading}
             checkoutBusy={checkoutBusy} /* V224 */
+            lot3bChoixDateRequis={lot3bChoixDateRequis} /* LOT 3b */
           />
         ))}
       </div>
@@ -4690,6 +4703,13 @@ function App() {
   // ========== AUDIO PLAYER STATE ==========
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
   const [audioFeatureEnabled, setAudioFeatureEnabled] = useState(false);
+  // LOT 3b — l'interrupteur de l'avantage membre, lu sur la MEME requete que
+  // le drapeau audio (aucun appel reseau supplementaire).
+  //
+  // Tant qu'il vaut `false`, le parcours d'achat est EXACTEMENT celui
+  // d'aujourd'hui : achat direct, aucune grille de dates, aucun tarif membre.
+  // C'est ce qui rend le coupe-circuit reel et non decoratif.
+  const [memberPricingEnabled, setMemberPricingEnabled] = useState(false);
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioVolume, setAudioVolume] = useState(0.7);
@@ -4750,13 +4770,51 @@ function App() {
       try {
         const response = await axios.get(`${API}/feature-flags`);
         setAudioFeatureEnabled(response.data?.AUDIO_SERVICE_ENABLED || false);
+        setMemberPricingEnabled(response.data?.MEMBER_PRICING_ENABLED || false);
       } catch (err) {
         console.log('Feature flags not available');
         setAudioFeatureEnabled(false);
+        // Drapeau illisible = ETEINT. Une panne ne doit jamais ouvrir un
+        // parcours ni changer un prix (lecon V310c).
+        setMemberPricingEnabled(false);
       }
     };
     checkAudioFeature();
   }, []);
+
+  // LOT 3b — « CETTE OFFRE A-T-ELLE BESOIN D'UNE DATE ? »
+  //
+  // C'est LE point de decision unique de la reouverture, et il est
+  // volontairement etroit. Depuis V225/V226, toute offre payante part en achat
+  // direct (`v225IsDirectCheckout`) et la grille de dates n'est plus rendue
+  // (`showSessions = false`) : plus aucun visiteur ne choisit d'occurrence.
+  //
+  // Or l'avantage membre porte sur une SEANCE, pas sur un achat : sans la date
+  // choisie, le serveur ne peut pas juger si l'adhesion la couvre. Ces offres
+  // — et ELLES SEULES — retrouvent donc le choix de date.
+  //
+  // Les QUATRE conditions sont cumulatives, et chacune protege quelque chose :
+  //   1. le drapeau est allume       -> eteint, le parcours ne bouge pas d'un pixel
+  //   2. l'offre est payante         -> une offre a 0 CHF garde son parcours
+  //   3. elle porte un avantage      -> sans avantage, rien a decider a la date
+  //   4. elle est liee a des cours   -> sinon il n'y aurait aucune date a montrer
+  //   5. et au moins un est affichable -> sinon la grille serait vide et le
+  //      visiteur ne pourrait plus acheter du tout
+  const lot3bChoixDateRequis = (offer) => {
+    if (!memberPricingEnabled || !offer) return false;
+    if (!(v223UnitPrice(offer) > 0)) return false;
+    if (!((parseFloat(offer.member_discount_pct) || 0) > 0)) return false;
+    if (!Array.isArray(offer.linked_course_ids) || offer.linked_course_ids.length === 0) return false;
+    // 5. ...ET au moins un de ces cours est REELLEMENT affichable aujourd'hui.
+    //
+    // Sans cette derniere condition, une offre dont tous les horaires ont ete
+    // masques ou archives ouvrirait une grille VIDE : le visiteur devrait
+    // choisir une date qui n'existe pas, et ne pourrait plus acheter du tout.
+    // Ce serait une regression sur un parcours qui PAIE — pire que l'absence
+    // d'avantage. Dans ce cas on retombe sur l'achat direct, au prix public.
+    return courses.some((c) => c && c.visible !== false && c.archived !== true
+      && offer.linked_course_ids.includes(c.id));
+  };
 
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [selectedDates, setSelectedDates] = useState([]); // MULTI-SELECT: Array de dates sélectionnées
@@ -6360,7 +6418,16 @@ function App() {
     // telles quelles (aucune suppression de code) mais ne servent que de trace
     // lisible du predicat historique ; ne pas les reintroduire dans une decision
     // sans reverifier qu'elles disent la meme chose que v225IsDirectCheckout.
-    if (v225IsDirectCheckout(offer)) {
+    // LOT 3b — LA SEULE EXCEPTION A L'ACHAT DIRECT.
+    //
+    // `startProgressiveCheckout` purge `selectedCourse` et `selectedDates` et
+    // n'envoie aucun `reservationData` : le serveur n'apprend jamais quelle
+    // seance est achetee. Une offre a avantage membre doit donc passer par le
+    // formulaire, ou le visiteur choisit une occurrence REELLE — que le
+    // serveur revalide ensuite (`lot3b_occurrences_prouvees`, garanties LOT 1).
+    //
+    // Toutes les autres offres gardent l'achat direct, a l'identique.
+    if (v225IsDirectCheckout(offer) && !lot3bChoixDateRequis(offer)) {
       startProgressiveCheckout(offer, 1);
       return;
     }
@@ -8262,7 +8329,14 @@ function App() {
           // V225: les horaires sont desormais affiches sur chaque carte, et toutes les
           // offres de service partent en achat direct. La grille de dates n'a plus de
           // role. Le calcul d'origine est conserve juste au-dessus, non consomme.
-          const showSessions = false;
+          //
+          // LOT 3b — SAUF pour une offre a avantage membre, qui a besoin d'une
+          // DATE choisie. `false` reste donc la regle, et cette exception est la
+          // seule breche. Elle reutilise la grille EXISTANTE : `visibleCourses`
+          // est deja restreint aux `linked_course_ids` de l'offre active
+          // (v159), donc le visiteur ne voit que les horaires de son offre.
+          // Aucune nouvelle page, aucun nouveau bloc.
+          const showSessions = lot3bChoixDateRequis(activeOffer);
 
           // --- BLOC SESSIONS ---
           const sessionsBlock = showSessions && (
@@ -8336,6 +8410,10 @@ function App() {
                 startProgressiveCheckout={startProgressiveCheckout}
                 loading={loading}
                 checkoutBusy={checkoutBusy} /* V224 */
+                /* LOT 3b — relaye UNIQUEMENT au carrousel des SERVICES. La
+                   boutique (produits) garde le defaut `() => false` : son
+                   parcours n'est pas touche d'un iota. */
+                lot3bChoixDateRequis={lot3bChoixDateRequis}
               />
             </div>
           );
