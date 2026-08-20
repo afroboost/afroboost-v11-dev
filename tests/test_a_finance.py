@@ -463,9 +463,27 @@ async def test_onglet_transactions():
              sub and sub.get("_tx_seances_achetees") == 10, str(sub and sub.get("_tx_seances_achetees")))
     verifier("36c. elle continue d'afficher le solde (10/10)",
              sub and sub.get("_tx_sessions") == "10/10", str(sub and sub.get("_tx_sessions")))
-    verifier("36d. une souscription DEJA representee par une reservation "
-             "n'est pas dupliquee",
-             par_code.get("AFR-P250") is None, "doublon reapparu")
+    # LOT 3c-0c — CETTE ASSERTION A CHANGE DE SENS, ET C'EST LE CORRECTIF.
+    #
+    # Elle exigeait `par_code.get("AFR-P250") is None` : la souscription devait
+    # DISPARAITRE des qu'une reservation portait son `subscriptionId`. Or les
+    # deux lignes ne disent pas la meme chose — la souscription est la VENTE
+    # (250 CHF encaisses), la reservation est une CONSOMMATION (une seance tiree
+    # de ce qui est deja paye). Masquer la vente parce qu'elle a ete consommee
+    # faisait disparaitre la recette de l'ecran du coach : mesure du 20/08/2026,
+    # 9 ventes sur 63 etaient DEJA cachees ainsi, et 24 l'auraient ete une fois
+    # `subscriptionId` enfin ecrit par l'espace abonne.
+    #
+    # L'assertion n'est PAS affaiblie, elle est REMISE SUR SA CIBLE : le vrai
+    # doublon — une vente et son paiement Stripe pour UN seul encaissement — est
+    # desormais traite par rapprochement sur `session_id`, une preuve stable, et
+    # il a son propre banc (`tests/test_lot3c0c_multi_offres.py`, verifications
+    # F et G2 : le paiement jumeau est retire, celui qui n'a pas de souscription
+    # en face reste visible). Ici on garantit l'inverse : la vente ne disparait
+    # plus derriere sa propre consommation.
+    verifier("36d. la VENTE reste visible meme quand une reservation la consomme "
+             "(une consommation n'efface pas la recette qui l'a payee)",
+             par_code.get("AFR-P250") is not None, "la vente a disparu de l'ecran")
 
     tx1 = par_code.get("cs_1")
     tx2 = par_code.get("cs_2")

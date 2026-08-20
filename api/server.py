@@ -13744,13 +13744,39 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         "guest_headphones": [None] * len(guests),
     }
     reservation_doc.update(_t1_champs)
+    # ── LOT 3c-0c : LA RESERVATION PORTE LE DROIT QU'ELLE A DEBITE ───────────
+    #
+    # Ce chemin DEBITE `subscription["id"]` quarante lignes plus haut, puis
+    # construisait un document sans cet identifiant : l'information etait en
+    # main, et jetee. Consequence mesuree le 20/08/2026 : seules 37 des 132
+    # reservations de production savaient quel document les avait payees — et
+    # AUCUNE des 74 venues d'ici, le chemin pourtant le plus emprunte. Le droit
+    # utilise devait alors etre REDEVINE a la lecture, par une cascade
+    # `subscriptionId -> code -> e-mail` recopiee en quatre endroits.
+    #
+    # ⚠️ RIEN N'EST ECRIT QUAND IL N'Y A RIEN A DESIGNER. Le repli « forfait
+    # virtuel » (reconstruit depuis `discount_codes`, `_is_virtual`) n'a pas
+    # d'`id` et ne debite aucun document : dans ce cas la cle reste ABSENTE.
+    # Une cle absente se lit « aucun document forfait » ; un `""` se lirait
+    # « document vide », ce qui serait un mensonge de plus a demeler plus tard.
+    if not subscription.get("_is_virtual") and subscription.get("id"):
+        reservation_doc["subscriptionId"] = subscription.get("id")
     # LOT 3a : la seance est tiree du forfait de l'abonne. Sa valeur vient du
     # montant REELLEMENT encaisse a l'achat divise par les seances achetees —
     # jamais du prix affiche aujourd'hui. Ne change aucun montant : `totalPrice`
     # reste a 0.0 comme avant.
     try:
         from api.routes.shared import lot3_champs_forfait as _lot3_champs
-        reservation_doc.update(_lot3_champs(subscription, None, reservation_doc))
+        # LOT 3c-0c : LE DOCUMENT JUMEAU EST PASSE, PLUS `None`.
+        #
+        # La PREUVE du montant (`stripe_amount` + `session_id`) et le
+        # denominateur (`maxUses`) vivent sur le CODE, pas sur la souscription.
+        # En passant `None`, ce chemin — le plus emprunte, 74 reservations sur
+        # 132 — se privait des deux : la couverture du snapshot LOT 3a tombait
+        # de 20,6 % a 6,3 %. `discount_for_mode` est deja lu 230 lignes plus
+        # haut : c'est un argument a passer, pas une requete a ajouter.
+        reservation_doc.update(_lot3_champs(subscription, discount_for_mode,
+                                            reservation_doc))
     except Exception as _l3e:
         logger.warning("[LOT3a] snapshot espace abonne ignore (%s)", type(_l3e).__name__)
     await db.reservations.insert_one(reservation_doc)
@@ -29319,12 +29345,33 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
     # repose pas la question a Mongo. Le tri par date reste celui d'avant.
     subscriptions = sorted(_tx_subs_tous, key=lambda x: str(x.get("created_at") or ""),
                            reverse=True)[:200]
+    # ── LOT 3c-0c : UNE VENTE N'EST PAS UN DOUBLON DE SA PROPRE CONSOMMATION ──
+    #
+    # Cette boucle MASQUAIT la souscription des qu'une reservation portait son
+    # `subscriptionId`. Or les deux lignes ne disent pas la meme chose : la
+    # souscription est la VENTE (250 CHF encaisses), la reservation est une
+    # CONSOMMATION (une seance tiree de ce qui est deja paye). Masquer la vente
+    # parce qu'elle a ete consommee, c'est faire disparaitre la recette de
+    # l'ecran du coach. Mesure du 20/08/2026 : 9 ventes sur 63 etaient DEJA
+    # cachees ainsi — et LOT 3c-0c, en faisant enfin ecrire `subscriptionId` a
+    # l'espace abonne, en aurait cache 24. Le correctif de selection sans
+    # celui-ci aurait donc retire 15 ventes de plus de l'ecran.
+    #
+    # La reservation, elle, ne compte deja pas comme une recette : elle porte
+    # `_tx_est_droit_utilise` (plus haut), qui la fait afficher « droit utilise
+    # — aucun nouveau paiement ».
+    #
+    # LE VRAI DOUBLON EST AILLEURS, et il est traite plus bas : un achat Stripe
+    # produit DEUX lignes — une souscription et un paiement — pour UN SEUL
+    # encaissement. On les rapproche par le `session_id` porte par le code
+    # jumeau : une preuve STABLE, jamais par le montant, le nom ou la date.
+    _l3c0c_sessions_vendues = set()
     for s in subscriptions:
-        # Avoid duplicates: skip if a reservation already exists with this subscription ID
+        _l3c0c_dc = _tx_codes.get((str(s.get("code") or "")).strip().upper()) or {}
+        _l3c0c_sid = str(_l3c0c_dc.get("session_id") or "").strip()
+        if _l3c0c_sid:
+            _l3c0c_sessions_vendues.add(_l3c0c_sid)
         sub_id = s.get("id", "")
-        already_in_reservations = any(
-            ri.get("subscriptionId") == sub_id for ri in reservations
-        )
         s["_tx_type"] = "subscription"
         s["_tx_date"] = s.get("created_at", "")
         s["_tx_name"] = s.get("name", "Inconnu")
@@ -29365,8 +29412,8 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
         # `total_sessions`) grandit a chaque reconduction : il ne dit PAS combien
         # a ete achete. Le denominateur fige, lui, ne bouge jamais.
         s["_tx_seances_achetees"] = _s_fin.get("seances_achetees")
-        if not already_in_reservations:
-            all_items.append(s)
+        # LOT 3c-0c : la vente est TOUJOURS affichee. Voir l'encadre ci-dessus.
+        all_items.append(s)
 
     # 3. Payment transactions (completed Stripe payments)
     payments = await db.payment_transactions.find(
@@ -29374,8 +29421,27 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
         {"_id": 0}
     ).sort("created_at", -1).to_list(200)
     for p in payments:
-        # Only add if not already represented by a subscription or reservation
-        session_id = p.get("session_id", "")
+        # ── LOT 3c-0c : UN ACHAT REEL COMPTE UNE FOIS ────────────────────────
+        #
+        # Ce commentaire annoncait « only add if not already represented » — et
+        # le `all_items.append(p)` plus bas etait INCONDITIONNEL. `session_id`
+        # etait meme calcule ici, puis jamais utilise. Un achat Stripe produisait
+        # donc DEUX lignes pour UN encaissement : la souscription creee par le
+        # webhook, et le paiement lui-meme. Toute somme future les aurait
+        # comptees deux fois.
+        #
+        # LA PREUVE EST STABLE, ET ELLE EXISTE DEJA : `session_id`, porte par les
+        # 188 transactions et par le code jumeau de la souscription. On ne
+        # rapproche NI par montant, NI par nom, NI par date approchee — deux
+        # achats identiques le meme jour sont deux recettes, pas un doublon.
+        #
+        # C'est le PAIEMENT qu'on retire, pas la vente : la souscription porte le
+        # code, les seances et le solde. Un paiement SANS souscription jumelle
+        # (achat direct, produit, event) reste evidemment affiche — sans quoi on
+        # ferait disparaitre une recette reelle.
+        session_id = str(p.get("session_id") or "").strip()
+        if session_id and session_id in _l3c0c_sessions_vendues:
+            continue
         meta = p.get("metadata", {})
         p["_tx_type"] = "payment"
         p["_tx_date"] = p.get("created_at", "")

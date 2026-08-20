@@ -753,11 +753,29 @@ async def _a_enrichir_finance(reservations: list, perimetre: dict = None) -> lis
             ).collation(_A_COLLATION_INSENSIBLE).to_list(500)
 
         _par_id = {s.get("id"): s for s in _subs if s.get("id")}
-        _par_code = {}
+        # ── LOT 3c-0c : LE MEME DEPARTAGE QUE LE DEBIT, PAS « LE PREMIER RENDU »
+        #
+        # `setdefault` retenait le PREMIER document rendu par Mongo — c'est-a-dire
+        # l'ordre naturel, donc en pratique le plus ancien. Or le debit, lui,
+        # applique la regle V391/V394 (`choisir_abonnement` : le document
+        # REELLEMENT consomme, `used_sessions` decroissant). Mesure du 20/08/2026
+        # sur CHRISTOUX10, qui porte deux documents actifs du MEME code :
+        #     debit / affichage / scan QR -> 8cd2fef3 (used=6, 4 restantes)
+        #     Finance (setdefault)        -> ba7f684e (used=5, 5 restantes)
+        # Le coach lisait donc le solde d'un document que rien ne debitait.
+        #
+        # ⚠️ CECI EST DU NIVEAU 2, ET DE LUI SEUL : on departage entre plusieurs
+        # souscriptions d'UN MEME CODE. L'offre utilisee, elle, reste designee
+        # par le contexte de la reservation (`subscriptionId` d'abord, sinon le
+        # code presente) — jamais par ce tri. Choisir l'offre par tri reviendrait
+        # a « prendre un abonnement actif », exactement la regle refusee.
+        from api.routes.shared import choisir_abonnement as _l3c0c_choisir
+        _groupes = {}
         for s in _subs:
             _k = (str(s.get("code") or "")).strip().upper()
             if _k:
-                _par_code.setdefault(_k, s)
+                _groupes.setdefault(_k, []).append(s)
+        _par_code = {_k: _l3c0c_choisir(_lot) for _k, _lot in _groupes.items()}
         _codes_idx = {}
         for d in _dcs:
             _k = (str(d.get("code") or "")).strip().upper()
@@ -1240,11 +1258,35 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     if user_email and not is_free_or_single_purchase:
         # Seulement si subscriptionId OU promoCode explicitement fourni
         if subscription_id:
+            # Le client a DESIGNE son droit : on l'honore tel quel. Aucun tri
+            # n'a lieu ici — c'est le NIVEAU 1, et il est deja tranche.
             query = {"id": subscription_id, "email": user_email, "status": "active"}
+            subscription = await db.subscriptions.find_one(query, {"_id": 0})
         else:
-            query = {"email": user_email, "status": "active", "code": promo_code.upper().strip()}
-
-        subscription = await db.subscriptions.find_one(query, {"_id": 0})
+            # ── LOT 3c-0c : LE MEME DEPARTAGE QUE PARTOUT AILLEURS ──────────
+            #
+            # Ce `find_one({email, status, code})` prenait un document
+            # ARBITRAIRE quand le code en portait plusieurs — l'ordre naturel
+            # de Mongo, donc en pratique le plus ancien. L'espace abonne et le
+            # scan QR, eux, appliquent la regle V391/V394 depuis longtemps.
+            # Trois chemins, deux reponses : sur CHRISTOUX10, ce chemin-ci
+            # debitait `ba7f684e` pendant que les deux autres debitaient
+            # `8cd2fef3`.
+            #
+            # ⚠️ L'E-MAIL RESTE UN FILTRE DUR. `lire_abonnement_par_code`
+            # accepte un parametre `email`, mais il y est un INDICE SOUPLE :
+            # s'il ne trouve rien il retombe sur l'ensemble des documents du
+            # code (`shared.py`, docstring). Le passer par la ferait debiter le
+            # forfait d'un AUTRE porteur du meme code. On le passe donc en
+            # `filtre_supplementaire`, qui est intersecte durement.
+            #
+            # NIVEAU 1 INCHANGE : le code presente designe toujours l'offre.
+            # On ne choisit pas entre PULSE et cours a l'unite — on departage
+            # entre deux documents du MEME code.
+            from api.routes.shared import lire_abonnement_par_code as _l3c0c_lire
+            subscription = await _l3c0c_lire(
+                db, promo_code,
+                filtre_supplementaire={"email": user_email, "status": "active"})
         _lot3_sub = subscription          # LOT 3a : lecture seule, pour le snapshot
         if subscription:
             remaining = subscription.get("remaining_sessions", 0)
@@ -1255,7 +1297,43 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
             if not _ok:
                 logger.warning(f"[V393] Reservation refusee pour {user_email} : {_pourquoi}")
                 raise HTTPException(status_code=400, detail=_pourquoi)
-            
+
+            # ── LOT 3c-0c : UN BILLET SEPARE NE SE PAIE PAS AVEC UN FORFAIT ──
+            #
+            # La garde V426 existait, mais UNIQUEMENT dans l'espace abonne
+            # (`server.py`). Ici, presenter le code d'un PULSE avec le
+            # `courseId` d'un event a billet separe debitait une seance du
+            # PULSE. C'est le defaut « faire debiter la mauvaise offre ».
+            #
+            # ON REUTILISE la fonction existante, on n'en ecrit pas une
+            # seconde : deux regles de propriete d'offre finiraient par
+            # diverger. Meme prudence qu'elle, et pour la meme raison : quand
+            # l'offre ne se resout pas ou ne declare AUCUN `linked_course_ids`,
+            # on n'oppose AUCUN refus — le comportement historique est conserve
+            # et aucun droit n'est retire a personne (regle V310c appliquee a
+            # une garde metier : on ne ferme que ce qu'on a prouve).
+            if reservation.courseId:
+                try:
+                    from api.server import _v426_offre_de_labonnement as _l3c0c_offre
+                    _l3c0c_off = await _l3c0c_offre(
+                        subscription.get("offer_name"),
+                        (promo_code or "").upper().strip())
+                    _l3c0c_lies = (_l3c0c_off or {}).get("linked_course_ids") or []
+                    if _l3c0c_lies and reservation.courseId not in _l3c0c_lies:
+                        logger.info("[LOT3c-0c] reservation refusee : %s hors forfait %s",
+                                    reservation.courseId, promo_code)
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Cette activité n'est pas incluse dans ton forfait — "
+                                   "elle se réserve avec un billet séparé.")
+                except HTTPException:
+                    raise
+                except Exception as _l3c0c_err:  # noqa: BLE001
+                    # Une lecture d'appoint ratee ne FERME jamais une porte :
+                    # elle priverait un abonne de sa seance sans qu'il comprenne.
+                    logger.warning("[LOT3c-0c] garde offre ignoree (%s)",
+                                   type(_l3c0c_err).__name__)
+
             # Déduire 1 séance
             new_remaining = remaining - 1
             new_used = subscription.get("used_sessions", 0) + 1
@@ -3099,7 +3177,21 @@ async def _qr_scan_validate_inner(request: Request):
     # valeur vient du forfait deja paye, jamais du catalogue du jour.
     try:
         from api.routes.shared import lot3_champs_forfait as _lot3_champs
-        new_reservation.update(_lot3_champs(subscription, None, new_reservation))
+        # LOT 3c-0c : LE DOCUMENT JUMEAU EST PASSE, PLUS `None`.
+        #
+        # La PREUVE du montant (`stripe_amount` + `session_id`) et le
+        # denominateur (`maxUses`) vivent sur le CODE. En passant `None`, ce
+        # chemin se privait des deux et n'ecrivait presque jamais de snapshot.
+        #
+        # Ici, contrairement a l'espace abonne, le document n'est PAS deja en
+        # portee (le CAS C qui le lit sort par un `return` avant d'arriver ici) :
+        # il faut donc une lecture. Elle est volontairement placee DANS ce `try`
+        # deja existant — un scan a l'entree d'un cours ne doit jamais echouer
+        # parce qu'une ligne d'historique n'a pas pu s'ecrire. Le client attend
+        # a la porte : le snapshot est une trace, pas une condition d'entree.
+        _l3c0c_dc = await db.discount_codes.find_one(
+            {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}}, {"_id": 0})
+        new_reservation.update(_lot3_champs(subscription, _l3c0c_dc, new_reservation))
     except Exception as _l3e:
         logger.warning("[LOT3a] snapshot scan ignore (%s)", type(_l3e).__name__)
     await db.reservations.insert_one(new_reservation)
