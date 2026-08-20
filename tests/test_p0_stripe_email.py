@@ -740,9 +740,22 @@ else:
     # anterieure doit etre strictement identique avant et apres.
     _socle_avant = {(f, v) for (f, v, _l) in locales_lues_avant_liaison(_source_avant)}
     _socle_apres = {(f, v) for (f, v, _l) in locales_lues_avant_liaison(source)}
-    verifier("8. le correctif ne retire QUE les lectures fautives du webhook",
+    # LOT 3b a RETIRE UNE DETTE DE PLUS, et c'est voulu.
+    #
+    # `create_checkout_session` lisait `_offer` alors qu'il n'etait affecte que
+    # sous `if request.offerId:` : une requete sans `offerId` levait
+    # `UnboundLocalError` et rendait la branche legacy inatteignable. LOT 3b
+    # ajoutant une lecture de plus sur ce chemin, il l'a lie par defaut plutot
+    # que d'heriter du defaut (commit 64add39).
+    #
+    # L'assertion garde son sens — la liste des dettes REMONTEES est explicite
+    # et fermee — mais la vraie garde est sa jumelle juste en dessous : le
+    # socle ne doit JAMAIS grandir. Celle-la n'a pas bouge d'un caractere.
+    verifier("8. les seules lectures non liees retirees sont celles du webhook "
+             "(P0) et `_offer` (LOT 3b)",
              sorted(_socle_avant - _socle_apres),
-             [("stripe_webhook", "primary_color"), ("stripe_webhook", "primary_rgb")])
+             [("create_checkout_session", "_offer"),
+              ("stripe_webhook", "primary_color"), ("stripe_webhook", "primary_rgb")])
     verifier("8. le correctif n'introduit AUCUNE nouvelle locale non liee",
              sorted(_socle_apres - _socle_avant), [])
 
