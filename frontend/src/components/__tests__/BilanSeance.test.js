@@ -138,7 +138,10 @@ describe('Bilan de seance — zone Transactions du ChatWidget', () => {
       // coach personnalise. Le voisinage immediat fait deja ce choix — le vert
       // `#22c55e` et le bleu `#3b82f6` de la zone Transactions sont codes en
       // dur parce qu'ils disent « valide » et « paiement », pas « Afroboost ».
-      const NEUTRES = ['#ffffff', '#000000', '#1a1a1a', '#aaaaaa', '#666666'];
+      // `#111111` est l ENCRE de la signature sur un fond blanc — la teindre
+      // de la couleur du coach la rendrait moins lisible et ne dirait rien de
+      // la marque. Neutre au meme titre que le noir.
+      const NEUTRES = ['#ffffff', '#000000', '#111111', '#1a1a1a', '#aaaaaa', '#666666'];
       const SEMANTIQUES = ['#fbbf24', '#fca5a5', '#22c55e', '#3b82f6', '#ef4444'];
       const estTolere = NEUTRES.indexOf(h.toLowerCase()) !== -1
         || SEMANTIQUES.indexOf(h.toLowerCase()) !== -1;
@@ -181,6 +184,79 @@ describe('Bilan de seance — zone Transactions du ChatWidget', () => {
     const bloc = ZONE_BILAN;
     expect(bloc).toMatch(/aucun paiement/i);
     // Et il ne declenche effectivement rien de tel.
+    expect(bloc).not.toMatch(/stripe|virement|payout|transfer|facture/i);
+  });
+
+  // ── SIGNATURE PARTENAIRE ──────────────────────────────────────────────────
+  test('la signature vit dans le Bilan, sous le partage — aucune nouvelle page', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toContain('signature-zone');
+    expect(bloc).toContain('signature-cadre');
+    expect(bloc).toContain('/reservations/bilan-seance/signature');
+  });
+
+  test('on ne fait pas signer un total provisoire', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toContain('signature-bloquee');
+    // Le bouton reste VISIBLE et desactive : le cacher laisserait croire que
+    // la signature n existe pas.
+    expect(bloc).toMatch(/bilanSeance\.provisoire/);
+    expect(bloc).toMatch(/disabled:\s*true/);
+  });
+
+  test('cote Afroboost : le coach authentifie, pas un second trait au doigt', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toContain('afroboost_valide_par');
+    // Un seul cadre de signature dans tout le panneau.
+    expect((bloc.match(/signature-cadre/g) || []).length).toBe(1);
+  });
+
+  test('le montant SIGNE vient du serveur et n est pas recalcule', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toContain('partage.signature.partner_amount');
+    expect(bloc).not.toMatch(/signature[\s\S]{0,80}\*\s*bilanSeance/);
+  });
+
+  test('une signature perimee est signalee, jamais reecrite ni cachee', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toContain('signature-perimee');
+    expect(bloc).toContain('signature.perimee');
+  });
+
+  test('signer n est pas payer, et le panneau le dit', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toMatch(/Signature de reconnaissance[\s\S]{0,60}aucun paiement/i);
+  });
+
+  test('le cadre est utilisable au doigt : le geste trace au lieu de defiler', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toContain('onPointerDown');
+    expect(bloc).toContain("touchAction: 'none'");
+  });
+
+  test('un cadre vide est refuse par le navigateur, seul temoin du geste', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toContain('sgTrace');
+  });
+
+  test('le recapitulatif porte le cours, la date et les DEUX parts', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toContain('signature-recap');
+    ['Cours', 'Date', 'Total séance', 'Partenaire',
+     'Part partenaire', 'Montant partenaire', 'Part Afroboost']
+      .forEach((l) => expect(bloc).toContain(`ligneRecap('${l}'`));
+  });
+
+  // ── SIGNE N EST PAS PAYE ──────────────────────────────────────────────────
+  test('le paiement est une ligne A PART, affichee meme quand rien n est renseigne', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toContain('paiement-statut');
+    expect(bloc).toContain('Non renseigné');
+  });
+
+  test('le navigateur DECLARE le paiement, il ne l encaisse pas', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toContain('/reservations/bilan-seance/paiement');
     expect(bloc).not.toMatch(/stripe|virement|payout|transfer|facture/i);
   });
 

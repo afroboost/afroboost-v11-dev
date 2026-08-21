@@ -324,6 +324,31 @@ export const QRScannerModal = ({ onClose, onValidate, scanResult, scanError, onM
                     </p>
                   </div>
                 )}
+                {/* TERRAIN A — L'ESSAI GRATUIT, DIT FRANCHEMENT. Informe, ne
+                    bloque pas : la presence est deja validee. Le tarif n'est
+                    affiche QUE s'il a ete fige a l'achat cote serveur ; sinon
+                    phrase generique. On n'annonce jamais un prix que la caisse
+                    ne tiendra pas. Meme regle, meme source que l'autre
+                    scanner — seule la mise en forme differe. */}
+                {scanResult.acces?.essai && (
+                  <div
+                    data-testid="scan-essai"
+                    className="mt-3 rounded-lg px-3 py-2"
+                    style={{
+                      background: 'rgba(251,191,36,0.14)',
+                      border: '1px solid rgba(251,191,36,0.45)',
+                    }}
+                  >
+                    <p style={{ color: '#fbbf24' }} className="text-xs font-bold">
+                      Essai gratuit — cours offert
+                    </p>
+                    <p className="text-white/80 text-[11px] mt-0.5">
+                      {scanResult.acces.tarif_public
+                        ? `Les prochaines séances sont payantes : ${scanResult.acces.tarif_public} ${scanResult.acces.tarif_devise || 'CHF'}.`
+                        : 'Les prochaines séances sont payantes — indique le tarif du cours.'}
+                    </p>
+                  </div>
+                )}
                 {scanResult.message && !scanResult.subscriptionInfo && (
                   <p className="text-green-200 text-xs mt-1">{scanResult.message}</p>
                 )}

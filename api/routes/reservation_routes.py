@@ -2840,14 +2840,27 @@ async def _scan_enrichir(request: Request, reponse):
         if _rcode:
             _resa = await db.reservations.find_one(
                 {"reservationCode": _rcode},
+                # TERRAIN : cette projection porte TOUT ce que l'ecran de scan
+                # doit montrer. L'elargir ne coute AUCUNE lecture de plus — le
+                # budget du scan (2 lectures pour un essai) reste intact.
                 {"_id": 0, "datetime": 1, "courseTime": 1, "courseName": 1,
-                 "promoCode": 1, "discountCode": 1},
+                 "promoCode": 1, "discountCode": 1,
+                 "tarif_public": 1, "tarif_devise": 1,
+                 "id": 1, "quantity": 1, "guests": 1,
+                 "headphone_status": 1, "guest_headphones": 1},
             )
         if _resa:
             _bloc.setdefault("courseName", _resa.get("courseName") or "")
             _bloc["datetime"] = _resa.get("datetime") or ""
             _bloc["courseTime"] = _resa.get("courseTime") or ""
             _bloc["quand"] = _scan_quand(_resa.get("datetime"), _resa.get("courseTime"))
+            # TERRAIN B — le casque. On n'invente aucun etat : on RECOPIE celui
+            # que la reservation porte deja, celui-la meme qu'affiche la liste
+            # des reservations. Une seule source de verite, deux ecrans.
+            for _champ in ("id", "quantity", "guests",
+                           "headphone_status", "guest_headphones"):
+                if _resa.get(_champ) is not None:
+                    _bloc[_champ] = _resa.get(_champ)
 
         # 2. Le code du DROIT. Celui porte par la reservation d'abord — il est
         #    explicite — puis le code scanne lui-meme, qui EST le code d'acces
@@ -2876,6 +2889,21 @@ async def _scan_enrichir(request: Request, reponse):
             # Le libelle du forfait n'apprendrait rien de plus : une requete
             # economisee sur le chemin le plus frequent de ce lot.
             reponse["acces"] = {"libelle": SCAN_LIBELLE_ESSAI, "essai": True}
+            # TERRAIN A — ce que coutera la PROCHAINE seance. On ne le dit que
+            # si un tarif a ete FIGE a l'achat (`tarif_public`, ecrit par le
+            # tunnel de paiement). Le catalogue `offers` est ecarte par mesure :
+            # l'offre « Afroboost Silent » y porte 0.0 et se vend 15 CHF.
+            # Pas de tarif fige -> pas de montant. Jamais de zero par defaut.
+            _tp = (_resa or {}).get("tarif_public")
+            if _tp is not None:
+                try:
+                    _tp = round(float(_tp), 2)
+                    if _tp == _tp and _tp > 0:
+                        reponse["acces"]["tarif_public"] = _tp
+                        reponse["acces"]["tarif_devise"] = (
+                            (_resa or {}).get("tarif_devise") or "CHF")
+                except (TypeError, ValueError):
+                    pass
             return reponse
 
         _sub = await db.subscriptions.find_one(
@@ -3544,6 +3572,40 @@ async def get_bilan_seance(request: Request, courseId: str = "",
                     "afroboost_amount": _pp.get("afroboost_amount"),
                 },
             }
+            # ── LA SIGNATURE, SI LE PARTENAIRE A RECONNU LE BILAN ───────────
+            # Le TRAIT lui-meme n'est PAS renvoye ici : il ne sert a rien pour
+            # decider, il alourdirait chaque lecture du bilan de ~200 Ko, et il
+            # n'a aucune raison de circuler a chaque ouverture du panneau.
+            # On renvoie ce qui permet de DECIDER : quand, combien, par qui —
+            # et si ce qui a ete signe correspond encore aux montants du jour.
+            # LE PAIEMENT EST TOUJOURS RESTITUE, meme absent. « Non
+            # renseigne » est une reponse : une cle manquante laisserait
+            # l'ecran libre d'inventer un statut.
+            _bilan["partage"]["paiement"] = {
+                "paye": bool(_pp.get("paid_at")),
+                "paid_at": _pp.get("paid_at"),
+                "paid_by": _pp.get("paid_by"),
+                "payment_method": _pp.get("payment_method"),
+            }
+            if _pp.get("partner_signed_at"):
+                _snap = _pp.get("signature_snapshot") or {}
+                _bilan["partage"]["signature"] = {
+                    "signed_at": _pp.get("partner_signed_at"),
+                    "partner_name": _snap.get("partner_name"),
+                    "partner_percentage": _snap.get("partner_percentage"),
+                    "partner_amount": _snap.get("partner_amount"),
+                    "afroboost_amount": _snap.get("afroboost_amount"),
+                    "total_connu": _snap.get("total_connu"),
+                    "devise": _snap.get("devise"),
+                    "afroboost_valide_par": _pp.get("afroboost_valide_par"),
+                    "afroboost_valide_le": _pp.get("afroboost_valide_le"),
+                    # PERIMEE : le bilan a bouge depuis la signature. On ne
+                    # reecrit rien et on ne cache rien — le coach voit que ce
+                    # qui a ete reconnu n'est plus ce qui est du, et fait
+                    # re-signer. Un ecart de centime suffit a le dire.
+                    "perimee": (_snap.get("partner_amount")
+                                != _bilan["partage"].get("partner_amount")),
+                }
     except Exception as _pperr:  # noqa: BLE001
         # Un partage illisible ne doit pas emporter le bilan : le coach garde
         # ses presences et son total, il perd seulement la ligne de partage.
@@ -3639,4 +3701,198 @@ async def post_partage_seance(request: Request, payload: PartageSeanceRequest):
     await db.session_shares.update_one(_cle, {"$set": _doc}, upsert=True)
     logger.info("[LOT3p] partage %s%% pour %s @ %s par %s",
                 payload.partner_percentage, _cid, _occ, caller_email)
+    return _doc
+
+
+# =============================================================================
+# SIGNATURE PARTENAIRE — CE QUE LE PARTENAIRE RECONNAIT, ET RIEN DE PLUS
+# =============================================================================
+#
+# CE QUE LA SIGNATURE DIT : « j'ai vu ce bilan, je reconnais ce montant ».
+# CE QU'ELLE NE DIT PAS : que l'argent a change de mains. Signer n'est pas
+# encaisser. Aucun mouvement d'argent n'est declenche ici, ni ailleurs par ce
+# lot — c'est la meme frontiere que le partage lui-meme.
+#
+# ELLE FIGE. Le partage, lui, se RECALCULE a chaque lecture tant que le bilan
+# bouge : c'est ce qui le garde juste. Une signature qui se recalculerait ne
+# vaudrait rien — on aurait signe un montant et le document en montrerait un
+# autre. Donc au moment de signer, on RECOPIE les montants dans
+# `signature_snapshot`, et plus rien ne les touche. Si le bilan change ensuite,
+# on ne reecrit pas le snapshot : on SIGNALE que la signature ne couvre plus
+# les montants courants (`perimee`), et le coach fait re-signer.
+#
+# ON NE FAIT PAS SIGNER UN TOTAL PROVISOIRE. Tant qu'une presence reste « a
+# verifier », le total peut encore monter : demander une signature dessus
+# reviendrait a faire reconnaitre un chiffre qu'on sait faux. Refus franc, 409.
+#
+# COTE AFROBOOST, PAS DE SECONDE SIGNATURE AU DOIGT. Le coach est DEJA
+# authentifie pour arriver ici — son identite serveur et l'horodatage valent
+# mieux qu'un trait dessine que n'importe qui pourrait tracer.
+class SignatureSeanceRequest(BaseModel):
+    courseId: str
+    occurrence: str
+    partner_signature: str
+
+
+# Une image, dessinee dans le navigateur. Rien d'autre n'entre.
+#
+# ON VERIFIE QUE C'EST VRAIMENT UNE IMAGE, pas qu'elle est « assez longue ».
+# Un seuil de taille serait un juge arbitraire : personne ne sait combien
+# d'octets pese un trait honnete. En revanche les premiers octets d'un PNG ou
+# d'un JPEG ne mentent pas — on les lit. Ce que le serveur ne peut PAS savoir,
+# c'est si l'image est BLANCHE : un cadre vide produit un PNG parfaitement
+# valide. C'est donc le navigateur qui refuse d'envoyer un cadre ou personne
+# n'a trace — lui seul a vu passer le doigt.
+LOT3S_PREFIXES = ("data:image/png;base64,", "data:image/jpeg;base64,")
+LOT3S_MAGIE = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff")
+LOT3S_MAX = 400000          # ~300 Ko : large pour un trait, ferme pour le reste
+
+
+def lot3s_signature_valide(valeur):
+    """Vrai si `valeur` est une image PNG/JPEG en data-URL, lisible et bornee."""
+    _v = (valeur or "").strip()
+    if not _v.startswith(LOT3S_PREFIXES) or len(_v) > LOT3S_MAX:
+        return False
+    try:
+        import base64
+        _brut = base64.b64decode(_v.split(",", 1)[1], validate=True)
+    except Exception:
+        return False
+    return any(_brut.startswith(_m) for _m in LOT3S_MAGIE)
+
+
+@reservation_router.post("/reservations/bilan-seance/signature")
+async def post_signature_seance(request: Request, payload: SignatureSeanceRequest):
+    """Le partenaire reconnait le bilan. Aucun mouvement d'argent."""
+    from api.server import _v311_coach_email_from_jwt as _sg_jwt
+    caller_email = (_sg_jwt(request) or "").lower().strip()
+    if not caller_email:
+        raise HTTPException(status_code=403,
+                            detail="Authentification coach requise — reconnectez-vous")
+
+    _cid = (payload.courseId or "").strip()
+    _occ = lot1_occurrence_iso(payload.occurrence) or (payload.occurrence or "").strip()
+    if not _cid or not _occ:
+        raise HTTPException(status_code=400, detail="Cours et date de la séance requis")
+
+    _sig = (payload.partner_signature or "").strip()
+    if not lot3s_signature_valide(_sig):
+        raise HTTPException(status_code=400,
+                            detail="Signature illisible — retrace-la dans le cadre")
+
+    # ── LA SEANCE DOIT ETRE LA SIENNE ───────────────────────────────────────
+    # Meme garde que le partage : le bilan porte deja toute la regle de
+    # propriete. Un coach ne voit pas la seance du voisin, donc ne la signe pas.
+    _bilan = await get_bilan_seance(request, _cid, _occ)
+    if not _bilan.get("lignes") and not _bilan.get("participants_absents"):
+        raise HTTPException(status_code=403,
+                            detail="Cette séance ne fait pas partie de tes cours")
+
+    _partage = _bilan.get("partage") or {}
+    if not _partage.get("partner_name"):
+        raise HTTPException(status_code=409,
+                            detail="Enregistre d'abord le partage : "
+                                   "il n'y a rien à faire reconnaître")
+    if _bilan.get("provisoire"):
+        raise HTTPException(status_code=409,
+                            detail="Bilan encore provisoire : %d présence(s) "
+                                   "à vérifier. On ne fait pas signer un total "
+                                   "qui peut encore bouger."
+                                   % (_bilan.get("participants_valeur_inconnue") or 0))
+
+    # ── LE FIGEAGE ──────────────────────────────────────────────────────────
+    # Les montants sont RECOPIES du bilan, pas recalcules : une seule
+    # implementation du partage dans tout le depot, et le snapshot dit
+    # exactement ce que le partenaire avait sous les yeux.
+    _maintenant = datetime.now(timezone.utc).isoformat()
+    _cle = {"coach_id": caller_email, "courseId": _cid, "occurrence": _occ}
+    _doc = dict(_cle)
+    _doc.update({
+        "partner_signature": _sig,
+        "partner_signed_at": _maintenant,
+        "signature_snapshot": {
+            "partner_name": _partage.get("partner_name"),
+            "partner_percentage": _partage.get("partner_percentage"),
+            "partner_amount": _partage.get("partner_amount"),
+            "afroboost_amount": _partage.get("afroboost_amount"),
+            "total_connu": _partage.get("total_connu"),
+            "devise": _partage.get("devise"),
+            "presences": _bilan.get("participants_valeur_connue"),
+        },
+        # Cote Afroboost : l'identite SERVEUR de l'appelant, horodatee.
+        "afroboost_valide_par": caller_email,
+        "afroboost_valide_le": _maintenant,
+        "updated_at": _maintenant,
+    })
+    await db.session_shares.update_one(_cle, {"$set": _doc}, upsert=True)
+    logger.info("[LOT3s] bilan %s @ %s reconnu par %s, valide par %s",
+                _cid, _occ, _partage.get("partner_name"), caller_email)
+    return _doc
+
+
+# =============================================================================
+# PAIEMENT PARTENAIRE — UNE DECLARATION DU COACH, PAS UN ENCAISSEMENT
+# =============================================================================
+#
+# SIGNE ET PAYE SONT DEUX FAITS DIFFERENTS, et les confondre est precisement le
+# risque de ce lot. La signature dit « je reconnais ce montant ». Cette route
+# dit « je declare avoir regle ce montant ». Ni l'une ni l'autre ne DEPLACE
+# d'argent : Afroboost n'a aucun moyen de constater un versement de la main a
+# la main, et pretendre le contraire serait une affirmation fausse dans un
+# document que quelqu'un lira plus tard comme une preuve.
+#
+# ON GARDE QUI A DECLARE. Une declaration sans auteur ne vaut rien le jour ou
+# elle est contestee. Le coach est deja authentifie : on l'inscrit.
+#
+# ELLE SE RETIRE. Un coach qui se trompe de seance doit pouvoir revenir en
+# arriere sans passer par la base — sinon il apprendra a ne plus s'en servir.
+class PaiementSeanceRequest(BaseModel):
+    courseId: str
+    occurrence: str
+    paye: bool
+    payment_method: Optional[str] = None
+
+
+@reservation_router.post("/reservations/bilan-seance/paiement")
+async def post_paiement_seance(request: Request, payload: PaiementSeanceRequest):
+    """Le coach DECLARE que le partenaire a ete regle. Aucun mouvement d'argent."""
+    from api.server import _v311_coach_email_from_jwt as _pa_jwt
+    caller_email = (_pa_jwt(request) or "").lower().strip()
+    if not caller_email:
+        raise HTTPException(status_code=403,
+                            detail="Authentification coach requise — reconnectez-vous")
+
+    _cid = (payload.courseId or "").strip()
+    _occ = lot1_occurrence_iso(payload.occurrence) or (payload.occurrence or "").strip()
+    if not _cid or not _occ:
+        raise HTTPException(status_code=400, detail="Cours et date de la séance requis")
+
+    # Meme garde de propriete que le partage et la signature : le bilan la porte.
+    _bilan = await get_bilan_seance(request, _cid, _occ)
+    if not _bilan.get("lignes") and not _bilan.get("participants_absents"):
+        raise HTTPException(status_code=403,
+                            detail="Cette séance ne fait pas partie de tes cours")
+    if not (_bilan.get("partage") or {}).get("partner_name"):
+        raise HTTPException(status_code=409,
+                            detail="Enregistre d'abord le partage : "
+                                   "il n'y a personne à régler")
+
+    _maintenant = datetime.now(timezone.utc).isoformat()
+    _cle = {"coach_id": caller_email, "courseId": _cid, "occurrence": _occ}
+    _doc = dict(_cle)
+    if payload.paye:
+        _doc.update({
+            "paid_at": _maintenant,
+            "paid_by": caller_email,
+            "payment_method": (payload.payment_method or "").strip()[:40] or None,
+            "updated_at": _maintenant,
+        })
+    else:
+        # Retirer une declaration erronee : les trois champs reviennent a vide,
+        # pas de champ fantome qui laisserait croire a un demi-paiement.
+        _doc.update({"paid_at": None, "paid_by": None,
+                     "payment_method": None, "updated_at": _maintenant})
+    await db.session_shares.update_one(_cle, {"$set": _doc}, upsert=True)
+    logger.info("[LOT3s] paiement partenaire %s pour %s @ %s declare par %s",
+                "DECLARE" if payload.paye else "RETIRE", _cid, _occ, caller_email)
     return _doc

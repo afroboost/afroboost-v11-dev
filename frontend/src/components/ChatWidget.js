@@ -2214,8 +2214,25 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   var _cPpN = useState(''); var ppNom = _cPpN[0]; var setPpNom = _cPpN[1];
   var _cPpP = useState('30'); var ppPct = _cPpP[0]; var setPpPct = _cPpP[1];
   var _cPpE = useState(''); var ppErreur = _cPpE[0]; var setPpErreur = _cPpE[1];
+  // SIGNATURE PARTENAIRE : le cadre ouvert, le refus eventuel, l'envoi en
+  // cours, et le fait qu'un trait a REELLEMENT ete depose. Ce dernier point
+  // est essentiel : un cadre vide produit une image PNG parfaitement valide,
+  // que le serveur ne peut pas distinguer d'une vraie signature. Seul le
+  // navigateur a vu passer le doigt — c'est donc lui qui refuse le vide.
+  var _cSgO = useState(false); var sgOuvert = _cSgO[0]; var setSgOuvert = _cSgO[1];
+  var _cSgE = useState(''); var sgErreur = _cSgE[0]; var setSgErreur = _cSgE[1];
+  var _cSgV = useState(false); var sgEnvoi = _cSgV[0]; var setSgEnvoi = _cSgV[1];
+  var _cSgT = useState(false); var sgTrace = _cSgT[0]; var setSgTrace = _cSgT[1];
+  var _cPmV = useState(false); var pmEnvoi = _cPmV[0]; var setPmEnvoi = _cPmV[1];
+  var sgCanvas = useRef(null);
+  var sgDessine = useRef(false);
   var _cqr = useState(''); var qrScanCode = _cqr[0]; var setQrScanCode = _cqr[1];
   var _cqrR = useState(null); var qrScanResult = _cqrR[0]; var setQrScanResult = _cqrR[1];
+  // TERRAIN B — le casque. `coachHpBusy` porte la cle du bouton en cours
+  // d'ecriture (un seul a la fois, anti double-clic) ; `coachHpErreur` le
+  // dernier refus du serveur, affiche brievement a cote du bouton.
+  var _chpB = useState(null); var coachHpBusy = _chpB[0]; var setCoachHpBusy = _chpB[1];
+  var _chpE = useState(''); var coachHpErreur = _chpE[0]; var setCoachHpErreur = _chpE[1];
   // v162e: QR camera scanner
   var _cqrCam = useState(false); var qrCameraActive = _cqrCam[0]; var setQrCameraActive = _cqrCam[1];
   var _cqrErr = useState(''); var qrCameraError = _cqrErr[0]; var setQrCameraError = _cqrErr[1];
@@ -5408,78 +5425,148 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
 
   // V191b: Cycle du statut casque depuis la page Chat coach (Transactions)
   // guestIndex = null pour l'abonné principal, index 0-based pour un accompagnant
+  //
+  // TERRAIN B — LA COULEUR NE MENT PAS. Cette fonction affichait le nouvel
+  // etat AVANT la reponse du serveur, puis revenait en arriere en cas d'echec.
+  // A la porte d'un event, avec du reseau qui va et vient, cela produit
+  // exactement l'erreur qu'on ne peut pas se permettre : un casque compte comme
+  // rendu alors qu'il est encore dans un sac. Desormais la couleur n'avance
+  // QU'APRES confirmation du serveur ; en cas d'echec, l'ancien etat reste et
+  // un message court le dit. Un aller-retour de plus a l'ecran, zero doute.
   var cycleCoachHeadphone = function(reservation, guestIndex) {
     var targetId = reservation && (reservation.id || reservation._id || reservation.reservationCode);
     if (!targetId) return;
     var isGuest = guestIndex != null && guestIndex >= 0;
+    var cle = targetId + ':' + (isGuest ? guestIndex : 'main');
+    if (coachHpBusy) return;               // un seul casque a la fois
     var current = isGuest
       ? ((reservation.guest_headphones || [])[guestIndex] || null)
       : (reservation.headphone_status || null);
     var next = current === 'taken' ? 'returned' : (current === 'returned' ? null : 'taken');
 
+    // La MEME ecriture dans les deux ecrans qui montrent ce casque : la liste
+    // des transactions et le resultat du scan. Un seul etat, deux fenetres.
     var applyStatus = function(newStatus) {
+      var fusion = function(r) {
+        if (!isGuest) return Object.assign({}, r, { headphone_status: newStatus });
+        var arr = Array.isArray(r.guest_headphones) ? r.guest_headphones.slice() : [];
+        while (arr.length <= guestIndex) arr.push(null);
+        arr[guestIndex] = newStatus;
+        return Object.assign({}, r, { guest_headphones: arr });
+      };
+      var concerne = function(r) {
+        return !!r && (r.id === targetId || r._id === targetId || r.reservationCode === targetId);
+      };
       setCoachReservations(function(prev) {
-        return (prev || []).map(function(r) {
-          if (r.id !== targetId && r._id !== targetId && r.reservationCode !== targetId) return r;
-          if (!isGuest) {
-            return Object.assign({}, r, { headphone_status: newStatus });
-          }
-          var arr = Array.isArray(r.guest_headphones) ? r.guest_headphones.slice() : [];
-          while (arr.length <= guestIndex) arr.push(null);
-          arr[guestIndex] = newStatus;
-          return Object.assign({}, r, { guest_headphones: arr });
-        });
+        return (prev || []).map(function(r) { return concerne(r) ? fusion(r) : r; });
+      });
+      setQrScanResult(function(prev) {
+        if (!prev || !concerne(prev.reservation)) return prev;
+        return Object.assign({}, prev, { reservation: fusion(prev.reservation) });
       });
     };
-    applyStatus(next);
 
+    setCoachHpBusy(cle);
+    setCoachHpErreur('');
     var url = API + '/reservations/' + encodeURIComponent(targetId) + '/headphone';
     var body = isGuest ? { status: next, guest_index: guestIndex } : { status: next };
-    axios.put(url, body).catch(function(err1) {
-      axios.post(url, body).catch(function(err2) {
+    var fini = function() { setCoachHpBusy(null); };
+    axios.put(url, body).then(function() {
+      applyStatus(next); fini();
+    }).catch(function() {
+      axios.post(url, body).then(function() {
+        applyStatus(next); fini();
+      }).catch(function(err2) {
         console.error('[V191b HEADPHONE] échec', {
           url: url, body: body,
           status: err2 && err2.response && err2.response.status,
           data: err2 && err2.response && err2.response.data
         });
-        applyStatus(current);
-        alert('Impossible de mettre à jour le statut du casque.');
+        // L'ancien etat RESTE. Pas d'alert() : une boite modale bloque le
+        // scan suivant, et a la porte on enchaine les participants.
+        setCoachHpErreur('Casque non enregistré — réessaie');
+        fini();
       });
     });
   };
 
   // V191b: Helper pour rendre la rangée de casques individuels (1 par personne)
-  var renderCoachHeadphoneRow = function(r) {
+  //
+  // `grand` : la MEME rangee, en taille TERRAIN. A la porte, le coach tient son
+  // telephone d'une main et un casque de l'autre — la cible de 11 px qui suffit
+  // dans une liste consultee assise ne suffit plus. Un seul composant, deux
+  // tailles : dupliquer le bouton pour l'agrandir aurait recree le « second
+  // systeme casque » que ce lot existe pour eviter.
+  var renderCoachHeadphoneRow = function(r, grand) {
     var guests = Array.isArray(r.guests) ? r.guests : [];
     var guestHp = Array.isArray(r.guest_headphones) ? r.guest_headphones : [];
     var mainName = ((r.userName || '') + '').split(' ')[0] || 'Abonné';
+    // LE LIBELLE N'EST PAS UN DOUBLON DE LA COULEUR. Un coach daltonien, un
+    // ecran en plein soleil, une capture en noir et blanc : le mot dit ce que
+    // la couleur seule ne garantit pas.
     var styleFor = function(hp) {
-      if (hp === 'taken') return { bg: 'rgba(239,68,68,0.18)', col: '#ef4444', label: 'Casque pris' };
+      if (hp === 'taken') return { bg: 'rgba(239,68,68,0.18)', col: '#ef4444', label: 'Casque remis' };
       if (hp === 'returned') return { bg: 'rgba(34,197,94,0.18)', col: '#22c55e', label: 'Casque rendu' };
       return { bg: 'rgba(255,255,255,0.06)', col: 'rgba(255,255,255,0.4)', label: 'Pas de casque' };
     };
+    var rid = r && (r.id || r._id || r.reservationCode);
     var makeToggle = function(name, hp, gIdx) {
       var s = styleFor(hp);
+      var cle = rid + ':' + (gIdx == null ? 'main' : gIdx);
+      var enCours = coachHpBusy === cle;
       return React.createElement('button', {
         key: 'hp-' + (gIdx == null ? 'main' : gIdx),
         type: 'button',
+        'data-testid': 'casque-' + (gIdx == null ? 'principal' : 'invite-' + gIdx),
+        'data-etat': hp || 'aucun',
+        disabled: !!coachHpBusy,
         title: '🎧 ' + s.label + ' — clic pour changer',
+        'aria-label': name + ' — ' + s.label + ', toucher pour changer',
         onClick: function(e) { e.stopPropagation(); cycleCoachHeadphone(r, gIdx); },
         style: {
-          display: 'inline-flex', alignItems: 'center', gap: '4px',
-          padding: '4px 7px', borderRadius: '6px',
-          background: s.bg, color: s.col, border: 'none', cursor: 'pointer',
-          fontSize: '11px', whiteSpace: 'nowrap', lineHeight: 1
+          display: 'inline-flex', alignItems: 'center',
+          gap: grand ? '6px' : '4px',
+          // 44 px de haut : la cible tactile que le doigt atteint du premier
+          // coup, meme en mouvement.
+          padding: grand ? '11px 14px' : '4px 7px',
+          minHeight: grand ? '44px' : 'auto',
+          borderRadius: grand ? '10px' : '6px',
+          background: s.bg, color: s.col, border: 'none',
+          cursor: coachHpBusy ? 'default' : 'pointer',
+          // L'attente se VOIT : pendant l'aller-retour serveur le bouton
+          // palit. Sans ce signe, le coach re-cliquerait en croyant que rien
+          // ne s'est passe — et le cycle repartirait d'un cran.
+          opacity: enCours ? 0.45 : 1,
+          fontSize: grand ? '15px' : '11px',
+          fontWeight: grand ? 600 : 400,
+          whiteSpace: 'nowrap', lineHeight: 1.1
         }
-      }, '🎧 ' + name);
+      },
+        React.createElement('span', {
+          style: { fontSize: grand ? '20px' : '11px' }, 'aria-hidden': 'true'
+        }, '🎧'),
+        React.createElement('span', null, name),
+        // Le MOT, a cote de la couleur — pas a la place.
+        grand && React.createElement('span', {
+          'data-testid': 'casque-libelle',
+          style: { fontSize: '11px', opacity: 0.85, fontWeight: 400 }
+        }, '· ' + s.label));
     };
     var children = [makeToggle(mainName, r.headphone_status || null, null)];
     for (var i = 0; i < guests.length; i++) {
       var gname = ((guests[i] || '') + '').split(' ')[0] || ('Invité ' + (i + 1));
       children.push(makeToggle(gname, guestHp[i] || null, i));
     }
+    if (coachHpErreur) {
+      children.push(React.createElement('span', {
+        key: 'hp-err', 'data-testid': 'casque-erreur',
+        style: { color: '#ef4444', fontSize: '10px', alignSelf: 'center' }
+      }, coachHpErreur));
+    }
     return React.createElement('div', {
-      style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }
+      'data-testid': 'casque-rangee',
+      style: { display: 'flex', flexWrap: 'wrap',
+               gap: grand ? '8px' : '6px', marginTop: '8px' }
     }, children);
   };
 
@@ -5578,6 +5665,151 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       setPpErreur((d && d.detail) ? String(d.detail) : 'Enregistrement impossible.');
     });
   };
+
+  // SIGNATURE PARTENAIRE — le trait, puis l'envoi.
+  //
+  // CE QUE LA SIGNATURE DIT : « j'ai vu ce bilan, je reconnais ce montant ».
+  // CE QU'ELLE NE DIT PAS : que l'argent a change de mains.
+  //
+  // ES5 STRICT ici comme dans tout le voisinage (Samsung Internet, anciens
+  // Android) : var, function(), aucune arrow, aucun gabarit de chaine.
+  // Une ligne du recapitulatif : libelle a gauche, valeur a droite. Extraite
+  // parce qu'elle sert sept fois — et qu'une seule mise en forme garantit que
+  // le partenaire lit un tableau, pas sept variantes.
+  var ligneRecap = function(libelle, valeur, fort) {
+    return React.createElement('div', {
+      key: 'rc-' + libelle,
+      style: { display: 'flex', justifyContent: 'space-between', gap: '10px' }
+    },
+      React.createElement('span', { style: { color: '#aaa' } }, libelle),
+      React.createElement('span', {
+        style: {
+          color: fort ? 'var(--primary-color, #D91CD2)' : '#fff',
+          fontWeight: fort ? 700 : 500, textAlign: 'right'
+        }
+      }, valeur));
+  };
+
+  var sgContexte = function() {
+    var c = sgCanvas.current;
+    if (!c || !c.getContext) return null;
+    return c.getContext('2d');
+  };
+
+  // Le fond BLANC est peint explicitement. Un canvas neuf est transparent :
+  // la signature partirait alors en PNG a fond transparent, illisible sur un
+  // fond sombre le jour ou on la relit.
+  var sgEffacer = function() {
+    var c = sgCanvas.current; var ctx = sgContexte();
+    if (!c || !ctx) return;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    setSgTrace(false);
+    setSgErreur('');
+  };
+
+  // Les coordonnees du doigt RAPPORTEES a la resolution du canvas. Le cadre
+  // est etire en CSS (largeur du panneau) alors que le canvas garde une
+  // resolution fixe : sans ce rapport, le trait se dessine a cote du doigt.
+  var sgPoint = function(e) {
+    var c = sgCanvas.current;
+    if (!c || !c.getBoundingClientRect) return null;
+    var r = c.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    var cx = (e.clientX != null) ? e.clientX
+           : (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+    var cy = (e.clientY != null) ? e.clientY
+           : (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+    return { x: (cx - r.left) * (c.width / r.width),
+             y: (cy - r.top) * (c.height / r.height) };
+  };
+
+  var sgDebut = function(e) {
+    e.preventDefault(); e.stopPropagation();
+    var ctx = sgContexte(); var p = sgPoint(e);
+    if (!ctx || !p) return;
+    sgDessine.current = true;
+    ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#111111';
+    ctx.beginPath(); ctx.moveTo(p.x, p.y);
+    // Un point pose sans glisser EST une marque : on la trace tout de suite.
+    ctx.lineTo(p.x + 0.1, p.y + 0.1); ctx.stroke();
+    setSgTrace(true);
+  };
+
+  var sgBouge = function(e) {
+    if (!sgDessine.current) return;
+    e.preventDefault(); e.stopPropagation();
+    var ctx = sgContexte(); var p = sgPoint(e);
+    if (!ctx || !p) return;
+    ctx.lineTo(p.x, p.y); ctx.stroke();
+  };
+
+  var sgFin = function() { sgDessine.current = false; };
+
+  // PAIEMENT PARTENAIRE — une DECLARATION du coach, jamais un encaissement.
+  // Le navigateur n'affirme rien de lui-meme : il transmet le choix du coach
+  // et RELIT le bilan, qui fait foi.
+  var pmDeclarer = function(paye) {
+    if (!bilanSeance || !bilanSeance.course_id) return;
+    if (pmEnvoi) return;
+    setPmEnvoi(true);
+    var headers = { 'Content-Type': 'application/json' };
+    var ce = getCoachEmail();
+    if (ce) headers['X-User-Email'] = ce;
+    axios.post(API + '/reservations/bilan-seance/paiement', {
+      courseId: bilanSeance.course_id,
+      occurrence: bilanSeance.occurrence,
+      paye: !!paye
+    }, { headers: headers }).then(function() {
+      bilanOuvrir(bilanSeance.course_id, bilanSeance.occurrence);
+      setPmEnvoi(false);
+    }).catch(function() { setPmEnvoi(false); });
+  };
+
+  var sgEnregistrer = function() {
+    if (!bilanSeance || !bilanSeance.course_id) return;
+    if (sgEnvoi) return;                       // anti double-envoi
+    if (!sgTrace) {
+      setSgErreur('Fais signer le partenaire dans le cadre.'); return;
+    }
+    var c = sgCanvas.current;
+    if (!c || !c.toDataURL) { setSgErreur('Cadre de signature indisponible.'); return; }
+    var image = c.toDataURL('image/png');
+    setSgErreur(''); setSgEnvoi(true);
+    var headers = { 'Content-Type': 'application/json' };
+    var ce = getCoachEmail();
+    if (ce) headers['X-User-Email'] = ce;
+    axios.post(API + '/reservations/bilan-seance/signature', {
+      courseId: bilanSeance.course_id,
+      occurrence: bilanSeance.occurrence,
+      partner_signature: image
+    }, { headers: headers }).then(function() {
+      // On RELIT le bilan : c'est le serveur qui dit ce qui est signe, et
+      // notamment si la signature couvre encore les montants courants.
+      bilanOuvrir(bilanSeance.course_id, bilanSeance.occurrence);
+      setSgOuvert(false); setSgTrace(false); setSgEnvoi(false);
+    }).catch(function(err) {
+      var d = err && err.response && err.response.data;
+      setSgErreur((d && d.detail) ? String(d.detail) : 'Signature non enregistrée.');
+      setSgEnvoi(false);
+    });
+  };
+
+  // LE FOND BLANC EST PEINT A L'OUVERTURE DU CADRE, pas seulement en CSS :
+  // `toDataURL` capture le CONTENU du canvas, pas son style. Sans cette
+  // peinture, la signature partirait sur fond transparent et deviendrait
+  // invisible le jour ou on la relit sur un fond sombre.
+  // Dependance PRIMITIVE (`sgOuvert`), jamais un objet : la regle anti-boucle
+  // du depot vaut aussi ici.
+  useEffect(function() {
+    if (!sgOuvert) return;
+    var c = sgCanvas.current;
+    if (!c || !c.getContext) return;
+    var ctx = c.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, c.width, c.height);
+  }, [sgOuvert]);
 
   // V236: ajoute ou retire une seance sur un pack, depuis l'onglet Transactions.
   //
@@ -10285,6 +10517,43 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                               </div>
                             </div>
                           )}
+                          {/* TERRAIN A — L'ESSAI GRATUIT, DIT FRANCHEMENT.
+                              La presence est VALIDEE : ce bloc informe, il ne
+                              bloque rien. Le tarif n'apparait QUE si le serveur
+                              en a un, fige a l'achat. Pas de tarif -> phrase
+                              generique. On n'annonce jamais un prix que la
+                              caisse ne tiendra pas. */}
+                          {qrScanResult.acces && qrScanResult.acces.essai && (
+                            <div data-testid="scan-essai" style={{
+                              marginTop: '10px', padding: '8px 10px', borderRadius: '8px',
+                              textAlign: 'left',
+                              background: 'rgba(251,191,36,0.14)',
+                              border: '1px solid rgba(251,191,36,0.45)'
+                            }}>
+                              <div style={{ color: '#fbbf24', fontSize: '12px', fontWeight: 700 }}>
+                                Essai gratuit — cours offert
+                              </div>
+                              <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '11px', marginTop: '3px' }}>
+                                {qrScanResult.acces.tarif_public
+                                  ? ('Les prochaines séances sont payantes : '
+                                     + qrScanResult.acces.tarif_public + ' '
+                                     + (qrScanResult.acces.tarif_devise || 'CHF') + '.')
+                                  : 'Les prochaines séances sont payantes — indique le tarif du cours.'}
+                              </div>
+                            </div>
+                          )}
+                          {/* TERRAIN B — LE CASQUE, AU MOMENT OU ON LE DONNE.
+                              Meme bouton, meme couleurs, meme route que la liste
+                              des transactions : le scan n'a pas son propre
+                              systeme de casques, il ouvre une seconde fenetre
+                              sur le meme etat. */}
+                          {qrScanResult.reservation
+                            && (qrScanResult.reservation.id || qrScanResult.reservation.reservationCode) && (
+                            <div style={{ marginTop: '8px', textAlign: 'left' }} data-testid="scan-casque">
+                              <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '9px', letterSpacing: '0.08em' }}>CASQUE</div>
+                              {renderCoachHeadphoneRow(qrScanResult.reservation, true)}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -12621,6 +12890,231 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       border: '1px solid rgba(255,255,255,0.2)'
                     }
                   }, 'Annuler')
+                )
+              ),
+
+              // ── PAIEMENT : UN FAIT DISTINCT DE LA SIGNATURE ────────────────
+              //    Affiche MEME quand rien n'est renseigne : « Non renseigné »
+              //    est une reponse. Une ligne absente laisserait le lecteur
+              //    supposer ce qui l'arrange.
+              (bilanSeance.partage && !ppOuvert) && React.createElement('div', {
+                'data-testid': 'paiement-zone',
+                style: { marginTop: '12px', display: 'flex', alignItems: 'center',
+                         justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }
+              },
+                React.createElement('span', { style: { color: '#aaa', fontSize: '11px' } },
+                  'Paiement partenaire'),
+                React.createElement('span', {
+                  'data-testid': 'paiement-statut',
+                  style: {
+                    fontSize: '11px', fontWeight: 600,
+                    color: (bilanSeance.partage.paiement || {}).paye ? '#22c55e' : '#888'
+                  }
+                }, (bilanSeance.partage.paiement || {}).paye
+                     ? ('Réglé — déclaré le '
+                        + String((bilanSeance.partage.paiement || {}).paid_at || '')
+                            .replace('T', ' à ').slice(0, 16))
+                     : 'Non renseigné'),
+                React.createElement('button', {
+                  type: 'button', 'data-testid': 'paiement-basculer',
+                  disabled: !!pmEnvoi,
+                  onClick: function(e) {
+                    e.stopPropagation();
+                    pmDeclarer(!((bilanSeance.partage.paiement || {}).paye));
+                  },
+                  style: {
+                    padding: '4px 10px', borderRadius: '10px', fontSize: '10px',
+                    fontWeight: 600, cursor: pmEnvoi ? 'default' : 'pointer',
+                    color: '#aaa', background: 'transparent',
+                    opacity: pmEnvoi ? 0.5 : 1,
+                    border: '1px solid rgba(255,255,255,0.2)'
+                  }
+                }, (bilanSeance.partage.paiement || {}).paye
+                     ? 'Retirer' : 'Marquer comme payé')
+              ),
+
+              // ── LA SIGNATURE DU PARTENAIRE ─────────────────────────────────
+              //    Elle ne s'affiche QUE s'il y a un partage a reconnaitre.
+              //    Signer un bilan sans partenaire n'aurait rien a attester.
+              (bilanSeance.partage && !ppOuvert) && React.createElement('div', {
+                'data-testid': 'signature-zone',
+                style: { marginTop: '16px', paddingTop: '12px',
+                         borderTop: '1px solid rgba(255,255,255,0.08)' }
+              },
+                // ── DEJA SIGNE ───────────────────────────────────────────────
+                (bilanSeance.partage.signature && !sgOuvert) && React.createElement('div', null,
+                  React.createElement('div', {
+                    'data-testid': 'signature-faite',
+                    style: { color: '#22c55e', fontSize: '12px', fontWeight: 600 }
+                  }, 'Bilan reconnu par ' + String(bilanSeance.partage.signature.partner_name || 'le partenaire')),
+                  React.createElement('div', {
+                    'data-testid': 'signature-montant',
+                    style: { color: '#fff', fontSize: '12px', marginTop: '4px' }
+                  }, 'Montant reconnu : '
+                     + String(bilanSeance.partage.signature.partner_amount != null
+                              ? bilanSeance.partage.signature.partner_amount : '—')
+                     + ' ' + (bilanSeance.partage.signature.devise || bilanSeance.devise || 'CHF')),
+                  React.createElement('div', {
+                    style: { color: '#888', fontSize: '10px', marginTop: '4px', lineHeight: 1.4 }
+                  }, 'Validé côté Afroboost par '
+                     + String(bilanSeance.partage.signature.afroboost_valide_par || '—')),
+                  // LE BILAN A BOUGE DEPUIS. On ne reecrit pas la signature et
+                  // on ne la cache pas : on dit qu'elle ne couvre plus le
+                  // montant du jour, et on propose de la refaire.
+                  bilanSeance.partage.signature.perimee && React.createElement('div', {
+                    'data-testid': 'signature-perimee',
+                    style: { color: '#fbbf24', fontSize: '10px', marginTop: '6px', lineHeight: 1.4 }
+                  }, 'Le total a changé depuis cette signature — elle ne couvre plus le montant actuel. Fais re-signer le partenaire.'),
+                  React.createElement('div', {
+                    style: { color: '#666', fontSize: '10px', marginTop: '6px', lineHeight: 1.4 }
+                  }, 'Signature de reconnaissance — aucun paiement n’est déclenché.'),
+                  React.createElement('button', {
+                    type: 'button', 'data-testid': 'signature-refaire',
+                    onClick: function(e) {
+                      e.stopPropagation(); setSgErreur(''); setSgTrace(false); setSgOuvert(true);
+                    },
+                    style: {
+                      marginTop: '10px', padding: '4px 10px', borderRadius: '10px',
+                      fontSize: '10px', fontWeight: 600, cursor: 'pointer',
+                      color: '#aaa', background: 'transparent',
+                      border: '1px solid rgba(255,255,255,0.2)'
+                    }
+                  }, 'Faire re-signer')
+                ),
+
+                // ── PAS ENCORE SIGNE ─────────────────────────────────────────
+                (!bilanSeance.partage.signature && !sgOuvert) && React.createElement('div', null,
+                  // UN TOTAL PROVISOIRE NE SE FAIT PAS SIGNER. Le bouton est
+                  // la, visible et desactive, avec la raison : cacher le bouton
+                  // laisserait croire que la signature n'existe pas.
+                  bilanSeance.provisoire
+                    ? React.createElement('div', null,
+                        React.createElement('button', {
+                          type: 'button', 'data-testid': 'signature-ouvrir',
+                          disabled: true,
+                          style: {
+                            padding: '6px 12px', borderRadius: '10px', fontSize: '11px',
+                            fontWeight: 600, cursor: 'default',
+                            color: 'rgba(255,255,255,0.35)',
+                            background: 'rgba(255,255,255,0.06)',
+                            border: '1px solid rgba(255,255,255,0.12)'
+                          }
+                        }, 'Faire signer le partenaire'),
+                        React.createElement('div', {
+                          'data-testid': 'signature-bloquee',
+                          style: { color: '#fbbf24', fontSize: '10px', marginTop: '6px', lineHeight: 1.4 }
+                        }, 'Bilan encore provisoire — le total peut bouger. Vérifie les présences avant de faire signer.'))
+                    : React.createElement('button', {
+                        type: 'button', 'data-testid': 'signature-ouvrir',
+                        onClick: function(e) {
+                          e.stopPropagation(); setSgErreur(''); setSgTrace(false); setSgOuvert(true);
+                        },
+                        style: {
+                          padding: '6px 12px', borderRadius: '10px', fontSize: '11px',
+                          fontWeight: 600, cursor: 'pointer',
+                          color: 'var(--primary-color, #D91CD2)',
+                          background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
+                          border: '1px solid var(--primary-color, #D91CD2)'
+                        }
+                      }, 'Faire signer le partenaire')
+                ),
+
+                // ── LE CADRE ─────────────────────────────────────────────────
+                sgOuvert && React.createElement('div', null,
+                  // CE QU'ON FAIT SIGNER, ECRIT AU-DESSUS DU CADRE. Personne ne
+                  // signe a l'aveugle : le nom, le pourcentage et le montant
+                  // sont sous les yeux du partenaire au moment du trait.
+                  React.createElement('div', {
+                    'data-testid': 'signature-recap',
+                    style: {
+                      padding: '10px 12px', borderRadius: '8px', fontSize: '12px',
+                      color: '#fff', background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.12)', lineHeight: 1.6
+                    }
+                  },
+                    React.createElement('div', {
+                      style: { color: '#aaa', fontSize: '9px', letterSpacing: '0.08em',
+                               textTransform: 'uppercase', marginBottom: '4px' }
+                    }, 'Bilan de séance'),
+                    // CE QU'ON SIGNE, EN ENTIER. Le partenaire doit pouvoir
+                    // relier ce montant a UNE seance precise : sans le cours ni
+                    // la date, une signature ne se rattache a rien de verifiable.
+                    ligneRecap('Cours', String(bilanSeance.course_name || bilanSeance.course_id || '—')),
+                    ligneRecap('Date', String(bilanSeance.occurrence || '').replace('T', ' à ').slice(0, 16)),
+                    ligneRecap('Total séance',
+                      String(bilanSeance.total_connu != null ? bilanSeance.total_connu : '—')
+                      + ' ' + (bilanSeance.devise || 'CHF')),
+                    ligneRecap('Partenaire', String(bilanSeance.partage.partner_name || '—')),
+                    ligneRecap('Part partenaire', String(bilanSeance.partage.partner_percentage) + ' %'),
+                    ligneRecap('Montant partenaire',
+                      String(bilanSeance.partage.partner_amount != null
+                             ? bilanSeance.partage.partner_amount : '—')
+                      + ' ' + (bilanSeance.devise || 'CHF'), true),
+                    ligneRecap('Part Afroboost',
+                      String(bilanSeance.partage.afroboost_amount != null
+                             ? bilanSeance.partage.afroboost_amount : '—')
+                      + ' ' + (bilanSeance.devise || 'CHF'))
+                  ),
+                  React.createElement('div', {
+                    style: { color: '#888', fontSize: '10px', margin: '8px 0 4px' }
+                  }, 'Signature du partenaire — au doigt ou à la souris'),
+                  React.createElement('canvas', {
+                    ref: sgCanvas, 'data-testid': 'signature-cadre',
+                    width: 560, height: 170,
+                    onPointerDown: sgDebut, onPointerMove: sgBouge,
+                    onPointerUp: sgFin, onPointerLeave: sgFin,
+                    onClick: function(e) { e.stopPropagation(); },
+                    style: {
+                      width: '100%', height: '110px', display: 'block',
+                      borderRadius: '8px', background: '#ffffff',
+                      border: '1px solid rgba(255,255,255,0.2)',
+                      // Sans cela, le glissement du doigt fait defiler le
+                      // panneau au lieu de tracer.
+                      touchAction: 'none', cursor: 'crosshair'
+                    }
+                  }),
+                  React.createElement('div', {
+                    style: { color: '#666', fontSize: '10px', marginTop: '6px', lineHeight: 1.4 }
+                  }, 'Reconnaissance du montant dû — aucun paiement n’est déclenché.'),
+                  sgErreur && React.createElement('div', {
+                    'data-testid': 'signature-erreur',
+                    style: { color: '#fca5a5', fontSize: '11px', marginTop: '6px' }
+                  }, sgErreur),
+                  React.createElement('div', {
+                    style: { display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }
+                  },
+                    React.createElement('button', {
+                      type: 'button', 'data-testid': 'signature-valider',
+                      disabled: !!sgEnvoi,
+                      onClick: function(e) { e.stopPropagation(); sgEnregistrer(); },
+                      style: {
+                        padding: '6px 14px', borderRadius: '10px', fontSize: '11px',
+                        fontWeight: 600, cursor: sgEnvoi ? 'default' : 'pointer',
+                        color: '#fff', border: 'none', opacity: sgEnvoi ? 0.5 : 1,
+                        background: 'var(--primary-color, #D91CD2)'
+                      }
+                    }, sgEnvoi ? 'Enregistrement…' : 'Valider la signature'),
+                    React.createElement('button', {
+                      type: 'button', 'data-testid': 'signature-effacer',
+                      onClick: function(e) { e.stopPropagation(); sgEffacer(); },
+                      style: {
+                        padding: '6px 14px', borderRadius: '10px', fontSize: '11px',
+                        cursor: 'pointer', color: '#aaa', background: 'transparent',
+                        border: '1px solid rgba(255,255,255,0.2)'
+                      }
+                    }, 'Effacer'),
+                    React.createElement('button', {
+                      type: 'button',
+                      onClick: function(e) {
+                        e.stopPropagation(); setSgOuvert(false); setSgErreur('');
+                      },
+                      style: {
+                        padding: '6px 14px', borderRadius: '10px', fontSize: '11px',
+                        cursor: 'pointer', color: '#aaa', background: 'transparent',
+                        border: '1px solid rgba(255,255,255,0.2)'
+                      }
+                    }, 'Annuler')
+                  )
                 )
               )
             )
