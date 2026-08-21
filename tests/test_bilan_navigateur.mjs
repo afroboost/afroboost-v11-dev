@@ -254,6 +254,53 @@ print("VALIDE")`);
       await p2.close();
     }
 
+    // ── PARTAGE PARTENAIRE ──────────────────────────────────────────────────
+    // Le bilan de cette occurrence vaut 45 CHF (15 + 30 + 0), avec une presence
+    // a verifier : le partage doit donc etre PROVISOIRE et calcule sur 45.
+    const poser = (pct, nom, jeton) => page.evaluate(async ({ t, c, o, p, n }) => {
+      const h = { 'Content-Type': 'application/json' };
+      if (t) h['Authorization'] = 'Bearer ' + t;
+      const r = await fetch('/api/reservations/bilan-seance/partage', {
+        method: 'POST', headers: h,
+        body: JSON.stringify({ courseId: c, occurrence: o, partner_name: n, partner_percentage: p }),
+      });
+      return { statut: r.status, corps: await r.json().catch(() => ({})) };
+    }, { t: jeton, c: COURS, o: OCC, p: pct, n: nom });
+
+    const p1 = await poser(30, 'LAFF Festival', jeton);
+    verifier('16. le partage s enregistre pour cette occurrence', p1.statut === 200,
+             `statut=${p1.statut}`);
+    verifier('17. 45 CHF x 30 % -> partenaire 13.5, Afroboost 31.5',
+             p1.corps.partner_amount === 13.5 && p1.corps.afroboost_amount === 31.5,
+             `${p1.corps.partner_amount} / ${p1.corps.afroboost_amount}`);
+    verifier('18. une presence restant a verifier, le partage est PROVISOIRE',
+             p1.corps.statut === 'provisoire', `statut=${p1.corps.statut}`);
+
+    const avecPartage = await page.evaluate(async ({ t, c, o }) => {
+      const r = await fetch(`/api/reservations/bilan-seance?courseId=${encodeURIComponent(c)}&occurrence=${encodeURIComponent(o)}`,
+        { headers: { Authorization: 'Bearer ' + t } });
+      return await r.json().catch(() => ({}));
+    }, { t: jeton, c: COURS, o: OCC });
+    verifier('19. le bilan restitue le partage dans le MEME panneau',
+             (avecPartage.partage || {}).partner_name === 'LAFF Festival'
+             && (avecPartage.partage || {}).partner_amount === 13.5,
+             JSON.stringify(avecPartage.partage));
+    verifier('20. partenaire + Afroboost retombent EXACTEMENT sur le total',
+             Math.round(((avecPartage.partage || {}).partner_amount
+                       + (avecPartage.partage || {}).afroboost_amount) * 100) / 100
+             === avecPartage.total_connu,
+             `${(avecPartage.partage||{}).partner_amount} + ${(avecPartage.partage||{}).afroboost_amount} vs ${avecPartage.total_connu}`);
+
+    // Un pourcentage aberrant est REFUSE, pas corrige en silence.
+    const mauvais = await poser(150, 'X', jeton);
+    verifier('21. pourcentage 150 refuse (400)', mauvais.statut === 400,
+             `statut=${mauvais.statut}`);
+
+    // Sans jeton : refus.
+    const anonPartage = await poser(30, 'Voleur', '');
+    verifier('22. sans jeton : le partage est refuse', anonPartage.statut === 403,
+             `statut=${anonPartage.statut}`);
+
     // ── AUCUNE ECRITURE ─────────────────────────────────────────────────────
     const apres = py(`
 import pymongo
@@ -262,7 +309,8 @@ d = c["${DBNAME}"]
 print("COMPTES:%d,%d,%d" % (d.reservations.count_documents({}),
                             d.subscriptions.count_documents({}),
                             d.discount_codes.count_documents({})))`);
-    verifier('15. le bilan n ECRIT rien : les comptes sont inchanges',
+    verifier('15. le bilan n ECRIT rien dans les donnees METIER : les comptes '
+             + 'de reservations, souscriptions et codes sont inchanges',
              apres.includes('COMPTES:7,1,1'), apres.trim().slice(-40));
 
     const ok = resultats.filter((r) => r.ok).length;

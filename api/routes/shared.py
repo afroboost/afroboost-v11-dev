@@ -3575,3 +3575,57 @@ def lot3f_bilan_occurrence(lignes, occurrence=None, coach_id=None) -> dict:
         "devise": B_DEVISE_DEFAUT,
         "lignes": _retenues,
     }
+
+
+# =====================================================================
+# PARTAGE PARTENAIRE — CE QUI REVIENT AU PARTENAIRE, CE QUI RESTE
+# =====================================================================
+#
+# CE QUE CE LOT CALCULE, ET CE QU'IL NE FAIT PAS. Il repartit le total d'une
+# seance entre un partenaire et Afroboost. Il ne declenche AUCUN paiement : ni
+# virement, ni Stripe Connect, ni facture. « Part partenaire = 90 CHF » se lit
+# « du au partenaire », jamais « paye au partenaire ». La nuance n'est pas
+# cosmetique : confondre les deux ferait croire un reglement effectue.
+#
+# L'ARRONDI SE FAIT UNE FOIS, ET DU BON COTE. La part Afroboost est obtenue en
+# SOUSTRAYANT la part partenaire du total, jamais en arrondissant separement :
+# `round(300 * 0.335, 2)` et `round(300 * 0.665, 2)` ne retombent pas sur 300.
+# Un total qui ne retombe pas sur ses pieds est un total faux, et c'est le genre
+# de centime qui fait perdre confiance dans tout le reste.
+
+LOT3P_PROVISOIRE = "provisoire"
+LOT3P_DEFINITIF = "definitif"
+
+
+def lot3p_partage(total_connu, pourcentage) -> dict:
+    """La repartition d'un total entre un partenaire et Afroboost. Pure.
+
+    Rend `None` — donc RIEN — si le pourcentage n'est pas exploitable ou si le
+    total est inconnu. On ne corrige pas un pourcentage aberrant en silence : un
+    `-5` ramene a `0` ou un `150` ramene a `100` produirait un montant que
+    personne n'a demande, et que le coach croirait avoir saisi.
+    """
+    try:
+        _p = float(pourcentage)
+    except (TypeError, ValueError):
+        return None
+    # `!= _p` attrape NaN, que ni `<` ni `>` ne rejettent.
+    if _p != _p or _p < 0 or _p > 100:
+        return None
+    if total_connu is None:
+        return None
+    try:
+        _t = round(float(total_connu), 2)
+    except (TypeError, ValueError):
+        return None
+    if _t != _t:
+        return None
+
+    _part = round(_t * _p / 100.0, 2)
+    return {
+        "partner_percentage": int(_p) if float(_p).is_integer() else round(_p, 2),
+        "partner_amount": _part,
+        # SOUSTRACTION, pas second arrondi — voir l'encadre ci-dessus.
+        "afroboost_amount": round(_t - _part, 2),
+        "total_connu": _t,
+    }

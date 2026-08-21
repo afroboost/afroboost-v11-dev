@@ -246,9 +246,24 @@ async def principal():
     corps = _extraire("get_bilan_seance") or ""
     verifier("16. la route ne RECALCULE rien : elle appelle le moteur LOT 3",
              "lot3f_valeur_presence" in corps and "lot3f_bilan_occurrence" in corps)
-    verifier("17. aucun pourcentage partenaire dans ce lot",
-             "partenaire" not in corps.lower() and "* 0.3" not in corps
-             and "pourcentage" not in corps.lower())
+    # ── 17 A CHANGE DE CIBLE, ET IL FAUT LE DIRE ────────────────────────────
+    #
+    # Elle exigeait qu'AUCUN partage n'existe : le Bilan avait ete livre sans,
+    # et cette assertion garantissait que le lot ne debordait pas sur le suivant.
+    # Le lot PARTAGE PARTENAIRE l'ajoute — c'est sa raison d'etre.
+    #
+    # Elle n'est pas supprimee, elle est REMISE SUR SA CIBLE : le bilan peut
+    # RESTITUER un partage, mais il ne doit ni le calculer lui-meme (le calcul
+    # vit dans `lot3p_partage`, un seul endroit), ni declencher le moindre
+    # paiement. Un pourcentage code en dur ici serait exactement la seconde
+    # verite financiere que ce chantier existe pour empecher.
+    verifier("17. le bilan RESTITUE le partage sans le recalculer : "
+             "aucun pourcentage code en dur",
+             "* 0.3" not in corps and "* 0.5" not in corps
+             and "/ 100" not in corps)
+    verifier("17b. ... et il ne declenche AUCUN paiement",
+             not any(m in corps.lower() for m in
+                     ("stripe.", "transfer", "payout", "virement", "invoice")))
     verifier("18. la route est en LECTURE PURE : aucune ecriture",
              "update_one" not in corps and "insert_one" not in corps
              and "delete_one" not in corps and "update_many" not in corps)

@@ -147,10 +147,46 @@ describe('Bilan de seance — zone Transactions du ChatWidget', () => {
   });
 
   // ── PERIMETRE ─────────────────────────────────────────────────────────────
-  test('aucun partage partenaire dans ce lot, mais la place lui est reservee', () => {
+  // ── PARTAGE PARTENAIRE ────────────────────────────────────────────────────
+  test('le partage vit DANS le Bilan — aucune nouvelle page', () => {
     const bloc = ZONE_BILAN;
-    expect(bloc).not.toMatch(/\*\s*0\.3|pourcentage_partenaire|partSplit/);
-    // Une zone nommee, prete a recevoir le lot suivant sans nouvelle page.
-    expect(bloc.toLowerCase()).toContain('partenaire');
+    expect(bloc.toLowerCase()).toContain('partage partenaire');
+    expect(bloc).toContain('partage-ajouter');
+    expect(bloc).toContain('partage-nom');
+    expect(bloc).toContain('partage-pct');
+  });
+
+  test('le navigateur ne calcule AUCUN montant : il envoie nom + %, le serveur repond', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toContain('/reservations/bilan-seance/partage');
+    // Aucune arithmetique de repartition cote client.
+    expect(bloc).not.toMatch(/\*\s*0\.3|total\s*\*\s*p|pct\s*\/\s*100/);
+    // Les montants affiches viennent du serveur, pas d'un calcul local.
+    expect(bloc).toContain('partage.partner_amount');
+    expect(bloc).toContain('partage.afroboost_amount');
+  });
+
+  test('le pourcentage est borne 0-100 avant meme l envoi', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toMatch(/pct\s*<\s*0\s*\|\|\s*pct\s*>\s*100/);
+  });
+
+  test('un partage provisoire est annonce comme tel', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toContain("statut === 'provisoire'");
+    expect(bloc.toLowerCase()).toContain('provisoires');
+  });
+
+  test('le panneau dit que ce n est PAS un paiement', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toMatch(/aucun paiement/i);
+    // Et il ne declenche effectivement rien de tel.
+    expect(bloc).not.toMatch(/stripe|virement|payout|transfer|facture/i);
+  });
+
+  test('le partage est rattache au cours ET a l occurrence', () => {
+    const bloc = ZONE_BILAN;
+    expect(bloc).toMatch(/courseId:\s*bilanSeance\.course_id/);
+    expect(bloc).toMatch(/occurrence:\s*bilanSeance\.occurrence/);
   });
 });

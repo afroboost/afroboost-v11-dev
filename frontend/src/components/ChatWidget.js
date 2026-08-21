@@ -2208,6 +2208,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   var _cBil = useState(null); var bilanSeance = _cBil[0]; var setBilanSeance = _cBil[1];
   var _cBilC = useState(false); var bilanCharge = _cBilC[0]; var setBilanCharge = _cBilC[1];
   var _cBilE = useState(''); var bilanErreur = _cBilE[0]; var setBilanErreur = _cBilE[1];
+  // PARTAGE PARTENAIRE : la saisie du coach (nom + %), et l'ouverture du bloc.
+  // Les MONTANTS ne sont jamais dans cet etat : ils viennent du serveur.
+  var _cPpO = useState(false); var ppOuvert = _cPpO[0]; var setPpOuvert = _cPpO[1];
+  var _cPpN = useState(''); var ppNom = _cPpN[0]; var setPpNom = _cPpN[1];
+  var _cPpP = useState('30'); var ppPct = _cPpP[0]; var setPpPct = _cPpP[1];
+  var _cPpE = useState(''); var ppErreur = _cPpE[0]; var setPpErreur = _cPpE[1];
   var _cqr = useState(''); var qrScanCode = _cqr[0]; var setQrScanCode = _cqr[1];
   var _cqrR = useState(null); var qrScanResult = _cqrR[0]; var setQrScanResult = _cqrR[1];
   // v162e: QR camera scanner
@@ -5530,6 +5536,47 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   };
   var bilanFermer = function() {
     setBilanSeance(null); setBilanCharge(false); setBilanErreur('');
+    setPpOuvert(false); setPpNom(''); setPpPct('30'); setPpErreur('');
+  };
+
+  // PARTAGE PARTENAIRE — enregistrement.
+  //
+  // LE NAVIGATEUR N'EST PAS L'AUTORITE FINANCIERE. Il envoie un nom et un
+  // pourcentage ; c'est le SERVEUR qui calcule les deux montants et les renvoie.
+  // Calculer ici creerait une seconde verite, et c'est exactement ce que LOT 3
+  // FINANCE existe pour empecher.
+  //
+  // CE BOUTON NE PAIE RIEN. Il enregistre ce qui est DU au partenaire.
+  var ppEnregistrer = function() {
+    if (!bilanSeance || !bilanSeance.course_id) return;
+    var pct = parseFloat(String(ppPct).replace(',', '.'));
+    if (!ppNom || !String(ppNom).trim()) {
+      setPpErreur('Indique le nom du partenaire.'); return;
+    }
+    // On refuse ici pour donner une reponse IMMEDIATE — mais le serveur
+    // revalide, et c'est lui qui fait foi.
+    if (isNaN(pct) || pct < 0 || pct > 100) {
+      setPpErreur('Le pourcentage doit être entre 0 et 100.'); return;
+    }
+    setPpErreur('');
+    var headers = { 'Content-Type': 'application/json' };
+    var ce = getCoachEmail();
+    if (ce) headers['X-User-Email'] = ce;
+    axios.post(API + '/reservations/bilan-seance/partage', {
+      courseId: bilanSeance.course_id,
+      occurrence: bilanSeance.occurrence,
+      partner_name: String(ppNom).trim(),
+      partner_percentage: pct
+    }, { headers: headers }).then(function() {
+      // On RELIT le bilan plutot que de recopier la reponse : le serveur y
+      // recalcule le partage sur le total courant, et c'est cette valeur-la
+      // qui doit s'afficher.
+      bilanOuvrir(bilanSeance.course_id, bilanSeance.occurrence);
+      setPpOuvert(false);
+    }).catch(function(err) {
+      var d = err && err.response && err.response.data;
+      setPpErreur((d && d.detail) ? String(d.detail) : 'Enregistrement impossible.');
+    });
   };
 
   // V236: ajoute ou retire une seance sur un pack, depuis l'onglet Transactions.
@@ -12439,10 +12486,144 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
               'data-testid': 'bilan-zone-partenaire',
               style: {
                 marginTop: '20px', paddingTop: '14px',
-                borderTop: '1px solid rgba(255,255,255,0.12)',
-                color: '#666', fontSize: '11px'
+                borderTop: '1px solid rgba(255,255,255,0.12)'
               }
-            }, 'Partage partenaire — bientôt disponible')
+            },
+              React.createElement('div', {
+                style: { color: '#aaa', fontSize: '10px', letterSpacing: '0.06em',
+                         textTransform: 'uppercase', marginBottom: '8px' }
+              }, 'Partage partenaire'),
+
+              // ── LE PARTAGE DEJA CONVENU ────────────────────────────────────
+              (bilanSeance.partage && !ppOuvert) && React.createElement('div', null,
+                React.createElement('div', {
+                  'data-testid': 'partage-resume',
+                  style: { color: '#fff', fontSize: '13px' }
+                }, String(bilanSeance.partage.partner_name || '')
+                   + ' · ' + String(bilanSeance.partage.partner_percentage) + ' %'),
+                React.createElement('div', {
+                  style: { display: 'flex', justifyContent: 'space-between',
+                           marginTop: '8px', fontSize: '13px' }
+                },
+                  React.createElement('span', { style: { color: '#aaa' } }, 'Partenaire'),
+                  React.createElement('span', {
+                    'data-testid': 'partage-partenaire',
+                    style: { color: 'var(--primary-color, #D91CD2)', fontWeight: 600 }
+                  }, String(bilanSeance.partage.partner_amount != null
+                            ? bilanSeance.partage.partner_amount : '—')
+                     + ' ' + (bilanSeance.devise || 'CHF'))
+                ),
+                React.createElement('div', {
+                  style: { display: 'flex', justifyContent: 'space-between',
+                           marginTop: '4px', fontSize: '13px' }
+                },
+                  React.createElement('span', { style: { color: '#aaa' } }, 'Afroboost'),
+                  React.createElement('span', {
+                    'data-testid': 'partage-afroboost',
+                    style: { color: '#fff', fontWeight: 600 }
+                  }, String(bilanSeance.partage.afroboost_amount != null
+                            ? bilanSeance.partage.afroboost_amount : '—')
+                     + ' ' + (bilanSeance.devise || 'CHF'))
+                ),
+                // Le mot « provisoire » n'est pas decoratif : tant qu'une
+                // presence reste a verifier, ces montants BOUGERONT.
+                (bilanSeance.partage.statut === 'provisoire') && React.createElement('div', {
+                  'data-testid': 'partage-provisoire',
+                  style: { color: '#fbbf24', fontSize: '10px', marginTop: '6px' }
+                }, 'Montants provisoires — ils suivront le total tant que des présences restent à vérifier.'),
+                // Et ce que ces montants ne sont PAS : un paiement.
+                React.createElement('div', {
+                  style: { color: '#666', fontSize: '10px', marginTop: '6px', lineHeight: 1.4 }
+                }, 'Montant dû au partenaire — aucun paiement n’est déclenché.'),
+                React.createElement('button', {
+                  type: 'button', 'data-testid': 'partage-modifier',
+                  onClick: function(e) {
+                    e.stopPropagation();
+                    setPpNom(String(bilanSeance.partage.partner_name || ''));
+                    setPpPct(String(bilanSeance.partage.partner_percentage));
+                    setPpOuvert(true);
+                  },
+                  style: {
+                    marginTop: '10px', padding: '4px 10px', borderRadius: '10px',
+                    fontSize: '10px', fontWeight: 600, cursor: 'pointer',
+                    color: '#aaa', background: 'transparent',
+                    border: '1px solid rgba(255,255,255,0.2)'
+                  }
+                }, 'Modifier')
+              ),
+
+              // ── LE BOUTON D'AJOUT ──────────────────────────────────────────
+              (!bilanSeance.partage && !ppOuvert) && React.createElement('button', {
+                type: 'button', 'data-testid': 'partage-ajouter',
+                onClick: function(e) { e.stopPropagation(); setPpOuvert(true); },
+                style: {
+                  padding: '6px 12px', borderRadius: '10px', fontSize: '11px',
+                  fontWeight: 600, cursor: 'pointer',
+                  color: 'var(--primary-color, #D91CD2)',
+                  background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
+                  border: '1px solid var(--primary-color, #D91CD2)'
+                }
+              }, 'Ajouter un partenaire'),
+
+              // ── LA SAISIE : un nom, un pourcentage. Rien d'autre. ──────────
+              ppOuvert && React.createElement('div', null,
+                React.createElement('input', {
+                  type: 'text', 'data-testid': 'partage-nom',
+                  value: ppNom, placeholder: 'Nom du partenaire',
+                  onChange: function(e) { setPpNom(e.target.value); },
+                  onClick: function(e) { e.stopPropagation(); },
+                  style: {
+                    width: '100%', boxSizing: 'border-box', padding: '8px 10px',
+                    borderRadius: '8px', fontSize: '13px', color: '#fff',
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.15)'
+                  }
+                }),
+                React.createElement('div', {
+                  style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }
+                },
+                  React.createElement('input', {
+                    type: 'number', 'data-testid': 'partage-pct',
+                    value: ppPct, min: 0, max: 100,
+                    onChange: function(e) { setPpPct(e.target.value); },
+                    onClick: function(e) { e.stopPropagation(); },
+                    style: {
+                      width: '90px', padding: '8px 10px', borderRadius: '8px',
+                      fontSize: '13px', color: '#fff',
+                      background: 'rgba(255,255,255,0.06)',
+                      border: '1px solid rgba(255,255,255,0.15)'
+                    }
+                  }),
+                  React.createElement('span', { style: { color: '#aaa', fontSize: '13px' } }, '%')
+                ),
+                ppErreur && React.createElement('div', {
+                  'data-testid': 'partage-erreur',
+                  style: { color: '#fca5a5', fontSize: '11px', marginTop: '6px' }
+                }, ppErreur),
+                React.createElement('div', {
+                  style: { display: 'flex', gap: '8px', marginTop: '10px' }
+                },
+                  React.createElement('button', {
+                    type: 'button', 'data-testid': 'partage-enregistrer',
+                    onClick: function(e) { e.stopPropagation(); ppEnregistrer(); },
+                    style: {
+                      padding: '6px 14px', borderRadius: '10px', fontSize: '11px',
+                      fontWeight: 600, cursor: 'pointer', color: '#fff',
+                      background: 'var(--primary-color, #D91CD2)', border: 'none'
+                    }
+                  }, 'Enregistrer'),
+                  React.createElement('button', {
+                    type: 'button',
+                    onClick: function(e) { e.stopPropagation(); setPpOuvert(false); setPpErreur(''); },
+                    style: {
+                      padding: '6px 14px', borderRadius: '10px', fontSize: '11px',
+                      cursor: 'pointer', color: '#aaa', background: 'transparent',
+                      border: '1px solid rgba(255,255,255,0.2)'
+                    }
+                  }, 'Annuler')
+                )
+              )
+            )
           )
         ),
         document.body

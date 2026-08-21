@@ -3504,4 +3504,139 @@ async def get_bilan_seance(request: Request, courseId: str = "",
     # se presente comme definitif alors qu'il ignore des presences est un
     # mensonge poli — celui que ce depot combat depuis V443.
     _bilan["provisoire"] = _bilan.get("participants_valeur_inconnue", 0) > 0
+
+    # ── LE PARTAGE PARTENAIRE, S'IL Y EN A UN ───────────────────────────────
+    #
+    # LES MONTANTS SONT RECALCULES ICI, A CHAQUE LECTURE. C'est la regle
+    # demandee : tant qu'une presence reste « a verifier », le total peut
+    # encore bouger, et un partage fige sur un total perime serait faux. Quand
+    # la derniere valeur devient connue, le total cesse de bouger et le calcul
+    # se stabilise de lui-meme — le partage devient definitif sans que personne
+    # ait a le re-enregistrer.
+    #
+    # CE QUI EST STOCKE RESTE LA TRACE DE CE QUI AVAIT ETE CONVENU (nom,
+    # pourcentage, et les montants du jour de l'enregistrement). On ne l'ecrase
+    # pas depuis une lecture : une route GET qui ecrit est un effet de bord que
+    # ce depot paie cher ailleurs. Le snapshot est expose tel quel sous
+    # `convenu_le`, a cote des montants courants.
+    try:
+        from api.routes.shared import (lot3p_partage as _pp_calc,
+                                       LOT3P_PROVISOIRE as _PP_PROV,
+                                       LOT3P_DEFINITIF as _PP_DEF)
+        _pp = await db.session_shares.find_one(
+            {"coach_id": caller_email, "courseId": _cid, "occurrence": _occ},
+            {"_id": 0})
+        if _pp:
+            _frais = _pp_calc(_bilan.get("total_connu"), _pp.get("partner_percentage"))
+            _bilan["partage"] = {
+                "partner_name": _pp.get("partner_name"),
+                "partner_percentage": _pp.get("partner_percentage"),
+                "partner_amount": (_frais or {}).get("partner_amount"),
+                "afroboost_amount": (_frais or {}).get("afroboost_amount"),
+                "total_connu": _bilan.get("total_connu"),
+                "devise": _bilan.get("devise"),
+                # Le statut SUIT le bilan : il n'est pas fige a l'enregistrement.
+                "statut": _PP_PROV if _bilan["provisoire"] else _PP_DEF,
+                "convenu_le": _pp.get("updated_at"),
+                "montants_a_l_enregistrement": {
+                    "total_connu": _pp.get("total_connu"),
+                    "partner_amount": _pp.get("partner_amount"),
+                    "afroboost_amount": _pp.get("afroboost_amount"),
+                },
+            }
+    except Exception as _pperr:  # noqa: BLE001
+        # Un partage illisible ne doit pas emporter le bilan : le coach garde
+        # ses presences et son total, il perd seulement la ligne de partage.
+        logger.warning("[LOT3p] partage ignore (%s)", type(_pperr).__name__)
     return _bilan
+
+
+# =============================================================================
+# PARTAGE PARTENAIRE — DANS LE BILAN, ET RATTACHE A UNE SEULE OCCURRENCE
+# =============================================================================
+#
+# LE PARTAGE APPARTIENT A UNE SEANCE, PAS A UN COURS. Le meme cours le 21/08 et
+# le 28/08 sont deux seances : deux partenaires possibles, deux pourcentages,
+# deux montants. La cle est donc `coach_id + courseId + occurrence normalisee`
+# — la MEME que le bilan, ce qui rend l'independance des seances structurelle
+# plutot que conventionnelle.
+#
+# CE LOT NE PAIE RIEN. Il calcule et memorise ce qui est DU. Aucun virement,
+# aucun Stripe Connect, aucune facture, aucun remboursement.
+#
+# V1 VOLONTAIREMENT MINCE : `partner_name` est du texte libre. Pas de table
+# partenaires, pas d'IBAN, pas de contrat — ils viendront s'ils sont demandes,
+# et ce lot est fait pour les accueillir sans changer de forme.
+class PartageSeanceRequest(BaseModel):
+    courseId: str
+    occurrence: str
+    partner_name: str
+    partner_percentage: float
+
+
+@reservation_router.post("/reservations/bilan-seance/partage")
+async def post_partage_seance(request: Request, payload: PartageSeanceRequest):
+    """Enregistre (ou remplace) le partage d'UNE occurrence. Jamais de paiement."""
+    from api.server import _v311_coach_email_from_jwt as _pp_jwt
+    caller_email = (_pp_jwt(request) or "").lower().strip()
+    if not caller_email:
+        raise HTTPException(status_code=403,
+                            detail="Authentification coach requise — reconnectez-vous")
+
+    _cid = (payload.courseId or "").strip()
+    _occ = lot1_occurrence_iso(payload.occurrence) or (payload.occurrence or "").strip()
+    _nom = (payload.partner_name or "").strip()[:120]
+    if not _cid or not _occ:
+        raise HTTPException(status_code=400, detail="Cours et date de la séance requis")
+    if not _nom:
+        raise HTTPException(status_code=400, detail="Nom du partenaire requis")
+
+    # ── LE POURCENTAGE EST VALIDE PAR LE CALCUL LUI-MEME ────────────────────
+    # On ne re-teste pas les bornes ici : `lot3p_partage` est l'autorite, et
+    # dupliquer sa regle garantirait qu'un jour les deux divergent. Elle rend
+    # `None` sur un pourcentage aberrant — on refuse alors franchement, plutot
+    # que de ramener un `-5` a `0` en silence.
+    from api.routes.shared import lot3p_partage, LOT3P_PROVISOIRE, LOT3P_DEFINITIF
+    if lot3p_partage(0.0, payload.partner_percentage) is None:
+        raise HTTPException(status_code=400,
+                            detail="Le pourcentage doit être un nombre entre 0 et 100")
+
+    # ── LA SEANCE DOIT ETRE LA SIENNE ───────────────────────────────────────
+    # On relit le bilan, qui porte deja toute la garde de propriete : il leve
+    # 403 pour un anonyme et ne rend que le perimetre de l'appelant. Un coach
+    # qui n'a aucune presence sur cette occurrence ne peut donc pas y poser de
+    # partage — la seance d'un voisin lui est invisible.
+    _bilan = await get_bilan_seance(request, _cid, _occ)
+    if not _bilan.get("lignes") and not _bilan.get("participants_absents"):
+        raise HTTPException(status_code=403,
+                            detail="Cette séance ne fait pas partie de tes cours")
+
+    _calc = lot3p_partage(_bilan.get("total_connu"), payload.partner_percentage) or {}
+    _maintenant = datetime.now(timezone.utc).isoformat()
+    _statut = LOT3P_PROVISOIRE if _bilan.get("provisoire") else LOT3P_DEFINITIF
+
+    _cle = {"coach_id": caller_email, "courseId": _cid, "occurrence": _occ}
+    _existant = await db.session_shares.find_one(_cle, {"_id": 0})
+    _doc = dict(_cle)
+    _doc.update({
+        "id": (_existant or {}).get("id") or str(uuid.uuid4()),
+        "partner_name": _nom,
+        "partner_percentage": payload.partner_percentage,
+        # SNAPSHOT de ce qui etait convenu CE JOUR-LA. Les montants affiches sont
+        # recalcules a la lecture tant que le bilan bouge (voir le bilan), mais
+        # cette trace permet de repondre plus tard : « qu'avait-on convenu ? ».
+        "total_connu": _calc.get("total_connu"),
+        "partner_amount": _calc.get("partner_amount"),
+        "afroboost_amount": _calc.get("afroboost_amount"),
+        "presences_connues": _bilan.get("participants_valeur_connue"),
+        "presences_inconnues": _bilan.get("participants_valeur_inconnue"),
+        "statut": _statut,
+        "devise": _bilan.get("devise"),
+        "updated_at": _maintenant,
+        "created_at": (_existant or {}).get("created_at") or _maintenant,
+    })
+    # REMPLACE, ne duplique pas : un partage par occurrence, et un seul.
+    await db.session_shares.update_one(_cle, {"$set": _doc}, upsert=True)
+    logger.info("[LOT3p] partage %s%% pour %s @ %s par %s",
+                payload.partner_percentage, _cid, _occ, caller_email)
+    return _doc
