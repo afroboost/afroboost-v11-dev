@@ -12,6 +12,7 @@ reseau, aucune ecriture.
 import ast
 import asyncio
 import io
+import logging
 import os
 import sys
 import types
@@ -65,6 +66,20 @@ for _nom in ("api", "api.routes", "api.routes.shared"):
     sys.modules.setdefault(_nom, types.ModuleType(_nom))
 sys.modules["api.routes.shared"].ESSAI2_FILTRE_GRATUIT = _FILTRE
 
+# ESSAI-6 (P1-a) : `t2_etat_essai` demande desormais « est-ce un essai ? » a la
+# definition centrale, au lieu de recopier le filtre. On lui donne la VRAIE
+# fonction, lue par AST comme le filtre juste au-dessus — un bouchon ferait de
+# ce banc un second endroit ou la regle vivrait.
+_SRC_PARTAGE = io.open(_PARTAGE, encoding="utf-8").read()
+_ns_e6 = {"ESSAI2_FILTRE_GRATUIT": _FILTRE, "logger": logging.getLogger("e6")}
+for _n in ast.parse(_SRC_PARTAGE).body:
+    if isinstance(_n, ast.Assign) and any(
+            isinstance(c, ast.Name) and c.id == "ESSAI6_ORIGINE_OFFERTE" for c in _n.targets):
+        exec(compile(ast.get_source_segment(_SRC_PARTAGE, _n), "<e6c>", "exec"), _ns_e6)
+    if isinstance(_n, ast.AsyncFunctionDef) and _n.name == "est_un_essai":
+        exec(compile(ast.get_source_segment(_SRC_PARTAGE, _n), "<e6>", "exec"), _ns_e6)
+sys.modules["api.routes.shared"].est_un_essai = _ns_e6["est_un_essai"]
+
 
 class _Journal:
     def __init__(self): self.lignes = []
@@ -106,6 +121,20 @@ class _Base:
         self.discount_codes = _Coll(codes)
         self.reservations = _Coll()
         self.subscriptions = _Coll()
+        # ESSAI-6 : `est_un_essai` consulte le catalogue en DERNIER recours.
+        # Vide ici a dessein — ces scenarios se jouent sur la preuve du code.
+        self.offers = _Coll()
+
+    def __getitem__(self, n):
+        """Le vrai pilote accepte les DEUX ecritures — `db.x` et `db["x"]`.
+        Les fonctions de `shared.py` utilisent la seconde ; sans elle, ce faux
+        levait `object is not subscriptable`, que le code appelant avale dans
+        son `except` et transforme en « ce n'est pas un essai ». Le banc
+        validait donc un silence, pas un comportement.
+        """
+        if not hasattr(self, n):
+            setattr(self, n, _Coll())
+        return getattr(self, n)
 
 
 BAC = {}
@@ -198,8 +227,9 @@ def structure():
     nu = code_nu("t2_etat_essai")
     verifier("S1. aucune nouvelle source de verite : ni ecriture, ni compteur",
              not any(m in nu for m in ("insert_one", "update_one", "$set", "$inc")))
-    verifier("S2. la nature d'essai vient d'ESSAI-2, elle n'est pas redefinie",
-             "ESSAI2_FILTRE_GRATUIT" in nu)
+    verifier("S2. la nature d'essai est DEMANDEE, jamais redefinie ici",
+             "est_un_essai" in nu
+             and "payment_method" not in nu and "total_paid" not in nu)
     verifier("S3. l'etat se derive des reservations recues, sans les relire",
              "db.reservations" not in nu)
     verifier("S4. le compteur brut est conserve, pas efface",
@@ -225,7 +255,8 @@ def structure():
         elif isinstance(n, ast.ImportFrom) and n.module:
             mods.add(n.module.split(".")[0])
     verifier("S9. ce test n'importe que la bibliotheque standard, hors reseau",
-             mods <= {"ast", "asyncio", "io", "os", "sys", "types", "datetime"},
+             mods <= {"ast", "asyncio", "io", "logging", "os", "sys",
+                      "types", "datetime"},
              str(sorted(mods)))
 
 

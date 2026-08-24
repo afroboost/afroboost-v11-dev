@@ -8,6 +8,7 @@ aucune reservation reelle, aucune donnee de production touchee.
 import ast
 import asyncio
 import io
+import logging
 import os
 import sys
 from datetime import datetime, timezone, timedelta
@@ -61,6 +62,21 @@ if _FILTRE is None:
 for _nom in ("api", "api.routes", "api.routes.shared"):
     sys.modules.setdefault(_nom, _types.ModuleType(_nom))
 sys.modules["api.routes.shared"].ESSAI2_FILTRE_GRATUIT = _FILTRE
+
+# ESSAI-6 (P1-a) : `t1_restituer_essais_non_honores` demande desormais « est-ce
+# un essai ? » a la definition centrale, au lieu de recopier le filtre. On lui
+# donne la VRAIE fonction, lue par AST comme le filtre ci-dessus — un bouchon
+# ferait de ce banc un second endroit ou la regle vivrait, et c'est justement
+# ce que ce lot supprime.
+_SRC_SHARED = io.open(_PARTAGE, encoding="utf-8").read()
+_ns_e6 = {"ESSAI2_FILTRE_GRATUIT": _FILTRE, "logger": logging.getLogger("e6")}
+for _n in ast.parse(_SRC_SHARED).body:
+    if isinstance(_n, ast.Assign) and any(
+            isinstance(c, ast.Name) and c.id == "ESSAI6_ORIGINE_OFFERTE" for c in _n.targets):
+        exec(compile(ast.get_source_segment(_SRC_SHARED, _n), "<e6c>", "exec"), _ns_e6)
+    if isinstance(_n, ast.AsyncFunctionDef) and _n.name == "est_un_essai":
+        exec(compile(ast.get_source_segment(_SRC_SHARED, _n), "<e6>", "exec"), _ns_e6)
+sys.modules["api.routes.shared"].est_un_essai = _ns_e6["est_un_essai"]
 
 
 def code_nu(nom):
@@ -151,6 +167,19 @@ class _Base:
         self.subscriptions = _Coll(subs)
         self.discount_codes = _Coll(codes)
         self.terms_versions = _Coll(versions)
+        # ESSAI-6 : `est_un_essai` consulte le catalogue en dernier recours.
+        self.offers = _Coll()
+
+    def __getitem__(self, n):
+        """Le vrai pilote accepte les DEUX ecritures — `db.x` et `db["x"]`.
+        Les fonctions de `shared.py` utilisent la seconde ; sans elle, ce faux
+        levait `object is not subscriptable`, que le code appelant avale dans
+        son `except` et transforme en « ce n'est pas un essai ». Le banc
+        validait donc un silence, pas un comportement.
+        """
+        if not hasattr(self, n):
+            setattr(self, n, _Coll())
+        return getattr(self, n)
 
 
 class _Requete:
@@ -568,7 +597,8 @@ def structure():
         elif isinstance(n, ast.ImportFrom) and n.module:
             mods.add(n.module.split(".")[0])
     verifier("S6. ce test n'importe que la bibliotheque standard, hors reseau",
-             mods <= {"ast", "asyncio", "io", "os", "sys", "datetime", "types"},
+             mods <= {"ast", "asyncio", "io", "logging", "os", "sys",
+                      "types", "datetime"},
              str(sorted(mods)))
 
 

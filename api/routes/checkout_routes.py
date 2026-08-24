@@ -216,8 +216,12 @@ async def create_checkout_session(req: CreateCheckoutRequest):
         # raisonnement qui a place ESSAI-1 ici.
         await _essai4_garde(req.customer_email,
                             str((req.items[0].id if req.items else "") or ""))
+        # ESSAI-6 : le numero est le SECOND critere d'identite. `customer_phone`
+        # existe deja sur cette requete — aucun champ nouveau. Absent, la garde
+        # retombe exactement sur son comportement e-mail d'avant.
         await _essai1_garde(req.customer_email,
-                            str((req.items[0].id if req.items else "") or ""))
+                            str((req.items[0].id if req.items else "") or ""),
+                            telephone=req.customer_phone)
         transaction_id = f"free_{uuid.uuid4().hex[:12]}"
         try:
             await _process_successful_payment(
@@ -236,7 +240,8 @@ async def create_checkout_session(req: CreateCheckoutRequest):
         except Exception:
             # La creation a echoue : on rend la reservation, sinon la personne
             # perdrait son essai sans jamais l'avoir recu.
-            await _essai1_liberer(req.customer_email)
+            await _essai1_liberer(req.customer_email,
+                                  telephone=req.customer_phone)
             raise
         # ESSAI-2 : meme mesure sur la seconde porte gratuite.
         try:
@@ -901,92 +906,194 @@ ESSAI1_RAISON = "free_trial_already_used"
 ESSAI1_MESSAGE = "Votre essai gratuit a déjà été utilisé."
 
 
-async def _essai1_essai_deja_accorde(email: str) -> bool:
-    """Cette adresse a-t-elle DEJA recu un essai gratuit ?
+async def _essai1_motif_refus(email: str, telephone: str = "", coach_id=None):
+    """`(raison, message)` si le droit a l'essai est ferme, `(None, None)` sinon.
 
-    En cas d'erreur de lecture on renvoie False : mieux vaut un second essai
-    accorde par accident qu'un tunnel casse pour tout le monde parce que la
-    base a hoquete. Le verrou d'unicite (voir plus bas) reste, lui, en place.
+    LES DEUX FERMETURES NE SE VALENT PAS, et les confondre priverait le client
+    de la seule information qui lui permet d'agir :
+      * CONSOMME   — il est venu. Il n'y aura pas d'autre essai.
+      * DEJA DETENU — il en a un qui l'attend. Ce n'est pas un refus d'abus,
+        c'est un renvoi vers son propre droit.
+    L'ordre compte : « consomme » est le fait le plus definitif, il passe en
+    premier. Quelqu'un qui est venu ET qui detiendrait encore un credit doit
+    lire « deja utilise », pas « va l'utiliser ».
     """
-    _e = (email or "").strip().lower()
-    if not _e:
-        return False
-    try:
-        _doc = await db["discount_codes"].find_one(
-            {"assignedEmail": _e,
-             "$or": [
-                 {"payment_method": "free", "total_paid": 0},
-                 {"source": "social_proof"},
-             ]},
-            {"_id": 1})
-        return _doc is not None
-    except Exception as _err:
-        logger.warning(f"[ESSAI-1] lecture anti-double-essai impossible: {_err}")
-        return False
+    from api.routes.shared import (essai6_consomme as _consomme,
+                                   essai6_reutilisable as _reutilisable,
+                                   ESSAI6_REFUS_CONSOMME as _R_CONSOMME,
+                                   ESSAI6_REFUS_DEJA_DETENU as _R_DETENU,
+                                   ESSAI6_MESSAGE_CONSOMME as _M_CONSOMME,
+                                   ESSAI6_MESSAGE_DEJA_DETENU as _M_DETENU)
+    if await _consomme(db, email, telephone, coach_id):
+        return _R_CONSOMME, _M_CONSOMME
+    if await _reutilisable(db, email, telephone, coach_id):
+        return _R_DETENU, _M_DETENU
+    return None, None
 
 
-async def _essai1_reclamer(email: str) -> bool:
-    """Reserve l'essai de cette adresse, de facon ATOMIQUE.
+async def _essai1_essai_deja_accorde(email: str, telephone: str = "",
+                                     coach_id=None) -> bool:
+    """Le droit a l'essai est-il ferme pour cette personne ?
 
-    Deux requetes lancees a la meme milliseconde passeraient toutes deux une
-    simple lecture — c'est arrive dans ce depot, documente a `shared.py:425`
-    (« 7 MICROSECONDES d'ecart, double-clic a la creation »). On s'appuie donc
-    sur la seule unicite garantie par MongoDB sans declarer d'index : la cle
-    primaire. `_id` porte l'adresse normalisee ; le second inserteur se prend
-    un doublon et repart les mains vides.
+    CONSERVEE, ET PAS PAR NOSTALGIE : c'est la formulation de l'INVARIANT du
+    lot G1/G2 — « deposer ou se faire refuser une demande de preuve sociale ne
+    consomme JAMAIS le droit a l'essai ». Cet invariant se verifie en posant
+    exactement cette question, et il reste vrai apres ESSAI-6. Seule sa
+    composition a change : elle vaut desormais « consomme OU deja detenu »,
+    et elle connait le telephone.
 
-    Meme motif que le jeton BoostTribe (`server.py:10631`), qui utilise le
-    `jti` du JWT comme `_id`.
+    En cas de base muette, `essai6_consomme` rend None : on repond donc False —
+    le tunnel ne se ferme pas sur un hoquet, et le verrou atomique reste, lui,
+    en place.
     """
-    _e = (email or "").strip().lower()
-    if not _e:
+    _raison, _ = await _essai1_motif_refus(email, telephone, coach_id)
+    return _raison is not None
+
+
+def _essai1_cles(email: str, telephone: str = "", coach_id=None) -> list:
+    """Les cles de verrou de cette personne : l'adresse, et le numero s'il existe.
+
+    LA PORTEE EST LE PROPRIETAIRE, PAS LA PLANETE. Sans proprietaire — le cas de
+    TOUTE la production aujourd'hui, les huit offres portant `coach_id: null` —
+    la cle reste `trial:{email}`, MOT POUR MOT celle des six verrous deja poses
+    le 18/08. Aucun d'eux ne devient orphelin, et il n'y a donc rien a migrer.
+    Un partenaire identifie, lui, obtient son propre espace de cles : son essai
+    ne ferme pas le droit chez un autre coach.
+    """
+    from api.routes.shared import (normaliser_email as _norm_mail,
+                                   essai6_normaliser_tel as _norm_tel)
+    _prefixe = ""
+    if isinstance(coach_id, str) and coach_id.strip():
+        _prefixe = coach_id.strip().lower() + ":"
+    _cles = []
+    _mail = _norm_mail(email)
+    if _mail:
+        _cles.append("trial:" + _prefixe + _mail)
+    _tel = _norm_tel(telephone)
+    if _tel:
+        _cles.append("trialtel:" + _prefixe + _tel)
+    return _cles
+
+
+async def _essai1_reclamer(email: str, telephone: str = "", coach_id=None) -> bool:
+    """Reserve l'essai de cette personne, de facon ATOMIQUE. Sur TOUTES ses cles.
+
+    POURQUOI PAS UN SIMPLE `insert_one`. C'etait le motif d'avant, et il ne
+    tient plus : depuis ce lot, un verrou peut exister alors que la personne a
+    de nouveau droit a un essai (son precedent n'a jamais ete consomme et n'est
+    plus utilisable — code supprime, forfait expire). Un `insert_one` lui
+    repondrait « doublon » et la banniraient a vie pour un droit qu'elle n'a
+    jamais exerce.
+
+    LE MOTIF RETENU garde l'atomicite SANS ce defaut : un `find_one_and_update`
+    filtre sur `actif != True`, en `upsert`. Sur un verrou absent, il insere ;
+    sur un verrou libere, il le reprend ; sur un verrou ACTIF, le filtre ne
+    correspond plus, l'`upsert` tente donc une insertion et MongoDB rend un
+    doublon de cle primaire. C'est exactement la barriere qu'on veut, et c'est
+    la base qui la tient — pas une lecture suivie d'une ecriture, qui laisserait
+    passer deux requetes nees a la meme milliseconde (`shared.py:425`).
+
+    TOUT OU RIEN : si la seconde cle echoue, la premiere est rendue. Sinon un
+    numero deja pris laisserait derriere lui un verrou d'adresse fantome.
+    """
+    _cles = _essai1_cles(email, telephone, coach_id)
+    if not _cles:
         return True
+    _maintenant = datetime.now(timezone.utc).isoformat()
+    _prises = []
+    for _cle in _cles:
+        try:
+            await db["free_trial_claims"].find_one_and_update(
+                {"_id": _cle, "actif": {"$ne": True}},
+                {"$set": {"actif": True, "created_at": _maintenant},
+                 "$unset": {"libere_le": "", "libere_motif": ""}},
+                upsert=True,
+            )
+            _prises.append(_cle)
+        except Exception as _err:
+            if "duplicate" in str(_err).lower() or "E11000" in str(_err):
+                for _rendue in _prises:
+                    await _essai1_liberer_cle(_rendue, "reclamation_partielle")
+                return False
+            # Toute autre panne : on ne bloque pas le tunnel sur une base
+            # capricieuse. La garde metier ci-dessus a deja fait son travail.
+            logger.warning(f"[ESSAI-1] reservation d'essai impossible: {_err}")
+            return True
+    return True
+
+
+async def _essai1_liberer_cle(cle: str, motif: str = "") -> None:
+    """Rend UNE cle. Le document reste, marque `actif: False`.
+
+    ON NE SUPPRIME PLUS LE DOCUMENT : la trace de qui a demande un essai, et
+    quand, est la seule chose qui permettra un jour de comprendre un litige.
+    C'est `actif` qui porte le verrou, pas l'existence de la ligne.
+    """
     try:
-        await db["free_trial_claims"].insert_one({
-            "_id": "trial:" + _e,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
-        return True
+        await db["free_trial_claims"].update_one(
+            {"_id": cle},
+            {"$set": {"actif": False,
+                      "libere_le": datetime.now(timezone.utc).isoformat(),
+                      "libere_motif": str(motif or "")[:64]}},
+        )
     except Exception as _err:
-        if "duplicate" in str(_err).lower() or "E11000" in str(_err):
-            return False
-        # Toute autre panne : on ne bloque pas le tunnel sur une base capricieuse.
-        logger.warning(f"[ESSAI-1] reservation d'essai impossible: {_err}")
-        return True
+        logger.error(f"[ESSAI-1] reservation non liberee ({cle[:24]}): {_err}")
 
 
-async def _essai1_liberer(email: str) -> None:
+async def _essai1_liberer(email: str, telephone: str = "", coach_id=None) -> None:
     """Rend la reservation si la creation a echoue : sans cela, une panne au
     milieu du tunnel priverait la personne de son essai pour toujours."""
-    _e = (email or "").strip().lower()
-    if not _e:
-        return
-    try:
-        await db["free_trial_claims"].delete_one({"_id": "trial:" + _e})
-    except Exception as _err:
-        logger.error(f"[ESSAI-1] reservation non liberee pour un essai echoue: {_err}")
+    for _cle in _essai1_cles(email, telephone, coach_id):
+        await _essai1_liberer_cle(_cle, "octroi_echoue")
 
 
-async def _essai1_garde(email: str, offer_id: str = "") -> None:
+async def _essai1_garde(email: str, offer_id: str = "", telephone: str = "",
+                        coach_id=None) -> None:
     """Refuse un second essai. A appeler AVANT la moindre ecriture.
 
-    Leve 409 avec un message lisible par un humain dans `detail` — le frontend
-    l'affiche deja tel quel — et le motif machine dans un en-tete, pour qu'il
-    puisse orienter vers les offres payantes sans analyser du francais.
+    TROIS ISSUES, ET DEUX REFUS QUI NE DISENT PAS LA MEME CHOSE :
+
+      1. l'essai a ete CONSOMME — une presence validee, sous cette adresse OU
+         sous ce numero -> 409 `free_trial_already_used`. C'est le refus qui
+         ferme l'abus mesure en production : trois essais sur le seul numero
+         +41765203363, sous trois adresses differentes.
+
+      2. la personne DETIENT DEJA un essai encore utilisable -> 409
+         `free_trial_already_granted`. Ce n'est pas une punition, c'est un
+         renvoi vers son propre droit : on ne fabrique pas un second cours
+         gratuit a quelqu'un qui en a un qui l'attend.
+
+      3. sinon -> l'essai est ACCORDE. Y compris a un absent dont le credit a
+         ete rendu puis le forfait expire, et y compris a quelqu'un dont le
+         code a ete supprime : ni l'un ni l'autre n'est jamais venu.
+
+    LA DIFFERENCE ENTRE 1 ET 2 EST LA DECISION DU PROPRIETAIRE, prise le
+    24/08/2026 : « reserver ne consomme pas, seule une presence validee
+    consomme ». C'est aussi, mot pour mot, ce que `t1_restituer_essais_non_honores`
+    applique deja depuis T1 — on ne change pas ce mecanisme, on s'aligne dessus.
+
+    Le motif machine part dans un en-tete pour que l'ecran puisse orienter sans
+    analyser du francais ; le `detail` reste la phrase montree au client.
     """
-    if await _essai1_essai_deja_accorde(email):
+    _raison, _message = await _essai1_motif_refus(email, telephone, coach_id)
+    if _raison:
         await _essai1_tracer_refus(offer_id)
         raise HTTPException(
             status_code=409,
-            detail=ESSAI1_MESSAGE,
-            headers={"X-Refus-Raison": ESSAI1_RAISON},
+            detail=_message,
+            headers={"X-Refus-Raison": _raison},
         )
-    if not await _essai1_reclamer(email):
+
+    if not await _essai1_reclamer(email, telephone, coach_id):
+        # Perdu la course : quelqu'un vient d'obtenir l'essai de cette identite
+        # a la milliseconde pres. Le message « deja detenu » est le vrai.
+        from api.routes.shared import (ESSAI6_REFUS_DEJA_DETENU as _R_DETENU,
+                                       ESSAI6_MESSAGE_DEJA_DETENU as _M_DETENU)
         await _essai1_tracer_refus(offer_id)
         raise HTTPException(
             status_code=409,
-            detail=ESSAI1_MESSAGE,
-            headers={"X-Refus-Raison": ESSAI1_RAISON},
+            detail=_M_DETENU,
+            headers={"X-Refus-Raison": _R_DETENU},
         )
 
 
@@ -1152,8 +1259,12 @@ async def free_checkout(req: FreeCheckoutRequest):
     # ESSAI-1 : ici, et pas ailleurs. `_process_successful_payment` cree le code
     # AFR- et le forfait des ses premieres lignes ; toute verification posee
     # apres arriverait devant un essai deja accorde.
+    # ESSAI-6 : meme second critere sur la seconde porte gratuite. Le poser sur
+    # une seule des deux le rendrait contournable en changeant d'URL — c'est le
+    # raisonnement qui a place ESSAI-1 et ESSAI-4 ici.
     await _essai1_garde(req.customer_email,
-                        str((req.items[0].id if req.items else "") or ""))
+                        str((req.items[0].id if req.items else "") or ""),
+                        telephone=req.customer_phone)
 
     transaction_id = f"free_{uuid.uuid4().hex[:12]}"
     try:
@@ -1172,7 +1283,8 @@ async def free_checkout(req: FreeCheckoutRequest):
         )
     except Exception:
         # Idem : une panne au milieu du tunnel ne doit pas confisquer l'essai.
-        await _essai1_liberer(req.customer_email)
+        await _essai1_liberer(req.customer_email,
+                              telephone=req.customer_phone)
         raise
     # ESSAI-1A : `access_code` n'est volontairement PAS relu ici — il ne doit
     # plus quitter le serveur par HTTP, seulement par l'e-mail du titulaire.

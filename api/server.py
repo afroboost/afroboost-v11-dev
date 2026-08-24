@@ -8313,7 +8313,12 @@ async def review_social_proof(proof_id: str, request: Request):
         # le 409 : le coach garde une demande lisible, et la personne un droit
         # intact si le refus venait d'une erreur.
         try:
-            await _g2_garde(proof.get("client_email", ""), proof.get("offer_id", ""))
+            # ESSAI-6 : la troisieme porte d'octroi connait elle aussi le
+            # second critere d'identite. `client_phone` est deja porte par la
+            # demande (server.py:8009) — aucun champ nouveau. En laisser une
+            # seule sans le telephone suffirait a contourner les deux autres.
+            await _g2_garde(proof.get("client_email", ""), proof.get("offer_id", ""),
+                            telephone=proof.get("client_phone", ""))
         except Exception:
             await _g4_rendre_en_attente()
             raise
@@ -8366,7 +8371,8 @@ async def review_social_proof(proof_id: str, request: Request):
             except Exception as _err:
                 logger.error("[V260] code orphelin %s non retire : %s",
                              granted_code, _err)
-            await _g2_liberer(proof.get("client_email", ""))
+            await _g2_liberer(proof.get("client_email", ""),
+                              telephone=proof.get("client_phone", ""))
             await _g4_rendre_en_attente()
             raise
         await db.social_proofs.update_one({"id": proof_id}, {"$set": {"granted_code": granted_code}})
@@ -26437,10 +26443,11 @@ async def t1_restituer_essais_non_honores(code: str) -> int:
     if not _code:
         return 0
     try:
-        from api.routes.shared import ESSAI2_FILTRE_GRATUIT as _GRATUIT
-        _q = {"code": _code}
-        _q.update(_GRATUIT)
-        if not await db.discount_codes.find_one(_q, {"_id": 1}):
+        # ESSAI-6 : meme definition que partout ailleurs. Un essai dont le code
+        # a disparu conserve donc son droit a restitution — sans quoi un absent
+        # perdrait son credit pour une suppression qui ne le concerne pas.
+        from api.routes.shared import est_un_essai as _est_essai
+        if not await _est_essai(db, code=_code):
             return 0          # pas un essai : la regle payante s'applique
     except Exception as _err:
         logger.warning("[T1] nature du code %s indeterminee : %s", _code[:4], _err)
@@ -26542,10 +26549,11 @@ async def t2_etat_essai(code: str, reservations: list, remaining) -> dict:
     if not _code:
         return {"is_trial": False}
     try:
-        from api.routes.shared import ESSAI2_FILTRE_GRATUIT as _GRATUIT
-        _q = {"code": _code}
-        _q.update(_GRATUIT)
-        if not await db.discount_codes.find_one(_q, {"_id": 1}):
+        # ESSAI-6 : la definition centrale, pas une copie locale du filtre. Elle
+        # sait reconnaitre un essai dont le code a ete supprime — ce que cette
+        # fonction ne savait plus faire (AFR-248AJR, AFR-V9KAUW).
+        from api.routes.shared import est_un_essai as _est_essai
+        if not await _est_essai(db, code=_code):
             return {"is_trial": False}
     except Exception as _err:
         # Dans le doute, on ne requalifie rien : l'ecran garde son comportement

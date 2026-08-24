@@ -94,6 +94,38 @@ class FausseCollection:
             self.docs.append(neuf)
             return _Res(0, up=neuf.get("_id"))
         return _Res(0)
+    async def find_one_and_update(self, filtre, maj, upsert=False, **_k):
+        """Le primitif sur lequel repose le verrou d'octroi (ESSAI-6).
+
+        IL FAUT LE MODELISER FIDELEMENT, sinon ce banc validerait une garde qui
+        ne tient pas en vraie base. Deux comportements comptent, et un seul les
+        distingue :
+          * un document EXISTE et correspond au filtre -> mise a jour, on rend
+            le document AVANT modification ;
+          * aucun ne correspond ET `upsert` -> insertion ; si la cle primaire
+            est deja prise par un document que le filtre a ECARTE, MongoDB rend
+            un doublon E11000. C'est exactement ce cas-la qui ferme la course
+            entre deux octrois simultanes.
+        """
+        for d in self.docs:
+            if self._match(d, filtre):
+                avant = dict(d)
+                d.update(maj.get("$set", {}))
+                for k in (maj.get("$unset") or {}):
+                    d.pop(k, None)
+                return avant
+        if not upsert:
+            return None
+        neuf = dict(maj.get("$setOnInsert", {}))
+        neuf.update(maj.get("$set", {}))
+        for k, v in (filtre or {}).items():
+            if not isinstance(v, dict):
+                neuf.setdefault(k, v)
+        if self.unique_id and any(d.get("_id") == neuf.get("_id") for d in self.docs):
+            raise Exception("E11000 duplicate key error")
+        self.docs.append(neuf)
+        return None
+
     async def delete_one(self, filtre):
         self.docs = [d for d in self.docs if not self._match(d, filtre)]
     async def to_list(self, n=None):
@@ -121,6 +153,10 @@ class FausseBase:
         self.concept = FausseCollection()
         self.terms_versions = FausseCollection()
         self.comments = FausseCollection()
+        # ESSAI-6 : « consomme » se lit dans les presences. Vide par defaut —
+        # aucune demande de preuve sociale n'en cree, et c'est precisement ce
+        # que l'invariant de ce banc affirme.
+        self.reservations = FausseCollection()
     def __getitem__(self, nom):
         return getattr(self, nom)
 
@@ -137,6 +173,59 @@ def extraire(src, nom):
     return m.group(0) if m else None
 
 
+def _charger_shared_reel():
+    """Le VRAI `api/routes/shared.py`, avec ses dependances pures.
+
+    POURQUOI PAS UN BOUCHON. Depuis ESSAI-6, la garde d'essai demande a ce
+    module « cet essai a-t-il ete consomme ? » et « en detient-elle deja un ? ».
+    Reecrire ces deux reponses ici en ferait une SECONDE definition, qui
+    divergerait du serveur sans que rien ne le dise — le defaut que ce banc
+    passe justement son temps a debusquer ailleurs.
+
+    Les semantiques d'ESSAI-6 sont prouvees a part, sur un vrai mongod
+    (`tests/test_essai6_identite.py`). Ici, on veut seulement que ce soit LE
+    code du depot qui reponde.
+    """
+    import ast as _ast, importlib.util as _iu, types as _t
+    if "fastapi" not in sys.modules:
+        _fa = _t.ModuleType("fastapi")
+        class _Routeur:
+            def __init__(self, *a, **k): pass
+            def _rien(self, *a, **k): return lambda f: f
+            get = post = put = patch = delete = _rien
+        _fa.APIRouter = _Routeur
+        _fa.HTTPException = HTTPException
+        _fa.Request = object
+        sys.modules["fastapi"] = _fa
+
+    # `p1a_filtre_proprietaire` : la regle de propriete, prise a la source.
+    _src = io.open(os.path.join(RACINE, "api", "routes", "membership_routes.py"),
+                   encoding="utf-8").read()
+    _bouts, _ns = [], {}
+    for _n in _ast.parse(_src).body:
+        if isinstance(_n, _ast.FunctionDef) and _n.name == "p1a_filtre_proprietaire":
+            _bouts.append(_ast.get_source_segment(_src, _n))
+        if isinstance(_n, _ast.Assign):
+            for _t2 in _n.targets:
+                if isinstance(_t2, _ast.Name) and _t2.id == "P1A_SANS_PROPRIETAIRE":
+                    _bouts.append(_ast.get_source_segment(_src, _n))
+    exec("\n\n".join(_bouts), _ns)
+    _mr = _t.ModuleType("api.routes.membership_routes")
+    _mr.p1a_filtre_proprietaire = _ns["p1a_filtre_proprietaire"]
+    sys.modules["api.routes.membership_routes"] = _mr
+
+    _spec_w = _iu.spec_from_file_location(
+        "api.routes.modeles_whatsapp",
+        os.path.join(RACINE, "api", "routes", "modeles_whatsapp.py"))
+    _w = _iu.module_from_spec(_spec_w); _spec_w.loader.exec_module(_w)
+    sys.modules["api.routes.modeles_whatsapp"] = _w
+
+    _spec = _iu.spec_from_file_location(
+        "api.routes.shared", os.path.join(RACINE, "api", "routes", "shared.py"))
+    _m = _iu.module_from_spec(_spec); _spec.loader.exec_module(_m)
+    return _m
+
+
 def construire(base):
     """Charge les VRAIES fonctions des deux fichiers, avec la fausse base."""
     import datetime, logging, types
@@ -148,7 +237,12 @@ def construire(base):
     async def _tracer(offer_id=""):
         return None
     esp_ck["_essai1_tracer_refus"] = _tracer
-    for fn in ("_essai1_essai_deja_accorde", "_essai1_reclamer", "_essai1_liberer", "_essai1_garde"):
+    # ESSAI-6 (P1-a) : la garde s'appuie sur deux helpers de plus — le motif de
+    # refus, et les cles de verrou (l'adresse, et le numero quand il existe).
+    # On charge les VRAIES fonctions, comme les quatre autres.
+    for fn in ("_essai1_motif_refus", "_essai1_essai_deja_accorde", "_essai1_cles",
+               "_essai1_reclamer", "_essai1_liberer_cle", "_essai1_liberer",
+               "_essai1_garde"):
         exec(compile(extraire(CHECKOUT, fn), "<ck>", "exec"), esp_ck)
 
     faux_ck = types.ModuleType("api.routes.checkout_routes")
@@ -194,7 +288,7 @@ def construire(base):
     # `essai2_tracer_octroi` (G6) est importe depuis api.routes.shared : on pose
     # un module espion pour verifier qu'il est bien appele, sans reseau.
     import types as _t
-    faux_shared = _t.ModuleType("api.routes.shared")
+    faux_shared = _charger_shared_reel()
     appels_octroi = []
     async def _octroi(db_, email="", offer_id="", sessions=0):
         appels_octroi.append({"email": email, "offer_id": offer_id, "sessions": sessions})
@@ -397,8 +491,15 @@ async def scenario():
     except Exception as e:
         verifier("11. panne apres claim -> l'erreur remonte", not isinstance(e, HTTPException)
                  or e.status_code != 409, type(e).__name__)
-    verifier("11a. le claim a ete RENDU",
-             len(base11.free_trial_claims.docs) == 0, base11.free_trial_claims.docs)
+    # ESSAI-6 : le verrou n'est plus SUPPRIME, il est marque `actif: False`.
+    # L'invariant teste ici est inchange — « une panne au milieu du tunnel ne
+    # prive personne de son essai » — mais il se lit desormais sur le drapeau.
+    # La ligne survit a dessein : c'est la seule trace de qui a demande un
+    # essai, et quand, le jour ou il faudra arbitrer un litige.
+    _c11 = base11.free_trial_claims.docs
+    verifier("11a. le claim a ete RENDU (verrou libere, trace conservee)",
+             len(_c11) == 1 and _c11[0].get("actif") is False
+             and _c11[0].get("libere_motif") == "octroi_echoue", _c11)
     verifier("11b. la demande est revenue EN ATTENTE",
              base11.social_proofs.docs[0]["status"] == "pending",
              base11.social_proofs.docs[0]["status"])

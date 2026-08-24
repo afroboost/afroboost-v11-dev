@@ -164,11 +164,16 @@ async def faux_posthog(event, email="", props=None, distinct_id=None):
     return True
 
 
-A_EXTRAIRE = ["essai2_codes_essai", "essai2_forfait_essai", "essai2_est_essai",
+A_EXTRAIRE = ["est_un_essai",
+              "essai2_codes_essai", "essai2_forfait_essai", "essai2_est_essai",
               "essai2_presence_essai", "essai2_marquer_conversion",
               "essai2_tracer_octroi"]
 
 CONSTANTES = '''
+# ESSAI-6 : la marque de gratuite portee par le FORFAIT (trace LOT B), seconde
+# preuve de `est_un_essai` — celle qui survit a la suppression du code.
+ESSAI6_ORIGINE_OFFERTE = "offert"
+
 ESSAI2_FILTRE_GRATUIT = {
     "$or": [
         {"payment_method": "free", "total_paid": 0},
@@ -385,8 +390,13 @@ def structure():
              "converted_props" in nu_conv and "converted_event_sent" in nu_conv)
 
     nu_sig = code_nu("essai2_est_essai")
-    verifier("S6. la nature d'un essai se lit dans discount_codes",
-             "discount_codes" in nu_sig and "ESSAI2_FILTRE_GRATUIT" in nu_sig)
+    # ESSAI-6 : la nature d'un essai ne se lit plus SEULEMENT dans
+    # `discount_codes` — un document que le coach peut supprimer, ce qu'il a
+    # fait. Elle est demandee a `est_un_essai`, qui garde ce filtre comme
+    # premiere preuve et sait retomber sur le forfait et le catalogue.
+    verifier("S6. la nature d'un essai est DEMANDEE a la definition centrale",
+             "est_un_essai" in nu_sig
+             and "payment_method" not in nu_sig and "total_paid" not in nu_sig)
     verifier("S7. jamais dans le nom de l'offre",
              "offer_name" not in nu_sig)
 

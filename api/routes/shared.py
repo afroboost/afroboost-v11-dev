@@ -1238,9 +1238,10 @@ async def essai2_est_essai(db, reservation: dict) -> bool:
             _code = ((_sub or {}).get("code") or "").strip().upper()
         if not _code:
             return False
-        _q = {"code": _code}
-        _q.update(ESSAI2_FILTRE_GRATUIT)
-        return await db["discount_codes"].find_one(_q, {"_id": 1}) is not None
+        # ESSAI-6 : une seule definition de « c'est un essai » dans tout le
+        # depot. Cette fonction garde son nom et ses appelants ; elle ne garde
+        # plus sa propre regle.
+        return await est_un_essai(db, code=_code)
     except Exception as _e2:
         logger.warning(f"[ESSAI-2] nature de la reservation indeterminee: {_e2}")
         return False
@@ -1379,6 +1380,380 @@ async def essai2_tracer_octroi(db, email: str, offer_id: str = "",
     except Exception as _err:
         logger.warning(f"[ESSAI-2] free_trial_granted ignore: {_err}")
 
+
+# ============================================================================
+# ESSAI-6 (P1-a) — « EST-CE UN ESSAI ? » ET « CET ESSAI A-T-IL ETE CONSOMME ? »
+# ============================================================================
+#
+# LES DEUX FAIBLESSES QUE CE LOT FERME, mesurees en base le 24/08/2026.
+#
+# 1) LA NATURE « ESSAI » NE TENAIT QU'A UN DOCUMENT SUPPRIMABLE.
+#    Tout le depot deduisait « c'est un essai » d'un `discount_codes` portant
+#    `payment_method: free`. Or le coach peut supprimer un code depuis son
+#    tableau de bord : `deleted_items` contient ceux de AFR-248AJR et
+#    AFR-V9KAUW, retires les 18 et 21/08/2026. Leurs FORFAITS, eux, existent
+#    toujours. Resultat mesure : `conv_etat` repondait `not_a_trial` et
+#    `t2_etat_essai` `is_trial: false` — ces deux personnes etaient sorties du
+#    funnel en silence, tout en restant bloquees par leur verrou d'essai. Le
+#    pire des deux mondes.
+#
+# 2) L'ANTI-DEUXIEME-ESSAI NE CONNAISSAIT QU'UNE IDENTITE : L'ADRESSE E-MAIL.
+#    Changer d'adresse suffisait. La production le DEMONTRE : le numero
+#    +41765203363 porte trois essais sous trois adresses differentes
+#    (tanono6670@, hejox32017@, yolat92037@), et +41765203325 en porte deux.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# UNE SEULE FONCTION POUR TRANCHER, ET TROIS PREUVES ORDONNEES
+# ─────────────────────────────────────────────────────────────────────────
+# `est_un_essai` est LA definition. Les six endroits qui recopiaient le filtre
+# `ESSAI2_FILTRE_GRATUIT` l'appellent desormais ; le filtre reste, mais comme
+# PREMIERE preuve de cette fonction, pas comme regle parallele.
+#
+# Les preuves sont classees de la PLUS FIGEE a la plus vivante — l'ordre n'est
+# pas cosmetique, il decide de ce qui se passe le jour ou le coach change un
+# prix ou supprime un code :
+#
+#   P1. le code porte `payment_method: free, total_paid: 0` ou
+#       `source: social_proof` — le fait de paiement, ecrit a l'octroi.
+#       SUPPRIMABLE par le coach : c'est la faiblesse n°1.
+#   P2. le FORFAIT porte `origine_paiement: "offert"` (trace LOT B, ecrite par
+#       le serveur au moment de l'octroi). Fige, et hors de portee de l'ecran
+#       des codes. Couvre 4 des 6 essais de production.
+#   P3. le `offer_id` du forfait designe une offre du catalogue a prix ZERO.
+#       Couvre les 6, y compris les deux forfaits dont le code a ete supprime
+#       et les deux crees avant l'existence de la trace LOT B.
+#
+# P3 est en DERNIER a dessein : c'est la seule preuve qui se relit dans le
+# catalogue, donc la seule qui changerait si le coach passait une offre a 0.
+# On ne s'en sert que lorsque les deux faits figes sont muets.
+#
+# AUCUN NOUVEAU CHAMP. Ces trois preuves existent deja toutes en base ; c'est
+# la consigne du lot, et elle est tenue : zero migration, zero backfill.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# « CONSOMME » = PRESENCE VALIDEE. RIEN D'AUTRE.
+# ─────────────────────────────────────────────────────────────────────────
+# Decision du proprietaire, et elle etait DEJA celle du depot :
+# `t1_restituer_essais_non_honores` rend le credit d'un essai reserve mais non
+# honore. Reserver ne consomme pas, annuler non plus, ne pas venir non plus.
+# `essai6_consomme` ne regarde donc QUE `validated: true`.
+#
+# ET SURTOUT PAS LA GARDE A1/A1b ICI. `conv_presence_reelle` exige en plus que
+# le cours existe encore — c'est juste pour OUVRIR UNE VENTE, ce serait faux
+# pour REFUSER UN ABUS : il suffirait qu'un cours soit supprime pour que
+# l'essai redevienne « non consomme » et qu'un second soit accorde. Une garde
+# anti-abus se trompe du cote qui ne coute rien.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# LA CLE : (PERSONNE, PROPRIETAIRE DE L'OFFRE) — ET POURQUOI PAS LE COURS
+# ─────────────────────────────────────────────────────────────────────────
+# Mesure du catalogue : UNE SEULE offre d'essai existe en production
+# (« Cours d'essai GRATUIT », prix 0), et les huit offres portent
+# `coach_id: null`. Rien, dans les donnees d'aujourd'hui, ne relie un DROIT
+# d'essai a un cours : `linked_course_ids` relie une offre a des cours, jamais
+# un essai a un cours. Poser la cle sur `courseId` inventerait donc une regle
+# que rien ne justifie.
+#
+# Le proprietaire, lui, est la SEULE relation existante qui separe deux
+# catalogues — c'est deja la cle de LOT A, LOT 2 et LOT R. La regle est donc :
+# une personne a droit a un essai PAR PROPRIETAIRE. Aujourd'hui, tout etant
+# sans proprietaire, cela se comporte EXACTEMENT comme la regle globale
+# actuelle ; le jour ou un partenaire arrive, il apporte son propre essai sans
+# qu'on y retouche. Et cela repond a la consigne : ce lot ne dit jamais
+# « cette personne ne peut plus jamais rien avoir de gratuit ».
+
+ESSAI6_ORIGINE_OFFERTE = "offert"
+
+# Le refus historique — l'essai a ete CONSOMME, il n'y en aura pas d'autre.
+ESSAI6_REFUS_CONSOMME = "free_trial_already_used"
+# Le refus NOUVEAU — la personne a deja un essai qu'elle n'a pas utilise. Ce
+# n'est pas une punition : on la renvoie vers le droit qu'elle detient deja,
+# au lieu de lui en fabriquer un second.
+ESSAI6_REFUS_DEJA_DETENU = "free_trial_already_granted"
+ESSAI6_MESSAGE_CONSOMME = "Votre essai gratuit a déjà été utilisé."
+ESSAI6_MESSAGE_DEJA_DETENU = (
+    "Vous avez déjà un cours d'essai à utiliser. "
+    "Retrouvez-le dans votre espace, il vous attend."
+)
+
+
+def essai6_normaliser_tel(valeur) -> str:
+    """Le numero sous la forme comparable du depot, ou '' si inexploitable.
+
+    ON NE CREE PAS UNE TROISIEME CONVENTION : c'est `normaliser_numero`
+    (`api/routes/modeles_whatsapp.py`), celle qui sert deja a parler a Meta.
+    Elle rend des chiffres seuls, indicatif compris, et traite le « 00 » AVANT
+    le « 0 » national — d'ou `+41 76 511 22 33`, `0765112233` et
+    `0041765112233` qui se rejoignent tous sur `41765112233`.
+
+    LE PLANCHER DE HUIT CHIFFRES EST UNE GARDE, pas une coquetterie : sans lui,
+    un champ contenant « 0 » ou « 12 » deviendrait une IDENTITE, et deux
+    inconnus se verraient refuser leur essai l'un a cause de l'autre. En cas de
+    doute on rend '' — c'est-a-dire « pas de second critere », donc le
+    comportement e-mail d'avant, jamais un refus invente.
+    """
+    try:
+        from api.routes.modeles_whatsapp import normaliser_numero as _norm
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[ESSAI-6] normalisation telephone indisponible: %s", _err)
+        return ""
+    try:
+        _n = _norm(valeur)
+    except Exception:  # noqa: BLE001
+        return ""
+    _n = "".join(ch for ch in str(_n or "") if ch.isdigit())
+    return _n if len(_n) >= 8 else ""
+
+
+async def essai6_offres_gratuites(db, coach_id=None) -> list:
+    """Les identifiants des offres a prix ZERO de ce proprietaire.
+
+    MEME FILTRE DE PROPRIETE QUE PARTOUT AILLEURS, importe et jamais recopie :
+    un proprietaire reel ne voit que ses offres, un contexte sans proprietaire
+    ne voit que les offres sans proprietaire. C'est ce qui empeche l'essai
+    offert par le coach A de fermer le droit chez le coach B.
+    """
+    try:
+        from api.routes.membership_routes import p1a_filtre_proprietaire as _filtre
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[ESSAI-6] regle de propriete indisponible: %s", _err)
+        return []
+    _q = dict(_filtre(coach_id))
+    _q["price"] = {"$in": [0, 0.0]}
+    try:
+        _rows = await db["offers"].find(_q, {"_id": 0, "id": 1}).to_list(50)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[ESSAI-6] catalogue gratuit illisible: %s", _err)
+        return []
+    return [str(r.get("id")) for r in (_rows or []) if r.get("id")]
+
+
+async def est_un_essai(db, forfait=None, code: str = "") -> bool:
+    """LA definition. Ce droit d'acces est-il un premier cours gratuit ?
+
+    Accepte un FORFAIT (le cas riche) ou un simple CODE (le cas des appelants
+    qui n'ont que lui sous la main). Avec un code seul, le forfait est relu :
+    sans lui, on perdrait les preuves P2 et P3, c'est-a-dire tout l'interet.
+
+    NE LEVE JAMAIS. En cas de base muette on rend False : un essai non reconnu
+    coute un ecran de conversion manquant ; un forfait payant pris pour un
+    essai ferait perdre a un client ses seances payees dans les ecrans qui
+    requalifient. Le cout n'est pas symetrique, la valeur de repli non plus.
+    """
+    _f = forfait if isinstance(forfait, dict) else None
+    _code = (str((_f or {}).get("code") or code or "")).strip().upper()
+
+    if _f is None and _code:
+        try:
+            _f = await db["subscriptions"].find_one(
+                {"code": _code}, {"_id": 0, "code": 1, "offer_id": 1,
+                                  "origine_paiement": 1})
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("[ESSAI-6] forfait %s illisible: %s", _code[:6], _err)
+            _f = None
+
+    # P1 — le fait de paiement porte par le code. Preuve historique.
+    if _code:
+        try:
+            _q = {"code": _code}
+            _q.update(ESSAI2_FILTRE_GRATUIT)
+            if await db["discount_codes"].find_one(_q, {"_id": 1}):
+                return True
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("[ESSAI-6] nature du code %s indeterminee: %s",
+                           _code[:6], _err)
+
+    if not _f:
+        return False
+
+    # P2 — la trace LOT B, ecrite sur le forfait a l'octroi. Non supprimable
+    # depuis l'ecran des codes, et c'est tout le point de ce lot.
+    if str(_f.get("origine_paiement") or "").strip().lower() == ESSAI6_ORIGINE_OFFERTE:
+        return True
+
+    # P3 — le catalogue, en dernier recours seulement.
+    _oid = str(_f.get("offer_id") or "").strip()
+    if not _oid:
+        return False
+    try:
+        _o = await db["offers"].find_one({"id": _oid}, {"_id": 0, "price": 1})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[ESSAI-6] offre %s illisible: %s", _oid[:12], _err)
+        return False
+    if not _o:
+        return False
+    try:
+        return float(_o.get("price") or 0) == 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+async def essai6_forfaits(db, email: str = "", telephone: str = "",
+                          coach_id=None) -> list:
+    """Tous les forfaits d'ESSAI de cette personne, e-mail OU telephone.
+
+    UNE SEULE REQUETE, ET ELLE EST BORNEE. On ne balaie jamais `subscriptions`
+    en entier : la requete part des trois signes d'un essai (origine offerte,
+    offre gratuite du proprietaire, code gratuit de cette adresse), puis le
+    telephone est compare EN MEMOIRE sur ce petit ensemble. Le numero est
+    stocke brut (`+41 76 …`) : le filtrer en base demanderait une regex sur une
+    saisie utilisateur, ce que ce depot s'interdit.
+    """
+    _mail = normaliser_email(email)
+    _tel = essai6_normaliser_tel(telephone)
+    if not _mail and not _tel:
+        return []
+
+    _signes = [{"origine_paiement": ESSAI6_ORIGINE_OFFERTE}]
+    _gratuites = await essai6_offres_gratuites(db, coach_id)
+    if _gratuites:
+        _signes.append({"offer_id": {"$in": _gratuites}})
+    if _mail:
+        _codes = await essai2_codes_essai(db, _mail)
+        if _codes:
+            _signes.append({"code": {"$in": _codes}})
+    try:
+        _rows = await db["subscriptions"].find(
+            {"$or": _signes}, {"_id": 0}).to_list(500)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[ESSAI-6] forfaits d'essai illisibles: %s", _err)
+        return []
+
+    # LA PROPRIETE SE JUGE SUR L'OFFRE QUI A CREE LE FORFAIT, pas sur le
+    # forfait. Sans ce tri, l'essai consomme chez le proprietaire A fermerait le
+    # droit chez le partenaire B — exactement ce que la consigne du lot interdit
+    # (« ne transforme pas l'anti-essai en : cette personne ne peut plus jamais
+    # avoir aucune offre gratuite »). Le defaut a ete pris par le CAS 12b.
+    #
+    # Le repli sur le `coach_id` du forfait sert aux droits dont l'offre n'est
+    # plus resoluble : `lot2_proprietaire` traduit les trois formes de « sans
+    # proprietaire » (None, "", absent) vers la seule que le module reconnait,
+    # ce qui reunit les forfaits d'essai de production (`coach_id: ""`) et leurs
+    # offres (`coach_id: null`).
+    _attendu = lot2_proprietaire(coach_id) if isinstance(coach_id, str) else None
+    _gratuites_set = set(_gratuites or [])
+
+    def _est_a_ce_proprietaire(_s):
+        _oid = str(_s.get("offer_id") or "").strip()
+        if _oid:
+            return _oid in _gratuites_set
+        return lot2_proprietaire(_s.get("coach_id")) == _attendu
+
+    _miens = []
+    for _s in (_rows or []):
+        if not _est_a_ce_proprietaire(_s):
+            continue
+        if _mail and normaliser_email(_s.get("email")) == _mail:
+            _miens.append(_s)
+            continue
+        if _tel and essai6_normaliser_tel(_s.get("whatsapp")) == _tel:
+            _miens.append(_s)
+    return _miens
+
+
+async def essai6_consomme(db, email: str = "", telephone: str = "",
+                          coach_id=None):
+    """La PRESENCE qui a consomme l'essai de cette personne, ou None.
+
+    Consommer, c'est etre VENU : `validated: true`. Une reservation, une date
+    passee, une annulation ne consomment rien — c'est la regle du proprietaire
+    et celle que `t1_restituer_essais_non_honores` applique deja.
+
+    Le document parasite trouve dans `reservations` (`{_id, coach_id, data,
+    pagination}`, une reponse d'API mise en cache par erreur) ne peut pas
+    ressortir d'ici : il ne porte ni `validated`, ni `subscriptionId`, ni
+    `promoCode`, ni `discountCode` — le filtre exige les deux.
+    """
+    _forfaits = await essai6_forfaits(db, email, telephone, coach_id)
+    if not _forfaits:
+        return None
+    _ou = []
+    for _f in _forfaits:
+        _sid = str(_f.get("id") or "").strip()
+        _code = str(_f.get("code") or "").strip().upper()
+        if _sid:
+            _ou.append({"subscriptionId": _sid})
+        if _code:
+            _ou.append({"promoCode": _code})
+            _ou.append({"discountCode": _code})
+    if not _ou:
+        return None
+    try:
+        _rows = await db["reservations"].find(
+            {"validated": True, "$or": _ou}, {"_id": 0}).to_list(50)
+    except Exception as _err:  # noqa: BLE001
+        # FAIL CLOSED VERS L'ABUS : base muette -> on n'AFFIRME pas que l'essai
+        # est consomme. Un essai offert deux fois coute un cours ; un client
+        # honnete refuse a tort coute le client.
+        logger.warning("[ESSAI-6] presences d'essai illisibles: %s", _err)
+        return None
+    if not _rows:
+        return None
+    _rows.sort(key=lambda x: str(x.get("validatedAt") or ""))
+    return _rows[0]
+
+
+async def essai6_reutilisable(db, email: str = "", telephone: str = "",
+                              coach_id=None):
+    """Un essai DEJA DETENU et encore utilisable, ou None.
+
+    « Utilisable » n'est pas redefini ici : c'est `forfait_utilisable`, le meme
+    predicat qui autorise une reservation — non expire, au moins une seance.
+    Un second predicat aurait derive du premier, et l'ecran finirait par
+    contredire le serveur.
+
+    C'est ce qui evite les deux erreurs symetriques : punir un absent en lui
+    retirant son essai, et lui en fabriquer un second alors qu'il en a un.
+
+    DEUX FORMES DE DROIT, ET IL FAUT LES DEUX. Le forfait est ce que l'espace
+    abonne affiche ; le CODE est ce qui se consomme a la reservation. Ne
+    regarder que le forfait laissait passer un cas reel : un essai dont le
+    forfait n'a pas ete cree (ou a ete retire) alors que son code, lui, est
+    encore valide et utilisable. Ce trou a ete pris par le scenario 7 du banc
+    G1/G2 — l'essai obtenu a la caisse gratuite ne fermait plus la porte de la
+    preuve sociale. Un droit reste un droit, quel que soit le document qui le
+    porte.
+
+    A L'INVERSE, un code EPUISE ou EXPIRE n'est pas un droit : c'est ce qui
+    laisse leur essai aux deux forfaits orphelins de production, dont le code a
+    ete supprime et qui ne sont jamais venus.
+    """
+    for _f in await essai6_forfaits(db, email, telephone, coach_id):
+        _ok, _ = forfait_utilisable(_f, 1)
+        if _ok:
+            return _f
+
+    _mail = normaliser_email(email)
+    if not _mail:
+        return None
+    try:
+        _q = {"assignedEmail": _mail}
+        _q.update(ESSAI2_FILTRE_GRATUIT)
+        _codes = await db["discount_codes"].find(_q, {"_id": 0}).to_list(20)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[ESSAI-6] codes d'essai illisibles: %s", _err)
+        return None
+    # MEME PORTEE QUE LES FORFAITS, et pour la meme raison : un code d'essai
+    # emis par le proprietaire A ne ferme pas la porte du partenaire B.
+    # `lot2_proprietaire` reunit les trois ecritures de « sans proprietaire »,
+    # dont le `coach_id: ""` que portent les codes d'essai de production.
+    _attendu_code = lot2_proprietaire(coach_id) if isinstance(coach_id, str) else None
+    for _c in (_codes or []):
+        if lot2_proprietaire(_c.get("coach_id")) != _attendu_code:
+            continue
+        if _c.get("active") is False:
+            continue
+        if _v391_est_expire(_c.get("expiresAt")):
+            continue
+        try:
+            _max = int(_c.get("maxUses") or 0)
+            _pris = int(_c.get("used") or 0)
+        except (TypeError, ValueError):
+            continue
+        if _max and _pris >= _max:
+            continue
+        return _c
+    return None
 
 # ============================================================================
 # LOT B — LA TRACE FINANCIERE D'UN DROIT ACCORDE A LA MAIN
@@ -2095,14 +2470,11 @@ async def conv_etat(db, forfait: dict, coach_id: str = "") -> dict:
     _code = (forfait.get("code") or "").strip().upper()
     if not _code:
         return dict(_vide, reason="no_code")
-    try:
-        _q = {"code": _code}
-        _q.update(ESSAI2_FILTRE_GRATUIT)
-        if not await db["discount_codes"].find_one(_q, {"_id": 1}):
-            return dict(_vide, reason="not_a_trial")
-    except Exception as _err:
-        logger.warning("[LOT-A] nature du code indeterminee: %s", _err)
-        return dict(_vide, reason="unreadable")
+    # ESSAI-6 : on interroge la definition centrale, avec le FORFAIT en main —
+    # donc avec ses trois preuves, et non plus le seul document supprimable.
+    # C'est ce qui rend sa suite a quelqu'un dont le coach a efface le code.
+    if not await est_un_essai(db, forfait=forfait):
+        return dict(_vide, reason="not_a_trial")
 
     _presence = await conv_presence_reelle(db, forfait)
     if not _presence:

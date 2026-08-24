@@ -204,7 +204,11 @@ class _Requete(object):
 
 
 # ═══════════════════════ construction des namespaces ════════════════════════
-CONV = ["conv_presence_reelle", "conv_offres_premier_achat",
+# ESSAI-6 (P1-a) : `conv_etat` ne relit plus le code lui-meme — elle demande a
+# `est_un_essai`, la definition centrale, qui sait aussi reconnaitre un essai
+# dont le `discount_codes` a ete supprime. On charge donc la VRAIE fonction ;
+# la recopier ici rendrait ce banc aveugle a ses evolutions.
+CONV = ["est_un_essai", "conv_presence_reelle", "conv_offres_premier_achat",
         "conv_offre_autorisee", "conv_etat", "conv_marquer_vue"]
 
 A1B = ["_a0_maintenant_ch", "_a0_horodatage", "_a1_jour_js",
@@ -249,7 +253,8 @@ def bac(codes=None, subs=None, resas=None, offers=None, courses=None,
           "logger": _Journal()}
     exec(compile(SHARED.constante("ESSAI2_FILTRE_GRATUIT"), "<lota>", "exec"), ns)
     exec(compile(SHARED.constante("B_DEVISE_DEFAUT"), "<lota>", "exec"), ns)
-    for c in ("CONV_INELIGIBLE", "CONV_OUVERTE", "CONV_TERMINEE"):
+    for c in ("CONV_INELIGIBLE", "CONV_OUVERTE", "CONV_TERMINEE",
+              "ESSAI6_ORIGINE_OFFERTE"):
         exec(compile(SHARED.constante(c), "<lota>", "exec"), ns)
     for f in CONV:
         exec(compile(SHARED.extraire(f), "<lota>", "exec"), ns)
