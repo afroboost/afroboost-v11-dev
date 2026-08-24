@@ -29,6 +29,12 @@ def lire(*b):
 
 SERVEUR = lire("api", "server.py")
 WIZARD = lire("frontend", "src", "components", "dashboard", "OfferWizard.js")
+# SCHEDULES : la REGLE de type (recurrent / date unique) a quitte le composant
+# pour un module pur, teste a part (`__tests__/horaireType.test.js`). Les
+# assertions B4-B11 la suivent : ce qu'elles verifient N'A PAS CHANGE, seul
+# l'endroit ou c'est ecrit a bouge. Les lire encore dans le composant ferait
+# echouer la garde sur un deplacement, pas sur une regression.
+HORAIRE = lire("frontend", "src", "components", "dashboard", "horaireType.js")
 
 resultats = []
 def verifier(nom, cond, detail=""):
@@ -108,11 +114,24 @@ verifier("B2. les deux modes sont proposes",
 verifier("B3. un menu JOUR remplace la date en mode hebdomadaire",
          'data-testid={`weekday-${course.id}`}' in WIZARD)
 verifier("B4. passer en hebdomadaire EFFACE la date",
-         re.search(r"recurrence-hebdo[\s\S]{0,900}?date: ''", WIZARD) is not None)
+         re.search(r"export function basculerHebdo[\s\S]{0,600}?date: ''", HORAIRE) is not None
+         and re.search(r"recurrence-hebdo[\s\S]{0,900}?horaireVersHebdo", WIZARD) is not None)
 verifier("B5. le jour retenu est DERIVE de la date precedente, pas dimanche par defaut",
-         re.search(r"recurrence-hebdo[\s\S]{0,900}?weekdayFromDate\(course\.date\)", WIZARD) is not None)
+         re.search(r"export function basculerHebdo[\s\S]{0,600}?weekdayDepuisDate\(c\.date\)",
+                   HORAIRE) is not None)
 verifier("B6. le type reste decide par `date`, comme le backend",
-         WIZARD.count("typeof course.date === 'string' && course.date.trim()") >= 2)
+         "if (typeof c.date === 'string' && c.date.trim()) return true;" in HORAIRE)
+# SCHEDULES — CE QUE LE LOT AJOUTE, ET QUI MANQUAIT : le bouton « Date unique »
+# posait `date: ''`, or l'ecran ne revele le champ date que si `date` est NON
+# VIDE. Il etait donc inerte sur tout bloc recurrent. Le type doit pouvoir se
+# decider a l'ECRAN avant qu'une date existe.
+verifier("B6b. un bloc peut etre mis en « date unique » AVANT d'avoir sa date",
+         "ponctuelsLocaux" in HORAIRE and "ponctuelsLocaux" in WIZARD
+         and re.search(r"recurrence-ponctuel[\s\S]{0,900}?setPonctuelsLocaux", WIZARD) is not None)
+verifier("B6c. cet etat est D'ECRAN — il ne part jamais au serveur",
+         "ponctuelsLocaux" not in WIZARD[WIZARD.index("const buildCoursePayload"):][:1200])
+verifier("B6d. un bloc annonce ponctuel sans date BLOQUE la sauvegarde",
+         "horairesPonctuelsSansDate" in WIZARD and "ponctuelsSansDate" in HORAIRE)
 verifier("B7. aucun champ nouveau n'est invente (pas de `recurrent`)",
          "recurrent:" not in code_seul(WIZARD) and "is_recurring" not in WIZARD)
 verifier("B8. le nouvel horaire est hebdomadaire par defaut",
@@ -122,8 +141,12 @@ verifier("B9. aucune couleur de marque codee en dur",
          or "var(--primary-color" in WIZARD.split("recurrence-")[1][:1500])
 
 _payload = WIZARD[WIZARD.index("const buildCoursePayload"):][:1200]
-verifier("B10. le payload efface la date quand il n'y en a pas", "date: derived != null ? rawDate : ''" in _payload)
-verifier("B11. le payload conserve le weekday choisi", "Number.isInteger(c.weekday) ? c.weekday" in _payload)
+verifier("B10. le payload efface la date quand il n'y en a pas",
+         "date: derive != null ? brute : ''" in HORAIRE
+         and "date: dateSortie" in _payload)
+verifier("B11. le payload conserve le weekday choisi",
+         "Number.isInteger(c.weekday) ? c.weekday" in HORAIRE
+         and "weekday: weekdaySortie" in _payload)
 
 
 # ===========================================================================

@@ -6,6 +6,15 @@ import axios from 'axios'; // V225: creation/modification des horaires depuis le
 import SvgIcon from '../SvgIcon';
 import { appartientAuCoach } from '../../utils/courseOwnership'; // V228: pictogrammes vectoriels a la place des emoji
 import CloudinaryUploadButton from '../CloudinaryUploadButton'; // V229
+// SCHEDULES : le type d'un bloc horaire (recurrent / date unique) vit dans un
+// module pur, teste a part. Une offre MELANGE les deux — voir horaireType.js.
+import {
+  estPonctuel as horaireEstPonctuel,
+  basculerHebdo as horaireVersHebdo,
+  payloadDateWeekday as horairePayload,
+  ponctuelsSansDate as horairesPonctuelsSansDate,
+  weekdayDepuisDate,
+} from './horaireType';
 
 const STEPS = [
   { n: 1, label: 'Bases' },
@@ -34,11 +43,8 @@ const WEEKDAYS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi',
 // V255b: jour de la semaine (convention JS, Dim=0) d'une date « 2026-08-05 »,
 // ou null si la chaine est inexploitable.
 // Midi local et NON minuit : minuit peut basculer d'un jour en heure d'ete.
-const weekdayFromDate = (value) => {
-  if (typeof value !== 'string' || !value.trim()) return null;
-  const d = new Date(value.trim().slice(0, 10) + 'T12:00:00');
-  return isNaN(d.getTime()) ? null : d.getDay();
-};
+// SCHEDULES : une seule implementation, celle du module pur teste.
+const weekdayFromDate = weekdayDepuisDate;
 
 // V246: libelle d'un horaire, retrocompatible. Cours PONCTUEL (`date`) ->
 // « jeu. 21 août 2026 » ; cours RECURRENT (`weekday`) -> « Mercredi ». Renvoie
@@ -161,6 +167,12 @@ export default function OfferWizard({
   // V225: ids des cours reellement modifies par le coach. Seuls ceux-ci feront
   // l'objet d'un PUT a l'enregistrement — on n'emet pas N requetes a chaque fois.
   const [dirtyCourseIds, setDirtyCourseIds] = useState([]);
+  // SCHEDULES — « ce bloc passe en date unique, la date n'est pas encore
+  // saisie ». Etat D'ECRAN, jamais enregistre : des que le coach choisit une
+  // date, `date` porte l'information et cette liste ne sert plus a rien.
+  // Sans lui, « Date unique » posait `date: ''`, ce qui ne changeait RIEN a
+  // l'affichage (conditionne a une date non vide) : le bouton etait inerte.
+  const [ponctuelsLocaux, setPonctuelsLocaux] = useState([]);
   // V225 CORRECTIF 1: ids des cours CREES PENDANT CETTE SESSION du wizard. Eux
   // seuls naissent `visible: false` et doivent donc etre bascules a
   // `visible: true` a l'enregistrement. Pour TOUT autre cours, la cle `visible`
@@ -343,6 +355,9 @@ export default function OfferWizard({
   const unlinkCourse = (id) => {
     setLinkedCourses(prev => prev.filter(c => c.id !== id));
     setDirtyCourseIds(prev => prev.filter(x => x !== id));
+    // SCHEDULES : un bloc retire emporte son intention d'ecran. Sans cela, un
+    // « + Ajouter un horaire » qui reprendrait le meme id naitrait ponctuel.
+    setPonctuelsLocaux(prev => prev.filter(x => x !== id));
     setForm(prev => ({
       ...prev,
       linked_course_ids: (prev.linked_course_ids || []).filter(x => x !== id)
@@ -355,6 +370,7 @@ export default function OfferWizard({
   const forgetCourse = (id) => {
     setLinkedCourses(prev => prev.filter(c => c.id !== id));
     setDirtyCourseIds(prev => prev.filter(x => x !== id));
+    setPonctuelsLocaux(prev => prev.filter(x => x !== id));  // SCHEDULES
     setSessionCreatedCourseIds(prev => prev.filter(x => x !== id));
     setSessionOwnedCourseIds(prev => prev.filter(x => x !== id));
     setForm(prev => ({
@@ -740,14 +756,13 @@ export default function OfferWizard({
   //    et tout code qui ne lit que `weekday` (anciennes vues, exports) affiche
   //    enfin le bon jour au lieu de dimanche.
   const buildCoursePayload = (c) => {
-    const rawDate = typeof c.date === 'string' ? c.date.trim() : '';
-    const derived = weekdayFromDate(rawDate);
+    // SCHEDULES : `date` et `weekday` viennent du module pur — meme regle a
+    // l'ecran et a l'enregistrement, une seule chose a prouver.
+    const { date: dateSortie, weekday: weekdaySortie } = horairePayload(c);
     const payload = {
       name: (c.name || '').trim(),
-      weekday: derived != null
-        ? derived
-        : (Number.isInteger(c.weekday) ? c.weekday : parseInt(c.weekday, 10) || 0),
-      date: derived != null ? rawDate : '',
+      weekday: weekdaySortie,
+      date: dateSortie,
       time: c.time || '',
       locationName: c.locationName || '',
       location: c.locationName || '',
@@ -791,6 +806,17 @@ export default function OfferWizard({
       if (unnamed) {
         setStep(2);
         setCoursesError('Chaque horaire doit porter un nom.');
+        return;
+      }
+      // SCHEDULES : un bloc annonce « Date unique » sans date repartirait en
+      // hebdomadaire (`date: ''`), en silence, sur le jour affiche. On refuse
+      // plutot que de trancher a la place du coach.
+      const sansDate = horairesPonctuelsSansDate(linkedCourses, ponctuelsLocaux);
+      if (sansDate.length) {
+        setStep(2);
+        setCoursesError(sansDate.length > 1
+          ? `${sansDate.length} horaires sont en « Date unique » sans date choisie.`
+          : 'Un horaire est en « Date unique » : choisissez sa date.');
         return;
       }
       setCoursesSaving(true);
@@ -1589,7 +1615,7 @@ export default function OfferWizard({
                     « Dimanche 18:30 » sont deux cours — c'est deja ainsi que
                     fonctionnent les deux seances reellement vendues. */}
                 {(() => {
-                  const estPonctuel = !!(typeof course.date === 'string' && course.date.trim());
+                  const estPonctuel = horaireEstPonctuel(course, ponctuelsLocaux);
                   const BTN = (actif) => ({
                     flex: 1, padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
                     fontSize: 12, fontWeight: 700,
@@ -1607,11 +1633,12 @@ export default function OfferWizard({
                           if (estPonctuel) return;
                           // On ne POSE pas de date a la place du coach : on
                           // revele le champ, vide. Tant qu'il ne le remplit pas,
-                          // le cours reste hebdomadaire — c'est la regle du
-                          // backend, et l'ecran ne doit pas raconter autre chose.
+                          // le cours reste hebdomadaire EN BASE — mais l'ecran,
+                          // lui, doit obeir au clic. C'est tout le correctif :
+                          // l'intention est retenue ici, pas dans `date`.
                           markDirty(course.id);
-                          setLinkedCourses(prev => prev.map(c =>
-                            c.id === course.id ? { ...c, date: '' } : c));
+                          setPonctuelsLocaux(prev =>
+                            prev.includes(course.id) ? prev : [...prev, course.id]);
                         }}
                       >
                         Date unique
@@ -1626,15 +1653,10 @@ export default function OfferWizard({
                           // jour de la semaine retenu est celui de cette date —
                           // le coach retrouve le creneau qu'il avait deja choisi
                           // plutot qu'un dimanche par defaut (piege V255b).
-                          const derive = weekdayFromDate(course.date);
                           markDirty(course.id);
+                          setPonctuelsLocaux(prev => prev.filter(id => id !== course.id));
                           setLinkedCourses(prev => prev.map(c =>
-                            c.id === course.id
-                              ? { ...c, date: '',
-                                  weekday: derive != null
-                                    ? derive
-                                    : (Number.isInteger(c.weekday) ? c.weekday : 0) }
-                              : c));
+                            c.id === course.id ? horaireVersHebdo(c) : c));
                         }}
                       >
                         Chaque semaine
@@ -1650,7 +1672,7 @@ export default function OfferWizard({
                     recurrent actuel » sous le champ tant qu'aucune date n'est
                     saisie : sa reservation continue de fonctionner. */}
                 <div className="grid grid-cols-2 gap-2 mt-2">
-                  {!(typeof course.date === 'string' && course.date.trim()) ? (
+                  {!horaireEstPonctuel(course, ponctuelsLocaux) ? (
                     <select
                       value={Number.isInteger(course.weekday) ? course.weekday : 0}
                       data-testid={`weekday-${course.id}`}
@@ -1714,7 +1736,7 @@ export default function OfferWizard({
                     </p>
                   );
                 })()}
-                {!course.date && Number.isInteger(course.weekday) && (
+                {!horaireEstPonctuel(course, ponctuelsLocaux) && Number.isInteger(course.weekday) && (
                   <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
                     Chaque {WEEKDAYS[course.weekday].toLowerCase()} — configuré une fois,
                     les prochaines séances sont proposées automatiquement.
