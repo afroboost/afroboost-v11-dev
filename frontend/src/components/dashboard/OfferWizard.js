@@ -1180,6 +1180,48 @@ export default function OfferWizard({
         )}
       </div>
 
+      {/* LOT R — LA RECHARGE : RESERVEE AUX MEMBRES ACTIFS, PACK EPUISE.
+          Le COMPLEMENT exact de la case ci-dessus : l'une OUVRE l'annee,
+          l'autre RECHARGE le pack a l'interieur de cette annee.
+          LES DEUX SONT EXCLUSIVES. On n'achete pas son adhesion avec une offre
+          reservee aux membres — il faudrait etre membre pour devenir membre.
+          La case est donc DESACTIVEE quand l'offre ouvre une adhesion, jamais
+          masquee : le coach voit la fonction et comprend pourquoi elle ne
+          s'applique pas.
+          LE SERVEUR RESTE L'AUTORITE : il refuse l'achat que cette case dise
+          oui ou non, et sur les quatre portes de paiement. */}
+      <div className="p-4 rounded-lg" style={{ background: '#000', border: `1px solid ${ACCENT_BORDER}` }}>
+        <label className={`flex items-center gap-3 ${form.creates_membership === true ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+          <input
+            type="checkbox"
+            checked={!!form.requires_active_membership && form.creates_membership !== true}
+            disabled={form.creates_membership === true}
+            onChange={(e) => set('requires_active_membership', e.target.checked)}
+            className="w-4 h-4 v224-input" style={{ accentColor: 'var(--primary-color, #D91CD2)' }}
+            data-testid="offer-requires-membership"
+          />
+          <span className="text-white text-sm font-medium inline-flex items-center gap-1.5"
+                style={form.creates_membership === true ? { opacity: 0.45 } : undefined}>
+            <SvgIcon name="refresh" size={14} /> Recharge réservée aux membres
+          </span>
+        </label>
+        <p className="text-xs mt-1 ml-7" style={{ color: 'rgba(255,255,255,0.5)' }}>
+          Cette offre ne peut être achetée que par un membre dont l'adhésion est
+          encore valide ET dont le pack de séances est épuisé. Elle recharge ses
+          séances sans créer ni prolonger son adhésion. Ailleurs, elle n'apparaît
+          pas et le paiement est refusé.
+        </p>
+        {form.creates_membership === true && (
+          <p className="text-xs mt-2 ml-7 p-2 rounded" data-testid="offer-recharge-exclusive"
+             style={{ color: PINK, border: `1px solid ${ACCENT_BORDER}`,
+                      background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)' }}>
+            <SvgIcon name="warning" size={12} />{' '}
+            Une offre qui ouvre l'adhésion ne peut pas être réservée aux membres :
+            il faudrait déjà être membre pour la payer.
+          </p>
+        )}
+      </div>
+
       {/* Description */}
       <div>
         <div className="flex items-center justify-between mb-1">

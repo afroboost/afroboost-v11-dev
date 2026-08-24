@@ -200,6 +200,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   };
 
   // V202: Paiement Stripe
+  const [rechargeLoading, setRechargeLoading] = useState(false);
+
   const handleStripeCheckout = async () => {
     if (stripeLoading) return;
     setStripeLoading(true);
@@ -219,6 +221,41 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       setActionError(err?.response?.data?.detail || "Erreur paiement. Réessaye.");
     } finally {
       setStripeLoading(false);
+    }
+  };
+
+  // LOT R — RECHARGER LE PACK.
+  //
+  // LE NAVIGATEUR NE DECIDE RIEN. C'est le serveur qui a dit `eligible`, qui
+  // a donne l'offre, le prix et le nombre de seances ; ce bouton ne fait que
+  // transmettre. Et la caisse REVERIFIE tout (garde `lotr_garde_achat`) : un
+  // bouton force depuis la console n'ouvre rien.
+  const handleRecharge = async () => {
+    const r = data?.recharge;
+    if (rechargeLoading || !r?.eligible || !r?.offer_id) return;
+    setRechargeLoading(true);
+    setActionError("");
+    try {
+      const res = await axios.post(`${API}/create-checkout-session`, {
+        productName: r.offer_name || "Recharge Afroboost",
+        // Le serveur fait AUTORITE sur le montant des qu'`offerId` est fourni
+        // (V428C) : cette valeur n'est qu'un affichage transmis.
+        amount: r.prix,
+        customerEmail: data?.subscriber?.email || "",
+        originUrl: window.location.origin,
+        offerId: r.offer_id,
+        quantity: 1,
+      });
+      if (res.data?.url) {
+        window.location.href = res.data.url;
+      } else {
+        setActionError("Le paiement est momentanément indisponible. Réessaye.");
+        setRechargeLoading(false);
+      }
+    } catch (err) {
+      setActionError(err?.response?.data?.detail
+        || "Recharge impossible pour le moment.");
+      setRechargeLoading(false);
     }
   };
 
@@ -1217,10 +1254,59 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               </div>
             );
           })()}
-          {remaining <= 0 && (
-            <p className="text-white/50 text-xs mt-3">
-              Tu as utilisé toutes tes séances. Contacte ton coach pour renouveler.
-            </p>
+          {/* ═══ LOT R — LA RECHARGE DU PACK ═══════════════════════════════
+              Le CTA n'apparait QUE si le serveur l'a autorise. Il ne se
+              montre donc jamais a quelqu'un qui a encore des seances, ni a un
+              non-membre, ni a une adhesion echue — la decision du proprietaire
+              vit cote serveur, pas ici.
+              Quand il n'apparait pas, la RAISON s'affiche : un bouton absent
+              sans explication est un bug pour celui qui le cherche. */}
+          {data?.recharge?.eligible ? (
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={handleRecharge}
+                disabled={rechargeLoading}
+                data-testid="recharge-cta"
+                className="w-full flex items-center justify-center gap-2 font-semibold rounded-2xl py-4 text-base transition-transform active:scale-95"
+                style={{
+                  background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`,
+                  color: "#fff",
+                  border: "none",
+                  opacity: rechargeLoading ? 0.6 : 1,
+                  boxShadow: "0 6px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.35)",
+                }}
+              >
+                {rechargeLoading ? "Redirection..." : (
+                  <>
+                    {/* Icône recharge — SVG inline, jamais un emoji */}
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <path d="M21 12a9 9 0 1 1-3-6.7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                      <path d="M21 3v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                    {/* Le libelle vient du SERVEUR : ni le nombre de seances ni
+                        le prix ne sont ecrits en dur ici. */}
+                    {data.recharge.seances
+                      ? `Recharger ${data.recharge.seances} séances`
+                      : "Recharger mon pack"}
+                    {data.recharge.prix != null
+                      && ` — ${data.recharge.prix} ${data.recharge.devise || "CHF"}`}
+                  </>
+                )}
+              </button>
+            </div>
+          ) : (
+            data?.recharge?.message ? (
+              <p data-testid="recharge-motif" className="text-white/50 text-xs mt-3">
+                {data.recharge.message}
+              </p>
+            ) : (
+              remaining <= 0 && (
+                <p className="text-white/50 text-xs mt-3">
+                  Tu as utilisé toutes tes séances. Contacte ton coach pour renouveler.
+                </p>
+              )
+            )
           )}
         </section>
 

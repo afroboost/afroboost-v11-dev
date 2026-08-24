@@ -3629,3 +3629,319 @@ def lot3p_partage(total_connu, pourcentage) -> dict:
         "afroboost_amount": round(_t - _part, 2),
         "total_connu": _t,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LOT R — LA RECHARGE PULSE x10 : 10 SEANCES, ET RIEN D'AUTRE
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# LE MODELE, TEL QUE LE PROPRIETAIRE L'A TRANCHE :
+#
+#     Offre d'ENTREE   -> ouvre une adhesion d'un an + un pack de seances.
+#     Offre de RECHARGE -> re-donne un pack de seances, et RIEN D'AUTRE.
+#
+# LA RECHARGE N'EST PAS UNE OFFRE LIBRE. Elle est reservee a quelqu'un qui a
+# deja payé son entree, dont l'annee court encore, et dont le pack est EPUISE.
+# Trois conditions, trois refus possibles, et ils sont DISTINCTS :
+#
+#   `seances_restantes` -> « termine d'abord celles que tu as payees »
+#   `adhesion_absente`  -> « passe par l'offre d'entree »
+#   `adhesion_expiree`  -> « ton annee est finie, reprends une entree »
+#
+# Les confondre priverait le client de la seule information qui lui permet
+# d'agir. Chaque motif remonte donc jusqu'a l'ecran, avec sa phrase.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# POURQUOI UN CHAMP EXPLICITE, ENCORE UNE FOIS
+# ═══════════════════════════════════════════════════════════════════════════
+# `requires_active_membership`, faux par defaut. C'est la dimension que LOT A
+# annoncait mot pour mot : « quand le lot adhesion arrivera, il posera sa
+# propre dimension (reserve aux membres actifs) ». Meme convention que
+# `creates_membership` et `first_purchase_eligible` : ABSENT VAUT NON, aucune
+# migration, aucun retro-remplissage. Une offre oubliee reste vendable comme
+# avant ; c'est le coach qui coche, en connaissance.
+#
+# AUCUNE COMPARAISON DE MONTANT. Ni 150, ni 250, nulle part. Le prix n'est pas
+# une identite metier — le jour ou le pack passe a 160 CHF, la regle tient
+# sans qu'on y touche. C'est la meme discipline que LOT A et LOT 2.
+#
+# CE QUE CE BLOC N'ECRIT JAMAIS : rien. Aucun `insert_one`, aucun
+# `update_one`. Il REPOND a une question ; les ecritures restent chez les
+# chemins de paiement, qui les faisaient deja.
+#
+# ET CE QU'IL NE TOUCHE PAS A L'ADHESION : ni creation, ni prolongation.
+# Decision du proprietaire, litteralement : « le membership existant reste le
+# meme ». `lot2_prolonger_fin` reste donc DORMANTE — sa garde de dormance
+# (P5, LOT 2) continue de tenir, et c'est voulu.
+
+LOTR_PREFIXE = "[LOT R]"
+
+# Le champ porte par l'offre. Nomme en anglais comme ses trois voisins
+# (`creates_membership`, `first_purchase_eligible`, `member_discount_pct`).
+LOTR_CHAMP_PROTECTION = "requires_active_membership"
+
+# Les trois refus. Des constantes, pour qu'un ecran ne compare jamais a une
+# chaine recopiee a la main.
+LOTR_REFUS_SEANCES = "seances_restantes"
+LOTR_REFUS_SANS_ADHESION = "adhesion_absente"
+LOTR_REFUS_ADHESION_EXPIREE = "adhesion_expiree"
+LOTR_REFUS_INDETERMINE = "etat_indetermine"
+
+LOTR_ORIGINE = "renouvellement_pulse"
+
+LOTR_MESSAGES = {
+    LOTR_REFUS_SEANCES:
+        "Il te reste des séances sur ton pack actuel. "
+        "Termine-les avant de le recharger.",
+    LOTR_REFUS_SANS_ADHESION:
+        "Cette recharge est réservée aux membres. "
+        "Commence par l'offre d'entrée pour ouvrir ton adhésion.",
+    LOTR_REFUS_ADHESION_EXPIREE:
+        "Ton adhésion annuelle est arrivée à échéance. "
+        "Reprends une offre d'entrée pour la rouvrir.",
+    LOTR_REFUS_INDETERMINE:
+        "Impossible de vérifier ton adhésion pour le moment. "
+        "Réessaie dans un instant ou contacte ton coach.",
+}
+
+
+def lotr_message_refus(motif) -> str:
+    """La phrase a montrer au client pour ce motif. Ne rend jamais None.
+
+    AUCUN MONTANT dans ces phrases, et c'est deliberé : le prix vit dans le
+    catalogue. Un « 150 CHF » ecrit ici deviendrait faux en silence le jour ou
+    le coach change son tarif.
+
+    Un motif inconnu rend le message le plus prudent — jamais une chaine vide,
+    qui laisserait l'ecran afficher un bouton sans explication.
+    """
+    return LOTR_MESSAGES.get(str(motif or ""), LOTR_MESSAGES[LOTR_REFUS_INDETERMINE])
+
+
+def lotr_etat_adhesion(adhesions, aujourdhui=None) -> str:
+    """« active » | « expiree » | « absente » — l'etat le MEILLEUR de la liste.
+
+    POURQUOI DISTINGUER « expiree » DE « absente ». Parce que ce ne sont pas
+    les memes clients. L'un n'a jamais payé son entree ; l'autre l'a payee il
+    y a treize mois et ne le sait peut-etre pas. Leur envoyer la meme phrase,
+    c'est traiter un fidele comme un inconnu.
+
+    LE STATUT EST RECALCULE DEPUIS LES DATES (`p1a_statut`), jamais lu dans un
+    champ `statut` : c'est la lecon V393, et la meme regle que
+    `lot2_adhesion_active`. Un document ecrit il y a un an se juge donc aussi
+    juste qu'un document ecrit ce matin.
+
+    « invalide » et « future » NE SONT PAS « active ». Un document aux dates
+    illisibles ne recharge rien : on ne donne pas dix seances sur une donnee
+    qu'on n'a pas su lire.
+    """
+    _lignes = [a for a in (adhesions or []) if isinstance(a, dict)]
+    if not _lignes:
+        return "absente"
+    try:
+        from api.routes.membership_routes import p1a_statut as _statut
+    except Exception as _err:  # noqa: BLE001
+        # Fail closed : sans la regle de statut, on n'affirme pas « active ».
+        logger.error("%s regle de statut indisponible: %s", LOTR_PREFIXE, _err)
+        return LOTR_REFUS_INDETERMINE
+    _vus = set()
+    for _a in _lignes:
+        _vus.add(_statut(_a.get("date_debut"), _a.get("date_fin"), aujourdhui))
+    if "active" in _vus:
+        return "active"
+    # « future » et « invalide » ne valent pas « expiree » : on ne dira pas a
+    # quelqu'un que son annee est finie si elle n'a jamais commence.
+    if "expiree" in _vus:
+        return "expiree"
+    return "absente"
+
+
+def lotr_verdict_recharge(offre, etat_adhesion, seances_restantes):
+    """`(autorise: bool, motif: str)` — la regle, sans aucun acces base.
+
+    FONCTION PURE, et c'est ce qui permet de la tester sur les six cas du
+    proprietaire sans monter une base.
+
+    L'ORDRE DES REFUS N'EST PAS ARBITRAIRE : l'adhesion se juge AVANT le
+    compteur de seances. Un non-membre a qui l'on repond « termine d'abord tes
+    seances » comprendrait qu'il pourra recharger ensuite — alors qu'il ne
+    pourra pas. Le motif le plus structurant passe donc en premier.
+
+    UNE OFFRE NON PROTEGEE EST TOUJOURS AUTORISEE. Ce n'est pas un trou : sans
+    cela, l'offre d'entree elle-meme deviendrait inachetable par un non-membre,
+    et plus personne ne pourrait devenir membre.
+    """
+    _o = offre if isinstance(offre, dict) else None
+    if _o is None:
+        # Offre illisible : on ne se prononce pas en faveur d'un achat protege.
+        return False, LOTR_REFUS_INDETERMINE
+    # `is True` strict, jamais `truthy` : une chaine « false » venue d'un
+    # import maladroit ne doit pas non plus INVENTER une protection.
+    if _o.get(LOTR_CHAMP_PROTECTION) is not True:
+        return True, ""
+
+    _etat = str(etat_adhesion or "")
+    if _etat == "absente":
+        return False, LOTR_REFUS_SANS_ADHESION
+    if _etat == "expiree":
+        return False, LOTR_REFUS_ADHESION_EXPIREE
+    if _etat != "active":
+        # « future », « invalide », panne de lecture : on ne tranche pas.
+        return False, LOTR_REFUS_INDETERMINE
+
+    try:
+        _reste = int(float(seances_restantes))
+    except (TypeError, ValueError):
+        # Compteur illisible -> refus. Accorder dix seances sur un compteur
+        # qu'on n'a pas su lire est exactement le risque que le proprietaire
+        # a demande d'ecarter.
+        return False, LOTR_REFUS_INDETERMINE
+    if _reste > 0:
+        return False, LOTR_REFUS_SEANCES
+    return True, ""
+
+
+async def lotr_seances_encore_utilisables(db, email) -> int:
+    """Les seances que cette personne peut ENCORE utiliser, tous forfaits.
+
+    TOUS LES FORFAITS, pas seulement le pack concerne. Quelqu'un qui detient
+    trois seances ailleurs n'a pas besoin d'en racheter dix : le proprietaire
+    a demande qu'on ne propose la recharge qu'a zero.
+
+    UN FORFAIT PERIME NE COMPTE PAS. Ses seances ne valent plus rien — les
+    compter interdirait la recharge a quelqu'un qui n'a plus aucun droit
+    utilisable. Meme regle que `choisir_abonnement` et `cloturer_anciens_forfaits`.
+
+    LEVE si la base ne repond pas. L'appelant traduit cela en refus : c'est
+    voulu, et c'est le fail-closed de `lot2_adhesion_active`.
+    """
+    _email = normaliser_email(email)
+    if not _email:
+        return 0
+    # `re` n'est pas importe au niveau de ce module : import LOCAL, comme le
+    # fait deja `cloturer_anciens_forfaits` juste au-dessus.
+    import re as _re
+    _lignes = await db["subscriptions"].find(
+        {"email": {"$regex": f"^{_re.escape(_email)}$", "$options": "i"},
+         "status": "active"},
+        {"_id": 0, "expires_at": 1, "remaining_sessions": 1,
+         "total_sessions": 1, "used_sessions": 1},
+    ).to_list(100)
+    _total = 0
+    for _l in (_lignes or []):
+        if _v391_est_expire(_l.get("expires_at")):
+            continue
+        _total += max(0, _v391_seances_restantes(_l))
+    return _total
+
+
+async def lotr_garde_achat(db, email, offre_id, aujourdhui=None):
+    """`(autorise, motif)` — LA GARDE SERVEUR, celle qui fait foi.
+
+    ELLE EST SERVEUR, ET C'EST TOUT LE POINT. Le bouton peut etre cache, l'URL
+    forgee, le navigateur contourne, la requete rejouee depuis un terminal :
+    c'est ici qu'on refuse. Le proprietaire l'a demande mot pour mot — « le
+    serveur doit refuser meme si le frontend est contourne ».
+    Elle est donc posee sur TOUTES les portes de paiement, pas une seule :
+    une garde sur une seule route se contourne en changeant d'URL, et ce depot
+    a deja paye cette lecon (ESSAI-1, ESSAI-4).
+
+    FAIL CLOSED. Toute panne — offre illisible, adhesions illisibles, forfaits
+    illisibles — rend un REFUS. On ne donne pas dix seances sur une base qui
+    n'a pas repondu. Le cout d'un faux refus est un client qui reessaie ; le
+    cout d'un faux accord est un pack offert et une regle metier percee.
+
+    N'ECRIT RIEN. Elle lit, elle repond.
+    """
+    _oid = str(offre_id or "").strip()
+    if not _oid:
+        # Pas d'offre identifiee : rien a proteger ici. Les autres gardes du
+        # checkout (vendeur, prix, essai) font deja leur travail.
+        return True, ""
+    try:
+        _offre = await db["offers"].find_one(
+            {"id": _oid},
+            {"_id": 0, "id": 1, "name": 1, "coach_id": 1,
+             LOTR_CHAMP_PROTECTION: 1})
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s offre %s illisible: %s", LOTR_PREFIXE, _oid[:32], _err)
+        return False, LOTR_REFUS_INDETERMINE
+    if not _offre:
+        # Offre inconnue : ce n'est pas a cette garde de trancher un achat
+        # dont l'offre a disparu — V223 a deja decide de ne pas bloquer le
+        # paiement dans ce cas. On ne se prononce pas.
+        return True, ""
+    if _offre.get(LOTR_CHAMP_PROTECTION) is not True:
+        return True, ""
+
+    _email = normaliser_email(email)
+    if not _email:
+        # Une offre reservee aux membres exige de savoir QUI achete.
+        logger.info("%s achat protege refuse — acheteur non identifie (offre=%s)",
+                    LOTR_PREFIXE, _oid[:32])
+        return False, LOTR_REFUS_SANS_ADHESION
+
+    _coach = lot2_proprietaire(_offre.get("coach_id"))
+    try:
+        _adhesions = await lot3b_adhesions(db, _email, _coach)
+        _etat = lotr_etat_adhesion(_adhesions, aujourdhui)
+        _reste = await lotr_seances_encore_utilisables(db, _email)
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s etat du membre illisible pour %s: %s",
+                     LOTR_PREFIXE, _email[:40], _err)
+        return False, LOTR_REFUS_INDETERMINE
+
+    _ok, _motif = lotr_verdict_recharge(_offre, _etat, _reste)
+    if not _ok:
+        logger.info("%s recharge refusee — motif=%s offre=%s adhesion=%s reste=%s",
+                    LOTR_PREFIXE, _motif, _oid[:32], _etat, _reste)
+    return _ok, _motif
+
+
+def lotr_trace_recharge(montant=None, devise=None, seances=None, offre_id="",
+                        membership_id=None, reference="") -> dict:
+    """Les champs qui rendent une recharge LISIBLE par Finance et par le Bilan.
+
+    LE DEFAUT QUE CECI FERME. La recharge automatique existante n'ecrivait que
+    dans `subscriptions` : le paiement existait chez Stripe et RIEN ne le
+    reliait cote Afroboost. Une somme encaissee sans reference n'est
+    rattachable a rien — c'est la dette « reconduction » deja consignee.
+
+    UNE VALEUR INCONNUE N'EST PAS ECRITE. Pas de `montant_encaisse: 0` : un
+    zero se lit « c'etait gratuit », et le Bilan le prendrait pour argent
+    comptant. La cle absente se lit « on ne sait pas », ce qui est la verite.
+    C'est la meme regle que `lot3_snapshot_tarifaire` et que le Bilan.
+
+    L'ORIGINE, ELLE, EST TOUJOURS POSEE. Meme sans montant lisible, on sait
+    que cet argent-la vient d'une recharge et non d'un premier achat — c'est
+    exactement la distinction que le proprietaire a demandee entre l'entree et
+    le renouvellement.
+    """
+    _doc = {"origine_paiement": LOTR_ORIGINE}
+    try:
+        if montant is not None:
+            _m = round(float(montant), 2)
+            if _m == _m:                       # ecarte NaN
+                _doc["montant_encaisse"] = _m
+    except (TypeError, ValueError):
+        pass
+    try:
+        if seances is not None:
+            _s = int(float(seances))
+            if _s > 0:
+                _doc["seances_a_l_achat"] = _s
+    except (TypeError, ValueError):
+        pass
+    _d = str(devise or "").strip().upper()
+    if _d:
+        _doc["devise"] = _d
+    _o = str(offre_id or "").strip()
+    if _o:
+        _doc["offer_id"] = _o
+    _mid = str(membership_id or "").strip()
+    if _mid:
+        _doc["membership_id"] = _mid
+    _ref = str(reference or "").strip()
+    if _ref:
+        _doc["reference_paiement"] = _ref
+    return _doc

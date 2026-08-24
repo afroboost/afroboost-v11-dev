@@ -189,6 +189,13 @@ async def create_checkout_session(req: CreateCheckoutRequest):
     # premiere ecriture, quelle que soit la suite du parcours.
     await _lot2_verifier_vendeur(req.items, req.coach_email)
 
+    # LOT R : une offre reservee aux membres se refuse ici aussi. Meme
+    # placement que la garde du vendeur — avant le total, avant la branche
+    # gratuite, donc avant la premiere ecriture. Poser cette garde sur une
+    # seule des portes la rendrait contournable en changeant d'URL : c'est
+    # exactement le raisonnement qui a place ESSAI-1 et ESSAI-4 ici.
+    await _lotr_garde(req.items, req.customer_email)
+
     # ESSAI-1B : le total qui DECIDE vient du catalogue. `discount_amount`,
     # fourni par le navigateur, n'est plus une autorite metier.
     total, _prix_resolus = await _essai1b_total_autorite(req.items)
@@ -779,6 +786,38 @@ async def _lot2_verifier_vendeur(items, coach_email: str):
             raise HTTPException(status_code=403, detail=LOT2_MSG_VENDEUR)
 
 
+async def _lotr_garde(items, customer_email: str) -> None:
+    """LOT R — refuse un panier qui contient une offre reservee aux membres.
+
+    LEVE 403 AVEC LE MOTIF, jamais un refus muet : le client doit savoir s'il
+    doit terminer ses seances, ouvrir son adhesion, ou la renouveler. Trois
+    situations, trois phrases — c'est la decision du proprietaire.
+
+    CHAQUE ARTICLE EST EXAMINE. Un panier melange (une offre libre + la
+    recharge) ne doit pas passer parce que le premier article etait innocent.
+
+    LA GARDE ELLE-MEME EST FAIL-CLOSED (`lotr_garde_achat` refuse sur toute
+    panne de base). Seul l'echec de son IMPORT laisse passer : casser la caisse
+    entiere pour un module absent serait pire que le trou qu'on ferme, et
+    l'immense majorite des offres ne sont pas protegees.
+    """
+    try:
+        from api.routes.shared import (lotr_garde_achat as _garde,
+                                       lotr_message_refus as _msg)
+    except Exception as _err:  # noqa: BLE001
+        logger.error("[LOT R] garde indisponible, achat poursuivi: %s", _err)
+        return
+    for _it in (items or []):
+        _oid = str(getattr(_it, "id", "") or "").strip()
+        if not _oid:
+            continue
+        _ok, _motif = await _garde(db, customer_email or "", _oid)
+        if not _ok:
+            logger.info("[LOT R] panier refuse — offre=%s motif=%s",
+                        _oid[:32], _motif)
+            raise HTTPException(status_code=403, detail=_msg(_motif))
+
+
 async def _essai1b_prix_unitaire(item):
     """Rend (prix unitaire faisant autorite, a-t-il ete resolu en base ?).
 
@@ -1105,6 +1144,10 @@ async def free_checkout(req: FreeCheckoutRequest):
     # doit pas bruler son droit a l'essai pour s'entendre refuser juste apres.
     await _essai4_garde(req.customer_email,
                         str((req.items[0].id if req.items else "") or ""))
+
+    # LOT R : la porte GRATUITE aussi. Une offre reservee aux membres obtenue
+    # a 0 CHF serait le contournement le plus simple de tous.
+    await _lotr_garde(req.items, req.customer_email)
 
     # ESSAI-1 : ici, et pas ailleurs. `_process_successful_payment` cree le code
     # AFR- et le forfait des ses premieres lignes ; toute verification posee

@@ -783,6 +783,16 @@ class Offer(BaseModel):
     # LOT 2 : « acheter cette offre ouvre une adhesion d'un an ». MEME symetrie
     # obligatoire que ci-dessus, et pour la meme raison exactement.
     creates_membership: bool = False
+    # LOT R : « cette offre est reservee a un membre ACTIF dont le pack est
+    # epuise ». QUATRIEME champ soumis a la meme symetrie obligatoire que ses
+    # voisins — absent d'`Offer`, il serait filtre en silence par le
+    # `response_model=List[Offer]` de GET /offers, et la case du dashboard
+    # reviendrait decochee a chaque relecture.
+    #
+    # C'est le complement exact de `creates_membership` : l'une OUVRE l'annee,
+    # l'autre RECHARGE le pack a l'interieur de cette annee. Aucune des deux ne
+    # se deduit d'un prix.
+    requires_active_membership: bool = False
     # LOT 3b : pourcentage de reduction reserve aux MEMBRES ACTIFS a la date de
     # la seance. TROISIEME champ soumis a la meme symetrie obligatoire que ses
     # deux voisins — absent d'`Offer`, il serait filtre en silence par le
@@ -894,6 +904,9 @@ class OfferCreate(BaseModel):
     # declarations doivent rester identiques : c'est `OfferCreate` qui est
     # serialise par le `$set: offer.model_dump()` de PUT /offers.
     member_discount_pct: Optional[float] = None
+    # LOT R — MIROIR STRICT, meme exigence : sans cette ligne, un `PUT /offers`
+    # EFFACERAIT la protection en base a chaque enregistrement de l'offre.
+    requires_active_membership: bool = False
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -5788,6 +5801,38 @@ async def create_checkout_session(request: CreateCheckoutRequest,
     puis fallback sur la variable d'environnement STRIPE_SECRET_KEY.
     Utilise une variable locale pour ne pas muter le global stripe.api_key.
     """
+    # ═══ LOT R — UNE OFFRE RESERVEE AUX MEMBRES SE REFUSE ICI ══════════════
+    #
+    # AVANT LA CLE STRIPE, AVANT LE MONTANT, AVANT TOUTE ECRITURE. Un refus ne
+    # laisse donc rien derriere lui — meme placement que les gardes ESSAI.
+    #
+    # POSEE SUR LES QUATRE PORTES, PAS SUR UNE SEULE. Ce depot a deja paye la
+    # lecon (ESSAI-1, ESSAI-4) : une garde posee sur une route se contourne en
+    # changeant d'URL. Ici : cette caisse, `/checkout/create-session`,
+    # `/checkout/free` et le bouton de l'espace abonne.
+    # UNE SEULE VARIABLE, LIEE AVANT LE `try`. Chaine vide = pas de refus. Le
+    # message est construit DANS le try, la ou l'import qui le fournit est
+    # certainement disponible : rien ne peut donc etre lu ici sans avoir ete
+    # affecte, quel que soit le chemin d'erreur.
+    _lotr_refus = ""
+    try:
+        from api.routes.shared import (lotr_garde_achat as _lotr_garde,
+                                       lotr_message_refus as _lotr_msg)
+        _lotr_ok, _lotr_motif = await _lotr_garde(
+            db, request.customerEmail or "", request.offerId or "")
+        if not _lotr_ok:
+            _lotr_refus = _lotr_msg(_lotr_motif)
+    except HTTPException:
+        raise
+    except Exception as _lotr_err:
+        # La garde elle-meme est deja fail-closed ; si son IMPORT echoue, on ne
+        # bloque pas les achats ordinaires — l'immense majorite des offres ne
+        # sont pas protegees, et casser toute la caisse serait pire.
+        logger.error(f"[LOT R] garde indisponible, achat poursuivi: {_lotr_err}")
+        _lotr_refus = ""
+    if _lotr_refus:
+        raise HTTPException(status_code=403, detail=_lotr_refus)
+
     # V220: Lire la clé Stripe depuis la base de données (dashboard admin) d'abord
     active_stripe_key = None
 
@@ -7125,6 +7170,43 @@ async def stripe_webhook(request: Request):
                 # B : la souscription porte la meme trace que son code.
                 subscription_data.update(_b_auto("stripe", amount_chf or _montant_paye,
                                                  (session.currency or "chf"), sessions_count))
+
+                # ═══ LOT R — UNE RECHARGE SE RECONNAIT DANS FINANCE ════════
+                #
+                # LE DEFAUT QUE CECI FERME. Rien ne distinguait un premier
+                # achat d'une recharge : ni le forfait, ni le code, ni la
+                # transaction. Le proprietaire a demande de pouvoir separer
+                # « entree » et « renouvellement » — sans cette trace, la seule
+                # façon de le faire serait de comparer des montants, ce que ce
+                # depot s'interdit (le prix n'est pas une identite metier).
+                #
+                # LA MARQUE VIENT DE L'OFFRE, pas du montant : c'est elle qui
+                # declare `requires_active_membership`. Un pack passe a 160 CHF
+                # resterait donc correctement identifie.
+                #
+                # NON BLOQUANT. Un achat encaisse ne doit jamais echouer parce
+                # qu'un champ d'analyse n'a pas pu s'ecrire.
+                try:
+                    _lotr_oid = str((metadata or {}).get("offer_id") or "")
+                    if _lotr_oid:
+                        from api.routes.shared import (
+                            LOTR_CHAMP_PROTECTION as _LOTR_CHAMP,
+                            lotr_trace_recharge as _lotr_trace)
+                        _lotr_o = await db.offers.find_one(
+                            {"id": _lotr_oid}, {"_id": 0, _LOTR_CHAMP: 1})
+                        if (_lotr_o or {}).get(_LOTR_CHAMP) is True:
+                            subscription_data.update(_lotr_trace(
+                                montant=amount_chf or _montant_paye,
+                                devise=(session.currency or "chf"),
+                                seances=sessions_count,
+                                offre_id=_lotr_oid,
+                                reference=str(session.get("payment_intent")
+                                              or session.id or "")))
+                            logger.info("[LOT R] recharge tracee : %s seances, "
+                                        "offre=%s", sessions_count, _lotr_oid[:32])
+                except Exception as _lotr_te:
+                    logger.warning(f"[LOT R] trace de recharge ignoree: {_lotr_te}")
+
                 await db.subscriptions.insert_one(subscription_data)
                 logger.info(f"[PAYMENT] Subscription auto-creee: {customer_email} - {product_name} ({sessions_count} seances) auto_renew={subscription_data['auto_renew']}")
 
@@ -12456,6 +12538,74 @@ async def _v426_recurrents_de_loffre(linked_ids: list) -> list:
     ]
 
 
+async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
+    """LOT R — ce que l'espace abonne doit savoir de la recharge.
+
+    NE LEVE JAMAIS. Cet ecran est le tableau de bord du client : une recharge
+    illisible ne doit pas lui retirer ses seances, son agenda et ses
+    reservations. En cas de doute on rend `eligible: false` avec un motif, ce
+    qui est aussi le comportement sur : « pas d'offre de recharge configuree ».
+
+    L'OFFRE DE RECHARGE EST CELLE QUE LE COACH A DECLAREE — `requires_
+    active_membership` sur une offre du meme proprietaire. Aucune comparaison
+    de montant, aucun nom code en dur : le jour ou le pack passe a 160 CHF,
+    rien ici ne bouge.
+    """
+    _vide = {"eligible": False, "motif": "", "message": ""}
+    try:
+        from api.routes.shared import (LOTR_CHAMP_PROTECTION as _CHAMP,
+                                       lot2_proprietaire as _proprio,
+                                       lotr_garde_achat as _garde,
+                                       lotr_message_refus as _msg)
+    except Exception as _err:
+        logger.warning(f"[LOT R] regle indisponible pour l'espace abonne: {_err}")
+        return _vide
+    try:
+        # Le proprietaire vient de l'offre COURANTE du client, pour qu'un
+        # abonne d'un partenaire ne se voie pas proposer la recharge d'un autre
+        # catalogue. Meme regle de symetrie que `conv_offres_premier_achat`.
+        _coach = _proprio((offer or {}).get("coach_id"))
+        _q = {_CHAMP: True}
+        _q["coach_id"] = _coach if _coach else None
+        _offres = await db.offers.find(_q, {"_id": 0}).to_list(10)
+        if not _offres:
+            # Aucune offre de recharge declaree : ce n'est pas une anomalie,
+            # c'est le cas de tous les coachs qui n'en ont pas.
+            return dict(_vide, motif="non_configuree")
+        _o = sorted(_offres, key=lambda x: (x.get("position") is None,
+                                            x.get("position") or 0,
+                                            str(x.get("name") or "")))[0]
+        _ok, _motif = await _garde(db, user_email or "", str(_o.get("id") or ""))
+        _prix = None
+        try:
+            _p = compute_active_price(_o).get("price")
+            if _p is not None and float(_p) > 0:
+                _prix = round(float(_p), 2)
+        except Exception:
+            _prix = None
+        _seances = None
+        try:
+            _ps = _o.get("pack_sessions")
+            if _ps is not None and int(float(_ps)) > 0:
+                _seances = int(float(_ps))
+        except (TypeError, ValueError):
+            _seances = None
+        return {
+            "eligible": bool(_ok),
+            "motif": "" if _ok else _motif,
+            "message": "" if _ok else _msg(_motif),
+            "offer_id": str(_o.get("id") or ""),
+            "offer_name": str(_o.get("name") or ""),
+            # UN PRIX INCONNU RESTE `None` — jamais 0, qui se lirait « gratuit ».
+            "prix": _prix,
+            "devise": "CHF",
+            "seances": _seances,
+        }
+    except Exception as _err:
+        logger.warning(f"[LOT R] etat de recharge non calcule: {_err}")
+        return _vide
+
+
 @api_router.get("/subscriber/space/{access_code}")
 async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     """V184: Données complètes de la page d'accès rapide d'un abonné.
@@ -12943,6 +13093,17 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
             ),
             "last_renewal_date": (subscription or {}).get("last_renewal_date"),
         },
+        # ═══ LOT R — LA RECHARGE : LE SERVEUR DIT SI ELLE EST OUVERTE ══════
+        #
+        # L'ECRAN NE RECALCULE RIEN. Il affiche ce que le serveur repond. S'il
+        # jugeait lui-meme (« reste == 0 et je crois etre membre »), deux
+        # regles cohabiteraient et divergeraient un jour — et c'est celle du
+        # navigateur que le client verrait. Le bouton et la caisse tiennent
+        # donc leur verdict de la MEME fonction.
+        #
+        # LE MOTIF PART AUSSI, avec sa phrase. Un bouton qui disparait sans
+        # explication est un bug pour celui qui le cherche.
+        "recharge": await _lotr_etat_recharge(user_email, offer, remaining_sessions),
         # ESSAI-5a-1D : la lecture qui donne son sens au compteur. Absente pour
         # un forfait payant, ou l'ecran garde exactement son comportement.
         "trial": await t2_etat_essai(code_upper, reservations_raw, remaining_sessions),
@@ -13193,10 +13354,6 @@ async def subscriber_stripe_checkout(access_code: str, request: Request):
     if not discount:
         raise HTTPException(status_code=404, detail="Code introuvable")
 
-    amount = discount.get("stripe_amount")
-    if not amount or float(amount) <= 0:
-        raise HTTPException(status_code=400, detail="Aucun montant configuré pour ce code")
-
     body = {}
     try:
         body = await request.json()
@@ -13204,9 +13361,83 @@ async def subscriber_stripe_checkout(access_code: str, request: Request):
         body = {}
     origin_url = body.get("originUrl") or "https://afroboost.com"
     member_slug = body.get("member_slug") or ""
-    customer_email = body.get("email") or ""
+    customer_email = body.get("email") or discount.get("assignedEmail") or ""
 
-    product_name = discount.get("name") or "Abonnement Afroboost"
+    # ═══ LOT R — CE BOUTON FACTURAIT LE MAUVAIS MONTANT ET DONNAIT 1 SEANCE ══
+    #
+    # LE DEFAUT, MESURE. Cette route prenait `discount_codes.stripe_amount` —
+    # le montant du PRECEDENT achat. Un client PULSE entre a 250 CHF se voyait
+    # donc refacturer 250, jamais le prix de la recharge. Pire : la metadata ne
+    # portait NI `offer_id` NI `pack_sessions`, si bien que le webhook retombait
+    # sur une regex appliquee au nom du produit. Ce nom valant « Abonnement
+    # Afroboost » (mesure : 43 codes sur 47 n'ont aucun champ `name`, et les 4
+    # autres s'appellent « test »…), aucun « x10 » n'y figurait : le client
+    # recevait UNE seance. Et `offer_id` vide signifiait aussi : aucune adhesion
+    # evaluee.
+    #
+    # LA CORRECTION. On resout l'OFFRE du forfait — avec la fonction qui sert
+    # deja a l'espace abonne et au controle de reservation, donc jamais une
+    # seconde verite — puis on prend d'elle le prix ET le nombre de seances.
+    # Le montant du code d'acces ne reste qu'un REPLI, pour les forfaits dont
+    # l'offre n'est plus resoluble : sans lui, un client ne pourrait plus payer
+    # du tout, ce qui serait un recul.
+    _lotr_offre = None
+    try:
+        _lotr_sub = await db.subscriptions.find_one(
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}},
+            {"_id": 0, "offer_name": 1})
+        _lotr_offre = await _v426_offre_de_labonnement(
+            (_lotr_sub or {}).get("offer_name") or "", code_upper)
+    except Exception as _lotr_e:
+        logger.warning(f"[LOT R] offre du forfait {code_upper} non resolue: {_lotr_e}")
+
+    # ═══ LOT R — LA GARDE, ICI AUSSI ═══════════════════════════════════════
+    _lotr_refus = ""          # liee AVANT le try, comme sur la caisse principale
+    if _lotr_offre:
+        try:
+            from api.routes.shared import (lotr_garde_achat as _lotr_garde,
+                                           lotr_message_refus as _lotr_msg)
+            _lotr_ok, _lotr_motif = await _lotr_garde(
+                db, customer_email, str(_lotr_offre.get("id") or ""))
+            if not _lotr_ok:
+                _lotr_refus = _lotr_msg(_lotr_motif)
+        except HTTPException:
+            raise
+        except Exception as _lotr_err:
+            logger.error(f"[LOT R] garde indisponible, achat poursuivi: {_lotr_err}")
+            _lotr_refus = ""
+    if _lotr_refus:
+        raise HTTPException(status_code=403, detail=_lotr_refus)
+
+    # LE PRIX VIENT DU CATALOGUE. `compute_active_price` est le seul endroit du
+    # depot qui sache dire ce que coute une offre AUJOURD'HUI (tarif progressif
+    # V223 inclus) — s'en passer afficherait un montant que la caisse ne
+    # tiendrait pas.
+    amount = None
+    _lotr_pack = ""
+    if _lotr_offre:
+        try:
+            _lotr_prix = compute_active_price(_lotr_offre).get("price")
+            if _lotr_prix is not None and float(_lotr_prix) > 0:
+                amount = float(_lotr_prix)
+        except Exception as _lotr_pe:
+            logger.warning(f"[LOT R] prix de l'offre illisible: {_lotr_pe}")
+        try:
+            _ps = _lotr_offre.get("pack_sessions")
+            if _ps is not None and int(float(_ps)) > 0:
+                _lotr_pack = str(int(float(_ps)))
+        except (TypeError, ValueError):
+            _lotr_pack = ""
+    if amount is None:
+        # REPLI : l'offre n'est plus resoluble. On garde le comportement
+        # historique plutot que d'empecher un client de payer.
+        amount = discount.get("stripe_amount")
+        logger.info(f"[LOT R] repli sur le montant du code {code_upper}")
+    if not amount or float(amount) <= 0:
+        raise HTTPException(status_code=400, detail="Aucun montant configuré pour ce code")
+
+    product_name = (_lotr_offre or {}).get("name") \
+        or discount.get("name") or "Abonnement Afroboost"
     amount_cents = int(float(amount) * 100)
 
     success_url = f"{origin_url}/espace/{code_upper}?status=success&session_id={{CHECKOUT_SESSION_ID}}"
@@ -13236,6 +13467,11 @@ async def subscriber_stripe_checkout(access_code: str, request: Request):
                 "code": code_upper,
                 "member_slug": member_slug,
                 "product_name": product_name,
+                # LOT R : ces deux cles sont ce qui donne au client les seances
+                # qu'il paie. Posees par le SERVEUR depuis le catalogue, jamais
+                # recues du navigateur — meme regle que V223.
+                "offer_id": str((_lotr_offre or {}).get("id") or ""),
+                "pack_sessions": _lotr_pack,
             },
         )
 

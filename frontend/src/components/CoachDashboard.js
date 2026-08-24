@@ -3240,6 +3240,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // booleen, pas `undefined`.
       first_purchase_eligible: !!offer.first_purchase_eligible,
       creates_membership: !!offer.creates_membership,
+      // LOT R : relu depuis la base, comme ses voisins. Sans cette ligne,
+      // rouvrir une offre protegee afficherait une case DECOCHEE alors que la
+      // protection existe en base — et le premier enregistrement l'effacerait.
+      requires_active_membership: !!offer.requires_active_membership,
       // LOT 3b : relu depuis la base, comme ses deux voisins. Sans cette
       // ligne, rouvrir une offre afficherait un avantage VIDE alors que la
       // base en porte un, et la premiere sauvegarde l'effacerait.
@@ -3406,6 +3410,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // prix a 0. Ceinture cote client ; le serveur reste l'autorite et
         // refuse la creation de toute facon.
         creates_membership: !!src.creates_membership && (parseFloat(src.price) || 0) > 0,
+        // LOT R : QUATRIEME champ de cette liste blanche soumis a la meme regle.
+        // Sans cette ligne, la case cochee dans le wizard ne partirait jamais et
+        // le `$set: offer.model_dump()` du PUT effacerait la protection en base.
+        // EXCLUSIF avec l'adhesion : une offre qui OUVRE l'annee ne peut pas
+        // etre reservee a ceux qui l'ont deja — meme regle que le wizard, pour
+        // que les deux ne puissent pas diverger. Le serveur reste l'autorite.
+        requires_active_membership: !!src.requires_active_membership
+          && !src.creates_membership,
         // LOT 3b : l'avantage membre. TROISIEME champ de cette liste blanche
         // soumis a la meme regle que ses deux voisins — sans cette ligne, le
         // pourcentage saisi dans le wizard ne partirait jamais, et le
@@ -3473,6 +3485,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       first_purchase_eligible: false,
       // LOT 2 : faux par defaut a la creation — « fail closed ».
       creates_membership: false,
+      // LOT R : faux par defaut, meme raison. Et remis a zero d'une offre a la
+      // suivante, sinon la protection de la precedente se reporterait en
+      // silence sur une offre que le coach vient de creer.
+      requires_active_membership: false,
       // LOT 3b : remis a zero, sinon l'avantage de l'offre precedente se
       // reporterait en silence sur la suivante (defaut V225 / V256).
       member_discount_pct: 0

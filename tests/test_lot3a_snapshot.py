@@ -330,8 +330,28 @@ def partie_6_perimetre():
     # frontiere entre les deux lots tant que LOT 3b n'existait pas. Maintenant
     # qu'il existe, ce qu'il faut prouver n'est plus « ces champs sont absents »
     # mais « ils ne sont poses QUE sur une decision membre, jamais a vide ».
-    _bloc_3b = shared.split("# LOT 3b — L'AVANTAGE MEMBRE")[-1] if \
-        "# LOT 3b — L'AVANTAGE MEMBRE" in shared else ""
+    # DEUX CORRECTIONS A CETTE BORNE, faites le 24/08/2026 :
+    #
+    # 1. ELLE PRENAIT TOUT JUSQU'A LA FIN DU FICHIER (`split(...)[-1]`), donc
+    #    tous les lots ECRITS APRES LOT 3b — LOT 3 FINANCE, LOT 3P, LOT R. Ce
+    #    test dit « LOT 3b ne les ECRIT jamais » : il doit mesurer LOT 3b, pas
+    #    ses successeurs. On s'arrete donc a la banniere suivante.
+    # 2. ELLE LISAIT DU TEXTE, PAS DU CODE. Un commentaire qui EXPLIQUE qu'un
+    #    bloc n'appelle jamais `update_one` contient le mot `update_one` — et
+    #    faisait echouer la garde. On depouille les commentaires avant de
+    #    chercher. Meme lecon que la garde ES5 du test Jest du Bilan.
+    def _sans_commentaires(_t):
+        return "\n".join(_l.split("#")[0] for _l in _t.splitlines())
+
+    _bloc_3b = ""
+    if "# LOT 3b — L'AVANTAGE MEMBRE" in shared:
+        _apres = shared.split("# LOT 3b — L'AVANTAGE MEMBRE", 1)[1]
+        # La banniere d'un lot suivant commence par cette forme exacte.
+        _suite = [_i for _i in
+                  (_apres.find("\n# LOT 3 FINANCE"), _apres.find("\n# LOT R —"),
+                   _apres.find("\n# PARTAGE"))
+                  if _i > 0]
+        _bloc_3b = _sans_commentaires(_apres[:min(_suite)] if _suite else _apres)
     verifier("6b. `tarif_avantage_pct` n'est pose que SOUS CONDITION, jamais en litteral",
              ('_doc["tarif_avantage_pct"] = _pct' in shared
               and "if avantage_pct is not None:" in shared
