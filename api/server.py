@@ -28632,7 +28632,7 @@ def _email_wrapper(header_gradient: str, body_html: str, accent: str = "#D91CD2"
 <div style="padding:16px;text-align:center;border-top:1px solid rgba(255,255,255,0.08);">
 <div style="color:#666;font-size:11px;">© 2026 Afroboost — Tous droits réservés</div>
 <div style="margin-top:6px;">
-<a href="https://afroboost-v11-dev-pm7l.vercel.app" style="color:{accent};font-size:11px;text-decoration:none;">afroboost.com</a>
+<a href="https://afroboost.com" style="color:{accent};font-size:11px;text-decoration:none;">afroboost.com</a>
 </div>
 </div>
 </div></div>"""

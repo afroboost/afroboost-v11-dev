@@ -1036,11 +1036,21 @@ async def discriminants():
 # ============================================================================
 #                        INVARIANTS DE STRUCTURE (sur le SOURCE)
 # ============================================================================
-def _src_avant(nom):
-    avant = subprocess.check_output(
-        ["git", "show", "%s:api/server.py" % BASE_AVANT], cwd=RACINE).decode(errors="replace")
-    arbre = ast.parse(avant)
-    lignes = avant.splitlines(True)
+def _src_a(rev, nom):
+    """La source d'une fonction TELLE QU'ELLE ETAIT a une revision donnee.
+
+    BORNEE AUX DEUX BOUTS, comme la garde de perimetre plus bas. Comparer
+    `BASE_AVANT` a l'ARBRE DE TRAVAIL revenait a geler ces fonctions pour
+    l'eternite : chaque lot ulterieur echouait sur du code qui ne concerne pas
+    RV2. Le pied de page de `_email_wrapper` — un lien mort vers l'ancien
+    domaine Vercel — a ete corrige APRES ce lot, et c'est cette garde-la, pas
+    le correctif, qui etait fautive. Ce qu'elle doit prouver, et ce qu'elle
+    prouve toujours : LE LOT RV2 n'a pas touche a ces fonctions.
+    """
+    src = subprocess.check_output(
+        ["git", "show", "%s:api/server.py" % rev], cwd=RACINE).decode(errors="replace")
+    arbre = ast.parse(src)
+    lignes = src.splitlines(True)
     for n in ast.walk(arbre):
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == nom:
             return "".join(lignes[n.lineno - 1:n.end_lineno])
@@ -1096,9 +1106,10 @@ def structure():
                     "_v259_primary_color", "_v259_primary_rgb"]
     _ecarts = []
     for f in intouchables:
-        if _src_avant(f) != extraire(f):
+        if _src_a(BASE_AVANT, f) != _src_a(LOT, f):
             _ecarts.append(f)
-    verifier("S8. les fonctions hors perimetre sont identiques a %s" % BASE_AVANT,
+    verifier("S8. le lot RV2 (%s..%s) n'a touche a aucune fonction hors perimetre"
+             % (BASE_AVANT, LOT),
              not _ecarts, "modifiees : %s" % _ecarts)
 
     # --- perimetre des fichiers, borne AUX DEUX BOUTS ----------------------

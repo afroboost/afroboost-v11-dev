@@ -398,16 +398,20 @@ def contenu():
     verifier("C9. sans prenom ni cours ni lien : aucun trou, aucun bouton mort",
              "Merci," in _h2 and "Continuer avec Afroboost" not in _h2
              and "None" not in _h2 and "ton cours" not in _h2)
-    # DETTE CONSIGNEE, NON TRAITEE ICI. Le pied de page de `_email_wrapper`
-    # affiche « afroboost.com » mais pointe vers `afroboost-v11-dev-pm7l...`,
-    # un residu Vercel qui sert un bundle perime. Ce lot NE LE CORRIGE PAS :
-    # la fonction figure dans la liste `intouchables` du lot RV2
-    # (`test_rv2_rappels_push_email.py:1092`), un garde de perimetre delibere
-    # qu'on n'affaiblit pas au passage. Ce qui est verifie ici, c'est que le
-    # lien qui COMPTE — le CTA, celui que ce lot fabrique — est sain.
+    # DETTE LEVEE. Le pied de page de `_email_wrapper` affichait
+    # « afroboost.com » en pointant vers `afroboost-v11-dev-pm7l...`, un residu
+    # Vercel qui sert un bundle perime ; son `href` a ete corrige, et la garde
+    # de perimetre du lot RV2 qui gelait cette fonction est desormais bornee a
+    # sa propre plage de commits. La preuve complete — pied de page ET CTA, sur
+    # le texte affiche comme sur la destination — vit dans
+    # `tests/test_p1b_footer_domaine.py`. Ce qui reste verifie ICI, c'est le
+    # lien que CE lot fabrique.
     verifier("C9b. le CTA fabrique par ce lot ne porte aucun residu Vercel",
-             "vercel.app" not in (_bouton_de(html) or ""),
-             "le pied de page du gabarit partage reste une dette a part")
+             "vercel.app" not in (_bouton_de(html) or ""))
+    verifier("C9c. et le message entier non plus — pied de page compris",
+             "vercel.app" not in html and "vercel.app" not in texte,
+             [u for u in __import__("re").findall(r'https?://[^\s"\'<>]+', html)
+              if "vercel.app" in u])
     _s3, _h3, _t3 = esp["p1b_contenu_relance"](
         '<script>x</script>', '"><b>', "https://afroboost.com/espace/A", "#D91CD2")
     verifier("C10. le nom et le cours sont ECHAPPES",
