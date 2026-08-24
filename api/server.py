@@ -13008,6 +13008,14 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
 
     # V208c: Historique de réservations — par member_slug pour les groupes, par email sinon
     import re as _re_mod
+    # P0 (24/08/2026) — CETTE VARIABLE EST DEJA ECHAPPEE. La re-echapper au
+    # moment de batir le `$regex` (ce que V310 avait fait a deux endroits)
+    # transformait `ex\.test` en `ex\\\.test` : le motif ne cherchait plus un
+    # point mais un ANTISLASH suivi d'un point. Tout domaine d'e-mail contenant
+    # un point, la recherche ne retrouvait PERSONNE — « Mes seances » restait
+    # vide, `t2_etat_essai` repondait « essai disponible » au lieu de
+    # « effectue », et l'ecran de conversion LOT A n'a jamais pu s'afficher.
+    # Elle s'utilise TELLE QUELLE dans les deux `$regex` ci-dessous.
     user_email_escaped = _re_mod.escape(user_email) if user_email else ""
     reservations_raw = []
     res_projection = {
@@ -13034,7 +13042,7 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
                 seen_ids = {r["id"] for r in reservations_raw if r.get("id")}
                 old_reservations = await db.reservations.find(
                     {
-                        "userEmail": {"$regex": f"^{re.escape(member_email_escaped)}$", "$options": "i"},
+                        "userEmail": {"$regex": f"^{member_email_escaped}$", "$options": "i"},
                         "discountCode": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"},
                         "$or": [{"member_slug": {"$exists": False}}, {"member_slug": ""}, {"member_slug": None}],
                     },
@@ -13045,7 +13053,7 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
                         reservations_raw.append(old_r)
         elif user_email:
             reservations_raw = await db.reservations.find(
-                {"userEmail": {"$regex": f"^{re.escape(user_email_escaped)}$", "$options": "i"}},
+                {"userEmail": {"$regex": f"^{user_email_escaped}$", "$options": "i"}},
                 res_projection
             ).sort("createdAt", -1).to_list(50)
     except Exception as e:
