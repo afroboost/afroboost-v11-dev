@@ -1617,6 +1617,25 @@ async def update_reservation_tracking(reservation_id: str, request: Request):
     updated = await db.reservations.find_one({"id": reservation_id}, {"_id": 0})
     return {"success": True, "reservation": updated}
 
+def _p1b_apres_presence(reservation: dict) -> None:
+    """P1-b — planifie la relance J+0. Ne rend rien, ne leve JAMAIS.
+
+    IMPORT TARDIF, et il n'y a pas le choix : `api.server` importe ce module,
+    donc un import en tete serait circulaire. C'est deja la forme retenue pour
+    `get_feature_flags` plus haut dans ce fichier.
+
+    TOUT EST AVALE ICI. Ce point est appele juste apres une presence validee :
+    aucune defaillance de la relance — module absent, boucle saturee, base
+    muette — ne doit remonter jusqu'au scanner du coach.
+    """
+    try:
+        from api.server import p1b_apres_presence as _p1b
+        _p1b(reservation)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[P1-b] relance non planifiee (%s) — la presence reste validee",
+                       type(_err).__name__)
+
+
 async def _c9_presence(reservation: dict, etait_deja_validee: bool):
     """C9-A — `attendance_checked_in`, et `second_class_attended` le cas échéant.
 
@@ -2368,6 +2387,14 @@ async def _a0_marquer_presente(reservation: dict, scanneur: str = "") -> bool:
     if not getattr(_res, "matched_count", 0):
         return False
     await _c9_presence(reservation, False)
+    # P1-b : la relance J+0 part d'ICI, donc exactement une fois par presence
+    # REELLE — la meme garantie que l'evenement de funnel ci-dessus, et pour la
+    # meme raison : le perdant de la course n'atteint jamais cette ligne.
+    #
+    # EN TACHE DE FOND, JAMAIS DANS CE CHEMIN. Un envoi Resend ferait attendre
+    # le coach, telephone en main, devant la porte — et une panne d'e-mail ne
+    # doit surtout pas defaire une presence deja validee.
+    _p1b_apres_presence(reservation)
     return True
 
 
@@ -3258,6 +3285,11 @@ async def _qr_scan_validate_inner(request: Request):
     # vient d'etre insere avec `validated: True`, il n'y a pas de transition a
     # arbitrer. `_c9_presence` n'echoue jamais et ne bloque rien.
     await _c9_presence(new_reservation, False)
+    # P1-b : meme relance sur CE chemin. L'oublier ici laisserait sans nouvelle
+    # exactement les participants qui n'avaient pas reserve — ceux qu'on a le
+    # plus interet a rappeler. Le document vient d'etre insere une seule fois :
+    # l'unicite est donc deja acquise, et le jeton la reconfirme.
+    _p1b_apres_presence(new_reservation)
 
     return {"success": True, "type": "subscription", "message": "Réservation créée + séance déduite",
             "reservation": {"userName": user_name, "reservationCode": new_res_code, "courseName": course_name},

@@ -1258,6 +1258,25 @@ class FeatureFlags(BaseModel):
     # (V310c). Les autres routes du lot ferment des ECRITURES ANONYMES : il
     # n'y a aucun chemin legitime a proteger, donc aucun drapeau a prevoir.
     RESERVATIONS_JWT_STRICT: bool = False
+    # P1-b : la relance J+0 apres un essai reellement consomme.
+    #
+    # DEUX DRAPEAUX, ET LE SECOND N'EST PAS NOMME « DRY_RUN ». La completion a
+    # la lecture (`get_feature_flags`) donne `False` a tout drapeau ABSENT. Un
+    # drapeau nomme `..._DRY_RUN` absent vaudrait donc « pas de simulation »,
+    # c'est-a-dire ENVOI REEL par accident, sur une base ou personne ne l'a
+    # encore ecrit. En inversant le sens, l'absence est le cas SUR.
+    #
+    #   ENABLED=false                    -> rien : aucun calcul, aucune trace
+    #   ENABLED=true, ENVOI_REEL=false   -> simulation : on calcule le
+    #                                       destinataire et le contenu, on les
+    #                                       journalise, on ne contacte personne
+    #   les deux a true                  -> l'e-mail part
+    #
+    # C'est la double garde du rappel de renouvellement (drapeau metier +
+    # `apercu`), transposee en drapeaux : ici rien n'est declenche par un appel
+    # HTTP qu'on pourrait parametrer.
+    P1_TRIAL_J0_ENABLED: bool = False        # P1-b
+    P1_TRIAL_J0_ENVOI_REEL: bool = False     # P1-b
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1275,6 +1294,8 @@ class FeatureFlagsUpdate(BaseModel):
     POSTHOG_IDENTIFY_ENABLED: Optional[bool] = None  # C9-B
     MEMBER_PRICING_ENABLED: Optional[bool] = None  # LOT 3b
     RESERVATIONS_JWT_STRICT: Optional[bool] = None  # LOT 3c-0
+    P1_TRIAL_J0_ENABLED: Optional[bool] = None  # P1-b
+    P1_TRIAL_J0_ENVOI_REEL: Optional[bool] = None  # P1-b
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -16931,6 +16952,8 @@ async def get_feature_flags():
             "POSTHOG_IDENTIFY_ENABLED": False, # C9-B : défaut OFF (aucune identification)
             "MEMBER_PRICING_ENABLED": False,   # LOT 3b : défaut OFF (aucun tarif membre)
             "RESERVATIONS_JWT_STRICT": False,  # LOT 3c-0 : défaut OFF (en-tête encore accepté)
+            "P1_TRIAL_J0_ENABLED": False,      # P1-b : défaut OFF (aucune relance)
+            "P1_TRIAL_J0_ENVOI_REEL": False,   # P1-b : défaut OFF (simulation même si activé)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -16948,7 +16971,9 @@ async def get_feature_flags():
                          ("CHAT_READ_STRICT", False), ("BOT_MENU_ENABLED", False),
                          ("POSTHOG_IDENTIFY_ENABLED", False),
                          ("MEMBER_PRICING_ENABLED", False),
-                         ("RESERVATIONS_JWT_STRICT", False)):
+                         ("RESERVATIONS_JWT_STRICT", False),
+                         ("P1_TRIAL_J0_ENABLED", False),
+                         ("P1_TRIAL_J0_ENVOI_REEL", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -28611,6 +28636,355 @@ def _email_wrapper(header_gradient: str, body_html: str, accent: str = "#D91CD2"
 </div>
 </div>
 </div></div>"""
+
+# ============================================================================
+# P1-b — LA RELANCE J+0, APRES UN ESSAI REELLEMENT CONSOMME
+# ============================================================================
+#
+# CE QUE CE LOT AJOUTE, ET RIEN D'AUTRE : UN e-mail, le jour meme, a quelqu'un
+# qui est VENU a son premier cours. Pas de WhatsApp, pas de J+3, pas d'offre
+# nommee, pas de moteur marketing.
+#
+# LE DEFAUT QU'IL FERME. L'ecran d'apres-essai existe depuis LOT A et il
+# fonctionne — mais RIEN ne dit au participant d'y retourner. Mesure du
+# 24/08/2026 : la validation d'une presence ne declenche qu'un evenement
+# PostHog. Le prospect rentre chez lui et personne ne lui parle.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# LE DECLENCHEUR : LA TRANSITION DE PRESENCE, PAS UN CRON
+# ─────────────────────────────────────────────────────────────────────────
+# `_a0_marquer_presente` prend la presence par une ecriture ATOMIQUE
+# (`validated != True`) et ne rend `True` qu'au gagnant. C'est donc deja
+# « exactement une fois par presence reelle », et c'est la que ce lot se
+# branche — plus le chemin qui insere une reservation deja validee.
+#
+# AUCUN CRON NOUVEAU, et ce n'est pas une preference : les crons declares dans
+# `vercel.json` NE S'EXECUTENT PAS sur Coolify (cf. `_campaign_scheduler_loop`).
+# Y adosser une relance serait la condamner au silence.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# JAMAIS DANS LE CHEMIN DE LA REQUETE
+# ─────────────────────────────────────────────────────────────────────────
+# L'appel part en `asyncio.create_task`. Deux raisons, la seconde mesuree :
+#   * une panne d'e-mail ne doit JAMAIS defaire une presence validee ;
+#   * `_c9_presence` est deja awaite en ligne et peut couter jusqu'a 6 s (deux
+#     appels PostHog a 3 s). Ajouter un envoi Resend dans ce chemin ferait
+#     attendre le coach, telephone en main, devant la porte.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# CE QUI GARANTIT « UNE SEULE RELANCE »
+# ─────────────────────────────────────────────────────────────────────────
+# `_rc_reserver_jeton` / `_rc_cloturer_jeton` — le meme couple qui empeche deja
+# la confirmation de reservation de partir deux fois. Le jeton est RESERVE par
+# une ecriture conditionnelle AVANT l'envoi : un rejeu, un re-scan, deux appels
+# simultanes ne peuvent pas produire deux e-mails. Pas de deduplication par
+# date, pas de compteur applicatif, aucune collection nouvelle.
+#
+# La trace vit donc sur la reservation, sous `confirmation.relance_j0` :
+# `{"statut": "en_cours" | "envoye" | "echec", "at": <iso>}`.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# CE QUE CE LOT NE DECIDE PAS
+# ─────────────────────────────────────────────────────────────────────────
+# AUCUNE OFFRE N'EST NOMMEE. Ni PULSE, ni 250, ni « Cours a l'unite », ni un
+# prix. C'est P1-c qui choisira l'offre pertinente ; le message d'aujourd'hui
+# doit fonctionner sans elle, et il fonctionne : il renvoie vers l'ecran qui
+# sait deja, lui, quelles offres proposer et a quel prix.
+
+P1B_CANAL = "relance_j0"
+P1B_PREFIXE = "[P1-b]"
+
+# Le type de preference lu par le systeme V286. Nouveau NOM, mecanisme
+# EXISTANT : aucune collection, aucune route, aucun consentement invente.
+P1B_TYPE_PREFERENCE = "trial_followup"
+
+# Le lien du CTA. LE DOMAINE EST EN DUR, et c'est un choix documente :
+# `FRONTEND_URL` vaut encore le residu Vercel `afroboost-v11-dev-pm7l...` —
+# `_v184_public_origin()` enverrait donc un lien MORT a un prospect. Les quatre
+# e-mails clients existants codent tous le domaine en dur pour cette raison.
+P1B_DOMAINE = "https://afroboost.com"
+
+
+def p1b_lien_espace(code: str) -> str:
+    """L'URL de l'espace du participant, ou '' si le code est inexploitable.
+
+    La forme est imposee par le frontend : `App.js` fait un match strict sur
+    `^/espace/([^/]+)/?$` puis passe le segment en MAJUSCULES. On produit donc
+    exactement cela — un code minuscule marcherait par chance, pas par contrat.
+
+    LE CODE VIENT DU DOCUMENT SERVEUR, jamais d'une saisie : il est lu sur la
+    reservation qui vient d'etre validee. C'est ce qui garantit qu'on n'envoie
+    a personne le code de quelqu'un d'autre.
+    """
+    _c = str(code or "").strip().upper()
+    # ALPHABET FERME plutot qu'encodage : un code d'acces est `AFR-XXXXXX`.
+    # Encoder accepterait n'importe quoi en le deguisant ; valider refuse ce
+    # qui n'a rien a faire dans une URL envoyee a un client.
+    if not _c or not all(ch.isalnum() or ch in "-_" for ch in _c):
+        return ""
+    return "%s/espace/%s" % (P1B_DOMAINE, _c)
+
+
+def p1b_contenu_relance(prenom: str, course_name: str, lien: str, accent: str):
+    """`(sujet, html, texte)` — FONCTION PURE : aucune I/O, aucune base.
+
+    Pure a dessein, comme `_p0_html_email_acces` et `rv2_contenu_rappel` : c'est
+    ce qui permet de prouver le contenu exact en simulation, et d'afficher en
+    dry-run CE QUI PARTIRAIT — pas une approximation.
+
+    LE SUJET NE COMMENCE PAS PAR UN EMOJI. C'est un signal de filtrage connu
+    chez Gmail, et la meme precaution est deja prise sur le rappel avant cours
+    et sur la newsletter. L'emoji est place a la fin, ou il ne coute rien.
+
+    AUCUNE OFFRE, AUCUN PRIX, AUCUNE URGENCE. « Decouvre les options pour
+    continuer », pas « achete ». Le catalogue vit dans l'ecran d'apres-essai,
+    qui le lit en base ; l'ecrire ici en ferait une seconde verite qui
+    deviendrait fausse au premier changement de tarif.
+    """
+    import html as _html
+    _prenom = (prenom or "").strip()
+    _cours = (course_name or "").strip()
+    _bonjour = ("Merci %s," % _prenom) if _prenom else "Merci,"
+
+    _sujet = "Merci pour ton énergie aujourd'hui 🔥"
+
+    _ligne_cours = ""
+    if _cours:
+        # On ne cite le cours que si on le connait. Une phrase a trou
+        # (« ton cours  ») se remarque et fait amateur.
+        _ligne_cours = (
+            '<div style="color:#aaa;font-size:14px;margin:0 0 18px;">%s</div>'
+            % _html.escape(_cours))
+
+    _bouton = ""
+    _texte_lien = ""
+    if lien:
+        _bouton = (
+            '<div style="text-align:center;margin:26px 0 8px;">'
+            '<a href="%s" style="display:inline-block;background:%s;color:#fff;'
+            'padding:14px 30px;text-decoration:none;border-radius:12px;'
+            'font-weight:700;font-size:15px;">Continuer avec Afroboost</a>'
+            '</div>' % (lien, accent))
+        _texte_lien = "\nContinuer avec Afroboost : %s\n" % lien
+
+    _corps = (
+        '<div style="padding:28px 24px;">'
+        '<div style="color:#fff;font-size:18px;font-weight:700;margin:0 0 6px;">%s</div>'
+        '%s'
+        '<div style="color:#ddd;font-size:15px;line-height:1.6;">'
+        'Merci d\'avoir participé à ton premier cours Afroboost.<br><br>'
+        'Si tu veux continuer l\'expérience, découvre les options pour la suite '
+        'directement dans ton espace Afroboost.'
+        '</div>'
+        '%s'
+        '<div style="color:#777;font-size:12px;text-align:center;margin-top:18px;">'
+        'Une question ? Réponds simplement à cet e-mail.'
+        '</div>'
+        '</div>' % (_html.escape(_bonjour), _ligne_cours, _bouton))
+
+    _html = _email_wrapper(
+        "linear-gradient(135deg, %s 0%%, #7c3aed 100%%)" % accent, _corps, accent)
+
+    _texte = (
+        "%s\n\n"
+        "Merci d'avoir participé à ton premier cours Afroboost.\n\n"
+        "Si tu veux continuer l'expérience, découvre les options pour la suite "
+        "directement dans ton espace Afroboost.\n"
+        "%s\n"
+        "Une question ? Réponds simplement à cet e-mail.\n" % (_bonjour, _texte_lien))
+
+    return _sujet, _html, _texte
+
+
+async def p1b_destinataire_autorise(email: str) -> bool:
+    """Cette adresse accepte-t-elle ce message ? DEUX portes EXISTANTES.
+
+    1. UN REFUS EXPLICITE SE RESPECTE. Si cette adresse porte
+       `status: "opted_out"` dans `subscribers`, quelqu'un a demande a ne plus
+       etre contacte. Passer outre serait indefendable, meme pour un message
+       qui suit un acte volontaire du destinataire.
+    2. La preference fine V286, opt-out : absente = autorisee.
+
+    CE LOT N'INVENTE AUCUN CONSENTEMENT et n'en enregistre aucun. Il se contente
+    d'honorer ce qui a deja ete exprime.
+
+    RESERVE CONNUE ET CONSIGNEE : ce depot n'a AUCUNE distinction
+    transactionnel / marketing, aucun champ de consentement sur `users`,
+    `subscriptions` ni `discount_codes`, et ses campagnes n'honorent AUCUN
+    opt-out. Ce message est donc classe au plus prudent — les deux portes
+    ci-dessus — sans pretendre reparer ce chantier-la.
+
+    En cas de panne de lecture : on AUTORISE. Meme convention que tout le
+    systeme V286 (`_v286_should_send_notification` renvoie True sur exception) :
+    une base qui hoquete ne doit pas se lire comme un refus.
+    """
+    _e = (email or "").strip().lower()
+    if not _e:
+        return False
+    try:
+        _refus = await db.subscribers.find_one(
+            {"channel": "email", "value": _e, "status": "opted_out"}, {"_id": 1})
+        if _refus:
+            logger.info("%s relance non envoyee — desinscription explicite", P1B_PREFIXE)
+            return False
+    except Exception as _err:
+        logger.warning("%s consentement illisible (%s) — on n'en deduit rien",
+                       P1B_PREFIXE, type(_err).__name__)
+    return await _v286_should_send_notification(_e, "subscriber", P1B_TYPE_PREFERENCE)
+
+
+async def p1b_envoyer_email(destinataire: str, sujet: str, html: str, texte: str) -> bool:
+    """Vrai SEULEMENT si Resend a accepte. Ne leve jamais.
+
+    Aucune couche nouvelle : meme transport (`asyncio.to_thread` +
+    `resend.Emails.send`), meme expediteur et meme `reply_to` que le rappel
+    avant cours. `notifications@afroboost.com` n'est pas une boite relevee —
+    or ce message invite explicitement a repondre, donc le `reply_to` n'est pas
+    decoratif ici, c'est la seule chose qui rend la phrase vraie.
+    """
+    if not RESEND_AVAILABLE or not RESEND_API_KEY:
+        logger.info("%s Resend non configure — aucune relance envoyee", P1B_PREFIXE)
+        return False
+    try:
+        await asyncio.to_thread(resend.Emails.send, {
+            "from": "Afroboost <notifications@afroboost.com>",
+            "to": [destinataire],
+            "reply_to": RV2_REPLY_TO,
+            "subject": sujet,
+            "html": html,
+            "text": texte,
+        })
+        return True
+    except Exception as _err:
+        logger.warning("%s relance refusee par Resend : %s", P1B_PREFIXE, _err)
+        return False
+
+
+async def p1b_relance_j0(reservation: dict) -> str:
+    """LA RELANCE. Rend un libelle d'issue, destine au journal. NE LEVE JAMAIS.
+
+    Appelee en tache de fond juste apres une transition de presence. Toute
+    sortie anticipee est une NON-relance silencieuse : il n'y a aucun cas ou
+    cette fonction doit perturber quoi que ce soit.
+
+    L'ORDRE DES VERIFICATIONS N'EST PAS ARBITRAIRE. Le drapeau passe en premier
+    pour qu'un lot dormant ne lise meme pas la base ; le jeton passe en DERNIER
+    avant l'envoi, pour ne pas bruler l'unicite sur un candidat qu'on aurait
+    ecarte ensuite.
+
+    Issues possibles :
+      "desactive"        le drapeau est faux -> rien, pas meme une lecture
+      "pas_un_essai"     presence payante : ce n'est pas un prospect
+      "non_consomme"     l'essai n'est pas reellement consomme
+      "sans_email"       aucune adresse exploitable
+      "refuse"           desinscription ou preference contraire
+      "deja_traitee"     un autre appel a deja pris le jeton
+      "simulation"       tout etait pret ; on n'a contacte personne
+      "envoye"           l'e-mail est parti
+      "echec"            Resend a refuse ; la trace le dit
+    """
+    if not isinstance(reservation, dict):
+        return "desactive"
+    try:
+        _flags = await get_feature_flags()
+    except Exception as _err:
+        logger.warning("%s drapeaux illisibles (%s) — aucune relance",
+                       P1B_PREFIXE, type(_err).__name__)
+        return "desactive"
+    if not (_flags or {}).get("P1_TRIAL_J0_ENABLED"):
+        return "desactive"
+    _reel = bool((_flags or {}).get("P1_TRIAL_J0_ENVOI_REEL"))
+
+    _id = str(reservation.get("id") or "").strip()
+    if not _id:
+        return "deja_traitee"
+
+    # LA NATURE DE L'ESSAI VIENT D'ESSAI-6, la definition centrale — celle qui
+    # survit a la suppression du code (P1-a). Un participant payant n'est jamais
+    # un prospect a relancer.
+    from api.routes.shared import (est_un_essai as _p1b_est_essai,
+                                   essai6_consomme as _p1b_consomme)
+    _code = (reservation.get("promoCode") or reservation.get("discountCode") or "").strip()
+    try:
+        if not await _p1b_est_essai(db, code=_code):
+            return "pas_un_essai"
+    except Exception as _err:
+        logger.warning("%s nature de la presence indeterminee : %s", P1B_PREFIXE, _err)
+        return "pas_un_essai"
+
+    _email = (reservation.get("userEmail") or "").strip().lower()
+    if not _email or not rv2_email_valide(_email):
+        # Le parcours ne casse pas pour autant : la presence est deja validee,
+        # et elle le reste. On ne peut simplement pas ecrire a personne.
+        logger.info("%s presence sans adresse exploitable — aucune relance", P1B_PREFIXE)
+        return "sans_email"
+
+    # CONSOMME = PRESENCE VALIDEE, la regle de P1-a. On la REDEMANDE au lieu de
+    # se fier au fait qu'on vient d'etre appele : cette fonction doit rendre le
+    # meme verdict si un jour un autre chemin l'appelle.
+    try:
+        if not await _p1b_consomme(db, _email, reservation.get("userWhatsapp") or ""):
+            return "non_consomme"
+    except Exception as _err:
+        logger.warning("%s consommation indeterminee : %s", P1B_PREFIXE, _err)
+        return "non_consomme"
+
+    if not await p1b_destinataire_autorise(_email):
+        return "refuse"
+
+    _accent = await _v259_primary_color(reservation.get("coach_id") or "")
+    _prenom = (reservation.get("userName") or "").strip().split(" ")[0]
+    _lien = p1b_lien_espace(_code)
+    _sujet, _html, _texte = p1b_contenu_relance(
+        _prenom, reservation.get("courseName") or "", _lien, _accent)
+
+    if not _reel:
+        # SIMULATION. Le destinataire et le contenu sont CALCULES par le meme
+        # code que l'envoi reel — sans quoi la preuve porterait sur autre chose
+        # que ce qui partirait. Aucun jeton n'est pose : simuler ne doit pas
+        # consommer le droit d'envoyer une vraie relance plus tard.
+        logger.info("%s SIMULATION — destinataire=%s sujet=%r lien=%s html=%d octets",
+                    P1B_PREFIXE, _email, _sujet, _lien or "(aucun)", len(_html))
+        return "simulation"
+
+    # LE JETON, EN DERNIER ET AVANT L'ENVOI. Ecriture conditionnelle atomique :
+    # deux appels simultanes, un rejeu, un re-scan — un seul obtient le droit.
+    from api.routes.shared import (_rc_reserver_jeton as _p1b_reserver,
+                                   _rc_cloturer_jeton as _p1b_cloturer)
+    _quand = datetime.now(timezone.utc).isoformat()
+    if not await _p1b_reserver(db, _id, P1B_CANAL, _quand):
+        return "deja_traitee"
+
+    _ok = await p1b_envoyer_email(_email, _sujet, _html, _texte)
+    await _p1b_cloturer(db, _id, P1B_CANAL, _ok)
+    if _ok:
+        logger.info("%s relance envoyee (reservation %s)", P1B_PREFIXE, _id[:8])
+        return "envoye"
+    # LE JETON RESTE POSE, EN « echec ». On ne le relache pas : sans mecanisme
+    # de reprise dans ce depot, le relacher n'offrirait aucun rattrapage et
+    # ouvrirait la porte a un doublon au prochain passage. L'echec est TRACE,
+    # donc rattrapable a la main, ce qui est le comportement honnete ici.
+    logger.warning("%s relance en echec (reservation %s) — trace posee",
+                   P1B_PREFIXE, _id[:8])
+    return "echec"
+
+
+def p1b_apres_presence(reservation: dict) -> None:
+    """Lance la relance EN TACHE DE FOND. Ne rend rien, ne leve jamais.
+
+    C'est le seul point que les chemins de presence appellent. Il est
+    synchrone et minuscule a dessein : ce qu'on ajoute dans le chemin d'une
+    validation de presence, c'est la creation d'une tache, rien de plus.
+
+    Meme motif que les onze `asyncio.create_task` du depot, et meme garde que
+    `server.py:14095` : si la boucle d'evenements refuse la tache, on le note
+    et la presence continue son chemin.
+    """
+    try:
+        asyncio.create_task(p1b_relance_j0(dict(reservation or {})))
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s relance non planifiee (%s) — la presence reste validee",
+                       P1B_PREFIXE, type(_err).__name__)
 
 async def send_expiry_reminder_email(coach_email: str, offer_name: str, days_remaining: int):
     """V70: Email J-7 rappel expiration — design Afroboost premium"""

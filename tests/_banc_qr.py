@@ -245,7 +245,14 @@ def construire(db):
     ns["is_super_admin"] = lambda e: (e or "").lower().strip() in ("admin@test",)
     for nom in ("_r11_scanneur", "_r11_verifier_proprietaire",
                 "_a0_maintenant_ch", "_a0_code_depuis_qr", "_a0_horodatage",
-                "_a0_est_aujourdhui", "_a0_marquer_presente",
+                "_a0_est_aujourdhui",
+                # P1-b : `_a0_marquer_presente` planifie desormais la relance
+                # J+0 juste apres avoir gagne la transition. On charge la VRAIE
+                # fonction — elle avale toute defaillance, y compris l'absence
+                # d'`api.server` dans ce banc, ce qui est precisement ce que ce
+                # banc doit pouvoir constater : une presence ne casse jamais sur
+                # un e-mail.
+                "_p1b_apres_presence", "_a0_marquer_presente",
                 "_a0_reservations_du_jour", "_a0_choisir_occurrence",
                 "_a0_presence_deja_reservee",
                 # A1 — absents des commits anterieurs, donc simplement ignores
