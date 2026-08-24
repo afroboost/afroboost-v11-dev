@@ -196,6 +196,20 @@ def partie_2_verdict():
              "absent vaut NON, comme `creates_membership`",
              ok is True and motif == "")
 
+    # ── LES DEUX CASES SONT EXCLUSIVES, ET L'ADHESION GAGNE ─────────────────
+    # Une offre qui ouvre l'adhesion ET se dit reservee aux membres serait un
+    # verrou ferme sur lui-meme : plus personne ne pourrait devenir membre.
+    ok, motif = f({"id": "x", "requires_active_membership": True,
+                   "creates_membership": True}, "absente", 0)
+    verifier("2m. offre a la fois d'ENTREE et « reservee aux membres » : "
+             "l'adhesion gagne, sinon plus personne ne pourrait le devenir",
+             ok is True and motif == "", "%r / %r" % (ok, motif))
+    ok, motif = f({"id": "x", "requires_active_membership": True,
+                   "creates_membership": True}, "active", 5)
+    verifier("2n. ... et cela vaut aussi pour un membre garni : une offre "
+             "d'entree ne se refuse jamais sur le compteur de seances",
+             ok is True and motif == "")
+
     # ── FAIL CLOSED SUR LES ENTREES ABERRANTES ──────────────────────────────
     verifier("2i. `requires_active_membership` n'est vrai qu'en `is True` — "
              "une chaine « false » venue d'un import ne protege rien... ",
@@ -532,9 +546,13 @@ def partie_10_symetrie():
              "n'achete pas son adhesion avec une offre reservee aux membres",
              "disabled={form.creates_membership === true}" in _wiz
              and "offer-recharge-exclusive" in _wiz)
-    verifier("10g. l'exclusivite est REDITE a l'envoi, pour que l'ecran et la "
-             "requete ne puissent pas diverger",
-             "&& !src.creates_membership" in _dash)
+    # L'EXCLUSIVITE EST UNE REGLE METIER : elle vit cote SERVEUR, une seule
+    # fois et sous test (voir 2m/2n). Le navigateur desactive la case pour
+    # l'ergonomie, mais ne rejuge rien — la redire ici creerait une seconde
+    # verite, contournable depuis la console.
+    verifier("10g. le navigateur ne REJUGE pas l'exclusivite : il transmet, "
+             "le serveur tranche",
+             "&& !src.creates_membership" not in _dash)
     verifier("10h. l'icone est un SVG du jeu du depot, jamais un emoji",
              'SvgIcon name="refresh"' in _wiz)
 

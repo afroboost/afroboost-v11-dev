@@ -3780,6 +3780,20 @@ def lotr_verdict_recharge(offre, etat_adhesion, seances_restantes):
     if _o.get(LOTR_CHAMP_PROTECTION) is not True:
         return True, ""
 
+    # LES DEUX CASES SONT EXCLUSIVES, ET C'EST L'ADHESION QUI GAGNE.
+    #
+    # Une offre qui OUVRE l'adhesion et se dit en meme temps reservee aux
+    # membres serait un verrou ferme sur lui-meme : il faudrait etre membre
+    # pour payer ce qui vous rend membre, donc PLUS PERSONNE ne pourrait le
+    # devenir. Entre les deux lectures possibles d'une configuration absurde,
+    # on choisit celle qui ne bloque personne.
+    #
+    # LA REGLE VIT ICI, PAS DANS LE NAVIGATEUR. L'ecran desactive bien la case
+    # pour l'ergonomie, mais une garde metier posee cote client serait
+    # contournable — et surtout intestable.
+    if _o.get("creates_membership") is True:
+        return True, ""
+
     _etat = str(etat_adhesion or "")
     if _etat == "absente":
         return False, LOTR_REFUS_SANS_ADHESION

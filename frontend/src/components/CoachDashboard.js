@@ -3413,11 +3413,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // LOT R : QUATRIEME champ de cette liste blanche soumis a la meme regle.
         // Sans cette ligne, la case cochee dans le wizard ne partirait jamais et
         // le `$set: offer.model_dump()` du PUT effacerait la protection en base.
-        // EXCLUSIF avec l'adhesion : une offre qui OUVRE l'annee ne peut pas
-        // etre reservee a ceux qui l'ont deja — meme regle que le wizard, pour
-        // que les deux ne puissent pas diverger. Le serveur reste l'autorite.
-        requires_active_membership: !!src.requires_active_membership
-          && !src.creates_membership,
+        //
+        // ON N'AJOUTE AUCUNE REGLE ICI. L'exclusivite avec l'adhesion est
+        // tranchee par le SERVEUR (`lotr_verdict_recharge`), une seule fois et
+        // sous test. La redire ici creerait une seconde verite, contournable
+        // depuis la console et intestable — exactement ce que ce depot evite.
+        requires_active_membership: !!src.requires_active_membership,
         // LOT 3b : l'avantage membre. TROISIEME champ de cette liste blanche
         // soumis a la meme regle que ses deux voisins — sans cette ligne, le
         // pourcentage saisi dans le wizard ne partirait jamais, et le
