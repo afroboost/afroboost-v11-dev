@@ -2317,7 +2317,109 @@ async def conv_presence_reelle(db, forfait: dict):
     return _rows[0]
 
 
-async def conv_offres_premier_achat(db, coach_id: str = "") -> list:
+# ===========================================================================
+# P1-c — UNE OFFRE RECOMMANDEE, ET DES ALTERNATIVES
+# ===========================================================================
+#
+# CE LOT N'AJOUTE AUCUN MOTEUR. Il branche entre elles trois regles qui
+# existent deja, chacune prouvee par son propre banc :
+#   * LOT A — `conv_offres_premier_achat` : qui a le droit d'etre PROPOSE ;
+#   * LOT R — `lotr_verdict_recharge`     : qui a le droit d'ACHETER ;
+#   * LOT 2 — l'adhesion                  : cette personne est-elle membre.
+#
+# Aucun montant nulle part. Ni 250, ni 150, ni 30. L'identite metier d'une
+# offre est portee par ses booleens, comme partout ailleurs dans ce depot.
+
+
+async def p1c_retirer_inachetables(db, utiles, email: str = "", coach_id: str = ""):
+    """Retire de la liste ce que la CAISSE refuserait de toute facon.
+
+    DEUX RETRAITS, ET SEULEMENT DEUX.
+
+    1. LA RECHARGE A QUI N'Y A PAS DROIT. Le verdict est celui de LOT R, mot
+       pour mot — `lotr_verdict_recharge`, la fonction pure que les quatre
+       portes de paiement interrogent deja. Sans ce retrait, une recharge
+       cochee « apres essai » s'afficherait a un non-membre et la caisse la
+       renverrait en 403 : l'ecran promettrait ce que le serveur refuse.
+
+    2. L'OFFRE D'ENTREE A QUI EST DEJA MEMBRE. Ce n'est pas une regle neuve :
+       `lot2_creer_adhesion_apres_achat` refuse DEJA de creer une seconde
+       adhesion (`motif=deja_membre`) et ne prolonge pas l'ancienne. La
+       personne paierait donc l'entree pour n'obtenir que des seances. L'ecran
+       cesse simplement de le lui proposer.
+
+    SANS E-MAIL, RIEN NE CHANGE. Les appelants historiques passent deux
+    arguments ; ils obtiennent exactement la liste d'avant. Le comportement ne
+    se durcit que lorsqu'on sait DE QUI on parle.
+
+    FAIL CLOSED, comme la garde LOT R : un etat d'adhesion illisible ne vaut
+    pas une autorisation. On retire la recharge et on garde l'entree — le
+    contraire offrirait un pack sur une base qui n'a pas repondu.
+    """
+    _mail = normaliser_email(email)
+    if not _mail:
+        return utiles
+
+    try:
+        _adhesions = await lot3b_adhesions(db, _mail, coach_id)
+        _etat = lotr_etat_adhesion(_adhesions)
+        _reste = await lotr_seances_encore_utilisables(db, _mail)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[P1-c] etat du membre illisible (%s) — offres reservees "
+                       "aux membres retirees", type(_err).__name__)
+        _etat, _reste = LOTR_REFUS_INDETERMINE, None
+
+    _gardees = []
+    for _couple in utiles:
+        _o = _couple[0]
+        _ok, _motif = lotr_verdict_recharge(_o, _etat, _reste)
+        if not _ok:
+            continue
+        if _o.get("creates_membership") is True and _etat == "active":
+            continue
+        _gardees.append(_couple)
+    return _gardees
+
+
+def p1c_index_recommande(utiles) -> int:
+    """L'indice de l'offre a recommander, ou -1 si aucune ne s'impose.
+
+    APRES UN ESSAI, LA SUITE NATURELLE EST L'ENTREE DANS LE PROGRAMME.
+    C'est la seule chose que cette fonction sait, et elle la lit sur le
+    booleen `creates_membership` — jamais sur un nom, jamais sur un montant.
+
+    POURQUOI L'ANCIENNE REGLE NE SUFFISAIT PAS. `recommended` valait `i == 0`
+    apres tri par `position` — or `position` est l'ordre de la VITRINE, ou le
+    moins cher est legitimement en tete. Mesure de production du 24/08/2026 :
+    l'ecran d'apres-essai recommandait « Cours a l'unite » (position 1) et
+    releguait l'offre d'entree (position 4). L'ordre d'une page d'accueil et
+    la suite a proposer apres un premier cours sont deux intentions
+    differentes ; les confondre donnait l'inverse de ce qui etait voulu.
+
+    DEUX REPLIS, ET AUCUNE INVENTION :
+      * aucune offre d'entree -> `0`, l'ANCIENNE regle, intacte. C'est encore
+        `position` qui decide, donc le coach garde la main.
+      * PLUSIEURS offres d'entree -> `-1`. On ne tranche pas dans le doute :
+        l'ecran affiche alors les options sans en couronner aucune.
+    """
+    if not utiles:
+        return -1
+    # L'OFFRE DE PROGRAMME : celle qui fait entrer, OU celle qui fait
+    # continuer. Les deux ne coexistent jamais dans une liste deja filtree —
+    # `p1c_retirer_inachetables` a retire l'entree si la personne est membre,
+    # et la recharge si elle ne l'est pas. Une seule des deux survit, et c'est
+    # exactement celle qui a du sens pour cette personne-la.
+    _programme = [_i for _i, _c in enumerate(utiles)
+                  if (_c[0] or {}).get("creates_membership") is True
+                  or (_c[0] or {}).get(LOTR_CHAMP_PROTECTION) is True]
+    if len(_programme) == 1:
+        return _programme[0]
+    if len(_programme) > 1:
+        return -1
+    return 0
+
+
+async def conv_offres_premier_achat(db, coach_id: str = "", email: str = "") -> list:
     """Les offres proposables APRES un essai, dans l'ordre d'affichage.
 
     QUATRE FILTRES, tous explicites :
@@ -2401,6 +2503,22 @@ async def conv_offres_premier_achat(db, coach_id: str = "") -> list:
 
     _utiles.sort(key=_rang)
 
+    # P1-c — ON NE PROPOSE PAS CE QUE LA CAISSE REFUSERAIT.
+    # Deux retraits, tous deux adosses a des regles DEJA en place ; aucune
+    # nouvelle logique metier, aucun montant, aucun nom d'offre.
+    _utiles = await p1c_retirer_inachetables(db, _utiles, email, coach_id)
+
+    # P1-c — LA RECOMMANDATION. Elle vit ici, et nulle part ailleurs, pour que
+    # l'ecran n'ait rien a decider (regle heritee de LOT A).
+    _reco = p1c_index_recommande(_utiles)
+    # ET ELLE PASSE EN TETE. L'ecran affiche `offers[0]` en grand et le reste en
+    # alternatives : sans ce deplacement, il devrait CHERCHER la recommandee,
+    # donc filtrer — c'est-a-dire decider. `position` continue d'ordonner tout
+    # le reste, exactement comme avant.
+    if _reco > 0:
+        _utiles.insert(0, _utiles.pop(_reco))
+        _reco = 0
+
     _sortie = []
     for _i, (_o, _prix) in enumerate(_utiles):
         try:
@@ -2415,12 +2533,13 @@ async def conv_offres_premier_achat(db, coach_id: str = "") -> list:
             "sessions": _seances or None,
             "description": (_o.get("description") or "")[:280],
             "thumbnail": _o.get("thumbnail") or "",
-            "recommended": _i == 0,
+            "recommended": _i == _reco,
         })
     return _sortie
 
 
-async def conv_offre_autorisee(db, offer_id: str, coach_id: str = ""):
+async def conv_offre_autorisee(db, offer_id: str, coach_id: str = "",
+                               email: str = ""):
     """L'offre demandee SI elle est proposable apres un essai, sinon None.
 
     LA GARDE DE NIVEAU 2. Le niveau 1 (ce que l'ecran montre) n'est pas une
@@ -2437,7 +2556,10 @@ async def conv_offre_autorisee(db, offer_id: str, coach_id: str = ""):
     _oid = (offer_id or "").strip()
     if not _oid:
         return None
-    _autorisees = await conv_offres_premier_achat(db, coach_id)
+    # P1-c : la MEME regle, avec le MEME contexte. Sans l'adresse, l'ecran
+    # retirerait une offre que cette garde laisserait acheter — les deux
+    # diraient alors deux choses differentes, ce que LOT A s'interdit.
+    _autorisees = await conv_offres_premier_achat(db, coach_id, email)
     for _o in _autorisees:
         if _o.get("id") == _oid:
             return _o
@@ -2490,7 +2612,11 @@ async def conv_etat(db, forfait: dict, coach_id: str = "") -> dict:
         "state": CONV_OUVERTE,
         "reason": "",
         "attended_at": _presence.get("validatedAt") or "",
-        "offers": await conv_offres_premier_achat(db, coach_id),
+        # P1-c : l'adresse vient du FORFAIT SERVEUR, jamais d'une saisie ni
+        # d'un parametre de requete. C'est elle qui permet de ne pas proposer
+        # ce que la caisse refuserait — et elle ne sort jamais de la reponse.
+        "offers": await conv_offres_premier_achat(
+            db, coach_id, forfait.get("email") or ""),
     }
 
 

@@ -208,7 +208,17 @@ class _Requete(object):
 # `est_un_essai`, la definition centrale, qui sait aussi reconnaitre un essai
 # dont le `discount_codes` a ete supprime. On charge donc la VRAIE fonction ;
 # la recopier ici rendrait ce banc aveugle a ses evolutions.
-CONV = ["est_un_essai", "conv_presence_reelle", "conv_offres_premier_achat",
+# P1-c : `conv_offres_premier_achat` delegue desormais deux decisions a des
+# aides dediees — retirer ce que la caisse refuserait, et designer LA
+# recommandation. Ce sont des DEPENDANCES REELLES : sans elles dans cet espace,
+# la fonction leve un NameError et tout le banc tombe sur une panne de banc.
+# Elles arrivent avec leurs propres dependances LOT R / LOT 3b, chargees ici
+# pour la meme raison : ce banc doit executer le VRAI code, pas une copie.
+CONV = ["normaliser_email", "est_un_essai", "conv_presence_reelle",
+        "lotr_etat_adhesion", "lotr_verdict_recharge",
+        "lotr_seances_encore_utilisables", "lot3b_adhesions",
+        "p1c_retirer_inachetables", "p1c_index_recommande",
+        "conv_offres_premier_achat",
         "conv_offre_autorisee", "conv_etat", "conv_marquer_vue"]
 
 A1B = ["_a0_maintenant_ch", "_a0_horodatage", "_a1_jour_js",
@@ -253,6 +263,13 @@ def bac(codes=None, subs=None, resas=None, offers=None, courses=None,
           "logger": _Journal()}
     exec(compile(SHARED.constante("ESSAI2_FILTRE_GRATUIT"), "<lota>", "exec"), ns)
     exec(compile(SHARED.constante("B_DEVISE_DEFAUT"), "<lota>", "exec"), ns)
+    # P1-c : les constantes dont dependent les aides LOT R / LOT 3b chargees
+    # ci-dessous. Sans elles, le banc tombe sur un NameError — une panne de
+    # banc, pas une regression du code.
+    for _c in ("LOT3B_PREFIXE", "LOTR_PREFIXE", "LOTR_CHAMP_PROTECTION",
+               "LOTR_REFUS_SEANCES", "LOTR_REFUS_SANS_ADHESION",
+               "LOTR_REFUS_ADHESION_EXPIREE", "LOTR_REFUS_INDETERMINE"):
+        exec(compile(SHARED.constante(_c), "<lota>", "exec"), ns)
     for c in ("CONV_INELIGIBLE", "CONV_OUVERTE", "CONV_TERMINEE",
               "ESSAI6_ORIGINE_OFFERTE"):
         exec(compile(SHARED.constante(c), "<lota>", "exec"), ns)

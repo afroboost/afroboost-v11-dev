@@ -13658,7 +13658,10 @@ async def post_conversion_checkout(access_code: str, request: Request):
             status_code=403,
             detail="Cette offre s'ouvre après une séance découverte réellement effectuée.")
 
-    offre = await _autorisee(db, offer_id, coach_id)
+    # P1-c : l'adresse vient du FORFAIT, jamais du corps de la requete — sinon
+    # elle deviendrait un oracle (« suis-je membre ? ») et un levier pour se
+    # faire passer pour quelqu'un d'autre. Meme discipline qu'au LOT 3b.
+    offre = await _autorisee(db, offer_id, coach_id, (forfait or {}).get("email") or "")
     if not offre:
         # Journalise le REFUS, pas l'offre convoitee en clair : cette ligne sert
         # a detecter une tentative, pas a fabriquer une liste de cibles.

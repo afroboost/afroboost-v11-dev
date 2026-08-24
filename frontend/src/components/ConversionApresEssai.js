@@ -37,6 +37,11 @@ function montant(prix, devise) {
 
 export default function ConversionApresEssai({ code, prenom }) {
   const [etat, setEtat] = useState(null);
+  // P1-c : les alternatives sont repliees par defaut. Une seule decision est
+  // demandee au participant ; les autres options restent a un clic, jamais
+  // cachees. C'est un etat d'ECRAN et rien d'autre — il ne touche ni la
+  // selection, ni l'ordre, ni le prix, qui restent des verdicts serveur.
+  const [autresOuvertes, setAutresOuvertes] = useState(false);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
   const [enCours, setEnCours] = useState("");
@@ -139,6 +144,81 @@ export default function ConversionApresEssai({ code, prenom }) {
   // d'erreur adresse a la mauvaise personne.
   if (etat.state !== "open" || offres.length === 0) return null;
 
+  // La recommandee est en tete parce que le SERVEUR l'y a mise. Les autres
+  // suivent dans leur ordre `position`. Aucune recherche, aucun tri, aucun
+  // filtre : l'ecran ne redecide rien.
+  const autres = offres.slice(1);
+
+  // Une seule fabrique de carte, deux poids. La mise en avant se lit dans la
+  // TAILLE et la STRUCTURE, plus seulement dans la couleur : c'etait le
+  // reproche fait a l'ecran precedent, six cartes de meme poids.
+  const carte = (o, vedette) => {
+    if (!o) return null;
+    const occupe = enCours === o.id;
+    return (
+      <div
+        key={o.id}
+        className={vedette ? "rounded-xl p-4" : "rounded-lg px-3 py-2.5"}
+        style={{
+          background: vedette ? VOILE : "rgba(255,255,255,0.03)",
+          border: `1px solid ${vedette ? PRIMAIRE : BORDURE}`,
+        }}
+        data-testid={`conversion-offre-${o.id}`}
+      >
+        {vedette && o.recommended && (
+          <p
+            className="text-[11px] mb-2 inline-flex items-center gap-1 font-semibold uppercase tracking-wider"
+            style={{ color: PRIMAIRE }}
+          >
+            <SvgIcon name="star" size={12} /> Recommandé pour toi
+          </p>
+        )}
+
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className={vedette ? "font-bold text-base truncate" : "font-medium text-sm truncate"}>
+              {o.name}
+            </p>
+            {o.sessions ? (
+              <p className="text-white/50 text-xs mt-0.5">
+                {o.sessions} séance{o.sessions > 1 ? "s" : ""}
+              </p>
+            ) : null}
+          </div>
+          <p
+            className={vedette ? "text-2xl font-bold shrink-0" : "text-sm font-semibold shrink-0"}
+            style={{ color: PRIMAIRE }}
+          >
+            {montant(o.price, o.currency)}
+          </p>
+        </div>
+
+        {vedette && o.description ? (
+          <p className="text-white/50 text-xs mt-2">{o.description}</p>
+        ) : null}
+
+        <button
+          type="button"
+          onClick={() => acheter(o)}
+          disabled={!!enCours}
+          className={
+            vedette
+              ? "mt-3 w-full py-3 rounded-xl text-sm font-semibold transition-transform active:scale-95 disabled:opacity-60"
+              : "mt-2 w-full py-2 rounded-lg text-xs font-medium transition-transform active:scale-95 disabled:opacity-60"
+          }
+          style={
+            vedette
+              ? { background: PRIMAIRE, color: "white", boxShadow: `0 6px 20px ${OMBRE}` }
+              : { background: "transparent", color: "white", border: `1px solid ${BORDURE}` }
+          }
+          data-testid={`conversion-cta-${o.id}`}
+        >
+          {occupe ? "Redirection…" : vedette ? "Choisir cette offre" : "Choisir"}
+        </button>
+      </div>
+    );
+  };
+
   return (
     <section
       className="rounded-2xl p-5"
@@ -172,64 +252,35 @@ export default function ConversionApresEssai({ code, prenom }) {
         </p>
       )}
 
-      <div className="mt-4 space-y-3">
-        {offres.map((o) => {
-          const occupe = enCours === o.id;
-          return (
-            <div
-              key={o.id}
-              className="rounded-xl p-4"
-              style={{
-                background: o.recommended ? VOILE : "rgba(255,255,255,0.03)",
-                border: `1px solid ${o.recommended ? PRIMAIRE : BORDURE}`,
-              }}
-              data-testid={`conversion-offre-${o.id}`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="font-semibold truncate">{o.name}</p>
-                  {o.sessions ? (
-                    <p className="text-white/50 text-xs mt-0.5">
-                      {o.sessions} séance{o.sessions > 1 ? "s" : ""}
-                    </p>
-                  ) : null}
-                </div>
-                <p className="text-xl font-bold shrink-0" style={{ color: PRIMAIRE }}>
-                  {montant(o.price, o.currency)}
-                </p>
-              </div>
-
-              {o.recommended && (
-                <p
-                  className="text-[11px] mt-2 inline-flex items-center gap-1"
-                  style={{ color: PRIMAIRE }}
-                >
-                  <SvgIcon name="star" size={12} /> Offre recommandée
-                </p>
-              )}
-
-              {o.description ? (
-                <p className="text-white/50 text-xs mt-2">{o.description}</p>
-              ) : null}
-
-              <button
-                type="button"
-                onClick={() => acheter(o)}
-                disabled={!!enCours}
-                className="mt-3 w-full py-3 rounded-xl text-sm font-semibold transition-transform active:scale-95 disabled:opacity-60"
-                style={
-                  o.recommended
-                    ? { background: PRIMAIRE, color: "white", boxShadow: `0 6px 20px ${OMBRE}` }
-                    : { background: VOILE, color: "white", border: `1px solid ${PRIMAIRE}` }
-                }
-                data-testid={`conversion-cta-${o.id}`}
-              >
-                {occupe ? "Redirection…" : o.recommended ? "Continuer" : "Choisir"}
-              </button>
-            </div>
-          );
-        })}
+      {/* P1-c — UNE DECISION, PAS UN CATALOGUE.
+          Le serveur place la recommandee EN TETE : l'ecran prend `offres[0]`
+          et le reste en alternatives. Il ne cherche pas, ne trie pas, ne
+          filtre pas — c'est la regle de LOT A, et elle survit ici. */}
+      <div className="mt-4" data-testid="conversion-recommandee">
+        {carte(offres[0], true)}
       </div>
+
+      {autres.length > 0 && (
+        <>
+          <button
+            type="button"
+            onClick={() => setAutresOuvertes((v) => !v)}
+            className="mt-3 w-full py-2.5 rounded-xl text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-transform active:scale-95"
+            style={{ background: "transparent", color: "rgba(255,255,255,0.55)", border: `1px solid ${BORDURE}` }}
+            data-testid="conversion-voir-autres"
+            aria-expanded={autresOuvertes}
+          >
+            <SvgIcon name={autresOuvertes ? "chevron-up" : "chevron-down"} size={12} />
+            {autresOuvertes ? "Masquer les autres options" : "Voir les autres options"}
+          </button>
+
+          {autresOuvertes && (
+            <div className="mt-3 space-y-2" data-testid="conversion-alternatives">
+              {autres.map((o) => carte(o, false))}
+            </div>
+          )}
+        </>
+      )}
     </section>
   );
 }
