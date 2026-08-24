@@ -28698,6 +28698,7 @@ P1B_PREFIXE = "[P1-b]"
 # EXISTANT : aucune collection, aucune route, aucun consentement invente.
 P1B_TYPE_PREFERENCE = "trial_followup"
 
+
 # Le lien du CTA. LE DOMAINE EST EN DUR, et c'est un choix documente :
 # `FRONTEND_URL` vaut encore le residu Vercel `afroboost-v11-dev-pm7l...` —
 # `_v184_public_origin()` enverrait donc un lien MORT a un prospect. Les quatre
@@ -28749,12 +28750,16 @@ def p1b_contenu_relance(prenom: str, course_name: str, lien: str, accent: str):
     _sujet = "Merci pour ton énergie aujourd'hui 🔥"
 
     _ligne_cours = ""
+    _cours_texte = ""
     if _cours:
         # On ne cite le cours que si on le connait. Une phrase a trou
         # (« ton cours  ») se remarque et fait amateur.
         _ligne_cours = (
             '<div style="color:#aaa;font-size:14px;margin:0 0 18px;">%s</div>'
             % _html.escape(_cours))
+        # SYMETRIE : la version texte le portait PAS. Un client sans HTML lisait
+        # donc un autre message que les autres.
+        _cours_texte = "%s\n" % _cours
 
     _bouton = ""
     _texte_lien = ""
@@ -28767,31 +28772,59 @@ def p1b_contenu_relance(prenom: str, course_name: str, lien: str, accent: str):
             '</div>' % (lien, accent))
         _texte_lien = "\nContinuer avec Afroboost : %s\n" % lien
 
+    # LE CORPS, mot pour mot celui valide par le proprietaire. Il felicite, il
+    # invite, il n'exige rien : aucun prix, aucune offre nommee, aucune urgence.
+    # Le catalogue vit dans l'ecran d'apres-essai, qui le lit en base ; l'ecrire
+    # ici en ferait une seconde verite, fausse au premier changement de tarif.
     _corps = (
         '<div style="padding:28px 24px;">'
         '<div style="color:#fff;font-size:18px;font-weight:700;margin:0 0 6px;">%s</div>'
         '%s'
         '<div style="color:#ddd;font-size:15px;line-height:1.6;">'
-        'Merci d\'avoir participé à ton premier cours Afroboost.<br><br>'
-        'Si tu veux continuer l\'expérience, découvre les options pour la suite '
-        'directement dans ton espace Afroboost.'
+        'Bravo pour ton premier cours Afroboost ! 🔥<br><br>'
+        'On espère que tu as aimé l\'expérience.<br><br>'
+        'Envie de continuer à bouger, progresser et booster ton énergie avec nous ?'
+        '<br><br>'
+        'Retrouve tes prochaines possibilités directement dans ton espace Afroboost.'
         '</div>'
         '%s'
         '<div style="color:#777;font-size:12px;text-align:center;margin-top:18px;">'
-        'Une question ? Réponds simplement à cet e-mail.'
+        'Une question ?<br>Réponds simplement à cet e-mail.'
         '</div>'
+        # PAS DE SIGNATURE ICI : le gabarit affiche deja « AFROBOOST /
+        # MOVE • GROOVE • BOOST » en en-tete. La repeter quinze lignes plus bas
+        # est une redite. La version TEXTE, elle, n'a pas d'en-tete — la
+        # signature y reste, et elle y sert.
+        #
+        # PAS DE « REPONDS STOP » NON PLUS. La chaine a ete tracee le
+        # 24/08/2026 et elle ne tient pas : la reponse arrive dans une boite
+        # Gmail que RIEN ne lit (aucun webhook entrant, aucun IMAP), aucune
+        # interface ne permet d'acter la demande, et la seule route qui ecrit
+        # `opted_out` (`v332_unsubscribe`) exige un jeton qui n'existe pour
+        # aucun participant d'essai (0 des 34 adresses ayant reserve figurent
+        # dans `subscribers`). Ecrire la phrase serait une facade.
+        # Les gardes qui MARCHENT restent : `p1b_destinataire_autorise` refuse
+        # toute adresse `opted_out` ou portant une preference contraire.
         '</div>' % (_html.escape(_bonjour), _ligne_cours, _bouton))
 
     _html = _email_wrapper(
         "linear-gradient(135deg, %s 0%%, #7c3aed 100%%)" % accent, _corps, accent)
 
+    # LA VERSION TEXTE DIT LA MEME CHOSE QUE LE HTML. Meme prenom, meme cours,
+    # meme corps, meme CTA, meme sortie, meme signature.
     _texte = (
-        "%s\n\n"
-        "Merci d'avoir participé à ton premier cours Afroboost.\n\n"
-        "Si tu veux continuer l'expérience, découvre les options pour la suite "
-        "directement dans ton espace Afroboost.\n"
         "%s\n"
-        "Une question ? Réponds simplement à cet e-mail.\n" % (_bonjour, _texte_lien))
+        "%s\n"
+        "Bravo pour ton premier cours Afroboost !\n\n"
+        "On espère que tu as aimé l'expérience.\n\n"
+        "Envie de continuer à bouger, progresser et booster ton énergie avec nous ?\n\n"
+        "Retrouve tes prochaines possibilités directement dans ton espace Afroboost.\n"
+        "%s\n"
+        "Une question ?\n"
+        "Réponds simplement à cet e-mail.\n\n"
+        "Afroboost\n"
+        "Move • Groove • Boost\n"
+        % (_bonjour, _cours_texte, _texte_lien))
 
     return _sujet, _html, _texte
 

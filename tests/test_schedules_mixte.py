@@ -26,6 +26,9 @@ SOURCE = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").rea
 ARBRE = ast.parse(SOURCE)
 LIGNES = SOURCE.splitlines(True)
 
+SCHED_AVANT = "37da8bca"        # l'etat du depot avant le lot SCHEDULES
+SCHED_LOT = "1a995bc2"          # le commit DU lot — borne haute
+
 RESULTATS = []
 
 
@@ -220,11 +223,17 @@ def structure():
              'k = (o.get("datetime"), _norm(o.get("name")), _norm(o.get("locationName")))'
              in espace)
 
-    # AUCUNE MIGRATION : ce lot ne touche pas le serveur. On le PROUVE.
+    # AUCUNE MIGRATION : ce lot ne touche pas le serveur. On le PROUVE — mais
+    # BORNE AUX DEUX BOUTS. Compare a l'arbre de travail, cette garde gelait
+    # `api/` pour l'eternite et echouait sur le lot SUIVANT, qui ne la concerne
+    # pas : exactement le defaut releve sur la garde S8 de RV2. Elle prouve ce
+    # qu'elle doit prouver — LE LOT SCHEDULES n'a touche aucun fichier serveur.
     import subprocess
     _diff = subprocess.check_output(
-        ["git", "diff", "--name-only", "HEAD"], cwd=RACINE).decode().split()
-    verifier("S5. ce lot ne modifie AUCUN fichier du serveur",
+        ["git", "diff", "--name-only", "%s..%s" % (SCHED_AVANT, SCHED_LOT)],
+        cwd=RACINE).decode().split()
+    verifier("S5. le lot SCHEDULES (%s..%s) ne modifie AUCUN fichier du serveur"
+             % (SCHED_AVANT, SCHED_LOT),
              not any(f.startswith("api/") for f in _diff),
              "modifies : %s" % [f for f in _diff if f.startswith("api/")])
 
