@@ -541,15 +541,39 @@ async def scenarios():
     _cours = await esp["p1d_offre_est_un_cours"]("off-inconnue")
     verifier("M4. offre introuvable -> indetermine, jamais 'marchandise'",
              _cours is None, _cours)
-    # M5 — DETTE CONSIGNEE : ESSAI-2 pose `converted_at` sur un achat de
-    # marchandise, ce qui FERME l'ecran P1-c en amont. P1-d ne peut alors pas
-    # promettre « voir mes options » : il se tait. Le test dit l'etat REEL.
+    # ══ CAS G — R1 A CHANGE CE CAS, ET C'EST TOUT L'INTERET ════════════════
+    # AVANT R1 (livre le 25/08/2026), un t-shirt paye posait `converted_at` :
+    # l'ecran P1-c se fermait, et P1-d se taisait — issue « deja_converti ».
+    # C'etait la dette M5, consignee a la livraison de P1-d.
+    # DEPUIS R1, la marchandise ne convertit plus : l'ecran reste OUVERT et la
+    # personne RESTE candidate au J+3. Elle a achete un t-shirt, pas une
+    # pratique. Ce banc verifie donc les DEUX bouts de la chaine : la regle de
+    # nature (R1) et ce que P1-d en fait.
+    ENVOIS.clear()
+    b = monde(subscriptions=[forfait_essai(), achat("off-tshirt", 59.99)])
+    esp = construire(b, ACTIF, etat="open")
+    issue = await esp["p1d_relance_j3"](resa(), J3_DANS)
+    verifier("G. produit physique SEUL -> reste candidat, le J+3 part",
+             issue == "envoye", issue)
+    verifier("G2. un seul e-mail", len(ENVOIS) == 1, len(ENVOIS))
+
+    # ══ CAS H — produit physique + VRAIE offre de cours payante -> exclu ════
+    ENVOIS.clear()
+    b = monde(subscriptions=[forfait_essai(), achat("off-tshirt", 59.99),
+                             achat("off-pulse", 250.0, code="AFR-PULSE")])
+    esp = construire(b, ACTIF, etat="open")
+    issue = await esp["p1d_relance_j3"](resa(), J3_DANS)
+    verifier("H. produit + vraie offre cours payante -> EXCLU", issue == "deja_converti", issue)
+    verifier("H2. aucun e-mail", not ENVOIS)
+
+    # H3 — et si l'ecran P1-c s'est ferme (achat de cours acte par ESSAI-2),
+    # P1-d se tait aussi : les deux gardes disent la meme chose.
     ENVOIS.clear()
     esp = construire(b, ACTIF, etat="purchased")
     issue = await esp["p1d_relance_j3"](resa(), J3_DANS)
-    verifier("M5. ecran P1-c ferme par ESSAI-2 -> aucun message (dette connue)",
+    verifier("H3. ecran P1-c ferme par une vraie conversion -> aucun message",
              issue == "deja_converti", issue)
-    verifier("M6. aucun e-mail", not ENVOIS)
+    verifier("H4. aucun e-mail", not ENVOIS)
 
     # ══ CAS N — LE CONTENU NE FIGE NI PRIX NI OFFRE ═════════════════════════
     b = monde()
