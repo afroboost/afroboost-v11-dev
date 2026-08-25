@@ -184,7 +184,7 @@ _I18N = {
         'credit_unit': 'séances',
         # v158: règles annulation & remboursement
         'cancel_title': '⚠️ Règles d\'annulation',
-        'cancel_rule1': 'Annulation possible jusqu\'à 24h avant la séance.',
+        'cancel_rule1': 'Annulation possible jusqu\'à 2 h avant la séance, depuis ton espace.',
         'cancel_rule2': 'Passé ce délai : séance non remboursable.',
         # v158: infos pratiques à apporter le jour J
         'practical_title': '🎒 Infos pratiques pour ta séance',
@@ -228,7 +228,7 @@ _I18N = {
         'credit_label': 'Your remaining credit',
         'credit_unit': 'sessions',
         'cancel_title': '⚠️ Cancellation policy',
-        'cancel_rule1': 'Cancellation is allowed up to 24h before the session.',
+        'cancel_rule1': 'Cancellation is allowed up to 2 h before the session, from your space.',
         'cancel_rule2': 'After that: the session is non-refundable.',
         'practical_title': '🎒 Practical info for your session',
         'practical_rule1': '🕒 Arrive 15 minutes early',
@@ -271,7 +271,7 @@ _I18N = {
         'credit_label': 'Dein verbleibendes Guthaben',
         'credit_unit': 'Sessions',
         'cancel_title': '⚠️ Stornierungsbedingungen',
-        'cancel_rule1': 'Stornierung bis 24h vor der Session möglich.',
+        'cancel_rule1': 'Stornierung bis 2 Std. vor der Session möglich, in deinem Bereich.',
         'cancel_rule2': 'Danach: Session nicht erstattungsfähig.',
         'practical_title': '🎒 Praktische Infos für deine Session',
         'practical_rule1': '🕒 Komme 15 Minuten früher',
@@ -362,6 +362,32 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
     primary_color = await get_primary_color(db)
     primary_rgb = hex_to_rgb_triplet(primary_color)
 
+    # ═══ N2 — QUAND ET OU ═══════════════════════════════════════════════
+    # Mesure du 25/08/2026 : 121 confirmations sur 139 (87 %) partaient sans
+    # date, sans heure et sans lieu. La cause tenait en une ligne — la date
+    # n'etait affichee que via `selectedDatesText`, un champ que SEUL le
+    # chemin `website` renseigne (77/77 manquants pour l'espace participant,
+    # 39/39 pour le chat). On DERIVE donc l'horaire de la reservation
+    # elle-meme, ce qui couvre les trois chemins d'un coup et sans reprise de
+    # donnees : `selectedDatesText` reste prioritaire quand il existe.
+    # CE HTML EST CONCATENE, PAS RENDU PAR UN GABARIT QUI ECHAPPE. Tout ce qui
+    # entre ici doit donc etre echappe a la main. `lieu_text` vient du tableau
+    # de bord ; `quand_text` peut rendre `selectedDatesText`, qui vient du
+    # NAVIGATEUR au moment de la reservation — celle-la est d'origine inconnue.
+    from html import escape as _n2_html
+    from api.routes.shared import n2_quand_lisible as _n2_quand, n2_ou as _n2_ou
+    quand_text = _n2_quand(reservation_data)
+    lieu_text, lieu_maps = "", ""
+    try:
+        _cid = str(reservation_data.get("courseId") or "").strip()
+        if _cid and db is not None:
+            lieu_text, lieu_maps = _n2_ou(
+                await db.courses.find_one({"id": _cid},
+                                          {"_id": 0, "locationName": 1, "mapsUrl": 1}))
+    except Exception as _n2err:
+        # Une adresse manquante ne doit jamais retenir la confirmation.
+        logger.warning("[N2] lieu absent de l'e-mail (%s)", type(_n2err).__name__)
+
     res_code = reservation_data.get("reservationCode", "N/A")
     offer = reservation_data.get("offerName", "Réservation")
     course = reservation_data.get("courseName", "")
@@ -400,6 +426,8 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
                     <tr><td style="color:#888;padding:6px 0;">{t['offer']}</td><td>{offer}</td></tr>
                     {"<tr><td style='color:#888;padding:6px 0;'>" + t['course'] + "</td><td>" + course + "</td></tr>" if course else ""}
                     {"<tr><td style='color:#888;padding:6px 0;'>" + t['dates'] + "</td><td>" + dates_text + "</td></tr>" if dates_text else ""}
+                    {"<tr><td style='color:#888;padding:6px 0;'>Quand</td><td style='font-weight:bold;'>" + _n2_html(quand_text) + "</td></tr>" if quand_text and quand_text != dates_text else ""}
+                    {"<tr><td style='color:#888;padding:6px 0;vertical-align:top;'>Où</td><td>" + _n2_html(lieu_text) + ("<br/><a href='" + _n2_html(lieu_maps, quote=True) + "' style='color:" + primary_color + ";'>Voir l'itinéraire</a>" if lieu_maps else "") + "</td></tr>" if lieu_text else ""}
                     <tr><td style="color:#888;padding:6px 0;">{t['price']}</td><td style="font-weight:bold;">{price} CHF</td></tr>
                 </table>
             </div>

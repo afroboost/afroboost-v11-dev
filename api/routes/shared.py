@@ -4642,3 +4642,128 @@ def lotr_trace_recharge(montant=None, devise=None, seances=None, offre_id="",
     if _ref:
         _doc["reference_paiement"] = _ref
     return _doc
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# N2 — « QUAND » ET « OU », DITS UNE SEULE FOIS POUR TOUT LE PRODUIT
+#
+# TROIS DEFAUTS MESURES LE 25/08/2026 ONT LA MEME RACINE : personne ne savait
+# lire l'heure d'un cours.
+#
+#   1. L'e-mail de confirmation affichait la date via `selectedDatesText`, un
+#      champ que SEUL le chemin `website` renseigne. Mesure : 121 reservations
+#      sur 139 (87 %) partaient donc SANS date, SANS heure et SANS lieu —
+#      77/77 pour l'espace participant, 39/39 pour le chat, 0/18 pour la
+#      vitrine. La seule trace ecrite que garde le participant ne lui permettait
+#      pas de venir.
+#
+#   2. Deux formats de date coexistent en base : « ...Z » (UTC explicite) et
+#      « 2026-05-13T18:30:00 » (NAIF, en heure suisse). Le garde d'annulation
+#      faisait `replace(tzinfo=utc)` sur les naives : le cours paraissait deux
+#      heures plus tard qu'il ne l'etait. C'est mot pour mot le defaut que V435
+#      a corrige sur les rappels — il etait reste ici.
+#
+#   3. L'ecran offrait « Annuler » jusqu'a 2 h avant, le serveur refusait en
+#      dessous de 24 h. Entre les deux, le bouton etait MORT.
+#
+# CES TROIS AIDES SONT PURES et vivent ici, pas dans un ecran : l'e-mail,
+# l'espace participant et le garde d'annulation doivent lire la MEME heure. Une
+# seconde implementation, c'est la garantie qu'un jour deux surfaces se
+# contrediront — c'est deja arrive entre l'ecran et le serveur.
+#
+# ⚠️ DETTE CONNUE, HORS DE CE LOT : `cron_reservation_reminders` porte encore sa
+# propre closure `_v435_instant_du_cours`, identique a `n2_instant_reel`. La
+# fusionner touche la boucle de rappel (chantier E), volontairement exclu ici.
+
+N2_FUSEAU = "Europe/Zurich"
+
+# Les mois en toutes lettres. `strftime('%B')` depend de la locale du CONTENEUR,
+# qui est en C/POSIX : il rendrait « August » a un public francophone.
+N2_MOIS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
+           "août", "septembre", "octobre", "novembre", "décembre")
+N2_JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+
+
+def n2_instant_reel(valeur):
+    """L'instant REEL d'une occurrence, en UTC. `None` si la date est illisible.
+
+    UNE DATE NAIVE EST DE L'HEURE SUISSE. C'est la seule lecture correcte des
+    67 documents concernes en base : « 2026-05-13T18:30:00 » designe le cours de
+    18h30 a Neuchatel, pas 18h30 UTC. Un decalage fixe (+2 h) serait faux la
+    moitie de l'annee ; le fuseau nomme gere seul le passage ete/hiver.
+    """
+    if not isinstance(valeur, str) or not valeur.strip():
+        return None
+    try:
+        from zoneinfo import ZoneInfo as _ZI
+        dt = datetime.fromisoformat(valeur.strip().replace("Z", "+00:00"))
+    except (ValueError, ImportError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_ZI(N2_FUSEAU))
+    return dt.astimezone(timezone.utc)
+
+
+def n2_quand_lisible(reservation) -> str:
+    """« mercredi 26 août · 18:30 », en heure suisse. Chaine vide si on ne sait pas.
+
+    ON N'INVENTE JAMAIS. Sans date exploitable, la phrase est vide et l'appelant
+    n'affiche simplement pas la ligne — mieux vaut une confirmation incomplete
+    qu'une confirmation fausse, qui enverrait quelqu'un le mauvais jour.
+
+    `selectedDatesText` reste PRIORITAIRE : c'est le texte que la vitrine
+    compose deja pour les achats multi-dates (« mer. 26 août, dim. 30 août »),
+    et le remplacer par une seule date perdrait de l'information.
+    """
+    _src = reservation or {}
+    _deja = str(_src.get("selectedDatesText") or "").strip()
+    if _deja:
+        return _deja
+    _instant = n2_instant_reel(_src.get("datetime"))
+    if _instant is None:
+        return ""
+    from zoneinfo import ZoneInfo as _ZI
+    _local = _instant.astimezone(_ZI(N2_FUSEAU))
+    return "%s %d %s · %02d:%02d" % (
+        N2_JOURS[_local.weekday()], _local.day, N2_MOIS[_local.month - 1],
+        _local.hour, _local.minute)
+
+
+# Les deux seuls schemas qui ont un sens pour un itineraire — et les deux seuls
+# qui soient inoffensifs dans un `href`. Tout le reste est jete.
+N2_SCHEMAS_CARTE = ("http://", "https://")
+
+
+def n2_lien_carte(url) -> str:
+    """L'URL d'itineraire, si et seulement si elle est cliquable sans danger.
+
+    POURQUOI CE FILTRE EXISTE. `mapsUrl` devient un `href` que le PARTICIPANT
+    clique, et React n'assainit PAS les `href` : un `javascript:...` s'execute
+    dans sa page, avec son code AFR- a portee de main. La valeur vient du
+    tableau de bord — elle n'est donc pas saisie par un inconnu, mais elle n'est
+    pas une constante non plus, et c'est exactement le genre de champ qu'on
+    finit par remplir en collant n'importe quoi.
+
+    LISTE BLANCHE, jamais liste noire : on n'essaie pas d'enumerer ce qui est
+    dangereux (`javascript:`, `data:`, `vbscript:`, et les variantes avec
+    tabulations ou espaces insecables que les navigateurs tolerent encore). On
+    n'accepte que ce qu'on reconnait. Perdre un itineraire mal saisi ne coute
+    qu'un lien ; laisser passer le mauvais coute une session.
+    """
+    _u = str(url or "").strip()
+    if not _u:
+        return ""
+    return _u if _u.lower().startswith(N2_SCHEMAS_CARTE) else ""
+
+
+def n2_ou(course):
+    """`(lieu, itineraire)` d'un cours. Deux chaines vides si on ne sait pas.
+
+    Les 23 cours de la production portent tous un `locationName` ; seuls 3
+    portent un `mapsUrl`. L'itineraire est donc facultatif par construction, et
+    son absence — y compris quand il est REFUSE par `n2_lien_carte` — ne doit
+    jamais faire disparaitre l'adresse : c'est elle qui fait venir les gens.
+    """
+    _c = course or {}
+    return (str(_c.get("locationName") or "").strip(),
+            n2_lien_carte(_c.get("mapsUrl")))

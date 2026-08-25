@@ -24,6 +24,10 @@ import { funnelTracer } from "../utils/funnelEssai";
 // teste a part. Il avance d'un cran des qu'une reservation est confirmee, sans
 // attendre un rechargement.
 import { etatEssaiAffiche } from "../utils/essaiReservation";
+// N2 : la MEME lecture de l'heure que le serveur (`n2_instant_reel`). Sans
+// elle, une date naive serait lue dans le fuseau du navigateur et l'ecran
+// pourrait offrir « Annuler » alors que le serveur refuse.
+import { instantReelCours, estAujourdhuiZurich } from "../utils/heureCours";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -34,6 +38,23 @@ const COLORS = {
   secondary: "#FF2DAA",
   panel: "rgba(255,255,255,0.04)",
   border: "rgba(255,255,255,0.08)",
+};
+
+// N2 — LA MEME VALEUR QUE LE SERVEUR (`T1_DELAI_ANNULATION_H`), decidee par le
+// proprietaire le 25/08/2026. L'ecran offrait « Annuler » jusqu'a 2 h, le
+// serveur refusait sous 24 h : entre les deux, le bouton etait mort.
+const DELAI_ANNULATION_H = 2;
+
+// N2 — UN `href` N'EST PAS UNE CHAINE COMME LES AUTRES.
+// React n'assainit PAS les `href` : `javascript:...` s'execute au clic, dans
+// la page du participant, avec son code AFR- a portee. Le serveur filtre deja
+// (`n2_lien_carte`), mais l'ecran ne doit pas dependre de la promesse d'une
+// autre couche : c'est LUI qui fabrique le lien, c'est LUI qui repond.
+// Liste blanche, jamais liste noire — on n'enumere pas ce qui est dangereux,
+// on n'accepte que ce qu'on reconnait.
+const lienCarteSur = (url) => {
+  const u = String(url || "").trim();
+  return /^https?:\/\//i.test(u) ? u : "";
 };
 
 const FRENCH_DATE_OPTIONS = {
@@ -823,6 +844,25 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                 {formatOccurrence(prochaineSeance.datetime)}
               </p>
             )}
+            {/* N2 : la meme adresse qu'ailleurs, au moment ou elle sert. */}
+            {prochaineSeance && prochaineSeance.locationName ? (
+              <p className="text-sm mt-1 text-white/70" data-testid="essai7-lieu">
+                <span className="inline-flex items-center gap-1">
+                  <SvgIcon name="mapPin" size={12} /> {prochaineSeance.locationName}
+                </span>
+                {lienCarteSur(prochaineSeance.mapsUrl) ? (
+                  <a
+                    href={lienCarteSur(prochaineSeance.mapsUrl)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="ml-2 underline"
+                    style={{ color: COLORS.primary }}
+                  >
+                    Itinéraire
+                  </a>
+                ) : null}
+              </p>
+            ) : null}
             <p className="text-sm mt-3 text-white/70">
               Ton QR est prêt. Présente-le au coach à ton arrivée.
             </p>
@@ -1069,9 +1109,13 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             <h2 className="text-base font-semibold mb-3">Mes prochaines séances</h2>
             <ul className="space-y-2">
               {upcomingReservations.map((r) => {
-                const occurrenceTs = new Date(r.datetime).getTime();
+                // N2 : instant REEL du cours, fuseau compris — la meme
+                // lecture que le garde serveur. Une date illisible ne doit pas
+                // fermer l'annulation par accident : on laisse alors le
+                // serveur trancher.
+                const occurrenceTs = instantReelCours(r.datetime);
                 const hoursAway = (occurrenceTs - now) / 3_600_000;
-                const tooLate = hoursAway < 2;
+                const tooLate = Number.isFinite(hoursAway) && hoursAway < DELAI_ANNULATION_H;
                 const isBusy = cancellingId === r.id;
                 const hp = r.headphone_status;
                 return (
@@ -1096,7 +1140,40 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         {r.courseTime
                           ? formatOccurrence({ date: (r.datetime || "").slice(0, 10), time: r.courseTime })
                           : formatOccurrence(r.datetime)}
+                        {/* N2 : le jour J se voit d'un coup d'oeil. Sans lui, la
+                            seance du soir se confond avec celle de la semaine
+                            prochaine dans la meme liste. */}
+                        {estAujourdhuiZurich(r.datetime) && (
+                          <span
+                            data-testid="resa-aujourdhui"
+                            className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold"
+                            style={{ background: COLORS.primary, color: "white" }}
+                          >
+                            AUJOURD'HUI
+                          </span>
+                        )}
                       </p>
+                      {/* N2 — OU. L'adresse vit sur le COURS et n'atteignait
+                          jamais cet ecran : on savait dire quand, jamais ou. */}
+                      {r.locationName ? (
+                        <p className="text-white/50 text-xs mt-0.5" data-testid="resa-lieu">
+                          <span className="inline-flex items-center gap-1">
+                            <SvgIcon name="mapPin" size={11} /> {r.locationName}
+                          </span>
+                          {lienCarteSur(r.mapsUrl) ? (
+                            <a
+                              href={lienCarteSur(r.mapsUrl)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="ml-2 underline"
+                              style={{ color: COLORS.primary }}
+                              data-testid="resa-itineraire"
+                            >
+                              Itinéraire
+                            </a>
+                          ) : null}
+                        </p>
+                      ) : null}
                       {/* V188: Liste des prénoms avec pastille casque par personne — CLIQUABLE */}
                       {(() => {
                         const subscriberName = (r.userName || subscriber.name || "").split(" ")[0] || "Moi";
@@ -1130,21 +1207,38 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         );
                       })()}
                     </div>
-                    <button
-                      type="button"
-                      disabled={tooLate || isBusy}
-                      onClick={() => handleCancelReservation(r)}
-                      className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-40"
-                      title={tooLate ? "Annulation impossible moins de 2h avant" : "Annuler la séance"}
-                      style={{
-                        background: tooLate ? "rgba(255,255,255,0.06)" : "rgba(239,68,68,0.18)",
-                        color: tooLate ? "rgba(255,255,255,0.4)" : "#fca5a5",
-                        cursor: tooLate ? "not-allowed" : "pointer",
-                      }}
-                      data-testid={`cancel-reservation-${r.id}`}
-                    >
-                      {isBusy ? "…" : "Annuler"}
-                    </button>
+                    {/* N2 — UN BOUTON GRIS NE DIT RIEN. Le `title` d'un bouton
+                        desactive est invisible sur telephone : la personne
+                        voyait « Annuler » eteint, sans savoir pourquoi. On
+                        remplace le bouton par la RAISON, qui est vraie et
+                        n'invente aucun canal de contact — il n'en existe
+                        aucun d'automatise pour ce cas. */}
+                    {tooLate ? (
+                      <span
+                        data-testid="annulation-trop-tard"
+                        className="text-[11px] leading-tight text-right max-w-[46%]"
+                        style={{ color: "rgba(255,255,255,0.45)" }}
+                      >
+                        Annulation en ligne fermée<br />
+                        (moins de 2 h avant)
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => handleCancelReservation(r)}
+                        className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-40"
+                        title="Annuler la séance"
+                        style={{
+                          background: "rgba(239,68,68,0.18)",
+                          color: "#fca5a5",
+                          cursor: "pointer",
+                        }}
+                        data-testid={`cancel-reservation-${r.id}`}
+                      >
+                        {isBusy ? "…" : "Annuler"}
+                      </button>
+                    )}
                   </li>
                 );
               })}
@@ -1279,9 +1373,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     const matchingRes = (data?.reservations || []).find(
                       (r) => r?.courseId === occ.course_id && r?.datetime === occ.datetime
                     );
-                    const occTs = new Date(occ.datetime).getTime();
+                    const occTs = instantReelCours(occ.datetime);
                     const hoursAway = (occTs - Date.now()) / 3_600_000;
-                    const tooLate = hoursAway < 2;
+                    const tooLate = Number.isFinite(hoursAway) && hoursAway < DELAI_ANNULATION_H;
                     const isCancelling = matchingRes && cancellingId === matchingRes.id;
                     return (
                       <div className="flex items-center justify-between gap-2">

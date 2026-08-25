@@ -13100,6 +13100,35 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     except Exception as e:
         logger.warning(f"[V211c] Reservations lookup failed: {e}")
 
+    # ═══ N2 — LE LIEU VOYAGE AVEC LA RESERVATION ═══════════════════════════
+    # L'ecran savait dire QUAND, jamais OU : `locationName` n'existe que sur le
+    # COURS, et la liste des seances reservees ne lisait que la reservation.
+    # Les 23 cours de la production portent tous une adresse — la donnee
+    # existait, elle n'atteignait simplement pas l'ecran.
+    #
+    # UNE SEULE REQUETE GROUPEE (`$in`), jamais un `find_one` par reservation :
+    # c'est la regle du depot sur les gros volumes, et l'espace doit rester
+    # rapide (P0). Un cours supprime ne casse rien : la reservation ressort
+    # sans lieu, comme avant.
+    try:
+        _n2_ids = sorted({str(r.get("courseId") or "").strip()
+                          for r in reservations_raw if r.get("courseId")})
+        if _n2_ids:
+            from api.routes.shared import n2_ou as _n2_ou
+            _n2_cours = {}
+            async for _c in db.courses.find(
+                    {"id": {"$in": _n2_ids}},
+                    {"_id": 0, "id": 1, "locationName": 1, "mapsUrl": 1}):
+                _n2_cours[str(_c.get("id"))] = _c
+            for _r in reservations_raw:
+                _lieu, _maps = _n2_ou(_n2_cours.get(str(_r.get("courseId") or "")))
+                _r["locationName"] = _lieu
+                _r["mapsUrl"] = _maps
+    except Exception as _n2err:
+        # Un lieu manquant n'a jamais empeche personne de venir : l'ecran
+        # retombe sur son affichage d'avant ce lot.
+        logger.warning("[N2] lieux non joints (%s)", type(_n2err).__name__)
+
     # V394 — PLAFOND DUR : l'espace abonné ne peut JAMAIS afficher plus de séances
     # que la page admin « Code promo ». Les deux écrans lisent deux collections
     # différentes — `subscriptions` ici, `discount_codes` là-bas — et ces deux
@@ -15235,9 +15264,17 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
     occurrence_iso = reservation.get("datetime")
     if occurrence_iso and not _t1_essai:
         try:
-            occurrence_dt = datetime.fromisoformat(occurrence_iso.replace("Z", "+00:00"))
-            if occurrence_dt.tzinfo is None:
-                occurrence_dt = occurrence_dt.replace(tzinfo=timezone.utc)
+            # N2 — L'HEURE REELLE DU COURS, PAS UNE DATE LUE DE TRAVERS.
+            # `replace(tzinfo=utc)` traitait « 2026-05-13T18:30:00 » comme de
+            # l'UTC alors que ces 67 documents portent de l'heure SUISSE : le
+            # cours paraissait deux heures plus tard qu'il ne l'etait, et la
+            # fenetre d'annulation etait donc fausse de deux heures — on
+            # pouvait annuler apres le debut du cours. C'est mot pour mot le
+            # defaut que V435 a corrige sur les rappels.
+            from api.routes.shared import n2_instant_reel as _n2_instant
+            occurrence_dt = _n2_instant(occurrence_iso)
+            if occurrence_dt is None:
+                raise ValueError("date d'occurrence illisible")
             hours_until = (occurrence_dt - datetime.now(timezone.utc)).total_seconds() / 3600.0
             if hours_until < T1_DELAI_ANNULATION_H:
                 raise HTTPException(
@@ -26418,7 +26455,13 @@ async def essai3_funnel_essai_gratuit(request: Request, period: str = "30d",
 
 # Delai d'annulation d'une seance PAYANTE. Une premiere seance decouverte n'y
 # est pas soumise : seule une presence confirmee la consomme.
-T1_DELAI_ANNULATION_H = 24
+# N2 — DECISION DU PROPRIETAIRE, 25/08/2026 : DEUX HEURES, ET PLUS 24.
+# L'ecran offrait deja « Annuler » jusqu'a 2 h avant ; le serveur refusait en
+# dessous de 24 h. Entre les deux, le bouton etait MORT : la personne cliquait
+# et recevait une erreur. On aligne sur la valeur qui sert le produit — un
+# imprevu du jour meme doit se solder par une annulation propre, qui rend la
+# place et le credit, plutot que par un no-show qui ne rend rien.
+T1_DELAI_ANNULATION_H = 2
 
 T1_RAISON_REFUS = "terms_not_accepted"
 T1_MESSAGE_REFUS = ("Merci d'accepter les conditions de participation "

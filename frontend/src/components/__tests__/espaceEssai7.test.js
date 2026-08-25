@@ -255,3 +255,135 @@ describe('un forfait payant ne voit rien de tout cela', () => {
       .toContain('Séances restantes');
   });
 });
+
+
+// ==========================================================================
+// N2 — LA CONFIRMATION PRATIQUE : QUAND, OU, ET UNE ANNULATION QUI S'EXPLIQUE
+// ==========================================================================
+const DANS_1H = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+describe('N2 — le lieu et le jour J', () => {
+  test('le lieu et l itineraire s affichent avec la seance', async () => {
+    await monter(espace({
+      trial: { is_trial: false }, restantes: 5,
+      reservations: [{ id: 'r-1', courseId: 'c-42', datetime: DEMAIN,
+                       courseName: 'Afroboost Pulse',
+                       locationName: 'Rue des Vallangines 97, Neuchâtel',
+                       mapsUrl: 'https://maps.example/x' }],
+    }));
+    const lieu = parTestId('resa-lieu');
+    expect(lieu).not.toBeNull();
+    expect(lieu.textContent).toContain('Rue des Vallangines 97');
+    expect(parTestId('resa-itineraire').getAttribute('href'))
+      .toBe('https://maps.example/x');
+  });
+
+  test('sans adresse connue, rien n est invente', async () => {
+    await monter(espace({
+      trial: { is_trial: false }, restantes: 5,
+      reservations: [{ id: 'r-1', courseId: 'c-42', datetime: DEMAIN,
+                       courseName: 'Afroboost Pulse' }],
+    }));
+    expect(parTestId('resa-lieu')).toBeNull();
+    expect(parTestId('resa-itineraire')).toBeNull();
+  });
+
+  test('la seance du jour porte le marqueur AUJOURD HUI', async () => {
+    await monter(espace({
+      trial: { is_trial: false }, restantes: 5,
+      reservations: [{ id: 'r-1', courseId: 'c-42', datetime: DANS_1H,
+                       courseName: 'Afroboost Pulse' }],
+    }));
+    expect(parTestId('resa-aujourdhui')).not.toBeNull();
+  });
+
+  test('une seance de demain ne porte PAS ce marqueur', async () => {
+    await monter(espace({
+      trial: { is_trial: false }, restantes: 5,
+      reservations: [{ id: 'r-1', courseId: 'c-42', datetime: DEMAIN,
+                       courseName: 'Afroboost Pulse' }],
+    }));
+    expect(parTestId('resa-aujourdhui')).toBeNull();
+  });
+});
+
+describe('N2 — l annulation dit pourquoi', () => {
+  test('a plus de 2 h, le bouton Annuler est la et actif', async () => {
+    await monter(espace({
+      trial: { is_trial: false }, restantes: 5,
+      reservations: [{ id: 'r-1', courseId: 'c-42', datetime: DEMAIN,
+                       courseName: 'Afroboost Pulse' }],
+    }));
+    const bouton = parTestId('cancel-reservation-r-1');
+    expect(bouton).not.toBeNull();
+    expect(bouton.disabled).toBe(false);
+    expect(parTestId('annulation-trop-tard')).toBeNull();
+  });
+
+  test('a moins de 2 h, la RAISON remplace le bouton eteint', async () => {
+    await monter(espace({
+      trial: { is_trial: false }, restantes: 5,
+      reservations: [{ id: 'r-1', courseId: 'c-42', datetime: DANS_1H,
+                       courseName: 'Afroboost Pulse' }],
+    }));
+    // Un bouton gris avec un `title` est invisible sur telephone.
+    expect(parTestId('cancel-reservation-r-1')).toBeNull();
+    const raison = parTestId('annulation-trop-tard');
+    expect(raison).not.toBeNull();
+    expect(raison.textContent).toContain('2 h');
+    // aucun canal de contact invente
+    expect(raison.textContent).not.toMatch(/appelle|whatsapp|t[ée]l[ée]phone|contacte/i);
+  });
+});
+
+describe('N2 — le bloc d essai dit lui aussi ou', () => {
+  test('le lieu accompagne la seance reservee', async () => {
+    await monter(espace({
+      trial: { is_trial: true, state: 'booked' }, restantes: 0,
+      reservations: [{ id: 'r-1', courseId: 'c-42', datetime: DEMAIN,
+                       courseName: 'Afroboost Pulse',
+                       locationName: 'Rue des Vallangines 97, Neuchâtel' }],
+    }));
+    expect(parTestId('essai7-lieu').textContent)
+      .toContain('Rue des Vallangines 97');
+    // et le QR reste accessible
+    expect(parTestId('subscriber-space-qr')).not.toBeNull();
+  });
+});
+
+
+describe('N2 — un href hostile ne devient jamais un lien', () => {
+  // React n'assainit PAS les `href` : un `javascript:` s'executerait au clic,
+  // dans la page du participant, avec son code AFR- a portee.
+  const HOSTILES = ['javascript:alert(1)', 'JavaScript:alert(1)',
+                    'data:text/html,<script>x</script>', 'vbscript:msgbox',
+                    '//evil.test', 'file:///etc/passwd'];
+
+  test.each(HOSTILES)('%s : aucun lien rendu, le lieu reste affiche', async (url) => {
+    await monter(espace({
+      trial: { is_trial: false }, restantes: 5,
+      reservations: [{ id: 'r-1', courseId: 'c-42', datetime: DEMAIN,
+                       courseName: 'Afroboost Pulse',
+                       locationName: 'Rue des Vallangines 97', mapsUrl: url }],
+    }));
+    expect(parTestId('resa-itineraire')).toBeNull();
+    expect(parTestId('resa-lieu').textContent).toContain('Rue des Vallangines 97');
+    // et aucun <a> de la page ne porte ce schema
+    const liens = Array.from(conteneur.querySelectorAll('a[href]'))
+      .map((a) => a.getAttribute('href'));
+    expect(liens.some((h) => /^(javascript|data|vbscript|file):/i.test(h || '')))
+      .toBe(false);
+  });
+
+  test('une vraie URL https reste cliquable', async () => {
+    await monter(espace({
+      trial: { is_trial: false }, restantes: 5,
+      reservations: [{ id: 'r-1', courseId: 'c-42', datetime: DEMAIN,
+                       courseName: 'Afroboost Pulse',
+                       locationName: 'Rue des Vallangines 97',
+                       mapsUrl: 'https://maps.example/x' }],
+    }));
+    expect(parTestId('resa-itineraire').getAttribute('href'))
+      .toBe('https://maps.example/x');
+  });
+});
