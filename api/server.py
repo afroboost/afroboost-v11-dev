@@ -1287,6 +1287,20 @@ class FeatureFlags(BaseModel):
     #   les deux a true                -> l'e-mail part
     P1_TRIAL_J3_ENABLED: bool = False        # P1-d
     P1_TRIAL_J3_ENVOI_REEL: bool = False     # P1-d
+    # AUTO-PRESENCE PHASE 1 — l'oubli du scan ne bloque plus l'essai.
+    # Meme double garde que P1-b/P1-d, mais le second drapeau ne parle pas
+    # d'ENVOI : ce lot n'ecrit pas a des gens, il ECRIT EN BASE. Le nommer
+    # `ENVOI_REEL` aurait ete un contresens dangereux le jour ou quelqu'un le
+    # bascule en croyant n'autoriser que des e-mails.
+    #   les deux a false                   -> lot DORMANT (etat de livraison)
+    #   ENABLED=true, ECRITURE_REELLE=false -> simulation : on identifie et on
+    #                                         journalise les reservations qui
+    #                                         SERAIENT auto-validees, on ne
+    #                                         touche a rien et on ne pose
+    #                                         AUCUNE trace definitive
+    #   les deux a true                    -> la presence est reellement posee
+    AUTO_PRESENCE_TRIAL_ENABLED: bool = False          # AUTO-PRESENCE
+    AUTO_PRESENCE_TRIAL_ECRITURE_REELLE: bool = False  # AUTO-PRESENCE
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1308,6 +1322,8 @@ class FeatureFlagsUpdate(BaseModel):
     P1_TRIAL_J0_ENVOI_REEL: Optional[bool] = None  # P1-b
     P1_TRIAL_J3_ENABLED: Optional[bool] = None  # P1-d
     P1_TRIAL_J3_ENVOI_REEL: Optional[bool] = None  # P1-d
+    AUTO_PRESENCE_TRIAL_ENABLED: Optional[bool] = None  # AUTO-PRESENCE
+    AUTO_PRESENCE_TRIAL_ECRITURE_REELLE: Optional[bool] = None  # AUTO-PRESENCE
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -15244,6 +15260,11 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
         qty_to_refund = 1
 
     # Suppression de la réservation
+    # ── LA TRACE PASSE AVANT, ET C'EST TOUT L'INTERET ──────────────────────
+    # Une ligne posee APRES le `delete_one` ne tracerait plus rien : le
+    # document a lire aurait disparu. `_t1_essai` a deja ete calcule plus haut
+    # par la regle existante — on ne redemande rien, on ne recalcule rien.
+    await t1_tracer_annulation(reservation, "abonné", _t1_essai)
     await db.reservations.delete_one({"id": reservation_id})
 
     new_remaining = (subscription.get("remaining_sessions") or 0) + qty_to_refund
@@ -17042,6 +17063,8 @@ async def get_feature_flags():
             "P1_TRIAL_J0_ENVOI_REEL": False,   # P1-b : défaut OFF (simulation même si activé)
             "P1_TRIAL_J3_ENABLED": False,      # P1-d : défaut OFF (aucune relance J+3)
             "P1_TRIAL_J3_ENVOI_REEL": False,   # P1-d : défaut OFF (simulation même si activé)
+            "AUTO_PRESENCE_TRIAL_ENABLED": False,          # AUTO-PRESENCE : défaut OFF (aucune auto-validation)
+            "AUTO_PRESENCE_TRIAL_ECRITURE_REELLE": False,  # AUTO-PRESENCE : défaut OFF (simulation même si activé)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -17063,7 +17086,9 @@ async def get_feature_flags():
                          ("P1_TRIAL_J0_ENABLED", False),
                          ("P1_TRIAL_J0_ENVOI_REEL", False),
                          ("P1_TRIAL_J3_ENABLED", False),
-                         ("P1_TRIAL_J3_ENVOI_REEL", False)):
+                         ("P1_TRIAL_J3_ENVOI_REEL", False),
+                         ("AUTO_PRESENCE_TRIAL_ENABLED", False),
+                         ("AUTO_PRESENCE_TRIAL_ECRITURE_REELLE", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -26535,6 +26560,60 @@ async def t1_preuve(accepte, course_id: str = "", coach_id: str = "") -> dict:
     }
 
 
+async def t1_tracer_annulation(reservation: dict, par: str = "",
+                               est_essai: bool = False) -> bool:
+    """Garde une trace d'une annulation AVANT que la reservation disparaisse.
+
+    POURQUOI. `cancel_reservation_from_space` fait un `delete_one` sec : une
+    annulation ne laissait ABSOLUMENT rien derriere elle. On savait distinguer
+    une presence scannee, un walk-in, une auto-presence et une absence
+    declaree — mais une reservation annulee etait indiscernable d'une
+    reservation qui n'a jamais existe. Impossible, donc, de repondre a
+    « combien de gens annulent ? », qui est exactement la question que pose un
+    funnel d'essai. (`deleted_items` ne sert qu'aux fiches CRM, V313.)
+
+    CE QU'ELLE NE FAIT PAS : elle ne retient PAS la reservation. Le
+    `delete_one` reste, le comportement d'annulation est inchange au caractere
+    pres. C'est une trace, pas une corbeille — une suppression douce aurait
+    demande de reprendre tout le cycle de vie des reservations, ce que ce lot
+    n'a aucune raison de faire.
+
+    ELLE NE BLOQUE JAMAIS UNE ANNULATION. Si l'ecriture echoue, on le note et
+    on rend False : personne ne doit se voir refuser une annulation parce
+    qu'un compteur est indisponible. C'est la meme regle que pour la
+    restitution et pour P1-b.
+
+    L'OCCURRENCE EST NORMALISEE ICI, une fois pour toutes, par
+    `lot1_occurrence_iso` : la base porte deux formats (naif et suffixe `Z`) et
+    une trace qui les melangerait serait incomptable.
+    """
+    _r = reservation or {}
+    _occ_iso = globals().get("lot1_occurrence_iso")
+    if _occ_iso is None:
+        from api.routes.reservation_routes import lot1_occurrence_iso as _occ_iso
+    try:
+        await db["reservation_cancellations"].insert_one({
+            "id": str(uuid.uuid4()),
+            "reservation_id": _r.get("id"),
+            "reservationCode": _r.get("reservationCode"),
+            "userEmail": (_r.get("userEmail") or "").strip().lower(),
+            "courseId": _r.get("courseId"),
+            "courseName": _r.get("courseName"),
+            "occurrence": _occ_iso(_r.get("datetime")) or "",
+            "code": (_r.get("promoCode") or _r.get("discountCode") or "").strip(),
+            "est_essai": bool(est_essai),
+            "quantity": _r.get("quantity") or 1,
+            "coach_id": _r.get("coach_id"),
+            "cancelled_at": datetime.now(timezone.utc).isoformat(),
+            "cancelled_by": par or "abonné",
+        })
+        return True
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[ANNULATION] trace non posee pour %s : %s",
+                       str(_r.get("id") or "?")[:8], _err)
+        return False
+
+
 async def t1_restituer_essais_non_honores(code: str) -> int:
     """Rend le credit d'un essai RESERVE mais jamais honore. Renvoie le nombre rendu.
 
@@ -29704,6 +29783,389 @@ async def _p1d_boucle_relance_j3():
         await asyncio.sleep(P1D_PERIODE_S)
 
 
+# ============================================================================
+# AUTO-PRESENCE PHASE 1 — L'OUBLI DU SCAN NE BLOQUE PLUS L'ESSAI
+# ============================================================================
+#
+# LE PROBLEME, MESURE LE 25/08/2026 SUR LA PRODUCTION. Une reservation dont le
+# cours est passe sans scan ne declenche RIEN : aucun automate ne regarde les
+# seances passees. La seance reste decomptee, l'essai reste ni consomme ni
+# rendu, P1-b ne part pas, P1-c ne s'ouvre pas, P1-d n'a rien a relancer. Le
+# seul mecanisme existant — `t1_restituer_essais_non_honores` — n'est appele
+# QUE si la personne revient reserver. Il n'avait, ce jour-la, jamais rendu un
+# seul credit (0 document portant `trial_credit_restored`).
+#
+# CE QUE CE LOT FAIT, ET STRICTEMENT RIEN D'AUTRE : apres un delai de grace,
+# une reservation D'ESSAI non scannee, non annulee et sans absence declaree
+# devient une presence — nommee comme telle.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# PHASE 1 = ESSAIS GRATUITS UNIQUEMENT. CE N'EST PAS UNE PRECAUTION DE STYLE.
+# ─────────────────────────────────────────────────────────────────────────
+# Au 25/08/2026, 122 reservations passees ne sont pas validees, et elles sont
+# TOUTES payantes. Ouvrir l'auto-presence aux forfaits debiterait 122 seances
+# vendues sans qu'aucun humain ne l'ait constate, et fausserait cinq mois de
+# bilan financier. Le moteur pourrait techniquement les traiter : il ne le
+# fera pas, et la garde est explicite (`pas_un_essai`).
+#
+# ─────────────────────────────────────────────────────────────────────────
+# TROIS VERROUS, ET POURQUOI CHACUN
+# ─────────────────────────────────────────────────────────────────────────
+#   1. LA BORNE D'ACTIVATION. Sans elle, le premier passage rattraperait cinq
+#      mois d'historique d'un coup. Illisible -> borne infinie : panne
+#      bruyante, jamais rattrapage silencieux. Meme motif que P1-d.
+#   2. LA SIMULATION. `ENABLED` sans `ECRITURE_REELLE` identifie et journalise
+#      les candidats SANS rien ecrire — et surtout sans poser la moindre trace
+#      qui empecherait l'execution reelle ensuite.
+#   3. L'ABSENCE DECLAREE. Elle ferme definitivement l'auto-validation. C'est
+#      la condition sans laquelle ce lot transformerait chaque absent en
+#      present.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# LE FUSEAU N'EST PAS UN DETAIL
+# ─────────────────────────────────────────────────────────────────────────
+# `reservations.datetime` porte DEUX formats en production (81 naifs, 57
+# suffixes `Z`). Comparer ces chaines a un instant UTC — ce que fait encore
+# `t1_restituer_essais_non_honores` — decale l'echeance de deux heures en ete.
+# On passe donc SYSTEMATIQUEMENT par `lot1_occurrence_iso` (naif Europe/Zurich)
+# puis par `ap_occurrence_utc`, qui rend un instant aware. Aucun UTC+2 ecrit
+# en dur : `zoneinfo` gere seul le passage ete/hiver.
+
+AP_PREFIXE = "[AUTO-PRESENCE]"
+AP_FUSEAU = "Europe/Zurich"
+# LE DELAI DE GRACE : deux heures APRES LA FIN de la seance, pas apres son
+# debut. Pour le cours de 18:30 (20 des 23 cours du catalogue), la duree de
+# l'offre est de 60 min : l'echeance tombe a 21:30 heure suisse. Trois raisons
+# a ce choix plutot qu'a 30 ou 60 min : le coach range la salle et scanne
+# souvent apres le cours ; il n'existe encore aucune habitude de declarer une
+# absence, il faut lui en laisser le temps ; et 21:30 reste le MEME JOUR
+# calendaire, donc le « J+0 » de P1-b ne devient pas un mensonge.
+AP_GRACE_MINUTES = 120
+# Aucun des 23 cours ne porte `duration_minutes` (mesure du 25/08/2026) : la
+# duree ne vit que sur les OFFRES (60 min pour cinq d'entre elles, 95 pour une).
+# On lit donc l'offre quand on peut, et on retombe sur 60 min sinon — jamais on
+# ne fait partir le delai du seul debut du cours.
+AP_DUREE_DEFAUT_MIN = 60
+AP_BORNE_DEFAUT = "2026-08-26T00:00:00+00:00"
+AP_LOT_MAX = 200
+AP_PERIODE_S = 3600        # un passage par heure, comme P1-d
+
+
+def ap_borne_activation():
+    """La borne AVANT laquelle aucune occurrence n'est jamais candidate.
+
+    ILLISIBLE -> BORNE INFINIE, exactement comme P1-d. Une borne mal formee ne
+    doit pas se lire « aucune borne » : ce serait le rattrapage des 122
+    reservations historiques, precisement ce que ce verrou interdit.
+    """
+    _brut = os.environ.get("AP_BORNE_ACTIVATION", "") or AP_BORNE_DEFAUT
+    try:
+        _d = datetime.fromisoformat(str(_brut).strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        _d = None
+    if _d is None:
+        logger.error("%s borne d'activation illisible (%r) — aucun candidat",
+                     AP_PREFIXE, _brut)
+        return datetime(2999, 1, 1, tzinfo=timezone.utc)
+    return _d if _d.tzinfo is not None else _d.replace(tzinfo=timezone.utc)
+
+
+def ap_occurrence_utc(occurrence_naive):
+    """Une occurrence naive Europe/Zurich -> l'instant AWARE UTC correspondant.
+
+    L'entree attendue est la sortie de `lot1_occurrence_iso` : une seule
+    convention dans tout le depot. Une valeur deja porteuse d'un fuseau est
+    acceptee telle quelle plutot que refusee — la convertir est sans ambiguite.
+
+    SANS BASE DE FUSEAUX, ON REFUSE. Deviner un decalage donnerait une heure
+    fausse en silence ; un refus se voit.
+    """
+    _v = str(occurrence_naive or "").strip()
+    if len(_v) < 16:
+        return None
+    try:
+        _d = datetime.fromisoformat(_v.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if _d.tzinfo is not None:
+        return _d.astimezone(timezone.utc)
+    try:
+        from zoneinfo import ZoneInfo
+        return _d.replace(tzinfo=ZoneInfo(AP_FUSEAU)).astimezone(timezone.utc)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s fuseau indisponible (%s) — occurrence refusee",
+                       AP_PREFIXE, type(_err).__name__)
+        return None
+
+
+def ap_echeance(occurrence_naive, duree_minutes=None):
+    """L'instant AWARE UTC a partir duquel l'auto-presence devient due.
+
+    FONCTION PURE : aucune I/O, aucune base. C'est ce qui permet de prouver le
+    delai — ete comme hiver — sans monter une seule reservation.
+
+        debut (occurrence) + duree reelle de la seance + delai de grace
+    """
+    _debut = ap_occurrence_utc(occurrence_naive)
+    if _debut is None:
+        return None
+    try:
+        _duree = int(duree_minutes or AP_DUREE_DEFAUT_MIN)
+    except (TypeError, ValueError):
+        _duree = AP_DUREE_DEFAUT_MIN
+    return _debut + timedelta(minutes=_duree + AP_GRACE_MINUTES)
+
+
+async def _ap_est_un_essai(_db, forfait=None, code=""):
+    """ESSAI-6, la definition centrale — jamais une copie locale.
+
+    Enveloppe volontairement mince : elle existe pour que le banc d'essai
+    puisse substituer la regle deja prouvee ailleurs sans que ce fichier en
+    connaisse une seconde version.
+    """
+    from api.routes.shared import est_un_essai as _e
+    return await _e(_db, forfait=forfait, code=code)
+
+
+async def _ap_a1b(rows):
+    """La garde A1b : la seance a-t-elle REELLEMENT eu lieu ce jour-la ?
+
+    C'est exactement la garde que P1-c (`conv_presence_reelle`) appliquera
+    ensuite. La poser ICI evite de valider une presence que P1-c refuserait —
+    donc une presence qui consommerait l'essai sans ouvrir la conversion.
+    """
+    from api.routes.reservation_routes import _a1b_occurrences_reelles as _g
+    return await _g(rows)
+
+
+async def ap_duree_minutes(reservation):
+    """La duree de la seance, en minutes. `AP_DUREE_DEFAUT_MIN` a defaut."""
+    _oid = str((reservation or {}).get("offerId") or "").strip()
+    if _oid:
+        try:
+            _o = await db.offers.find_one({"id": _oid},
+                                          {"_id": 0, "duration_minutes": 1})
+            _d = (_o or {}).get("duration_minutes")
+            if _d:
+                return int(_d)
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("%s duree de l'offre %s illisible : %s",
+                           AP_PREFIXE, _oid[:12], _err)
+    return AP_DUREE_DEFAUT_MIN
+
+
+async def ap_candidats(maintenant=None) -> list:
+    """Les reservations qui POURRAIENT etre dues. LECTURE PURE.
+
+    Les quatre exclusions sont posees EN BASE, pas en Python : une reservation
+    deja validee, deja declaree absente, dont le credit a deja ete rendu, ou
+    deja traitee par l'automate n'est meme pas chargee. L'echeance, la borne et
+    la nature d'essai sont revalidees par `ap_traiter` — cette fonction ne fait
+    que borner ce qu'on lit.
+
+    `trial_credit_restored` MERITE SON EXCLUSION. C'est le seul point de
+    contact avec la restitution existante : si le credit a deja ete rendu,
+    valider ensuite la presence consommerait une seance rendue. Le crediter
+    puis le reprendre serait une double consommation silencieuse.
+    """
+    try:
+        return await db.reservations.find(
+            {"validated": {"$ne": True},
+             "absence_marked_at": {"$exists": False},
+             "trial_credit_restored": {"$exists": False},
+             "auto_presence_at": {"$exists": False},
+             "datetime": {"$exists": True}},
+            {"_id": 0}).to_list(AP_LOT_MAX)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s candidats illisibles (%s) — passage ignore",
+                       AP_PREFIXE, type(_err).__name__)
+        return []
+
+
+async def ap_traiter(reservation, maintenant=None) -> str:
+    """UNE reservation. Rend l'issue, NE LEVE JAMAIS.
+
+    L'ETAT EST RELU EN BASE AVANT TOUTE DECISION, et ce n'est pas une
+    precaution theorique : entre le chargement du lot et le traitement d'une
+    ligne, le coach a pu scanner ou declarer une absence. Le candidat en
+    memoire est peut-etre perime ; le document, lui, fait foi. C'est ce qui
+    fait gagner le no-show pose a la derniere seconde.
+
+    Issues possibles :
+      "desactive"            le drapeau est faux -> rien
+      "deja_validee"         quelqu'un l'a validee (scan, staff, ou nous-memes)
+      "absent"               absence declaree par le coach
+      "credit_rendu"         le credit a deja ete restitue
+      "occurrence_illisible" date inexploitable — on refuse plutot que deviner
+      "hors_borne"           occurrence anterieure a l'activation
+      "pas_un_essai"         forfait payant : hors perimetre de la phase 1
+      "pas_encore"           le delai de grace n'est pas echu
+      "seance_inexistante"   la garde A1b refuse (cours archive, mauvais jour)
+      "simulation"           tout etait pret ; on n'a rien ecrit
+      "auto_validee"         la presence est posee
+      "echec"                incident ; rien n'a ete ecrit
+    """
+    if not isinstance(reservation, dict):
+        return "echec"
+    try:
+        _flags = await get_feature_flags()
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s drapeaux illisibles (%s) — aucune auto-presence",
+                       AP_PREFIXE, type(_err).__name__)
+        return "desactive"
+    if not (_flags or {}).get("AUTO_PRESENCE_TRIAL_ENABLED"):
+        return "desactive"
+    _reel = bool((_flags or {}).get("AUTO_PRESENCE_TRIAL_ECRITURE_REELLE"))
+    _now = maintenant or datetime.now(timezone.utc)
+
+    # ── L'ETAT REEL, RELU MAINTENANT ────────────────────────────────────────
+    _id = str(reservation.get("id") or "").strip()
+    _r = reservation
+    if _id:
+        try:
+            _frais = await db.reservations.find_one({"id": _id}, {"_id": 0})
+            if _frais:
+                _r = _frais
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("%s relecture impossible (%s) — candidat ignore",
+                           AP_PREFIXE, type(_err).__name__)
+            return "echec"
+
+    if _r.get("validated") is True:
+        return "deja_validee"
+    if _r.get("absence_marked_at"):
+        return "absent"
+    if _r.get("trial_credit_restored"):
+        return "credit_rendu"
+
+    # ── L'OCCURRENCE, NORMALISEE UNE FOIS POUR TOUTES ───────────────────────
+    # RESOLUTION PAR L'ESPACE DE NOMS D'ABORD. Le banc d'essai extrait ces
+    # fonctions par AST et les place dans son propre espace, relie a une base
+    # simulee ; un `import` inconditionnel irait rechercher la version reliee a
+    # la VRAIE base et le banc ne testerait plus rien. En production, ces noms
+    # sont absents de `server.py` : l'import a lieu, comme prevu.
+    _occ_iso = globals().get("lot1_occurrence_iso")
+    if _occ_iso is None:
+        from api.routes.reservation_routes import lot1_occurrence_iso as _occ_iso
+    _occ = _occ_iso(_r.get("datetime"))
+    if not _occ:
+        return "occurrence_illisible"
+    _debut = ap_occurrence_utc(_occ)
+    if _debut is None:
+        return "occurrence_illisible"
+    if _debut < ap_borne_activation():
+        return "hors_borne"
+
+    # ── PHASE 1 : LES ESSAIS, ET EUX SEULS ──────────────────────────────────
+    _code = (_r.get("promoCode") or _r.get("discountCode") or "").strip()
+    try:
+        if not await _ap_est_un_essai(db, code=_code):
+            return "pas_un_essai"
+    except Exception as _err:  # noqa: BLE001
+        # NATURE INDETERMINEE -> ON NE VALIDE PAS. Un essai manque coute une
+        # relance ; un forfait payant auto-consomme coute une seance vendue.
+        logger.warning("%s nature indeterminee pour %s : %s",
+                       AP_PREFIXE, _id[:8], _err)
+        return "pas_un_essai"
+
+    # ── LE DELAI DE GRACE ───────────────────────────────────────────────────
+    _ech = ap_echeance(_occ, await ap_duree_minutes(_r))
+    if _ech is None:
+        return "occurrence_illisible"
+    if _now < _ech:
+        return "pas_encore"
+
+    # ── LA SEANCE A-T-ELLE EU LIEU ? ────────────────────────────────────────
+    try:
+        if not await _ap_a1b([_r]):
+            return "seance_inexistante"
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s garde A1b indisponible (%s) — presence refusee",
+                       AP_PREFIXE, type(_err).__name__)
+        return "seance_inexistante"
+
+    # ── SIMULATION : ON DECIDE, ON DIT, ON N'ECRIT RIEN ─────────────────────
+    if not _reel:
+        # Aucune trace n'est posee — ni `auto_presence_at`, ni quoi que ce soit
+        # d'autre : simuler ne doit JAMAIS empecher l'execution reelle plus
+        # tard. C'est la meme discipline qu'en P1-b et P1-d.
+        logger.info("%s SIMULATION — reservation=%s occurrence=%s echeance=%s "
+                    "SERAIT auto-validee (aucune ecriture)",
+                    AP_PREFIXE, _id[:8], _occ, _ech.isoformat())
+        return "simulation"
+
+    # ── L'ECRITURE REELLE, ATOMIQUE ─────────────────────────────────────────
+    # On reutilise LE point de transition unique du depot. Il porte deja
+    # l'atomicite (filtre `validated != True`), l'evenement de funnel C9 et le
+    # declenchement de P1-b — donc le J+0 part d'ici, au moment ou l'auto-
+    # validation devient definitive, et jamais a l'heure theorique du cours.
+    _poser = globals().get("_a0_marquer_presente")
+    if _poser is None:
+        from api.routes.reservation_routes import _a0_marquer_presente as _poser
+    try:
+        _gagne = await _poser(_r, "", "auto")
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s ecriture impossible sur %s : %s", AP_PREFIXE, _id[:8], _err)
+        return "echec"
+    if not _gagne:
+        return "deja_validee"
+    logger.info("%s presence AUTOMATIQUE posee sur %s (occurrence %s)",
+                AP_PREFIXE, _id[:8], _occ)
+    return "auto_validee"
+
+
+async def ap_passage(maintenant=None) -> dict:
+    """UN passage complet. Rend le decompte par issue. NE LEVE JAMAIS.
+
+    Extraite de la boucle a dessein : c'est elle que le banc appelle, et c'est
+    elle qu'un super-admin pourrait declencher a la main sans qu'on duplique la
+    moindre regle.
+    """
+    _resume = {}
+    try:
+        _flags = await get_feature_flags()
+        if not (_flags or {}).get("AUTO_PRESENCE_TRIAL_ENABLED"):
+            return {"desactive": 1}
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s drapeaux illisibles (%s) — passage ignore",
+                       AP_PREFIXE, type(_err).__name__)
+        return {"desactive": 1}
+    _now = maintenant or datetime.now(timezone.utc)
+    for _r in await ap_candidats(_now):
+        try:
+            _issue = await ap_traiter(_r, _now)
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("%s candidat ignore (%s)", AP_PREFIXE, type(_err).__name__)
+            _issue = "echec"
+        _resume[_issue] = _resume.get(_issue, 0) + 1
+    return _resume
+
+
+async def _ap_boucle_auto_presence():
+    """La boucle de fond. Un passage par heure, et jamais d'arret sur erreur.
+
+    MEME MOTIF QUE `_p1d_boucle_relance_j3` : tache asyncio native lancee au
+    demarrage, qui fonctionne parce que Coolify fait tourner un uvicorn
+    permanent (les crons `vercel.json` ne s'executent pas ici).
+
+    L'ETAT VIT EN BASE, PAS EN MEMOIRE. Un redemarrage ne perd donc aucun
+    travail : le passage suivant recharge les memes candidats, et ceux qui ont
+    deja ete traites en sont exclus par la requete elle-meme.
+
+    LE DRAPEAU EST RELU A CHAQUE PASSAGE : l'activation ne demande aucun
+    redeploiement.
+    """
+    await asyncio.sleep(60)   # laisser l'application finir de s'initialiser
+    while True:
+        try:
+            _resume = await ap_passage()
+            if _resume and set(_resume) != {"desactive"}:
+                logger.info("%s passage : %s", AP_PREFIXE, _resume)
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("%s passage ignore : %s", AP_PREFIXE, _err)
+        await asyncio.sleep(AP_PERIODE_S)
+
+
 async def send_expiry_reminder_email(coach_email: str, offer_name: str, days_remaining: int):
     """V70: Email J-7 rappel expiration — design Afroboost premium"""
     if not RESEND_API_KEY:
@@ -31942,6 +32404,11 @@ async def startup_db():
     # tache ne lit meme pas la collection des reservations.
     try:
         asyncio.create_task(_p1d_boucle_relance_j3())
+        # AUTO-PRESENCE : meme motif, meme raison — un automate doit
+        # regarder l'heure, personne ne le fait a sa place. Dormant tant
+        # que le drapeau est faux : la boucle tourne, chaque passage sort
+        # immediatement sans lire la base.
+        asyncio.create_task(_ap_boucle_auto_presence())
         logger.info("[P1-d] Boucle de relance J+3 demarree (1 h) — drapeau relu a chaque passage")
     except Exception as e:
         logger.warning(f"[P1-d] Demarrage de la boucle ignore: {e}")

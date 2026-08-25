@@ -2354,9 +2354,27 @@ def _a0_est_aujourdhui(valeur) -> bool:
     return _d.astimezone(_tz_ch).date() == _a0_maintenant_ch().date()
 
 
-async def _a0_marquer_presente(reservation: dict, scanneur: str = "") -> bool:
+async def _a0_marquer_presente(reservation: dict, scanneur: str = "",
+                               source: str = "qr") -> bool:
     """Pose la presence sur UNE reservation. Renvoie True si c'est une
     transition reelle (non-validee -> validee), False si elle l'etait deja.
+
+    AUTO-PRESENCE — `source` DIT COMMENT LA PRESENCE A ETE ETABLIE, et ce
+    n'est pas un detail de journalisation : une presence presumee par un
+    automate ne vaut pas une presence constatee par un humain a la porte.
+    Le defaut est `"qr"` parce que les DIX appelants existants sont tous des
+    chemins humains (scan direct, staff, groupe, code de reservation) — aucun
+    n'a besoin d'etre modifie, et aucun ne peut donc etre oublie. Seule
+    l'auto-presence passe `"auto"`, et elle est la seule a le faire.
+
+    NE JAMAIS FAIRE PASSER UNE AUTO-VALIDATION POUR UN SCAN. C'est la demande
+    explicite du proprietaire, et c'est aussi ce qui rend le lot reversible :
+    sans ce champ, une auto-presence erronee serait indiscernable d'une
+    presence reelle, donc impossible a corriger.
+
+    L'horodatage `auto_presence_at` est pose DANS LA MEME ECRITURE que
+    `validated` : un arret entre les deux laisserait sinon une auto-presence
+    sans son jeton, et le worker la reprendrait au passage suivant.
 
     PRISE DE DROIT ATOMIQUE, et non « lire puis ecrire ». Le filtre porte la
     condition `validated != True` : deux scans simultanes du meme QR — un
@@ -2382,8 +2400,10 @@ async def _a0_marquer_presente(reservation: dict, scanneur: str = "") -> bool:
                    "validated": {"$ne": True}}
     else:
         _filtre = {"id": _id, "validated": {"$ne": True}}
-    _res = await db.reservations.update_one(
-        _filtre, {"$set": {"validated": True, "validatedAt": _quand}})
+    _maj = {"validated": True, "validatedAt": _quand, "validation_source": source}
+    if source == "auto":
+        _maj["auto_presence_at"] = _quand
+    _res = await db.reservations.update_one(_filtre, {"$set": _maj})
     if not getattr(_res, "matched_count", 0):
         return False
     await _c9_presence(reservation, False)
@@ -2396,6 +2416,80 @@ async def _a0_marquer_presente(reservation: dict, scanneur: str = "") -> bool:
     # doit surtout pas defaire une presence deja validee.
     _p1b_apres_presence(reservation)
     return True
+
+
+@reservation_router.post("/reservations/{reservation_id}/absence")
+async def marquer_absence(reservation_id: str, request: Request):
+    """Le coach declare qu'une personne N'EST PAS VENUE.
+
+    POURQUOI CETTE ROUTE EXISTE. Jusqu'ici l'absence n'etait pas une donnee :
+    le Bilan la CALCULAIT par soustraction (`total - presents`). Tant que rien
+    ne validait automatiquement, cela suffisait. Des lors qu'un automate
+    presume la presence apres un delai, l'absence doit devenir une DECLARATION
+    — sans quoi tout absent deviendrait un present, recevrait un « merci d'etre
+    venu » et verrait son essai consomme. C'est la condition posee par le
+    proprietaire, et elle est non negociable.
+
+    CE QU'ELLE FAIT, ET RIEN DE PLUS :
+      * elle pose `absence_marked_at` / `absence_marked_by` ;
+      * elle rend son credit d'essai a la personne, EN REUTILISANT la regle
+        existante (`t1_restituer_essais_non_honores`) — on n'ecrit pas une
+        seconde logique de restitution, il n'y en aura jamais qu'une ;
+      * elle ne supprime rien, ne debite rien, n'envoie rien.
+
+    CE QU'ELLE N'EMPECHE PAS : un SCAN ULTERIEUR. Si la personne arrive en
+    retard et presente son QR, la presence reelle l'emporte — c'est la seule
+    soupape contre un clic malheureux, et elle est volontaire. L'absence ferme
+    l'AUTO-validation, pas la realite.
+
+    IDEMPOTENTE : l'ecriture est conditionnee a l'absence du champ. Deux clics
+    ne produisent qu'une declaration, et la seconde ne rejoue pas la
+    restitution — sinon un double-clic rendrait deux credits.
+
+    R11 : meme garde de propriete que les trois portes de validation. Declarer
+    une absence, c'est ecrire sur la reservation de quelqu'un.
+    """
+    _scanneur = await _r11_scanneur(request)
+    reservation = await db.reservations.find_one({"id": reservation_id}, {"_id": 0})
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Réservation introuvable")
+    _r11_verifier_proprietaire(_scanneur, reservation, "réservation")
+
+    # Une presence CONSTATEE ne se defait pas par une declaration d'absence :
+    # le scan est la preuve forte, la declaration la preuve faible.
+    if reservation.get("validated") is True:
+        raise HTTPException(
+            status_code=409,
+            detail="Cette personne a été validée présente — l'absence ne peut pas l'annuler.")
+
+    _quand = datetime.now(timezone.utc).isoformat()
+    _pris = await db.reservations.update_one(
+        {"id": reservation_id, "absence_marked_at": {"$exists": False}},
+        {"$set": {"absence_marked_at": _quand, "absence_marked_by": _scanneur or ""}},
+    )
+    _nouvelle = bool(getattr(_pris, "matched_count", 0))
+
+    # LA RESTITUTION EXISTANTE, PAS UNE NOUVELLE. Elle est deja idempotente
+    # (`trial_credit_restored`), deja limitee aux essais, et c'est deja elle qui
+    # applique la regle « ne pas venir ne consomme pas ». La rejouer ici sur une
+    # seconde declaration ne rendrait rien de plus.
+    _rendus = 0
+    if _nouvelle:
+        _code = (reservation.get("promoCode") or reservation.get("discountCode") or "").strip()
+        if _code:
+            try:
+                from api.server import t1_restituer_essais_non_honores as _t1
+                _rendus = await _t1(_code)
+            except Exception as _err:
+                # Une restitution qui echoue ne doit pas defaire la declaration
+                # d'absence : celle-ci protege deja la personne de l'automate.
+                logger.warning("[ABSENCE] credit non rendu sur %s : %s",
+                               reservation_id[:8], _err)
+
+    logger.info("[ABSENCE] %s declaree absente par %s (nouvelle=%s, credits rendus=%d)",
+                reservation_id[:8], (_scanneur or "?")[:32], _nouvelle, _rendus)
+    return {"success": True, "absence_marked_at": _quand,
+            "deja_declaree": not _nouvelle, "credits_rendus": _rendus}
 
 
 async def _a1b_occurrences_reelles(reservations: list) -> list:
@@ -3254,6 +3348,11 @@ async def _qr_scan_validate_inner(request: Request):
         "offerId": course_id, "offerName": course_name, "price": 0, "quantity": 1, "totalPrice": 0,
         "subscriptionId": sub_id, "promoCode": code, "source": "qr_scan_coach", "type": "abonné",
         "validated": True, "validatedAt": datetime.now(timezone.utc).isoformat(),
+        # AUTO-PRESENCE : ce chemin cree la reservation AU MOMENT du scan, pour
+        # quelqu'un qui n'avait rien reserve. C'est une presence constatee par
+        # un humain — elle se nomme, comme les autres, et surtout elle ne doit
+        # jamais etre confondue avec une presence presumee par l'automate.
+        "validation_source": "walkin",
         "createdAt": datetime.now(timezone.utc).isoformat(), "coach_id": coach_id
     }
     # LOT 3a : la presence constatee au scan vaut UNE seance du forfait. La
@@ -3560,6 +3659,19 @@ async def get_bilan_seance(request: Request, courseId: str = "",
         _presentes[0].get("courseName") if _presentes else "")
     _bilan["course_time"] = _cours.get("time") or ""
     _bilan["participants_absents"] = _absents
+    # AUTO-PRESENCE — LA LISTE DES ATTENDUS, ET POURQUOI ELLE MANQUAIT.
+    # Le Bilan ne rendait que les PRESENTS, plus un COMPTE d'absents. Le coach
+    # voyait donc « 3 absents » sans savoir LESQUELS : impossible d'en marquer
+    # un. Tant que l'absence n'etait qu'une soustraction, cela suffisait ; des
+    # lors qu'il faut la DECLARER, il faut la liste.
+    # Aucune donnee nouvelle n'est exposee : ce sont les memes personnes que
+    # celles deja rendues dans `lignes`, du meme cours et de la meme occurrence.
+    _bilan["participants_attendus"] = [
+        {"id": r.get("id"),
+         "nom": r.get("userName") or "",
+         "absence_marked_at": r.get("absence_marked_at") or None}
+        for r in _resas if r.get("validated") is not True
+    ]
     # PROVISOIRE tant qu'une seule valeur manque. Le mot compte : un total qui
     # se presente comme definitif alors qu'il ignore des presences est un
     # mensonge poli — celui que ce depot combat depuis V443.

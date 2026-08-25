@@ -5767,6 +5767,38 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     }).catch(function() { setPmEnvoi(false); });
   };
 
+  // AUTO-PRESENCE — DECLARER UNE ABSENCE.
+  //
+  // Meme motif que `pmDeclarer` : on POSTe, puis on RELIT le bilan, qui fait
+  // foi. On ne recopie jamais la reponse dans l'ecran — c'est le serveur qui
+  // dit qui est absent, pas le navigateur.
+  //
+  // POURQUOI CE BOUTON EXISTE. Une fois l'auto-presence active, une personne
+  // qui n'est pas venue et que personne ne declare absente sera comptee
+  // presente apres le delai de grace : elle recevra un « merci d'etre venu »
+  // et son essai sera consomme. Ce bouton est la seule facon de l'eviter.
+  //
+  // ES5 STRICT (Samsung Internet, anciens Android) : `var`, `function()`,
+  // aucune arrow, aucun template literal.
+  var absEnvoi = useState('');                 // id en cours d'envoi, ou ''
+  var absId = absEnvoi[0]; var setAbsId = absEnvoi[1];
+  var bilanMarquerAbsent = function(reservationId) {
+    if (!bilanSeance || !bilanSeance.course_id) return;
+    if (!reservationId) return;
+    if (absId) return;                         // un seul envoi a la fois
+    setAbsId(reservationId);
+    var headers = { 'Content-Type': 'application/json' };
+    var ce = getCoachEmail();
+    if (ce) headers['X-User-Email'] = ce;
+    axios.post(API + '/reservations/' + encodeURIComponent(reservationId) + '/absence',
+               {}, { headers: headers })
+      .then(function() {
+        bilanOuvrir(bilanSeance.course_id, bilanSeance.occurrence);
+        setAbsId('');
+      })
+      .catch(function() { setAbsId(''); });
+  };
+
   var sgEnregistrer = function() {
     if (!bilanSeance || !bilanSeance.course_id) return;
     if (sgEnvoi) return;                       // anti double-envoi
@@ -12746,6 +12778,64 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                                   : (String(l.valeur) + ' ' + (bilanSeance.devise || 'CHF')))
                     );
                   })
+            ),
+
+            // ── Les ATTENDUS : reserves, pas encore valides ──────────────────
+            //    Jusqu'ici le bilan n'affichait qu'un COMPTE d'absents : le
+            //    coach lisait « 3 absents » sans savoir lesquels, donc sans
+            //    pouvoir en marquer un. Cette liste est la condition de l'auto-
+            //    presence : sans elle, aucune absence ne peut etre declaree, et
+            //    l'automate compterait tout le monde present.
+            (bilanCharge && !bilanErreur && (bilanSeance.participants_attendus || []).length > 0)
+            && React.createElement('div', {
+              'data-testid': 'bilan-attendus',
+              style: { marginTop: '18px', paddingTop: '14px',
+                       borderTop: '1px solid rgba(255,255,255,0.12)' }
+            },
+              React.createElement('div', {
+                style: { color: '#aaa', fontSize: '10px', letterSpacing: '0.06em',
+                         textTransform: 'uppercase', marginBottom: '8px' }
+              }, 'Attendus — non validés'),
+              (bilanSeance.participants_attendus || []).map(function(a, i) {
+                var declare = !!a.absence_marked_at;
+                return React.createElement('div', {
+                  key: (a.id || '') + '-' + i,
+                  'data-testid': 'bilan-attendu',
+                  style: {
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '9px 0', borderBottom: '1px solid rgba(255,255,255,0.08)'
+                  }
+                },
+                  React.createElement('div', {
+                    style: { color: declare ? '#666' : '#fff', fontSize: '13px',
+                             minWidth: 0, paddingRight: '10px', whiteSpace: 'nowrap',
+                             overflow: 'hidden', textOverflow: 'ellipsis' }
+                  }, a.nom || '—'),
+                  declare
+                    ? React.createElement('span', {
+                        style: { color: '#666', fontSize: '11px', whiteSpace: 'nowrap' }
+                      }, 'Absent déclaré')
+                    : React.createElement('button', {
+                        type: 'button',
+                        'data-testid': 'bilan-marquer-absent',
+                        onClick: function() { bilanMarquerAbsent(a.id); },
+                        disabled: !!absId,
+                        style: {
+                          background: 'transparent',
+                          border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.55)',
+                          color: 'var(--primary-color, #D91CD2)',
+                          borderRadius: '8px', padding: '5px 11px', fontSize: '11px',
+                          cursor: absId ? 'default' : 'pointer',
+                          opacity: (absId && absId !== a.id) ? 0.4 : 1,
+                          whiteSpace: 'nowrap'
+                        }
+                      }, absId === a.id ? '…' : 'Absent')
+                );
+              }),
+              React.createElement('div', {
+                style: { color: '#666', fontSize: '10px', marginTop: '8px', lineHeight: 1.4 }
+              }, 'Sans déclaration, une réservation d’essai non scannée sera comptée '
+               + 'présente après le délai. Un scan reste toujours prioritaire.')
             ),
 
             // ── La place du lot suivant, nommee et vide ──────────────────────
