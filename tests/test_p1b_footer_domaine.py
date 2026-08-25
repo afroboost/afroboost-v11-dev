@@ -142,8 +142,13 @@ def voisins():
     verifier("V1. la signature du gabarit est INCHANGEE",
              "def _email_wrapper(header_gradient: str, body_html: str, "
              "accent: str = \"#D91CD2\") -> str:" in _src, _src[:120])
-    verifier("V2. les cinq appelants du gabarit sont toujours la",
-             SOURCE.count("_email_wrapper(") == 6,
+    # COMPTE EXACT, jamais `>=` : un `>=` laisserait passer la PERTE d'un
+    # appelant compensee par l'ajout d'un autre — exactement ce que ce garde
+    # doit voir. Le compte est monte de 6 a 7 le 25/08/2026 avec P1-d
+    # (`p1d_contenu_relance`), qui reutilise le meme gabarit. Toute nouvelle
+    # variation de ce nombre doit etre EXPLIQUEE ici.
+    verifier("V2. les six appelants du gabarit sont toujours la (dont P1-d)",
+             SOURCE.count("_email_wrapper(") == 7,
              "occurrences (definition comprise) : %d" % SOURCE.count("_email_wrapper("))
 
 

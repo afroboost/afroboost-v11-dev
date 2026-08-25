@@ -2330,6 +2330,55 @@ def _install_signal_cleanup():
             except Exception:
                 pass
 
+# ── P1-d : LA RELANCE J+3 EST LIVREE DORMANTE ──────────────────────────────
+P1D_FLAGS = ("P1_TRIAL_J3_ENABLED", "P1_TRIAL_J3_ENVOI_REEL")
+
+
+def t109_p1d_drapeaux_exposes_et_dormants():
+    """P1-d : les deux interrupteurs doivent être LISIBLES au curl ET à false.
+
+    DEUX choses en une, et les deux comptent :
+      1. la LISIBILITÉ — c'est la leçon V319 : un drapeau ajouté après la
+         création du document `feature_flags` restait invisible, donc
+         impossible de prouver qu'une version est déployée ;
+      2. la DORMANCE — P1-d est livré éteint, et il doit le RESTER tant que le
+         premier vrai J+0 n'a pas été observé en production. Ce test est le
+         garde-fou : si un jour l'un des deux passe à true sans décision, la
+         suite de non-régression le dit.
+    """
+    d = _lot3b_drapeaux()
+    if d is None:
+        return record(109, "GET /api/feature-flags expose les drapeaux P1-d", False,
+                      "drapeaux illisibles")
+    absents = [f for f in P1D_FLAGS if f not in d]
+    if absents:
+        return skip(109, "GET /api/feature-flags expose les drapeaux P1-d",
+                    "%s absent(s) — P1-d pas encore déployé" % ", ".join(absents))
+    allumes = [f for f in P1D_FLAGS if d.get(f) is not False]
+    record(109, "P1-d exposé ET dormant (les deux drapeaux à false)",
+           not allumes,
+           ("ALLUMÉ : %s" % ", ".join(allumes)) if allumes
+           else "%s" % {f: d.get(f) for f in P1D_FLAGS})
+
+
+def t110_p1d_drapeaux_admin_seulement():
+    """P1-d commande des ENVOIS À DES CLIENTS. Le basculer exige un JWT
+    super-admin ; `X-User-Email` seul (usurpable) -> 403. Même exigence que #59,
+    #61 et #104. On envoie `False`, la valeur PAR DÉFAUT : même si la garde
+    tombait, la production ne changerait pas d'état."""
+    d = _lot3b_drapeaux()
+    if d is None or any(f not in d for f in P1D_FLAGS):
+        return skip(110, "PUT /feature-flags P1-d sans JWT super-admin -> 403",
+                    "drapeaux P1-d absents — P1-d pas encore déployé")
+    try:
+        r = requests.put(_url("/api/feature-flags"),
+                         json={"P1_TRIAL_J3_ENABLED": False},
+                         headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+        record(110, "PUT /feature-flags P1-d sans JWT super-admin -> 403",
+               r.status_code == 403, f"HTTP {r.status_code}")
+    except Exception as e:
+        record(110, "PUT /feature-flags P1-d sans JWT super-admin -> 403", False, str(e))
+
 
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
@@ -2374,6 +2423,7 @@ def main():
                    t105_estimation_sans_jeton_prix_public, t106_estimation_offre_inconnue,
                    t107_estimation_aucun_oracle_par_email,
                    t108_offres_exposent_avantage_membre,
+                   t109_p1d_drapeaux_exposes_et_dormants, t110_p1d_drapeaux_admin_seulement,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

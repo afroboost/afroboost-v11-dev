@@ -1277,6 +1277,16 @@ class FeatureFlags(BaseModel):
     # HTTP qu'on pourrait parametrer.
     P1_TRIAL_J0_ENABLED: bool = False        # P1-b
     P1_TRIAL_J0_ENVOI_REEL: bool = False     # P1-b
+    # P1-d : la DERNIERE relance, trois jours apres un essai non converti.
+    # Meme double garde qu'au J+0, et pour la meme raison : le premier drapeau
+    # dit « le lot existe », le second « il ecrit vraiment a des gens ».
+    #   les deux a false               -> lot DORMANT (etat de livraison)
+    #   ENABLED=true, ENVOI_REEL=false -> simulation : destinataire et contenu
+    #                                     calcules et journalises, personne
+    #                                     n'est contacte
+    #   les deux a true                -> l'e-mail part
+    P1_TRIAL_J3_ENABLED: bool = False        # P1-d
+    P1_TRIAL_J3_ENVOI_REEL: bool = False     # P1-d
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1296,6 +1306,8 @@ class FeatureFlagsUpdate(BaseModel):
     RESERVATIONS_JWT_STRICT: Optional[bool] = None  # LOT 3c-0
     P1_TRIAL_J0_ENABLED: Optional[bool] = None  # P1-b
     P1_TRIAL_J0_ENVOI_REEL: Optional[bool] = None  # P1-b
+    P1_TRIAL_J3_ENABLED: Optional[bool] = None  # P1-d
+    P1_TRIAL_J3_ENVOI_REEL: Optional[bool] = None  # P1-d
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -16965,6 +16977,8 @@ async def get_feature_flags():
             "RESERVATIONS_JWT_STRICT": False,  # LOT 3c-0 : défaut OFF (en-tête encore accepté)
             "P1_TRIAL_J0_ENABLED": False,      # P1-b : défaut OFF (aucune relance)
             "P1_TRIAL_J0_ENVOI_REEL": False,   # P1-b : défaut OFF (simulation même si activé)
+            "P1_TRIAL_J3_ENABLED": False,      # P1-d : défaut OFF (aucune relance J+3)
+            "P1_TRIAL_J3_ENVOI_REEL": False,   # P1-d : défaut OFF (simulation même si activé)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -16984,7 +16998,9 @@ async def get_feature_flags():
                          ("MEMBER_PRICING_ENABLED", False),
                          ("RESERVATIONS_JWT_STRICT", False),
                          ("P1_TRIAL_J0_ENABLED", False),
-                         ("P1_TRIAL_J0_ENVOI_REEL", False)):
+                         ("P1_TRIAL_J0_ENVOI_REEL", False),
+                         ("P1_TRIAL_J3_ENABLED", False),
+                         ("P1_TRIAL_J3_ENVOI_REEL", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -29030,6 +29046,602 @@ def p1b_apres_presence(reservation: dict) -> None:
         logger.warning("%s relance non planifiee (%s) — la presence reste validee",
                        P1B_PREFIXE, type(_err).__name__)
 
+
+# ============================================================================
+# P1-d — LA DERNIERE RELANCE, TROIS JOURS APRES UN ESSAI NON CONVERTI
+# ============================================================================
+#
+# CE QUE CE LOT AJOUTE, ET RIEN D'AUTRE : UN second e-mail, trois jours apres
+# une presence d'essai, a quelqu'un qui n'a toujours rien achete. Puis PLUS
+# JAMAIS. Pas de J+7, pas de J+14, pas de WhatsApp, pas d'offre nommee.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# POURQUOI UNE BOUCLE ICI, ALORS QUE P1-b SE BRANCHE SUR UN EVENEMENT
+# ─────────────────────────────────────────────────────────────────────────
+# Le J+0 a un declencheur naturel : la transition de presence. Le J+3 n'en a
+# aucun — l'echeance arrive alors que PERSONNE ne fait rien. Il faut donc que
+# quelque chose regarde l'heure.
+#
+# Ce ne sera PAS un cron `vercel.json` : ils ne s'executent pas sur Coolify
+# (constat de `_campaign_scheduler_loop`). Ce ne sera PAS APScheduler :
+# desactive et absent des dependances. C'est le MEME motif que
+# `_v276_periodic_purge`, `_v352_boucle_purge` et `_campaign_scheduler_loop` —
+# une tache asyncio native lancee au demarrage, deja en service et prouvee sur
+# ce serveur.
+#
+# UN PASSAGE PAR HEURE, pas par minute : un J+3 n'a aucune urgence a la
+# minute, et la fenetre d'envoi dure onze heures.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# CE QUI GARANTIT « UN SEUL J+3 », MEME A QUATRE WORKERS
+# ─────────────────────────────────────────────────────────────────────────
+# `_rc_reserver_jeton` / `_rc_cloturer_jeton`, le couple deja employe par la
+# confirmation de reservation et par P1-b. Il est GENERIQUE PAR CANAL : on lui
+# passe `relance_j3`, et la trace vit sous `confirmation.relance_j3`. Le droit
+# d'envoyer est RESERVE par une ecriture conditionnelle atomique AVANT l'envoi.
+# Aucune collection nouvelle, aucun compteur applicatif, aucune deduplication
+# par date.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# CE QUI GARANTIT QU'AUCUN ANCIEN ESSAI NE SERA RATTRAPE
+# ─────────────────────────────────────────────────────────────────────────
+# DEUX verrous, et il faut les deux :
+#   1. une BORNE D'ACTIVATION (`p1d_borne_activation`) : aucune presence
+#      anterieure n'est jamais candidate. Elle est lue dans la requete Mongo
+#      elle-meme, donc rien d'ancien n'est meme charge ;
+#   2. une FENETRE HAUTE (`P1D_FENETRE_JOURS`) : passe J+10, plus jamais.
+#      C'est le verrou qui ne depend d'AUCUN etat persiste — meme une borne
+#      mal posee ne peut pas reveiller un essai de mars.
+# Aucun backfill, aucune migration, aucun marquage de l'existant.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# CE QUE CE LOT NE DECIDE PAS
+# ─────────────────────────────────────────────────────────────────────────
+# AUCUNE OFFRE N'EST NOMMEE, AUCUN PRIX N'EST FIGE. Le CTA renvoie vers
+# l'espace du participant ; c'est P1-c qui, au CLIC, relit le catalogue, le
+# filtre LOT R et l'etat d'adhesion, et decide quoi proposer. Un tarif modifie
+# entre J+0 et J+3 est donc pris en compte sans que cet e-mail le sache.
+
+P1D_CANAL = "relance_j3"
+P1D_PREFIXE = "[P1-d]"
+
+# MEME CONSENTEMENT QUE LE J+0, volontairement. Ces deux messages sont le meme
+# acte de communication vu a trois jours d'ecart : quelqu'un qui a refuse le
+# suivi d'essai a refuse les DEUX. Inventer un second type de preference
+# permettrait de le recontacter apres un refus — exactement ce qu'il ne faut
+# pas.
+P1D_TYPE_PREFERENCE = P1B_TYPE_PREFERENCE
+P1D_DOMAINE = P1B_DOMAINE
+
+P1D_DELAI_JOURS = 3        # l'echeance : presence validee + 3 jours
+P1D_FENETRE_JOURS = 7      # ... et plus jamais passe J+10. Verrou anti-rattrapage.
+P1D_HEURE_DEBUT = 9        # 09:00 heure suisse
+P1D_HEURE_FIN = 20         # 20:00 heure suisse (borne HAUTE exclue a 20:00 pile)
+P1D_FUSEAU = "Europe/Zurich"
+P1D_PERIODE_S = 3600       # un passage par heure
+P1D_LOT_MAX = 50           # jamais plus de 50 candidats charges par passage
+
+# LA BORNE PAR DEFAUT EST UNE DATE, PAS « MAINTENANT ». Calculer la borne au
+# demarrage la ferait glisser a chaque redemarrage du conteneur — un essai
+# consomme la veille redeviendrait invisible. Elle est donc FIXE, lisible, et
+# surchargeable par l'environnement le jour ou l'on decidera d'ouvrir le lot.
+P1D_BORNE_DEFAUT = "2026-08-26T00:00:00+00:00"
+
+# Fuseau resolu une seule fois. `pytz` et NON `zoneinfo` : `pytz` est une
+# dependance DURE de ce depot (requirements.txt) et embarque sa PROPRE base de
+# fuseaux, independante du conteneur. `zoneinfo` depend de `/usr/share/zoneinfo`,
+# dont rien ne garantit la presence dans l'image `python:3.11-slim` — et le
+# repli deja ecrit ailleurs dans ce fichier est un UTC+2 FIXE, faux tout
+# l'hiver. Sur une fenetre horaire, se tromper d'une heure six mois par an
+# n'est pas acceptable.
+_P1D_TZ = None
+
+
+def p1d_fuseau():
+    """Le fuseau Europe/Zurich, ou None s'il est introuvable.
+
+    None ne se traduit JAMAIS par un offset de secours : une heure fausse
+    enverrait un e-mail a 22 h. On prefere ne pas envoyer et le dire.
+    """
+    global _P1D_TZ
+    if _P1D_TZ is None:
+        try:
+            import pytz as _pytz
+            _P1D_TZ = _pytz.timezone(P1D_FUSEAU)
+        except Exception as _err:  # noqa: BLE001
+            logger.error("%s fuseau %s indisponible (%s) — aucune relance",
+                         P1D_PREFIXE, P1D_FUSEAU, type(_err).__name__)
+            return None
+    return _P1D_TZ
+
+
+def p1d_parse_iso(valeur):
+    """Un horodatage ISO du depot -> datetime AWARE en UTC, ou None.
+
+    Les documents portent `datetime.now(timezone.utc).isoformat()`. On accepte
+    aussi le suffixe `Z` et les valeurs naives (relues comme UTC), parce qu'un
+    document ancien ne doit pas faire lever une boucle de fond.
+    """
+    _s = str(valeur or "").strip()
+    if not _s:
+        return None
+    try:
+        _d = datetime.fromisoformat(_s.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if _d.tzinfo is None:
+        _d = _d.replace(tzinfo=timezone.utc)
+    return _d.astimezone(timezone.utc)
+
+
+def p1d_borne_activation():
+    """La borne AVANT laquelle aucune presence n'est jamais candidate.
+
+    ILLISIBLE -> BORNE INFINIE. Une borne mal formee ne doit pas se lire
+    « aucune borne » : ce serait exactement le rattrapage historique que ce lot
+    doit rendre impossible. On rend alors une date lointaine, et plus rien
+    n'est candidat — panne bruyante, jamais silencieuse.
+    """
+    _brut = os.environ.get("P1D_BORNE_ACTIVATION", "") or P1D_BORNE_DEFAUT
+    _d = p1d_parse_iso(_brut)
+    if _d is None:
+        logger.error("%s borne d'activation illisible (%r) — aucun candidat",
+                     P1D_PREFIXE, _brut)
+        return datetime(2999, 1, 1, tzinfo=timezone.utc)
+    return _d
+
+
+def p1d_dans_la_fenetre(instant) -> bool:
+    """Cet instant tombe-t-il dans la plage 09:00-20:00 heure SUISSE ?
+
+    L'heure d'ete est geree par `pytz` : on convertit l'instant AWARE vers
+    Europe/Zurich et on lit l'heure locale obtenue. Aucun offset ecrit en dur —
+    c'est tout l'objet de la decision D6.
+
+    FAIL CLOSED : sans fuseau, on repond NON. Le candidat repassera au tour
+    suivant ; il ne partira jamais a une heure inconnue.
+    """
+    _tz = p1d_fuseau()
+    if _tz is None:
+        return False
+    try:
+        _local = instant.astimezone(_tz)
+    except Exception:  # noqa: BLE001
+        return False
+    return P1D_HEURE_DEBUT <= _local.hour < P1D_HEURE_FIN
+
+
+def p1d_echeance(validated_at):
+    """L'instant a partir duquel le J+3 devient du, ou None."""
+    _d = p1d_parse_iso(validated_at)
+    return (_d + timedelta(days=P1D_DELAI_JOURS)) if _d else None
+
+
+def p1d_contenu_relance(prenom: str, lien: str, accent: str):
+    """`(sujet, html, texte)` — FONCTION PURE : aucune I/O, aucune base.
+
+    Pure pour la meme raison que `p1b_contenu_relance` : c'est ce qui permet
+    d'afficher en simulation CE QUI PARTIRAIT, pas une approximation.
+
+    IL NE REPETE PAS LE J+0. Le J+0 remercie et felicite ; celui-ci constate
+    que l'espace est toujours ouvert et propose d'aller voir. Le corps est
+    celui valide par le proprietaire, mot pour mot.
+
+    LE SUJET NE COMMENCE PAS PAR UN EMOJI — meme precaution que le J+0, le
+    rappel avant cours et la newsletter : c'est un signal de filtrage connu
+    chez Gmail. L'emoji est a la fin, ou il ne coute rien.
+
+    AUCUNE OFFRE, AUCUN PRIX, AUCUNE URGENCE, AUCUN COMPTE A REBOURS. Le
+    catalogue vit dans l'ecran d'apres-essai, qui le lit en base au moment du
+    clic ; l'ecrire ici en ferait une seconde verite, fausse au premier
+    changement de tarif.
+
+    PAS DE « REPONDS STOP » : la chaine n'est pas tenue dans ce depot (aucun
+    webhook entrant, aucune interface pour acter la demande). Meme decision
+    qu'au J+0 — les gardes qui MARCHENT sont dans `p1b_destinataire_autorise`.
+    """
+    import html as _html
+    _prenom = (prenom or "").strip()
+
+    _sujet = "Envie de continuer l'expérience Afroboost ? 🔥"
+
+    _entete = ""
+    _entete_texte = ""
+    if _prenom:
+        # On ne met un titre que si l'on connait le prenom. Une phrase a trou
+        # (« , ») se remarque et fait amateur — meme regle qu'au J+0.
+        _entete = ('<div style="color:#fff;font-size:18px;font-weight:700;'
+                   'margin:0 0 12px;">%s,</div>' % _html.escape(_prenom))
+        _entete_texte = "%s,\n\n" % _prenom
+
+    _bouton = ""
+    _texte_lien = ""
+    if lien:
+        _bouton = (
+            '<div style="text-align:center;margin:26px 0 8px;">'
+            '<a href="%s" style="display:inline-block;background:%s;color:#fff;'
+            'padding:14px 30px;text-decoration:none;border-radius:12px;'
+            'font-weight:700;font-size:15px;">Voir mes options</a>'
+            '</div>' % (lien, accent))
+        _texte_lien = "\nVoir mes options : %s\n" % lien
+
+    _corps = (
+        '<div style="padding:28px 24px;">'
+        '%s'
+        '<div style="color:#ddd;font-size:15px;line-height:1.6;">'
+        'Merci encore pour ton premier cours Afroboost.<br><br>'
+        'Ton espace est toujours prêt si tu veux continuer l\'expérience.'
+        '<br><br>'
+        'Nous avons sélectionné les options les plus adaptées pour la suite.'
+        '</div>'
+        '%s'
+        '<div style="color:#777;font-size:12px;text-align:center;margin-top:18px;">'
+        'Une question ?<br>Réponds simplement à cet e-mail.'
+        '</div>'
+        '</div>' % (_entete, _bouton))
+
+    _html_final = _email_wrapper(
+        "linear-gradient(135deg, %s 0%%, #7c3aed 100%%)" % accent, _corps, accent)
+
+    # LA VERSION TEXTE DIT LA MEME CHOSE QUE LE HTML. Meme prenom, meme corps,
+    # meme CTA, meme sortie, meme signature. Un client sans HTML ne doit pas
+    # lire un autre message — c'est le defaut corrige au J+0.
+    _texte = (
+        "%s"
+        "Merci encore pour ton premier cours Afroboost.\n\n"
+        "Ton espace est toujours prêt si tu veux continuer l'expérience.\n\n"
+        "Nous avons sélectionné les options les plus adaptées pour la suite.\n"
+        "%s\n"
+        "Une question ?\n"
+        "Réponds simplement à cet e-mail.\n\n"
+        "Afroboost\n"
+        "Move • Groove • Boost\n"
+        % (_entete_texte, _texte_lien))
+
+    return _sujet, _html_final, _texte
+
+
+async def p1d_offre_est_un_cours(offre_id: str):
+    """`True` cours / `False` marchandise / `None` indetermine.
+
+    LA MARCHANDISE SE LIT SUR `isProduct`, le drapeau que la caisse pose
+    elle-meme (`checkout_routes`, item `type == "product"`), et non sur
+    `category` — chaine libre que le coach edite. Mesure du 25/08/2026 : les 8
+    offres de production portent `isProduct` (un seul `True`, le t-shirt).
+
+    OFFRE INTROUVABLE -> `None`, jamais `False`. Repondre « ce n'est pas un
+    cours » sur une offre qu'on n'a pas su lire ferait partir une relance a
+    quelqu'un qui vient peut-etre de payer 250 CHF.
+    """
+    _oid = str(offre_id or "").strip()
+    if not _oid:
+        return None
+    try:
+        _o = await db.offers.find_one({"id": _oid}, {"_id": 0, "isProduct": 1})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s offre %s illisible: %s", P1D_PREFIXE, _oid[:12], _err)
+        return None
+    if not _o:
+        return None
+    return _o.get("isProduct") is not True
+
+
+async def p1d_conversion_cours(forfait: dict):
+    """A-t-il ACHETE un cours depuis son essai ? `True` / `False` / `None`.
+
+    C'est la regle D1 du proprietaire, et elle ne s'appuie que sur des PREUVES
+    DE PAIEMENT ECRITES PAR LE SERVEUR :
+      * `montant_encaisse` (LOT B, pose par `b_champs_automatiques` sur les
+        quatre moteurs de paiement) ;
+      * a defaut, `total_paid` du code d'acces, avec `payment_method != free`.
+    Un clic, un panier, une session de caisse ouverte n'entrent JAMAIS ici —
+    c'est ce qui ecarte le checkout abandonne (172 transactions `pending` en
+    production) et la transaction echouee.
+
+    LA MARCHANDISE NE CONVERTIT PAS. Un t-shirt paye n'est pas une entree dans
+    la pratique : `p1d_offre_est_un_cours` le retire. C'est la seule difference
+    entre cette regle et `converted_at`, et elle est VOULUE (decision D1).
+
+    LE PLANCHER EST LA CREATION DU FORFAIT D'ESSAI, pas la presence. Quelqu'un
+    qui a paye son pack le matin et honore son essai le soir a converti — le
+    lier a la presence le laisserait recevoir une relance apres avoir paye.
+
+    `None` = INDETERMINE, et l'appelant le traduit en NON-ENVOI. Une base
+    muette ne prouve pas qu'il n'a pas achete.
+    """
+    _mail = str((forfait or {}).get("email") or "").strip().lower()
+    if not _mail:
+        return None
+    _depuis = str((forfait or {}).get("created_at") or "").strip()
+    try:
+        _autres = await db.subscriptions.find(
+            {"email": _mail}, {"_id": 0, "id": 1, "code": 1, "offer_id": 1,
+                               "created_at": 1, "montant_encaisse": 1}).to_list(100)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s forfaits de %s illisibles: %s", P1D_PREFIXE, _mail[:32], _err)
+        return None
+
+    _indetermine = False
+    for _f in (_autres or []):
+        if str(_f.get("id") or "") == str((forfait or {}).get("id") or ""):
+            continue                     # l'essai lui-meme ne se convertit pas
+        if _depuis and str(_f.get("created_at") or "") < _depuis:
+            continue                     # anterieur a l'essai : hors sujet
+        _paye = False
+        try:
+            _paye = float(_f.get("montant_encaisse") or 0) > 0
+        except (TypeError, ValueError):
+            _paye = False
+        if not _paye:
+            # Repli sur le code d'acces : les forfaits anterieurs au LOT B ne
+            # portent aucun montant, mais leur code, lui, porte `total_paid`.
+            try:
+                _dc = await db.discount_codes.find_one(
+                    {"code": _f.get("code")},
+                    {"_id": 0, "total_paid": 1, "payment_method": 1})
+                if _dc and str(_dc.get("payment_method") or "").lower() != "free":
+                    _paye = float(_dc.get("total_paid") or 0) > 0
+            except Exception as _err:  # noqa: BLE001
+                logger.warning("%s code de %s illisible: %s", P1D_PREFIXE, _mail[:32], _err)
+                _indetermine = True
+        if not _paye:
+            continue
+        _cours = await p1d_offre_est_un_cours(_f.get("offer_id"))
+        if _cours is True:
+            return True
+        if _cours is None:
+            _indetermine = True
+    return None if _indetermine else False
+
+
+async def p1d_relance_j3(reservation: dict, maintenant=None) -> str:
+    """LA RELANCE J+3. Rend un libelle d'issue, destine au journal. NE LEVE JAMAIS.
+
+    TOUT EST REVALIDE ICI, a chaque passage et juste avant l'envoi : le
+    drapeau, la nature de l'essai, l'echeance, la borne, la fenetre haute,
+    l'heure suisse, l'etat de conversion, le consentement. Rien n'est « deja
+    planifie » : un candidat retenu au tour precedent et qui a achete entre
+    temps ressort ici sans qu'aucun e-mail ne parte. C'est la regle 5 du
+    proprietaire, et elle est appliquee au dernier moment possible.
+
+    L'ORDRE N'EST PAS ARBITRAIRE, meme discipline qu'au J+0 : le drapeau passe
+    en premier pour qu'un lot dormant ne lise meme pas la base ; le jeton passe
+    en DERNIER avant l'envoi, pour ne pas bruler l'unicite sur un candidat
+    qu'on aurait ecarte ensuite.
+
+    Issues possibles :
+      "desactive"        le drapeau est faux -> rien, pas meme une lecture
+      "sans_presence"    aucune date de presence exploitable
+      "hors_borne"       presence anterieure a la borne d'activation
+      "pas_encore"       l'echeance J+3 n'est pas atteinte
+      "trop_tard"        passe J+10 : ce tunnel est clos, et pour toujours
+      "hors_fenetre"     hors 09:00-20:00 suisse -> report au prochain passage
+      "pas_un_essai"     presence payante : ce n'est pas un prospect
+      "sans_forfait"     le forfait d'essai est introuvable
+      "ecran_ferme"      P1-c ne proposerait rien : pas de CTA a promettre
+      "deja_converti"    il a achete un cours depuis son essai
+      "conversion_indeterminee"  on n'a pas su lire -> on n'ecrit a personne
+      "sans_email"       aucune adresse exploitable
+      "refuse"           desinscription ou preference contraire
+      "deja_traitee"     un autre appel a deja pris le jeton
+      "simulation"       tout etait pret ; on n'a contacte personne
+      "envoye"           l'e-mail est parti
+      "echec"            Resend a refuse ; la trace le dit
+    """
+    if not isinstance(reservation, dict):
+        return "desactive"
+    try:
+        _flags = await get_feature_flags()
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s drapeaux illisibles (%s) — aucune relance",
+                       P1D_PREFIXE, type(_err).__name__)
+        return "desactive"
+    if not (_flags or {}).get("P1_TRIAL_J3_ENABLED"):
+        return "desactive"
+    _reel = bool((_flags or {}).get("P1_TRIAL_J3_ENVOI_REEL"))
+
+    _id = str(reservation.get("id") or "").strip()
+    if not _id:
+        return "deja_traitee"
+
+    _now = maintenant or datetime.now(timezone.utc)
+
+    # ── L'HORLOGE ────────────────────────────────────────────────────────────
+    _echeance = p1d_echeance(reservation.get("validatedAt"))
+    if _echeance is None:
+        return "sans_presence"
+    if (_echeance - timedelta(days=P1D_DELAI_JOURS)) < p1d_borne_activation():
+        return "hors_borne"
+    if _now < _echeance:
+        return "pas_encore"
+    if _now > (_echeance + timedelta(days=P1D_FENETRE_JOURS)):
+        return "trop_tard"
+    if not p1d_dans_la_fenetre(_now):
+        return "hors_fenetre"
+
+    # ── LA NATURE DE LA PRESENCE ─────────────────────────────────────────────
+    # ESSAI-6, la definition centrale — celle qui survit a la suppression du
+    # code (P1-a). Un participant payant n'est jamais un prospect a relancer.
+    from api.routes.shared import est_un_essai as _p1d_est_essai
+    _code = (reservation.get("promoCode") or reservation.get("discountCode") or "").strip()
+    try:
+        if not await _p1d_est_essai(db, code=_code):
+            return "pas_un_essai"
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s nature de la presence indeterminee : %s", P1D_PREFIXE, _err)
+        return "pas_un_essai"
+
+    # ── L'ETAT REEL DU TUNNEL, DEMANDE A P1-c LUI-MEME ───────────────────────
+    # On ne REECRIT pas la regle d'eligibilite : on interroge celle qui rendra
+    # l'ecran au clic. C'est ce qui garantit qu'un CTA envoye ouvre bien un
+    # ecran qui propose quelque chose — un cours archive ou supprime depuis
+    # ferme les deux en meme temps, jamais l'un sans l'autre.
+    from api.routes.shared import (conv_etat as _p1d_etat,
+                                   CONV_OUVERTE as _P1D_OUVERTE,
+                                   CONV_TERMINEE as _P1D_TERMINEE)
+    try:
+        _, _forfait, _coach = await _conv_contexte(_code)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s contexte de conversion illisible : %s", P1D_PREFIXE, _err)
+        return "sans_forfait"
+    if not _forfait:
+        return "sans_forfait"
+    try:
+        _etat = await _p1d_etat(db, _forfait, _coach)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s etat de conversion illisible : %s", P1D_PREFIXE, _err)
+        return "ecran_ferme"
+    if (_etat or {}).get("state") == _P1D_TERMINEE:
+        return "deja_converti"
+    if (_etat or {}).get("state") != _P1D_OUVERTE:
+        # Ni prospect ni converti : l'ecran ne proposerait RIEN. Promettre
+        # « voir mes options » a quelqu'un qui n'en a aucune serait mentir.
+        return "ecran_ferme"
+
+    # ── LA REGLE D1 : LA MARCHANDISE NE CONVERTIT PAS, LE COURS OUI ──────────
+    # Deuxieme garde, et elle n'est pas redondante : `converted_at` ne regarde
+    # pas CE QUI a ete achete, et un paiement peut avoir eu lieu sans que la
+    # conversion ait ete actee (achat anterieur a la presence, incident sur le
+    # marqueur). C'est la preuve de paiement qui gagne.
+    _converti = await p1d_conversion_cours(_forfait)
+    if _converti is True:
+        return "deja_converti"
+    if _converti is None:
+        logger.warning("%s conversion indeterminee (reservation %s) — aucune relance",
+                       P1D_PREFIXE, _id[:8])
+        return "conversion_indeterminee"
+
+    # ── LE DESTINATAIRE ──────────────────────────────────────────────────────
+    _email = (reservation.get("userEmail") or "").strip().lower()
+    if not _email or not rv2_email_valide(_email):
+        logger.info("%s presence sans adresse exploitable — aucune relance", P1D_PREFIXE)
+        return "sans_email"
+    # LES MEMES DEUX PORTES QU'AU J+0, sans en ajouter ni en retirer une :
+    # desinscription explicite (`subscribers`) et preference V286.
+    if not await p1b_destinataire_autorise(_email):
+        return "refuse"
+
+    _accent = await _v259_primary_color(reservation.get("coach_id") or "")
+    _prenom = (reservation.get("userName") or "").strip().split(" ")[0]
+    _lien = p1b_lien_espace(_code)
+    _sujet, _html, _texte = p1d_contenu_relance(_prenom, _lien, _accent)
+
+    if not _reel:
+        # SIMULATION. Destinataire et contenu sont calcules par le MEME code
+        # que l'envoi reel — sans quoi la preuve porterait sur autre chose que
+        # ce qui partirait. Aucun jeton n'est pose : simuler ne doit pas
+        # consommer le droit d'envoyer une vraie relance plus tard.
+        logger.info("%s SIMULATION — destinataire=%s sujet=%r lien=%s html=%d octets",
+                    P1D_PREFIXE, _email, _sujet, _lien or "(aucun)", len(_html))
+        return "simulation"
+
+    # LE JETON, EN DERNIER ET AVANT L'ENVOI. Ecriture conditionnelle atomique :
+    # quatre workers, un rejeu, deux passages simultanes — un seul obtient le
+    # droit. Le canal est `relance_j3` : le jeton du J+0 ne le bloque pas, et
+    # inversement.
+    from api.routes.shared import (_rc_reserver_jeton as _p1d_reserver,
+                                   _rc_cloturer_jeton as _p1d_cloturer)
+    _quand = _now.isoformat()
+    if not await _p1d_reserver(db, _id, P1D_CANAL, _quand):
+        return "deja_traitee"
+
+    _ok = await p1b_envoyer_email(_email, _sujet, _html, _texte)
+    await _p1d_cloturer(db, _id, P1D_CANAL, _ok)
+    if _ok:
+        logger.info("%s relance envoyee (reservation %s)", P1D_PREFIXE, _id[:8])
+        return "envoye"
+    # LE JETON RESTE POSE, EN « echec ». Meme choix qu'au J+0 : sans mecanisme
+    # de reprise dans ce depot, le relacher n'offrirait aucun rattrapage et
+    # ouvrirait la porte a un doublon au passage suivant — qui arrive dans une
+    # heure. L'echec est TRACE, donc rattrapable a la main.
+    logger.warning("%s relance en echec (reservation %s) — trace posee",
+                   P1D_PREFIXE, _id[:8])
+    return "echec"
+
+
+async def p1d_candidats(maintenant=None) -> list:
+    """Les presences qui pourraient etre dues. LECTURE PURE, jamais d'ecriture.
+
+    LA REQUETE PORTE DEJA LES TROIS FILTRES QUI COMPTENT, et c'est voulu :
+      * `validated: True` — seule une presence reelle ouvre ce tunnel ;
+      * `confirmation.relance_j3` ABSENT — une relance deja tentee (envoyee,
+        en cours ou en echec) ne revient jamais dans la liste ;
+      * `validatedAt >= borne` — aucun essai anterieur a l'activation n'est
+        meme CHARGE. Les horodatages du depot sont des chaines ISO-UTC de
+        format constant : leur ordre lexicographique est leur ordre
+        chronologique, la comparaison Mongo est donc exacte.
+    L'echeance J+3, la fenetre haute et l'heure suisse sont revalidees par
+    `p1d_relance_j3` — cette fonction ne fait que borner ce qu'on charge.
+    """
+    _now = maintenant or datetime.now(timezone.utc)
+    _borne = p1d_borne_activation()
+    # On ne charge pas ce qui ne peut pas encore etre du : l'echeance vaut
+    # `validatedAt + 3 j`, donc rien de plus recent que `maintenant - 3 j`.
+    _limite = (_now - timedelta(days=P1D_DELAI_JOURS)).isoformat()
+    try:
+        return await db.reservations.find(
+            {"validated": True,
+             "confirmation.%s" % P1D_CANAL: {"$exists": False},
+             "validatedAt": {"$gte": _borne.isoformat(), "$lte": _limite}},
+            {"_id": 0}).to_list(P1D_LOT_MAX)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s candidats illisibles (%s) — passage ignore",
+                       P1D_PREFIXE, type(_err).__name__)
+        return []
+
+
+async def p1d_passage(maintenant=None) -> dict:
+    """UN passage complet. Rend le decompte par issue. NE LEVE JAMAIS.
+
+    Extraite de la boucle a dessein : c'est elle que le banc d'essai appelle,
+    et c'est elle qu'un super-admin pourrait declencher un jour a la main sans
+    qu'on ait a dupliquer la moindre regle.
+    """
+    _resume = {}
+    try:
+        _flags = await get_feature_flags()
+        if not (_flags or {}).get("P1_TRIAL_J3_ENABLED"):
+            return {"desactive": 1}
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s drapeaux illisibles (%s) — passage ignore",
+                       P1D_PREFIXE, type(_err).__name__)
+        return {"desactive": 1}
+    _now = maintenant or datetime.now(timezone.utc)
+    for _r in await p1d_candidats(_now):
+        try:
+            _issue = await p1d_relance_j3(_r, _now)
+        except Exception as _err:  # noqa: BLE001
+            # Une presence qui fait tousser la relance ne doit pas arreter les
+            # autres, ni la boucle. Meme discipline que le scheduler campagnes.
+            logger.warning("%s candidat ignore (%s)", P1D_PREFIXE, type(_err).__name__)
+            _issue = "echec"
+        _resume[_issue] = _resume.get(_issue, 0) + 1
+    return _resume
+
+
+async def _p1d_boucle_relance_j3():
+    """La boucle de fond. Un passage par heure, et jamais d'arret sur erreur.
+
+    MEME MOTIF QUE `_campaign_scheduler_loop` : tache asyncio native lancee au
+    demarrage, qui fonctionne parce que Coolify fait tourner un uvicorn
+    permanent. Un echec de passage est journalise et n'interrompt JAMAIS la
+    boucle — sinon une seule base indisponible eteindrait le lot jusqu'au
+    prochain redemarrage.
+
+    LE DRAPEAU EST RELU A CHAQUE PASSAGE, pas au demarrage : c'est ce qui rend
+    l'activation possible SANS redeploiement, comme le demande le proprietaire.
+    """
+    await asyncio.sleep(45)   # laisser l'application finir de s'initialiser
+    while True:
+        try:
+            _resume = await p1d_passage()
+            if _resume and set(_resume) != {"desactive"}:
+                logger.info("%s passage : %s", P1D_PREFIXE, _resume)
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("%s passage ignore : %s", P1D_PREFIXE, _err)
+        await asyncio.sleep(P1D_PERIODE_S)
+
+
 async def send_expiry_reminder_email(coach_email: str, offer_name: str, days_remaining: int):
     """V70: Email J-7 rappel expiration — design Afroboost premium"""
     if not RESEND_API_KEY:
@@ -31260,6 +31872,17 @@ async def startup_db():
         logger.info("[SCHEDULER-CAMPAGNE] Boucle d'envoi automatique demarree (60s)")
     except Exception as e:
         logger.warning(f"[SCHEDULER-CAMPAGNE] Demarrage ignore: {e}")
+
+    # P1-d : la relance J+3. Un passage par heure. La boucle tourne toujours,
+    # mais elle RELIT le drapeau a chaque passage et ressort immediatement tant
+    # qu'il est faux — c'est ce qui rend l'activation possible sans
+    # redeploiement. A la livraison, les deux drapeaux P1-d sont a false : cette
+    # tache ne lit meme pas la collection des reservations.
+    try:
+        asyncio.create_task(_p1d_boucle_relance_j3())
+        logger.info("[P1-d] Boucle de relance J+3 demarree (1 h) — drapeau relu a chaque passage")
+    except Exception as e:
+        logger.warning(f"[P1-d] Demarrage de la boucle ignore: {e}")
 
     logger.info("[SYSTEM] Database indexes initialized")
 
