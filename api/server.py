@@ -25514,8 +25514,49 @@ def rv2_date_lisible(quand_local) -> str:
         return ""
 
 
+# === E2 — LE RAPPEL DIT AUSSI OU VENIR, ET COMMENT RETROUVER SON QR ===
+#
+# Mesure du 25/08/2026 : le rappel disait le cours, la date et l'heure, et rien
+# d'autre. Pas l'adresse — alors que les 23 cours de la production en portent
+# une. Pas de chemin vers l'espace participant — alors que c'est la que vit le
+# QR qu'on presente a la porte. Le dernier message avant la seance etait donc
+# celui qui en disait le moins.
+#
+# LE LIEN N'EST PAS UN NOUVEAU MECANISME. `https://<origine>/espace/<CODE>`
+# existe depuis V225 et sert deja dans l'e-mail de paiement (V248). Le CODE
+# n'est ni fabrique ni devine : il est LU sur la reservation (`promoCode`, sinon
+# `discountCode` — la meme regle de choix qu'ailleurs dans le fichier), et il a
+# deja ete envoye a CETTE adresse dans la confirmation. Aucun jeton nouveau,
+# aucune authentification nouvelle, rien qui ne circulait pas deja.
+RV2_ESPACE_CARACTERES = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+
+
+def rv2_lien_espace(code) -> str:
+    """L'URL de l'espace participant, ou chaine vide si le code est douteux.
+
+    LISTE BLANCHE ASCII, jamais liste noire — meme regle que `n2_lien_carte`.
+    Un code part dans un `href` : il ne doit contenir ni `/`, ni `:`, ni `?`,
+    ni un caractere unicode qui ressemble a une lettre. `isalnum()` ne suffit
+    PAS ici : il rend vrai pour « é » comme pour « а » cyrillique. On n'accepte
+    donc que les 38 caracteres qu'un code d'acces peut reellement porter.
+
+    La route `/espace/{code}` met deja en majuscules et compare sans tenir
+    compte de la casse — les codes de la base en portent trois (`AFR-...`,
+    `BASSBOOSTX-...`, `AurelieBoost-26`). On normalise donc ici aussi.
+    """
+    _c = (str(code or "")).strip().upper()
+    if not (3 <= len(_c) <= 40) or _c[0] in "-_":
+        return ""
+    if any(_ch not in RV2_ESPACE_CARACTERES for _ch in _c):
+        return ""
+    return "%s/espace/%s" % (_v184_public_origin(), _c)
+
+
 def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
-                       heure: str, accent: str):
+                       heure: str, accent: str,
+                       lieu: str = "", lieu_maps: str = "",
+                       lien_espace: str = ""):
     """Rend le triplet (sujet, html, texte) du rappel avant cours.
 
     `heure` vient EXCLUSIVEMENT de `reservations.courseTime`. Si elle est vide,
@@ -25525,7 +25566,25 @@ def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
 
     Le sujet ne commence pas par un emoji : c'est un signal de filtrage connu
     chez Gmail, et la meme precaution est deja prise sur l'e-mail de newsletter.
+
+    E2 — `lieu`, `lieu_maps` et `lien_espace` sont FACULTATIFS et vides par
+    defaut : un appelant qui ne les passe pas retrouve mot pour mot l'e-mail
+    d'avant ce lot. On n'invente jamais : sans adresse, la ligne « Où » ne
+    s'affiche pas du tout, plutot que d'afficher un vide qui inquiete.
+
+    CE HTML EST CONCATENE, PAS RENDU PAR UN GABARIT QUI ECHAPPE. Tout ce que ce
+    lot fait entrer ici est donc echappe a la main — meme lecon que N2, et pour
+    la meme raison : `lieu` vient du tableau de bord, `lieu_maps` finit dans un
+    `href`. Les deux liens sont deja filtres en amont (`n2_lien_carte`,
+    `rv2_lien_espace`) ; l'echappement est la seconde barriere, pas la seule.
+
+    DETTE ANTERIEURE, VOLONTAIREMENT NON TRAITEE ICI : `prenom` et
+    `course_name` sont concatenes SANS echappement depuis l'origine de cette
+    fonction — dont `prenom`, saisi par le participant. C'est la meme dette que
+    celle relevee sur le gabarit de confirmation ; elle se traite a part, pour
+    ne pas elargir ce lot.
     """
+    from html import escape as _e2_html
     _cours = (course_name or "ton cours").strip()
     _heure = (heure or "").strip()
     _date = (date_lisible or "").strip()
@@ -25552,15 +25611,47 @@ def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
             '<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:0 0 8px;">'
             'C&rsquo;est <strong style="color:%s;">%s</strong>.</p>' % (accent, _quand))
 
+    # E2 — « OU ». L'adresse ne disparait JAMAIS parce que l'itineraire manque
+    # ou a ete refuse par le filtre : c'est elle qui fait venir les gens, le
+    # lien n'est qu'un confort. Meme regle que N2 sur l'espace participant.
+    _lieu = (lieu or "").strip()
+    _maps = (lieu_maps or "").strip()
+    _ligne_ou_html = ""
+    if _lieu:
+        _itineraire = ""
+        if _maps:
+            _itineraire = (
+                ' <a href="%s" style="color:%s;">Voir l&rsquo;itinéraire</a>'
+                % (_e2_html(_maps, quote=True), accent))
+        _ligne_ou_html = (
+            '<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:0 0 8px;">'
+            'C&rsquo;est au <strong style="color:%s;">%s</strong>.%s</p>'
+            % (accent, _e2_html(_lieu), _itineraire))
+
+    # E2 — LE QR. On ne met pas le code en clair dans le corps : on donne le
+    # chemin vers l'espace, ou le QR vit deja. Rien de nouveau n'est expose.
+    _espace = (lien_espace or "").strip()
+    _ligne_espace_html = ""
+    if _espace:
+        _ligne_espace_html = (
+            '<div style="text-align:center;margin:20px 0 4px;">'
+            '<a href="%s" style="display:inline-block;background:%s;color:#fff;'
+            'padding:14px 28px;text-decoration:none;border-radius:12px;'
+            'font-weight:bold;font-size:15px;">Mon espace &amp; mon QR</a>'
+            '<p style="color:rgba(255,255,255,0.5);font-size:12px;margin:10px 0 0;">'
+            'Ton QR à présenter à l&rsquo;entrée s&rsquo;y trouve.</p></div>'
+            % (_e2_html(_espace, quote=True), accent))
+
     _corps_html = (
         '<div style="padding:24px;color:#fff;">'
         '<p style="font-size:16px;margin:0 0 12px;">%s</p>'
         '<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:0 0 8px;">'
         'Petit rappel : tu es inscrit(e) à <strong style="color:%s;">%s</strong>.</p>'
-        '%s'
+        '%s%s%s'
         '<p style="color:rgba(255,255,255,0.6);line-height:1.6;margin:12px 0 0;font-size:13px;">'
         'À tout de suite, et pense à arriver un peu en avance.</p>'
-        '</div>' % (_bonjour, accent, _cours, _ligne_quand_html))
+        '</div>' % (_bonjour, accent, _cours, _ligne_quand_html,
+                    _ligne_ou_html, _ligne_espace_html))
 
     _html = _email_wrapper("linear-gradient(135deg,#9333EA,%s)" % accent,
                            _corps_html, accent)
@@ -25569,6 +25660,15 @@ def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
                "Petit rappel : tu es inscrit(e) à %s." % _cours]
     if _quand:
         _lignes.append("C'est %s." % _quand)
+    # La version texte porte EXACTEMENT la meme information que le HTML : c'est
+    # elle que lisent les clients qui refusent le HTML, et un rappel amputé de
+    # l'adresse ne remplirait pas son role.
+    if _lieu:
+        _lignes.append("C'est au %s." % _lieu)
+        if _maps:
+            _lignes.append("Itinéraire : %s" % _maps)
+    if _espace:
+        _lignes += ["", "Ton espace et ton QR : %s" % _espace]
     _lignes += ["", "À tout de suite, et pense à arriver un peu en avance.",
                 "", "Afroboost — Move, Groove, Boost"]
     _texte = "\n".join(_lignes) + "\n"
@@ -25576,7 +25676,9 @@ def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
 
 
 async def rv2_envoyer_email_rappel(destinataire: str, prenom: str, course_name: str,
-                                   date_lisible: str, heure: str, accent: str) -> bool:
+                                   date_lisible: str, heure: str, accent: str,
+                                   lieu: str = "", lieu_maps: str = "",
+                                   lien_espace: str = "") -> bool:
     """Envoie le rappel par e-mail. Vrai SEULEMENT si Resend a accepte.
 
     Aucune couche nouvelle : meme transport, meme garde et meme gabarit que les
@@ -25587,7 +25689,8 @@ async def rv2_envoyer_email_rappel(destinataire: str, prenom: str, course_name: 
         logger.info("[RV2] Resend non configure — aucun e-mail de rappel envoye")
         return False
     _sujet, _html, _texte = rv2_contenu_rappel(prenom, course_name, date_lisible,
-                                               heure, accent)
+                                               heure, accent, lieu, lieu_maps,
+                                               lien_espace)
     try:
         await asyncio.to_thread(resend.Emails.send, {
             "from": "Afroboost <notifications@afroboost.com>",
@@ -27599,10 +27702,15 @@ async def cron_reservation_reminders():
             _c = None
             try:
                 _lectures_cours[0] += 1
+                # E2 : `locationName` et `mapsUrl` s'ajoutent a la projection
+                # DEJA faite, dans le cache DEJA en place. Zero requete de plus,
+                # zero lecture supplementaire — un cours reste lu au plus une
+                # fois par passage, quel que soit le nombre de reservations.
                 _c = await db.courses.find_one(
                     {"id": _cid},
                     {"_id": 0, "id": 1, "name": 1, "archived": 1,
-                     "reminders_enabled": 1, "reminder_rules": 1})
+                     "reminders_enabled": 1, "reminder_rules": 1,
+                     "locationName": 1, "mapsUrl": 1})
             except Exception as _e:
                 logger.warning("[RV3] cours %s illisible : %s", _cid, _e)
             _cache_cours[_cid] = _c
@@ -27679,6 +27787,35 @@ async def cron_reservation_reminders():
         return {"checked": 0, "sent": 0, "error": str(e)}
     sent = 0
     _par_canal = {RV2_CANAL_PUSH: 0, RV2_CANAL_EMAIL: 0}
+    # E2 — UN LIEN MORT EST PIRE QUE PAS DE LIEN. Sur les 29 codes distincts que
+    # portent les reservations de production, 28 existent bien dans
+    # `discount_codes` et un seul est orphelin (`CLUBPMI-AFRO`) : sans cette
+    # verification, ce dernier enverrait le participant sur une page d'erreur au
+    # moment ou il en a le plus besoin. UNE seule requete groupee (`$in`), et
+    # seulement sur les rappels qui partent vraiment — jamais un `find_one` par
+    # reservation. Les codes de la base portent trois casses differentes
+    # (`AFR-...`, `BASSBOOSTX-...`, `AurelieBoost-26`) : on compare donc en
+    # majuscules des DEUX cotes. En cas d'echec, l'ensemble reste vide et le
+    # rappel part SANS bouton — jamais avec un bouton douteux.
+    _codes_valides = set()
+    try:
+        _codes_vus = {(str(_t.get("promoCode") or _t.get("discountCode") or "")).strip()
+                      for _t, _ in taches}
+        _codes_vus = {_c for _c in _codes_vus if _c}
+        if _codes_vus:
+            # `$or` de regex ANCREES et ECHAPPEES : c'est l'idiome deja utilise
+            # partout dans ce fichier pour retrouver un code, et le seul qui
+            # ignore la casse. Aucune entree ne rentre nue dans une regex —
+            # `re.escape` est obligatoire (regle du depot).
+            async for _dc in db.discount_codes.find(
+                    {"$or": [{"code": {"$regex": "^%s$" % re.escape(_c),
+                                       "$options": "i"}}
+                             for _c in sorted(_codes_vus)]},
+                    {"_id": 0, "code": 1}):
+                _codes_valides.add(str(_dc.get("code") or "").strip().upper())
+    except Exception as _e2err:
+        logger.warning("[E2] codes d'accès non vérifiés (%s) — rappel sans lien espace",
+                       type(_e2err).__name__)
     # La couleur de marque est relue UNE fois pour tout le passage : un e-mail ne
     # lit pas les variables CSS, et rien ne justifie de refaire cette lecture a
     # chaque reservation.
@@ -27703,6 +27840,24 @@ async def cron_reservation_reminders():
         _instant = _v435_instant_du_cours(r.get("datetime"))
         if _instant:
             _date_lisible = rv2_date_lisible(_instant.astimezone(_zurich))
+        # === E2 — « OU VENIR » ET « OU EST MON QR » ===
+        # Le lieu sort du cours DEJA lu et DEJA en cache : `n2_ou` est reprise
+        # telle quelle de N2, avec sa liste blanche http/https sur l'itineraire.
+        # Une seconde implementation du filtre garantirait qu'un jour les deux
+        # surfaces se contredisent — c'est deja arrive dans ce depot.
+        _e2_lieu, _e2_maps = "", ""
+        try:
+            from api.routes.shared import n2_ou as _e2_ou
+            _e2_lieu, _e2_maps = _e2_ou(_cache_cours.get(str(r.get("courseId") or "")))
+        except Exception as _e2err:
+            # Une adresse manquante n'a jamais empeche un rappel de partir.
+            logger.warning("[E2] lieu absent du rappel (%s)", type(_e2err).__name__)
+        # Le code est LU sur la reservation — jamais fabrique — et le lien n'est
+        # construit que si ce code existe reellement (verifie plus haut, en une
+        # requete pour tout le passage).
+        _e2_code = (str(r.get("promoCode") or r.get("discountCode") or "")).strip()
+        _e2_espace = (rv2_lien_espace(_e2_code)
+                      if _e2_code.upper() in _codes_valides else "")
         # Un marqueur herite est une chaine : aucun sous-champ ne peut y etre
         # cree. On le convertit AVANT de reserver quoi que ce soit.
         try:
@@ -27738,7 +27893,8 @@ async def cron_reservation_reminders():
                     )
                 else:
                     ok = await rv2_envoyer_email_rappel(
-                        email, _prenom, course_name, _date_lisible, course_time, _accent)
+                        email, _prenom, course_name, _date_lisible, course_time,
+                        _accent, _e2_lieu, _e2_maps, _e2_espace)
             except Exception as e:
                 logger.warning(f"[REMINDER-V183] résa {_rid} ({_canal}): {e}")
                 ok = False

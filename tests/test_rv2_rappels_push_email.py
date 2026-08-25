@@ -86,9 +86,11 @@ RV2_MOIS = ("janvier", "fevrier", "mars", "avril", "mai", "juin",
             "juillet", "aout", "septembre", "octobre", "novembre", "decembre")
 RESEND_AVAILABLE = True
 RESEND_API_KEY = "re_faux_jamais_utilisee"
+RV2_ESPACE_CARACTERES = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
 """
 
 A_EXTRAIRE = ["_v259_primary_rgb", "_email_wrapper",
+              "_v184_public_origin", "rv2_lien_espace",
               "n1b2_cle", "n1b2_cible", "n1b2_titre", "n1b2_corps",
               "n1b2_valider_regles", "n1b3b2_plan", "n1b2_regles_du_coach",
               "n1b3b2_regles_trop_proches", "rv3_ecrire_rappels_du_cours",
@@ -114,10 +116,28 @@ def _valeur(doc, chemin):
 
 def _match(doc, q):
     for cle, attendu in (q or {}).items():
+        # E2 : `$or` est un operateur de PREMIER niveau — sa valeur est une
+        # liste de sous-requetes, pas un champ du document.
+        if cle == "$or":
+            if not any(_match(doc, sous) for sous in (attendu or [])):
+                return False
+            continue
         obtenu = _valeur(doc, cle)
         if isinstance(attendu, dict):
             for op, val in attendu.items():
-                if op == "$exists":
+                if op == "$options":
+                    continue        # lu avec `$regex`, jamais seul
+                if op == "$regex":
+                    # E2 : le cron retrouve un code d'acces par regex ANCREE et
+                    # ECHAPPEE, sans tenir compte de la casse — l'idiome deja
+                    # utilise partout dans server.py. Le harnais doit donc
+                    # savoir le simuler, sinon il validerait a l'aveugle.
+                    if obtenu is MANQUANT or not isinstance(obtenu, str):
+                        return False
+                    _dr = re.IGNORECASE if "i" in (attendu.get("$options") or "") else 0
+                    if not re.search(val, obtenu, _dr):
+                        return False
+                elif op == "$exists":
                     if bool(obtenu is not MANQUANT) != bool(val):
                         return False
                 elif op == "$gte":
@@ -196,6 +216,22 @@ class _Curseur(object):
         import copy
         return [copy.deepcopy(x) for x in self.d[:n]]
 
+    # E2 : Motor rend un curseur qu'on peut aussi PARCOURIR (`async for`), et
+    # c'est cette forme qu'utilise la verification des codes d'acces. Sans elle,
+    # le harnais levait une exception que le code de production rattrape — le
+    # test aurait donc valide « pas de lien » en croyant tester le contraire.
+    def __aiter__(self):
+        self._i = 0
+        return self
+
+    async def __anext__(self):
+        await asyncio.sleep(0)
+        import copy
+        if self._i >= len(self.d):
+            raise StopAsyncIteration
+        self._i += 1
+        return copy.deepcopy(self.d[self._i - 1])
+
 
 class _Coll(object):
     """Chaque methode REND LA MAIN a la boucle avant d'agir.
@@ -256,11 +292,15 @@ def cours(cid="c1", actif=True, regles=None, archive=False, **extra):
 
 
 class _Base(object):
-    def __init__(self, resas, prefs=None, profils=None, cours_docs=None):
+    def __init__(self, resas, prefs=None, profils=None, cours_docs=None,
+                 codes=None):
         self.reservations = _Coll(resas)
         self.notification_preferences = _Coll(prefs or [])
         self.coach_profiles = _Coll(profils or [])
         self.courses = _Coll([dict(COURS_ACTIF)] if cours_docs is None else cours_docs)
+        # E2 : le cron verifie qu'un code d'acces EXISTE avant d'en faire un
+        # lien. Vide par defaut -> aucun lien, comme avant ce lot.
+        self.discount_codes = _Coll(codes or [])
 
 
 class _HTTP(Exception):
@@ -314,11 +354,12 @@ class _FauxResend(object):
     Emails = _FauxEmails
 
 
-def bac(resas, prefs=None, profils=None, push_ok=True, email_ok=True, cours_docs=None):
+def bac(resas, prefs=None, profils=None, push_ok=True, email_ok=True, cours_docs=None,
+        codes=None):
     PUSHS[:] = []
     EMAILS[:] = []
     _FauxEmails.echec = not email_ok
-    base = _Base(resas, prefs, profils, cours_docs)
+    base = _Base(resas, prefs, profils, cours_docs, codes)
 
     async def faux_push(email, titre, corps, data=None):
         await asyncio.sleep(0)
@@ -334,6 +375,7 @@ def bac(resas, prefs=None, profils=None, push_ok=True, email_ok=True, cours_docs
     b = {
         "db": base,
         "asyncio": asyncio,
+        "os": os, "re": re,
         "datetime": datetime, "timezone": timezone, "timedelta": timedelta,
         "resend": _FauxResend,
         "send_push_by_email": faux_push,
