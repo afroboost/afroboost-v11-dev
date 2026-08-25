@@ -7304,11 +7304,24 @@ async def stripe_webhook(request: Request):
                 # `pulse_purchased` : un webhook rejoue par Stripe ressort avant
                 # d'arriver ici. L'idempotence propre a la conversion est en
                 # plus portee par `converted_at`, ecrit atomiquement.
+                #
+                # R1-b — CE CHEMIN N'AVAIT AUCUNE GARDE DE MONTANT. La caisse
+                # vitrine exigeait `total > 0` et `payment_method != free` ;
+                # ici, `essai2_marquer_conversion` etait appele en direct, donc
+                # une session a 0 CHF y aurait converti un essai. Les deux
+                # chemins d'autorite passent desormais par LA MEME porte, qui
+                # porte la garde de montant ET la regle R1 (une ligne de cours
+                # reellement payee — un t-shirt ne convertit pas).
+                #
+                # UNE SEULE LIGNE ICI, et c'est fidele : ce webhook decrit un
+                # achat par sa metadonnee `offer_id`, il n'a pas de panier.
                 try:
-                    from api.routes.shared import essai2_marquer_conversion as _e2_conv
-                    await _e2_conv(db, customer_email,
-                                   str((metadata or {}).get("offer_id") or ""),
-                                   str(subscription_data.get("id") or ""))
+                    from api.routes.shared import (
+                        essai2_convertir_si_achat_de_cours as _e2_porte)
+                    await _e2_porte(db, customer_email,
+                                    amount_chf or _montant_paye, "card",
+                                    [str((metadata or {}).get("offer_id") or "")],
+                                    str(subscription_data.get("id") or ""))
                 except Exception as _e2err:
                     logger.warning(f"[ESSAI-2] conversion non evaluee: {_e2err}")
 
@@ -29304,26 +29317,25 @@ def p1d_contenu_relance(prenom: str, lien: str, accent: str):
 async def p1d_offre_est_un_cours(offre_id: str):
     """`True` cours / `False` marchandise / `None` indetermine.
 
-    LA MARCHANDISE SE LIT SUR `isProduct`, le drapeau que la caisse pose
-    elle-meme (`checkout_routes`, item `type == "product"`), et non sur
-    `category` — chaine libre que le coach edite. Mesure du 25/08/2026 : les 8
-    offres de production portent `isProduct` (un seul `True`, le t-shirt).
+    R1 — CETTE FONCTION NE TIENT PLUS SA PROPRE REGLE. La nature d'une offre
+    est definie UNE SEULE FOIS dans le depot, par `essai2_offre_est_un_cours`
+    (`shared.py`), celle-la meme qui decide desormais si un achat convertit.
+    Deux definitions auraient fini par diverger, et l'ecran de conversion
+    aurait contredit la relance : exactement le defaut R1.
 
-    OFFRE INTROUVABLE -> `None`, jamais `False`. Repondre « ce n'est pas un
-    cours » sur une offre qu'on n'a pas su lire ferait partir une relance a
-    quelqu'un qui vient peut-etre de payer 250 CHF.
+    Le contrat de ce point d'entree ne bouge pas — `True` cours, `False`
+    marchandise, `None` indetermine — ni le sens de son fail-closed : une
+    offre introuvable rend `None`, jamais `False`, car repondre « ce n'est pas
+    un cours » sur une offre illisible ferait partir une relance a quelqu'un
+    qui vient peut-etre de payer 250 CHF.
     """
-    _oid = str(offre_id or "").strip()
-    if not _oid:
-        return None
+    from api.routes.shared import essai2_offre_est_un_cours as _p1d_nature
     try:
-        _o = await db.offers.find_one({"id": _oid}, {"_id": 0, "isProduct": 1})
+        return await _p1d_nature(db, offre_id)
     except Exception as _err:  # noqa: BLE001
-        logger.warning("%s offre %s illisible: %s", P1D_PREFIXE, _oid[:12], _err)
+        logger.warning("%s nature de l'offre %s indeterminee: %s",
+                       P1D_PREFIXE, str(offre_id or "")[:12], _err)
         return None
-    if not _o:
-        return None
-    return _o.get("isProduct") is not True
 
 
 async def p1d_conversion_cours(forfait: dict):

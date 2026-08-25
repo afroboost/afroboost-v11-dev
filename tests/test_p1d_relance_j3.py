@@ -83,6 +83,22 @@ for _n in ast.walk(_ARBRE_SHARED):
             "_rc_reserver_jeton", "_rc_cloturer_jeton"):
         _JETONS[_n.name] = ast.get_source_segment(_SRC_SHARED, _n)
 
+# R1 (25/08/2026) : la NATURE d'une offre — cours ou marchandise — n'est plus
+# definie dans P1-d. Elle vit une seule fois dans `shared.py`, et
+# `p1d_offre_est_un_cours` s'y ramene. On charge donc la VRAIE regle : ce banc
+# doit voir celle qui tourne, pas une copie qui divergerait le jour ou elle
+# changera.
+_R1_SRC = {}
+for _n in ast.walk(_ARBRE_SHARED):
+    if isinstance(_n, (ast.FunctionDef, ast.AsyncFunctionDef)) and _n.name in (
+            "essai2_nature_est_un_cours", "essai2_lire_offre",
+            "essai2_offre_est_un_cours"):
+        _R1_SRC[_n.name] = ast.get_source_segment(_SRC_SHARED, _n)
+for _n in _ARBRE_SHARED.body:
+    if isinstance(_n, ast.Assign) and any(
+            isinstance(c, ast.Name) and c.id == "ESSAI2_CHAMP_PRODUIT" for c in _n.targets):
+        _R1_SRC["ESSAI2_CHAMP_PRODUIT"] = ast.get_source_segment(_SRC_SHARED, _n)
+
 
 # ───────────────────────── faux Mongo, minimal et fidele ────────────────────
 def _valeur(doc, cle):
@@ -274,6 +290,10 @@ def construire(base, flags, essai=True, etat="open", resend_ok=True,
     _esp_sh = {"logger": _Journal()}
     for _nom_j, _src_j in _JETONS.items():
         exec(_code("sh:" + _nom_j, _src_j), _esp_sh)
+    # La regle de nature R1, la VRAIE, dans le meme espace.
+    for _nom_r, _src_r in _R1_SRC.items():
+        exec(_code("r1:" + _nom_r, _src_r), _esp_sh)
+    faux_shared.essai2_offre_est_un_cours = _esp_sh["essai2_offre_est_un_cours"]
     faux_shared._rc_reserver_jeton = _esp_sh["_rc_reserver_jeton"]
     faux_shared._rc_cloturer_jeton = _esp_sh["_rc_cloturer_jeton"]
     for _nom in ("api", "api.routes"):

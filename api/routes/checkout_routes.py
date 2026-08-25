@@ -1667,7 +1667,8 @@ async def checkout_paypal_webhook(request: Request):
 # ===== PAYMENT SUCCESS HANDLER =====
 
 async def _essai2_convertir_si_paye(email: str, total, payment_method: str,
-                                    offer_id: str = "", sub_id: str = "") -> bool:
+                                    offer_id: str = "", sub_id: str = "",
+                                    items=None) -> bool:
     """LOT A — LE CHAINON MANQUANT : cet achat convertit-il un essai honore ?
 
     LE TROU QUE CECI BOUCHE. `converted_at` n'etait pose que par le webhook de
@@ -1691,15 +1692,26 @@ async def _essai2_convertir_si_paye(email: str, total, payment_method: str,
     deux n'en produiraient qu'une. Non bloquant : le paiement est deja encaisse,
     une mesure ratee ne doit rien faire echouer.
     """
+    # R1 — LES DEUX GARDES VIVENT DESORMAIS DANS `shared.py`, une seule fois,
+    # pour les DEUX chemins d'autorite. Ce helper ne fait plus que rassembler
+    # les identifiants d'offre du panier ; il ne juge plus rien lui-meme.
+    #
+    # R1-c : TOUTES LES LIGNES, PAS LA PREMIERE. `offer_id` valait
+    # `items_offer_id`, fige sur le PREMIER article — « t-shirt + PULSE » se
+    # classait donc sur le t-shirt. `items` est desormais transmis par
+    # l'appelant ; `offer_id` reste le repli exact d'avant pour les appelants
+    # qui n'ont qu'un identifiant sous la main (webhook a metadonnee unique).
+    _ids = []
+    for _it in (items or []):
+        _d = _it.dict() if hasattr(_it, "dict") else dict(_it or {})
+        _oid = str(_d.get("id") or "").strip()
+        if _oid:
+            _ids.append(_oid)
+    if not _ids and str(offer_id or "").strip():
+        _ids = [str(offer_id).strip()]
     try:
-        _montant = float(total or 0)
-    except (TypeError, ValueError):
-        _montant = 0.0
-    if _montant <= 0 or (payment_method or "").lower() == "free":
-        return False
-    try:
-        from api.routes.shared import essai2_marquer_conversion as _e2_conv
-        return await _e2_conv(db, email, str(offer_id or ""), str(sub_id or ""))
+        from api.routes.shared import essai2_convertir_si_achat_de_cours as _e2_porte
+        return await _e2_porte(db, email, total, payment_method, _ids, str(sub_id or ""))
     except Exception as _err:
         logger.warning(f"[ESSAI-2] conversion non evaluee (caisse vitrine): {_err}")
         return False
@@ -1947,8 +1959,12 @@ async def _process_successful_payment(
     # Placee ICI et pas plus haut : `essai2_marquer_conversion` renseigne
     # `converted_by_subscription_id`, qui n'a de sens qu'une fois l'identifiant
     # du nouveau forfait connu.
+    # R1-c : `items` en plus — le panier ENTIER, pas seulement son premier
+    # article. `items_offer_id` reste passe : il sert de repli si aucune ligne
+    # ne porte d'identifiant (paniers anciens).
     if await _essai2_convertir_si_paye(customer_email, total, payment_method,
-                                       items_offer_id, subscription_id):
+                                       items_offer_id, subscription_id,
+                                       items=items):
         logger.info(f"[ESSAI-2] Conversion actee pour {customer_email} "
                     f"(achat vitrine {items_product_name or ''})")
 

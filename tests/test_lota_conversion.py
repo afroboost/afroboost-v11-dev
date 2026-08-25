@@ -214,7 +214,14 @@ class _Requete(object):
 # la fonction leve un NameError et tout le banc tombe sur une panne de banc.
 # Elles arrivent avec leurs propres dependances LOT R / LOT 3b, chargees ici
 # pour la meme raison : ce banc doit executer le VRAI code, pas une copie.
+# R1 : la regle « un produit physique n'est pas une conversion de cours » et
+# la porte commune qui l'applique. Chargees ici pour la meme raison que les
+# aides P1-c ci-dessus : la caisse les appelle REELLEMENT, ce banc doit voir la
+# vraie regle et non une copie qui divergerait.
 CONV = ["normaliser_email", "est_un_essai", "conv_presence_reelle",
+        "essai2_nature_est_un_cours", "essai2_prix_catalogue",
+        "essai2_lire_offre", "essai2_offre_est_un_cours",
+        "essai2_achat_convertit", "essai2_convertir_si_achat_de_cours",
         "lotr_etat_adhesion", "lotr_verdict_recharge",
         "lotr_seances_encore_utilisables", "lot3b_adhesions",
         "p1c_retirer_inachetables", "p1c_index_recommande",
@@ -263,6 +270,7 @@ def bac(codes=None, subs=None, resas=None, offers=None, courses=None,
           "logger": _Journal()}
     exec(compile(SHARED.constante("ESSAI2_FILTRE_GRATUIT"), "<lota>", "exec"), ns)
     exec(compile(SHARED.constante("B_DEVISE_DEFAUT"), "<lota>", "exec"), ns)
+    exec(compile(SHARED.constante("ESSAI2_CHAMP_PRODUIT"), "<lota>", "exec"), ns)
     # P1-c : les constantes dont dependent les aides LOT R / LOT 3b chargees
     # ci-dessous. Sans elles, le banc tombe sur un NameError — une panne de
     # banc, pas une regression du code.
@@ -290,6 +298,13 @@ def bac(codes=None, subs=None, resas=None, offers=None, courses=None,
         if CONV_ERREUR[0]:
             raise RuntimeError("moteur indisponible (simule)")
         return True
+
+    # R1 (25/08/2026) : la caisse ne juge plus la conversion elle-meme, elle
+    # delegue a `essai2_convertir_si_achat_de_cours` — la porte commune aux
+    # DEUX chemins d'autorite, qui porte la garde de montant ET la regle « au
+    # moins une ligne de COURS payee ». Les VRAIES fonctions sont chargees avec
+    # les autres (liste `CONV`) ; seul le marquage final reste un mouchard.
+    ns["essai2_marquer_conversion"] = _marquer
 
     _module("api.routes.shared", lire_abonnement_par_code=_lire,
             posthog_capture=faux_posthog, essai2_marquer_conversion=_marquer,
@@ -773,9 +788,14 @@ async def scenarios():
 
     # T16g. Le chainon est bien BRANCHE dans le traitement du paiement.
     _corps = CAISSE_SRC.extraire("_process_successful_payment")
+    # R1-c : l'appel transmet desormais le PANIER ENTIER (`items=items`) et non
+    # plus le seul `items_offer_id`, fige sur le premier article. On verifie les
+    # deux : le chainon est branche, ET il recoit toutes les lignes.
     verifier("T16g. `_process_successful_payment` appelle bien ce chainon",
              "_essai2_convertir_si_paye(customer_email, total, payment_method," in _corps
-             and "subscription_id)" in _corps, "")
+             and "items_offer_id, subscription_id," in _corps, "")
+    verifier("T16h. R1-c : le PANIER ENTIER lui est transmis",
+             "items=items)" in _corps, "")
 
     # ───────── 8. LE FILTRE COACH : SYMETRIQUE, ET SANS FUITE ──────────────
     # Cause racine mesuree le 19/08/2026 : les 8 offres de production portent

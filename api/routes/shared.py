@@ -1382,6 +1382,191 @@ async def essai2_tracer_octroi(db, email: str, offer_id: str = "",
 
 
 # ============================================================================
+# R1 — UN ACHAT DE PRODUIT PHYSIQUE N'EST PAS UNE CONVERSION DE COURS
+# ============================================================================
+#
+# LE DEFAUT FERME ICI. `essai2_marquer_conversion` juge QUI achete et QUAND,
+# jamais QUOI : un forfait d'essai, une presence validee, `converted_at`
+# absent. Le contenu du panier n'entrait nulle part. Un t-shirt paye posait
+# donc `converted_at`, FERMAIT l'ecran d'apres-essai (LOT A / P1-c) et
+# eteignait la relance J+3 (P1-d) — alors que l'acheteur n'est jamais entre
+# dans la pratique.
+#
+# LA REGLE DU PROPRIETAIRE, arretee le 25/08/2026 :
+#
+#   Conversion = OUI si AU MOINS UNE LIGNE PAYEE de l'achat correspond
+#   reellement a une offre de cours / pratique Afroboost.
+#
+# ET SON COROLLAIRE, QUI EST TOUT L'INTERET DE LA REGLE : une seance OFFERTE
+# par un produit ne suffit JAMAIS. Le seul produit du catalogue s'appelle
+# « T-shirt + 1 cours offert! » et accorde bel et bien une seance — il reste
+# de la marchandise. C'est la NATURE DE LA LIGNE PAYEE qui classe, jamais le
+# fait que des seances soient accordees.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# POURQUOI `isProduct` ET NON `category`
+# ─────────────────────────────────────────────────────────────────────────
+# `isProduct` est pose par la CAISSE elle-meme (`CheckoutItem.type ==
+# "product"`, que le front derive de l'offre) : c'est une donnee de structure.
+# `category` est une chaine libre que le coach edite — s'y fier reproduirait
+# exactement le defaut d'`offer_name`, qui a DEJA derive en production (les
+# essais historiques portent « Essai gratuit! » et « Cours gratuit! », deux
+# libelles qui ne correspondent plus a aucune offre).
+# Mesure du 25/08/2026 : les 8 offres de production portent toutes `isProduct`,
+# une seule a `True`.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# FAIL-CLOSED, ET DANS QUEL SENS
+# ─────────────────────────────────────────────────────────────────────────
+# Une offre illisible ou introuvable -> ON CONVERTIT. Ce n'est pas de la
+# prudence inversee : le risque dominant n'est pas de manquer une mesure, c'est
+# d'ECRIRE « envie de continuer ? » a quelqu'un qui vient de payer 250 CHF.
+# Entre une conversion en trop et une relance de trop, on choisit la premiere.
+# C'est la meme convention que `p1d_conversion_cours`.
+
+# La cle de structure qui distingue une marchandise d'une prestation.
+ESSAI2_CHAMP_PRODUIT = "isProduct"
+
+
+def essai2_nature_est_un_cours(offre_doc):
+    """`True` cours / `False` marchandise / `None` indetermine. FONCTION PURE.
+
+    LA definition, et la seule du depot. `p1d_offre_est_un_cours` s'y ramene
+    au lieu d'en tenir une seconde : deux regles de nature finiraient par
+    diverger, et l'ecran de conversion contredirait la relance.
+
+    `is True` STRICT, jamais `truthy` : une chaine « false » venue d'un import
+    maladroit ne doit pas INVENTER une marchandise. Meme discipline que
+    `lotr_verdict_recharge`.
+    """
+    if not isinstance(offre_doc, dict):
+        return None
+    return offre_doc.get(ESSAI2_CHAMP_PRODUIT) is not True
+
+
+def essai2_prix_catalogue(offre_doc):
+    """Le prix qui fait AUTORITE pour cette offre, ou 0.0.
+
+    MEME SOURCE QU'ESSAI-1B : `active_price` s'il existe, sinon `price`, et
+    jamais une valeur venue du navigateur. « Ligne payee » se juge sur le
+    catalogue, comme le montant debite.
+    """
+    if not isinstance(offre_doc, dict):
+        return 0.0
+    _p = offre_doc.get("active_price")
+    if _p is None:
+        _p = offre_doc.get("price")
+    try:
+        return float(_p or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def essai2_lire_offre(db, offre_id):
+    """Le document d'offre, ou None. Ne leve jamais."""
+    _oid = str(offre_id or "").strip()
+    if not _oid:
+        return None
+    try:
+        return await db["offers"].find_one(
+            {"id": _oid}, {"_id": 0, ESSAI2_CHAMP_PRODUIT: 1,
+                           "price": 1, "active_price": 1})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning(f"[R1] offre {_oid[:12]} illisible: {_err}")
+        return None
+
+
+async def essai2_offre_est_un_cours(db, offre_id):
+    """`True` cours / `False` marchandise / `None` indetermine.
+
+    Offre INTROUVABLE -> `None`, jamais `False`. Repondre « ce n'est pas un
+    cours » sur une offre qu'on n'a pas su lire ferait rouvrir un tunnel de
+    relance a quelqu'un qui vient peut-etre d'acheter un pack.
+    """
+    return essai2_nature_est_un_cours(await essai2_lire_offre(db, offre_id))
+
+
+async def essai2_achat_convertit(db, offres_ids) -> bool:
+    """CE PANIER convertit-il l'essai ? La regle R1, en entier.
+
+    AU MOINS UNE LIGNE, ET TOUTES LES LIGNES SONT REGARDEES. C'est le defaut
+    R1-c : la caisse ne retenait que `items_offer_id`, fige sur le PREMIER
+    article du panier. « t-shirt + PULSE » se classait donc sur le t-shirt si
+    le t-shirt etait en tete — et l'inverse si PULSE l'etait. L'ordre d'un
+    panier ne peut pas decider d'une conversion.
+
+    UNE LIGNE CONVERTIT SI, ET SEULEMENT SI : son offre est un cours ET son
+    prix catalogue est STRICTEMENT positif. La seconde condition n'est pas
+    decorative — c'est elle qui empeche la seance offerte d'un produit, ou un
+    second acces gratuit glisse dans le panier, de valoir conversion.
+
+    PANIER VIDE OU LIGNE ILLISIBLE -> `True`. Voir l'encadre fail-closed
+    ci-dessus : on ne relance pas quelqu'un dont on n'a pas su lire l'achat.
+    """
+    _ids = [str(o or "").strip() for o in (offres_ids or [])]
+    if not any(_ids):
+        return True
+    for _oid in _ids:
+        _doc = await essai2_lire_offre(db, _oid)
+        _nature = essai2_nature_est_un_cours(_doc)
+        if _nature is None:
+            logger.info("[R1] ligne %s non classee — conversion accordee "
+                        "(on ne relance pas un acheteur inconnu)", _oid[:12] or "(vide)")
+            return True
+        if _nature is True and essai2_prix_catalogue(_doc) > 0:
+            return True
+    return False
+
+
+async def essai2_convertir_si_achat_de_cours(db, email, montant, moyen,
+                                             offres_ids, sub_id="") -> bool:
+    """LA PORTE UNIQUE des deux chemins d'autorite du paiement. Ne leve jamais.
+
+    TROIS GARDES, DANS CET ORDRE :
+      1. LE MONTANT. `montant > 0` et `moyen != "free"`. La caisse avait cette
+         garde ; le webhook Stripe « client » ne l'avait PAS (defaut R1-b) —
+         une session a 0 CHF y aurait converti. Les deux passent desormais
+         par ici, donc par la meme garde.
+      2. LA NATURE. `essai2_achat_convertit` : au moins une ligne de cours
+         reellement payee (defauts R1-a et R1-c).
+      3. LA REGLE HISTORIQUE, INTACTE. `essai2_marquer_conversion` garde le
+         dernier mot : forfait d'essai existant, presence VALIDEE, ecriture
+         atomique de `converted_at`. On ne lui retire rien, on ne l'appelle
+         simplement plus quand l'achat n'est pas un achat de cours.
+
+    RIEN N'EST BLOQUANT. L'argent est deja encaisse quand on arrive ici ; une
+    mesure ratee ne doit jamais faire echouer un paiement, un forfait ou un
+    code d'acces.
+    """
+    try:
+        _montant = float(montant or 0)
+    except (TypeError, ValueError):
+        _montant = 0.0
+    if _montant <= 0 or str(moyen or "").strip().lower() == "free":
+        return False
+    try:
+        if not await essai2_achat_convertit(db, offres_ids):
+            logger.info("[R1] achat sans ligne de cours payee — aucune conversion "
+                        "(l'ecran d'apres-essai reste ouvert)")
+            return False
+        # L'ATTRIBUTION SUIT LA REGLE, PAS L'ORDRE DU PANIER : on impute la
+        # conversion a la PREMIERE LIGNE DE COURS PAYEE, pas au premier article.
+        _impute = ""
+        for _oid in [str(o or "").strip() for o in (offres_ids or []) if str(o or "").strip()]:
+            _doc = await essai2_lire_offre(db, _oid)
+            if essai2_nature_est_un_cours(_doc) is True and essai2_prix_catalogue(_doc) > 0:
+                _impute = _oid
+                break
+        if not _impute:
+            _impute = next((str(o or "").strip() for o in (offres_ids or [])
+                            if str(o or "").strip()), "")
+        return await essai2_marquer_conversion(db, email, _impute, str(sub_id or ""))
+    except Exception as _err:  # noqa: BLE001
+        logger.warning(f"[R1] conversion non evaluee: {_err}")
+        return False
+
+
+# ============================================================================
 # ESSAI-6 (P1-a) — « EST-CE UN ESSAI ? » ET « CET ESSAI A-T-IL ETE CONSOMME ? »
 # ============================================================================
 #
