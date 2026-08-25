@@ -218,7 +218,13 @@ class _Requete(object):
 # la porte commune qui l'applique. Chargees ici pour la meme raison que les
 # aides P1-c ci-dessus : la caisse les appelle REELLEMENT, ce banc doit voir la
 # vraie regle et non une copie qui divergerait.
+# P1-c/PAIEMENT (25/08/2026) : `post_conversion_checkout` resout desormais le
+# VENDEUR — distinct du marqueur de propriete — et s'appuie pour cela sur
+# `lot2_proprietaire`, le normaliseur central des trois formes de « sans
+# proprietaire ». C'est une dependance REELLE de la route : sans elle ici, le
+# banc tombe sur un ImportError, pas sur une regression.
 CONV = ["normaliser_email", "est_un_essai", "conv_presence_reelle",
+        "lot2_proprietaire",
         "essai2_nature_est_un_cours", "essai2_prix_catalogue",
         "essai2_lire_offre", "essai2_offre_est_un_cours",
         "essai2_achat_convertit", "essai2_convertir_si_achat_de_cours",
@@ -340,6 +346,11 @@ def bac(codes=None, subs=None, resas=None, offers=None, courses=None,
             "api_router": type("R", (), {
                 "get": staticmethod(lambda *a, **k: (lambda f: f)),
                 "post": staticmethod(lambda *a, **k: (lambda f: f))})()}
+    # P1-c/PAIEMENT : la route resout le VENDEUR et retombe sur le compte
+    # PLATEFORME quand aucune offre ni aucun forfait ne declare de proprietaire.
+    # On charge la VRAIE constante du depot — pas une copie : ce banc doit
+    # prouver l'adresse qui encaissera reellement.
+    exec(compile(SERVEUR.constante("COACH_EMAIL"), "<cst>", "exec"), ns_r)
     for f in ROUTES:
         exec(compile(SERVEUR.extraire(f), "<routes>", "exec"), ns_r)
     return ns, ns_r, base

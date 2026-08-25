@@ -13708,8 +13708,58 @@ async def post_conversion_checkout(access_code: str, request: Request):
         CheckoutItem as _Item)
     _succes = f"{origin_url}/espace/{code_upper}?payment=success"
     _annule = f"{origin_url}/espace/{code_upper}?payment=cancelled"
+
+    # ══════════════════════════════════════════════════════════════════════
+    # LE VENDEUR QUI ENCAISSE N'EST PAS LE MARQUEUR DE PROPRIETE
+    # ══════════════════════════════════════════════════════════════════════
+    # DEFAUT CONSTATE EN PRODUCTION LE 25/08/2026, sur le premier vrai parcours
+    # terrain. E-mail J+0 recu, CTA clique, ecran affiche, PULSE x10 recommandee
+    # a 250 CHF — et au clic : « Paiements non configures. Le partenaire doit
+    # configurer ses methodes de paiement. » Or Stripe fonctionne et cette offre
+    # a deja ete vendue 29 fois.
+    #
+    # LA CAUSE. Cette ligne passait `coach_email=coach_id`, c'est-a-dire le
+    # marqueur de PROPRIETE du forfait — celui qui filtre le catalogue (LOT A).
+    # Il vaut la chaine VIDE pour les 12 forfaits d'essai de production, et les
+    # 8 offres portent `coach_id: None`. `get_payment_keys("")` cherchait donc
+    # un partenaire nomme « chaine vide », n'en trouvait aucun, et refusait.
+    # Un marqueur de propriete avait ete pris pour une CLE DE ROUTAGE BANCAIRE :
+    # les deux coincident pour un partenaire, et divergent totalement pour la
+    # plateforme, dont les offres n'ont — par conception — aucun proprietaire.
+    #
+    # LA REGLE, arretee par le proprietaire :
+    #   A. aucun proprietaire nulle part  -> compte PLATEFORME (`COACH_EMAIL`),
+    #      celui qui encaisse deja les 29 ventes PULSE par la vitrine ;
+    #   B. offre d'un partenaire identifie -> SA configuration, inchangee ;
+    #   C. partenaire identifie mais NON configure -> l'erreur est CONSERVEE,
+    #      et il n'y a AUCUN repli. « Je refuse qu'Afroboost encaisse a la place
+    #      d'un partenaire sans que ce soit deliberement configure. » Ce cas ne
+    #      passe meme pas ici : c'est `get_payment_keys` qui refuse, en aval,
+    #      exactement comme avant ce correctif.
+    #
+    # L'OFFRE DECIDE, PAS LE FORFAIT. Meme raisonnement que
+    # `lot2_creer_adhesion_apres_achat` (« LE PROPRIETAIRE N'EST PAS
+    # `coach_email` ») : la propriete se lit sur l'objet vendu. Le forfait ne
+    # sert que de second repli, et il est INATTEIGNABLE en pratique — le filtre
+    # coach de LOT A est symetrique, un essai qui declare un coach ne voit que
+    # les offres de ce coach. Le banc le prouve (cas D) plutot que de l'affirmer.
+    #
+    # `lot2_proprietaire` NORMALISE LES TROIS FORMES de « sans proprietaire »
+    # reellement presentes en base (None, "", champ absent) vers une seule. Sans
+    # elle, une offre a `coach_id: ""` et une offre sans le champ ne se
+    # comporteraient pas pareil — c'est la lecon du LOT 2, on ne la rejoue pas.
+    #
+    # `COACH_EMAIL` ET NON `DEFAULT_COACH_ID` : les deux valent aujourd'hui la
+    # meme adresse, mais `DEFAULT_COACH_ID` nomme une PROPRIETE de coach — la
+    # notion meme que ce correctif separe du routage de l'argent. Reutiliser ce
+    # nom ici rebrouillerait ce qu'on vient de demeler.
+    from api.routes.shared import lot2_proprietaire as _p1c_proprio
+    _vendeur = (_p1c_proprio(offre.get("coach_id"))
+                or _p1c_proprio(coach_id)
+                or COACH_EMAIL)
+
     _requete = _Req(
-        coach_email=coach_id,
+        coach_email=_vendeur,
         payment_method="card",
         items=[_Item(type="offer", id=offre.get("id"), name=offre.get("name") or "Offre",
                      price=float(offre.get("price") or 0), currency="CHF", quantity=1)],
