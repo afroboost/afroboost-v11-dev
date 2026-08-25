@@ -17,6 +17,11 @@ import path from 'path';
 import { EVENEMENTS_FUNNEL } from '../funnelEssai';
 
 const APP = fs.readFileSync(path.join(__dirname, '..', '..', 'App.js'), 'utf8');
+// ESSAI-7 : le funnel ne s'arrete plus a la vitrine. `session_booked` part de
+// l'espace participant, ou la reservation est REELLEMENT confirmee.
+const ESPACE = fs.readFileSync(
+  path.join(__dirname, '..', '..', 'components', 'SubscriberSpace.js'), 'utf8');
+const SOURCES = APP + '\n' + ESPACE;
 
 // Reperes stables du fichier, verifies un a un a l'audit du 25/08/2026.
 const ANCRE_SELECT_OFFER = 'const handleSelectOffer = (offer) => {';
@@ -59,10 +64,16 @@ describe('le module est bien la source unique de la mesure', () => {
     expect(APP).not.toMatch(/posthog\s*\.\s*capture/);
   });
 
-  test('les quatre evenements sont tous branches', () => {
+  test('les cinq evenements sont tous branches', () => {
     EVENEMENTS_FUNNEL.forEach((nom) => {
-      expect(APP).toMatch(motifAppel(nom));
+      expect(SOURCES).toMatch(motifAppel(nom));
     });
+  });
+
+  test('SubscriberSpace.js passe lui aussi par le module, jamais par posthog', () => {
+    expect(ESPACE).not.toMatch(/posthog\s*\.\s*capture/);
+    expect(ESPACE).toMatch(
+      /import\s*\{[^}]*funnelTracer[^}]*\}\s*from\s*['"]\.\.\/utils\/funnelEssai['"]/);
   });
 });
 
@@ -143,5 +154,82 @@ describe('ETAPE 1 — ce qui ne doit PAS avoir bouge', () => {
 
   test('aucun funnelTracer n est attendu (await) nulle part', () => {
     expect(APP).not.toMatch(/await\s+funnelTracer/);
+  });
+});
+
+
+// ==========================================================================
+// ESSAI-7 — DU CODE OBTENU A LA SEANCE RESERVEE
+// ==========================================================================
+const ANCRE_RESERVE_POST = '/reserve/${encodeURIComponent(occurrence.course_id)}';
+
+function positionAppelDans(src, nom) {
+  const m = src.match(motifAppel(nom));
+  expect(m).not.toBeNull();
+  return m.index;
+}
+
+describe('la redirection apres octroi', () => {
+  test('App.js ne fabrique JAMAIS une URL /espace/ lui-meme', () => {
+    // Un code reconstruit cote frontend (localStorage, e-mail saisi, memoire
+    // d'un ancien achat) enverrait la personne sur l'espace de quelqu'un
+    // d'autre — ou sur un 404 juste apres un essai reellement accorde.
+    // La seule fabrication autorisee vit dans `utils/essaiReservation.js`.
+    expect(APP).not.toMatch(/['"`]\/espace\//);
+  });
+
+  test('App.js delegue la decision a cibleRedirectionEssai', () => {
+    expect(APP).toMatch(
+      /import\s*\{[^}]*cibleRedirectionEssai[^}]*\}\s*from\s*['"]\.\/utils\/essaiReservation['"]/);
+    expect(APP).toMatch(/cibleRedirectionEssai\(\s*freeRes\.data\s*\)/);
+  });
+
+  test('la redirection vient APRES la reussite du POST et apres trial_granted', () => {
+    const iPost = position(ANCRE_POST_FREE);
+    const iOctroi = positionAppel('trial_granted');
+    const iCible = APP.search(/cibleRedirectionEssai\(/);
+    expect(iCible).toBeGreaterThan(iPost);
+    expect(iCible).toBeGreaterThan(iOctroi);
+  });
+
+  test('aucune redirection n est possible sans cible : la navigation est gardee', () => {
+    // Un refus anti-2e-essai part dans le `catch` et ne doit RIEN ouvrir ; un
+    // succes sans code (backend non deploye) non plus. La navigation n'existe
+    // donc qu'a l'interieur de la garde, et la cible est calculee avant elle.
+    const iCalcul = APP.search(/cibleRedirectionEssai\(/);
+    const iGarde = APP.search(/if\s*\(\s*cibleEssai\s*\)/);
+    const iNav = APP.indexOf('window.location.href = cibleEssai');
+    expect(iCalcul).toBeGreaterThan(-1);
+    expect(iGarde).toBeGreaterThan(iCalcul);
+    expect(iNav).toBeGreaterThan(iGarde);
+    // `cibleEssai` ne sert a rien d'autre qu'a cette navigation-la.
+    expect(APP.match(/window\.location\.href\s*=\s*cibleEssai/g)).toHaveLength(1);
+  });
+});
+
+describe('session_booked — au bon moment, et pas avant', () => {
+  test('part depuis SubscriberSpace.js, apres la reponse du serveur', () => {
+    const iPost = ESPACE.indexOf(ANCRE_RESERVE_POST);
+    expect(iPost).toBeGreaterThan(-1);
+    const iEvenement = positionAppelDans(ESPACE, 'session_booked');
+    expect(iEvenement).toBeGreaterThan(iPost);
+  });
+
+  test('reste DANS le try : une reservation refusee ne compte pas', () => {
+    const iEvenement = positionAppelDans(ESPACE, 'session_booked');
+    // le `catch` de `handleReserve` — tout ce qui suit est un echec
+    const iCatch = ESPACE.indexOf('} catch (err) {', ESPACE.indexOf(ANCRE_RESERVE_POST));
+    expect(iCatch).toBeGreaterThan(-1);
+    expect(iEvenement).toBeLessThan(iCatch);
+  });
+
+  test('ne part pas au clic : le bouton n appelle que handleReserve', () => {
+    const iBouton = ESPACE.indexOf('onClick={() => handleReserve(occ)}');
+    expect(iBouton).toBeGreaterThan(-1);
+    expect(ESPACE.slice(iBouton, iBouton + 200)).not.toContain('funnelTracer');
+  });
+
+  test('n est jamais attendu (await) : la mesure n ajoute aucune latence', () => {
+    expect(ESPACE).not.toMatch(/await\s+funnelTracer/);
   });
 });

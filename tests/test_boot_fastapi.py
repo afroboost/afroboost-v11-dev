@@ -260,6 +260,19 @@ def partie_3_import_reel():
                  estim.dependant.request_param_name == "http_request",
                  str(estim.dependant.request_param_name))
 
+    # ESSAI-7 : la porte gratuite lit desormais l'IP pour limiter le debit. Le
+    # meme piege l'attend — `http_request` glisse dans le corps et TOUS les
+    # essais gratuits repondent 422.
+    gratuit = next((r for r in routes if r.path == "/api/checkout/free"), None)
+    verifier("3n. `/api/checkout/free` est declaree", gratuit is not None)
+    if gratuit is not None:
+        verifier("3o. la porte gratuite injecte la requete HTTP",
+                 gratuit.dependant.request_param_name == "http_request",
+                 str(gratuit.dependant.request_param_name))
+        corps_gratuit = [p.name for p in gratuit.dependant.body_params]
+        verifier("3p. ... et le corps reste le seul modele metier `req`",
+                 corps_gratuit == ["req"], str(corps_gratuit))
+
 
 def rapport() -> bool:
     print("\n" + "=" * 78)

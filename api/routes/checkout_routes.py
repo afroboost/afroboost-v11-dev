@@ -1216,8 +1216,131 @@ async def _essai1_tracer_refus(offer_id: str = "") -> None:
         pass
 
 
+# ═══ ESSAI-7 — LE CODE NE REPART QUE S'IL N'OUVRE RIEN QUI NE SOIT A NOUS ═══
+#
+# LE DELTA A FERMER. Rendre `access_code` sur une route SANS authentification
+# ajoute une capacite qui n'existait pas : un appelant anonyme qui saisit
+# l'adresse d'un tiers repart avec un code utilisable. Bruler l'essai d'autrui
+# etait deja possible avant ce lot (trou pre-existant, inchange) ; APPRENDRE le
+# code ne l'etait pas.
+#
+# POURQUOI C'EST GRAVE. `GET /subscriber/space/{code}` resout les reservations
+# PAR ADRESSE E-MAIL, pas par code (server.py, « V208c »). Un code neuf frappe
+# sur une adresse DEJA CONNUE ouvre donc l'historique complet de cette
+# personne : noms de cours, dates, invites, presences validees.
+#
+# LA REGLE. Le code ne repart QUE si l'espace qu'il ouvre ne peut rien contenir
+# d'autre que ce que CETTE requete vient de fournir : aucune reservation,
+# aucun forfait, aucun code d'acces anterieur sur cette adresse. Sinon la
+# reponse redevient EXACTEMENT celle d'avant le lot, et l'e-mail — qui prouve
+# la possession de la boite — reste le seul canal. Le delta retombe a zero.
+#
+# CE QUI NE COMPTE PAS : un simple contact CRM (`chat_participants`). L'espace
+# n'en montre rien, et le tunnel Chat en cree un AVANT le checkout : l'inclure
+# aurait ferme Option B pour l'entree principale du funnel.
+#
+# CE QUE CETTE REGLE NE FERME PAS, et il faut le dire : elle n'empeche pas de
+# bruler l'essai d'un tiers (trou anterieur), ni d'obtenir un code sur une
+# adresse encore INCONNUE — dont l'espace ne contiendra jamais que ce que
+# l'appelant a lui-meme saisi ce jour-la, mais qui suivrait cette adresse si
+# elle devenait active plus tard. Fermer CELA demande de prouver la possession
+# de l'adresse, donc une etape de verification : c'est un lot en soi.
+async def _essai7_espace_vierge(email: str) -> bool:
+    """L'espace de cette adresse est-il VIERGE de tout passe ?
+
+    FAIL-CLOSED : en cas de base muette, on repond False. Perdre la redirection
+    coute une commodite ; rendre un code a tort coute un acces.
+    """
+    import re as _re_e7
+    _mail = (email or "").strip().lower()
+    if not _mail:
+        return False
+    _motif = {"$regex": f"^{_re_e7.escape(_mail)}$", "$options": "i"}
+    try:
+        # L'historique que l'espace afficherait. Les deux orthographes du champ
+        # sont interrogees : `userEmail` est celle de la production, `user_email`
+        # traine dans des documents anciens — et ici, un doublon de prudence ne
+        # coute qu'une redirection perdue.
+        if await db["reservations"].find_one(
+                {"$or": [{"userEmail": _motif}, {"user_email": _motif}]}, {"_id": 1}):
+            return False
+        if await db["subscriptions"].find_one({"email": _motif}, {"_id": 1}):
+            return False
+        if await db["discount_codes"].find_one({"assignedEmail": _motif}, {"_id": 1}):
+            return False
+        # LOT R : l'espace affiche l'etat de recharge, derive des adhesions
+        # (`memberships`). Six d'entre elles ont ete regularisees a la main, sans
+        # forfait en face : les deduire des trois lectures ci-dessus serait faux.
+        if await db["memberships"].find_one({"email": _motif}, {"_id": 1}):
+            return False
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[ESSAI-7] passe de l'adresse illisible (%s) — code non rendu",
+                       type(_err).__name__)
+        return False
+    return True
+
+
+# ═══ ESSAI-7 — LIMITATION DE DEBIT SUR LA PORTE GRATUITE ════════════════════
+#
+# Meme mecanique que `_lot3b_debit_ok` (server.py) : un compteur en memoire du
+# processus, sans collection ni ecriture. Le depot n'a pas de limiteur global
+# (`slowapi` n'est pas installe), et en ajouter un pour une seule route serait
+# disproportionne.
+#
+# CE QU'ELLE FERME : l'appel FABRIQUE en serie — enumeration d'adresses,
+# brulage d'essais en masse. Elle ne pretend pas remplacer une preuve
+# d'identite : un seuil ne distingue pas un visiteur d'un attaquant patient.
+#
+# LE SEUIL EST GENEREUX A DESSEIN. Un essai gratuit est unique par personne :
+# 20 par heure et par IP ne gene aucun usage reel, pas meme une salle entiere
+# derriere le meme wifi, alors qu'une enumeration en veut des milliers.
+_ESSAI7_DEBIT = {}
+_ESSAI7_DEBIT_MAX = 20          # octrois tentes
+_ESSAI7_DEBIT_FENETRE = 3600.0  # secondes
+
+
+def _essai7_debit_ok(cle: str) -> bool:
+    import time as _t
+    _now = _t.monotonic()
+    _hist = [h for h in _ESSAI7_DEBIT.get(cle, []) if _now - h < _ESSAI7_DEBIT_FENETRE]
+    if len(_hist) >= _ESSAI7_DEBIT_MAX:
+        _ESSAI7_DEBIT[cle] = _hist
+        return False
+    _hist.append(_now)
+    _ESSAI7_DEBIT[cle] = _hist
+    if len(_ESSAI7_DEBIT) > 5000:      # borne memoire, jamais une fuite
+        for _k in list(_ESSAI7_DEBIT.keys())[:1000]:
+            _ESSAI7_DEBIT.pop(_k, None)
+    return True
+
+
+def _essai7_exiger_debit(http_request) -> None:
+    """Leve 429 au-dela du seuil. A appeler AVANT toute autre garde : un refus
+    de debit ne doit RIEN consommer, surtout pas le droit a l'essai.
+
+    L'IP reelle passe par Cloudflare puis Traefik — `request.client.host` est le
+    proxy. Meme resolution qu'ailleurs dans le depot (server.py, « IP reelle »).
+    """
+    try:
+        _ip = (http_request.headers.get("CF-Connecting-IP")
+               or (http_request.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
+               or (http_request.client.host if http_request.client else "")).strip()
+    except Exception:  # noqa: BLE001
+        # Pas d'IP lisible : on ne bloque pas un parcours legitime pour un
+        # en-tete manquant. La regle du code vierge, elle, tient toujours.
+        return
+    if not _ip:
+        return
+    if not _essai7_debit_ok("free:" + _ip):
+        logger.warning("[ESSAI-7] debit depasse pour %s — refus 429", _ip[:24])
+        raise HTTPException(
+            status_code=429,
+            detail="Trop de demandes depuis cette connexion. Réessayez dans un moment.",
+        )
+
+
 @router.post("/free")
-async def free_checkout(req: FreeCheckoutRequest):
+async def free_checkout(req: FreeCheckoutRequest, http_request: Request):
     """V249 — checkout d'une offre GRATUITE (0 CHF), de bout en bout.
 
     Aligne le flux gratuit sur le flux payant : jusqu'ici la vitrine (App.js)
@@ -1230,6 +1353,10 @@ async def free_checkout(req: FreeCheckoutRequest):
     payment_transaction, la notif push au coach et le contact — exactement ce
     que produit le webhook Stripe pour un achat payant.
     """
+    # ESSAI-7 : le debit d'abord. Un refus ici ne coute rien a personne — ni
+    # lecture, ni ecriture, ni droit consomme.
+    _essai7_exiger_debit(http_request)
+
     # garde-fou : on refuse un item non gratuit ici, ce chemin est reserve au
     # 0 CHF. ESSAI-1B : le prix est relu EN BASE — additionner les `price` du
     # client laissait passer une offre a 250 CHF annoncee a 0.
@@ -1266,6 +1393,11 @@ async def free_checkout(req: FreeCheckoutRequest):
                         str((req.items[0].id if req.items else "") or ""),
                         telephone=req.customer_phone)
 
+    # ESSAI-7 : constate MAINTENANT, avant que le moteur n'ecrive. Apres lui,
+    # le forfait et le code qu'il vient de creer rendraient la reponse toujours
+    # fausse, et plus aucun code ne repartirait jamais.
+    espace_vierge = await _essai7_espace_vierge(req.customer_email)
+
     transaction_id = f"free_{uuid.uuid4().hex[:12]}"
     try:
         result = await _process_successful_payment(
@@ -1286,9 +1418,16 @@ async def free_checkout(req: FreeCheckoutRequest):
         await _essai1_liberer(req.customer_email,
                               telephone=req.customer_phone)
         raise
-    # ESSAI-1A : `access_code` n'est volontairement PAS relu ici — il ne doit
-    # plus quitter le serveur par HTTP, seulement par l'e-mail du titulaire.
     product_name = (result or {}).get("product_name", "Offre gratuite")
+    # ESSAI-7 : le code que le serveur VIENT DE CREER, et lui seul.
+    # `_process_successful_payment` en fabrique un neuf a chaque appel
+    # (`AFR-` + 6 caracteres tires au hasard) : cette valeur n'a jamais
+    # appartenu a personne avant cette requete. Voir le commentaire de la
+    # reponse, plus bas, pour la difference avec ESSAI-1A.
+    # ESSAI-7 : le code ne quitte le serveur que si l'espace qu'il ouvre ne
+    # contient rien d'autre que ce que cette requete vient de fournir. Sinon,
+    # la reponse est mot pour mot celle d'avant ce lot.
+    code_octroye = str((result or {}).get("access_code") or "") if espace_vierge else ""
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -1351,20 +1490,34 @@ async def free_checkout(req: FreeCheckoutRequest):
     except Exception as _e2err:
         logger.warning(f"[ESSAI-2] octroi non mesure: {_e2err}")
 
-    # ESSAI-1A : le code AFR- ne repart PLUS dans la reponse HTTP.
+    # ESSAI-7 — LE CODE REPART DANS LA REPONSE, ET CE N'EST PAS UN RETOUR EN
+    # ARRIERE SUR ESSAI-1A.
     #
-    # Cette route n'a aucune authentification : l'adresse est celle que le
-    # visiteur ecrit lui-meme. Renvoyer le code revenait donc a le remettre a
-    # QUICONQUE saisit l'adresse d'un tiers. Il part desormais par le seul
-    # canal qui atteste de la possession de l'adresse : l'e-mail.
+    # Ce qu'ESSAI-1A refermait, a juste titre : cette route n'a AUCUNE
+    # authentification, l'adresse est celle que le visiteur ecrit lui-meme, et
+    # rendre le code d'un TIERS revenait a le remettre a quiconque saisit son
+    # adresse. C'est exactement pour cela que le refus ESSAI-4 (« vous avez
+    # deja un abonnement actif ») ne dit toujours NI le code, NI le lien
+    # `/espace/{code}` : la, il s'agirait d'un code PRE-EXISTANT.
     #
-    # Le parcours legitime ne change pas d'un pixel — la vitrine ne lisait pas
-    # ce champ, et son message dit deja « Consultez votre email pour recevoir
-    # votre QR code et code d'acces AFR ».
+    # Ce qui repart ici est autre chose : un code que ce meme appel VIENT de
+    # fabriquer. Les deux chemins qui exposeraient le code de quelqu'un
+    # d'autre — essai deja consomme (ESSAI-1) et abonnement actif (ESSAI-4) —
+    # LEVENT avant `_process_successful_payment` et ne renvoient rien du tout.
+    #
+    # POURQUOI IL LE FAUT. Sans ce champ, la fin du tunnel etait un cul-de-sac :
+    # le code n'existait pour le visiteur que dans un e-mail — donc dans une
+    # boite de reception, un dossier « promotions », un delai. La mesure du
+    # 25/08/2026 l'a montre : l'essai etait accorde, la seance ne l'etait pas.
+    # Avec lui, la vitrine peut emmener la personne sur `/espace/<CODE>` pour
+    # qu'elle CHOISISSE sa seance, tout de suite.
+    #
+    # Le champ est ADDITIF : tous les autres sont conserves a l'identique.
     return {
         "success": True,
         "free": True,
         "transaction_id": transaction_id,
+        "access_code": code_octroye,
         "message": "Réservation confirmée gratuitement !",
     }
 

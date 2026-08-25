@@ -32,7 +32,7 @@
  */
 
 /**
- * Les quatre etapes du funnel d'essai, et elles seules.
+ * Les cinq etapes du funnel d'essai, et elles seules.
  *
  * La liste est FERMEE volontairement : un nom mal orthographie ne serait jamais
  * retrouve dans PostHog et trouerait la baseline en silence. Mieux vaut ne rien
@@ -42,7 +42,14 @@ export const EVENEMENTS_FUNNEL = [
   'trial_cta_click',    // clic sur un CTA d'entree dans l'essai
   'trial_form_open',    // le formulaire de reservation s'ouvre reellement
   'trial_form_submit',  // la soumission a passe TOUTES les validations
-  'trial_granted'       // POST /checkout/free reussi : le code existe
+  'trial_granted',      // POST /checkout/free reussi : le code existe
+  // ESSAI-7 — LE PAS QUI MANQUAIT, et le seul qui compte vraiment.
+  // `trial_granted` dit qu'un code existe ; il ne dit RIEN sur la venue au
+  // cours. Entre les deux, la personne devait retrouver un e-mail, l'ouvrir,
+  // cliquer, choisir une date. C'est la que le parcours se perdait, et
+  // personne ne pouvait le voir. `session_booked` ne part qu'APRES la
+  // confirmation du serveur : ni au clic, ni a l'ouverture du formulaire.
+  'session_booked'
 ];
 
 /** Cle de memorisation de la variante, pour la duree de l'onglet. */

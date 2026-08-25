@@ -12,6 +12,10 @@ import { terminerSession, debutConnexion, finConnexion, signalerConnexionReussie
 // FUNNEL ESSAI (etape 1) — mesure PURE : ces deux fonctions ne changent aucun
 // parcours et ne levent jamais. Voir utils/funnelEssai.js pour les invariants.
 import { funnelTracer, funnelVariante } from "./utils/funnelEssai";
+// ESSAI-7 : la SEULE fabrique d'adresse d'espace participant du frontend.
+// Elle n'accepte que le code renvoye par le serveur — jamais le localStorage,
+// jamais une reconstruction. Voir utils/essaiReservation.js.
+import { cibleRedirectionEssai, DELAI_REDIRECTION_ESSAI_MS } from "./utils/essaiReservation";
 
 // V133: Intercepteur global — JWT prioritaire + fallback X-User-Email
 axios.interceptors.request.use((config) => {
@@ -6813,18 +6817,41 @@ function App() {
         // Le backend a deja envoye email client + email coach + push : plus
         // besoin de notifyCoachAutomatic (qui aurait fait doublon).
 
+        // ESSAI-7 — OU VA LA PERSONNE MAINTENANT.
+        // Jusqu'ici : nulle part. Le message disait « consultez votre e-mail »,
+        // et le parcours s'arretait sur la vitrine. Le code n'existait donc que
+        // dans une boite de reception — un dossier « promotions », un delai,
+        // une application e-mail a rouvrir. La mesure du 25/08/2026 l'a montre :
+        // l'essai etait accorde, la seance ne l'etait pas.
+        // La cible est calculee par le module dedie, a partir du SEUL code
+        // renvoye par le serveur. Elle vaut `null` s'il n'y a pas d'octroi
+        // prouve — et dans ce cas on ne bouge pas d'un pixel.
+        const cibleEssai = cibleRedirectionEssai(freeRes.data);
+
         // Toast — le code d'acces AFR- existe desormais reellement.
         try {
           const existingToast = document.getElementById('v159-email-toast');
           if (existingToast) existingToast.remove();
           const toast = document.createElement('div');
           toast.id = 'v159-email-toast';
-          toast.innerHTML = '✅&nbsp; <strong>Réservation confirmée !</strong><br/><span style="font-size:13px;opacity:0.95;">📧 Consultez votre email pour recevoir votre QR code et code d\'accès AFR</span>';
+          // Le message dit ce qui se passe VRAIMENT : soit on emmene la
+          // personne choisir sa seance, soit — a defaut de code — l'e-mail
+          // reste le seul chemin, et on le lui dit comme avant.
+          toast.innerHTML = cibleEssai
+            ? '🎁&nbsp; <strong>Ton cours d\'essai est activé !</strong><br/><span style="font-size:13px;opacity:0.95;">On t\'emmène choisir ta séance…</span>'
+            : '✅&nbsp; <strong>Réservation confirmée !</strong><br/><span style="font-size:13px;opacity:0.95;">📧 Consultez votre email pour recevoir votre QR code et code d\'accès AFR</span>';
           toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#10b981,var(--primary-color, #D91CD2));color:white;padding:16px 28px;border-radius:14px;font-size:15px;box-shadow:0 10px 40px rgba(var(--primary-rgb, 217, 28, 210), 0.5);max-width:90%;text-align:center;animation:fadeInScale 0.4s ease;';
           document.body.appendChild(toast);
           setTimeout(() => { if (toast.parentNode) toast.remove(); }, 10000);
         } catch (e) { /* ignore */ }
         resetFormKeepClient();
+
+        // La redirection n'a lieu QUE si le serveur a prouve l'octroi. Le delai
+        // laisse le temps de lire la confirmation sans ajouter d'etape a
+        // franchir : personne n'a de bouton a cliquer.
+        if (cibleEssai) {
+          setTimeout(() => { window.location.href = cibleEssai; }, DELAI_REDIRECTION_ESSAI_MS);
+        }
       } catch (err) {
         // V249: l'ancien code avalait TOUTE erreur en silence — le client ne
         // voyait rien et n'etait jamais cree. On affiche desormais un message.

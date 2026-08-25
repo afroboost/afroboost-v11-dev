@@ -18,6 +18,12 @@ import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 const SubscriberCockpit = lazy(() => import("./SubscriberCockpit"));
 import SvgIcon from "./SvgIcon";
 import { PublishModal } from "./Publications"; // V261
+// ESSAI-7 : la mesure du dernier pas du funnel — « une seance a ete reservee ».
+import { funnelTracer } from "../utils/funnelEssai";
+// ESSAI-7 : l'etat d'essai REELLEMENT affichable, decide hors de cet ecran et
+// teste a part. Il avance d'un cran des qu'une reservation est confirmee, sans
+// attendre un rechargement.
+import { etatEssaiAffiche } from "../utils/essaiReservation";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -294,6 +300,20 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           : prev.subscription;
         return { ...prev, reservations: updatedReservations, subscription: updatedSub };
       });
+      // ESSAI-7 — `session_booked`, LE dernier pas du funnel.
+      // Il part ICI, et nulle part ailleurs : apres la reponse du serveur,
+      // donc apres qu'une reservation a REELLEMENT ete creee. Pas au clic
+      // (le serveur peut refuser : plus de credit, capacite pleine, conditions
+      // manquantes), pas a l'ouverture de l'ecran. Un refus part dans le
+      // `catch` et ne compte pas ; un rechargement ne rejoue aucun POST, donc
+      // ne peut pas produire de doublon.
+      // Aucune donnee personnelle : ni code, ni prenom, ni accompagnants.
+      funnelTracer('session_booked', {
+        course_id: occurrence.course_id,
+        places: qty,
+        is_trial: !!(data?.trial && data.trial.is_trial)
+      });
+
       // V186/V187: reset compteur + guests après réservation
       setQuantities((prev) => ({ ...prev, [reservationKey]: 1 }));
       setGuestNames((prev) => ({ ...prev, [reservationKey]: [] }));
@@ -591,6 +611,28 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const percentUsed = total > 0 ? Math.max(0, Math.min(100, Math.round((used / total) * 100))) : 0;
   const noSessions = remaining <= 0;
 
+  // ESSAI-7 — L'ETAT QUE CET ECRAN MONTRE.
+  // `t2_etat_essai` derive l'etat au CHARGEMENT. Une reservation faite juste
+  // apres n'y figure donc pas : sans ce rattrapage, l'ecran continuerait a
+  // reclamer « choisis ta seance » a quelqu'un qui vient d'en choisir une, et
+  // il faudrait recharger la page pour le voir changer. La regle vit dans
+  // `utils/essaiReservation.js`, ou elle est testee cas par cas.
+  const etatEssaiVu = etatEssaiAffiche(essai, upcomingReservations.length);
+  // Tant qu'aucune seance n'est choisie, choisir EST l'action principale : le
+  // QR ne repond pas a « qu'est-ce que je fais maintenant ? », il repond a
+  // « je suis a l'entree du cours ».
+  //
+  // `!noSessions` est volontaire : il existe un etat transitoire ou le droit
+  // est « disponible » alors que le compteur affiche encore 0 — une seance
+  // passee non honoree, dont le credit n'est rendu qu'a la prochaine tentative
+  // (`t1_restituer_essais_non_honores`). Y crier « choisis ta seance » devant
+  // des boutons desactives serait un mensonge : dans ce cas precis, l'ecran
+  // garde exactement son affichage d'avant ce lot.
+  const essaiAReserver = etatEssaiVu === "available" && !noSessions;
+  const essaiReserve = etatEssaiVu === "booked";
+  const essaiPrioritaire = essaiAReserver || essaiReserve;
+  const prochaineSeance = upcomingReservations[0] || null;
+
   const firstName = (subscriber.name || "").split(" ")[0] || "Abonné";
   // V202: Le lien personnel inclut ?m=slug si c'est un membre
   const shareUrl = typeof window !== "undefined"
@@ -643,7 +685,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
   return (
     <div className="min-h-screen pb-16" style={{ background: COLORS.bg, color: "white" }}>
-      <div className="max-w-md mx-auto px-4 pt-6 space-y-5">
+      {/* ESSAI-7 : `flex flex-col gap-5` rend EXACTEMENT le meme espacement
+          que `space-y-5`, mais permet de remonter un bloc avec `order` sans
+          rien demonter. Hors parcours d'essai, tous les `order` valent 0 et
+          l'ordre du DOM est conserve au pixel pres. */}
+      <div className="max-w-md mx-auto px-4 pt-6 flex flex-col gap-5">
         {/* V203f: Bouton retour vers la page d'inscription multi-membre */}
         {data?.multi_member && memberSlug && (
           <button
@@ -652,14 +698,16 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               setMemberSlug("");
               window.history.replaceState(null, "", window.location.pathname);
             }}
-            className="text-xs text-white/50 hover:text-white transition-colors"
+            className="text-xs text-white/50 hover:text-white transition-colors self-start"
+            style={{ order: essaiPrioritaire ? -3 : 0 }}
           >
             <span className="inline-flex items-center gap-1.5"><SvgIcon name="arrowLeft" size={14} /> Retour à la page du groupe</span>
           </button>
         )}
 
         {/* ===== Welcome ===== */}
-        <header className="flex items-center gap-3" data-testid="subscriber-space-header">
+        <header className="flex items-center gap-3" data-testid="subscriber-space-header"
+          style={{ order: essaiPrioritaire ? -2 : 0 }}>
           {coach?.logo_url ? (
             <img
               src={coach.logo_url}
@@ -704,6 +752,93 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             </svg>
           </button>
         </header>
+
+        {/* ═══ ESSAI-7 — TANT QU'AUCUNE SEANCE N'EST CHOISIE, CHOISIR EST
+            L'ACTION PRINCIPALE ══════════════════════════════════════════════
+            Avant ce bloc, quelqu'un qui venait d'obtenir son essai arrivait
+            devant un compteur, puis un QR code, et ne trouvait la liste des
+            seances qu'apres le pli. Or le QR ne repond pas a « qu'est-ce que
+            je fais maintenant ? » — il repond a « je suis a l'entree du
+            cours ». Rien n'est cache pour autant : `order` remonte ce bloc,
+            il ne demonte rien. */}
+        {essaiAReserver && (
+          <section
+            className="rounded-2xl p-5"
+            data-testid="essai7-priorite"
+            style={{
+              order: -1,
+              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.10)',
+              border: `1px solid ${COLORS.primary}`,
+            }}
+          >
+            <p className="text-lg font-bold">🎁 Ton cours d'essai est activé !</p>
+            {courses.length > 0 ? (
+              <>
+                <p className="text-white/60 text-xs uppercase tracking-wider mt-3">
+                  Prochaine étape
+                </p>
+                <p className="text-sm mt-1">Choisis maintenant ta séance.</p>
+                <button
+                  type="button"
+                  onClick={scrollToReservation}
+                  data-testid="essai7-choisir"
+                  className="mt-4 w-full py-3 rounded-xl font-bold transition-transform active:scale-95"
+                  style={{ background: COLORS.primary, color: "white", border: "none" }}
+                >
+                  Choisir ma séance
+                </button>
+              </>
+            ) : (
+              /* ESSAI-7 — ZERO CRENEAU : on dit ce qui est VRAI, et on ne
+                 promet rien qui n'existe pas. Aucune notification n'est
+                 branchee derriere cet ecran : annoncer « on te previendra »
+                 serait une promesse que personne ne tient. L'espace, lui,
+                 reste entierement accessible. */
+              <p className="text-sm mt-3 text-white/70" data-testid="essai7-aucun-creneau">
+                Aucun nouveau créneau n'est disponible pour le moment.
+                Reviens bientôt pour choisir ta séance.
+              </p>
+            )}
+          </section>
+        )}
+
+        {/* ═══ ESSAI-7 — LA SEANCE EST CHOISIE : LE QR DEVIENT LA SUITE ════
+            C'est seulement ici que le QR a un sens : il y a une seance, une
+            date, une porte a franchir. Le bouton OUVRE le QR existant, il ne
+            le remplace pas et ne le deplace pas. */}
+        {essaiReserve && (
+          <section
+            className="rounded-2xl p-5"
+            data-testid="essai7-reserve"
+            style={{
+              order: -1,
+              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.10)',
+              border: `1px solid ${COLORS.primary}`,
+            }}
+          >
+            <p className="text-lg font-bold">🔥 Ta séance est réservée !</p>
+            {prochaineSeance && (
+              <p className="text-sm mt-2 font-semibold" style={{ color: COLORS.primary }}>
+                {prochaineSeance.courseName ? `${prochaineSeance.courseName} · ` : ""}
+                {formatOccurrence(prochaineSeance.datetime)}
+              </p>
+            )}
+            <p className="text-sm mt-3 text-white/70">
+              Ton QR est prêt. Présente-le au coach à ton arrivée.
+            </p>
+            <button
+              type="button"
+              onClick={() => setQrFullscreen(true)}
+              data-testid="essai7-voir-qr"
+              className="mt-4 w-full py-3 rounded-xl font-bold transition-transform active:scale-95"
+              style={{ background: COLORS.primary, color: "white", border: "none" }}
+            >
+              <span className="inline-flex items-center justify-center gap-1.5">
+                <SvgIcon name="ticket" size={16} /> Voir mon QR
+              </span>
+            </button>
+          </section>
+        )}
 
         {/* V261 */}
         {v261ShowPublish && (
@@ -1021,7 +1156,12 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         <section
           ref={reserveSectionRef}
           className="rounded-2xl p-5"
-          style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, overflow: "hidden" }}
+          style={{
+            background: COLORS.panel, border: `1px solid ${COLORS.border}`, overflow: "hidden",
+            // ESSAI-7 : remontee juste sous l'annonce tant qu'aucune seance
+            // n'est choisie. Zero autrement — l'ordre du DOM est conserve.
+            order: essaiAReserver ? -1 : 0,
+          }}
           data-testid="subscriber-space-reservation"
         >
           <h2 className="text-base font-semibold mb-3">Réserver une séance</h2>
@@ -1039,9 +1179,13 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               className="text-xs mb-3 px-3 py-2 rounded-lg"
               style={{ background: "rgba(245,158,11,0.15)", color: "#fbbf24" }}
             >
-              {estEssai && etatEssai === "booked"
+              {/* ESSAI-7 : `etatEssaiVu` et non `etatEssai` — juste apres une
+                  reservation, le serveur n'a pas encore rederive l'etat et ce
+                  bandeau annoncait « Plus de séances disponibles » a quelqu'un
+                  qui venait de reserver la sienne. */}
+              {estEssai && etatEssaiVu === "booked"
                 ? "Vous avez déjà réservé votre séance découverte. Annulez-la pour en choisir une autre."
-                : estEssai && etatEssai === "done"
+                : estEssai && etatEssaiVu === "done"
                 ? "Votre séance découverte a été utilisée."
                 : "Plus de séances disponibles"}
             </p>
@@ -1212,7 +1356,13 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                           className="text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
                           style={{ background: COLORS.primary, color: "white" }}
                           data-testid={`reserve-${occ.course_id}`}>
-                          {isBusy ? "…" : qty > 1 ? `Réserver ${qty} places` : "Réserver"}
+                          {/* ESSAI-7 : pendant l'essai, le bouton nomme ce
+                              qu'il fait — « Réserver » seul, au milieu d'une
+                              liste de dates, ne dit pas LAQUELLE. */}
+                          {isBusy ? "…"
+                            : qty > 1 ? `Réserver ${qty} places`
+                            : essaiAReserver ? "Réserver cette séance"
+                            : "Réserver"}
                         </button>
                       </div>
                       )}

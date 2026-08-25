@@ -35,14 +35,42 @@ beforeEach(() => {
 afterEach(() => { delete window.posthog; });
 
 // --------------------------------------------------------------------------
-describe('les quatre evenements du funnel', () => {
+describe('les cinq evenements du funnel', () => {
   test('portent exactement les noms retenus a l audit', () => {
     expect(EVENEMENTS_FUNNEL).toEqual([
       'trial_cta_click',
       'trial_form_open',
       'trial_form_submit',
-      'trial_granted'
+      'trial_granted',
+      // ESSAI-7 : le pas qui manquait. Entre « le code existe » et « la
+      // personne vient au cours », rien n'etait mesure — or c'est LA le
+      // decrochage constate le 25/08/2026.
+      'session_booked'
     ]);
+  });
+
+  test('session_booked ferme le funnel : trial_granted -> session_booked', () => {
+    // L'ordre de la liste EST la lecture du funnel dans PostHog. Un evenement
+    // ajoute au milieu decalerait toutes les etapes de la baseline.
+    expect(EVENEMENTS_FUNNEL.indexOf('session_booked'))
+      .toBe(EVENEMENTS_FUNNEL.indexOf('trial_granted') + 1);
+    expect(EVENEMENTS_FUNNEL[EVENEMENTS_FUNNEL.length - 1]).toBe('session_booked');
+  });
+
+  test('session_booked ne laisse passer aucune donnee personnelle', () => {
+    // Le point d'appel vit dans l'espace participant, ou le code AFR-, le
+    // prenom et les prenoms des accompagnants sont a portee de main.
+    funnelTracer('session_booked', {
+      course_id: 'cours-42',
+      is_trial: true,
+      access_code: 'AFR-2287CA',
+      prenom: 'Ana',
+      guest_name: 'Bea'
+    });
+    expect(ph.capture).toHaveBeenCalledWith(
+      'session_booked',
+      { course_id: 'cours-42', is_trial: true }
+    );
   });
 });
 
