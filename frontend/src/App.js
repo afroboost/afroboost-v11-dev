@@ -9,6 +9,9 @@ import { LanguageContext } from "./contexts/LanguageContext";
 import { jetonExpire } from "./utils/jwt";
 // P0-SOCLE : la strategie d'authentification, decidee en un seul endroit.
 import { terminerSession, debutConnexion, finConnexion, signalerConnexionReussie, abonnerAuth, authValide, AUTH } from "./utils/authSession";
+// FUNNEL ESSAI (etape 1) — mesure PURE : ces deux fonctions ne changent aucun
+// parcours et ne levent jamais. Voir utils/funnelEssai.js pour les invariants.
+import { funnelTracer, funnelVariante } from "./utils/funnelEssai";
 
 // V133: Intercepteur global — JWT prioritaire + fallback X-User-Email
 axios.interceptors.request.use((config) => {
@@ -6499,6 +6502,16 @@ function App() {
       return; // ne pas définir selectedOffer
     }
 
+    // FUNNEL ESSAI — `trial_form_open`. Pose ICI et pas en tete de fonction :
+    // `handleSelectOffer` sort avant pour la preuve sociale (V260) et pour
+    // l'achat direct (V225), qui n'ouvrent PAS le formulaire. Mesurer en tete
+    // compterait des ouvertures qui n'ont jamais lieu.
+    funnelTracer('trial_form_open', {
+      offer_id: offer?.id,
+      is_free: !(v223UnitPrice(offer) > 0),
+      variante: funnelVariante()
+    });
+
     setSelectedOffer(offer);
     // Réinitialiser les variantes quand une nouvelle offre est sélectionnée
     setSelectedVariants({});
@@ -6743,6 +6756,19 @@ function App() {
     // meme resultat que le flux Stripe (souscription + code AFR- + email avec
     // lien de reservation + push coach + contact). POST /reservations n'est pas
     // touche : il reste utilise par les autres parcours.
+
+    // FUNNEL ESSAI — `trial_form_submit`. Pose APRES toutes les gardes qui
+    // peuvent encore renvoyer (cours/dates, conditions, e-mail, WhatsApp, date
+    // de naissance, variantes) : un formulaire refuse trois fois compterait
+    // sinon trois soumissions, et le taux de passage serait faux et gonfle.
+    // Pose AVANT le branchement pour couvrir les deux chemins, gratuit ou non.
+    // Appel synchrone et non attendu : il n'ajoute aucune latence au checkout.
+    funnelTracer('trial_form_submit', {
+      offer_id: selectedOffer?.id,
+      is_free: totalPrice === 0,
+      variante: funnelVariante()
+    });
+
     if (totalPrice === 0) {
       setLoading(true);
       try {
@@ -6772,6 +6798,18 @@ function App() {
 
         saveClientInfo(userName, userEmail, userWhatsapp);
         setLastReservation(freeRes.data);
+
+        // FUNNEL ESSAI — `trial_granted`. Pose APRES la reussite du POST, donc
+        // apres que le serveur a franchi la garde anti-2e-essai et cree le code
+        // AFR-. Un octroi refuse (essai deja pris) part dans le `catch` et
+        // n'emet rien : c'est voulu, il n'y a pas eu d'octroi.
+        // Un rechargement ou un retour arriere ne rejoue AUCUN POST — le
+        // formulaire est reinitialise plus bas — donc aucun faux octroi.
+        funnelTracer('trial_granted', {
+          offer_id: selectedOffer?.id,
+          variante: funnelVariante()
+        });
+
         // Le backend a deja envoye email client + email coach + push : plus
         // besoin de notifyCoachAutomatic (qui aurait fait doublon).
 
@@ -8039,15 +8077,19 @@ function App() {
               // reste native et immediate. Zero attente, zero retard — la mesure
               // ne conditionne rien. Si PostHog est bloque (adblock) ou absent,
               // le `try` avale et le lien fonctionne comme avant.
-              try {
-                if (window.posthog && typeof window.posthog.capture === 'function') {
-                  window.posthog.capture(
-                    'trial_cta_click',
-                    { source: 'homepage_hero' },
-                    { transport: 'sendBeacon' }
-                  );
-                }
-              } catch (e) { /* mesure best-effort, on n'interrompt rien */ }
+              // FUNNEL ESSAI — passe desormais par `funnelTracer`, qui porte le
+              // try/catch et le filtre de donnees personnelles. `sendBeacon`
+              // est CONSERVE : sans lui, la navigation qui suit le clic annule
+              // la requete et le clic n'est jamais compte.
+              // `variante: 'chat'` decrit la DESTINATION de ce CTA — il pointe
+              // aujourd'hui sur le tunnel. Le jour ou l'etape 2 le fera pointer
+              // sur l'offre, cette valeur devra devenir 'direct' : c'est elle
+              // qui rendra les deux periodes comparables.
+              funnelTracer(
+                'trial_cta_click',
+                { source: 'homepage_hero', variante: 'chat' },
+                { transport: 'sendBeacon' }
+              );
             }}
             className="mt-6 inline-flex items-center justify-center gap-2 font-bold rounded-full w-full max-w-[260px] md:w-auto md:max-w-none"
             style={{
