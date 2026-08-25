@@ -121,7 +121,10 @@ _V184_WEEKDAY_LABELS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "s
 """
 
 A_EXTRAIRE = ["_v184_parse_time_hhmm", "_v184_next_occurrences", "sessions_agenda",
-              "rv3_cours_configurables"]
+              "rv3_cours_configurables",
+              # E1B : la regle « ce cours sert-il encore ? » est desormais
+              # ecrite une seule fois et partagee avec le moteur de rappels.
+              "e1b_cours_encore_servi"]
 
 APPELANT = ["coach@exemple.com"]
 
@@ -643,11 +646,20 @@ def structure():
             _gardes.append(ast.unparse(_n.test))
     verifier("S8. AUCUNE garde de la regle COACH ne decide sur `visible`",
              _gardes and all("visible" not in g for g in _gardes), str(_gardes))
-    verifier("S8b. sa garde d'eligibilite decide sur l'archivage, les offres et `agenda_abonne`",
-             any(all(m in g for m in ("archived", "agenda_abonne")) for g in _gardes),
-             str(_gardes))
-    verifier("S9. elle s'appuie sur l'archivage, les offres et `agenda_abonne`",
-             all(m in nu_coach for m in ("archived", "agenda_abonne", "linked_course_ids")))
+    # E1B : la garde ne recopie plus la regle, elle l'APPELLE. Ce deplacement est
+    # le fond du lot : le moteur de rappels appelle exactement la meme fonction,
+    # et deux ecritures de la meme regle ne peuvent plus diverger. On verifie
+    # donc que la garde delegue, puis que la fonction appelee decide bien sur
+    # l'archivage, les offres et `agenda_abonne`.
+    verifier("S8b. sa garde d'eligibilite delegue a la regle partagee",
+             any("e1b_cours_encore_servi" in g for g in _gardes), str(_gardes))
+    nu_regle = code_nu("e1b_cours_encore_servi")
+    verifier("S9. la regle partagee s'appuie sur l'archivage et `agenda_abonne`",
+             all(m in nu_regle for m in ("archived", "agenda_abonne"))
+             and "linked_course_ids" in nu_coach)
+    verifier("S9b. le moteur de rappels appelle LA MEME regle",
+             "e1b_cours_encore_servi" in SOURCE[SOURCE.find(
+                 "async def cron_reservation_reminders"):])
     verifier("S10. elle expose l'etat de publication de chaque offre",
              "publique" in nu_coach)
     verifier("S11. elle n'ecrit rien en base",

@@ -26165,7 +26165,11 @@ async def rv3_cours_configurables(request: Request):
     _sortie = []
     for _c in _cours:
         _liees = _par_cours.get(_c.get("id"), [])
-        if _c.get("archived") is True and not _liees and not _c.get("agenda_abonne"):
+        # E1B : la regle ci-dessus vit desormais dans `e1b_cours_encore_servi`,
+        # appelee AUSSI par le moteur de rappels. Le verdict est identique au
+        # caractere pres — `_liees` n'est non vide que pour un cours present
+        # dans `_par_cours` — mais il ne peut plus diverger avec le temps.
+        if not e1b_cours_encore_servi(_c, _par_cours):
             continue
         _vue = dict(_c)
         _vue["offres"] = _liees
@@ -27618,6 +27622,91 @@ def c2_enrichir(contact: dict, abonnements: dict, consentements: dict) -> dict:
 
 
 
+# ============================ E1B — ARCHIVE N'EST PAS ANNULE ============================
+#
+# `archived` etait, a lui seul, ce qui separait les deux vraies seances
+# hebdomadaires du dernier message avant la porte. Or ce booleen ne dit PAS
+# « ce cours n'a plus lieu » : il dit « ce cours ne figure plus dans la liste de
+# la vitrine ». Les deux seances concernees sont vendues par trois offres,
+# portent `agenda_abonne`, et l'agenda public les propose en ce moment meme.
+# L'ecran de configuration des rappels les offre deja au coach
+# (`rv3_cours_configurables`) — le moteur, lui, les jetait en silence. Ce lot
+# supprime cette contradiction, et rien d'autre.
+#
+# CE QUE CE LOT N'INVENTE PAS. Le modele ne sait pas representer une occurrence
+# ANNULEE : ni champ, ni collection, ni drapeau. Fabriquer ici une regle qui
+# devinerait l'annulation serait une fiction, et une fiction qui enverrait de
+# vrais e-mails. On verifie donc la seule chose verifiable — la seance de cette
+# reservation figure-t-elle ENCORE au planning du cours — et la vraie annulation
+# d'occurrence reste une dette nommee, E1C, hors de ce commit : elle demandera
+# une representation propre, respectee par les reservations, la vitrine/espace,
+# les rappels, AUTO-PRESENCE et le coach.
+
+
+def e1b_cours_encore_servi(cours, cours_vendus) -> bool:
+    """Ce cours sert-il encore, meme archive ?
+
+    La regle n'est pas nouvelle : c'est MOT POUR MOT celle que
+    `rv3_cours_configurables` publie deja a l'ecran depuis RV3 —
+
+        sert encore  =  non archive
+                     OU rattache a au moins une offre
+                     OU marque `agenda_abonne`
+
+    Elle est extraite ici pour etre appelee des DEUX cotes. Deux ecritures de la
+    meme regle finiraient par se contredire — c'est deja arrive dans ce depot, et
+    le coach verrait alors un cours propose a la configuration puis muet a
+    l'envoi, ce qui est exactement le defaut que ce lot repare.
+
+    `cours_vendus` est l'ensemble des identifiants de cours rattaches a au moins
+    une offre. Vide ou illisible : seul `agenda_abonne` peut encore prouver
+    quelque chose, et un cours archive que plus rien ne designe reste muet.
+    """
+    if not cours:
+        return False
+    if cours.get("archived") is not True:
+        return True
+    return bool(cours.get("id") in (cours_vendus or ())
+                or cours.get("agenda_abonne"))
+
+
+def e1b_seance_encore_au_planning(cours, instant, en_instant, jours) -> bool:
+    """La seance de CETTE reservation figure-t-elle encore au planning ?
+
+    Aucun calendrier nouveau : on demande son planning a
+    `_v184_next_occurrences`, la MEME fonction qui alimente l'agenda public et
+    l'espace abonne. Si l'agenda ne propose plus cette seance, le rappel ne part
+    pas — un cours dont on a deplace le jour ou la date ponctuelle cesse donc de
+    rappeler, sans qu'aucune notion d'annulation ait ete inventee.
+
+    La comparaison se fait a la MINUTE, des deux cotes : l'horaire d'un cours
+    s'ecrit « HH:MM » et n'a jamais eu de secondes, tandis que le `datetime`
+    d'une reservation en porte parfois. Comparer plus fin ferait echouer une
+    seance pourtant maintenue.
+
+    `en_instant` est l'interpretation de dates DEJA utilisee par le moteur
+    (V435 : une date naive est de l'heure suisse, pas de l'UTC). La lui passer
+    interdit qu'un second fuseau apparaisse dans ce fichier.
+
+    Faux des que le moindre doute existe : c'est la garde qui OUVRE une porte
+    restee fermee jusqu'ici, elle doit se refuser par defaut.
+    """
+    if not cours or instant is None:
+        return False
+    try:
+        _occurrences = _v184_next_occurrences(cours, days_ahead=jours)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[E1B] planning illisible pour %s (%s) — aucun rappel",
+                       str(cours.get("id") or "?")[:8], type(_err).__name__)
+        return False
+    _cible = instant.replace(second=0, microsecond=0)
+    for _occ in _occurrences:
+        _i = en_instant(_occ.get("datetime"))
+        if _i is not None and _i.replace(second=0, microsecond=0) == _cible:
+            return True
+    return False
+
+
 # V183: Cron rappel 1h avant un cours réservé
 @api_router.get("/cron/reservation-reminders")
 async def cron_reservation_reminders():
@@ -27691,6 +27780,39 @@ async def cron_reservation_reminders():
         # soit le nombre de reservations qui s'y rattachent.
         _cache_cours: dict = {}
         _lectures_cours = [0]
+        # E1B : l'horizon du moteur (~48 h) borne le planning a interroger. Deux
+        # jours de marge suffisent et evitent de derouler une recurrence pour
+        # rien.
+        _e1b_jours = int(N1B2_HORIZON_MIN // 1440) + 2
+        _e1b_vendus = [None]
+
+        async def _e1b_cours_vendus():
+            """Les cours rattaches a au moins une offre. UNE lecture par passage.
+
+            Elle n'a lieu que si un cours ARCHIVE se presente : un parc sans
+            archive ne paie rien. Le resultat est ensuite servi de memoire, quel
+            que soit le nombre de reservations concernees — la meme discipline
+            que le cache de cours juste au-dessus.
+
+            Illisible : on retient un ensemble VIDE. Seul `agenda_abonne` peut
+            alors encore prouver qu'un cours archive sert, et a defaut il reste
+            muet — c'est-a-dire le comportement d'avant ce lot.
+            """
+            if _e1b_vendus[0] is None:
+                _ids = set()
+                try:
+                    async for _o in db.offers.find({}, {"_id": 0,
+                                                        "linked_course_ids": 1}):
+                        for _cid_lie in (_o.get("linked_course_ids") or []):
+                            if _cid_lie:
+                                _ids.add(_cid_lie)
+                except Exception as _err:  # noqa: BLE001
+                    logger.warning("[E1B] offres illisibles (%s) — un cours archive "
+                                   "ne sera servi que par `agenda_abonne`",
+                                   type(_err).__name__)
+                    _ids = set()
+                _e1b_vendus[0] = _ids
+            return _e1b_vendus[0]
 
         async def _rv3_cours_de(_resa):
             """Le cours d'une reservation, mis en cache par passage."""
@@ -27706,17 +27828,22 @@ async def cron_reservation_reminders():
                 # DEJA faite, dans le cache DEJA en place. Zero requete de plus,
                 # zero lecture supplementaire — un cours reste lu au plus une
                 # fois par passage, quel que soit le nombre de reservations.
+                # E1B : `weekday`, `date`, `time` et `agenda_abonne` s'ajoutent a
+                # la projection DEJA faite, dans le cache DEJA en place — comme
+                # E2 avant lui. Zero requete de plus : ils servent a juger si la
+                # seance est encore au planning, pas a en chercher une autre.
                 _c = await db.courses.find_one(
                     {"id": _cid},
                     {"_id": 0, "id": 1, "name": 1, "archived": 1,
                      "reminders_enabled": 1, "reminder_rules": 1,
-                     "locationName": 1, "mapsUrl": 1})
+                     "locationName": 1, "mapsUrl": 1,
+                     "weekday": 1, "date": 1, "time": 1, "agenda_abonne": 1})
             except Exception as _e:
                 logger.warning("[RV3] cours %s illisible : %s", _cid, _e)
             _cache_cours[_cid] = _c
             return _c
 
-        async def _rv3_regles_de(_resa):
+        async def _rv3_regles_de(_resa, _quand=None):
             """Les regles de CE cours, ou [] s'il n'envoie pas de rappels.
 
             AUCUN repli sur une configuration globale du coach. Un cours qui n'a
@@ -27731,8 +27858,20 @@ async def cron_reservation_reminders():
             _c = await _rv3_cours_de(_resa)
             if not _c:
                 return []
+            # E1B — ARCHIVE NE SUFFIT PLUS A REFUSER, MAIS N'OUVRE RIEN NON PLUS.
+            # Deux preuves sont exigees, et elles ne s'appliquent QU'AUX cours
+            # archives : le chemin du parc vivant reste identique au caractere
+            # pres, aucune restriction nouvelle n'y est introduite.
+            #   1) le cours est encore servi — meme regle que l'ecran ;
+            #   2) la seance de CETTE reservation est encore au planning.
+            # A defaut de l'une ou l'autre, on retombe exactement sur le refus
+            # d'avant ce lot.
             if _c.get("archived") is True:
-                return []
+                if not e1b_cours_encore_servi(_c, await _e1b_cours_vendus()):
+                    return []
+                if not e1b_seance_encore_au_planning(
+                        _c, _quand, _v435_instant_du_cours, _e1b_jours):
+                    return []
             if _c.get("reminders_enabled") is not True:
                 return []
             _regles = n1b2_valider_regles(_c.get("reminder_rules"))
@@ -27750,7 +27889,7 @@ async def cron_reservation_reminders():
             # aucune regle ne peut encore se declencher.
             if not _quand or _quand <= now or _quand > _horizon:
                 continue
-            _regles_r = await _rv3_regles_de(_r)
+            _regles_r = await _rv3_regles_de(_r, _quand)
             if not _regles_r:
                 continue
             # N1B-3B2 : les cibles sont RECALCULEES pour cette occurrence reelle,

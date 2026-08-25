@@ -173,11 +173,23 @@ verifier("D1. le cron part des RESERVATIONS, pas des cours",
          "db.reservations.find(" in _cron)
 verifier("D2. il selectionne sur le `datetime` REEL de la seance reservee",
          '"datetime": {"$gte": _plancher}' in _cron)
+# E1B : `weekday` et `date` entrent dans la PROJECTION du cours, pour savoir si
+# la seance d'un cours ARCHIVE figure encore au planning. Ils ne decident jamais
+# d'un envoi : le parc vivant ne passe meme pas par ce controle. L'assertion se
+# resserre donc — hors de cette unique ligne de projection, la regle universelle
+# tient toujours — et une assertion NOUVELLE (D3b) verrouille la condition.
+_cron_hors_projection = re.sub(r"db\.courses\.find_one\([^()]*\)", "",
+                               _cron, flags=re.S)
 verifier("D3. AUCUNE condition de recurrence n'entre dans l'envoi",
-         "weekday" not in _cron and "recurrent" not in _cron,
+         "weekday" not in _cron_hors_projection
+         and "recurrent" not in _cron_hors_projection,
          "un `if recurrent:` rendrait les rappels non universels")
 verifier("D4. le type de cours n'est pas lu non plus",
-         '"date"' not in _cron.replace('"datetime"', ""))
+         '"date"' not in _cron_hors_projection.replace('"datetime"', ""))
+verifier("D3b. le planning n'est consulte QUE pour un cours archive",
+         re.search(r'if _c\.get\("archived"\) is True:[\s\S]{0,400}'
+                   r'e1b_seance_encore_au_planning', SERVEUR) is not None,
+         "sinon un cours vivant deviendrait tributaire de sa recurrence")
 verifier("D5. la configuration est lue sur LE COURS, via courseId",
          'reservation.get("courseId")' in _cron or '_resa.get("courseId")' in _cron)
 verifier("D6. seule `reminders_enabled` decide — absent vaut NON",

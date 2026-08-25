@@ -87,9 +87,13 @@ RV2_MOIS = ("janvier", "fevrier", "mars", "avril", "mai", "juin",
 RESEND_AVAILABLE = True
 RESEND_API_KEY = "re_faux_jamais_utilisee"
 RV2_ESPACE_CARACTERES = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+_V184_WEEKDAY_LABELS_FR = ["lundi", "mardi", "mercredi", "jeudi",
+                           "vendredi", "samedi", "dimanche"]
 """
 
 A_EXTRAIRE = ["_v259_primary_rgb", "_email_wrapper",
+              "_v184_parse_time_hhmm", "_v184_next_occurrences",
+              "e1b_cours_encore_servi", "e1b_seance_encore_au_planning",
               "_v184_public_origin", "rv2_lien_espace",
               "n1b2_cle", "n1b2_cible", "n1b2_titre", "n1b2_corps",
               "n1b2_valider_regles", "n1b3b2_plan", "n1b2_regles_du_coach",
@@ -293,7 +297,7 @@ def cours(cid="c1", actif=True, regles=None, archive=False, **extra):
 
 class _Base(object):
     def __init__(self, resas, prefs=None, profils=None, cours_docs=None,
-                 codes=None):
+                 codes=None, offres=None):
         self.reservations = _Coll(resas)
         self.notification_preferences = _Coll(prefs or [])
         self.coach_profiles = _Coll(profils or [])
@@ -301,6 +305,10 @@ class _Base(object):
         # E2 : le cron verifie qu'un code d'acces EXISTE avant d'en faire un
         # lien. Vide par defaut -> aucun lien, comme avant ce lot.
         self.discount_codes = _Coll(codes or [])
+        # E1B : les offres servent a prouver qu'un cours ARCHIVE est encore
+        # vendu. Vide par defaut -> aucune preuve, donc un cours archive reste
+        # muet exactement comme avant ce lot.
+        self.offers = _Coll(offres or [])
 
 
 class _HTTP(Exception):
@@ -355,11 +363,11 @@ class _FauxResend(object):
 
 
 def bac(resas, prefs=None, profils=None, push_ok=True, email_ok=True, cours_docs=None,
-        codes=None):
+        codes=None, offres=None):
     PUSHS[:] = []
     EMAILS[:] = []
     _FauxEmails.echec = not email_ok
-    base = _Base(resas, prefs, profils, cours_docs, codes)
+    base = _Base(resas, prefs, profils, cours_docs, codes, offres)
 
     async def faux_push(email, titre, corps, data=None):
         await asyncio.sleep(0)
@@ -1023,8 +1031,22 @@ async def scenarios_flexibilite():
     _trouves = [j for j in _jours if j in _nu.lower()]
     verifier("F9. le moteur ne nomme AUCUN jour de la semaine",
              not _trouves, "trouves : %s" % _trouves)
-    verifier("F9b. il ne lit ni `weekday` ni `time` pour decider",
-             "weekday" not in _nu and "'time'" not in _nu, "")
+    # E1B : `weekday`, `date` et `time` entrent dans la PROJECTION du cours —
+    # ils servent a savoir si la seance est encore au planning, jamais a decider
+    # QUAND rappeler. L'assertion se resserre donc au lieu de disparaitre : hors
+    # de cette unique ligne de projection, le moteur continue de les ignorer, et
+    # l'instant declencheur ne sort que du `datetime` de la reservation.
+    _hors_projection = "\n".join(l for l in _nu.split("\n")
+                                 if "db.courses.find_one" not in l)
+    verifier("F9b. il ne lit ni `weekday` ni `time` pour decider QUAND rappeler",
+             "weekday" not in _hors_projection and "'time'" not in _hors_projection,
+             [l.strip()[:80] for l in _hors_projection.split("\n")
+              if "weekday" in l or "'time'" in l])
+    _v435 = _nu[_nu.find("def _v435_instant_du_cours"):]
+    _v435 = _v435[:_v435.find("\ntry:")]
+    verifier("F9c. l'instant declencheur ne vient que du `datetime` de la resa",
+             "weekday" not in _v435 and "'time'" not in _v435
+             and "fromisoformat" in _v435, "")
 
 
 # ============================================================================
