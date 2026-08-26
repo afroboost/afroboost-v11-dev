@@ -4618,6 +4618,66 @@ def format_phone_e164(phone: str, default_country: str = "+41") -> str:
 
 
 @api_router.post("/campaigns/{campaign_id}/launch")
+async def v451_lancer_campagne_http(campaign_id: str, request: Request):
+    """V451 — LA SEULE PORTE HTTP vers le lancement d'une campagne de masse.
+
+    CE QU'ELLE FERME. `launch_campaign` portait ce décorateur avec la signature
+    `async def launch_campaign(campaign_id: str)` : SANS paramètre `Request`,
+    l'authentification y était structurellement impossible — pas seulement
+    oubliée. Mesuré en production le 26/08/2026, sans rien envoyer (identifiant
+    inexistant, donc aucun destinataire) :
+
+        POST /api/campaigns/id-inexistant-preuve-audit-v450/launch
+        -> HTTP 404 {"detail":"Campaign not found"}
+
+    404 et non 403 : le handler s'exécutait pour un anonyme. Avec un
+    `campaign_id` RÉEL, n'importe qui déclenchait l'envoi de masse sur toute
+    l'audience — WhatsApp, e-mail ET push. Le canal e-mail (Resend) étant
+    opérationnel, le risque n'était pas théorique.
+
+    LA GARDE EST RÉUTILISÉE, PAS INVENTÉE. `_v309_require_coach_or_admin` sert
+    déjà les routes de LECTURE du dashboard (`/api/users`, `/api/contacts/all`) :
+    JWT signé, coach ou admin, 403 sinon. Le drapeau `REQUIRE_COACH_JWT` est
+    déjà à `true` en production et ces routes rendent un dashboard PLEIN au
+    propriétaire — la preuve que son jeton signé existe est donc ANTÉRIEURE à ce
+    lot, et le durcissement n'ouvre aucun risque nouveau (règle V310c).
+
+    CLOISONNEMENT. Le super-admin lance n'importe quelle campagne ; un coach ne
+    lance QUE les siennes. La propriété se lit sur le document (`coach_id`),
+    jamais sur le corps ni sur un en-tête. Une campagne sans `coach_id` n'est
+    lançable que par un super-admin : on ne devine pas un propriétaire.
+
+    CE QU'ELLE NE TOUCHE PAS. `launch_campaign` — 754 lignes — n'est pas modifiée
+    d'un octet : crédits et tarification, résolution des destinataires,
+    segmentation, dépliage des groupes, opt-out C3, registre STOP S1,
+    déduplication, verrou anti-doublon atomique, fournisseurs. Seul son
+    DÉCORATEUR de route se déplace ici.
+
+    LES APPELS INTERNES NE PASSENT PAS PAR ICI. `_cron_check_campaigns_body` et
+    la boucle de fond appellent `launch_campaign()` en Python : le cron n'a pas
+    de jeton, et n'en a pas besoin. C'est voulu — la porte gardée est la porte
+    HTTP, pas le moteur.
+    """
+    _appelant = await _v309_require_coach_or_admin(request)
+
+    _campagne = await db.campaigns.find_one({"id": campaign_id},
+                                            {"_id": 0, "coach_id": 1, "name": 1})
+    if not _campagne:
+        # Même réponse qu'avant pour un identifiant inconnu — mais désormais
+        # seulement APRÈS authentification : un anonyme reçoit 403, jamais 404,
+        # et ne peut donc pas sonder l'existence d'une campagne.
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    _proprietaire = (_campagne.get("coach_id") or "").lower().strip()
+    if not is_super_admin(_appelant) and _proprietaire != _appelant:
+        logger.warning("[V451] REFUS lancement de « %s » — %s n'en est pas le propriétaire",
+                       _campagne.get("name"), _appelant)
+        raise HTTPException(status_code=403,
+                            detail="Cette campagne ne vous appartient pas.")
+
+    return await launch_campaign(campaign_id)
+
+
 async def launch_campaign(campaign_id: str):
     """
     Lance une campagne immédiatement.
