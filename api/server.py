@@ -469,6 +469,17 @@ async def debug_config():
         # Booleen SEUL — permet de vérifier que l'authentification signée est active,
         # sans divulguer le secret qui la fonde ni aucun détail exploitable.
         "jwt_secret_set": bool(os.environ.get('JWT_SECRET')),
+        # V452 — SONDE, et rien d'autre. Le lot suivant (3b) vérifiera la signature
+        # `X-Hub-Signature-256` des webhooks Meta. Si `META_APP_SECRET` n'atteignait
+        # pas le conteneur, cette vérification refuserait TOUT le trafic entrant
+        # légitime : plus aucun message reçu, plus aucun STOP traité, bot muet.
+        # Or le projet a déjà vécu exactement cela — `JWT_SECRET` posé dans Coolify
+        # sans jamais parvenir au conteneur, d'où le repli V307 par MongoDB
+        # `app_secrets`. Poser une variable ne prouve RIEN ; seule sa lecture depuis
+        # le conteneur le prouve. Ce booléen est cette preuve, et il est déployé
+        # SEUL, avant la moindre ligne de vérification.
+        # Booléen strict : jamais la valeur, jamais sa longueur, jamais un préfixe.
+        "meta_app_secret_set": bool(os.environ.get('META_APP_SECRET')),
     })
 
 
