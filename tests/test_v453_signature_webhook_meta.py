@@ -398,17 +398,24 @@ def _index_travail():
     return idx
 
 
+# Le commit de ce lot, compare a SON PROPRE PARENT — jamais l'arbre de travail a
+# un hachage fige. Sinon le garde-fou tomberait en panne des le lot suivant.
+# Meme motif que V442, V450, V451 et V452.
+V453 = "89513b28"
+
+
 def tests_non_regression():
-    tete, travail = _index("HEAD"), _index_travail()
-    if not tete:
-        verifier("N0. la revision HEAD est lisible", False, "git indisponible")
+    tete, travail = _index(V453 + "^"), _index(V453)
+    if not tete or not travail:
+        verifier("N0. la revision V453 est lisible", False, "git indisponible")
         return
-    verifier("N0. la revision HEAD est lisible", True)
+    verifier("N0. la revision V453 est lisible", True)
     for nom in INTOUCHABLES:
         if nom not in tete:
             continue
-        verifier("9. %s INCHANGE par ce lot" % nom, tete[nom] == travail.get(nom), "MODIFIE")
-    diff = subprocess.check_output(["git", "diff", "--name-only", "HEAD"],
+        verifier("9. %s INCHANGE par le commit V453" % nom,
+                 tete[nom] == travail.get(nom), "MODIFIE")
+    diff = subprocess.check_output(["git", "diff", "--name-only", V453 + "^", V453],
                                    cwd=RACINE).decode("utf-8").split()
     autorises = {"api/server.py", "tests/test_v453_signature_webhook_meta.py"}
     hors = [f for f in diff if f not in autorises]
