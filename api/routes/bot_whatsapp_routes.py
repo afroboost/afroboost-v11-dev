@@ -632,6 +632,85 @@ async def lire_cours_de_offre(offre):
 ETAPE_ATTENTE_CRENEAU = "attente_creneau"
 
 
+# V455 — QU'EST-CE QU'UNE REPONSE EXPLOITABLE A « quel creneau ? »
+#
+# Avant V455, la seule condition etait « texte non vide ». Le 26/08/2026, « Hi » est
+# donc devenu un horaire : notification au coach, et pause de 7 jours declenchee sur
+# un malentendu. On demande desormais un INDICE : un mot de temps, un chiffre, ou une
+# formule de disponibilite.
+#
+# « quand tu veux » n'est PAS une non-reponse : c'est une reponse sincere, et la
+# refuser serait absurde. Elle est acceptee, mais enregistree comme FLEXIBLE — jamais
+# recopiee telle quelle dans un champ « heure souhaitee », ou elle ferait croire a un
+# rendez-vous qui n'existe pas.
+_CRENEAU_FLEXIBLE = (
+    "quand tu veux", "quand vous voulez", "quand vous voudrez", "quand tu peux",
+    "quand vous pouvez", "nimporte quand", "nimporte quelle heure", "peu importe",
+    "des que possible", "asap", "au plus vite", "comme tu veux", "comme vous voulez",
+    "quand ca tarrange", "quand ca vous arrange", "je suis libre", "flexible",
+    "au choix", "sans preference", "aucune preference",
+)
+
+# Mots cherches avec des FRONTIERES DE MOT, jamais en sous-chaine : « bonsoir »
+# contient « soir » et n'est pourtant pas un creneau.
+_CRENEAU_MOTS_TEMPS = (
+    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+    "demain", "apres-demain", "aujourdhui", "matin", "matinee", "midi",
+    "apres-midi", "aprem", "soir", "soiree", "nuit", "weekend", "week-end",
+    "semaine", "heure", "heures", "tantot", "prochaine",
+)
+
+_CRENEAU_SANS_ACCENT = str.maketrans(
+    "\u00e0\u00e2\u00e4\u00e1\u00e3\u00e7\u00e9\u00e8\u00ea\u00eb\u00ed\u00ef\u00ee\u00ec\u00f1\u00f3\u00f2\u00f4\u00f6\u00f5\u00fa\u00f9\u00fb\u00fc\u00fd\u00ff",
+    "aaaaaceeeeiiiinooooouuuuyy")
+
+
+def _normaliser_creneau(texte):
+    """Minuscules, sans accents, sans apostrophes, espaces normalises."""
+    n = str(texte or "").lower().translate(_CRENEAU_SANS_ACCENT)
+    n = n.replace("'", "").replace("\u2019", "")
+    return re.sub(r"\s+", " ", n).strip()
+
+
+def qualifier_creneau(texte):
+    """« flexible » | « precis » | None. None = ce n'est pas une reponse."""
+    n = _normaliser_creneau(texte)
+    if not n:
+        return None
+    if any(f in n for f in _CRENEAU_FLEXIBLE):
+        return "flexible"
+    if any(re.search(r"\b%s\b" % re.escape(m), n) for m in _CRENEAU_MOTS_TEMPS):
+        return "precis"
+    if re.search(r"\d", n):
+        return "precis"
+    return None
+
+
+def construire_relance_creneau():
+    """V455 — premiere reponse inexploitable : on repose la question AVEC des exemples.
+    On ne note rien, on ne previent pas le coach, on ne met pas en pause."""
+    return {
+        "type": "text",
+        "text": {"body": "Je n'ai pas bien saisi le moment qui vous conviendrait \U0001F642\n\n"
+                         "Par exemple :\n"
+                         "\u2022 \u00ab demain vers 18h \u00bb\n"
+                         "\u2022 \u00ab mercredi 14h \u00bb\n"
+                         "\u2022 \u00ab vendredi matin \u00bb\n\n"
+                         "Et si vous n'avez pas de pr\u00e9f\u00e9rence, r\u00e9pondez "
+                         "\u00ab quand vous voulez \u00bb."}
+    }
+
+
+def construire_abandon_creneau():
+    """V455 — deuxieme reponse inexploitable : on abandonne PROPREMENT. Le menu suit.
+    Sans cette sortie, reposer la question indefiniment serait une boucle."""
+    return {
+        "type": "text",
+        "text": {"body": "Pas de souci, on laisse \u00e7a de c\u00f4t\u00e9 \U0001F642\n\n"
+                         "Tape \u00ab coach \u00bb quand tu souhaites \u00eatre rappel\u00e9(e)."}
+    }
+
+
 def construire_demande_creneau():
     """Question posée juste après le clic sur « Parler à un coach »."""
     return {
@@ -641,8 +720,18 @@ def construire_demande_creneau():
     }
 
 
-def construire_confirmation_creneau(creneau_brut):
-    """Confirmation. Le créneau est repris TEL QUEL, sans reformulation."""
+def construire_confirmation_creneau(creneau_brut, flexible=False):
+    """Confirmation. Le créneau est repris TEL QUEL, sans reformulation.
+
+    V455 : sauf s'il est FLEXIBLE. « Un coach vous rappellera quand tu veux »
+    se lirait comme un horaire ; on dit alors ce qui a vraiment été compris.
+    """
+    if flexible:
+        return {
+            "type": "text",
+            "text": {"body": "Merci ! Vous n'avez pas de contrainte d'horaire — "
+                             "un coach vous rappellera au plus vite 🙌"}
+        }
     creneau = _couper(creneau_brut, 200)
     return {
         "type": "text",
@@ -650,9 +739,15 @@ def construire_confirmation_creneau(creneau_brut):
     }
 
 
-def construire_notification_coach(nom, telephone, creneau_brut):
-    """Ce que le coach reçoit : WebPush + message dans sa messagerie."""
+def construire_notification_coach(nom, telephone, creneau_brut, flexible=False):
+    """Ce que le coach reçoit : WebPush + message dans sa messagerie.
+
+    V455 : une disponibilité flexible est ANNONCÉE comme telle. Le coach doit
+    savoir s'il a un rendez-vous ou une simple autorisation d'appeler.
+    """
     creneau = _couper(creneau_brut, 200)
+    if flexible:
+        creneau = "%s (disponibilité flexible)" % creneau
     qui = nom or "Contact WhatsApp"
     return {
         "push": {
@@ -750,10 +845,10 @@ async def decider_reponse(telephone: str, texte: str, bouton: str, nom: str = No
     None = le bot se tait (personne en pause, ou message hors liste blanche).
 
     ORDRE DE PRIORITÉ (le STOP V332 est traité AVANT, dans le webhook) :
-        1. pause coach  ->  silence total
-        2. clic sur un bouton du menu
-        3. attente d'un créneau  ->  le message est pris tel quel
-        4. mot-clé « coach »
+        1. pause coach  ->  silence du TEXTE LIBRE seulement (V455)
+        2. actions globales : clic sur un bouton, ou « menu » / « coach »
+        3. attente d'un créneau  ->  qualifié puis pris tel quel (V455)
+        4. clic sur une ligne de liste  ->  fiche
         5. tout le reste  ->  menu, jamais l'IA
     """
     etat = await lire_etat(telephone)
@@ -762,12 +857,33 @@ async def decider_reponse(telephone: str, texte: str, bouton: str, nom: str = No
         "derniere_interaction_le": datetime.now(timezone.utc).isoformat(),
     })
 
-    # 1. PAUSE : le bot se tait, y compris si la personne écrit « menu ».
-    if await en_pause(etat):
-        logger.info(f"[BOT-WA] silence (pause active) pour …{telephone[-4:]}")
-        return None, None
-
     mot = (texte or "").strip().lower()
+
+    # 1. PAUSE — V455 : elle ne fait plus taire QUE LE TEXTE LIBRE.
+    #
+    # CE QUI S'EST PASSÉ. Ce test était la PREMIÈRE instruction de la fonction :
+    # il rendait le bot muet à TOUT, boutons compris. Mesuré le 26/08/2026, une
+    # pause posée à 15:56:51 a avalé le clic « 📅 Nos cours » de 15:57:22, puis
+    # « ? » et « Hello ». Le webhook arrivait, la signature était valide : le bot
+    # choisissait le silence. Pour la personne, l'application était cassée.
+    #
+    # CE QUE LA PAUSE PROTÈGE, ET QU'ON GARDE. Elle existe pour qu'un coach
+    # puisse parler sans que le bot s'intercale. Un message écrit à la main peut
+    # être destiné AU COACH — il reste donc silencieux. Un CLIC, lui, ne peut
+    # viser que le bot : personne ne clique « Nos cours » pour parler à un
+    # humain. Le mot « menu » est la seule exception écrite, pour la même raison.
+    #
+    # LA PAUSE N'EST PAS LEVÉE — décision du coach. Répondre à un clic n'est pas
+    # reprendre la main : le relais humain reste armé jusqu'à son terme ou
+    # jusqu'à `POST /api/bot-whatsapp/reactiver`.
+    #
+    # `attente_creneau` est exclue de ce silence : la personne vient d'ouvrir
+    # elle-même ce sous-dialogue, la faire taire au moment de répondre serait
+    # exactement le cul-de-sac qu'on corrige.
+    if (await en_pause(etat) and not bouton and mot != "menu"
+            and etat.get("etape") != ETAPE_ATTENTE_CRENEAU):
+        logger.info(f"[BOT-WA] silence (pause active, texte libre) pour …{telephone[-4:]}")
+        return None, None
 
     # 2. CLIC SUR UN BOUTON
     if bouton == BOUTON_COURS:
@@ -778,18 +894,43 @@ async def decider_reponse(telephone: str, texte: str, bouton: str, nom: str = No
         await ecrire_etat(telephone, {"etape": ETAPE_ATTENTE_CRENEAU})
         return construire_demande_creneau(), None
 
-    # 3. LE MESSAGE SUIVANT EST LE CRÉNEAU — pris TEL QUEL, aucune interprétation
+    # 3. LE MESSAGE SUIVANT EST LE CRÉNEAU — repris TEL QUEL, mais plus à
+    #    n'importe quel prix (V455). Le texte n'est toujours PAS interprété : on
+    #    vérifie seulement qu'il contient un indice de temps ou de disponibilité,
+    #    puis on l'enregistre mot pour mot. Aucune reformulation, aucune IA.
     if etat.get("etape") == ETAPE_ATTENTE_CRENEAU and texte:
+        qualite = qualifier_creneau(texte)
+
+        if not qualite:
+            # Rien d'exploitable : on n'écrit RIEN, on ne prévient PAS le coach,
+            # et surtout on ne met PAS en pause. C'est cette cascade qui, sur un
+            # simple « Hi », avait rendu la conversation muette pour 7 jours.
+            essais = int(etat.get("creneau_essais") or 0) + 1
+            if essais >= 2:
+                await ecrire_etat(telephone, {"etape": "", "creneau_essais": 0})
+                logger.info(f"[BOT-WA] créneau abandonné après {essais} essais "
+                            f"pour …{telephone[-4:]}")
+                return [construire_abandon_creneau(),
+                        construire_menu_principal(nom or etat.get("nom"))], None
+            await ecrire_etat(telephone, {"creneau_essais": essais})
+            logger.info(f"[BOT-WA] créneau inexploitable (essai {essais}) "
+                        f"pour …{telephone[-4:]}")
+            return construire_relance_creneau(), None
+
+        flexible = (qualite == "flexible")
         fin_pause = datetime.now(timezone.utc) + timedelta(days=JOURS_DE_PAUSE)
         await ecrire_etat(telephone, {
             "etape": "",
             "creneau_demande": texte.strip()[:300],
+            "creneau_flexible": flexible,
+            "creneau_essais": 0,
             "pause_jusqu_a": fin_pause.isoformat(),
         })
-        logger.info(f"[BOT-WA] demande de rappel pour …{telephone[-4:]}, bot en pause "
-                    f"{JOURS_DE_PAUSE} jours")
-        return (construire_confirmation_creneau(texte.strip()),
-                construire_notification_coach(nom or etat.get("nom"), telephone, texte.strip()))
+        logger.info(f"[BOT-WA] demande de rappel ({qualite}) pour …{telephone[-4:]}, "
+                    f"bot en pause {JOURS_DE_PAUSE} jours")
+        return (construire_confirmation_creneau(texte.strip(), flexible),
+                construire_notification_coach(nom or etat.get("nom"), telephone,
+                                              texte.strip(), flexible))
 
     # 4. SÉLECTION D'UNE LIGNE -> fiche détaillée. Les listes WhatsApp coupent à
     #    24/72 caractères ; la fiche donne le texte entier, les tarifs et le lien.

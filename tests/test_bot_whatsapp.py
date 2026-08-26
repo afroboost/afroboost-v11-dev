@@ -44,6 +44,9 @@ NOMS = {"_couper", "_formater_prix", "_bloc_tarifs", "_prochaine_seance",
         "construire_liste_offres", "construire_repli", "construire_demande_creneau",
         "construire_confirmation_creneau", "construire_notification_coach",
         "numero_autorise", "lire_etat", "ecrire_etat", "en_pause", "decider_reponse",
+        "qualifier_creneau", "_normaliser_creneau", "_CRENEAU_FLEXIBLE",
+        "_CRENEAU_MOTS_TEMPS", "_CRENEAU_SANS_ACCENT",
+        "construire_relance_creneau", "construire_abandon_creneau",
         "lire_occurrences", "lire_offres", "JOURS", "SITE", "MAX_LIGNES_LISTE",
         "MAX_TITRE_LIGNE", "MAX_DESCRIPTION_LIGNE", "MAX_TITRE_BOUTON", "BOUTON_COURS",
         "BOUTON_OFFRES", "BOUTON_COACH", "ETAPE_ATTENTE_CRENEAU", "COLLECTION_ETAT",
@@ -248,8 +251,29 @@ def test_decisions():
         verifier("APRÈS la demande, la PAUSE impose le silence",
                  rep is None, "le bot a répondu alors qu'il devait se taire")
 
+        # V455 — CETTE REGLE EST DELIBEREMENT INVERSEE.
+        # Jusqu'ici la pause faisait taire « menu » et les boutons. En production
+        # le 26/08/2026, cela a rendu la conversation muette : le clic
+        # « 📅 Nos cours » de 15:57:22 est tombe dans le silence. Une action
+        # globale repond desormais TOUJOURS ; seul le texte libre se tait, pour
+        # continuer de proteger le relais humain. La pause, elle, n'est PAS levee.
         rep, _ = await d(MOI, "menu", "", "Bassi")
-        verifier("« menu » ne contourne pas la pause", rep is None)
+        verifier("V455 : « menu » traverse la pause et rend le menu",
+                 rep is not None
+                 and len(rep["interactive"]["action"]["buttons"]) == 3,
+                 "rep=%r" % (rep,))
+
+        rep, _ = await d(MOI, "", BOT["BOUTON_COURS"], "Bassi")
+        verifier("V455 : un clic traverse la pause",
+                 rep is not None and rep["interactive"]["type"] == "list")
+
+        verifier("V455 : la pause n'est PAS levee par ces reponses",
+                 BOT["db"].etat.docs[0].get("pause_jusqu_a") is not None,
+                 str(BOT["db"].etat.docs[0]))
+
+        rep, _ = await d(MOI, "d'accord merci", "", "Bassi")
+        verifier("V455 : le texte libre reste silencieux (relais humain protege)",
+                 rep is None, "le bot a repondu alors qu'il devait se taire")
 
         etat = BOT["db"].etat.docs[0]
         verifier("l'état contient le créneau et la fin de pause",
