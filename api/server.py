@@ -28908,8 +28908,34 @@ def _parse_scheduled_at(scheduled_at_str: str) -> datetime:
         return None
 
 @api_router.get("/whatsapp-diagnostic")
-async def whatsapp_diagnostic():
-    """V164.4: Diagnostic complet du setup WhatsApp Cloud API"""
+async def whatsapp_diagnostic(request: Request):
+    """V164.4: Diagnostic complet du setup WhatsApp Cloud API
+
+    V450 — route fermée. Elle n'envoyait rien, mais livrait à un anonyme la
+    configuration Meta complète ET `token_prefix` : les 20 premiers caractères
+    du jeton système. Ce champ est retiré, jeton signé ou pas — un morceau de
+    secret n'a aucune raison de sortir d'un serveur.
+    """
+    _v411_exiger_super_admin(request, "diagnostic WhatsApp")
+    # V450 — CETTE ROUTE ETAIT OUVERTE A TOUT LE MONDE. Mesure en production le
+    # 26/08/2026 : un `curl` anonyme obtenait 200 et le handler s'executait EN
+    # ENTIER — config Meta lue, vrai jeton systeme pose en en-tete, appel POST a
+    # graph.facebook.com/<phone_number_id>/messages. Seule une version d'API
+    # volontairement invalide a empeche l'envoi pendant l'audit. Avec la version
+    # par defaut, un inconnu faisait partir un WhatsApp depuis le numero business
+    # d'Afroboost, facture a notre compte, avec a la cle une chute de la note de
+    # qualite (aujourd'hui GREEN) et le risque de suspension du WABA.
+    #
+    # On pose la garde des TROIS routes soeurs qui menent au meme numero
+    # (`/send-whatsapp` V442, `/send-whatsapp-template` et
+    # `/create-whatsapp-template` V435) : `_v411_exiger_super_admin`, la seule du
+    # depot qui n'accepte JAMAIS le repli `X-User-Email` falsifiable. Aucune
+    # authentification nouvelle n'est inventee.
+    #
+    # Pourquoi garder la route plutot que la supprimer : l'etape suivante du
+    # chantier WhatsApp est UN test controle unique apres reparation du compte
+    # Meta. La route reste donc utilisable — par le proprietaire, jeton signe en
+    # main, et par personne d'autre.
     import httpx
     config = await _get_whatsapp_config()
     if not config or config["api_mode"] != "meta":
@@ -28956,18 +28982,20 @@ async def whatsapp_diagnostic():
         })
         results["templates"] = tpl_resp.json()
 
+    # V450 : `token_prefix` (20 caractères du jeton système) est RETIRÉ. La
+    # longueur suffit à diagnostiquer un jeton tronqué ou absent ; les premiers
+    # caractères, eux, n'apprennent rien de plus et sortent un morceau de secret.
     results["config_info"] = {
         "phone_number_id": phone_number_id,
         "api_version": api_version,
         "token_length": len(access_token),
-        "token_prefix": access_token[:20] + "..."
     }
 
     return results
 
 
 @api_router.get("/whatsapp-app-info")
-async def whatsapp_app_info():
+async def whatsapp_app_info(request: Request):
     """V377 — À QUELLE APP META appartient le jeton qui envoie les campagnes ?
 
     LECTURE SEULE, AUCUN message envoyé. Répond à une question qu'on ne peut pas
@@ -28977,7 +29005,30 @@ async def whatsapp_app_info():
     test — ce qui expliquerait des campagnes acceptées par Meta mais jamais reçues.
 
     Le jeton n'est JAMAIS renvoyé : seuls son app_id, son type et sa validité.
+
+    V450 — route fermée. Elle n'envoyait rien, mais exposait à un anonyme
+    l'app_id, le WABA, le numéro business et les permissions du jeton.
     """
+    _v411_exiger_super_admin(request, "identification de l'app Meta")
+    # V450 — CETTE ROUTE ETAIT OUVERTE A TOUT LE MONDE. Mesure en production le
+    # 26/08/2026 : un `curl` anonyme obtenait 200 et le handler s'executait EN
+    # ENTIER — config Meta lue, vrai jeton systeme pose en en-tete, appel POST a
+    # graph.facebook.com/<phone_number_id>/messages. Seule une version d'API
+    # volontairement invalide a empeche l'envoi pendant l'audit. Avec la version
+    # par defaut, un inconnu faisait partir un WhatsApp depuis le numero business
+    # d'Afroboost, facture a notre compte, avec a la cle une chute de la note de
+    # qualite (aujourd'hui GREEN) et le risque de suspension du WABA.
+    #
+    # On pose la garde des TROIS routes soeurs qui menent au meme numero
+    # (`/send-whatsapp` V442, `/send-whatsapp-template` et
+    # `/create-whatsapp-template` V435) : `_v411_exiger_super_admin`, la seule du
+    # depot qui n'accepte JAMAIS le repli `X-User-Email` falsifiable. Aucune
+    # authentification nouvelle n'est inventee.
+    #
+    # Pourquoi garder la route plutot que la supprimer : l'etape suivante du
+    # chantier WhatsApp est UN test controle unique apres reparation du compte
+    # Meta. La route reste donc utilisable — par le proprietaire, jeton signe en
+    # main, et par personne d'autre.
     import httpx
     config = await _get_whatsapp_config()
     if not config or config.get("api_mode") != "meta":
@@ -29093,8 +29144,32 @@ async def get_campaign_errors(request: Request, limit: int = 20):
 
 
 @api_router.get("/test-whatsapp-template")
-async def test_whatsapp_template(to: str = "41765203363", template: str = "afroboost_bienvenue", version: str = ""):
-    """V164.3: Endpoint diagnostic — envoie UN message template et retourne la réponse complète de Meta"""
+async def test_whatsapp_template(request: Request, to: str = "41765203363", template: str = "afroboost_bienvenue", version: str = ""):
+    """V164.3: Endpoint diagnostic — envoie UN message template et retourne la réponse complète de Meta
+
+    V450 — route fermée : elle ENVOIE un vrai WhatsApp depuis le numéro
+    business, et n'importe qui sur Internet pouvait l'appeler.
+    """
+    _v411_exiger_super_admin(request, "envoi de test WhatsApp (route de diagnostic)")
+    # V450 — CETTE ROUTE ETAIT OUVERTE A TOUT LE MONDE. Mesure en production le
+    # 26/08/2026 : un `curl` anonyme obtenait 200 et le handler s'executait EN
+    # ENTIER — config Meta lue, vrai jeton systeme pose en en-tete, appel POST a
+    # graph.facebook.com/<phone_number_id>/messages. Seule une version d'API
+    # volontairement invalide a empeche l'envoi pendant l'audit. Avec la version
+    # par defaut, un inconnu faisait partir un WhatsApp depuis le numero business
+    # d'Afroboost, facture a notre compte, avec a la cle une chute de la note de
+    # qualite (aujourd'hui GREEN) et le risque de suspension du WABA.
+    #
+    # On pose la garde des TROIS routes soeurs qui menent au meme numero
+    # (`/send-whatsapp` V442, `/send-whatsapp-template` et
+    # `/create-whatsapp-template` V435) : `_v411_exiger_super_admin`, la seule du
+    # depot qui n'accepte JAMAIS le repli `X-User-Email` falsifiable. Aucune
+    # authentification nouvelle n'est inventee.
+    #
+    # Pourquoi garder la route plutot que la supprimer : l'etape suivante du
+    # chantier WhatsApp est UN test controle unique apres reparation du compte
+    # Meta. La route reste donc utilisable — par le proprietaire, jeton signe en
+    # main, et par personne d'autre.
     import httpx
     import json as json_test
 
@@ -29154,8 +29229,33 @@ async def test_whatsapp_template(to: str = "41765203363", template: str = "afrob
 
 
 @api_router.get("/test-campaign-3steps")
-async def test_campaign_3steps(to: str = "41765203363"):
-    """V167.4: Test diagnostic — envoie template + message texte + vérifie chaque étape"""
+async def test_campaign_3steps(request: Request, to: str = "41765203363"):
+    """V167.4: Test diagnostic — envoie template + message texte + vérifie chaque étape
+
+    V450 — route fermée : elle envoie DEUX vrais WhatsApp (un modèle puis un
+    texte libre) depuis le numéro business, et n'importe qui sur Internet
+    pouvait l'appeler.
+    """
+    _v411_exiger_super_admin(request, "test de campagne en 3 étapes (route de diagnostic)")
+    # V450 — CETTE ROUTE ETAIT OUVERTE A TOUT LE MONDE. Mesure en production le
+    # 26/08/2026 : un `curl` anonyme obtenait 200 et le handler s'executait EN
+    # ENTIER — config Meta lue, vrai jeton systeme pose en en-tete, appel POST a
+    # graph.facebook.com/<phone_number_id>/messages. Seule une version d'API
+    # volontairement invalide a empeche l'envoi pendant l'audit. Avec la version
+    # par defaut, un inconnu faisait partir un WhatsApp depuis le numero business
+    # d'Afroboost, facture a notre compte, avec a la cle une chute de la note de
+    # qualite (aujourd'hui GREEN) et le risque de suspension du WABA.
+    #
+    # On pose la garde des TROIS routes soeurs qui menent au meme numero
+    # (`/send-whatsapp` V442, `/send-whatsapp-template` et
+    # `/create-whatsapp-template` V435) : `_v411_exiger_super_admin`, la seule du
+    # depot qui n'accepte JAMAIS le repli `X-User-Email` falsifiable. Aucune
+    # authentification nouvelle n'est inventee.
+    #
+    # Pourquoi garder la route plutot que la supprimer : l'etape suivante du
+    # chantier WhatsApp est UN test controle unique apres reparation du compte
+    # Meta. La route reste donc utilisable — par le proprietaire, jeton signe en
+    # main, et par personne d'autre.
     import httpx
     import asyncio
     import json as json_test
