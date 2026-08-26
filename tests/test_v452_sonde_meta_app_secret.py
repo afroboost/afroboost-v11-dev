@@ -196,23 +196,32 @@ def _index_travail():
     return idx
 
 
+# Le commit de ce lot. On compare V452 a SON PROPRE PARENT, jamais l'arbre de
+# travail a un hachage fige : sinon ce garde-fou tomberait en panne des le lot
+# SUIVANT — ce qui est exactement arrive avec V453, parfaitement legitime, qui
+# touche `handle_meta_whatsapp_webhook` et `get_feature_flags`. L'invariant
+# « le commit V452 n'a rien touche d'autre que debug_config », lui, reste vrai
+# pour toujours. Meme motif que V442, V450 et V451.
+V452 = "26a25b27"
+
+
 def tests_non_regression():
-    tete, travail = _index("HEAD"), _index_travail()
-    if not tete:
-        verifier("N0. la revision HEAD est lisible", False, "git indisponible")
+    tete, lot = _index(V452 + "^"), _index(V452)
+    if not tete or not lot:
+        verifier("N0. la revision V452 est lisible", False, "git indisponible")
         return
-    verifier("N0. la revision HEAD est lisible", True)
+    verifier("N0. la revision V452 est lisible", True)
     for nom in INTOUCHABLES:
         if nom not in tete:
             continue
-        verifier("11. %s INCHANGE par ce lot" % nom, tete[nom] == travail.get(nom),
+        verifier("11. %s INCHANGE par le commit V452" % nom, tete[nom] == lot.get(nom),
                  "MODIFIE")
-    diff = subprocess.check_output(["git", "diff", "--name-only", "HEAD"],
+    diff = subprocess.check_output(["git", "diff", "--name-only", V452 + "^", V452],
                                    cwd=RACINE).decode("utf-8").split()
     autorises = {"api/server.py", "tests/test_v452_sonde_meta_app_secret.py"}
     hors = [f for f in diff if f not in autorises]
     verifier("12. le lot ne modifie AUCUN autre fichier", hors == [], " ".join(hors))
-    change = [n for n, s in travail.items() if n not in tete or tete[n] != s]
+    change = [n for n, s in lot.items() if n not in tete or tete[n] != s]
     verifier("13. dans server.py, SEUL debug_config change",
              set(change) <= {"debug_config"}, "aussi : %s" % sorted(set(change) - {"debug_config"}))
 
