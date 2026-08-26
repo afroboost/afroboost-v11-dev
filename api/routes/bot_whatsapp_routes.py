@@ -60,6 +60,14 @@ BOUTON_OFFRES = "menu_offres"
 BOUTON_COACH = "menu_coach"
 # V372 : préfixe du bouton de paiement. L'identifiant de l'offre suit.
 PREFIXE_PAYER = "payer_"
+# V454 (LOT « VOIR LES COURS ») : préfixe d'une ligne d'OCCURRENCE. L'identifiant du cours
+# ET l'instant suivent, séparés par « __ ». Deux séances du même cours doivent porter
+# deux identifiants différents — WhatsApp refuse une liste dont deux lignes partagent
+# le même id, et le clic doit dire QUELLE séance a été choisie, pas seulement laquelle
+# des offres. L'ancien préfixe `cours_` reste accepté : une liste déjà envoyée avant
+# ce déploiement doit continuer de répondre.
+PREFIXE_OCCURRENCE = "occ_"
+_JOURS_COURT = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."]
 # Un lien Stripe déjà généré est REUTILISÉ pendant ce délai : sans cela, une
 # personne indécise qui reclique trois fois crée trois lignes `payment_transactions`
 # en « pending ». Décision du coach : 1 heure.
@@ -96,15 +104,31 @@ def _sans_vrai_nom(course):
     return nom == "" or nom.startswith("nouveau cours")
 
 
-async def lire_cours():
-    """Les cours affichés par la vitrine : MÊME filtre que GET /api/courses."""
-    cours = await db.courses.find(
-        {"archived": {"$ne": True}},
-        {"_id": 0, "id": 1, "name": 1, "weekday": 1, "time": 1,
-         "locationName": 1, "location": 1, "date": 1, "visible": 1}
-    ).to_list(100)
-    # La vitrine masque en plus ce qui n'est pas `visible`.
-    return [c for c in cours if c.get("visible") is not False and not _sans_vrai_nom(c)]
+async def lire_occurrences(jours=60):
+    """V454 — les séances que WhatsApp peut proposer — la MÊME vérité que le site.
+
+    CE QUI N'ALLAIT PAS. La version précédente (`lire_cours`) lisait `db.courses`
+    en direct et ne filtrait que `archived` / `visible` / « Nouveau cours ». Le
+    champ `date` était lu puis JAMAIS utilisé : mesuré le 26/08/2026 en
+    production, 9 des 11 lignes proposées étaient des événements TERMINÉS (Dîner
+    canadien du 09/08, Laff Festival du 21/08…). Symétriquement, deux séances
+    réelles — archivées mais marquées `agenda_abonne` — n'étaient PAS proposées
+    alors que le site les affiche. Deux listes, deux vérités.
+
+    LA RÈGLE. On appelle `_agenda_occurrences`, c'est-à-dire le corps même de
+    `GET /api/sessions/agenda` (« les occurrences qu'un visiteur peut voir et
+    reserver »). AUCUN filtre n'est recopié ici, et c'est le point : le jour où
+    la règle métier bouge, elle bouge au MÊME INSTANT sur le site et dans
+    WhatsApp. Une deuxième copie des filtres aurait redivergé au premier
+    changement — c'est exactement ce qui a produit ce bug.
+
+    IMPORT PARESSEUX, et pas par élégance : `api/server.py` importe déjà ce
+    module (dans le webhook). Un import en tête de fichier créerait un cycle et
+    empêcherait le démarrage de l'application.
+    """
+    from api.server import _agenda_occurrences
+    donnees = await _agenda_occurrences(jours)
+    return (donnees or {}).get("occurrences", []) or []
 
 
 async def lire_offres():
@@ -116,33 +140,22 @@ async def lire_offres():
     return [o for o in offres if o.get("visible") is not False]
 
 
-def _cle_tri_cours(c, aujourdhui=None):
-    """Trie par PROCHAINE OCCURRENCE, pas par numéro de jour.
+def _libelle_occurrence(occ):
+    """V454 — « mer. 26/08 · 18:30 · Bord du Lac ».
 
-    Trier de dimanche à samedi remplissait les 10 places avec les seuls dimanches,
-    et cachait les cours de mercredi — les plus proches. Quelqu'un qui écrit veut
-    savoir ce qui vient ENSUITE.
+    La DATE est indispensable, pas décorative : la liste comporte désormais
+    plusieurs lignes pour un même cours, et sans quantième elles sont
+    rigoureusement indiscernables.
     """
-    if aujourdhui is None:
-        aujourdhui = (datetime.now(timezone.utc).weekday() + 1) % 7  # dimanche = 0
-    jour = c.get("weekday")
-    jour = jour if isinstance(jour, int) else 9
-    dans_combien = (jour - aujourdhui) % 7 if jour <= 6 else 9
-    return (dans_combien, str(c.get("time") or "99:99"), str(c.get("name") or ""))
-
-
-def _dedoublonner_cours(cours):
-    """Même nom + même jour + même heure + même lieu = une seule ligne."""
-    vus, uniques = set(), []
-    for c in cours:
-        cle = (re.sub(r"\s+", " ", (c.get("name") or "").strip().lower()),
-               c.get("weekday"), c.get("time"),
-               (c.get("locationName") or c.get("location") or "").strip().lower())
-        if cle in vus:
-            continue
-        vus.add(cle)
-        uniques.append(c)
-    return uniques
+    quand = ""
+    try:
+        d = datetime.fromisoformat(str(occ.get("datetime") or ""))
+        quand = "%s %02d/%02d" % (_JOURS_COURT[(d.weekday() + 1) % 7], d.day, d.month)
+    except (ValueError, TypeError):
+        quand = ""
+    heure = (occ.get("time") or "").strip()
+    lieu = (occ.get("locationName") or occ.get("location") or "").strip()
+    return " · ".join(x for x in (quand, heure, lieu) if x)
 
 
 # ---------------------------------------------------------------- construction du menu
@@ -170,29 +183,45 @@ def construire_menu_principal(prenom=None):
     }
 
 
-def construire_liste_cours(cours):
-    """Liste des cours, lue en direct. Renvoie aussi le nombre non affiché."""
-    tries = sorted(_dedoublonner_cours(cours), key=_cle_tri_cours)
-    retenus = tries[:MAX_LIGNES_LISTE]
-    reste = len(tries) - len(retenus)
+def construire_liste_occurrences(occurrences):
+    """V454 — UNE LIGNE PAR SÉANCE À VENIR, triée dans le temps. Renvoie aussi le reste.
+
+    POURQUOI PAS « la prochaine séance de chaque cours ». Ce serait plus court,
+    et ce serait faux : quelqu'un qui ne peut pas venir mercredi ne verrait
+    jamais le dimanche. Une ligne = un choix concret de réservation.
+
+    CE QUI N'EST PAS FILTRÉ ICI, ET POURQUOI. Ni le passé, ni les cours sans
+    offre publique, ni les cours masqués n'apparaissent — non pas parce qu'on
+    les écarte à cet endroit, mais parce qu'ils ne sont JAMAIS entrés :
+    `lire_occurrences()` ne renvoie que ce que le site présente. Ajouter un
+    filtre ici recréerait la deuxième vérité qu'on vient de supprimer.
+
+    LA SEULE EXCEPTION est le garde-fou V367 (« Nouveau cours ») : l'agenda les
+    écarte aujourd'hui via `visible`, mais c'est un état de DONNÉES, pas une
+    règle. On garde le verrou de nom, sinon un horaire enregistré trop tôt
+    serait proposé sous ce nom.
+    """
+    retenues = sorted((o for o in (occurrences or []) if not _sans_vrai_nom(o)),
+                      key=lambda o: str(o.get("datetime") or ""))
+    affichees = retenues[:MAX_LIGNES_LISTE]
+    reste = len(retenues) - len(affichees)
 
     lignes = []
-    for c in retenus:
-        jour = c.get("weekday")
-        jour_txt = JOURS[jour] if isinstance(jour, int) and 0 <= jour <= 6 else ""
-        heure = c.get("time") or ""
-        lieu = c.get("locationName") or c.get("location") or ""
-        quand = " ".join(x for x in (jour_txt, heure) if x)
+    for o in affichees:
+        # cours ET instant : deux séances du même cours doivent porter deux
+        # identifiants distincts, sinon WhatsApp refuse la liste entière.
+        identifiant = "%s%s__%s" % (PREFIXE_OCCURRENCE, o.get("course_id") or "",
+                                    str(o.get("datetime") or "")[:16])
         lignes.append({
-            "id": f"cours_{c.get('id', '')}"[:200],
-            "title": _couper(c.get("name") or "Cours", MAX_TITRE_LIGNE),
-            "description": _couper(" · ".join(x for x in (quand, lieu) if x), MAX_DESCRIPTION_LIGNE)
+            "id": identifiant[:200],
+            "title": _couper(o.get("name") or "Cours", MAX_TITRE_LIGNE),
+            "description": _couper(_libelle_occurrence(o), MAX_DESCRIPTION_LIGNE),
         })
 
-    corps = "Voici nos cours 📅"
+    corps = "Voici nos prochaines séances 📅"
     if reste > 0:
         # Jamais de troncature silencieuse : on annonce ce qui n'est pas montré.
-        corps += f"\n\n(et {reste} autre{'s' if reste > 1 else ''} sur {SITE})"
+        corps += "\n\n(et %d autre%s sur %s)" % (reste, "s" if reste > 1 else "", SITE)
 
     return {
         "type": "interactive",
@@ -202,7 +231,8 @@ def construire_liste_cours(cours):
             "footer": {"text": "Réserve sur afroboost.com"},
             "action": {
                 "button": _couper("Voir les cours", MAX_TITRE_BOUTON),
-                "sections": [{"title": _couper("Nos cours", MAX_TITRE_LIGNE), "rows": lignes}]
+                "sections": [{"title": _couper("Nos séances", MAX_TITRE_LIGNE),
+                              "rows": lignes}]
             }
         }
     }, reste
@@ -391,7 +421,7 @@ def _prochaine_seance(cours):
     return None
 
 
-def construire_fiche_cours(cours, offre=None):
+def construire_fiche_cours(cours, offre=None, quand_iso=None):
     """Message COMPLET d'un cours : nom, quand, lieu, plan, description, lien.
 
     DESCRIPTION : un cours n'a AUCUN champ `description` en base (ses seuls champs
@@ -401,7 +431,19 @@ def construire_fiche_cours(cours, offre=None):
     nom, date et lieu, sans erreur ni ligne vide.
     """
     lignes = [f"📅 *{(cours.get('name') or 'Cours').strip()}*", ""]
-    quand = _prochaine_seance([cours])
+    # V454 : `quand_iso` = la séance RÉELLEMENT cliquée. Sans elle, la fiche d'un cours
+    # dont la date est passée affichait « 🗓️ 18:30 » tout court (repli sur
+    # `time`), sans jamais dire de quel jour il s'agissait.
+    quand = None
+    if quand_iso:
+        try:
+            _d = datetime.fromisoformat(str(quand_iso))
+            quand = "%s %02d/%02d à %s" % (_JOURS_COURT[(_d.weekday() + 1) % 7],
+                                           _d.day, _d.month, _d.strftime("%H:%M"))
+        except (ValueError, TypeError):
+            quand = None
+    if not quand:
+        quand = _prochaine_seance([cours])
     if quand:
         lignes.append(f"🗓️ {quand}")
     elif cours.get("time"):
@@ -729,7 +771,7 @@ async def decider_reponse(telephone: str, texte: str, bouton: str, nom: str = No
 
     # 2. CLIC SUR UN BOUTON
     if bouton == BOUTON_COURS:
-        return construire_liste_cours(await lire_cours())[0], None
+        return construire_liste_occurrences(await lire_occurrences())[0], None
     if bouton == BOUTON_OFFRES:
         return construire_liste_offres(await lire_offres())[0], None
     if bouton == BOUTON_COACH or mot in ("coach", "humain", "parler a un coach", "parler à un coach"):
@@ -775,6 +817,18 @@ async def decider_reponse(telephone: str, texte: str, bouton: str, nom: str = No
             return [construire_fiche_offre(offre, await lire_cours_de_offre(offre)),
                     construire_boutons_offre(offre, offre_payable_par_lien(offre))], None
         return construire_repli(), None
+    if bouton and bouton.startswith(PREFIXE_OCCURRENCE):
+        # « occ_<cours>__<instant> » : on retrouve le cours ET la séance choisie,
+        # pour que la fiche annonce la bonne date.
+        _brut = bouton[len(PREFIXE_OCCURRENCE):]
+        identifiant, _, quand_iso = _brut.partition("__")
+        cours = await lire_un_cours(identifiant)
+        if cours:
+            return construire_fiche_cours(cours, await lire_offre_du_cours(identifiant),
+                                          quand_iso=quand_iso or None), None
+        return construire_repli(), None
+    # Compatibilité : une liste envoyée AVANT ce lot porte encore « cours_<id> ».
+    # Un clic dessus doit répondre, pas tomber sur le message de repli.
     if bouton and bouton.startswith("cours_"):
         identifiant = bouton[len("cours_"):]
         cours = await lire_un_cours(identifiant)
@@ -867,10 +921,10 @@ async def apercu_du_menu(request: Request):
     if not email:
         raise HTTPException(status_code=403, detail="Authentification coach requise")
 
-    cours = await lire_cours()
+    cours = await lire_occurrences()
     offres = await lire_offres()
     menu = construire_menu_principal()
-    liste_c, reste_c = construire_liste_cours(cours)
+    liste_c, reste_c = construire_liste_occurrences(cours)
     liste_o, reste_o = construire_liste_offres(offres)
 
     def lisible(charge):

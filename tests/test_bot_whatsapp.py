@@ -23,6 +23,7 @@ MODE D'EMPLOI
 """
 import ast
 import asyncio
+import types
 import os
 import re
 import sys
@@ -37,12 +38,13 @@ NOMS = {"_couper", "_formater_prix", "_bloc_tarifs", "_prochaine_seance",
         "_lien_offre", "lire_offre_du_cours", "construire_boutons_offre",
         "offre_payable_par_lien", "creer_lien_paiement", "_message_lien",
         "PREFIXE_PAYER", "MINUTES_REUTILISATION_LIEN",
-        "lire_cours_de_offre", "LIEN_BOUTIQUE", "_LIBELLE_PALIER", "_cle_tri_cours", "_prix", "_sans_vrai_nom", "_dedoublonner_cours",
-        "_cle_numero", "construire_menu_principal", "construire_liste_cours",
+        "lire_cours_de_offre", "LIEN_BOUTIQUE", "_LIBELLE_PALIER", "_prix", "_sans_vrai_nom",
+        "_cle_numero", "construire_menu_principal", "construire_liste_occurrences",
+        "_libelle_occurrence", "PREFIXE_OCCURRENCE", "_JOURS_COURT",
         "construire_liste_offres", "construire_repli", "construire_demande_creneau",
         "construire_confirmation_creneau", "construire_notification_coach",
         "numero_autorise", "lire_etat", "ecrire_etat", "en_pause", "decider_reponse",
-        "lire_cours", "lire_offres", "JOURS", "SITE", "MAX_LIGNES_LISTE",
+        "lire_occurrences", "lire_offres", "JOURS", "SITE", "MAX_LIGNES_LISTE",
         "MAX_TITRE_LIGNE", "MAX_DESCRIPTION_LIGNE", "MAX_TITRE_BOUTON", "BOUTON_COURS",
         "BOUTON_OFFRES", "BOUTON_COACH", "ETAPE_ATTENTE_CRENEAU", "COLLECTION_ETAT",
         "JOURS_DE_PAUSE", "NUMEROS_AUTORISES"}
@@ -121,6 +123,31 @@ class _Base:
 
 
 BOT = _charger_bot()
+
+# `lire_occurrences()` importe `api.server` AU MOMENT DE L'APPEL (import paresseux :
+# `server.py` importe deja ce module, un import en tete ferait un cycle). Hors ligne,
+# `api.server` n'existe pas — on injecte un double qui rend un agenda simule. Ce test
+# verifie le BOT ; le calcul des occurrences a sa propre suite, tests/test_sessions_agenda.py.
+_AGENDA_SIMULE = [
+    {"course_id": "c1", "name": "Afroboost Silent", "weekday": 2, "time": "18:30",
+     "locationName": "Auvernier", "datetime": "2026-09-02T18:30:00",
+     "date": "2026-09-02", "offers": [{"id": "o1", "name": "Cours à l'unité"}],
+     "recurrent": True},
+    {"course_id": "c1", "name": "Afroboost Silent", "weekday": 6, "time": "18:30",
+     "locationName": "Auvernier", "datetime": "2026-09-06T18:30:00",
+     "date": "2026-09-06", "offers": [{"id": "o1", "name": "Cours à l'unité"}],
+     "recurrent": True},
+]
+
+
+async def _faux_agenda_occurrences(days=60):
+    return {"occurrences": list(_AGENDA_SIMULE), "jours": days}
+
+
+_faux_serveur = types.ModuleType("api.server")
+_faux_serveur._agenda_occurrences = _faux_agenda_occurrences
+sys.modules.setdefault("api", types.ModuleType("api"))
+sys.modules["api.server"] = _faux_serveur
 MOI = "+41765203363"
 QUELQUUN_DAUTRE = "+41790000000"
 
@@ -325,11 +352,14 @@ def test_paiement_aucune_fausse_transaction():
             return {"url": f"https://checkout.stripe.com/c/pay/cs_test_{appels['n']}"}
 
         # On remplace l'appel réel : le test ne contacte jamais Stripe.
+        # On ENRICHIT le double d'`api.server` déjà installé en tête de fichier ;
+        # le REMPLACER effaçait `_agenda_occurrences`, dont le bot a besoin pour
+        # construire la liste des séances — et l'ordre des tests décidait alors
+        # si le clic « Nos cours » fonctionnait ou non.
         import types, sys
-        faux_module = types.ModuleType("api.server")
+        faux_module = sys.modules["api.server"]
         faux_module.create_checkout_session = faux_stripe
         faux_module.CreateCheckoutRequest = lambda **kw: kw
-        sys.modules["api.server"] = faux_module
         faux_pricing = types.ModuleType("api.pricing")
         faux_pricing.compute_active_price = lambda o, now=None: {
             "price": float(o.get("price") or 0), "tier": "regular"}

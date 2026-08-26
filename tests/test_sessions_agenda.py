@@ -120,7 +120,13 @@ CONSTANTES = """
 _V184_WEEKDAY_LABELS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 """
 
-A_EXTRAIRE = ["_v184_parse_time_hhmm", "_v184_next_occurrences", "sessions_agenda",
+A_EXTRAIRE = ["_v184_parse_time_hhmm", "_v184_next_occurrences",
+              # La route `/sessions/agenda` n'est plus qu'une facade : depuis le lot
+              # « voir les cours », son corps vit dans `_agenda_occurrences`, que le
+              # bot WhatsApp appelle aussi. Les regles ci-dessous sont donc verifiees
+              # sur le HELPER — c'est lui qui les porte — et la facade reste extraite
+              # pour que les scenarios continuent d'appeler la route elle-meme.
+              "_agenda_occurrences", "sessions_agenda",
               "rv3_cours_configurables",
               # E1B : la regle « ce cours sert-il encore ? » est desormais
               # ecrite une seule fois et partagee avec le moteur de rappels.
@@ -620,7 +626,7 @@ async def scenarios_coach():
 
 
 def structure():
-    nu = code_nu("sessions_agenda")
+    nu = code_nu("_agenda_occurrences")
     verifier("S1. la route reutilise le calcul d'occurrences existant",
              "_v184_next_occurrences" in nu)
     verifier("S2. elle applique la regle V426 `agenda_abonne`",
@@ -668,7 +674,7 @@ def structure():
     nu_occ = code_nu("_v184_next_occurrences")
     verifier("S12. le lieu d'une occurrence vient du COURS, jamais d'une offre",
              "locationName" in nu_occ and "offer" not in nu_occ.lower())
-    nu_ag = code_nu("sessions_agenda")
+    nu_ag = code_nu("_agenda_occurrences")
     verifier("S13. l'agenda ne reecrit aucun lieu",
              "locationName" not in nu_ag, "")
 
@@ -678,7 +684,7 @@ def structure():
     _villes = ("auvernier", "lausanne", "geneve", "genève", "neuchatel",
                "neuchâtel", "vallangines", "jeunes-rives", "montbenon",
                "vidy", "st-blaise", "bienne")
-    for _f in ("sessions_agenda", "_v184_next_occurrences",
+    for _f in ("_agenda_occurrences", "sessions_agenda", "_v184_next_occurrences",
                "rv3_cours_configurables", "_enrich_offers_with_next_date"):
         _nu = code_nu(_f).lower().replace("europe/zurich", "")
         _trouves = [v for v in _villes if v in _nu]

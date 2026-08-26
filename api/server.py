@@ -1839,8 +1839,13 @@ async def _enrich_offers_with_next_date(offers_list):
         logger.info(f"[V252] next_date enrichment skipped: {_e}")
     return offers_list
 
-@api_router.get("/sessions/agenda")
-async def sessions_agenda(days: int = 60):
+# V454 (LOT « VOIR LES COURS ») : le corps de `/sessions/agenda` devient un helper
+# appelable EN INTERNE. Motif : le bot WhatsApp doit proposer exactement ce que
+# le site presente, et la seule facon de garantir que les deux listes ne
+# redivergeront pas est qu'il n'existe qu'UN corps de regles. Le bot appelle donc
+# cette fonction ; il ne recopie aucun filtre. La route publique ci-dessous n'est
+# plus qu'une facade : sa reponse est INCHANGEE, octet pour octet.
+async def _agenda_occurrences(days: int = 60):
     """Agenda public : les occurrences qu'un visiteur peut voir et reserver.
 
     UNE SEULE SOURCE D'HORAIRES. Le calendrier ne recalcule rien de son cote et
@@ -1920,6 +1925,16 @@ async def sessions_agenda(days: int = 60):
             _sorties.append(_occ)
     _sorties.sort(key=lambda x: x.get("datetime") or "")
     return {"occurrences": _sorties, "jours": _jours}
+
+
+@api_router.get("/sessions/agenda")
+async def sessions_agenda(days: int = 60):
+    """Agenda public : les occurrences qu'un visiteur peut voir et reserver.
+
+    Toute la logique vit dans `_agenda_occurrences` — voir sa docstring pour les
+    regles metier. Cette route n'est qu'un point d'entree HTTP.
+    """
+    return await _agenda_occurrences(days)
 
 
 @api_router.get("/offers", response_model=List[Offer])
