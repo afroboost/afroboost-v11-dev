@@ -62,6 +62,9 @@ def _match(doc, filtre):
                 elif op == "$ne":
                     if val == ref:
                         return False
+                elif op == "$in":
+                    if val not in (ref or []):
+                        return False
                 else:
                     raise AssertionError("operateur non simule : %s" % op)
         elif val != cond:
@@ -73,6 +76,31 @@ class _Maj:
     def __init__(self, n): self.matched_count = n; self.modified_count = n
 
 
+class _Curseur:
+    """Curseur asynchrone minimal — `async for d in coll.find(...)`.
+
+    C3 : la garde d'opt-out lit `subscribers` par une requete GROUPEE, la meme
+    pour un destinataire que pour deux cents. Sans ce curseur, le harnais
+    renverrait vide et validerait a l'aveugle une garde qui ne garde rien.
+    """
+
+    def __init__(self, docs):
+        self._docs = docs
+
+    def __aiter__(self):
+        self._i = 0
+        return self
+
+    async def __anext__(self):
+        if self._i >= len(self._docs):
+            raise StopAsyncIteration
+        self._i += 1
+        return dict(self._docs[self._i - 1])
+
+    async def to_list(self, n=None):
+        return [dict(d) for d in (self._docs if n is None else self._docs[:n])]
+
+
 class _Coll:
     def __init__(self, docs=None):
         self.docs = [dict(d) for d in (docs or [])]
@@ -82,6 +110,9 @@ class _Coll:
             if _match(d, filtre or {}):
                 return dict(d)
         return None
+
+    def find(self, filtre=None, proj=None):
+        return _Curseur([d for d in self.docs if _match(d, filtre or {})])
 
     async def update_one(self, filtre, maj, upsert=False):
         for d in self.docs:
@@ -158,7 +189,12 @@ def construire(base, flags, essai=True, consomme=True, resend_ok=True,
     esp["_v286_should_send_notification"] = _v286
 
     # `_email_wrapper`, `_v259_primary_rgb` et `rv2_email_valide` : les VRAIES.
-    for fn in ("_v259_primary_rgb", "_email_wrapper", "rv2_email_valide"):
+    # C3 : `p1b_destinataire_autorise` ne recopie plus la lecture du refus, il
+    # appelle la regle PARTAGEE avec les campagnes. On extrait donc aussi ses
+    # dependances — sinon le harnais testerait une fonction amputee.
+    for fn in ("_v259_primary_rgb", "_email_wrapper", "rv2_email_valide",
+               "format_phone_e164", "_v332_normaliser",
+               "c3_refus_exprimes", "c3_refus_exprime"):
         exec(compile(extraire(fn), "<srv>", "exec"), esp)
     for c in ("P1B_CANAL", "P1B_PREFIXE", "P1B_TYPE_PREFERENCE", "P1B_DOMAINE"):
         exec(compile(constante(c), "<cst>", "exec"), esp)

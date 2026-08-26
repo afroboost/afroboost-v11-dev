@@ -125,6 +125,11 @@ def _match(doc, filtre):
                 elif op == "$lte":
                     if val is None or not (str(val) <= str(ref)):
                         return False
+                elif op == "$in":
+                    # C3 : la garde d'opt-out lit `subscribers` par une requete
+                    # GROUPEE, la meme pour un destinataire que pour deux cents.
+                    if val not in (ref or []):
+                        return False
                 else:
                     raise AssertionError("operateur non simule : %s" % op)
         elif val != cond:
@@ -141,6 +146,18 @@ class _Curseur:
 
     async def to_list(self, n=None):
         return [dict(r) for r in (self._rows if n is None else self._rows[:n])]
+
+    # C3 : `async for d in coll.find(...)` — sans cela le harnais renverrait
+    # vide et validerait a l'aveugle une garde qui ne garde rien.
+    def __aiter__(self):
+        self._i = 0
+        return self
+
+    async def __anext__(self):
+        if self._i >= len(self._rows):
+            raise StopAsyncIteration
+        self._i += 1
+        return dict(self._rows[self._i - 1])
 
 
 class _Coll:
@@ -256,7 +273,11 @@ def construire(base, flags, essai=True, etat="open", resend_ok=True,
     esp["_conv_contexte"] = _contexte
 
     # Les VRAIES fonctions communes, extraites du depot.
+    # C3 : meme raison qu'en P1-b — la garde du refus est desormais partagee
+    # avec les campagnes, ses dependances doivent suivre.
     for fn in ("_v259_primary_rgb", "_email_wrapper", "rv2_email_valide",
+               "format_phone_e164", "_v332_normaliser",
+               "c3_refus_exprimes", "c3_refus_exprime",
                "p1b_lien_espace", "p1b_destinataire_autorise", "p1b_envoyer_email"):
         exec(_code(fn, extraire(fn)), esp)
     for c in ("P1B_PREFIXE", "P1B_TYPE_PREFERENCE", "P1B_DOMAINE",

@@ -154,6 +154,13 @@ def _match(doc, q):
                 elif op == "$ne":
                     if obtenu is not MANQUANT and obtenu == val:
                         return False
+                elif op == "$in":
+                    # C3 : la garde d'opt-out interroge `subscribers` par une
+                    # requete GROUPEE (`$in`) — une seule lecture pour toute la
+                    # campagne. Sans cette simulation, le harnais renverrait
+                    # vide et validerait a l'aveugle une garde qui ne garde rien.
+                    if obtenu is MANQUANT or obtenu not in (val or []):
+                        return False
                 else:
                     raise AssertionError("operateur non simule : %s" % op)
         else:

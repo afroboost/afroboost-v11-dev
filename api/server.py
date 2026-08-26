@@ -4959,11 +4959,43 @@ async def launch_campaign(campaign_id: str):
         business_phone_number = "41767639928"
         logger.info(f"[CAMPAIGN-LAUNCH] 🏢 Numéro business fallback: {business_phone_number}")
 
+    # === C3 — LES REFUS, LUS UNE FOIS POUR TOUTE LA CAMPAGNE ===
+    # Une requete groupee par canal ACTIF, avant la boucle : jamais une lecture
+    # par destinataire. `_c3_deja` porte la deduplication, canal par canal.
+    _c3_refus = {}
+    for _c3_canal in C3_CANAUX_CAMPAGNE:
+        if not channels.get(_c3_canal):
+            continue
+        _c3_valeurs = [(c.get("email") if _c3_canal == "email"
+                        else (c.get("whatsapp") or c.get("phone") or ""))
+                       for c in contacts]
+        _c3_refus[_c3_canal] = await c3_refus_exprimes(_c3_canal, _c3_valeurs)
+        if _c3_refus[_c3_canal]:
+            logger.info("[C3] %d refus honores sur le canal %s",
+                        len(_c3_refus[_c3_canal]), _c3_canal)
+    _c3_deja = {_c: set() for _c in C3_CANAUX_CAMPAGNE}
+
     for contact in contacts:
         contact_id = contact.get("id", "")
         contact_name = contact.get("name", "")
         contact_email = contact.get("email", "")
         contact_phone = contact.get("whatsapp") or contact.get("phone") or ""
+
+        # Le verdict est rendu ICI, avant toute condition d'envoi : un
+        # destinataire ecarte n'atteint jamais le fournisseur, et l'ecart est
+        # COMPTE — un saut silencieux se lirait comme un envoi reussi.
+        _c3_wa = (c3_verdict("whatsapp", contact_phone,
+                             _c3_refus.get("whatsapp"), _c3_deja["whatsapp"])
+                  if (channels.get("whatsapp") and contact_phone) else "")
+        if _c3_wa:
+            skipped_count += 1
+            logger.info("[C3] contact ecarte du canal whatsapp : %s", _c3_wa)
+        _c3_mail = (c3_verdict("email", contact_email,
+                               _c3_refus.get("email"), _c3_deja["email"])
+                    if (channels.get("email") and contact_email) else "")
+        if _c3_mail:
+            skipped_count += 1
+            logger.info("[C3] contact ecarte du canal email : %s", _c3_mail)
 
         # V165: Vérifier si ce contact est le numéro business (expéditeur)
         if contact_phone and business_phone_number:
@@ -4981,7 +5013,7 @@ async def launch_campaign(campaign_id: str):
         personalized_msg = substitute_campaign_variables(message_content, contact)
 
         # ==================== ENVOI WHATSAPP (INDÉPENDANT) ====================
-        if channels.get("whatsapp") and contact_phone:
+        if channels.get("whatsapp") and contact_phone and not _c3_wa:
             whatsapp_result = {
                 "contactId": contact_id,
                 "contactName": contact_name,
@@ -5155,7 +5187,7 @@ async def launch_campaign(campaign_id: str):
             results.append(whatsapp_result)
         
         # ==================== ENVOI EMAIL (INDÉPENDANT) ====================
-        if channels.get("email") and contact_email:
+        if channels.get("email") and contact_email and not _c3_mail:
             email_result = {
                 "contactId": contact_id,
                 "contactName": contact_name,
@@ -10880,6 +10912,122 @@ def _v332_normaliser(canal: str, valeur: str) -> str:
     if "@" not in valeur or "." not in valeur.split("@")[-1] or len(valeur) < 6:
         return ""
     return valeur
+
+
+
+# ===================== C3 — UNE CAMPAGNE N'ECRIT PAS A QUI A DIT NON =====================
+#
+# Quatre chemins d'envoi de masse — `launch_campaign`, `send-bulk-email`,
+# `send-email` et `push/broadcast` — ne lisaient AUCUN refus. Le depot le
+# documentait lui-meme, dans `p1b_destinataire_autorise` : « ses campagnes
+# n'honorent AUCUN opt-out ». Trois campagnes reelles ont vise 176, 202 et 268
+# numeros dans ces conditions.
+#
+# AUCUNE NOTION NOUVELLE. La source de verite est `subscribers` — (canal, valeur
+# normalisee, `status`) — celle qu'ecrivent deja le lien de desinscription
+# (`v332_unsubscribe`) et le STOP WhatsApp, et que `p1b_destinataire_autorise`
+# lisait DEJA. Elle est extraite ici pour etre appelee des DEUX cotes : une
+# seule interpretation du refus, jamais deux definitions qui divergeront.
+#
+# CE QUE CE LOT NE FAIT PAS, ET POURQUOI.
+#
+#   - Il n'ECRIT jamais. Il n'inscrit personne au registre, ne cree aucun
+#     consentement, n'en retire aucun. Il honore ce qui a deja ete exprime.
+#
+#   - Il n'ajoute PAS les en-tetes `List-Unsubscribe` aux campagnes, alors que
+#     l'aide existe (`_v336_entetes_desinscription`). La condition n'est pas
+#     remplie : `v332_unsubscribe` exige un `unsubscribe_token`, et ce jeton
+#     n'est cree qu'a l'inscription au registre. Mesure du 26/08/2026 : 6 des
+#     ~314 personnes joignables en portent un. Poser l'en-tete offrirait donc a
+#     l'immense majorite un bouton « se desinscrire » qui repondrait « Lien
+#     invalide » — une fausse promesse est pire que pas de promesse. Le jour ou
+#     les cibles seront inscrites au registre, l'en-tete deviendra une ligne.
+#
+#   - Il ne touche pas `push/broadcast` : le seul refus push exprimable
+#     aujourd'hui est la desinscription du navigateur, DEJA honoree (une
+#     souscription inactive ou morte n'est pas servie). Melanger les canaux
+#     ferait taire des gens qui n'ont rien refuse sur celui-la.
+C3_CANAUX_CAMPAGNE = ("email", "whatsapp")
+
+
+async def c3_refus_exprimes(canal: str, valeurs) -> set:
+    """Les valeurs NORMALISEES qui ont dit non sur CE canal. UNE seule requete.
+
+    Groupee par `$in`, jamais un `find_one` par destinataire : une campagne vise
+    couramment 200 a 270 personnes, et la regle du depot sur les grands groupes
+    est explicite. Aucune entree utilisateur n'entre dans une regex — l'egalite
+    stricte sur une valeur DEJA normalisee suffit et ne peut rien injecter.
+
+    Un canal sans destinataire exploitable ne coute aucune lecture.
+
+    LECTURE IMPOSSIBLE -> AUCUN REFUS DEDUIT. C'est la convention de tout le
+    systeme (`_v286_should_send_notification`, `p1b_destinataire_autorise`) :
+    une base qui hoquette ne doit pas se lire comme un refus, sinon une panne
+    silencieuse annulerait des envois legitimes sans que personne le sache.
+    """
+    _cles = set()
+    for _v in (valeurs or []):
+        _n = _v332_normaliser(canal, _v)
+        if _n:
+            _cles.add(_n)
+    if not _cles:
+        return set()
+    _refus = set()
+    try:
+        async for _s in db.subscribers.find(
+                {"channel": canal, "value": {"$in": sorted(_cles)},
+                 "status": "opted_out"},
+                {"_id": 0, "value": 1}):
+            _n = _v332_normaliser(canal, _s.get("value"))
+            if _n:
+                _refus.add(_n)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[C3] refus illisibles sur %s (%s) — on n'en deduit rien",
+                       canal, type(_err).__name__)
+        return set()
+    return _refus
+
+
+async def c3_refus_exprime(canal: str, valeur: str) -> bool:
+    """Cette personne a-t-elle dit non sur ce canal ? Meme regle, un seul nom.
+
+    Sert les chemins qui traitent UNE personne (P1-b, P1-d). Passer par la meme
+    fonction que les campagnes est le fond du lot : deux ecritures de la regle
+    finiraient par se contredire, et le refus est precisement ce qui ne doit
+    jamais dependre du chemin emprunte.
+    """
+    _n = _v332_normaliser(canal, valeur)
+    if not _n:
+        return False
+    return _n in await c3_refus_exprimes(canal, [valeur])
+
+
+def c3_verdict(canal: str, valeur, refus, deja) -> str:
+    """Faut-il ecarter ce destinataire ? '' = envoyer.
+
+    Trois motifs, et rien d'autre : « refus », « doublon », « illisible ». Cette
+    fonction ne connait ni segment, ni abonnement, ni anciennete — c'est
+    volontaire : aucune qualite ne doit pouvoir REINCLURE quelqu'un qui a dit
+    non, et la seule facon de le garantir est que la decision ne les voie pas.
+
+    LA DEDUPLICATION EST PAR CANAL et porte sur la valeur NORMALISEE : la meme
+    personne presente sous deux fiches, deux collections ou deux segments ne
+    recoit qu'un message. Le depot dedupliquait par identifiant de contact, ce
+    qui laissait passer les fiches jumelles.
+
+    La valeur retenue est MEMORISEE quand on decide d'envoyer — comme
+    `rv2_reserver_canal` marque avant l'envoi : c'est ce qui rend l'appel
+    suivant capable de voir le doublon.
+    """
+    _n = _v332_normaliser(canal, valeur)
+    if not _n:
+        return "illisible"
+    if _n in (refus or ()):
+        return "refus"
+    if _n in deja:
+        return "doublon"
+    deja.add(_n)
+    return ""
 
 
 def _v332_url_publique() -> str:
@@ -28410,11 +28558,26 @@ async def send_bulk_campaign_email(request: Request, background_tasks: Backgroun
     primary_rgb = _v259_primary_rgb(primary_color)
     async def send_emails_background(recipients_list, subj, msg, media, coach):
         results = {"sent": 0, "failed": 0, "errors": []}
+        # C3 : meme garde que `launch_campaign`, meme source de verite, une seule
+        # lecture groupee pour toute la fournee. Les ecarts sont COMPTES dans
+        # `skipped` : une exclusion silencieuse se lirait comme un envoi reussi.
+        _c3_refus = await c3_refus_exprimes(
+            "email", [(r or {}).get("email") for r in (recipients_list or [])])
+        if _c3_refus:
+            logger.info("[C3] %d refus honores sur l'envoi en masse", len(_c3_refus))
+        _c3_deja = set()
+        results["skipped"] = 0
         for recipient in recipients_list:
             try:
                 to_email = recipient.get("email")
                 to_name = recipient.get("name", "")
                 if not to_email:
+                    continue
+                _c3_motif = c3_verdict("email", to_email, _c3_refus, _c3_deja)
+                if _c3_motif:
+                    results["skipped"] += 1
+                    logger.info("[C3] destinataire ecarte de l'envoi en masse : %s",
+                                _c3_motif)
                     continue
                 
                 # Personnaliser le message avec le prénom
@@ -29361,15 +29524,13 @@ async def p1b_destinataire_autorise(email: str) -> bool:
     _e = (email or "").strip().lower()
     if not _e:
         return False
-    try:
-        _refus = await db.subscribers.find_one(
-            {"channel": "email", "value": _e, "status": "opted_out"}, {"_id": 1})
-        if _refus:
-            logger.info("%s relance non envoyee — desinscription explicite", P1B_PREFIXE)
-            return False
-    except Exception as _err:
-        logger.warning("%s consentement illisible (%s) — on n'en deduit rien",
-                       P1B_PREFIXE, type(_err).__name__)
+    # C3 : la meme lecture qu'avant, mais ecrite UNE SEULE FOIS et partagee avec
+    # les campagnes. Verdict identique au caractere pres — y compris la
+    # convention « lecture impossible = aucun refus deduit », qui vit desormais
+    # dans `c3_refus_exprimes`.
+    if await c3_refus_exprime("email", _e):
+        logger.info("%s relance non envoyee — desinscription explicite", P1B_PREFIXE)
+        return False
     return await _v286_should_send_notification(_e, "subscriber", P1B_TYPE_PREFERENCE)
 
 
