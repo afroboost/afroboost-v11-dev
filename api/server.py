@@ -4959,6 +4959,17 @@ async def launch_campaign(campaign_id: str):
         business_phone_number = "41767639928"
         logger.info(f"[CAMPAIGN-LAUNCH] 🏢 Numéro business fallback: {business_phone_number}")
 
+    # === S1 — LE CIBLAGE INSCRIT LA CIBLE, POUR QU'ELLE PUISSE DIRE NON ===
+    # Avant la boucle, comme la garde C3 : une seule ecriture groupee pour toute
+    # la campagne, jamais une par destinataire. Ne cree que des lignes NEUTRES —
+    # ni consentement, ni refus — et ne touche a aucune ligne existante.
+    if channels.get("whatsapp"):
+        _s1_crees = await s1_inscrire_cibles(
+            [(c.get("whatsapp") or c.get("phone") or "") for c in contacts])
+        if _s1_crees:
+            logger.info("[S1] %d cible(s) WhatsApp inscrite(s) au registre — "
+                        "leur STOP sera desormais enregistre", _s1_crees)
+
     # === C3 — LES REFUS, LUS UNE FOIS POUR TOUTE LA CAMPAGNE ===
     # Une requete groupee par canal ACTIF, avant la boucle : jamais une lecture
     # par destinataire. `_c3_deja` porte la deduplication, canal par canal.
@@ -4981,12 +4992,16 @@ async def launch_campaign(campaign_id: str):
         contact_email = contact.get("email", "")
         contact_phone = contact.get("whatsapp") or contact.get("phone") or ""
 
+        # S1 : la forme canonique du numero, SI son indicatif est dans la donnee.
+        # Vide = on ne saurait pas reconnaitre le STOP de cette personne.
+        _s1_val = s1_valeur_sure(contact_phone)
+
         # Le verdict est rendu ICI, avant toute condition d'envoi : un
         # destinataire ecarte n'atteint jamais le fournisseur, et l'ecart est
         # COMPTE — un saut silencieux se lirait comme un envoi reussi.
-        _c3_wa = (c3_verdict("whatsapp", contact_phone,
+        _c3_wa = (c3_verdict("whatsapp", _s1_val,
                              _c3_refus.get("whatsapp"), _c3_deja["whatsapp"])
-                  if (channels.get("whatsapp") and contact_phone) else "")
+                  if (channels.get("whatsapp") and _s1_val) else "")
         if _c3_wa:
             skipped_count += 1
             logger.info("[C3] contact ecarte du canal whatsapp : %s", _c3_wa)
@@ -4996,6 +5011,14 @@ async def launch_campaign(campaign_id: str):
         if _c3_mail:
             skipped_count += 1
             logger.info("[C3] contact ecarte du canal email : %s", _c3_mail)
+
+        # S1 : une cible dont le STOP ne serait pas reconnu n'est pas demarchee
+        # DU TOUT. Mieux vaut une personne non touchee qu'une personne a qui
+        # l'on ecrit en sachant que son « stop » se perdrait.
+        if channels.get("whatsapp") and contact_phone and not _s1_val:
+            skipped_count += 1
+            logger.info("[S1] contact ecarte du canal whatsapp : indicatif absent "
+                        "du numero, son STOP ne serait pas reconnu")
 
         # V165: Vérifier si ce contact est le numéro business (expéditeur)
         if contact_phone and business_phone_number:
@@ -5013,7 +5036,7 @@ async def launch_campaign(campaign_id: str):
         personalized_msg = substitute_campaign_variables(message_content, contact)
 
         # ==================== ENVOI WHATSAPP (INDÉPENDANT) ====================
-        if channels.get("whatsapp") and contact_phone and not _c3_wa:
+        if channels.get("whatsapp") and contact_phone and _s1_val and not _c3_wa:
             whatsapp_result = {
                 "contactId": contact_id,
                 "contactName": contact_name,
@@ -11030,6 +11053,137 @@ def c3_verdict(canal: str, valeur, refus, deja) -> str:
     return ""
 
 
+# ============ S1 — LE CIBLAGE REND « STOP » EXPRIMABLE, ET RIEN DE PLUS ============
+#
+# `_v332_stop_whatsapp` n'ecrit un refus que si le numero a DEJA une ligne dans
+# `subscribers`. Or la seule porte d'entree du registre est le formulaire
+# d'opt-in, qui exige une case cochee : 6 lignes pour 280 numeros joignables.
+# Mesure du 26/08/2026 : 274 numeros sur 280 tombaient sur « numero non inscrit
+# — rien a faire ». Repondre STOP ne produisait RIEN, et la campagne suivante
+# repartait. C3 honore les refus ; il ne les rendait pas EXPRIMABLES.
+#
+# CE QUE FAIT S1 : au moment ou une cible WhatsApp entre dans le chemin de
+# campagne, il cree la ligne qui manque — et RIEN d'autre. Le STOP ulterieur
+# trouve alors sa ligne et suit le chemin EXISTANT ; pas une ligne du traitement
+# du STOP ne change.
+#
+# ETRE INSCRIT N'EST PAS AVOIR REFUSE — ni avoir accepte. La ligne creee porte
+# `status: "targeted"`, sans `consent_at`, sans `consent_text`, sans
+# `unsubscribe_token`. Les trois lecteurs du registre le confirment chacun de son
+# cote : `c3_refus_exprimes` ne retient que `opted_out`, `v332_liste` ne rend que
+# les `confirmed`, et `c2_consentement` lit tout le reste comme « inconnu ».
+# Aucun d'eux n'a besoin d'apprendre ce statut : ils le traitaient DEJA
+# correctement, parce qu'ils nomment ce qu'ils cherchent au lieu de deduire de
+# l'absence.
+#
+# HORS LOT, ET VOLONTAIREMENT : le canal e-mail. Son pendant du STOP est le lien
+# de desinscription, qui exige un `unsubscribe_token` — donc une autre mecanique,
+# et un autre lot.
+#
+# QUI EST INSCRIT : les cibles dont on saura reconnaitre le STOP — celles qui
+# portent leur indicatif, et les mobiles suisses ecrits en format local. Les
+# autres ne sont ni inscrites ni demarchees (`s1_valeur_sure`).
+S1_STATUT_CIBLE = "targeted"
+S1_SOURCE_CIBLE = "campaign_target"
+
+# Mobiles suisses en format LOCAL : « 0 », puis un prefixe mobile attribue en
+# Suisse (075 a 079), puis sept chiffres — dix en tout, jamais plus, jamais
+# moins. C'est une LECTURE du plan de numerotation, pas un pari : ces prefixes,
+# sur cette longueur, designent un mobile suisse. Tout le reste — un « 06 »
+# francais, un « 021 » fixe, un prefixe inconnu, une longueur qui ne tombe pas
+# juste — reste dehors.
+S1_MOBILE_CH_LOCAL = re.compile(r"^07[56789]\d{7}$")
+
+
+def s1_valeur_sure(brut) -> str:
+    """La forme canonique du numero SI on saura reconnaitre son STOP, sinon ''.
+
+    C'est la regle de surete du lot : on n'inscrit — donc on ne demarche — que
+    les numeros dont un « STOP » reviendra sous une valeur qu'on saura rapprocher
+    de celle inscrite. Deux cas, et deux seulement.
+
+    1. L'INDICATIF EST DANS LA DONNEE (`+…`, `00…`). Rien a deviner.
+
+    2. C'EST UN MOBILE SUISSE EN FORMAT LOCAL (`S1_MOBILE_CH_LOCAL` : 075 a 079,
+       dix chiffres). Ce n'est PAS deviner un indicatif : ces prefixes, sur cette
+       longueur, DESIGNENT un mobile suisse — c'est une lecture du plan de
+       numerotation. Mesure du 26/08/2026 : ce seul cas represente 90 des 127
+       fiches sans indicatif, et fait tomber l'exclusion de 32 % a 9 %.
+
+    TOUT LE RESTE EST ECARTE, et c'est la que le lot refuse de parier.
+    `format_phone_e164`, lui, tranche toujours : « 0612345678 » (mobile francais)
+    devient « +33612345678 », et « 0532545508 » — un prefixe qui n'existe pas en
+    Suisse — devient un numero GHANEEN, « +233532545508 ». Si le pari est faux,
+    la valeur inscrite ici et celle que Meta renverra au STOP ne se ressemblent
+    pas : le refus serait enregistre a cote, et la personne continuerait a
+    recevoir les campagnes en croyant avoir dit non. C'est le seul scenario que
+    ce lot doit rendre impossible.
+
+    RISQUE RESIDUEL, ASSUME : la France attribue aussi des mobiles en 07, et
+    « 0765880749 » s'ecrit comme un 076 suisse. Un contact francais saisi en
+    format LOCAL sera lu comme suisse. Le depot en heberge — mais stockes avec
+    leur `+33`, donc reconnus sans ambiguite. Le cas qui resterait faux existait
+    deja avant ce lot ; l'inscription au registre ne l'aggrave pas.
+
+    La normalisation reste celle du depot (`_v332_normaliser`), inchangee.
+    """
+    _p = re.sub(r"[\s.()\-]", "", str(brut or ""))
+    if _p.startswith("+") or _p.startswith("00"):
+        _n = _v332_normaliser("whatsapp", _p)
+        return _n if len(re.sub(r"\D", "", _n)) >= 10 else ""
+    # Mobile suisse ecrit en format local : le seul cas ou l'indicatif absent se
+    # DEDUIT sans parier. Mesure du 26/08/2026 : ce seul cas represente 90 des
+    # 127 fiches sans indicatif, et fait passer l'exclusion de 32 % a 9 %.
+    if S1_MOBILE_CH_LOCAL.match(_p):
+        return "+41" + _p[1:]
+    return ""
+
+
+async def s1_inscrire_cibles(valeurs) -> int:
+    """Inscrit les cibles joignables au registre. Rend le nombre de lignes CREEES.
+
+    `$setOnInsert` SEUL, et c'est tout le contrat : sur une ligne qui existe
+    deja, l'operation ne change RIEN. Un `opted_out` ne peut pas etre ressuscite
+    par un ciblage, un `confirmed` ne peut pas etre efface, une date de
+    consentement ne peut pas etre reecrite. La preuve ne tient pas a la prudence
+    de l'appelant, elle tient a l'operateur choisi.
+
+    UN SEUL aller-retour, quel que soit le nombre de cibles : une campagne en
+    vise couramment 200 a 270, et la regle du depot sur les grands groupes vaut
+    pour les ecritures comme pour les lectures. Aucune cible joignable -> aucun
+    trajet du tout.
+
+    ECRITURE IMPOSSIBLE -> ON N'INSCRIT PERSONNE, et la campagne continue. Le
+    registre est un service rendu a la personne ciblee, pas une condition de
+    l'envoi : une base qui hoquette ne doit pas annuler une campagne. Le prix de
+    cet echec est borne et connu — les cibles concernees restent dans l'etat
+    d'avant le lot, ou leur STOP ne produirait rien.
+    """
+    from pymongo import UpdateOne
+    _cibles = set()
+    for _v in (valeurs or []):
+        _n = s1_valeur_sure(_v)
+        if _n:
+            _cibles.add(_n)
+    if not _cibles:
+        return 0
+    _now = datetime.now(timezone.utc).isoformat()
+    _ops = [UpdateOne({"channel": "whatsapp", "value": _v},
+                      {"$setOnInsert": {"id": str(uuid.uuid4()),
+                                        "created_at": _now, "updated_at": _now,
+                                        "status": S1_STATUT_CIBLE,
+                                        "source": S1_SOURCE_CIBLE, "name": ""}},
+                      upsert=True)
+            for _v in sorted(_cibles)]
+    try:
+        _res = await db.subscribers.bulk_write(_ops, ordered=False)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[S1] registre non ecrit (%s) — aucune cible inscrite",
+                       type(_err).__name__)
+        return 0
+    return int(getattr(_res, "upserted_count", 0) or 0)
+
+
 def _v332_url_publique() -> str:
     return os.environ.get('REACT_APP_FRONTEND_URL', 'https://afroboost.com')
 
@@ -11325,6 +11479,19 @@ async def _v332_stop_whatsapp(numero_brut: str, texte: str) -> bool:
     if not sub:
         logger.info(f"[V332] « {mot} » reçu d'un numéro non inscrit — rien à faire")
         return True   # commande reconnue : on n'enchaîne pas sur l'IA
+
+    # S1 — CONSEQUENCE DIRECTE DU CIBLAGE, ET SEULE LIGNE QU'IL AJOUTE ICI.
+    # Depuis S1, une ligne peut exister sans qu'aucune case n'ait ete cochee
+    # (`status: "targeted"`, cree par le ciblage d'une campagne). Sans cette
+    # garde, un simple « oui » la ferait passer `confirmed` : le lot fabriquerait
+    # un consentement RGPD a partir d'un mot, et la personne entrerait dans la
+    # liste des inscrits sans l'avoir jamais demande. Un consentement ne se
+    # deduit pas — il se prouve, et la preuve est `consent_at`.
+    # Le STOP, lui, n'est pas concerne : refuser n'a jamais besoin de preuve
+    # prealable, et c'est tout l'objet du lot.
+    if mot in MOTS_START and not str(sub.get("consent_at") or "").strip():
+        logger.info("[S1] « %s » sur une ligne sans consentement — aucun accord fabrique", mot)
+        return True
 
     nouveau = "opted_out" if mot in MOTS_STOP else "confirmed"
     await db.subscribers.update_one(
