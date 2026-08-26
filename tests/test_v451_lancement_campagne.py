@@ -393,30 +393,38 @@ INTOUCHABLES = (
 )
 
 
+# Le commit de ce lot. On compare V451 a SON PROPRE PARENT, jamais l'arbre de
+# travail a un hachage fige : sinon le garde-fou tomberait en panne des qu'un
+# correctif ULTERIEUR et parfaitement legitime toucherait launch_campaign ou le
+# webhook entrant. L'invariant « le commit V451 n'a pas touche au moteur », lui,
+# reste vrai pour toujours. Meme motif que V442 et V450.
+V451 = "523e896f"
+
+
 def tests_non_regression():
-    """Comparaison au dernier commit : tant que le lot n'est pas commite, HEAD
-    EST le parent. Le commit qui suivra figera ce garde-fou sur son propre SHA
-    (motif V442/V450), pour qu'il survive aux correctifs ulterieurs."""
-    tete = _index_rev("HEAD")
+    """Le lot n'ajoute qu'une enveloppe : le moteur et le canal metier sont
+    INCHANGES, octet pour octet, entre V451 et son parent."""
+    tete = _index_rev(V451 + "^")
     if not tete:
-        verifier("N0. la revision HEAD est lisible", False, "git indisponible")
+        verifier("N0. la revision V451 est lisible", False, "git indisponible")
         return
-    verifier("N0. la revision HEAD est lisible", True)
+    verifier("N0. la revision V451 est lisible", True)
 
     for nom in INTOUCHABLES:
-        avant, apres = tete.get(nom), INDEX_TRAVAIL.get(nom)
+        avant, apres = tete.get(nom), _index_rev(V451).get(nom)
         if avant is None:
             continue
         verifier("6/7/8. %s INCHANGE (octet pour octet)" % nom, avant == apres,
                  "MODIFIE" if avant != apres else "")
 
-    diff = subprocess.check_output(["git", "diff", "--name-only", "HEAD"],
-                                   cwd=RACINE).decode("utf-8").split()
+    diff = subprocess.check_output(
+        ["git", "diff", "--name-only", V451 + "^", V451], cwd=RACINE).decode("utf-8").split()
     autorises = {"api/server.py", "tests/test_v451_lancement_campagne.py"}
     hors = [f for f in diff if f not in autorises]
     verifier("9. le lot ne modifie AUCUN autre fichier", hors == [], " ".join(hors))
 
-    change = [n for n, s in INDEX_TRAVAIL.items() if n not in tete or tete[n] != s]
+    lot = _index_rev(V451)
+    change = [n for n, srcs in lot.items() if n not in tete or tete[n] != srcs]
     verifier("9. dans server.py, SEULE l'enveloppe est ajoutee",
              set(change) <= {ENVELOPPE}, "aussi : %s" % sorted(set(change) - {ENVELOPPE}))
 
