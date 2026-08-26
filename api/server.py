@@ -1312,6 +1312,15 @@ class FeatureFlags(BaseModel):
     #   les deux a true                    -> la presence est reellement posee
     AUTO_PRESENCE_TRIAL_ENABLED: bool = False          # AUTO-PRESENCE
     AUTO_PRESENCE_TRIAL_ECRITURE_REELLE: bool = False  # AUTO-PRESENCE
+    # V453 : vérification de la signature `X-Hub-Signature-256` des webhooks Meta.
+    # Défaut FALSE = le webhook se comporte EXACTEMENT comme aujourd'hui, aucune
+    # requête légitime refusée ; la signature est seulement calculée et journalisée,
+    # pour observer de vrais webhooks avant d'activer le refus.
+    # True = signature absente ou invalide -> 403 AVANT toute logique métier.
+    # Drapeau en base et non variable d'environnement, comme V319/V344/V349/V367 :
+    # si la vérification étranglait le trafic entrant, il faut pouvoir l'éteindre
+    # en une seconde, pas en quatre minutes de rebuild.
+    META_WEBHOOK_SIGNATURE_ENABLED: bool = False       # V453
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1335,6 +1344,7 @@ class FeatureFlagsUpdate(BaseModel):
     P1_TRIAL_J3_ENVOI_REEL: Optional[bool] = None  # P1-d
     AUTO_PRESENCE_TRIAL_ENABLED: Optional[bool] = None  # AUTO-PRESENCE
     AUTO_PRESENCE_TRIAL_ECRITURE_REELLE: Optional[bool] = None  # AUTO-PRESENCE
+    META_WEBHOOK_SIGNATURE_ENABLED: Optional[bool] = None  # V453
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -17488,6 +17498,7 @@ async def get_feature_flags():
             "P1_TRIAL_J3_ENVOI_REEL": False,   # P1-d : défaut OFF (simulation même si activé)
             "AUTO_PRESENCE_TRIAL_ENABLED": False,          # AUTO-PRESENCE : défaut OFF (aucune auto-validation)
             "AUTO_PRESENCE_TRIAL_ECRITURE_REELLE": False,  # AUTO-PRESENCE : défaut OFF (simulation même si activé)
+            "META_WEBHOOK_SIGNATURE_ENABLED": False,       # V453 : défaut OFF (webhook inchangé, observation seule)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -17511,7 +17522,8 @@ async def get_feature_flags():
                          ("P1_TRIAL_J3_ENABLED", False),
                          ("P1_TRIAL_J3_ENVOI_REEL", False),
                          ("AUTO_PRESENCE_TRIAL_ENABLED", False),
-                         ("AUTO_PRESENCE_TRIAL_ECRITURE_REELLE", False)):
+                         ("AUTO_PRESENCE_TRIAL_ECRITURE_REELLE", False),
+                         ("META_WEBHOOK_SIGNATURE_ENABLED", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -18609,6 +18621,71 @@ async def v440_historique_fil(from_phone: str, limite: int = V440_MAX_HISTORIQUE
     return _tours
 
 
+async def _v453_signature_refusee(request: Request, brut: bytes) -> bool:
+    """V453 — ce webhook vient-il VRAIMENT de Meta ? Renvoie True s'il faut REFUSER.
+
+    LE TROU. `POST /api/webhook/whatsapp-meta` n'avait aucun contrôle d'origine.
+    Un POST forgé qui imite un message entrant fait répondre le bot — donc ENVOIE
+    un vrai WhatsApp au numéro choisi par l'attaquant — et peut écrire un faux
+    STOP au nom de n'importe quel numéro, désabonnant un client à son insu.
+
+    LA RÈGLE DU HMAC. Meta signe les OCTETS BRUTS du corps. On ne recalcule
+    JAMAIS depuis du JSON re-sérialisé : mesuré le 26/08/2026 sur un vrai
+    FastAPI, le corps reçu et sa re-sérialisation ont des empreintes
+    DIFFÉRENTES (9ea864bc… contre f139005d…). Recalculer depuis le JSON
+    produirait un refus systématique. D'où le paramètre `brut`, lu par
+    `request.body()` avant toute autre chose.
+
+    Comparaison en TEMPS CONSTANT (`hmac.compare_digest`) : une comparaison
+    ordinaire fuit, par son temps d'exécution, le nombre de caractères devinés.
+
+    DEUX PANNES, DEUX RÉPONSES OPPOSÉES — c'est délibéré :
+      * lecture du DRAPEAU impossible (hoquet MongoDB) -> on n'active PAS. Un
+        incident de base ne doit jamais couper le canal entrant.
+      * drapeau ON mais META_APP_SECRET absent -> on REFUSE (fail closed). Ici
+        l'intention est explicite : mieux vaut un canal muet qu'un canal ouvert
+        à tous alors qu'on le croit protégé.
+
+    OBSERVATION. Tant que le drapeau est OFF, la signature est quand même
+    calculée et le résultat journalisé — présence, validité, taille. Ni le
+    secret, ni la signature, ni le corps ne sont journalisés : c'est ce qui
+    permet d'observer de vrais webhooks Meta avant d'activer le refus.
+    """
+    import hmac as _hmac453
+    import hashlib as _hashlib453
+
+    secret = os.environ.get("META_APP_SECRET", "")
+    fournie = (request.headers.get("X-Hub-Signature-256", "") or "").strip()
+    presente = bool(fournie)
+    valide = False
+    if secret and presente:
+        attendue = "sha256=" + _hmac453.new(
+            secret.encode("utf-8"), brut or b"", _hashlib453.sha256).hexdigest()
+        valide = _hmac453.compare_digest(fournie.lower(), attendue.lower())
+
+    try:
+        actif = bool((await get_feature_flags()).get("META_WEBHOOK_SIGNATURE_ENABLED"))
+    except Exception as _e453:
+        actif = False
+        logger.warning("[V453] drapeau illisible (%s) — verification NON activee", _e453)
+
+    logger.info("[V453] webhook Meta — drapeau=%s signature_presente=%s "
+                "signature_valide=%s taille=%d octets",
+                "ON" if actif else "OFF", "oui" if presente else "non",
+                "oui" if valide else "non", len(brut or b""))
+
+    if not actif:
+        return False
+    if not secret:
+        logger.error("[V453] REFUS — META_APP_SECRET absent alors que la verification est ACTIVE")
+        return True
+    if not valide:
+        logger.warning("[V453] REFUS — signature %s",
+                       "invalide" if presente else "absente")
+        return True
+    return False
+
+
 @api_router.post("/webhook/whatsapp-meta")
 async def handle_meta_whatsapp_webhook(request: Request):
     """
@@ -18617,6 +18694,17 @@ async def handle_meta_whatsapp_webhook(request: Request):
     Réutilise le MÊME flux IA + conversation que le webhook Twilio existant.
     """
     import time
+
+    # V453 : la signature se calcule sur les OCTETS BRUTS, avant toute lecture
+    # JSON. `request.body()` met le corps en cache dans Starlette : le
+    # `request.json()` qui suit relit ce cache, il n'est donc PAS cassé
+    # (vérifié le 26/08/2026 sur un vrai FastAPI). Aucun middleware du projet
+    # ne consomme le corps (CORS et en-têtes de sécurité ne touchent que la
+    # réponse). Tant que le drapeau est OFF, cette garde ne refuse RIEN : elle
+    # se contente d'observer.
+    _v453_brut = await request.body()
+    if await _v453_signature_refusee(request, _v453_brut):
+        raise HTTPException(status_code=403, detail="Signature invalide")
 
     try:
         body = await request.json()
