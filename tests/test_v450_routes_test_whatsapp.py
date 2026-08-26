@@ -424,40 +424,54 @@ def _src_au(rev, chemin, nom):
     return _index_fonctions(rev, chemin).get(nom)
 
 
-def tests_non_regression_metier():
-    """Ce lot ne doit toucher QUE les 4 handlers. On compare l'arbre de travail a
-    HEAD : tant que le lot n'est pas commite, HEAD EST le parent."""
-    for nom in INTOUCHABLES_SERVEUR:
-        avant = _src_au("HEAD", "api/server.py", nom)
-        apres = INDEX_TRAVAIL.get(nom)
-        verifier("D/E. %s inchange par ce lot" % nom,
-                 avant is not None and avant == apres,
-                 "modifie" if avant != apres else "absent de HEAD")
+# Le commit de ce lot. On compare V450 a SON PROPRE PARENT, jamais l'arbre de
+# travail a un hachage fige : sinon le garde-fou tomberait en panne des qu'un
+# correctif ULTERIEUR et parfaitement legitime toucherait l'une de ces
+# fonctions. L'invariant « le commit V450 n'a pas touche au canal metier »,
+# lui, reste vrai pour toujours. Meme raisonnement que V442 (S9b).
+V450 = "1a7a0a70"
 
-    # E — le registre STOP (S1) et l'opt-out (C3) ne sont pas touches.
-    for chemin, noms in (("api/server.py", ("p1b_destinataire_autorise",)),):
-        for nom in noms:
-            avant = _src_au("HEAD", chemin, nom)
-            if avant is None:
-                continue
-            verifier("E.   %s inchange par ce lot" % nom,
-                     avant == INDEX_TRAVAIL.get(nom), "")
+
+def tests_non_regression_metier():
+    """Ce lot ne doit toucher QUE les 4 handlers, et AUCUN chemin metier."""
+    if _index_fonctions(V450, "api/server.py") == {}:
+        verifier("D/E. le commit V450 est visible par git", False,
+                 "revision %s introuvable" % V450)
+        return
+    verifier("D/E. le commit V450 est visible par git", True)
+
+    for nom in INTOUCHABLES_SERVEUR:
+        avant = _src_au(V450 + "^", "api/server.py", nom)
+        apres = _src_au(V450, "api/server.py", nom)
+        verifier("D/E. le commit V450 n'a pas touche a %s" % nom,
+                 avant is not None and avant == apres,
+                 "modifie" if avant != apres else "absent du parent")
+
+    # E — l'opt-out (C3), source de verite du refus, n'est pas touche non plus.
+    for nom in ("p1b_destinataire_autorise",):
+        avant = _src_au(V450 + "^", "api/server.py", nom)
+        if avant is None:
+            continue
+        verifier("E.   le commit V450 n'a pas touche a %s" % nom,
+                 avant == _src_au(V450, "api/server.py", nom), "")
 
     # Aucun fichier metier ne doit apparaitre dans le diff de ce lot.
-    diff = subprocess.check_output(["git", "diff", "--name-only", "HEAD"],
-                                   cwd=RACINE).decode("utf-8").split()
+    diff = subprocess.check_output(
+        ["git", "diff", "--name-only", V450 + "^", V450], cwd=RACINE).decode("utf-8").split()
     autorises = {"api/server.py", "tests/test_v450_routes_test_whatsapp.py"}
     hors = [f for f in diff if f not in autorises]
     verifier("D/E. le lot ne modifie AUCUN autre fichier", hors == [], " ".join(hors))
 
     # Et dans api/server.py, seules les 4 fonctions du lot changent.
-    tete = _index_fonctions("HEAD", "api/server.py")
-    change = [nom for nom, srcs in INDEX_TRAVAIL.items()
-              if nom in tete and tete[nom] != srcs]
-    change += [nom for nom in INDEX_TRAVAIL if nom not in tete]
+    parent = _index_fonctions(V450 + "^", "api/server.py")
+    lot = _index_fonctions(V450, "api/server.py")
+    change = [nom for nom, srcs in lot.items()
+              if nom not in parent or parent[nom] != srcs]
     attendues = {f for f, _, _ in ROUTES}
     verifier("D/E. seules les 4 routes du lot sont modifiees dans server.py",
              set(change) <= attendues, "aussi : %s" % sorted(set(change) - attendues))
+    verifier("D/E. les 4 routes du lot sont bien toutes modifiees",
+             attendues <= set(change), "manquantes : %s" % sorted(attendues - set(change)))
 
 
 def main():
