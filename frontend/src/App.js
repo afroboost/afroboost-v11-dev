@@ -62,6 +62,23 @@ axios.interceptors.request.use((config) => {
         config.headers['X-Subscriber-Token'] = subTok;
       }
     }
+    // 4. LOT B3-S1.2 : jeton d'ESPACE, obtenu par OTP e-mail. En-tete et cle
+    //    DISTINCTS du jeton V296 ci-dessus, et ce n'est pas un detail : le
+    //    serveur rejette l'un la ou il accepte l'autre (`type` different).
+    //    Ecraser la cle V296 casserait le chat ; les deux cohabitent.
+    if (!config.headers['X-Espace-Token']) {
+      const espaceBrut = localStorage.getItem('afroboost_espace_token');
+      if (espaceBrut) {
+        try {
+          const espace = JSON.parse(espaceBrut);
+          // Un jeton perime n'est pas envoye : inutile de faire refuser une
+          // requete que l'on sait deja perdue.
+          if (espace && espace.token && (!espace.expires_at || new Date(espace.expires_at) > new Date())) {
+            config.headers['X-Espace-Token'] = espace.token;
+          }
+        } catch (e) { /* entree illisible : on n'envoie rien */ }
+      }
+    }
   } catch (e) { /* ignore */ }
   return config;
 });
