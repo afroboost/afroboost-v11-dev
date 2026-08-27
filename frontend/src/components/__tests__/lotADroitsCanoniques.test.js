@@ -76,15 +76,6 @@ beforeEach(() => {
   window.posthog = { capture: jest.fn() };
   window.history.replaceState({}, '', `/espace/${CODE}`);
   jest.clearAllMocks();
-  // LOT B3-S1.2 : l'espace exige desormais un jeton d'identite (OTP e-mail).
-  // Ce banc-ci ne teste PAS l'authentification : on lui fournit donc un jeton
-  // de banc valide pour qu'il atteigne l'ecran qu'il mesure. MONTAGE seul —
-  // aucune assertion metier n'est touchee, et la garde de production reste
-  // entiere : c'est bien elle qui lit ce jeton.
-  window.localStorage.setItem('afroboost_espace_token', JSON.stringify({
-    token: 'jeton-de-banc', code: CODE, slug: '',
-    expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
-  }));
 });
 afterEach(() => {
   if (conteneur) document.body.removeChild(conteneur);
