@@ -1816,8 +1816,11 @@ async def delete_reservation(reservation_id: str, request: Request):
 
     logger.info(f"[CANCEL] Tentative annulation: res={reservation_id} email={user_email} promo={promo_code} subId={subscription_id}")
 
+    # LOT B3 : `sub` était déclaré DANS le `if user_email` alors que la
+    # transaction, elle, vit en dehors. Une réservation sans e-mail levait donc
+    # un `NameError`. Déclaration hissée, aucune règle changée.
+    sub = None
     if user_email:
-        sub = None
         # V216: Recherche par subscriptionId d'abord (plus fiable)
         if subscription_id:
             sub = await db.subscriptions.find_one(
@@ -1843,31 +1846,130 @@ async def delete_reservation(reservation_id: str, request: Request):
             if sub:
                 logger.info(f"[CANCEL] Trouvé par email seul: code={sub.get('code')} remaining={sub.get('remaining_sessions')}")
 
-        if sub:
-            new_remaining = sub.get("remaining_sessions", 0) + 1
-            new_used = max(0, sub.get("used_sessions", 0) - 1)
-            update_data = {
-                "remaining_sessions": new_remaining,
-                "used_sessions": new_used,
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }
-            # Si le statut était "completed", le remettre à "active"
-            if sub.get("status") == "completed":
-                update_data["status"] = "active"
-            await db.subscriptions.update_one(
-                {"id": sub.get("id")},
-                {"$set": update_data}
-            )
-            recredited = True
-            logger.info(f"[CANCEL] Séance recréditée: {user_email} - {new_remaining} restantes (sub: {sub.get('id')})")
-        else:
-            logger.warning(f"[CANCEL] Aucun abonnement trouvé pour {user_email} / {promo_code} — pas de recrédit")
+    # ═══ LOT B3 — TOUT OU RIEN, DANS UNE SEULE TRANSACTION ════════════════
+    #
+    # L'ANCIEN CHEMIN, ET CE QU'IL COÛTAIT. Il recréditait `subscriptions` puis
+    # supprimait la réservation, et ne touchait JAMAIS `discount_codes.used`.
+    # Depuis le LOT A la page « Code promo » fait foi : la séance annulée
+    # restait comptée comme consommée et le membre ne la revoyait jamais.
+    # Mesure du 27/08/2026 : 38 annulations par ce chemin depuis le 20/05,
+    # 29 séances rendues côté abonnement et jamais côté code, 4 membres.
+    #
+    # Son ordre était aussi dangereux : recréditer PUIS supprimer laisse, si la
+    # suppression échoue, une séance rendue deux fois au prochain essai.
+    # L'ordre inverse aurait perdu la séance. La transaction supprime le choix.
+    #
+    # CE QUE LA TRANSACTION GARANTIT, prouvé sur le cluster réel (MongoDB
+    # 8.0.29, replica set 3 membres, motor 3.7.1) et non sur un simulacre :
+    #   * les trois effets ensemble, ou aucun ;
+    #   * `find_one_and_delete` ne rend le document qu'à UN seul appelant :
+    #     double-clic et requêtes simultanées ne restituent qu'une fois — la
+    #     concurrente est refusée par le moteur (WriteConflict observé) ;
+    #   * une panne à n'importe quelle étape ramène l'état complet, donc
+    #     l'annulation reste rejouable sans second crédit.
+    #
+    # AUCUN EFFET EXTERNE ICI. Notification et e-mail restent APRÈS le commit :
+    # une transaction qui échoue ne doit pas avoir prévenu le coach, et un
+    # envoi lent ne doit pas tenir une transaction ouverte.
+    from api.routes.shared import (lotb3_actif as _b3_actif,
+                                   lotb3_montant_debite as _b3_debite,
+                                   lotb3_montant_restitue as _b3_restitue,
+                                   lotb3_code_decrementable as _b3_fiche)
+    if not _b3_actif():
+        # Drapeau éteint : on REFUSE, on ne retombe jamais sur l'ancien chemin.
+        logger.warning("[LOT B3] annulation refusee : LOTB3_ANNULATION_CANONIQUE_ENABLED absent ou false")
+        raise HTTPException(
+            status_code=503,
+            detail="L'annulation est momentanément indisponible. Contacte le coach.")
 
-    # Supprimer la réservation
-    await db.reservations.delete_one(
-        {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]}
-    )
-    logger.info(f"[CANCEL] Réservation {reservation_id} supprimée — recredited={recredited}")
+    # DÉFAUT DE PORTÉE, CORRIGÉ ICI JUSQU'AU BOUT. `sub` était déclaré DANS le
+    # `if user_email:` alors que la suite l'utilise en dehors : une réservation
+    # sans e-mail levait un `NameError`, donc un 500. La déclaration est hissée
+    # plus haut — mais un 500 en moins ne suffit pas : sans e-mail, on ne peut
+    # rattacher la restitution à personne. On REFUSE, proprement et sans la
+    # moindre mutation, plutôt que de supprimer une réservation en laissant sa
+    # séance dans le vide. Les gardes B3-S0 sont déjà passées : ce refus ne
+    # contourne aucune vérification de propriété, il s'y ajoute.
+    # Mesure du 27/08/2026 : 143 réservations sur 143 portent un `userEmail`,
+    # ce refus ne ferme donc aujourd'hui aucun parcours réel.
+    if not user_email:
+        logger.warning("[LOT B3] %s : reservation sans e-mail — restitution non rattachable, refus",
+                       reservation_id)
+        raise HTTPException(
+            status_code=409,
+            detail="Cette réservation n'est rattachée à aucun participant : "
+                   "son annulation doit être traitée par le coach.")
+
+    _b3_montant = _b3_debite(reservation)
+    _b3_code = (reservation.get("discountCode") or promo_code or "").strip().upper()
+    _b3_fiche_id, _b3_motif = (None, "aucune_fiche")
+    if _b3_code and _b3_code != "N/A":
+        _b3_fiche_id, _b3_motif = _b3_fiche(await db.discount_codes.find(
+            {"code": {"$regex": f"^{re.escape(_b3_code)}$", "$options": "i"}},
+            {"_id": 0, "id": 1, "used": 1, "active": 1, "expiresAt": 1, "canonical": 1},
+        ).to_list(50))
+    if _b3_fiche_id is None and _b3_motif in ("ambigu", "code_mort"):
+        logger.warning("[LOT B3] %s : code non decremente (%s) — abonnement seul recredite",
+                       _b3_code, _b3_motif)
+
+    _b3_filtre = {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]}
+    async with await db.client.start_session() as _b3_ses:
+        _b3_ses.start_transaction()
+        try:
+            # LA SUPPRESSION EST LE JETON : un seul appelant l'obtient.
+            _b3_supprimee = await db.reservations.find_one_and_delete(_b3_filtre, session=_b3_ses)
+            if _b3_supprimee is None:
+                await _b3_ses.abort_transaction()
+                raise HTTPException(status_code=404, detail="Réservation introuvable")
+
+            # Les compteurs sont RELUS DANS la transaction : le plafond porte
+            # sur l'état réellement engagé, pas sur une lecture d'avant.
+            _b3_sub = None
+            if sub and sub.get("id"):
+                _b3_sub = await db.subscriptions.find_one(
+                    {"id": sub.get("id")}, {"_id": 0, "used_sessions": 1, "remaining_sessions": 1,
+                                            "status": 1}, session=_b3_ses)
+            _b3_doc = None
+            if _b3_fiche_id:
+                _b3_doc = await db.discount_codes.find_one(
+                    {"id": _b3_fiche_id}, {"_id": 0, "used": 1}, session=_b3_ses)
+
+            _b3_rendu = _b3_restitue(
+                _b3_montant,
+                None if _b3_sub is None else _b3_sub.get("used_sessions"),
+                None if _b3_doc is None else _b3_doc.get("used"),
+            )
+
+            if _b3_sub is not None and _b3_rendu > 0:
+                _b3_maj = {"$inc": {"used_sessions": -_b3_rendu, "remaining_sessions": _b3_rendu},
+                           "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
+                if _b3_sub.get("status") == "completed":
+                    _b3_maj["$set"]["status"] = "active"
+                await db.subscriptions.update_one(
+                    {"id": sub.get("id"), "used_sessions": {"$gte": _b3_rendu}},
+                    _b3_maj, session=_b3_ses)
+                recredited = True
+
+            if _b3_doc is not None and _b3_rendu > 0:
+                await db.discount_codes.update_one(
+                    {"id": _b3_fiche_id, "used": {"$gte": _b3_rendu}},
+                    {"$inc": {"used": -_b3_rendu}}, session=_b3_ses)
+
+            await _b3_ses.commit_transaction()
+            logger.info("[LOT B3] %s annulee : %d seance(s) rendue(s) — abonnement=%s code=%s (%s)",
+                        reservation_id, _b3_rendu, bool(_b3_sub), bool(_b3_doc), _b3_motif)
+        except HTTPException:
+            raise
+        except Exception as _b3_err:
+            try:
+                await _b3_ses.abort_transaction()
+            except Exception:            # noqa: BLE001 — l'abort peut echouer si la session est morte
+                pass
+            logger.error("[LOT B3] %s : transaction annulee (%s) — AUCUNE mutation",
+                         reservation_id, type(_b3_err).__name__)
+            raise HTTPException(
+                status_code=500,
+                detail="L'annulation n'a pas pu être enregistrée. Rien n'a été modifié, réessaie.")
 
     # V216: Notifier le coach par email + sauvegarder le log d'annulation
     user_name = reservation.get("userName", user_email)

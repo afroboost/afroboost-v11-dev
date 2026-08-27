@@ -22,7 +22,7 @@ comportement de recredit du chemin coach legitime est INCHANGE.
 AUCUNE BASE REELLE, AUCUN RESEAU, AUCUNE DONNEE PERSONNELLE.
     python3 tests/test_lotb3s0_delete_auth.py
 """
-import ast, asyncio, io, os, sys, types
+import ast, asyncio, importlib.util, io, os, sys, types
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RACINE)
@@ -30,6 +30,15 @@ sys.path.insert(0, RACINE)
 import tests._banc_qr as B
 from tests._banc_qr import (_Base, _Collection, _HTTPException, _Requete, _Journal,
                             construire, extraire, faux_api_server, faux_shared)
+
+# LOT B3 : `delete_reservation` importe desormais les fonctions LOT B3 depuis
+# `shared.py` — que `faux_shared()` remplace par un bouchon. On charge donc le
+# VRAI module pour les rebrancher (montage uniquement : aucune attente touchee).
+_spec_reel = importlib.util.spec_from_file_location(
+    "b3s0_shared_reel", os.path.join(RACINE, "api", "routes", "shared.py"))
+_S_REEL = importlib.util.module_from_spec(_spec_reel)
+_spec_reel.loader.exec_module(_S_REEL)
+_DRAPEAU_B3_AVANT = os.environ.get("LOTB3_ANNULATION_CANONIQUE_ENABLED")
 
 RESULTATS = []
 
@@ -43,15 +52,95 @@ AUTRE_COACH = "autre@test"
 ADMIN = "admin@test"
 
 
+def _match_tx(doc, filtre):
+    """`_match` du banc partage, plus `$gte` — l'operateur des filtres bornes
+    du LOT B3 (`used >= montant`). MONTAGE uniquement."""
+    from tests._banc_qr import _match
+    reste = {}
+    for cle, cond in (filtre or {}).items():
+        if isinstance(cond, dict) and "$gte" in cond:
+            try:
+                if float(doc.get(cle) or 0) < float(cond["$gte"]):
+                    return False
+            except (TypeError, ValueError):
+                return False
+            autres = {k: v for k, v in cond.items() if k != "$gte"}
+            if autres:
+                reste[cle] = autres
+        else:
+            reste[cle] = cond
+    return _match(doc, reste) if reste else True
+
+
+class FausseSession:
+    """Journalise et sait DEFAIRE. Ne prouve PAS l'atomicite du moteur — c'est
+    le role de `tests/test_lotb3_atomicite_reelle.py`. Ici on verifie seulement
+    que l'AUTHENTIFICATION passe avant tout, transaction ou pas."""
+
+    def __init__(self):
+        self.journal, self.ouverte = [], False
+
+    def start_transaction(self):
+        self.ouverte, self.journal = True, []
+
+    async def commit_transaction(self):
+        self.ouverte = False
+
+    async def abort_transaction(self):
+        for defaire in reversed(self.journal):
+            defaire()
+        self.journal, self.ouverte = [], False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+
+class FauxClient:
+    async def start_session(self):
+        return FausseSession()
+
+
 class CollectionSupprimable(_Collection):
-    """Le banc partage ne simule pas `delete_one` — aucune suite existante ne
-    supprimait. On l'ajoute ICI et pas dans `_banc_qr.py` : le perimetre
-    d'ecriture de ce lot est limite a deux fichiers."""
+    """Le banc partage ne simule ni `delete_one`, ni `find_one_and_delete`, ni
+    le parametre `session=`, ni `$inc` — aucune suite existante n'en avait
+    besoin. On les ajoute ICI, dans le MONTAGE de ce banc, et non dans
+    `_banc_qr.py` qui sert a cinq autres suites."""
+
+    async def find_one(self, filtre, projection=None, session=None):
+        for d in self.docs:
+            if _match_tx(d, filtre):
+                return dict(d)
+        return None
+
+    async def find_one_and_delete(self, filtre, session=None):
+        for i, d in enumerate(list(self.docs)):
+            if _match_tx(d, filtre):
+                doc = self.docs.pop(i)
+                self.ecritures.append(("delete", dict(filtre), None))
+                if session is not None and session.ouverte:
+                    session.journal.append(lambda i=i, doc=doc: self.docs.insert(i, doc))
+                return dict(doc)
+        return None
+
+    async def update_one(self, filtre, maj, session=None):
+        for d in self.docs:
+            if _match_tx(d, filtre):
+                avant = dict(d)
+                d.update(maj.get("$set", {}))
+                for cle, pas in (maj.get("$inc") or {}).items():
+                    d[cle] = int(float(d.get(cle) or 0)) + int(pas)
+                self.ecritures.append(("update", dict(filtre), maj))
+                if session is not None and session.ouverte:
+                    session.journal.append(lambda d=d, avant=avant: (d.clear(), d.update(avant)))
+                return types_simple_maj(1)
+        return types_simple_maj(0)
 
     async def delete_one(self, filtre):
-        from tests._banc_qr import _match
         for i, d in enumerate(list(self.docs)):
-            if _match(d, filtre):
+            if _match_tx(d, filtre):
                 self.docs.pop(i)
                 self.ecritures.append(("delete", dict(filtre), None))
                 return types_simple(1)
@@ -63,14 +152,22 @@ def types_simple(n):
     return _t.SimpleNamespace(deleted_count=n)
 
 
+def types_simple_maj(n):
+    import types as _t
+    return _t.SimpleNamespace(matched_count=n, modified_count=n)
+
+
 class BaseAvecNotifs(_Base):
-    """`notifications` (la trace d'annulation) et une collection `reservations`
-    qui sait supprimer."""
+    """`notifications` (la trace d'annulation), des collections qui savent
+    supprimer et transiger, et le `client` que reclame la transaction."""
 
     def __init__(self):
         _Base.__init__(self)
         self.reservations = CollectionSupprimable()
+        self.subscriptions = CollectionSupprimable()
+        self.discount_codes = CollectionSupprimable()
         self.notifications = _Collection()
+        self.client = FauxClient()
 
 
 def resa(id_="res-1", coach_id=COACH, **kw):
@@ -110,6 +207,10 @@ def espace(db, appelant=COACH, admins=(ADMIN,)):
     du VRAI fichier. `appelant=""` simule un anonyme."""
     faux_api_server(appelant)
     faux_shared()
+    for _n in ("lotb3_actif", "lotb3_montant_debite", "lotb3_montant_restitue",
+               "lotb3_code_decrementable"):
+        setattr(sys.modules["api.routes.shared"], _n, getattr(_S_REEL, _n))
+    os.environ["LOTB3_ANNULATION_CANONIQUE_ENABLED"] = "true"
     ns = construire(db)
     ns["is_super_admin"] = lambda e: (e or "").lower().strip() in [a.lower() for a in admins]
     ns["_RESEND_OK"] = False
@@ -205,9 +306,18 @@ async def principal():
              db.subscriptions.docs[0]["remaining_sessions"] == 4
              and db.subscriptions.docs[0]["used_sessions"] == 6,
              (db.subscriptions.docs[0]["remaining_sessions"], db.subscriptions.docs[0]["used_sessions"]))
-    verifier("6. LOT B3 non commence : discount_codes INTACT",
-             db.discount_codes.docs[0]["used"] == 7 and db.discount_codes.ecritures == [],
-             db.discount_codes.docs[0]["used"])
+    # ── ASSERTION SUPPRIMEE PAR LE LOT B3, ET ELLE EST NOMMEE ICI ─────────
+    # « 6. LOT B3 non commence : discount_codes INTACT » exigeait
+    # `discount_codes.used == 7` ET aucune ecriture sur la collection. Ce
+    # n'etait pas un controle de securite : c'etait un marqueur d'avancement,
+    # ecrit au LOT B3-S0 pour prouver que ce lot-la ne touchait a aucun
+    # compteur. LOT B3 est precisement le lot qui rend cette affirmation
+    # fausse — il decremente `used` de 7 a 6, ce qu'une annulation doit faire.
+    # Elle VERROUILLAIT le defaut ; la garder aurait interdit sa correction.
+    # La securite, elle, reste prouvee par les 26 controles restants et par
+    # les trois controles d'execution du banc LOT B3 (anonyme -> 403 sans
+    # mutation, autre tenant -> 404 sans oracle, et « sans e-mail ET anonyme
+    # -> 403 » qui prouve que l'authentification passe avant le refus 409).
 
     # ══ 7. SUPER-ADMIN : contrat deja present dans le depot ════════════════
     # `_r11_verifier_proprietaire` accorde deja tout au super-admin (l. 2259).
@@ -265,6 +375,13 @@ for _n in ast.walk(_arbre):
                  "_r11_verifier_proprietaire" in _corps, "")
         verifier("10. aucun second moteur d'authentification",
                  "jwt.decode" not in _corps and "def _b3s0_auth" not in _corps, "")
+
+# L'environnement est RESTAURE : ce banc ne laisse pas le drapeau LOT B3 pose
+# derriere lui, sans quoi il changerait le resultat des bancs suivants.
+if _DRAPEAU_B3_AVANT is None:
+    os.environ.pop("LOTB3_ANNULATION_CANONIQUE_ENABLED", None)
+else:
+    os.environ["LOTB3_ANNULATION_CANONIQUE_ENABLED"] = _DRAPEAU_B3_AVANT
 
 echecs = [x for x in RESULTATS if not x[1]]
 print("\nLOT B3-S0 — AUTHENTIFICATION DU DELETE (%d verifications)\n" % len(RESULTATS))

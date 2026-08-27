@@ -5250,3 +5250,132 @@ async def lotb2_refus_canonique(db, code, quantite: int = 1):
         logger.info("[LOT B2] %s : etat AMBIGU (%s) — la garde s'abstient, reservation laissee passer",
                     code, etat.get("motif"))
     return refus, message
+
+
+# =====================================================================
+# LOT B3 — UNE ANNULATION REND EXACTEMENT CE QU'ELLE A DÉBITÉ
+# =====================================================================
+#
+# LE DÉFAUT. `delete_reservation` recréditait `subscriptions` et ne touchait
+# JAMAIS `discount_codes.used`. Depuis le LOT A, la page « Code promo » fait
+# foi : une séance annulée restait donc comptée comme consommée, et le membre
+# ne la revoyait jamais. Mesure du 27/08/2026 : 38 annulations passées par ce
+# chemin depuis le 20/05, dont 28 avec recrédit — et 29 séances rendues côté
+# abonnement mais jamais côté code, pour 4 membres.
+#
+# POURQUOI PAS SIMPLEMENT `quantity`. Les chemins de création ne débitent pas
+# la même chose, et la réservation n'en garde AUCUNE preuve immuable :
+#
+#   espace abonné   -> débite `quantity`  (server.py:14589, 14608, 14619)
+#   vitrine / chat  -> débite 1           (reservation_routes.py:1404,1405,1455)
+#   scan QR         -> débite 1           (reservation_routes.py:3418,3419,3200)
+#
+# `quantity` compte des PLACES, pas des séances (server.py:14650). Rendre
+# `quantity` à une réservation `website` de 3 places fabriquerait deux droits.
+# Le seul discriminant est `source`, écrit EN DUR côté serveur pour l'espace
+# (server.py:14641) — et repris du corps de la requête ailleurs
+# (reservation_routes.py:1556), donc non fiable pour les autres valeurs. D'où
+# la règle : on ne fait confiance à `subscriber_space` QUE parce que cette
+# valeur-là est la seule que le client ne peut pas s'attribuer utilement — et
+# le montant est de toute façon PLAFONNÉ par les compteurs réels, plus bas.
+
+
+def lotb3_actif() -> bool:
+    """`LOTB3_ANNULATION_CANONIQUE_ENABLED` — et le défaut est REFUS.
+
+    Contrairement aux drapeaux des LOTS A et B2, celui-ci n'est PAS actif par
+    défaut : décision du 27/08/2026. Absent ou `false`, la route REFUSE
+    l'annulation sans la moindre mutation — elle ne retombe JAMAIS sur
+    l'ancien chemin, celui qui fabriquait les divergences. Éteindre ce lot ne
+    doit pas rouvrir le défaut qu'il corrige.
+    """
+    return os.environ.get("LOTB3_ANNULATION_CANONIQUE_ENABLED", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def lotb3_montant_debite(reservation) -> int:
+    """Combien CETTE réservation a-t-elle RÉELLEMENT débité ? (fonction pure)
+
+    Jamais moins de 1, jamais plus que `quantity`. Le résultat est une borne
+    HAUTE : l'appelant le plafonne encore par les compteurs réels, de sorte
+    qu'aucune restitution ne peut dépasser ce qui a été consommé.
+    """
+    _r = reservation or {}
+    try:
+        _q = int(float(_r.get("quantity") or 1))
+    except (TypeError, ValueError):
+        _q = 1
+    if _q < 1:
+        _q = 1
+    # Seul l'espace abonné débite une séance PAR PLACE, et lui seul écrit cette
+    # valeur côté serveur. Partout ailleurs, une réservation vaut une séance,
+    # quel que soit le nombre de places.
+    if str(_r.get("source") or "").strip() == "subscriber_space":
+        return _q
+    return 1
+
+
+def lotb3_montant_restitue(montant_debite, utilise_abonnement=None, utilise_code=None) -> int:
+    """Le montant EFFECTIVEMENT restituable, plafonné par les compteurs réels.
+
+    DEUX GARANTIES, ET C'EST TOUT L'OBJET DE CE PLAFOND :
+      * on ne rend jamais plus que ce qui est compté comme consommé — sinon on
+        fabriquerait un droit que personne n'a payé ;
+      * on rend le MÊME nombre des deux côtés, jamais deux valeurs différentes :
+        restituer 2 à l'abonnement et 1 au code CRÉERAIT la divergence que ce
+        lot existe pour empêcher.
+
+    Un compteur absent (`None`) ne participe pas au plafond : il n'existe pas,
+    il ne contredit rien.
+    """
+    try:
+        _m = max(0, int(montant_debite or 0))
+    except (TypeError, ValueError):
+        return 0
+    for _compteur in (utilise_abonnement, utilise_code):
+        if _compteur is None:
+            continue
+        try:
+            _m = min(_m, max(0, int(float(_compteur))))
+        except (TypeError, ValueError):
+            return 0
+    return _m
+
+
+def lotb3_code_decrementable(docs, aujourdhui=None):
+    """(id_de_la_fiche, motif) — quelle fiche `discount_codes` décrémenter ?
+
+    MÊME DISCIPLINE QU'AU LOT B0, en miroir : on ne choisit jamais entre
+    plusieurs fiches, et on ne touche pas à un code mort.
+
+      * plusieurs fiches vivantes -> (None, 'ambigu')   : le LOT C tranchera ;
+      * aucune fiche              -> (None, 'aucune_fiche') ;
+      * code expiré ou inactif    -> (None, 'code_mort') : lui rendre une
+        séance ne servirait à rien et pourrait le faire ressortir de l'état
+        que le LOT B2 vient de fermer ;
+      * une seule fiche vivante   -> (son id, 'unique').
+
+    Un code ÉPUISÉ, lui, est bien décrémenté : c'est exactement ce qu'une
+    annulation défait.
+    """
+    docs = list(docs or [])
+    if not docs:
+        return None, "aucune_fiche"
+    vivants = []
+    jour = aujourdhui or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    for d in docs:
+        if not d.get("active"):
+            continue
+        _exp = str(d.get("expiresAt") or "")[:10]
+        if _exp and _exp < jour:
+            continue
+        vivants.append(d)
+    if not vivants:
+        return None, "code_mort"
+    if len(vivants) > 1:
+        _canoniques = [d for d in vivants if d.get("canonical") is True]
+        if len(_canoniques) == 1:
+            return _canoniques[0].get("id"), "canonical"
+        return None, "ambigu"
+    return vivants[0].get("id"), "unique"
