@@ -619,7 +619,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   })();
   const hasActiveHeadphone = headphoneSummary.some((p) => p.hp === "taken");
 
-  const total = subscription.total_sessions || 0;
+  // LOT A : le total suit la meme verite que le restant (voir plus bas).
+  const total = (subscription.droits_etat === "OK" && typeof subscription.droits_total === "number")
+    ? subscription.droits_total
+    : (subscription.total_sessions || 0);
   // ESSAI-5a-1D : l'etat de l'essai est DERIVE PAR LE SERVEUR. Cet ecran ne
   // le recalcule pas — il se contente de dire ce qu'il recoit. Absent pour un
   // forfait payant, dont l'affichage reste strictement inchange.
@@ -627,10 +630,33 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const estEssai = !!(essai && essai.is_trial);
   const etatEssai = estEssai ? essai.state : null;
 
-  const remaining = subscription.remaining_sessions || 0;
-  const used = subscription.used_sessions || (total ? total - remaining : 0);
+  // ═══ LOT A — LE SOLDE AFFICHE VIENT DE LA PAGE « CODE PROMO » ══════════
+  //
+  // Decision du 27/08/2026 : `discount_codes` fait foi. Le serveur envoie
+  // desormais `droits_etat` (OK / AUCUN_DROIT / AMBIGU / INDISPONIBLE) et,
+  // quand il sait, le solde canonique. Cet ecran ne recalcule RIEN : il
+  // affiche ce qu'on lui donne, ou il se tait.
+  //
+  // AMBIGU = plusieurs forfaits, plusieurs fiches pour un meme code, ou deux
+  // collections qui se contredisent. Dans ce cas on n'affiche AUCUN chiffre :
+  // ni 0, ni la somme, ni le premier venu. Un solde invente ferme un droit
+  // paye ou en promet un qui n'existe pas.
+  const droitsEtat = subscription.droits_etat || null;
+  const droitsAmbigus = droitsEtat === "AMBIGU";
+  const droitsCanoniques = droitsEtat === "OK"
+    && typeof subscription.droits_restant === "number"
+    && typeof subscription.droits_total === "number";
+  const remaining = droitsCanoniques
+    ? subscription.droits_restant
+    : (subscription.remaining_sessions || 0);
+  const used = droitsCanoniques
+    ? subscription.droits_utilise
+    : (subscription.used_sessions || (total ? total - remaining : 0));
   const percentUsed = total > 0 ? Math.max(0, Math.min(100, Math.round((used / total) * 100))) : 0;
-  const noSessions = remaining <= 0;
+  // `noSessions` GARDE la valeur historique, celle que lit la RESERVATION cote
+  // serveur. Ce lot ne touche pas a la reservation : le bouton s'active donc
+  // exactement comme avant, meme quand l'affichage, lui, change.
+  const noSessions = (subscription.remaining_sessions || 0) <= 0;
 
   // ESSAI-7 — L'ETAT QUE CET ECRAN MONTRE.
   // `t2_etat_essai` derive l'etat au CHARGEMENT. Une reservation faite juste
@@ -943,6 +969,18 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                 )}
               </div>
             ) : (
+            droitsAmbigus ? (
+              // LOT A — on ne sait pas, donc on le dit. Le nom du forfait reste
+              // affiche a droite et l'expiration plus bas : elles, ne sont pas
+              // ambigues, et les taire priverait l'abonne d'informations justes.
+              <div data-testid="droits-ambigus">
+                <p className="text-white/60 text-xs uppercase tracking-wider">Séances restantes</p>
+                <p className="text-sm mt-1 leading-snug" style={{ color: COLORS.primary }}>
+                  {subscription.droits_message
+                    || "Plusieurs forfaits sont enregistrés à ton nom — le coach vérifie ton solde."}
+                </p>
+              </div>
+            ) : (
             <div>
               <p className="text-white/60 text-xs uppercase tracking-wider">Séances restantes</p>
               <p className="text-3xl font-bold mt-1" style={{ color: COLORS.primary }}>
@@ -950,20 +988,27 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                 <span className="text-white/40 text-base font-normal"> / {total || "—"}</span>
               </p>
             </div>
-            )}
+            ))}
             <span className="text-white/40 text-xs text-right max-w-[40%] truncate">{subscription.offer_name}</span>
           </div>
-          <div className="w-full h-2 rounded-full overflow-hidden bg-white/10">
-            <div
-              className="h-full transition-all"
-              style={{
-                width: `${100 - percentUsed}%`,
-                background: `linear-gradient(90deg, ${COLORS.primary}, ${COLORS.secondary})`,
-              }}
-            />
-          </div>
+          {/* LOT A : pas de jauge quand le solde est inconnu — une barre a une
+              longueur, et toute longueur serait un chiffre invente. */}
+          {!droitsAmbigus && (
+            <div className="w-full h-2 rounded-full overflow-hidden bg-white/10">
+              <div
+                className="h-full transition-all"
+                style={{
+                  width: `${100 - percentUsed}%`,
+                  background: `linear-gradient(90deg, ${COLORS.primary}, ${COLORS.secondary})`,
+                }}
+              />
+            </div>
+          )}
           {/* V202: Bouton scroll vers réservation — accès rapide */}
-          {remaining > 0 && courses.length > 0 && (
+          {/* LOT A : le bouton reste offert quand le solde est ambigu — ne pas
+              savoir combien il reste n'est pas une raison de fermer l'acces.
+              C'est le serveur qui tranche a la reservation, comme avant. */}
+          {(droitsAmbigus || remaining > 0) && courses.length > 0 && (
             <button type="button" onClick={scrollToReservation}
               className="mt-3 w-full py-2 rounded-xl text-sm font-semibold transition-transform active:scale-95"
               style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "white" }}>

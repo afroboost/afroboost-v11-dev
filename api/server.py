@@ -5695,23 +5695,11 @@ class CreateCheckoutRequest(BaseModel):
     # « Achat Audio ».
     isAudioPurchase: bool = False
 
-def _v429_resoudre_code(docs: list):
-    """V429 — quel document fait foi pour ce code promo ?
-
-    A) exactement un `canonical: true`  -> lui
-    B) plusieurs `canonical: true`      -> (None, 'indetermine') : on ne devine pas
-    C) aucun `canonical: true`          -> comportement LEGACY inchange (1er actif),
-       et `canonical: false` n'exclut rien tant qu'aucun `true` n'existe.
-    """
-    vrais = [d for d in docs if d.get("canonical") is True]
-    if len(vrais) == 1:
-        return vrais[0], "canonical"
-    if len(vrais) > 1:
-        return None, "indetermine"
-    actifs = [d for d in docs if d.get("active")]
-    if len(docs) == 1:
-        return (docs[0] if docs[0].get("active") else None), "unique"
-    return (actifs[0] if actifs else None), "legacy"
+# LOT A : la regle « quel document fait foi » n'a plus qu'UNE definition, dans
+# `shared.py`, ou le helper canonique des droits l'utilise aussi. Le nom V429
+# reste un alias : les appelants de la remise (`_v429_remise_serveur`) sont
+# INCHANGES, et deux copies de cette regle finiraient par diverger.
+from api.routes.shared import lota_resoudre_code as _v429_resoudre_code
 
 
 def _v429_quota_coherent(doc: dict, subs_actifs: list):
@@ -13574,6 +13562,54 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     )
     _v393_bloque = not _v393_valide
 
+    # ═══ LOT A — LA VÉRITÉ DES DROITS EST LUE DANS `discount_codes` ══════
+    #
+    # Décision métier du 27/08/2026 : la page « Code promo » fait foi. Cet
+    # écran affichait jusqu'ici `subscriptions.remaining_sessions`, plafonné
+    # par V394. Or les deux compteurs dérivent : 10 codes divergent en
+    # production, jusqu'à 13 séances d'écart. Le plafond V394 protégeait le
+    # coach (jamais plus que l'admin) mais ne protégeait PAS le client : quand
+    # `discount_codes` est plus généreux, l'abonné voyait moins que son dû.
+    #
+    # CE BLOC N'ÉCRIT RIEN, ET NE TOUCHE À AUCUNE VARIABLE EXISTANTE.
+    # `total_sessions`, `used_sessions`, `remaining_sessions` sont laissés
+    # STRICTEMENT intacts : ils alimentent `_v393_bloque` (calculé juste
+    # au-dessus), le verdict de recharge LOT R et les compteurs de quantité de
+    # l'écran. Les toucher ici, c'est modifier la réservation — hors périmètre
+    # de ce lot, et le genre de raccourci qui a cassé la production en V305.
+    # La vérité canonique voyage donc dans des champs NOUVEAUX, que l'écran
+    # préfère pour l'AFFICHAGE et pour rien d'autre.
+    #
+    # En cas d'AMBIGUÏTÉ (plusieurs codes, plusieurs fiches, plusieurs
+    # abonnements), `droits_restant` vaut `null` — jamais `0`, jamais une
+    # somme, jamais le premier venu. L'écran affiche alors une phrase, pas un
+    # chiffre : on préfère dire « je ne sais pas » que mentir sur un droit payé.
+    _lota = {"etat": "INDISPONIBLE", "motif": "non_evalue", "code": None,
+             "total": None, "utilise": None, "restant": None,
+             "expire_le": None, "message": "", "codes_concurrents": []}
+    try:
+        from api.routes.shared import (lota_actif as _lota_actif,
+                                       lota_droits_du_code as _lota_lire)
+        # PAR CODE, et pas par personne : cette page s'ouvre sur `/espace/<code>`
+        # et doit parler du code par lequel on arrive. C'est aussi la lecture de
+        # la décision de référence — AFR-53F288 affiche 9/8/1, alors même que son
+        # porteur détient un second code. L'ambiguïté « plusieurs codes pour une
+        # personne » est une question de CAMPAGNE (R1, LOT D), pas d'affichage.
+        if _lota_actif():
+            _lota = await _lota_lire(db, code_upper)
+            if _lota.get("etat") == "AMBIGU":
+                logger.warning(
+                    "[LOT A] %s : droits ambigus (%s) codes=%s -> aucun solde affiche",
+                    code_upper, _lota.get("motif"), _lota.get("codes_concurrents"))
+            elif _lota.get("etat") == "OK" and _lota.get("restant") != remaining_sessions:
+                logger.info(
+                    "[LOT A] %s : espace %s -> canonique %s (code promo fait foi)",
+                    code_upper, remaining_sessions, _lota.get("restant"))
+    except Exception as _lota_err:
+        # Le helper indisponible ne doit JAMAIS fermer l'espace d'un abonné :
+        # l'écran retombe alors sur son affichage d'avant ce lot, à l'identique.
+        logger.warning("[LOT A] verite canonique indisponible: %s", type(_lota_err).__name__)
+
     return {
         "success": True,
         "multi_member": is_multi,
@@ -13608,6 +13644,18 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
                 and (subscription or {}).get("stripe_payment_method")
             ),
             "last_renewal_date": (subscription or {}).get("last_renewal_date"),
+            # LOT A — la vérité canonique, À CÔTÉ des champs historiques et
+            # jamais à leur place. `droits_etat` vaut OK / AUCUN_DROIT / AMBIGU
+            # / INDISPONIBLE. En AMBIGU, les trois compteurs sont `null` et
+            # `droits_message` porte la phrase à afficher.
+            "droits_etat": _lota.get("etat"),
+            "droits_motif": _lota.get("motif"),
+            "droits_message": _lota.get("message") or "",
+            "droits_code": _lota.get("code"),
+            "droits_total": _lota.get("total"),
+            "droits_utilise": _lota.get("utilise"),
+            "droits_restant": _lota.get("restant"),
+            "droits_expire_le": _lota.get("expire_le"),
         },
         # ═══ LOT R — LA RECHARGE : LE SERVEUR DIT SI ELLE EST OUVERTE ══════
         #

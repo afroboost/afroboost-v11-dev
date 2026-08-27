@@ -4767,3 +4767,362 @@ def n2_ou(course):
     _c = course or {}
     return (str(_c.get("locationName") or "").strip(),
             n2_lien_carte(_c.get("mapsUrl")))
+
+
+
+
+# =====================================================================
+# LOT A — LA VÉRITÉ DES SÉANCES EST DANS `discount_codes`
+# =====================================================================
+#
+# DÉCISION MÉTIER DU 27/08/2026 : la page « Code promo » fait foi. Le solde
+# canonique est `discount_codes.maxUses - discount_codes.used`, et JAMAIS
+# `subscriptions.used_sessions`.
+#
+# POURQUOI CE HELPER EXISTE. La lecture des séances était recopiée en sept
+# endroits, chacun avec sa propre chaîne de repli (`subscription` sinon
+# `discount` sinon `member`, puis `remaining_sessions` sinon `total - used`).
+# Sept chaînes = sept vérités possibles pour un même abonné. Mesure du
+# 27/08/2026 en production : 10 codes où `discount_codes.used` et
+# `subscriptions.used_sessions` divergent, jusqu'à 13 séances d'écart
+# (`BASSBOOSTX-11` : 15 contre 2).
+#
+# CE QUE CE HELPER REFUSE DE FAIRE, ET C'EST TOUT SON INTÉRÊT : il ne devine
+# pas. Quand la lecture hésite, il renvoie `AMBIGU` et AUCUN chiffre — ni la
+# somme, ni le premier venu, ni zéro. Un écran qui ne sait pas doit le dire.
+#
+# DEUX QUESTIONS DIFFÉRENTES, DEUX FONCTIONS — et les confondre était mon
+# erreur de conception, corrigée après mesure :
+#
+#   `lota_droits_du_code(db, code)`  — « que vaut CE code ? »
+#        L'espace abonné s'ouvre sur `/espace/<code>` : il doit parler du code
+#        par lequel on arrive, pas d'un autre. C'est aussi la lecture de la
+#        décision de référence : AFR-53F288 -> total 9, used 8, restant 1,
+#        alors même que son porteur détient un second code.
+#
+#   `lota_droits_membre(db, email)`  — « que possède CETTE personne ? »
+#        Une campagne écrit à une PERSONNE. Deux codes utilisables = on ne sait
+#        pas de quel solde lui parler -> `multi_codes`. C'est la porte de R1
+#        (LOT D), pas celle de l'espace abonné.
+#
+# LOT A = LECTURE SEULE. Aucune écriture, aucun réalignement, aucune fusion.
+# Le réalignement des divergences est le LOT B, les doublons le LOT C.
+
+# Le drapeau éteint le lot SANS redéployer : poser `LOTA_DROITS_CANONIQUES=false`
+# dans Coolify et redémarrer. C'est le rollback le plus rapide disponible ;
+# `git revert` reste là pour le reste.
+def lota_actif() -> bool:
+    return os.environ.get("LOTA_DROITS_CANONIQUES", "true").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def lota_resoudre_code(docs: list):
+    """Quel document `discount_codes` fait foi pour ce code ? (repris de V429)
+
+    A) exactement un `canonical: true`  -> lui, voie `canonical`
+    B) plusieurs `canonical: true`      -> (None, 'indetermine') : on ne devine pas
+    C) aucun `canonical: true`          -> comportement LEGACY inchangé (1er actif),
+       et `canonical: false` n'exclut rien tant qu'aucun `true` n'existe.
+
+    IDENTIQUE à l'ancien `_v429_resoudre_code` (api/server.py), dont c'est
+    désormais la seule définition — le nom V429 reste un alias, la remise est
+    donc INCHANGÉE. La voie `legacy` est un choix ARBITRAIRE (`actifs[0]`,
+    ordre naturel de Mongo) : `lota_etat_du_code` la traite comme ambiguë dès
+    qu'il y a plus d'un document, au lieu de s'y fier. `BASSBOOSTX-16` porte
+    deux fiches actives contradictoires (9/45 et 6/12) : c'est exactement le
+    pari qu'on refuse de prendre.
+    """
+    vrais = [d for d in docs if d.get("canonical") is True]
+    if len(vrais) == 1:
+        return vrais[0], "canonical"
+    if len(vrais) > 1:
+        return None, "indetermine"
+    actifs = [d for d in docs if d.get("active")]
+    if len(docs) == 1:
+        return (docs[0] if docs[0].get("active") else None), "unique"
+    return (actifs[0] if actifs else None), "legacy"
+
+
+def lota_droit_utilisable(doc, aujourdhui=None):
+    """(ok, motif) — ce code donne-t-il ENCORE droit à une séance ?
+
+    Trois refus, tous lus dans `discount_codes` et nulle part ailleurs :
+    inactif, expiré, épuisé. Un code sans `expiresAt` n'expire pas — plusieurs
+    codes à durée libre existent en production, les exclure les ferait
+    disparaître de l'espace de leur porteur.
+    """
+    if not doc:
+        return False, "aucun_document"
+    if not doc.get("active"):
+        return False, "inactif"
+    jour = aujourdhui or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    expire_le = str(doc.get("expiresAt") or "")[:10]
+    if expire_le and expire_le < jour:
+        return False, "expire"
+    try:
+        total = int(float(doc.get("maxUses") or 0))
+        utilise = int(float(doc.get("used") or 0))
+    except (TypeError, ValueError):
+        return False, "compteurs_illisibles"
+    if total and utilise >= total:
+        return False, "epuise"
+    return True, "utilisable"
+
+
+def lota_vide(etat="AUCUN_DROIT", motif="aucun_code_utilisable", **extra):
+    base = {"etat": etat, "motif": motif, "code": None, "total": None,
+            "utilise": None, "restant": None, "partage": False,
+            "expire_le": None, "actif": False, "codes_concurrents": [],
+            "message": ""}
+    base.update(extra)
+    return base
+
+
+def lota_etat_du_code(docs, abonnements=None, porteurs=0, aujourdhui=None) -> dict:
+    """LE CŒUR DU LOT, ET IL EST PUR : les documents d'UN code -> son état.
+
+    Aucune base, aucun réseau : c'est ce qui rend la règle testable cas par cas
+    (`tests/test_lota_droits_canoniques.py`) sans jouer avec la production.
+
+    `docs`        : toutes les fiches `discount_codes` de ce code
+    `abonnements` : les `subscriptions` liées à ce code (tous statuts)
+    `porteurs`    : nombre de `code_members` déclarés
+
+    `AMBIGU` a CINQ causes, mesurées toutes les cinq en production :
+
+      1. `code_indetermine`     — plusieurs `canonical: true` (garde V429) ;
+      2. `plusieurs_docs_code`  — plusieurs fiches ENCORE VIVANTES pour un même
+                                  code ; les fiches mortes sont ignorées, une
+                                  ambiguïté sans conséquence n'en est pas une ;
+      3. `plusieurs_abonnements`— 2 abonnements ACTIFS sur un même code
+                                  (`CHRISTOUX10` : used_sessions 5 ET 8) ;
+      4. `consommation_contradictoire` — voir ci-dessous ;
+      5. `divergence_bloquante` — le code annonce une séance que la réservation
+                                  refuserait (`AURELIEBOOST-26`).
+
+    LA QUATRIÈME CAUSE MÉRITE SON PARAGRAPHE, parce qu'elle nuance la règle
+    « discount_codes fait foi » là où l'appliquer coûterait de l'argent.
+    Trois codes de production (`AFR-0C60A3`, `AFR-B7E009`, `AFR-S4QYXD`)
+    portent `used: 0` — code intact — alors que leur abonnement est `completed`
+    avec `used_sessions: 1` : la séance A ÉTÉ prise. Ce n'est pas une dérive de
+    comptage d'une unité, c'est une CONTRADICTION sur le fait qu'une séance ait
+    été consommée ou non. S'en tenir aveuglément à `used: 0` rendrait une
+    séance déjà honorée — pour deux d'entre eux, un cours d'essai gratuit une
+    deuxième fois. On ne tranche donc pas : `AMBIGU`, aucun chiffre, et le cas
+    part au LOT B avec les autres. La divergence ORDINAIRE (`used: 5` contre
+    `used_sessions: 6`) reste arbitrée par `discount_codes`, comme décidé.
+
+    UN CODE PARTAGÉ N'EST PAS AMBIGU. `CLUBPMI` a UN document, UN compteur
+    (16/40) et 7 porteurs : la lecture n'hésite pas. Ce qui est partagé, c'est
+    la PROPRIÉTÉ des séances, pas leur nombre. Leur afficher « plusieurs
+    forfaits sont enregistrés à ton nom » serait faux — ils en ont un seul, à
+    plusieurs — et casserait un écran qui marche pour 7 clients réels. L'état
+    reste `OK`, avec `partage: True` : c'est ce drapeau, et non l'état, qui les
+    écarte de R1.
+
+    En AMBIGU, `total`/`utilise`/`restant` valent `None` — PAS `0`. Zéro est un
+    chiffre, et un chiffre faux ferme un droit payé.
+    """
+    docs = list(docs or [])
+    abonnements = list(abonnements or [])
+    if not docs:
+        return lota_vide()
+
+    code = str((docs[0] or {}).get("code") or "").strip().upper()
+    doc, voie = lota_resoudre_code(docs)
+    partage = bool((doc or docs[0]).get("multi_member")) or int(porteurs or 0) > 1
+
+    def _ambigu(motif):
+        return lota_vide(
+            etat="AMBIGU", motif=motif, actif=True, partage=partage,
+            codes_concurrents=[code],
+            # Le nom du forfait et l'expiration RESTENT servis : ils ne sont pas
+            # ambigus, et les taire priverait l'abonné d'une information juste
+            # au motif qu'une autre ne l'est pas.
+            expire_le=(doc or docs[0]).get("expiresAt"),
+            message=lota_message("AMBIGU"),
+        )
+
+    # UNE AMBIGUÏTÉ QUI NE CHANGE PAS LA RÉPONSE N'EN EST PAS UNE.
+    # `BASSBOOSTX-09` porte deux fiches — mais l'une est inactive et l'autre a
+    # expiré le 17/08 : quel que soit le document retenu, ce code ne donne plus
+    # aucune séance. Le déclarer ambigu ferait pire que de ne rien dire : son
+    # porteur (`AmandaBoost-26`, 4 séances bien vivantes) deviendrait ambigu
+    # lui aussi, et perdrait un solde parfaitement lisible à cause d'un vieux
+    # code mort. On ne lève donc l'ambiguïté que là où elle porte à conséquence :
+    # au moins un des documents doit encore ouvrir un droit.
+    vivants = [d for d in docs if lota_droit_utilisable(d, aujourdhui)[0]]
+    if not vivants:
+        # `lota_resoudre_code` rend `None` pour un code unique INACTIF. Le motif
+        # doit rester lisible par le coach — « inactif », pas « aucun_document » :
+        # c'est lui qui indique quoi corriger dans la page Code promo.
+        _mort = doc or docs[0]
+        return lota_vide(motif=lota_droit_utilisable(_mort, aujourdhui)[1],
+                         expire_le=_mort.get("expiresAt"), partage=partage)
+
+    if voie == "indetermine":
+        return _ambigu("code_indetermine")
+
+    # UN `canonical: true` EST UNE DÉCISION HUMAINE, ET ELLE PRIME.
+    # Quelqu'un a désigné la fiche qui fait foi : tant qu'elle ouvre encore un
+    # droit, il n'y a plus rien à deviner, même si d'autres fiches vivantes
+    # existent à côté. C'est exactement ce que V429 avait mis en place, et le
+    # filtre « vivants » ne doit pas l'annuler en silence.
+    # Cas inverse, réel (`BASSBOOSTX-31`) : la fiche marquée canonique a expiré
+    # le 10/07 tandis qu'une autre, non marquée, vit jusqu'au 30/09 et concorde
+    # avec l'abonnement actif. Une décision devenue caduque ne tranche plus
+    # rien — on retombe alors sur la règle générale ci-dessous.
+    tranche_par_humain = voie == "canonical" and doc in vivants
+    if tranche_par_humain:
+        pass
+    elif len(vivants) > 1:
+        return _ambigu("plusieurs_docs_code")
+    else:
+        # Un seul document vivant : c'est LUI qui fait foi, même si des fiches
+        # mortes traînent à côté — il n'y a rien à deviner.
+        doc = vivants[0]
+    # `doc` appartient désormais à `vivants` : sa validité est acquise, la
+    # re-tester ici ne ferait que dupliquer une décision déjà prise.
+
+    if len([a for a in abonnements if a.get("status") == "active"]) > 1:
+        return _ambigu("plusieurs_abonnements")
+
+    utilise = int(float(doc.get("used") or 0))
+    if utilise == 0:
+        consommees = 0
+        for a in abonnements:
+            try:
+                consommees = max(consommees, int(float(a.get("used_sessions") or 0)))
+            except (TypeError, ValueError):
+                continue
+        if consommees > 0:
+            return _ambigu("consommation_contradictoire")
+
+    total = int(float(doc.get("maxUses") or 0))
+    restant = max(0, total - utilise)
+
+    # CINQUIÈME CAUSE — L'ÉCRAN NE DOIT PAS PROMETTRE CE QUE LE SERVEUR REFUSE.
+    # `AURELIEBOOST-26` : le code promo dit « 1 séance restante », l'abonnement
+    # actif dit 0. Afficher « 1 » donnerait un bouton « Réserver » qui échoue à
+    # l'arrivée — la réservation, elle, lit `subscriptions` et la LOGIQUE DE
+    # RÉSERVATION N'EST PAS TOUCHÉE PAR CE LOT. Une séance annoncée puis refusée
+    # est pire qu'une séance non annoncée : elle fait venir quelqu'un pour rien.
+    # Ce cas n'est donc pas « OK avec un chiffre », c'est un désaccord entre les
+    # deux collections sur l'existence même du droit -> AMBIGU, et le coach
+    # tranche. Le LOT B le réalignera, et la séance sera alors réellement due.
+    if restant > 0:
+        for a in abonnements:
+            if a.get("status") != "active":
+                continue
+            _r = a.get("remaining_sessions")
+            if _r is None:
+                continue
+            try:
+                if int(float(_r)) <= 0:
+                    return _ambigu("divergence_bloquante")
+            except (TypeError, ValueError):
+                continue
+
+    return {"etat": "OK",
+            "motif": ("unique_partage" if partage
+                      else "canonical" if tranche_par_humain else "unique"),
+            "code": code, "partage": partage, "total": total, "utilise": utilise,
+            "restant": restant, "expire_le": doc.get("expiresAt"),
+            "actif": True, "codes_concurrents": [code], "message": ""}
+
+
+def lota_message(etat: str) -> str:
+    """La phrase que voit l'abonné. Une seule, validée le 27/08/2026."""
+    if etat == "AMBIGU":
+        return "Plusieurs forfaits sont enregistrés à ton nom — le coach vérifie ton solde."
+    return ""
+
+
+async def lota_droits_du_code(db, code) -> dict:
+    """« Que vaut CE code ? » — la lecture de l'espace abonné. ZÉRO écriture.
+
+    Trois lectures ciblées et indexables : les fiches du code, ses abonnements,
+    ses membres déclarés. `re.escape` sur toute valeur entrant dans une regex.
+    """
+    import re as _re
+
+    code_norm = str(code or "").strip().upper()
+    if not code_norm:
+        return lota_vide(motif="code_absent")
+    motif = {"$regex": f"^{_re.escape(code_norm)}$", "$options": "i"}
+    try:
+        docs = await db.discount_codes.find({"code": motif}, {"_id": 0}).to_list(50)
+        abonnements = await db.subscriptions.find(
+            {"code": motif},
+            {"_id": 0, "status": 1, "used_sessions": 1, "remaining_sessions": 1}
+        ).to_list(50)
+        porteurs = await db.code_members.count_documents({"code": motif})
+    except Exception as _err:
+        # Une lecture qui échoue ne doit pas priver l'abonné de son espace :
+        # l'appelant garde alors son affichage d'avant le lot.
+        logger.warning("[LOT A] code %s illisible (%s)", code_norm, type(_err).__name__)
+        return lota_vide(etat="INDISPONIBLE", motif="lecture_impossible")
+    return lota_etat_du_code(docs, abonnements, porteurs)
+
+
+async def lota_droits_membre(db, email=None, code_contexte=None) -> dict:
+    """« Que possède CETTE personne ? » — la porte de R1 (LOT D). ZÉRO écriture.
+
+    Les codes candidats sont ramenés par TROIS chemins, parce qu'un porteur
+    s'attache de trois façons en production : `discount_codes.assignedEmail`
+    (14 cas), `subscriptions.email` (`CHRISTOUX10` n'a AUCUN `assignedEmail` :
+    son seul lien au porteur passe par là) et `code_members.email` (les 7
+    membres de `CLUBPMI`). Manquer un chemin, c'est déclarer « un seul droit »
+    à quelqu'un qui en détient deux, et lui écrire un solde qui n'est pas le
+    sien.
+
+    Deux codes utilisables -> `AMBIGU/multi_codes`, aucun chiffre. C'est la
+    règle du 27/08/2026 : on ne somme pas, on ne choisit pas le plus proche de
+    l'expiration, on ne devine pas.
+    """
+    import re as _re
+
+    adresse = str(email or "").strip().lower()
+    codes = set()
+    if code_contexte:
+        codes.add(str(code_contexte).strip().upper())
+    if adresse:
+        _m = {"$regex": f"^{_re.escape(adresse)}$", "$options": "i"}
+        try:
+            async for d in db.discount_codes.find({"assignedEmail": _m}, {"_id": 0, "code": 1}):
+                if d.get("code"):
+                    codes.add(str(d["code"]).strip().upper())
+            async for s in db.subscriptions.find(
+                {"email": _m, "status": "active"}, {"_id": 0, "code": 1}
+            ):
+                if s.get("code"):
+                    codes.add(str(s["code"]).strip().upper())
+            async for cm in db.code_members.find({"email": _m}, {"_id": 0, "code": 1}):
+                if cm.get("code"):
+                    codes.add(str(cm["code"]).strip().upper())
+        except Exception as _err:
+            logger.warning("[LOT A] codes candidats illisibles (%s)", type(_err).__name__)
+            return lota_vide(etat="INDISPONIBLE", motif="lecture_impossible")
+
+    utilisables, ambigus = [], []
+    for code in sorted(codes):
+        etat = await lota_droits_du_code(db, code)
+        if etat["etat"] == "OK":
+            utilisables.append(etat)
+        elif etat["etat"] == "AMBIGU":
+            ambigus.append(etat)
+
+    if ambigus and not utilisables:
+        # Un seul code, et il est ambigu : on relaie SON motif, pas un motif
+        # inventé — c'est lui que le LOT B ou le LOT C devra traiter.
+        resultat = dict(ambigus[0])
+        resultat["codes_concurrents"] = [a["code"] or a["codes_concurrents"][0] for a in ambigus]
+        return resultat
+    if len(utilisables) + len(ambigus) > 1:
+        tous = [x["codes_concurrents"][0] for x in (utilisables + ambigus) if x["codes_concurrents"]]
+        return lota_vide(etat="AMBIGU", motif="multi_codes", actif=True,
+                         codes_concurrents=sorted(tous), message=lota_message("AMBIGU"))
+    if utilisables:
+        return utilisables[0]
+    return lota_vide()
