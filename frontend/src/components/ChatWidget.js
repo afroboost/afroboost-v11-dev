@@ -4203,45 +4203,38 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     }
   };
 
-  // === LOT 1 — CHARGER DES OCCURRENCES, PLUS UN CATALOGUE ===
+  // === LOT B3-S1.3 — LE CHAT NE LIT PLUS L'ESPACE PRIVE ===
   //
-  // CE QUI N'ALLAIT PAS. Cet appel lisait `GET /api/courses` : le CATALOGUE.
-  // Un cours y porte un `weekday` et une heure, jamais une date. Le panneau
-  // n'avait donc aucune occurrence a envoyer, et `handleConfirmReservation`
-  // ecrivait `new Date().toISOString()` — L'INSTANT DU CLIC. Mesure du
-  // 19/08/2026 : sur les 39 reservations de ce parcours, ZERO ne tombe sur une
-  // heure ronde. Aucune ne designait une seance.
+  // POURQUOI. La route privee de l'espace abonne exige desormais le jeton
+  // d'identite delivre par l'OTP e-mail. Le chat n'en a pas, et ne doit pas en
+  // avoir : pour proposer des seances il n'a besoin d'AUCUNE donnee privee.
   //
-  // PIRE, ET C'EST LE VRAI SUJET. `BookingPanel` affichait quand meme une date,
-  // calculee DANS LE NAVIGATEUR par `zurichTime.courseOccurrenceDate()`. La
-  // personne lisait « mer. 26 aout · 18:30 », cliquait, et le serveur
-  // enregistrait tout autre chose. Ce qui etait VU n'a jamais ete ce qui etait
-  // ENREGISTRE. Et comme ce calcul ne rend QUE la prochaine occurrence, il etait
-  // impossible de reserver le mercredi suivant tant que celui-ci n'etait pas
-  // passe : deux seances du meme cours n'etaient meme pas exprimables.
+  // CE QU'IL LIT MAINTENANT. `/api/courses/occurrences` : les memes cours que
+  // la vitrine, deplies en dates PAR LE SERVEUR avec
+  // `_v184_next_occurrences` — la fonction qui alimente deja l'espace abonne et
+  // l'agenda. Une seule definition de « les prochaines seances » pour tous les
+  // ecrans : ils ne peuvent pas diverger. Le serveur applique les filtres du
+  // site (visible, non archive), ne rend que du FUTUR, et n'expose qu'une liste
+  // blanche de champs publics. Aucune identite, reservation, solde ni membre
+  // n'entre plus ici.
   //
-  // LA SOURCE DE VERITE EST DESORMAIS LE SERVEUR — et c'est EXACTEMENT celle de
-  // l'espace abonne (`upcoming_courses`, produit par `_v184_next_occurrences`,
-  // 76 reservations sur 76 correctes). Une seule definition de « les prochaines
-  // seances » pour les deux ecrans : ils ne peuvent plus diverger. Chaque
-  // occurrence arrive avec son `course_id` ET son `datetime` naif local — les
-  // deux moities de l'identite de seance, deja calculees, rien a inventer ici.
+  // ET LA RESERVATION RESTE JUSTE. Chaque occurrence arrive avec son
+  // `course_id` ET son `datetime` naif local — les deux moities de l'identite
+  // de seance, deja calculees. Elles sont RECOPIEES, jamais recalculees : le
+  // defaut mesure en LOT 1 (39 reservations datees de l'instant du clic, aucune
+  // sur une heure ronde) reste ferme. Echec de l'appel -> aucune seance
+  // proposee, jamais de repli sur le catalogue.
   //
-  // ECHEC DE L'APPEL -> AUCUNE SEANCE PROPOSEE. Pas de repli sur le catalogue :
-  // ce repli est precisement le defaut qu'on ferme. Mieux vaut un panneau vide
-  // qui le dit qu'une reservation datee de l'heure du clic.
-  var loadAvailableCourses = useCallback(function (accessCode) {
-    var code = String(accessCode || '').trim();
-    if (!code) {
-      setAvailableCourses([]);
-      setReservationError("Code d'abonné introuvable : impossible d'afficher les séances.");
-      return Promise.resolve();
-    }
+  // La dependance est le seul e-mail du coach — une chaine, donc une valeur
+  // PRIMITIVE : pas un objet dont la reference changerait a chaque rendu et
+  // relancerait les effets (la boucle d'appels V305, 502 en production).
+  var loadAvailableCourses = useCallback(function () {
     setLoadingCourses(true);
-    return axios.get(API + '/subscriber/space/' + encodeURIComponent(code))
+    var quiOrganise = String(vitrineCoachEmail || '').trim();
+    var params = quiOrganise ? '?coach=' + encodeURIComponent(quiOrganise) : '';
+    return axios.get(API + '/courses/occurrences' + params)
       .then(function (res) {
-        var data = (res && res.data) || {};
-        var brutes = data.upcoming_courses || [];
+        var brutes = (((res && res.data) || {}).occurrences) || [];
         var seances = [];
         for (var i = 0; i < brutes.length; i++) {
           var occ = brutes[i] || {};
@@ -4258,7 +4251,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
             // Le cours REEL, celui qui part au serveur.
             courseId: quelCours,
             // L'occurrence REELLE, telle que le serveur l'a produite. Recopiee,
-            // jamais recalculee : c'est tout l'objet du lot.
+            // jamais recalculee.
             occurrenceDatetime: quand,
             name: occ.name || 'Cours',
             time: occ.time || quand.slice(11, 16),
@@ -4271,22 +4264,17 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           });
         }
         setAvailableCourses(seances);
-        // V393 : un forfait expire ou epuise ne propose rien — et dit pourquoi,
-        // au lieu de laisser croire a un planning vide.
-        if (data.forfait_bloque && data.forfait_message) {
-          setReservationError(data.forfait_message);
-        }
-        console.log('[LOT1] Occurrences chargées:', seances.length);
+        console.log('[B3-S1.3] Occurrences publiques chargees:', seances.length);
       })
       .catch(function (err) {
-        console.error('[LOT1] Occurrences indisponibles:', err);
+        console.error('[B3-S1.3] Occurrences indisponibles:', err);
         setAvailableCourses([]);
         setReservationError('Séances indisponibles pour le moment. Réessayez dans un instant.');
       })
       .then(function () {
         setLoadingCourses(false);
       });
-  }, []);
+  }, [vitrineCoachEmail]);
 
   // === CHARGER LA PHOTO DEPUIS LA DB (pas localStorage) ===
   // Se déclenche quand participantId est disponible

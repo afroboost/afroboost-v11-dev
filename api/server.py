@@ -1653,6 +1653,56 @@ async def get_courses(request: Request, scope: str = ""):
     
     return courses
 
+# LOT B3-S1.3 — LES OCCURRENCES, MAIS PUBLIQUES.
+#
+# POURQUOI ELLE EXISTE. `/api/courses` rend le CATALOGUE : un cours recurrent y
+# porte un `weekday`, jamais une date. Le chat n'avait donc plus d'occurrence a
+# proposer une fois l'espace prive ferme, et sans occurrence il ne peut pas
+# reserver (garde LOT 1). Cette route rend les memes cours, deplies en dates.
+#
+# AUCUN NOUVEAU MOTEUR : c'est `_v184_next_occurrences`, celle-la meme qui
+# alimente l'espace abonne et l'agenda. Une seule definition de « les prochaines
+# seances » — elles ne peuvent pas diverger.
+#
+# CE QU'ELLE NE PREND PAS : aucun code d'espace abonne, aucune identite. Il n'y
+# a donc rien a deviner et aucun oracle possible — un coach inconnu rend une
+# liste vide, exactement comme un coach sans cours.
+#
+# CE QU'ELLE NE REND PAS : la liste blanche `_N456_CHAMPS_PUBLICS` ci-dessous
+# est la garantie. Un champ ajoute demain a `_v184_next_occurrences` ne fuira
+# pas ici par accident : il faudra l'inscrire explicitement.
+_N456_CHAMPS_PUBLICS = ("course_id", "name", "weekday", "weekday_label", "time",
+                        "locationName", "datetime", "date", "is_fixed_date")
+
+
+@api_router.get("/courses/occurrences")
+async def n456_occurrences_publiques(coach: str = "", days: int = 14):
+    """Les prochaines seances, sans aucune donnee personnelle."""
+    # Memes filtres que la vitrine : masque ou archive n'est pas publiable.
+    _filtre = {"archived": {"$ne": True}, "visible": {"$ne": False}}
+    _coach = (coach or "").strip().lower()
+    if _coach:
+        _filtre["coach_id"] = _coach
+    try:
+        _cours = await db.courses.find(_filtre, {"_id": 0}).to_list(300)
+    except Exception as _err:
+        logger.warning("[B3-S1.3] cours publics illisibles (%s)", type(_err).__name__)
+        return {"occurrences": []}
+    _jours = max(1, min(int(days or 14), 60))
+    _vues, _sorties = set(), []
+    for _c in _cours:
+        # `_v184_next_occurrences` ne rend QUE du futur : une date passee est
+        # deja ecartee a la source, on ne refait pas ce filtre ici.
+        for _occ in _v184_next_occurrences(_c, days_ahead=_jours):
+            _cle = (_occ.get("course_id"), _occ.get("datetime"))
+            if _cle in _vues:
+                continue
+            _vues.add(_cle)
+            _sorties.append({_k: _occ.get(_k) for _k in _N456_CHAMPS_PUBLICS})
+    _sorties.sort(key=lambda _o: str(_o.get("datetime") or ""))
+    return {"occurrences": _sorties[:200]}
+
+
 @api_router.post("/courses", response_model=Course)
 async def create_course(course: CourseCreate, request: Request):
     # Sécurité : vérifier que l'utilisateur est authentifié
@@ -13073,13 +13123,134 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
         return _vide
 
 
+# ═══════════════ LOT B3-S1.3 — L'ESPACE PRIVE SE FERME A CLE ═══════════════
+#
+# CE QUI N'ALLAIT PAS. `get_subscriber_space` etait declaree
+# `async def get_subscriber_space(access_code, m=None)` : SANS parametre
+# `request`. L'authentification n'y etait pas oubliee, elle etait IMPOSSIBLE —
+# le meme defaut exactement que B3-S0 a corrige sur `DELETE /reservations/{id}`.
+# La route servait e-mail, telephone, objectifs, solde, reservations (avec leurs
+# `id`) et la liste des membres d'un groupe a quiconque connait un code, alors
+# que 37 des 63 codes en base sont des libelles lisibles du type prenom+annee.
+#
+# CE QUI LA FERME. Les deux briques livrees et testees en B3-S1.1, et elles
+# seules. AUCUN second moteur d'authentification : c'est la regle heritee de
+# B3-S0, et c'est ce qui fait qu'il n'y a qu'un seul endroit ou se tromper.
+#
+# AUCUN DRAPEAU, VOLONTAIREMENT — meme raison qu'en B3-S0 : une variable
+# capable de rouvrir une route non authentifiee est une porte derobee
+# documentee. Le repli d'urgence n'est pas de rouvrir, c'est de fermer pour
+# tout le monde.
+_B3S13_REFUS_DETAIL = "Code abonné introuvable."
+
+
+def _b3s13_refus():
+    """UNE SEULE reponse pour TOUS les refus.
+
+    Code inconnu, autre tenant, jeton absent, perime, revoque ou emis pour un
+    autre membre : la reponse est mot pour mot la meme. Un 403 la ou un 404
+    existe dirait « ce code existe, mais pas pour toi » — l'oracle d'enumeration
+    que B3-S0 a deja refuse d'ouvrir. Le journal, lui, garde la vraie raison.
+    """
+    return HTTPException(status_code=404, detail=_B3S13_REFUS_DETAIL)
+
+
+def _b3s13_tenant_accepte(charge, subscription, discount):
+    """Le jeton appartient-il a un proprietaire connu de CE code ?
+
+    LE PIEGE, ET IL A FAILLI FERMER L'ESPACE A SON PROPRIETAIRE. L'OTP derive le
+    `coach_id` du jeton de `discount_codes` D'ABORD (`_b3s1_contact_enregistre`),
+    la route, elle, lit `subscriptions` d'abord — et sur un code a fiches
+    multiples les deux tris ne designent pas le meme document. Comparer a UNE
+    seule des deux sources aurait refuse des jetons parfaitement legitimes.
+
+    On compare donc a l'ENSEMBLE des proprietaires connus du code. L'isolation
+    tient : un jeton emis chez un autre coach n'y figure pas. Et elle n'est de
+    toute facon que la SECONDE barriere — le jeton est deja lie a un code
+    precis, donc ce controle ne garde pas la porte d'entree, il double le
+    verrou.
+
+    `DEFAULT_COACH_ID` est accepte : c'est le repli qu'ecrit l'OTP lui-meme
+    quand le document du code ne porte pas de `coach_id`. Le refuser
+    enfermerait dehors exactement les titulaires que ce repli a servis.
+    """
+    connus = set()
+    for _d in (subscription, discount):
+        _c = str((_d or {}).get("coach_id") or "").strip().lower()
+        if _c:
+            connus.add(_c)
+    connus.add(str(DEFAULT_COACH_ID or "").strip().lower())
+    connus.discard("")
+    if not connus:
+        return True
+    return str((charge or {}).get("coach_id") or "").strip().lower() in connus
+
+
+async def _b3s13_porteur_autorise(request, code_upper, member_slug):
+    """(charge, motif) — le jeton presente ouvre-t-il CET espace ?
+
+    Cinq verifications, dans cet ordre, et aucune n'est facultative :
+      * TYPE    — `lotb3s1_lire_token` refuse tout ce qui n'est pas
+                  `subscriber_space`. C'est ici que le jeton V296 de
+                  `POST /subscriber/token` est ecarte : cette route reste
+                  ouverte pour ses 15 utilisateurs, mais elle n'ouvre plus
+                  CETTE piece. Un jeton delivre contre le seul code ne peut pas
+                  proteger ce que ce code protege deja.
+      * PORTEE  — la signature, verifiee par le meme appel.
+      * CODE    — celui du JETON, pas celui de l'URL : connaitre un code ne
+                  suffit plus, il faut avoir prouve qu'on possede l'adresse.
+      * MEMBRE  — `?m=` ne peut pas devenir un selecteur de membre : le slug
+                  demande doit etre EXACTEMENT celui pour lequel l'OTP a ete
+                  verifie.
+      * SESSION — `lotb3s1_session_utilisable` : revocation et expiration se
+                  lisent EN BASE. Une signature valide ne prouve pas qu'une
+                  session est encore ouverte — c'est tout le sens du `jti`.
+
+    Le tenant se verifie dans la route : il demande le document du code, qu'on
+    n'a pas encore lu ici.
+    """
+    from api.routes.shared import (
+        lotb3s1_lire_token as _b3s13_lire,
+        lotb3s1_session_utilisable as _b3s13_vivante,
+    )
+    try:
+        _entete = (request.headers.get("x-espace-token", "") or "").strip()
+    except Exception:
+        _entete = ""
+    charge = _b3s13_lire(_entete)
+    if not charge:
+        return None, "jeton_absent_ou_invalide"
+    if str(charge.get("code") or "").strip().upper() != str(code_upper or "").strip().upper():
+        return None, "autre_code"
+    if str(member_slug or "").strip() != str(charge.get("slug") or "").strip():
+        return None, "autre_membre"
+    try:
+        session = await db[_B3S1_COLL_SESSIONS].find_one(
+            {"jti": charge.get("jti")}, {"_id": 0})
+    except Exception as _err:
+        # Fail closed : une base illisible ne vaut pas une autorisation.
+        logger.warning("[B3-S1.3] session illisible (%s)", type(_err).__name__)
+        return None, "session_illisible"
+    _ok, _motif = _b3s13_vivante(session, charge)
+    if not _ok:
+        return None, _motif
+    return charge, "ok"
+
+
 @api_router.get("/subscriber/space/{access_code}")
-async def get_subscriber_space(access_code: str, m: Optional[str] = None):
+async def get_subscriber_space(access_code: str, request: Request, m: Optional[str] = None):
     """V184: Données complètes de la page d'accès rapide d'un abonné.
     V202: Supporte les codes multi-membres via ?m=slug."""
     code_upper = (access_code or "").strip().upper()
     if not code_upper:
         raise HTTPException(status_code=400, detail="Code d'accès requis")
+
+    # LOT B3-S1.3 : la preuve d'identite AVANT toute lecture. Un refus ici ne
+    # touche pas la base, n'ecrit rien, et ne dit rien de plus qu'« introuvable ».
+    _b3s13_charge, _b3s13_motif = await _b3s13_porteur_autorise(request, code_upper, m)
+    if not _b3s13_charge:
+        logger.warning("[B3-S1.3] espace refuse (motif=%s)", _b3s13_motif)
+        raise _b3s13_refus()
 
     # V201: Log pour diagnostic
     logger.info(f"[V202] subscriber/space code={code_upper}, member_slug={m}")
@@ -13119,7 +13290,14 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
             {"code": {"$regex": code_upper[:6], "$options": "i"}}, {"_id": 0, "code": 1}
         ).to_list(5)
         logger.error(f"[V201] Code {code_upper} introuvable! Similar subs: {[s.get('code') for s in similar_subs]}, Similar discount_codes: {[c.get('code') for c in similar_codes]}")
-        raise HTTPException(status_code=404, detail=f"Code abonné introuvable. Code cherché: {code_upper}")
+        raise _b3s13_refus()
+
+    # LOT B3-S1.3 — LE TENANT DU JETON DOIT ETRE CELUI DU CODE.
+    # La regle vit dans `_b3s13_tenant_accepte` : elle est pure, donc testable,
+    # et le piege qu'elle evite y est explique.
+    if not _b3s13_tenant_accepte(_b3s13_charge, subscription, discount):
+        logger.warning("[B3-S1.3] espace refuse (motif=autre_tenant)")
+        raise _b3s13_refus()
 
     # V202: Multi-membre — vérifier si le code est en mode multi-membre
     is_multi = (discount or {}).get("multi_member", False)
