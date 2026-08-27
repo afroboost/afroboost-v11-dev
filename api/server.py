@@ -13610,6 +13610,29 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
         # l'écran retombe alors sur son affichage d'avant ce lot, à l'identique.
         logger.warning("[LOT A] verite canonique indisponible: %s", type(_lota_err).__name__)
 
+    # LOT B2 — L'ECRAN NE DOIT PAS PROPOSER CE QUE LA RESERVATION REFUSERA.
+    #
+    # La garde canonique vient d'etre posee sur les deux chemins d'ECRITURE.
+    # Sans ce miroir en LECTURE, l'espace de `BASSBOOSTX-02` continuerait
+    # d'afficher « 4 seances » et un bouton « Reserver » qui echouerait au
+    # clic — exactement le defaut que `divergence_bloquante` evite au LOT A,
+    # retourne dans l'autre sens. Le bouton disparait donc, et le motif
+    # s'affiche, avec la MEME fonction que la garde d'ecriture : deux regles
+    # separees finiraient par diverger.
+    #
+    # AUCUNE ECRITURE : on ne touche qu'a un booleen de reponse.
+    try:
+        from api.routes.shared import lotb2_verdict as _b2_verdict, lotb2_actif as _b2_actif
+        if _b2_actif() and not _v393_bloque:
+            _b2_ferme, _b2_pourquoi = _b2_verdict(_lota, 1)
+            if _b2_ferme:
+                logger.info("[LOT B2] %s : ecran ferme (canonique %s/%s)",
+                            code_upper, _lota.get("etat"), _lota.get("motif"))
+                _v393_bloque = True
+                _v393_message = _b2_pourquoi
+    except Exception as _b2_err:
+        logger.warning("[LOT B2] miroir d'affichage indisponible: %s", type(_b2_err).__name__)
+
     return {
         "success": True,
         "multi_member": is_multi,
@@ -14456,6 +14479,17 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     if not _ok:
         logger.info(f"[V393] Reservation refusee sur {code_upper} : {_pourquoi}")
         raise HTTPException(status_code=400, detail=_pourquoi)
+
+    # LOT B2 — ET LE CODE, LUI, DIT-IL ENCORE OUI ?
+    # V393 vient de valider l'ABONNEMENT ; cette garde valide le CODE. Les deux
+    # sont necessaires : `BASSBOOSTX-02` avait un abonnement valide jusqu'au
+    # 24.10 et un code expire depuis le 17.08 — V393 laissait passer 4 seances.
+    # La garde ne ferme JAMAIS sur un doute : sans fiche, ou sur un etat
+    # ambigu, elle s'abstient (voir `lotb2_verdict`, shared.py).
+    from api.routes.shared import lotb2_refus_canonique as _lotb2_refus
+    _b2_refus, _b2_msg = await _lotb2_refus(db, code_upper, quantity)
+    if _b2_refus:
+        raise HTTPException(status_code=400, detail=_b2_msg)
 
     course = await db.courses.find_one({"id": course_id}, {"_id": 0})
     if not course:

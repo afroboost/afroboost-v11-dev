@@ -1354,6 +1354,16 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
                 logger.warning(f"[V393] Reservation refusee pour {user_email} : {_pourquoi}")
                 raise HTTPException(status_code=400, detail=_pourquoi)
 
+            # LOT B2 : la meme garde que dans l'espace abonne. L'oublier ici
+            # laisserait la vitrine et le chat ouverts sur un code mort —
+            # fermer une porte sur deux ne ferme rien.
+            from api.routes.shared import lotb2_refus_canonique as _lotb2_refus
+            _b2_refus, _b2_msg = await _lotb2_refus(
+                db, (subscription.get("code") or promo_code), 1)
+            if _b2_refus:
+                logger.warning("[LOT B2] reservation refusee (vitrine/chat) : %s", _b2_msg)
+                raise HTTPException(status_code=400, detail=_b2_msg)
+
             # ── LOT 3c-0c : UN BILLET SEPARE NE SE PAIE PAS AVEC UN FORFAIT ──
             #
             # La garde V426 existait, mais UNIQUEMENT dans l'espace abonne

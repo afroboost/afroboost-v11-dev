@@ -5126,3 +5126,127 @@ async def lota_droits_membre(db, email=None, code_contexte=None) -> dict:
     if utilisables:
         return utilisables[0]
     return lota_vide()
+
+
+# =====================================================================
+# LOT B2 — UN CODE MORT NE DOIT PLUS OUVRIR UNE RÉSERVATION
+# =====================================================================
+#
+# LE DÉFAUT, MESURÉ. `forfait_utilisable()` ne lit QUE `subscriptions` : ses
+# deux entrées, `expires_at` et `remaining_sessions`, viennent de la même
+# collection. Aucune garde de réservation ne consulte `discount_codes`. Depuis
+# le LOT A, la vérité canonique et la garde d'écriture ne regardent donc plus
+# le même document — et deux abonnements de production en profitaient :
+#
+#   `BASSBOOSTX-02` : code expiré le 17.08, abonnement valide jusqu'au 24.10,
+#                     4 séances réservables, bouton « Réserver » VISIBLE ;
+#   `AFR-YXFCGP`    : code épuisé (1/1), abonnement à `remaining_sessions: 1`.
+#
+# V394 aurait pu les couvrir : il ne le fait pas. Il ne vit que dans la LECTURE
+# de l'espace, jamais dans l'écriture ; il ne compare que le RESTANT, jamais
+# l'EXPIRATION ; et il choisit sa fiche par `stripe_amount`, pas par la
+# résolution canonique.
+#
+# POURQUOI CETTE GARDE EST PRUDENTE, ET PAS ZÉLÉE. Mesure du 27/08/2026 sur les
+# 33 abonnements réservables : une garde « tout ce qui n'est pas OK est refusé »
+# en bloquerait 19 — dont 14 qui n'ont AUCUNE fiche `discount_codes` (essais et
+# cours à l'unité parfaitement légitimes) et `CHRISTOUX10`, un client réel dont
+# le seul tort est d'être AMBIGU. La règle retenue en refuse exactement 2 : les
+# deux fuites, et rien d'autre.
+#
+#   * aucune fiche      -> on ne sait pas, donc ON NE FERME PAS ;
+#   * état AMBIGU       -> on ne devine pas, donc ON NE FERME PAS ;
+#   * fiche vivante     -> on refuse seulement si le restant est insuffisant.
+#
+# La garde REFUSE, elle n'écrit jamais : aucun code ressuscité, aucune séance
+# remise, aucun compteur touché, aucune autre souscription choisie pour
+# contourner le refus.
+
+
+def lotb2_actif() -> bool:
+    """Drapeau de rollback : `LOTB2_GARDE_CANONIQUE=false` éteint la garde sans
+    redéployer. Même mécanisme que `lota_actif`."""
+    return os.environ.get("LOTB2_GARDE_CANONIQUE", "true").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def lotb2_verdict(etat: dict, quantite: int = 1):
+    """(refus, message) — LE CŒUR DE LA GARDE, ET IL EST PUR.
+
+    `etat` est ce que rend `lota_droits_du_code`. Aucune base, aucun réseau :
+    la règle se teste cas par cas sans jouer avec la production.
+
+    Le message est celui que LIT LE CLIENT. Il reprend le ton de
+    `forfait_utilisable` — dire pourquoi, et vers qui se tourner.
+    """
+    if not etat:
+        return False, ""
+    _etat = etat.get("etat")
+
+    if _etat == "AUCUN_DROIT":
+        motif = etat.get("motif")
+        # `aucun_code_utilisable` signifie « AUCUNE fiche `discount_codes` » —
+        # 14 abonnements de production sont dans ce cas. Les fermer serait
+        # exactement l'erreur que cette garde doit éviter.
+        if motif == "epuise":
+            return True, ("Toutes les séances de ce code ont été utilisées. "
+                          "Contacte le coach pour le renouveler.")
+        if motif == "expire":
+            _j = str(etat.get("expire_le") or "")[:10]
+            try:
+                a, m, j = _j.split("-")
+                _lisible = f"{j}.{m}.{a}"
+            except ValueError:
+                _lisible = _j
+            return True, ((f"Ce code a expiré le {_lisible}. " if _lisible
+                           else "Ce code a expiré. ")
+                          + "Contacte le coach pour le renouveler.")
+        if motif == "inactif":
+            return True, "Ce code n'est plus actif. Contacte le coach."
+        return False, ""
+
+    if _etat == "OK":
+        restant = etat.get("restant")
+        if restant is None:
+            return False, ""
+        try:
+            _q = max(1, int(quantite or 1))
+        except (TypeError, ValueError):
+            _q = 1
+        if int(restant) < _q:
+            return True, (f"Séances insuffisantes : {int(restant)} restante(s), "
+                          f"{_q} demandée(s).")
+        return False, ""
+
+    # AMBIGU, INDISPONIBLE, ou tout état futur : on ne ferme pas sur un doute.
+    return False, ""
+
+
+async def lotb2_refus_canonique(db, code, quantite: int = 1):
+    """(refus, message) — la page « Code promo » autorise-t-elle cette réservation ?
+
+    À appeler APRÈS `forfait_utilisable`, jamais à sa place : les deux gardes
+    répondent à deux questions différentes (« l'abonnement est-il utilisable ? »
+    et « le code l'est-il encore ? ») et se complètent.
+
+    Aucune exception ne remonte : une garde qui tombe ne doit pas fermer la
+    porte à quelqu'un qui a payé. En cas de défaillance, on laisse passer —
+    c'est le comportement d'avant ce lot, et il est journalisé.
+    """
+    if not lotb2_actif():
+        return False, ""
+    try:
+        etat = await lota_droits_du_code(db, code)
+    except Exception as _err:
+        logger.warning("[LOT B2] %s : verite canonique illisible (%s) — reservation laissee passer",
+                       code, type(_err).__name__)
+        return False, ""
+    refus, message = lotb2_verdict(etat, quantite)
+    if refus:
+        logger.info("[LOT B2] %s : reservation refusee — canonique %s/%s (restant=%s)",
+                    code, etat.get("etat"), etat.get("motif"), etat.get("restant"))
+    elif etat.get("etat") == "AMBIGU":
+        logger.info("[LOT B2] %s : etat AMBIGU (%s) — la garde s'abstient, reservation laissee passer",
+                    code, etat.get("motif"))
+    return refus, message
