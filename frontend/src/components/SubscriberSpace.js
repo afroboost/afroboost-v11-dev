@@ -97,6 +97,52 @@ function formatOccurrence(input) {
   return [dateStr, timeStr].filter(Boolean).join(", ");
 }
 
+// ═══ LOT B3-S1.2 — LE JETON D'ESPACE, ET OU IL VIT ═══════════════════════
+//
+// POURQUOI CET ECRAN EXISTE. `GET /api/subscriber/space/{code}` sert l'e-mail,
+// le telephone, les objectifs, le solde, les reservations et — pour un groupe —
+// la liste des membres, a quiconque connait le code. Or 37 des 63 codes en base
+// sont des libelles lisibles du type prenom + annee : ils ne demandent aucune
+// force brute. Le code ne peut donc pas rester le seul secret.
+//
+// LE JETON V296 NE POUVAIT PAS SERVIR DE PREUVE : `POST /subscriber/token`
+// n'exige que le code. Un jeton derive du secret qu'il protege ne protege rien.
+// Celui-ci s'obtient par un code a 6 chiffres envoye a l'adresse ENREGISTREE.
+//
+// CLE ET EN-TETE DISTINCTS de V296 (`afroboost_subscriber_token` /
+// `X-Subscriber-Token`) : le serveur rejette l'un la ou il accepte l'autre, et
+// ecraser la cle du chat le casserait.
+const B3S1_CLE_JETON = "afroboost_espace_token";
+
+function b3s1LireJeton(code, slug) {
+  try {
+    const brut = window.localStorage.getItem(B3S1_CLE_JETON);
+    if (!brut) return null;
+    const j = JSON.parse(brut);
+    if (!j || !j.token) return null;
+    // Le jeton vaut pour UN code et UN membre : celui d'un autre espace ne doit
+    // jamais ouvrir celui-ci, meme sur le meme appareil.
+    if ((j.code || "") !== (code || "")) return null;
+    if ((j.slug || "") !== (slug || "")) return null;
+    if (j.expires_at && new Date(j.expires_at) <= new Date()) return null;
+    return j;
+  } catch (e) {
+    return null;
+  }
+}
+
+function b3s1EcrireJeton(code, slug, token, expiresAt) {
+  try {
+    window.localStorage.setItem(B3S1_CLE_JETON, JSON.stringify({
+      token, code: code || "", slug: slug || "", expires_at: expiresAt || null,
+    }));
+  } catch (e) { /* stockage indisponible : l'acces prime, on reidentifiera */ }
+}
+
+function b3s1OublierJeton() {
+  try { window.localStorage.removeItem(B3S1_CLE_JETON); } catch (e) { /* ignore */ }
+}
+
 export default function SubscriberSpace({ accessCode: propCode }) {
   const accessCode = useMemo(() => {
     if (propCode) return propCode.toUpperCase();
@@ -117,6 +163,16 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // LOT B3-S1.2 — la barriere d'identification.
+  const [jetonEspace, setJetonEspace] = useState(null);
+  const [identEtape, setIdentEtape] = useState("email");   // "email" | "otp"
+  const [identEmail, setIdentEmail] = useState("");
+  const [identOtp, setIdentOtp] = useState("");
+  const [identOccupe, setIdentOccupe] = useState(false);
+  const [identInfo, setIdentInfo] = useState("");
+  const [identErreur, setIdentErreur] = useState("");
+  const [renvoiDispoA, setRenvoiDispoA] = useState(0);
+  const [maintenantSec, setMaintenantSec] = useState(() => Date.now());
   const [data, setData] = useState(null);
   const [reservingKey, setReservingKey] = useState(null);
   // ESSAI-5a-1 : l'acceptation vaut pour UNE occurrence — l'annonce de
@@ -177,9 +233,96 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     }
   }, [accessCode, memberSlug]);
 
+  // LOT B3-S1.2 : on relit le jeton a chaque changement de code ou de membre.
   useEffect(() => {
-    loadSpace();
-  }, [loadSpace]);
+    setJetonEspace(b3s1LireJeton(accessCode, memberSlug));
+  }, [accessCode, memberSlug]);
+
+  // LE CHARGEMENT EST SUBORDONNE AU JETON. Sans lui, on n'appelle meme pas la
+  // route : l'ecran d'identification ne doit pas etre un rideau devant des
+  // donnees deja recuperees. Tant que le serveur n'exige rien (B3-S1.3), c'est
+  // CE garde-ci qui tient la porte.
+  useEffect(() => {
+    if (jetonEspace) {
+      loadSpace();
+    } else {
+      setLoading(false);
+    }
+  }, [loadSpace, jetonEspace]);
+
+  // Compte a rebours du bouton « Renvoyer » : une horloge locale, pas un
+  // minuteur par bouton — un seul intervalle, arrete des qu'il ne sert plus.
+  useEffect(() => {
+    if (!renvoiDispoA || jetonEspace) return undefined;
+    const t = setInterval(() => setMaintenantSec(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [renvoiDispoA, jetonEspace]);
+
+  const b3s1Secondes = Math.max(0, Math.ceil((renvoiDispoA - maintenantSec) / 1000));
+
+  // ── Demander le code a 6 chiffres ────────────────────────────────────────
+  const b3s1DemanderCode = useCallback(async () => {
+    const mail = (identEmail || "").trim();
+    if (!mail || mail.indexOf("@") < 1) {
+      setIdentErreur("Indique une adresse e-mail valide.");
+      return;
+    }
+    setIdentOccupe(true); setIdentErreur(""); setIdentInfo("");
+    try {
+      const corps = { code: accessCode, email: mail };
+      if (memberSlug) corps.m = memberSlug;
+      const res = await axios.post(`${API}/subscriber/otp/request`, corps);
+      // Le serveur repond la MEME chose que l'adresse corresponde ou non : on
+      // affiche donc son message tel quel, sans jamais le completer par une
+      // information sur l'existence d'un compte.
+      setIdentInfo(res?.data?.message
+        || "Si ces informations correspondent à un espace, un code vient d'être envoyé par e-mail.");
+      setIdentEtape("otp");
+      setRenvoiDispoA(Date.now() + 120000);
+      setMaintenantSec(Date.now());
+    } catch (err) {
+      if (err?.response?.status === 429) {
+        setIdentErreur("Trop de demandes. Réessaie dans quelques minutes.");
+      } else {
+        setIdentErreur("L'envoi n'a pas pu aboutir. Vérifie ta connexion et réessaie.");
+      }
+    } finally {
+      setIdentOccupe(false);
+    }
+  }, [accessCode, memberSlug, identEmail]);
+
+  // ── Verifier le code et recuperer le jeton ───────────────────────────────
+  const b3s1ValiderCode = useCallback(async () => {
+    const saisi = (identOtp || "").replace(/\D/g, "");
+    if (saisi.length !== 6) {
+      setIdentErreur("Le code comporte 6 chiffres.");
+      return;
+    }
+    setIdentOccupe(true); setIdentErreur("");
+    try {
+      const corps = { code: accessCode, email: (identEmail || "").trim(), otp: saisi };
+      if (memberSlug) corps.m = memberSlug;
+      const res = await axios.post(`${API}/subscriber/otp/verify`, corps);
+      const tok = res?.data?.token;
+      if (!tok) throw new Error("sans jeton");
+      b3s1EcrireJeton(accessCode, memberSlug, tok, res?.data?.expires_at);
+      setJetonEspace({ token: tok, code: accessCode, slug: memberSlug || "" });
+      setIdentOtp(""); setIdentInfo("");
+    } catch (err) {
+      // Le serveur ne distingue pas « faux », « expire » et « essais epuises » :
+      // il renvoie un seul 400. On ne peut donc pas etre plus precis sans
+      // inventer — et inventer serait exactement l'oracle qu'on evite.
+      if (err?.response?.status === 429) {
+        setIdentErreur("Trop de tentatives. Réessaie dans quelques minutes.");
+      } else if (err?.response?.status === 503) {
+        setIdentErreur("Vérification momentanément indisponible. Réessaie dans un instant.");
+      } else {
+        setIdentErreur("Code invalide ou expiré. Demande un nouveau code.");
+      }
+    } finally {
+      setIdentOccupe(false);
+    }
+  }, [accessCode, memberSlug, identEmail, identOtp]);
 
   // V210: Réinitialiser confirmedKeys quand on change de membre
   // IMPORTANT: remplacer (pas merger) pour ne pas garder les ✓ d'un autre membre
@@ -421,6 +564,97 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       setCancellingId(null);
     }
   };
+
+  // ═══ LOT B3-S1.2 — LA BARRIERE D'IDENTIFICATION ═══════════════════════
+  //
+  // ELLE PASSE AVANT TOUT, y compris avant l'ecran de chargement : sans jeton,
+  // aucune donnee privee n'a ete demandee, il n'y a donc rien a charger.
+  // Elle ne doit JAMAIS etre une page morte — chaque echec laisse un message,
+  // un bouton « Réessayer », la possibilite de corriger l'adresse, et le
+  // recours au coach.
+  if (!jetonEspace) {
+    const enOtp = identEtape === "otp";
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6"
+           style={{ background: COLORS.bg, color: "white" }}>
+        <div className="max-w-md w-full rounded-2xl p-6"
+             style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
+             data-testid="espace-identification">
+          <h1 className="text-xl font-semibold mb-2">Accède à ton espace</h1>
+          <p className="text-white/60 text-sm mb-5">
+            {enOtp
+              ? "Saisis le code à 6 chiffres reçu par e-mail."
+              : "Confirme ton adresse e-mail pour recevoir un code de vérification."}
+          </p>
+
+          {!enOtp && (
+            <input
+              type="email" inputMode="email" autoComplete="email"
+              value={identEmail}
+              onChange={(e) => setIdentEmail(e.target.value)}
+              placeholder="ton adresse e-mail"
+              data-testid="espace-email"
+              className="w-full px-3 py-3 rounded-xl mb-3 text-sm"
+              style={{ background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`, color: "white" }}
+            />
+          )}
+
+          {enOtp && (
+            <input
+              type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+              value={identOtp}
+              onChange={(e) => setIdentOtp(e.target.value.replace(/\D/g, ""))}
+              placeholder="000000"
+              data-testid="espace-otp"
+              className="w-full px-3 py-3 rounded-xl mb-3 text-center text-2xl tracking-[0.4em]"
+              style={{ background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`, color: "white" }}
+            />
+          )}
+
+          {identInfo && (
+            <p className="text-white/70 text-xs mb-3" data-testid="espace-info">{identInfo}</p>
+          )}
+          {identErreur && (
+            <p className="text-sm mb-3" data-testid="espace-erreur"
+               style={{ color: COLORS.primary }}>{identErreur}</p>
+          )}
+
+          <button
+            type="button" disabled={identOccupe}
+            onClick={enOtp ? b3s1ValiderCode : b3s1DemanderCode}
+            data-testid="espace-valider"
+            className="w-full py-3 rounded-xl text-sm font-semibold disabled:opacity-50"
+            style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "white" }}>
+            {identOccupe ? "…" : enOtp ? "Valider" : "Recevoir mon code"}
+          </button>
+
+          {enOtp && (
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <button
+                type="button" data-testid="espace-renvoyer"
+                disabled={identOccupe || b3s1Secondes > 0}
+                onClick={b3s1DemanderCode}
+                className="text-xs underline disabled:opacity-40 disabled:no-underline"
+                style={{ color: "rgba(255,255,255,0.7)" }}>
+                {b3s1Secondes > 0 ? `Renvoyer dans ${b3s1Secondes}s` : "Renvoyer le code"}
+              </button>
+              <button
+                type="button" data-testid="espace-corriger"
+                onClick={() => { setIdentEtape("email"); setIdentOtp(""); setIdentErreur(""); setIdentInfo(""); }}
+                className="text-xs underline" style={{ color: "rgba(255,255,255,0.7)" }}>
+                Corriger mon e-mail
+              </button>
+            </div>
+          )}
+
+          <p className="text-white/40 text-xs mt-5">
+            Tu n'as pas reçu de code ou tu n'as plus accès à cette adresse ?
+            Contacte ton coach, il peut t'aider.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
