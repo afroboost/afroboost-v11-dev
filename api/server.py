@@ -32560,6 +32560,227 @@ async def v296_subscriber_token(request: Request):
             "secret_set": jwt_secret_is_set(), "analytics_id": _c9b_id}
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# LOT B3-S1.1 — OTP PAR E-MAIL, ET UN JETON QUI PROUVE QUELQUE CHOSE
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# CES DEUX ROUTES NE DURCISSENT RIEN. `get_subscriber_space` n'est pas touché,
+# `/subscriber/token` non plus, le frontend non plus. Elles ajoutent le seul
+# facteur d'identité qui manquait : la preuve qu'on possède la boîte e-mail
+# enregistrée. Le durcissement sera un lot suivant, une fois le parcours mesuré.
+#
+# POURQUOI L'E-MAIL, ET PAS WHATSAPP. Mesure du 27/08/2026 sur les 29 espaces
+# encore utilisables : 100 % joignables par e-mail, 96,6 % par WhatsApp.
+# WhatsApp n'ajouterait aucune couverture, mais imposerait un template Meta
+# AUTHENTICATION à faire approuver, un coût par envoi, et une dépendance déjà
+# tombée cette année. L'e-mail survit en outre à un changement de téléphone.
+#
+# AUCUN ORACLE, ET C'EST LA PROPRIÉTÉ CENTRALE. Les deux routes répondent la
+# MÊME chose que le code existe ou non, que l'adresse corresponde ou non. Elles
+# ne confirment jamais qu'un code est valide — sans quoi elles remplaceraient
+# la fuite qu'on ferme par une autre.
+
+_B3S1_COLL_OTP = "subscriber_otp"
+_B3S1_COLL_SESSIONS = "subscriber_sessions"
+
+
+async def _b3s1_contact_enregistre(code_upper: str, slug: str = ""):
+    """(email_enregistre, coach_id) pour ce code — ou (None, None).
+
+    L'adresse vient TOUJOURS de la base, jamais du corps de la requête : c'est
+    ce qui empêche de se faire envoyer l'OTP chez soi en présentant le code
+    d'un autre. Même principe que `_v261_resolve_subscriber` pour le nom.
+    """
+    _m = {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}
+    if slug:
+        # Groupe : c'est le MEMBRE désigné par le slug qui est authentifié, pas
+        # le titulaire — et la liste des autres membres n'est jamais lue ici.
+        membre = await db.code_members.find_one(dict(_m, slug=slug), {"_id": 0, "email": 1})
+        if not membre:
+            return None, None
+        _em = (membre.get("email") or "").strip().lower()
+        _dc = await db.discount_codes.find_one(_m, {"_id": 0, "coach_id": 1})
+        return (_em or None), ((_dc or {}).get("coach_id") or DEFAULT_COACH_ID)
+    _dc = await db.discount_codes.find_one(_m, {"_id": 0, "assignedEmail": 1, "coach_id": 1})
+    _em = ((_dc or {}).get("assignedEmail") or "").strip().lower()
+    _cid = (_dc or {}).get("coach_id")
+    if not _em:
+        _sub = await db.subscriptions.find_one(_m, {"_id": 0, "email": 1, "coach_id": 1})
+        _em = ((_sub or {}).get("email") or "").strip().lower()
+        _cid = _cid or (_sub or {}).get("coach_id")
+    return (_em or None), (_cid or DEFAULT_COACH_ID)
+
+
+@api_router.post("/subscriber/otp/request")
+async def b3s1_demander_otp(request: Request):
+    """Envoie un code à 6 chiffres à l'adresse ENREGISTRÉE pour ce code.
+
+    Réponse toujours identique — aucune information sur l'existence du code ni
+    sur l'adresse. Aucun OTP, aucune adresse et aucun secret dans les journaux.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    code = (body.get("code") or "").strip().upper()
+    email = (body.get("email") or "").strip().lower()
+    slug = (body.get("m") or "").strip()
+    from api.routes.shared import (lotb3s1_peut_demander, lotb3s1_generer_otp,
+                                   lotb3s1_empreinte, LOTB3S1_REPONSE_NEUTRE,
+                                   LOTB3S1_OTP_MINUTES, LOTB3S1_FENETRE_MINUTES)
+    neutre = {"success": True, "message": LOTB3S1_REPONSE_NEUTRE}
+    if not code or not email:
+        return neutre
+
+    _maintenant = datetime.now(timezone.utc)
+    _depuis = (_maintenant - timedelta(minutes=LOTB3S1_FENETRE_MINUTES)).isoformat()
+    _filtre = {"code": code, "slug": slug or "", "created_at": {"$gte": _depuis}}
+    try:
+        _recentes = await db[_B3S1_COLL_OTP].count_documents(_filtre)
+        _dernier = await db[_B3S1_COLL_OTP].find_one(
+            {"code": code, "slug": slug or "", "envoye": True},
+            {"_id": 0, "created_at": 1}, sort=[("created_at", -1)])
+    except Exception as _err:
+        logger.warning("[B3-S1] compteur de demandes illisible (%s)", type(_err).__name__)
+        return neutre
+    _ok, _motif = lotb3s1_peut_demander(
+        _recentes, (_dernier or {}).get("created_at"), _maintenant)
+    if not _ok:
+        # 429 assumé : c'est une limite de débit, pas une information sur le
+        # code. Elle se déclenche même pour un code inexistant, donc n'apprend rien.
+        logger.info("[B3-S1] demande refusee (%s)", _motif)
+        raise HTTPException(status_code=429,
+                            detail="Trop de demandes. Réessaie dans quelques minutes.")
+
+    _enregistre, _coach = await _b3s1_contact_enregistre(code, slug)
+    _correspond = bool(_enregistre) and _enregistre == email
+    _doc = {
+        "id": str(uuid.uuid4()), "code": code, "slug": slug or "",
+        "created_at": _maintenant.isoformat(),
+        "expires_at": (_maintenant + timedelta(minutes=LOTB3S1_OTP_MINUTES)).isoformat(),
+        "essais": 0, "used": False, "envoye": bool(_correspond),
+        "coach_id": _coach if _correspond else None,
+    }
+    if _correspond:
+        _otp = lotb3s1_generer_otp()
+        _doc["otp_empreinte"] = lotb3s1_empreinte(_otp, code)   # jamais l'OTP en clair
+        _doc["email"] = _enregistre
+    # La ligne est écrite MÊME quand l'adresse ne correspond pas : c'est elle
+    # qui alimente la limite de débit. Sans OTP, elle n'ouvre rien.
+    try:
+        await db[_B3S1_COLL_OTP].insert_one(dict(_doc))
+    except Exception as _err:
+        logger.warning("[B3-S1] demande non enregistree (%s)", type(_err).__name__)
+        return neutre
+
+    if _correspond:
+        try:
+            if _RESEND_OK and _RESEND_KEY:
+                import resend as _r
+                _r.api_key = _RESEND_KEY
+                await asyncio.to_thread(_r.Emails.send, {
+                    "from": "Afroboost <notifications@afroboost.com>",
+                    "to": [_enregistre],
+                    "subject": "Ton code de vérification Afroboost",
+                    "html": (
+                        '<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">'
+                        '<p>Voici ton code de vérification :</p>'
+                        '<p style="font-size:30px;font-weight:bold;letter-spacing:6px;">%s</p>'
+                        '<p>Il est valable %d minutes et ne sert qu\'une fois.</p>'
+                        '<p style="color:#666;font-size:13px;">Si tu n\'es pas à l\'origine de '
+                        'cette demande, ignore cet e-mail : rien n\'a été ouvert.</p></div>'
+                        % (_otp, LOTB3S1_OTP_MINUTES)),
+                })
+        except Exception as _err:
+            # L'envoi qui échoue ne dit rien de plus à l'appelant : même réponse.
+            logger.warning("[B3-S1] envoi impossible (%s)", type(_err).__name__)
+    return neutre
+
+
+@api_router.post("/subscriber/otp/verify")
+async def b3s1_verifier_otp(request: Request):
+    """Vérifie le code à 6 chiffres et délivre le jeton d'espace.
+
+    Le jeton porte le code, l'e-mail, le `coach_id` et un `jti` : c'est ce
+    dernier qui rend la session RÉVOCABLE, ce que le jeton V296 ne permet pas.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    code = (body.get("code") or "").strip().upper()
+    email = (body.get("email") or "").strip().lower()
+    otp = (body.get("otp") or "").strip()
+    slug = (body.get("m") or "").strip()
+    from api.routes.shared import (lotb3s1_otp_valide, lotb3s1_make_token,
+                                   LOTB3S1_JETON_JOURS)
+    # Un seul message de refus pour TOUS les cas : code inconnu, adresse qui ne
+    # correspond pas, OTP faux, expiré, déjà consommé, essais épuisés. Distinguer
+    # reviendrait à rendre la route bavarde sur ce qui existe.
+    _refus = HTTPException(status_code=400, detail="Code de vérification invalide ou expiré.")
+    if not code or not email or not otp:
+        raise _refus
+
+    try:
+        _doc = await db[_B3S1_COLL_OTP].find_one(
+            {"code": code, "slug": slug or "", "used": False, "envoye": True},
+            {"_id": 0}, sort=[("created_at", -1)])
+    except Exception as _err:
+        logger.warning("[B3-S1] verification illisible (%s)", type(_err).__name__)
+        raise _refus
+    # L'adresse présentée doit être celle à qui l'OTP a été envoyé.
+    if not _doc or str(_doc.get("email") or "").strip().lower() != email:
+        raise _refus
+
+    _ok, _motif = lotb3s1_otp_valide(_doc, otp, code)
+    if not _ok:
+        if _motif == "otp_incorrect":
+            # Une tentative ratée COMPTE : c'est ce qui borne l'essai à 5.
+            try:
+                await db[_B3S1_COLL_OTP].update_one({"id": _doc.get("id")},
+                                                    {"$inc": {"essais": 1}})
+            except Exception:
+                pass
+        logger.info("[B3-S1] verification refusee (%s)", _motif)
+        raise _refus
+
+    # USAGE UNIQUE : on ferme le document AVANT d'émettre quoi que ce soit, et
+    # la condition `used: False` fait de cette écriture le jeton d'unicité —
+    # deux requêtes simultanées ne peuvent pas la gagner toutes les deux.
+    try:
+        _prise = await db[_B3S1_COLL_OTP].update_one(
+            {"id": _doc.get("id"), "used": False},
+            {"$set": {"used": True, "used_at": datetime.now(timezone.utc).isoformat()}})
+        if not getattr(_prise, "modified_count", 0):
+            raise _refus
+    except HTTPException:
+        raise
+    except Exception as _err:
+        logger.warning("[B3-S1] consommation impossible (%s)", type(_err).__name__)
+        raise _refus
+
+    _coach = _doc.get("coach_id") or DEFAULT_COACH_ID
+    _jeton, _jti = lotb3s1_make_token(code, email, _coach, slug or None)
+    if not _jeton:
+        # `JWT_SECRET` absent : aucun jeton n'est émis, et on le dit clairement
+        # plutôt que de rendre une chaîne vide qui passerait pour un succès.
+        raise HTTPException(status_code=503,
+                            detail="Vérification indisponible. Réessaie plus tard.")
+    _fin = datetime.now(timezone.utc) + timedelta(days=LOTB3S1_JETON_JOURS)
+    try:
+        await db[_B3S1_COLL_SESSIONS].insert_one({
+            "jti": _jti, "code": code, "email": email, "coach_id": _coach,
+            "slug": slug or "", "created_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": _fin.isoformat(), "revoked": False,
+        })
+    except Exception as _err:
+        logger.warning("[B3-S1] session non enregistree (%s)", type(_err).__name__)
+        raise HTTPException(status_code=503,
+                            detail="Vérification indisponible. Réessaie plus tard.")
+    logger.info("[B3-S1] session ouverte pour un espace (jti=%s)", str(_jti)[:8])
+    return {"success": True, "token": _jeton, "expires_at": _fin.isoformat()}
+
+
 # === STAFF ACCESS: Code d'accès pour scanner uniquement ===
 @api_router.post("/staff/login")
 async def staff_login(request: Request):

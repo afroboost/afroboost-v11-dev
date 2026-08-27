@@ -5379,3 +5379,214 @@ def lotb3_code_decrementable(docs, aujourdhui=None):
             return _canoniques[0].get("id"), "canonical"
         return None, "ambigu"
     return vivants[0].get("id"), "unique"
+
+
+# =====================================================================
+# LOT B3-S1.1 — PROUVER QU'ON POSSÈDE SON E-MAIL, PAS SEULEMENT SON CODE
+# =====================================================================
+#
+# CE QUE CE LOT CORRIGE À LA RACINE. `GET /api/subscriber/space/{code}` sert
+# aujourd'hui l'e-mail, le téléphone, les objectifs, le solde, les réservations
+# et — pour un groupe — la liste des membres, à quiconque connaît le code. Or
+# sur 63 codes en base, 37 sont des libellés lisibles du type prénom + année :
+# ils ne demandent aucune force brute.
+#
+# ET LE JETON V296 NE POUVAIT PAS SERVIR DE PREUVE. `POST /subscriber/token`
+# (api/server.py:32458) n'exige que le code : son contrôle d'appartenance est
+# conditionné par `if email:` (api/server.py:32499), donc entièrement sauté
+# quand le corps n'en porte pas. Connaître le code suffisait à obtenir le
+# jeton — un jeton dérivé du secret qu'il était censé protéger ne protège rien.
+#
+# LE FACTEUR RETENU EST L'E-MAIL, ET C'EST LA MESURE QUI L'A CHOISI :
+# sur les 29 espaces encore utilisables, **100 % sont joignables par e-mail**
+# et 96,6 % par WhatsApp. WhatsApp n'apporterait aucune couverture de plus,
+# mais exigerait un template AUTHENTICATION à faire approuver par Meta, un coût
+# par envoi, et une dépendance déjà tombée en panne cette année. L'e-mail
+# survit en outre à un changement de téléphone.
+#
+# RIEN N'EST DURCI DANS CE LOT. Ces fonctions n'ont aucun appelant en
+# production : elles préparent le terrain, elles ne ferment aucune porte.
+
+LOTB3S1_OTP_CHIFFRES = 6
+LOTB3S1_OTP_MINUTES = 10          # durée de vie d'un code
+LOTB3S1_OTP_ESSAIS_MAX = 5        # au-delà, le code est mort
+LOTB3S1_RENVOI_SECONDES = 120     # anti-renvoi, calqué sur auth_routes.py:660
+LOTB3S1_DEMANDES_MAX = 3          # sur la fenêtre ci-dessous
+LOTB3S1_FENETRE_MINUTES = 10      # même barème que /subscriber/recover
+LOTB3S1_JETON_JOURS = 30
+
+# La réponse est TOUJOURS celle-ci, que le code existe ou non, que l'e-mail
+# corresponde ou non. C'est ce qui empêche la route de servir d'oracle : on ne
+# confirme jamais qu'un code est valide, ni qu'une adresse est la bonne.
+LOTB3S1_REPONSE_NEUTRE = ("Si ces informations correspondent à un espace, "
+                          "un code de vérification vient d'être envoyé par e-mail.")
+
+
+def lotb3s1_generer_otp() -> str:
+    """Six chiffres, tirés par `secrets` — jamais `random`.
+
+    `checkout_routes.py:1906` fabrique encore des codes d'accès avec `random`,
+    un générateur NON cryptographique. On ne reproduit pas cette faiblesse pour
+    un secret d'authentification.
+    """
+    import secrets as _s
+    return "".join(str(_s.randbelow(10)) for _ in range(LOTB3S1_OTP_CHIFFRES))
+
+
+def lotb3s1_empreinte(otp, code) -> str:
+    """L'OTP n'est JAMAIS stocké en clair — seulement son empreinte.
+
+    Poivrée par `JWT_SECRET` et salée par le code : deux abonnés qui tirent le
+    même OTP n'ont pas la même empreinte, et une fuite de la collection ne
+    permet pas de rejouer un code sans connaître le secret du serveur.
+    """
+    import hashlib as _h
+    poivre = os.environ.get("JWT_SECRET", "")
+    brut = "%s|%s|%s" % (str(otp or ""), str(code or "").strip().upper(), poivre)
+    return _h.sha256(brut.encode("utf-8")).hexdigest()
+
+
+def lotb3s1_peut_demander(demandes_recentes, dernier_envoi_iso=None, maintenant=None):
+    """(ok, motif) — cette demande d'OTP est-elle autorisée ? FONCTION PURE.
+
+    Deux garde-fous distincts, et ils ne disent pas la même chose :
+      * `renvoi_trop_rapide` — moins de 2 min depuis le dernier envoi ;
+      * `trop_de_demandes`   — plus de 3 demandes sur 10 min.
+    Le premier protège la boîte mail de l'abonné, le second protège le serveur.
+    """
+    _now = maintenant or datetime.now(timezone.utc)
+    try:
+        _n = int(demandes_recentes or 0)
+    except (TypeError, ValueError):
+        _n = 0
+    if _n >= LOTB3S1_DEMANDES_MAX:
+        return False, "trop_de_demandes"
+    if dernier_envoi_iso:
+        _prec = n2_instant_reel(dernier_envoi_iso)
+        if _prec is not None:
+            _ecoule = (_now - _prec).total_seconds()
+            if 0 <= _ecoule < LOTB3S1_RENVOI_SECONDES:
+                return False, "renvoi_trop_rapide"
+    return True, "ok"
+
+
+def lotb3s1_otp_valide(doc, otp, code, maintenant=None):
+    """(ok, motif) — ce code saisi ouvre-t-il ce document ? FONCTION PURE.
+
+    L'ordre des refus est délibéré : consommé, puis expiré, puis essais
+    épuisés, et SEULEMENT ENSUITE la comparaison. Un document déjà mort ne doit
+    pas consommer une tentative de plus, et surtout la comparaison ne doit
+    jamais s'exécuter sur un document hors d'usage.
+    """
+    if not doc:
+        return False, "aucune_demande"
+    if doc.get("used") is True:
+        return False, "deja_consomme"
+    _exp = doc.get("expires_at")
+    if _exp:
+        _fin = n2_instant_reel(_exp)
+        if _fin is not None and (maintenant or datetime.now(timezone.utc)) > _fin:
+            return False, "expire"
+    try:
+        _essais = int(doc.get("essais") or 0)
+    except (TypeError, ValueError):
+        _essais = 0
+    if _essais >= LOTB3S1_OTP_ESSAIS_MAX:
+        return False, "essais_epuises"
+    _saisi = str(otp or "").strip()
+    if not _saisi or not _saisi.isdigit() or len(_saisi) != LOTB3S1_OTP_CHIFFRES:
+        return False, "format_invalide"
+    # Comparaison à temps constant : une comparaison naïve laisse fuir la
+    # position du premier caractère faux.
+    import hmac as _hmac
+    if not _hmac.compare_digest(lotb3s1_empreinte(_saisi, code),
+                                str(doc.get("otp_empreinte") or "")):
+        return False, "otp_incorrect"
+    return True, "ok"
+
+
+def lotb3s1_make_token(code, email, coach_id, member_slug=None, jti=None,
+                       days=LOTB3S1_JETON_JOURS):
+    """Le jeton d'espace, DISTINCT de V296 — et ce qu'il porte en plus.
+
+    `type: "subscriber_space"` (V296 pose `"subscriber"`) : les deux ne peuvent
+    pas être confondus, et le nouveau ne sera jamais accepté là où l'ancien
+    l'était, ni l'inverse.
+
+    Il porte le `coach_id` — que V296 n'a PAS — donc l'isolation multi-tenant
+    voyage avec le jeton au lieu d'être redécidée à chaque route. Et un `jti`,
+    sans lequel un JWT ne se révoque pas : c'est lui qu'on cherchera en base.
+
+    Renvoie '' si `JWT_SECRET` est absent : aucun jeton n'est émis, comme V296.
+    """
+    secret = os.environ.get("JWT_SECRET", "")
+    if not secret:
+        return "", ""
+    import uuid as _uuid
+    _jti = jti or str(_uuid.uuid4())
+    try:
+        import jwt as _pyjwt
+        now = datetime.now(timezone.utc)
+        charge = {
+            "type": "subscriber_space",
+            "code": (code or "").strip().upper(),
+            "email": (email or "").strip().lower(),
+            "coach_id": (coach_id or "").strip().lower(),
+            "slug": (member_slug or "") or None,
+            "jti": _jti,
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(days=days)).timestamp()),
+        }
+        return _pyjwt.encode(charge, secret, algorithm="HS256"), _jti
+    except Exception as _err:
+        logger.warning("[B3-S1] jeton non emis (%s)", type(_err).__name__)
+        return "", ""
+
+
+def lotb3s1_lire_token(jeton):
+    """La charge du jeton si la signature tient ET que c'est bien un jeton
+    d'espace, sinon None. La révocation, elle, se vérifie EN BASE (`jti`) —
+    une signature valide ne prouve pas qu'une session est encore ouverte.
+
+    AUCUN APPELANT EN PRODUCTION dans ce lot : `get_subscriber_space` n'est pas
+    touché. Cette fonction existe pour que le durcissement suivant n'ait plus
+    qu'à l'appeler, et pour être testable dès maintenant.
+    """
+    secret = os.environ.get("JWT_SECRET", "")
+    if not secret or not jeton:
+        return None
+    try:
+        import jwt as _pyjwt
+        charge = _pyjwt.decode(str(jeton), secret, algorithms=["HS256"])
+    except Exception:
+        return None
+    if charge.get("type") != "subscriber_space":
+        return None          # un jeton V296 ne vaut PAS un jeton d'espace
+    return charge
+
+
+def lotb3s1_session_utilisable(session, charge, maintenant=None):
+    """(ok, motif) — la session correspondant à ce jeton est-elle vivante ?
+
+    Le jeton peut être parfaitement signé et la session close : c'est
+    exactement ce que « révocable côté serveur » veut dire.
+    """
+    if not session:
+        return False, "session_inconnue"
+    if session.get("revoked") is True:
+        return False, "revoquee"
+    _exp = session.get("expires_at")
+    if _exp:
+        _fin = n2_instant_reel(_exp)
+        if _fin is not None and (maintenant or datetime.now(timezone.utc)) > _fin:
+            return False, "expiree"
+    # Le jeton ne doit pas pouvoir servir pour un AUTRE code, membre ou tenant :
+    # on recompare, la signature ne dit rien de l'appariement métier.
+    for cle in ("code", "email", "coach_id"):
+        _a = str((charge or {}).get(cle) or "").strip().lower()
+        _b = str(session.get(cle) or "").strip().lower()
+        if _a != _b:
+            return False, "appariement_%s" % cle
+    if str((charge or {}).get("slug") or "") != str(session.get("slug") or ""):
+        return False, "appariement_slug"
+    return True, "ok"
