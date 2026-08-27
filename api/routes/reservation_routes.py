@@ -1745,8 +1745,48 @@ async def validate_reservation(reservation_code: str, request: Request):
     return {"success": True, "message": "Réservation validée", "reservation": reservation}
 
 @reservation_router.delete("/reservations/{reservation_id}")
-async def delete_reservation(reservation_id: str):
-    """Supprime une réservation et recrédite la séance à l'abonné si applicable — V216"""
+async def delete_reservation(reservation_id: str, request: Request):
+    """Supprime une réservation et recrédite la séance à l'abonné si applicable — V216
+
+    LOT B3-S0 — CETTE ROUTE N'AVAIT AUCUNE AUTHENTIFICATION, ET NE POUVAIT PAS
+    EN AVOIR : sa signature ne recevait même pas la requête HTTP. Elle était la
+    SEULE de ce routeur dans ce cas — ses voisines portent `_r11_scanneur`
+    (validation, staff), `coach_jwt_email` (export CSV) ou `is_super_admin`
+    (liste des réservations). Le trou n'était pas un oubli de garde, c'était
+    l'absence du paramètre qui aurait permis d'en poser une.
+
+    CE QUE CELA OUVRAIT, chaîne vérifiée en production le 27/08/2026 :
+    `GET /api/subscriber/space/{code}` rend la liste des réservations AVEC leurs
+    `id` sans aucune authentification ; un `DELETE` suffisait ensuite à
+    SUPPRIMER DÉFINITIVEMENT la réservation (`delete_one`, aucun archivage) et à
+    recréditer un forfait. Plusieurs codes d'accès sont des libellés devinables,
+    et l'espace produit un lien partageable `/espace/<code>`. S'y ajoutait un
+    contournement métier : le délai d'annulation et la règle d'essai ne sont
+    vérifiés que par le chemin abonné (`api/server.py`, `cancel_reservation_from_space`).
+
+    DEUX GARDES, TOUTES DEUX DÉJÀ EN SERVICE DANS CE FICHIER — on n'écrit pas un
+    second moteur d'authentification :
+      * `_r11_scanneur`               : jeton signé coach/admin, 403 sinon ;
+      * `_r11_verifier_proprietaire`  : super-admin, sinon `coach_id` du document.
+
+    UNE SEULE DIFFÉRENCE AVEC LES ROUTES DE VALIDATION, ET ELLE EST DÉLIBÉRÉE.
+    `_r11_verifier_proprietaire` LAISSE PASSER une donnée orpheline (`coach_id`
+    vide) : c'est un choix assumé là où l'action est de VALIDER une présence —
+    refuser bloquerait un portier légitime devant une donnée ancienne. Ici
+    l'action est DESTRUCTIVE et irréversible : on ne supprime pas un document
+    dont on ne peut pas prouver le propriétaire. Mesure du 27/08/2026 :
+    143 réservations sur 143 portent un `coach_id`, ce refus ne ferme donc
+    aujourd'hui aucun parcours réel.
+
+    LE REFUS D'AUTORISATION RÉPOND 404, PAS 403. Un 403 confirmerait à
+    l'appelant que la réservation EXISTE chez quelqu'un d'autre : ce serait un
+    oracle d'énumération. « Pas à toi » et « n'existe pas » se ressemblent donc
+    de l'extérieur — le journal, lui, conserve la vraie raison.
+    """
+    # L'IDENTITÉ D'ABORD, avant même de lire le document : un anonyme n'apprend
+    # rien, pas même qu'un identifiant est valide.
+    _b3s0_appelant = await _r11_scanneur(request)
+
     # Récupérer la réservation avant suppression pour recréditer
     reservation = await db.reservations.find_one(
         {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]},
@@ -1754,6 +1794,19 @@ async def delete_reservation(reservation_id: str):
     )
     if not reservation:
         raise HTTPException(status_code=404, detail="Réservation introuvable")
+
+    _b3s0_introuvable = HTTPException(status_code=404, detail="Réservation introuvable")
+    if not (reservation.get("coach_id") or "").strip() and not is_super_admin(_b3s0_appelant):
+        logger.warning("[B3-S0] REFUS suppression %s : reservation sans coach_id, "
+                       "propriete non prouvable", reservation_id)
+        raise _b3s0_introuvable
+    try:
+        _r11_verifier_proprietaire(_b3s0_appelant, reservation)
+    except HTTPException as _b3s0_err:
+        if _b3s0_err.status_code == 403:
+            # Le motif reel est deja journalise par `_r11_verifier_proprietaire`.
+            raise _b3s0_introuvable
+        raise
 
     # Recréditer la séance si l'abonné avait un code promo / abonnement
     promo_code = (reservation.get("promoCode") or "").strip().upper()
