@@ -3082,6 +3082,76 @@ async def qr_scan_validate(request: Request):
         raise HTTPException(status_code=500, detail=f"Erreur interne scanner: {type(e).__name__}: {str(e)}")
 
 
+async def _lotb0_refleter_la_consommation(code: str, used_sessions_apres: int):
+    """LOT B0 — le scan a debite une seance : le CODE doit l'apprendre aussi.
+
+    LE DEFAUT, PROUVE PAR LES DONNEES. Ce chemin ecrivait `used_sessions +1` et
+    `remaining_sessions -1` sur `subscriptions`, et NE TOUCHAIT JAMAIS
+    `discount_codes.used`. Trois codes de production le montrent a la seconde
+    pres — `AFR-0C60A3`, `AFR-B7E009`, `AFR-E77BD4` : l'abonnement passe a
+    `used: 1` a l'instant exact du `validatedAt` d'une reservation
+    `source: qr_scan_coach`, pendant que le code reste a `used: 0`. Depuis le
+    LOT A, la page « Code promo » fait foi : une presence invisible pour elle
+    est une seance RENDUE — pour deux de ces trois cas, un cours d'essai gratuit
+    une deuxieme fois.
+
+    CE QUE CETTE FONCTION NE FAIT PAS, ET C'EST DELIBERE :
+      * elle ne decide RIEN sur la consommation — celle-ci a deja eu lieu, elle
+        se contente de la refleter ;
+      * elle ne choisit JAMAIS entre plusieurs fiches. Deux fiches pour un meme
+        code, c'est une ambiguite que le LOT A sait deja nommer et que le LOT C
+        tranchera : ici on s'abstient et on le journalise ;
+      * elle ne ressuscite aucun code. `$inc` ne peut qu'AUGMENTER `used`, donc
+        que reduire le restant : un code expire ou epuise le reste.
+
+    `$inc` et non `$set` : deux portiers qui scannent en meme temps ne doivent
+    pas s'ecraser l'un l'autre. L'increment est atomique AU NIVEAU DU DOCUMENT.
+
+    Aucune exception ne remonte : quelqu'un attend a la porte. Une trace
+    d'historique qui echoue ne doit pas lui refuser l'entree.
+    """
+    try:
+        _fiches = await db.discount_codes.find(
+            {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}},
+            {"_id": 0, "id": 1, "used": 1},
+        ).to_list(50)
+    except Exception as _err:
+        logger.warning("[LOT B0] %s : fiches illisibles (%s) — compteur du code inchange",
+                       code, type(_err).__name__)
+        return
+    if not _fiches:
+        # Un abonnement peut exister sans fiche `discount_codes` : il n'y a
+        # alors aucun compteur a refleter, et aucune divergence possible.
+        logger.info("[LOT B0] %s : aucune fiche code — rien a refleter", code)
+        return
+    if len(_fiches) > 1:
+        logger.warning("[LOT B0] %s : %d fiches concurrentes — AUCUNE ecriture "
+                       "(le code reste AMBIGU, cf. LOT C)", code, len(_fiches))
+        return
+    _cible = _fiches[0].get("id")
+    if not _cible:
+        logger.warning("[LOT B0] %s : fiche sans `id` — aucune ecriture ciblee possible", code)
+        return
+    _avant = _fiches[0].get("used")
+    try:
+        await db.discount_codes.update_one({"id": _cible}, {"$inc": {"used": 1}})
+    except Exception as _err:
+        # Le seul cas ou une divergence subsiste. On la NOMME dans le journal :
+        # c'est ce marqueur que la sonde de coherence cherchera.
+        logger.error("[LOT B0] %s : ECART — abonnement debite, code NON incremente (%s)",
+                     code, type(_err).__name__)
+        return
+    try:
+        _apres = int(float(_avant or 0)) + 1
+    except (TypeError, ValueError):
+        _apres = None
+    # Observation en LECTURE SEULE, sans aucune donnee personnelle : elle permet
+    # de confirmer sur un VRAI scan que l'invariant tient, sans rejouer un scan.
+    logger.info("[LOT B0] %s : used %s -> %s | used_sessions=%s | invariant=%s",
+                code, _avant, _apres, used_sessions_apres,
+                "OK" if _apres == used_sessions_apres else "ECART")
+
+
 async def _qr_scan_validate_inner(request: Request):
     """V213d: Logique interne du scan QR."""
     # R11 — PREMIERE CHOSE FAITE, AVANT MEME DE LIRE LE CORPS : qui scanne ?
@@ -3362,6 +3432,18 @@ async def _qr_scan_validate_inner(request: Request):
     if new_remaining <= 0:
         sub_update["status"] = "completed"
     await db.subscriptions.update_one({"id": sub_id}, {"$set": sub_update})
+    # LOT B0 : et TOUT DE SUITE APRES, le code apprend la meme consommation.
+    #
+    # L'ORDRE EST CHOISI, PAS SUBI. Les deux ecritures portent sur deux
+    # documents : rien ici ne peut les rendre atomiques ensemble sans une
+    # transaction, et en ouvrir une sur ce chemin serait un refactor, pas un
+    # correctif. Reste donc a choisir QUEL demi-etat une panne laisserait.
+    # L'abonnement d'abord : si le processus tombe entre les deux, le code
+    # affiche une seance de PLUS que la realite — c'est exactement l'etat
+    # d'aujourd'hui, et il penche du cote du client. L'ordre inverse lui
+    # retirerait une seance qu'il a payee. La fenetre se compte en
+    # millisecondes et l'ecart eventuel est journalise `ECART`.
+    await _lotb0_refleter_la_consommation(code, new_used)
 
     new_res_code = _generate_afro_code()
     new_reservation = {

@@ -151,6 +151,15 @@ class _Collection:
         for d in self.docs:
             if _match(d, filtre):
                 d.update(maj.get("$set", {}))
+                # LOT B0 : `$inc` est simule parce que le correctif du scan
+                # l'utilise a dessein — deux portiers qui scannent en meme temps
+                # ne doivent pas s'ecraser. Un `$set` calcule cote client aurait
+                # cette faille ; le banc doit donc savoir lire l'operateur sur.
+                for _cle, _pas in (maj.get("$inc") or {}).items():
+                    try:
+                        d[_cle] = int(float(d.get(_cle) or 0)) + int(_pas)
+                    except (TypeError, ValueError):
+                        d[_cle] = _pas
                 self.ecritures.append(("update", dict(filtre), maj))
                 return _MajResultat(1)
         return _MajResultat(0)
@@ -224,9 +233,22 @@ async def _c9_presence_faux(reservation, deja):
 
 
 class _Journal:
-    def info(self, *a, **k): pass
-    def warning(self, *a, **k): pass
-    def error(self, *a, **k): pass
+    """LOT B0 : le journal RETIENT desormais ses lignes. Quand un correctif
+    choisit de NE PAS ecrire, la seule trace de cette decision est le journal —
+    un test qui ne peut pas le lire ne peut pas prouver l'abstention."""
+
+    def __init__(self):
+        self.lignes = []
+
+    def _noter(self, niveau, msg, a):
+        try:
+            self.lignes.append("%s %s" % (niveau, (str(msg) % a) if a else str(msg)))
+        except (TypeError, ValueError):
+            self.lignes.append("%s %s %r" % (niveau, msg, a))
+
+    def info(self, msg="", *a, **k): self._noter("INFO", msg, a)
+    def warning(self, msg="", *a, **k): self._noter("WARNING", msg, a)
+    def error(self, msg="", *a, **k): self._noter("ERROR", msg, a)
 
 
 def construire(db):
@@ -264,6 +286,9 @@ def construire(db):
                 # SCAN — le droit utilise a cote du cours suivi. Absent des
                 # commits anterieurs, donc simplement ignore la aussi.
                 "_scan_quand", "_scan_enrichir",
+                # LOT B0 — le reflet de la consommation sur le code. Absent des
+                # commits anterieurs, donc simplement ignore la aussi.
+                "_lotb0_refleter_la_consommation",
                 "_qr_scan_validate_inner"):
         _code = extraire(nom, obligatoire=False)
         if _code:
