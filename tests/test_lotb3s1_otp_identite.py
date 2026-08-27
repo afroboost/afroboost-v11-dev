@@ -147,9 +147,12 @@ def espace(db):
           "timedelta": timedelta, "asyncio": asyncio, "uuid": __import__("uuid"),
           "logger": Journal(), "HTTPException": HTTPExc, "Request": object,
           "DEFAULT_COACH_ID": COACH,
-          # AUCUN e-mail reel : la garde d'envoi est fermee, et le mouchard
-          # ci-dessus prouve que rien ne part meme si elle s'ouvrait.
-          "_RESEND_OK": False, "_RESEND_KEY": ""}
+          # LES NOMS REELS DE `server.py`, ET EUX SEULS. Le banc precedent
+          # fournissait `_RESEND_OK` / `_RESEND_KEY` — des noms qui n'existent
+          # PAS dans `server.py` (ils vivent dans `reservation_routes.py`). Il
+          # CREAIT donc ce que la production n'avait pas, et masquait le
+          # `NameError` qui a fait qu'aucun OTP n'est jamais parti.
+          "RESEND_AVAILABLE": True, "RESEND_API_KEY": "cle-de-banc"}
     for n in ast.walk(arbre):
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in (
                 "_B3S1_COLL_OTP", "_B3S1_COLL_SESSIONS"):
@@ -208,6 +211,7 @@ async def principal():
     db = monde()
     ns = espace(db)
     rep, err = await demander(ns, code=CODE, email=MAIL)
+    monde_etape1 = db
     verifier("1. demande acceptee", err is None and rep.get("success") is True, err)
     verifier("1. une ligne OTP est creee", len(db["subscriber_otp"].docs) == 1, "")
     d = db["subscriber_otp"].docs[0]
@@ -215,7 +219,13 @@ async def principal():
              "otp" not in d and "otp_empreinte" in d, sorted(d.keys()))
     verifier("1. la ligne porte une expiration et un compteur d'essais",
              d.get("expires_at") and d.get("essais") == 0 and d.get("used") is False, "")
-    verifier("1. AUCUN e-mail reel n'est parti", ENVOIS == [], len(ENVOIS))
+    # ASSERTION INVERSEE : elle exigeait `ENVOIS == []`, ce qui n'etait vrai
+    # QUE PARCE QUE le `NameError` empechait d'atteindre l'envoi. Elle
+    # verrouillait le defaut. Ce qui compte n'est pas qu'aucun envoi n'ait lieu,
+    # c'est qu'aucun envoi REEL ne parte : le moteur est un mouchard.
+    verifier("1. l'envoi est REELLEMENT atteint (et simule)", len(ENVOIS) == 1, len(ENVOIS))
+    verifier("1. le destinataire est l'adresse ENREGISTREE",
+             ENVOIS and ENVOIS[0].get("to") == [MAIL], "")
     verifier("1. aucun OTP ni adresse dans le journal",
              not any("@" in l or re.search(r"\b\d{6}\b", l) for l in ns["logger"].lignes),
              ns["logger"].lignes)
@@ -232,6 +242,18 @@ async def principal():
              and "otp_empreinte" not in db1["subscriber_otp"].docs[0], "")
     verifier("2. ... mais la demande est comptee (limite de debit)",
              len(db1["subscriber_otp"].docs) == 1, "")
+    verifier("2. adresse fausse -> l'envoi n'est JAMAIS appele",
+             len(ENVOIS) == 1, len(ENVOIS))   # seul l'envoi legitime de l'etape 1
+
+    # L'OTP transmis au moteur d'e-mail est-il bien CELUI qui est stocke ?
+    # Sans ce controle, un envoi pourrait partir avec un code sans rapport.
+    # Acces DEFENSIF : quand l'envoi n'est pas atteint, le banc doit RAPPORTER
+    # l'echec, pas planter — un rouge illisible ne sert a personne.
+    _corps_mail = ENVOIS[0].get("html", "") if ENVOIS else ""
+    _otp_attendu = otp_de(monde_etape1)
+    verifier("2. l'OTP transmis au moteur est celui dont l'empreinte est stockee",
+             bool(_otp_attendu) and _otp_attendu in _corps_mail,
+             "aucun envoi capte" if not ENVOIS else "")
 
     # ══ 3. OTP INCORRECT, PUIS 5e TENTATIVE ═══════════════════════════════
     db = monde(); ns = espace(db)
@@ -353,8 +375,90 @@ async def principal():
              err is not None and rep is None, rep)
 
     # ══ 10. AUCUN E-MAIL REEL SUR L'ENSEMBLE DU BANC ══════════════════════
-    verifier("10. mouchard d'envoi : ZERO e-mail parti sur tout le banc",
-             ENVOIS == [], len(ENVOIS))
+    # ASSERTION INVERSEE, meme raison : « zero envoi » etait la signature du
+    # defaut. La garantie reelle est que le moteur d'e-mail est un MOUCHARD :
+    # rien ne peut sortir du processus, quel que soit le nombre d'envois.
+    import sys as _sys
+    verifier("10. le moteur d'e-mail est un mouchard : rien ne peut sortir",
+             getattr(_sys.modules.get("resend"), "__name__", "") == "resend"
+             and not hasattr(_sys.modules["resend"], "__file__"), "")
+    verifier("10. tous les envois du banc sont des simulations captees",
+             len(ENVOIS) >= 1 and all(isinstance(x, dict) for x in ENVOIS), len(ENVOIS))
+
+
+# ══ 12. LE DEFAUT QUI A CAUSE L'INCIDENT, ET SON GARDE-FOU ══════════════
+# `b3s1_demander_otp` testait `if _RESEND_OK and _RESEND_KEY:` — deux noms qui
+# n'existent PAS dans `server.py`. Le `NameError` etait avale par le
+# `except Exception` sept lignes plus bas : l'appel a Resend n'a JAMAIS eu lieu,
+# et la reponse neutre laissait croire au contraire. Deux demandes reelles en
+# production portent `envoye: true` sans qu'aucun e-mail ne soit parti.
+def _noms_libres(nom_fonction):
+    """Tout nom LU par cette fonction et qui n'existe nulle part -> NameError.
+
+    Ce controle est generique : il attrapera n'importe quelle faute du meme
+    genre, aujourd'hui et demain, sans qu'on ait a la deviner.
+    """
+    import builtins
+    src = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
+    arbre = ast.parse(src)
+    globaux = set()
+    for n in arbre.body:
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    globaux.add(t.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            globaux.add(n.name)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names:
+                globaux.add((a.asname or a.name).split(".")[0])
+        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
+            globaux.add(n.target.id)
+        elif isinstance(n, ast.Try):
+            for sous in n.body + [x for h in n.handlers for x in h.body] + n.orelse + n.finalbody:
+                if isinstance(sous, (ast.Import, ast.ImportFrom)):
+                    for a in sous.names:
+                        globaux.add((a.asname or a.name).split(".")[0])
+                elif isinstance(sous, ast.Assign):
+                    for t in sous.targets:
+                        if isinstance(t, ast.Name):
+                            globaux.add(t.id)
+    cible = None
+    for n in ast.walk(arbre):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == nom_fonction:
+            cible = n
+    if cible is None:
+        return {"<fonction introuvable>"}
+    locaux = {a.arg for a in cible.args.args}
+    for n in ast.walk(cible):
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    locaux.add(t.id)
+                elif isinstance(t, (ast.Tuple, ast.List)):
+                    for e in t.elts:
+                        if isinstance(e, ast.Name):
+                            locaux.add(e.id)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names:
+                locaux.add((a.asname or a.name).split(".")[0])
+        elif isinstance(n, (ast.For, ast.AsyncFor)) and isinstance(n.target, ast.Name):
+            locaux.add(n.target.id)
+        elif isinstance(n, ast.comprehension) and isinstance(n.target, ast.Name):
+            locaux.add(n.target.id)
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            locaux.add(n.name)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n is not cible:
+            locaux.add(n.name)
+    lus = {n.id for n in ast.walk(cible)
+           if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    return lus - locaux - globaux - set(dir(builtins))
+
+
+for _f in ("b3s1_demander_otp", "b3s1_verifier_otp", "_b3s1_contact_enregistre"):
+    _manquants = _noms_libres(_f)
+    verifier("12. `%s` n'utilise aucun nom inexistant (anti-NameError)" % _f,
+             _manquants == set(), sorted(_manquants))
 
 
 # ══ 11. LES FONCTIONS PURES ══════════════════════════════════════════════

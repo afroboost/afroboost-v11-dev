@@ -32675,9 +32675,14 @@ async def b3s1_demander_otp(request: Request):
 
     if _correspond:
         try:
-            if _RESEND_OK and _RESEND_KEY:
+            # LES NOMS DE `server.py`, PAS CEUX DE `reservation_routes.py`.
+            # `_RESEND_OK` / `_RESEND_KEY` n'existent QUE dans les modules de
+            # routes ; ici ils levaient un `NameError`, avale par le
+            # `except Exception` plus bas. Deux demandes reelles portent
+            # `envoye: true` sans qu'aucun e-mail ne soit jamais parti.
+            # `resend.api_key` est deja pose au chargement (server.py:87).
+            if RESEND_AVAILABLE and RESEND_API_KEY:
                 import resend as _r
-                _r.api_key = _RESEND_KEY
                 await asyncio.to_thread(_r.Emails.send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [_enregistre],
