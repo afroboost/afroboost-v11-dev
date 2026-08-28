@@ -1,6 +1,7 @@
 # shared.py - Constantes et helpers partagés v9.5.6
 from datetime import datetime, timezone, timedelta
 import os
+import re
 import logging
 
 logger = logging.getLogger(__name__)
@@ -5590,3 +5591,184 @@ def lotb3s1_session_utilisable(session, charge, maintenant=None):
     if str((charge or {}).get("slug") or "") != str(session.get("slug") or ""):
         return False, "appariement_slug"
     return True, "ok"
+
+
+# ═══════════ LOT M2-A — D'OU VIENT VRAIMENT UNE RESERVATION D'ESSAI ═══════════
+#
+# DEUX CONCEPTS QU'IL NE FAUT JAMAIS MELANGER. Le champ `source` d'une
+# reservation (`website`, `subscriber_space`) est un champ METIER : LOT B3 s'en
+# sert pour decider du montant restitue a l'annulation. Le marketing vit dans un
+# sous-document `attribution` SEPARE. Toucher au premier casserait la
+# comptabilite des seances.
+#
+# TOUT CE QUI ARRIVE D'UNE URL OU D'UN NAVIGATEUR EST SUSPECT : on ne recopie
+# jamais une chaine telle quelle, on la normalise contre une LISTE FERMEE et on
+# la tronque. Une source inconnue vaut « pas de source », jamais la chaine brute.
+M2A_SOURCES = ("google", "instagram", "tiktok", "youtube", "facebook",
+               "whatsapp", "partenaire", "direct")
+M2A_MAX = 64
+M2A_MAX_CHEMIN = 128
+M2A_CHAMPS = ("source", "medium", "campaign", "content", "term",
+              "landing_path", "touch_at")
+# Hote -> (source, canal). `google` est traite a part : il a des dizaines de
+# domaines regionaux (google.ch, google.fr, google.co.uk...).
+M2A_HOTES = (
+    ("instagram.com", "instagram", "social"),
+    ("tiktok.com", "tiktok", "social"),
+    ("youtube.com", "youtube", "social"),
+    ("youtu.be", "youtube", "social"),
+    ("facebook.com", "facebook", "social"),
+    ("fb.com", "facebook", "social"),
+    ("whatsapp.com", "whatsapp", "messaging"),
+    ("wa.me", "whatsapp", "messaging"),
+)
+# Un referrer interne n'est PAS une origine : sinon toute navigation sur le site
+# ecraserait la vraie source par « afroboost.com ».
+M2A_HOTES_INTERNES = ("afroboost.com", "afroboosteur.com", "localhost", "127.0.0.1")
+
+
+def m2a_valeur_propre(valeur, maxi=M2A_MAX):
+    """Minuscules, sans accent, sans ponctuation, tronquee. Ne leve jamais.
+
+    On garde `[a-z0-9_-]` et rien d'autre : c'est assez pour un jeton de
+    campagne, et cela rend toute injection impossible par construction.
+    """
+    try:
+        import unicodedata as _ud
+        brut = "" if valeur is None else str(valeur)
+        brut = _ud.normalize("NFKD", brut).encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"[^a-z0-9_-]", "", brut.strip().lower())[:maxi]
+    except Exception:
+        return ""
+
+
+def m2a_chemin_propre(valeur):
+    """Un chemin d'atterrissage, jamais une URL complete ni une query."""
+    try:
+        brut = "" if valeur is None else str(valeur)
+        brut = brut.split("?")[0].split("#")[0].strip().lower()
+        return re.sub(r"[^a-z0-9/_-]", "", brut)[:M2A_MAX_CHEMIN]
+    except Exception:
+        return ""
+
+
+def m2a_source_normalisee(valeur):
+    """Le jeton s'il est dans la liste fermee, sinon la chaine VIDE."""
+    jeton = m2a_valeur_propre(valeur)
+    return jeton if jeton in M2A_SOURCES else ""
+
+
+def m2a_source_du_referrer(referer):
+    """(source, canal) deduits de l'HOTE du referrer — jamais de son URL.
+
+    Une URL de recherche contient la requete tapee par la personne : la recopier
+    serait collecter une donnee qu'on n'a pas demandee. Seul l'hote sort d'ici.
+    """
+    try:
+        brut = ("" if referer is None else str(referer)).strip()
+        if not brut:
+            return ("", "")
+        hote = brut.split("//")[-1].split("/")[0].split("?")[0].split("@")[-1]
+        hote = hote.split(":")[0].strip().lower()
+        if not hote:
+            return ("", "")
+        if hote.startswith("www."):
+            hote = hote[4:]
+        for interne in M2A_HOTES_INTERNES:
+            if hote == interne or hote.endswith("." + interne):
+                return ("", "")
+        if re.search(r"(^|\.)google\.[a-z]{2,}(\.[a-z]{2,})?$", hote):
+            return ("google", "organic")
+        for cle, src, canal in M2A_HOTES:
+            if hote == cle or hote.endswith("." + cle):
+                return (src, canal)
+        return ("", "")
+    except Exception:
+        return ("", "")
+
+
+def m2a_touche(source, medium="", campaign="", content="", term="",
+               landing_path="", maintenant=None):
+    """Une « touche » normalisee, avec son horodatage."""
+    return {
+        "source": m2a_source_normalisee(source),
+        "medium": m2a_valeur_propre(medium),
+        "campaign": m2a_valeur_propre(campaign),
+        "content": m2a_valeur_propre(content),
+        "term": m2a_valeur_propre(term),
+        "landing_path": m2a_chemin_propre(landing_path),
+        "touch_at": (maintenant or datetime.now(timezone.utc)).isoformat(),
+    }
+
+
+def m2a_attribution_entrante(params, referer="", chemin=""):
+    """La touche portee par CETTE arrivee, ou None.
+
+    ORDRE, ET IL COMPTE : les UTM explicites gagnent toujours. Le referrer n'est
+    consulte que faute d'UTM — c'est ce qui rattrape le SEO Google, ou personne
+    ne peut poser d'UTM. Aucune des deux voies ne peut inventer une source hors
+    de la liste fermee.
+    """
+    try:
+        lire = params.get if hasattr(params, "get") else (lambda _k, _d=None: None)
+        src = m2a_source_normalisee(lire("utm_source"))
+        if src:
+            return m2a_touche(src, lire("utm_medium"), lire("utm_campaign"),
+                              lire("utm_content"), lire("utm_term"), chemin)
+        _s, _m = m2a_source_du_referrer(referer)
+        if _s:
+            return m2a_touche(_s, _m, lire("utm_campaign"), lire("utm_content"),
+                              lire("utm_term"), chemin)
+        return None
+    except Exception:
+        return None
+
+
+def m2a_fusionner(existant, nouveau):
+    """first / last — et la regle qui evite de perdre l'origine.
+
+    `first` est FIGE des la premiere touche connue. `last` n'est remplace que
+    par une touche EXTERNE : revenir directement sur le site ne doit pas effacer
+    « instagram » au profit de « direct », sinon toute personne qui revient
+    deux fois devient un visiteur direct et la mesure ne veut plus rien dire.
+    """
+    try:
+        neuf = None
+        if isinstance(nouveau, dict):
+            neuf = m2a_touche(nouveau.get("source"), nouveau.get("medium"),
+                              nouveau.get("campaign"), nouveau.get("content"),
+                              nouveau.get("term"), nouveau.get("landing_path"))
+        ancien = existant if isinstance(existant, dict) else {}
+        first = ancien.get("first") if isinstance(ancien.get("first"), dict) else None
+        last = ancien.get("last") if isinstance(ancien.get("last"), dict) else None
+        if neuf is None:
+            return {"first": first, "last": last} if (first or last) else None
+        if not first:
+            return {"first": neuf, "last": neuf}
+        externe = neuf.get("source") not in ("", "direct")
+        return {"first": first, "last": neuf if externe else (last or first)}
+    except Exception:
+        return existant if isinstance(existant, dict) else None
+
+
+def m2a_bloc_propre(bloc):
+    """Re-valide un bloc `{first, last}` venu du navigateur. Ne leve jamais.
+
+    LE CLIENT N'EST PAS UNE SOURCE DE VERITE : il peut envoyer n'importe quoi,
+    y compris une adresse e-mail glissee dans une campagne. On ne garde que les
+    champs connus, normalises — tout le reste disparait.
+    """
+    try:
+        if not isinstance(bloc, dict):
+            return None
+        sortie = {}
+        for cle in ("first", "last"):
+            touche = bloc.get(cle)
+            if not isinstance(touche, dict):
+                continue
+            sortie[cle] = m2a_touche(
+                touche.get("source"), touche.get("medium"), touche.get("campaign"),
+                touche.get("content"), touche.get("term"), touche.get("landing_path"))
+        return sortie or None
+    except Exception:
+        return None

@@ -12,6 +12,7 @@ import { terminerSession, debutConnexion, finConnexion, signalerConnexionReussie
 // FUNNEL ESSAI (etape 1) — mesure PURE : ces deux fonctions ne changent aucun
 // parcours et ne levent jamais. Voir utils/funnelEssai.js pour les invariants.
 import { funnelTracer, funnelVariante } from "./utils/funnelEssai";
+import { attributionEnregistrer, attributionActuelle } from "./utils/attribution";
 // ESSAI-7 : la SEULE fabrique d'adresse d'espace participant du frontend.
 // Elle n'accepte que le code renvoye par le serveur — jamais le localStorage,
 // jamais une reconstruction. Voir utils/essaiReservation.js.
@@ -4974,6 +4975,15 @@ function App() {
   // Check for /validate/:code URL and /v/:slug URL on mount
   // SUPPORTE AUSSI LE HASH ROUTING: /#/v/{slug} (fonctionne sans config serveur)
   useEffect(() => {
+    // M2-A : l'origine est memorisee des la premiere lecture de l'URL. Un `try`
+    // l'entoure : une panne de suivi ne doit jamais empecher le routage. La
+    // page SEO ayant recopie ses UTM dans le CTA, le referrer Google survit
+    // jusqu'ici alors que `document.referrer` vaudrait « afroboost.com ».
+    try {
+      attributionEnregistrer(window.location.search, document.referrer,
+                             window.location.pathname);
+    } catch (e) { /* le suivi ne bloque jamais le parcours */ }
+
     const path = window.location.pathname;
     const hash = window.location.hash;
     const searchParams = new URLSearchParams(window.location.search);
@@ -6809,7 +6819,16 @@ function App() {
           customer_name: userName,
           customer_email: userEmail,
           customer_phone: userWhatsapp || '',
-          discount_code: appliedDiscount?.code || null
+          discount_code: appliedDiscount?.code || null,
+          // M2-A : l'origine memorisee par le navigateur. FACULTATIVE — le
+          // serveur la re-valide contre une liste fermee, et son absence
+          // n'empeche jamais l'essai. On la pose ICI parce que c'est le
+          // dernier instant ou ce navigateur existe encore dans le parcours :
+          // la reservation, elle, se fera depuis le lien recu par e-mail,
+          // souvent sur un autre telephone.
+          attribution: (function () {
+            try { return attributionActuelle(); } catch (e) { return null; }
+          })()
         });
 
         // Marquer le code promo comme utilise (inchange).

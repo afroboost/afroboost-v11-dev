@@ -14940,6 +14940,19 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
                                             reservation_doc))
     except Exception as _l3e:
         logger.warning("[LOT3a] snapshot espace abonne ignore (%s)", type(_l3e).__name__)
+    # M2-A : l'origine suit la PERSONNE, pas le navigateur. Elle a ete posee sur
+    # la souscription au moment de l'octroi ; on la recopie telle quelle. Un
+    # essai reserve depuis un second appareil, sans aucun stockage local, garde
+    # donc son `first.source`. FAIL-OPEN : jamais au prix de la reservation.
+    try:
+        _m2a = subscription.get("attribution") if isinstance(subscription, dict) else None
+        if not _m2a and isinstance(discount_for_mode, dict):
+            _m2a = discount_for_mode.get("attribution")
+        if _m2a:
+            reservation_doc["attribution"] = _m2a
+    except Exception as _m2ae:
+        logger.warning("[M2-A] origine non recopiee (%s)", type(_m2ae).__name__)
+
     await db.reservations.insert_one(reservation_doc)
     reservation_doc.pop("_id", None)
     logger.info(f"[SUBSCRIBER_SPACE V187] Réservation {reservation_doc['reservationCode']} pour {user_email} ({course.get('name')}) × {quantity} guests={guests}")
@@ -34048,8 +34061,18 @@ async def _m1_seances():
 
 
 @fastapi_app.get(_M1_CHEMIN, response_class=HTMLResponse)
-async def m1_page_essai_neuchatel():
-    """Page publique d'acquisition — lisible sans JavaScript, et sans image."""
+async def m1_page_essai_neuchatel(request: Request):
+    """Page publique d'acquisition — lisible sans JavaScript, et sans image.
+
+    LOT M2-A — POURQUOI L'ORIGINE SE LIT ICI, ET PAS DANS LA SPA. Cette page
+    n'execute AUCUN JavaScript : un `?utm_source=instagram` mourrait au premier
+    clic, puisque le CTA etait un `href` constant. Pire pour le SEO Google, ou
+    personne ne peut poser d'UTM : si l'on attendait la SPA pour lire
+    `document.referrer`, elle verrait `afroboost.com` — jamais Google.
+    L'origine est donc lue COTE SERVEUR, a l'arrivee, et recopiee dans le CTA
+    pour survivre au passage vers la SPA. Une navigation interne ne fabrique
+    aucune source (voir `M2A_HOTES_INTERNES`).
+    """
     _mois, _evenements = await _m1_seances()
 
     if _mois:
@@ -34081,8 +34104,32 @@ async def m1_page_essai_neuchatel():
     # ville ni lieu — ils ne sont pas prouvables depuis l'image.
     _alt = ("Femme en débardeur Afroboost, casque audio sur les oreilles, "
             "en pleine séance en extérieur au coucher du soleil")
+    # M2-A : le tunnel EXISTANT, eventuellement suivi de l'origine normalisee.
+    # Les valeurs sortent de `m2a_*` : elles ne contiennent que `[a-z0-9_-]`,
+    # donc rien a encoder, et aucune injection possible. Sans origine connue, le
+    # lien est exactement celui d'avant ce lot.
+    _lien = _M1_TUNNEL
+    try:
+        _attr = m2a_attribution_entrante(
+            request.query_params if request else None,
+            (request.headers.get("referer", "") if request else ""),
+            _M1_CHEMIN)
+        if _attr:
+            _bouts = []
+            for _cle, _utm in (("source", "utm_source"), ("medium", "utm_medium"),
+                               ("campaign", "utm_campaign"), ("content", "utm_content"),
+                               ("term", "utm_term")):
+                _v = _attr.get(_cle) or ""
+                if _v:
+                    _bouts.append("%s=%s" % (_utm, _v))
+            if _bouts:
+                _lien = _M1_TUNNEL + "&amp;" + "&amp;".join(_bouts)
+    except Exception as _aerr:
+        # Fail-open : une origine illisible ne doit jamais priver la page de son
+        # bouton. Le lien nu reste parfaitement fonctionnel.
+        logger.warning("[M2-A] origine non lue (%s)", type(_aerr).__name__)
     _cta = ('<a class="cta" href="%s">Réserver mon premier cours gratuit</a>'
-            % _M1_TUNNEL)
+            % _lien)
 
     _structure = _m1_jsonld([
         {"@context": "https://schema.org", "@type": "WebPage",

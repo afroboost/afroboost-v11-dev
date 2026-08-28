@@ -702,6 +702,11 @@ class FreeCheckoutRequest(BaseModel):
     discount_code: Optional[str] = None
     # ESSAI-5a-1 : la seule chose que le client exprime.
     terms_accepted: Optional[bool] = None
+    # M2-A : l'origine marketing, telle que le navigateur l'a memorisee.
+    # OPTIONNELLE et NON FIABLE : elle est re-validee cote serveur contre une
+    # liste fermee (`m2a_bloc_propre`) avant la moindre ecriture. Son absence
+    # n'empeche jamais un essai — c'est du suivi, pas une condition.
+    attribution: Optional[dict] = None
 
 
 # === ESSAI-1B : LE PRIX VIENT DU CATALOGUE, JAMAIS DU NAVIGATEUR ===
@@ -1428,6 +1433,25 @@ async def free_checkout(req: FreeCheckoutRequest, http_request: Request):
     # contient rien d'autre que ce que cette requete vient de fournir. Sinon,
     # la reponse est mot pour mot celle d'avant ce lot.
     code_octroye = str((result or {}).get("access_code") or "") if espace_vierge else ""
+
+    # ═══ M2-A — L'ORIGINE SURVIT AU CHANGEMENT D'APPAREIL ═══
+    # Le parcours d'essai se termine des jours plus tard, depuis le lien recu
+    # par e-mail, souvent sur un autre telephone : le `localStorage` d'origine
+    # n'existe plus. On pose donc l'origine ICI, sur la souscription du code —
+    # `reserve_course_from_space` la recopiera le jour venu.
+    # FAIL-OPEN : toute panne de ce bloc laisse l'essai intact.
+    try:
+        from api.routes.shared import m2a_bloc_propre as _m2a_propre
+        _m2a_attribution = _m2a_propre(getattr(req, "attribution", None))
+        _m2a_code = str((result or {}).get("access_code") or "").strip().upper()
+        if _m2a_attribution and _m2a_code:
+            await db["subscriptions"].update_one(
+                {"code": _m2a_code}, {"$set": {"attribution": _m2a_attribution}})
+            logger.info("[M2-A] origine enregistree pour un essai (first=%s last=%s)",
+                        (_m2a_attribution.get("first") or {}).get("source", "-"),
+                        (_m2a_attribution.get("last") or {}).get("source", "-"))
+    except Exception as _m2ae:
+        logger.warning("[M2-A] origine non enregistree (%s)", type(_m2ae).__name__)
 
     now_iso = datetime.now(timezone.utc).isoformat()
 

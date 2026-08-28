@@ -26,7 +26,7 @@ LES QUATRE GARDES, toutes verifiees ici :
 AUCUNE BASE REELLE, AUCUN RESEAU, AUCUNE DONNEE PERSONNELLE.
     python3 tests/test_m1_page_seo_locale.py
 """
-import ast, asyncio, io, json, os, re, sys, types
+import ast, asyncio, importlib.util, io, json, os, re, sys, types, types
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
@@ -102,6 +102,13 @@ class Journal:
     def error(self, m="", *a, **k): self._n(m, a)
 
 
+# Le helper d'origine vit dans le module partage : on charge le VRAI.
+_spec_partage = importlib.util.spec_from_file_location(
+    "m1_shared", os.path.join(RACINE, "api", "routes", "shared.py"))
+_PARTAGE = importlib.util.module_from_spec(_spec_partage)
+_spec_partage.loader.exec_module(_PARTAGE)
+_m2a_entrante = _PARTAGE.m2a_attribution_entrante
+
 NOMS = ("m1geo1_region_normalisee", "_m1_echapper", "_m1_jsonld", "_v184_parse_time_hhmm",
         "_v184_next_occurrences", "n456_occurrences_publiques",
         "rv2_date_lisible", "_m1_seances", "m1_page_essai_neuchatel")
@@ -116,7 +123,11 @@ def monter(db, journal):
     from fastapi.responses import HTMLResponse
     ns = {"db": db, "logger": journal, "datetime": datetime, "timezone": timezone,
           "timedelta": timedelta, "re": re, "html": __import__("html"),
-          "json": json, "HTMLResponse": HTMLResponse}
+          "json": json, "HTMLResponse": HTMLResponse,
+          # M2-A : la page annote `request: Request` et lit l'origine via le
+          # helper partage. MONTAGE seulement — ce sont les VRAIS noms de
+          # production, pas des imitations.
+          "Request": object, "m2a_attribution_entrante": _m2a_entrante}
     for n in ast.walk(ARBRE):
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in CONSTANTES:
             exec(compile("".join(LIGNES[n.lineno - 1:n.end_lineno]), "s", "exec"), ns)
@@ -156,9 +167,22 @@ def monde():
 async def rendre(db, journal, coach=COACH):
     ns = monter(db, journal)
     ns["COACH_EMAIL"] = coach
-    rep = await ns["m1_page_essai_neuchatel"]()
+    # M2-A : la page lit desormais l'origine dans la requete. MONTAGE seulement —
+    # une requete nue, sans UTM ni referrer, reproduit exactement l'ancien appel.
+    rep = await ns["m1_page_essai_neuchatel"](_RequeteNue())
     corps = rep.body.decode("utf-8") if hasattr(rep, "body") else str(rep)
     return rep, corps
+
+
+class _RequeteNue:
+    """Une requete sans origine : ni UTM, ni referrer."""
+    @property
+    def query_params(self):
+        return types.SimpleNamespace(get=lambda k, d=None: d)
+
+    @property
+    def headers(self):
+        return types.SimpleNamespace(get=lambda k, d="": d)
 
 
 def blocs_jsonld(corps):
@@ -448,8 +472,10 @@ async def principal():
     verifier("70. Deux CTA identiques, avant et apres les seances", len(ctas) == 2, ctas)
     verifier("71. Meme libelle valide",
              all("Réserver mon premier cours gratuit" in t for _, t in ctas), ctas)
+    # M2-A : le lien peut desormais porter l'origine normalisee en suffixe.
+    # Ce qui est verifie reste le meme : la destination est le tunnel EXISTANT.
     verifier("72. Meme destination : le tunnel EXISTANT",
-             all(h == "/?link=b83914b4-c5a" for h, _ in ctas), ctas)
+             all(h.startswith("/?link=b83914b4-c5a") for h, _ in ctas), ctas)
 
     # --- les seances, groupees par mois, en HTML natif ---
     verifier("73. Les seances sont groupees dans des `<details>`",
