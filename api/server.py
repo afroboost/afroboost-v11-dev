@@ -33975,8 +33975,20 @@ def _m1_jsonld(objets):
     return '<script type="application/ld+json">%s</script>' % brut.replace("<", "\\u003c")
 
 
+# Les mois EN TOUTES LETTRES, accentues, pour l'affichage web uniquement.
+# `RV2_MOIS` existe deja mais volontairement SANS accents : il sert les gabarits
+# WhatsApp, ou les caracteres accentues ont pose probleme. Une page vitrine n'a
+# pas cette contrainte, et « Aout » y ferait negligé.
+_M1_MOIS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
+            "août", "septembre", "octobre", "novembre", "décembre")
+
+
 async def _m1_seances():
-    """(lignes_affichables, evenements_jsonld) — depuis LA source, ou rien.
+    """(mois, evenements) — depuis LA source, ou rien.
+
+    Les seances sont GROUPEES PAR MOIS. Douze lignes identiques empilees, c'est
+    une colonne qu'on ne lit pas ; regroupees, la page tient a l'ecran et
+    chaque mois se replie tout seul en HTML natif.
 
     Aucune exception ne remonte : une page d'acquisition qui tombe en 500 est
     pire qu'une page sans planning.
@@ -33988,7 +34000,7 @@ async def _m1_seances():
     except Exception as _err:
         logger.warning("[M1] planning indisponible (%s)", type(_err).__name__)
         return [], []
-    lignes, evenements = [], []
+    mois, ordre, evenements = {}, [], []
     for occ in occurrences[:_M1_MAX_SEANCES]:
         _quand = str(occ.get("datetime") or "")
         try:
@@ -33998,11 +34010,21 @@ async def _m1_seances():
         _nom = str(occ.get("name") or "Séance Afroboost")
         _lieu = str(occ.get("locationName") or "")
         _heure = str(occ.get("time") or _dt.strftime("%H:%M"))
-        lignes.append({
-            "nom": _m1_echapper(_nom),
-            "date": _m1_echapper(rv2_date_lisible(_dt)),
+        _cle = (_dt.year, _dt.month)
+        if _cle not in mois:
+            mois[_cle] = []
+            ordre.append(_cle)
+        mois[_cle].append({
+            # Le mois est deja dans l'en-tete du groupe : la ligne ne porte que
+            # le jour. Cela evite surtout de melanger DEUX listes de mois —
+            # `rv2_date_lisible` rend « aout » (sans accent, contrainte des
+            # gabarits WhatsApp) alors que l'en-tete affiche « Août ». La
+            # discordance etait visible a l'ecran.
+            "jour": _m1_echapper("%s %d" % (
+                _V184_WEEKDAY_LABELS_FR[_dt.weekday()], _dt.day)),
             "heure": _m1_echapper(_heure),
             "lieu": _m1_echapper(_lieu),
+            "nom": _m1_echapper(_nom),
         })
         # `Event` UNIQUEMENT pour une occurrence future reelle — celles-ci le
         # sont deja, la source ne rend que du futur.
@@ -34018,29 +34040,47 @@ async def _m1_seances():
             # postale n'est declaree : nous n'en avons pas de permanente.
             _ev["location"] = {"@type": "Place", "name": _lieu}
         evenements.append(_ev)
-    return lignes, evenements
+    groupes = [{"titre": "%s %d" % (_M1_MOIS[m - 1].capitalize(), a),
+                "lignes": mois[(a, m)]} for (a, m) in ordre]
+    return groupes, evenements
+
+
 
 
 @fastapi_app.get(_M1_CHEMIN, response_class=HTMLResponse)
 async def m1_page_essai_neuchatel():
-    """Page publique d'acquisition — lisible sans JavaScript."""
-    _lignes, _evenements = await _m1_seances()
+    """Page publique d'acquisition — lisible sans JavaScript, et sans image."""
+    _mois, _evenements = await _m1_seances()
 
-    if _lignes:
-        _planning = "".join(
-            '<li><span class="j">%s · %s</span><span class="l">%s</span>'
-            '<span class="n">%s</span></li>' % (x["date"], x["heure"], x["lieu"], x["nom"])
-            for x in _lignes)
-        _planning = '<ul class="seances">%s</ul>' % _planning
+    if _mois:
+        _blocs = []
+        for _i, _g in enumerate(_mois):
+            # `<details>` natif : le premier mois ouvert, les suivants replies.
+            # Zero JavaScript, et le `<summary>` est focusable au clavier par
+            # construction — on n'a rien a reimplementer.
+            _cartes = "".join(
+                '<article class="seance"><p class="s-quand">%s<span>%s</span></p>'
+                '<p class="s-lieu">%s</p><p class="s-nom">%s</p></article>'
+                % (_x["jour"], _x["heure"], _x["lieu"], _x["nom"]) for _x in _g["lignes"])
+            _blocs.append(
+                '<details%s><summary>%s<span class="s-compte">%d séance%s</span></summary>'
+                '<div class="grille">%s</div></details>'
+                % (" open" if _i == 0 else "", _m1_echapper(_g["titre"]),
+                   len(_g["lignes"]), "s" if len(_g["lignes"]) > 1 else "", _cartes))
+        _planning = "".join(_blocs)
     else:
         # NI DATE NI ADRESSE INVENTEE — on le dit, et le CTA reste.
         _planning = ('<p class="vide">Aucune séance n’est publiée pour le moment. '
                      'Réserve ton essai : nous te proposons la prochaine date.</p>')
 
-    _titre = "Cours de danse afro à Neuchâtel — 1er cours d’essai offert | Afroboost"
-    _desc = ("Danse afro, cardio et fitness au casque audio à Neuchâtel. "
-             "Accessible aux débutants, sans niveau requis. "
-             "Ton premier cours d’essai Afroboost est offert — réserve ta place.")
+    _titre = "Danse africaine à Neuchâtel | Essai gratuit Afroboost"
+    _desc = ("Découvre Afroboost à Neuchâtel : danse africaine et Afrobeat, "
+             "cardio-fitness au casque, accessible aux débutants. "
+             "Premier cours d’essai offert.")
+    # `alt` STRICTEMENT descriptif : ce que la photo montre, rien de plus. Ni
+    # ville ni lieu — ils ne sont pas prouvables depuis l'image.
+    _alt = ("Femme en débardeur Afroboost, casque audio sur les oreilles, "
+            "en pleine séance en extérieur au coucher du soleil")
     _cta = ('<a class="cta" href="%s">Réserver mon premier cours gratuit</a>'
             % _M1_TUNNEL)
 
@@ -34074,47 +34114,106 @@ async def m1_page_essai_neuchatel():
 <meta name="twitter:image" content="%(site)s/og-image.png"/>
 %(structure)s
 <style>
-:root{--p:#D91CD2}
+:root{--p:#D91CD2;--prgb:217,28,210;--fond:#0a0a12}
 *{box-sizing:border-box}
-body{margin:0;background:#0a0a12;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.6}
-main{max-width:720px;margin:0 auto;padding:28px 20px 56px}
-h1{font-size:clamp(1.6rem,6vw,2.4rem);line-height:1.2;margin:0 0 12px}
-h2{font-size:clamp(1.1rem,4.4vw,1.4rem);margin:32px 0 12px}
+body{margin:0;background:var(--fond);color:#fff;line-height:1.6;
+ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+img{max-width:100%%;display:block}
+a{color:inherit}
+
+/* ---- HERO : la photo derriere, le texte devant, jamais dans l'image ---- */
+.hero{position:relative;min-height:88svh;display:flex;align-items:center;
+ justify-content:center;overflow:hidden;background:var(--fond)}
+.hero-photo{position:absolute;inset:0;width:100%%;height:100%%;object-fit:cover;
+ object-position:50%% 30%%}
+.hero-voile{position:absolute;inset:0;background:
+ linear-gradient(180deg,rgba(10,10,18,.72) 0%%,rgba(10,10,18,.42) 38%%,
+ rgba(10,10,18,.80) 78%%,var(--fond) 100%%)}
+.hero-texte{position:relative;z-index:2;max-width:640px;padding:32px 20px 40px;
+ text-align:center;width:100%%}
+.kicker{margin:0 0 10px;font-size:.8rem;letter-spacing:.16em;text-transform:uppercase;
+ color:var(--p);font-weight:700;text-shadow:0 2px 10px rgba(0,0,0,.8)}
+h1{font-size:clamp(1.55rem,5.6vw,2.5rem);line-height:1.15;margin:0 0 14px;
+ font-weight:800;text-shadow:0 2px 18px rgba(0,0,0,.85)}
+.promesse{margin:0 0 22px;font-size:clamp(.98rem,3.6vw,1.12rem);
+ text-shadow:0 2px 12px rgba(0,0,0,.9)}
+.promesse b{color:#fff}
+.cta{display:block;width:100%%;max-width:330px;margin:0 auto;padding:16px 22px;
+ background:var(--p);color:#fff;text-align:center;text-decoration:none;
+ font-weight:700;border-radius:999px;
+ box-shadow:0 8px 28px rgba(var(--prgb),.45)}
+.cta:hover,.cta:focus{filter:brightness(1.08)}
+.reperes{list-style:none;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;
+ padding:0;margin:22px 0 0}
+.reperes li{font-size:.82rem;padding:6px 12px;border-radius:999px;
+ border:1px solid rgba(var(--prgb),.45);background:rgba(10,10,18,.55);color:#f0f0f6}
+
+/* ---- CORPS ---- */
+main{max-width:720px;margin:0 auto;padding:8px 20px 56px}
+section{margin-top:40px}
+h2{font-size:clamp(1.15rem,4.6vw,1.5rem);margin:0 0 14px;font-weight:700}
 p{margin:0 0 14px;color:#e8e8f0}
-.offre{font-weight:700;color:#fff;font-size:clamp(1rem,4vw,1.15rem)}
-.cta{display:block;width:100%%;max-width:340px;margin:22px auto;padding:16px 22px;background:var(--p);color:#fff;text-align:center;text-decoration:none;font-weight:700;border-radius:999px}
-.seances{list-style:none;padding:0;margin:0}
-.seances li{display:flex;flex-direction:column;gap:2px;padding:14px 0;border-bottom:1px solid rgba(255,255,255,.14)}
-.seances .j{font-weight:700;color:var(--p)}
-.seances .l{color:#e8e8f0}
-.seances .n{color:#a9a9b8;font-size:.92rem}
-.vide{color:#a9a9b8}
 .note{color:#a9a9b8;font-size:.9rem}
+
+/* ---- SEANCES : mois replies, HTML natif ---- */
+details{border:1px solid rgba(255,255,255,.12);border-radius:14px;margin-bottom:12px;
+ background:linear-gradient(135deg,rgba(20,20,30,.95),rgba(30,10,28,.85))}
+summary{cursor:pointer;padding:14px 16px;font-weight:700;display:flex;
+ justify-content:space-between;align-items:center;gap:10px;border-radius:14px}
+summary:focus-visible{outline:2px solid var(--p);outline-offset:2px}
+.s-compte{font-size:.8rem;font-weight:600;color:var(--p)}
+.grille{display:grid;gap:10px;padding:0 14px 14px}
+.seance{border-left:3px solid var(--p);border-radius:10px;padding:10px 12px;
+ background:rgba(255,255,255,.04)}
+.seance p{margin:0}
+.s-quand{font-weight:700;color:var(--p);display:flex;gap:10px;align-items:baseline}
+.s-quand span{color:#fff;font-weight:600}
+.s-lieu{color:#e8e8f0;font-size:.94rem}
+.s-nom{color:#a9a9b8;font-size:.88rem}
+.vide{color:#a9a9b8}
+.fin{text-align:center;border-top:1px solid rgba(255,255,255,.12);padding-top:32px}
+.fin .cta{margin-top:18px}
 </style>
-</head><body><main>
-<h1>Cours de danse afro, cardio et fitness à Neuchâtel</h1>
-<p class="offre">Ton premier cours d’essai Afroboost est offert.</p>
+</head><body>
+<header class="hero">
+<img class="hero-photo" src="/hero-afroboost.webp" alt="%(alt)s" width="1024" height="1024" fetchpriority="high"/>
+<div class="hero-voile"></div>
+<div class="hero-texte">
+<p class="kicker">Afroboost · Neuchâtel</p>
+<h1>Cours de danse africaine, Afrobeat et cardio-fitness à Neuchâtel</h1>
+<p class="promesse">Une expérience immersive au casque, accessible aux débutants.<br/><b>Ton premier cours est offert.</b></p>
 %(cta)s
-<h2>L’expérience Afroboost</h2>
-<p>Afroboost mélange la danse afro, le cardio et le fitness dans une séance
-d’environ une heure, à Neuchâtel et autour du lac.</p>
-<p>Chacun porte un casque audio sans fil : la musique est dans la tête, pas
-dans la salle. On oublie le regard des autres, on suit le rythme, on transpire.</p>
-<p>Aucun niveau n’est demandé. Les séances sont pensées pour les débutants
-comme pour les habitués : on avance à son rythme, personne ne juge.</p>
-<h2>Prochaines séances</h2>
+<ul class="reperes"><li>Débutants bienvenus</li><li>Environ 1 heure</li><li>Casque fourni</li><li>Neuchâtel</li></ul>
+</div>
+</header>
+<main>
+<section>
+<h2>C’est quoi Afroboost ?</h2>
+<p>Afroboost est un concept inspiré des danses africaines et de l’Afrobeat, qui
+mélange danse, cardio et fitness. Ce n’est pas un cours de danse traditionnelle :
+tu suis le rythme, tu transpires et tu avances à ton niveau, avec la musique dans
+ton casque.</p>
+</section>
+<section class="seances">
+<h2>Prochaines séances à Neuchâtel</h2>
 %(planning)s
-<p class="note">Les dates, horaires et lieux ci-dessus viennent directement du
-planning Afroboost. Les séances se déroulent selon la saison au bord du lac ou
-en salle : le lieu exact de chaque séance est indiqué avec sa date.</p>
+<p class="note">Dates, horaires et lieux viennent directement du planning
+Afroboost. Le lieu exact est indiqué avec chaque séance.</p>
+</section>
+<section class="fin">
+<h2>Ton premier cours est offert</h2>
+<p>Ton premier cours d’essai Afroboost est offert.</p>
 %(cta)s
-<p class="note">L’essai offert concerne la première séance, une seule fois par
-personne. Les autres formules restent payantes.</p>
-</main></body></html>""" % {
+<p class="note">L’essai concerne la première séance, une seule fois par personne.
+Les autres formules restent payantes.</p>
+</section>
+</main>
+</body></html>""" % {
         "titre": _titre, "desc": _desc, "site": _M1_SITE, "chemin": _M1_CHEMIN,
-        "structure": _structure, "cta": _cta, "planning": _planning,
+        "structure": _structure, "cta": _cta, "planning": _planning, "alt": _alt,
     }
     return HTMLResponse(content=_html, status_code=200)
+
 
 
 # Export for Vercel Serverless

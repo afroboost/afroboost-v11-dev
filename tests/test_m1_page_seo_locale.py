@@ -107,7 +107,8 @@ NOMS = ("m1geo1_region_normalisee", "_m1_echapper", "_m1_jsonld", "_v184_parse_t
         "rv2_date_lisible", "_m1_seances", "m1_page_essai_neuchatel")
 CONSTANTES = ("_N456_CHAMPS_PUBLICS", "_V184_WEEKDAY_LABELS_FR", "RV2_JOURS",
               "RV2_MOIS", "COACH_EMAIL", "_M1_SITE", "_M1_CHEMIN", "_M1_TUNNEL",
-              "_M1_HORIZON_JOURS", "_M1_MAX_SEANCES", "M1GEO1_REGIONS", "_M1_REGION")
+              "_M1_HORIZON_JOURS", "_M1_MAX_SEANCES", "M1GEO1_REGIONS", "_M1_REGION",
+              "_M1_MOIS", "_V184_WEEKDAY_LABELS_FR")
 
 
 def monter(db, journal):
@@ -369,6 +370,105 @@ async def principal():
     verifier("56. Le titre et la description de l'accueil sont INCHANGES",
              "Afroboost | Cardio &amp; Danse Afrobeat avec Casques" in idx
              and "cardio, danse afrobeat et casques audio immersifs" in idx)
+
+    # ═══════════ M1-SEO-UX1 — LA PAGE DEVIENT UNE PAGE D'ACQUISITION ═════════
+    db, j = monde()
+    _, page = await rendre(db, j)
+
+    # --- textes valides, au mot pres ---
+    verifier("57. TITLE exact",
+             "<title>Danse africaine à Neuchâtel | Essai gratuit Afroboost</title>" in page)
+    verifier("58. META DESCRIPTION exacte",
+             "Découvre Afroboost à Neuchâtel : danse africaine et Afrobeat, "
+             "cardio-fitness au casque, accessible aux débutants. "
+             "Premier cours d’essai offert." in page)
+    verifier("59. H1 exact et UNIQUE",
+             page.count("<h1") == 1 and
+             "Cours de danse africaine, Afrobeat et cardio-fitness à Neuchâtel" in page)
+    for h2 in ("C’est quoi Afroboost ?", "Prochaines séances à Neuchâtel",
+               "Ton premier cours est offert"):
+        verifier("60. H2 « %s » present" % h2, ">%s</h2>" % h2 in page)
+    verifier("61. La promesse du hero est celle validee",
+             "Une expérience immersive au casque, accessible aux débutants." in page)
+    verifier("62. La formulation metier EXACTE est conservee",
+             "Ton premier cours d’essai Afroboost est offert." in page)
+    verifier("63. Le texte concept valide est present",
+             "Ce n’est pas un cours de danse traditionnelle" in page
+             and "inspiré des danses africaines et de l’Afrobeat" in page)
+
+    # --- la photo ---
+    img = re.search(r'<img[^>]*class="hero-photo"[^>]*>', page)
+    verifier("64. Le hero porte une vraie photo", img is not None)
+    src = re.search(r'src="([^"]+)"', img.group(0)) if img else None
+    verifier("65. Elle pointe sur le fichier optimise",
+             src is not None and src.group(1) == "/hero-afroboost.webp",
+             src.group(1) if src else "absent")
+    alt = re.search(r'alt="([^"]*)"', img.group(0)) if img else None
+    verifier("66. Son `alt` est renseigne et factuel",
+             alt is not None and len(alt.group(1)) > 25
+             and "Neuchâtel" not in alt.group(1) and "lac" not in alt.group(1).lower(),
+             alt.group(1) if alt else "absent")
+    chemin_img = os.path.join(RACINE, "frontend", "public", "hero-afroboost.webp")
+    verifier("67. Le fichier optimise existe", os.path.isfile(chemin_img))
+    if os.path.isfile(chemin_img):
+        poids = os.path.getsize(chemin_img)
+        verifier("68. Il pese moins de 300 Ko", poids < 300 * 1024, "%d octets" % poids)
+    verifier("69. La page reste lisible SANS image (texte hors de l'image)",
+             "<h1" in page.split("</picture>")[-1] or 'class="hero-texte"' in page)
+
+    # --- le CTA ---
+    ctas = re.findall(r'<a class="cta"[^>]*href="([^"]+)"[^>]*>([^<]*)</a>', page)
+    verifier("70. Deux CTA identiques, avant et apres les seances", len(ctas) == 2, ctas)
+    verifier("71. Meme libelle valide",
+             all("Réserver mon premier cours gratuit" in t for _, t in ctas), ctas)
+    verifier("72. Meme destination : le tunnel EXISTANT",
+             all(h == "/?link=b83914b4-c5a" for h, _ in ctas), ctas)
+
+    # --- les seances, groupees par mois, en HTML natif ---
+    verifier("73. Les seances sont groupees dans des `<details>`",
+             page.count("<details") >= 1)
+    verifier("74. Chaque groupe a son `<summary>` (focusable au clavier)",
+             page.count("<summary") == page.count("<details"))
+    verifier("75. Le PREMIER mois est ouvert, les suivants replies",
+             page.count("<details open") == 1, "ouverts=%d" % page.count("<details open"))
+    verifier("76. Aucune dependance JavaScript pour les seances",
+             "onclick" not in page.lower() and "<script" not in
+             page.split('class="seances"')[-1] if 'class="seances"' in page else True)
+
+    # --- rien n'a disparu du HTML ---
+    for attendu in ("18:30", "19:45", LIEU_A, LIEU_B, "Afroboost Silent", "Session Cardio"):
+        verifier("77. « %s » toujours dans le HTML servi" % attendu[:28], attendu in page)
+    plats = [o for b in blocs_jsonld(page) for o in _plat(b)]
+    verifier("78. JSON-LD toujours valide, 1 `Event` par occurrence",
+             len([o for o in plats if o.get("@type") == "Event"]) == 2)
+    verifier("79. `canonical` inchangee",
+             '<link rel="canonical" href="%s%s"/>' % (URL, CHEMIN) in page)
+
+    # --- pas de bourrage ---
+    # Le bourrage se mesure sur le TEXTE VISIBLE, pas sur le document entier :
+    # `<title>`, `og:` et `twitter:` repetent legitimement la meme phrase, et
+    # les compter ferait echouer une page parfaitement sobre. (Premiere ecriture
+    # de ce controle : elle comptait tout le HTML.)
+    _corps_visible = re.sub(r"<[^>]+>", " ", page.split("<body>")[-1])
+    verifier("80. « Neuchâtel » reste sous 8 occurrences dans le texte visible",
+             _corps_visible.count("Neuchâtel") <= 8,
+             "occurrences=%d" % _corps_visible.count("Neuchâtel"))
+
+    # Deux listes de mois cohabitent dans le depot (`RV2_MOIS` sans accents pour
+    # les gabarits WhatsApp, `_M1_MOIS` accentuee pour l'affichage web). Les
+    # melanger affichait « Août 2026 » en en-tete et « 30 aout » dans la ligne.
+    _lignes_seances = re.findall(r'<p class="s-quand">([^<]*)<', page)
+    verifier("80b. Aucun nom de mois dans la ligne de seance (une seule source)",
+             _lignes_seances and not any(
+                 m in l.lower() for l in _lignes_seances
+                 for m in ("janvier", "fevrier", "février", "mars", "avril", "mai",
+                           "juin", "juillet", "aout", "août", "septembre",
+                           "octobre", "novembre", "decembre", "décembre")),
+             _lignes_seances[:2])
+
+    # --- les quatre reperes ---
+    for repere in ("Débutants bienvenus", "Environ 1 heure", "Casque fourni", "Neuchâtel"):
+        verifier("81. Repere « %s »" % repere, repere in page)
 
 
 def _plat(bloc):
