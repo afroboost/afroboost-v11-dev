@@ -34176,7 +34176,7 @@ summary:focus-visible{outline:2px solid var(--p);outline-offset:2px}
 </style>
 </head><body>
 <header class="hero">
-<img class="hero-photo" src="/hero-afroboost.webp" alt="%(alt)s" width="1024" height="1024" fetchpriority="high"/>
+<img class="hero-photo" src="/hero-afroboost.jpg" alt="%(alt)s" width="1024" height="1024" fetchpriority="high"/>
 <div class="hero-voile"></div>
 <div class="hero-texte">
 <p class="kicker">Afroboost · Neuchâtel</p>

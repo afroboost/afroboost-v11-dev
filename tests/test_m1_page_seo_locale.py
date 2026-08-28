@@ -401,18 +401,45 @@ async def principal():
     verifier("64. Le hero porte une vraie photo", img is not None)
     src = re.search(r'src="([^"]+)"', img.group(0)) if img else None
     verifier("65. Elle pointe sur le fichier optimise",
-             src is not None and src.group(1) == "/hero-afroboost.webp",
+             src is not None and src.group(1) == "/hero-afroboost.jpg",
              src.group(1) if src else "absent")
     alt = re.search(r'alt="([^"]*)"', img.group(0)) if img else None
     verifier("66. Son `alt` est renseigne et factuel",
              alt is not None and len(alt.group(1)) > 25
              and "Neuchâtel" not in alt.group(1) and "lac" not in alt.group(1).lower(),
              alt.group(1) if alt else "absent")
-    chemin_img = os.path.join(RACINE, "frontend", "public", "hero-afroboost.webp")
+    # M1-SEO-UX1-MIME1 — LE WEBP A ETE REMPLACE PAR UN JPEG, ET POURQUOI.
+    # Le conteneur tourne sur `python:3.11-slim`, dont la table MIME integree
+    # ne connait PAS `.webp` : `FileResponse` retombait sur `text/plain`, avec
+    # `nosniff`. Corriger cela dans le gestionnaire statique aurait touche le
+    # chemin de TOUTES les reponses statiques (bundle, Service Worker,
+    # manifeste). `.jpg` est dans la table de toutes les versions de Python :
+    # changer d'image ne touche que cette page.
+    chemin_img = os.path.join(RACINE, "frontend", "public", "hero-afroboost.jpg")
     verifier("67. Le fichier optimise existe", os.path.isfile(chemin_img))
     if os.path.isfile(chemin_img):
         poids = os.path.getsize(chemin_img)
-        verifier("68. Il pese moins de 300 Ko", poids < 300 * 1024, "%d octets" % poids)
+        verifier("68. Il pese moins de 200 Ko", poids < 200 * 1024, "%d octets" % poids)
+        with open(chemin_img, "rb") as _f:
+            _tete = _f.read(3)
+        # Le CONTENU, pas l'extension : un fichier mal converti passerait
+        # sinon tous les controles.
+        verifier("68b. C'est un VRAI JPEG (nombre magique FF D8 FF)",
+                 _tete == b"\xff\xd8\xff", repr(_tete))
+        try:
+            from PIL import Image
+            _im = Image.open(chemin_img)
+            verifier("68c. Dimensions 1024x1024 au maximum",
+                     _im.width <= 1024 and _im.height <= 1024, str(_im.size))
+            verifier("68d. Aucune metadonnee EXIF ni GPS",
+                     not dict(_im.getexif() or {}), str(dict(_im.getexif() or {}))[:80])
+        except ImportError:
+            verifier("68c. Dimensions 1024x1024 au maximum", True, "Pillow absent")
+            verifier("68d. Aucune metadonnee EXIF ni GPS", True, "Pillow absent")
+    verifier("68e. Plus AUCUNE dérivée WebP dans le depot",
+             not os.path.isfile(os.path.join(RACINE, "frontend", "public",
+                                             "hero-afroboost.webp")))
+    verifier("68f. La page ne reference plus le WebP", "hero-afroboost.webp" not in page)
     verifier("69. La page reste lisible SANS image (texte hors de l'image)",
              "<h1" in page.split("</picture>")[-1] or 'class="hero-texte"' in page)
 
