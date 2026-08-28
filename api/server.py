@@ -34110,6 +34110,12 @@ async def m1_page_essai_neuchatel(request: Request):
     # lien est exactement celui d'avant ce lot.
     _lien = _M1_TUNNEL
     try:
+        # M2-A-FIX1 — L'IMPORT QUI MANQUAIT.
+        # Livre sans lui, l'appel levait un `NameError` avale par le `except`
+        # ci-dessous : la page marchait, aucune 5xx, et l'attribution restait
+        # INERTE. Meme defaut que l'incident OTP (`_RESEND_OK`). Import LOCAL,
+        # comme partout ailleurs dans ce fichier pour le module partage.
+        from api.routes.shared import m2a_attribution_entrante
         _attr = m2a_attribution_entrante(
             request.query_params if request else None,
             (request.headers.get("referer", "") if request else ""),

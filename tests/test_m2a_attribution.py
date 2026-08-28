@@ -332,6 +332,87 @@ async def principal():
     verifier("48. L'espace abonne ecrit toujours `source: subscriber_space`",
              '"source": "subscriber_space"' in "".join(LIGNES))
 
+    # ═══════════ 9. AUCUN NOM LIBRE — LA LECON DE L'INCIDENT ════════════════
+    for f in ("m1_page_essai_neuchatel", "_m1_seances"):
+        manquants = _noms_libres(f)
+        verifier("49. `%s` n'utilise aucun nom inexistant" % f, not manquants,
+                 "noms absents de api/server.py : %s" % sorted(manquants))
+    for f in ("free_checkout",):
+        manquants = _noms_libres(f, ARBRE_CHECKOUT)
+        verifier("50. `%s` n'utilise aucun nom inexistant" % f, not manquants,
+                 "noms absents de checkout_routes.py : %s" % sorted(manquants))
+
+
+def _noms_libres(nom_fonction, arbre=None):
+    """Tout nom LU par cette fonction et qui n'existe nulle part -> NameError.
+
+    POURQUOI CE CONTROLE EXISTE, ET POURQUOI IL ARRIVE APRES COUP. M2-A a ete
+    livre en production avec `m2a_attribution_entrante` APPELE mais JAMAIS
+    IMPORTE dans `api/server.py`. Le `NameError` etait avale par le `except`
+    fail-open : la page marchait, aucune 5xx, et l'attribution restait inerte.
+    Le banc, lui, etait vert — parce qu'il INJECTAIT le nom dans son namespace,
+    fournissant ainsi ce que la production n'avait pas.
+
+    C'est le MEME defaut que l'incident OTP (`_RESEND_OK`), dont la lecon etait
+    deja consignee. Ce controle est generique : il attrapera n'importe quel nom
+    libre, aujourd'hui et demain, sans qu'on ait a le deviner.
+    """
+    import builtins
+    arbre = arbre or ARBRE
+    globaux = set()
+    for n in arbre.body:
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    globaux.add(t.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            globaux.add(n.name)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            for al in n.names:
+                globaux.add((al.asname or al.name).split(".")[0])
+        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
+            globaux.add(n.target.id)
+        elif isinstance(n, ast.Try):
+            for sous in n.body + [x for h in n.handlers for x in h.body] + n.orelse + n.finalbody:
+                if isinstance(sous, (ast.Import, ast.ImportFrom)):
+                    for al in sous.names:
+                        globaux.add((al.asname or al.name).split(".")[0])
+                elif isinstance(sous, ast.Assign):
+                    for t in sous.targets:
+                        if isinstance(t, ast.Name):
+                            globaux.add(t.id)
+    cible = None
+    for n in ast.walk(arbre):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == nom_fonction:
+            cible = n
+    if cible is None:
+        return {nom_fonction + " (fonction absente)"}
+    locaux = set(a.arg for a in cible.args.args)
+    for n in ast.walk(cible):
+        if isinstance(n, ast.Lambda):
+            for _a in list(n.args.args) + list(n.args.posonlyargs) + list(n.args.kwonlyargs):
+                locaux.add(_a.arg)
+    for n in ast.walk(cible):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+            locaux.add(n.id)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            for al in n.names:
+                locaux.add((al.asname or al.name).split(".")[0])
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            locaux.add(n.name)
+    for n in ast.walk(cible):
+        if isinstance(n, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            for g in n.generators:
+                for x in ast.walk(g.target):
+                    if isinstance(x, ast.Name):
+                        locaux.add(x.id)
+    manquants = set()
+    for n in ast.walk(cible):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+            if n.id not in locaux and n.id not in globaux and not hasattr(builtins, n.id):
+                manquants.add(n.id)
+    return manquants
+
 
 if __name__ == "__main__":
     try:
