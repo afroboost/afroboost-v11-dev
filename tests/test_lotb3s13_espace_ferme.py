@@ -152,7 +152,10 @@ def extraire(noms, db, journal):
           "DEFAULT_COACH_ID": "bassi_default"}
     for n in ast.walk(ARBRE):
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in (
-                "_B3S1_COLL_SESSIONS", "_B3S13_REFUS_DETAIL"):
+                # M1-GEO1 : `n456_occurrences_publiques` valide desormais un
+                # parametre `region`. MONTAGE uniquement — aucune attente de ce
+                # banc ne change, il fournit juste ce que la fonction lit.
+                "_B3S1_COLL_SESSIONS", "_B3S13_REFUS_DETAIL", "M1GEO1_REGIONS"):
             exec(compile("".join(LIGNES[n.lineno - 1:n.end_lineno]), "s", "exec"), ns)
     for nom in noms:
         for n in ast.walk(ARBRE):
@@ -388,8 +391,8 @@ async def principal():
     # Le VRAI moteur d'occurrences, pas une imitation : c'est lui qui garantit
     # « futur seulement », et on ne testerait rien en le remplacant.
     dbc = Base()
-    nsr = extraire(["n456_occurrences_publiques", "_v184_next_occurrences",
-                    "_v184_parse_time_hhmm"], dbc, Journal())
+    nsr = extraire(["m1geo1_region_normalisee", "n456_occurrences_publiques",
+                    "_v184_next_occurrences", "_v184_parse_time_hhmm"], dbc, Journal())
     for nn in ast.walk(ARBRE):
         if isinstance(nn, ast.Assign) and getattr(nn.targets[0], "id", "") == "_V184_WEEKDAY_LABELS_FR":
             exec(compile("".join(LIGNES[nn.lineno - 1:nn.end_lineno]), "s", "exec"), nsr)

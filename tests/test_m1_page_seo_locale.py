@@ -102,12 +102,12 @@ class Journal:
     def error(self, m="", *a, **k): self._n(m, a)
 
 
-NOMS = ("_m1_echapper", "_m1_jsonld", "_v184_parse_time_hhmm",
+NOMS = ("m1geo1_region_normalisee", "_m1_echapper", "_m1_jsonld", "_v184_parse_time_hhmm",
         "_v184_next_occurrences", "n456_occurrences_publiques",
         "rv2_date_lisible", "_m1_seances", "m1_page_essai_neuchatel")
 CONSTANTES = ("_N456_CHAMPS_PUBLICS", "_V184_WEEKDAY_LABELS_FR", "RV2_JOURS",
               "RV2_MOIS", "COACH_EMAIL", "_M1_SITE", "_M1_CHEMIN", "_M1_TUNNEL",
-              "_M1_HORIZON_JOURS", "_M1_MAX_SEANCES")
+              "_M1_HORIZON_JOURS", "_M1_MAX_SEANCES", "M1GEO1_REGIONS", "_M1_REGION")
 
 
 def monter(db, journal):
@@ -143,6 +143,12 @@ def monde():
         {"id": "c-archive", "name": "Cours archive", "date": demain, "time": "21:30",
          "locationName": LIEU_A, "coach_id": COACH, "visible": True, "archived": True},
     ]
+    # M1-GEO1 : la page ne sert QUE sa region. Les cours de banc la portent donc,
+    # sinon la regle fail closed les ecarterait tous et ce banc testerait le
+    # vide. MONTAGE uniquement — aucune attente n'est modifiee. Le cas « sans
+    # region » a son propre banc (`test_m1geo1_region.py`, controle 18).
+    for _d in db.courses.docs:
+        _d["region"] = "neuchatel"
     return db, j
 
 

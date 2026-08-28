@@ -655,6 +655,48 @@ class AudioTrack(BaseModel):
     order: int = 0
     visible: bool = True  # En vente sur la vitrine
 
+# ═══════ LOT M1-GEO1 — LA REGION EST UN JETON, PAS UNE ADRESSE ═══════
+#
+# POURQUOI. La page SEO « a Neuchatel » ne pouvait pas garantir qu'elle
+# n'afficherait jamais une seance lausannoise : le seul champ geographique d'un
+# cours etait `locationName`, du TEXTE LIBRE. Recensement du 28/08 : 23 cours,
+# 8 libelles pour 4 endroits — « LAUSANNE ESPLANADE & CASINO DE MONTBENON » et
+# « ESPLANADE & CASINO DE MONTBENON, LAUSANNE » designent le meme lieu. Filtrer
+# la-dessus serait une recherche par morceau de texte ; et `courseLocation.js`
+# documente deja que l'alias `location` a DIVERGE en production.
+#
+# UNE SEULE LISTE, TROIS USAGES : la validation serveur, le selecteur du
+# dashboard et les pages SEO lisent la meme. Une ville nouvelle arrive avec sa
+# page, dans un lot dedie — jamais par une valeur libre qui traine.
+M1GEO1_REGIONS = ("neuchatel", "lausanne")
+
+
+def m1geo1_region_normalisee(valeur):
+    """(jeton, statut) — statut vaut `absent`, `valide` ou `inconnue`.
+
+    TROIS ISSUES, ET AUCUNE N'EST SILENCIEUSE :
+      * absent   — champ vide : le cours n'est PAS classe. Il n'apparaitra sur
+                   aucune page locale, et c'est voulu : mieux vaut une page
+                   incomplete qu'une page qui ment sur sa ville.
+      * valide   — le jeton est enregistre sous sa forme normalisee.
+      * inconnue — l'appelant DOIT refuser. Une faute de frappe acceptee en
+                   silence produirait un cours invisible partout, sans que
+                   personne comprenne pourquoi.
+
+    La normalisation ne sert qu'a l'ECRITURE : « Neuchatel », « NEUCHATEL » et
+    « Neuchatel » designent la meme ville, mais un seul jeton entre en base.
+    """
+    import unicodedata as _ud
+    brut = "" if valeur is None else str(valeur)
+    jeton = _ud.normalize("NFKD", brut).encode("ascii", "ignore").decode("ascii")
+    jeton = re.sub(r"[\s_]+", "-", jeton.strip().lower()).strip("-")
+    if not jeton:
+        return "", "absent"
+    if jeton in M1GEO1_REGIONS:
+        return jeton, "valide"
+    return "", "inconnue"
+
+
 class Course(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -666,6 +708,9 @@ class Course(BaseModel):
     time: str
     locationName: str
     location: Optional[str] = None  # Alias de locationName pour le frontend
+    # M1-GEO1 : la region SEO. Optionnel — aucun cours existant n'est migre de
+    # force, et un cours non classe reste invisible des pages locales.
+    region: Optional[str] = None
     mapsUrl: Optional[str] = ""
     visible: bool = True
     archived: bool = False  # Archive au lieu de supprimer
@@ -689,6 +734,7 @@ class CourseCreate(BaseModel):
     date: Optional[str] = None     # V246: cours ponctuel « 2026-08-21 »
     time: str
     locationName: str
+    region: Optional[str] = None  # M1-GEO1 : jeton de `M1GEO1_REGIONS`
     mapsUrl: Optional[str] = ""
     visible: bool = True
     archived: bool = False
@@ -1676,13 +1722,27 @@ _N456_CHAMPS_PUBLICS = ("course_id", "name", "weekday", "weekday_label", "time",
 
 
 @api_router.get("/courses/occurrences")
-async def n456_occurrences_publiques(coach: str = "", days: int = 14):
-    """Les prochaines seances, sans aucune donnee personnelle."""
+async def n456_occurrences_publiques(coach: str = "", days: int = 14,
+                                     region: str = ""):
+    """Les prochaines seances, sans aucune donnee personnelle.
+
+    M1-GEO1 : `region` est FACULTATIF. Absent, la route rend exactement ce
+    qu'elle rendait avant ce lot — le ChatWidget et la vitrine ne changent pas.
+    Fourni, il devient un filtre STRICT : seuls les cours portant ce jeton
+    sortent. Un cours non classe n'apparait donc sur aucune page locale.
+    """
     # Memes filtres que la vitrine : masque ou archive n'est pas publiable.
     _filtre = {"archived": {"$ne": True}, "visible": {"$ne": False}}
     _coach = (coach or "").strip().lower()
     if _coach:
         _filtre["coach_id"] = _coach
+    _reg, _reg_st = m1geo1_region_normalisee(region)
+    if _reg_st == "inconnue":
+        # Fail closed, et sans oracle : une region inconnue rend une liste vide,
+        # exactement comme une region reelle sans seance.
+        return {"occurrences": []}
+    if _reg:
+        _filtre["region"] = _reg
     try:
         _cours = await db.courses.find(_filtre, {"_id": 0}).to_list(300)
     except Exception as _err:
@@ -1710,6 +1770,13 @@ async def create_course(course: CourseCreate, request: Request):
     # v19: Auto-set coach_id depuis le header d'authentification
     user_email = request.headers.get("X-User-Email", "").lower().strip()
     course_data = course.model_dump()
+    # M1-GEO1 : une region mal orthographiee n'entre JAMAIS en base en silence.
+    _reg, _reg_st = m1geo1_region_normalisee(course_data.get("region"))
+    if _reg_st == "inconnue":
+        raise HTTPException(status_code=400,
+                            detail="Région inconnue. Valeurs acceptées : %s."
+                                   % ", ".join(M1GEO1_REGIONS))
+    course_data["region"] = _reg or None
     if user_email and not course_data.get("coach_id"):
         course_data["coach_id"] = user_email
     course_obj = Course(**course_data)
@@ -1728,7 +1795,17 @@ async def update_course(course_id: str, course_update: dict, request: Request):
     
     # Fusionner les données (mise à jour partielle)
     update_data = {k: v for k, v in course_update.items() if v is not None}
-    
+
+    # M1-GEO1 : meme garde qu'a la creation. « Non classe » se dit en envoyant
+    # une chaine vide — elle efface la region au lieu d'en inventer une.
+    if "region" in course_update:
+        _reg, _reg_st = m1geo1_region_normalisee(course_update.get("region"))
+        if _reg_st == "inconnue":
+            raise HTTPException(status_code=400,
+                                detail="Région inconnue. Valeurs acceptées : %s."
+                                       % ", ".join(M1GEO1_REGIONS))
+        update_data["region"] = _reg or None
+
     await db.courses.update_one({"id": course_id}, {"$set": update_data})
     updated = await db.courses.find_one({"id": course_id}, {"_id": 0})
     return updated
@@ -33875,6 +33952,9 @@ _M1_SITE = "https://afroboost.com"
 _M1_CHEMIN = "/cours-essai-gratuit-neuchatel"
 # Le tunnel d'essai EXISTANT — on n'en cree pas un second.
 _M1_TUNNEL = "/?link=b83914b4-c5a"
+# M1-GEO1 : la region servie par CETTE page. Elle vient de la liste fermee —
+# une page locale ne peut pas inventer sa ville.
+_M1_REGION = "neuchatel"
 _M1_HORIZON_JOURS = 45
 _M1_MAX_SEANCES = 12
 
@@ -33903,7 +33983,7 @@ async def _m1_seances():
     """
     try:
         donnees = await n456_occurrences_publiques(
-            coach=COACH_EMAIL, days=_M1_HORIZON_JOURS)
+            coach=COACH_EMAIL, days=_M1_HORIZON_JOURS, region=_M1_REGION)
         occurrences = (donnees or {}).get("occurrences") or []
     except Exception as _err:
         logger.warning("[M1] planning indisponible (%s)", type(_err).__name__)

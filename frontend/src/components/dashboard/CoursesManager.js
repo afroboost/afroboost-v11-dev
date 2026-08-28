@@ -9,6 +9,18 @@ import SvgIcon from '../SvgIcon';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
 
+// M1-GEO1 — LA MEME LISTE FERMEE QUE LE SERVEUR (`M1GEO1_REGIONS`).
+// La region decide sur quelle page SEO locale une seance apparait. Elle se
+// CHOISIT, elle ne se tape pas : une faute de frappe rendrait le cours
+// invisible partout sans que personne comprenne pourquoi — et le serveur la
+// refuserait en 400. « Non classe » est une valeur legitime : le cours reste
+// visible sur le site, simplement absent des pages locales.
+const M1GEO1_REGIONS = [
+  { valeur: '', libelle: 'Non classé' },
+  { valeur: 'neuchatel', libelle: 'Neuchâtel' },
+  { valeur: 'lausanne', libelle: 'Lausanne' }
+];
+
 const CoursesManager = ({
   courses,
   setCourses,
@@ -70,7 +82,7 @@ const CoursesManager = ({
     try {
       const res = await axios.post(`${API}/courses`, { ...newCourse, visible: true, archived: false });
       setCourses([...courses, res.data]);
-      setNewCourse({ name: "", weekday: 0, time: "18:30", locationName: "", mapsUrl: "" });
+      setNewCourse({ name: "", weekday: 0, time: "18:30", locationName: "", region: "", mapsUrl: "" });
     } catch (err) {
       console.error("Erreur ajout cours:", err);
     }
@@ -83,6 +95,7 @@ const CoursesManager = ({
         weekday: course.weekday,
         time: course.time,
         locationName: course.locationName,
+        region: course.region || '',
         mapsUrl: course.mapsUrl || '',
         visible: true,
         archived: false
@@ -242,6 +255,25 @@ const CoursesManager = ({
                   onBlur={() => updateCourse(course)}
                   className="w-full px-3 py-2 rounded-lg neon-input text-sm"
                 />
+              </div>
+              <div>
+                <label className="block mb-1 text-white text-xs opacity-70">Région (pages locales)</label>
+                <select
+                  value={course.region || ''}
+                  onChange={(e) => {
+                    const n = [...courses];
+                    const realIdx = courses.findIndex(c => c.id === course.id);
+                    n[realIdx].region = e.target.value;
+                    setCourses(n);
+                    updateCourse(n[realIdx]);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+                  data-testid={`course-region-${course.id}`}
+                >
+                  {M1GEO1_REGIONS.map(r => (
+                    <option key={r.valeur} value={r.valeur}>{r.libelle}</option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="block mb-1 text-white text-xs opacity-70">{t('weekday')}</label>
@@ -474,6 +506,16 @@ const CoursesManager = ({
             onChange={e => setNewCourse({ ...newCourse, locationName: e.target.value })}
             className="px-3 py-2 rounded-lg neon-input text-sm w-full"
           />
+          <select
+            value={newCourse.region || ''}
+            onChange={e => setNewCourse({ ...newCourse, region: e.target.value })}
+            className="px-3 py-2 rounded-lg neon-input text-sm w-full"
+            data-testid="new-course-region"
+          >
+            {M1GEO1_REGIONS.map(r => (
+              <option key={r.valeur} value={r.valeur}>{r.libelle}</option>
+            ))}
+          </select>
           <select
             value={newCourse.weekday}
             onChange={e => setNewCourse({ ...newCourse, weekday: parseInt(e.target.value) })}
