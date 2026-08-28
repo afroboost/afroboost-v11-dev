@@ -38,10 +38,10 @@
         <meta property="og:type" content="website" />
         <meta property="og:title" content="Afroboost - Fitness Immersif 🎧" />
         <meta property="og:description" content="Le concept Afroboost : cardio + danse afrobeat + casques audio immersifs. Un entraînement fun, énergétique et accessible à tous. Réservez votre session !" />
-        <meta property="og:image" content="%PUBLIC_URL%/og-image.png" />
+        <meta property="og:image" content="https://afroboost.com/og-image.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta property="og:url" content="%PUBLIC_URL%" />
+        <meta property="og:url" content="https://afroboost.com/" />
         <meta property="og:site_name" content="Afroboost" />
         <meta property="og:locale" content="fr_FR" />
         
@@ -49,7 +49,7 @@
         <meta name="twitter:card" content="summary_large_image" />
         <meta name="twitter:title" content="Afroboost - Fitness Immersif 🎧" />
         <meta name="twitter:description" content="Cardio + danse afrobeat + casques audio immersifs. Réservez votre session maintenant !" />
-        <meta name="twitter:image" content="%PUBLIC_URL%/og-image.png" />
+        <meta name="twitter:image" content="https://afroboost.com/og-image.png" />
         
         <!-- Additional SEO -->
         <meta name="keywords" content="afroboost, fitness, casque audio, danse, afrobeat, cardio, réservation, cours" />
@@ -115,6 +115,9 @@
             });
         </script>
         <meta name="robots" content="index, follow" />
+        <!-- M1 : canonical ABSOLU. Sans lui, toute URL inventee (le catch-all
+             SPA repond 200 partout) devenait un duplicata indexable de l'accueil. -->
+        <link rel="canonical" href="https://afroboost.com/" />
         
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black" />

@@ -33847,6 +33847,196 @@ async def shutdown_db_client():
     client.close()
     logger.info("[SYSTEM] Database connections closed")
 
+# ═════════════ LOT M1 — UNE PAGE QUE GOOGLE PEUT REELLEMENT LIRE ═════════════
+#
+# CE QUI N'ALLAIT PAS. Le site est une SPA React : la page servie AVANT
+# l'execution du JavaScript contient 16 mots utiles, aucun `<h1>`, aucun
+# `canonical`, aucune donnee structuree — et n'importe quelle URL renvoie 200
+# avec ce meme contenu. Aucune recherche locale ne pouvait donc etre servie, et
+# le seul chemin vers l'essai etait `/?link=...`, illisible pour un moteur
+# comme pour une bio Instagram.
+#
+# CE QUE CETTE PAGE EST. Une page HTML reelle, rendue par le serveur, qui se
+# suffit a elle-meme sans JavaScript. Elle devient la destination unique pour
+# Google, les reseaux et les partages WhatsApp.
+#
+# UNE SEULE SOURCE POUR LES COURS. Elle APPELLE `n456_occurrences_publiques`,
+# la fonction meme qui sert `/api/courses/occurrences` — pas un appel HTTP du
+# serveur vers lui-meme, pas une copie de son filtrage, pas un second calcul.
+# Si cette source tombe ou ne rend rien, la page le DIT et n'invente ni date ni
+# adresse : c'est exactement le defaut qu'elle corrige.
+#
+# CE QU'ELLE NE DECLARE PAS, ET POURQUOI. Pas de `LocalBusiness` : le planning
+# compte plusieurs lieux et Afroboost n'a pas d'adresse permanente — en
+# declarer une serait faux. Pas de `price: 0` ni `isAccessibleForFree` : seule
+# la PREMIERE seance d'essai eligible est offerte, pas les cours. Aucun avis,
+# aucune note, aucun effectif : rien qui ne soit prouve.
+_M1_SITE = "https://afroboost.com"
+_M1_CHEMIN = "/cours-essai-gratuit-neuchatel"
+# Le tunnel d'essai EXISTANT — on n'en cree pas un second.
+_M1_TUNNEL = "/?link=b83914b4-c5a"
+_M1_HORIZON_JOURS = 45
+_M1_MAX_SEANCES = 12
+
+
+def _m1_echapper(valeur):
+    """Toute valeur venant d'un cours passe par ici avant d'entrer dans le HTML."""
+    import html as _m1_html
+    return _m1_html.escape("" if valeur is None else str(valeur), quote=True)
+
+
+def _m1_jsonld(objets):
+    """Un bloc `<script type="application/ld+json">` sur.
+
+    `<` est reecrit en `\\u003c` : un nom de cours contenant `</script>`
+    fermerait sinon la balise. L'echappement reste du JSON parfaitement valide.
+    """
+    brut = json.dumps(objets, ensure_ascii=False)
+    return '<script type="application/ld+json">%s</script>' % brut.replace("<", "\\u003c")
+
+
+async def _m1_seances():
+    """(lignes_affichables, evenements_jsonld) — depuis LA source, ou rien.
+
+    Aucune exception ne remonte : une page d'acquisition qui tombe en 500 est
+    pire qu'une page sans planning.
+    """
+    try:
+        donnees = await n456_occurrences_publiques(
+            coach=COACH_EMAIL, days=_M1_HORIZON_JOURS)
+        occurrences = (donnees or {}).get("occurrences") or []
+    except Exception as _err:
+        logger.warning("[M1] planning indisponible (%s)", type(_err).__name__)
+        return [], []
+    lignes, evenements = [], []
+    for occ in occurrences[:_M1_MAX_SEANCES]:
+        _quand = str(occ.get("datetime") or "")
+        try:
+            _dt = datetime.fromisoformat(_quand)
+        except (TypeError, ValueError):
+            continue
+        _nom = str(occ.get("name") or "Séance Afroboost")
+        _lieu = str(occ.get("locationName") or "")
+        _heure = str(occ.get("time") or _dt.strftime("%H:%M"))
+        lignes.append({
+            "nom": _m1_echapper(_nom),
+            "date": _m1_echapper(rv2_date_lisible(_dt)),
+            "heure": _m1_echapper(_heure),
+            "lieu": _m1_echapper(_lieu),
+        })
+        # `Event` UNIQUEMENT pour une occurrence future reelle — celles-ci le
+        # sont deja, la source ne rend que du futur.
+        _ev = {"@context": "https://schema.org", "@type": "Event",
+               "name": _nom, "startDate": _quand,
+               "eventStatus": "https://schema.org/EventScheduled",
+               "eventAttendanceMode": "https://schema.org/OfflineEventAttendanceMode",
+               "organizer": {"@type": "Organization", "name": "Afroboost",
+                             "url": _M1_SITE},
+               "url": _M1_SITE + _M1_CHEMIN}
+        if _lieu:
+            # Le NOM du lieu, tel que le planning le porte. Aucune adresse
+            # postale n'est declaree : nous n'en avons pas de permanente.
+            _ev["location"] = {"@type": "Place", "name": _lieu}
+        evenements.append(_ev)
+    return lignes, evenements
+
+
+@fastapi_app.get(_M1_CHEMIN, response_class=HTMLResponse)
+async def m1_page_essai_neuchatel():
+    """Page publique d'acquisition — lisible sans JavaScript."""
+    _lignes, _evenements = await _m1_seances()
+
+    if _lignes:
+        _planning = "".join(
+            '<li><span class="j">%s · %s</span><span class="l">%s</span>'
+            '<span class="n">%s</span></li>' % (x["date"], x["heure"], x["lieu"], x["nom"])
+            for x in _lignes)
+        _planning = '<ul class="seances">%s</ul>' % _planning
+    else:
+        # NI DATE NI ADRESSE INVENTEE — on le dit, et le CTA reste.
+        _planning = ('<p class="vide">Aucune séance n’est publiée pour le moment. '
+                     'Réserve ton essai : nous te proposons la prochaine date.</p>')
+
+    _titre = "Cours de danse afro à Neuchâtel — 1er cours d’essai offert | Afroboost"
+    _desc = ("Danse afro, cardio et fitness au casque audio à Neuchâtel. "
+             "Accessible aux débutants, sans niveau requis. "
+             "Ton premier cours d’essai Afroboost est offert — réserve ta place.")
+    _cta = ('<a class="cta" href="%s">Réserver mon premier cours gratuit</a>'
+            % _M1_TUNNEL)
+
+    _structure = _m1_jsonld([
+        {"@context": "https://schema.org", "@type": "WebPage",
+         "name": _titre, "description": _desc, "url": _M1_SITE + _M1_CHEMIN,
+         "inLanguage": "fr-CH"},
+        {"@context": "https://schema.org", "@type": "Organization",
+         "name": "Afroboost", "url": _M1_SITE,
+         "logo": _M1_SITE + "/logo512.png",
+         "areaServed": "Neuchâtel, Suisse"},
+    ] + _evenements)
+
+    _html = """<!doctype html><html lang="fr"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>%(titre)s</title>
+<meta name="description" content="%(desc)s"/>
+<meta name="robots" content="index, follow"/>
+<link rel="canonical" href="%(site)s%(chemin)s"/>
+<meta property="og:type" content="website"/>
+<meta property="og:site_name" content="Afroboost"/>
+<meta property="og:locale" content="fr_FR"/>
+<meta property="og:title" content="%(titre)s"/>
+<meta property="og:description" content="%(desc)s"/>
+<meta property="og:url" content="%(site)s%(chemin)s"/>
+<meta property="og:image" content="%(site)s/og-image.png"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="%(titre)s"/>
+<meta name="twitter:description" content="%(desc)s"/>
+<meta name="twitter:image" content="%(site)s/og-image.png"/>
+%(structure)s
+<style>
+:root{--p:#D91CD2}
+*{box-sizing:border-box}
+body{margin:0;background:#0a0a12;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.6}
+main{max-width:720px;margin:0 auto;padding:28px 20px 56px}
+h1{font-size:clamp(1.6rem,6vw,2.4rem);line-height:1.2;margin:0 0 12px}
+h2{font-size:clamp(1.1rem,4.4vw,1.4rem);margin:32px 0 12px}
+p{margin:0 0 14px;color:#e8e8f0}
+.offre{font-weight:700;color:#fff;font-size:clamp(1rem,4vw,1.15rem)}
+.cta{display:block;width:100%%;max-width:340px;margin:22px auto;padding:16px 22px;background:var(--p);color:#fff;text-align:center;text-decoration:none;font-weight:700;border-radius:999px}
+.seances{list-style:none;padding:0;margin:0}
+.seances li{display:flex;flex-direction:column;gap:2px;padding:14px 0;border-bottom:1px solid rgba(255,255,255,.14)}
+.seances .j{font-weight:700;color:var(--p)}
+.seances .l{color:#e8e8f0}
+.seances .n{color:#a9a9b8;font-size:.92rem}
+.vide{color:#a9a9b8}
+.note{color:#a9a9b8;font-size:.9rem}
+</style>
+</head><body><main>
+<h1>Cours de danse afro, cardio et fitness à Neuchâtel</h1>
+<p class="offre">Ton premier cours d’essai Afroboost est offert.</p>
+%(cta)s
+<h2>L’expérience Afroboost</h2>
+<p>Afroboost mélange la danse afro, le cardio et le fitness dans une séance
+d’environ une heure, à Neuchâtel et autour du lac.</p>
+<p>Chacun porte un casque audio sans fil : la musique est dans la tête, pas
+dans la salle. On oublie le regard des autres, on suit le rythme, on transpire.</p>
+<p>Aucun niveau n’est demandé. Les séances sont pensées pour les débutants
+comme pour les habitués : on avance à son rythme, personne ne juge.</p>
+<h2>Prochaines séances</h2>
+%(planning)s
+<p class="note">Les dates, horaires et lieux ci-dessus viennent directement du
+planning Afroboost. Les séances se déroulent selon la saison au bord du lac ou
+en salle : le lieu exact de chaque séance est indiqué avec sa date.</p>
+%(cta)s
+<p class="note">L’essai offert concerne la première séance, une seule fois par
+personne. Les autres formules restent payantes.</p>
+</main></body></html>""" % {
+        "titre": _titre, "desc": _desc, "site": _M1_SITE, "chemin": _M1_CHEMIN,
+        "structure": _structure, "cta": _cta, "planning": _planning,
+    }
+    return HTMLResponse(content=_html, status_code=200)
+
+
 # Export for Vercel Serverless
 # ============================================
 # Docker Static File Serving (React SPA)

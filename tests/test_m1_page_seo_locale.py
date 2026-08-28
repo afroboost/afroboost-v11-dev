@@ -1,0 +1,394 @@
+# -*- coding: utf-8 -*-
+"""LOT M1 — UNE PAGE QUE GOOGLE PEUT REELLEMENT LIRE.
+
+CE QUE CE LOT CORRIGE. Le site est une SPA React : la page servie AVANT
+l'execution du JavaScript contient 16 mots utiles, aucun `<h1>`, aucun
+`canonical`, aucune donnee structuree, et n'importe quelle URL renvoie 200 avec
+ce meme contenu. Aucune requete locale ne peut donc etre servie, et le seul
+chemin vers l'essai est un parametre de requete (`/?link=...`) illisible pour
+un moteur comme pour une bio Instagram.
+
+CE QU'IL AJOUTE, ET RIEN D'AUTRE. Une page HTML reelle, rendue par le serveur,
+a `/cours-essai-gratuit-neuchatel`.
+
+LES QUATRE GARDES, toutes verifiees ici :
+  1. UNE SEULE SOURCE POUR LES COURS. La page APPELLE
+     `n456_occurrences_publiques` — la fonction derriere `/api/courses/occurrences`
+     — directement, sans appel HTTP vers soi-meme et sans recopier son filtrage.
+     Le controle 7 le prouve par lecture de l'arbre syntaxique.
+  2. DONNEES STRUCTUREES FACTUELLES. Pas de `LocalBusiness` (l'adresse
+     permanente n'existe pas : le planning compte plusieurs lieux), pas de
+     `price: 0` ni `isAccessibleForFree` (seule la PREMIERE seance eligible est
+     offerte), aucun avis invente.
+  3. ECHAPPEMENT. Toute valeur venant d'un cours traverse `html.escape`.
+  4. AUCUN LIEU EN DUR. Ni Auvernier, ni Vallangines, ni aucune autre adresse.
+
+AUCUNE BASE REELLE, AUCUN RESEAU, AUCUNE DONNEE PERSONNELLE.
+    python3 tests/test_m1_page_seo_locale.py
+"""
+import ast, asyncio, io, json, os, re, sys, types
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone, timedelta
+
+RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, RACINE)
+
+SRC = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
+ARBRE = ast.parse(SRC)
+LIGNES = SRC.splitlines(True)
+
+RESULTATS = []
+
+
+def verifier(nom, cond, detail=""):
+    RESULTATS.append((nom, bool(cond), detail))
+
+
+COACH = "coach-synthetique"
+URL = "https://afroboost.com"
+CHEMIN = "/cours-essai-gratuit-neuchatel"
+# Les lieux REELS du planning, jamais ecrits dans le code de production.
+LIEU_A = "Bord du Lac, Auvernier, Neuchâtel"
+LIEU_B = "Plage Est de St-Blaise - La Torpille"
+
+
+# ═════════════════════════ faux Mongo minimal ════════════════════════════════
+def _corr(doc, filtre):
+    for cle, cond in (filtre or {}).items():
+        v = doc.get(cle)
+        if isinstance(cond, dict):
+            if "$ne" in cond and v == cond["$ne"]:
+                return False
+        elif v != cond:
+            return False
+    return True
+
+
+class _Curseur:
+    def __init__(self, docs):
+        self._d = docs
+
+    async def to_list(self, n=None):
+        return [dict(x) for x in (self._d if n is None else self._d[:n])]
+
+
+class Coll:
+    def __init__(self):
+        self.docs = []
+        self.appels = 0
+
+    def find(self, filtre=None, projection=None):
+        self.appels += 1
+        return _Curseur([d for d in self.docs if _corr(d, filtre)])
+
+
+class Base:
+    def __init__(self):
+        self.courses = Coll()
+
+
+class Journal:
+    def __init__(self):
+        self.lignes = []
+
+    def _n(self, m, a):
+        try:
+            self.lignes.append((str(m) % a) if a else str(m))
+        except (TypeError, ValueError):
+            self.lignes.append(str(m))
+
+    def info(self, m="", *a, **k): self._n(m, a)
+    def warning(self, m="", *a, **k): self._n(m, a)
+    def error(self, m="", *a, **k): self._n(m, a)
+
+
+NOMS = ("_m1_echapper", "_m1_jsonld", "_v184_parse_time_hhmm",
+        "_v184_next_occurrences", "n456_occurrences_publiques",
+        "rv2_date_lisible", "_m1_seances", "m1_page_essai_neuchatel")
+CONSTANTES = ("_N456_CHAMPS_PUBLICS", "_V184_WEEKDAY_LABELS_FR", "RV2_JOURS",
+              "RV2_MOIS", "COACH_EMAIL", "_M1_SITE", "_M1_CHEMIN", "_M1_TUNNEL",
+              "_M1_HORIZON_JOURS", "_M1_MAX_SEANCES")
+
+
+def monter(db, journal):
+    """Les VRAIES fonctions, extraites du vrai `server.py`."""
+    from fastapi.responses import HTMLResponse
+    ns = {"db": db, "logger": journal, "datetime": datetime, "timezone": timezone,
+          "timedelta": timedelta, "re": re, "html": __import__("html"),
+          "json": json, "HTMLResponse": HTMLResponse}
+    for n in ast.walk(ARBRE):
+        if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in CONSTANTES:
+            exec(compile("".join(LIGNES[n.lineno - 1:n.end_lineno]), "s", "exec"), ns)
+    for nom in NOMS:
+        for n in ast.walk(ARBRE):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == nom:
+                exec(compile("".join(LIGNES[n.lineno - 1:n.end_lineno]), "s", "exec"), ns)
+    return ns
+
+
+def monde():
+    db, j = Base(), Journal()
+    demain = (datetime.now() + timedelta(days=2)).date().isoformat()
+    hier = (datetime.now() - timedelta(days=9)).date().isoformat()
+    db.courses.docs = [
+        {"id": "c-futur", "name": "Afroboost Silent", "date": demain, "time": "18:30",
+         "locationName": LIEU_A, "coach_id": COACH, "visible": True,
+         "assignedEmail": "prive@exemple.invalid", "notes": "ne doit pas sortir"},
+        {"id": "c-futur2", "name": "Session Cardio", "date": demain, "time": "19:45",
+         "locationName": LIEU_B, "coach_id": COACH, "visible": True},
+        {"id": "c-passe", "name": "Ancien cours", "date": hier, "time": "18:30",
+         "locationName": LIEU_A, "coach_id": COACH, "visible": True},
+        {"id": "c-masque", "name": "Cours masque", "date": demain, "time": "20:30",
+         "locationName": LIEU_A, "coach_id": COACH, "visible": False},
+        {"id": "c-archive", "name": "Cours archive", "date": demain, "time": "21:30",
+         "locationName": LIEU_A, "coach_id": COACH, "visible": True, "archived": True},
+    ]
+    return db, j
+
+
+async def rendre(db, journal, coach=COACH):
+    ns = monter(db, journal)
+    ns["COACH_EMAIL"] = coach
+    rep = await ns["m1_page_essai_neuchatel"]()
+    corps = rep.body.decode("utf-8") if hasattr(rep, "body") else str(rep)
+    return rep, corps
+
+
+def blocs_jsonld(corps):
+    return re.findall(
+        r'<script type="application/ld\+json">(.*?)</script>', corps, re.S)
+
+
+# ════════════════════════════════ le banc ════════════════════════════════════
+async def principal():
+    # ---- 1. LA ROUTE EXISTE ET EST MONTEE AVANT LE CATCH-ALL ---------------
+    route = None
+    for n in ast.walk(ARBRE):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "m1_page_essai_neuchatel":
+            route = n
+    verifier("1. La page d'essai existe", route is not None)
+    decos = ["".join(LIGNES[d.lineno - 1:d.end_lineno]) for d in (route.decorator_list if route else [])]
+    verifier("2. Elle est montee sur le bon chemin, en HTML",
+             any("fastapi_app.get" in d and "_M1_CHEMIN" in d for d in decos)
+             and any("HTMLResponse" in d for d in decos),
+             "decorateurs=%s" % [d.strip() for d in decos])
+
+    spa = None
+    for n in ast.walk(ARBRE):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "_serve_spa":
+            spa = n
+    verifier("3. Elle est declaree AVANT le catch-all SPA (ordre = priorite)",
+             route is not None and spa is not None and route.lineno < spa.lineno,
+             "page l.%s / catch-all l.%s" % (route.lineno if route else "?", spa.lineno if spa else "?"))
+
+    # ---- 2. LE RENDU, SANS JAVASCRIPT --------------------------------------
+    db, j = monde()
+    rep, corps = await rendre(db, j)
+    verifier("4. Reponse 200", getattr(rep, "status_code", None) == 200)
+    verifier("5. Type text/html", "text/html" in str(getattr(rep, "media_type", "")))
+    verifier("6. Un `<title>` local (Neuchatel)",
+             re.search(r"<title>[^<]*Neuch[aâ]tel[^<]*</title>", corps) is not None)
+    verifier("7. Une meta description non vide",
+             re.search(r'<meta name="description" content="[^"]{60,}"', corps) is not None)
+    verifier("8. UN SEUL `<h1>`", len(re.findall(r"<h1[ >]", corps)) == 1,
+             "trouves=%d" % len(re.findall(r"<h1[ >]", corps)))
+    verifier("9. Le concept est decrit en clair (afro, cardio, casque, debutant)",
+             all(m in corps.lower() for m in ("afro", "cardio", "casque", "débutant")))
+    verifier("10. La formulation metier EXACTE est presente",
+             "Ton premier cours d'essai Afroboost est offert." in corps
+             or "Ton premier cours d’essai Afroboost est offert." in corps)
+    verifier("11. Aucune promesse que TOUS les cours sont gratuits",
+             not re.search(r"(tous|toutes) les (cours|s[ée]ances) (sont )?(gratuit|offert)", corps, re.I))
+
+    # ---- 3. METADONNEES ABSOLUES -------------------------------------------
+    can = re.search(r'<link rel="canonical" href="([^"]+)"', corps)
+    verifier("12. Canonical ABSOLU vers la page", can is not None and can.group(1) == URL + CHEMIN,
+             can.group(1) if can else "absent")
+    ogu = re.search(r'<meta property="og:url" content="([^"]+)"', corps)
+    verifier("13. og:url ABSOLU", ogu is not None and ogu.group(1).startswith("https://"),
+             ogu.group(1) if ogu else "absent")
+    ogi = re.search(r'<meta property="og:image" content="([^"]+)"', corps)
+    verifier("14. og:image ABSOLU", ogi is not None and ogi.group(1).startswith("https://"),
+             ogi.group(1) if ogi else "absent")
+    verifier("15. Aucune URL non-HTTPS officielle dans les metadonnees",
+             "http://afroboost" not in corps)
+
+    # ---- 4. DONNEES STRUCTUREES : VALIDES ET FACTUELLES --------------------
+    blocs = blocs_jsonld(corps)
+    verifier("16. Au moins un bloc JSON-LD", len(blocs) >= 1, "blocs=%d" % len(blocs))
+    objets = []
+    ok_json = True
+    for b in blocs:
+        try:
+            objets.append(json.loads(b))
+        except Exception as e:
+            ok_json = False
+            verifier("17. JSON-LD syntaxiquement valide", False, str(e)[:80])
+    if ok_json:
+        verifier("17. JSON-LD syntaxiquement valide", True)
+    plats = []
+    for o in objets:
+        plats.extend(o if isinstance(o, list) else [o])
+    types = [str(o.get("@type")) for o in plats]
+    verifier("18. `WebPage` et `Organization` presents",
+             "WebPage" in types and "Organization" in types, "types=%s" % types)
+    verifier("19. AUCUN `LocalBusiness` (aucune adresse permanente honnete)",
+             not any("LocalBusiness" in t for t in types), "types=%s" % types)
+    verifier("20. AUCUN avis, note ou compte invente",
+             not any(k in json.dumps(plats) for k in
+                     ("aggregateRating", "reviewCount", "ratingValue", "review")))
+    ev = [o for o in plats if o.get("@type") == "Event"]
+    verifier("21. Un `Event` par occurrence FUTURE, et seulement elles",
+             len(ev) == 2, "events=%d (attendu 2)" % len(ev))
+    verifier("22. Aucun `price: 0` ni `isAccessibleForFree` (l'essai n'est pas pour tous)",
+             not any(k in json.dumps(plats) for k in ("isAccessibleForFree", '"price"')))
+    verifier("23. Chaque `Event` porte une date de debut reelle",
+             all(str(e.get("startDate") or "").count("-") >= 2 for e in ev))
+    verifier("24. Le lieu d'un `Event` vient du planning, jamais d'une adresse ecrite",
+             all(((e.get("location") or {}).get("name") or "") in (LIEU_A, LIEU_B) for e in ev),
+             [str((e.get("location") or {}).get("name")) for e in ev])
+
+    # ---- 5. LA SOURCE UNIQUE (GARDE 1) ------------------------------------
+    # LE CODE DE LA PAGE = la route ET son collecteur de seances. Regarder la
+    # seule route laisserait passer une duplication cachee dans le helper.
+    src_route = "".join(LIGNES[route.lineno - 1:route.end_lineno]) if route else ""
+    for n in ast.walk(ARBRE):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "_m1_seances":
+            src_route += "".join(LIGNES[n.lineno - 1:n.end_lineno])
+    verifier("25. La page APPELLE `n456_occurrences_publiques`",
+             "n456_occurrences_publiques(" in src_route)
+    verifier("26. Elle ne requete PAS les cours elle-meme (aucune duplication)",
+             "db.courses" not in src_route and "_v184_next_occurrences" not in src_route)
+    verifier("27. Aucun appel HTTP du serveur vers lui-meme",
+             not any(m in src_route for m in ("httpx", "requests.", "aiohttp", "urlopen", "AsyncClient")))
+    verifier("28. Le filtrage visible/archived n'est pas recopie",
+             '"archived"' not in src_route and '"visible"' not in src_route)
+    verifier("29. La lecture des cours est bien passee par la source",
+             db.courses.appels == 1, "appels=%d" % db.courses.appels)
+
+    # ---- 6. AUCUN LIEU EN DUR ----------------------------------------------
+    verifier("30. Aucune adresse codee en dur dans la production",
+             not any(m.lower() in src_route.lower() for m in
+                     ("Auvernier", "Vallangines", "Montbenon", "Vidy", "St-Blaise")),
+             "une adresse en dur reproduirait le defaut qu'on corrige")
+    verifier("31. Les deux lieux REELS apparaissent dans la page rendue",
+             LIEU_A in corps and LIEU_B in corps)
+
+    # ---- 7. FUTUR ET PUBLIC UNIQUEMENT -------------------------------------
+    verifier("32. Le cours PASSE n'apparait pas", "Ancien cours" not in corps)
+    verifier("33. Le cours MASQUE n'apparait pas", "Cours masque" not in corps)
+    verifier("34. Le cours ARCHIVE n'apparait pas", "Cours archive" not in corps)
+    verifier("35. Les deux seances futures apparaissent",
+             "Afroboost Silent" in corps and "Session Cardio" in corps)
+
+    # ---- 8. ECHAPPEMENT (GARDE 3) ------------------------------------------
+    db2, j2 = monde()
+    db2.courses.docs[0]["name"] = '<script>alert(1)</script>"onload="x'
+    db2.courses.docs[0]["locationName"] = "Lieu & <b>gras</b>"
+    _, corps2 = await rendre(db2, j2)
+    verifier("36. Une valeur hostile est ECHAPPEE, jamais injectee",
+             "<script>alert(1)</script>" not in corps2 and "&lt;script&gt;" in corps2)
+    verifier("37. L'esperluette et les chevrons du lieu sont echappes",
+             "Lieu &amp; &lt;b&gt;gras&lt;/b&gt;" in corps2)
+    verifier("38. Le JSON-LD reste valide malgre la valeur hostile",
+             all(_valide(b) for b in blocs_jsonld(corps2)))
+
+    # ---- 9. LE CTA ---------------------------------------------------------
+    verifier("39. Le CTA porte le libelle demande",
+             "Réserver mon premier cours gratuit" in corps)
+    verifier("40. Le CTA mene au tunnel d'essai EXISTANT",
+             "?link=b83914b4-c5a" in corps)
+    verifier("41. Aucun nouveau tunnel n'est cree",
+             corps.count("?link=") >= 1 and "/checkout" not in corps)
+
+    # ---- 10. AUCUNE DONNEE PERSONNELLE -------------------------------------
+    verifier("42. Aucune donnee personnelle du cours ne fuit",
+             "prive@exemple.invalid" not in corps and "ne doit pas sortir" not in corps)
+    verifier("43. Aucune adresse e-mail dans la page",
+             not re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", corps))
+
+    # ---- 11. LA SOURCE ECHOUE : LA PAGE RESTE SURE -------------------------
+    db3, j3 = monde()
+    db3.courses.docs = []
+    _, corps3 = await rendre(db3, j3)
+    verifier("44. Sans seance a venir : message neutre, aucune date inventee",
+             "Aucune séance" in corps3 or "aucune séance" in corps3)
+    verifier("45. Le CTA reste present meme sans seance",
+             "Réserver mon premier cours gratuit" in corps3 and "?link=b83914b4-c5a" in corps3)
+    verifier("46. Aucun `Event` n'est declare sans occurrence reelle",
+             not [o for b in blocs_jsonld(corps3) for o in _plat(b) if o.get("@type") == "Event"])
+
+    class CollCassee(Coll):
+        def find(self, *a, **k):
+            raise RuntimeError("base injoignable")
+
+    db4, j4 = monde()
+    db4.courses = CollCassee()
+    rep4, corps4 = await rendre(db4, j4)
+    verifier("47. Source EN PANNE : la page repond quand meme 200",
+             getattr(rep4, "status_code", None) == 200)
+    verifier("48. Source EN PANNE : aucune date ni lieu invente",
+             "Aucune séance" in corps4 or "aucune séance" in corps4)
+
+    # ---- 12. LE SITEMAP ----------------------------------------------------
+    chemin_sm = os.path.join(RACINE, "frontend", "public", "sitemap.xml")
+    verifier("49. `sitemap.xml` existe dans les fichiers publics", os.path.isfile(chemin_sm))
+    if os.path.isfile(chemin_sm):
+        brut = io.open(chemin_sm, encoding="utf-8").read()
+        try:
+            arbre = ET.fromstring(brut)
+            valide = True
+        except Exception as e:
+            arbre, valide = None, False
+            verifier("50. Le sitemap est un XML VALIDE", False, str(e)[:80])
+        if valide:
+            verifier("50. Le sitemap est un XML VALIDE", True)
+            locs = [e.text.strip() for e in arbre.iter() if e.tag.endswith("}loc") or e.tag == "loc"]
+            verifier("51. Il contient l'accueil ET la nouvelle page",
+                     URL + "/" in locs and URL + CHEMIN in locs, "locs=%s" % locs)
+            verifier("52. Uniquement des URL HTTPS officielles",
+                     all(u.startswith(URL) for u in locs), "locs=%s" % locs)
+
+    # ---- 13. L'ACCUEIL -----------------------------------------------------
+    idx = io.open(os.path.join(RACINE, "frontend", "public", "index.html"), encoding="utf-8").read()
+    c2 = re.search(r'<link rel="canonical" href="([^"]+)"', idx)
+    verifier("53. L'accueil a un canonical ABSOLU", c2 is not None and c2.group(1) == URL + "/",
+             c2.group(1) if c2 else "absent")
+    o2 = re.search(r'<meta property="og:url" content="([^"]+)"', idx)
+    verifier("54. og:url de l'accueil ABSOLU (plus de `%PUBLIC_URL%` vide)",
+             o2 is not None and o2.group(1) == URL + "/", o2.group(1) if o2 else "absent")
+    i2 = re.search(r'<meta property="og:image" content="([^"]+)"', idx)
+    verifier("55. og:image de l'accueil ABSOLU",
+             i2 is not None and i2.group(1).startswith(URL + "/"), i2.group(1) if i2 else "absent")
+    verifier("56. Le titre et la description de l'accueil sont INCHANGES",
+             "Afroboost | Cardio &amp; Danse Afrobeat avec Casques" in idx
+             and "cardio, danse afrobeat et casques audio immersifs" in idx)
+
+
+def _plat(bloc):
+    try:
+        o = json.loads(bloc)
+    except Exception:
+        return []
+    return o if isinstance(o, list) else [o]
+
+
+def _valide(bloc):
+    try:
+        json.loads(bloc)
+        return True
+    except Exception:
+        return False
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(principal())
+    except Exception as _e:
+        RESULTATS.append(("BANC INTERROMPU : %s: %s" % (type(_e).__name__, _e), False, ""))
+    ok = 0
+    for nom, bon, detail in RESULTATS:
+        print(("  OK   " if bon else "  RATE ") + nom + (("   [%s]" % detail) if (detail and not bon) else ""))
+        ok += 1 if bon else 0
+    print("\n%d/%d au vert" % (ok, len(RESULTATS)))
+    sys.exit(0 if ok == len(RESULTATS) else 1)
