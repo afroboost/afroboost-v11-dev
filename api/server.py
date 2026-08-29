@@ -21838,10 +21838,37 @@ async def get_conversations_advanced(
     - has_more: Indique s'il y a plus de pages
     """
     import re
-    
-    # v14.7: Récupérer l'email du caller pour le filtrage
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    
+
+    # SECURITY-S0 — LA JUMELLE OUBLIÉE DE V309.
+    #
+    # V309 avait fermé la fuite sur `/chat/sessions` et laissé cette route-ci
+    # grande ouverte. Le défaut ne venait pas d'une garde trop faible : il n'y
+    # en avait AUCUNE. L'identité était prise dans `X-User-Email`, et son
+    # ABSENCE n'était pas une erreur — elle laissait `caller_email` vide, donc
+    # la condition `if caller_email and not is_super_admin(...)` plus bas était
+    # fausse, donc le filtre `coach_id` n'était JAMAIS posé. Autrement dit :
+    # moins on était identifié, plus on voyait.
+    #
+    # Mesuré en production le 29/08/2026, sans le moindre en-tête :
+    #   GET /api/conversations  ->  200, total: 592, tous coachs confondus,
+    #   avec participantEmail, participantWhatsapp, lastMessage, les notes du
+    #   coach et custom_prompt. Paginable jusqu'au bout.
+    #
+    # On applique la garde EXACTE de la jumelle (`/chat/sessions`), pas une
+    # variante : même fonction, même message, donc même kill-switch. Le drapeau
+    # `REQUIRE_COACH_JWT` reste lu à chaud — s'il repasse à OFF, les deux routes
+    # retombent ensemble sur le repli transitoire, sans redéploiement.
+    #
+    # Preuve du chemin légitime AVANT ce durcissement (règle V310c), jeton réel
+    # du propriétaire en main : `/conversations` 200 avec total 592, et les six
+    # routes déjà JWT-strict à 200 avec des volumes non vides (users 119,
+    # contacts 1625, codes 50, sessions 300). Le 200-sur-liste-vide de V312b
+    # n'est pas ce qu'on observe ici.
+    caller_email = await _v319_coach_identity(request)
+    if not caller_email or not await _v309_is_coach_or_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Accès réservé au coach/administrateur")
+
+
     # Limiter à 100 max
     limit = min(limit, 100)
     skip = (page - 1) * limit

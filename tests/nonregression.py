@@ -2380,6 +2380,82 @@ def t110_p1d_drapeaux_admin_seulement():
         record(110, "PUT /feature-flags P1-d sans JWT super-admin -> 403", False, str(e))
 
 
+def t111_s0_conversations_fermee_et_sans_pii():
+    """SECURITY-S0 : `/api/conversations` etait la JUMELLE OUBLIEE de V309.
+
+    V309 a ferme la fuite sur `/chat/sessions` (test 23, test 83) et laisse
+    celle-ci grande ouverte pendant des mois. Le defaut n'etait pas une garde
+    trop faible : il n'y en avait AUCUNE. L'identite venait de `X-User-Email`,
+    et son ABSENCE laissait `caller_email` vide -> le filtre `coach_id` n'etait
+    jamais pose -> un anonyme recevait TOUTES les conversations de TOUS les
+    coachs. Mesure du 29/08/2026 : `200`, `total: 592`, avec e-mails, WhatsApp,
+    contenu des messages, notes du coach et `custom_prompt`.
+
+    CE TEST AURAIT ECHOUE AVANT LE LOT : les trois profils recevaient 200.
+
+    Deux affirmations, la seconde etant la vraie garantie :
+      - les trois profils non autorises sont REFUSES (401/403), jamais 200 ;
+      - et le corps de la reponse ne contient AUCUNE donnee personnelle. Un
+        refus qui fuiterait un e-mail dans son message d'erreur serait une
+        fuite quand meme — c'est ce que ce second controle verrouille."""
+    try:
+        cas = {
+            "anonyme": {},
+            "X-User-Email usurpe": {"X-User-Email": ADMIN},
+            # Jeton de forme valide mais signe avec un mauvais secret.
+            "jeton invalide": {"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9."
+                                                "eyJlbWFpbCI6ImFAYi5jIn0.mauvaise_signature"},
+        }
+        # Marqueurs de PII : si l'un apparait dans un corps de refus, c'est
+        # une fuite. On ne cherche AUCUNE vraie valeur — uniquement les NOMS
+        # de champs, pour ne jamais ecrire de donnee reelle dans un test.
+        champs_pii = ("participantEmail", "participantWhatsapp", "participantName",
+                      "lastMessage", "last_message", "notes", "custom_prompt",
+                      "link_token", "conversations")
+        details = []
+        ok = True
+        for nom, hdr in cas.items():
+            r = requests.get(_url("/api/conversations?page=1&limit=1"),
+                             headers=hdr, timeout=TIMEOUT)
+            refuse = r.status_code in (401, 403)
+            corps = (r.text or "")
+            fuite = [c for c in champs_pii if c in corps]
+            details.append(f"{nom}={r.status_code}" + (f" FUITE:{','.join(fuite)}" if fuite else ""))
+            if not refuse or fuite:
+                ok = False
+        record(111, "SECURITY-S0 : /api/conversations REFUSE et ne fuite aucune donnee",
+               ok, " | ".join(details))
+    except Exception as e:
+        record(111, "SECURITY-S0 : /api/conversations fermee", False, str(e))
+
+
+def t112_s0_conversations_acces_legitime():
+    """SECURITY-S0 — LE PENDANT OBLIGATOIRE DU TEST 111 (regle V310c).
+
+    Fermer une route sans prouver que son proprietaire garde l'acces, c'est
+    l'incident V310 FIX 1 : dashboard vide, revert. Le refus seul ne prouve
+    rien de bon — il prouve juste qu'on a ferme la porte a tout le monde.
+
+    Un `200` renvoyant une liste VIDE ne compte pas : c'est exactement la
+    panne V312b (« 32 conversations disparues »). On exige donc `total > 0`."""
+    if not ADMIN_JWT:
+        skip(112, "SECURITY-S0 : acces legitime a /api/conversations",
+             "ADMIN_JWT non fourni — ⛔ un SKIP ici INTERDIT la livraison du "
+             "durcissement (regle V310c) : le parcours legitime n'est pas prouve.")
+        return
+    try:
+        r = requests.get(_url("/api/conversations?page=1&limit=5"),
+                         headers={"Authorization": f"Bearer {ADMIN_JWT}"}, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        total = d.get("total", 0)
+        lignes = len(d.get("conversations") or [])
+        record(112, "SECURITY-S0 : coach legitime (JWT) -> /api/conversations 200 NON vide",
+               r.status_code == 200 and total > 0 and lignes > 0,
+               f"HTTP {r.status_code} total={total} lignes={lignes}")
+    except Exception as e:
+        record(112, "SECURITY-S0 : acces legitime a /api/conversations", False, str(e))
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -2424,6 +2500,8 @@ def main():
                    t107_estimation_aucun_oracle_par_email,
                    t108_offres_exposent_avantage_membre,
                    t109_p1d_drapeaux_exposes_et_dormants, t110_p1d_drapeaux_admin_seulement,
+                   t111_s0_conversations_fermee_et_sans_pii,
+                   t112_s0_conversations_acces_legitime,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

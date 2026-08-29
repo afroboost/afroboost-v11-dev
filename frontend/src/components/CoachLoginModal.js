@@ -74,7 +74,21 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
           withCredentials: true
         });
         if (response.data && response.data.email) {
-          console.log('✅ Déjà connecté:', response.data.email);
+          console.log('✅ Déjà connecté'); // SECURITY-S0 : plus d'email journalise
+          // SECURITY-S0 — L'ENTRÉE PAR LE COOKIE POSE MAINTENANT LE JETON.
+          // Sans cette ligne, entrer par `/auth/me` ouvrait le tableau de bord
+          // avec une session NON SIGNÉE : la moitié des sections restaient en
+          // 403, et le kill-switch `PUT /feature-flags` — qui exige un JWT —
+          // devenait lui-même inaccessible. Le serveur vient de vérifier le
+          // cookie en base ; on stocke la preuve qu'il nous rend, dans la MÊME
+          // clé et par le MÊME motif que la connexion par mot de passe
+          // ci-dessous. On ne touche ni au mot de passe ni aux rôles.
+          if (response.data.token) {
+            localStorage.setItem('afroboost_jwt', response.data.token);
+            // Réveille les écrans qui attendaient : ils relancent SEULEMENT
+            // les sections refusées, sans recharger la page.
+            signalerConnexionReussie();
+          }
           onLogin(response.data);
         }
       } catch (err) {

@@ -241,13 +241,48 @@ async def get_current_user(request: Request, response: Response):
     if not user:
         raise HTTPException(status_code=401, detail="Utilisateur non trouvé")
 
-    return {
+    # SECURITY-S0 — CETTE ROUTE PROUVAIT UNE IDENTITÉ SANS JAMAIS LA DIRE.
+    #
+    # Le constat : le propriétaire entrait par le cookie (`CoachLoginModal.js`
+    # appelle `/auth/me` au montage), donc SANS jamais passer par `/auth/login`
+    # — et `/auth/login` est le seul émetteur de jeton. Résultat mesuré le
+    # 29/08/2026 : `afroboost_jwt` absent, `/auth/whoami` -> `valid: false`, et
+    # la moitié du tableau de bord en 403 (Utilisateurs, Codes promo, non-lus,
+    # Transactions). Comme `JWT_EXPIRATION_DAYS = 7` et qu'aucune route ne
+    # renouvelle un jeton, l'état revenait TOUTES LES SEMAINES.
+    #
+    # Pourquoi c'est sûr, et pourquoi ce n'est pas un second système d'auth :
+    # on n'invente aucune preuve, on transcrit celle qui vient d'être vérifiée
+    # ci-dessus. Le `session_token` est un UUID4 de `coach_sessions`, contrôlé
+    # en base et supprimé s'il est périmé (lignes plus haut). Ses SEULS
+    # producteurs sont `/auth/login` (PBKDF2-SHA256, 100 000 itérations, plus
+    # le contrôle `pending_validation`), `/auth/register` (auto-inscription
+    # refusée en 403) et `/cinetpay/register-free` (adresses super-admin
+    # interdites, V2-0d). Détenir ce cookie, c'est donc avoir déjà prouvé
+    # exactement ce que `/auth/login` exige.
+    #
+    # Le rôle est calculé par la MÊME ligne que `/auth/login` — et il reste
+    # informatif : l'accès est recalculé en base par `_v309_is_coach_or_admin`,
+    # un rôle menti dans un jeton n'ouvre rien.
+    #
+    # Purement additif : aucun appelant existant ne lit ce champ, aucune garde
+    # n'est resserrée. `generate_jwt_token` rend "" (sans lever) quand
+    # JWT_SECRET manque — d'où le `if`, pour ne jamais faire stocker un jeton
+    # vide au client.
+    _s0_email = (user.get("email") or "")
+    _s0_role = "super_admin" if is_super_admin_email(_s0_email) else "coach"
+    _s0_token = generate_jwt_token(_s0_email, _s0_role) if _s0_email else ""
+
+    _reponse = {
         "user_id": user.get("user_id"),
         "email": user.get("email"),
         "name": user.get("name"),
         "picture": user.get("picture"),
         "is_coach": user.get("is_coach", True)
     }
+    if _s0_token:
+        _reponse["token"] = _s0_token
+    return _reponse
 
 
 @auth_router.post("/logout")
