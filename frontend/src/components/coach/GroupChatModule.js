@@ -2,6 +2,7 @@
 // V155: Fix création robuste + UI d'édition groupe (nom, prompt, membres, IA/Humain)
 // V107.11: Chat intégré inline dans chaque groupe
 
+import { cl1DoitSonder } from '../../utils/chatPolling';
 import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
 import { Users, Plus, X, Search, Check, Bot, UserCircle, Trash2, ChevronDown, ChevronUp, Copy, MessageSquare, Send, RefreshCw, Edit2, Save, UserPlus, Eye, EyeOff } from 'lucide-react';
 import { renderTextWithLinks } from '../chat/ChatBubbles';
@@ -144,8 +145,13 @@ const GroupChatPanel = memo(({ group, API, coachEmail, onClose }) => {
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   // Polling toutes les 10s
+  // CHAT-LOOP1 — onglet cache : on ne tire pas. Ce panneau restait ouvert en
+  // arriere-plan et sondait sa session indefiniment.
   useEffect(() => {
-    const interval = setInterval(loadMessages, 10000);
+    const interval = setInterval(() => {
+      if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
+      loadMessages();
+    }, 10000);
     return () => clearInterval(interval);
   }, [loadMessages]);
 

@@ -3,6 +3,7 @@
  * Admin panel for managing the Afroboost application
  * Extracted from App.js for better maintainability
  */
+import { cl1DoitSonder } from '../utils/chatPolling';
 import React, { useState, useEffect, useRef, useMemo, useCallback, Component } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
@@ -4846,66 +4847,71 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     checkUnreadNotifications();
     
     // Puis toutes les 10 secondes
+    // CHAT-LOOP1 — onglet cache ou reseau absent : on ne tire pas. Le
+    // `ChatWidget` appliquait deja cette garde cote visiteur ; le dashboard,
+    // non : portable ferme, il sondait toute la nuit.
     const interval = setInterval(() => {
+      if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
       checkUnreadNotifications();
     }, 10000);
-    
+
+    // Reprise propre au retour a l'ecran : UN rappel immediat, aucun timer
+    // supplementaire — l'intervalle ci-dessus n'est ni recree ni double.
+    const cl1Reprise = () => {
+      if (document.visibilityState === 'visible') checkUnreadNotifications();
+    };
+    document.addEventListener('visibilitychange', cl1Reprise);
+
     // Cleanup important pour éviter les fuites mémoire
     return () => {
       console.log('[NOTIFICATIONS] Polling désactivé');
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', cl1Reprise);
     };
   }, [tab, checkUnreadNotifications]);
 
-  // === POLLING LEGACY pour les sessions en mode humain ===
-  const lastMessageCountRef = useRef({});
-  
-  const checkNewMessages = useCallback(async () => {
-    if (tab !== 'conversations') return;
-    
-    // Vérifier les sessions en mode humain pour les nouveaux messages
-    const humanSessions = chatSessions.filter(s => !s.is_ai_active);
-    
-    for (const session of humanSessions) {
-      try {
-        const res = await axios.get(`${API}/chat/sessions/${session.id}/messages`);
-        const messages = res.data;
-        const prevCount = lastMessageCountRef.current[session.id] || 0;
-        
-        if (messages.length > prevCount) {
-          const latestMessage = messages[messages.length - 1];
-          
-          // Si le message vient d'un utilisateur (pas du coach)
-          if (latestMessage.sender_type === 'user') {
-            // Note: Le son est maintenant géré par checkUnreadNotifications
-            
-            // Mettre à jour les messages si c'est la session sélectionnée
-            if (selectedSession?.id === session.id) {
-              setSessionMessages(messages);
-            }
-          }
-        }
-        
-        lastMessageCountRef.current[session.id] = messages.length;
-      } catch (err) {
-        // Ignorer les erreurs silencieusement
-      }
-    }
-  }, [tab, chatSessions, selectedSession]);
+  // === CHAT-LOOP1 — LA BOUCLE PAR SESSION A ETE SUPPRIMEE ===
+  //
+  // Ce qu'il y avait ici : `checkNewMessages`, une boucle `for` sur TOUTES les
+  // sessions en mode humain, avec un `GET /chat/sessions/<id>/messages` par
+  // session, relancee toutes les 5 secondes. En base, 69 sessions ont
+  // `is_ai_active` faux OU ABSENT — et `!undefined` vaut vrai, donc les 56
+  // sessions sans le champ etaient parcourues elles aussi. Jusqu'a 828 requetes
+  // par minute, sans garde de visibilite.
+  //
+  // Mesure Cloudflare du 29/08 : 126 660 requetes en 24 h depuis une seule IP,
+  // 98,69 k bloquees, 73 % du trafic du site. La regle « Anti-aspiration API
+  // Afroboost » (20 requetes / 10 s / IP) coupait alors aussi le formulaire
+  // partenaire, qui partageait ce compteur.
+  //
+  // RIEN N'EST PERDU — verifie ligne a ligne avant suppression :
+  //   - le badge et le son des non-lus viennent de `checkUnreadNotifications`
+  //     (`/notifications/unread`), pas d'ici ; le commentaire d'origine le
+  //     disait deja (« le son est maintenant gere par checkUnreadNotifications ») ;
+  //   - le seul effet observable qui restait, `setSessionMessages` sur la
+  //     conversation OUVERTE, est deja assure par le poller 8 s ci-dessous,
+  //     et sans condition ;
+  //   - `last_message` et `message_count` de la liste viennent de
+  //     `/conversations`.
+  // `lastMessageCountRef` n'etait lu que par cette fonction : il disparait avec elle.
 
   // Polling toutes les 5 secondes quand sur l'onglet conversations
+  // CHAT-LOOP1 — il ne reste QUE le rafraichissement de la liste complete des
+  // sessions : une requete par cycle, quel que soit le nombre de conversations.
+  // Les dependances ne contiennent plus `checkNewMessages` : cette fonction
+  // dependait de `chatSessions`, que deux pollers reecrivaient toutes les 5 et
+  // 8 secondes — l'intervalle etait donc detruit et recree en permanence.
   useEffect(() => {
     if (tab !== 'conversations') return;
-    
+
     const interval = setInterval(() => {
-      checkNewMessages();
-      // Rafraîchir aussi la liste des sessions
+      if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
       axios.get(`${API}/chat/sessions`).then(res => {
         setChatSessions(res.data);
       }).catch(() => {});
     }, 5000);
     return () => clearInterval(interval);
-  }, [tab, checkNewMessages]);
+  }, [tab]);
 
   // Load conversations when tab changes
   useEffect(() => {
@@ -4934,8 +4940,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         ]);
         if (linksRes?.data) setChatLinks(linksRes.data);
         if (convsRes?.data?.conversations) {
+          // CHAT-LOOP1 — UNE SEULE SOURCE POUR `chatSessions`. Ce poller y
+          // ecrivait les 20 conversations de `/conversations?limit=20` pendant
+          // que le poller 5 s y ecrivait la liste COMPLETE (915) : l'etat
+          // oscillait entre les deux, ce qui faisait varier le nombre de
+          // requetes de l'ancienne boucle. `chatSessions` est desormais
+          // alimente par `/chat/sessions` seul ; la liste affichee reste
+          // `enrichedConversations`.
           setEnrichedConversations(convsRes.data.conversations);
-          setChatSessions(convsRes.data.conversations);
         }
         if (partsRes?.data) setChatParticipants(partsRes.data);
         // Rafraichir messages si une session est ouverte
@@ -4945,8 +4957,21 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         }
       } catch (e) { /* silencieux */ }
     };
-    const interval = setInterval(poll, 8000);
-    return () => clearInterval(interval);
+    // CHAT-LOOP1 — meme garde de visibilite, et une reprise immediate unique
+    // au retour a l'ecran : c'est ce poller qui rafraichit la conversation
+    // ouverte, donc celui dont l'utilisateur voit le retard.
+    const interval = setInterval(() => {
+      if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
+      poll();
+    }, 8000);
+    const cl1Reprise = () => {
+      if (document.visibilityState === 'visible') poll();
+    };
+    document.addEventListener('visibilitychange', cl1Reprise);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', cl1Reprise);
+    };
   }, [tab, selectedSession?.id]);
 
   // === CONTACTS COMBINÉS: Users + Reservations + Chat Participants ===
