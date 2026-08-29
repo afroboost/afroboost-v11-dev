@@ -245,8 +245,16 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
             width="1024"
             height="1024"
             style={{
-              width: '100%', height: '160px', objectFit: 'cover',
-              objectPosition: '50% 30%', borderRadius: '14px',
+              // P1.2-HEROFIX — LE CADRAGE, MESURE PLUTOT QUE DEVINE.
+              // La photo source est CARREE (1024x1024) ; une banniere de
+              // 390x150 n'en montre que 393 px de haut, soit 38 % — le reste
+              // est rogne. A `50% 30%`, la fenetre commencait a y=189 et
+              // coupait le haut de la tete : sujet decapite, exactement ce qui
+              // a ete constate en production. A `50% 10%` elle commence a y=63,
+              // et la chevelure, le casque et le visage tiennent entiers.
+              // Verifie en decoupant reellement la photo aux quatre valeurs.
+              width: '100%', height: '150px', objectFit: 'cover',
+              objectPosition: '50% 10%', borderRadius: '14px',
               marginBottom: '14px', display: 'block'
             }}
           />

@@ -93,9 +93,21 @@ describe('OnboardingTunnel — cablage (lecture de la source)', () => {
   });
   test('4. elle porte un alt descriptif et object-fit cover', () => {
     const i = SRC.indexOf('/hero-afroboost.jpg');
-    const bloc = SRC.slice(Math.max(0, i - 400), i + 700);
+    const bloc = SRC.slice(Math.max(0, i - 400), i + 1400);
     expect(bloc).toMatch(/alt="[^"]{25,}"/);
     expect(bloc).toContain('cover');
+  });
+
+  test('4bis. le cadrage ne decapite pas le sujet', () => {
+    // La photo est CARREE : une banniere n'en montre que ~38 % de la hauteur.
+    // A `50% 30%` (premiere version, constatee en production) la fenetre
+    // commencait sous le haut du crane. Mesure en decoupant la photo : `10 %`
+    // garde chevelure, casque et visage entiers.
+    const i = SRC.indexOf('/hero-afroboost.jpg');
+    const bloc = SRC.slice(i, i + 1400);
+    expect(bloc).toMatch(/objectPosition: '50% 10%'/);
+    expect(bloc).not.toMatch(/objectPosition: '50% 30%'/);
+    expect(bloc).toMatch(/height: '1[45]0px'/);
   });
   test('3. le tunnel essai ne recoit aucune image', () => {
     // Le logo rond historique reste, la banniere est conditionnelle.
