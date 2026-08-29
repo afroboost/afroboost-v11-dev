@@ -139,6 +139,58 @@ describe('OnboardingTunnel — cablage (lecture de la source)', () => {
   });
 });
 
+describe('P1.2-DEDUP2 — le MEME submission_id sur les DEUX appels', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const TUNNEL = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'components', 'chat', 'OnboardingTunnel.js'), 'utf8');
+  const WIDGET = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'components', 'ChatWidget.js'), 'utf8');
+
+  // LE DEFAUT MESURE EN PRODUCTION LE 29/08 A 10:24 :
+  //   10:24:53  lead 1  submission_id = a3ead67d…   (POST du tunnel)
+  //   10:24:54  lead 2  submission_id = ABSENT      (POST du ChatWidget)
+  // Un parcours partenaire fait DEUX appels a smart-entry — le tunnel, puis
+  // `handleSmartEntry` via `onComplete`. Seul le premier portait l'identifiant :
+  // le second ne pouvait donc pas etre deduplique. Ce n'etait PAS un double-clic.
+
+  test('1. le tunnel remonte son submission_id dans onComplete', () => {
+    const i = TUNNEL.indexOf('onComplete(participantId, sessionId, {');
+    const bloc = TUNNEL.slice(i, i + 900);
+    expect(bloc).toMatch(/submission_?[iI]d/);
+  });
+
+  test('2. le second POST envoie un submission_id', () => {
+    const i = WIDGET.indexOf('axios.post(`${API}/chat/smart-entry`');
+    expect(i).toBeGreaterThan(0);
+    const bloc = WIDGET.slice(i, i + 900);
+    expect(bloc).toContain('submission_id');
+  });
+
+  test('3. il le prend de clientData, il n en fabrique pas un autre', () => {
+    const i = WIDGET.indexOf('axios.post(`${API}/chat/smart-entry`');
+    const bloc = WIDGET.slice(i, i + 900);
+    expect(bloc).toMatch(/clientData[\s\S]{0,40}submission/);
+  });
+
+  test('4. AUCUN second UUID n est genere dans ChatWidget', () => {
+    expect(WIDGET).not.toContain('p12NouveauSubmissionId');
+    expect(WIDGET).not.toContain('crypto.randomUUID');
+  });
+
+  test('5. le tunnel ne genere toujours qu UN seul UUID, au montage', () => {
+    expect((TUNNEL.match(/p12NouveauSubmissionId\(\)/g) || []).length).toBe(1);
+    expect(TUNNEL).toMatch(/useState\(\(\) => p12NouveauSubmissionId\(\)\)/);
+  });
+
+  test('6. non-regression : absent de clientData -> champ simplement absent', () => {
+    const i = WIDGET.indexOf('axios.post(`${API}/chat/smart-entry`');
+    const bloc = WIDGET.slice(i, i + 900);
+    // aucune valeur de repli fabriquee : un ancien appelant reste inchange
+    expect(bloc).not.toMatch(/submission_id:\s*['\"]/);
+  });
+});
+
 describe('ChatWidget — cablage (lecture de la source)', () => {
   const fs = require('fs');
   const path = require('path');

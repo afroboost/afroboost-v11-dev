@@ -6724,7 +6724,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         email: clientData.email,
         whatsapp: clientData.whatsapp,
         link_token: linkToken,
-        tunnel_answers: clientData.tunnelAnswers || null
+        tunnel_answers: clientData.tunnelAnswers || null,
+        // P1.2-DEDUP2 : le MEME identifiant que le premier appel, celui que le
+        // tunnel a genere. Le serveur reconnait alors le rejeu et n'ecrit ni
+        // second lead ni seconde notification. ABSENT quand l'appelant n'en a
+        // pas (reprise de conversation, skip paiement) : comportement inchange.
+        submission_id: (clientData && clientData.submission_id) || undefined
       }, _seConfig);
 
       // V315 : PREUVE REQUISE (mode strict, appareil neuf sans jeton d'appareil).

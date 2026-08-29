@@ -126,6 +126,22 @@ async def principal():
     verifier("20. `proof_required` garde sa forme",
              '"proof_required": True' in se and '"acquisition_saved"' in se)
 
+    # ═══════════ 5bis. P1.2-DEDUP2 — LE REJEU DOIT RESTER EXPLOITABLE ══════
+    # Un parcours partenaire fait DEUX appels a smart-entry (tunnel puis
+    # ChatWidget). Le second, une fois le meme `submission_id` propage, tombera
+    # sur le rejeu. Il faut donc que le rejeu renvoie de quoi TERMINER le
+    # parcours — sinon on echangerait un doublon contre un ecran casse.
+    _rejeu = se[se.index("rejeu ignore (submission deja connue)"):][:600]
+    for cle in ('"proof_required": True', '"acquisition_saved"', '"message"', '"reason"'):
+        verifier("22. Le rejeu rend %s, comme une reponse normale" % cle,
+                 cle in _rejeu, _rejeu[:120])
+    # Sur le chemin NORMAL, le rejeu ne doit PAS court-circuiter la reponse :
+    # participant et session restent necessaires pour ouvrir la conversation.
+    _bloc_normal = se[se.index("rejeu ignore sur le chemin normal"):][:900]
+    verifier("23. Le chemin normal ne sort PAS prematurement sur un rejeu",
+             "return" not in _bloc_normal.split("logger.info")[1][:200],
+             "un `return` ici priverait ChatWidget du participant et de la session")
+
     # ═══════════ 6. AUCUN NOM LIBRE — LA LECON, APPLIQUEE D'EMBLEE ══════════
     # Deux fois deja un nom appele mais jamais importe a rendu du code inerte en
     # production (`_RESEND_OK` pour l'OTP, `m2a_attribution_entrante` pour M2-A),

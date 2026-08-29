@@ -185,6 +185,13 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
         whatsapp: formData.whatsapp.trim(),
         tunnelAnswers: tunnelData,
         linkData: linkData, // V218: expose end_actions to ChatWidget for payment flow
+        // P1.2-DEDUP2 : un parcours partenaire fait DEUX appels a smart-entry —
+        // celui-ci, puis celui de `handleSmartEntry` juste apres. Sans cet
+        // identifiant, le second etait invisible pour la deduplication : mesure
+        // du 29/08 a 10:24, deux leads a 1,4 s d'ecart, le premier avec son
+        // `submission_id`, le second sans. On propage le MEME — on n'en cree
+        // surtout pas un autre.
+        submission_id: submissionId,
       });
     } catch (err) {
       console.error('[ONBOARDING] Erreur smart-entry:', err);
