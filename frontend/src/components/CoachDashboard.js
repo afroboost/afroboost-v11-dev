@@ -927,8 +927,18 @@ function SessionSecureBadge() {
   }, []);
   useEffect(() => {
     check();
-    const id = setInterval(check, 60000);
-    return () => clearInterval(id);
+    // CHAT-LOOP2 — pastille purement visuelle : personne ne la lit onglet cache.
+    // Reprise immediate au retour, sinon le badge resterait faux jusqu'a 60 s.
+    const id = setInterval(() => {
+      if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
+      check();
+    }, 60000);
+    const cl2Reprise = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', cl2Reprise);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', cl2Reprise);
+    };
   }, [check]);
 
   if (state.status === 'checking') return null;
@@ -3748,8 +3758,17 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     // Vérifier immédiatement puis toutes les 30 secondes
     if (tab === "campaigns") {
       checkSchedulerHealth();
-      const interval = setInterval(checkSchedulerHealth, 30000);
-      return () => clearInterval(interval);
+      // CHAT-LOOP2 — simple affichage d'etat, aucun effet metier : inutile cache.
+      const interval = setInterval(() => {
+        if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
+        checkSchedulerHealth();
+      }, 30000);
+      const cl2Reprise = () => { if (document.visibilityState === 'visible') checkSchedulerHealth(); };
+      document.addEventListener('visibilitychange', cl2Reprise);
+      return () => {
+        clearInterval(interval);
+        document.removeEventListener('visibilitychange', cl2Reprise);
+      };
     }
   }, [tab]);
 
@@ -3783,8 +3802,22 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         fetch(`${API}/cron/check-campaigns`).then(() => loadCampaigns()).catch(() => {});
       };
       triggerCheck();
-      const campaignCheckInterval = setInterval(triggerCheck, 60000); // 60s
-      return () => clearInterval(campaignCheckInterval);
+      // CHAT-LOOP2 — ce declencheur est un vestige de l'ere Vercel, et il est
+      // desormais inerte : `/cron/check-campaigns` repond 401 au frontend, et
+      // le serveur lance `_campaign_scheduler_loop()` au demarrage, qui envoie
+      // les campagnes programmees toutes les 60 s. Le garder onglet cache ne
+      // declenche donc AUCUN envoi — seule la liste se rafraichissait, ce qui
+      // n'a d'interet que devant les yeux du coach.
+      const campaignCheckInterval = setInterval(() => {
+        if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
+        triggerCheck();
+      }, 60000); // 60s
+      const cl2Reprise = () => { if (document.visibilityState === 'visible') triggerCheck(); };
+      document.addEventListener('visibilitychange', cl2Reprise);
+      return () => {
+        clearInterval(campaignCheckInterval);
+        document.removeEventListener('visibilitychange', cl2Reprise);
+      };
     }
   }, [tab]);
 
@@ -3805,7 +3838,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       } catch (err) { /* silencieux */ }
     };
 
-    const fastPollInterval = setInterval(pollSending, 3000); // 3s
+    // CHAT-LOOP2 — barre de progression d'un envoi : rien a montrer onglet
+    // cache. Aucune reprise immediate : la cadence est de 3 s, le retard au
+    // retour est imperceptible, et un rappel de plus serait une rafale pour rien.
+    const fastPollInterval = setInterval(() => {
+      if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
+      pollSending();
+    }, 3000); // 3s
     return () => clearInterval(fastPollInterval);
   }, [campaigns.filter(c => c.status === 'sending').map(c => c.id).join(',')]);
 
@@ -4550,7 +4589,17 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   useEffect(() => {
     v441ChargerNonLus();
-    const t = setInterval(v441ChargerNonLus, 5000);
+    // CHAT-LOOP2 — C'EST LE POLLER DU LOT. Mesure du 29/08 dans le dashboard
+    // reel : 8 appels en 40 s, soit 1 toutes les 5 s, sur TOUS les onglets,
+    // onglet cache compris — 17 280 requetes/24 h, en 403 dans une session
+    // sans jeton, et les requetes s'empilaient (un 503 observe).
+    // Une pastille de non-lus ne se lit pas onglet cache. Aucune reprise
+    // immediate : a 5 s de cadence, le prochain tir arrive avant que l'oeil
+    // ne s'en apercoive — un rappel de plus ne serait qu'une rafale.
+    const t = setInterval(() => {
+      if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
+      v441ChargerNonLus();
+    }, 5000);
     return () => clearInterval(t);
   }, [v441ChargerNonLus]);
 
