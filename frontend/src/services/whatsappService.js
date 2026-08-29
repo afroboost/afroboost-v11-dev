@@ -1,6 +1,11 @@
 // whatsappService.js - V161: Service d'envoi WhatsApp via Meta Cloud API (+ Twilio legacy)
 // Compatible Vercel - Configuration stockée dans MongoDB
 
+// V468 : axios porte l'intercepteur global qui pose `Authorization: Bearer`
+// (enregistré par App.js:21-28, exécuté avant tout rendu). Importer axios ici
+// n'installe pas l'intercepteur — il le REJOINT.
+import axios from 'axios';
+
 // API URL
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -35,15 +40,16 @@ export const getWhatsAppConfigSync = () => {
  */
 export const saveWhatsAppConfig = async (config) => {
   try {
-    const response = await fetch(`${API}/api/whatsapp-config`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config)
-    });
-    if (response.ok) {
-      cachedConfig = await response.json();
-      return true;
-    }
+    // V468 (SECURITY-S2-A1) : `fetch` -> `axios`. La route écrit les identifiants
+    // du numéro business WhatsApp et exige désormais un JWT super-admin signé ;
+    // `fetch` ne passe pas par l'intercepteur global (App.js:21-28) qui pose
+    // `Authorization: Bearer`. Aucun bouton de l'interface n'appelle cette
+    // fonction aujourd'hui (le panneau Twilio/Meta hérité n'est plus rendu) :
+    // cette conversion ne répare rien de visible, elle évite que le panneau
+    // revienne un jour en 403 silencieux.
+    const { data } = await axios.put(`${API}/api/whatsapp-config`, config);
+    cachedConfig = data;
+    return true;
   } catch (e) {
     console.error('Error saving WhatsApp config:', e);
   }

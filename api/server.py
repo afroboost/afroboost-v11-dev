@@ -4381,12 +4381,72 @@ async def notify_coach(payload: CoachNotificationPayload):
 ---
 Notification automatique Afroboost"""
 
+        _sujet = f"🎉 Nouvelle réservation - {payload.clientName}"
+
+        # V468 (SECURITY-S2-A1) — l'e-mail au coach part désormais D'ICI, côté serveur.
+        #
+        # POURQUOI. Jusqu'ici cette route se contentait de RENVOYER l'adresse du coach
+        # et le texte au navigateur, à charge pour lui d'appeler
+        # `POST /campaigns/send-email` (App.js, notifyCoachAutomatic). Or ce second
+        # appel est déclenché par un VISITEUR ANONYME qui vient de payer : il n'a ni
+        # jeton ni identité. C'était donc le seul usage légitime d'un relais de
+        # courrier ouvert — et, tant qu'il existait, il INTERDISAIT de fermer
+        # `/campaigns/send-email`, où n'importe qui pouvait faire partir un e-mail
+        # vers n'importe quelle adresse depuis le domaine Afroboost.
+        #
+        # Ce qui change pour l'attaquant : la destination n'est plus choisie par
+        # l'appelant. Elle vient de `payment_links.coachNotificationEmail`, en base.
+        # Un anonyme peut encore déclencher cette route, mais seulement pour écrire
+        # au coach lui-même, avec un gabarit fixe. On passe d'un relais ouvert vers
+        # le monde entier à une sonnette chez le coach. Ce n'est pas zéro : la
+        # limitation de débit de cette route reste une dette, consignée.
+        #
+        # Ce qui change pour le coach : le message est IDENTIQUE, seule l'enveloppe
+        # diffère. Il recevait jusqu'ici le gabarit de CAMPAGNE, dont l'en-tête
+        # invisible annonce « découvre notre nouvelle vidéo exclusive » — un habillage
+        # marketing sur une notification de service. Il reçoit maintenant un gabarit
+        # sobre.
+        #
+        # Échappement : `notification_message` porte des données saisies par le
+        # client (nom, e-mail, WhatsApp). Il est échappé AVANT d'entrer dans le HTML,
+        # jamais concaténé brut.
+        _email_envoye = False
+        if coach_email and RESEND_AVAILABLE and RESEND_API_KEY:
+            try:
+                import html as _v468_html
+                _corps = _v468_html.escape(notification_message).replace("\n", "<br>")
+                _html = (
+                    '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">'
+                    '<meta name="viewport" content="width=device-width,initial-scale=1.0">'
+                    "</head><body style=\"margin:0;padding:24px;"
+                    'background:#f6f6f6;font-family:Arial,Helvetica,sans-serif;">'
+                    '<div style="max-width:520px;margin:0 auto;background:#ffffff;'
+                    'border-radius:10px;padding:24px;color:#222222;font-size:15px;'
+                    'line-height:1.6;">' + _corps + "</div></body></html>"
+                )
+                await asyncio.to_thread(
+                    resend.Emails.send,
+                    {
+                        "from": "Afroboost <notifications@afroboost.com>",
+                        "to": [coach_email],
+                        "subject": _sujet,
+                        "html": _html,
+                    },
+                )
+                _email_envoye = True
+                logger.info("[V468] notification coach envoyée à %s", coach_email)
+            except Exception as _err_mail:
+                # Un échec d'envoi ne doit JAMAIS faire échouer le retour de paiement
+                # du client : la réservation est déjà encaissée à ce stade.
+                logger.error("[V468] notification coach NON envoyée : %s", _err_mail)
+
         return {
             "success": True,
             "coachEmail": coach_email,
             "coachPhone": coach_phone,
             "message": notification_message,
-            "subject": f"🎉 Nouvelle réservation - {payload.clientName}"
+            "subject": _sujet,
+            "emailSent": _email_envoye,  # V468 : le front n'a plus à envoyer lui-même
         }
     except Exception as e:
         logger.error(f"Error in notify-coach: {e}")
@@ -18105,7 +18165,48 @@ async def get_whatsapp_config():
     return config
 
 @api_router.put("/whatsapp-config")
-async def update_whatsapp_config(config: WhatsAppConfigUpdate):
+async def update_whatsapp_config(config: WhatsAppConfigUpdate, request: Request):
+    """V468 (SECURITY-S2-A1) — CETTE ROUTE ÉTAIT OUVERTE À TOUT LE MONDE.
+
+    La signature ne recevait même pas `Request` : il était donc LITTÉRALEMENT
+    impossible d'y authentifier quoi que ce soit — le même défaut que la route
+    `/send-whatsapp` corrigée par V435, dont on reprend ici la garde à
+    l'identique. Ce que la route écrit : `metaAccessToken`, `authToken`,
+    `accountSid` — c'est-à-dire les identifiants du numéro business WhatsApp.
+
+    Pourquoi c'est plus grave qu'une simple écriture : le document n'existe pas
+    aujourd'hui, et `GET /whatsapp-config` (juste au-dessus) renvoie de ce fait le marqueur
+    `***configured***`, sans secret réel. Mais ce GET renvoie le document ENTIER
+    dès qu'il existe. Un anonyme pouvait donc CRÉER le document par ce PUT, puis
+    relire ses propres valeurs — et, en écrivant un jeton Meta à lui, détourner
+    les envois vers son propre numéro. La fermeture du PUT retire l'écrivain ;
+    le durcissement du GET reste à faire (lot suivant).
+
+    Pourquoi `_v411_exiger_super_admin` et PAS `_v319_coach_identity` : c'est la
+    seule garde qui n'accepte JAMAIS `X-User-Email`. `require_auth` et
+    `_v263_authenticated_coach` gardent un repli inconditionnel sur cet en-tête
+    falsifiable ; `_v319_coach_identity` ne s'en protège que si le drapeau
+    `REQUIRE_COACH_JWT` est ON — un état de base modifiable à chaud dont
+    l'`except` retombe VOLONTAIREMENT sur le mode permissif. Une porte qui ouvre
+    les identifiants du numéro business ne peut pas dépendre d'un réglage. C'est
+    le raisonnement déjà écrit pour V411/V435 sur les deux routes jumelles.
+
+    Super-admin et non coach : il s'agit d'une configuration de PLATEFORME,
+    document unique `{"id": "whatsapp_config"}` sans `coach_id`. Un coach
+    partenaire qui l'écrirait modifierait le numéro de TOUT LE MONDE.
+
+    Le contrat de l'API est INCHANGÉ : FastAPI lie le corps par le TYPE (modèle
+    Pydantic), jamais par le nom du paramètre. Le paramètre du corps s'appelle
+    déjà `config`, aucun renommage n'est nécessaire — contrairement à V435.
+
+    Front : `saveWhatsAppConfig` (services/whatsappService.js) passe d'un `fetch`
+    nu à `axios`, qui porte le Bearer via l'intercepteur global (App.js:21-28).
+    Aucun bouton de l'interface ne l'appelle aujourd'hui (`handleSaveWhatsAppConfig`
+    est passé en prop à CampaignManager, déstructuré, jamais câblé) : la
+    conversion prépare le jour où le panneau sera re-câblé, elle ne répare rien
+    de visible.
+    """
+    _v411_exiger_super_admin(request, "modification de la configuration WhatsApp")
     updates = {k: v for k, v in config.model_dump().items() if v is not None}
     updates["id"] = "whatsapp_config"
     await db.whatsapp_config.update_one({"id": "whatsapp_config"}, {"$set": updates}, upsert=True)
@@ -29151,7 +29252,59 @@ async def notify_coach_new_message(participant_name: str, message_preview: str, 
 # =============================================
 @api_router.post("/campaigns/send-email")
 async def send_campaign_email(request: Request):
-    """Envoie un email de campagne via Resend - v9.0.2: Déduit 1 crédit"""
+    """Envoie un email de campagne via Resend - v9.0.2: Déduit 1 crédit
+
+    V468 (SECURITY-S2-A1) — CETTE ROUTE ÉTAIT UN RELAIS DE COURRIER OUVERT.
+    Aucune authentification : `X-User-Email` n'était lu que pour décider s'il
+    fallait débiter un crédit, sous la forme `if coach_email and not
+    is_super_admin(...)`. En-tête ABSENT -> la condition est fausse -> aucun
+    contrôle de crédits, aucun débit, ET L'E-MAIL PART QUAND MÊME, vers
+    l'adresse de son choix, depuis `notifications@afroboost.com`. Vecteur
+    d'hameçonnage au nom d'Afroboost, et brûlage de la réputation du domaine
+    d'envoi — donc, en cascade, des e-mails de réservation légitimes.
+
+    Le même en-tête vide était aussi le moyen, pour un coach payant, de
+    contourner la facturation : ne pas l'envoyer suffisait à envoyer gratis.
+    L'identité vient maintenant d'un JWT signé, ce qui ferme les deux trous
+    d'un seul geste — la porte ET la caisse.
+
+    Garde retenue : `_v309_require_coach_or_admin`, qui n'accepte QUE le JWT
+    signé (`_v311_coach_email_from_jwt`) et rejette explicitement les jetons
+    ABONNÉ (`type == "subscriber"`). C'est la raison pour laquelle `require_auth`
+    est écarté ici : il décode sans tester `type`, donc un abonné y deviendrait
+    une identité coach.
+
+    Pas de drapeau d'extinction, à dessein : un interrupteur qui ROUVRE un
+    relais de courrier est lui-même le risque. `REQUIRE_COACH_JWT` est de plus
+    un état de base modifiable à chaud, et son `except` retombe volontairement
+    sur le mode permissif. C'est le choix déjà fait par V411/V435 pour les
+    portes d'envoi WhatsApp. Retour arrière = `git revert` (~4 min).
+
+    ⚠️ CE QUI A DÛ ÊTRE FAIT AVANT DE POUVOIR FERMER. Le seul appelant
+    légitimement anonyme était `notifyCoachAutomatic` (App.js) : un VISITEUR qui
+    vient de payer notifiait le coach en passant par ici. Cet envoi est remonté
+    côté serveur dans `POST /notify-coach` (V468, server.py ~4380), où
+    l'adresse du coach était déjà lue en base. Fermer cette route sans ce
+    déplacement aurait supprimé EN SILENCE la notification de chaque
+    réservation payée — le défaut exact que la règle V310c interdit de livrer.
+    """
+    await _v309_require_coach_or_admin(request)
+    # V468 — LA LIGNE SUIVANTE N'EST PAS TOUCHÉE, ET C'EST DÉLIBÉRÉ.
+    # Il serait tentant de brancher le débit sur l'identité signée qu'on vient de
+    # vérifier. Ce serait une RÉGRESSION DE FACTURATION : `launch_campaign`
+    # (server.py:4945) débite DÉJÀ le coût total de la campagne, puis le front
+    # (`launchCampaignWithSend`) boucle sur CETTE route, un appel par
+    # destinataire. Aujourd'hui ces appels partaient en `fetch` nu, donc sans
+    # `X-User-Email`, donc sans débit — le double débit n'existait pas par
+    # accident. En passant le front à `axios` (qui pose le Bearer) ET en
+    # branchant le débit sur l'identité, chaque campagne d'un coach partenaire
+    # serait facturée DEUX FOIS, et un coach à zéro crédit se prendrait un 402
+    # en plein envoi. C'est exactement « casser l'envoi légitime ».
+    # Le débit reste donc sur l'en-tête, inchangé : il ne décide plus de l'ACCÈS
+    # (le JWT s'en charge au-dessus), seulement de la facturation. Dette
+    # consignée : un coach authentifié peut encore désigner un autre coach dans
+    # cet en-tête pour lui débiter des crédits. À traiter avec la question du
+    # double débit, dans un lot de FACTURATION — pas dans un lot de sécurité.
     coach_email = request.headers.get("X-User-Email", "").lower().strip()
     if coach_email and not is_super_admin(coach_email):
         credit_check = await check_credits(coach_email)
@@ -29338,7 +29491,28 @@ async def send_bulk_campaign_email(request: Request, background_tasks: Backgroun
     Envoie des emails de campagne à plusieurs destinataires en tâche de fond.
     Garantit que l'interface ne soit jamais bloquée (asynchrone).
     v9.4.2: Chaque email est envoyé de manière indépendante.
+
+    V468 (SECURITY-S2-A1) — MÊME TROU QUE `/campaigns/send-email`, en pire.
+    Aucune authentification, et `recipients` est lu tel quel du corps JSON,
+    SANS PLAFOND, puis traité en `BackgroundTasks` : la réponse part
+    immédiatement, l'envoi continue en fond. Un appelant sans en-tête laissait
+    `coach_email` vide, donc `if coach_email and not is_super_admin(...)` faux,
+    donc aucune vérification de crédits — pour un nombre arbitraire de
+    destinataires. C'est la définition d'un moteur de spam.
+
+    Fermeture SANS RISQUE mesurable : cette route n'a AUCUN appelant. Vérifié
+    sur tout le dépôt — ni dans `frontend/src`, ni ailleurs dans `api/`. Les
+    seules autres occurrences sont l'ancien backend non déployé
+    (`backend/server.py`) et des tests. Faux ami à ne pas confondre :
+    `services/emailService.js` exporte une fonction `sendBulkEmails`, mais elle
+    passe par EmailJS, pas par cette route.
+
+    Même garde et mêmes raisons que sa jumelle : JWT signé seulement, jetons
+    abonné rejetés, pas de drapeau d'extinction.
     """
+    await _v309_require_coach_or_admin(request)
+    # Comme sur la route jumelle, la logique de crédits n'est pas touchée : ce lot
+    # ferme une porte, il ne redessine pas la facturation.
     body = await request.json()
     recipients = body.get("recipients", [])  # [{email, name}, ...]
     subject = body.get("subject", "Message d'Afroboost")

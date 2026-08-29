@@ -6653,21 +6653,19 @@ function App() {
         return;
       }
 
-      const { coachEmail, coachPhone, message, subject } = notifyResponse.data;
+      const { coachPhone, message } = notifyResponse.data;
 
-      // Envoyer notification email via Resend (backend)
-      if (coachEmail) {
-        try {
-          await axios.post(`${API}/campaigns/send-email`, {
-            to_email: coachEmail,
-            to_name: "Coach Afroboost",
-            subject: subject,
-            message: message
-          });
-          console.log("✅ Email notification sent to coach via Resend");
-        } catch (emailErr) {
-          console.error("Email notification failed:", emailErr);
-        }
+      // V468 (SECURITY-S2-A1) : l'e-mail au coach n'est PLUS envoyé d'ici.
+      // Ce code s'exécute dans le navigateur d'un VISITEUR qui vient de payer :
+      // il n'a ni jeton ni identité. Il appelait `POST /campaigns/send-email`,
+      // ce qui obligeait cette route à rester ouverte à tout le monde — un
+      // relais de courrier d'où n'importe qui pouvait écrire à n'importe qui
+      // depuis le domaine Afroboost. L'envoi est remonté dans
+      // `POST /notify-coach` (api/server.py, V468), qui lisait déjà l'adresse du
+      // coach en base : la destination n'est donc plus choisie par le client.
+      // `notifyResponse.data.emailSent` dit si le serveur a bien envoyé.
+      if (notifyResponse.data.emailSent) {
+        console.log("✅ Email notification sent to coach (server-side)");
       }
 
       // Envoyer notification WhatsApp si configuré et Twilio est actif

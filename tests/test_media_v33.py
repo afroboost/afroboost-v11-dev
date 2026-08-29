@@ -141,30 +141,44 @@ class TestMediaEndpoints:
 
 
 class TestCampaignSendEmail:
-    """Test POST /api/campaigns/send-email endpoint"""
-    
-    def test_send_email_requires_to_email(self):
-        """POST /api/campaigns/send-email should require to_email"""
+    """POST /api/campaigns/send-email — FERMÉE depuis V468 (SECURITY-S2-A1).
+
+    CES TROIS TESTS ONT CHANGÉ DE SENS, ET C'EST LE CORRECTIF QUI L'A VOULU.
+    Ils vérifiaient qu'un appel SANS AUCUNE AUTHENTIFICATION obtenait 400 ou
+    200 — autrement dit, ils documentaient un relais de courrier ouvert, et le
+    dernier d'entre eux faisait partir un VRAI e-mail depuis la production à
+    chaque exécution. La route exige désormais un JWT coach signé : la bonne
+    réponse à un appel anonyme est 403, et plus rien ne part.
+
+    Ils restent donc utiles, mais comme PREUVE DE FERMETURE. Le chemin
+    légitime (jeton valide) est couvert hors ligne par
+    tests/test_s2a1_portes_critiques.py, qui bouchonne Resend et n'envoie rien.
+    """
+
+    def test_send_email_refuse_anonyme(self):
+        """Sans jeton : 403, quel que soit le corps."""
         response = requests.post(
             f"{BASE_URL}/api/campaigns/send-email",
             json={"message": "Test message"}
         )
-        assert response.status_code == 400, f"Expected 400, got {response.status_code}"
-        print("✅ POST /api/campaigns/send-email requires to_email (400 without it)")
-    
-    def test_send_email_requires_message(self):
-        """POST /api/campaigns/send-email should require message"""
+        assert response.status_code == 403, f"Expected 403, got {response.status_code}"
+        print("✅ POST /api/campaigns/send-email refuse un anonyme (403)")
+
+    def test_send_email_refuse_entete_forge(self):
+        """`X-User-Email` seul ne vaut plus rien : 403."""
         response = requests.post(
             f"{BASE_URL}/api/campaigns/send-email",
-            json={"to_email": "test@example.com"}
+            json={"to_email": "test@example.com", "message": "Test"},
+            headers={"X-User-Email": "quelqu-un@exemple.test"}
         )
-        assert response.status_code == 400, f"Expected 400, got {response.status_code}"
-        print("✅ POST /api/campaigns/send-email requires message (400 without it)")
-    
-    def test_send_email_with_valid_payload(self):
-        """POST /api/campaigns/send-email should accept valid payload"""
-        # Note: This test verifies the endpoint accepts the payload
-        # Actual email sending depends on Resend configuration
+        assert response.status_code == 403, f"Expected 403, got {response.status_code}"
+        print("✅ POST /api/campaigns/send-email refuse un en-tête forgé (403)")
+
+    def test_send_email_charge_utile_complete_refusee(self):
+        """Le corps complet d'un envoi réel est refusé AVANT tout envoi.
+
+        C'est le test qui, avant V468, expédiait un e-mail depuis la production.
+        """
         response = requests.post(
             f"{BASE_URL}/api/campaigns/send-email",
             json={
@@ -175,17 +189,8 @@ class TestCampaignSendEmail:
                 "media_url": "/v/session-finale"
             }
         )
-        # Should return 200 (success or Resend not configured)
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-        
-        data = response.json()
-        # Either success or Resend not configured
-        assert "success" in data, "Response should contain 'success' field"
-        
-        if data.get("success"):
-            print(f"✅ POST /api/campaigns/send-email sent email successfully")
-        else:
-            print(f"✅ POST /api/campaigns/send-email endpoint works (Resend: {data.get('error', 'not configured')})")
+        assert response.status_code == 403, f"Expected 403, got {response.status_code}"
+        print("✅ POST /api/campaigns/send-email : aucun e-mail ne part sans jeton (403)")
 
 
 class TestHealthCheck:

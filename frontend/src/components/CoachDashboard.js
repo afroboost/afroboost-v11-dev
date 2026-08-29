@@ -114,20 +114,19 @@ console.log("🚀 V93 : Contr\u00f4le Cr\u00e9dits Admin + Isolation Offres + On
     console.log('========================================');
     
     // Appel API backend Resend
-    const response = await fetch(`${BACKEND_URL}/api/campaigns/send-email`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        to_email: String(destination).trim(),
-        to_name: String(recipientName || 'Client').trim(),
-        subject: String(subject || 'Afroboost').trim(),
-        message: String(text).trim(),
-        media_url: mediaUrl ? String(mediaUrl).trim() : null
-      })
+    // V468 (SECURITY-S2-A1) : `fetch` -> `axios`. La route exige désormais un JWT
+    // coach signé, et `fetch` ne passe PAS par l'intercepteur global (App.js:21-28)
+    // qui pose `Authorization: Bearer`. En `fetch`, cet appel partirait sans jeton
+    // et reviendrait en 403. On ne recopie PAS la logique du jeton ici : axios la
+    // porte déjà pour tout le monde, c'est le seul endroit où elle doit vivre.
+    const { data: result } = await axios.post(`${API}/campaigns/send-email`, {
+      to_email: String(destination).trim(),
+      to_name: String(recipientName || 'Client').trim(),
+      subject: String(subject || 'Afroboost').trim(),
+      message: String(text).trim(),
+      media_url: mediaUrl ? String(mediaUrl).trim() : null
     });
-    
-    const result = await response.json();
-    
+
     if (result.success) {
       console.log('RESEND_DEBUG: SUCCÈS - Email ID =', result.email_id);
       return { success: true, response: result };
@@ -5497,20 +5496,18 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           
           try {
             // Appel API Resend via backend
-            const response = await fetch(`${BACKEND_URL}/api/campaigns/send-email`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                to_email: contact.contactEmail,
-                to_name: contact.contactName || 'Client',
-                subject: campaign.name || 'Afroboost - Message',
-                message: campaign.message,
-                media_url: campaign.mediaUrl || null
-              })
+            // V468 (SECURITY-S2-A1) : `fetch` -> `axios`, pour la même raison qu'en
+            // tête de fichier — c'est CE point d'appel qui est réellement câblé sur
+            // les boutons « Lancer » (CampaignManager.js:701/705/709). Laissé en
+            // `fetch`, l'envoi de campagne du coach tomberait en 403.
+            const { data: result } = await axios.post(`${API}/campaigns/send-email`, {
+              to_email: contact.contactEmail,
+              to_name: contact.contactName || 'Client',
+              subject: campaign.name || 'Afroboost - Message',
+              message: campaign.message,
+              media_url: campaign.mediaUrl || null
             });
-            
-            const result = await response.json();
-            
+
             if (result.success) {
               console.log(`RESEND_DEBUG: [${i + 1}/${emailResults.length}] SUCCÈS - ID = ${result.email_id}`);
               totalSent++;

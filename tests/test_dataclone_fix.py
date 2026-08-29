@@ -39,20 +39,22 @@ class TestBackendAPIs:
         assert "apiMode" in data
         print(f"✅ WhatsApp config GET works - apiMode: {data.get('apiMode')}")
     
-    def test_whatsapp_config_put(self):
-        """Test WhatsApp config PUT endpoint"""
-        # Get current config
-        get_response = requests.get(f"{BASE_URL}/api/whatsapp-config")
-        current_config = get_response.json()
-        
-        # Update with same values (to not break anything)
+    def test_whatsapp_config_put_refuse_anonyme(self):
+        """PUT /api/whatsapp-config — FERMÉE depuis V468 (SECURITY-S2-A1).
+
+        Ce test relisait la configuration de PRODUCTION puis la RÉÉCRIVAIT à
+        l'identique, sans aucune authentification — ce qui en faisait la preuve,
+        exécutée régulièrement, qu'un anonyme pouvait écrire les identifiants du
+        numéro business WhatsApp. La route est maintenant réservée au
+        super-admin signé : la bonne réponse est 403, et plus rien n'est réécrit.
+        """
         response = requests.put(
             f"{BASE_URL}/api/whatsapp-config",
-            json=current_config,
+            json={"apiMode": "meta"},
             headers={"Content-Type": "application/json"}
         )
-        assert response.status_code == 200
-        print("✅ WhatsApp config PUT works")
+        assert response.status_code == 403, f"Expected 403, got {response.status_code}"
+        print("✅ WhatsApp config PUT refuse un anonyme (403)")
     
     def test_campaigns_get(self):
         """Test campaigns GET endpoint"""
