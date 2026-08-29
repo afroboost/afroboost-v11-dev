@@ -54,3 +54,73 @@ export function p11FinSansFormulaireAbonne(reponse, linkToken, linkData) {
     return false;
   }
 }
+
+/* ═══════════════════ P1.2 — SOUMISSION SURE ET MESSAGE HONNETE ═══════════════ */
+
+/**
+ * Le message affiche quand la reponse n'est PAS du JSON, ou que la connexion
+ * a echoue.
+ *
+ * POURQUOI IL REMPLACE « Erreur serveur ». Le 29/08, une soumission partenaire
+ * a affiche « Erreur serveur » alors que le serveur n'y etait pour rien : la
+ * requete n'a JAMAIS atteint FastAPI (aucune trace dans `smart_entry_attempts`,
+ * aucun lead, conteneur sain, jamais redemarre). Un proxy a repondu a sa place.
+ * Accuser le serveur envoyait le prospect sur une fausse piste et le laissait
+ * sans rien faire.
+ */
+export const P12_MESSAGE_RESEAU =
+  'La connexion a été interrompue. Vos réponses sont conservées. Réessayez dans quelques secondes.';
+
+/** Ce lien est-il un lien partenaire ? */
+export function p12EstPartenaire(linkData) {
+  try {
+    if (!linkData || typeof linkData !== 'object' || Array.isArray(linkData)) return false;
+    var type = linkData.lead_type;
+    if (typeof type !== 'string') return false;
+    return type.trim().toLowerCase() === 'partner';
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Un identifiant de soumission, genere UNE SEULE FOIS au montage du tunnel.
+ *
+ * C'EST LUI, ET PAS LE BOUTON, QUI EMPECHE LE DOUBLON. Le bouton porte deja
+ * `disabled={loading}` — et deux leads sont quand meme nes a 882 ms d'ecart le
+ * 29/08. Une garde d'interface ne survit ni a la touche Entree, ni a une
+ * premiere requete qui aboutit avant le second clic. Le serveur, lui, deduplique
+ * sur cet identifiant : un rejeu retombe sur le meme document.
+ *
+ * Il DOIT rester identique pendant toute la vie du tunnel, y compris apres une
+ * erreur reseau et un « Reessayer » — le regenerer recreerait le doublon qu'on
+ * cherche a eviter.
+ */
+export function p12NouveauSubmissionId() {
+  try {
+    if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch (e) { /* repli ci-dessous */ }
+  // Repli sans `crypto.randomUUID` (Safari ancien, contexte non securise).
+  var hex = '0123456789abcdef';
+  var out = '';
+  for (var i = 0; i < 36; i++) {
+    if (i === 8 || i === 13 || i === 18 || i === 23) { out += '-'; continue; }
+    if (i === 14) { out += '4'; continue; }
+    var r = Math.floor(Math.random() * 16);
+    if (i === 19) r = (r & 0x3) | 0x8;
+    out += hex[r];
+  }
+  return out;
+}
+
+/** Forme UUID stricte. Aucune donnee personnelle ne peut satisfaire ce motif. */
+export function p12SubmissionIdValide(id) {
+  try {
+    if (typeof id !== 'string') return false;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id.trim().toLowerCase());
+  } catch (e) {
+    return false;
+  }
+}

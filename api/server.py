@@ -24313,6 +24313,18 @@ async def smart_chat_entry(request: Request):
     whatsapp = str(body.get("whatsapp") or "").strip()[:40]
     link_token = body.get("link_token")
     tunnel_answers = body.get("tunnel_answers")  # v100: réponses tunnel
+    # P1.2 — L'IDENTIFIANT QUI EMPECHE LE DOUBLON, ET LE RETRY SUR.
+    # Genere UNE SEULE FOIS par le navigateur, renvoye identique a chaque
+    # tentative. ADDITIF : un ancien client qui ne l'envoie pas garde exactement
+    # le comportement d'avant — une valeur absente ou mal formee vaut « aucun
+    # identifiant », jamais une erreur.
+    from api.routes.shared import p12_submission_id_propre as _p12_propre
+    # Import LOCAL, comme partout ailleurs dans ce fichier. Sans lui, le `except`
+    # ci-dessous leverait un `NameError` avale par le fail-open — le defaut qui a
+    # rendu M2-A inerte en production. Le controle `_noms_libres` du banc P1.2
+    # verifie desormais ce cas, precisement pour qu'il ne se reproduise plus.
+    from pymongo.errors import DuplicateKeyError
+    p12_submission = _p12_propre(body.get("submission_id"))
 
     if not name:
         raise HTTPException(status_code=400, detail="Le nom est requis")
@@ -24466,6 +24478,31 @@ async def smart_chat_entry(request: Request):
                 # (`link_token` présent) ET porte des réponses. Une tentative de récupération
                 # de conversation n'a ni l'un ni l'autre et ne déclenche donc rien.
                 _c2f_acq = False
+                # P1.2 — LE REJEU RETOMBE SUR LE MEME DOCUMENT.
+                # Verification prealable : elle suffit au cas SEQUENTIEL (un
+                # « Reessayer » apres une coupure) et fonctionne des aujourd'hui,
+                # sans index. Le cas CONCURRENT, lui, est ferme plus bas par
+                # l'erreur de cle dupliquee : entre un `find_one` et un `insert`,
+                # une seconde requete peut passer — seul l'index l'en empeche.
+                if p12_submission:
+                    try:
+                        _p12_deja = await db.leads.find_one(
+                            {"submission_id": p12_submission}, {"_id": 1})
+                    except Exception:
+                        _p12_deja = None
+                    if _p12_deja:
+                        # Rejeu : AUCUN second lead, AUCUNE seconde notification.
+                        # On repond quand meme « enregistre » — c'est vrai, et
+                        # c'est ce que le prospect doit voir. Rien du lead
+                        # existant n'est divulgue.
+                        logger.info("[P1.2] rejeu ignore (submission deja connue)")
+                        _c2f_acq = True
+                        return {
+                            "proof_required": True,
+                            "reason": "subscriber_code",
+                            "acquisition_saved": _c2f_acq,
+                            "message": "Entre ton code d'accès pour retrouver ta conversation.",
+                        }
                 if link_token and tunnel_answers and isinstance(tunnel_answers, (list, dict)):
                     try:
                         _c2f_lead = {
@@ -24481,7 +24518,35 @@ async def smart_chat_entry(request: Request):
                             "acquisition_only": True,        # collecté sans identité prouvée
                             "created_at": datetime.now(timezone.utc).isoformat(),
                         }
-                        await db.leads.insert_one(_c2f_lead)
+                        # P1.2 : present UNIQUEMENT s'il est valide. Absent, le
+                        # document reste exactement celui d'avant ce lot — et
+                        # l'index PARTIEL ci-dessous l'ignore.
+                        if p12_submission:
+                            _c2f_lead["submission_id"] = p12_submission
+                        try:
+                            await db.leads.insert_one(_c2f_lead)
+                        except DuplicateKeyError:
+                            # P1.2 — DEUX REQUETES SIMULTANEES. L'index unique
+                            # partiel a laissé passer la premiere et refuse la
+                            # seconde : c'est le signal « rejeu », pas une panne.
+                            # L'INSERTION EST LE JETON D'IDEMPOTENCE, exactement
+                            # comme `find_one_and_delete` l'est en LOT B3.
+                            #
+                            # L'INDEX A CREER AU DEPLOIEMENT, et il doit etre
+                            # PARTIEL — 145 leads n'ont pas de `submission_id`,
+                            # un index unique simple les verrait tous comme des
+                            # doublons de `null` :
+                            #   db.leads.createIndex(
+                            #     {submission_id: 1},
+                            #     {unique: true,
+                            #      partialFilterExpression: {submission_id: {$type: "string"}}})
+                            logger.info("[P1.2] rejeu concurrent ignore (cle dupliquee)")
+                            return {
+                                "proof_required": True,
+                                "reason": "subscriber_code",
+                                "acquisition_saved": True,
+                                "message": "Entre ton code d'accès pour retrouver ta conversation.",
+                            }
                         _c2f_acq = True
                         logger.info(f"[C2-F] Lead d'acquisition conservé malgré proof_required (link={link_token})")
                         # C17-C : ce prospect-la est le PLUS important a signaler —
@@ -24664,18 +24729,45 @@ async def smart_chat_entry(request: Request):
             "source": source,
             "created_at": datetime.now(timezone.utc).isoformat()
         }
-        await db.leads.insert_one(lead_doc)
-        logger.info(f"[V100] 📋 Lead sauvegardé: {name} ({email}) — {len(tunnel_answers) if isinstance(tunnel_answers, list) else 1} réponses")
+        # P1.2 — LE SECOND SITE D'INSERTION, DEDUPLIQUE LUI AUSSI.
+        # Ce chemin-ci sert le prospect dont l'identite EST resolue : il cree un
+        # lead ET notifie le coach. Un rejeu y produirait donc un second lead et
+        # une seconde notification — exactement ce que `submission_id` doit
+        # empecher. Meme mecanisme qu'au-dessus : verification prealable pour le
+        # cas sequentiel, cle dupliquee pour le cas concurrent.
+        if p12_submission:
+            lead_doc["submission_id"] = p12_submission
+        _p12_rejeu = False
+        if p12_submission:
+            try:
+                if await db.leads.find_one({"submission_id": p12_submission}, {"_id": 1}):
+                    _p12_rejeu = True
+            except Exception:
+                _p12_rejeu = False
+        if _p12_rejeu:
+            # Rejeu : ni lead, ni notification. Le participant et la session,
+            # eux, sont deja idempotents (resolus par e-mail ou WhatsApp) — la
+            # personne retrouve donc sa conversation, sans doublon derriere.
+            logger.info("[P1.2] rejeu ignore sur le chemin normal (submission deja connue)")
+        else:
+            try:
+                await db.leads.insert_one(lead_doc)
+            except DuplicateKeyError:
+                _p12_rejeu = True
+                logger.info("[P1.2] rejeu concurrent ignore sur le chemin normal")
+        if not _p12_rejeu:
+            logger.info(f"[V100] 📋 Lead sauvegardé: {name} ({email}) — {len(tunnel_answers) if isinstance(tunnel_answers, list) else 1} réponses")
         # C17-C : prevenir le coach PROPRIETAIRE du lead — jamais une constante
         # globale. Non bloquant : la fonction avale ses erreurs, et le lead est
         # deja enregistre juste au-dessus quoi qu'il arrive.
-        try:
-            from api.routes.shared import notifier_nouveau_prospect as _c17c
-            # C17-D : l'emetteur push est injecte ici (shared.py ne peut pas
-            # importer server.py — cycle).
-            await _c17c(db, lead_doc, envoyer_push=send_push_notification)
-        except Exception as _c17e:
-            logger.warning(f"[C17-C] notification ignoree: {type(_c17e).__name__}")
+        if not _p12_rejeu:
+            try:
+                from api.routes.shared import notifier_nouveau_prospect as _c17c
+                # C17-D : l'emetteur push est injecte ici (shared.py ne peut pas
+                # importer server.py — cycle).
+                await _c17c(db, lead_doc, envoyer_push=send_push_notification)
+            except Exception as _c17e:
+                logger.warning(f"[C17-C] notification ignoree: {type(_c17e).__name__}")
         # Aussi stocker dans la session pour accès rapide côté coach
         await db.chat_sessions.update_one(
             {"id": session["id"]},

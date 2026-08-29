@@ -5772,3 +5772,37 @@ def m2a_bloc_propre(bloc):
         return sortie or None
     except Exception:
         return None
+
+
+# ═══════════ P1.2 — UN REJEU NE DOIT JAMAIS CREER UN SECOND LEAD ═══════════
+#
+# LE DEFAUT MESURE. Le 29/08/2026, deux leads identiques sont nes a 882 ms
+# d'intervalle sur le tunnel partenaire. Le bouton porte pourtant
+# `disabled={loading}` : une garde d'interface ne survit ni a la touche Entree,
+# ni a une premiere requete qui aboutit avant le second clic.
+#
+# ET SURTOUT : sans idempotence, on ne peut PAS offrir un « Reessayer » apres
+# une coupure reseau. Le serveur a peut-etre enregistre la demande et seule la
+# reponse s'est perdue — reessayer creerait alors un doublon silencieux.
+#
+# Le navigateur genere donc un `submission_id` UNE SEULE FOIS et le renvoie
+# identique a chaque tentative. Ici, on ne fait que le VALIDER : rien de ce qui
+# vient du client n'est ecrit tel quel.
+P12_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def p12_submission_id_propre(valeur):
+    """L'UUID normalise, ou la chaine VIDE. Ne leve jamais.
+
+    Forme STRICTE : aucune adresse e-mail, aucun numero, aucun chemin ni
+    fragment SQL ne satisfait ce motif. Une valeur refusee est traitee comme
+    ABSENTE — jamais comme une erreur : un ancien client qui n'envoie rien doit
+    continuer de fonctionner exactement comme avant.
+    """
+    try:
+        if not isinstance(valeur, str):
+            return ""
+        jeton = valeur.strip().lower()
+        return jeton if P12_UUID.match(jeton) else ""
+    except Exception:
+        return ""

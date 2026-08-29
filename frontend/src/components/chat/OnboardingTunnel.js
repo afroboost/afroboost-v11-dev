@@ -3,6 +3,9 @@
 // Fallback: 3 étapes par défaut (Nom, WhatsApp, Email) si aucune question configurée
 
 import React, { useState, useCallback, useEffect } from 'react';
+import {
+  p12EstPartenaire, p12NouveauSubmissionId, P12_MESSAGE_RESEAU,
+} from '../../utils/finTunnelPartenaire';
 
 const DEFAULT_STEPS = [
   { id: 1, label: 'Votre nom', field: 'name', type: 'text', placeholder: 'Ex: Marie Dupont', icon: '👤' },
@@ -21,6 +24,11 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [linkData, setLinkData] = useState(null);
+  // P1.2 — L'IDENTIFIANT QUI EMPECHE LE DOUBLON. Genere UNE SEULE FOIS ici, il
+  // reste identique pendant toute la vie du tunnel : premiere tentative, erreur
+  // reseau, « Reessayer ». Le regenerer au retry recreerait exactement le
+  // doublon qu'on cherche a eviter (deux leads a 882 ms le 29/08).
+  const [submissionId] = useState(() => p12NouveauSubmissionId());
   const [fetchingLink, setFetchingLink] = useState(true);
 
   const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
@@ -101,6 +109,10 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
   }, []);
 
   const handleNext = useCallback(async () => {
+    // P1.2 — le bouton porte deja `disabled={loading}`, mais la touche Entree
+    // (`onKeyDown`) appelle cette fonction directement. Une garde ici ferme le
+    // dernier chemin d'interface. Elle ne remplace PAS l'idempotence serveur.
+    if (loading) return;
     const value = getCurrentValue();
     const validationError = validateStep(step, value);
 
@@ -133,12 +145,24 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
           whatsapp: formData.whatsapp.trim(),
           link_token: linkToken,
           tunnel_answers: Object.keys(tunnelData).length > 0 ? tunnelData : undefined,
+          // P1.2 : le serveur deduplique dessus. Additif — un ancien client qui
+          // ne l'envoie pas garde exactement le comportement d'avant.
+          submission_id: submissionId,
         })
       });
 
       if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.detail || 'Erreur serveur');
+        // P1.2 — DEUX ERREURS TRES DIFFERENTES, DEUX MESSAGES.
+        //
+        // Un refus applicatif porte toujours un `detail` (« Le nom est requis »,
+        // « Trop de tentatives ») : on l'affiche tel quel, il est utile.
+        //
+        // Un corps NON-JSON signifie qu'un proxy a repondu a la place de
+        // l'application. Constate le 29/08 : la requete n'avait jamais atteint
+        // FastAPI. Dire « Erreur serveur » accusait le serveur a tort et
+        // laissait le prospect sans rien faire.
+        const errData = await response.json().catch(() => null);
+        throw new Error((errData && errData.detail) || P12_MESSAGE_RESEAU);
       }
 
       const data = await response.json();
@@ -164,11 +188,14 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
       });
     } catch (err) {
       console.error('[ONBOARDING] Erreur smart-entry:', err);
-      setError(err.message || 'Impossible de continuer. Réessayez.');
+      // Un `fetch` qui jette = coupure reseau : meme message, meme promesse.
+      // Les reponses restent dans l'etat React, le bouton se reactive dans le
+      // `finally` : un second clic repart avec le MEME `submission_id`.
+      setError(err.message || P12_MESSAGE_RESEAU);
     } finally {
       setLoading(false);
     }
-  }, [currentStep, totalSteps, formData, tunnelAnswers, linkToken, linkData, onComplete, step, tunnelQuestions, API, getCurrentValue, validateStep]);
+  }, [currentStep, totalSteps, formData, tunnelAnswers, linkToken, linkData, onComplete, step, tunnelQuestions, API, getCurrentValue, validateStep, loading, submissionId]);
 
   const handleBack = useCallback(() => {
     if (currentStep > 1) { setCurrentStep(prev => prev - 1); setError(''); }
@@ -206,6 +233,24 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
     }}>
       {/* Logo Afroboost officiel */}
       <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+        {/* P1.2 — BANNIERE PARTENAIRE. Uniquement pour `lead_type: partner` :
+            le tunnel d'essai, en production, ne change pas d'un pixel. La photo
+            existe deja (`/hero-afroboost.jpg`, 122 Ko, servie en image/jpeg) —
+            aucune image creee, aucun telechargement. */}
+        {p12EstPartenaire(linkData) && (
+          <img
+            src="/hero-afroboost.jpg"
+            alt="Participante Afroboost en séance, casque audio sur les oreilles, en extérieur au coucher du soleil"
+            loading="lazy"
+            width="1024"
+            height="1024"
+            style={{
+              width: '100%', height: '160px', objectFit: 'cover',
+              objectPosition: '50% 30%', borderRadius: '14px',
+              marginBottom: '14px', display: 'block'
+            }}
+          />
+        )}
         <img src="/logo192.png" alt="Afroboost" style={{ width: '56px', height: '56px', borderRadius: '50%', marginBottom: '8px', border: '2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', boxShadow: '0 0 16px rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }} />
         <h2 style={{ color: '#ffffff', fontSize: '20px', fontWeight: '700', margin: '0 0 8px 0' }}>
           {welcomeMsg}

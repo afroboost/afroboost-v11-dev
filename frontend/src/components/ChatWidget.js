@@ -41,7 +41,7 @@ import AudioMessage from './chat/AudioMessage'; // V356 : lecteur de note vocale
 import AfricanEmojiPicker from './chat/AfricanEmojiPicker';
 import SubscriberForm from './chat/SubscriberForm';
 import OnboardingTunnel from './chat/OnboardingTunnel';
-import { p11FinSansFormulaireAbonne } from '../utils/finTunnelPartenaire';
+import { p11FinSansFormulaireAbonne, p12EstPartenaire } from '../utils/finTunnelPartenaire';
 import PrivateChatView from './chat/PrivateChatView';
 import BookingPanel from './chat/BookingPanel';
 import MessageSkeleton from './chat/MessageSkeleton';
@@ -6763,6 +6763,18 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           setShowSubscriberForm(false);
           setError('');
           setShowTrialConfirm(true);
+          return;
+        }
+        // P1.2 — LA LIMITE LAISSEE OUVERTE PAR P1.1, REFERMEE.
+        // Si l'enregistrement a echoue (`acquisition_saved: false`), on ne peut
+        // pas dire « votre demande est enregistree » — ce serait faux. Mais un
+        // prospect partenaire ne doit JAMAIS se voir reclamer un code d'abonne
+        // ni une date de naissance pour autant. On lui dit la verite et on
+        // s'arrete la.
+        if (p12EstPartenaire(clientData && clientData.linkData)) {
+          setShowSubscriberForm(false);
+          setIsKnownSubscriber(false);
+          setError('Votre demande n\'a pas pu être enregistrée. Réessayez dans quelques instants.');
           return;
         }
         setIsKnownSubscriber(true);
