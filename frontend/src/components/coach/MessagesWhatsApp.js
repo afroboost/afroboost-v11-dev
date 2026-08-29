@@ -26,6 +26,7 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
+import { cl1DoitSonder } from "../../utils/chatPolling";
 
 const API = `${process.env.REACT_APP_BACKEND_URL || ''}/api`;
 
@@ -181,7 +182,17 @@ export default function MessagesWhatsApp() {
    *  rythme du sondage, et relire les messages en boucle saturerait le serveur. */
   useEffect(() => {
     chargerNonLus();
-    const t = setInterval(chargerNonLus, 5000);
+    // CHAT-LOOP3 — jumeau du poller V441 de `CoachDashboard`, sur le MÊME
+    // endpoint, et resté sans garde quand CHAT-LOOP2 a gardé l'autre : le
+    // registre n'auditait alors que `CoachDashboard.js`. Écran ouvert et
+    // onglet caché, il tirait 17 280 fois par jour pour une pastille que
+    // personne ne regarde. L'appel immédiat ci-dessus reste inconditionnel :
+    // monter cet écran, c'est que le coach vient de l'ouvrir.
+    // Aucune reprise au retour : à 5 s, le tir suivant arrive avant l'œil.
+    const t = setInterval(() => {
+      if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
+      chargerNonLus();
+    }, 5000);
     return () => clearInterval(t);
   }, [chargerNonLus]);
 

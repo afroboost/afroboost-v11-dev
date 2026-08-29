@@ -4892,9 +4892,22 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     
     console.log('[NOTIFICATIONS] Polling activé (interval 10s)');
     
-    // Vérifier immédiatement
-    checkUnreadNotifications();
-    
+    // CHAT-LOOP3 — CET APPEL IMMÉDIAT ÉTAIT LA DERNIÈRE PORTE OUVERTE.
+    // L'intervalle ci-dessous est gardé depuis CHAT-LOOP1, mais celui-ci ne
+    // l'était pas — or l'effet se REMONTE dès que `checkUnreadNotifications`
+    // change d'identité, et cette identité dépend de `chatSessions`, que
+    // `loadConversations` réécrit avec un tableau neuf. Onglet caché, chaque
+    // passage du poller 30 s de `CRMSection` provoquait donc une requête ici.
+    // Le risque était plus grave que le volume : avec une session portant un
+    // vrai jeton, `/notifications/unread` répond 200, la branche « nouveaux
+    // messages » rappelle `loadConversations`, qui réécrit `chatSessions`,
+    // qui remonte cet effet — boucle auto-entretenue, sans attendre les 30 s.
+    // On garde l'appel, PAS la dépendance : `chatSessions.find(...)` est
+    // réellement lu plus haut, la retirer causerait un défaut de fraîcheur.
+    if (cl1DoitSonder(document.visibilityState, navigator.onLine)) {
+      checkUnreadNotifications();
+    }
+
     // Puis toutes les 10 secondes
     // CHAT-LOOP1 — onglet cache ou reseau absent : on ne tire pas. Le
     // `ChatWidget` appliquait deja cette garde cote visiteur ; le dashboard,

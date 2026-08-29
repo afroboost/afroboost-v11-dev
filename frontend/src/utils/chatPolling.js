@@ -205,3 +205,121 @@ export function cl2RequetesParJour(intervalleMs) {
   if (!intervalleMs || intervalleMs <= 0) return 0;
   return Math.round(86400000 / intervalleMs);
 }
+
+/* ═══════════════════════ CHAT-LOOP3 ═══════════════════════ */
+/**
+ * CHAT-LOOP3 — LE REGISTRE NE COUVRAIT QU'UN SEUL FICHIER.
+ *
+ * CHAT-LOOP2 a garde les 8 `setInterval` de `CoachDashboard.js` et s'est cru
+ * complet. La validation en production a montre qu'il restait 4 sondages
+ * reseau du dashboard, dans des fichiers que le registre n'auditait pas :
+ * `coach/CRMSection.js` (30 s -> `loadConversations`, 15 s -> messages du fil
+ * ouvert) et `coach/MessagesWhatsApp.js` (5 s -> `/private/nonlus`).
+ *
+ * LA CHAINE QUE PERSONNE N'AVAIT VUE, mesuree onglet cache :
+ *   CRMSection 30 s -> loadConversations(false)
+ *     -> Promise.allSettled([/conversations, /chat/participants, /chat/links])
+ *     -> setChatSessions(TABLEAU NEUF)
+ *     -> `checkUnreadNotifications` change d'identite (useCallback dep chatSessions)
+ *     -> l'effet [tab, checkUnreadNotifications] se remonte
+ *     -> son appel IMMEDIAT, non garde, tire /notifications/unread
+ * Console relevee : « Polling desactive / Polling active / Polling demarre »
+ * toutes les 30,4 s ; reseau : trio a 28346, 58715, 89121 ms.
+ *
+ * `chatSessions` EST reellement lu dans `checkUnreadNotifications`
+ * (`chatSessions.find(...)`) : la dependance est legitime, on ne la retire pas.
+ * C'est l'appel immediat qu'on garde — sinon, le jour ou la session portera un
+ * vrai jeton, `/notifications/unread` repondra 200, la ligne « nouveaux
+ * messages » rappellera `loadConversations`, et la chaine deviendra une boucle
+ * auto-entretenue sans meme attendre les 30 s.
+ */
+
+/** Sondages periodiques des composants du dashboard AUTRES que CoachDashboard.js. */
+export const CL3_POLLERS_DASHBOARD = [
+  {
+    cle: 'crm-conversations',
+    fichier: 'coach/CRMSection.js',
+    fonction: 'loadConversations(false)',
+    endpoint: 'GET /conversations + /chat/participants + /chat/links',
+    intervalleMs: 30000,
+    repriseImmediate: true,
+    reseau: true,
+    fondAutorise: false,
+    raison:
+      "Rafraichissement de la liste CRM. Onglet cache, il declenchait 4 requetes " +
+      "toutes les 30 s (le trio, plus /notifications/unread par remontage induit).",
+  },
+  {
+    cle: 'crm-messages-fil-ouvert',
+    fichier: 'coach/CRMSection.js',
+    fonction: 'loadSessionMessages(selectedSession.id)',
+    endpoint: 'GET /chat/sessions/<id>/messages',
+    intervalleMs: 15000,
+    repriseImmediate: false,
+    reseau: true,
+    fondAutorise: false,
+    raison:
+      "Second sondage du fil OUVERT, en plus de celui de 8 s de CoachDashboard. " +
+      "Il ne s'etait pas manifeste plus tot faute de conversation selectionnee.",
+  },
+  {
+    cle: 'whatsapp-nonlus',
+    fichier: 'coach/MessagesWhatsApp.js',
+    fonction: 'chargerNonLus',
+    endpoint: 'GET /private/nonlus',
+    intervalleMs: 5000,
+    repriseImmediate: false,
+    reseau: true,
+    fondAutorise: false,
+    raison:
+      "Jumeau du poller V441 garde par CHAT-LOOP2, sur le MEME endpoint. Monte " +
+      "seulement sur Gestion -> sous-onglet WhatsApp, mais 5 s onglet cache compris.",
+  },
+  {
+    cle: 'groupe-messages',
+    fichier: 'coach/GroupChatModule.js',
+    fonction: 'loadMessages',
+    endpoint: 'GET messages du groupe',
+    intervalleMs: 10000,
+    repriseImmediate: false,
+    reseau: true,
+    fondAutorise: false,
+    raison: "Deja garde par CHAT-LOOP1. Inscrit ici pour que le registre soit exhaustif.",
+  },
+];
+
+/**
+ * Sondages du perimetre dashboard volontairement NON gardes, avec leur raison.
+ * Toute entree ici doit rester justifiable a la relecture.
+ */
+export const CL3_EXCEPTIONS_DASHBOARD = [
+  {
+    cle: 'oauth-google-contacts',
+    fichier: 'dashboard/ContactsManager.js',
+    intervalleMs: 2000,
+    raison:
+      "Sonde /google-contacts/status pendant le popup OAuth, et s'arrete elle-meme " +
+      "(`clearInterval` des que connecte). Transitoire et declenchee par un clic : " +
+      "ce n'est pas un sondage de fond. Dette connue : aucune echeance si " +
+      "l'utilisateur ferme le popup.",
+  },
+  {
+    cle: 'clignotement-titre',
+    fichier: 'services/notificationService.js',
+    intervalleMs: 1000,
+    raison: "Fait clignoter `document.title`. AUCUNE requete reseau.",
+  },
+];
+
+/**
+ * Nombre de requetes retirees par jour, onglet cache, dashboard laisse ouvert.
+ * Le trio CRM compte 4 requetes par cycle : les trois du `Promise.allSettled`
+ * plus le `/notifications/unread` que le remontage induit.
+ */
+export function cl3RequetesRetireesParJour() {
+  return {
+    crm_conversations: 4 * cl2RequetesParJour(30000),
+    crm_messages: cl2RequetesParJour(15000),
+    whatsapp_nonlus: cl2RequetesParJour(5000),
+  };
+}

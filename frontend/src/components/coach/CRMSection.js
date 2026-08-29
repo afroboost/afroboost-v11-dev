@@ -9,6 +9,7 @@ import { ChevronDown, Trash2, Send, Copy, Check, ExternalLink, Phone, Edit2, Sav
 import SmartLinksSection from './SmartLinksSection'; // v98: Liens Intelligents
 import GroupChatModule from './GroupChatModule'; // v100: Groupes de chat
 import { renderTextWithLinks } from '../chat/ChatBubbles'; // V156.3: Liens cliquables
+import { cl1DoitSonder } from '../../utils/chatPolling'; // CHAT-LOOP3 : garde de visibilité
 import AfricanEmojiPicker from '../chat/AfricanEmojiPicker'; // V143: Emoji picker for coach
 import SvgIcon from '../SvgIcon'; // V228: icones vectorielles en remplacement des emoji d'interface
 
@@ -1309,19 +1310,45 @@ const CRMSection = ({
   const [showNewConversationDialog, setShowNewConversationDialog] = useState(false);
 
   // v105: Real-time polling — refresh conversations every 30s, messages every 15s
+  // CHAT-LOOP3 — C'EST LE STIMULATEUR DES 30 SECONDES.
+  // Mesuré en production, onglet Conversations et onglet caché : ce timer
+  // appelait `loadConversations(false)`, dont le `Promise.allSettled` tire
+  // trois requêtes, puis écrit `setChatSessions` avec un TABLEAU NEUF. Cette
+  // écriture change l'identité de `checkUnreadNotifications` (qui en dépend
+  // légitimement), remonte l'effet des notifications, et son appel immédiat
+  // tirait une quatrième requête. Console relevée : « Polling désactivé /
+  // activé / démarré » toutes les 30,4 s ; réseau : trio à 28346, 58715,
+  // 89121 ms. Soit 11 520 requêtes/jour pour un écran que personne ne regarde.
   useEffect(() => {
     if (!API_URL) return;
-    const convInterval = setInterval(() => {
+    const sonder = () => {
       if (loadConversations && !conversationsLoading) {
         loadConversations(false);
       }
+    };
+    const convInterval = setInterval(() => {
+      if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
+      sonder();
     }, 30000);
-    return () => clearInterval(convInterval);
+    // Cadence >= 30 s : une reprise immédiate au retour à l'écran, sinon la
+    // liste resterait figée jusqu'à une demi-minute. Même règle que CHAT-LOOP2,
+    // et c'est un rappel direct — jamais un minuteur de plus.
+    const cl3Reprise = () => { if (document.visibilityState === 'visible') sonder(); };
+    document.addEventListener('visibilitychange', cl3Reprise);
+    return () => {
+      clearInterval(convInterval);
+      document.removeEventListener('visibilitychange', cl3Reprise);
+    };
   }, [API_URL, loadConversations, conversationsLoading]);
 
+  // CHAT-LOOP3 — SECOND sondage du fil ouvert, en plus de celui de 8 s de
+  // `CoachDashboard`. Il avait échappé aux mesures précédentes parce qu'aucune
+  // conversation n'était sélectionnée (`selectedSession?.id` absent). Pas de
+  // reprise immédiate : à 15 s, le tir suivant suffit.
   useEffect(() => {
     if (!API_URL || !selectedSession?.id) return;
     const msgInterval = setInterval(() => {
+      if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
       loadSessionMessages(selectedSession.id);
     }, 15000);
     return () => clearInterval(msgInterval);
