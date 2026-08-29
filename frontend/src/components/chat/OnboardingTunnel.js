@@ -5,6 +5,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   p12EstPartenaire, p12NouveauSubmissionId, P12_MESSAGE_RESEAU,
+  p12CodeDiagnostic, P12_CODE_FETCH, P12_DIAG_PREFIXE, P12_INTRO_PARTENAIRE,
 } from '../../utils/finTunnelPartenaire';
 
 const DEFAULT_STEPS = [
@@ -30,6 +31,13 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
   // doublon qu'on cherche a eviter (deux leads a 882 ms le 29/08).
   const [submissionId] = useState(() => p12NouveauSubmissionId());
   const [fetchingLink, setFetchingLink] = useState(true);
+  // P1.2-UXFINAL — le code diagnostic de la DERNIERE tentative ; '' = rien a
+  // signaler. Fabrique uniquement avec le statut HTTP et la famille du
+  // Content-Type (cf. `p12CodeDiagnostic`) : aucune donnee personnelle ne peut
+  // y entrer, elles ne sont pas des parametres de cette fonction.
+  const [diagCode, setDiagCode] = useState('');
+  // Le depliant « Lire plus » de l'intro partenaire — REPLIE par defaut.
+  const [introDepliee, setIntroDepliee] = useState(false);
 
   const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 
@@ -121,6 +129,7 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
       return;
     }
     setError('');
+    setDiagCode('');
 
     if (currentStep < totalSteps) {
       setCurrentStep(prev => prev + 1);
@@ -162,7 +171,17 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
         // FastAPI. Dire « Erreur serveur » accusait le serveur a tort et
         // laissait le prospect sans rien faire.
         const errData = await response.json().catch(() => null);
-        throw new Error((errData && errData.detail) || P12_MESSAGE_RESEAU);
+        const erreur = new Error((errData && errData.detail) || P12_MESSAGE_RESEAU);
+        // P1.2-UXFINAL — UN REFUS APPLICATIF N'A PAS BESOIN DE CODE. Son
+        // `detail` dit deja quoi faire (« Le nom est requis », « Trop de
+        // tentatives ») ; y accoler un code technique ne ferait qu'inquieter.
+        // Une reponse SANS JSON, elle, vient d'un proxy : c'est la seule trace
+        // exploitable qui restera de l'incident, cote prospect comme cote
+        // serveur — ou il n'y en aura aucune, la requete n'y arrivant pas.
+        erreur.codeDiag = (errData && errData.detail)
+          ? ''
+          : p12CodeDiagnostic(response.status, response.headers.get('content-type'));
+        throw erreur;
       }
 
       const data = await response.json();
@@ -198,7 +217,18 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
       // Un `fetch` qui jette = coupure reseau : meme message, meme promesse.
       // Les reponses restent dans l'etat React, le bouton se reactive dans le
       // `finally` : un second clic repart avec le MEME `submission_id`.
-      setError(err.message || P12_MESSAGE_RESEAU);
+      // Un `fetch` qui jette n'a NI statut NI en-tete : aucune reponse n'est
+      // revenue. `codeDiag` ABSENT (et non vide) est exactement ce cas — d'ou
+      // le test sur le type plutot que sur la verite de la valeur.
+      const notre = (typeof err.codeDiag === 'string');
+      setDiagCode(notre ? err.codeDiag : P12_CODE_FETCH);
+      // P1.2-UXFINAL — « Failed to fetch » N'EST PAS UN MESSAGE POUR UN
+      // PROSPECT. Mesure au banc : `route.abort()` faisait afficher cette
+      // chaine technique en anglais, alors que le commentaire d'a cote
+      // promettait « meme message, meme promesse ». `err.message` n'est sur
+      // que si l'erreur vient de NOUS — c'est-a-dire si elle porte `codeDiag`.
+      // Sinon elle vient du navigateur, dans sa langue et son vocabulaire.
+      setError(notre ? (err.message || P12_MESSAGE_RESEAU) : P12_MESSAGE_RESEAU);
     } finally {
       setLoading(false);
     }
@@ -230,6 +260,7 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
   const currentValue = getCurrentValue();
   const isButtonsType = step?.type === 'buttons' && step?.options?.length > 0;
   const isLastStep = currentStep === totalSteps;
+  const estPartenaire = p12EstPartenaire(linkData);
 
   return (
     <div style={{
@@ -244,7 +275,7 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
             le tunnel d'essai, en production, ne change pas d'un pixel. La photo
             existe deja (`/hero-afroboost.jpg`, 122 Ko, servie en image/jpeg) —
             aucune image creee, aucun telechargement. */}
-        {p12EstPartenaire(linkData) && (
+        {estPartenaire && (
           <img
             src="/hero-afroboost.jpg"
             alt="Participante Afroboost en séance, casque audio sur les oreilles, en extérieur au coucher du soleil"
@@ -267,12 +298,61 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
           />
         )}
         <img src="/logo192.png" alt="Afroboost" style={{ width: '56px', height: '56px', borderRadius: '50%', marginBottom: '8px', border: '2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', boxShadow: '0 0 16px rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }} />
-        <h2 style={{ color: '#ffffff', fontSize: '20px', fontWeight: '700', margin: '0 0 8px 0' }}>
-          {welcomeMsg}
-        </h2>
-        <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '14px', margin: 0 }}>
-          {hasTunnel ? `${totalSteps} étapes pour personnaliser votre expérience` : 'Quelques infos avant de démarrer la conversation'}
-        </p>
+        {estPartenaire ? (
+          /* P1.2-UXFINAL — INTRO ECRITE POUR QUI NE CONNAIT PAS AFROBOOST.
+             Le lien partenaire circule HORS de la communaute : un gerant de
+             salon n'a aucune raison de savoir ce qu'est un cours au casque.
+             L'accroche est donc une question, pas un titre de marque.
+             Le detail est REPLIE : sur un telephone, un pave de texte au
+             chargement fait fermer l'onglet avant la premiere question. */
+          <>
+            <h2 style={{ color: '#ffffff', fontSize: '18px', fontWeight: '700', margin: '0 0 10px 0', lineHeight: 1.35 }}>
+              {P12_INTRO_PARTENAIRE.titre}
+            </h2>
+            <p style={{ color: 'rgba(255,255,255,0.72)', fontSize: '14px', margin: '0 0 10px 0', lineHeight: 1.5 }}>
+              {P12_INTRO_PARTENAIRE.texte}
+            </p>
+            <div
+              id="p12-intro-detail"
+              data-testid="p12-intro-detail"
+              hidden={!introDepliee}
+              style={{ textAlign: 'left', margin: '0 0 10px 0' }}
+            >
+              <p style={{ color: 'rgba(255,255,255,0.72)', fontSize: '14px', margin: '0 0 8px 0', lineHeight: 1.5 }}>
+                {P12_INTRO_PARTENAIRE.detail1}
+              </p>
+              <p style={{ color: 'rgba(255,255,255,0.72)', fontSize: '14px', margin: 0, lineHeight: 1.5 }}>
+                {P12_INTRO_PARTENAIRE.detail2}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIntroDepliee(v => !v)}
+              aria-expanded={introDepliee}
+              aria-controls="p12-intro-detail"
+              data-testid="p12-intro-toggle"
+              style={{
+                background: 'transparent', border: 'none', padding: '4px 0',
+                cursor: 'pointer', color: 'var(--primary-color, #D91CD2)',
+                fontSize: '14px', fontWeight: 600, textDecoration: 'underline',
+              }}
+            >
+              {introDepliee ? P12_INTRO_PARTENAIRE.moins : P12_INTRO_PARTENAIRE.plus}
+            </button>
+            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '14px', margin: '10px 0 0 0' }}>
+              {P12_INTRO_PARTENAIRE.sousTitre}
+            </p>
+          </>
+        ) : (
+          <>
+            <h2 style={{ color: '#ffffff', fontSize: '20px', fontWeight: '700', margin: '0 0 8px 0' }}>
+              {welcomeMsg}
+            </h2>
+            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '14px', margin: 0 }}>
+              {hasTunnel ? `${totalSteps} étapes pour personnaliser votre expérience` : 'Quelques infos avant de démarrer la conversation'}
+            </p>
+          </>
+        )}
       </div>
 
       {/* Barre de progression */}
@@ -359,6 +439,17 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
         )}
         {error && (
           <p style={{ color: '#ef4444', fontSize: '13px', margin: '6px 0 0 0' }}>{error}</p>
+        )}
+        {error && diagCode && (
+          <p
+            data-testid="p12-code-diag"
+            style={{
+              color: 'rgba(255,255,255,0.35)', fontSize: '11px',
+              margin: '4px 0 0 0', fontFamily: 'monospace',
+            }}
+          >
+            {P12_DIAG_PREFIXE}{diagCode}
+          </p>
         )}
       </div>
 

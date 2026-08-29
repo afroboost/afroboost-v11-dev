@@ -124,3 +124,107 @@ export function p12SubmissionIdValide(id) {
     return false;
   }
 }
+
+/* ═════════════ P1.2-UXFINAL — DIAGNOSTIC RESEAU NON SENSIBLE ════════════════ */
+
+/** Le `fetch` lui-meme a jete : rien n'est parti, ou rien n'est revenu. */
+export const P12_CODE_FETCH = 'NET-FETCH';
+
+/** Prefixe affiche sous le message d'erreur. */
+export const P12_DIAG_PREFIXE = 'Code diagnostic : ';
+
+/**
+ * Construit un code diagnostic a partir de la SEULE enveloppe HTTP.
+ *
+ * POURQUOI CE CODE EXISTE. Deux incidents partenaire le 29/08, deux fois zero
+ * preuve : la requete n'avait jamais atteint FastAPI (aucune ligne uvicorn,
+ * aucune entree dans `smart_entry_attempts`), et le navigateur du prospect
+ * n'avait rien garde. Impossible de dire si Cloudflare avait bloque, si un
+ * proxy avait rendu une page HTML, ou si le telephone avait perdu le reseau.
+ * Un code court, lisible a voix haute au telephone, rend le prochain incident
+ * diagnosticable en une phrase.
+ *
+ * CE QU'IL NE CONTIENT JAMAIS. Il est fabrique uniquement avec le statut HTTP
+ * et la famille du `Content-Type`. Ni le corps de la reponse, ni l'URL, ni le
+ * nom, l'e-mail, le telephone, le `submission_id`, le `participant_id` ou le
+ * `session_id` ne peuvent y entrer : ces valeurs ne sont pas des parametres de
+ * cette fonction. C'est structurel, pas une precaution de redaction.
+ *
+ * @param {number} status      le statut HTTP de la reponse
+ * @param {string} contentType l'en-tete `Content-Type` brut, ou ''
+ * @returns {string} ex. `HTTP-403-HTML`, `HTTP-502-HTML`, `HTTP-503`
+ */
+export function p12CodeDiagnostic(status, contentType) {
+  try {
+    var n = parseInt(status, 10);
+    // Un statut hors norme HTTP ne renseigne rien : on le dit plutot que
+    // d'imprimer un nombre fantaisiste dans l'interface du prospect.
+    if (!isFinite(n) || n < 100 || n > 599) return 'HTTP-INCONNU';
+    var ct = (typeof contentType === 'string') ? contentType.toLowerCase() : '';
+    // `text/html`, `application/xhtml+xml` : une PAGE a repondu a la place de
+    // l'API — signature d'un proxy (challenge Cloudflare, page d'erreur).
+    var estPage = ct.indexOf('html') !== -1;
+    return 'HTTP-' + n + (estPage ? '-HTML' : '');
+  } catch (e) {
+    return 'HTTP-INCONNU';
+  }
+}
+
+/* ═════════════ P1.2-UXFINAL — TEXTES DU TUNNEL PARTENAIRE ═══════════════════ */
+
+/**
+ * L'intro partenaire, ecrite pour quelqu'un qui ne connait PAS Afroboost.
+ * `detail` est REPLIE par defaut : sur un telephone, un pave de texte au
+ * chargement fait fermer l'onglet avant la premiere question.
+ */
+export const P12_INTRO_PARTENAIRE = {
+  titre: 'Et si vous proposiez à vos clients ou membres une expérience qu’ils n’ont encore jamais vécue ? 🎧🔥',
+  texte: 'Afroboost mélange danse afro, fitness et musique au casque dans une expérience immersive, fun et accessible à tous.',
+  detail1: 'Nous sélectionnons quelques partenaires à Neuchâtel pour tester pendant 30 jours une collaboration gratuite et sans engagement : visibilité croisée, création de contenu, événement ou découverte Afroboost pour votre communauté.',
+  detail2: 'L’objectif : créer de la valeur ensemble et mesurer les résultats, sans engagement à long terme.',
+  plus: '… Lire plus',
+  moins: 'Lire moins',
+  sousTitre: 'Voyons en 1 minute si une collaboration est possible 🤝',
+};
+
+/**
+ * L'ecran de fin partenaire.
+ *
+ * CE QU'IL REMPLACE. L'ecran C2-G annoncait « On te confirme ton cours d'essai
+ * sur WhatsApp » — mesure le 29/08 sur le parcours partenaire reel. Un gerant
+ * de salon qui propose une collaboration ne reserve pas un cours d'essai : la
+ * phrase promettait autre chose que ce qui allait arriver.
+ */
+export const P12_FIN_PARTENAIRE = {
+  titre: 'Merci 🙌',
+  corps: 'Votre demande de collaboration a bien été enregistrée.',
+  suite: 'Bassi la consultera personnellement et vous contactera si une collaboration est pertinente.',
+  signature: 'À bientôt,',
+  marque: 'Afroboost 🎧🔥',
+};
+
+/**
+ * Ce qu'un ecran partenaire ne doit JAMAIS dire. Un partenaire n'achete rien
+ * et ne reserve rien — toute promesse de ce registre est fausse chez lui.
+ * Liste exportee pour que le banc puisse la faire respecter texte par texte.
+ */
+export const P12_MOTS_INTERDITS_PARTENAIRE = [
+  'cours d’essai', 'cours d\'essai', 'essai gratuit',
+  'réserv', 'code promo', 'paiement', 'payer', 'abonnement',
+];
+
+/** Un texte destine a un partenaire contient-il une promesse interdite ? */
+export function p12PromesseInterdite(texte) {
+  try {
+    if (typeof texte !== 'string') return '';
+    var bas = texte.toLowerCase();
+    for (var i = 0; i < P12_MOTS_INTERDITS_PARTENAIRE.length; i++) {
+      if (bas.indexOf(P12_MOTS_INTERDITS_PARTENAIRE[i].toLowerCase()) !== -1) {
+        return P12_MOTS_INTERDITS_PARTENAIRE[i];
+      }
+    }
+    return '';
+  } catch (e) {
+    return '';
+  }
+}

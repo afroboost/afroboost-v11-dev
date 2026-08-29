@@ -41,7 +41,7 @@ import AudioMessage from './chat/AudioMessage'; // V356 : lecteur de note vocale
 import AfricanEmojiPicker from './chat/AfricanEmojiPicker';
 import SubscriberForm from './chat/SubscriberForm';
 import OnboardingTunnel from './chat/OnboardingTunnel';
-import { p11FinSansFormulaireAbonne, p12EstPartenaire } from '../utils/finTunnelPartenaire';
+import { p11FinSansFormulaireAbonne, p12EstPartenaire, P12_FIN_PARTENAIRE } from '../utils/finTunnelPartenaire';
 import PrivateChatView from './chat/PrivateChatView';
 import BookingPanel from './chat/BookingPanel';
 import MessageSkeleton from './chat/MessageSkeleton';
@@ -2429,6 +2429,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   // vendent). Meme constante que le CTA du hero d'accueil (App.js).
   const C2G_LIEN_ESSAI = 'b83914b4-c5a';
   const [showTrialConfirm, setShowTrialConfirm] = useState(false);
+  // P1.2-UXFINAL — l'ecran de confirmation est PARTAGE entre le tunnel d'essai
+  // et le tunnel partenaire. Sans ce drapeau, un partenaire lisait « On te
+  // confirme ton cours d'essai sur WhatsApp » : une promesse qui ne le
+  // concerne pas et que personne ne tiendra.
+  const [trialConfirmPartner, setTrialConfirmPartner] = useState(false);
 
   // === V218: ÉCRAN DE PAIEMENT POST-TUNNEL (end_actions.payment) ===
   const [showPaymentScreen, setShowPaymentScreen] = useState(false);
@@ -6767,6 +6772,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           setShowOnboardingTunnel(false);
           setShowSubscriberForm(false);
           setError('');
+          setTrialConfirmPartner(p12EstPartenaire(clientData && clientData.linkData));
           setShowTrialConfirm(true);
           return;
         }
@@ -8872,24 +8878,43 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                     justifyContent: 'center', textAlign: 'center', gap: '14px',
                     padding: '24px 16px', minHeight: '220px'
                   }}>
-                    <p style={{
-                      color: '#fff', fontSize: 'clamp(15px, 4.5vw, 18px)', fontWeight: 700,
-                      margin: 0, lineHeight: 1.35
-                    }}>
-                      🎉 Ta demande est bien enregistrée !
+                    <p
+                      data-testid={trialConfirmPartner ? 'p12-fin-partenaire' : 'c2g-fin-essai'}
+                      style={{
+                        color: '#fff', fontSize: 'clamp(15px, 4.5vw, 18px)', fontWeight: 700,
+                        margin: 0, lineHeight: 1.35
+                      }}
+                    >
+                      {trialConfirmPartner ? P12_FIN_PARTENAIRE.titre : '🎉 Ta demande est bien enregistrée !'}
                     </p>
                     <p style={{
                       color: 'rgba(255,255,255,0.78)', fontSize: 'clamp(13px, 3.8vw, 15px)',
-                      margin: 0, lineHeight: 1.5, maxWidth: '270px'
+                      margin: 0, lineHeight: 1.5, maxWidth: trialConfirmPartner ? '300px' : '270px'
                     }}>
-                      On te confirme ton cours d'essai sur WhatsApp.
+                      {trialConfirmPartner ? P12_FIN_PARTENAIRE.corps : "On te confirme ton cours d'essai sur WhatsApp."}
                     </p>
+                    {trialConfirmPartner && (
+                      <p style={{
+                        color: 'rgba(255,255,255,0.78)', fontSize: 'clamp(13px, 3.8vw, 15px)',
+                        margin: 0, lineHeight: 1.5, maxWidth: '300px'
+                      }}>
+                        {P12_FIN_PARTENAIRE.suite}
+                      </p>
+                    )}
                     <p style={{
                       color: 'var(--primary-color, #D91CD2)', fontSize: 'clamp(13px, 3.8vw, 15px)',
                       fontWeight: 600, margin: 0
                     }}>
-                      À très vite chez Afroboost 🎧🔥
+                      {trialConfirmPartner ? P12_FIN_PARTENAIRE.signature : 'À très vite chez Afroboost 🎧🔥'}
                     </p>
+                    {trialConfirmPartner && (
+                      <p style={{
+                        color: 'var(--primary-color, #D91CD2)', fontSize: 'clamp(13px, 3.8vw, 15px)',
+                        fontWeight: 600, margin: 0
+                      }}>
+                        {P12_FIN_PARTENAIRE.marque}
+                      </p>
+                    )}
                     <a
                       href="/"
                       style={{
