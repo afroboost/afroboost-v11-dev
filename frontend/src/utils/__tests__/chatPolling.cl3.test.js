@@ -151,10 +151,17 @@ describe('CHAT-LOOP3 / 11-12. la chaine remontage -> requete est coupee', () => 
     // mais l'appel immediat du (re)montage, lui, ne l'etait pas.
     // Assertion directe sur la forme exacte : la garde doit envelopper CET
     // appel-la, pas seulement exister quelque part dans le fichier.
+    // SECURITY-S1 : l'appel passe par la reference vers la derniere version.
     expect(DASH).toMatch(
-      /if \(cl1DoitSonder\(document\.visibilityState, navigator\.onLine\)\) \{\s*checkUnreadNotifications\(\);\s*\}/);
+      /if \(cl1DoitSonder\(document\.visibilityState, navigator\.onLine\)\) \{\s*s1CheckUnreadRef\.current\(\);\s*\}/);
     // Et il ne doit plus rester d'appel immediat NU dans cet effet.
     expect(DASH).not.toMatch(/^\s{4}checkUnreadNotifications\(\);$/m);
+    // SECURITY-S1 — LA CAUSE, pas seulement le symptome : la fonction ne doit
+    // plus figurer dans les dependances de l'effet, sinon chaque ecriture de
+    // `chatSessions` (toutes les 5 s) le remonterait et detruirait son minuteur
+    // de 10 s avant son echeance — il ne tirait JAMAIS.
+    expect(DASH).not.toContain('}, [tab, checkUnreadNotifications]);');
+    expect(DASH).toContain('s1CheckUnreadRef.current = checkUnreadNotifications');
   });
   test('12. la dependance chatSessions est CONSERVEE (elle est utilisee)', () => {
     // On corrige l'appel, pas la dependance : `chatSessions.find(...)` est lu

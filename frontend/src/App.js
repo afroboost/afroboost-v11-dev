@@ -8,7 +8,7 @@ import { LanguageContext } from "./contexts/LanguageContext";
 // serveur reste seul juge ; ici on distingue « refusé » de « session morte »).
 import { jetonExpire } from "./utils/jwt";
 // P0-SOCLE : la strategie d'authentification, decidee en un seul endroit.
-import { terminerSession, debutConnexion, finConnexion, signalerConnexionReussie, abonnerAuth, authValide, AUTH } from "./utils/authSession";
+import { terminerSession, debutConnexion, finConnexion, signalerConnexionReussie, abonnerAuth, authValide, classerEchec, AUTH } from "./utils/authSession";
 // FUNNEL ESSAI (etape 1) — mesure PURE : ces deux fonctions ne changent aucun
 // parcours et ne levent jamais. Voir utils/funnelEssai.js pour les invariants.
 import { funnelTracer, funnelVariante } from "./utils/funnelEssai";
@@ -4601,6 +4601,67 @@ function App() {
   coachModeRef.current = coachMode;
   const coachUserRef = useRef(coachUser);
   coachUserRef.current = coachUser;
+
+  // SECURITY-S1 — LE JETON SE RENOUVELLE MÊME QUAND LE MODAL NE MONTE PAS.
+  //
+  // SECURITY-S0 a fait renvoyer le jeton par `/auth/me` et l'a fait stocker par
+  // `CoachLoginModal`. Le serveur marche — vérifié en production, `/auth/me`
+  // rend bien un `token`. Mais ce composant n'est JAMAIS monté dans le seul cas
+  // qui compte : `afroboost_admin_persist` survit à `terminerSession()`, la
+  // ligne ~4571 ci-dessus le relit et RÉÉCRIT `afroboost_coach_user`, et les
+  // deux branches du hash `#coach-dashboard` (~5058, ~5103) arbitrent sur cette
+  // clé — jamais sur le jeton. La branche `setShowCoachLogin(true)` est donc
+  // inatteignable, et le propriétaire retombe en session non signée tous les
+  // 7 jours (`JWT_EXPIRATION_DAYS`), dashboard à moitié en 403.
+  //
+  // On ne touche NI à la restauration de `coachMode`, NI au rendu. Conditionner
+  // `coachMode` à `authValide()` renverrait le propriétaire sur la vitrine sans
+  // issue — aucun des six déclencheurs de `setShowCoachLogin` ne lui est
+  // accessible — et fermerait un dashboard aujourd'hui partiellement
+  // fonctionnel : c'est la forme exacte de l'incident V310c.
+  //
+  // On rejoue simplement l'appel de SECURITY-S0 depuis un écran qui, lui, EST
+  // monté. `debutConnexion()` met l'état à EN_COURS pendant l'appel, ce qui fait
+  // PARQUER les sections au lieu de tirer des 403 ; `signalerConnexionReussie()`
+  // ne relance ensuite que celles qui avaient été refusées. Cookie mort : on ne
+  // stocke rien et on retombe exactement sur l'état actuel, jamais pire.
+  //
+  // Garde one-shot : React 18 en mode strict monte deux fois en développement.
+  const s1JetonReparé = useRef(false);
+  useEffect(() => {
+    if (s1JetonReparé.current) return;
+    s1JetonReparé.current = true;
+    if (!coachModeRef.current || authValide()) return;
+    debutConnexion();
+    axios.get(`${API}/auth/me`, { withCredentials: true })
+      .then((r) => {
+        if (r?.data?.token) {
+          localStorage.setItem('afroboost_jwt', r.data.token);
+          signalerConnexionReussie();
+        }
+      })
+      .catch((err) => {
+        // SECURITY-S1 — UN COOKIE MORT N'EST PAS UNE PANNE RÉSEAU.
+        // `classerEchec` fait déjà cette distinction dans tout le dashboard, on
+        // la réutilise telle quelle plutôt que de relire `err.response.status` :
+        //   401, ou 403 sans jeton -> 'session' : les DEUX preuves d'identité
+        //     sont mortes (jeton ET cookie). Laisser le dashboard ouvert dans
+        //     cet état, c'est exactement la session zombie qu'on corrige : on
+        //     ouvre le formulaire de connexion existant. Il est rendu AVANT le
+        //     dashboard (`if (showCoachLogin) return ...`), il gagne donc sans
+        //     qu'on ait à toucher à `coachMode` — donc sans renvoyer le
+        //     propriétaire sur la vitrine, ce qui serait le piège V310c.
+        //   'reseau' (aucune réponse) ou 'serveur' (5xx) -> on ne conclut RIEN.
+        //     Une coupure de wifi ou un conteneur remplacé en plein vol ne sont
+        //     pas un mot de passe invalide : aucun modal, aucun message d'échec,
+        //     aucune purge. L'état reste exactement celui d'avant, récupérable
+        //     au prochain chargement. C'est la même prudence que le repli sur
+        //     OFF de `_v319_coach_identity` côté serveur : une panne de lecture
+        //     ne doit jamais fermer la porte au propriétaire.
+        if (classerEchec(err) === 'session') setShowCoachLogin(true);
+      })
+      .finally(() => { finConnexion(); });
+  }, []);
 
   const [validationCode, setValidationCode] = useState(null); // For /validate/:code URL
   const [loginWelcomeMessage, setLoginWelcomeMessage] = useState(null); // v9.1.8: Message de bienvenue après paiement

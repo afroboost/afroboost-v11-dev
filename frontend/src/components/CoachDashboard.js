@@ -4886,26 +4886,56 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   }, [tab, chatSessions, addToastNotification, notifyOnAiResponse]);
   
+  // SECURITY-S1 — « DERNIÈRE VERSION » DE LA FONCTION, SANS EN FAIRE UNE DÉPENDANCE.
+  // La référence est réassignée à CHAQUE rendu (aucun tableau de dépendances),
+  // donc elle pointe toujours sur la callback la plus récente : `chatSessions`,
+  // `loadConversations`, `addToastNotification` et `notifyOnAiResponse` y sont
+  // plus frais qu'avant. Ce qui disparaît, c'est uniquement le lien
+  // « identité de la fonction -> remontage de l'effet ».
+  const s1CheckUnreadRef = useRef(checkUnreadNotifications);
+  useEffect(() => { s1CheckUnreadRef.current = checkUnreadNotifications; });
+
   // Polling des notifications toutes les 10 secondes
   useEffect(() => {
     if (tab !== 'conversations') return;
-    
+
     console.log('[NOTIFICATIONS] Polling activé (interval 10s)');
-    
-    // CHAT-LOOP3 — CET APPEL IMMÉDIAT ÉTAIT LA DERNIÈRE PORTE OUVERTE.
-    // L'intervalle ci-dessous est gardé depuis CHAT-LOOP1, mais celui-ci ne
-    // l'était pas — or l'effet se REMONTE dès que `checkUnreadNotifications`
-    // change d'identité, et cette identité dépend de `chatSessions`, que
-    // `loadConversations` réécrit avec un tableau neuf. Onglet caché, chaque
-    // passage du poller 30 s de `CRMSection` provoquait donc une requête ici.
-    // Le risque était plus grave que le volume : avec une session portant un
-    // vrai jeton, `/notifications/unread` répond 200, la branche « nouveaux
-    // messages » rappelle `loadConversations`, qui réécrit `chatSessions`,
-    // qui remonte cet effet — boucle auto-entretenue, sans attendre les 30 s.
-    // On garde l'appel, PAS la dépendance : `chatSessions.find(...)` est
-    // réellement lu plus haut, la retirer causerait un défaut de fraîcheur.
+
+    // SECURITY-S1 — L'INTERVALLE DE 10 s NE TIRAIT JAMAIS.
+    //
+    // `checkUnreadNotifications` est un `useCallback` qui dépend de la VALEUR
+    // `chatSessions` (le setter, lui, est stable par construction : il n'est
+    // pour rien dans l'affaire). Le poller 5 s fait `setChatSessions(res.data)`
+    // avec le tableau fraîchement désérialisé par axios — donc une référence
+    // NEUVE à chaque réponse, même quand les octets sont identiques. La callback
+    // était donc recréée toutes les 5 s, cet effet se remontait, et son
+    // minuteur de 10 s était détruit à ~5 s de vie : il n'a jamais atteint
+    // son échéance. Ce n'était pas « 10 s dégradées en 5 s », c'était 10 s
+    // MORTES, remplacées par l'horloge de `/chat/sessions`. Mesuré en
+    // production : écarts de 4924 à 5106 ms — le jitter de la LATENCE, preuve
+    // que le départ suivait la réception de `/chat/sessions`, pas une horloge.
+    // Invisible tant que la route répondait 403 (`.catch()`, aucun `setState`).
+    //
+    // CE QUE JE M'ÉTAIS TROMPÉ D'ÉCRIRE ICI : « la retirer causerait un défaut
+    // de fraîcheur ». C'est l'inverse. `chatSessions` n'est lu qu'au CLIC sur la
+    // notification (`.find(s => s.id === msg.session_id)`), arbitrairement plus
+    // tard ; une closure y fige la liste de l'instant de l'AFFICHAGE, soit la
+    // valeur la moins fraîche possible. La référence ci-dessus donne la plus
+    // fraîche. On ne retire donc PAS la dépendance du `useCallback` — elle est
+    // légitime et reste en place — on retire le lien vers le REMONTAGE.
+    //
+    // Écarté : comparer avant `setState` aurait ranimé deux minuteurs de
+    // `CRMSection` aujourd'hui inertes pour la même raison — une « optimisation »
+    // qui AUGMENTE le trafic de 17 280 requêtes/jour. Écarté aussi : retirer
+    // l'appel immédiat, qui aurait laissé le remontage tuer l'intervalle et
+    // arrêté le sondage pour de bon, avec un graphe réseau plat trompeur.
+    //
+    // La garde de visibilité de CHAT-LOOP3 reste, sur l'appel immédiat comme sur
+    // l'intervalle, et sous forme INLINE : `cl2AnalyserSetIntervals` lit le texte
+    // qui suit chaque pose de minuteur ; une garde déportée dans une fonction la
+    // rendrait invisible à notre propre banc d'audit.
     if (cl1DoitSonder(document.visibilityState, navigator.onLine)) {
-      checkUnreadNotifications();
+      s1CheckUnreadRef.current();
     }
 
     // Puis toutes les 10 secondes
@@ -4914,13 +4944,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     // non : portable ferme, il sondait toute la nuit.
     const interval = setInterval(() => {
       if (!cl1DoitSonder(document.visibilityState, navigator.onLine)) return;
-      checkUnreadNotifications();
+      s1CheckUnreadRef.current();
     }, 10000);
 
     // Reprise propre au retour a l'ecran : UN rappel immediat, aucun timer
     // supplementaire — l'intervalle ci-dessus n'est ni recree ni double.
     const cl1Reprise = () => {
-      if (document.visibilityState === 'visible') checkUnreadNotifications();
+      if (document.visibilityState === 'visible') s1CheckUnreadRef.current();
     };
     document.addEventListener('visibilitychange', cl1Reprise);
 
@@ -4930,7 +4960,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', cl1Reprise);
     };
-  }, [tab, checkUnreadNotifications]);
+  }, [tab]);
 
   // === CHAT-LOOP1 — LA BOUCLE PAR SESSION A ETE SUPPRIMEE ===
   //

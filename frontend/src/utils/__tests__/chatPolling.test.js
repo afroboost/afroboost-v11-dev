@@ -49,8 +49,13 @@ describe('CHAT-LOOP1 / 10-12. le nouveau message reste detecte SANS la boucle', 
   test('10-11. le badge non-lu vient de /notifications/unread, pas de la boucle', () => {
     expect(DASH).toContain('/notifications/unread');
     expect(DASH).toContain('setUnreadCount(count)');
-    // ...et son poller a sa propre cadence, independante.
-    expect(DASH).toContain('checkUnreadNotifications();');
+    // ...et son poller a sa propre cadence, independante. SECURITY-S1 : l'appel
+    // passe desormais par une reference vers la DERNIERE version de la fonction
+    // (`s1CheckUnreadRef`), pour que l'identite de la callback ne remonte plus
+    // l'effet. L'intention du test est inchangee : le badge vient bien de ce
+    // sondage-la, pas de la boucle supprimee.
+    expect(DASH).toContain('s1CheckUnreadRef.current()');
+    expect(DASH).toContain('const checkUnreadNotifications = useCallback');
   });
   test('10. le fil de la conversation OUVERTE est rafraichi par le poller 8 s', () => {
     const i = DASH.indexOf('if (msgRes?.data) setSessionMessages(msgRes.data)');
