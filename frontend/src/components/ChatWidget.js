@@ -41,6 +41,7 @@ import AudioMessage from './chat/AudioMessage'; // V356 : lecteur de note vocale
 import AfricanEmojiPicker from './chat/AfricanEmojiPicker';
 import SubscriberForm from './chat/SubscriberForm';
 import OnboardingTunnel from './chat/OnboardingTunnel';
+import { p11FinSansFormulaireAbonne } from '../utils/finTunnelPartenaire';
 import PrivateChatView from './chat/PrivateChatView';
 import BookingPanel from './chat/BookingPanel';
 import MessageSkeleton from './chat/MessageSkeleton';
@@ -6751,7 +6752,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         // conversation existante (sans tunnel, sans reponses) garde exactement le
         // comportement d'avant : `acquisition_saved` est faux, on tombe dans la
         // branche historique juste en dessous.
-        if (response.data.acquisition_saved === true && linkToken === C2G_LIEN_ESSAI) {
+        // P1.1-FIX : PARTNER != SUBSCRIBER. La porte de sortie propre n'est plus
+        // reservee au seul lien d'essai : tout lien `lead_type: partner` en
+        // beneficie. Un prospect partenaire ne se verra JAMAIS reclamer un code
+        // d'abonne ni une date de naissance. Regle isolee et testee dans
+        // `utils/finTunnelPartenaire.js` — ChatWidget n'est pas importable par Jest.
+        if (p11FinSansFormulaireAbonne(response.data, linkToken,
+                                       clientData && clientData.linkData)) {
           setShowOnboardingTunnel(false);
           setShowSubscriberForm(false);
           setError('');
