@@ -21055,6 +21055,535 @@ async def p2d_stats_partenaire(partner_slug: str, request: Request):
     }
 
 
+
+# ═══════════ P3-S1 — LE PROSPECT PARTENAIRE DEVIENT UN OBJET A PART ═══════════
+#
+# CE QUE CE LOT AJOUTE, ET RIEN D'AUTRE : une collection, un modele, quatre
+# routes de lecture-ecriture, deux index. AUCUN envoi, AUCUNE relance, AUCUN
+# calcul d'echeance, AUCUN import, AUCUN ecran. C'est un socle.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POURQUOI UNE COLLECTION SEPAREE — LA DECISION CENTRALE DU LOT
+# ─────────────────────────────────────────────────────────────────────────────
+# Festi'neuch n'est pas une abonnee. Un prospect commercial n'a jamais reserve,
+# jamais paye, jamais consenti a quoi que ce soit. Le ranger dans
+# `chat_participants` le ferait apparaitre dans le selecteur de destinataires
+# des campagnes (`GET /api/contacts/all` fusionne participants + users), dans
+# les compteurs de contacts du tableau de bord, et dans les segments. Le ranger
+# dans `leads` le melerait aux 146 soumissions de tunnel — dont les
+# candidatures partenaire, qui sont l'ETAPE SUIVANTE de sa vie, pas la meme
+# chose. Le cout de la separation est une collection ; le cout du melange
+# serait la confiance dans tous les compteurs metier.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# CE QUE CE LOT NE DUPLIQUE PAS
+# ─────────────────────────────────────────────────────────────────────────────
+# Les statuts operationnels du partenaire — `decouverte`, `actif`,
+# `ambassadeur` — existent DEJA sur `partners.partner_status` (P2-B). Ils ne
+# sont pas repris ici. Le pipeline de ce lot s'arrete AVANT la candidature :
+# des qu'une candidature reelle existe, c'est le systeme partenaire qui reprend
+# la main, et le prospect ne fait plus que POINTER vers elle
+# (`partner_application_id`, `partner_id`). Deux etats pour une meme realite
+# finiraient toujours par se contredire.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LE NOM DE LA COLLECTION
+# ─────────────────────────────────────────────────────────────────────────────
+# `partner_prospects`, et pas `prospects` : le mot « prospect » est DEJA pris
+# dans ce depot — `notifier_nouveau_prospect` (routes/shared.py) et la
+# notification « Nouveau prospect » designent une soumission de tunnel. Un
+# `prospects` nu creerait deux sens pour un meme mot. Le prefixe suit
+# `partner_payment_config`, deja en base.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# AUCUN EFFET DE BORD — C'EST UNE EXIGENCE, PAS UNE CONSEQUENCE
+# ─────────────────────────────────────────────────────────────────────────────
+# Les quatre routes ne touchent QUE `db.partner_prospects`. Aucun
+# `chat_participant`, aucune `chat_session`, aucun message, aucune
+# notification, aucun lead, aucun user, aucune reservation, aucun abonnement.
+# `tests/test_p3s1_socle_prospects.py` le prouve en comptant les ecritures de
+# CHAQUE autre collection, et pas seulement de celles auxquelles on pense.
+
+P3S1_COLLECTION = "partner_prospects"
+
+# Les huit categories. LISTE FERMEE : une valeur inconnue est refusee en 400
+# plutot que stockee, sinon un filtre finirait par ne rien rendre sans que
+# personne comprenne pourquoi. En ajouter une plus tard = une ligne ici.
+P3S1_CATEGORIES = (
+    "festival",
+    "ecole_danse",
+    "restaurant",
+    "bar",
+    "commerce",
+    "organisateur_evenement",
+    "communaute_etudiante",
+    "influenceur",
+)
+
+# LE PIPELINE AMONT, ET LUI SEUL. `decouverte`, `actif` et `ambassadeur`
+# n'y figurent pas : ils appartiennent a `partners.partner_status`.
+#   a_contacter        etat d'import, le point de depart
+#   contacte           le premier message est parti
+#   repondu            une reponse est arrivee — arrete toute relance
+#   interesse          decision humaine, jamais deduite
+#   sans_reponse_pause fin de sequence apres J+7, aucune relance de plus
+#   refuse             refus explicite — arret definitif
+P3S1_STATUTS = (
+    "a_contacter",
+    "contacte",
+    "repondu",
+    "interesse",
+    "sans_reponse_pause",
+    "refuse",
+)
+P3S1_STATUT_INITIAL = "a_contacter"
+
+# Prepare P4 SANS rien en faire. Aucune logique de prestation dans ce lot :
+# c'est une information collectee au premier contact pour qu'elle existe le
+# jour ou elle servira.
+P3S1_COLLABORATIONS = ("community", "event_programming", "both")
+
+P3S1_PRIORITES = ("A", "B", "C")
+
+# Les dates commerciales. ELLES SONT STOCKEES, JAMAIS CALCULEES ICI : aucune
+# echeance n'est deduite, aucune relance programmee. P3-S4 les lira.
+P3S1_DATES = (
+    "first_contact_at", "last_contact_at", "next_followup_at",
+    "j3_sent_at", "j7_sent_at", "replied_at", "interested_at", "paused_at",
+)
+
+# Champs texte libres, bornes en longueur. Le plafond n'est pas decoratif : il
+# empeche qu'un copier-coller malheureux fasse gonfler un document sans limite.
+P3S1_TEXTES = {
+    "organisation_name": 160, "city": 80, "address": 200,
+    "website": 300, "instagram": 120, "facebook": 300, "linkedin": 300, "tiktok": 120,
+    "public_email": 160, "public_phone": 40,
+    "contact_name": 120, "contact_role": 120,
+    "source_url": 500, "secondary_source_url": 500,
+    "wave": 40, "preferred_channel": 60, "approach": 300,
+    "j0_message": 4000, "j3_message": 4000, "j7_message": 4000,
+    "interested_message": 4000,
+    "notes": 4000, "ref": 40,
+}
+
+P3S1_LISTE_MAX = 50          # la regle du depot sur toute liste
+P3S1_PREFIXE = "[P3-S1]"
+
+
+def p3s1_texte(valeur, plafond):
+    """La chaine telle qu'elle sera stockee, ou None. NE DEVINE JAMAIS.
+
+    Une coordonnee absente vaut `None`, jamais une chaine vide ni un
+    « NON TROUVE » recopie : ecrire une valeur qu'on n'a pas est exactement ce
+    qui ferait croire, plus tard, qu'on peut ecrire a ce festival.
+    """
+    if valeur is None:
+        return None
+    texte = str(valeur).strip()
+    if not texte:
+        return None
+    return texte[:plafond]
+
+
+def p3s1_normaliser(valeur) -> str:
+    """La forme comparable d'un nom : minuscules, sans accent, espaces reduits.
+
+    SERT A RECONNAITRE LE MEME ETABLISSEMENT, PAS A RAPPROCHER DEUX NOMS QUI SE
+    RESSEMBLENT. Aucune distance d'edition, aucun radical, aucune heuristique :
+    « Akoko Tresses » et « Akoko Tresse » restent DEUX prospects. C'est
+    volontaire — fusionner deux commerces distincts coute infiniment plus cher
+    que garder un doublon visible.
+    """
+    if not valeur:
+        return ""
+    import unicodedata as _p3ud
+    texte = str(valeur).strip().lower()
+    texte = "".join(c for c in _p3ud.normalize("NFD", texte)
+                    if _p3ud.category(c) != "Mn")
+    texte = re.sub(r"[^a-z0-9]+", " ", texte).strip()
+    return texte
+
+
+def p3s1_domaine(url) -> str:
+    """Le domaine nu d'une URL ou d'un site ecrit a la main. '' si illisible."""
+    if not url:
+        return ""
+    texte = str(url).strip().lower()
+    texte = re.sub(r"^[a-z]+://", "", texte)
+    texte = texte.split("/")[0].split("?")[0].split("#")[0]
+    texte = re.sub(r"^www\.", "", texte)
+    return texte if "." in texte else ""
+
+
+def p3s1_cle_doublon(organisation, ville) -> str:
+    """L'empreinte « meme etablissement, meme ville ».
+
+    ELLE N'EST PAS UNIQUE EN BASE, ET C'EST DELIBERE. Deux bars homonymes dans
+    la meme commune existent ; un index unique les rendrait INEXPRIMABLES, ce
+    qui est pire qu'un doublon qu'on voit. La collision est donc SIGNALEE
+    (409 + `allow_duplicate`) et jamais tranchee par la machine.
+    """
+    nom = p3s1_normaliser(organisation)
+    if not nom:
+        return ""
+    return nom + "|" + p3s1_normaliser(ville)
+
+
+async def p3s1_signaux_doublon(coach: str, prospect: dict, exclure_id=None) -> list:
+    """Les prospects qui POURRAIENT etre le meme. Lecture pure, aucun verdict.
+
+    Trois signaux, du plus fort au plus faible : la meme empreinte nom+ville,
+    le meme e-mail public, le meme telephone public. Le domaine du site n'en
+    est pas un : plusieurs commerces partagent une page d'un meme groupe.
+
+    AUCUNE FUSION N'EST FAITE ICI, ET AUCUNE NE LE SERA AILLEURS. La fonction
+    rend de quoi afficher « attention, regarde » — la decision reste humaine.
+    """
+    ou = []
+    cle = prospect.get("dedupe_key") or ""
+    if cle:
+        ou.append({"dedupe_key": cle})
+    # Egalite stricte, jamais de `$regex` : une entree utilisateur n'entre pas
+    # dans une expression reguliere Mongo (regle du depot).
+    for champ in ("public_email", "public_phone"):
+        valeur = prospect.get(champ)
+        if valeur:
+            ou.append({champ: valeur})
+    if not ou:
+        return []
+    filtre = {"$or": ou}
+    if not is_super_admin(coach):
+        filtre["coach_id"] = coach
+    trouves = []
+    try:
+        async for autre in db[P3S1_COLLECTION].find(
+                filtre,
+                {"_id": 0, "id": 1, "ref": 1, "organisation_name": 1,
+                 "city": 1, "dedupe_key": 1, "public_email": 1, "public_phone": 1}):
+            if exclure_id and autre.get("id") == exclure_id:
+                continue
+            motifs = []
+            if cle and autre.get("dedupe_key") == cle:
+                motifs.append("nom_et_ville")
+            if prospect.get("public_email") and autre.get("public_email") == prospect["public_email"]:
+                motifs.append("email")
+            if prospect.get("public_phone") and autre.get("public_phone") == prospect["public_phone"]:
+                motifs.append("telephone")
+            trouves.append({"id": autre.get("id"), "ref": autre.get("ref"),
+                            "organisation_name": autre.get("organisation_name"),
+                            "city": autre.get("city"), "matched_on": motifs})
+    except Exception as _err:  # noqa: BLE001
+        # Un signal illisible ne doit jamais empecher d'enregistrer un prospect.
+        logger.warning("%s signaux de doublon ignores (%s)", P3S1_PREFIXE, type(_err).__name__)
+        return []
+    return trouves
+
+
+def p3s1_champs_valides(corps: dict, creation: bool) -> dict:
+    """Le document tel qu'il sera ecrit. Leve 400 sur toute valeur hors liste.
+
+    RIEN N'EST DEVINE, RIEN N'EST REECRIT EN SILENCE. Une categorie inconnue
+    est REFUSEE et non rangee dans « autre » : un prospect mal range est un
+    prospect qu'on ne retrouvera pas au moment de le contacter.
+    """
+    champs = {}
+
+    # --- categorie : obligatoire a la creation, jamais videe ensuite ---
+    if creation or "category" in corps:
+        categorie = (corps.get("category") or "").strip().lower()
+        if categorie not in P3S1_CATEGORIES:
+            raise HTTPException(
+                status_code=400,
+                detail="Categorie inconnue. Valeurs acceptees : %s" % ", ".join(P3S1_CATEGORIES))
+        champs["category"] = categorie
+
+    # --- statut : la liste amont seulement ---
+    if "status" in corps:
+        statut = (corps.get("status") or "").strip().lower()
+        if statut not in P3S1_STATUTS:
+            raise HTTPException(
+                status_code=400,
+                detail="Statut inconnu. Valeurs acceptees : %s" % ", ".join(P3S1_STATUTS))
+        champs["status"] = statut
+
+    if "collaboration_type" in corps:
+        valeur = corps.get("collaboration_type")
+        if valeur is None or str(valeur).strip() == "":
+            champs["collaboration_type"] = None
+        else:
+            valeur = str(valeur).strip().lower()
+            if valeur not in P3S1_COLLABORATIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Type de collaboration inconnu. Valeurs acceptees : %s"
+                           % ", ".join(P3S1_COLLABORATIONS))
+            champs["collaboration_type"] = valeur
+
+    if "priority" in corps:
+        valeur = corps.get("priority")
+        if valeur is None or str(valeur).strip() == "":
+            champs["priority"] = None
+        else:
+            valeur = str(valeur).strip().upper()
+            if valeur not in P3S1_PRIORITES:
+                raise HTTPException(status_code=400,
+                                    detail="Priorite inconnue. Valeurs acceptees : A, B, C")
+            champs["priority"] = valeur
+
+    if "score" in corps:
+        valeur = corps.get("score")
+        if valeur is None or str(valeur).strip() == "":
+            champs["score"] = None
+        else:
+            try:
+                note = float(valeur)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Score : nombre entre 0 et 10 attendu")
+            if not 0 <= note <= 10:
+                raise HTTPException(status_code=400, detail="Score : nombre entre 0 et 10 attendu")
+            champs["score"] = round(note, 2)
+
+    # --- textes libres, bornes ---
+    for champ, plafond in P3S1_TEXTES.items():
+        if creation or champ in corps:
+            champs[champ] = p3s1_texte(corps.get(champ), plafond)
+
+    if "public_email" in champs and champs["public_email"]:
+        champs["public_email"] = champs["public_email"].lower()
+
+    # --- dates commerciales : STOCKEES telles quelles, jamais interpretees ---
+    for champ in P3S1_DATES:
+        if creation or champ in corps:
+            champs[champ] = p3s1_texte(corps.get(champ), 40)
+
+    # --- les deux pointeurs vers P2. JAMAIS poses par ce lot ---
+    # Ils restent None : c'est P3-S3 qui rapprochera un prospect de sa
+    # candidature, et P2-B seul qui cree un partenaire. Aucune conversion
+    # automatique n'existe dans ce lot.
+    for champ in ("partner_application_id", "partner_id"):
+        if creation:
+            champs[champ] = None
+        elif champ in corps:
+            champs[champ] = p3s1_texte(corps.get(champ), 64)
+
+    if creation:
+        if not champs.get("organisation_name"):
+            raise HTTPException(status_code=400, detail="Le nom de l'organisation est obligatoire")
+        champs.setdefault("status", P3S1_STATUT_INITIAL)
+        champs.setdefault("collaboration_type", None)
+        champs.setdefault("priority", None)
+        champs.setdefault("score", None)
+    elif "organisation_name" in corps and not champs.get("organisation_name"):
+        raise HTTPException(status_code=400, detail="Le nom de l'organisation ne peut pas etre vide")
+
+    return champs
+
+
+@api_router.get("/partner-prospects")
+async def p3s1_lister_prospects(request: Request):
+    """La liste des prospects du coach appelant. LECTURE PURE.
+
+    CINQ FILTRES, ET PAS UN MOTEUR DE RECHERCHE : statut, categorie, priorite,
+    vague, ville. Chacun est une EGALITE STRICTE — aucune entree utilisateur
+    n'entre dans une expression reguliere Mongo. La ville est comparee sur sa
+    forme normalisee stockee, pour que « Neuchatel » trouve « Neuchâtel ».
+
+    Plafond a 50, comme toute liste du depot. Le total NON borne est renvoye a
+    part : sans lui, on ne saurait pas qu'il en reste.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+
+    filtre = {} if is_super_admin(appelant) else {"coach_id": appelant}
+    parametres = request.query_params
+
+    statut = (parametres.get("status") or "").strip().lower()
+    if statut:
+        if statut not in P3S1_STATUTS:
+            raise HTTPException(status_code=400, detail="Statut de filtre inconnu")
+        filtre["status"] = statut
+
+    categorie = (parametres.get("category") or "").strip().lower()
+    if categorie:
+        if categorie not in P3S1_CATEGORIES:
+            raise HTTPException(status_code=400, detail="Categorie de filtre inconnue")
+        filtre["category"] = categorie
+
+    priorite = (parametres.get("priority") or "").strip().upper()
+    if priorite:
+        if priorite not in P3S1_PRIORITES:
+            raise HTTPException(status_code=400, detail="Priorite de filtre inconnue")
+        filtre["priority"] = priorite
+
+    vague = p3s1_texte(parametres.get("wave"), 40)
+    if vague:
+        filtre["wave"] = vague
+
+    ville = p3s1_texte(parametres.get("city"), 80)
+    if ville:
+        filtre["city_key"] = p3s1_normaliser(ville)
+
+    try:
+        limite = min(max(int(parametres.get("limit") or P3S1_LISTE_MAX), 1), P3S1_LISTE_MAX)
+    except (TypeError, ValueError):
+        limite = P3S1_LISTE_MAX
+
+    documents = await db[P3S1_COLLECTION].find(filtre, {"_id": 0}).to_list(limite)
+    # Plus recents d'abord. Les horodatages sont des chaines ISO-UTC de format
+    # constant : leur ordre lexicographique EST leur ordre chronologique.
+    documents.sort(key=lambda d: d.get("created_at") or "", reverse=True)
+
+    return {"total": await db[P3S1_COLLECTION].count_documents(filtre),
+            "returned": len(documents),
+            "limit": limite,
+            "prospects": documents}
+
+
+@api_router.get("/partner-prospects/{prospect_id}")
+async def p3s1_lire_prospect(prospect_id: str, request: Request):
+    """Un prospect. 404 s'il n'existe pas, 403 s'il appartient a un autre coach.
+
+    LES DEUX CAS SONT DISTINGUES A DESSEIN. Renvoyer 404 pour le prospect d'un
+    autre coach cacherait au proprietaire legitime qu'il s'est trompe de compte ;
+    l'appelant est deja authentifie, il n'y a rien a lui dissimuler ici.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+    identifiant = (prospect_id or "").strip()
+    if not identifiant or len(identifiant) > 64:
+        raise HTTPException(status_code=404, detail="Prospect introuvable")
+
+    prospect = await db[P3S1_COLLECTION].find_one({"id": identifiant}, {"_id": 0})
+    if not prospect:
+        raise HTTPException(status_code=404, detail="Prospect introuvable")
+    if not is_super_admin(appelant) and (prospect.get("coach_id") or "") != appelant:
+        raise HTTPException(status_code=403, detail="Ce prospect ne vous appartient pas")
+    return prospect
+
+
+@api_router.post("/partner-prospects")
+async def p3s1_creer_prospect(request: Request):
+    """Cree UN prospect. N'ECRIT QUE DANS `partner_prospects`.
+
+    AUCUN EFFET DE BORD : pas de participant de chat, pas de conversation, pas
+    de message, pas de notification, pas de lead, pas d'utilisateur, pas de
+    reservation, pas d'abonnement, aucun envoi. Un prospect commercial n'a rien
+    demande : lui fabriquer une identite dans le systeme client serait faux, et
+    fausserait les compteurs.
+
+    LE DOUBLON N'EST PAS TRANCHE PAR LA MACHINE. Si un prospect porte deja la
+    meme empreinte nom+ville, le meme e-mail ou le meme telephone, la reponse
+    est 409 AVEC la liste de ce qui ressemble. Le coach decide : soit il
+    corrige, soit il repasse avec `allow_duplicate: true` et les deux fiches
+    coexistent. Deux bars homonymes dans la meme commune doivent rester
+    exprimables.
+    """
+    # IMPORT LOCAL, INDISPENSABLE — meme piege que P2-B (server.py:20645).
+    # `DuplicateKeyError` n'est importe NULLE PART au niveau module : sans
+    # cette ligne, le `except DuplicateKeyError` ci-dessous leverait un
+    # NameError et une collision de `ref` reviendrait en 500 au lieu du 409.
+    from pymongo.errors import DuplicateKeyError
+
+    appelant = await _v309_require_coach_or_admin(request)
+    corps = await request.json()
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+
+    champs = p3s1_champs_valides(corps, creation=True)
+    maintenant = datetime.now(timezone.utc).isoformat()
+
+    prospect = dict(champs)
+    prospect["id"] = str(uuid.uuid4())
+    prospect["coach_id"] = appelant
+    prospect["dedupe_key"] = p3s1_cle_doublon(champs.get("organisation_name"), champs.get("city"))
+    prospect["city_key"] = p3s1_normaliser(champs.get("city"))
+    prospect["website_domain"] = p3s1_domaine(champs.get("website"))
+    prospect["created_at"] = maintenant
+    prospect["updated_at"] = maintenant
+    prospect["created_by"] = appelant
+
+    if not bool(corps.get("allow_duplicate")):
+        signaux = await p3s1_signaux_doublon(appelant, prospect)
+        if signaux:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Un prospect existant lui ressemble. Verifie, puis "
+                                   "renvoie avec allow_duplicate=true si ce sont bien "
+                                   "deux organisations differentes.",
+                        "possible_duplicates": signaux})
+
+    try:
+        await db[P3S1_COLLECTION].insert_one(dict(prospect))
+    except DuplicateKeyError:
+        # L'INDEX A PARLE. Seule `ref` est unique en base : c'est la cle de
+        # l'import de P3-S2, et c'est elle qui rend le reimport idempotent.
+        raise HTTPException(status_code=409,
+                            detail="La reference « %s » est deja utilisee" % (champs.get("ref") or ""))
+
+    prospect.pop("_id", None)
+    logger.info("%s prospect cree %s (%s / %s) par %s", P3S1_PREFIXE,
+                prospect["id"][:8], prospect.get("category"),
+                (prospect.get("organisation_name") or "")[:40], appelant[:24])
+    return prospect
+
+
+@api_router.patch("/partner-prospects/{prospect_id}")
+async def p3s1_modifier_prospect(prospect_id: str, request: Request):
+    """Modifie un prospect. Seuls les champs PRESENTS dans le corps changent.
+
+    TROIS CHAMPS SONT IMMUABLES : `id`, `coach_id` et `created_at`. Laisser
+    reecrire `coach_id` par le corps de la requete rendrait le cloisonnement
+    decoratif — c'est la faille que V451 a fermee ailleurs dans ce depot.
+
+    `dedupe_key`, `city_key` et `website_domain` sont RECALCULES quand leur
+    source change, jamais acceptes du client : deux endroits pour une meme
+    verite finissent toujours par diverger.
+    """
+    # IMPORT LOCAL, INDISPENSABLE — meme piege que P2-B (server.py:20645).
+    # `DuplicateKeyError` n'est importe NULLE PART au niveau module : sans
+    # cette ligne, le `except DuplicateKeyError` ci-dessous leverait un
+    # NameError et une collision de `ref` reviendrait en 500 au lieu du 409.
+    from pymongo.errors import DuplicateKeyError
+
+    appelant = await _v309_require_coach_or_admin(request)
+    identifiant = (prospect_id or "").strip()
+    if not identifiant or len(identifiant) > 64:
+        raise HTTPException(status_code=404, detail="Prospect introuvable")
+
+    existant = await db[P3S1_COLLECTION].find_one({"id": identifiant}, {"_id": 0})
+    if not existant:
+        raise HTTPException(status_code=404, detail="Prospect introuvable")
+    if not is_super_admin(appelant) and (existant.get("coach_id") or "") != appelant:
+        raise HTTPException(status_code=403, detail="Ce prospect ne vous appartient pas")
+
+    corps = await request.json()
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+
+    champs = p3s1_champs_valides(corps, creation=False)
+    if not champs:
+        raise HTTPException(status_code=400, detail="Aucun champ modifiable fourni")
+
+    if "organisation_name" in champs or "city" in champs:
+        nom = champs.get("organisation_name", existant.get("organisation_name"))
+        ville = champs.get("city", existant.get("city"))
+        champs["dedupe_key"] = p3s1_cle_doublon(nom, ville)
+        champs["city_key"] = p3s1_normaliser(ville)
+    if "website" in champs:
+        champs["website_domain"] = p3s1_domaine(champs.get("website"))
+
+    champs["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    try:
+        await db[P3S1_COLLECTION].update_one({"id": identifiant}, {"$set": champs})
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409,
+                            detail="La reference « %s » est deja utilisee" % (champs.get("ref") or ""))
+
+    apres = await db[P3S1_COLLECTION].find_one({"id": identifiant}, {"_id": 0})
+    logger.info("%s prospect %s modifie (%s) par %s", P3S1_PREFIXE, identifiant[:8],
+                ", ".join(sorted(champs)), appelant[:24])
+    return apres
+
+
 # --- Leads Routes (Widget IA) ---
 # v68: ISOLATION MULTI-TENANT — chaque lead est lié à un coach_id
 @api_router.get("/leads")
@@ -34820,6 +35349,33 @@ async def startup_db():
         await db.subscribers.create_index("unsubscribe_token", sparse=True)
         await db.subscribers.create_index("confirm_token", sparse=True)
         logger.info("[INDEX] subscribers (channel,value) unique OK")
+    except Exception:
+        pass  # Index existe deja
+
+    # P3-S1 : les index de `partner_prospects`. Ils sont poses A LA CREATION,
+    # avant tout import — la lecon de P2, ou un index unique ajoute apres coup
+    # laissait passer les collisions concurrentes.
+    #
+    # `(coach_id, ref)` est LE VERROU STRUCTUREL de l'idempotence : `ref` est
+    # l'identifiant Cowork (FES-01, ECO-01...), et c'est lui qui permettra a
+    # P3-S2 de rejouer l'import sans creer de doublon. Il est PARTIEL et non
+    # `sparse` : un index compose n'est ignore que si TOUTES ses cles manquent,
+    # or `coach_id` est toujours present — sans `partialFilterExpression`, tous
+    # les prospects sans `ref` entreraient en collision sur `null`.
+    #
+    # `dedupe_key` n'est VOLONTAIREMENT PAS unique : deux bars homonymes dans
+    # la meme commune doivent rester exprimables (cf. p3s1_cle_doublon).
+    try:
+        await db[P3S1_COLLECTION].create_index("id", unique=True)
+        await db[P3S1_COLLECTION].create_index(
+            [("coach_id", 1), ("ref", 1)], unique=True,
+            partialFilterExpression={"ref": {"$type": "string"}})
+        await db[P3S1_COLLECTION].create_index([("coach_id", 1), ("dedupe_key", 1)])
+        await db[P3S1_COLLECTION].create_index([("coach_id", 1), ("status", 1)])
+        await db[P3S1_COLLECTION].create_index([("coach_id", 1), ("category", 1)])
+        await db[P3S1_COLLECTION].create_index([("coach_id", 1), ("wave", 1)])
+        await db[P3S1_COLLECTION].create_index([("coach_id", 1), ("priority", 1)])
+        logger.info("[P3-S1] index partner_prospects OK (ref unique par coach)")
     except Exception:
         pass  # Index existe deja
 
