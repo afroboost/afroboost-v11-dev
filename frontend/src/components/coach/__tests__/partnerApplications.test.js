@@ -21,13 +21,13 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import axios from 'axios';
 import PartnerApplications, {
-  p2aNormaliserReponses, p2aDateLisible,
+  p2aNormaliserReponses, p2aDateLisible, p2bSuggererSlug, p2bSlugValide,
 } from '../PartnerApplications';
 import SmartLinkCard from '../SmartLinkCard';
 
 jest.mock('axios', () => ({
   __esModule: true,
-  default: { get: jest.fn() }
+  default: { get: jest.fn(), patch: jest.fn() }
 }));
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -104,6 +104,24 @@ const REPONSE_DEUX = {
     ],
   },
 };
+
+/** Une reponse a un seul element, dans l'etat demande. */
+const reponseUne = (extra = {}) => ({
+  data: {
+    link_token: 'tok_fictif', title: 'Devenir Partenaire (fictif)',
+    lead_type: 'partner', total: 1,
+    applications: [{
+      id: 'c-1', submission_id: null, link_token: 'tok_fictif',
+      name: 'Akoko Tresses', email: 'a@exemple.test', whatsapp: '+41000000001',
+      source: 'link_tok_fictif', created_at: '2026-08-28T10:00:00+00:00',
+      application_decision: 'pending',
+      answers: { q_0: { question: 'Votre activite ?', answer: 'Salon' } },
+      ...extra,
+    }],
+  },
+});
+
+const champSlug = () => conteneur.querySelector('input[aria-label="Identifiant du partenaire"]');
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -205,18 +223,20 @@ describe('P2-A — la fenetre des candidatures', () => {
     expect(compter('En attente')).toBe(2);
   });
 
-  test('AUCUNE action Accepter/Refuser, aucun slug, aucun QR', async () => {
+  test('aucun QR, aucun slug, aucune statistique — meme avec la decision P2-B', async () => {
     axios.get.mockResolvedValue(REPONSE_DEUX);
     await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
     const t = texte();
-    expect(t).not.toMatch(/Accepter/i);
-    expect(t).not.toMatch(/Refuser/i);
     expect(t).not.toMatch(/slug/i);
-    expect(t).not.toMatch(/QR/);
-    // Les seuls boutons sont « Fermer » et, en cas d'erreur, « Réessayer ».
+    expect(t).not.toMatch(/\bQR\b/);
+    expect(t).not.toMatch(/utm_/);
+    expect(conteneur.querySelector('canvas')).toBeNull();
+    // P2-B ajoute Accepter/Refuser sur les candidatures EN ATTENTE : c'est
+    // attendu ici. Leur ABSENCE sur une candidature deja tranchee est prouvee
+    // dans la section « P2-B — la decision ».
     const libelles = Array.from(conteneur.querySelectorAll('button'))
       .map(b => (b.getAttribute('aria-label') || b.textContent || '').trim());
-    expect(libelles).toEqual(['Fermer']);
+    expect(libelles).toEqual(['Fermer', 'Accepter', 'Refuser', 'Accepter', 'Refuser']);
   });
 
   test('etat VIDE : un message, pas une liste blanche', async () => {
@@ -252,6 +272,187 @@ describe('P2-A — la fenetre des candidatures', () => {
     await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={fermer} />);
     await cliquer(conteneur.querySelector('button[aria-label="Fermer"]'));
     expect(fermer).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('P2-B — la decision', () => {
+  test('EN ATTENTE : les deux boutons de decision sont proposes', async () => {
+    axios.get.mockResolvedValue(reponseUne());
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    expect(bouton('Accepter')).toBeTruthy();
+    expect(bouton('Refuser')).toBeTruthy();
+  });
+
+  test('ACCEPTEE : plus aucun bouton de decision — on ne renverse pas', async () => {
+    axios.get.mockResolvedValue(reponseUne({
+      application_decision: 'accepted', partner_slug: 'akoko_tresses' }));
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    expect(bouton('Accepter')).toBeFalsy();
+    expect(bouton('Refuser')).toBeFalsy();
+    expect(texte()).toContain('Acceptée');
+    expect(texte()).toContain('akoko_tresses');
+  });
+
+  test('REFUSEE : plus aucun bouton de decision', async () => {
+    axios.get.mockResolvedValue(reponseUne({ application_decision: 'rejected' }));
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    expect(bouton('Accepter')).toBeFalsy();
+    expect(bouton('Refuser')).toBeFalsy();
+    expect(texte()).toContain('Refusée');
+  });
+
+  test('« Accepter » ouvre la saisie du slug, PRE-REMPLIE depuis le nom', async () => {
+    axios.get.mockResolvedValue(reponseUne());
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    await cliquer(bouton('Accepter'));
+    expect(champSlug()).toBeTruthy();
+    expect(champSlug().value).toBe('akoko_tresses');
+    expect(texte()).toContain("ne pourra plus être modifié après l'acceptation");
+  });
+
+  test('la suggestion est MODIFIABLE avant validation', async () => {
+    axios.get.mockResolvedValue(reponseUne());
+    axios.patch.mockResolvedValue({ data: { success: true } });
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    await cliquer(bouton('Accepter'));
+    await act(async () => {
+      const c = champSlug();
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+        .set.call(c, 'autre_nom_choisi');
+      c.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await cliquer(bouton('Accepter le partenaire'));
+    expect(axios.patch).toHaveBeenCalledWith(
+      '/api/partner-applications/c-1/decision',
+      { decision: 'accepted', partner_slug: 'autre_nom_choisi' });
+  });
+
+  test('un slug invalide est refuse AVANT tout appel reseau', async () => {
+    axios.get.mockResolvedValue(reponseUne());
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    await cliquer(bouton('Accepter'));
+    await act(async () => {
+      const c = champSlug();
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+        .set.call(c, 'Nom Avec Espaces');
+      c.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await cliquer(bouton('Accepter le partenaire'));
+    expect(axios.patch).not.toHaveBeenCalled();
+    expect(texte()).toContain('3 à 40 caractères');
+  });
+
+  test('le refus demande une confirmation avant de partir', async () => {
+    axios.get.mockResolvedValue(reponseUne());
+    axios.patch.mockResolvedValue({ data: { success: true } });
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    await cliquer(bouton('Refuser'));
+    expect(axios.patch).not.toHaveBeenCalled();
+    expect(texte()).toContain('Cette décision est définitive');
+    await cliquer(bouton('Confirmer le refus'));
+    expect(axios.patch).toHaveBeenCalledWith(
+      '/api/partner-applications/c-1/decision', { decision: 'rejected' });
+  });
+
+  test('un refus n\'envoie AUCUN slug', async () => {
+    axios.get.mockResolvedValue(reponseUne());
+    axios.patch.mockResolvedValue({ data: { success: true } });
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    await cliquer(bouton('Refuser'));
+    await cliquer(bouton('Confirmer le refus'));
+    expect(axios.patch.mock.calls[0][1]).not.toHaveProperty('partner_slug');
+  });
+
+  test('succes : la liste est RECHARGEE depuis le serveur', async () => {
+    axios.get.mockResolvedValueOnce(reponseUne());
+    axios.patch.mockResolvedValue({ data: { success: true } });
+    axios.get.mockResolvedValueOnce(reponseUne({
+      application_decision: 'accepted', partner_slug: 'akoko_tresses' }));
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    await cliquer(bouton('Accepter'));
+    await cliquer(bouton('Accepter le partenaire'));
+    expect(axios.get).toHaveBeenCalledTimes(2);
+    expect(texte()).toContain('Acceptée');
+    expect(bouton('Accepter')).toBeFalsy();
+  });
+
+  test('double clic : un seul appel part', async () => {
+    axios.get.mockResolvedValue(reponseUne());
+    let resoudre;
+    axios.patch.mockReturnValue(new Promise((r) => { resoudre = r; }));
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    await cliquer(bouton('Accepter'));
+    const valider = bouton('Accepter le partenaire');
+    await act(async () => {
+      valider.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      valider.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(axios.patch).toHaveBeenCalledTimes(1);
+    expect(texte()).toContain('Enregistrement…');
+    await act(async () => { resoudre({ data: { success: true } }); });
+  });
+
+  test('collision de slug : le message du serveur est affiche', async () => {
+    axios.get.mockResolvedValue(reponseUne());
+    axios.patch.mockRejectedValue({
+      response: { status: 409, data: { detail: 'Ce slug est déjà utilisé' } } });
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    await cliquer(bouton('Accepter'));
+    await cliquer(bouton('Accepter le partenaire'));
+    expect(texte()).toContain('Ce slug est déjà utilisé');
+  });
+
+  test('un 403 dit de se reconnecter', async () => {
+    axios.get.mockResolvedValue(reponseUne());
+    axios.patch.mockRejectedValue({ response: { status: 403 } });
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    await cliquer(bouton('Refuser'));
+    await cliquer(bouton('Confirmer le refus'));
+    expect(texte()).toContain('Accès refusé');
+  });
+
+  test('AUCUN QR, AUCUNE statistique, AUCUN lien UTM dans ce lot', async () => {
+    axios.get.mockResolvedValue(reponseUne({
+      application_decision: 'accepted', partner_slug: 'akoko_tresses' }));
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    const t = texte();
+    expect(t).not.toMatch(/utm_/);
+    expect(t).not.toMatch(/\bQR\b/);
+    expect(t).not.toMatch(/clics|conversion/i);
+    expect(conteneur.querySelector('canvas')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('P2-B — le slug', () => {
+  test('la suggestion deplie les accents au lieu de les supprimer', () => {
+    expect(p2bSuggererSlug('Récif Neuchâtel')).toBe('recif_neuchatel');
+    expect(p2bSuggererSlug('Akoko Tresses')).toBe('akoko_tresses');
+  });
+
+  test('les separateurs multiples sont fondus, jamais laisses aux bords', () => {
+    expect(p2bSuggererSlug('  Vénus   Nails -- Neuchâtel !! ')).toBe('venus_nails_neuchatel');
+  });
+
+  test('la suggestion est bornee a 40 caracteres', () => {
+    expect(p2bSuggererSlug('a'.repeat(80)).length).toBe(40);
+  });
+
+  test('un nom vide ne fait pas planter la suggestion', () => {
+    expect(p2bSuggererSlug('')).toBe('');
+    expect(p2bSuggererSlug(null)).toBe('');
+  });
+
+  test('la validation applique EXACTEMENT la regle du serveur', () => {
+    expect(p2bSlugValide('akoko_tresses')).toBe(true);
+    expect(p2bSlugValide('ab')).toBe(false);
+    expect(p2bSlugValide('a'.repeat(41))).toBe(false);
+    expect(p2bSlugValide('Akoko_Tresses')).toBe(false);
+    expect(p2bSlugValide('akoko tresses')).toBe(false);
+    expect(p2bSlugValide('akoko-tresses')).toBe(false);
+    expect(p2bSlugValide('récif')).toBe(false);
+    expect(p2bSlugValide('')).toBe(false);
   });
 });
 

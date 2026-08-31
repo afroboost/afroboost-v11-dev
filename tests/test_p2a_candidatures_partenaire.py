@@ -452,12 +452,25 @@ verifier("6i. les reponses sont rendues generiquement, sans coder q_0/q_1 en dur
          and not re.search(r"answers\.q_0|answers\['q_0'\]|\bq_1\b", APP_CODE))
 verifier("6j. « pending » s'affiche « En attente »", "pending: 'En attente'" in APP_CODE)
 
-for interdit, quoi in [("Accepter", "bouton Accepter"), ("Refuser", "bouton Refuser"),
-                       ("partner_slug", "slug"), ("QRCode", "QR")]:
+# CE QUI RESTE INTERDIT APRES P2-B.
+# P2-A n'avait ni decision ni slug ; P2-B les ajoute DELIBEREMENT — les
+# assertions correspondantes ont donc migre vers
+# tests/test_p2b_decision_partenaire.py, qui prouve en 89 points que les
+# boutons n'apparaissent que sur une candidature EN ATTENTE et que le slug est
+# saisi avant l'acceptation. Ce qui reste hors perimetre des deux lots, et le
+# restera jusqu'a P2-C/P2-D, c'est le QR, le lien UTM et les statistiques.
+for interdit, quoi in [("QRCode", "QR"), ("qrcode", "bibliotheque QR"),
+                       ("utm_", "lien UTM"), ("<canvas", "canevas de QR")]:
     verifier("6k. aucun %s dans ce lot (code seul)" % quoi,
              interdit not in APP_CODE and interdit not in CARD_CODE)
 
-verifier("6l. le Service Worker est bumpe en v469", "afroboost-v469" in SW)
+# Version MINIMALE, pas exacte : epingler « v469 » ferait echouer ce fichier a
+# chaque bump ulterieur, pour une raison sans rapport avec P2-A. Le seul risque
+# reel est le retour en arriere, qui reservirait un bundle sans l'ecran.
+_sw = re.search(r"afroboost-v(\d+)", SW)
+verifier("6l. le Service Worker est au moins en v469 (jamais revenu en arriere)",
+         bool(_sw) and int(_sw.group(1)) >= 469,
+         "version lue = %s" % (_sw.group(0) if _sw else "aucune"))
 
 
 print("\n" + "=" * 78)

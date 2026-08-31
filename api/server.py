@@ -20505,12 +20505,291 @@ async def p2a_candidatures_partenaire(link_token: str, request: Request):
     # pas en tête par accident — elle vaut "" et finit en queue.
     candidatures.sort(key=lambda c: c["created_at"] or "", reverse=True)
 
+    # P2-B — LE SLUG EST JOINT, JAMAIS RECOPIE SUR LE LEAD.
+    # `partner_slug` vit sur `partners` et nulle part ailleurs : c'est la source
+    # de verite. Le poser aussi sur le lead creerait deux endroits a maintenir,
+    # donc deux endroits qui finiraient par se contredire. On le rattache donc a
+    # l'affichage, par UNE lecture groupee `$in` — jamais un `find_one` par
+    # candidature, la regle du depot sur les grands groupes.
+    _acceptes = [c["id"] for c in candidatures
+                 if c["application_decision"] == "accepted" and c["id"]]
+    if _acceptes:
+        try:
+            _par_lead = {}
+            async for _p in db.partners.find(
+                    {"lead_id": {"$in": _acceptes}},
+                    {"_id": 0, "lead_id": 1, "partner_slug": 1, "partner_status": 1}):
+                _par_lead[_p.get("lead_id")] = _p
+            for c in candidatures:
+                _p = _par_lead.get(c["id"])
+                if _p:
+                    c["partner_slug"] = _p.get("partner_slug")
+                    c["partner_status"] = _p.get("partner_status")
+        except Exception as _perr:  # noqa: BLE001
+            # La collection peut ne pas exister encore. Une jointure impossible
+            # ne doit jamais priver le coach de la liste elle-meme.
+            logger.warning("[P2-B] jointure partenaires ignoree (%s)", type(_perr).__name__)
+
     return {
         "link_token": jeton,
         "title": lien.get("title") or "",
         "lead_type": lien.get("lead_type") or "",
         "total": len(candidatures),
         "applications": candidatures,
+    }
+
+
+# --- P2-B : ACCEPTER OU REFUSER UNE CANDIDATURE PARTENAIRE ---
+
+P2B_DECISIONS = ("accepted", "rejected")
+P2B_SLUG_MOTIF = re.compile(r"^[a-z0-9_]{3,40}$")
+
+
+def p2b_slug_propre(valeur):
+    """Le slug tel qu'il sera stocké, ou '' s'il est refusé.
+
+    NORMALISE, MAIS NE DEVINE PAS. On enlève les espaces de bord et on met en
+    minuscules — deux corrections sans ambiguïté, dont le resultat reste
+    reconnaissable par celui qui a tapé. Tout le reste est REFUSE plutot que
+    reecrit : un accent transforme en silence, ou un caractere retire sans le
+    dire, produirait une adresse que le coach n'a pas choisie et qu'il
+    decouvrirait plus tard dans le lien de son partenaire.
+
+    Et surtout : AUCUN SUFFIXE AUTOMATIQUE. Un `_2` ajoute pour eviter une
+    collision est exactement la « collision silencieuse » que ce lot proscrit.
+    """
+    slug = str(valeur or "").strip().lower()
+    return slug if P2B_SLUG_MOTIF.match(slug) else ""
+
+
+async def _p2b_lien_et_proprietaire(lead, appelant):
+    """Le Smart Link du lead, apres controle de propriete ET de type.
+
+    Meme ordre qu'en P2-A, pour les memes raisons : propriete AVANT type, sinon
+    la reponse a un jeton etranger revele le type du lien d'un autre coach.
+    """
+    jeton = (lead.get("link_token") or "").strip()
+    if not jeton:
+        raise HTTPException(status_code=404, detail="Candidature sans lien d'origine")
+    lien = await db.chat_sessions.find_one(
+        {"link_token": jeton},
+        {"_id": 0, "link_token": 1, "lead_type": 1, "coach_id": 1, "title": 1})
+    if not lien:
+        raise HTTPException(status_code=404, detail="Lien introuvable")
+    proprietaire = (lien.get("coach_id") or "").strip().lower()
+    if not is_super_admin(appelant):
+        if not proprietaire or proprietaire != appelant:
+            logger.warning("[P2-B] REFUS decision — lien %s non detenu par l'appelant", jeton)
+            raise HTTPException(status_code=403, detail="Ce lien ne vous appartient pas")
+    if (lien.get("lead_type") or "").strip().lower() != "partner":
+        raise HTTPException(status_code=404, detail="Ce lien n'est pas un lien partenaire")
+    return lien
+
+
+@api_router.patch("/partner-applications/{lead_id}/decision")
+async def p2b_decider_candidature(lead_id: str, request: Request):
+    """P2-B — Bassi accepte ou refuse une candidature partenaire. MANUELLEMENT.
+
+    DEUX NOTIONS QUI NE DOIVENT JAMAIS SE MELANGER, ET QUI VIVENT DONC A DEUX
+    ENDROITS DIFFERENTS :
+      * `application_decision` (pending | accepted | rejected) appartient au
+        LEAD. C'est l'etat d'un DOSSIER.
+      * `partner_status` (decouverte | actif | ambassadeur) appartient a un
+        document de la collection `partners`. C'est la vie OPERATIONNELLE d'un
+        partenaire.
+    Un lead est une SOUMISSION — il en existe deja des doublons en base. Un
+    partenaire est une ENTITE DURABLE. Les fondre en un seul document ferait
+    qu'une re-candidature creerait un second partenaire.
+
+    L'ECRITURE EST TRANSACTIONNELLE. Verifie sur le cluster de production, pas
+    suppose : MongoDB 8.0.30, replica set `atlas-...-shard-0`, une transaction
+    reelle ouverte puis abandonnee. Le depot en emploie deja une (LOT B3,
+    `reservation_routes.py`), dont on reprend ici le patron. Ce qu'elle
+    garantit : jamais `lead = accepted` sans partenaire, jamais un partenaire
+    sans lead accepte. Si l'insertion du partenaire echoue — slug deja pris —,
+    la decision du lead est annulee avec elle.
+
+    L'IDEMPOTENCE NE REPOSE PAS SUR UN `if`. Comme en LOT B3, c'est UNE ECRITURE
+    ATOMIQUE qui sert de jeton : `find_one_and_update` filtre sur
+    `application_decision` ABSENT ou `pending`. Deux requetes simultanees sur le
+    meme lead : une seule obtient le document, l'autre recoit `None` et ne
+    touche a rien. Un `if` prealable, lui, laisserait passer les deux entre la
+    lecture et l'ecriture.
+
+    CE QUI N'EST PAS REVERSIBLE EN SILENCE. `accepted -> rejected` et
+    `rejected -> accepted` sont REFUSES (409). Rejouer la MEME decision est
+    accepte et ne modifie rien — ni les dates, ni l'historique, qui ne gagne
+    donc pas dix lignes identiques.
+
+    ⚠️ LA GARANTIE D'UNICITE DU SLUG EST L'INDEX, PAS CE CODE. La verification
+    en transaction ferme le cas sequentiel. Le cas CONCURRENT — deux leads
+    differents, meme slug, au meme instant — n'est ferme que par
+    `db.partners.createIndex({partner_slug: 1}, {unique: true})`, parce que deux
+    transactions ne voient pas leurs insertions respectives avant validation.
+    Idem pour `{lead_id: 1}`. Ces index n'existent pas encore : la collection
+    elle-meme n'existe pas. Leur creation est une operation de DEPLOIEMENT,
+    documentee dans le rapport du lot, et volontairement NON faite ici.
+
+    P2-B NE FAIT PAS le QR ni le lien UTM : c'est P2-C. Le slug est cree ici
+    parce qu'il est la CLE du partenaire, pas parce qu'on va s'en servir tout
+    de suite.
+    """
+    # IMPORT LOCAL, ET IL EST INDISPENSABLE. `DuplicateKeyError` n'est importe
+    # nulle part au niveau module : le seul import existant est LOCAL a la
+    # fonction de smart-entry. Sans cette ligne, le `except DuplicateKeyError`
+    # plus bas leverait un `NameError`, avale par le `except Exception` general
+    # — la collision de slug reviendrait en 500 « rien n'a ete modifie » au lieu
+    # du 409 « ce slug est deja utilise ». Exactement le defaut `_RESEND_OK` et
+    # `M2-A-FIX1` deja rencontres dans ce fichier : un import manquant qui ne se
+    # voit pas, parce qu'un `except` le mange.
+    from pymongo.errors import DuplicateKeyError
+
+    appelant = await _v309_require_coach_or_admin(request)
+
+    identifiant = (lead_id or "").strip()
+    if not identifiant or len(identifiant) > 128:
+        raise HTTPException(status_code=404, detail="Candidature introuvable")
+
+    corps = await request.json()
+    decision = str((corps or {}).get("decision") or "").strip().lower()
+    if decision not in P2B_DECISIONS:
+        raise HTTPException(status_code=400,
+                            detail="Décision invalide : « accepted » ou « rejected » attendu")
+
+    lead = await db.leads.find_one(
+        {"id": identifiant},
+        {"_id": 0, "id": 1, "link_token": 1, "name": 1, "email": 1, "whatsapp": 1,
+         "application_decision": 1})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Candidature introuvable")
+
+    lien = await _p2b_lien_et_proprietaire(lead, appelant)
+
+    slug = ""
+    if decision == "accepted":
+        slug = p2b_slug_propre((corps or {}).get("partner_slug"))
+        if not slug:
+            raise HTTPException(
+                status_code=400,
+                detail="Identifiant partenaire invalide : 3 à 40 caractères, "
+                       "uniquement des lettres minuscules, des chiffres et « _ ».")
+
+    # REJEU DE LA MEME DECISION : on repond « c'est fait » sans rien reecrire.
+    # Une decision DIFFERENTE, elle, est refusee — voir l'en-tete.
+    _deja = (lead.get("application_decision") or "").strip().lower()
+    if _deja in P2B_DECISIONS:
+        if _deja != decision:
+            raise HTTPException(
+                status_code=409,
+                detail="Cette candidature a déjà été %s. Une décision ne se "
+                       "renverse pas ici." % ("acceptée" if _deja == "accepted" else "refusée"))
+        _partenaire = await db.partners.find_one(
+            {"lead_id": identifiant}, {"_id": 0, "partner_slug": 1, "partner_status": 1})
+        return {"success": True, "already": True, "lead_id": identifiant,
+                "application_decision": _deja,
+                "partner_slug": (_partenaire or {}).get("partner_slug"),
+                "partner_status": (_partenaire or {}).get("partner_status")}
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    trace = {"decision": decision, "at": maintenant, "by": appelant}
+    champs = {"application_decision": decision}
+    if decision == "accepted":
+        champs["accepted_at"] = maintenant
+        champs["accepted_by"] = appelant
+    else:
+        champs["rejected_at"] = maintenant
+        champs["rejected_by"] = appelant
+
+    partenaire = None
+    async with await db.client.start_session() as ses:
+        ses.start_transaction()
+        try:
+            # LE JETON : seul le premier appelant obtient le document. Le filtre
+            # exige que la decision soit ABSENTE ou « pending » — `$nin` accepte
+            # aussi les documents ou le champ n'existe pas, ce qui est le cas de
+            # la totalite des candidatures actuelles.
+            gagnant = await db.leads.find_one_and_update(
+                {"id": identifiant,
+                 "application_decision": {"$nin": list(P2B_DECISIONS)}},
+                {"$set": champs, "$push": {"decision_history": trace}},
+                session=ses)
+            if gagnant is None:
+                await ses.abort_transaction()
+                # Quelqu'un d'autre a decide entre notre lecture et ici.
+                _apres = await db.leads.find_one({"id": identifiant},
+                                                 {"_id": 0, "application_decision": 1})
+                _etat = ((_apres or {}).get("application_decision") or "").strip().lower()
+                if _etat == decision:
+                    _p = await db.partners.find_one(
+                        {"lead_id": identifiant},
+                        {"_id": 0, "partner_slug": 1, "partner_status": 1})
+                    return {"success": True, "already": True, "lead_id": identifiant,
+                            "application_decision": _etat,
+                            "partner_slug": (_p or {}).get("partner_slug"),
+                            "partner_status": (_p or {}).get("partner_status")}
+                raise HTTPException(status_code=409,
+                                    detail="Cette candidature vient d'être traitée ailleurs.")
+
+            if decision == "accepted":
+                _pris = await db.partners.find_one({"partner_slug": slug},
+                                                   {"_id": 0, "lead_id": 1}, session=ses)
+                if _pris:
+                    await ses.abort_transaction()
+                    raise HTTPException(status_code=409,
+                                        detail="Ce slug est déjà utilisé")
+                partenaire = {
+                    "id": str(uuid.uuid4()),
+                    "lead_id": identifiant,
+                    "coach_id": (lien.get("coach_id") or "").strip().lower(),
+                    "partner_slug": slug,
+                    # L'ETAT OPERATIONNEL DEMARRE ICI, et nulle part ailleurs.
+                    "partner_status": "decouverte",
+                    "source_link_token": lien.get("link_token") or "",
+                    # Instantane d'identite : ces trois champs servent a
+                    # AFFICHER un partenaire sans dependre du lead, qui est une
+                    # soumission et peut etre supprime. `answers` n'est PAS
+                    # recopie — il appartient a la candidature, pas au partenaire.
+                    "name": lead.get("name") or "",
+                    "email": lead.get("email") or "",
+                    "whatsapp": lead.get("whatsapp") or "",
+                    "created_at": maintenant,
+                    "created_by": appelant,
+                }
+                try:
+                    await db.partners.insert_one(partenaire, session=ses)
+                except DuplicateKeyError:
+                    # L'INDEX A PARLE. C'est le cas concurrent que la lecture
+                    # ci-dessus ne peut pas voir : deux transactions ignorent
+                    # leurs insertions mutuelles tant qu'elles ne sont pas
+                    # validees. Sans index, ce chemin ne se declenche pas — et
+                    # c'est pourquoi l'index n'est pas optionnel.
+                    await ses.abort_transaction()
+                    raise HTTPException(status_code=409,
+                                        detail="Ce slug est déjà utilisé")
+
+            await ses.commit_transaction()
+        except HTTPException:
+            raise
+        except Exception as err:
+            try:
+                await ses.abort_transaction()
+            except Exception:  # noqa: BLE001 — l'abort peut echouer si la session est morte
+                pass
+            logger.error("[P2-B] %s : transaction annulee (%s) — AUCUNE mutation",
+                         identifiant, type(err).__name__)
+            raise HTTPException(
+                status_code=500,
+                detail="La décision n'a pas pu être enregistrée. Rien n'a été modifié, réessaie.")
+
+    logger.info("[P2-B] candidature %s -> %s par %s%s", identifiant[:8], decision,
+                appelant[:24], (" (slug %s)" % slug) if slug else "")
+    return {
+        "success": True,
+        "already": False,
+        "lead_id": identifiant,
+        "application_decision": decision,
+        "partner_slug": (partenaire or {}).get("partner_slug"),
+        "partner_status": (partenaire or {}).get("partner_status"),
     }
 
 
