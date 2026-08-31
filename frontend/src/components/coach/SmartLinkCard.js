@@ -1,7 +1,7 @@
 // SmartLinkCard.js — v98.2: Carte premium Liens Intelligents
 // Design: fond anthracite #1A1A1A, glow violet, gradient overlay, checkbox sélection
 import React, { memo, useState } from 'react';
-import { Copy, Check, ExternalLink, Trash2, Edit2, Eye, MessageCircle, Zap } from 'lucide-react';
+import { Copy, Check, ExternalLink, Trash2, Edit2, Eye, MessageCircle, Zap, Users } from 'lucide-react';
 
 const LEAD_TYPES = [
   { value: 'participant', label: 'Participant', color: '#22c55e', icon: '\u{1F3C3}', gradient: 'linear-gradient(135deg, #22c55e, #16a34a)' },
@@ -10,7 +10,11 @@ const LEAD_TYPES = [
   { value: 'question', label: 'Question', color: '#a78bfa', icon: '\u{2753}', gradient: 'linear-gradient(135deg, #a78bfa, #8b5cf6)' },
 ];
 
-const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, onPreview, selected, onToggleSelect }) => {
+const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, onPreview, selected, onToggleSelect,
+  // P2-A : uniquement pour les liens de type `partner`. `applicationsCount`
+  // vaut `null` tant que le compte n'est pas connu — on affiche alors le bouton
+  // sans nombre plutôt qu'un « 0 » qui serait faux.
+  applicationsCount, onOpenApplications }) => {
   const [hovered, setHovered] = useState(false);
 
   // Robust ID: fallback chain
@@ -25,6 +29,8 @@ const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, onPr
   const isCopied = copiedLinkId === linkId;
   const hasPrompt = !!(link.custom_prompt || link.customPrompt);
   const hasTunnel = questionsCount > 0;
+  // P2-A : seul un lien partenaire reçoit des candidatures.
+  const isPartner = (link.lead_type || '') === 'partner';
 
   const formatDate = (d) => {
     try {
@@ -198,6 +204,30 @@ const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, onPr
               {'\u2726'} {link.custom_prompt || link.customPrompt}
             </p>
           </div>
+        )}
+
+        {/* P2-A : Candidatures — UNIQUEMENT sur un lien partenaire.
+            Sur un lien « participant », la notion n'a pas de sens et la route
+            backend refuse d'ailleurs de répondre : mieux vaut ne pas proposer un
+            bouton qui mènerait à un message d'erreur. */}
+        {isPartner && onOpenApplications && (
+          <button
+            type="button"
+            onClick={() => onOpenApplications(link)}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              gap: '6px', padding: '9px 0', marginBottom: '10px', borderRadius: '10px',
+              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.10)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.25)',
+              color: 'var(--primary-color, #D91CD2)',
+              fontSize: '12px', fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.10)'; }}
+          >
+            <Users size={13} />
+            Candidatures{typeof applicationsCount === 'number' ? ` (${applicationsCount})` : ''}
+          </button>
         )}
 
         {/* Row 4: Actions */}

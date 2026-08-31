@@ -6,7 +6,9 @@ import React, { useState, useRef, memo, useCallback, useEffect } from 'react';
 import { Link2, Copy, Check, ExternalLink, Trash2, Edit2, Save, X, Plus, ChevronDown, ChevronUp, Users, MessageCircle, Calendar, CreditCard, Phone, Target, Zap, BarChart3, Eye, Play, ArrowRight, GripVertical, Sparkles, CheckSquare, Square } from 'lucide-react';
 import SmartLinkCard from './SmartLinkCard';
 import LinkSimulator from './LinkSimulator';
+import PartnerApplications from './PartnerApplications';
 import SvgIcon from '../SvgIcon';
+import axios from 'axios';
 
 // ====== STYLES ======
 const GLOW = {
@@ -953,6 +955,54 @@ const SmartLinksSection = ({
   const [selectedLinks, setSelectedLinks] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [simulatorLink, setSimulatorLink] = useState(null);
+  // P2-A : le lien dont on lit les candidatures, et le compte par jeton.
+  const [applicationsLink, setApplicationsLink] = useState(null);
+  const [applicationsCounts, setApplicationsCounts] = useState({});
+
+  // P2-A — LE COMPTE VIENT DES DONNÉES, JAMAIS D'UNE CONSTANTE.
+  //
+  // Une requête par lien PARTENAIRE (6 aujourd'hui), UNE SEULE FOIS. Deux
+  // précautions, parce que ce dépôt a déjà payé cher une boucle d'appels :
+  //   * la dépendance est une CHAÎNE de jetons triés, pas le tableau `chatLinks` —
+  //     un tableau neuf à chaque rendu du parent relancerait l'effet en boucle ;
+  //   * `setApplicationsCounts` ne remplace l'état que si un compte a RÉELLEMENT
+  //     changé, sinon on renvoie `prev`. Un objet neuf identique réveillerait
+  //     tous les effets qui en dépendent.
+  const p2aJetonsPartenaires = (chatLinks || [])
+    .filter(l => (l && l.lead_type) === 'partner')
+    .map(l => (l.link_token || l.token || ''))
+    .filter(Boolean)
+    .sort()
+    .join(',');
+
+  useEffect(() => {
+    if (!API || !p2aJetonsPartenaires) return;
+    let annule = false;
+    const jetons = p2aJetonsPartenaires.split(',');
+    (async () => {
+      const trouves = {};
+      for (const jeton of jetons) {
+        try {
+          const { data } = await axios.get(`${API}/partner-applications/${encodeURIComponent(jeton)}`);
+          if (typeof data?.total === 'number') trouves[jeton] = data.total;
+        } catch (e) {
+          // Silencieux À DESSEIN : un compte indisponible fait disparaître le
+          // nombre, pas le bouton. Le coach peut toujours ouvrir la liste, qui
+          // affichera elle-même l'erreur exacte.
+        }
+      }
+      if (annule) return;
+      setApplicationsCounts(prev => {
+        const change = Object.keys(trouves).some(k => prev[k] !== trouves[k]);
+        return change ? { ...prev, ...trouves } : prev;
+      });
+    })();
+    return () => { annule = true; };
+  }, [API, p2aJetonsPartenaires]);
+
+  const p2aOuvrirCandidatures = useCallback((link) => {
+    setApplicationsLink(link);
+  }, []);
   // V198: Référence sur le conteneur carrousel pour scroll programmatique via les flèches
   const carouselRef = useRef(null);
   const v198ScrollCarousel = useCallback((dir) => {
@@ -1273,6 +1323,8 @@ const SmartLinksSection = ({
                       onPreview={() => setSimulatorLink(link)}
                       selected={selectedLinks.has(lid)}
                       onToggleSelect={toggleSelect}
+                      applicationsCount={applicationsCounts[link.link_token || link.token || '']}
+                      onOpenApplications={p2aOuvrirCandidatures}
                     />
                   </div>
                 );
@@ -1306,6 +1358,14 @@ const SmartLinksSection = ({
         link={simulatorLink}
         isOpen={!!simulatorLink}
         onClose={() => setSimulatorLink(null)}
+      />
+
+      {/* P2-A : lecture des candidatures partenaire */}
+      <PartnerApplications
+        link={applicationsLink}
+        isOpen={!!applicationsLink}
+        onClose={() => setApplicationsLink(null)}
+        API={API}
       />
 
       {/* Modal */}

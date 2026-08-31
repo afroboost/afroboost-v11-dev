@@ -20397,6 +20397,123 @@ async def test_ai_response(data: dict):
         logger.error(f"AI test error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- P2-A : LES CANDIDATURES PARTENAIRE DEVIENNENT LISIBLES ---
+
+@api_router.get("/partner-applications/{link_token}")
+async def p2a_candidatures_partenaire(link_token: str, request: Request):
+    """P2-A — les candidatures reçues par un Smart Link de type `partner`.
+
+    LE TROU QU'ELLE COMBLE. Le tunnel « Devenir Partenaire Afroboost » enregistre
+    des candidatures depuis P1.2, mais RIEN dans le tableau de bord ne les
+    affiche : `GET /api/leads` n'a aucun appelant côté navigateur, et les badges
+    de la carte (`SmartLinkCard.js`) comptent des clics, des questions et des
+    actions — jamais des candidatures. Le coach ne voyait donc qu'une
+    notification « 🎯 Nouveau prospect », sans le nom de l'établissement, sans
+    les réponses, sans rien à faire. Les réponses existaient et personne ne
+    pouvait les lire.
+
+    POURQUOI UNE ROUTE DÉDIÉE ET PAS `GET /api/leads`. Trois raisons, toutes
+    mesurées pendant l'audit : (1) sa garde repose sur `X-User-Email`, un en-tête
+    falsifiable ; (2) elle mélange les 150 leads de toutes provenances ; (3) elle
+    trie sur `createdAt`, alors que les 48 leads issus du tunnel écrivent
+    `created_at` — ils ressortaient donc dans un ordre arbitraire. La corriger
+    globalement toucherait un chemin partagé : ce lot ne le fait pas.
+
+    P2-A EST STRICTEMENT EN LECTURE. Aucune décision, aucun `partner_slug`,
+    aucune collection `partners`, aucun QR, aucune statistique — et, ci-dessous,
+    AUCUNE écriture : `application_decision` est CALCULÉ à la volée pour les
+    documents qui ne le portent pas, jamais posé en base. Écrire « pending » sur
+    150 documents pour afficher un mot serait une migration déguisée.
+
+    TROIS VERROUS, DANS CET ORDRE — l'ordre compte.
+      1. `_v309_require_coach_or_admin` : JWT SIGNÉ seul. Il rejette les jetons
+         `subscriber` (via `_v311`) et neutralise les jetons `subscriber_space`
+         par le contrôle de rôle qui suit. `require_auth` est écarté : il décode
+         sans tester `payload["type"]`, un abonné y deviendrait coach.
+      2. LE LIEN DOIT EXISTER, puis APPARTENIR à l'appelant. La propriété se lit
+         sur le document (`chat_sessions.coach_id`), jamais sur le corps ni sur
+         un en-tête. C'est le cloisonnement de V451.
+      3. SEULEMENT ENSUITE, le type. Vérifier la propriété AVANT le type est
+         délibéré : autrement, la réponse à un jeton étranger révélerait le type
+         du lien d'un autre coach.
+
+    Le `link_token` vient de l'URL. Il n'entre JAMAIS dans une regex Mongo —
+    égalité stricte, et longueur bornée. C'est la règle du dépôt sur les entrées
+    utilisateur (`re.escape` ou égalité stricte, jamais de `$regex` brut).
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+
+    jeton = (link_token or "").strip()
+    if not jeton or len(jeton) > 64:
+        raise HTTPException(status_code=404, detail="Lien introuvable")
+
+    lien = await db.chat_sessions.find_one(
+        {"link_token": jeton},
+        {"_id": 0, "link_token": 1, "title": 1, "lead_type": 1, "coach_id": 1},
+    )
+    if not lien:
+        raise HTTPException(status_code=404, detail="Lien introuvable")
+
+    proprietaire = (lien.get("coach_id") or "").strip().lower()
+    if not is_super_admin(appelant):
+        # Un lien sans propriétaire n'est PAS « à tout le monde ». On ne devine
+        # jamais le tenant : sans propriétaire déclaré, seul un super-admin lit.
+        if not proprietaire or proprietaire != appelant:
+            logger.warning("[P2-A] REFUS lecture candidatures — lien %s non détenu par l'appelant", jeton)
+            raise HTTPException(status_code=403, detail="Ce lien ne vous appartient pas")
+
+    if (lien.get("lead_type") or "").strip().lower() != "partner":
+        raise HTTPException(status_code=404, detail="Ce lien n'est pas un lien partenaire")
+
+    # Plafond de lecture, comme partout ailleurs sur les listes du dépôt. Le
+    # tunnel partenaire compte 6 candidatures aujourd'hui ; la pagination
+    # deviendra utile bien avant 200, elle n'est pas le sujet de ce lot.
+    documents = await db.leads.find(
+        {"link_token": jeton},
+        {"_id": 0, "id": 1, "submission_id": 1, "link_token": 1, "name": 1,
+         "email": 1, "whatsapp": 1, "answers": 1, "source": 1,
+         "created_at": 1, "createdAt": 1, "application_decision": 1},
+    ).to_list(200)
+
+    candidatures = []
+    for d in documents:
+        # Les deux familles de schéma cohabitent dans `leads` : `created_at`
+        # (tunnel, 48 documents) et `createdAt` (widget, 102). On expose UNE
+        # seule clé au navigateur pour qu'il n'ait pas à connaître cette
+        # histoire, et on trie sur elle.
+        quand = d.get("created_at") or d.get("createdAt") or ""
+        candidatures.append({
+            "id": d.get("id") or "",
+            "submission_id": d.get("submission_id") or None,
+            "link_token": d.get("link_token") or jeton,
+            "name": d.get("name") or "",
+            "email": d.get("email") or "",
+            "whatsapp": d.get("whatsapp") or "",
+            # `answers` est AUTO-DESCRIPTIF ({q_0: {question, answer}}) : le
+            # libellé voyage avec la réponse. Il est rendu TEL QUEL, sans
+            # réindexation ni renommage — c'est ce qui permettra de changer le
+            # questionnaire sans toucher au navigateur.
+            "answers": d.get("answers") if isinstance(d.get("answers"), (dict, list)) else {},
+            "source": d.get("source") or "",
+            "created_at": quand,
+            # CALCULÉ, jamais écrit. Voir l'en-tête.
+            "application_decision": (d.get("application_decision") or "pending"),
+        })
+
+    # Plus récentes d'abord. Les dates sont des chaînes ISO 8601 UTC : leur ordre
+    # lexicographique EST leur ordre chronologique. Une date manquante ne remonte
+    # pas en tête par accident — elle vaut "" et finit en queue.
+    candidatures.sort(key=lambda c: c["created_at"] or "", reverse=True)
+
+    return {
+        "link_token": jeton,
+        "title": lien.get("title") or "",
+        "lead_type": lien.get("lead_type") or "",
+        "total": len(candidatures),
+        "applications": candidatures,
+    }
+
+
 # --- Leads Routes (Widget IA) ---
 # v68: ISOLATION MULTI-TENANT — chaque lead est lié à un coach_id
 @api_router.get("/leads")

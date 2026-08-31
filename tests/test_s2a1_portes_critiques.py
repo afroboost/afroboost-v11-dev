@@ -675,10 +675,14 @@ verifier("8e. App.js n'APPELLE plus send-email (le chemin visiteur anonyme a dis
 verifier("8f. App.js lit `emailSent` renvoye par le serveur",
          "notifyResponse.data.emailSent" in APPJS)
 
-verifier("8g. le Service Worker est bumpe en v468",
-         "afroboost-v468" in SW,
-         "sans ce bump, un navigateur garderait le bundle dont les envois "
-         "partent en fetch, donc sans jeton -> 403")
+# Version MINIMALE, pas exacte : epingler « v468 » ferait echouer ce fichier a
+# chaque bump ulterieur, pour une raison sans aucun rapport avec SECURITY-S2-A1.
+# Le seul risque reel est le RETOUR EN ARRIERE — un cache revenu sous v468
+# reservirait le bundle dont les envois partent en `fetch`, donc sans jeton.
+_sw_version = re.search(r"afroboost-v(\d+)", SW)
+verifier("8g. le Service Worker est au moins en v468 (jamais revenu en arriere)",
+         bool(_sw_version) and int(_sw_version.group(1)) >= 468,
+         "version lue = %s" % (_sw_version.group(0) if _sw_version else "aucune"))
 
 
 print("\n=== 9. AUCUN APPEL EXTERNE, AUCUNE VALEUR SENSIBLE REELLE ===")
