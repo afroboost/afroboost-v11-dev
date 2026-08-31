@@ -22,6 +22,7 @@ import { createRoot } from 'react-dom/client';
 import axios from 'axios';
 import PartnerApplications, {
   p2aNormaliserReponses, p2aDateLisible, p2bSuggererSlug, p2bSlugValide,
+  p2d2Taux, p2d2Nombre, p2d2ReponseUtilisable,
 } from '../PartnerApplications';
 import { construireLienPartenaire } from '../../../utils/partnerLink';
 import SmartLinkCard from '../SmartLinkCard';
@@ -394,7 +395,19 @@ describe('P2-B — la decision', () => {
     await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
     await cliquer(bouton('Accepter'));
     await cliquer(bouton('Accepter le partenaire'));
-    expect(axios.get).toHaveBeenCalledTimes(2);
+    // P2-D2 A MIGRE CETTE ASSERTION, ET L'A RENDUE PLUS STRICTE.
+    // Avant P2-D2, ce composant n'emettait qu'un seul type de GET : compter
+    // TOUS les appels d'axios revenait donc a compter ceux de la route des
+    // candidatures. P2-D2 ajoute un second GET legitime
+    // (`/partners/{slug}/stats`, cf. le bloc P2-D2 plus bas), et le compteur
+    // global melangerait desormais deux routes.
+    // Ce qui suit epingle l'URL EN PLUS du nombre : c'est un durcissement, pas
+    // un assouplissement. L'appel de statistiques n'est pas masque — il est
+    // controle separement, et le test « A. » exige qu'il parte exactement une
+    // fois.
+    const appelsCandidatures = axios.get.mock.calls
+      .filter((c) => String(c[0]).includes('/partner-applications/'));
+    expect(appelsCandidatures).toHaveLength(2);
     expect(texte()).toContain('Acceptée');
     expect(bouton('Accepter')).toBeFalsy();
   });
@@ -668,5 +681,360 @@ describe('P2-A — le rendu des reponses est generique', () => {
     expect(p2aDateLisible('')).toBe('—');
     expect(p2aDateLisible(null)).toBe('—');
     expect(p2aDateLisible('2026-08-28T10:00:00+00:00')).not.toBe('—');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P2-D2 — LES RESULTATS DU PARTENARIAT.
+//
+// CE QUE CE BLOC VERROUILLE, ET POURQUOI :
+//
+//   * `null` n'est pas `0`. Le serveur renvoie `null` quand il n'a pas de
+//     denominateur et `0` quand il a mesure zero. Afficher « 0 % » dans le
+//     premier cas reprocherait a un partenaire une contre-performance qu'il
+//     n'a pas eue. Deux tests separes, pour chacun des deux taux.
+//   * l'appel n'existe que pour une candidature ACCEPTEE avec slug. En attente,
+//     refusee, ou acceptee sans slug : AUCUN appel — verifie sur l'URL, pas sur
+//     le nombre total d'appels.
+//   * une erreur de la route stats ne doit RIEN emporter avec elle : le lien,
+//     le QR et la microcopy sont produits sans reseau, ils doivent rester.
+//   * aucune donnee personnelle rendue : la route est agregee, l'ecran aussi.
+//
+// `axios.get` est aiguille PAR URL : c'est la seule facon de distinguer la
+// route des candidatures de celle des statistiques dans le meme composant.
+describe('P2-D2 — les resultats du partenariat', () => {
+  const SLUG = 'akoko_tresses';
+  const URL_STATS = `/api/partners/${SLUG}/stats`;
+
+  const accepteD2 = (extra = {}) => reponseUne({
+    application_decision: 'accepted', partner_slug: SLUG,
+    partner_status: 'decouverte', ...extra });
+
+  /** La reponse REELLE de la production du 31/08/2026, relevee avec un jeton
+   *  coach valide sur `GET /api/partners/bassi_test_interne/stats` (HTTP 200).
+   *  Les valeurs ne sont pas inventees pour le test. */
+  const STATS_REELLES = {
+    partner_slug: SLUG, partner_status: 'decouverte',
+    reservations: 1, unique_people: 1,
+    unique_people_method: 'discount_code_then_normalized_email',
+    attendances: 0, attendance_definition: 'validated_true',
+    conversions_unit: 'people',
+    conversions: { pulse: 0, member: 0, subscription: 0, total: 0 },
+    attendance_rate: 0, conversion_rate: 0,
+    attribution: { basis: 'first', source: 'partenaire',
+                   medium: 'referral', campaign: 'essai_neuchatel' },
+  };
+
+  /** Aiguillage par URL. `stats` peut etre une valeur, ou une fonction pour
+   *  faire echouer / varier les appels successifs. */
+  function router(candidatures, stats) {
+    let n = 0;
+    axios.get.mockImplementation((url) => {
+      if (String(url).includes('/partners/')) {
+        n += 1;
+        const r = typeof stats === 'function' ? stats(n) : stats;
+        return r instanceof Error ? Promise.reject(r) : Promise.resolve({ data: r });
+      }
+      return Promise.resolve(candidatures);
+    });
+  }
+
+  /** Les URL de statistiques réellement appelées. */
+  const appelsStats = () => axios.get.mock.calls
+    .map((c) => String(c[0])).filter((u) => u.includes('/partners/'));
+
+  const monterFiche = () => monter(
+    <PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+
+  // --- Les fonctions pures : la regle `null` != `0`, isolee ---------------
+  test('p2d2Taux : null et undefined donnent un tiret, JAMAIS « 0 % »', () => {
+    expect(p2d2Taux(null)).toBe('—');
+    expect(p2d2Taux(undefined)).toBe('—');
+    expect(p2d2Taux(null)).not.toContain('0');
+  });
+
+  test('p2d2Taux : un vrai zero mesure donne bien « 0 % »', () => {
+    expect(p2d2Taux(0)).toBe('0 %');
+    expect(p2d2Taux(0.0)).toBe('0 %');
+  });
+
+  test('p2d2Taux : les taux reels sont rendus en pourcentage', () => {
+    expect(p2d2Taux(1)).toBe('100 %');
+    expect(p2d2Taux(0.5)).toBe('50 %');
+    expect(p2d2Taux(0.3333)).toBe('33.3 %');
+  });
+
+  test('p2d2Nombre : jamais « NaN », jamais un zero invente', () => {
+    expect(p2d2Nombre(0)).toBe('0');
+    expect(p2d2Nombre(7)).toBe('7');
+    expect(p2d2Nombre(undefined)).toBe('—');
+    expect(p2d2Nombre(null)).toBe('—');
+    expect(p2d2Nombre('abc')).toBe('—');
+  });
+
+  test('p2d2ReponseUtilisable : une reponse d\'une autre route est refusee', () => {
+    expect(p2d2ReponseUtilisable(STATS_REELLES)).toBe(true);
+    expect(p2d2ReponseUtilisable({ reservations: 0 })).toBe(true);
+    expect(p2d2ReponseUtilisable({ applications: [] })).toBe(false);
+    expect(p2d2ReponseUtilisable(null)).toBe(false);
+  });
+
+  // --- A a D : QUAND la route est appelee --------------------------------
+  test('A. acceptee + slug : la route stats est appelee EXACTEMENT une fois', async () => {
+    router(accepteD2(), STATS_REELLES);
+    await monterFiche();
+    expect(appelsStats()).toEqual([URL_STATS]);
+  });
+
+  test('B. en attente : AUCUN appel a la route stats', async () => {
+    router(reponseUne(), STATS_REELLES);
+    await monterFiche();
+    expect(appelsStats()).toEqual([]);
+  });
+
+  test('C. refusee : AUCUN appel a la route stats', async () => {
+    router(reponseUne({ application_decision: 'rejected' }), STATS_REELLES);
+    await monterFiche();
+    expect(appelsStats()).toEqual([]);
+  });
+
+  test('D. acceptee SANS slug : AUCUN appel a la route stats', async () => {
+    router(reponseUne({ application_decision: 'accepted' }), STATS_REELLES);
+    await monterFiche();
+    expect(appelsStats()).toEqual([]);
+    expect(texte()).toContain('Partenaire incomplet');
+  });
+
+  test("l'appel ne pose AUCUN en-tete a la main — le Bearer vient de l'intercepteur",
+    async () => {
+      router(accepteD2(), STATS_REELLES);
+      await monterFiche();
+      const appel = axios.get.mock.calls.find((c) => String(c[0]).includes('/partners/'));
+      expect(appel).toHaveLength(1);
+    });
+
+  // --- E : les valeurs reelles sont rendues ------------------------------
+  test('E. les quatre compteurs affichent les valeurs du serveur', async () => {
+    router(accepteD2(), STATS_REELLES);
+    await monterFiche();
+    const grille = conteneur.querySelector('[data-testid="p2d2-compteurs"]');
+    expect(grille).not.toBeNull();
+    const cases = Array.from(grille.children).map((d) => (d.textContent || '').trim());
+    expect(cases).toEqual(['1Réservations', '1Personnes', '0Présences', '0Conversions']);
+    expect(texte()).toContain('Résultats de votre partenariat');
+  });
+
+  test('E-bis. les compteurs ne sont pas codes en dur : d\'autres chiffres passent',
+    async () => {
+      router(accepteD2(), {
+        ...STATS_REELLES, reservations: 12, unique_people: 9, attendances: 7,
+        conversions: { pulse: 2, member: 1, subscription: 3, total: 5 },
+      });
+      await monterFiche();
+      const grille = conteneur.querySelector('[data-testid="p2d2-compteurs"]');
+      const cases = Array.from(grille.children).map((d) => (d.textContent || '').trim());
+      expect(cases).toEqual(['12Réservations', '9Personnes', '7Présences', '5Conversions']);
+      expect(texte()).toContain('Pulse 2');
+      expect(texte()).toContain('Membres 1');
+      expect(texte()).toContain('Abonnements 3');
+    });
+
+  // --- F a H : la regle null != 0, dans le RENDU -------------------------
+  test('F. attendance_rate = null : le rendu ne contient PAS « 0 % » de presence',
+    async () => {
+      router(accepteD2(), {
+        ...STATS_REELLES, reservations: 0, unique_people: 0, attendances: 0,
+        attendance_rate: null, conversion_rate: null,
+      });
+      await monterFiche();
+      expect(texte()).toContain('Taux de présence —');
+      expect(texte()).not.toContain('Taux de présence 0 %');
+    });
+
+  test('G. attendance_rate = 0.0 reellement fourni : « 0 % » est affiche', async () => {
+    router(accepteD2(), { ...STATS_REELLES, attendance_rate: 0 });
+    await monterFiche();
+    expect(texte()).toContain('Taux de présence 0 %');
+  });
+
+  test('H. conversion_rate = null : pas « 0 % » de conversion', async () => {
+    router(accepteD2(), { ...STATS_REELLES, conversion_rate: null });
+    await monterFiche();
+    expect(texte()).toContain('Taux de conversion —');
+    expect(texte()).not.toContain('Taux de conversion 0 %');
+  });
+
+  // --- C (etat zero) : un partenaire sans aucune reservation --------------
+  test('partenaire a zero : quatre zeros, des tirets, et rien d\'alarmant', async () => {
+    router(accepteD2(), {
+      ...STATS_REELLES, reservations: 0, unique_people: 0, attendances: 0,
+      conversions: { pulse: 0, member: 0, subscription: 0, total: 0 },
+      attendance_rate: null, conversion_rate: null,
+    });
+    await monterFiche();
+    const grille = conteneur.querySelector('[data-testid="p2d2-compteurs"]');
+    const cases = Array.from(grille.children).map((d) => (d.textContent || '').trim());
+    expect(cases).toEqual(['0Réservations', '0Personnes', '0Présences', '0Conversions']);
+    expect(texte()).not.toContain('indisponibles');
+    expect(texte()).not.toContain('Erreur');
+  });
+
+  // --- I : une erreur n'emporte pas le lien ------------------------------
+  test('I. erreur API : le lien, le QR et la microcopy RESTENT visibles', async () => {
+    router(accepteD2(), new Error('reseau'));
+    await monterFiche();
+    expect(texte()).toContain('Résultats momentanément indisponibles');
+    expect(conteneur.querySelector('[data-testid="lien-partenaire"]')).not.toBeNull();
+    expect(texte()).toContain('utm_content=akoko_tresses');
+    expect(bouton('Copier')).toBeTruthy();
+    expect(bouton('QR code')).toBeTruthy();
+    expect(texte()).toContain('Partagez votre invitation Afroboost');
+  });
+
+  test('E-bis. 403 : etat d\'erreur ordinaire, aucun contournement d\'authentification',
+    async () => {
+      router(accepteD2(), Object.assign(new Error('403'), { response: { status: 403 } }));
+      await monterFiche();
+      expect(texte()).toContain('Résultats momentanément indisponibles');
+      // Aucun en-tete d'authentification pose a la main, meme apres un refus.
+      const appel = axios.get.mock.calls.find((c) => String(c[0]).includes('/partners/'));
+      expect(appel).toHaveLength(1);
+    });
+
+  test('une reponse d\'une AUTRE route n\'est pas rendue comme « 0 »', async () => {
+    router(accepteD2(), { applications: [], total: 0 });
+    await monterFiche();
+    expect(texte()).toContain('Résultats momentanément indisponibles');
+    expect(conteneur.querySelector('[data-testid="p2d2-compteurs"]')).toBeNull();
+  });
+
+  // --- J : reessayer -----------------------------------------------------
+  test('J. « Actualiser » relance UN appel propre, sans duplication', async () => {
+    router(accepteD2(), (n) => (n === 1 ? new Error('reseau') : STATS_REELLES));
+    await monterFiche();
+    expect(texte()).toContain('Résultats momentanément indisponibles');
+    expect(appelsStats()).toHaveLength(1);
+
+    await cliquer(bouton('Actualiser'));
+    expect(appelsStats()).toHaveLength(2);
+    expect(texte()).not.toContain('Résultats momentanément indisponibles');
+    const grille = conteneur.querySelector('[data-testid="p2d2-compteurs"]');
+    expect(Array.from(grille.children)).toHaveLength(4);
+  });
+
+  // --- K : aucune donnee personnelle -------------------------------------
+  test('K. aucune PII dans la zone des resultats', async () => {
+    router(accepteD2(), {
+      ...STATS_REELLES,
+      // Meme si le serveur en renvoyait un jour, l'ecran ne le rendrait pas :
+      // il ne lit que les champs agreges, nommement.
+      userEmail: 'ne-doit-pas-sortir@exemple.test',
+      discountCode: 'AFR-NEDOITPASSORTIR',
+      participants: [{ name: 'Nom Interdit', email: 'x@exemple.test' }],
+    });
+    await monterFiche();
+    const t = texte();
+    expect(t).not.toContain('ne-doit-pas-sortir@exemple.test');
+    expect(t).not.toContain('AFR-NEDOITPASSORTIR');
+    expect(t).not.toContain('Nom Interdit');
+    expect(t).not.toMatch(/AFR-[A-Z0-9]{6}/);
+  });
+
+  // --- L : aucun minuteur ------------------------------------------------
+  test('L. aucun minuteur n\'est arme par ce composant', async () => {
+    const si = jest.spyOn(global, 'setInterval');
+    router(accepteD2(), STATS_REELLES);
+    await monterFiche();
+    await cliquer(bouton('Actualiser'));
+    expect(si).not.toHaveBeenCalled();
+    si.mockRestore();
+  });
+
+  test('L-bis. le fichier livre ne contient AUCUN minuteur', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const brut = fs.readFileSync(
+      path.join(__dirname, '..', 'PartnerApplications.js'), 'utf8');
+    // Commentaires retires : ceux du lot CITENT le mot pour l'interdire, et un
+    // balayage naif se piegerait lui-meme sur sa propre documentation.
+    const code = brut.replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    expect(code).not.toContain('setInterval');
+    expect(code).not.toContain('setTimeout(charger');
+  });
+
+  // --- ce que les gardes P2-A / P2-B protegeaient, repris ici -------------
+  test('aucune metrique de CLICS : P2-D1 n\'en fournit pas, on n\'en invente pas',
+    async () => {
+      router(accepteD2(), { ...STATS_REELLES, clicks: 42, clics: 42 });
+      await monterFiche();
+      expect(texte()).not.toContain('42');
+      expect(texte().toLowerCase()).not.toContain('clic');
+    });
+
+  test('AUCUN calcul local : les nombres rendus sont ceux du serveur, tels quels',
+    async () => {
+      // Des valeurs volontairement incoherentes entre elles : 3 presences pour
+      // 2 reservations. Un ecran qui recalculerait, plafonnerait ou corrigerait
+      // quoi que ce soit trahirait sa propre definition de « une presence ».
+      // Le serveur est la seule autorite ; l'ecran le montre, meme bizarre.
+      router(accepteD2(), {
+        ...STATS_REELLES, reservations: 2, unique_people: 5, attendances: 3,
+        conversions: { pulse: 1, member: 1, subscription: 1, total: 2 },
+        attendance_rate: 0.9, conversion_rate: 0.1,
+      });
+      await monterFiche();
+      const grille = conteneur.querySelector('[data-testid="p2d2-compteurs"]');
+      const cases = Array.from(grille.children).map((d) => (d.textContent || '').trim());
+      expect(cases).toEqual(['2Réservations', '5Personnes', '3Présences', '2Conversions']);
+      // Le total affiche est celui du serveur (2), PAS la somme 1+1+1 = 3.
+      expect(cases[3]).toBe('2Conversions');
+      // Les taux ne sont pas recalcules depuis les compteurs (3/2 = 150 %).
+      expect(texte()).toContain('Taux de présence 90 %');
+      expect(texte()).not.toContain('150 %');
+    });
+
+  test('le fichier livre ne calcule aucune statistique lui-meme', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const brut = fs.readFileSync(
+      path.join(__dirname, '..', 'PartnerApplications.js'), 'utf8');
+    const code = brut.replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    // Le bloc P2-D2 seul : ni division, ni accumulation, ni `reduce`.
+    const bloc = code.split('const StatsPartenaire')[1].split('const BoutonAction')[0];
+    expect(bloc).not.toMatch(/\.reduce\(/);
+    expect(bloc).not.toMatch(/reservations\s*\/|attendances\s*\//);
+    expect(bloc).not.toContain('* 100');
+  });
+
+  // --- M : la microcopy partenaire ---------------------------------------
+  test('M. la microcopy partenaire est intacte, mot pour mot', async () => {
+    router(accepteD2(), STATS_REELLES);
+    await monterFiche();
+    expect(texte()).toContain(
+      "Partagez votre invitation Afroboost. Votre communauté s'inscrit et "
+      + 'réserve directement sa séance.');
+  });
+
+  // --- le cycle de vie du partenaire n'est pas touche ---------------------
+  test('le statut partenaire n\'est JAMAIS ecrit par cet ecran', async () => {
+    router(accepteD2(), STATS_REELLES);
+    await monterFiche();
+    await cliquer(bouton('Actualiser'));
+    expect(axios.patch).not.toHaveBeenCalled();
+    expect(axios.post).not.toHaveBeenCalled();
+    expect(axios.put).not.toHaveBeenCalled();
+  });
+
+  test('etat CHARGEMENT visible avant la reponse', async () => {
+    let resoudre;
+    axios.get.mockImplementation((url) => (String(url).includes('/partners/')
+      ? new Promise((r) => { resoudre = r; })
+      : Promise.resolve(accepteD2())));
+    await monterFiche();
+    expect(texte()).toContain('Chargement des résultats…');
+    await act(async () => { resoudre({ data: STATS_REELLES }); });
+    expect(texte()).not.toContain('Chargement des résultats…');
   });
 });

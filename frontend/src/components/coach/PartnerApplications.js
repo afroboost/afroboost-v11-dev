@@ -131,7 +131,7 @@ const Ligne = ({ icone, valeur }) => {
  *  Meme bibliotheque (`qrcode.react`, deja installee), aucune dependance
  *  ajoutee.
  */
-const LienPartenaire = ({ slug }) => {
+const LienPartenaire = ({ slug, API }) => {
   const lien = construireLienPartenaire(slug);
   const [copie, setCopie] = useState(false);
   const [qrVisible, setQrVisible] = useState(false);
@@ -237,6 +237,203 @@ const LienPartenaire = ({ slug }) => {
           </div>
         </div>
       )}
+
+      {/* P2-D2 — les resultats, sous le lien et le QR. */}
+      <StatsPartenaire slug={slug} API={API} />
+    </div>
+  );
+};
+
+/** P2-D2 — un taux, rendu pour un humain.
+ *
+ *  LA REGLE QUI COMPTE : `null` N'EST PAS `0`.
+ *  Le serveur renvoie `null` quand le denominateur est nul (`_taux`), et `0`
+ *  quand il a vraiment mesure zero. Les confondre ferait lire « 0 % de
+ *  presence » a un partenaire qui n'a encore envoye personne — un reproche a
+ *  la place d'une absence de donnee. On rend donc un tiret cadratin pour
+ *  « pas encore de donnee », et « 0 % » seulement pour un vrai zero mesure.
+ */
+export function p2d2Taux(valeur) {
+  if (valeur === null || valeur === undefined) return '—';
+  const n = Number(valeur);
+  if (!Number.isFinite(n)) return '—';
+  return `${Math.round(n * 1000) / 10} %`;
+}
+
+/** Un compteur. Tout ce qui n'est pas un entier positif devient un tiret :
+ *  mieux vaut avouer l'ignorance qu'afficher « NaN » ou un zero invente.
+ *
+ *  ⚠️ `null` EST REJETE AVANT LA CONVERSION, et ce n'est pas un detail :
+ *  `Number(null)` vaut `0`. Sans ce test explicite, un champ absent
+ *  s'afficherait « 0 » — soit precisement la confusion que ce lot existe pour
+ *  eviter, transposee des taux aux compteurs. Mesure faite : le test le
+ *  rendait « 0 ». Meme raison pour la chaine vide, que `Number` rend aussi `0`. */
+export function p2d2Nombre(valeur) {
+  if (valeur === null || valeur === undefined || valeur === '') return '—';
+  const n = Number(valeur);
+  if (!Number.isFinite(n) || n < 0) return '—';
+  return String(Math.trunc(n));
+}
+
+/** La reponse du serveur est-elle exploitable ? On exige le champ qui porte le
+ *  sens du lot. Une reponse d'une AUTRE route (ou tronquee) n'est pas rendue
+ *  comme un resultat de zero : elle passe par l'etat d'erreur. */
+export function p2d2ReponseUtilisable(data) {
+  return !!data && typeof data === 'object' && Number.isFinite(Number(data.reservations));
+}
+
+/** P2-D2 — LES RESULTATS DU PARTENARIAT, EN LECTURE SEULE.
+ *
+ *  AUCUN CALCUL ICI. Les quatre nombres sortent tels quels de
+ *  `GET /partners/{slug}/stats` (P2-D1). Recalculer quoi que ce soit dans le
+ *  navigateur ferait exister deux definitions de « une presence » ou de « une
+ *  conversion », et c'est la deuxieme qui finirait par mentir.
+ *
+ *  AUCUNE DONNEE PERSONNELLE. La route est agregee par construction : elle ne
+ *  renvoie ni nom, ni e-mail, ni telephone, ni code d'acces, ni reservation
+ *  individuelle. Ce composant n'affiche donc que des totaux — et le test le
+ *  verifie sur le rendu, pas sur l'intention.
+ *
+ *  AUCUN POLLING. Un seul appel au montage, plus un bouton « Actualiser ».
+ *  Pas de `setInterval` : le depot vient d'en retirer plusieurs (CHAT-LOOP1 a 3)
+ *  et un tableau de bord n'a pas besoin de se rafraichir tout seul.
+ *
+ *  MONTE UNIQUEMENT DEPUIS `LienPartenaire`, donc seulement pour une
+ *  candidature ACCEPTEE portant un `partner_slug` valide. La condition
+ *  d'affichage est STRUCTURELLE, pas un `if` a l'interieur : une candidature en
+ *  attente, refusee, ou acceptee sans slug ne monte pas ce composant et
+ *  n'emet donc aucun appel.
+ */
+const StatsPartenaire = ({ slug, API }) => {
+  const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState(false);
+  const [stats, setStats] = useState(null);
+
+  const charger = useCallback(async () => {
+    setChargement(true);
+    setErreur(false);
+    try {
+      const { data } = await axios.get(
+        `${API}/partners/${encodeURIComponent(slug)}/stats`);
+      if (p2d2ReponseUtilisable(data)) {
+        setStats(data);
+      } else {
+        setStats(null);
+        setErreur(true);
+      }
+    } catch (e) {
+      // 403 compris : on n'essaie JAMAIS de contourner l'authentification, on
+      // affiche l'etat d'erreur ordinaire. Le lien et le QR, eux, restent —
+      // ils ne dependent d'aucun appel reseau.
+      setStats(null);
+      setErreur(true);
+    } finally {
+      setChargement(false);
+    }
+  }, [API, slug]);
+
+  // Dependance PRIMITIVE (`charger` ne depend que de `API` et `slug`, deux
+  // chaines) : cet effet ne peut pas se relancer a chaque rendu du parent.
+  useEffect(() => { charger(); }, [charger]);
+
+  const conversions = (stats && stats.conversions) || {};
+
+  return (
+    <div style={{ marginTop: '12px', paddingTop: '10px',
+                  borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px',
+                    marginBottom: '8px' }}>
+        <p style={{ margin: 0, flex: 1, color: 'rgba(255,255,255,0.75)',
+                    fontSize: '12px', fontWeight: 700 }}>
+          Résultats de votre partenariat
+        </p>
+        <button
+          type="button"
+          onClick={charger}
+          disabled={chargement}
+          aria-label="Actualiser les résultats"
+          style={{
+            display: 'flex', alignItems: 'center', gap: '5px',
+            padding: '5px 9px', borderRadius: '8px',
+            background: 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            color: 'rgba(255,255,255,0.6)', fontSize: '11px', fontWeight: 700,
+            cursor: chargement ? 'not-allowed' : 'pointer',
+            opacity: chargement ? 0.5 : 1,
+          }}
+        >
+          <RefreshCw size={11} /> Actualiser
+        </button>
+      </div>
+
+      {chargement && (
+        <p style={{ margin: 0, color: 'rgba(255,255,255,0.45)', fontSize: '11px' }}>
+          Chargement des résultats…
+        </p>
+      )}
+
+      {!chargement && erreur && (
+        <div style={{
+          padding: '8px 10px', borderRadius: '8px',
+          background: 'rgba(245,158,11,0.08)',
+          border: '1px solid rgba(245,158,11,0.2)',
+        }}>
+          <p style={{ margin: 0, color: '#f59e0b', fontSize: '11px' }}>
+            Résultats momentanément indisponibles
+          </p>
+        </div>
+      )}
+
+      {!chargement && !erreur && stats && (
+        <>
+          {/* Deux colonnes sur telephone : quatre nombres courts y tiennent
+              sans rogner les libelles. `minmax(0, 1fr)` empeche une colonne de
+              pousser la grille au-dela de la fenetre — c'est ce qui evite le
+              debordement horizontal quand un nombre grandit. */}
+          <div data-testid="p2d2-compteurs" style={{
+            display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+            gap: '8px',
+          }}>
+            {[
+              ['Réservations', p2d2Nombre(stats.reservations)],
+              ['Personnes', p2d2Nombre(stats.unique_people)],
+              ['Présences', p2d2Nombre(stats.attendances)],
+              ['Conversions', p2d2Nombre(conversions.total)],
+            ].map(([libelle, valeur]) => (
+              <div key={libelle} style={{
+                padding: '9px 10px', borderRadius: '9px', minWidth: 0,
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.08)',
+              }}>
+                <p style={{ margin: 0, color: '#FFFFFF', fontSize: '19px',
+                            fontWeight: 800, lineHeight: 1.1 }}>
+                  {valeur}
+                </p>
+                <p style={{ margin: '2px 0 0', color: 'rgba(255,255,255,0.5)',
+                            fontSize: '10px' }}>
+                  {libelle}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.45)',
+                      fontSize: '10px', lineHeight: 1.5 }}>
+            Taux de présence {p2d2Taux(stats.attendance_rate)}
+            {' · '}
+            Taux de conversion {p2d2Taux(stats.conversion_rate)}
+          </p>
+
+          <p style={{ margin: '3px 0 0', color: 'rgba(255,255,255,0.35)',
+                      fontSize: '10px', lineHeight: 1.5 }}>
+            Pulse {p2d2Nombre(conversions.pulse)}
+            {' · '}
+            Membres {p2d2Nombre(conversions.member)}
+            {' · '}
+            Abonnements {p2d2Nombre(conversions.subscription)}
+          </p>
+        </>
+      )}
     </div>
   );
 };
@@ -259,7 +456,7 @@ const BoutonAction = ({ onClick, disabled, couleur, children, style }) => (
   </button>
 );
 
-const Candidature = ({ item, onDecider, enCours }) => {
+const Candidature = ({ item, onDecider, enCours, API }) => {
   const reponses = p2aNormaliserReponses(item.answers);
   const enAttente = (item.application_decision || 'pending') === 'pending';
   // `etape` : null (rien) | 'accept' (saisie du slug) | 'reject' (confirmation)
@@ -422,7 +619,7 @@ const Candidature = ({ item, onDecider, enCours }) => {
           peine de distribuer un lien qui n'attribue rien. */}
       {(item.application_decision === 'accepted') && (
         item.partner_slug
-          ? <LienPartenaire slug={item.partner_slug} />
+          ? <LienPartenaire slug={item.partner_slug} API={API} />
           : (
             <p style={{ margin: '12px 0 0', padding: '8px 10px', borderRadius: '8px',
                         background: 'rgba(239,68,68,0.08)',
@@ -633,6 +830,7 @@ const PartnerApplications = ({ isOpen, onClose, link, API }) => {
               item={item}
               onDecider={decider}
               enCours={enCours === item.id}
+              API={API}
             />
           ))}
         </div>

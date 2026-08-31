@@ -459,9 +459,29 @@ verifier("6j. « pending » s'affiche « En attente »", "pending: 'En attente'"
 # n'appartient a aucun des trois : les statistiques de P2-D.
 # P2-C ajoute le lien UTM et le QR sur une candidature ACCEPTEE — c'est son
 # objet meme. Leur absence sur `pending` et `rejected` est prouvee dans la suite
-# P2-C. Ce qui reste hors perimetre des trois lots, ce sont les statistiques.
-for interdit, quoi in [("clics", "compteur de clics"), ("conversions", "conversions"),
-                       ("taux de", "taux de conversion")]:
+# P2-C.
+#
+# ═══ MIGRE PAR P2-D2 — CE N'EST PAS UN AFFAIBLISSEMENT ═══
+# Cette garde interdisait `conversions` et `taux de` PARCE QUE les statistiques
+# etaient hors perimetre jusqu'a P2-D. C'est ecrit tel quel deux lignes plus
+# haut depuis P2-A : « hors perimetre JUSQU'A P2-D ». P2-D2 est ce lot : il
+# affiche les statistiques agregees, les conversions et les deux taux, en
+# lisant `GET /partners/{slug}/stats` (P2-D1). L'interdiction a donc atteint son
+# terme prevu, elle n'a pas ete contournee.
+# Ce que ces deux mots protegeaient est repris POSITIVEMENT par la suite
+# `partnerApplications.test.js` (bloc « P2-D2 ») : les compteurs viennent du
+# serveur et jamais d'une constante, `null` ne s'affiche jamais « 0 % », aucune
+# donnee personnelle n'est rendue, aucun minuteur n'est arme.
+#
+# `clics` RESTE INTERDIT, et ce n'est pas symbolique : `GET /partners/{slug}/
+# stats` ne renvoie AUCUN compteur de clics. En faire apparaitre un ici
+# signifierait qu'il a ete fabrique dans le navigateur — exactement ce que ce
+# lot s'interdit.
+# `taux de` a ete RETIRE plutot que conserve : l'ecran ecrit « Taux de presence »
+# avec une majuscule, la garde en minuscules passerait donc sans rien proteger.
+# Une assertion qui ne tient que par une difference de casse ment sur ce qu'elle
+# verifie ; mieux vaut l'assumer que la garder pour le decor.
+for interdit, quoi in [("clics", "compteur de clics")]:
     verifier("6k. aucun %s dans ce lot (code seul)" % quoi,
              interdit not in APP_CODE and interdit not in CARD_CODE)
 

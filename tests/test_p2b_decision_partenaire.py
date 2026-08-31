@@ -643,9 +643,22 @@ verifier("8j. un envoi en cours desactive les boutons (double clic sans effet)",
 verifier("8k. apres succes, la liste est RECHARGEE depuis le serveur",
          "await charger();" in APPC.split("axios.patch")[1][:400])
 # P2-C ajoute DELIBEREMENT le lien UTM et le QR sur une candidature acceptee.
-# Ce qui reste hors perimetre jusqu'a P2-D, ce sont les statistiques.
-verifier("8l. AUCUNE statistique dans ce lot (P2-D)",
-         not re.search(r"\bclics\b|\bconversions\b|\btaux\b", APPC))
+#
+# ═══ MIGRE PAR P2-D2 — CE N'EST PAS UN AFFAIBLISSEMENT ═══
+# La ligne d'origine disait « hors perimetre JUSQU'A P2-D ». P2-D2 est ce lot :
+# il affiche les statistiques agregees, les conversions et les taux de presence
+# et de conversion, tous lus sur `GET /partners/{slug}/stats` (P2-D1). Les mots
+# `conversions` et `taux` sont donc devenus legitimes dans ce fichier a la date
+# prevue. Ce qu'ils protegeaient est desormais verifie POSITIVEMENT par le bloc
+# « P2-D2 » de `partnerApplications.test.js`.
+#
+# CE QUI RESTE INTERDIT : `clics`. P2-D1 ne fournit aucun compteur de clics.
+# Sa presence ici voudrait dire qu'une metrique a ete inventee cote navigateur,
+# ce que P2-D2 s'interdit explicitement (aucun calcul local). Le test n'est donc
+# pas vide : il garde la seule frontiere qui existe encore.
+verifier("8l. aucune metrique de clics (absente de P2-D1) — statistiques, "
+         "conversions et taux leves par P2-D2",
+         not re.search(r"\bclics\b", APPC))
 verifier("8m. le Service Worker est au moins en v470",
          bool(re.search(r"afroboost-v(\d+)", SW))
          and int(re.search(r"afroboost-v(\d+)", SW).group(1)) >= 470,
