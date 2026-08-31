@@ -598,6 +598,200 @@ verifier("8j. l'onglet Prospection est branché dans le dashboard existant",
 verifier("8k. aucune application parallèle : un onglet, pas une route",
          DASH.count("<ProspectsSection") == 1)
 
+print("\n9. P3-S2B — LES DEUX CATÉGORIES ET LE CLASSEUR EXPANSION")
+
+verifier("9a. « association » et « fitness » existent côté serveur",
+         {"association", "fitness"} <= set(S.P3S1_CATEGORIES))
+verifier("9b. les huit catégories d'origine sont INTACTES",
+         {"festival", "ecole_danse", "restaurant", "bar", "commerce",
+          "organisateur_evenement", "communaute_etudiante", "influenceur"}
+         <= set(S.P3S1_CATEGORIES) and len(S.P3S1_CATEGORIES) == 10)
+def _refuse(corps):
+    """Le validateur de P3-S1 refuse-t-il ce corps ? On l'interroge directement :
+    pas besoin d'une requête HTTP pour éprouver une liste fermée."""
+    try:
+        S.p3s1_champs_valides(corps, creation=True)
+        return False
+    except HTTPException as e:
+        return e.status_code == 400
+
+
+verifier("9c. une catégorie inventée reste refusée",
+         _refuse({"organisation_name": "X", "category": "salle_de_sport"}))
+verifier("9c-bis. les dix catégories connues sont acceptées",
+         all(not _refuse({"organisation_name": "X", "category": c})
+             for c in S.P3S1_CATEGORIES))
+verifier("9d. les quatre champs de l'expansion sont stockables",
+         {"subcategory", "backup_channel", "language", "j0_fr_translation"}
+         <= set(S.P3S1_TEXTES))
+
+verifier("9e. « dance » tombe sur la clé RÉELLE du dépôt, `ecole_danse`",
+         I.CATEGORIE_EXPANSION.get("dance") == "ecole_danse"
+         and "ecole_de_danse" not in S.P3S1_CATEGORIES)
+verifier("9f. festival et fitness se mappent directement",
+         I.CATEGORIE_EXPANSION.get("festival") == "festival"
+         and I.CATEGORIE_EXPANSION.get("fitness") == "fitness")
+
+print("\n   -- association : étudiante ou générale, décidé sur le TEXTE --")
+for nom, sous, attendu in (
+        ("ESN UNIL", "Étudiante / Erasmus / internationale", "communaute_etudiante"),
+        ("ESN Zürich", "Étudiants internationaux (UZH/ETH)", "communaute_etudiante"),
+        ("AEA — Assoc. des Étudiant·e·s", "Étudiante afro-descendante", "communaute_etudiante"),
+        ("ASAZ – African Students Association", "Étudiants africains (ETH/UZH)", "communaute_etudiante"),
+        ("BDE quelque part", "Bureau des étudiants", "communaute_etudiante"),
+        ("FAANG — Fédération", "Fédération diaspora afro", "association"),
+        ("Afrodyssée", "Culture / mode / design africains", "association"),
+        ("Appartenances — Espaces Femmes", "Féminine / interculturelle / migrantes", "association"),
+        ("Sisterhood", "Réseau femmes diaspora (267 membres)", "association"),
+        ("African Diaspora Council", "Faîtière diaspora africaine", "association")):
+    verifier("9g. %-34s -> %s" % (nom[:34], attendu),
+             I.classer_association(nom, sous) == attendu,
+             "obtenu : %s" % I.classer_association(nom, sous))
+
+verifier("9h. le classement lit la SOUS-CATÉGORIE, pas seulement le nom",
+         I.classer_association("Association Machin", "Étudiante / campus") == "communaute_etudiante"
+         and I.classer_association("Association Machin", "Culturelle africaine") == "association")
+
+print("\n10. LES DEUX CLASSEURS")
+
+CHEMIN_EXP = I.CHEMIN_EXPANSION
+if not (os.path.exists(I.CHEMIN_DEFAUT) and os.path.exists(CHEMIN_EXP)):
+    non_joue("10a-10n. fusion des deux classeurs", "un classeur est absent")
+else:
+    base = I.traduire(I.lire_classeur(I.CHEMIN_DEFAUT), COACH_A)
+    exp = I.traduire_expansion(I.lire_classeur(CHEMIN_EXP), COACH_A)
+    tous = I.charger_sources([I.CHEMIN_DEFAUT, CHEMIN_EXP], COACH_A)
+    verifier("10a. base initiale = 80 lignes", len(base) == 80, "lu : %d" % len(base))
+    verifier("10b. expansion = 62 lignes", len(exp) == 62, "lu : %d" % len(exp))
+    verifier("10c. total source = 142", len(tous) == 142, "lu : %d" % len(tous))
+    verifier("10d. le format est reconnu à la FEUILLE, pas au nom du fichier",
+             len(I.charger_sources([CHEMIN_EXP, I.CHEMIN_DEFAUT], COACH_A)) == 142)
+    verifier("10e. l'expansion se répartit sur les trois villes annoncées",
+             {d["city"] for d in exp} == {"Lausanne", "Genève", "Zürich"})
+    import collections as _c
+    _villes = _c.Counter(d["city"] for d in exp)
+    verifier("10f. Lausanne 21 · Genève 20 · Zürich 21",
+             _villes["Lausanne"] == 21 and _villes["Genève"] == 20 and _villes["Zürich"] == 21,
+             str(dict(_villes)))
+    verifier("10g. les 62 tombent sur des catégories connues du serveur",
+             all(d["category"] in S.P3S1_CATEGORIES for d in exp))
+    verifier("10h. les 62 démarrent en « a_contacter »",
+             all(d["status"] == "a_contacter" for d in exp))
+    verifier("10i. les 142 refs sont uniques",
+             len({d["ref"] for d in tous}) == 142)
+
+    print("\n   -- ce que Cowork a validé ne doit pas être écrasé --")
+    _alld = [d for d in exp if d["language"]]
+    verifier("10j. la langue est conservée pour les 62", len(_alld) == 62)
+    _de = [d for d in exp if "allemand" in (d["language"] or "").lower()]
+    verifier("10k. les fiches allemandes gardent leur J0 allemand",
+             _de and all(d["j0_message"] for d in _de), "%d fiches" % len(_de))
+    _tr = [d for d in exp if d["j0_fr_translation"]]
+    verifier("10l. les 21 traductions françaises de Zurich sont conservées",
+             len(_tr) == 21, "trouvees : %d" % len(_tr))
+    verifier("10m. aucune traduction n'écrase le message d'origine",
+             all(d["j0_fr_translation"] != d["j0_message"] for d in _tr))
+    verifier("10n. le type de collaboration n'est posé QUE sur marqueur explicite",
+             all(d["collaboration_type"] in (None, "community", "event_programming", "both")
+                 for d in exp)
+             and any(d["collaboration_type"] is None for d in exp))
+
+    print("\n11. DRY-RUN DE FUSION, IDEMPOTENCE, DESTINATAIRES")
+
+    b1 = BaseBouchon()
+    plan = lancer(I.planifier(b1, tous, COACH_A))
+    verifier("11a. dry-run : 142 nouveaux, 0 conflit, 0 invalide",
+             len(plan["nouveaux"]) == 142 and not plan["conflits"] and not plan["invalides"],
+             "n=%d c=%d i=%d" % (len(plan["nouveaux"]), len(plan["conflits"]), len(plan["invalides"])))
+    verifier("11b. le dry-run n'a RIEN écrit", b1["partner_prospects"].ecritures == 0)
+    plan2 = lancer(I.planifier(b1, I.charger_sources([I.CHEMIN_DEFAUT, CHEMIN_EXP], COACH_A), COACH_A))
+    verifier("11c. un second dry-run rend le même verdict",
+             len(plan2["nouveaux"]) == len(plan["nouveaux"]))
+
+    lancer(I.appliquer(b1, plan, COACH_A))
+    verifier("11d. application locale : 142 fiches", len(b1["partner_prospects"].documents) == 142)
+    p3 = lancer(I.planifier(b1, I.charger_sources([I.CHEMIN_DEFAUT, CHEMIN_EXP], COACH_A), COACH_A))
+    res3 = lancer(I.appliquer(b1, p3, COACH_A))
+    verifier("11e. RÉIMPORT : toujours 142, jamais 284",
+             res3["crees"] == 0 and len(b1["partner_prospects"].documents) == 142)
+    verifier("11f. aucune autre collection touchée",
+             b1.ecritures_hors("partner_prospects") == {})
+
+    groupes = I.grouper_destinataires(tous)
+    partages = [g for g in groupes if len(g) > 1]
+    verifier("11g. 142 fiches -> moins de 142 destinataires",
+             len(groupes) < 142, "destinataires : %d" % len(groupes))
+    verifier("11h. l'écart s'explique entièrement par les groupes partagés",
+             142 - len(groupes) == sum(len(g) - 1 for g in partages))
+
+    def _fiche(ref):
+        return next((i for i, d in enumerate(tous) if d["ref"] == ref), None)
+
+    def _memes(a, b):
+        ia, ib = _fiche(a), _fiche(b)
+        return any(ia in g and ib in g for g in groupes)
+
+    verifier("11i. DANCEFLOOR : les deux sites sont UN SEUL destinataire",
+             _memes("LSN-D5", "GVA-D2"))
+    verifier("11j. ... mais restent DEUX fiches distinctes",
+             _fiche("LSN-D5") is not None and _fiche("GVA-D2") is not None
+             and tous[_fiche("LSN-D5")]["city"] != tous[_fiche("GVA-D2")]["city"])
+    _pd = I._preuves_destinataire(tous[_fiche("LSN-D5")]) & I._preuves_destinataire(tous[_fiche("GVA-D2")])
+    verifier("11k. la preuve est FORTE : même e-mail ET même téléphone",
+             any(x.startswith("mail:") for x in _pd) and any(x.startswith("tel:") for x in _pd),
+             str(sorted(_pd)))
+
+    verifier("11l. RESO : Neuchâtel, Lausanne et Genève restent TROIS destinataires",
+             not _memes("ORG-01", "LSN-E3") and not _memes("LSN-E3", "GVA-E3")
+             and not _memes("ORG-01", "GVA-E3"))
+    verifier("11m. ... alors qu'ils partagent le domaine fetedeladanse.ch",
+             len({S.p3s1_domaine(tous[_fiche(r)]["website"])
+                  for r in ("ORG-01", "LSN-E3", "GVA-E3")}) == 1)
+    verifier("11n. JAZZERCISE : Lausanne et Zurich restent deux destinataires",
+             not _memes("LSN-F4", "ZRH-F2"))
+    verifier("11o. le domaine seul ne fusionne JAMAIS",
+             all(not _memes(a, b) for a, b in (("ORG-01", "LSN-E3"), ("LSN-F4", "ZRH-F2"),
+                                               ("BAR-05", "ORG-02"), ("ETU-01", "ETU-09"))))
+
+    print("\n   -- les quatre doublons que Cowork dit avoir exclus --")
+    _noms = " | ".join((d["organisation_name"] or "").lower() for d in exp)
+    for mot in ("laff", "cipina", "pfingsten", "danse"):
+        pass
+    for mot, libelle in (("laff", "LAFF"), ("cipina", "CIPINA"), ("pfingsten", "Afro-Pfingsten")):
+        verifier("11p. %s n'est pas ré-ajouté par l'expansion" % libelle, mot not in _noms)
+    verifier("11q. K'Danse n'est pas ré-ajouté par l'expansion",
+             "k'danse" not in _noms and "kdanse" not in _noms)
+
+    _rapport = I.rapport_destinataires(tous)
+    verifier("11r. le rapport rend les deux nombres, fiches et destinataires",
+             _rapport["fiches"] == 142 and _rapport["destinataires"] == len(groupes))
+    _dom = I.rapport_domaines(tous)
+    verifier("11s. les domaines partagés sont SIGNALÉS", "fetedeladanse.ch" in _dom)
+
+    print("\n12. AUCUN EFFET DE BORD, AUCUN ENVOI")
+    b2 = BaseBouchon()
+    lancer(I.appliquer(b2, lancer(I.planifier(b2, tous, COACH_A)), COACH_A))
+    verifier("12a. l'import des 142 n'écrit que dans partner_prospects",
+             b2.ecritures_hors("partner_prospects") == {},
+             str(b2.ecritures_hors("partner_prospects")))
+    for intitule, col in (("12b. aucun user", "users"), ("12c. aucun lead", "leads"),
+                          ("12d. aucun chat_participant", "chat_participants"),
+                          ("12e. aucune réservation", "reservations"),
+                          ("12f. aucun abonnement", "subscriptions"),
+                          ("12g. aucun partenaire", "partners"),
+                          ("12h. aucune notification", "notifications")):
+        verifier(intitule, b2[col].ecritures == 0 and b2[col].documents == [])
+    verifier("12i. l'importeur ne contient toujours AUCUN canal d'envoi",
+             not [i for i in INTERDITS if i in
+                  open(os.path.join(RACINE, "tests", "import_prospects_cowork.py"),
+                       encoding="utf-8").read().lower()])
+    ECRAN2 = open(os.path.join(RACINE, "frontend", "src", "components", "coach",
+                               "ProspectsSection.js"), encoding="utf-8").read()
+    verifier("12j. l'écran connaît les dix catégories du serveur",
+             set(re.findall(r"cle: '([a-z_]+)', libelle", ECRAN2)) >= set(S.P3S1_CATEGORIES))
+    verifier("12k. Association et Fitness sont affichés",
+             "'Association'" in ECRAN2 and "'Fitness'" in ECRAN2)
+
 # ===========================================================================
 print("\n" + "=" * 78)
 _ok = sum(1 for _, c, _ in RESULTATS if c)

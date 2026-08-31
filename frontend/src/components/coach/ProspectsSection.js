@@ -83,6 +83,11 @@ export const CATEGORIES = [
   { cle: 'organisateur_evenement', libelle: 'Organisateur événementiel' },
   { cle: 'communaute_etudiante', libelle: 'Communauté étudiante' },
   { cle: 'influenceur', libelle: 'Influenceur' },
+  // P3-S2B — l'expansion Lausanne / Genève / Zurich. « Association » reste
+  // distincte de « Communauté étudiante » : on n'écrit pas la même chose à une
+  // faîtière de la diaspora qu'à un bureau des étudiants.
+  { cle: 'association', libelle: 'Association' },
+  { cle: 'fitness', libelle: 'Fitness' },
 ];
 
 /* Les six statuts AMONT. `decouverte`, `actif` et `ambassadeur` n'y sont pas :

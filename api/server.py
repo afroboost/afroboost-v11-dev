@@ -21118,6 +21118,18 @@ P3S1_CATEGORIES = (
     "organisateur_evenement",
     "communaute_etudiante",
     "influenceur",
+    # P3-S2B — l'expansion Lausanne / Geneve / Zurich amene deux familles que
+    # les huit premieres ne savaient pas nommer. Les forcer dans `commerce` ou
+    # `communaute_etudiante` aurait rendu un filtre faux et un ciblage faux.
+    #
+    # `association` est GENERALE : culturelle, africaine, diaspora, feminine,
+    # communautaire, faitiere. Elle ne remplace PAS `communaute_etudiante`, qui
+    # reste reservee aux structures explicitement etudiantes (ESN, BDE,
+    # associations universitaires) — la distinction sert au message, pas au
+    # rangement : on n'ecrit pas la meme chose a une faitiere de la diaspora
+    # qu'a un bureau des etudiants.
+    "association",
+    "fitness",
 )
 
 # LE PIPELINE AMONT, ET LUI SEUL. `decouverte`, `actif` et `ambassadeur`
@@ -21161,6 +21173,13 @@ P3S1_TEXTES = {
     "contact_name": 120, "contact_role": 120,
     "source_url": 500, "secondary_source_url": 500,
     "wave": 40, "preferred_channel": 60, "approach": 300,
+    # P3-S2B — quatre champs apportes par l'expansion. `language` et
+    # `j0_fr_translation` ne sont pas decoratifs : les 21 fiches de Zurich
+    # portent un message allemand ET sa traduction francaise, tous deux valides
+    # par Cowork. Les jeter obligerait a les reecrire. `subcategory` porte la
+    # nuance qui distingue une association etudiante d'une faitiere de diaspora.
+    "subcategory": 160, "backup_channel": 60,
+    "language": 40, "j0_fr_translation": 4000,
     "j0_message": 4000, "j3_message": 4000, "j7_message": 4000,
     "interested_message": 4000,
     "notes": 4000, "ref": 40,

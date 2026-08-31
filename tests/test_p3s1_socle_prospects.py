@@ -667,10 +667,19 @@ verifier("S-6. DuplicateKeyError a son import LOCAL dans les deux routes d'ecrit
              if "DuplicateKeyError" in (ast.get_source_segment(SOURCE, f) or "")))
 verifier("S-7. les statuts partenaire P2 ne sont PAS redefinis par ce lot",
          not ({"decouverte", "actif", "ambassadeur"} & set(S.P3S1_STATUTS)))
-verifier("S-8. les 8 categories demandees sont couvertes",
-         set(S.P3S1_CATEGORIES) == {"festival", "ecole_danse", "restaurant", "bar",
+# P3-S2B a AJOUTE deux categories (`association`, `fitness`). L'assertion
+# d'origine figeait l'egalite a huit : elle est ELARGIE, pas retiree — les huit
+# du socle restent exigees, et les deux nouvelles sont verifiees a part. Une
+# categorie supprimee ferait donc toujours echouer ce test.
+verifier("S-8. les 8 categories du socle sont TOUJOURS couvertes",
+         set(S.P3S1_CATEGORIES) >= {"festival", "ecole_danse", "restaurant", "bar",
                                     "commerce", "organisateur_evenement",
                                     "communaute_etudiante", "influenceur"})
+verifier("S-8-bis. P3-S2B a ajoute « association » et « fitness », et rien d'autre",
+         set(S.P3S1_CATEGORIES) == {"festival", "ecole_danse", "restaurant", "bar",
+                                    "commerce", "organisateur_evenement",
+                                    "communaute_etudiante", "influenceur",
+                                    "association", "fitness"})
 verifier("S-9. aucune route DELETE — hors lot, comme convenu",
          "p3s1_supprimer" not in SOURCE and 'delete("/partner-prospects' not in SOURCE)
 verifier("S-10. la collection est distincte des sept collections metier",
