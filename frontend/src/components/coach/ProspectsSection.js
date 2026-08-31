@@ -49,6 +49,28 @@ const RGB = 'var(--primary-rgb, 217, 28, 210)';
    couleur explicitement : celui-ci fait pareil. Aucun thème global n'est
    touché — ce serait un autre lot, et un risque sans rapport. */
 const TEXTE = '#fff';
+/* P3-S2D — LA COULEUR DE MARQUE, RENDUE LISIBLE SANS CHANGER DE TEINTE.
+   Le chiffre de la tuile ACTIVE s'ecrit dans la couleur du coach, sur le fond
+   teinte de cette meme couleur a 16 % sur du noir. Avec la couleur mesuree en
+   production (#9f2d70, un magenta sombre), cela donnait 2.85:1 — sous le seuil
+   WCAG << gros texte >> de 3:1, qui s'applique ici (20 px, gras).
+
+   `color-mix` eclaircit la couleur DU COACH de 20 % vers le blanc : la teinte
+   est conservee, l'identite aussi, et le calcul suit sa couleur quelle qu'elle
+   soit — aucun hexadecimal n'est fige. Mesure sur les trois couleurs reellement
+   en base : #9f2d70 -> 4.29:1, #c328be et #d91cd2 -> au-dela de 5:1.
+
+   REPLI : un navigateur sans `color-mix` (avant Chrome 111 / Safari 16.2)
+   rejette la declaration ; le chiffre herite alors du blanc de la racine —
+   19.78:1, lisible, simplement pas colore. La degradation est sure.
+
+   LIMITE ASSUMEE : une couleur personnalisee EXTREMEMENT sombre resterait sous
+   3:1 meme eclaircie de 20 %. La traiter demanderait un jeton conscient de la
+   luminance, applicable a tout le tableau de bord — un autre lot.
+
+   La bordure et le fond de la tuile gardent la couleur BRUTE : l'identite
+   visuelle de l'etat actif ne change pas. */
+const PRIMAIRE_LISIBLE = 'color-mix(in srgb, var(--primary-color, #D91CD2) 80%, white)';
 
 /* Les valeurs techniques sont celles du serveur (P3S1_CATEGORIES). Le libellé
    n'existe que pour l'affichage : c'est la clé qui voyage, jamais le mot. */
@@ -136,7 +158,7 @@ function Tuile({ libelle, valeur, actif, onClick }) {
       data-testid={`tuile-${libelle}`}
     >
       <div style={{ fontSize: '11px', opacity: 0.65, lineHeight: 1.3 }}>{libelle}</div>
-      <div style={{ fontSize: '20px', fontWeight: 700, color: actif ? PRIMAIRE : 'inherit' }}>
+      <div style={{ fontSize: '20px', fontWeight: 700, color: actif ? PRIMAIRE_LISIBLE : 'inherit' }}>
         {valeur}
       </div>
     </button>

@@ -515,6 +515,42 @@ describe('P3-S2C — contraste', () => {
     });
   });
 
+  // P3-S2D — le chiffre de la tuile ACTIVE etait ecrit dans la couleur de marque
+  // BRUTE sur un fond teinte de cette meme couleur : 2.85:1 avec la couleur
+  // mesuree en production (#9f2d70), sous le seuil << gros texte >> de 3:1.
+  //
+  // CES TROIS CONTROLES LISENT LA SOURCE, PAS LE DOM. jsdom ne stocke ni
+  // `color-mix`, ni un `var()` place dans un raccourci `border`/`background`,
+  // ni le mot-cle `inherit` : sonde a l'appui, `style.color`, `style.border` et
+  // `style.background` reviennent tous vides. Le navigateur, lui, les applique.
+  const SOURCE = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'ProspectsSection.js'), 'utf8');
+
+  test("le chiffre de la tuile active éclaircit la couleur de marque, sans en changer", () => {
+    const decl = SOURCE.match(/const PRIMAIRE_LISIBLE = '([^']+)'/);
+    expect(decl).not.toBeNull();
+    // On part de la variable du coach : aucune couleur n'est figée.
+    expect(decl[1]).toContain('var(--primary-color');
+    // On l'éclaircit vers le blanc — pas vers une couleur sans rapport.
+    expect(decl[1]).toContain('color-mix');
+    expect(decl[1]).toContain('white');
+    // Et c'est bien elle qu'utilise le chiffre de la tuile active.
+    expect(SOURCE).toContain("color: actif ? PRIMAIRE_LISIBLE : 'inherit'");
+  });
+
+  test('les tuiles INACTIVES gardent leur chiffre hérité — rien d’autre ne change', () => {
+    // Un seul endroit distingue actif / inactif pour la couleur du chiffre,
+    // et l'inactif retombe sur l'héritage, donc sur le blanc de la racine.
+    expect(SOURCE.match(/PRIMAIRE_LISIBLE/g)).toHaveLength(2); // la déclaration + l'usage
+    expect(SOURCE).toContain("color: actif ? PRIMAIRE_LISIBLE : 'inherit'");
+  });
+
+  test('la bordure et le fond de la tuile active gardent la couleur de marque BRUTE', () => {
+    // L'identité visuelle de l'état actif ne bouge pas : seul le chiffre change.
+    expect(SOURCE).toContain("border: `1px solid ${actif ? PRIMAIRE : 'rgba(255,255,255,0.10)'}`");
+    expect(SOURCE).toContain("background: actif ? `rgba(${RGB}, 0.16)`");
+  });
+
   test('la fiche hérite de la racine, donc du texte lisible', async () => {
     mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect()]) };
     await monter(<ProspectsSection API="/api" />);
