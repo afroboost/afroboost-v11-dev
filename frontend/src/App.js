@@ -3070,6 +3070,43 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
     : 356;
   const AUTO_PLAY_INTERVAL = 3500; // 3.5 secondes entre chaque slide
 
+  // P2-FIX2 — LE LIEN PROFOND NE DOIT S'EXECUTER QU'UNE FOIS.
+  //
+  // LE DEFAUT MESURE, le 31/08/2026, en contexte visiteur anonyme :
+  //     t=800 ms  la carte passe a scale(1.02) -> elle EST selectionnee
+  //     t=1200 ms elle revient a scale(1)      -> la selection est DEFAITE
+  // `&reserver=1` fonctionnait donc, puis se defaisait 400 ms plus tard, et le
+  // visiteur devait cliquer la carte lui-meme.
+  //
+  // LA CHAINE. L'effet ci-dessous depend de `[offers]`, et `offers` vaut
+  // `filteredServices` — un tableau RECREE a chaque rendu du parent. Ouvrir le
+  // formulaire change l'etat, donc provoque un rendu, donc un nouveau tableau,
+  // donc l'effet se rejoue. La sonde retrouve la carte immediatement et rappelle
+  // `onSelectOffer` sur la MEME offre — ce qui declenche la bascule de v56
+  // (« la meme offre deja selectionnee -> on la deselectionne ») et referme ce
+  // qu'on venait d'ouvrir.
+  //
+  // Une `ref` — et non un `state` — parce qu'elle change de valeur
+  // IMMEDIATEMENT : un `state` ne serait a jour qu'au rendu suivant, c'est-a-dire
+  // trop tard, exactement le defaut corrige dans P2-B sur le double clic.
+  const p2fix2LienProfondTraite = useRef(false);
+  // Un lien profond est-il en cours de traitement ? Tant que oui, le carrousel
+  // ne doit pas deplacer la carte que le visiteur s'apprete a voir s'ouvrir.
+  const [p2fix2LienProfondEnCours] = useState(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      const h = new URLSearchParams((window.location.hash.split('?')[1]) || '');
+      return !!(q.get('offre') || h.get('offre'));
+    } catch (e) { return false; }
+  });
+  // Le PENDANT du verrou, en `state` cette fois — et les deux sont necessaires.
+  // La `ref` sert au garde de l'effet : elle doit changer immediatement. Le
+  // `state`, lui, RELANCE l'effet de defilement automatique : une `ref` ne
+  // provoque aucun rendu, si bien qu'un lien `?offre=` SANS `reserver=1`
+  // (qui defile et met en evidence, mais n'ouvre rien) aurait laisse le
+  // carrousel suspendu pour toujours.
+  const [p2fix2LienProfondFini, setP2fix2LienProfondFini] = useState(false);
+
   // V225: enrichissement de chaque offre de ses cours complets. Fait ICI, une
   // seule fois, plutot qu'aux deux points de montage (offres ~l.5688 et boutique
   // ~l.5937) : les deux passent deja `courses`, donc les deux en beneficient
@@ -3111,6 +3148,9 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
   // Aucune modification du checkout, aucune session créée.
   useEffect(() => {
     if (!offers || offers.length === 0) return;
+    // P2-FIX2 : une seule fois, quoi qu'il arrive. Voir l'explication du verrou
+    // au-dessus — sans lui, l'effet se rejoue et referme le formulaire.
+    if (p2fix2LienProfondTraite.current) return;
     let cible = '';
     try {
       cible = new URLSearchParams(window.location.search).get('offre') || '';
@@ -3140,6 +3180,11 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
         return;
       }
       clearInterval(t);
+      // P2-FIX2 : la cible existe, on agit — et on ne repassera plus jamais ici.
+      // Pose APRES le `if (!carte)`, jamais avant : tant que les offres n'ont
+      // pas monte leurs cartes, l'effet doit pouvoir repasser.
+      p2fix2LienProfondTraite.current = true;
+      setP2fix2LienProfondFini(true);
       // V434b — DÉFILEMENT INSTANTANÉ, PAS ANIMÉ.
       // Mesuré : `behavior: 'smooth'` finit systématiquement à y=0 sur cette
       // page. L'animation dure plusieurs centaines de millisecondes, pendant
@@ -3187,6 +3232,11 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
   
   // Auto-play effect
   useEffect(() => {
+    // P2-FIX2 : un lien profond vise une carte precise. Tant qu'elle n'est pas
+    // ouverte, le carrousel ne doit pas la faire glisser sous le doigt du
+    // visiteur. Une fois le formulaire ouvert, `v383Formulaires` et
+    // `selectedOffer` prennent le relais, comme aujourd'hui.
+    if (p2fix2LienProfondEnCours && !p2fix2LienProfondFini) return;
     if (!offers || offers.length <= 1 || isPaused || v383Formulaires > 0 || selectedOffer) return;   // V383
     
     const interval = setInterval(() => {
@@ -3204,7 +3254,8 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
     }, AUTO_PLAY_INTERVAL);
     
     return () => clearInterval(interval);
-  }, [offers, isPaused, v383Formulaires, selectedOffer]);   // V383
+  }, [offers, isPaused, v383Formulaires, selectedOffer, p2fix2LienProfondEnCours,
+      p2fix2LienProfondFini]);   // V383 + P2-FIX2
   
   // Reset auto-play when offers change
   useEffect(() => {
