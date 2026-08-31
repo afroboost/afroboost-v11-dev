@@ -181,6 +181,24 @@ const LienPartenaire = ({ slug }) => {
         {lien}
       </p>
 
+      {/* P2-UX SIMPLE — CE QUE LE PARTENAIRE A A FAIRE, EN UNE PHRASE.
+          Volontairement sobre : elle dit ce qui se passe, sans evoquer ce qui
+          ne se passe pas. Parler de fichiers clients ou de donnees a proteger
+          installerait une inquietude que personne n'a exprimee — l'interface
+          suffit a montrer qu'on ne partage qu'un lien et un QR. Le partenaire
+          ne voit ici que son lien, son QR et, plus tard, ses resultats : il
+          n'existe aucun formulaire de reservation de ce cote, et il ne doit
+          pas y en avoir. */}
+      <p style={{
+        margin: '0 0 10px', padding: '8px 10px', borderRadius: '8px',
+        background: 'rgba(255,255,255,0.05)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        color: 'rgba(255,255,255,0.6)', fontSize: '11px', lineHeight: 1.5,
+      }}>
+        Partagez votre invitation Afroboost. Votre communauté s'inscrit et
+        réserve directement sa séance.
+      </p>
+
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
         <BoutonAction onClick={copier} couleur={copie ? '#22c55e' : '#a78bfa'}>
           {copie ? <><Check size={13} /> Copié</> : <><Copy size={13} /> Copier</>}

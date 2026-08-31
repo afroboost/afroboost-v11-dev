@@ -34921,6 +34921,10 @@ _M1_TUNNEL = "/?link=b83914b4-c5a"
 _M1_REGION = "neuchatel"
 _M1_HORIZON_JOURS = 45
 _M1_MAX_SEANCES = 12
+# P2-UX SIMPLE : combien de seances le visiteur voit SANS deplier. Les
+# autres restent dans le document (SEO, `Event` JSON-LD, navigation sans
+# JavaScript) — elles sont seulement repliees.
+_M1_SEANCES_VISIBLES = 3
 
 
 def _m1_echapper(valeur):
@@ -35027,20 +35031,42 @@ async def m1_page_essai_neuchatel(request: Request):
     _mois, _evenements = await _m1_seances()
 
     if _mois:
-        _blocs = []
-        for _i, _g in enumerate(_mois):
-            # `<details>` natif : le premier mois ouvert, les suivants replies.
-            # Zero JavaScript, et le `<summary>` est focusable au clavier par
-            # construction — on n'a rien a reimplementer.
-            _cartes = "".join(
-                '<article class="seance"><p class="s-quand">%s<span>%s</span></p>'
-                '<p class="s-lieu">%s</p><p class="s-nom">%s</p></article>'
-                % (_x["jour"], _x["heure"], _x["lieu"], _x["nom"]) for _x in _g["lignes"])
+        # P2-UX SIMPLE — TROIS SÉANCES VISIBLES, LE RESTE REPLIÉ.
+        #
+        # CE QUI CHANGE, ET CE QUI NE CHANGE PAS. Seule la PRÉSENTATION bouge.
+        # `_m1_seances()` n'est pas touchée : elle rend toujours les mêmes 12
+        # occurrences, et `_evenements` — les 12 `Event` JSON-LD injectés plus
+        # bas — en dérive indépendamment de ce bloc. Google ne perd donc
+        # strictement rien : les 12 séances restent dans le document ET dans
+        # les données structurées.
+        #
+        # POURQUOI TROIS. Le visiteur arrive par un lien de partenaire et n'a
+        # qu'une décision à prendre : s'inscrire. Douze grosses cartes empilées
+        # lui font défiler une page entière avant d'atteindre le bouton, et lui
+        # laissent croire qu'il doit choisir ici — alors que le choix de la
+        # séance se fait APRÈS l'inscription, dans son espace. Trois suffisent à
+        # prouver qu'il y a des cours, souvent, et près de chez lui.
+        #
+        # `<details>` natif, sans JavaScript : le `<summary>` est focusable au
+        # clavier par construction, et le contenu replié reste dans le DOM —
+        # c'est ce qui permet de raccourcir la page sans rien retirer.
+        _toutes = [(_g["titre"], _x) for _g in _mois for _x in _g["lignes"]]
+        _carte = (lambda _x:
+                  '<article class="seance"><p class="s-quand">%s<span>%s</span></p>'
+                  '<p class="s-lieu">%s</p><p class="s-nom">%s</p></article>'
+                  % (_x["jour"], _x["heure"], _x["lieu"], _x["nom"]))
+
+        _apercu = "".join(_carte(_x) for _titre_mois, _x in _toutes[:_M1_SEANCES_VISIBLES])
+        _reste = _toutes[_M1_SEANCES_VISIBLES:]
+        _blocs = ['<div class="grille">%s</div>' % _apercu]
+        if _reste:
             _blocs.append(
-                '<details%s><summary>%s<span class="s-compte">%d séance%s</span></summary>'
+                '<details><summary>Voir tout le planning'
+                '<span class="s-compte">%d autre%s séance%s</span></summary>'
                 '<div class="grille">%s</div></details>'
-                % (" open" if _i == 0 else "", _m1_echapper(_g["titre"]),
-                   len(_g["lignes"]), "s" if len(_g["lignes"]) > 1 else "", _cartes))
+                % (len(_reste), "s" if len(_reste) > 1 else "",
+                   "s" if len(_reste) > 1 else "",
+                   "".join(_carte(_x) for _titre_mois, _x in _reste)))
         _planning = "".join(_blocs)
     else:
         # NI DATE NI ADRESSE INVENTEE — on le dit, et le CTA reste.
@@ -35158,6 +35184,11 @@ section{margin-top:40px}
 h2{font-size:clamp(1.15rem,4.6vw,1.5rem);margin:0 0 14px;font-weight:700}
 p{margin:0 0 14px;color:#e8e8f0}
 .note{color:#a9a9b8;font-size:.9rem}
+/* P2-UX SIMPLE : la microcopie qui dit QUAND on choisit sa seance. */
+.intro{margin:0 0 14px;color:#d7d7e2;font-size:.98rem;line-height:1.5}
+/* L'apercu des 3 seances vit hors d'un <details> : il ne reprend donc pas
+   le retrait lateral prevu pour le contenu deplie. */
+.seances > .grille{padding:0 0 14px}
 
 /* ---- SEANCES : mois replies, HTML natif ---- */
 details{border:1px solid rgba(255,255,255,.12);border-radius:14px;margin-bottom:12px;
@@ -35200,6 +35231,8 @@ ton casque.</p>
 </section>
 <section class="seances">
 <h2>Prochaines séances à Neuchâtel</h2>
+<p class="intro">Ton premier cours Afroboost est offert. Inscris-toi
+gratuitement, puis choisis la séance qui te convient.</p>
 %(planning)s
 <p class="note">Dates, horaires et lieux viennent directement du planning
 Afroboost. Le lieu exact est indiqué avec chaque séance.</p>

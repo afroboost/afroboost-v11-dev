@@ -180,6 +180,18 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [conditionsOk, setConditionsOk] = useState({});
   const [conditionsRequises, setConditionsRequises] = useState(false);
   const [confirmedKeys, setConfirmedKeys] = useState({});
+  // P2-UX SIMPLE — LA SEANCE QU'ON VIENT DE RESERVER, ET ELLE SEULE.
+  //
+  // Jusqu'ici la seule confirmation etait un badge « Reserve » de la taille
+  // d'une etiquette, au milieu d'une liste de dates. Quelqu'un qui vient de
+  // reserver son PREMIER cours n'a aucun repere pour savoir ce qu'il a obtenu,
+  // ni ou il doit se rendre. On garde le badge — il dit l'etat de chaque date —
+  // et on ajoute un panneau qui repond aux trois seules questions du moment :
+  // c'est confirme, quand, ou.
+  //
+  // Les valeurs viennent de l'occurrence REELLEMENT envoyee au serveur, jamais
+  // d'un texte fabrique : si le serveur avait refuse, on ne serait pas ici.
+  const [seanceConfirmee, setSeanceConfirmee] = useState(null);
   const [qrFullscreen, setQrFullscreen] = useState(false);
   const [actionError, setActionError] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
@@ -476,6 +488,19 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         course_id: occurrence.course_id,
         places: qty,
         is_trial: !!(data?.trial && data.trial.is_trial)
+      });
+
+      // P2-UX SIMPLE : posee ICI, donc APRES la reponse du serveur — au meme
+      // endroit que `session_booked`, et pour la meme raison. Un refus part
+      // dans le `catch` et n'affiche aucune confirmation.
+      setSeanceConfirmee({
+        cle: reservationKey,
+        nom: occurrence.name || "",
+        datetime: occurrence.datetime,
+        date: occurrence.date,
+        time: occurrence.time,
+        lieu: occurrence.locationName || "",
+        places: qty,
       });
 
       // V186/V187: reset compteur + guests après réservation
@@ -1033,6 +1058,52 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             </svg>
           </button>
         </header>
+
+        {/* ═══ P2-UX SIMPLE — LA CONFIRMATION QUI MANQUAIT ═══════════════
+            Elle prend la place de tete (`order: -2`, donc au-dessus du bloc
+            ESSAI-7 qui, lui, invite a CHOISIR une seance) le temps de dire
+            l'essentiel : c'est enregistre, quand, ou. Elle ne remplace pas le
+            badge « Reserve » de chaque date, qui reste la source d'etat.
+            Aucune redirection, aucune vente derriere : la personne vient de
+            faire ce qu'on lui demandait, le parcours s'arrete ici. */}
+        {seanceConfirmee && (
+          <section
+            className="rounded-2xl p-5"
+            data-testid="p2ux-confirmation"
+            style={{
+              order: -2,
+              background: 'rgba(34,197,94,0.10)',
+              border: '1px solid rgba(34,197,94,0.45)',
+            }}
+          >
+            <p className="text-lg font-bold" style={{ color: '#86efac' }}>
+              ✅ Ta réservation est confirmée !
+            </p>
+            <p className="text-base font-semibold mt-2">
+              {formatOccurrence(
+                seanceConfirmee.date
+                  ? { date: seanceConfirmee.date, time: seanceConfirmee.time }
+                  : seanceConfirmee.datetime
+              )}
+            </p>
+            {seanceConfirmee.nom && (
+              <p className="text-sm opacity-80">{seanceConfirmee.nom}</p>
+            )}
+            {seanceConfirmee.lieu && (
+              <p className="text-sm opacity-80 flex items-center gap-1.5 mt-1">
+                <SvgIcon name="mapPin" size={14} /> {seanceConfirmee.lieu}
+              </p>
+            )}
+            {seanceConfirmee.places > 1 && (
+              <p className="text-sm opacity-80 mt-1">
+                {seanceConfirmee.places} places réservées
+              </p>
+            )}
+            <p className="text-sm mt-3 opacity-75">
+              Nous avons bien enregistré ta place. À bientôt chez Afroboost 🎧🔥
+            </p>
+          </section>
+        )}
 
         {/* ═══ ESSAI-7 — TANT QU'AUCUNE SEANCE N'EST CHOISIE, CHOISIR EST
             L'ACTION PRINCIPALE ══════════════════════════════════════════════
