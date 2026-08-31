@@ -38,6 +38,17 @@ import { SectionErreur } from '../ui/EtatChargement';
 
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
 const RGB = 'var(--primary-rgb, 217, 28, 210)';
+/* LE TEXTE EST POSÉ ICI, PAS HÉRITÉ — la leçon de P3-S2.
+   Le tableau de bord est sombre par dessin (`.section-gradient` et
+   `.card-gradient` sont des dégradés noirs), mais le jeu de jetons shadcn
+   resté actif est le jeu CLAIR : `--foreground: 0 0% 3.9%`, et la classe
+   `.dark` n'est posée nulle part. Un composant qui écrit `color: inherit`
+   hérite donc d'un `rgb(10,10,10)` quasi noir SUR DU NOIR — contraste 1.06,
+   texte invisible. Tous les autres écrans du tableau de bord
+   (AdhesionsManager, PartnerApplications, ContactsManager) posent leur
+   couleur explicitement : celui-ci fait pareil. Aucun thème global n'est
+   touché — ce serait un autre lot, et un risque sans rapport. */
+const TEXTE = '#fff';
 
 /* Les valeurs techniques sont celles du serveur (P3S1_CATEGORIES). Le libellé
    n'existe que pour l'affichage : c'est la clé qui voyage, jamais le mot. */
@@ -287,7 +298,7 @@ export default function ProspectsSection({ API }) {
   const nb = (cle) => (chargeUnFois ? (compteurs[cle] || 0) : '—');
 
   return (
-    <div style={{ padding: '4px 0' }} data-testid="prospection-section">
+    <div style={{ padding: '4px 0', color: TEXTE }} data-testid="prospection-section">
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
         <SvgIcon name="compass" size={18} />
         <h2 style={{ fontSize: '18px', fontWeight: 700, margin: 0 }}>Prospection</h2>
@@ -354,7 +365,7 @@ export default function ProspectsSection({ API }) {
       ) : null}
 
       {etat === SECTION.CHARGEMENT && (
-        <div style={{ opacity: 0.45, fontSize: '12px', padding: '10px 0' }}>
+        <div style={{ opacity: 0.55, fontSize: '12px', padding: '10px 0' }}>
           Chargement des prospects…
         </div>
       )}
@@ -399,7 +410,7 @@ export default function ProspectsSection({ API }) {
                   >
                     <td style={{ padding: '8px', fontWeight: 600 }}>
                       {p.organisation_name}
-                      {p.ref ? <span style={{ opacity: 0.45, fontSize: '11px' }}> · {p.ref}</span> : null}
+                      {p.ref ? <span style={{ opacity: 0.55, fontSize: '11px' }}> · {p.ref}</span> : null}
                     </td>
                     <td style={{ padding: '8px' }}>{libelleDe(CATEGORIES, p.category)}</td>
                     <td style={{ padding: '8px' }}>{ou(p.city)}</td>
@@ -637,7 +648,7 @@ const styleChamp = {
   borderRadius: '8px',
   border: '1px solid rgba(255,255,255,0.14)',
   background: 'rgba(255,255,255,0.05)',
-  color: 'inherit',
+  color: TEXTE,
   fontSize: '13px',
 };
 

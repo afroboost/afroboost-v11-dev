@@ -484,6 +484,48 @@ describe('P3-S2 — édition', () => {
   });
 });
 
+// P3-S2C — LE CONTRASTE. Ce bloc existe parce que la version deployee etait
+// ILLISIBLE : le composant ecrivait `color: inherit`, et le tableau de bord
+// herite d'un `rgb(10,10,10)` (jeton shadcn CLAIR reste actif, classe `.dark`
+// jamais posee) sur un fond NOIR — contraste mesure 1.06 en production.
+// jsdom ne calcule pas l'heritage : aucun test ne pouvait le voir. On verifie
+// donc la CAUSE — une couleur explicite a la racine — plutot que le pixel.
+describe('P3-S2C — contraste', () => {
+  test("la racine pose une couleur EXPLICITE, jamais 'inherit'", async () => {
+    mockEtatPilote = { etat: SECTION.OK, donnees: reponse([]) };
+    await monter(<ProspectsSection API="/api" />);
+    const racine = par('prospection-section');
+    expect(racine.style.color).toBeTruthy();
+    expect(racine.style.color).not.toBe('inherit');
+  });
+
+  test('aucune opacité de texte sous 0.5 — en dessous, le blanc sur noir passe sous 4.5:1', () => {
+    const source = require('fs').readFileSync(
+      require('path').join(__dirname, '..', 'ProspectsSection.js'), 'utf8');
+    const trop_pales = (source.match(/opacity:\s*(0\.[0-4]\d*)\b/g) || []);
+    expect(trop_pales).toEqual([]);
+  });
+
+  test('les champs de saisie posent leur couleur — un <option> est rendu par l’OS', async () => {
+    mockEtatPilote = { etat: SECTION.OK, donnees: reponse([]) };
+    await monter(<ProspectsSection API="/api" />);
+    ['filtre-category', 'filtre-status', 'filtre-wave'].forEach((id) => {
+      expect(par(id).style.color).toBeTruthy();
+      expect(par(id).style.color).not.toBe('inherit');
+    });
+  });
+
+  test('la fiche hérite de la racine, donc du texte lisible', async () => {
+    mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect()]) };
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('ligne-FES-01').click(); });
+    const racine = par('prospection-section');
+    expect(par('fiche-prospect')).not.toBeNull();
+    expect(racine.contains(par('fiche-prospect'))).toBe(true);
+    expect(racine.style.color).not.toBe('inherit');
+  });
+});
+
 describe('P3-S2 — ce que l’écran ne fait pas', () => {
   test('aucun bouton d’envoi nulle part — c’est P3-S3', async () => {
     mockEtatPilote = {
