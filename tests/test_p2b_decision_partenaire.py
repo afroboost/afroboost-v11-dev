@@ -620,9 +620,21 @@ verifier("8e. les boutons n'existent que pour une candidature EN ATTENTE",
          "enAttente && onDecider" in APPC)
 verifier("8f. le slug est PROPOSE puis modifiable",
          "p2bSuggererSlug(item.name)" in APPC and "onChange={(e) => setSlug(e.target.value)}" in APPC)
+# P2-C a deplace la regle du slug dans `utils/partnerLink.js`, avec la
+# construction du lien : UNE seule regle, un seul endroit, partagee par les deux
+# lots. L'assertion suit le code plutot que de figer un emplacement — et elle
+# devient plus forte, puisqu'elle prouve la source unique.
+LIEN_UTIL = open(os.path.join(RACINE, "frontend", "src", "utils",
+                              "partnerLink.js"), encoding="utf-8").read()
 verifier("8g. le format du slug est verifie AVANT l'appel, avec la MEME regle "
          "que le serveur",
-         "p2bSlugValide(slug)" in APPC and "^[a-z0-9_]{3,40}$" in APPC)
+         "p2bSlugValide(slug)" in APPC
+         and "from '../../utils/partnerLink'" in APPC
+         and "^[a-z0-9_]{3,40}$" in LIEN_UTIL)
+verifier("8g-bis. la regle du slug n'existe QU'A UN endroit cote navigateur",
+         "[a-z0-9_]{3,40}" not in APPC,
+         "le motif est recopie dans le composant — deux regles finiraient par "
+         "diverger")
 verifier("8h. l'ecran previent que le slug est definitif",
          "ne pourra plus être modifié après l'acceptation" in APP)
 verifier("8i. le refus demande une confirmation", "Confirmer le refus" in APPC)
@@ -630,9 +642,10 @@ verifier("8j. un envoi en cours desactive les boutons (double clic sans effet)",
          "disabled={enCours}" in APPC or "disabled: enCours" in APPC)
 verifier("8k. apres succes, la liste est RECHARGEE depuis le serveur",
          "await charger();" in APPC.split("axios.patch")[1][:400])
-verifier("8l. AUCUN QR, AUCUNE statistique dans ce lot",
-         "QRCode" not in APPC and "qrcode" not in APPC.lower()
-         and "utm_" not in APPC and "statistique" not in APPC.lower())
+# P2-C ajoute DELIBEREMENT le lien UTM et le QR sur une candidature acceptee.
+# Ce qui reste hors perimetre jusqu'a P2-D, ce sont les statistiques.
+verifier("8l. AUCUNE statistique dans ce lot (P2-D)",
+         not re.search(r"\bclics\b|\bconversions\b|\btaux\b", APPC))
 verifier("8m. le Service Worker est au moins en v470",
          bool(re.search(r"afroboost-v(\d+)", SW))
          and int(re.search(r"afroboost-v(\d+)", SW).group(1)) >= 470,

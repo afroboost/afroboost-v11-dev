@@ -452,15 +452,16 @@ verifier("6i. les reponses sont rendues generiquement, sans coder q_0/q_1 en dur
          and not re.search(r"answers\.q_0|answers\['q_0'\]|\bq_1\b", APP_CODE))
 verifier("6j. « pending » s'affiche « En attente »", "pending: 'En attente'" in APP_CODE)
 
-# CE QUI RESTE INTERDIT APRES P2-B.
-# P2-A n'avait ni decision ni slug ; P2-B les ajoute DELIBEREMENT — les
-# assertions correspondantes ont donc migre vers
-# tests/test_p2b_decision_partenaire.py, qui prouve en 89 points que les
-# boutons n'apparaissent que sur une candidature EN ATTENTE et que le slug est
-# saisi avant l'acceptation. Ce qui reste hors perimetre des deux lots, et le
-# restera jusqu'a P2-C/P2-D, c'est le QR, le lien UTM et les statistiques.
-for interdit, quoi in [("QRCode", "QR"), ("qrcode", "bibliotheque QR"),
-                       ("utm_", "lien UTM"), ("<canvas", "canevas de QR")]:
+# CE QUI RESTE INTERDIT APRES P2-B ET P2-C.
+# P2-A n'avait ni decision ni slug ; P2-B les ajoute, P2-C ajoute le lien et le
+# QR — toujours DELIBEREMENT. Les assertions correspondantes ont migre vers les
+# suites de ces lots plutot que d'etre supprimees. Ne reste ici que ce qui
+# n'appartient a aucun des trois : les statistiques de P2-D.
+# P2-C ajoute le lien UTM et le QR sur une candidature ACCEPTEE — c'est son
+# objet meme. Leur absence sur `pending` et `rejected` est prouvee dans la suite
+# P2-C. Ce qui reste hors perimetre des trois lots, ce sont les statistiques.
+for interdit, quoi in [("clics", "compteur de clics"), ("conversions", "conversions"),
+                       ("taux de", "taux de conversion")]:
     verifier("6k. aucun %s dans ce lot (code seul)" % quoi,
              interdit not in APP_CODE and interdit not in CARD_CODE)
 

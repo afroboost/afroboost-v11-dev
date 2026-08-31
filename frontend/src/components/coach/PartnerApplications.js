@@ -32,7 +32,19 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { X, Mail, Phone, Calendar, Clock, RefreshCw, Inbox, AlertCircle, Check, Ban } from 'lucide-react';
+import { QRCodeCanvas } from 'qrcode.react';
+import { X, Mail, Phone, Calendar, Clock, RefreshCw, Inbox, AlertCircle, Check, Ban,
+  Copy, ExternalLink, QrCode, Download } from 'lucide-react';
+import { copyToClipboard } from '../../utils/clipboard';
+import {
+  construireLienPartenaire, p2cNomFichierQr,
+  p2bSuggererSlug, p2bSlugValide,
+} from '../../utils/partnerLink';
+
+// Les deux helpers de slug vivent desormais dans `utils/partnerLink.js`, avec
+// la construction du lien : une seule regle, un seul endroit. On les
+// re-exporte ici pour ne pas casser ce qui les importe deja depuis ce module.
+export { p2bSuggererSlug, p2bSlugValide };
 
 /** Les réponses arrivent en dict (`{q_0: {...}}`) ou en liste. Les deux formes
  *  existent en base ; on rend une liste ordonnée dans les deux cas. */
@@ -50,28 +62,6 @@ export function p2aNormaliserReponses(answers) {
       return { question, answer };
     })
     .filter(Boolean);
-}
-
-/** Suggestion de slug a partir d'un nom. Le coach peut TOUJOURS la corriger.
- *
- *  Les accents sont deplies (NFD) plutot que supprimes : « Récif » donne
- *  `recif`, pas `rcif`. Tout ce qui n'est pas [a-z0-9] devient `_`, les `_`
- *  consecutifs sont fondus, et le resultat est borne a 40 caracteres — la meme
- *  regle que le serveur, qui reste le seul a decider si un slug est valide.
- */
-export function p2bSuggererSlug(nom) {
-  const base = String(nom || '')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_|_$/g, '');
-  return base.slice(0, 40);
-}
-
-/** Le slug est-il acceptable ? MEME regle que le serveur, mot pour mot. */
-export function p2bSlugValide(slug) {
-  return /^[a-z0-9_]{3,40}$/.test(String(slug || ''));
 }
 
 /** Date lisible, sans jamais afficher « Invalid Date » au coach. */
@@ -124,6 +114,111 @@ const Ligne = ({ icone, valeur }) => {
     }}>
       {icone}
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{valeur}</span>
+    </div>
+  );
+};
+
+/** P2-C — le lien personnel du partenaire, son QR, et de quoi s'en servir.
+ *
+ *  RIEN N'EST STOCKE. L'URL est derivee du slug par `construireLienPartenaire`,
+ *  et le QR est une image de cette URL, calculee a l'affichage. Le QR encode
+ *  l'URL EXACTE : aucun raccourcisseur, aucune redirection, aucun identifiant
+ *  interne — ce qui est scanne chez le partenaire est ce qui est affiche ici.
+ *
+ *  Le QR est rendu en CANVAS et non en SVG, contrairement au reste du depot :
+ *  c'est ce qui permet le telechargement PNG en une ligne
+ *  (`canvas.toDataURL`), avec le meme patron que le ticket de reservation.
+ *  Meme bibliotheque (`qrcode.react`, deja installee), aucune dependance
+ *  ajoutee.
+ */
+const LienPartenaire = ({ slug }) => {
+  const lien = construireLienPartenaire(slug);
+  const [copie, setCopie] = useState(false);
+  const [qrVisible, setQrVisible] = useState(false);
+  const zoneQr = useRef(null);
+
+  const copier = async () => {
+    try {
+      const r = await copyToClipboard(lien);
+      if (r && r.success) {
+        setCopie(true);
+        setTimeout(() => setCopie(false), 1800);
+      }
+    } catch (e) { /* le bouton reste, le coach peut selectionner l'URL a la main */ }
+  };
+
+  const telecharger = () => {
+    const canvas = zoneQr.current && zoneQr.current.querySelector('canvas');
+    if (!canvas) return;
+    const a = document.createElement('a');
+    a.download = p2cNomFichierQr(slug);
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  };
+
+  if (!lien) return null;
+
+  return (
+    <div style={{
+      marginTop: '12px', padding: '10px', borderRadius: '10px',
+      background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.18)',
+    }}>
+      <p style={{ margin: 0, color: 'rgba(255,255,255,0.5)', fontSize: '11px' }}>
+        Identifiant partenaire
+      </p>
+      <p style={{ margin: '2px 0 8px', color: '#FFFFFF', fontSize: '13px',
+                  fontWeight: 700, fontFamily: 'monospace' }}>
+        {slug}
+      </p>
+
+      <p style={{ margin: 0, color: 'rgba(255,255,255,0.5)', fontSize: '11px' }}>
+        Lien partenaire
+      </p>
+      <p data-testid="lien-partenaire" style={{
+        margin: '2px 0 8px', color: 'rgba(255,255,255,0.75)', fontSize: '11px',
+        fontFamily: 'monospace', wordBreak: 'break-all', lineHeight: 1.4,
+      }}>
+        {lien}
+      </p>
+
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <BoutonAction onClick={copier} couleur={copie ? '#22c55e' : '#a78bfa'}>
+          {copie ? <><Check size={13} /> Copié</> : <><Copy size={13} /> Copier</>}
+        </BoutonAction>
+        <a
+          href={lien}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            gap: '6px', padding: '9px 0', borderRadius: '10px', textDecoration: 'none',
+            background: 'rgba(59,130,246,0.14)', border: '1px solid rgba(59,130,246,0.33)',
+            color: '#3b82f6', fontSize: '12px', fontWeight: 700,
+          }}
+        >
+          <ExternalLink size={13} /> Ouvrir
+        </a>
+        <BoutonAction onClick={() => setQrVisible((v) => !v)} couleur="#f59e0b">
+          <QrCode size={13} /> QR code
+        </BoutonAction>
+      </div>
+
+      {qrVisible && (
+        <div style={{ marginTop: '10px', textAlign: 'center' }}>
+          <div ref={zoneQr} style={{
+            display: 'inline-block', padding: '10px',
+            background: '#ffffff', borderRadius: '10px',
+          }}>
+            <QRCodeCanvas value={lien} size={180} level="M" includeMargin={false}
+                          bgColor="#ffffff" fgColor="#000000" />
+          </div>
+          <div style={{ marginTop: '8px' }}>
+            <BoutonAction onClick={telecharger} couleur="#22c55e">
+              <Download size={13} /> Télécharger le QR
+            </BoutonAction>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -302,13 +397,22 @@ const Candidature = ({ item, onDecider, enCours }) => {
         </div>
       )}
 
-      {/* Le slug, une fois acquis, est une information discrete : il sert au
-          lot suivant (lien + QR), pas ici. */}
-      {item.partner_slug && (
-        <p style={{ margin: '10px 0 0', color: 'rgba(255,255,255,0.4)',
-                    fontSize: '11px', fontFamily: 'monospace' }}>
-          {item.partner_slug}
-        </p>
+      {/* P2-C — LE LIEN PERSONNEL ET SON QR.
+          Uniquement pour une candidature ACCEPTEE qui possede reellement un
+          `partner_slug`. Un slug absent n'est pas un cas a rattraper : on ne
+          fabrique JAMAIS un slug depuis le nom pour boucher le trou, sous
+          peine de distribuer un lien qui n'attribue rien. */}
+      {(item.application_decision === 'accepted') && (
+        item.partner_slug
+          ? <LienPartenaire slug={item.partner_slug} />
+          : (
+            <p style={{ margin: '12px 0 0', padding: '8px 10px', borderRadius: '8px',
+                        background: 'rgba(239,68,68,0.08)',
+                        border: '1px solid rgba(239,68,68,0.2)',
+                        color: '#ef4444', fontSize: '11px' }}>
+              Partenaire incomplet — identifiant indisponible
+            </p>
+          )
       )}
     </div>
   );

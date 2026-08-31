@@ -23,11 +23,25 @@ import axios from 'axios';
 import PartnerApplications, {
   p2aNormaliserReponses, p2aDateLisible, p2bSuggererSlug, p2bSlugValide,
 } from '../PartnerApplications';
+import { construireLienPartenaire } from '../../../utils/partnerLink';
 import SmartLinkCard from '../SmartLinkCard';
 
 jest.mock('axios', () => ({
   __esModule: true,
-  default: { get: jest.fn(), patch: jest.fn() }
+  default: { get: jest.fn(), patch: jest.fn(), post: jest.fn(), put: jest.fn() }
+}));
+
+// Le generateur de QR est remplace par un canvas qui EXPOSE la valeur recue.
+// C'est le seul moyen de prouver ce que le QR encode reellement : lire les
+// pixels ne dirait rien, et verifier qu'un canvas existe ne prouve pas son
+// contenu. La vraie bibliotheque reste utilisee en production, inchangee.
+jest.mock('qrcode.react', () => ({
+  __esModule: true,
+  QRCodeCanvas: ({ value, size }) => {
+    const React = require('react');
+    return React.createElement('canvas', {
+      'data-qr-value': value, width: size, height: size });
+  },
 }));
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -122,6 +136,14 @@ const reponseUne = (extra = {}) => ({
 });
 
 const champSlug = () => conteneur.querySelector('input[aria-label="Identifiant du partenaire"]');
+
+/** La valeur REELLEMENT encodee par le QR, lue sur la fibre React du canvas.
+ *  On ne se contente pas de verifier qu'un canvas existe : ce qui compte est
+ *  ce qu'il encode, et rien d'autre ne le prouve. */
+const valeurQr = () => {
+  const c = conteneur.querySelector('canvas');
+  return c ? c.getAttribute('data-qr-value') : null;
+};
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -412,16 +434,18 @@ describe('P2-B — la decision', () => {
     expect(texte()).toContain('Accès refusé');
   });
 
-  test('AUCUN QR, AUCUNE statistique, AUCUN lien UTM dans ce lot', async () => {
-    axios.get.mockResolvedValue(reponseUne({
-      application_decision: 'accepted', partner_slug: 'akoko_tresses' }));
-    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
-    const t = texte();
-    expect(t).not.toMatch(/utm_/);
-    expect(t).not.toMatch(/\bQR\b/);
-    expect(t).not.toMatch(/clics|conversion/i);
-    expect(conteneur.querySelector('canvas')).toBeNull();
-  });
+  // P2-C ajoute DELIBEREMENT le lien UTM et le QR sur une candidature acceptee :
+  // l'absence de lien est desormais prouvee sur `pending` et `rejected`, dans la
+  // section P2-C. Ce qui reste hors perimetre jusqu'a P2-D, ce sont les
+  // statistiques — et le QR ne doit s'afficher que sur demande, pas d'office.
+  test('aucune statistique, et le QR ne s\'affiche pas tant qu\'on ne le demande pas',
+    async () => {
+      axios.get.mockResolvedValue(reponseUne({
+        application_decision: 'accepted', partner_slug: 'akoko_tresses' }));
+      await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+      expect(texte()).not.toMatch(/clics|conversions|taux/i);
+      expect(conteneur.querySelector('canvas')).toBeNull();
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -453,6 +477,153 @@ describe('P2-B — le slug', () => {
     expect(p2bSlugValide('akoko-tresses')).toBe(false);
     expect(p2bSlugValide('récif')).toBe(false);
     expect(p2bSlugValide('')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('P2-C — le lien personnel et son QR', () => {
+  const LIEN = construireLienPartenaire('akoko_tresses');
+
+  const accepte = (extra = {}) => reponseUne({
+    application_decision: 'accepted', partner_slug: 'akoko_tresses',
+    partner_status: 'decouverte', ...extra });
+
+  test('EN ATTENTE : aucun lien, aucun QR', async () => {
+    axios.get.mockResolvedValue(reponseUne());
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    expect(conteneur.querySelector('[data-testid="lien-partenaire"]')).toBeNull();
+    expect(texte()).not.toContain('utm_source');
+    expect(bouton('QR code')).toBeFalsy();
+    expect(conteneur.querySelector('canvas')).toBeNull();
+  });
+
+  test('REFUSEE : aucun lien, aucun QR', async () => {
+    axios.get.mockResolvedValue(reponseUne({ application_decision: 'rejected' }));
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    expect(conteneur.querySelector('[data-testid="lien-partenaire"]')).toBeNull();
+    expect(bouton('QR code')).toBeFalsy();
+    expect(conteneur.querySelector('canvas')).toBeNull();
+  });
+
+  test("ACCEPTEE SANS slug : anomalie sobre, et surtout AUCUN slug fabrique "
+     + 'depuis le nom', async () => {
+    axios.get.mockResolvedValue(reponseUne({ application_decision: 'accepted' }));
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    expect(texte()).toContain('Partenaire incomplet — identifiant indisponible');
+    expect(conteneur.querySelector('[data-testid="lien-partenaire"]')).toBeNull();
+    expect(bouton('QR code')).toBeFalsy();
+    expect(texte()).not.toContain('akoko_tresses');
+  });
+
+  test('ACCEPTEE avec slug : le lien EXACT est affiche', async () => {
+    axios.get.mockResolvedValue(accepte());
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    const zone = conteneur.querySelector('[data-testid="lien-partenaire"]');
+    expect(zone).toBeTruthy();
+    expect(zone.textContent).toBe(LIEN);
+    expect(zone.textContent).toBe(
+      'https://afroboost.com/cours-essai-gratuit-neuchatel'
+      + '?utm_source=partenaire&utm_medium=referral&utm_campaign=essai_neuchatel'
+      + '&utm_content=akoko_tresses');
+  });
+
+  test("l'identifiant partenaire est affiche", async () => {
+    axios.get.mockResolvedValue(accepte());
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    expect(texte()).toContain('Identifiant partenaire');
+    expect(texte()).toContain('akoko_tresses');
+  });
+
+  test('les trois boutons sont proposes', async () => {
+    axios.get.mockResolvedValue(accepte());
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    expect(bouton('Copier')).toBeTruthy();
+    expect(bouton('QR code')).toBeTruthy();
+    const ouvrir = Array.from(conteneur.querySelectorAll('a'))
+      .find((a) => (a.textContent || '').includes('Ouvrir'));
+    expect(ouvrir).toBeTruthy();
+  });
+
+  test("« Ouvrir » pointe l'URL exacte, dans un nouvel onglet, sans rien declencher",
+    async () => {
+      axios.get.mockResolvedValue(accepte());
+      await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+      const a = Array.from(conteneur.querySelectorAll('a'))
+        .find((x) => (x.textContent || '').includes('Ouvrir'));
+      expect(a.getAttribute('href')).toBe(LIEN);
+      expect(a.getAttribute('target')).toBe('_blank');
+      expect(a.getAttribute('rel')).toContain('noopener');
+    });
+
+  test('« Copier » met le lien au presse-papiers et confirme « Copié »', async () => {
+    axios.get.mockResolvedValue(accepte());
+    const ecrire = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: ecrire }, configurable: true });
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    await cliquer(bouton('Copier'));
+    expect(ecrire).toHaveBeenCalledWith(LIEN);
+    expect(texte()).toContain('Copié');
+  });
+
+  test('« QR code » affiche un canvas, et le QR encode l\'URL EXACTE', async () => {
+    axios.get.mockResolvedValue(accepte());
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    expect(conteneur.querySelector('canvas')).toBeNull();
+    await cliquer(bouton('QR code'));
+    expect(conteneur.querySelector('canvas')).toBeTruthy();
+    // La valeur REELLEMENT passee au generateur, lue sur le composant monte.
+    expect(valeurQr()).toBe(LIEN);
+  });
+
+  test('le QR n\'encode ni raccourci, ni identifiant interne', () => {
+    expect(LIEN).not.toMatch(/\/v\/|bit\.ly|\?link=/);
+    expect(LIEN).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
+  });
+
+  test('« Télécharger le QR » produit un PNG nomme avec le slug', async () => {
+    axios.get.mockResolvedValue(accepte());
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    await cliquer(bouton('QR code'));
+
+    const canvas = conteneur.querySelector('canvas');
+    canvas.toDataURL = jest.fn(() => 'data:image/png;base64,FICTIF');
+    const ancre = { download: '', href: '', click: jest.fn() };
+    const creer = jest.spyOn(document, 'createElement').mockImplementation((t) =>
+      (t === 'a' ? ancre : document.createElementNS('http://www.w3.org/1999/xhtml', t)));
+
+    await cliquer(bouton('Télécharger le QR'));
+
+    expect(ancre.download).toBe('afroboost-partenaire-akoko_tresses-qr.png');
+    expect(ancre.href).toBe('data:image/png;base64,FICTIF');
+    expect(ancre.click).toHaveBeenCalled();
+    expect(canvas.toDataURL).toHaveBeenCalledWith('image/png');
+    creer.mockRestore();
+  });
+
+  test('P2-C ne declenche AUCUNE ecriture : ni PATCH, ni POST, ni PUT', async () => {
+    axios.get.mockResolvedValue(accepte());
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    await cliquer(bouton('QR code'));
+    await cliquer(bouton('Copier'));
+    expect(axios.patch).not.toHaveBeenCalled();
+    expect(axios.post).not.toHaveBeenCalled();
+    expect(axios.put).not.toHaveBeenCalled();
+  });
+
+  test('une candidature acceptee n\'a plus de bouton de decision', async () => {
+    axios.get.mockResolvedValue(accepte());
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    expect(bouton('Accepter')).toBeFalsy();
+    expect(bouton('Refuser')).toBeFalsy();
+    expect(texte()).toContain('Acceptée');
+  });
+
+  test('AUCUNE statistique dans ce lot', async () => {
+    axios.get.mockResolvedValue(accepte());
+    await monter(<PartnerApplications isOpen link={LIEN_PARTENAIRE} API="/api" onClose={jest.fn()} />);
+    const t = texte();
+    expect(t).not.toMatch(/clics|conversions|présences|taux/i);
   });
 });
 
