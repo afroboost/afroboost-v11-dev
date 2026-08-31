@@ -20793,6 +20793,268 @@ async def p2b_decider_candidature(lead_id: str, request: Request):
     }
 
 
+# --- P2-D1 : CE QU'UN PARTENAIRE A RÉELLEMENT APPORTÉ ---
+
+# Les quatre critères d'attribution, VERROUILLÉS. Ils sont les jumeaux exacts de
+# `P2C_UTM` côté navigateur (`frontend/src/utils/partnerLink.js`) : si l'un des
+# deux bouge sans l'autre, le lien distribué aux partenaires cesse d'être compté
+# — sans aucune erreur, sans 500, juste des chiffres qui restent à zéro.
+P2D_SOURCE = "partenaire"
+P2D_MEDIUM = "referral"
+P2D_CAMPAGNE = "essai_neuchatel"
+
+# Les statuts d'abonnement qui valent un ACHAT RÉEL. Liste BLANCHE, à dessein :
+# un futur statut « cancelled » ou « refunded » ne sera donc PAS compté par
+# accident. Les quatre présents en production correspondent tous à un achat
+# effectué — `superseded` est un forfait remplacé par une recharge, `expired`
+# un forfait arrivé à terme : dans les deux cas la personne a payé.
+P2D_STATUTS_ACHAT = ("active", "completed", "superseded", "expired")
+
+
+def p2d_est_une_reservation(doc) -> bool:
+    """Ce document est-il une VRAIE réservation ?
+
+    La collection contient un document parasite — une réponse d'API entière
+    insérée par erreur, reconnaissable à ses clés `data` et `pagination`. Il ne
+    porte ni identifiant, ni code, ni date de création. On l'écarte du COMPTAGE
+    sans y toucher : réparer la collection est un autre sujet, et une
+    statistique n'a pas à corriger la base pour se calculer.
+
+    Les trois champs exigés sont présents sur 144 des 145 documents — le seul
+    manquant étant précisément le parasite.
+    """
+    if not isinstance(doc, dict):
+        return False
+    return bool(str(doc.get("id") or "").strip()
+                and str(doc.get("reservationCode") or "").strip()
+                and str(doc.get("createdAt") or "").strip())
+
+
+def p2d_cle_personne(reservation) -> str:
+    """L'identifiant STABLE d'une personne, pour dédupliquer. Jamais renvoyé.
+
+    ⚠️ `userId` N'EXISTE PAS EN PRATIQUE : 0 des 145 réservations de production
+    le portent. Bâtir la déduplication dessus produirait un compteur toujours
+    égal au nombre de réservations.
+
+    L'ordre retenu, mesuré :
+      1. `discountCode` — le code d'accès, l'identifiant le plus proche d'une
+         clé interne dont dispose ce schéma (84/145) ;
+      2. sinon `userEmail` normalisé (144/145) ;
+      3. sinon l'identifiant de la réservation — on ne FUSIONNE PAS deux
+         réservations qu'on ne peut pas prouver identiques. Compter deux
+         personnes quand on n'en sait rien surestime `unique_people`, donc
+         SOUS-estime le taux de conversion : l'erreur va dans le sens prudent.
+
+    La valeur sort d'ici et ne quitte jamais le serveur.
+    """
+    code = str(reservation.get("discountCode") or "").strip().upper()
+    if code and code != "N/A":
+        return "code:" + code
+    courriel = str(reservation.get("userEmail") or "").strip().lower()
+    if courriel:
+        return "mail:" + courriel
+    return "res:" + str(reservation.get("id") or "")
+
+
+@api_router.get("/partners/{partner_slug}/stats")
+async def p2d_stats_partenaire(partner_slug: str, request: Request):
+    """P2-D1 — les chiffres d'un partenaire, en AGRÉGATS SEULS.
+
+    POURQUOI UNE ROUTE SERVEUR PLUTÔT QU'UN CALCUL DANS LE NAVIGATEUR. Pour
+    afficher quatre nombres, l'alternative exigerait d'envoyer au navigateur
+    TOUTES les réservations attribuées — donc les noms, les e-mails et les
+    téléphones des personnes venues par ce partenaire. Cette route ne renvoie
+    que des ENTIERS et deux taux. Aucune liste, aucune adresse, aucun code.
+
+    L'ATTRIBUTION RETENUE EST `first`, ET C'EST UN CHOIX MÉTIER, PAS UN DÉFAUT.
+    La logique déjà déployée (`utils/attribution.js`) fige `first` pour toujours
+    et ne remplace `last` que par une origine EXTERNE. Le cas qui tranche :
+    quelqu'un découvre Afroboost par le partenaire A, revient plus tard par
+    Instagram, puis réserve — `first` vaut A, `last` vaut Instagram. La question
+    posée ici est « qui a AMENÉ cette personne », pas « qui l'a fait revenir ».
+    C'est donc `first`, et les quatre critères doivent correspondre ENSEMBLE :
+    un `content` seul ne prouve rien s'il arrive sur une autre campagne.
+
+    LA PRÉSENCE EST `validated is True`, SEUL. C'est la convention de tout le
+    dépôt — `server.py:28745`, `28812`, `shared.py:1271`, `1869`,
+    `reservation_routes.py:1701` comptent tous ainsi. `validatedAt` y sert de
+    filtre de DATE (relances P1-d), jamais de preuve. Exiger les deux aurait
+    introduit ici une définition de la présence différente du reste du produit,
+    pour aucun gain : en production les deux coïncident exactement (15 et 15).
+
+    ⚠️ LE PIÈGE QUE CETTE ROUTE ÉVITE. L'essai gratuit CRÉE LUI-MÊME un
+    abonnement : `🎁 Cours d'essai GRATUIT` apparaît 9 fois dans
+    `subscriptions`. Compter naïvement les abonnements d'une personne venue par
+    un partenaire donnerait donc 100 % de conversion pour tout le monde, et le
+    tableau serait faux dès le premier partenaire. On exclut donc les
+    abonnements dont le CODE est celui de la réservation attribuée elle-même :
+    ce qui reste est ce qui a été acheté APRÈS.
+
+    PULSE ET MEMBRE SE LISENT SUR L'OFFRE, JAMAIS SUR UN NOM. `creates_membership`
+    (l'offre qui fait ENTRER dans le programme) et `requires_active_membership`
+    (celle qui fait CONTINUER) sont les booléens que le dépôt emploie déjà —
+    `shared.py:2564`, `2599`, `p1c_index_recommande` : « jamais sur un nom,
+    jamais sur un montant ». La production contient « PULSE x10 cours (Membres) »
+    et « Cours à l'unité (copie) » : un filtre par libellé s'y briserait.
+
+    100 % EN LECTURE. Aucun `insert`, `update` ni `delete`.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+
+    slug = (partner_slug or "").strip().lower()
+    if not slug or len(slug) > 64:
+        raise HTTPException(status_code=404, detail="Partenaire introuvable")
+
+    # La source de vérité est `partners`. On ne FABRIQUE jamais un partenaire
+    # depuis un lead pour faire fonctionner la route : sans entité, pas de
+    # statistiques.
+    partenaire = await db.partners.find_one(
+        {"partner_slug": slug},
+        {"_id": 0, "partner_slug": 1, "coach_id": 1, "partner_status": 1, "lead_id": 1})
+    if not partenaire:
+        raise HTTPException(status_code=404, detail="Partenaire introuvable")
+
+    proprietaire = (partenaire.get("coach_id") or "").strip().lower()
+    if not is_super_admin(appelant):
+        if not proprietaire or proprietaire != appelant:
+            logger.warning("[P2-D] REFUS stats — partenaire %s non detenu par l'appelant", slug)
+            raise HTTPException(status_code=403, detail="Ce partenaire ne vous appartient pas")
+
+    # --- Les réservations attribuées : les QUATRE critères, simultanément ---
+    brutes = await db.reservations.find(
+        {"attribution.first.source": P2D_SOURCE,
+         "attribution.first.medium": P2D_MEDIUM,
+         "attribution.first.campaign": P2D_CAMPAGNE,
+         "attribution.first.content": slug},
+        {"_id": 0, "id": 1, "reservationCode": 1, "createdAt": 1,
+         "discountCode": 1, "userEmail": 1, "validated": 1, "offerId": 1},
+    ).to_list(2000)
+    reservations = [r for r in brutes if p2d_est_une_reservation(r)]
+
+    personnes = {p2d_cle_personne(r) for r in reservations}
+    presences = sum(1 for r in reservations if r.get("validated") is True)
+
+    # --- Les offres de PROGRAMME, lues sur leurs booléens ---
+    offres_pulse, offres_membre = set(), set()
+    try:
+        async for _o in db.offers.find(
+                {"$or": [{"creates_membership": True}, {"requires_active_membership": True}]},
+                {"_id": 0, "id": 1, "creates_membership": 1, "requires_active_membership": 1}):
+            _id = str(_o.get("id") or "")
+            if not _id:
+                continue
+            if _o.get("creates_membership") is True:
+                offres_pulse.add(_id)
+            if _o.get("requires_active_membership") is True:
+                offres_membre.add(_id)
+    except Exception as _oerr:  # noqa: BLE001
+        logger.warning("[P2-D] offres de programme illisibles (%s)", type(_oerr).__name__)
+
+    # --- Ce que ces personnes ont acheté ENSUITE ---
+    # Le rattachement passe par l'e-mail normalisé : `subscriptions` ne porte
+    # aucun identifiant de personne, et `reservations.userId` n'est jamais
+    # renseigné. C'est la seule jointure disponible, et elle est assumée comme
+    # telle — pas choisie par facilité.
+    # ⚠️ LES CONVERSIONS SE COMPTENT PAR PERSONNE, PAS PAR ACHAT.
+    # Un achat ultérieur porte un code d'accès NEUF : le classer sous ce code
+    # ferait compter deux fois quelqu'un qui prend un forfait puis une recharge.
+    # Mesuré par le test 5f, qui rendait 2 conversions pour une seule personne.
+    # On ramène donc chaque achat à la personne de la COHORTE attribuée, par son
+    # e-mail normalisé — la seule jointure dont ce schéma dispose.
+    personne_par_courriel = {}
+    for _r in reservations:
+        _mail = str(_r.get("userEmail") or "").strip().lower()
+        if _mail:
+            personne_par_courriel.setdefault(_mail, p2d_cle_personne(_r))
+    courriels = set(personne_par_courriel)
+    codes_essai = {str(r.get("discountCode") or "").strip().upper()
+                   for r in reservations if str(r.get("discountCode") or "").strip()}
+
+    pulse, membre, abonnement = set(), set(), set()
+
+    # Pulse et Membre se lisent sur les AUTRES réservations de ces personnes,
+    # parce que `reservations.offerId` est un vrai identifiant d'offre — alors
+    # que `subscriptions` ne porte qu'un libellé.
+    if courriels:
+        try:
+            async for _r in db.reservations.find(
+                    {"userEmail": {"$in": sorted(courriels)}},
+                    {"_id": 0, "id": 1, "reservationCode": 1, "createdAt": 1,
+                     "offerId": 1, "userEmail": 1, "discountCode": 1}):
+                if not p2d_est_une_reservation(_r):
+                    continue
+                _offre = str(_r.get("offerId") or "")
+                if not _offre:
+                    continue
+                # La clé est celle de la COHORTE, pas celle de cet achat-ci.
+                _cle = personne_par_courriel.get(
+                    str(_r.get("userEmail") or "").strip().lower())
+                if not _cle:
+                    continue
+                if _offre in offres_pulse:
+                    pulse.add(_cle)
+                if _offre in offres_membre:
+                    membre.add(_cle)
+        except Exception as _rerr:  # noqa: BLE001
+            logger.warning("[P2-D] achats de programme illisibles (%s)", type(_rerr).__name__)
+
+        try:
+            async for _s in db.subscriptions.find(
+                    {"email": {"$in": sorted(courriels)}},
+                    {"_id": 0, "code": 1, "email": 1, "status": 1}):
+                if (_s.get("status") or "") not in P2D_STATUTS_ACHAT:
+                    continue
+                _code = str(_s.get("code") or "").strip().upper()
+                # L'ESSAI LUI-MÊME N'EST PAS UNE CONVERSION.
+                if _code and _code in codes_essai:
+                    continue
+                _cle = personne_par_courriel.get(str(_s.get("email") or "").strip().lower())
+                if _cle:
+                    abonnement.add(_cle)
+        except Exception as _serr:  # noqa: BLE001
+            logger.warning("[P2-D] abonnements illisibles (%s)", type(_serr).__name__)
+
+    # LES QUATRE COMPTEURS SONT DES PERSONNES, y compris le détail par
+    # catégorie. Faire compter des ACHATS au détail et des PERSONNES au total
+    # donnerait un tableau incohérent — « 2 abonnements » au-dessus de « 1
+    # conversion » — et personne ne saurait lequel des deux lire.
+    converties = pulse | membre | abonnement
+
+    def _taux(numerateur, denominateur):
+        """`None` quand le dénominateur est nul — jamais 0 %.
+
+        Un taux de 0 % dit « personne n'est venu » ; l'absence de dénominateur
+        dit « on ne sait pas encore ». Les confondre ferait passer un partenaire
+        tout neuf pour un partenaire qui a échoué.
+        """
+        if not denominateur:
+            return None
+        return round(numerateur / denominateur, 4)
+
+    return {
+        "partner_slug": slug,
+        "partner_status": partenaire.get("partner_status") or "",
+        "reservations": len(reservations),
+        "unique_people": len(personnes),
+        "unique_people_method": "discount_code_then_normalized_email",
+        "attendances": presences,
+        "attendance_definition": "validated_true",
+        # Unité annoncée : ces quatre nombres comptent des PERSONNES.
+        "conversions_unit": "people",
+        "conversions": {
+            "pulse": len(pulse),
+            "member": len(membre),
+            "subscription": len(abonnement),
+            "total": len(converties),
+        },
+        "attendance_rate": _taux(presences, len(reservations)),
+        "conversion_rate": _taux(len(converties), len(personnes)),
+        "attribution": {"basis": "first", "source": P2D_SOURCE,
+                        "medium": P2D_MEDIUM, "campaign": P2D_CAMPAGNE},
+    }
+
+
 # --- Leads Routes (Widget IA) ---
 # v68: ISOLATION MULTI-TENANT — chaque lead est lié à un coach_id
 @api_router.get("/leads")
