@@ -99,14 +99,41 @@ class RequeteFictive:
 
 
 class Curseur:
+    """P3-S2 : le curseur sait desormais trier, sauter et borner.
+
+    La route de liste a cesse de trier en Python pour trier EN BASE — sans quoi
+    la pagination rendrait un echantillon arbitraire. Le bouchon doit donc
+    honorer `sort/skip/limit`. C'est de l'OUTILLAGE : aucune assertion de ce
+    fichier n'a change.
+    """
+
     def __init__(self, docs):
         self._docs = docs
+        self._skip = 0
+        self._limit = None
+
+    def sort(self, cle, sens=1):
+        self._docs = sorted(self._docs, key=lambda d: d.get(cle) or "",
+                            reverse=(sens == -1))
+        return self
+
+    def skip(self, n):
+        self._skip = n
+        return self
+
+    def limit(self, n):
+        self._limit = n
+        return self
+
+    def _tranche(self):
+        d = self._docs[self._skip:]
+        return d[:self._limit] if self._limit is not None else d
 
     async def to_list(self, n):
-        return list(self._docs)[:n]
+        return list(self._tranche())[:n]
 
     def __aiter__(self):
-        self._i = iter(self._docs)
+        self._i = iter(self._tranche())
         return self
 
     async def __anext__(self):
@@ -163,6 +190,19 @@ class CollectionBouchon:
 
     async def count_documents(self, filtre=None, *a, **k):
         return sum(1 for d in self.documents if self._ok(d, filtre))
+
+    def aggregate(self, etapes, *a, **k):
+        """P3-S2 : outillage. `$match` puis `$group` par une seule cle."""
+        docs = list(self.documents)
+        groupes = {}
+        for etape in etapes:
+            if "$match" in etape:
+                docs = [d for d in docs if self._ok(d, etape["$match"])]
+            if "$group" in etape:
+                cle = etape["$group"]["_id"].lstrip("$")
+                for d in docs:
+                    groupes[d.get(cle)] = groupes.get(d.get(cle), 0) + 1
+        return Curseur([{"_id": k2, "n": v} for k2, v in groupes.items()])
 
     # --- index uniques, simules comme en base ---
     def _verifier_uniques(self, doc, sauf=None):

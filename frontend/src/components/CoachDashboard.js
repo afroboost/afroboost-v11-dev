@@ -42,6 +42,9 @@ import V199BoutiqueAccordion from "./dashboard/V199BoutiqueAccordion";
 import { deplierTargetIds, estIdentifiantDeGroupe } from '../utils/deplierGroupes';
 import { copyToClipboard } from "../utils/clipboard"; // Utilitaire copier avec fallback mobile
 import SvgIcon from "./SvgIcon";
+// P3-S2 : l'ecran Prospection. Il lit `partner_prospects` et cette collection
+// SEULE — jamais les contacts, les abonnes ni les reservations.
+import ProspectsSection from "./coach/ProspectsSection";
 import { alignerLieu } from "../utils/courseLocation"; // V230: jeu d'icones vectorielles inline
 
 // v9.2.1: ErrorBoundary pour isoler les erreurs de composants
@@ -6318,6 +6321,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     { id: "codes", label: t('promoCodes') },
     { id: "contacts", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="users" size={14} /> Contacts</span> },
     { id: "campaigns", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="megaphone" size={14} /> Campagnes</span> },
+    // P3-S2 : voisin de Contacts et Campagnes, jamais une application a part.
+    // Visible pour tous les coachs — le backend cloisonne par coach_id.
+    { id: "prospection", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="compass" size={14} /> Prospection</span> },
     { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> },
     // V314 : corbeille (récupération des suppressions). Visible pour tous — le backend cloisonne.
     { id: "corbeille", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="trash" size={14} /> Corbeille</span> }
@@ -8594,6 +8600,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           <div className="card-gradient rounded-xl p-4 sm:p-6">
             <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 700, marginBottom: '16px' , display: 'flex', alignItems: 'center', gap: '8px' }}><SvgIcon name="users" size={18} /> Mes Contacts</h2>
             <ContactsManager API={API} coachEmail={coachUser?.email} isSuperAdmin={isSuperAdmin} />
+          </div>
+        )}
+
+        {/* === PROSPECTION TAB (P3-S2) === */}
+        {tab === "prospection" && (
+          <div className="card-gradient rounded-xl p-4 sm:p-6">
+            <ProspectsSection API={API} />
           </div>
         )}
 

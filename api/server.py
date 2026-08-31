@@ -21393,7 +21393,11 @@ async def p3s1_lister_prospects(request: Request):
     """
     appelant = await _v309_require_coach_or_admin(request)
 
-    filtre = {} if is_super_admin(appelant) else {"coach_id": appelant}
+    # `portee` = ce que l'appelant a le droit de voir. `filtre` = la meme chose
+    # RESTREINTE par les filtres d'ecran. Les deux sont distincts parce que les
+    # compteurs se lisent sur la portee et la liste sur le filtre.
+    portee = {} if is_super_admin(appelant) else {"coach_id": appelant}
+    filtre = dict(portee)
     parametres = request.query_params
 
     statut = (parametres.get("status") or "").strip().lower()
@@ -21426,15 +21430,56 @@ async def p3s1_lister_prospects(request: Request):
         limite = min(max(int(parametres.get("limit") or P3S1_LISTE_MAX), 1), P3S1_LISTE_MAX)
     except (TypeError, ValueError):
         limite = P3S1_LISTE_MAX
+    try:
+        depart = max(int(parametres.get("offset") or 0), 0)
+    except (TypeError, ValueError):
+        depart = 0
 
-    documents = await db[P3S1_COLLECTION].find(filtre, {"_id": 0}).to_list(limite)
-    # Plus recents d'abord. Les horodatages sont des chaines ISO-UTC de format
-    # constant : leur ordre lexicographique EST leur ordre chronologique.
-    documents.sort(key=lambda d: d.get("created_at") or "", reverse=True)
+    # P3-S2 : LE TRI SE FAIT EN BASE, PAS EN PYTHON.
+    # P3-S1 chargeait les 50 premiers documents dans l'ORDRE NATUREL puis les
+    # triait apres coup : sans pagination cela se voyait a peine, mais des que
+    # `offset` existe, la page 2 renverrait un echantillon arbitraire — et deux
+    # appels successifs pourraient rendre le meme prospect deux fois. Le tri
+    # remonte donc dans Mongo, ou il porte sur l'ENSEMBLE avant le decoupage.
+    # Les horodatages sont des chaines ISO-UTC de format constant : leur ordre
+    # lexicographique EST leur ordre chronologique.
+    documents = await db[P3S1_COLLECTION].find(filtre, {"_id": 0}) \
+        .sort("created_at", -1).skip(depart).limit(limite).to_list(limite)
+
+    # LES COMPTEURS IGNORENT LES FILTRES, ET C'EST VOULU. Ce sont les tuiles du
+    # haut d'ecran : si elles suivaient le filtre courant, cliquer « Contactes »
+    # ferait tomber toutes les autres tuiles a zero, et on perdrait justement ce
+    # qu'on regarde — la repartition. Une seule agregation, sur la portee du
+    # coach.
+    compteurs = {statut: 0 for statut in P3S1_STATUTS}
+    try:
+        async for _groupe in db[P3S1_COLLECTION].aggregate([
+                {"$match": portee},
+                {"$group": {"_id": "$status", "n": {"$sum": 1}}}]):
+            if _groupe.get("_id") in compteurs:
+                compteurs[_groupe["_id"]] = _groupe.get("n") or 0
+    except Exception as _cerr:  # noqa: BLE001
+        # Des compteurs illisibles ne doivent jamais priver le coach de sa liste.
+        logger.warning("%s compteurs illisibles (%s)", P3S1_PREFIXE, type(_cerr).__name__)
+
+    # CANDIDATURE ET ACCEPTE NE SONT PAS RECOPIES DE P2.
+    # Ils comptent les prospects qui PORTENT un lien vers une candidature ou un
+    # partenaire. Compter `db.partners` ici afficherait des partenaires qui ne
+    # viennent pas de la prospection — un compteur juste au premier coup d'oeil
+    # et faux des le premier partenaire arrive par un autre chemin. Le
+    # rattachement est le travail de P3-S3 : ces deux nombres valent donc 0
+    # aujourd'hui, et c'est la verite.
+    compteurs["candidature"] = await db[P3S1_COLLECTION].count_documents(
+        dict(portee, partner_application_id={"$nin": [None, ""]}))
+    compteurs["accepte"] = await db[P3S1_COLLECTION].count_documents(
+        dict(portee, partner_id={"$nin": [None, ""]}))
+    compteurs["total"] = await db[P3S1_COLLECTION].count_documents(portee)
 
     return {"total": await db[P3S1_COLLECTION].count_documents(filtre),
             "returned": len(documents),
             "limit": limite,
+            "offset": depart,
+            "counts": compteurs,
             "prospects": documents}
 
 
