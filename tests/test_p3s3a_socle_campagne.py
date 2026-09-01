@@ -614,7 +614,9 @@ verifier("11e. ... et le reste du corps est bien pris en compte",
 print("\n12. IL EST IMPOSSIBLE QUE CE LOT CONTACTE QUELQU'UN")
 
 DEBUT = SRC.index("# P3-S3-A — SOCLE DU MOTEUR DE CAMPAGNE")
-FIN = SRC.index("# --- Leads Routes (Widget IA) ---", DEBUT)
+_SUITE = "# P3-S3-B — LA PREPARATION D'UNE CAMPAGNE"
+FIN = (SRC.index(_SUITE, DEBUT) if _SUITE in SRC[DEBUT:]
+       else SRC.index("# --- Leads Routes (Widget IA) ---", DEBUT))
 BLOC = SRC[DEBUT:FIN]
 
 # ON INTERROGE LE CODE, PAS LA PROSE. Une premiere version de ce test
@@ -673,17 +675,21 @@ for _n in ast.walk(ARBRE):
 verifier("12c. les fonctions p3s3_* existent bien (%d)" % len(_p3s3), len(_p3s3) >= 8,
          str(sorted(_p3s3)))
 verifier("12d. AUCUNE fonction p3s3_* n'appelle un helper d'envoi", not _fautifs, str(_fautifs))
-verifier("12e. toutes les fonctions p3s3_* sont SYNCHRONES et pures",
+verifier("12e. toutes les fonctions p3s3_* DU SOCLE sont synchrones et pures",
          all(isinstance(_n, ast.FunctionDef)
-             for _n in ast.walk(ARBRE)
+             for _n in ast.walk(ARBRE_BLOC)
              if isinstance(_n, (ast.FunctionDef, ast.AsyncFunctionDef))
              and _n.name.startswith("p3s3_")))
 
 # Aucune route nouvelle : le nombre de decorateurs de route est le meme qu'avant
 # le lot pour tout chemin evoquant une campagne de prospection.
-for _chemin in ('"/prospect-campaigns', '"/campaign-actions', '"/launch',
-                '"/partner-prospects/send', '"/partner-prospects/launch'):
-    verifier("12f. aucune route %s" % _chemin, _chemin not in SRC)
+for _chemin in ('"/prospect-campaigns', '"/campaign-actions'):
+    verifier("12f. le SOCLE ne cree aucune route %s" % _chemin, _chemin not in BLOC)
+for _chemin in ('"/launch', '"/partner-prospects/send', '"/partner-prospects/launch',
+                '"/prospect-campaigns/send', '"/prospect-campaigns/{campaign_id}/send',
+                '"/prospect-campaigns/{campaign_id}/launch'):
+    verifier("12f-bis. AUCUNE route %s nulle part dans le serveur" % _chemin,
+             _chemin not in SRC)
 
 
 # ============================================================================

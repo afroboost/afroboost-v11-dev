@@ -573,12 +573,21 @@ print("\n8. L'ÉCRAN — CE QU'IL NE FAIT PAS")
 
 ECRAN = open(os.path.join(RACINE, "frontend", "src", "components", "coach",
                           "ProspectsSection.js"), encoding="utf-8").read()
-verifier("8a. l'écran n'appelle QUE les routes partner-prospects",
-         set(re.findall(r"\$\{base\}/([a-z-]+)", ECRAN)) == {"partner-prospects"},
-         str(set(re.findall(r"\$\{base\}/([a-z-]+)", ECRAN))))
-verifier("8b. aucune méthode d'écriture autre que PATCH",
-         "axios.post" not in ECRAN and "axios.delete" not in ECRAN
-         and "axios.put" not in ECRAN and "axios.patch" in ECRAN)
+_ROUTES_ECRAN = set(re.findall(r"\$\{base\}/([a-z-]+)", ECRAN))
+verifier("8a. l'écran n'appelle que partner-prospects et prospect-campaigns",
+         _ROUTES_ECRAN == {"partner-prospects", "prospect-campaigns"}, str(_ROUTES_ECRAN))
+verifier("8a-bis. aucune route d'envoi, de lancement ou d'approbation",
+         not re.search(r"/(send|launch|dispatch|approve|execute|retry)\b", ECRAN))
+verifier("8b. ni suppression ni PUT : seuls GET, POST et PATCH existent",
+         "axios.delete" not in ECRAN and "axios.put" not in ECRAN
+         and "axios.patch" in ECRAN)
+verifier("8b-bis. tous les POST de l'écran visent la PRÉPARATION de campagne",
+         set(re.findall(r"axios\.post\(\s*`\$\{base\}(/[^`]*)`", ECRAN))
+         == {"/prospect-campaigns/prepare"},
+         str(set(re.findall(r"axios\.post\(\s*`\$\{base\}(/[^`]*)`", ECRAN))))
+verifier("8b-ter. le PATCH d'un PROSPECT reste le seul écrivant sur une fiche",
+         "/partner-prospects/${ouvert.id}" in ECRAN
+         and ECRAN.count("axios.patch") == 2)
 verifier("8c. AUCUN bouton d'envoi — c'est P3-S3",
          not re.search(r">\s*(Envoyer|Contacter|Relancer)\b", ECRAN))
 verifier("8d. aucune couleur imposée : tout hex est un repli de var()",

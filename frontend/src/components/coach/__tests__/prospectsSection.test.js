@@ -598,3 +598,207 @@ describe('P3-S2 — ce que l’écran ne fait pas', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// P3-S3-B — LA PREPARATION DE CAMPAGNE, VUE DU NAVIGATEUR.
+//
+// Ce que ces tests rendent difficile a casser :
+//   * le PREMIER clic est une SIMULATION — s'il ecrivait, un clic curieux
+//     creerait une campagne en production ;
+//   * creer la campagne demande un SECOND clic, explicite ;
+//   * deux clics sur « Creer » portent la MEME cle d'idempotence, donc le
+//     serveur rend la campagne deja creee au lieu d'en fabriquer une jumelle ;
+//   * exclure passe par un PATCH sur l'ACTION, jamais sur le prospect ;
+//   * aucun bouton d'envoi n'apparait, meme campagne preparee.
+// ---------------------------------------------------------------------------
+const actionFictive = (sur) => Object.assign({
+  id: 'a-1', recipient_key: 'GVA-F3', prospect_ids: ['GVA-F3', 'LSN-F3'],
+  organisations: ['Wellness Genève', 'Wellness Lausanne'],
+  cities: ['Genève', 'Lausanne'], category: 'fitness', priority: 'B',
+  language: 'FR', channel: 'email', backup_channel: 'instagram',
+  execution_type: 'AUTO', message_j0: 'Bonjour Wellness', statut: 'pret',
+}, sur || {});
+
+const resumeFictif = (sur) => Object.assign({
+  destinataires: 2, exclus: 0, fiches: 3, multi_fiches: 1, sans_message_j0: 1,
+  par_execution: { AUTO: 1, ASSISTE: 0, MANUEL: 1, BLOQUE: 0 },
+  par_canal: { email: 1, instagram: 1 },
+  par_langue: { FR: 2 },
+}, sur || {});
+
+const apercuFictif = () => ({
+  dry_run: true,
+  campaign: { id: 'c-1', nom: 'P3-LAUNCH-2', etat: 'preparee' },
+  summary: resumeFictif(),
+  actions: [actionFictive(), actionFictive({
+    id: 'a-2', recipient_key: 'INF-01', prospect_ids: ['INF-01'],
+    organisations: ['Coach Ikram'], cities: ['Neuchâtel'],
+    channel: 'instagram', backup_channel: null, execution_type: 'MANUEL',
+    message_j0: '',
+  })],
+});
+
+async function ouvrirApercu() {
+  mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect()]) };
+  axios.post.mockResolvedValue({ data: apercuFictif() });
+  await monter(<ProspectsSection API="/api" />);
+  await act(async () => { par('preparer-campagne').click(); });
+}
+
+describe('P3-S3-B — préparation de campagne', () => {
+  test('le bandeau existe et rien n’est préparé au chargement', async () => {
+    mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect()]) };
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('bandeau-campagne')).not.toBeNull();
+    expect(par('preparer-campagne')).not.toBeNull();
+    expect(par('panneau-campagne')).toBeNull();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test('le premier clic est une SIMULATION : dry_run true', async () => {
+    await ouvrirApercu();
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    const [url, corps] = axios.post.mock.calls[0];
+    expect(url).toBe('/api/prospect-campaigns/prepare');
+    expect(corps.dry_run).toBe(true);
+  });
+
+  test('le résumé affiche destinataires, exécution, canaux et langues', async () => {
+    await ouvrirApercu();
+    expect(par('panneau-campagne')).not.toBeNull();
+    expect(par('resume-campagne').textContent).toContain('Destinataires');
+    expect(par('resume-campagne').textContent).toContain('Automatique');
+    expect(par('resume-campagne').textContent).toContain('Bloqué');
+    expect(par('resume-canaux').textContent).toContain('E-mail');
+    expect(par('resume-langues').textContent).toContain('FR');
+    expect(par('resume-langues').textContent).toContain('sans message J0');
+  });
+
+  test('l’aperçu compact montre chaque destinataire sans ouvrir 137 fiches', async () => {
+    await ouvrirApercu();
+    expect(par('action-GVA-F3')).not.toBeNull();
+    expect(par('action-INF-01')).not.toBeNull();
+    // Les deux fiches d'un même destinataire tiennent sur UNE ligne.
+    expect(par('action-GVA-F3').textContent).toContain('GVA-F3, LSN-F3');
+    expect(par('action-GVA-F3').textContent).toContain('Bonjour Wellness');
+    expect(par('action-INF-01').textContent).toContain('aucun message');
+  });
+
+  test('tant que c’est un aperçu, on ne peut ni exclure ni modifier', async () => {
+    await ouvrirApercu();
+    expect(par('exclure-GVA-F3')).toBeNull();
+    expect(par('ouvrir-action-GVA-F3')).toBeNull();
+    expect(par('creer-campagne')).not.toBeNull();
+  });
+
+  test('créer la campagne demande un SECOND clic, avec dry_run false', async () => {
+    await ouvrirApercu();
+    axios.post.mockResolvedValue({
+      data: { dry_run: false, rejeu: false, campaign: { id: 'c-1', nom: 'P3-LAUNCH-2', etat: 'preparee' } },
+    });
+    axios.get.mockResolvedValue({
+      data: { campaign: { id: 'c-1', nom: 'P3-LAUNCH-2', etat: 'preparee' },
+              summary: resumeFictif(), actions: [actionFictive()] },
+    });
+    await act(async () => { par('creer-campagne').click(); });
+    const dernier = axios.post.mock.calls[axios.post.mock.calls.length - 1][1];
+    expect(dernier.dry_run).toBe(false);
+    expect(dernier.idempotency_key).toBe('c-1');
+    expect(par('message-campagne').textContent).toContain("Aucun message n'a été envoyé");
+  });
+
+  test('deux clics sur « Créer » portent la MÊME clé d’idempotence', async () => {
+    await ouvrirApercu();
+    axios.post.mockResolvedValue({
+      data: { dry_run: false, rejeu: true, campaign: { id: 'c-1', nom: 'P3-LAUNCH-2', etat: 'preparee' } },
+    });
+    axios.get.mockResolvedValue({
+      data: { campaign: { id: 'c-1', etat: 'preparee', nom: 'P3-LAUNCH-2' },
+              summary: resumeFictif(), actions: [actionFictive()] },
+    });
+    await act(async () => { par('creer-campagne').click(); });
+    // Le panneau n'est plus un aperçu : le bouton disparaît, donc pas de
+    // troisième création possible par inadvertance.
+    expect(par('creer-campagne')).toBeNull();
+    const cles = axios.post.mock.calls.slice(1).map((c) => c[1].idempotency_key);
+    expect(new Set(cles).size).toBe(1);
+  });
+
+  test('exclure passe par un PATCH sur l’ACTION, jamais sur le prospect', async () => {
+    await ouvrirApercu();
+    axios.post.mockResolvedValue({
+      data: { dry_run: false, rejeu: false, campaign: { id: 'c-1', nom: 'X', etat: 'preparee' } },
+    });
+    axios.get.mockResolvedValue({
+      data: { campaign: { id: 'c-1', nom: 'X', etat: 'preparee' },
+              summary: resumeFictif(), actions: [actionFictive()] },
+    });
+    await act(async () => { par('creer-campagne').click(); });
+    axios.patch.mockResolvedValue({
+      data: { action: actionFictive({ statut: 'exclu' }),
+              summary: resumeFictif({ destinataires: 1, exclus: 1 }) },
+    });
+    await act(async () => { par('exclure-GVA-F3').click(); });
+    const [url, corps] = axios.patch.mock.calls[0];
+    expect(url).toBe('/api/prospect-campaigns/c-1/actions/a-1');
+    expect(corps).toEqual({ excluded: true });
+    // Aucun PATCH n'est parti vers un prospect.
+    axios.patch.mock.calls.forEach(([u]) => {
+      expect(u).not.toContain('/partner-prospects/');
+    });
+  });
+
+  test('la sélection envoie prospect_ids, et la case n’ouvre pas la fiche', async () => {
+    mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect()]) };
+    axios.post.mockResolvedValue({ data: apercuFictif() });
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('choix-FES-01').click(); });
+    expect(par('fiche-prospect')).toBeNull();          // le tiroir ne s'ouvre pas
+    await act(async () => { par('preparer-campagne').click(); });
+    expect(axios.post.mock.calls[0][1].prospect_ids).toEqual(['p-1']);
+  });
+
+  test('« Tout sélectionner » coche puis décoche toute la page', async () => {
+    mockEtatPilote = {
+      etat: SECTION.OK,
+      donnees: reponse([prospect(), prospect({ id: 'p-2', ref: 'FES-02' })]),
+    };
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('tout-selectionner').click(); });
+    expect(par('choix-FES-01').checked).toBe(true);
+    expect(par('choix-FES-02').checked).toBe(true);
+    await act(async () => { par('tout-selectionner').click(); });
+    expect(par('choix-FES-01').checked).toBe(false);
+  });
+
+  test('AUCUN bouton d’envoi, même campagne préparée', async () => {
+    await ouvrirApercu();
+    axios.post.mockResolvedValue({
+      data: { dry_run: false, rejeu: false, campaign: { id: 'c-1', nom: 'X', etat: 'preparee' } },
+    });
+    axios.get.mockResolvedValue({
+      data: { campaign: { id: 'c-1', nom: 'X', etat: 'preparee' },
+              summary: resumeFictif(), actions: [actionFictive()] },
+    });
+    await act(async () => { par('creer-campagne').click(); });
+    tous('button').map((b) => b.textContent.trim().toLowerCase()).forEach((libelle) => {
+      expect(libelle).not.toMatch(/^(envoyer|lancer|relancer|contacter|send|notifier|approuver)\b/);
+    });
+    // Et l'écran ne connaît aucune route d'envoi.
+    const source = require('fs').readFileSync(
+      require('path').join(__dirname, '..', 'ProspectsSection.js'), 'utf8');
+    ['/send', '/launch', '/dispatch', '/approve'].forEach((chemin) => {
+      expect(source).not.toContain(chemin);
+    });
+  });
+
+  test('une erreur serveur est dite, sans casser l’écran', async () => {
+    mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect()]) };
+    axios.post.mockRejectedValue({ response: { data: { detail: 'Aucun prospect ne correspond' } } });
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('preparer-campagne').click(); });
+    expect(par('message-campagne')).not.toBeNull();
+    expect(par('message-campagne').textContent).toContain('Aucun prospect ne correspond');
+    expect(par('prospection-section')).not.toBeNull();
+  });
+});

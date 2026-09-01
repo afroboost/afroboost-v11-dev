@@ -21998,6 +21998,536 @@ def p3s3_envoi_autorise(flags) -> bool:
     return flags.get(P3S3_FLAG_ACTIF) is True and flags.get(P3S3_FLAG_ENVOI) is True
 
 
+# ============================================================================
+# P3-S3-B — LA PREPARATION D'UNE CAMPAGNE, ET RIEN D'AUTRE
+# ============================================================================
+# CE LOT NE CONTACTE TOUJOURS PERSONNE.
+#
+# Il construit une campagne et ses actions, fige un instantane du message, et
+# s'arrete la. Aucune route `send`, `launch`, `dispatch`, `retry`, `j3`, `j7`.
+# La porte `p3s3_envoi_autorise()` reste fermee et n'est appelee nulle part
+# dans ce lot : il n'y a rien a autoriser.
+#
+# PREPARER N'EST NI RESERVER NI CONTACTER
+# ---------------------------------------------------------------------------
+# Une action `pret` ne pose PAS `verrou_actif`, donc pas le verrou
+# inter-campagnes : plusieurs campagnes simplement preparees coexistent, et
+# c'est voulu — on doit pouvoir preparer, comparer, jeter. Le verrou n'arrive
+# qu'a la RESERVATION, en P3-S3-E. De meme, `first_contact_claimed_at` et
+# `first_contact_sent_at` ne sont ecrits nulle part ici.
+# ============================================================================
+
+P3S3_ETAT_PREPARE = "preparee"
+P3S3_LISTE_MAX = 200          # une campagne tient en une page : 137 actions
+P3S3_MESSAGE_MAX = 4000
+P3S3_CANAUX = ("email", "whatsapp", "instagram", "formulaire",
+               "telephone", "visite", "aucun")
+
+# Les mots qui, dans le canal DECLARE par la source, designent un moyen de
+# contact. On lit ce que le prospecteur a ecrit — on ne devine pas a partir des
+# coordonnees. « Un telephone existe » ne signifie pas « ce numero est joignable
+# sur WhatsApp » : c'est la regle la plus importante de tout le chantier.
+_P3S3_RE_WHATSAPP = re.compile(r"whatsapp|wa\.me")
+_P3S3_RE_FORMULAIRE = re.compile(r"formulaire")
+_P3S3_RE_SITE = re.compile(r"\bsite\b")
+_P3S3_RE_TELEPHONE = re.compile(r"t[eé]l\b|t[eé]l[eé]phone")
+_P3S3_RE_VISITE = re.compile(r"visite")
+_P3S3_RE_DM = re.compile(r"\bdm\b|instagram")
+_P3S3_RE_EMAIL = re.compile(r"e-mail|email|mail")
+
+
+def p3s3_coordonnees(fiches) -> dict:
+    """Les coordonnees REELLEMENT exploitables d'un destinataire.
+
+    L'union des fiches du groupe : quand deux sites d'une meme enseigne sont un
+    seul decideur, l'e-mail publie par l'un vaut pour l'autre.
+    """
+    emails, telephones = [], []
+    reseaux = {"instagram": [], "facebook": [], "linkedin": [], "tiktok": []}
+    for f in fiches or []:
+        courriel = (f.get("public_email") or "").strip().lower()
+        if courriel and _P3S3_RE_MAIL.match(courriel) and courriel not in emails:
+            emails.append(courriel)
+        tel = (f.get("public_phone") or "").strip()
+        if tel and len(_P3S3_RE_NONCHIFFRE.sub("", tel)) >= 8 and tel not in telephones:
+            telephones.append(tel)
+        for champ, domaine in P3S3_RESEAUX:
+            compte = p3s3_compte_social(f.get(champ), domaine)
+            if compte and compte not in reseaux[champ]:
+                reseaux[champ].append(compte)
+    return {"emails": emails, "telephones": telephones, **reseaux}
+
+
+def p3s3_canal_et_execution(fiches) -> dict:
+    """Le canal du premier contact, son secours, et ce que la machine sait faire.
+
+    DEUX DECISIONS SEPAREES, ET C'EST DELIBERE.
+      1. QUEL CANAL — le plus NATUREL, celui que la source a declare. On ne
+         bascule jamais vers l'e-mail au seul motif qu'il serait automatisable :
+         ecrire a `contact@` un festival qu'on voulait aborder en message prive,
+         c'est gagner un envoi et perdre un partenariat.
+      2. CE QUE LE PRODUIT SAIT EN FAIRE — mesure sur le depot, pas espere :
+           email      Resend, envoi serveur reel et journalise      -> AUTO
+           whatsapp   l'envoi existe, mais un PREMIER contact hors
+                      fenetre de 24 h exige un gabarit approuve par
+                      Meta, et aucun gabarit de prospection n'existe -> ASSISTE
+           instagram  AUCUNE API de message prive dans le depot     -> MANUEL
+           formulaire aucune brique de remplissage                  -> ASSISTE
+           telephone / visite : manuels par nature                  -> MANUEL
+           aucun canal                                              -> BLOQUE
+
+    WHATSAPP N'EST JAMAIS DEDUIT D'UN NUMERO. Il faut une mention explicite
+    (« WhatsApp », « wa.me ») dans le canal declare ET un numero. Sur les 137
+    destinataires, 56 ont un telephone et 8 seulement une mention WhatsApp.
+    """
+    fiches = list(fiches or [])
+    coord = p3s3_coordonnees(fiches)
+    declare = " | ".join(((f.get("preferred_channel") or "") + " " +
+                          (f.get("backup_channel") or "")) for f in fiches).lower()
+
+    mails, tels = coord["emails"], coord["telephones"]
+    insta, fb, li = coord["instagram"], coord["facebook"], coord["linkedin"]
+
+    whatsapp = bool(_P3S3_RE_WHATSAPP.search(declare)) and bool(tels)
+    formulaire = bool(_P3S3_RE_FORMULAIRE.search(declare))
+    site = bool(_P3S3_RE_SITE.search(declare))
+    dit_tel = bool(_P3S3_RE_TELEPHONE.search(declare))
+    visite = bool(_P3S3_RE_VISITE.search(declare))
+    dit_dm = bool(_P3S3_RE_DM.search(declare))
+    dit_mail = bool(_P3S3_RE_EMAIL.search(declare))
+
+    if dit_mail and mails:
+        canal = "email"
+    elif dit_dm and insta:
+        canal = "instagram"
+    elif whatsapp:
+        canal = "whatsapp"
+    elif formulaire or (site and not mails):
+        canal = "formulaire"
+    elif visite:
+        canal = "visite"
+    elif dit_tel and tels:
+        canal = "telephone"
+    elif mails:
+        canal = "email"
+    elif insta:
+        canal = "instagram"
+    elif tels:
+        canal = "telephone"
+    else:
+        canal = "aucun"
+
+    # Le secours est ENREGISTRE, jamais emprunte. P3-S3-B n'execute aucun
+    # repli : un changement de canal reste une decision humaine.
+    disponibles = []
+    if mails:
+        disponibles.append("email")
+    if insta:
+        disponibles.append("instagram")
+    if whatsapp:
+        disponibles.append("whatsapp")
+    if formulaire or site:
+        disponibles.append("formulaire")
+    if tels:
+        disponibles.append("telephone")
+    if fb:
+        disponibles.append("facebook")
+    if li:
+        disponibles.append("linkedin")
+    if visite:
+        disponibles.append("visite")
+    secours = next((c for c in disponibles if c != canal), None)
+
+    if canal == "email":
+        execution, raison = "AUTO", "Resend : envoi serveur reel et journalise"
+        cible = mails[0]
+    elif canal == "whatsapp":
+        execution = "ASSISTE"
+        raison = ("Meta exige un gabarit approuve pour un premier contact ; "
+                  "aucun gabarit de prospection n'existe")
+        cible = tels[0]
+    elif canal == "instagram":
+        cible = insta[0]
+        if mails:
+            execution = "ASSISTE"
+            raison = "aucun message prive sortant possible ; e-mail public disponible en secours"
+        else:
+            execution = "MANUEL"
+            raison = "aucun message prive sortant possible, aucun e-mail public"
+    elif canal == "formulaire":
+        execution = "ASSISTE"
+        raison = "formulaire web : navigateur assiste, aucune brique serveur"
+        cible = next((f.get("website") for f in fiches if f.get("website")), "") or ""
+    elif canal in ("telephone", "visite"):
+        execution, raison = "MANUEL", "appel ou visite : aucun automate, par nature"
+        cible = (tels[0] if tels else
+                 next((f.get("address") for f in fiches if f.get("address")), "") or "")
+    else:
+        execution, raison = "BLOQUE", "aucune coordonnee numerique exploitable"
+        cible = ""
+
+    return {"channel": canal, "backup_channel": secours,
+            "execution_type": execution, "execution_reason": raison,
+            "target": cible, "coordonnees": coord}
+
+
+def p3s3_action_preparee(campagne_id: str, coach: str, fiches, maintenant: str) -> dict:
+    """L'action d'UN destinataire, message fige. Fonction PURE.
+
+    C'EST ICI QUE NAIT LE SNAPSHOT. Le message, le canal, la langue et
+    l'adresse sont COPIES dans l'action. L'action ne relira jamais la fiche :
+    modifier un prospect apres la preparation ne changera pas ce qui a ete
+    valide. Une campagne approuvee doit rester ce qu'on a approuve.
+    """
+    fiches = sorted(list(fiches or []), key=_p3s3_rang)
+    canal = p3s3_canal_et_execution(fiches)
+    tete = fiches[0] if fiches else {}
+    # Le message J0 vient de la fiche de tete du groupe ; si elle n'en a pas,
+    # on prend le premier disponible du groupe plutot que de perdre un texte
+    # deja redige. On ne FABRIQUE jamais de message : absent reste absent.
+    message = next((f.get("j0_message") for f in fiches if (f.get("j0_message") or "").strip()), "")
+    traduction = next((f.get("j0_fr_translation") for f in fiches
+                       if (f.get("j0_fr_translation") or "").strip()), "")
+    return {
+        "id": str(uuid.uuid4()),
+        "campaign_id": campagne_id,
+        "coach_id": coach,
+        "recipient_key": p3s3_recipient_key(fiches),
+        "prospect_ids": [(f.get("ref") or f.get("id") or "") for f in fiches],
+        "prospect_uuids": [f.get("id") for f in fiches],
+        "organisations": [f.get("organisation_name") or "" for f in fiches],
+        "cities": [f.get("city") or "" for f in fiches],
+        "category": tete.get("category"),
+        "priority": tete.get("priority"),
+        "score": tete.get("score"),
+        "wave": tete.get("wave"),
+        "language": tete.get("language") or "",
+        "channel": canal["channel"],
+        "backup_channel": canal["backup_channel"],
+        "target": canal["target"],
+        "execution_type": canal["execution_type"],
+        "execution_reason": canal["execution_reason"],
+        "message_j0": message,
+        "message_j0_origine": "fiche" if message else "absent",
+        "j0_fr_translation": traduction,
+        # `bloque` des la preparation quand aucun canal n'existe : inutile de
+        # faire croire qu'une action est prete alors qu'elle est sans issue.
+        "statut": "bloque" if canal["execution_type"] == "BLOQUE" else "pret",
+        # PAS DE `verrou_actif` : preparer ne reserve pas. Plusieurs campagnes
+        # preparees doivent pouvoir coexister sur le meme destinataire.
+        "created_at": maintenant,
+        "updated_at": maintenant,
+    }
+
+
+def p3s3_resume(actions) -> dict:
+    """Les compteurs du resume. Fonction PURE, aucune lecture de base.
+
+    Les actions EXCLUES ne comptent nulle part sauf dans leur propre total :
+    un resume qui compterait les exclus annoncerait un envoi plus large que
+    celui qu'on approuve.
+    """
+    vivantes = [a for a in (actions or []) if a.get("statut") != "exclu"]
+    par_execution = {t: 0 for t in P3S3_TYPES_EXECUTION}
+    par_canal, par_langue = {}, {}
+    for a in vivantes:
+        par_execution[a.get("execution_type", "BLOQUE")] = \
+            par_execution.get(a.get("execution_type", "BLOQUE"), 0) + 1
+        par_canal[a.get("channel") or "aucun"] = par_canal.get(a.get("channel") or "aucun", 0) + 1
+        langue = (a.get("language") or "").strip() or "non precisee"
+        par_langue[langue] = par_langue.get(langue, 0) + 1
+    return {
+        "destinataires": len(vivantes),
+        "exclus": len(actions or []) - len(vivantes),
+        "fiches": sum(len(a.get("prospect_ids") or []) for a in vivantes),
+        "par_execution": par_execution,
+        "par_canal": dict(sorted(par_canal.items(), key=lambda kv: -kv[1])),
+        "par_langue": dict(sorted(par_langue.items(), key=lambda kv: -kv[1])),
+        "sans_message_j0": sum(1 for a in vivantes if not (a.get("message_j0") or "").strip()),
+        "multi_fiches": sum(1 for a in vivantes if len(a.get("prospect_ids") or []) > 1),
+    }
+
+
+async def p3s3_portee(appelant: str) -> dict:
+    """Le filtre de cloisonnement. Un super-admin voit tout, un coach les siens."""
+    return {} if is_super_admin(appelant) else {"coach_id": appelant}
+
+
+@api_router.post("/prospect-campaigns/prepare")
+async def p3s3_preparer_campagne(request: Request):
+    """Prepare une campagne. `dry_run: true` par defaut : RIEN n'est ecrit.
+
+    LE DEFAUT EST LA SIMULATION, ET C'EST VOLONTAIRE. Une route de preparation
+    qui ecrit quand on oublie un parametre finirait par creer des campagnes par
+    accident. Il faut demander `dry_run: false` explicitement.
+
+    CE QUE CETTE ROUTE NE FAIT PAS, ET NE PEUT PAS FAIRE : envoyer. Elle
+    n'appelle aucun fournisseur, ne pose ni `first_contact_claimed_at` ni
+    `first_contact_sent_at`, ne touche a AUCUN statut metier de prospect, et
+    n'active PAS `verrou_actif`. Preparer une campagne ne contacte personne.
+
+    IDEMPOTENCE. Le corps peut porter `idempotency_key` : si une campagne
+    existe deja pour cette cle, elle est RENVOYEE telle quelle au lieu d'etre
+    recreee. C'est ce qui rend un double clic inoffensif — le second appel
+    reconnait le premier plutot que de fabriquer une campagne jumelle.
+    """
+    from pymongo.errors import DuplicateKeyError
+
+    appelant = await _v309_require_coach_or_admin(request)
+    corps = await request.json() if request.headers.get("content-length") else {}
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+
+    simulation = corps.get("dry_run", True) is not False
+    portee = await p3s3_portee(appelant)
+    cle_idempotence = p3s1_texte(corps.get("idempotency_key"), 64)
+
+    # --- rejeu : la campagne existe deja, on la rend sans rien recreer ---
+    if cle_idempotence and not simulation:
+        deja = await db[P3S3_CAMPAGNES].find_one(
+            dict(portee, idempotency_key=cle_idempotence), {"_id": 0})
+        if deja:
+            logger.info("%s preparation rejouee, campagne %s rendue telle quelle",
+                        P3S3_PREFIXE, (deja.get("id") or "")[:8])
+            return {"dry_run": False, "rejeu": True, "campaign": deja,
+                    "summary": deja.get("summary") or {}}
+
+    # --- selection : des references explicites, ou les filtres de l'ecran ---
+    filtre = dict(portee)
+    demandes = corps.get("prospect_ids")
+    if demandes is not None:
+        if not isinstance(demandes, list) or len(demandes) > 1000:
+            raise HTTPException(status_code=400,
+                                detail="prospect_ids : liste de 1000 identifiants maximum")
+        propres = [p3s1_texte(x, 64) for x in demandes if p3s1_texte(x, 64)]
+        if not propres:
+            raise HTTPException(status_code=400, detail="Aucun prospect selectionne")
+        filtre["$or"] = [{"id": {"$in": propres}}, {"ref": {"$in": propres}}]
+    else:
+        # LES MEMES FILTRES QUE L'ECRAN, en egalite stricte. Aucune entree
+        # utilisateur n'entre dans une expression reguliere Mongo.
+        for champ, cle in (("status", "status"), ("category", "category"),
+                           ("priority", "priority"), ("wave", "wave")):
+            valeur = p3s1_texte(corps.get(cle), 64)
+            if valeur:
+                filtre[champ] = valeur
+        ville = p3s1_normaliser(corps.get("city"))
+        if ville:
+            filtre["city_key"] = ville
+
+    fiches = await db[P3S1_COLLECTION].find(filtre, {"_id": 0}) \
+        .sort([("created_at", -1), ("id", 1)]).to_list(2000)
+    if not fiches:
+        raise HTTPException(status_code=400, detail="Aucun prospect ne correspond a cette selection")
+
+    # --- LES DESTINATAIRES REELS : la fonction de P3-S3-A, pas une seconde ---
+    # Aucune deuxieme logique de deduplication n'existe dans ce lot. Deux
+    # regles de regroupement auraient fini par diverger, et une campagne aurait
+    # alors ecrit deux fois a la meme personne.
+    groupes = p3s3_grouper(fiches)
+    maintenant = datetime.now(timezone.utc).isoformat()
+    campagne_id = str(uuid.uuid4())
+    actions = [p3s3_action_preparee(campagne_id, appelant,
+                                    [fiches[i] for i in indices], maintenant)
+               for indices in groupes]
+    actions.sort(key=lambda a: a["recipient_key"])
+    resume = p3s3_resume(actions)
+
+    nom = p3s1_texte(corps.get("name"), 120) or ("P3-LAUNCH-%d" % resume["destinataires"])
+    campagne = {
+        "id": campagne_id,
+        "coach_id": appelant,
+        "nom": nom,
+        "etat": P3S3_ETAT_PREPARE,
+        "idempotency_key": cle_idempotence or None,
+        "nb_fiches": len(fiches),
+        "nb_destinataires": resume["destinataires"],
+        "summary": resume,
+        "created_at": maintenant,
+        "updated_at": maintenant,
+        "created_by": appelant,
+        # Poses UNE SEULE FOIS, par un lot ulterieur. Jamais ici.
+        "approved_at": None, "approved_by": None,
+        "started_at": None, "finished_at": None,
+    }
+
+    if simulation:
+        # DRY-RUN : PAS UNE SEULE ECRITURE. On rend ce qui SERAIT cree.
+        return {"dry_run": True, "campaign": campagne, "summary": resume,
+                "actions": actions[:P3S3_LISTE_MAX], "returned": min(len(actions), P3S3_LISTE_MAX)}
+
+    try:
+        await db[P3S3_CAMPAGNES].insert_one(dict(campagne))
+    except DuplicateKeyError:
+        deja = await db[P3S3_CAMPAGNES].find_one(
+            dict(portee, idempotency_key=cle_idempotence), {"_id": 0})
+        if deja:
+            return {"dry_run": False, "rejeu": True, "campaign": deja,
+                    "summary": deja.get("summary") or {}}
+        raise HTTPException(status_code=409, detail="Cette campagne existe deja")
+
+    # Les actions une par une : l'index `(campaign_id, recipient_key)` est
+    # UNIQUE, donc un doublon de destinataire est refuse PAR LA BASE et non par
+    # une verification en Python qu'une requete concurrente contournerait.
+    ecrites, refusees = 0, 0
+    for action in actions:
+        try:
+            await db[P3S3_ACTIONS].insert_one(dict(action))
+            ecrites += 1
+        except DuplicateKeyError:
+            refusees += 1
+
+    if refusees:
+        logger.warning("%s campagne %s : %d action(s) refusees par l'index",
+                       P3S3_PREFIXE, campagne_id[:8], refusees)
+    logger.info("%s campagne %s preparee : %d fiches -> %d destinataires (%s)",
+                P3S3_PREFIXE, campagne_id[:8], len(fiches), ecrites,
+                resume["par_execution"])
+    campagne.pop("_id", None)
+    return {"dry_run": False, "rejeu": False, "campaign": campagne,
+            "summary": resume, "actions_creees": ecrites, "actions_refusees": refusees}
+
+
+@api_router.get("/prospect-campaigns")
+async def p3s3_lister_campagnes(request: Request):
+    """Les campagnes du coach. LECTURE PURE, ordre TOTAL."""
+    appelant = await _v309_require_coach_or_admin(request)
+    portee = await p3s3_portee(appelant)
+    try:
+        limite = min(max(int(request.query_params.get("limit", 25)), 1), 50)
+        depart = max(int(request.query_params.get("offset", 0)), 0)
+    except (TypeError, ValueError):
+        limite, depart = 25, 0
+    documents = await db[P3S3_CAMPAGNES].find(portee, {"_id": 0}) \
+        .sort([("created_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
+    return {"total": await db[P3S3_CAMPAGNES].count_documents(portee),
+            "returned": len(documents), "limit": limite, "offset": depart,
+            "campaigns": documents}
+
+
+@api_router.get("/prospect-campaigns/{campaign_id}")
+async def p3s3_lire_campagne(campaign_id: str, request: Request):
+    """Une campagne et ses actions. L'APERCU COMPACT de l'ecran.
+
+    Les compteurs sont RECALCULES depuis les actions en base, jamais relus du
+    resume fige : si une exclusion a eu lieu depuis la preparation, c'est le
+    nombre d'aujourd'hui qui doit s'afficher, pas celui d'hier.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+    identifiant = p3s1_texte(campaign_id, 64)
+    campagne = await db[P3S3_CAMPAGNES].find_one({"id": identifiant}, {"_id": 0})
+    if not campagne:
+        raise HTTPException(status_code=404, detail="Campagne introuvable")
+    if not is_super_admin(appelant) and (campagne.get("coach_id") or "") != appelant:
+        raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas")
+
+    actions = await db[P3S3_ACTIONS].find({"campaign_id": identifiant}, {"_id": 0}) \
+        .sort([("recipient_key", 1), ("id", 1)]).to_list(P3S3_LISTE_MAX)
+    return {"campaign": campagne, "summary": p3s3_resume(actions),
+            "returned": len(actions), "actions": actions}
+
+
+@api_router.patch("/prospect-campaigns/{campaign_id}/actions/{action_id}")
+async def p3s3_modifier_action(campaign_id: str, action_id: str, request: Request):
+    """Exclut un destinataire, ou corrige SON message / SON canal.
+
+    LA MODIFICATION TOUCHE LE SNAPSHOT, JAMAIS LA FICHE SOURCE. C'est tout
+    l'interet de l'instantane : on ajuste ce qui partira dans CETTE campagne
+    sans reecrire le prospect, et sans que le prospect reecrive la campagne.
+
+    EXCLURE N'EST PAS SUPPRIMER. L'action passe a `exclu` et reste en base :
+    elle raconte qu'on a choisi de ne pas ecrire a quelqu'un, ce qui vaut
+    d'etre garde. Le prospect, lui, n'est pas touche — ni son statut, ni ses
+    champs, ni son existence.
+
+    UNE CAMPAGNE APPROUVEE NE SE MODIFIE PLUS. Tant que P3-S3-D n'existe pas,
+    aucune campagne ne peut etre approuvee ; la garde est neanmoins ecrite ici,
+    la ou elle doit vivre, pour ne pas dependre d'un lot futur.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+    campagne = await db[P3S3_CAMPAGNES].find_one(
+        {"id": p3s1_texte(campaign_id, 64)}, {"_id": 0})
+    if not campagne:
+        raise HTTPException(status_code=404, detail="Campagne introuvable")
+    if not is_super_admin(appelant) and (campagne.get("coach_id") or "") != appelant:
+        raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas")
+    if campagne.get("etat") != P3S3_ETAT_PREPARE:
+        raise HTTPException(status_code=409,
+                            detail="Cette campagne n'est plus modifiable (etat : %s)"
+                                   % campagne.get("etat"))
+
+    action = await db[P3S3_ACTIONS].find_one(
+        {"id": p3s1_texte(action_id, 64), "campaign_id": campagne["id"]}, {"_id": 0})
+    if not action:
+        raise HTTPException(status_code=404, detail="Destinataire introuvable dans cette campagne")
+
+    corps = await request.json()
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+
+    champs = {}
+
+    if "excluded" in corps:
+        exclure = bool(corps.get("excluded"))
+        if exclure:
+            champs["statut"] = "exclu"
+        else:
+            # On rend a l'action l'etat qu'elle MERITE, pas `pret` par defaut :
+            # un destinataire sans canal reste bloque, meme reintegre.
+            champs["statut"] = "bloque" if action.get("execution_type") == "BLOQUE" else "pret"
+
+    if "message_j0" in corps:
+        texte = p3s1_texte(corps.get("message_j0"), P3S3_MESSAGE_MAX)
+        champs["message_j0"] = texte
+        champs["message_j0_origine"] = "edite" if texte else "absent"
+
+    for cle in ("channel", "backup_channel"):
+        if cle not in corps:
+            continue
+        valeur = (p3s1_texte(corps.get(cle), 24) or "").lower()
+        if cle == "backup_channel" and not valeur:
+            champs[cle] = None
+            continue
+        if valeur not in P3S3_CANAUX:
+            raise HTTPException(status_code=400,
+                                detail="Canal inconnu. Valeurs acceptees : %s"
+                                       % ", ".join(P3S3_CANAUX))
+        champs[cle] = valeur
+
+    if not champs:
+        raise HTTPException(status_code=400, detail="Aucun champ modifiable fourni")
+
+    # Changer le canal change ce que la machine sait faire : on recalcule le
+    # type d'execution plutot que de laisser un « AUTO » mentir sur un canal
+    # devenu manuel.
+    if "channel" in champs:
+        table = {"email": ("AUTO", "Resend : envoi serveur reel et journalise"),
+                 "whatsapp": ("ASSISTE", "Meta exige un gabarit approuve pour un premier contact"),
+                 "instagram": ("MANUEL", "aucun message prive sortant possible"),
+                 "formulaire": ("ASSISTE", "formulaire web : navigateur assiste"),
+                 "telephone": ("MANUEL", "appel : aucun automate, par nature"),
+                 "visite": ("MANUEL", "visite : aucun automate, par nature"),
+                 "aucun": ("BLOQUE", "aucune coordonnee numerique exploitable")}
+        champs["execution_type"], champs["execution_reason"] = table[champs["channel"]]
+        if champs.get("statut") != "exclu" and action.get("statut") != "exclu":
+            champs["statut"] = "bloque" if champs["execution_type"] == "BLOQUE" else "pret"
+
+    champs["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db[P3S3_ACTIONS].update_one({"id": action["id"]}, {"$set": champs})
+
+    apres = await db[P3S3_ACTIONS].find_one({"id": action["id"]}, {"_id": 0})
+    actions = await db[P3S3_ACTIONS].find(
+        {"campaign_id": campagne["id"]}, {"_id": 0}).to_list(P3S3_LISTE_MAX)
+    resume = p3s3_resume(actions)
+    await db[P3S3_CAMPAGNES].update_one(
+        {"id": campagne["id"]},
+        {"$set": {"summary": resume, "nb_destinataires": resume["destinataires"],
+                  "updated_at": champs["updated_at"]}})
+    logger.info("%s action %s modifiee (%s) par %s", P3S3_PREFIXE,
+                action["id"][:8], ", ".join(sorted(champs)), appelant[:24])
+    return {"action": apres, "summary": resume}
+
+
 
 # --- Leads Routes (Widget IA) ---
 # v68: ISOLATION MULTI-TENANT — chaque lead est lié à un coach_id
@@ -35838,6 +36368,16 @@ async def startup_db():
             [("coach_id", 1), ("recipient_key", 1)], unique=True,
             partialFilterExpression={"verrou_actif": True})
         await db[P3S3_ACTIONS].create_index([("campaign_id", 1), ("statut", 1)])
+
+        # P3-S3-B : la cle d'idempotence de la PREPARATION. Unique et PARTIELLE
+        # — la plupart des campagnes n'en portent pas, et sans le filtre elles
+        # entreraient toutes en collision sur `null`. C'est ce qui rend un
+        # double clic sur « Preparer la campagne » inoffensif : le second appel
+        # se heurte a l'index, reconnait la campagne deja creee et la rend,
+        # au lieu d'en fabriquer une jumelle.
+        await db[P3S3_CAMPAGNES].create_index(
+            [("coach_id", 1), ("idempotency_key", 1)], unique=True,
+            partialFilterExpression={"idempotency_key": {"$type": "string"}})
         await db[P3S3_ACTIONS].create_index(
             [("coach_id", 1), ("created_at", -1), ("id", 1)])
 

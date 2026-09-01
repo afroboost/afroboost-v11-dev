@@ -109,6 +109,25 @@ export const COLLABORATIONS = [
 ];
 
 const PRIORITES = ['A', 'B', 'C'];
+
+/* P3-S3-B — les libellés lisibles des vocabulaires du serveur. Aucun calcul :
+   le serveur décide du canal et du type d'exécution, l'écran ne fait que
+   traduire. Deux endroits pour une même règle finiraient par diverger. */
+const LIBELLE_CANAL = {
+  email: 'E-mail', whatsapp: 'WhatsApp', instagram: 'Instagram',
+  formulaire: 'Formulaire', telephone: 'Téléphone', visite: 'Visite', aucun: 'Aucun',
+};
+const LIBELLE_EXECUTION = {
+  AUTO: 'Automatique', ASSISTE: 'Assisté', MANUEL: 'Manuel', BLOQUE: 'Bloqué',
+};
+const LIBELLE_STATUT_ACTION = {
+  pret: 'Prêt', exclu: 'Exclu', bloque: 'Bloqué',
+};
+
+const erreurLisible = (err, repli) => {
+  const detail = err && err.response && err.response.data && err.response.data.detail;
+  return typeof detail === 'string' ? detail : repli;
+};
 const TAILLES = [25, 50];
 
 const libelleDe = (liste, cle) => {
@@ -204,6 +223,17 @@ export default function ProspectsSection({ API }) {
   const [brouillon, setBrouillon] = useState(null);
   const [enregistrement, setEnregistrement] = useState(false);
   const [message, setMessage] = useState(null);
+
+  /* P3-S3-B — LA PREPARATION DE CAMPAGNE.
+     `selection` est un TABLEAU d'identifiants, pas un objet : la règle V305
+     interdit de reposer un objet neuf quand rien n'a changé, et une liste de
+     chaînes se compare sans risque. Vide = « toute la sélection courante ». */
+  const [selection, setSelection] = useState([]);
+  const [campagne, setCampagne] = useState(null);      // aperçu OU campagne créée
+  const [actions, setActions] = useState([]);
+  const [prepEnCours, setPrepEnCours] = useState(false);
+  const [messageCampagne, setMessageCampagne] = useState(null);
+  const [actionOuverte, setActionOuverte] = useState(null);
 
   /* Les dépendances sont des CHAÎNES, jamais l'objet `filtres` — qui est neuf à
      chaque rendu et relancerait l'effet en boucle (règle absolue, incident V305). */
@@ -322,7 +352,105 @@ export default function ProspectsSection({ API }) {
     setEnregistrement(false);
   };
 
+  /* ------------------------------------------------------------------
+     P3-S3-B — PREPARER N'ENVOIE RIEN.
+     Cet écran ne connaît aucune route d'envoi : il prépare, il montre, il
+     laisse exclure ou corriger. Le premier appel est toujours une SIMULATION
+     (`dry_run: true`) ; créer la campagne demande un second clic explicite.
+     ------------------------------------------------------------------ */
+  const corpsPreparation = (simulation, cle) => {
+    const corps = { dry_run: simulation };
+    if (selection.length) {
+      corps.prospect_ids = selection;
+    } else {
+      Object.keys(filtres).forEach((k) => { if (filtres[k]) corps[k] = filtres[k]; });
+    }
+    if (cle) corps.idempotency_key = cle;
+    return corps;
+  };
+
+  const apercuCampagne = async () => {
+    setPrepEnCours(true);
+    setMessageCampagne(null);
+    try {
+      const rep = await axios.post(`${base}/prospect-campaigns/prepare`, corpsPreparation(true));
+      const d = (rep && rep.data) || {};
+      setCampagne(d.campaign ? { ...d.campaign, summary: d.summary, dry_run: true } : null);
+      setActions(d.actions || []);
+    } catch (err) {
+      setCampagne(null);
+      setActions([]);
+      setMessageCampagne({ type: 'erreur', texte: erreurLisible(err, 'Préparation refusée par le serveur.') });
+    }
+    setPrepEnCours(false);
+  };
+
+  /* La clé d'idempotence est calculée UNE FOIS pour cet aperçu : deux clics sur
+     « Créer la campagne » portent donc la même clé, et le serveur rend la
+     campagne déjà créée au lieu d'en fabriquer une jumelle. */
+  const creerCampagne = async () => {
+    if (!campagne || !campagne.dry_run || prepEnCours) return;
+    setPrepEnCours(true);
+    setMessageCampagne(null);
+    try {
+      const rep = await axios.post(`${base}/prospect-campaigns/prepare`,
+        corpsPreparation(false, campagne.id));
+      const d = (rep && rep.data) || {};
+      if (d.campaign) {
+        const lu = await axios.get(`${base}/prospect-campaigns/${d.campaign.id}`);
+        const c = (lu && lu.data) || {};
+        setCampagne({ ...(c.campaign || d.campaign), summary: c.summary || d.summary, dry_run: false });
+        setActions(c.actions || []);
+        setMessageCampagne({
+          type: 'ok',
+          texte: d.rejeu ? 'Campagne déjà préparée : rien n\'a été recréé.'
+                         : 'Campagne préparée. Aucun message n\'a été envoyé.',
+        });
+      }
+    } catch (err) {
+      setMessageCampagne({ type: 'erreur', texte: erreurLisible(err, 'Création refusée par le serveur.') });
+    }
+    setPrepEnCours(false);
+  };
+
+  const modifierAction = async (action, modifs) => {
+    if (!campagne || campagne.dry_run) return;
+    setMessageCampagne(null);
+    try {
+      const rep = await axios.patch(
+        `${base}/prospect-campaigns/${campagne.id}/actions/${action.id}`, modifs);
+      const d = (rep && rep.data) || {};
+      if (d.action) {
+        setActions((prec) => prec.map((a) => (a.id === d.action.id ? d.action : a)));
+        if (actionOuverte && actionOuverte.id === d.action.id) setActionOuverte(d.action);
+      }
+      if (d.summary) setCampagne((prec) => (prec ? { ...prec, summary: d.summary } : prec));
+    } catch (err) {
+      setMessageCampagne({ type: 'erreur', texte: erreurLisible(err, 'Modification refusée.') });
+    }
+  };
+
+  const fermerCampagne = () => {
+    setCampagne(null);
+    setActions([]);
+    setActionOuverte(null);
+    setMessageCampagne(null);
+  };
+
+  const basculerSelection = (identifiant) => {
+    setSelection((prec) => (prec.indexOf(identifiant) === -1
+      ? prec.concat([identifiant])
+      : prec.filter((x) => x !== identifiant)));
+  };
+
+  const toutSelectionner = () => {
+    const visibles = liste.map((p) => p.id);
+    const tousDejaPris = visibles.length > 0 && visibles.every((x) => selection.indexOf(x) !== -1);
+    setSelection(tousDejaPris ? [] : visibles);
+  };
+
   const nb = (cle) => (chargeUnFois ? (compteurs[cle] || 0) : '—');
+  const resume = (campagne && campagne.summary) || null;
 
   return (
     <div style={{ padding: '4px 0', color: TEXTE }} data-testid="prospection-section">
@@ -334,6 +462,174 @@ export default function ProspectsSection({ API }) {
         Les organisations à démarcher pour un partenariat. Aucun message n'est envoyé
         depuis cet écran.
       </p>
+
+      {/* ---------- P3-S3-B : PREPARER LA CAMPAGNE ---------- */}
+      <div data-testid="bandeau-campagne"
+           style={{
+             display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px',
+             padding: '10px 12px', marginBottom: '14px', borderRadius: '10px',
+             border: `1px solid rgba(${RGB}, 0.35)`, background: `rgba(${RGB}, 0.08)`,
+           }}>
+        <span style={{ fontSize: '12px', opacity: 0.85 }}>
+          {selection.length
+            ? `${selection.length} prospect${selection.length > 1 ? 's' : ''} sélectionné${selection.length > 1 ? 's' : ''}`
+            : 'Aucune sélection : la campagne couvrira tous les prospects filtrés.'}
+        </span>
+        {selection.length > 0 && (
+          <button type="button" onClick={() => setSelection([])} data-testid="vider-selection"
+                  style={{ ...styleBouton, background: 'transparent', border: '1px solid rgba(255,255,255,0.2)' }}>
+            Vider la sélection
+          </button>
+        )}
+        <button type="button" onClick={apercuCampagne} disabled={prepEnCours}
+                data-testid="preparer-campagne"
+                style={{ ...styleBouton, opacity: prepEnCours ? 0.6 : 1, marginLeft: 'auto' }}>
+          {prepEnCours ? 'Calcul…' : 'Préparer la campagne'}
+        </button>
+      </div>
+
+      {messageCampagne && (
+        <div data-testid="message-campagne"
+             style={{
+               fontSize: '12px', padding: '8px 10px', borderRadius: '8px', marginBottom: '12px',
+               background: messageCampagne.type === 'ok' ? 'rgba(34,197,94,0.14)' : 'rgba(239,68,68,0.16)',
+             }}>
+          {messageCampagne.texte}
+        </div>
+      )}
+
+      {campagne && (
+        <div data-testid="panneau-campagne"
+             style={{
+               marginBottom: '16px', padding: '14px', borderRadius: '12px',
+               border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(0,0,0,0.22)',
+             }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+            <strong style={{ fontSize: '14px' }}>{campagne.nom}</strong>
+            <Etiquette texte={campagne.dry_run ? 'Aperçu — rien n\'est enregistré' : 'Campagne préparée'}
+                       ton="primaire" />
+            <button type="button" onClick={fermerCampagne} data-testid="fermer-campagne"
+                    style={{ ...styleBouton, background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', marginLeft: 'auto' }}>
+              Fermer
+            </button>
+          </div>
+
+          {resume && (
+            <>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}
+                   data-testid="resume-campagne">
+                <Tuile libelle="Fiches" valeur={resume.fiches} />
+                <Tuile libelle="Destinataires" valeur={resume.destinataires} actif />
+                {['AUTO', 'ASSISTE', 'MANUEL', 'BLOQUE'].map((k) => (
+                  <Tuile key={k} libelle={LIBELLE_EXECUTION[k]} valeur={resume.par_execution[k] || 0} />
+                ))}
+                {resume.exclus > 0 && <Tuile libelle="Exclus" valeur={resume.exclus} />}
+              </div>
+              <div style={{ fontSize: '12px', opacity: 0.75, marginBottom: '4px' }} data-testid="resume-canaux">
+                <strong>Par canal :</strong>{' '}
+                {Object.keys(resume.par_canal).map((c) => `${LIBELLE_CANAL[c] || c} ${resume.par_canal[c]}`).join(' · ')}
+              </div>
+              <div style={{ fontSize: '12px', opacity: 0.75, marginBottom: '10px' }} data-testid="resume-langues">
+                <strong>Par langue :</strong>{' '}
+                {Object.keys(resume.par_langue).map((l) => `${l} ${resume.par_langue[l]}`).join(' · ')}
+                {resume.sans_message_j0 > 0
+                  ? ` — ${resume.sans_message_j0} sans message J0`
+                  : ''}
+              </div>
+            </>
+          )}
+
+          {campagne.dry_run && (
+            <button type="button" onClick={creerCampagne} disabled={prepEnCours}
+                    data-testid="creer-campagne" style={{ ...styleBouton, marginBottom: '10px' }}>
+              Créer la campagne préparée
+            </button>
+          )}
+
+          {/* L'APERCU COMPACT : on ne doit pas ouvrir 137 fiches une par une. */}
+          <div style={{ overflowX: 'auto', maxHeight: '420px', overflowY: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ textAlign: 'left', opacity: 0.6, fontSize: '11px' }}>
+                  {['Organisation', 'Ville', 'Canal', 'Langue', 'Exécution', 'Message J0', 'État', ''].map((h, i) => (
+                    <th key={`${h}-${i}`} style={{ padding: '5px 8px', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {actions.map((a) => (
+                  <tr key={a.id} data-testid={`action-${a.recipient_key}`}
+                      style={{
+                        borderTop: '1px solid rgba(255,255,255,0.06)',
+                        opacity: a.statut === 'exclu' ? 0.55 : 1,
+                      }}>
+                    <td style={{ padding: '6px 8px', fontWeight: 600 }}>
+                      {a.organisations.join(' + ')}
+                      <span style={{ opacity: 0.55, fontSize: '11px' }}> · {a.prospect_ids.join(', ')}</span>
+                    </td>
+                    <td style={{ padding: '6px 8px' }}>{ou(a.cities.filter(Boolean).join(' / '))}</td>
+                    <td style={{ padding: '6px 8px' }}>{LIBELLE_CANAL[a.channel] || a.channel}</td>
+                    <td style={{ padding: '6px 8px' }}>{ou(a.language)}</td>
+                    <td style={{ padding: '6px 8px' }}>
+                      <Etiquette texte={LIBELLE_EXECUTION[a.execution_type] || a.execution_type}
+                                 ton={a.execution_type === 'AUTO' ? 'primaire' : 'neutre'} />
+                    </td>
+                    <td style={{ padding: '6px 8px', maxWidth: '260px' }}>
+                      {a.message_j0
+                        ? `${a.message_j0.slice(0, 90)}${a.message_j0.length > 90 ? '…' : ''}`
+                        : <span style={{ opacity: 0.5 }}>aucun message</span>}
+                    </td>
+                    <td style={{ padding: '6px 8px' }}>{LIBELLE_STATUT_ACTION[a.statut] || a.statut}</td>
+                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                      {!campagne.dry_run && (
+                        <>
+                          <button type="button" data-testid={`ouvrir-action-${a.recipient_key}`}
+                                  onClick={() => setActionOuverte(a)}
+                                  style={{ ...stylePetitBouton }}>Modifier</button>
+                          <button type="button" data-testid={`exclure-${a.recipient_key}`}
+                                  onClick={() => modifierAction(a, { excluded: a.statut !== 'exclu' })}
+                                  style={{ ...stylePetitBouton, marginLeft: '6px' }}>
+                            {a.statut === 'exclu' ? 'Réintégrer' : 'Exclure'}
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {actionOuverte && (
+            <div data-testid="edition-action"
+                 style={{ marginTop: '12px', padding: '12px', borderRadius: '10px',
+                          border: `1px solid rgba(${RGB}, 0.35)` }}>
+              <div style={{ fontSize: '12px', opacity: 0.7, marginBottom: '8px' }}>
+                Ces corrections ne touchent que cette campagne — la fiche prospect
+                reste telle quelle.
+              </div>
+              <Champ libelle="Canal">
+                <select value={actionOuverte.channel} data-testid="action-canal" style={styleChamp}
+                        onChange={(e) => modifierAction(actionOuverte, { channel: e.target.value })}>
+                  {Object.keys(LIBELLE_CANAL).map((c) => (
+                    <option key={c} value={c}>{LIBELLE_CANAL[c]}</option>
+                  ))}
+                </select>
+              </Champ>
+              <Champ libelle="Message J0">
+                <textarea defaultValue={actionOuverte.message_j0 || ''} rows={5}
+                          data-testid="action-message" style={{ ...styleChamp, width: '100%' }}
+                          onBlur={(e) => modifierAction(actionOuverte, { message_j0: e.target.value })} />
+              </Champ>
+              <button type="button" onClick={() => setActionOuverte(null)}
+                      data-testid="fermer-edition-action"
+                      style={{ ...styleBouton, background: 'transparent', border: '1px solid rgba(255,255,255,0.2)' }}>
+                Fermer
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ---------- LES COMPTEURS ---------- */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
@@ -421,6 +717,12 @@ export default function ProspectsSection({ API }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
               <thead>
                 <tr style={{ textAlign: 'left', opacity: 0.6, fontSize: '11px' }}>
+                  <th style={{ padding: '6px 8px' }}>
+                    <input type="checkbox" data-testid="tout-selectionner"
+                           aria-label="Tout sélectionner"
+                           checked={liste.length > 0 && liste.every((p) => selection.indexOf(p.id) !== -1)}
+                           onChange={toutSelectionner} />
+                  </th>
                   {['Organisation', 'Catégorie', 'Ville', 'Score', 'Priorité', 'Vague',
                     'Canal', 'Statut', 'Prochaine action', 'Dernier contact'].map((h) => (
                     <th key={h} style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>{h}</th>
@@ -435,6 +737,14 @@ export default function ProspectsSection({ API }) {
                     data-testid={`ligne-${p.ref || p.id}`}
                     style={{ cursor: 'pointer', borderTop: '1px solid rgba(255,255,255,0.06)' }}
                   >
+                    {/* La case n'ouvre PAS la fiche : sans `stopPropagation`,
+                        cocher un prospect ouvrirait le tiroir à chaque clic. */}
+                    <td style={{ padding: '8px' }} onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" data-testid={`choix-${p.ref || p.id}`}
+                             aria-label={`Sélectionner ${p.organisation_name}`}
+                             checked={selection.indexOf(p.id) !== -1}
+                             onChange={() => basculerSelection(p.id)} />
+                    </td>
                     <td style={{ padding: '8px', fontWeight: 600 }}>
                       {p.organisation_name}
                       {p.ref ? <span style={{ opacity: 0.55, fontSize: '11px' }}> · {p.ref}</span> : null}
@@ -669,6 +979,17 @@ export default function ProspectsSection({ API }) {
     </div>
   );
 }
+
+const styleBouton = {
+  padding: '7px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+  cursor: 'pointer', color: TEXTE, border: `1px solid rgba(${RGB}, 0.55)`,
+  background: `rgba(${RGB}, 0.28)`,
+};
+
+const stylePetitBouton = {
+  padding: '3px 9px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer',
+  color: TEXTE, border: '1px solid rgba(255,255,255,0.22)', background: 'transparent',
+};
 
 const styleChamp = {
   padding: '7px 10px',
