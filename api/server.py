@@ -23689,6 +23689,199 @@ async def p3s3d_executer_campagne(campagne_id: str, appelant: str,
             "resultats": resultats, "traites": traites}
 
 
+# ============================================================================
+# P3-S3-D4 — UNE ROUTE POUR EPROUVER RESEND, ET RIEN D'AUTRE
+# ============================================================================
+# ELLE NE PEUT PAS LANCER UNE CAMPAGNE. Elle ne prend aucun identifiant de
+# campagne, ne lit aucune action, n'ecrit dans aucune collection metier. Son
+# seul travail : envoyer UN e-mail de test a UNE adresse qui n'appartient a
+# aucun prospect, pour prouver que l'adaptateur Resend fonctionne de bout en
+# bout depuis la production.
+#
+# POURQUOI ELLE EXISTE. P3-S3-D2 a volontairement fait de l'adaptateur un
+# service SANS route — c'etait la bonne decision : aucune surface d'envoi tant
+# que le moteur n'etait pas eprouve. Mais il en resultait qu'aucun chemin
+# deploye ne pouvait valider le fournisseur reel. Cette route ouvre ce chemin,
+# et lui seul.
+#
+# POURQUOI ELLE NE CONSULTE PAS LES DEUX DRAPEAUX, ET POURQUOI CE N'EST PAS
+# UN CONTOURNEMENT. `P3_LAUNCH_ENABLED` et `P3_LAUNCH_ENVOI_REEL` gardent
+# l'envoi AUX PROSPECTS : ils protegent 137 destinataires d'un premier contact
+# premature. Ici, aucun prospect n'est joignable — c'est verifie avant l'appel,
+# sur les fiches ET sur les actions. Les drapeaux ne sont ni lus, ni modifies :
+# leur objet n'est pas celui-ci. La protection, ici, ce sont les six gardes
+# ci-dessous.
+# ============================================================================
+
+# LE CROCHET D'ESSAI. `None` en production, et il ne peut PAS venir de la
+# requete : un transport passe dans le corps ferait du crochet de test une
+# partie du contrat public, que n'importe quel appelant pourrait viser. Il vit
+# donc ici, hors d'atteinte du reseau, et seul un banc d'essai le remplace.
+P3S3D4_TRANSPORT = None
+
+P3S3D4_PREFIXE_OBJET = "[TEST AFROBOOST] "
+P3S3D4_OBJET_DEFAUT = "Test technique du systeme d'envoi"
+# Le corps est FIGE dans le code. Laisser passer un texte libre, c'est laisser
+# quelqu'un coller le J0 commercial et l'envoyer sous couvert de « test ».
+P3S3D4_CORPS = (
+    "Bonjour,\n\n"
+    "Ceci est un test technique du systeme d'envoi Afroboost.\n\n"
+    "Si vous recevez cet e-mail, le fournisseur Resend fonctionne correctement.\n\n"
+    "Aucune campagne commerciale n'a ete lancee.\n\n"
+    "Afroboost"
+)
+
+
+def p3s3d4_cle_idempotence(destinataire: str, maintenant: str) -> str:
+    """Une cle de TEST, impossible a confondre avec celle d'un premier contact.
+
+    Les cles J0 valent `p3-<campagne>-<destinataire>-j0`. Celle-ci porte
+    `provider-test` en clair : meme en relisant des journaux six mois plus
+    tard, on ne prendra pas un test pour un envoi commercial.
+
+    Elle est stable A LA MINUTE : deux clics rapproches portent la meme cle, et
+    Resend refuse alors lui-meme le doublon. Au-dela, un nouveau test est un
+    nouvel envoi — ce qui est le comportement voulu pour un outil de diagnostic.
+    """
+    import hashlib
+    empreinte = hashlib.sha256((destinataire or "").strip().lower().encode()).hexdigest()
+    return "p3-provider-test-%s-%s" % ((maintenant or "")[:16].replace("-", "")
+                                       .replace(":", "").replace("T", ""), empreinte[:12])
+
+
+async def p3s3d4_est_un_prospect(destinataire: str) -> dict:
+    """Cette adresse appartient-elle a quelqu'un qu'on demarche ? LECTURE PURE.
+
+    DEUX SOURCES, PAS UNE. Une adresse peut vivre sur une FICHE prospect, ou
+    seulement dans la CIBLE d'une action de campagne — les deux ne coincident
+    pas toujours, et n'en verifier qu'une laisserait passer l'autre.
+
+    UNE LECTURE IMPOSSIBLE VAUT « C'EST UN PROSPECT ». C'est l'inverse de la
+    convention habituelle du depot, et c'est deliberé : partout ailleurs une
+    base qui hoquette ne doit pas se lire comme un refus, parce que le risque
+    est d'annuler un envoi legitime. Ici le risque est l'oppose — envoyer un
+    « test » a une vraie organisation demarchee. Devant ce risque-la, le doute
+    interdit.
+    """
+    valeur = (destinataire or "").strip().lower()
+    if not valeur:
+        return {"prospect": True, "motif": "adresse vide"}
+    try:
+        fiche = await db[P3S1_COLLECTION].find_one(
+            {"public_email": valeur}, {"_id": 0, "ref": 1, "organisation_name": 1})
+        if fiche:
+            return {"prospect": True,
+                    "motif": "fiche prospect %s" % (fiche.get("ref") or "?")}
+        action = await db[P3S3_ACTIONS].find_one(
+            {"target": valeur}, {"_id": 0, "recipient_key": 1})
+        if action:
+            return {"prospect": True,
+                    "motif": "cible de l'action %s" % (action.get("recipient_key") or "?")}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s verification prospect impossible : %s",
+                       P3S3D_PREFIXE, type(e).__name__)
+        return {"prospect": True, "motif": "verification impossible : dans le doute, refus"}
+    return {"prospect": False, "motif": ""}
+
+
+@api_router.post("/prospect-email-provider-test")
+async def p3s3d4_test_fournisseur_email(request: Request):
+    """Envoie UN e-mail de test. NE PEUT PAS LANCER DE CAMPAGNE.
+
+    SIX GARDES, DANS CET ORDRE :
+      1. super-admin uniquement — ce n'est pas un outil de coach ;
+      2. une adresse, UNE SEULE, au format valide ;
+      3. l'adresse ne doit appartenir a AUCUN prospect — verifie sur les fiches
+         ET sur les cibles d'action, le doute valant refus ;
+      4. l'objet est TOUJOURS prefixe `[TEST AFROBOOST] `, meme si l'appelant
+         envoie l'objet commercial : le destinataire doit voir que c'est un test ;
+      5. le corps est fige dans le code — aucun texte libre, donc aucun moyen
+         de faire passer le J0 commercial pour un test ;
+      6. un seul appel fournisseur, aucun reessai.
+
+    CE QU'ELLE N'ECRIT NULLE PART : aucun `partner_prospects`, aucune action,
+    aucune campagne, aucun `first_contact_*`, aucun `claimed_at`, aucun
+    `sent_at`. Elle n'a acces a aucun de ces objets — elle ne les lit que pour
+    REFUSER d'ecrire a un prospect.
+
+    ET ELLE NE TOUCHE PAS AUX DRAPEAUX : ni lus, ni modifies. Ils gardent
+    l'envoi aux prospects ; ici il n'y a pas de prospect a garder.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+    if not is_super_admin(appelant):
+        raise HTTPException(status_code=403,
+                            detail="Test fournisseur reserve au super-admin")
+
+    corps = await request.json()
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+
+    # UNE adresse, et une CHAINE. Le test de type n'est pas cosmetique : une
+    # liste `["a@x.ch", "b@y.ch"]` passee a `str()` donnerait la chaine
+    # "['a@x.ch', 'b@y.ch']", que le motif rejetterait par accident plutot que
+    # par decision. On refuse donc tout ce qui n'est pas une chaine, pour que
+    # « un seul e-mail par appel » soit une regle et non un heureux hasard.
+    brut = corps.get("to")
+    if not isinstance(brut, str):
+        raise HTTPException(status_code=400,
+                            detail="Une adresse e-mail unique et valide est requise")
+    destinataire = (p3s1_texte(brut, 200) or "").lower()
+    if not destinataire or not _P3S3_RE_MAIL.match(destinataire):
+        raise HTTPException(status_code=400,
+                            detail="Une adresse e-mail unique et valide est requise")
+
+    verdict_prospect = await p3s3d4_est_un_prospect(destinataire)
+    if verdict_prospect["prospect"]:
+        logger.warning("%s test fournisseur REFUSE : %s est un prospect (%s)",
+                       P3S3D_PREFIXE, destinataire[:4] + "***",
+                       verdict_prospect["motif"])
+        raise HTTPException(
+            status_code=409,
+            detail="Cette adresse appartient a un prospect (%s). Un test ne "
+                   "s'envoie jamais a quelqu'un qu'on demarche."
+                   % verdict_prospect["motif"])
+
+    # L'objet est TOUJOURS prefixe. Meme l'objet commercial devient un test.
+    _objet_brut = corps.get("subject")
+    fourni = (p3s1_texte(_objet_brut, P3S3D2_OBJET_MAX)
+              if isinstance(_objet_brut, str) else None) or P3S3D4_OBJET_DEFAUT
+    if fourni.startswith(P3S3D4_PREFIXE_OBJET):
+        objet = fourni
+    else:
+        objet = (P3S3D4_PREFIXE_OBJET + fourni)[:P3S3D2_OBJET_MAX]
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    cle = p3s3d4_cle_idempotence(destinataire, maintenant)
+
+    # `envoi_autorise=True` est pose ICI, explicitement : cette route EST
+    # l'autorisation. Les deux drapeaux ne sont pas consultes — ils gardent
+    # l'envoi aux prospects, et il n'y a pas de prospect ici.
+    fournisseur = P3S3DFournisseurEmail(
+        objet=objet, envoi_autorise=True, transport=P3S3D4_TRANSPORT)
+    instantane = {"canal": "email", "destinataire": destinataire,
+                  "message": P3S3D4_CORPS, "langue": "FR",
+                  "organisation": "test technique", "recipient_key": "PROVIDER-TEST"}
+
+    reponse = await fournisseur.envoyer(instantane, cle)
+
+    logger.info("%s TEST FOURNISSEUR %s -> verdict=%s id=%s par %s (cle %s)",
+                P3S3D_PREFIXE, destinataire[:4] + "***", reponse.get("verdict"),
+                reponse.get("provider_message_id") or "-", appelant[:24], cle)
+    return {
+        "provider": reponse.get("provider"),
+        "verdict": reponse.get("verdict"),
+        "provider_message_id": reponse.get("provider_message_id"),
+        "error_code": reponse.get("error_code"),
+        "error_message": reponse.get("error_message"),
+        "accepted_at": reponse.get("accepted_at"),
+        "idempotency_key": cle,
+        "subject": objet,
+        "from": fournisseur.expediteur,
+        "reply_to": fournisseur.reply_to,
+        "to_masque": destinataire[:4] + "***" + destinataire[destinataire.index("@"):],
+        "envoye_a_un_prospect": False,
+        "campagne_touchee": False,
+    }
 
 
 # --- Leads Routes (Widget IA) ---
