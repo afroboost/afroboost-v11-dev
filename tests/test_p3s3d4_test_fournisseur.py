@@ -449,8 +449,17 @@ verifier("11c. un echec n'ecrit toujours rien", _b.total_ecritures() == 0)
 print("\n12. AUCUNE SORTIE RESEAU DE TOUT LE BANC")
 
 verifier("12a. zero tentative de sortie", not _TENTATIVES, str(_TENTATIVES))
-verifier("12b. le transport reel n'est jamais atteint sans injection",
-         all("_transport" in str(x) or True for x in []) or True)
+# CETTE VERIFICATION NE POUVAIT PAS ECHOUER — `all(... for x in []) or True`
+# vaut True quoi qu'il arrive. Elle donnait l'illusion d'une garde. Ce qu'elle
+# voulait dire : en production, le crochet vaut None, donc l'adaptateur
+# utilise le VRAI SDK ; seul un banc peut le remplacer. On le verifie
+# reellement — sur le code, et sur l'etat du module apres le banc.
+verifier("12b. en production, le crochet d'essai vaut None",
+         "P3S3D4_TRANSPORT = None" in SRC, "valeur par defaut du crochet")
+verifier("12b-bis. ... et il est remis a None apres chaque appel du banc",
+         S.P3S3D4_TRANSPORT is None, repr(S.P3S3D4_TRANSPORT))
+verifier("12b-ter. la route lit le crochet du MODULE, pas la requete",
+         "transport=P3S3D4_TRANSPORT" in SRC and 'corps.get("_transport")' not in SRC)
 
 
 # ============================================================================

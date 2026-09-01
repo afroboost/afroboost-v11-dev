@@ -279,6 +279,22 @@ export default function ProspectsSection({ API }) {
         },
         extraire: (donnees) => donnees,
       },
+      /* P3-U3 — LES RÉPONSES REÇUES.
+         Elles n'apparaissaient nulle part : le moteur U2 les stocke, la route
+         les rend, et l'écran ne les demandait pas. Une réponse invisible est
+         une réponse perdue — c'est exactement ce que ce chantier veut éviter.
+         Chargée comme les deux autres sources, donc jamais de compteur à 0
+         suivi d'un rafraîchissement obligatoire (socle P0). */
+      reponses: {
+        url: `${base}/prospect-inbound`,
+        signature: true,
+        appel: async () => {
+          const rep = await axios.get(`${base}/prospect-inbound`,
+            { params: { limit: 20 } });
+          return rep && rep.data ? rep.data : null;
+        },
+        extraire: (donnees) => donnees,
+      },
     },
     { deps: [base, signature] }
   );
@@ -287,6 +303,13 @@ export default function ProspectsSection({ API }) {
   const campagnesOuvertes = (sectionCampagnes && sectionCampagnes.etat === SECTION.OK
     && sectionCampagnes.donnees && sectionCampagnes.donnees.campaigns) || [];
   const campagneOuverte = campagnesOuvertes[0] || null;
+
+  /* P3-U3 — dérivé de la section, jamais recopié dans un état local. */
+  const sectionReponses = chargement.sections.reponses;
+  const reponses = (sectionReponses && sectionReponses.etat === SECTION.OK
+    && sectionReponses.donnees && sectionReponses.donnees.messages) || [];
+  const reponsesEnAttente = (sectionReponses && sectionReponses.etat === SECTION.OK
+    && sectionReponses.donnees && sectionReponses.donnees.en_attente) || 0;
 
   const section = chargement.sections.prospects;
   const etat = (section && section.etat) || SECTION.CHARGEMENT;
@@ -582,6 +605,69 @@ export default function ProspectsSection({ API }) {
                   style={{ ...styleBouton, marginLeft: 'auto' }}>
             Ouvrir
           </button>
+        </div>
+      )}
+
+      {/* ---------- P3-U3 : LES RÉPONSES REÇUES ----------
+           Une liste, pas une messagerie. Elle répond à une seule question —
+           « qui nous a répondu, et est-ce rattaché au bon prospect ? » — et
+           s'efface tant que personne n'a répondu, pour ne pas encombrer un
+           écran qui sert d'abord à préparer. */}
+      {reponses.length > 0 && (
+        <div data-testid="reponses-recues"
+             style={{
+               padding: '12px 14px', marginBottom: '14px', borderRadius: '10px',
+               border: `1px solid rgba(${RGB}, 0.4)`, background: `rgba(${RGB}, 0.10)`,
+             }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px',
+                        marginBottom: '10px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '13px', fontWeight: 700 }}>
+              Réponses reçues ({reponses.length})
+            </span>
+            {reponsesEnAttente > 0 && (
+              <span data-testid="reponses-en-attente"
+                    style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
+                             background: 'rgba(245,158,11,0.22)', fontWeight: 600 }}>
+                {reponsesEnAttente} à rattacher à la main
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {reponses.map((r) => (
+              <div key={r.id} data-testid="reponse-ligne"
+                   style={{
+                     padding: '8px 10px', borderRadius: '8px',
+                     background: 'rgba(255,255,255,0.05)',
+                     borderLeft: `3px solid ${r.statut === 'rattache'
+                       ? `rgba(${RGB}, 0.9)` : 'rgba(245,158,11,0.9)'}`,
+                   }}>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap',
+                              alignItems: 'baseline' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700 }}>
+                    {r.recipient_key || 'Prospect à identifier'}
+                  </span>
+                  <span style={{ fontSize: '11px', opacity: 0.75 }}>{r.from_email}</span>
+                  <span style={{ fontSize: '11px', opacity: 0.6, marginLeft: 'auto' }}>
+                    {(r.received_at || '').slice(0, 16).replace('T', ' ')}
+                  </span>
+                </div>
+                <div style={{ fontSize: '12px', marginTop: '3px' }}>{r.subject}</div>
+                {/* Le corps est du TEXTE, jamais du HTML : on n'injecte pas le
+                    contenu d'un inconnu dans la page. */}
+                <div style={{ fontSize: '11px', opacity: 0.75, marginTop: '3px',
+                              whiteSpace: 'pre-wrap' }}>
+                  {(r.body_text || '').slice(0, 180)}
+                  {(r.body_text || '').length > 180 ? '…' : ''}
+                </div>
+                <div style={{ fontSize: '10px', opacity: 0.6, marginTop: '4px' }}>
+                  {r.statut === 'rattache'
+                    ? `rattaché — ${r.matching_method} (confiance ${r.matching_confidence})`
+                    : `à rattacher — ${r.motif || 'ambigu'}`}
+                  {r.campaign_id ? ` · campagne ${String(r.campaign_id).slice(0, 8)}` : ''}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

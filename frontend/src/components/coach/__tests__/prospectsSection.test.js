@@ -1070,3 +1070,129 @@ describe('P3-S3-C — réouverture et approbation', () => {
 
 const SOURCE_C = require('fs').readFileSync(
   require('path').join(__dirname, '..', 'ProspectsSection.js'), 'utf8');
+
+/* ==========================================================================
+   P3-U3 — LES RÉPONSES REÇUES DEVIENNENT VISIBLES
+
+   Le moteur U2 stockait les réponses, la route les rendait, et l'écran ne les
+   demandait pas : une réponse invisible est une réponse perdue. Ce panneau
+   répond à UNE question — « qui nous a répondu, et est-ce rattaché au bon
+   prospect ? » — et rien de plus. Ce n'est pas une messagerie.
+   ========================================================================== */
+
+const reponseFictive = (extra = {}) => ({
+  id: 'msg-1',
+  campaign_id: 'camp-abcdef12',
+  action_id: 'act-1',
+  recipient_key: 'BAR-01',
+  from_email: 'hotel@beaulac.exemple.test',
+  to_email: 'contact@reply.afroboosteur.com',
+  subject: 'Re: Proposition de collaboration avec Afroboost',
+  body_text: 'Bonjour, cela nous intéresse beaucoup.',
+  received_at: '2026-09-02T11:00:00+00:00',
+  matching_method: 'A_IN_REPLY_TO',
+  matching_confidence: 100,
+  statut: 'rattache',
+  motif: '',
+  ...extra,
+});
+
+describe('P3-U3 — les réponses reçues', () => {
+  const avecReponses = (messages, en_attente = 0) => {
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
+      campagnes: { etat: SECTION.OK, donnees: { total: 0, campaigns: [] } },
+      reponses: { etat: SECTION.OK,
+                  donnees: { messages, total: messages.length, en_attente } },
+    };
+  };
+
+  test('l’écran DEMANDE les réponses au chargement', async () => {
+    avecReponses([]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(mockSourcesDeclarees.reponses).toBeDefined();
+    expect(mockSourcesDeclarees.reponses.url).toContain('/prospect-inbound');
+  });
+
+  test('tant que personne n’a répondu, le panneau ne s’affiche pas', async () => {
+    avecReponses([]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(document.querySelector('[data-testid="reponses-recues"]')).toBeNull();
+  });
+
+  test('une réponse rattachée montre prospect, expéditeur, sujet, extrait et date', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    const panneau = par('reponses-recues');
+    expect(panneau).toBeTruthy();
+    expect(panneau.textContent).toContain('BAR-01');
+    expect(panneau.textContent).toContain('hotel@beaulac.exemple.test');
+    expect(panneau.textContent).toContain('Proposition de collaboration');
+    expect(panneau.textContent).toContain('cela nous intéresse');
+    expect(panneau.textContent).toContain('2026-09-02');
+    // 8 caractères, comme l'écran les tronque — `camp-abcdef12` -> `camp-abc`.
+    expect(panneau.textContent).toContain('campagne camp-abc');
+  });
+
+  test('le statut de rattachement est affiché, méthode et confiance comprises', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('reponses-recues').textContent).toContain('A_IN_REPLY_TO');
+    expect(par('reponses-recues').textContent).toContain('100');
+  });
+
+  test('un message ambigu est montré comme À RATTACHER, avec son motif', async () => {
+    avecReponses([reponseFictive({
+      statut: 'manual_review', action_id: null, recipient_key: null,
+      matching_method: 'AUCUNE', matching_confidence: 0,
+      motif: 'plusieurs actions pourraient correspondre — un humain tranche',
+    })], 1);
+    await monter(<ProspectsSection API="/api" />);
+    const panneau = par('reponses-recues');
+    expect(panneau.textContent).toContain('à rattacher');
+    expect(panneau.textContent).toContain('plusieurs actions');
+    expect(panneau.textContent).toContain('Prospect à identifier');
+    expect(par('reponses-en-attente').textContent).toContain('1');
+  });
+
+  test('le corps est rendu en TEXTE — aucun HTML d’un inconnu n’est injecté', async () => {
+    avecReponses([reponseFictive({
+      body_text: '<script>alert(1)</script><b>gras</b>',
+      subject: '<img src=x onerror=alert(2)>',
+    })]);
+    await monter(<ProspectsSection API="/api" />);
+    const panneau = par('reponses-recues');
+    expect(panneau.querySelector('script')).toBeNull();
+    expect(panneau.querySelector('b')).toBeNull();
+    expect(panneau.querySelector('img')).toBeNull();
+    expect(panneau.textContent).toContain('<script>alert(1)</script>');
+  });
+
+  test('un extrait long est tronqué, jamais déroulé en entier', async () => {
+    avecReponses([reponseFictive({ body_text: 'x'.repeat(400) })]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('reponses-recues').textContent).toContain('…');
+    expect(par('reponses-recues').textContent).not.toContain('x'.repeat(200));
+  });
+
+  test('plusieurs réponses sont listées, une ligne chacune', async () => {
+    avecReponses([reponseFictive(),
+                  reponseFictive({ id: 'msg-2', recipient_key: 'BAR-02' })]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(tous('[data-testid="reponse-ligne"]').length).toBe(2);
+  });
+
+  test('AUCUN bouton d’envoi ou de réponse n’apparaît dans ce panneau', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('reponses-recues').querySelectorAll('button').length).toBe(0);
+  });
+
+  test('le panneau n’utilise aucune couleur codée en dur', () => {
+    const bloc = SOURCE_C.slice(SOURCE_C.indexOf('P3-U3 : LES RÉPONSES REÇUES'),
+                                SOURCE_C.indexOf('{messageCampagne &&'));
+    const hex = bloc.match(/#[0-9a-fA-F]{6}/g) || [];
+    expect(hex).toEqual([]);
+    expect(bloc).toContain('RGB');
+  });
+});

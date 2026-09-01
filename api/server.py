@@ -24134,6 +24134,14 @@ async def p3u1_desabonnement_prospect(token: str = ""):
 
 P3U2_COLLECTION = "prospect_inbound_messages"
 
+# LE PROPRIETAIRE DES MESSAGES ENTRANTS. Une reponse arrive sur une adresse
+# Afroboost, pas sur celle d'un coach : rien dans le message ne dit a qui elle
+# appartient. La campagne P3 est unique et porte le compte du proprietaire ;
+# c'est donc lui. Le jour ou plusieurs coachs prospecteront, c'est l'adresse
+# de reception qui tranchera — d'ou une constante nommee plutot qu'une valeur
+# semee dans le code.
+P3U3_COACH_PAR_DEFAUT = COACH_EMAIL
+
 # LES METHODES DE RATTACHEMENT, de la plus sure a la plus faible.
 P3U2_METHODE_IN_REPLY_TO = "A_IN_REPLY_TO"   # l'en-tete que le protocole garantit
 P3U2_METHODE_REFERENCES = "B_REFERENCES"     # le fil complet, meme garantie
@@ -24586,6 +24594,292 @@ async def p3u2_lister_reponses(request: Request):
     return {"messages": lignes, "total": total, "limit": limite, "offset": depart,
             "en_attente": await db[P3U2_COLLECTION].count_documents(
                 {**dict(get_coach_filter(email)), "statut": P3U2_STATUT_REVUE})}
+
+
+# ============================================================================
+# P3-U3 — L'ARRIVEE REELLE : RESEND RECEIVING, DERRIERE UNE SIGNATURE
+# ============================================================================
+# CE LOT OUVRE LA PORTE, IL NE L'ACTIVE PAS. La route existe, elle verifie une
+# signature et elle sait traduire un evenement Resend vers le contrat U2 —
+# mais AUCUN message ne peut arriver tant que `reply.afroboosteur.com` n'a pas
+# de MX et que Resend Receiving n'est pas configure. Ces deux gestes sont une
+# operation separee, qui demandera son propre GO.
+#
+# CETTE ROUTE EST PUBLIQUE, ET C'EST LE SEUL MOYEN. Resend ne peut pas porter
+# de jeton coach : il ne connait aucun de nos comptes. Ce qui remplace
+# l'authentification, c'est la SIGNATURE — et elle doit etre exigee sans
+# exception, parce qu'une route publique qui accepte un corps arbitraire
+# laisserait n'importe qui fabriquer une fausse reponse de prospect, donc
+# couper les relances de qui il veut.
+#
+# LA VERIFICATION N'EST PAS REECRITE ICI. Le SDK Resend fournit
+# `Webhooks.verify` : HMAC-SHA256 sur `{id}.{timestamp}.{corps}`, secret
+# base64 apres retrait du prefixe `whsec_`, comparaison en temps constant, et
+# fenetre anti-rejeu sur l'horodatage. Reimplementer cette mecanique donnerait
+# une seconde crypto a maintenir, qui divergerait le jour ou Resend la fera
+# evoluer. On l'appelle ; on ne la copie pas.
+#
+# ET LE MOTEUR RESTE CELUI DE U2. Ce lot ne decide RIEN sur le rattachement :
+# il normalise, puis il passe la main. Recoder la correlation dans le webhook
+# donnerait deux regles qui finiraient par se contredire.
+
+P3U3_ENTETE_ID = "svix-id"
+P3U3_ENTETE_HORODATAGE = "svix-timestamp"
+P3U3_ENTETE_SIGNATURE = "svix-signature"
+
+# Les evenements que cette route traite. Tout autre evenement est ACCEPTE
+# (signature valide) mais ignore : Resend peut en ajouter, et repondre en
+# erreur ferait accumuler des reessais pour rien.
+P3U3_EVENEMENT_RECU = "email.received"
+P3U3_EVENEMENT_ENVOYE = "email.sent"
+
+
+def p3u3_secret() -> str:
+    """Le secret de signature. ABSENT = PORTE FERMEE, jamais ouverte.
+
+    C'est l'inverse exact de la convention habituelle du depot, ou une
+    configuration manquante laisse passer. Ici la configuration EST
+    l'authentification : sans secret, il n'y a aucun moyen de distinguer
+    Resend d'un inconnu, et accepter reviendrait a publier une route qui
+    ecrit dans la base sur simple demande.
+    """
+    return (os.environ.get("RESEND_WEBHOOK_SECRET", "") or "").strip()
+
+
+def p3u3_signature_valide(corps_brut: bytes, entetes) -> dict:
+    """La signature est-elle celle de Resend ? `{"ok": bool, "motif": str}`.
+
+    AUCUN SECRET NE SORT D'ICI. Ni dans le retour, ni dans les journaux : le
+    motif dit ce qui manque, jamais ce que vaut la valeur attendue.
+    """
+    secret = p3u3_secret()
+    if not secret:
+        return {"ok": False, "motif": "secret de webhook non configure"}
+    if not RESEND_AVAILABLE:
+        # Sans le SDK, on ne sait pas verifier. On ne devine pas : on refuse.
+        return {"ok": False, "motif": "verification indisponible"}
+    lire = (entetes.get if hasattr(entetes, "get") else (lambda k, d=None: None))
+    identifiant = (lire(P3U3_ENTETE_ID) or "").strip()
+    horodatage = (lire(P3U3_ENTETE_HORODATAGE) or "").strip()
+    signature = (lire(P3U3_ENTETE_SIGNATURE) or "").strip()
+    if not (identifiant and horodatage and signature):
+        return {"ok": False, "motif": "en-tetes de signature incomplets"}
+    try:
+        resend.Webhooks.verify({
+            "payload": (corps_brut or b"").decode("utf-8", "replace"),
+            "headers": {"id": identifiant, "timestamp": horodatage,
+                        "signature": signature},
+            "webhook_secret": secret,
+        })
+    except Exception as e:  # noqa: BLE001
+        # `verify` leve `ValueError` pour un horodatage hors fenetre, une
+        # signature absente ou non concordante. On ne distingue pas : dans
+        # tous les cas la reponse est la meme, et le detail reste au journal.
+        return {"ok": False, "motif": "signature refusee (%s)" % type(e).__name__}
+    return {"ok": True, "motif": ""}
+
+
+def p3u3_texte_depuis_html(html: str) -> str:
+    """Un HTML reduit a du texte LISIBLE, sans balise. PURE.
+
+    ON NE STOCKE JAMAIS DE HTML ETRANGER. Un dashboard qui rend le HTML d'un
+    inconnu est une faille par construction, et l'assainir correctement est un
+    metier a part entiere. Resend fournit presque toujours une version texte ;
+    quand elle manque, on fabrique un texte plutot que de garder le HTML.
+
+    Ce n'est pas un convertisseur fidele — il n'a pas a l'etre. Il retire les
+    blocs non affichables, remplace les sauts de bloc par des retours a la
+    ligne, retire les balises, et decode les entites les plus courantes.
+    """
+    if not html:
+        return ""
+    texte = re.sub(r"(?is)<(script|style|head)[^>]*>.*?</\1>", " ", str(html))
+    texte = re.sub(r"(?i)<br\s*/?>", "\n", texte)
+    texte = re.sub(r"(?i)</(p|div|tr|li|h[1-6])>", "\n", texte)
+    texte = re.sub(r"<[^>]+>", "", texte)
+    for entite, valeur in (("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"),
+                           ("&gt;", ">"), ("&quot;", '"'), ("&#39;", "'")):
+        texte = texte.replace(entite, valeur)
+    texte = re.sub(r"[ \t]+", " ", texte)
+    texte = re.sub(r"\n\s*\n\s*\n+", "\n\n", texte)
+    return texte.strip()
+
+
+def p3u3_entete(donnees: dict, nom: str):
+    """Un en-tete d'e-mail, quelle que soit la casse rendue. PURE.
+
+    Les en-tetes sont insensibles a la casse (RFC 5322) et les fournisseurs
+    n'en rendent pas tous la meme forme : `In-Reply-To`, `in-reply-to`,
+    `In-reply-to`. Chercher une seule ecriture ferait echouer le rattachement
+    le plus sur pour une raison purement typographique.
+    """
+    entetes = (donnees or {}).get("headers") or {}
+    if not isinstance(entetes, dict):
+        return None
+    cible = nom.strip().lower()
+    for cle, valeur in entetes.items():
+        if str(cle).strip().lower() == cible:
+            return valeur
+    return None
+
+
+def p3u3_adapter_recu(evenement: dict) -> dict:
+    """RESEND -> LE CONTRAT `InboundMessage` DE U2. Fonction PURE.
+
+    C'est le seul endroit du depot qui connait la forme d'un evenement Resend.
+    Le moteur U2 n'en verra jamais rien : le jour ou l'on brancherait un
+    `ImapAdapter`, il n'y aurait que cette fonction a ecrire.
+
+    LES DEUX EMPLACEMENTS DU `Message-ID`. Le modele `ReceivedEmail` du SDK
+    l'expose en champ de premier niveau (`message_id`), mais l'en-tete RFC
+    existe aussi dans `headers`. On prend le champ, et l'en-tete en repli :
+    l'un des deux suffit, et n'en lire qu'un ferait dependre le
+    dedoublonnage d'un detail de serialisation.
+    """
+    e = evenement or {}
+    donnees = e.get("data") or e.get("email") or e
+    destinataires = donnees.get("to")
+    if isinstance(destinataires, (list, tuple)):
+        destinataire = destinataires[0] if destinataires else None
+    else:
+        destinataire = destinataires
+    texte = donnees.get("text")
+    if not (texte or "").strip():
+        texte = p3u3_texte_depuis_html(donnees.get("html") or "")
+    return {
+        "provider": "resend",
+        # L'identifiant de l'EVENEMENT, pas du message : c'est lui que Resend
+        # rejoue, et c'est donc lui qui dedoublonne quand le `Message-ID`
+        # manque. `svix-id` le porte aussi, l'appelant le fournit alors.
+        "provider_event_id": (e.get("id") or donnees.get("id") or "").strip() or None,
+        "message_id": donnees.get("message_id") or p3u3_entete(donnees, "Message-ID"),
+        "in_reply_to": p3u3_entete(donnees, "In-Reply-To"),
+        "references": p3u3_entete(donnees, "References"),
+        "from_email": donnees.get("from"),
+        "to_email": destinataire,
+        "subject": donnees.get("subject"),
+        "body_text": texte,
+        "received_at": donnees.get("created_at") or e.get("created_at"),
+    }
+
+
+def p3u3_rfc_sortant(evenement: dict) -> str:
+    """Le `Message-ID` RFC de NOTRE e-mail, s'il figure dans `email.sent`. PURE.
+
+    ETAT REEL AU MOMENT DE CE LOT : NON PROUVE. Le SDK Resend 2.19.0 ne type
+    la charge utile d'AUCUN webhook — seuls les en-tetes Svix et l'objet de
+    configuration le sont — et `message_id` n'apparait dans tout le SDK que
+    dans `ReceivedEmail`, c'est-a-dire pour un message ENTRANT. Le
+    `GET /emails/{id}` local repond 403 avec la cle disponible.
+    On ne peut donc ni affirmer que ce champ existe, ni affirmer qu'il
+    n'existe pas.
+
+    CETTE FONCTION EST DONC ECRITE POUR LES DEUX CAS. Elle cherche le champ
+    aux endroits ou il serait naturellement place ; s'il n'y est pas, elle
+    rend une chaine vide et RIEN n'est ecrit. Aucun `Message-ID` n'est
+    fabrique, et le rattachement fort restera simplement indisponible jusqu'a
+    ce qu'un test fournisseur controle tranche.
+    """
+    e = evenement or {}
+    donnees = e.get("data") or e
+    # Trois emplacements plausibles, essayes dans l'ordre. Aucun n'est promis
+    # par le SDK : c'est justement pour cela qu'on les essaie tous plutot que
+    # de parier sur un seul.
+    candidats = [donnees.get("message_id"), p3u3_entete(donnees, "Message-ID")]
+    imbrique = donnees.get("email")
+    if isinstance(imbrique, dict):
+        candidats += [imbrique.get("message_id"), p3u3_entete(imbrique, "Message-ID")]
+    for brut in candidats:
+        normalise = p3u2_normaliser_identifiant(brut)
+        if normalise:
+            return normalise
+    return ""
+
+
+async def p3u3_traiter_envoi(evenement: dict) -> dict:
+    """`email.sent` : on note le `Message-ID` RFC sur l'action, et RIEN d'autre.
+
+    AUCUNE CONSEQUENCE METIER. Cet evenement ne fait ni avancer un statut, ni
+    marquer une fiche, ni declencher une relance : `sent_at` et compagnie sont
+    poses par `p3s3d_appliquer_succes` au moment de l'envoi, pas ici. Cette
+    branche n'ajoute qu'une METADONNEE, celle qui rendra le rattachement fort
+    possible plus tard.
+
+    IDEMPOTENTE PAR CONSTRUCTION : la condition `$exists: False` vit dans le
+    filtre, donc dix rejeux du meme evenement ecrivent une seule fois.
+    """
+    rfc = p3u3_rfc_sortant(evenement)
+    donnees = (evenement or {}).get("data") or (evenement or {})
+    identifiant = (donnees.get("email_id") or donnees.get("id") or "").strip()
+    if not rfc or not identifiant:
+        return {"ecrit": False, "motif": "aucun Message-ID RFC dans cet evenement"}
+    pose = await db[P3S3_ACTIONS].update_one(
+        {"provider_message_id": identifiant, P3U2_CHAMP_RFC: {"$exists": False}},
+        {"$set": {P3U2_CHAMP_RFC: rfc,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return {"ecrit": bool(getattr(pose, "matched_count", 0)), "motif": ""}
+
+
+@api_router.post("/webhooks/resend")
+async def p3u3_webhook_resend(request: Request):
+    """L'arrivee des evenements Resend. PUBLIQUE, MAIS SIGNEE.
+
+    L'ORDRE DES CONTROLES EST LE CONTRAT :
+      1. la signature, AVANT toute lecture du contenu — un corps non signe
+         n'est jamais interprete, meme pour en lire le type ;
+      2. le type d'evenement ;
+      3. la normalisation vers le contrat U2 ;
+      4. le moteur U2, qui decide seul du rattachement.
+
+    ELLE NE DECIDE RIEN. Pas de correlation ici, pas d'ecriture de
+    `replied_at`, pas d'arret de relance : tout cela appartient a
+    `p3u2_recevoir`, qui reste la source unique de verite.
+
+    ELLE REPOND 200 A CE QU'ELLE IGNORE. Un evenement signe mais d'un type
+    qu'on ne traite pas est acquitte : repondre en erreur ferait reessayer
+    Resend indefiniment pour un message qu'on ne veut pas.
+    """
+    corps_brut = await request.body()
+    verdict = p3u3_signature_valide(corps_brut, request.headers)
+    if not verdict["ok"]:
+        logger.warning("[P3-U3] webhook REFUSE : %s", verdict["motif"])
+        raise HTTPException(status_code=401, detail="Signature invalide")
+
+    try:
+        evenement = json.loads((corps_brut or b"{}").decode("utf-8", "replace"))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+    if not isinstance(evenement, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+
+    type_evenement = (evenement.get("type") or "").strip()
+
+    if type_evenement == P3U3_EVENEMENT_ENVOYE:
+        issue = await p3u3_traiter_envoi(evenement)
+        return {"recu": True, "type": type_evenement, "rfc_message_id_ecrit": issue["ecrit"]}
+
+    if type_evenement != P3U3_EVENEMENT_RECU:
+        # Acquitte sans rien faire. Resend n'a pas a reessayer.
+        return {"recu": True, "type": type_evenement, "ignore": True}
+
+    message = p3u3_adapter_recu(evenement)
+    if not message.get("provider_event_id"):
+        # `svix-id` identifie l'evenement de facon unique cote Resend : c'est
+        # le meilleur repli quand la charge utile n'a pas d'identifiant.
+        message["provider_event_id"] = (request.headers.get(P3U3_ENTETE_ID) or "").strip() or None
+
+    # LE DESTINATAIRE DECIDE DU PROPRIETAIRE. Une reponse arrive sur NOTRE
+    # adresse : c'est elle qui dit de quel coach il s'agit. En attendant le
+    # multi-coach, la campagne est unique et le proprietaire est le
+    # super-admin de la plateforme.
+    coach = P3U3_COACH_PAR_DEFAUT
+    issue = await p3u2_recevoir(message, coach)
+    logger.info("[P3-U3] evenement %s -> %s (doublon=%s)",
+                (message.get("provider_event_id") or "-")[:16],
+                issue.get("statut") or "-", issue.get("doublon"))
+    return {"recu": True, "type": type_evenement,
+            "stocke": issue.get("stocke"), "doublon": issue.get("doublon"),
+            "statut": issue.get("statut"), "methode": issue.get("methode")}
 
 
 # --- Leads Routes (Widget IA) ---

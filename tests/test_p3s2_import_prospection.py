@@ -574,8 +574,17 @@ print("\n8. L'ÉCRAN — CE QU'IL NE FAIT PAS")
 ECRAN = open(os.path.join(RACINE, "frontend", "src", "components", "coach",
                           "ProspectsSection.js"), encoding="utf-8").read()
 _ROUTES_ECRAN = set(re.findall(r"\$\{base\}/([a-z-]+)", ECRAN))
-verifier("8a. l'écran n'appelle que partner-prospects et prospect-campaigns",
-         _ROUTES_ECRAN == {"partner-prospects", "prospect-campaigns"}, str(_ROUTES_ECRAN))
+# LA LISTE RESTE EXACTE, ELLE S'ALLONGE SEULEMENT QUAND UNE ROUTE EST AJOUTEE
+# EN CONSCIENCE. P3-U3 en ajoute une TROISIEME, `prospect-inbound`, qui est en
+# LECTURE SEULE : elle affiche les réponses reçues. On la NOMME plutôt que
+# d'assouplir la comparaison — une garde de périmètre qui accepterait
+# n'importe quoi ne garderait plus rien.
+verifier("8a. l'écran n'appelle que partner-prospects, prospect-campaigns "
+         "et prospect-inbound (lecture des réponses, P3-U3)",
+         _ROUTES_ECRAN == {"partner-prospects", "prospect-campaigns", "prospect-inbound"},
+         str(_ROUTES_ECRAN))
+verifier("8a-ter. `prospect-inbound` n'est appelée qu'en LECTURE",
+         not re.search(r"axios\.(post|patch|put|delete)\([^)]*prospect-inbound", ECRAN))
 verifier("8a-bis. aucune route d'envoi, de lancement ou d'execution",
          not re.search(r"/(send|launch|dispatch|execute|retry)\b", ECRAN))
 verifier("8b. ni suppression ni PUT : seuls GET, POST et PATCH existent",
