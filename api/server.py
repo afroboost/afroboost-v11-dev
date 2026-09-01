@@ -22725,6 +22725,10 @@ P3S3D_MOTIFS = {
     "DEJA_RESERVE": "une tentative est deja en cours ou indeterminee",
     "STATUT_INCOMPATIBLE": "l'action n'est pas dans un etat envoyable",
     "TENTATIVES_EPUISEES": "le nombre maximum de tentatives est atteint",
+    # P3-S3-D2 : un e-mail sans objet part avec un sujet vide — signal de
+    # filtrage immediat — ou avec un sujet fabrique par la machine, c'est-a-dire
+    # du contenu que personne n'a approuve. Ni l'un ni l'autre.
+    "OBJET_ABSENT": "aucun objet d'e-mail approuve pour cette campagne",
 }
 
 
@@ -22834,8 +22838,13 @@ def p3s3d_garde_action(action: dict, campagne: dict, fiches=None,
                 "motif": P3S3D_MOTIFS["CAMPAGNE_NON_APPROUVEE"]}
 
     # --- ce qui protege la personne ---
+    # LE REFUS EST PROPRE A UN CANAL. Un numero qui a dit STOP sur WhatsApp
+    # n'a rien refuse par e-mail, et l'inverse est vrai aussi. `refus` est donc
+    # un ensemble de cles « canal:valeur », jamais une liste de valeurs nues :
+    # les fusionner reviendrait a inventer des refus que personne n'a exprimes.
     valeur = (a.get("target") or "").strip().lower()
-    if valeur and valeur in (refus or set()):
+    canal = (a.get("channel") or "").strip().lower()
+    if valeur and ("%s:%s" % (canal, valeur)) in (refus or set()):
         return {"autorise": False, "code": "REFUS_EXPRIME",
                 "motif": P3S3D_MOTIFS["REFUS_EXPRIME"]}
     # Un premier contact deja confirme sur UNE SEULE des fiches suffit a
@@ -22866,6 +22875,13 @@ def p3s3d_garde_action(action: dict, campagne: dict, fiches=None,
     if not valeur or not _P3S3_RE_MAIL.match(valeur):
         return {"autorise": False, "code": "CIBLE_INVALIDE",
                 "motif": P3S3D_MOTIFS["CIBLE_INVALIDE"]}
+    # P3-S3-D2 : l'objet est propre au canal e-mail, et il est APPROUVE au
+    # niveau de la campagne — une seule decision pour tous les destinataires,
+    # pas trente-et-une. Son absence retient l'action AVANT toute tentative,
+    # exactement comme un message vide : rien n'est consomme, rien n'echoue.
+    if a.get("channel") == "email" and not p3s3d2_objet_campagne(c):
+        return {"autorise": False, "code": "OBJET_ABSENT",
+                "motif": P3S3D_MOTIFS["OBJET_ABSENT"]}
     if a.get("verrou_actif") or a.get("claimed_at"):
         return {"autorise": False, "code": "DEJA_RESERVE",
                 "motif": P3S3D_MOTIFS["DEJA_RESERVE"]}
@@ -23015,6 +23031,273 @@ async def p3s3d_marquer_indetermine(action_id: str, maintenant: str,
     await db[P3S3_ACTIONS].update_one({"id": action_id}, {"$set": champs})
 
 
+# ============================================================================
+# P3-S3-D2 — L'ADAPTATEUR E-MAIL REEL, DERRIERE DEUX VERROUS
+# ============================================================================
+# ON REUTILISE L'INFRASTRUCTURE EXISTANTE, ON N'EN CONSTRUIT PAS UNE SECONDE.
+# Le depot envoie deja ses e-mails par RESEND (API, pas SMTP), avec une cle
+# posee au demarrage (`resend.api_key`, server.py:87), un expediteur unique
+# (`Afroboost <notifications@afroboost.com>`, 44 usages) et une adresse de
+# reponse reelle (`V336_REPLY_TO`). Aucun second systeme n'est cree ici : ni
+# file, ni gabarit, ni registre.
+#
+# LE MOTEUR NE CONNAIT PAS RESEND. Cet adaptateur respecte l'interface de D1 —
+# `envoyer(instantane, cle_idempotence) -> verdict` — et le moteur continue de
+# ne manipuler que les cinq verdicts. Aucun `if canal == "email"` n'a ete
+# ajoute dans `p3s3d_executer_campagne` : brancher WhatsApp ou Instagram un
+# jour se fera en ecrivant un adaptateur, pas en modifiant le moteur.
+#
+# CE QUE L'AUDIT DU SDK A ETABLI (resend 2.19.0, lu dans la roue publiee)
+# ---------------------------------------------------------------------------
+#   * `Emails.send(params, options)` rend un dictionnaire portant `id` ;
+#   * `options["idempotency_key"]` est envoye en en-tete `Idempotency-Key`
+#     (`resend/request.py:56`) — L'IDEMPOTENCE EST DONC NATIVE ;
+#   * toute erreur remonte en `ResendError` avec `.code`, `.error_type`,
+#     `.message` ; la table `ERRORS` couvre 400, 401, 403, 422, 500 ;
+#   * TOUTE panne du client HTTP est enveloppee en `ResendError(code=500,
+#     error_type="HttpClientError")` — y compris un delai depasse. Le SDK ne
+#     distingue donc PAS « la requete n'est jamais partie » de « la requete est
+#     partie et la reponse s'est perdue ». C'est exactement le cas
+#     INDETERMINE, et c'est pour cela qu'il est traite comme tel.
+# ============================================================================
+
+# Le champ que la campagne doit porter pour qu'un e-mail puisse partir.
+# IL N'EXISTE PAS AUJOURD'HUI, et c'est un constat, pas un oubli : ni
+# l'instantane approuve ni la fiche prospect ne contiennent d'objet d'e-mail.
+# Un premier contact commercial sans objet part avec un sujet vide — signal de
+# filtrage immediat — ou avec un sujet fabrique par la machine, c'est-a-dire du
+# contenu que personne n'a approuve. Les deux sont refuses : l'adaptateur exige
+# un objet, et la garde le reclame AVANT toute tentative.
+P3S3D2_CHAMP_OBJET = "subject_j0"
+P3S3D2_OBJET_MAX = 200
+
+# L'expediteur du depot. On ne cree pas une identite d'envoi pour la
+# prospection : un domaine qui parle soudain avec deux voix perd la reputation
+# des deux.
+P3S3D2_EXPEDITEUR = "Afroboost <notifications@afroboost.com>"
+
+
+def p3s3d2_entetes_prospect() -> dict:
+    """Un desabonnement praticable, SANS jeton — la seule forme honnete ici.
+
+    `_v336_entetes_desinscription` construit un lien `List-Unsubscribe` a
+    partir d'un `unsubscribe_token`, qui n'existe que pour les inscrits au
+    registre. AUCUN prospect n'en a : ce sont des organisations demarchees, pas
+    des abonnes. Poser ce lien leur offrirait un bouton « se desinscrire » qui
+    repondrait « lien invalide » — pire que pas de bouton du tout.
+
+    La RFC 8058 admet la forme `mailto:` seule, et elle fonctionne sans jeton.
+    On l'utilise donc seule, sans `List-Unsubscribe-Post` : l'en-tete un-clic
+    exige une URL qui accepte un POST, et nous n'en avons pas a offrir.
+    """
+    return {"List-Unsubscribe":
+            "<mailto:notifications@afroboost.com?subject=unsubscribe>"}
+
+
+def p3s3d2_corps_html(message: str) -> str:
+    """Le corps HTML, minimal et sobre. Le texte reste la version de reference.
+
+    Un e-mail HTML SANS equivalent texte est un signal de filtrage a lui seul
+    (constat deja porte par V336). Ici c'est l'inverse : le message approuve
+    EST du texte, et l'HTML n'en est qu'un habillage. Aucune couleur de marque,
+    aucun gabarit : un premier contact commercial qui ressemble a une
+    infolettre se lit comme une infolettre.
+    """
+    lignes = (message or "").split("\n")
+    corps = "".join("<p style=\"margin:0 0 12px;\">%s</p>" % _p3s3d2_echapper(l)
+                    for l in lignes if l.strip())
+    return ('<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
+            '<body style="margin:0;padding:0;">'
+            '<div style="font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;'
+            'font-size:15px;line-height:1.55;color:#111;max-width:560px;">'
+            + corps + '</div></body></html>')
+
+
+def _p3s3d2_echapper(texte: str) -> str:
+    """Le message est du TEXTE ECRIT A LA MAIN : il ne doit jamais devenir du
+    balisage. Sans cet echappement, une apostrophe typographique passerait,
+    mais un `<` d'un nom d'enseigne casserait la mise en page — et pire, un
+    message contenant du HTML serait rendu tel quel."""
+    return (str(texte or "").replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+class P3S3DFournisseurEmail:
+    """L'adaptateur Resend. Il ne sort de la machine QUE si les deux drapeaux
+    sont ouverts — et le moteur ignore tout de son fonctionnement.
+
+    LE DOUBLE VERROU EST DANS L'ADAPTATEUR, PAS SEULEMENT DANS LE MOTEUR.
+    La garde de D1 refuse deja un envoi reel drapeaux fermes ; cette classe le
+    refuse une SECONDE fois, juste avant l'appel. Deux gardes independantes sur
+    le meme interdit, parce qu'une seule finit toujours par etre contournee par
+    un chemin qu'on n'avait pas prevu.
+
+    SUCCES = LE FOURNISSEUR A ACCEPTE ET A RENDU UN IDENTIFIANT.
+    Ni « l'appel est parti », ni « aucune exception » : un identifiant de
+    message, et rien d'autre. Sans lui, on ne conclut pas — on rend INDETERMINE
+    et le verrou anti-double reste pose.
+    """
+
+    nom = "resend"
+
+    def __init__(self, objet: str = "", expediteur: str = None,
+                 reply_to: str = None, transport=None, envoi_autorise: bool = False):
+        self.objet = (objet or "").strip()
+        self.expediteur = expediteur or P3S3D2_EXPEDITEUR
+        self.reply_to = reply_to or V336_REPLY_TO
+        # `transport` n'existe que pour les bancs d'essai : il remplace l'appel
+        # au SDK. En production il vaut None, et le SDK reel est utilise.
+        self.transport = transport
+        self.envoi_autorise = bool(envoi_autorise)
+        self.appels = []
+
+    def charge_utile(self, instantane: dict, cle_idempotence: str) -> dict:
+        """Ce qui serait transmis a Resend. Fonction pure, sans effet."""
+        message = (instantane or {}).get("message") or ""
+        return {
+            "params": {
+                "from": self.expediteur,
+                "to": [(instantane or {}).get("destinataire")],
+                "subject": self.objet,
+                "reply_to": self.reply_to,
+                "headers": p3s3d2_entetes_prospect(),
+                "text": message,
+                "html": p3s3d2_corps_html(message),
+            },
+            # L'IDEMPOTENCE EST NATIVE. Le SDK pose l'en-tete `Idempotency-Key`
+            # des que cette option est presente (resend/request.py:56). La cle
+            # vient de D1 et ne bouge pas d'une tentative a l'autre : un rejeu
+            # est donc refuse par Resend lui-meme, en plus de nos verrous.
+            "options": {"idempotency_key": cle_idempotence},
+        }
+
+    async def envoyer(self, instantane: dict, cle_idempotence: str) -> dict:
+        reponse = {"provider": self.nom, "verdict": None, "provider_message_id": None,
+                   "error_code": None, "error_message": None, "retry_after": None,
+                   "accepted_at": None}
+
+        # --- refus AVANT tout appel : rien a envoyer, rien a qui envoyer ---
+        message = (instantane or {}).get("message") or ""
+        destinataire = ((instantane or {}).get("destinataire") or "").strip()
+        if not self.objet:
+            return dict(reponse, verdict=P3S3D_PERMANENT, error_code="OBJET_ABSENT",
+                        error_message="aucun objet d'e-mail approuve pour cette campagne")
+        if not message.strip():
+            return dict(reponse, verdict=P3S3D_PERMANENT, error_code="MESSAGE_VIDE",
+                        error_message="aucun message a envoyer")
+        if not destinataire or not _P3S3_RE_MAIL.match(destinataire.lower()):
+            return dict(reponse, verdict=P3S3D_PERMANENT, error_code="CIBLE_INVALIDE",
+                        error_message="adresse absente ou illisible")
+
+        # --- LE DOUBLE VERROU, une seconde fois, juste avant l'appel ---
+        if not self.envoi_autorise:
+            return dict(reponse, verdict=P3S3D_PERMANENT, error_code="ENVOI_NON_AUTORISE",
+                        error_message="les deux drapeaux d'envoi ne sont pas ouverts")
+
+        charge = self.charge_utile(instantane, cle_idempotence)
+        self.appels.append({"destinataire": destinataire, "cle": cle_idempotence})
+
+        try:
+            if self.transport is not None:
+                brut = await self.transport(charge["params"], charge["options"])
+            else:
+                # LE SEUL APPEL SORTANT DU LOT, et il est inatteignable tant
+                # que `envoi_autorise` est faux — donc tant que les deux
+                # drapeaux ne sont pas ouverts.
+                import resend
+                brut = await asyncio.to_thread(
+                    resend.Emails.send, charge["params"], charge["options"])
+        except Exception as e:  # noqa: BLE001
+            return dict(reponse, **p3s3d2_verdict_erreur(e))
+
+        identifiant = (brut or {}).get("id") if isinstance(brut, dict) else None
+        if not identifiant:
+            # UN SUCCES MUET N'EST PAS UN SUCCES. Sans identifiant, on ignore
+            # si le message est parti : le verrou anti-double doit rester pose.
+            return dict(reponse, verdict=P3S3D_INDETERMINE, error_code="SANS_IDENTIFIANT",
+                        error_message="Resend n'a rendu aucun identifiant de message")
+        return dict(reponse, verdict=P3S3D_SUCCESS, provider_message_id=identifiant,
+                    accepted_at=datetime.now(timezone.utc).isoformat())
+
+
+def p3s3d2_verdict_erreur(erreur) -> dict:
+    """Traduit une erreur Resend en l'un des cinq verdicts. Fonction pure.
+
+    LA DECISION LA PLUS IMPORTANTE EST CELLE DU DELAI DEPASSE.
+    Le SDK enveloppe TOUTE panne de son client HTTP dans un
+    `ResendError(code=500, error_type="HttpClientError")` — sans distinguer
+    « la requete n'est jamais partie » de « elle est partie et la reponse s'est
+    perdue ». Dans le second cas, un reessai enverrait un DEUXIEME premier
+    contact. Puisque le SDK ne permet pas de trancher, on ne tranche pas : ce
+    cas devient INDETERMINE, le verrou reste pose, et un humain decide.
+
+    C'est deliberement plus strict que necessaire. La cle d'idempotence native
+    rendrait un reessai sur : Resend refuserait lui-meme le doublon. Mais je
+    n'ai pas verifie le comportement serveur de cette deduplication ni sa
+    fenetre — tant que ce n'est pas prouve, le cas ambigu reste protege.
+    Assouplir cette regle appartient a un lot qui apportera cette preuve.
+
+    401 / 403 NE SONT PAS LA FAUTE DU DESTINATAIRE : c'est la configuration qui
+    est en cause. Le verdict est permanent — reessayer ne servirait a rien —
+    mais le code d'erreur le dit, pour qu'on ne conclue pas « adresse morte ».
+    """
+    code = getattr(erreur, "code", None)
+    genre = getattr(erreur, "error_type", None) or type(erreur).__name__
+    message = (getattr(erreur, "message", None) or str(erreur))[:300]
+
+    if genre == "HttpClientError":
+        return {"verdict": P3S3D_INDETERMINE, "error_code": "HTTP_CLIENT",
+                "error_message": message}
+    if type(erreur).__name__ == "NoContentError":
+        return {"verdict": P3S3D_INDETERMINE, "error_code": "SANS_CONTENU",
+                "error_message": "reponse vide : on ignore si le message est parti"}
+
+    try:
+        numero = int(str(code))
+    except (TypeError, ValueError):
+        # Une erreur qu'on ne sait pas lire est une erreur qu'on ne sait pas
+        # juger : on protege plutot que de deviner.
+        return {"verdict": P3S3D_INDETERMINE, "error_code": str(code or genre),
+                "error_message": message}
+
+    if numero == 429:
+        return {"verdict": P3S3D_RATE_LIMIT, "error_code": "429",
+                "error_message": message,
+                "retry_after": getattr(erreur, "retry_after", None) or 60}
+    if numero in (401, 403):
+        return {"verdict": P3S3D_PERMANENT, "error_code": str(numero),
+                "error_message": "configuration d'envoi refusee : " + message}
+    if 400 <= numero < 500:
+        return {"verdict": P3S3D_PERMANENT, "error_code": str(numero),
+                "error_message": message}
+    if numero >= 500:
+        return {"verdict": P3S3D_RETRYABLE, "error_code": str(numero),
+                "error_message": message}
+    return {"verdict": P3S3D_INDETERMINE, "error_code": str(numero),
+            "error_message": message}
+
+
+def p3s3d2_objet_campagne(campagne: dict) -> str:
+    """L'objet d'e-mail APPROUVE de la campagne. Vide s'il n'y en a pas."""
+    return p3s1_texte((campagne or {}).get(P3S3D2_CHAMP_OBJET), P3S3D2_OBJET_MAX)
+
+
+def p3s3d2_fournisseur_pour(canal: str, campagne: dict, envoi_autorise: bool,
+                            transport=None):
+    """LE CHOIX DU FOURNISSEUR, EN UN SEUL ENDROIT.
+
+    C'est le seul point du systeme qui sait qu'un canal correspond a un
+    adaptateur. Le moteur, lui, n'en sait rien : il appelle `envoyer` et lit un
+    verdict. Ajouter WhatsApp ou Instagram un jour se fera en ajoutant une
+    ligne ICI et un adaptateur a cote — jamais en touchant au moteur.
+    """
+    if canal == "email":
+        return P3S3DFournisseurEmail(
+            objet=p3s3d2_objet_campagne(campagne),
+            envoi_autorise=envoi_autorise, transport=transport)
+    return None
+
+
 def p3s3d_verdict_reprise(action: dict) -> str:
     """Que faire d'une action trouvee en vol apres un redemarrage ? PURE.
 
@@ -23153,7 +23436,21 @@ async def p3s3d_executer_campagne(campagne_id: str, appelant: str,
         {"ref": {"$in": references}}, {"_id": 0}).to_list(len(references) + 1) \
         if references else []
     table = {f.get("ref"): f for f in fiches}
-    refus = await c3_refus_exprimes("email", [a.get("target") for a in actions])
+    # LE REGISTRE STOP EST INTERROGE PAR CANAL, ET LE MOTEUR N'EN NOMME AUCUN.
+    # Ecrire `c3_refus_exprimes("email", ...)` ici aurait grave le canal dans le
+    # moteur — le premier `if email` d'une longue serie. On regroupe donc les
+    # cibles par canal present dans la campagne, une lecture par canal, et le
+    # jour ou WhatsApp s'ajoutera rien ne changera ici.
+    refus = set()
+    _par_canal = {}
+    for _a in actions:
+        _par_canal.setdefault((_a.get("channel") or "").strip().lower(), []).append(
+            _a.get("target"))
+    for _canal, _valeurs in _par_canal.items():
+        if not _canal:
+            continue
+        for _v in await c3_refus_exprimes(_canal, _valeurs):
+            refus.add("%s:%s" % (_canal, _v))
 
     flags = await get_feature_flags()
     envoi_autorise = p3s3_envoi_autorise(flags)

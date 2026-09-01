@@ -124,6 +124,9 @@ def base_prete(fiches=None):
         jeton_=JA, corps={"dry_run": False, "idempotency_key": "d1"})))
     identifiant = prepare["campaign"]["id"]
     lancer(S.p3s3_approuver_campagne(identifiant, RequeteFictive(jeton_=JA, corps={})))
+    # P3-S3-D2 : un e-mail sans objet approuve ne part pas. La campagne de banc
+    # en porte donc un, comme une campagne reellement prete.
+    b["prospect_campaigns"].documents[0][S.P3S3D2_CHAMP_OBJET] = "Objet de banc"
     b["prospect_campaigns"].ecritures = 0
     b["prospect_campaign_actions"].ecritures = 0
     b["partner_prospects"].ecritures = 0
@@ -171,10 +174,20 @@ verifier("1h. trois tentatives au maximum", S.P3S3D_MAX_TENTATIVES == 3)
 print("\n2. AUCUN RESEAU — VERIFIE SUR LE CODE, PAS SUR LES COMMENTAIRES")
 
 ARBRE = ast.parse(SRC)
+_L_D1 = SRC[:SRC.index("# P3-S3-D1 — LE CONTRAT D'EXECUTION")].count("\n") + 1
+_SUITE_D2 = "# P3-S3-D2 — L'ADAPTATEUR E-MAIL REEL"
+_L_FIN = (SRC[:SRC.index(_SUITE_D2)].count("\n") + 1) if _SUITE_D2 in SRC else 10 ** 9
 _NOEUDS = [n for n in ast.walk(ARBRE)
            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-           and n.name.startswith(("p3s3d_", "P3S3D"))]
-verifier("2a. les fonctions du lot existent (%d)" % len(_NOEUDS), len(_NOEUDS) >= 10)
+           and n.name.startswith(("p3s3d_", "P3S3D"))
+           and _L_D1 <= n.lineno < _L_FIN]
+verifier("2a. le bloc D1 porte exactement les fonctions attendues",
+         sorted(n.name for n in _NOEUDS) == sorted([
+             "p3s3d_cle_idempotence", "p3s3d_instantane_envoi",
+             "P3S3DFournisseurFactice", "p3s3d_garde_action",
+             "p3s3d_empreinte_conforme", "p3s3d_resume_execution",
+             "p3s3d_reserver", "p3s3d_liberer", "p3s3d_marquer_indetermine"]),
+         str(sorted(n.name for n in _NOEUDS)))
 _appeles, _noms = set(), set()
 for _n in _NOEUDS:
     for _s in ast.walk(_n):
@@ -259,6 +272,14 @@ for _modif, _code, _quoi in (
     verifier("4b. %-24s -> %s" % (_quoi, _code), _v["code"] == _code,
              "obtenu : %s" % _v["code"])
 
+# P3-S3-D2 : l'objet d'e-mail est APPROUVE au niveau de la campagne.
+verifier("4b-bis. campagne SANS objet d'e-mail -> OBJET_ABSENT",
+         S.p3s3d_garde_action(_ok, dict(_camp, subject_j0=None))["code"] == "OBJET_ABSENT")
+verifier("4b-ter. ... et un canal NON e-mail n'exige aucun objet",
+         S.p3s3d_garde_action(dict(_ok, channel="instagram"),
+                              dict(_camp, subject_j0=None))["code"]
+         == "CANAL_NON_AUTOMATISABLE")
+
 verifier("4c. campagne NON approuvee -> tout est refuse",
          S.p3s3d_garde_action(_ok, dict(_camp, etat="preparee"))["code"]
          == "CAMPAGNE_NON_APPROUVEE")
@@ -267,12 +288,16 @@ verifier("4d. campagne annulee -> tout est refuse",
          == "CAMPAGNE_NON_APPROUVEE")
 
 # Le registre STOP : un refus exprime bloque, et il passe AVANT tout le reste.
-_refus = {(_ok.get("target") or "").lower()}
+# Depuis P3-S3-D2, un refus est PROPRE A UN CANAL : la cle est « canal:valeur ».
+_refus = {"%s:%s" % (_ok.get("channel"), (_ok.get("target") or "").lower())}
 verifier("4e. un refus exprime bloque le premier contact",
          S.p3s3d_garde_action(_ok, _camp, refus=_refus)["code"] == "REFUS_EXPRIME")
 verifier("4f. le refus prime meme sur un message vide",
          S.p3s3d_garde_action(dict(_ok, message_j0=""), _camp, refus=_refus)["code"]
          == "REFUS_EXPRIME")
+verifier("4f-bis. un refus sur un AUTRE canal ne bloque PAS l'e-mail",
+         S.p3s3d_garde_action(_ok, _camp, refus={
+             "whatsapp:%s" % (_ok.get("target") or "").lower()})["autorise"] is True)
 
 # Un premier contact deja fait sur UNE fiche du groupe suffit.
 verifier("4g. une fiche deja contactee interdit le J0",
