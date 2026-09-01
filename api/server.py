@@ -21745,6 +21745,12 @@ P3S3_CHAMPS_PROSPECT = (P3S3_CHAMP_CLAIM, P3S3_CHAMP_ENVOI, P3S3_CHAMP_CLE)
 P3S3_ETATS_CAMPAGNE = (
     "brouillon", "preparee", "approuvee", "en_cours", "terminee", "annulee",
 )
+# P3-S3-C : les etats OUVERTS — ceux qui representent un lancement en cours.
+# Tant qu'une campagne est dans l'un d'eux, en preparer une seconde serait un
+# DOUBLON ACCIDENTEL et non une nouvelle campagne voulue. `terminee` et
+# `annulee` sont CLOSES : elles ne bloquent jamais un lancement futur. C'est la
+# nuance qui evite de graver « un coach n'aura jamais qu'une campagne ».
+P3S3_ETATS_OUVERTS = ("preparee", "approuvee", "en_cours")
 P3S3_STATUTS_ACTION = (
     "pret",               # prepare, pas encore approuve
     "exclu",              # retire avant approbation — conserve, jamais efface
@@ -22248,6 +22254,29 @@ def p3s3_resume(actions) -> dict:
     }
 
 
+def p3s3_empreinte(actions) -> str:
+    """L'empreinte de CE QUI A ETE APPROUVE. Fonction pure.
+
+    Elle ne couvre que ce qui partira vraiment : le destinataire, son canal, sa
+    langue, son adresse et son message. Ni les horodatages ni les compteurs —
+    ils bougent sans que le contenu change, et une empreinte qui bouge toute
+    seule ne prouve plus rien.
+
+    A QUOI ELLE SERT : approuver un message A puis en envoyer un B est le
+    defaut qu'on refuse. L'empreinte est calculee a l'approbation et figee sur
+    la campagne ; l'executant la RECALCULERA avant d'envoyer et s'arretera si
+    elle a bouge. Elle ne remplace pas la garde d'etat (une campagne approuvee
+    n'accepte deja plus de modification) : elle la double.
+    """
+    import hashlib
+    lignes = sorted(
+        "|".join([(a.get("recipient_key") or ""), (a.get("channel") or ""),
+                  (a.get("language") or ""), (a.get("target") or ""),
+                  (a.get("message_j0") or "")])
+        for a in (actions or []) if (a or {}).get("statut") != "exclu")
+    return hashlib.sha256("\n".join(lignes).encode("utf-8")).hexdigest()
+
+
 async def p3s3_portee(appelant: str) -> dict:
     """Le filtre de cloisonnement. Un super-admin voit tout, un coach les siens."""
     return {} if is_super_admin(appelant) else {"coach_id": appelant}
@@ -22291,6 +22320,32 @@ async def p3s3_preparer_campagne(request: Request):
                         P3S3_PREFIXE, (deja.get("id") or "")[:8])
             return {"dry_run": False, "rejeu": True, "campaign": deja,
                     "summary": deja.get("summary") or {}}
+
+    # --- P3-S3-C : UNE SEULE CAMPAGNE OUVERTE A LA FOIS ---
+    # LE DEFAUT QUE CETTE GARDE FERME. L'ecran envoyait comme cle d'idempotence
+    # l'identifiant de son APERCU — un uuid NEUF a chaque clic sur « Preparer ».
+    # Un double clic sur « Creer » etait donc protege, mais la suite
+    # Preparer -> Creer -> Preparer -> Creer fabriquait DEUX campagnes
+    # P3-LAUNCH-137 pour le meme lancement, chacune avec ses 137 actions. Deux
+    # campagnes ouvertes sur les memes destinataires, c'est la porte ouverte au
+    # double premier contact.
+    #
+    # LA PROTECTION EST SERVEUR, PAS SEULEMENT D'INTERFACE : une UX ne protege
+    # personne d'un appel direct, d'un retour arriere ou d'un onglet oublie.
+    #
+    # ELLE NE GRAVE PAS « un coach n'aura jamais qu'une campagne » : elle ne
+    # regarde que les etats OUVERTS. Une campagne `terminee` ou `annulee` ne
+    # bloque rien. Et `allow_new` laisse le coach trancher explicitement, comme
+    # `allow_duplicate` le fait deja pour les prospects homonymes (P3-S1) : la
+    # machine signale, elle ne decide pas.
+    ouverte = await db[P3S3_CAMPAGNES].find_one(
+        {"coach_id": appelant, "etat": {"$in": list(P3S3_ETATS_OUVERTS)}},
+        {"_id": 0}, sort=[("created_at", -1), ("id", 1)])
+    if ouverte is not None and not simulation and not bool(corps.get("allow_new")):
+        logger.info("%s campagne ouverte %s deja presente — rendue au lieu d'en creer une seconde",
+                    P3S3_PREFIXE, (ouverte.get("id") or "")[:8])
+        return {"dry_run": False, "rejeu": True, "reouverte": True,
+                "campaign": ouverte, "summary": ouverte.get("summary") or {}}
 
     # --- selection : des references explicites, ou les filtres de l'ecran ---
     filtre = dict(portee)
@@ -22352,8 +22407,11 @@ async def p3s3_preparer_campagne(request: Request):
     }
 
     if simulation:
-        # DRY-RUN : PAS UNE SEULE ECRITURE. On rend ce qui SERAIT cree.
+        # DRY-RUN : PAS UNE SEULE ECRITURE. On rend ce qui SERAIT cree, et on
+        # DIT s'il existe deja une campagne ouverte — pour que l'ecran propose
+        # de la ROUVRIR plutot que d'en fabriquer une seconde.
         return {"dry_run": True, "campaign": campagne, "summary": resume,
+                "campagne_ouverte": ouverte,
                 "actions": actions[:P3S3_LISTE_MAX], "returned": min(len(actions), P3S3_LISTE_MAX)}
 
     try:
@@ -22398,6 +22456,18 @@ async def p3s3_lister_campagnes(request: Request):
         depart = max(int(request.query_params.get("offset", 0)), 0)
     except (TypeError, ValueError):
         limite, depart = 25, 0
+    # P3-S3-C : deux filtres, en EGALITE STRICTE. `ouvertes=1` est le seul dont
+    # l'ecran a besoin — savoir s'il faut proposer « Ouvrir » ou « Preparer ».
+    portee = dict(portee)
+    etat = p3s1_texte(request.query_params.get("etat"), 24)
+    if etat:
+        if etat not in P3S3_ETATS_CAMPAGNE:
+            raise HTTPException(status_code=400,
+                                detail="Etat inconnu. Valeurs acceptees : %s"
+                                       % ", ".join(P3S3_ETATS_CAMPAGNE))
+        portee["etat"] = etat
+    elif str(request.query_params.get("ouvertes", "")).strip() in ("1", "true", "yes"):
+        portee["etat"] = {"$in": list(P3S3_ETATS_OUVERTS)}
     documents = await db[P3S3_CAMPAGNES].find(portee, {"_id": 0}) \
         .sort([("created_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
     return {"total": await db[P3S3_CAMPAGNES].count_documents(portee),
@@ -22425,6 +22495,74 @@ async def p3s3_lire_campagne(campaign_id: str, request: Request):
         .sort([("recipient_key", 1), ("id", 1)]).to_list(P3S3_LISTE_MAX)
     return {"campaign": campagne, "summary": p3s3_resume(actions),
             "returned": len(actions), "actions": actions}
+
+
+@api_router.post("/prospect-campaigns/{campaign_id}/approve")
+async def p3s3_approuver_campagne(campaign_id: str, request: Request):
+    """Approuve une campagne preparee. UNE SEULE FOIS. N'ENVOIE RIEN.
+
+    APPROUVER N'EST PAS ENVOYER. Cette route ne connait aucun fournisseur : ni
+    Resend, ni Meta, ni la moindre requete sortante. Elle fige un instantane et
+    pose une date, c'est tout. Les deux drapeaux restent fermes apres son
+    passage, et ce lot n'ouvre aucune route qui les consulterait.
+
+    APPROUVER N'EST PAS RESERVER. Ni `first_contact_claimed_at`, ni
+    `first_contact_sent_at`, ni `verrou_actif` ne sont ecrits ici : la
+    reservation appartient a l'execution, et elle seule.
+
+    IDEMPOTENTE PAR ECRITURE CONDITIONNELLE, PAS PAR RELECTURE. La condition
+    porte sur `approved_at: None` et NON sur `$exists: False` : le champ est
+    pose des la creation avec la valeur `null` — un `$exists` serait vrai et la
+    garde ne garderait rien. Deux clics, deux onglets, deux requetes
+    simultanees : une seule approbation passe, la seconde reconnait la
+    premiere et rend le meme document.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+    identifiant = p3s1_texte(campaign_id, 64)
+    campagne = await db[P3S3_CAMPAGNES].find_one({"id": identifiant}, {"_id": 0})
+    if not campagne:
+        raise HTTPException(status_code=404, detail="Campagne introuvable")
+    if not is_super_admin(appelant) and (campagne.get("coach_id") or "") != appelant:
+        raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas")
+
+    actions = await db[P3S3_ACTIONS].find(
+        {"campaign_id": identifiant}, {"_id": 0}).to_list(P3S3_LISTE_MAX)
+    resume = p3s3_resume(actions)
+
+    # Deja approuvee : on rend le meme document, sans rien reecrire. Un second
+    # appel ne doit produire ni deuxieme date, ni deuxieme trace d'audit.
+    if campagne.get("approved_at"):
+        return {"campaign": campagne, "summary": resume, "deja_approuvee": True}
+
+    if campagne.get("etat") != P3S3_ETAT_PREPARE:
+        raise HTTPException(status_code=409,
+                            detail="Seule une campagne preparee peut etre approuvee "
+                                   "(etat : %s)" % campagne.get("etat"))
+    if not resume["destinataires"]:
+        raise HTTPException(status_code=400,
+                            detail="Aucun destinataire retenu : il n'y a rien a approuver")
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    empreinte = p3s3_empreinte(actions)
+    resultat = await db[P3S3_CAMPAGNES].update_one(
+        {"id": identifiant, "approved_at": None},
+        {"$set": {"approved_at": maintenant, "approved_by": appelant,
+                  "etat": "approuvee", "snapshot_hash": empreinte,
+                  "nb_destinataires": resume["destinataires"],
+                  "summary": resume, "updated_at": maintenant}})
+
+    apres = await db[P3S3_CAMPAGNES].find_one({"id": identifiant}, {"_id": 0})
+    if not getattr(resultat, "matched_count", 0):
+        # Quelqu'un a approuve entre la lecture et l'ecriture. Ce n'est pas une
+        # erreur : c'est exactement ce que la garde doit produire.
+        logger.info("%s campagne %s deja approuvee par une requete concurrente",
+                    P3S3_PREFIXE, identifiant[:8])
+        return {"campaign": apres, "summary": resume, "deja_approuvee": True}
+
+    logger.info("%s campagne %s APPROUVEE par %s — %d destinataires retenus, "
+                "%d exclus, AUCUN envoi (empreinte %s)", P3S3_PREFIXE, identifiant[:8],
+                appelant[:24], resume["destinataires"], resume["exclus"], empreinte[:12])
+    return {"campaign": apres, "summary": resume, "deja_approuvee": False}
 
 
 @api_router.patch("/prospect-campaigns/{campaign_id}/actions/{action_id}")

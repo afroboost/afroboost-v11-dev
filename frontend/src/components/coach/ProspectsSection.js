@@ -120,6 +120,10 @@ const LIBELLE_CANAL = {
 const LIBELLE_EXECUTION = {
   AUTO: 'Automatique', ASSISTE: 'Assisté', MANUEL: 'Manuel', BLOQUE: 'Bloqué',
 };
+const LIBELLE_ETAT = {
+  preparee: 'Campagne préparée', approuvee: 'Campagne approuvée',
+  en_cours: 'En cours', terminee: 'Terminée', annulee: 'Annulée', brouillon: 'Brouillon',
+};
 const LIBELLE_STATUT_ACTION = {
   pret: 'Prêt', exclu: 'Exclu', bloque: 'Bloqué',
 };
@@ -234,6 +238,10 @@ export default function ProspectsSection({ API }) {
   const [prepEnCours, setPrepEnCours] = useState(false);
   const [messageCampagne, setMessageCampagne] = useState(null);
   const [actionOuverte, setActionOuverte] = useState(null);
+  /* P3-S3-C — filtre de l'aperçu : '' | 'sans_langue' | 'sans_message'.
+     Les 78 destinataires sans langue déclarée doivent pouvoir être VUS avant
+     toute activation ; l'écran ne les corrige pas et ne suppose rien. */
+  const [filtreApercu, setFiltreApercu] = useState('');
 
   /* Les dépendances sont des CHAÎNES, jamais l'objet `filtres` — qui est neuf à
      chaque rendu et relancerait l'effet en boucle (règle absolue, incident V305). */
@@ -257,9 +265,28 @@ export default function ProspectsSection({ API }) {
         },
         extraire: (donnees) => donnees,
       },
+      /* P3-S3-C — LA CAMPAGNE OUVERTE, s'il y en a une.
+         Sans cette lecture, l'écran ne savait pas qu'une campagne existait
+         déjà : il ne proposait que « Préparer », et deux préparations
+         successives fabriquaient deux campagnes pour un seul lancement. */
+      campagnes: {
+        url: `${base}/prospect-campaigns`,
+        signature: true,
+        appel: async () => {
+          const rep = await axios.get(`${base}/prospect-campaigns`,
+            { params: { ouvertes: 1, limit: 5 } });
+          return rep && rep.data ? rep.data : null;
+        },
+        extraire: (donnees) => donnees,
+      },
     },
     { deps: [base, signature] }
   );
+
+  const sectionCampagnes = chargement.sections.campagnes;
+  const campagnesOuvertes = (sectionCampagnes && sectionCampagnes.etat === SECTION.OK
+    && sectionCampagnes.donnees && sectionCampagnes.donnees.campaigns) || [];
+  const campagneOuverte = campagnesOuvertes[0] || null;
 
   const section = chargement.sections.prospects;
   const etat = (section && section.etat) || SECTION.CHARGEMENT;
@@ -430,6 +457,46 @@ export default function ProspectsSection({ API }) {
     }
   };
 
+  /* ROUVRIR : on CHARGE la campagne existante. On n'en prépare pas une autre. */
+  const ouvrirCampagne = async (id) => {
+    setPrepEnCours(true);
+    setMessageCampagne(null);
+    try {
+      const rep = await axios.get(`${base}/prospect-campaigns/${id}`);
+      const d = (rep && rep.data) || {};
+      setCampagne({ ...d.campaign, summary: d.summary, dry_run: false });
+      setActions(d.actions || []);
+    } catch (err) {
+      setMessageCampagne({ type: 'erreur', texte: erreurLisible(err, "Campagne illisible.") });
+    }
+    setPrepEnCours(false);
+  };
+
+  /* APPROUVER N'ENVOIE RIEN. La route ne connaît aucun fournisseur, et les
+     deux drapeaux d'envoi restent fermés. */
+  const approuverCampagne = async () => {
+    if (!campagne || campagne.dry_run || campagne.etat !== 'preparee' || prepEnCours) return;
+    setPrepEnCours(true);
+    setMessageCampagne(null);
+    try {
+      const rep = await axios.post(`${base}/prospect-campaigns/${campagne.id}/approve`, {});
+      const d = (rep && rep.data) || {};
+      if (d.campaign) {
+        setCampagne({ ...d.campaign, summary: d.summary, dry_run: false });
+        setMessageCampagne({
+          type: 'ok',
+          texte: d.deja_approuvee
+            ? 'Campagne déjà approuvée : rien n\'a été refait.'
+            : 'Campagne approuvée. Aucun message n\'a été envoyé.',
+        });
+        chargement.reessayer('campagnes');
+      }
+    } catch (err) {
+      setMessageCampagne({ type: 'erreur', texte: erreurLisible(err, "Approbation refusée.") });
+    }
+    setPrepEnCours(false);
+  };
+
   const fermerCampagne = () => {
     setCampagne(null);
     setActions([]);
@@ -483,10 +550,40 @@ export default function ProspectsSection({ API }) {
         )}
         <button type="button" onClick={apercuCampagne} disabled={prepEnCours}
                 data-testid="preparer-campagne"
-                style={{ ...styleBouton, opacity: prepEnCours ? 0.6 : 1, marginLeft: 'auto' }}>
-          {prepEnCours ? 'Calcul…' : 'Préparer la campagne'}
+                style={{
+                  ...styleBouton, opacity: prepEnCours ? 0.6 : 1, marginLeft: 'auto',
+                  /* Quand une campagne est déjà ouverte, « Préparer » devient
+                     secondaire : l'action attendue est « Ouvrir ». */
+                  ...(campagneOuverte ? { background: 'transparent',
+                                          border: '1px solid rgba(255,255,255,0.22)' } : {}),
+                }}>
+          {prepEnCours ? 'Calcul…' : (campagneOuverte ? 'Préparer une autre campagne' : 'Préparer la campagne')}
         </button>
       </div>
+
+      {/* ---------- P3-S3-C : LA CAMPAGNE DÉJÀ PRÉPARÉE ---------- */}
+      {campagneOuverte && !campagne && (
+        <div data-testid="campagne-ouverte"
+             style={{
+               display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px',
+               padding: '12px 14px', marginBottom: '14px', borderRadius: '10px',
+               border: `1px solid rgba(${RGB}, 0.5)`, background: `rgba(${RGB}, 0.14)`,
+             }}>
+          <div style={{ minWidth: '220px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 700 }}>{campagneOuverte.nom}</div>
+            <div style={{ fontSize: '12px', opacity: 0.8 }}>
+              {campagneOuverte.nb_destinataires} destinataires ·{' '}
+              {LIBELLE_ETAT[campagneOuverte.etat] || campagneOuverte.etat} ·{' '}
+              créée le {(campagneOuverte.created_at || '').slice(0, 10)} · 0 envoyé
+            </div>
+          </div>
+          <button type="button" onClick={() => ouvrirCampagne(campagneOuverte.id)}
+                  disabled={prepEnCours} data-testid="ouvrir-campagne"
+                  style={{ ...styleBouton, marginLeft: 'auto' }}>
+            Ouvrir
+          </button>
+        </div>
+      )}
 
       {messageCampagne && (
         <div data-testid="message-campagne"
@@ -506,8 +603,16 @@ export default function ProspectsSection({ API }) {
              }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
             <strong style={{ fontSize: '14px' }}>{campagne.nom}</strong>
-            <Etiquette texte={campagne.dry_run ? 'Aperçu — rien n\'est enregistré' : 'Campagne préparée'}
-                       ton="primaire" />
+            <Etiquette
+              texte={campagne.dry_run
+                ? 'Aperçu — rien n\'est enregistré'
+                : (LIBELLE_ETAT[campagne.etat] || campagne.etat)}
+              ton="primaire" />
+            {campagne.approved_at && (
+              <span data-testid="envoi-desactive" style={{ fontSize: '12px', opacity: 0.85 }}>
+                Envoi désactivé — aucun message ne peut partir
+              </span>
+            )}
             <button type="button" onClick={fermerCampagne} data-testid="fermer-campagne"
                     style={{ ...styleBouton, background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', marginLeft: 'auto' }}>
               Fermer
@@ -546,6 +651,33 @@ export default function ProspectsSection({ API }) {
             </button>
           )}
 
+          {/* APPROUVER N'ENVOIE RIEN : la route ne connaît aucun fournisseur. */}
+          {!campagne.dry_run && campagne.etat === 'preparee' && (
+            <button type="button" onClick={approuverCampagne} disabled={prepEnCours}
+                    data-testid="approuver-campagne" style={{ ...styleBouton, marginBottom: '10px' }}>
+              Approuver la campagne
+            </button>
+          )}
+
+          {/* Le filtre de l'aperçu : voir les cas à traiter AVANT toute activation. */}
+          {!campagne.dry_run && (
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
+              {[['', 'Tous'], ['sans_langue', `Langue non précisée (${actions.filter((a) => !(a.language || '').trim()).length})`],
+                ['sans_message', `Sans message J0 (${actions.filter((a) => !(a.message_j0 || '').trim()).length})`],
+                ['exclus', `Exclus (${actions.filter((a) => a.statut === 'exclu').length})`]].map(([cle, libelle]) => (
+                <button key={cle || 'tous'} type="button" onClick={() => setFiltreApercu(cle)}
+                        data-testid={`filtre-apercu-${cle || 'tous'}`}
+                        style={{
+                          ...stylePetitBouton,
+                          background: filtreApercu === cle ? `rgba(${RGB}, 0.28)` : 'transparent',
+                          borderColor: filtreApercu === cle ? PRIMAIRE : 'rgba(255,255,255,0.22)',
+                        }}>
+                  {libelle}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* L'APERCU COMPACT : on ne doit pas ouvrir 137 fiches une par une. */}
           <div style={{ overflowX: 'auto', maxHeight: '420px', overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
@@ -557,7 +689,12 @@ export default function ProspectsSection({ API }) {
                 </tr>
               </thead>
               <tbody>
-                {actions.map((a) => (
+                {actions.filter((a) => (
+                  filtreApercu === 'sans_langue' ? !(a.language || '').trim()
+                    : filtreApercu === 'sans_message' ? !(a.message_j0 || '').trim()
+                      : filtreApercu === 'exclus' ? a.statut === 'exclu'
+                        : true
+                )).map((a) => (
                   <tr key={a.id} data-testid={`action-${a.recipient_key}`}
                       style={{
                         borderTop: '1px solid rgba(255,255,255,0.06)',
@@ -581,7 +718,10 @@ export default function ProspectsSection({ API }) {
                     </td>
                     <td style={{ padding: '6px 8px' }}>{LIBELLE_STATUT_ACTION[a.statut] || a.statut}</td>
                     <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
-                      {!campagne.dry_run && (
+                      {/* Après approbation, le snapshot est FIGÉ : plus aucun
+                          bouton d'édition. Le serveur refuse déjà (409) — on
+                          ne laisse pas non plus l'interface le proposer. */}
+                      {!campagne.dry_run && campagne.etat === 'preparee' && (
                         <>
                           <button type="button" data-testid={`ouvrir-action-${a.recipient_key}`}
                                   onClick={() => setActionOuverte(a)}

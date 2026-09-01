@@ -576,14 +576,14 @@ ECRAN = open(os.path.join(RACINE, "frontend", "src", "components", "coach",
 _ROUTES_ECRAN = set(re.findall(r"\$\{base\}/([a-z-]+)", ECRAN))
 verifier("8a. l'écran n'appelle que partner-prospects et prospect-campaigns",
          _ROUTES_ECRAN == {"partner-prospects", "prospect-campaigns"}, str(_ROUTES_ECRAN))
-verifier("8a-bis. aucune route d'envoi, de lancement ou d'approbation",
-         not re.search(r"/(send|launch|dispatch|approve|execute|retry)\b", ECRAN))
+verifier("8a-bis. aucune route d'envoi, de lancement ou d'execution",
+         not re.search(r"/(send|launch|dispatch|execute|retry)\b", ECRAN))
 verifier("8b. ni suppression ni PUT : seuls GET, POST et PATCH existent",
          "axios.delete" not in ECRAN and "axios.put" not in ECRAN
          and "axios.patch" in ECRAN)
-verifier("8b-bis. tous les POST de l'écran visent la PRÉPARATION de campagne",
+verifier("8b-bis. les POST de l'écran visent la préparation ou l'approbation, rien d'autre",
          set(re.findall(r"axios\.post\(\s*`\$\{base\}(/[^`]*)`", ECRAN))
-         == {"/prospect-campaigns/prepare"},
+         == {"/prospect-campaigns/prepare", "/prospect-campaigns/${campagne.id}/approve"},
          str(set(re.findall(r"axios\.post\(\s*`\$\{base\}(/[^`]*)`", ECRAN))))
 verifier("8b-ter. le PATCH d'un PROSPECT reste le seul écrivant sur une fiche",
          "/partner-prospects/${ouvert.id}" in ECRAN

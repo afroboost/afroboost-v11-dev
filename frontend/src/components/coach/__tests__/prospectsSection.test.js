@@ -42,6 +42,8 @@ const SECTION = {
 // (Le prefixe `mock` est impose par le hoisting de `jest.mock`.)
 let mockEtatPilote = { etat: SECTION.OK, donnees: null, motif: 'serveur' };
 let mockDerniereSource = null;
+let mockSourcesDeclarees = null;
+let mockEtatParSection = null;
 const mockReessayer = jest.fn();
 
 jest.mock('../../../hooks/useChargement', () => ({
@@ -52,12 +54,18 @@ jest.mock('../../../hooks/useChargement', () => ({
   },
   default: (sources) => {
     mockDerniereSource = sources.prospects;
+    mockSourcesDeclarees = sources;
+    const sections = {};
+    Object.keys(sources).forEach((cle) => {
+      const e = (mockEtatParSection && mockEtatParSection[cle]) || mockEtatPilote;
+      sections[cle] = { etat: e.etat, donnees: e.donnees, motif: e.motif };
+    });
     return {
-      sections: { prospects: { etat: mockEtatPilote.etat, donnees: mockEtatPilote.donnees, motif: mockEtatPilote.motif } },
+      sections,
       reessayer: mockReessayer,
       global: mockEtatPilote.etat,
       donnees: {},
-      cles: ['prospects'],
+      cles: Object.keys(sources),
       chargement: mockEtatPilote.etat === 'chargement',
       sessionExpiree: mockEtatPilote.etat === 'session',
     };
@@ -85,6 +93,8 @@ afterEach(async () => {
   conteneur = null;
   jest.clearAllMocks();
   mockDerniereSource = null;
+  mockSourcesDeclarees = null;
+  mockEtatParSection = null;
   mockEtatPilote = { etat: SECTION.OK, donnees: null, motif: 'serveur' };
 });
 
@@ -782,14 +792,21 @@ describe('P3-S3-B — préparation de campagne', () => {
     });
     await act(async () => { par('creer-campagne').click(); });
     tous('button').map((b) => b.textContent.trim().toLowerCase()).forEach((libelle) => {
-      expect(libelle).not.toMatch(/^(envoyer|lancer|relancer|contacter|send|notifier|approuver)\b/);
+      expect(libelle).not.toMatch(/^(envoyer|lancer|relancer|contacter|send|notifier)\b/);
     });
     // Et l'écran ne connaît aucune route d'envoi.
     const source = require('fs').readFileSync(
       require('path').join(__dirname, '..', 'ProspectsSection.js'), 'utf8');
-    ['/send', '/launch', '/dispatch', '/approve'].forEach((chemin) => {
+    ['/send', '/launch', '/dispatch', '/execute', '/retry'].forEach((chemin) => {
       expect(source).not.toContain(chemin);
     });
+    // `/approve` existe désormais — et c'est le SEUL autre POST de l'écran.
+    const posts = (source.match(/axios\.post\(\s*`\$\{base\}([^`]*)`/g) || [])
+      .map((m) => m.replace(/.*\$\{base\}/, '').replace(/`.*/, ''));
+    expect(new Set(posts)).toEqual(new Set([
+      '/prospect-campaigns/prepare',
+      '/prospect-campaigns/${campagne.id}/approve',
+    ]));
   });
 
   test('une erreur serveur est dite, sans casser l’écran', async () => {
@@ -884,3 +901,172 @@ describe('P3-S2F — responsive : une fiche ne s’affiche jamais deux fois', ()
     expect(axios.post.mock.calls[0][1].prospect_ids).toEqual(['p-1']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P3-S3-C — ROUVRIR PLUTOT QUE RECREER, ET APPROUVER UNE FOIS.
+//
+// Le defaut ferme ici : l'ecran ne savait pas qu'une campagne existait deja.
+// Il ne proposait que « Preparer », et deux preparations successives
+// fabriquaient deux campagnes pour un seul lancement.
+// ---------------------------------------------------------------------------
+const campagneOuverteFictive = (sur) => Object.assign({
+  id: 'c-1', nom: 'P3-LAUNCH-137', etat: 'preparee', nb_destinataires: 137,
+  nb_fiches: 142, created_at: '2026-09-01T08:29:36.738198+00:00',
+  approved_at: null, approved_by: null,
+}, sur || {});
+
+// `useChargement` est pilote : les DEUX sources recoivent le meme etat. On
+// distingue donc les reponses par l'URL demandee dans `axios.get`.
+function brancherDeuxSources(campagnes, prospects) {
+  mockEtatPilote = { etat: SECTION.OK, donnees: null };
+  axios.get.mockImplementation((url) => {
+    if (String(url).includes('/prospect-campaigns/')) {
+      return Promise.resolve({ data: {
+        campaign: campagneOuverteFictive(), summary: resumeFictif(), actions: [actionFictive()],
+      } });
+    }
+    if (String(url).includes('/prospect-campaigns')) {
+      return Promise.resolve({ data: { total: campagnes.length, campaigns: campagnes } });
+    }
+    return Promise.resolve({ data: prospects });
+  });
+}
+
+describe('P3-S3-C — réouverture et approbation', () => {
+  test('l’écran demande les campagnes OUVERTES au chargement', async () => {
+    brancherDeuxSources([], reponse([prospect()]));
+    await monter(<ProspectsSection API="/api" />);
+    // La source déclarée pointe bien vers les campagnes ouvertes.
+    expect(SOURCE_C).toContain("params: { ouvertes: 1, limit: 5 }");
+    expect(SOURCE_C).toContain('`${base}/prospect-campaigns`');
+  });
+
+  test('sans campagne ouverte, le bouton reste « Préparer la campagne »', async () => {
+    mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect()]) };
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('campagne-ouverte')).toBeNull();
+    expect(par('preparer-campagne').textContent).toContain('Préparer la campagne');
+  });
+
+  test('avec une campagne ouverte, l’écran propose « Ouvrir » et non « Créer »', async () => {
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
+      campagnes: { etat: SECTION.OK, donnees: { total: 1, campaigns: [campagneOuverteFictive()] } },
+    };
+    await monter(<ProspectsSection API="/api" />);
+    const banniere = par('campagne-ouverte');
+    expect(banniere).not.toBeNull();
+    expect(banniere.textContent).toContain('P3-LAUNCH-137');
+    expect(banniere.textContent).toContain('137 destinataires');
+    expect(banniere.textContent).toContain('Campagne préparée');
+    expect(banniere.textContent).toContain('2026-09-01');
+    expect(banniere.textContent).toContain('0 envoyé');
+    expect(par('ouvrir-campagne')).not.toBeNull();
+    // « Préparer » devient secondaire, et le dit.
+    expect(par('preparer-campagne').textContent).toContain('Préparer une autre campagne');
+    // Aucun appel de préparation n'est parti tout seul.
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test('« Ouvrir » LIT la campagne existante — aucun POST, donc aucune création', async () => {
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
+      campagnes: { etat: SECTION.OK, donnees: { total: 1, campaigns: [campagneOuverteFictive()] } },
+    };
+    axios.get.mockResolvedValue({ data: {
+      campaign: campagneOuverteFictive(), summary: resumeFictif(), actions: [actionFictive()],
+    } });
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('ouvrir-campagne').click(); });
+    expect(axios.get).toHaveBeenCalledWith('/api/prospect-campaigns/c-1');
+    expect(axios.post).not.toHaveBeenCalled();
+    expect(par('panneau-campagne')).not.toBeNull();
+    expect(par('creer-campagne')).toBeNull();          // ce n'est pas un aperçu
+    expect(par('approuver-campagne')).not.toBeNull();  // c'est une campagne réelle
+  });
+
+  test('« Approuver » appelle /approve et n’envoie rien', async () => {
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
+      campagnes: { etat: SECTION.OK, donnees: { total: 1, campaigns: [campagneOuverteFictive()] } },
+    };
+    axios.get.mockResolvedValue({ data: {
+      campaign: campagneOuverteFictive(), summary: resumeFictif(), actions: [actionFictive()],
+    } });
+    axios.post.mockResolvedValue({ data: {
+      campaign: campagneOuverteFictive({ etat: 'approuvee', approved_at: '2026-09-01T10:00:00+00:00',
+                                         approved_by: 'coach@test' }),
+      summary: resumeFictif(), deja_approuvee: false,
+    } });
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('ouvrir-campagne').click(); });
+    await act(async () => { par('approuver-campagne').click(); });
+    expect(axios.post).toHaveBeenCalledWith('/api/prospect-campaigns/c-1/approve', {});
+    expect(par('message-campagne').textContent).toContain("Aucun message n'a été envoyé");
+    expect(par('envoi-desactive')).not.toBeNull();
+  });
+
+  test('après approbation, plus aucun bouton d’édition ni d’exclusion', async () => {
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
+      campagnes: { etat: SECTION.OK,
+                   donnees: { total: 1, campaigns: [campagneOuverteFictive({ etat: 'approuvee' })] } },
+    };
+    axios.get.mockResolvedValue({ data: {
+      campaign: campagneOuverteFictive({ etat: 'approuvee',
+                                         approved_at: '2026-09-01T10:00:00+00:00' }),
+      summary: resumeFictif(), actions: [actionFictive()],
+    } });
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('ouvrir-campagne').click(); });
+    expect(par('exclure-GVA-F3')).toBeNull();
+    expect(par('ouvrir-action-GVA-F3')).toBeNull();
+    expect(par('approuver-campagne')).toBeNull();      // déjà approuvée
+    expect(par('envoi-desactive')).not.toBeNull();
+  });
+
+  test('le filtre « langue non précisée » rend ces cas visibles avant tout envoi', async () => {
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
+      campagnes: { etat: SECTION.OK, donnees: { total: 1, campaigns: [campagneOuverteFictive()] } },
+    };
+    axios.get.mockResolvedValue({ data: {
+      campaign: campagneOuverteFictive(), summary: resumeFictif(),
+      actions: [actionFictive(),
+                actionFictive({ id: 'a-2', recipient_key: 'BAR-09', prospect_ids: ['BAR-09'],
+                                organisations: ['Les Brasseurs'], cities: ['Neuchâtel'],
+                                language: '', message_j0: '', channel: 'aucun',
+                                execution_type: 'BLOQUE', statut: 'bloque' })],
+    } });
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('ouvrir-campagne').click(); });
+    expect(par('filtre-apercu-sans_langue').textContent).toContain('(1)');
+    expect(par('action-GVA-F3')).not.toBeNull();
+    await act(async () => { par('filtre-apercu-sans_langue').click(); });
+    expect(par('action-BAR-09')).not.toBeNull();
+    expect(par('action-GVA-F3')).toBeNull();           // filtré, pas supprimé
+    await act(async () => { par('filtre-apercu-tous').click(); });
+    expect(par('action-GVA-F3')).not.toBeNull();
+  });
+
+  test('AUCUN bouton d’envoi, même campagne approuvée', async () => {
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
+      campagnes: { etat: SECTION.OK,
+                   donnees: { total: 1, campaigns: [campagneOuverteFictive({ etat: 'approuvee' })] } },
+    };
+    axios.get.mockResolvedValue({ data: {
+      campaign: campagneOuverteFictive({ etat: 'approuvee',
+                                         approved_at: '2026-09-01T10:00:00+00:00' }),
+      summary: resumeFictif(), actions: [actionFictive()],
+    } });
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('ouvrir-campagne').click(); });
+    tous('button').map((b) => b.textContent.trim().toLowerCase()).forEach((libelle) => {
+      expect(libelle).not.toMatch(/^(envoyer|lancer|relancer|contacter|send|notifier)\b/);
+    });
+  });
+});
+
+const SOURCE_C = require('fs').readFileSync(
+  require('path').join(__dirname, '..', 'ProspectsSection.js'), 'utf8');

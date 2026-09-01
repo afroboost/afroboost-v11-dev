@@ -340,8 +340,15 @@ def preparer(base, **corps):
 print("\n1. AUCUNE ROUTE D'ENVOI N'EXISTE")
 
 CHEMINS = [r.path for r in S.app.routes if "prospect-campaigns" in getattr(r, "path", "")]
-verifier("1a. exactement 4 routes de campagne", len(CHEMINS) == 4, str(CHEMINS))
-for _interdit in ("send", "launch", "dispatch", "retry", "j3", "j7", "approve", "execute"):
+verifier("1a. cinq routes de campagne, pas une de plus", len(CHEMINS) == 5, str(CHEMINS))
+verifier("1a-bis. et ce sont exactement celles attendues",
+         sorted(CHEMINS) == sorted([
+             "/api/prospect-campaigns/prepare",
+             "/api/prospect-campaigns",
+             "/api/prospect-campaigns/{campaign_id}",
+             "/api/prospect-campaigns/{campaign_id}/approve",
+             "/api/prospect-campaigns/{campaign_id}/actions/{action_id}"]), str(sorted(CHEMINS)))
+for _interdit in ("send", "launch", "dispatch", "retry", "j3", "j7", "execute"):
     verifier("1b. aucune route contenant %r" % _interdit,
              not any(_interdit in c for c in CHEMINS))
 
@@ -370,11 +377,12 @@ for _n in ast.walk(ARBRE):
         _verbe = getattr(getattr(_d, "func", _d), "attr", "?")
         _chemin = _d.args[0].value if getattr(_d, "args", None) else "?"
         _decore.append((_verbe, _chemin))
-verifier("1c-bis. les 4 decorateurs du bloc sont ceux attendus, et rien d'autre",
+verifier("1c-bis. les decorateurs du bloc sont ceux attendus, et rien d'autre",
          sorted(_decore) == sorted([
              ("post", "/prospect-campaigns/prepare"),
              ("get", "/prospect-campaigns"),
              ("get", "/prospect-campaigns/{campaign_id}"),
+             ("post", "/prospect-campaigns/{campaign_id}/approve"),
              ("patch", "/prospect-campaigns/{campaign_id}/actions/{action_id}")]),
          str(sorted(_decore)))
 verifier("1d. le bloc n'appelle meme pas la porte d'envoi (rien a autoriser)",
@@ -569,8 +577,12 @@ verifier("8d. le meme identifiant est rendu",
 verifier("8e. 8 actions, pas 16", len(_b["prospect_campaign_actions"].documents) == 8)
 
 _troisieme = preparer(_b, dry_run=False, idempotency_key="autre-clic-43")
-verifier("8f. une cle DIFFERENTE cree bien une seconde campagne",
-         len(_b["prospect_campaigns"].documents) == 2 and _troisieme["rejeu"] is False)
+verifier("8f. une cle DIFFERENTE ne cree PLUS de seconde campagne (garde P3-S3-C)",
+         len(_b["prospect_campaigns"].documents) == 1 and _troisieme["rejeu"] is True,
+         "campagnes : %d" % len(_b["prospect_campaigns"].documents))
+_deliberee = preparer(_b, dry_run=False, idempotency_key="voulue-44", allow_new=True)
+verifier("8f-bis. ... sauf demande EXPLICITE du coach (`allow_new`)",
+         len(_b["prospect_campaigns"].documents) == 2 and _deliberee["rejeu"] is False)
 verifier("8g. deux campagnes PREPAREES coexistent sur les memes destinataires",
          len(_b["prospect_campaign_actions"].documents) == 16)
 verifier("8h. ... parce qu'aucune ne pose `verrou_actif` (le verrou vient plus tard)",
@@ -580,8 +592,9 @@ verifier("8h. ... parce qu'aucune ne pose `verrou_actif` (le verrou vient plus t
 _b2 = base_neuve()
 preparer(_b2, dry_run=False)
 preparer(_b2, dry_run=False)
-verifier("8i. sans cle d'idempotence, deux preparations font deux campagnes",
-         len(_b2["prospect_campaigns"].documents) == 2)
+verifier("8i. sans cle d'idempotence non plus, une seule campagne (garde P3-S3-C)",
+         len(_b2["prospect_campaigns"].documents) == 1,
+         "campagnes : %d" % len(_b2["prospect_campaigns"].documents))
 
 
 # ============================================================================
@@ -795,7 +808,7 @@ print("\n15. LECTURE ET PAGINATION")
 
 _b = base_neuve()
 preparer(_b, dry_run=False, name="Campagne A")
-preparer(_b, dry_run=False, name="Campagne B")
+preparer(_b, dry_run=False, name="Campagne B", allow_new=True)
 _l = lancer(S.p3s3_lister_campagnes(RequeteFictive(jeton_=JA)))
 verifier("15a. les deux campagnes sont listees", _l["total"] == 2)
 verifier("15b. la liste est plafonnee et paginee",
