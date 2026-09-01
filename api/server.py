@@ -24909,15 +24909,31 @@ CAL1_COLLECTION = "calendar_events"
 # cosmetique : un `campaign` ou un `course` affiche dans le calendrier n'a
 # AUCUNE ligne dans `calendar_events` — il est lu chez lui, converti a la
 # volee, et ne peut donc pas diverger de son original.
-CAL1_TYPES_STOCKES = ("appointment", "event")
+CAL1_TYPES_STOCKES = ("appointment", "event", "task")
 CAL1_TYPES_PROJETES = ("campaign", "course")
 CAL1_TYPES = CAL1_TYPES_STOCKES + CAL1_TYPES_PROJETES
 
-# `task` est VOLONTAIREMENT ABSENT : les taches sont le lot CAL-2. Declarer un
-# type que rien ne sait creer donnerait une palette pour du vide.
+# CAL-2 A OUVERT `task`. Il etait volontairement absent de CAL-1 : declarer un
+# type que rien ne sait creer aurait donne une palette pour du vide.
+#
+# UNE TACHE N'A PAS DE CHAMP `due_at`, ET C'EST DELIBERE. Son echeance EST son
+# `starts_at`. Ajouter un second champ de date obligerait le calendrier a
+# savoir lequel lire selon le type — la divergence commence toujours ainsi. Un
+# seul nom, une seule regle : ce qui est date se lit au meme endroit.
 
-CAL1_STATUTS = ("prevu", "confirme", "annule")
+CAL1_STATUTS = ("prevu", "confirme", "annule", "fait")
 CAL1_STATUT_INITIAL = "prevu"
+
+# CAL-2 — LES STATUTS QUI FERMENT UNE TACHE. Ni relance, ni notification : la
+# tache est reglee, d'une facon ou d'une autre.
+CAL2_STATUTS_CLOS = ("fait", "annule")
+
+CAL2_PRIORITES = ("basse", "normale", "haute")
+CAL2_PRIORITE_DEFAUT = "normale"
+
+# Le type de notification, ajoute a la liste BLANCHE du centre de
+# notifications. Une ligne, comme prevu : le socle existait deja.
+CAL2_NOTIF_TYPE = "task_due"
 
 CAL1_TEXTES = {"title": 200, "description": 2000, "location": 200}
 
@@ -25002,6 +25018,10 @@ def cal1_forme(document: dict) -> dict:
         "prospect_id": d.get("prospect_id") or None,
         "campaign_id": d.get("campaign_id") or None,
         "campaign_action_id": d.get("campaign_action_id") or None,
+        # CAL-2 — propres aux taches, absents ailleurs. `None` plutot que ''
+        # pour qu'une tache sans priorite se distingue d'une priorite vide.
+        "priority": d.get("priority") or None,
+        "completed_at": d.get("completed_at") or None,
     }
 
 
@@ -25187,6 +25207,12 @@ async def cal1_creer(request: Request):
         "starts_at": debut, "ends_at": cal1_instant(corps.get("ends_at")),
         "all_day": bool(corps.get("all_day")),
         "event_type": type_demande, "status": statut,
+        # CAL-2 : la priorite n'a de sens que pour une tache. La poser sur un
+        # rendez-vous ne casserait rien, mais elle ne serait jamais lue — on
+        # ne stocke donc pas une donnee que personne n'interroge.
+        "priority": (cal2_priorite(corps.get("priority"))
+                     if type_demande == "task" else None),
+        "completed_at": None,
         # Les liaisons metier restent VIDES en CAL-1 : rien ne les remplit
         # encore, et les declarer evite une migration au lot CAL-3.
         "prospect_id": None, "campaign_id": None, "campaign_action_id": None,
@@ -25232,6 +25258,8 @@ async def cal1_modifier(evenement_id: str, request: Request):
             champs[cle] = valeur
     if "all_day" in corps:
         champs["all_day"] = bool(corps.get("all_day"))
+    if "priority" in corps:
+        champs["priority"] = cal2_priorite(corps.get("priority"))
     if "status" in corps:
         statut = (corps.get("status") or "").strip()
         if statut not in CAL1_STATUTS:
@@ -25239,6 +25267,13 @@ async def cal1_modifier(evenement_id: str, request: Request):
                                 detail="Statut inconnu. Valeurs acceptees : %s"
                                        % ", ".join(CAL1_STATUTS))
         champs["status"] = statut
+        # CAL-2 — TERMINER UNE TACHE, C'EST CHANGER SON STATUT. Pas de route
+        # dediee : un second chemin pour la meme chose finirait par diverger
+        # de celui-ci. La date d'achevement suit le statut, dans la MEME
+        # ecriture — il est donc impossible d'avoir une tache `fait` sans date,
+        # ni une date sans le statut.
+        champs["completed_at"] = (datetime.now(timezone.utc).isoformat()
+                                  if statut == "fait" else None)
     if not champs:
         raise HTTPException(status_code=400, detail="Rien a modifier")
 
@@ -25270,6 +25305,219 @@ async def cal1_supprimer(evenement_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Evenement introuvable")
     logger.info("[CAL-1] evenement retire %s par %s", (evenement_id or "")[:8], email[:24])
     return {"ok": True, "id": evenement_id}
+
+
+# ============================================================================
+# CAL-2 — LES TACHES, DANS LE MEME CALENDRIER
+# ============================================================================
+# AUCUNE COLLECTION NOUVELLE. Une tache est un evenement de `calendar_events`
+# portant `event_type: "task"` — pas une seconde table, pas un second ecran,
+# pas un second moteur. C'est ce qui permet a une echeance d'apparaitre dans
+# le calendrier a cote d'une campagne sans qu'on ait rien a fusionner.
+#
+# CE LOT NE CREE PAS DE PLANIFICATEUR NON PLUS. Le depot en a un motif eprouve
+# — une tache `asyncio` native lancee au demarrage — utilise par cinq boucles
+# deja en service (`_campaign_scheduler_loop`, `_p1d_boucle_relance_j3`, la
+# purge...). APScheduler est desactive et les crons Vercel ne tournent pas sur
+# Coolify : c'est ce motif-la, et aucun autre, qui fonctionne ici.
+#
+# LES NOTIFICATIONS NON PLUS. `db.notifications`, la route du centre et le push
+# existent ; il manquait UN type dans la liste blanche. C'est la ligne ajoutee
+# a `C17J_TYPES`.
+#
+# AUCUN GOOGLE. Pas un champ, pas un appel.
+
+CAL2_INTERVALLE_S = 60          # meme cadence que le planificateur de campagnes
+CAL2_LOT_MAX = 50               # ce qu'un passage traite au plus
+
+
+def cal2_priorite(valeur) -> str:
+    """La priorite d'une tache, ou la valeur par defaut. PURE.
+
+    Une valeur inconnue devient `normale` plutot que de faire echouer la
+    creation : la priorite est un confort de tri, pas une donnee dont
+    l'absence rendrait la tache fausse.
+    """
+    brut = (valeur or "").strip().lower() if isinstance(valeur, str) else ""
+    return brut if brut in CAL2_PRIORITES else CAL2_PRIORITE_DEFAUT
+
+
+def cal2_bucket(tache: dict, maintenant: str) -> str:
+    """Dans quelle pile cette tache tombe-t-elle ? PURE.
+
+    QUATRE PILES, ET L'ORDRE COMPTE. « Terminee » passe avant « en retard » :
+    une tache faite hier n'est pas en retard, elle est faite. L'inverse
+    afficherait un rouge permanent sur du travail accompli.
+    """
+    t = tache or {}
+    if (t.get("status") or "") in CAL2_STATUTS_CLOS:
+        return "terminees"
+    echeance = (t.get("starts_at") or "")
+    if not echeance:
+        return "a_venir"
+    if echeance < maintenant:
+        return "en_retard"
+    if echeance[:10] == maintenant[:10]:
+        return "aujourdhui"
+    return "a_venir"
+
+
+@api_router.get("/calendar-tasks")
+async def cal2_lister_taches(request: Request):
+    """Les taches du coach, rangees en quatre piles. Lecture pure.
+
+    CE N'EST PAS UN SECOND CALENDRIER : c'est une autre LECTURE de la meme
+    collection. Une tache vue ici et vue dans la grille est le meme document ;
+    la cocher a un endroit la coche a l'autre, sans synchronisation.
+
+    LA FENETRE DE CAL-1 NE CONVIENT PAS ICI, et c'est la seule difference. Une
+    tache en retard est par definition DANS LE PASSE : la borner comme le
+    calendrier la rendrait invisible le jour ou elle compte le plus. On borne
+    donc par le NOMBRE, pas par les dates.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    parametres = request.query_params
+    maintenant = datetime.now(timezone.utc).isoformat()
+    filtre = (parametres.get("filtre") or "").strip()
+    piles = ("aujourdhui", "a_venir", "en_retard", "terminees")
+    if filtre and filtre not in piles:
+        raise HTTPException(status_code=400,
+                            detail="Filtre inconnu. Valeurs acceptees : %s" % ", ".join(piles))
+
+    documents = await db[CAL1_COLLECTION].find(
+        {**get_coach_filter(email), "event_type": "task", "is_deleted": {"$ne": True}},
+        {"_id": 0}).sort([("starts_at", 1), ("id", 1)]).to_list(CAL1_LISTE_MAX)
+
+    comptes = {p: 0 for p in piles}
+    rangees = []
+    for d in documents:
+        pile = cal2_bucket(d, maintenant)
+        comptes[pile] += 1
+        if not filtre or pile == filtre:
+            vue = cal1_forme(d)
+            vue["bucket"] = pile
+            rangees.append(vue)
+    return {"tasks": rangees, "counts": comptes, "total": len(rangees),
+            "filtre": filtre, "priorites": list(CAL2_PRIORITES)}
+
+
+async def cal2_taches_echues(maintenant: str) -> list:
+    """Les taches arrivees a echeance et jamais signalees. Lecture pure.
+
+    LA CONDITION D'ABSENCE EST DANS LA REQUETE, pas dans une boucle Python :
+    `notified_at: {$exists: False}` ecarte en base ce qui a deja ete traite,
+    au lieu de charger tout puis de trier. Sur un passage toutes les minutes,
+    la difference n'est pas theorique.
+    """
+    try:
+        return await db[CAL1_COLLECTION].find(
+            {"event_type": "task", "is_deleted": {"$ne": True},
+             "status": {"$nin": list(CAL2_STATUTS_CLOS)},
+             "starts_at": {"$lte": maintenant},
+             "notified_at": {"$exists": False}},
+            {"_id": 0}).sort([("starts_at", 1), ("id", 1)]).to_list(CAL2_LOT_MAX)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[CAL-2] lecture des echeances impossible : %s", type(e).__name__)
+        return []
+
+
+async def cal2_signaler_echeance(tache: dict, maintenant: str) -> dict:
+    """Previent le coach QU'UNE SEULE FOIS. Deux gardes independantes.
+
+    PREMIERE GARDE, LA RESERVATION. `notified_at: {$exists: False}` vit dans le
+    FILTRE : entre la lecture et l'ecriture il n'y a aucune fenetre, et
+    `matched_count` dit sans ambiguite qui a gagne. C'est le patron maison
+    (`_rc_reserver_jeton`), et c'est lui qui rend deux boucles concurrentes
+    inoffensives.
+    
+    SECONDE GARDE, L'IDENTIFIANT STABLE. La notification porte
+    `task_due_<id>` et s'ecrit en `$setOnInsert` : meme si la premiere garde
+    cedait un jour, la base refuserait le doublon. Deux gardes independantes
+    sur le meme interdit, parce qu'une seule finit toujours par etre
+    contournee par un chemin qu'on n'avait pas prevu.
+
+    LE PUSH EST ACCESSOIRE, JAMAIS BLOQUANT. Un appareil injoignable ne doit
+    pas empecher la notification en-app d'exister : c'est elle que le coach
+    retrouvera dans son centre.
+    """
+    identifiant = (tache or {}).get("id") or ""
+    if not identifiant:
+        return {"signale": False, "motif": "tache sans identifiant"}
+
+    reserve = await db[CAL1_COLLECTION].update_one(
+        {"id": identifiant, "notified_at": {"$exists": False}},
+        {"$set": {"notified_at": maintenant}})
+    if not getattr(reserve, "matched_count", 0):
+        return {"signale": False, "motif": "deja signalee"}
+
+    coach = (tache.get("coach_id") or "").strip()
+    titre = (tache.get("title") or "Tache").strip()
+    try:
+        await db.notifications.update_one(
+            {"id": "task_due_%s" % identifiant},
+            {"$setOnInsert": {
+                "id": "task_due_%s" % identifiant, "type": CAL2_NOTIF_TYPE,
+                "target": "coach", "title": "Tache a echeance",
+                # LE MESSAGE NE PORTE QUE LE TITRE. Le centre de notifications
+                # est une liste blanche justement parce que d'anciennes
+                # familles y ont laisse des donnees personnelles ; on n'en
+                # ajoute pas une nouvelle.
+                "message": titre[:200], "coach_id": coach,
+                "task_id": identifiant, "read": False, "created_at": maintenant,
+            }}, upsert=True)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[CAL-2] notification impossible (%s) : %s",
+                       identifiant[:8], type(e).__name__)
+        return {"signale": False, "motif": "notification impossible"}
+
+    pousse = False
+    if coach:
+        try:
+            pousse = bool(await send_push_by_email(
+                coach, "Tache a echeance", titre[:120],
+                {"type": CAL2_NOTIF_TYPE, "task_id": identifiant}))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[CAL-2] push echoue (%s) : %s", identifiant[:8], type(e).__name__)
+    return {"signale": True, "push": pousse, "motif": ""}
+
+
+async def cal2_passage_echeances() -> dict:
+    """Un passage du planificateur. Rend son bilan, pour etre eprouvable.
+
+    Separee de la boucle parce qu'une boucle infinie ne se teste pas : ici on
+    peut appeler UN passage, verifier ce qu'il a fait, et le rejouer pour
+    prouver qu'il ne le refait pas.
+    """
+    maintenant = datetime.now(timezone.utc).isoformat()
+    echues = await cal2_taches_echues(maintenant)
+    signalees = 0
+    for tache in echues:
+        issue = await cal2_signaler_echeance(tache, maintenant)
+        signalees += int(bool(issue["signale"]))
+    if signalees:
+        logger.info("[CAL-2] %d tache(s) a echeance signalee(s)", signalees)
+    return {"examinees": len(echues), "signalees": signalees}
+
+
+async def _cal2_boucle_echeances():
+    """Le planificateur des echeances. MEME MOTIF QUE LES CINQ AUTRES BOUCLES.
+
+    On n'active pas APScheduler et on ne touche pas a `SCHEDULER_RUNNING` :
+    c'est ecrit noir sur blanc dans `_campaign_scheduler_loop`, et pour la
+    meme raison — sur Coolify, un uvicorn permanent fait tourner une tache
+    asyncio, la ou les crons Vercel ne s'executent jamais.
+
+    UNE ERREUR NE TUE PAS LA BOUCLE. Un passage qui echoue est journalise et
+    le suivant reessaie : une echeance manquee vaut mieux qu'un planificateur
+    mort en silence.
+    """
+    await asyncio.sleep(20)     # laisse le demarrage se terminer
+    while True:
+        try:
+            await cal2_passage_echeances()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[CAL-2] passage en echec : %s", type(e).__name__)
+        await asyncio.sleep(CAL2_INTERVALLE_S)
 
 
 # --- Leads Routes (Widget IA) ---
@@ -28708,7 +28956,7 @@ C17J_PROJECTION = {
 # `reservation_cancelled` RESTE DEHORS, et ce n'est pas un oubli : ses 29
 # documents portent un code d'acces dans leur `message`. Les montrer demanderait
 # d'assainir ce texte d'abord — c'est un autre lot.
-C17J_TYPES = ("new_lead", "new_reservation")
+C17J_TYPES = ("new_lead", "new_reservation", "task_due")
 
 
 @api_router.get("/coach/notifications")
@@ -39152,6 +39400,11 @@ async def startup_db():
         await db[CAL1_COLLECTION].create_index(
             [("coach_id", 1), ("starts_at", 1), ("id", 1)])
         await db[CAL1_COLLECTION].create_index([("coach_id", 1), ("event_type", 1)])
+        # CAL-2 — LA REQUETE DU PLANIFICATEUR, toutes les 60 secondes. Sans cet
+        # index, chaque passage balaierait la collection entiere pour trouver
+        # les rares taches echues.
+        await db[CAL1_COLLECTION].create_index(
+            [("event_type", 1), ("status", 1), ("starts_at", 1)])
         # Le rattachement fort interroge les actions par leur `Message-ID` RFC.
         await db[P3S3_ACTIONS].create_index(
             [("coach_id", 1), (P3U2_CHAMP_RFC, 1)],
@@ -39206,6 +39459,8 @@ async def startup_db():
 
     try:
         asyncio.create_task(_campaign_scheduler_loop())
+        # CAL-2 : les echeances de taches. Meme motif, meme cadence.
+        asyncio.create_task(_cal2_boucle_echeances())
         logger.info("[SCHEDULER-CAMPAGNE] Boucle d'envoi automatique demarree (60s)")
     except Exception as e:
         logger.warning(f"[SCHEDULER-CAMPAGNE] Demarrage ignore: {e}")

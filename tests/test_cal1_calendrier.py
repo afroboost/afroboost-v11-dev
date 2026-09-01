@@ -241,7 +241,13 @@ verifier("4d. les evenements sont tries par date",
          == sorted(e["starts_at"] for e in _r["events"]))
 verifier("4e. les types connus sont annonces",
          set(_r["types"]) == set(S.CAL1_TYPES))
-verifier("4f. `task` n'est PAS annonce (c'est CAL-2)", "task" not in _r["types"])
+# CETTE VERIFICATION BORNAIT CAL-1, ET ELLE AVAIT RAISON : declarer un type
+# que rien ne savait creer aurait donne une palette pour du vide. CAL-2 a
+# ouvert les taches ; le contrat s'inverse, et la propriete de fond monte d'un
+# cran — le type n'est pas seulement annonce, il est CREABLE.
+verifier("4f. `task` est desormais annonce (CAL-2 l'a ouvert)", "task" in _r["types"])
+verifier("4f-bis. ... et il fait partie des types STOCKES, pas projetes",
+         "task" in S.CAL1_TYPES_STOCKES and "task" not in S.CAL1_TYPES_PROJETES)
 
 
 # ============================================================================
@@ -257,14 +263,23 @@ verifier("5d. les liaisons metier existent, VIDES (CAL-3 les remplira)",
          _e["event"]["prospect_id"] is None and _e["event"]["campaign_id"] is None
          and _e["event"]["campaign_action_id"] is None)
 
+# `task` A QUITTE CETTE LISTE : il etait refuse tant que CAL-2 n'existait pas.
+# Ce qui reste interdit ici ne l'est pas par etape, mais par NATURE — une
+# campagne et un cours vivent dans leurs propres collections, et les creer
+# depuis le calendrier ouvrirait un second chemin de creation.
 for _type, _quoi in (("campaign", "une campagne"), ("course", "un cours"),
-                     ("task", "une tache (CAL-2)"), ("nimporte", "un type inconnu")):
+                     ("nimporte", "un type inconnu")):
     try:
         creer({"title": "x", "starts_at": "2026-09-10T14:00:00+00:00", "event_type": _type})
         _refuse = False
     except HTTPException as ex:
         _refuse = ex.status_code == 400
     verifier("5e. creer %-22s ici -> 400" % _quoi, _refuse)
+
+# ... et la tache, elle, se cree bien desormais.
+verifier("5e-bis. creer une tache ici est desormais POSSIBLE",
+         creer({"title": "Tache", "starts_at": "2026-09-10T14:00:00+00:00",
+                "event_type": "task"})["event"]["event_type"] == "task")
 
 for _corps, _quoi in (({"starts_at": "2026-09-10T14:00:00+00:00"}, "sans titre"),
                       ({"title": "x"}, "sans date"),

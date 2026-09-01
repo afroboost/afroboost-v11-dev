@@ -136,10 +136,26 @@ describe('CAL-1 — un seul calendrier pour tous les types', () => {
     });
   });
 
-  test('« task » n’est PAS proposé — les tâches sont le lot CAL-2', async () => {
+  /* CETTE VÉRIFICATION DISAIT LE CONTRAIRE, ET ELLE AVAIT RAISON EN CAL-1 :
+     déclarer un type que rien ne savait créer aurait donné une palette pour du
+     vide. CAL-2 a ouvert les tâches ; le contrat s'inverse donc, et la
+     propriété de fond monte d'un cran — le type n'est pas seulement affiché,
+     il FILTRE réellement. */
+  test('« task » est désormais proposé — CAL-2 a ouvert les tâches', async () => {
     await monter(<CampaignCalendar evenements={[]} />);
-    expect(par('filtre-task')).toBeNull();
-    expect(conteneur.textContent).not.toContain('Tâche');
+    expect(par('filtre-task')).toBeTruthy();
+    expect(conteneur.textContent).toContain('Tâche');
+  });
+
+  test('et le filtre « Tâche » ne garde que les tâches', async () => {
+    const tache = { id: 't-1', source_id: 't-1', source: 'calendar_events',
+                    title: 'Vérifier DKIM Resend', starts_at: LE_15.toISOString(),
+                    event_type: 'task', status: 'prevu', modifiable: true };
+    await monter(<CampaignCalendar evenements={[campagne(), tache, cours()]} />);
+    await cliquer(par('filtre-task'));
+    const restants = tous('[data-testid="evenement"]');
+    expect(restants.length).toBe(1);
+    expect(restants[0].textContent).toContain('DKIM');
   });
 
   test('un filtre ne garde que son type', async () => {

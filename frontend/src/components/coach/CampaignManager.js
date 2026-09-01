@@ -9,6 +9,7 @@
 import React, { memo, useState, useEffect } from 'react';
 import axios from 'axios';
 import CampaignCalendar from './CampaignCalendar';
+import TasksPanel from './TasksPanel';
 import CampaignModal from './CampaignModal';
 import SvgIcon from '../SvgIcon';
 import { deplierTargetIds, estIdentifiantDeGroupe } from '../../utils/deplierGroupes';
@@ -174,6 +175,26 @@ const CampaignManager = ({
       .catch(() => setAutresEvenements([]));
   }, []);
 
+  /* CAL-2 — LES TÂCHES. Elles vivent dans la MÊME collection que le reste du
+     calendrier ; cette lecture-ci sert la LISTE, qui répond à une question que
+     la grille ne peut pas poser : « qu'est-ce qui traîne ? ». Une tâche en
+     retard est dans le passé, donc hors de la fenêtre affichée. */
+  const [taches, setTaches] = useState([]);
+  const [compteursTaches, setCompteursTaches] = useState({});
+  const [pileTaches, setPileTaches] = useState('');
+  const chargerTaches = React.useCallback(async (pile) => {
+    const API_ = process.env.REACT_APP_API_URL || '';
+    try {
+      const r = await axios.get(`${API_}/api/calendar-tasks`,
+                                { params: pile ? { filtre: pile } : {} });
+      setTaches((r.data && r.data.tasks) || []);
+      setCompteursTaches((r.data && r.data.counts) || {});
+    } catch (e) {
+      setTaches([]); setCompteursTaches({});
+    }
+  }, []);
+  useEffect(() => { chargerTaches(pileTaches); }, [chargerTaches, pileTaches]);
+
   /* Les campagnes, traduites dans la forme unique du calendrier. Elles ne sont
      PAS copiées en base : c'est une vue, le temps d'un rendu. */
   const evenementsCalendrier = React.useMemo(() => {
@@ -182,8 +203,14 @@ const CampaignManager = ({
       title: c.name, starts_at: c.scheduledAt || c.createdAt,
       event_type: 'campaign', status: c.status, all_day: true, modifiable: true,
     }));
-    return vues.concat(autresEvenements || []);
-  }, [campaigns, autresEvenements]);
+    /* Les tâches rejoignent la grille : une seule page, plusieurs types.
+       On ne garde que celles qui ont une échéance — une tâche sans date n'a
+       rien à faire dans un calendrier. */
+    const vuesTaches = (taches || [])
+      .filter((t) => t.starts_at)
+      .map((t) => ({ ...t, source_id: t.id, modifiable: true }));
+    return vues.concat(autresEvenements || []).concat(vuesTaches);
+  }, [campaigns, autresEvenements, taches]);
 
   /* Le calendrier rend l'ÉVÉNEMENT ; le gestionnaire retrouve la campagne
      d'origine par son identifiant de source. Sans cette traduction, les
@@ -427,6 +454,16 @@ const CampaignManager = ({
           })()}
         </div>
       </div>
+
+      {/* === CAL-2 : LES TÂCHES, au-dessus de la grille === */}
+      <TasksPanel
+        API={process.env.REACT_APP_API_URL || ''}
+        taches={taches}
+        compteurs={compteursTaches}
+        pile={pileTaches}
+        onChangerPile={setPileTaches}
+        onRecharger={() => chargerTaches(pileTaches)}
+      />
 
       {/* === CALENDRIER (point d'entrée principal) === */}
       <CampaignCalendar

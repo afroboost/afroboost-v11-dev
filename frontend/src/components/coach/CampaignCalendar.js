@@ -36,6 +36,7 @@ const RGB = 'var(--primary-rgb, 217, 28, 210)';
    l'infobulle. */
 const TYPES = {
   campaign:    { libelle: 'Campagne',   teinte: `rgba(${RGB}, 0.85)` },
+  task:        { libelle: 'Tâche',      teinte: 'rgba(168,85,247,0.85)' },
   appointment: { libelle: 'Rendez-vous', teinte: 'rgba(59,130,246,0.85)' },
   course:      { libelle: 'Cours',      teinte: 'rgba(34,197,94,0.85)' },
   event:       { libelle: 'Événement',  teinte: 'rgba(249,115,22,0.85)' },
