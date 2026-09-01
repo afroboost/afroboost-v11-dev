@@ -152,6 +152,46 @@ const CampaignManager = ({
   const [showModal, setShowModal] = useState(false);
   const [preSelectedDate, setPreSelectedDate] = useState(null);
 
+  /* CAL-1 — LES AUTRES ÉVÉNEMENTS DU CALENDRIER.
+     Les campagnes continuent d'arriver par la prop `campaigns`, inchangée :
+     tout le circuit de création, d'édition, de déplacement et de duplication
+     reste EXACTEMENT celui d'avant, et c'est ce qui garantit l'absence de
+     régression. On demande donc au calendrier les autres types SEULEMENT
+     (`types=course,appointment,event`) — sans quoi les campagnes arriveraient
+     deux fois, une par chaque chemin.
+     Un échec de chargement laisse simplement la liste vide : le calendrier
+     des campagnes doit s'afficher même si cette lecture échoue. */
+  const [autresEvenements, setAutresEvenements] = useState([]);
+  useEffect(() => {
+    const API = process.env.REACT_APP_API_URL || '';
+    const debut = new Date(); debut.setDate(1); debut.setHours(0, 0, 0, 0);
+    const fin = new Date(debut); fin.setDate(fin.getDate() + 62);
+    axios.get(`${API}/api/calendar-events`, {
+      params: { from: debut.toISOString(), to: fin.toISOString(),
+                types: 'course,appointment,event' },
+    })
+      .then((r) => setAutresEvenements((r.data && r.data.events) || []))
+      .catch(() => setAutresEvenements([]));
+  }, []);
+
+  /* Les campagnes, traduites dans la forme unique du calendrier. Elles ne sont
+     PAS copiées en base : c'est une vue, le temps d'un rendu. */
+  const evenementsCalendrier = React.useMemo(() => {
+    const vues = (campaigns || []).map((c) => ({
+      id: `campaign:${c.id}`, source_id: c.id, source: 'campaigns',
+      title: c.name, starts_at: c.scheduledAt || c.createdAt,
+      event_type: 'campaign', status: c.status, all_day: true, modifiable: true,
+    }));
+    return vues.concat(autresEvenements || []);
+  }, [campaigns, autresEvenements]);
+
+  /* Le calendrier rend l'ÉVÉNEMENT ; le gestionnaire retrouve la campagne
+     d'origine par son identifiant de source. Sans cette traduction, les
+     rappels recevraient une vue et non l'objet qu'ils savent traiter. */
+  const campagneDe = React.useCallback(
+    (evenement) => (campaigns || []).find((c) => c.id === (evenement && evenement.source_id)) || null,
+    [campaigns]);
+
   // V115: Mode WhatsApp (sandbox/production) — détection automatique
   const [waMode, setWaMode] = useState(null);
   useEffect(() => {
@@ -390,11 +430,11 @@ const CampaignManager = ({
 
       {/* === CALENDRIER (point d'entrée principal) === */}
       <CampaignCalendar
-        campaigns={campaigns}
+        evenements={evenementsCalendrier}
         onDayClick={openNewCampaign}
-        onCampaignClick={openEditCampaign}
-        onMoveCampaign={handleMoveCampaign}
-        onDuplicateCampaign={handleDuplicateCampaign}
+        onEvenementClick={(e) => { const c = campagneDe(e); if (c) openEditCampaign(c); }}
+        onMoveEvenement={(e, d) => { const c = campagneDe(e); if (c) handleMoveCampaign(c.id, d); }}
+        onDuplicateEvenement={(e) => { const c = campagneDe(e); if (c) handleDuplicateCampaign(c); }}
       />
 
       {/* === V360 : SELECTEUR DE DATE TACTILE ===

@@ -24882,6 +24882,396 @@ async def p3u3_webhook_resend(request: Request):
             "statut": issue.get("statut"), "methode": issue.get("methode")}
 
 
+# ============================================================================
+# CAL-1 — UN SEUL CALENDRIER, ET IL EXISTAIT DEJA
+# ============================================================================
+# CE LOT NE CREE PAS DE CALENDRIER. Il en generalise un : `CampaignCalendar`
+# affichait deja une grille mensuelle avec creation, edition, glisser-deposer
+# et duplication. Son couplage aux campagnes etait SUPERFICIEL — il ne lisait
+# que cinq champs (`id`, `name`, `scheduledAt`, `status`, `createdAt`), que
+# tout evenement possede. Ce qui etait campagne-specifique tenait au
+# VOCABULAIRE, pas a la mecanique.
+#
+# LES CAMPAGNES ET LES COURS NE SONT PAS MIGRES. Ils restent dans leurs
+# collections, qui demeurent leur source de verite ; le calendrier les
+# PROJETTE en lecture. C'est ce qui rend l'absence de regression structurelle
+# et non vigilante : aucun document existant n'est lu autrement qu'en lecture,
+# aucun n'est transforme, et annuler ce lot laisse `calendar_events` orpheline
+# et vide sans que rien d'autre n'ait bouge.
+#
+# AUCUNE DEPENDANCE GOOGLE. Pas un champ, pas un appel. Afroboost est la
+# source de verite, et le restera : la synchronisation viendra se greffer sur
+# ce modele, jamais l'inverse.
+
+CAL1_COLLECTION = "calendar_events"
+
+# LES TYPES QU'ON STOCKE, ET CEUX QU'ON PROJETTE. La distinction n'est pas
+# cosmetique : un `campaign` ou un `course` affiche dans le calendrier n'a
+# AUCUNE ligne dans `calendar_events` — il est lu chez lui, converti a la
+# volee, et ne peut donc pas diverger de son original.
+CAL1_TYPES_STOCKES = ("appointment", "event")
+CAL1_TYPES_PROJETES = ("campaign", "course")
+CAL1_TYPES = CAL1_TYPES_STOCKES + CAL1_TYPES_PROJETES
+
+# `task` est VOLONTAIREMENT ABSENT : les taches sont le lot CAL-2. Declarer un
+# type que rien ne sait creer donnerait une palette pour du vide.
+
+CAL1_STATUTS = ("prevu", "confirme", "annule")
+CAL1_STATUT_INITIAL = "prevu"
+
+CAL1_TEXTES = {"title": 200, "description": 2000, "location": 200}
+
+# La fenetre est BORNEE, et ce n'est pas une precaution decorative : sans
+# plafond, ouvrir le calendrier sur une annee entiere chargerait tout
+# l'historique a chaque rendu. 62 jours couvrent largement un mois affiche
+# avec ses debordements de semaine.
+CAL1_FENETRE_MAX_JOURS = 62
+CAL1_LISTE_MAX = 500
+
+
+def cal1_texte(valeur, plafond):
+    """La chaine telle qu'elle sera stockee, ou ''. PURE."""
+    return (p3s1_texte(valeur, plafond) or "") if isinstance(valeur, str) else ""
+
+
+def cal1_instant(valeur) -> str:
+    """Un horodatage ISO exploitable, ou ''. PURE. NE DEVINE JAMAIS UNE DATE.
+
+    Une date absente n'est pas remplacee par « maintenant » : un evenement sans
+    date n'a rien a faire dans un calendrier, et lui en inventer une le ferait
+    apparaitre un jour au hasard.
+    """
+    brut = (valeur or "").strip() if isinstance(valeur, str) else ""
+    if not brut:
+        return ""
+    try:
+        datetime.fromisoformat(brut.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return ""
+    return brut
+
+
+def cal1_fenetre(depuis: str, jusqu_a: str) -> dict:
+    """La fenetre demandee, bornee. `{"debut","fin"}` en ISO. PURE.
+
+    Une fenetre absente vaut le mois courant — le cas d'usage normal. Une
+    fenetre trop large est REDUITE, jamais refusee : l'ecran doit s'afficher.
+    """
+    maintenant = datetime.now(timezone.utc)
+    try:
+        debut = datetime.fromisoformat((depuis or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        debut = maintenant.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    try:
+        fin = datetime.fromisoformat((jusqu_a or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        fin = debut + timedelta(days=CAL1_FENETRE_MAX_JOURS)
+    if fin < debut:
+        debut, fin = fin, debut
+    if (fin - debut).days > CAL1_FENETRE_MAX_JOURS:
+        fin = debut + timedelta(days=CAL1_FENETRE_MAX_JOURS)
+    return {"debut": debut.isoformat(), "fin": fin.isoformat()}
+
+
+def cal1_forme(document: dict) -> dict:
+    """LA FORME UNIQUE QUE L'ECRAN CONNAIT. Fonction pure.
+
+    Un evenement stocke, une campagne et un cours arrivent tous ici et en
+    ressortent identiques. C'est ce qui permet a UN SEUL composant d'afficher
+    les trois — et c'est aussi ce qui empeche l'ecran de fouiller dans les
+    champs propres a chaque source.
+    """
+    d = document or {}
+    return {
+        "id": d.get("id"),
+        "title": d.get("title") or "",
+        "description": d.get("description") or "",
+        "starts_at": d.get("starts_at") or "",
+        "ends_at": d.get("ends_at") or "",
+        "all_day": bool(d.get("all_day")),
+        "event_type": d.get("event_type") or "event",
+        "status": d.get("status") or CAL1_STATUT_INITIAL,
+        "location": d.get("location") or "",
+        # `source` dit D'OU vient la ligne, donc ce qu'on a le droit d'en
+        # faire : seul `calendar_events` est modifiable depuis le calendrier.
+        "source": d.get("source") or CAL1_COLLECTION,
+        "source_id": d.get("source_id") or d.get("id"),
+        "modifiable": (d.get("source") or CAL1_COLLECTION) == CAL1_COLLECTION,
+        # Les liaisons metier existent des maintenant, VIDES. Les remplir est
+        # le travail de CAL-3 ; les declarer ici evite une migration plus tard.
+        "prospect_id": d.get("prospect_id") or None,
+        "campaign_id": d.get("campaign_id") or None,
+        "campaign_action_id": d.get("campaign_action_id") or None,
+    }
+
+
+def cal1_projeter_campagne(campagne: dict) -> dict:
+    """Une campagne, vue comme un evenement. PURE, sans ecriture.
+
+    La campagne n'est pas copiee : elle est TRADUITE le temps d'un affichage.
+    `scheduledAt` d'abord, `createdAt` en repli — exactement ce que faisait
+    deja le calendrier avant ce lot, pour que rien ne disparaisse de l'ecran.
+    """
+    c = campagne or {}
+    quand = cal1_instant(c.get("scheduledAt")) or cal1_instant(c.get("createdAt"))
+    return cal1_forme({
+        "id": "campaign:" + str(c.get("id") or ""),
+        "title": c.get("name") or "Campagne",
+        "starts_at": quand, "all_day": True,
+        "event_type": "campaign",
+        # LE STATUT DE LA CAMPAGNE EST CONSERVE TEL QUEL. Il ne fait pas partie
+        # des trois statuts du calendrier, et c'est voulu : l'ecran distingue
+        # les campagnes par leur COULEUR DE TYPE, et affiche leur statut propre
+        # en clair. Le traduire en `prevu`/`annule` perdrait « echouee ».
+        "status": c.get("status") or "draft",
+        "source": "campaigns", "source_id": c.get("id"),
+        "campaign_id": c.get("id"),
+    })
+
+
+def cal1_occurrences_cours(cours: dict, debut: datetime, fin: datetime) -> list:
+    """Les seances d'un cours DANS LA FENETRE. PURE, sans ecriture.
+
+    POURQUOI PAS `_v184_next_occurrences`. Cette fonction-la repond a une
+    autre question — « les PROCHAINES occurrences » — et ne sait pas remonter
+    dans le passe : un coach qui feuillette le mois dernier n'y verrait aucun
+    cours. On reutilise en revanche son analyseur d'heure et sa convention,
+    qui sont les deux endroits ou l'on se trompe.
+
+    LA CONVENTION EST CELLE DU DEPOT, ET ELLE EST PIEGEUSE : `weekday` est
+    stocke en convention JavaScript (dimanche=0), alors que Python compte
+    lundi=0. La conversion est la meme qu'en V196 ; l'oublier decalerait tous
+    les cours d'un jour.
+
+    L'HEURE EST LOCALE, PAS UTC. `time` vaut « 18:30 » a Neuchatel. On rend un
+    horodatage NAIF, comme `_v184_next_occurrences` — le marquer `+00:00`
+    afficherait 20:30 en ete.
+    """
+    c = cours or {}
+    if c.get("archived") or c.get("visible") is False:
+        return []
+    hm = _v184_parse_time_hhmm(c.get("time") or "") or (9, 0)
+    sorties = []
+
+    fixe = (c.get("date") or "").strip() if isinstance(c.get("date"), str) else ""
+    if fixe:
+        try:
+            parts = fixe[:10].split("-")
+            quand = datetime(int(parts[0]), int(parts[1]), int(parts[2]), hm[0], hm[1])
+        except (ValueError, IndexError, TypeError):
+            return []
+        if debut.replace(tzinfo=None) <= quand <= fin.replace(tzinfo=None):
+            sorties.append(quand)
+        return [cal1_forme({
+            "id": "course:%s:%s" % (c.get("id"), q.date().isoformat()),
+            "title": c.get("name") or "Cours", "starts_at": q.isoformat(),
+            "event_type": "course", "status": "confirme",
+            "location": c.get("locationName") or c.get("location") or "",
+            "source": "courses", "source_id": c.get("id"),
+        }) for q in sorties]
+
+    valeur = c.get("weekday")
+    try:
+        js = int(valeur) if valeur is not None else None
+    except (TypeError, ValueError):
+        js = None
+    if js is None or not (0 <= js <= 6):
+        return []
+    py = (js - 1) % 7          # V196 : JS dimanche=0 -> Python lundi=0
+
+    jour = debut.replace(tzinfo=None).replace(hour=hm[0], minute=hm[1],
+                                              second=0, microsecond=0)
+    borne = fin.replace(tzinfo=None)
+    # Bornee par la fenetre elle-meme, deja plafonnee : pas de boucle infinie.
+    for _ in range(CAL1_FENETRE_MAX_JOURS + 7):
+        if jour > borne:
+            break
+        if jour.weekday() == py and jour >= debut.replace(tzinfo=None):
+            sorties.append(jour)
+        jour = jour + timedelta(days=1)
+    return [cal1_forme({
+        "id": "course:%s:%s" % (c.get("id"), q.date().isoformat()),
+        "title": c.get("name") or "Cours", "starts_at": q.isoformat(),
+        "event_type": "course", "status": "confirme",
+        "location": c.get("locationName") or c.get("location") or "",
+        "source": "courses", "source_id": c.get("id"),
+    }) for q in sorties]
+
+
+@api_router.get("/calendar-events")
+async def cal1_lister(request: Request):
+    """LE CALENDRIER, EN UNE SEULE LECTURE. Authentifiee, lecture pure.
+
+    Elle rend TROIS sources dans UNE forme : les evenements propres, les
+    campagnes projetees et les seances de cours projetees. C'est ce qui
+    permet de n'avoir qu'une page — l'ecran ne sait meme pas qu'il y a
+    plusieurs origines, sinon par le champ `source`.
+
+    LA FENETRE EST BORNEE (62 jours). Charger « tout » ferait grossir la
+    reponse avec l'historique, sans que personne ne le remarque avant que ce
+    soit lent.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    parametres = request.query_params
+    fenetre = cal1_fenetre(parametres.get("from"), parametres.get("to"))
+    debut = datetime.fromisoformat(fenetre["debut"])
+    fin = datetime.fromisoformat(fenetre["fin"])
+    portee = get_coach_filter(email)
+
+    # 1. les evenements propres au calendrier
+    propres = await db[CAL1_COLLECTION].find(
+        {**portee, "is_deleted": {"$ne": True},
+         "starts_at": {"$gte": fenetre["debut"], "$lte": fenetre["fin"]}},
+        {"_id": 0}).sort([("starts_at", 1), ("id", 1)]).to_list(CAL1_LISTE_MAX)
+    lignes = [cal1_forme(d) for d in propres]
+
+    # 2. les campagnes, PROJETEES — jamais copiees
+    types_demandes = [t for t in (parametres.get("types") or "").split(",") if t]
+    if not types_demandes or "campaign" in types_demandes:
+        for c in await db.campaigns.find(portee, {"_id": 0}).to_list(CAL1_LISTE_MAX):
+            vue = cal1_projeter_campagne(c)
+            if vue["starts_at"] and fenetre["debut"] <= vue["starts_at"] <= fenetre["fin"]:
+                lignes.append(vue)
+
+    # 3. les cours, PROJETES seance par seance
+    if not types_demandes or "course" in types_demandes:
+        for co in await db.courses.find(portee, {"_id": 0}).to_list(CAL1_LISTE_MAX):
+            lignes.extend(cal1_occurrences_cours(co, debut, fin))
+
+    if types_demandes:
+        lignes = [l for l in lignes if l["event_type"] in types_demandes]
+    lignes.sort(key=lambda l: (l["starts_at"] or "", l["id"] or ""))
+    return {"events": lignes, "total": len(lignes),
+            "from": fenetre["debut"], "to": fenetre["fin"],
+            "types": list(CAL1_TYPES)}
+
+
+@api_router.post("/calendar-events")
+async def cal1_creer(request: Request):
+    """Un evenement PROPRE au calendrier. Ni campagne, ni cours.
+
+    On ne peut creer ici que ce que le calendrier possede. Fabriquer une
+    campagne depuis cet ecran creerait un second chemin de creation, a cote de
+    celui des campagnes — deux chemins qui finiraient par diverger.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    corps = await request.json()
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+
+    titre = cal1_texte(corps.get("title"), CAL1_TEXTES["title"])
+    if not titre:
+        raise HTTPException(status_code=400, detail="Un titre est requis")
+    debut = cal1_instant(corps.get("starts_at"))
+    if not debut:
+        raise HTTPException(status_code=400,
+                            detail="Une date de debut valide (ISO) est requise")
+    type_demande = (corps.get("event_type") or "event").strip()
+    if type_demande not in CAL1_TYPES_STOCKES:
+        raise HTTPException(
+            status_code=400,
+            detail="Type non creable ici. Valeurs acceptees : %s"
+                   % ", ".join(CAL1_TYPES_STOCKES))
+    statut = (corps.get("status") or CAL1_STATUT_INITIAL).strip()
+    if statut not in CAL1_STATUTS:
+        raise HTTPException(status_code=400,
+                            detail="Statut inconnu. Valeurs acceptees : %s"
+                                   % ", ".join(CAL1_STATUTS))
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    document = {
+        "id": str(uuid.uuid4()), "coach_id": email,
+        "title": titre,
+        "description": cal1_texte(corps.get("description"), CAL1_TEXTES["description"]),
+        "location": cal1_texte(corps.get("location"), CAL1_TEXTES["location"]),
+        "starts_at": debut, "ends_at": cal1_instant(corps.get("ends_at")),
+        "all_day": bool(corps.get("all_day")),
+        "event_type": type_demande, "status": statut,
+        # Les liaisons metier restent VIDES en CAL-1 : rien ne les remplit
+        # encore, et les declarer evite une migration au lot CAL-3.
+        "prospect_id": None, "campaign_id": None, "campaign_action_id": None,
+        "is_deleted": False,
+        "created_at": maintenant, "updated_at": maintenant,
+    }
+    await db[CAL1_COLLECTION].insert_one(dict(document))
+    logger.info("[CAL-1] evenement cree %s (%s) par %s",
+                document["id"][:8], type_demande, email[:24])
+    return {"event": cal1_forme(document)}
+
+
+@api_router.patch("/calendar-events/{evenement_id}")
+async def cal1_modifier(evenement_id: str, request: Request):
+    """Modifie un evenement PROPRE. Une campagne ou un cours est intouchable ici.
+
+    L'APPARTENANCE EST VERIFIEE DANS LE FILTRE, pas avant : il n'y a donc
+    aucune fenetre entre le controle et l'ecriture, et un evenement inexistant
+    rend le MEME 404 qu'un evenement appartenant a un autre coach — on ne
+    revele pas au demandeur ce qui existe chez les autres.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    corps = await request.json()
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+
+    champs = {}
+    if "title" in corps:
+        titre = cal1_texte(corps.get("title"), CAL1_TEXTES["title"])
+        if not titre:
+            raise HTTPException(status_code=400, detail="Un titre est requis")
+        champs["title"] = titre
+    for cle, plafond in (("description", CAL1_TEXTES["description"]),
+                         ("location", CAL1_TEXTES["location"])):
+        if cle in corps:
+            champs[cle] = cal1_texte(corps.get(cle), plafond)
+    for cle in ("starts_at", "ends_at"):
+        if cle in corps:
+            valeur = cal1_instant(corps.get(cle))
+            if cle == "starts_at" and not valeur:
+                raise HTTPException(status_code=400,
+                                    detail="Une date de debut valide (ISO) est requise")
+            champs[cle] = valeur
+    if "all_day" in corps:
+        champs["all_day"] = bool(corps.get("all_day"))
+    if "status" in corps:
+        statut = (corps.get("status") or "").strip()
+        if statut not in CAL1_STATUTS:
+            raise HTTPException(status_code=400,
+                                detail="Statut inconnu. Valeurs acceptees : %s"
+                                       % ", ".join(CAL1_STATUTS))
+        champs["status"] = statut
+    if not champs:
+        raise HTTPException(status_code=400, detail="Rien a modifier")
+
+    champs["updated_at"] = datetime.now(timezone.utc).isoformat()
+    resultat = await db[CAL1_COLLECTION].update_one(
+        {"id": evenement_id, "is_deleted": {"$ne": True}, **get_coach_filter(email)},
+        {"$set": champs})
+    if not getattr(resultat, "matched_count", 0):
+        raise HTTPException(status_code=404, detail="Evenement introuvable")
+    document = await db[CAL1_COLLECTION].find_one({"id": evenement_id}, {"_id": 0})
+    return {"event": cal1_forme(document)}
+
+
+@api_router.delete("/calendar-events/{evenement_id}")
+async def cal1_supprimer(evenement_id: str, request: Request):
+    """Retire un evenement de l'affichage. SUPPRESSION DOUCE, jamais destructive.
+
+    `is_deleted` plutot qu'un vrai effacement : c'est le motif du depot
+    (`chat_messages`, `publications`), et il permet de retrouver ce qu'un clic
+    malheureux a fait disparaitre. Une campagne ou un cours ne peut pas etre
+    supprime ici — ils ne vivent pas dans cette collection.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    resultat = await db[CAL1_COLLECTION].update_one(
+        {"id": evenement_id, "is_deleted": {"$ne": True}, **get_coach_filter(email)},
+        {"$set": {"is_deleted": True,
+                  "deleted_at": datetime.now(timezone.utc).isoformat()}})
+    if not getattr(resultat, "matched_count", 0):
+        raise HTTPException(status_code=404, detail="Evenement introuvable")
+    logger.info("[CAL-1] evenement retire %s par %s", (evenement_id or "")[:8], email[:24])
+    return {"ok": True, "id": evenement_id}
+
+
 # --- Leads Routes (Widget IA) ---
 # v68: ISOLATION MULTI-TENANT — chaque lead est lié à un coach_id
 @api_router.get("/leads")
@@ -38752,6 +39142,16 @@ async def startup_db():
         # pagination soit un ordre TOTAL (P3-S2E).
         await db[P3U2_COLLECTION].create_index([("coach_id", 1), ("received_at", -1), ("id", 1)])
         await db[P3U2_COLLECTION].create_index([("coach_id", 1), ("statut", 1)])
+
+        # CAL-1 — le calendrier se lit TOUJOURS par fenetre de dates. Un index
+        # sur (coach_id, starts_at) est donc celui que chaque ouverture d'ecran
+        # utilise. La seconde cle `id` rend l'ordre TOTAL : `starts_at` seul
+        # n'est pas unique — deux rendez-vous peuvent commencer a la meme
+        # minute — et un tri non total fait boiter la pagination (lecon P3-S2E).
+        await db[CAL1_COLLECTION].create_index("id", unique=True)
+        await db[CAL1_COLLECTION].create_index(
+            [("coach_id", 1), ("starts_at", 1), ("id", 1)])
+        await db[CAL1_COLLECTION].create_index([("coach_id", 1), ("event_type", 1)])
         # Le rattachement fort interroge les actions par leur `Message-ID` RFC.
         await db[P3S3_ACTIONS].create_index(
             [("coach_id", 1), (P3U2_CHAMP_RFC, 1)],

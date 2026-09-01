@@ -89,11 +89,23 @@ SRC = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
 # code. On s'arrete donc a la premiere banniere de lot rencontree apres
 # celle-ci, quelle qu'elle soit.
 def _bloc(source, entete):
+    """Le bloc du lot, borne par ce qui vient APRES lui — quel qu'il soit.
+
+    Deux corrections successives, chacune payee par une fausse alerte :
+      * la banniere cherchee etait `# P3-`, si bien qu'un lot d'une AUTRE
+        famille (CAL-1) ne bornait rien et le bloc avalait le suivant ;
+      * partir du titre mordait sur la banniere de FERMETURE de l'en-tete,
+        reduisant le bloc a une seule ligne.
+    On part donc de la fin de l'en-tete, on accepte n'importe quelle banniere
+    de lot, et on retient la borne LA PLUS PROCHE.
+    """
     debut = source.index(entete)
-    banniere = "\n# " + "=" * 76 + "\n# P3-"
-    suite = source.find(banniere, debut + len(entete))
-    return source[debut:suite if suite != -1 else
-                  source.index("# --- Leads Routes (Widget IA) ---", debut)]
+    banniere = "\n# " + "=" * 76 + "\n# "
+    apres_entete = source.index("\n\n", debut)
+    bornes = [x for x in (source.find(banniere, apres_entete),
+                          source.find("# --- Leads Routes (Widget IA) ---", apres_entete))
+              if x != -1]
+    return source[debut:min(bornes)] if bornes else source[debut:]
 
 BLOC_U1 = _bloc(SRC, "# P3-U1 — UN DESABONNEMENT")
 COACH_A = "coach.a.fictif@exemple.test"
