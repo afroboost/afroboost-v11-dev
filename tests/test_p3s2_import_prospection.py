@@ -104,7 +104,12 @@ class Curseur:
         self._limit = None
 
     def sort(self, cle, sens=1):
-        self._docs = sorted(self._docs, key=lambda d: d.get(cle) or "", reverse=(sens == -1))
+        # P3-S2E : la route trie desormais sur DEUX cles — `.sort([(a, -1), (b, 1)])`.
+        # Le bouchon accepte les deux formes. Outillage seul, aucune assertion.
+        specs = cle if isinstance(cle, list) else [(cle, sens)]
+        for champ, s in reversed(specs):
+            self._docs = sorted(self._docs, key=lambda d: d.get(champ) or "",
+                                reverse=(s == -1))
         return self
 
     def skip(self, n):
@@ -791,6 +796,129 @@ else:
              set(re.findall(r"cle: '([a-z_]+)', libelle", ECRAN2)) >= set(S.P3S1_CATEGORIES))
     verifier("12k. Association et Fitness sont affichés",
              "'Association'" in ECRAN2 and "'Fitness'" in ECRAN2)
+
+print("\n13. P3-S2E — LA PAGINATION NE PERD NI NE REPETE AUCUNE FICHE")
+
+# POURQUOI CE BOUCHON EST DIFFERENT DES AUTRES.
+# Le bouchon des sections precedentes trie une liste Python avec `sorted`, qui
+# est STABLE : a cle egale, l'ordre d'insertion est conserve, et la pagination
+# semble fonctionner meme avec un tri sur une seule cle. C'est exactement pour
+# ca qu'aucun test n'a vu le defaut, et que seule la production l'a revele.
+#
+# MongoDB ne promet RIEN de tel : a cle de tri egale, l'ordre est NON SPECIFIE.
+# Le bouchon ci-dessous modelise cette promesse-la — il fait tourner l'ordre
+# naturel entre deux appels, de sorte que les ex aequo ne ressortent pas dans le
+# meme ordre. Avec un tri sur `created_at` seul et 142 fiches partageant le meme
+# horodatage, `skip`/`limit` decoupe alors deux ordres differents : des fiches
+# apparaissent deux fois, d'autres jamais. Avec une seconde cle UNIQUE, il n'y a
+# plus d'ex aequo du tout, donc plus rien a departager.
+
+_ROTATION = {"n": 0}
+
+
+class CurseurInstable(Curseur):
+    """Modelise la promesse REELLE de MongoDB : a cle egale, ordre non specifie."""
+
+    def sort(self, cle, sens=1):
+        _ROTATION["n"] += 1
+        specs = cle if isinstance(cle, list) else [(cle, sens)]
+        docs = list(self._docs)
+        if docs:
+            # L'ordre naturel change d'un appel a l'autre. `sorted` etant stable,
+            # les ex aequo ressortent donc differemment — comme en base.
+            r = _ROTATION["n"] % len(docs)
+            docs = docs[r:] + docs[:r]
+        for champ, s in reversed(specs):
+            docs = sorted(docs, key=lambda d: d.get(champ) or "", reverse=(s == -1))
+        self._docs = docs
+        return self
+
+
+class CollectionInstable(CollectionBouchon):
+    def find(self, filtre=None, projection=None, **k):
+        return CurseurInstable([dict(d) for d in self.documents if self._ok(d, filtre)])
+
+
+class BaseInstable(BaseBouchon):
+    def __init__(self, prospects):
+        BaseBouchon.__init__(self)
+        col = CollectionInstable("partner_prospects", prospects,
+                                 uniques=[("coach_id", "ref"), ("id",)])
+        self["partner_prospects"] = col
+
+
+# 142 fiches partageant EXACTEMENT le meme horodatage — le cas de production.
+INSTANT = "2026-08-31T18:26:57.951583+00:00"
+FICHES = [{"id": "p-%03d" % i, "ref": "R-%03d" % i, "coach_id": COACH_A,
+           "organisation_name": "Org %03d" % i, "category": "festival",
+           "status": "a_contacter", "created_at": INSTANT, "city": "Neuchâtel",
+           "city_key": "neuchatel", "priority": "B", "wave": "Vague X"}
+          for i in range(142)]
+
+_base_p = BaseInstable(FICHES)
+S.db = _base_p
+_J = jeton(COACH_A)
+
+
+def _toutes_les_pages(limite=50):
+    """Les pages, exactement comme l'ecran les demande."""
+    ids, depart = [], 0
+    while True:
+        r = lancer(S.p3s1_lister_prospects(RequeteFictive(
+            jeton_=_J, params={"limit": str(limite), "offset": str(depart)})))
+        ids += [p["id"] for p in r["prospects"]]
+        depart += limite
+        if depart >= r["total"]:
+            return ids
+
+
+verifier("13a. le bouchon reproduit bien l'instabilite (sinon le test ne prouve rien)",
+         len({tuple(CurseurInstable([dict(d) for d in FICHES]).sort("created_at", -1)._docs
+                    and [x["id"] for x in CurseurInstable(
+                        [dict(d) for d in FICHES]).sort("created_at", -1)._docs][:10])
+              for _ in range(6)}) > 1)
+
+_ids = _toutes_les_pages()
+verifier("13b. les pages rendent 142 lignes", len(_ids) == 142, "rendues : %d" % len(_ids))
+verifier("13c. AUCUN identifiant repete", len(_ids) == len(set(_ids)),
+         "doublons : %d" % (len(_ids) - len(set(_ids))))
+verifier("13d. AUCUNE fiche perdue", set(_ids) == {f["id"] for f in FICHES},
+         "manquantes : %d" % (142 - len(set(_ids))))
+
+_passages = [tuple(_toutes_les_pages()) for _ in range(5)]
+verifier("13e. cinq paginations completes rendent le MEME ordre",
+         len(set(_passages)) == 1)
+verifier("13f. chacune reste complete et sans doublon",
+         all(len(p) == 142 and len(set(p)) == 142 for p in _passages))
+
+_p25 = _toutes_les_pages(limite=25)
+verifier("13g. le meme resultat avec des pages de 25",
+         len(_p25) == 142 and len(set(_p25)) == 142)
+
+# Le meme banc, avec l'ANCIEN tri : il doit ECHOUER. Sans cette preuve, on ne
+# saurait pas si le test valide le correctif ou s'il est simplement complaisant.
+_avant = []
+_dep = 0
+while _dep < 142:
+    _c = _base_p["partner_prospects"].find({"coach_id": COACH_A}, {"_id": 0})
+    _avant += [d["id"] for d in lancer(_c.sort("created_at", -1).skip(_dep).limit(50).to_list(50))]
+    _dep += 50
+verifier("13h. avec l'ANCIEN tri, le meme banc PERD des fiches — le test mord",
+         len(set(_avant)) < 142, "distincts avec l'ancien tri : %d" % len(set(_avant)))
+
+SRC = open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
+verifier("13i. la route trie sur une seconde cle UNIQUE",
+         '.sort([("created_at", -1), ("id", 1)]).skip(depart)' in SRC)
+verifier("13j. plus aucun tri pagine de partner_prospects sur une seule cle",
+         '.sort("created_at", -1).skip(depart)' not in SRC)
+
+# Les filtres doivent rester intacts : un tri secondaire ne restreint rien.
+for _cle, _val, _attendu in (("category", "festival", 142), ("status", "a_contacter", 142),
+                             ("priority", "B", 142), ("wave", "Vague X", 142),
+                             ("city", "Neuchatel", 142)):
+    _r = lancer(S.p3s1_lister_prospects(RequeteFictive(jeton_=_J, params={_cle: _val})))
+    verifier("13k. filtre %-9s toujours servi" % _cle, _r["total"] == _attendu,
+             "total : %d" % _r["total"])
 
 # ===========================================================================
 print("\n" + "=" * 78)

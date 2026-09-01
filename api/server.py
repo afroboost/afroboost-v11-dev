@@ -21462,8 +21462,23 @@ async def p3s1_lister_prospects(request: Request):
     # remonte donc dans Mongo, ou il porte sur l'ENSEMBLE avant le decoupage.
     # Les horodatages sont des chaines ISO-UTC de format constant : leur ordre
     # lexicographique EST leur ordre chronologique.
+    #
+    # P3-S2E : ET IL FAUT UN SECOND CRITERE UNIQUE. `created_at` seul ne suffit
+    # pas — c'est ce que la production a demontre. L'import pose le meme
+    # horodatage sur toutes les fiches d'un meme passage : les 142 prospects
+    # partagent `2026-08-31T18:26:57.951583+00:00`, une seule valeur pour 142
+    # documents. Un tri sur une cle NON UNIQUE n'est pas un ordre TOTAL : Mongo
+    # est libre de departager les ex aequo differemment a chaque requete, et
+    # `skip`/`limit` decoupe alors deux ordres differents. Mesure reelle sur
+    # trois pages de 50 : 142 lignes rendues, mais 85 fiches distinctes,
+    # 45 identifiants repetes et 57 fiches INATTEIGNABLES.
+    #
+    # `id` est unique par construction (index unique pose par P3-S1) : l'ajouter
+    # en second rend l'ordre TOTAL, donc les pages stables et reproductibles.
+    # On corrige la cause, pas le symptome — redonner un horodatage distinct a
+    # chaque document laisserait le defaut revenir au prochain import en masse.
     documents = await db[P3S1_COLLECTION].find(filtre, {"_id": 0}) \
-        .sort("created_at", -1).skip(depart).limit(limite).to_list(limite)
+        .sort([("created_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
 
     # LES COMPTEURS IGNORENT LES FILTRES, ET C'EST VOULU. Ce sont les tuiles du
     # haut d'ecran : si elles suivaient le filtre courant, cliquer « Contactes »

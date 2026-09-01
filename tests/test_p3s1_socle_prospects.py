@@ -113,8 +113,12 @@ class Curseur:
         self._limit = None
 
     def sort(self, cle, sens=1):
-        self._docs = sorted(self._docs, key=lambda d: d.get(cle) or "",
-                            reverse=(sens == -1))
+        # P3-S2E : la route trie desormais sur DEUX cles — `.sort([(a, -1), (b, 1)])`.
+        # Le bouchon accepte les deux formes. Outillage seul, aucune assertion.
+        specs = cle if isinstance(cle, list) else [(cle, sens)]
+        for champ, s in reversed(specs):
+            self._docs = sorted(self._docs, key=lambda d: d.get(champ) or "",
+                                reverse=(s == -1))
         return self
 
     def skip(self, n):
