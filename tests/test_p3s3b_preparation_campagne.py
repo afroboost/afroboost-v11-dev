@@ -353,7 +353,9 @@ for _interdit in ("send", "launch", "dispatch", "retry", "j3", "j7", "execute"):
              not any(_interdit in c for c in CHEMINS))
 
 DEBUT = SRC.index("# P3-S3-B — LA PREPARATION D'UNE CAMPAGNE")
-FIN = SRC.index("# --- Leads Routes (Widget IA) ---", DEBUT)
+_SUITE = "# P3-S3-D1 — LE CONTRAT D'EXECUTION"
+FIN = (SRC.index(_SUITE, DEBUT) if _SUITE in SRC[DEBUT:]
+       else SRC.index("# --- Leads Routes (Widget IA) ---", DEBUT))
 BLOC = SRC[DEBUT:FIN]
 ARBRE = ast.parse(BLOC)
 _appeles = set()

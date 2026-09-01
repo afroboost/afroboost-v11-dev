@@ -22665,6 +22665,598 @@ async def p3s3_modifier_action(campaign_id: str, action_id: str, request: Reques
                 action["id"][:8], ", ".join(sorted(champs)), appelant[:24])
     return {"action": apres, "summary": resume}
 
+# ============================================================================
+# P3-S3-D1 — LE CONTRAT D'EXECUTION, ET UN FOURNISSEUR QUI N'ENVOIE RIEN
+# ============================================================================
+# CE LOT NE PEUT PAS CONTACTER QUELQU'UN, MEME DRAPEAUX OUVERTS.
+#
+# Il n'existe ici AUCUN fournisseur reel : ni Resend, ni Meta, ni SMTP, ni le
+# moindre appel sortant. Le seul adaptateur est FACTICE et rend un verdict
+# decide a l'avance. Brancher Resend est le travail de P3-S3-D3 ; tant que ce
+# lot est seul en ligne, ouvrir les deux drapeaux ne ferait rien partir.
+#
+# LA VERITE OPERATIONNELLE, ETABLIE PAR L'AUDIT P3-S3-D
+# ---------------------------------------------------------------------------
+# Le PREFLIGHT classait 56 destinataires en AUTO. Il regardait la CAPACITE DU
+# CANAL et pas le CONTENU : 25 de ces 56 n'ont aucun message J0. On ne peut pas
+# envoyer un message qui n'existe pas. Le chiffre reel est donc :
+#
+#     56 AUTO declares  ->  31 reellement executables, tous par E-MAIL
+#
+# WhatsApp et Instagram ne sont AUCUNEMENT automatisables dans ce chantier :
+# le premier exige un gabarit Meta approuve sur un compte suspendu, le second
+# n'a aucune API de message prive. Aucun code d'envoi ne leur est ecrit ici.
+# ============================================================================
+
+P3S3D_PREFIXE = "[P3-S3-D]"
+
+# Les CINQ verdicts. Un fournisseur ne rend jamais autre chose.
+P3S3D_SUCCESS = "SUCCESS"
+P3S3D_RETRYABLE = "RETRYABLE_FAILURE"
+P3S3D_PERMANENT = "PERMANENT_FAILURE"
+P3S3D_INDETERMINE = "INDETERMINATE"
+P3S3D_RATE_LIMIT = "RATE_LIMIT"
+P3S3D_VERDICTS = (P3S3D_SUCCESS, P3S3D_RETRYABLE, P3S3D_PERMANENT,
+                  P3S3D_INDETERMINE, P3S3D_RATE_LIMIT)
+
+# LE SEUL CANAL AUTOMATISABLE. Cette liste n'est pas une preference, c'est un
+# constat : e-mail est le seul canal dont le depot sait faire partir un premier
+# contact. L'elargir exigera d'abord une integration reelle, pas une ligne ici.
+P3S3D_CANAUX_AUTOMATISABLES = ("email",)
+
+P3S3D_MAX_TENTATIVES = 3
+# Le delai avant nouvelle tentative, en secondes. Pas exponentiel a l'infini :
+# une campagne de premier contact qui traine trois jours n'a plus de sens.
+P3S3D_BACKOFF_S = (60, 300, 1200)
+
+# Les motifs de refus AVANT toute reservation. Chacun est une raison de NE PAS
+# envoyer, jamais un echec : rien n'a ete tente.
+P3S3D_MOTIFS = {
+    "CAMPAGNE_NON_APPROUVEE": "la campagne n'est pas approuvee",
+    "EMPREINTE_ALTEREE": "le snapshot approuve a change depuis l'approbation",
+    "ENVOI_NON_AUTORISE": "les drapeaux d'envoi sont fermes",
+    "ACTION_EXCLUE": "ce destinataire a ete exclu de la campagne",
+    "PAS_AUTO": "ce destinataire n'est pas automatisable",
+    "CANAL_NON_AUTOMATISABLE": "ce canal n'a aucun envoi automatique dans ce depot",
+    "MESSAGE_VIDE": "aucun message J0 : il n'y a rien a envoyer",
+    "CIBLE_INVALIDE": "adresse absente ou illisible",
+    "REFUS_EXPRIME": "ce destinataire a exprime un refus",
+    "DEJA_CONTACTE": "un premier contact a deja ete confirme",
+    "DEJA_RESERVE": "une tentative est deja en cours ou indeterminee",
+    "STATUT_INCOMPATIBLE": "l'action n'est pas dans un etat envoyable",
+    "TENTATIVES_EPUISEES": "le nombre maximum de tentatives est atteint",
+}
+
+
+def p3s3d_cle_idempotence(action: dict) -> str:
+    """La cle STABLE d'un premier contact. Jamais un identifiant aleatoire.
+
+    Elle depend de la campagne, du destinataire et de l'etape — donc elle est
+    IDENTIQUE d'une tentative a l'autre. C'est tout l'interet : un fournisseur
+    qui la reconnait refusera lui-meme le doublon. Un uuid tire a chaque essai
+    aurait fait exactement l'inverse.
+
+    Elle ne remplace pas nos propres verrous : elle les double, le jour ou le
+    fournisseur saura la lire.
+    """
+    a = action or {}
+    return "p3-%s-%s-j0" % ((a.get("campaign_id") or "")[:36],
+                            (a.get("recipient_key") or "")[:64])
+
+
+def p3s3d_instantane_envoi(action: dict) -> dict:
+    """CE QUI PARTIRAIT, et rien d'autre. Fonction pure.
+
+    Le fournisseur ne recoit que cela : il n'a acces ni a la fiche prospect, ni
+    aux compteurs, ni au reste de la campagne. Un adaptateur qui pourrait lire
+    la base pourrait aussi l'ecrire.
+    """
+    a = action or {}
+    return {"canal": a.get("channel"), "destinataire": a.get("target"),
+            "message": a.get("message_j0"), "langue": a.get("language"),
+            "organisation": (a.get("organisations") or [""])[0],
+            "recipient_key": a.get("recipient_key")}
+
+
+class P3S3DFournisseurFactice:
+    """Le fournisseur de P3-S3-D1 : il ne sort JAMAIS de la machine.
+
+    Aucun import reseau, aucun client HTTP, aucun SMTP. Il rend le verdict
+    qu'on lui a demande de rendre, pour que le moteur soit eprouve sur ses cinq
+    chemins sans qu'un seul destinataire reel soit approche.
+
+    `identifiants` est prefixe `fake_` : un identifiant factice qui se lirait
+    comme un vrai finirait un jour par etre pris pour une preuve d'envoi.
+    """
+
+    nom = "factice"
+
+    def __init__(self, verdict=P3S3D_SUCCESS, par_destinataire=None,
+                 error_code=None, error_message=None, retry_after=None):
+        self.verdict = verdict
+        self.par_destinataire = dict(par_destinataire or {})
+        self.error_code = error_code
+        self.error_message = error_message
+        self.retry_after = retry_after
+        self.appels = []          # la trace, pour les bancs d'essai
+
+    async def envoyer(self, instantane: dict, cle_idempotence: str) -> dict:
+        self.appels.append({"instantane": dict(instantane or {}),
+                            "cle_idempotence": cle_idempotence})
+        verdict = self.par_destinataire.get(
+            (instantane or {}).get("recipient_key"), self.verdict)
+        if verdict not in P3S3D_VERDICTS:
+            raise ValueError("verdict inconnu : %r" % verdict)
+        reponse = {"provider": self.nom, "verdict": verdict,
+                   "provider_message_id": None, "error_code": None,
+                   "error_message": None, "retry_after": None,
+                   "accepted_at": None}
+        if verdict == P3S3D_SUCCESS:
+            reponse["provider_message_id"] = "fake_" + cle_idempotence
+            reponse["accepted_at"] = datetime.now(timezone.utc).isoformat()
+        elif verdict == P3S3D_RATE_LIMIT:
+            reponse["error_code"] = self.error_code or "429"
+            reponse["error_message"] = self.error_message or "trop de requetes"
+            reponse["retry_after"] = self.retry_after or 60
+        elif verdict == P3S3D_RETRYABLE:
+            reponse["error_code"] = self.error_code or "503"
+            reponse["error_message"] = self.error_message or "service indisponible"
+            reponse["retry_after"] = self.retry_after
+        elif verdict == P3S3D_PERMANENT:
+            reponse["error_code"] = self.error_code or "422"
+            reponse["error_message"] = self.error_message or "adresse refusee"
+        else:   # INDETERMINATE
+            reponse["error_code"] = self.error_code or "timeout"
+            reponse["error_message"] = self.error_message or (
+                "aucune reponse lisible : on ignore si le message est parti")
+        return reponse
+
+
+def p3s3d_garde_action(action: dict, campagne: dict, fiches=None,
+                       refus=None, envoi_autorise: bool = False,
+                       simulation: bool = True) -> dict:
+    """CE DESTINATAIRE PEUT-IL RECEVOIR SON PREMIER CONTACT ? Fonction pure.
+
+    Elle repond AVANT toute reservation et avant tout appel. Un refus n'est pas
+    un echec : rien n'a ete tente, rien n'est consomme, et le destinataire
+    reste exactement dans l'etat ou il etait.
+
+    L'ORDRE DES CONTROLES N'EST PAS INDIFFERENT. Les refus qui protegent une
+    PERSONNE — un refus exprime, un premier contact deja fait — passent avant
+    ceux qui protegent la machine. Si les deux s'appliquent, c'est celui qui
+    parle du destinataire qu'il faut lire dans le rapport.
+    """
+    a = action or {}
+    c = campagne or {}
+
+    if (c.get("etat") or "") != "approuvee":
+        return {"autorise": False, "code": "CAMPAGNE_NON_APPROUVEE",
+                "motif": P3S3D_MOTIFS["CAMPAGNE_NON_APPROUVEE"]}
+
+    # --- ce qui protege la personne ---
+    valeur = (a.get("target") or "").strip().lower()
+    if valeur and valeur in (refus or set()):
+        return {"autorise": False, "code": "REFUS_EXPRIME",
+                "motif": P3S3D_MOTIFS["REFUS_EXPRIME"]}
+    # Un premier contact deja confirme sur UNE SEULE des fiches suffit a
+    # interdire le J0 : les fiches d'un meme destinataire partagent un decideur.
+    for f in (fiches or []):
+        if (f or {}).get("first_contact_sent_at"):
+            return {"autorise": False, "code": "DEJA_CONTACTE",
+                    "motif": P3S3D_MOTIFS["DEJA_CONTACTE"]}
+    if a.get("sent_at"):
+        return {"autorise": False, "code": "DEJA_CONTACTE",
+                "motif": P3S3D_MOTIFS["DEJA_CONTACTE"]}
+
+    # --- ce qui protege la machine ---
+    if a.get("statut") == "exclu":
+        return {"autorise": False, "code": "ACTION_EXCLUE",
+                "motif": P3S3D_MOTIFS["ACTION_EXCLUE"]}
+    if (a.get("execution_type") or "") != "AUTO":
+        return {"autorise": False, "code": "PAS_AUTO",
+                "motif": P3S3D_MOTIFS["PAS_AUTO"]}
+    if (a.get("channel") or "") not in P3S3D_CANAUX_AUTOMATISABLES:
+        return {"autorise": False, "code": "CANAL_NON_AUTOMATISABLE",
+                "motif": P3S3D_MOTIFS["CANAL_NON_AUTOMATISABLE"]}
+    # LE MESSAGE VIDE N'EST PAS UN ECHEC D'ENVOI : c'est l'absence de contenu.
+    # Les 25 « AUTO » sans message sont exactement ce cas.
+    if not (a.get("message_j0") or "").strip():
+        return {"autorise": False, "code": "MESSAGE_VIDE",
+                "motif": P3S3D_MOTIFS["MESSAGE_VIDE"]}
+    if not valeur or not _P3S3_RE_MAIL.match(valeur):
+        return {"autorise": False, "code": "CIBLE_INVALIDE",
+                "motif": P3S3D_MOTIFS["CIBLE_INVALIDE"]}
+    if a.get("verrou_actif") or a.get("claimed_at"):
+        return {"autorise": False, "code": "DEJA_RESERVE",
+                "motif": P3S3D_MOTIFS["DEJA_RESERVE"]}
+    if (a.get("statut") or "") not in ("pret", "echec"):
+        return {"autorise": False, "code": "STATUT_INCOMPATIBLE",
+                "motif": P3S3D_MOTIFS["STATUT_INCOMPATIBLE"]}
+    if int(a.get("attempt_count") or 0) >= P3S3D_MAX_TENTATIVES:
+        return {"autorise": False, "code": "TENTATIVES_EPUISEES",
+                "motif": P3S3D_MOTIFS["TENTATIVES_EPUISEES"]}
+
+    # Le dernier contrôle, et non le premier : on veut savoir CE QUI SERAIT
+    # envoye meme quand les drapeaux sont fermes — c'est tout l'objet du
+    # dry-run. En envoi reel, la porte fermee arrete tout.
+    if not simulation and not envoi_autorise:
+        return {"autorise": False, "code": "ENVOI_NON_AUTORISE",
+                "motif": P3S3D_MOTIFS["ENVOI_NON_AUTORISE"]}
+
+    return {"autorise": True, "code": "OK", "motif": ""}
+
+
+def p3s3d_empreinte_conforme(campagne: dict, actions) -> bool:
+    """Le snapshot est-il TOUJOURS celui qui a ete approuve ?
+
+    Approuver un message A puis en envoyer un B est le defaut qu'on refuse.
+    L'empreinte est recalculee AVANT chaque passage, pas seulement au
+    demarrage : une alteration survenue en cours de route doit arreter la
+    campagne, pas seulement l'empecher de commencer.
+
+    Une campagne sans empreinte figee n'est PAS conforme : l'absence de preuve
+    n'est pas une preuve.
+    """
+    attendue = (campagne or {}).get("snapshot_hash")
+    if not attendue:
+        return False
+    return p3s3_empreinte(actions) == attendue
+
+
+def p3s3d_resume_execution(campagne: dict, actions, fiches_par_ref=None,
+                           refus=None, envoi_autorise: bool = False) -> dict:
+    """CE QUI PARTIRAIT, ET CE QUI NE PARTIRAIT PAS — sans rien ecrire.
+
+    Fonction PURE : elle ne lit pas la base, n'ecrit nulle part, ne reserve
+    rien. C'est le rapport qu'on veut pouvoir relire avant d'ouvrir le moindre
+    drapeau, et le meme calcul sert au dry-run et a l'execution reelle — deux
+    calculs auraient fini par diverger.
+    """
+    actions = list(actions or [])
+    table = dict(fiches_par_ref or {})
+    resume = {
+        "campagne": (campagne or {}).get("id"),
+        "etat_campagne": (campagne or {}).get("etat"),
+        "empreinte_conforme": p3s3d_empreinte_conforme(campagne, actions),
+        "actions_total": len(actions),
+        "auto_declares": 0,
+        "auto_executables": 0,
+        "email_auto": 0,
+        "par_canal_auto": {},
+        "non_automatisables": 0,
+        "bloques_par_garde": {},
+        "sans_langue_executables": 0,
+        "destinataires_executables": [],
+    }
+    for a in actions:
+        if (a.get("execution_type") or "") == "AUTO":
+            resume["auto_declares"] += 1
+        fiches = [table[r] for r in (a.get("prospect_ids") or []) if r in table]
+        verdict = p3s3d_garde_action(a, campagne, fiches=fiches, refus=refus,
+                                     envoi_autorise=envoi_autorise, simulation=True)
+        if verdict["autorise"]:
+            resume["auto_executables"] += 1
+            canal = a.get("channel") or "aucun"
+            resume["par_canal_auto"][canal] = resume["par_canal_auto"].get(canal, 0) + 1
+            if canal == "email":
+                resume["email_auto"] += 1
+            if not (a.get("language") or "").strip():
+                resume["sans_langue_executables"] += 1
+            resume["destinataires_executables"].append(a.get("recipient_key"))
+        else:
+            code = verdict["code"]
+            resume["bloques_par_garde"][code] = resume["bloques_par_garde"].get(code, 0) + 1
+            if code in ("PAS_AUTO", "CANAL_NON_AUTOMATISABLE"):
+                resume["non_automatisables"] += 1
+    resume["destinataires_executables"].sort()
+    return resume
+
+
+async def p3s3d_reserver(action_id: str, campagne_id: str, maintenant: str) -> bool:
+    """Le droit d'envoyer a CE destinataire. True si on l'obtient.
+
+    UNE SEULE ECRITURE CONDITIONNELLE — l'idiome de `_rc_reserver_jeton`, deja
+    en service trois fois dans ce depot. Deux workers, deux clics, deux
+    requetes simultanees : un seul obtient `matched_count == 1`, les autres
+    passent a la suivante SANS erreur. Ce n'est pas une exception, c'est le
+    fonctionnement normal.
+
+    RESERVER N'EST PAS ENVOYER. Aucun `sent_at`, aucun statut metier, aucune
+    ecriture dans `partner_prospects` : cette fonction donne un droit
+    temporaire, rien de plus.
+    """
+    try:
+        resultat = await db[P3S3_ACTIONS].update_one(
+            {"id": action_id, "campaign_id": campagne_id,
+             "statut": {"$in": ["pret", "echec"]},
+             "claimed_at": {"$exists": False},
+             "verrou_actif": {"$exists": False}},
+            {"$set": {"claimed_at": maintenant, "statut": "reserve",
+                      "verrou_actif": True},
+             "$inc": {"attempt_count": 1}})
+        return bool(getattr(resultat, "matched_count", 0))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s reservation impossible pour %s : %s",
+                       P3S3D_PREFIXE, (action_id or "")[:8], type(e).__name__)
+        return False
+
+
+async def p3s3d_liberer(action_id: str, statut: str, maintenant: str,
+                        erreur=None) -> None:
+    """Rend le destinataire disponible. RESERVE AUX ECHECS DE CAUSE CONNUE.
+
+    Le verrou est RETIRE : on sait que rien n'est parti, il n'y a aucune
+    ambiguite a proteger. C'est exactement ce qui NE DOIT PAS arriver a un
+    `echec_indetermine`, dont le verrou reste pose (cf. `p3s3d_marquer`).
+    """
+    champs = {"statut": statut, "updated_at": maintenant}
+    for cle in ("error_code", "error_message", "retry_after"):
+        if (erreur or {}).get(cle) is not None:
+            champs[cle] = erreur[cle]
+    await db[P3S3_ACTIONS].update_one(
+        {"id": action_id},
+        {"$set": champs, "$unset": {"claimed_at": "", "verrou_actif": ""}})
+
+
+async def p3s3d_marquer_indetermine(action_id: str, maintenant: str,
+                                    erreur=None) -> None:
+    """Le cas dangereux : on IGNORE si le message est parti.
+
+    LE VERROU EST CONSERVE, et c'est toute la raison d'etre de cet etat. Entre
+    risquer un deuxieme premier contact et demander confirmation a un humain,
+    on demande. Aucun reessai automatique n'est possible tant qu'une personne
+    n'a pas tranche.
+    """
+    champs = {"statut": "echec_indetermine", "verrou_actif": True,
+              "updated_at": maintenant}
+    for cle in ("error_code", "error_message"):
+        if (erreur or {}).get(cle) is not None:
+            champs[cle] = erreur[cle]
+    await db[P3S3_ACTIONS].update_one({"id": action_id}, {"$set": champs})
+
+
+def p3s3d_verdict_reprise(action: dict) -> str:
+    """Que faire d'une action trouvee en vol apres un redemarrage ? PURE.
+
+    C'EST LA REPONSE AU SCENARIO « message envoye, puis crash, puis reessai,
+    puis deuxieme message ». La trace d'intention est ecrite AVANT l'appel :
+
+      statut `reserve`  -> l'appel n'a jamais eu lieu     -> LIBERER
+      statut `en_cours` -> un appel est parti, sort inconnu -> INDETERMINE
+
+    Le moteur ne rejoue JAMAIS une action dont il ignore le sort.
+    """
+    a = action or {}
+    if a.get("sent_at"):
+        return "TERMINEE"
+    statut = a.get("statut") or ""
+    if statut == "en_cours":
+        return "INDETERMINE"
+    if statut == "reserve":
+        return "LIBERER"
+    return "RIEN"
+
+
+async def p3s3d_appliquer_succes(action: dict, reponse: dict, maintenant: str) -> dict:
+    """Le seul chemin qui fait passer un prospect a `contacte`.
+
+    L'ORDRE COMPTE. L'action est marquee `envoye` AVANT les fiches : si le
+    processus meurt entre les deux, on retrouve un envoi confirme dont la
+    propagation metier a manque — un ecart visible et reparable. L'inverse
+    aurait donne des fiches `contacte` sans trace d'envoi : un mensonge
+    silencieux, impossible a detecter.
+
+    LE SEUIL EST L'ACCEPTATION PAR LE FOURNISSEUR, materialisee par un
+    identifiant de message. Sans identifiant, on ne conclut RIEN — un appel
+    lance n'est pas un message parti.
+
+    LES FICHES SONT ECRITES SOUS CONDITION D'ABSENCE. Un destinataire couvre
+    parfois deux implantations (Dancefloor, Wellness) : elles partagent un
+    decideur, donc un seul J0 les marque TOUTES. Ne marquer que la premiere
+    garantirait qu'une prochaine campagne re-sollicite l'autre — exactement le
+    double premier contact qu'on refuse.
+    """
+    identifiant = (reponse or {}).get("provider_message_id")
+    if not identifiant:
+        # Un succes sans identifiant n'est pas un succes : on ne sait pas.
+        await p3s3d_marquer_indetermine(action["id"], maintenant, {
+            "error_code": "sans_identifiant",
+            "error_message": "le fournisseur n'a rendu aucun identifiant de message"})
+        return {"statut": "echec_indetermine", "fiches_marquees": 0}
+
+    await db[P3S3_ACTIONS].update_one(
+        {"id": action["id"], "sent_at": {"$exists": False}},
+        {"$set": {"statut": "envoye", "sent_at": maintenant,
+                  "provider": (reponse or {}).get("provider"),
+                  "provider_message_id": identifiant,
+                  "provider_status": "accepted",
+                  "verrou_actif": True, "updated_at": maintenant,
+                  # Les echeances partent du VRAI premier contact, jamais du
+                  # jour de preparation ni d'approbation : une relance calculee
+                  # sur l'approbation partirait avant le contact lui-meme.
+                  "j3_due_at": p3s3d_echeance(maintenant, 3),
+                  "j7_due_at": p3s3d_echeance(maintenant, 7)}})
+
+    marquees = 0
+    for reference in (action.get("prospect_ids") or []):
+        resultat = await db[P3S1_COLLECTION].update_one(
+            {"ref": reference, "coach_id": action.get("coach_id"),
+             "first_contact_sent_at": {"$exists": False}},
+            {"$set": {"first_contact_sent_at": maintenant,
+                      "last_contact_at": maintenant,
+                      "status": "contacte", "updated_at": maintenant}})
+        marquees += int(bool(getattr(resultat, "matched_count", 0)))
+    logger.info("%s J0 confirme pour %s (%s) — %d fiche(s) passees a contacte",
+                P3S3D_PREFIXE, action.get("recipient_key"), identifiant[:24], marquees)
+    return {"statut": "envoye", "fiches_marquees": marquees}
+
+
+def p3s3d_echeance(depart: str, jours: int) -> str:
+    """`depart` + N jours, au format du depot. Pure."""
+    try:
+        base = datetime.fromisoformat((depart or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        base = datetime.now(timezone.utc)
+    return (base + timedelta(days=jours)).isoformat()
+
+
+async def p3s3d_executer_campagne(campagne_id: str, appelant: str,
+                                  simulation: bool = True,
+                                  fournisseur=None, plafond: int = 0) -> dict:
+    """Le moteur. `simulation=True` par DEFAUT, et le defaut est le cas sur.
+
+    EN SIMULATION, PAS UNE SEULE ECRITURE. Aucune reservation, aucun
+    `sent_at`, aucun prospect qui change de statut, aucun identifiant de
+    message conserve. Une simulation ne consomme pas de premier contact : elle
+    se rejoue autant qu'on veut, et c'est ce qui permet de tout eprouver avant
+    d'ouvrir le moindre drapeau.
+
+    EN MODE REEL, L'ORDRE DES ECRITURES EST LE CONTRAT :
+      1. reservation atomique
+      2. TRACE D'INTENTION (`en_cours`) — ECRITE AVANT L'APPEL
+      3. appel du fournisseur
+      4. verdict
+      5. succes -> `envoye` puis fiches ; echec -> liberation ou indetermine
+
+    L'etape 2 est ce qui rend impossible le scenario « message parti, crash,
+    reessai, deuxieme message » : au redemarrage, une action `en_cours` sans
+    `sent_at` signifie qu'un appel est parti et qu'on ignore son sort. Elle
+    devient `echec_indetermine`, garde son verrou, et attend un humain.
+
+    P3-S3-D1 N'A AUCUN FOURNISSEUR REEL. Le defaut est l'adaptateur factice ;
+    brancher Resend est le travail de D3. Ouvrir les deux drapeaux aujourd'hui
+    ne ferait donc partir aucun message.
+    """
+    fournisseur = fournisseur or P3S3DFournisseurFactice()
+    campagne = await db[P3S3_CAMPAGNES].find_one({"id": campagne_id}, {"_id": 0})
+    if not campagne:
+        raise HTTPException(status_code=404, detail="Campagne introuvable")
+    if not is_super_admin(appelant) and (campagne.get("coach_id") or "") != appelant:
+        raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas")
+
+    actions = await db[P3S3_ACTIONS].find(
+        {"campaign_id": campagne_id}, {"_id": 0}).to_list(P3S3_LISTE_MAX)
+
+    # LA GARDE D'EMPREINTE PASSE AVANT TOUT LE RESTE. Un snapshot altere
+    # arrete la campagne entiere : on n'envoie pas action par action ce qui
+    # n'est plus ce qui a ete approuve.
+    if not p3s3d_empreinte_conforme(campagne, actions):
+        logger.warning("%s campagne %s : empreinte alteree, execution refusee",
+                       P3S3D_PREFIXE, (campagne_id or "")[:8])
+        return {"simulation": simulation, "arrete": True,
+                "code": "EMPREINTE_ALTEREE",
+                "motif": P3S3D_MOTIFS["EMPREINTE_ALTEREE"],
+                "resume": None, "resultats": []}
+
+    references = [r for a in actions for r in (a.get("prospect_ids") or [])]
+    fiches = await db[P3S1_COLLECTION].find(
+        {"ref": {"$in": references}}, {"_id": 0}).to_list(len(references) + 1) \
+        if references else []
+    table = {f.get("ref"): f for f in fiches}
+    refus = await c3_refus_exprimes("email", [a.get("target") for a in actions])
+
+    flags = await get_feature_flags()
+    envoi_autorise = p3s3_envoi_autorise(flags)
+    resume = p3s3d_resume_execution(campagne, actions, fiches_par_ref=table,
+                                    refus=refus, envoi_autorise=envoi_autorise)
+
+    resultats = []
+    traites = 0
+    for action in actions:
+        associees = [table[r] for r in (action.get("prospect_ids") or []) if r in table]
+        verdict = p3s3d_garde_action(action, campagne, fiches=associees, refus=refus,
+                                     envoi_autorise=envoi_autorise, simulation=simulation)
+        if not verdict["autorise"]:
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": "IGNORE", "code": verdict["code"],
+                              "motif": verdict["motif"]})
+            continue
+        if plafond and traites >= plafond:
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": "REPORTE", "code": "PLAFOND",
+                              "motif": "plafond de ce passage atteint"})
+            continue
+
+        cle = p3s3d_cle_idempotence(action)
+        instantane = p3s3d_instantane_envoi(action)
+        maintenant = datetime.now(timezone.utc).isoformat()
+
+        if simulation:
+            # Le fournisseur factice est interroge pour que le rapport soit
+            # realiste — mais RIEN n'est ecrit, et aucune reservation n'est
+            # prise : le destinataire reste exactement dans l'etat trouve.
+            reponse = await fournisseur.envoyer(instantane, cle)
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": reponse["verdict"], "code": "SIMULATION",
+                              "motif": "simulation : aucune ecriture",
+                              "cle_idempotence": cle})
+            traites += 1
+            continue
+
+        if not await p3s3d_reserver(action["id"], campagne_id, maintenant):
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": "IGNORE", "code": "DEJA_RESERVE",
+                              "motif": P3S3D_MOTIFS["DEJA_RESERVE"]})
+            continue
+
+        # ETAPE 2 : la trace d'intention, AVANT l'appel. Sans elle, un crash
+        # entre l'appel et l'ecriture du resultat serait indiscernable d'un
+        # appel jamais parti — et le reessai enverrait un second message.
+        await db[P3S3_ACTIONS].update_one(
+            {"id": action["id"]},
+            {"$set": {"statut": "en_cours", "attempted_at": maintenant,
+                      "provider": getattr(fournisseur, "nom", "?"),
+                      "idempotency_key": cle, "updated_at": maintenant}})
+
+        try:
+            reponse = await fournisseur.envoyer(instantane, cle)
+        except Exception as e:  # noqa: BLE001
+            # Une exception APRES l'envoi de la requete ne dit pas si le
+            # message est parti. On ne devine pas : on garde le verrou.
+            await p3s3d_marquer_indetermine(action["id"], maintenant, {
+                "error_code": type(e).__name__, "error_message": str(e)[:300]})
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": P3S3D_INDETERMINE, "code": "EXCEPTION",
+                              "motif": type(e).__name__})
+            traites += 1
+            continue
+
+        v = reponse.get("verdict")
+        if v == P3S3D_SUCCESS:
+            issue = await p3s3d_appliquer_succes(action, reponse, maintenant)
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": v, "code": issue["statut"],
+                              "fiches_marquees": issue["fiches_marquees"],
+                              "provider_message_id": reponse.get("provider_message_id")})
+        elif v == P3S3D_PERMANENT:
+            await p3s3d_liberer(action["id"], "echec", maintenant, reponse)
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": v, "code": "echec",
+                              "motif": reponse.get("error_message")})
+        elif v in (P3S3D_RETRYABLE, P3S3D_RATE_LIMIT):
+            # La cause est connue et anterieure a l'emission : le destinataire
+            # est rendu disponible, sinon une panne d'une minute le gelerait.
+            await p3s3d_liberer(action["id"], "echec", maintenant, reponse)
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": v, "code": "echec",
+                              "retry_after": reponse.get("retry_after"),
+                              "motif": reponse.get("error_message")})
+        else:   # INDETERMINATE
+            await p3s3d_marquer_indetermine(action["id"], maintenant, reponse)
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": v, "code": "echec_indetermine",
+                              "motif": reponse.get("error_message")})
+        traites += 1
+
+    logger.info("%s campagne %s : passage %s, %d traite(s) sur %d executables",
+                P3S3D_PREFIXE, (campagne_id or "")[:8],
+                "SIMULE" if simulation else "REEL", traites,
+                resume["auto_executables"])
+    return {"simulation": simulation, "arrete": False, "code": "OK",
+            "envoi_autorise": envoi_autorise, "resume": resume,
+            "resultats": resultats, "traites": traites}
+
+
 
 
 # --- Leads Routes (Widget IA) ---
