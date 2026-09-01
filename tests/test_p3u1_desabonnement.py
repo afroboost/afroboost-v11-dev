@@ -83,12 +83,19 @@ import api.server as S      # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
 SRC = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
-# LE BLOC U1, ET RIEN QUE LUI. Un `split(...)[1]` emporterait tout le reste du
-# fichier : les assertions « le lot ne fait pas X » deviendraient des
-# assertions sur le depot entier, et mordraient sur du code etranger.
-_D = SRC.index("# P3-U1 — UN DESABONNEMENT")
-_F = SRC.index("# --- Leads Routes (Widget IA) ---", _D)
-BLOC_U1 = SRC[_D:_F]
+# LES BORNES DU BLOC, INSENSIBLES AUX LOTS FUTURS. Elles pointaient sur
+# « Leads Routes », l'en-tete qui suivait ce lot le jour ou il a ete ecrit —
+# et le lot SUIVANT, insere entre les deux, a fait deborder l'analyse sur son
+# code. On s'arrete donc a la premiere banniere de lot rencontree apres
+# celle-ci, quelle qu'elle soit.
+def _bloc(source, entete):
+    debut = source.index(entete)
+    banniere = "\n# " + "=" * 76 + "\n# P3-"
+    suite = source.find(banniere, debut + len(entete))
+    return source[debut:suite if suite != -1 else
+                  source.index("# --- Leads Routes (Widget IA) ---", debut)]
+
+BLOC_U1 = _bloc(SRC, "# P3-U1 — UN DESABONNEMENT")
 COACH_A = "coach.a.fictif@exemple.test"
 COACH_B = "coach.b.fictif@exemple.test"
 INSTANT = "2026-08-31T18:26:57.951583+00:00"

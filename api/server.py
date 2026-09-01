@@ -23554,18 +23554,32 @@ async def p3s3d_appliquer_succes(action: dict, reponse: dict, maintenant: str) -
             "error_message": "le fournisseur n'a rendu aucun identifiant de message"})
         return {"statut": "echec_indetermine", "fiches_marquees": 0}
 
+    # P3-U2 : LE `Message-ID` RFC, S'IL EST FOURNI, ET SEULEMENT ALORS.
+    # `provider_message_id` est l'identifiant INTERNE du fournisseur ; le
+    # `Message-ID` de la RFC 5322 est une autre valeur, et c'est LA SEULE que
+    # le client de messagerie du prospect renverra dans `In-Reply-To`. Les
+    # confondre rendrait le rattachement fort impossible.
+    # ON NE SUPPOSE RIEN SUR SA DISPONIBILITE. Aujourd'hui aucun chemin prouve
+    # ne le rend (le GET Resend local repond 403) ; U3 tranchera entre le
+    # webhook `email.sent` et une cle en lecture. En attendant, le champ n'est
+    # ecrit QUE si l'adaptateur l'a fourni — jamais a vide, pour qu'un `null`
+    # ne vienne pas polluer l'index partiel ni faire croire a une valeur.
+    _rfc = p3u2_normaliser_identifiant((reponse or {}).get("rfc_message_id"))
+    _champs_envoi = {"statut": "envoye", "sent_at": maintenant,
+                     "provider": (reponse or {}).get("provider"),
+                     "provider_message_id": identifiant,
+                     "provider_status": "accepted",
+                     "verrou_actif": True, "updated_at": maintenant,
+                     # Les echeances partent du VRAI premier contact, jamais du
+                     # jour de preparation ni d'approbation : une relance calculee
+                     # sur l'approbation partirait avant le contact lui-meme.
+                     "j3_due_at": p3s3d_echeance(maintenant, 3),
+                     "j7_due_at": p3s3d_echeance(maintenant, 7)}
+    if _rfc:
+        _champs_envoi[P3U2_CHAMP_RFC] = _rfc
     await db[P3S3_ACTIONS].update_one(
         {"id": action["id"], "sent_at": {"$exists": False}},
-        {"$set": {"statut": "envoye", "sent_at": maintenant,
-                  "provider": (reponse or {}).get("provider"),
-                  "provider_message_id": identifiant,
-                  "provider_status": "accepted",
-                  "verrou_actif": True, "updated_at": maintenant,
-                  # Les echeances partent du VRAI premier contact, jamais du
-                  # jour de preparation ni d'approbation : une relance calculee
-                  # sur l'approbation partirait avant le contact lui-meme.
-                  "j3_due_at": p3s3d_echeance(maintenant, 3),
-                  "j7_due_at": p3s3d_echeance(maintenant, 7)}})
+        {"$set": _champs_envoi})
 
     marquees = 0
     for reference in (action.get("prospect_ids") or []):
@@ -24096,6 +24110,482 @@ async def p3u1_desabonnement_prospect(token: str = ""):
                 action.get("recipient_key"), action.get("channel"), issue["premiere_fois"])
     return _v332_page("Desinscription effectuee",
                       "Vous ne recevrez plus de message d'Afroboost.", "#f59e0b")
+
+
+# ============================================================================
+# P3-U2 — LA RECEPTION DES REPONSES, ET RIEN QUI RECOIVE ENCORE
+# ============================================================================
+# CE LOT NE RECOIT AUCUN E-MAIL. Il n'ouvre ni webhook, ni IMAP, ni port. Il
+# construit ce qui se passe APRES qu'un message soit arrive : le normaliser,
+# ne pas l'enregistrer deux fois, retrouver a quelle action il repond, et —
+# seulement si c'est certain — arreter les relances de ce destinataire.
+# U3 branchera la vraie arrivee sur ce contrat, sans toucher a ce moteur.
+#
+# POURQUOI UN MOTEUR SEPARE DE L'ARRIVEE. Un adaptateur qui recoit ET decide
+# lie la logique metier a la forme du fournisseur : le jour ou l'on passe de
+# Resend a IMAP, il faudrait tout reecrire, y compris les regles qui protegent
+# les prospects. Ici l'adaptateur n'aura qu'a produire un `InboundMessage`.
+#
+# LA REGLE QUI PRIME SUR TOUTES LES AUTRES : on ne devine jamais. Ecrire
+# `replied_at` sur la mauvaise action couperait les relances de quelqu'un qui
+# n'a rien dit, et laisserait sans reponse celui qui a ecrit. Deux erreurs pour
+# le prix d'une, et aucune detectable. Dans le doute, le message attend un
+# humain.
+
+P3U2_COLLECTION = "prospect_inbound_messages"
+
+# LES METHODES DE RATTACHEMENT, de la plus sure a la plus faible.
+P3U2_METHODE_IN_REPLY_TO = "A_IN_REPLY_TO"   # l'en-tete que le protocole garantit
+P3U2_METHODE_REFERENCES = "B_REFERENCES"     # le fil complet, meme garantie
+P3U2_METHODE_PROVIDER = "B_PROVIDER"         # l'identifiant du fournisseur
+P3U2_METHODE_EMAIL = "C_FROM_EMAIL"          # l'expediteur, et lui seul
+P3U2_METHODE_AUCUNE = "AUCUNE"
+
+# La confiance n'est pas decorative : elle dit au dashboard ce qu'il peut
+# afficher sans reserve, et au moteur ce qu'il peut ecrire tout seul.
+P3U2_CONFIANCE = {
+    P3U2_METHODE_IN_REPLY_TO: 100,
+    P3U2_METHODE_REFERENCES: 95,
+    P3U2_METHODE_PROVIDER: 90,
+    P3U2_METHODE_EMAIL: 60,
+    P3U2_METHODE_AUCUNE: 0,
+}
+# EN DESSOUS DE CE SEUIL, AUCUNE ECRITURE AUTOMATIQUE. `C_FROM_EMAIL` le
+# franchit tout juste — et seulement s'il ne reste qu'un candidat.
+P3U2_SEUIL_AUTOMATIQUE = 60
+
+# Les plafonds de lecture. Aucun n'est arbitraire : un fil de discussion cite
+# rarement plus de quelques dizaines de messages, et deux candidats suffisent
+# deja a interdire tout rattachement automatique.
+P3U2_MAX_CANDIDATS = 50
+
+P3U2_STATUT_RATTACHE = "rattache"
+P3U2_STATUT_REVUE = "manual_review"
+P3U2_STATUTS = (P3U2_STATUT_RATTACHE, P3U2_STATUT_REVUE)
+
+# Les motifs de mise en attente, nommes pour etre lisibles dans le dashboard.
+P3U2_MOTIFS = {
+    "AUCUN_CANDIDAT": "aucune action ne correspond a ce message",
+    "PLUSIEURS_CANDIDATS": "plusieurs actions pourraient correspondre — un humain tranche",
+    "JAMAIS_ENVOYE": "l'action correspondante n'a jamais ete envoyee",
+    "SANS_IDENTIFIANT": "message sans identifiant : impossible d'ecarter un doublon",
+    "EXPEDITEUR_ILLISIBLE": "adresse d'expedition inexploitable",
+}
+
+# LE CHAMP QUI MANQUE SUR L'ACTION, ET POURQUOI IL N'EST PAS UN DOUBLON.
+# `provider_message_id` existe deja : c'est l'identifiant INTERNE de Resend,
+# un uuid maison. Le `Message-ID` de la RFC 5322 est une autre valeur, de la
+# forme `<...@domaine>`, et c'est LA SEULE que le client de messagerie du
+# prospect renverra dans `In-Reply-To`. Les confondre rendrait le rattachement
+# fort impossible ; les stocker tous les deux n'est pas une duplication, ce
+# sont deux identifiants de deux systemes differents.
+P3U2_CHAMP_RFC = "rfc_message_id"
+
+
+def p3u2_normaliser_adresse(valeur) -> str:
+    """L'adresse comparable. Minuscules, sans espaces, sans chevrons. PURE.
+
+    ELLE NE RAPPROCHE RIEN. Aucun rapprochement par domaine : deux adresses
+    `@gmail.com` n'ont AUCUN rapport entre elles, et un rattachement par
+    domaine ferait repondre un prospect a la place d'un autre.
+    """
+    brut = (valeur or "").strip()
+    if not brut:
+        return ""
+    # « Nom Prenom <a@b.ch> » -> « a@b.ch »
+    if "<" in brut and ">" in brut:
+        brut = brut[brut.rindex("<") + 1:brut.index(">", brut.rindex("<"))]
+    brut = brut.strip().strip("<>").lower()
+    return brut if _P3S3_RE_MAIL.match(brut) else ""
+
+
+def p3u2_normaliser_identifiant(valeur) -> str:
+    """Un `Message-ID` comparable : sans chevrons, sans espaces. PURE.
+
+    Les clients de messagerie ecrivent tantot `<a@b>`, tantot `a@b`, souvent
+    avec des espaces ou des retours a la ligne au milieu d'un `References`.
+    Comparer des chaines brutes ferait echouer le rattachement le plus sur
+    pour une raison purement typographique.
+    """
+    brut = (valeur or "").strip()
+    return brut.strip("<>").strip().lower()
+
+
+def p3u2_normaliser_liste(valeur) -> list:
+    """`References` / `In-Reply-To` -> liste d'identifiants comparables. PURE.
+
+    Accepte une liste OU la chaine brute de l'en-tete, ou les identifiants
+    sont separes par des espaces ou des retours a la ligne.
+    """
+    if valeur is None:
+        return []
+    elements = valeur if isinstance(valeur, (list, tuple)) else str(valeur).split()
+    vus, sortie = set(), []
+    for e in elements:
+        n = p3u2_normaliser_identifiant(e)
+        if n and n not in vus:
+            vus.add(n)
+            sortie.append(n)
+    return sortie
+
+
+def p3u2_message_entrant(brut: dict) -> dict:
+    """LE CONTRAT. Un message entrant, independant du fournisseur. PURE.
+
+    C'est la seule forme que le moteur connait. `ResendWebhookAdapter` (U3) ou
+    un futur `ImapAdapter` n'auront qu'a produire ce dictionnaire — ils ne
+    verront jamais une action, une fiche ni une campagne.
+
+    LA CLE DE DEDUPLICATION EST CALCULEE ICI, pas plus tard : elle depend de ce
+    que le fournisseur a fourni, et cette decision doit etre prise une fois,
+    au meme endroit, pour tous les adaptateurs.
+    """
+    b = brut or {}
+    identifiant = p3u2_normaliser_identifiant(b.get("message_id"))
+    evenement = (b.get("provider_event_id") or "").strip()
+    # DEUX SOURCES POSSIBLES, UN ORDRE ASSUME. Le `Message-ID` prime : il est
+    # pose par l'emetteur et survit aux rejeux du fournisseur. L'identifiant
+    # d'evenement ne vaut que pour CE fournisseur, mais il est mieux que rien.
+    if identifiant:
+        cle = "mid:" + identifiant
+    elif evenement:
+        cle = "evt:" + evenement
+    else:
+        cle = None
+    return {
+        "message_id": identifiant,
+        "in_reply_to": p3u2_normaliser_liste(b.get("in_reply_to")),
+        "references": p3u2_normaliser_liste(b.get("references")),
+        "from_email": p3u2_normaliser_adresse(b.get("from_email")),
+        "to_email": p3u2_normaliser_adresse(b.get("to_email")),
+        "subject": p3s1_texte(b.get("subject"), 500) or "",
+        # LE TEXTE, PAS LE HTML. On ne conserve pas le corps HTML : il faudrait
+        # l'assainir avant tout affichage, et un dashboard qui rend du HTML
+        # etranger est une faille par construction. Le texte suffit a lire une
+        # reponse, et U2 n'en fait aucune analyse.
+        "body_text": p3s1_texte(b.get("body_text"), 20000) or "",
+        "received_at": (b.get("received_at") or "").strip() or None,
+        "provider": (b.get("provider") or "").strip() or None,
+        "provider_event_id": evenement or None,
+        "dedupe_key": cle,
+    }
+
+
+def p3u2_candidats_par_identifiant(message: dict) -> list:
+    """Les identifiants sortants que ce message pretend citer. PURE.
+
+    `In-Reply-To` d'abord — il designe LE message auquel on repond. Puis
+    `References`, qui porte le fil entier : le premier element y est souvent
+    le message d'origine, mais on les essaie tous, du plus recent au plus
+    ancien, parce qu'aucun client ne garantit l'ordre.
+    """
+    m = message or {}
+    vus, sortie = set(), []
+    for identifiant in list(m.get("in_reply_to") or []) + list(reversed(m.get("references") or [])):
+        if identifiant and identifiant not in vus:
+            vus.add(identifiant)
+            sortie.append(identifiant)
+    return sortie
+
+
+def p3u2_verdict_correlation(message: dict, actions_par_rfc: dict,
+                             actions_par_provider: dict,
+                             candidats_email: list) -> dict:
+    """A QUELLE ACTION CE MESSAGE REPOND-IL ? Fonction PURE, sans base.
+
+    TROIS METHODES, DANS UN ORDRE QUI N'EST PAS NEGOCIABLE :
+
+      A — `In-Reply-To` / `References` contre le `Message-ID` RFC de notre J0.
+          C'est la seule cle que le protocole garantit : elle fonctionne meme
+          si l'organisation repond depuis une autre adresse, meme si le sujet
+          a ete reecrit, meme si le fil a change de nom.
+
+      B — l'identifiant du fournisseur, quand il apparait dans le fil.
+
+      C — l'adresse d'expedition, ET SEULEMENT s'il ne reste qu'UN candidat.
+          Deux candidats, c'est zero : on ne tire pas au sort entre deux
+          organisations.
+
+    UNE ACTION JAMAIS ENVOYEE N'EST JAMAIS UNE REPONSE. Un `Message-ID` sortant
+    n'existe qu'apres l'envoi ; le trouver sur une action sans `sent_at`
+    signale une incoherence, pas un succes. On rattache l'action pour que
+    l'humain voie laquelle, mais on n'ecrit rien.
+    """
+    m = message or {}
+
+    def issue(action, methode, motif=""):
+        confiance = P3U2_CONFIANCE.get(methode, 0)
+        if action is not None and not (action or {}).get("sent_at"):
+            return {"action": action, "methode": methode, "confiance": confiance,
+                    "statut": P3U2_STATUT_REVUE, "motif": P3U2_MOTIFS["JAMAIS_ENVOYE"]}
+        if action is None:
+            return {"action": None, "methode": P3U2_METHODE_AUCUNE, "confiance": 0,
+                    "statut": P3U2_STATUT_REVUE, "motif": motif}
+        automatique = confiance >= P3U2_SEUIL_AUTOMATIQUE
+        return {"action": action, "methode": methode, "confiance": confiance,
+                "statut": P3U2_STATUT_RATTACHE if automatique else P3U2_STATUT_REVUE,
+                "motif": "" if automatique else motif}
+
+    cites = p3u2_candidats_par_identifiant(m)
+    # A — l'en-tete du protocole.
+    for identifiant in cites:
+        trouvee = (actions_par_rfc or {}).get(identifiant)
+        if trouvee:
+            methode = (P3U2_METHODE_IN_REPLY_TO
+                       if identifiant in (m.get("in_reply_to") or [])
+                       else P3U2_METHODE_REFERENCES)
+            return issue(trouvee, methode)
+    # B — l'identifiant du fournisseur, s'il transite dans le fil.
+    for identifiant in cites:
+        trouvee = (actions_par_provider or {}).get(identifiant)
+        if trouvee:
+            return issue(trouvee, P3U2_METHODE_PROVIDER)
+    # C — l'expediteur, et seulement s'il est sans ambiguite.
+    if not m.get("from_email"):
+        return issue(None, P3U2_METHODE_AUCUNE, P3U2_MOTIFS["EXPEDITEUR_ILLISIBLE"])
+    if len(candidats_email or []) == 1:
+        return issue(candidats_email[0], P3U2_METHODE_EMAIL)
+    if len(candidats_email or []) > 1:
+        return {"action": None, "methode": P3U2_METHODE_AUCUNE, "confiance": 0,
+                "statut": P3U2_STATUT_REVUE, "motif": P3U2_MOTIFS["PLUSIEURS_CANDIDATS"]}
+    return issue(None, P3U2_METHODE_AUCUNE, P3U2_MOTIFS["AUCUN_CANDIDAT"])
+
+
+def p3u2_relance_autorisee(action: dict, refus=None) -> dict:
+    """CE DESTINATAIRE PEUT-IL ENCORE RECEVOIR UNE RELANCE ? PURE.
+
+    C'est la garde que le futur moteur J+3 / J+7 devra appeler, et c'est ICI
+    que la reponse arrete la relance. Elle ne remplace pas
+    `p3s3d_garde_action`, qui protege le PREMIER contact : une relance n'a de
+    sens que sur un contact deja parti, les deux gardes ne disent donc pas la
+    meme chose.
+
+    UNE REPONSE ET UN DESABONNEMENT ARRETENT TOUS DEUX LES RELANCES, POUR DES
+    RAISONS OPPOSEES. Le desabonnement dit « ne m'ecrivez plus ». La reponse
+    dit « quelqu'un vous parle » — continuer a derouler des relances
+    automatiques pendant qu'une conversation existe est la faute commerciale
+    la plus couteuse de tout ce chantier. Les deux traces restent distinctes :
+    le refus vit dans `subscribers`, la reponse dans `replied_at`.
+    """
+    a = action or {}
+    if not a.get("sent_at"):
+        return {"autorise": False, "code": "JAMAIS_ENVOYE",
+                "motif": "aucune relance sans premier contact"}
+    if a.get("replied_at"):
+        return {"autorise": False, "code": "A_REPONDU",
+                "motif": "ce destinataire a repondu — la conversation prime"}
+    if a.get("interesse_at") or a.get("paused_at"):
+        return {"autorise": False, "code": "SUIVI_HUMAIN",
+                "motif": "un humain a pris la main sur ce destinataire"}
+    valeur = (a.get("target") or "").strip().lower()
+    canal = (a.get("channel") or "").strip().lower()
+    if valeur and ("%s:%s" % (canal, valeur)) in (refus or set()):
+        return {"autorise": False, "code": "REFUS_EXPRIME",
+                "motif": P3S3D_MOTIFS["REFUS_EXPRIME"]}
+    return {"autorise": True, "code": "OK", "motif": ""}
+
+
+async def p3u2_marquer_reponse(action: dict, recu_le: str) -> dict:
+    """`replied_at`, ECRIT UNE SEULE FOIS, et les relances tombent avec.
+
+    LE PATRON MAISON, ET C'EST LUI QUI REGLE LA COURSE. La condition
+    `replied_at: {$exists: False}` vit DANS le filtre : entre la lecture et
+    l'ecriture il n'y a aucune fenetre, et `matched_count` dit sans ambiguite
+    si c'est ce message-ci qui a pose la date. Une deuxieme reponse du meme
+    prospect est donc stockee, mais ne rajeunit pas la premiere — c'est la
+    date du PREMIER signe de vie qui compte.
+
+    LES TROIS ECRITURES TIENNENT DANS UNE SEULE OPERATION. `replied_at` et
+    l'annulation des deux relances partent ensemble : il est impossible
+    d'obtenir une reponse enregistree dont les relances resteraient armees.
+    Une transaction Mongo serait inutile ici — un `update_one` est deja
+    atomique sur un document, et tout ce qui doit bouger est dans CE document.
+
+    LES FICHES SUIVENT, mais separement et sous condition. Elles ne sont pas
+    dans le meme document : si le processus meurt entre les deux, on retrouve
+    une action `replied_at` dont les fiches n'ont pas suivi — un ecart visible
+    et reparable. L'inverse aurait donne des fiches « repondu » sans reponse.
+    """
+    a = action or {}
+    maintenant = datetime.now(timezone.utc).isoformat()
+    date_reponse = (recu_le or "").strip() or maintenant
+    pose = await db[P3S3_ACTIONS].update_one(
+        {"id": a.get("id"), "replied_at": {"$exists": False}},
+        {"$set": {"replied_at": date_reponse,
+                  # Les deux relances tombent DANS LA MEME operation.
+                  "j3_annule_le": maintenant, "j7_annule_le": maintenant,
+                  "j3_annule_motif": "reponse recue", "j7_annule_motif": "reponse recue",
+                  "updated_at": maintenant}})
+    premiere = bool(getattr(pose, "matched_count", 0))
+    fiches = 0
+    if premiere:
+        for reference in (a.get("prospect_ids") or []):
+            r = await db[P3S1_COLLECTION].update_one(
+                {"ref": reference, "coach_id": a.get("coach_id"), "status": "contacte"},
+                {"$set": {"status": "repondu", "replied_at": date_reponse,
+                          "updated_at": maintenant}})
+            fiches += int(bool(getattr(r, "matched_count", 0)))
+    return {"premiere_reponse": premiere, "replied_at": date_reponse,
+            "fiches_marquees": fiches}
+
+
+async def p3u2_recevoir(brut: dict, coach_id: str) -> dict:
+    """LE MOTEUR. Un message entrant deja normalise entre, un verdict sort.
+
+    IL NE RECOIT RIEN LUI-MEME. Aucun reseau, aucun webhook, aucune boite :
+    U3 lui passera ce que l'adaptateur aura produit. C'est ce qui permet de
+    l'eprouver entierement sans qu'un seul e-mail existe.
+
+    L'ORDRE : normaliser, ecarter un doublon, correler, stocker, et seulement
+    si le rattachement est certain, ecrire `replied_at`. Le stockage precede
+    l'ecriture metier : un message recu ne doit jamais disparaitre parce que
+    la suite a echoue.
+    """
+    message = p3u2_message_entrant(brut)
+    maintenant = datetime.now(timezone.utc).isoformat()
+
+    # --- LE DOUBLON. Un fournisseur rejoue ses evenements ; c'est normal et
+    # documente. Sans cette porte, un rejeu creerait un second message et,
+    # pire, pourrait relancer la machinerie metier.
+    if message["dedupe_key"]:
+        existant = await db[P3U2_COLLECTION].find_one(
+            {"coach_id": coach_id, "dedupe_key": message["dedupe_key"]}, {"_id": 0, "id": 1})
+        if existant:
+            return {"stocke": False, "doublon": True, "id": existant.get("id"),
+                    "statut": None, "methode": None, "confiance": 0,
+                    "action_id": None, "motif": "", "premiere_reponse": False}
+
+    # --- LES CANDIDATS. Deux lectures groupees, jamais un `find_one` par
+    # identifiant : la regle du depot sur les grands ensembles vaut ici aussi.
+    cites = p3u2_candidats_par_identifiant(message)
+    par_rfc, par_provider = {}, {}
+    if cites:
+        # UNE SEULE REQUETE, ET BORNEE. Un `find_one` par identifiant ferait
+        # autant d'allers-retours que le fil compte de messages ; un curseur
+        # sans plafond laisserait un `References` anormalement long tirer une
+        # liste sans fin. Un message cite au plus quelques dizaines d'ancetres,
+        # et une seule action peut correspondre : le plafond est large.
+        _trouvees = await db[P3S3_ACTIONS].find(
+            {"coach_id": coach_id,
+             "$or": [{P3U2_CHAMP_RFC: {"$in": cites}},
+                     {"provider_message_id": {"$in": cites}}]},
+            {"_id": 0}).to_list(P3U2_MAX_CANDIDATS)
+        for act in _trouvees:
+            cle_rfc = p3u2_normaliser_identifiant(act.get(P3U2_CHAMP_RFC))
+            if cle_rfc:
+                par_rfc[cle_rfc] = act
+            cle_prov = p3u2_normaliser_identifiant(act.get("provider_message_id"))
+            if cle_prov:
+                par_provider[cle_prov] = act
+
+    candidats_email = []
+    if message["from_email"] and not par_rfc and not par_provider:
+        # LE REPLI. On ne retient que des actions REELLEMENT envoyees et
+        # toujours sans reponse : une action jamais partie ne peut pas avoir
+        # suscite de reponse, et une action deja repondue n'est plus en jeu.
+        candidats_email = await db[P3S3_ACTIONS].find(
+            {"coach_id": coach_id, "target": message["from_email"],
+             "sent_at": {"$exists": True}, "replied_at": {"$exists": False}},
+            {"_id": 0}).to_list(10)
+
+    verdict = p3u2_verdict_correlation(message, par_rfc, par_provider, candidats_email)
+    action = verdict["action"] or {}
+
+    document = {
+        "id": str(uuid.uuid4()),
+        "coach_id": coach_id,
+        "campaign_id": action.get("campaign_id"),
+        "action_id": action.get("id"),
+        "recipient_key": action.get("recipient_key"),
+        "from_email": message["from_email"],
+        "to_email": message["to_email"],
+        "subject": message["subject"],
+        "body_text": message["body_text"],
+        "received_at": message["received_at"] or maintenant,
+        "message_id": message["message_id"] or None,
+        "in_reply_to": message["in_reply_to"],
+        "references": message["references"],
+        "provider": message["provider"],
+        "provider_event_id": message["provider_event_id"],
+        "dedupe_key": message["dedupe_key"],
+        "matching_method": verdict["methode"],
+        "matching_confidence": verdict["confiance"],
+        "statut": verdict["statut"],
+        "motif": verdict["motif"],
+        "processed_at": None,
+        "created_at": maintenant,
+    }
+    try:
+        await db[P3U2_COLLECTION].insert_one(dict(document))
+    except Exception as e:  # noqa: BLE001
+        # L'INDEX UNIQUE A PARLE. Deux messages identiques sont arrives en
+        # meme temps : le second est un doublon, pas une panne.
+        if "E11000" in str(e) or "duplicate" in str(e).lower():
+            return {"stocke": False, "doublon": True, "id": None,
+                    "statut": None, "methode": None, "confiance": 0,
+                    "action_id": None, "motif": "", "premiere_reponse": False}
+        raise
+
+    issue = {"stocke": True, "doublon": False, "id": document["id"],
+             "statut": document["statut"], "methode": document["matching_method"],
+             "confiance": document["matching_confidence"],
+             "action_id": document["action_id"], "motif": document["motif"],
+             "premiere_reponse": False}
+    if document["statut"] == P3U2_STATUT_RATTACHE and document["action_id"]:
+        marque = await p3u2_marquer_reponse(action, document["received_at"])
+        issue["premiere_reponse"] = marque["premiere_reponse"]
+        issue["fiches_marquees"] = marque["fiches_marquees"]
+        await db[P3U2_COLLECTION].update_one(
+            {"id": document["id"]}, {"$set": {"processed_at": maintenant}})
+    logger.info("[P3-U2] message %s -> %s (%s, confiance %d) action=%s",
+                (document["id"] or "")[:8], document["statut"],
+                document["matching_method"], document["matching_confidence"],
+                document["action_id"] or "-")
+    return issue
+
+
+@api_router.get("/prospect-inbound")
+async def p3u2_lister_reponses(request: Request):
+    """Les reponses recues, pour le dashboard du coach. LECTURE SEULE.
+
+    Authentifiee comme toutes les routes de prospection : une reponse contient
+    le nom d'une organisation, une adresse et un texte libre — jamais public.
+    Le filtre de tenance passe par `get_coach_filter`, comme partout ailleurs.
+
+    LE TRI PORTE UNE SECONDE CLE UNIQUE. `received_at` seul ne suffit pas :
+    plusieurs messages peuvent partager l'horodatage a la seconde pres, et un
+    tri sur une cle non unique n'est pas un ordre total — la pagination
+    rendrait alors deux fois la meme ligne et en perdrait une autre. C'est
+    exactement le defaut corrige en P3-S2E sur la liste des prospects.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    # LES PARAMETRES SE LISENT SUR LA REQUETE, comme partout ailleurs
+    # (`p3s1_lister_prospects`). Les declarer en arguments de fonction marche
+    # sous FastAPI mais rend la route intestable en appel direct — et c'est en
+    # appel direct que tous les bancs du depot la verifient.
+    parametres = request.query_params
+    try:
+        limite = max(1, min(int(parametres.get("limit") or 50), 100))
+    except (TypeError, ValueError):
+        limite = 50
+    try:
+        depart = max(0, int(parametres.get("offset") or 0))
+    except (TypeError, ValueError):
+        depart = 0
+    filtre = dict(get_coach_filter(email))
+    demande = (parametres.get("statut") or "").strip()
+    if demande:
+        if demande not in P3U2_STATUTS:
+            raise HTTPException(status_code=400,
+                                detail="Statut inconnu. Valeurs acceptees : %s"
+                                       % ", ".join(P3U2_STATUTS))
+        filtre["statut"] = demande
+    total = await db[P3U2_COLLECTION].count_documents(filtre)
+    lignes = await db[P3U2_COLLECTION].find(filtre, {"_id": 0}) \
+        .sort([("received_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
+    return {"messages": lignes, "total": total, "limit": limite, "offset": depart,
+            "en_attente": await db[P3U2_COLLECTION].count_documents(
+                {**dict(get_coach_filter(email)), "statut": P3U2_STATUT_REVUE})}
 
 
 # --- Leads Routes (Widget IA) ---
@@ -37954,6 +38444,24 @@ async def startup_db():
         await db[P3S3_CAMPAGNES].create_index(
             [("coach_id", 1), ("idempotency_key", 1)], unique=True,
             partialFilterExpression={"idempotency_key": {"$type": "string"}})
+
+        # P3-U2 — UN MESSAGE ENTRANT N'ENTRE QU'UNE FOIS.
+        # `partialFilterExpression`, JAMAIS `sparse` : un index sparse ignore les
+        # documents sans le champ, mais n'empeche pas deux documents de partager
+        # une valeur nulle — et c'est precisement le cas d'un message sans
+        # identifiant. Le filtre partiel, lui, n'applique l'unicite qu'aux cles
+        # REELLEMENT presentes sous forme de chaine (lecon de P3-S1).
+        await db[P3U2_COLLECTION].create_index(
+            [("coach_id", 1), ("dedupe_key", 1)], unique=True,
+            partialFilterExpression={"dedupe_key": {"$type": "string"}})
+        # La lecture du dashboard : tri par date, seconde cle unique pour que la
+        # pagination soit un ordre TOTAL (P3-S2E).
+        await db[P3U2_COLLECTION].create_index([("coach_id", 1), ("received_at", -1), ("id", 1)])
+        await db[P3U2_COLLECTION].create_index([("coach_id", 1), ("statut", 1)])
+        # Le rattachement fort interroge les actions par leur `Message-ID` RFC.
+        await db[P3S3_ACTIONS].create_index(
+            [("coach_id", 1), (P3U2_CHAMP_RFC, 1)],
+            partialFilterExpression={P3U2_CHAMP_RFC: {"$type": "string"}})
         await db[P3S3_ACTIONS].create_index(
             [("coach_id", 1), ("created_at", -1), ("id", 1)])
 
