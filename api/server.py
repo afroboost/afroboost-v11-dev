@@ -22254,22 +22254,34 @@ def p3s3_resume(actions) -> dict:
     }
 
 
-def p3s3_empreinte(actions) -> str:
+def p3s3_empreinte(actions, campagne=None) -> str:
     """L'empreinte de CE QUI A ETE APPROUVE. Fonction pure.
 
-    Elle ne couvre que ce qui partira vraiment : le destinataire, son canal, sa
-    langue, son adresse et son message. Ni les horodatages ni les compteurs —
-    ils bougent sans que le contenu change, et une empreinte qui bouge toute
-    seule ne prouve plus rien.
+    Elle couvre TOUT ce qui partira, et rien d'autre. Par destinataire : son
+    identite, son canal, sa langue, son adresse et son message. Au niveau de la
+    campagne : l'OBJET de l'e-mail. Ni horodatages ni compteurs — ils bougent
+    sans que le contenu change, et une empreinte qui bouge toute seule ne
+    prouve plus rien.
 
-    A QUOI ELLE SERT : approuver un message A puis en envoyer un B est le
-    defaut qu'on refuse. L'empreinte est calculee a l'approbation et figee sur
-    la campagne ; l'executant la RECALCULERA avant d'envoyer et s'arretera si
-    elle a bouge. Elle ne remplace pas la garde d'etat (une campagne approuvee
+    P3-S3-D3 — POURQUOI L'OBJET A REJOINT L'EMPREINTE.
+    Il n'y etait pas, et c'etait un trou : l'objet vit sur la CAMPAGNE, alors
+    que l'empreinte ne lisait que les ACTIONS. On pouvait donc changer l'objet
+    d'une campagne approuvee sans que la garde ne voie rien passer — approuver
+    un sujet A et envoyer un sujet B, exactement le defaut que cette empreinte
+    existe pour empecher. Il est desormais la premiere ligne du condense.
+
+    `campagne` n'est pas optionnel par confort : l'omettre produit une
+    empreinte DIFFERENTE, et deux appelants qui divergeraient sur ce point
+    calculeraient deux verites. Tous les appelants le passent.
+
+    A QUOI ELLE SERT : l'empreinte est calculee a l'approbation et figee sur la
+    campagne ; l'executant la RECALCULERA avant d'envoyer et s'arretera si elle
+    a bouge. Elle ne remplace pas la garde d'etat (une campagne approuvee
     n'accepte deja plus de modification) : elle la double.
     """
     import hashlib
-    lignes = sorted(
+    lignes = ["campagne|" + (p3s3d2_objet_campagne(campagne) or "")]
+    lignes += sorted(
         "|".join([(a.get("recipient_key") or ""), (a.get("channel") or ""),
                   (a.get("language") or ""), (a.get("target") or ""),
                   (a.get("message_j0") or "")])
@@ -22543,7 +22555,7 @@ async def p3s3_approuver_campagne(campaign_id: str, request: Request):
                             detail="Aucun destinataire retenu : il n'y a rien a approuver")
 
     maintenant = datetime.now(timezone.utc).isoformat()
-    empreinte = p3s3_empreinte(actions)
+    empreinte = p3s3_empreinte(actions, campagne)
     resultat = await db[P3S3_CAMPAGNES].update_one(
         {"id": identifiant, "approved_at": None},
         {"$set": {"approved_at": maintenant, "approved_by": appelant,
@@ -22563,6 +22575,123 @@ async def p3s3_approuver_campagne(campaign_id: str, request: Request):
                 "%d exclus, AUCUN envoi (empreinte %s)", P3S3_PREFIXE, identifiant[:8],
                 appelant[:24], resume["destinataires"], resume["exclus"], empreinte[:12])
     return {"campaign": apres, "summary": resume, "deja_approuvee": False}
+
+
+@api_router.post("/prospect-campaigns/{campaign_id}/reopen")
+async def p3s3_rouvrir_campagne(campaign_id: str, request: Request):
+    """Rouvre une campagne APPROUVEE pour la modifier. N'ENVOIE RIEN.
+
+    POURQUOI CE CHEMIN EXISTE, ET POURQUOI IL EST EXPLICITE.
+    Une campagne approuvee n'accepte aucune modification (409) — c'est ce qui
+    garantit qu'on envoie bien ce qui a ete valide. Mais il fallait pouvoir
+    corriger un objet oublie sans fabriquer une SECONDE campagne. Rouvrir est
+    donc une decision metier a part entiere : un appel volontaire, jamais un
+    effet de bord d'une modification.
+
+    L'HISTOIRE N'EST PAS REECRITE. L'approbation precedente a reellement eu
+    lieu : elle est archivee dans `approbations` avec sa date, son auteur, son
+    empreinte, et la date de reouverture. Effacer cette trace reviendrait a
+    prétendre que la campagne n'avait jamais ete approuvee.
+
+    APRES REOUVERTURE, PLUS RIEN N'EST EXECUTABLE. L'etat redevient `preparee`,
+    `approved_at` et `approved_by` sont vides, et `snapshot_hash` est efface :
+    trois raisons independantes pour que le moteur refuse. La garde d'etat
+    suffirait ; les deux autres sont la parce qu'une seule garde finit toujours
+    par etre contournee par un chemin qu'on n'avait pas prevu.
+
+    NI CAMPAGNE NI ACTION N'EST CREEE. Meme identifiant, memes actions, meme
+    contenu — seule l'approbation tombe.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+    identifiant = p3s1_texte(campaign_id, 64)
+    campagne = await db[P3S3_CAMPAGNES].find_one({"id": identifiant}, {"_id": 0})
+    if not campagne:
+        raise HTTPException(status_code=404, detail="Campagne introuvable")
+    if not is_super_admin(appelant) and (campagne.get("coach_id") or "") != appelant:
+        raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas")
+    if campagne.get("etat") == P3S3_ETAT_PREPARE:
+        # Deja ouverte : rien a faire, et surtout pas une seconde archive.
+        return {"campaign": campagne, "deja_ouverte": True}
+    if campagne.get("etat") != "approuvee":
+        raise HTTPException(status_code=409,
+                            detail="Seule une campagne approuvee peut etre rouverte "
+                                   "(etat : %s)" % campagne.get("etat"))
+    if campagne.get("started_at"):
+        # Une campagne dont l'execution a commence ne se rouvre pas : des
+        # premiers contacts sont peut-etre deja partis sous l'ancien contenu.
+        raise HTTPException(status_code=409,
+                            detail="Cette campagne a commence a s'executer : "
+                                   "elle ne peut plus etre rouverte")
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    archive = {"approved_at": campagne.get("approved_at"),
+               "approved_by": campagne.get("approved_by"),
+               "snapshot_hash": campagne.get("snapshot_hash"),
+               "reopened_at": maintenant, "reopened_by": appelant}
+    resultat = await db[P3S3_CAMPAGNES].update_one(
+        {"id": identifiant, "etat": "approuvee"},
+        {"$set": {"etat": P3S3_ETAT_PREPARE, "approved_at": None,
+                  "approved_by": None, "snapshot_hash": None,
+                  "updated_at": maintenant},
+         "$push": {"approbations": archive}})
+    if not getattr(resultat, "matched_count", 0):
+        apres = await db[P3S3_CAMPAGNES].find_one({"id": identifiant}, {"_id": 0})
+        return {"campaign": apres, "deja_ouverte": True}
+
+    apres = await db[P3S3_CAMPAGNES].find_one({"id": identifiant}, {"_id": 0})
+    logger.info("%s campagne %s ROUVERTE par %s — approbation du %s archivee",
+                P3S3_PREFIXE, identifiant[:8], appelant[:24], archive["approved_at"])
+    return {"campaign": apres, "deja_ouverte": False,
+            "approbation_archivee": archive}
+
+
+@api_router.patch("/prospect-campaigns/{campaign_id}")
+async def p3s3_modifier_campagne(campaign_id: str, request: Request):
+    """Modifie l'entete d'une campagne PREPAREE : son nom, son objet d'e-mail.
+
+    L'OBJET EST UNE DECISION UNIQUE, PAS TRENTE-ET-UNE. Il vit sur la campagne
+    et non sur chaque action : le coach l'approuve une fois pour tous les
+    destinataires. C'est aussi pour cela qu'il entre dans l'empreinte au niveau
+    campagne, et non recopie dans 137 documents qui pourraient diverger.
+
+    UNE CAMPAGNE APPROUVEE N'EST PAS MODIFIABLE ICI. Il faut d'abord la
+    rouvrir, ce qui archive l'approbation et la rend inexecutable. Modifier
+    puis « oublier » de reapprouver ne laisse donc rien partir.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+    identifiant = p3s1_texte(campaign_id, 64)
+    campagne = await db[P3S3_CAMPAGNES].find_one({"id": identifiant}, {"_id": 0})
+    if not campagne:
+        raise HTTPException(status_code=404, detail="Campagne introuvable")
+    if not is_super_admin(appelant) and (campagne.get("coach_id") or "") != appelant:
+        raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas")
+    if campagne.get("etat") != P3S3_ETAT_PREPARE:
+        raise HTTPException(status_code=409,
+                            detail="Cette campagne n'est pas modifiable (etat : %s). "
+                                   "Rouvrez-la d'abord." % campagne.get("etat"))
+
+    corps = await request.json()
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+
+    champs = {}
+    if P3S3D2_CHAMP_OBJET in corps:
+        champs[P3S3D2_CHAMP_OBJET] = p3s1_texte(
+            corps.get(P3S3D2_CHAMP_OBJET), P3S3D2_OBJET_MAX) or None
+    if "nom" in corps:
+        nouveau = p3s1_texte(corps.get("nom"), 120)
+        if not nouveau:
+            raise HTTPException(status_code=400, detail="Le nom ne peut pas etre vide")
+        champs["nom"] = nouveau
+    if not champs:
+        raise HTTPException(status_code=400, detail="Aucun champ modifiable fourni")
+
+    champs["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db[P3S3_CAMPAGNES].update_one({"id": identifiant}, {"$set": champs})
+    apres = await db[P3S3_CAMPAGNES].find_one({"id": identifiant}, {"_id": 0})
+    logger.info("%s campagne %s modifiee (%s) par %s", P3S3_PREFIXE,
+                identifiant[:8], ", ".join(sorted(champs)), appelant[:24])
+    return {"campaign": apres}
 
 
 @api_router.patch("/prospect-campaigns/{campaign_id}/actions/{action_id}")
@@ -22916,7 +23045,7 @@ def p3s3d_empreinte_conforme(campagne: dict, actions) -> bool:
     attendue = (campagne or {}).get("snapshot_hash")
     if not attendue:
         return False
-    return p3s3_empreinte(actions) == attendue
+    return p3s3_empreinte(actions, campagne) == attendue
 
 
 def p3s3d_resume_execution(campagne: dict, actions, fiches_par_ref=None,
@@ -23278,8 +23407,14 @@ def p3s3d2_verdict_erreur(erreur) -> dict:
 
 
 def p3s3d2_objet_campagne(campagne: dict) -> str:
-    """L'objet d'e-mail APPROUVE de la campagne. Vide s'il n'y en a pas."""
-    return p3s1_texte((campagne or {}).get(P3S3D2_CHAMP_OBJET), P3S3D2_OBJET_MAX)
+    """L'objet d'e-mail APPROUVE de la campagne. CHAINE VIDE s'il n'y en a pas.
+
+    Elle rend toujours une chaine, jamais `None` : l'empreinte la concatene, et
+    la garde la teste. Une fonction qui promet une chaine doit en rendre une
+    meme quand la valeur est absente — sinon chaque appelant doit s'en
+    souvenir, et l'un d'eux finira par l'oublier.
+    """
+    return p3s1_texte((campagne or {}).get(P3S3D2_CHAMP_OBJET), P3S3D2_OBJET_MAX) or ""
 
 
 def p3s3d2_fournisseur_pour(canal: str, campagne: dict, envoi_autorise: bool,

@@ -340,13 +340,15 @@ def preparer(base, **corps):
 print("\n1. AUCUNE ROUTE D'ENVOI N'EXISTE")
 
 CHEMINS = [r.path for r in S.app.routes if "prospect-campaigns" in getattr(r, "path", "")]
-verifier("1a. cinq routes de campagne, pas une de plus", len(CHEMINS) == 5, str(CHEMINS))
+verifier("1a. sept routes de campagne, pas une de plus", len(CHEMINS) == 7, str(CHEMINS))
 verifier("1a-bis. et ce sont exactement celles attendues",
          sorted(CHEMINS) == sorted([
              "/api/prospect-campaigns/prepare",
              "/api/prospect-campaigns",
              "/api/prospect-campaigns/{campaign_id}",
+             "/api/prospect-campaigns/{campaign_id}",
              "/api/prospect-campaigns/{campaign_id}/approve",
+             "/api/prospect-campaigns/{campaign_id}/reopen",
              "/api/prospect-campaigns/{campaign_id}/actions/{action_id}"]), str(sorted(CHEMINS)))
 for _interdit in ("send", "launch", "dispatch", "retry", "j3", "j7", "execute"):
     verifier("1b. aucune route contenant %r" % _interdit,
@@ -385,6 +387,8 @@ verifier("1c-bis. les decorateurs du bloc sont ceux attendus, et rien d'autre",
              ("get", "/prospect-campaigns"),
              ("get", "/prospect-campaigns/{campaign_id}"),
              ("post", "/prospect-campaigns/{campaign_id}/approve"),
+             ("post", "/prospect-campaigns/{campaign_id}/reopen"),
+             ("patch", "/prospect-campaigns/{campaign_id}"),
              ("patch", "/prospect-campaigns/{campaign_id}/actions/{action_id}")]),
          str(sorted(_decore)))
 verifier("1d. le bloc n'appelle meme pas la porte d'envoi (rien a autoriser)",

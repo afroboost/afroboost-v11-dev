@@ -139,9 +139,11 @@ def base_prete(objet=OBJET):
     p = lancer(S.p3s3_preparer_campagne(RequeteFictive(
         jeton_=JA, corps={"dry_run": False, "idempotency_key": "d2"})))
     identifiant = p["campaign"]["id"]
-    lancer(S.p3s3_approuver_campagne(identifiant, RequeteFictive(jeton_=JA, corps={})))
+    # P3-S3-D3 : l'objet fait partie de l'empreinte — il se pose AVANT
+    # l'approbation, sinon le contenu approuve ne le couvrirait pas.
     if objet:
         b["prospect_campaigns"].documents[0][S.P3S3D2_CHAMP_OBJET] = objet
+    lancer(S.p3s3_approuver_campagne(identifiant, RequeteFictive(jeton_=JA, corps={})))
     b["prospect_campaigns"].ecritures = 0
     b["prospect_campaign_actions"].ecritures = 0
     b["partner_prospects"].ecritures = 0

@@ -120,7 +120,8 @@ verifier("1e. les 6 statuts metier de P3-S1 restent intacts",
                             "sans_reponse_pause", "refuse"))
 
 CHEMINS = [r.path for r in S.app.routes if "prospect-campaigns" in getattr(r, "path", "")]
-verifier("1f. cinq routes de campagne, pas une de plus", len(CHEMINS) == 5, str(CHEMINS))
+# P3-S3-D3 ajoute `reopen` et le PATCH d'entete — deux routes sans envoi.
+verifier("1f. sept routes de campagne, pas une de plus", len(CHEMINS) == 7, str(CHEMINS))
 for _interdit in ("send", "launch", "dispatch", "execute", "retry", "j3", "j7"):
     verifier("1g. aucune route contenant %r" % _interdit,
              not any(_interdit in c for c in CHEMINS))

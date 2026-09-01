@@ -123,10 +123,12 @@ def base_prete(fiches=None):
     prepare = lancer(S.p3s3_preparer_campagne(RequeteFictive(
         jeton_=JA, corps={"dry_run": False, "idempotency_key": "d1"})))
     identifiant = prepare["campaign"]["id"]
-    lancer(S.p3s3_approuver_campagne(identifiant, RequeteFictive(jeton_=JA, corps={})))
-    # P3-S3-D2 : un e-mail sans objet approuve ne part pas. La campagne de banc
-    # en porte donc un, comme une campagne reellement prete.
+    # P3-S3-D2/D3 : un e-mail sans objet approuve ne part pas, et l'objet entre
+    # dans l'empreinte. Il doit donc etre pose AVANT l'approbation — sinon le
+    # contenu approuve ne correspondrait pas au contenu courant, et le moteur
+    # s'arreterait, a juste titre.
     b["prospect_campaigns"].documents[0][S.P3S3D2_CHAMP_OBJET] = "Objet de banc"
+    lancer(S.p3s3_approuver_campagne(identifiant, RequeteFictive(jeton_=JA, corps={})))
     b["prospect_campaigns"].ecritures = 0
     b["prospect_campaign_actions"].ecritures = 0
     b["partner_prospects"].ecritures = 0
@@ -216,8 +218,8 @@ verifier("2e. aucune route d'execution n'existe encore",
                                     '"/prospect-campaigns/{campaign_id}/send',
                                     '"/execute-real', '"/dispatch-real')))
 _CHEMINS = [r.path for r in S.app.routes if "prospect-campaigns" in getattr(r, "path", "")]
-verifier("2f. toujours cinq routes de campagne, aucune ajoutee",
-         len(_CHEMINS) == 5, str(len(_CHEMINS)))
+verifier("2f. sept routes de campagne — D1 n'en ajoute AUCUNE",
+         len(_CHEMINS) == 7, str(len(_CHEMINS)))
 verifier("2g. le fournisseur factice n'a qu'une methode d'envoi",
          [m for m in dir(S.P3S3DFournisseurFactice) if not m.startswith("_")]
          == ["envoyer", "nom"], str([m for m in dir(S.P3S3DFournisseurFactice)
