@@ -768,7 +768,17 @@ export default function ProspectsSection({ API }) {
           </div>
 
           {/* ---------- LES CARTES (mobile) ---------- */}
-          <div className="md:hidden" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {/* P3-S2F — `display` VIENT DE LA CLASSE, JAMAIS DU STYLE EN LIGNE.
+              Un style en ligne l'emporte sur n'importe quelle classe, media
+              query comprise : `display: 'flex'` écrasait donc `md:hidden`, et
+              les cartes destinées au mobile restaient affichées sur desktop —
+              chaque prospect apparaissait deux fois, en ligne de tableau ET en
+              carte. Mesuré en production : 25 lignes + 25 cartes.
+              `flex` passe en classe pour que `md:hidden` puisse le battre ;
+              `flexDirection` et `gap` restent en ligne, ils n'entrent en
+              conflit avec rien. Le voisin ligne 716 (`hidden md:block`) était
+              déjà correct — son style en ligne ne touche pas `display`. */}
+          <div className="md:hidden flex" style={{ flexDirection: 'column', gap: '8px' }}>
             {liste.map((p) => (
               <button
                 key={p.id}

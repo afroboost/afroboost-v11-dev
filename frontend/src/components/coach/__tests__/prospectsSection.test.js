@@ -802,3 +802,85 @@ describe('P3-S3-B — préparation de campagne', () => {
     expect(par('prospection-section')).not.toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// P3-S2F — LE DOUBLON VISUEL DESKTOP.
+//
+// Le defaut : `<div className="md:hidden" style={{ display: 'flex' }}>`.
+// Un style EN LIGNE l'emporte sur n'importe quelle classe, media query
+// comprise. `md:hidden` ne masquait donc jamais rien, et chaque prospect
+// s'affichait DEUX fois sur desktop — une ligne de tableau et une carte.
+// Mesure en production avant correctif : 25 lignes + 25 cartes.
+//
+// POURQUOI CES TESTS LISENT LA SOURCE PLUTOT QUE LE DOM.
+// jsdom n'embarque pas la feuille Tailwind : `md:hidden` et `flex` n'y sont
+// que des chaines de caracteres, et `getComputedStyle` renverrait le meme
+// resultat AVANT et APRES le correctif. Un test DOM serait donc muet — c'est
+// exactement pourquoi les 45 tests precedents n'ont pas vu le bug. On verifie
+// donc la CAUSE STRUCTURELLE : aucune classe responsive ne doit etre
+// contredite par un `display` en ligne. La preuve visuelle, elle, se fait au
+// navigateur, a deux viewports reels.
+describe('P3-S2F — responsive : une fiche ne s’affiche jamais deux fois', () => {
+  const SRC_F = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'ProspectsSection.js'), 'utf8');
+
+  // Toutes les balises du fichier qui portent une classe responsive.
+  const balisesResponsive = SRC_F.match(/<div className="[^"]*(?:md:hidden|md:block|hidden)[^"]*"[^>]*>/g) || [];
+
+  test('les deux conteneurs responsive existent toujours', () => {
+    expect(balisesResponsive.length).toBe(2);
+    expect(SRC_F).toContain('className="hidden md:block"');   // le tableau
+    expect(SRC_F).toContain('className="md:hidden flex"');    // les cartes
+  });
+
+  test('AUCUNE classe responsive n’est contredite par un display en ligne', () => {
+    const fautives = balisesResponsive.filter((b) => /style=\{\{[^}]*display\s*:/.test(b));
+    expect(fautives).toEqual([]);
+  });
+
+  test('les cartes tiennent leur display de la CLASSE, pas du style', () => {
+    const carte = balisesResponsive.find((b) => b.includes('md:hidden'));
+    expect(carte).toContain('flex');            // la classe porte le display
+    expect(carte).not.toMatch(/display\s*:/);   // le style ne le porte plus
+    // Le reste de la mise en page ne bouge pas : colonne + gouttiere.
+    expect(carte).toContain("flexDirection: 'column'");
+    expect(carte).toContain("gap: '8px'");
+  });
+
+  test('le tableau garde son défilement interne, sans display en ligne', () => {
+    const table = balisesResponsive.find((b) => b.includes('hidden md:block'));
+    expect(table).toContain("overflowX: 'auto'");
+    expect(table).not.toMatch(/display\s*:/);
+  });
+
+  test('les deux conteneurs restent MUTUELLEMENT exclusifs', () => {
+    // L'un se cache a partir de md, l'autre s'y montre : jamais les deux,
+    // jamais aucun des deux.
+    expect(SRC_F).toMatch(/className="hidden md:block"/);
+    expect(SRC_F).toMatch(/className="md:hidden flex"/);
+  });
+
+  test('les deux rendus contiennent les MÊMES prospects — le doublon était visuel, pas des données', async () => {
+    mockEtatPilote = {
+      etat: SECTION.OK,
+      donnees: reponse([prospect(), prospect({ id: 'p-2', ref: 'FES-02' })]),
+    };
+    await monter(<ProspectsSection API="/api" />);
+    const refsLignes = tous('[data-testid^="ligne-"]').map((e) => e.getAttribute('data-testid'));
+    const refsCartes = tous('[data-testid^="carte-"]').map((e) => e.getAttribute('data-testid'));
+    expect(refsLignes).toEqual(['ligne-FES-01', 'ligne-FES-02']);
+    expect(refsCartes).toEqual(['carte-FES-01', 'carte-FES-02']);
+    // Deux rendus du MÊME jeu : 2 prospects, jamais 4.
+    expect(new Set(refsLignes.concat(refsCartes).map((r) => r.split('-').slice(1).join('-'))).size).toBe(2);
+  });
+
+  test('sélectionner depuis la carte ne compte pas le prospect deux fois', async () => {
+    mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect()]) };
+    axios.post.mockResolvedValue({ data: apercuFictif() });
+    await monter(<ProspectsSection API="/api" />);
+    // La case vit dans la ligne de tableau ; le prospect n'a qu'un seul id.
+    await act(async () => { par('choix-FES-01').click(); });
+    await act(async () => { par('preparer-campagne').click(); });
+    expect(axios.post.mock.calls[0][1].prospect_ids).toEqual(['p-1']);
+  });
+});
