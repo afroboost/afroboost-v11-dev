@@ -25016,6 +25016,7 @@ def cal1_forme(document: dict) -> dict:
         # Les liaisons metier existent des maintenant, VIDES. Les remplir est
         # le travail de CAL-3 ; les declarer ici evite une migration plus tard.
         "prospect_id": d.get("prospect_id") or None,
+        "recipient_key": d.get("recipient_key") or None,
         "campaign_id": d.get("campaign_id") or None,
         "campaign_action_id": d.get("campaign_action_id") or None,
         # CAL-2 — propres aux taches, absents ailleurs. `None` plutot que ''
@@ -25518,6 +25519,225 @@ async def _cal2_boucle_echeances():
         except Exception as e:  # noqa: BLE001
             logger.warning("[CAL-2] passage en echec : %s", type(e).__name__)
         await asyncio.sleep(CAL2_INTERVALLE_S)
+
+
+# ============================================================================
+# CAL-3 — PLANIFIER DEPUIS UNE FICHE PROSPECT
+# ============================================================================
+# LE MAILLON QUI MANQUAIT. Un prospect qui repond « appelez-moi jeudi a 14 h »
+# n'avait nulle part ou etre planifie : le calendrier existait (CAL-1), les
+# taches existaient (CAL-2), mais rien ne reliait une fiche a un rendez-vous.
+#
+# CE LOT N'INVENTE NI COLLECTION NI MOTEUR. Un rendez-vous est un evenement
+# `calendar_events` de type `appointment` — celui-la meme que CAL-1 sait deja
+# creer, afficher et deplacer. CAL-3 n'ajoute que le CONTEXTE : par quelle
+# fiche, quelle campagne, quelle action il est arrive.
+#
+# IL NE TOUCHE A RIEN DE P3. Ni `contacte`, ni `sent_at`, ni `replied_at`, ni
+# l'empreinte de campagne, ni Resend. Un rendez-vous est un objet de SUIVI
+# HUMAIN : le coach note ce qu'il a convenu, la machine n'en deduit rien.
+#
+# LE CAS MULTI-FICHES, ET LA DECISION QU'IL IMPOSE. Cinq actions de la
+# campagne couvrent DEUX fiches chacune (« ECO-01 + ORG-10 »...) : deux
+# implantations, un seul decideur — c'est le fondement du `recipient_key`.
+# Un rendez-vous pris depuis l'une doit donc etre VU depuis l'autre, sans etre
+# CREE deux fois. On stocke par consequent les deux informations :
+#   * `prospect_id`     — la fiche d'ou le coach a planifie, pour la tracer ;
+#   * `recipient_key`   — le decideur, et c'est LUI qui sert a l'affichage.
+# Chercher par `prospect_id` seul cacherait le rendez-vous a la fiche jumelle ;
+# n'enregistrer que la cle perdrait d'ou l'on vient.
+
+CAL3_TYPES_RDV = ("appel", "visio", "rencontre", "autre")
+CAL3_TYPE_RDV_DEFAUT = "appel"
+CAL3_DUREES = (15, 30, 45, 60, 90, 120)
+CAL3_DUREE_DEFAUT = 30
+
+
+def cal3_type_rdv(valeur) -> str:
+    """Le type de rendez-vous, ou le defaut. PURE.
+
+    Une valeur inconnue devient `appel` plutot que de faire echouer la
+    creation : le type sert a l'affichage, pas a la validite du rendez-vous.
+    """
+    brut = (valeur or "").strip().lower() if isinstance(valeur, str) else ""
+    return brut if brut in CAL3_TYPES_RDV else CAL3_TYPE_RDV_DEFAUT
+
+
+def cal3_duree(valeur) -> int:
+    """La duree en minutes, bornee a une liste courte. PURE."""
+    try:
+        minutes = int(valeur)
+    except (TypeError, ValueError):
+        return CAL3_DUREE_DEFAUT
+    return minutes if minutes in CAL3_DUREES else CAL3_DUREE_DEFAUT
+
+
+def cal3_fin(debut: str, minutes: int) -> str:
+    """`debut` + duree, au format du depot. PURE. Chaine vide si illisible."""
+    try:
+        base = datetime.fromisoformat((debut or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return ""
+    return (base + timedelta(minutes=minutes)).isoformat()
+
+
+async def cal3_action_du_prospect(reference: str, coach_id: str) -> dict:
+    """L'action de campagne qui couvre CETTE fiche, s'il y en a une. LECTURE.
+
+    ON NE DEVINE JAMAIS. Une fiche jamais entree en campagne n'a pas d'action :
+    la fonction rend un dictionnaire VIDE, et les liaisons resteront nulles.
+    Fabriquer un `campaign_id` parce qu'il n'y en a qu'une serait exactement le
+    genre de raccourci qui rattache un rendez-vous a la mauvaise campagne le
+    jour ou il y en aura deux.
+    """
+    valeur = (reference or "").strip()
+    if not valeur:
+        return {}
+    try:
+        action = await db[P3S3_ACTIONS].find_one(
+            {"coach_id": coach_id, "prospect_ids": valeur},
+            {"_id": 0, "id": 1, "recipient_key": 1, "campaign_id": 1, "prospect_ids": 1})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[CAL-3] action introuvable pour %s : %s", valeur[:12], type(e).__name__)
+        return {}
+    return action or {}
+
+
+@api_router.get("/prospect-agenda/{reference}")
+async def cal3_agenda_prospect(reference: str, request: Request):
+    """CE QUI EST PREVU POUR CE PROSPECT. Lecture pure, aucune ecriture.
+
+    Deux blocs, et rien de plus : le PROCHAIN rendez-vous et les taches
+    OUVERTES. Une fiche prospect sert a qualifier, pas a tout afficher — y
+    deverser tout l'historique la rendrait illisible pour le seul cas qui
+    compte, celui du coach qui rappelle quelqu'un.
+
+    L'AFFICHAGE SUIT LE DECIDEUR, PAS LA FICHE. Quand une action couvre deux
+    implantations, un rendez-vous pris depuis l'une doit se voir depuis
+    l'autre : c'est la meme personne au bout du fil. On cherche donc par
+    `recipient_key` des qu'il existe, et par `prospect_id` seulement a defaut.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    action = await cal3_action_du_prospect(reference, email)
+    cle = action.get("recipient_key")
+
+    # LE DECIDEUR D'ABORD, LA FICHE ENSUITE. `$or` plutot que deux requetes :
+    # une seule lecture, et aucun risque que les deux listes divergent.
+    conditions = [{"prospect_id": (reference or "").strip()}]
+    if cle:
+        conditions.append({"recipient_key": cle})
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    documents = await db[CAL1_COLLECTION].find(
+        {**get_coach_filter(email), "is_deleted": {"$ne": True}, "$or": conditions},
+        {"_id": 0}).sort([("starts_at", 1), ("id", 1)]).to_list(CAL1_LISTE_MAX)
+
+    rendez_vous, taches = [], []
+    for d in documents:
+        vue = cal1_forme(d)
+        vue["meeting_type"] = d.get("meeting_type") or None
+        if d.get("event_type") == "task":
+            # OUVERTE veut dire : ni faite, ni annulee. Une tache terminee
+            # disparait de ce bloc — c'est tout son interet.
+            if (d.get("status") or "") not in CAL2_STATUTS_CLOS:
+                vue["bucket"] = cal2_bucket(d, maintenant)
+                taches.append(vue)
+        elif d.get("event_type") == "appointment":
+            rendez_vous.append(vue)
+
+    # LE PROCHAIN, PAS LE DERNIER. Un rendez-vous passe n'est plus « prochain » ;
+    # s'il n'y en a aucun a venir, le bloc reste vide plutot que de montrer une
+    # date depassee, qu'on lirait comme un rappel.
+    a_venir = [r for r in rendez_vous
+               if r["starts_at"] >= maintenant and r["status"] != "annule"]
+    return {
+        "reference": reference,
+        "recipient_key": cle,
+        "campaign_id": action.get("campaign_id"),
+        "campaign_action_id": action.get("id"),
+        "next_appointment": a_venir[0] if a_venir else None,
+        "appointments": rendez_vous,
+        "open_tasks": taches,
+        "meeting_types": list(CAL3_TYPES_RDV),
+        "durations": list(CAL3_DUREES),
+    }
+
+
+@api_router.post("/prospect-agenda/{reference}/appointment")
+async def cal3_planifier(reference: str, request: Request):
+    """Planifie un rendez-vous DEPUIS une fiche prospect.
+
+    ELLE NE CREE RIEN DE NOUVEAU AU SENS DU MODELE : c'est un evenement
+    `calendar_events` de type `appointment`, celui que CAL-1 sait deja
+    afficher, deplacer et supprimer. La seule chose que cette route ajoute,
+    c'est le CONTEXTE — d'ou vient ce rendez-vous.
+
+    LES LIAISONS SONT LUES, JAMAIS INVENTEES. Si la fiche n'est entree dans
+    aucune campagne, `campaign_id` et `campaign_action_id` restent `None`. Un
+    rendez-vous sans campagne est parfaitement valide ; un rendez-vous rattache
+    a la mauvaise campagne ne l'est pas.
+
+    ELLE N'ECRIT RIEN SUR LE PROSPECT NI SUR L'ACTION. Ni statut, ni
+    `next_followup_at`, ni `replied_at`. Planifier un appel n'est pas un
+    evenement de prospection : c'est une note d'agenda, et le coach reste seul
+    juge de ce que la fiche doit dire.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    corps = await request.json()
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+
+    debut = cal1_instant(corps.get("starts_at"))
+    if not debut:
+        raise HTTPException(status_code=400,
+                            detail="Une date et une heure valides (ISO) sont requises")
+    minutes = cal3_duree(corps.get("duration_minutes"))
+    type_rdv = cal3_type_rdv(corps.get("meeting_type"))
+
+    # LA FICHE DOIT EXISTER, ET APPARTENIR A L'APPELANT. Sans ce controle, on
+    # pourrait planifier « pour » une fiche d'un autre coach et la lui afficher.
+    fiche = await db[P3S1_COLLECTION].find_one(
+        {"ref": (reference or "").strip(), **get_coach_filter(email)},
+        {"_id": 0, "ref": 1, "organisation_name": 1})
+    if not fiche:
+        raise HTTPException(status_code=404, detail="Prospect introuvable")
+
+    action = await cal3_action_du_prospect(reference, email)
+    titre = cal1_texte(corps.get("title"), CAL1_TEXTES["title"])
+    if not titre:
+        # UN TITRE PAR DEFAUT UTILE, pas un remplissage. Le coach en planifie
+        # plusieurs par jour : « Rendez-vous » ne lui dirait rien dans sa
+        # grille, le nom de l'organisation si.
+        titre = "Rendez-vous — %s" % (fiche.get("organisation_name") or reference)
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    document = {
+        "id": str(uuid.uuid4()), "coach_id": email,
+        "title": titre,
+        "description": cal1_texte(corps.get("description"), CAL1_TEXTES["description"]),
+        "location": cal1_texte(corps.get("location"), CAL1_TEXTES["location"]),
+        "starts_at": debut, "ends_at": cal3_fin(debut, minutes),
+        "all_day": False,
+        "event_type": "appointment", "status": CAL1_STATUT_INITIAL,
+        "priority": None, "completed_at": None,
+        # LE CONTEXTE — c'est tout ce que CAL-3 ajoute au modele.
+        "meeting_type": type_rdv, "duration_minutes": minutes,
+        "prospect_id": (reference or "").strip(),
+        "recipient_key": action.get("recipient_key"),
+        "campaign_id": action.get("campaign_id"),
+        "campaign_action_id": action.get("id"),
+        "is_deleted": False,
+        "created_at": maintenant, "updated_at": maintenant,
+    }
+    await db[CAL1_COLLECTION].insert_one(dict(document))
+    logger.info("[CAL-3] rendez-vous %s planifie pour %s (cle %s, campagne %s)",
+                document["id"][:8], reference,
+                document["recipient_key"] or "-", (document["campaign_id"] or "-")[:8])
+    vue = cal1_forme(document)
+    vue["meeting_type"] = type_rdv
+    return {"appointment": vue, "recipient_key": document["recipient_key"],
+            "campaign_id": document["campaign_id"],
+            "campaign_action_id": document["campaign_action_id"]}
 
 
 # --- Leads Routes (Widget IA) ---
@@ -39405,6 +39625,16 @@ async def startup_db():
         # les rares taches echues.
         await db[CAL1_COLLECTION].create_index(
             [("event_type", 1), ("status", 1), ("starts_at", 1)])
+        # CAL-3 — L'AGENDA D'UNE FICHE. Deux index plutot qu'un compose : la
+        # requete est un `$or` entre la cle du decideur et la fiche elle-meme,
+        # et Mongo sait alors utiliser l'un OU l'autre selon ce qui est
+        # renseigne. Partiels, pour ne peser que sur les evenements rattaches.
+        await db[CAL1_COLLECTION].create_index(
+            [("coach_id", 1), ("recipient_key", 1), ("starts_at", 1)],
+            partialFilterExpression={"recipient_key": {"$type": "string"}})
+        await db[CAL1_COLLECTION].create_index(
+            [("coach_id", 1), ("prospect_id", 1), ("starts_at", 1)],
+            partialFilterExpression={"prospect_id": {"$type": "string"}})
         # Le rattachement fort interroge les actions par leur `Message-ID` RFC.
         await db[P3S3_ACTIONS].create_index(
             [("coach_id", 1), (P3U2_CHAMP_RFC, 1)],

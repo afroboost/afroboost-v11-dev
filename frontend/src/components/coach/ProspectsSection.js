@@ -30,7 +30,7 @@
  * hexadécimaux après la virgule sont des REPLIS, jamais des valeurs imposées.
  * ICÔNES : SVG inline via `SvgIcon`, jamais d'emoji.
  */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import SvgIcon from '../SvgIcon';
 import useChargement, { SECTION } from '../../hooks/useChargement';
@@ -228,10 +228,38 @@ export default function ProspectsSection({ API }) {
   const [enregistrement, setEnregistrement] = useState(false);
   const [message, setMessage] = useState(null);
 
+  /* CAL-3 — L'AGENDA DE LA FICHE OUVERTE.
+     Chargé à l'ouverture d'une fiche, jamais avant : c'est une lecture par
+     prospect, et la charger pour les 142 lignes de la liste ferait 142 appels
+     pour une information que personne ne regarde. */
+  const [agenda, setAgenda] = useState(null);
+  const [planifOuvert, setPlanifOuvert] = useState(false);
+  const [planif, setPlanif] = useState({ quand: '', duree: 30, type: 'appel', titre: '' });
+  const [planifEnCours, setPlanifEnCours] = useState(false);
+
+  const chargerAgenda = React.useCallback(async (reference) => {
+    if (!reference) { setAgenda(null); return; }
+    try {
+      const r = await axios.get(`${base}/prospect-agenda/${encodeURIComponent(reference)}`);
+      setAgenda((r && r.data) || null);
+    } catch (e) {
+      setAgenda(null);
+    }
+  }, [base]);
+
   /* P3-S3-B — LA PREPARATION DE CAMPAGNE.
      `selection` est un TABLEAU d'identifiants, pas un objet : la règle V305
      interdit de reposer un objet neuf quand rien n'a changé, et une liste de
      chaînes se compare sans risque. Vide = « toute la sélection courante ». */
+  /* La dépendance est la RÉFÉRENCE, une chaîne — jamais l'objet `ouvert`,
+     qui est neuf à chaque rendu et relancerait l'effet en boucle (règle
+     absolue, incident V305). */
+  const refOuverte = (ouvert && ouvert.ref) || '';
+  useEffect(() => {
+    if (refOuverte) chargerAgenda(refOuverte);
+    else { setAgenda(null); setPlanifOuvert(false); }
+  }, [refOuverte, chargerAgenda]);
+
   const [selection, setSelection] = useState([]);
   const [campagne, setCampagne] = useState(null);      // aperçu OU campagne créée
   const [actions, setActions] = useState([]);
@@ -368,6 +396,45 @@ export default function ProspectsSection({ API }) {
 
   const majBrouillon = (cle, valeur) => {
     setBrouillon((prec) => (prec && prec[cle] === valeur ? prec : { ...prec, [cle]: valeur }));
+  };
+
+  /* CAL-3 — PLANIFIER. Le rendez-vous part dans le calendrier natif ; la fiche
+     prospect n'est PAS modifiée. Planifier un appel n'est pas un événement de
+     prospection : c'est une note d'agenda, et le coach reste seul juge de ce
+     que la fiche doit dire. */
+  const ouvrirPlanification = () => {
+    const dans2j = new Date(Date.now() + 2 * 86400000);
+    dans2j.setHours(14, 0, 0, 0);
+    const p = (n) => String(n).padStart(2, '0');
+    setPlanif({
+      quand: `${dans2j.getFullYear()}-${p(dans2j.getMonth() + 1)}-${p(dans2j.getDate())}T14:00`,
+      duree: 30, type: 'appel', titre: '',
+    });
+    setMessage(null);
+    setPlanifOuvert(true);
+  };
+
+  const planifier = async () => {
+    if (!planif.quand) {
+      setMessage({ type: 'erreur', texte: 'Une date et une heure sont nécessaires.' });
+      return;
+    }
+    setPlanifEnCours(true); setMessage(null);
+    try {
+      await axios.post(`${base}/prospect-agenda/${encodeURIComponent(refOuverte)}/appointment`, {
+        starts_at: new Date(planif.quand).toISOString(),
+        duration_minutes: Number(planif.duree),
+        meeting_type: planif.type,
+        title: planif.titre.trim() || undefined,
+      });
+      setPlanifOuvert(false);
+      await chargerAgenda(refOuverte);
+      setMessage({ type: 'ok', texte: 'Rendez-vous planifié.' });
+    } catch (e) {
+      setMessage({ type: 'erreur', texte: erreurLisible(e, 'Planification refusée par le serveur.') });
+    } finally {
+      setPlanifEnCours(false);
+    }
   };
 
   const enregistrer = async () => {
@@ -1175,6 +1242,106 @@ export default function ProspectsSection({ API }) {
               <textarea value={brouillon.notes} data-testid="edit-notes" rows={6}
                         onChange={(e) => majBrouillon('notes', e.target.value)}
                         style={{ ...styleChamp, width: '100%', resize: 'vertical' }} />
+            </Bloc>
+
+            {/* ---------- CAL-3 : PLANIFIER ET AGENDA ----------
+                Deux blocs, et rien de plus. Une fiche prospect sert à
+                qualifier ; y déverser tout l'historique la rendrait illisible
+                pour le seul cas qui compte — le coach qui rappelle quelqu'un. */}
+            <Bloc titre="Rendez-vous">
+              {agenda && agenda.next_appointment ? (
+                <div data-testid="prochain-rdv"
+                     style={{ padding: '8px 10px', borderRadius: '8px',
+                              background: `rgba(${RGB}, 0.12)`,
+                              borderLeft: `3px solid ${PRIMAIRE}`, marginBottom: '8px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: TEXTE }}>
+                    {agenda.next_appointment.title}
+                  </div>
+                  <div style={{ fontSize: '11px', opacity: 0.8, color: TEXTE }}>
+                    {String(agenda.next_appointment.starts_at).slice(0, 16).replace('T', ' à ')}
+                    {agenda.next_appointment.meeting_type
+                      ? ` · ${agenda.next_appointment.meeting_type}` : ''}
+                    {agenda.next_appointment.status
+                      ? ` · ${agenda.next_appointment.status}` : ''}
+                  </div>
+                </div>
+              ) : (
+                <div data-testid="aucun-rdv"
+                     style={{ fontSize: '12px', opacity: 0.6, color: TEXTE, marginBottom: '8px' }}>
+                  Aucun rendez-vous à venir.
+                </div>
+              )}
+
+              {!planifOuvert ? (
+                <button type="button" data-testid="planifier"
+                        onClick={ouvrirPlanification} style={styleBouton}>
+                  Planifier un rendez-vous
+                </button>
+              ) : (
+                <div data-testid="formulaire-planification"
+                     style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  <input data-testid="planif-quand" type="datetime-local" value={planif.quand}
+                         onChange={(e) => setPlanif({ ...planif, quand: e.target.value })}
+                         style={{ ...styleChamp, flex: '1 1 170px' }} />
+                  <select data-testid="planif-type" value={planif.type}
+                          onChange={(e) => setPlanif({ ...planif, type: e.target.value })}
+                          style={{ ...styleChamp, flex: '0 1 120px' }}>
+                    <option value="appel">Appel</option>
+                    <option value="visio">Visioconférence</option>
+                    <option value="rencontre">Rencontre</option>
+                    <option value="autre">Autre</option>
+                  </select>
+                  <select data-testid="planif-duree" value={planif.duree}
+                          onChange={(e) => setPlanif({ ...planif, duree: e.target.value })}
+                          style={{ ...styleChamp, flex: '0 1 100px' }}>
+                    {[15, 30, 45, 60, 90, 120].map((d) => (
+                      <option key={d} value={d}>{d} min</option>
+                    ))}
+                  </select>
+                  <input data-testid="planif-titre" value={planif.titre}
+                         placeholder="Titre (facultatif)"
+                         onChange={(e) => setPlanif({ ...planif, titre: e.target.value })}
+                         style={{ ...styleChamp, flex: '2 1 180px' }} />
+                  <button type="button" data-testid="planif-valider" onClick={planifier}
+                          disabled={planifEnCours} style={styleBouton}>
+                    {planifEnCours ? '…' : 'Créer'}
+                  </button>
+                  <button type="button" data-testid="planif-annuler"
+                          onClick={() => setPlanifOuvert(false)}
+                          style={{ ...styleBouton, background: 'transparent',
+                                   border: `1px solid rgba(${RGB}, 0.4)` }}>
+                    Annuler
+                  </button>
+                </div>
+              )}
+            </Bloc>
+
+            <Bloc titre="Tâches ouvertes">
+              {agenda && (agenda.open_tasks || []).length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  {agenda.open_tasks.map((tc) => (
+                    <div key={tc.id} data-testid="tache-ouverte"
+                         style={{ display: 'flex', gap: '8px', alignItems: 'baseline',
+                                  fontSize: '12px', color: TEXTE }}>
+                      <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden',
+                                     textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {tc.title}
+                      </span>
+                      <span style={{ fontSize: '11px', opacity: 0.7, whiteSpace: 'nowrap',
+                                     color: tc.bucket === 'en_retard'
+                                       ? 'rgba(239,68,68,0.95)' : 'inherit' }}>
+                        {tc.bucket === 'en_retard' ? 'en retard' : ''}
+                        {' '}{String(tc.starts_at).slice(0, 16).replace('T', ' ')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div data-testid="aucune-tache"
+                     style={{ fontSize: '12px', opacity: 0.6, color: TEXTE }}>
+                  Aucune tâche ouverte.
+                </div>
+              )}
             </Bloc>
 
             <Bloc titre="Suivi">

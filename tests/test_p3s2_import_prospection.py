@@ -579,9 +579,10 @@ _ROUTES_ECRAN = set(re.findall(r"\$\{base\}/([a-z-]+)", ECRAN))
 # LECTURE SEULE : elle affiche les réponses reçues. On la NOMME plutôt que
 # d'assouplir la comparaison — une garde de périmètre qui accepterait
 # n'importe quoi ne garderait plus rien.
-verifier("8a. l'écran n'appelle que partner-prospects, prospect-campaigns "
-         "et prospect-inbound (lecture des réponses, P3-U3)",
-         _ROUTES_ECRAN == {"partner-prospects", "prospect-campaigns", "prospect-inbound"},
+verifier("8a. l'écran n'appelle que partner-prospects, prospect-campaigns, "
+         "prospect-inbound (P3-U3) et prospect-agenda (CAL-3)",
+         _ROUTES_ECRAN == {"partner-prospects", "prospect-campaigns",
+                           "prospect-inbound", "prospect-agenda"},
          str(_ROUTES_ECRAN))
 verifier("8a-ter. `prospect-inbound` n'est appelée qu'en LECTURE",
          not re.search(r"axios\.(post|patch|put|delete)\([^)]*prospect-inbound", ECRAN))
@@ -590,10 +591,20 @@ verifier("8a-bis. aucune route d'envoi, de lancement ou d'execution",
 verifier("8b. ni suppression ni PUT : seuls GET, POST et PATCH existent",
          "axios.delete" not in ECRAN and "axios.put" not in ECRAN
          and "axios.patch" in ECRAN)
-verifier("8b-bis. les POST de l'écran visent la préparation ou l'approbation, rien d'autre",
+# CAL-3 AJOUTE UN TROISIEME POST, ET ON LE NOMME. Planifier un rendez-vous
+# n'est pas un envoi : cela ecrit dans le calendrier natif et ne touche ni au
+# prospect, ni a la campagne, ni a Resend. La garde reste EXACTE — elle
+# s'allonge quand un chemin est ajoute en conscience, jamais par relachement.
+verifier("8b-bis. les POST de l'écran visent la préparation, l'approbation "
+         "ou la planification d'un rendez-vous — rien d'autre",
          set(re.findall(r"axios\.post\(\s*`\$\{base\}(/[^`]*)`", ECRAN))
-         == {"/prospect-campaigns/prepare", "/prospect-campaigns/${campagne.id}/approve"},
+         == {"/prospect-campaigns/prepare",
+             "/prospect-campaigns/${campagne.id}/approve",
+             "/prospect-agenda/${encodeURIComponent(refOuverte)}/appointment"},
          str(set(re.findall(r"axios\.post\(\s*`\$\{base\}(/[^`]*)`", ECRAN))))
+verifier("8b-quater. aucun de ces POST n'écrit sur une fiche prospect",
+         "/partner-prospects" not in str(
+             set(re.findall(r"axios\.post\(\s*`\$\{base\}(/[^`]*)`", ECRAN))))
 verifier("8b-ter. le PATCH d'un PROSPECT reste le seul écrivant sur une fiche",
          "/partner-prospects/${ouvert.id}" in ECRAN
          and ECRAN.count("axios.patch") == 2)

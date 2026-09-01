@@ -800,12 +800,18 @@ describe('P3-S3-B — préparation de campagne', () => {
     ['/send', '/launch', '/dispatch', '/execute', '/retry'].forEach((chemin) => {
       expect(source).not.toContain(chemin);
     });
-    // `/approve` existe désormais — et c'est le SEUL autre POST de l'écran.
+    /* LA LISTE RESTE EXACTE — elle s'allonge seulement quand un POST est
+       ajouté EN CONSCIENCE. CAL-3 en ajoute un troisième : planifier un
+       rendez-vous. Ce n'est pas un envoi — il écrit dans le calendrier natif
+       et ne touche ni au prospect, ni à la campagne, ni à Resend. On le NOMME
+       plutôt que d'assouplir la comparaison : une garde de périmètre qui
+       accepterait n'importe quoi ne garderait plus rien. */
     const posts = (source.match(/axios\.post\(\s*`\$\{base\}([^`]*)`/g) || [])
       .map((m) => m.replace(/.*\$\{base\}/, '').replace(/`.*/, ''));
     expect(new Set(posts)).toEqual(new Set([
       '/prospect-campaigns/prepare',
       '/prospect-campaigns/${campagne.id}/approve',
+      '/prospect-agenda/${encodeURIComponent(refOuverte)}/appointment',
     ]));
   });
 
@@ -1194,5 +1200,170 @@ describe('P3-U3 — les réponses reçues', () => {
     const hex = bloc.match(/#[0-9a-fA-F]{6}/g) || [];
     expect(hex).toEqual([]);
     expect(bloc).toContain('RGB');
+  });
+});
+
+/* ==========================================================================
+   CAL-3 — PLANIFIER DEPUIS UNE FICHE PROSPECT
+
+   Le maillon qui manquait entre P3 et le calendrier : un prospect qui répond
+   « appelez-moi jeudi à 14 h » peut enfin être planifié. Ce qui est prouvé ici :
+
+     * le bouton existe et n'ouvre son formulaire que sur demande ;
+     * la création part sur `/prospect-agenda/{ref}/appointment` — la route du
+       calendrier, pas une seconde ;
+     * le prochain rendez-vous et les tâches ouvertes s'affichent ;
+     * une tâche terminée n'apparaît PAS dans les tâches ouvertes ;
+     * la fiche prospect n'est JAMAIS modifiée par une planification ;
+     * l'agenda est chargé à l'ouverture de la fiche, pas pour les 142 lignes.
+   ========================================================================== */
+
+const agendaFictif = (extra = {}) => ({
+  reference: 'FES-01', recipient_key: 'FES-01',
+  campaign_id: 'camp-1', campaign_action_id: 'act-1',
+  next_appointment: null, appointments: [], open_tasks: [],
+  meeting_types: ['appel', 'visio', 'rencontre', 'autre'],
+  durations: [15, 30, 45, 60, 90, 120], ...extra,
+});
+
+const rdvFictif = (extra = {}) => ({
+  id: 'rdv-1', title: 'Appel partenariat — Festival du Lac',
+  starts_at: '2026-09-10T14:00:00+00:00', event_type: 'appointment',
+  status: 'prevu', meeting_type: 'appel', modifiable: true, ...extra,
+});
+
+describe('CAL-3 — planifier depuis la fiche', () => {
+  const ouvrirFiche = async (agenda = agendaFictif()) => {
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect({ ref: 'FES-01' })]) },
+      campagnes: { etat: SECTION.OK, donnees: { total: 0, campaigns: [] } },
+      reponses: { etat: SECTION.OK, donnees: { messages: [], total: 0, en_attente: 0 } },
+    };
+    axios.get.mockResolvedValue({ data: agenda });
+    axios.post.mockResolvedValue({ data: { appointment: rdvFictif() } });
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('ligne-FES-01').click(); });
+  };
+
+  test('l’agenda est chargé à l’ouverture de la fiche', async () => {
+    await ouvrirFiche();
+    const appels = axios.get.mock.calls.map((c) => String(c[0]));
+    expect(appels.some((u) => u.includes('/prospect-agenda/FES-01'))).toBe(true);
+  });
+
+  test('sans rendez-vous, la fiche le DIT', async () => {
+    await ouvrirFiche();
+    expect(par('aucun-rdv')).toBeTruthy();
+    expect(par('prochain-rdv')).toBeNull();
+  });
+
+  test('le prochain rendez-vous s’affiche avec date, type et statut', async () => {
+    await ouvrirFiche(agendaFictif({ next_appointment: rdvFictif() }));
+    const bloc = par('prochain-rdv');
+    expect(bloc).toBeTruthy();
+    expect(bloc.textContent).toContain('Appel partenariat');
+    expect(bloc.textContent).toContain('2026-09-10');
+    expect(bloc.textContent).toContain('appel');
+    expect(bloc.textContent).toContain('prevu');
+  });
+
+  test('le formulaire ne s’ouvre que sur demande', async () => {
+    await ouvrirFiche();
+    expect(par('formulaire-planification')).toBeNull();
+    await act(async () => { par('planifier').click(); });
+    expect(par('formulaire-planification')).toBeTruthy();
+  });
+
+  test('la date est pré-remplie — on ne demande pas de tout saisir', async () => {
+    await ouvrirFiche();
+    await act(async () => { par('planifier').click(); });
+    expect(par('planif-quand').value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+  });
+
+  test('les quatre types et les six durées sont proposés', async () => {
+    await ouvrirFiche();
+    await act(async () => { par('planifier').click(); });
+    expect(par('planif-type').querySelectorAll('option').length).toBe(4);
+    expect(par('planif-duree').querySelectorAll('option').length).toBe(6);
+  });
+
+  test('créer part sur la route du calendrier, avec un ISO', async () => {
+    await ouvrirFiche();
+    await act(async () => { par('planifier').click(); });
+    await act(async () => { par('planif-valider').click(); });
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    const [url, corps] = axios.post.mock.calls[0];
+    expect(url).toContain('/prospect-agenda/FES-01/appointment');
+    expect(corps.starts_at).toMatch(/Z$/);
+    expect(corps.duration_minutes).toBe(30);
+    expect(corps.meeting_type).toBe('appel');
+  });
+
+  test('la fiche prospect n’est JAMAIS modifiée par une planification', async () => {
+    await ouvrirFiche();
+    await act(async () => { par('planifier').click(); });
+    await act(async () => { par('planif-valider').click(); });
+    expect(axios.patch).not.toHaveBeenCalled();
+  });
+
+  test('un refus du serveur est annoncé, sans casser la fiche', async () => {
+    await ouvrirFiche();
+    axios.post.mockRejectedValue(new Error('refus'));
+    await act(async () => { par('planifier').click(); });
+    await act(async () => { par('planif-valider').click(); });
+    expect(par('message-fiche')).toBeTruthy();
+    expect(par('fiche-prospect')).toBeTruthy();
+  });
+
+  test('annuler referme le formulaire sans rien envoyer', async () => {
+    await ouvrirFiche();
+    await act(async () => { par('planifier').click(); });
+    await act(async () => { par('planif-annuler').click(); });
+    expect(par('formulaire-planification')).toBeNull();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+});
+
+describe('CAL-3 — les tâches ouvertes sur la fiche', () => {
+  const ouvrirAvec = async (taches) => {
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect({ ref: 'FES-01' })]) },
+      campagnes: { etat: SECTION.OK, donnees: { total: 0, campaigns: [] } },
+      reponses: { etat: SECTION.OK, donnees: { messages: [], total: 0, en_attente: 0 } },
+    };
+    axios.get.mockResolvedValue({ data: agendaFictif({ open_tasks: taches }) });
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('ligne-FES-01').click(); });
+  };
+
+  test('sans tâche, la fiche le DIT', async () => {
+    await ouvrirAvec([]);
+    expect(par('aucune-tache')).toBeTruthy();
+  });
+
+  test('les tâches ouvertes sont listées', async () => {
+    await ouvrirAvec([
+      { id: 't-1', title: 'Rappeler le festival', starts_at: '2026-09-08T10:00:00+00:00',
+        bucket: 'a_venir' },
+      { id: 't-2', title: 'Envoyer le dossier', starts_at: '2026-08-20T10:00:00+00:00',
+        bucket: 'en_retard' },
+    ]);
+    expect(tous('[data-testid="tache-ouverte"]').length).toBe(2);
+    expect(conteneur.textContent).toContain('Rappeler le festival');
+  });
+
+  test('le retard est signalé', async () => {
+    await ouvrirAvec([{ id: 't-2', title: 'Envoyer le dossier',
+                        starts_at: '2026-08-20T10:00:00+00:00', bucket: 'en_retard' }]);
+    expect(par('tache-ouverte').textContent).toContain('en retard');
+  });
+
+  test('le serveur ne renvoie que des tâches ouvertes — l’écran n’en filtre aucune', () => {
+    // La règle vit côté serveur (CAL2_STATUTS_CLOS) : l'écran affiche ce qu'il
+    // reçoit. Le vérifier ici empêcherait de croire à un second filtrage.
+    const source = require('fs').readFileSync(
+      require('path').join(__dirname, '..', 'ProspectsSection.js'), 'utf8');
+    expect(source).toContain('agenda.open_tasks');
+    expect(source).not.toContain("status !== 'fait'");
   });
 });
