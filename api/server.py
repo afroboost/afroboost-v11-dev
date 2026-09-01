@@ -1367,6 +1367,21 @@ class FeatureFlags(BaseModel):
     # si la vérification étranglait le trafic entrant, il faut pouvoir l'éteindre
     # en une seconde, pas en quatre minutes de rebuild.
     META_WEBHOOK_SIGNATURE_ENABLED: bool = False       # V453
+    # P3-S3 : le moteur de campagne de prospection partenaire. MEME DOUBLE
+    # GARDE que P1-b/P1-d, et pour la meme raison : le premier drapeau dit
+    # « le lot existe », le second « il ecrit vraiment a des gens ».
+    #   les deux a false                 -> lot DORMANT (etat de livraison)
+    #   ACTIF=true, ENVOI_REEL=false     -> simulation complete : campagne
+    #                                       preparee, destinataires calcules,
+    #                                       snapshot pris, PERSONNE n'est
+    #                                       contacte et aucun prospect ne passe
+    #                                       a `contacte`
+    #   les deux a true                  -> les messages partent
+    # Le second n'est PAS nomme `DRY_RUN` : la completion a la lecture donne
+    # `False` a tout drapeau absent, et un `DRY_RUN` absent signifierait
+    # « envoi reel » par accident. Ici l'absence est le cas SUR.
+    P3_LAUNCH_ENABLED: bool = False           # P3-S3
+    P3_LAUNCH_ENVOI_REEL: bool = False        # P3-S3
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1391,6 +1406,8 @@ class FeatureFlagsUpdate(BaseModel):
     AUTO_PRESENCE_TRIAL_ENABLED: Optional[bool] = None  # AUTO-PRESENCE
     AUTO_PRESENCE_TRIAL_ECRITURE_REELLE: Optional[bool] = None  # AUTO-PRESENCE
     META_WEBHOOK_SIGNATURE_ENABLED: Optional[bool] = None  # V453
+    P3_LAUNCH_ENABLED: Optional[bool] = None  # P3-S3
+    P3_LAUNCH_ENVOI_REEL: Optional[bool] = None  # P3-S3
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -17924,6 +17941,8 @@ async def get_feature_flags():
             "AUTO_PRESENCE_TRIAL_ENABLED": False,          # AUTO-PRESENCE : défaut OFF (aucune auto-validation)
             "AUTO_PRESENCE_TRIAL_ECRITURE_REELLE": False,  # AUTO-PRESENCE : défaut OFF (simulation même si activé)
             "META_WEBHOOK_SIGNATURE_ENABLED": False,       # V453 : défaut OFF (webhook inchangé, observation seule)
+            "P3_LAUNCH_ENABLED": False,        # P3-S3 : défaut OFF (moteur dormant)
+            "P3_LAUNCH_ENVOI_REEL": False,     # P3-S3 : défaut OFF (simulation même si activé)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -17948,7 +17967,9 @@ async def get_feature_flags():
                          ("P1_TRIAL_J3_ENVOI_REEL", False),
                          ("AUTO_PRESENCE_TRIAL_ENABLED", False),
                          ("AUTO_PRESENCE_TRIAL_ECRITURE_REELLE", False),
-                         ("META_WEBHOOK_SIGNATURE_ENABLED", False)):
+                         ("META_WEBHOOK_SIGNATURE_ENABLED", False),
+                         ("P3_LAUNCH_ENABLED", False),
+                         ("P3_LAUNCH_ENVOI_REEL", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -21661,6 +21682,321 @@ async def p3s1_modifier_prospect(prospect_id: str, request: Request):
     logger.info("%s prospect %s modifie (%s) par %s", P3S1_PREFIXE, identifiant[:8],
                 ", ".join(sorted(champs)), appelant[:24])
     return apres
+
+# ============================================================================
+# P3-S3-A — SOCLE DU MOTEUR DE CAMPAGNE : LE DESTINATAIRE REEL ET SES VERROUS
+# ============================================================================
+# CE LOT NE CONTACTE PERSONNE, ET NE LE PEUT PAS.
+#
+# Il n'y a ici AUCUNE route, AUCUN appel fournisseur, AUCUNE file, AUCUNE
+# boucle de fond. Ce fichier n'ajoute que des DEFINITIONS : deux collections,
+# trois champs, des index, deux drapeaux eteints, et des fonctions PURES. Un
+# lot qui pose des verrous doit pouvoir etre relu sans chercher ou se cache
+# l'envoi : il n'y en a pas.
+#
+# POURQUOI UNE COLLECTION D'ACTIONS PLUTOT QU'UN TABLEAU
+# ---------------------------------------------------------------------------
+# La collection `campaigns` du depot embarque ses resultats dans un tableau
+# `results` — mesure a 404 elements dans une seule campagne. Un tableau
+# embarque NE PEUT PAS porter le verrou anti-double J0 : deux envois vers deux
+# destinataires DIFFERENTS se disputeraient le meme document, et le code
+# existant reecrit ce tableau en bloc. C'est pour cela, et pour cela seul, que
+# `prospect_campaign_actions` existe : un destinataire = un document = une
+# unite de verrouillage. Tout le reste du lot en decoule.
+#
+# QUATRE VERROUS SUPERPOSES, AUCUN NE SUFFIT SEUL
+# ---------------------------------------------------------------------------
+#   1. (campaign_id, recipient_key) unique  -> une campagne ne peut pas
+#      contenir deux fois le meme destinataire. Rend la PREPARATION idempotente.
+#   2. (coach_id, recipient_key) unique PARTIEL sur `verrou_actif: True`
+#      -> le verrou INTER-CAMPAGNES. Tant qu'une action vit ou a reussi, aucune
+#      autre campagne ne peut en creer une seconde pour ce destinataire.
+#   3. la reservation atomique (P3-S3-E) : update_one conditionnel sur
+#      `claimed_at` absent — l'idiome maison de `_rc_reserver_jeton`.
+#   4. `first_contact_sent_at` sur la fiche, ecrit sous condition d'absence
+#      -> une fiche deja contactee ne peut plus jamais l'etre une premiere fois.
+#
+# P3-S3-A pose les verrous 1, 2 et 4 (structure). Le 3 arrivera en P3-S3-E.
+# ============================================================================
+
+P3S3_CAMPAGNES = "prospect_campaigns"
+P3S3_ACTIONS = "prospect_campaign_actions"
+P3S3_PREFIXE = "[P3-S3]"
+
+# --- LES TROIS CHAMPS AJOUTES A `partner_prospects` -------------------------
+# Ils sont ABSENTS des 142 fiches existantes, et le restent : aucun backfill.
+# L'absence est le cas sur — une fiche sans `first_contact_sent_at` n'a jamais
+# ete contactee, ce qui est exactement la verite d'aujourd'hui.
+#
+# ILS NE SONT PAS MODIFIABLES PAR LE CLIENT. `p3s1_champs_valides` construit
+# une liste blanche : une cle inconnue du corps est ignoree, jamais ecrite.
+# Ces trois champs n'y figurent pas, donc un PATCH qui les contiendrait
+# n'aurait aucun effet. C'est voulu : personne ne doit pouvoir se declarer
+# contacte depuis un navigateur.
+P3S3_CHAMP_CLAIM = "first_contact_claimed_at"   # « je m'apprete a envoyer »
+P3S3_CHAMP_ENVOI = "first_contact_sent_at"      # « le fournisseur a confirme »
+P3S3_CHAMP_CLE = "recipient_key"                # le destinataire reel
+P3S3_CHAMPS_PROSPECT = (P3S3_CHAMP_CLAIM, P3S3_CHAMP_ENVOI, P3S3_CHAMP_CLE)
+
+# --- VOCABULAIRES TECHNIQUES ------------------------------------------------
+# Ils vivent sur la campagne et sur l'action, JAMAIS sur le prospect. Les six
+# statuts metier de P3-S1 ne bougent pas d'une virgule : un prospect n'a pas a
+# savoir qu'il existe des campagnes.
+P3S3_ETATS_CAMPAGNE = (
+    "brouillon", "preparee", "approuvee", "en_cours", "terminee", "annulee",
+)
+P3S3_STATUTS_ACTION = (
+    "pret",               # prepare, pas encore approuve
+    "exclu",              # retire avant approbation — conserve, jamais efface
+    "reserve",            # verrou pris, envoi imminent
+    "en_cours",           # appel fournisseur en vol
+    "envoye",             # confirme
+    "echec",              # echoue, cause connue, reservation levee
+    "echec_indetermine",  # panne PENDANT l'appel — decision humaine obligatoire
+    "a_faire_assiste",    # message pret, le coach agit
+    "a_faire_manuel",     # idem
+    "bloque",             # aucun canal exploitable
+)
+# Les statuts qui portent `verrou_actif` : une tentative vivante, ou reussie.
+# `echec_indetermine` EN FAIT PARTIE — c'est tout l'interet du verrou : tant
+# qu'on ignore si le fournisseur a accepte, personne d'autre ne doit pouvoir
+# tenter un premier contact vers ce destinataire.
+P3S3_STATUTS_VERROU = ("reserve", "en_cours", "envoye", "echec_indetermine")
+
+P3S3_TYPES_EXECUTION = ("AUTO", "ASSISTE", "MANUEL", "BLOQUE")
+
+# --- LES DEUX DRAPEAUX ------------------------------------------------------
+P3S3_FLAG_ACTIF = "P3_LAUNCH_ENABLED"        # le moteur existe-t-il ?
+P3S3_FLAG_ENVOI = "P3_LAUNCH_ENVOI_REEL"     # ecrit-il vraiment a des gens ?
+
+_P3S3_RE_MAIL = re.compile(r"^[\w.+-]+@[\w-]+\.[\w.-]+$")
+_P3S3_RE_NONCHIFFRE = re.compile(r"\D")
+P3S3_RESEAUX = (
+    ("instagram", "instagram.com"), ("facebook", "facebook.com"),
+    ("linkedin", "linkedin.com"), ("tiktok", "tiktok.com"),
+)
+
+
+def p3s3_compte_social(valeur, domaine: str) -> str:
+    """L'identifiant du compte, ou '' si ce n'en est pas un.
+
+    LE PIEGE, PAYE UNE PREMIERE FOIS EN P3-S2B. Les colonnes sociales
+    contiennent souvent une DESCRIPTION et pas un compte : « FB, LinkedIn »,
+    « tiktok », « page evenement FB », « @salsapeople (a confirmer) ». Prises
+    pour des identifiants, elles faisaient croire que trois influenceuses de
+    villes differentes partageaient un compte — et fusionnaient trois
+    destinataires distincts en un seul, donc en supprimaient deux.
+
+    Une preuve n'est donc retenue que sous DEUX formes non ambigues :
+      * une URL du bon domaine — `instagram.com/dancefloor_team` ;
+      * une arobase explicite et SEULE — `@festineuch`.
+    Tout le reste est de la prose et ne prouve rien.
+    """
+    texte = (valeur or "").strip().lower().rstrip("/")
+    if not texte:
+        return ""
+    if domaine in texte:
+        compte = texte.split(domaine, 1)[1].lstrip("/").split("/")[0].split("?")[0]
+        return compte.lstrip("@")
+    if texte.startswith("@") and " " not in texte and "," not in texte:
+        return texte.lstrip("@")
+    return ""
+
+
+def p3s3_preuves(fiche: dict) -> set:
+    """Les identifiants FORTS d'une fiche. Vide si rien n'est prouvable.
+
+    QUATRE PREUVES, ET RIEN D'AUTRE : e-mail exact, telephone exact, compte
+    social exact, decideur explicitement relie par l'une des trois precedentes.
+    Une fiche sans coordonnee exploitable rend un ensemble VIDE, donc reste
+    seule — on ne peut pas prouver qu'elle est quelqu'un d'autre, et supposer
+    le contraire ferait disparaitre un destinataire.
+
+    NE SONT PAS DES PREUVES, ET NE LE SERONT JAMAIS : la ressemblance de nom,
+    le domaine web partage, la ville, la categorie. « Wellness Sport Club
+    Lausanne » et « Wellness Sport Club Geneve » ne fusionnent PAS parce que
+    leurs noms se ressemblent — ils fusionnent parce qu'ils publient la MEME
+    adresse e-mail. A l'inverse, quatre entites distinctes qui partagent un
+    domaine restent quatre destinataires.
+    """
+    preuves = set()
+    courriel = (fiche.get("public_email") or "").strip().lower()
+    if courriel and _P3S3_RE_MAIL.match(courriel):
+        preuves.add("mail:" + courriel)
+    chiffres = _P3S3_RE_NONCHIFFRE.sub("", fiche.get("public_phone") or "")
+    if len(chiffres) >= 8:
+        # Les 9 derniers chiffres : l'indicatif national est ignore, sinon
+        # `+41 76 233 49 43` et `076 233 49 43` seraient deux personnes.
+        preuves.add("tel:" + chiffres[-9:])
+    for champ, domaine in P3S3_RESEAUX:
+        compte = p3s3_compte_social(fiche.get(champ), domaine)
+        if compte:
+            preuves.add(champ[:2] + ":" + compte)
+    return preuves
+
+
+def _p3s3_rang(fiche: dict) -> tuple:
+    """L'ordre TOTAL des fiches d'un groupe. Jamais une seule cle.
+
+    Lecon de P3-S2E : un tri sur une cle non unique n'est pas un ordre total.
+    Les 142 fiches importees partagent EXACTEMENT le meme `created_at` ; s'en
+    remettre a lui seul rendrait la cle du destinataire dependante de l'ordre
+    de lecture de Mongo, donc INSTABLE d'un appel a l'autre.
+    """
+    return ((fiche.get("created_at") or ""), (fiche.get("ref") or ""),
+            (fiche.get("id") or ""))
+
+
+def p3s3_recipient_key(groupe) -> str:
+    """La cle d'UN groupe de fiches : la reference de la plus ancienne.
+
+    DETERMINISTE ET INDEPENDANTE DE L'ORDRE D'ENTREE. La cle ne depend que du
+    CONTENU du groupe, jamais de la facon dont il a ete assemble : rejouer la
+    fonction sur les memes fiches melangees rend toujours la meme cle.
+
+    `ref` (FES-01, LSN-F3...) est preferee a `id` parce qu'elle est lisible :
+    la cle apparaitra dans l'ecran et dans les journaux. Une fiche sans `ref`
+    retombe sur son `id`, qui existe toujours.
+    """
+    fiches = [f for f in (groupe or []) if f]
+    if not fiches:
+        return ""
+    premiere = min(fiches, key=_p3s3_rang)
+    return (premiere.get("ref") or premiere.get("id") or "").strip()
+
+
+def p3s3_grouper(fiches) -> list:
+    """Les indices des fiches qui ecriraient a la MEME personne.
+
+    Union-find : chaque fiche commence seule et deux fiches ne se rejoignent
+    que sur une preuve FORTE partagee (`p3s3_preuves`). Les composantes
+    connexes d'un graphe ne dependent pas de l'ordre de parcours : le
+    decoupage est donc le meme quel que soit l'ordre des fiches en entree.
+    """
+    documents = list(fiches or [])
+    parent = list(range(len(documents)))
+
+    def racine(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def unir(i, j):
+        ri, rj = racine(i), racine(j)
+        if ri != rj:
+            parent[max(ri, rj)] = min(ri, rj)
+
+    par_preuve = {}
+    for i, doc in enumerate(documents):
+        for preuve in p3s3_preuves(doc):
+            if preuve in par_preuve:
+                unir(par_preuve[preuve], i)
+            else:
+                par_preuve[preuve] = i
+
+    groupes = {}
+    for i in range(len(documents)):
+        groupes.setdefault(racine(i), []).append(i)
+    return list(groupes.values())
+
+
+def p3s3_destinataires(fiches) -> list:
+    """Les destinataires REELS derriere une liste de fiches.
+
+    Rend, pour chacun : sa cle, les references des fiches qu'il couvre, et les
+    preuves qui ont justifie le regroupement — pour qu'une fusion soit
+    toujours EXPLICABLE et jamais a croire sur parole.
+
+    Le resultat est trie par cle : deux appels rendent la meme liste, dans le
+    meme ordre, meme si les fiches arrivent melangees.
+    """
+    documents = list(fiches or [])
+    sortie = []
+    for indices in p3s3_grouper(documents):
+        groupe = [documents[i] for i in indices]
+        cle = p3s3_recipient_key(groupe)
+        partagees = set()
+        if len(groupe) > 1:
+            vues = {}
+            for f in groupe:
+                for p in p3s3_preuves(f):
+                    vues[p] = vues.get(p, 0) + 1
+            partagees = {p for p, n in vues.items() if n > 1}
+        sortie.append({
+            "recipient_key": cle,
+            "prospect_ids": sorted((f.get("ref") or f.get("id") or "") for f in groupe),
+            "nb_fiches": len(groupe),
+            "preuves_partagees": sorted(partagees),
+        })
+    return sorted(sortie, key=lambda d: d["recipient_key"])
+
+
+def p3s3_cle_par_fiche(fiches) -> dict:
+    """{ reference de fiche -> cle du destinataire }. Pure, aucune ecriture."""
+    table = {}
+    for destinataire in p3s3_destinataires(fiches):
+        for reference in destinataire["prospect_ids"]:
+            table[reference] = destinataire["recipient_key"]
+    return table
+
+
+# --- RESERVER N'EST PAS ENVOYER ---------------------------------------------
+# Le point le plus dangereux du chantier, isole ici en une fonction d'une
+# ligne pour qu'il ne puisse pas etre contourne par distraction.
+#
+# Une reservation (`first_contact_claimed_at`) dit « je m'apprete a envoyer ».
+# Elle est REVERSIBLE : si l'appel echoue, on la retire et la fiche redevient
+# a contacter. Un envoi (`first_contact_sent_at`) dit « le fournisseur a
+# confirme » ; il ne se retire JAMAIS.
+#
+# Confondre les deux produirait le pire defaut possible : un prospect marque
+# « contacte » alors que personne ne lui a jamais ecrit — il ne serait jamais
+# recontacte, et l'erreur serait invisible.
+def p3s3_contact_effectif(fiche: dict) -> bool:
+    """True si, et seulement si, un envoi a ete CONFIRME pour cette fiche."""
+    return bool((fiche or {}).get(P3S3_CHAMP_ENVOI))
+
+
+def p3s3_statut_metier_cible(fiche: dict) -> str:
+    """Le statut metier qu'une fiche DEVRAIT porter. N'ecrit rien.
+
+    Une reservation seule ne fait pas avancer le statut : tant que l'envoi
+    n'est pas confirme, la fiche reste `a_contacter`. Et un statut deja plus
+    avance que `contacte` (repondu, interesse, refuse...) n'est jamais
+    ramene en arriere : le premier contact est un plancher, pas un plafond.
+    """
+    courant = (fiche or {}).get("status") or P3S1_STATUT_INITIAL
+    if not p3s3_contact_effectif(fiche):
+        return courant
+    if courant == P3S1_STATUT_INITIAL:
+        return "contacte"
+    return courant
+
+
+def p3s3_envoi_autorise(flags) -> bool:
+    """L'unique porte d'un envoi reel. FERMEE par defaut, sans exception.
+
+    LES DEUX DRAPEAUX SONT EXIGES, et le second ne s'appelle pas `DRY_RUN`.
+    `get_feature_flags` complete a la lecture tout drapeau ABSENT avec `False` :
+    un drapeau nomme `..._DRY_RUN` absent vaudrait donc « pas de simulation »,
+    c'est-a-dire ENVOI REEL par accident, sur une base ou personne ne l'a
+    encore ecrit. En inversant le sens, l'ABSENCE est le cas SUR.
+
+        les deux a false                -> lot DORMANT (etat de livraison)
+        ACTIF=true, ENVOI_REEL=false    -> simulation : on calcule le
+                                           destinataire et le message, on les
+                                           journalise, on ne contacte personne
+        les deux a true                 -> l'e-mail part
+
+    Une configuration absente, illisible ou partielle rend `False`. Jamais
+    l'inverse : le jour ou la lecture des drapeaux echouera, le systeme devra
+    se taire, pas ecrire a 137 organisations.
+    """
+    if not isinstance(flags, dict):
+        return False
+    return flags.get(P3S3_FLAG_ACTIF) is True and flags.get(P3S3_FLAG_ENVOI) is True
+
 
 
 # --- Leads Routes (Widget IA) ---
@@ -35455,6 +35791,63 @@ async def startup_db():
         await db[P3S1_COLLECTION].create_index([("coach_id", 1), ("wave", 1)])
         await db[P3S1_COLLECTION].create_index([("coach_id", 1), ("priority", 1)])
         logger.info("[P3-S1] index partner_prospects OK (ref unique par coach)")
+    except Exception:
+        pass  # Index existe deja
+
+    # P3-S3-A : les index du moteur de campagne. Poses AU DEMARRAGE, donc
+    # AVANT qu'une seule campagne existe — la lecon de P2, ou un index unique
+    # ajoute apres coup laissait passer les collisions concurrentes. Un verrou
+    # qui arrive apres les donnees ne verrouille rien.
+    #
+    # `(campaign_id, recipient_key)` UNIQUE — VERROU 1, l'idempotence de la
+    # preparation : rejouer une preparation ne peut pas creer une deuxieme
+    # action pour le meme destinataire, la seconde ecriture leve
+    # DuplicateKeyError qu'on avale en silence.
+    #
+    # `(coach_id, recipient_key)` UNIQUE PARTIEL sur `verrou_actif: True` —
+    # VERROU 2, LE VERROU INTER-CAMPAGNES, le plus important du lot. Il porte
+    # sur `verrou_actif` et non sur le statut : une condition d'egalite simple
+    # est la seule que `partialFilterExpression` garantit partout. Tant qu'une
+    # action vit (reserve, en_cours) ou a abouti (envoye), ou meme tant qu'on
+    # IGNORE si le fournisseur a accepte (echec_indetermine), aucune autre
+    # campagne ne peut reclamer ce destinataire. Une campagne rejouee, deux
+    # workers, un double clic : la base refuse, elle ne discute pas.
+    #
+    # PARTIEL, ET JAMAIS `sparse` — c'est la lecon deja payee en P3-S1 : un
+    # index compose n'est ignore que si TOUTES ses cles manquent, or
+    # `coach_id` est toujours present. Sans `partialFilterExpression`, toutes
+    # les actions sans verrou entreraient en collision sur `null` et la
+    # deuxieme action de la campagne serait refusee.
+    #
+    # Les index de pagination portent une seconde cle UNIQUE (`id`) : un tri
+    # sur une cle non unique n'est pas un ordre total, et `skip`/`limit`
+    # decoupe alors deux ordres differents. Defaut mesure en production sur
+    # `partner_prospects` (P3-S2E) : 142 lignes rendues, 85 fiches distinctes,
+    # 57 INATTEIGNABLES. On ne le laisse pas se reproduire ici.
+    try:
+        await db[P3S3_CAMPAGNES].create_index("id", unique=True)
+        await db[P3S3_CAMPAGNES].create_index(
+            [("coach_id", 1), ("created_at", -1), ("id", 1)])
+        await db[P3S3_CAMPAGNES].create_index([("coach_id", 1), ("etat", 1)])
+
+        await db[P3S3_ACTIONS].create_index("id", unique=True)
+        await db[P3S3_ACTIONS].create_index(
+            [("campaign_id", 1), ("recipient_key", 1)], unique=True,
+            partialFilterExpression={"recipient_key": {"$type": "string"}})
+        await db[P3S3_ACTIONS].create_index(
+            [("coach_id", 1), ("recipient_key", 1)], unique=True,
+            partialFilterExpression={"verrou_actif": True})
+        await db[P3S3_ACTIONS].create_index([("campaign_id", 1), ("statut", 1)])
+        await db[P3S3_ACTIONS].create_index(
+            [("coach_id", 1), ("created_at", -1), ("id", 1)])
+
+        # La fiche porte desormais la cle de son destinataire : l'ecran doit
+        # pouvoir grouper sans recalculer les 142 a chaque affichage. NON
+        # unique — plusieurs fiches partagent legitimement un destinataire.
+        await db[P3S1_COLLECTION].create_index(
+            [("coach_id", 1), (P3S3_CHAMP_CLE, 1)])
+        logger.info("%s index campagne OK (verrou inter-campagnes partiel pose)",
+                    P3S3_PREFIXE)
     except Exception:
         pass  # Index existe deja
 
