@@ -195,6 +195,51 @@ const CampaignManager = ({
   }, []);
   useEffect(() => { chargerTaches(pileTaches); }, [chargerTaches, pileTaches]);
 
+  /* GOOGLE-1 — LES ÉVÉNEMENTS GOOGLE, AFFICHÉS ET RIEN DE PLUS.
+     Ils ne sont jamais copiés dans `calendar_events` : les recopier créerait
+     une seconde vérité qui divergerait au premier changement fait depuis
+     Google. Une panne de Google laisse simplement la liste vide — le
+     calendrier Afroboost s'affiche sans eux, ce qui est tout l'objet de la
+     règle « aucune dépendance Google ». */
+  const [evenementsGoogle, setEvenementsGoogle] = useState([]);
+  const [googleStatut, setGoogleStatut] = useState(null);
+  const chargerGoogle = React.useCallback(async () => {
+    const API_ = process.env.REACT_APP_API_URL || '';
+    try {
+      const s = await axios.get(`${API_}/api/google/status`);
+      setGoogleStatut((s && s.data) || null);
+      if (!(s && s.data && s.data.connected && s.data.calendar_granted)) {
+        setEvenementsGoogle([]);
+        return;
+      }
+      const debut = new Date(); debut.setDate(1); debut.setHours(0, 0, 0, 0);
+      const fin = new Date(debut); fin.setDate(fin.getDate() + 62);
+      const r = await axios.get(`${API_}/api/google/events`, {
+        params: { from: debut.toISOString(), to: fin.toISOString() },
+      });
+      setEvenementsGoogle((r.data && r.data.events) || []);
+    } catch (e) {
+      setGoogleStatut(null); setEvenementsGoogle([]);
+    }
+  }, []);
+  useEffect(() => { chargerGoogle(); }, [chargerGoogle]);
+
+  const connecterGoogle = React.useCallback(async () => {
+    const API_ = process.env.REACT_APP_API_URL || '';
+    try {
+      const r = await axios.get(`${API_}/api/google/auth-url`);
+      if (r && r.data && r.data.auth_url) window.open(r.data.auth_url, '_blank', 'width=520,height=640');
+    } catch (e) { /* l'écran reste utilisable : Google est facultatif */ }
+  }, []);
+
+  const deconnecterGoogle = React.useCallback(async () => {
+    const API_ = process.env.REACT_APP_API_URL || '';
+    try {
+      await axios.post(`${API_}/api/google/disconnect`, {});
+    } catch (e) { /* sans effet sur les données Afroboost */ }
+    chargerGoogle();
+  }, [chargerGoogle]);
+
   /* Les campagnes, traduites dans la forme unique du calendrier. Elles ne sont
      PAS copiées en base : c'est une vue, le temps d'un rendu. */
   const evenementsCalendrier = React.useMemo(() => {
@@ -209,8 +254,9 @@ const CampaignManager = ({
     const vuesTaches = (taches || [])
       .filter((t) => t.starts_at)
       .map((t) => ({ ...t, source_id: t.id, modifiable: true }));
-    return vues.concat(autresEvenements || []).concat(vuesTaches);
-  }, [campaigns, autresEvenements, taches]);
+    return vues.concat(autresEvenements || []).concat(vuesTaches)
+               .concat(evenementsGoogle || []);
+  }, [campaigns, autresEvenements, taches, evenementsGoogle]);
 
   /* Le calendrier rend l'ÉVÉNEMENT ; le gestionnaire retrouve la campagne
      d'origine par son identifiant de source. Sans cette traduction, les
@@ -453,6 +499,41 @@ const CampaignManager = ({
             );
           })()}
         </div>
+      </div>
+
+      {/* === GOOGLE-1 : la connexion Google, une ligne discrète === */}
+      <div data-testid="bandeau-google"
+           style={{ display: 'flex', alignItems: 'center', gap: '10px',
+                    flexWrap: 'wrap', marginBottom: '10px', fontSize: '12px',
+                    color: 'rgba(255,255,255,0.75)' }}>
+        <span>Google Calendar :</span>
+        {googleStatut && googleStatut.connected && googleStatut.calendar_granted ? (
+          <>
+            <span data-testid="google-connecte" style={{ color: 'rgba(34,197,94,0.95)' }}>
+              connecté — {evenementsGoogle.length} événement{evenementsGoogle.length > 1 ? 's' : ''}
+            </span>
+            <button type="button" data-testid="google-deconnecter" onClick={deconnecterGoogle}
+                    style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.2)',
+                             color: 'inherit', borderRadius: '8px', padding: '3px 9px',
+                             fontSize: '11px', cursor: 'pointer' }}>
+              Déconnecter
+            </button>
+          </>
+        ) : googleStatut && googleStatut.reconnect_required ? (
+          <button type="button" data-testid="google-reconnecter" onClick={connecterGoogle}
+                  style={{ background: 'rgba(245,158,11,0.25)', border: 'none', color: '#fff',
+                           borderRadius: '8px', padding: '3px 9px', fontSize: '11px',
+                           cursor: 'pointer' }}>
+            Reconnecter Google (accès calendrier requis)
+          </button>
+        ) : (
+          <button type="button" data-testid="google-connecter" onClick={connecterGoogle}
+                  style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)',
+                           color: 'inherit', borderRadius: '8px', padding: '3px 9px',
+                           fontSize: '11px', cursor: 'pointer' }}>
+            Connecter Google Calendar
+          </button>
+        )}
       </div>
 
       {/* === CAL-2 : LES TÂCHES, au-dessus de la grille === */}

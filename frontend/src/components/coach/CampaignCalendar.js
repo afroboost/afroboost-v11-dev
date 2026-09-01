@@ -40,6 +40,9 @@ const TYPES = {
   appointment: { libelle: 'Rendez-vous', teinte: 'rgba(59,130,246,0.85)' },
   course:      { libelle: 'Cours',      teinte: 'rgba(34,197,94,0.85)' },
   event:       { libelle: 'Événement',  teinte: 'rgba(249,115,22,0.85)' },
+  /* GOOGLE-1 — un événement EXTERNE. Gris volontairement : il n'appartient pas
+     à Afroboost, il est seulement affiché, et rien ici ne peut le modifier. */
+  google:      { libelle: 'Google',     teinte: 'rgba(148,163,184,0.85)' },
 };
 const TYPE_DEFAUT = TYPES.event;
 

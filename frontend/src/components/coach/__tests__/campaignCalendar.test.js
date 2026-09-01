@@ -317,9 +317,32 @@ describe('CAL-1 — les couleurs de marque ne sont plus codées en dur', () => {
     expect(hex).toEqual([]);
   });
 
-  test('aucune dépendance Google dans ce lot', () => {
-    ['google', 'Google', 'oauth', 'gapi'].forEach((mot) => {
+  /* CETTE VÉRIFICATION BORNAIT CAL-1, ET ELLE AVAIT RAISON. GOOGLE-1 ajoute un
+     TYPE d'événement `google` à la palette — mais afficher un type n'est pas
+     dépendre de Google : le composant ne connaît ni OAuth, ni jeton, ni appel
+     réseau. C'est cette distinction-là que la garde doit tenir, et elle est
+     plus exigeante que la précédente. */
+  test('le calendrier affiche le type google, sans en DÉPENDRE', () => {
+    expect(SOURCE).toContain('google:');           // la palette, pour l'affichage
+    ['oauth', 'gapi', 'accounts.google.com', 'googleapis',
+     'access_token', 'refresh_token', 'client_id'].forEach((mot) => {
       expect(SOURCE).not.toContain(mot);
     });
+  });
+
+  test('un événement Google n’est jamais déplaçable', async () => {
+    const g = { id: 'google:primary:g-1', source: 'google', source_id: 'g-1',
+                title: 'Réunion équipe', starts_at: LE_15.toISOString(),
+                event_type: 'google', status: 'confirmed', modifiable: false };
+    await monter(<CampaignCalendar evenements={[g]} />);
+    expect(par('evenement').getAttribute('draggable')).toBe('false');
+  });
+
+  test('il se distingue des événements Afroboost', async () => {
+    const g = { id: 'google:primary:g-1', source: 'google', title: 'Réunion',
+                starts_at: LE_15.toISOString(), event_type: 'google', modifiable: false };
+    await monter(<CampaignCalendar evenements={[campagne(), g]} />);
+    const bords = tous('[data-testid="evenement"]').map((e) => e.style.borderLeft);
+    expect(new Set(bords).size).toBe(2);   // deux teintes distinctes
   });
 });

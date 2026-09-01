@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Union
+import urllib.parse
 import uuid
 from datetime import datetime, timezone, timedelta
 import stripe
@@ -17634,17 +17635,20 @@ GOOGLE_CONTACTS_SCOPES = "https://www.googleapis.com/auth/contacts.readonly"
 
 @api_router.get("/google-contacts/auth-url")
 async def get_google_contacts_auth_url(request: Request):
-    """Génère l'URL d'autorisation Google pour la sync contacts"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    """Génère l'URL d'autorisation Google pour la sync contacts.
+
+    GOOGLE-1 — L'IDENTITE VIENT DU JETON SIGNE, PLUS DE L'EN-TETE. `X-User-Email`
+    est falsifiable : n'importe qui pouvait demander une URL au nom d'un autre
+    coach, et — le `state` portant cet e-mail en clair — faire ecrire les
+    jetons dans SA ligne. Le `state` est desormais signe, lui aussi.
+    """
+    caller_email = await _v309_require_coach_or_admin(request)
 
     if not GOOGLE_CONTACTS_CLIENT_ID:
         raise HTTPException(status_code=503, detail="Google Contacts non configuré (GOOGLE_CONTACTS_CLIENT_ID manquant)")
 
     # Redirect URI = notre callback
-    base_url = os.environ.get("VERCEL_URL", "afroboost-v11-dev-pm7l.vercel.app")
-    redirect_uri = f"https://{base_url}/api/google-contacts/callback"
+    redirect_uri = g1_redirection_contacts()
 
     import urllib.parse
     params = urllib.parse.urlencode({
@@ -17654,7 +17658,8 @@ async def get_google_contacts_auth_url(request: Request):
         "scope": GOOGLE_CONTACTS_SCOPES,
         "access_type": "offline",
         "prompt": "consent",
-        "state": caller_email  # Pour identifier le coach
+        # GOOGLE-1 : signe, plus l'e-mail en clair. Voir `g1_signer_etat`.
+        "state": g1_signer_etat(caller_email)
     })
 
     return {
@@ -17675,9 +17680,20 @@ async def google_contacts_callback(code: str = "", state: str = "", error: str =
     if not code or not state:
         return HTMLResponse("<html><body><h2>Code manquant</h2><script>window.close()</script></body></html>")
 
-    coach_email = state.lower().strip()
-    base_url = os.environ.get("VERCEL_URL", "afroboost-v11-dev-pm7l.vercel.app")
-    redirect_uri = f"https://{base_url}/api/google-contacts/callback"
+    # GOOGLE-1 — L'ETAT EST VERIFIE, PLUS RECOPIE. Il valait auparavant
+    # `state.lower().strip()`, c'est-a-dire la valeur que l'appelant avait
+    # choisie : fabriquer une URL portant l'e-mail d'un autre coach suffisait a
+    # faire ecrire les jetons dans SA ligne. La signature ferme ce chemin.
+    coach_email = g1_verifier_etat(state)
+    if not coach_email:
+        logger.warning("[GOOGLE-CONTACTS] callback refuse : etat invalide")
+        return HTMLResponse(
+            "<html><body><h2>Lien invalide</h2>"
+            "<p>Recommencez depuis votre tableau de bord.</p>"
+            "<script>setTimeout(()=>window.close(),3000)</script></body></html>")
+    # Et la redirection ne pointe plus sur le residu Vercel perime : c'est ce
+    # qui empechait ce flux d'aboutir depuis toujours.
+    redirect_uri = g1_redirection_contacts()
 
     try:
         # Exchange code for tokens
@@ -17699,8 +17715,9 @@ async def google_contacts_callback(code: str = "", state: str = "", error: str =
             {"coach_email": coach_email},
             {"$set": {
                 "coach_email": coach_email,
-                "access_token": tokens.get("access_token"),
-                "refresh_token": tokens.get("refresh_token"),
+                # GOOGLE-1 : chiffres au repos, comme ceux du calendrier.
+                "access_token": g1_chiffrer(tokens.get("access_token")),
+                "refresh_token": g1_chiffrer(tokens.get("refresh_token")),
                 "expires_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }},
@@ -17724,8 +17741,8 @@ async def google_contacts_callback(code: str = "", state: str = "", error: str =
 
 @api_router.get("/google-contacts/status")
 async def google_contacts_status(request: Request):
-    """Vérifie si le coach a connecté Google Contacts"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    """Vérifie si le coach a connecté Google Contacts. GOOGLE-1 : JWT requis."""
+    caller_email = await _v309_require_coach_or_admin(request)
     token_doc = await db.google_tokens.find_one({"coach_email": caller_email}, {"_id": 0})
     return {
         "connected": bool(token_doc and token_doc.get("refresh_token")),
@@ -17740,9 +17757,7 @@ async def sync_google_contacts(request: Request):
     Synchronise les contacts Google dans chat_participants.
     Utilise le refresh_token stocké pour obtenir un access_token frais.
     """
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    caller_email = await _v309_require_coach_or_admin(request)
 
     token_doc = await db.google_tokens.find_one({"coach_email": caller_email}, {"_id": 0})
     if not token_doc or not token_doc.get("refresh_token"):
@@ -17756,7 +17771,9 @@ async def sync_google_contacts(request: Request):
             token_resp = await client.post("https://oauth2.googleapis.com/token", data={
                 "client_id": GOOGLE_CONTACTS_CLIENT_ID,
                 "client_secret": GOOGLE_CONTACTS_CLIENT_SECRET,
-                "refresh_token": token_doc["refresh_token"],
+                # GOOGLE-1 : les jetons sont chiffres au repos ; `g1_dechiffrer`
+                # rend tel quel un ancien document en clair, donc rien a migrer.
+                "refresh_token": g1_dechiffrer(token_doc["refresh_token"]),
                 "grant_type": "refresh_token"
             })
             tokens = token_resp.json()
@@ -25738,6 +25755,574 @@ async def cal3_planifier(reference: str, request: Request):
     return {"appointment": vue, "recipient_key": document["recipient_key"],
             "campaign_id": document["campaign_id"],
             "campaign_action_id": document["campaign_action_id"]}
+
+
+# ============================================================================
+# GOOGLE-1 — DURCIR LA CONNEXION GOOGLE, PUIS LIRE LE CALENDRIER
+# ============================================================================
+# CE LOT NE SYNCHRONISE RIEN. Il ne cree, ne modifie et ne supprime AUCUN
+# evenement Google. Afroboost reste la source de verite, et le restera : les
+# evenements Google lus ici sont AFFICHES, jamais copies dans
+# `calendar_events`. La synchronisation sortante est GOOGLE-2.
+#
+# CE QU'IL FALLAIT CORRIGER D'ABORD, ET QUI EST PIRE QUE PREVU. Le flux OAuth
+# existant (Google Contacts) place l'e-mail du coach EN CLAIR dans le
+# parametre `state` de l'URL d'autorisation. `state` est une valeur que
+# l'appelant controle : n'importe qui pouvait fabriquer une URL portant
+# l'e-mail d'un AUTRE coach, et le callback ecrivait les jetons dans SA ligne.
+# Ce n'etait donc pas seulement une identite falsifiable en lecture — c'etait
+# une prise de controle du rattachement des jetons.
+#
+# LE `state` EST DESORMAIS SIGNE. Il porte l'e-mail, un alea et un horodatage,
+# scelles par HMAC-SHA256 : le callback ne croit plus ce qu'on lui raconte, il
+# verifie. Et l'URL d'autorisation ne s'obtient qu'avec un JWT valide.
+#
+# LES JETONS SONT CHIFFRES AU REPOS. Un `refresh_token` Google est une cle
+# permanente sur le calendrier de quelqu'un ; le laisser en clair dans Mongo
+# revient a confier cette cle a toute fuite de base. `cryptography` est deja
+# une dependance du depot — rien a installer.
+#
+# AUCUNE MIGRATION. `google_tokens` n'existe pas et ne contient aucun document :
+# le flux n'a jamais abouti, son `redirect_uri` pointant sur le residu Vercel
+# perime. Il n'y a donc aucune connexion existante a preserver, et la lecture
+# reste malgre tout TOLERANTE aux valeurs en clair (voir `g1_dechiffrer`),
+# pour qu'un document ecrit avant ce lot ne casse rien.
+
+G1_COLLECTION = "google_tokens"
+
+# LE SCOPE MINIMAL, ET RIEN DE PLUS. `calendar.readonly` suffit a LISTER les
+# calendriers ET a LIRE leurs evenements — c'est tout ce que GOOGLE-1 fait.
+# L'ecriture (GOOGLE-2) exigera `calendar.events`, un scope distinct : il n'est
+# PAS demande ici, parce qu'un consentement qu'on n'utilise pas est un droit
+# qu'on n'aurait pas du demander.
+G1_SCOPE_CALENDRIER = "https://www.googleapis.com/auth/calendar.readonly"
+G1_SCOPE_CONTACTS = "https://www.googleapis.com/auth/contacts.readonly"
+G1_SCOPES = (G1_SCOPE_CONTACTS, G1_SCOPE_CALENDRIER)
+
+G1_ETAT_VALIDITE_S = 900        # 15 min pour aller cliquer chez Google
+G1_MARGE_EXPIRATION_S = 120     # on renouvelle avant l'echeance, pas apres
+G1_FENETRE_MAX_JOURS = 62       # meme borne que le calendrier natif
+G1_CALENDRIERS_MAX = 50
+G1_EVENEMENTS_MAX = 250
+G1_PREFIXE_CHIFFRE = "enc:v1:"
+
+
+def g1_cle_chiffrement() -> bytes:
+    """La cle de chiffrement des jetons. Derivee, jamais stockee en base.
+
+    ELLE NE VIT PAS DANS MONGO. Chiffrer des jetons avec une cle rangee a cote
+    d'eux ne protege de rien : une fuite de base emporterait les deux. La cle
+    vient donc de l'environnement — `GOOGLE_TOKEN_KEY` si elle existe, sinon
+    derivee de `JWT_SECRET`, qui est deja le secret serveur du depot.
+
+    PAS DE SECRET PAR DEFAUT. Sans secret, la fonction leve : mieux vaut une
+    connexion Google impossible qu'un chiffrement decoratif.
+    """
+    import base64
+    import hashlib
+    brut = (os.environ.get("GOOGLE_TOKEN_KEY") or os.environ.get("JWT_SECRET") or "").strip()
+    if not brut:
+        raise RuntimeError("aucun secret de chiffrement disponible")
+    # Fernet exige 32 octets en base64url. On derive, on ne tronque pas.
+    return base64.urlsafe_b64encode(hashlib.sha256(brut.encode()).digest())
+
+
+def g1_chiffrer(valeur: str) -> str:
+    """Chiffre un jeton. Rend '' pour une valeur vide. JAMAIS journalise."""
+    if not valeur:
+        return ""
+    from cryptography.fernet import Fernet
+    jeton = Fernet(g1_cle_chiffrement()).encrypt(str(valeur).encode())
+    return G1_PREFIXE_CHIFFRE + jeton.decode()
+
+
+def g1_dechiffrer(valeur: str) -> str:
+    """Dechiffre un jeton. TOLERANTE au clair, par compatibilite.
+
+    Une valeur sans le prefixe est rendue telle quelle : c'est ce qui permet a
+    ce lot de ne migrer AUCUN document. Aujourd'hui il n'y en a aucun ; le jour
+    ou l'on en retrouverait un ecrit avant ce lot, il continuerait de
+    fonctionner et serait rechiffre au prochain renouvellement.
+    """
+    brut = (valeur or "").strip()
+    if not brut:
+        return ""
+    if not brut.startswith(G1_PREFIXE_CHIFFRE):
+        return brut
+    from cryptography.fernet import Fernet, InvalidToken
+    try:
+        return Fernet(g1_cle_chiffrement()).decrypt(
+            brut[len(G1_PREFIXE_CHIFFRE):].encode()).decode()
+    except (InvalidToken, RuntimeError, ValueError) as e:
+        # Cle changee ou donnee abimee. On ne devine pas : le coach
+        # reconnectera, ce qui est sans danger et explicite.
+        logger.warning("[GOOGLE-1] jeton illisible (%s) — reconnexion requise",
+                       type(e).__name__)
+        return ""
+
+
+def g1_signer_etat(email: str) -> str:
+    """Le `state` OAuth, SIGNE. `<email base64>.<horodatage>.<alea>.<hmac>`.
+
+    LE COEUR DU DURCISSEMENT. L'ancien `state` valait l'e-mail en clair, et
+    l'appelant le choisissait. Ici la signature est calculee avec le secret
+    serveur : forger un `state` pour un autre coach exige ce secret.
+
+    L'ALEA ET L'HORODATAGE NE SONT PAS DECORATIFS. L'horodatage borne la
+    fenetre d'usage a quinze minutes ; l'alea rend deux demandes successives
+    distinctes, pour qu'un `state` intercepte ne se rejoue pas indefiniment.
+    """
+    import base64
+    import hmac
+    import hashlib
+    import secrets as _s
+    secret = (os.environ.get("JWT_SECRET") or "").strip()
+    if not secret:
+        raise RuntimeError("JWT_SECRET requis pour signer l'etat OAuth")
+    charge = "%s.%d.%s" % (
+        base64.urlsafe_b64encode((email or "").encode()).decode().rstrip("="),
+        int(datetime.now(timezone.utc).timestamp()), _s.token_urlsafe(12))
+    signature = hmac.new(secret.encode(), charge.encode(), hashlib.sha256).hexdigest()[:32]
+    return "%s.%s" % (charge, signature)
+
+
+def g1_verifier_etat(etat: str) -> str:
+    """L'e-mail porte par un `state` VALIDE, sinon ''. PURE.
+
+    Comparaison en temps constant, et fenetre de validite verifiee. Un `state`
+    forge, expire ou abime rend '' — et le callback n'ecrit alors rien.
+    """
+    import base64
+    import hmac
+    import hashlib
+    brut = (etat or "").strip()
+    morceaux = brut.split(".")
+    if len(morceaux) != 4:
+        return ""
+    charge = ".".join(morceaux[:3])
+    secret = (os.environ.get("JWT_SECRET") or "").strip()
+    if not secret:
+        return ""
+    attendu = hmac.new(secret.encode(), charge.encode(), hashlib.sha256).hexdigest()[:32]
+    if not hmac.compare_digest(attendu, morceaux[3]):
+        return ""
+    try:
+        emis = int(morceaux[1])
+    except (TypeError, ValueError):
+        return ""
+    if abs(int(datetime.now(timezone.utc).timestamp()) - emis) > G1_ETAT_VALIDITE_S:
+        return ""
+    try:
+        rembourre = morceaux[0] + "=" * (-len(morceaux[0]) % 4)
+        return base64.urlsafe_b64decode(rembourre.encode()).decode().lower().strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def g1_redirection_contacts() -> str:
+    """Le callback de Google Contacts. Meme correction que pour le calendrier.
+
+    Ce flux a son PROPRE chemin de retour, et il doit le garder : changer
+    l'URL de redirection d'un flux OAuth exige de la declarer aussi chez
+    Google. On corrige la base, pas le chemin.
+    """
+    base = (os.environ.get("REACT_APP_FRONTEND_URL")
+            or os.environ.get("FRONTEND_URL") or "https://afroboost.com").strip()
+    return base.rstrip("/") + "/api/google-contacts/callback"
+
+
+def g1_redirection() -> str:
+    """L'URL de callback. FONDEE SUR LE SITE REEL, pas sur un residu Vercel.
+
+    L'ancien flux construisait cette URL depuis `VERCEL_URL`, absente de
+    Coolify, avec pour defaut `afroboost-v11-dev-pm7l.vercel.app` — le residu
+    d'une installation abandonnee, documente dans le CLAUDE.md. Google
+    redirigeait donc vers une application morte, ce qui explique qu'aucun
+    jeton n'ait jamais ete enregistre.
+    """
+    base = (os.environ.get("REACT_APP_FRONTEND_URL")
+            or os.environ.get("FRONTEND_URL") or "https://afroboost.com").strip()
+    return base.rstrip("/") + "/api/google/callback"
+
+
+def g1_expire_dans(secondes) -> str:
+    """L'instant d'expiration d'un access_token. PURE."""
+    try:
+        marge = max(0, int(secondes) - G1_MARGE_EXPIRATION_S)
+    except (TypeError, ValueError):
+        marge = 0
+    return (datetime.now(timezone.utc) + timedelta(seconds=marge)).isoformat()
+
+
+def g1_scopes_du_document(document: dict) -> list:
+    """Les scopes reellement accordes, tels que Google les a rendus. PURE.
+
+    ON NE SUPPOSE JAMAIS QU'UN JETON PORTE UN SCOPE. C'est exactement le piege
+    du §8 : un coach connecte AVANT l'ajout de Calendar possede un jeton
+    `contacts.readonly` seulement. Lui afficher un calendrier vide serait
+    incomprehensible ; lui dire « reconnectez Google » est la verite.
+    """
+    brut = (document or {}).get("scope") or ""
+    return [s for s in str(brut).split() if s]
+
+
+async def g1_document(coach_id: str) -> dict:
+    """Le document de jetons du coach, ou {}. LECTURE."""
+    try:
+        return await db[G1_COLLECTION].find_one(
+            {"coach_email": (coach_id or "").lower().strip()}, {"_id": 0}) or {}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[GOOGLE-1] lecture des jetons impossible : %s", type(e).__name__)
+        return {}
+
+
+async def g1_access_token(coach_id: str) -> dict:
+    """Un access_token VALIDE, renouvele si besoin. `{"token","motif"}`.
+
+    LE RENOUVELLEMENT EST COTE SERVEUR, TOUJOURS. Aucun `refresh_token` ne
+    quitte le backend : il n'apparait ni dans une reponse d'API, ni dans un
+    journal, ni dans le navigateur.
+
+    UNE REVOCATION SE RECONNAIT ET SE DIT. Google repond `invalid_grant` quand
+    l'utilisateur a retire l'acces : on marque alors la connexion comme
+    revoquee plutot que de reessayer en boucle, et l'ecran proposera de
+    reconnecter.
+    """
+    document = await g1_document(coach_id)
+    if not document:
+        return {"token": "", "motif": "non_connecte"}
+    if document.get("revoked_at"):
+        return {"token": "", "motif": "revoque"}
+
+    encore_bon = (document.get("access_token")
+                  and (document.get("expires_at") or "") > datetime.now(timezone.utc).isoformat())
+    if encore_bon:
+        clair = g1_dechiffrer(document.get("access_token"))
+        if clair:
+            return {"token": clair, "motif": ""}
+
+    rafraichissement = g1_dechiffrer(document.get("refresh_token"))
+    if not rafraichissement:
+        return {"token": "", "motif": "sans_refresh"}
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            reponse = await client.post("https://oauth2.googleapis.com/token", data={
+                "client_id": GOOGLE_CONTACTS_CLIENT_ID,
+                "client_secret": GOOGLE_CONTACTS_CLIENT_SECRET,
+                "refresh_token": rafraichissement,
+                "grant_type": "refresh_token"})
+        donnees = reponse.json() if reponse is not None else {}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[GOOGLE-1] renouvellement impossible : %s", type(e).__name__)
+        return {"token": "", "motif": "google_indisponible"}
+
+    if donnees.get("error") == "invalid_grant":
+        await db[G1_COLLECTION].update_one(
+            {"coach_email": (coach_id or "").lower().strip()},
+            {"$set": {"revoked_at": datetime.now(timezone.utc).isoformat()}})
+        logger.warning("[GOOGLE-1] acces revoque par l'utilisateur")
+        return {"token": "", "motif": "revoque"}
+    nouveau = donnees.get("access_token")
+    if not nouveau:
+        return {"token": "", "motif": "google_indisponible"}
+
+    await db[G1_COLLECTION].update_one(
+        {"coach_email": (coach_id or "").lower().strip()},
+        {"$set": {"access_token": g1_chiffrer(nouveau),
+                  "expires_at": g1_expire_dans(donnees.get("expires_in")),
+                  "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return {"token": nouveau, "motif": ""}
+
+
+def g1_verdict_http(code: int) -> str:
+    """Ce qu'un code HTTP de Google veut dire pour nous. PURE.
+
+    UNE PANNE DE GOOGLE N'EST PAS UNE PANNE D'AFROBOOST. Chacun de ces cas
+    rend un motif lisible, et l'appelant affiche le calendrier natif sans les
+    evenements Google — jamais une erreur qui masquerait tout l'ecran.
+    """
+    if code in (401,):
+        return "reconnexion_requise"
+    if code in (403,):
+        return "acces_refuse"
+    if code in (429,):
+        return "trop_de_requetes"
+    if code >= 500:
+        return "google_indisponible"
+    return "" if 200 <= code < 300 else "erreur_google"
+
+
+async def g1_appel_google(chemin: str, jeton: str, params: dict = None) -> dict:
+    """Un appel LECTURE SEULE a l'API Google. `{"ok","donnees","motif"}`.
+
+    C'est le seul endroit du lot qui sort de la machine, et il ne fait que des
+    GET : aucune ecriture chez Google n'est possible depuis GOOGLE-1, meme par
+    erreur de programmation.
+    """
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            reponse = await client.get(
+                "https://www.googleapis.com/calendar/v3" + chemin,
+                headers={"Authorization": "Bearer " + jeton}, params=params or {})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[GOOGLE-1] appel %s impossible : %s", chemin, type(e).__name__)
+        return {"ok": False, "donnees": {}, "motif": "google_indisponible"}
+    motif = g1_verdict_http(getattr(reponse, "status_code", 500))
+    if motif:
+        return {"ok": False, "donnees": {}, "motif": motif}
+    try:
+        return {"ok": True, "donnees": reponse.json(), "motif": ""}
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "donnees": {}, "motif": "reponse_illisible"}
+
+
+def g1_evenement_externe(brut: dict, calendrier: str) -> dict:
+    """Un evenement Google, dans la forme du calendrier Afroboost. PURE.
+
+    IL PORTE `source: "google"` ET `modifiable: False`. C'est ce qui le rend
+    visuellement distinct dans la grille, et ce qui empeche l'ecran de
+    proposer de le deplacer : GOOGLE-1 ne sait rien ecrire chez Google.
+
+    IL N'EST PAS STOCKE. Aucun document n'entre dans `calendar_events` : le
+    copier creerait une seconde verite qui divergerait au premier changement
+    fait depuis Google.
+    """
+    e = brut or {}
+    debut = (e.get("start") or {})
+    fin = (e.get("end") or {})
+    quand = debut.get("dateTime") or debut.get("date") or ""
+    return {
+        "id": "google:%s:%s" % (calendrier, e.get("id") or ""),
+        "title": e.get("summary") or "(sans titre)",
+        "description": "",
+        "starts_at": quand,
+        "ends_at": fin.get("dateTime") or fin.get("date") or "",
+        "all_day": bool(debut.get("date") and not debut.get("dateTime")),
+        "event_type": "google",
+        "status": e.get("status") or "confirmed",
+        "location": e.get("location") or "",
+        "source": "google", "source_id": e.get("id"),
+        "modifiable": False,
+        "calendar_id": calendrier,
+        "prospect_id": None, "recipient_key": None,
+        "campaign_id": None, "campaign_action_id": None,
+        "priority": None, "completed_at": None,
+    }
+
+
+@api_router.get("/google/auth-url")
+async def g1_url_autorisation(request: Request):
+    """L'URL de consentement Google. AUTHENTIFIEE, et l'etat est signe."""
+    email = await _v309_require_coach_or_admin(request)
+    if not GOOGLE_CONTACTS_CLIENT_ID:
+        raise HTTPException(status_code=503, detail="Google non configure")
+    import urllib.parse
+    params = urllib.parse.urlencode({
+        "client_id": GOOGLE_CONTACTS_CLIENT_ID,
+        "redirect_uri": g1_redirection(),
+        "response_type": "code",
+        "scope": " ".join(G1_SCOPES),
+        "access_type": "offline",
+        # `consent` force Google a rendre un refresh_token, meme si le coach
+        # avait deja autorise l'application avec un scope plus etroit.
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+        "state": g1_signer_etat(email),
+    })
+    return {"auth_url": "https://accounts.google.com/o/oauth2/v2/auth?" + params,
+            "configured": True, "scopes": list(G1_SCOPES)}
+
+
+@api_router.get("/google/callback")
+async def g1_callback(code: str = "", state: str = "", error: str = ""):
+    """Le retour de Google. IL NE CROIT PAS L'APPELANT, IL VERIFIE.
+
+    L'identite vient de la SIGNATURE du `state`, jamais d'un en-tete ni d'un
+    parametre libre. Un `state` forge ou expire n'ecrit rien.
+    """
+    from fastapi.responses import HTMLResponse
+    if error:
+        return _v332_page("Connexion Google refusee",
+                          "Vous pouvez fermer cette fenetre.", "#f87171")
+    email = g1_verifier_etat(state)
+    if not email or not code:
+        logger.warning("[GOOGLE-1] callback refuse : etat invalide")
+        return _v332_page("Lien invalide",
+                          "Cette demande de connexion n'est pas valable. Recommencez "
+                          "depuis votre tableau de bord.", "#f87171")
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            reponse = await client.post("https://oauth2.googleapis.com/token", data={
+                "client_id": GOOGLE_CONTACTS_CLIENT_ID,
+                "client_secret": GOOGLE_CONTACTS_CLIENT_SECRET,
+                "code": code, "grant_type": "authorization_code",
+                "redirect_uri": g1_redirection()})
+        jetons = reponse.json()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[GOOGLE-1] echange de code impossible : %s", type(e).__name__)
+        return _v332_page("Connexion impossible",
+                          "Google n'a pas repondu. Reessayez dans un moment.", "#f87171")
+    if jetons.get("error") or not jetons.get("access_token"):
+        return _v332_page("Connexion impossible",
+                          "Google a refuse cette demande.", "#f87171")
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    champs = {
+        "coach_email": email,
+        "access_token": g1_chiffrer(jetons.get("access_token")),
+        "expires_at": g1_expire_dans(jetons.get("expires_in")),
+        "scope": jetons.get("scope") or " ".join(G1_SCOPES),
+        "updated_at": maintenant,
+    }
+    # LE REFRESH TOKEN N'EST RENDU QU'A LA PREMIERE AUTORISATION. Ecraser
+    # celui qu'on a par une valeur vide couperait la connexion en silence.
+    if jetons.get("refresh_token"):
+        champs["refresh_token"] = g1_chiffrer(jetons["refresh_token"])
+    await db[G1_COLLECTION].update_one(
+        {"coach_email": email},
+        {"$set": champs, "$setOnInsert": {"created_at": maintenant},
+         "$unset": {"revoked_at": ""}},
+        upsert=True)
+    logger.info("[GOOGLE-1] connexion etablie pour %s", email[:24])
+    return _v332_page("Google connecte",
+                      "Vous pouvez fermer cette fenetre et revenir au tableau de bord.")
+
+
+@api_router.get("/google/status")
+async def g1_statut(request: Request):
+    """L'etat de la connexion Google. AUCUN JETON N'EST RENDU."""
+    email = await _v309_require_coach_or_admin(request)
+    document = await g1_document(email)
+    scopes = g1_scopes_du_document(document)
+    return {
+        "connected": bool(document.get("refresh_token")) and not document.get("revoked_at"),
+        "revoked": bool(document.get("revoked_at")),
+        "configured": bool(GOOGLE_CONTACTS_CLIENT_ID),
+        # §8 — ON NE FAIT PAS CROIRE QU'UN JETON PORTE UN SCOPE QU'IL N'A PAS.
+        "calendar_granted": G1_SCOPE_CALENDRIER in scopes,
+        "reconnect_required": bool(document.get("refresh_token"))
+                              and G1_SCOPE_CALENDRIER not in scopes,
+        "scopes": scopes,
+        "connected_at": document.get("created_at"),
+        "selected_calendars": document.get("selected_calendars") or [],
+    }
+
+
+@api_router.get("/google/calendars")
+async def g1_calendriers(request: Request):
+    """Les calendriers accessibles. LECTURE SEULE."""
+    email = await _v309_require_coach_or_admin(request)
+    acces = await g1_access_token(email)
+    if not acces["token"]:
+        return {"calendars": [], "motif": acces["motif"]}
+    issue = await g1_appel_google("/users/me/calendarList", acces["token"],
+                                  {"maxResults": G1_CALENDRIERS_MAX,
+                                   "minAccessRole": "reader"})
+    if not issue["ok"]:
+        return {"calendars": [], "motif": issue["motif"]}
+    sortie = []
+    for c in (issue["donnees"].get("items") or [])[:G1_CALENDRIERS_MAX]:
+        sortie.append({"id": c.get("id"), "name": c.get("summary") or c.get("id"),
+                       "primary": bool(c.get("primary")),
+                       "access_role": c.get("accessRole")})
+    return {"calendars": sortie, "motif": ""}
+
+
+@api_router.post("/google/calendars/selection")
+async def g1_choisir_calendriers(request: Request):
+    """Quels calendriers afficher dans Afroboost. Ecrit UNIQUEMENT ce choix."""
+    email = await _v309_require_coach_or_admin(request)
+    corps = await request.json()
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+    choix = corps.get("calendars")
+    if not isinstance(choix, list):
+        raise HTTPException(status_code=400, detail="Une liste de calendriers est requise")
+    propres = [str(c).strip() for c in choix if str(c).strip()][:G1_CALENDRIERS_MAX]
+    await db[G1_COLLECTION].update_one(
+        {"coach_email": email},
+        {"$set": {"selected_calendars": propres,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return {"selected_calendars": propres}
+
+
+@api_router.get("/google/events")
+async def g1_evenements(request: Request):
+    """Les evenements Google d'une fenetre. LECTURE SEULE, JAMAIS STOCKES.
+
+    UNE PANNE DE GOOGLE NE CASSE PAS LE CALENDRIER. Cette route rend
+    `events: []` avec un motif plutot qu'une erreur : l'ecran affiche alors le
+    calendrier natif sans les evenements Google, ce qui est exactement le
+    comportement voulu — Afroboost ne depend de Google pour rien.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    parametres = request.query_params
+    fenetre = cal1_fenetre(parametres.get("from"), parametres.get("to"))
+
+    acces = await g1_access_token(email)
+    if not acces["token"]:
+        return {"events": [], "motif": acces["motif"],
+                "from": fenetre["debut"], "to": fenetre["fin"]}
+
+    document = await g1_document(email)
+    if G1_SCOPE_CALENDRIER not in g1_scopes_du_document(document):
+        return {"events": [], "motif": "reconnexion_requise",
+                "from": fenetre["debut"], "to": fenetre["fin"]}
+
+    calendriers = document.get("selected_calendars") or ["primary"]
+    sortie, motif = [], ""
+    for calendrier in calendriers[:G1_CALENDRIERS_MAX]:
+        issue = await g1_appel_google(
+            "/calendars/%s/events" % urllib.parse.quote(str(calendrier), safe=""),
+            acces["token"],
+            {"timeMin": fenetre["debut"], "timeMax": fenetre["fin"],
+             "singleEvents": "true", "orderBy": "startTime",
+             "maxResults": G1_EVENEMENTS_MAX})
+        if not issue["ok"]:
+            motif = motif or issue["motif"]
+            continue
+        for e in (issue["donnees"].get("items") or []):
+            vue = g1_evenement_externe(e, calendrier)
+            if vue["starts_at"]:
+                sortie.append(vue)
+    sortie.sort(key=lambda x: (x["starts_at"], x["id"]))
+    return {"events": sortie[:G1_EVENEMENTS_MAX], "motif": motif,
+            "from": fenetre["debut"], "to": fenetre["fin"]}
+
+
+@api_router.post("/google/disconnect")
+async def g1_deconnecter(request: Request):
+    """Deconnecte Google. AUCUNE DONNEE AFROBOOST N'EST TOUCHEE.
+
+    Les taches, les rendez-vous, les campagnes et les prospects restent
+    exactement ou ils sont : Google n'etait qu'un affichage supplementaire.
+    On tente aussi de revoquer le jeton chez Google — un echec de cette
+    revocation n'empeche pas la deconnexion locale, qui est ce que le coach a
+    demande.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    document = await g1_document(email)
+    revoque = False
+    jeton = g1_dechiffrer(document.get("refresh_token"))
+    if jeton:
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.post("https://oauth2.googleapis.com/revoke",
+                                      params={"token": jeton})
+            revoque = 200 <= getattr(r, "status_code", 500) < 300
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[GOOGLE-1] revocation Google echouee : %s", type(e).__name__)
+    resultat = await db[G1_COLLECTION].delete_one({"coach_email": email})
+    logger.info("[GOOGLE-1] deconnexion de %s (revocation Google : %s)",
+                email[:24], revoque)
+    return {"disconnected": bool(getattr(resultat, "deleted_count", 0)) or bool(document),
+            "revoked_at_google": revoque}
 
 
 # --- Leads Routes (Widget IA) ---
@@ -39635,6 +40220,11 @@ async def startup_db():
         await db[CAL1_COLLECTION].create_index(
             [("coach_id", 1), ("prospect_id", 1), ("starts_at", 1)],
             partialFilterExpression={"prospect_id": {"$type": "string"}})
+
+        # GOOGLE-1 — un seul document de jetons par coach. L'unicite n'est pas
+        # decorative : deux lignes pour un meme compte laisseraient l'une
+        # d'elles porter un `refresh_token` perime que rien ne nettoierait.
+        await db[G1_COLLECTION].create_index("coach_email", unique=True)
         # Le rattachement fort interroge les actions par leur `Message-ID` RFC.
         await db[P3S3_ACTIONS].create_index(
             [("coach_id", 1), (P3U2_CHAMP_RFC, 1)],
