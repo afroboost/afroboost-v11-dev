@@ -484,9 +484,24 @@ verifier("9k. le factice sait rendre un verdict PAR destinataire",
          lancer(_f.envoyer({"recipient_key": "A"}, "c"))["verdict"] == "PERMANENT_FAILURE"
          and lancer(_f.envoyer({"recipient_key": "B"}, "c"))["verdict"] == "SUCCESS")
 verifier("9l. le factice trace ses appels (pour les bancs)", len(_f.appels) == 2)
+# CE QUE CETTE VERIFICATION PROTEGE : le fournisseur n'a acces ni a la fiche
+# prospect, ni aux compteurs, ni au reste de la campagne — « un adaptateur qui
+# pourrait lire la base pourrait aussi l'ecrire ». Elle le prouvait en figeant
+# la liste EXACTE des cles, ce qui la faisait mordre des qu'une cle legitime
+# s'ajoutait (P3-U1 : `action_id`, pour signer le lien de desabonnement).
+# On garde la liste exacte — elle reste la meilleure garde contre une fuite
+# accidentelle — et on NOMME en plus ce qui ne doit jamais en faire partie.
+_INSTANTANE = S.p3s3d_instantane_envoi(_cible)
 verifier("9m. il ne recoit QUE l'instantane d'envoi",
-         set(S.p3s3d_instantane_envoi(_cible)) ==
-         {"canal", "destinataire", "message", "langue", "organisation", "recipient_key"})
+         set(_INSTANTANE) == {"canal", "destinataire", "message", "langue",
+                              "organisation", "recipient_key", "action_id"},
+         str(sorted(_INSTANTANE)))
+verifier("9m-bis. rien de la fiche, des compteurs ni de la campagne n'y entre",
+         not (set(_INSTANTANE) & {"prospect_ids", "prospect_uuids", "coach_id",
+                                  "campaign_id", "score", "priority", "category",
+                                  "statut", "wave", "sent_at", "verrou_actif",
+                                  "first_contact_claimed_at", "provider_message_id"}),
+         str(sorted(_INSTANTANE)))
 
 
 # ============================================================================

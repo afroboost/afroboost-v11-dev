@@ -22931,7 +22931,11 @@ def p3s3d_instantane_envoi(action: dict) -> dict:
     return {"canal": a.get("channel"), "destinataire": a.get("target"),
             "message": a.get("message_j0"), "langue": a.get("language"),
             "organisation": (a.get("organisations") or [""])[0],
-            "recipient_key": a.get("recipient_key")}
+            "recipient_key": a.get("recipient_key"),
+            # P3-U1 : l'identifiant sert UNIQUEMENT a fabriquer le lien de
+            # desabonnement. Il ne donne acces a rien : l'adaptateur ne lit
+            # toujours pas la base, et le jeton derive est signe.
+            "action_id": a.get("id")}
 
 
 class P3S3DFournisseurFactice:
@@ -23249,7 +23253,7 @@ P3S3D2_OBJET_MAX = 200
 P3S3D2_EXPEDITEUR = "Afroboost <notifications@afroboost.com>"
 
 
-def p3s3d2_entetes_prospect() -> dict:
+def p3s3d2_entetes_prospect(instantane: dict = None) -> dict:
     """Un desabonnement praticable, SANS jeton — la seule forme honnete ici.
 
     `_v336_entetes_desinscription` construit un lien `List-Unsubscribe` a
@@ -23258,12 +23262,33 @@ def p3s3d2_entetes_prospect() -> dict:
     des abonnes. Poser ce lien leur offrirait un bouton « se desinscrire » qui
     repondrait « lien invalide » — pire que pas de bouton du tout.
 
-    La RFC 8058 admet la forme `mailto:` seule, et elle fonctionne sans jeton.
-    On l'utilise donc seule, sans `List-Unsubscribe-Post` : l'en-tete un-clic
-    exige une URL qui accepte un POST, et nous n'en avons pas a offrir.
+    P3-U1 REND CE COMMENTAIRE CADUC, ET C'EST TOUT L'OBJET DU LOT. Le repli
+    `mailto:` pointait vers `notifications@afroboost.com` — et le domaine
+    `afroboost.com` n'a AUCUN enregistrement MX. Ce n'etait donc pas un
+    desabonnement degrade : c'etait un bouton qui rebondit. Un destinataire qui
+    n'a pas de sortie propre en prend une autre — « Signaler comme spam » — et
+    la reputation du domaine paie pour TOUS les envois, transactionnels inclus.
+
+    Il y a desormais une URL, et elle fonctionne sans jeton stocke : le jeton
+    est DERIVE de l'action par signature. Rien n'est ecrit dans la campagne
+    approuvee pour l'obtenir.
+
+    Le `mailto:` de repli reste — la RFC 8058 le prevoit pour les clients sans
+    un-clic — mais il pointe maintenant vers une boite QUI EXISTE.
     """
-    return {"List-Unsubscribe":
-            "<mailto:notifications@afroboost.com?subject=unsubscribe>"}
+    lien = p3u1_lien_desabonnement((instantane or {}).get("action_id"))
+    repli = "<mailto:%s?subject=unsubscribe>" % AFROBOOST_REPLY_TO_CANONIQUE
+    if not lien:
+        # Sans action identifiable (e-mail de test, par exemple), aucun lien
+        # ne peut etre signe. On ne fabrique pas une URL qui echouera : on
+        # laisse le seul repli, vers une adresse relevee.
+        return {"List-Unsubscribe": repli}
+    return {
+        "List-Unsubscribe": "<%s>, %s" % (lien, repli),
+        # L'un-clic. Gmail POSTe sur l'URL ; si ce POST echouait, il
+        # considererait le desabonnement comme non honore.
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
 
 
 def p3s3d2_corps_html(message: str) -> str:
@@ -23336,7 +23361,7 @@ class P3S3DFournisseurEmail:
                 "to": [(instantane or {}).get("destinataire")],
                 "subject": self.objet,
                 "reply_to": self.reply_to,
-                "headers": p3s3d2_entetes_prospect(),
+                "headers": p3s3d2_entetes_prospect(instantane),
                 "text": message,
                 "html": p3s3d2_corps_html(message),
             },
@@ -23929,6 +23954,148 @@ async def p3s3d4_test_fournisseur_email(request: Request):
         "envoye_a_un_prospect": False,
         "campagne_touchee": False,
     }
+
+
+# ============================================================================
+# P3-U1 — UN DESABONNEMENT QUI FONCTIONNE VRAIMENT
+# ============================================================================
+# CE QUI N'ALLAIT PAS. L'en-tete `List-Unsubscribe` des e-mails de prospection
+# pointait vers `mailto:notifications@afroboost.com`. Le domaine
+# `afroboost.com` n'a AUCUN enregistrement MX : ce n'etait pas une boite qu'on
+# ne releve pas, c'est un domaine qui ne peut RIEN recevoir. Le bouton « Se
+# desabonner » de Gmail rebondissait. Un destinataire sans sortie propre en
+# prend une autre — « Signaler comme spam » — et la reputation du domaine paie
+# pour TOUS les envois, y compris les e-mails transactionnels des abonnes.
+#
+# CE LOT NE CREE AUCUN SECOND SYSTEME. Le registre des refus existe
+# (`subscribers`, statut `opted_out`), sa lecture existe (`c3_refus_exprimes`),
+# et le moteur de campagne l'interroge DEJA avant chaque envoi. Il manquait
+# uniquement une porte par laquelle un prospect puisse y entrer lui-meme.
+#
+# POURQUOI UN JETON DERIVE, ET NON STOCKE. `subscribers` porte un
+# `unsubscribe_token` tire au sort et range en base. Reproduire ce schema
+# exigerait d'ecrire un champ sur les 137 actions d'une campagne DEJA
+# APPROUVEE. On derive donc le jeton de l'action par signature : rien a
+# ecrire, rien a migrer, et le meme lien peut etre reconstruit a tout moment.
+#
+# CE QUE LE JETON NE MONTRE PAS. Ni l'adresse, ni la cle du destinataire, ni
+# l'identifiant de campagne. Il porte l'identifiant de l'ACTION — un uuid4,
+# donc non devinable — et une signature qui empeche d'en fabriquer un autre
+# meme en connaissant cet identifiant.
+
+
+def p3u1_secret() -> str:
+    """Le secret de signature. Un secret ABSENT ferme la porte, jamais l'inverse.
+
+    Renvoyer une chaine vide ferait signer tout le monde avec le meme secret
+    vide : n'importe qui pourrait alors desabonner n'importe qui. On prefere
+    donc ne produire AUCUN lien plutot qu'un lien forgeable — l'e-mail garde
+    son `mailto:` de repli, qui lui aboutit dans une vraie boite.
+    """
+    return (os.environ.get("AFROBOOST_UNSUB_SECRET")
+            or os.environ.get("JWT_SECRET") or "").strip()
+
+
+def p3u1_jeton(action_id: str) -> str:
+    """`<action_id>.<signature>`, ou '' si on ne peut pas signer. PURE."""
+    import hmac as _h
+    import hashlib as _hh
+    identifiant = (action_id or "").strip()
+    secret = p3u1_secret()
+    if not identifiant or not secret:
+        return ""
+    signature = _h.new(secret.encode(), ("p3u1:" + identifiant).encode(),
+                       _hh.sha256).hexdigest()[:32]
+    return "%s.%s" % (identifiant, signature)
+
+
+def p3u1_action_du_jeton(jeton: str) -> str:
+    """L'identifiant d'action porte par un jeton VALIDE, sinon ''. PURE.
+
+    La comparaison passe par `hmac.compare_digest` : une comparaison naive
+    revelerait la signature octet par octet a qui mesure le temps de reponse.
+    """
+    import hmac as _h
+    brut = (jeton or "").strip()
+    if not brut or "." not in brut:
+        return ""
+    identifiant, _, signature = brut.rpartition(".")
+    attendu = p3u1_jeton(identifiant)
+    if not attendu:
+        return ""
+    return identifiant if _h.compare_digest(attendu, brut) else ""
+
+
+def p3u1_lien_desabonnement(action_id: str) -> str:
+    """L'URL complete, ou '' si aucun jeton n'est signable. PURE."""
+    jeton = p3u1_jeton(action_id)
+    if not jeton:
+        return ""
+    return "%s/api/prospects/unsubscribe?token=%s" % (_v332_url_publique(), jeton)
+
+
+async def p3u1_enregistrer_refus(canal: str, valeur: str) -> dict:
+    """Inscrit un refus dans le registre CANONIQUE. Idempotent.
+
+    DEUX ECRITURES, ET C'EST VOULU. La premiere pose le statut et se contente
+    d'un `upsert` : elle peut se rejouer sans fin, un refus deja exprime reste
+    un refus. La seconde pose la DATE, sous condition d'absence — le patron
+    maison (`update_one` filtre sur `$exists: False`, puis lecture de
+    `matched_count`). Un second clic ne rajeunit donc pas la date du premier :
+    c'est ce qui permettra plus tard de dire QUAND quelqu'un a dit non.
+    """
+    normalisee = _v332_normaliser(canal, valeur)
+    if not normalisee:
+        return {"ok": False, "motif": "valeur inexploitable", "premiere_fois": False}
+    maintenant = datetime.now(timezone.utc).isoformat()
+    await db.subscribers.update_one(
+        {"channel": canal, "value": normalisee},
+        {"$set": {"status": "opted_out", "updated_at": maintenant},
+         "$setOnInsert": {"channel": canal, "value": normalisee,
+                          "created_at": maintenant, "source": "p3_prospection"}},
+        upsert=True)
+    pose = await db.subscribers.update_one(
+        {"channel": canal, "value": normalisee, "opted_out_at": {"$exists": False}},
+        {"$set": {"opted_out_at": maintenant}})
+    return {"ok": True, "motif": "",
+            "premiere_fois": bool(getattr(pose, "matched_count", 0))}
+
+
+@api_router.api_route("/prospects/unsubscribe", methods=["GET", "POST"])
+async def p3u1_desabonnement_prospect(token: str = ""):
+    """Le desabonnement d'un prospect. SANS authentification, par construction.
+
+    GET  = un humain a clique dans le corps de l'e-mail.
+    POST = l'un-clic de Gmail / Apple Mail, declenche par les deux en-tetes.
+
+    C'est le seul endroit du systeme ou l'absence d'authentification est la
+    bonne reponse : exiger un compte pour cesser d'etre demarche serait une
+    facade. Le jeton signe tient lieu de preuve, et il ne permet QUE cela —
+    aucune lecture de fiche, aucune ecriture ailleurs que dans le registre.
+
+    LA MEME PAGE DANS TOUS LES CAS DE SUCCES. Un premier clic et un second
+    rendent le meme ecran : le destinataire n'a pas a savoir si le systeme
+    avait deja enregistre sa demande, il veut seulement qu'elle soit prise.
+    """
+    identifiant = p3u1_action_du_jeton(token)
+    if not identifiant:
+        return _v332_page("Lien invalide",
+                          "Ce lien de desinscription n'est pas valable. "
+                          "Ecrivez-nous et nous le ferons manuellement.", "#f87171")
+    action = await db[P3S3_ACTIONS].find_one(
+        {"id": identifiant}, {"_id": 0, "channel": 1, "target": 1, "recipient_key": 1})
+    if not action:
+        return _v332_page("Lien invalide",
+                          "Ce lien de desinscription n'est plus valable.", "#f87171")
+    issue = await p3u1_enregistrer_refus(action.get("channel") or "email",
+                                         action.get("target"))
+    if not issue["ok"]:
+        return _v332_page("Desinscription impossible",
+                          "Nous n'avons pas pu traiter ce lien. Ecrivez-nous.", "#f87171")
+    logger.info("[P3-U1] refus enregistre pour %s (%s) — premiere fois : %s",
+                action.get("recipient_key"), action.get("channel"), issue["premiere_fois"])
+    return _v332_page("Desinscription effectuee",
+                      "Vous ne recevrez plus de message d'Afroboost.", "#f59e0b")
 
 
 # --- Leads Routes (Widget IA) ---

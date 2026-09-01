@@ -279,7 +279,11 @@ verifier("3g. AUCUN code Instagram ajoute",
 print("\n4. LA CHARGE UTILE — CE QUI PARTIRAIT")
 
 _f = S.P3S3DFournisseurEmail(objet=OBJET)
+# L'INSTANTANE PORTE UN `action_id`, comme tout envoi reel : c'est de lui que
+# le lien de desabonnement est signe (P3-U1). Un instantane sans identifiant
+# existe — l'e-mail de TEST de la route D4 — et il est couvert par le banc U1.
 _ch = _f.charge_utile({"destinataire": "contact@studio.test",
+                       "action_id": "act-d2-fixture",
                        "message": "Bonjour !\nUne masterclass ?"}, "p3-c-GVA-F3-j0")
 _p = _ch["params"]
 verifier("4a. expediteur", _p["from"] == S.P3S3D2_EXPEDITEUR)
@@ -290,13 +294,28 @@ verifier("4e. version TEXTE presente (un HTML seul est un signal de filtrage)",
          _p["text"] == "Bonjour !\nUne masterclass ?")
 verifier("4f. version HTML presente", _p["html"].startswith("<!DOCTYPE html>"))
 verifier("4g. le HTML porte les deux lignes", _p["html"].count("<p ") == 2)
-verifier("4h. desabonnement `mailto:` — la seule forme qui marche SANS jeton",
-         _p["headers"] == {"List-Unsubscribe":
-                           "<mailto:notifications@afroboost.com?subject=unsubscribe>"})
-verifier("4i. PAS de `List-Unsubscribe-Post` (aucune URL n'accepte le POST)",
-         "List-Unsubscribe-Post" not in _p["headers"])
-verifier("4j. le lien a jeton de V336 n'est PAS utilise (les prospects n'en ont pas)",
-         "unsubscribe?token" not in json.dumps(_p))
+# CES DEUX VERIFICATIONS DECRIVAIENT LE DEFAUT, PAS LE CONTRAT. Elles
+# EXIGEAIENT le `mailto:notifications@afroboost.com` et l'ABSENCE d'un-clic —
+# or ce domaine n'a aucun MX : le bouton « Se desabonner » rebondissait. P3-U1
+# a corrige cela ; le contrat s'inverse donc, et la propriete de fond monte
+# d'un cran : il y a TOUJOURS une sortie, et elle aboutit quelque part.
+verifier("4h. un en-tete de desabonnement est TOUJOURS present",
+         bool(_p["headers"].get("List-Unsubscribe")), str(_p["headers"]))
+verifier("4h-bis. il ne pointe plus vers le domaine SANS MX",
+         "notifications@afroboost.com" not in str(_p["headers"]), str(_p["headers"]))
+verifier("4i. l'un-clic RFC 8058 est desormais annonce, avec une URL pour l'honorer",
+         _p["headers"].get("List-Unsubscribe-Post") == "List-Unsubscribe=One-Click"
+         and "/api/prospects/unsubscribe?token=" in _p["headers"]["List-Unsubscribe"],
+         str(_p["headers"]))
+# LA PROPRIETE VISEE ETAIT : « on ne fabrique pas un jeton d'abonne que le
+# prospect n'a pas ». Elle tient toujours — mais P3-U1 a donne aux prospects
+# leur PROPRE mecanisme, avec une route distincte et un jeton DERIVE par
+# signature, sans aucune ligne dans `subscribers`. L'assertion se reformule
+# donc sur ce qui compte : la route des abonnes reste hors du chemin prospect.
+verifier("4j. la route des ABONNES (`/subscribers/unsubscribe`) n'est pas utilisee",
+         "/api/subscribers/unsubscribe" not in json.dumps(_p), json.dumps(_p)[:200])
+verifier("4j-bis. c'est la route PROSPECT, avec un jeton derive, qui sert",
+         "/api/prospects/unsubscribe?token=" in json.dumps(_p), json.dumps(_p)[:200])
 
 # L'IDEMPOTENCE NATIVE.
 verifier("4k. la cle d'idempotence est passee en OPTION du SDK",
@@ -306,8 +325,13 @@ verifier("4l. ... et c'est bien l'option que le SDK transforme en en-tete",
          io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read())
 verifier("4m. rejouee, la charge est IDENTIQUE (meme cle, meme corps)",
          _f.charge_utile({"destinataire": "contact@studio.test",
+                          "action_id": "act-d2-fixture",
                           "message": "Bonjour !\nUne masterclass ?"},
                          "p3-c-GVA-F3-j0") == _ch)
+verifier("4m-bis. le lien de desabonnement est STABLE d'une tentative a l'autre "
+         "(un jeton qui changerait invaliderait le lien deja envoye)",
+         S.p3u1_lien_desabonnement("act-d2-fixture")
+         == S.p3u1_lien_desabonnement("act-d2-fixture"))
 
 # Le message est du TEXTE : il ne doit pas devenir du balisage.
 _ech = S.P3S3DFournisseurEmail(objet="o").charge_utile(
