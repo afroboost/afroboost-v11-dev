@@ -11176,8 +11176,51 @@ V332_CANAUX = ("whatsapp", "email")
 
 # V336 — DÉLIVRABILITÉ DES E-MAILS
 # Adresse de réponse réelle : un expéditeur dont le Reply-To ne mène nulle part
-# ressemble à une machine anonyme. Surchargeable par l'environnement.
-V336_REPLY_TO = os.environ.get("AFROBOOST_REPLY_TO", "contact@afroboost.ch")
+# ressemble à une machine anonyme.
+#
+# ═══ UNE SEULE SOURCE POUR L'ADRESSE DE RÉPONSE ═════════════════════════════
+#
+# Elle vivait auparavant en DEUX endroits, avec deux valeurs différentes et
+# deux variables d'environnement : `AFROBOOST_REPLY_TO` ici, et
+# `AFROBOOST_REPLY_TO_RAPPELS` mille lignes plus bas. Deux sources, c'est la
+# garantie qu'un jour l'une est corrigée et l'autre oubliée — ce qui est
+# exactement arrivé.
+#
+# `notifications@afroboost.com` n'est PAS une boîte relevée : c'est l'adresse
+# d'envoi, pas de réception. Le Reply-To est donc le SEUL chemin par lequel une
+# organisation démarchée peut répondre. S'il ne mène nulle part, la réponse est
+# perdue sans que personne ne le sache — aucune erreur, aucun rebond, rien.
+AFROBOOST_REPLY_TO_CANONIQUE = "contact@afroboosteur.com"
+
+# LES ADRESSES MORTES, NOMMÉES. `contact@afroboost.ch` a servi de valeur par
+# défaut et personne ne relève cette boîte. La lister ici n'est pas un excès de
+# prudence : la valeur reste surchargeable par l'environnement, et rien
+# n'empêcherait Coolify de reposer demain l'ancienne adresse — silencieusement,
+# puisqu'une adresse syntaxiquement valide ne déclenche aucune erreur.
+# On la refuse donc explicitement, en le disant dans les journaux.
+AFROBOOST_REPLY_TO_MORTES = ("contact@afroboost.ch",)
+
+
+def _reply_to_vivant(valeur, defaut=AFROBOOST_REPLY_TO_CANONIQUE):
+    """L'adresse de réponse, ou la canonique si celle proposée est morte. PURE.
+
+    Ne devine rien et ne corrige rien d'autre : une adresse absente, vide ou
+    figurant parmi les mortes rend la canonique. Toute autre valeur est
+    respectée — la surcharge par l'environnement reste possible, c'est
+    seulement le RETOUR DE L'ADRESSE MORTE qui est rendu impossible.
+    """
+    propre = (valeur or "").strip()
+    if not propre:
+        return defaut
+    if propre.lower() in AFROBOOST_REPLY_TO_MORTES:
+        logger.warning(
+            "[REPLY-TO] adresse morte refusee (%s) — repli sur %s. "
+            "Corriger la variable d'environnement.", propre, defaut)
+        return defaut
+    return propre
+
+
+V336_REPLY_TO = _reply_to_vivant(os.environ.get("AFROBOOST_REPLY_TO"))
 
 
 def _v336_entetes_desinscription(lien_desinscription: str) -> dict:
@@ -23273,7 +23316,11 @@ class P3S3DFournisseurEmail:
                  reply_to: str = None, transport=None, envoi_autorise: bool = False):
         self.objet = (objet or "").strip()
         self.expediteur = expediteur or P3S3D2_EXPEDITEUR
-        self.reply_to = reply_to or V336_REPLY_TO
+        # MEME PORTE QUE LA VALEUR PAR DEFAUT. Ecrire `reply_to or V336_REPLY_TO`
+        # laissait un appelant poser explicitement l'adresse morte : le garde-fou
+        # n'aurait protege que le chemin qu'on avait prevu. Il n'y a donc qu'UNE
+        # entree pour cette valeur, quelle qu'en soit la provenance.
+        self.reply_to = _reply_to_vivant(reply_to, V336_REPLY_TO)
         # `transport` n'existe que pour les bancs d'essai : il remplace l'appel
         # au SDK. En production il vaut None, et le SDK reel est utilise.
         self.transport = transport
@@ -29933,7 +29980,14 @@ RV2_CANAUX = (RV2_CANAL_PUSH, RV2_CANAL_EMAIL)
 
 # `notifications@afroboost.com` n'est pas une boite relevee. Une reponse d'un
 # abonne a son rappel doit atterrir chez quelqu'un.
-RV2_REPLY_TO = os.environ.get("AFROBOOST_REPLY_TO_RAPPELS", "contact.artboost@gmail.com")
+#
+# LA MEME SOURCE CANONIQUE QUE LES CAMPAGNES. Ce rappel portait auparavant sa
+# propre valeur par defaut (`contact.artboost@gmail.com`), independante de
+# celle des campagnes : deux adresses de reponse pour un meme expediteur, sans
+# qu'aucune regle ne dise laquelle faisait foi. La surcharge par
+# `AFROBOOST_REPLY_TO_RAPPELS` reste possible pour qui veut les separer a
+# nouveau, mais le DEFAUT est desormais unique.
+RV2_REPLY_TO = _reply_to_vivant(os.environ.get("AFROBOOST_REPLY_TO_RAPPELS"))
 
 RV2_JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
 RV2_MOIS = ("janvier", "fevrier", "mars", "avril", "mai", "juin",

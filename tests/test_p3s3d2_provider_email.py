@@ -209,8 +209,22 @@ verifier("2b. il est bien celui deja utilise 44 fois",
          SRC.count('"from": "Afroboost <notifications@afroboost.com>"') > 10)
 verifier("2c. l'adresse de reponse est celle du depot (V336), pas une nouvelle",
          S.P3S3DFournisseurEmail(objet="x").reply_to == S.V336_REPLY_TO)
+# CE QUE CETTE VERIFICATION VEUT PROUVER : `V336_REPLY_TO` est une
+# infrastructure PREEXISTANTE que D2 reutilise, et non une valeur que D2
+# aurait inventee pour lui-meme. Elle etait ancree sur la FORME exacte de la
+# ligne (`= os.environ.get`), ce qui l'a fait mordre le jour ou la correction
+# Reply-To a interpose une garde. La propriete, elle, n'a pas bouge : la
+# constante existe toujours, elle est toujours SURCHARGEABLE par
+# `AFROBOOST_REPLY_TO`, et D2 n'en definit aucune. On verifie donc cela.
 verifier("2d. ... et V336_REPLY_TO existait AVANT ce lot",
-         "V336_REPLY_TO = os.environ.get" in SRC)
+         hasattr(S, "V336_REPLY_TO")
+         and "AFROBOOST_REPLY_TO" in SRC
+         and SRC.index("V336_REPLY_TO =") < SRC.index("class P3S3DFournisseurEmail"),
+         "definie ligne %d, adaptateur D2 ligne %d"
+         % (SRC[:SRC.index("V336_REPLY_TO =")].count("\n") + 1,
+            SRC[:SRC.index("class P3S3DFournisseurEmail")].count("\n") + 1))
+verifier("2d-bis. ... et elle reste surchargeable par l'environnement",
+         "os.environ.get(\"AFROBOOST_REPLY_TO\")" in SRC)
 verifier("2e. AUCUN second systeme SMTP",
          "smtplib" not in SRC and "SMTP(" not in SRC)
 verifier("2f. AUCUNE seconde cle d'API introduite",
