@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-02, 11:15 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-02, 11:56 UTC**.
 
 ---
 
@@ -99,26 +99,48 @@ Confirmé côté runtime par `GET /api/debug/config` : `jwt_secret_set`, `resend
 | Scopes actuels | `calendar.readonly` + `contacts.readonly` — **LECTURE SEULE** |
 | Créé / rafraîchi | 2026-09-02 08:21:13 UTC / 10:13:47 UTC |
 
-## G. GOOGLE-2 — DÉPLOYÉ EN PRODUCTION, ÉCRITURE EN ATTENTE DE SCOPE
+## G. GOOGLE-2 — **VALIDÉ EN PRODUCTION** (test réel du 2026-09-02)
 
-- Code GOOGLE-2 = commit **9972d48a**, **déployé** (Coolify Success 09:13→09:18 UTC le 02/09)
-- **Preuve runtime** (403 = route existe et protégée ; 405 = route inexistante) :
+- Code = commit **9972d48a**, déployé (Coolify Success 09:13→09:18 UTC le 02/09)
+- Droits d'écriture **acquis** le 02/09 11:49 UTC : consentement OAuth avec `calendar.events`
+- `calendar_write_granted = true`, `reconnect_required_for_sync = false`
+- Scopes du jeton : `calendar.events` + `calendar.readonly` + `contacts.readonly`
+  (les deux lectures ont été **conservées** — `include_granted_scopes` fait son travail)
 
-  | Route | Réponse sans jeton |
-  |---|---|
-  | `POST /api/calendar-events/{id}/google-sync` | **403** |
-  | `POST /api/calendar-events/{id}/google-retry` | **403** |
-  | `DELETE /api/calendar-events/{id}/google-sync` | **403** |
-  | `POST /api/calendar-events/{id}/controle-inexistant` (contrôle) | 405 |
+### Test contrôlé de bout en bout — 13 points, tous verts
 
-- État des droits d'écriture : **`calendar_write_granted = false`**, **`reconnect_required_for_sync = true`**
-- **Seul point manquant** : les jetons stockés ne portent pas `calendar.events`.
-  Ce n'est ni un bug, ni une régression, ni un problème de secret.
-- Cause identifiée : le consentement du 02/09 09:19 UTC accordait bien `calendar.events`, mais le `state`
-  OAuth avait expiré (fenêtre 900 s dépassée) avant le traitement du callback ; l'échange du code a donc
-  été refusé et les jetons de lecture d'origine sont restés inchangés.
-- **Action nécessaire** : un nouveau consentement OAuth avec `calendar.events`, cliqué **dans les 15 minutes**
-  suivant la génération du lien. Rien d'autre.
+Événement `[TEST GOOGLE-2] À SUPPRIMER`, 2026-09-06, aucun prospect, aucune campagne,
+aucune donnée métier touchée. Séquence réellement exécutée en production :
+
+| # | Vérification | Résultat |
+|---|---|---|
+| 1 | Création dans Afroboost | OK — `836d9246`, HTTP 200 |
+| 2 | Sync Google demandée et effectuée | OK — `google_sync_status = synced` |
+| 3 | `google_event_id` réellement enregistré | OK — + `google_etag` présent (Google a répondu) |
+| 4 | Exactement 1 événement chez Google | OK — suppression confirmée par Google, 0 orphelin ensuite |
+| 5 | Aucun doublon dans Afroboost après refresh | OK — moisson Google = 0, inchangée |
+| 6 | Modification du titre ET de l'heure | OK — HTTP 200 |
+| 7 | Même `google_event_id` après modification | OK — identifiant identique |
+| 8 | Retry contrôlé (sans `force`) | OK — `synced`, même identifiant, `attempts = 0` |
+| 9 | Toujours exactement 1 événement Google | OK — aucun doublon après retry |
+| 10 | Suppression explicite des deux côtés (`?google=delete`) | OK — `demande: true` |
+| 11 | Disparition chez Google | OK — `supprime: true`, **confirmé par Google** |
+| 12 | Nettoyage dans Afroboost | OK — suppression douce puis retrait du document de test |
+| 13 | Aucune donnée de test restante | OK — 0 résidu en base, 0 résidu chez Google |
+
+**Preuve d'unicité (la plus forte du lot)** : après la suppression douce, le document
+n'est plus dans le filtre anti-doublon — toute la fenêtre Google redevient visible.
+Le balayage a rendu **0 événement**. Un second exemplaire poussé par erreur serait
+apparu ici en orphelin : il n'y en avait aucun.
+
+**Intégrité vérifiée après le test** : le cours métier du 06/09 est intact ;
+P3 inchangé (142 prospects, 137 actions, 0 contacté, 0 envoyé, 0 inbound,
+drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
+
+- Rappel de conception : la synchronisation est **explicite**, événement par événement
+  (`google_sync` dans le corps). Rien ne part automatiquement.
+- Rappel : **Afroboost écrit d'abord, Google ensuite.** Une panne Google n'annule jamais
+  une création Afroboost.
 - **NE JAMAIS conclure « secret absent »** sans avoir vérifié le runtime réel (cf. pièges de méthode).
 
 ## E. CALENDRIER
@@ -190,15 +212,16 @@ Confirmé côté runtime par `GET /api/debug/config` : `jwt_secret_set`, `resend
 | CAL-2 | `1b9f3492` | déployé | VERT |
 | CAL-3 | `de0f8997` | déployé | VERT |
 | GOOGLE-1 | `521cfe19` | déployé | VERT — lecture Google Calendar prouvée en production |
-| GOOGLE-2 | `9972d48a` | **déployé (prod actuelle)** | Routes actives ; écriture en attente du scope `calendar.events` |
+| GOOGLE-2 | `9972d48a` | **déployé (prod actuelle)** | **VERT** — écriture Google prouvée de bout en bout le 02/09 (13 points) |
 
 ---
 
 # DETTES / PROCHAINES ÉTAPES
 
-- **GOOGLE-2** : un seul geste manquant — nouveau consentement OAuth avec `calendar.events`,
-  cliqué dans les 15 min. Puis vérifier `calendar_write_granted = true`, tester la sync d'un événement,
-  le `google_event_id` et l'anti-doublon.
+- **GOOGLE-2 : terminé.** Plus rien à faire sur ce lot.
+  ⚠️ Le `state` OAuth expire en **900 s** : si une reconnexion Google devient nécessaire un jour,
+  générer le lien et cliquer **immédiatement**. C'est ce délai — et rien d'autre — qui avait fait
+  échouer la première tentative.
 - **P3-LAUNCH-137** : campagne prête, envoi bloqué par les deux drapeaux absents.
   N'ouvrir qu'après GO explicite écrit du coach.
 - Dettes antérieures (non bloquantes) : cf. `CLAUDE.md` et l'historique des lots.
