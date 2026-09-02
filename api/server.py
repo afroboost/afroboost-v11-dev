@@ -24729,14 +24729,48 @@ def p3u3_entete(donnees: dict, nom: str):
     n'en rendent pas tous la meme forme : `In-Reply-To`, `in-reply-to`,
     `In-reply-to`. Chercher une seule ecriture ferait echouer le rattachement
     le plus sur pour une raison purement typographique.
+
+    V450 — DEUX STRUCTURES, PAS UNE. Cette fonction n'acceptait qu'un
+    dictionnaire et rendait `None` pour tout le reste. Or Resend envoie
+    `headers` comme une LISTE d'objets `{"name": ..., "value": ...}` —
+    releve textuellement dans une charge utile de production le 02/09/2026 :
+
+        "headers": [{"name": "Reply-To", "value": "..."}, ...]
+
+    Consequence MESUREE, et elle est grave : `In-Reply-To` et `References`
+    valaient TOUJOURS `None`. Les deux methodes de rattachement fortes de U2
+    — `A_IN_REPLY_TO` (confiance 100) et `B_REFERENCES` (95) — etaient donc
+    STRUCTURELLEMENT inatteignables. Une vraie reponse Gmail, envoyee depuis
+    le bouton « Repondre » et portant forcement ces en-tetes, est arrivee en
+    base avec `in_reply_to: []` et `references: []`, rattachee par le seul
+    repli `C_FROM_EMAIL` (confiance 60, PILE au seuil automatique).
+
+    Ce repli ne tient que si la reponse vient de l'adresse EXACTEMENT
+    demarchee. En prospection c'est rarement le cas : on ecrit a
+    `info@club.ch`, et c'est une personne qui repond depuis la sienne. Ces
+    reponses-la tombaient en `manual_review` sans que rien ne le signale.
+
+    On accepte donc les deux formes, et on continue d'ignorer ce qui n'est ni
+    l'une ni l'autre : un format inconnu ne doit pas lever, il doit rendre
+    `None` comme avant.
     """
     entetes = (donnees or {}).get("headers") or {}
-    if not isinstance(entetes, dict):
-        return None
     cible = nom.strip().lower()
-    for cle, valeur in entetes.items():
-        if str(cle).strip().lower() == cible:
-            return valeur
+
+    if isinstance(entetes, dict):
+        for cle, valeur in entetes.items():
+            if str(cle).strip().lower() == cible:
+                return valeur
+        return None
+
+    if isinstance(entetes, (list, tuple)):
+        for entree in entetes:
+            if not isinstance(entree, dict):
+                continue
+            if str(entree.get("name") or "").strip().lower() == cible:
+                return entree.get("value")
+        return None
+
     return None
 
 

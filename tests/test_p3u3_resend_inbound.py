@@ -384,6 +384,59 @@ verifier("4l. sans champ `message_id`, l'en-tete RFC prend le relais",
 verifier("4m. AUCUN champ propre a Resend ne fuit dans le contrat",
          not any(c in json.dumps(_m).lower() for c in ("svix", "\"data\"", "email_id")))
 
+# --------------------------------------------------------------------------
+# V450 — LA FORME REELLE DES EN-TETES RESEND : UNE LISTE, PAS UN DICTIONNAIRE.
+#
+# Ce qui suit n'est pas une hypothese. Charge utile relevee en production le
+# 02/09/2026 sur un evenement `email.sent` :
+#     "headers": [{"name": "Reply-To", "value": "contact@afroboosteur.com"}]
+#
+# L'adaptateur n'acceptait qu'un dictionnaire et rendait `None` pour tout le
+# reste : `In-Reply-To` et `References` etaient donc TOUJOURS vides, et les
+# deux rattachements forts de U2 — A_IN_REPLY_TO (100) et B_REFERENCES (95) —
+# structurellement inatteignables. Une vraie reponse Gmail est arrivee en base
+# avec `in_reply_to: []`, rattachee par le seul repli C_FROM_EMAIL (60, pile
+# au seuil). Ce repli ne tient que si la reponse vient de l'adresse exactement
+# demarchee — en prospection, c'est rarement le cas.
+_liste = S.p3u3_adapter_recu(evenement_recu(data={"headers": [
+    {"name": "In-Reply-To", "value": RFC_A},
+    {"name": "References", "value": RFC_B},
+    {"name": "Message-ID", "value": "<depuis-liste@x.test>"},
+], "message_id": None}))
+verifier("4n. en-tetes en LISTE : In-Reply-To est lu",
+         _liste["in_reply_to"] == RFC_A, str(_liste["in_reply_to"]))
+verifier("4o. en-tetes en LISTE : References est lu",
+         _liste["references"] == RFC_B, str(_liste["references"]))
+verifier("4p. en-tetes en LISTE : le Message-ID RFC prend le relais",
+         _liste["message_id"] == "<depuis-liste@x.test>", str(_liste["message_id"]))
+
+# La casse ne compte pas davantage sous forme de liste : meme regle RFC 5322.
+_liste_casse = S.p3u3_adapter_recu(evenement_recu(data={"headers": [
+    {"name": "in-reply-to", "value": RFC_A}, {"name": "REFERENCES", "value": RFC_B},
+]}))
+verifier("4q. en-tetes en LISTE : la casse n'empeche rien",
+         _liste_casse["in_reply_to"] == RFC_A and _liste_casse["references"] == RFC_B,
+         str(_liste_casse))
+
+# LA FORME DICTIONNAIRE N'A PAS BOUGE. Un correctif qui reparerait une forme
+# en cassant l'autre n'aurait fait que deplacer la panne.
+_dict_intact = S.p3u3_adapter_recu(evenement_recu(data={"headers": {
+    "In-Reply-To": RFC_A, "References": RFC_B}}))
+verifier("4r. la forme DICTIONNAIRE fonctionne toujours",
+         _dict_intact["in_reply_to"] == RFC_A and _dict_intact["references"] == RFC_B,
+         str(_dict_intact))
+
+# ET CE QUI N'EST NI L'UN NI L'AUTRE NE LEVE PAS. Une charge utile inattendue
+# doit rendre `None` — le message part alors en revue manuelle, ce qui est le
+# comportement sur ; une exception ferait repondre 500 et Resend reessaierait
+# indefiniment le meme evenement.
+for _forme in ("une chaine", 42, [1, 2, 3], [None], [{"pas_de_nom": "x"}]):
+    _bizarre = S.p3u3_adapter_recu(evenement_recu(data={"headers": _forme}))
+    verifier("4s. en-tetes de forme inattendue (%s) -> None, sans lever"
+             % type(_forme).__name__,
+             _bizarre["in_reply_to"] is None and _bizarre["references"] is None,
+             str(_bizarre["in_reply_to"]))
+
 
 # ============================================================================
 print("\n5. LE HTML N'EST JAMAIS CONSERVE TEL QUEL")
