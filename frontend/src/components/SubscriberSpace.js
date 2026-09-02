@@ -1635,7 +1635,28 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             </p>
           )}
           {courses.length === 0 ? (
-            <p className="text-white/50 text-sm">Aucun cours disponible pour le moment.</p>
+            /* V449 — UNE LISTE VIDE DOIT DIRE POURQUOI ELLE EST VIDE.
+               Le serveur envoie DEJA `forfait_bloque` et `forfait_message`
+               exactement pour ca (voir `upcoming_courses` dans server.py, V393) :
+               un forfait expire ou epuise ne propose plus aucun creneau. L'ecran
+               les ignorait et affichait « Aucun cours disponible pour le moment »
+               — la phrase d'un planning vide, pas celle d'un forfait mort.
+               Une abonnee dont l'abonnement avait expire lisait donc qu'il n'y
+               avait PAS DE COURS, et le coach avec elle : le vrai motif etait
+               invisible des deux cotes. On affiche le motif du serveur, jamais
+               un motif recalcule ici. */
+            data?.forfait_bloque ? (
+              <p
+                className="text-sm"
+                data-testid="forfait-bloque-message"
+                style={{ color: COLORS.primary }}
+              >
+                {data?.forfait_message
+                  || "Ton abonnement n'est plus utilisable. Contacte le coach pour le renouveler."}
+              </p>
+            ) : (
+              <p className="text-white/50 text-sm">Aucun cours disponible pour le moment.</p>
+            )
           ) : (() => {
             const visibleCourses = courses.slice(0, 12);
             const safeIdx = Math.min(selectedCourseIdx, visibleCourses.length - 1);
