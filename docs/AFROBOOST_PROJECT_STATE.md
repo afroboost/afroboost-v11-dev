@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-02, 11:56 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-02, 14:35 UTC**.
 
 ---
 
@@ -212,7 +212,8 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | CAL-2 | `1b9f3492` | déployé | VERT |
 | CAL-3 | `de0f8997` | déployé | VERT |
 | GOOGLE-1 | `521cfe19` | déployé | VERT — lecture Google Calendar prouvée en production |
-| GOOGLE-2 | `9972d48a` | **déployé (prod actuelle)** | **VERT** — écriture Google prouvée de bout en bout le 02/09 (13 points) |
+| GOOGLE-2 | `9972d48a` | déployé | **VERT** — écriture Google prouvée de bout en bout le 02/09 (13 points) |
+| Hotfix espace abonné | `aad0fa7a` | **déployé (prod actuelle)** | **VERT** — une liste vide dit enfin pourquoi elle est vide |
 
 ---
 
@@ -225,6 +226,39 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 - **P3-LAUNCH-137** : campagne prête, envoi bloqué par les deux drapeaux absents.
   N'ouvrir qu'après GO explicite écrit du coach.
 - Dettes antérieures (non bloquantes) : cf. `CLAUDE.md` et l'historique des lots.
+
+---
+
+## Réservation & forfaits — DEUX FONCTIONS MANQUANTES (constaté 02/09/2026)
+
+Les deux ont bloqué le coach une après-midi entière, sur un cours du soir.
+Ce ne sont pas des bugs : ce sont des fonctions qui **n'existent pas**.
+
+### Dette 1 — prolonger un forfait depuis le dashboard
+**Aucune route ne modifie la date d'expiration d'un forfait existant.**
+`PUT /subscriptions/{id}/sessions` ajuste les séances, `/profile` le profil,
+mais la validité n'est modifiable nulle part. Le champ « expiration » de
+l'onglet Codes promo ne sert qu'à la **création** (`POST /admin/create-code`) ;
+`PromoCodesTab.js` ne fait que des lectures.
+Conséquence vécue : le coach a cru prolonger, rien ne s'est écrit, et il a fallu
+poser la date **directement en base**. À noter : la date vit à **deux endroits**
+(`subscriptions.expires_at` ET `discount_codes.expiresAt`) — c'est la première
+que lisent les gardes V393/LOT B2, mais les deux doivent rester cohérentes.
+
+### Dette 2 — réservation administrateur explicite et tracée
+**Il n'existe qu'UNE seule route de création de réservation** :
+`POST /subscriber/space/{code}/reserve/{course_id}`, appelée uniquement par
+`SubscriberSpace.js`. Le coach qui « réserve depuis l'administration » emprunte
+donc exactement le chemin d'une participante, avec exactement les mêmes gardes.
+Aucune dérogation admin n'est prévue. Un lot futur devra l'ajouter :
+explicite, tracée, non destructive, sans falsifier l'abonnement.
+
+### Corrigé au passage — `aad0fa7a` (déployé 02/09)
+Le serveur envoyait déjà `forfait_bloque` / `forfait_message` pour expliquer une
+liste de créneaux vide (V393) ; `SubscriberSpace.js` les ignorait et affichait
+« Aucun cours disponible pour le moment » — la phrase d'un planning vide. Une
+abonnée au forfait expiré en concluait qu'il n'y avait pas de cours, et le coach
+avec elle. L'écran affiche désormais le motif du serveur.
 
 ---
 
