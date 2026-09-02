@@ -727,3 +727,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 5. **WhatsApp Business API** : En cours de setup. Numéro vérifié (+41 76 763 99 28) mais token permanent non créé (bloqué par rate limit Meta). Mode sandbox uniquement.
 
 6. **next-themes** : Présent dans package.json mais le projet n'utilise PAS Next.js (c'est CRA+CRACO). Dépendance probablement inutile.
+
+
+## Mémoire opérationnelle (obligatoire)
+Avant toute opération sur Afroboost, lire `docs/AFROBOOST_PROJECT_STATE.md` et traiter son ÉTAT ACTUEL comme source de vérité opérationnelle, à confirmer par le runtime pour les sujets production.
