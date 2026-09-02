@@ -171,6 +171,27 @@ REFRESH = "1//refresh-token-de-test-tres-secret"
 ACCESS = "ya29.access-token-de-test"
 
 
+class CurseurIterable(_espace["Curseur"]):
+    """`async for` sur un curseur — SIXIEME TROU DE LA MEME FAMILLE.
+
+    Depuis GOOGLE-2, la lecture des evenements Google parcourt d'abord les
+    identifiants deja pousses par Afroboost, pour ne pas les afficher deux
+    fois. Elle le fait avec `async for`, que le curseur partage ne savait pas
+    servir : sans ce complement, le banc mesurait une exception au lieu de la
+    regle. Le bouchon modelise la promesse de Mongo, il ne la contourne pas.
+    """
+
+    def __aiter__(self):
+        self._i = iter(list(self._docs))
+        return self
+
+    async def __anext__(self):
+        try:
+            return dict(next(self._i))
+        except StopIteration:
+            raise StopAsyncIteration
+
+
 class ColG1(Col):
     """Le bouchon partage, complete de ce dont CE lot depend.
 
@@ -182,6 +203,9 @@ class ColG1(Col):
     `$lte`, `$setOnInsert` et l'appariement scalaire/tableau) : le bouchon
     doit modeliser la promesse REELLE de Mongo, pas une approximation.
     """
+
+    def find(self, filtre=None, projection=None, *a, **k):
+        return CurseurIterable([dict(d) for d in self.documents if self._ok(d, filtre)])
 
     async def update_one(self, filtre, maj, upsert=False, *a, **k):
         for d in self.documents:
@@ -218,9 +242,9 @@ def base_neuve(jetons=None):
     b = Base([])
     b[S.G1_COLLECTION] = ColG1(S.G1_COLLECTION, [dict(x) for x in (jetons or [])],
                                uniques=[(("coach_email",), None)])
-    b[S.CAL1_COLLECTION] = Col(S.CAL1_COLLECTION, [], uniques=[(("id",), None)])
-    b["campaigns"] = Col("campaigns", [], uniques=[(("id",), None)])
-    b["courses"] = Col("courses", [], uniques=[(("id",), None)])
+    b[S.CAL1_COLLECTION] = ColG1(S.CAL1_COLLECTION, [], uniques=[(("id",), None)])
+    b["campaigns"] = ColG1("campaigns", [], uniques=[(("id",), None)])
+    b["courses"] = ColG1("courses", [], uniques=[(("id",), None)])
     S.db = b
     del _APPELS[:]
     _REPONSES.clear()
@@ -500,9 +524,20 @@ verifier("8a. seuls des GET et des POST OAuth partent vers Google",
 _posts = [a for a in _APPELS if a["methode"] == "POST"]
 verifier("8b. aucun POST vers l'API Calendar",
          not any("calendar/v3" in a["url"] for a in _posts), str([a["url"] for a in _posts]))
-for _interdit in ("google_event_id", "sync_status", "last_synced_at", "insertEvent"):
+for _interdit in ("sync_status", "last_synced_at", "insertEvent"):
     verifier("8c. aucun champ de synchronisation sortante : `%s`" % _interdit,
              _interdit not in _CODE)
+# GOOGLE-2 A FAIT ENTRER `google_event_id` ICI — EN LECTURE SEULE. La moisson
+# Google ecarte desormais les evenements qu'Afroboost a lui-meme pousses, pour
+# qu'ils ne s'affichent pas deux fois (§21). GOOGLE-1 LIT donc ce champ ; ce
+# qu'il ne doit toujours pas faire, c'est l'ECRIRE — c'est ce qu'on verifie.
+_LECTURE_G1 = _CODE.split("async def g1_evenements")[1]
+verifier("8c2. `google_event_id` n'apparait QUE dans la moisson en lecture",
+         _CODE.count("google_event_id") == _LECTURE_G1.count("google_event_id") == 3,
+         "%d dans le bloc / %d dans la lecture"
+         % (_CODE.count("google_event_id"), _LECTURE_G1.count("google_event_id")))
+verifier("8c3. cette moisson n'ECRIT rien : ni $set, ni insert, ni update",
+         not any(m in _LECTURE_G1 for m in ("$set", "insert_one", "update_one")))
 # LE CODE, PAS LE COMMENTAIRE : l'en-tete explique justement que
 # `calendar.events` sera le scope de GOOGLE-2 et qu'on ne le demande PAS.
 _CODE_SEUL = "\n".join(l for l in _CODE.split("\n") if not l.strip().startswith("#"))

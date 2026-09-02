@@ -46,6 +46,49 @@ const TYPES = {
 };
 const TYPE_DEFAUT = TYPES.event;
 
+/* GOOGLE-2 — CE QUE L'ÉTAT DE SYNCHRONISATION DIT AU COACH.
+   Quatre situations, quatre messages, et surtout : les deux qui demandent une
+   décision humaine (conflit, disparu de Google) ne se confondent pas avec un
+   simple échec réseau. Un événement non synchronisé n'affiche RIEN — la grille
+   ne doit pas se remplir de symboles pour ce qui va de soi. */
+const SYNC = {
+  synced: { cle: 'ok', forme: 'coche', teinte: 'rgba(34,197,94,0.95)',
+            libelle: 'Google : synchronisé' },
+  pending: { cle: 'attente', forme: 'horloge', teinte: 'rgba(245,158,11,0.95)',
+             libelle: 'Google : en attente' },
+  failed: { cle: 'echec', forme: 'alerte', teinte: 'rgba(239,68,68,0.95)',
+            libelle: 'Google : échec de synchronisation' },
+  reconnect_required: { cle: 'reconnexion', forme: 'alerte',
+                        teinte: 'rgba(245,158,11,0.95)',
+                        libelle: 'Google : reconnexion nécessaire' },
+  conflict: { cle: 'conflit', forme: 'alerte', teinte: 'rgba(245,158,11,0.95)',
+              libelle: 'Modifié dans Google — votre arbitrage est nécessaire' },
+  google_deleted: { cle: 'supprime', forme: 'alerte', teinte: 'rgba(239,68,68,0.95)',
+                    libelle: 'Supprimé dans Google — non recréé sans votre accord' },
+};
+
+/* LES TROIS SIGNES, EN SVG INLINE. Règle du dépôt : jamais d'emoji Unicode
+   comme icône — ils changent de dessin selon le système, et certains ne
+   s'affichent pas du tout sur les anciens Android que ce projet sert. */
+const TRACES = {
+  coche: 'M4 8.5 L6.8 11.3 L12 4.7',
+  horloge: 'M8 4.2 V8 L10.4 9.6',
+  alerte: 'M8 4.4 V9 M8 11.4 V11.5',
+};
+
+function SigneSync({ forme, teinte, libelle, cle }) {
+  return (
+    <svg data-testid={`sync-${cle}`} width="9" height="9" viewBox="0 0 16 16"
+         fill="none" stroke={teinte} strokeWidth="1.9" strokeLinecap="round"
+         strokeLinejoin="round" aria-label={libelle}
+         style={{ marginLeft: '3px', verticalAlign: 'middle', flexShrink: 0 }}>
+      <title>{libelle}</title>
+      {forme !== 'coche' ? <circle cx="8" cy="8" r="6.2" /> : null}
+      <path d={TRACES[forme]} />
+    </svg>
+  );
+}
+
 const DAYS_FR = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 const MONTHS_FR = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet',
                    'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
@@ -303,6 +346,13 @@ export default function CampaignCalendar({
                           maxWidth: '100%', boxSizing: 'border-box',
                         }}>
                         {h ? `${h} ` : ''}{e.title || e.name || ''}
+                        {/* GOOGLE-2 — l'état de synchronisation, discret et
+                            muet quand il n'y a rien à dire. Un seul caractère
+                            suffit dans une grille aussi dense ; le survol
+                            donne la phrase complète. */}
+                        {e.google && e.google.enabled && SYNC[e.google.status] ? (
+                          <SigneSync {...SYNC[e.google.status]} />
+                        ) : null}
                       </div>
                     );
                   })}

@@ -388,8 +388,18 @@ for _interdit in ("contacte", "replied_at", "snapshot_hash", "opted_out",
                   "first_contact_sent_at", "Emails.send"):
     verifier("6f. le code ne mentionne jamais `%s`" % _interdit,
              _interdit not in _SANS, "trouve dans le code du lot")
-verifier("6g. AUCUNE trace de Google",
-         not any(m in _SANS.lower() for m in ("google", "oauth", "gapi")))
+# GOOGLE-2 : le §7 du lot suivant fait de CE rendez-vous le cas prioritaire de
+# la synchronisation sortante. L'assertion « aucun Google » n'a donc plus lieu
+# d'etre — mais la regle qu'elle protegeait, elle, tient toujours : le
+# rendez-vous Afroboost est ecrit AVANT, et Google ne peut pas l'empecher.
+verifier("6g. le report Google est conditionne a une demande explicite",
+         'corps.get("google_sync")' in _SANS)
+verifier("6g2. il vient APRES l'ecriture du rendez-vous",
+         _SANS.index("insert_one") < _SANS.index('corps.get("google_sync")'))
+verifier("6g3. son echec est avale, jamais propage",
+         "except Exception" in _SANS.split('corps.get("google_sync")')[1][:400])
+verifier("6g4. CAL-3 ne parle jamais directement a l'API Google",
+         not any(m in _SANS.lower() for m in ("googleapis", "oauth", "gapi")))
 verifier("6h. aucun `update_many` (donc aucune migration)", "update_many" not in _CODE)
 
 

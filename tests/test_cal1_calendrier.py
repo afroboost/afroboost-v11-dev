@@ -400,12 +400,30 @@ verifier("8c. aucun `update_many` (donc aucune migration de masse)",
 # GOOGLE », et une recherche naive mordait sur cette phrase-la.
 _SANS_COMMENTAIRES = "\n".join(
     l for l in _CODE.split("\n") if not l.strip().startswith("#"))
-verifier("8d. AUCUNE trace de Google dans le CODE",
+# GOOGLE-2 A CHANGE CE QUI EST VRAI ICI, ET L'ASSERTION LE SUIT.
+# Ce point garantissait que CAL-1 n'inventait pas de Google avant l'heure.
+# L'heure est venue : la creation et la modification appellent desormais le
+# report sortant. Ce qui doit rester vrai, et qui est verifie ci-dessous, c'est
+# que CAL-1 ne DEPEND de Google pour rien — l'appel est conditionne a une
+# demande explicite, et son echec ne remonte jamais a l'appelant.
+verifier("8d. Google n'entre dans CAL-1 que par une demande EXPLICITE",
+         _SANS_COMMENTAIRES.count("google_sync") >= 1
+         and 'corps.get("google_sync")' in _SANS_COMMENTAIRES,
+         "le report Google n'est pas conditionne")
+verifier("8d2. aucune logique propre au calendrier ne depend de Google",
          not any(m in _SANS_COMMENTAIRES.lower()
-                 for m in ("google", "oauth", "gapi", "calendar_id")),
-         "une reference Google dans le code du lot")
-verifier("8e. aucun champ de synchronisation premature",
-         "google_event_id" not in BLOC and "sync_status" not in BLOC)
+                 for m in ("googleapis", "oauth", "gapi")),
+         "CAL-1 parle directement a Google")
+verifier("8e. l'ecriture Afroboost PRECEDE toujours l'appel Google",
+         _SANS_COMMENTAIRES.index("insert_one")
+         < _SANS_COMMENTAIRES.index('corps.get("google_sync")'),
+         "Google serait appele avant l'ecriture Afroboost")
+# On borne sur la fonction SUIVANTE, pas sur un nombre de caracteres : une
+# longueur en dur se perime des qu'une ligne s'ajoute — ce qui vient d'arriver.
+_CORPS_PATCH = SRC.split("async def cal1_modifier")[1].split("async def cal1_supprimer")[0]
+verifier("8e2. un echec de Google ne remonte pas : la modification est rendue",
+         "except Exception" in _CORPS_PATCH and "logger.warning" in _CORPS_PATCH
+         and "raise" not in _CORPS_PATCH.split('google_sync_enabled')[-1])
 verifier("8f. l'index de lecture porte une seconde cle UNIQUE (ordre total)",
          '[("coach_id", 1), ("starts_at", 1), ("id", 1)]' in SRC)
 verifier("8g. `sparse` n'est pas utilise par ce lot",

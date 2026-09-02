@@ -25040,6 +25040,10 @@ def cal1_forme(document: dict) -> dict:
         # pour qu'une tache sans priorite se distingue d'une priorite vide.
         "priority": d.get("priority") or None,
         "completed_at": d.get("completed_at") or None,
+        # GOOGLE-2 — L'ETAT DE SYNCHRONISATION VOYAGE AVEC L'EVENEMENT. L'ecran
+        # n'a donc pas de second appel a faire pour savoir s'il doit afficher
+        # une pastille, et il ne peut pas afficher un etat perime.
+        "google": g2_vue_sync(d),
     }
 
 
@@ -25240,6 +25244,14 @@ async def cal1_creer(request: Request):
     await db[CAL1_COLLECTION].insert_one(dict(document))
     logger.info("[CAL-1] evenement cree %s (%s) par %s",
                 document["id"][:8], type_demande, email[:24])
+    # GOOGLE-2 — AFROBOOST D'ABORD, GOOGLE ENSUITE, JAMAIS L'INVERSE.
+    # L'insertion ci-dessus est deja confirmee quand on arrive ici : une panne
+    # de Google ne peut donc plus annuler la creation. La synchronisation est
+    # de surcroit EXPLICITE — sans `google_sync` dans le corps, rien ne part.
+    if corps.get("google_sync"):
+        await g2_activer(document["id"], email, corps.get("google_calendar_id") or "")
+        document = await db[CAL1_COLLECTION].find_one(
+            {"id": document["id"]}, {"_id": 0}) or document
     return {"event": cal1_forme(document)}
 
 
@@ -25301,7 +25313,20 @@ async def cal1_modifier(evenement_id: str, request: Request):
         {"$set": champs})
     if not getattr(resultat, "matched_count", 0):
         raise HTTPException(status_code=404, detail="Evenement introuvable")
+    # GOOGLE-2 — UNE MODIFICATION SUIT L'EVENEMENT CHEZ GOOGLE, SUR LE MEME
+    # IDENTIFIANT. `g2_pousser` prend le chemin PATCH des qu'un
+    # `google_event_id` existe : modifier ne peut donc pas creer un second
+    # evenement Google. Un echec ici ne remonte pas : la modification
+    # Afroboost, elle, est faite.
     document = await db[CAL1_COLLECTION].find_one({"id": evenement_id}, {"_id": 0})
+    if (document or {}).get("google_sync_enabled"):
+        try:
+            await g2_pousser(evenement_id, email)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[GOOGLE-2] report de modification impossible : %s",
+                           type(e).__name__)
+        document = await db[CAL1_COLLECTION].find_one(
+            {"id": evenement_id}, {"_id": 0}) or document
     return {"event": cal1_forme(document)}
 
 
@@ -25315,14 +25340,45 @@ async def cal1_supprimer(evenement_id: str, request: Request):
     supprime ici — ils ne vivent pas dans cette collection.
     """
     email = await _v309_require_coach_or_admin(request)
+    # GOOGLE-2 — LE SORT DE L'EVENEMENT GOOGLE EST UN CHOIX, JAMAIS UN DEFAUT.
+    # `google=delete` supprime aussi chez Google ; toute autre valeur, absence
+    # comprise, laisse l'evenement Google intact et independant. C'est le §14 :
+    # aucune suppression silencieuse dans l'agenda de quelqu'un.
+    supprimer_google = (request.query_params.get("google") or "").strip() == "delete"
+    document = await db[CAL1_COLLECTION].find_one(
+        {"id": evenement_id, "is_deleted": {"$ne": True}, **get_coach_filter(email)},
+        {"_id": 0})
     resultat = await db[CAL1_COLLECTION].update_one(
         {"id": evenement_id, "is_deleted": {"$ne": True}, **get_coach_filter(email)},
         {"$set": {"is_deleted": True,
                   "deleted_at": datetime.now(timezone.utc).isoformat()}})
     if not getattr(resultat, "matched_count", 0):
         raise HTTPException(status_code=404, detail="Evenement introuvable")
+    google = {"demande": supprimer_google, "supprime": False, "motif": ""}
+    if supprimer_google and (document or {}).get("google_event_id"):
+        try:
+            issue = await g2_supprimer_chez_google(document, email)
+            google["supprime"] = bool(issue.get("ok"))
+            google["motif"] = issue.get("motif") or ""
+        except Exception as e:  # noqa: BLE001
+            google["motif"] = type(e).__name__
+        # LA TRACE RESTE. On desactive la synchronisation et on note l'issue,
+        # sans effacer l'identifiant : c'est ce qui permet de dire plus tard
+        # ce qui a ete fait chez Google, et de le rattraper si l'appel a rate.
+        await db[CAL1_COLLECTION].update_one(
+            {"id": evenement_id, **get_coach_filter(email)},
+            {"$set": {"google_sync_enabled": False,
+                      "google_sync_status": (G2_SUPPRIME_CHEZ_GOOGLE
+                                             if google["supprime"] else G2_ECHEC),
+                      "google_sync_error": google["motif"],
+                      "google_last_synced_at":
+                          datetime.now(timezone.utc).isoformat()}})
+    elif (document or {}).get("google_sync_enabled"):
+        await db[CAL1_COLLECTION].update_one(
+            {"id": evenement_id, **get_coach_filter(email)},
+            {"$set": {"google_sync_enabled": False, "google_sync_status": G2_OFF}})
     logger.info("[CAL-1] evenement retire %s par %s", (evenement_id or "")[:8], email[:24])
-    return {"ok": True, "id": evenement_id}
+    return {"ok": True, "id": evenement_id, "google": google}
 
 
 # ============================================================================
@@ -25750,6 +25806,18 @@ async def cal3_planifier(reference: str, request: Request):
     logger.info("[CAL-3] rendez-vous %s planifie pour %s (cle %s, campagne %s)",
                 document["id"][:8], reference,
                 document["recipient_key"] or "-", (document["campaign_id"] or "-")[:8])
+    # GOOGLE-2 — LE CAS PRIORITAIRE DU §7, DANS L'ORDRE EXIGE : le rendez-vous
+    # Afroboost est ECRIT ET CONFIRME ci-dessus ; Google n'est tente qu'apres.
+    # Google injoignable laisse donc un rendez-vous parfaitement valide, en
+    # attente de reprise — le coach ne perd jamais ce qu'il vient de convenir.
+    if corps.get("google_sync"):
+        try:
+            await g2_activer(document["id"], email, corps.get("google_calendar_id") or "")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[GOOGLE-2] activation du rendez-vous impossible : %s",
+                           type(e).__name__)
+        document = await db[CAL1_COLLECTION].find_one(
+            {"id": document["id"]}, {"_id": 0}) or document
     vue = cal1_forme(document)
     vue["meeting_type"] = type_rdv
     return {"appointment": vue, "recipient_key": document["recipient_key"],
@@ -26124,7 +26192,10 @@ async def g1_url_autorisation(request: Request):
         "client_id": GOOGLE_CONTACTS_CLIENT_ID,
         "redirect_uri": g1_redirection(),
         "response_type": "code",
-        "scope": " ".join(G1_SCOPES),
+        # GOOGLE-2 — LE DROIT D'ECRITURE S'AJOUTE AUX DEUX LECTURES, il ne les
+        # remplace pas. `include_granted_scopes` ci-dessous garantit en outre
+        # qu'une autorisation deja donnee n'est jamais perdue en cours de route.
+        "scope": " ".join(G2_SCOPES),
         "access_type": "offline",
         # `consent` force Google a rendre un refresh_token, meme si le coach
         # avait deja autorise l'application avec un scope plus etroit.
@@ -26133,7 +26204,7 @@ async def g1_url_autorisation(request: Request):
         "state": g1_signer_etat(email),
     })
     return {"auth_url": "https://accounts.google.com/o/oauth2/v2/auth?" + params,
-            "configured": True, "scopes": list(G1_SCOPES)}
+            "configured": True, "scopes": list(G2_SCOPES)}
 
 
 @api_router.get("/google/callback")
@@ -26205,8 +26276,16 @@ async def g1_statut(request: Request):
         "configured": bool(GOOGLE_CONTACTS_CLIENT_ID),
         # §8 — ON NE FAIT PAS CROIRE QU'UN JETON PORTE UN SCOPE QU'IL N'A PAS.
         "calendar_granted": G1_SCOPE_CALENDRIER in scopes,
+        # GOOGLE-2 — CE DRAPEAU COMMANDE L'AFFICHAGE DE L'OPTION DE
+        # SYNCHRONISATION. Un jeton emis avant ce lot ne porte PAS le droit
+        # d'ecriture : il vaut `false`, et l'ecran propose une reconnexion au
+        # lieu de laisser cocher une case qui echouerait en 403.
+        "calendar_write_granted": g2_ecriture_accordee(document),
         "reconnect_required": bool(document.get("refresh_token"))
                               and G1_SCOPE_CALENDRIER not in scopes,
+        # Distinct du precedent : la connexion MARCHE, seule l'ecriture manque.
+        "reconnect_required_for_sync": bool(document.get("refresh_token"))
+                                       and not g2_ecriture_accordee(document),
         "scopes": scopes,
         "connected_at": document.get("created_at"),
         "selected_calendars": document.get("selected_calendars") or [],
@@ -26275,6 +26354,17 @@ async def g1_evenements(request: Request):
                 "from": fenetre["debut"], "to": fenetre["fin"]}
 
     calendriers = document.get("selected_calendars") or ["primary"]
+    # GOOGLE-2, §21 — UN EVENEMENT POUSSE PAR AFROBOOST NE REVIENT PAS EN
+    # DOUBLE. Il existe des deux cotes, mais c'est UN SEUL evenement logique :
+    # on releve ici les identifiants Google que nous avons nous-memes ecrits,
+    # et on les retire de la moisson. L'ecran affiche donc la ligne Afroboost,
+    # avec sa pastille de synchronisation — jamais une seconde ligne Google.
+    deja_a_nous = set()
+    async for ligne in db[CAL1_COLLECTION].find(
+            {"google_event_id": {"$nin": [None, ""]},
+             "is_deleted": {"$ne": True}, **get_coach_filter(email)},
+            {"_id": 0, "google_event_id": 1}):
+        deja_a_nous.add(str(ligne.get("google_event_id") or ""))
     sortie, motif = [], ""
     for calendrier in calendriers[:G1_CALENDRIERS_MAX]:
         issue = await g1_appel_google(
@@ -26287,6 +26377,8 @@ async def g1_evenements(request: Request):
             motif = motif or issue["motif"]
             continue
         for e in (issue["donnees"].get("items") or []):
+            if str(e.get("id") or "") in deja_a_nous:
+                continue        # c'est notre propre evenement : deja affiche
             vue = g1_evenement_externe(e, calendrier)
             if vue["starts_at"]:
                 sortie.append(vue)
@@ -26323,6 +26415,617 @@ async def g1_deconnecter(request: Request):
                 email[:24], revoque)
     return {"disconnected": bool(getattr(resultat, "deleted_count", 0)) or bool(document),
             "revoked_at_google": revoque}
+
+
+# ============================================================================
+# GOOGLE-2 — LA SYNCHRONISATION SORTANTE, AFROBOOST -> GOOGLE CALENDAR
+# ============================================================================
+# AFROBOOST RESTE LA SOURCE DE VERITE, ET CE N'EST PAS UNE FORMULE. Tout ce
+# lot est construit autour d'une seule regle : l'evenement Afroboost est ECRIT
+# ET CONFIRME AVANT que Google ne soit contacte. Google indisponible, lent, en
+# erreur, jeton expire, coach deconnecte — l'evenement existe quand meme, et
+# l'ecran fonctionne. Aucun chemin de ce fichier ne peut annuler une creation
+# Afroboost a cause de Google.
+#
+# AUCUNE COLLECTION NOUVELLE. Un evenement synchronise reste un document de
+# `calendar_events` ; ce lot n'y ajoute que des champs `google_*`. Une seconde
+# table aurait cree une seconde verite a reconcilier.
+#
+# AUCUNE ECRITURE MASSIVE. Rien n'est pousse chez Google sans que le coach
+# l'ait demande pour CET evenement-la. Ni les cours, ni les campagnes, ni les
+# taches, ni l'historique. `google_sync_enabled` est faux par defaut et le
+# reste tant qu'on ne le pose pas explicitement.
+#
+# L'IDEMPOTENCE N'EST PAS UNE ESPERANCE, C'EST UNE PROPRIETE. Google accepte
+# qu'on CHOISISSE l'identifiant d'un evenement a l'insertion, pourvu qu'il
+# tienne dans l'alphabet base32hex (0-9, a-v). Un UUID Afroboost prive de ses
+# tirets est exactement cela : 32 caracteres hexadecimaux. On derive donc
+# l'identifiant Google DU document Afroboost, de facon deterministe. Deux
+# consequences, et ce sont les deux qui comptent :
+#   - deux insertions concurrentes (double clic, retry, redemarrage du worker,
+#     redeploiement) visent LE MEME identifiant ; la seconde recoit un 409 de
+#     Google, que l'on traite comme un succes — l'evenement existe deja ;
+#   - un plantage entre « Google a cree » et « Afroboost a enregistre l'id »
+#     ne laisse pas d'orphelin : la reprise recalcule le meme identifiant et
+#     retombe sur le meme evenement.
+# C'est ce qui rend impossible le doublon que le §10 interdit, sans verrou
+# distribue ni table d'idempotence.
+#
+# LE CONFLIT EST DETECTE PAR GOOGLE, PAS DEVINE PAR NOUS. On garde l'`etag`
+# rendu a la derniere ecriture et on le renvoie en `If-Match`. Si quelqu'un a
+# modifie l'evenement dans Google entre-temps, Google repond 412 et nous
+# n'ecrasons RIEN : l'etat passe a `conflit` et le coach tranche.
+#
+# RIEN N'EST SUPPRIME EN SILENCE. La suppression chez Google est un choix
+# explicite, passe en parametre. Et un evenement disparu de Google (404) n'est
+# jamais recree tout seul : l'etat devient `google_deleted` et attend.
+
+G2_SCOPE_ECRITURE = "https://www.googleapis.com/auth/calendar.events"
+# LE SCOPE MINIMAL, ET RIEN DE PLUS. `calendar.events` autorise a creer,
+# modifier et supprimer des evenements — exactement ce que GOOGLE-2 fait. Le
+# scope large `auth/calendar` donnerait en plus la gestion des agendas
+# eux-memes (creation, suppression, partage) dont ce lot n'a aucun besoin.
+G2_SCOPES = G1_SCOPES + (G2_SCOPE_ECRITURE,)
+
+G2_OFF = "off"
+G2_EN_ATTENTE = "pending"
+G2_SYNCHRONISE = "synced"
+G2_ECHEC = "failed"
+G2_SUPPRIME_CHEZ_GOOGLE = "google_deleted"
+G2_CONFLIT = "conflict"
+G2_RECONNEXION = "reconnect_required"
+G2_STATUTS = (G2_OFF, G2_EN_ATTENTE, G2_SYNCHRONISE, G2_ECHEC,
+              G2_SUPPRIME_CHEZ_GOOGLE, G2_CONFLIT, G2_RECONNEXION)
+
+# LES ETATS QUI ATTENDENT UNE MAIN HUMAINE NE SONT PAS REESSAYES. Un conflit
+# et une suppression chez Google demandent une decision ; les rejouer en
+# boucle ecraserait justement ce que le coach n'a pas encore arbitre.
+G2_STATUTS_TERMINAUX = (G2_SYNCHRONISE, G2_CONFLIT, G2_SUPPRIME_CHEZ_GOOGLE, G2_OFF)
+
+G2_INTERVALLE_S = 90            # cadence de la reprise, plus lache que CAL-2
+G2_LOT_MAX = 25                 # ce qu'un passage tente au plus
+G2_TENTATIVES_MAX = 5           # borne dure : jamais de boucle infinie
+G2_DUREE_DEFAUT_MIN = 60        # un evenement sans fin dure une heure chez Google
+G2_TIMEOUT_S = 20
+
+# Motifs qui ne se reglent pas en reessayant : inutile de bruler les tentatives.
+G2_MOTIFS_DEFINITIFS = ("reconnexion_requise", "acces_refuse", "requete_invalide")
+
+
+def g2_id_google(evenement_id: str) -> str:
+    """L'identifiant Google DERIVE de l'identifiant Afroboost. PURE.
+
+    LA CLE DE VOUTE DE L'IDEMPOTENCE. Google impose l'alphabet base32hex
+    (0-9 puis a-v) et une longueur de 5 a 1024 : un UUID sans tirets, en
+    minuscules, le respecte exactement. Deterministe, donc rejouable.
+
+    Rend '' si l'identifiant ne s'y prete pas — on prefere laisser Google
+    choisir plutot que d'envoyer un identifiant qu'il refusera.
+    """
+    brut = "".join(c for c in str(evenement_id or "").lower() if c != "-")
+    if len(brut) < 5 or len(brut) > 1024:
+        return ""
+    if any(c not in "0123456789abcdefghijklmnopqrstuv" for c in brut):
+        return ""
+    return brut
+
+
+def g2_ecriture_accordee(document: dict) -> bool:
+    """Le jeton porte-t-il le droit d'ECRIRE dans l'agenda ? PURE.
+
+    ON NE SUPPOSE JAMAIS QU'UN JETON A UN SCOPE. Les jetons emis par GOOGLE-1
+    sont en lecture seule ; les utiliser pour ecrire rendrait un 403 opaque.
+    On lit la liste reellement accordee, et on demande une reconnexion sinon.
+    """
+    return G2_SCOPE_ECRITURE in g1_scopes_du_document(document)
+
+
+def g2_signature(evenement: dict) -> str:
+    """L'empreinte du CONTENU pousse chez Google. PURE.
+
+    Elle repond a une question et une seule : « ce qui est chez Google est-il
+    encore ce que nous avons ? ». Elle ne couvre donc que les champs envoyes —
+    un changement de priorite ou de statut interne ne declenche pas d'ecriture
+    inutile chez Google.
+    """
+    import hashlib
+    e = evenement or {}
+    parts = [str(e.get("title") or ""), str(e.get("description") or ""),
+             str(e.get("location") or ""), str(e.get("starts_at") or ""),
+             str(e.get("ends_at") or ""), "1" if e.get("all_day") else "0",
+             str(e.get("status") or "")]
+    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:32]
+
+
+def g2_borne_temps(valeur: str, tout_le_jour: bool) -> dict:
+    """Un instant Afroboost dans la forme attendue par Google. PURE.
+
+    Google distingue `date` (journee entiere) et `dateTime`. Confondre les
+    deux fait apparaitre un rendez-vous de 14 h comme une journee complete.
+    """
+    brut = (valeur or "").strip()
+    if not brut:
+        return {}
+    if tout_le_jour:
+        return {"date": brut[:10]}
+    try:
+        instant = datetime.fromisoformat(brut.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return {}
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    return {"dateTime": instant.isoformat()}
+
+
+def g2_fin_effective(evenement: dict) -> str:
+    """La fin a envoyer a Google, deduite si elle manque. PURE.
+
+    Google REFUSE un evenement sans fin. Afroboost l'autorise (un rappel n'a
+    pas de duree). Plutot que d'echouer, on donne une duree par defaut — et on
+    ne touche pas au document Afroboost, qui reste sans fin.
+    """
+    e = evenement or {}
+    fin = (e.get("ends_at") or "").strip()
+    if fin:
+        return fin
+    debut = (e.get("starts_at") or "").strip()
+    minutes = e.get("duration_minutes")
+    try:
+        minutes = int(minutes)
+    except (TypeError, ValueError):
+        minutes = 0
+    return cal3_fin(debut, minutes if minutes > 0 else G2_DUREE_DEFAUT_MIN)
+
+
+def g2_lien_fiche(evenement: dict) -> str:
+    """Le lien Afroboost a poser dans la description Google. PURE.
+
+    Il ramene le coach a l'endroit ou l'evenement se pilote. Aucun jeton,
+    aucun secret : une URL de tableau de bord, rien d'autre.
+    """
+    e = evenement or {}
+    base = _v332_url_publique().rstrip("/")
+    if e.get("prospect_id"):
+        return "%s/dashboard?prospect=%s" % (base, urllib.parse.quote(str(e["prospect_id"])))
+    return "%s/dashboard?calendrier=%s" % (base, urllib.parse.quote(str(e.get("id") or "")))
+
+
+def g2_corps_google(evenement: dict, avec_id: bool = False) -> dict:
+    """Le corps envoye a Google. PURE. AUCUNE DONNEE TECHNIQUE.
+
+    Ni jeton, ni secret, ni identifiant de campagne, ni cle de destinataire :
+    un evenement Google se retrouve dans les notifications d'un telephone, il
+    ne doit porter que ce qu'un humain a besoin de lire.
+    """
+    e = evenement or {}
+    tout_le_jour = bool(e.get("all_day"))
+    debut = g2_borne_temps(e.get("starts_at"), tout_le_jour)
+    fin = g2_borne_temps(g2_fin_effective(e), tout_le_jour)
+    morceaux = []
+    if e.get("description"):
+        morceaux.append(str(e["description"]))
+    if e.get("meeting_type"):
+        morceaux.append("Type de rendez-vous : %s" % e["meeting_type"])
+    lien = g2_lien_fiche(e)
+    if lien:
+        morceaux.append("Fiche Afroboost : %s" % lien)
+    corps = {
+        "summary": str(e.get("title") or "(sans titre)")[:1000],
+        "description": "\n\n".join(morceaux)[:8000],
+        "location": str(e.get("location") or "")[:1000],
+        "start": debut, "end": fin,
+        # `annule` cote Afroboost devient `cancelled` cote Google : l'evenement
+        # reste visible et barre plutot que de disparaitre sans explication.
+        "status": "cancelled" if e.get("status") == "annule" else "confirmed",
+    }
+    if avec_id:
+        identifiant = g2_id_google(e.get("id"))
+        if identifiant:
+            corps["id"] = identifiant
+    return corps
+
+
+def g2_verdict_http(code: int) -> str:
+    """Ce qu'un code HTTP d'ECRITURE veut dire. PURE.
+
+    Elle etend le verdict de lecture au lieu de le remplacer : GOOGLE-1 garde
+    exactement le comportement valide en production, et GOOGLE-2 ajoute les
+    trois cas propres a l'ecriture.
+    """
+    if code in (404, 410):
+        return "introuvable_google"
+    if code in (409,):
+        return "existe_deja"
+    if code in (412,):
+        return "conflit"
+    if code in (400, 422):
+        return "requete_invalide"
+    return g1_verdict_http(code)
+
+
+async def g2_appel_google(methode: str, chemin: str, jeton: str,
+                          corps: dict = None, etag: str = "") -> dict:
+    """Un appel d'ECRITURE a l'API Google. `{"ok","donnees","motif","code"}`.
+
+    C'EST LE SEUL ENDROIT DU DEPOT QUI ECRIT CHEZ GOOGLE. Un appel sortant y
+    est journalise par son verdict, jamais par son contenu : aucun jeton,
+    aucun corps d'evenement ne passe dans les logs.
+
+    `If-Match` n'est pose que si l'on possede un `etag` : c'est ce qui fait
+    echouer proprement (412) une modification qui ecraserait un changement
+    fait dans Google.
+    """
+    import httpx
+    entetes = {"Authorization": "Bearer " + jeton}
+    if etag:
+        entetes["If-Match"] = etag
+    try:
+        async with httpx.AsyncClient(timeout=G2_TIMEOUT_S) as client:
+            reponse = await client.request(
+                methode, "https://www.googleapis.com/calendar/v3" + chemin,
+                headers=entetes, json=corps if corps is not None else None)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[GOOGLE-2] appel %s %s impossible : %s",
+                       methode, chemin.split("/")[-1], type(e).__name__)
+        return {"ok": False, "donnees": {}, "motif": "google_indisponible", "code": 0}
+    code = getattr(reponse, "status_code", 500)
+    motif = g2_verdict_http(code)
+    if motif:
+        logger.warning("[GOOGLE-2] %s -> %s (%s)", methode, code, motif)
+        return {"ok": False, "donnees": {}, "motif": motif, "code": code}
+    try:
+        donnees = reponse.json() if (reponse.content or b"") else {}
+    except Exception:  # noqa: BLE001
+        donnees = {}
+    return {"ok": True, "donnees": donnees, "motif": "", "code": code}
+
+
+def g2_vue_sync(document: dict) -> dict:
+    """L'etat de synchronisation, tel que l'ecran le lit. PURE.
+
+    AUCUN IDENTIFIANT GOOGLE N'EST CACHE, ET AUCUN JETON N'EST EXPOSE. L'ecran
+    a besoin de l'etat, de la date et du motif ; il n'a jamais besoin d'un
+    jeton, qui n'apparait donc nulle part dans cette forme.
+    """
+    d = document or {}
+    actif = bool(d.get("google_sync_enabled"))
+    return {
+        "enabled": actif,
+        "status": d.get("google_sync_status") or (G2_EN_ATTENTE if actif else G2_OFF),
+        "calendar_id": d.get("google_calendar_id") or "",
+        "event_id": d.get("google_event_id") or "",
+        "last_synced_at": d.get("google_last_synced_at") or None,
+        "error": d.get("google_sync_error") or "",
+        "attempts": int(d.get("google_sync_attempts") or 0),
+    }
+
+
+async def g2_calendrier_cible(coach_id: str, demande: str = "") -> str:
+    """L'identifiant TECHNIQUE du calendrier vise. Jamais un nom affiche.
+
+    LE NOM AFFICHE N'EST PAS UN IDENTIFIANT. Deux agendas peuvent s'appeler
+    « Afroboost » ; l'identifiant Google, lui, est unique et stable. On accepte
+    donc uniquement ce que Google nous a rendu, et on retombe sur le
+    calendrier choisi en GOOGLE-1, puis sur `primary`.
+    """
+    voulu = (demande or "").strip()
+    document = await g1_document(coach_id)
+    choisis = [str(c) for c in (document.get("selected_calendars") or []) if c]
+    if voulu:
+        # On ne valide contre la liste que si le coach en a choisi une : sinon
+        # `primary` et les agendas secondaires resteraient inaccessibles.
+        if not choisis or voulu in choisis or voulu == "primary":
+            return voulu
+    return choisis[0] if choisis else "primary"
+
+
+async def g2_pousser(evenement_id: str, coach_id: str, forcer: bool = False) -> dict:
+    """Pousse UN evenement chez Google. Rend l'etat obtenu. IDEMPOTENTE.
+
+    ELLE NE CREE JAMAIS L'EVENEMENT AFROBOOST — il existe deja quand on
+    arrive ici, c'est l'invariant du lot. Elle ne fait que reporter chez
+    Google un document qui est deja la verite.
+
+    L'ORDRE DES DEUX CHEMINS N'EST PAS ARBITRAIRE. Si l'on possede deja un
+    `google_event_id`, on MODIFIE — jamais on ne re-insere. C'est la regle du
+    §10, et elle est doublee par l'identifiant derive : meme une insertion
+    rejouee retombe sur le meme evenement.
+    """
+    filtre = {"id": evenement_id, "is_deleted": {"$ne": True},
+              **get_coach_filter(coach_id)}
+    evenement = await db[CAL1_COLLECTION].find_one(filtre, {"_id": 0})
+    if not evenement:
+        return {"status": G2_ECHEC, "motif": "evenement_introuvable"}
+    if not evenement.get("google_sync_enabled"):
+        return {"status": G2_OFF, "motif": ""}
+
+    proprietaire = evenement.get("coach_id") or coach_id
+    document_jeton = await g1_document(proprietaire)
+    if not g2_ecriture_accordee(document_jeton):
+        await g2_noter(evenement_id, proprietaire, G2_RECONNEXION, "droit_ecriture_absent")
+        return {"status": G2_RECONNEXION, "motif": "droit_ecriture_absent"}
+    acces = await g1_access_token(proprietaire)
+    if not acces["token"]:
+        etat = (G2_RECONNEXION if acces["motif"] in ("revoque", "reconnexion_requise")
+                else G2_EN_ATTENTE)
+        await g2_noter(evenement_id, proprietaire, etat, acces["motif"])
+        return {"status": etat, "motif": acces["motif"]}
+
+    calendrier = (evenement.get("google_calendar_id")
+                  or await g2_calendrier_cible(proprietaire))
+    chemin_base = "/calendars/%s/events" % urllib.parse.quote(str(calendrier), safe="")
+    identifiant = evenement.get("google_event_id") or ""
+    signature = g2_signature(evenement)
+
+    # RIEN A FAIRE EST UN RESULTAT VALIDE. Un evenement deja synchronise dont
+    # le contenu n'a pas bouge ne merite pas un appel reseau : le rejouer
+    # ferait clignoter les notifications de tous les invites.
+    if (not forcer and identifiant
+            and evenement.get("google_sync_status") == G2_SYNCHRONISE
+            and evenement.get("google_sync_signature") == signature):
+        return {"status": G2_SYNCHRONISE, "motif": ""}
+
+    if identifiant:
+        # ON MODIFIE L'EXISTANT. `If-Match` protege ce que quelqu'un aurait
+        # change dans Google ; `forcer` est la decision explicite de l'ecraser.
+        issue = await g2_appel_google(
+            "PATCH", "%s/%s" % (chemin_base, urllib.parse.quote(identifiant, safe="")),
+            acces["token"], g2_corps_google(evenement),
+            etag="" if forcer else (evenement.get("google_etag") or ""))
+        if not issue["ok"] and issue["motif"] == "introuvable_google":
+            # SUPPRIME DANS GOOGLE. On ne recree PAS : §15. Le coach tranche.
+            await g2_noter(evenement_id, proprietaire, G2_SUPPRIME_CHEZ_GOOGLE,
+                           "introuvable_google")
+            return {"status": G2_SUPPRIME_CHEZ_GOOGLE, "motif": "introuvable_google"}
+        if not issue["ok"] and issue["motif"] == "conflit":
+            await g2_noter(evenement_id, proprietaire, G2_CONFLIT, "modifie_dans_google")
+            return {"status": G2_CONFLIT, "motif": "modifie_dans_google"}
+    else:
+        corps = g2_corps_google(evenement, avec_id=True)
+        issue = await g2_appel_google("POST", chemin_base, acces["token"], corps)
+        if not issue["ok"] and issue["motif"] == "existe_deja":
+            # LE 409 EST UN SUCCES DEGUISE. Notre identifiant derive existe
+            # deja chez Google : c'est notre propre evenement, cree par une
+            # tentative precedente. On l'adopte au lieu d'en fabriquer un
+            # second — c'est exactement ce qui rend le double clic inoffensif.
+            identifiant = corps.get("id") or ""
+            if identifiant:
+                relecture = await g2_appel_google(
+                    "GET", "%s/%s" % (chemin_base,
+                                      urllib.parse.quote(identifiant, safe="")),
+                    acces["token"])
+                issue = relecture if relecture["ok"] else issue
+        if issue["ok"]:
+            identifiant = (issue["donnees"] or {}).get("id") or corps.get("id") or ""
+
+    if not issue["ok"]:
+        return await g2_echouer(evenement_id, proprietaire, issue["motif"])
+
+    donnees = issue["donnees"] or {}
+    maintenant = datetime.now(timezone.utc).isoformat()
+    await db[CAL1_COLLECTION].update_one(
+        {"id": evenement_id, **get_coach_filter(proprietaire)},
+        {"$set": {"google_event_id": donnees.get("id") or identifiant,
+                  "google_calendar_id": calendrier,
+                  "google_etag": donnees.get("etag") or "",
+                  "google_sync_status": G2_SYNCHRONISE,
+                  "google_sync_signature": signature,
+                  "google_sync_error": "",
+                  "google_sync_attempts": 0,
+                  "google_last_synced_at": maintenant}})
+    logger.info("[GOOGLE-2] evenement %s synchronise (calendrier %s)",
+                (evenement_id or "")[:8], str(calendrier)[:24])
+    return {"status": G2_SYNCHRONISE, "motif": ""}
+
+
+async def g2_noter(evenement_id: str, coach_id: str, statut: str, motif: str) -> None:
+    """Ecrit l'etat de synchronisation. N'EFFACE JAMAIS L'IDENTIFIANT GOOGLE.
+
+    Perdre `google_event_id` sur un echec transformerait la reprise suivante
+    en INSERTION — donc en doublon. C'est precisement l'accident que le §10
+    interdit : ce champ n'est efface qu'a la suppression explicite.
+    """
+    await db[CAL1_COLLECTION].update_one(
+        {"id": evenement_id, **get_coach_filter(coach_id)},
+        {"$set": {"google_sync_status": statut,
+                  "google_sync_error": (motif or "")[:120],
+                  "updated_at": datetime.now(timezone.utc).isoformat()}})
+
+
+async def g2_echouer(evenement_id: str, coach_id: str, motif: str) -> dict:
+    """Compte une tentative et decide : on reessaiera, ou plus jamais.
+
+    LA BORNE EST DURE. Au-dela de `G2_TENTATIVES_MAX`, l'etat devient `failed`
+    et la reprise cesse de le prendre : un evenement en echec ne doit pas
+    consommer chaque passage jusqu'a la fin des temps.
+    """
+    document = await db[CAL1_COLLECTION].find_one(
+        {"id": evenement_id, **get_coach_filter(coach_id)},
+        {"_id": 0, "google_sync_attempts": 1})
+    tentatives = int((document or {}).get("google_sync_attempts") or 0) + 1
+    definitif = motif in G2_MOTIFS_DEFINITIFS or tentatives >= G2_TENTATIVES_MAX
+    statut = (G2_RECONNEXION if motif == "reconnexion_requise"
+              else (G2_ECHEC if definitif else G2_EN_ATTENTE))
+    await db[CAL1_COLLECTION].update_one(
+        {"id": evenement_id, **get_coach_filter(coach_id)},
+        {"$set": {"google_sync_status": statut,
+                  "google_sync_error": (motif or "")[:120],
+                  "google_sync_attempts": tentatives,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return {"status": statut, "motif": motif}
+
+
+async def g2_supprimer_chez_google(evenement: dict, coach_id: str) -> dict:
+    """Supprime l'evenement chez Google. APPELEE UNIQUEMENT SUR DEMANDE.
+
+    Aucun chemin automatique n'y mene : ni la suppression douce d'Afroboost,
+    ni la desactivation de la synchronisation, ni la deconnexion Google. Le
+    §14 l'exige, et c'est aussi la seule facon de ne pas effacer l'agenda de
+    quelqu'un par effet de bord.
+    """
+    e = evenement or {}
+    identifiant = e.get("google_event_id") or ""
+    if not identifiant:
+        return {"ok": False, "motif": "aucun_evenement_google"}
+    document_jeton = await g1_document(coach_id)
+    if not g2_ecriture_accordee(document_jeton):
+        return {"ok": False, "motif": "droit_ecriture_absent"}
+    acces = await g1_access_token(coach_id)
+    if not acces["token"]:
+        return {"ok": False, "motif": acces["motif"]}
+    calendrier = e.get("google_calendar_id") or "primary"
+    issue = await g2_appel_google(
+        "DELETE", "/calendars/%s/events/%s" % (
+            urllib.parse.quote(str(calendrier), safe=""),
+            urllib.parse.quote(str(identifiant), safe="")),
+        acces["token"])
+    # DEJA ABSENT VAUT SUPPRIME. Rendre une erreur pour un evenement que le
+    # coach a lui-meme efface dans Google n'aiderait personne.
+    if issue["ok"] or issue["motif"] == "introuvable_google":
+        return {"ok": True, "motif": ""}
+    return {"ok": False, "motif": issue["motif"]}
+
+
+async def g2_reprise(limite: int = G2_LOT_MAX) -> int:
+    """Un passage de reprise. Rend le nombre d'evenements traites.
+
+    ELLE NE REPREND QUE CE QUI ATTEND VRAIMENT. `pending` uniquement : ni les
+    synchronises, ni les conflits, ni les disparus de Google, ni les echecs
+    definitifs. C'est ce qui borne le travail et empeche la boucle infinie.
+    """
+    curseur = db[CAL1_COLLECTION].find(
+        {"google_sync_enabled": True,
+         "google_sync_status": G2_EN_ATTENTE,
+         "is_deleted": {"$ne": True},
+         "google_sync_attempts": {"$lt": G2_TENTATIVES_MAX}},
+        {"_id": 0, "id": 1, "coach_id": 1}).limit(int(limite))
+    lot = await curseur.to_list(int(limite))
+    traites = 0
+    for ligne in lot:
+        try:
+            await g2_pousser(ligne.get("id"), ligne.get("coach_id") or "")
+            traites += 1
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[GOOGLE-2] reprise de %s en echec : %s",
+                           str(ligne.get("id"))[:8], type(e).__name__)
+    return traites
+
+
+async def _g2_boucle_synchronisation():
+    """La reprise des synchronisations en attente. MEME MOTIF QUE CAL-2.
+
+    Une tache asyncio native, comme les six autres boucles du depot. Une
+    erreur de passage est journalisee et le passage suivant reessaie : la
+    boucle ne meurt pas en silence.
+    """
+    await asyncio.sleep(35)     # apres CAL-2, pour ne pas se marcher dessus
+    while True:
+        try:
+            await g2_reprise()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[GOOGLE-2] passage de reprise en echec : %s", type(e).__name__)
+        await asyncio.sleep(G2_INTERVALLE_S)
+
+
+async def g2_activer(evenement_id: str, coach_id: str, calendrier: str = "") -> dict:
+    """Active la synchronisation d'UN evenement, puis tente de le pousser.
+
+    L'ACTIVATION EST UNE ECRITURE AFROBOOST, ET ELLE REUSSIT SEULE. Meme si
+    Google est injoignable, l'evenement reste marque `pending` et la reprise
+    s'en chargera : c'est le §11.
+    """
+    cible = await g2_calendrier_cible(coach_id, calendrier)
+    resultat = await db[CAL1_COLLECTION].update_one(
+        {"id": evenement_id, "is_deleted": {"$ne": True}, **get_coach_filter(coach_id)},
+        {"$set": {"google_sync_enabled": True,
+                  "google_sync_status": G2_EN_ATTENTE,
+                  "google_calendar_id": cible,
+                  "google_sync_error": "",
+                  "google_sync_attempts": 0,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}})
+    if not getattr(resultat, "matched_count", 0):
+        raise HTTPException(status_code=404, detail="Evenement introuvable")
+    return await g2_pousser(evenement_id, coach_id)
+
+
+@api_router.post("/calendar-events/{evenement_id}/google-sync")
+async def g2_route_activer(evenement_id: str, request: Request):
+    """Demande la synchronisation Google de CET evenement. EXPLICITE.
+
+    Rien d'automatique ne mene ici : c'est un geste du coach, evenement par
+    evenement, exactement ce que le §6 impose.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    try:
+        corps = await request.json()
+    except Exception:  # noqa: BLE001
+        corps = {}
+    calendrier = (corps or {}).get("calendar_id") if isinstance(corps, dict) else ""
+    etat = await g2_activer(evenement_id, email, calendrier or "")
+    document = await db[CAL1_COLLECTION].find_one(
+        {"id": evenement_id, **get_coach_filter(email)}, {"_id": 0})
+    return {"event": cal1_forme(document), "google": g2_vue_sync(document),
+            "status": etat.get("status"), "motif": etat.get("motif") or ""}
+
+
+@api_router.post("/calendar-events/{evenement_id}/google-retry")
+async def g2_route_reessayer(evenement_id: str, request: Request):
+    """Reessaie la synchronisation. `force` ecrase ce qui est chez Google.
+
+    SANS `force`, UN CONFLIT RESTE UN CONFLIT. C'est le §16 : on ne resout pas
+    automatiquement une divergence, on la signale et on attend un arbitrage.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    try:
+        corps = await request.json()
+    except Exception:  # noqa: BLE001
+        corps = {}
+    forcer = bool((corps or {}).get("force")) if isinstance(corps, dict) else False
+    resultat = await db[CAL1_COLLECTION].update_one(
+        {"id": evenement_id, "is_deleted": {"$ne": True},
+         "google_sync_enabled": True, **get_coach_filter(email)},
+        {"$set": {"google_sync_attempts": 0, "google_sync_error": ""}})
+    if not getattr(resultat, "matched_count", 0):
+        raise HTTPException(status_code=404,
+                            detail="Evenement introuvable ou non synchronise")
+    # UN EVENEMENT DISPARU DE GOOGLE NE SE RECREE QUE SUR DEMANDE EXPLICITE.
+    # `force` est cette demande : on oublie alors l'identifiant mort pour que
+    # la poussee suivante insere a nouveau.
+    if forcer:
+        document = await db[CAL1_COLLECTION].find_one(
+            {"id": evenement_id, **get_coach_filter(email)},
+            {"_id": 0, "google_sync_status": 1})
+        if (document or {}).get("google_sync_status") == G2_SUPPRIME_CHEZ_GOOGLE:
+            await db[CAL1_COLLECTION].update_one(
+                {"id": evenement_id, **get_coach_filter(email)},
+                {"$unset": {"google_event_id": "", "google_etag": "",
+                            "google_sync_signature": ""}})
+    etat = await g2_pousser(evenement_id, email, forcer=forcer)
+    document = await db[CAL1_COLLECTION].find_one(
+        {"id": evenement_id, **get_coach_filter(email)}, {"_id": 0})
+    return {"event": cal1_forme(document), "google": g2_vue_sync(document),
+            "status": etat.get("status"), "motif": etat.get("motif") or ""}
+
+
+@api_router.delete("/calendar-events/{evenement_id}/google-sync")
+async def g2_route_desactiver(evenement_id: str, request: Request):
+    """Arrete de synchroniser. NE TOUCHE PAS A L'EVENEMENT GOOGLE.
+
+    Desactiver n'est pas supprimer : l'evenement deja cree chez Google reste
+    ou il est, et devient independant. Supprimer chez Google se demande par la
+    route de suppression, avec le parametre prevu pour cela.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    resultat = await db[CAL1_COLLECTION].update_one(
+        {"id": evenement_id, "is_deleted": {"$ne": True}, **get_coach_filter(email)},
+        {"$set": {"google_sync_enabled": False, "google_sync_status": G2_OFF,
+                  "google_sync_error": "",
+                  "updated_at": datetime.now(timezone.utc).isoformat()}})
+    if not getattr(resultat, "matched_count", 0):
+        raise HTTPException(status_code=404, detail="Evenement introuvable")
+    document = await db[CAL1_COLLECTION].find_one(
+        {"id": evenement_id, **get_coach_filter(email)}, {"_id": 0})
+    return {"event": cal1_forme(document), "google": g2_vue_sync(document)}
 
 
 # --- Leads Routes (Widget IA) ---
@@ -40281,6 +40984,8 @@ async def startup_db():
         asyncio.create_task(_campaign_scheduler_loop())
         # CAL-2 : les echeances de taches. Meme motif, meme cadence.
         asyncio.create_task(_cal2_boucle_echeances())
+        # GOOGLE-2 — la reprise des synchronisations en attente.
+        asyncio.create_task(_g2_boucle_synchronisation())
         logger.info("[SCHEDULER-CAMPAGNE] Boucle d'envoi automatique demarree (60s)")
     except Exception as e:
         logger.warning(f"[SCHEDULER-CAMPAGNE] Demarrage ignore: {e}")

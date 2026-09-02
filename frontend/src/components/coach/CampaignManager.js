@@ -254,8 +254,18 @@ const CampaignManager = ({
     const vuesTaches = (taches || [])
       .filter((t) => t.starts_at)
       .map((t) => ({ ...t, source_id: t.id, modifiable: true }));
-    return vues.concat(autresEvenements || []).concat(vuesTaches)
-               .concat(evenementsGoogle || []);
+    /* GOOGLE-2, §21 — UN ÉVÉNEMENT POUSSÉ CHEZ GOOGLE NE S'AFFICHE PAS DEUX
+       FOIS. Le serveur le retire déjà de la moisson Google ; ce filtre est la
+       seconde ceinture, utile le temps qu'un ancien onglet se rafraîchisse.
+       On compare sur `source_id`, l'identifiant Google réel, jamais sur le
+       titre : deux rendez-vous peuvent porter le même intitulé. */
+    const deja = new Set(
+      (autresEvenements || []).concat(vuesTaches)
+        .map((e) => (e.google && e.google.event_id) || '')
+        .filter(Boolean));
+    const google = (evenementsGoogle || [])
+      .filter((e) => !deja.has(e.source_id));
+    return vues.concat(autresEvenements || []).concat(vuesTaches).concat(google);
   }, [campaigns, autresEvenements, taches, evenementsGoogle]);
 
   /* Le calendrier rend l'ÉVÉNEMENT ; le gestionnaire retrouve la campagne
@@ -512,6 +522,23 @@ const CampaignManager = ({
             <span data-testid="google-connecte" style={{ color: 'rgba(34,197,94,0.95)' }}>
               connecté — {evenementsGoogle.length} événement{evenementsGoogle.length > 1 ? 's' : ''}
             </span>
+            {/* GOOGLE-2 — LA SYNCHRONISATION SORTANTE A SON PROPRE DROIT.
+                Un jeton émis avant ce lot lit l'agenda mais ne peut pas y
+                écrire : plutôt que de laisser cocher une case qui échouerait,
+                on propose la reconnexion, et on le dit en clair. */}
+            {googleStatut.calendar_write_granted ? (
+              <span data-testid="google-ecriture-ok"
+                    style={{ color: 'rgba(34,197,94,0.8)' }}>
+                · synchronisation sortante active
+              </span>
+            ) : (
+              <button type="button" data-testid="google-activer-sync" onClick={connecterGoogle}
+                      style={{ background: 'rgba(245,158,11,0.25)', border: 'none', color: '#fff',
+                               borderRadius: '8px', padding: '3px 9px', fontSize: '11px',
+                               cursor: 'pointer' }}>
+                Reconnecter Google pour activer la synchronisation
+              </button>
+            )}
             <button type="button" data-testid="google-deconnecter" onClick={deconnecterGoogle}
                     style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.2)',
                              color: 'inherit', borderRadius: '8px', padding: '3px 9px',

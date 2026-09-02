@@ -269,6 +269,17 @@ describe('P3-S2 — les compteurs', () => {
   });
 });
 
+/* GOOGLE-2 — DESIGNER UN APPEL PAR SA ROUTE, JAMAIS PAR SON RANG.
+   L'ecran interroge desormais aussi `/api/google/status` ; un `calls[0]` ne
+   designait donc plus la requete des prospects. Le rang etait deja fragile —
+   il l'aurait ete au lot suivant de toute facon. */
+function appelProspects() {
+  const trouve = axios.get.mock.calls.find(
+    ([url]) => String(url).includes('/partner-prospects'));
+  if (!trouve) throw new Error('aucun appel a /partner-prospects');
+  return trouve;
+}
+
 describe('P3-S2 — les filtres partent dans la requête', () => {
   async function requeteApres(action) {
     mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect()]) };
@@ -276,7 +287,7 @@ describe('P3-S2 — les filtres partent dans la requête', () => {
     if (action) await act(async () => { action(); });
     axios.get.mockResolvedValue({ data: reponse([]) });
     await act(async () => { await mockDerniereSource.appel(); });
-    return axios.get.mock.calls[0][1].params;
+    return appelProspects()[1].params;
   }
 
   test('sans filtre : seulement limit et offset', async () => {
@@ -347,7 +358,7 @@ describe('P3-S2 — pagination', () => {
     await act(async () => { par('page-suivante').click(); });
     axios.get.mockResolvedValue({ data: reponse([]) });
     await act(async () => { await mockDerniereSource.appel(); });
-    expect(axios.get.mock.calls[0][1].params.offset).toBe(25);
+    expect(appelProspects()[1].params.offset).toBe(25);
   });
 
   test('« Précédent » est inactif sur la première page', async () => {
@@ -372,8 +383,8 @@ describe('P3-S2 — pagination', () => {
     });
     axios.get.mockResolvedValue({ data: reponse([]) });
     await act(async () => { await mockDerniereSource.appel(); });
-    expect(axios.get.mock.calls[0][1].params.offset).toBe(0);
-    expect(axios.get.mock.calls[0][1].params.limit).toBe(50);
+    expect(appelProspects()[1].params.offset).toBe(0);
+    expect(appelProspects()[1].params.limit).toBe(50);
   });
 });
 
@@ -603,9 +614,14 @@ describe('P3-S2 — ce que l’écran ne fait pas', () => {
     await monter(<ProspectsSection API="/api" />);
     axios.get.mockResolvedValue({ data: reponse([]) });
     await act(async () => { await mockDerniereSource.appel(); });
+    // GOOGLE-2 ajoute UN appel, et un seul : l'etat du droit d'ecriture Google,
+    // qui commande l'affichage de la case « Synchroniser ». On le NOMME plutot
+    // que d'assouplir l'assertion — toute autre route reste interdite.
     axios.get.mock.calls.forEach(([url]) => {
-      expect(url).toBe('/api/partner-prospects');
+      expect(['/api/partner-prospects', '/api/google/status']).toContain(url);
     });
+    const routes = axios.get.mock.calls.map(([u]) => u);
+    expect(routes).toContain('/api/partner-prospects');
   });
 });
 
@@ -1365,5 +1381,121 @@ describe('CAL-3 — les tâches ouvertes sur la fiche', () => {
       require('path').join(__dirname, '..', 'ProspectsSection.js'), 'utf8');
     expect(source).toContain('agenda.open_tasks');
     expect(source).not.toContain("status !== 'fait'");
+  });
+});
+
+/* ==========================================================================
+   GOOGLE-2 — « SYNCHRONISER AVEC GOOGLE CALENDAR », DEPUIS LA FICHE PROSPECT
+   --------------------------------------------------------------------------
+   C'est le cas prioritaire du lot : un rendez-vous convenu avec un prospect
+   part dans l'agenda du coach. Trois règles y sont vérifiées, et ce sont les
+   trois que le lot promet :
+
+     * L'OPTION N'EXISTE QUE SI ELLE PEUT ABOUTIR — un jeton Google sans droit
+       d'écriture ne doit pas donner une case qui échouerait en 403 ;
+     * LE CHOIX EST EXPLICITE — décoché, rien ne part chez Google ; le corps
+       de la requête ne porte même pas le drapeau ;
+     * LE RENDEZ-VOUS AFROBOOST PASSE D'ABORD — la case ne change rien à la
+       route appelée ni aux champs métier : c'est le serveur qui, ensuite,
+       tente Google.
+   ========================================================================== */
+describe('GOOGLE-2 — la case « Synchroniser avec Google Calendar »', () => {
+  const ouvrirAvecGoogle = async (google) => {
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect({ ref: 'FES-01' })]) },
+      campagnes: { etat: SECTION.OK, donnees: { total: 0, campaigns: [] } },
+      reponses: { etat: SECTION.OK, donnees: { messages: [], total: 0, en_attente: 0 } },
+    };
+    axios.get.mockImplementation((url) => {
+      if (String(url).includes('/google/status')) return Promise.resolve({ data: google });
+      return Promise.resolve({ data: agendaFictif() });
+    });
+    axios.post.mockResolvedValue({ data: { appointment: rdvFictif() } });
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('ligne-FES-01').click(); });
+    await act(async () => { par('planifier').click(); });
+  };
+
+  const CONNECTE_ECRITURE = { connected: true, calendar_granted: true,
+                              calendar_write_granted: true };
+  const CONNECTE_LECTURE = { connected: true, calendar_granted: true,
+                             calendar_write_granted: false };
+
+  test('Google absent : AUCUNE case — on ne propose pas ce qui échouerait', async () => {
+    await ouvrirAvecGoogle({ connected: false, configured: false });
+    expect(par('planif-google')).toBeNull();
+    expect(par('formulaire-planification')).toBeTruthy();
+  });
+
+  test('Google en LECTURE SEULE : toujours aucune case', async () => {
+    await ouvrirAvecGoogle(CONNECTE_LECTURE);
+    expect(par('planif-google')).toBeNull();
+  });
+
+  test('Google avec droit d’écriture : la case apparaît, DÉCOCHÉE', async () => {
+    await ouvrirAvecGoogle(CONNECTE_ECRITURE);
+    expect(par('planif-google')).toBeTruthy();
+    expect(par('planif-google-case').checked).toBe(false);
+    expect(par('planif-google').textContent).toContain('Synchroniser avec Google Calendar');
+  });
+
+  test('DÉCOCHÉE : le corps ne porte pas le drapeau — rien ne part chez Google', async () => {
+    await ouvrirAvecGoogle(CONNECTE_ECRITURE);
+    await act(async () => { par('planif-valider').click(); });
+    const corps = axios.post.mock.calls[0][1];
+    expect(corps.google_sync).toBeUndefined();
+    expect('google_sync' in JSON.parse(JSON.stringify(corps))).toBe(false);
+  });
+
+  test('COCHÉE : le drapeau part, et rien d’autre ne change', async () => {
+    await ouvrirAvecGoogle(CONNECTE_ECRITURE);
+    // Un vrai clic : c'est lui qui bascule la case ET déclenche `onChange`.
+    // Forcer `checked` avant le clic le rebasculerait aussitôt.
+    await act(async () => {
+      par('planif-google-case').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(par('planif-google-case').checked).toBe(true);
+    await act(async () => { par('planif-valider').click(); });
+    const [url, corps] = axios.post.mock.calls[0];
+    expect(corps.google_sync).toBe(true);
+    // La route et les champs métier sont EXACTEMENT ceux d'avant le lot.
+    expect(url).toContain('/prospect-agenda/FES-01/appointment');
+    expect(corps.meeting_type).toBe('appel');
+    expect(corps.duration_minutes).toBe(30);
+    expect(String(corps.starts_at)).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  test('la case ne déclenche AUCUN appel direct à Google depuis le navigateur', async () => {
+    await ouvrirAvecGoogle(CONNECTE_ECRITURE);
+    // Un vrai clic : c'est lui qui bascule la case ET déclenche `onChange`.
+    // Forcer `checked` avant le clic le rebasculerait aussitôt.
+    await act(async () => {
+      par('planif-google-case').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(par('planif-google-case').checked).toBe(true);
+    await act(async () => { par('planif-valider').click(); });
+    const sortants = axios.post.mock.calls.map(([u]) => String(u))
+      .concat(axios.get.mock.calls.map(([u]) => String(u)));
+    expect(sortants.some((u) => u.includes('googleapis.com'))).toBe(false);
+    expect(sortants.some((u) => u.includes('google.com'))).toBe(false);
+  });
+
+  test('un échec du statut Google laisse la planification utilisable', async () => {
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect({ ref: 'FES-01' })]) },
+      campagnes: { etat: SECTION.OK, donnees: { total: 0, campaigns: [] } },
+      reponses: { etat: SECTION.OK, donnees: { messages: [], total: 0, en_attente: 0 } },
+    };
+    axios.get.mockImplementation((url) => (String(url).includes('/google/status')
+      ? Promise.reject(new Error('502'))
+      : Promise.resolve({ data: agendaFictif() })));
+    axios.post.mockResolvedValue({ data: { appointment: rdvFictif() } });
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('ligne-FES-01').click(); });
+    await act(async () => { par('planifier').click(); });
+    expect(par('formulaire-planification')).toBeTruthy();
+    expect(par('planif-google')).toBeNull();
+    await act(async () => { par('planif-valider').click(); });
+    expect(axios.post).toHaveBeenCalledTimes(1);
   });
 });

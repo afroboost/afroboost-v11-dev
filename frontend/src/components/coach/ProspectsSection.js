@@ -408,11 +408,30 @@ export default function ProspectsSection({ API }) {
     const p = (n) => String(n).padStart(2, '0');
     setPlanif({
       quand: `${dans2j.getFullYear()}-${p(dans2j.getMonth() + 1)}-${p(dans2j.getDate())}T14:00`,
-      duree: 30, type: 'appel', titre: '',
+      duree: 30, type: 'appel', titre: '', google: false,
     });
     setMessage(null);
     setPlanifOuvert(true);
   };
+
+  /* GOOGLE-2 — L'OPTION N'APPARAÎT QUE SI ELLE PEUT ABOUTIR. Proposer une
+     case qui échouerait en 403 serait pire que ne rien proposer : on interroge
+     donc l'état réel du droit d'écriture, et une erreur laisse simplement
+     l'option masquée — la planification, elle, marche toujours. */
+  const [googleSync, setGoogleSync] = useState(false);
+  useEffect(() => {
+    let vivant = true;
+    (async () => {
+      try {
+        const r = await axios.get(`${base}/google/status`);
+        const d = (r && r.data) || {};
+        if (vivant) setGoogleSync(Boolean(d.connected && d.calendar_write_granted));
+      } catch (e) {
+        if (vivant) setGoogleSync(false);
+      }
+    })();
+    return () => { vivant = false; };
+  }, [base]);
 
   const planifier = async () => {
     if (!planif.quand) {
@@ -426,6 +445,11 @@ export default function ProspectsSection({ API }) {
         duration_minutes: Number(planif.duree),
         meeting_type: planif.type,
         title: planif.titre.trim() || undefined,
+        /* GOOGLE-2, §6 — LE CHOIX EST EXPLICITE, ET IL NE PART QUE S'IL EST
+           FAIT. `undefined` plutôt que `false` : on n'envoie pas une intention
+           que le coach n'a pas exprimée. Le rendez-vous Afroboost est créé
+           dans tous les cas — Google n'est tenté qu'ensuite, côté serveur. */
+        google_sync: planif.google ? true : undefined,
       });
       setPlanifOuvert(false);
       await chargerAgenda(refOuverte);
@@ -1302,6 +1326,18 @@ export default function ProspectsSection({ API }) {
                          placeholder="Titre (facultatif)"
                          onChange={(e) => setPlanif({ ...planif, titre: e.target.value })}
                          style={{ ...styleChamp, flex: '2 1 180px' }} />
+                  {googleSync ? (
+                    <label data-testid="planif-google"
+                           style={{ display: 'flex', alignItems: 'center', gap: '6px',
+                                    flex: '1 1 100%', fontSize: '12px',
+                                    color: 'rgba(255,255,255,0.75)', cursor: 'pointer' }}>
+                      <input type="checkbox" data-testid="planif-google-case"
+                             checked={planif.google}
+                             onChange={(e) => setPlanif({ ...planif, google: e.target.checked })}
+                             style={{ accentColor: PRIMAIRE }} />
+                      Synchroniser avec Google Calendar
+                    </label>
+                  ) : null}
                   <button type="button" data-testid="planif-valider" onClick={planifier}
                           disabled={planifEnCours} style={styleBouton}>
                     {planifEnCours ? '…' : 'Créer'}

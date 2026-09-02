@@ -346,3 +346,107 @@ describe('CAL-1 — les couleurs de marque ne sont plus codées en dur', () => {
     expect(new Set(bords).size).toBe(2);   // deux teintes distinctes
   });
 });
+
+// ---------------------------------------------------------------------------
+// GOOGLE-2 — LA PASTILLE DE SYNCHRONISATION
+//
+// Elle doit dire quatre choses différentes sans encombrer une grille déjà
+// dense : synchronisé, en attente, échec, et — les deux qui comptent le plus —
+// « modifié dans Google » et « supprimé dans Google », qui appellent une
+// décision humaine et ne doivent surtout pas passer pour un simple échec.
+describe('GOOGLE-2 — l’état de synchronisation dans la grille', () => {
+  const sync = (statut, extra = {}) => rendezVous({
+    google: { enabled: true, status: statut, event_id: 'g-1', calendar_id: 'primary',
+              last_synced_at: null, error: '', attempts: 0 },
+    ...extra,
+  });
+
+  test('un événement NON synchronisé n’affiche aucune pastille', async () => {
+    await monter(<CampaignCalendar evenements={[rendezVous()]} />);
+    expect(tous('[data-testid^="sync-"]').length).toBe(0);
+  });
+
+  test('synchronisation demandée mais désactivée : rien non plus', async () => {
+    await monter(<CampaignCalendar evenements={[rendezVous({
+      google: { enabled: false, status: 'off' } })]} />);
+    expect(tous('[data-testid^="sync-"]').length).toBe(0);
+  });
+
+  test('synchronisé : une pastille verte', async () => {
+    await monter(<CampaignCalendar evenements={[sync('synced')]} />);
+    const p = par('sync-ok');
+    expect(p).toBeTruthy();
+    expect(p.getAttribute('stroke')).toContain('34,197,94');
+    expect(p.querySelector('title').textContent).toContain('synchronisé');
+  });
+
+  test('en attente : une pastille orange, et le mot juste', async () => {
+    await monter(<CampaignCalendar evenements={[sync('pending')]} />);
+    expect(par('sync-attente')).toBeTruthy();
+    expect(par('sync-attente').querySelector('title').textContent).toContain('attente');
+  });
+
+  test('échec : une pastille rouge', async () => {
+    await monter(<CampaignCalendar evenements={[sync('failed')]} />);
+    expect(par('sync-echec')).toBeTruthy();
+    expect(par('sync-echec').getAttribute('stroke')).toContain('239,68,68');
+  });
+
+  test('CONFLIT — le message parle d’arbitrage, pas d’erreur', async () => {
+    await monter(<CampaignCalendar evenements={[sync('conflict')]} />);
+    const t = par('sync-conflit').querySelector('title').textContent;
+    expect(t).toContain('Modifié dans Google');
+    expect(t.toLowerCase()).not.toContain('échec');
+  });
+
+  test('SUPPRIMÉ DANS GOOGLE — le message dit que rien n’a été recréé', async () => {
+    await monter(<CampaignCalendar evenements={[sync('google_deleted')]} />);
+    const t = par('sync-supprime').querySelector('title').textContent;
+    expect(t).toContain('Supprimé dans Google');
+    expect(t).toContain('sans votre accord');
+  });
+
+  test('reconnexion nécessaire : dit à l’utilisateur ce qu’il doit faire', async () => {
+    await monter(<CampaignCalendar evenements={[sync('reconnect_required')]} />);
+    expect(par('sync-reconnexion').querySelector('title').textContent)
+      .toContain('reconnexion');
+  });
+
+  test('un état inconnu n’affiche RIEN plutôt qu’un symbole muet', async () => {
+    await monter(<CampaignCalendar evenements={[sync('etat_de_demain')]} />);
+    expect(tous('[data-testid^="sync-"]').length).toBe(0);
+  });
+
+  test('RÈGLE DU DÉPÔT — la pastille est un SVG inline, jamais un emoji', async () => {
+    // Un jour DIFFÉRENT par état : la vue mois plafonne le nombre d'événements
+    // affichés par case, et les empiler ici mesurerait ce plafond, pas le SVG.
+    await monter(<CampaignCalendar evenements={[
+      sync('synced', { starts_at: jourDuMois(4).toISOString() }),
+      sync('pending', { id: 'r2', starts_at: jourDuMois(6).toISOString() }),
+      sync('failed', { id: 'r3', starts_at: jourDuMois(8).toISOString() }),
+      sync('conflict', { id: 'r4', starts_at: jourDuMois(10).toISOString() }),
+      sync('google_deleted', { id: 'r5', starts_at: jourDuMois(12).toISOString() })]} />);
+    const pastilles = tous('[data-testid^="sync-"]');
+    expect(pastilles.length).toBe(5);
+    pastilles.forEach((p) => expect(p.tagName.toLowerCase()).toBe('svg'));
+    // Aucun caractère hors ASCII imprimable dans le rendu des pastilles.
+    pastilles.forEach((p) => {
+      const visible = (p.textContent || '').replace(/[\s]/g, '');
+      expect(/[←-⯿\u{1F300}-\u{1FAFF}]/u.test(visible)).toBe(false);
+    });
+  });
+
+  test('le titre de l’événement reste lisible à côté de la pastille', async () => {
+    await monter(<CampaignCalendar evenements={[sync('synced')]} />);
+    expect(par('evenement').textContent).toContain('Appel partenariat');
+  });
+
+  test('la pastille n’empêche ni le clic ni le glisser-déposer', async () => {
+    const vus = [];
+    await monter(<CampaignCalendar evenements={[sync('synced')]}
+                                   onEvenementClick={(e) => vus.push(e.id)} />);
+    await cliquer(par('evenement'));
+    expect(vus).toEqual(['rdv-1']);
+    expect(par('evenement').getAttribute('draggable')).toBe('true');
+  });
+});
