@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import secrets  # P3-R1 : jetons de reponse opaques, aleatoire cryptographique
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
@@ -22949,6 +22950,11 @@ def p3s3d_instantane_envoi(action: dict) -> dict:
             "message": a.get("message_j0"), "langue": a.get("language"),
             "organisation": (a.get("organisations") or [""])[0],
             "recipient_key": a.get("recipient_key"),
+            # P3-R1 : l'adresse a laquelle CETTE action attend sa reponse.
+            # Vide tant que l'action n'a pas de jeton — en simulation, par
+            # exemple, ou rien n'est ecrit : l'adaptateur retombe alors sur le
+            # Reply-To generique, qui reste une adresse vivante.
+            "reply_to": p3r1_adresse_reponse(a.get(P3R1_CHAMP_TOKEN)),
             # P3-U1 : l'identifiant sert UNIQUEMENT a fabriquer le lien de
             # desabonnement. Il ne donne acces a rien : l'adaptateur ne lit
             # toujours pas la base, et le jeton derive est signe.
@@ -23377,7 +23383,13 @@ class P3S3DFournisseurEmail:
                 "from": self.expediteur,
                 "to": [(instantane or {}).get("destinataire")],
                 "subject": self.objet,
-                "reply_to": self.reply_to,
+                # P3-R1 — L'ADRESSE DE L'ACTION D'ABORD, LA GENERIQUE ENSUITE.
+                # Meme porte que partout ailleurs : `_reply_to_vivant` filtre
+                # les adresses mortes et retombe sur le defaut si l'instantane
+                # n'en propose aucune. Un e-mail hors P3 garde donc exactement
+                # le comportement qu'il avait.
+                "reply_to": _reply_to_vivant(
+                    (instantane or {}).get("reply_to"), self.reply_to),
                 "headers": p3s3d2_entetes_prospect(instantane),
                 "text": message,
                 "html": p3s3d2_corps_html(message),
@@ -23713,6 +23725,13 @@ async def p3s3d_executer_campagne(campagne_id: str, appelant: str,
             continue
 
         cle = p3s3d_cle_idempotence(action)
+        # P3-R1 — LE JETON EST POSE AVANT QUE L'INSTANTANE NE SOIT FIGE, et
+        # UNIQUEMENT hors simulation : une simulation qui ecrirait un jeton ne
+        # serait plus une simulation. L'ecriture est conditionnelle, donc un
+        # reessai reutilise le meme jeton et les reponses au premier envoi
+        # restent rattachables.
+        if not simulation:
+            action = await p3r1_assurer_token(action)
         instantane = p3s3d_instantane_envoi(action)
         maintenant = datetime.now(timezone.utc).isoformat()
 
@@ -24130,6 +24149,125 @@ async def p3u1_desabonnement_prospect(token: str = ""):
 
 
 # ============================================================================
+# P3-R1 — L'ADRESSE DE REPONSE PORTE L'IDENTITE DE L'ACTION
+# ============================================================================
+# POURQUOI CE LOT EXISTE, MESURE EN PRODUCTION LE 02/09/2026.
+#
+# Le rattachement fort de U2 repose sur `In-Reply-To` / `References`. Ces
+# en-tetes ne nous parviennent PAS : deux vraies reponses Gmail, envoyees
+# depuis le bouton « Repondre », sont arrivees avec `in_reply_to: []` et
+# `references: []`. Le correctif `fa3485ce` a d'abord leve un obstacle certain
+# — les en-tetes Resend sont une LISTE, pas un dictionnaire — mais la seconde
+# reponse, recue APRES son deploiement, etait toujours vide. Resend ne
+# transmet donc pas ces en-tetes dans `email.received`. Les methodes A et B
+# sont indisponibles en pratique, et rien de notre cote ne peut les rendre
+# disponibles.
+#
+# Restait le repli `C_FROM_EMAIL`, a 60, pile au seuil : il n'identifie une
+# reponse que si elle vient de l'adresse EXACTEMENT demarchee. En prospection
+# c'est l'exception — on ecrit a `info@club.ch`, c'est une personne qui repond
+# depuis la sienne. Ces reponses-la seraient parties en revue manuelle, et les
+# relances J+3/J+7 auraient continue vers quelqu'un ayant deja repondu.
+#
+# LA CLE CHANGE DE CAMP. Plutot que d'esperer un en-tete que le fournisseur ne
+# rend pas, on met l'identite dans la SEULE donnee dont on garde la maitrise :
+# l'adresse a laquelle on demande de repondre. Chaque action recoit son propre
+# `Reply-To`, `r-<token>@reply.afroboosteur.com`, et le destinataire de la
+# reponse suffit alors a la rattacher — quelle que soit l'adresse qui repond.
+#
+# PREUVE PREALABLE, EXIGEE AVANT D'ECRIRE UNE LIGNE : Resend transmet-il le
+# local-part complet ? Sonde envoyee le 02/09 a
+# `r-test-91f01b9baa697625785931d9@reply.afroboosteur.com`, relue en base :
+# `to_email` porte l'adresse entiere, token compris. Sans cette preuve, ce lot
+# n'aurait pas eu lieu.
+#
+# LE JETON N'EST PAS UN IDENTIFIANT METIER. Ni `_id` Mongo, ni `action_id`, ni
+# `recipient_key`, ni l'adresse du prospect : ces valeurs se devinent, se
+# recoupent, ou renseignent un tiers sur qui d'autre est demarche. C'est un
+# aleatoire opaque, sans structure, qui ne signifie rien hors de la base.
+#
+# ET IL N'OUVRE RIEN. Aucune route ne l'accepte en entree : il n'est lu que
+# depuis le destinataire d'un message ENTRANT, deja authentifie par la
+# signature Svix du webhook. Recevoir ou deviner un jeton ne donne donc aucun
+# acces — au pire on ecrit a une adresse qui range un message en revue.
+P3R1_DOMAINE_REPONSE = (os.environ.get("P3_REPLY_DOMAIN")
+                        or "reply.afroboosteur.com").strip().lower()
+P3R1_PREFIXE = "r-"
+# 16 octets = 128 bits d'entropie, rendus en 32 caracteres hexadecimaux. Un
+# jeton ne se devine pas par force brute, et n'est pas sequentiel : deux
+# actions creees a la meme seconde n'ont aucun voisinage.
+P3R1_OCTETS_TOKEN = 16
+P3R1_CHAMP_TOKEN = "reply_token"
+# La lecture est STRICTE : minuscules hexadecimales uniquement, longueur
+# bornee. Une adresse qui ne colle pas exactement ne rend rien plutot qu'un
+# a-peu-pres — c'est ce qui empeche `r-../..@` ou une injection de motif
+# d'atteindre la requete.
+_P3R1_RE_TOKEN = re.compile(r"^r-([0-9a-f]{24,64})$")
+
+
+def p3r1_nouveau_token() -> str:
+    """Un jeton opaque, aleatoire, non sequentiel. PURE (hors entropie)."""
+    return secrets.token_hex(P3R1_OCTETS_TOKEN)
+
+
+def p3r1_adresse_reponse(token) -> str:
+    """`r-<token>@<domaine>`, ou "" si le jeton n'est pas exploitable. PURE.
+
+    Rendre "" plutot que de fabriquer une adresse bancale est deliberé :
+    l'appelant retombe alors sur le Reply-To generique, qui fonctionne. Une
+    adresse malformee, elle, ferait rebondir la reponse du prospect.
+    """
+    propre = str(token or "").strip().lower()
+    if not propre or not propre.isalnum():
+        return ""
+    return "%s%s@%s" % (P3R1_PREFIXE, propre, P3R1_DOMAINE_REPONSE)
+
+
+def p3r1_token_depuis_adresse(adresse) -> str:
+    """Le jeton porte par une adresse de reception, ou "". PURE.
+
+    LE DOMAINE EST VERIFIE, PAS SEULEMENT LE PREFIXE. Sans cela,
+    `r-<jeton>@ailleurs.example` — une adresse qu'un tiers controle — serait
+    lue comme l'une des notres. Le sous-adressage `+quelquechose` est tolere :
+    certains clients l'ajoutent, il ne fait pas partie de l'identite.
+    """
+    texte = str(adresse or "").strip().lower()
+    if "@" not in texte:
+        return ""
+    local, _, domaine = texte.partition("@")
+    if domaine.strip() != P3R1_DOMAINE_REPONSE:
+        return ""
+    local = local.split("+", 1)[0]
+    trouve = _P3R1_RE_TOKEN.match(local)
+    return trouve.group(1) if trouve else ""
+
+
+async def p3r1_assurer_token(action: dict) -> dict:
+    """L'action porte un jeton — le sien, pose UNE SEULE FOIS.
+
+    ECRITURE CONDITIONNELLE, et c'est tout l'enjeu. `$exists: False` vit DANS
+    le filtre : deux passages concurrents ne peuvent pas produire deux jetons,
+    et un reessai apres panne reutilise celui deja pose. Un jeton qui changerait
+    entre deux tentatives rendrait orpheline toute reponse au premier envoi.
+    """
+    a = dict(action or {})
+    existant = str(a.get(P3R1_CHAMP_TOKEN) or "").strip()
+    if existant:
+        return a
+    propose = p3r1_nouveau_token()
+    await db[P3S3_ACTIONS].update_one(
+        {"id": a.get("id"), P3R1_CHAMP_TOKEN: {"$exists": False}},
+        {"$set": {P3R1_CHAMP_TOKEN: propose,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}})
+    # On RELIT plutot que de supposer avoir gagne : si un autre passage a pose
+    # le sien entre-temps, c'est le sien qui fait foi.
+    frais = await db[P3S3_ACTIONS].find_one(
+        {"id": a.get("id")}, {"_id": 0, P3R1_CHAMP_TOKEN: 1})
+    a[P3R1_CHAMP_TOKEN] = (frais or {}).get(P3R1_CHAMP_TOKEN) or propose
+    return a
+
+
+# ============================================================================
 # P3-U2 — LA RECEPTION DES REPONSES, ET RIEN QUI RECOIVE ENCORE
 # ============================================================================
 # CE LOT NE RECOIT AUCUN E-MAIL. Il n'ouvre ni webhook, ni IMAP, ni port. Il
@@ -24160,6 +24298,7 @@ P3U2_COLLECTION = "prospect_inbound_messages"
 P3U3_COACH_PAR_DEFAUT = COACH_EMAIL
 
 # LES METHODES DE RATTACHEMENT, de la plus sure a la plus faible.
+P3U2_METHODE_TOKEN = "A0_REPLY_TOKEN"        # P3-R1 : notre propre adresse
 P3U2_METHODE_IN_REPLY_TO = "A_IN_REPLY_TO"   # l'en-tete que le protocole garantit
 P3U2_METHODE_REFERENCES = "B_REFERENCES"     # le fil complet, meme garantie
 P3U2_METHODE_PROVIDER = "B_PROVIDER"         # l'identifiant du fournisseur
@@ -24168,7 +24307,14 @@ P3U2_METHODE_AUCUNE = "AUCUNE"
 
 # La confiance n'est pas decorative : elle dit au dashboard ce qu'il peut
 # afficher sans reserve, et au moteur ce qu'il peut ecrire tout seul.
+#
+# A0 VAUT 100 COMME A, ET PASSE AVANT LUI. Ce n'est pas qu'il serait « plus
+# vrai » : les deux sont certains. C'est qu'il est le seul DISPONIBLE — A et B
+# dependent d'en-tetes que Resend ne transmet pas. Les garder n'est pas une
+# precaution decorative : le jour ou ces en-tetes arriveront, ou si l'on
+# change de fournisseur, ils reprendront du service sans qu'on touche a rien.
 P3U2_CONFIANCE = {
+    P3U2_METHODE_TOKEN: 100,
     P3U2_METHODE_IN_REPLY_TO: 100,
     P3U2_METHODE_REFERENCES: 95,
     P3U2_METHODE_PROVIDER: 90,
@@ -24315,10 +24461,20 @@ def p3u2_candidats_par_identifiant(message: dict) -> list:
 
 def p3u2_verdict_correlation(message: dict, actions_par_rfc: dict,
                              actions_par_provider: dict,
-                             candidats_email: list) -> dict:
+                             candidats_email: list,
+                             action_par_token: dict = None) -> dict:
     """A QUELLE ACTION CE MESSAGE REPOND-IL ? Fonction PURE, sans base.
 
-    TROIS METHODES, DANS UN ORDRE QUI N'EST PAS NEGOCIABLE :
+    QUATRE METHODES, DANS UN ORDRE QUI N'EST PAS NEGOCIABLE :
+
+      A0 — P3-R1 : le jeton porte par NOTRE adresse de reception. La seule qui
+           fonctionne en pratique, parce qu'elle ne depend d'aucun en-tete que
+           le fournisseur pourrait ne pas transmettre — et Resend ne transmet
+           ni `In-Reply-To` ni `References`. Elle rattache meme quand la
+           reponse vient d'une AUTRE adresse que celle demarchee, ce qui est
+           le cas courant en prospection.
+           Le parametre est en DERNIERE position, avec un defaut : les
+           appelants ecrits avant P3-R1 continuent de fonctionner tels quels.
 
       A — `In-Reply-To` / `References` contre le `Message-ID` RFC de notre J0.
           C'est la seule cle que le protocole garantit : elle fonctionne meme
@@ -24350,6 +24506,12 @@ def p3u2_verdict_correlation(message: dict, actions_par_rfc: dict,
         return {"action": action, "methode": methode, "confiance": confiance,
                 "statut": P3U2_STATUT_RATTACHE if automatique else P3U2_STATUT_REVUE,
                 "motif": "" if automatique else motif}
+
+    # A0 — NOTRE PROPRE ADRESSE. Elle passe avant tout : c'est la seule cle
+    # que nous maitrisons de bout en bout, et la seule qui survive a une
+    # reponse envoyee depuis une autre adresse que celle demarchee.
+    if action_par_token:
+        return issue(action_par_token, P3U2_METHODE_TOKEN)
 
     cites = p3u2_candidats_par_identifiant(m)
     # A — l'en-tete du protocole.
@@ -24513,7 +24675,22 @@ async def p3u2_recevoir(brut: dict, coach_id: str) -> dict:
              "sent_at": {"$exists": True}, "replied_at": {"$exists": False}},
             {"_id": 0}).to_list(10)
 
-    verdict = p3u2_verdict_correlation(message, par_rfc, par_provider, candidats_email)
+    # P3-R1 — LE DESTINATAIRE DIT A QUI CE MESSAGE REPOND.
+    # Une seule lecture, sur un champ indexe, et seulement si l'adresse porte
+    # bien un jeton des notres (domaine verifie). Un jeton inconnu ne rend
+    # rien : le message suit alors les methodes suivantes, puis la revue
+    # manuelle. On n'invente jamais de rattachement a partir d'une adresse.
+    action_par_token = None
+    _jeton = p3r1_token_depuis_adresse(message.get("to_email"))
+    if _jeton:
+        action_par_token = await db[P3S3_ACTIONS].find_one(
+            {"coach_id": coach_id, P3R1_CHAMP_TOKEN: _jeton}, {"_id": 0})
+        if action_par_token is None:
+            logger.info("[P3-R1] jeton inconnu sur %s — methodes suivantes",
+                        str(message.get("to_email"))[:40])
+
+    verdict = p3u2_verdict_correlation(message, par_rfc, par_provider,
+                                       candidats_email, action_par_token)
     action = verdict["action"] or {}
 
     document = {
@@ -40968,6 +41145,15 @@ async def startup_db():
             partialFilterExpression={P3U2_CHAMP_RFC: {"$type": "string"}})
         await db[P3S3_ACTIONS].create_index(
             [("coach_id", 1), ("created_at", -1), ("id", 1)])
+        # P3-R1 — UN JETON, UNE ACTION. L'unicite n'est pas decorative : deux
+        # actions partageant un jeton rendraient toute reponse ambigue, donc
+        # non rattachable, et c'est exactement ce que ce lot vient corriger.
+        # Index PARTIEL : les actions sans jeton (jamais envoyees, ou d'avant
+        # ce lot) ne sont pas concernees — un index unique non partiel les
+        # ferait toutes entrer en collision sur `null`.
+        await db[P3S3_ACTIONS].create_index(
+            P3R1_CHAMP_TOKEN, unique=True,
+            partialFilterExpression={P3R1_CHAMP_TOKEN: {"$type": "string"}})
 
         # La fiche porte desormais la cle de son destinataire : l'ecran doit
         # pouvoir grouper sans recalculer les 142 a chaque affichage. NON

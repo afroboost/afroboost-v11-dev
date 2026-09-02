@@ -493,9 +493,20 @@ verifier("9l. le factice trace ses appels (pour les bancs)", len(_f.appels) == 2
 # accidentelle — et on NOMME en plus ce qui ne doit jamais en faire partie.
 _INSTANTANE = S.p3s3d_instantane_envoi(_cible)
 verifier("9m. il ne recoit QUE l'instantane d'envoi",
+         # P3-R1 ajoute `reply_to` : l'adresse a laquelle CETTE action attend
+         # sa reponse. Elle est DERIVEE d'un jeton opaque et ne dit rien de la
+         # fiche — ni le nom de l'organisation, ni qui d'autre est demarche.
+         # L'adaptateur en a besoin : c'est lui qui pose l'en-tete Reply-To.
          set(_INSTANTANE) == {"canal", "destinataire", "message", "langue",
-                              "organisation", "recipient_key", "action_id"},
+                              "organisation", "recipient_key", "action_id",
+                              "reply_to"},
          str(sorted(_INSTANTANE)))
+verifier("9m-ter. `reply_to` ne laisse fuir aucun identifiant metier",
+         not any(marqueur in str(_INSTANTANE.get("reply_to") or "")
+                 for marqueur in (str(_cible.get("id")), str(_cible.get("campaign_id")),
+                                  str(_cible.get("recipient_key")),
+                                  str(_cible.get("target")))),
+         str(_INSTANTANE.get("reply_to")))
 verifier("9m-bis. rien de la fiche, des compteurs ni de la campagne n'y entre",
          not (set(_INSTANTANE) & {"prospect_ids", "prospect_uuids", "coach_id",
                                   "campaign_id", "score", "priority", "category",

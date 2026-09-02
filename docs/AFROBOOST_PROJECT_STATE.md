@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-02, 14:35 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-02, 19:45 UTC**.
 
 ---
 
@@ -259,6 +259,25 @@ liste de créneaux vide (V393) ; `SubscriberSpace.js` les ignorait et affichait
 « Aucun cours disponible pour le moment » — la phrase d'un planning vide. Une
 abonnée au forfait expiré en concluait qu'il n'y avait pas de cours, et le coach
 avec elle. L'écran affiche désormais le motif du serveur.
+
+---
+
+## Bancs de test au ROUGE — état connu, à traiter dans un lot séparé
+
+Les trois étaient **déjà rouges avant** les lots inbound (vérifié en retirant
+les changements : `git stash`, relance, même échec). Aucun n'est causé par
+P3-U3, la lecture des en-têtes, ni P3-R1. **Aucun n'est corrigé ici** — les
+consigner évite qu'on les redécouvre en croyant à une régression.
+
+| Banc | État | Cause connue |
+|---|---|---|
+| `test_p3s2_import_prospection` | ROUGE | Assertion « l'écran n'appelle que partner-prospects, prospect-campaigns, prospect-inbound et prospect-agenda ». **GOOGLE-2 a ajouté un appel `google/status`** dans `ProspectsSection.js` (case à cocher de synchronisation). L'écran est correct ; c'est l'assertion qui doit accueillir le nouvel appel. |
+| `test_lot1_rattachement` | ROUGE | `IndexError` : le banc découpe `ChatWidget.js` sur l'ancre `=== LOT 1 — CHARGER DES OCCURRENCES`, **qui n'existe plus** dans le fichier (0 occurrence). Banc à ré-ancrer sur une propriété, pas sur un commentaire. |
+| `test_lot3b_avantage_membre` | ROUGE | 218/219. Une seule vérification : `9K5. checkout_routes.py aussi`. |
+
+**Règle de méthode** : avant d'incriminer un lot en cours, retirer ses
+changements et relancer le banc. Un banc rouge n'est pas une régression tant
+qu'on n'a pas prouvé qu'il était vert avant.
 
 ---
 

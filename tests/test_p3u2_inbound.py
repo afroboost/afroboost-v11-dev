@@ -552,7 +552,20 @@ verifier("14a. les index de P3-U2 utilisent `partialFilterExpression`, jamais `s
 verifier("14b. le tri pagine porte une SECONDE cle unique (ordre TOTAL)",
          '.sort([("received_at", -1), ("id", 1)])' in SRC)
 verifier("14c. la correlation lit les actions en UNE requete groupee, pas une par identifiant",
-         '"$in": cites' in BLOC_U2 and BLOC_U2.count("find_one(") <= 1)
+         '"$in": cites' in BLOC_U2 and BLOC_U2.count("find_one(") <= 2)
+# CE QUE 14c PROTEGE VRAIMENT : qu'un fil citant trente ancetres ne declenche
+# pas trente allers-retours. Le plafond est passe de 1 a 2 parce que P3-R1
+# ajoute UNE lecture ponctuelle — l'action designee par le jeton de l'adresse
+# de reception. Elle ne depend pas du nombre d'identifiants cites, et elle est
+# CONDITIONNEE : sans jeton valide dans l'adresse, aucune requete n'est faite.
+# C'est ce point-la qu'il faut tenir, pas le chiffre.
+verifier("14c-bis. la lecture par jeton est conditionnee, jamais systematique",
+         "if _jeton:" in BLOC_U2
+         and BLOC_U2.index("_jeton = p3r1_token_depuis_adresse")
+             < BLOC_U2.index("if _jeton:"))
+verifier("14c-ter. elle ne lit qu'UNE action, jamais une liste",
+         "P3R1_CHAMP_TOKEN: _jeton}" in BLOC_U2 and "_jeton}" not in BLOC_U2.replace(
+             "P3R1_CHAMP_TOKEN: _jeton}", ""))
 # IDEM : « webhook » figure dans le commentaire d'en-tete, qui dit qu'il n'y
 # en a pas. On regarde donc les IMPORTS et les DECORATEURS reels du bloc.
 _arbre_u2 = ast.parse(BLOC_U2.split("P3U2_COLLECTION =", 1)[0]

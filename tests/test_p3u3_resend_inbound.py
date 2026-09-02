@@ -623,6 +623,138 @@ verifier("10i. aucune migration : le champ RFC reste optionnel",
 
 
 # ============================================================================
+print("\n12. P3-R1 — L'ADRESSE DE REPONSE PORTE L'IDENTITE DE L'ACTION")
+#
+# CE QUE CE LOT REPARE, ET POURQUOI IL A FALLU CHANGER DE CLE.
+# Deux vraies reponses Gmail sont arrivees en production avec `in_reply_to: []`
+# et `references: []`, dont une APRES le correctif de lecture des en-tetes :
+# Resend ne transmet pas ces en-tetes. Les methodes A et B sont donc
+# indisponibles en pratique, et tout reposait sur `C_FROM_EMAIL` (60), qui ne
+# reconnait une reponse que si elle vient de l'adresse EXACTEMENT demarchee.
+# On met donc l'identite dans la seule donnee qu'on maitrise : l'adresse a
+# laquelle on demande de repondre.
+
+# --- les fonctions pures, d'abord : elles ne touchent aucune base -----------
+_TK = S.p3r1_nouveau_token()
+_ADR = S.p3r1_adresse_reponse(_TK)
+verifier("12a. le jeton fait 128 bits d'entropie (32 hexa)", len(_TK) == 32, _TK)
+verifier("12b. deux jetons ne se ressemblent pas",
+         S.p3r1_nouveau_token() != S.p3r1_nouveau_token())
+verifier("12c. aller-retour adresse -> jeton",
+         S.p3r1_token_depuis_adresse(_ADR) == _TK, _ADR)
+verifier("12d. la casse de l'adresse n'empeche rien",
+         S.p3r1_token_depuis_adresse(_ADR.upper()) == _TK)
+verifier("12e. le sous-adressage `+x` est tolere",
+         S.p3r1_token_depuis_adresse(_ADR.replace("@", "+bruit@")) == _TK)
+
+# LE DOMAINE EST VERIFIE, PAS SEULEMENT LE PREFIXE. Sans cela, une adresse
+# qu'un tiers controle serait lue comme l'une des notres.
+verifier("12f. un AUTRE domaine ne rend aucun jeton",
+         S.p3r1_token_depuis_adresse("r-%s@ailleurs.example" % _TK) == "")
+verifier("12g. l'adresse generique ne rend aucun jeton",
+         S.p3r1_token_depuis_adresse("contact@" + S.P3R1_DOMAINE_REPONSE) == "")
+for _sale in ("r-../..", "r-abc", "r-" + "z" * 32, "r-%s%%40x" % _TK, "r-"):
+    verifier("12h. local-part refuse : %s" % _sale[:14],
+             S.p3r1_token_depuis_adresse("%s@%s" % (_sale, S.P3R1_DOMAINE_REPONSE)) == "")
+verifier("12i. sans jeton, aucune adresse fabriquee",
+         S.p3r1_adresse_reponse("") == "" and S.p3r1_adresse_reponse(None) == ""
+         and S.p3r1_adresse_reponse("ab..cd") == "")
+
+# --- le jeton voyage jusqu'a la charge utile Resend ------------------------
+_act_tok = action("tok1", "info@club.exemple.test", "TOK-01")
+_act_tok[S.P3R1_CHAMP_TOKEN] = _TK
+_inst = S.p3s3d_instantane_envoi(_act_tok)
+verifier("12j. l'instantane porte l'adresse de reponse de l'action",
+         _inst.get("reply_to") == _ADR, str(_inst.get("reply_to")))
+_charge = S.P3S3DFournisseurEmail(objet="Sujet", envoi_autorise=False).charge_utile(_inst, "cle")
+verifier("12k. la charge utile Resend utilise CETTE adresse",
+         _charge["params"]["reply_to"] == _ADR, str(_charge["params"]["reply_to"]))
+
+# SANS JETON, LE COMPORTEMENT D'AVANT. Un e-mail hors P3 ne doit rien perdre.
+_inst_sans = S.p3s3d_instantane_envoi(action("tok2", "x@y.test", "TOK-02"))
+_f = S.P3S3DFournisseurEmail(objet="Sujet", envoi_autorise=False)
+verifier("12l. sans jeton, le Reply-To generique est conserve",
+         _f.charge_utile(_inst_sans, "cle")["params"]["reply_to"] == _f.reply_to)
+
+# --- le jeton est pose UNE SEULE FOIS --------------------------------------
+_b = base_neuve([_act_tok, action("tok3", "info@autre.test", "TOK-03")])
+_a3 = lancer(S.p3r1_assurer_token(action("tok3", "info@autre.test", "TOK-03")))
+_t3 = _a3.get(S.P3R1_CHAMP_TOKEN)
+verifier("12m. une action sans jeton en recoit un", bool(_t3) and len(_t3) == 32)
+_a3bis = lancer(S.p3r1_assurer_token(_a3))
+verifier("12n. un second passage NE LE CHANGE PAS",
+         _a3bis.get(S.P3R1_CHAMP_TOKEN) == _t3, str(_a3bis.get(S.P3R1_CHAMP_TOKEN)))
+_a3ter = lancer(S.p3r1_assurer_token({"id": "act-tok3"}))
+verifier("12o. relu depuis la base, c'est le meme jeton",
+         _a3ter.get(S.P3R1_CHAMP_TOKEN) == _t3)
+
+# --- LE TEST CRITIQUE : une reponse depuis une AUTRE adresse ---------------
+# C'est le cas que `C_FROM_EMAIL` ne savait pas traiter : on ecrit a
+# `info@club`, une personne repond depuis la sienne.
+_b = base_neuve([_act_tok])
+_VERIFY_ACCEPTE["oui"] = True
+_r = appeler(evenement_recu(data={
+    "id": "em_tok_1", "from": "marie.personnelle@exemple.test",
+    "to": [_ADR], "subject": "Re: Proposition", "text": "Volontiers !",
+    "headers": []}))
+_msg = _b[S.P3U2_COLLECTION].documents[-1] if _b[S.P3U2_COLLECTION].documents else {}
+verifier("12p. rattachee malgre une adresse d'expedition DIFFERENTE",
+         _msg.get("statut") == S.P3U2_STATUT_RATTACHE, str(_msg.get("statut")))
+verifier("12q. par la methode du jeton",
+         _msg.get("matching_method") == S.P3U2_METHODE_TOKEN,
+         str(_msg.get("matching_method")))
+verifier("12r. confiance 100", _msg.get("matching_confidence") == 100,
+         str(_msg.get("matching_confidence")))
+verifier("12s. rattachee a la BONNE action",
+         _msg.get("action_id") == "act-tok1", str(_msg.get("action_id")))
+_act_apres = [a for a in _b[S.P3S3_ACTIONS].documents if a["id"] == "act-tok1"][0]
+verifier("12t. `replied_at` est ecrit", bool(_act_apres.get("replied_at")))
+_rep1 = _act_apres.get("replied_at")
+
+# --- idempotence : une seconde reponse ne rejoue rien ----------------------
+_r2 = appeler(evenement_recu(data={
+    "id": "em_tok_2", "from": "autre.encore@exemple.test",
+    "to": [_ADR], "subject": "Re: Proposition", "text": "Je confirme",
+    "headers": []}))
+_act_apres2 = [a for a in _b[S.P3S3_ACTIONS].documents if a["id"] == "act-tok1"][0]
+verifier("12u. `replied_at` n'est PAS reecrit",
+         _act_apres2.get("replied_at") == _rep1, str(_act_apres2.get("replied_at")))
+verifier("12v. aucune relance n'a ete declenchee",
+         not _act_apres2.get("j3_sent_at") and not _act_apres2.get("j7_sent_at"))
+
+# --- un jeton inconnu ne rattache RIEN ------------------------------------
+_b = base_neuve([_act_tok])
+_r3 = appeler(evenement_recu(data={
+    "id": "em_tok_3", "from": "inconnu@exemple.test",
+    "to": [S.p3r1_adresse_reponse(S.p3r1_nouveau_token())],
+    "subject": "Bonjour", "text": "?", "headers": []}))
+_msg3 = _b[S.P3U2_COLLECTION].documents[-1] if _b[S.P3U2_COLLECTION].documents else {}
+verifier("12w. un jeton INCONNU part en revue manuelle, sans rattachement",
+         _msg3.get("statut") == S.P3U2_STATUT_REVUE and not _msg3.get("action_id"),
+         str(_msg3.get("statut")))
+
+# --- les methodes existantes n'ont pas bouge ------------------------------
+# Un correctif qui ajouterait A0 en cassant A, B ou C n'aurait fait que
+# deplacer la fragilite.
+_b = base_neuve([ACT_A])
+_r4 = appeler(evenement_recu(data={
+    "id": "em_tok_4", "from": "hotel@beaulac.exemple.test",
+    "to": ["contact@" + S.P3R1_DOMAINE_REPONSE],
+    "headers": {"In-Reply-To": RFC_A}}))
+_msg4 = _b[S.P3U2_COLLECTION].documents[-1] if _b[S.P3U2_COLLECTION].documents else {}
+verifier("12x. sans jeton, la methode In-Reply-To fonctionne toujours",
+         _msg4.get("matching_method") == S.P3U2_METHODE_IN_REPLY_TO,
+         str(_msg4.get("matching_method")))
+
+# --- securite : le jeton n'ouvre aucune porte -----------------------------
+BLOC_R1 = SRC[SRC.index("P3-R1 — L'ADRESSE DE REPONSE"):]
+verifier("12y. le jeton n'est JAMAIS lu depuis une requete entrante",
+         "query_params" not in BLOC_R1[:6000] and "request.headers" not in BLOC_R1[:6000])
+verifier("12z. il vient d'un aleatoire cryptographique, pas de uuid ni de hachage",
+         "secrets.token_hex" in SRC and "P3R1_CHAMP_TOKEN: {\"$exists\": False}" in SRC)
+
+
+# ============================================================================
 print("\n11. AUCUN RESEAU REEL")
 
 verifier("11a. zero tentative de sortie", len(_TENTATIVES) == 0, str(_TENTATIVES))
