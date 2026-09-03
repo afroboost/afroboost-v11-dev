@@ -64,6 +64,10 @@ const CourseRemindersCard = ({ coachEmail }) => {
   // configure.
   const [proposees, setProposees] = useState(false);
   const [rapport, setRapport] = useState('');
+  // Vingt cours en base, dont une douzaine de brouillons homonymes que
+  // personne ne peut reserver. Les montrer tous, c'est demander au coach de
+  // deviner — et c'est exactement ce qui a fait poser les rappels ailleurs.
+  const [voirTout, setVoirTout] = useState(false);
   const [chargement, setChargement] = useState(true);
   const [indisponible, setIndisponible] = useState('');
   const [envoi, setEnvoi] = useState(false);
@@ -100,10 +104,15 @@ const CourseRemindersCard = ({ coachEmail }) => {
         // reintroduirait exactement le bug qu'on vient de corriger.
         const _liste = (Array.isArray(res.data) ? res.data : []).filter(Boolean);
         setCours(_liste);
-        // AUCUNE PRESELECTION. C'est la ligne qui a fait poser les rappels sur
-        // le mauvais cours : elle choisissait `_liste[0]`, qui se trouvait etre
-        // deja active, et l'ecran s'ouvrait donc sur « actives » — pour un
-        // cours que le coach n'avait pas demande.
+        // AUCUNE PRESELECTION ARBITRAIRE — mais l'ecran doit REFLETER LA BASE.
+        // On coche donc exactement les cours qui portent DEJA des rappels, ni
+        // plus ni moins. Deux consequences, et ce sont les deux demandes :
+        //   * apres un rechargement, les cours regles restent coches ;
+        //   * un cours qu'on n'a jamais active n'est jamais coche tout seul.
+        // C'est l'oppose de l'ancien `_liste[0]`, qui cochait le PREMIER cours
+        // de la liste sans rapport avec son etat.
+        setCoursIds(_liste.filter((c) => c.reminders_enabled === true)
+                          .map((c) => c.id));
       } catch (e) {
         if (annule) return;
         setIndisponible(
@@ -117,6 +126,16 @@ const CourseRemindersCard = ({ coachEmail }) => {
     })();
     return () => { annule = true; };
   }, [entetes]);
+
+  /** Ce cours peut-il REELLEMENT recevoir une reservation, donc un rappel ? */
+  const utile = useCallback((c) => (
+    (c.offres || []).some((o) => o.publique) || c.reminders_enabled === true
+    || coursIds.indexOf(c.id) !== -1
+  ), [coursIds]);
+
+  const coursUtiles = useMemo(() => cours.filter(utile), [cours, utile]);
+  const coursCaches = useMemo(() => cours.filter((c) => !utile(c)), [cours, utile]);
+  const coursAffiches = voirTout ? cours : coursUtiles;
 
   const choisis = useMemo(
     () => cours.filter((c) => coursIds.indexOf(c.id) !== -1), [cours, coursIds]);
@@ -338,7 +357,7 @@ const CourseRemindersCard = ({ coachEmail }) => {
               Cours à régler — coche un ou plusieurs
             </legend>
             <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
-              {cours.map((c) => {
+              {coursAffiches.map((c) => {
                 const _coche = coursIds.indexOf(c.id) !== -1;
                 const _on = c.reminders_enabled === true;
                 return (
@@ -363,9 +382,20 @@ const CourseRemindersCard = ({ coachEmail }) => {
                       aria-label={`Régler les rappels de ${libelleCours(c)}`}
                       style={{ accentColor: 'var(--primary-color, #D91CD2)' }}
                     />
-                    <span className="min-w-0 flex-1 truncate">
-                      {libelleCours(c)}
-                      {(c.offres || []).some((o) => o.publique) ? ' • vendu' : ''}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">
+                        {libelleCours(c)}
+                        {c.archived ? ' • archivé' : ''}
+                      </span>
+                      {/* Le LIEU departage les homonymes mieux que le nom :
+                          « Cours à l'unité » existe trois fois, mais un seul
+                          se donne au Bord du Lac le mercredi. */}
+                      <span className="block truncate text-[11px] text-white/35">
+                        {(c.locationName || c.location || 'Lieu non renseigné')}
+                        {(c.offres || []).some((o) => o.publique)
+                          ? ' • vendu'
+                          : ' • non réservable'}
+                      </span>
                     </span>
                     {/* L'ETAT REEL DE CHAQUE COURS, LISIBLE SANS RIEN OUVRIR.
                         C'est ce qui manquait : dans un `select` fermé, la
@@ -383,6 +413,19 @@ const CourseRemindersCard = ({ coachEmail }) => {
                 );
               })}
             </div>
+            {coursCaches.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setVoirTout((v) => !v)}
+                className="mt-2 text-xs hover:opacity-80"
+                style={{ color: 'var(--primary-color, #D91CD2)' }}
+                data-testid="cr-voir-tout"
+              >
+                {voirTout
+                  ? 'Masquer les cours non réservables'
+                  : `Afficher les ${coursCaches.length} cours non réservables`}
+              </button>
+            )}
           </fieldset>
 
           {coursIds.length === 0 && (
@@ -552,7 +595,11 @@ const CourseRemindersCard = ({ coachEmail }) => {
               style={{ backgroundColor: 'var(--primary-color, #D91CD2)' }}
               data-testid="cr-enregistrer"
             >
-              {envoi ? 'Enregistrement…' : 'Enregistrer'}
+              {envoi
+                ? 'Enregistrement…'
+                : (coursIds.length > 1
+                  ? `Enregistrer pour ${coursIds.length} cours`
+                  : 'Enregistrer')}
             </button>
             {confirme && (
               <span className="text-xs text-white/60" data-testid="cr-confirme">

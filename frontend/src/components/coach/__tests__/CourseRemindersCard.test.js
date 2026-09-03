@@ -55,7 +55,7 @@ const ARCHIVE = {
 let conteneur = null;
 let racine = null;
 
-async function monter({ cours = [MERCREDI, DIMANCHE], echecGet = null, sansChoix = false } = {}) {
+async function monter({ cours = [MERCREDI, DIMANCHE], echecGet = null, sansChoix = false, sansRepli = false } = {}) {
   axios.get.mockReset();
   axios.put.mockReset();
   if (echecGet) axios.get.mockRejectedValue(echecGet);
@@ -71,9 +71,19 @@ async function monter({ cours = [MERCREDI, DIMANCHE], echecGet = null, sansChoix
   // scenarios qui eprouvent le reglage d'UN cours cochent donc explicitement
   // le premier, comme le ferait le coach. `sansChoix` garde l'etat initial
   // pour les scenarios qui eprouvent l'absence de selection.
+  // LE REPLI EST DEPLIE PAR DEFAUT DANS LE BANC. Les cours que personne ne
+  // peut reserver sont replies derriere un bouton — ils ne sont pas SUPPRIMES.
+  // Les scenarios ci-dessous eprouvent le contenu de la liste ; ils la
+  // deplient donc, comme le ferait un coach qui cherche un brouillon.
+  if (!echecGet && !sansRepli) {
+    const _bouton = par('cr-voir-tout');
+    if (_bouton) await act(async () => {
+      _bouton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+  }
   if (!sansChoix && !echecGet) {
     const _liste = (cours || []);
-    if (_liste.length > 0) await cocher(_liste[0].id);
+    if (_liste.length > 0) await choisir('cr-cours', _liste[0].id);
   }
 }
 
@@ -401,43 +411,70 @@ describe('erreurs de chargement', () => {
 // que l'ecran preselectionnait tout seul, et qui etait deja actif.
 // Ces verifications existent pour que cela ne puisse plus se reproduire.
 
-describe('aucune preselection — l\'ecran n\'affiche l\'etat de personne', () => {
-  test('a l\'ouverture, aucun cours n\'est coche', async () => {
-    await monter({ sansChoix: true });
+// Deux cours reguliers VIERGES : ni l'un ni l'autre n'a jamais ete active.
+const DIM_VIERGE = { ...DIMANCHE, reminders_enabled: undefined, reminder_rules: undefined };
+const VIERGES = [MERCREDI, DIM_VIERGE];
+
+describe('l\'ecran reflete la base, et rien d\'autre', () => {
+  test('aucun cours actif en base -> aucun coche a l\'ouverture', async () => {
+    await monter({ cours: VIERGES, sansChoix: true });
     expect(conteneur.querySelectorAll('[data-testid^="cr-cours-"] input:checked').length)
       .toBe(0);
   });
 
-  test('et l\'interrupteur n\'est meme pas affiche', async () => {
+  test('un cours ACTIF en base est coche a l\'ouverture — et lui seul', async () => {
+    // C'est la persistance : apres un rechargement, ce qui est regle le reste.
+    // Et c'est fidele : on ne coche pas « le premier de la liste », on coche
+    // ce que la base porte.
     await monter({ sansChoix: true });
+    const _coches = Array.from(
+      conteneur.querySelectorAll('[data-testid^="cr-cours-"] input:checked')
+    ).length;
+    expect(_coches).toBe(1);
+    expect(par('cr-etat-dim').textContent).toBe('rappels actifs');
+    expect(par('cr-etat-merc').textContent).toBe('aucun rappel');
+  });
+
+  test('et l\'interrupteur n\'est meme pas affiche sans selection', async () => {
+    await monter({ cours: VIERGES, sansChoix: true });
     expect(par('cr-actif')).toBeNull();
     expect(par('cr-aucun-choix')).not.toBeNull();
   });
 
   test('le bouton Enregistrer ne peut pas partir a l\'aveugle', async () => {
-    await monter({ sansChoix: true });
+    await monter({ cours: VIERGES, sansChoix: true });
     expect(par('cr-enregistrer').disabled).toBe(true);
   });
 
-  test('l\'etat REEL de chaque cours est lisible sans rien ouvrir', async () => {
-    // C'est ce que le `select` ferme cachait : DIMANCHE etait actif, MERCREDI
-    // ne l'etait pas, et rien ne le montrait.
+  test('le lieu est affiche — c\'est lui qui departage les homonymes', async () => {
     await monter({ sansChoix: true });
-    expect(par('cr-etat-merc').textContent).toBe('aucun rappel');
-    expect(par('cr-etat-dim').textContent).toBe('rappels actifs');
+    expect(par('cr-cours-merc').textContent).toContain('vendu');
+  });
+
+  test('un cours ARCHIVE est marque comme tel', async () => {
+    await monter({ sansChoix: true });
+    expect(par('cr-cours-merc').textContent).toContain('archivé');
   });
 
   test('decocher le dernier cours efface l\'etat affiche', async () => {
-    await monter({ cours: [DIMANCHE] });
-    expect(par('cr-actif')).not.toBeNull();
+    await monter({ cours: [DIMANCHE], sansChoix: true });
+    expect(par('cr-actif')).not.toBeNull();   // coche car actif en base
     await cocher('dim');
     expect(par('cr-actif')).toBeNull();
+  });
+
+  test('un cours que PERSONNE ne peut reserver est replie, jamais perdu', async () => {
+    await monter({ cours: [DIMANCHE, BROUILLON], sansChoix: true, sansRepli: true });
+    expect(par('cr-cours-brouillon2')).toBeNull();
+    expect(par('cr-voir-tout')).not.toBeNull();
+    await cliquer('cr-voir-tout');
+    expect(par('cr-cours-brouillon2')).not.toBeNull();
   });
 });
 
 describe('regler DEUX cours en une fois', () => {
   test('un seul Enregistrer ecrit sur les deux cours', async () => {
-    await monter({ sansChoix: true });
+    await monter({ cours: VIERGES, sansChoix: true });
     // APRES le montage : `monter` remet les mocks a zero.
     axios.put.mockResolvedValue({
       data: { success: true, reminders_enabled: true, rules: [R24H, SD700] }
@@ -452,7 +489,7 @@ describe('regler DEUX cours en une fois', () => {
   });
 
   test('les deux recoivent EXACTEMENT le meme reglage', async () => {
-    await monter({ sansChoix: true });
+    await monter({ cours: VIERGES, sansChoix: true });
     // APRES le montage : `monter` remet les mocks a zero.
     axios.put.mockResolvedValue({
       data: { success: true, reminders_enabled: true, rules: [R24H, SD700] }
@@ -467,7 +504,7 @@ describe('regler DEUX cours en une fois', () => {
   });
 
   test('le compte rendu dit combien de cours ont ete ecrits', async () => {
-    await monter({ sansChoix: true });
+    await monter({ cours: VIERGES, sansChoix: true });
     // APRES le montage : `monter` remet les mocks a zero.
     axios.put.mockResolvedValue({
       data: { success: true, reminders_enabled: true, rules: [R24H, SD700] }
@@ -480,14 +517,15 @@ describe('regler DEUX cours en une fois', () => {
   });
 
   test('deux cours aux reglages differents sont signales', async () => {
+    // MERCREDI est vierge, DIMANCHE est deja regle : cocher les deux doit le
+    // dire AVANT d'enregistrer, sinon on ecrase un reglage sans le savoir.
     await monter({ sansChoix: true });
     await cocher('merc');
-    await cocher('dim');
     expect(par('cr-divergents')).not.toBeNull();
   });
 
   test('un echec sur UN cours n\'affiche jamais « Enregistre »', async () => {
-    await monter({ sansChoix: true });
+    await monter({ cours: VIERGES, sansChoix: true });
     axios.put
       .mockResolvedValueOnce({ data: { success: true, reminders_enabled: true, rules: [R24H] } })
       .mockRejectedValueOnce({ response: { data: { detail: 'Refus du serveur.' } } });
@@ -501,7 +539,7 @@ describe('regler DEUX cours en une fois', () => {
   });
 
   test('et le cours qui a REUSSI garde son etat, lui', async () => {
-    await monter({ sansChoix: true });
+    await monter({ cours: VIERGES, sansChoix: true });
     axios.put
       .mockResolvedValueOnce({ data: { success: true, reminders_enabled: true, rules: [R24H] } })
       .mockRejectedValueOnce({ response: { data: { detail: 'Refus du serveur.' } } });
