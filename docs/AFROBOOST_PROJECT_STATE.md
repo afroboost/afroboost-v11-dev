@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 08:40 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 09:10 UTC**.
 
 ---
 
@@ -182,7 +182,7 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 |---|---|
 | Campagne | **P3-LAUNCH-137** (`idempotency_key = P3-LAUNCH-137-INITIAL-2026-09`) |
 | État | **`preparee`** — ⚠️ **ROUVERTE le 03/09** pour compléter les 25 J0 manquants ; **attend une RÉAPPROBATION du coach** |
-| `snapshot_hash` courant | **`null`** — effacé par la réouverture. Empreinte qui sera figée à la réapprobation : `d6f290408db5a419a450b7d1d1537d6e14ffde482d0f6da2e8aabbc9da452212` (ancienne : `cd84f795…`, archivée) |
+| `snapshot_hash` courant | **`null`** — effacé par la réouverture. Empreinte qui sera figée à la réapprobation : `bfdba290ae2053a62456f9440b82c72c14908b74a130711e6c1760c1aa6401e0` (ancienne : `cd84f795…`, archivée) |
 | Prospects (`partner_prospects`) | **142** |
 | Actions (`prospect_campaign_actions`) | **137** |
 | Contacté (`first_contact_claimed_at`) | **0** |
@@ -264,10 +264,33 @@ redevient `preparee`, `snapshot_hash` est effacé. **Aucune seconde campagne n'a
 Trois raisons indépendantes empêchent aujourd'hui tout envoi : état non approuvé, empreinte
 absente, drapeaux absents.
 
+### Arbitrage du coach — deux adresses, une seule maison (03/09)
+
+Deux actions visaient le **même domaine `case-a-chocs.ch`** : `ORG-02` (Case à Chocs,
+`contact@`) et `BAR-05` (L'Interlope, `interlope@`). Ce n'était pas un doublon technique —
+deux fiches, deux adresses — mais la fiche de L'Interlope désigne elle-même comme contact
+**« Programmation Case à Chocs »** : les deux boîtes aboutissent au même bureau.
+
+**Décision du coach : `ORG-02` part, `BAR-05` attend.** `BAR-05` passe en `statut = "exclu"`
+(chemin `excluded: true` de la route de modification). **Rien n'est supprimé** : l'action, son
+message et la fiche `partner_prospects` (toujours `a_contacter`) restent intacts et
+réintégrables en un appel. Une action `exclu` sort de l'empreinte ET du décompte.
+
+**AUTO destinés au premier lancement : 56 → 55.**
+
+**Aucun autre doublon organisationnel**, vérifié sur quatre critères parmi les 55 partants :
+adresse e-mail exacte (55 distinctes), domaine d'entreprise hors messagerie gratuite (aucun
+en double), site web (aucun partagé), adresse postale (aucune partagée). Les **8 adresses
+`gmail.com`** appartiennent à **8 entités réellement indépendantes** (noms, villes et
+catégories différents) : un domaine gratuit partagé n'est pas un doublon. `GVA-D2` porte deux
+sites « Dancefloor Studio » **dans la même action** — un seul message, pas un doublon.
+
 **PROCHAINE ÉTAPE — HUMAINE, ET ELLE N'A PAS ÉTÉ FAITE** : le coach relit les 25 messages,
 puis **réapprouve la campagne**. La garde projetée sur l'état `approuvee` rend alors
-**56 AUTORISE** (les 81 autres restent `PAS_AUTO` : MANUEL 53, ASSISTÉ 19, BLOQUÉ 9).
-Sauvegarde complète d'avant l'opération : `~/afroboost-sauvegardes/p3-j0-25-avant-20260903-083541.json`.
+**55 AUTORISE** (81 `PAS_AUTO` — MANUEL 53, ASSISTÉ 19, BLOQUÉ 9 — et 1 `ACTION_EXCLUE`).
+Empreinte qui sera figée à la réapprobation : `bfdba290ae2053a62456f9440b82c72c14908b74a130711e6c1760c1aa6401e0`.
+Sauvegardes d'avant chaque opération : `~/afroboost-sauvegardes/p3-j0-25-avant-20260903-083541.json`
+et `~/afroboost-sauvegardes/p3-arbitrage-interlope-avant-20260903-090614.json`.
 
 ### Le compte des destinataires — historique de la réconciliation du 2026-09-03
 
@@ -283,6 +306,7 @@ réservation, aucun envoi.
 | … et `message_j0` non vide | **31** | les 25 autres → `MESSAGE_VIDE` |
 | **Verdict de la garde : AUTORISE** | **31** | plus aucun filtre ne retire personne |
 | *(après P3-J0-25, sur campagne réapprouvée)* | **56** | les 25 `MESSAGE_VIDE` ont reçu leur J0 |
+| *(après l'arbitrage Case à Chocs)* | **55** | `BAR-05` mise en attente : `ACTION_EXCLUE` |
 
 ⚠️ **Le « 56 » n'a jamais été un nombre d'envois** : c'est le total AUTO+e-mail, AVANT la garde.
 Le seul chiffre qui compte est celui que rend la garde : **31**.
@@ -299,7 +323,7 @@ Les autres portes de la garde ont toutes été vérifiées vides au même moment
 `DEJA_RESERVE` 0, `STATUT_INCOMPATIBLE` 0, `TENTATIVES_EPUISEES` 0.
 Empreinte de campagne **conforme**, `envoi_autorise = False`.
 
-- **56 e-mails prêts mais NON envoyés** (31 avant P3-J0-25), et l'envoi reste impossible : campagne non approuvée, empreinte absente, drapeaux absents.
+- **55 e-mails prêts mais NON envoyés** (31 avant P3-J0-25 ; 56 avant l'arbitrage Case à Chocs), et l'envoi reste impossible : campagne non approuvée, empreinte absente, drapeaux absents.
 - **Porte d'envoi FERMÉE et prouvée fermée** : les deux drapeaux `P3_LAUNCH_ENABLED` et
   `P3_LAUNCH_ENVOI_REEL` sont **absents** de `feature_flags` → l'envoi réel est impossible.
   L'absence est le cas sûr, par conception.
@@ -353,7 +377,7 @@ Empreinte de campagne **conforme**, `envoi_autorise = False`.
 - **P3-R1 : terminé et prouvé.** Le verrou technique qui empêchait de lancer sereinement
   — « une réponse envoyée depuis une autre adresse partait en revue manuelle et les relances
   continuaient » — est levé.
-- **Nombre de destinataires : 56** depuis P3-J0-25. Les 25 messages manquants sont écrits.
+- **Nombre de destinataires : 55** — 56 après P3-J0-25, moins `BAR-05` mise en attente par arbitrage du coach.
 - ⏳ **SEULE ACTION EN ATTENTE, ET ELLE EST HUMAINE : réapprouver P3-LAUNCH-137.**
   La campagne est `preparee` depuis la réouverture du 03/09 : rien ne peut partir tant que le
   coach n'a pas relu les 25 nouveaux messages et réapprouvé. Ne pas réapprouver à sa place.
