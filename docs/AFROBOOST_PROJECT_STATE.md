@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 16:03 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 17:20 UTC**.
 
 ---
 
@@ -817,6 +817,109 @@ Empreinte de campagne **conforme**, `envoi_autorise = False`.
   L'absence est le cas sûr, par conception. **Aujourd'hui ils sont présents à `false`**, et
   ce sont `P3_RELANCE_ENABLED` / `P3_RELANCE_ENVOI_REEL` qui sont **absents**, donc fermés.
 - **NE JAMAIS LANCER SANS GO EXPLICITE DU COACH.**
+
+## J. ESSAI GRATUIT & RAPPELS AVANT COURS (vérifié en base 2026-09-03, 17:20 UTC)
+
+### ✅ AUTO-PRÉSENCE DES ESSAIS — ACTIVE EN PRODUCTION (03/09, décision du coach)
+
+**Règle métier retenue par le propriétaire : le scan QR n'est plus obligatoire.**
+Un essai gratuit réservé, non annulé, non déclaré absent devient une présence
+**2 h après la FIN du cours** (`AP_GRACE_MINUTES = 120` ; fin = début + `duration_minutes`,
+60 min par défaut). Le scan reste possible et prioritaire.
+
+**AUCUN CODE ÉCRIT POUR CELA.** Le moteur (phase 1) existait déjà, déployé et testé
+(`test_autopresence_essai` **91/91**). L'activation a consisté à basculer **un seul champ** :
+
+| Drapeau | Avant | Après |
+|---|---|---|
+| `AUTO_PRESENCE_TRIAL_ENABLED` | true | true (inchangé) |
+| `AUTO_PRESENCE_TRIAL_ECRITURE_REELLE` | *(absent = false)* | **true** |
+
+Repli : remettre ce champ à `false`. Sauvegarde des 18 drapeaux prise avant l'écriture.
+
+⚠️ **PHASE 1 = ESSAIS SEULEMENT.** Les forfaits payants sont exclus (`pas_un_essai`) —
+auto-valider consommerait une séance vendue. **La phase payante n'est PAS ouverte.**
+⚠️ **L'ABSENCE EST DÉSORMAIS UNE DÉCLARATION.** Ne rien faire vaut « venu ». La route
+`POST /reservations/{id}/absence` existe et n'a jamais servi.
+⚠️ `AP_BORNE_ACTIVATION` reste au **26/08** : 122 réservations historiques protégées.
+**Ne jamais la reculer.**
+
+### ✅ LE FUNNEL D'ESSAI EST ALLÉ AU BOUT — pour la première fois (03/09 17:08 UTC)
+
+Passe automatique du moteur en production, **non forcée**. Deux essais du cours du 02/09
+18:30 auto-validés :
+
+| Personne | `validation_source` | `auto_presence_at` | Écran après-essai | J+0 |
+|---|---|---|---|---|
+| Hélène Bourgouin (`AFR-3J5JKA`) | **`auto`** | 17:08:41 | **ouvert, 2 offres** | **delivered** — `01a0683e-845a-720b-a6c8-0d45a60e5046` |
+| Yann (`AFR-R4HS8Q`) | **`auto`** | 17:08:42 | **ouvert, 2 offres** | **delivered** — `01a0683e-863e-705a-a6c1-444b12697e3b` |
+
+Chaîne complète prouvée : **accordé → réservé → présent → écran ouvert → J+0 livré.**
+Offres proposées : *PULSE x10 cours* et *Cours à l'unité*. Aucune offre interdite ne fuite
+(« Membres », le T-shirt et l'essai lui-même sont écartés).
+
+Non-débordement vérifié : **0** réservation payante auto-validée, **0** annulée, **0**
+antérieure au 26/08. Exactement **2** documents portent `validation_source: "auto"` dans
+toute la base. Présences validées : 15 → **17**.
+
+📌 **PIÈGE DE CONTRÔLE.** `conv_etat` doit être appelée avec le coach résolu par
+`_conv_contexte`, PAS avec l'e-mail admin : ces forfaits portent `coach_id = ""` et le
+filtre est symétrique. Passer le mauvais propriétaire affiche « 0 offre » et fait croire à
+une régression qui n'existe pas.
+
+J+3 : Hélène et Yann deviendront candidats le **06/09** s'ils n'ont pas converti.
+`P1_TRIAL_J3_ENVOI_REEL` reste à **false** — le moteur simulera, rien ne partira.
+
+### ✅ RAPPELS AVANT COURS — LE DÉCLENCHEUR COOLIFY EXISTE ENFIN (RV3-B, `43b8fa57`)
+
+**La cause était le silence, pas le refus.** `/api/cron/reservation-reminders` n'avait qu'un
+seul planificateur : `vercel.json`. **Les crons de ce fichier ne s'exécutent PAS sur
+Coolify.** Mesure du 03/09 : **0 réservation sur 152** ne porte `reminders_sent`, et les
+deux seules traces de l'ancien champ datent du **12/08** — plus un rappel depuis 3 semaines.
+
+RV3-B ajoute **une horloge, et rien d'autre** : `_rv3b_boucle_rappels`, tâche asyncio native
+enregistrée au démarrage comme les cinq autres, qui appelle le moteur EXISTANT. Elle ne lit
+aucune réservation, ne décide d'aucun envoi, ne connaît ni règles ni canaux.
+
+- **Période = 3600 s**, soit **exactement** la largeur de la fenêtre du moteur
+  (2 × `N1B2_DEMI_FENETRE_MIN`). Chaque instant appartient à une fenêtre et une seule,
+  quelle que soit l'heure de démarrage du conteneur. Premier passage à **+90 s**.
+- **Aucun rattrapage** : un rappel dont l'heure est passée de plus de 30 min tombe hors de
+  la fenêtre `(cible − 30) < maintenant ≤ (cible + 30)`. Cette garde vit dans le moteur.
+- Banc `test_rv3b_boucle_rappels` **44/44** (horloge gelée pour éprouver le rappel de 07:00
+  hors de 07:00). Non-régression : RV2 96/96 · E2 73/73 · E1B 50/50 · boot 21/21.
+- Déployé : `boot_id b94b4526…`, démarrage **17:14:33 UTC**, postérieur au push. 15/15 × 200.
+
+⚠️ **Les 4 AUTRES crons de `vercel.json` sont dans le même cas** (`check-campaigns`,
+`post-course-feedback`, `check-subscription-renewal`, `admin/check-expirations`) et méritent
+le même examen. Certains ont déjà leur boucle, d'autres non — à vérifier un par un.
+
+### ⛔ SECOND VERROU TOUJOURS FERMÉ — le cours réservé n'a pas ses rappels
+
+**Vérifié en base le 03/09 à 17:20 UTC : `reminders_enabled` est TOUJOURS ABSENT sur le
+cours que les gens réservent réellement.**
+
+| Cours | id | `reminders_enabled` | Règles | Réservations |
+|---|---|---|---|---|
+| **Cours à l'unité** — mercredi 18:30, Bord du Lac Auvernier | `62fcac27` | **absent** | aucune | **6** |
+| Afroboost Silent – Session Cardio | `64b4c975` | true | 24 h + 07:00 | 46 (**archivé**) |
+| Nouveau cours | `285fadd6` | true | 24 h + 07:00 | **0** |
+
+Le moteur exige `reminders_enabled is True`, **sans aucun repli** sur la configuration du
+coach. Les règles 24 h + 07:00 existent bien dans `coach_profiles.reminder_rules`, mais
+elles ne sont JAMAIS lues à l'exécution : seule la configuration **du cours** compte.
+
+**Aucune écriture n'a eu lieu ce jour-là** : la route `PUT /coach/courses/{id}/reminders`
+pose `reminders_updated_at` à chaque succès, et la trace la plus récente du parc entier
+date du **17/08**. Un enregistrement réussi serait visible ; il n'y en a aucun.
+
+👉 **À FAIRE CÔTÉ COACH** : rouvrir « Cours à l'unité » (`62fcac27`, celui qui porte les
+6 réservations, PAS l'homonyme `01f3b303` ni celui qui est archivé), activer les rappels et
+**vérifier que l'écran confirme l'enregistrement**. Tant que ce champ est absent, l'horloge
+tourne à vide sur ce cours.
+
+📌 **« Rappel configuré » ≠ « rappel envoyé ».** Deux verrous indépendants : le déclencheur
+(désormais ouvert) et l'activation par cours (toujours fermée sur le bon cours).
 
 ## B. P2 — PARTENAIRES
 
