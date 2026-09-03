@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 09:16 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 09:55 UTC**.
 
 ---
 
@@ -286,6 +286,45 @@ en double), site web (aucun partagé), adresse postale (aucune partagée). Les *
 `gmail.com`** appartiennent à **8 entités réellement indépendantes** (noms, villes et
 catégories différents) : un domaine gratuit partagé n'est pas un doublon. `GVA-D2` porte deux
 sites « Dancefloor Studio » **dans la même action** — un seul message, pas un doublon.
+
+### ⛔ INCIDENT — PREMIER ENVOI x3 AVORTÉ, 0 E-MAIL PARTI (03/09 09:51 UTC)
+
+Un premier passage réel plafonné à 3 a été lancé sur GO écrit du coach. **Aucun e-mail
+n'est parti** : le moteur a été exécuté **depuis le poste local**, où le paquet `resend`
+n'était **pas installé**. `import resend` a levé `ModuleNotFoundError` **avant** le moindre
+appel réseau.
+
+**LA LEÇON, ET ELLE EST STRUCTURELLE** : `p3s3d_executer_campagne` n'est exposée par
+**aucune route HTTP** — la lancer suppose donc de l'appeler à la main, et **l'endroit d'où
+on l'appelle décide si le SDK existe**. `resend==2.19.0` est dans `api/requirements.txt`,
+donc présent dans le conteneur ; il ne l'était pas sur le poste. Avant tout envoi réel :
+**vérifier `import resend` là où le moteur va tourner.**
+
+**Ce que le système a bien fait** — la conception a tenu exactement comme prévue :
+l'échec est classé `INDETERMINE` (le SDK ne permet pas de distinguer « jamais parti » de
+« parti, réponse perdue »), donc **le verrou reste posé** et rien n'est rejoué tout seul.
+Aucun faux `sent`.
+
+| Fait | Valeur vérifiée |
+|---|---|
+| E-mails réellement envoyés | **0** — confirmé côté **Resend** : 0 envoi vers les 3 adresses, 0 e-mail portant l'objet de campagne |
+| `sent_at` / `provider_message_id` / `first_contact_sent_at` | **0 / 0 / 0** |
+| Fiches `partner_prospects` | **142 × `a_contacter`** — aucune passée à `contacte` |
+| Actions touchées | **3** : `BAR-01`, `BAR-02`, `BAR-03` |
+| Leur état | `statut = echec_indetermine`, `verrou_actif = true`, `attempt_count = 1`, `reply_token` posé |
+| 4ᵉ destinataire | **aucun** — les 52 suivants en `REPORTE / PLAFOND` |
+| Drapeaux d'envoi | **refermés** (`$unset`, donc absents) — porte close, vérifiée `envoi_autorise() = False` |
+
+⚠️ **ÉTAT À RÉGULARISER AVANT LE PROCHAIN ENVOI** : les 3 actions sont **verrouillées** et
+sortent donc des exécutables (55 → 52 tant qu'elles le restent). La libération
+(`p3s3d_liberer` → `statut = echec`, verrou retiré) est **une décision humaine par
+conception** — le code réserve ce cas à un humain, et la preuve d'innocuité est acquise
+(0 envoi côté Resend). **Ne pas libérer sans GO.**
+💡 Leur `reply_token` est **conservé et réutilisable** : c'est voulu, un jeton qui changerait
+entre deux tentatives rendrait orpheline toute réponse au premier envoi.
+
+Correctif de terrain appliqué : `resend==2.19.0` **installé sur le poste**, `import resend`
+vérifié, et la porte fermée refuse toujours avant tout appel (`ENVOI_NON_AUTORISE`, 0 appel).
 
 ### RÉAPPROBATION FAITE — 2026-09-03 09:15:03 UTC
 
