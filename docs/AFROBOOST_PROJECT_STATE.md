@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 09:10 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 09:16 UTC**.
 
 ---
 
@@ -181,8 +181,8 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | Fait | Valeur vérifiée |
 |---|---|
 | Campagne | **P3-LAUNCH-137** (`idempotency_key = P3-LAUNCH-137-INITIAL-2026-09`) |
-| État | **`preparee`** — ⚠️ **ROUVERTE le 03/09** pour compléter les 25 J0 manquants ; **attend une RÉAPPROBATION du coach** |
-| `snapshot_hash` courant | **`null`** — effacé par la réouverture. Empreinte qui sera figée à la réapprobation : `bfdba290ae2053a62456f9440b82c72c14908b74a130711e6c1760c1aa6401e0` (ancienne : `cd84f795…`, archivée) |
+| État | **`approuvee`** — **RÉAPPROUVÉE le 2026-09-03 09:15:03 UTC** par `contact.artboost@gmail.com`, après complétion des 25 J0 et arbitrage Case à Chocs |
+| `snapshot_hash` courant | **`bfdba290ae2053a62456f9440b82c72c14908b74a130711e6c1760c1aa6401e0`** — recalculé **au moment** de l'approbation, jamais recopié. Empreinte **conforme** vérifiée après coup. Ancienne `cd84f795…` archivée |
 | Prospects (`partner_prospects`) | **142** |
 | Actions (`prospect_campaign_actions`) | **137** |
 | Contacté (`first_contact_claimed_at`) | **0** |
@@ -190,7 +190,9 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | Inbound (`prospect_inbound_messages`) | **0** |
 | Répartition par canal | email 56, instagram 51, formulaire 16, aucun 9, visite 3, whatsapp 1, téléphone 1 |
 | Répartition par exécution | AUTO 56, MANUEL 53, ASSISTÉ 19, BLOQUÉ 9 |
-| Approbations archivées | **2** (1ʳᵉ du 01/09 09:12, 2ᵉ du 01/09 11:17 — rouvertes, historique intact) |
+| Approbations archivées | **2** (01/09 09:12 et 01/09 11:17 — rouvertes, historique intact) + l'approbation **courante** du 03/09 |
+| `nb_destinataires` (campagne, tous canaux) | **136** — 137 actions moins `BAR-05` exclue |
+| **AUTO e-mail réellement autorisés** | **55** — le seul chiffre qui décide de ce qui part |
 
 ### P3-R1 — CORRÉLATION FORTE : **VERT, PROUVÉE EN PRODUCTION (03/09/2026)**
 
@@ -285,12 +287,39 @@ en double), site web (aucun partagé), adresse postale (aucune partagée). Les *
 catégories différents) : un domaine gratuit partagé n'est pas un doublon. `GVA-D2` porte deux
 sites « Dancefloor Studio » **dans la même action** — un seul message, pas un doublon.
 
-**PROCHAINE ÉTAPE — HUMAINE, ET ELLE N'A PAS ÉTÉ FAITE** : le coach relit les 25 messages,
-puis **réapprouve la campagne**. La garde projetée sur l'état `approuvee` rend alors
-**55 AUTORISE** (81 `PAS_AUTO` — MANUEL 53, ASSISTÉ 19, BLOQUÉ 9 — et 1 `ACTION_EXCLUE`).
-Empreinte qui sera figée à la réapprobation : `bfdba290ae2053a62456f9440b82c72c14908b74a130711e6c1760c1aa6401e0`.
-Sauvegardes d'avant chaque opération : `~/afroboost-sauvegardes/p3-j0-25-avant-20260903-083541.json`
-et `~/afroboost-sauvegardes/p3-arbitrage-interlope-avant-20260903-090614.json`.
+### RÉAPPROBATION FAITE — 2026-09-03 09:15:03 UTC
+
+Le coach a validé les 25 messages et l'arbitrage, puis la campagne a été **réapprouvée**.
+**MÊME campagne, aucune seconde créée** (`prospect_campaigns` = 1). L'empreinte a été
+**recalculée au moment de l'approbation** sur l'état réel, jamais recopiée d'un calcul
+antérieur ; elle est ensuite vérifiée **conforme** par `p3s3d_empreinte_conforme`.
+
+Garde réelle rejouée après approbation, sur les 137 actions :
+
+| Verdict | Nombre |
+|---|---|
+| **AUTORISE** | **55** |
+| `PAS_AUTO` | 81 (MANUEL 53, ASSISTÉ 19, BLOQUÉ 9) |
+| `ACTION_EXCLUE` | 1 (`BAR-05`, L'Interlope) |
+| `MESSAGE_VIDE`, `DEJA_CONTACTE`, `REFUS_EXPRIME`, `CIBLE_INVALIDE`, `DEJA_RESERVE`, `OBJET_ABSENT`, `STATUT_INCOMPATIBLE`, `TENTATIVES_EPUISEES` | **0 chacun** |
+
+Vérifié en plus : aucune action exclue ne figure parmi les 55 ; `ORG-02` y est, `BAR-05` n'y est
+pas ; les 55 sont toutes `AUTO` + `email` et portent toutes un `message_j0`.
+
+**P3-R1 — les 55 sont rattachables** : pour chacune, un Reply-To individuel
+`r-<jeton>@reply.afroboosteur.com` est généré, relu et redonne le même jeton (**55/55**,
+en simulation pure — **aucun jeton n'a été écrit**). Confiance `A0_REPLY_TOKEN` = **100**.
+⚠️ **`reply_token` est posé À L'EXÉCUTION, pas à l'approbation** : en compter 0 en base
+aujourd'hui est le comportement attendu, pas un manque.
+
+⚠️ **APPROUVER N'EST PAS ENVOYER.** Les deux drapeaux `P3_LAUNCH_ENABLED` et
+`P3_LAUNCH_ENVOI_REEL` restent **absents**, `p3s3_envoi_autorise()` rend **False**.
+Aucun `claim`, aucun `verrou_actif`, aucun `sent_at`, aucun e-mail. **La porte d'envoi reste
+fermée et n'a pas été touchée.**
+
+Sauvegardes d'avant chaque opération, dans `~/afroboost-sauvegardes/` :
+`p3-j0-25-avant-20260903-083541.json`, `p3-arbitrage-interlope-avant-20260903-090614.json`,
+`p3-avant-reapprobation-20260903-091503.json`.
 
 ### Le compte des destinataires — historique de la réconciliation du 2026-09-03
 
@@ -378,9 +407,9 @@ Empreinte de campagne **conforme**, `envoi_autorise = False`.
   — « une réponse envoyée depuis une autre adresse partait en revue manuelle et les relances
   continuaient » — est levé.
 - **Nombre de destinataires : 55** — 56 après P3-J0-25, moins `BAR-05` mise en attente par arbitrage du coach.
-- ⏳ **SEULE ACTION EN ATTENTE, ET ELLE EST HUMAINE : réapprouver P3-LAUNCH-137.**
-  La campagne est `preparee` depuis la réouverture du 03/09 : rien ne peut partir tant que le
-  coach n'a pas relu les 25 nouveaux messages et réapprouvé. Ne pas réapprouver à sa place.
+- ✅ **P3-LAUNCH-137 est RÉAPPROUVÉE** (03/09 09:15 UTC). Contenu figé, empreinte conforme.
+- ⛔ **SEULE PORTE ENCORE FERMÉE : les deux drapeaux d'envoi.** Leur ouverture est une décision
+  distincte de l'approbation, et elle n'a pas été demandée. **NE JAMAIS LES OUVRIR SANS GO ÉCRIT.**
 - Dettes antérieures (non bloquantes) : cf. `CLAUDE.md` et l'historique des lots.
 
 ---
