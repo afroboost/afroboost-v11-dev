@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-02, 19:45 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 05:47 UTC**.
 
 ---
 
@@ -53,11 +53,16 @@ Avant chaque lot / diagnostic / déploiement : (1) lire ce fichier ; (2) vérifi
   C'est une application DIFFÉRENTE sur le MÊME serveur : y poser une variable n'a aucun effet sur afroboost.com.
 - Dans le même environnement se trouvent aussi `afroboost-live`, `sportdate`, `sportdate-rencontre` : ce ne sont pas la bonne app.
 
-## Git / déploiement (vérifié 2026-09-02 11:15 UTC)
+## Git / déploiement (vérifié 2026-09-03 05:47 UTC)
 
-- `origin/main` = **9972d48a** — « GOOGLE-2 : un rendez-vous convenu part enfin dans l'agenda du coach »
-- Dernier déploiement Coolify = **Success**, commit **9972d48**, 09:13:25 → 09:18:04 UTC
-- Uptime conteneur cohérent avec ce démarrage — **la prod EXÉCUTE bien GOOGLE-2**
+- `origin/main` = `HEAD` local = **a20c93ad** — « P3-R1 : l'adresse de réponse porte l'identité de l'action »
+- **Preuve runtime que la prod EXÉCUTE bien P3-R1** — deux faits indépendants, aucun ne repose sur Coolify :
+  1. l'index **`reply_token_1`**, unique et partiel, **existe en base** — il n'est créé qu'au démarrage
+     par le code de P3-R1 ;
+  2. un e-mail réel envoyé à `r-<jeton>@reply.afroboosteur.com` est ressorti en base avec
+     `matching_method = A0_REPLY_TOKEN`, confiance **100** — méthode qui n'existe que dans P3-R1.
+- `GET /healthz` → 200 ; 15 sondes consécutives sur `/` → **15 × 200**, aucun 404 Traefik.
+- Antérieurement : GOOGLE-2 (`9972d48a`) déployé le 02/09, Coolify Success 09:13:25 → 09:18:04 UTC.
 
 ## Variables d'environnement (présence uniquement, aucune valeur)
 
@@ -154,13 +159,24 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 ## D. RESEND
 
 - **Receiving configuré** ; `email.sent` **actif** ; `email.received` **actif** (webhook signé Svix — lot P3-U3)
-- **Reply-To commercial actuel : `contact@afroboosteur.com`** — seule source canonique
+- **Reply-To commercial : `contact@afroboosteur.com`** — canonique pour tout ce qui n'est PAS P3
   (`AFROBOOST_REPLY_TO` et `AFROBOOST_REPLY_TO_RAPPELS` convergent dessus)
+- **Reply-To des actions P3 : `r-<jeton>@reply.afroboosteur.com`, UN PAR ACTION** (P3-R1, `a20c93ad`).
+  Le générique reste le repli quand l'action n'a pas de jeton (simulation) et pour tout e-mail hors P3.
+  Domaine de réception réglable par `P3_REPLY_DOMAIN` ; **absent en production**, donc le défaut
+  `reply.afroboosteur.com` s'applique — et il est prouvé fonctionnel (test réel du 03/09).
+- ⚠️ **Resend NE TRANSMET PAS `In-Reply-To` ni `References`** dans `email.received`. Deux vraies
+  réponses Gmail sont arrivées avec les deux champs vides, dont une APRÈS le correctif de lecture
+  `fa3485ce` (les en-têtes Resend sont une LISTE, pas un dictionnaire — ce correctif était juste,
+  mais insuffisant). **Ne pas rouvrir ce sujet** : les méthodes A et B sont indisponibles en pratique,
+  c'est ce qui a rendu P3-R1 nécessaire.
+- ✅ **Resend transmet le local-part COMPLET du destinataire** dans `to_email` (jeton compris).
+  Prouvé deux fois en production : sonde du 02/09 19:22 UTC, puis test P3-R1 du 03/09 05:45 UTC.
 - Expéditeur (FROM) : `Afroboost <notifications@afroboost.com>`
 - ⚠️ `contact@afroboost.ch` est une **adresse morte** (domaine sans MX) : refusée par le code, ne pas la reposer
 - **DNS déjà configuré — NE PAS recommencer la configuration DNS**
 
-## C. P3 — PROSPECTION PARTENAIRES (vérifié en base 2026-09-02)
+## C. P3 — PROSPECTION PARTENAIRES (re-vérifié en base 2026-09-03, après nettoyage de la fixture P3-R1)
 
 | Fait | Valeur vérifiée |
 |---|---|
@@ -174,6 +190,45 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | Inbound (`prospect_inbound_messages`) | **0** |
 | Répartition par canal | email 56, instagram 51, formulaire 16, aucun 9, visite 3, whatsapp 1, téléphone 1 |
 | Répartition par exécution | AUTO 56, MANUEL 53, ASSISTÉ 19, BLOQUÉ 9 |
+
+### P3-R1 — CORRÉLATION FORTE : **VERT, PROUVÉE EN PRODUCTION (03/09/2026)**
+
+Le rattachement d'une réponse ne passe plus par un en-tête que le fournisseur ne rend pas,
+mais par **l'adresse à laquelle on demande de répondre** : chaque action porte son
+`r-<jeton>@reply.afroboosteur.com`. Jeton = 128 bits d'aléatoire cryptographique, opaque,
+**aucun identifiant métier** (ni `_id`, ni `action_id`, ni `recipient_key`, ni l'adresse du
+prospect). Index unique **partiel** sur `reply_token` — présent en base, vérifié.
+
+Ordre de corrélation : **A0 jeton (100)** > A `In-Reply-To` (100) > B `References` (95) >
+`B_PROVIDER` (90) > C `from_email` (60) > revue manuelle. Les anciennes méthodes sont
+**conservées**, elles reprendront du service le jour où les en-têtes arriveront.
+
+Test réel contrôlé, fixture isolée (`FIXTURE-R1-*`), **aucun prospect réel touché** :
+
+| # | Vérification | Résultat |
+|---|---|---|
+| 1 | Resend expose le local-part complet du destinataire | OK — jeton lu dans `to_email` |
+| 2 | Réponse envoyée depuis une **AUTRE adresse** que celle démarchée | OK — `notifications@afroboost.com` ≠ `info@club-fictif-p3r1.exemple` |
+| 3 | Méthodes A/B mécaniquement impossibles | OK — `in_reply_to: []`, `references: []` |
+| 4 | Méthode C mécaniquement impossible | OK — l'expéditeur ne correspond à aucune `target` |
+| 5 | Rattachement | OK — `matching_method = A0_REPLY_TOKEN` |
+| 6 | Confiance | OK — **100**, `statut = rattache` |
+| 7 | Action retrouvée | OK — `action_id`, `campaign_id`, `recipient_key` renseignés |
+| 8 | `replied_at` écrit | OK — `2026-09-03T05:44:59.915Z` |
+| 9 | Relances J+3 / J+7 annulées | OK — `j3_annule_le` + `j7_annule_le`, motif « reponse recue » |
+| 10 | Deuxième réponse du même fil | OK — stockée, rattachée, **`replied_at` INCHANGÉ** |
+| 11 | Aucun doublon d'action, aucun rejeu | OK — 2 messages, 1 seule pose de date |
+| 12 | Jeton inconnu | OK — sonde `r-test-91f0…` → `AUCUNE`, revue manuelle, rien rattaché |
+| 13 | `/prospect-inbound` protégé | OK — **403 sans jeton** (contrôle : route inexistante = 200, POST = 405) |
+| 14 | Nettoyage de la fixture | OK — **0 résidu**, compteurs revenus à l'identique |
+
+**Ce que le jeton n'ouvre pas** : aucune route ne l'accepte en entrée, il n'apparaît nulle part
+dans le frontend, il n'est lu que depuis un message entrant **déjà authentifié par la signature
+Svix**. Le **domaine est vérifié** en plus du préfixe — sans quoi `r-<jeton>@ailleurs.example`,
+adresse qu'un tiers contrôle, serait lue comme une des nôtres.
+
+**Multi-fiches** (5 destinataires portent plusieurs organisations) : couvert par le banc U2
+(`11d. fiches_marquees == 2`), pas par le test réel — la fixture n'avait aucune fiche rattachée.
 
 - **31 e-mails prêts mais NON envoyés** (chiffre déclaré par le coach ; en base, 56 destinataires
   de canal e-mail en exécution AUTO — à re-confirmer avant tout envoi).
@@ -214,6 +269,8 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | GOOGLE-1 | `521cfe19` | déployé | VERT — lecture Google Calendar prouvée en production |
 | GOOGLE-2 | `9972d48a` | déployé | **VERT** — écriture Google prouvée de bout en bout le 02/09 (13 points) |
 | Hotfix espace abonné | `aad0fa7a` | **déployé (prod actuelle)** | **VERT** — une liste vide dit enfin pourquoi elle est vide |
+| Lecture en-têtes Resend | `fa3485ce` | déployé | VERT — les en-têtes sont une liste ; correctif juste mais insuffisant (Resend ne les envoie pas) |
+| P3-R1 | `a20c93ad` | **déployé (prod actuelle)** | **VERT** — corrélation par jeton prouvée en production le 03/09 (14 points) |
 
 ---
 
@@ -225,6 +282,10 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
   échouer la première tentative.
 - **P3-LAUNCH-137** : campagne prête, envoi bloqué par les deux drapeaux absents.
   N'ouvrir qu'après GO explicite écrit du coach.
+- **P3-R1 : terminé et prouvé.** Le verrou technique qui empêchait de lancer sereinement
+  — « une réponse envoyée depuis une autre adresse partait en revue manuelle et les relances
+  continuaient » — est levé. Reste, avant tout envoi : re-confirmer le nombre réel de
+  destinataires e-mail en exécution AUTO (**56 en base**, « 31 » annoncé par le coach).
 - Dettes antérieures (non bloquantes) : cf. `CLAUDE.md` et l'historique des lots.
 
 ---
@@ -274,6 +335,18 @@ consigner évite qu'on les redécouvre en croyant à une régression.
 | `test_p3s2_import_prospection` | ROUGE | Assertion « l'écran n'appelle que partner-prospects, prospect-campaigns, prospect-inbound et prospect-agenda ». **GOOGLE-2 a ajouté un appel `google/status`** dans `ProspectsSection.js` (case à cocher de synchronisation). L'écran est correct ; c'est l'assertion qui doit accueillir le nouvel appel. |
 | `test_lot1_rattachement` | ROUGE | `IndexError` : le banc découpe `ChatWidget.js` sur l'ancre `=== LOT 1 — CHARGER DES OCCURRENCES`, **qui n'existe plus** dans le fichier (0 occurrence). Banc à ré-ancrer sur une propriété, pas sur un commentaire. |
 | `test_lot3b_avantage_membre` | ROUGE | 218/219. Une seule vérification : `9K5. checkout_routes.py aussi`. |
+
+**Re-vérifiés le 2026-09-03 05:43 UTC**, sur `a20c93ad`, sortie exacte :
+
+| Banc | Sortie | Lot séparé à prévoir |
+|---|---|---|
+| `test_p3s2_import_prospection` | `164/165` — échec `8a.` ; l'appel constaté en trop est `google` | **LOT ROUGE-1** : accueillir `google/status` dans l'assertion `8a.` |
+| `test_lot1_rattachement` | `IndexError` ligne 507, l'ancre commentaire n'existe plus | **LOT ROUGE-2** : ré-ancrer le banc sur une propriété du code, pas sur un commentaire |
+| `test_lot3b_avantage_membre` | `218/219` — échec `9K5. checkout_routes.py aussi` | **LOT ROUGE-3** : trancher si `checkout_routes.py` doit porter la règle |
+
+Les trois bancs verts du chantier inbound, aux mêmes date et commit :
+`test_p3u3_resend_inbound` **133/133**, `test_p3u2_inbound` **102/102**,
+`test_p3s3d1_moteur_factice` **226/226**.
 
 **Règle de méthode** : avant d'incriminer un lot en cours, retirer ses
 changements et relancer le banc. Un banc rouge n'est pas une régression tant
