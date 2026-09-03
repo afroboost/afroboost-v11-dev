@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 09:55 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 10:05 UTC**.
 
 ---
 
@@ -185,14 +185,14 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | `snapshot_hash` courant | **`bfdba290ae2053a62456f9440b82c72c14908b74a130711e6c1760c1aa6401e0`** — recalculé **au moment** de l'approbation, jamais recopié. Empreinte **conforme** vérifiée après coup. Ancienne `cd84f795…` archivée |
 | Prospects (`partner_prospects`) | **142** |
 | Actions (`prospect_campaign_actions`) | **137** |
-| Contacté (`first_contact_claimed_at`) | **0** |
-| Envoyé (`first_contact_sent_at`) | **0** |
+| Contacté (fiches `first_contact_sent_at`) | **3** — `BAR-01`, `BAR-02`, `BAR-03` (03/09 10:00 UTC) |
+| Envoyé (actions `sent_at`) | **3** |
 | Inbound (`prospect_inbound_messages`) | **0** |
 | Répartition par canal | email 56, instagram 51, formulaire 16, aucun 9, visite 3, whatsapp 1, téléphone 1 |
 | Répartition par exécution | AUTO 56, MANUEL 53, ASSISTÉ 19, BLOQUÉ 9 |
 | Approbations archivées | **2** (01/09 09:12 et 01/09 11:17 — rouvertes, historique intact) + l'approbation **courante** du 03/09 |
 | `nb_destinataires` (campagne, tous canaux) | **136** — 137 actions moins `BAR-05` exclue |
-| **AUTO e-mail réellement autorisés** | **55** — le seul chiffre qui décide de ce qui part |
+| **AUTO e-mail réellement autorisés** | **55** au total — **3 partis**, **52 restants** |
 
 ### P3-R1 — CORRÉLATION FORTE : **VERT, PROUVÉE EN PRODUCTION (03/09/2026)**
 
@@ -286,6 +286,37 @@ en double), site web (aucun partagé), adresse postale (aucune partagée). Les *
 `gmail.com`** appartiennent à **8 entités réellement indépendantes** (noms, villes et
 catégories différents) : un domaine gratuit partagé n'est pas un doublon. `GVA-D2` porte deux
 sites « Dancefloor Studio » **dans la même action** — un seul message, pas un doublon.
+
+### ✅ PREMIERS ENVOIS RÉELS — 3 J0 PARTIS (03/09 10:00 UTC)
+
+Après libération des 3 verrous (`p3s3d_liberer`, mécanisme prévu) et installation du SDK,
+le même passage a été rejoué, plafond 3. **3 SUCCESS, 3 identifiants Resend réels.**
+
+| Destinataire | Identifiant Resend | Reply-To individuel | État Resend |
+|---|---|---|---|
+| `BAR-01` Waves — Rooftop (Beaulac) | `01a066b6-0515…` | `r-5c04a040…@reply.afroboosteur.com` | **delivered** |
+| `BAR-02` Bar King | `01a066b6-08ef…` | `r-dcac8e46…@reply.afroboosteur.com` | ⚠️ **bounced** |
+| `BAR-03` Café du Cerf | `01a066b6-0c26…` | `r-64b1d6ef…@reply.afroboosteur.com` | **delivered** |
+
+Tout est conservé de la tentative avortée : **même jeton, même clé d'idempotence, même
+message, même destinataire** — c'est ce qui rend une réponse au premier envoi rattachable.
+Chez Resend : **3 e-mails portant l'objet de campagne, 0 doublon de destinataire.**
+
+**P3-U3 a fonctionné pour de vrai** : le webhook `email.sent` a rendu le `Message-ID` RFC,
+enregistré sur les 3 actions. La méthode A redevient donc disponible **pour ces trois-là**,
+en plus de A0.
+
+📌 **Où lire le compteur « envoyé »** : `first_contact_sent_at` vit sur les **fiches
+`partner_prospects`** (3), **pas** sur les actions — sur l'action c'est `sent_at` (3).
+Ne pas compter le mauvais champ.
+📌 `verrou_actif` **reste posé après un succès**, volontairement : l'envoi est définitif,
+le verrou empêche tout second premier contact. Ce n'est pas un blocage à nettoyer.
+
+⚠️ **DETTE OUVERTE — LES REBONDS NE SONT PAS TRACÉS.** Le webhook ne traite que
+`email.sent` et `email.received` : **aucun `email.bounced`**. `BAR-02` est donc marquée
+`contacte` en base alors que **le message n'est jamais arrivé**. Le rebond est
+`Transient / General` (rejet temporaire côté Gmail, réémission possible plus tard), pas une
+adresse morte. Sur 55 envois, ce sera invisible sans ce webhook. **Lot séparé à prévoir.**
 
 ### ⛔ INCIDENT — PREMIER ENVOI x3 AVORTÉ, 0 E-MAIL PARTI (03/09 09:51 UTC)
 
