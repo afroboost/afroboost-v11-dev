@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 12:35 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 13:12 UTC**.
 
 ---
 
@@ -53,11 +53,22 @@ Avant chaque lot / diagnostic / déploiement : (1) lire ce fichier ; (2) vérifi
   C'est une application DIFFÉRENTE sur le MÊME serveur : y poser une variable n'a aucun effet sur afroboost.com.
 - Dans le même environnement se trouvent aussi `afroboost-live`, `sportdate`, `sportdate-rencontre` : ce ne sont pas la bonne app.
 
-## Git / déploiement (vérifié 2026-09-03 12:35 UTC) — ⛔ LIVRAISON BLOQUÉE
+## Git / déploiement (vérifié 2026-09-03 13:12 UTC) — ✅ LIVRÉ, BLOCAGE RÉSORBÉ
 
-- `origin/main` = **`5803f8df`**. **Dernier commit RÉELLEMENT déployé : `96642164` (P3-R2)**
-  ou antérieur — `cccd739f` et `5803f8df` n'ont produit **aucune bascule** en 88 min.
-- Le conteneur répond (200 partout) mais exécute du code périmé. **Vérifier Coolify.**
+- `origin/main` = `HEAD` local = **`e40f99b9`**, qui contient **`cccd739f` (P3-R3)** et
+  **`96642164` (P3-R2)**. La production **exécute le nouveau code**.
+- **Preuve runtime** : `boot_id` **`bd3d1c0b…`** (l'ancien `dda30969…` a disparu),
+  démarrage du conteneur à **13:02:54 UTC**, soit **6 min 39 s APRÈS** le dernier push
+  (`e40f99b9`, 12:56:15 UTC). Un démarrage postérieur au push, sur une app que Coolify
+  reconstruit depuis `HEAD` : la bascule a bien eu lieu.
+- **Limite honnête de cette preuve** : P3-R3 ne modifie que des fonctions internes
+  (`p3s3_empreinte`), **sans aucune surface HTTP** — aucune route ne permet de lire
+  l'algorithme depuis l'extérieur. La preuve est le démarrage postérieur au push, pas une
+  signature du code. Elle ne bloque rien : le moteur de relance **n'a aucune route HTTP**
+  et s'exécute depuis le dépôt, donc depuis le code poussé.
+- Stabilité au même instant : **20/20 × 200** sur `/` via Cloudflare, **200** sur l'origine
+  directe (`Host: afroboost.com` → `178.105.201.62`), aucun 404 Traefik, `boot_id` stable
+  pendant toute la mesure.
 
 ## Git / déploiement — historique (vérifié 2026-09-03 05:47 UTC)
 
@@ -187,18 +198,46 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | Fait | Valeur vérifiée |
 |---|---|
 | Campagne | **P3-LAUNCH-137** (`idempotency_key = P3-LAUNCH-137-INITIAL-2026-09`) |
-| État | **`approuvee`** — **CAMPAGNE J0 TERMINÉE le 03/09 10:57 UTC** ; réapprouvée le 2026-09-03 09:15:03 UTC par `contact.artboost@gmail.com`, après complétion des 25 J0 et arbitrage Case à Chocs |
+| État | **`approuvee`** — **CAMPAGNE J0 TERMINÉE le 03/09 10:57 UTC** ; **réapprobation courante 2026-09-03 12:02:35 UTC** par `contact.artboost@gmail.com` (P3-R3 : couvre les textes J+3/J+7). Réapprobation précédente 09:15:03 UTC archivée |
 | `snapshot_hash` courant | **`de05fdeee289807574856e5aa7c24f83ca3e06b6ccdc1c520767c70b0b3f294b`** (P3-R3, 03/09 12:01) — couvre désormais **les trois messages et les trois objets**. Anciennes `cd84f795…` et `bfdba290…` archivées |
 | Prospects (`partner_prospects`) | **142** |
 | Actions (`prospect_campaign_actions`) | **137** |
 | Contacté (fiches `first_contact_sent_at`) | **59 fiches** pour **55 destinataires** (4 destinataires portent 2 fiches) |
 | Envoyé (actions `sent_at`) | **55 / 55** — le J0 est **terminé**, plus aucune action autorisée |
-| Inbound (`prospect_inbound_messages`) | **0** |
+| Inbound (`prospect_inbound_messages`) | **1** — `ZRH-D5` SalsaRica, 03/09 11:37 UTC (cf. section dédiée) |
 | Répartition par canal | email 56, instagram 51, formulaire 16, aucun 9, visite 3, whatsapp 1, téléphone 1 |
 | Répartition par exécution | AUTO 56, MANUEL 53, ASSISTÉ 19, BLOQUÉ 9 |
-| Approbations archivées | **2** (01/09 09:12 et 01/09 11:17 — rouvertes, historique intact) + l'approbation **courante** du 03/09 |
+| Approbations archivées | **3** (01/09 09:12, 01/09 11:17, 03/09 09:15 — rouvertes, historique intact) + l'approbation **courante** du 03/09 12:02:35 |
 | `nb_destinataires` (campagne, tous canaux) | **136** — 137 actions moins `BAR-05` exclue |
 | **AUTO e-mail encore autorisés** | **0** — tout est parti (3 le 03/09 10:00, puis 52 le 03/09 10:57) |
+| Textes de relance écrits | **52 `message_j3`** et **52 `message_j7`** (P3-R3) ; `subject_j3` = `subject_j7` = `Re: Proposition de collaboration avec Afroboost` |
+| Relances RÉELLEMENT envoyées | **0 `j3_sent_at`, 0 `j7_sent_at`** |
+
+### 🟢 ÉTAT OPÉRATIONNEL AU 2026-09-03 13:12 UTC — **ATTENTE GO J+3**
+
+- **P3-LAUNCH-137 reste la campagne UNIQUE** (`prospect_campaigns` = 1,
+  `id = 6a1fddf8-8fdb-41e6-bd77-a8f43732b740`). Aucune seconde campagne n'a jamais été créée.
+- **J0 terminé** : **55 premiers e-mails envoyés**, 55 actions `sent_at`, 59 fiches
+  `first_contact_sent_at`. Historique **intact**.
+- **Moteur J+3/J+7 (P3-R2) construit et validé** ; **contenus J+3/J+7 (P3-R3) réapprouvés**
+  sur la même campagne, empreinte `de05fdee…` **conforme** (recalcul = base).
+- **Production sur le nouveau code** (cf. « Git / déploiement » ci-dessus).
+- **51 J+3 potentiellement éligibles au 06/09**, **selon l'état actuel** — simulation sans
+  écriture : `SIMULATION` 51 · `JAMAIS_ENVOYE` 82 (les non-J0) · `REFUS_EXPRIME` 3 ·
+  `A_REPONDU` 1 = 137 actions.
+- **51 J+7 potentiellement éligibles au 10/09**, selon l'état actuel (même répartition).
+- ⚠️ **CE NOMBRE SERA RECALCULÉ PAR LA GARDE LE JOUR J.** Chaque réponse, refus ou rebond
+  arrivé d'ici là le fera baisser. Le 51 est une photo, pas un engagement.
+- **3 adresses en `REFUS_EXPRIME`** — les 3 rebonds **permanents**, déjà au registre STOP :
+  `GVA-E1` (`fesstra@gmail.com`), `ORG-02` (`contact@case-a-chocs.ch`),
+  `ORG-04` (`info@danse-neuchatel.ch`). Bar King (`BAR-02`, rebond **transitoire**) garde ses relances.
+- **1 prospect a répondu** : **`ZRH-D5` / SalsaRica**, réponse reçue le **03/09**,
+  corrélation réelle **`A0_REPLY_TOKEN`, confiance 100** — ses **J+3 et J+7 ont été annulés
+  automatiquement**.
+- **Aucune relance réelle envoyée. Portes d'envoi FERMÉES** : `P3_LAUNCH_ENABLED` et
+  `P3_LAUNCH_ENVOI_REEL` à `false`, `P3_RELANCE_ENABLED` et `P3_RELANCE_ENVOI_REEL`
+  **absents** → `p3r2_envoi_autorise()` = **False**.
+- **Statut : ATTENTE GO J+3. NE RIEN ENVOYER SANS GO EXPLICITE DU COACH.**
 
 ### P3-R1 — CORRÉLATION FORTE : **VERT, PROUVÉE EN PRODUCTION (03/09/2026)**
 
@@ -361,31 +400,26 @@ C'est **exactement l'adresse retenue lors de l'arbitrage du 03/09**, au détrime
 donc **rien reçu**. `BAR-05` est toujours `exclu` et intacte : la réintégrer est un appel,
 et c'est la seule voie e-mail restante vers la Case à Chocs.
 
-### ⛔ BLOCAGE OUVERT — LE DÉPLOIEMENT NE PART PLUS (constaté 03/09 12:35 UTC)
+### ✅ INCIDENT REFERMÉ — LE DÉPLOIEMENT ÉTAIT EN RETARD, PAS EN PANNE (12:35 → 13:12 UTC)
 
-**Deux pushes n'ont produit aucune bascule de conteneur** : `cccd739f` (P3-R3) puis
-`5803f8df` (re-déclenchement via `trigger.txt`). Le `boot_id` est resté `dda30969…`
-pendant plus de **88 minutes**. Le dernier démarrage observé est **antérieur** au push de
-P3-R3 : **le code de P3-R3 n'est PAS en ligne.**
+**Ce qui avait été constaté à 12:35 UTC** : deux pushes — `cccd739f` (P3-R3) puis
+`5803f8df` (re-déclenchement via `trigger.txt`) — sans aucune bascule de conteneur,
+`boot_id` figé sur `dda30969…` pendant plus de **88 minutes**. Le site répondait
+parfaitement (25/25 × 200) : ce n'était pas une panne de service.
 
-**Le site fonctionne** : 25/25 × 200 sur `/`, tous les endpoints à 200. Ce n'est pas une
-panne de service, c'est une **panne de livraison**.
+**Résolution constatée à 13:12 UTC, sans aucune intervention sur le code** : le conteneur
+a redémarré à **13:02:54 UTC** avec un nouveau `boot_id` (`bd3d1c0b…`), soit **après** le
+dernier push. Le build est passé ; le code de P3-R3 est en ligne.
 
-**Conséquence exacte, mesurée** — la base porte l'empreinte NOUVELLE
-(`de05fdee…`), la production calcule encore l'ANCIENNE (`bfdba290…`) :
+**Ce que l'épisode confirme, et qu'il faut garder** : pendant tout le retard,
+**aucun risque d'envoi n'a existé**. Les deux drapeaux étaient fermés, 0 action J0 encore
+autorisée, aucune route HTTP ne déclenche d'envoi, et une empreinte jugée non conforme
+**arrête** le moteur. L'écart penchait **du côté sûr** — et il s'est résorbé seul, comme
+prévu, dès le passage du build.
 
-| Calcul | Conforme ? |
-|---|---|
-| avec le code **déployé** (ancien) | **NON** |
-| avec le code **poussé** (nouveau) | **OUI** |
-
-**Aucun risque d'envoi** : les deux drapeaux sont fermés, 0 action J0 encore autorisée,
-aucune route HTTP ne déclenche d'envoi, et une empreinte non conforme **arrête** le moteur
-— l'écart penche du côté sûr. Il se résorbe **seul** dès que le build passe.
-
-👉 **À FAIRE CÔTÉ COACH : ouvrir Coolify, application `afroboost-v11-dev`, et lire le
-dernier déploiement.** Soit le webhook GitHub ne déclenche plus, soit le build échoue
-(l'OOM Terser est un précédent connu — cf. V309b). Je ne peux pas lire ces journaux d'ici.
+📌 **Leçon de méthode** : un `boot_id` figé plus d'une heure après un push est un signal de
+retard de livraison, pas une preuve de panne définitive. Avant d'ouvrir Coolify, **re-sonder
+`/healthz`** : un `uptime_s` faible et un `boot_id` neuf suffisent à clore le sujet.
 
 ### ✍️ P3-R3 — LES RELANCES ONT UN TEXTE (03/09 12:01 UTC)
 
@@ -447,6 +481,12 @@ prouvée **sur un vrai prospect**, pas sur une fixture.
 
 ### ⏸️ P3-R2 — LE MOTEUR DE RELANCE EXISTE, ET IL N'A RIEN À DIRE (03/09)
 
+> ⚠️ **SECTION HISTORIQUE — DÉPASSÉE PAR P3-R3.** Ce qui suit décrit l'état du moteur
+> **avant** que les textes de relance soient écrits. Depuis P3-R3 (03/09 12:01 UTC), les
+> 52 `message_j3` / 52 `message_j7` et les deux objets existent : `MESSAGE_VIDE` et
+> `OBJET_ABSENT` ne s'appliquent plus. **Chiffres à jour : section « ÉTAT OPÉRATIONNEL »
+> en tête de la partie C.** Le moteur lui-même n'a pas changé.
+
 `p3u2_relance_autorisee` existait depuis U2, testée, correcte — et **n'avait aucun
 appelant**. Aucune relance ne partait, non parce qu'une garde l'interdisait, mais parce que
 **rien ne les exécutait**. Le jour où un cron aurait été branché à la va-vite, il aurait
@@ -469,10 +509,13 @@ jamais approuvé à cette étape est exactement ce que l'empreinte existe pour e
 
 **Simulation sur la production réelle** (aucune écriture, vérifié champ par champ) :
 
-| Échéance | Partiraient | Détail |
+| Échéance | Partiraient (mesure du 03/09 **avant** P3-R3) | Détail |
 |---|---|---|
 | **J+3 au 06/09** | **0** | 52 `MESSAGE_VIDE` · 3 `REFUS_EXPRIME` (rebonds durs) · 82 `JAMAIS_ENVOYE` |
 | **J+7 au 10/09** | **0** | idem |
+
+> Mesure **remplacée** depuis P3-R3 : **51** au 06/09 et **51** au 10/09, selon l'état
+> actuel — 51 `SIMULATION` · 82 `JAMAIS_ENVOYE` · 3 `REFUS_EXPRIME` · 1 `A_REPONDU`.
 
 Les 3 rebonds permanents sont **déjà écartés** par le registre STOP, sans règle ajoutée.
 Bar King (transitoire) reste dans les 52 : il n'est pas bloqué, il n'a simplement pas de texte.
@@ -669,10 +712,11 @@ Les autres portes de la garde ont toutes été vérifiées vides au même moment
 `DEJA_RESERVE` 0, `STATUT_INCOMPATIBLE` 0, `TENTATIVES_EPUISEES` 0.
 Empreinte de campagne **conforme**, `envoi_autorise = False`.
 
-- **55 e-mails prêts mais NON envoyés** (31 avant P3-J0-25 ; 56 avant l'arbitrage Case à Chocs), et l'envoi reste impossible : campagne non approuvée, empreinte absente, drapeaux absents.
-- **Porte d'envoi FERMÉE et prouvée fermée** : les deux drapeaux `P3_LAUNCH_ENABLED` et
-  `P3_LAUNCH_ENVOI_REEL` sont **absents** de `feature_flags` → l'envoi réel est impossible.
-  L'absence est le cas sûr, par conception.
+- **55 e-mails prêts** (31 avant P3-J0-25 ; 56 avant l'arbitrage Case à Chocs). ⚠️ **État de l'époque : non envoyés.** Ils sont **tous partis depuis** — 3 le 03/09 10:00 UTC, 52 le 03/09 10:57 UTC.
+- **Porte d'envoi du J0** : à l'époque, les deux drapeaux `P3_LAUNCH_ENABLED` et
+  `P3_LAUNCH_ENVOI_REEL` étaient **absents** de `feature_flags` → envoi réel impossible.
+  L'absence est le cas sûr, par conception. **Aujourd'hui ils sont présents à `false`**, et
+  ce sont `P3_RELANCE_ENABLED` / `P3_RELANCE_ENVOI_REEL` qui sont **absents**, donc fermés.
 - **NE JAMAIS LANCER SANS GO EXPLICITE DU COACH.**
 
 ## B. P2 — PARTENAIRES
