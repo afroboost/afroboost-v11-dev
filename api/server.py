@@ -22321,8 +22321,8 @@ def p3s3_empreinte(actions, campagne=None) -> str:
     """L'empreinte de CE QUI A ETE APPROUVE. Fonction pure.
 
     Elle couvre TOUT ce qui partira, et rien d'autre. Par destinataire : son
-    identite, son canal, sa langue, son adresse et son message. Au niveau de la
-    campagne : l'OBJET de l'e-mail. Ni horodatages ni compteurs — ils bougent
+    identite, son canal, sa langue, son adresse et SES TROIS MESSAGES (J0, J+3,
+    J+7). Au niveau de la campagne : les TROIS objets d'e-mail. Ni horodatages ni compteurs — ils bougent
     sans que le contenu change, et une empreinte qui bouge toute seule ne
     prouve plus rien.
 
@@ -22343,11 +22343,21 @@ def p3s3_empreinte(actions, campagne=None) -> str:
     n'accepte deja plus de modification) : elle la double.
     """
     import hashlib
-    lignes = ["campagne|" + (p3s3d2_objet_campagne(campagne) or "")]
+    # P3-R3 : LES RELANCES ENTRENT DANS L'EMPREINTE, ET IL LE FALLAIT.
+    # Tant qu'elle ne couvrait que le J0, un texte de relance pouvait etre
+    # remplace APRES l'approbation sans que le moteur ne voie rien passer —
+    # exactement le defaut « approuver A, envoyer B » que cette empreinte
+    # existe pour empecher, simplement decale d'une etape. Les trois messages
+    # et les trois objets sont donc dans le condense.
+    lignes = ["campagne|" + "|".join([
+        p3s3d2_objet_campagne(campagne) or "",
+        p3r2_objet_campagne(campagne, "j3"),
+        p3r2_objet_campagne(campagne, "j7")])]
     lignes += sorted(
         "|".join([(a.get("recipient_key") or ""), (a.get("channel") or ""),
                   (a.get("language") or ""), (a.get("target") or ""),
-                  (a.get("message_j0") or "")])
+                  (a.get("message_j0") or ""),
+                  (a.get("message_j3") or ""), (a.get("message_j7") or "")])
         for a in (actions or []) if (a or {}).get("statut") != "exclu")
     return hashlib.sha256("\n".join(lignes).encode("utf-8")).hexdigest()
 

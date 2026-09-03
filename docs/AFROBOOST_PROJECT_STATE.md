@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 11:25 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 12:05 UTC**.
 
 ---
 
@@ -182,7 +182,7 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 |---|---|
 | Campagne | **P3-LAUNCH-137** (`idempotency_key = P3-LAUNCH-137-INITIAL-2026-09`) |
 | État | **`approuvee`** — **CAMPAGNE J0 TERMINÉE le 03/09 10:57 UTC** ; réapprouvée le 2026-09-03 09:15:03 UTC par `contact.artboost@gmail.com`, après complétion des 25 J0 et arbitrage Case à Chocs |
-| `snapshot_hash` courant | **`bfdba290ae2053a62456f9440b82c72c14908b74a130711e6c1760c1aa6401e0`** — recalculé **au moment** de l'approbation, jamais recopié. Empreinte **conforme** vérifiée après coup. Ancienne `cd84f795…` archivée |
+| `snapshot_hash` courant | **`de05fdeee289807574856e5aa7c24f83ca3e06b6ccdc1c520767c70b0b3f294b`** (P3-R3, 03/09 12:01) — couvre désormais **les trois messages et les trois objets**. Anciennes `cd84f795…` et `bfdba290…` archivées |
 | Prospects (`partner_prospects`) | **142** |
 | Actions (`prospect_campaign_actions`) | **137** |
 | Contacté (fiches `first_contact_sent_at`) | **59 fiches** pour **55 destinataires** (4 destinataires portent 2 fiches) |
@@ -354,6 +354,64 @@ C'est **exactement l'adresse retenue lors de l'arbitrage du 03/09**, au détrime
 `interlope@case-a-chocs.ch` (`BAR-05`, mise en attente, jamais contactée). La maison n'a
 donc **rien reçu**. `BAR-05` est toujours `exclu` et intacte : la réintégrer est un appel,
 et c'est la seule voie e-mail restante vers la Case à Chocs.
+
+### ✍️ P3-R3 — LES RELANCES ONT UN TEXTE (03/09 12:01 UTC)
+
+**52 J+3 et 52 J+7 écrits**, tous **distincts**, tous **plus courts que leur propre J0**
+(175 à 264 caractères contre 243 à 383). Aucune donnée inventée : chaque phrase
+personnalisée est **tirée du J0 déjà approuvé** de la même action — donc de la matière que
+le coach avait lui-même écrite dans les `notes` de la fiche.
+
+**3 destinataires écartés — les 3 rebonds PERMANENTS** : `GVA-E1` FESTTRAA, `ORG-02` Case à
+Chocs, `ORG-04` ADN. Aucun texte ne leur est préparé ; leur adresse est de toute façon au
+registre STOP. `BAR-02` Bar King (rebond **transitoire**) **garde** ses relances : il n'est
+pas bloqué, et rien n'est renvoyé maintenant.
+
+**Langues** : celle du J0 réellement parti, jamais retraduite. **46 en français**,
+**6 en allemand** (`ZRH-D1`, `ZRH-D3`, `ZRH-D5`, `ZRH-E1`, `ZRH-F1`, `ZRH-F4` — leur J0
+était en allemand, y compris ceux marqués « anglais » ou « les trois » dans la fiche : c'est
+le message ENVOYÉ qui fait foi, pas le champ `language`).
+
+**Objet des deux relances : `Re: Proposition de collaboration avec Afroboost`.** Le moteur
+EXIGE `subject_j3` / `subject_j7` (sinon `OBJET_ABSENT`) — ils ne peuvent donc pas être
+omis. Reprendre l'objet du premier message **préfixé de `Re:`** est la solution minimale
+cohérente : les clients de messagerie regroupent sur l'objet, la relance reste **dans le
+même fil**, et le `Re:` dit honnêtement que c'est un suivi.
+
+### 🔒 L'EMPREINTE COUVRE ENFIN LES RELANCES — un trou qui aurait pu coûter cher
+
+En préparant ce lot, un contrôle a montré que **l'empreinte ne changeait PAS** quand on
+ajoutait `message_j3` / `message_j7` : elle ne couvrait que `message_j0` et `subject_j0`.
+Autrement dit, un texte de relance pouvait être remplacé **après** l'approbation sans que
+le moteur ne voie rien passer — exactement le défaut « approuver A, envoyer B » que cette
+empreinte existe pour empêcher, simplement **décalé d'une étape**.
+
+`p3s3_empreinte` couvre désormais **les trois messages et les trois objets**. C'est ce qui
+fait passer l'empreinte de `bfdba290…` à `de05fdee…`. Banc D3 enrichi de 5 vérifications
+(107 → **112**) : modifier `message_j3`, `message_j7`, `subject_j3` ou `subject_j7` change
+maintenant l'empreinte.
+
+**Réapprobation faite sur LA MÊME campagne** (`prospect_campaigns` = 1), empreinte
+**recalculée au moment de l'approbation**, **3 approbations archivées**, historique intact.
+
+⚠️ **APPROUVER N'EST PAS ENVOYER.** Les drapeaux `P3_RELANCE_ENABLED` /
+`P3_RELANCE_ENVOI_REEL` restent **absents**. Aucune relance n'est partie.
+
+**Simulation sur la production** (aucune écriture, vérifiée) :
+
+| Échéance | Partiraient | Bloqués |
+|---|---|---|
+| **J+3 au 06/09** | **51** | 3 `REFUS_EXPRIME` (rebonds durs) · **1 `A_REPONDU`** · 82 `JAMAIS_ENVOYE` |
+| **J+7 au 10/09** | **51** | idem |
+
+### 🎉 UNE PREMIÈRE RÉPONSE EST ARRIVÉE — ET P3-R1 L'A RATTACHÉE SEUL
+
+`SalsaRica Dance School` (Zurich, `ZRH-D5`) a répondu le **03/09 à 11:37 UTC**, depuis
+`info@salsarica.ch` sur `r-6e7e104e…@reply.afroboosteur.com`.
+**`matching_method = A0_REPLY_TOKEN`, confiance 100, `statut = rattache`.**
+`replied_at` écrit, **J+3 et J+7 annulés automatiquement** (motif « reponse recue »), fiche
+passée à `repondu`. La chaîne complète — jeton, corrélation, arrêt des relances — est donc
+prouvée **sur un vrai prospect**, pas sur une fixture.
 
 ### ⏸️ P3-R2 — LE MOTEUR DE RELANCE EXISTE, ET IL N'A RIEN À DIRE (03/09)
 
@@ -639,10 +697,11 @@ Empreinte de campagne **conforme**, `envoi_autorise = False`.
 - 🔴 **À trancher : `contact@case-a-chocs.ch` a rebondi en PERMANENT.** L'arbitrage avait
   retenu cette adresse contre `interlope@case-a-chocs.ch` (`BAR-05`, `exclu`, jamais
   contactée). La Case à Chocs n'a rien reçu ; `BAR-05` est la seule voie e-mail restante.
-- ⏸️ **J+3 / J+7 : le moteur EXISTE (P3-R2) mais n'a aucun texte à envoyer.** Simulation sur
-  la production : **0 relance** au 06/09 comme au 10/09 (52 `MESSAGE_VIDE`, 3 rebonds durs
-  écartés). Prochaine étape, et elle est éditoriale : **rédiger les `message_j3` / `message_j7`
-  et l'objet de chaque étape, puis réapprouver** — l'empreinte changera, c'est voulu.
+- ✅ **J+3 / J+7 : moteur (P3-R2) + textes (P3-R3) prêts et approuvés.** Simulation :
+  **51 relances** partiraient au 06/09. **Les drapeaux restent fermés** — aucune relance
+  n'est partie, et les ouvrir demande un GO écrit distinct.
+- 📬 **Première réponse reçue** : SalsaRica (`ZRH-D5`), rattachée par jeton à confiance 100,
+  relances annulées automatiquement.
 - Dettes antérieures (non bloquantes) : cf. `CLAUDE.md` et l'historique des lots.
 
 ---

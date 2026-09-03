@@ -208,6 +208,21 @@ verifier("1l. AUCUN champ protege n'a ete retire",
                                            "target", "message_j0")))
 verifier("1l-bis. et l'objet de campagne s'y ajoute",
          "p3s3d2_objet_campagne" in _TXT_EMPREINTE)
+# P3-R3 : LES RELANCES SONT ENTREES DANS L'EMPREINTE. Sans cela, un texte de
+# relance pouvait etre remplace APRES l'approbation sans que le moteur ne voie
+# rien — le defaut « approuver A, envoyer B », decale d'une etape.
+for _champ, _valeur in (("message_j3", "RELANCE SUBSTITUEE"),
+                        ("message_j7", "DERNIERE RELANCE SUBSTITUEE")):
+    _mod = [dict(a) for a in _A]
+    _mod[0] = dict(_mod[0], **{_champ: _valeur})
+    verifier("1l-ter. modifier %-12s -> empreinte differente" % _champ,
+             S.p3s3_empreinte(_mod, _C) != _h_avec)
+for _sujet in ("subject_j3", "subject_j7"):
+    verifier("1l-ter. modifier %-12s -> empreinte differente" % _sujet,
+             S.p3s3_empreinte(_A, dict(_C, **{_sujet: "OBJET SUBSTITUE"})) != _h_avec)
+verifier("1l-quater. les trois messages et les trois objets y figurent",
+         all(c in _TXT_EMPREINTE for c in ("message_j0", "message_j3", "message_j7",
+                                           "p3r2_objet_campagne")))
 verifier("1m. la campagne est un parametre EXIGE par tous les appelants",
          SRC.count("p3s3_empreinte(actions, campagne)") == 2)
 
