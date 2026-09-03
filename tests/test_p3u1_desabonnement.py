@@ -347,8 +347,17 @@ verifier("6g. ... et cette fonction n'est atteinte qu'apres un verdict SUCCESS",
          "if v == P3S3D_SUCCESS:" in SRC and "p3s3d_appliquer_succes(action" in SRC)
 
 # UN FUTUR J0 : une nouvelle campagne interrogera le meme registre.
-verifier("6h. un futur J0 lira le MEME registre (une seule lecture des refus)",
-         "c3_refus_exprimes" in SRC and SRC.count("await c3_refus_exprimes(_canal") == 1)
+# L'INTENTION EST INCHANGEE — un seul registre, une seule fonction pour le lire —
+# mais le compte de sites d'appel n'est plus la bonne mesure : P3-R2 a ajoute un
+# SECOND executeur (les relances), qui appelle exactement la meme fonction. Ce
+# qu'il faut verifier, c'est qu'aucun d'eux ne s'est ecrit sa propre lecture.
+_appels = SRC.count("await c3_refus_exprimes(_canal")
+verifier("6h. un futur J0 lira le MEME registre (une seule fonction de lecture)",
+         "c3_refus_exprimes" in SRC and _appels == 2, "sites d'appel : %d" % _appels)
+_bloc_r2 = SRC[SRC.index("# P3-R2 — LE MOTEUR DE RELANCE"):
+               SRC.index("# P3-U3 — L'ARRIVEE REELLE")]
+verifier("6h2. le moteur de relance ne relit PAS `subscribers` de son cote",
+         "db.subscribers" not in _bloc_r2 and "c3_refus_exprimes" in _bloc_r2)
 
 
 # ============================================================================

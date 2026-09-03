@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 11:05 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 11:25 UTC**.
 
 ---
 
@@ -355,6 +355,50 @@ C'est **exactement l'adresse retenue lors de l'arbitrage du 03/09**, au détrime
 donc **rien reçu**. `BAR-05` est toujours `exclu` et intacte : la réintégrer est un appel,
 et c'est la seule voie e-mail restante vers la Case à Chocs.
 
+### ⏸️ P3-R2 — LE MOTEUR DE RELANCE EXISTE, ET IL N'A RIEN À DIRE (03/09)
+
+`p3u2_relance_autorisee` existait depuis U2, testée, correcte — et **n'avait aucun
+appelant**. Aucune relance ne partait, non parce qu'une garde l'interdisait, mais parce que
+**rien ne les exécutait**. Le jour où un cron aurait été branché à la va-vite, il aurait
+relancé sans consulter cette garde. C'est ce vide qui est comblé.
+
+Le moteur est le **jumeau** de celui du J0 : même ordre d'écritures (garde → réservation →
+trace d'intention → fournisseur → verdict), mêmes verrous conditionnels, même isolement des
+erreurs, même plafond. Il **ne recopie pas** la garde de U2, **il l'appelle**.
+
+⛔ **IL NE PEUT RIEN ENVOYER AUJOURD'HUI, ET CE N'EST PAS UN DRAPEAU.**
+Les actions ne portent **aucun `message_j3` ni `message_j7`** (0 sur 137) et la campagne
+n'a **ni `subject_j3` ni `subject_j7`**. Il n'y a pas de texte de relance. Le moteur refuse
+donc sur `MESSAGE_VIDE` — exactement comme le J0 refusait les 25 sans texte avant qu'on les
+rédige.
+
+📌 **On ne va PAS chercher le texte dans la fiche.** 72 fiches portent un `j3_message`,
+mais l'instantané approuvé ne couvre que `message_j0`. Envoyer un texte que le coach n'a
+jamais approuvé à cette étape est exactement ce que l'empreinte existe pour empêcher.
+**Rédiger les relances est un lot à part, avec sa réapprobation**, comme P3-J0-25 l'a été.
+
+**Simulation sur la production réelle** (aucune écriture, vérifié champ par champ) :
+
+| Échéance | Partiraient | Détail |
+|---|---|---|
+| **J+3 au 06/09** | **0** | 52 `MESSAGE_VIDE` · 3 `REFUS_EXPRIME` (rebonds durs) · 82 `JAMAIS_ENVOYE` |
+| **J+7 au 10/09** | **0** | idem |
+
+Les 3 rebonds permanents sont **déjà écartés** par le registre STOP, sans règle ajoutée.
+Bar King (transitoire) reste dans les 52 : il n'est pas bloqué, il n'a simplement pas de texte.
+
+**Drapeaux dédiés** : `P3_RELANCE_ENABLED` / `P3_RELANCE_ENVOI_REEL`, **absents** donc
+fermés. Réutiliser ceux du J0 aurait rouvert la porte du **premier** contact en même temps.
+Deux étapes, deux portes.
+
+📌 Le **jeton de réponse P3-R1 de la relance est celui du J0** : une réponse à une relance
+doit se rattacher à la même action — c'est la même conversation. Un second jeton aurait
+créé deux fils pour un seul prospect.
+📌 **Aucun cron n'a été créé.** L'exécuteur est appelable de façon contrôlée, avec plafond.
+
+Banc **P3-R2 : 69/69**. Non-régression : U1 64 · U2 102 · U3 134 · B1 84 · D1 226 · D2 116 ·
+D3 107 · D4 100 · préparation 149 · opt-out 50 · boot 21. **0 e-mail, 0 socket.**
+
 ### ✅ P3-B1 — LES REBONDS SONT TRACÉS (livré et déployé le 03/09, `ea73c2e8`)
 
 **L'abonnement Resend a été corrigé en premier** — c'était là qu'était la cause :
@@ -595,9 +639,10 @@ Empreinte de campagne **conforme**, `envoi_autorise = False`.
 - 🔴 **À trancher : `contact@case-a-chocs.ch` a rebondi en PERMANENT.** L'arbitrage avait
   retenu cette adresse contre `interlope@case-a-chocs.ch` (`BAR-05`, `exclu`, jamais
   contactée). La Case à Chocs n'a rien reçu ; `BAR-05` est la seule voie e-mail restante.
-- ⏭️ **J+3 / J+7 : AUCUN MOTEUR N'EXISTE.** `p3u2_relance_autorisee` n'a toujours aucun
-  appelant. Les échéances sont posées (`j3_due_at` au 06/09, `j7_due_at` au 10/09) mais
-  **rien ne partira**. C'est un lot à décider, pas un oubli.
+- ⏸️ **J+3 / J+7 : le moteur EXISTE (P3-R2) mais n'a aucun texte à envoyer.** Simulation sur
+  la production : **0 relance** au 06/09 comme au 10/09 (52 `MESSAGE_VIDE`, 3 rebonds durs
+  écartés). Prochaine étape, et elle est éditoriale : **rédiger les `message_j3` / `message_j7`
+  et l'objet de chaque étape, puis réapprouver** — l'empreinte changera, c'est voulu.
 - Dettes antérieures (non bloquantes) : cf. `CLAUDE.md` et l'historique des lots.
 
 ---

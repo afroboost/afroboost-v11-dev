@@ -18004,6 +18004,8 @@ async def get_feature_flags():
             "META_WEBHOOK_SIGNATURE_ENABLED": False,       # V453 : défaut OFF (webhook inchangé, observation seule)
             "P3_LAUNCH_ENABLED": False,        # P3-S3 : défaut OFF (moteur dormant)
             "P3_LAUNCH_ENVOI_REEL": False,     # P3-S3 : défaut OFF (simulation même si activé)
+            "P3_RELANCE_ENABLED": False,       # P3-R2 : défaut OFF (aucune relance J+3/J+7)
+            "P3_RELANCE_ENVOI_REEL": False,    # P3-R2 : défaut OFF (simulation même si activé)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -24954,6 +24956,426 @@ async def p3b1_traiter_rebond(evenement: dict) -> dict:
     return {"traite": True, "motif": "", "doublon": False, "permanent": permanent,
             "action_id": action.get("id"), "refus_pose": refus_pose,
             "bounce_type": lu["type"], "bounce_subtype": lu["subtype"]}
+
+
+# ============================================================================
+# P3-R2 — LE MOTEUR DE RELANCE, ECRIT MAIS SANS RIEN A DIRE
+# ============================================================================
+# CE QUI MANQUAIT, ET QUI ETAIT DANGEREUX. `p3u2_relance_autorisee` existait
+# depuis U2, testee, correcte — et N'AVAIT AUCUN APPELANT. Aucune relance ne
+# partait, non parce qu'une garde l'interdisait, mais parce que rien ne les
+# executait. Le jour ou quelqu'un aurait branche un cron a la va-vite, il
+# aurait relance sans consulter cette garde. C'est ce vide que ce lot comble.
+#
+# CE LOT N'ENVOIE RIEN AUJOURD'HUI, ET LA RAISON N'EST PAS UN DRAPEAU.
+# Les actions ne portent AUCUN `message_j3` ni `message_j7`, et la campagne
+# n'a ni `subject_j3` ni `subject_j7` : il n'y a pas de texte de relance. Le
+# moteur refuse donc les 55 sur `MESSAGE_VIDE` — comme le J0 refusait les 25
+# sans texte avant qu'on les redige. Ce n'est pas une panne : c'est la meme
+# regle, appliquee a une etape qui n'a pas encore de contenu.
+#
+# ET ON NE VA PAS CHERCHER LE TEXTE DANS LA FICHE. Soixante-douze fiches
+# portent bien un `j3_message` — mais l'instantane approuve ne couvre que
+# `message_j0`. Envoyer un texte que le coach n'a jamais approuve a cette
+# etape, c'est exactement ce que l'empreinte existe pour empecher. Rediger les
+# relances est un lot a part, avec sa reapprobation, comme P3-J0-25 l'a ete.
+#
+# LES DRAPEAUX SONT LES SIENS, PAS CEUX DU J0. Reutiliser
+# `P3_LAUNCH_ENABLED` aurait rouvert la porte du PREMIER contact en meme temps
+# que celle des relances. Deux etapes differentes, deux portes differentes —
+# et l'absence reste le cas sur.
+P3R2_PREFIXE = "[P3-R2]"
+P3R2_ETAPES = ("j3", "j7")
+P3R2_DRAPEAU_ACTIF = "P3_RELANCE_ENABLED"
+P3R2_DRAPEAU_REEL = "P3_RELANCE_ENVOI_REEL"
+P3R2_MOTIFS = {
+    "CAMPAGNE_NON_APPROUVEE": "la campagne n'est pas approuvee",
+    "EMPREINTE_ALTEREE": "le contenu a change depuis l'approbation",
+    "JAMAIS_ENVOYE": "aucune relance sans premier contact",
+    "PAS_ENCORE_DUE": "l'echeance de cette relance n'est pas atteinte",
+    "DEJA_RELANCE": "cette relance est deja partie",
+    "RELANCE_ANNULEE": "cette relance a ete annulee",
+    "REBOND_PERMANENT": "l'adresse a rebondi definitivement",
+    "MESSAGE_VIDE": "aucun texte de relance pour cette etape",
+    "OBJET_ABSENT": "aucun objet d'e-mail approuve pour cette etape",
+    "CIBLE_INVALIDE": "adresse absente ou illisible",
+    "DEJA_RESERVE": "une tentative de relance est deja en cours",
+    "ENVOI_NON_AUTORISE": "les deux drapeaux de relance ne sont pas ouverts",
+    "ETAPE_INCONNUE": "etape de relance inconnue",
+}
+
+
+def p3r2_envoi_autorise(flags) -> bool:
+    """L'unique porte d'une relance reelle. FERMEE par defaut, sans exception.
+
+    Meme forme que `p3s3_envoi_autorise`, et meme raison d'etre : l'ABSENCE
+    d'un drapeau vaut FERME. Une configuration illisible ou partielle rend
+    `False` — le jour ou la lecture echouera, le systeme devra se taire.
+    """
+    if not isinstance(flags, dict):
+        return False
+    return bool(flags.get(P3R2_DRAPEAU_ACTIF)) and bool(flags.get(P3R2_DRAPEAU_REEL))
+
+
+def p3r2_champ(etape: str, suffixe: str) -> str:
+    """`j3_sent_at`, `j7_due_at`… Le nom du champ d'UNE etape. PURE."""
+    return "%s_%s" % (etape, suffixe)
+
+
+def p3r2_champ_message(etape: str) -> str:
+    """`message_j3` / `message_j7`. PURE, et l'ordre des mots n'est pas un detail.
+
+    Le premier contact vit dans `message_j0` : les relances suivent la MEME
+    convention sur l'action. La fiche prospect, elle, nomme les siens
+    `j3_message` — c'est un autre document, avec son histoire. Les confondre
+    ferait lire un champ toujours vide et refuser toutes les relances sans
+    qu'on comprenne pourquoi.
+    """
+    return "message_%s" % etape
+
+
+def p3r2_objet_campagne(campagne: dict, etape: str) -> str:
+    """L'objet d'e-mail approuve POUR CETTE ETAPE. Chaine vide sinon. PURE.
+
+    Un objet propre a l'etape, et non celui du J0 recopie : une relance qui
+    reprendrait mot pour mot l'objet du premier message se lirait comme un
+    doublon dans la boite du destinataire, et Gmail regroupe les fils sur
+    l'objet. Tant qu'il n'est pas approuve, rien ne part.
+    """
+    return p3s1_texte((campagne or {}).get("subject_%s" % etape),
+                      P3S3D2_OBJET_MAX) or ""
+
+
+def p3r2_instantane(action: dict, etape: str) -> dict:
+    """CE QUI PARTIRAIT pour cette relance, et rien d'autre. PURE.
+
+    LE JETON DE REPONSE EST CELUI DU J0, VOLONTAIREMENT. Une reponse a la
+    relance doit se rattacher a LA MEME action que le premier contact — c'est
+    la meme conversation. Tirer un second jeton rendrait orpheline la moitie
+    des reponses et ferait apparaitre deux fils pour un seul prospect.
+    """
+    a = action or {}
+    return {"canal": a.get("channel"), "destinataire": a.get("target"),
+            "message": a.get(p3r2_champ_message(etape)),
+            "langue": a.get("language"),
+            "organisation": (a.get("organisations") or [""])[0],
+            "recipient_key": a.get("recipient_key"),
+            "etape": etape,
+            "reply_to": p3r1_adresse_reponse(a.get(P3R1_CHAMP_TOKEN)),
+            "action_id": a.get("id")}
+
+
+def p3r2_cle_idempotence(action: dict, etape: str) -> str:
+    """La cle STABLE de CETTE relance. Meme forme que celle du J0, autre etape.
+
+    L'etape est dans la cle : sans elle, le J+3 et le J+7 d'un meme
+    destinataire partageraient une cle et le fournisseur refuserait le second
+    comme un doublon du premier.
+    """
+    a = action or {}
+    return "p3-%s-%s-%s" % ((a.get("campaign_id") or "")[:36],
+                            (a.get("recipient_key") or "")[:64], etape)
+
+
+def p3r2_garde_relance(action: dict, campagne: dict, etape: str, refus=None,
+                       maintenant: str = "", envoi_autorise: bool = False,
+                       simulation: bool = True) -> dict:
+    """CETTE RELANCE PEUT-ELLE PARTIR ? Fonction PURE, sans base.
+
+    ELLE NE REECRIT PAS `p3u2_relance_autorisee`, ELLE L'APPELLE. Cette garde
+    porte deja ce qui protege la PERSONNE : une reponse recue, un refus
+    exprime, un premier contact jamais parti, un humain qui a pris la main.
+    La dupliquer aurait cree une seconde verite qui aurait divergé au premier
+    correctif. On y ajoute seulement ce qui est propre a l'ETAPE : l'echeance,
+    le deja-envoye, l'annulation, le contenu.
+
+    L'ORDRE SUIT CELUI DU J0 : ce qui protege la personne d'abord, ce qui
+    protege la machine ensuite. Si les deux s'appliquent, c'est le refus qui
+    parle du destinataire qu'il faut lire dans le rapport.
+    """
+    a = action or {}
+    c = campagne or {}
+    if etape not in P3R2_ETAPES:
+        return {"autorise": False, "code": "ETAPE_INCONNUE",
+                "motif": P3R2_MOTIFS["ETAPE_INCONNUE"]}
+    if (c.get("etat") or "") != "approuvee":
+        return {"autorise": False, "code": "CAMPAGNE_NON_APPROUVEE",
+                "motif": P3R2_MOTIFS["CAMPAGNE_NON_APPROUVEE"]}
+
+    # --- ce qui protege la personne : la garde de U2, telle quelle ---
+    verdict = p3u2_relance_autorisee(a, refus)
+    if not verdict["autorise"]:
+        return verdict
+    # LE REBOND PERMANENT EN CEINTURE ET BRETELLES. Il est deja couvert par le
+    # registre STOP, que la garde ci-dessus consulte. On le retient une seconde
+    # fois ICI, sur l'action : si l'inscription au registre avait echoue, une
+    # adresse morte serait relancee, et c'est le genre de trou qu'on ne voit
+    # qu'apres l'avoir creuse.
+    if p3b1_est_permanent(a.get("bounce_type")):
+        return {"autorise": False, "code": "REBOND_PERMANENT",
+                "motif": P3R2_MOTIFS["REBOND_PERMANENT"]}
+
+    # --- ce qui est propre a l'etape ---
+    if a.get(p3r2_champ(etape, "annule_le")):
+        return {"autorise": False, "code": "RELANCE_ANNULEE",
+                "motif": P3R2_MOTIFS["RELANCE_ANNULEE"]}
+    if a.get(p3r2_champ(etape, "sent_at")):
+        return {"autorise": False, "code": "DEJA_RELANCE",
+                "motif": P3R2_MOTIFS["DEJA_RELANCE"]}
+    echeance = (a.get(p3r2_champ(etape, "due_at")) or "").strip()
+    # PAS D'ECHEANCE = PAS DE RELANCE. Une date absente n'est pas une date
+    # atteinte : deduire l'inverse ferait partir la relance immediatement.
+    if not echeance or not maintenant or maintenant < echeance:
+        return {"autorise": False, "code": "PAS_ENCORE_DUE",
+                "motif": P3R2_MOTIFS["PAS_ENCORE_DUE"]}
+
+    # --- ce qui protege la machine ---
+    if a.get("statut") == "exclu":
+        return {"autorise": False, "code": "ACTION_EXCLUE",
+                "motif": P3S3D_MOTIFS["ACTION_EXCLUE"]}
+    if (a.get("execution_type") or "") != "AUTO":
+        return {"autorise": False, "code": "PAS_AUTO",
+                "motif": P3S3D_MOTIFS["PAS_AUTO"]}
+    if (a.get("channel") or "") not in P3S3D_CANAUX_AUTOMATISABLES:
+        return {"autorise": False, "code": "CANAL_NON_AUTOMATISABLE",
+                "motif": P3S3D_MOTIFS["CANAL_NON_AUTOMATISABLE"]}
+    if not (a.get(p3r2_champ_message(etape)) or "").strip():
+        return {"autorise": False, "code": "MESSAGE_VIDE",
+                "motif": P3R2_MOTIFS["MESSAGE_VIDE"]}
+    valeur = (a.get("target") or "").strip().lower()
+    if not valeur or not _P3S3_RE_MAIL.match(valeur):
+        return {"autorise": False, "code": "CIBLE_INVALIDE",
+                "motif": P3R2_MOTIFS["CIBLE_INVALIDE"]}
+    if a.get("channel") == "email" and not p3r2_objet_campagne(c, etape):
+        return {"autorise": False, "code": "OBJET_ABSENT",
+                "motif": P3R2_MOTIFS["OBJET_ABSENT"]}
+    if a.get(p3r2_champ(etape, "claimed_at")) or a.get(p3r2_champ(etape, "verrou")):
+        return {"autorise": False, "code": "DEJA_RESERVE",
+                "motif": P3R2_MOTIFS["DEJA_RESERVE"]}
+    if not simulation and not envoi_autorise:
+        return {"autorise": False, "code": "ENVOI_NON_AUTORISE",
+                "motif": P3R2_MOTIFS["ENVOI_NON_AUTORISE"]}
+    return {"autorise": True, "code": "OK", "motif": ""}
+
+
+async def p3r2_reserver(action_id: str, etape: str, maintenant: str) -> bool:
+    """Le droit d'envoyer CETTE relance a CE destinataire. True si obtenu.
+
+    VERROUS SEPARES PAR ETAPE, et c'est indispensable : le verrou du J0 reste
+    pose apres son succes — le reutiliser interdirait toute relance a vie.
+    Chaque etape a donc son `<etape>_claimed_at` et son `<etape>_verrou`.
+
+    UNE SEULE ECRITURE CONDITIONNELLE, l'idiome maison. Deux passages
+    concurrents : un seul obtient `matched_count == 1`, l'autre passe a la
+    suivante sans erreur.
+    """
+    if etape not in P3R2_ETAPES:
+        return False
+    try:
+        resultat = await db[P3S3_ACTIONS].update_one(
+            {"id": action_id,
+             p3r2_champ(etape, "claimed_at"): {"$exists": False},
+             p3r2_champ(etape, "verrou"): {"$exists": False},
+             p3r2_champ(etape, "sent_at"): {"$exists": False}},
+            {"$set": {p3r2_champ(etape, "claimed_at"): maintenant,
+                      p3r2_champ(etape, "verrou"): True,
+                      "updated_at": maintenant},
+             "$inc": {p3r2_champ(etape, "attempts"): 1}})
+        return bool(getattr(resultat, "matched_count", 0))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s reservation impossible pour %s/%s : %s",
+                       P3R2_PREFIXE, (action_id or "")[:8], etape, type(e).__name__)
+        return False
+
+
+async def p3r2_liberer(action_id: str, etape: str, maintenant: str, erreur=None) -> None:
+    """Rend la relance re-tentable. RESERVE AUX ECHECS DE CAUSE CONNUE."""
+    champs = {"updated_at": maintenant}
+    for cle in ("error_code", "error_message"):
+        if (erreur or {}).get(cle) is not None:
+            champs["%s_%s" % (etape, cle)] = erreur[cle]
+    await db[P3S3_ACTIONS].update_one(
+        {"id": action_id},
+        {"$set": champs, "$unset": {p3r2_champ(etape, "claimed_at"): "",
+                                    p3r2_champ(etape, "verrou"): ""}})
+
+
+async def p3r2_marquer_indetermine(action_id: str, etape: str, maintenant: str,
+                                   erreur=None) -> None:
+    """On IGNORE si la relance est partie : le verrou RESTE pose.
+
+    Meme regle que pour le J0, et pour la meme raison : entre risquer un
+    second message et demander a un humain, on demande.
+    """
+    champs = {p3r2_champ(etape, "indetermine_le"): maintenant,
+              p3r2_champ(etape, "verrou"): True, "updated_at": maintenant}
+    for cle in ("error_code", "error_message"):
+        if (erreur or {}).get(cle) is not None:
+            champs["%s_%s" % (etape, cle)] = erreur[cle]
+    await db[P3S3_ACTIONS].update_one({"id": action_id}, {"$set": champs})
+
+
+async def p3r2_appliquer_succes(action: dict, etape: str, reponse: dict,
+                                maintenant: str) -> dict:
+    """`<etape>_sent_at`, et SEULEMENT si le fournisseur a rendu un identifiant.
+
+    L'ECRITURE EST CONDITIONNELLE SUR L'ABSENCE de la date : deux passages ne
+    peuvent pas poser deux dates d'envoi pour la meme relance.
+
+    LES FICHES NE BOUGENT PAS. Une relance ne re-contacte personne : le
+    prospect est deja `contacte` depuis le J0. Y toucher ecraserait la date du
+    PREMIER contact, qui est celle qui compte.
+    """
+    identifiant = (reponse or {}).get("provider_message_id")
+    if not identifiant:
+        await p3r2_marquer_indetermine(action["id"], etape, maintenant, {
+            "error_code": "sans_identifiant",
+            "error_message": "le fournisseur n'a rendu aucun identifiant de message"})
+        return {"statut": "echec_indetermine"}
+    champs = {p3r2_champ(etape, "sent_at"): maintenant,
+              p3r2_champ(etape, "provider_message_id"): identifiant,
+              p3r2_champ(etape, "verrou"): True,
+              "updated_at": maintenant}
+    _rfc = p3u2_normaliser_identifiant((reponse or {}).get("rfc_message_id"))
+    if _rfc:
+        champs[p3r2_champ(etape, "rfc_message_id")] = _rfc
+    await db[P3S3_ACTIONS].update_one(
+        {"id": action["id"], p3r2_champ(etape, "sent_at"): {"$exists": False}},
+        {"$set": champs})
+    logger.info("%s relance %s confirmee pour %s (%s)", P3R2_PREFIXE, etape,
+                action.get("recipient_key"), identifiant[:24])
+    return {"statut": "envoye"}
+
+
+async def p3r2_executer_relances(campagne_id: str, etape: str, appelant: str,
+                                 simulation: bool = True, fournisseur=None,
+                                 plafond: int = 0, maintenant: str = None) -> dict:
+    """Le moteur de relance. `simulation=True` par DEFAUT, et c'est le cas sur.
+
+    IL EST LE JUMEAU DE `p3s3d_executer_campagne`, PAS SA COPIE. Meme ordre
+    d'ecritures, memes verrous, meme isolement des erreurs — mais sur les
+    champs de l'etape, et derriere SES PROPRES drapeaux. Un lot qui aurait
+    reutilise ceux du J0 aurait rouvert le premier contact en meme temps.
+
+    EN SIMULATION, PAS UNE SEULE ECRITURE : aucune reservation, aucune date,
+    aucun identifiant conserve. Une simulation se rejoue autant qu'on veut.
+
+    UN ECHEC N'ARRETE JAMAIS LES AUTRES. Chaque destinataire a son verdict.
+    Seule l'empreinte alteree arrete tout : on ne relance pas au nom d'un
+    contenu qui n'est plus celui qui a ete approuve.
+    """
+    fournisseur = fournisseur or P3S3DFournisseurFactice()
+    if etape not in P3R2_ETAPES:
+        raise HTTPException(status_code=400, detail="Etape de relance inconnue")
+    campagne = await db[P3S3_CAMPAGNES].find_one({"id": campagne_id}, {"_id": 0})
+    if not campagne:
+        raise HTTPException(status_code=404, detail="Campagne introuvable")
+    if not is_super_admin(appelant) and (campagne.get("coach_id") or "") != appelant:
+        raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas")
+
+    actions = await db[P3S3_ACTIONS].find(
+        {"campaign_id": campagne_id}, {"_id": 0}).to_list(P3S3_LISTE_MAX)
+    if not p3s3d_empreinte_conforme(campagne, actions):
+        logger.warning("%s campagne %s : empreinte alteree, relances refusees",
+                       P3R2_PREFIXE, (campagne_id or "")[:8])
+        return {"simulation": simulation, "etape": etape, "arrete": True,
+                "code": "EMPREINTE_ALTEREE", "motif": P3R2_MOTIFS["EMPREINTE_ALTEREE"],
+                "resultats": [], "traites": 0}
+
+    refus = set()
+    _par_canal = {}
+    for _a in actions:
+        _par_canal.setdefault((_a.get("channel") or "").strip().lower(), []).append(
+            _a.get("target"))
+    for _canal, _valeurs in _par_canal.items():
+        if not _canal:
+            continue
+        for _v in await c3_refus_exprimes(_canal, _valeurs):
+            refus.add("%s:%s" % (_canal, _v))
+
+    envoi_autorise = p3r2_envoi_autorise(await get_feature_flags())
+    instant = (maintenant or datetime.now(timezone.utc).isoformat())
+
+    resultats = []
+    traites = 0
+    for action in actions:
+        verdict = p3r2_garde_relance(action, campagne, etape, refus=refus,
+                                     maintenant=instant,
+                                     envoi_autorise=envoi_autorise,
+                                     simulation=simulation)
+        if not verdict["autorise"]:
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": "IGNORE", "code": verdict["code"],
+                              "motif": verdict["motif"]})
+            continue
+        if plafond and traites >= plafond:
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": "REPORTE", "code": "PLAFOND",
+                              "motif": "plafond de ce passage atteint"})
+            continue
+
+        cle = p3r2_cle_idempotence(action, etape)
+        instantane = p3r2_instantane(action, etape)
+        horodatage = datetime.now(timezone.utc).isoformat()
+
+        if simulation:
+            reponse = await fournisseur.envoyer(instantane, cle)
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": reponse["verdict"], "code": "SIMULATION",
+                              "motif": "simulation : aucune ecriture",
+                              "cle_idempotence": cle})
+            traites += 1
+            continue
+
+        if not await p3r2_reserver(action["id"], etape, horodatage):
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": "IGNORE", "code": "DEJA_RESERVE",
+                              "motif": P3R2_MOTIFS["DEJA_RESERVE"]})
+            continue
+
+        # LA TRACE D'INTENTION, AVANT L'APPEL — comme pour le J0.
+        await db[P3S3_ACTIONS].update_one(
+            {"id": action["id"]},
+            {"$set": {p3r2_champ(etape, "attempted_at"): horodatage,
+                      p3r2_champ(etape, "provider"): getattr(fournisseur, "nom", "?"),
+                      p3r2_champ(etape, "idempotency_key"): cle,
+                      "updated_at": horodatage}})
+
+        try:
+            reponse = await fournisseur.envoyer(instantane, cle)
+        except Exception as e:  # noqa: BLE001
+            await p3r2_marquer_indetermine(action["id"], etape, horodatage, {
+                "error_code": type(e).__name__, "error_message": str(e)[:300]})
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": P3S3D_INDETERMINE, "code": "EXCEPTION",
+                              "motif": type(e).__name__})
+            traites += 1
+            continue
+
+        v = reponse.get("verdict")
+        if v == P3S3D_SUCCESS:
+            issue = await p3r2_appliquer_succes(action, etape, reponse, horodatage)
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": v, "code": issue["statut"],
+                              "provider_message_id": reponse.get("provider_message_id")})
+        elif v in (P3S3D_PERMANENT, P3S3D_RETRYABLE, P3S3D_RATE_LIMIT):
+            await p3r2_liberer(action["id"], etape, horodatage, reponse)
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": v, "code": "echec",
+                              "retry_after": reponse.get("retry_after"),
+                              "motif": reponse.get("error_message")})
+        else:
+            await p3r2_marquer_indetermine(action["id"], etape, horodatage, reponse)
+            resultats.append({"recipient_key": action.get("recipient_key"),
+                              "verdict": v, "code": "echec_indetermine",
+                              "motif": reponse.get("error_message")})
+        traites += 1
+
+    logger.info("%s campagne %s etape %s : passage %s, %d traite(s)",
+                P3R2_PREFIXE, (campagne_id or "")[:8], etape,
+                "SIMULE" if simulation else "REEL", traites)
+    return {"simulation": simulation, "etape": etape, "arrete": False, "code": "OK",
+            "envoi_autorise": envoi_autorise, "resultats": resultats, "traites": traites}
 
 
 # ============================================================================
