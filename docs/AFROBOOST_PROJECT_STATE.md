@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 10:42 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 11:05 UTC**.
 
 ---
 
@@ -181,18 +181,18 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | Fait | Valeur vérifiée |
 |---|---|
 | Campagne | **P3-LAUNCH-137** (`idempotency_key = P3-LAUNCH-137-INITIAL-2026-09`) |
-| État | **`approuvee`** — **RÉAPPROUVÉE le 2026-09-03 09:15:03 UTC** par `contact.artboost@gmail.com`, après complétion des 25 J0 et arbitrage Case à Chocs |
+| État | **`approuvee`** — **CAMPAGNE J0 TERMINÉE le 03/09 10:57 UTC** ; réapprouvée le 2026-09-03 09:15:03 UTC par `contact.artboost@gmail.com`, après complétion des 25 J0 et arbitrage Case à Chocs |
 | `snapshot_hash` courant | **`bfdba290ae2053a62456f9440b82c72c14908b74a130711e6c1760c1aa6401e0`** — recalculé **au moment** de l'approbation, jamais recopié. Empreinte **conforme** vérifiée après coup. Ancienne `cd84f795…` archivée |
 | Prospects (`partner_prospects`) | **142** |
 | Actions (`prospect_campaign_actions`) | **137** |
-| Contacté (fiches `first_contact_sent_at`) | **3** — `BAR-01`, `BAR-02`, `BAR-03` (03/09 10:00 UTC) ; ⚠️ `BAR-02` a **rebondi** (transitoire) |
-| Envoyé (actions `sent_at`) | **3** |
+| Contacté (fiches `first_contact_sent_at`) | **59 fiches** pour **55 destinataires** (4 destinataires portent 2 fiches) |
+| Envoyé (actions `sent_at`) | **55 / 55** — le J0 est **terminé**, plus aucune action autorisée |
 | Inbound (`prospect_inbound_messages`) | **0** |
 | Répartition par canal | email 56, instagram 51, formulaire 16, aucun 9, visite 3, whatsapp 1, téléphone 1 |
 | Répartition par exécution | AUTO 56, MANUEL 53, ASSISTÉ 19, BLOQUÉ 9 |
 | Approbations archivées | **2** (01/09 09:12 et 01/09 11:17 — rouvertes, historique intact) + l'approbation **courante** du 03/09 |
 | `nb_destinataires` (campagne, tous canaux) | **136** — 137 actions moins `BAR-05` exclue |
-| **AUTO e-mail réellement autorisés** | **55** au total — **3 partis** (2 remis, 1 rebond transitoire), **52 restants** |
+| **AUTO e-mail encore autorisés** | **0** — tout est parti (3 le 03/09 10:00, puis 52 le 03/09 10:57) |
 
 ### P3-R1 — CORRÉLATION FORTE : **VERT, PROUVÉE EN PRODUCTION (03/09/2026)**
 
@@ -311,6 +311,49 @@ en plus de A0.
 Ne pas compter le mauvais champ.
 📌 `verrou_actif` **reste posé après un succès**, volontairement : l'envoi est définitif,
 le verrou empêche tout second premier contact. Ce n'est pas un blocage à nettoyer.
+
+### 🚀 ENVOI DES 52 — LE J0 EST TERMINÉ (03/09 10:57:09 → 10:57:56 UTC, 47 s)
+
+**52 tentatives, 52 SUCCESS, 0 échec.** Aucun `PERMANENT`, aucun `RETRYABLE`, aucun
+`INDETERMINE`. Porte ouverte 47 secondes, **refermée dans le `finally`** et vérifiée close.
+Plafond 52 respecté : **aucun 53ᵉ envoi**.
+
+| Fait | Valeur vérifiée |
+|---|---|
+| Total envoyé sur la campagne | **55 / 55** (3 + 52) |
+| `provider_message_id` | **55**, tous **distincts** |
+| Jetons de réponse P3-R1 | **55**, tous **distincts** |
+| Destinataires | **55 distincts** — **0 doublon** |
+| `rfc_message_id` (webhook `email.sent`) | **55** — la méthode A est disponible partout |
+| Fiches `contacte` | **59** (4 destinataires portent 2 fiches) |
+| Actions encore autorisées | **0** |
+| Empreinte | conforme |
+
+**Contrôle croisé chez Resend, les 55 interrogés un par un** :
+**49 `delivered` · 4 `bounced` · 2 `sent`** (encore en vol au moment du contrôle).
+**55 destinataires distincts, 55 Reply-To individuels distincts, 0 non conforme au
+format `r-<32 hex>@reply.afroboosteur.com`.**
+
+### ⚠️ P3-B1 A FONCTIONNÉ EN PRODUCTION, SUR DE VRAIES DONNÉES — 4 rebonds
+
+Déployé depuis quelques minutes, le lot a traité **4 rebonds réels sans intervention** :
+
+| Destinataire | Type | Adresse | Effet |
+|---|---|---|---|
+| `GVA-E1` FESTTRAA | **Permanent** | `fesstra@gmail.com` | J+3/J+7 annulés, **registre STOP** |
+| `ORG-02` **Case à Chocs** | **Permanent** | `contact@case-a-chocs.ch` | J+3/J+7 annulés, **registre STOP** |
+| `ORG-04` ADN — Assoc. Danse NE | **Permanent** | `info@danse-neuchatel.ch` | J+3/J+7 annulés, **registre STOP** |
+| `BAR-02` Bar King | `Transient` | `caveauduking@gmail.com` | enregistré, **rien bloqué** |
+
+La garde le confirme : **`REFUS_EXPRIME` = 3**. Les trois adresses sont désormais refusées
+par le système lui-même, sans qu'aucune règle ait été posée à la main. Les fiches restent
+`contacte`, ne sont pas supprimées, et une nouvelle adresse les rendrait joignables.
+
+🔴 **À TRANCHER PAR LE COACH — `contact@case-a-chocs.ch` est une adresse morte.**
+C'est **exactement l'adresse retenue lors de l'arbitrage du 03/09**, au détriment de
+`interlope@case-a-chocs.ch` (`BAR-05`, mise en attente, jamais contactée). La maison n'a
+donc **rien reçu**. `BAR-05` est toujours `exclu` et intacte : la réintégrer est un appel,
+et c'est la seule voie e-mail restante vers la Case à Chocs.
 
 ### ✅ P3-B1 — LES REBONDS SONT TRACÉS (livré et déployé le 03/09, `ea73c2e8`)
 
@@ -547,9 +590,14 @@ Empreinte de campagne **conforme**, `envoi_autorise = False`.
   — « une réponse envoyée depuis une autre adresse partait en revue manuelle et les relances
   continuaient » — est levé.
 - **Nombre de destinataires : 55** — 56 après P3-J0-25, moins `BAR-05` mise en attente par arbitrage du coach.
-- ✅ **P3-LAUNCH-137 est RÉAPPROUVÉE** (03/09 09:15 UTC). Contenu figé, empreinte conforme.
-- ⛔ **SEULE PORTE ENCORE FERMÉE : les deux drapeaux d'envoi.** Leur ouverture est une décision
-  distincte de l'approbation, et elle n'a pas été demandée. **NE JAMAIS LES OUVRIR SANS GO ÉCRIT.**
+- ✅ **P3-LAUNCH-137 — LE J0 EST TERMINÉ** : 55/55 partis le 03/09, 0 action encore autorisée.
+  Les drapeaux d'envoi sont **refermés** (absents). **NE JAMAIS LES ROUVRIR SANS GO ÉCRIT.**
+- 🔴 **À trancher : `contact@case-a-chocs.ch` a rebondi en PERMANENT.** L'arbitrage avait
+  retenu cette adresse contre `interlope@case-a-chocs.ch` (`BAR-05`, `exclu`, jamais
+  contactée). La Case à Chocs n'a rien reçu ; `BAR-05` est la seule voie e-mail restante.
+- ⏭️ **J+3 / J+7 : AUCUN MOTEUR N'EXISTE.** `p3u2_relance_autorisee` n'a toujours aucun
+  appelant. Les échéances sont posées (`j3_due_at` au 06/09, `j7_due_at` au 10/09) mais
+  **rien ne partira**. C'est un lot à décider, pas un oubli.
 - Dettes antérieures (non bloquantes) : cf. `CLAUDE.md` et l'historique des lots.
 
 ---
