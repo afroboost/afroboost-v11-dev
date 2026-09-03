@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 12:05 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 12:35 UTC**.
 
 ---
 
@@ -53,7 +53,13 @@ Avant chaque lot / diagnostic / déploiement : (1) lire ce fichier ; (2) vérifi
   C'est une application DIFFÉRENTE sur le MÊME serveur : y poser une variable n'a aucun effet sur afroboost.com.
 - Dans le même environnement se trouvent aussi `afroboost-live`, `sportdate`, `sportdate-rencontre` : ce ne sont pas la bonne app.
 
-## Git / déploiement (vérifié 2026-09-03 05:47 UTC)
+## Git / déploiement (vérifié 2026-09-03 12:35 UTC) — ⛔ LIVRAISON BLOQUÉE
+
+- `origin/main` = **`5803f8df`**. **Dernier commit RÉELLEMENT déployé : `96642164` (P3-R2)**
+  ou antérieur — `cccd739f` et `5803f8df` n'ont produit **aucune bascule** en 88 min.
+- Le conteneur répond (200 partout) mais exécute du code périmé. **Vérifier Coolify.**
+
+## Git / déploiement — historique (vérifié 2026-09-03 05:47 UTC)
 
 - `origin/main` = `HEAD` local = **a20c93ad** — « P3-R1 : l'adresse de réponse porte l'identité de l'action »
 - **Preuve runtime que la prod EXÉCUTE bien P3-R1** — deux faits indépendants, aucun ne repose sur Coolify :
@@ -354,6 +360,32 @@ C'est **exactement l'adresse retenue lors de l'arbitrage du 03/09**, au détrime
 `interlope@case-a-chocs.ch` (`BAR-05`, mise en attente, jamais contactée). La maison n'a
 donc **rien reçu**. `BAR-05` est toujours `exclu` et intacte : la réintégrer est un appel,
 et c'est la seule voie e-mail restante vers la Case à Chocs.
+
+### ⛔ BLOCAGE OUVERT — LE DÉPLOIEMENT NE PART PLUS (constaté 03/09 12:35 UTC)
+
+**Deux pushes n'ont produit aucune bascule de conteneur** : `cccd739f` (P3-R3) puis
+`5803f8df` (re-déclenchement via `trigger.txt`). Le `boot_id` est resté `dda30969…`
+pendant plus de **88 minutes**. Le dernier démarrage observé est **antérieur** au push de
+P3-R3 : **le code de P3-R3 n'est PAS en ligne.**
+
+**Le site fonctionne** : 25/25 × 200 sur `/`, tous les endpoints à 200. Ce n'est pas une
+panne de service, c'est une **panne de livraison**.
+
+**Conséquence exacte, mesurée** — la base porte l'empreinte NOUVELLE
+(`de05fdee…`), la production calcule encore l'ANCIENNE (`bfdba290…`) :
+
+| Calcul | Conforme ? |
+|---|---|
+| avec le code **déployé** (ancien) | **NON** |
+| avec le code **poussé** (nouveau) | **OUI** |
+
+**Aucun risque d'envoi** : les deux drapeaux sont fermés, 0 action J0 encore autorisée,
+aucune route HTTP ne déclenche d'envoi, et une empreinte non conforme **arrête** le moteur
+— l'écart penche du côté sûr. Il se résorbe **seul** dès que le build passe.
+
+👉 **À FAIRE CÔTÉ COACH : ouvrir Coolify, application `afroboost-v11-dev`, et lire le
+dernier déploiement.** Soit le webhook GitHub ne déclenche plus, soit le build échoue
+(l'OOM Terser est un précédent connu — cf. V309b). Je ne peux pas lire ces journaux d'ici.
 
 ### ✍️ P3-R3 — LES RELANCES ONT UN TEXTE (03/09 12:01 UTC)
 
