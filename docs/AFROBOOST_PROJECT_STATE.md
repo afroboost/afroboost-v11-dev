@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 13:12 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 16:03 UTC**.
 
 ---
 
@@ -204,7 +204,7 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | Actions (`prospect_campaign_actions`) | **137** |
 | Contacté (fiches `first_contact_sent_at`) | **59 fiches** pour **55 destinataires** (4 destinataires portent 2 fiches) |
 | Envoyé (actions `sent_at`) | **55 / 55** — le J0 est **terminé**, plus aucune action autorisée |
-| Inbound (`prospect_inbound_messages`) | **1** — `ZRH-D5` SalsaRica, 03/09 11:37 UTC (cf. section dédiée) |
+| Inbound (`prospect_inbound_messages`) | **2** — `ZRH-D5` SalsaRica (03/09 11:37 UTC) et `LSN-A3` ACD (03/09 13:35 UTC). **Les deux ont leur `body_text` réel depuis P3-R4** |
 | Répartition par canal | email 56, instagram 51, formulaire 16, aucun 9, visite 3, whatsapp 1, téléphone 1 |
 | Répartition par exécution | AUTO 56, MANUEL 53, ASSISTÉ 19, BLOQUÉ 9 |
 | Approbations archivées | **3** (01/09 09:12, 01/09 11:17, 03/09 09:15 — rouvertes, historique intact) + l'approbation **courante** du 03/09 12:02:35 |
@@ -213,7 +213,7 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | Textes de relance écrits | **52 `message_j3`** et **52 `message_j7`** (P3-R3) ; `subject_j3` = `subject_j7` = `Re: Proposition de collaboration avec Afroboost` |
 | Relances RÉELLEMENT envoyées | **0 `j3_sent_at`, 0 `j7_sent_at`** |
 
-### 🟢 ÉTAT OPÉRATIONNEL AU 2026-09-03 13:12 UTC — **ATTENTE GO J+3**
+### 🟢 ÉTAT OPÉRATIONNEL AU 2026-09-03 16:03 UTC — **ATTENTE GO J+3**
 
 - **P3-LAUNCH-137 reste la campagne UNIQUE** (`prospect_campaigns` = 1,
   `id = 6a1fddf8-8fdb-41e6-bd77-a8f43732b740`). Aucune seconde campagne n'a jamais été créée.
@@ -222,18 +222,22 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 - **Moteur J+3/J+7 (P3-R2) construit et validé** ; **contenus J+3/J+7 (P3-R3) réapprouvés**
   sur la même campagne, empreinte `de05fdee…` **conforme** (recalcul = base).
 - **Production sur le nouveau code** (cf. « Git / déploiement » ci-dessus).
-- **51 J+3 potentiellement éligibles au 06/09**, **selon l'état actuel** — simulation sans
-  écriture : `SIMULATION` 51 · `JAMAIS_ENVOYE` 82 (les non-J0) · `REFUS_EXPRIME` 3 ·
-  `A_REPONDU` 1 = 137 actions.
-- **51 J+7 potentiellement éligibles au 10/09**, selon l'état actuel (même répartition).
+- **Contenu des réponses entrantes (P3-R4) : TERMINÉ.** Cf. section dédiée.
+- **50 J+3 potentiellement éligibles au 06/09**, **selon l'état actuel** — simulation sans
+  écriture : `SIMULATION` 50 · `JAMAIS_ENVOYE` 82 (les non-J0) · `REFUS_EXPRIME` 3 ·
+  `A_REPONDU` **2** = 137 actions.
+- **50 J+7 potentiellement éligibles au 10/09**, selon l'état actuel, **à recalculer par la
+  garde le jour J** (même répartition).
 - ⚠️ **CE NOMBRE SERA RECALCULÉ PAR LA GARDE LE JOUR J.** Chaque réponse, refus ou rebond
-  arrivé d'ici là le fera baisser. Le 51 est une photo, pas un engagement.
+  arrivé d'ici là le fera baisser. Le 50 est une photo, pas un engagement — il valait
+  **51** trois heures plus tôt, avant la réponse d'ACD.
+- **Aucune relance J+3/J+7 n'a encore été envoyée** : `j3_sent_at` = 0, `j7_sent_at` = 0.
 - **3 adresses en `REFUS_EXPRIME`** — les 3 rebonds **permanents**, déjà au registre STOP :
   `GVA-E1` (`fesstra@gmail.com`), `ORG-02` (`contact@case-a-chocs.ch`),
   `ORG-04` (`info@danse-neuchatel.ch`). Bar King (`BAR-02`, rebond **transitoire**) garde ses relances.
-- **1 prospect a répondu** : **`ZRH-D5` / SalsaRica**, réponse reçue le **03/09**,
-  corrélation réelle **`A0_REPLY_TOKEN`, confiance 100** — ses **J+3 et J+7 ont été annulés
-  automatiquement**.
+- **2 prospects ont répondu** (`A_REPONDU` = 2), tous deux corrélés en réel par
+  **`A0_REPLY_TOKEN`, confiance 100**, J+3 **et** J+7 annulés automatiquement :
+  **`ZRH-D5` / SalsaRica** (REFUS) et **`LSN-A3` / ACD Lausanne** (POSITIVE).
 - **Aucune relance réelle envoyée. Portes d'envoi FERMÉES** : `P3_LAUNCH_ENABLED` et
   `P3_LAUNCH_ENVOI_REEL` à `false`, `P3_RELANCE_ENABLED` et `P3_RELANCE_ENVOI_REEL`
   **absents** → `p3r2_envoi_autorise()` = **False**.
@@ -466,10 +470,47 @@ automatiquement, fiches passées à `repondu`. Aucune intervention humaine.
 | `ZRH-D5` | SalsaRica Dance School, Zürich | 03/09 11:37:15 | **REFUS** net, en allemand |
 | `LSN-A3` | Association Art et Culture pour le Développement (ACD), Lausanne | 03/09 13:35:35 | **POSITIVE** — un contact et un numéro donnés |
 
-⚠️ **RATTRAPAGE NON EXÉCUTÉ.** La simulation attendait **1** candidat (SalsaRica) et en a
-trouvé **2** : la seconde réponse est arrivée pendant le lot. Conformément au cahier des
-charges, **rien n'a été écrit** — le rattrapage réel attend un GO sur **2** candidats.
-Les deux corps ont été lus en simulation, sans écriture.
+> ⚠️ **ÉTAT DÉPASSÉ, conservé pour l'historique** : au moment de la livraison de P3-R4, le
+> rattrapage n'était PAS exécuté — la simulation attendait 1 candidat et en avait trouvé 2,
+> la seconde réponse étant arrivée pendant le lot. **Il a été exécuté depuis** (03/09 16:03
+> UTC, sur GO), et la section ci-dessous fait foi.
+
+### ✅ RATTRAPAGE P3-R4 EXÉCUTÉ — 2/2 (03/09 16:03 UTC, sur GO du coach)
+
+| Fait | Valeur |
+|---|---|
+| Messages candidats | **2** |
+| Messages complétés | **2 / 2** (verdict `COMPLETE` sur chacun) |
+| `ZRH-D5` SalsaRica | **COMPLETE** — `provider_email_id` `88268b21-13be-4b73-9ee6-437fe86396e4` |
+| `LSN-A3` ACD | **COMPLETE** — `provider_email_id` `71ce4a20-921a-44dd-b8cb-5cbf558bffb5` |
+| Contenu réel récupéré depuis Resend | **OUI** |
+| Source | **`text`** pour les deux (`contenu_source`), `contenu_erreur` vide |
+| Corrélation | **INCHANGÉE** — `A0_REPLY_TOKEN` / confiance **100** sur les deux |
+| `replied_at` | **INCHANGÉS** — `ZRH-D5` 11:37:15.440Z, `LSN-A3` 13:35:35.233Z |
+| Annulations J+3/J+7 | **INCHANGÉES**, au caractère près |
+| Nouvel inbound créé | **0** — les 2 documents existants ont été complétés, rien d'autre |
+| E-mails envoyés / relances envoyées | **0 / 0** |
+| Portes d'envoi | **FERMÉES** (`P3_LAUNCH_*` à `false`, `P3_RELANCE_*` absents) |
+| Campagne P3 unique / actions / prospects | **1 / 137 / 142** |
+| Registre STOP | **11 entrées, inchangé** |
+
+**SalsaRica et ACD disposent désormais de leur vrai `body_text` entrant.** Avant P3-R4, ces
+deux champs étaient vides : on savait qu'un prospect avait répondu, jamais quoi.
+
+⚠️ **AUCUN champ Afroboost n'a servi de corps entrant** — ni `j0_message`, ni
+`message_j3`, ni `message_j7`, ni `interested_message`. Vérifié champ par champ sur les
+deux documents.
+
+📌 **PIÈGE DE CONTRÔLE, à ne pas repayer.** Chercher un texte Afroboost dans **tout** le
+document donne un **faux positif** : notre J0 s'y trouve légitimement, dans `body_quoted` —
+c'est l'historique que le logiciel de messagerie du prospect recopie sous sa réponse. **Le
+seul contrôle qui compte porte sur `body_text` SEUL**, et il est propre sur les deux.
+
+**P3-R4 ENRICHIT, IL NE CORRÈLE PAS.** Le lot n'a pas touché une ligne de P3-R1 : il vient
+APRÈS la corrélation, jamais à sa place. Et la règle qui gouverne le reste :
+**une panne future de récupération du corps ne doit JAMAIS faire perdre la corrélation** —
+message stocké, `replied_at` écrit, relances annulées, seul le contenu porte l'échec
+(`contenu_recupere: false` + motif).
 
 ### ✍️ P3-R3 — LES RELANCES ONT UN TEXTE (03/09 12:01 UTC)
 
@@ -520,7 +561,14 @@ maintenant l'empreinte.
 | **J+3 au 06/09** | **51** | 3 `REFUS_EXPRIME` (rebonds durs) · **1 `A_REPONDU`** · 82 `JAMAIS_ENVOYE` |
 | **J+7 au 10/09** | **51** | idem |
 
+> ⚠️ **Mesure du 03/09 12:01 UTC, DÉPASSÉE.** Depuis la réponse d'ACD, c'est **50** au
+> 06/09 et **50** au 10/09 (`A_REPONDU` = 2). Chiffre à jour : section « ÉTAT
+> OPÉRATIONNEL » en tête de la partie C.
+
 ### 🎉 UNE PREMIÈRE RÉPONSE EST ARRIVÉE — ET P3-R1 L'A RATTACHÉE SEUL
+
+> Une **seconde** est arrivée depuis (`LSN-A3` / ACD, 03/09 13:35 UTC) : voir la section
+> « DEUX RÉPONSES RÉELLES ». Les deux ont leur corps réel depuis le rattrapage P3-R4.
 
 `SalsaRica Dance School` (Zurich, `ZRH-D5`) a répondu le **03/09 à 11:37 UTC**, depuis
 `info@salsarica.ch` sur `r-6e7e104e…@reply.afroboosteur.com`.
@@ -564,8 +612,9 @@ jamais approuvé à cette étape est exactement ce que l'empreinte existe pour e
 | **J+3 au 06/09** | **0** | 52 `MESSAGE_VIDE` · 3 `REFUS_EXPRIME` (rebonds durs) · 82 `JAMAIS_ENVOYE` |
 | **J+7 au 10/09** | **0** | idem |
 
-> Mesure **remplacée** depuis P3-R3 : **51** au 06/09 et **51** au 10/09, selon l'état
-> actuel — 51 `SIMULATION` · 82 `JAMAIS_ENVOYE` · 3 `REFUS_EXPRIME` · 1 `A_REPONDU`.
+> Mesure **remplacée** depuis P3-R3, puis à nouveau depuis la réponse d'ACD : **50** au
+> 06/09 et **50** au 10/09, selon l'état actuel — 50 `SIMULATION` · 82 `JAMAIS_ENVOYE` ·
+> 3 `REFUS_EXPRIME` · **2 `A_REPONDU`**.
 
 Les 3 rebonds permanents sont **déjà écartés** par le registre STOP, sans règle ajoutée.
 Bar King (transitoire) reste dans les 52 : il n'est pas bloqué, il n'a simplement pas de texte.
@@ -824,10 +873,12 @@ Empreinte de campagne **conforme**, `envoi_autorise = False`.
   retenu cette adresse contre `interlope@case-a-chocs.ch` (`BAR-05`, `exclu`, jamais
   contactée). La Case à Chocs n'a rien reçu ; `BAR-05` est la seule voie e-mail restante.
 - ✅ **J+3 / J+7 : moteur (P3-R2) + textes (P3-R3) prêts et approuvés.** Simulation :
-  **51 relances** partiraient au 06/09. **Les drapeaux restent fermés** — aucune relance
-  n'est partie, et les ouvrir demande un GO écrit distinct.
-- 📬 **Première réponse reçue** : SalsaRica (`ZRH-D5`), rattachée par jeton à confiance 100,
-  relances annulées automatiquement.
+  **50 relances** partiraient au 06/09 (état du 03/09 16:03 UTC). **Les drapeaux restent
+  fermés** — aucune relance n'est partie, et les ouvrir demande un GO écrit distinct.
+- 📬 **Deux réponses reçues**, rattachées par jeton à confiance 100, relances annulées
+  automatiquement : SalsaRica (`ZRH-D5`, REFUS) et ACD Lausanne (`LSN-A3`, **POSITIVE** —
+  un contact et un numéro transmis).
+- ✅ **P3-R4 terminé** : les deux réponses ont leur corps réel, récupéré chez Resend.
 - Dettes antérieures (non bloquantes) : cf. `CLAUDE.md` et l'historique des lots.
 
 ---
