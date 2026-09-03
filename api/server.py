@@ -24447,6 +24447,10 @@ def p3u2_message_entrant(brut: dict) -> dict:
         # etranger est une faille par construction. Le texte suffit a lire une
         # reponse, et U2 n'en fait aucune analyse.
         "body_text": p3s1_texte(b.get("body_text"), 20000) or "",
+        # P3-R4 : le CONTENU enrichi traverse le contrat sans etre interprete
+        # ici. Le moteur n'en fait rien — il le RECOPIE, et seulement les
+        # champs d'une liste blanche fermee.
+        "contenu": b.get("contenu") if isinstance(b.get("contenu"), dict) else None,
         "received_at": (b.get("received_at") or "").strip() or None,
         "provider": (b.get("provider") or "").strip() or None,
         "provider_event_id": evenement or None,
@@ -24729,6 +24733,8 @@ async def p3u2_recevoir(brut: dict, coach_id: str) -> dict:
         "processed_at": None,
         "created_at": maintenant,
     }
+    # P3-R4 : le corps reel, quand l'adaptateur a su le lire. LISTE BLANCHE.
+    document.update(p3r4_champs_contenu(message.get("contenu")))
     try:
         await db[P3U2_COLLECTION].insert_one(dict(document))
     except Exception as e:  # noqa: BLE001
@@ -25702,18 +25708,459 @@ async def p3u3_webhook_resend(request: Request):
         # le meilleur repli quand la charge utile n'a pas d'identifiant.
         message["provider_event_id"] = (request.headers.get(P3U3_ENTETE_ID) or "").strip() or None
 
+    # P3-R4 : LE CORPS REEL, avant de passer la main. Cet appel ne leve jamais
+    # et ne decide rien : si le fournisseur est muet, le message part quand
+    # meme et la correlation suit son cours.
+    message = await p3r4_enrichir(message, evenement)
+
     # LE DESTINATAIRE DECIDE DU PROPRIETAIRE. Une reponse arrive sur NOTRE
     # adresse : c'est elle qui dit de quel coach il s'agit. En attendant le
     # multi-coach, la campagne est unique et le proprietaire est le
     # super-admin de la plateforme.
     coach = P3U3_COACH_PAR_DEFAUT
     issue = await p3u2_recevoir(message, coach)
+    # P3-R4 : UN REJEU PEUT COMPLETER UN CORPS MANQUANT. Le message reste le
+    # meme — aucun document cree, aucune relance retouchee, aucun `replied_at`
+    # reecrit : seul un champ vide se remplit.
+    if issue.get("doublon") and issue.get("id"):
+        issue["contenu_complete"] = await p3r4_completer_depuis_evenement(
+            issue["id"], evenement)
     logger.info("[P3-U3] evenement %s -> %s (doublon=%s)",
                 (message.get("provider_event_id") or "-")[:16],
                 issue.get("statut") or "-", issue.get("doublon"))
     return {"recu": True, "type": type_evenement,
             "stocke": issue.get("stocke"), "doublon": issue.get("doublon"),
-            "statut": issue.get("statut"), "methode": issue.get("methode")}
+            "statut": issue.get("statut"), "methode": issue.get("methode"),
+            # P3-R4 : dit si un rejeu a servi a combler un corps manquant.
+            "contenu_complete": bool(issue.get("contenu_complete"))}
+
+
+# ============================================================================
+# P3-R4 — LE CONTENU REEL DES REPONSES ENTRANTES
+# ============================================================================
+# CE LOT N'AJOUTE QU'UNE CHOSE : LE CORPS DU MESSAGE.
+#
+# La correlation fonctionne DEJA, et elle est prouvee en production : une
+# reponse arrivee sur `r-<jeton>@…` retrouve son action, ecrit `replied_at` et
+# annule J+3/J+7 sans que personne n'intervienne (P3-R1, 03/09). Ce lot ne la
+# remplace pas, ne la reecrit pas, ne la deplace pas. Il vient APRES elle.
+#
+# CE QUI MANQUAIT, ET POURQUOI. Le webhook `email.received` de Resend ne porte
+# PAS le corps du message — par conception, pas par accident. `body_text` est
+# donc reste vide sur la premiere vraie reponse de la campagne : on savait
+# QU'un prospect avait repondu, jamais QUOI. Le corps se lit en LECTURE SEULE
+# chez le fournisseur, `GET /emails/receiving/{email_id}`.
+#
+# DEUX PIEGES DEJA PAYES, tous deux consignes ici pour qu'on ne les repaye pas :
+#   1. l'`email_id` est un UUID. L'identifiant d'EVENEMENT (`msg_…`), le seul
+#      que la base conservait, est refuse par l'API en 422 « must be a valid
+#      UUID ». D'ou `p3r4_identifiant_recu`, qui VALIDE la forme au lieu de
+#      passer n'importe quel identifiant qui traine ;
+#   2. `urllib` recoit un 403 Cloudflare (« error code: 1010 ») sur
+#      api.resend.com — ce n'est PAS un refus de la cle. On passe donc par le
+#      SDK (`resend.Emails.Receiving`), qui utilise un client normal.
+#
+# LA REGLE QUI DOMINE TOUT LE LOT : LA PERTE DU CORPS NE DOIT JAMAIS ENTRAINER
+# LA PERTE DE LA CORRELATION. Fournisseur muet, cle absente, SDK manquant,
+# exception inattendue : le message est stocke quand meme, `replied_at` est
+# ecrit quand meme, les relances sont annulees quand meme, et seul le CONTENU
+# porte un etat d'echec. Une panne de lecture n'est pas une reponse inexistante.
+#
+# ET LA REGLE ANTI-CONFUSION : aucun champ redige par Afroboost — `j0_message`,
+# `message_j3`, `message_j7`, `interested_message` — ne peut alimenter un corps
+# entrant. Le seul repli autorise est le texte que le FOURNISSEUR a livre dans
+# la charge utile. Ce n'est pas une convention de nommage : c'est un banc.
+
+P3R4_PREFIXE = "[P3-R4]"
+P3R4_TEXTE_MAX = 20000
+P3R4_HTML_MAX = 200000
+
+# Les etats possibles du contenu, et rien d'autre. Un motif dit POURQUOI le
+# corps manque — jamais que la reponse n'existe pas.
+P3R4_SANS_IDENTIFIANT = "IDENTIFIANT_ABSENT"
+P3R4_SANS_FOURNISSEUR = "FOURNISSEUR_INDISPONIBLE"
+P3R4_ERREUR_FOURNISSEUR = "ERREUR_FOURNISSEUR"
+P3R4_CORPS_VIDE = "CORPS_VIDE_CHEZ_FOURNISSEUR"
+P3R4_AMBIGU = "PLUSIEURS_CANDIDATS_CHEZ_FOURNISSEUR"
+P3R4_INTROUVABLE = "INTROUVABLE_CHEZ_FOURNISSEUR"
+
+# Les SEULS champs que ce lot ajoute au message entrant. La liste est blanche
+# et fermee : `p3u2_recevoir` ne recopie que ceux-la, si bien qu'un adaptateur
+# bavard ne peut pas glisser un champ arbitraire dans le document.
+P3R4_CHAMPS_CONTENU = ("provider_email_id", "body_html", "body_quoted",
+                       "contenu_recupere", "contenu_source", "contenu_erreur")
+
+_P3R4_RE_UUID = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+# LES MARQUEURS DE CITATION. Chacun ouvre l'HISTORIQUE : tout ce qui suit
+# appartient au fil precedent, donc a NOUS le plus souvent. Sans cette coupe,
+# notre propre J0 revient en base comme s'il venait du prospect — exactement la
+# confusion que ce lot existe pour empecher.
+_P3R4_MARQUEURS = (
+    re.compile(r"^\s*>"),                                   # citation classique
+    re.compile(r"^\s*-{2,}\s*(?:Original Message|Message d'origine|"
+               r"Forwarded message|Ursprüngliche Nachricht)", re.I),
+    # Les accents sont OPTIONNELS : un client de messagerie mal configure
+    # ecrit « a ecrit » sans accent, et la coupe doit tenir quand meme.
+    re.compile(r"^\s*(?:Am|On|Le|El|Il)\b.{0,200}?"
+               r"(?:schrieb|wrote|a\s+[eé]crit|escribi[oó]|ha\s+scritto)\b", re.I),
+    re.compile(r"^\s*(?:De|From|Von|Da|Expéditeur)\s*:\s*\S", re.I),
+    re.compile(r"^\s*_{10,}\s*$"),
+)
+
+
+def p3r4_identifiant_recu(evenement) -> str:
+    """L'`email_id` du message ENTRANT, ou chaine vide. PURE.
+
+    ELLE VALIDE LA FORME, ET C'EST TOUT L'INTERET. `provider_event_id`
+    (`msg_3Ioe…`) ressemble a un identifiant et n'en est pas un pour cette
+    API : le passer rend 422. On n'accepte donc qu'un UUID, et un identifiant
+    absent est un cas NORMAL, pas une erreur.
+    """
+    e = evenement or {}
+    donnees = e.get("data") if isinstance(e.get("data"), dict) else e
+    if not isinstance(donnees, dict):
+        return ""
+    for brut in (donnees.get("email_id"), donnees.get("id"), e.get("email_id")):
+        valeur = str(brut or "").strip()
+        if valeur and _P3R4_RE_UUID.match(valeur):
+            return valeur
+    return ""
+
+
+def p3r4_identifiant_valide(valeur) -> bool:
+    """Cet identifiant a-t-il la forme attendue par l'API Receiving ? PURE."""
+    return bool(_P3R4_RE_UUID.match(str(valeur or "").strip()))
+
+
+def p3r4_couper_citation(texte) -> dict:
+    """Separe le NOUVEAU texte de l'HISTORIQUE CITE. PURE.
+
+    Rend `{"nouveau": …, "cite": …}`. La coupe se fait a la PREMIERE ligne
+    reconnue comme marqueur de citation ; tout ce qui suit part dans `cite`,
+    y compris les marqueurs suivants.
+
+    ON NE JETTE RIEN. L'historique est conserve a part, jamais supprime : il
+    sert a relire un fil, et le supprimer ferait perdre le contexte d'une
+    reponse courte. Ce qu'on refuse, c'est de le confondre avec la reponse.
+
+    LA SIGNATURE RESTE DANS `nouveau`, et c'est voulu : elle est ecrite par le
+    prospect, elle porte souvent son telephone et son adresse. La retirer
+    demanderait de deviner ou elle commence — on ne devine pas.
+    """
+    brut = str(texte or "")
+    if not brut.strip():
+        return {"nouveau": "", "cite": ""}
+    lignes = brut.splitlines()
+    for rang, ligne in enumerate(lignes):
+        if any(m.match(ligne) for m in _P3R4_MARQUEURS):
+            return {"nouveau": "\n".join(lignes[:rang]).strip(),
+                    "cite": "\n".join(lignes[rang:]).strip()}
+    return {"nouveau": brut.strip(), "cite": ""}
+
+
+def p3r4_contenu_depuis_recu(recu) -> dict:
+    """L'objet de l'API Receiving -> un contenu normalise. PURE.
+
+    `text` d'abord : c'est la representation principale quand le client de
+    messagerie l'a fournie, et elle n'a besoin d'aucun nettoyage. `html` n'est
+    lu QUE si `text` manque.
+
+    LE HTML N'EST CONSERVE QUE DANS CE SECOND CAS, et jamais rendu tel quel :
+    un tableau de bord qui affiche le HTML d'un inconnu est une faille par
+    construction. On garde la source pour pouvoir re-extraire plus tard, et
+    c'est le TEXTE extrait qui est lu partout ailleurs. L'extraction reutilise
+    `p3u3_texte_depuis_html` — une seule regle de nettoyage dans le depot.
+    """
+    lire = (recu.get if isinstance(recu, dict) else (lambda c, d=None: getattr(recu, c, d)))
+    texte = str(lire("text") or "").strip()
+    html = str(lire("html") or "")
+    source, garde_html = "", ""
+    if texte:
+        source = "text"
+    elif html.strip():
+        texte = p3u3_texte_depuis_html(html)
+        if texte.strip():
+            source, garde_html = "html", html[:P3R4_HTML_MAX]
+    coupe = p3r4_couper_citation(texte)
+    return {"body_text": coupe["nouveau"][:P3R4_TEXTE_MAX],
+            "body_quoted": coupe["cite"][:P3R4_TEXTE_MAX],
+            "body_html": garde_html,
+            "contenu_source": source,
+            "contenu_recupere": bool(source)}
+
+
+def p3r4_champs_contenu(contenu) -> dict:
+    """Les champs de contenu a poser sur le document. PURE, liste BLANCHE.
+
+    Tout ce qui n'est pas dans `P3R4_CHAMPS_CONTENU` est ignore : c'est ce qui
+    garantit qu'un adaptateur ne peut pas ecrire un champ imprevu dans un
+    message entrant, et que le document reste compatible avec l'historique.
+    """
+    c = contenu if isinstance(contenu, dict) else {}
+    return {cle: c[cle] for cle in P3R4_CHAMPS_CONTENU if cle in c}
+
+
+def p3r4_contenu_vide(motif: str, identifiant: str = "") -> dict:
+    """Le contenu d'un message dont le corps n'a PAS pu etre lu. PURE.
+
+    Il existe, il est explicite, et il dit pourquoi. C'est la difference entre
+    « le corps n'a pas pu etre recupere » et « il n'y a pas eu de reponse ».
+    """
+    return {"provider_email_id": identifiant or None, "body_html": "",
+            "body_quoted": "", "contenu_recupere": False,
+            "contenu_source": "", "contenu_erreur": motif}
+
+
+async def p3r4_lire_chez_resend(identifiant: str) -> dict:
+    """Le corps reel, chez le fournisseur. LECTURE SEULE. NE LEVE JAMAIS.
+
+    Rend `{"ok": bool, "motif": str, "contenu": dict}`. Toute panne devient un
+    motif : c'est l'appelant qui decide, et il decide toujours de conserver la
+    correlation.
+    """
+    if not p3r4_identifiant_valide(identifiant):
+        return {"ok": False, "motif": P3R4_SANS_IDENTIFIANT, "contenu": {}}
+    if not (RESEND_AVAILABLE and RESEND_API_KEY):
+        return {"ok": False, "motif": P3R4_SANS_FOURNISSEUR, "contenu": {}}
+    try:
+        recu = await asyncio.to_thread(resend.Emails.Receiving.get, identifiant)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s lecture du corps refusee (%s) pour %s",
+                       P3R4_PREFIXE, type(e).__name__, str(identifiant)[:8])
+        return {"ok": False,
+                "motif": "%s:%s" % (P3R4_ERREUR_FOURNISSEUR, type(e).__name__),
+                "contenu": {}}
+    contenu = p3r4_contenu_depuis_recu(recu)
+    if not contenu["contenu_recupere"]:
+        return {"ok": False, "motif": P3R4_CORPS_VIDE, "contenu": contenu}
+    return {"ok": True, "motif": "", "contenu": contenu}
+
+
+async def p3r4_enrichir(message, evenement) -> dict:
+    """Le message normalise, AVEC son corps quand il est lisible. NE LEVE JAMAIS.
+
+    C'EST LE SEUL POINT D'ENTREE DU WEBHOOK, et il est volontairement muet en
+    cas d'echec : il rend toujours un message exploitable par
+    `p3u2_recevoir`. Une exception ici annulerait la correlation d'une vraie
+    reponse a cause d'un hoquet de lecture — le contraire de ce qu'on veut.
+
+    ORDRE DES SOURCES : le corps du fournisseur d'abord, le texte deja porte
+    par la charge utile ensuite. AUCUN champ Afroboost n'est un repli.
+    """
+    m = dict(message or {})
+    try:
+        identifiant = p3r4_identifiant_recu(evenement)
+        issue = await p3r4_lire_chez_resend(identifiant)
+        contenu = dict(issue.get("contenu") or {})
+        if issue["ok"]:
+            m["body_text"] = contenu.get("body_text") or ""
+        elif str(m.get("body_text") or "").strip():
+            # LE REPLI, ET IL EST ETROIT : le texte que le FOURNISSEUR a mis
+            # dans la charge utile. On lui applique la meme coupe de citation,
+            # sinon notre propre message reviendrait comme reponse.
+            coupe = p3r4_couper_citation(m.get("body_text"))
+            contenu = {"body_text": coupe["nouveau"], "body_quoted": coupe["cite"],
+                       "body_html": "", "contenu_source": "webhook",
+                       "contenu_recupere": bool(coupe["nouveau"].strip())}
+            m["body_text"] = coupe["nouveau"]
+        if contenu.get("contenu_recupere"):
+            m["contenu"] = {"provider_email_id": identifiant or None,
+                            "body_html": contenu.get("body_html") or "",
+                            "body_quoted": contenu.get("body_quoted") or "",
+                            "contenu_recupere": True,
+                            "contenu_source": contenu.get("contenu_source") or "",
+                            "contenu_erreur": ""}
+        else:
+            m["contenu"] = p3r4_contenu_vide(issue["motif"], identifiant)
+        return m
+    except Exception as e:  # noqa: BLE001
+        # LA CORRELATION PASSE AVANT LE CONTENU, SANS EXCEPTION.
+        logger.warning("%s enrichissement abandonne (%s) — correlation conservee",
+                       P3R4_PREFIXE, type(e).__name__)
+        m["contenu"] = p3r4_contenu_vide("%s:%s" % (P3R4_ERREUR_FOURNISSEUR,
+                                                    type(e).__name__))
+        return m
+
+
+async def p3r4_completer(document_id: str, contenu) -> bool:
+    """Pose le corps sur un message DEJA stocke. IDEMPOTENTE. True si ecrit.
+
+    ECRITURE CONDITIONNELLE, PAS RELECTURE : la condition
+    `contenu_recupere != True` vit dans le FILTRE. Deux consequences, et ce
+    sont les deux exigences du lot :
+      * un rejeu ne recrit rien — le second passage ne trouve plus rien a
+        completer ;
+      * un contenu deja correct n'est JAMAIS ecrase, ni par du vide ni par une
+        source moins bonne. Le premier corps lisible gagne.
+
+    ELLE NE TOUCHE QUE LE CONTENU. Ni `replied_at`, ni `statut`, ni une
+    action, ni une fiche, ni une relance : la partie metier a deja eu lieu et
+    n'a pas a etre rejouee.
+    """
+    c = contenu if isinstance(contenu, dict) else {}
+    if not c.get("contenu_recupere"):
+        # Rien de lisible a poser. On ne remplace pas un vide par un vide, et
+        # surtout on ne marque pas le contenu comme recupere.
+        return False
+    champs = p3r4_champs_contenu(c)
+    champs["body_text"] = c.get("body_text") or ""
+    champs["contenu_complete_le"] = datetime.now(timezone.utc).isoformat()
+    pose = await db[P3U2_COLLECTION].update_one(
+        {"id": document_id, "contenu_recupere": {"$ne": True}}, {"$set": champs})
+    return bool(getattr(pose, "matched_count", 0))
+
+
+async def p3r4_completer_depuis_evenement(document_id: str, evenement) -> bool:
+    """Rejeu d'un webhook : complete un corps manquant. NE LEVE JAMAIS.
+
+    C'est le point 4 du cahier des charges : « un retry de recuperation peut
+    completer un corps precedemment manquant ». Le message reste UN seul
+    message logique — on ne cree rien, on remplit.
+    """
+    try:
+        identifiant = p3r4_identifiant_recu(evenement)
+        issue = await p3r4_lire_chez_resend(identifiant)
+        if not issue["ok"]:
+            return False
+        contenu = dict(issue["contenu"])
+        contenu["provider_email_id"] = identifiant or None
+        contenu["contenu_erreur"] = ""
+        return await p3r4_completer(document_id, contenu)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s completion abandonnee (%s)", P3R4_PREFIXE, type(e).__name__)
+        return False
+
+
+# ----------------------------------------------------------------------------
+# LE RATTRAPAGE — les messages deja correles mais sans corps
+# ----------------------------------------------------------------------------
+# IL N'A PAS DE ROUTE HTTP, et c'est deliberé : comme le moteur d'envoi, il
+# s'appelle de facon controlee, avec un plafond, apres une SIMULATION. Une
+# route l'exposerait a etre declenche par accident.
+
+async def p3r4_candidats_rattrapage(coach_id=None, plafond: int = 200) -> list:
+    """Les messages entrants dont le corps manque. LECTURE PURE.
+
+    Le critere est le MANQUE, jamais l'age ni le statut : un message deja
+    rattache, en revue manuelle, ancien ou recent, entre dans la liste des lors
+    qu'aucun corps lisible n'a ete conserve.
+    """
+    filtre = {"contenu_recupere": {"$ne": True}}
+    if coach_id:
+        filtre["coach_id"] = coach_id
+    documents = await db[P3U2_COLLECTION].find(filtre, {"_id": 0}) \
+        .to_list(max(1, min(int(plafond or 200), 500)))
+    candidats = []
+    for d in documents:
+        if str(d.get("body_text") or "").strip():
+            # Un corps existe deja : il a simplement ete ecrit avant ce lot.
+            continue
+        candidats.append({
+            "id": d.get("id"), "recipient_key": d.get("recipient_key"),
+            "from_email": d.get("from_email"), "to_email": d.get("to_email"),
+            "subject": d.get("subject"), "received_at": d.get("received_at"),
+            "provider_email_id": d.get("provider_email_id") or "",
+            "identifiant_present": bool(p3r4_identifiant_valide(d.get("provider_email_id"))),
+            "raison": "corps absent" if not d.get("contenu_erreur")
+                      else str(d.get("contenu_erreur")),
+        })
+    return candidats
+
+
+async def p3r4_retrouver_identifiant(candidat) -> dict:
+    """L'`email_id` d'un message dont la base ne l'a pas garde. LECTURE SEULE.
+
+    CORRESPONDANCE STRICTE ET UNIQUE, sur trois criteres simultanes :
+    expediteur, adresse de reponse (donc le jeton, donc l'action) et instant de
+    reception. Si DEUX messages correspondent, on ne choisit pas : on rend
+    `PLUSIEURS_CANDIDATS` et rien n'est ecrit. Deviner ici collerait le texte
+    d'un prospect sur la fiche d'un autre.
+    """
+    if not (RESEND_AVAILABLE and RESEND_API_KEY):
+        return {"ok": False, "motif": P3R4_SANS_FOURNISSEUR, "identifiant": ""}
+    attendu_de = p3u2_normaliser_adresse(candidat.get("from_email"))
+    attendu_a = p3u2_normaliser_adresse(candidat.get("to_email"))
+    attendu_le = str(candidat.get("received_at") or "").strip()
+    if not (attendu_de and attendu_a and attendu_le):
+        return {"ok": False, "motif": P3R4_SANS_IDENTIFIANT, "identifiant": ""}
+    try:
+        liste = await asyncio.to_thread(resend.Emails.Receiving.list, {"limit": 100})
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False,
+                "motif": "%s:%s" % (P3R4_ERREUR_FOURNISSEUR, type(e).__name__),
+                "identifiant": ""}
+    lignes = (liste.get("data") if isinstance(liste, dict) else getattr(liste, "data", None)) or []
+    trouves = []
+    for ligne in lignes:
+        lire = (ligne.get if isinstance(ligne, dict)
+                else (lambda c, d=None: getattr(ligne, c, d)))
+        de = p3u2_normaliser_adresse(lire("from"))
+        vers = [p3u2_normaliser_adresse(x) for x in (lire("to") or [])]
+        quand = str(lire("created_at") or "").strip()
+        if de == attendu_de and attendu_a in vers and quand == attendu_le:
+            identifiant = str(lire("id") or "").strip()
+            if p3r4_identifiant_valide(identifiant):
+                trouves.append(identifiant)
+    trouves = sorted(set(trouves))
+    if len(trouves) > 1:
+        return {"ok": False, "motif": P3R4_AMBIGU, "identifiant": ""}
+    if not trouves:
+        return {"ok": False, "motif": P3R4_INTROUVABLE, "identifiant": ""}
+    return {"ok": True, "motif": "", "identifiant": trouves[0]}
+
+
+async def p3r4_rattraper(coach_id=None, simulation: bool = True,
+                         plafond: int = 0) -> dict:
+    """Le rattrapage. `simulation=True` par DEFAUT, et c'est le cas sur.
+
+    EN SIMULATION, PAS UNE SEULE ECRITURE : ni contenu, ni identifiant, ni
+    date. Une simulation se rejoue autant qu'on veut, et c'est elle qu'on lit
+    avant de decider.
+
+    IL NE CREE RIEN et NE MODIFIE AUCUNE DECISION : pas de prospect, pas de
+    campagne, pas d'action, pas de relance, pas de `replied_at`. Il remplit un
+    champ vide sur un document qui existe deja, ou il explique pourquoi il ne
+    peut pas.
+    """
+    candidats = await p3r4_candidats_rattrapage(coach_id=coach_id)
+    resultats, completes = [], 0
+    for candidat in candidats:
+        if plafond and completes >= plafond:
+            resultats.append(dict(candidat, verdict="REPORTE", motif="plafond atteint"))
+            continue
+        identifiant = candidat["provider_email_id"] if candidat["identifiant_present"] else ""
+        motif = ""
+        if not identifiant:
+            piste = await p3r4_retrouver_identifiant(candidat)
+            identifiant, motif = piste["identifiant"], piste["motif"]
+        if not identifiant:
+            resultats.append(dict(candidat, verdict="IGNORE",
+                                  motif=motif or P3R4_SANS_IDENTIFIANT))
+            continue
+        issue = await p3r4_lire_chez_resend(identifiant)
+        if not issue["ok"]:
+            resultats.append(dict(candidat, verdict="IGNORE", motif=issue["motif"],
+                                  provider_email_id=identifiant))
+            continue
+        contenu = dict(issue["contenu"])
+        contenu["provider_email_id"] = identifiant
+        contenu["contenu_erreur"] = ""
+        if simulation:
+            resultats.append(dict(candidat, verdict="SIMULATION", motif="aucune ecriture",
+                                  provider_email_id=identifiant,
+                                  apercu=(contenu.get("body_text") or "")[:160]))
+            completes += 1
+            continue
+        ecrit = await p3r4_completer(candidat["id"], contenu)
+        resultats.append(dict(candidat, verdict="COMPLETE" if ecrit else "DEJA_COMPLET",
+                              motif="", provider_email_id=identifiant))
+        completes += 1 if ecrit else 0
+    logger.info("%s rattrapage %s : %d candidat(s), %d traite(s)", P3R4_PREFIXE,
+                "SIMULE" if simulation else "REEL", len(candidats), completes)
+    return {"simulation": simulation, "candidats": len(candidats),
+            "traites": completes, "resultats": resultats}
 
 
 # ============================================================================

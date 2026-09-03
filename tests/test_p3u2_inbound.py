@@ -194,7 +194,10 @@ _m = S.p3u2_message_entrant(entrant(in_reply_to=RFC_A, references=[RFC_A, "<x@y.
 verifier("1a. les champs attendus par U3 sont tous la",
          set(_m) == {"message_id", "in_reply_to", "references", "from_email",
                      "to_email", "subject", "body_text", "received_at",
-                     "provider", "provider_event_id", "dedupe_key"},
+                     "provider", "provider_event_id", "dedupe_key",
+                     # P3-R4 : le contenu enrichi traverse le contrat. Le
+                     # moteur ne l'interprete pas, il le recopie.
+                     "contenu"},
          str(sorted(_m)))
 verifier("1b. AUCUN champ propre a Resend n'entre dans le contrat",
          not any(c in json.dumps(_m).lower() for c in ("svix", "resend_", "payload")))

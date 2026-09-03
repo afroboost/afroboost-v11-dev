@@ -360,7 +360,7 @@ verifier("4a. le contrat U2 est respecte, champ pour champ",
          set(S.p3u2_message_entrant(_m)) ==
          {"message_id", "in_reply_to", "references", "from_email", "to_email",
           "subject", "body_text", "received_at", "provider", "provider_event_id",
-          "dedupe_key"})
+          "dedupe_key", "contenu"})
 verifier("4b. l'identifiant d'evenement vient de l'evenement", _m["provider_event_id"] == "evt_001")
 verifier("4c. le `Message-ID` entrant est lu", _m["message_id"] == "<reponse-1@client.exemple.test>")
 verifier("4d. `In-Reply-To` est lu", _m["in_reply_to"] == RFC_A)

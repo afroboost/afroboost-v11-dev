@@ -421,6 +421,56 @@ prévu, dès le passage du build.
 retard de livraison, pas une preuve de panne définitive. Avant d'ouvrir Coolify, **re-sonder
 `/healthz`** : un `uptime_s` faible et un `boot_id` neuf suffisent à clore le sujet.
 
+### 📥 P3-R4 — LE CORPS DES REPONSES EST ENFIN LU (03/09)
+
+**Le trou** : le webhook `email.received` de Resend **ne porte pas le corps du message**,
+par conception. On savait **qu'**un prospect avait répondu, jamais **quoi** : `body_text`
+était vide sur la première vraie réponse de la campagne.
+
+**Le correctif** : après la corrélation — jamais avant, jamais à sa place — le corps est lu
+en **lecture seule** chez le fournisseur (`GET /emails/receiving/{email_id}`), puis conservé
+avec le message. Le nouveau texte et **l'historique cité sont SÉPARÉS** (`body_text` /
+`body_quoted`) : sans cette coupe, notre propre J0 revenait en base comme s'il venait du
+prospect.
+
+**La règle qui domine le lot** : *la perte du corps n'entraîne jamais la perte de la
+corrélation.* Fournisseur muet, clé absente, exception inattendue → le message est stocké,
+`replied_at` est écrit, les relances sont annulées, et **seul le contenu** porte un état
+d'échec (`contenu_recupere: false` + motif). Une panne de lecture n'est pas une réponse
+inexistante. Un rejeu du même webhook **complète** un corps manquant sans rien dupliquer.
+
+⚠️ **DEUX PIÈGES DÉJÀ PAYÉS, à ne pas repayer** :
+1. l'`email_id` est un **UUID**. L'identifiant d'**événement** (`msg_…`), le seul que la base
+   conservait, est refusé en **422** « must be a valid UUID ». Le lot le VALIDE désormais.
+2. `urllib` reçoit un **403 Cloudflare « error code: 1010 »** sur `api.resend.com` — ce
+   n'est **pas** un refus de clé. Passer par le SDK (`resend.Emails.Receiving`) ou `curl`.
+
+**Anti-confusion, prouvée par banc** : aucun champ rédigé par Afroboost (`message_j0`,
+`message_j3`, `message_j7`, `interested_message`) ne peut devenir un corps entrant. Le seul
+repli autorisé est le texte livré par le FOURNISSEUR. Le banc échoue si quelqu'un
+réintroduit un repli commercial.
+
+**Bancs** : `test_p3r4_contenu_entrant` **121/121** (A→J du cahier des charges). Non-régression
+au vert : U1 64 · U2 102 · U3 134 · B1 84 · R2 69 · D1 226 · D2 116 · D3 112 · D4 100 ·
+S3-A 159 · préparation 149 · réouverture 110 · S1 82 · reply-to 44 · boot 21 · opt-out 50.
+**0 e-mail, 0 socket.** Le rattrapage **n'a AUCUNE route HTTP** et simule par défaut.
+
+### 🎉 DEUX RÉPONSES RÉELLES — dont une POSITIVE (03/09)
+
+`prospect_inbound_messages` = **2**, toutes deux rattachées par jeton
+(`A0_REPLY_TOKEN`, confiance **100**), `replied_at` écrit, J+3 **et** J+7 annulés
+automatiquement, fiches passées à `repondu`. Aucune intervention humaine.
+
+| Réf | Organisation | Reçu (UTC) | Intention |
+|---|---|---|---|
+| `ZRH-D5` | SalsaRica Dance School, Zürich | 03/09 11:37:15 | **REFUS** net, en allemand |
+| `LSN-A3` | Association Art et Culture pour le Développement (ACD), Lausanne | 03/09 13:35:35 | **POSITIVE** — un contact et un numéro donnés |
+
+⚠️ **RATTRAPAGE NON EXÉCUTÉ.** La simulation attendait **1** candidat (SalsaRica) et en a
+trouvé **2** : la seconde réponse est arrivée pendant le lot. Conformément au cahier des
+charges, **rien n'a été écrit** — le rattrapage réel attend un GO sur **2** candidats.
+Les deux corps ont été lus en simulation, sans écriture.
+
 ### ✍️ P3-R3 — LES RELANCES ONT UN TEXTE (03/09 12:01 UTC)
 
 **52 J+3 et 52 J+7 écrits**, tous **distincts**, tous **plus courts que leur propre J0**
