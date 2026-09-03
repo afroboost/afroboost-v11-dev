@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 10:05 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 10:20 UTC**.
 
 ---
 
@@ -312,11 +312,51 @@ Ne pas compter le mauvais champ.
 📌 `verrou_actif` **reste posé après un succès**, volontairement : l'envoi est définitif,
 le verrou empêche tout second premier contact. Ce n'est pas un blocage à nettoyer.
 
-⚠️ **DETTE OUVERTE — LES REBONDS NE SONT PAS TRACÉS.** Le webhook ne traite que
-`email.sent` et `email.received` : **aucun `email.bounced`**. `BAR-02` est donc marquée
-`contacte` en base alors que **le message n'est jamais arrivé**. Le rebond est
-`Transient / General` (rejet temporaire côté Gmail, réémission possible plus tard), pas une
-adresse morte. Sur 55 envois, ce sera invisible sans ce webhook. **Lot séparé à prévoir.**
+⚠️ **DETTE P3-B1 — LES REBONDS N'EXISTENT PAS POUR LE SYSTÈME** (constaté 03/09, lecture seule)
+
+Ce n'est pas seulement que le code ne traite pas les rebonds : **l'abonnement Resend ne les
+demande même pas.** Relevé sur l'API Resend, webhook `f486bc06…`, `status: enabled`,
+endpoint `https://afroboost.com/api/webhooks/resend` :
+**`events: ["email.sent", "email.received"]`** — ni `email.bounced`, ni `email.delivered`.
+Resend **ne nous enverra donc jamais** l'information, et le handler acquitte de toute façon
+en 200 tout type inconnu sans rien écrire. **Aucune trace de rebond n'est possible en base.**
+
+État réel de `BAR-02` (Bar King, `caveauduking@gmail.com`) : `statut = envoye`,
+`provider_status = accepted`, fiche `contacte`, **aucun champ `bounce`, `bounced_at` ni
+erreur**. Chez Resend : `last_event = bounced`, `type = Transient`, `subType = General`
+(« le fournisseur du destinataire a renvoyé un rebond général ; un envoi ultérieur peut
+passer ») — donc un **SOFT bounce**, pas une adresse morte.
+
+Ce qui se passerait aujourd'hui pour Bar King, mesuré avec les gardes réelles :
+
+| Question | Réponse | Pourquoi |
+|---|---|---|
+| Un nouveau J0 partirait-il ? | **NON** | `DEJA_CONTACTE` — mais parce qu'il est « contacté », **pas** à cause du rebond |
+| La garde de relance l'autorise-t-elle ? | **OUI** (`autorise: true`) | elle ignore tout du rebond |
+| Un J+3 / J+7 partirait-il ? | **NON, aujourd'hui** | uniquement parce qu'**aucun moteur de relance n'existe** (`p3u2_relance_autorisee` n'a **aucun appelant**) |
+| L'adresse est-elle bloquée après un rebond dur ? | **NON** | aucun mécanisme ; registre STOP vide pour cette adresse |
+
+⚠️ **Le jour où un moteur J+3 sera écrit, il relancera une adresse qui a rebondi sans le
+savoir.** C'est ce couple — rebond invisible + relance aveugle — qu'il faut fermer.
+
+**CORRECTIF MINIMAL P3-B1 (proposé, NON codé, NON déployé)** — 5 points, rien de plus :
+1. **Abonner `email.bounced`** sur le webhook Resend (réglage, pas de code).
+2. **Prouver la charge utile AVANT de coder** — comme pour P3-R1 : recevoir un vrai
+   `email.bounced` et vérifier qu'il porte bien un identifiant corrélable
+   (`provider_message_id`) et le couple `type`/`subType`. Sans cette preuve, ne rien écrire.
+3. Une branche dans le handler : corrélation **par `provider_message_id`** (déjà indexé et
+   déjà stocké sur l'action), écriture **write-once** de `bounced_at`, `bounce_type`,
+   `bounce_subtype`, `bounce_message`, `provider_status = "bounced"`.
+4. **Rebond PERMANENT uniquement** : poser `j3_annule_le` / `j7_annule_le` (champs
+   **existants**, motif « rebond permanent ») **et** inscrire l'adresse au registre STOP via
+   `p3u1_enregistrer_refus("email", …)` — la garde `REFUS_EXPRIME` bloque alors tout envoi
+   futur, sans nouveau mécanisme. Rebond **transitoire** : on enregistre, on ne bloque rien.
+5. **Ne pas toucher au sens de `contacte`.** Le contrat actuel est « accepté par le
+   fournisseur » ; le remettre en cause dépasse ce correctif. La distinction se lit dans le
+   nouveau champ `provider_status`, pas dans `status`.
+
+L'historique du premier envoi est conservé dans tous les cas, le prospect n'est jamais
+supprimé, et une nouvelle adresse trouvée plus tard restera contactable.
 
 ### ⛔ INCIDENT — PREMIER ENVOI x3 AVORTÉ, 0 E-MAIL PARTI (03/09 09:51 UTC)
 
