@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 08:25 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 08:40 UTC**.
 
 ---
 
@@ -181,8 +181,8 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | Fait | Valeur vérifiée |
 |---|---|
 | Campagne | **P3-LAUNCH-137** (`idempotency_key = P3-LAUNCH-137-INITIAL-2026-09`) |
-| État | `approuvee` |
-| `snapshot_hash` courant | `cd84f795ea66dc26fc288131559b016308be38eac9e86100c08fde6b3640bdb9` |
+| État | **`preparee`** — ⚠️ **ROUVERTE le 03/09** pour compléter les 25 J0 manquants ; **attend une RÉAPPROBATION du coach** |
+| `snapshot_hash` courant | **`null`** — effacé par la réouverture. Empreinte qui sera figée à la réapprobation : `d6f290408db5a419a450b7d1d1537d6e14ffde482d0f6da2e8aabbc9da452212` (ancienne : `cd84f795…`, archivée) |
 | Prospects (`partner_prospects`) | **142** |
 | Actions (`prospect_campaign_actions`) | **137** |
 | Contacté (`first_contact_claimed_at`) | **0** |
@@ -190,6 +190,7 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | Inbound (`prospect_inbound_messages`) | **0** |
 | Répartition par canal | email 56, instagram 51, formulaire 16, aucun 9, visite 3, whatsapp 1, téléphone 1 |
 | Répartition par exécution | AUTO 56, MANUEL 53, ASSISTÉ 19, BLOQUÉ 9 |
+| Approbations archivées | **2** (1ʳᵉ du 01/09 09:12, 2ᵉ du 01/09 11:17 — rouvertes, historique intact) |
 
 ### P3-R1 — CORRÉLATION FORTE : **VERT, PROUVÉE EN PRODUCTION (03/09/2026)**
 
@@ -230,7 +231,45 @@ adresse qu'un tiers contrôle, serait lue comme une des nôtres.
 **Multi-fiches** (5 destinataires portent plusieurs organisations) : couvert par le banc U2
 (`11d. fiches_marquees == 2`), pas par le test réel — la fixture n'avait aucune fiche rattachée.
 
-### Combien de destinataires partiront réellement : **31** (réconcilié 2026-09-03, lecture seule)
+### LOT P3-J0-25 — les 25 messages manquants sont écrits (03/09/2026)
+
+**`MESSAGE_VIDE` restant : 0.** Les 25 actions AUTO+e-mail sans `message_j0` en ont désormais un.
+Aucune n'a été jugée `DONNEES_INSUFFISANTES` : **chaque fiche portait déjà, dans ses `notes`,
+un « Pourquoi Afroboost » et une « Idée de collaboration » rédigés par le coach**. C'est cette
+matière-là qui a servi — aucune recherche web, aucun fait inventé sur une organisation réelle.
+
+| Avant | Après |
+|---|---|
+| AUTO+e-mail avec `message_j0` : 31 | **56** |
+| `MESSAGE_VIDE` : 25 | **0** |
+| `message_j0_origine` | 31 `fiche` + **25 `edite`** |
+
+Trois consignes de rédaction respectées et vérifiées par relecture automatique :
+aucun **QR**, aucune statistique, aucune commission, aucune exclusivité — les trois fiches
+dont l'idée mentionnait un QR (`COM-07`, `RES-04`, `RES-09`) ont été reformulées en
+« invitation découverte » / « offre membres ». Format tenu : 1 idée + 1 raison personnalisée
++ 1 CTA court, 263 à 383 caractères (les 31 existants sont dans la même plage).
+
+**Langue** : les 25 avaient `language` vide (non précisée) — **aucune traduction automatique**,
+tout est en français, y compris Bienne (`ECO-10`). Les versions allemandes de Zurich n'ont pas
+été touchées.
+
+**Déduplication** : `FES-08` porte deux fiches (LAFF + CIPINA) — **un seul J0**, sur la seule
+action de ce `recipient_key`. Aucun doublon créé.
+
+⚠️ **La campagne a été ROUVERTE, et c'est le mécanisme prévu, pas un contournement.**
+`POST /prospect-campaigns/{id}/rouvrir` : l'approbation précédente est **archivée** dans
+`approbations` (avec sa date, son auteur, son empreinte et la date de réouverture), l'état
+redevient `preparee`, `snapshot_hash` est effacé. **Aucune seconde campagne n'a été créée.**
+Trois raisons indépendantes empêchent aujourd'hui tout envoi : état non approuvé, empreinte
+absente, drapeaux absents.
+
+**PROCHAINE ÉTAPE — HUMAINE, ET ELLE N'A PAS ÉTÉ FAITE** : le coach relit les 25 messages,
+puis **réapprouve la campagne**. La garde projetée sur l'état `approuvee` rend alors
+**56 AUTORISE** (les 81 autres restent `PAS_AUTO` : MANUEL 53, ASSISTÉ 19, BLOQUÉ 9).
+Sauvegarde complète d'avant l'opération : `~/afroboost-sauvegardes/p3-j0-25-avant-20260903-083541.json`.
+
+### Le compte des destinataires — historique de la réconciliation du 2026-09-03
 
 **Le chiffre du coach était juste.** Réconciliation faite en appelant la garde RÉELLE du serveur
 (`p3s3d_garde_action`, fonction pure) sur les 137 actions réelles — aucune écriture, aucune
@@ -243,6 +282,7 @@ réservation, aucun envoi.
 | … et `channel == email` | **56** | aucune perte : **toutes** les AUTO sont e-mail |
 | … et `message_j0` non vide | **31** | les 25 autres → `MESSAGE_VIDE` |
 | **Verdict de la garde : AUTORISE** | **31** | plus aucun filtre ne retire personne |
+| *(après P3-J0-25, sur campagne réapprouvée)* | **56** | les 25 `MESSAGE_VIDE` ont reçu leur J0 |
 
 ⚠️ **Le « 56 » n'a jamais été un nombre d'envois** : c'est le total AUTO+e-mail, AVANT la garde.
 Le seul chiffre qui compte est celui que rend la garde : **31**.
@@ -259,7 +299,7 @@ Les autres portes de la garde ont toutes été vérifiées vides au même moment
 `DEJA_RESERVE` 0, `STATUT_INCOMPATIBLE` 0, `TENTATIVES_EPUISEES` 0.
 Empreinte de campagne **conforme**, `envoi_autorise = False`.
 
-- **31 e-mails prêts mais NON envoyés.**
+- **56 e-mails prêts mais NON envoyés** (31 avant P3-J0-25), et l'envoi reste impossible : campagne non approuvée, empreinte absente, drapeaux absents.
 - **Porte d'envoi FERMÉE et prouvée fermée** : les deux drapeaux `P3_LAUNCH_ENABLED` et
   `P3_LAUNCH_ENVOI_REEL` sont **absents** de `feature_flags` → l'envoi réel est impossible.
   L'absence est le cas sûr, par conception.
@@ -313,9 +353,10 @@ Empreinte de campagne **conforme**, `envoi_autorise = False`.
 - **P3-R1 : terminé et prouvé.** Le verrou technique qui empêchait de lancer sereinement
   — « une réponse envoyée depuis une autre adresse partait en revue manuelle et les relances
   continuaient » — est levé.
-- **Nombre de destinataires : réconcilié, c'est 31.** Plus rien à vérifier de ce côté.
-  Seule décision restante, et elle est éditoriale, pas technique : rédiger (ou non) les
-  25 messages J0 manquants avant de lancer. Sans eux, le lot partira à 31.
+- **Nombre de destinataires : 56** depuis P3-J0-25. Les 25 messages manquants sont écrits.
+- ⏳ **SEULE ACTION EN ATTENTE, ET ELLE EST HUMAINE : réapprouver P3-LAUNCH-137.**
+  La campagne est `preparee` depuis la réouverture du 03/09 : rien ne peut partir tant que le
+  coach n'a pas relu les 25 nouveaux messages et réapprouvé. Ne pas réapprouver à sa place.
 - Dettes antérieures (non bloquantes) : cf. `CLAUDE.md` et l'historique des lots.
 
 ---
