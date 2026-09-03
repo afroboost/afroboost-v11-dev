@@ -24791,6 +24791,172 @@ async def p3u2_lister_reponses(request: Request):
 
 
 # ============================================================================
+# P3-B1 — UN REBOND CESSE D'ETRE INVISIBLE
+# ============================================================================
+# CE QUI A RENDU CE LOT NECESSAIRE, MESURE EN PRODUCTION LE 03/09/2026.
+# Sur les trois premiers J0 reels, UN a rebondi (`caveauduking@gmail.com`).
+# Chez Resend : `last_event = bounced`. Chez nous : `statut = envoye`,
+# `provider_status = accepted`, fiche `contacte`, et AUCUNE trace. Les deux
+# versions ne se parlaient pas.
+#
+# LA CAUSE N'ETAIT PAS DANS LE CODE, ELLE ETAIT EN AMONT. L'abonnement Resend
+# lui-meme ne demandait que `email.sent` et `email.received` : l'evenement de
+# rebond ne nous etait JAMAIS transmis. Le corriger commence donc par un
+# reglage — `email.bounced` ajoute a l'abonnement, les deux autres conserves —
+# et cette branche traite ce qui arrive desormais.
+#
+# LE DANGER N'ETAIT PAS D'AUJOURD'HUI, IL ETAIT AU PROCHAIN LOT. Aucun moteur
+# de relance n'existe encore ; c'est la SEULE raison pour laquelle une adresse
+# ayant rebondi n'a pas ete relancee. `p3u2_relance_autorisee` l'autorise sans
+# reserve — elle ignore tout du rebond. Le jour ou ce moteur sera ecrit, il
+# relancerait a l'aveugle. C'est ce couple que ce lot ferme, et rien d'autre.
+#
+# PERMANENT ET TRANSITOIRE NE SE TRAITENT PAS PAREIL, et c'est tout l'enjeu.
+# Le rebond de Bar King est `Transient / General` : le fournisseur du
+# destinataire a refuse MAINTENANT, un envoi ulterieur peut passer. Bloquer
+# cette adresse serait perdre un prospect valide sur un incident passager. Un
+# rebond `Permanent`, lui, dit que l'adresse n'existe pas : continuer a lui
+# ecrire abime la reputation du domaine pour TOUS les envois.
+P3B1_EVENEMENT_REBOND = "email.bounced"
+# La nomenclature vient de SES, que Resend relaie : `Permanent`, `Transient`,
+# `Undetermined`. SEUL `Permanent` bloque. Un type inconnu ou absent est
+# traite comme transitoire — se tromper en bloquant coute un prospect, se
+# tromper en n'bloquant pas coute un e-mail de plus. Le cas sur est de ne pas
+# bloquer sans certitude.
+P3B1_TYPE_PERMANENT = "permanent"
+P3B1_MOTIF_ANNULATION = "rebond permanent"
+
+
+def p3b1_rebond_depuis(evenement) -> dict:
+    """Ce qu'un evenement de rebond nous apprend. Fonction PURE, sans base.
+
+    ELLE LIT PLUSIEURS EMPLACEMENTS, ET CE N'EST PAS DE L'INDECISION. Le SDK
+    Resend 2.19.0 ne type la charge utile d'aucun webhook. Ce qui EST prouve,
+    c'est que `data.email_id` porte bien l'identifiant : `email.sent` l'a
+    utilise en production le 03/09 pour ecrire trois `Message-ID` RFC. On
+    reprend donc exactement la meme lecture que `p3u3_traiter_envoi`, et on
+    accepte l'objet `bounce` a la racine comme sous `data` — la forme rendue
+    par `GET /emails/{id}` (`{message, type, subType, diagnosticCode}`) est
+    connue, son emballage dans le webhook ne l'est pas encore.
+
+    RIEN N'EST FABRIQUE. Un champ absent reste vide, et l'appelant n'ecrira
+    rien : mieux vaut un rebond non enregistre qu'un rebond invente.
+    """
+    e = evenement or {}
+    donnees = e.get("data") or e
+    identifiant = str(donnees.get("email_id") or donnees.get("id") or "").strip()
+    rebond = donnees.get("bounce") or e.get("bounce") or {}
+    if not isinstance(rebond, dict):
+        rebond = {}
+    return {
+        "identifiant": identifiant,
+        "type": str(rebond.get("type") or "").strip(),
+        "subtype": str(rebond.get("subType") or rebond.get("subtype") or "").strip(),
+        "message": str(rebond.get("message") or "").strip()[:500],
+    }
+
+
+def p3b1_est_permanent(type_rebond) -> bool:
+    """Ce rebond interdit-il DEFINITIVEMENT cette adresse ? PURE.
+
+    Comparaison insensible a la casse sur la valeur EXACTE. Pas de `in`, pas
+    de prefixe : « Transient » ne doit jamais etre lu comme permanent parce
+    qu'il contient des lettres communes.
+    """
+    return str(type_rebond or "").strip().lower() == P3B1_TYPE_PERMANENT
+
+
+async def p3b1_traiter_rebond(evenement: dict) -> dict:
+    """`email.bounced` : on enregistre, et on ne bloque que si c'est definitif.
+
+    L'ORDRE EST LE CONTRAT :
+      1. lire l'evenement (pur) ;
+      2. retrouver L'UNE action par `provider_message_id` EXACT ;
+      3. ecrire le rebond, UNE SEULE FOIS ;
+      4. si et seulement si le rebond est permanent : annuler les relances,
+         puis inscrire l'adresse au registre STOP.
+
+    IDEMPOTENCE PAR ECRITURE CONDITIONNELLE. `bounced_at: {$exists: False}`
+    vit DANS le filtre : dix rejeux du meme evenement — Resend rejoue, c'est
+    documente — n'ecrivent qu'une fois et ne declenchent la suite qu'une fois.
+    C'est `matched_count` qui le dit, pas une relecture.
+
+    LE `contacte` N'EST PAS TOUCHE, et c'est deliberé. Le contrat actuel dit
+    « accepte par le fournisseur », et il reste vrai : l'e-mail A ete accepte.
+    La nuance de LIVRAISON se lit desormais dans `provider_status`,
+    `bounce_type` et `bounce_subtype`. Redefinir `contacte` depasserait ce
+    correctif et casserait les compteurs deja publies.
+
+    L'ADRESSE BLOQUEE EST LA NOTRE, PAS CELLE DE L'EVENEMENT. On inscrit au
+    registre STOP le `target` lu SUR L'ACTION, jamais le destinataire annonce
+    par la charge utile : c'est la seule valeur dont nous soyons la source.
+    """
+    lu = p3b1_rebond_depuis(evenement)
+    if not lu["identifiant"]:
+        return {"traite": False, "motif": "aucun identifiant de message dans cet evenement",
+                "permanent": False, "action_id": None}
+
+    # CORRESPONDANCE EXACTE, ET UNE SEULE ACTION. Aucun `regex`, aucun
+    # `startswith` : un identifiant partiel ne doit jamais atteindre la
+    # requete, et un rebond ne concerne jamais deux destinataires.
+    action = await db[P3S3_ACTIONS].find_one(
+        {"provider_message_id": lu["identifiant"]}, {"_id": 0})
+    if not action:
+        logger.info("[P3-B1] rebond sur un identifiant inconnu (%s) — rien touche",
+                    lu["identifiant"][:24])
+        return {"traite": False, "motif": "aucune action ne porte cet identifiant",
+                "permanent": False, "action_id": None}
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    permanent = p3b1_est_permanent(lu["type"])
+    champs = {"provider_status": "bounced", "bounced_at": maintenant,
+              "updated_at": maintenant}
+    for cle, valeur in (("bounce_type", lu["type"]),
+                        ("bounce_subtype", lu["subtype"]),
+                        ("bounce_message", lu["message"])):
+        if valeur:
+            champs[cle] = valeur
+    pose = await db[P3S3_ACTIONS].update_one(
+        {"id": action.get("id"), "bounced_at": {"$exists": False}},
+        {"$set": champs})
+    premiere = bool(getattr(pose, "matched_count", 0))
+    if not premiere:
+        return {"traite": False, "motif": "rebond deja enregistre", "doublon": True,
+                "permanent": permanent, "action_id": action.get("id")}
+
+    refus_pose = False
+    if permanent:
+        # LES DEUX RELANCES TOMBENT, SOUS CONDITION D'ABSENCE. Une reponse
+        # deja recue les a peut-etre annulees avant : sa date et son motif
+        # doivent survivre. On n'ecrase pas une annulation par une autre.
+        await db[P3S3_ACTIONS].update_one(
+            {"id": action.get("id"), "j3_annule_le": {"$exists": False}},
+            {"$set": {"j3_annule_le": maintenant,
+                      "j3_annule_motif": P3B1_MOTIF_ANNULATION,
+                      "updated_at": maintenant}})
+        await db[P3S3_ACTIONS].update_one(
+            {"id": action.get("id"), "j7_annule_le": {"$exists": False}},
+            {"$set": {"j7_annule_le": maintenant,
+                      "j7_annule_motif": P3B1_MOTIF_ANNULATION,
+                      "updated_at": maintenant}})
+        # LE REGISTRE STOP EST LE MEME QUE CELUI DU DESABONNEMENT, et c'est
+        # voulu : la garde `REFUS_EXPRIME` le consulte deja avant chaque
+        # envoi. Aucun mecanisme nouveau, donc aucun chemin a re-eprouver.
+        cible = (action.get("target") or "").strip()
+        if cible:
+            issue = await p3u1_enregistrer_refus("email", cible)
+            refus_pose = bool(issue.get("ok"))
+    logger.info("[P3-B1] rebond %s sur %s (%s/%s) — relances %s, registre STOP %s",
+                "PERMANENT" if permanent else "transitoire",
+                action.get("recipient_key"), lu["type"] or "?", lu["subtype"] or "?",
+                "annulees" if permanent else "inchangees",
+                "inscrit" if refus_pose else "non touche")
+    return {"traite": True, "motif": "", "doublon": False, "permanent": permanent,
+            "action_id": action.get("id"), "refus_pose": refus_pose,
+            "bounce_type": lu["type"], "bounce_subtype": lu["subtype"]}
+
+
+# ============================================================================
 # P3-U3 — L'ARRIVEE REELLE : RESEND RECEIVING, DERRIERE UNE SIGNATURE
 # ============================================================================
 # CE LOT OUVRE LA PORTE, IL NE L'ACTIVE PAS. La route existe, elle verifie une
@@ -25085,6 +25251,14 @@ async def p3u3_webhook_resend(request: Request):
     if type_evenement == P3U3_EVENEMENT_ENVOYE:
         issue = await p3u3_traiter_envoi(evenement)
         return {"recu": True, "type": type_evenement, "rfc_message_id_ecrit": issue["ecrit"]}
+
+    # P3-B1 : le rebond. Comme `email.sent`, cette branche n'appelle PAS le
+    # moteur de reception : un rebond n'est pas une reponse, il ne se correle
+    # pas par jeton et n'ecrit jamais `replied_at`.
+    if type_evenement == P3B1_EVENEMENT_REBOND:
+        issue = await p3b1_traiter_rebond(evenement)
+        return {"recu": True, "type": type_evenement, "traite": issue["traite"],
+                "permanent": issue["permanent"], "motif": issue["motif"]}
 
     if type_evenement != P3U3_EVENEMENT_RECU:
         # Acquitte sans rien faire. Resend n'a pas a reessayer.

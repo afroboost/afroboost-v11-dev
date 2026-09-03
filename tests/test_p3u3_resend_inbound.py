@@ -589,12 +589,23 @@ verifier("8k. le lot ne FABRIQUE jamais de Message-ID",
 # ============================================================================
 print("\n9. LES AUTRES EVENEMENTS SONT ACQUITTES, PAS TRAITES")
 
+# P3-B1 a retire `email.bounced` de cette liste, et c'est DELIBERE : il est
+# desormais traite. L'intention de ce bloc est inchangee — un evenement que le
+# systeme ne traite PAS doit etre acquitte sans rien faire — seule la liste des
+# types non traites a maigri d'une ligne.
 _b = base_neuve([ACT_A])
-for _type in ("email.delivered", "email.bounced", "email.complained",
+for _type in ("email.delivered", "email.complained",
               "email.opened", "contact.created", ""):
     _r = appeler({"type": _type, "id": "evt_x", "data": {}})
     verifier("9. evenement %-20s acquitte sans effet" % (_type or "(vide)"),
              _r["recu"] is True and _r.get("ignore") is True, str(_r))
+# Le rebond, lui, est acquitte ET traite — mais sans action correspondante il
+# ne touche rien, et surtout il n'entre JAMAIS dans les messages recus.
+_r = appeler({"type": "email.bounced", "id": "evt_x", "data": {}})
+verifier("9y. `email.bounced` est desormais TRAITE (P3-B1), pas ignore",
+         _r["recu"] is True and _r.get("ignore") is None and "traite" in _r, str(_r))
+verifier("9y2. ... et sans action correspondante il ne touche rien",
+         _r["traite"] is False and _r["permanent"] is False, str(_r))
 verifier("9z. et rien n'a ete stocke", len(_b[S.P3U2_COLLECTION].documents) == 0)
 
 
