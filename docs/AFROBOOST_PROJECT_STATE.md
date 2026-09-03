@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 10:20 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 10:42 UTC**.
 
 ---
 
@@ -185,14 +185,14 @@ drapeaux d'envoi toujours absents) ; Resend et DNS non touchés.
 | `snapshot_hash` courant | **`bfdba290ae2053a62456f9440b82c72c14908b74a130711e6c1760c1aa6401e0`** — recalculé **au moment** de l'approbation, jamais recopié. Empreinte **conforme** vérifiée après coup. Ancienne `cd84f795…` archivée |
 | Prospects (`partner_prospects`) | **142** |
 | Actions (`prospect_campaign_actions`) | **137** |
-| Contacté (fiches `first_contact_sent_at`) | **3** — `BAR-01`, `BAR-02`, `BAR-03` (03/09 10:00 UTC) |
+| Contacté (fiches `first_contact_sent_at`) | **3** — `BAR-01`, `BAR-02`, `BAR-03` (03/09 10:00 UTC) ; ⚠️ `BAR-02` a **rebondi** (transitoire) |
 | Envoyé (actions `sent_at`) | **3** |
 | Inbound (`prospect_inbound_messages`) | **0** |
 | Répartition par canal | email 56, instagram 51, formulaire 16, aucun 9, visite 3, whatsapp 1, téléphone 1 |
 | Répartition par exécution | AUTO 56, MANUEL 53, ASSISTÉ 19, BLOQUÉ 9 |
 | Approbations archivées | **2** (01/09 09:12 et 01/09 11:17 — rouvertes, historique intact) + l'approbation **courante** du 03/09 |
 | `nb_destinataires` (campagne, tous canaux) | **136** — 137 actions moins `BAR-05` exclue |
-| **AUTO e-mail réellement autorisés** | **55** au total — **3 partis**, **52 restants** |
+| **AUTO e-mail réellement autorisés** | **55** au total — **3 partis** (2 remis, 1 rebond transitoire), **52 restants** |
 
 ### P3-R1 — CORRÉLATION FORTE : **VERT, PROUVÉE EN PRODUCTION (03/09/2026)**
 
@@ -312,7 +312,37 @@ Ne pas compter le mauvais champ.
 📌 `verrou_actif` **reste posé après un succès**, volontairement : l'envoi est définitif,
 le verrou empêche tout second premier contact. Ce n'est pas un blocage à nettoyer.
 
-⚠️ **DETTE P3-B1 — LES REBONDS N'EXISTENT PAS POUR LE SYSTÈME** (constaté 03/09, lecture seule)
+### ✅ P3-B1 — LES REBONDS SONT TRACÉS (livré et déployé le 03/09, `ea73c2e8`)
+
+**L'abonnement Resend a été corrigé en premier** — c'était là qu'était la cause :
+`events: ["email.sent", "email.received", "email.bounced"]`, même webhook, même endpoint,
+même secret de signature. **P3-R1 et `email.received` intacts** (webhook toujours 401 sans
+signature Svix).
+
+Ce que fait le lot, action par action, sur `email.bounced` :
+
+| Cas | Effet |
+|---|---|
+| **Tout rebond** | `provider_status = bounced`, `bounced_at`, `bounce_type`, `bounce_subtype`, `bounce_message` — **write-once** |
+| **`Permanent` SEULEMENT** | annule J+3 et J+7 (champs **existants**, motif « rebond permanent ») **et** inscrit l'adresse au registre STOP → la garde `REFUS_EXPRIME` refuse ensuite tout envoi |
+| **`Transient` / `Undetermined` / inconnu** | enregistré, **rien de bloqué** — se tromper en bloquant coûte un prospect, se tromper en ne bloquant pas coûte un e-mail |
+
+📌 **`contacte` n'est PAS redéfini** : le contrat reste « accepté par le fournisseur », qui
+reste vrai. La nuance de livraison se lit dans `provider_status` / `bounce_type`, à côté.
+📌 **L'adresse bloquée est le `target` de NOTRE action**, jamais celle annoncée par la
+charge utile — seule valeur dont nous soyons la source.
+📌 Corrélation par `provider_message_id` en **égalité stricte**, aucune regex.
+📌 Une annulation de relance déjà posée par une **réponse** n'est jamais écrasée.
+
+**Bar King régularisé à partir de la réponse RÉELLE de l'API Resend** (aucun champ inventé) :
+`bounce_type = Transient`, `subType = General` → **SOFT**. Donc enregistré, **J+3/J+7 non
+annulés, aucun registre STOP** — l'adresse reste joignable, ce que dit Resend lui-même
+(« un envoi ultérieur peut passer »). Rejeu du même événement : `doublon: true`, aucun effet.
+
+Bancs : **P3-B1 84/84**, U3 **134/134**, U2 102, U1 63, D1 226, D2 116, D3 107, D4 100,
+préparation 149, opt-out 50, boot 21 — **0 e-mail, 0 socket**.
+
+### Historique — comment la dette avait été constatée (03/09, lecture seule)
 
 Ce n'est pas seulement que le code ne traite pas les rebonds : **l'abonnement Resend ne les
 demande même pas.** Relevé sur l'API Resend, webhook `f486bc06…`, `status: enabled`,
@@ -339,7 +369,7 @@ Ce qui se passerait aujourd'hui pour Bar King, mesuré avec les gardes réelles 
 ⚠️ **Le jour où un moteur J+3 sera écrit, il relancera une adresse qui a rebondi sans le
 savoir.** C'est ce couple — rebond invisible + relance aveugle — qu'il faut fermer.
 
-**CORRECTIF MINIMAL P3-B1 (proposé, NON codé, NON déployé)** — 5 points, rien de plus :
+**Correctif minimal alors proposé — LIVRÉ depuis, cf. ci-dessus :**
 1. **Abonner `email.bounced`** sur le webhook Resend (réglage, pas de code).
 2. **Prouver la charge utile AVANT de coder** — comme pour P3-R1 : recevoir un vrai
    `email.bounced` et vérifier qu'il porte bien un identifiant corrélable
