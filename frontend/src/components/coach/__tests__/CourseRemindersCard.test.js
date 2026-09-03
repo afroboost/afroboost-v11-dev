@@ -55,7 +55,7 @@ const ARCHIVE = {
 let conteneur = null;
 let racine = null;
 
-async function monter({ cours = [MERCREDI, DIMANCHE], echecGet = null } = {}) {
+async function monter({ cours = [MERCREDI, DIMANCHE], echecGet = null, sansChoix = false } = {}) {
   axios.get.mockReset();
   axios.put.mockReset();
   if (echecGet) axios.get.mockRejectedValue(echecGet);
@@ -67,6 +67,14 @@ async function monter({ cours = [MERCREDI, DIMANCHE], echecGet = null } = {}) {
   await act(async () => {
     racine.render(<CourseRemindersCard coachEmail="coach@afroboost.com" />);
   });
+  // L'ECRAN NE PRESELECTIONNE PLUS RIEN — c'est le correctif meme. Les
+  // scenarios qui eprouvent le reglage d'UN cours cochent donc explicitement
+  // le premier, comme le ferait le coach. `sansChoix` garde l'etat initial
+  // pour les scenarios qui eprouvent l'absence de selection.
+  if (!sansChoix && !echecGet) {
+    const _liste = (cours || []);
+    if (_liste.length > 0) await cocher(_liste[0].id);
+  }
 }
 
 afterEach(async () => {
@@ -78,9 +86,38 @@ afterEach(async () => {
 
 const par = (id) => conteneur.querySelector(`[data-testid="${id}"]`);
 const texte = () => conteneur.textContent;
-const valeursCours = () => Array.from(par('cr-cours').options).map((o) => o.value);
+// Les cours ne sont plus des `option` mais des cases a cocher : une ligne par
+// cours, visible en permanence, avec son etat reel a droite.
+const valeursCours = () => Array.from(
+  conteneur.querySelectorAll('[data-testid^="cr-cours-"]')
+).map((el) => el.getAttribute('data-testid').slice('cr-cours-'.length));
+
+const libellesCours = () => Array.from(
+  conteneur.querySelectorAll('[data-testid^="cr-cours-"]')
+).map((el) => el.textContent);
+
+async function cocher(id) {
+  const _ligne = par(`cr-cours-${id}`);
+  const _case = _ligne ? _ligne.querySelector('input[type="checkbox"]') : null;
+  await act(async () => {
+    if (_case) _case.click();
+  });
+}
 
 async function choisir(id, valeur) {
+  if (id === 'cr-cours') {
+    // Selection EXCLUSIVE, pour rejouer l'ancien parcours mono-cours : on
+    // decoche ce qui l'etait, puis on coche le cours demande.
+    const _coches = Array.from(
+      conteneur.querySelectorAll('[data-testid^="cr-cours-"] input:checked')
+    );
+    for (let _i = 0; _i < _coches.length; _i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await act(async () => { _coches[_i].click(); });
+    }
+    await cocher(valeur);
+    return;
+  }
   const el = par(id);
   const poser = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
   await act(async () => {
@@ -125,8 +162,7 @@ describe('la liste des cours a configurer', () => {
     await monter({ cours: [MERCREDI, DIMANCHE] });
     expect(MERCREDI.archived).toBe(true);
     expect(valeursCours()).toEqual(['merc', 'dim']);
-    const libelles = Array.from(par('cr-cours').options).map((o) => o.textContent);
-    expect(libelles[0]).toContain('vendu');
+    expect(libellesCours()[0]).toContain('vendu');
   });
 
   test('le coach voit PAR QUELLES OFFRES le cours est vendu', async () => {
@@ -154,7 +190,7 @@ describe('la liste des cours a configurer', () => {
 
   test('le jour et l\'heure figurent dans le libelle — mercredi et dimanche 18:30', async () => {
     await monter();
-    const libelles = Array.from(par('cr-cours').options).map((o) => o.textContent);
+    const libelles = libellesCours();
     expect(libelles[0]).toContain('Mercredi');
     expect(libelles[0]).toContain('18:30');
     expect(libelles[1]).toContain('Dimanche');
@@ -185,13 +221,13 @@ describe('flexibilite — n\'importe quel cours, n\'importe quel jour', () => {
   test('un cours ponctuel est configurable comme un autre', async () => {
     await monter({ cours: [PONCTUEL] });
     expect(valeursCours()).toEqual(['unique']);
-    expect(par('cr-cours').options[0].textContent).toContain('2026-09-12');
+    expect(libellesCours()[0]).toContain('2026-09-12');
   });
 
   test('deux cours le meme jour restent distincts a l\'ecran', async () => {
     await monter({ cours: [JEUDI, JEUDI2] });
     expect(valeursCours()).toEqual(['jeu', 'jeu2']);
-    const libelles = Array.from(par('cr-cours').options).map((o) => o.textContent);
+    const libelles = libellesCours();
     expect(libelles[0]).toContain('19:00');
     expect(libelles[1]).toContain('20:30');
     expect(libelles[0]).not.toBe(libelles[1]);
@@ -268,9 +304,22 @@ describe('activation par cours', () => {
 });
 
 describe('enregistrement', () => {
-  test('rien a enregistrer tant que rien n\'a change', async () => {
-    await monter();
+  test('rien a enregistrer sur un cours DEJA configure et non touche', async () => {
+    // DIMANCHE porte deja `reminders_enabled` et ses deux regles : le
+    // formulaire montre l'etat de la base, il n'y a rien a poser.
+    await monter({ cours: [DIMANCHE] });
     expect(par('cr-enregistrer').disabled).toBe(true);
+  });
+
+  test('mais un cours VIERGE est enregistrable tout de suite', async () => {
+    // C'est le piege corrige : MERCREDI n'a AUCUNE regle, l'ecran en propose
+    // deux, et l'ancien bouton restait gris sans dire pourquoi. Desormais la
+    // proposition est annoncee comme telle ET elle est enregistrable.
+    await monter({ cours: [MERCREDI] });
+    expect(par('cr-proposees')).toBeNull();      // tant que c'est desactive
+    await cliquer('cr-actif');
+    expect(par('cr-proposees')).not.toBeNull();
+    expect(par('cr-enregistrer').disabled).toBe(false);
   });
 
   test('l\'activation part au serveur sur la route du COURS choisi', async () => {
@@ -320,7 +369,10 @@ describe('enregistrement', () => {
     axios.put.mockRejectedValue({ response: { status: 400, data: { detail: 'Motif du serveur.' } } });
     await cliquer('cr-actif');
     await cliquer('cr-enregistrer');
-    expect(par('cr-erreur').textContent).toBe('Motif du serveur.');
+    // Le motif du serveur est rendu mot pour mot, ET le cours concerne est
+    // NOMME : « une erreur est survenue » ne dit pas quoi refaire.
+    expect(par('cr-erreur').textContent).toContain('Motif du serveur.');
+    expect(par('cr-erreur').textContent).toContain('Session Cardio');
     expect(par('cr-confirme')).toBeNull();
   });
 });
@@ -337,5 +389,126 @@ describe('erreurs de chargement', () => {
     await monter({ echecGet: new Error('Network Error') });
     expect(texte()).toContain('Réglage des rappels indisponible pour le moment.');
     expect(par('cr-cours')).toBeNull();
+  });
+});
+
+// ============================================================================
+// LE BUG DU 03/09/2026 — L'ECRAN DISAIT « ACTIVES » POUR UN AUTRE COURS
+// ============================================================================
+// Le proprietaire a active « les rappels du mercredi », lu « Rappels avant
+// cours : actives », et la base n'a rien enregistre sur le mercredi. Son
+// enregistrement etait parti sur le DIMANCHE — le premier cours de la liste,
+// que l'ecran preselectionnait tout seul, et qui etait deja actif.
+// Ces verifications existent pour que cela ne puisse plus se reproduire.
+
+describe('aucune preselection — l\'ecran n\'affiche l\'etat de personne', () => {
+  test('a l\'ouverture, aucun cours n\'est coche', async () => {
+    await monter({ sansChoix: true });
+    expect(conteneur.querySelectorAll('[data-testid^="cr-cours-"] input:checked').length)
+      .toBe(0);
+  });
+
+  test('et l\'interrupteur n\'est meme pas affiche', async () => {
+    await monter({ sansChoix: true });
+    expect(par('cr-actif')).toBeNull();
+    expect(par('cr-aucun-choix')).not.toBeNull();
+  });
+
+  test('le bouton Enregistrer ne peut pas partir a l\'aveugle', async () => {
+    await monter({ sansChoix: true });
+    expect(par('cr-enregistrer').disabled).toBe(true);
+  });
+
+  test('l\'etat REEL de chaque cours est lisible sans rien ouvrir', async () => {
+    // C'est ce que le `select` ferme cachait : DIMANCHE etait actif, MERCREDI
+    // ne l'etait pas, et rien ne le montrait.
+    await monter({ sansChoix: true });
+    expect(par('cr-etat-merc').textContent).toBe('aucun rappel');
+    expect(par('cr-etat-dim').textContent).toBe('rappels actifs');
+  });
+
+  test('decocher le dernier cours efface l\'etat affiche', async () => {
+    await monter({ cours: [DIMANCHE] });
+    expect(par('cr-actif')).not.toBeNull();
+    await cocher('dim');
+    expect(par('cr-actif')).toBeNull();
+  });
+});
+
+describe('regler DEUX cours en une fois', () => {
+  test('un seul Enregistrer ecrit sur les deux cours', async () => {
+    await monter({ sansChoix: true });
+    // APRES le montage : `monter` remet les mocks a zero.
+    axios.put.mockResolvedValue({
+      data: { success: true, reminders_enabled: true, rules: [R24H, SD700] }
+    });
+    await cocher('merc');
+    await cocher('dim');
+    await cliquer('cr-actif');
+    await cliquer('cr-enregistrer');
+    expect(axios.put).toHaveBeenCalledTimes(2);
+    expect(axios.put.mock.calls[0][0]).toBe('/api/coach/courses/merc/reminders');
+    expect(axios.put.mock.calls[1][0]).toBe('/api/coach/courses/dim/reminders');
+  });
+
+  test('les deux recoivent EXACTEMENT le meme reglage', async () => {
+    await monter({ sansChoix: true });
+    // APRES le montage : `monter` remet les mocks a zero.
+    axios.put.mockResolvedValue({
+      data: { success: true, reminders_enabled: true, rules: [R24H, SD700] }
+    });
+    await cocher('merc');
+    await cocher('dim');
+    await cliquer('cr-actif');
+    await cliquer('cr-enregistrer');
+    expect(axios.put.mock.calls[0][1]).toEqual(axios.put.mock.calls[1][1]);
+    expect(axios.put.mock.calls[0][1].enabled).toBe(true);
+    expect(axios.put.mock.calls[0][1].rules).toEqual([R24H, SD700]);
+  });
+
+  test('le compte rendu dit combien de cours ont ete ecrits', async () => {
+    await monter({ sansChoix: true });
+    // APRES le montage : `monter` remet les mocks a zero.
+    axios.put.mockResolvedValue({
+      data: { success: true, reminders_enabled: true, rules: [R24H, SD700] }
+    });
+    await cocher('merc');
+    await cocher('dim');
+    await cliquer('cr-actif');
+    await cliquer('cr-enregistrer');
+    expect(par('cr-confirme').textContent).toContain('2 cours sur 2');
+  });
+
+  test('deux cours aux reglages differents sont signales', async () => {
+    await monter({ sansChoix: true });
+    await cocher('merc');
+    await cocher('dim');
+    expect(par('cr-divergents')).not.toBeNull();
+  });
+
+  test('un echec sur UN cours n\'affiche jamais « Enregistre »', async () => {
+    await monter({ sansChoix: true });
+    axios.put
+      .mockResolvedValueOnce({ data: { success: true, reminders_enabled: true, rules: [R24H] } })
+      .mockRejectedValueOnce({ response: { data: { detail: 'Refus du serveur.' } } });
+    await cocher('merc');
+    await cocher('dim');
+    await cliquer('cr-actif');
+    await cliquer('cr-enregistrer');
+    expect(par('cr-confirme')).toBeNull();
+    expect(par('cr-erreur').textContent).toContain('Refus du serveur.');
+    expect(par('cr-erreur').textContent).toContain('Sunday Vibes');
+  });
+
+  test('et le cours qui a REUSSI garde son etat, lui', async () => {
+    await monter({ sansChoix: true });
+    axios.put
+      .mockResolvedValueOnce({ data: { success: true, reminders_enabled: true, rules: [R24H] } })
+      .mockRejectedValueOnce({ response: { data: { detail: 'Refus du serveur.' } } });
+    await cocher('merc');
+    await cocher('dim');
+    await cliquer('cr-actif');
+    await cliquer('cr-enregistrer');
+    expect(par('cr-etat-merc').textContent).toBe('rappels actifs');
   });
 });
