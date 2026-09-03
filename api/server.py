@@ -37024,6 +37024,74 @@ async def cron_reservation_reminders():
             "push": _par_canal[RV2_CANAL_PUSH], "email": _par_canal[RV2_CANAL_EMAIL]}
 
 
+# ============================================================================
+# RV3-B — LE MOTEUR DE RAPPELS AVAIT UNE HORLOGE, ET ELLE NE TOURNAIT PLUS
+# ============================================================================
+# CE LOT N'AJOUTE AUCUNE REGLE. Il ajoute UNE HORLOGE.
+#
+# Le moteur ci-dessus est complet et eprouve : il lit la configuration du
+# cours, respecte Europe/Zurich, ecarte les rappels trop rapproches, tient son
+# anti-doublon par canal, verifie les preferences et survit a une panne de
+# fournisseur. Il ne lui manquait qu'une chose : que quelqu'un l'appelle.
+#
+# CE QUI L'APPELAIT, ET POURQUOI CA NE MARCHE PLUS. `/cron/reservation-reminders`
+# n'etait declenche que par `vercel.json` (« 0 * * * * »). Le site tourne sur
+# Coolify depuis longtemps : ces crons ne s'executent JAMAIS. Mesure du
+# 03/09/2026 sur la base reelle : 0 reservation sur 152 porte `reminders_sent`,
+# et les deux seules traces de l'ancien champ datent du 12/08. Autrement dit,
+# plus un seul rappel n'est parti depuis trois semaines — non par refus, par
+# silence.
+#
+# POURQUOI UNE BOUCLE, ET PAS UN CRON. C'est le motif deja en service ici pour
+# les campagnes, les echeances, la relance J+3 et l'auto-presence : une tache
+# asyncio native, lancee au demarrage, qui fonctionne parce que Coolify fait
+# tourner un uvicorn permanent. Rien de nouveau n'est invente.
+#
+# LA PERIODE N'EST PAS UN REGLAGE ARBITRAIRE. La fenetre du moteur vaut
+# `+/- N1B2_DEMI_FENETRE_MIN` autour de chaque cible, soit 60 minutes de large.
+# Une passe par heure la recouvre donc EXACTEMENT : chaque instant appartient a
+# une fenetre et une seule, quelle que soit l'heure a laquelle le conteneur a
+# demarre. Passer plus souvent ne gagnerait rien (le meme rappel retomberait
+# dans la meme fenetre, et l'anti-doublon le refuserait) ; passer moins souvent
+# creerait des trous. C'est aussi, au caractere pres, la cadence qu'avait le
+# cron Vercel.
+#
+# CE QUI PROTEGE DU RATTRAPAGE, ET CE N'EST PAS CETTE BOUCLE. Un rappel dont
+# l'heure est passee depuis plus de 30 minutes tombe HORS de la fenetre
+# `(cible - 30) < maintenant <= (cible + 30)` : il n'est pas envoye, et il ne le
+# sera jamais. Allumer cette horloge ne declenche donc AUCUN rattrapage des
+# rappels manques depuis le 12/08 — la garde vit dans le moteur, ou elle doit
+# etre, et ce lot ne la touche pas.
+
+RV3B_PREFIXE = "[RV3-B]"
+RV3B_PERIODE_S = 3600      # exactement la largeur de la fenetre du moteur
+RV3B_DEMARRAGE_S = 90      # laisser l'application finir de s'initialiser
+
+
+async def _rv3b_boucle_rappels():
+    """La boucle de fond des rappels avant cours. NE S'ARRETE JAMAIS.
+
+    ELLE N'EST QU'UN REVEIL. Elle ne lit aucune reservation, ne decide d'aucun
+    envoi, ne connait ni les regles ni les canaux : elle appelle le moteur
+    existant et journalise ce qu'il a fait. Toute regle ajoutee ici serait une
+    seconde verite, qui divergerait au premier correctif.
+
+    UNE PANNE NE L'ARRETE PAS. Le moteur attrape deja ses propres incidents par
+    reservation et par canal ; ce `try` couvre ce qui pourrait rester — une base
+    injoignable, par exemple. Une horloge qui meurt sur un incident est pire
+    qu'une horloge absente : elle donne l'illusion de tourner.
+    """
+    await asyncio.sleep(RV3B_DEMARRAGE_S)
+    while True:
+        try:
+            _r = await cron_reservation_reminders()
+            if isinstance(_r, dict) and (_r.get("sent") or _r.get("error")):
+                logger.info("%s passage : %s", RV3B_PREFIXE, _r)
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("%s passage ignore (%s)", RV3B_PREFIXE, type(_err).__name__)
+        await asyncio.sleep(RV3B_PERIODE_S)
+
+
 async def send_backup_email(participant_id: str, message_preview: str):
     """Envoie un email de backup si la notification push echoue."""
     participant = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0})
@@ -42275,7 +42343,14 @@ async def startup_db():
         # que le drapeau est faux : la boucle tourne, chaque passage sort
         # immediatement sans lire la base.
         asyncio.create_task(_ap_boucle_auto_presence())
+        # RV3-B : les rappels avant cours. Le moteur existait et n'etait
+        # appele par personne — son seul declencheur vivait dans
+        # `vercel.json`, qui ne s'execute pas sur Coolify. Meme motif, meme
+        # cadence que le cron d'origine (1 h = la largeur de sa fenetre).
+        asyncio.create_task(_rv3b_boucle_rappels())
         logger.info("[P1-d] Boucle de relance J+3 demarree (1 h) — drapeau relu a chaque passage")
+        logger.info("%s Boucle des rappels avant cours demarree (%d s)",
+                    RV3B_PREFIXE, RV3B_PERIODE_S)
     except Exception as e:
         logger.warning(f"[P1-d] Demarrage de la boucle ignore: {e}")
 
