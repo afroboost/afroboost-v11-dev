@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 05:47 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-03, 08:25 UTC**.
 
 ---
 
@@ -230,8 +230,36 @@ adresse qu'un tiers contrôle, serait lue comme une des nôtres.
 **Multi-fiches** (5 destinataires portent plusieurs organisations) : couvert par le banc U2
 (`11d. fiches_marquees == 2`), pas par le test réel — la fixture n'avait aucune fiche rattachée.
 
-- **31 e-mails prêts mais NON envoyés** (chiffre déclaré par le coach ; en base, 56 destinataires
-  de canal e-mail en exécution AUTO — à re-confirmer avant tout envoi).
+### Combien de destinataires partiront réellement : **31** (réconcilié 2026-09-03, lecture seule)
+
+**Le chiffre du coach était juste.** Réconciliation faite en appelant la garde RÉELLE du serveur
+(`p3s3d_garde_action`, fonction pure) sur les 137 actions réelles — aucune écriture, aucune
+réservation, aucun envoi.
+
+| Étape | Nombre | Ce qui filtre |
+|---|---|---|
+| Actions de la campagne | 137 | — |
+| `execution_type == AUTO` | **56** | les 81 autres → `PAS_AUTO` (MANUEL 53, ASSISTÉ 19, BLOQUÉ 9) |
+| … et `channel == email` | **56** | aucune perte : **toutes** les AUTO sont e-mail |
+| … et `message_j0` non vide | **31** | les 25 autres → `MESSAGE_VIDE` |
+| **Verdict de la garde : AUTORISE** | **31** | plus aucun filtre ne retire personne |
+
+⚠️ **Le « 56 » n'a jamais été un nombre d'envois** : c'est le total AUTO+e-mail, AVANT la garde.
+Le seul chiffre qui compte est celui que rend la garde : **31**.
+
+Les **25 écartées** le sont pour une raison unique et non technique — `message_j0` vide.
+Ce n'est pas un échec d'envoi, c'est l'absence de contenu : personne n'a encore écrit leur
+message. Elles redeviendront envoyables le jour où leur J0 sera rédigé, sans aucune
+modification de code. Catégories concernées : bar 7, ecole_danse 7, organisateur 4,
+restaurant 3, commerce 2, festival 2.
+
+Les autres portes de la garde ont toutes été vérifiées vides au même moment :
+`REFUS_EXPRIME` 0 (registre STOP interrogé par canal, 0 refus applicable), `DEJA_CONTACTE` 0,
+`ACTION_EXCLUE` 0, `CIBLE_INVALIDE` 0, `OBJET_ABSENT` 0 (objet de campagne présent),
+`DEJA_RESERVE` 0, `STATUT_INCOMPATIBLE` 0, `TENTATIVES_EPUISEES` 0.
+Empreinte de campagne **conforme**, `envoi_autorise = False`.
+
+- **31 e-mails prêts mais NON envoyés.**
 - **Porte d'envoi FERMÉE et prouvée fermée** : les deux drapeaux `P3_LAUNCH_ENABLED` et
   `P3_LAUNCH_ENVOI_REEL` sont **absents** de `feature_flags` → l'envoi réel est impossible.
   L'absence est le cas sûr, par conception.
@@ -284,8 +312,10 @@ adresse qu'un tiers contrôle, serait lue comme une des nôtres.
   N'ouvrir qu'après GO explicite écrit du coach.
 - **P3-R1 : terminé et prouvé.** Le verrou technique qui empêchait de lancer sereinement
   — « une réponse envoyée depuis une autre adresse partait en revue manuelle et les relances
-  continuaient » — est levé. Reste, avant tout envoi : re-confirmer le nombre réel de
-  destinataires e-mail en exécution AUTO (**56 en base**, « 31 » annoncé par le coach).
+  continuaient » — est levé.
+- **Nombre de destinataires : réconcilié, c'est 31.** Plus rien à vérifier de ce côté.
+  Seule décision restante, et elle est éditoriale, pas technique : rédiger (ou non) les
+  25 messages J0 manquants avant de lancer. Sans eux, le lot partira à 31.
 - Dettes antérieures (non bloquantes) : cf. `CLAUDE.md` et l'historique des lots.
 
 ---
