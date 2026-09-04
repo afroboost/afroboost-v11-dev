@@ -6,6 +6,9 @@ import axios from 'axios'; // V225: creation/modification des horaires depuis le
 import SvgIcon from '../SvgIcon';
 import { appartientAuCoach } from '../../utils/courseOwnership'; // V228: pictogrammes vectoriels a la place des emoji
 import CloudinaryUploadButton from '../CloudinaryUploadButton'; // V229
+// U1b : champ d'adresse avec suggestions OpenStreetMap. Reste un input texte
+// libre : si le service est injoignable, le champ se comporte comme avant.
+import ChampAdresse from './ChampAdresse';
 // SCHEDULES : le type d'un bloc horaire (recurrent / date unique) vit dans un
 // module pur, teste a part. Une offre MELANGE les deux — voir horaireType.js.
 import {
@@ -1793,13 +1796,22 @@ export default function OfferWizard({
                   </p>
                 )}
 
-                <input
-                  type="text"
+                {/* U1b : le lieu de L'HORAIRE est le champ d'adresse
+                    reellement visible pour la quasi-totalite des offres — le
+                    lieu de l'offre juste en dessous est masque des qu'un
+                    horaire est lie. C'est donc lui qu'il fallait equiper en
+                    priorite. La saisie libre reste entiere : « Plage Est de
+                    St-Blaise - La Torpille » n'est pas une adresse postale et
+                    doit rester tapable. */}
+                <ChampAdresse
                   value={course.locationName || course.location || ''}
-                  onChange={(e) => setCourseLocation(course.id, e.target.value)}
-                  placeholder="📍 Lieu (ex: Rue des Vallangines 97, Neuchâtel)"
+                  onChange={(v) => setCourseLocation(course.id, v)}
+                  placeholder="Lieu (ex: Rue des Vallangines 97, Neuchâtel)"
+                  ariaLabel="Lieu de l'horaire"
                   style={INPUT_STYLE}
-                  className="text-sm v224-input mt-2"
+                  className="text-sm v224-input"
+                  classNameConteneur="mt-2"
+                  testId={`course-location-${course.id}`}
                 />
                 <input
                   type="url"
@@ -2234,13 +2246,17 @@ export default function OfferWizard({
           <label className="block text-xs mb-1" style={LABEL_STYLE}>
             <SvgIcon name="mapPin" size={14} />{' '}Lieu
           </label>
-          <input
-            type="text"
+          {/* U1b : meme champ d'adresse que sur les horaires. Il ne s'affiche
+              que sans horaire lie (produits, offres sans planning), mais le
+              coach y attend le meme confort. */}
+          <ChampAdresse
             value={form.location || ''}
-            onChange={(e) => set('location', e.target.value)}
+            onChange={(v) => set('location', v)}
             placeholder="Ex: Salle Afroboost, Lausanne"
+            ariaLabel="Lieu de l'offre"
             style={INPUT_STYLE}
             className="text-sm v224-input"
+            testId="offer-location"
           />
         </div>
         <div>
