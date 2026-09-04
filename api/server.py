@@ -754,6 +754,39 @@ class CourseCreate(BaseModel):
     reminders_enabled: Optional[bool] = None
     reminder_rules: Optional[List[dict]] = None
 
+# ============================================================================
+# U1a — L'AUDIENCE D'UNE OFFRE
+# ============================================================================
+# Une offre peut s'adresser a tout le monde, aux femmes, ou aux hommes. Rien de
+# plus dans ce lot : on STOCKE et on AFFICHE. Aucun filtrage, aucune visibilite
+# modifiee, aucune reservation refusee — le ciblage reel viendra plus tard, et
+# il aura son propre lot.
+#
+# TROIS VALEURS, PAS QUATRE. Spordate en propose une quatrieme,
+# « mixte priorite femmes », qui promet une VISIBILITE accrue aux femmes dans
+# son moteur de decouverte. Ce moteur n'existe pas ici : l'offrir a afroboost
+# serait promettre au coach un comportement que rien n'applique. Elle sera
+# ajoutee le jour ou quelque chose la mettra en oeuvre.
+#
+# « all » EST LE PASSE. Les 8 offres existantes n'ont pas ce champ ; il vaut
+# donc « all » a la lecture comme a l'ecriture, et leur comportement ne change
+# pas d'un iota.
+U1A_AUDIENCES = ("all", "women-only", "men-only")
+U1A_AUDIENCE_DEFAUT = "all"
+
+
+def u1a_audience(valeur) -> str:
+    """L'audience d'une offre, ramenee a une valeur connue. PURE.
+
+    UNE VALEUR INCONNUE DEVIENT « all », elle ne fait pas echouer la lecture.
+    Un `Literal` Pydantic serait plus strict et casserait le jour ou un
+    document porterait autre chose — sur une collection deja en production, on
+    ne transforme pas une donnee inattendue en erreur 500.
+    """
+    _v = str(valeur or "").strip().lower()
+    return _v if _v in U1A_AUDIENCES else U1A_AUDIENCE_DEFAUT
+
+
 class Offer(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -774,6 +807,8 @@ class Offer(BaseModel):
     position: Optional[int] = None
     # E-commerce fields
     category: Optional[str] = ""  # Ex: "service", "tshirt", "shoes", "supplement"
+    # U1a : « all » par defaut — donc les offres d'avant ce lot sont inchangees.
+    audience: Optional[str] = U1A_AUDIENCE_DEFAUT
     isProduct: bool = False  # True = physical product, False = service/course
     variants: Optional[dict] = None  # { sizes: ["S","M","L"], colors: ["Noir","Blanc"], weights: ["0.5kg","1kg"] }
     tva: float = 0.0  # TVA percentage
@@ -879,6 +914,11 @@ class OfferCreate(BaseModel):
     position: Optional[int] = None  # v159: ordre d'affichage
     # E-commerce fields
     category: Optional[str] = ""
+    # U1a — PRESENT ICI AUSSI, ET CE N'EST PAS UNE REDONDANCE. `PUT /offers`
+    # fait `$set: offer.model_dump()` sur ce modele : un champ absent d'ici
+    # serait EFFACE en base a chaque sauvegarde (cf. l'avertissement V224
+    # quelques lignes plus bas). Les deux modeles restent symetriques.
+    audience: Optional[str] = U1A_AUDIENCE_DEFAUT
     isProduct: bool = False
     variants: Optional[dict] = None
     tva: float = 0.0
@@ -2174,6 +2214,8 @@ async def create_offer(offer: OfferCreate, request: Request):
     require_auth(request)
     user_email = request.headers.get("X-User-Email", "").lower().strip()
     offer_data = offer.model_dump()
+    # U1a : meme normalisation qu'a la mise a jour — une seule regle, deux portes.
+    offer_data["audience"] = u1a_audience(offer_data.get("audience"))
     # v61: Blindage conversion durée — accepte string, int, vide, null
     raw_dv = offer_data.get("duration_value")
     if raw_dv is not None and raw_dv != "" and raw_dv is not False:
@@ -2219,6 +2261,8 @@ async def create_offer(offer: OfferCreate, request: Request):
 async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
     require_auth(request)
     update_data = offer.model_dump()
+    # U1a : une valeur inconnue redevient « all » plutot que d'entrer en base.
+    update_data["audience"] = u1a_audience(update_data.get("audience"))
     # v61: Blindage conversion durée
     raw_dv = update_data.get("duration_value")
     if raw_dv is not None and raw_dv != "" and raw_dv is not False:

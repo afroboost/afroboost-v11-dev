@@ -40,6 +40,22 @@ const HINT_STYLE = { color: 'rgba(255,255,255,0.4)' };
 
 const WEEKDAYS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
 
+// U1a — A QUI S'ADRESSE CETTE OFFRE.
+//
+// TROIS CHOIX, ET « Tout le monde » EST LE PASSE : une offre creee avant ce
+// lot n'a pas ce champ, elle vaut donc « all » et ne change pas de
+// comportement. Aucune offre existante n'est retouchee.
+//
+// CE LOT STOCKE ET AFFICHE, IL NE FILTRE RIEN. Ni la visibilite, ni la
+// reservation, ni la recherche ne consultent cette valeur aujourd'hui. Le
+// libelle le dit au coach plutot que de le laisser croire a une restriction
+// qui ne s'applique pas encore.
+const AUDIENCES = [
+  { valeur: 'all', label: 'Tout le monde', aide: 'Aucune restriction.' },
+  { valeur: 'women-only', label: 'Femmes', aide: 'Offre destinee aux femmes.' },
+  { valeur: 'men-only', label: 'Hommes', aide: 'Offre destinee aux hommes.' }
+];
+
 // V255b: jour de la semaine (convention JS, Dim=0) d'une date « 2026-08-05 »,
 // ou null si la chaine est inexploitable.
 // Midi local et NON minuit : minuit peut basculer d'un jour en heure d'ete.
@@ -906,6 +922,40 @@ export default function OfferWizard({
           style={INPUT_STYLE}
           className="text-sm v224-input"
         />
+      </div>
+
+      {/* U1a — AUDIENCE. Placee sous le nom : elle decrit l'offre, pas son
+          tarif. Trois boutons plutot qu'une liste deroulante — sur telephone,
+          trois choix se lisent d'un coup d'oeil et se touchent du pouce. */}
+      <div>
+        <label className="block text-xs mb-1" style={LABEL_STYLE}>Pour qui&nbsp;?</label>
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Audience de l'offre">
+          {AUDIENCES.map((a) => {
+            const actif = (form.audience || 'all') === a.valeur;
+            return (
+              <button
+                key={a.valeur}
+                type="button"
+                role="radio"
+                aria-checked={actif}
+                onClick={() => set('audience', a.valeur)}
+                data-testid={`u1a-audience-${a.valeur}`}
+                className="text-xs px-3 py-2 rounded-lg transition-colors"
+                style={{
+                  border: `1px solid ${actif ? PINK : 'rgba(255,255,255,0.14)'}`,
+                  background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)' : 'transparent',
+                  color: actif ? PINK : 'rgba(255,255,255,0.75)'
+                }}
+              >
+                {a.label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs mt-1" style={HINT_STYLE}>
+          {(AUDIENCES.find((a) => a.valeur === (form.audience || 'all')) || AUDIENCES[0]).aide}
+          {' '}Information affichee sur l&apos;offre&nbsp;; elle ne bloque aucune reservation.
+        </p>
       </div>
 
       {/* Prix */}
