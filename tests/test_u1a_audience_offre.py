@@ -118,6 +118,66 @@ verifier("5b. aucune requete Mongo ne filtre sur l'audience",
          '{"audience"' not in _src and "'audience':" not in _src.replace('"audience":', ''))
 
 # ============================================================================
+print("\n6. LA LISTE BLANCHE DU FRONTEND — le piege qui a fait echouer U1a")
+# Le champ etait declare dans les deux modeles ET saisi dans le wizard, et
+# pourtant il ne persistait pas : `addOffer` (CoachDashboard.js) construit le
+# corps de la requete comme une LISTE BLANCHE explicite. Un champ absent de cet
+# objet ne PART JAMAIS — le backend le recoit donc vide et le ramene a « all ».
+# Le fichier avertissait deja de ce piege trois fois (V223, V224, V256) ; il
+# manquait une verification qui le rende impossible a oublier.
+import re  # noqa: E402
+
+_DASH = os.path.join(RACINE, "frontend", "src", "components", "CoachDashboard.js")
+_src_dash = open(_DASH, encoding="utf-8").read()
+_i = _src_dash.index("const offerData = {")
+_bloc = _src_dash[_i:_src_dash.index("\n      };", _i)]
+_cles_envoyees = set(re.findall(r"^\s{8}([a-zA-Z_][a-zA-Z0-9_]*):", _bloc, re.M))
+
+verifier("6a. `audience` part bien dans la requete", "audience" in _cles_envoyees,
+         "sans cette ligne, le choix du coach n'atteint jamais le serveur")
+
+# `coach_id` est la SEULE exception legitime : la propriete est posee par le
+# serveur a partir de l'identite de l'appelant, jamais envoyee par le client.
+_ATTENDU_ABSENT = {"coach_id"}
+_manquants = _champs_create - _cles_envoyees - _ATTENDU_ABSENT
+verifier("6b. tout champ du modele traverse la liste blanche",
+         not _manquants,
+         "champs saisissables mais jamais envoyes : %s" % sorted(_manquants))
+
+# ============================================================================
+print("\n7. L'ALLER-RETOUR COMPLET")
+# create -> normalisation serveur -> document -> relecture -> hydratation.
+# On rejoue la chaine REELLE : le modele, puis la normalisation appelee par les
+# deux routes, puis la regle d'affichage du wizard.
+
+
+def _hydrater(document):
+    """La regle du wizard : `form.audience || 'all'`. Copie fidele."""
+    return document.get("audience") or "all"
+
+
+for _choix, _attendu in (("all", "all"),
+                         ("women-only", "women-only"),
+                         ("men-only", "men-only")):
+    _corps = S.OfferCreate(name="TEST AUDIENCE", price=0.0, audience=_choix).model_dump()
+    _corps["audience"] = S.u1a_audience(_corps.get("audience"))   # ce que font POST et PUT
+    _relu = dict(_corps)                                          # ce que rend le GET
+    verifier("7a. aller-retour « %s » : ecrit en base" % _choix,
+             _relu.get("audience") == _attendu, repr(_relu.get("audience")))
+    verifier("7b. aller-retour « %s » : bouton actif a la reouverture" % _choix,
+             _hydrater(_relu) == _attendu, repr(_hydrater(_relu)))
+
+# Une offre d'AVANT ce lot : aucun champ, et le wizard doit afficher « all ».
+verifier("7c. offre historique sans le champ -> « Tout le monde »",
+         _hydrater({"name": "PULSE x10 cours", "price": 250.0}) == "all")
+
+# Et le wizard lit bien cette regle-la, pas une autre.
+_WIZ = os.path.join(RACINE, "frontend", "src", "components", "dashboard", "OfferWizard.js")
+_src_wiz = open(_WIZ, encoding="utf-8").read()
+verifier("7d. le wizard hydrate avec le meme repli",
+         "form.audience || 'all'" in _src_wiz)
+
+# ============================================================================
 print("\n" + "=" * 78)
 _ok = sum(1 for _, c, _ in RESULTATS if c)
 print("U1a : %d / %d verifications" % (_ok, len(RESULTATS)))

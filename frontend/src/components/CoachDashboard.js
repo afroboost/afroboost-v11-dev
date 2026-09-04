@@ -3341,6 +3341,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // on le conserve. Sinon on prend la premiere image.
         thumbnail: src.thumbnail || filteredImages[0] || "",
         category: src.category || "service",
+        // U1a: l'audience de l'offre. MEME PIEGE QUE LES PALIERS, `position` ET
+        // LE LIEN PARTENAIRE ci-dessous : cet objet est une LISTE BLANCHE. Le
+        // champ etait bien saisi dans le wizard et bien declare dans les deux
+        // modeles backend — mais absent d'ICI, il ne partait pas dans la
+        // requete, et le backend le ramenait donc a « all » a chaque
+        // enregistrement. Le coach choisissait « Femmes », rouvrait l'offre, et
+        // relisait « Tout le monde ».
+        audience: src.audience || 'all',
         isProduct: src.isProduct || false,
         variants: src.variants || null,
         tva: parseFloat(src.tva) || 0,
