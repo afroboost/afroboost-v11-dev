@@ -68,6 +68,11 @@ const CourseRemindersCard = ({ coachEmail }) => {
   // personne ne peut reserver. Les montrer tous, c'est demander au coach de
   // deviner — et c'est exactement ce qui a fait poser les rappels ailleurs.
   const [voirTout, setVoirTout] = useState(false);
+  // REPLIEE PAR DEFAUT. Le dashboard est une pile de cartes : celle-ci ne doit
+  // pas occuper un ecran entier pour un reglage qu'on touche deux fois par an.
+  // L'etat general reste lisible SANS ouvrir — c'est la condition pour que
+  // replier ne revienne pas a cacher.
+  const [ouvert, setOuvert] = useState(false);
   const [chargement, setChargement] = useState(true);
   const [indisponible, setIndisponible] = useState('');
   const [envoi, setEnvoi] = useState(false);
@@ -134,6 +139,22 @@ const CourseRemindersCard = ({ coachEmail }) => {
   ), [coursIds]);
 
   const coursUtiles = useMemo(() => cours.filter(utile), [cours, utile]);
+  // Le compte porte sur les cours RESERVABLES : un brouillon actif ne rassure
+  // personne, et un cours vendu sans rappel est le vrai signal a donner.
+  const resume = useMemo(() => {
+    const _reservables = cours.filter((c) => (c.offres || []).some((o) => o.publique));
+    const _actifs = _reservables.filter((c) => c.reminders_enabled === true).length;
+    const _muets = _reservables.length - _actifs;
+    if (_reservables.length === 0) return { texte: '', alerte: false };
+    if (_actifs === 0) {
+      return { texte: 'aucun rappel actif', alerte: true };
+    }
+    return {
+      texte: `${_actifs} cours actif${_actifs > 1 ? 's' : ''}`
+        + (_muets > 0 ? ` · ${_muets} sans rappel` : ''),
+      alerte: _muets > 0
+    };
+  }, [cours]);
   const coursCaches = useMemo(() => cours.filter((c) => !utile(c)), [cours, utile]);
   const coursAffiches = voirTout ? cours : coursUtiles;
 
@@ -324,12 +345,43 @@ const CourseRemindersCard = ({ coachEmail }) => {
     + 'px-2 py-2 focus:outline-none focus:border-white/30 min-w-0';
 
   return (
-    <div className="card-gradient rounded-xl p-4">
-      <div className="flex items-center gap-2 flex-wrap">
-        <SvgIcon name="bell" size={16} style={{ color: 'var(--primary-color, #D91CD2)' }} />
-        <h2 className="font-semibold text-white text-base sm:text-lg">Rappels avant cours</h2>
-      </div>
-      <p className="text-white/50 text-xs mt-1">
+    <div className="card-gradient rounded-xl p-4 overflow-x-hidden">
+      {/* TOUTE LA LIGNE EST LA COMMANDE — icone, titre, resume et fleche. Un
+          coach au telephone ne vise pas un chevron de 14 px. */}
+      <button
+        type="button"
+        onClick={() => setOuvert((o) => !o)}
+        aria-expanded={ouvert}
+        className="w-full flex items-start gap-2 text-left"
+        data-testid="cr-bascule"
+      >
+        <SvgIcon name="bell" size={16} style={{ color: 'var(--primary-color, #D91CD2)', flexShrink: 0, marginTop: '3px' }} />
+        <span className="min-w-0 flex-1">
+          <span className="block font-semibold text-white text-base sm:text-lg">
+            Rappels avant cours
+          </span>
+          {!ouvert && resume.texte && (
+            <span
+              className="block text-xs mt-0.5"
+              style={{ color: resume.alerte
+                ? 'rgba(255,255,255,0.55)'
+                : 'var(--primary-color, #D91CD2)' }}
+              data-testid="cr-resume"
+            >
+              {resume.texte}
+            </span>
+          )}
+        </span>
+        <SvgIcon
+          name={ouvert ? 'arrowUp' : 'arrowDown'}
+          size={16}
+          className="shrink-0 mt-1 text-white/50"
+        />
+      </button>
+
+      {ouvert && (
+      <>
+      <p className="text-white/50 text-xs mt-2">
         Choisis les cours qui envoient des rappels. Ils partent par notification Push
         et par e-mail, selon les préférences de chaque participant.
       </p>
@@ -352,19 +404,19 @@ const CourseRemindersCard = ({ coachEmail }) => {
 
       {!chargement && !indisponible && cours.length > 0 && (
         <>
-          <fieldset className="mt-3 max-w-md" data-testid="cr-cours">
+          <fieldset className="mt-3 w-full max-w-md" data-testid="cr-cours">
             <legend className="text-white/50 text-xs mb-1">
               Cours à régler — coche un ou plusieurs
             </legend>
-            <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
+            <div className="space-y-1 max-h-64 overflow-y-auto overflow-x-hidden pr-1">
               {coursAffiches.map((c) => {
                 const _coche = coursIds.indexOf(c.id) !== -1;
                 const _on = c.reminders_enabled === true;
                 return (
                   <label
                     key={c.id}
-                    className="flex items-center gap-2 text-xs text-white/80 rounded-lg
-                               px-2 py-2 cursor-pointer border"
+                    className="flex flex-wrap items-start gap-x-2 gap-y-1 text-xs
+                               text-white/80 rounded-lg px-2 py-2 cursor-pointer border"
                     style={{
                       borderColor: _coche
                         ? 'var(--primary-color, #D91CD2)'
@@ -380,17 +432,22 @@ const CourseRemindersCard = ({ coachEmail }) => {
                       checked={_coche}
                       onChange={() => basculerCours(c.id)}
                       aria-label={`Régler les rappels de ${libelleCours(c)}`}
-                      style={{ accentColor: 'var(--primary-color, #D91CD2)' }}
+                      className="shrink-0"
+                      style={{ accentColor: 'var(--primary-color, #D91CD2)', marginTop: '2px' }}
                     />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate">
+                    {/* AUCUNE TRONCATURE. `truncate` coupait le nom du cours au
+                        milieu sur telephone : le coach voyait « Mercredi 18:30 —
+                        Afroboost Silent – Session… » et devait deviner. Le texte
+                        revient a la ligne, la ligne grandit. */}
+                    <span className="min-w-0 flex-1" style={{ minWidth: '150px' }}>
+                      <span className="block break-words">
                         {libelleCours(c)}
                         {c.archived ? ' • archivé' : ''}
                       </span>
                       {/* Le LIEU departage les homonymes mieux que le nom :
                           « Cours à l'unité » existe trois fois, mais un seul
                           se donne au Bord du Lac le mercredi. */}
-                      <span className="block truncate text-[11px] text-white/35">
+                      <span className="block break-words text-[11px] text-white/35">
                         {(c.locationName || c.location || 'Lieu non renseigné')}
                         {(c.offres || []).some((o) => o.publique)
                           ? ' • vendu'
@@ -403,7 +460,7 @@ const CourseRemindersCard = ({ coachEmail }) => {
                         invisible, et l'écran paraissait dire que TOUT était
                         réglé alors qu'un seul cours l'était. */}
                     <span
-                      className="shrink-0 text-[11px]"
+                      className="shrink-0 text-[11px] pl-6 sm:pl-0"
                       style={{ color: _on ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.35)' }}
                       data-testid={`cr-etat-${c.id}`}
                     >
@@ -517,7 +574,7 @@ const CourseRemindersCard = ({ coachEmail }) => {
             <>
               <div className="mt-3 space-y-2">
                 {regles.map((regle, index) => (
-                  <div key={index} className="flex items-center gap-2 max-w-md">
+                  <div key={index} className="flex items-center gap-2 w-full max-w-md">
                     <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
                       <select
                         value={valeurMoment(regle)}
@@ -609,9 +666,11 @@ const CourseRemindersCard = ({ coachEmail }) => {
           </div>
 
           {erreur && (
-            <p className="text-white/60 text-xs mt-2" data-testid="cr-erreur">{erreur}</p>
+            <p className="text-white/60 text-xs mt-2 break-words" data-testid="cr-erreur">{erreur}</p>
           )}
         </>
+      )}
+      </>
       )}
     </div>
   );

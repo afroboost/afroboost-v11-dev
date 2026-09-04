@@ -55,7 +55,7 @@ const ARCHIVE = {
 let conteneur = null;
 let racine = null;
 
-async function monter({ cours = [MERCREDI, DIMANCHE], echecGet = null, sansChoix = false, sansRepli = false } = {}) {
+async function monter({ cours = [MERCREDI, DIMANCHE], echecGet = null, sansChoix = false, sansRepli = false, fermee = false } = {}) {
   axios.get.mockReset();
   axios.put.mockReset();
   if (echecGet) axios.get.mockRejectedValue(echecGet);
@@ -71,7 +71,16 @@ async function monter({ cours = [MERCREDI, DIMANCHE], echecGet = null, sansChoix
   // scenarios qui eprouvent le reglage d'UN cours cochent donc explicitement
   // le premier, comme le ferait le coach. `sansChoix` garde l'etat initial
   // pour les scenarios qui eprouvent l'absence de selection.
-  // LE REPLI EST DEPLIE PAR DEFAUT DANS LE BANC. Les cours que personne ne
+  // LA CARTE EST REPLIEE PAR DEFAUT dans l'ecran : les scenarios qui
+  // eprouvent son contenu l'ouvrent d'abord, comme le ferait le coach.
+  // `fermee` garde l'etat initial pour les scenarios du repli lui-meme.
+  if (!fermee) {
+    const _bascule = par('cr-bascule');
+    if (_bascule) await act(async () => {
+      _bascule.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+  }
+  // LE REPLI DES COURS NON RESERVABLES EST DEPLIE PAR DEFAUT DANS LE BANC. Les cours que personne ne
   // peut reserver sont replies derriere un bouton — ils ne sont pas SUPPRIMES.
   // Les scenarios ci-dessous eprouvent le contenu de la liste ; ils la
   // deplient donc, comme le ferait un coach qui cherche un brouillon.
@@ -548,5 +557,98 @@ describe('regler DEUX cours en une fois', () => {
     await cliquer('cr-actif');
     await cliquer('cr-enregistrer');
     expect(par('cr-etat-merc').textContent).toBe('rappels actifs');
+  });
+});
+
+// ============================================================================
+// LA CARTE EST REPLIEE — MAIS ELLE NE CACHE RIEN
+// ============================================================================
+// Le dashboard est une pile de cartes. Celle-ci occupait un ecran entier pour
+// un reglage qu'on touche deux fois par an. Repliee, elle doit malgre tout
+// dire l'essentiel : sinon replier revient a cacher.
+
+describe('la carte se replie et se deplie', () => {
+  test('elle est FERMEE a l\'ouverture du dashboard', async () => {
+    await monter({ fermee: true });
+    expect(par('cr-cours')).toBeNull();
+    expect(par('cr-enregistrer')).toBeNull();
+  });
+
+  test('un clic sur la ligne ouvre le panneau complet', async () => {
+    await monter({ fermee: true });
+    await cliquer('cr-bascule');
+    expect(par('cr-cours')).not.toBeNull();
+  });
+
+  test('un second clic le referme', async () => {
+    await monter({ fermee: true });
+    await cliquer('cr-bascule');
+    await cliquer('cr-bascule');
+    expect(par('cr-cours')).toBeNull();
+  });
+
+  test('l\'etat est annonce a la bascule, pour les lecteurs d\'ecran', async () => {
+    await monter({ fermee: true });
+    expect(par('cr-bascule').getAttribute('aria-expanded')).toBe('false');
+    await cliquer('cr-bascule');
+    expect(par('cr-bascule').getAttribute('aria-expanded')).toBe('true');
+  });
+
+  test('FERMEE, elle dit combien de cours sont actifs', async () => {
+    // DIMANCHE est actif et vendu, MERCREDI est vendu sans rappel.
+    await monter({ fermee: true });
+    expect(par('cr-resume').textContent).toContain('1 cours actif');
+    expect(par('cr-resume').textContent).toContain('1 sans rappel');
+  });
+
+  test('FERMEE, elle alerte quand AUCUN cours n\'a de rappel', async () => {
+    const _dimVierge = { ...DIMANCHE, reminders_enabled: undefined, reminder_rules: undefined };
+    await monter({ cours: [MERCREDI, _dimVierge], fermee: true });
+    expect(par('cr-resume').textContent).toBe('aucun rappel actif');
+  });
+
+  test('le resume ne compte QUE les cours reservables', async () => {
+    // Un brouillon actif ne rassure personne : il n'entre pas dans le compte.
+    const _brouillonActif = { ...BROUILLON, reminders_enabled: true, reminder_rules: [R24H] };
+    await monter({ cours: [_brouillonActif, DIMANCHE], fermee: true });
+    expect(par('cr-resume').textContent).toBe('1 cours actif');
+  });
+
+  test('ouverte, le resume laisse la place au panneau', async () => {
+    await monter({ fermee: true });
+    await cliquer('cr-bascule');
+    expect(par('cr-resume')).toBeNull();
+  });
+});
+
+describe('mobile — rien n\'est coupe, rien ne sort de l\'ecran', () => {
+  test('le nom du cours n\'est JAMAIS tronque', async () => {
+    await monter({ sansChoix: true });
+    const _ligne = par('cr-cours-merc');
+    expect(_ligne.className).not.toContain('truncate');
+    expect(_ligne.textContent).toContain('Session Cardio');
+  });
+
+  test('la ligne peut passer a la ligne quand la place manque', async () => {
+    await monter({ sansChoix: true });
+    expect(par('cr-cours-merc').className).toContain('flex-wrap');
+  });
+
+  test('le statut reste dans le flux — il ne peut pas sortir a droite', async () => {
+    await monter({ sansChoix: true });
+    // Il est DANS la ligne, apres le bloc texte : quand la largeur manque, le
+    // `flex-wrap` du parent le fait descendre au lieu de le pousser dehors.
+    expect(par('cr-cours-merc').contains(par('cr-etat-merc'))).toBe(true);
+  });
+
+  test('la liste ne defile jamais horizontalement', async () => {
+    await monter({ sansChoix: true });
+    const _liste = par('cr-cours').querySelector('.overflow-y-auto');
+    expect(_liste.className).toContain('overflow-x-hidden');
+  });
+
+  test('la carte elle-meme ne deborde pas', async () => {
+    await monter({ fermee: true });
+    expect(par('cr-bascule').parentElement.className).toContain('overflow-x-hidden');
   });
 });
