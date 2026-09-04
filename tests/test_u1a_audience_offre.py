@@ -178,6 +178,44 @@ verifier("7d. le wizard hydrate avec le meme repli",
          "form.audience || 'all'" in _src_wiz)
 
 # ============================================================================
+print("\n8. LA RELECTURE — la SECONDE liste blanche, celle qui a fait echouer U1a")
+# La preuve reseau l'a montre : `audience: "women-only"` partait bien dans la
+# requete, et la base le contenait. Le champ n'etait simplement JAMAIS RELU par
+# `startEditOffer`, qui est une DEUXIEME liste blanche. Rouvrir l'offre
+# affichait donc « Tout le monde », et comme PUT /offers/{id} fait un
+# `$set: offer.model_dump()` COMPLET, la sauvegarde suivante ecrasait la base.
+# La section 7 ne pouvait pas l'attraper : elle hydratait depuis le document de
+# la base, en sautant precisement l'etape fautive.
+_j = _src_dash.index("const startEditOffer")
+_k = _src_dash.index("setNewOffer({", _j)
+_bloc_relu = _src_dash[_k:_src_dash.index("\n    });", _k)]
+_cles_relues = set(re.findall(r"^\s{6}([a-zA-Z_][a-zA-Z0-9_]*):", _bloc_relu, re.M))
+
+verifier("8a. `audience` est relu a la reouverture", "audience" in _cles_relues,
+         "sans cette ligne le bouton retombe sur « Tout le monde » "
+         "et la sauvegarde suivante ecrase la base")
+
+# LA REGLE GENERALE, celle qui rend le piege impossible a repeter : tout champ
+# qui PART doit etre RELU. Sinon il revient vide au formulaire et le $set
+# complet l'efface. `thumbnail` est la seule exception legitime : il n'est pas
+# saisi, il est DERIVE de la premiere image non vide a l'envoi.
+_DERIVES = {"thumbnail"}
+_jamais_relus = _cles_envoyees - _cles_relues - _DERIVES
+verifier("8b. tout champ envoye est aussi relu a l'edition",
+         not _jamais_relus,
+         "champs ecrasables a la premiere reouverture : %s" % sorted(_jamais_relus))
+
+# Et l'etat neuf comme le reset doivent porter une audience, sans quoi celle de
+# l'offre precedente resterait collee au formulaire suivant.
+_e = _src_dash.index("const [newOffer, setNewOffer] = useState({")
+verifier("8c. l'offre neuve part sur une audience definie",
+         "audience:" in _src_dash[_e:_src_dash.index("\n  });", _e)])
+_c = _src_dash.index("const cancelEditOffer")
+verifier("8d. l'abandon d'edition remet l'audience a zero",
+         "audience:" in _src_dash[_c:_src_dash.index("\n    });", _c)],
+         "sinon l'audience de l'offre abandonnee fuit sur la suivante")
+
+# ============================================================================
 print("\n" + "=" * 78)
 _ok = sum(1 for _, c, _ in RESULTATS if c)
 print("U1a : %d / %d verifications" % (_ok, len(RESULTATS)))

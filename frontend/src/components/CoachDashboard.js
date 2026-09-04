@@ -1749,7 +1749,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     videoUrl: '', linked_course_ids: [],
     duration_minutes: '', location: '', max_participants: '',
     // V225: libelles des paliers de prix progressif (personnalisables).
-    label_early_bird: '', label_standard: '', label_last_minute: ''
+    label_early_bird: '', label_standard: '', label_last_minute: '',
+    // U1a : l'audience par defaut d'une offre neuve.
+    audience: 'all'
   });
   const [editingOfferId, setEditingOfferId] = useState(null); // Pour mode édition
   const fileInputRef = useRef(null);
@@ -3261,6 +3263,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // ligne, rouvrir une offre afficherait un avantage VIDE alors que la
       // base en porte un, et la premiere sauvegarde l'effacerait.
       member_discount_pct: parseFloat(offer.member_discount_pct) || 0,
+      // U1a : SEPTIEME cas du meme piege que les paliers (V223), les libelles
+      // (V225), le lien partenaire (V256), le prix alternatif (V260), les deux
+      // cases (LOT 2 FIX) et l'avantage membre (LOT 3b). `audience` partait
+      // BIEN a l'enregistrement — la preuve reseau montre `women-only` dans le
+      // corps de la requete, et la base le contient — mais n'etait JAMAIS RELU
+      // ici. Rouvrir l'offre affichait donc « Tout le monde », et le
+      // `$set: offer.model_dump()` de PUT /offers/{id} ramenait la base a
+      // « all » a la sauvegarde suivante : perte silencieuse.
+      // `||` et non `??` : une chaine vide n'est pas une audience valide.
+      audience: offer.audience || 'all',
     });
     setEditingOfferId(offer.id);
     // Scroll vers le formulaire
@@ -3293,7 +3305,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       social_proof_price: '', // V260
       // LOT 3b : sans ce reset, l'avantage membre de l'offre qu'on vient
       // d'abandonner resterait pre-rempli sur la suivante.
-      member_discount_pct: 0
+      member_discount_pct: 0,
+      // U1a : sans ce reset, l'audience de l'offre qu'on vient d'abandonner
+      // resterait pre-remplie — et publiee — sur l'offre suivante.
+      audience: 'all'
     });
     setEditingOfferId(null);
   };
