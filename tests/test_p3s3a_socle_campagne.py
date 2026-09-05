@@ -124,9 +124,13 @@ verifier("2c. le modele de mise a jour accepte les deux",
 verifier("2d. la creation par defaut pose les deux a False",
          '"P3_LAUNCH_ENABLED": False,' in SRC and
          '"P3_LAUNCH_ENVOI_REEL": False,' in SRC)
+# LA GARDE TESTAIT UNE POSITION, PAS UN INVARIANT. Le `):` final ne disait
+# qu'une chose : « ce drapeau est le DERNIER de la liste » — vrai le jour ou la
+# ligne a ete ecrite, faux des qu'un lot en ajoute un autre (AI-P4). Ce qui
+# compte est que les deux drapeaux SOIENT completes a False, ou qu'ils soient.
 verifier("2e. la completion a la lecture les rend False s'ils sont ABSENTS",
          '("P3_LAUNCH_ENABLED", False),' in SRC and
-         '("P3_LAUNCH_ENVOI_REEL", False)):' in SRC)
+         '("P3_LAUNCH_ENVOI_REEL", False)' in SRC)
 
 # Le coeur : la porte d'envoi. Aucune combinaison ne l'ouvre sauf deux `True`.
 for _cas, _flags, _attendu in (

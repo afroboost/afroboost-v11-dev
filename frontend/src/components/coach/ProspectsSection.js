@@ -550,6 +550,53 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
     }
   }, [base, carteDe, majCarte]);
 
+  /* ---------- AI-P4 — VALIDER, PUIS ENVOYER. DEUX GESTES, JAMAIS UN. ----------
+
+     « Valider et envoyer » N'ENVOIE RIEN : il demande au serveur ce qui
+     partirait, et affiche cet aperçu. Seul « Confirmer l'envoi » appelle la
+     route d'envoi. Un e-mail à un partenaire est irréversible ; un clic de
+     trop ne doit pas suffire.
+
+     L'APERÇU VIENT DU SERVEUR, PAS DE L'ÉCRAN. Recalculer ici le destinataire
+     ou l'objet créerait une seconde vérité : le jour où elle diverge, le coach
+     approuve un texte et un autre part. L'écran affiche ce que le serveur dit
+     qu'il ferait — destinataire compris. */
+  const preparerEnvoi = useCallback(async (id) => {
+    if (!id || carteDe(id).chargement) return;
+    majCarte(id, { chargement: true, erreur: '' });
+    try {
+      const r = await axios.get(`${base}/prospect-inbound/${encodeURIComponent(id)}/apercu-envoi`);
+      majCarte(id, { chargement: false, apercu: (r && r.data) || null });
+    } catch (e) {
+      const detail = (e && e.response && e.response.data && e.response.data.detail)
+        || "L'aperçu n'a pas pu être préparé.";
+      majCarte(id, { chargement: false, erreur: String(detail) });
+    }
+  }, [base, carteDe, majCarte]);
+
+  /* L'ENVOI RÉEL. Il porte l'empreinte du texte AFFICHÉ : si le brouillon a
+     changé entre l'aperçu et la confirmation, le serveur refuse plutôt que
+     d'expédier un autre texte. */
+  const confirmerEnvoi = useCallback(async (id) => {
+    const carte = carteDe(id);
+    const apercu = carte.apercu;
+    if (!id || !apercu || carte.chargement) return;
+    majCarte(id, { chargement: true, erreur: '' });
+    try {
+      const r = await axios.post(
+        `${base}/prospect-inbound/${encodeURIComponent(id)}/envoyer-reponse`,
+        { confirme: true, draft_hash: apercu.draft_hash });
+      const d = (r && r.data) || {};
+      majCarte(id, { chargement: false, apercu: null,
+                     envoye: (d.envoi || {}).send_status || 'envoye' });
+      chargement.reessayer('reponses');
+    } catch (e) {
+      const detail = (e && e.response && e.response.data && e.response.data.detail)
+        || "L'envoi n'a pas abouti.";
+      majCarte(id, { chargement: false, erreur: String(detail) });
+    }
+  }, [base, carteDe, majCarte, chargement]);
+
   /* READ-P1 — « TRAITÉ » EST UNE DÉCISION, JAMAIS UNE DÉDUCTION.
      Lire ne traite pas, analyser ne traite pas. Seul ce clic le fait — et il
      est réversible, parce qu'un état qu'on ne peut pas corriger finit ignoré. */
@@ -1325,12 +1372,123 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
                               Modifier
                             </button>
                           )}
-                          {/* AUCUN FAUX BOUTON ACTIF. L'envoi n'existe pas
-                              encore : on le dit, on ne le mime pas. */}
-                          <span data-testid="envoi-a-venir"
-                                style={{ fontSize: '11px', opacity: 0.6, color: TEXTE }}>
-                            Envoi disponible prochainement
-                          </span>
+                          {/* AI-P4 — « VALIDER ET ENVOYER » N'ENVOIE PAS.
+                              Il ouvre l'aperçu. Seul « Confirmer l'envoi »
+                              expédie — un e-mail à un partenaire est
+                              irréversible, un clic de trop ne doit pas
+                              suffire. */}
+                          {bro && (
+                            <button type="button" data-testid="valider-envoyer"
+                                    onClick={() => preparerEnvoi(r.id)}
+                                    disabled={occupe}
+                                    style={{ ...stylePetitBouton, fontWeight: 600,
+                                             opacity: occupe ? 0.6 : 1 }}>
+                              Valider et envoyer
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ============ AI-P4 : L'ÉCRAN DE CONFIRMATION ============
+                          Compact, dans la carte — pas une modale pleine page.
+                          Il montre EXACTEMENT ce qui partirait, tel que le
+                          serveur l'a calculé : organisation, destinataire,
+                          objet, texte final. */}
+                      {carte.apercu && (
+                        <div data-testid="confirmation-envoi"
+                             style={{ marginTop: '10px', padding: '11px',
+                                      borderRadius: '9px',
+                                      background: 'rgba(0,0,0,0.30)',
+                                      border: `1px solid rgba(${RGB}, 0.5)` }}>
+                          <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.7,
+                                        color: TEXTE, letterSpacing: '0.05em',
+                                        marginBottom: '7px' }}>
+                            AVANT D’ENVOYER — VÉRIFIEZ
+                          </div>
+                          {carte.apercu.validation_requise && (
+                            <div data-testid="confirmation-validation"
+                                 style={{ fontSize: '11px', fontWeight: 700, color: TEXTE,
+                                          padding: '6px 8px', borderRadius: '6px',
+                                          background: 'rgba(245,158,11,0.28)',
+                                          marginBottom: '7px' }}>
+                              VALIDATION BASSI NÉCESSAIRE — {(carte.apercu.motifs_validation || []).join(', ')}
+                            </div>
+                          )}
+                          {[['Organisation', carte.apercu.organisation],
+                            ['Destinataire', carte.apercu.destinataire],
+                            ['Objet', carte.apercu.objet],
+                            ['État du dossier',
+                             (STATUT_COMMERCIAL[carte.apercu.statut_commercial]
+                              || STATUT_COMMERCIAL.a_repondre).libelle]].map(([cle, val]) => (
+                            <div key={cle} style={{ fontSize: '11px', color: TEXTE,
+                                                    marginBottom: '2px', wordBreak: 'break-word' }}>
+                              <span style={{ opacity: 0.65 }}>{cle} : </span>
+                              <strong data-testid={`apercu-${cle.split(' ')[0].toLowerCase()}`}>
+                                {val || '—'}
+                              </strong>
+                            </div>
+                          ))}
+                          <div data-testid="apercu-texte"
+                               style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
+                                        lineHeight: 1.5, marginTop: '7px', padding: '8px 9px',
+                                        borderRadius: '7px', background: 'rgba(0,0,0,0.30)' }}>
+                            {carte.apercu.texte}
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                        marginTop: '9px', alignItems: 'center' }}>
+                            {/* LE BOUTON N'EST ACTIF QUE SI L'ENVOI L'EST VRAIMENT.
+                                Un bouton qui a l'air cliquable et qui refuse est
+                                pire qu'un bouton désactivé qui dit pourquoi. */}
+                            <button type="button" data-testid="confirmer-envoi"
+                                    onClick={() => confirmerEnvoi(r.id)}
+                                    disabled={occupe || !carte.apercu.envoi_possible
+                                              || carte.apercu.contexte_obsolete
+                                              || carte.apercu.deja_envoye}
+                                    style={{ ...styleBouton,
+                                             opacity: (occupe || !carte.apercu.envoi_possible
+                                                       || carte.apercu.contexte_obsolete
+                                                       || carte.apercu.deja_envoye) ? 0.5 : 1,
+                                             cursor: carte.apercu.envoi_possible ? 'pointer' : 'not-allowed' }}>
+                              {occupe ? 'Envoi…' : 'Confirmer l’envoi'}
+                            </button>
+                            <button type="button" data-testid="annuler-envoi"
+                                    onClick={() => majCarte(r.id, { apercu: null })}
+                                    style={stylePetitBouton}>
+                              Annuler
+                            </button>
+                            {!carte.apercu.envoi_possible && (
+                              <span data-testid="envoi-non-active"
+                                    style={{ fontSize: '11px', opacity: 0.7, color: TEXTE }}>
+                                Envoi non activé
+                              </span>
+                            )}
+                            {carte.apercu.deja_envoye && (
+                              <span data-testid="deja-envoye"
+                                    style={{ fontSize: '11px', opacity: 0.7, color: TEXTE }}>
+                                Déjà envoyé
+                              </span>
+                            )}
+                            {carte.apercu.contexte_obsolete && (
+                              <span data-testid="envoi-bloque-contexte"
+                                    style={{ fontSize: '11px', opacity: 0.8, color: TEXTE }}>
+                                Le contexte a changé — régénérez avant d’envoyer.
+                              </span>
+                            )}
+                            {carte.apercu.fil_rattache && (
+                              <span style={{ fontSize: '10px', opacity: 0.55, color: TEXTE }}>
+                                rattaché au fil d’origine
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {carte.envoye && (
+                        <div data-testid="envoi-reussi"
+                             style={{ fontSize: '11px', marginTop: '8px', padding: '7px 9px',
+                                      borderRadius: '7px', color: TEXTE,
+                                      background: 'rgba(34,197,94,0.20)' }}>
+                          Réponse envoyée.
                         </div>
                       )}
 

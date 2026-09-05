@@ -593,15 +593,22 @@ verifier("8a. l'écran n'appelle que partner-prospects, prospect-campaigns, "
 # Ce qui reste interdit est ce qui compte : aucun PUT, aucun DELETE, aucun
 # chemin d'envoi. Une garde qui accepterait n'importe quel verbe ne garderait
 # plus rien.
+# Le motif capturait `[a-z]+` : `envoyer-reponse` y devenait `/envoyer` et
+# `apercu-envoi` `/apercu`. Un recensement tronque nomme mal ce qu'il garde.
 _SOUS_ROUTES = set(re.findall(
-    r"prospect-inbound/\$\{encodeURIComponent\(id\)\}(/[a-z]+)", ECRAN))
+    r"prospect-inbound/\$\{encodeURIComponent\(id\)\}(/[a-z-]+)", ECRAN))
 # AI-P3 AJOUTE `/notes`, ET ON LA NOMME. Une note raconte une action HUMAINE
 # (appel, WhatsApp, rencontre) : elle n'envoie rien, n'écrit jamais dans le
 # message reçu — qui reste immuable — et ne touche pas la fiche prospect. Ce
 # qui reste interdit est ce qui compte : aucun PUT, aucun DELETE.
 verifier("8a-ter. `prospect-inbound` n'expose que des écritures d'état, "
          "d'analyse et de notes — jamais un PUT ni un DELETE",
-         _SOUS_ROUTES == {"/lu", "/traite", "/analyser", "/brouillon", "/notes"}
+         # AI-P4 ajoute l'apercu (LECTURE) et l'envoi de la reponse validee.
+         # Ce dernier n'est atteignable qu'apres une confirmation explicite, et
+         # le serveur refuse tant que les deux drapeaux `P3_REPONSE_*` sont
+         # fermes. PUT et DELETE restent interdits — c'est ce qui compte.
+         _SOUS_ROUTES == {"/lu", "/traite", "/analyser", "/brouillon", "/notes",
+                          "/apercu-envoi", "/envoyer-reponse"}
          and not re.search(r"axios\.(put|delete)\([^)]*prospect-inbound", ECRAN),
          str(_SOUS_ROUTES))
 verifier("8a-quater. `/brouillon` reste une LECTURE — jamais un POST",
@@ -627,7 +634,10 @@ verifier("8b-bis. les POST de l'écran visent la préparation, l'approbation "
              "/prospect-inbound/${encodeURIComponent(id)}/traite",
              "/prospect-inbound/${encodeURIComponent(id)}/analyser",
              # AI-P3 : une action humaine consignée, jamais un envoi.
-             "/prospect-inbound/${encodeURIComponent(id)}/notes"},
+             "/prospect-inbound/${encodeURIComponent(id)}/notes",
+             # AI-P4 : l'envoi de la réponse validée — deux gestes (aperçu puis
+             # confirmation) et deux drapeaux fermés à la livraison.
+             "/prospect-inbound/${encodeURIComponent(id)}/envoyer-reponse"},
          str(set(re.findall(r"axios\.post\(\s*`\$\{base\}(/[^`]*)`", ECRAN))))
 verifier("8b-quater. aucun de ces POST n'écrit sur une fiche prospect",
          "/partner-prospects" not in str(

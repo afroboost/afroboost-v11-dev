@@ -1424,6 +1424,14 @@ class FeatureFlags(BaseModel):
     # « envoi reel » par accident. Ici l'absence est le cas SUR.
     P3_LAUNCH_ENABLED: bool = False           # P3-S3
     P3_LAUNCH_ENVOI_REEL: bool = False        # P3-S3
+    # AI-P4 : la REPONSE a un partenaire qui nous a ecrit. Drapeaux PROPRES,
+    # jamais ceux du J0 : les rouvrir pour repondre a une personne relancerait
+    # une campagne de 55 destinataires. Deux chemins, deux verrous.
+    #   les deux a false             -> lot DORMANT (etat de livraison)
+    #   ACTIF=true, ENVOI_REEL=false -> l'ecran fonctionne, RIEN ne part
+    #   les deux a true              -> la reponse validee part vraiment
+    P3_REPONSE_ACTIF: bool = False            # AI-P4
+    P3_REPONSE_ENVOI_REEL: bool = False       # AI-P4
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1450,6 +1458,8 @@ class FeatureFlagsUpdate(BaseModel):
     META_WEBHOOK_SIGNATURE_ENABLED: Optional[bool] = None  # V453
     P3_LAUNCH_ENABLED: Optional[bool] = None  # P3-S3
     P3_LAUNCH_ENVOI_REEL: Optional[bool] = None  # P3-S3
+    P3_REPONSE_ACTIF: Optional[bool] = None      # AI-P4
+    P3_REPONSE_ENVOI_REEL: Optional[bool] = None  # AI-P4
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -18048,6 +18058,8 @@ async def get_feature_flags():
             "META_WEBHOOK_SIGNATURE_ENABLED": False,       # V453 : défaut OFF (webhook inchangé, observation seule)
             "P3_LAUNCH_ENABLED": False,        # P3-S3 : défaut OFF (moteur dormant)
             "P3_LAUNCH_ENVOI_REEL": False,     # P3-S3 : défaut OFF (simulation même si activé)
+            "P3_REPONSE_ACTIF": False,         # AI-P4 : défaut OFF (aucun envoi de réponse)
+            "P3_REPONSE_ENVOI_REEL": False,    # AI-P4 : défaut OFF (simulation même si activé)
             "P3_RELANCE_ENABLED": False,       # P3-R2 : défaut OFF (aucune relance J+3/J+7)
             "P3_RELANCE_ENVOI_REEL": False,    # P3-R2 : défaut OFF (simulation même si activé)
             "updatedAt": None,
@@ -18076,7 +18088,9 @@ async def get_feature_flags():
                          ("AUTO_PRESENCE_TRIAL_ECRITURE_REELLE", False),
                          ("META_WEBHOOK_SIGNATURE_ENABLED", False),
                          ("P3_LAUNCH_ENABLED", False),
-                         ("P3_LAUNCH_ENVOI_REEL", False)):
+                         ("P3_LAUNCH_ENVOI_REEL", False),
+                         ("P3_REPONSE_ACTIF", False),
+                         ("P3_REPONSE_ENVOI_REEL", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -26774,6 +26788,11 @@ def p3ai_brouillon_depuis(contexte: dict, sortie: dict, viewer: str,
         "demande": str(s.get("demande") or "")[:600],
         "prochaine_action": str(s.get("prochaine_action") or "")[:600],
         "reponse_proposee": reponse,
+        # AI-P4 — CE QUE LE MODELE AVAIT ECRIT, fige a la generation.
+        # `reponse_proposee` bougera si le coach corrige a la main ; celui-ci
+        # ne bouge pas. Un envoi est irreversible : on doit pouvoir relire plus
+        # tard qui a ecrit quoi, sans avoir a le deviner.
+        "texte_modele": reponse,
         "validation_requise": bool(sensibles),
         "motifs_validation": sensibles,
         "ton": ton if ton in P3AI_TONS else "",
@@ -27298,7 +27317,16 @@ def p3n_contexte_obsolete(brouillon, notes) -> bool:
     ecrit_le = str(brouillon.get("genere_le") or brouillon.get("updated_at") or "")
     if not ecrit_le:
         return False
-    return any(str(n.get("created_at") or "") > ecrit_le for n in notes or [])
+    # AI-P4 — LA NOTE QUI RACONTE NOTRE PROPRE ENVOI NE PERIME RIEN.
+    # Trouve par le banc : apres un envoi reussi, la note « Reponse Afroboost
+    # envoyee » est posterieure au brouillon, et le declarait donc perime — un
+    # rejeu tombait alors sur « le contexte a change » au lieu de « deja
+    # envoye ». Or cette note ne dit RIEN de neuf sur le prospect : elle
+    # documente ce qu'on vient de faire. Seule une information NOUVELLE sur le
+    # partenaire rend un brouillon caduc.
+    return any(str(n.get("created_at") or "") > ecrit_le
+               and (n.get("origine") or "") != "envoi"
+               for n in notes or [])
 
 
 @api_router.post("/prospect-inbound/{inbound_id}/notes")
@@ -27516,6 +27544,498 @@ async def p3n2_signaler(message: dict, action: dict) -> dict:
                 "envoye" if pousse else "non abouti")
     return {"signale": True, "motif": "", "push": pousse, "url": lien,
             "organisation": organisation}
+
+
+# ============================================================================
+# AI-P4 — LA REPONSE PART, ET SEULEMENT QUAND UN HUMAIN L'A DECIDE
+# ============================================================================
+# A LA LIVRAISON, CE LOT N'ENVOIE RIEN. Les deux drapeaux sont fermes : l'ecran
+# fonctionne de bout en bout, la garde refuse, aucun e-mail ne quitte la
+# machine. Il faudra un GO explicite pour ouvrir le premier.
+#
+# UN CHEMIN UNITAIRE, PAS CELUI DU J0. Reutiliser `P3S3DFournisseurEmail`
+# aurait demande d'ouvrir `P3_LAUNCH_*` — c'est-a-dire de rouvrir la campagne
+# de 55 destinataires pour repondre a UNE personne. Deux besoins opposes ne
+# peuvent pas partager un interrupteur. Ce fournisseur-ci ne connait qu'un
+# dossier, et il a ses propres verrous.
+#
+# LE DESTINATAIRE EST CELUI QUI A ECRIT, ET C'EST UNE CORRECTION IMPORTANTE.
+# L'audit du 05/09 a mesure un ecart reel : la proposition d'ACD Lausanne etait
+# partie a `info@assoacd.org`, mais c'est `eveline.sautaux@assoacd.org` qui a
+# repondu. Repondre a `action.target` aurait renvoye la reponse d'Eveline vers
+# une boite generique — elle n'aurait peut-etre jamais su qu'on lui avait
+# repondu. On repond donc a l'adresse qui a ECRIT (`inbound.from_email`),
+# resolue EN BASE et jamais fournie par le navigateur.
+#
+# LE FIL DE DISCUSSION EST REELLEMENT POSSIBLE, contrairement a ce que le
+# dossier supposait. Les trois messages recus portent un VRAI `Message-ID`
+# (`...@salsarica.ch`, `...@assoacd.org`, `...@mail.infomaniak.com`), et nos
+# actions gardent celui du J0 (`rfc_message_id`, `...@eu-west-1.amazonses.com`).
+# On peut donc poser `In-Reply-To` ET une chaine `References` complete. Ce que
+# Resend ne transmet pas, ce sont les en-tetes ENTRANTS `In-Reply-To` /
+# `References` — mesure : `[]` sur les trois. On n'en a pas besoin : ce qu'il
+# faut pour repondre, c'est l'identifiant du message auquel on repond.
+
+P3AI4_COLLECTION = "prospect_reply_sends"
+P3AI4_PREFIXE = "[AI-P4]"
+P3AI4_DRAPEAU_ACTIF = "P3_REPONSE_ACTIF"
+P3AI4_DRAPEAU_REEL = "P3_REPONSE_ENVOI_REEL"
+
+# Les etats d'un envoi. `indetermine` n'est pas un echec : c'est l'aveu qu'on
+# ignore si le message est parti — et dans ce cas le verrou RESTE pose, sinon
+# un reessai enverrait un second e-mail au meme partenaire.
+P3AI4_RESERVE = "reserve"
+P3AI4_ENVOYE = "envoye"
+P3AI4_ECHEC = "echec"
+P3AI4_INDETERMINE = "indetermine"
+
+P3AI4_OBJET_MAX = 200
+
+
+def p3ai4_envoi_autorise(flags) -> bool:
+    """Les DEUX drapeaux, jamais un seul. PURE.
+
+    Un `and` plutot qu'un `or`, et l'absence vaut FAUX : un drapeau qu'on a
+    oublie de poser ne doit pas ouvrir un envoi. C'est la meme regle que P3-S3
+    et P1-b, pour la meme raison.
+    """
+    f = flags or {}
+    return bool(f.get(P3AI4_DRAPEAU_ACTIF)) and bool(f.get(P3AI4_DRAPEAU_REEL))
+
+
+def p3ai4_objet(sujet_recu) -> str:
+    """L'objet de la reponse : « Re: » une seule fois. PURE.
+
+    Le message recu porte deja « Re: Proposition de collaboration... ». Empiler
+    un second « Re: » n'ajoute rien et sort du fil dans certains clients.
+    """
+    texte = str(sujet_recu or "").strip()
+    if not texte:
+        return "Re: votre message"
+    sans = texte
+    while sans[:3].lower() in ("re:", "re :"):
+        sans = sans[3:].strip()
+    while sans[:3].lower() == "re:":
+        sans = sans[3:].strip()
+    return ("Re: " + sans)[:P3AI4_OBJET_MAX] if sans else "Re: votre message"
+
+
+def p3ai4_destinataire(message: dict, action: dict) -> str:
+    """A QUI la reponse part. PURE, et resolue en base — jamais du navigateur.
+
+    L'ORDRE N'EST PAS ARBITRAIRE. `from_email` d'abord : c'est la personne qui
+    a REELLEMENT ecrit, et c'est a elle qu'on repond. `action.target` ensuite,
+    en dernier recours seulement — c'est l'adresse a qui la PROPOSITION est
+    partie, ce qui n'est pas la meme chose (mesure du 05/09 : ACD a ete
+    contacte sur `info@`, et c'est `eveline.sautaux@` qui a repondu).
+
+    Une adresse illisible rend "" : l'appelant refusera l'envoi plutot que de
+    retomber sur un defaut. On n'ecrit jamais « au hasard ».
+    """
+    for candidat in ((message or {}).get("from_email"), (action or {}).get("target")):
+        valeur = str(candidat or "").strip().lower()
+        if valeur and _P3S3_RE_MAIL.match(valeur):
+            return valeur
+    return ""
+
+
+def p3ai4_entetes(message: dict, action: dict) -> dict:
+    """Les en-tetes qui rattachent la reponse au fil. PURE.
+
+    ON NE FABRIQUE RIEN. Chaque en-tete n'est pose que si l'identifiant qui le
+    fonde existe vraiment. Un `In-Reply-To` invente ne rattacherait a rien et
+    pourrait casser le fil au lieu de le construire.
+
+    `References` porte la CHAINE : notre J0 d'abord, leur reponse ensuite —
+    c'est l'ordre chronologique que la RFC 5322 attend.
+    """
+    # LES CHEVRONS SONT OBLIGATOIRES, ET LEUR ABSENCE EST SILENCIEUSE.
+    # `p3u2_normaliser_identifiant` les RETIRE — c'est ce qu'il faut pour
+    # comparer deux identifiants, et c'est ce qu'il ne faut surtout pas pour
+    # les EMETTRE : la RFC 5322 exige `<id@domaine>`, et un client qui recoit
+    # un `In-Reply-To` nu ne rattache rien. L'e-mail part quand meme, le fil ne
+    # se forme pas, et personne ne s'en apercoit. Le banc a attrape ce cas.
+    def _chevrons(valeur):
+        v = str(valeur or "").strip()
+        return ("<%s>" % v) if v and not v.startswith("<") else v
+
+    entetes = {}
+    recu = _chevrons(p3u2_normaliser_identifiant((message or {}).get("message_id")))
+    notre = _chevrons(p3u2_normaliser_identifiant((action or {}).get(P3U2_CHAMP_RFC)))
+    if recu:
+        entetes["In-Reply-To"] = recu
+        entetes["References"] = ("%s %s" % (notre, recu)) if notre else recu
+    elif notre:
+        entetes["References"] = notre
+    return entetes
+
+
+def p3ai4_empreinte(texte) -> str:
+    """L'empreinte du texte approuve. PURE, et c'est la cle de tout le lot.
+
+    ELLE SERT DEUX FOIS, ET C'EST VOULU :
+      * le coach envoie l'empreinte de CE QU'IL A LU ; si le brouillon a change
+        entre-temps, le serveur refuse plutot que d'expedier un autre texte ;
+      * elle entre dans la cle d'idempotence : deux clics sur le meme texte ne
+        peuvent produire qu'un envoi, alors qu'un texte CORRIGE est une
+        operation differente — et doit pouvoir partir.
+    Un simple compteur de version n'aurait pas cette seconde propriete.
+    """
+    import hashlib as _h
+    return _h.sha256(str(texte or "").encode("utf-8")).hexdigest()[:16]
+
+
+def p3ai4_cle_envoi(inbound_id, empreinte) -> str:
+    """La cle deterministe d'UNE tentative d'envoi. PURE."""
+    return "%s_%s" % (str(inbound_id or ""), str(empreinte or ""))
+
+
+def p3ai4_statut_apres(intention) -> str:
+    """L'etat commercial APRES un envoi reussi. PURE.
+
+    REPONDRE N'EST PAS CLORE. Le dossier passe « en attente » — on attend
+    desormais le partenaire — et surtout pas « traite », qui voudrait dire
+    « plus rien a faire ». Un refus, lui, reste un refus : lui envoyer un mot
+    de courtoisie ne le transforme pas en piste.
+    """
+    return P3N_STATUT_REFUS if p3ai_intention(intention) == "refus" \
+        else P3N_STATUT_ATTENTE
+
+
+class P3AI4FournisseurReponse:
+    """L'adaptateur d'envoi d'AI-P4. SON PROPRE, jamais celui de la campagne.
+
+    LE DOUBLE VERROU EST ICI AUSSI, pas seulement dans la route. Deux gardes
+    independantes sur le meme interdit, parce qu'une seule finit toujours par
+    etre contournee par un chemin qu'on n'avait pas prevu.
+
+    SUCCES = LE FOURNISSEUR A RENDU UN IDENTIFIANT. Ni « aucune exception », ni
+    « l'appel est parti ». Sans identifiant on ne conclut pas : le verrou
+    anti-double reste pose et un humain tranche.
+    """
+
+    nom = "resend"
+
+    def __init__(self, envoi_autorise: bool = False, transport=None,
+                 expediteur: str = None):
+        self.envoi_autorise = bool(envoi_autorise)
+        self.transport = transport          # n'existe que pour les bancs
+        self.expediteur = expediteur or P3S3D2_EXPEDITEUR
+        self.appels = []
+
+    def charge_utile(self, envoi: dict) -> dict:
+        """Ce qui serait transmis a Resend. Fonction PURE, sans effet."""
+        message = (envoi or {}).get("texte") or ""
+        return {
+            "params": {
+                "from": self.expediteur,
+                "to": [(envoi or {}).get("destinataire")],
+                "subject": (envoi or {}).get("objet") or "",
+                # LE JETON DE REPONSE EST CONSERVE. Sans lui, la prochaine
+                # reponse du partenaire arriverait sans rattachement possible
+                # et finirait en revue manuelle — on casserait P3-R1 en
+                # repondant.
+                "reply_to": _reply_to_vivant((envoi or {}).get("reply_to"), V336_REPLY_TO),
+                "headers": (envoi or {}).get("entetes") or {},
+                "text": message,
+                "html": p3s3d2_corps_html(message),
+            },
+            "options": {"idempotency_key": (envoi or {}).get("cle") or ""},
+        }
+
+    async def envoyer(self, envoi: dict) -> dict:
+        reponse = {"provider": self.nom, "verdict": None, "provider_message_id": None,
+                   "error_code": None, "error_message": None}
+        charge = self.charge_utile(envoi)
+        destinataire = ((envoi or {}).get("destinataire") or "").strip()
+        if not destinataire or not _P3S3_RE_MAIL.match(destinataire.lower()):
+            return dict(reponse, verdict=P3AI4_ECHEC, error_code="CIBLE_INVALIDE",
+                        error_message="adresse absente ou illisible")
+        if not str((envoi or {}).get("texte") or "").strip():
+            return dict(reponse, verdict=P3AI4_ECHEC, error_code="TEXTE_VIDE",
+                        error_message="aucun texte a envoyer")
+        if not str(charge["params"]["subject"] or "").strip():
+            return dict(reponse, verdict=P3AI4_ECHEC, error_code="OBJET_ABSENT",
+                        error_message="aucun objet")
+        if not self.envoi_autorise:
+            return dict(reponse, verdict=P3AI4_ECHEC, error_code="ENVOI_NON_AUTORISE",
+                        error_message="les deux drapeaux d'envoi ne sont pas ouverts")
+
+        self.appels.append({"destinataire": destinataire, "cle": charge["options"]["idempotency_key"]})
+        try:
+            if self.transport is not None:
+                brut = await self.transport(charge["params"], charge["options"])
+            else:
+                # LE SEUL APPEL SORTANT DU LOT, inatteignable drapeaux fermes.
+                import resend
+                brut = await asyncio.to_thread(
+                    resend.Emails.send, charge["params"], charge["options"])
+        except Exception as e:  # noqa: BLE001
+            _v = p3s3d2_verdict_erreur(e)
+            # UNE PANNE AMBIGUE N'EST PAS UN ECHEC. Le SDK enveloppe toute
+            # panne HTTP sans distinguer « jamais parti » de « parti, reponse
+            # perdue ». Dans le second cas, un reessai enverrait un DEUXIEME
+            # e-mail au partenaire. On ne tranche donc pas.
+            return dict(reponse,
+                        verdict=P3AI4_INDETERMINE if _v["verdict"] in
+                        (P3S3D_INDETERMINE, P3S3D_RETRYABLE, P3S3D_RATE_LIMIT)
+                        else P3AI4_ECHEC,
+                        error_code=_v["error_code"], error_message=_v["error_message"])
+
+        identifiant = (brut or {}).get("id") if isinstance(brut, dict) else None
+        if not identifiant:
+            return dict(reponse, verdict=P3AI4_INDETERMINE, error_code="SANS_IDENTIFIANT",
+                        error_message="le fournisseur n'a rendu aucun identifiant")
+        return dict(reponse, verdict=P3AI4_ENVOYE, provider_message_id=identifiant)
+
+
+async def p3ai4_refuse_par_stop(destinataire: str) -> bool:
+    """Ce partenaire a-t-il dit « ne m'ecrivez plus » ? Registre EXISTANT.
+
+    UNE PANNE DE LECTURE NE VAUT PAS UN REFUS — c'est la convention de tout le
+    depot (`c3_refus_exprimes`) : une base qui hoquette ne doit pas annuler
+    silencieusement des envois legitimes. Mais elle ne vaut pas non plus une
+    autorisation : ici, on preferera refuser, parce qu'ecrire a quelqu'un qui
+    a dit non coute plus cher qu'un envoi differe.
+    """
+    valeur = (destinataire or "").strip().lower()
+    if not valeur:
+        return True
+    # `c3_refus_exprimes` rend des VALEURS NORMALISEES, pas des cles
+    # « canal:valeur ». Comparer au mauvais format ne levait jamais : un
+    # prospect ayant dit STOP aurait recu l'e-mail, sans la moindre alerte.
+    # Le banc a attrape ce cas ; on compare desormais ce que la fonction rend.
+    try:
+        normalisee = _v332_normaliser("email", valeur)
+        return bool(normalisee) and normalisee in await c3_refus_exprimes("email", [valeur])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s registre STOP illisible pour %s : %s", P3AI4_PREFIXE,
+                       valeur[:24], type(e).__name__)
+        return True
+
+
+@api_router.post("/prospect-inbound/{inbound_id}/envoyer-reponse")
+async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
+    """Le coach a valide : la reponse part. UN dossier, UNE fois.
+
+    L'ORDRE DES CONTROLES EST L'ESSENTIEL DE CETTE ROUTE. Tout ce qui peut
+    refuser refuse AVANT que le verrou ne soit pose et AVANT tout appel
+    sortant : proprietaire, brouillon present, contexte a jour, empreinte
+    concordante, destinataire resolu, registre STOP. Un refus tardif laisserait
+    des reservations orphelines ; un refus apres l'appel serait un e-mail parti
+    pour rien.
+
+    LE VERROU EST POSE AVANT L'APPEL, PAS APRES. C'est ce qui rend le double
+    clic inoffensif : la seconde requete trouve la reservation et s'arrete,
+    meme si la premiere est encore en vol.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    dossier = await p3ai_dossier(inbound_id, email)
+    message, action = dossier["message"], dossier["action"]
+    if not p3ai_est_proprietaire(message, email):
+        raise HTTPException(status_code=403,
+                            detail="Seul le proprietaire de ce dossier peut y repondre")
+
+    try:
+        corps = await request.json()
+    except (ValueError, TypeError):
+        corps = None
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+    if corps.get("confirme") is not True:
+        raise HTTPException(status_code=400,
+                            detail="Confirmation explicite requise avant tout envoi")
+
+    brouillon = await db[P3AI_BROUILLONS].find_one({"inbound_id": message["id"]}, {"_id": 0})
+    if not brouillon:
+        raise HTTPException(status_code=409, detail="Aucun brouillon a envoyer")
+    texte = str(brouillon.get("reponse_proposee") or "").strip()
+    if not texte:
+        raise HTTPException(status_code=409, detail="Le brouillon est vide")
+
+    # L'EMPREINTE DE CE QUE LE COACH A LU. Sans elle, l'ecran pourrait afficher
+    # un texte et le serveur en expedier un autre — un ecart invisible et
+    # irrattrapable une fois l'e-mail parti.
+    empreinte = p3ai4_empreinte(texte)
+    attendue = str(corps.get("draft_hash") or "").strip()
+    if not attendue:
+        raise HTTPException(status_code=400, detail="Empreinte du brouillon requise")
+    if attendue != empreinte:
+        raise HTTPException(
+            status_code=409,
+            detail="Le brouillon a ete modifie. Rechargez la derniere version "
+                   "avant l'envoi.")
+
+    # L'IDEMPOTENCE SE VERIFIE AVANT TOUT LE RESTE, et l'ordre a ete corrige
+    # apres une mesure du banc. Un rejeu doit s'entendre repondre « deja
+    # envoye » — pas un refus sur une autre regle qui, elle, aurait change
+    # entre-temps. Le message le plus utile est celui qui dit ce qui S'EST
+    # PASSE, pas ce qui empeche de recommencer.
+    cle = p3ai4_cle_envoi(message["id"], empreinte)
+    deja = await db[P3AI4_COLLECTION].find_one({"id": cle}, {"_id": 0})
+    if deja:
+        logger.info("%s envoi deja engage pour %s (%s)", P3AI4_PREFIXE,
+                    message.get("recipient_key") or "-", deja.get("send_status"))
+        return {"deja_envoye": True, "envoi": deja,
+                "statut_commercial": await p3n_statut_courant(message)}
+
+    # LE CONTEXTE A-T-IL CHANGE DEPUIS LA REDACTION ? AI-P3 sait le dire. Un
+    # brouillon perime part avec des faits faux — c'est exactement le « je vais
+    # contacter M. Ndongo Beye » qu'on a mesure. On refuse.
+    notes = await p3n_notes_du_dossier(message.get("action_id") or "")
+    if p3n_contexte_obsolete(brouillon, notes):
+        raise HTTPException(
+            status_code=409,
+            detail="Le contexte a change depuis la redaction. Regenerez ou "
+                   "confirmez le brouillon avant l'envoi.")
+
+    destinataire = p3ai4_destinataire(message, action)
+    if not destinataire:
+        raise HTTPException(status_code=409,
+                            detail="Aucune adresse exploitable pour ce dossier")
+    if await p3ai4_refuse_par_stop(destinataire):
+        raise HTTPException(status_code=409,
+                            detail="Ce destinataire ne peut pas etre contacte")
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    trace = {
+        "id": cle,
+        "inbound_id": message["id"],
+        "action_id": message.get("action_id"),
+        "coach_id": message.get("coach_id"),
+        "prospect_uuid": next((u for u in (action.get("prospect_uuids") or []) if u), None),
+        "recipient_key": message.get("recipient_key"),      # libelle, jamais identite
+        "organisation": p3ai_organisation(action),
+        "to_email": destinataire,
+        "subject": p3ai4_objet(message.get("subject")),
+        "draft_id": brouillon.get("id"),
+        "draft_version": brouillon.get("version"),
+        "draft_hash": empreinte,
+        "language": brouillon.get("langue"),
+        "intention": brouillon.get("intention"),
+        "validation_requise": bool(brouillon.get("validation_requise")),
+        # CE QUE L'IA AVAIT PROPOSE, CE QUE LE COACH A CORRIGE, CE QUI PART.
+        # Trois champs, parce qu'on doit pouvoir relire plus tard qui a ecrit
+        # quoi — et qu'un envoi est irreversible.
+        "generated_text": brouillon.get("texte_modele") or brouillon.get("reponse_proposee"),
+        "edited_text": brouillon.get("reponse_proposee") if brouillon.get("edite_le") else None,
+        "approved_text": texte,
+        "approved_at": maintenant, "approved_by": email,
+        "send_status": P3AI4_RESERVE, "provider": None, "provider_message_id": None,
+        "sent_at": None, "error_code": None, "created_at": maintenant,
+    }
+    # LA RESERVATION EST UNE INSERTION UNIQUE, donc atomique : deux requetes
+    # concurrentes ne peuvent pas la gagner toutes les deux.
+    try:
+        await db[P3AI4_COLLECTION].insert_one(dict(trace))
+    except Exception as e:  # noqa: BLE001
+        if "E11000" in str(e) or "duplicate" in str(e).lower():
+            deja = await db[P3AI4_COLLECTION].find_one({"id": cle}, {"_id": 0})
+            logger.info("%s envoi deja engage pour %s (%s)", P3AI4_PREFIXE,
+                        message.get("recipient_key") or "-", (deja or {}).get("send_status"))
+            return {"deja_envoye": True, "envoi": deja,
+                    "statut_commercial": await p3n_statut_courant(message)}
+        raise
+
+    # LES DRAPEAUX SE LISENT EN BASE, PAS DANS L'ENVIRONNEMENT. C'est ce qui
+    # permet de refermer l'envoi en une seconde depuis le tableau de bord,
+    # plutot qu'en quatre minutes de redeploiement (motif V319/V344/V349).
+    flags = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
+    autorise = p3ai4_envoi_autorise(flags)
+    jeton = str(action.get(P3R1_CHAMP_TOKEN) or "").strip()
+    envoi = {
+        "destinataire": destinataire,
+        "objet": trace["subject"],
+        "texte": texte,
+        "reply_to": p3r1_adresse_reponse(jeton) if jeton else None,
+        "entetes": p3ai4_entetes(message, action),
+        "cle": cle,
+    }
+    fournisseur = P3AI4FournisseurReponse(envoi_autorise=autorise)
+    resultat = await fournisseur.envoyer(envoi)
+
+    champs = {"send_status": resultat["verdict"], "provider": resultat["provider"],
+              "provider_message_id": resultat["provider_message_id"],
+              "error_code": resultat["error_code"],
+              "updated_at": datetime.now(timezone.utc).isoformat()}
+    if resultat["verdict"] == P3AI4_ENVOYE:
+        champs["sent_at"] = champs["updated_at"]
+    await db[P3AI4_COLLECTION].update_one({"id": cle}, {"$set": champs})
+
+    # L'ETAT COMMERCIAL NE BOUGE QUE SUR UN SUCCES PROUVE, et il passe par la
+    # SEULE regle qui existe (AI-P3) : une note declaree. Aucun second chemin
+    # de statut n'est cree — deux sources pour un meme etat finissent toujours
+    # par diverger.
+    if resultat["verdict"] == P3AI4_ENVOYE:
+        await db[P3N_COLLECTION].insert_one({
+            "id": str(uuid.uuid4()), "coach_id": message.get("coach_id"),
+            "inbound_id": message["id"], "action_id": message.get("action_id"),
+            "prospect_uuids": [u for u in (action.get("prospect_uuids") or []) if u],
+            "prospect_uuid": trace["prospect_uuid"],
+            "recipient_key": message.get("recipient_key"),
+            "type": "information",
+            "texte": "Réponse Afroboost envoyée à %s." % (trace["organisation"] or destinataire),
+            "status_after": p3ai4_statut_apres(brouillon.get("intention")),
+            "occurred_at": champs["updated_at"], "created_at": champs["updated_at"],
+            "created_by": email, "corrige_note_id": None,
+            # Elle raconte NOTRE geste, pas une information nouvelle sur le
+            # partenaire : elle ne doit donc pas perimer le brouillon envoye.
+            "origine": "envoi",
+        })
+    logger.info("%s reponse %s -> %s (%s) par %s", P3AI4_PREFIXE,
+                message.get("recipient_key") or "-", resultat["verdict"],
+                destinataire[:32], email[:24])
+    return {"deja_envoye": False,
+            "envoi": await db[P3AI4_COLLECTION].find_one({"id": cle}, {"_id": 0}),
+            "statut_commercial": await p3n_statut_courant(message),
+            **await p3ai_compteurs(email)}
+
+
+async def p3n_statut_courant(message: dict) -> str:
+    """L'etat commercial d'un dossier, relu apres ecriture. Une seule regle."""
+    notes = await p3n_notes_du_dossier((message or {}).get("action_id") or "")
+    brouillon = await db[P3AI_BROUILLONS].find_one(
+        {"inbound_id": (message or {}).get("id")}, {"_id": 0, "intention": 1})
+    return p3n_statut_commercial(message, p3n_derniere_declaration(notes),
+                                 (brouillon or {}).get("intention"))
+
+
+@api_router.get("/prospect-inbound/{inbound_id}/apercu-envoi")
+async def p3ai4_apercu(inbound_id: str, request: Request):
+    """CE QUI PARTIRAIT, sans rien envoyer. Lecture seule.
+
+    ELLE EXISTE POUR QUE L'ECRAN DE CONFIRMATION NE MENTE PAS. Recalculer le
+    destinataire, l'objet et l'empreinte cote navigateur serait une seconde
+    verite : le jour ou elle divergerait, le coach approuverait un texte et un
+    autre partirait. C'est le serveur qui dit ce qu'il ferait.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    dossier = await p3ai_dossier(inbound_id, email)
+    message, action = dossier["message"], dossier["action"]
+    brouillon = await db[P3AI_BROUILLONS].find_one({"inbound_id": message["id"]}, {"_id": 0})
+    texte = str((brouillon or {}).get("reponse_proposee") or "").strip()
+    notes = await p3n_notes_du_dossier(message.get("action_id") or "")
+    destinataire = p3ai4_destinataire(message, action)
+    flags = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
+    deja = await db[P3AI4_COLLECTION].find_one(
+        {"id": p3ai4_cle_envoi(message["id"], p3ai4_empreinte(texte))},
+        {"_id": 0, "send_status": 1, "sent_at": 1})
+    return {
+        "organisation": p3ai_organisation(action),
+        "destinataire": destinataire,
+        "objet": p3ai4_objet(message.get("subject")),
+        "texte": texte,
+        "draft_hash": p3ai4_empreinte(texte) if texte else "",
+        "langue": (brouillon or {}).get("langue"),
+        "intention": (brouillon or {}).get("intention"),
+        "validation_requise": bool((brouillon or {}).get("validation_requise")),
+        "motifs_validation": (brouillon or {}).get("motifs_validation") or [],
+        "statut_commercial": await p3n_statut_courant(message),
+        "contexte_obsolete": p3n_contexte_obsolete(brouillon, notes),
+        "envoi_possible": p3ai4_envoi_autorise(flags),
+        "deja_envoye": bool(deja and deja.get("send_status") == P3AI4_ENVOYE),
+        "fil_rattache": bool(p3ai4_entetes(message, action)),
+    }
 
 
 # ============================================================================
@@ -43619,6 +44139,14 @@ async def startup_db():
                                                ("created_at", 1)])
         await db[P3N_COLLECTION].create_index([("coach_id", 1), ("created_at", -1)])
         await db[P3N_COLLECTION].create_index("inbound_id")
+
+        # AI-P4 — UN ENVOI, UNE FOIS. L'unicite porte sur `id`, qui vaut
+        # `<inbound_id>_<empreinte du texte approuve>` : deux clics sur le meme
+        # texte ne peuvent produire qu'un e-mail, tandis qu'un texte CORRIGE
+        # est une operation differente et doit pouvoir partir.
+        await db[P3AI4_COLLECTION].create_index("id", unique=True)
+        await db[P3AI4_COLLECTION].create_index([("coach_id", 1), ("created_at", -1)])
+        await db[P3AI4_COLLECTION].create_index("inbound_id")
         await db[P3AI_BROUILLONS].create_index([("coach_id", 1), ("updated_at", -1)])
         logger.info("[INDEX] READ-P1 / AI-P1 (etats de lecture, brouillons) OK")
 

@@ -844,6 +844,10 @@ describe('P3-S3-B — préparation de campagne', () => {
          rencontre). Elle n'envoie rien, ne touche pas la fiche prospect, et
          n'écrit jamais dans le message reçu — qui reste immuable. */
       '/prospect-inbound/${encodeURIComponent(id)}/notes',
+      /* AI-P4 : l'envoi de la réponse validée. Il n'est atteignable qu'après
+         un aperçu et une confirmation explicite, et le serveur refuse tant que
+         les deux drapeaux `P3_REPONSE_*` ne sont pas ouverts. */
+      '/prospect-inbound/${encodeURIComponent(id)}/envoyer-reponse',
     ]));
   });
 
@@ -1293,15 +1297,31 @@ describe('P3-U3 — les réponses reçues', () => {
      traitée. Ce qui doit rester vrai n'est donc plus « aucun bouton » mais
      « aucun bouton n'EXPÉDIE quoi que ce soit » — et cela se vérifie sur les
      libellés ET sur les routes, pas sur un décompte. */
-  test('AUCUN bouton n’expédie quoi que ce soit depuis ce panneau', async () => {
-    avecReponses([reponseFictive()]);
+  /* AI-P4 A OUVERT UN CHEMIN D'ENVOI, ET LA GARDE CHANGE ENCORE DE FORME.
+     Exiger qu'aucun libellé ne contienne « envoyer » n'a plus de sens : le
+     bouton s'appelle « Valider et envoyer ». Ce qui doit rester vrai, et qui
+     est plus fort, c'est qu'AUCUN bouton n'expédie AU PREMIER CLIC — il faut
+     un aperçu puis une confirmation — et qu'aucune route d'envoi de CAMPAGNE
+     n'est joignable d'ici.
+     (Ce test passait jusqu'ici par accident : le bouton n'apparaît qu'avec un
+     brouillon, et ce cas n'en avait pas.) */
+  test('AUCUN bouton n’expédie AU PREMIER CLIC', async () => {
+    avecReponses([reponseFictive({ id: 'inb-etu04' })]);
     await monter(<ProspectsSection API="/api" />);
-    const libelles = [...par('reponses-recues').querySelectorAll('button')]
-      .map((b) => b.textContent.trim().toLowerCase());
-    expect(libelles.length).toBeGreaterThan(0);
-    libelles.forEach((libelle) => {
-      expect(libelle).not.toMatch(/envoyer|expédier|répondre au|relancer|contacter|send/);
-    });
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 0, a_repondre: 1 } });
+    axios.get.mockResolvedValue({ data: { brouillon: brouillonDe(), notes: [], timeline: [] } });
+    await act(async () => { par('voir-reponse').click(); });
+    axios.get.mockResolvedValue({ data: {
+      organisation: 'BDE HE-ARC', destinataire: 'info@bde-hearc.ch',
+      objet: 'Re: Proposition', texte: 'Bonjour', draft_hash: 'abc',
+      envoi_possible: false, contexte_obsolete: false, deja_envoye: false,
+      validation_requise: false, motifs_validation: [], statut_commercial: 'a_repondre' } });
+    await act(async () => { par('valider-envoyer').click(); });
+    // Le premier clic n'a produit AUCUN appel d'envoi : il a ouvert l'aperçu.
+    const envois = axios.post.mock.calls.map((c) => String(c[0]))
+      .filter((u) => u.includes('envoyer-reponse'));
+    expect(envois).toEqual([]);
+    expect(par('confirmation-envoi')).toBeTruthy();
     // Et le panneau ne connaît aucune route d'envoi.
     /* LE MARQUEUR VISE LE RENDU, PAS UN COMMENTAIRE. « LES RÉPONSES REÇUES »
        apparaît d'abord dans la prose qui décrit la source `useChargement` :
@@ -1522,12 +1542,22 @@ describe('P3-U3 — les réponses reçues', () => {
       '/api/prospect-inbound/inb-etu04/analyser', { ton: 'court' });
   });
 
-  test('AUCUN bouton d’envoi : l’écran le DIT au lieu de le mimer', async () => {
+  test('drapeaux fermés : le bouton de confirmation est DÉSACTIVÉ et le dit', async () => {
     avecReponses([reponseFictive({ id: 'inb-etu04' })]);
     await monter(<ProspectsSection API="/api" />);
-    await ouvrirCarte();
-    expect(par('envoi-a-venir').textContent).toContain('Envoi disponible prochainement');
-    expect(par('envoi-a-venir').tagName.toLowerCase()).toBe('span');   // pas un bouton
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 0, a_repondre: 1 } });
+    axios.get.mockResolvedValue({ data: { brouillon: brouillonDe(), notes: [], timeline: [] } });
+    await act(async () => { par('voir-reponse').click(); });
+    axios.get.mockResolvedValue({ data: {
+      organisation: 'BDE HE-ARC', destinataire: 'info@bde-hearc.ch',
+      objet: 'Re: Proposition', texte: 'Bonjour', draft_hash: 'abc',
+      envoi_possible: false, contexte_obsolete: false, deja_envoye: false,
+      validation_requise: false, motifs_validation: [], statut_commercial: 'a_repondre' } });
+    await act(async () => { par('valider-envoyer').click(); });
+    // Un bouton qui a l'air cliquable et qui refuse est pire qu'un bouton
+    // désactivé qui dit pourquoi.
+    expect(par('confirmer-envoi').disabled).toBe(true);
+    expect(par('envoi-non-active').textContent).toContain('Envoi non activé');
   });
 
   /* ======================================================================
