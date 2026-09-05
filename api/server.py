@@ -787,6 +787,164 @@ def u1a_audience(valeur) -> str:
     return _v if _v in U1A_AUDIENCES else U1A_AUDIENCE_DEFAUT
 
 
+# ===========================================================================
+# R2c — DE QUI EST CETTE OFFRE, ET QU'EST-CE QUE C'EST ?
+# ===========================================================================
+#
+# Deux questions qu'AUCUNE donnee ne savait repondre jusqu'ici. Une offre
+# portait un `coach_id` (une adresse e-mail, parfois nulle) et rien d'autre :
+# impossible de dire si elle vient d'Afroboost ou d'un partenaire, impossible
+# de dire si c'est un cours a l'unite ou un abonnement.
+#
+# POURQUOI CA COMPTE MAINTENANT. La regle « Ou pratiquer ? » de Spordateur
+# distinguera bientot une offre admin (visible gratuitement) d'une offre
+# partenaire (visible seulement avec un Boost paye), et un cours a l'unite
+# (affichable) d'un abonnement (jamais affichable). Cette regle n'est PAS
+# implementee ici — R2c ne fait que rendre les deux questions repondables.
+#
+# POURQUOI PAS UNE HEURISTIQUE. On pourrait croire deviner : « PULSE x10
+# cours » avec `pack_sessions=10` ressemble a un pack, « Cours a l'unite »
+# porte son type dans son nom. C'est precisement ce que ce depot a deja refuse
+# six fois (`first_purchase_eligible`, `creates_membership`,
+# `requires_active_membership`, `member_discount_pct`...) : le prix, le nom et
+# la duree ne sont pas des identites metier. Un nom se renomme, un prix change,
+# et « Membres » a 150 CHF avec 10 seances est une carte membre OU un pack
+# selon ce que le coach a voulu — lui seul le sait.
+#
+# D'ou : DECLARE ou INCONNU. Jamais devine.
+R2C_TYPES_OFFRE = (
+    "single_class",   # Cours a l'unite
+    "event",          # Evenement
+    "subscription",   # Abonnement
+    "pack",           # Pack de seances
+    "membership",     # Carte membre
+    "product",        # Produit physique
+    "other",          # Autre
+    "unknown",        # Non classifie — legacy uniquement
+)
+R2C_TYPE_INCONNU = "unknown"
+
+R2C_PROPRIETAIRES = ("admin", "partner", "unknown")
+R2C_PROPRIETAIRE_INCONNU = "unknown"
+
+# Les libelles que Bassi lit a l'ecran. Le serveur les rend pour que
+# l'interface n'ait pas a maintenir sa propre table : deux tables divergent
+# toujours, et c'est le serveur qui fait autorite sur les valeurs acceptees.
+R2C_LIBELLES_TYPE = {
+    "single_class": "Cours à l'unité",
+    "event": "Événement",
+    "subscription": "Abonnement",
+    "pack": "Pack",
+    "membership": "Carte membre",
+    "product": "Produit",
+    "other": "Autre",
+    "unknown": "Non classifié",
+}
+R2C_LIBELLES_PROPRIETAIRE = {
+    "admin": "Afroboost / Administrateur",
+    "partner": "Coach partenaire",
+    "unknown": "Non classifié",
+}
+
+
+def r2c_type_offre(valeur) -> str:
+    """Le type declare, ramene a une valeur connue. PURE.
+
+    Une valeur inconnue devient `unknown` plutot que de faire echouer la
+    LECTURE — meme raison qu'`u1a_audience` juste au-dessus : sur une
+    collection en production, une donnee inattendue ne doit pas produire un
+    500. L'ECRITURE, elle, est stricte : voir `r2c_type_valide_ou_refus`.
+    """
+    _v = str(valeur or "").strip().lower()
+    return _v if _v in R2C_TYPES_OFFRE else R2C_TYPE_INCONNU
+
+
+def r2c_proprietaire_type(valeur) -> str:
+    """Le role du proprietaire, ramene a une valeur connue. PURE."""
+    _v = str(valeur or "").strip().lower()
+    return _v if _v in R2C_PROPRIETAIRES else R2C_PROPRIETAIRE_INCONNU
+
+
+def r2c_type_valide_ou_refus(valeur, *, exige: bool) -> str:
+    """La porte d'ECRITURE du type. Stricte, contrairement a la lecture.
+
+    `exige=True` (creation) : `unknown` est REFUSE. Une offre creee
+    aujourd'hui n'a aucune excuse d'etre non classifiee — l'interface presente
+    le choix, et `unknown` est reserve a l'historique.
+
+    `exige=False` (mise a jour) : `unknown` passe, sinon on empecherait
+    d'enregistrer une offre legacy pas encore classifiee.
+    """
+    _v = str(valeur or "").strip().lower()
+    if not _v:
+        _v = R2C_TYPE_INCONNU
+    if _v not in R2C_TYPES_OFFRE:
+        raise HTTPException(
+            status_code=400,
+            detail="Type d'offre inconnu : %s. Valeurs acceptées : %s"
+                   % (_v, ", ".join(R2C_TYPES_OFFRE)),
+        )
+    if exige and _v == R2C_TYPE_INCONNU:
+        raise HTTPException(
+            status_code=400,
+            detail="Le type de l'offre est obligatoire (cours à l'unité, "
+                   "événement, abonnement, pack, carte membre, produit, autre).",
+        )
+    return _v
+
+
+async def r2c_proprietaire_depuis_identite(email: str) -> dict:
+    """QUI cree cette offre — repondu par l'IDENTITE AUTHENTIFIEE, jamais par
+    le corps de la requete.
+
+    C'est le coeur du lot. Un navigateur qui pourrait ecrire
+    `owner_type: "admin"` deviendrait administrateur en une ligne de `curl`,
+    et toutes les offres partenaires deviendraient gratuitement visibles dans
+    « Ou pratiquer ? » le jour ou la regle s'appliquera. Le corps de la requete
+    n'est donc JAMAIS lu pour cette question — ni ici, ni a la creation, ni a
+    la mise a jour.
+
+    `owner_id` est un identifiant OPAQUE et STABLE : le `id` (UUID) du document
+    `coaches`, celui-la meme que `/api/coaches/public/{id}` expose deja. JAMAIS
+    une adresse e-mail — R2b vient de les retirer des routes publiques, ce
+    champ ne doit pas les y ramener par la porte de derriere.
+
+    Un partenaire sans fiche `coaches` exploitable reste `partner` avec
+    `owner_id = None` : on constate qu'on ne sait pas, on n'invente pas.
+    """
+    _e = (email or "").lower().strip()
+    if not _e:
+        return {"owner_type": R2C_PROPRIETAIRE_INCONNU, "owner_id": None}
+    if is_super_admin(_e):
+        # L'administrateur n'a pas d'identifiant partenaire : il EST la
+        # plateforme. `owner_id` reste nul, et c'est une information, pas un trou.
+        return {"owner_type": "admin", "owner_id": None}
+    _fiche = await db.coaches.find_one({"email": _e}, {"_id": 0, "id": 1})
+    _pid = (_fiche or {}).get("id")
+    return {"owner_type": "partner", "owner_id": _pid if _pid else None}
+
+
+async def r2c_proprietaire_du_partenaire(partner_id: str) -> dict:
+    """Le proprietaire designe EXPLICITEMENT par un administrateur.
+
+    Utilise par la classification des offres historiques, et seulement la.
+    L'identifiant doit correspondre a une fiche `coaches` REELLE : on n'attribue
+    pas une offre a un partenaire qui n'existe pas, et on ne deduit RIEN d'un
+    nom de coach ecrit dans le titre de l'offre.
+    """
+    _pid = str(partner_id or "").strip()
+    if not _pid:
+        raise HTTPException(status_code=400, detail="Identifiant du partenaire manquant")
+    if "@" in _pid:
+        # Une adresse e-mail n'est pas un identifiant public. R2b.
+        raise HTTPException(status_code=400, detail="Identifiant de partenaire invalide")
+    _fiche = await db.coaches.find_one({"id": _pid}, {"_id": 0, "id": 1, "email": 1})
+    if not _fiche:
+        raise HTTPException(status_code=404, detail="Partenaire introuvable")
+    return {"owner_type": "partner", "owner_id": _fiche["id"],
+            "coach_id": (_fiche.get("email") or "").lower().strip() or None}
+
+
 class Offer(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -898,6 +1056,21 @@ class Offer(BaseModel):
     # existantes n'en ont pas, et n'en auront pas tant que le coach ne l'a pas
     # saisi. Bornes utiles STRICTES ]0, 100[ — voir `lot3b_avantage_de_l_offre`.
     member_discount_pct: Optional[float] = None
+    # R2c — DE QUI, ET QUOI. Les deux questions posees en tete de fichier.
+    #
+    # `owner_type` / `owner_id` sont ecrits par le SERVEUR seul : ils sont
+    # declares ici (sortie) mais VOLONTAIREMENT ABSENTS d'`OfferCreate`
+    # (entree). C'est la difference entre ce lot et les six champs qui le
+    # precedent : ceux-la sont des choix du coach, ceux-ci sont un CONSTAT
+    # d'identite. Un champ absent d'`OfferCreate` ne peut pas etre envoye par
+    # un navigateur — et le `$set: offer.model_dump()` du PUT ne peut pas
+    # l'ecraser non plus, il ne le porte tout simplement pas.
+    #
+    # `offer_type`, lui, EST un choix du coach : il figure donc dans les DEUX
+    # modeles, comme ses voisins, sous peine d'etre efface a chaque sauvegarde.
+    owner_type: str = R2C_PROPRIETAIRE_INCONNU
+    owner_id: Optional[str] = None   # UUID opaque du partenaire. JAMAIS un e-mail.
+    offer_type: str = R2C_TYPE_INCONNU
 
 class OfferCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1006,6 +1179,19 @@ class OfferCreate(BaseModel):
     # LOT R — MIROIR STRICT, meme exigence : sans cette ligne, un `PUT /offers`
     # EFFACERAIT la protection en base a chaque enregistrement de l'offre.
     requires_active_membership: bool = False
+    # R2c — LE TYPE METIER, et LUI SEUL.
+    #
+    # Miroir strict du champ declare dans `Offer` : sans cette ligne, le
+    # `$set: offer.model_dump()` du PUT ramenerait toute offre classifiee a
+    # « non classifie » a la sauvegarde suivante. Septieme fois que ce depot
+    # rencontre ce piege, septieme fois qu'il l'evite explicitement.
+    #
+    # ET ON S'ARRETE LA. `owner_type` et `owner_id` ne sont PAS ici, et c'est
+    # deliberé : tout champ present dans ce modele est, par construction, un
+    # champ qu'un navigateur peut envoyer. Le proprietaire se lit dans
+    # l'identite authentifiee (`r2c_proprietaire_depuis_identite`), jamais dans
+    # le corps de la requete.
+    offer_type: str = R2C_TYPE_INCONNU
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -2164,6 +2350,14 @@ R2B_CLES_OFFRE_PUBLIQUE = (
     "active_price", "active_tier", "next_date", "next_dates",
     "member_discount_pct", "member_price", "progressive_pricing", "schedules",
     "reminders_enabled", "is_membership", "membership_sessions",
+    # R2c — LE ROLE DU PROPRIETAIRE ET LE TYPE METIER, PAS SON IDENTITE.
+    # `owner_type` vaut « admin » / « partner » / « unknown » : un ROLE, pas une
+    # personne. `owner_id` est le UUID opaque de la fiche partenaire, celui que
+    # `/api/coaches/public/{id}` sert deja publiquement — jamais une adresse
+    # e-mail, le serveur refuse d'ailleurs d'en enregistrer une
+    # (`r2c_proprietaire_du_partenaire`). `coach_id`, lui, reste HORS de cette
+    # liste : c'est l'e-mail, et R2b l'a sorti pour de bon.
+    "owner_type", "owner_id", "offer_type",
 )
 
 # Les seules cles qu'un coach PUBLIC peut porter. `email` en est absent.
@@ -2231,10 +2425,17 @@ async def get_offers(request: Request, scope: str = ""):
         # SUPER_ADMIN_EMAILS[0] plutot que DEFAULT_COACH_ID : ce dernier
         # (`bassi_default`) n'est l'email d'aucun compte, donc invisible partout.
         _seed_owner = SUPER_ADMIN_EMAILS[0]
+        # R2c : ces trois offres sont ECRITES ICI, leur nature n'est donc pas
+        # devinee — elle est DECLAREE par l'auteur du bloc, au meme titre que
+        # leur prix. C'est la difference avec les offres historiques, dont
+        # personne ne peut affirmer le type sans demander a Bassi.
+        # Proprietaire : `_seed_owner` est l'administrateur -> owner_type admin,
+        # owner_id nul (l'administrateur n'a pas de fiche partenaire).
+        _seed_r2c = {"owner_type": "admin", "owner_id": None}
         default_offers = [
-            {"id": str(uuid.uuid4()), "name": "Cours à l'unité", "price": 30, "thumbnail": "", "videoUrl": "", "description": "", "visible": True, "coach_id": _seed_owner},
-            {"id": str(uuid.uuid4()), "name": "Carte 10 cours", "price": 150, "thumbnail": "", "videoUrl": "", "description": "", "visible": True, "coach_id": _seed_owner},
-            {"id": str(uuid.uuid4()), "name": "Abonnement 1 mois", "price": 109, "thumbnail": "", "videoUrl": "", "description": "", "visible": True, "coach_id": _seed_owner}
+            {"id": str(uuid.uuid4()), "name": "Cours à l'unité", "price": 30, "thumbnail": "", "videoUrl": "", "description": "", "visible": True, "coach_id": _seed_owner, "offer_type": "single_class", **_seed_r2c},
+            {"id": str(uuid.uuid4()), "name": "Carte 10 cours", "price": 150, "thumbnail": "", "videoUrl": "", "description": "", "visible": True, "coach_id": _seed_owner, "offer_type": "pack", **_seed_r2c},
+            {"id": str(uuid.uuid4()), "name": "Abonnement 1 mois", "price": 109, "thumbnail": "", "videoUrl": "", "description": "", "visible": True, "coach_id": _seed_owner, "offer_type": "subscription", **_seed_r2c}
         ]
         await db.offers.insert_many(default_offers)
         # R2b : meme sortie publique que la branche normale — une offre
@@ -2312,8 +2513,39 @@ async def create_offer(offer: OfferCreate, request: Request):
     # V256: lien partenaire — garde XSS + normalisation du toggle
     _v256_normalize_external_link(offer_data)
     print(f"[V61 DEBUG] POST /offers duration_value={offer_data.get('duration_value')} duration_unit={offer_data.get('duration_unit')} is_auto_prolong={offer_data.get('is_auto_prolong')}")
-    if user_email and not offer_data.get("coach_id"):
-        offer_data["coach_id"] = user_email
+    # ===================== R2c — QUI CREE, ET QUOI =====================
+    #
+    # AVANT CE LOT, la ligne etait : « si l'appelant est identifie ET que le
+    # corps ne porte pas deja de coach_id, alors coach_id = appelant ». Lue a
+    # l'envers, elle dit : UN COACH_ID ENVOYE PAR LE NAVIGATEUR GAGNAIT SUR
+    # L'IDENTITE AUTHENTIFIEE. Un partenaire pouvait donc creer une offre au
+    # nom de n'importe qui — y compris de l'administrateur.
+    #
+    # Desormais : le proprietaire vient de l'identite. Une seule exception,
+    # celle qui existait deja et qu'on ne retire pas : un SUPER-ADMIN peut
+    # designer un partenaire. Mais il doit le designer par son identifiant
+    # reel — la fiche `coaches` doit exister. Aucune deduction depuis un nom.
+    _cible = str(offer_data.get("coach_id") or "").strip().lower()
+    if _cible and _cible != user_email and is_super_admin(user_email):
+        _fiche_cible = await db.coaches.find_one({"email": _cible}, {"_id": 0, "id": 1})
+        if not _fiche_cible:
+            raise HTTPException(
+                status_code=400,
+                detail="Aucun partenaire ne correspond à ce compte : l'offre ne "
+                       "peut pas lui être attribuée.")
+        offer_data["coach_id"] = _cible
+        offer_data["owner_type"] = "partner"
+        offer_data["owner_id"] = _fiche_cible.get("id")
+    else:
+        # Le cas normal, et le seul pour un partenaire : l'offre est a celui
+        # qui la cree. Ce qu'il a pu ecrire dans le corps est ignore.
+        offer_data["coach_id"] = user_email or None
+        offer_data.update(await r2c_proprietaire_depuis_identite(user_email))
+    # Le TYPE est obligatoire a la creation. `unknown` est reserve aux offres
+    # historiques : une offre creee aujourd'hui passe par un formulaire qui
+    # pose la question, il n'y a aucune raison de ne pas savoir.
+    offer_data["offer_type"] = r2c_type_valide_ou_refus(
+        offer_data.get("offer_type"), exige=True)
     # v59: Calculer expiration si durée définie
     now_iso = datetime.utcnow().isoformat()
     offer_data["created_at"] = now_iso
@@ -2339,7 +2571,40 @@ async def create_offer(offer: OfferCreate, request: Request):
 @api_router.put("/offers/{offer_id}", response_model=Offer)
 async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
     require_auth(request)
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
     update_data = offer.model_dump()
+    # ============ R2c — MODIFIER SON OFFRE, PAS CELLE DES AUTRES ============
+    #
+    # Cette route n'avait AUCUNE verification de propriete : tout appelant
+    # authentifie pouvait reecrire n'importe quelle offre, prix compris, et y
+    # poser son propre `coach_id`. La regle appliquee est EXACTEMENT celle que
+    # `DELETE /offers/{id}` applique dix lignes plus bas depuis la v20 — on ne
+    # durcit pas plus que le voisin, on rattrape l'oubli :
+    #   * super-admin : tout ;
+    #   * sinon : uniquement une offre dont il est le proprietaire, OU une
+    #     offre SANS proprietaire (les 9 offres historiques restent donc
+    #     modifiables exactement comme avant ce lot).
+    _offre_avant = await db.offers.find_one({"id": offer_id}, {"_id": 0})
+    if not _offre_avant:
+        raise HTTPException(status_code=404, detail="Offre non trouvée")
+    if not is_super_admin(user_email):
+        _proprio = (_offre_avant.get("coach_id") or "").lower()
+        if _proprio and _proprio != user_email:
+            raise HTTPException(
+                status_code=403,
+                detail="Vous ne pouvez modifier que vos propres offres")
+    # Le proprietaire ne change PAS par une sauvegarde d'offre. Il est recopie
+    # tel quel depuis la base : ni le navigateur ni ce formulaire n'ont voix au
+    # chapitre. Le changer se fait par la porte prevue pour cela, reservee a
+    # l'administrateur (`PATCH /offers/{id}/classification`).
+    update_data["coach_id"] = _offre_avant.get("coach_id")
+    update_data["owner_type"] = r2c_proprietaire_type(_offre_avant.get("owner_type"))
+    update_data["owner_id"] = _offre_avant.get("owner_id")
+    # Le TYPE, lui, se modifie : c'est un choix metier du coach. `unknown` est
+    # tolere ici — refuser d'enregistrer une offre legacy pas encore classifiee
+    # rendrait toutes les anciennes offres immodifiables.
+    update_data["offer_type"] = r2c_type_valide_ou_refus(
+        update_data.get("offer_type"), exige=False)
     # U1a : une valeur inconnue redevient « all » plutot que d'entrer en base.
     update_data["audience"] = u1a_audience(update_data.get("audience"))
     # v61: Blindage conversion durée
@@ -2445,6 +2710,128 @@ async def delete_offer(offer_id: str, request: Request):
     )
 
     return {"success": True, "message": "Offre supprimée et références nettoyées"}
+
+
+# ===========================================================================
+# R2c — CLASSIFIER LES OFFRES HISTORIQUES, SANS DEVINER
+# ===========================================================================
+#
+# Neuf offres existent en production, toutes sans proprietaire declare. Elles
+# ne peuvent pas etre migrees automatiquement : rien en base ne PROUVE a qui
+# elles appartiennent ni ce qu'elles sont. Les attribuer d'office a
+# l'administrateur serait une invention — commode aujourd'hui, fausse le jour
+# ou un partenaire reclamera la sienne.
+#
+# On rend donc a Bassi les deux questions, et on enregistre SA reponse. C'est
+# le seul chemin honnete : la connaissance existe, elle est dans sa tete, pas
+# dans la base.
+#
+# Reserve au super-admin, exactement comme `DELETE /offers/{id}` : classer une
+# offre, c'est decider qui la possede.
+
+def r2c_a_classifier(offre: dict) -> bool:
+    """Cette offre attend-elle une reponse humaine ? PURE."""
+    _o = offre or {}
+    return (r2c_proprietaire_type(_o.get("owner_type")) == R2C_PROPRIETAIRE_INCONNU
+            or r2c_type_offre(_o.get("offer_type")) == R2C_TYPE_INCONNU)
+
+
+@api_router.get("/offers/classification")
+async def r2c_lister_a_classifier(request: Request):
+    """L'ecran de classification : les offres a trancher, et de quoi trancher.
+
+    Rend AUSSI le vocabulaire (libelles francais) et la liste des partenaires
+    reels. L'interface ne maintient donc aucune table de son cote : deux tables
+    divergent toujours, et c'est le serveur qui fait autorite sur les valeurs
+    qu'il acceptera.
+    """
+    email = require_auth(request)
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
+    _offres = await db.offers.find({}, {"_id": 0}).to_list(500)
+    _partenaires = await db.coaches.find(
+        {"id": {"$exists": True, "$ne": None}},
+        {"_id": 0, "id": 1, "name": 1, "is_active": 1}).to_list(200)
+    _lignes = []
+    for _o in _offres:
+        _lignes.append({
+            "id": _o.get("id"),
+            "name": _o.get("name"),
+            "visible": bool(_o.get("visible")),
+            "price": _o.get("price"),
+            "linked_course_ids": _o.get("linked_course_ids") or [],
+            "duration_value": _o.get("duration_value"),
+            "duration_unit": _o.get("duration_unit"),
+            "owner_type": r2c_proprietaire_type(_o.get("owner_type")),
+            "owner_id": _o.get("owner_id"),
+            "offer_type": r2c_type_offre(_o.get("offer_type")),
+            "a_classifier": r2c_a_classifier(_o),
+        })
+    return {
+        "offres": _lignes,
+        "total": len(_lignes),
+        "a_classifier": sum(1 for l in _lignes if l["a_classifier"]),
+        "types": [{"valeur": v, "libelle": R2C_LIBELLES_TYPE[v]}
+                  for v in R2C_TYPES_OFFRE if v != R2C_TYPE_INCONNU],
+        "proprietaires": [{"valeur": v, "libelle": R2C_LIBELLES_PROPRIETAIRE[v]}
+                          for v in R2C_PROPRIETAIRES if v != R2C_PROPRIETAIRE_INCONNU],
+        # Vide aujourd'hui : aucune fiche `coaches` ne porte d'identifiant.
+        # L'interface doit le dire, pas afficher une liste deroulante morte.
+        "partenaires": [{"id": p.get("id"), "name": p.get("name") or "(sans nom)",
+                         "is_active": bool(p.get("is_active"))}
+                        for p in _partenaires],
+    }
+
+
+class R2CClassification(BaseModel):
+    """Ce qu'un administrateur DECLARE sur une offre historique."""
+    model_config = ConfigDict(extra="ignore")
+    owner_type: str
+    partner_id: Optional[str] = None   # requis si owner_type == "partner"
+    offer_type: str
+
+
+@api_router.patch("/offers/{offer_id}/classification")
+async def r2c_classifier(offer_id: str, corps: R2CClassification, request: Request):
+    """Enregistre la reponse de l'administrateur. UNE offre a la fois.
+
+    N'ECRIT QUE LES TROIS CHAMPS DE CE LOT. Ni le prix, ni la visibilite, ni la
+    duree, ni les cours lies ne sont touches : cette route classe, elle ne
+    modifie pas l'offre. C'est aussi pour cela qu'elle est separee de
+    `PUT /offers` plutot qu'un drapeau de plus dedans.
+    """
+    email = require_auth(request)
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
+    _offre = await db.offers.find_one({"id": offer_id}, {"_id": 0, "id": 1, "name": 1})
+    if not _offre:
+        raise HTTPException(status_code=404, detail="Offre non trouvée")
+
+    _ot = str(corps.owner_type or "").strip().lower()
+    if _ot not in ("admin", "partner"):
+        raise HTTPException(
+            status_code=400,
+            detail="Propriétaire invalide : « admin » ou « partner » attendu.")
+    if _ot == "admin":
+        _maj = {"owner_type": "admin", "owner_id": None,
+                "coach_id": SUPER_ADMIN_EMAILS[0]}
+    else:
+        # Un vrai partenaire, designe par son identifiant. `coach_id` (l'e-mail,
+        # qui reste l'identite INTERNE de l'offre) est relu depuis sa fiche : il
+        # n'est jamais saisi a la main, et jamais transporte par le navigateur.
+        _maj = await r2c_proprietaire_du_partenaire(corps.partner_id)
+
+    _maj["offer_type"] = r2c_type_valide_ou_refus(corps.offer_type, exige=True)
+    await db.offers.update_one({"id": offer_id}, {"$set": _maj})
+    logger.info("[R2c] offre %s classee par %s : %s / %s",
+                offer_id, email, _maj["owner_type"], _maj["offer_type"])
+    _apres = await db.offers.find_one({"id": offer_id}, {"_id": 0})
+    return {"success": True, "id": offer_id,
+            "owner_type": _apres.get("owner_type"),
+            "owner_id": _apres.get("owner_id"),
+            "offer_type": _apres.get("offer_type"),
+            "a_classifier": r2c_a_classifier(_apres)}
+
 
 # --- Product Categories ---
 @api_router.get("/categories")

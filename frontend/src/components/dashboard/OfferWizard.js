@@ -59,6 +59,30 @@ const AUDIENCES = [
   { valeur: 'men-only', label: 'Hommes', aide: 'Offre destinee aux hommes.' }
 ];
 
+// R2c — QU'EST-CE QUE CETTE OFFRE, AU JUSTE ?
+//
+// Le serveur ne le devinera pas : ni le nom, ni le prix, ni le nombre de
+// seances ne disent si « Membres » a 150 CHF est une carte membre ou un pack.
+// Seul le coach le sait, donc on le lui demande — une fois, a la creation.
+//
+// POURQUOI CETTE QUESTION EXISTE. Spordateur affichera bientot les offres
+// dans « Ou pratiquer ? », mais uniquement les cours a l'unite et les
+// evenements : personne ne cherche un abonnement sur une carte. Sans cette
+// reponse, il faudrait deviner — et se tromper en public.
+//
+// Les valeurs techniques sont celles du serveur (`R2C_TYPES_OFFRE`), les
+// libelles sont ceux que Bassi lit. `unknown` n'est PAS proposable : il est
+// reserve aux offres d'avant ce lot.
+const TYPES_OFFRE = [
+  { valeur: 'single_class', label: "Cours à l'unité", aide: "Une séance, achetée à l'unité." },
+  { valeur: 'event', label: 'Événement', aide: 'Une date précise, ponctuelle.' },
+  { valeur: 'subscription', label: 'Abonnement', aide: 'Accès récurrent sur une période.' },
+  { valeur: 'pack', label: 'Pack', aide: 'Un lot de séances à consommer.' },
+  { valeur: 'membership', label: 'Carte membre', aide: 'Adhésion donnant des avantages.' },
+  { valeur: 'product', label: 'Produit', aide: 'Un objet physique à expédier.' },
+  { valeur: 'other', label: 'Autre', aide: 'Aucune des catégories ci-dessus.' }
+];
+
 // V255b: jour de la semaine (convention JS, Dim=0) d'une date « 2026-08-05 »,
 // ou null si la chaine est inexploitable.
 // Midi local et NON minuit : minuit peut basculer d'un jour en heure d'ete.
@@ -803,6 +827,18 @@ export default function OfferWizard({
       return;
     }
 
+    // R2c : le type est la SECONDE contrainte bloquante, et pour la meme
+    // raison que le nom — le serveur refuse la creation sans lui (400). On
+    // arrete ici plutot que de laisser partir une requete condamnee : le coach
+    // verrait une erreur technique au lieu de la question qu'on lui pose.
+    // Une offre ANCIENNE (deja enregistree, encore « non classifiee ») garde
+    // le droit d'etre enregistree : le serveur tolere `unknown` en mise a jour.
+    if (!form.offer_type && !isEditing) {
+      setStep(1);
+      alert("Choisis le type de l'offre (cours à l'unité, événement, abonnement, pack, carte membre, produit ou autre).");
+      return;
+    }
+
     // V225: persistance des horaires MODIFIES uniquement, avant de remonter
     // l'offre au parent (qui, lui, garde sa requete unique POST/PUT).
     // V225 CORRECTIF 1: on y ajoute les horaires CREES DANS CETTE SESSION, pour
@@ -958,6 +994,45 @@ export default function OfferWizard({
         <p className="text-xs mt-1" style={HINT_STYLE}>
           {(AUDIENCES.find((a) => a.valeur === (form.audience || 'all')) || AUDIENCES[0]).aide}
           {' '}Information affichee sur l&apos;offre&nbsp;; elle ne bloque aucune reservation.
+        </p>
+      </div>
+
+      {/* R2c — TYPE DE L'OFFRE. Obligatoire : le serveur refuse une creation
+          sans type. Meme presentation que « Pour qui ? » juste au-dessus —
+          des boutons, pas une liste deroulante : sept choix restent lisibles
+          et touchables au pouce, et le coach voit tout l'eventail d'un coup
+          plutot que d'avoir a le derouler. */}
+      <div>
+        <label className="block text-xs mb-1" style={LABEL_STYLE}>
+          Type d&apos;offre&nbsp;*
+        </label>
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Type de l'offre">
+          {TYPES_OFFRE.map((t) => {
+            const actif = form.offer_type === t.valeur;
+            return (
+              <button
+                key={t.valeur}
+                type="button"
+                role="radio"
+                aria-checked={actif}
+                onClick={() => set('offer_type', t.valeur)}
+                data-testid={`r2c-type-${t.valeur}`}
+                className="text-xs px-3 py-2 rounded-lg transition-colors"
+                style={{
+                  border: `1px solid ${actif ? PINK : 'rgba(255,255,255,0.14)'}`,
+                  background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)' : 'transparent',
+                  color: actif ? PINK : 'rgba(255,255,255,0.75)'
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs mt-1" style={HINT_STYLE}>
+          {form.offer_type
+            ? (TYPES_OFFRE.find((t) => t.valeur === form.offer_type) || {}).aide
+            : "À choisir : cette information servira à savoir où l'offre peut apparaître."}
         </p>
       </div>
 

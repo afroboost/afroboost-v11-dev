@@ -19,3 +19,4 @@ export { default as SEOManager } from './SEOManager';
 export { default as FAQManager } from './FAQManager';
 export { default as ContactsManager } from './ContactsManager';
 export { default as AdhesionsManager } from './AdhesionsManager';  // P1-bis-a
+export { default as OffersClassification } from './OffersClassification';  // R2c

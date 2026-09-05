@@ -38,6 +38,7 @@ import ast
 import asyncio
 import importlib.util
 import io
+import re
 import os
 import sys
 import types
@@ -1084,8 +1085,15 @@ def partie_9_forfait():
              "ignore totalement LOT 3b",
              not any(mot in RESA_SRC for mot in
                      ("lot3b", "LOT3B", "MEMBER_PRICING")))
+    # Le CODE, pas les commentaires. Depuis ESSAI-7 (7b79b7ea), une note
+    # explicative de `checkout_routes.py` cite `_lot3b_debit_ok` pour dire
+    # qu'elle s'en INSPIRE — ce qui faisait echouer ce garde alors que le
+    # fichier n'a jamais porte la moindre logique LOT 3b. Un garde qui lit de
+    # la prose finit toujours par accuser un commentaire.
+    _checkout_code = re.sub(r"#.*$", "", CHECKOUT_SRC, flags=re.M)
+    _checkout_code = re.sub(r'"""[\s\S]*?"""', "", _checkout_code)
     verifier("9K5. `checkout_routes.py` aussi",
-             not any(mot in CHECKOUT_SRC for mot in
+             not any(mot in _checkout_code for mot in
                      ("lot3b", "LOT3B", "MEMBER_PRICING")))
 
     # LA RAISON TARIFAIRE D'UNE SEANCE DE FORFAIT, VERIFIEE EN L'APPELANT.

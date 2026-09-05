@@ -35,7 +35,7 @@ import SmartLinksSection from "./coach/SmartLinksSection"; // v98: Liens Intelli
 import { parseMediaUrl, getMediaThumbnail } from "../services/MediaParser"; // Media Parser
 import SuperAdminPanel from "./SuperAdminPanel"; // v8.9 Super Admin Panel
 // v13.5: Composants extraits pour alléger CoachDashboard
-import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab, BrandingManager, SEOManager, FAQManager, ContactsManager, InvoiceGenerator, AdhesionsManager } from "./dashboard";
+import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab, BrandingManager, SEOManager, FAQManager, ContactsManager, InvoiceGenerator, AdhesionsManager, OffersClassification } from "./dashboard";
 // V199: Accordéon paiements (5 sections pliables)
 import V199BoutiqueAccordion from "./dashboard/V199BoutiqueAccordion";
 // V366 : dépliage des groupes en personnes (partagé avec la duplication)
@@ -1751,7 +1751,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     // V225: libelles des paliers de prix progressif (personnalisables).
     label_early_bird: '', label_standard: '', label_last_minute: '',
     // U1a : l'audience par defaut d'une offre neuve.
-    audience: 'all'
+    audience: 'all',
+    // R2c : VOLONTAIREMENT VIDE, et pas « single_class ». Un type par defaut
+    // serait accepte sans que le coach ait rien lu — et « cours a l'unite »
+    // est justement celui qui rendra l'offre publique dans « Ou pratiquer ? ».
+    // Une valeur vide force le choix : le wizard bloque, le serveur aussi.
+    offer_type: ''
   });
   const [editingOfferId, setEditingOfferId] = useState(null); // Pour mode édition
   const fileInputRef = useRef(null);
@@ -3273,6 +3278,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // « all » a la sauvegarde suivante : perte silencieuse.
       // `||` et non `??` : une chaine vide n'est pas une audience valide.
       audience: offer.audience || 'all',
+      // R2c : RELU, comme son voisin. Sans cette ligne, rouvrir une offre
+      // classifiee la reafficherait « sans type », et l'enregistrement
+      // suivant la ramenerait a « non classifie » en base. C'est exactement
+      // le defaut que U1a a du corriger apres coup — huitieme occasion de ne
+      // pas le reproduire. Une offre historique n'a pas le champ : elle
+      // s'ouvre a vide, et le coach peut la classer par la meme occasion.
+      offer_type: offer.offer_type && offer.offer_type !== 'unknown'
+        ? offer.offer_type : '',
     });
     setEditingOfferId(offer.id);
     // Scroll vers le formulaire
@@ -3308,7 +3321,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       member_discount_pct: 0,
       // U1a : sans ce reset, l'audience de l'offre qu'on vient d'abandonner
       // resterait pre-remplie — et publiee — sur l'offre suivante.
-      audience: 'all'
+      audience: 'all',
+      // R2c : meme raison. Le type de l'offre abandonnee ne doit pas etre
+      // celui, silencieusement pre-rempli, de la suivante.
+      offer_type: ''
     });
     setEditingOfferId(null);
   };
@@ -3473,7 +3489,17 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // ici ferait de ce fichier un second endroit ou lire le drapeau
         // d'adhesion — or LOT 2 a pose la regle qu'il ne vit qu'en trois
         // lignes dans ce fichier, et son test la verifie.
-        member_discount_pct: Math.max(0, Math.min(99, parseFloat(src.member_discount_pct) || 0))
+        member_discount_pct: Math.max(0, Math.min(99, parseFloat(src.member_discount_pct) || 0)),
+        // R2c — LE TYPE METIER. Meme piege de liste blanche que les six champs
+        // ci-dessus : absent d'ici, le choix du wizard ne partirait jamais, et
+        // le `$set: offer.model_dump()` du PUT ramenerait l'offre a « non
+        // classifie » a chaque sauvegarde.
+        //
+        // ON N'ENVOIE PAS `owner_type` NI `owner_id` : ce ne sont pas des choix,
+        // ce sont des constats d'identite. Le serveur les etablit depuis la
+        // session authentifiee et ignore ce que le navigateur en dirait — ils
+        // n'existent d'ailleurs meme pas dans son modele d'entree.
+        offer_type: src.offer_type || 'unknown'
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 
@@ -8103,6 +8129,32 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
                 {offersSubTab === 'contenus' && (
                 <div style={{ marginTop: '16px' }}>
+                  {/* R2c : au-dessus de la liste, et replie par defaut. Les
+                      offres a classer sont un rattrapage ponctuel, pas le
+                      travail quotidien du coach — l'ecran le dit en restant
+                      ferme tant qu'on ne l'ouvre pas. Invisible pour un
+                      partenaire : le composant se retire lui-meme. */}
+                  <OffersClassification
+                    API={API}
+                    isSuperAdmin={isSuperAdmin}
+                    coachEmail={safeCoachUser?.email}
+                    onClassifie={async () => {
+                      // Relecture de la MEME requete que le chargement initial
+                      // (`?scope=mine`, ligne ~2291) : classer une offre change
+                      // son proprietaire, donc potentiellement sa presence dans
+                      // cette liste. Appelee sur un clic, jamais dans un effet —
+                      // aucune boucle possible.
+                      try {
+                        const r = await axios.get(`${API}/offers?scope=mine`, {
+                          headers: { 'X-User-Email': safeCoachUser?.email || '' }
+                        });
+                        setOffers(isSuperAdmin ? r.data : r.data.filter(
+                          (o) => (o.coach_id || '').toLowerCase() === (safeCoachUser?.email || '').toLowerCase()));
+                      } catch (e) {
+                        console.error('[R2c] relecture des offres impossible', e);
+                      }
+                    }}
+                  />
                   <OffersManager
                     offers={offers}
                     setOffers={setOffers}

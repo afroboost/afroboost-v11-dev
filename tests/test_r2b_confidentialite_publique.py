@@ -203,9 +203,16 @@ _bloc_brut = SRC[SRC.index("# R2b — UNE ROUTE PUBLIQUE"):SRC.index('@api_route
 _bloc = "\n".join(re.sub(r"#.*$", "", l) for l in _bloc_brut.splitlines())
 _bloc = re.sub(r'"""[\s\S]*?"""', "", _bloc)
 for interdit in ("update_one", "update_many", "insert_one", "insert_many",
-                 "delete_one", "owner_type", "offer_type", "subscription",
-                 "boost", "stripe", "price ="):
+                 "delete_one", "boost", "stripe", "price ="):
     verifier("8a. le socle R2b ne fait pas « %s »" % interdit, interdit not in _bloc)
+# R2c a AJOUTE owner_type / owner_id / offer_type a la liste blanche. Ce sont
+# un ROLE et un TYPE, pas une identite. L'invariant qui compte n'est donc pas
+# « ces champs sont absents » mais « aucune cle PRIVEE n'est entree ».
+for _prive in ("coach_id", "email", "phone", "whatsapp", "stripe", "password",
+               "token", "secret"):
+    verifier("8a-bis. aucune cle publique ne contient « %s »" % _prive,
+             not any(_prive in c for c in S.R2B_CLES_OFFRE_PUBLIQUE + S.R2B_CLES_COACH_PUBLIC),
+             [c for c in S.R2B_CLES_OFFRE_PUBLIQUE + S.R2B_CLES_COACH_PUBLIC if _prive in c])
 verifier("8b. AUCUNE sortie reseau pendant le banc", not _TENTATIVES, str(_TENTATIVES[:3]))
 
 _ok = sum(1 for _i, _c, _d in RESULTATS if _c)
