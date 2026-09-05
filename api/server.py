@@ -26481,6 +26481,52 @@ def p3ai_intention(valeur) -> str:
     return brut if brut in P3AI_INTENTIONS else "autre"
 
 
+# LES MARQUEURS D'UNE DEMANDE EXPLICITE. Le point d'interrogation d'abord —
+# c'est le signal le plus sur, et il traverse les langues. Les formules
+# viennent ensuite, pour les demandes posees sans ponctuation interrogative
+# (« pouvez-vous nous en dire plus », « wir moechten wissen »).
+P3AI_MARQUEURS_QUESTION = (
+    "pouvez-vous", "pourriez-vous", "pouvez vous", "auriez-vous",
+    "j'aimerais savoir", "nous aimerions savoir", "nous souhaitons savoir",
+    "dites-nous en plus", "en savoir plus", "des precisions", "plus de details",
+    "comment cela", "en quoi consiste", "de quoi s'agit-il",
+    "koennen sie", "koennt ihr", "wir moechten wissen", "mehr erfahren",
+    "could you", "can you", "we would like to know", "tell us more",
+)
+
+
+def p3ai_intention_finale(intention_modele, corps_recu) -> str:
+    """L'intention COMMERCIALE, celle que l'ecran affiche. PURE.
+
+    POURQUOI UNE REGLE, ET PAS SEULEMENT UNE CONSIGNE DANS L'INVITE.
+    Mesure du 05/09/2026 en production : le BDE HE-Arc ecrit « cela nous semble
+    une proposition interessante, ca consiste en quoi ? Et quels sont les enjeux
+    de cette possible collaboration ? ». Le modele a rendu `positif` — ce n'est
+    pas faux, le prospect EST interesse. Mais c'est inutilisable pour trier une
+    file de reponses : `positif` se lit « rien a faire », alors que deux
+    questions attendent une reponse. L'interet appartient au RESUME ; ce que
+    l'intention doit dire, c'est CE QUE LE COACH DOIT FAIRE.
+
+    L'INVITE PORTE LA MEME REGLE, et cette fonction la GARANTIT. Une consigne
+    dans une invite est une preference : elle tient la plupart du temps. Ici la
+    priorite decide de la place d'une carte dans la file de travail — elle doit
+    tenir A CHAQUE FOIS, y compris le jour ou le modele changera.
+
+    LE REFUS PRIME SUR TOUT, et c'est le seul cas. Un partenaire qui decline en
+    posant une question polie (« merci, mais peut-etre une autre fois ? ») ne
+    doit pas atterrir dans « a repondre » : le relancer serait exactement ce
+    qu'il ne faut pas faire. Une erreur de tri coute une carte mal classee ;
+    relancer quelqu'un qui a dit non coute le prospect.
+    """
+    intention = p3ai_intention(intention_modele)
+    if intention == "refus":
+        return intention
+    texte = p3ai_sans_accents(corps_recu)
+    if "?" in texte or any(m in texte for m in P3AI_MARQUEURS_QUESTION):
+        return "question"
+    return intention
+
+
 def p3ai_organisation(action: dict) -> str:
     """Le nom a afficher pour l'interlocuteur. PURE, et il vient de l'ACTION.
 
@@ -26559,6 +26605,11 @@ def p3ai_invite(contexte: dict) -> str:
         "NOTES INTERNES : aucune.",
         "",
         "REGLES ABSOLUES :",
+        "0. INTENTION : si le partenaire pose une question ou demande une",
+        "   information, l'intention est « question » — meme s'il se dit par",
+        "   ailleurs interesse. Son enthousiasme va dans le resume, pas dans",
+        "   l'intention. « positif » est reserve a un accord SANS question en",
+        "   suspens. Un refus reste « refus », meme formule poliment.",
         "1. Reponds dans la LANGUE DU MESSAGE RECU, pas dans une autre.",
         "2. N'invente RIEN : ni prix, ni date, ni chiffre, ni engagement, ni nom.",
         "3. Si une information manque, propose un echange plutot que de la deviner.",
@@ -26628,7 +26679,10 @@ def p3ai_brouillon_depuis(contexte: dict, sortie: dict, viewer: str,
         "organisation": c.get("organisation") or "",
         "to_email": c.get("from_email") or "",
         "subject": c.get("subject") or "",
-        "intention": p3ai_intention(s.get("intention")),
+        # L'intention affichee est celle qui DIT QUOI FAIRE : une demande
+        # explicite l'emporte sur l'enthousiasme (cf. `p3ai_intention_finale`).
+        "intention": p3ai_intention_finale(s.get("intention"), c.get("body_text")),
+        "intention_modele": p3ai_intention(s.get("intention")),
         "langue": (str(s.get("langue") or "").strip().lower() or "fr")[:5],
         "resume": str(s.get("resume") or "")[:600],
         "demande": str(s.get("demande") or "")[:600],
@@ -26801,6 +26855,56 @@ async def p3ai_lire_brouillon(inbound_id: str, request: Request):
         {"inbound_id": message["id"]}, {"_id": 0})
     return {"brouillon": brouillon, "lu": bool(message.get(P3AI_CHAMP_LU)),
             "traite": bool(message.get(P3AI_CHAMP_TRAITE))}
+
+
+@api_router.patch("/prospect-inbound/{inbound_id}/brouillon")
+async def p3ai_modifier_brouillon(inbound_id: str, request: Request):
+    """Le coach corrige le texte propose. IL N'ENVOIE TOUJOURS RIEN.
+
+    POURQUOI CETTE ROUTE EXISTE DES MAINTENANT. Un brouillon modifiable dont la
+    correction disparait au premier repli de la carte n'est pas modifiable :
+    c'est un piege. AI-P2 rend le texte editable, donc l'edition doit survivre.
+
+    SEUL LE TEXTE BOUGE. L'intention, le resume, la demande, la langue et le
+    destinataire restent ceux de l'analyse : ce sont des CONSTATS sur le message
+    recu, pas des champs de saisie. `to_email` en particulier ne s'edite pas —
+    c'est ce qui garantit qu'une reponse ne peut pas changer de destinataire.
+
+    `edite_le` / `edite_par` distinguent le texte du modele de celui du coach :
+    regenerer effacera l'edition, et il faut pouvoir le dire avant.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    message = await p3ai_message_du_coach(inbound_id, email)
+    if not p3ai_est_proprietaire(message, email):
+        raise HTTPException(status_code=403,
+                            detail="Seul le proprietaire de cette reponse peut la modifier")
+    try:
+        corps = await request.json()
+    except (ValueError, TypeError):
+        corps = None
+    if not isinstance(corps, dict) or "reponse_proposee" not in corps:
+        raise HTTPException(status_code=400, detail="Champ `reponse_proposee` requis")
+    texte = str(corps.get("reponse_proposee") or "").strip()
+    if not texte:
+        raise HTTPException(status_code=400, detail="Un brouillon vide ne se garde pas")
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    resultat = await db[P3AI_BROUILLONS].update_one(
+        {"inbound_id": message["id"]},
+        {"$set": {"reponse_proposee": texte[:P3AI_REPONSE_MAX],
+                  # Le drapeau de validation est RECALCULE : un coach qui ecrit
+                  # « 15 CHF par personne » dans son brouillon doit declencher
+                  # la meme alerte que si le modele l'avait ecrit.
+                  "motifs_validation": p3ai_sujets_sensibles(texte),
+                  "validation_requise": bool(p3ai_sujets_sensibles(texte)),
+                  "edite_le": maintenant, "edite_par": email,
+                  "updated_at": maintenant}})
+    if not getattr(resultat, "matched_count", 0):
+        raise HTTPException(status_code=404, detail="Aucun brouillon a modifier")
+    logger.info("%s brouillon corrige a la main pour %s par %s", P3AI_PREFIXE,
+                message.get("recipient_key") or "-", email[:24])
+    return {"brouillon": await db[P3AI_BROUILLONS].find_one(
+        {"inbound_id": message["id"]}, {"_id": 0})}
 
 
 # ============================================================================

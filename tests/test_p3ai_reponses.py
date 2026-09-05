@@ -510,6 +510,108 @@ verifier("9h. une intention inventee par le modele retombe sur `autre`",
 
 
 # ============================================================================
+print("\n9bis. L'INTENTION DIT CE QU'IL FAUT FAIRE, PAS L'HUMEUR DU PROSPECT")
+
+# LA REGLE, SUR DES CAS GENERIQUES — jamais sur un identifiant particulier.
+_CAS_INTENTION = [
+    ("une question explicite l'emporte sur l'enthousiasme", "positif",
+     "votre proposition nous semble interessante, ca consiste en quoi ?", "question"),
+    ("deux questions, meme resultat", "positif",
+     "Cela nous semble interessant, ca consiste en quoi?\nEt quels sont les enjeux?",
+     "question"),
+    ("une demande SANS point d'interrogation compte aussi", "positif",
+     "Pouvez-vous nous en dire plus sur votre concept.", "question"),
+    ("une demande en allemand compte aussi", "autre",
+     "Koennen Sie uns mehr erfahren lassen", "question"),
+    ("un accord SANS question reste positif", "positif",
+     "Bonjour oui, cela peut se faire, la personne est joignable au 076.", "positif"),
+    ("un refus reste un refus", "refus",
+     "Danke fuer deine Anfrage, aber wir sind nicht interessiert", "refus"),
+    ("UN REFUS POLI AVEC UNE QUESTION RESTE UN REFUS", "refus",
+     "Merci, mais pas pour nous. Peut-etre une autre fois ?", "refus"),
+    ("une absence reste une absence", "absence",
+     "Je suis absente jusqu'au 15 septembre.", "absence"),
+]
+for _intitule, _modele, _corps, _attendu in _CAS_INTENTION:
+    verifier("9bis-a. %s" % _intitule,
+             S.p3ai_intention_finale(_modele, _corps) == _attendu,
+             S.p3ai_intention_finale(_modele, _corps))
+
+verifier("9bis-b. l'invite porte la MEME regle que le code",
+         "l'intention est « question »" in BLOC_AI)
+verifier("9bis-c. l'intention brute du modele est CONSERVEE a cote",
+         '"intention_modele"' in BLOC_AI)
+
+# Et de bout en bout : le brouillon range porte l'intention corrigee.
+_b = base_trois_cas()
+S.p3ai_appeler_modele = modele_bouchon("Bonjour, voici ce qu'est Afroboost.",
+                                       intention="positif")
+_q = analyser("inb-etu04")
+verifier("9bis-d. un message qui pose des questions est range en QUESTION",
+         _q["brouillon"]["intention"] == "question", _q["brouillon"]["intention"])
+verifier("9bis-e. l'avis du modele reste consultable",
+         _q["brouillon"]["intention_modele"] == "positif")
+S.p3ai_appeler_modele = modele_bouchon("Merci pour votre retour.", intention="positif")
+_p = analyser("inb-lsna3")
+verifier("9bis-f. un message SANS question garde l'intention du modele",
+         _p["brouillon"]["intention"] == "positif", _p["brouillon"]["intention"])
+S.p3ai_appeler_modele = modele_bouchon("Danke fuer die Rueckmeldung.",
+                                       intention="refus", langue="de")
+_r = analyser("inb-zrhd5")
+verifier("9bis-g. le refus allemand reste un refus, en allemand",
+         _r["brouillon"]["intention"] == "refus" and _r["brouillon"]["langue"] == "de")
+
+
+# ============================================================================
+print("\n9ter. LE BROUILLON SE CORRIGE A LA MAIN, ET N'ENVOIE TOUJOURS RIEN")
+
+_b = base_trois_cas()
+S.p3ai_appeler_modele = modele_bouchon("Texte du modele.")
+analyser("inb-etu04")
+
+def modifier(inbound_id, texte, jeton_=None):
+    return lancer(S.p3ai_modifier_brouillon(
+        inbound_id, RequeteFictive(jeton_=jeton_ or JA,
+                                   corps={"reponse_proposee": texte})))
+
+_m = modifier("inb-etu04", "Texte corrige a la main par Bassi.")
+verifier("9ter-a. le texte corrige remplace celui du modele",
+         _m["brouillon"]["reponse_proposee"] == "Texte corrige a la main par Bassi.")
+verifier("9ter-b. la correction est datee et signee",
+         bool(_m["brouillon"].get("edite_le")) and _m["brouillon"].get("edite_par") == COACH_A)
+verifier("9ter-c. le destinataire n'a PAS bouge",
+         _m["brouillon"]["to_email"] == "info@bde-hearc.ch")
+verifier("9ter-d. l'intention et le resume non plus",
+         _m["brouillon"]["intention"] == "question"
+         and _m["brouillon"]["resume"] == "Le partenaire pose une question.")
+
+_sens = modifier("inb-etu04", "Nous proposons un tarif de 15 CHF par personne.")
+verifier("9ter-e. un montant ecrit A LA MAIN leve la meme alerte",
+         _sens["brouillon"]["validation_requise"] is True,
+         str(_sens["brouillon"]["motifs_validation"]))
+
+for _mauvais, _code in ((None, 400), ("", 400), ("   ", 400)):
+    try:
+        lancer(S.p3ai_modifier_brouillon("inb-etu04", RequeteFictive(
+            jeton_=JA, corps=({} if _mauvais is None else {"reponse_proposee": _mauvais}))))
+        _ok = False
+    except HTTPException as e:
+        _ok = e.status_code == _code
+    verifier("9ter-f. un brouillon vide (%r) est refuse" % _mauvais, _ok)
+
+try:
+    modifier("inb-zrhd5", "aucun brouillon ici")
+    _sans = False
+except HTTPException as e:
+    _sans = e.status_code == 404
+verifier("9ter-g. corriger un brouillon inexistant -> 404", _sans)
+
+verifier("9ter-h. corriger ETU-04 ne touche pas le brouillon de LSN-A3",
+         all(d["inbound_id"] != "inb-lsna3" or "corrige" not in d["reponse_proposee"]
+             for d in _b[S.P3AI_BROUILLONS].documents))
+
+
+# ============================================================================
 print("\n10. AUTHENTIFICATION ET CLOISONNEMENT ENTRE COACHS")
 
 _b = base_trois_cas()
@@ -519,7 +621,9 @@ for _nom, _appel in (
         ("l'ouverture", lambda j: S.p3ai_ouvrir_reponse("inb-etu04", RequeteFictive(jeton_=j))),
         ("l'analyse", lambda j: S.p3ai_analyser("inb-etu04", RequeteFictive(jeton_=j, corps={}))),
         ("la lecture du brouillon", lambda j: S.p3ai_lire_brouillon("inb-etu04", RequeteFictive(jeton_=j))),
-        ("le marquage traite", lambda j: S.p3ai_marquer_traite("inb-etu04", RequeteFictive(jeton_=j, corps={})))):
+        ("le marquage traite", lambda j: S.p3ai_marquer_traite("inb-etu04", RequeteFictive(jeton_=j, corps={}))),
+        ("la correction du brouillon", lambda j: S.p3ai_modifier_brouillon(
+            "inb-etu04", RequeteFictive(jeton_=j, corps={"reponse_proposee": "x"})))):
     try:
         lancer(_appel(None))
         _ferme = False
@@ -540,7 +644,7 @@ verifier("10d. un identifiant inconnu rend le MEME 404 qu'un message d'autrui",
          _bloc(SRC, "# READ-P1 — DEUX ETATS").count("Reponse introuvable") >= 2)
 verifier("10e. toutes les routes du lot passent par la garde coach",
          BLOC_READ.count("_v309_require_coach_or_admin") == 2
-         and BLOC_AI.count("_v309_require_coach_or_admin") == 2,
+         and BLOC_AI.count("_v309_require_coach_or_admin") == 3,
          "%d / %d" % (BLOC_READ.count("_v309_require_coach_or_admin"),
                       BLOC_AI.count("_v309_require_coach_or_admin")))
 
@@ -576,9 +680,9 @@ for _n in ast.walk(_arbre):
             _src = ast.get_source_segment(SRC, _d) or ""
             if "api_router" in _src:
                 _routes.append((_n.name, _src))
-verifier("11e. le lot ajoute EXACTEMENT 4 routes", len(_routes) == 4,
+verifier("11e. le lot ajoute EXACTEMENT 5 routes", len(_routes) == 5,
          str([r[0] for r in _routes]))
-verifier("11f. aucune n'est un DELETE ni un PUT",
+verifier("11f. aucune n'est un DELETE ni un PUT (le PATCH ne corrige QUE le texte)",
          all(".delete(" not in s and ".put(" not in s for _n, s in _routes))
 verifier("11g. l'appel au modele passe par un fil separe (jamais la boucle async)",
          "asyncio.to_thread(_appel)" in BLOC_AI)
@@ -592,17 +696,35 @@ ECRAN = io.open(os.path.join(RACINE, "frontend", "src", "components", "coach",
 TABLEAU = io.open(os.path.join(RACINE, "frontend", "src", "components",
                                "CoachDashboard.js"), encoding="utf-8").read()
 
-verifier("12a. le brouillon est une TABLE indexee par identifiant",
-         "brouillons[r.id]" in ECRAN and "const [brouillons, setBrouillons]" in ECRAN)
-verifier("12b. la generation en cours l'est aussi", "iaEnCours === r.id" in ECRAN)
-verifier("12c. les erreurs aussi", "iaErreurs[r.id]" in ECRAN)
-verifier("12d. la carte ouverte est une CHAINE, jamais un objet (regle V305)",
-         "const [reponseOuverte, setReponseOuverte] = useState('')" in ECRAN)
+# AI-P2 A UNIFIE L'ETAT EN UNE SEULE TABLE, et c'est une garantie PLUS FORTE
+# que les quatre variables separees d'AI-P1 : il n'existe plus qu'un endroit ou
+# un etat de carte peut vivre, et il est indexe par `message.id`. Un futur champ
+# (edition, texte...) sera donc cloisonne par construction, sans qu'on ait a y
+# penser — c'etait exactement le risque des variables paralleles.
+verifier("12a. il n'existe qu'UNE table d'etat, indexee par identifiant",
+         "const [cartes, setCartes] = useState({})" in ECRAN
+         and "cartes[r.id] || {}" in ECRAN)
+verifier("12b. les mises a jour sont FONCTIONNELLES et ne touchent qu'une cle",
+         "setCartes((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), ...champs } }))" in ECRAN)
+verifier("12c. les cinq etats de carte y vivent, aucun a l'exterieur",
+         all(("%s:" % c) in ECRAN or ("%s," % c) in ECRAN or ("%s " % c) in ECRAN
+             for c in ("ouvert", "brouillon", "chargement", "erreur", "edition")))
+verifier("12d. AUCUNE variable d'etat GLOBALE de carte ne subsiste",
+         not any(v in ECRAN for v in ("const [brouillons,", "const [iaEnCours,",
+                                      "const [iaErreurs,", "const [etatEnCours,",
+                                      "const [reponseOuverte,")))
+verifier("12d-bis. l'ouverture, la generation et l'edition sont toutes par carte",
+         "carteDe(id).ouvert" in ECRAN and "carteDe(id).chargement" in ECRAN
+         and "carte.edition" in ECRAN)
 verifier("12e. seul « Voir la reponse » appelle la route de lecture",
          ECRAN.count("/lu`") == 1 and "ouvrirReponse(r.id)" in ECRAN)
 verifier("12f. le chargement de l'ecran n'appelle JAMAIS cette route",
          "/lu`" not in ECRAN.split("const chargement = useChargement")[1]
          .split("const reponsesEnAttente")[0])
+verifier("12f-bis. ouvrir ne REGENERE pas : le brouillon existant est RELU",
+         "/brouillon`" in ECRAN and "carteDe(id).brouillon !== undefined" in ECRAN)
+verifier("12f-ter. l'analyse ne part que sur un clic explicite",
+         ECRAN.count("analyserReponse(r.id") == 2)   # « Generer/Regenerer » + les tons
 verifier("12g. le badge NOUVEAU se lit sur `read_at`", "const nonLue = !r.read_at;" in ECRAN)
 verifier("12h. « A REPONDRE » se lit sur `traite_at`", "const traitee = !!r.traite_at;" in ECRAN)
 verifier("12i. les compteurs viennent du SERVEUR, pas d'un comptage local",

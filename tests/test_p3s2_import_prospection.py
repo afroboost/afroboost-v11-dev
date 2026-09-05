@@ -626,9 +626,20 @@ verifier("8b-bis. les POST de l'écran visent la préparation, l'approbation "
 verifier("8b-quater. aucun de ces POST n'écrit sur une fiche prospect",
          "/partner-prospects" not in str(
              set(re.findall(r"axios\.post\(\s*`\$\{base\}(/[^`]*)`", ECRAN))))
-verifier("8b-ter. le PATCH d'un PROSPECT reste le seul écrivant sur une fiche",
-         "/partner-prospects/${ouvert.id}" in ECRAN
-         and ECRAN.count("axios.patch") == 2)
+# AI-P2 AJOUTE UN SECOND PATCH, ET IL N'ÉCRIT PAS SUR UNE FICHE.
+# `/prospect-inbound/{id}/brouillon` corrige le TEXTE proposé pour une réponse
+# reçue ; il ne peut ni changer son destinataire, ni toucher `partner_prospects`.
+# Ce qui est gardé ici reste donc vrai : la fiche prospect n'a qu'UN seul
+# chemin d'écriture, et c'est celui de son propre PATCH.
+_PATCHS = set(re.findall(r"axios\.patch\(\s*`\$\{base\}(/[^`]*)`", ECRAN))
+verifier("8b-ter. la fiche prospect n'a QU'UN seul chemin d'écriture",
+         _PATCHS == {"/partner-prospects/${ouvert.id}",
+                     # préexistant : corriger le message d'une action de campagne
+                     "/prospect-campaigns/${campagne.id}/actions/${action.id}",
+                     # AI-P2 : corriger le TEXTE proposé pour une réponse reçue
+                     "/prospect-inbound/${encodeURIComponent(id)}/brouillon"}
+         and len([p for p in _PATCHS if p.startswith("/partner-prospects")]) == 1,
+         str(_PATCHS))
 verifier("8c. AUCUN bouton d'envoi — c'est P3-S3",
          not re.search(r">\s*(Envoyer|Contacter|Relancer)\b", ECRAN))
 verifier("8d. aucune couleur imposée : tout hex est un repli de var()",

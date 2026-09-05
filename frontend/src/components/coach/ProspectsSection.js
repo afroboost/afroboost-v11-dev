@@ -193,6 +193,27 @@ function Tuile({ libelle, valeur, actif, onClick }) {
   );
 }
 
+/* AI-P2 — LES LIBELLÉS D'INTENTION, EN FRANÇAIS ET EN MAJUSCULES.
+   La valeur stockée reste anglaise-neutre (`question`, `refus`…) : elle sert
+   au tri et aux tests. Ce qui s'affiche est traduit ICI, une seule fois, pour
+   qu'un renommage d'interface ne touche jamais la donnée. */
+const LIBELLE_INTENTION = {
+  question: 'QUESTION',
+  positif: 'POSITIF',
+  refus: 'REFUS',
+  absence: 'ABSENCE',
+  autre: 'À QUALIFIER',
+};
+
+/* Les quatre tons de régénération. Liste FERMÉE côté serveur aussi : une
+   valeur libre entrerait dans une invite, donc serait une injection. */
+const TONS_IA = [
+  { cle: 'court', libelle: 'Plus court' },
+  { cle: 'chaleureux', libelle: 'Plus chaleureux' },
+  { cle: 'professionnel', libelle: 'Plus professionnel' },
+  { cle: 'direct', libelle: 'Plus direct' },
+];
+
 function Etiquette({ texte, ton }) {
   const fonds = {
     neutre: 'rgba(255,255,255,0.08)',
@@ -349,31 +370,39 @@ export default function ProspectsSection({ API }) {
   const reponsesARepondre = (sectionReponses && sectionReponses.etat === SECTION.OK
     && sectionReponses.donnees && sectionReponses.donnees.a_repondre) || 0;
 
-  /* ---------- READ-P1 + AI-P1 — L'ÉTAT DES RÉPONSES REÇUES ----------
+  /* ---------- READ-P1 + AI-P2 — L'ÉTAT DES CARTES DE RÉPONSE ----------
 
-     TOUT EST INDEXÉ PAR `message.id`, ET C'EST LA RÈGLE CENTRALE DU LOT.
+     UNE SEULE TABLE, INDEXÉE PAR `message.id`, ET C'EST LA RÈGLE CENTRALE.
      Trois partenaires ont répondu le même jour, au même objet, sur la même
-     campagne. Une variable unique (`brouillon`, `enCours`…) partagée par les
-     cartes ferait apparaître le texte d'ETU-04 sur la carte de LSN-A3 — le
-     mélange exact que ce chantier existe pour empêcher. Une table par
-     identifiant rend ce mélange structurellement impossible.
+     campagne. Une variable unique (`brouillon`, `ouvert`, `edition`…) partagée
+     par les cartes ferait apparaître le texte d'ETU-04 sur la carte de LSN-A3 —
+     le mélange exact que ce chantier existe pour empêcher. Chaque entrée vaut
+     `{ ouvert, brouillon, chargement, erreur, edition, texte }` et ne concerne
+     QUE son message.
 
-     `reponseOuverte` est une CHAÎNE (l'id), jamais l'objet : la règle V305
-     interdit de reposer un objet neuf quand rien n'a changé. */
-  const [reponseOuverte, setReponseOuverte] = useState('');
-  const [brouillons, setBrouillons] = useState({});      // id -> brouillon serveur
-  const [iaEnCours, setIaEnCours] = useState('');        // id de la carte en génération
-  const [iaErreurs, setIaErreurs] = useState({});        // id -> message d'erreur
-  const [etatEnCours, setEtatEnCours] = useState('');    // id de la carte dont l'état change
+     LES MISES À JOUR SONT FONCTIONNELLES et ne touchent qu'une clé : reposer
+     l'objet entier relancerait les effets qui en dépendent (règle absolue,
+     incident V305). */
+  const [cartes, setCartes] = useState({});
+
+  const majCarte = useCallback((id, champs) => {
+    setCartes((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), ...champs } }));
+  }, []);
+
+  const carteDe = useCallback((id) => cartes[id] || {}, [cartes]);
 
   /* READ-P1 — OUVRIR, C'EST LIRE. Et rien d'autre ne l'est.
      Ce clic est le SEUL chemin qui écrit `read_at`. Ni le chargement de
-     l'écran, ni l'analyse IA, ni la future notification ne passent par ici.
-     Refermer la carte ne « dé-lit » pas : on n'oublie pas ce qu'on a vu. */
+     l'écran, ni l'ouverture de l'onglet, ni l'analyse IA ne passent par ici.
+     Refermer la carte ne « dé-lit » pas : on n'oublie pas ce qu'on a vu.
+
+     LE BROUILLON EXISTANT EST RELU, JAMAIS RÉGÉNÉRÉ. Une régénération
+     automatique à chaque ouverture coûterait un appel au modèle par clic et
+     écraserait une correction écrite à la main. */
   const ouvrirReponse = useCallback(async (id) => {
     if (!id) return;
-    if (reponseOuverte === id) { setReponseOuverte(''); return; }
-    setReponseOuverte(id);
+    if (carteDe(id).ouvert) { majCarte(id, { ouvert: false }); return; }
+    majCarte(id, { ouvert: true });
     try {
       await axios.post(`${base}/prospect-inbound/${encodeURIComponent(id)}/lu`);
       chargement.reessayer('reponses');
@@ -381,53 +410,71 @@ export default function ProspectsSection({ API }) {
       /* La lecture n'a pas pu être enregistrée : la carte s'ouvre quand même.
          Un état de badge n'est jamais une raison de cacher un message. */
     }
-    /* Le brouillon éventuel est relu à l'ouverture, jamais avant : le charger
-       pour toutes les cartes ferait N appels pour un panneau que personne
-       n'a encore déplié. */
+    if (carteDe(id).brouillon !== undefined) return;   // déjà chargé une fois
     try {
       const r = await axios.get(`${base}/prospect-inbound/${encodeURIComponent(id)}/brouillon`);
-      const b = (r && r.data && r.data.brouillon) || null;
-      if (b) setBrouillons((prev) => ({ ...prev, [id]: b }));
-    } catch (e) { /* pas de brouillon = cas normal, pas une panne */ }
-  }, [base, reponseOuverte, chargement]);
+      majCarte(id, { brouillon: (r && r.data && r.data.brouillon) || null });
+    } catch (e) {
+      majCarte(id, { brouillon: null });
+    }
+  }, [base, carteDe, majCarte, chargement]);
 
-  /* AI-P1 — L'ANALYSE. Elle NE MARQUE RIEN comme lu ni traité.
+  /* AI-P1/P2 — L'ANALYSE. Elle NE MARQUE RIEN comme lu ni traité.
      `ton` vide = première génération ; sinon régénération orientée. */
   const analyserReponse = useCallback(async (id, ton) => {
-    if (!id || iaEnCours) return;
-    setIaEnCours(id);
-    setIaErreurs((prev) => (prev[id] ? { ...prev, [id]: '' } : prev));
+    if (!id || carteDe(id).chargement) return;
+    majCarte(id, { chargement: true, erreur: '' });
     try {
       const r = await axios.post(
         `${base}/prospect-inbound/${encodeURIComponent(id)}/analyser`,
         ton ? { ton } : {});
       const b = (r && r.data && r.data.brouillon) || null;
-      if (b) setBrouillons((prev) => ({ ...prev, [id]: b }));
+      /* Régénérer REMPLACE : on referme l'édition en cours, sinon le coach
+         croirait corriger un texte qui n'existe plus. */
+      majCarte(id, { brouillon: b, chargement: false, edition: false, texte: '' });
     } catch (e) {
       const detail = (e && e.response && e.response.data && e.response.data.detail)
-        || "L'analyse n'a pas abouti.";
-      setIaErreurs((prev) => ({ ...prev, [id]: String(detail) }));
-    } finally {
-      setIaEnCours('');
+        || "Analyse IA temporairement indisponible.";
+      majCarte(id, { chargement: false, erreur: String(detail) });
     }
-  }, [base, iaEnCours]);
+  }, [base, carteDe, majCarte]);
+
+  /* AI-P2 — LA CORRECTION À LA MAIN, ENREGISTRÉE.
+     Un brouillon dont la correction disparaît au premier repli n'est pas
+     modifiable : c'est un piège. Le texte part donc au serveur. */
+  const enregistrerBrouillon = useCallback(async (id) => {
+    const carte = carteDe(id);
+    const texte = (carte.texte || '').trim();
+    if (!id || !texte || carte.chargement) return;
+    majCarte(id, { chargement: true, erreur: '' });
+    try {
+      const r = await axios.patch(
+        `${base}/prospect-inbound/${encodeURIComponent(id)}/brouillon`,
+        { reponse_proposee: texte });
+      majCarte(id, { brouillon: (r && r.data && r.data.brouillon) || carte.brouillon,
+                     chargement: false, edition: false, texte: '' });
+    } catch (e) {
+      majCarte(id, { chargement: false,
+                     erreur: "La correction n'a pas pu être enregistrée." });
+    }
+  }, [base, carteDe, majCarte]);
 
   /* READ-P1 — « TRAITÉ » EST UNE DÉCISION, JAMAIS UNE DÉDUCTION.
      Lire ne traite pas, analyser ne traite pas. Seul ce clic le fait — et il
      est réversible, parce qu'un état qu'on ne peut pas corriger finit ignoré. */
   const basculerTraite = useCallback(async (id, traite) => {
-    if (!id || etatEnCours) return;
-    setEtatEnCours(id);
+    if (!id || carteDe(id).chargement) return;
+    majCarte(id, { chargement: true, erreur: '' });
     try {
       await axios.post(`${base}/prospect-inbound/${encodeURIComponent(id)}/traite`,
         { traite: !!traite });
+      majCarte(id, { chargement: false });
       chargement.reessayer('reponses');
     } catch (e) {
-      setIaErreurs((prev) => ({ ...prev, [id]: "L'état n'a pas pu être enregistré." }));
-    } finally {
-      setEtatEnCours('');
+      majCarte(id, { chargement: false,
+                     erreur: "L'état n'a pas pu être enregistré." });
     }
-  }, [base, etatEnCours, chargement]);
+  }, [base, carteDe, majCarte, chargement]);
 
   const section = chargement.sections.prospects;
   const etat = (section && section.etat) || SECTION.CHARGEMENT;
@@ -789,25 +836,33 @@ export default function ProspectsSection({ API }) {
         </div>
       )}
 
-      {/* ---------- P3-U3 / READ-P1 / AI-P1 : LES RÉPONSES REÇUES ----------
+      {/* ---------- LES RÉPONSES REÇUES — CARTES COMPACTES (AI-P2) ----------
 
-           TROIS ÉTATS, TROIS QUESTIONS DIFFÉRENTES, et les confondre est le
-           défaut que ce bloc corrige :
-             « NOUVEAU »    — je ne l'ai jamais OUVERTE   (`read_at` absent)
-             « À RÉPONDRE » — je n'ai pas encore AGI       (`traite_at` absent)
-             « TRAITÉ »     — j'ai agi, explicitement
+           CE QUE LA CARTE FERMÉE DOIT DIRE EN TROIS SECONDES, dans cet ordre :
+             1. est-ce NOUVEAU ?          2. dois-je encore RÉPONDRE ?
+             3. QUI ?                     4. quelle INTENTION ?
+             5. le RÉSUMÉ                 6. l'ACTION recommandée
+           Et rien d'autre. Le mode de corrélation, la confiance, l'identifiant
+           de campagne sont du diagnostic : ils existent toujours, mais dans la
+           carte OUVERTE. Les afficher fermés noyait les six lignes utiles.
+
+           TROIS ÉTATS, TROIS QUESTIONS :
+             « NOUVEAU »    — jamais OUVERTE     (`read_at` absent)
+             « À RÉPONDRE » — jamais AGI dessus  (`traite_at` absent)
+             l'INTENTION    — ce que le message demande (vient du brouillon)
            Ouvrir n'est pas répondre : le badge NOUVEAU disparaît à l'ouverture,
            « À RÉPONDRE » reste tant que le coach n'a pas décidé le contraire.
 
-           TOUT EST INDEXÉ PAR `r.id`. Aucune variable partagée entre les
-           cartes : le brouillon d'ETU-04 ne peut pas s'afficher sur LSN-A3. */}
+           MOBILE D'ABORD : cartes pleine largeur, `flexWrap` partout, adresse
+           tronquée par ellipse plutôt que par débordement. Aucune largeur fixe,
+           donc aucun défilement horizontal. */}
       {reponses.length > 0 && (
         <div data-testid="reponses-recues"
              style={{
                padding: '12px 14px', marginBottom: '14px', borderRadius: '10px',
                border: `1px solid rgba(${RGB}, 0.4)`, background: `rgba(${RGB}, 0.10)`,
              }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px',
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px',
                         marginBottom: '10px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '13px', fontWeight: 700, color: TEXTE }}>
               Réponses reçues ({reponses.length})
@@ -835,64 +890,112 @@ export default function ProspectsSection({ API }) {
               </span>
             )}
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {reponses.map((r) => {
-              /* Tout ce qui suit est LOCAL à cette carte. Aucune de ces
-                 variables n'existe en dehors de l'itération : c'est ce qui
-                 garantit qu'aucune donnée d'un prospect n'atteint un autre. */
+              /* Tout ce qui suit est LOCAL à cette carte : aucune de ces
+                 variables n'existe hors de l'itération, et tout état persistant
+                 est lu dans `cartes[r.id]`. C'est ce qui rend le mélange entre
+                 prospects structurellement impossible. */
+              const carte = cartes[r.id] || {};
               const nonLue = !r.read_at;
               const traitee = !!r.traite_at;
-              const deplie = reponseOuverte === r.id;
-              const bro = brouillons[r.id] || null;
-              const erreurIa = iaErreurs[r.id] || '';
-              const genere = iaEnCours === r.id;
+              const deplie = !!carte.ouvert;
+              const bro = carte.brouillon || null;
+              const occupe = !!carte.chargement;
               return (
                 <div key={r.id} data-testid="reponse-ligne"
                      style={{
-                       padding: '8px 10px', borderRadius: '8px',
+                       padding: '10px 12px', borderRadius: '10px',
                        background: nonLue ? `rgba(${RGB}, 0.14)` : 'rgba(255,255,255,0.05)',
-                       borderLeft: `3px solid ${r.statut === 'rattache'
-                         ? `rgba(${RGB}, 0.9)` : 'rgba(245,158,11,0.9)'}`,
+                       borderLeft: `3px solid ${nonLue
+                         ? `rgba(${RGB}, 0.9)` : 'rgba(255,255,255,0.18)'}`,
                      }}>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
-                                alignItems: 'baseline' }}>
+
+                  {/* ---- ligne 1 : les deux badges d'état, rien d'autre ---- */}
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap',
+                                alignItems: 'center', marginBottom: '6px' }}>
                     {nonLue && (
                       <span data-testid="badge-nouveau"
                             style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
-                                     padding: '2px 7px', borderRadius: '999px', color: TEXTE,
+                                     padding: '2px 8px', borderRadius: '999px', color: TEXTE,
                                      background: `rgba(${RGB}, 0.55)` }}>
                         NOUVEAU
                       </span>
                     )}
-                    <span style={{ fontSize: '12px', fontWeight: 700, color: TEXTE }}>
-                      {r.recipient_key || 'Prospect à identifier'}
-                    </span>
-                    <span style={{ fontSize: '11px', opacity: 0.75, color: TEXTE }}>{r.from_email}</span>
                     <span data-testid={traitee ? 'badge-traite' : 'badge-a-repondre'}
-                          style={{ fontSize: '10px', fontWeight: 600, padding: '2px 7px',
-                                   borderRadius: '999px', color: TEXTE,
-                                   background: traitee ? 'rgba(34,197,94,0.22)' : 'rgba(245,158,11,0.22)' }}>
+                          style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
+                                   padding: '2px 8px', borderRadius: '999px', color: TEXTE,
+                                   background: traitee ? 'rgba(34,197,94,0.22)'
+                                                       : 'rgba(245,158,11,0.22)' }}>
                       {traitee ? 'TRAITÉ' : 'À RÉPONDRE'}
                     </span>
-                    <span style={{ fontSize: '11px', opacity: 0.6, color: TEXTE, marginLeft: 'auto' }}>
-                      {(r.received_at || '').slice(0, 16).replace('T', ' ')}
+                    {r.statut !== 'rattache' && (
+                      <span data-testid="badge-a-rattacher"
+                            style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px',
+                                     borderRadius: '999px', color: TEXTE,
+                                     background: 'rgba(255,255,255,0.14)' }}>
+                        À RATTACHER
+                      </span>
+                    )}
+                    <span style={{ fontSize: '11px', opacity: 0.55, color: TEXTE,
+                                   marginLeft: 'auto' }}>
+                      {(r.received_at || '').slice(0, 10)}
                     </span>
                   </div>
-                  <div style={{ fontSize: '12px', marginTop: '3px', color: TEXTE }}>{r.subject}</div>
 
-                  {/* Le corps est du TEXTE, jamais du HTML : on n'injecte pas le
-                      contenu d'un inconnu dans la page. Replié, on n'en montre
-                      qu'un aperçu — l'original complet est un clic plus loin. */}
-                  {!deplie && (
-                    <div style={{ fontSize: '11px', opacity: 0.75, marginTop: '3px',
-                                  whiteSpace: 'pre-wrap', color: TEXTE }}>
-                      {(r.body_text || '').slice(0, 180)}
-                      {(r.body_text || '').length > 180 ? '…' : ''}
+                  {/* ---- ligne 2 : QUI. L'organisation d'abord, l'adresse en
+                       dessous et tronquée — sur un téléphone, une adresse longue
+                       poussait la carte hors de l'écran. ---- */}
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: TEXTE,
+                                lineHeight: 1.25 }}>
+                    {(bro && bro.organisation) || r.recipient_key || 'Prospect à identifier'}
+                  </div>
+                  <div title={r.from_email}
+                       style={{ fontSize: '11px', opacity: 0.7, color: TEXTE,
+                                overflow: 'hidden', textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                    {r.from_email}
+                  </div>
+
+                  {/* ---- ligne 3 : ce que ça demande, et ce qu'il faut faire ---- */}
+                  {bro ? (
+                    <div style={{ marginTop: '7px' }}>
+                      <span data-testid="carte-intention"
+                            style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.04em',
+                                     color: PRIMAIRE }}>
+                        {LIBELLE_INTENTION[bro.intention] || bro.intention.toUpperCase()}
+                      </span>
+                      {bro.resume ? (
+                        <div data-testid="carte-resume"
+                             style={{ fontSize: '12px', color: TEXTE, lineHeight: 1.45,
+                                      marginTop: '2px' }}>
+                          {bro.resume}
+                        </div>
+                      ) : null}
+                      {!deplie && bro.prochaine_action ? (
+                        <div style={{ fontSize: '11px', opacity: 0.75, color: TEXTE,
+                                      marginTop: '3px' }}>
+                          <strong style={{ opacity: 0.9 }}>À faire :</strong> {bro.prochaine_action}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    /* Pas encore d'analyse : on montre deux lignes du message
+                       réel plutôt qu'une carte muette — et on ne lance AUCUN
+                       appel au modèle tant que personne ne l'a demandé. */
+                    <div data-testid="carte-sans-analyse"
+                         style={{ fontSize: '12px', opacity: 0.7, color: TEXTE,
+                                  marginTop: '7px', lineHeight: 1.4,
+                                  display: '-webkit-box', WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                      {(r.body_text || '').slice(0, 160) || 'Aucun contenu lisible.'}
                     </div>
                   )}
 
+                  {/* ---- ligne 4 : l'action ---- */}
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
-                                alignItems: 'center', marginTop: '6px' }}>
+                                alignItems: 'center', marginTop: '9px' }}>
                     <button type="button" data-testid="voir-reponse"
                             onClick={() => ouvrirReponse(r.id)}
                             style={{ ...stylePetitBouton, fontWeight: 600 }}>
@@ -901,128 +1004,198 @@ export default function ProspectsSection({ API }) {
                     {deplie && (
                       <button type="button" data-testid="basculer-traite"
                               onClick={() => basculerTraite(r.id, !traitee)}
-                              disabled={etatEnCours === r.id}
-                              style={{ ...stylePetitBouton,
-                                       opacity: etatEnCours === r.id ? 0.6 : 1 }}>
+                              disabled={occupe}
+                              style={{ ...stylePetitBouton, opacity: occupe ? 0.6 : 1 }}>
                         {traitee ? 'Remettre à répondre' : 'Marquer comme traité'}
                       </button>
                     )}
-                    <span style={{ fontSize: '10px', opacity: 0.6, color: TEXTE, marginLeft: 'auto' }}>
-                      {r.statut === 'rattache'
-                        ? `rattaché — ${r.matching_method} (confiance ${r.matching_confidence})`
-                        : `à rattacher — ${r.motif || 'ambigu'}`}
-                      {r.campaign_id ? ` · campagne ${String(r.campaign_id).slice(0, 8)}` : ''}
-                    </span>
                   </div>
 
+                  {/* ================= LE DÉTAIL ================= */}
                   {deplie && (
-                    <div style={{ marginTop: '8px', paddingTop: '8px',
+                    <div style={{ marginTop: '10px', paddingTop: '10px',
                                   borderTop: '1px solid rgba(255,255,255,0.12)' }}>
-                      <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.7,
-                                    color: TEXTE, marginBottom: '4px' }}>
-                        MESSAGE ORIGINAL
-                      </div>
-                      <div data-testid="corps-original"
-                           style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
-                                    lineHeight: 1.5 }}>
-                        {r.body_text || '(aucun contenu lisible pour cette réponse)'}
-                      </div>
-                      {/* L'historique cité reste SÉPARÉ du nouveau texte : c'est
-                          la coupure faite par P3-R4, on ne la recolle pas ici. */}
-                      {r.body_quoted ? (
-                        <details style={{ marginTop: '6px' }}>
-                          <summary style={{ fontSize: '11px', cursor: 'pointer',
-                                            opacity: 0.7, color: TEXTE }}>
-                            Historique cité
-                          </summary>
-                          <div style={{ fontSize: '11px', whiteSpace: 'pre-wrap',
-                                        opacity: 0.7, color: TEXTE, marginTop: '4px' }}>
-                            {r.body_quoted}
-                          </div>
-                        </details>
-                      ) : null}
 
-                      {/* ---- AI-P1 : l'analyse et le brouillon ----
-                          RIEN NE PART D'ICI. Aucun bouton d'envoi : le brouillon
-                          se lit, se copie, se régénère. L'envoi appartient à un
-                          lot ultérieur, derrière une confirmation explicite. */}
-                      <div style={{ marginTop: '10px', display: 'flex', gap: '8px',
-                                    flexWrap: 'wrap', alignItems: 'center' }}>
-                        <button type="button" data-testid="analyser-ia"
-                                onClick={() => analyserReponse(r.id, '')}
-                                disabled={genere}
-                                style={{ ...styleBouton, opacity: genere ? 0.6 : 1 }}>
-                          {genere ? 'Analyse en cours…'
-                            : (bro ? 'Régénérer' : "Analyser avec l'IA")}
-                        </button>
-                        {bro && !genere && ['court', 'chaleureux', 'professionnel', 'direct'].map((t) => (
-                          <button key={t} type="button" data-testid={`ton-${t}`}
-                                  onClick={() => analyserReponse(r.id, t)}
-                                  style={stylePetitBouton}>
-                            Plus {t}
-                          </button>
-                        ))}
-                      </div>
-
-                      {erreurIa ? (
+                      {carte.erreur ? (
                         <div data-testid="erreur-ia"
-                             style={{ fontSize: '11px', marginTop: '6px', padding: '6px 8px',
+                             style={{ fontSize: '11px', marginBottom: '8px', padding: '7px 9px',
                                       borderRadius: '6px', color: TEXTE,
                                       background: 'rgba(239,68,68,0.18)' }}>
-                          {erreurIa}
+                          {carte.erreur}
                         </div>
                       ) : null}
 
+                      {/* ---- ANALYSE IA ---- */}
                       {bro ? (
-                        <div data-testid="brouillon-ia" style={{ marginTop: '8px' }}>
+                        <div data-testid="analyse-ia" style={{ marginBottom: '10px' }}>
+                          <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
+                                        color: TEXTE, letterSpacing: '0.05em',
+                                        marginBottom: '5px' }}>
+                            ANALYSE IA
+                          </div>
                           {bro.validation_requise && (
                             <div data-testid="validation-bassi"
                                  style={{ display: 'flex', gap: '6px', alignItems: 'center',
                                           fontSize: '11px', fontWeight: 700, color: TEXTE,
                                           padding: '6px 8px', borderRadius: '6px',
-                                          background: 'rgba(245,158,11,0.25)', marginBottom: '6px' }}>
+                                          background: 'rgba(245,158,11,0.25)', marginBottom: '7px',
+                                          flexWrap: 'wrap' }}>
                               <SvgIcon name="warning" size={13} />
                               VALIDATION BASSI NÉCESSAIRE — {bro.motifs_validation.join(', ')}
                             </div>
                           )}
-                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap',
-                                        marginBottom: '6px' }}>
-                            <Etiquette texte={`intention : ${bro.intention}`} ton="primaire" />
-                            <Etiquette texte={`langue : ${bro.langue}`} />
-                            <Etiquette texte={`version ${bro.version}`} />
-                          </div>
-                          {bro.resume ? (
-                            <div style={{ fontSize: '11px', color: TEXTE, marginBottom: '3px' }}>
-                              <strong>Résumé :</strong> {bro.resume}
-                            </div>
-                          ) : null}
                           {bro.demande ? (
-                            <div style={{ fontSize: '11px', color: TEXTE, marginBottom: '3px' }}>
-                              <strong>Demande :</strong> {bro.demande}
+                            <div style={{ fontSize: '12px', color: TEXTE, marginBottom: '3px',
+                                          lineHeight: 1.45 }}>
+                              <strong>Ce qu’il demande :</strong> {bro.demande}
                             </div>
                           ) : null}
                           {bro.prochaine_action ? (
-                            <div style={{ fontSize: '11px', color: TEXTE, marginBottom: '6px' }}>
-                              <strong>Prochaine action :</strong> {bro.prochaine_action}
+                            <div style={{ fontSize: '12px', color: TEXTE, lineHeight: 1.45 }}>
+                              <strong>Action recommandée :</strong> {bro.prochaine_action}
                             </div>
                           ) : null}
-                          <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.7,
-                                        color: TEXTE, marginBottom: '3px' }}>
-                            BROUILLON POUR {bro.to_email}
-                          </div>
-                          <div data-testid="reponse-proposee"
-                               style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
-                                        lineHeight: 1.5, padding: '8px 10px', borderRadius: '8px',
-                                        background: 'rgba(0,0,0,0.25)',
-                                        border: `1px solid rgba(${RGB}, 0.35)` }}>
-                            {bro.reponse_proposee}
-                          </div>
-                          <div style={{ fontSize: '10px', opacity: 0.6, color: TEXTE,
-                                        marginTop: '4px' }}>
-                            Brouillon — rien n'est envoyé. L'envoi viendra dans un lot dédié.
-                          </div>
                         </div>
                       ) : null}
+
+                      {/* ---- RÉPONSE PROPOSÉE ---- */}
+                      <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
+                                    color: TEXTE, letterSpacing: '0.05em', marginBottom: '5px' }}>
+                        {bro ? `RÉPONSE PROPOSÉE POUR ${bro.to_email}` : 'RÉPONSE PROPOSÉE'}
+                      </div>
+
+                      {bro && carte.edition ? (
+                        <>
+                          <textarea
+                            data-testid="editeur-brouillon"
+                            value={carte.texte}
+                            onChange={(e) => majCarte(r.id, { texte: e.target.value })}
+                            rows={9}
+                            style={{
+                              width: '100%', boxSizing: 'border-box', fontSize: '12px',
+                              lineHeight: 1.5, color: TEXTE, padding: '9px 10px',
+                              borderRadius: '8px', background: 'rgba(0,0,0,0.32)',
+                              border: `1px solid rgba(${RGB}, 0.45)`, resize: 'vertical',
+                              fontFamily: 'inherit',
+                            }} />
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                        marginTop: '7px' }}>
+                            <button type="button" data-testid="enregistrer-brouillon"
+                                    onClick={() => enregistrerBrouillon(r.id)}
+                                    disabled={occupe || !(carte.texte || '').trim()}
+                                    style={{ ...styleBouton,
+                                             opacity: occupe || !(carte.texte || '').trim() ? 0.6 : 1 }}>
+                              {occupe ? 'Enregistrement…' : 'Enregistrer'}
+                            </button>
+                            <button type="button" data-testid="annuler-edition"
+                                    onClick={() => majCarte(r.id, { edition: false, texte: '' })}
+                                    style={stylePetitBouton}>
+                              Annuler
+                            </button>
+                          </div>
+                        </>
+                      ) : bro ? (
+                        <div data-testid="reponse-proposee"
+                             style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
+                                      lineHeight: 1.5, padding: '9px 10px', borderRadius: '8px',
+                                      background: 'rgba(0,0,0,0.25)',
+                                      border: `1px solid rgba(${RGB}, 0.35)` }}>
+                          {bro.reponse_proposee}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: '12px', opacity: 0.75, color: TEXTE }}>
+                          Aucune réponse n'a encore été préparée pour ce partenaire.
+                        </div>
+                      )}
+
+                      {/* ---- les commandes ---- */}
+                      {!carte.edition && (
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                      alignItems: 'center', marginTop: '8px' }}>
+                          <button type="button" data-testid="analyser-ia"
+                                  onClick={() => analyserReponse(r.id, '')}
+                                  disabled={occupe}
+                                  style={{ ...styleBouton, opacity: occupe ? 0.6 : 1 }}>
+                            {occupe ? 'Analyse en cours…'
+                              : (bro ? 'Régénérer' : "Générer une réponse avec l’IA")}
+                          </button>
+                          {bro && !occupe && (
+                            <button type="button" data-testid="modifier-brouillon"
+                                    onClick={() => majCarte(r.id, {
+                                      edition: true, texte: bro.reponse_proposee || '' })}
+                                    style={stylePetitBouton}>
+                              Modifier
+                            </button>
+                          )}
+                          {/* AUCUN FAUX BOUTON ACTIF. L'envoi n'existe pas
+                              encore : on le dit, on ne le mime pas. */}
+                          <span data-testid="envoi-a-venir"
+                                style={{ fontSize: '11px', opacity: 0.6, color: TEXTE }}>
+                            Envoi disponible prochainement
+                          </span>
+                        </div>
+                      )}
+
+                      {bro && !carte.edition && !occupe && (
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap',
+                                      marginTop: '7px', alignItems: 'center' }}>
+                          <span style={{ fontSize: '10px', opacity: 0.6, color: TEXTE }}>
+                            Régénérer en :
+                          </span>
+                          {TONS_IA.map((t) => (
+                            <button key={t.cle} type="button" data-testid={`ton-${t.cle}`}
+                                    onClick={() => analyserReponse(r.id, t.cle)}
+                                    style={stylePetitBouton}>
+                              {t.libelle}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* ---- L'EMAIL ORIGINAL, REPLIÉ PAR DÉFAUT ----
+                           Il reste accessible — c'est la seule source de vérité
+                           du message reçu — mais il ne s'impose plus. */}
+                      <details data-testid="email-original" style={{ marginTop: '11px' }}>
+                        <summary style={{ fontSize: '11px', cursor: 'pointer', opacity: 0.8,
+                                          color: TEXTE }}>
+                          Voir l’email original
+                        </summary>
+                        <div style={{ fontSize: '11px', opacity: 0.6, color: TEXTE,
+                                      marginTop: '5px' }}>
+                          {r.subject}
+                        </div>
+                        {/* Du TEXTE, jamais du HTML : on n'injecte pas le
+                            contenu d'un inconnu dans la page. */}
+                        <div data-testid="corps-original"
+                             style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
+                                      lineHeight: 1.5, marginTop: '4px' }}>
+                          {r.body_text || '(aucun contenu lisible pour cette réponse)'}
+                        </div>
+                        {/* L'historique cité reste SÉPARÉ du nouveau texte :
+                            c'est la coupure faite par P3-R4, on ne la recolle pas. */}
+                        {r.body_quoted ? (
+                          <details style={{ marginTop: '6px' }}>
+                            <summary style={{ fontSize: '11px', cursor: 'pointer',
+                                              opacity: 0.6, color: TEXTE }}>
+                              Historique cité
+                            </summary>
+                            <div style={{ fontSize: '11px', whiteSpace: 'pre-wrap',
+                                          opacity: 0.6, color: TEXTE, marginTop: '4px' }}>
+                              {r.body_quoted}
+                            </div>
+                          </details>
+                        ) : null}
+                        {/* Le diagnostic de corrélation vit ICI, pas sur la
+                            carte fermée : utile quand quelque chose cloche,
+                            illisible quand tout va bien. */}
+                        <div style={{ fontSize: '10px', opacity: 0.5, color: TEXTE,
+                                      marginTop: '7px' }}>
+                          {r.statut === 'rattache'
+                            ? `rattaché — ${r.matching_method} (confiance ${r.matching_confidence})`
+                            : `à rattacher — ${r.motif || 'ambigu'}`}
+                          {r.campaign_id ? ` · campagne ${String(r.campaign_id).slice(0, 8)}` : ''}
+                        </div>
+                      </details>
                     </div>
                   )}
                 </div>
