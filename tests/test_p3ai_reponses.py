@@ -531,14 +531,24 @@ _CAS_INTENTION = [
      "Merci, mais pas pour nous. Peut-etre une autre fois ?", "refus"),
     ("une absence reste une absence", "absence",
      "Je suis absente jusqu'au 15 septembre.", "absence"),
+    # LA GARDE TRANCHE DANS LES DEUX SENS. Mesure du 05/09 en production :
+    # pousse par la consigne, le modele a classe `question` un message qui est
+    # un ACCORD sans une seule question (ACD Lausanne). Forcer `question` quand
+    # il y a une demande ne suffit pas — il faut la REFUSER quand il n'y en a
+    # aucune, sinon « QUESTION » finit par ne plus rien vouloir dire.
+    ("un ACCORD sans question n'est PAS une question", "question",
+     "Bonjour oui, cela peut se faire, la personne est joignable au 076.", "autre"),
+    ("... et on ne devine pas non plus : « autre » dit qu'on ne tranche pas",
+     "question", "Bien recu, merci.", "autre"),
 ]
 for _intitule, _modele, _corps, _attendu in _CAS_INTENTION:
     verifier("9bis-a. %s" % _intitule,
              S.p3ai_intention_finale(_modele, _corps) == _attendu,
              S.p3ai_intention_finale(_modele, _corps))
 
-verifier("9bis-b. l'invite porte la MEME regle que le code",
-         "l'intention est « question »" in BLOC_AI)
+verifier("9bis-b. l'invite N'OFFRE PLUS `question` au modele",
+         "NE RENDS JAMAIS « question »" in BLOC_AI
+         and '"intention": "positif|refus|absence|autre"' in BLOC_AI)
 verifier("9bis-c. l'intention brute du modele est CONSERVEE a cote",
          '"intention_modele"' in BLOC_AI)
 
@@ -555,6 +565,12 @@ S.p3ai_appeler_modele = modele_bouchon("Merci pour votre retour.", intention="po
 _p = analyser("inb-lsna3")
 verifier("9bis-f. un message SANS question garde l'intention du modele",
          _p["brouillon"]["intention"] == "positif", _p["brouillon"]["intention"])
+S.p3ai_appeler_modele = modele_bouchon("Merci.", intention="question")
+_p2 = analyser("inb-lsna3")
+verifier("9bis-f-bis. un modele qui dit `question` sans question n'est PAS suivi",
+         _p2["brouillon"]["intention"] == "autre", _p2["brouillon"]["intention"])
+verifier("9bis-f-ter. son avis reste consultable tel quel",
+         _p2["brouillon"]["intention_modele"] == "question")
 S.p3ai_appeler_modele = modele_bouchon("Danke fuer die Rueckmeldung.",
                                        intention="refus", langue="de")
 _r = analyser("inb-zrhd5")

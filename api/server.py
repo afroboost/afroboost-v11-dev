@@ -26517,6 +26517,23 @@ def p3ai_intention_finale(intention_modele, corps_recu) -> str:
     doit pas atterrir dans « a repondre » : le relancer serait exactement ce
     qu'il ne faut pas faire. Une erreur de tri coute une carte mal classee ;
     relancer quelqu'un qui a dit non coute le prospect.
+
+    ELLE TRANCHE DANS LES DEUX SENS, ET LA PREMIERE VERSION NE LE FAISAIT PAS.
+    Mesure du 05/09/2026, apres la mise en ligne de la regle : ACD Lausanne
+    ecrit « Bonjour oui, cela peut se faire, M. X est joignable au 076 » — un
+    ACCORD, sans une seule question — et le modele, pousse par la consigne, a
+    rendu `question`. Forcer `question` quand il y a une demande ne suffit donc
+    pas : il faut aussi la REFUSER quand il n'y en a aucune. Sans quoi la file
+    de travail se remplit de fausses questions, et « QUESTION » ne veut plus
+    rien dire.
+
+    C'EST DONC CETTE FONCTION QUI DECIDE DE `question`, PAS LE MODELE. L'invite
+    ne lui propose plus cette valeur : on lui demande la DISPOSITION du
+    partenaire (positif, refus, absence, autre), ce qu'un modele juge bien, et
+    on garde pour nous la question « y a-t-il une demande ? », qui se lit dans
+    le texte et se verifie. S'il rend `question` malgre tout sans qu'aucune
+    demande soit reperable, on ne le suit pas et on ne devine pas non plus :
+    `autre` (« a qualifier ») dit honnetement qu'on ne sait pas trancher.
     """
     intention = p3ai_intention(intention_modele)
     if intention == "refus":
@@ -26524,7 +26541,7 @@ def p3ai_intention_finale(intention_modele, corps_recu) -> str:
     texte = p3ai_sans_accents(corps_recu)
     if "?" in texte or any(m in texte for m in P3AI_MARQUEURS_QUESTION):
         return "question"
-    return intention
+    return "autre" if intention == "question" else intention
 
 
 def p3ai_organisation(action: dict) -> str:
@@ -26605,11 +26622,12 @@ def p3ai_invite(contexte: dict) -> str:
         "NOTES INTERNES : aucune.",
         "",
         "REGLES ABSOLUES :",
-        "0. INTENTION : si le partenaire pose une question ou demande une",
-        "   information, l'intention est « question » — meme s'il se dit par",
-        "   ailleurs interesse. Son enthousiasme va dans le resume, pas dans",
-        "   l'intention. « positif » est reserve a un accord SANS question en",
-        "   suspens. Un refus reste « refus », meme formule poliment.",
+        "0. INTENTION = LA DISPOSITION DU PARTENAIRE, pas la forme de son",
+        "   message. Quatre valeurs seulement : « positif » (il accepte ou se",
+        "   montre favorable), « refus » (il decline, meme poliment),",
+        "   « absence » (repondeur, conge, indisponibilite), « autre ».",
+        "   NE RENDS JAMAIS « question » : reperer une demande n'est pas ton",
+        "   role ici, c'est fait ailleurs et verifie sur le texte.",
         "1. Reponds dans la LANGUE DU MESSAGE RECU, pas dans une autre.",
         "2. N'invente RIEN : ni prix, ni date, ni chiffre, ni engagement, ni nom.",
         "3. Si une information manque, propose un echange plutot que de la deviner.",
@@ -26621,7 +26639,7 @@ def p3ai_invite(contexte: dict) -> str:
         "",
         "Rends UNIQUEMENT un objet JSON, sans texte autour :",
         "{",
-        '  "intention": "question|positif|refus|absence|autre",',
+        '  "intention": "positif|refus|absence|autre",',
         '  "langue": "code ISO 2 lettres du message recu",',
         '  "resume": "une phrase, en francais",',
         '  "demande": "ce que le partenaire demande concretement, en francais",',
