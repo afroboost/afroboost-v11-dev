@@ -486,7 +486,9 @@ async def get_active_partners():
         bassi_data = {
             "id": "bassi_main",
             "name": "Bassi - Afroboost",
-            "email": SUPER_ADMIN_EMAIL,
+            # R2b : plus d'e-mail sur une carte publique. La deduplication
+            # ci-dessous continue de travailler sur `seen_emails`, en MEMOIRE —
+            # elle n'a jamais eu besoin que l'e-mail sorte.
             "platform_name": "Afroboost",
             "photo_url": _bassi_photo,
             "logo_url": None,
@@ -535,7 +537,14 @@ async def get_active_partners():
             partners_with_videos.append(partner_data)
         
         logger.info(f"[PARTNERS-CAROUSEL] {len(partners_with_videos)} partenaires uniques avec vidéos")
-        return partners_with_videos
+        # R2b — LA LISTE BLANCHE EST APPLIQUEE A LA SORTIE, PAS A CHAQUE BRANCHE.
+        # `partner_data` est un `dict(coach)` : il recopie TOUT le document, y
+        # compris l'e-mail et tout champ qu'un lot futur y ajouterait. Filtrer
+        # ici, en un seul point, est ce qui empeche la prochaine fuite autant
+        # que celle-ci. La deduplication par e-mail, elle, reste intacte : elle
+        # travaille en memoire, avant ce filtre.
+        from api.server import r2b_coach_public
+        return [r2b_coach_public(p) for p in partners_with_videos]
         
     except Exception as e:
         logger.error(f"[PARTNERS-CAROUSEL] Erreur: {e}")
@@ -544,7 +553,11 @@ async def get_active_partners():
 @coach_router.get("/coaches/public/{coach_id}")
 async def get_public_coach_profile(coach_id: str):
     """Profil public d'un coach"""
-    coach = await db.coaches.find_one({"id": coach_id, "is_active": True}, {"_id": 0, "id": 1, "name": 1, "photo_url": 1, "bio": 1, "email": 1})
+    # R2b — L'E-MAIL N'EST MEME PLUS LU. Le retirer de la PROJECTION plutot que
+    # de la reponse est ce qui rend la garde durable : il ne peut pas ressortir
+    # par un `return coach` ecrit plus tard sans y penser.
+    coach = await db.coaches.find_one({"id": coach_id, "is_active": True},
+                                      {"_id": 0, "id": 1, "name": 1, "photo_url": 1, "bio": 1})
     if not coach:
         raise HTTPException(status_code=404, detail="Coach non trouvé")
     return coach
@@ -563,6 +576,9 @@ async def get_coach_vitrine(username: str):
         # V290 : charger la photo du Super Admin depuis coach_profiles (plus de None en dur).
         _bassi_cp2 = await db.coach_profiles.find_one({"email": SUPER_ADMIN_EMAIL}, {"_id": 0, "photo_url": 1})
         _bassi_photo2 = (_bassi_cp2 or {}).get("photo_url") or None
+        # R2b : l'e-mail sert encore ICI, en memoire, a construire le filtre des
+        # offres — mais il ne sortira pas : la reponse passe par la liste
+        # blanche plus bas.
         coach = {"id": "bassi", "name": "Bassi - Afroboost", "email": SUPER_ADMIN_EMAIL, "photo_url": _bassi_photo2, "bio": "Coach Afroboost - Fitness & Bien-être", "platform_name": "Afroboost", "logo_url": None, "is_active": True}
         # Super Admin: match son coach_id OU les données legacy sans coach_id
         coach_filter = {"$or": [
@@ -636,7 +652,23 @@ async def get_coach_vitrine(username: str):
             "externalLink2Url": concept.get("externalLink2Url", ""),
         }
     logger.info(f"[VITRINE-V29] {username} → concept_id={concept_id}, heroVideos={len(concept_data.get('heroVideos', []))}, offers={len(offers)}, courses={len(courses)}")
-    return {"coach": coach, "offers": offers, "courses": courses, "courses_count": len(courses), "offers_count": len(offers), "concept": concept_data}
+    # R2b — LA VITRINE EST UNE PAGE PUBLIQUE, ET ELLE LE RESTE.
+    # `coach` et `offers` portaient tous deux l'e-mail du proprietaire
+    # (`coach.email`, `offer.coach_id`). Les deux passent desormais par la liste
+    # blanche. Rien de ce qui s'AFFICHE ne disparait : nom, photo, logo, bio,
+    # nom de plateforme, offres, cours, concept sont conserves.
+    #
+    # `username` EST AJOUTE, et ce n'est pas un identifiant nouveau : c'est
+    # celui de l'URL, deja public par construction. Il remplace l'e-mail pour
+    # la seule chose que le navigateur en faisait — retrouver les commentaires
+    # de cette vitrine.
+    from api.server import r2b_coach_public, r2b_offre_publique
+    _coach_public = r2b_coach_public(coach)
+    _coach_public["username"] = username
+    return {"coach": _coach_public,
+            "offers": [r2b_offre_publique(o) for o in offers],
+            "courses": courses, "courses_count": len(courses),
+            "offers_count": len(offers), "concept": concept_data}
 
 # === STRIPE CONNECT ===
 @coach_router.post("/coach/stripe-connect/onboard")

@@ -2133,6 +2133,65 @@ async def sessions_agenda(days: int = 60):
     return await _agenda_occurrences(days)
 
 
+# ============================================================================
+# R2b — UNE ROUTE PUBLIQUE NE DIT JAMAIS QUI EST LE COACH
+# ============================================================================
+# LE PROBLEME, MESURE AVANT D'ECRIRE UNE LIGNE. `coach_id` EST l'adresse
+# e-mail du coach — c'est la cle de cloisonnement de tout le produit — et
+# quatre routes publiques la rendaient telle quelle a n'importe quel visiteur
+# anonyme : `/offers`, `/partners/active`, `/coaches/public/{id}` et
+# `/coach/vitrine/{username}`. Cela contredit frontalement la regle du depot :
+# « aucune donnee personnelle sans authentification ».
+#
+# LISTE BLANCHE, JAMAIS LISTE NOIRE. Retirer les champs connus comme sensibles
+# laisserait passer le suivant : le jour ou un lot ajoute `phone` ou
+# `stripe_account` sur un coach, un filtre par exclusion le publierait sans que
+# personne l'ait decide. On enumere donc ce qui SORT.
+#
+# CE LOT NE MIGRE RIEN. `coach_id` reste en base et reste la cle interne : on
+# corrige la SORTIE publique, pas le modele. Aucune route authentifiee n'est
+# touchee — un coach qui lit ses propres donnees continue de voir son e-mail.
+
+# Les seules cles qu'une offre PUBLIQUE peut porter. `coach_id` en est absent,
+# et c'est tout l'objet du lot.
+R2B_CLES_OFFRE_PUBLIQUE = (
+    "id", "name", "price", "thumbnail", "videoUrl", "description", "keywords",
+    "visible", "images", "linked_course_ids", "position", "category", "audience",
+    "isProduct", "variants", "tva", "shippingCost", "stock", "duration_minutes",
+    "location", "max_participants", "duration_value", "duration_unit",
+    "is_auto_prolong", "created_at", "expiration_date",
+    # Champs calcules ajoutes par les enrichissements existants.
+    "active_price", "active_tier", "next_date", "next_dates",
+    "member_discount_pct", "member_price", "progressive_pricing", "schedules",
+    "reminders_enabled", "is_membership", "membership_sessions",
+)
+
+# Les seules cles qu'un coach PUBLIC peut porter. `email` en est absent.
+# `id` reste : c'est un identifiant opaque, deja utilise par
+# `/coaches/public/{id}`, et il ne revele aucune donnee personnelle.
+R2B_CLES_COACH_PUBLIC = (
+    "id", "name", "photo_url", "logo_url", "bio", "platform_name",
+    "video_url", "heroImageUrl", "heroVideos", "is_active", "username",
+)
+
+
+def r2b_offre_publique(offre) -> dict:
+    """Une offre telle qu'un visiteur anonyme peut la voir. PURE.
+
+    ELLE NE SUPPRIME PAS `coach_id` — elle ne le RECOPIE PAS. La nuance est
+    ce qui rend la garde durable : un champ ajoute demain au document n'aura
+    pas a etre pense pour rester prive, il le sera par defaut.
+    """
+    d = dict(offre or {})
+    return {c: d[c] for c in R2B_CLES_OFFRE_PUBLIQUE if c in d}
+
+
+def r2b_coach_public(coach) -> dict:
+    """Un coach tel qu'une vitrine peut le montrer. PURE, sans e-mail."""
+    d = dict(coach or {})
+    return {c: d[c] for c in R2B_CLES_COACH_PUBLIC if c in d}
+
+
 @api_router.get("/offers", response_model=List[Offer])
 async def get_offers(request: Request, scope: str = ""):
     # V237 — isolation par coach, en OPT-IN explicite (`?scope=mine`).
@@ -2178,8 +2237,18 @@ async def get_offers(request: Request, scope: str = ""):
             {"id": str(uuid.uuid4()), "name": "Abonnement 1 mois", "price": 109, "thumbnail": "", "videoUrl": "", "description": "", "visible": True, "coach_id": _seed_owner}
         ]
         await db.offers.insert_many(default_offers)
-        return _enrich_offers_with_active_price(default_offers)  # V223
-    return await _enrich_offers_with_next_date(_enrich_offers_with_active_price(offers))  # V223 + V252
+        # R2b : meme sortie publique que la branche normale — une offre
+        # d'amorcage n'a pas plus le droit de porter l'e-mail du proprietaire.
+        return [r2b_offre_publique(o)
+                for o in _enrich_offers_with_active_price(default_offers)]  # V223
+    # R2b — LA SORTIE PUBLIQUE PASSE PAR LA LISTE BLANCHE.
+    # Cette branche sert la vitrine a un visiteur ANONYME : `coach_id`, qui est
+    # l'e-mail du coach, n'a rien a y faire. La branche `scope=mine` au-dessus
+    # n'est pas touchee — un coach qui demande SES offres voit son propre
+    # e-mail, ce qui n'est une fuite pour personne.
+    _publiques = await _enrich_offers_with_next_date(
+        _enrich_offers_with_active_price(offers))  # V223 + V252
+    return [r2b_offre_publique(o) for o in _publiques]
 
 # V223: Prix actif d'une offre — utilisé par la page activité
 @api_router.get("/offers/{offer_id}/active-price")
@@ -41843,6 +41912,28 @@ def _comment_public(doc: dict) -> dict:
 async def get_comments(request: Request):
     """V71: Récupère les commentaires visibles (public)."""
     coach_id = request.query_params.get("coach_id", "").lower().strip()
+    # R2b — LA VITRINE N'A PLUS L'E-MAIL, ELLE ENVOIE SON `username`.
+    # Sans cette resolution, les commentaires d'une vitrine partenaire
+    # AURAIENT DISPARU EN SILENCE : `CoachVitrine` retombait deja sur
+    # `username` quand l'e-mail manquait, et un `coach_id` qui ne correspond a
+    # personne rend simplement une liste vide — une regression invisible, la
+    # pire espece. On traduit donc ici, cote serveur, ou l'e-mail a le droit
+    # d'exister.
+    if coach_id and "@" not in coach_id:
+        try:
+            _c = await db.coaches.find_one(
+                {"$or": [{"id": coach_id},
+                         {"name": {"$regex": f"^{re.escape(coach_id)}$", "$options": "i"}},
+                         {"name": {"$regex": f"^{re.escape(coach_id.replace('-', ' '))}$",
+                                   "$options": "i"}}]},
+                {"_id": 0, "email": 1})
+            if _c and _c.get("email"):
+                coach_id = str(_c["email"]).lower().strip()
+            elif coach_id in ("bassi", "afroboost"):
+                coach_id = SUPER_ADMIN_EMAILS[0].lower()
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("[R2b] resolution du coach %s impossible : %s",
+                           coach_id[:24], type(_e).__name__)
     query = {"is_visible": True}
     if coach_id:
         query["coach_id"] = coach_id

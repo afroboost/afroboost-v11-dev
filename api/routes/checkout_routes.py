@@ -76,7 +76,13 @@ async def _t1_preuve_checkout(accepte, items, coach_email: str = "",
 
 
 class CreateCheckoutRequest(BaseModel):
-    coach_email: str  # Vendeur (qui reçoit l'argent)
+    # R2b — FACULTATIF DESORMAIS, ET C'EST UN DURCISSEMENT, pas un
+    # relachement. Le navigateur n'a plus l'e-mail du coach (retire de la
+    # sortie publique de `/offers`), et il n'a jamais eu a etre l'autorite sur
+    # le destinataire d'un paiement : le serveur le lit dans le catalogue
+    # (`_r2b_vendeur_si_absent`). Une valeur encore fournie reste verifiee a
+    # l'identique par `_lot2_verifier_vendeur`.
+    coach_email: str = ""  # Vendeur (qui reçoit l'argent) — resolu si absent
     payment_method: str  # "card" | "paypal" | "mobile_money"
     items: List[CheckoutItem]
     customer_name: str
@@ -187,6 +193,8 @@ async def create_checkout_session(req: CreateCheckoutRequest):
     # LOT 2 : le vendeur declare a-t-il le droit de vendre ces articles ? Pose
     # AVANT le calcul du total et avant la branche gratuite — donc avant la
     # premiere ecriture, quelle que soit la suite du parcours.
+    # R2b — SI LE CLIENT NE DIT PLUS QUI VEND, LE SERVEUR LE LIT.
+    await _r2b_vendeur_si_absent(req)
     await _lot2_verifier_vendeur(req.items, req.coach_email)
 
     # LOT R : une offre reservee aux membres se refuse ici aussi. Meme
@@ -694,7 +702,8 @@ async def create_checkout_session(req: CreateCheckoutRequest):
 
 
 class FreeCheckoutRequest(BaseModel):
-    coach_email: str
+    # R2b : meme raison que sur `CreateCheckoutRequest` — resolu cote serveur.
+    coach_email: str = ""
     items: List[CheckoutItem]
     customer_name: str
     customer_email: str
@@ -768,6 +777,55 @@ class FreeCheckoutRequest(BaseModel):
 
 LOT2_MSG_VENDEUR = ("Cette offre n'appartient pas au vendeur indiqué. "
                     "Rechargez la page et réessayez.")
+
+
+async def _r2b_resoudre_vendeur(items) -> str:
+    """LE VENDEUR SE LIT DANS LE CATALOGUE, PAS DANS LA REQUETE. R2b.
+
+    POURQUOI CETTE FONCTION EXISTE. `coach_id` etant l'adresse e-mail du coach,
+    R2b l'a retiree de la sortie publique de `/offers`. Or le navigateur la
+    renvoyait au serveur pour dire QUI RECOIT L'ARGENT — ce qui etait deja une
+    mauvaise idee : le client n'a pas a etre l'autorite sur le destinataire
+    d'un paiement. Le serveur sait le lire lui-meme, et `_lot2_verifier_vendeur`
+    faisait deja exactement cette lecture pour la CONTROLER.
+
+    ELLE NE DEVINE RIEN. Elle lit `offers.coach_id` sur le premier article qui
+    en porte un. Aucun article vendeur -> chaine vide, et le comportement
+    d'avant (proprietaire absent = super-admin) s'applique tel quel plus bas.
+    """
+    for _it in (items or []):
+        _d = _it.dict() if hasattr(_it, "dict") else dict(_it)
+        _oid = str(_d.get("id") or "").strip()
+        if not _oid:
+            continue
+        try:
+            _o = await db["offers"].find_one({"id": _oid}, {"_id": 0, "coach_id": 1})
+        except Exception as _err:  # noqa: BLE001
+            logger.warning(f"[R2b] proprietaire de l'offre {_oid[:32]} illisible: {_err}")
+            continue
+        _reel = str((_o or {}).get("coach_id") or "").strip().lower()
+        if _reel:
+            return _reel
+    return ""
+
+
+async def _r2b_vendeur_si_absent(req) -> None:
+    """Repose le vendeur sur la requete quand le client ne l'a pas dit. R2b.
+
+    ELLE EST POSEE SUR LES DEUX PORTES DE PAIEMENT. N'en couvrir qu'une la
+    rendrait contournable en changeant d'URL — c'est le raisonnement qui a deja
+    place ESSAI-1, ESSAI-4 et la garde du vendeur aux deux endroits.
+
+    ELLE N'OUVRE RIEN. Un client qui declare encore un vendeur n'est pas touche
+    et reste verifie a l'identique par `_lot2_verifier_vendeur`.
+    """
+    if str(getattr(req, "coach_email", "") or "").strip():
+        return
+    _vendeur = await _r2b_resoudre_vendeur(getattr(req, "items", None))
+    if _vendeur:
+        req.coach_email = _vendeur
+        logger.info("[R2b] vendeur resolu depuis le catalogue (%d article(s))",
+                    len(getattr(req, "items", None) or []))
 
 
 async def _lot2_verifier_vendeur(items, coach_email: str):
@@ -1373,6 +1431,8 @@ async def free_checkout(req: FreeCheckoutRequest, http_request: Request):
     # LOT 2 : meme garde que sur `/create-session`. Elle doit exister sur LES
     # DEUX portes — la poser sur une seule la rendrait contournable en changeant
     # d'URL, exactement comme ESSAI-1 l'a appris.
+    # R2b — SI LE CLIENT NE DIT PLUS QUI VEND, LE SERVEUR LE LIT.
+    await _r2b_vendeur_si_absent(req)
     await _lot2_verifier_vendeur(req.items, req.coach_email)
 
     await _essai1b_exiger_gratuit(req.items)

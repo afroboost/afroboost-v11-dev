@@ -6,8 +6,21 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v342'; // V342: Boost payant des publications
-var SW_VERSION = 265;
+// V347 : le cache etait reste bloque sur v342 pendant V343, V344, V345 et V346 —
+// les appareils deja installes (mobile en particulier) continuaient donc de servir
+// un ancien bundle malgre quatre deploiements reussis. On le bumpe pour forcer
+// tous les clients a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
+// V359 : le cache etait reste sur v347 pendant V348 a V358 — onze versions.
+// L'index.html en cache reference l'ANCIEN hash de bundle, et comme /static/ est
+// servi en cache-first, l'ancien JS restait epingle : c'est ce qui explique que le
+// mobile ne pouvait ni supprimer un media (V356/V357) ni garder un vocal au
+// rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
+// Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
+// a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
+var CACHE_NAME = 'afroboost-v491'; // R2b : le front change (App — le navigateur n'envoie plus `coach_email` au checkout gratuit, il ne le connait plus ; CoachVitrine — les commentaires sont demandes par `username` et non plus par l'adresse e-mail du coach) — sans ce bump, un navigateur en repli de cache garderait le bundle qui lit `coach.email` sur une route publique qui ne le renvoie PLUS : la vitrine demanderait les commentaires avec `undefined` et la page afficherait zero avis sans la moindre erreur // // AI-P4 : le front change (ProspectsSection — bouton « Valider et envoyer » qui ouvre un APERCU, ecran de confirmation avec organisation/destinataire/objet/texte final, bouton « Confirmer l'envoi » desactive tant que les drapeaux sont fermes) — sans ce bump, un navigateur en repli de cache garderait le bundle ou l'envoi n'existe pas, et le coach ne pourrait jamais valider une reponse // // READ-P2 : le front change (App — lien profond ?prospection=1&inbound= et reaction au clic du Service Worker ; CoachDashboard — consommation de l'intention, notification in-app cliquable ; ProspectsSection — ouverture de la carte visee ; ChatWidget — le chat ne s'ouvre plus sur une notification de prospection) — sans ce bump, toucher une notification ramenerait le coach sur l'ecran qu'il avait quitte, ou pire ouvrirait le chat par-dessus la reponse qu'il venait de demander a voir // // AI-P3 FIX : le front change (ProspectsSection — le compteur « a rattacher a la main » lit `a_rattacher` et non plus `en_attente`, desormais reserve a l'etat commercial) — sans ce bump, un navigateur en repli de cache lirait une cle que le serveur n'envoie plus : le badge des messages non rattaches disparaitrait silencieusement // // AI-P3 : le front change (ProspectsSection — badge d'etat commercial derive du serveur, bouton « Ajouter une note » et son formulaire, section Historique, banniere « le contexte a change », filtres par etat) — sans ce bump, un navigateur en repli de cache garderait le bundle qui ignore les notes : le coach noterait un appel sans qu'aucun ecran ne le montre, et un brouillon devenu faux continuerait de s'afficher comme valable // // AI-P2 : le front change (ProspectsSection — cartes compactes : intention, resume et action recommandee en tete ; e-mail original REPLIE derriere « Voir l'email original » ; brouillon editable et enregistrable ; regeneration par ton) — sans ce bump, un navigateur en repli de cache garderait le bundle qui affiche encore de gros blocs d'e-mails bruts, sans intention ni action, et le coach devrait relire chaque message en entier pour savoir quoi faire // // READ-P1 + AI-P1 : le front change (ProspectsSection — badges NOUVEAU / A REPONDRE, bouton « Voir la reponse », panneau d'analyse IA ; CoachDashboard — pastille sur l'onglet Prospection et bandeau « nouvelles reponses partenaires ») — sans ce bump, un navigateur en repli de cache garderait le bundle ou les reponses recues sont une liste morte : le coach ne verrait NI qu'un partenaire a repondu, NI qu'il doit encore lui repondre, alors que les compteurs existent cote serveur // // U1b : le front change (OfferWizard — les deux champs de lieu passent par ChampAdresse ; nouveaux modules ChampAdresse + adresseNominatim) — sans ce bump, l'index.html en cache epinglerait le bundle precedent, celui ou le coach tape son adresse a la main sans aucune proposition, et le lot n'atteindrait aucun appareil deja installe // // U1a RELECTURE : le front change (CoachDashboard — `audience` relu par startEditOffer, present dans l'etat neuf et dans le reset) — sans ce bump, l'index.html en cache epinglerait le bundle precedent, celui qui rouvre l'offre sur « Tout le monde » et ecrase women-only en base a la sauvegarde suivante // // U1a : le front change (OfferWizard — selecteur « Pour qui ? » ; CoachDashboard — `audience` dans la liste blanche du payload) — sans ce bump, un navigateur en repli de cache garde l'index.html d'avant, qui epingle l'ANCIEN bundle : le coach choisit « Femmes », le champ ne part pas dans la requete, le serveur le ramene a « all », et l'offre rouvre sur « Tout le monde » alors que le correctif est en ligne // // P3-S3-C : le front change (ProspectsSection — banniere « Campagne preparee » avec bouton Ouvrir, bouton Approuver, filtres de l'apercu, edition figee apres approbation) — sans ce bump, un navigateur en repli de cache garderait le bundle qui ne sait PAS rouvrir une campagne existante et pousse a en creer une seconde // // P3-S2F : le front change (ProspectsSection — les cartes mobiles tiennent leur `display` de la classe et non d'un style en ligne) — sans ce bump, un navigateur en repli de cache garderait le bundle ou chaque prospect s'affiche DEUX fois sur desktop, ligne de tableau ET carte // // P3-S3-B : le front change (ProspectsSection — selection, bandeau « Preparer la campagne », resume, apercu compact des destinataires, exclusion et correction du message) — sans ce bump, un navigateur en repli de cache garderait un ecran SANS aucun moyen de preparer une campagne, alors que les quatre routes existent cote serveur // // P3-S2B : le front change (ProspectsSection — les categories Association et Fitness apparaissent dans le filtre et les libelles) — sans ce bump, un navigateur en repli de cache afficherait les 25 fiches d'association et de fitness sous une categorie vide // // P3-S2D : le front change (ProspectsSection — le chiffre de la tuile active eclaircit la couleur de marque de 20 % pour passer de 2.85:1 a 4.29:1) — sans ce bump, un navigateur en repli de cache garderait le bundle ou ce chiffre reste sous le seuil // // P3-S2C : le front change (ProspectsSection — le texte porte enfin sa couleur au lieu de l'heriter) — sans ce bump, un navigateur en repli de cache garderait le bundle ou l'ecran Prospection s'affiche en noir sur noir, contraste 1.06 // // P3-S2 : le front change (CoachDashboard — onglet Prospection ; ProspectsSection — nouvel ecran) — sans ce bump, un navigateur en repli de cache garderait le bundle sans l'onglet, alors que la route et les 80 prospects existent cote serveur // // P2-FIX2 : le front change (App — le lien profond `?offre=&reserver=1` ne s'execute plus qu'UNE fois, sans quoi la bascule v56 refermait le formulaire qu'il venait d'ouvrir ; le defilement automatique se tait pendant ce traitement) — sans ce bump, un navigateur en repli de cache garderait le bundle ou le visiteur doit encore cliquer la carte // // P2-UX SIMPLE : le front change (SubscriberSpace — panneau de confirmation apres reservation ; PartnerApplications — microcopy qui dit que le partenaire ne reserve pas) — sans ce bump, un navigateur en repli de cache garderait le bundle ou une reservation ne se confirme que par un badge de la taille d'une etiquette // // P2-C : le front change (PartnerApplications — lien personnel UTM, QR en canvas, copier/ouvrir/telecharger ; utils/partnerLink — construction du lien) — sans ce bump, un navigateur en repli de cache garderait le bundle ou un partenaire accepte n'a ni lien ni QR // // P2-B : le front change (PartnerApplications — boutons Accepter/Refuser, saisie du slug avant acceptation, rafraichissement apres decision) — sans ce bump, un navigateur en repli de cache garderait le bundle ou la route de decision existe cote serveur mais n'est appelable par aucun bouton // // P2-A : le front change (SmartLinkCard — bouton Candidatures sur les liens partenaire ; SmartLinksSection — compteur reel + modale ; PartnerApplications — nouvelle lecture des candidatures) — sans ce bump, un navigateur en repli de cache garderait le bundle ou les candidatures partenaire restent invisibles, alors que la route existe // // SECURITY-S2-A1 : le front change (CoachDashboard — les DEUX envois de campagne passent de fetch a axios ; whatsappService — le PUT de configuration aussi ; App — le visiteur anonyme n'appelle plus /campaigns/send-email, c'est le serveur qui notifie le coach) — sans ce bump, un navigateur en repli de cache garderait le bundle dont les envois partent en fetch SANS jeton : l'envoi de campagne du coach tomberait en 403 alors que le correctif est en ligne // // SECURITY-S1 : le front change (App — /auth/me renouvelle le jeton meme quand le modal ne monte pas ; CoachDashboard — l'effet des notifications ne se remonte plus a chaque ecriture de chatSessions) — sans ce bump, un navigateur en repli de cache garderait le bundle ou le jeton meurt tous les 7 jours et ou le minuteur de 10 s n'atteint jamais son echeance // // SECURITY-S0 : le front change (CoachLoginModal — l'entree par le cookie stocke enfin le JWT) — sans ce bump, un navigateur en repli de cache garderait le bundle qui ouvre le tableau de bord avec une session NON SIGNEE, laissant la moitie des sections en 403 et le kill-switch des drapeaux inaccessible // // CHAT-LOOP3 : le front change (CRMSection — gardes sur les sondages 30 s et 15 s ; MessagesWhatsApp — garde sur /private/nonlus ; CoachDashboard — l'appel immediat des notifications est garde) — sans ce bump, un navigateur en repli de cache garderait le bundle qui emet encore les 4 requetes toutes les 30 s onglet cache, et le risque de boucle loadConversations -> setChatSessions -> remontage resterait ouvert // // CHAT-LOOP2 : le front change (CoachDashboard — garde de visibilite sur les 5 derniers sondages, dont /private/nonlus a 5 s) — sans ce bump, un navigateur en repli de cache garderait precisement le bundle qui emet les 17 280 requetes/jour qu'on vient de supprimer // // CHAT-LOOP1 : le front change (CoachDashboard — suppression de la boucle qui emettait une requete par conversation toutes les 5 s ; GroupChatModule — garde de visibilite) — sans ce bump, un navigateur en repli de cache garderait precisement le bundle qui produit les 126 660 requetes/jour qu'on vient de supprimer // // P1.2-UXFINAL : le front change (OnboardingTunnel — intro partenaire + « Lire plus » + code diagnostic ; ChatWidget — ecran de fin partenaire) — sans ce bump, un telephone dont la navigation retombe sur le cache garderait l'ancien bundle : un partenaire continuerait a lire « On te confirme ton cours d'essai sur WhatsApp », et une coupure resterait sans code diagnostic, donc sans preuve // // N2 : le front change (SubscriberSpace — lieu, itineraire, marqueur AUJOURD'HUI, et la raison du refus d'annulation a la place d'un bouton gris muet) — sans ce bump, un participant garderait un ecran qui ne dit toujours pas OU venir // ESSAI-7 : le front change (App — redirection vers /espace/<CODE> apres l'octroi ; SubscriberSpace — la reservation passe en tete) — sans ce bump, un navigateur garderait l'ancien bundle : le code repartirait dans la reponse du serveur SANS que personne ne soit emmene le choisir, et `session_booked` ne serait jamais emis // AUTO-PRESENCE : le front change (ChatWidget — liste des attendus + bouton Absent) — sans ce bump, le telephone du coach garderait un Bilan sans aucun moyen de declarer une absence, alors que l'automate compterait tout le monde present // // FUNNEL ESSAI etape 1 : App.js change (4 evenements de mesure) — sans ce bump, un navigateur garderait l'ancien bundle et n'emettrait AUCUN evenement, la baseline serait vide sans qu'on le sache // // LOT R : le front change (SubscriberSpace) — sans ce bump, un abonne garderait un espace qui ignore le bouton de recharge // TERRAIN EVENT : le front change (ChatWidget, QRScanner) — sans ce bump, le telephone du coach garderait l'ancien bundle a la porte de l'event : pas d'alerte essai, pas de casque au scan, pas de signature // LOT 3b : le front change (OfferWizard, CoachDashboard, App) — sans ce bump, un navigateur garderait l'ancien bundle, qui n'envoie PAS les dates d'occurrence et ne verrait donc jamais son tarif membre // LOT 2.1 : la case adhesion est desactivee sur une offre gratuite (OfferWizard, CoachDashboard) // LOT 2 FIX : CoachDashboard change (startEditOffer relit les deux cases) // LOT 2 : le front change (OfferWizard, FicheContact, Contacts) // LOT 1 : le front change (ChatWidget, App, BookingPanel)
+                                   // -> sans ce bump, un appareil deja installe garderait l'ancien
+                                   // bundle et continuerait d'envoyer l'instant du clic comme date.
+var SW_VERSION = 272;
 
 var PRECACHE_URLS = [
   '/',
@@ -15,7 +28,8 @@ var PRECACHE_URLS = [
   '/logo192.png',
   '/logo512.png',
   '/logo192-maskable.png',
-  '/logo512-maskable.png'
+  '/logo512-maskable.png',
+  '/notification-badge-96.png'
 ];
 
 // -----------------------------------------------------------------
@@ -205,7 +219,28 @@ self.addEventListener('push', function(event) {
     var options = {
       body: data.body || 'Vous avez une nouvelle notification',
       icon: '/logo192.png',
-      badge: '/logo192.png',
+      // V445 — LE CARRE BLANC DANS LA BARRE DE STATUT ANDROID.
+      //
+      // `badge` est la PETITE icone (barre de statut, coin de la notification).
+      // Android ne l'affiche JAMAIS en couleur : il n'en garde que le canal
+      // ALPHA et repeint chaque pixel non transparent avec la teinte du systeme
+      // — blanc sur le volet sombre de Samsung.
+      //
+      // Or `/logo192.png` est le logo couleur sur fond noir OPAQUE : mesure du
+      // 16/08/2026, 36 864 pixels sur 36 864 ont alpha = 255, aucun transparent.
+      // Sa silhouette est donc un carre plein, et Android affichait exactement
+      // ca : un carre blanc. Le fichier n'etait pas casse — il etait juste du
+      // mauvais TYPE pour cet emplacement.
+      //
+      // `/notification-badge-96.png` est la silhouette du meme « A », EXTRAITE
+      // de logo512.png (l'asset officiel, aucun redessin) : blanc sur fond
+      // transparent, masque plein pour rester lisible a 24 dp. Le test
+      // tests/test_v445_icone_notification.py la regenere depuis le logo et
+      // verifie qu'elle correspond au fichier livre, octet pour octet.
+      //
+      // `icon` reste le logo COULEUR : c'est la grande icone, elle, rendue
+      // telle quelle. Les deux emplacements n'ont pas les memes contraintes.
+      badge: '/notification-badge-96.png',
       vibrate: [200, 100, 200],
       tag: data.tag || 'afroboost-push',
       renotify: true,
@@ -231,6 +266,61 @@ self.addEventListener('push', function(event) {
   } catch (e) {
     // Protection totale — ne jamais crasher le SW
   }
+});
+
+// -----------------------------------------------------------------
+// P1-a — LA ROTATION D'ENDPOINT SE DECLARE ELLE-MEME
+// -----------------------------------------------------------------
+// FCM fait tourner l'endpoint d'un navigateur en permanence. Sans ce
+// gestionnaire, Afroboost apprenait le nouvel endpoint SEULEMENT au prochain
+// chargement du dashboard : entre les deux, tout push partait vers l'ancien,
+// que FCM accepte encore silencieusement. Mesure du 18/08/2026 : 196 endpoints
+// enregistres pour un ou deux appareils reels, dont 185 encore actifs.
+//
+// `pushsubscriptionchange` est le mecanisme PREVU PAR LA SPECIFICATION pour ce
+// cas precis, et il etait absent. Le Service Worker est le seul a connaitre le
+// couple (ancien endpoint, nouveau endpoint) : c'est donc lui qui le declare.
+// Le serveur ne devine rien.
+//
+// `oldSubscription` n'est pas fourni par tous les navigateurs : on l'envoie
+// quand il existe, et son absence n'empeche jamais l'enregistrement du nouveau.
+// Si `newSubscription` manque, on se reabonne avec la MEME cle applicative que
+// l'ancienne — aucune permission n'est redemandee, la spec l'interdit ici.
+self.addEventListener('pushsubscriptionchange', function(event) {
+  event.waitUntil(
+    (function () {
+      var ancien = event.oldSubscription ? event.oldSubscription.endpoint : null;
+      var pNouveau = event.newSubscription
+        ? Promise.resolve(event.newSubscription)
+        : self.registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: event.oldSubscription
+              && event.oldSubscription.options
+              && event.oldSubscription.options.applicationServerKey
+          });
+      return pNouveau.then(function (nouveau) {
+        if (!nouveau) return;
+        // L'identifiant du proprietaire est celui pose au dernier
+        // enregistrement : le Service Worker n'a pas de session.
+        return caches.open('afroboost-push-owner').then(function (c) {
+          return c.match('owner').then(function (r) {
+            return (r ? r.text() : Promise.resolve('')).then(function (pid) {
+              if (!pid) return;
+              return fetch('/api/push/subscribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  participant_id: pid,
+                  subscription: nouveau.toJSON(),
+                  previous_endpoint: ancien
+                })
+              });
+            });
+          });
+        });
+      });
+    })().catch(function () { /* jamais casser le Service Worker */ })
+  );
 });
 
 self.addEventListener('notificationclick', function(event) {

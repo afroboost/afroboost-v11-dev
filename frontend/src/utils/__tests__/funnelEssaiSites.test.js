@@ -136,13 +136,27 @@ describe('ETAPE 1 — ce qui ne doit PAS avoir bouge', () => {
     expect(APP).not.toContain('href="/?offre=');
   });
 
-  test('le corps du POST /checkout/free est inchange', () => {
+  test('le corps du POST /checkout/free garde tout ce qui vient du client', () => {
     const i = position(ANCRE_POST_FREE);
-    const bloc = APP.slice(i, i + 700);
-    ['terms_accepted', 'coach_email', 'items', 'customer_name',
+    // Fenetre large : le corps porte desormais un commentaire explicatif.
+    const bloc = APP.slice(i, i + 1000);
+    ['terms_accepted', 'items', 'customer_name',
      'customer_email', 'customer_phone', 'discount_code'].forEach((champ) => {
       expect(bloc).toContain(champ);
     });
+  });
+
+  test('R2b — le navigateur ne DESIGNE plus le vendeur', () => {
+    // Avant R2b, la page lisait `selectedOffer.coach_id` — donc l'adresse
+    // e-mail du coach — et la renvoyait au serveur. Deux problemes : la route
+    // publique devait publier cette adresse, et le NAVIGATEUR decidait qui
+    // recoit l'argent. Le serveur la lit maintenant dans le catalogue
+    // (`_r2b_resoudre_vendeur`). L'attribution n'est pas perdue : elle est
+    // simplement redevenue l'affaire du serveur.
+    const i = position(ANCRE_POST_FREE);
+    const bloc = APP.slice(i, i + 1000);
+    expect(bloc).not.toMatch(/coach_email:/);
+    expect(APP).not.toContain('coach_email: selectedOffer.coach_id');
   });
 
   test('aucune mesure ne s intercale entre la soumission et le POST', () => {

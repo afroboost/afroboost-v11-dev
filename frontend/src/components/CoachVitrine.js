@@ -467,7 +467,12 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         }
         // v71: Charger commentaires Social Proof
         try {
-          const commentsRes = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(res.data.coach.email || username)}`);
+          // R2b : la vitrine ne reçoit plus l'e-mail du coach. On envoie le
+          // `username` — celui de l'URL, public par construction — et le
+          // serveur le traduit. Sans cette traduction côté serveur, les
+          // commentaires auraient disparu EN SILENCE : un coach_id inconnu
+          // rend une liste vide, pas une erreur.
+          const commentsRes = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(res.data.coach.username || username)}`);
           if (commentsRes.data?.comments) {
             setSocialComments(commentsRes.data.comments);
             setSocialTotalCount(commentsRes.data.total_count || commentsRes.data.comments.length);

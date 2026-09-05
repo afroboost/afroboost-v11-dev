@@ -6976,7 +6976,9 @@ function App() {
         // donnait `/api/api/checkout/free` -> 405 Method Not Allowed.
         const freeRes = await axios.post(`${API}/checkout/free`, {
           terms_accepted: hasAcceptedTerms,
-          coach_email: selectedOffer.coach_id || '',
+          // R2b : plus de `coach_email` — c'était l'adresse du coach, et le
+          // navigateur n'a jamais eu à désigner qui reçoit l'argent. Le serveur
+          // lit le vendeur dans le catalogue, à partir de l'id de l'offre.
           items: [{
             type: isPhysicalProduct ? 'product' : 'offer',
             id: selectedOffer.id,
@@ -9230,11 +9232,11 @@ function App() {
             seulement. Rien à voir avec le mur de commentaires, dont 88 sur 100
             sont générés par IA. La section ne s'affiche pas si rien n'est
             approuvé : mieux vaut une absence qu'une preuve sociale fabriquée. */}
+        {/* R2b : `coachId` n'est plus transmis — c'était l'e-mail du coach,
+            et le filtre par offre suffit : /testimonials accepte les deux, et
+            `offer_id` est le plus précis des deux. */}
         {selectedOffer && (
-          <TemoignagesPublics
-            offerId={selectedOffer.id || ''}
-            coachId={selectedOffer.coach_id || ''}
-          />
+          <TemoignagesPublics offerId={selectedOffer.id || ''} />
         )}
 
         {/* Bouton Voir les avis Google - affiché si configuré par le coach */}
