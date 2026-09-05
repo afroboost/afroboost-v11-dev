@@ -511,8 +511,13 @@ verifier("13a. SANS jeton -> refuse", _ferme)
 _JA = jeton(COACH_A)
 _rep = lancer(S.p3u2_lister_reponses(RequeteFictive(jeton_=_JA)))
 verifier("13b. avec jeton -> les messages du coach", _rep["total"] == 2, str(_rep["total"]))
-verifier("13c. le compteur des messages en attente est rendu",
-         _rep["en_attente"] == 1, str(_rep.get("en_attente")))
+# AI-P3 A RENOMME CETTE CLE, ET C'ETAIT NECESSAIRE. Elle s'appelait
+# `en_attente` et voulait dire « ce message n'a pas pu etre rattache ». AI-P3 a
+# introduit un ETAT COMMERCIAL « en attente » — « j'attends une reponse du
+# partenaire ». Les deux se sont retrouves sous la meme cle et le second
+# ecrasait le premier. Le sens de CE compteur est desormais dans son nom.
+verifier("13c. le compteur des messages a rattacher a la main est rendu",
+         _rep["a_rattacher"] == 1, str(_rep.get("a_rattacher")))
 verifier("13d. la pagination est bornee",
          lancer(S.p3u2_lister_reponses(RequeteFictive(jeton_=_JA, params={"limit": "9999"})))["limit"] == 100)
 try:

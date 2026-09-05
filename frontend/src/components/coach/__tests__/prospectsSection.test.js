@@ -1144,7 +1144,7 @@ describe('P3-U3 — les réponses reçues', () => {
      compteurs. Le faux les dérive de la même façon — mais l'écran, lui, ne
      recalcule JAMAIS : il affiche ce que le serveur a dérivé, sinon deux règles
      coexisteraient et finiraient par diverger. */
-  const avecReponses = (messages, en_attente = 0) => {
+  const avecReponses = (messages, a_rattacher = 0) => {
     const avecStatut = messages.map((m) => ({
       ...m,
       statut_commercial: m.statut_commercial
@@ -1155,11 +1155,16 @@ describe('P3-U3 — les réponses reçues', () => {
       prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
       campagnes: { etat: SECTION.OK, donnees: { total: 0, campaigns: [] } },
       reponses: { etat: SECTION.OK,
-                  donnees: { messages: avecStatut, total: avecStatut.length, en_attente,
+                  donnees: { messages: avecStatut, total: avecStatut.length,
+                             /* `a_rattacher` (aucune action ne réclame ce message) ne
+                                se confond plus avec l'état commercial `en_attente`
+                                (« j'attends une réponse du partenaire ») : les deux
+                                portaient le même nom et le second écrasait le premier. */
+                             a_rattacher,
                              non_lues: avecStatut.filter((m) => !m.read_at).length,
                              a_repondre: compte('a_repondre'),
                              appel_a_faire: compte('appel_a_faire'),
-                             en_attente_statut: compte('en_attente'),
+                             en_attente: compte('en_attente'),
                              refus: compte('refus'),
                              traite: compte('traite') } },
     };

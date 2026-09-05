@@ -964,9 +964,14 @@ verifier("12d-bis. l'ouverture, la generation et l'edition sont toutes par carte
          and "carte.edition" in ECRAN)
 verifier("12e. seul « Voir la reponse » appelle la route de lecture",
          ECRAN.count("/lu`") == 1 and "ouvrirReponse(r.id)" in ECRAN)
-verifier("12f. le chargement de l'ecran n'appelle JAMAIS cette route",
-         "/lu`" not in ECRAN.split("const chargement = useChargement")[1]
-         .split("const reponsesEnAttente")[0])
+# LA TRANCHE EST LA DECLARATION DE CHARGEMENT ELLE-MEME, bornee par sa propre
+# fermeture. Elle etait bornee par le nom d'une variable voisine — qui a change
+# de nom au lot suivant, et la garde s'est mise a examiner tout le fichier.
+_DECLARATION = ECRAN.split("const chargement = useChargement")[1] \
+    .split("{ deps: [base, signature] }")[0]
+verifier("12f. le chargement de l'ecran n'appelle JAMAIS la route de lecture",
+         "/lu`" not in _DECLARATION and "/notes`" not in _DECLARATION,
+         "%d caracteres examines" % len(_DECLARATION))
 verifier("12f-bis. ouvrir ne REGENERE pas : le brouillon existant est RELU",
          "/brouillon`" in ECRAN and "carteDe(id).brouillon !== undefined" in ECRAN)
 # TROIS declencheurs, et TOUS sont un clic : « Generer / Regenerer », les

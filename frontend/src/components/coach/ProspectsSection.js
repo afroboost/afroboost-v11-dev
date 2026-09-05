@@ -392,8 +392,12 @@ export default function ProspectsSection({ API }) {
   const sectionReponses = chargement.sections.reponses;
   const reponses = (sectionReponses && sectionReponses.etat === SECTION.OK
     && sectionReponses.donnees && sectionReponses.donnees.messages) || [];
-  const reponsesEnAttente = (sectionReponses && sectionReponses.etat === SECTION.OK
-    && sectionReponses.donnees && sectionReponses.donnees.en_attente) || 0;
+  /* `a_rattacher` — les messages qu'aucune action n'a pu réclamer. À ne pas
+     confondre avec l'état commercial « EN ATTENTE » (AI-P3), qui veut dire
+     « j'attends une réponse du partenaire » : les deux portaient le même nom,
+     et le second écrasait le premier. */
+  const reponsesARattacher = (sectionReponses && sectionReponses.etat === SECTION.OK
+    && sectionReponses.donnees && sectionReponses.donnees.a_rattacher) || 0;
 
   /* READ-P1 — LES DEUX COMPTEURS VIENNENT DU SERVEUR, JAMAIS DE LA PAGE.
      La liste est paginée (20 par défaut) : les recompter ici donnerait un badge
@@ -969,11 +973,11 @@ export default function ProspectsSection({ API }) {
                 {reponsesARepondre} à répondre
               </span>
             )}
-            {reponsesEnAttente > 0 && (
+            {reponsesARattacher > 0 && (
               <span data-testid="reponses-en-attente"
                     style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
                              background: 'rgba(255,255,255,0.10)', color: TEXTE, fontWeight: 600 }}>
-                {reponsesEnAttente} à rattacher à la main
+                {reponsesARattacher} à rattacher à la main
               </span>
             )}
           </div>

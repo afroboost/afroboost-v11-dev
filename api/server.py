@@ -24871,9 +24871,16 @@ async def p3u2_lister_reponses(request: Request):
     # donne un badge qui change selon la page affichee. `p3ai_compteurs` compte
     # sur la portee complete du coach, donc survit au rafraichissement.
     # AUCUN MARQUAGE ICI : afficher la liste ne lit rien au sens humain.
+    # AI-P3 — `a_rattacher` S'APPELAIT `en_attente`, ET C'ETAIT UNE COLLISION.
+    # Ce compteur-ci dit « ce message n'a pas pu etre rattache automatiquement a
+    # une action » ; AI-P3 a introduit un etat commercial qui s'appelle, lui
+    # aussi, « en attente » — mais qui veut dire « j'attends une reponse du
+    # partenaire ». Les deux se retrouvaient sous la meme cle, et la seconde
+    # ecrasait la premiere : le badge « en attente » affichait 0 alors qu'un
+    # dossier l'etait. Deux sens sous un seul nom finissent toujours ainsi.
     return {"messages": lignes, "total": total, "limit": limite, "offset": depart,
             **await p3ai_compteurs(email),
-            "en_attente": await db[P3U2_COLLECTION].count_documents(
+            "a_rattacher": await db[P3U2_COLLECTION].count_documents(
                 {**dict(get_coach_filter(email)), "statut": P3U2_STATUT_REVUE})}
 
 
