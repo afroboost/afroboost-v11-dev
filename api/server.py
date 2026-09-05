@@ -945,6 +945,81 @@ async def r2c_proprietaire_du_partenaire(partner_id: str) -> dict:
             "coach_id": (_fiche.get("email") or "").lower().strip() or None}
 
 
+# ===========================================================================
+# R3a — OU SE PASSE CETTE OFFRE ?
+# ===========================================================================
+#
+# Jusqu'ici, une offre disait son lieu dans UN champ de texte libre :
+# `location`. Cela donne « Bord du Lac, Auvernier, Neuchatel », « Vidy,
+# Lausanne », «  Plage Est de St-Blaise - La Torpille ». Lisible par un
+# humain, inexploitable par une machine : on ne peut ni regrouper par ville,
+# ni repondre a « qu'est-ce qui se passe pres de moi ».
+#
+# CE QUE `region` N'EST PAS, ET LE PIEGE QU'IL TEND. Les cours portent deja un
+# jeton `region` (`neuchatel`, `lausanne`). Il serait tentant d'en tirer la
+# ville. CE SERAIT FAUX : « Bord du Lac, Auvernier, Neuchatel » porte
+# `region=neuchatel` alors que la ville est AUVERNIER — c'est le cas de 12
+# cours sur 23 en production. `region` est un decoupage SEO, pas une commune.
+# Aucune ville n'est donc DEDUITE : elle est declaree, ou elle est vide.
+#
+# CE LOT N'AFFICHE RIEN et ne decide d'aucune eligibilite. Il rend la question
+# repondable, c'est tout.
+R3A_LONGUEUR_MAX = 200
+
+
+def r3a_texte_lieu(valeur) -> str:
+    """Un morceau d'adresse, nettoye. PURE.
+
+    Espaces multiples ecrases et bords rognes — les donnees de production en
+    portent (« Vidy,  Lausanne », «  Plage Est... »), et deux villes qui ne
+    different que par une espace seraient deux villes differentes au moment de
+    regrouper. Borne a 200 caracteres : une adresse plus longue est une
+    description, et le champ n'est pas fait pour ca.
+    """
+    _v = " ".join(str(valeur or "").split())
+    return _v[:R3A_LONGUEUR_MAX]
+
+
+def r3a_coordonnee(valeur, borne: float):
+    """Une latitude ou une longitude, ou `None`. PURE, ne leve jamais.
+
+    Hors bornes, illisible, vide -> `None`. Une coordonnee fausse est pire que
+    pas de coordonnee du tout : elle placerait un cours au milieu de l'ocean
+    sans que personne ne s'en apercoive avant la carte.
+    """
+    if valeur is None or valeur == "":
+        return None
+    try:
+        _f = float(valeur)
+    except (TypeError, ValueError):
+        return None
+    if _f != _f or _f < -borne or _f > borne:   # NaN inclus
+        return None
+    return _f
+
+
+def r3a_localisation(donnees: dict) -> dict:
+    """La localisation d'une offre, normalisee. PURE.
+
+    RIEN N'EST OBLIGATOIRE, et c'est voulu : un abonnement, un pack, une carte
+    membre ou un t-shirt n'ont pas de lieu. Forcer une adresse sur eux
+    fabriquerait une donnee fausse pour satisfaire un schema. Absent = inconnu,
+    et l'eligibilite a « Ou pratiquer ? » sera tranchee ailleurs (R3c).
+
+    LES COORDONNEES SONT SOLIDAIRES : une latitude sans longitude ne situe
+    rien. On garde les deux ou aucune.
+    """
+    _d = donnees or {}
+    _ville = r3a_texte_lieu(_d.get("location_city"))
+    _adresse = r3a_texte_lieu(_d.get("location_address"))
+    _lat = r3a_coordonnee(_d.get("location_lat"), 90.0)
+    _lng = r3a_coordonnee(_d.get("location_lng"), 180.0)
+    if _lat is None or _lng is None:
+        _lat = _lng = None
+    return {"location_city": _ville, "location_address": _adresse,
+            "location_lat": _lat, "location_lng": _lng}
+
+
 class Offer(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -1071,6 +1146,26 @@ class Offer(BaseModel):
     owner_type: str = R2C_PROPRIETAIRE_INCONNU
     owner_id: Optional[str] = None   # UUID opaque du partenaire. JAMAIS un e-mail.
     offer_type: str = R2C_TYPE_INCONNU
+    # R3a — OU SE PASSE CETTE OFFRE. Quatre champs, TOUS FACULTATIFS.
+    #
+    # `location` (texte libre, au-dessus) N'EST PAS REMPLACE ni migre : les 9
+    # offres de production s'appuient dessus, et il reste ce qui s'affiche.
+    # Ces champs-ci sont la version STRUCTUREE, saisie a cote — la ville
+    # separee de l'adresse, pour qu'une machine puisse regrouper.
+    #
+    # Ce sont des CHOIX du coach : ils figurent donc dans les DEUX modeles,
+    # comme `offer_type` et ses six voisins. Absents d'`OfferCreate`, le
+    # `$set: offer.model_dump()` du PUT les effacerait a chaque sauvegarde —
+    # huitieme rencontre avec ce piege dans ce fichier.
+    #
+    # Les coordonnees arrivent GRATUITEMENT avec la suggestion Nominatim que
+    # le coach choisit (U1b). Elles restent donc `None` quand il tape son
+    # adresse a la main : « absent » veut dire « on ne sait pas », jamais
+    # « 0,0 ».
+    location_city: Optional[str] = None
+    location_address: Optional[str] = None
+    location_lat: Optional[float] = None
+    location_lng: Optional[float] = None
 
 class OfferCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1192,6 +1287,13 @@ class OfferCreate(BaseModel):
     # l'identite authentifiee (`r2c_proprietaire_depuis_identite`), jamais dans
     # le corps de la requete.
     offer_type: str = R2C_TYPE_INCONNU
+    # R3a — MIROIR STRICT des quatre champs declares dans `Offer`. Sans eux
+    # ici, le `$set: offer.model_dump()` du PUT effacerait la localisation a
+    # chaque enregistrement d'offre.
+    location_city: Optional[str] = None
+    location_address: Optional[str] = None
+    location_lat: Optional[Union[float, str]] = None
+    location_lng: Optional[Union[float, str]] = None
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -2362,6 +2464,11 @@ R2B_CLES_OFFRE_PUBLIQUE = (
     # (`r2c_proprietaire_du_partenaire`). `coach_id`, lui, reste HORS de cette
     # liste : c'est l'e-mail, et R2b l'a sorti pour de bon.
     "owner_type", "owner_id", "offer_type",
+    # R3a — OU, mais pas QUI. Une ville, une adresse de LIEU et ses
+    # coordonnees decrivent un endroit public ou l'on vient danser : c'est
+    # exactement ce qu'une carte doit pouvoir montrer. Rien ici ne designe une
+    # personne — l'adresse du coach, elle, n'a jamais transite par ce modele.
+    "location_city", "location_address", "location_lat", "location_lng",
 )
 
 # Les seules cles qu'un coach PUBLIC peut porter. `email` en est absent.
@@ -2579,6 +2686,11 @@ async def create_offer(offer: OfferCreate, request: Request):
     # pose la question, il n'y a aucune raison de ne pas savoir.
     offer_data["offer_type"] = r2c_type_valide_ou_refus(
         offer_data.get("offer_type"), exige=True)
+    # R3a : la localisation, normalisee a l'entree. Aucune obligation — un
+    # pack ou un t-shirt n'ont pas de lieu, et rien ne doit les forcer a en
+    # inventer un. Une coordonnee illisible ou hors bornes devient `None`
+    # plutot que d'entrer en base.
+    offer_data.update(r3a_localisation(offer_data))
     # v59: Calculer expiration si durée définie
     now_iso = datetime.utcnow().isoformat()
     offer_data["created_at"] = now_iso
@@ -2638,6 +2750,8 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
     # rendrait toutes les anciennes offres immodifiables.
     update_data["offer_type"] = r2c_type_valide_ou_refus(
         update_data.get("offer_type"), exige=False)
+    # R3a : meme normalisation qu'a la creation — une seule regle, deux portes.
+    update_data.update(r3a_localisation(update_data))
     # U1a : une valeur inconnue redevient « all » plutot que d'entrer en base.
     update_data["audience"] = u1a_audience(update_data.get("audience"))
     # v61: Blindage conversion durée
@@ -2799,11 +2913,22 @@ async def r2c_lister_a_classifier(request: Request):
             "owner_id": _o.get("owner_id"),
             "offer_type": r2c_type_offre(_o.get("offer_type")),
             "a_classifier": r2c_a_classifier(_o),
+            # R3a — CE QU'ON SAIT DU LIEU, ET CE QU'ON N'EN SAIT PAS.
+            # `location` est le texte libre historique : il est rendu TEL QUEL
+            # pour que l'ecran puisse le PROPOSER comme point de depart. Il
+            # n'est pas recopie en base : proposer n'est pas decider.
+            "location": _o.get("location") or "",
+            "location_city": _o.get("location_city") or "",
+            "location_address": _o.get("location_address") or "",
+            "location_lat": _o.get("location_lat"),
+            "location_lng": _o.get("location_lng"),
+            "localisation_absente": not (_o.get("location_city") or "").strip(),
         })
     return {
         "offres": _lignes,
         "total": len(_lignes),
         "a_classifier": sum(1 for l in _lignes if l["a_classifier"]),
+        "sans_localisation": sum(1 for l in _lignes if l["localisation_absente"]),
         "types": [{"valeur": v, "libelle": R2C_LIBELLES_TYPE[v]}
                   for v in R2C_TYPES_OFFRE if v != R2C_TYPE_INCONNU],
         "proprietaires": [{"valeur": v, "libelle": R2C_LIBELLES_PROPRIETAIRE[v]}
@@ -2864,6 +2989,43 @@ async def r2c_classifier(offer_id: str, corps: R2CClassification, request: Reque
             "owner_id": _apres.get("owner_id"),
             "offer_type": _apres.get("offer_type"),
             "a_classifier": r2c_a_classifier(_apres)}
+
+
+class R3ALocalisation(BaseModel):
+    """La localisation qu'un administrateur DECLARE sur une offre."""
+    model_config = ConfigDict(extra="ignore")
+    location_city: Optional[str] = None
+    location_address: Optional[str] = None
+    location_lat: Optional[Union[float, str]] = None
+    location_lng: Optional[Union[float, str]] = None
+
+
+@api_router.patch("/offers/{offer_id}/localisation")
+async def r3a_enregistrer_localisation(offer_id: str, corps: R3ALocalisation,
+                                       request: Request):
+    """Ou se passe cette offre — repondu a la main, offre par offre.
+
+    JUMELLE de `PATCH /offers/{id}/classification`, et separee d'elle POUR UNE
+    RAISON : la classification exige un proprietaire ET un type, ensemble. La
+    localisation, elle, se complete seule, et peut rester vide. Les fondre en
+    une route obligerait a rendre les deux facultatifs — et un durcissement
+    qu'on assouplit pour faire tenir un second usage n'est plus un
+    durcissement.
+
+    N'ECRIT QUE LES QUATRE CHAMPS DE LIEU. `location` (le texte libre
+    historique), le prix, la visibilite et les cours lies ne sont pas touches.
+    """
+    email = require_auth(request)
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
+    _offre = await db.offers.find_one({"id": offer_id}, {"_id": 0, "id": 1})
+    if not _offre:
+        raise HTTPException(status_code=404, detail="Offre non trouvée")
+    _maj = r3a_localisation(corps.model_dump())
+    await db.offers.update_one({"id": offer_id}, {"$set": _maj})
+    logger.info("[R3a] localisation de %s posee par %s : ville=%r",
+                offer_id, email, _maj["location_city"])
+    return {"success": True, "id": offer_id, **_maj}
 
 
 # --- Product Categories ---

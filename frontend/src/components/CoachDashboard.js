@@ -1756,7 +1756,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     // serait accepte sans que le coach ait rien lu — et « cours a l'unite »
     // est justement celui qui rendra l'offre publique dans « Ou pratiquer ? ».
     // Une valeur vide force le choix : le wizard bloque, le serveur aussi.
-    offer_type: ''
+    offer_type: '',
+    // R3a : la localisation structurée d'une offre neuve est VIDE. Rien n'est
+    // pré-rempli — une ville par défaut serait une ville fausse.
+    location_city: '',
+    location_address: '',
+    location_lat: null,
+    location_lng: null
   });
   const [editingOfferId, setEditingOfferId] = useState(null); // Pour mode édition
   const fileInputRef = useRef(null);
@@ -3286,6 +3292,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // s'ouvre a vide, et le coach peut la classer par la meme occasion.
       offer_type: offer.offer_type && offer.offer_type !== 'unknown'
         ? offer.offer_type : '',
+      // R3a : RELUS, comme leurs voisins. Un champ envoyé mais jamais relu
+      // revient à vide en base à la sauvegarde suivante — le piège que ce
+      // fichier a déjà rencontré huit fois.
+      location_city: offer.location_city || '',
+      location_address: offer.location_address || '',
+      location_lat: offer.location_lat ?? null,
+      location_lng: offer.location_lng ?? null,
     });
     setEditingOfferId(offer.id);
     // Scroll vers le formulaire
@@ -3324,7 +3337,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       audience: 'all',
       // R2c : meme raison. Le type de l'offre abandonnee ne doit pas etre
       // celui, silencieusement pre-rempli, de la suivante.
-      offer_type: ''
+      offer_type: '',
+      // R3a : idem — le lieu de l'offre abandonnée n'est pas celui de la suivante.
+      location_city: '',
+      location_address: '',
+      location_lat: null,
+      location_lng: null
     });
     setEditingOfferId(null);
   };
@@ -3499,7 +3517,18 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // ce sont des constats d'identite. Le serveur les etablit depuis la
         // session authentifiee et ignore ce que le navigateur en dirait — ils
         // n'existent d'ailleurs meme pas dans son modele d'entree.
-        offer_type: src.offer_type || 'unknown'
+        offer_type: src.offer_type || 'unknown',
+        // R3a — LA LOCALISATION STRUCTUREE. Meme piege de liste blanche que
+        // tous les champs ci-dessus. Les chaines vides partent telles quelles
+        // (le serveur les normalise) ; les coordonnees partent NULLES quand
+        // elles sont inconnues, jamais 0 — 0,0 est un point au large du Ghana,
+        // pas une absence.
+        location_city: src.location_city || '',
+        location_address: src.location_address || src.location || '',
+        location_lat: (src.location_lat === '' || src.location_lat === undefined)
+          ? null : src.location_lat,
+        location_lng: (src.location_lng === '' || src.location_lng === undefined)
+          ? null : src.location_lng
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 

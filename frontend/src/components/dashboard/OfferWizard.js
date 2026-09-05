@@ -2326,13 +2326,54 @@ export default function OfferWizard({
               coach y attend le meme confort. */}
           <ChampAdresse
             value={form.location || ''}
-            onChange={(v) => set('location', v)}
+            onChange={(v) => {
+              // R3a : le champ visible reste `location` — c'est lui qui
+              // s'affiche sur la carte de l'offre et sur la vitrine, rien ne
+              // change de ce cote. Il alimente EN PLUS `location_address`,
+              // moitie structuree de la reponse. Aucune saisie en double.
+              set('location', v);
+              set('location_address', v);
+            }}
+            onChoisir={(item) => {
+              // R3a : le coach a choisi une proposition OpenStreetMap. La
+              // ville et les coordonnees arrivent dans la meme reponse — les
+              // ignorer obligerait a les redemander plus tard. Un coach qui
+              // tape librement n'en aura pas : « absent » veut dire « on ne
+              // sait pas », et c'est une reponse valable.
+              if (item.ville) set('location_city', item.ville);
+              set('location_lat', item.lat);
+              set('location_lng', item.lon);
+            }}
             placeholder="Ex: Salle Afroboost, Lausanne"
             ariaLabel="Lieu de l'offre"
             style={INPUT_STYLE}
             className="text-sm v224-input"
             testId="offer-location"
           />
+        </div>
+        {/* R3a — LA VILLE, SEPAREE. Deuxieme champ et non deduction : le
+            jeton `region` d'Afroboost dit « neuchatel » pour un cours qui se
+            tient a AUVERNIER. Une machine ne peut pas regrouper sur du texte
+            libre, et une ville devinee serait fausse une fois sur deux. Elle
+            se remplit toute seule quand le coach choisit une proposition
+            ci-dessus ; sinon il l'ecrit, ou il la laisse vide. */}
+        <div>
+          <label className="block text-xs mb-1" style={LABEL_STYLE}>
+            <SvgIcon name="mapPin" size={14} />{' '}Ville
+          </label>
+          <input
+            type="text"
+            value={form.location_city || ''}
+            onChange={(e) => set('location_city', e.target.value)}
+            placeholder="Ex: Auvernier"
+            data-testid="offer-city"
+            style={INPUT_STYLE}
+            className="text-sm v224-input"
+          />
+          <p className="text-xs mt-1" style={HINT_STYLE}>
+            Se remplit toute seule si tu choisis une adresse proposée ci-dessus.
+            Facultative&nbsp;: un abonnement ou un t-shirt n&apos;ont pas de ville.
+          </p>
         </div>
         <div>
           <label className="block text-xs mb-1" style={LABEL_STYLE}>

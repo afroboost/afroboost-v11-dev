@@ -62,11 +62,34 @@ export function construireUrl(texte, options) {
  * recompose « rue numero, code ville » et on garde le pays seulement quand ce
  * n'est PAS la Suisse.
  */
+/**
+ * R3a — LA VILLE, extraite de la reponse Nominatim.
+ *
+ * Nominatim ne dit pas « ville » : selon la taille de la commune il renvoie
+ * `city`, `town`, `village`, `municipality`, `hamlet` ou `suburb`. Auvernier
+ * arrive en `village`, Lausanne en `city`. Cet ordre de repli existait deja a
+ * l'interieur de `formaterAdresse` ; il est simplement EXTRAIT ici pour etre
+ * reutilisable et testable, sans changer d'un iota ce que `formaterAdresse`
+ * produit.
+ *
+ * POURQUOI PAS `region`. Afroboost porte deja un jeton `region` sur ses cours
+ * (`neuchatel`, `lausanne`). Ce n'est PAS une ville : « Bord du Lac,
+ * Auvernier, Neuchatel » y est classe `neuchatel` alors que la commune est
+ * Auvernier — 12 cours sur 23 en production. La ville vient d'ici, ou de la
+ * main du coach. Jamais d'une deduction.
+ */
+export function extraireVille(item) {
+  if (!item || typeof item !== 'object') return '';
+  const a = item.address && typeof item.address === 'object' ? item.address : {};
+  return nettoyerTexte(a.city || a.town || a.village || a.municipality
+    || a.hamlet || a.suburb || '');
+}
+
 export function formaterAdresse(item) {
   if (!item || typeof item !== 'object') return '';
   const a = item.address && typeof item.address === 'object' ? item.address : {};
   const rue = [a.road, a.house_number].filter(Boolean).join(' ');
-  const ville = a.city || a.town || a.village || a.municipality || a.hamlet || a.suburb || '';
+  const ville = extraireVille(item);
   const tete = rue || item.name || a.amenity || a.building || a.leisure || a.tourism || '';
   const codeVille = [a.postcode, ville].filter(Boolean).join(' ');
   const morceaux = [];
@@ -97,10 +120,21 @@ export function normaliserReponse(donnees) {
     const libelle = formaterAdresse(item);
     if (!libelle || vus.has(libelle)) continue;
     vus.add(libelle);
+    // R3a : trois champs AJOUTES, aucun retire. `cle`, `libelle` et `detail`
+    // restent identiques — les consommateurs d'U1b ne voient aucune
+    // difference. Les coordonnees arrivent gratuitement dans la meme reponse :
+    // ne pas les prendre au passage obligerait a redemander plus tard ce que
+    // Nominatim vient de donner.
+    const lat = Number(item && item.lat);
+    const lon = Number(item && item.lon);
+    const situe = Number.isFinite(lat) && Number.isFinite(lon);
     out.push({
       cle: String((item && (item.place_id || item.osm_id)) || libelle),
       libelle,
-      detail: formaterDetail(item)
+      detail: formaterDetail(item),
+      ville: extraireVille(item),
+      lat: situe ? lat : null,
+      lon: situe ? lon : null
     });
   }
   return out;

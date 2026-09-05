@@ -49,11 +49,44 @@ export default function OffersClassification({ API, isSuperAdmin, coachEmail, on
 
   if (!isSuperAdmin) return null;
 
-  const aClassifier = (donnees?.offres || []).filter((o) => o.a_classifier);
-  const nb = donnees ? donnees.a_classifier : null;
+  // R3a : l'ecran couvre desormais DEUX manques distincts — le proprietaire
+  // et le type d'un cote, la ville de l'autre. Une offre peut avoir besoin de
+  // l'un, de l'autre, ou des deux ; elle apparait des qu'il lui manque quelque
+  // chose. Un seul outil, comme demande — pas un second grand ecran.
+  const aTraiter = (donnees?.offres || []).filter(
+    (o) => o.a_classifier || o.localisation_absente);
+  const nb = donnees ? aTraiter.length : null;
 
   const majBrouillon = (id, champ, valeur) =>
     setBrouillons((p) => ({ ...p, [id]: { ...(p[id] || {}), [champ]: valeur } }));
+
+  const enregistrerLieu = async (offre) => {
+    const b = brouillons[offre.id] || {};
+    // La ville SEULE est demandee : l'adresse se pre-remplit depuis le texte
+    // libre historique, et les coordonnees ne viennent que d'une proposition
+    // choisie. Aucune n'est obligatoire.
+    const ville = (b.location_city ?? offre.location_city ?? '').trim();
+    const adresse = (b.location_address ?? offre.location_address ?? offre.location ?? '').trim();
+    setEnCours(offre.id + ':lieu');
+    try {
+      await axios.patch(
+        `${API}/offers/${offre.id}/localisation`,
+        {
+          location_city: ville,
+          location_address: adresse,
+          location_lat: b.location_lat ?? offre.location_lat ?? null,
+          location_lng: b.location_lng ?? offre.location_lng ?? null
+        },
+        { headers: { 'X-User-Email': coachEmail || '' } }
+      );
+      await charger();
+      if (onClassifie) onClassifie();
+    } catch (e) {
+      alert(e?.response?.data?.detail || "L'enregistrement du lieu a échoué.");
+    } finally {
+      setEnCours('');
+    }
+  };
 
   const enregistrer = async (offre) => {
     const b = brouillons[offre.id] || {};
@@ -121,7 +154,7 @@ export default function OffersClassification({ API, isSuperAdmin, coachEmail, on
              style={{ transform: ouvert ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>
           <polyline points="9 18 15 12 9 6" />
         </svg>
-        Classer les anciennes offres
+        Classer et situer les anciennes offres
         {nb !== null && nb > 0 && (
           <span style={{
             fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
@@ -141,20 +174,20 @@ export default function OffersClassification({ API, isSuperAdmin, coachEmail, on
           {chargement && <p style={ETIQUETTE}>Chargement…</p>}
           {erreur && <p style={{ ...ETIQUETTE, color: '#ff8a8a' }}>{erreur}</p>}
 
-          {donnees && aClassifier.length === 0 && (
+          {donnees && aTraiter.length === 0 && (
             <p style={ETIQUETTE}>
-              Toutes les offres sont classées. Rien à faire ici.
+              Toutes les offres sont classées et situées. Rien à faire ici.
             </p>
           )}
 
-          {donnees && donnees.partenaires.length === 0 && aClassifier.length > 0 && (
+          {donnees && donnees.partenaires.length === 0 && aTraiter.some((o) => o.a_classifier) && (
             <p style={{ ...ETIQUETTE, marginBottom: '12px' }}>
               Aucun coach partenaire n&apos;est enregistré pour l&apos;instant&nbsp;:
               seul le choix «&nbsp;Afroboost / Administrateur&nbsp;» est disponible.
             </p>
           )}
 
-          {aClassifier.map((o) => {
+          {aTraiter.map((o) => {
             const b = brouillons[o.id] || {};
             return (
               <div key={o.id} data-testid={`r2c-offre-${o.id}`} style={{
@@ -173,6 +206,7 @@ export default function OffersClassification({ API, isSuperAdmin, coachEmail, on
                   {o.duration_value && <> · {o.duration_value} {o.duration_unit}</>}
                 </div>
 
+                {o.a_classifier && (<>
                 <div style={{ ...ETIQUETTE, marginBottom: '4px' }}>À qui appartient-elle&nbsp;?</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                   {(donnees.proprietaires || []).map((p) => (
@@ -231,6 +265,66 @@ export default function OffersClassification({ API, isSuperAdmin, coachEmail, on
                         }}>
                   {enCours === o.id ? 'Enregistrement…' : 'Enregistrer'}
                 </button>
+                </>)}
+
+                {/* R3a — OU SE PASSE-T-ELLE ? Bloc SEPARE, et enregistre
+                    separement : classer une offre et la situer sont deux
+                    reponses independantes, et Bassi peut n'en connaitre
+                    qu'une. L'adresse historique est PROPOSEE comme point de
+                    depart, jamais recopiee en base a son insu. */}
+                <div style={{
+                  marginTop: o.a_classifier ? '14px' : 0,
+                  paddingTop: o.a_classifier ? '12px' : 0,
+                  borderTop: o.a_classifier ? '1px solid rgba(255,255,255,0.10)' : 'none'
+                }}>
+                  <div style={{ ...ETIQUETTE, marginBottom: '6px' }}>Où se passe-t-elle&nbsp;?</div>
+                  {o.location && !o.location_address && (
+                    <p style={{ ...ETIQUETTE, marginBottom: '6px', fontStyle: 'italic' }}>
+                      Lieu actuellement affiché&nbsp;: «&nbsp;{o.location}&nbsp;»
+                      — vérifie-le avant d&apos;enregistrer.
+                    </p>
+                  )}
+                  <input
+                    type="text"
+                    data-testid={`r3a-ville-${o.id}`}
+                    value={b.location_city ?? o.location_city ?? ''}
+                    onChange={(e) => majBrouillon(o.id, 'location_city', e.target.value)}
+                    placeholder="Ville (ex : Auvernier)"
+                    style={{
+                      width: '100%', marginBottom: '6px', padding: '8px',
+                      borderRadius: '8px', fontSize: '12px',
+                      background: 'rgba(0,0,0,0.4)', color: '#fff',
+                      border: '1px solid rgba(255,255,255,0.14)'
+                    }}
+                  />
+                  <input
+                    type="text"
+                    data-testid={`r3a-adresse-${o.id}`}
+                    value={b.location_address ?? o.location_address ?? o.location ?? ''}
+                    onChange={(e) => majBrouillon(o.id, 'location_address', e.target.value)}
+                    placeholder="Adresse / lieu"
+                    style={{
+                      width: '100%', marginBottom: '10px', padding: '8px',
+                      borderRadius: '8px', fontSize: '12px',
+                      background: 'rgba(0,0,0,0.4)', color: '#fff',
+                      border: '1px solid rgba(255,255,255,0.14)'
+                    }}
+                  />
+                  <button type="button"
+                          data-testid={`r3a-enregistrer-lieu-${o.id}`}
+                          disabled={enCours === o.id + ':lieu'}
+                          onClick={() => enregistrerLieu(o)}
+                          style={{
+                            fontSize: '12px', padding: '8px 14px', borderRadius: '8px',
+                            border: '1px solid var(--primary-color, #D91CD2)',
+                            cursor: enCours === o.id + ':lieu' ? 'wait' : 'pointer',
+                            background: 'transparent',
+                            color: 'var(--primary-color, #D91CD2)',
+                            opacity: enCours === o.id + ':lieu' ? 0.6 : 1
+                          }}>
+                    {enCours === o.id + ':lieu' ? 'Enregistrement…' : 'Enregistrer le lieu'}
+                  </button>
+                </div>
               </div>
             );
           })}

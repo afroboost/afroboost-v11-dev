@@ -22,6 +22,7 @@ TYPE
 CONFIDENTIALITE
   aucun e-mail ne revient par la porte de derriere : `owner_id` est un UUID.
 """
+import ast
 import asyncio
 import io
 import os
@@ -58,119 +59,13 @@ os.environ.setdefault("MONGO_URL", "mongodb://bouchon-r2c-inexistant:27017")
 import api.server as S  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
-ADMIN = S.SUPER_ADMIN_EMAILS[0]
-PARTENAIRE = "partenaire.un@exemple.test"
-AUTRE = "partenaire.deux@exemple.test"
-UUID_UN = "11111111-2222-3333-4444-555555555555"
-UUID_DEUX = "99999999-8888-7777-6666-555555555555"
 
 
-# --------------------------------------------------------------------------
-# UNE BASE EN MEMOIRE. Juste assez de MongoDB pour les routes testees.
-# --------------------------------------------------------------------------
-def _correspond(doc, requete):
-    for cle, attendu in (requete or {}).items():
-        if cle == "$or":
-            if not any(_correspond(doc, sous) for sous in attendu):
-                return False
-            continue
-        valeur = doc.get(cle)
-        if isinstance(attendu, dict):
-            for op, arg in attendu.items():
-                if op == "$in" and valeur not in arg:
-                    return False
-                if op == "$exists" and (cle in doc) != bool(arg):
-                    return False
-                if op == "$ne" and valeur == arg:
-                    return False
-        elif valeur != attendu:
-            return False
-    return True
-
-
-def _projeter(doc, proj):
-    if not proj:
-        return dict(doc)
-    gardees = [k for k, v in proj.items() if v and k != "_id"]
-    if not gardees:
-        return {k: v for k, v in doc.items() if k != "_id"}
-    return {k: doc[k] for k in gardees if k in doc}
-
-
-class _Curseur:
-    def __init__(self, docs):
-        self._docs = docs
-
-    async def to_list(self, n=None):
-        return list(self._docs)[:n] if n else list(self._docs)
-
-    def sort(self, *a, **k):
-        return self
-
-
-class _Collection:
-    def __init__(self, docs=None):
-        self.docs = [dict(d) for d in (docs or [])]
-
-    def find(self, requete=None, proj=None):
-        return _Curseur([_projeter(d, proj) for d in self.docs
-                         if _correspond(d, requete)])
-
-    async def find_one(self, requete=None, proj=None):
-        for d in self.docs:
-            if _correspond(d, requete):
-                return _projeter(d, proj)
-        return None
-
-    async def insert_one(self, doc):
-        self.docs.append(dict(doc))
-        return type("R", (), {"inserted_id": doc.get("id")})()
-
-    async def insert_many(self, docs):
-        self.docs += [dict(d) for d in docs]
-
-    async def update_one(self, requete, maj):
-        for d in self.docs:
-            if _correspond(d, requete):
-                d.update(maj.get("$set", {}))
-                return type("R", (), {"modified_count": 1})()
-        return type("R", (), {"modified_count": 0})()
-
-    async def update_many(self, requete, maj):
-        return type("R", (), {"modified_count": 0})()
-
-    async def delete_one(self, requete):
-        return type("R", (), {"deleted_count": 0})()
-
-
-class _Base:
-    def __init__(self):
-        self.offers = _Collection()
-        self.courses = _Collection()
-        self.coaches = _Collection([
-            {"id": UUID_UN, "email": PARTENAIRE, "name": "Partenaire Un", "is_active": True},
-            {"id": UUID_DEUX, "email": AUTRE, "name": "Partenaire Deux", "is_active": True},
-        ])
-        self.discount_codes = _Collection()
-
-    def __getitem__(self, nom):
-        return getattr(self, nom)
-
-
-class _Requete:
-    """Le strict minimum d'un `fastapi.Request` pour ces routes."""
-    def __init__(self, email=None):
-        self.headers = {} if email is None else {"X-User-Email": email}
-        self.headers = _Entetes(self.headers)
-
-
-class _Entetes(dict):
-    def get(self, cle, defaut=""):
-        for k, v in self.items():
-            if k.lower() == str(cle).lower():
-                return v
-        return defaut
-
+# La base en memoire vit dans `_base_memoire` : un banc qui s'importe
+# re-executerait tout son contenu, ce qui est arrive au banc R3a.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _base_memoire import (_Base, _Requete, _attrape,  # noqa: E402
+                           ADMIN, PARTENAIRE, AUTRE, UUID_UN, UUID_DEUX)
 
 BASE = _Base()
 S.db = BASE
@@ -186,12 +81,6 @@ async def _creer(email, **kw):
     return await S.create_offer(_offre(**kw), _Requete(email))
 
 
-def _attrape(coro):
-    """Execute et renvoie (resultat, code_http_ou_None)."""
-    try:
-        return asyncio.run(coro), None
-    except HTTPException as e:
-        return None, e.status_code
 
 
 # ==========================================================================
@@ -409,8 +298,14 @@ print("\nAUCUN DEBORDEMENT DE LOT")
 
 _bloc_total = _src[_src.index("# R2c — DE QUI EST CETTE OFFRE"):
                    _src.index("class Offer(BaseModel):")]
-_r2c_routes = _src[_src.index("# R2c — CLASSIFIER LES OFFRES HISTORIQUES"):
-                   _src.index("# --- Product Categories ---")]
+# Bornee par la FIN DE SA DERNIERE FONCTION, pas par la section suivante :
+# tout code insere apres R2c (R3a l'a fait) tombait sinon dans cette tranche
+# et se faisait accuser a sa place.
+_arbre_src = ast.parse(_src)
+_fn_r2c = [n for n in ast.walk(_arbre_src)
+           if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+           and n.name.startswith("r2c_")]
+_r2c_routes = "\n".join(ast.get_source_segment(_src, f) for f in _fn_r2c)
 _tout_r2c = _bloc_total + _r2c_routes
 _tout_r2c = "\n".join(re.sub(r"#.*$", "", l) for l in _tout_r2c.splitlines())
 _tout_r2c = re.sub(r'"""[\s\S]*?"""', "", _tout_r2c)

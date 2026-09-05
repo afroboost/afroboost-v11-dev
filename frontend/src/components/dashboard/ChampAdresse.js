@@ -68,6 +68,10 @@ function styleOption(actif) {
 export default function ChampAdresse({
   value,
   onChange,
+  // R3a — rappel FACULTATIF, appele avec la proposition COMPLETE quand le
+  // coach en choisit une (ville et coordonnees comprises). Absent, le
+  // composant se comporte exactement comme avant ce lot : `onChange` seul.
+  onChoisir,
   placeholder,
   style,
   className,
@@ -127,6 +131,7 @@ export default function ChampAdresse({
   const choisir = (item) => {
     if (!item) return;
     onChange(item.libelle);
+    if (typeof onChoisir === 'function') onChoisir(item);
     setRecherche(null); // le texte pose ne relance PAS de recherche
     setSuggestions([]);
     fermer();
