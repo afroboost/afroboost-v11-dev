@@ -4593,6 +4593,28 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   useEffect(() => { c17jCharger(); }, [c17jCharger]);
 
+  // === READ-P2 — L'INTENTION VENUE D'UNE NOTIFICATION ===
+  //
+  // App.js a mis de côté l'identifiant de la réponse à ouvrir (le coach vient
+  // de toucher une notification, éventuellement en passant par la connexion).
+  // On la CONSOMME ici : elle vaut pour cette venue, pas pour les suivantes.
+  //
+  // ELLE NE CASSE PAS LA RESTAURATION D'ONGLET. `tab` reste initialisé depuis
+  // le localStorage comme avant ; l'intention n'est qu'une bascule ponctuelle,
+  // après quoi la navigation normale reprend — y compris la mémorisation du
+  // dernier onglet visité.
+  const [p3Cible, setP3Cible] = useState('');
+  useEffect(() => {
+    let cible = null;
+    try {
+      cible = sessionStorage.getItem('afroboost_prospection_inbound');
+      if (cible !== null) sessionStorage.removeItem('afroboost_prospection_inbound');
+    } catch (e) { return; }          // mode privé : rien à reprendre
+    if (cible === null) return;
+    setTab('prospection');
+    if (cible) setP3Cible(cible);
+  }, []);
+
   // === READ-P1 — LES RÉPONSES PARTENAIRES NON LUES ===
   //
   // LA PASTILLE DOIT SE VOIR SANS AVOIR OUVERT PROSPECTION — c'est tout son
@@ -4674,6 +4696,27 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       await c17jCharger();               // echec : on revient a l'etat reel, sans casser
     }
   }, [c17jCharger]);
+
+  /* READ-P2 — UNE NOTIFICATION MÈNE OÙ ELLE LE DIT.
+     Elle porte son `url`, la MÊME que celle du push : un seul chemin vers la
+     bonne réponse, donc un seul comportement à maintenir. On ne recharge pas
+     la page — on repose l'intention et on bascule d'onglet, exactement comme
+     le lien profond venu de l'extérieur.
+     Une notification sans url (les familles antérieures) ne fait rien de plus
+     que ce qu'elle faisait déjà : elle se marque lue. */
+  const c17jOuvrir = useCallback((n) => {
+    const url = (n && n.url) || '';
+    if (url.indexOf('prospection=1') === -1) return;
+    let cible = '';
+    try {
+      cible = (new URLSearchParams(url.split('?')[1] || '').get('inbound') || '')
+        .trim().slice(0, 64);
+      sessionStorage.setItem('afroboost_prospection_inbound', cible);
+    } catch (e) { /* mode privé : l'onglet s'ouvrira sans cible */ }
+    if (cible) setP3Cible(cible);
+    setTab('prospection');
+    setC17jOuvert(false);
+  }, []);
 
   const c17jDate = (v) => {
     try {
@@ -7456,7 +7499,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     <button
                       key={n.id}
                       type="button"
-                      onClick={() => { if (!n.read) c17jMarquerLue(n.id); }}
+                      onClick={() => { if (!n.read) c17jMarquerLue(n.id); c17jOuvrir(n); }}
                       data-testid="c17j-item"
                       style={{
                         width: '100%', textAlign: 'left', border: 'none', cursor: n.read ? 'default' : 'pointer',
@@ -7468,7 +7511,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       <span style={{ color: 'var(--primary-color, #D91CD2)', flexShrink: 0, marginTop: '2px' }}>
                         {/* F2 : l'icone suit le type. Une reservation n'est pas
                             un prospect — la cible visait juste. */}
-                        <SvgIcon name={n.type === 'new_reservation' ? 'calendar' : 'target'} size={16} />
+                        <SvgIcon name={n.type === 'new_reservation' ? 'calendar'
+                          : n.type === 'prospect_reply' ? 'compass' : 'target'} size={16} />
                       </span>
                       <span style={{ flex: 1, minWidth: 0 }}>
                         {/* F2 — LE LIBELLE VIENT DE LA DONNEE, PLUS DU CLIENT.
@@ -8706,7 +8750,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {/* === PROSPECTION TAB (P3-S2) === */}
         {tab === "prospection" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6">
-            <ProspectsSection API={API} />
+            <ProspectsSection API={API} inboundCible={p3Cible}
+                              onCibleConsommee={() => setP3Cible('')} />
           </div>
         )}
 

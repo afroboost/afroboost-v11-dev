@@ -1530,6 +1530,79 @@ describe('P3-U3 — les réponses reçues', () => {
     expect(par('envoi-a-venir').tagName.toLowerCase()).toBe('span');   // pas un bouton
   });
 
+  /* ======================================================================
+     READ-P2 — LE LIEN PROFOND D'UNE NOTIFICATION.
+     Le coach touche « BDE HE-ARC a répondu » : il doit arriver sur CETTE
+     carte, pas sur une liste où il devra la chercher — et surtout pas sur
+     une autre. Ces tests prouvent que la cible est unique et que rien
+     d'autre ne s'ouvre.
+     ====================================================================== */
+  test('la carte VISÉE s’ouvre seule, les autres restent fermées', async () => {
+    avecReponses(TROIS());
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 2, a_repondre: 3 } });
+    axios.get.mockResolvedValue({ data: { brouillon: null, notes: [], timeline: [] } });
+    await monter(<ProspectsSection API="/api" inboundCible="inb-lsna3" />);
+    const libelles = tous('[data-testid="voir-reponse"]').map((b) => b.textContent.trim());
+    expect(libelles).toEqual(['Voir la réponse', 'Replier', 'Voir la réponse']);
+    expect(tous('[data-testid="email-original"]').length).toBe(1);
+  });
+
+  test('elle est marquée LUE par le chemin normal, et elle SEULE', async () => {
+    avecReponses(TROIS());
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 2, a_repondre: 3 } });
+    axios.get.mockResolvedValue({ data: { brouillon: null, notes: [], timeline: [] } });
+    await monter(<ProspectsSection API="/api" inboundCible="inb-etu04" />);
+    const lus = axios.post.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('/lu'));
+    expect(lus).toEqual(['/api/prospect-inbound/inb-etu04/lu']);
+  });
+
+  test('viser ETU-04 n’ouvre pas LSN-A3, et réciproquement', async () => {
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 2, a_repondre: 3 } });
+    axios.get.mockResolvedValue({ data: { brouillon: null, notes: [], timeline: [] } });
+    avecReponses(TROIS());
+    await monter(<ProspectsSection API="/api" inboundCible="inb-etu04" />);
+    let libelles = tous('[data-testid="voir-reponse"]').map((b) => b.textContent.trim());
+    expect(libelles[0]).toBe('Replier');
+    expect(libelles[1]).toBe('Voir la réponse');
+    axios.post.mockClear();
+    avecReponses(TROIS());
+    await monter(<ProspectsSection API="/api" inboundCible="inb-zrhd5" />);
+    libelles = tous('[data-testid="voir-reponse"]').map((b) => b.textContent.trim());
+    expect(libelles[0]).toBe('Voir la réponse');
+    expect(libelles[2]).toBe('Replier');
+  });
+
+  test('SANS cible, rien ne s’ouvre et rien n’est marqué lu', async () => {
+    avecReponses(TROIS());
+    await monter(<ProspectsSection API="/api" />);
+    expect(tous('[data-testid="email-original"]').length).toBe(0);
+    const lus = axios.post.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('/lu'));
+    expect(lus).toEqual([]);
+  });
+
+  test('une cible INTROUVABLE le dit et ne casse rien', async () => {
+    avecReponses(TROIS());
+    await monter(<ProspectsSection API="/api" inboundCible="inb-inexistant" />);
+    expect(par('cible-introuvable')).toBeTruthy();
+    // L'écran reste utilisable : les trois cartes sont là, aucune n'est ouverte.
+    expect(tous('[data-testid="reponse-ligne"]').length).toBe(3);
+    expect(tous('[data-testid="email-original"]').length).toBe(0);
+    const lus = axios.post.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('/lu'));
+    expect(lus).toEqual([]);
+  });
+
+  test('la cible est CONSOMMÉE une fois — pas de réouverture en boucle', async () => {
+    avecReponses(TROIS());
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 2, a_repondre: 3 } });
+    axios.get.mockResolvedValue({ data: { brouillon: null, notes: [], timeline: [] } });
+    const consommee = jest.fn();
+    await monter(<ProspectsSection API="/api" inboundCible="inb-lsna3"
+                                   onCibleConsommee={consommee} />);
+    expect(consommee).toHaveBeenCalledTimes(1);
+    const lus = axios.post.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('/lu'));
+    expect(lus.length).toBe(1);
+  });
+
   test('MOBILE — rien ne peut déborder horizontalement', async () => {
     avecReponses(TROIS());
     await monter(<ProspectsSection API="/api" />);

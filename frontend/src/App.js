@@ -4650,6 +4650,31 @@ function App() {
   // une seule fois, il ne verrait sinon que les valeurs du montage).
   const coachModeRef = useRef(coachMode);
   coachModeRef.current = coachMode;
+
+  /* === READ-P2 : L'APPLICATION EST DÉJÀ OUVERTE QUAND ON TOUCHE LA NOTIFICATION.
+     Le Service Worker ne recharge alors PAS la page : il focus l'onglet et
+     envoie `NOTIFICATION_CLICK` avec l'url (sw.js). Sans ce gestionnaire, le
+     coach verrait son onglet revenir au premier plan… sur l'écran qu'il avait
+     quitté, et la notification n'aurait servi à rien.
+     On reprend exactement le même chemin que le lien profond : une intention
+     mise de côté, puis le dashboard. Un seul chemin, donc un seul comportement. */
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return undefined;
+    const surMessage = (event) => {
+      const url = (event.data && event.data.url) || '';
+      if (url.indexOf('prospection=1') === -1) return;
+      let cible = '';
+      try {
+        cible = (new URLSearchParams(url.split('?')[1] || '').get('inbound') || '')
+          .trim().slice(0, 64);
+        sessionStorage.setItem('afroboost_prospection_inbound', cible);
+      } catch (e) { /* mode privé : le dashboard s'ouvrira sans cible */ }
+      if (coachModeRef.current && coachUserRef.current?.email) setCoachMode(true);
+      else setShowCoachLogin(true);
+    };
+    navigator.serviceWorker.addEventListener('message', surMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', surMessage);
+  }, []);
   const coachUserRef = useRef(coachUser);
   coachUserRef.current = coachUser;
 
@@ -5102,6 +5127,39 @@ function App() {
     // Aussi parser les params dans le hash (ex: #coach-dashboard?session_id=xxx)
     const hashParams = new URLSearchParams(hash.split('?')[1] || '');
     
+    // === READ-P2 : LE LIEN PROFOND D'UNE NOTIFICATION DE RÉPONSE PARTENAIRE ===
+    //
+    // `?prospection=1&inbound=<id>` — posé par le push ET par le centre de
+    // notifications, qui partagent la MÊME url (deux chemins vers le même
+    // endroit finiraient par diverger).
+    //
+    // L'INTENTION EST MISE DE CÔTÉ AVANT TOUTE DÉCISION. Si le coach n'est plus
+    // connecté, il verra d'abord l'écran de connexion : sans cette mise de côté,
+    // l'identifiant serait perdu et il retomberait sur une liste anonyme après
+    // s'être authentifié. `sessionStorage` — pas `localStorage` : l'intention
+    // vaut pour CET onglet et cette venue, elle ne doit pas ressurgir demain.
+    //
+    // ON NE STOCKE QUE L'IDENTIFIANT. Ni le nom de l'organisation, ni l'adresse,
+    // ni le contenu : le strict nécessaire pour rouvrir la bonne carte.
+    if (searchParams.get('prospection') === '1') {
+      const cible = (searchParams.get('inbound') || '').trim().slice(0, 64);
+      try {
+        if (cible) sessionStorage.setItem('afroboost_prospection_inbound', cible);
+        else sessionStorage.setItem('afroboost_prospection_inbound', '');
+      } catch (e) { /* mode privé : le dashboard s'ouvrira sans cible */ }
+      // L'URL est nettoyée : un rafraîchissement ne doit pas rejouer l'intention,
+      // et l'identifiant n'a rien à faire dans la barre d'adresse.
+      try {
+        window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+      } catch (e) { /* silencieux */ }
+      if (coachModeRef.current && coachUserRef.current?.email) {
+        setCoachMode(true);          // déjà connecté : le dashboard s'ouvre seul
+      } else {
+        setShowCoachLogin(true);     // sinon : connexion, puis reprise de l'intention
+      }
+      return;
+    }
+
     // v214: Détection #session_id= pour auto-ouvrir le modal OAuth (retour Google)
     // CORRIGE LE BUG: OAuth redirige vers homepage sans traiter le session_id
     if (hash.includes('session_id=')) {

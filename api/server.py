@@ -24795,6 +24795,19 @@ async def p3u2_recevoir(brut: dict, coach_id: str) -> dict:
              "confiance": document["matching_confidence"],
              "action_id": document["action_id"], "motif": document["motif"],
              "premiere_reponse": False}
+    # READ-P2 — LE COACH APPREND QU'ON LUI A REPONDU.
+    # APRES l'insertion, jamais avant : signaler une reponse qui n'aurait pas
+    # ete stockee enverrait le coach vers une carte inexistante. Un rejeu de
+    # webhook heurte l'index unique plus haut et n'atteint donc jamais cette
+    # ligne. Le signalement est ENVELOPPE : une panne de notification ne doit
+    # pas faire echouer la reception d'un message — c'est le message qui
+    # compte, l'alerte n'est qu'un confort.
+    try:
+        issue["signalement"] = await p3n2_signaler(document, action)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s signalement impossible pour %s : %s", P3N2_PREFIXE,
+                       (document["id"] or "")[:8], type(e).__name__)
+        issue["signalement"] = {"signale": False, "motif": type(e).__name__, "push": False}
     if document["statut"] == P3U2_STATUT_RATTACHE and document["action_id"]:
         marque = await p3u2_marquer_reponse(action, document["received_at"])
         issue["premiere_reponse"] = marque["premiere_reponse"]
@@ -27371,6 +27384,138 @@ async def p3n_ajouter_note(inbound_id: str, request: Request):
             "statut_commercial": statut,
             "contexte_obsolete": p3n_contexte_obsolete(brouillon, notes),
             **await p3ai_compteurs(email)}
+
+
+# ============================================================================
+# READ-P2 — LE COACH APPREND QU'UN PARTENAIRE A REPONDU
+# ============================================================================
+# CE LOT NE CREE AUCUN SYSTEME DE NOTIFICATION. Il n'y a ici ni nouveau Service
+# Worker, ni nouvelle collection d'abonnements, ni second fournisseur : tout
+# existe deja et a ete durci pendant des mois (V433 tri, V434 ttl=3600, V437
+# trois appareils, 404/410 -> `active: false`). Ce bloc ajoute UN type
+# d'evenement a un centre de notifications qui tourne, et rien d'autre.
+#
+# LE MOTIF EST CELUI DE CAL-2, RECOPIE A L'IDENTIQUE : un `$setOnInsert` sur un
+# identifiant DETERMINISTE, puis un push ACCESSOIRE. Cet ordre n'est pas
+# esthetique — il decide de ce qui survit a une panne. La notification en-app
+# est ecrite d'abord parce que c'est elle que le coach retrouvera ; le push,
+# lui, peut echouer sans que personne ne perde d'information.
+#
+# LE PUSH NE MARQUE JAMAIS COMME LU, et ce lot ne touche pas a READ-P1.
+# L'envoyer, le recevoir, l'afficher, poser la notification en-app : rien de
+# tout cela n'est une lecture. Seule l'ouverture de la carte l'est.
+#
+# LE BADGE « Prospection (N) » NE CHANGE PAS DE SOURCE. Il compte les reponses
+# NON LUES (`read_at` absent), pas les notifications. Deux compteurs pour une
+# meme idee finiraient par diverger — et c'est le badge, deja en place et
+# prouve, qui fait foi.
+
+P3N2_TYPE = "prospect_reply"
+P3N2_PREFIXE = "[READ-P2]"
+P3N2_TITRE = "Nouvelle réponse partenaire"
+
+
+def p3n2_corps(organisation) -> str:
+    """Le texte du push. PURE, et VOLONTAIREMENT PAUVRE.
+
+    IL NE PORTE QUE LE NOM DE L'ORGANISATION. Un ecran verrouille s'affiche
+    dans un train, sur une table, devant n'importe qui : le corps du message,
+    l'adresse, un telephone ou un montant n'y ont rien a faire. Le push sert a
+    PREVENIR, pas a montrer.
+
+    Sans organisation, on ne fabrique pas un nom : la phrase reste vraie et
+    generique plutot que d'afficher une cle technique.
+    """
+    nom = (organisation or "").strip()
+    return ("%s a répondu à votre proposition." % nom) if nom \
+        else "Un partenaire a répondu à votre proposition."
+
+
+def p3n2_lien(inbound_id) -> str:
+    """Le lien profond vers CETTE reponse. PURE.
+
+    IL EST LE MEME POUR LE PUSH ET POUR LE CENTRE EN-APP. Deux chemins vers le
+    meme endroit finiraient par diverger, et l'un des deux emmenerait au mauvais
+    dossier — exactement ce que ce chantier existe pour empecher.
+    """
+    identifiant = str(inbound_id or "").strip()
+    return "/?prospection=1&inbound=%s" % identifiant if identifiant else "/?prospection=1"
+
+
+async def p3n2_signaler(message: dict, action: dict) -> dict:
+    """Une reponse vient d'arriver : le coach doit l'apprendre. IDEMPOTENTE.
+
+    DEUX VERROUS INDEPENDANTS CONTRE LE DOUBLON, et ils ne protegent pas de la
+    meme chose :
+      1. en amont, `p3u2_recevoir` n'appelle cette fonction QUE si l'insertion a
+         reussi — un rejeu de webhook heurte l'index unique `dedupe_key` et
+         n'arrive jamais ici ;
+      2. ici, l'ecriture est un `$setOnInsert` sur `prospect_reply_<inbound.id>`.
+    Le second couvre ce que le premier ne peut pas voir : un rattrapage, un
+    reessai manuel, un chemin futur qu'on n'a pas prevu.
+
+    LE PUSH EST ACCESSOIRE, JAMAIS BLOQUANT. Un telephone injoignable, une
+    permission refusee, des cles VAPID absentes : rien de tout cela ne doit
+    empecher la notification en-app d'exister. C'est elle que le coach
+    retrouvera dans son centre, et le badge, lui, ne depend d'aucune des deux.
+
+    ELLE N'ECRIT RIEN SUR LE MESSAGE. Ni `read_at`, ni `traite_at`, ni
+    `processed_at` : signaler n'est ni lire, ni traiter.
+    """
+    identifiant = (message or {}).get("id") or ""
+    coach = ((message or {}).get("coach_id") or "").strip()
+    if not identifiant or not coach:
+        return {"signale": False, "motif": "message sans identifiant ou sans proprietaire",
+                "push": False}
+
+    organisation = p3ai_organisation(action)
+    maintenant = datetime.now(timezone.utc).isoformat()
+    cle = "%s_%s" % (P3N2_TYPE, identifiant)
+    lien = p3n2_lien(identifiant)
+    try:
+        resultat = await db.notifications.update_one(
+            {"id": cle},
+            {"$setOnInsert": {
+                "id": cle, "type": P3N2_TYPE, "target": "coach",
+                "coach_id": coach,
+                "title": P3N2_TITRE,
+                # LE MESSAGE DU CENTRE EST LE MEME QUE CELUI DU PUSH. Le centre
+                # est une LISTE BLANCHE precisement parce que d'anciennes
+                # familles y ont laisse des donnees personnelles ; on n'en
+                # ajoute pas une nouvelle.
+                "message": p3n2_corps(organisation),
+                "organisation": organisation,
+                "inbound_id": identifiant,
+                "action_id": (message or {}).get("action_id"),
+                "url": lien,
+                "read": False, "created_at": maintenant,
+            }}, upsert=True)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s notification impossible (%s) : %s", P3N2_PREFIXE,
+                       identifiant[:8], type(e).__name__)
+        return {"signale": False, "motif": "notification impossible", "push": False}
+
+    # `upserted_id` distingue « je viens de la creer » de « elle existait deja ».
+    # Sans cette distinction, un rattrapage repousserait un push pour une
+    # reponse dont le coach a deja ete averti.
+    neuve = getattr(resultat, "upserted_id", None) is not None
+    if not neuve:
+        logger.info("%s deja signalee : %s", P3N2_PREFIXE, identifiant[:8])
+        return {"signale": False, "motif": "deja signalee", "push": False}
+
+    pousse = False
+    try:
+        pousse = bool(await send_push_by_email(
+            coach, P3N2_TITRE, p3n2_corps(organisation),
+            {"type": P3N2_TYPE, "url": lien, "inbound_id": identifiant}))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s push impossible pour %s : %s", P3N2_PREFIXE,
+                       coach[:24], type(e).__name__)
+    logger.info("%s reponse %s signalee a %s (%s) — push %s", P3N2_PREFIXE,
+                identifiant[:8], coach[:24], organisation or "sans organisation",
+                "envoye" if pousse else "non abouti")
+    return {"signale": True, "motif": "", "push": pousse, "url": lien,
+            "organisation": organisation}
 
 
 # ============================================================================
@@ -32919,6 +33064,11 @@ async def get_unread_notifications(
 C17J_PROJECTION = {
     "_id": 0, "id": 1, "type": 1, "title": 1,
     "message": 1, "created_at": 1, "read": 1,
+    # READ-P2 — LE LIEN, POUR QUE LA NOTIFICATION SOIT CLIQUABLE.
+    # C'est EXACTEMENT celui du push : deux chemins vers le meme endroit
+    # finiraient par diverger, et l'un des deux emmenerait au mauvais dossier.
+    # Les familles anterieures n'en ont pas ; elles rendent simplement rien.
+    "url": 1,
 }
 
 # F2 — CE QUE LE CENTRE MONTRE, ENUMERE PLUTOT QUE DEDUIT.
@@ -32938,7 +33088,11 @@ C17J_PROJECTION = {
 # `reservation_cancelled` RESTE DEHORS, et ce n'est pas un oubli : ses 29
 # documents portent un code d'acces dans leur `message`. Les montrer demanderait
 # d'assainir ce texte d'abord — c'est un autre lot.
-C17J_TYPES = ("new_lead", "new_reservation", "task_due")
+# READ-P2 ouvre `prospect_reply`. Verifie avant d'ouvrir, comme les
+# precedents : le message ne porte QUE le nom d'une organisation et la phrase
+# « a repondu a votre proposition » — ni adresse, ni telephone, ni corps
+# d'e-mail. C'est la meme discipline que `task_due`, qui ne porte qu'un titre.
+C17J_TYPES = ("new_lead", "new_reservation", "task_due", "prospect_reply")
 
 
 @api_router.get("/coach/notifications")

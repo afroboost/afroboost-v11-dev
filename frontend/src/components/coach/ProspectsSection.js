@@ -258,7 +258,7 @@ function Etiquette({ texte, ton }) {
   );
 }
 
-export default function ProspectsSection({ API }) {
+export default function ProspectsSection({ API, inboundCible, onCibleConsommee }) {
   const base = API || '';
 
   const [filtres, setFiltres] = useState({
@@ -566,6 +566,41 @@ export default function ProspectsSection({ API }) {
                      erreur: "L'état n'a pas pu être enregistré." });
     }
   }, [base, carteDe, majCarte, chargement]);
+
+  /* READ-P2 — LA CARTE VISÉE PAR LA NOTIFICATION.
+     Le coach a touché une notification : on ouvre CETTE réponse, une seule
+     fois, dès qu'elle est chargée. `ouvrirReponse` est le chemin normal — donc
+     la lecture est enregistrée exactement comme si le coach avait cliqué
+     lui-même, ce qui est le cas : toucher la notification PUIS voir la carte
+     EST une lecture. Tant qu'il reste bloqué au login, rien ne s'ouvre et rien
+     n'est marqué.
+
+     LA DÉPENDANCE EST L'IDENTIFIANT, une chaîne — jamais la liste `reponses`,
+     qui est un tableau neuf à chaque rendu et relancerait l'effet en boucle
+     (règle absolue, incident V305). */
+  const cibleTrouvee = inboundCible
+    && reponses.some((r) => r.id === inboundCible) ? inboundCible : '';
+  useEffect(() => {
+    if (!cibleTrouvee) return;
+    ouvrirReponse(cibleTrouvee);
+    if (onCibleConsommee) onCibleConsommee();
+    /* Le défilement est un confort, jamais une condition : si l'ancre n'existe
+       pas encore, la carte est ouverte de toute façon. */
+    try {
+      const noeud = document.querySelector('[data-inbound="' + cibleTrouvee + '"]');
+      if (noeud && noeud.scrollIntoView) {
+        noeud.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    } catch (e) { /* silencieux */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cibleTrouvee]);
+
+  /* Une cible qui ne correspond à AUCUNE réponse chargée n'ouvre rien et ne
+     casse rien : l'écran reste utilisable, et on le DIT plutôt que de laisser
+     le coach chercher une carte qui n'existe pas (message d'un autre coach,
+     réponse supprimée, lien périmé). */
+  const cibleIntrouvable = !!inboundCible && !cibleTrouvee
+    && sectionReponses && sectionReponses.etat === SECTION.OK;
 
   const section = chargement.sections.prospects;
   const etat = (section && section.etat) || SECTION.CHARGEMENT;
@@ -1012,6 +1047,16 @@ export default function ProspectsSection({ API }) {
             </div>
           )}
 
+          {cibleIntrouvable && (
+            <div data-testid="cible-introuvable"
+                 style={{ fontSize: '11px', padding: '7px 9px', borderRadius: '7px',
+                          background: 'rgba(255,255,255,0.10)', color: TEXTE,
+                          marginBottom: '10px' }}>
+              La réponse liée à cette notification n’est pas dans cette liste.
+              Elle a peut-être été traitée ailleurs.
+            </div>
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {reponses.map((r) => {
               /* Tout ce qui suit est LOCAL à cette carte : aucune de ces
@@ -1029,7 +1074,7 @@ export default function ProspectsSection({ API }) {
               const bro = carte.brouillon || null;
               const occupe = !!carte.chargement;
               return (
-                <div key={r.id} data-testid="reponse-ligne"
+                <div key={r.id} data-testid="reponse-ligne" data-inbound={r.id}
                      style={{
                        padding: '10px 12px', borderRadius: '10px',
                        background: nonLue ? `rgba(${RGB}, 0.14)` : 'rgba(255,255,255,0.05)',

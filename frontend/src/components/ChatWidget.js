@@ -2571,6 +2571,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     if (!('serviceWorker' in navigator)) return;
     const onSwMessage = (event) => {
       const t = event.data && event.data.type;
+      // READ-P2 : TOUTES LES NOTIFICATIONS N'OUVRENT PAS LE CHAT.
+      // Ce gestionnaire ouvrait le widget quel que soit le message. Depuis
+      // qu'une notification peut viser une RÉPONSE PARTENAIRE, ouvrir le chat
+      // par-dessus le dashboard couvrirait précisément ce que le coach vient
+      // de demander à voir. On regarde donc l'url portée par la notification.
+      const url = (event.data && event.data.url) || '';
+      if (url.indexOf('prospection=1') !== -1) return;
       if (t === 'NOTIFICATION_CLICK' || t === 'OPEN_CHAT') {
         setIsOpen(true);
       }
