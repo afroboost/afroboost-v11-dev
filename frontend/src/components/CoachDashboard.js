@@ -4593,6 +4593,40 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   useEffect(() => { c17jCharger(); }, [c17jCharger]);
 
+  // === READ-P1 — LES RÉPONSES PARTENAIRES NON LUES ===
+  //
+  // LA PASTILLE DOIT SE VOIR SANS AVOIR OUVERT PROSPECTION — c'est tout son
+  // intérêt : un partenaire a répondu, le coach doit le savoir depuis
+  // n'importe quel onglet. Le compteur vit donc ICI, pas dans l'écran.
+  //
+  // LECTURE PURE, ET AUCUN SONDAGE. `GET /prospect-inbound` ne marque jamais
+  // rien comme lu (READ-P1) : afficher le badge ne consomme aucune nouveauté.
+  // On charge au montage et à chaque retour sur l'onglet Prospection — pas de
+  // `setInterval`, la règle anti-boucle du dépôt s'applique ici comme ailleurs.
+  const [p3NonLues, setP3NonLues] = useState(0);
+  const [p3ARepondre, setP3ARepondre] = useState(0);
+
+  const p3ChargerCompteurs = useCallback(async () => {
+    try {
+      // `limit=1` : on ne veut que les compteurs, pas la liste. Le serveur les
+      // calcule sur la portée complète du coach, jamais sur la page rendue.
+      const res = await axios.get(`${API}/prospect-inbound`, { params: { limit: 1 } });
+      setP3NonLues(Number(res?.data?.non_lues) || 0);
+      setP3ARepondre(Number(res?.data?.a_repondre) || 0);
+    } catch (e) {
+      // Jeton expiré ou panne : aucun badge plutôt qu'un badge faux.
+      setP3NonLues(0);
+      setP3ARepondre(0);
+    }
+  }, []);
+
+  useEffect(() => { p3ChargerCompteurs(); }, [p3ChargerCompteurs]);
+  // La dépendance est la CHAÎNE `tab`, jamais un objet : un objet neuf à chaque
+  // rendu relancerait l'effet en boucle (règle absolue, incident V305).
+  useEffect(() => {
+    if (tab === 'prospection') p3ChargerCompteurs();
+  }, [tab, p3ChargerCompteurs]);
+
   // === V441 — compteur global des WhatsApp non lus ===
   // Il vit ICI, et pas dans l'onglet WhatsApp, parce que la pastille doit se voir
   // SANS avoir ouvert l'onglet — c'est tout l'intérêt. Lecture pure : la route
@@ -6346,7 +6380,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     { id: "campaigns", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="megaphone" size={14} /> Campagnes</span> },
     // P3-S2 : voisin de Contacts et Campagnes, jamais une application a part.
     // Visible pour tous les coachs — le backend cloisonne par coach_id.
-    { id: "prospection", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="compass" size={14} /> Prospection</span> },
+    // READ-P1 : la pastille compte les réponses partenaires JAMAIS OUVERTES.
+    // Pas de pastille « 0 » — un badge n'existe que s'il y a du neuf, comme
+    // pour Conversations juste en dessous.
+    { id: "prospection", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="compass" size={14} /> {p3NonLues > 0 ? `Prospection (${p3NonLues})` : "Prospection"}</span> },
     { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> },
     // V314 : corbeille (récupération des suppressions). Visible pour tous — le backend cloisonne.
     { id: "corbeille", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="trash" size={14} /> Corbeille</span> }
@@ -7263,6 +7300,46 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           )}
         </div>
 
+
+          {/* === READ-P1 : « un partenaire a répondu » ===
+            UN BANDEAU, PAS UNE MODALE. Le coach doit voir la nouvelle sans
+            avoir rien à fermer : aucune popup, aucun blocage, et le bloc
+            disparaît de lui-même dès qu'il n'y a plus rien de neuf.
+            Il ne marque RIEN comme lu — il emmène simplement au bon endroit. */}
+        {p3NonLues > 0 && (
+          <div data-testid="p3-nouvelles-reponses"
+            style={{
+              marginBottom: '14px', padding: '10px 14px', borderRadius: '10px',
+              display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
+              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+              color: '#fff'
+            }}>
+            <SvgIcon name="compass" size={18} />
+            <span style={{ flex: 1, fontSize: '14px', fontWeight: 600, minWidth: '160px' }}>
+              {p3NonLues === 1
+                ? '1 nouvelle réponse partenaire'
+                : `${p3NonLues} nouvelles réponses partenaires`}
+              {p3ARepondre > 0 && (
+                <span style={{ fontWeight: 400, opacity: 0.8, fontSize: '12px' }}>
+                  {` — ${p3ARepondre} à répondre au total`}
+                </span>
+              )}
+            </span>
+            <button
+              type="button"
+              data-testid="p3-voir-reponses"
+              onClick={() => setTab('prospection')}
+              style={{
+                padding: '7px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+                cursor: 'pointer', color: '#fff',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.55)',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.28)'
+              }}>
+              Voir les réponses
+            </button>
+          </div>
+        )}
 
           {/* === C17-J : cloche + zone notifications ===
             Bloc AUTONOME, insere apres la navigation : il ne touche ni `tabs`,

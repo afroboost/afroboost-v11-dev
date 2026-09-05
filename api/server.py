@@ -24847,7 +24847,13 @@ async def p3u2_lister_reponses(request: Request):
     total = await db[P3U2_COLLECTION].count_documents(filtre)
     lignes = await db[P3U2_COLLECTION].find(filtre, {"_id": 0}) \
         .sort([("received_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
+    # READ-P1 — LES DEUX COMPTEURS VIENNENT DE LA BASE, PAS DE LA PAGE.
+    # `lignes` est paginee (20 par defaut cote ecran) : compter dessus aurait
+    # donne un badge qui change selon la page affichee. `p3ai_compteurs` compte
+    # sur la portee complete du coach, donc survit au rafraichissement.
+    # AUCUN MARQUAGE ICI : afficher la liste ne lit rien au sens humain.
     return {"messages": lignes, "total": total, "limit": limite, "offset": depart,
+            **await p3ai_compteurs(email),
             "en_attente": await db[P3U2_COLLECTION].count_documents(
                 {**dict(get_coach_filter(email)), "statut": P3U2_STATUT_REVUE})}
 
@@ -26205,6 +26211,596 @@ async def p3r4_rattraper(coach_id=None, simulation: bool = True,
                 "SIMULE" if simulation else "REEL", len(candidats), completes)
     return {"simulation": simulation, "candidats": len(candidats),
             "traites": completes, "resultats": resultats}
+
+
+import unicodedata
+
+# ============================================================================
+# READ-P1 — DEUX ETATS QU'ON CONFOND TOUJOURS : « LU » ET « TRAITE »
+# ============================================================================
+# CE LOT N'ENVOIE RIEN. Aucun chemin sortant, aucun drapeau d'envoi touche.
+#
+# DEUX ETATS, PARCE QU'ILS REPONDENT A DEUX QUESTIONS DIFFERENTES :
+#   `read_at`   — « est-ce que je l'ai OUVERTE ? »    -> fait disparaitre NOUVEAU
+#   `traite_at` — « est-ce que j'ai AGI dessus ? »    -> fait disparaitre A REPONDRE
+# Les fondre en un seul champ ferait disparaitre la relance au moment precis ou
+# elle devient utile : le coach ouvre, se dit « j'y reviens », et plus rien ne
+# le lui rappelle. Ouvrir n'est pas repondre.
+#
+# L'ETAT VIT SUR LE MESSAGE, PAS DANS UNE TABLE DE LECTURES.
+# La verification faite avant d'ecrire ce lot : les trois reponses en base
+# portent UN SEUL `coach_id` (`contact.artboost@gmail.com`), et il n'existe
+# qu'un compte coach. Une reponse a donc un proprietaire unique, et deux champs
+# sur le document suffisent — pas de collection par lecteur.
+#
+# LA SEULE NUANCE, ET ELLE TIENT EN UN `if`. `get_coach_filter` rend `{}` pour
+# un super-admin, et le depot en declare DEUX (`SUPER_ADMIN_EMAILS`). Le second
+# voit donc ces reponses sans en etre le proprietaire. S'il en ouvrait une, il
+# effacerait la pastille de celui qui doit repondre. D'ou la regle :
+# SEULE L'OUVERTURE PAR LE PROPRIETAIRE ECRIT `read_at`. Un autre compte peut
+# lire — il ne peut pas decider a sa place que c'est lu.
+#
+# AUCUNE MIGRATION, ET C'EST VOULU. L'absence de `read_at` VAUT « non lu » :
+# `{"read_at": None}` retrouve en MongoDB les documents ou le champ manque
+# comme ceux ou il vaut `null`. Les 3 reponses existantes deviennent donc « non
+# lues » — leur etat metier reel — sans qu'une seule ligne soit reecrite, et
+# `p3u2_recevoir` n'est pas modifie d'une virgule.
+#
+# CE QUI NE MARQUE JAMAIS COMME LU :
+#   * le chargement du dashboard ;
+#   * l'ouverture de l'onglet Prospection ;
+#   * `GET /prospect-inbound` ;
+#   * l'analyse IA (`POST .../analyser`) ;
+#   * la future notification Push de READ-P2 ;
+#   * l'affichage du badge.
+# Une machine qui traite n'est pas un humain qui lit.
+
+P3AI_CHAMP_LU = "read_at"
+P3AI_CHAMP_LECTEUR = "read_by"
+P3AI_CHAMP_TRAITE = "traite_at"
+P3AI_CHAMP_TRAITEUR = "traite_par"
+
+# Le filtre « jamais ouverte ». Nomme plutot que recopie : trois endroits
+# l'utilisent (compteur, liste, marquage), et trois copies d'un meme filtre
+# finissent toujours par diverger d'un `$ne` mal place.
+P3AI_FILTRE_NON_LU = {P3AI_CHAMP_LU: None}
+P3AI_FILTRE_A_REPONDRE = {P3AI_CHAMP_TRAITE: None}
+
+
+def p3ai_est_proprietaire(message: dict, email: str) -> bool:
+    """CE compte est-il le proprietaire de CETTE reponse ? PURE.
+
+    Un super-admin qui n'est pas le proprietaire consulte sans rien decider.
+    C'est exactement la regle metier : l'ouverture par un admin ne doit pas
+    faire disparaitre le « NOUVEAU » de celui qui doit repondre.
+    """
+    return ((message or {}).get("coach_id") or "").strip().lower() == \
+        (email or "").strip().lower()
+
+
+async def p3ai_compteurs(email: str) -> dict:
+    """Les deux compteurs du coach. Comptes EN BASE, jamais sur la page.
+
+    Ils ne dependent donc ni de la pagination, ni de ce qui est affiche : ils
+    survivent a un rafraichissement, a une reconnexion et a une navigation,
+    parce qu'ils ne sont derives d'aucun etat de navigateur.
+    """
+    portee = dict(get_coach_filter(email))
+    return {
+        "non_lues": await db[P3U2_COLLECTION].count_documents(
+            {**portee, **P3AI_FILTRE_NON_LU}),
+        "a_repondre": await db[P3U2_COLLECTION].count_documents(
+            {**portee, **P3AI_FILTRE_A_REPONDRE}),
+    }
+
+
+async def p3ai_message_du_coach(inbound_id: str, email: str) -> dict:
+    """La reponse demandee, dans la portee de l'appelant. 404 sinon.
+
+    Un message d'un autre coach et un message inexistant rendent le MEME 404 :
+    on ne revele pas au demandeur ce qui existe ailleurs.
+    """
+    identifiant = (inbound_id or "").strip()
+    if not identifiant or len(identifiant) > 64:
+        raise HTTPException(status_code=404, detail="Reponse introuvable")
+    message = await db[P3U2_COLLECTION].find_one(
+        {"id": identifiant, **dict(get_coach_filter(email))}, {"_id": 0})
+    if not message:
+        raise HTTPException(status_code=404, detail="Reponse introuvable")
+    return message
+
+
+@api_router.post("/prospect-inbound/{inbound_id}/lu")
+async def p3ai_ouvrir_reponse(inbound_id: str, request: Request):
+    """Le coach a OUVERT cette reponse. LE SEUL chemin qui marque comme lu.
+
+    L'ECRITURE EST CONDITIONNELLE SUR L'ABSENCE de `read_at` : une seconde
+    ouverture ne repousse pas la date. `read_at` est donc la date de PREMIERE
+    ouverture, ce qui la rend utilisable telle quelle dans une chronologie.
+
+    ELLE NE MARQUE JAMAIS `traite_at`. Ouvrir n'est pas repondre — c'est toute
+    la raison d'etre des deux champs.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    message = await p3ai_message_du_coach(inbound_id, email)
+
+    if not p3ai_est_proprietaire(message, email):
+        # Consultation par un autre compte (second super-admin) : elle est
+        # legitime, elle ne decide rien. On rend l'etat REEL du proprietaire.
+        logger.info("[READ-P1] %s consulte %s sans en etre proprietaire",
+                    email[:24], (message.get("id") or "")[:8])
+        return {"ok": True, "id": message["id"], "lu": bool(message.get(P3AI_CHAMP_LU)),
+                "read_at": message.get(P3AI_CHAMP_LU), "marque": False,
+                "motif": "consultation : seul le proprietaire marque comme lu",
+                **await p3ai_compteurs(email)}
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    resultat = await db[P3U2_COLLECTION].update_one(
+        {"id": message["id"], P3AI_CHAMP_LU: None},
+        {"$set": {P3AI_CHAMP_LU: maintenant, P3AI_CHAMP_LECTEUR: email}})
+    premiere = bool(getattr(resultat, "matched_count", 0))
+    logger.info("[READ-P1] %s ouvre %s (premiere=%s)", email[:24],
+                (message.get("id") or "")[:8], premiere)
+    return {"ok": True, "id": message["id"], "lu": True, "marque": True,
+            "premiere_lecture": premiere,
+            "read_at": maintenant if premiere else message.get(P3AI_CHAMP_LU),
+            **await p3ai_compteurs(email)}
+
+
+@api_router.post("/prospect-inbound/{inbound_id}/traite")
+async def p3ai_marquer_traite(inbound_id: str, request: Request):
+    """« J'ai agi sur cette reponse. » ACTION HUMAINE EXPLICITE, jamais deduite.
+
+    RIEN NE L'APPELLE TOUT SEUL. Ni la lecture, ni l'analyse IA, ni un envoi —
+    AI-P4 pourra la declencher le jour ou une reponse partira reellement, mais
+    ce lot n'invente aucun envoi. Aujourd'hui, seul un clic du coach l'atteint.
+
+    Reversible : `{"traite": false}` remet la reponse dans « a repondre ». Un
+    etat commercial qu'on ne peut pas corriger est un etat qu'on finit par
+    ignorer.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    message = await p3ai_message_du_coach(inbound_id, email)
+    if not p3ai_est_proprietaire(message, email):
+        raise HTTPException(status_code=403,
+                            detail="Seul le proprietaire de cette reponse peut la traiter")
+
+    corps = {}
+    try:
+        if int(request.headers.get("content-length") or 0) > 0:
+            corps = await request.json()
+    except (ValueError, TypeError):
+        corps = {}
+    traite = bool((corps or {}).get("traite", True)) if isinstance(corps, dict) else True
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    champs = ({P3AI_CHAMP_TRAITE: maintenant, P3AI_CHAMP_TRAITEUR: email}
+              if traite else {P3AI_CHAMP_TRAITE: None, P3AI_CHAMP_TRAITEUR: None})
+    await db[P3U2_COLLECTION].update_one({"id": message["id"]}, {"$set": champs})
+    logger.info("[READ-P1] %s marque %s comme %s", email[:24],
+                (message.get("id") or "")[:8], "traite" if traite else "a repondre")
+    return {"ok": True, "id": message["id"], "traite": traite,
+            "traite_at": champs[P3AI_CHAMP_TRAITE], **await p3ai_compteurs(email)}
+
+
+# ============================================================================
+# AI-P1 — L'ANALYSE D'UNE REPONSE, ET SON BROUILLON. AUCUN E-MAIL.
+# ============================================================================
+# CE LOT N'ENVOIE RIEN NON PLUS. Il n'ouvre aucun chemin sortant, ne touche a
+# aucun drapeau (`P3_LAUNCH_*`, `P3_RELANCE_*`), n'appelle ni Resend ni
+# `P3S3DFournisseurEmail`. Il lit une reponse recue, la fait analyser, range le
+# brouillon. Ce que Bassi en fait ensuite appartient a AI-P4.
+#
+# LE PIEGE QU'IL FERME, ET C'EST SA RAISON D'ETRE. Trois prospects ont repondu
+# le meme jour, au meme objet, sur la meme campagne. Un contexte assemble
+# ailleurs qu'ici — cote navigateur, ou a partir d'une cle d'affichage — a deja
+# melange leurs dossiers une fois. Le contexte est donc construit ICI, sur le
+# serveur, a partir d'un SEUL identifiant : `inbound.id`. Rien d'autre n'entre.
+#
+# `recipient_key` N'EST PAS UNE IDENTITE, et ne le sera jamais.
+# `p3s3_recipient_key` rend la `ref` de la fiche la plus ancienne d'un GROUPE
+# de fiches fusionnees : une meme cle peut couvrir plusieurs organisations.
+# C'est un LIBELLE, affiche parce qu'il est lisible. L'identite, c'est
+# `inbound.id` pour le message et `action_id` pour l'interlocuteur.
+#
+# LA SOURCE DU MESSAGE RECU EST UNIQUE : `prospect_inbound_messages.body_text`.
+# Jamais `j0_message`, `message_j0`, `j3_message`, `j7_message` ni
+# `interested_message` — ceux-la sont des textes qu'AFROBOOST a ecrits. Les
+# confondre ferait repondre l'IA a notre propre prospection.
+
+P3AI_BROUILLONS = "prospect_reply_drafts"
+P3AI_PREFIXE = "[AI-P1]"
+
+# Le modele est FIGE ICI, pas lu dans `db.ai_config`. Ce reglage-la pilote le
+# chat public : le changer pour le chat changerait, sans que personne le veuille,
+# la facon dont Afroboost repond a ses partenaires commerciaux. Deux usages,
+# deux reglages.
+P3AI_MODELE = "gpt-4o-mini"
+P3AI_TIMEOUT_S = 30.0
+
+# Les intentions, LISTE FERMEE. Une valeur hors liste devient `autre` : le
+# dashboard affiche des libelles, et un libelle invente par un modele
+# statistique n'a pas sa place dans une interface.
+P3AI_INTENTIONS = ("question", "positif", "refus", "absence", "autre")
+
+# Les tons de regeneration. Fermes pour la meme raison, et parce qu'ils entrent
+# dans une invite : une valeur libre y serait une injection.
+P3AI_TONS = ("court", "chaleureux", "professionnel", "direct")
+
+# LES SUJETS QUI EXIGENT BASSI. Ils ne bloquent pas la generation — ils posent
+# un drapeau que l'ecran affiche. Un brouillon qui parle d'argent doit etre lu
+# par un humain avant de partir, quelle que soit sa qualite.
+P3AI_SUJETS_SENSIBLES = {
+    "budget": ("budget", "budgets"),
+    "remise": ("remise", "rabais", "reduction", "discount", "rabatt"),
+    "commission": ("commission", "commissions", "provision"),
+    "contrat": ("contrat", "contrats", "convention", "vertrag"),
+    "exclusivite": ("exclusivite", "exclusif", "exclusive"),
+    "paiement": ("paiement", "payer", "tarif", "tarifs", "prix", "facture",
+                 "honoraires", "preis", "zahlung"),
+    "sponsor": ("sponsor", "sponsoring", "mecenat", "partenariat financier"),
+    "juridique": ("juridique", "avocat", "clause", "engagement juridique",
+                  "responsabilite civile", "assurance"),
+}
+
+P3AI_TEXTE_MAX = 6000        # ce qu'on transmet du corps recu
+P3AI_REPONSE_MAX = 4000      # ce qu'on stocke d'un brouillon
+
+
+def p3ai_sans_accents(valeur) -> str:
+    """Le texte comparable : minuscules, sans accents. PURE.
+
+    `Exclusivité` et `exclusivite` doivent declencher la meme garde. Sans cette
+    normalisation, la moitie des mots francais passeraient au travers.
+    """
+    texte = str(valeur or "").lower()
+    return "".join(c for c in unicodedata.normalize("NFD", texte)
+                   if unicodedata.category(c) != "Mn")
+
+
+def p3ai_sujets_sensibles(texte) -> list:
+    """Les sujets d'argent ou d'engagement presents dans un texte. PURE.
+
+    Rend une liste triee, eventuellement vide. Elle sert a AFFICHER une alerte,
+    jamais a refuser : un faux positif coute une mention de plus a l'ecran, un
+    faux negatif coute un engagement pris sans que Bassi l'ait relu.
+    """
+    plat = p3ai_sans_accents(texte)
+    trouves = set()
+    for sujet, mots in P3AI_SUJETS_SENSIBLES.items():
+        for mot in mots:
+            if p3ai_sans_accents(mot) in plat:
+                trouves.add(sujet)
+                break
+    return sorted(trouves)
+
+
+def p3ai_intention(valeur) -> str:
+    """L'intention retenue, toujours l'une des cinq. PURE."""
+    brut = p3ai_sans_accents(valeur).strip()
+    return brut if brut in P3AI_INTENTIONS else "autre"
+
+
+def p3ai_organisation(action: dict) -> str:
+    """Le nom a afficher pour l'interlocuteur. PURE, et il vient de l'ACTION.
+
+    L'action porte `organisations` — la liste des fiches que ce destinataire
+    couvre. On prend la premiere non vide ; s'il y en a plusieurs, elles sont
+    toutes rendues au contexte, jamais fusionnees en une seule chaine.
+    """
+    for nom in (action or {}).get("organisations") or []:
+        if (nom or "").strip():
+            return nom.strip()
+    return ""
+
+
+def p3ai_contexte(message: dict, action: dict, fiches=None, notes=None) -> dict:
+    """Le dossier d'UN prospect, et de lui seul. Fonction PURE, sans base.
+
+    ELLE EST PURE POUR POUVOIR ETRE PROUVEE. Le banc lui donne les trois cas
+    reels et verifie qu'aucun mot de l'un n'apparait dans le dossier de
+    l'autre. Une fonction qui irait chercher elle-meme en base ne se testerait
+    qu'en integration, c'est-a-dire tard, c'est-a-dire jamais.
+
+    LES NOTES ENTRENT DEJA FILTREES. C'est l'appelant qui les a lues pour CE
+    prospect ; cette fonction ne sait pas les chercher, donc ne peut pas se
+    tromper de dossier.
+    """
+    m = message or {}
+    a = action or {}
+    return {
+        "inbound_id": m.get("id") or "",
+        "action_id": a.get("id") or m.get("action_id") or "",
+        "recipient_key": m.get("recipient_key") or a.get("recipient_key") or "",
+        "organisation": p3ai_organisation(a),
+        "organisations": [n for n in (a.get("organisations") or []) if (n or "").strip()],
+        "from_email": m.get("from_email") or "",
+        "contact_name": next((f.get("contact_name") for f in (fiches or [])
+                              if (f.get("contact_name") or "").strip()), ""),
+        "subject": m.get("subject") or "",
+        "body_text": (m.get("body_text") or "")[:P3AI_TEXTE_MAX],
+        "received_at": m.get("received_at") or "",
+        "langue_campagne": a.get("language") or "",
+        "notre_message_j0": a.get("message_j0") or "",
+        "notes": [
+            {"type": n.get("type") or "autre", "texte": n.get("texte") or "",
+             "created_at": n.get("created_at") or ""}
+            for n in (notes or []) if (n.get("texte") or "").strip()
+        ],
+    }
+
+
+def p3ai_invite(contexte: dict) -> str:
+    """L'invite envoyee au modele. PURE, et volontairement etroite.
+
+    ELLE NE CONTIENT QUE CE PROSPECT. Aucune liste d'autres reponses, aucun
+    resume de campagne, aucune note d'un tiers : ce qui n'est pas dans le
+    dossier ne peut pas ressortir dans le brouillon.
+    """
+    c = contexte or {}
+    notes = "\n".join("- [%s] %s" % (n["type"], n["texte"]) for n in c.get("notes") or [])
+    return "\n".join([
+        "Tu assistes Bassi, fondateur d'Afroboost (cardio-danse afro avec casques",
+        "audio silencieux, base en Suisse). Il demarche des partenaires par e-mail.",
+        "",
+        "UN partenaire vient de repondre. Analyse SA reponse, et rien d'autre.",
+        "",
+        "ORGANISATION : %s" % (c.get("organisation") or "(inconnue)"),
+        "ADRESSE : %s" % (c.get("from_email") or ""),
+        "OBJET : %s" % (c.get("subject") or ""),
+        "",
+        "MESSAGE RECU (c'est le seul texte du partenaire) :",
+        "\"\"\"",
+        c.get("body_text") or "",
+        "\"\"\"",
+        "",
+        ("NOTES INTERNES DE BASSI SUR CE PARTENAIRE (elles sont vraies, "
+         "utilise-les) :\n" + notes) if notes else
+        "NOTES INTERNES : aucune.",
+        "",
+        "REGLES ABSOLUES :",
+        "1. Reponds dans la LANGUE DU MESSAGE RECU, pas dans une autre.",
+        "2. N'invente RIEN : ni prix, ni date, ni chiffre, ni engagement, ni nom.",
+        "3. Si une information manque, propose un echange plutot que de la deviner.",
+        "4. Reste court : 120 mots maximum, ton professionnel et chaleureux.",
+        "5. Ne repete pas tout le concept si le partenaire le connait deja.",
+        "6. Signe « Bassi » puis « Afroboost », sans coordonnees inventees.",
+        "7. Si les notes internes disent qu'une action est deja faite, tiens-en",
+        "   compte au lieu de la reproposer.",
+        "",
+        "Rends UNIQUEMENT un objet JSON, sans texte autour :",
+        "{",
+        '  "intention": "question|positif|refus|absence|autre",',
+        '  "langue": "code ISO 2 lettres du message recu",',
+        '  "resume": "une phrase, en francais",',
+        '  "demande": "ce que le partenaire demande concretement, en francais",',
+        '  "prochaine_action": "ce que Bassi devrait faire, en francais",',
+        '  "reponse_proposee": "le brouillon complet, dans la langue du partenaire"',
+        "}",
+    ])
+
+
+def p3ai_lire_json(brut) -> dict:
+    """Le JSON du modele, ou un dictionnaire vide. PURE, et TOLERANTE.
+
+    Un modele peut entourer son JSON de texte malgre la consigne. On tente
+    l'analyse stricte, puis le premier bloc entre accolades. Un echec n'est pas
+    une panne : l'appelant rendra une erreur lisible plutot qu'une exception.
+    """
+    texte = (brut or "").strip()
+    if not texte:
+        return {}
+    extrait = ""
+    if "{" in texte and "}" in texte:
+        extrait = texte[texte.find("{"):texte.rfind("}") + 1]
+    for candidat in (texte, extrait):
+        if not candidat:
+            continue
+        try:
+            valeur = json.loads(candidat)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(valeur, dict):
+            return valeur
+    return {}
+
+
+def p3ai_brouillon_depuis(contexte: dict, sortie: dict, viewer: str,
+                          maintenant: str, ton: str = "", version: int = 1) -> dict:
+    """Le document de brouillon, assemble. PURE.
+
+    LE DESTINATAIRE VIENT DU MESSAGE RECU, PAS DU MODELE. `to_email` est
+    l'adresse qui nous a ecrit — recopiee du contexte, jamais proposee par
+    l'IA. Un modele qui hallucinerait une adresse enverrait la reponse d'un
+    prospect a un autre ; ici, c'est structurellement impossible.
+    """
+    c = contexte or {}
+    s = sortie or {}
+    reponse = str(s.get("reponse_proposee") or "")[:P3AI_REPONSE_MAX]
+    sensibles = sorted(set(p3ai_sujets_sensibles(c.get("body_text"))
+                           + p3ai_sujets_sensibles(reponse)))
+    return {
+        "id": str(uuid.uuid4()),
+        "inbound_id": c.get("inbound_id") or "",
+        "action_id": c.get("action_id") or "",
+        "coach_id": "",                      # pose par l'appelant, depuis le message
+        "recipient_key": c.get("recipient_key") or "",
+        "organisation": c.get("organisation") or "",
+        "to_email": c.get("from_email") or "",
+        "subject": c.get("subject") or "",
+        "intention": p3ai_intention(s.get("intention")),
+        "langue": (str(s.get("langue") or "").strip().lower() or "fr")[:5],
+        "resume": str(s.get("resume") or "")[:600],
+        "demande": str(s.get("demande") or "")[:600],
+        "prochaine_action": str(s.get("prochaine_action") or "")[:600],
+        "reponse_proposee": reponse,
+        "validation_requise": bool(sensibles),
+        "motifs_validation": sensibles,
+        "ton": ton if ton in P3AI_TONS else "",
+        "modele": P3AI_MODELE,
+        "version": version,
+        "genere_le": maintenant,
+        "genere_par": viewer,
+        "created_at": maintenant,
+        "updated_at": maintenant,
+    }
+
+
+async def p3ai_appeler_modele(invite: str, ton: str = "") -> str:
+    """L'appel a OpenAI, dans un fil separe. LE SEUL APPEL SORTANT DU LOT.
+
+    `asyncio.to_thread` n'est pas une precaution de style : le client OpenAI est
+    SYNCHRONE, et l'appeler directement dans une route async bloque la boucle
+    d'evenements pour toute l'application pendant la duree de la generation.
+    Le depot a paye ce defaut ailleurs ; on ne le reproduit pas ici.
+    """
+    from openai import OpenAI
+
+    cle = os.environ.get("OPENAI_API_KEY")
+    if not cle:
+        raise HTTPException(status_code=503,
+                            detail="Analyse indisponible (OPENAI_API_KEY absente)")
+    consignes = {
+        "court": "Fais plus court que d'habitude : 60 mots maximum.",
+        "chaleureux": "Rends le ton plus chaleureux et personnel, sans familiarite.",
+        "professionnel": "Rends le ton plus formel et institutionnel.",
+        "direct": "Va droit au but : une proposition claire, sans preambule.",
+    }
+    invite_finale = invite if ton not in consignes else invite + "\n\n" + consignes[ton]
+
+    def _appel():
+        client = OpenAI(api_key=cle, timeout=P3AI_TIMEOUT_S, max_retries=1)
+        reponse = client.chat.completions.create(
+            model=P3AI_MODELE,
+            messages=[{"role": "user", "content": invite_finale}],
+            response_format={"type": "json_object"},
+            temperature=0.4,
+            max_tokens=900,
+        )
+        return reponse.choices[0].message.content or ""
+
+    return await asyncio.to_thread(_appel)
+
+
+async def p3ai_notes_de(action_id: str, plafond: int = 50) -> list:
+    """Les notes commerciales de CETTE action. Vide tant qu'AI-P3 n'existe pas.
+
+    LA FONCTION EXISTE AVANT LA COLLECTION, ET C'EST VOLONTAIRE. Le contexte
+    doit avoir UNE seule porte d'entree pour les notes des aujourd'hui : le
+    jour ou AI-P3 les ecrira, aucune autre ligne de ce lot ne bougera, et le
+    cloisonnement prouve par le banc restera exactement le meme.
+    """
+    identifiant = (action_id or "").strip()
+    if not identifiant:
+        return []
+    try:
+        return await db["prospect_notes"].find(
+            {"action_id": identifiant}, {"_id": 0}
+        ).sort([("created_at", 1)]).to_list(plafond)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s notes illisibles pour %s : %s", P3AI_PREFIXE,
+                       identifiant[:8], type(e).__name__)
+        return []
+
+
+async def p3ai_dossier(inbound_id: str, email: str) -> dict:
+    """Le message, son action et ses fiches — pour CE message uniquement.
+
+    UN SEUL IDENTIFIANT ENTRE. Tout le reste est deduit en base, en suivant
+    `action_id`. Aucun parametre d'appelant ne peut orienter la lecture vers un
+    autre prospect : c'est la garantie qui rend le melange impossible.
+    """
+    message = await p3ai_message_du_coach(inbound_id, email)
+    action = {}
+    if message.get("action_id"):
+        action = await db[P3S3_ACTIONS].find_one(
+            {"id": message["action_id"]}, {"_id": 0}) or {}
+    fiches = []
+    uuids = [u for u in (action.get("prospect_uuids") or []) if u][:20]
+    if uuids:
+        fiches = await db[P3S1_COLLECTION].find(
+            {"id": {"$in": uuids}}, {"_id": 0}).to_list(20)
+    return {"message": message, "action": action, "fiches": fiches}
+
+
+@api_router.post("/prospect-inbound/{inbound_id}/analyser")
+async def p3ai_analyser(inbound_id: str, request: Request):
+    """Analyse UNE reponse et range son brouillon. N'ENVOIE AUCUN E-MAIL.
+
+    ELLE NE MARQUE NI LU NI TRAITE. Faire analyser par une machine n'est ni
+    lire ni repondre : les deux pastilles restent jusqu'a ce que Bassi ouvre la
+    carte, puis agisse.
+
+    ELLE REFUSE DE GENERER SUR DU VIDE. Sans `body_text`, le modele n'aurait
+    rien a analyser et ecrirait une reponse plausible a un message qu'il n'a
+    pas lu. Le cas existe : le contenu entrant n'est arrive qu'avec P3-R4, et
+    le rattrapage des messages anterieurs n'a jamais ete lance.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    dossier = await p3ai_dossier(inbound_id, email)
+    message, action = dossier["message"], dossier["action"]
+
+    if not (message.get("body_text") or "").strip():
+        raise HTTPException(
+            status_code=409,
+            detail="Cette reponse n'a pas de contenu lisible : rien a analyser.")
+
+    corps = {}
+    try:
+        if int(request.headers.get("content-length") or 0) > 0:
+            corps = await request.json()
+    except (ValueError, TypeError):
+        corps = {}
+    if not isinstance(corps, dict):
+        corps = {}
+    ton = str(corps.get("ton") or "").strip().lower()
+    if ton and ton not in P3AI_TONS:
+        raise HTTPException(status_code=400,
+                            detail="Ton inconnu. Valeurs acceptees : %s" % ", ".join(P3AI_TONS))
+
+    notes = await p3ai_notes_de(action.get("id") or message.get("action_id") or "")
+    contexte = p3ai_contexte(message, action, dossier["fiches"], notes)
+
+    precedent = await db[P3AI_BROUILLONS].find_one(
+        {"inbound_id": message["id"]}, {"_id": 0}) or {}
+    version = int(precedent.get("version") or 0) + 1
+
+    sortie = p3ai_lire_json(await p3ai_appeler_modele(p3ai_invite(contexte), ton))
+    if not str(sortie.get("reponse_proposee") or "").strip():
+        raise HTTPException(status_code=502,
+                            detail="Le modele n'a rendu aucun brouillon exploitable.")
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    brouillon = p3ai_brouillon_depuis(contexte, sortie, email, maintenant, ton, version)
+    brouillon["coach_id"] = message.get("coach_id")
+    if precedent.get("id"):
+        brouillon["id"] = precedent["id"]
+        brouillon["created_at"] = precedent.get("created_at") or maintenant
+        await db[P3AI_BROUILLONS].update_one(
+            {"inbound_id": message["id"]}, {"$set": brouillon})
+    else:
+        await db[P3AI_BROUILLONS].insert_one(dict(brouillon))
+    logger.info("%s brouillon v%d pour %s (%s, intention %s) par %s", P3AI_PREFIXE,
+                version, message.get("recipient_key") or "-",
+                (message["id"] or "")[:8], brouillon["intention"], email[:24])
+    return {"brouillon": brouillon, "contexte_organisation": contexte["organisation"],
+            "lu": bool(message.get(P3AI_CHAMP_LU))}
+
+
+@api_router.get("/prospect-inbound/{inbound_id}/brouillon")
+async def p3ai_lire_brouillon(inbound_id: str, request: Request):
+    """Le brouillon range pour cette reponse, ou `null`. LECTURE SEULE.
+
+    Elle passe par `p3ai_message_du_coach` — donc par le filtre de tenance —
+    AVANT de rendre quoi que ce soit : sans cela, un identifiant devine
+    donnerait acces au brouillon d'un autre coach.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    message = await p3ai_message_du_coach(inbound_id, email)
+    brouillon = await db[P3AI_BROUILLONS].find_one(
+        {"inbound_id": message["id"]}, {"_id": 0})
+    return {"brouillon": brouillon, "lu": bool(message.get(P3AI_CHAMP_LU)),
+            "traite": bool(message.get(P3AI_CHAMP_TRAITE))}
 
 
 # ============================================================================
@@ -42274,6 +42870,22 @@ async def startup_db():
         # pagination soit un ordre TOTAL (P3-S2E).
         await db[P3U2_COLLECTION].create_index([("coach_id", 1), ("received_at", -1), ("id", 1)])
         await db[P3U2_COLLECTION].create_index([("coach_id", 1), ("statut", 1)])
+        # READ-P1 — LE COMPTEUR DE NON-LUS EST UNE REQUETE, PAS UN CALCUL.
+        # `{"read_at": None}` retrouve les documents ou le champ MANQUE comme
+        # ceux ou il vaut `null` : les reponses anterieures a ce lot sont donc
+        # « non lues » sans qu'aucune migration ne les touche. L'index porte les
+        # deux champs d'etat pour que les deux compteurs du badge soient servis
+        # sans parcours de collection.
+        await db[P3U2_COLLECTION].create_index([("coach_id", 1), ("read_at", 1)])
+        await db[P3U2_COLLECTION].create_index([("coach_id", 1), ("traite_at", 1)])
+
+        # AI-P1 — UN SEUL BROUILLON COURANT PAR REPONSE.
+        # L'unicite est sur `inbound_id` : regenerer REMPLACE, jamais n'empile.
+        # Sans elle, deux clics sur « Regenerer » creeraient deux brouillons pour
+        # la meme reponse, et l'ecran en afficherait un au hasard.
+        await db[P3AI_BROUILLONS].create_index("inbound_id", unique=True)
+        await db[P3AI_BROUILLONS].create_index([("coach_id", 1), ("updated_at", -1)])
+        logger.info("[INDEX] READ-P1 / AI-P1 (etats de lecture, brouillons) OK")
 
         # CAL-1 — le calendrier se lit TOUJOURS par fenetre de dates. Un index
         # sur (coach_id, starts_at) est donc celui que chaque ouverture d'ecran

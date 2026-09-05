@@ -339,6 +339,96 @@ export default function ProspectsSection({ API }) {
   const reponsesEnAttente = (sectionReponses && sectionReponses.etat === SECTION.OK
     && sectionReponses.donnees && sectionReponses.donnees.en_attente) || 0;
 
+  /* READ-P1 — LES DEUX COMPTEURS VIENNENT DU SERVEUR, JAMAIS DE LA PAGE.
+     La liste est paginée (20 par défaut) : les recompter ici donnerait un badge
+     qui change selon la page affichée. Ils survivent donc au rafraîchissement,
+     à la reconnexion et à la navigation, parce qu'ils ne dérivent d'aucun état
+     de navigateur. */
+  const reponsesNonLues = (sectionReponses && sectionReponses.etat === SECTION.OK
+    && sectionReponses.donnees && sectionReponses.donnees.non_lues) || 0;
+  const reponsesARepondre = (sectionReponses && sectionReponses.etat === SECTION.OK
+    && sectionReponses.donnees && sectionReponses.donnees.a_repondre) || 0;
+
+  /* ---------- READ-P1 + AI-P1 — L'ÉTAT DES RÉPONSES REÇUES ----------
+
+     TOUT EST INDEXÉ PAR `message.id`, ET C'EST LA RÈGLE CENTRALE DU LOT.
+     Trois partenaires ont répondu le même jour, au même objet, sur la même
+     campagne. Une variable unique (`brouillon`, `enCours`…) partagée par les
+     cartes ferait apparaître le texte d'ETU-04 sur la carte de LSN-A3 — le
+     mélange exact que ce chantier existe pour empêcher. Une table par
+     identifiant rend ce mélange structurellement impossible.
+
+     `reponseOuverte` est une CHAÎNE (l'id), jamais l'objet : la règle V305
+     interdit de reposer un objet neuf quand rien n'a changé. */
+  const [reponseOuverte, setReponseOuverte] = useState('');
+  const [brouillons, setBrouillons] = useState({});      // id -> brouillon serveur
+  const [iaEnCours, setIaEnCours] = useState('');        // id de la carte en génération
+  const [iaErreurs, setIaErreurs] = useState({});        // id -> message d'erreur
+  const [etatEnCours, setEtatEnCours] = useState('');    // id de la carte dont l'état change
+
+  /* READ-P1 — OUVRIR, C'EST LIRE. Et rien d'autre ne l'est.
+     Ce clic est le SEUL chemin qui écrit `read_at`. Ni le chargement de
+     l'écran, ni l'analyse IA, ni la future notification ne passent par ici.
+     Refermer la carte ne « dé-lit » pas : on n'oublie pas ce qu'on a vu. */
+  const ouvrirReponse = useCallback(async (id) => {
+    if (!id) return;
+    if (reponseOuverte === id) { setReponseOuverte(''); return; }
+    setReponseOuverte(id);
+    try {
+      await axios.post(`${base}/prospect-inbound/${encodeURIComponent(id)}/lu`);
+      chargement.reessayer('reponses');
+    } catch (e) {
+      /* La lecture n'a pas pu être enregistrée : la carte s'ouvre quand même.
+         Un état de badge n'est jamais une raison de cacher un message. */
+    }
+    /* Le brouillon éventuel est relu à l'ouverture, jamais avant : le charger
+       pour toutes les cartes ferait N appels pour un panneau que personne
+       n'a encore déplié. */
+    try {
+      const r = await axios.get(`${base}/prospect-inbound/${encodeURIComponent(id)}/brouillon`);
+      const b = (r && r.data && r.data.brouillon) || null;
+      if (b) setBrouillons((prev) => ({ ...prev, [id]: b }));
+    } catch (e) { /* pas de brouillon = cas normal, pas une panne */ }
+  }, [base, reponseOuverte, chargement]);
+
+  /* AI-P1 — L'ANALYSE. Elle NE MARQUE RIEN comme lu ni traité.
+     `ton` vide = première génération ; sinon régénération orientée. */
+  const analyserReponse = useCallback(async (id, ton) => {
+    if (!id || iaEnCours) return;
+    setIaEnCours(id);
+    setIaErreurs((prev) => (prev[id] ? { ...prev, [id]: '' } : prev));
+    try {
+      const r = await axios.post(
+        `${base}/prospect-inbound/${encodeURIComponent(id)}/analyser`,
+        ton ? { ton } : {});
+      const b = (r && r.data && r.data.brouillon) || null;
+      if (b) setBrouillons((prev) => ({ ...prev, [id]: b }));
+    } catch (e) {
+      const detail = (e && e.response && e.response.data && e.response.data.detail)
+        || "L'analyse n'a pas abouti.";
+      setIaErreurs((prev) => ({ ...prev, [id]: String(detail) }));
+    } finally {
+      setIaEnCours('');
+    }
+  }, [base, iaEnCours]);
+
+  /* READ-P1 — « TRAITÉ » EST UNE DÉCISION, JAMAIS UNE DÉDUCTION.
+     Lire ne traite pas, analyser ne traite pas. Seul ce clic le fait — et il
+     est réversible, parce qu'un état qu'on ne peut pas corriger finit ignoré. */
+  const basculerTraite = useCallback(async (id, traite) => {
+    if (!id || etatEnCours) return;
+    setEtatEnCours(id);
+    try {
+      await axios.post(`${base}/prospect-inbound/${encodeURIComponent(id)}/traite`,
+        { traite: !!traite });
+      chargement.reessayer('reponses');
+    } catch (e) {
+      setIaErreurs((prev) => ({ ...prev, [id]: "L'état n'a pas pu être enregistré." }));
+    } finally {
+      setEtatEnCours('');
+    }
+  }, [base, etatEnCours, chargement]);
+
   const section = chargement.sections.prospects;
   const etat = (section && section.etat) || SECTION.CHARGEMENT;
   const charge = etat === SECTION.OK && section.donnees ? section.donnees : null;
@@ -699,11 +789,18 @@ export default function ProspectsSection({ API }) {
         </div>
       )}
 
-      {/* ---------- P3-U3 : LES RÉPONSES REÇUES ----------
-           Une liste, pas une messagerie. Elle répond à une seule question —
-           « qui nous a répondu, et est-ce rattaché au bon prospect ? » — et
-           s'efface tant que personne n'a répondu, pour ne pas encombrer un
-           écran qui sert d'abord à préparer. */}
+      {/* ---------- P3-U3 / READ-P1 / AI-P1 : LES RÉPONSES REÇUES ----------
+
+           TROIS ÉTATS, TROIS QUESTIONS DIFFÉRENTES, et les confondre est le
+           défaut que ce bloc corrige :
+             « NOUVEAU »    — je ne l'ai jamais OUVERTE   (`read_at` absent)
+             « À RÉPONDRE » — je n'ai pas encore AGI       (`traite_at` absent)
+             « TRAITÉ »     — j'ai agi, explicitement
+           Ouvrir n'est pas répondre : le badge NOUVEAU disparaît à l'ouverture,
+           « À RÉPONDRE » reste tant que le coach n'a pas décidé le contraire.
+
+           TOUT EST INDEXÉ PAR `r.id`. Aucune variable partagée entre les
+           cartes : le brouillon d'ETU-04 ne peut pas s'afficher sur LSN-A3. */}
       {reponses.length > 0 && (
         <div data-testid="reponses-recues"
              style={{
@@ -712,52 +809,225 @@ export default function ProspectsSection({ API }) {
              }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px',
                         marginBottom: '10px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '13px', fontWeight: 700 }}>
+            <span style={{ fontSize: '13px', fontWeight: 700, color: TEXTE }}>
               Réponses reçues ({reponses.length})
             </span>
+            {reponsesNonLues > 0 && (
+              <span data-testid="reponses-non-lues"
+                    style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
+                             background: `rgba(${RGB}, 0.30)`, color: TEXTE,
+                             border: `1px solid rgba(${RGB}, 0.6)`, fontWeight: 700 }}>
+                {reponsesNonLues} nouvelle{reponsesNonLues > 1 ? 's' : ''}
+              </span>
+            )}
+            {reponsesARepondre > 0 && (
+              <span data-testid="reponses-a-repondre"
+                    style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
+                             background: 'rgba(245,158,11,0.22)', color: TEXTE, fontWeight: 600 }}>
+                {reponsesARepondre} à répondre
+              </span>
+            )}
             {reponsesEnAttente > 0 && (
               <span data-testid="reponses-en-attente"
                     style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
-                             background: 'rgba(245,158,11,0.22)', fontWeight: 600 }}>
+                             background: 'rgba(255,255,255,0.10)', color: TEXTE, fontWeight: 600 }}>
                 {reponsesEnAttente} à rattacher à la main
               </span>
             )}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {reponses.map((r) => (
-              <div key={r.id} data-testid="reponse-ligne"
-                   style={{
-                     padding: '8px 10px', borderRadius: '8px',
-                     background: 'rgba(255,255,255,0.05)',
-                     borderLeft: `3px solid ${r.statut === 'rattache'
-                       ? `rgba(${RGB}, 0.9)` : 'rgba(245,158,11,0.9)'}`,
-                   }}>
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap',
-                              alignItems: 'baseline' }}>
-                  <span style={{ fontSize: '12px', fontWeight: 700 }}>
-                    {r.recipient_key || 'Prospect à identifier'}
-                  </span>
-                  <span style={{ fontSize: '11px', opacity: 0.75 }}>{r.from_email}</span>
-                  <span style={{ fontSize: '11px', opacity: 0.6, marginLeft: 'auto' }}>
-                    {(r.received_at || '').slice(0, 16).replace('T', ' ')}
-                  </span>
+            {reponses.map((r) => {
+              /* Tout ce qui suit est LOCAL à cette carte. Aucune de ces
+                 variables n'existe en dehors de l'itération : c'est ce qui
+                 garantit qu'aucune donnée d'un prospect n'atteint un autre. */
+              const nonLue = !r.read_at;
+              const traitee = !!r.traite_at;
+              const deplie = reponseOuverte === r.id;
+              const bro = brouillons[r.id] || null;
+              const erreurIa = iaErreurs[r.id] || '';
+              const genere = iaEnCours === r.id;
+              return (
+                <div key={r.id} data-testid="reponse-ligne"
+                     style={{
+                       padding: '8px 10px', borderRadius: '8px',
+                       background: nonLue ? `rgba(${RGB}, 0.14)` : 'rgba(255,255,255,0.05)',
+                       borderLeft: `3px solid ${r.statut === 'rattache'
+                         ? `rgba(${RGB}, 0.9)` : 'rgba(245,158,11,0.9)'}`,
+                     }}>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                alignItems: 'baseline' }}>
+                    {nonLue && (
+                      <span data-testid="badge-nouveau"
+                            style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
+                                     padding: '2px 7px', borderRadius: '999px', color: TEXTE,
+                                     background: `rgba(${RGB}, 0.55)` }}>
+                        NOUVEAU
+                      </span>
+                    )}
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: TEXTE }}>
+                      {r.recipient_key || 'Prospect à identifier'}
+                    </span>
+                    <span style={{ fontSize: '11px', opacity: 0.75, color: TEXTE }}>{r.from_email}</span>
+                    <span data-testid={traitee ? 'badge-traite' : 'badge-a-repondre'}
+                          style={{ fontSize: '10px', fontWeight: 600, padding: '2px 7px',
+                                   borderRadius: '999px', color: TEXTE,
+                                   background: traitee ? 'rgba(34,197,94,0.22)' : 'rgba(245,158,11,0.22)' }}>
+                      {traitee ? 'TRAITÉ' : 'À RÉPONDRE'}
+                    </span>
+                    <span style={{ fontSize: '11px', opacity: 0.6, color: TEXTE, marginLeft: 'auto' }}>
+                      {(r.received_at || '').slice(0, 16).replace('T', ' ')}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '12px', marginTop: '3px', color: TEXTE }}>{r.subject}</div>
+
+                  {/* Le corps est du TEXTE, jamais du HTML : on n'injecte pas le
+                      contenu d'un inconnu dans la page. Replié, on n'en montre
+                      qu'un aperçu — l'original complet est un clic plus loin. */}
+                  {!deplie && (
+                    <div style={{ fontSize: '11px', opacity: 0.75, marginTop: '3px',
+                                  whiteSpace: 'pre-wrap', color: TEXTE }}>
+                      {(r.body_text || '').slice(0, 180)}
+                      {(r.body_text || '').length > 180 ? '…' : ''}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                alignItems: 'center', marginTop: '6px' }}>
+                    <button type="button" data-testid="voir-reponse"
+                            onClick={() => ouvrirReponse(r.id)}
+                            style={{ ...stylePetitBouton, fontWeight: 600 }}>
+                      {deplie ? 'Replier' : 'Voir la réponse'}
+                    </button>
+                    {deplie && (
+                      <button type="button" data-testid="basculer-traite"
+                              onClick={() => basculerTraite(r.id, !traitee)}
+                              disabled={etatEnCours === r.id}
+                              style={{ ...stylePetitBouton,
+                                       opacity: etatEnCours === r.id ? 0.6 : 1 }}>
+                        {traitee ? 'Remettre à répondre' : 'Marquer comme traité'}
+                      </button>
+                    )}
+                    <span style={{ fontSize: '10px', opacity: 0.6, color: TEXTE, marginLeft: 'auto' }}>
+                      {r.statut === 'rattache'
+                        ? `rattaché — ${r.matching_method} (confiance ${r.matching_confidence})`
+                        : `à rattacher — ${r.motif || 'ambigu'}`}
+                      {r.campaign_id ? ` · campagne ${String(r.campaign_id).slice(0, 8)}` : ''}
+                    </span>
+                  </div>
+
+                  {deplie && (
+                    <div style={{ marginTop: '8px', paddingTop: '8px',
+                                  borderTop: '1px solid rgba(255,255,255,0.12)' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.7,
+                                    color: TEXTE, marginBottom: '4px' }}>
+                        MESSAGE ORIGINAL
+                      </div>
+                      <div data-testid="corps-original"
+                           style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
+                                    lineHeight: 1.5 }}>
+                        {r.body_text || '(aucun contenu lisible pour cette réponse)'}
+                      </div>
+                      {/* L'historique cité reste SÉPARÉ du nouveau texte : c'est
+                          la coupure faite par P3-R4, on ne la recolle pas ici. */}
+                      {r.body_quoted ? (
+                        <details style={{ marginTop: '6px' }}>
+                          <summary style={{ fontSize: '11px', cursor: 'pointer',
+                                            opacity: 0.7, color: TEXTE }}>
+                            Historique cité
+                          </summary>
+                          <div style={{ fontSize: '11px', whiteSpace: 'pre-wrap',
+                                        opacity: 0.7, color: TEXTE, marginTop: '4px' }}>
+                            {r.body_quoted}
+                          </div>
+                        </details>
+                      ) : null}
+
+                      {/* ---- AI-P1 : l'analyse et le brouillon ----
+                          RIEN NE PART D'ICI. Aucun bouton d'envoi : le brouillon
+                          se lit, se copie, se régénère. L'envoi appartient à un
+                          lot ultérieur, derrière une confirmation explicite. */}
+                      <div style={{ marginTop: '10px', display: 'flex', gap: '8px',
+                                    flexWrap: 'wrap', alignItems: 'center' }}>
+                        <button type="button" data-testid="analyser-ia"
+                                onClick={() => analyserReponse(r.id, '')}
+                                disabled={genere}
+                                style={{ ...styleBouton, opacity: genere ? 0.6 : 1 }}>
+                          {genere ? 'Analyse en cours…'
+                            : (bro ? 'Régénérer' : "Analyser avec l'IA")}
+                        </button>
+                        {bro && !genere && ['court', 'chaleureux', 'professionnel', 'direct'].map((t) => (
+                          <button key={t} type="button" data-testid={`ton-${t}`}
+                                  onClick={() => analyserReponse(r.id, t)}
+                                  style={stylePetitBouton}>
+                            Plus {t}
+                          </button>
+                        ))}
+                      </div>
+
+                      {erreurIa ? (
+                        <div data-testid="erreur-ia"
+                             style={{ fontSize: '11px', marginTop: '6px', padding: '6px 8px',
+                                      borderRadius: '6px', color: TEXTE,
+                                      background: 'rgba(239,68,68,0.18)' }}>
+                          {erreurIa}
+                        </div>
+                      ) : null}
+
+                      {bro ? (
+                        <div data-testid="brouillon-ia" style={{ marginTop: '8px' }}>
+                          {bro.validation_requise && (
+                            <div data-testid="validation-bassi"
+                                 style={{ display: 'flex', gap: '6px', alignItems: 'center',
+                                          fontSize: '11px', fontWeight: 700, color: TEXTE,
+                                          padding: '6px 8px', borderRadius: '6px',
+                                          background: 'rgba(245,158,11,0.25)', marginBottom: '6px' }}>
+                              <SvgIcon name="warning" size={13} />
+                              VALIDATION BASSI NÉCESSAIRE — {bro.motifs_validation.join(', ')}
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap',
+                                        marginBottom: '6px' }}>
+                            <Etiquette texte={`intention : ${bro.intention}`} ton="primaire" />
+                            <Etiquette texte={`langue : ${bro.langue}`} />
+                            <Etiquette texte={`version ${bro.version}`} />
+                          </div>
+                          {bro.resume ? (
+                            <div style={{ fontSize: '11px', color: TEXTE, marginBottom: '3px' }}>
+                              <strong>Résumé :</strong> {bro.resume}
+                            </div>
+                          ) : null}
+                          {bro.demande ? (
+                            <div style={{ fontSize: '11px', color: TEXTE, marginBottom: '3px' }}>
+                              <strong>Demande :</strong> {bro.demande}
+                            </div>
+                          ) : null}
+                          {bro.prochaine_action ? (
+                            <div style={{ fontSize: '11px', color: TEXTE, marginBottom: '6px' }}>
+                              <strong>Prochaine action :</strong> {bro.prochaine_action}
+                            </div>
+                          ) : null}
+                          <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.7,
+                                        color: TEXTE, marginBottom: '3px' }}>
+                            BROUILLON POUR {bro.to_email}
+                          </div>
+                          <div data-testid="reponse-proposee"
+                               style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
+                                        lineHeight: 1.5, padding: '8px 10px', borderRadius: '8px',
+                                        background: 'rgba(0,0,0,0.25)',
+                                        border: `1px solid rgba(${RGB}, 0.35)` }}>
+                            {bro.reponse_proposee}
+                          </div>
+                          <div style={{ fontSize: '10px', opacity: 0.6, color: TEXTE,
+                                        marginTop: '4px' }}>
+                            Brouillon — rien n'est envoyé. L'envoi viendra dans un lot dédié.
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
-                <div style={{ fontSize: '12px', marginTop: '3px' }}>{r.subject}</div>
-                {/* Le corps est du TEXTE, jamais du HTML : on n'injecte pas le
-                    contenu d'un inconnu dans la page. */}
-                <div style={{ fontSize: '11px', opacity: 0.75, marginTop: '3px',
-                              whiteSpace: 'pre-wrap' }}>
-                  {(r.body_text || '').slice(0, 180)}
-                  {(r.body_text || '').length > 180 ? '…' : ''}
-                </div>
-                <div style={{ fontSize: '10px', opacity: 0.6, marginTop: '4px' }}>
-                  {r.statut === 'rattache'
-                    ? `rattaché — ${r.matching_method} (confiance ${r.matching_confidence})`
-                    : `à rattacher — ${r.motif || 'ambigu'}`}
-                  {r.campaign_id ? ` · campagne ${String(r.campaign_id).slice(0, 8)}` : ''}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

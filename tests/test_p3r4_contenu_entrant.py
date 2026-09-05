@@ -141,8 +141,16 @@ import api.server as S      # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
 SRC = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
-BLOC_R4 = SRC[SRC.index("# P3-R4 — LE CONTENU REEL DES REPONSES ENTRANTES"):
-              SRC.index("# CAL-1 — UN SEUL CALENDRIER")]
+# LA BORNE NE NOMME PLUS LE LOT SUIVANT — elle s'arrete a la PREMIERE banniere
+# de lot rencontree, quelle qu'elle soit. Nommer « CAL-1 » etait un pari sur
+# l'ordre du fichier : le jour ou un lot (READ-P1) s'est insere entre les deux,
+# l'analyse a deborde sur son code et cinq verifications de P3-R4 ont accuse un
+# lot qui ne les concernait pas. C'est exactement la correction deja faite dans
+# `test_p3u2_inbound.py` pour la meme raison.
+_DEBUT_R4 = SRC.index("# P3-R4 — LE CONTENU REEL DES REPONSES ENTRANTES")
+_BANNIERE = "\n# " + "=" * 76 + "\n# "
+_SUIVANTE = SRC.find(_BANNIERE, SRC.index("\n\n", _DEBUT_R4))
+BLOC_R4 = SRC[_DEBUT_R4:_SUIVANTE if _SUIVANTE != -1 else len(SRC)]
 # LE CODE SEUL, SANS LES COMMENTAIRES. L'en-tete du lot NOMME les quatre champs
 # Afroboost pour dire qu'ils sont interdits : c'est de la prose, et l'interdire
 # obligerait a documenter la regle sans pouvoir l'ecrire. Ce qui doit rester

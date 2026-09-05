@@ -822,12 +822,24 @@ describe('P3-S3-B — préparation de campagne', () => {
        et ne touche ni au prospect, ni à la campagne, ni à Resend. On le NOMME
        plutôt que d'assouplir la comparaison : une garde de périmètre qui
        accepterait n'importe quoi ne garderait plus rien. */
+    /* `[\s\S]*` et non `.*` : un appel écrit sur DEUX lignes (celui de
+       l'analyse IA l'est) laissait sinon « axios.post(\n » collé devant le
+       chemin, et le recensement accusait une route qui n'existe pas. Le point
+       ne traverse pas les sauts de ligne en JavaScript. */
     const posts = (source.match(/axios\.post\(\s*`\$\{base\}([^`]*)`/g) || [])
-      .map((m) => m.replace(/.*\$\{base\}/, '').replace(/`.*/, ''));
+      .map((m) => m.replace(/[\s\S]*\$\{base\}/, '').replace(/`[\s\S]*/, ''));
+    /* READ-P1 / AI-P1 ajoutent TROIS POST, et on les nomme un par un.
+       Aucun n'est un envoi : `/lu` enregistre que le coach a ouvert la
+       réponse, `/traite` qu'il a agi dessus, `/analyser` range un brouillon
+       sans rien expédier. Ils écrivent tous sur la réponse REÇUE — jamais sur
+       une fiche prospect, jamais vers Resend. */
     expect(new Set(posts)).toEqual(new Set([
       '/prospect-campaigns/prepare',
       '/prospect-campaigns/${campagne.id}/approve',
       '/prospect-agenda/${encodeURIComponent(refOuverte)}/appointment',
+      '/prospect-inbound/${encodeURIComponent(id)}/lu',
+      '/prospect-inbound/${encodeURIComponent(id)}/traite',
+      '/prospect-inbound/${encodeURIComponent(id)}/analyser',
     ]));
   });
 
@@ -1120,12 +1132,18 @@ const reponseFictive = (extra = {}) => ({
 });
 
 describe('P3-U3 — les réponses reçues', () => {
+  /* READ-P1 : le serveur rend DEUX compteurs à côté des messages. Le faux les
+     dérive de la même page pour rester fidèle — mais l'écran, lui, ne les
+     recalcule jamais : il affiche ce que le serveur a compté sur la portée
+     complète du coach, pagination comprise. */
   const avecReponses = (messages, en_attente = 0) => {
     mockEtatParSection = {
       prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
       campagnes: { etat: SECTION.OK, donnees: { total: 0, campaigns: [] } },
       reponses: { etat: SECTION.OK,
-                  donnees: { messages, total: messages.length, en_attente } },
+                  donnees: { messages, total: messages.length, en_attente,
+                             non_lues: messages.filter((m) => !m.read_at).length,
+                             a_repondre: messages.filter((m) => !m.traite_at).length } },
     };
   };
 
@@ -1204,14 +1222,74 @@ describe('P3-U3 — les réponses reçues', () => {
     expect(tous('[data-testid="reponse-ligne"]').length).toBe(2);
   });
 
-  test('AUCUN bouton d’envoi ou de réponse n’apparaît dans ce panneau', async () => {
+  /* AI-P1 A DONNÉ DES BOUTONS À CE PANNEAU, ET LA GARDE CHANGE DE FORME.
+     Exiger ZÉRO bouton était la façon la plus simple de prouver « rien ne
+     part d'ici » tant que le panneau était une liste morte. Il est devenu un
+     outil de travail : on ouvre une réponse, on l'analyse, on la marque
+     traitée. Ce qui doit rester vrai n'est donc plus « aucun bouton » mais
+     « aucun bouton n'EXPÉDIE quoi que ce soit » — et cela se vérifie sur les
+     libellés ET sur les routes, pas sur un décompte. */
+  test('AUCUN bouton n’expédie quoi que ce soit depuis ce panneau', async () => {
     avecReponses([reponseFictive()]);
     await monter(<ProspectsSection API="/api" />);
-    expect(par('reponses-recues').querySelectorAll('button').length).toBe(0);
+    const libelles = [...par('reponses-recues').querySelectorAll('button')]
+      .map((b) => b.textContent.trim().toLowerCase());
+    expect(libelles.length).toBeGreaterThan(0);
+    libelles.forEach((libelle) => {
+      expect(libelle).not.toMatch(/envoyer|expédier|répondre au|relancer|contacter|send/);
+    });
+    // Et le panneau ne connaît aucune route d'envoi.
+    const bloc = SOURCE_C.slice(SOURCE_C.indexOf('LES RÉPONSES REÇUES'),
+                                SOURCE_C.indexOf('{messageCampagne &&'));
+    ['/send', '/launch', '/dispatch', '/execute', '/retry', 'resend']
+      .forEach((chemin) => { expect(bloc).not.toContain(chemin); });
+  });
+
+  test('une réponse jamais ouverte porte NOUVEAU et À RÉPONDRE', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('badge-nouveau')).toBeTruthy();
+    expect(par('badge-a-repondre')).toBeTruthy();
+    expect(par('badge-traite')).toBeFalsy();
+  });
+
+  test('une réponse déjà ouverte perd NOUVEAU mais garde À RÉPONDRE', async () => {
+    avecReponses([reponseFictive({ read_at: '2026-09-05T10:00:00Z' })]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('badge-nouveau')).toBeFalsy();
+    expect(par('badge-a-repondre')).toBeTruthy();
+  });
+
+  test('une réponse traitée porte TRAITÉ, plus À RÉPONDRE', async () => {
+    avecReponses([reponseFictive({ read_at: '2026-09-05T10:00:00Z',
+                                   traite_at: '2026-09-05T11:00:00Z' })]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('badge-traite')).toBeTruthy();
+    expect(par('badge-a-repondre')).toBeFalsy();
+  });
+
+  test('AFFICHER la liste n’appelle JAMAIS la route de lecture', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    const appels = axios.post.mock.calls.map((c) => String(c[0]));
+    expect(appels.some((u) => u.includes('/lu'))).toBe(false);
+  });
+
+  test('« Voir la réponse » est le SEUL chemin qui marque comme lu', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 0, a_repondre: 1 } });
+    axios.get.mockResolvedValue({ data: { brouillon: null } });
+    await act(async () => { par('voir-reponse').click(); });
+    const appels = axios.post.mock.calls.map((c) => String(c[0]));
+    expect(appels.filter((u) => u.includes('/lu')).length).toBe(1);
   });
 
   test('le panneau n’utilise aucune couleur codée en dur', () => {
-    const bloc = SOURCE_C.slice(SOURCE_C.indexOf('P3-U3 : LES RÉPONSES REÇUES'),
+    /* Le marqueur ne nomme plus UN lot : READ-P1 et AI-P1 se sont ajoutés au
+       même bandeau, et un marqueur qui épelle la liste des lots casse à chaque
+       nouveau. On vise ce qui ne bougera pas : le titre du panneau. */
+    const bloc = SOURCE_C.slice(SOURCE_C.indexOf('LES RÉPONSES REÇUES'),
                                 SOURCE_C.indexOf('{messageCampagne &&'));
     const hex = bloc.match(/#[0-9a-fA-F]{6}/g) || [];
     expect(hex).toEqual([]);

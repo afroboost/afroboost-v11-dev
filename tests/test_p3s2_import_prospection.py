@@ -580,12 +580,28 @@ _ROUTES_ECRAN = set(re.findall(r"\$\{base\}/([a-z-]+)", ECRAN))
 # d'assouplir la comparaison — une garde de périmètre qui accepterait
 # n'importe quoi ne garderait plus rien.
 verifier("8a. l'écran n'appelle que partner-prospects, prospect-campaigns, "
-         "prospect-inbound (P3-U3) et prospect-agenda (CAL-3)",
+         "prospect-inbound (P3-U3), prospect-agenda (CAL-3) et google (statut)",
          _ROUTES_ECRAN == {"partner-prospects", "prospect-campaigns",
-                           "prospect-inbound", "prospect-agenda"},
+                           "prospect-inbound", "prospect-agenda", "google"},
          str(_ROUTES_ECRAN))
-verifier("8a-ter. `prospect-inbound` n'est appelée qu'en LECTURE",
-         not re.search(r"axios\.(post|patch|put|delete)\([^)]*prospect-inbound", ECRAN))
+# READ-P1 / AI-P1 — `prospect-inbound` N'EST PLUS EN LECTURE SEULE, ET C'EST LE
+# LOT. Trois écritures y sont ajoutées EN CONSCIENCE, et elles sont nommées une
+# par une plutôt que d'assouplir la garde :
+#   /lu       — le coach a OUVERT cette réponse (le seul chemin qui marque lu) ;
+#   /traite   — le coach a AGI dessus (décision humaine, réversible) ;
+#   /analyser — l'IA range un brouillon, sans rien envoyer ni rien marquer.
+# Ce qui reste interdit est ce qui compte : aucun PUT, aucun DELETE, aucun
+# chemin d'envoi. Une garde qui accepterait n'importe quel verbe ne garderait
+# plus rien.
+_SOUS_ROUTES = set(re.findall(
+    r"prospect-inbound/\$\{encodeURIComponent\(id\)\}(/[a-z]+)", ECRAN))
+verifier("8a-ter. `prospect-inbound` n'expose que trois écritures d'état "
+         "et une lecture de brouillon — jamais un PUT ni un DELETE",
+         _SOUS_ROUTES == {"/lu", "/traite", "/analyser", "/brouillon"}
+         and not re.search(r"axios\.(put|delete)\([^)]*prospect-inbound", ECRAN),
+         str(_SOUS_ROUTES))
+verifier("8a-quater. `/brouillon` reste une LECTURE — jamais un POST",
+         not re.search(r"axios\.post\([^)]*prospect-inbound[^)]*brouillon", ECRAN))
 verifier("8a-bis. aucune route d'envoi, de lancement ou d'execution",
          not re.search(r"/(send|launch|dispatch|execute|retry)\b", ECRAN))
 verifier("8b. ni suppression ni PUT : seuls GET, POST et PATCH existent",
@@ -600,7 +616,12 @@ verifier("8b-bis. les POST de l'écran visent la préparation, l'approbation "
          set(re.findall(r"axios\.post\(\s*`\$\{base\}(/[^`]*)`", ECRAN))
          == {"/prospect-campaigns/prepare",
              "/prospect-campaigns/${campagne.id}/approve",
-             "/prospect-agenda/${encodeURIComponent(refOuverte)}/appointment"},
+             "/prospect-agenda/${encodeURIComponent(refOuverte)}/appointment",
+             # READ-P1 / AI-P1 : trois POST de plus, tous sur la réponse REÇUE.
+             # Aucun n'écrit sur une fiche prospect, aucun ne parle à Resend.
+             "/prospect-inbound/${encodeURIComponent(id)}/lu",
+             "/prospect-inbound/${encodeURIComponent(id)}/traite",
+             "/prospect-inbound/${encodeURIComponent(id)}/analyser"},
          str(set(re.findall(r"axios\.post\(\s*`\$\{base\}(/[^`]*)`", ECRAN))))
 verifier("8b-quater. aucun de ces POST n'écrit sur une fiche prospect",
          "/partner-prospects" not in str(

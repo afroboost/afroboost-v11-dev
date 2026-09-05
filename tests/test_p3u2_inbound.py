@@ -550,7 +550,11 @@ _index_u2 = [a for a in _appels_index
 _mots_u2 = [k.arg for a in _index_u2 for k in a.keywords]
 verifier("14a. les index de P3-U2 utilisent `partialFilterExpression`, jamais `sparse`",
          'partialFilterExpression={"dedupe_key": {"$type": "string"}}' in SRC
-         and "sparse" not in _mots_u2 and len(_index_u2) == 3,
+         # READ-P1 ajoute DEUX index de lecture (`read_at`, `traite_at`) sur cette
+         # meme collection : le recensement passe de 3 a 5. Ce qui est verifie ici
+         # n'est pas le NOMBRE — c'est que pas un seul de ces index n'emploie
+         # `sparse`, et que le seul index UNIQUE porte son filtre partiel.
+         and "sparse" not in _mots_u2 and len(_index_u2) == 5,
          "%d index, mots-cles %s" % (len(_index_u2), sorted(set(_mots_u2))))
 verifier("14b. le tri pagine porte une SECONDE cle unique (ordre TOTAL)",
          '.sort([("received_at", -1), ("id", 1)])' in SRC)
