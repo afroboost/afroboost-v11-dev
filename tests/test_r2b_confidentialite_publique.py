@@ -138,6 +138,27 @@ cpub2 = S.r2b_coach_public(dict(COACH, stripe_connect_id="acct_x",
 for secret in ("stripe_connect_id", "whatsapp", "password_hash"):
     verifier("3e. « %s » non transmis" % secret, secret not in cpub2)
 
+print("\n3-bis. LES COURS — LA FUITE QUE CE BANC N'AVAIT PAS VUE")
+# CE BLOC EXISTE A CAUSE D'UN ECHEC. Le banc validait `r2b_offre_publique` et
+# `r2b_coach_public` — les deux fonctions qu'on venait d'ecrire — et concluait
+# « aucune fuite ». La production a rendu 20 adresses sur la vitrine et 18 sur
+# /api/courses : les COURS, troisieme tableau de la reponse, n'etaient filtres
+# par personne. On teste desormais la CHARGE UTILE, pas le filtre.
+COURS = {"id": "c-1", "name": "Silent Lakeside", "weekday": 3, "time": "18:30",
+         "locationName": "Bord du Lac", "location": "Bord du Lac",
+         "mapsUrl": "https://maps/x", "visible": True, "archived": False,
+         "audio_tracks": [], "region": "neuchatel",
+         "coach_id": "coach.prive@exemple.test",        # 🔴
+         "reminder_rules": [{"h": 24}], "reminders_enabled": True}
+_cp = S.r2b_cours_public(COURS)
+verifier("3f. `coach_id` ABSENT du cours public", "coach_id" not in _cp, sorted(_cp))
+verifier("3g. aucun e-mail, balayage recursif", emails_trouves(_cp) == [])
+for champ in ("id", "name", "weekday", "time", "locationName", "location",
+              "mapsUrl", "visible", "audio_tracks", "region"):
+    verifier("3h. l'agenda garde `%s`" % champ, champ in _cp)
+for interne in ("reminder_rules", "reminders_enabled", "reminders_updated_at"):
+    verifier("3i. le reglage interne « %s » ne sort pas" % interne, interne not in _cp)
+
 print("\n4. LES QUATRE ROUTES PUBLIQUES SONT COUVERTES")
 verifier("4a. /offers — branche publique filtree",
          "return [r2b_offre_publique(o) for o in _publiques]" in SRC)
@@ -152,6 +173,15 @@ verifier("4e. /coach/vitrine — coach ET offres filtres",
          and "[r2b_offre_publique(o) for o in offers]" in SRC_COACH)
 verifier("4f. la vitrine rend `username` a la place de l'e-mail",
          '_coach_public["username"] = username' in SRC_COACH)
+verifier("4g. la vitrine filtre AUSSI ses cours",
+         '"courses": _cours_publics' in SRC_COACH
+         and "[r2b_cours_public(c) for c in courses]" in SRC_COACH)
+verifier("4h. /courses — la branche publique filtre",
+         "return [r2b_cours_public(c) for c in courses]" in SRC)
+verifier("4i. ... et `scope=mine` de /courses reste intact",
+         "return out" in SRC and "r2b_cours_public" not in
+         SRC[SRC.index('if scope == "mine":', SRC.index('@api_router.get("/courses"')):
+             SRC.index("courses_raw = await db.courses.find")])
 
 print("\n5. LA REGRESSION SILENCIEUSE QUI GUETTAIT LES COMMENTAIRES")
 verifier("5a. /comments traduit un `username` en e-mail, cote serveur",

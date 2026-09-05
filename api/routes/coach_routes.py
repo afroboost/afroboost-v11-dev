@@ -662,12 +662,16 @@ async def get_coach_vitrine(username: str):
     # celui de l'URL, deja public par construction. Il remplace l'e-mail pour
     # la seule chose que le navigateur en faisait — retrouver les commentaires
     # de cette vitrine.
-    from api.server import r2b_coach_public, r2b_offre_publique
+    # R2b-2 : les COURS passaient encore bruts — 20 adresses e-mail rendues sur
+    # une page publique. Le filtre des offres ne couvrait qu'un des trois
+    # tableaux de cette reponse.
+    from api.server import r2b_coach_public, r2b_offre_publique, r2b_cours_public
     _coach_public = r2b_coach_public(coach)
     _coach_public["username"] = username
+    _cours_publics = [r2b_cours_public(c) for c in courses]
     return {"coach": _coach_public,
             "offers": [r2b_offre_publique(o) for o in offers],
-            "courses": courses, "courses_count": len(courses),
+            "courses": _cours_publics, "courses_count": len(courses),
             "offers_count": len(offers), "concept": concept_data}
 
 # === STRIPE CONNECT ===

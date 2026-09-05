@@ -1951,8 +1951,12 @@ async def get_courses(request: Request, scope: str = ""):
         if "locationName" in course_copy:
             course_copy["location"] = course_copy["locationName"]
         courses.append(course_copy)
-    
-    return courses
+
+    # R2b-2 : cette branche sert un visiteur ANONYME. `coach_id` est l'e-mail
+    # du coach — 18 adresses etaient rendues ici. La branche `scope=mine`
+    # ci-dessus n'est PAS touchee : un coach qui demande SES cours voit son
+    # propre e-mail, ce qui n'est une fuite pour personne.
+    return [r2b_cours_public(c) for c in courses]
 
 # LOT B3-S1.3 — LES OCCURRENCES, MAIS PUBLIQUES.
 #
@@ -2384,6 +2388,35 @@ def r2b_coach_public(coach) -> dict:
     """Un coach tel qu'une vitrine peut le montrer. PURE, sans e-mail."""
     d = dict(coach or {})
     return {c: d[c] for c in R2B_CLES_COACH_PUBLIC if c in d}
+
+
+# R2b-2 — LES COURS AUSSI. Trouve en PRODUCTION, pas par un test.
+#
+# R2b avait ferme le coach et les offres de la vitrine ; il avait laissé les
+# COURS passer bruts. Or un cours porte lui aussi `coach_id`, c'est-a-dire une
+# adresse e-mail : `GET /api/coach/vitrine/{username}` en rendait 20, et
+# `GET /api/courses` — public lui aussi — 18. La liste blanche des offres
+# donnait un faux sentiment de securite parce qu'elle ne couvrait qu'un des
+# trois tableaux de la reponse.
+#
+# LECON RETENUE DANS LE BANC : verifier la CHARGE UTILE COMPLETE d'une route,
+# pas seulement la fonction de filtrage qu'on vient d'ecrire.
+#
+# Les reglages internes du coach (`reminder_rules`, `reminders_enabled`,
+# `reminders_updated_at`) sortent au passage : aucun ecran public ne les lit,
+# et ils decrivent l'organisation du coach, pas la seance.
+R2B_CLES_COURS_PUBLIC = (
+    "id", "name", "title", "description", "date", "time", "weekday",
+    "location", "locationName", "mapsUrl", "region", "visible", "archived",
+    "audio_tracks", "playlist", "agenda_abonne", "likes", "maxCapacity",
+    "duration_minutes", "max_participants",
+)
+
+
+def r2b_cours_public(cours) -> dict:
+    """Un cours tel qu'une page publique peut le montrer. PURE, sans e-mail."""
+    d = dict(cours or {})
+    return {c: d[c] for c in R2B_CLES_COURS_PUBLIC if c in d}
 
 
 @api_router.get("/offers", response_model=List[Offer])
