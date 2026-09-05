@@ -840,6 +840,10 @@ describe('P3-S3-B — préparation de campagne', () => {
       '/prospect-inbound/${encodeURIComponent(id)}/lu',
       '/prospect-inbound/${encodeURIComponent(id)}/traite',
       '/prospect-inbound/${encodeURIComponent(id)}/analyser',
+      /* AI-P3 : une note raconte une action HUMAINE (appel, WhatsApp,
+         rencontre). Elle n'envoie rien, ne touche pas la fiche prospect, et
+         n'écrit jamais dans le message reçu — qui reste immuable. */
+      '/prospect-inbound/${encodeURIComponent(id)}/notes',
     ]));
   });
 
@@ -1136,14 +1140,28 @@ describe('P3-U3 — les réponses reçues', () => {
      dérive de la même page pour rester fidèle — mais l'écran, lui, ne les
      recalcule jamais : il affiche ce que le serveur a compté sur la portée
      complète du coach, pagination comprise. */
+  /* AI-P3 : le serveur rend le STATUT COMMERCIAL de chaque message et les cinq
+     compteurs. Le faux les dérive de la même façon — mais l'écran, lui, ne
+     recalcule JAMAIS : il affiche ce que le serveur a dérivé, sinon deux règles
+     coexisteraient et finiraient par diverger. */
   const avecReponses = (messages, en_attente = 0) => {
+    const avecStatut = messages.map((m) => ({
+      ...m,
+      statut_commercial: m.statut_commercial
+        || (m.traite_at ? 'traite' : 'a_repondre'),
+    }));
+    const compte = (etat) => avecStatut.filter((m) => m.statut_commercial === etat).length;
     mockEtatParSection = {
       prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
       campagnes: { etat: SECTION.OK, donnees: { total: 0, campaigns: [] } },
       reponses: { etat: SECTION.OK,
-                  donnees: { messages, total: messages.length, en_attente,
-                             non_lues: messages.filter((m) => !m.read_at).length,
-                             a_repondre: messages.filter((m) => !m.traite_at).length } },
+                  donnees: { messages: avecStatut, total: avecStatut.length, en_attente,
+                             non_lues: avecStatut.filter((m) => !m.read_at).length,
+                             a_repondre: compte('a_repondre'),
+                             appel_a_faire: compte('appel_a_faire'),
+                             en_attente_statut: compte('en_attente'),
+                             refus: compte('refus'),
+                             traite: compte('traite') } },
     };
   };
 
@@ -1294,23 +1312,47 @@ describe('P3-U3 — les réponses reçues', () => {
     avecReponses([reponseFictive()]);
     await monter(<ProspectsSection API="/api" />);
     expect(par('badge-nouveau')).toBeTruthy();
-    expect(par('badge-a-repondre')).toBeTruthy();
-    expect(par('badge-traite')).toBeFalsy();
+    expect(par('badge-statut-a_repondre')).toBeTruthy();
+    expect(par('badge-statut-traite')).toBeFalsy();
   });
 
   test('une réponse déjà ouverte perd NOUVEAU mais garde À RÉPONDRE', async () => {
     avecReponses([reponseFictive({ read_at: '2026-09-05T10:00:00Z' })]);
     await monter(<ProspectsSection API="/api" />);
     expect(par('badge-nouveau')).toBeFalsy();
-    expect(par('badge-a-repondre')).toBeTruthy();
+    expect(par('badge-statut-a_repondre')).toBeTruthy();
   });
 
   test('une réponse traitée porte TRAITÉ, plus À RÉPONDRE', async () => {
     avecReponses([reponseFictive({ read_at: '2026-09-05T10:00:00Z',
-                                   traite_at: '2026-09-05T11:00:00Z' })]);
+                                   traite_at: '2026-09-05T11:00:00Z',
+                                   statut_commercial: 'traite' })]);
     await monter(<ProspectsSection API="/api" />);
-    expect(par('badge-traite')).toBeTruthy();
-    expect(par('badge-a-repondre')).toBeFalsy();
+    expect(par('badge-statut-traite')).toBeTruthy();
+    expect(par('badge-statut-a_repondre')).toBeFalsy();
+  });
+
+  /* AI-P3 — LES CINQ ÉTATS, ET LEUR INDÉPENDANCE VIS-À-VIS DE LA LECTURE.
+     Un message peut être LU et EN ATTENTE, ou NON LU et REFUS : ce sont deux
+     dimensions, elles ne se déduisent pas l'une de l'autre. */
+  test('l’état commercial vient du serveur, jamais d’un calcul de l’écran', async () => {
+    avecReponses([reponseFictive({ statut_commercial: 'en_attente' })]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('badge-statut-en_attente').textContent).toContain('EN ATTENTE');
+    expect(par('badge-statut-a_repondre')).toBeFalsy();
+  });
+
+  test('EN ATTENTE et NON LU coexistent — deux dimensions distinctes', async () => {
+    avecReponses([reponseFictive({ statut_commercial: 'en_attente' })]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('badge-nouveau')).toBeTruthy();
+    expect(par('badge-statut-en_attente')).toBeTruthy();
+  });
+
+  test('un REFUS s’affiche comme tel, pas comme « à répondre »', async () => {
+    avecReponses([reponseFictive({ statut_commercial: 'refus' })]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('badge-statut-refus').textContent).toContain('REFUS');
   });
 
   test('AFFICHER la liste n’appelle JAMAIS la route de lecture', async () => {
@@ -1458,7 +1500,7 @@ describe('P3-U3 — les réponses reçues', () => {
     expect(carte.textContent).toContain('ETU-04');
     expect(carte.textContent).toContain('hotel@beaulac.exemple.test');
     expect(par('corps-original')).toBeTruthy();
-    expect(par('badge-a-repondre')).toBeTruthy();
+    expect(par('badge-statut-a_repondre')).toBeTruthy();
   });
 
   test('les quatre tons de régénération ne partent qu’avec un brouillon', async () => {
@@ -1494,7 +1536,14 @@ describe('P3-U3 — les réponses reçues', () => {
                                 SOURCE_C.indexOf('{messageCampagne &&'));
     // Aucune largeur fixe, aucune colonne rigide, aucun défilement latéral.
     expect(bloc).not.toMatch(/width:\s*'\d+px'/);
-    expect(bloc).not.toMatch(/minWidth:\s*'\d{3,}px'/);
+    /* UN SEUIL, PAS UN NOMBRE DE CHIFFRES. Interdire « trois chiffres »
+       condamnait `minWidth: 160px` — qui, dans un conteneur `flexWrap`, dit
+       seulement « replie-toi plutôt que de me comprimer sous 160 px » et ne
+       déborde sur aucun téléphone. Ce qui déborde vraiment, c'est un minimum
+       plus large que l'écran : 280 px est la largeur de contenu du plus étroit
+       encore en service (iPhone SE, 320 px moins les marges). */
+    const minima = [...bloc.matchAll(/minWidth:\s*'(\d+)px'/g)].map((m) => Number(m[1]));
+    minima.forEach((v) => expect(v).toBeLessThan(280));
     expect(bloc).not.toContain('overflowX');
     expect(bloc).not.toContain('whiteSpace: \'nowrap\', width');
     // L'adresse, seule chaîne insécable, est bornée par une ellipse.

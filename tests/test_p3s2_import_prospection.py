@@ -595,9 +595,13 @@ verifier("8a. l'écran n'appelle que partner-prospects, prospect-campaigns, "
 # plus rien.
 _SOUS_ROUTES = set(re.findall(
     r"prospect-inbound/\$\{encodeURIComponent\(id\)\}(/[a-z]+)", ECRAN))
-verifier("8a-ter. `prospect-inbound` n'expose que trois écritures d'état "
-         "et une lecture de brouillon — jamais un PUT ni un DELETE",
-         _SOUS_ROUTES == {"/lu", "/traite", "/analyser", "/brouillon"}
+# AI-P3 AJOUTE `/notes`, ET ON LA NOMME. Une note raconte une action HUMAINE
+# (appel, WhatsApp, rencontre) : elle n'envoie rien, n'écrit jamais dans le
+# message reçu — qui reste immuable — et ne touche pas la fiche prospect. Ce
+# qui reste interdit est ce qui compte : aucun PUT, aucun DELETE.
+verifier("8a-ter. `prospect-inbound` n'expose que des écritures d'état, "
+         "d'analyse et de notes — jamais un PUT ni un DELETE",
+         _SOUS_ROUTES == {"/lu", "/traite", "/analyser", "/brouillon", "/notes"}
          and not re.search(r"axios\.(put|delete)\([^)]*prospect-inbound", ECRAN),
          str(_SOUS_ROUTES))
 verifier("8a-quater. `/brouillon` reste une LECTURE — jamais un POST",
@@ -621,7 +625,9 @@ verifier("8b-bis. les POST de l'écran visent la préparation, l'approbation "
              # Aucun n'écrit sur une fiche prospect, aucun ne parle à Resend.
              "/prospect-inbound/${encodeURIComponent(id)}/lu",
              "/prospect-inbound/${encodeURIComponent(id)}/traite",
-             "/prospect-inbound/${encodeURIComponent(id)}/analyser"},
+             "/prospect-inbound/${encodeURIComponent(id)}/analyser",
+             # AI-P3 : une action humaine consignée, jamais un envoi.
+             "/prospect-inbound/${encodeURIComponent(id)}/notes"},
          str(set(re.findall(r"axios\.post\(\s*`\$\{base\}(/[^`]*)`", ECRAN))))
 verifier("8b-quater. aucun de ces POST n'écrit sur une fiche prospect",
          "/partner-prospects" not in str(

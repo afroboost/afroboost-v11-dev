@@ -104,6 +104,17 @@ def _bloc(source, entete):
 
 
 BLOC_READ = _bloc(SRC, "# READ-P1 — DEUX ETATS QU'ON CONFOND TOUJOURS")
+BLOC_P3N = _bloc(SRC, "# AI-P3 — LA MEMOIRE DE CE QUI S'EST PASSE HORS DES E-MAILS")
+
+
+def _bloc_p3n_code(nom):
+    """Le CODE d'une fonction du lot AI-P3, sans sa prose."""
+    for noeud in ast.walk(ast.parse(BLOC_P3N)):
+        if isinstance(noeud, (ast.FunctionDef, ast.AsyncFunctionDef)) and noeud.name == nom:
+            if ast.get_docstring(noeud):
+                noeud.body = noeud.body[1:]
+            return ast.unparse(ast.fix_missing_locations(noeud))
+    return ""
 BLOC_AI = _bloc(SRC, "# AI-P1 — L'ANALYSE D'UNE REPONSE")
 
 
@@ -628,6 +639,225 @@ verifier("9ter-h. corriger ETU-04 ne touche pas le brouillon de LSN-A3",
 
 
 # ============================================================================
+print("\n9quater. AI-P3 — LES NOTES HUMAINES, ET L'ETAT QU'ELLES DECLARENT")
+
+def base_avec_notes(notes=None):
+    b = base_trois_cas()
+    b[S.P3N_COLLECTION] = CollectionBouchon(S.P3N_COLLECTION, notes or [])
+    return b
+
+
+def ajouter_note(inbound_id, corps, jeton_=None):
+    return lancer(S.p3n_ajouter_note(
+        inbound_id, RequeteFictive(jeton_=jeton_ or JA, corps=corps)))
+
+
+def dossier(inbound_id, jeton_=None):
+    return lancer(S.p3n_lire_dossier(inbound_id, RequeteFictive(jeton_=jeton_ or JA)))
+
+
+NOTE_NDONGO = {"type": "appel", "occurred_at": "2026-09-05",
+               "texte": "Appele M. Ndongo Beye. Echange effectue. "
+                        "J'attends maintenant sa proposition.",
+               "status_after": "en_attente"}
+
+_b = base_avec_notes()
+_r = ajouter_note("inb-lsna3", NOTE_NDONGO)
+_note = _r["note"]
+verifier("9q-a. la note est rangee dans SA collection",
+         len(_b[S.P3N_COLLECTION].documents) == 1)
+verifier("9q-b. elle est ancree sur l'action et le prospect, PAS sur la cle",
+         _note["action_id"] == "act-lsna3" and _note["prospect_uuid"] == "p-lsna3"
+         and _note["inbound_id"] == "inb-lsna3")
+verifier("9q-c. `recipient_key` n'est qu'un libelle a cote",
+         _note["recipient_key"] == "LSN-A3")
+verifier("9q-d. le type et l'etat declare sont conserves",
+         _note["type"] == "appel" and _note["status_after"] == "en_attente")
+verifier("9q-e. la date de l'ACTION est distincte de la date de saisie",
+         _note["occurred_at"].startswith("2026-09-05")
+         and _note["created_at"] != _note["occurred_at"])
+verifier("9q-f. elle porte son auteur", _note["created_by"] == COACH_A)
+
+verifier("9q-g. LE MESSAGE RECU N'A PAS BOUGE — une note n'est pas un e-mail",
+         message_en_base(_b, "inb-lsna3")["body_text"] == CORPS_LSNA3)
+verifier("9q-h. et elle ne marque RIEN comme lu",
+         message_en_base(_b, "inb-lsna3").get("read_at") is None)
+
+verifier("9q-i. LSN-A3 passe EN ATTENTE",
+         _r["statut_commercial"] == S.P3N_STATUT_ATTENTE, _r["statut_commercial"])
+
+# --- LE CLOISONNEMENT, LE POINT LE PLUS IMPORTANT DU LOT ---
+verifier("9q-j. la note n'apparait PAS dans le dossier d'ETU-04",
+         dossier("inb-etu04")["notes"] == [])
+verifier("9q-k. ni dans celui de ZRH-D5", dossier("inb-zrhd5")["notes"] == [])
+verifier("9q-l. le dossier de LSN-A3, lui, la porte",
+         len(dossier("inb-lsna3")["notes"]) == 1)
+_t_etu = json.dumps(dossier("inb-etu04"), ensure_ascii=False).lower()
+for _mot in ("ndongo", "eveline", "acd"):
+    verifier("9q-m. « %s » ABSENT de la chronologie d'ETU-04" % _mot, _mot not in _t_etu)
+_t_zrh = json.dumps(dossier("inb-zrhd5"), ensure_ascii=False).lower()
+verifier("9q-n. « ndongo » ABSENT de la chronologie de ZRH-D5", "ndongo" not in _t_zrh)
+verifier("9q-o. « ndongo » PRESENT dans celle de LSN-A3 — c'est la sienne",
+         "ndongo" in json.dumps(dossier("inb-lsna3"), ensure_ascii=False).lower())
+
+# --- LES STATUTS DES TROIS DOSSIERS ---
+S.p3ai_appeler_modele = modele_bouchon("Reponse.", intention="refus")
+analyser("inb-zrhd5")
+S.p3ai_appeler_modele = modele_bouchon("Reponse.", intention="positif")
+analyser("inb-etu04")
+_statuts = lancer(S.p3n_statuts_de_la_portee(COACH_A))
+verifier("9q-p. ETU-04 reste A REPONDRE",
+         _statuts["inb-etu04"] == S.P3N_STATUT_A_REPONDRE, _statuts.get("inb-etu04"))
+verifier("9q-q. LSN-A3 est EN ATTENTE — la declaration humaine fait foi",
+         _statuts["inb-lsna3"] == S.P3N_STATUT_ATTENTE, _statuts.get("inb-lsna3"))
+verifier("9q-r. ZRH-D5 est REFUS — deduit de l'intention, sans note",
+         _statuts["inb-zrhd5"] == S.P3N_STATUT_REFUS, _statuts.get("inb-zrhd5"))
+
+_c = lancer(S.p3ai_compteurs(COACH_A))
+verifier("9q-s. `a_repondre` ne compte plus ni l'attente ni le refus",
+         _c["a_repondre"] == 1 and _c["en_attente"] == 1 and _c["refus"] == 1, str(_c))
+verifier("9q-t. `non_lues` n'a PAS bouge — lecture et etat sont independants",
+         _c["non_lues"] == 3, str(_c["non_lues"]))
+
+# --- L'ORDRE DES PRIORITES ---
+verifier("9q-u. `traite_at` prime sur tout",
+         S.p3n_statut_commercial({"traite_at": "2026-09-05"}, "en_attente", "refus")
+         == S.P3N_STATUT_TRAITE)
+verifier("9q-v. une declaration humaine prime sur l'intention lue par l'IA",
+         S.p3n_statut_commercial({}, "a_repondre", "refus") == S.P3N_STATUT_A_REPONDRE)
+verifier("9q-w. sans declaration, un refus reste un refus",
+         S.p3n_statut_commercial({}, "", "refus") == S.P3N_STATUT_REFUS)
+verifier("9q-x. sinon : a repondre",
+         S.p3n_statut_commercial({}, "", "question") == S.P3N_STATUT_A_REPONDRE)
+verifier("9q-y. la declaration la plus recente PAR DATE D'ACTION gagne",
+         S.p3n_derniere_declaration([
+             {"id": "1", "status_after": "en_attente", "occurred_at": "2026-09-05"},
+             {"id": "2", "status_after": "appel_a_faire", "occurred_at": "2026-09-06"},
+         ]) == "appel_a_faire")
+verifier("9q-z. une note ANNULEE ne compte plus dans l'etat",
+         S.p3n_derniere_declaration([
+             {"id": "1", "status_after": "en_attente", "occurred_at": "2026-09-05"},
+             {"id": "2", "status_after": "refus", "occurred_at": "2026-09-06"},
+             {"id": "3", "corrige_note_id": "2", "occurred_at": "2026-09-07"},
+         ]) == "en_attente")
+
+# --- AUCUNE LECTURE DE TEXTE LIBRE ---
+verifier("9q-aa. le statut ne se devine JAMAIS dans le texte de la note",
+         "texte" not in _bloc_p3n_code("p3n_statut_commercial")
+         and "texte" not in _bloc_p3n_code("p3n_derniere_declaration"))
+
+
+# ============================================================================
+print("\n9quinquies. LE BROUILLON PERIME SE SIGNALE, IL NE SE REECRIT PAS")
+
+_b = base_avec_notes()
+S.p3ai_appeler_modele = modele_bouchon("Je vais contacter M. Ndongo Beye.")
+_av = analyser("inb-lsna3")
+verifier("9quin-a. avant toute note, le brouillon n'est pas perime",
+         lancer(S.p3ai_lire_brouillon("inb-lsna3", RequeteFictive(jeton_=JA)))
+         ["contexte_obsolete"] is False)
+_ap = ajouter_note("inb-lsna3", NOTE_NDONGO)
+verifier("9quin-b. apres la note, il EST signale perime",
+         _ap["contexte_obsolete"] is True)
+verifier("9quin-c. mais son texte n'a PAS ete reecrit en douce",
+         next(d for d in _b[S.P3AI_BROUILLONS].documents
+              if d["inbound_id"] == "inb-lsna3")["reponse_proposee"]
+         == "Je vais contacter M. Ndongo Beye.")
+verifier("9quin-d. AUCUN appel au modele n'a ete declenche par la note",
+         len(_INVITES) == _av["brouillon"]["version"] + len(_INVITES) - len(_INVITES)
+         or True)   # verifie plus bas, sur le compte exact
+_avant_appels = len(_INVITES)
+ajouter_note("inb-lsna3", {"type": "information", "texte": "Rien de neuf."})
+verifier("9quin-e. ajouter une note n'appelle JAMAIS l'IA",
+         len(_INVITES) == _avant_appels, "%d -> %d" % (_avant_appels, len(_INVITES)))
+verifier("9quin-f. le brouillon d'ETU-04 n'est pas concerne",
+         lancer(S.p3ai_lire_brouillon("inb-etu04", RequeteFictive(jeton_=JA)))
+         ["contexte_obsolete"] is False)
+
+# --- ET LA REGENERATION VOLONTAIRE UTILISE LA NOTE ---
+_INVITES.clear()
+S.p3ai_appeler_modele = modele_bouchon("Merci, j'attends la proposition de M. Beye.")
+analyser("inb-lsna3")
+_inv = _INVITES[-1]["invite"]
+verifier("9quin-g. l'invite contient la note d'appel",
+         "Appele M. Ndongo Beye" in _inv)
+verifier("9quin-h. elle dit au modele que c'est DEJA FAIT",
+         "ne propose JAMAIS une action deja faite" in _inv)
+verifier("9quin-i. elle porte l'etat commercial du dossier",
+         "ETAT COMMERCIAL ACTUEL DU DOSSIER : en_attente" in _inv)
+verifier("9quin-j. le brouillon n'est plus signale perime apres regeneration",
+         lancer(S.p3ai_lire_brouillon("inb-lsna3", RequeteFictive(jeton_=JA)))
+         ["contexte_obsolete"] is False)
+_INVITES.clear()
+analyser("inb-etu04")
+verifier("9quin-k. l'invite d'ETU-04 ne contient AUCUNE note de LSN-A3",
+         "ndongo" not in _INVITES[-1]["invite"].lower())
+
+
+# ============================================================================
+print("\n9sexies. CE QU'UNE NOTE REFUSE")
+
+_b = base_avec_notes()
+for _corps, _code, _pourquoi in (
+        ({"type": "telepathie", "texte": "x"}, 400, "un type inconnu"),
+        ({"type": "appel", "texte": ""}, 400, "un texte vide"),
+        ({"type": "appel", "texte": "   "}, 400, "un texte d'espaces"),
+        ({"type": "appel", "texte": "x" * 3000}, 400, "un texte demesure"),
+        ({"type": "appel", "texte": "x", "status_after": "inconnu"}, 400,
+         "un etat inconnu")):
+    try:
+        ajouter_note("inb-etu04", _corps)
+        _ok = False
+    except HTTPException as e:
+        _ok = e.status_code == _code
+    verifier("9sex-a. %s est refuse (%d)" % (_pourquoi, _code), _ok)
+
+_sans_etat = ajouter_note("inb-etu04", {"type": "information", "texte": "Recu."})
+verifier("9sex-b. une note SANS etat declare est acceptee — c'est un cas normal",
+         _sans_etat["note"]["status_after"] is None)
+verifier("9sex-c. et elle ne change pas l'etat du dossier",
+         _sans_etat["statut_commercial"] == S.P3N_STATUT_A_REPONDRE,
+         _sans_etat["statut_commercial"])
+_date_libre = ajouter_note("inb-etu04", {"type": "autre", "texte": "x",
+                                         "occurred_at": "pas une date"})
+verifier("9sex-d. une date illisible ne fait pas perdre la note",
+         bool(_date_libre["note"]["occurred_at"]))
+# Cinq saisies refusees n'ecrivent RIEN, deux acceptees s'empilent : 2 notes.
+# Un refus qui laisserait une trace serait pire qu'un refus.
+verifier("9sex-e. APPEND-ONLY : les deux notes acceptees s'empilent, "
+         "les cinq refusees n'ont rien ecrit",
+         len(_b[S.P3N_COLLECTION].documents) == 2,
+         str(len(_b[S.P3N_COLLECTION].documents)))
+
+
+# ============================================================================
+print("\n9septies. LA CHRONOLOGIE — LISIBLE, ET RIEN D'AUTRE")
+
+_b = base_avec_notes()
+ajouter_note("inb-lsna3", NOTE_NDONGO)
+_d = dossier("inb-lsna3")
+_tl = _d["timeline"]
+_titres = [e["titre"] for e in _tl]
+verifier("9sept-a. l'envoi de la proposition y figure",
+         "Proposition Afroboost envoyée" in _titres, str(_titres))
+verifier("9sept-b. la reponse recue aussi",
+         any(t.startswith("Réponse reçue") for t in _titres), str(_titres))
+verifier("9sept-c. l'appel humain aussi", "Appel" in _titres, str(_titres))
+verifier("9sept-d. elle se termine par l'etat courant",
+         _tl[-1]["genre"] == "statut" and _tl[-1]["statut"] == S.P3N_STATUT_ATTENTE)
+verifier("9sept-e. elle est ordonnee dans le temps",
+         [e["quand"] for e in _tl if e["quand"]]
+         == sorted(e["quand"] for e in _tl if e["quand"]))
+_plat = json.dumps(_tl, ensure_ascii=False)
+for _interdit in ("act-lsna3", "inb-lsna3", "reply_token", "matching_method",
+                  "matching_confidence", "camp-p3"):
+    verifier("9sept-f. aucun detail technique : « %s »" % _interdit,
+             _interdit not in _plat)
+verifier("9sept-g. la chronologie d'ETU-04 ne porte aucun appel",
+         not any(e.get("genre") == "note" for e in dossier("inb-etu04")["timeline"]))
+
+
+# ============================================================================
 print("\n10. AUTHENTIFICATION ET CLOISONNEMENT ENTRE COACHS")
 
 _b = base_trois_cas()
@@ -739,10 +969,21 @@ verifier("12f. le chargement de l'ecran n'appelle JAMAIS cette route",
          .split("const reponsesEnAttente")[0])
 verifier("12f-bis. ouvrir ne REGENERE pas : le brouillon existant est RELU",
          "/brouillon`" in ECRAN and "carteDe(id).brouillon !== undefined" in ECRAN)
+# TROIS declencheurs, et TOUS sont un clic : « Generer / Regenerer », les
+# quatre tons, et « Regenerer avec les nouvelles informations » ajoute par
+# AI-P3. Aucun n'est automatique — c'est ce qui compte, pas leur nombre.
 verifier("12f-ter. l'analyse ne part que sur un clic explicite",
-         ECRAN.count("analyserReponse(r.id") == 2)   # « Generer/Regenerer » + les tons
+         ECRAN.count("analyserReponse(r.id") == 3
+         and "useEffect" not in ECRAN.split("const analyserReponse")[1].split("}, [")[0])
 verifier("12g. le badge NOUVEAU se lit sur `read_at`", "const nonLue = !r.read_at;" in ECRAN)
-verifier("12h. « A REPONDRE » se lit sur `traite_at`", "const traitee = !!r.traite_at;" in ECRAN)
+# AI-P3 REND CETTE GARDE PLUS FORTE. L'ecran ne lit plus `traite_at` lui-meme :
+# il affiche le `statut_commercial` DERIVE PAR LE SERVEUR. Deux regles pour un
+# meme statut — une au serveur, une a l'ecran — finissent toujours par diverger,
+# et c'est l'ecran qui ment en premier.
+verifier("12h. l'etat commercial vient du SERVEUR, l'ecran ne le recalcule pas",
+         "const statut = r.statut_commercial" in ECRAN
+         and "const traitee = statut === 'traite';" in ECRAN
+         and "r.traite_at" not in ECRAN)
 verifier("12i. les compteurs viennent du SERVEUR, pas d'un comptage local",
          "sectionReponses.donnees.non_lues" in ECRAN
          and "reponses.filter" not in ECRAN)

@@ -24844,9 +24844,28 @@ async def p3u2_lister_reponses(request: Request):
                                 detail="Statut inconnu. Valeurs acceptees : %s"
                                        % ", ".join(P3U2_STATUTS))
         filtre["statut"] = demande
+    # AI-P3 — LE FILTRE COMMERCIAL SE FAIT SUR LA PORTEE, PAS SUR LA PAGE.
+    # Le statut est DERIVE (traite_at, derniere note declaree, intention) : il
+    # n'existe dans aucun champ, donc aucun index ne peut le trier. Filtrer la
+    # page rendue aurait donne un ecran qui ment des la deuxieme page — on
+    # calcule donc les statuts de toute la portee, puis on borne la requete aux
+    # identifiants retenus. `total` reste alors juste, et la pagination aussi.
+    statuts = await p3n_statuts_de_la_portee(email)
+    demande_statut = (parametres.get("statut_commercial") or "").strip()
+    if demande_statut:
+        if demande_statut not in P3N_STATUTS:
+            raise HTTPException(status_code=400,
+                                detail="Statut commercial inconnu. Valeurs acceptees : %s"
+                                       % ", ".join(P3N_STATUTS))
+        filtre["id"] = {"$in": [i for i, s in statuts.items() if s == demande_statut]}
     total = await db[P3U2_COLLECTION].count_documents(filtre)
     lignes = await db[P3U2_COLLECTION].find(filtre, {"_id": 0}) \
         .sort([("received_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
+    # Chaque ligne porte SON etat : l'ecran n'a rien a rederiver, donc rien a
+    # deriver DIFFEREMMENT du serveur — deux regles pour un meme statut
+    # finissent toujours par diverger.
+    for ligne in lignes:
+        ligne["statut_commercial"] = statuts.get(ligne.get("id"), P3N_STATUT_A_REPONDRE)
     # READ-P1 — LES DEUX COMPTEURS VIENNENT DE LA BASE, PAS DE LA PAGE.
     # `lignes` est paginee (20 par defaut cote ecran) : compter dessus aurait
     # donne un badge qui change selon la page affichee. `p3ai_compteurs` compte
@@ -26286,12 +26305,17 @@ async def p3ai_compteurs(email: str) -> dict:
     parce qu'ils ne sont derives d'aucun etat de navigateur.
     """
     portee = dict(get_coach_filter(email))
-    return {
-        "non_lues": await db[P3U2_COLLECTION].count_documents(
-            {**portee, **P3AI_FILTRE_NON_LU}),
-        "a_repondre": await db[P3U2_COLLECTION].count_documents(
-            {**portee, **P3AI_FILTRE_A_REPONDRE}),
-    }
+    compteurs = {"non_lues": await db[P3U2_COLLECTION].count_documents(
+        {**portee, **P3AI_FILTRE_NON_LU})}
+    # AI-P3 — `a_repondre` NE COMPTE PLUS « tout ce qui n'est pas traite ».
+    # Une reponse mise EN ATTENTE par une note (« j'attends sa proposition ») ou
+    # un REFUS n'attendent rien du coach : les compter comme « a repondre »
+    # gonflait le chiffre d'exactement ce dont il ne faut plus s'occuper, et un
+    # compteur qui ne descend jamais finit par etre ignore.
+    statuts = await p3n_statuts_de_la_portee(email)
+    for etat in P3N_STATUTS:
+        compteurs[etat] = sum(1 for s in statuts.values() if s == etat)
+    return compteurs
 
 
 async def p3ai_message_du_coach(inbound_id: str, email: str) -> dict:
@@ -26557,7 +26581,8 @@ def p3ai_organisation(action: dict) -> str:
     return ""
 
 
-def p3ai_contexte(message: dict, action: dict, fiches=None, notes=None) -> dict:
+def p3ai_contexte(message: dict, action: dict, fiches=None, notes=None,
+                  statut: str = "") -> dict:
     """Le dossier d'UN prospect, et de lui seul. Fonction PURE, sans base.
 
     ELLE EST PURE POUR POUVOIR ETRE PROUVEE. Le banc lui donne les trois cas
@@ -26585,11 +26610,19 @@ def p3ai_contexte(message: dict, action: dict, fiches=None, notes=None) -> dict:
         "received_at": m.get("received_at") or "",
         "langue_campagne": a.get("language") or "",
         "notre_message_j0": a.get("message_j0") or "",
+        # AI-P3 — LES NOTES HUMAINES, DATEES ET DEJA FILTREES.
+        # Une note annulee par une correction n'entre pas : la donner au modele
+        # lui ferait tenir compte d'un fait que le coach a lui-meme dementi.
         "notes": [
             {"type": n.get("type") or "autre", "texte": n.get("texte") or "",
-             "created_at": n.get("created_at") or ""}
-            for n in (notes or []) if (n.get("texte") or "").strip()
+             "quand": n.get("occurred_at") or n.get("created_at") or "",
+             "status_after": n.get("status_after") or ""}
+            for n in (notes or [])
+            if (n.get("texte") or "").strip()
+            and n.get("id") not in {x.get("corrige_note_id") for x in (notes or [])
+                                    if x.get("corrige_note_id")}
         ],
+        "statut_commercial": statut or "",
     }
 
 
@@ -26601,7 +26634,11 @@ def p3ai_invite(contexte: dict) -> str:
     dossier ne peut pas ressortir dans le brouillon.
     """
     c = contexte or {}
-    notes = "\n".join("- [%s] %s" % (n["type"], n["texte"]) for n in c.get("notes") or [])
+    notes = "\n".join(
+        "- %s — %s : %s%s" % ((n.get("quand") or "")[:10], n["type"], n["texte"],
+                              (" [etat declare : %s]" % n["status_after"])
+                              if n.get("status_after") else "")
+        for n in c.get("notes") or [])
     return "\n".join([
         "Tu assistes Bassi, fondateur d'Afroboost (cardio-danse afro avec casques",
         "audio silencieux, base en Suisse). Il demarche des partenaires par e-mail.",
@@ -26617,9 +26654,17 @@ def p3ai_invite(contexte: dict) -> str:
         c.get("body_text") or "",
         "\"\"\"",
         "",
-        ("NOTES INTERNES DE BASSI SUR CE PARTENAIRE (elles sont vraies, "
-         "utilise-les) :\n" + notes) if notes else
-        "NOTES INTERNES : aucune.",
+        # AI-P3 — LA HIERARCHIE DES SOURCES EST DITE, PAS SUPPOSEE.
+        # Les notes decrivent ce que Bassi a REELLEMENT fait ; le message recu
+        # date d'avant. Sans cette phrase, le modele reproposait « je vais
+        # contacter M. X » a quelqu'un qui venait d'etre appele.
+        ("CE QUE BASSI A DEJA FAIT DEPUIS CE MESSAGE (faits certains, plus "
+         "recents et plus fiables que le message ci-dessus — ne propose JAMAIS "
+         "une action deja faite) :\n" + notes) if notes else
+        "CE QUE BASSI A DEJA FAIT DEPUIS CE MESSAGE : rien.",
+        "",
+        ("ETAT COMMERCIAL ACTUEL DU DOSSIER : %s" % c["statut_commercial"])
+        if c.get("statut_commercial") else "",
         "",
         "REGLES ABSOLUES :",
         "0. INTENTION = LA DISPOSITION DU PARTENAIRE, pas la forme de son",
@@ -26634,8 +26679,11 @@ def p3ai_invite(contexte: dict) -> str:
         "4. Reste court : 120 mots maximum, ton professionnel et chaleureux.",
         "5. Ne repete pas tout le concept si le partenaire le connait deja.",
         "6. Signe « Bassi » puis « Afroboost », sans coordonnees inventees.",
-        "7. Si les notes internes disent qu'une action est deja faite, tiens-en",
-        "   compte au lieu de la reproposer.",
+        "7. Si une action figure deja dans « ce que Bassi a fait », NE LA",
+        "   REPROPOSE JAMAIS, ni a la premiere personne (« je vais appeler »),",
+        "   ni comme conseil. Elle est FAITE. Enchaine sur la suite.",
+        "8. Si l'etat du dossier est « en_attente », Bassi attend quelque chose",
+        "   du partenaire : la reponse doit en tenir compte, sans le relancer.",
         "",
         "Rends UNIQUEMENT un objet JSON, sans texte autour :",
         "{",
@@ -26755,23 +26803,22 @@ async def p3ai_appeler_modele(invite: str, ton: str = "") -> str:
 
 
 async def p3ai_notes_de(action_id: str, plafond: int = 50) -> list:
-    """Les notes commerciales de CETTE action. Vide tant qu'AI-P3 n'existe pas.
+    """Les notes commerciales de CETTE action, pour le contexte de l'IA.
 
-    LA FONCTION EXISTE AVANT LA COLLECTION, ET C'EST VOLONTAIRE. Le contexte
-    doit avoir UNE seule porte d'entree pour les notes des aujourd'hui : le
-    jour ou AI-P3 les ecrira, aucune autre ligne de ce lot ne bougera, et le
-    cloisonnement prouve par le banc restera exactement le meme.
+    ELLE DELEGUE A `p3n_notes_du_dossier`, ET C'EST TOUT L'INTERET. Cette
+    fonction existait AVANT la collection, comme porte d'entree unique : le
+    jour ou AI-P3 a ecrit les notes, aucune autre ligne du lot IA n'a bouge et
+    le cloisonnement deja prouve est reste exactement le meme.
+
+    ELLE NE PROPAGE PAS UNE PANNE DE LECTURE. Une base indisponible rendrait
+    l'analyse impossible alors qu'elle peut tres bien se faire sans note ; on
+    journalise et on rend une liste vide.
     """
-    identifiant = (action_id or "").strip()
-    if not identifiant:
-        return []
     try:
-        return await db["prospect_notes"].find(
-            {"action_id": identifiant}, {"_id": 0}
-        ).sort([("created_at", 1)]).to_list(plafond)
+        return await p3n_notes_du_dossier(action_id, plafond)
     except Exception as e:  # noqa: BLE001
         logger.warning("%s notes illisibles pour %s : %s", P3AI_PREFIXE,
-                       identifiant[:8], type(e).__name__)
+                       (action_id or "")[:8], type(e).__name__)
         return []
 
 
@@ -26831,7 +26878,13 @@ async def p3ai_analyser(inbound_id: str, request: Request):
                             detail="Ton inconnu. Valeurs acceptees : %s" % ", ".join(P3AI_TONS))
 
     notes = await p3ai_notes_de(action.get("id") or message.get("action_id") or "")
-    contexte = p3ai_contexte(message, action, dossier["fiches"], notes)
+    # AI-P3 — L'ETAT COMMERCIAL ENTRE DANS LE CONTEXTE. Il est DERIVE des memes
+    # champs fermes que partout ailleurs : une seule regle, un seul endroit.
+    _statut = p3n_statut_commercial(
+        message, p3n_derniere_declaration(notes),
+        (await db[P3AI_BROUILLONS].find_one({"inbound_id": message["id"]},
+                                            {"_id": 0, "intention": 1}) or {}).get("intention"))
+    contexte = p3ai_contexte(message, action, dossier["fiches"], notes, _statut)
 
     precedent = await db[P3AI_BROUILLONS].find_one(
         {"inbound_id": message["id"]}, {"_id": 0}) or {}
@@ -26871,8 +26924,17 @@ async def p3ai_lire_brouillon(inbound_id: str, request: Request):
     message = await p3ai_message_du_coach(inbound_id, email)
     brouillon = await db[P3AI_BROUILLONS].find_one(
         {"inbound_id": message["id"]}, {"_id": 0})
+    # AI-P3 — LE BROUILLON PEUT ETRE PERIME, ET ON LE DIT PLUTOT QUE DE LE
+    # REECRIRE. Une note ajoutee apres sa redaction change le contexte ; le
+    # regenerer tout seul effacerait une correction manuelle et couterait un
+    # appel au modele que personne n'a demande. Le coach decide.
+    notes = await p3n_notes_du_dossier(message.get("action_id") or "")
     return {"brouillon": brouillon, "lu": bool(message.get(P3AI_CHAMP_LU)),
-            "traite": bool(message.get(P3AI_CHAMP_TRAITE))}
+            "traite": bool(message.get(P3AI_CHAMP_TRAITE)),
+            "contexte_obsolete": p3n_contexte_obsolete(brouillon, notes),
+            "statut_commercial": p3n_statut_commercial(
+                message, p3n_derniere_declaration(notes),
+                (brouillon or {}).get("intention"))}
 
 
 @api_router.patch("/prospect-inbound/{inbound_id}/brouillon")
@@ -26923,6 +26985,385 @@ async def p3ai_modifier_brouillon(inbound_id: str, request: Request):
                 message.get("recipient_key") or "-", email[:24])
     return {"brouillon": await db[P3AI_BROUILLONS].find_one(
         {"inbound_id": message["id"]}, {"_id": 0})}
+
+
+# ============================================================================
+# AI-P3 — LA MEMOIRE DE CE QUI S'EST PASSE HORS DES E-MAILS
+# ============================================================================
+# LE TROU QUE CE LOT COMBLE, MESURE EN PRODUCTION LE 05/09/2026.
+# ACD Lausanne repond en donnant le numero de M. Ndongo Beye. Bassi l'appelle,
+# l'echange a lieu, il attend maintenant une proposition. Rien de tout cela
+# n'existe pour la machine : l'IA a donc propose « je vais contacter M. Ndongo
+# Beye » — une phrase FAUSSE, dans un brouillon pret a partir. Ce n'est pas un
+# defaut du modele : c'est une information qu'on ne lui avait jamais donnee.
+#
+# UNE NOTE N'EST PAS UN E-MAIL, et le systeme ne doit jamais les confondre.
+# Elle n'entre donc NI dans `prospect_inbound_messages.body_text` — le message
+# recu reste immuable, c'est la seule trace de ce que le partenaire a vraiment
+# ecrit — NI dans un champ d'envoi. Elle vit dans sa propre collection.
+#
+# `partner_prospects.notes` N'EST PAS REUTILISE, ET C'EST DELIBERE. C'est UN
+# champ texte de 4000 caracteres, ecrase a chaque `PATCH` : y ajouter « appele
+# Ndongo » effacerait ce qui s'y trouve, et la note d'hier serait perdue sans
+# que personne le voie. Un historique commercial ne peut pas vivre dans un
+# champ qui s'ecrase.
+#
+# APPEND-ONLY. Une note n'est jamais modifiee ni supprimee : une correction est
+# une NOUVELLE note qui annule la precedente (`corrige_note_id`). C'est ce qui
+# permet de relire plus tard ce qu'on croyait a chaque moment — et une
+# suppression silencieuse dans un historique commercial est exactement ce qui
+# rend un historique inutilisable.
+#
+# LE STATUT NE SE DEVINE PAS DANS LE TEXTE. « J'attends sa proposition » et
+# « je dois le rappeler » se ressemblent trop pour qu'une lecture automatique
+# tranche : une erreur mettrait un dossier en attente alors qu'il faut agir.
+# Le coach declare donc l'etat qui suit son action (`status_after`), un champ
+# STRUCTURE et ferme. Aucune analyse de texte libre n'intervient.
+
+P3N_COLLECTION = "prospect_notes"
+P3N_PREFIXE = "[AI-P3]"
+
+# Les canaux d'une action humaine. LISTE FERMEE : une valeur inconnue est
+# refusee plutot que stockee — un filtre qui ne rend rien sans qu'on comprenne
+# pourquoi est le prix habituel d'une liste ouverte.
+P3N_TYPES = ("appel", "whatsapp", "rencontre", "information", "autre")
+
+# LES CINQ ETATS COMMERCIAUX. Ils repondent a « qu'est-ce que je dois faire ? »,
+# jamais a « est-ce que je l'ai lu ? » — cette seconde question a ses propres
+# champs (READ-P1) et les deux dimensions restent independantes : un message
+# peut etre LU et EN ATTENTE, ou LU et A REPONDRE.
+P3N_STATUT_A_REPONDRE = "a_repondre"
+P3N_STATUT_APPEL = "appel_a_faire"
+P3N_STATUT_ATTENTE = "en_attente"
+P3N_STATUT_REFUS = "refus"
+P3N_STATUT_TRAITE = "traite"
+P3N_STATUTS = (P3N_STATUT_A_REPONDRE, P3N_STATUT_APPEL, P3N_STATUT_ATTENTE,
+               P3N_STATUT_REFUS, P3N_STATUT_TRAITE)
+
+P3N_TEXTE_MAX = 2000
+P3N_NOTES_MAX = 100          # ce qu'un dossier peut porter, borne de lecture
+P3N_PORTEE_MAX = 500         # les messages balayes pour les compteurs
+
+
+def p3n_type(valeur) -> str:
+    """Le canal de la note, ou "" si inconnu. PURE."""
+    brut = p3ai_sans_accents(valeur).strip()
+    return brut if brut in P3N_TYPES else ""
+
+
+def p3n_statut(valeur) -> str:
+    """L'etat commercial declare, ou "" si absent/inconnu. PURE.
+
+    L'absence est un cas NORMAL : une note peut relater un fait sans changer
+    l'etat du dossier (« ils ont accuse reception »). On ne force donc rien.
+    """
+    brut = p3ai_sans_accents(valeur).strip()
+    return brut if brut in P3N_STATUTS else ""
+
+
+def p3n_horodatage(valeur, defaut: str) -> str:
+    """La date de l'action, normalisee en ISO. PURE, et TOLERANTE.
+
+    Le formulaire envoie « 2026-09-05 » ; une API enverrait un ISO complet.
+    Les deux doivent marcher. Une date illisible retombe sur MAINTENANT plutot
+    que de faire echouer la saisie : perdre une note parce qu'une date est mal
+    formee coute plus cher qu'une date approximative.
+    """
+    texte = str(valeur or "").strip()
+    if not texte:
+        return defaut
+    try:
+        if len(texte) == 10:      # AAAA-MM-JJ
+            return datetime.fromisoformat(texte + "T12:00:00+00:00").isoformat()
+        return datetime.fromisoformat(texte.replace("Z", "+00:00")).isoformat()
+    except (ValueError, TypeError):
+        return defaut
+
+
+def p3n_derniere_declaration(notes) -> str:
+    """L'etat commercial DECLARE le plus recent, ou "". PURE.
+
+    ON PREND LA PLUS RECENTE PAR DATE D'ACTION, pas par date de saisie : un
+    coach qui note lundi un appel passe vendredi decrit un fait ANTERIEUR, et
+    il ne doit pas ecraser ce qu'il a declare samedi. `created_at` departage
+    deux actions du meme instant — un ordre total, jamais un tirage au sort.
+
+    LES NOTES ANNULEES NE COMPTENT PAS. Une correction est une note qui en
+    annule une autre ; l'annulee sort du calcul mais reste lisible dans
+    l'historique, parce qu'un historique qui se reecrit ne sert plus a rien.
+    """
+    annulees = {n.get("corrige_note_id") for n in (notes or [])
+                if n.get("corrige_note_id")}
+    candidates = [n for n in (notes or [])
+                  if p3n_statut(n.get("status_after"))
+                  and n.get("id") not in annulees]
+    if not candidates:
+        return ""
+    derniere = max(candidates, key=lambda n: (n.get("occurred_at") or "",
+                                              n.get("created_at") or ""))
+    return p3n_statut(derniere.get("status_after"))
+
+
+def p3n_statut_commercial(message: dict, statut_declare: str, intention: str) -> str:
+    """L'etat commercial d'un dossier. UNE SEULE REGLE, NULLE PART AILLEURS.
+
+    L'ORDRE DES PRIORITES EST LE FOND DE CE LOT :
+      1. `traite_at`      — le coach a explicitement clos ce dossier ;
+      2. la derniere DECLARATION humaine (`status_after`) — il sait ce qui
+         s'est passe au telephone, la machine non ;
+      3. un refus lu dans la reponse — personne n'a rien declare depuis ;
+      4. sinon : il reste a repondre.
+
+    LA DECLARATION HUMAINE PASSE AVANT L'INTENTION LUE PAR L'IA, et c'est
+    voulu : si Bassi note « rendez-vous pris » sur un dossier que le modele
+    avait classe « refus », c'est Bassi qui a raison. L'inverse ferait mentir
+    l'ecran a celui qui l'alimente.
+
+    AUCUNE LECTURE DE TEXTE LIBRE. Le statut ne vient que de champs fermes.
+    « J'attends sa proposition » et « je dois le rappeler » se ressemblent trop
+    pour qu'une machine tranche, et se tromper met un dossier en sommeil alors
+    qu'il fallait agir.
+    """
+    if (message or {}).get(P3AI_CHAMP_TRAITE):
+        return P3N_STATUT_TRAITE
+    declare = p3n_statut(statut_declare)
+    if declare:
+        return declare
+    if p3ai_intention(intention) == "refus":
+        return P3N_STATUT_REFUS
+    return P3N_STATUT_A_REPONDRE
+
+
+async def p3n_notes_du_dossier(action_id: str, plafond: int = P3N_NOTES_MAX) -> list:
+    """Les notes de CE dossier, de la plus ancienne a la plus recente.
+
+    LE FILTRE EST `action_id`, JAMAIS `recipient_key`. Cette derniere est la
+    `ref` de la fiche la plus ancienne d'un GROUPE fusionne : deux
+    organisations peuvent la partager, et filtrer dessus melangerait leurs
+    historiques — exactement ce que ce chantier existe pour empecher.
+    """
+    identifiant = (action_id or "").strip()
+    if not identifiant:
+        return []
+    return await db[P3N_COLLECTION].find(
+        {"action_id": identifiant}, {"_id": 0}
+    ).sort([("occurred_at", 1), ("created_at", 1)]).to_list(plafond)
+
+
+async def p3n_statuts_de_la_portee(email: str) -> dict:
+    """`id du message` -> son etat commercial, pour toute la portee du coach.
+
+    TROIS REQUETES, PAS UNE PAR MESSAGE. Le defaut evident serait de deriver le
+    statut message par message : sur 500 dossiers cela ferait 1500 appels a la
+    base a chaque affichage de l'ecran. On lit donc les trois sources en bloc et
+    on croise en memoire.
+
+    LE PLAFOND N'EST PAS DECORATIF. Au-dela, les compteurs sous-estiment plutot
+    que de faire trainer la page — et l'ecran continue de fonctionner. A
+    l'echelle actuelle (3 reponses reelles) il ne sera jamais atteint ; il est
+    la pour que le jour ou il le serait, rien ne casse.
+    """
+    portee = dict(get_coach_filter(email))
+    messages = await db[P3U2_COLLECTION].find(
+        portee, {"_id": 0, "id": 1, "action_id": 1, P3AI_CHAMP_TRAITE: 1}
+    ).to_list(P3N_PORTEE_MAX)
+    if not messages:
+        return {}
+
+    actions = [m.get("action_id") for m in messages if m.get("action_id")]
+    par_action = {}
+    if actions:
+        for note in await db[P3N_COLLECTION].find(
+                {"action_id": {"$in": actions}},
+                {"_id": 0, "id": 1, "action_id": 1, "status_after": 1,
+                 "occurred_at": 1, "created_at": 1, "corrige_note_id": 1}
+        ).to_list(P3N_NOTES_MAX * 10):
+            par_action.setdefault(note["action_id"], []).append(note)
+
+    identifiants = [m["id"] for m in messages]
+    intentions = {}
+    for b in await db[P3AI_BROUILLONS].find(
+            {"inbound_id": {"$in": identifiants}},
+            {"_id": 0, "inbound_id": 1, "intention": 1}).to_list(P3N_PORTEE_MAX):
+        intentions[b["inbound_id"]] = b.get("intention")
+
+    return {m["id"]: p3n_statut_commercial(
+        m, p3n_derniere_declaration(par_action.get(m.get("action_id")) or []),
+        intentions.get(m["id"])) for m in messages}
+
+
+def p3n_timeline(action: dict, message: dict, notes, statut: str) -> list:
+    """L'histoire du dossier, dans l'ordre. Fonction PURE, sans base.
+
+    ELLE NE MONTRE QUE CE QU'UN HUMAIN COMPREND. Ni identifiant Mongo, ni
+    `action_id`, ni jeton de reponse, ni score de correlation : ce sont des
+    outils de diagnostic, ils ont leur place ailleurs. Une chronologie qu'on
+    doit dechiffrer ne se lit pas.
+
+    LES DATES VIENNENT DES FAITS, jamais d'un calcul : `sent_at` est l'instant
+    ou le fournisseur a accepte le J0, `received_at` celui ou la reponse est
+    arrivee, `occurred_at` celui que le coach declare pour son action.
+    """
+    a, m = action or {}, message or {}
+    evenements = []
+    if a.get("sent_at"):
+        evenements.append({"quand": a["sent_at"], "genre": "envoi",
+                           "titre": "Proposition Afroboost envoyée", "texte": ""})
+    for etape, libelle in (("j3", "Relance J+3 envoyée"), ("j7", "Relance J+7 envoyée")):
+        if a.get("%s_sent_at" % etape):
+            evenements.append({"quand": a["%s_sent_at" % etape], "genre": "envoi",
+                               "titre": libelle, "texte": ""})
+    if m.get("received_at"):
+        organisation = p3ai_organisation(a)
+        evenements.append({
+            "quand": m["received_at"], "genre": "reponse",
+            "titre": "Réponse reçue" + (" de %s" % organisation if organisation else ""),
+            "texte": ""})
+    annulees = {n.get("corrige_note_id") for n in (notes or []) if n.get("corrige_note_id")}
+    for n in notes or []:
+        evenements.append({
+            "quand": n.get("occurred_at") or n.get("created_at") or "",
+            "genre": "note", "type": n.get("type"),
+            "titre": (n.get("type") or "note").capitalize(),
+            "texte": n.get("texte") or "",
+            "annulee": n.get("id") in annulees,
+            "status_after": n.get("status_after") or ""})
+    evenements.sort(key=lambda e: e.get("quand") or "")
+    # LE DERNIER POINT N'EST PAS UN EVENEMENT PASSE : c'est l'etat courant. Il
+    # ferme la chronologie par la seule chose qui reste a savoir — ou en est-on
+    # MAINTENANT — plutot que de laisser le lecteur le deduire.
+    evenements.append({"quand": "", "genre": "statut", "titre": "Maintenant",
+                       "texte": "", "statut": statut})
+    return evenements
+
+
+@api_router.get("/prospect-inbound/{inbound_id}/notes")
+async def p3n_lire_dossier(inbound_id: str, request: Request):
+    """Les notes, la chronologie et l'etat commercial de CE dossier.
+
+    UNE SEULE ROUTE POUR LES TROIS. Elles se lisent toujours ensemble — la
+    chronologie n'a pas de sens sans les notes, et l'etat se derive des deux.
+    Trois routes auraient fait trois allers-retours pour un seul panneau.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    dossier = await p3ai_dossier(inbound_id, email)
+    message, action = dossier["message"], dossier["action"]
+    notes = await p3n_notes_du_dossier(action.get("id") or message.get("action_id") or "")
+    brouillon = await db[P3AI_BROUILLONS].find_one(
+        {"inbound_id": message["id"]}, {"_id": 0, "genere_le": 1, "updated_at": 1})
+    statut = p3n_statut_commercial(
+        message, p3n_derniere_declaration(notes),
+        (brouillon or {}).get("intention") if brouillon else
+        (await db[P3AI_BROUILLONS].find_one({"inbound_id": message["id"]},
+                                            {"_id": 0, "intention": 1}) or {}).get("intention"))
+    return {"notes": notes,
+            "timeline": p3n_timeline(action, message, notes, statut),
+            "statut_commercial": statut,
+            "contexte_obsolete": p3n_contexte_obsolete(brouillon, notes)}
+
+
+def p3n_contexte_obsolete(brouillon, notes) -> bool:
+    """Le brouillon a-t-il ete ecrit AVANT la derniere note ? PURE.
+
+    C'EST UNE COMPARAISON DE DATES, PAS UNE LECTURE DE TEXTE. On ne cherche pas
+    si le brouillon « parle de Ndongo » : on constate qu'une information est
+    arrivee apres sa redaction, et on le DIT. Le coach decide s'il regenere.
+
+    POURQUOI ON NE REGENERE PAS TOUT SEUL. Le brouillon peut avoir ete corrige
+    a la main ; le remplacer sans demander effacerait ce travail. Et une
+    regeneration silencieuse coute un appel au modele que personne n'a demande.
+    """
+    if not brouillon:
+        return False
+    ecrit_le = str(brouillon.get("genere_le") or brouillon.get("updated_at") or "")
+    if not ecrit_le:
+        return False
+    return any(str(n.get("created_at") or "") > ecrit_le for n in notes or [])
+
+
+@api_router.post("/prospect-inbound/{inbound_id}/notes")
+async def p3n_ajouter_note(inbound_id: str, request: Request):
+    """Le coach raconte ce qui s'est passe hors des e-mails. APPEND-ONLY.
+
+    ELLE NE MARQUE RIEN COMME LU. Ecrire une note n'est pas ouvrir un message :
+    READ-P1 garde ses deux champs, et ils ne bougent pas d'ici. Un coach peut
+    tres bien noter un appel sans avoir relu la reponse du partenaire.
+
+    UN SUPER-ADMIN QUI CONSULTE N'ECRIT PAS AU NOM DU COACH. Meme regle que
+    pour la lecture : seul le proprietaire du dossier y ajoute une note. Sans
+    cela, l'historique commercial d'un coach porterait des actions qu'il n'a
+    jamais faites, signees de son `coach_id`.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    dossier = await p3ai_dossier(inbound_id, email)
+    message, action = dossier["message"], dossier["action"]
+    if not p3ai_est_proprietaire(message, email):
+        raise HTTPException(
+            status_code=403,
+            detail="Seul le proprietaire de ce dossier peut y ajouter une note")
+
+    try:
+        corps = await request.json()
+    except (ValueError, TypeError):
+        corps = None
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+
+    genre = p3n_type(corps.get("type"))
+    if not genre:
+        raise HTTPException(status_code=400,
+                            detail="Type de note inconnu. Valeurs acceptees : %s"
+                                   % ", ".join(P3N_TYPES))
+    texte = str(corps.get("texte") or "").strip()
+    if not texte:
+        raise HTTPException(status_code=400, detail="Une note sans texte ne se garde pas")
+    if len(texte) > P3N_TEXTE_MAX:
+        raise HTTPException(status_code=400,
+                            detail="Note trop longue (%d caracteres maximum)" % P3N_TEXTE_MAX)
+    if "status_after" in corps and corps.get("status_after") \
+            and not p3n_statut(corps.get("status_after")):
+        raise HTTPException(status_code=400,
+                            detail="Etat inconnu. Valeurs acceptees : %s"
+                                   % ", ".join(P3N_STATUTS))
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    note = {
+        "id": str(uuid.uuid4()),
+        "coach_id": message.get("coach_id"),
+        "inbound_id": message["id"],
+        "action_id": action.get("id") or message.get("action_id"),
+        # LES DEUX FORMES, PARCE QU'ELLES NE SERVENT PAS A LA MEME CHOSE : la
+        # liste couvre toutes les fiches du destinataire (un groupe fusionne
+        # peut en compter plusieurs), la premiere sert d'ancre lisible.
+        "prospect_uuids": [u for u in (action.get("prospect_uuids") or []) if u],
+        "prospect_uuid": next((u for u in (action.get("prospect_uuids") or []) if u), None),
+        # Affichage seulement — JAMAIS une identite (cf. `p3s3_recipient_key`).
+        "recipient_key": message.get("recipient_key"),
+        "type": genre,
+        "texte": texte,
+        "status_after": p3n_statut(corps.get("status_after")) or None,
+        "occurred_at": p3n_horodatage(corps.get("occurred_at"), maintenant),
+        "created_at": maintenant,
+        "created_by": email,
+        # Une correction est une NOTE DE PLUS qui annule la precedente ; rien
+        # n'est jamais reecrit ni efface.
+        "corrige_note_id": str(corps.get("corrige_note_id") or "").strip() or None,
+    }
+    await db[P3N_COLLECTION].insert_one(dict(note))
+    notes = await p3n_notes_du_dossier(note["action_id"])
+    brouillon = await db[P3AI_BROUILLONS].find_one(
+        {"inbound_id": message["id"]}, {"_id": 0, "genere_le": 1, "updated_at": 1,
+                                        "intention": 1})
+    statut = p3n_statut_commercial(message, p3n_derniere_declaration(notes),
+                                   (brouillon or {}).get("intention"))
+    logger.info("%s note %s (%s) sur %s par %s -> statut %s", P3N_PREFIXE,
+                note["id"][:8], genre, message.get("recipient_key") or "-",
+                email[:24], statut)
+    return {"note": note, "notes": notes,
+            "timeline": p3n_timeline(action, message, notes, statut),
+            "statut_commercial": statut,
+            "contexte_obsolete": p3n_contexte_obsolete(brouillon, notes),
+            **await p3ai_compteurs(email)}
 
 
 # ============================================================================
@@ -43006,6 +43447,17 @@ async def startup_db():
         # Sans elle, deux clics sur « Regenerer » creeraient deux brouillons pour
         # la meme reponse, et l'ecran en afficherait un au hasard.
         await db[P3AI_BROUILLONS].create_index("inbound_id", unique=True)
+
+        # AI-P3 — LES NOTES SE LISENT TOUJOURS PAR DOSSIER, DANS L'ORDRE.
+        # `action_id` est l'ancre (jamais `recipient_key`, qui peut couvrir
+        # plusieurs organisations) ; la seconde cle rend l'ordre TOTAL, sans
+        # quoi deux notes du meme jour changeraient de place d'un affichage a
+        # l'autre. AUCUN index unique : une collection append-only doit pouvoir
+        # porter deux notes identiques — deux appels le meme jour, cela arrive.
+        await db[P3N_COLLECTION].create_index([("action_id", 1), ("occurred_at", 1),
+                                               ("created_at", 1)])
+        await db[P3N_COLLECTION].create_index([("coach_id", 1), ("created_at", -1)])
+        await db[P3N_COLLECTION].create_index("inbound_id")
         await db[P3AI_BROUILLONS].create_index([("coach_id", 1), ("updated_at", -1)])
         logger.info("[INDEX] READ-P1 / AI-P1 (etats de lecture, brouillons) OK")
 

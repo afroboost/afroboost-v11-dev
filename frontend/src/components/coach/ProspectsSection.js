@@ -207,6 +207,28 @@ const LIBELLE_INTENTION = {
 
 /* Les quatre tons de régénération. Liste FERMÉE côté serveur aussi : une
    valeur libre entrerait dans une invite, donc serait une injection. */
+/* AI-P3 — LES CINQ ÉTATS COMMERCIAUX. Ils répondent à « qu'est-ce que je dois
+   faire ? », jamais à « est-ce que je l'ai lu ? » : les deux dimensions ont
+   leurs propres champs et ne se confondent pas. Les couleurs sont SÉMANTIQUES
+   (ambre = il faut agir, vert = clos, neutre = on attend), jamais la couleur de
+   marque — qui, elle, appartient au coach. */
+const STATUT_COMMERCIAL = {
+  a_repondre: { libelle: 'À RÉPONDRE', fond: 'rgba(245,158,11,0.22)' },
+  appel_a_faire: { libelle: 'APPEL À FAIRE', fond: 'rgba(245,158,11,0.30)' },
+  en_attente: { libelle: 'EN ATTENTE', fond: 'rgba(255,255,255,0.14)' },
+  refus: { libelle: 'REFUS', fond: 'rgba(239,68,68,0.20)' },
+  traite: { libelle: 'TRAITÉ', fond: 'rgba(34,197,94,0.22)' },
+};
+
+/* Les cinq canaux d'une action humaine. Liste fermée côté serveur aussi. */
+const TYPES_NOTE = [
+  { cle: 'appel', libelle: 'Appel' },
+  { cle: 'whatsapp', libelle: 'WhatsApp' },
+  { cle: 'rencontre', libelle: 'Rencontre' },
+  { cle: 'information', libelle: 'Information' },
+  { cle: 'autre', libelle: 'Autre' },
+];
+
 const TONS_IA = [
   { cle: 'court', libelle: 'Plus court' },
   { cle: 'chaleureux', libelle: 'Plus chaleureux' },
@@ -291,12 +313,19 @@ export default function ProspectsSection({ API }) {
      Les 78 destinataires sans langue déclarée doivent pouvoir être VUS avant
      toute activation ; l'écran ne les corrige pas et ne suppose rien. */
   const [filtreApercu, setFiltreApercu] = useState('');
+  /* AI-P3 — le filtre commercial des réponses reçues. Une CHAÎNE, jamais un
+     objet : la règle V305 interdit de reposer un objet neuf quand rien n'a
+     changé, et une chaîne se compare sans risque. */
+  const [filtreStatut, setFiltreStatut] = useState('');
 
   /* Les dépendances sont des CHAÎNES, jamais l'objet `filtres` — qui est neuf à
      chaque rendu et relancerait l'effet en boucle (règle absolue, incident V305). */
   const signature = [
     filtres.status, filtres.category, filtres.priority, filtres.wave, filtres.city,
     String(taille), String(page),
+    /* Le filtre commercial entre dans la signature : sans lui, changer de
+       filtre ne relancerait aucune lecture et l'écran mentirait. */
+    filtreStatut,
   ].join('|');
 
   const chargement = useChargement(
@@ -338,8 +367,14 @@ export default function ProspectsSection({ API }) {
         url: `${base}/prospect-inbound`,
         signature: true,
         appel: async () => {
-          const rep = await axios.get(`${base}/prospect-inbound`,
-            { params: { limit: 20 } });
+          /* AI-P3 — LE FILTRE PART AU SERVEUR, JAMAIS À L'ÉCRAN. Le statut
+             commercial est DÉRIVÉ (traité, dernière note déclarée, intention) :
+             il n'existe dans aucun champ. Filtrer la page rendue donnerait un
+             écran qui ment dès la deuxième page ; le serveur, lui, calcule sur
+             toute la portée du coach puis pagine. */
+          const params = { limit: 20 };
+          if (filtreStatut) params.statut_commercial = filtreStatut;
+          const rep = await axios.get(`${base}/prospect-inbound`, { params });
           return rep && rep.data ? rep.data : null;
         },
         extraire: (donnees) => donnees,
@@ -369,6 +404,11 @@ export default function ProspectsSection({ API }) {
     && sectionReponses.donnees && sectionReponses.donnees.non_lues) || 0;
   const reponsesARepondre = (sectionReponses && sectionReponses.etat === SECTION.OK
     && sectionReponses.donnees && sectionReponses.donnees.a_repondre) || 0;
+  /* AI-P3 — les cinq états viennent du serveur, dérivés d'une seule règle.
+     L'écran ne recompte rien : il afficherait sinon un chiffre qui diverge du
+     badge de la carte dès qu'une note change un statut. */
+  const compteursEtat = (sectionReponses && sectionReponses.etat === SECTION.OK
+    && sectionReponses.donnees) || {};
 
   /* ---------- READ-P1 + AI-P2 — L'ÉTAT DES CARTES DE RÉPONSE ----------
 
@@ -411,11 +451,55 @@ export default function ProspectsSection({ API }) {
          Un état de badge n'est jamais une raison de cacher un message. */
     }
     if (carteDe(id).brouillon !== undefined) return;   // déjà chargé une fois
+    /* Les deux lectures partent ENSEMBLE : le brouillon et le dossier
+       (notes, historique, état commercial) s'affichent dans le même panneau,
+       les charger l'un après l'autre ferait clignoter la carte. */
     try {
-      const r = await axios.get(`${base}/prospect-inbound/${encodeURIComponent(id)}/brouillon`);
-      majCarte(id, { brouillon: (r && r.data && r.data.brouillon) || null });
+      const [b, d] = await Promise.all([
+        axios.get(`${base}/prospect-inbound/${encodeURIComponent(id)}/brouillon`),
+        axios.get(`${base}/prospect-inbound/${encodeURIComponent(id)}/notes`),
+      ]);
+      majCarte(id, {
+        brouillon: (b && b.data && b.data.brouillon) || null,
+        notes: (d && d.data && d.data.notes) || [],
+        timeline: (d && d.data && d.data.timeline) || [],
+        obsolete: !!(d && d.data && d.data.contexte_obsolete),
+      });
     } catch (e) {
-      majCarte(id, { brouillon: null });
+      majCarte(id, { brouillon: null, notes: [], timeline: [] });
+    }
+  }, [base, carteDe, majCarte, chargement]);
+
+  /* AI-P3 — LA MÉMOIRE COMMERCIALE. Une note raconte ce qui s'est passé HORS
+     des e-mails : un appel, un WhatsApp, une rencontre. Elle est append-only —
+     jamais une modification de l'ancienne — et elle NE MARQUE RIEN comme lu :
+     noter un appel n'est pas relire le message du partenaire. */
+  const ajouterNote = useCallback(async (id) => {
+    const carte = carteDe(id);
+    const f = carte.formNote || {};
+    const texte = (f.texte || '').trim();
+    if (!id || !texte || carte.chargement) return;
+    majCarte(id, { chargement: true, erreur: '' });
+    try {
+      const r = await axios.post(
+        `${base}/prospect-inbound/${encodeURIComponent(id)}/notes`,
+        { type: f.type || 'appel', texte,
+          occurred_at: f.date || undefined,
+          status_after: f.statut || undefined });
+      const d = (r && r.data) || {};
+      majCarte(id, {
+        chargement: false, noteOuverte: false, formNote: null,
+        notes: d.notes || [], timeline: d.timeline || [],
+        obsolete: !!d.contexte_obsolete,
+      });
+      /* Le statut commercial et les compteurs sont RECALCULÉS PAR LE SERVEUR :
+         on relit la liste plutôt que de les rejouer ici. Deux règles pour un
+         même statut finissent toujours par diverger. */
+      chargement.reessayer('reponses');
+    } catch (e) {
+      const detail = (e && e.response && e.response.data && e.response.data.detail)
+        || "La note n'a pas pu être enregistrée.";
+      majCarte(id, { chargement: false, erreur: String(detail) });
     }
   }, [base, carteDe, majCarte, chargement]);
 
@@ -431,7 +515,10 @@ export default function ProspectsSection({ API }) {
       const b = (r && r.data && r.data.brouillon) || null;
       /* Régénérer REMPLACE : on referme l'édition en cours, sinon le coach
          croirait corriger un texte qui n'existe plus. */
-      majCarte(id, { brouillon: b, chargement: false, edition: false, texte: '' });
+      /* Le brouillon vient d'être écrit AVEC les notes actuelles : il n'est
+         plus périmé. */
+      majCarte(id, { brouillon: b, chargement: false, edition: false, texte: '',
+                     obsolete: false });
     } catch (e) {
       const detail = (e && e.response && e.response.data && e.response.data.detail)
         || "Analyse IA temporairement indisponible.";
@@ -891,6 +978,36 @@ export default function ProspectsSection({ API }) {
             )}
           </div>
 
+          {/* AI-P3 — LES FILTRES COMMERCIAUX. Ils n'apparaissent que s'il y a
+              plus d'un état à trier : sur trois réponses toutes à répondre, une
+              barre de filtres serait du décor. Chaque puce porte SON compteur,
+              calculé par le serveur — un filtre qui annonce un chiffre faux est
+              pire que pas de filtre. */}
+          {Object.keys(STATUT_COMMERCIAL).filter((c) => compteursEtat[c] > 0).length > 1 && (
+            <div data-testid="filtres-statut"
+                 style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+              {[{ cle: '', libelle: 'Toutes' }].concat(
+                Object.keys(STATUT_COMMERCIAL)
+                  .filter((c) => compteursEtat[c] > 0)
+                  .map((c) => ({ cle: c, libelle: STATUT_COMMERCIAL[c].libelle }))
+              ).map((f) => (
+                <button key={f.cle || 'toutes'} type="button"
+                        data-testid={`filtre-${f.cle || 'toutes'}`}
+                        onClick={() => setFiltreStatut(f.cle)}
+                        style={{
+                          ...stylePetitBouton,
+                          fontWeight: filtreStatut === f.cle ? 700 : 500,
+                          background: filtreStatut === f.cle
+                            ? `rgba(${RGB}, 0.28)` : 'transparent',
+                          borderColor: filtreStatut === f.cle
+                            ? `rgba(${RGB}, 0.55)` : 'rgba(255,255,255,0.22)',
+                        }}>
+                  {f.libelle}{f.cle ? ` (${compteursEtat[f.cle]})` : ''}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {reponses.map((r) => {
               /* Tout ce qui suit est LOCAL à cette carte : aucune de ces
@@ -899,7 +1016,11 @@ export default function ProspectsSection({ API }) {
                  prospects structurellement impossible. */
               const carte = cartes[r.id] || {};
               const nonLue = !r.read_at;
-              const traitee = !!r.traite_at;
+              const statut = r.statut_commercial || 'a_repondre';
+              const libelleStatut = STATUT_COMMERCIAL[statut] || STATUT_COMMERCIAL.a_repondre;
+              const traitee = statut === 'traite';
+              const notes = carte.notes || [];
+              const form = carte.formNote || {};
               const deplie = !!carte.ouvert;
               const bro = carte.brouillon || null;
               const occupe = !!carte.chargement;
@@ -923,12 +1044,14 @@ export default function ProspectsSection({ API }) {
                         NOUVEAU
                       </span>
                     )}
-                    <span data-testid={traitee ? 'badge-traite' : 'badge-a-repondre'}
+                    {/* AI-P3 — L'ÉTAT COMMERCIAL VIENT DU SERVEUR, DÉRIVÉ.
+                        L'écran ne le recalcule pas : deux règles pour un même
+                        statut finissent toujours par diverger. */}
+                    <span data-testid={`badge-statut-${statut}`}
                           style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
                                    padding: '2px 8px', borderRadius: '999px', color: TEXTE,
-                                   background: traitee ? 'rgba(34,197,94,0.22)'
-                                                       : 'rgba(245,158,11,0.22)' }}>
-                      {traitee ? 'TRAITÉ' : 'À RÉPONDRE'}
+                                   background: libelleStatut.fond }}>
+                      {libelleStatut.libelle}
                     </span>
                     {r.statut !== 'rattache' && (
                       <span data-testid="badge-a-rattacher"
@@ -1059,6 +1182,32 @@ export default function ProspectsSection({ API }) {
                       ) : null}
 
                       {/* ---- RÉPONSE PROPOSÉE ---- */}
+                      {/* AI-P3 — UN BROUILLON PÉRIMÉ SE SIGNALE, IL NE SE
+                          RÉÉCRIT PAS TOUT SEUL. Une note ajoutée après sa
+                          rédaction change les faits : le régénérer sans
+                          demander effacerait une correction manuelle et
+                          coûterait un appel au modèle que personne n'a
+                          demandé. C'est une comparaison de DATES, jamais une
+                          lecture du texte. */}
+                      {bro && carte.obsolete && !carte.edition ? (
+                        <div data-testid="contexte-obsolete"
+                             style={{ fontSize: '11px', padding: '7px 9px', borderRadius: '7px',
+                                      background: 'rgba(245,158,11,0.22)', color: TEXTE,
+                                      marginBottom: '7px', display: 'flex', gap: '8px',
+                                      alignItems: 'center', flexWrap: 'wrap' }}>
+                          <SvgIcon name="warning" size={13} />
+                          <span style={{ flex: 1, minWidth: '160px' }}>
+                            Le contexte a changé depuis la génération de cette réponse.
+                          </span>
+                          <button type="button" data-testid="regenerer-contexte"
+                                  onClick={() => analyserReponse(r.id, '')}
+                                  disabled={occupe}
+                                  style={{ ...stylePetitBouton, fontWeight: 600,
+                                           opacity: occupe ? 0.6 : 1 }}>
+                            Régénérer avec les nouvelles informations
+                          </button>
+                        </div>
+                      ) : null}
                       <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
                                     color: TEXTE, letterSpacing: '0.05em', marginBottom: '5px' }}>
                         {bro ? `RÉPONSE PROPOSÉE POUR ${bro.to_email}` : 'RÉPONSE PROPOSÉE'}
@@ -1149,6 +1298,154 @@ export default function ProspectsSection({ API }) {
                               {t.libelle}
                             </button>
                           ))}
+                        </div>
+                      )}
+
+
+                      {/* ================= AI-P3 : L'HISTORIQUE ================= */}
+                      {/* UNE CHRONOLOGIE VERTICALE, PAS UN TABLEAU. Sur un
+                          téléphone un tableau déborde ; une colonne de lignes
+                          datées se lit partout. On n'y met QUE ce qu'un humain
+                          comprend : ni identifiant Mongo, ni action_id, ni
+                          jeton de réponse, ni score de corrélation. */}
+                      {(carte.timeline || []).length > 0 && (
+                        <div data-testid="historique" style={{ marginTop: '12px' }}>
+                          <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
+                                        color: TEXTE, letterSpacing: '0.05em',
+                                        marginBottom: '6px' }}>
+                            HISTORIQUE
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px',
+                                        borderLeft: `2px solid rgba(${RGB}, 0.35)`,
+                                        paddingLeft: '10px' }}>
+                            {(carte.timeline || []).map((e, i) => (
+                              <div key={i} data-testid="historique-ligne"
+                                   style={{ fontSize: '11px', color: TEXTE,
+                                            opacity: e.annulee ? 0.45 : 1,
+                                            textDecoration: e.annulee ? 'line-through' : 'none' }}>
+                                <span style={{ opacity: 0.65 }}>
+                                  {e.quand ? String(e.quand).slice(0, 10) : 'Maintenant'}
+                                </span>
+                                {' · '}
+                                <strong>{e.titre}</strong>
+                                {e.genre === 'statut' && e.statut ? (
+                                  <span style={{ marginLeft: '6px', fontWeight: 700,
+                                                 color: PRIMAIRE }}>
+                                    {(STATUT_COMMERCIAL[e.statut]
+                                      || STATUT_COMMERCIAL.a_repondre).libelle}
+                                  </span>
+                                ) : null}
+                                {e.texte ? (
+                                  <div style={{ opacity: 0.85, marginTop: '1px',
+                                                whiteSpace: 'pre-wrap' }}>
+                                    {e.texte}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ================= AI-P3 : AJOUTER UNE NOTE ================= */}
+                      {/* UN FORMULAIRE INTÉGRÉ, JAMAIS UNE MODALE. Le coach note
+                          un appel en trois secondes, sans quitter la carte ni
+                          perdre de vue ce qu'il vient de lire. */}
+                      {!carte.noteOuverte ? (
+                        <div style={{ marginTop: '10px' }}>
+                          <button type="button" data-testid="ouvrir-note"
+                                  onClick={() => majCarte(r.id, {
+                                    noteOuverte: true,
+                                    formNote: { type: 'appel', texte: '', statut: '',
+                                                date: new Date().toISOString().slice(0, 10) } })}
+                                  style={stylePetitBouton}>
+                            Ajouter une note
+                          </button>
+                        </div>
+                      ) : (
+                        <div data-testid="formulaire-note"
+                             style={{ marginTop: '10px', padding: '10px', borderRadius: '8px',
+                                      background: 'rgba(0,0,0,0.22)',
+                                      border: '1px solid rgba(255,255,255,0.14)' }}>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                        marginBottom: '7px' }}>
+                            <label style={{ fontSize: '11px', color: TEXTE, opacity: 0.8 }}>
+                              Type
+                              <select data-testid="note-type" value={form.type || 'appel'}
+                                      onChange={(ev) => majCarte(r.id, {
+                                        formNote: { ...form, type: ev.target.value } })}
+                                      style={{ display: 'block', marginTop: '2px',
+                                               fontSize: '12px', padding: '5px 7px',
+                                               borderRadius: '6px', color: TEXTE,
+                                               background: 'rgba(0,0,0,0.35)',
+                                               border: '1px solid rgba(255,255,255,0.2)' }}>
+                                {TYPES_NOTE.map((t) => (
+                                  <option key={t.cle} value={t.cle}>{t.libelle}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label style={{ fontSize: '11px', color: TEXTE, opacity: 0.8 }}>
+                              Date
+                              <input type="date" data-testid="note-date" value={form.date || ''}
+                                     onChange={(ev) => majCarte(r.id, {
+                                       formNote: { ...form, date: ev.target.value } })}
+                                     style={{ display: 'block', marginTop: '2px',
+                                              fontSize: '12px', padding: '5px 7px',
+                                              borderRadius: '6px', color: TEXTE,
+                                              background: 'rgba(0,0,0,0.35)',
+                                              border: '1px solid rgba(255,255,255,0.2)' }} />
+                            </label>
+                            <label style={{ fontSize: '11px', color: TEXTE, opacity: 0.8 }}>
+                              État après cette action
+                              {/* LE STATUT EST DÉCLARÉ, JAMAIS DEVINÉ DANS LE
+                                  TEXTE. « J'attends sa proposition » et « je
+                                  dois le rappeler » se ressemblent trop pour
+                                  qu'une machine tranche. */}
+                              <select data-testid="note-statut" value={form.statut || ''}
+                                      onChange={(ev) => majCarte(r.id, {
+                                        formNote: { ...form, statut: ev.target.value } })}
+                                      style={{ display: 'block', marginTop: '2px',
+                                               fontSize: '12px', padding: '5px 7px',
+                                               borderRadius: '6px', color: TEXTE,
+                                               background: 'rgba(0,0,0,0.35)',
+                                               border: '1px solid rgba(255,255,255,0.2)' }}>
+                                <option value="">— inchangé —</option>
+                                {Object.keys(STATUT_COMMERCIAL).map((cle) => (
+                                  <option key={cle} value={cle}>
+                                    {STATUT_COMMERCIAL[cle].libelle}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                          <textarea data-testid="note-texte" rows={3}
+                                    value={form.texte || ''}
+                                    placeholder="Ce qui s'est passé : appel, rencontre, information…"
+                                    onChange={(ev) => majCarte(r.id, {
+                                      formNote: { ...form, texte: ev.target.value } })}
+                                    style={{ width: '100%', boxSizing: 'border-box',
+                                             fontSize: '12px', lineHeight: 1.5, color: TEXTE,
+                                             padding: '8px 9px', borderRadius: '7px',
+                                             background: 'rgba(0,0,0,0.32)',
+                                             border: '1px solid rgba(255,255,255,0.2)',
+                                             resize: 'vertical', fontFamily: 'inherit' }} />
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                        marginTop: '7px' }}>
+                            <button type="button" data-testid="enregistrer-note"
+                                    onClick={() => ajouterNote(r.id)}
+                                    disabled={occupe || !(form.texte || '').trim()}
+                                    style={{ ...styleBouton,
+                                             opacity: occupe || !(form.texte || '').trim()
+                                               ? 0.6 : 1 }}>
+                              {occupe ? 'Enregistrement…' : 'Enregistrer la note'}
+                            </button>
+                            <button type="button" data-testid="annuler-note"
+                                    onClick={() => majCarte(r.id, {
+                                      noteOuverte: false, formNote: null })}
+                                    style={stylePetitBouton}>
+                              Annuler
+                            </button>
+                          </div>
                         </div>
                       )}
 
