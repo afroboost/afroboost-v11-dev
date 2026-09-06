@@ -712,6 +712,23 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
   const cibleIntrouvable = !!inboundCible && !cibleTrouvee
     && sectionReponses && sectionReponses.etat === SECTION.OK;
 
+  /* DEEPLINK PROSPECTION — INTROUVABLE EST UN ÉTAT TERMINAL, DONC ON CONSOMME.
+     Le point clé est la CONDITION, pas l'effacement : on n'y arrive qu'une fois
+     les conversations CHARGÉES (`SECTION.OK`). Tant qu'elles arrivent encore,
+     `cibleIntrouvable` est faux et l'intention reste intacte — c'est
+     exactement l'erreur que le correctif supprime. Mais une fois la liste
+     complète sous les yeux, une cible absente l'est pour de bon : la garder
+     ferait rouvrir la même bannière à chaque rafraîchissement, pour un message
+     qui n'existe pas.
+     ON NE SE RABAT SUR AUCUNE AUTRE CONVERSATION : rien ne s'ouvre, et l'écran
+     le dit. Une cible d'un autre coach ne peut pas fuiter — le serveur ne l'a
+     jamais mise dans `conversations`. */
+  useEffect(() => {
+    if (!cibleIntrouvable) return;
+    if (onCibleConsommee) onCibleConsommee();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cibleIntrouvable]);
+
   const section = chargement.sections.prospects;
   const etat = (section && section.etat) || SECTION.CHARGEMENT;
   const charge = etat === SECTION.OK && section.donnees ? section.donnees : null;

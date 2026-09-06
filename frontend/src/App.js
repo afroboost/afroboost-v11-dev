@@ -263,6 +263,11 @@ import { useDataCache, invalidateCache } from "./hooks/useDataCache";
 import { applyPrimaryColor, persistThemeColors } from "./utils/themeColor"; // V259 + V295 (anti-FOUC)
 import { PublicationsCarousel } from "./components/Publications"; // V261
 import { ConfirmationBoost } from "./components/publications/Boost"; // V342
+// DEEPLINK PROSPECTION — cet import n'est PAS decoratif : le module capture
+// `?prospection=1&inbound=<id>` AU CHARGEMENT, donc avant le premier rendu.
+// C'est ce qui ferme la course avec le montage de CoachDashboard.
+import { lire as prospectionIntentionLire,
+         poser as prospectionIntentionPoser } from "./utils/prospectionIntention";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -4667,8 +4672,11 @@ function App() {
       try {
         cible = (new URLSearchParams(url.split('?')[1] || '').get('inbound') || '')
           .trim().slice(0, 64);
-        sessionStorage.setItem('afroboost_prospection_inbound', cible);
-      } catch (e) { /* mode privé : le dashboard s'ouvrira sans cible */ }
+      } catch (e) { /* url illisible : le dashboard s'ouvrira sans cible */ }
+      // Par le module : il ecrit ET annonce. L'annonce compte ici plus qu'ailleurs
+      // — l'application est deja ouverte, le dashboard est monte depuis
+      // longtemps, et son effet de montage ne se rejouera jamais.
+      prospectionIntentionPoser(cible);
       if (coachModeRef.current && coachUserRef.current?.email) setCoachMode(true);
       else setShowCoachLogin(true);
     };
@@ -5141,17 +5149,23 @@ function App() {
     //
     // ON NE STOCKE QUE L'IDENTIFIANT. Ni le nom de l'organisation, ni l'adresse,
     // ni le contenu : le strict nécessaire pour rouvrir la bonne carte.
-    if (searchParams.get('prospection') === '1') {
-      const cible = (searchParams.get('inbound') || '').trim().slice(0, 64);
-      try {
-        if (cible) sessionStorage.setItem('afroboost_prospection_inbound', cible);
-        else sessionStorage.setItem('afroboost_prospection_inbound', '');
-      } catch (e) { /* mode privé : le dashboard s'ouvrira sans cible */ }
-      // L'URL est nettoyée : un rafraîchissement ne doit pas rejouer l'intention,
-      // et l'identifiant n'a rien à faire dans la barre d'adresse.
-      try {
-        window.history.replaceState({}, '', window.location.pathname + window.location.hash);
-      } catch (e) { /* silencieux */ }
+    //
+    // LA CAPTURE N'EST PLUS ICI, ET C'EST LE CORRECTIF. `coachMode` est
+    // restauré de façon SYNCHRONE depuis le localStorage (voir son
+    // `useState(() => …)`) : quand le coach est déjà connecté — le cas normal
+    // quand il touche une notification — `CoachDashboard` est monté dès le
+    // PREMIER rendu, et React exécute les effets des enfants AVANT ceux du
+    // parent. Cet effet-ci posait donc l'intention APRÈS que le dashboard soit
+    // allé la chercher : elle restait en `sessionStorage`, intacte et jamais
+    // honorée, et la conversation ne s'ouvrait pas (mesuré en production le
+    // 06/09). La capture a lieu désormais à l'import de
+    // `utils/prospectionIntention`, donc avant le premier rendu — un moment
+    // qu'aucun ordre de montage ne peut dépasser.
+    //
+    // ON LIT SANS CONSOMMER. L'intention n'appartient plus à celui qui la
+    // trouve : elle sera effacée par l'écran Prospection, et seulement une fois
+    // la bonne conversation réellement ouverte (ou déclarée introuvable).
+    if (prospectionIntentionLire() !== null) {
       if (coachModeRef.current && coachUserRef.current?.email) {
         setCoachMode(true);          // déjà connecté : le dashboard s'ouvre seul
       } else {

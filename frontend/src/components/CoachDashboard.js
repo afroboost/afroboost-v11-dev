@@ -46,6 +46,14 @@ import SvgIcon from "./SvgIcon";
 // SEULE — jamais les contacts, les abonnes ni les reservations.
 import ProspectsSection from "./coach/ProspectsSection";
 import { alignerLieu } from "../utils/courseLocation"; // V230: jeu d'icones vectorielles inline
+// DEEPLINK PROSPECTION — la source UNIQUE de l'intention. Ce composant ne
+// touche plus jamais `sessionStorage` directement : deux endroits qui lisent
+// et effacent la meme cle sans se coordonner, c'est exactement ce qui a
+// produit le defaut.
+import { lire as prospectionIntentionLire,
+         poser as prospectionIntentionPoser,
+         consommer as prospectionIntentionConsommer,
+         EVENEMENT as PROSPECTION_INTENTION_EVENEMENT } from "../utils/prospectionIntention";
 
 // v9.2.1: ErrorBoundary pour isoler les erreurs de composants
 class SectionErrorBoundary extends Component {
@@ -4658,16 +4666,29 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // le localStorage comme avant ; l'intention n'est qu'une bascule ponctuelle,
   // après quoi la navigation normale reprend — y compris la mémorisation du
   // dernier onglet visité.
+  //
+  // DEEPLINK PROSPECTION — ON NE CONSOMME PLUS ICI, ET C'EST LE CORRECTIF.
+  // Cet effet effaçait l'intention au montage. Or à cet instant les
+  // conversations ne sont pas chargées : l'écran ne pouvait pas encore trouver
+  // la bonne, et l'intention était déjà partie. Elle est désormais lue sans
+  // être détruite, et c'est `ProspectsSection` qui la consomme — une fois la
+  // conversation réellement ouverte, ou déclarée introuvable.
+  //
+  // ET ON ÉCOUTE L'ANNONCE. Quand l'application est déjà ouverte, le Service
+  // Worker ne recharge pas la page : cet effet de montage ne se rejouera
+  // jamais. Sans cet abonnement, une notification touchée dans ces conditions
+  // poserait une intention que plus personne n'irait relire.
   const [p3Cible, setP3Cible] = useState('');
   useEffect(() => {
-    let cible = null;
-    try {
-      cible = sessionStorage.getItem('afroboost_prospection_inbound');
-      if (cible !== null) sessionStorage.removeItem('afroboost_prospection_inbound');
-    } catch (e) { return; }          // mode privé : rien à reprendre
-    if (cible === null) return;
-    setTab('prospection');
-    if (cible) setP3Cible(cible);
+    const reprendre = () => {
+      const cible = prospectionIntentionLire();
+      if (cible === null) return;    // aucune demande : on ne bascule rien
+      setTab('prospection');
+      if (cible) setP3Cible(cible);  // '' = demande sans cible : onglet seul
+    };
+    reprendre();
+    window.addEventListener(PROSPECTION_INTENTION_EVENEMENT, reprendre);
+    return () => window.removeEventListener(PROSPECTION_INTENTION_EVENEMENT, reprendre);
   }, []);
 
   // === READ-P1 — LES RÉPONSES PARTENAIRES NON LUES ===
@@ -4766,8 +4787,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     try {
       cible = (new URLSearchParams(url.split('?')[1] || '').get('inbound') || '')
         .trim().slice(0, 64);
-      sessionStorage.setItem('afroboost_prospection_inbound', cible);
-    } catch (e) { /* mode privé : l'onglet s'ouvrira sans cible */ }
+    } catch (e) { /* url illisible : l'onglet s'ouvrira sans cible */ }
+    // Par le module, comme tout le reste : une seule ecriture, un seul endroit.
+    prospectionIntentionPoser(cible);
     if (cible) setP3Cible(cible);
     setTab('prospection');
     setC17jOuvert(false);
@@ -8832,7 +8854,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {tab === "prospection" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6">
             <ProspectsSection API={API} inboundCible={p3Cible}
-                              onCibleConsommee={() => setP3Cible('')} />
+                              onCibleConsommee={() => {
+                                /* L'ecran a ouvert la bonne conversation — ou l'a
+                                   declaree introuvable. C'est SEULEMENT ici que
+                                   l'intention meurt : un rafraichissement ne doit
+                                   pas la rejouer. */
+                                prospectionIntentionConsommer();
+                                setP3Cible('');
+                              }} />
           </div>
         )}
 

@@ -25,6 +25,7 @@ CE QU'IL PROUVE
 import ast
 import asyncio
 import io
+import re
 import json
 import os
 import socket
@@ -389,23 +390,43 @@ ECRAN = io.open(os.path.join(RACINE, "frontend", "src", "components", "coach",
 CHAT = io.open(os.path.join(RACINE, "frontend", "src", "components",
                             "ChatWidget.js"), encoding="utf-8").read()
 
-verifier("10a. App.js reconnait le lien profond",
-         "searchParams.get('prospection') === '1'" in APP)
-verifier("10b. il met l'intention de cote AVANT de decider",
-         "sessionStorage.setItem('afroboost_prospection_inbound'" in APP)
+# DEEPLINK PROSPECTION — les trois premieres verifications suivent le
+# deplacement de la CAPTURE. Elle n'est plus dans un effet d'App.js (elle y
+# arrivait apres le montage de l'enfant, cf. section 11) mais a l'import du
+# module. Ce qui est prouve ne change pas : le lien profond est reconnu,
+# l'intention est mise de cote AVANT toute decision, et on n'y met que
+# l'identifiant borne. Seul l'endroit qui le fait a change.
+INTENTION_SRC = io.open(os.path.join(RACINE, "frontend", "src", "utils",
+                                     "prospectionIntention.js"),
+                        encoding="utf-8").read()
+_APRES = APP.split("prospectionIntentionLire() !== null")
+
+verifier("10a. le lien profond est reconnu",
+         "params.get('prospection') !== '1'" in INTENTION_SRC
+         and "get('inbound')" in INTENTION_SRC)
+verifier("10b. l'intention est mise de cote AVANT toute decision",
+         # A l'import, donc avant le premier rendu — plus tot qu'aucun effet.
+         "CAPTURE_AU_CHARGEMENT = capturer()" in INTENTION_SRC
+         and "poser(cible)" in INTENTION_SRC)
 verifier("10c. il n'y met QUE l'identifiant, borne",
-         ".trim().slice(0, 64)" in APP)
+         ".slice(0, 64)" in INTENTION_SRC)
 verifier("10d. connecte -> dashboard ; sinon -> connexion, puis reprise",
-         "setCoachMode(true)" in APP.split("prospection') === '1'")[1][:1200]
-         and "setShowCoachLogin(true)" in APP.split("prospection') === '1'")[1][:1200])
+         len(_APRES) > 1
+         and "setCoachMode(true)" in _APRES[1][:1200]
+         and "setShowCoachLogin(true)" in _APRES[1][:1200])
 verifier("10e. l'URL est nettoyee : un rafraichissement ne rejoue rien",
-         "history.replaceState" in APP.split("prospection') === '1'")[1][:1400])
+         "history.replaceState" in INTENTION_SRC)
 verifier("10f. l'app DEJA OUVERTE reagit au clic du Service Worker",
          "NOTIFICATION_CLICK" not in APP or "prospection=1" in APP)
 verifier("10g. le ChatWidget NE s'ouvre PLUS sur une notification de prospection",
          "url.indexOf('prospection=1') !== -1) return;" in CHAT)
-verifier("10h. le dashboard consomme l'intention UNE fois",
-         "sessionStorage.removeItem('afroboost_prospection_inbound')" in DASH)
+# L'intention est toujours consommee UNE fois — mais plus au montage, ou les
+# conversations n'etaient pas encore chargees : au SUCCES, quand l'ecran a
+# ouvert la bonne conversation (ou l'a declaree introuvable).
+verifier("10h. l'intention est consommee UNE fois, et au succes",
+         "prospectionIntentionConsommer()" in DASH
+         and DASH.count("prospectionIntentionConsommer()") == 1
+         and "export function consommer()" in INTENTION_SRC)
 verifier("10i. il bascule sur l'onglet Prospection",
          "setTab('prospection')" in DASH)
 # PROSPECTION FOCUS — la cible est desormais une CONVERSATION ouverte SUR le
@@ -427,6 +448,80 @@ verifier("10m. la notification en-app mene au MEME endroit que le push",
 verifier("10n. le badge Prospection continue de venir des NON LUES",
          "p3NonLues > 0 ? `Prospection (${p3NonLues})`" in DASH
          and "res?.data?.non_lues" in DASH)
+
+# ============================================================================
+# 11. DEEPLINK PROSPECTION — LA COURSE DE MONTAGE EST FERMEE, ET LE RESTE.
+#
+# CE QUI S'EST PASSE. `coachMode` est restaure de facon SYNCHRONE depuis le
+# localStorage : quand le coach est deja connecte — le cas normal quand il
+# touche une notification — CoachDashboard est monte des le PREMIER rendu. React
+# executant les effets des enfants AVANT ceux du parent, l'effet de montage du
+# dashboard allait chercher l'intention avant que l'effet d'App ne l'ait posee.
+# Il trouvait `null`, repartait, et l'identifiant restait en sessionStorage sans
+# que personne ne l'honore. Mesure en production le 06/09 : la cle intacte apres
+# chargement, et la conversation fermee.
+#
+# CE QUE CES VERIFICATIONS EMPECHENT DE REVENIR : remettre la capture dans un
+# effet, redonner a deux composants le droit d'ecrire la meme cle, ou reprendre
+# l'habitude de consommer l'intention avant d'avoir ouvert quoi que ce soit.
+# ============================================================================
+print("\n11. DEEPLINK PROSPECTION — LA COURSE DE MONTAGE EST FERMEE")
+
+INTENTION = io.open(os.path.join(RACINE, "frontend", "src", "utils",
+                                 "prospectionIntention.js"), encoding="utf-8").read()
+
+verifier("11a. la capture a lieu A L'IMPORT, pas dans un effet",
+         "CAPTURE_AU_CHARGEMENT = capturer()" in INTENTION)
+verifier("11b. le module est la SEULE source : il nomme la cle",
+         "CLE = 'afroboost_prospection_inbound'" in INTENTION)
+verifier("11c. App.js ne touche PLUS la cle directement",
+         "afroboost_prospection_inbound" not in APP)
+verifier("11d. le dashboard non plus",
+         "afroboost_prospection_inbound" not in DASH)
+verifier("11e. ni l'ecran Prospection",
+         "afroboost_prospection_inbound" not in ECRAN)
+verifier("11f. App LIT l'intention, il ne la pose plus depuis l'URL",
+         "prospectionIntentionLire() !== null" in APP)
+verifier("11g. le dashboard NE CONSOMME PLUS au montage",
+         "removeItem('afroboost_prospection_inbound')" not in DASH
+         and "prospectionIntentionLire" in DASH)
+verifier("11h. il ecoute l'annonce, pour l'application DEJA ouverte",
+         "PROSPECTION_INTENTION_EVENEMENT" in DASH
+         and "addEventListener(PROSPECTION_INTENTION_EVENEMENT" in DASH)
+verifier("11i. et il retire son ecouteur en partant",
+         "removeEventListener(PROSPECTION_INTENTION_EVENEMENT" in DASH)
+verifier("11j. la consommation n'a lieu QU'AU SUCCES, cote ecran",
+         "prospectionIntentionConsommer()" in DASH
+         and "onCibleConsommee" in DASH)
+verifier("11k. lire n'efface pas — les deux gestes sont deux fonctions",
+         "export function lire()" in INTENTION
+         and "export function consommer()" in INTENTION
+         and "removeItem" not in INTENTION.split("export function lire()")[1]
+                                            .split("export function consommer()")[0])
+verifier("11l. une cible INTROUVABLE est aussi un etat terminal : on consomme",
+         "if (!cibleIntrouvable) return;" in ECRAN
+         and "}, [cibleIntrouvable]);" in ECRAN)
+verifier("11m. mais SEULEMENT une fois les conversations chargees",
+         "sectionReponses.etat === SECTION.OK" in ECRAN)
+verifier("11n. le module borne l'identifiant recu",
+         ".slice(0, 64)" in INTENTION)
+# Ces deux verifications portent sur le CODE, pas sur la prose : les
+# commentaires du module citent « organisation » et « localStorage »
+# precisement pour dire qu'il ne les touche pas.
+def _sans_commentaires(src):
+    src = re.sub(r"/\*[\s\S]*?\*/", "", src)
+    return re.sub(r"^\s*//.*$", "", src, flags=re.M)
+
+INTENTION_CODE = _sans_commentaires(INTENTION)
+
+verifier("11o. et ne stocke QUE l'identifiant, jamais le contenu",
+         "organisation" not in INTENTION_CODE
+         and "from_email" not in INTENTION_CODE
+         and "setItem(CLE, valeur)" in INTENTION_CODE)
+verifier("11p. sessionStorage, jamais localStorage — l'intention ne survit pas a demain",
+         "sessionStorage" in INTENTION_CODE and "localStorage" not in INTENTION_CODE)
+verifier("11q. le moteur Push n'est pas touche par ce lot",
+         "vapid" not in INTENTION.lower() and "subscription" not in INTENTION.lower())
 
 # ============================================================================
 _ok = sum(1 for _i, _c, _d in RESULTATS if _c)
