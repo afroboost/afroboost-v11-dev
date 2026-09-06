@@ -4,7 +4,7 @@
 > Ne stocke que `présent = oui/non`, `configuré = oui/non`, des noms de variables, des SHA et des compteurs.
 > Pour tout sujet **production**, la **preuve runtime** prime sur toute vue UI / onglet / rapport ancien.
 
-Dernière réconciliation runtime vérifiée : **2026-09-03, 17:20 UTC**.
+Dernière réconciliation runtime vérifiée : **2026-09-06, 11:48 UTC**.
 
 ---
 
@@ -53,7 +53,62 @@ Avant chaque lot / diagnostic / déploiement : (1) lire ce fichier ; (2) vérifi
   C'est une application DIFFÉRENTE sur le MÊME serveur : y poser une variable n'a aucun effet sur afroboost.com.
 - Dans le même environnement se trouvent aussi `afroboost-live`, `sportdate`, `sportdate-rencontre` : ce ne sont pas la bonne app.
 
-## Git / déploiement (vérifié 2026-09-03 13:12 UTC) — ✅ LIVRÉ, BLOCAGE RÉSORBÉ
+## Git / déploiement (vérifié 2026-09-06 11:48 UTC) — ✅ À JOUR, DÉPLOYÉ, PROUVÉ
+
+- `origin/main` = `HEAD` local = **`5f36c77c`** — « CONTRAT VISIBILITE : la vitrine
+  publique rendait 6 offres que Bassi avait masquees ». Arbre de travail **propre**,
+  local et distant **au même commit** (0 devant / 0 derrière).
+- Lots livrés depuis la précédente réconciliation (03/09) : `ad7c9663` AI-P4,
+  `0b127b1f` R2b, `1e62209b` R2c, `acae5429` R2b-2, `eab2d661` R3a,
+  `294bf22c` + `92dc7ef8` PROSPECTION FOCUS, `939ba9aa` + `31ba89c0` DEEPLINK
+  PROSPECTION, `5f36c77c` CONTRAT VISIBILITE.
+- **Preuve runtime du backend** : `boot_id` **`94b82274…`**, conteneur démarré à
+  **09:04:51 UTC**, soit **45 s APRÈS** le push de `5f36c77c` (09:04:06 UTC).
+- **Preuve runtime FONCTIONNELLE du dernier lot** (pas seulement un redémarrage) :
+  `GET /api/offers` (route **publique**, sans jeton) renvoie **3 offres, toutes
+  `visible=true`**. Avant le correctif la même route en servait **9, dont 6
+  masquées**. Le filtrage est donc bien exécuté **côté serveur** en production.
+- **L'administration n'est pas cassée** : `GET /api/offers?scope=mine` répond
+  toujours, et **sans jeton elle renvoie `[]`** — aucune offre masquée ne fuit par
+  cette branche.
+- **Preuve runtime du frontend** : `https://afroboost.com/sw.js` sert
+  `CACHE_NAME = 'afroboost-v496'`, dont le commentaire de tête est celui de
+  **DEEPLINK PROSPECTION FIX2** (`31ba89c0`). Le bundle en ligne est donc bien
+  celui d'aujourd'hui.
+  ⚠️ **Piège à ne pas repayer** : comparer le hachage `static/js/main.<hash>.js` de
+  la production à celui de `frontend/build/index.html` **du dépôt** ne prouve RIEN et
+  donne un faux négatif. Le `Dockerfile` **reconstruit React depuis les sources**
+  (`npx craco build`, étape `frontend-build`) et copie le résultat ; le dossier
+  `frontend/build/` versionné est un **artefact périmé qui n'est jamais servi**.
+  Mesure du jour : prod `main.4810ad83.js` ≠ dépôt `main.ebe787b4.js`, et pourtant
+  la production exécute bien le code d'aujourd'hui. **La preuve, c'est `sw.js` /
+  une chaîne du lot, jamais le hachage du dossier `build/` versionné.**
+- Stabilité au même instant : **20/20 × 200** sur `/` via Cloudflare, **200** sur
+  l'origine directe (`Host: afroboost.com` → `178.105.201.62`), **aucun 404
+  Traefik**, `boot_id` **inchangé** pendant toute la mesure.
+
+## Non-régression production — relevé du 2026-09-06 11:47 UTC (sur `5f36c77c`)
+
+`python3 tests/nonregression.py` : **63 PASS / 2 FAIL / 21 SKIP (sur 86)**.
+
+| Test | État | Lecture |
+|---|---|---|
+| #92 V369 bot OFF, routes fermées | ❌ FAIL | `drapeau_off=False` : **`BOT_MENU_ENABLED` est à `true` en base**. Les trois portes sont bien fermées (`pauses=403 reactiver=403 usurpé=403`) et le webhook reste vérifiable (`200`). L'échec porte sur **l'état d'un drapeau choisi par le propriétaire**, pas sur le code. |
+| #109 P1-d exposé ET dormant | ❌ FAIL | `P1_TRIAL_J3_ENABLED = true`, **`P1_TRIAL_J3_ENVOI_REEL = false`** : J+3 est **à demi armé** — le moteur tourne, **rien ne part**. Déjà consigné comme tel depuis l'audit du 29/08. |
+
+**Ces deux échecs ne sont PAS des régressions**, et la preuve ne repose pas sur une
+opinion : le document `feature_flags` porte `updatedAt = 2026-09-03T10:57:09 UTC`
+(auteur `contact.artboost@gmail.com`), donc **aucune écriture depuis** ; et
+`git log -S` sur `P1_TRIAL_J3_ENABLED` comme sur `BOT_MENU_ENABLED` ne renvoie
+**aucun commit** depuis le 05/09. Les lots du 06/09 ne touchent ni l'un ni l'autre.
+
+Les **21 SKIP** viennent tous de l'absence de `ADMIN_JWT` / `SUB_CODE` / `SUB_EMAIL`
+dans l'environnement d'exécution. ⛔ Deux d'entre eux (#102, #112) restent des
+**interdictions de livraison au sens de la règle V310c** pour tout NOUVEAU
+durcissement JWT : le parcours légitime (200 **avec** jeton) n'y est pas prouvé.
+Ils n'interdisent pas les lots du jour, qui ne durcissent aucune authentification.
+
+## Git / déploiement — historique (vérifié 2026-09-03 13:12 UTC)
 
 - `origin/main` = `HEAD` local = **`e40f99b9`**, qui contient **`cccd739f` (P3-R3)** et
   **`96642164` (P3-R2)**. La production **exécute le nouveau code**.
