@@ -959,11 +959,20 @@ verifier("12d. AUCUNE variable d'etat GLOBALE de carte ne subsiste",
          not any(v in ECRAN for v in ("const [brouillons,", "const [iaEnCours,",
                                       "const [iaErreurs,", "const [etatEnCours,",
                                       "const [reponseOuverte,")))
-verifier("12d-bis. l'ouverture, la generation et l'edition sont toutes par carte",
-         "carteDe(id).ouvert" in ECRAN and "carteDe(id).chargement" in ECRAN
+# PROSPECTION FOCUS a retire le bascule `carteDe(id).ouvert` : c'est desormais
+# `filActif` — une CHAINE — qui dit quelle conversation est developpee, et une
+# chaine ne peut en designer qu'une. La garantie ne change pas d'un pouce :
+# tout ce qui est PERSISTANT (chargement, brouillon, edition, note) reste indexe
+# par `message.id` dans `cartes`, et c'est cela qui rend le melange entre deux
+# dossiers structurellement impossible.
+verifier("12d-bis. le chargement, la generation et l'edition sont tous par carte",
+         "cartes[r.id]" in ECRAN and "carteDe(id).chargement" in ECRAN
          and "carte.edition" in ECRAN)
-verifier("12e. seul « Voir la reponse » appelle la route de lecture",
-         ECRAN.count("/lu`") == 1 and "ouvrirReponse(r.id)" in ECRAN)
+verifier("12d-ter. une seule conversation peut etre developpee — c'est une chaine",
+         "const [filActif, setFilActif] = useState('')" in ECRAN
+         and "conversations.find((c) => c.cle === filActif)" in ECRAN)
+verifier("12e. un SEUL chemin appelle la route de lecture",
+         ECRAN.count("/lu`") == 1 and "ouvrirReponse(message.id)" in ECRAN)
 # LA TRANCHE EST LA DECLARATION DE CHARGEMENT ELLE-MEME, bornee par sa propre
 # fermeture. Elle etait bornee par le nom d'une variable voisine — qui a change
 # de nom au lot suivant, et la garde s'est mise a examiner tout le fichier.
@@ -986,11 +995,15 @@ verifier("12g. le badge NOUVEAU se lit sur `read_at`", "const nonLue = !r.read_a
 # meme statut — une au serveur, une a l'ecran — finissent toujours par diverger,
 # et c'est l'ecran qui ment en premier.
 verifier("12h. l'etat commercial vient du SERVEUR, l'ecran ne le recalcule pas",
-         "const statut = r.statut_commercial" in ECRAN
+         "const statut = convActive.statut_commercial" in ECRAN
          and "const traitee = statut === 'traite';" in ECRAN
          and "r.traite_at" not in ECRAN)
+# PROSPECTION FOCUS compte des CONVERSATIONS et non plus des messages (le BDE
+# en a deux). La source ne change pas : c'est toujours le serveur, sur toute la
+# portee du coach — l'ecran ne recompte rien.
 verifier("12i. les compteurs viennent du SERVEUR, pas d'un comptage local",
-         "sectionReponses.donnees.non_lues" in ECRAN
+         "sectionReponses.donnees.conversations_counts" in ECRAN
+         and "conversations.filter" not in ECRAN
          and "reponses.filter" not in ECRAN)
 verifier("12j. l'onglet Prospection porte la pastille des non-lues",
          "p3NonLues > 0 ? `Prospection (${p3NonLues})`" in TABLEAU)

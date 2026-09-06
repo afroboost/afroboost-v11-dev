@@ -1114,12 +1114,28 @@ const SOURCE_C = require('fs').readFileSync(
   require('path').join(__dirname, '..', 'ProspectsSection.js'), 'utf8');
 
 /* ==========================================================================
-   P3-U3 — LES RÉPONSES REÇUES DEVIENNENT VISIBLES
+   PROSPECTION FOCUS — UN PARTENAIRE, UNE CONVERSATION
 
-   Le moteur U2 stockait les réponses, la route les rendait, et l'écran ne les
-   demandait pas : une réponse invisible est une réponse perdue. Ce panneau
-   répond à UNE question — « qui nous a répondu, et est-ce rattaché au bon
-   prospect ? » — et rien de plus. Ce n'est pas une messagerie.
+   CE QUI A RENDU CE LOT NÉCESSAIRE, MESURÉ EN PRODUCTION LE 06/09/2026.
+   Quatre réponses reçues, mais TROIS interlocuteurs : `info@bde-hearc.ch` a
+   écrit deux fois sur la même action (`a0e02bd1`). L'écran affichait donc deux
+   grosses cartes pour un seul partenaire — l'une nommée « BDE HE-Arc », l'autre
+   « ETU-04 » — sans que rien ne dise que c'était le même fil. À côté, les 142
+   prospects s'affichaient EN MÊME TEMPS, sous les cartes dépliées.
+
+   CE QUI EST PROUVÉ ICI :
+     * deux vues séparées : jamais la grande table ET les conversations ;
+     * un fil = une conversation, quel que soit le nombre de messages reçus ;
+     * deux actions différentes ne fusionnent JAMAIS ;
+     * une seule conversation développée à la fois ;
+     * « statut commercial » et « réponse envoyée » restent DEUX informations ;
+     * « réponse envoyée » vient de la trace réelle, jamais d'une déduction ;
+     * l'historique est replié, et rien n'y a été perdu ;
+     * tout ce que AI-P1 à AI-P4 et READ-P1/P2 garantissaient tient encore.
+
+   LE REGROUPEMENT LUI-MÊME EST PROUVÉ CÔTÉ SERVEUR (`tests/test_pf_conversations.py`) :
+   c'est là qu'il est calculé. Ici on prouve que l'ÉCRAN l'affiche fidèlement et
+   ne le recalcule pas.
    ========================================================================== */
 
 const reponseFictive = (extra = {}) => ({
@@ -1139,29 +1155,78 @@ const reponseFictive = (extra = {}) => ({
   ...extra,
 });
 
-describe('P3-U3 — les réponses reçues', () => {
-  /* READ-P1 : le serveur rend DEUX compteurs à côté des messages. Le faux les
-     dérive de la même page pour rester fidèle — mais l'écran, lui, ne les
-     recalcule jamais : il affiche ce que le serveur a compté sur la portée
-     complète du coach, pagination comprise. */
-  /* AI-P3 : le serveur rend le STATUT COMMERCIAL de chaque message et les cinq
-     compteurs. Le faux les dérive de la même façon — mais l'écran, lui, ne
-     recalcule JAMAIS : il affiche ce que le serveur a dérivé, sinon deux règles
-     coexisteraient et finiraient par diverger. */
-  const avecReponses = (messages, a_rattacher = 0) => {
+/* LE FAUX SERVEUR GROUPE COMME LE VRAI. `pf_conversations` (api/server.py)
+   groupe par `action_id` ; l'écran, lui, ne groupe RIEN — il affiche ce qu'on
+   lui donne. Reproduire la règle ici est donc la seule façon de tester l'écran
+   sans réseau, et c'est déjà ce que ce banc fait pour le statut commercial et
+   les compteurs. La règle elle-même est prouvée là où elle vit : côté serveur. */
+const conversationsDe = (messages, envois) => {
+  const groupes = [];
+  const index = {};
+  messages.forEach((m) => {
+    const cle = String(m.action_id || '').trim() || `inbound:${m.id}`;
+    if (index[cle] === undefined) { index[cle] = groupes.length; groupes.push([cle, []]); }
+    groupes[index[cle]][1].push(m);
+  });
+  return groupes.map(([cle, lot]) => {
+    const ordonnes = lot.slice().sort(
+      (a, b) => String(a.received_at).localeCompare(String(b.received_at)));
+    const dernier = ordonnes[ordonnes.length - 1];
+    const envoi = (envois || {})[cle] || null;
+    const statut = dernier.statut_commercial || (dernier.traite_at ? 'traite' : 'a_repondre');
+    return {
+      cle,
+      action_id: dernier.action_id || null,
+      organisation: dernier._organisation || '',
+      recipient_key: dernier.recipient_key || '',
+      from_email: dernier.from_email || '',
+      nb_messages: ordonnes.length,
+      message_ids: ordonnes.map((m) => m.id),
+      non_lues: ordonnes.filter((m) => !m.read_at).length,
+      statut_commercial: statut,
+      intention: dernier._intention || '',
+      dernier_message: dernier,
+      dernier_message_at: dernier.received_at,
+      messages_recus: ordonnes,
+      derniere_reponse_afroboost: envoi,
+      reponse_apres_dernier_message: !!(envoi && envoi.sent_at
+        && String(envoi.sent_at) > String(dernier.received_at)),
+      rang: statut === 'a_repondre' ? 1 : 4,
+    };
+  });
+};
+
+const compteursDe = (conversations) => {
+  const c = { total: conversations.length, non_lues: 0, a_traiter: 0,
+              a_repondre: 0, appel_a_faire: 0, en_attente: 0, refus: 0, traite: 0 };
+  conversations.forEach((conv) => {
+    c[conv.statut_commercial] = (c[conv.statut_commercial] || 0) + 1;
+    if (conv.non_lues) c.non_lues += 1;
+    if (conv.rang <= 3) c.a_traiter += 1;
+  });
+  return c;
+};
+
+describe('PROSPECTION FOCUS — les réponses reçues', () => {
+  /* READ-P1 : le serveur rend ses compteurs à côté des messages. AI-P3 : il
+     rend le STATUT COMMERCIAL de chaque message. PROSPECTION FOCUS : il rend
+     en plus les CONVERSATIONS et leurs compteurs. Le faux les dérive de la
+     même façon — mais l'écran, lui, ne recalcule JAMAIS. */
+  const avecReponses = (messages, a_rattacher = 0, envois = null) => {
     const avecStatut = messages.map((m) => ({
       ...m,
       statut_commercial: m.statut_commercial
         || (m.traite_at ? 'traite' : 'a_repondre'),
     }));
+    const conversations = conversationsDe(avecStatut, envois);
     const compte = (etat) => avecStatut.filter((m) => m.statut_commercial === etat).length;
     mockEtatParSection = {
-      prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect()], null, 142) },
       campagnes: { etat: SECTION.OK, donnees: { total: 0, campaigns: [] } },
       reponses: { etat: SECTION.OK,
                   donnees: { messages: avecStatut, total: avecStatut.length,
                              /* `a_rattacher` (aucune action ne réclame ce message) ne
-                                se confond plus avec l'état commercial `en_attente`
+                                se confond pas avec l'état commercial `en_attente`
                                 (« j'attends une réponse du partenaire ») : les deux
                                 portaient le même nom et le second écrasait le premier. */
                              a_rattacher,
@@ -1170,20 +1235,33 @@ describe('P3-U3 — les réponses reçues', () => {
                              appel_a_faire: compte('appel_a_faire'),
                              en_attente: compte('en_attente'),
                              refus: compte('refus'),
-                             traite: compte('traite') } },
+                             traite: compte('traite'),
+                             conversations,
+                             conversations_total: conversations.length,
+                             conversations_counts: compteursDe(conversations) } },
     };
   };
 
-  /* AI-P2 — OUVRIR UNE CARTE. Le détail (email original, corrélation, brouillon)
-     n'existe plus dans la carte FERMÉE : il est derrière « Voir la réponse ».
-     Ce helper fait ce que le coach fait, pour que les vérifications portent sur
-     ce qu'il voit vraiment. */
+  /* OUVRIR UNE CONVERSATION, comme le coach le fait : un clic sur la ligne. */
   const ouvrirCarte = async (indice = 0) => {
     axios.post.mockResolvedValue({ data: { ok: true, non_lues: 0, a_repondre: 1 } });
     axios.get.mockResolvedValue({ data: { brouillon: null } });
-    await act(async () => { tous('[data-testid="voir-reponse"]')[indice].click(); });
+    await act(async () => {
+      tous('[data-testid="conversation-ligne"]')[indice].click();
+    });
   };
 
+  const lignes = () => tous('[data-testid="conversation-ligne"]');
+  const nomsFile = () => lignes().map((b) => b.textContent.trim());
+
+  /* LE BLOC RÉPONSES, DÉCOUPÉ DANS LA SOURCE. Le marqueur vise le RENDU, pas un
+     commentaire : `data-testid` n'existe que dans le JSX, et la sentinelle de
+     fin est posée exprès pour que la découpe ne dépende pas de ce qui suit. */
+  const blocReponses = () => SOURCE_C.slice(
+    SOURCE_C.indexOf('data-testid="reponses-recues"'),
+    SOURCE_C.indexOf('/* FIN BLOC RÉPONSES */'));
+
+  // ------------------------------------------------------------------ §1
   test('l’écran DEMANDE les réponses au chargement', async () => {
     avecReponses([]);
     await monter(<ProspectsSection API="/api" />);
@@ -1191,56 +1269,271 @@ describe('P3-U3 — les réponses reçues', () => {
     expect(mockSourcesDeclarees.reponses.url).toContain('/prospect-inbound');
   });
 
-  test('tant que personne n’a répondu, le panneau ne s’affiche pas', async () => {
+  test('tant que personne n’a répondu, l’écran ouvre la liste des prospects', async () => {
     avecReponses([]);
     await monter(<ProspectsSection API="/api" />);
-    expect(document.querySelector('[data-testid="reponses-recues"]')).toBeNull();
+    expect(par('onglet-reponses').getAttribute('aria-selected')).toBe('false');
+    expect(par('onglet-prospects').getAttribute('aria-selected')).toBe('true');
+    expect(par('reponses-recues')).toBeNull();
   });
 
-  /* AI-P2 SÉPARE CE QUI SE LIT EN TROIS SECONDES DE CE QUI SE CONSULTE.
-     La carte fermée répond à « qui, quand, quoi faire ». Le sujet, le corps
-     complet et le diagnostic de corrélation ne DISPARAISSENT pas — ils passent
-     derrière « Voir la réponse », parce qu'affichés en permanence ils noyaient
-     les six lignes utiles sous un bloc d'email brut. */
-  test('la carte FERMÉE dit qui a répondu et quand', async () => {
+  test('dès qu’une réponse existe, la boîte de traitement s’ouvre en premier', async () => {
     avecReponses([reponseFictive()]);
     await monter(<ProspectsSection API="/api" />);
-    const panneau = par('reponses-recues');
-    expect(panneau).toBeTruthy();
-    expect(panneau.textContent).toContain('BAR-01');
-    expect(panneau.textContent).toContain('hotel@beaulac.exemple.test');
-    expect(panneau.textContent).toContain('2026-09-02');
+    expect(par('onglet-reponses').getAttribute('aria-selected')).toBe('true');
+    expect(par('reponses-recues')).toBeTruthy();
   });
 
-  test('la carte OUVERTE porte le sujet, le corps entier et la corrélation', async () => {
+  /* TEST L — onglet Réponses : la grande table des 142 prospects est ABSENTE. */
+  test('L. onglet Réponses : la table des prospects n’est pas rendue', async () => {
     avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(conteneur.querySelector('table')).toBeNull();
+    expect(par('ligne-FES-01')).toBeNull();
+    expect(par('bandeau-campagne')).toBeNull();
+    expect(par('tuile-Total')).toBeNull();
+  });
+
+  /* TEST M — onglet Tous les prospects : aucune conversation détaillée. */
+  test('M. onglet Tous les prospects : aucune conversation, aucun détail', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('onglet-prospects').click(); });
+    expect(par('reponses-recues')).toBeNull();
+    expect(par('conversation-active')).toBeNull();
+    expect(par('file-conversations')).toBeNull();
+    // Et TOUT ce que la liste savait faire est là.
+    expect(par('bandeau-campagne')).toBeTruthy();
+    expect(par('tuile-Total')).toBeTruthy();
+    expect(par('ligne-FES-01')).toBeTruthy();
+    expect(par('filtre-category')).toBeTruthy();
+    expect(par('page-suivante')).toBeTruthy();
+  });
+
+  test('les deux onglets annoncent leur nombre réel', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('onglet-reponses').textContent).toContain('Réponses (1)');
+    expect(par('onglet-prospects').textContent).toContain('Tous les prospects (142)');
+  });
+
+  // ------------------------------------------------------------------ §2
+  /* LES QUATRE MESSAGES RÉELS DU 06/09/2026. Le BDE en a écrit DEUX sur la
+     même action ; les deux autres partenaires un chacun. */
+  const QUATRE = () => [
+    reponseFictive({ id: 'inb-etu04a', action_id: 'act-bde', recipient_key: 'ETU-04',
+                     _organisation: 'BDE HE-Arc', from_email: 'info@bde-hearc.ch',
+                     received_at: '2026-09-04T05:25:19+00:00',
+                     body_text: 'Cela nous semble intéressant, ça consiste en quoi ?' }),
+    reponseFictive({ id: 'inb-etu04b', action_id: 'act-bde', recipient_key: 'ETU-04',
+                     _organisation: 'BDE HE-Arc', from_email: 'info@bde-hearc.ch',
+                     received_at: '2026-09-05T14:45:26+00:00',
+                     body_text: 'Merci pour votre retour, une question de plus.' }),
+    reponseFictive({ id: 'inb-lsna3', action_id: 'act-acd', recipient_key: 'LSN-A3',
+                     _organisation: 'ACD Lausanne',
+                     from_email: 'eveline.sautaux@assoacd.org',
+                     received_at: '2026-09-03T13:35:35+00:00',
+                     body_text: 'Ndongo Beye est joignable au 076.' }),
+    reponseFictive({ id: 'inb-zrhd5', action_id: 'act-salsa', recipient_key: 'ZRH-D5',
+                     _organisation: 'SalsaRica', statut_commercial: 'refus',
+                     from_email: 'info@salsarica.ch',
+                     received_at: '2026-09-03T11:37:15+00:00',
+                     body_text: 'Danke, aber wir sind nicht interessiert.' }),
+  ];
+
+  /* TESTS A + B — le cas qui a déclenché ce lot. */
+  test('A+B. les DEUX messages du BDE font UNE seule conversation', async () => {
+    avecReponses(QUATRE());
+    await monter(<ProspectsSection API="/api" />);
+    expect(lignes().length).toBe(3);
+    const bde = lignes().filter((l) => l.textContent.includes('BDE HE-Arc'));
+    expect(bde.length).toBe(1);
+    // « ETU-04 » n'est plus une seconde carte : c'est la même conversation.
+    expect(bde[0].getAttribute('data-cle')).toBe('act-bde');
+    expect(bde[0].textContent).toContain('2 messages');
+    expect(nomsFile().filter((n) => n.includes('ETU-04')).length).toBe(0);
+  });
+
+  /* TESTS C + D — deux actions différentes ne fusionnent JAMAIS. */
+  test('C+D. ACD Lausanne et SalsaRica restent indépendants', async () => {
+    avecReponses(QUATRE());
+    await monter(<ProspectsSection API="/api" />);
+    const cles = lignes().map((l) => l.getAttribute('data-cle')).sort();
+    expect(cles).toEqual(['act-acd', 'act-bde', 'act-salsa']);
+  });
+
+  test('un message qu’aucune action ne réclame reste SEUL dans son fil', async () => {
+    avecReponses([
+      reponseFictive({ id: 'orphelin-1', action_id: null, recipient_key: null,
+                       statut: 'manual_review', motif: 'ambigu' }),
+      reponseFictive({ id: 'orphelin-2', action_id: null, recipient_key: null,
+                       statut: 'manual_review', motif: 'ambigu' }),
+    ], 2);
+    await monter(<ProspectsSection API="/api" />);
+    // Deux inconnus ne sont pas « le même partenaire ».
+    expect(lignes().length).toBe(2);
+  });
+
+  // ------------------------------------------------------------------ §12
+  test('12. les compteurs comptent des CONVERSATIONS, pas des messages', async () => {
+    avecReponses(QUATRE());
+    await monter(<ProspectsSection API="/api" />);
+    // 4 messages reçus, mais 3 interlocuteurs.
+    expect(par('compteur-conversations').textContent).toContain('3 conversations');
+    expect(par('compteur-detail').textContent).toContain('2 à répondre');
+    expect(par('compteur-detail').textContent).toContain('1 refus');
+  });
+
+  // ------------------------------------------------------------------ §3
+  /* TESTS E + F — une seule conversation développée, toujours. */
+  test('E+F. cliquer ACD replie le BDE — jamais deux conversations ouvertes', async () => {
+    avecReponses(QUATRE());
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte(0);
+    expect(tous('[data-testid="conversation-active"]').length).toBe(1);
+    const premier = par('conversation-active').getAttribute('data-inbound');
+    const indexAcd = lignes().findIndex((l) => l.textContent.includes('ACD'));
+    await ouvrirCarte(indexAcd);
+    expect(tous('[data-testid="conversation-active"]').length).toBe(1);
+    expect(par('conversation-active').getAttribute('data-inbound')).not.toBe(premier);
+    expect(par('conversation-active').getAttribute('data-inbound')).toBe('inb-lsna3');
+  });
+
+  test('la ligne ouverte est la SEULE marquée développée', async () => {
+    avecReponses(QUATRE());
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte(0);
+    const ouvertes = lignes().filter((l) => l.getAttribute('aria-expanded') === 'true');
+    expect(ouvertes.length).toBe(1);
+  });
+
+  test('recliquer la ligne active la replie, sans en ouvrir une autre', async () => {
+    avecReponses(QUATRE());
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte(0);
+    await act(async () => { lignes()[0].click(); });
+    expect(par('conversation-active')).toBeNull();
+  });
+
+  test('la file FERMÉE ne montre ni corps, ni analyse, ni brouillon', async () => {
+    avecReponses(QUATRE());
+    await monter(<ProspectsSection API="/api" />);
+    const file = par('file-conversations').textContent;
+    expect(file).not.toContain('ça consiste en quoi');
+    expect(file).not.toContain('Ndongo');
+    expect(file).not.toContain('ANALYSE IA');
+    expect(par('conversation-active')).toBeNull();
+  });
+
+  test('une ligne fermée dit le nom, l’état et la date — c’est tout', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    const ligne = lignes()[0];
+    expect(ligne.textContent).toContain('BAR-01');
+    expect(ligne.textContent).toContain('À RÉPONDRE');
+    expect(ligne.textContent).toContain('02/09');
+    // L'adresse et le corps appartiennent à la conversation ouverte.
+    expect(ligne.textContent).not.toContain('hotel@beaulac.exemple.test');
+    expect(ligne.textContent).not.toContain('cela nous intéresse');
+  });
+
+  test('une conversation non lue porte un point, une conversation lue non', async () => {
+    avecReponses([reponseFictive(),
+                  reponseFictive({ id: 'msg-2', action_id: 'act-2',
+                                   read_at: '2026-09-05T10:00:00Z' })]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(tous('[data-testid="point-non-lu"]').length).toBe(1);
+    expect(tous('[data-testid="point-lu"]').length).toBe(1);
+  });
+
+  // ------------------------------------------------------------------ §4-6
+  const ENVOI_BDE = {
+    sent_at: '2026-09-05T13:05:42+00:00',
+    to_email: 'info@bde-hearc.ch', objet: 'Re: Proposition',
+  };
+
+  /* TEST G — une réponse partie APRÈS le dernier message : on le dit, avec sa date. */
+  test('G. une réponse envoyée après le dernier message est affichée avec sa date', async () => {
+    avecReponses(
+      [reponseFictive({ id: 'inb-bde', action_id: 'act-bde', _organisation: 'BDE HE-Arc',
+                        received_at: '2026-09-04T05:25:19+00:00',
+                        statut_commercial: 'en_attente' })],
+      0, { 'act-bde': ENVOI_BDE });
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    expect(par('etat-reponse-afroboost').getAttribute('data-code')).toBe('envoyee');
+    expect(par('etat-reponse-afroboost').textContent)
+      .toContain('Réponse Afroboost envoyée le 05/09');
+    expect(par('ligne-dernier-envoi').textContent).toContain('Réponse envoyée le 05/09');
+  });
+
+  /* TEST H — rien n'est parti : l'écran l'ÉCRIT, il ne laisse pas deviner. */
+  test('H. sans trace d’envoi, l’écran écrit « aucune réponse envoyée »', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    expect(par('etat-reponse-afroboost').getAttribute('data-code')).toBe('a_repondre');
+    expect(par('etat-reponse-afroboost').textContent).toContain('À répondre');
+    expect(par('ligne-dernier-envoi').textContent).toBe('Aucune réponse envoyée.');
+  });
+
+  /* LE CAS RÉEL DU BDE : une réponse existe, mais elle est ANTÉRIEURE au
+     dernier message reçu. Elle ne répond donc pas à CE message. */
+  test('une réponse ANTÉRIEURE au dernier message ne clôt pas le dossier', async () => {
+    avecReponses(QUATRE(), 0, { 'act-bde': ENVOI_BDE });
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte(lignes().findIndex((l) => l.textContent.includes('BDE')));
+    expect(par('etat-reponse-afroboost').getAttribute('data-code')).toBe('a_repondre');
+    expect(par('etat-reponse-afroboost').textContent)
+      .toContain('aucune réponse Afroboost envoyée après ce message');
+    // La trace reste visible : on ne prétend pas que rien n'est jamais parti.
+    expect(par('ligne-dernier-envoi').textContent).toContain('05/09');
+  });
+
+  /* TEST I — les deux informations ne se confondent JAMAIS. */
+  test('I. « EN ATTENTE » et l’état d’envoi sont deux lignes distinctes', async () => {
+    avecReponses([reponseFictive({ statut_commercial: 'en_attente' })]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    expect(par('ligne-statut-commercial').textContent).toBe('EN ATTENTE');
+    expect(par('ligne-dernier-envoi').textContent).toBe('Aucune réponse envoyée.');
+    // « en attente » ne veut pas dire « nous avons répondu ».
+    expect(par('ligne-statut-commercial').textContent).not.toContain('envoy');
+  });
+
+  /* §6 — le dernier échange, en dates factuelles. */
+  test('6. le dernier échange donne les deux dates, ou dit qu’il n’y en a pas', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    expect(par('dernier-echange').textContent).toContain('Dernier message reçu : 02/09');
+    expect(par('dernier-echange').textContent)
+      .toContain('Dernière réponse Afroboost : Aucune réponse envoyée.');
+  });
+
+  // ------------------------------------------------------------------ §7
+  test('7. seul le DERNIER message du fil s’affiche dans le bloc principal', async () => {
+    avecReponses(QUATRE());
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte(lignes().findIndex((l) => l.textContent.includes('BDE')));
+    expect(par('dernier-message').textContent).toContain('DERNIER MESSAGE DU PARTENAIRE');
+    expect(par('corps-original').textContent).toContain('une question de plus');
+    // Le message du 04/09 n'est PAS empilé dessous : il est dans l'historique.
+    expect(par('dernier-message').textContent).not.toContain('ça consiste en quoi');
+  });
+
+  test('le corps est rendu en TEXTE — aucun HTML d’un inconnu n’est injecté', async () => {
+    avecReponses([reponseFictive({
+      body_text: '<script>alert(1)</script><b>gras</b>',
+      subject: '<img src=x onerror=alert(2)>',
+    })]);
     await monter(<ProspectsSection API="/api" />);
     await ouvrirCarte();
     const panneau = par('reponses-recues');
-    expect(panneau.textContent).toContain('Proposition de collaboration');
-    expect(par('corps-original').textContent).toContain('cela nous intéresse');
-    // 8 caractères, comme l'écran les tronque — `camp-abcdef12` -> `camp-abc`.
-    expect(panneau.textContent).toContain('campagne camp-abc');
-  });
-
-  test('l’email original est REPLIÉ par défaut, jamais un bloc permanent', async () => {
-    avecReponses([reponseFictive()]);
-    await monter(<ProspectsSection API="/api" />);
-    await ouvrirCarte();
-    const details = par('email-original');
-    expect(details.tagName.toLowerCase()).toBe('details');
-    expect(details.hasAttribute('open')).toBe(false);
-    expect(details.querySelector('summary').textContent).toContain('Voir l’email original');
-  });
-
-  test('méthode et confiance restent consultables — dans le détail, pas sur la carte', async () => {
-    avecReponses([reponseFictive()]);
-    await monter(<ProspectsSection API="/api" />);
-    // Du diagnostic : utile quand quelque chose cloche, illisible quand tout va bien.
-    expect(par('reponses-recues').textContent).not.toContain('A_IN_REPLY_TO');
-    await ouvrirCarte();
-    expect(par('email-original').textContent).toContain('A_IN_REPLY_TO');
-    expect(par('email-original').textContent).toContain('100');
+    expect(panneau.querySelector('script')).toBeNull();
+    expect(panneau.querySelector('b')).toBeNull();
+    expect(panneau.querySelector('img')).toBeNull();
+    expect(panneau.textContent).toContain('<script>alert(1)</script>');
   });
 
   test('un message ambigu est montré comme À RATTACHER, avec son motif', async () => {
@@ -1250,164 +1543,70 @@ describe('P3-U3 — les réponses reçues', () => {
       motif: 'plusieurs actions pourraient correspondre — un humain tranche',
     })], 1);
     await monter(<ProspectsSection API="/api" />);
-    // Le BADGE alerte sur la carte fermée ; le motif détaillé est dans le détail.
-    expect(par('badge-a-rattacher')).toBeTruthy();
-    await ouvrirCarte();
-    expect(par('email-original').textContent).toContain('à rattacher');
-    expect(par('email-original').textContent).toContain('plusieurs actions');
-    expect(par('reponses-recues').textContent).toContain('Prospect à identifier');
     expect(par('reponses-en-attente').textContent).toContain('1');
-  });
-
-  test('le corps est rendu en TEXTE — aucun HTML d’un inconnu n’est injecté', async () => {
-    avecReponses([reponseFictive({
-      body_text: '<script>alert(1)</script><b>gras</b>',
-      subject: '<img src=x onerror=alert(2)>',
-    })]);
-    await monter(<ProspectsSection API="/api" />);
-    const panneau = par('reponses-recues');
-    expect(panneau.querySelector('script')).toBeNull();
-    expect(panneau.querySelector('b')).toBeNull();
-    expect(panneau.querySelector('img')).toBeNull();
-    expect(panneau.textContent).toContain('<script>alert(1)</script>');
-  });
-
-  test('un message long ne déroule pas la carte fermée', async () => {
-    avecReponses([reponseFictive({ body_text: 'x'.repeat(400) })]);
-    await monter(<ProspectsSection API="/api" />);
-    // Sans analyse IA, la carte montre au plus deux lignes du message réel.
-    expect(par('carte-sans-analyse').textContent.length).toBeLessThanOrEqual(160);
-    expect(par('reponses-recues').textContent).not.toContain('x'.repeat(200));
-    // Et le texte entier reste accessible, une fois la carte ouverte.
+    expect(par('file-conversations').textContent).toContain('Prospect à identifier');
     await ouvrirCarte();
-    expect(par('corps-original').textContent).toContain('x'.repeat(400));
+    expect(par('badge-a-rattacher')).toBeTruthy();
+    expect(par('detail-technique').textContent).toContain('à rattacher');
+    expect(par('detail-technique').textContent).toContain('plusieurs actions');
   });
 
-  test('plusieurs réponses sont listées, une ligne chacune', async () => {
-    avecReponses([reponseFictive(),
-                  reponseFictive({ id: 'msg-2', recipient_key: 'BAR-02' })]);
-    await monter(<ProspectsSection API="/api" />);
-    expect(tous('[data-testid="reponse-ligne"]').length).toBe(2);
-  });
-
-  /* AI-P1 A DONNÉ DES BOUTONS À CE PANNEAU, ET LA GARDE CHANGE DE FORME.
-     Exiger ZÉRO bouton était la façon la plus simple de prouver « rien ne
-     part d'ici » tant que le panneau était une liste morte. Il est devenu un
-     outil de travail : on ouvre une réponse, on l'analyse, on la marque
-     traitée. Ce qui doit rester vrai n'est donc plus « aucun bouton » mais
-     « aucun bouton n'EXPÉDIE quoi que ce soit » — et cela se vérifie sur les
-     libellés ET sur les routes, pas sur un décompte. */
-  /* AI-P4 A OUVERT UN CHEMIN D'ENVOI, ET LA GARDE CHANGE ENCORE DE FORME.
-     Exiger qu'aucun libellé ne contienne « envoyer » n'a plus de sens : le
-     bouton s'appelle « Valider et envoyer ». Ce qui doit rester vrai, et qui
-     est plus fort, c'est qu'AUCUN bouton n'expédie AU PREMIER CLIC — il faut
-     un aperçu puis une confirmation — et qu'aucune route d'envoi de CAMPAGNE
-     n'est joignable d'ici.
-     (Ce test passait jusqu'ici par accident : le bouton n'apparaît qu'avec un
-     brouillon, et ce cas n'en avait pas.) */
-  test('AUCUN bouton n’expédie AU PREMIER CLIC', async () => {
-    avecReponses([reponseFictive({ id: 'inb-etu04' })]);
-    await monter(<ProspectsSection API="/api" />);
-    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 0, a_repondre: 1 } });
-    axios.get.mockResolvedValue({ data: { brouillon: brouillonDe(), notes: [], timeline: [] } });
-    await act(async () => { par('voir-reponse').click(); });
-    axios.get.mockResolvedValue({ data: {
-      organisation: 'BDE HE-ARC', destinataire: 'info@bde-hearc.ch',
-      objet: 'Re: Proposition', texte: 'Bonjour', draft_hash: 'abc',
-      envoi_possible: false, contexte_obsolete: false, deja_envoye: false,
-      validation_requise: false, motifs_validation: [], statut_commercial: 'a_repondre' } });
-    await act(async () => { par('valider-envoyer').click(); });
-    // Le premier clic n'a produit AUCUN appel d'envoi : il a ouvert l'aperçu.
-    const envois = axios.post.mock.calls.map((c) => String(c[0]))
-      .filter((u) => u.includes('envoyer-reponse'));
-    expect(envois).toEqual([]);
-    expect(par('confirmation-envoi')).toBeTruthy();
-    // Et le panneau ne connaît aucune route d'envoi.
-    /* LE MARQUEUR VISE LE RENDU, PAS UN COMMENTAIRE. « LES RÉPONSES REÇUES »
-       apparaît d'abord dans la prose qui décrit la source `useChargement` :
-       la découpe démarrait 500 lignes trop haut et jugeait du code étranger au
-       panneau. `data-testid` n'existe, lui, que dans le JSX. */
-    const bloc = SOURCE_C.slice(SOURCE_C.indexOf('data-testid="reponses-recues"'),
-                                SOURCE_C.indexOf('{messageCampagne &&'));
-    ['/send', '/launch', '/dispatch', '/execute', '/retry', 'resend']
-      .forEach((chemin) => { expect(bloc).not.toContain(chemin); });
-  });
-
-  test('une réponse jamais ouverte porte NOUVEAU et À RÉPONDRE', async () => {
+  // ------------------------------------------------------------------ §8
+  /* TESTS J + K — l'historique est replié, et rien n'y a été perdu. */
+  test('J. l’historique est REPLIÉ par défaut', async () => {
     avecReponses([reponseFictive()]);
     await monter(<ProspectsSection API="/api" />);
-    expect(par('badge-nouveau')).toBeTruthy();
-    expect(par('badge-statut-a_repondre')).toBeTruthy();
-    expect(par('badge-statut-traite')).toBeFalsy();
+    await ouvrirCarte();
+    const details = par('historique');
+    expect(details.tagName.toLowerCase()).toBe('details');
+    expect(details.hasAttribute('open')).toBe(false);
+    expect(details.querySelector('summary').textContent).toContain('Voir l’historique');
   });
 
-  test('une réponse déjà ouverte perd NOUVEAU mais garde À RÉPONDRE', async () => {
-    avecReponses([reponseFictive({ read_at: '2026-09-05T10:00:00Z' })]);
+  test('K. ouvert, l’historique porte TOUTES les traces — rien n’a disparu', async () => {
+    avecReponses(QUATRE());
     await monter(<ProspectsSection API="/api" />);
-    expect(par('badge-nouveau')).toBeFalsy();
-    expect(par('badge-statut-a_repondre')).toBeTruthy();
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 3, a_repondre: 2 } });
+    axios.get.mockResolvedValue({ data: { brouillon: null, notes: [], timeline: [
+      { quand: '2026-09-03T10:57:23Z', genre: 'envoi',
+        titre: 'Proposition Afroboost envoyée', texte: '' },
+      { quand: '2026-09-04T05:25:19Z', genre: 'reponse',
+        titre: 'Réponse reçue de BDE HE-Arc', texte: '' },
+      { quand: '2026-09-05T13:05:42Z', genre: 'note', type: 'information',
+        titre: 'Information', texte: 'Réponse Afroboost envoyée à BDE HE-Arc.' },
+      { quand: '2026-09-05T14:45:26Z', genre: 'reponse',
+        titre: 'Réponse reçue de BDE HE-Arc', texte: '' },
+      { quand: '', genre: 'statut', titre: 'Maintenant', texte: '', statut: 'a_repondre' },
+    ] } });
+    await act(async () => {
+      lignes()[lignes().findIndex((l) => l.textContent.includes('BDE'))].click();
+    });
+    const histo = par('historique');
+    expect(tous('[data-testid="historique-ligne"]').length).toBe(5);
+    expect(histo.textContent).toContain('Proposition Afroboost envoyée');
+    expect(histo.textContent).toContain('Réponse Afroboost envoyée à BDE HE-Arc');
+    // Les DEUX messages du fil y sont, avec de quoi revenir sur l'ancien.
+    expect(tous('[data-testid="message-du-fil"]').length).toBe(2);
+    expect(par('messages-du-fil').textContent).toContain('ça consiste en quoi');
+    // Et le diagnostic de corrélation reste consultable.
+    expect(par('detail-technique').textContent).toContain('A_IN_REPLY_TO');
+    expect(par('detail-technique').textContent).toContain('100');
+    expect(par('detail-technique').textContent).toContain('campagne camp-abc');
   });
 
-  test('une réponse traitée porte TRAITÉ, plus À RÉPONDRE', async () => {
-    avecReponses([reponseFictive({ read_at: '2026-09-05T10:00:00Z',
-                                   traite_at: '2026-09-05T11:00:00Z',
-                                   statut_commercial: 'traite' })]);
+  test('rouvrir un message plus ancien du fil le signale, et propose le retour', async () => {
+    avecReponses(QUATRE());
     await monter(<ProspectsSection API="/api" />);
-    expect(par('badge-statut-traite')).toBeTruthy();
-    expect(par('badge-statut-a_repondre')).toBeFalsy();
+    await ouvrirCarte(lignes().findIndex((l) => l.textContent.includes('BDE')));
+    await act(async () => { tous('[data-testid="message-du-fil"]')[0].click(); });
+    expect(par('conversation-active').getAttribute('data-inbound')).toBe('inb-etu04a');
+    expect(par('message-plus-ancien')).toBeTruthy();
+    await act(async () => { par('voir-dernier-message').click(); });
+    expect(par('conversation-active').getAttribute('data-inbound')).toBe('inb-etu04b');
+    expect(par('message-plus-ancien')).toBeNull();
   });
 
-  /* AI-P3 — LES CINQ ÉTATS, ET LEUR INDÉPENDANCE VIS-À-VIS DE LA LECTURE.
-     Un message peut être LU et EN ATTENTE, ou NON LU et REFUS : ce sont deux
-     dimensions, elles ne se déduisent pas l'une de l'autre. */
-  test('l’état commercial vient du serveur, jamais d’un calcul de l’écran', async () => {
-    avecReponses([reponseFictive({ statut_commercial: 'en_attente' })]);
-    await monter(<ProspectsSection API="/api" />);
-    expect(par('badge-statut-en_attente').textContent).toContain('EN ATTENTE');
-    expect(par('badge-statut-a_repondre')).toBeFalsy();
-  });
-
-  test('EN ATTENTE et NON LU coexistent — deux dimensions distinctes', async () => {
-    avecReponses([reponseFictive({ statut_commercial: 'en_attente' })]);
-    await monter(<ProspectsSection API="/api" />);
-    expect(par('badge-nouveau')).toBeTruthy();
-    expect(par('badge-statut-en_attente')).toBeTruthy();
-  });
-
-  test('un REFUS s’affiche comme tel, pas comme « à répondre »', async () => {
-    avecReponses([reponseFictive({ statut_commercial: 'refus' })]);
-    await monter(<ProspectsSection API="/api" />);
-    expect(par('badge-statut-refus').textContent).toContain('REFUS');
-  });
-
-  test('AFFICHER la liste n’appelle JAMAIS la route de lecture', async () => {
-    avecReponses([reponseFictive()]);
-    await monter(<ProspectsSection API="/api" />);
-    const appels = axios.post.mock.calls.map((c) => String(c[0]));
-    expect(appels.some((u) => u.includes('/lu'))).toBe(false);
-  });
-
-  /* ======================================================================
-     AI-P2 — TROIS CARTES AFFICHÉES EN MÊME TEMPS, AUCUN ÉTAT PARTAGÉ.
-
-     C'est LE test de ce lot. Trois partenaires ont répondu le même jour, au
-     même objet, sur la même campagne ; un état global (`ouvert`, `brouillon`,
-     `edition`) ferait apparaître le texte de l'un sur la carte de l'autre.
-     Tout est indexé par `message.id` — ces tests le prouvent en manipulant
-     une carte et en vérifiant que les deux autres n'ont pas bougé.
-     ====================================================================== */
-  const TROIS = () => [
-    reponseFictive({ id: 'inb-etu04', recipient_key: 'ETU-04',
-                     from_email: 'info@bde-hearc.ch',
-                     body_text: 'Cela nous semble intéressant, ça consiste en quoi ?' }),
-    reponseFictive({ id: 'inb-lsna3', recipient_key: 'LSN-A3',
-                     from_email: 'eveline.sautaux@assoacd.org',
-                     body_text: 'Ndongo Beye est joignable au 076.' }),
-    reponseFictive({ id: 'inb-zrhd5', recipient_key: 'ZRH-D5',
-                     from_email: 'info@salsarica.ch',
-                     body_text: 'Danke, aber wir sind nicht interessiert.' }),
-  ];
-
+  // ------------------------------------------------------------------ §9-10
   const brouillonDe = (extra = {}) => ({
     id: 'b-1', inbound_id: 'inb-etu04', action_id: 'act-1',
     organisation: 'BDE HE-ARC', to_email: 'info@bde-hearc.ch',
@@ -1419,15 +1618,211 @@ describe('P3-U3 — les réponses reçues', () => {
     validation_requise: false, motifs_validation: [], ...extra,
   });
 
+  test('9. un dossier EN ATTENTE n’affiche aucun bloc de réponse', async () => {
+    avecReponses([reponseFictive({ statut_commercial: 'en_attente' })]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    expect(par('bloc-reponse')).toBeNull();
+    expect(par('analyser-ia')).toBeNull();
+    expect(par('rien-a-envoyer').textContent).toContain('En attente du partenaire');
+  });
+
+  test('9bis. « Répondre quand même » ouvre le bloc, sans rien envoyer', async () => {
+    avecReponses([reponseFictive({ statut_commercial: 'en_attente' })]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    await act(async () => { par('repondre-quand-meme').click(); });
+    expect(par('bloc-reponse')).toBeTruthy();
+    expect(par('analyser-ia')).toBeTruthy();
+    const appels = axios.post.mock.calls.map((c) => String(c[0]));
+    expect(appels.some((u) => u.includes('envoyer-reponse'))).toBe(false);
+  });
+
+  test('un dossier À RÉPONDRE montre le bloc sans qu’on le demande', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    expect(par('bloc-reponse')).toBeTruthy();
+    expect(par('rien-a-envoyer')).toBeNull();
+  });
+
+  test('10. sans brouillon, l’action principale est de préparer la réponse', async () => {
+    avecReponses([reponseFictive({ id: 'inb-etu04' })]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    const appels = axios.post.mock.calls.map((c) => String(c[0]));
+    expect(appels.some((u) => u.includes('/analyser'))).toBe(false);
+    expect(par('analyser-ia').textContent.trim()).toBe('Générer une réponse avec l’IA');
+    expect(par('valider-envoyer')).toBeNull();
+    // Une seule action mise en avant dans la barre d'actions.
+    expect(par('actions-conversation').querySelectorAll('button').length).toBe(1);
+  });
+
+  test('10bis. avec un brouillon, l’action principale devient « Valider et envoyer »', async () => {
+    avecReponses([reponseFictive({ id: 'inb-etu04' })]);
+    await monter(<ProspectsSection API="/api" />);
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 0, a_repondre: 1 } });
+    axios.get.mockResolvedValue({ data: { brouillon: brouillonDe(), notes: [], timeline: [] } });
+    await act(async () => { lignes()[0].click(); });
+    const boutons = tous('[data-testid="actions-conversation"] button')
+      .map((b) => b.textContent.trim());
+    expect(boutons[0]).toBe('Valider et envoyer');
+    expect(boutons).toContain('Régénérer');
+    expect(boutons).toContain('Modifier');
+  });
+
+  test('un REFUS met en avant « Marquer comme traité »', async () => {
+    avecReponses([reponseFictive({ statut_commercial: 'refus' })]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    expect(par('bloc-reponse')).toBeNull();
+    expect(par('basculer-traite').textContent.trim()).toBe('Marquer comme traité');
+    expect(par('rien-a-envoyer').textContent).toContain('Refus enregistré');
+  });
+
+  // ------------------------------------------------------------------ §13
+  test('13. la file suit l’ordre rendu par le serveur, sans le retrier', async () => {
+    avecReponses(QUATRE());
+    await monter(<ProspectsSection API="/api" />);
+    // Le faux rend BDE, ACD, SalsaRica dans cet ordre : l'écran ne le change pas.
+    expect(lignes().map((l) => l.getAttribute('data-cle')))
+      .toEqual(['act-bde', 'act-acd', 'act-salsa']);
+  });
+
+  // ------------------------------------------------------------------ §11
+  test('11. après un envoi réel, l’écran propose la conversation SUIVANTE', async () => {
+    avecReponses(QUATRE());
+    await monter(<ProspectsSection API="/api" />);
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 3, a_repondre: 2 } });
+    axios.get.mockResolvedValue({ data: { brouillon: brouillonDe(), notes: [], timeline: [] } });
+    await act(async () => {
+      lignes()[lignes().findIndex((l) => l.textContent.includes('BDE'))].click();
+    });
+    axios.get.mockResolvedValue({ data: {
+      organisation: 'BDE HE-Arc', destinataire: 'info@bde-hearc.ch',
+      objet: 'Re: Proposition', texte: 'Bonjour', draft_hash: 'abc',
+      envoi_possible: true, contexte_obsolete: false, deja_envoye: false,
+      validation_requise: false, motifs_validation: [], statut_commercial: 'a_repondre' } });
+    await act(async () => { par('valider-envoyer').click(); });
+    axios.post.mockResolvedValue({ data: { deja_envoye: false,
+      envoi: { send_status: 'envoye' } } });
+    await act(async () => { par('confirmer-envoi').click(); });
+    expect(par('envoi-reussi').textContent).toContain('Réponse envoyée');
+    // Elle est PROPOSÉE, pas ouverte : aucun second envoi, aucun clic implicite.
+    expect(par('conversation-suivante').textContent).toContain('ACD Lausanne');
+    expect(par('conversation-active').getAttribute('data-inbound')).toBe('inb-etu04b');
+    const envois = axios.post.mock.calls.map((c) => String(c[0]))
+      .filter((u) => u.includes('envoyer-reponse'));
+    expect(envois.length).toBe(1);
+    await act(async () => { par('conversation-suivante').click(); });
+    expect(par('conversation-active').getAttribute('data-inbound')).toBe('inb-lsna3');
+  });
+
+  // ============ NON-RÉGRESSION : CE QUE LES LOTS PRÉCÉDENTS GARANTISSAIENT ===
+  test('AUCUN bouton n’expédie AU PREMIER CLIC', async () => {
+    avecReponses([reponseFictive({ id: 'inb-etu04' })]);
+    await monter(<ProspectsSection API="/api" />);
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 0, a_repondre: 1 } });
+    axios.get.mockResolvedValue({ data: { brouillon: brouillonDe(), notes: [], timeline: [] } });
+    await act(async () => { lignes()[0].click(); });
+    axios.get.mockResolvedValue({ data: {
+      organisation: 'BDE HE-ARC', destinataire: 'info@bde-hearc.ch',
+      objet: 'Re: Proposition', texte: 'Bonjour', draft_hash: 'abc',
+      envoi_possible: false, contexte_obsolete: false, deja_envoye: false,
+      validation_requise: false, motifs_validation: [], statut_commercial: 'a_repondre' } });
+    await act(async () => { par('valider-envoyer').click(); });
+    const envois = axios.post.mock.calls.map((c) => String(c[0]))
+      .filter((u) => u.includes('envoyer-reponse'));
+    expect(envois).toEqual([]);
+    expect(par('confirmation-envoi')).toBeTruthy();
+    // Et le panneau ne connaît aucune route d'envoi de CAMPAGNE.
+    ['/send', '/launch', '/dispatch', '/execute', '/retry', 'resend']
+      .forEach((chemin) => { expect(blocReponses()).not.toContain(chemin); });
+  });
+
+  test('une réponse jamais ouverte porte NOUVEAU et À RÉPONDRE', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    expect(par('badge-nouveau')).toBeTruthy();
+    expect(par('badge-statut-a_repondre')).toBeTruthy();
+    expect(par('badge-statut-traite')).toBeFalsy();
+  });
+
+  test('une réponse déjà ouverte perd NOUVEAU mais garde À RÉPONDRE', async () => {
+    avecReponses([reponseFictive({ read_at: '2026-09-05T10:00:00Z' })]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    expect(par('badge-nouveau')).toBeFalsy();
+    expect(par('badge-statut-a_repondre')).toBeTruthy();
+  });
+
+  test('une réponse traitée porte TRAITÉ, plus À RÉPONDRE', async () => {
+    avecReponses([reponseFictive({ read_at: '2026-09-05T10:00:00Z',
+                                   traite_at: '2026-09-05T11:00:00Z',
+                                   statut_commercial: 'traite' })]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    expect(par('badge-statut-traite')).toBeTruthy();
+    expect(par('badge-statut-a_repondre')).toBeFalsy();
+  });
+
+  test('l’état commercial vient du serveur, jamais d’un calcul de l’écran', async () => {
+    avecReponses([reponseFictive({ statut_commercial: 'en_attente' })]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    expect(par('badge-statut-en_attente').textContent).toContain('EN ATTENTE');
+    expect(par('badge-statut-a_repondre')).toBeFalsy();
+  });
+
+  test('EN ATTENTE et NON LU coexistent — deux dimensions distinctes', async () => {
+    avecReponses([reponseFictive({ statut_commercial: 'en_attente' })]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('point-non-lu')).toBeTruthy();
+    expect(par('ligne-statut-en_attente')).toBeTruthy();
+  });
+
+  test('un REFUS s’affiche comme tel, pas comme « à répondre »', async () => {
+    avecReponses([reponseFictive({ statut_commercial: 'refus' })]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('ligne-statut-refus').textContent).toContain('REFUS');
+  });
+
+  test('AFFICHER la liste n’appelle JAMAIS la route de lecture', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    const appels = axios.post.mock.calls.map((c) => String(c[0]));
+    expect(appels.some((u) => u.includes('/lu'))).toBe(false);
+  });
+
+  /* ======================================================================
+     AI-P2 — TROIS PARTENAIRES, AUCUN ÉTAT PARTAGÉ.
+     Trois ont répondu le même jour, au même objet, sur la même campagne ; un
+     état global (`ouvert`, `brouillon`, `edition`) ferait apparaître le texte
+     de l'un sur le dossier de l'autre. Tout reste indexé par `message.id`.
+     ====================================================================== */
+  const TROIS = () => [
+    reponseFictive({ id: 'inb-etu04', action_id: 'act-etu04', recipient_key: 'ETU-04',
+                     from_email: 'info@bde-hearc.ch',
+                     received_at: '2026-09-04T05:25:19+00:00',
+                     body_text: 'Cela nous semble intéressant, ça consiste en quoi ?' }),
+    reponseFictive({ id: 'inb-lsna3', action_id: 'act-lsna3', recipient_key: 'LSN-A3',
+                     from_email: 'eveline.sautaux@assoacd.org',
+                     received_at: '2026-09-03T13:35:35+00:00',
+                     body_text: 'Ndongo Beye est joignable au 076.' }),
+    reponseFictive({ id: 'inb-zrhd5', action_id: 'act-zrhd5', recipient_key: 'ZRH-D5',
+                     from_email: 'info@salsarica.ch',
+                     received_at: '2026-09-03T11:37:15+00:00',
+                     body_text: 'Danke, aber wir sind nicht interessiert.' }),
+  ];
+
   test('ouvrir ETU-04 laisse LSN-A3 et ZRH-D5 FERMÉES', async () => {
     avecReponses(TROIS());
     await monter(<ProspectsSection API="/api" />);
-    expect(tous('[data-testid="voir-reponse"]').length).toBe(3);
+    expect(lignes().length).toBe(3);
     await ouvrirCarte(0);
-    // Une seule carte déplie son détail.
-    expect(tous('[data-testid="email-original"]').length).toBe(1);
-    const libelles = tous('[data-testid="voir-reponse"]').map((b) => b.textContent.trim());
-    expect(libelles).toEqual(['Replier', 'Voir la réponse', 'Voir la réponse']);
+    expect(tous('[data-testid="conversation-active"]').length).toBe(1);
+    expect(par('conversation-active').getAttribute('data-inbound')).toBe('inb-etu04');
   });
 
   test('marquer ETU-04 lu n’appelle la route QUE pour ETU-04', async () => {
@@ -1438,41 +1833,39 @@ describe('P3-U3 — les réponses reçues', () => {
     expect(appels.filter((u) => u.includes('/lu'))).toEqual(['/api/prospect-inbound/inb-etu04/lu']);
   });
 
-  test('le brouillon d’ETU-04 ne s’affiche QUE sur la carte d’ETU-04', async () => {
+  test('le brouillon d’ETU-04 ne s’affiche QUE sur le dossier d’ETU-04', async () => {
     avecReponses(TROIS());
     await monter(<ProspectsSection API="/api" />);
     axios.post.mockResolvedValue({ data: { ok: true, non_lues: 2, a_repondre: 3 } });
     axios.get.mockResolvedValue({ data: { brouillon: brouillonDe() } });
-    await act(async () => { tous('[data-testid="voir-reponse"]')[0].click(); });
+    await act(async () => { lignes()[0].click(); });
     expect(tous('[data-testid="reponse-proposee"]').length).toBe(1);
     expect(par('reponse-proposee').textContent).toContain('merci pour votre intérêt');
-    // La carte de LSN-A3 ne porte ni brouillon, ni intention, ni résumé.
-    const cartes = tous('[data-testid="reponse-ligne"]');
-    expect(cartes[1].textContent).not.toContain('merci pour votre intérêt');
-    expect(cartes[1].textContent).not.toContain('BDE HE-ARC');
-    expect(cartes[2].textContent).not.toContain('BDE HE-ARC');
+    // La file ne porte ni brouillon ni intention.
+    expect(par('file-conversations').textContent).not.toContain('merci pour votre intérêt');
+    expect(par('file-conversations').textContent).not.toContain('BDE HE-ARC');
+    // Et ouvrir LSN-A3 ne montre PAS le brouillon d'ETU-04.
+    axios.get.mockResolvedValue({ data: { brouillon: null, notes: [], timeline: [] } });
+    await act(async () => { lignes()[1].click(); });
+    expect(par('reponse-proposee')).toBeNull();
+    expect(par('conversation-active').textContent).not.toContain('merci pour votre intérêt');
   });
 
-  test('modifier le brouillon d’ETU-04 ne touche pas les autres cartes', async () => {
+  test('modifier le brouillon d’ETU-04 ne touche pas les autres dossiers', async () => {
     avecReponses(TROIS());
     await monter(<ProspectsSection API="/api" />);
     axios.post.mockResolvedValue({ data: { ok: true, non_lues: 2, a_repondre: 3 } });
     axios.get.mockResolvedValue({ data: { brouillon: brouillonDe() } });
-    await act(async () => { tous('[data-testid="voir-reponse"]')[0].click(); });
+    await act(async () => { lignes()[0].click(); });
     await act(async () => { par('modifier-brouillon').click(); });
     const zone = par('editeur-brouillon');
     expect(zone.value).toContain('merci pour votre intérêt');
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')
-        .set.call(zone, 'TEXTE CORRIGÉ À LA MAIN');
-      zone.dispatchEvent(new Event('input', { bubbles: true }));
-    });
+    await act(async () => { saisir(zone, 'TEXTE CORRIGÉ À LA MAIN'); });
     expect(par('editeur-brouillon').value).toBe('TEXTE CORRIGÉ À LA MAIN');
-    // Une seule zone d'édition existe, et les deux autres cartes sont intactes.
     expect(tous('[data-testid="editeur-brouillon"]').length).toBe(1);
-    const cartes = tous('[data-testid="reponse-ligne"]');
-    expect(cartes[1].textContent).not.toContain('TEXTE CORRIGÉ');
-    expect(cartes[2].textContent).not.toContain('TEXTE CORRIGÉ');
+    axios.get.mockResolvedValue({ data: { brouillon: null, notes: [], timeline: [] } });
+    await act(async () => { lignes()[1].click(); });
+    expect(par('conversation-active').textContent).not.toContain('TEXTE CORRIGÉ');
   });
 
   test('enregistrer une correction passe par PATCH, jamais par un envoi', async () => {
@@ -1480,7 +1873,7 @@ describe('P3-U3 — les réponses reçues', () => {
     await monter(<ProspectsSection API="/api" />);
     axios.post.mockResolvedValue({ data: { ok: true, non_lues: 2, a_repondre: 3 } });
     axios.get.mockResolvedValue({ data: { brouillon: brouillonDe() } });
-    await act(async () => { tous('[data-testid="voir-reponse"]')[0].click(); });
+    await act(async () => { lignes()[0].click(); });
     await act(async () => { par('modifier-brouillon').click(); });
     axios.patch.mockResolvedValue({
       data: { brouillon: brouillonDe({ reponse_proposee: 'CORRIGÉ' }) } });
@@ -1496,23 +1889,13 @@ describe('P3-U3 — les réponses reçues', () => {
     await monter(<ProspectsSection API="/api" />);
     axios.post.mockResolvedValue({ data: { ok: true, non_lues: 0, a_repondre: 1 } });
     axios.get.mockResolvedValue({ data: { brouillon: brouillonDe() } });
-    await act(async () => { par('voir-reponse').click(); });
-    // Aucun POST /analyser : ouvrir ne coûte pas un appel au modèle.
+    await act(async () => { lignes()[0].click(); });
     const appels = axios.post.mock.calls.map((c) => String(c[0]));
     expect(appels.some((u) => u.includes('/analyser'))).toBe(false);
     expect(par('analyser-ia').textContent.trim()).toBe('Régénérer');
   });
 
-  test('sans brouillon, l’écran PROPOSE de générer — il ne génère pas tout seul', async () => {
-    avecReponses([reponseFictive({ id: 'inb-etu04' })]);
-    await monter(<ProspectsSection API="/api" />);
-    await ouvrirCarte();
-    const appels = axios.post.mock.calls.map((c) => String(c[0]));
-    expect(appels.some((u) => u.includes('/analyser'))).toBe(false);
-    expect(par('analyser-ia').textContent.trim()).toBe('Générer une réponse avec l’IA');
-  });
-
-  test('l’IA en panne laisse la carte utilisable', async () => {
+  test('l’IA en panne laisse le dossier utilisable', async () => {
     avecReponses([reponseFictive({ id: 'inb-etu04', recipient_key: 'ETU-04' })]);
     await monter(<ProspectsSection API="/api" />);
     await ouvrirCarte();
@@ -1520,10 +1903,9 @@ describe('P3-U3 — les réponses reçues', () => {
       response: { data: { detail: 'Analyse indisponible (OPENAI_API_KEY absente)' } } });
     await act(async () => { par('analyser-ia').click(); });
     expect(par('erreur-ia').textContent).toContain('Analyse indisponible');
-    // Rien n'est cassé : organisation, adresse, message et statut restent là.
-    const carte = par('reponse-ligne');
-    expect(carte.textContent).toContain('ETU-04');
-    expect(carte.textContent).toContain('hotel@beaulac.exemple.test');
+    const dossier = par('conversation-active');
+    expect(dossier.textContent).toContain('ETU-04');
+    expect(dossier.textContent).toContain('hotel@beaulac.exemple.test');
     expect(par('corps-original')).toBeTruthy();
     expect(par('badge-statut-a_repondre')).toBeTruthy();
   });
@@ -1532,7 +1914,7 @@ describe('P3-U3 — les réponses reçues', () => {
     avecReponses([reponseFictive({ id: 'inb-etu04' })]);
     await monter(<ProspectsSection API="/api" />);
     await ouvrirCarte();
-    expect(par('ton-court')).toBeFalsy();          // rien à régénérer encore
+    expect(par('ton-court')).toBeFalsy();
     axios.post.mockResolvedValue({ data: { brouillon: brouillonDe() } });
     await act(async () => { par('analyser-ia').click(); });
     ['court', 'chaleureux', 'professionnel', 'direct']
@@ -1547,34 +1929,46 @@ describe('P3-U3 — les réponses reçues', () => {
     await monter(<ProspectsSection API="/api" />);
     axios.post.mockResolvedValue({ data: { ok: true, non_lues: 0, a_repondre: 1 } });
     axios.get.mockResolvedValue({ data: { brouillon: brouillonDe(), notes: [], timeline: [] } });
-    await act(async () => { par('voir-reponse').click(); });
+    await act(async () => { lignes()[0].click(); });
     axios.get.mockResolvedValue({ data: {
       organisation: 'BDE HE-ARC', destinataire: 'info@bde-hearc.ch',
       objet: 'Re: Proposition', texte: 'Bonjour', draft_hash: 'abc',
       envoi_possible: false, contexte_obsolete: false, deja_envoye: false,
       validation_requise: false, motifs_validation: [], statut_commercial: 'a_repondre' } });
     await act(async () => { par('valider-envoyer').click(); });
-    // Un bouton qui a l'air cliquable et qui refuse est pire qu'un bouton
-    // désactivé qui dit pourquoi.
     expect(par('confirmer-envoi').disabled).toBe(true);
     expect(par('envoi-non-active').textContent).toContain('Envoi non activé');
   });
 
+  test('AI-P3 — une note part sur la BONNE route, et ne marque rien comme lu', async () => {
+    avecReponses([reponseFictive({ id: 'inb-etu04',
+                                   read_at: '2026-09-05T10:00:00Z' })]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    await act(async () => { par('ouvrir-note').click(); });
+    await act(async () => { saisir(par('note-texte'), 'Appelé, rappelle lundi.'); });
+    axios.post.mockResolvedValue({ data: { notes: [], timeline: [] } });
+    await act(async () => { par('enregistrer-note').click(); });
+    expect(axios.post).toHaveBeenCalledWith(
+      '/api/prospect-inbound/inb-etu04/notes',
+      expect.objectContaining({ type: 'appel', texte: 'Appelé, rappelle lundi.' }));
+  });
+
   /* ======================================================================
      READ-P2 — LE LIEN PROFOND D'UNE NOTIFICATION.
-     Le coach touche « BDE HE-ARC a répondu » : il doit arriver sur CETTE
-     carte, pas sur une liste où il devra la chercher — et surtout pas sur
-     une autre. Ces tests prouvent que la cible est unique et que rien
-     d'autre ne s'ouvre.
      ====================================================================== */
-  test('la carte VISÉE s’ouvre seule, les autres restent fermées', async () => {
-    avecReponses(TROIS());
-    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 2, a_repondre: 3 } });
+  test('N. le deeplink ouvre la BONNE conversation, sur le BON message', async () => {
+    avecReponses(QUATRE());
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 3, a_repondre: 2 } });
     axios.get.mockResolvedValue({ data: { brouillon: null, notes: [], timeline: [] } });
-    await monter(<ProspectsSection API="/api" inboundCible="inb-lsna3" />);
-    const libelles = tous('[data-testid="voir-reponse"]').map((b) => b.textContent.trim());
-    expect(libelles).toEqual(['Voir la réponse', 'Replier', 'Voir la réponse']);
-    expect(tous('[data-testid="email-original"]').length).toBe(1);
+    // La notification vise le PREMIER message du BDE, pas le dernier.
+    await monter(<ProspectsSection API="/api" inboundCible="inb-etu04a" />);
+    expect(par('onglet-reponses').getAttribute('aria-selected')).toBe('true');
+    expect(tous('[data-testid="conversation-active"]').length).toBe(1);
+    expect(par('conversation-active').getAttribute('data-inbound')).toBe('inb-etu04a');
+    expect(lignes().filter((l) => l.getAttribute('aria-expanded') === 'true').length).toBe(1);
+    expect(lignes().find((l) => l.getAttribute('aria-expanded') === 'true')
+      .getAttribute('data-cle')).toBe('act-bde');
   });
 
   test('elle est marquée LUE par le chemin normal, et elle SEULE', async () => {
@@ -1591,21 +1985,17 @@ describe('P3-U3 — les réponses reçues', () => {
     axios.get.mockResolvedValue({ data: { brouillon: null, notes: [], timeline: [] } });
     avecReponses(TROIS());
     await monter(<ProspectsSection API="/api" inboundCible="inb-etu04" />);
-    let libelles = tous('[data-testid="voir-reponse"]').map((b) => b.textContent.trim());
-    expect(libelles[0]).toBe('Replier');
-    expect(libelles[1]).toBe('Voir la réponse');
+    expect(par('conversation-active').getAttribute('data-inbound')).toBe('inb-etu04');
     axios.post.mockClear();
     avecReponses(TROIS());
     await monter(<ProspectsSection API="/api" inboundCible="inb-zrhd5" />);
-    libelles = tous('[data-testid="voir-reponse"]').map((b) => b.textContent.trim());
-    expect(libelles[0]).toBe('Voir la réponse');
-    expect(libelles[2]).toBe('Replier');
+    expect(par('conversation-active').getAttribute('data-inbound')).toBe('inb-zrhd5');
   });
 
   test('SANS cible, rien ne s’ouvre et rien n’est marqué lu', async () => {
     avecReponses(TROIS());
     await monter(<ProspectsSection API="/api" />);
-    expect(tous('[data-testid="email-original"]').length).toBe(0);
+    expect(par('conversation-active')).toBeNull();
     const lus = axios.post.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('/lu'));
     expect(lus).toEqual([]);
   });
@@ -1614,9 +2004,8 @@ describe('P3-U3 — les réponses reçues', () => {
     avecReponses(TROIS());
     await monter(<ProspectsSection API="/api" inboundCible="inb-inexistant" />);
     expect(par('cible-introuvable')).toBeTruthy();
-    // L'écran reste utilisable : les trois cartes sont là, aucune n'est ouverte.
-    expect(tous('[data-testid="reponse-ligne"]').length).toBe(3);
-    expect(tous('[data-testid="email-original"]').length).toBe(0);
+    expect(lignes().length).toBe(3);
+    expect(par('conversation-active')).toBeNull();
     const lus = axios.post.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('/lu'));
     expect(lus).toEqual([]);
   });
@@ -1633,27 +2022,21 @@ describe('P3-U3 — les réponses reçues', () => {
     expect(lus.length).toBe(1);
   });
 
-  test('MOBILE — rien ne peut déborder horizontalement', async () => {
-    avecReponses(TROIS());
+  // ------------------------------------------------------------------ §14
+  test('O. MOBILE — rien ne peut déborder horizontalement', async () => {
+    avecReponses(QUATRE());
     await monter(<ProspectsSection API="/api" />);
-    /* LE MARQUEUR VISE LE RENDU, PAS UN COMMENTAIRE. « LES RÉPONSES REÇUES »
-       apparaît d'abord dans la prose qui décrit la source `useChargement` :
-       la découpe démarrait 500 lignes trop haut et jugeait du code étranger au
-       panneau. `data-testid` n'existe, lui, que dans le JSX. */
-    const bloc = SOURCE_C.slice(SOURCE_C.indexOf('data-testid="reponses-recues"'),
-                                SOURCE_C.indexOf('{messageCampagne &&'));
+    const bloc = blocReponses();
     // Aucune largeur fixe, aucune colonne rigide, aucun défilement latéral.
     expect(bloc).not.toMatch(/width:\s*'\d+px'/);
-    /* UN SEUIL, PAS UN NOMBRE DE CHIFFRES. Interdire « trois chiffres »
-       condamnait `minWidth: 160px` — qui, dans un conteneur `flexWrap`, dit
-       seulement « replie-toi plutôt que de me comprimer sous 160 px » et ne
-       déborde sur aucun téléphone. Ce qui déborde vraiment, c'est un minimum
-       plus large que l'écran : 280 px est la largeur de contenu du plus étroit
-       encore en service (iPhone SE, 320 px moins les marges). */
+    /* UN SEUIL, PAS UN NOMBRE DE CHIFFRES : ce qui déborde vraiment, c'est un
+       minimum plus large que l'écran — 280 px est la largeur de contenu du plus
+       étroit encore en service (iPhone SE, 320 px moins les marges). */
     const minima = [...bloc.matchAll(/minWidth:\s*'(\d+)px'/g)].map((m) => Number(m[1]));
     minima.forEach((v) => expect(v).toBeLessThan(280));
     expect(bloc).not.toContain('overflowX');
-    expect(bloc).not.toContain('whiteSpace: \'nowrap\', width');
+    // Aucun tableau dans la boîte de traitement : sur un téléphone, il déborde.
+    expect(bloc).not.toContain('<table');
     // L'adresse, seule chaîne insécable, est bornée par une ellipse.
     expect(bloc).toContain("textOverflow: 'ellipsis'");
     expect(bloc).toContain("maxWidth: '100%'");
@@ -1661,29 +2044,17 @@ describe('P3-U3 — les réponses reçues', () => {
     expect((bloc.match(/flexWrap: 'wrap'/g) || []).length).toBeGreaterThanOrEqual(5);
   });
 
-  test('« Voir la réponse » est le SEUL chemin qui marque comme lu', async () => {
-    avecReponses([reponseFictive()]);
-    await monter(<ProspectsSection API="/api" />);
-    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 0, a_repondre: 1 } });
-    axios.get.mockResolvedValue({ data: { brouillon: null } });
-    await act(async () => { par('voir-reponse').click(); });
-    const appels = axios.post.mock.calls.map((c) => String(c[0]));
-    expect(appels.filter((u) => u.includes('/lu')).length).toBe(1);
+  test('le panneau n’utilise aucune couleur codée en dur', () => {
+    const hex = blocReponses().match(/#[0-9a-fA-F]{6}/g) || [];
+    expect(hex).toEqual([]);
+    expect(blocReponses()).toContain('RGB');
   });
 
-  test('le panneau n’utilise aucune couleur codée en dur', () => {
-    /* Le marqueur ne nomme plus UN lot : READ-P1 et AI-P1 se sont ajoutés au
-       même bandeau, et un marqueur qui épelle la liste des lots casse à chaque
-       nouveau. On vise ce qui ne bougera pas : le titre du panneau. */
-    /* LE MARQUEUR VISE LE RENDU, PAS UN COMMENTAIRE. « LES RÉPONSES REÇUES »
-       apparaît d'abord dans la prose qui décrit la source `useChargement` :
-       la découpe démarrait 500 lignes trop haut et jugeait du code étranger au
-       panneau. `data-testid` n'existe, lui, que dans le JSX. */
-    const bloc = SOURCE_C.slice(SOURCE_C.indexOf('data-testid="reponses-recues"'),
-                                SOURCE_C.indexOf('{messageCampagne &&'));
-    const hex = bloc.match(/#[0-9a-fA-F]{6}/g) || [];
-    expect(hex).toEqual([]);
-    expect(bloc).toContain('RGB');
+  test('l’écran ne GROUPE rien lui-même : il affiche ce que le serveur rend', () => {
+    /* Deux règles de regroupement finiraient par diverger. Celle-ci vit dans
+       `api/server.py` (`pf_conversations`) et nulle part ailleurs. */
+    expect(SOURCE_C).not.toMatch(/action_id\]\s*=|groupBy|reduce\(/);
+    expect(SOURCE_C).toContain('donnees.conversations');
   });
 });
 

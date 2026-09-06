@@ -25556,8 +25556,17 @@ async def p3u2_lister_reponses(request: Request):
     # partenaire ». Les deux se retrouvaient sous la meme cle, et la seconde
     # ecrasait la premiere : le badge « en attente » affichait 0 alors qu'un
     # dossier l'etait. Deux sens sous un seul nom finissent toujours ainsi.
+    # PROSPECTION FOCUS — LA MEME VERITE, LUE PAR INTERLOCUTEUR.
+    # `messages` ne bouge pas d'un champ : tout ce qui le lit (AI-P1 a AI-P4,
+    # READ-P1, READ-P2) continue de fonctionner a l'identique. `conversations`
+    # est une SECONDE lecture des memes documents, groupee par `action_id`, et
+    # rien n'est migre ni fusionne en base. Elle porte en plus la seule
+    # information que l'ecran ne pouvait pas connaitre : la trace REELLE de ce
+    # qu'Afroboost a deja envoye (`prospect_reply_sends`, AI-P4).
+    focus = await pf_charger(email, statuts, demande_statut)
     return {"messages": lignes, "total": total, "limit": limite, "offset": depart,
             **await p3ai_compteurs(email),
+            **focus,
             "a_rattacher": await db[P3U2_COLLECTION].count_documents(
                 {**dict(get_coach_filter(email)), "statut": P3U2_STATUT_REVUE})}
 
@@ -27882,7 +27891,8 @@ async def p3n_statuts_de_la_portee(email: str) -> dict:
         intentions.get(m["id"])) for m in messages}
 
 
-def p3n_timeline(action: dict, message: dict, notes, statut: str) -> list:
+def p3n_timeline(action: dict, message: dict, notes, statut: str,
+                 messages_du_fil=None) -> list:
     """L'histoire du dossier, dans l'ordre. Fonction PURE, sans base.
 
     ELLE NE MONTRE QUE CE QU'UN HUMAIN COMPREND. Ni identifiant Mongo, ni
@@ -27903,10 +27913,18 @@ def p3n_timeline(action: dict, message: dict, notes, statut: str) -> list:
         if a.get("%s_sent_at" % etape):
             evenements.append({"quand": a["%s_sent_at" % etape], "genre": "envoi",
                                "titre": libelle, "texte": ""})
-    if m.get("received_at"):
-        organisation = p3ai_organisation(a)
+    # PROSPECTION FOCUS — TOUS LES MESSAGES DU FIL, PAS SEULEMENT CELUI-CI.
+    # Le BDE HE-Arc a ecrit deux fois sur la meme action : n'inscrire que le
+    # message ouvert faisait disparaitre le premier de l'histoire du dossier.
+    # `messages_du_fil` absent = ancien appel, un seul message : le comportement
+    # ne change pas d'un iota pour les appelants qui ne le passent pas.
+    organisation = p3ai_organisation(a)
+    recus = list(messages_du_fil) if messages_du_fil else ([m] if m else [])
+    for recu in sorted(recus, key=lambda x: str((x or {}).get("received_at") or "")):
+        if not (recu or {}).get("received_at"):
+            continue
         evenements.append({
-            "quand": m["received_at"], "genre": "reponse",
+            "quand": recu["received_at"], "genre": "reponse",
             "titre": "Réponse reçue" + (" de %s" % organisation if organisation else ""),
             "texte": ""})
     annulees = {n.get("corrige_note_id") for n in (notes or []) if n.get("corrige_note_id")}
@@ -27939,6 +27957,7 @@ async def p3n_lire_dossier(inbound_id: str, request: Request):
     dossier = await p3ai_dossier(inbound_id, email)
     message, action = dossier["message"], dossier["action"]
     notes = await p3n_notes_du_dossier(action.get("id") or message.get("action_id") or "")
+    fil = await p3n_messages_du_fil(message)
     brouillon = await db[P3AI_BROUILLONS].find_one(
         {"inbound_id": message["id"]}, {"_id": 0, "genere_le": 1, "updated_at": 1})
     statut = p3n_statut_commercial(
@@ -27947,9 +27966,27 @@ async def p3n_lire_dossier(inbound_id: str, request: Request):
         (await db[P3AI_BROUILLONS].find_one({"inbound_id": message["id"]},
                                             {"_id": 0, "intention": 1}) or {}).get("intention"))
     return {"notes": notes,
-            "timeline": p3n_timeline(action, message, notes, statut),
+            "timeline": p3n_timeline(action, message, notes, statut, fil),
             "statut_commercial": statut,
             "contexte_obsolete": p3n_contexte_obsolete(brouillon, notes)}
+
+
+async def p3n_messages_du_fil(message: dict) -> list:
+    """Tous les messages RECUS du meme fil, du plus ancien au plus recent.
+
+    LE FILTRE EST `action_id`, JAMAIS `recipient_key` — meme regle que
+    `p3n_notes_du_dossier`, et pour la meme raison : la seconde est un LIBELLE
+    partageable, pas une identite.
+
+    Un message qu'aucune action ne reclame est SEUL dans son fil : on ne
+    rassemble pas deux inconnus sous pretexte qu'ils sont inconnus.
+    """
+    reference = str((message or {}).get("action_id") or "").strip()
+    if not reference:
+        return [message] if message else []
+    return await db[P3U2_COLLECTION].find(
+        {"action_id": reference}, {"_id": 0}
+    ).sort([("received_at", 1), ("id", 1)]).to_list(P3N_NOTES_MAX)
 
 
 def p3n_contexte_obsolete(brouillon, notes) -> bool:
@@ -28059,7 +28096,8 @@ async def p3n_ajouter_note(inbound_id: str, request: Request):
                 note["id"][:8], genre, message.get("recipient_key") or "-",
                 email[:24], statut)
     return {"note": note, "notes": notes,
-            "timeline": p3n_timeline(action, message, notes, statut),
+            "timeline": p3n_timeline(action, message, notes, statut,
+                                     await p3n_messages_du_fil(message)),
             "statut_commercial": statut,
             "contexte_obsolete": p3n_contexte_obsolete(brouillon, notes),
             **await p3ai_compteurs(email)}
@@ -28687,6 +28725,267 @@ async def p3ai4_apercu(inbound_id: str, request: Request):
         "deja_envoye": bool(deja and deja.get("send_status") == P3AI4_ENVOYE),
         "fil_rattache": bool(p3ai4_entetes(message, action)),
     }
+
+
+# ============================================================================
+# PROSPECTION FOCUS (PF) — UN PARTENAIRE, UNE CONVERSATION
+# ============================================================================
+# CE QUE CE LOT AJOUTE, ET CE QU'IL N'AJOUTE PAS.
+# Il n'ajoute AUCUNE donnee. Il ne migre rien, ne fusionne aucun document, ne
+# supprime aucun message. Une « conversation » est une VUE calculee a la
+# lecture : les messages restent exactement ou ils sont, avec leurs
+# identifiants, et `GET /prospect-inbound` continue de rendre `messages` a
+# l'identique. Ce bloc ne fait qu'AJOUTER une seconde lecture des memes faits.
+#
+# LE PROBLEME MESURE, LE 06/09/2026 EN PRODUCTION. Quatre reponses recues, mais
+# seulement TROIS interlocuteurs : `info@bde-hearc.ch` a ecrit deux fois
+# (04/09 puis 05/09), sur la meme action `a0e02bd1`. L'ecran affichait donc
+# deux grosses cartes pour un seul partenaire — l'une intitulee « BDE HE-Arc »
+# (le nom lu dans le brouillon), l'autre « ETU-04 » (la cle d'affichage) — et
+# rien ne disait que c'etait le meme fil. Le coach devait deviner.
+#
+# LA CLE DE REGROUPEMENT EST `action_id`, ET RIEN D'AUTRE.
+# Surtout pas `recipient_key` : `p3s3_recipient_key` rend la `ref` de la fiche
+# la PLUS ANCIENNE d'un GROUPE de fiches fusionnees, donc deux organisations
+# distinctes peuvent la partager. Grouper dessus melangerait deux dossiers —
+# exactement ce que tout ce chantier existe pour empecher. Un message sans
+# action reste SEUL dans sa propre conversation (`inbound:<id>`) : on ne
+# rassemble jamais deux inconnus sous pretexte qu'ils sont inconnus.
+#
+# « EN ATTENTE » NE VEUT PAS DIRE « NOUS AVONS REPONDU ». Ce sont deux
+# informations, et les confondre est ce qui rendait l'ecran illisible : le
+# statut commercial dit CE QU'IL FAUT FAIRE (AI-P3), l'etat d'envoi dit CE QUI
+# EST PARTI. Le second se lit dans `prospect_reply_sends`, la trace reelle
+# ecrite par AI-P4 — jamais deduit d'un statut, jamais suppose. Si aucune trace
+# n'existe, on ECRIT qu'aucune reponse n'est partie.
+PF_PREFIXE = "[PF]"
+PF_PORTEE_MAX = P3N_PORTEE_MAX
+
+# L'ORDRE DE TRAVAIL. Il ne change AUCUN statut metier : il ne fait que ranger
+# la file pour que le premier element soit celui qui coute le plus a oublier.
+PF_RANG_NOUVEAU = 0        # jamais ouvert ET une action est attendue
+PF_RANG_A_REPONDRE = 1     # une demande identifiee attend une reponse
+PF_RANG_APPEL = 2          # un appel a passer
+PF_RANG_A_QUALIFIER = 3    # on ne sait pas encore ce que le partenaire demande
+PF_RANG_ATTENTE = 4        # la balle est chez le partenaire
+PF_RANG_CLOS = 5           # refus ou dossier traite
+
+
+def pf_instant(valeur) -> str:
+    """Un horodatage COMPARABLE, en UTC. PURE, et elle n'est pas decorative.
+
+    Les deux dates qu'on doit comparer ne viennent pas de la meme plume :
+    `received_at` est ecrit par le moteur d'entree (souvent suffixe « Z »),
+    `sent_at` par AI-P4 (`datetime.now(timezone.utc).isoformat()`, donc
+    « +00:00 » et des microsecondes). Comparees comme des CHAINES, « Z » passe
+    apres « + » : un envoi anterieur pouvait donc paraitre posterieur au
+    message, et l'ecran aurait annonce « deja repondu » a tort. On normalise.
+
+    Une date illisible rend "" — qui compare avant tout le reste, donc se
+    traduit par « on ne sait pas », jamais par « c'est recent ».
+    """
+    texte = str(valeur or "").strip()
+    if not texte:
+        return ""
+    try:
+        instant = datetime.fromisoformat(texte.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return ""
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    return instant.astimezone(timezone.utc).isoformat()
+
+
+def pf_cle_conversation(message) -> str:
+    """La cle de regroupement d'UN message recu. PURE.
+
+    `action_id` quand il existe — c'est l'interlocuteur, au sens ou l'entend
+    tout le reste du chantier (`p3n_notes_du_dossier` filtre deja dessus).
+    Sinon une cle PROPRE a ce message : deux messages qu'aucune action ne
+    reclame ne sont pas « le meme partenaire », ils sont deux inconnus.
+    """
+    action = str((message or {}).get("action_id") or "").strip()
+    return action or ("inbound:%s" % str((message or {}).get("id") or ""))
+
+
+def pf_rang(statut: str, non_lue: bool, intention: str) -> int:
+    """La place d'une conversation dans la file de travail. PURE.
+
+    ELLE NE MODIFIE AUCUN STATUT. Trier n'est pas requalifier : le statut
+    commercial reste celui qu'AI-P3 a derive, et cette fonction ne fait que
+    decider de l'ordre d'affichage.
+
+    « A QUALIFIER » N'EST PAS UN STATUT, C'EST UNE ABSENCE. Un dossier « a
+    repondre » dont on ne sait pas encore ce qu'il demande (aucune analyse, ou
+    intention `autre`) passe APRES ceux dont la demande est identifiee : on
+    traite d'abord ce qu'on sait faire.
+    """
+    etat = statut or P3N_STATUT_A_REPONDRE
+    if etat in (P3N_STATUT_REFUS, P3N_STATUT_TRAITE):
+        return PF_RANG_CLOS
+    if etat == P3N_STATUT_ATTENTE:
+        return PF_RANG_ATTENTE
+    if non_lue:
+        return PF_RANG_NOUVEAU
+    if etat == P3N_STATUT_APPEL:
+        return PF_RANG_APPEL
+    return PF_RANG_A_REPONDRE if p3ai_intention(intention) in ("question", "positif") \
+        else PF_RANG_A_QUALIFIER
+
+
+def pf_conversation(cle: str, messages, action, envoi, statuts, intentions) -> dict:
+    """UNE conversation : un interlocuteur, tous ses messages, l'etat d'envoi.
+
+    Fonction PURE — aucune base. C'est ce qui permet de la prouver sur les
+    documents REELS de production plutot que sur des cas de laboratoire.
+
+    LE STATUT EST CELUI DU DERNIER MESSAGE, et c'est le seul choix coherent :
+    AI-P3 derive un statut PAR message, mais ses deux sources majeures (les
+    notes, le `traite_at`) portent sur le dossier entier. Prendre le plus
+    ancien ferait dire « a repondre » a un fil qu'on vient de clore.
+    """
+    ordonnes = sorted(messages or [],
+                      key=lambda m: (pf_instant(m.get("received_at")), str(m.get("id") or "")))
+    dernier = ordonnes[-1] if ordonnes else {}
+    identifiant = dernier.get("id") or ""
+    statut = statuts.get(identifiant) or P3N_STATUT_A_REPONDRE
+    intention = intentions.get(identifiant) or ""
+    non_lues = sum(1 for m in ordonnes if not m.get(P3AI_CHAMP_LU))
+    recu_le = pf_instant(dernier.get("received_at"))
+    envoye_le = pf_instant((envoi or {}).get("sent_at"))
+    return {
+        "cle": cle,
+        "action_id": (action or {}).get("id") or dernier.get("action_id") or None,
+        # LE NOM VIENT DE L'ACTION, pas du brouillon : un brouillon n'existe
+        # qu'apres une analyse, et une conversation doit avoir un nom avant.
+        "organisation": p3ai_organisation(action),
+        "recipient_key": dernier.get("recipient_key") or "",
+        "from_email": dernier.get("from_email") or "",
+        "nb_messages": len(ordonnes),
+        "message_ids": [m.get("id") for m in ordonnes],
+        "non_lues": non_lues,
+        "statut_commercial": statut,
+        "intention": intention,
+        "dernier_message": dernier,
+        "dernier_message_at": recu_le,
+        "messages_recus": ordonnes,
+        # LA TRACE REELLE, OU RIEN. `prospect_reply_sends` n'est ecrit qu'apres
+        # un envoi accepte par le fournisseur (AI-P4) : son absence prouve
+        # qu'aucune reponse n'est partie, et l'ecran le DIT.
+        "derniere_reponse_afroboost": ({
+            "sent_at": envoye_le,
+            "to_email": (envoi or {}).get("to_email") or "",
+            "objet": (envoi or {}).get("subject") or "",
+        } if envoye_le else None),
+        # LA QUESTION QUI COMPTE VRAIMENT : a-t-on repondu APRES ce message ?
+        # Une reponse envoyee avant le dernier message recu ne repond pas a ce
+        # message — c'est exactement le cas du BDE HE-Arc (envoi le 05/09 a
+        # 13:05, nouveau message le 05/09 a 14:45).
+        "reponse_apres_dernier_message": bool(envoye_le and recu_le and envoye_le > recu_le),
+        "rang": pf_rang(statut, non_lues > 0, intention),
+    }
+
+
+def pf_conversations(messages, actions, envois, statuts, intentions) -> list:
+    """Les conversations d'un coach, triees par urgence puis par recence. PURE.
+
+    LE TRI EST EN DEUX TEMPS, et l'ordre des deux `sort` n'est pas au hasard :
+    Python trie de facon STABLE, donc trier d'abord par date puis par rang
+    conserve la date a l'interieur de chaque rang. L'inverse melangerait tout.
+    """
+    groupes = {}
+    for message in messages or []:
+        groupes.setdefault(pf_cle_conversation(message), []).append(message)
+    conversations = [
+        pf_conversation(cle, lot, actions.get(cle) or {}, envois.get(cle) or {},
+                        statuts or {}, intentions or {})
+        for cle, lot in groupes.items()
+    ]
+    conversations.sort(key=lambda c: c.get("dernier_message_at") or "", reverse=True)
+    conversations.sort(key=lambda c: c.get("rang", PF_RANG_CLOS))
+    return conversations
+
+
+def pf_compteurs(conversations) -> dict:
+    """Les compteurs de la file — EN CONVERSATIONS, jamais en messages. PURE.
+
+    C'est la raison d'etre de ce compteur separe : `p3ai_compteurs` compte des
+    MESSAGES, et le BDE en a deux. Annoncer « 4 reponses » quand trois
+    partenaires ont ecrit fait chercher un quatrieme interlocuteur qui n'existe
+    pas.
+    """
+    compteurs = {statut: 0 for statut in P3N_STATUTS}
+    compteurs.update({"total": 0, "non_lues": 0, "a_traiter": 0})
+    for conversation in conversations or []:
+        compteurs["total"] += 1
+        statut = conversation.get("statut_commercial") or P3N_STATUT_A_REPONDRE
+        compteurs[statut] = compteurs.get(statut, 0) + 1
+        if conversation.get("non_lues"):
+            compteurs["non_lues"] += 1
+        if conversation.get("rang", PF_RANG_CLOS) <= PF_RANG_A_QUALIFIER:
+            compteurs["a_traiter"] += 1
+    return compteurs
+
+
+async def pf_charger(email: str, statuts: dict, filtre_statut: str = "") -> dict:
+    """Les conversations du coach. LECTURE SEULE, sur SA portee seulement.
+
+    LE FILTRE DE TENANCE EST CELUI DE PARTOUT (`get_coach_filter`), applique
+    aux messages ET aux traces d'envoi : une trace porte une adresse et un
+    objet, elle ne sort pas de la portee de son proprietaire.
+
+    LES COMPTEURS SONT CALCULES AVANT LE FILTRE, et c'est voulu : les puces de
+    filtrage affichent chacune SON nombre, et un compteur calcule apres
+    filtrage afficherait « (3) » sur la puce active et « (0) » sur toutes les
+    autres.
+
+    LA PORTEE EST BORNEE (`PF_PORTEE_MAX`), comme celle des statuts. Au-dela,
+    la file sous-estime plutot que de faire trainer la page. A l'echelle
+    actuelle — 4 messages reels — elle ne sera jamais atteinte.
+    """
+    portee = dict(get_coach_filter(email))
+    messages = await db[P3U2_COLLECTION].find(portee, {"_id": 0}) \
+        .sort([("received_at", -1), ("id", 1)]).to_list(PF_PORTEE_MAX)
+    if not messages:
+        return {"conversations": [], "conversations_total": 0,
+                "conversations_counts": pf_compteurs([])}
+
+    references = sorted({str(m.get("action_id") or "").strip()
+                         for m in messages if str(m.get("action_id") or "").strip()})
+    actions = {}
+    if references:
+        for action in await db[P3S3_ACTIONS].find(
+                {"id": {"$in": references}}, {"_id": 0}).to_list(len(references)):
+            actions[action["id"]] = action
+
+    # LA TRACE D'ENVOI LA PLUS RECENTE PAR FIL. On garde le dernier envoi
+    # REUSSI : un envoi reserve puis refuse par le fournisseur n'est pas une
+    # reponse partie, et l'annoncer comme telle serait le pire des mensonges.
+    envois = {}
+    for trace in await db[P3AI4_COLLECTION].find(
+            {**portee, "send_status": P3AI4_ENVOYE},
+            {"_id": 0, "action_id": 1, "inbound_id": 1, "sent_at": 1,
+             "to_email": 1, "subject": 1}).to_list(PF_PORTEE_MAX):
+        cle = str(trace.get("action_id") or "").strip() \
+            or ("inbound:%s" % str(trace.get("inbound_id") or ""))
+        if pf_instant(trace.get("sent_at")) >= pf_instant((envois.get(cle) or {}).get("sent_at")):
+            envois[cle] = trace
+
+    identifiants = [m["id"] for m in messages if m.get("id")]
+    intentions = {}
+    for brouillon in await db[P3AI_BROUILLONS].find(
+            {"inbound_id": {"$in": identifiants}},
+            {"_id": 0, "inbound_id": 1, "intention": 1}).to_list(PF_PORTEE_MAX):
+        intentions[brouillon["inbound_id"]] = brouillon.get("intention")
+
+    conversations = pf_conversations(messages, actions, envois, statuts, intentions)
+    compteurs = pf_compteurs(conversations)
+    if filtre_statut:
+        conversations = [c for c in conversations
+                         if c.get("statut_commercial") == filtre_statut]
+    return {"conversations": conversations,
+            "conversations_total": len(conversations),
+            "conversations_counts": compteurs}
 
 
 # ============================================================================

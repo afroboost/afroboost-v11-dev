@@ -35,6 +35,11 @@ import axios from 'axios';
 import SvgIcon from '../SvgIcon';
 import useChargement, { SECTION } from '../../hooks/useChargement';
 import { SectionErreur } from '../ui/EtatChargement';
+/* PROSPECTION FOCUS — les phrases factuelles de l'écran, isolées et pures.
+   Elles ne DÉDUISENT jamais qu'un e-mail est parti : elles lisent la trace. */
+import {
+  attendUneAction, etatReponse, jourHeure, jourMois, ligneDernierEnvoi, suivanteATraiter,
+} from '../../utils/prospectionFocus';
 
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
 const RGB = 'var(--primary-rgb, 217, 28, 210)';
@@ -266,6 +271,22 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
   });
   const [taille, setTaille] = useState(25);
   const [page, setPage] = useState(0);
+  /* PROSPECTION FOCUS — LES TROIS SEULS ÉTATS QU'AJOUTE CE LOT.
+     Tous les trois sont des CHAÎNES, jamais des objets : la règle absolue
+     (incident V305) interdit de reposer un objet neuf quand rien n'a changé,
+     et une chaîne se compare sans risque.
+       `onglet`       — '' tant que le coach n'a rien choisi ; l'écran décide
+                        alors tout seul, sans effet ni setState (donc sans
+                        boucle possible) ;
+       `filActif`     — la clé de LA conversation ouverte. Une chaîne : il
+                        n'existe aucun état où deux le seraient ;
+       `messageActif` — le message affiché DANS cette conversation. Il vaut le
+                        dernier reçu, sauf quand une notification en vise un
+                        autre (READ-P2) ou que le coach en rouvre un plus
+                        ancien depuis l'historique. */
+  const [onglet, setOnglet] = useState('');
+  const [filActif, setFilActif] = useState('');
+  const [messageActif, setMessageActif] = useState('');
   const [ouvert, setOuvert] = useState(null); // le prospect affiché en fiche
   const [brouillon, setBrouillon] = useState(null);
   const [enregistrement, setEnregistrement] = useState(false);
@@ -390,8 +411,6 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
 
   /* P3-U3 — dérivé de la section, jamais recopié dans un état local. */
   const sectionReponses = chargement.sections.reponses;
-  const reponses = (sectionReponses && sectionReponses.etat === SECTION.OK
-    && sectionReponses.donnees && sectionReponses.donnees.messages) || [];
   /* `a_rattacher` — les messages qu'aucune action n'a pu réclamer. À ne pas
      confondre avec l'état commercial « EN ATTENTE » (AI-P3), qui veut dire
      « j'attends une réponse du partenaire » : les deux portaient le même nom,
@@ -399,20 +418,27 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
   const reponsesARattacher = (sectionReponses && sectionReponses.etat === SECTION.OK
     && sectionReponses.donnees && sectionReponses.donnees.a_rattacher) || 0;
 
-  /* READ-P1 — LES DEUX COMPTEURS VIENNENT DU SERVEUR, JAMAIS DE LA PAGE.
-     La liste est paginée (20 par défaut) : les recompter ici donnerait un badge
-     qui change selon la page affichée. Ils survivent donc au rafraîchissement,
-     à la reconnexion et à la navigation, parce qu'ils ne dérivent d'aucun état
-     de navigateur. */
-  const reponsesNonLues = (sectionReponses && sectionReponses.etat === SECTION.OK
-    && sectionReponses.donnees && sectionReponses.donnees.non_lues) || 0;
-  const reponsesARepondre = (sectionReponses && sectionReponses.etat === SECTION.OK
-    && sectionReponses.donnees && sectionReponses.donnees.a_repondre) || 0;
-  /* AI-P3 — les cinq états viennent du serveur, dérivés d'une seule règle.
-     L'écran ne recompte rien : il afficherait sinon un chiffre qui diverge du
-     badge de la carte dès qu'une note change un statut. */
-  const compteursEtat = (sectionReponses && sectionReponses.etat === SECTION.OK
-    && sectionReponses.donnees) || {};
+  /* ---------- PROSPECTION FOCUS — LES CONVERSATIONS ----------
+
+     ELLES VIENNENT DU SERVEUR, ET L'ÉCRAN NE LES RECALCULE JAMAIS.
+     Le regroupement (`pf_conversations`, clé `action_id`) est une règle
+     métier : la dupliquer ici en ferait une seconde, et deux règles pour un
+     même regroupement finissent toujours par diverger — c'est la leçon déjà
+     payée sur le statut commercial. Le serveur groupe sur TOUTE la portée du
+     coach ; l'écran, lui, affiche.
+
+     RIEN N'EST FUSIONNÉ EN BASE. Chaque message garde son identifiant, ses
+     champs et sa place ; `messages` continue d'être rendu à l'identique et
+     tout ce qui s'y adossait (AI-P1 à AI-P4, READ-P1, READ-P2) fonctionne
+     inchangé. Une conversation est une VUE. */
+  const conversations = (sectionReponses && sectionReponses.etat === SECTION.OK
+    && sectionReponses.donnees && sectionReponses.donnees.conversations) || [];
+  /* LES COMPTEURS COMPTENT DES CONVERSATIONS, PAS DES MESSAGES. Le BDE HE-Arc
+     a écrit deux fois : annoncer « 4 réponses » ferait chercher un quatrième
+     interlocuteur qui n'existe pas. Ils sont calculés par le serveur sur la
+     portée complète, donc ils ne changent pas d'une page à l'autre. */
+  const compteursConv = (sectionReponses && sectionReponses.etat === SECTION.OK
+    && sectionReponses.donnees && sectionReponses.donnees.conversations_counts) || {};
 
   /* ---------- READ-P1 + AI-P2 — L'ÉTAT DES CARTES DE RÉPONSE ----------
 
@@ -445,7 +471,6 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
      écraserait une correction écrite à la main. */
   const ouvrirReponse = useCallback(async (id) => {
     if (!id) return;
-    if (carteDe(id).ouvert) { majCarte(id, { ouvert: false }); return; }
     majCarte(id, { ouvert: true });
     try {
       await axios.post(`${base}/prospect-inbound/${encodeURIComponent(id)}/lu`);
@@ -473,6 +498,34 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
       majCarte(id, { brouillon: null, notes: [], timeline: [] });
     }
   }, [base, carteDe, majCarte, chargement]);
+
+  /* PROSPECTION FOCUS — OUVRIR UNE CONVERSATION EN FERME UNE AUTRE.
+     Ce n'est pas une politesse d'interface, c'est la garantie : `filActif` est
+     une CHAÎNE, donc il n'existe aucun état où deux conversations seraient
+     développées. Le repli de la précédente n'est pas une action séparée qui
+     pourrait échouer — c'est la même écriture.
+
+     OUVRIR RESTE LIRE, PAR LE CHEMIN NORMAL. `ouvrirReponse` est appelé sur LE
+     message affiché : le badge « nouveau » et `read_at` se comportent
+     exactement comme avant ce lot. */
+  const ouvrirMessage = useCallback((conversation, identifiant) => {
+    const conv = conversation || {};
+    const message = (conv.messages_recus || []).find((m) => m && m.id === identifiant)
+      || conv.dernier_message || {};
+    if (!message.id) return;
+    setFilActif(conv.cle || '');
+    setMessageActif(message.id);
+    ouvrirReponse(message.id);
+  }, [ouvrirReponse]);
+
+  const ouvrirConversation = useCallback((conversation) => {
+    const conv = conversation || {};
+    /* Recliquer la ligne ACTIVE la replie : c'est le geste attendu, et il
+       laisse l'écran dans l'état « aucune conversation ouverte », jamais dans
+       un état où deux le seraient. */
+    if (conv.cle && conv.cle === filActif) { setFilActif(''); return; }
+    ouvrirMessage(conv, (conv.dernier_message || {}).id);
+  }, [filActif, ouvrirMessage]);
 
   /* AI-P3 — LA MÉMOIRE COMMERCIALE. Une note raconte ce qui s'est passé HORS
      des e-mails : un appel, un WhatsApp, une rencontre. Elle est append-only —
@@ -625,11 +678,21 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
      LA DÉPENDANCE EST L'IDENTIFIANT, une chaîne — jamais la liste `reponses`,
      qui est un tableau neuf à chaque rendu et relancerait l'effet en boucle
      (règle absolue, incident V305). */
-  const cibleTrouvee = inboundCible
-    && reponses.some((r) => r.id === inboundCible) ? inboundCible : '';
+  /* PROSPECTION FOCUS — LA CIBLE SE CHERCHE DANS LES CONVERSATIONS.
+     C'est un élargissement, pas un changement de règle : `conversations`
+     couvre TOUTE la portée du coach, là où `messages` n'en est qu'une page.
+     Une notification visant un message de la deuxième page ne tombait donc
+     nulle part. Et comme un fil peut porter plusieurs messages (le BDE en a
+     deux), on ouvre la BONNE conversation SUR le message visé — jamais sur un
+     autre message du même fil. */
+  const conversationCible = inboundCible
+    ? conversations.find((c) => (c.message_ids || []).indexOf(inboundCible) !== -1) || null
+    : null;
+  const cibleTrouvee = conversationCible ? inboundCible : '';
   useEffect(() => {
     if (!cibleTrouvee) return;
-    ouvrirReponse(cibleTrouvee);
+    setOnglet('reponses');
+    ouvrirMessage(conversationCible, cibleTrouvee);
     if (onCibleConsommee) onCibleConsommee();
     /* Le défilement est un confort, jamais une condition : si l'ancre n'existe
        pas encore, la carte est ouverte de toute façon. */
@@ -659,6 +722,27 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
   const compteurs = (charge && charge.counts) || {};
   const total = charge ? charge.total : null;
   const chargeUnFois = etat === SECTION.OK;
+
+  /* ---------- PROSPECTION FOCUS — QUELLE VUE, QUELLE CONVERSATION ----------
+
+     L'ONGLET PAR DÉFAUT SE CALCULE, IL NE S'ÉCRIT PAS. Un `useEffect` qui
+     poserait l'onglet à l'arrivée des conversations relancerait un rendu, donc
+     les effets qui en dépendent — c'est exactement la mécanique de l'incident
+     V305. Ici : tant que le coach n'a rien choisi (`onglet` vide), l'écran
+     ouvre la boîte de traitement s'il y a quelque chose à traiter, et la liste
+     des prospects sinon. Aucun `setState`, donc aucune boucle possible. */
+  const ongletActif = onglet || (conversations.length ? 'reponses' : 'prospects');
+
+  /* LA CONVERSATION OUVERTE, ET LE MESSAGE AFFICHÉ DEDANS.
+     Les deux sont DÉRIVÉS d'une clé et d'un identifiant — jamais recopiés dans
+     un état : une conversation recopiée deviendrait périmée dès la première
+     note, et afficherait un statut que le serveur a déjà corrigé. */
+  const convActive = filActif
+    ? conversations.find((c) => c.cle === filActif) || null : null;
+  const msgActif = convActive
+    ? ((convActive.messages_recus || []).find((m) => m && m.id === messageActif)
+       || convActive.dernier_message || null)
+    : null;
 
   const recharger = useCallback(() => chargement.reessayer('prospects'), [chargement]);
 
@@ -954,6 +1038,912 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
         depuis cet écran.
       </p>
 
+      {/* ---------- §1 : DEUX TÂCHES, DEUX VUES, JAMAIS LES DEUX À LA FOIS ----
+           Traiter les réponses et parcourir les 142 prospects sont deux gestes
+           différents, et les afficher ensemble obligeait à chercher dans deux
+           endroits à la fois. Chaque vue garde TOUTES ses fonctions : rien
+           n'est retiré, seulement séparé. */}
+      <div data-testid="onglets-prospection" role="tablist"
+           style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        {[['reponses', `Réponses (${conversations.length})`],
+          ['prospects', `Tous les prospects (${chargeUnFois && total !== null ? total : '—'})`]
+        ].map(([cle, libelle]) => (
+          <button key={cle} type="button" role="tab"
+                  data-testid={`onglet-${cle}`}
+                  aria-selected={ongletActif === cle}
+                  onClick={() => setOnglet(cle)}
+                  style={{
+                    padding: '7px 14px', borderRadius: '999px', fontSize: '12px',
+                    cursor: 'pointer', color: TEXTE,
+                    fontWeight: ongletActif === cle ? 700 : 500,
+                    border: `1px solid ${ongletActif === cle
+                      ? `rgba(${RGB}, 0.7)` : 'rgba(255,255,255,0.18)'}`,
+                    background: ongletActif === cle
+                      ? `rgba(${RGB}, 0.26)` : 'transparent',
+                  }}>
+            {libelle}
+          </button>
+        ))}
+      </div>
+
+      {/* ================================================================
+           PROSPECTION FOCUS — LA BOÎTE DE TRAITEMENT
+
+           UN PARTENAIRE = UNE CONVERSATION, ET UNE SEULE OUVERTE À LA FOIS.
+           L'écran affichait une grosse carte PAR MESSAGE REÇU : le BDE HE-Arc,
+           qui a écrit deux fois sur la même action, occupait donc deux cartes —
+           l'une nommée « BDE HE-Arc », l'autre « ETU-04 » — sans que rien ne
+           dise que c'était le même fil. Le regroupement vient du SERVEUR
+           (`pf_conversations`, clé `action_id`) : l'écran ne le recalcule pas,
+           et aucune donnée n'est fusionnée en base.
+
+           CE QUI EST VISIBLE SANS CLIQUER : une ligne par conversation. Nom,
+           état, date, point de non-lu. Rien d'autre — ni corps, ni analyse, ni
+           brouillon : c'est ce qui rendait l'écran illisible.
+
+           MOBILE D'ABORD : une seule colonne, la file au-dessus, la
+           conversation active en dessous. Aucune largeur fixe, aucun tableau,
+           donc aucun défilement horizontal.
+         ================================================================ */}
+      {ongletActif === 'reponses' && (
+        <div data-testid="reponses-recues"
+             style={{
+               padding: '12px 14px', marginBottom: '14px', borderRadius: '10px',
+               border: `1px solid rgba(${RGB}, 0.4)`, background: `rgba(${RGB}, 0.10)`,
+             }}>
+
+          {/* ---- LES COMPTEURS, EN CONVERSATIONS ET NON EN MESSAGES ----
+               `p3ai_compteurs` compte des messages ; le BDE en a deux. Annoncer
+               « 4 réponses » quand trois partenaires ont écrit fait chercher un
+               quatrième interlocuteur qui n'existe pas. */}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px',
+                        marginBottom: '10px', flexWrap: 'wrap' }}>
+            <span data-testid="compteur-conversations"
+                  style={{ fontSize: '13px', fontWeight: 700, color: TEXTE }}>
+              {conversations.length} conversation{conversations.length > 1 ? 's' : ''}
+            </span>
+            <span data-testid="compteur-detail"
+                  style={{ fontSize: '11px', opacity: 0.75, color: TEXTE }}>
+              {[
+                [compteursConv.a_repondre, 'à répondre'],
+                [compteursConv.appel_a_faire, 'appel à faire'],
+                [compteursConv.en_attente, 'en attente'],
+                [compteursConv.refus, 'refus'],
+                [compteursConv.traite, 'traité'],
+              ].filter(([n]) => n > 0).map(([n, mot]) => `${n} ${mot}`).join(' · ') || '—'}
+            </span>
+            {compteursConv.non_lues > 0 && (
+              <span data-testid="reponses-non-lues"
+                    style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
+                             background: `rgba(${RGB}, 0.30)`, color: TEXTE,
+                             border: `1px solid rgba(${RGB}, 0.6)`, fontWeight: 700 }}>
+                {compteursConv.non_lues} nouvelle{compteursConv.non_lues > 1 ? 's' : ''}
+              </span>
+            )}
+            {reponsesARattacher > 0 && (
+              <span data-testid="reponses-en-attente"
+                    style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
+                             background: 'rgba(255,255,255,0.10)', color: TEXTE, fontWeight: 600 }}>
+                {reponsesARattacher} à rattacher à la main
+              </span>
+            )}
+          </div>
+
+          {/* AI-P3 — LES FILTRES COMMERCIAUX. Ils comptent désormais des
+              CONVERSATIONS, comme le reste de l'écran. Ils n'apparaissent que
+              s'il y a plus d'un état à trier : sur trois réponses toutes à
+              répondre, une barre de filtres serait du décor. */}
+          {Object.keys(STATUT_COMMERCIAL).filter((c) => compteursConv[c] > 0).length > 1 && (
+            <div data-testid="filtres-statut"
+                 style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+              {[{ cle: '', libelle: 'Toutes' }].concat(
+                Object.keys(STATUT_COMMERCIAL)
+                  .filter((c) => compteursConv[c] > 0)
+                  .map((c) => ({ cle: c, libelle: STATUT_COMMERCIAL[c].libelle }))
+              ).map((f) => (
+                <button key={f.cle || 'toutes'} type="button"
+                        data-testid={`filtre-${f.cle || 'toutes'}`}
+                        onClick={() => setFiltreStatut(f.cle)}
+                        style={{
+                          ...stylePetitBouton,
+                          fontWeight: filtreStatut === f.cle ? 700 : 500,
+                          background: filtreStatut === f.cle
+                            ? `rgba(${RGB}, 0.28)` : 'transparent',
+                          borderColor: filtreStatut === f.cle
+                            ? `rgba(${RGB}, 0.55)` : 'rgba(255,255,255,0.22)',
+                        }}>
+                  {f.libelle}{f.cle ? ` (${compteursConv[f.cle]})` : ''}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {cibleIntrouvable && (
+            <div data-testid="cible-introuvable"
+                 style={{ fontSize: '11px', padding: '7px 9px', borderRadius: '7px',
+                          background: 'rgba(255,255,255,0.10)', color: TEXTE,
+                          marginBottom: '10px' }}>
+              La réponse liée à cette notification n’est pas dans cette liste.
+              Elle a peut-être été traitée ailleurs.
+            </div>
+          )}
+
+          {conversations.length === 0 ? (
+            <div data-testid="aucune-conversation"
+                 style={{ fontSize: '12px', opacity: 0.7, color: TEXTE, padding: '6px 0' }}>
+              Aucune réponse reçue pour le moment.
+            </div>
+          ) : null}
+
+          {/* ---- LA FILE COMPACTE : UNE LIGNE PAR CONVERSATION ----
+               Nom, état, date. Le corps, l'analyse, l'historique et le
+               brouillon n'y sont PAS : c'est ce qui permet de voir d'un coup
+               d'œil ce qui reste à traiter. L'ordre vient du serveur
+               (`pf_conversations`) — non lues d'abord, puis à répondre, puis à
+               qualifier, puis en attente, puis clos. */}
+          {conversations.length > 0 && (
+            <div data-testid="file-conversations"
+                 style={{ display: 'flex', flexDirection: 'column', gap: '4px',
+                          marginBottom: filActif ? '12px' : '0' }}>
+              {conversations.map((conv) => {
+                const actif = conv.cle === filActif;
+                const etatConv = STATUT_COMMERCIAL[conv.statut_commercial]
+                  || STATUT_COMMERCIAL.a_repondre;
+                return (
+                  <button key={conv.cle} type="button"
+                          data-testid="conversation-ligne"
+                          data-cle={conv.cle}
+                          data-inbound={(conv.dernier_message || {}).id || ''}
+                          aria-expanded={actif}
+                          onClick={() => ouvrirConversation(conv)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            flexWrap: 'wrap', textAlign: 'left', width: '100%',
+                            padding: '8px 10px', borderRadius: '8px', cursor: 'pointer',
+                            color: TEXTE,
+                            border: `1px solid ${actif
+                              ? `rgba(${RGB}, 0.65)` : 'rgba(255,255,255,0.12)'}`,
+                            background: actif
+                              ? `rgba(${RGB}, 0.22)` : 'rgba(255,255,255,0.04)',
+                          }}>
+                    <span data-testid={conv.non_lues > 0 ? 'point-non-lu' : 'point-lu'}
+                          aria-hidden="true"
+                          style={{ flex: '0 0 8px', minWidth: '8px', height: '8px',
+                                   borderRadius: '999px',
+                                   background: conv.non_lues > 0
+                                     ? `rgba(${RGB}, 0.95)` : 'rgba(255,255,255,0.18)' }} />
+                    <span style={{ flex: '1 1 140px', minWidth: '120px', fontWeight: 700,
+                                   fontSize: '13px', overflow: 'hidden',
+                                   textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                   maxWidth: '100%' }}>
+                      {conv.organisation || conv.recipient_key || 'Prospect à identifier'}
+                      {conv.nb_messages > 1 ? (
+                        <span data-testid="nb-messages"
+                              style={{ opacity: 0.6, fontWeight: 500, fontSize: '11px' }}>
+                          {' '}· {conv.nb_messages} messages
+                        </span>
+                      ) : null}
+                    </span>
+                    <span data-testid={`ligne-statut-${conv.statut_commercial}`}
+                          style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
+                                   padding: '2px 8px', borderRadius: '999px',
+                                   flex: '0 0 auto', background: etatConv.fond }}>
+                      {etatConv.libelle}
+                    </span>
+                    <span style={{ fontSize: '11px', opacity: 0.6, flex: '0 0 auto' }}>
+                      {jourMois(conv.dernier_message_at)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ================= LA CONVERSATION OUVERTE — UNE SEULE =============
+               `filActif` est une CHAÎNE, donc une seule conversation peut être
+               développée : il n'existe aucun état où deux le seraient. Tout ce
+               qui est persistant reste indexé par `message.id` dans `cartes`,
+               exactement comme avant — c'est ce qui empêche structurellement le
+               mélange entre deux dossiers. */}
+          {convActive && msgActif && (() => {
+            const r = msgActif;
+            const carte = cartes[r.id] || {};
+            const nonLue = !r.read_at;
+            const statut = convActive.statut_commercial || 'a_repondre';
+            const libelleStatut = STATUT_COMMERCIAL[statut] || STATUT_COMMERCIAL.a_repondre;
+            const traitee = statut === 'traite';
+            const form = carte.formNote || {};
+            const bro = carte.brouillon || null;
+            const occupe = !!carte.chargement;
+            const etatEnvoi = etatReponse(convActive);
+            /* §9 — LE GROS BLOC IA NE S'AFFICHE QUE S'IL SERT. Un dossier en
+               attente du partenaire n'a rien à envoyer : lui consacrer la
+               moitié de l'écran ferait croire qu'une action est due. */
+            const montrerReponse = attendUneAction(convActive) || !!carte.repondre;
+            const suivante = suivanteATraiter(conversations, convActive.cle);
+            return (
+              <div data-testid="conversation-active" data-inbound={r.id}
+                   style={{ padding: '12px', borderRadius: '10px',
+                            background: 'rgba(0,0,0,0.28)',
+                            border: `1px solid rgba(${RGB}, 0.45)` }}>
+
+                {/* ---- §4 : QUI, ET DANS QUEL ÉTAT ---- */}
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap',
+                              alignItems: 'center', marginBottom: '6px' }}>
+                  {nonLue && (
+                    <span data-testid="badge-nouveau"
+                          style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
+                                   padding: '2px 8px', borderRadius: '999px', color: TEXTE,
+                                   background: `rgba(${RGB}, 0.55)` }}>
+                      NOUVEAU
+                    </span>
+                  )}
+                  <span data-testid={`badge-statut-${statut}`}
+                        style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
+                                 padding: '2px 8px', borderRadius: '999px', color: TEXTE,
+                                 background: libelleStatut.fond }}>
+                    {libelleStatut.libelle}
+                  </span>
+                  {r.statut !== 'rattache' && (
+                    <span data-testid="badge-a-rattacher"
+                          style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px',
+                                   borderRadius: '999px', color: TEXTE,
+                                   background: 'rgba(255,255,255,0.14)' }}>
+                      À RATTACHER
+                    </span>
+                  )}
+                  <button type="button" data-testid="fermer-conversation"
+                          onClick={() => setFilActif('')}
+                          style={{ ...stylePetitBouton, marginLeft: 'auto' }}>
+                    Replier
+                  </button>
+                </div>
+
+                <div data-testid="conversation-nom"
+                     style={{ fontSize: '15px', fontWeight: 700, color: TEXTE,
+                              lineHeight: 1.25 }}>
+                  {convActive.organisation || convActive.recipient_key
+                    || 'Prospect à identifier'}
+                </div>
+                <div title={r.from_email}
+                     style={{ fontSize: '11px', opacity: 0.7, color: TEXTE,
+                              overflow: 'hidden', textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                  {r.from_email}
+                </div>
+
+                {/* ---- §5 : STATUT COMMERCIAL ET ÉTAT D'ENVOI, SÉPARÉS ----
+                     « EN ATTENTE » ne veut pas dire « nous avons répondu ». Ce
+                     sont deux informations : la première dit ce qu'il faut
+                     faire, la seconde ce qui est parti. Les confondre est
+                     exactement ce qui rendait l'écran trompeur. */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px',
+                              marginTop: '9px' }}>
+                  <div style={{ fontSize: '11px', color: TEXTE, minWidth: '140px' }}>
+                    <span style={{ opacity: 0.6 }}>STATUT COMMERCIAL</span>
+                    <div data-testid="ligne-statut-commercial"
+                         style={{ fontWeight: 700, fontSize: '12px' }}>
+                      {libelleStatut.libelle}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '11px', color: TEXTE, minWidth: '160px' }}>
+                    <span style={{ opacity: 0.6 }}>DERNIER ENVOI AFROBOOST</span>
+                    <div data-testid="ligne-dernier-envoi"
+                         style={{ fontWeight: 700, fontSize: '12px' }}>
+                      {ligneDernierEnvoi(convActive)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* LA PHRASE QUI DÉCIDE. Elle répond à la seule question que
+                    Bassi se posait sans pouvoir y répondre : « est-ce que j'ai
+                    déjà répondu à CE message ? ». Elle vient de la trace réelle
+                    d'AI-P4 — jamais d'une déduction. */}
+                <div data-testid="etat-reponse-afroboost"
+                     data-code={etatEnvoi.code}
+                     style={{ display: 'flex', gap: '7px', alignItems: 'center',
+                              flexWrap: 'wrap', marginTop: '9px', padding: '7px 9px',
+                              borderRadius: '7px', fontSize: '12px', fontWeight: 600,
+                              color: TEXTE,
+                              background: etatEnvoi.code === 'envoyee'
+                                ? 'rgba(34,197,94,0.20)'
+                                : etatEnvoi.code === 'a_repondre'
+                                  ? 'rgba(245,158,11,0.22)' : 'rgba(255,255,255,0.10)' }}>
+                  <SvgIcon name={etatEnvoi.code === 'envoyee' ? 'check' : 'clock'} size={13} />
+                  <span style={{ flex: '1 1 160px', minWidth: '160px' }}>
+                    {etatEnvoi.texte}
+                  </span>
+                </div>
+
+                {/* ---- §6 : LE DERNIER ÉCHANGE, EN DATES ---- */}
+                <div data-testid="dernier-echange"
+                     style={{ fontSize: '11px', opacity: 0.75, color: TEXTE,
+                              marginTop: '7px', lineHeight: 1.6 }}>
+                  <div>Dernier message reçu : {jourHeure(convActive.dernier_message_at) || '—'}</div>
+                  <div>Dernière réponse Afroboost : {ligneDernierEnvoi(convActive)
+                    .replace('Réponse envoyée le ', '')}</div>
+                </div>
+
+                {carte.erreur ? (
+                  <div data-testid="erreur-ia"
+                       style={{ fontSize: '11px', marginTop: '9px', padding: '7px 9px',
+                                borderRadius: '6px', color: TEXTE,
+                                background: 'rgba(239,68,68,0.18)' }}>
+                    {carte.erreur}
+                  </div>
+                ) : null}
+
+                {/* ---- §7 : LE DERNIER MESSAGE DU PARTENAIRE, ET LUI SEUL ----
+                     Les messages plus anciens du même fil ne s'empilent pas
+                     dessous : ils sont dans l'historique, replié. */}
+                <div data-testid="dernier-message" style={{ marginTop: '11px' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
+                                color: TEXTE, letterSpacing: '0.05em', marginBottom: '4px' }}>
+                    DERNIER MESSAGE DU PARTENAIRE
+                  </div>
+                  {r.id !== (convActive.dernier_message || {}).id && (
+                    <div data-testid="message-plus-ancien"
+                         style={{ display: 'flex', gap: '8px', alignItems: 'center',
+                                  flexWrap: 'wrap', fontSize: '11px', color: TEXTE,
+                                  padding: '6px 8px', borderRadius: '6px',
+                                  background: 'rgba(255,255,255,0.10)', marginBottom: '6px' }}>
+                      <span style={{ flex: '1 1 170px', minWidth: '170px' }}>
+                        Ce n’est pas le dernier message de ce fil.
+                      </span>
+                      <button type="button" data-testid="voir-dernier-message"
+                              onClick={() => ouvrirMessage(convActive,
+                                (convActive.dernier_message || {}).id)}
+                              style={stylePetitBouton}>
+                        Voir le dernier
+                      </button>
+                    </div>
+                  )}
+                  <div style={{ fontSize: '11px', opacity: 0.6, color: TEXTE }}>
+                    {r.subject}
+                  </div>
+                  {/* Du TEXTE, jamais du HTML : on n'injecte pas le contenu
+                      d'un inconnu dans la page. */}
+                  <div data-testid="corps-original"
+                       style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
+                                lineHeight: 1.5, marginTop: '4px' }}>
+                    {r.body_text || '(aucun contenu lisible pour cette réponse)'}
+                  </div>
+                </div>
+
+                {/* ---- L'ANALYSE, quand elle existe et qu'elle sert ---- */}
+                {montrerReponse && bro ? (
+                  <div data-testid="analyse-ia" style={{ marginTop: '12px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
+                                  color: TEXTE, letterSpacing: '0.05em',
+                                  marginBottom: '5px' }}>
+                      ANALYSE IA
+                    </div>
+                    <span data-testid="carte-intention"
+                          style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.04em',
+                                   color: PRIMAIRE }}>
+                      {LIBELLE_INTENTION[bro.intention] || String(bro.intention || '').toUpperCase()}
+                    </span>
+                    {bro.resume ? (
+                      <div data-testid="carte-resume"
+                           style={{ fontSize: '12px', color: TEXTE, lineHeight: 1.45,
+                                    marginTop: '2px' }}>
+                        {bro.resume}
+                      </div>
+                    ) : null}
+                    {bro.validation_requise && (
+                      <div data-testid="validation-bassi"
+                           style={{ display: 'flex', gap: '6px', alignItems: 'center',
+                                    fontSize: '11px', fontWeight: 700, color: TEXTE,
+                                    padding: '6px 8px', borderRadius: '6px',
+                                    background: 'rgba(245,158,11,0.25)', margin: '7px 0',
+                                    flexWrap: 'wrap' }}>
+                        <SvgIcon name="warning" size={13} />
+                        VALIDATION BASSI NÉCESSAIRE — {(bro.motifs_validation || []).join(', ')}
+                      </div>
+                    )}
+                    {bro.demande ? (
+                      <div style={{ fontSize: '12px', color: TEXTE, marginTop: '3px',
+                                    lineHeight: 1.45 }}>
+                        <strong>Ce qu’il demande :</strong> {bro.demande}
+                      </div>
+                    ) : null}
+                    {bro.prochaine_action ? (
+                      <div style={{ fontSize: '12px', color: TEXTE, lineHeight: 1.45 }}>
+                        <strong>Action recommandée :</strong> {bro.prochaine_action}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* ---- §9 : RIEN À ENVOYER ? ON LE DIT, ON N'OCCUPE PAS L'ÉCRAN ---- */}
+                {!montrerReponse && (
+                  <div data-testid="rien-a-envoyer"
+                       style={{ display: 'flex', gap: '8px', alignItems: 'center',
+                                flexWrap: 'wrap', marginTop: '12px', fontSize: '12px',
+                                color: TEXTE, opacity: 0.85 }}>
+                    <span style={{ flex: '1 1 170px', minWidth: '170px' }}>
+                      {statut === 'refus' ? 'Refus enregistré — aucune réponse attendue.'
+                        : traitee ? 'Dossier traité.'
+                          : 'En attente du partenaire.'}
+                    </span>
+                    <button type="button" data-testid="repondre-quand-meme"
+                            onClick={() => majCarte(r.id, { repondre: true })}
+                            style={stylePetitBouton}>
+                      Répondre quand même
+                    </button>
+                  </div>
+                )}
+
+                {/* ================= LA RÉPONSE ================= */}
+                {montrerReponse && (
+                  <div data-testid="bloc-reponse" style={{ marginTop: '12px' }}>
+                    {/* AI-P3 — UN BROUILLON PÉRIMÉ SE SIGNALE, IL NE SE RÉÉCRIT
+                        PAS TOUT SEUL. C'est une comparaison de DATES, jamais une
+                        lecture du texte. */}
+                    {bro && carte.obsolete && !carte.edition ? (
+                      <div data-testid="contexte-obsolete"
+                           style={{ fontSize: '11px', padding: '7px 9px', borderRadius: '7px',
+                                    background: 'rgba(245,158,11,0.22)', color: TEXTE,
+                                    marginBottom: '7px', display: 'flex', gap: '8px',
+                                    alignItems: 'center', flexWrap: 'wrap' }}>
+                        <SvgIcon name="warning" size={13} />
+                        <span style={{ flex: 1, minWidth: '160px' }}>
+                          Le contexte a changé depuis la génération de cette réponse.
+                        </span>
+                        <button type="button" data-testid="regenerer-contexte"
+                                onClick={() => analyserReponse(r.id, '')}
+                                disabled={occupe}
+                                style={{ ...stylePetitBouton, fontWeight: 600,
+                                         opacity: occupe ? 0.6 : 1 }}>
+                          Régénérer avec les nouvelles informations
+                        </button>
+                      </div>
+                    ) : null}
+
+                    <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
+                                  color: TEXTE, letterSpacing: '0.05em', marginBottom: '5px' }}>
+                      {bro ? `RÉPONSE PROPOSÉE POUR ${bro.to_email}` : 'RÉPONSE PROPOSÉE'}
+                    </div>
+
+                    {bro && carte.edition ? (
+                      <>
+                        <textarea
+                          data-testid="editeur-brouillon"
+                          value={carte.texte}
+                          onChange={(e) => majCarte(r.id, { texte: e.target.value })}
+                          rows={9}
+                          style={{
+                            width: '100%', boxSizing: 'border-box', fontSize: '12px',
+                            lineHeight: 1.5, color: TEXTE, padding: '9px 10px',
+                            borderRadius: '8px', background: 'rgba(0,0,0,0.32)',
+                            border: `1px solid rgba(${RGB}, 0.45)`, resize: 'vertical',
+                            fontFamily: 'inherit',
+                          }} />
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                      marginTop: '7px' }}>
+                          <button type="button" data-testid="enregistrer-brouillon"
+                                  onClick={() => enregistrerBrouillon(r.id)}
+                                  disabled={occupe || !(carte.texte || '').trim()}
+                                  style={{ ...styleBouton,
+                                           opacity: occupe || !(carte.texte || '').trim() ? 0.6 : 1 }}>
+                            {occupe ? 'Enregistrement…' : 'Enregistrer'}
+                          </button>
+                          <button type="button" data-testid="annuler-edition"
+                                  onClick={() => majCarte(r.id, { edition: false, texte: '' })}
+                                  style={stylePetitBouton}>
+                            Annuler
+                          </button>
+                        </div>
+                      </>
+                    ) : bro ? (
+                      <div data-testid="reponse-proposee"
+                           style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
+                                    lineHeight: 1.5, padding: '9px 10px', borderRadius: '8px',
+                                    background: 'rgba(0,0,0,0.25)',
+                                    border: `1px solid rgba(${RGB}, 0.35)` }}>
+                        {bro.reponse_proposee}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '12px', opacity: 0.75, color: TEXTE }}>
+                        Aucune réponse n'a encore été préparée pour ce partenaire.
+                      </div>
+                    )}
+
+                    {/* ---- §10 : UNE ACTION PRINCIPALE, LE RESTE EN RETRAIT ----
+                        Sans brouillon, la seule chose à faire est d'en préparer
+                        un ; avec un brouillon, c'est de l'envoyer. Les autres
+                        boutons existent toujours, mais en second rang. */}
+                    {!carte.edition && (
+                      <div data-testid="actions-conversation"
+                           style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                    alignItems: 'center', marginTop: '9px' }}>
+                        {bro ? (
+                          <button type="button" data-testid="valider-envoyer"
+                                  onClick={() => preparerEnvoi(r.id)}
+                                  disabled={occupe}
+                                  style={{ ...styleBouton, opacity: occupe ? 0.6 : 1 }}>
+                            Valider et envoyer
+                          </button>
+                        ) : null}
+                        <button type="button" data-testid="analyser-ia"
+                                onClick={() => analyserReponse(r.id, '')}
+                                disabled={occupe}
+                                style={{ ...(bro ? stylePetitBouton : styleBouton),
+                                         opacity: occupe ? 0.6 : 1 }}>
+                          {occupe ? 'Analyse en cours…'
+                            : (bro ? 'Régénérer' : "Générer une réponse avec l’IA")}
+                        </button>
+                        {bro && !occupe && (
+                          <button type="button" data-testid="modifier-brouillon"
+                                  onClick={() => majCarte(r.id, {
+                                    edition: true, texte: bro.reponse_proposee || '' })}
+                                  style={stylePetitBouton}>
+                            Modifier
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ============ AI-P4 : L'ÉCRAN DE CONFIRMATION ============
+                        « Valider et envoyer » N'ENVOIE RIEN : il montre ce qui
+                        partirait, tel que le SERVEUR l'a calculé. Seul
+                        « Confirmer l'envoi » expédie. */}
+                    {carte.apercu && (
+                      <div data-testid="confirmation-envoi"
+                           style={{ marginTop: '10px', padding: '11px',
+                                    borderRadius: '9px',
+                                    background: 'rgba(0,0,0,0.30)',
+                                    border: `1px solid rgba(${RGB}, 0.5)` }}>
+                        <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.7,
+                                      color: TEXTE, letterSpacing: '0.05em',
+                                      marginBottom: '7px' }}>
+                          AVANT D’ENVOYER — VÉRIFIEZ
+                        </div>
+                        {carte.apercu.validation_requise && (
+                          <div data-testid="confirmation-validation"
+                               style={{ fontSize: '11px', fontWeight: 700, color: TEXTE,
+                                        padding: '6px 8px', borderRadius: '6px',
+                                        background: 'rgba(245,158,11,0.28)',
+                                        marginBottom: '7px' }}>
+                            VALIDATION BASSI NÉCESSAIRE — {(carte.apercu.motifs_validation || []).join(', ')}
+                          </div>
+                        )}
+                        {[['Organisation', carte.apercu.organisation],
+                          ['Destinataire', carte.apercu.destinataire],
+                          ['Objet', carte.apercu.objet],
+                          ['État du dossier',
+                           (STATUT_COMMERCIAL[carte.apercu.statut_commercial]
+                            || STATUT_COMMERCIAL.a_repondre).libelle]].map(([cle, val]) => (
+                          <div key={cle} style={{ fontSize: '11px', color: TEXTE,
+                                                  marginBottom: '2px', wordBreak: 'break-word' }}>
+                            <span style={{ opacity: 0.65 }}>{cle} : </span>
+                            <strong data-testid={`apercu-${cle.split(' ')[0].toLowerCase()}`}>
+                              {val || '—'}
+                            </strong>
+                          </div>
+                        ))}
+                        <div data-testid="apercu-texte"
+                             style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
+                                      lineHeight: 1.5, marginTop: '7px', padding: '8px 9px',
+                                      borderRadius: '7px', background: 'rgba(0,0,0,0.30)' }}>
+                          {carte.apercu.texte}
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                      marginTop: '9px', alignItems: 'center' }}>
+                          <button type="button" data-testid="confirmer-envoi"
+                                  onClick={() => confirmerEnvoi(r.id)}
+                                  disabled={occupe || !carte.apercu.envoi_possible
+                                            || carte.apercu.contexte_obsolete
+                                            || carte.apercu.deja_envoye}
+                                  style={{ ...styleBouton,
+                                           opacity: (occupe || !carte.apercu.envoi_possible
+                                                     || carte.apercu.contexte_obsolete
+                                                     || carte.apercu.deja_envoye) ? 0.5 : 1,
+                                           cursor: carte.apercu.envoi_possible ? 'pointer' : 'not-allowed' }}>
+                            {occupe ? 'Envoi…' : 'Confirmer l’envoi'}
+                          </button>
+                          <button type="button" data-testid="annuler-envoi"
+                                  onClick={() => majCarte(r.id, { apercu: null })}
+                                  style={stylePetitBouton}>
+                            Annuler
+                          </button>
+                          {!carte.apercu.envoi_possible && (
+                            <span data-testid="envoi-non-active"
+                                  style={{ fontSize: '11px', opacity: 0.7, color: TEXTE }}>
+                              Envoi non activé
+                            </span>
+                          )}
+                          {carte.apercu.deja_envoye && (
+                            <span data-testid="deja-envoye"
+                                  style={{ fontSize: '11px', opacity: 0.7, color: TEXTE }}>
+                              Déjà envoyé
+                            </span>
+                          )}
+                          {carte.apercu.contexte_obsolete && (
+                            <span data-testid="envoi-bloque-contexte"
+                                  style={{ fontSize: '11px', opacity: 0.8, color: TEXTE }}>
+                              Le contexte a changé — régénérez avant d’envoyer.
+                            </span>
+                          )}
+                          {carte.apercu.fil_rattache && (
+                            <span style={{ fontSize: '10px', opacity: 0.55, color: TEXTE }}>
+                              rattaché au fil d’origine
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ---- §11 : APRÈS UN ENVOI RÉEL ----
+                         La trace reste, l'état est relu du serveur, et l'écran
+                         PROPOSE la conversation suivante — il ne l'ouvre pas
+                         tout seul et n'envoie évidemment rien. */}
+                    {carte.envoye && (
+                      <div data-testid="envoi-reussi"
+                           style={{ display: 'flex', gap: '8px', alignItems: 'center',
+                                    flexWrap: 'wrap', fontSize: '12px', marginTop: '9px',
+                                    padding: '8px 10px', borderRadius: '7px', color: TEXTE,
+                                    background: 'rgba(34,197,94,0.20)' }}>
+                        <SvgIcon name="check" size={13} />
+                        <span style={{ flex: '1 1 150px', minWidth: '150px' }}>
+                          Réponse envoyée.
+                        </span>
+                        {suivante && (
+                          <button type="button" data-testid="conversation-suivante"
+                                  onClick={() => ouvrirConversation(suivante)}
+                                  style={stylePetitBouton}>
+                            Conversation suivante à traiter —{' '}
+                            {suivante.organisation || suivante.recipient_key}
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {bro && !carte.edition && !occupe && (
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap',
+                                    marginTop: '7px', alignItems: 'center' }}>
+                        <span style={{ fontSize: '10px', opacity: 0.6, color: TEXTE }}>
+                          Régénérer en :
+                        </span>
+                        {TONS_IA.map((t) => (
+                          <button key={t.cle} type="button" data-testid={`ton-${t.cle}`}
+                                  onClick={() => analyserReponse(r.id, t.cle)}
+                                  style={stylePetitBouton}>
+                            {t.libelle}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ---- LES ACTIONS SECONDAIRES, DISCRÈTES ET GROUPÉES ---- */}
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                              alignItems: 'center', marginTop: '11px' }}>
+                  <button type="button" data-testid="basculer-traite"
+                          onClick={() => basculerTraite(r.id, !traitee)}
+                          disabled={occupe}
+                          style={{ ...(statut === 'refus' && !traitee
+                            ? styleBouton : stylePetitBouton),
+                            opacity: occupe ? 0.6 : 1 }}>
+                    {traitee ? 'Remettre à répondre' : 'Marquer comme traité'}
+                  </button>
+                  {!carte.noteOuverte && (
+                    <button type="button" data-testid="ouvrir-note"
+                            onClick={() => majCarte(r.id, {
+                              noteOuverte: true,
+                              formNote: { type: 'appel', texte: '', statut: '',
+                                          date: new Date().toISOString().slice(0, 10) } })}
+                            style={stylePetitBouton}>
+                      Ajouter une note
+                    </button>
+                  )}
+                </div>
+
+                {/* ================= AI-P3 : AJOUTER UNE NOTE ================= */}
+                {carte.noteOuverte && (
+                  <div data-testid="formulaire-note"
+                       style={{ marginTop: '10px', padding: '10px', borderRadius: '8px',
+                                background: 'rgba(0,0,0,0.22)',
+                                border: '1px solid rgba(255,255,255,0.14)' }}>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                  marginBottom: '7px' }}>
+                      <label style={{ fontSize: '11px', color: TEXTE, opacity: 0.8 }}>
+                        Type
+                        <select data-testid="note-type" value={form.type || 'appel'}
+                                onChange={(ev) => majCarte(r.id, {
+                                  formNote: { ...form, type: ev.target.value } })}
+                                style={{ display: 'block', marginTop: '2px',
+                                         fontSize: '12px', padding: '5px 7px',
+                                         borderRadius: '6px', color: TEXTE,
+                                         background: 'rgba(0,0,0,0.35)',
+                                         border: '1px solid rgba(255,255,255,0.2)' }}>
+                          {TYPES_NOTE.map((t) => (
+                            <option key={t.cle} value={t.cle}>{t.libelle}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label style={{ fontSize: '11px', color: TEXTE, opacity: 0.8 }}>
+                        Date
+                        <input type="date" data-testid="note-date" value={form.date || ''}
+                               onChange={(ev) => majCarte(r.id, {
+                                 formNote: { ...form, date: ev.target.value } })}
+                               style={{ display: 'block', marginTop: '2px',
+                                        fontSize: '12px', padding: '5px 7px',
+                                        borderRadius: '6px', color: TEXTE,
+                                        background: 'rgba(0,0,0,0.35)',
+                                        border: '1px solid rgba(255,255,255,0.2)' }} />
+                      </label>
+                      <label style={{ fontSize: '11px', color: TEXTE, opacity: 0.8 }}>
+                        État après cette action
+                        {/* LE STATUT EST DÉCLARÉ, JAMAIS DEVINÉ DANS LE TEXTE. */}
+                        <select data-testid="note-statut" value={form.statut || ''}
+                                onChange={(ev) => majCarte(r.id, {
+                                  formNote: { ...form, statut: ev.target.value } })}
+                                style={{ display: 'block', marginTop: '2px',
+                                         fontSize: '12px', padding: '5px 7px',
+                                         borderRadius: '6px', color: TEXTE,
+                                         background: 'rgba(0,0,0,0.35)',
+                                         border: '1px solid rgba(255,255,255,0.2)' }}>
+                          <option value="">— inchangé —</option>
+                          {Object.keys(STATUT_COMMERCIAL).map((cle) => (
+                            <option key={cle} value={cle}>
+                              {STATUT_COMMERCIAL[cle].libelle}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <textarea data-testid="note-texte" rows={3}
+                              value={form.texte || ''}
+                              placeholder="Ce qui s'est passé : appel, rencontre, information…"
+                              onChange={(ev) => majCarte(r.id, {
+                                formNote: { ...form, texte: ev.target.value } })}
+                              style={{ width: '100%', boxSizing: 'border-box',
+                                       fontSize: '12px', lineHeight: 1.5, color: TEXTE,
+                                       padding: '8px 9px', borderRadius: '7px',
+                                       background: 'rgba(0,0,0,0.32)',
+                                       border: '1px solid rgba(255,255,255,0.2)',
+                                       resize: 'vertical', fontFamily: 'inherit' }} />
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                  marginTop: '7px' }}>
+                      <button type="button" data-testid="enregistrer-note"
+                              onClick={() => ajouterNote(r.id)}
+                              disabled={occupe || !(form.texte || '').trim()}
+                              style={{ ...styleBouton,
+                                       opacity: occupe || !(form.texte || '').trim()
+                                         ? 0.6 : 1 }}>
+                        {occupe ? 'Enregistrement…' : 'Enregistrer la note'}
+                      </button>
+                      <button type="button" data-testid="annuler-note"
+                              onClick={() => majCarte(r.id, {
+                                noteOuverte: false, formNote: null })}
+                              style={stylePetitBouton}>
+                        Annuler
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ================= §8 : L'HISTORIQUE, REPLIÉ =================
+                     AUCUNE DONNÉE N'EST SUPPRIMÉE : tout ce qui s'affichait
+                     avant reste ici — chronologie complète, e-mail brut,
+                     historique cité, diagnostic de corrélation. Simplement, ça
+                     ne s'impose plus. Une chronologie verticale, jamais un
+                     tableau : sur un téléphone, un tableau déborde. */}
+                <details data-testid="historique" style={{ marginTop: '12px' }}>
+                  <summary style={{ fontSize: '11px', cursor: 'pointer', opacity: 0.85,
+                                    color: TEXTE }}>
+                    Voir l’historique
+                  </summary>
+
+                  {(carte.timeline || []).length > 0 && (
+                    <div data-testid="historique-timeline"
+                         style={{ display: 'flex', flexDirection: 'column', gap: '6px',
+                                  borderLeft: `2px solid rgba(${RGB}, 0.35)`,
+                                  paddingLeft: '10px', marginTop: '8px' }}>
+                      {(carte.timeline || []).map((e, i) => (
+                        <div key={i} data-testid="historique-ligne"
+                             style={{ fontSize: '11px', color: TEXTE,
+                                      opacity: e.annulee ? 0.45 : 1,
+                                      textDecoration: e.annulee ? 'line-through' : 'none' }}>
+                          <span style={{ opacity: 0.65 }}>
+                            {e.quand ? String(e.quand).slice(0, 10) : 'Maintenant'}
+                          </span>
+                          {' · '}
+                          <strong>{e.titre}</strong>
+                          {e.genre === 'statut' && e.statut ? (
+                            <span style={{ marginLeft: '6px', fontWeight: 700,
+                                           color: PRIMAIRE }}>
+                              {(STATUT_COMMERCIAL[e.statut]
+                                || STATUT_COMMERCIAL.a_repondre).libelle}
+                            </span>
+                          ) : null}
+                          {e.texte ? (
+                            <div style={{ opacity: 0.85, marginTop: '1px',
+                                          whiteSpace: 'pre-wrap' }}>
+                              {e.texte}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* LES MESSAGES PLUS ANCIENS DU MÊME FIL. Ils ne sont pas
+                      perdus : ils sont ici, avec de quoi revenir dessus. */}
+                  {(convActive.messages_recus || []).length > 1 && (
+                    <div data-testid="messages-du-fil" style={{ marginTop: '10px' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
+                                    color: TEXTE, letterSpacing: '0.05em',
+                                    marginBottom: '5px' }}>
+                        LES {(convActive.messages_recus || []).length} MESSAGES DE CE FIL
+                      </div>
+                      {(convActive.messages_recus || []).map((m) => (
+                        <button key={m.id} type="button" data-testid="message-du-fil"
+                                onClick={() => ouvrirMessage(convActive, m.id)}
+                                style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
+                                         alignItems: 'baseline', width: '100%',
+                                         textAlign: 'left', padding: '5px 7px',
+                                         marginBottom: '3px', borderRadius: '6px',
+                                         cursor: 'pointer', color: TEXTE, fontSize: '11px',
+                                         border: `1px solid ${m.id === r.id
+                                           ? `rgba(${RGB}, 0.55)` : 'rgba(255,255,255,0.12)'}`,
+                                         background: m.id === r.id
+                                           ? `rgba(${RGB}, 0.16)` : 'transparent' }}>
+                          <span style={{ opacity: 0.65, flex: '0 0 auto' }}>
+                            {jourHeure(m.received_at)}
+                          </span>
+                          <span style={{ flex: '1 1 140px', minWidth: '140px',
+                                         overflow: 'hidden', textOverflow: 'ellipsis',
+                                         whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                            {(m.body_text || '').slice(0, 90) || '(vide)'}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* L'HISTORIQUE CITÉ reste SÉPARÉ du nouveau texte : c'est la
+                      coupure faite par P3-R4, on ne la recolle pas. */}
+                  {r.body_quoted ? (
+                    <details data-testid="historique-cite" style={{ marginTop: '8px' }}>
+                      <summary style={{ fontSize: '11px', cursor: 'pointer',
+                                        opacity: 0.6, color: TEXTE }}>
+                        Historique cité
+                      </summary>
+                      <div style={{ fontSize: '11px', whiteSpace: 'pre-wrap',
+                                    opacity: 0.6, color: TEXTE, marginTop: '4px' }}>
+                        {r.body_quoted}
+                      </div>
+                    </details>
+                  ) : null}
+
+                  {/* Le diagnostic de corrélation : utile quand quelque chose
+                      cloche, illisible quand tout va bien. */}
+                  <div data-testid="detail-technique"
+                       style={{ fontSize: '10px', opacity: 0.55, color: TEXTE,
+                                marginTop: '8px' }}>
+                    {r.statut === 'rattache'
+                      ? `rattaché — ${r.matching_method} (confiance ${r.matching_confidence})`
+                      : `à rattacher — ${r.motif || 'ambigu'}`}
+                    {r.campaign_id ? ` · campagne ${String(r.campaign_id).slice(0, 8)}` : ''}
+                  </div>
+                </details>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+      {/* FIN BLOC RÉPONSES */}
+
+      {/* ---------- LA LISTE DES PROSPECTS ET SES CAMPAGNES ----------
+           Tout ce bloc appartient à l'onglet « Tous les prospects ». Aucune
+           fonction n'a bougé : préparation de campagne, tuiles, filtres,
+           tableau, cartes mobiles, pagination et fiche sont intacts. Ils ne
+           s'affichent simplement plus par-dessus les conversations. */}
+      {ongletActif === 'prospects' && (
+        <>
       {/* ---------- P3-S3-B : PREPARER LA CAMPAGNE ---------- */}
       <div data-testid="bandeau-campagne"
            style={{
@@ -1006,706 +1996,6 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
                   style={{ ...styleBouton, marginLeft: 'auto' }}>
             Ouvrir
           </button>
-        </div>
-      )}
-
-      {/* ---------- LES RÉPONSES REÇUES — CARTES COMPACTES (AI-P2) ----------
-
-           CE QUE LA CARTE FERMÉE DOIT DIRE EN TROIS SECONDES, dans cet ordre :
-             1. est-ce NOUVEAU ?          2. dois-je encore RÉPONDRE ?
-             3. QUI ?                     4. quelle INTENTION ?
-             5. le RÉSUMÉ                 6. l'ACTION recommandée
-           Et rien d'autre. Le mode de corrélation, la confiance, l'identifiant
-           de campagne sont du diagnostic : ils existent toujours, mais dans la
-           carte OUVERTE. Les afficher fermés noyait les six lignes utiles.
-
-           TROIS ÉTATS, TROIS QUESTIONS :
-             « NOUVEAU »    — jamais OUVERTE     (`read_at` absent)
-             « À RÉPONDRE » — jamais AGI dessus  (`traite_at` absent)
-             l'INTENTION    — ce que le message demande (vient du brouillon)
-           Ouvrir n'est pas répondre : le badge NOUVEAU disparaît à l'ouverture,
-           « À RÉPONDRE » reste tant que le coach n'a pas décidé le contraire.
-
-           MOBILE D'ABORD : cartes pleine largeur, `flexWrap` partout, adresse
-           tronquée par ellipse plutôt que par débordement. Aucune largeur fixe,
-           donc aucun défilement horizontal. */}
-      {reponses.length > 0 && (
-        <div data-testid="reponses-recues"
-             style={{
-               padding: '12px 14px', marginBottom: '14px', borderRadius: '10px',
-               border: `1px solid rgba(${RGB}, 0.4)`, background: `rgba(${RGB}, 0.10)`,
-             }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px',
-                        marginBottom: '10px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: TEXTE }}>
-              Réponses reçues ({reponses.length})
-            </span>
-            {reponsesNonLues > 0 && (
-              <span data-testid="reponses-non-lues"
-                    style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
-                             background: `rgba(${RGB}, 0.30)`, color: TEXTE,
-                             border: `1px solid rgba(${RGB}, 0.6)`, fontWeight: 700 }}>
-                {reponsesNonLues} nouvelle{reponsesNonLues > 1 ? 's' : ''}
-              </span>
-            )}
-            {reponsesARepondre > 0 && (
-              <span data-testid="reponses-a-repondre"
-                    style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
-                             background: 'rgba(245,158,11,0.22)', color: TEXTE, fontWeight: 600 }}>
-                {reponsesARepondre} à répondre
-              </span>
-            )}
-            {reponsesARattacher > 0 && (
-              <span data-testid="reponses-en-attente"
-                    style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
-                             background: 'rgba(255,255,255,0.10)', color: TEXTE, fontWeight: 600 }}>
-                {reponsesARattacher} à rattacher à la main
-              </span>
-            )}
-          </div>
-
-          {/* AI-P3 — LES FILTRES COMMERCIAUX. Ils n'apparaissent que s'il y a
-              plus d'un état à trier : sur trois réponses toutes à répondre, une
-              barre de filtres serait du décor. Chaque puce porte SON compteur,
-              calculé par le serveur — un filtre qui annonce un chiffre faux est
-              pire que pas de filtre. */}
-          {Object.keys(STATUT_COMMERCIAL).filter((c) => compteursEtat[c] > 0).length > 1 && (
-            <div data-testid="filtres-statut"
-                 style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
-              {[{ cle: '', libelle: 'Toutes' }].concat(
-                Object.keys(STATUT_COMMERCIAL)
-                  .filter((c) => compteursEtat[c] > 0)
-                  .map((c) => ({ cle: c, libelle: STATUT_COMMERCIAL[c].libelle }))
-              ).map((f) => (
-                <button key={f.cle || 'toutes'} type="button"
-                        data-testid={`filtre-${f.cle || 'toutes'}`}
-                        onClick={() => setFiltreStatut(f.cle)}
-                        style={{
-                          ...stylePetitBouton,
-                          fontWeight: filtreStatut === f.cle ? 700 : 500,
-                          background: filtreStatut === f.cle
-                            ? `rgba(${RGB}, 0.28)` : 'transparent',
-                          borderColor: filtreStatut === f.cle
-                            ? `rgba(${RGB}, 0.55)` : 'rgba(255,255,255,0.22)',
-                        }}>
-                  {f.libelle}{f.cle ? ` (${compteursEtat[f.cle]})` : ''}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {cibleIntrouvable && (
-            <div data-testid="cible-introuvable"
-                 style={{ fontSize: '11px', padding: '7px 9px', borderRadius: '7px',
-                          background: 'rgba(255,255,255,0.10)', color: TEXTE,
-                          marginBottom: '10px' }}>
-              La réponse liée à cette notification n’est pas dans cette liste.
-              Elle a peut-être été traitée ailleurs.
-            </div>
-          )}
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {reponses.map((r) => {
-              /* Tout ce qui suit est LOCAL à cette carte : aucune de ces
-                 variables n'existe hors de l'itération, et tout état persistant
-                 est lu dans `cartes[r.id]`. C'est ce qui rend le mélange entre
-                 prospects structurellement impossible. */
-              const carte = cartes[r.id] || {};
-              const nonLue = !r.read_at;
-              const statut = r.statut_commercial || 'a_repondre';
-              const libelleStatut = STATUT_COMMERCIAL[statut] || STATUT_COMMERCIAL.a_repondre;
-              const traitee = statut === 'traite';
-              const notes = carte.notes || [];
-              const form = carte.formNote || {};
-              const deplie = !!carte.ouvert;
-              const bro = carte.brouillon || null;
-              const occupe = !!carte.chargement;
-              return (
-                <div key={r.id} data-testid="reponse-ligne" data-inbound={r.id}
-                     style={{
-                       padding: '10px 12px', borderRadius: '10px',
-                       background: nonLue ? `rgba(${RGB}, 0.14)` : 'rgba(255,255,255,0.05)',
-                       borderLeft: `3px solid ${nonLue
-                         ? `rgba(${RGB}, 0.9)` : 'rgba(255,255,255,0.18)'}`,
-                     }}>
-
-                  {/* ---- ligne 1 : les deux badges d'état, rien d'autre ---- */}
-                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap',
-                                alignItems: 'center', marginBottom: '6px' }}>
-                    {nonLue && (
-                      <span data-testid="badge-nouveau"
-                            style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
-                                     padding: '2px 8px', borderRadius: '999px', color: TEXTE,
-                                     background: `rgba(${RGB}, 0.55)` }}>
-                        NOUVEAU
-                      </span>
-                    )}
-                    {/* AI-P3 — L'ÉTAT COMMERCIAL VIENT DU SERVEUR, DÉRIVÉ.
-                        L'écran ne le recalcule pas : deux règles pour un même
-                        statut finissent toujours par diverger. */}
-                    <span data-testid={`badge-statut-${statut}`}
-                          style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
-                                   padding: '2px 8px', borderRadius: '999px', color: TEXTE,
-                                   background: libelleStatut.fond }}>
-                      {libelleStatut.libelle}
-                    </span>
-                    {r.statut !== 'rattache' && (
-                      <span data-testid="badge-a-rattacher"
-                            style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px',
-                                     borderRadius: '999px', color: TEXTE,
-                                     background: 'rgba(255,255,255,0.14)' }}>
-                        À RATTACHER
-                      </span>
-                    )}
-                    <span style={{ fontSize: '11px', opacity: 0.55, color: TEXTE,
-                                   marginLeft: 'auto' }}>
-                      {(r.received_at || '').slice(0, 10)}
-                    </span>
-                  </div>
-
-                  {/* ---- ligne 2 : QUI. L'organisation d'abord, l'adresse en
-                       dessous et tronquée — sur un téléphone, une adresse longue
-                       poussait la carte hors de l'écran. ---- */}
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: TEXTE,
-                                lineHeight: 1.25 }}>
-                    {(bro && bro.organisation) || r.recipient_key || 'Prospect à identifier'}
-                  </div>
-                  <div title={r.from_email}
-                       style={{ fontSize: '11px', opacity: 0.7, color: TEXTE,
-                                overflow: 'hidden', textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap', maxWidth: '100%' }}>
-                    {r.from_email}
-                  </div>
-
-                  {/* ---- ligne 3 : ce que ça demande, et ce qu'il faut faire ---- */}
-                  {bro ? (
-                    <div style={{ marginTop: '7px' }}>
-                      <span data-testid="carte-intention"
-                            style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.04em',
-                                     color: PRIMAIRE }}>
-                        {LIBELLE_INTENTION[bro.intention] || bro.intention.toUpperCase()}
-                      </span>
-                      {bro.resume ? (
-                        <div data-testid="carte-resume"
-                             style={{ fontSize: '12px', color: TEXTE, lineHeight: 1.45,
-                                      marginTop: '2px' }}>
-                          {bro.resume}
-                        </div>
-                      ) : null}
-                      {!deplie && bro.prochaine_action ? (
-                        <div style={{ fontSize: '11px', opacity: 0.75, color: TEXTE,
-                                      marginTop: '3px' }}>
-                          <strong style={{ opacity: 0.9 }}>À faire :</strong> {bro.prochaine_action}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : (
-                    /* Pas encore d'analyse : on montre deux lignes du message
-                       réel plutôt qu'une carte muette — et on ne lance AUCUN
-                       appel au modèle tant que personne ne l'a demandé. */
-                    <div data-testid="carte-sans-analyse"
-                         style={{ fontSize: '12px', opacity: 0.7, color: TEXTE,
-                                  marginTop: '7px', lineHeight: 1.4,
-                                  display: '-webkit-box', WebkitLineClamp: 2,
-                                  WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                      {(r.body_text || '').slice(0, 160) || 'Aucun contenu lisible.'}
-                    </div>
-                  )}
-
-                  {/* ---- ligne 4 : l'action ---- */}
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
-                                alignItems: 'center', marginTop: '9px' }}>
-                    <button type="button" data-testid="voir-reponse"
-                            onClick={() => ouvrirReponse(r.id)}
-                            style={{ ...stylePetitBouton, fontWeight: 600 }}>
-                      {deplie ? 'Replier' : 'Voir la réponse'}
-                    </button>
-                    {deplie && (
-                      <button type="button" data-testid="basculer-traite"
-                              onClick={() => basculerTraite(r.id, !traitee)}
-                              disabled={occupe}
-                              style={{ ...stylePetitBouton, opacity: occupe ? 0.6 : 1 }}>
-                        {traitee ? 'Remettre à répondre' : 'Marquer comme traité'}
-                      </button>
-                    )}
-                  </div>
-
-                  {/* ================= LE DÉTAIL ================= */}
-                  {deplie && (
-                    <div style={{ marginTop: '10px', paddingTop: '10px',
-                                  borderTop: '1px solid rgba(255,255,255,0.12)' }}>
-
-                      {carte.erreur ? (
-                        <div data-testid="erreur-ia"
-                             style={{ fontSize: '11px', marginBottom: '8px', padding: '7px 9px',
-                                      borderRadius: '6px', color: TEXTE,
-                                      background: 'rgba(239,68,68,0.18)' }}>
-                          {carte.erreur}
-                        </div>
-                      ) : null}
-
-                      {/* ---- ANALYSE IA ---- */}
-                      {bro ? (
-                        <div data-testid="analyse-ia" style={{ marginBottom: '10px' }}>
-                          <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
-                                        color: TEXTE, letterSpacing: '0.05em',
-                                        marginBottom: '5px' }}>
-                            ANALYSE IA
-                          </div>
-                          {bro.validation_requise && (
-                            <div data-testid="validation-bassi"
-                                 style={{ display: 'flex', gap: '6px', alignItems: 'center',
-                                          fontSize: '11px', fontWeight: 700, color: TEXTE,
-                                          padding: '6px 8px', borderRadius: '6px',
-                                          background: 'rgba(245,158,11,0.25)', marginBottom: '7px',
-                                          flexWrap: 'wrap' }}>
-                              <SvgIcon name="warning" size={13} />
-                              VALIDATION BASSI NÉCESSAIRE — {bro.motifs_validation.join(', ')}
-                            </div>
-                          )}
-                          {bro.demande ? (
-                            <div style={{ fontSize: '12px', color: TEXTE, marginBottom: '3px',
-                                          lineHeight: 1.45 }}>
-                              <strong>Ce qu’il demande :</strong> {bro.demande}
-                            </div>
-                          ) : null}
-                          {bro.prochaine_action ? (
-                            <div style={{ fontSize: '12px', color: TEXTE, lineHeight: 1.45 }}>
-                              <strong>Action recommandée :</strong> {bro.prochaine_action}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-
-                      {/* ---- RÉPONSE PROPOSÉE ---- */}
-                      {/* AI-P3 — UN BROUILLON PÉRIMÉ SE SIGNALE, IL NE SE
-                          RÉÉCRIT PAS TOUT SEUL. Une note ajoutée après sa
-                          rédaction change les faits : le régénérer sans
-                          demander effacerait une correction manuelle et
-                          coûterait un appel au modèle que personne n'a
-                          demandé. C'est une comparaison de DATES, jamais une
-                          lecture du texte. */}
-                      {bro && carte.obsolete && !carte.edition ? (
-                        <div data-testid="contexte-obsolete"
-                             style={{ fontSize: '11px', padding: '7px 9px', borderRadius: '7px',
-                                      background: 'rgba(245,158,11,0.22)', color: TEXTE,
-                                      marginBottom: '7px', display: 'flex', gap: '8px',
-                                      alignItems: 'center', flexWrap: 'wrap' }}>
-                          <SvgIcon name="warning" size={13} />
-                          <span style={{ flex: 1, minWidth: '160px' }}>
-                            Le contexte a changé depuis la génération de cette réponse.
-                          </span>
-                          <button type="button" data-testid="regenerer-contexte"
-                                  onClick={() => analyserReponse(r.id, '')}
-                                  disabled={occupe}
-                                  style={{ ...stylePetitBouton, fontWeight: 600,
-                                           opacity: occupe ? 0.6 : 1 }}>
-                            Régénérer avec les nouvelles informations
-                          </button>
-                        </div>
-                      ) : null}
-                      <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
-                                    color: TEXTE, letterSpacing: '0.05em', marginBottom: '5px' }}>
-                        {bro ? `RÉPONSE PROPOSÉE POUR ${bro.to_email}` : 'RÉPONSE PROPOSÉE'}
-                      </div>
-
-                      {bro && carte.edition ? (
-                        <>
-                          <textarea
-                            data-testid="editeur-brouillon"
-                            value={carte.texte}
-                            onChange={(e) => majCarte(r.id, { texte: e.target.value })}
-                            rows={9}
-                            style={{
-                              width: '100%', boxSizing: 'border-box', fontSize: '12px',
-                              lineHeight: 1.5, color: TEXTE, padding: '9px 10px',
-                              borderRadius: '8px', background: 'rgba(0,0,0,0.32)',
-                              border: `1px solid rgba(${RGB}, 0.45)`, resize: 'vertical',
-                              fontFamily: 'inherit',
-                            }} />
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
-                                        marginTop: '7px' }}>
-                            <button type="button" data-testid="enregistrer-brouillon"
-                                    onClick={() => enregistrerBrouillon(r.id)}
-                                    disabled={occupe || !(carte.texte || '').trim()}
-                                    style={{ ...styleBouton,
-                                             opacity: occupe || !(carte.texte || '').trim() ? 0.6 : 1 }}>
-                              {occupe ? 'Enregistrement…' : 'Enregistrer'}
-                            </button>
-                            <button type="button" data-testid="annuler-edition"
-                                    onClick={() => majCarte(r.id, { edition: false, texte: '' })}
-                                    style={stylePetitBouton}>
-                              Annuler
-                            </button>
-                          </div>
-                        </>
-                      ) : bro ? (
-                        <div data-testid="reponse-proposee"
-                             style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
-                                      lineHeight: 1.5, padding: '9px 10px', borderRadius: '8px',
-                                      background: 'rgba(0,0,0,0.25)',
-                                      border: `1px solid rgba(${RGB}, 0.35)` }}>
-                          {bro.reponse_proposee}
-                        </div>
-                      ) : (
-                        <div style={{ fontSize: '12px', opacity: 0.75, color: TEXTE }}>
-                          Aucune réponse n'a encore été préparée pour ce partenaire.
-                        </div>
-                      )}
-
-                      {/* ---- les commandes ---- */}
-                      {!carte.edition && (
-                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
-                                      alignItems: 'center', marginTop: '8px' }}>
-                          <button type="button" data-testid="analyser-ia"
-                                  onClick={() => analyserReponse(r.id, '')}
-                                  disabled={occupe}
-                                  style={{ ...styleBouton, opacity: occupe ? 0.6 : 1 }}>
-                            {occupe ? 'Analyse en cours…'
-                              : (bro ? 'Régénérer' : "Générer une réponse avec l’IA")}
-                          </button>
-                          {bro && !occupe && (
-                            <button type="button" data-testid="modifier-brouillon"
-                                    onClick={() => majCarte(r.id, {
-                                      edition: true, texte: bro.reponse_proposee || '' })}
-                                    style={stylePetitBouton}>
-                              Modifier
-                            </button>
-                          )}
-                          {/* AI-P4 — « VALIDER ET ENVOYER » N'ENVOIE PAS.
-                              Il ouvre l'aperçu. Seul « Confirmer l'envoi »
-                              expédie — un e-mail à un partenaire est
-                              irréversible, un clic de trop ne doit pas
-                              suffire. */}
-                          {bro && (
-                            <button type="button" data-testid="valider-envoyer"
-                                    onClick={() => preparerEnvoi(r.id)}
-                                    disabled={occupe}
-                                    style={{ ...stylePetitBouton, fontWeight: 600,
-                                             opacity: occupe ? 0.6 : 1 }}>
-                              Valider et envoyer
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {/* ============ AI-P4 : L'ÉCRAN DE CONFIRMATION ============
-                          Compact, dans la carte — pas une modale pleine page.
-                          Il montre EXACTEMENT ce qui partirait, tel que le
-                          serveur l'a calculé : organisation, destinataire,
-                          objet, texte final. */}
-                      {carte.apercu && (
-                        <div data-testid="confirmation-envoi"
-                             style={{ marginTop: '10px', padding: '11px',
-                                      borderRadius: '9px',
-                                      background: 'rgba(0,0,0,0.30)',
-                                      border: `1px solid rgba(${RGB}, 0.5)` }}>
-                          <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.7,
-                                        color: TEXTE, letterSpacing: '0.05em',
-                                        marginBottom: '7px' }}>
-                            AVANT D’ENVOYER — VÉRIFIEZ
-                          </div>
-                          {carte.apercu.validation_requise && (
-                            <div data-testid="confirmation-validation"
-                                 style={{ fontSize: '11px', fontWeight: 700, color: TEXTE,
-                                          padding: '6px 8px', borderRadius: '6px',
-                                          background: 'rgba(245,158,11,0.28)',
-                                          marginBottom: '7px' }}>
-                              VALIDATION BASSI NÉCESSAIRE — {(carte.apercu.motifs_validation || []).join(', ')}
-                            </div>
-                          )}
-                          {[['Organisation', carte.apercu.organisation],
-                            ['Destinataire', carte.apercu.destinataire],
-                            ['Objet', carte.apercu.objet],
-                            ['État du dossier',
-                             (STATUT_COMMERCIAL[carte.apercu.statut_commercial]
-                              || STATUT_COMMERCIAL.a_repondre).libelle]].map(([cle, val]) => (
-                            <div key={cle} style={{ fontSize: '11px', color: TEXTE,
-                                                    marginBottom: '2px', wordBreak: 'break-word' }}>
-                              <span style={{ opacity: 0.65 }}>{cle} : </span>
-                              <strong data-testid={`apercu-${cle.split(' ')[0].toLowerCase()}`}>
-                                {val || '—'}
-                              </strong>
-                            </div>
-                          ))}
-                          <div data-testid="apercu-texte"
-                               style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
-                                        lineHeight: 1.5, marginTop: '7px', padding: '8px 9px',
-                                        borderRadius: '7px', background: 'rgba(0,0,0,0.30)' }}>
-                            {carte.apercu.texte}
-                          </div>
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
-                                        marginTop: '9px', alignItems: 'center' }}>
-                            {/* LE BOUTON N'EST ACTIF QUE SI L'ENVOI L'EST VRAIMENT.
-                                Un bouton qui a l'air cliquable et qui refuse est
-                                pire qu'un bouton désactivé qui dit pourquoi. */}
-                            <button type="button" data-testid="confirmer-envoi"
-                                    onClick={() => confirmerEnvoi(r.id)}
-                                    disabled={occupe || !carte.apercu.envoi_possible
-                                              || carte.apercu.contexte_obsolete
-                                              || carte.apercu.deja_envoye}
-                                    style={{ ...styleBouton,
-                                             opacity: (occupe || !carte.apercu.envoi_possible
-                                                       || carte.apercu.contexte_obsolete
-                                                       || carte.apercu.deja_envoye) ? 0.5 : 1,
-                                             cursor: carte.apercu.envoi_possible ? 'pointer' : 'not-allowed' }}>
-                              {occupe ? 'Envoi…' : 'Confirmer l’envoi'}
-                            </button>
-                            <button type="button" data-testid="annuler-envoi"
-                                    onClick={() => majCarte(r.id, { apercu: null })}
-                                    style={stylePetitBouton}>
-                              Annuler
-                            </button>
-                            {!carte.apercu.envoi_possible && (
-                              <span data-testid="envoi-non-active"
-                                    style={{ fontSize: '11px', opacity: 0.7, color: TEXTE }}>
-                                Envoi non activé
-                              </span>
-                            )}
-                            {carte.apercu.deja_envoye && (
-                              <span data-testid="deja-envoye"
-                                    style={{ fontSize: '11px', opacity: 0.7, color: TEXTE }}>
-                                Déjà envoyé
-                              </span>
-                            )}
-                            {carte.apercu.contexte_obsolete && (
-                              <span data-testid="envoi-bloque-contexte"
-                                    style={{ fontSize: '11px', opacity: 0.8, color: TEXTE }}>
-                                Le contexte a changé — régénérez avant d’envoyer.
-                              </span>
-                            )}
-                            {carte.apercu.fil_rattache && (
-                              <span style={{ fontSize: '10px', opacity: 0.55, color: TEXTE }}>
-                                rattaché au fil d’origine
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {carte.envoye && (
-                        <div data-testid="envoi-reussi"
-                             style={{ fontSize: '11px', marginTop: '8px', padding: '7px 9px',
-                                      borderRadius: '7px', color: TEXTE,
-                                      background: 'rgba(34,197,94,0.20)' }}>
-                          Réponse envoyée.
-                        </div>
-                      )}
-
-                      {bro && !carte.edition && !occupe && (
-                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap',
-                                      marginTop: '7px', alignItems: 'center' }}>
-                          <span style={{ fontSize: '10px', opacity: 0.6, color: TEXTE }}>
-                            Régénérer en :
-                          </span>
-                          {TONS_IA.map((t) => (
-                            <button key={t.cle} type="button" data-testid={`ton-${t.cle}`}
-                                    onClick={() => analyserReponse(r.id, t.cle)}
-                                    style={stylePetitBouton}>
-                              {t.libelle}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-
-                      {/* ================= AI-P3 : L'HISTORIQUE ================= */}
-                      {/* UNE CHRONOLOGIE VERTICALE, PAS UN TABLEAU. Sur un
-                          téléphone un tableau déborde ; une colonne de lignes
-                          datées se lit partout. On n'y met QUE ce qu'un humain
-                          comprend : ni identifiant Mongo, ni action_id, ni
-                          jeton de réponse, ni score de corrélation. */}
-                      {(carte.timeline || []).length > 0 && (
-                        <div data-testid="historique" style={{ marginTop: '12px' }}>
-                          <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
-                                        color: TEXTE, letterSpacing: '0.05em',
-                                        marginBottom: '6px' }}>
-                            HISTORIQUE
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px',
-                                        borderLeft: `2px solid rgba(${RGB}, 0.35)`,
-                                        paddingLeft: '10px' }}>
-                            {(carte.timeline || []).map((e, i) => (
-                              <div key={i} data-testid="historique-ligne"
-                                   style={{ fontSize: '11px', color: TEXTE,
-                                            opacity: e.annulee ? 0.45 : 1,
-                                            textDecoration: e.annulee ? 'line-through' : 'none' }}>
-                                <span style={{ opacity: 0.65 }}>
-                                  {e.quand ? String(e.quand).slice(0, 10) : 'Maintenant'}
-                                </span>
-                                {' · '}
-                                <strong>{e.titre}</strong>
-                                {e.genre === 'statut' && e.statut ? (
-                                  <span style={{ marginLeft: '6px', fontWeight: 700,
-                                                 color: PRIMAIRE }}>
-                                    {(STATUT_COMMERCIAL[e.statut]
-                                      || STATUT_COMMERCIAL.a_repondre).libelle}
-                                  </span>
-                                ) : null}
-                                {e.texte ? (
-                                  <div style={{ opacity: 0.85, marginTop: '1px',
-                                                whiteSpace: 'pre-wrap' }}>
-                                    {e.texte}
-                                  </div>
-                                ) : null}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* ================= AI-P3 : AJOUTER UNE NOTE ================= */}
-                      {/* UN FORMULAIRE INTÉGRÉ, JAMAIS UNE MODALE. Le coach note
-                          un appel en trois secondes, sans quitter la carte ni
-                          perdre de vue ce qu'il vient de lire. */}
-                      {!carte.noteOuverte ? (
-                        <div style={{ marginTop: '10px' }}>
-                          <button type="button" data-testid="ouvrir-note"
-                                  onClick={() => majCarte(r.id, {
-                                    noteOuverte: true,
-                                    formNote: { type: 'appel', texte: '', statut: '',
-                                                date: new Date().toISOString().slice(0, 10) } })}
-                                  style={stylePetitBouton}>
-                            Ajouter une note
-                          </button>
-                        </div>
-                      ) : (
-                        <div data-testid="formulaire-note"
-                             style={{ marginTop: '10px', padding: '10px', borderRadius: '8px',
-                                      background: 'rgba(0,0,0,0.22)',
-                                      border: '1px solid rgba(255,255,255,0.14)' }}>
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
-                                        marginBottom: '7px' }}>
-                            <label style={{ fontSize: '11px', color: TEXTE, opacity: 0.8 }}>
-                              Type
-                              <select data-testid="note-type" value={form.type || 'appel'}
-                                      onChange={(ev) => majCarte(r.id, {
-                                        formNote: { ...form, type: ev.target.value } })}
-                                      style={{ display: 'block', marginTop: '2px',
-                                               fontSize: '12px', padding: '5px 7px',
-                                               borderRadius: '6px', color: TEXTE,
-                                               background: 'rgba(0,0,0,0.35)',
-                                               border: '1px solid rgba(255,255,255,0.2)' }}>
-                                {TYPES_NOTE.map((t) => (
-                                  <option key={t.cle} value={t.cle}>{t.libelle}</option>
-                                ))}
-                              </select>
-                            </label>
-                            <label style={{ fontSize: '11px', color: TEXTE, opacity: 0.8 }}>
-                              Date
-                              <input type="date" data-testid="note-date" value={form.date || ''}
-                                     onChange={(ev) => majCarte(r.id, {
-                                       formNote: { ...form, date: ev.target.value } })}
-                                     style={{ display: 'block', marginTop: '2px',
-                                              fontSize: '12px', padding: '5px 7px',
-                                              borderRadius: '6px', color: TEXTE,
-                                              background: 'rgba(0,0,0,0.35)',
-                                              border: '1px solid rgba(255,255,255,0.2)' }} />
-                            </label>
-                            <label style={{ fontSize: '11px', color: TEXTE, opacity: 0.8 }}>
-                              État après cette action
-                              {/* LE STATUT EST DÉCLARÉ, JAMAIS DEVINÉ DANS LE
-                                  TEXTE. « J'attends sa proposition » et « je
-                                  dois le rappeler » se ressemblent trop pour
-                                  qu'une machine tranche. */}
-                              <select data-testid="note-statut" value={form.statut || ''}
-                                      onChange={(ev) => majCarte(r.id, {
-                                        formNote: { ...form, statut: ev.target.value } })}
-                                      style={{ display: 'block', marginTop: '2px',
-                                               fontSize: '12px', padding: '5px 7px',
-                                               borderRadius: '6px', color: TEXTE,
-                                               background: 'rgba(0,0,0,0.35)',
-                                               border: '1px solid rgba(255,255,255,0.2)' }}>
-                                <option value="">— inchangé —</option>
-                                {Object.keys(STATUT_COMMERCIAL).map((cle) => (
-                                  <option key={cle} value={cle}>
-                                    {STATUT_COMMERCIAL[cle].libelle}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          </div>
-                          <textarea data-testid="note-texte" rows={3}
-                                    value={form.texte || ''}
-                                    placeholder="Ce qui s'est passé : appel, rencontre, information…"
-                                    onChange={(ev) => majCarte(r.id, {
-                                      formNote: { ...form, texte: ev.target.value } })}
-                                    style={{ width: '100%', boxSizing: 'border-box',
-                                             fontSize: '12px', lineHeight: 1.5, color: TEXTE,
-                                             padding: '8px 9px', borderRadius: '7px',
-                                             background: 'rgba(0,0,0,0.32)',
-                                             border: '1px solid rgba(255,255,255,0.2)',
-                                             resize: 'vertical', fontFamily: 'inherit' }} />
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
-                                        marginTop: '7px' }}>
-                            <button type="button" data-testid="enregistrer-note"
-                                    onClick={() => ajouterNote(r.id)}
-                                    disabled={occupe || !(form.texte || '').trim()}
-                                    style={{ ...styleBouton,
-                                             opacity: occupe || !(form.texte || '').trim()
-                                               ? 0.6 : 1 }}>
-                              {occupe ? 'Enregistrement…' : 'Enregistrer la note'}
-                            </button>
-                            <button type="button" data-testid="annuler-note"
-                                    onClick={() => majCarte(r.id, {
-                                      noteOuverte: false, formNote: null })}
-                                    style={stylePetitBouton}>
-                              Annuler
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* ---- L'EMAIL ORIGINAL, REPLIÉ PAR DÉFAUT ----
-                           Il reste accessible — c'est la seule source de vérité
-                           du message reçu — mais il ne s'impose plus. */}
-                      <details data-testid="email-original" style={{ marginTop: '11px' }}>
-                        <summary style={{ fontSize: '11px', cursor: 'pointer', opacity: 0.8,
-                                          color: TEXTE }}>
-                          Voir l’email original
-                        </summary>
-                        <div style={{ fontSize: '11px', opacity: 0.6, color: TEXTE,
-                                      marginTop: '5px' }}>
-                          {r.subject}
-                        </div>
-                        {/* Du TEXTE, jamais du HTML : on n'injecte pas le
-                            contenu d'un inconnu dans la page. */}
-                        <div data-testid="corps-original"
-                             style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
-                                      lineHeight: 1.5, marginTop: '4px' }}>
-                          {r.body_text || '(aucun contenu lisible pour cette réponse)'}
-                        </div>
-                        {/* L'historique cité reste SÉPARÉ du nouveau texte :
-                            c'est la coupure faite par P3-R4, on ne la recolle pas. */}
-                        {r.body_quoted ? (
-                          <details style={{ marginTop: '6px' }}>
-                            <summary style={{ fontSize: '11px', cursor: 'pointer',
-                                              opacity: 0.6, color: TEXTE }}>
-                              Historique cité
-                            </summary>
-                            <div style={{ fontSize: '11px', whiteSpace: 'pre-wrap',
-                                          opacity: 0.6, color: TEXTE, marginTop: '4px' }}>
-                              {r.body_quoted}
-                            </div>
-                          </details>
-                        ) : null}
-                        {/* Le diagnostic de corrélation vit ICI, pas sur la
-                            carte fermée : utile quand quelque chose cloche,
-                            illisible quand tout va bien. */}
-                        <div style={{ fontSize: '10px', opacity: 0.5, color: TEXTE,
-                                      marginTop: '7px' }}>
-                          {r.statut === 'rattache'
-                            ? `rattaché — ${r.matching_method} (confiance ${r.matching_confidence})`
-                            : `à rattacher — ${r.motif || 'ambigu'}`}
-                          {r.campaign_id ? ` · campagne ${String(r.campaign_id).slice(0, 8)}` : ''}
-                        </div>
-                      </details>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
         </div>
       )}
 
@@ -2087,6 +2377,9 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
           </div>
         </>
       )}
+        </>
+      )}
+
 
       {/* ---------- LA FICHE ---------- */}
       {ouvert && brouillon && (
