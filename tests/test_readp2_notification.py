@@ -408,8 +408,16 @@ verifier("10h. le dashboard consomme l'intention UNE fois",
          "sessionStorage.removeItem('afroboost_prospection_inbound')" in DASH)
 verifier("10i. il bascule sur l'onglet Prospection",
          "setTab('prospection')" in DASH)
+# PROSPECTION FOCUS — la cible est desormais une CONVERSATION ouverte SUR le
+# message vise : `ouvrirMessage` designe les DEUX, ce qu'un identifiant seul ne
+# pouvait plus faire depuis qu'un fil porte plusieurs messages (le BDE en a
+# deux). La propriete prouvee ne bouge pas d'un iota : le lien profond n'ouvre
+# PAS par un chemin parallele qui sauterait la lecture — la chaine finit dans
+# `ouvrirReponse`, donc `read_at` s'ecrit comme si le coach avait clique.
 verifier("10j. l'ecran recoit la cible et l'ouvre par le chemin NORMAL",
-         "inboundCible" in ECRAN and "ouvrirReponse(cibleTrouvee)" in ECRAN)
+         "inboundCible" in ECRAN
+         and "ouvrirMessage(conversationCible, cibleTrouvee)" in ECRAN
+         and "ouvrirReponse(message.id)" in ECRAN)
 verifier("10k. la dependance de l'effet est une CHAINE, jamais un tableau",
          "}, [cibleTrouvee]);" in ECRAN)
 verifier("10l. une cible introuvable ne casse rien et le DIT",
