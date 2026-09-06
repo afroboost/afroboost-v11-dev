@@ -36846,9 +36846,50 @@ async def subscribe_push(request: Request):
     if not participant_id or not subscription:
         raise HTTPException(status_code=400, detail="participant_id et subscription requis")
     endpoint = subscription.get("endpoint", "")
+    # ===================================================================
+    # PUSH-OBS — L'ABONNEMENT DIT ENFIN DE QUEL APPAREIL IL VIENT
+    # ===================================================================
+    #
+    # LE FAIT MESURE (06/09/2026). Un document de `push_subscriptions` ne
+    # portait QUE quatre champs : `active`, `participant_id`, `subscription`,
+    # `updated_at`. Sur les 187 abonnements actifs du compte coach, RIEN ne
+    # permettait de dire lequel est le telephone. Le client envoyait pourtant
+    # `role` et `email` depuis toujours (CoachDashboard, `p1Enregistrer`) : le
+    # `$set` ci-dessous les JETAIT en silence. C'est ce qui a rendu un audit
+    # anterieur faux (« 21 abonnements » au lieu de 196, cf. 851a1953) et c'est
+    # ce qui empeche aujourd'hui de repondre a « le telephone a-t-il ete
+    # sollicite ? ».
+    #
+    # `device_hint` EST UNE FAMILLE, PAS UNE EMPREINTE. On ne stocke pas le
+    # User-Agent : il identifie trop finement. On en derive une etiquette
+    # grossiere — `android`, `ios`, `mac`, `windows`, `autre` — qui suffit
+    # exactement a distinguer « le telephone » de « le navigateur de bureau »
+    # et ne permet de reconnaitre personne.
+    _ua = (request.headers.get("user-agent") or "").lower()
+    if "android" in _ua:
+        _famille = "android"
+    elif "iphone" in _ua or "ipad" in _ua or "ipod" in _ua:
+        _famille = "ios"
+    elif "macintosh" in _ua or "mac os" in _ua:
+        _famille = "mac"
+    elif "windows" in _ua:
+        _famille = "windows"
+    elif _ua:
+        _famille = "autre"
+    else:
+        _famille = "inconnu"
+    _role = str(body.get("role") or "").strip().lower()[:16]
+    _email = str(body.get("email") or "").strip().lower()[:120]
+    _extra = {"device_hint": _famille}
+    if _role:
+        _extra["role"] = _role
+    if _email:
+        _extra["email"] = _email
     # Securite: si endpoint existe pour AUTRE user, le reassigner au nouveau
     if endpoint:
-        await db.push_subscriptions.update_one({"subscription.endpoint": endpoint}, {"$set": {"participant_id": participant_id, "subscription": subscription, "active": True, "updated_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+        _maj = {"participant_id": participant_id, "subscription": subscription, "active": True, "updated_at": datetime.now(timezone.utc).isoformat()}
+        _maj.update(_extra)
+        await db.push_subscriptions.update_one({"subscription.endpoint": endpoint}, {"$set": _maj}, upsert=True)
     else:
         await db.push_subscriptions.update_one({"participant_id": participant_id}, {"$set": {"subscription": subscription, "active": True}}, upsert=True)
     # ===================================================================
@@ -37010,6 +37051,40 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
     # statut HTTP. Jamais l'endpoint complet, jamais les cles `p256dh`/`auth`,
     # jamais le jeton VAPID.
     import hashlib as _h439
+
+    # ===================================================================
+    # PUSH-OBS — LE VERDICT DE FCM CESSE DE VIVRE UNIQUEMENT DANS LES LOGS
+    # ===================================================================
+    #
+    # V439-DIAG journalise deja `rang / empreinte / statut`. Mais ces lignes ne
+    # vivent que dans les journaux du conteneur Coolify, AUXQUELS ON N'A PAS
+    # ACCES depuis le poste de travail (constat repete, cf. 851a1953 : « STATUT
+    # FCM HISTORIQUE DU 18/08 : NON RETROUVE »). Resultat : le 06/09/2026, la
+    # base sait dire que le push est parti (`confirmation.coach_push = envoye`)
+    # et reste MUETTE sur ce que chaque appareil en a fait. On ne pouvait donc
+    # ni prouver ni refuter « le telephone n'a pas ete sollicite ».
+    #
+    # On ecrit donc le verdict LA OU IL EST DEJA LISIBLE : sur le document
+    # d'abonnement lui-meme. BORNE PAR CONSTRUCTION — un abonnement, une ligne,
+    # ecrasee a chaque envoi. Aucune collection nouvelle, aucune croissance,
+    # aucun historique a purger.
+    #
+    # AUCUNE DONNEE SENSIBLE : un statut HTTP, un rang, un horodatage. Jamais
+    # l'endpoint, jamais les cles, jamais le contenu du message.
+    async def _obs_verdict(_ep, _statut, _rang_):
+        if not _ep:
+            return
+        try:
+            await db.push_subscriptions.update_one(
+                {"subscription.endpoint": _ep},
+                {"$set": {"last_push_status": str(_statut)[:32],
+                          "last_push_rank": int(_rang_),
+                          "last_push_at": datetime.now(timezone.utc).isoformat()}},
+            )
+        except Exception:
+            # Une trace ratee ne doit JAMAIS empecher la notification suivante.
+            pass
+
     _rang = 0
     for sub in subs:
         subscription_info = sub.get("subscription")
@@ -37030,7 +37105,9 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
             # ces fenetres de veille sans conserver un message devenu inutile
             # pendant des heures.
             _rep439 = webpush(subscription_info=subscription_info, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"}, ttl=3600)
-            logger.info("[PUSH-FCM] rang=%d emp=%s statut=%s", _rang, _emp, getattr(_rep439, "status_code", "?"))
+            _st_ok = getattr(_rep439, "status_code", "?")
+            logger.info("[PUSH-FCM] push_success rang=%d emp=%s statut=%s", _rang, _emp, _st_ok)
+            await _obs_verdict(_endpoint, _st_ok, _rang)
             any_sent = True
             # V437 : PLUS DE `break`. On tente les 3 appareils retenus, meme si
             # le premier a abouti — c'est le comportement voulu (telephone ET
@@ -37039,7 +37116,8 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
             # la gestion 404/410 restant endpoint par endpoint.
         except WebPushException as e:
             _st439 = e.response.status_code if e.response is not None else "exception"
-            logger.info("[PUSH-FCM] rang=%d emp=%s statut=%s", _rang, _emp, _st439)
+            logger.info("[PUSH-FCM] push_failure rang=%d emp=%s statut=%s", _rang, _emp, _st439)
+            await _obs_verdict(_endpoint, _st439, _rang)
             if e.response is not None and e.response.status_code in [404, 410]:
                 # V245: desactiver PAR endpoint, pas tout le participant — sinon
                 # une souscription morte tuerait aussi les fraiches du meme pid.
@@ -37051,7 +37129,8 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
             else:
                 logger.error(f"[PUSH] Echec critique: {str(e)}")
         except Exception as e:
-            logger.info("[PUSH-FCM] rang=%d emp=%s statut=exception-reseau (%s)", _rang, _emp, type(e).__name__)
+            logger.info("[PUSH-FCM] push_failure rang=%d emp=%s statut=exception-reseau (%s)", _rang, _emp, type(e).__name__)
+            await _obs_verdict(_endpoint, "reseau:" + type(e).__name__, _rang)
             logger.error(f"[PUSH] Erreur: {str(e)}")
     return any_sent
 
@@ -37083,15 +37162,52 @@ async def send_push_by_email(email: str, title: str, body: str, data: dict = Non
                 candidate_pids.add(u["id"])
     except Exception:
         pass
-    # V246: trace du flux push pour diagnostic en production.
-    logger.info(f"[PUSH-DEBUG] envoi a {email_lower} — {len(candidate_pids)} pid(s) candidat(s)")
+    # ===================================================================
+    # PUSH-OBS — `push_target_resolved` : QUI VA ETRE SOLLICITE, ET COMBIEN
+    # ===================================================================
+    #
+    # LE FAIT MESURE (06/09/2026) : sur les 25 identifiants candidats du compte
+    # coach, UN SEUL portait des abonnements — et ce seul identifiant en avait
+    # 187 actifs, dont V437 n'essaie que les 3 plus recemment ENREGISTRES. Soit
+    # 3 endpoints sollicites sur 187. Cette ligne rend ce rapport visible A
+    # CHAQUE ENVOI, au lieu de devoir interroger la base apres coup.
+    #
+    # AUCUNE ADRESSE EN CLAIR : l'e-mail est reduit a une empreinte courte, non
+    # reversible. Les familles d'appareils (`android`, `mac`, …) disent si le
+    # telephone fait partie des cibles — c'est precisement la question a
+    # laquelle personne ne savait repondre.
+    import hashlib as _hobs
+    _emp_dest = _hobs.sha256(email_lower.encode()).hexdigest()[:10]
+    try:
+        # BORNE DURE : cette trace ne doit jamais couter plus que l'envoi
+        # qu'elle decrit. Le compte coach porte deja 187 abonnements actifs ;
+        # on s'arrete a 300 documents, quitte a rendre un compte tronque —
+        # l'ordre de grandeur suffit, la precision au document ne sert a rien.
+        _PLAFOND_OBS = 300
+        _actifs = 0
+        _familles = {}
+        for _pid in candidate_pids:
+            if not _pid or _actifs >= _PLAFOND_OBS:
+                continue
+            async for _d in db.push_subscriptions.find(
+                    {"participant_id": _pid, "active": True},
+                    {"_id": 0, "device_hint": 1}):
+                _actifs += 1
+                _f = _d.get("device_hint") or "inconnu"
+                _familles[_f] = _familles.get(_f, 0) + 1
+                if _actifs >= _PLAFOND_OBS:
+                    break
+        logger.info("[PUSH-OBS] push_target_resolved dest=%s pids=%d actifs=%d familles=%s",
+                    _emp_dest, len(candidate_pids), _actifs, _familles)
+    except Exception as _eobs:
+        logger.warning("[PUSH-OBS] cible non decrite: %s", type(_eobs).__name__)
     sent = 0
     for pid in candidate_pids:
         if not pid:
             continue
         if await send_push_notification(pid, title, body, data):
             sent += 1
-    logger.info(f"[PUSH-DEBUG] resultat pour {email_lower}: {sent} envoi(s) reussi(s) sur {len(candidate_pids)} pid(s) — « {title} »")
+    logger.info("[PUSH-OBS] push_result dest=%s reussis=%d pids=%d", _emp_dest, sent, len(candidate_pids))
     return sent > 0
 
 
