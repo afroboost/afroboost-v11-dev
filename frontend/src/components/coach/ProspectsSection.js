@@ -524,6 +524,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
        laisse l'écran dans l'état « aucune conversation ouverte », jamais dans
        un état où deux le seraient. */
     if (conv.cle && conv.cle === filActif) { setFilActif(''); return; }
+    setCiblePerdue('');   // le coach a repris la main : l'echec n'a plus a etre dit
     ouvrirMessage(conv, (conv.dernier_message || {}).id);
   }, [filActif, ouvrirMessage]);
 
@@ -723,8 +724,16 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
      ON NE SE RABAT SUR AUCUNE AUTRE CONVERSATION : rien ne s'ouvre, et l'écran
      le dit. Une cible d'un autre coach ne peut pas fuiter — le serveur ne l'a
      jamais mise dans `conversations`. */
+  /* LA BANNIÈRE SURVIT À LA CONSOMMATION, et il faut le vouloir explicitement.
+     `cibleIntrouvable` se DÉRIVE de `inboundCible` : consommer l'intention le
+     remet à '', donc la condition redevient fausse et le message disparaîtrait
+     dans le même rendu — le coach verrait sa notification n'ouvrir rien, sans
+     un mot d'explication. On mémorise donc l'échec ici : c'est un fait acquis,
+     pas un dérivé de l'intention qu'on vient d'effacer. */
+  const [ciblePerdue, setCiblePerdue] = useState('');
   useEffect(() => {
     if (!cibleIntrouvable) return;
+    setCiblePerdue(inboundCible);
     if (onCibleConsommee) onCibleConsommee();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cibleIntrouvable]);
@@ -1175,7 +1184,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
             </div>
           )}
 
-          {cibleIntrouvable && (
+          {!!ciblePerdue && (
             <div data-testid="cible-introuvable"
                  style={{ fontSize: '11px', padding: '7px 9px', borderRadius: '7px',
                           background: 'rgba(255,255,255,0.10)', color: TEXTE,

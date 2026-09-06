@@ -2010,6 +2010,32 @@ describe('PROSPECTION FOCUS — les réponses reçues', () => {
     expect(lus).toEqual([]);
   });
 
+  test('F. la cible introuvable est CONSOMMÉE, et le message RESTE affiché', async () => {
+    /* LA REGRESSION QUE CE TEST EMPECHE. `cibleIntrouvable` se derive de
+       `inboundCible` : consommer l'intention remet la propriete a '', donc la
+       condition redevient fausse. Une premiere version de ce correctif faisait
+       disparaitre la banniere DANS LE MEME RENDU — le coach voyait sa
+       notification n'ouvrir rien, sans un mot d'explication. Constate en
+       production le 06/09 avant correction. */
+    avecReponses(TROIS());
+    const consommee = jest.fn();
+    await monter(<ProspectsSection API="/api" inboundCible="inb-inexistant"
+                                   onCibleConsommee={consommee} />);
+    expect(consommee).toHaveBeenCalledTimes(1);   // l'intention ne se rejouera pas
+    expect(par('cible-introuvable')).toBeTruthy(); // ET le coach le sait
+    expect(par('conversation-active')).toBeNull(); // aucune autre n'est ouverte
+  });
+
+  test('F-bis. la cible introuvable n ouvre AUCUNE autre conversation', async () => {
+    // Une cible d'un autre coach n'arrive jamais dans `conversations` : le
+    // serveur ne la rend pas. L'ecran ne doit surtout pas se rabattre sur la
+    // premiere venue — ce serait montrer la reponse d'un autre partenaire.
+    avecReponses(TROIS());
+    await monter(<ProspectsSection API="/api" inboundCible="inb-dun-autre-coach" />);
+    expect(par('conversation-active')).toBeNull();
+    expect(lignes().length).toBe(3);
+  });
+
   test('la cible est CONSOMMÉE une fois — pas de réouverture en boucle', async () => {
     avecReponses(TROIS());
     axios.post.mockResolvedValue({ data: { ok: true, non_lues: 2, a_repondre: 3 } });
