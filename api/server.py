@@ -2554,7 +2554,27 @@ async def get_offers(request: Request, scope: str = ""):
         scoped = await db.offers.find(query, {"_id": 0}).to_list(100)
         return await _enrich_offers_with_next_date(_enrich_offers_with_active_price(scoped))
 
-    offers = await db.offers.find({}, {"_id": 0}).to_list(100)
+    # CONTRAT DE VISIBILITE — LA PORTE PUBLIQUE NE REND QUE CE QUI EST PUBLIE.
+    #
+    # CETTE LIGNE FAISAIT `find({})`, SANS FILTRE. La vitrine recevait donc les
+    # offres masquees — 6 sur 9 le 06/09/2026 — avec leur nom, leur prix, leur
+    # adresse et leur description ; c'est le NAVIGATEUR qui les ecartait
+    # (App.js ~7582/7588, `o.visible !== false`). Une protection posee cote
+    # client n'en est pas une : quiconque appelle l'API directement les
+    # recevait, et l'adaptateur Spordateur les aurait transportees.
+    # Meme faute de structure que R2b (l'e-mail du coach), meme correction :
+    # le filtrage descend au serveur.
+    #
+    # `$ne: False` ET NON `== True`, POUR UNE RAISON. Le modele declare
+    # `visible: bool = True` et le navigateur testait `!== false` : un document
+    # anterieur au champ est PUBLIE. Exiger `== True` ferait disparaitre d'un
+    # coup toutes les offres qui n'ont jamais porte l'attribut.
+    #
+    # L'ADMINISTRATION N'EST PAS CONCERNEE : elle passe par `?scope=mine`
+    # (CoachDashboard.js ~2305 et ~8199), traite plus haut, qui continue de
+    # rendre les masquees — sans quoi Bassi ne pourrait plus jamais republier
+    # une offre qu'il a masquee.
+    offers = await db.offers.find({"visible": {"$ne": False}}, {"_id": 0}).to_list(100)
     if not offers:
         # V241: `coach_id` pose des la creation. Ce bloc d'amorcage s'execute sur
         # un GET (potentiellement anonyme, sans header) quand la collection est

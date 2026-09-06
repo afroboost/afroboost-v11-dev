@@ -112,6 +112,13 @@ class _Collection:
         return type("R", (), {"modified_count": 0})()
 
     async def delete_one(self, requete):
+        # Le vrai driver SUPPRIME. Ce bouchon renvoyait 0 sans rien retirer :
+        # un banc qui verifiait « l'offre a disparu » se serait cru vert en
+        # mesurant le bouchon, jamais le code. Aucun banc n'en dependait.
+        for i, d in enumerate(self.docs):
+            if _correspond(d, requete):
+                del self.docs[i]
+                return type("R", (), {"deleted_count": 1})()
         return type("R", (), {"deleted_count": 0})()
 
 
