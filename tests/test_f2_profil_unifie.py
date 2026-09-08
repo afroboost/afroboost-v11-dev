@@ -210,7 +210,12 @@ verifier("J1 non lié -> lie:false", _res.get("lie") is False and _res.get("moti
 
 print("\n--- K : LA SOURCE N'ACCEPTE AUCUN REPLI X-User-Email ---")
 _src = io.open(os.path.join(RACINE, "api", "routes", "spordate_routes.py"), encoding="utf-8").read()
-_bloc = _src[_src.index("async def spordate_unified_profile_me"):]
+# On BORNE le bloc à la SEULE fonction F2 (jusqu'au prochain @router), sinon la
+# tranche irait jusqu'à la fin du fichier et capterait les routes suivantes
+# (ex. l'écriture de trace de F4) — ce qui n'a rien à voir avec CETTE route.
+_debut = _src.index("async def spordate_unified_profile_me")
+_fin = _src.index("@router", _debut)
+_bloc = _src[_debut:_fin]
 verifier("K1 identité coach par JWT SIGNÉ (_v311, pas _v263)", "_v311_coach_email_from_jwt" in _bloc)
 verifier("K2 le repli _v263 (X-User-Email) n'est PAS utilisé ici", "_v263_authenticated_coach" not in _bloc)
 # On vise la LECTURE réelle de l'en-tête, pas les mentions en commentaire :

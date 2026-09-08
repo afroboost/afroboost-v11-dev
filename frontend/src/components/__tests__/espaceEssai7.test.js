@@ -246,7 +246,12 @@ describe('session_booked — une fois, au bon moment', () => {
     // charge une fois au montage et n'a aucun rapport avec le rechargement des
     // donnees d'essai que ce test surveille.
     const getsEspace = axios.get.mock.calls.filter(
-      (c) => !String(c[0] || '').includes('unified-profile'));
+      (c) => {
+        const u = String(c[0] || '');
+        // La carte profil social lit son propre profil ET le drapeau F4 :
+        // deux appels étrangers au parcours d'essai que ce test surveille.
+        return !u.includes('unified-profile') && !u.includes('feature-flags');
+      });
     expect(getsEspace).toHaveLength(1);
   });
 });

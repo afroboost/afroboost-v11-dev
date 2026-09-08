@@ -41,13 +41,19 @@ afterEach(() => {
 
 const par = (id) => conteneur.querySelector(`[data-testid="${id}"]`);
 
-async function monter(reponse) {
-  axios.get.mockReturnValue(reponse);
+async function monter(reponse, activationOn = true) {
+  // Deux GET distincts : le profil unifié, et le drapeau F4 (feature-flags).
+  axios.get.mockImplementation((url) => {
+    if (String(url).includes('feature-flags')) {
+      return Promise.resolve({ data: { SOCIAL_ACTIVATION_ENABLED: activationOn } });
+    }
+    return reponse;
+  });
   await act(async () => {
     racine = createRoot(conteneur);
     racine.render(React.createElement(CarteProfilSpordateur));
   });
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 }
 
 const PROFIL = {
@@ -79,11 +85,46 @@ test('C. le survol précharge le pont', async () => {
   expect(prechargerSpordate).toHaveBeenCalled();
 });
 
-test('D. non lié → « Profil social non encore activé », jamais un faux profil', async () => {
-  await monter(Promise.resolve({ data: { lie: false, motif: 'non_lie' } }));
+test('D0. F4 DORMANT (flag OFF) → carte passive « non encore activé », pas d’activation', async () => {
+  await monter(Promise.resolve({ data: { lie: false, motif: 'non_lie' } }), false);
   expect(par('carte-non-lie')).not.toBeNull();
   expect(par('carte-non-lie').textContent).toContain('non encore activé');
-  expect(par('carte-nom')).toBeNull();
+  expect(par('carte-activer')).toBeNull();
+});
+
+test('D. non lié → carte d’ACTIVATION (F4), jamais un faux profil', async () => {
+  await monter(Promise.resolve({ data: { lie: false, motif: 'non_lie' } }));
+  expect(par('carte-activer')).not.toBeNull();
+  expect(par('carte-activer-titre').textContent).toContain('Profil social');
+  expect(par('carte-nom')).toBeNull();       // aucun profil d'autrui inventé
+});
+
+test('D2. F4 — consentement NON pré-coché ; « Activer » désactivé tant que non coché', async () => {
+  await monter(Promise.resolve({ data: { lie: false, motif: 'non_lie' } }));
+  await act(async () => { par('carte-activer').click(); });      // ouvre le consentement
+  const caseConsent = par('carte-consent-case');
+  expect(caseConsent).not.toBeNull();
+  expect(caseConsent.checked).toBe(false);                       // JAMAIS pré-coché
+  expect(par('carte-activer-confirmer').disabled).toBe(true);    // bloqué sans consentement
+  expect(axios.post).not.toHaveBeenCalled();                     // rien envoyé
+});
+
+test('D3. F4 — consentement coché + Activer → POST /spordate/activate {consent:true}', async () => {
+  axios.post.mockResolvedValue({ data: { url: '/rencontre/activer?t=JETON' } });
+  await monter(Promise.resolve({ data: { lie: false, motif: 'non_lie' } }));
+  await act(async () => { par('carte-activer').click(); });
+  await act(async () => { par('carte-consent-case').click(); });   // bascule native + onChange
+  await act(async () => { par('carte-activer-confirmer').click(); });
+  expect(axios.post).toHaveBeenCalledWith(
+    expect.stringContaining('/spordate/activate'),
+    { consent: true },
+  );
+});
+
+test('D4. F4 — « Plus tard » masque la carte, l’espace reste utilisable (État C)', async () => {
+  await monter(Promise.resolve({ data: { lie: false, motif: 'non_lie' } }));
+  await act(async () => { par('carte-plus-tard').click(); });
+  expect(par('carte-profil')).toBeNull();
 });
 
 test('E. pont indisponible → la carte disparaît (rien à casser)', async () => {

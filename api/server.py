@@ -1749,6 +1749,7 @@ class FeatureFlagsUpdate(BaseModel):
     P3_REPONSE_ACTIF: Optional[bool] = None      # AI-P4
     P3_REPONSE_ENVOI_REEL: Optional[bool] = None  # AI-P4
     SOCIAL_PROFILE_LINKS: Optional[bool] = None  # F3 FINAL : profils Spordateur des autres comptes liés
+    SOCIAL_ACTIVATION_ENABLED: Optional[bool] = None  # F4 : activation volontaire du profil social
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -18770,6 +18771,7 @@ async def get_feature_flags():
             "P3_RELANCE_ENABLED": False,       # P3-R2 : défaut OFF (aucune relance J+3/J+7)
             "P3_RELANCE_ENVOI_REEL": False,    # P3-R2 : défaut OFF (simulation même si activé)
             "SOCIAL_PROFILE_LINKS": False,     # F3 FINAL : défaut OFF (profils liés dormants)
+            "SOCIAL_ACTIVATION_ENABLED": False,  # F4 : défaut OFF (activation dormante)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -18799,7 +18801,8 @@ async def get_feature_flags():
                          ("P3_LAUNCH_ENVOI_REEL", False),
                          ("P3_REPONSE_ACTIF", False),
                          ("P3_REPONSE_ENVOI_REEL", False),
-                         ("SOCIAL_PROFILE_LINKS", False)):
+                         ("SOCIAL_PROFILE_LINKS", False),
+                         ("SOCIAL_ACTIVATION_ENABLED", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags

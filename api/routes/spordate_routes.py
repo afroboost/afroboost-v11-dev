@@ -452,6 +452,17 @@ _CACHE_LIENS_TTL_S = 120               # un lien change rarement : cache court
 _cache_liens = {}                      # email -> (uid|None, ts monotone)
 
 
+async def _social_activation_actif() -> bool:
+    """Le drapeau `SOCIAL_ACTIVATION_ENABLED` (F4), lu EN DIRECT. Défaut OFF :
+    la carte reste passive et la route `/activate` est inerte tant qu'il n'est
+    pas activé. Panne de lecture -> OFF (jamais d'activation par accident)."""
+    try:
+        from api.server import get_feature_flags
+        return bool((await get_feature_flags()).get("SOCIAL_ACTIVATION_ENABLED"))
+    except Exception:
+        return False
+
+
 async def _social_links_actif() -> bool:
     """Le drapeau `SOCIAL_PROFILE_LINKS`, lu EN DIRECT (bascule/kill-switch sans
     redéploiement). Une panne de lecture ferme (OFF) — jamais d'annotation par
@@ -531,3 +542,85 @@ async def annoter_social_profile(email) -> dict:
         return {"available": False}
     return {"available": True, "target": _signer({"aud": AUDIENCE_VUE_PROFIL, "uid": uid},
                                                  secret, DUREE_JETON_VUE_S)}
+
+
+# ============================================================================
+# F4 — ACTIVATION VOLONTAIRE DU PROFIL SOCIAL (ÉMISSION DU JETON DE CONSENTEMENT)
+# ============================================================================
+# afroboost n'ouvre PAS de compte Spordateur ni de liaison : il atteste, par un
+# jeton signé, DEUX choses que lui seul peut affirmer — « voici QUI » (identité
+# SIGNÉE, jamais X-User-Email) et « cette personne a CONSENTI ». C'est Spordateur
+# qui, sur présentation de ce jeton, décide (déjà lié / preuve requise / crée).
+#
+# `aud:"spordate-activate"` — distincte de l'accès (session) et du profil : ce
+# jeton NE peut qu'amorcer l'activation, rien d'autre. `consent:true` est EXIGÉ.
+
+AUDIENCE_ACTIVATION = "spordate-activate"
+DUREE_JETON_ACTIVATION_S = 15 * 60   # le temps d'aller consentir puis activer
+
+
+@router.post("/activate")
+async def spordate_activate(request: Request):
+    """Émet le jeton d'activation pour l'appelant SIGNÉ ET CONSENTANT.
+
+    Identité SIGNÉE uniquement (JWT coach OU jeton abonné) — jamais X-User-Email,
+    jamais un e-mail/uid fourni par le client (§16-G/H/I). `consent:true` exigé
+    dans le corps : sans consentement explicite, 400, aucun jeton. Ne crée NI
+    compte NI liaison — il remet une clé de 15 min à présenter à Spordateur."""
+    secret = os.environ.get("AFRO_SPORDATE_SHARED_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="Le pont Spordateur n'est pas configuré.")
+
+    # F4 dormant : tant que le drapeau est OFF, la route est inerte (403), même
+    # si quelqu'un l'appelait directement. La carte, elle, reste passive.
+    if not await _social_activation_actif():
+        return JSONResponse(status_code=403, content={"reason": "activation_disabled"})
+
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        corps = {}
+    if corps.get("consent") is not True:
+        # Le consentement doit être EXPLICITE et VRAI. Pas de valeur par défaut.
+        return JSONResponse(status_code=400, content={"reason": "consent_required"})
+
+    # ── IDENTITÉ SIGNÉE UNIQUEMENT (comme F2/F3, jamais le repli falsifiable) ──
+    from api.server import _v311_coach_email_from_jwt
+    email = _v311_coach_email_from_jwt(request)
+    if not email:
+        try:
+            from api.routes.shared import subscriber_from_request
+            abonne = subscriber_from_request(request)
+        except Exception:
+            abonne = None
+        if abonne and abonne.get("email"):
+            email = str(abonne["email"]).strip().lower()
+    if not email:
+        return JSONResponse(status_code=401, content={"reason": "identity_required"})
+    email = email.strip().lower()
+
+    jti = str(uuid.uuid4())
+    import jwt as _pyjwt
+    emis = int(datetime.now(timezone.utc).timestamp())
+    jeton = _pyjwt.encode(
+        {"email": email, "consent": True, "jti": jti, "aud": AUDIENCE_ACTIVATION,
+         "iss": "afroboost", "iat": emis, "exp": emis + DUREE_JETON_ACTIVATION_S},
+        secret, algorithm="HS256",
+    )
+    if isinstance(jeton, bytes):
+        jeton = jeton.decode("utf-8")
+
+    # Trace du consentement — preuve minimale, append-only, aucune donnée neuve.
+    if db is not None:
+        try:
+            await db.spordate_activation_consent.insert_one({
+                "_id": jti, "email": email, "consent": True,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception as e:
+            logger.warning(f"[F4] trace consentement non écrite ({jti}): {e}")
+
+    logger.info(f"[F4] jeton d'activation émis pour {email}")
+    return {"url": f"{CHEMIN_RENCONTRE}/activer?t={jeton}", "expires_in": DUREE_JETON_ACTIVATION_S}
