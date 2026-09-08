@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { prechargerSpordate, entrerDansSpordate } from "./utils/spordateHandoff"; // F3 handoff
+import { prechargerSpordate, entrerDansSpordate, urlEntreeServeur } from "./utils/spordateHandoff"; // F3 handoff
 import "@/App.css";
 import axios from "axios";
 // V277 : langues supplementaires (africaines + creole) + contexte de langue.
@@ -1656,6 +1656,13 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
     window.dispatchEvent(new CustomEvent('afroboost:paiement-formulaire-ouvert'));
     return () => window.dispatchEvent(new CustomEvent('afroboost:paiement-formulaire-ferme'));
   }, [v230Open]);
+
+  // F3 FINAL — PRÉCHARGEMENT DU PONT AU MONTAGE. Le mobile n'a pas de survol :
+  // pour que le TOUT PREMIER tap sur « Spordateur » parte instantané avec un
+  // jeton déjà prêt, on le pré-obtient dès le montage. `prechargerSpordate` est
+  // silencieux et ne tente RIEN sans identité connue (aucun 403 pour un visiteur
+  // anonyme). Une seule fois, en arrière-plan.
+  useEffect(() => { prechargerSpordate(); }, []);
   const v230Toggle = (key) => setV230Open(prev => ({ ...prev, [key]: !prev[key] }));
 
   // V230.1: bascule commune a la quantite et a chaque dimension de variante.
@@ -8474,20 +8481,17 @@ function App() {
               qu'un fond. Couleur de marque via la variable, jamais en dur : les
               deux marques partagent #D91CD2. Icône SVG inline (règle du projet). */}
           <a
-            href="/rencontre"
+            href={urlEntreeServeur()}
             data-testid="nav-rencontre"
             title="Spordateur — trouver un partenaire de sport"
-            /* V387 — pont « une seule clé ». On demande d'abord un jeton de
-               passage : s'il arrive, on entre dans Rencontre déjà connecté.
-               Sinon on laisse le lien faire son travail et Spordate proposera
-               son login normal. Le `href` reste donc VRAI : clic milieu,
-               « ouvrir dans un nouvel onglet » et navigation sans JS
-               continuent de fonctionner. */
-            /* F3 — PLUS D'ATTENTE VISIBLE. Le jeton de passage est
-               pré-obtenu au survol/focus (`prechargerSpordate`) ; au clic, il
-               est déjà là et la navigation est IMMÉDIATE. L'auto-login est
-               conservé — le pont reste, il est juste préparé d'avance. Le
-               `href` demeure vrai (clic milieu / nouvel onglet marchent). */
+            /* F3 FINAL — HANDOFF DIRECT, MOBILE COMPRIS. Le `href` pointe vers
+               la route serveur `/api/spordate/enter` : clic milieu, « nouvel
+               onglet » et navigation sans JS y passent aussi — un coach à cookie
+               y est redirigé (302) déjà connecté ; sinon /rencontre (login
+               normal). Au clic gauche, `entrerDansSpordate` part IMMÉDIATEMENT :
+               jeton déjà pré-obtenu au montage -> navigation directe ; sinon ->
+               la route serveur. Aucun fetch attendu avant de naviguer, aucun
+               survol requis (le mobile n'en a pas). L'auto-login est conservé. */
             onMouseEnter={() => { prechargerSpordate(); }}
             onFocus={() => { prechargerSpordate(); }}
             onTouchStart={() => { prechargerSpordate(); }}

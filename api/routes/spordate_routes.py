@@ -24,7 +24,7 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 logger = logging.getLogger(__name__)
 
@@ -110,44 +110,133 @@ async def spordate_access(request: Request):
         # login normal de Spordate au lieu de laisser un bouton mort.
         return JSONResponse(status_code=403, content={"reason": "identity_required"})
 
-    jti = str(uuid.uuid4())
-    maintenant = datetime.now(timezone.utc)
-    emis = int(maintenant.timestamp())
-
-    import jwt as _pyjwt
-    jeton = _pyjwt.encode(
-        {
-            "email": email,
-            "jti": jti,
-            "aud": "spordate",
-            "iss": "afroboost",
-            "iat": emis,
-            "exp": emis + DUREE_JETON_S,
-        },
-        secret,
-        algorithm="HS256",
-    )
-
-    # Trace côté afroboost — utile pour comprendre après coup qui est passé.
-    # L'anti-rejeu, lui, est tenu par Spordate : c'est LUI qui consomme le jeton,
-    # et une garde posée ici ne saurait pas si l'échange a réellement abouti.
-    if db is not None:
-        try:
-            await db.spordate_bridge_usage.insert_one({
-                "_id": jti,
-                "email": email,
-                "origine": origine,
-                "created_at": maintenant.isoformat(),
-                "created_dt": maintenant,   # vrai Date BSON -> index TTL possible
-            })
-        except Exception as e:
-            logger.warning(f"[SPORDATE] Trace non écrite ({jti}): {e}")
-
-    logger.info(f"[SPORDATE] Jeton émis pour {email} (via {origine})")
+    jeton = await _emettre_jeton_passage(email, origine, secret)
     return {
         "url": f"{CHEMIN_RENCONTRE}?t={jeton}",
         "expires_in": DUREE_JETON_S,
     }
+
+
+# ============================================================================
+# F3 FINAL — HANDOFF SERVEUR DIRECT (302), POUR LES SESSIONS À COOKIE
+# ============================================================================
+# `/access` (POST) émet un jeton à partir d'une identité portée dans un EN-TÊTE
+# (JWT / X-User-Email / jeton d'appareil abonné). Une navigation navigateur de
+# premier niveau (GET) n'emporte AUCUN en-tête — seulement les cookies. Donc un
+# 302 serveur pur n'est possible QUE pour les porteurs du cookie de session
+# coach `coach_session_token` (login Google / mot de passe).
+#
+# Pour EUX, `/enter` supprime tout aller-retour côté client : clic -> GET ->
+# 302 vers /rencontre?t=…&next=… -> BridgeAutoLogin -> destination. Zéro fetch
+# frontend, zéro attente, zéro écran intermédiaire.
+#
+# Pour les ABONNÉS (identité en en-tête, pas de cookie), ce chemin ne peut pas
+# authentifier : le frontend les fait entrer avec un jeton PRÉ-OBTENU au montage
+# (voir utils/spordateHandoff). `/enter` reste pour eux une porte de repli sûre
+# qui, faute d'identité, renvoie vers /rencontre (login normal Spordate) — JAMAIS
+# une redirection externe.
+
+def _next_interne_sur(brut) -> str:
+    """Réplique serveur de `cheminNextSur` : n'accepte qu'un chemin interne. Rend
+    '' pour tout ce qui pourrait ouvrir une redirection externe. La cible du 302
+    reste TOUJOURS /rencontre ; `next` n'y voyage qu'en paramètre de requête —
+    cette garde est donc de la défense en profondeur, doublée côté Spordate."""
+    v = (brut or "").strip()
+    if not v:
+        return ""
+    # doit commencer par un seul '/', jamais '//' ni '/\' (URL protocole-relative)
+    if v[0] != "/" or (len(v) > 1 and v[1] in ("/", "\\")):
+        return ""
+    low = v.lower()
+    if "://" in v or "javascript:" in low or "\\" in v:
+        return ""
+    if any(ord(c) < 0x20 for c in v):
+        return ""
+    return v
+
+
+async def _email_depuis_cookie_session(request: Request) -> str:
+    """Identité coach TIRÉE DU COOKIE `coach_session_token` — le seul porteur
+    d'identité qu'une navigation GET emporte. Exactement la chaîne de `/auth/me` :
+    cookie -> coach_sessions (non périmée) -> google_users|users_auth -> email.
+    Rend '' sans jamais lever (une porte de handoff ne doit pas tomber en 500)."""
+    if db is None:
+        return ""
+    token = request.cookies.get("coach_session_token")
+    if not token:
+        return ""
+    try:
+        session = await db.coach_sessions.find_one({"session_token": token}, {"_id": 0})
+        if not session:
+            return ""
+        expires_at = session.get("expires_at")
+        if isinstance(expires_at, str):
+            expires_at = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        if expires_at and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at and expires_at < datetime.now(timezone.utc):
+            return ""
+        uid = session.get("user_id")
+        user = await db.google_users.find_one({"user_id": uid}, {"_id": 0}) \
+            or await db.users_auth.find_one({"user_id": uid}, {"_id": 0})
+        if not user:
+            return ""
+        return (user.get("email") or "").strip().lower()
+    except Exception as e:
+        logger.warning(f"[SPORDATE] cookie->email a échoué: {e}")
+        return ""
+
+
+async def _emettre_jeton_passage(email: str, origine: str, secret: str) -> str:
+    """Frappe le jeton HS256 de passage et écrit la trace. Partagé par /access
+    et /enter — un seul endroit qui décide de la forme du jeton."""
+    jti = str(uuid.uuid4())
+    maintenant = datetime.now(timezone.utc)
+    emis = int(maintenant.timestamp())
+    import jwt as _pyjwt
+    jeton = _pyjwt.encode(
+        {"email": email, "jti": jti, "aud": "spordate", "iss": "afroboost",
+         "iat": emis, "exp": emis + DUREE_JETON_S},
+        secret, algorithm="HS256",
+    )
+    if db is not None:
+        try:
+            await db.spordate_bridge_usage.insert_one({
+                "_id": jti, "email": email, "origine": origine,
+                "created_at": maintenant.isoformat(), "created_dt": maintenant,
+            })
+        except Exception as e:
+            logger.warning(f"[SPORDATE] Trace non écrite ({jti}): {e}")
+    logger.info(f"[SPORDATE] Jeton émis pour {email} (via {origine})")
+    return jeton
+
+
+@router.get("/enter")
+async def spordate_enter(request: Request):
+    """Handoff serveur : clic/tap -> 302 vers Rencontre, déjà connecté, sans
+    aucun aller-retour côté client. N'authentifie QUE par le cookie de session
+    (voir l'encadré ci-dessus). Sans identité, renvoie proprement vers Rencontre
+    (login normal) — la cible du 302 est TOUJOURS interne."""
+    next_interne = _next_interne_sur(request.query_params.get("next"))
+    secret = os.environ.get("AFRO_SPORDATE_SHARED_SECRET", "")
+
+    email = await _email_depuis_cookie_session(request)
+    if email and secret:
+        jeton = await _emettre_jeton_passage(email, "cookie_302", secret)
+        cible = f"{CHEMIN_RENCONTRE}?t={jeton}"
+        if next_interne:
+            cible += f"&next={next_interne}"
+    else:
+        # Pas de cookie exploitable (abonné, visiteur, ou pont non configuré) :
+        # on n'invente aucune session. On renvoie vers Rencontre, en gardant
+        # `next` pour que l'intention survive à un login manuel éventuel.
+        cible = CHEMIN_RENCONTRE + (f"?next={next_interne}" if next_interne else "")
+
+    # 303 : la réponse à un GET de navigation est une AUTRE ressource à charger
+    # en GET. Cache interdit — le jeton est à usage unique.
+    reponse = RedirectResponse(url=cible, status_code=303)
+    reponse.headers["Cache-Control"] = "no-store"
+    return reponse
 
 
 # ============================================================================

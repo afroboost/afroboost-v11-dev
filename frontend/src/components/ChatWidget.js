@@ -5,6 +5,10 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import ReactDOM from 'react-dom';
 import axios from 'axios';
+// F3 FINAL — le handoff Spordateur est partagé avec App.js : même cache de
+// jeton, même navigation directe. On importe le module (ES6) ; le corps ES5 de
+// ce fichier n'en est pas affecté — c'est juste un appel de fonction.
+import { prechargerSpordate, entrerDansSpordate } from '../utils/spordateHandoff';
 import ConditionsParticipation from './ConditionsParticipation'; // ESSAI-5a-1
 import { io } from 'socket.io-client';
 import { 
@@ -3364,17 +3368,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   // conversation (affiché entre participants), qui est un autre objet.
   const ouvrirProfilSpordateur = () => {
     setShowUserMenu(false);
-    var parti = false;
-    var aller = function (url) {
-      if (parti) return; parti = true;
-      var u = url || '/rencontre';
-      var sep = u.indexOf('?') >= 0 ? '&' : '?';
-      window.location.href = u + sep + 'next=' + encodeURIComponent('/profile');
-    };
-    var filet = setTimeout(function () { aller('/rencontre'); }, 1500);
-    axios.post(`${API}/spordate/access`, {}, { timeout: 1500 })
-      .then(function (r) { clearTimeout(filet); aller((r && r.data && r.data.url) || '/rencontre'); })
-      .catch(function () { clearTimeout(filet); aller('/rencontre'); });
+    // Handoff partagé : jeton pré-obtenu à l'ouverture du menu -> navigation
+    // DIRECTE vers /rencontre/profile déjà connecté ; sinon route serveur. Aucun
+    // fetch attendu ici, aucun écran d'attente. `next=/profile` cible la page.
+    entrerDansSpordate('/profile');
   };
 
   const saveProfile = async () => {
@@ -8259,7 +8256,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                   
                   {/* Icône Menu (⋮) filaire fine */}
                   <button
-                    onClick={() => setShowUserMenu(!showUserMenu)}
+                    onMouseEnter={() => { prechargerSpordate(); }}
+                    onClick={() => { if (!showUserMenu) prechargerSpordate(); setShowUserMenu(!showUserMenu); }}
                     style={{
                       background: 'none',
                       border: 'none',
