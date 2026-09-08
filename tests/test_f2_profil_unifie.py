@@ -86,6 +86,14 @@ class _ClientFaux:
         if isinstance(self._rep, Exception):
             raise self._rep
         return self._rep
+    async def patch(self, url, json=None):
+        CAPTURE["url"] = url
+        CAPTURE["corps"] = json
+        CAPTURE["methode"] = "PATCH"
+        CAPTURE["appels"] += 1
+        if isinstance(self._rep, Exception):
+            raise self._rep
+        return self._rep
 class _HttpxFaux:
     def __init__(self, reponse):
         self._rep = reponse
@@ -213,6 +221,47 @@ verifier("K4 aucune écriture Mongo dans cette route",
          all(m not in _bloc for m in ("insert_one", "update_one", "delete_one", "insert_many")))
 
 # restaurer la socket
+
+# ═══════════════════════════════════════════════════════════════════════════
+print("\n--- L : ÉCRITURE — IDENTITÉ SIGNÉE, uid RÉSOLU CHEZ SPORDATEUR (F3) ---")
+_installer_httpx(_ReponseFausse(200, {"lie": True, "profil": {"bio": "à jour", "displayName": "BASSI"}}))
+_req = RequeteFictive({"Authorization": "Bearer " + jwt_coach("bassi@example.test")})
+_req._corps = {"profil": {"bio": "à jour", "city": "Genève", "credits": 999, "uid": "victime"}}
+async def _json_corps(self):
+    return self._corps
+RequeteFictive.json = _json_corps
+_res = lancer(SP.spordate_unified_profile_patch(_req))
+verifier("L1 JWT coach signé + PATCH -> profil relayé", _res.get("lie") is True)
+verifier("L2 méthode PATCH utilisée vers le pont", CAPTURE.get("methode") == "PATCH")
+verifier("L3 l'appel vise la route de profil Spordateur",
+         str(CAPTURE["url"]).endswith("/api/bridge/unified-profile"))
+_env = CAPTURE["corps"] or {}
+verifier("L4 le corps transmet un jeton signé + le profil", set(_env.keys()) == {"t", "profil"}, str(list(_env.keys())))
+_charge = _pyjwt.decode(_env["t"], os.environ["AFRO_SPORDATE_SHARED_SECRET"], algorithms=["HS256"], audience="spordate-profile")
+verifier("L5 l'e-mail du jeton est celui du JWT vérifié", _charge.get("email") == "bassi@example.test")
+verifier("L6 audience dédiée", _charge.get("aud") == "spordate-profile")
+# afroboost transmet le profil TEL QUEL ; c'est Spordateur qui filtre. On vérifie
+# juste qu'afroboost ne fabrique pas d'uid ni n'ajoute d'autorité.
+verifier("L7 afroboost ne pose aucun uid dans le corps", "uid" not in _env and "spordateUid" not in _env)
+
+print("\n--- M : ÉCRITURE REFUSÉE SANS IDENTITÉ SIGNÉE (E du GO) ---")
+_installer_httpx(_ReponseFausse(200, {"lie": True}))
+_req = RequeteFictive({"X-User-Email": "victime@example.test"})
+_req._corps = {"profil": {"bio": "hack"}}
+_bloque = False
+try:
+    lancer(SP.spordate_unified_profile_patch(_req))
+except HTTPException as e:
+    _bloque = (e.status_code == 401)
+verifier("M1 X-User-Email seul -> 401 (aucune écriture)", _bloque)
+verifier("M2 aucun appel au pont", CAPTURE["appels"] == 0)
+
+print("\n--- N : LA SOURCE DU RELAIS N'ACCEPTE AUCUN uid/X-User-Email ---")
+_bloc2 = _src[_src.index("async def spordate_unified_profile_patch"):]
+verifier("N1 identité par JWT SIGNÉ", "_v311_coach_email_from_jwt" in _bloc2)
+verifier("N2 pas de repli X-User-Email", "_v263_authenticated_coach" not in _bloc2 and 'headers.get("X-User-Email")' not in _bloc2)
+verifier("N3 afroboost ne lit aucun uid du corps", "corps.get(\"uid\")" not in _bloc2)
+
 socket.socket.connect = _vrai_connect
 print("\n%d PASS · %d FAIL" % (_p, _f))
 sys.exit(0 if _f == 0 else 1)

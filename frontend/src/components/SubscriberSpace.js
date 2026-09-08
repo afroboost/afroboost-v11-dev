@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { copyToClipboard } from "../utils/clipboard";
 import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 import ProfilSocialPartage from './ProfilSocialPartage'; // F2 — profil social partagé
+import EditeurProfilSpordateur from './EditeurProfilSpordateur'; // F3 — édition du profil Spordateur
 // V334 etape 2 : « Mon cockpit » charge A LA DEMANDE (React.lazy).
 // Il embarque recharts, qui pese ~98 ko gzip : l'inclure dans le bundle
 // principal ferait payer ce poids a CHAQUE visiteur, pour une section repliee
@@ -1066,6 +1067,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             est indisponible. Placé sous l'en-tête de bienvenue, jamais dans le
             parcours d'essai (aucun `order`, donc il suit l'ordre du DOM). */}
         <ProfilSocialPartage />
+
+        {/* F3 — L'ÉDITEUR du profil social Spordateur, sous le panneau de
+            lecture. Édite bio/ville/sports du VRAI users/{uid} Spordateur, avec
+            les mêmes règles que l'éditeur Spordateur. Read-only si non relié. */}
+        <EditeurProfilSpordateur />
 
         {/* ═══ P2-UX SIMPLE — LA CONFIRMATION QUI MANQUAIT ═══════════════
             Elle prend la place de tete (`order: -2`, donc au-dessus du bloc

@@ -8502,10 +8502,18 @@ function App() {
                 parti = true;
                 window.location.href = url || '/rencontre';
               };
-              // Filet : meme si la promesse ne se resout JAMAIS, on part.
-              const filet = setTimeout(() => aller('/rencontre'), 2500);
+              // F3 — ON GARDE L'AUTO-LOGIN, MAIS ON RÉDUIT L'ATTENTE RESSENTIE.
+              // Le pont (`/spordate/access`) est ce qui fait entrer dans
+              // Rencontre DÉJÀ connecté : on ne le supprime pas. Mais l'attente
+              // du jeton donnait l'impression d'une « page intermédiaire ». On
+              // raccourcit donc le filet et le timeout de 2500 à 1200 ms : au
+              // pire, on part sur /rencontre en 1,2 s (login Spordate normal),
+              // au mieux on entre connecté encore plus vite. 1,2 s couvre
+              // largement un aller-retour local (le pont et Rencontre sont sur
+              // la MÊME machine).
+              const filet = setTimeout(() => aller('/rencontre'), 1200);
               try {
-                const r = await axios.post(`${API}/spordate/access`, {}, { timeout: 2500 });
+                const r = await axios.post(`${API}/spordate/access`, {}, { timeout: 1200 });
                 aller((r.data && r.data.url) || '/rencontre');
               } catch (err) {
                 // V403 — ON VA TOUJOURS SUR /rencontre, JAMAIS SUR UN ECRAN DE

@@ -262,3 +262,75 @@ async def spordate_unified_profile_me(request: Request):
     # 503/erreurs Spordateur : dégradation douce, jamais une page cassée.
     logger.warning(f"[F2] pont profil statut {r.status_code}")
     return {"lie": False, "motif": "pont_indisponible"}
+
+
+@router.patch("/unified-profile/me")
+async def spordate_unified_profile_patch(request: Request):
+    """F3 — MODIFIER son profil social Spordateur DEPUIS afroboost (champs texte).
+
+    Même contrat de sécurité que la lecture : identité SIGNÉE uniquement (JWT
+    coach ou jeton abonné), JAMAIS X-User-Email. On émet un jeton signé à
+    audience dédiée, on transmet le corps modifiable, et Spordateur — qui
+    détient bridge + profil — résout le uid, applique SA liste blanche
+    d'écriture (bio/city/sports), écrit `users/{uid}` et renvoie le DTO social.
+
+    afroboost ne décide NI du uid (résolu chez Spordateur via le bridge), NI de
+    ce qui est écrit (filtré chez Spordateur). Il relaie une intention signée.
+    """
+    secret = os.environ.get("AFRO_SPORDATE_SHARED_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="Le pont Spordateur n'est pas configuré.")
+
+    from api.server import _v311_coach_email_from_jwt
+    email = _v311_coach_email_from_jwt(request)
+    if not email:
+        try:
+            from api.routes.shared import subscriber_from_request
+            abonne = subscriber_from_request(request)
+        except Exception:
+            abonne = None
+        if abonne and abonne.get("email"):
+            email = str(abonne["email"]).strip().lower()
+    if not email:
+        raise HTTPException(status_code=401, detail="Identité signée requise")
+
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        corps = {}
+    # On ne transmet QUE le sous-objet `profil` : Spordateur re-filtrera de
+    # toute façon, mais on ne fait pas voyager plus que nécessaire.
+    profil = corps.get("profil")
+    if not isinstance(profil, dict):
+        profil = {}
+
+    import jwt as _pyjwt
+    emis = int(datetime.now(timezone.utc).timestamp())
+    jeton = _pyjwt.encode(
+        {"email": email, "aud": AUDIENCE_PROFIL, "iss": "afroboost",
+         "iat": emis, "exp": emis + DUREE_JETON_PROFIL_S},
+        secret, algorithm="HS256",
+    )
+    if isinstance(jeton, bytes):
+        jeton = jeton.decode("utf-8")
+
+    import httpx
+    url = f"{_f2_base_spordate()}/api/bridge/unified-profile"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.patch(url, json={"t": jeton, "profil": profil})
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[F3] pont profil (écriture) injoignable: {e}")
+        return {"lie": False, "motif": "pont_indisponible"}
+
+    if r.status_code == 200:
+        try:
+            return r.json()
+        except Exception:
+            return {"lie": False, "motif": "pont_indisponible"}
+    if r.status_code == 401:
+        raise HTTPException(status_code=401, detail="Jeton de profil refusé")
+    logger.warning(f"[F3] pont profil (écriture) statut {r.status_code}")
+    return {"lie": False, "motif": "pont_indisponible"}
