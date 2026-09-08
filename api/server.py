@@ -4383,6 +4383,15 @@ async def _get_user_profile_impl(participant_id: str):
 async def update_user_mini_profile(participant_id: str, request: Request):
     """V279 : met a jour les champs du mini-profil (bio, age, passions).
 
+    DEPRECATED (CLEANUP PROFIL LEGACY) — plus AUCUN appelant dans le frontend :
+    l'ancien editeur Afroboost a ete retire de l'interface et le profil social
+    actif est Spordateur (F2/F3/F4). La route est CONSERVEE volontairement :
+    elle peut encore etre appelee par une PWA installee servant un ancien
+    bundle, et la retirer casserait ces clients sans rien apporter. Elle
+    n'ecrit que sur demande explicite ; aucune donnee historique n'est touchee
+    par le nettoyage. A supprimer seulement apres une periode d'observation
+    prouvant zero appel en production.
+
     Champs OPTIONNELS et libres. `bio` plafonnee a 200 caracteres, `passions` a
     200 aussi. `age` doit etre un entier plausible (0-120) sinon ignore. On ecrit
     dans `users` (upsert par participant_id) — la meme collection que le GET lit

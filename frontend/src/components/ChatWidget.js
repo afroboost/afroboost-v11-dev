@@ -3340,78 +3340,27 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // === V279b : formulaire « Mon profil » (bio / age / passions) ===
-  // Indexe par participantId (l'identite chat), coherent avec le mini-profil et
-  // le backend. Champs optionnels ; rien n'est obligatoire.
-  const [showProfileForm, setShowProfileForm] = useState(false);
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [profileData, setProfileData] = useState({ display_name: '', bio: '', age: '', passions: '' });
-
-  // V299 : clé de profil = EMAIL pour TOUS les rôles (coach ET abonné) -> profil
-  // UNIQUE et identique PC/mobile. Avant, l'abonné était indexé par participantId
-  // (stocké en localStorage, différent sur chaque appareil) -> profil rempli sur
-  // mobile mais vide sur PC. participantId ne reste qu'un dernier repli (visiteur
-  // anonyme sans email).
-  const getProfileKey = () => {
-    return (isCoachMode ? getCoachEmail() : '')
-        || (afroboostProfile && afroboostProfile.email)
-        || participantId;
-  };
-
-  const openProfileForm = async () => {
-    setShowUserMenu(false);
-    var profileKey = getProfileKey();
-    if (!profileKey) { setProfileData({ display_name: leadData.firstName || '', bio: '', age: '', passions: '' }); setShowProfileForm(true); return; }
-    try {
-      const res = await axios.get(`${API}/users/${encodeURIComponent(profileKey)}/profile`);
-      const d = res.data || {};
-      setProfileData({
-        display_name: d.name || leadData.firstName || '',
-        bio: d.bio || '',
-        age: (d.age != null ? String(d.age) : ''),
-        passions: d.passions || ''
-      });
-    } catch (e) {
-      setProfileData({ display_name: leadData.firstName || '', bio: '', age: '', passions: '' });
-    }
-    setShowProfileForm(true);
-  };
+  // CLEANUP PROFIL LEGACY — l'ancien éditeur Afroboost (Nom / Bio / Âge /
+  // Passions) a été RETIRÉ de l'interface : le profil social est désormais
+  // Spordateur (F2 lecture, F3 handoff, F4 activation). Les états, la clé de
+  // profil, `openProfileForm` et `saveProfile` qui vivaient ici n'ont plus
+  // aucun appelant. AUCUNE donnée n'est touchée : la lecture
+  // `GET /users/{id}/profile` reste utilisée par la mini-fiche et par le
+  // chargement de la photo, et l'écriture PATCH reste en place côté serveur.
 
   // F3 SUITE — « Mon profil » ouvre désormais la VRAIE page profil Spordateur
   // (/rencontre/profile), pas l'ancien mini-formulaire Nom/Bio/Âge/Passions.
   // On passe par le pont (auto-login) : POST /spordate/access renvoie l'URL
   // signée, on y accroche next=/profile pour atterrir directement sur le profil.
   // Filet de sécurité 1,5 s -> /rencontre si le pont tarde. Aucune vente, aucune
-  // écriture : simple navigation. `openProfileForm` reste pour le mini-profil de
-  // conversation (affiché entre participants), qui est un autre objet.
+  // écriture : simple navigation. La mini-fiche de conversation (affichée entre
+  // participants) reste un objet distinct, en lecture seule.
   const ouvrirProfilSpordateur = () => {
     setShowUserMenu(false);
     // Handoff partagé : jeton pré-obtenu à l'ouverture du menu -> navigation
     // DIRECTE vers /rencontre/profile déjà connecté ; sinon route serveur. Aucun
     // fetch attendu ici, aucun écran d'attente. `next=/profile` cible la page.
     entrerDansSpordate('/profile');
-  };
-
-  const saveProfile = async () => {
-    // V299 : clé = email pour tous les rôles (cf. getProfileKey).
-    var profileKey = getProfileKey();
-    if (!profileKey) { setShowProfileForm(false); return; }
-    setSavingProfile(true);
-    try {
-      // En-tête d'identité : email du coach OU de l'abonné (pour la garde IDOR V279b
-      // du backend, qui exige que l'appelant corresponde au profil édité).
-      var _identity = getCoachEmail() || (afroboostProfile && afroboostProfile.email) || '';
-      await axios.patch(`${API}/users/${encodeURIComponent(profileKey)}/profile`, {
-        display_name: profileData.display_name,
-        bio: profileData.bio,
-        age: profileData.age ? parseInt(profileData.age, 10) : null,
-        passions: profileData.passions
-      }, { headers: { 'X-User-Email': _identity } });
-      setShowProfileForm(false);
-    } catch (e) {
-      alert(e?.response?.data?.detail || "L'enregistrement a échoué.");
-    }
-    setSavingProfile(false);
   };
 
   // === v75: UPLOAD DIRECT SANS CROP — Auto-centrage côté backend ===
@@ -8352,7 +8301,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         )}
                       </label>
 
-                      {/* V279b : « Mon profil » — bio / âge / passions (mini-profil) */}
+                      {/* « Mon profil » — ouvre la page profil Spordateur (handoff F3) */}
                       <button
                         onClick={ouvrirProfilSpordateur}
                         style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '12px', textAlign: 'left' }}
@@ -9472,7 +9421,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }} className="coach-icons-menu">
-                    {/* V286 : accès « Mon profil » (bio/âge/passions) depuis le dashboard coach */}
+                    {/* « Mon profil » depuis le dashboard coach — page Spordateur (handoff F3) */}
                     <button
                       onClick={ouvrirProfilSpordateur}
                       title="Mon profil"
@@ -12586,61 +12535,6 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         document.body
       )}
 
-      {/* === V279b : FORMULAIRE « Mon profil » === */}
-      {showProfileForm && ReactDOM.createPortal(
-        <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000001, padding: '16px' }}
-          onClick={() => setShowProfileForm(false)}
-        >
-          <div
-            style={{ background: '#1a1a1a', borderRadius: '16px', padding: '24px', width: '320px', maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#fff', marginBottom: '20px', textAlign: 'center' }}>Mon profil</div>
-
-            <label style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '4px', display: 'block' }}>Nom affiché</label>
-            <input
-              type="text" value={profileData.display_name} maxLength={50}
-              onChange={(e) => setProfileData(p => ({ ...p, display_name: e.target.value }))}
-              placeholder="Ton prénom ou pseudo"
-              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #333', background: '#111', color: '#fff', fontSize: '0.9rem', marginBottom: '14px', boxSizing: 'border-box' }}
-            />
-
-            <label style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '4px', display: 'block' }}>Biographie</label>
-            <textarea
-              value={profileData.bio} maxLength={200} rows={3}
-              onChange={(e) => setProfileData(p => ({ ...p, bio: e.target.value }))}
-              placeholder="Parle de toi en quelques mots..."
-              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #333', background: '#111', color: '#fff', fontSize: '0.9rem', marginBottom: '4px', resize: 'none', boxSizing: 'border-box' }}
-            />
-            <div style={{ fontSize: '0.7rem', color: '#555', textAlign: 'right', marginBottom: '14px' }}>{profileData.bio.length}/200</div>
-
-            <label style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '4px', display: 'block' }}>Âge</label>
-            <input
-              type="number" value={profileData.age} min={13} max={120}
-              onChange={(e) => setProfileData(p => ({ ...p, age: e.target.value }))}
-              placeholder="Ex: 28"
-              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #333', background: '#111', color: '#fff', fontSize: '0.9rem', marginBottom: '14px', boxSizing: 'border-box' }}
-            />
-
-            <label style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '4px', display: 'block' }}>Passions / Centres d'intérêt</label>
-            <input
-              type="text" value={profileData.passions} maxLength={150}
-              onChange={(e) => setProfileData(p => ({ ...p, passions: e.target.value }))}
-              placeholder="Danse, Fitness, Afrobeat, Yoga..."
-              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #333', background: '#111', color: '#fff', fontSize: '0.9rem', marginBottom: '6px', boxSizing: 'border-box' }}
-            />
-            <div style={{ fontSize: '0.7rem', color: '#666', marginBottom: '16px' }}>Sépare tes passions par des virgules</div>
-
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-              <button onClick={() => setShowProfileForm(false)} style={{ padding: '10px 20px', background: '#333', color: '#aaa', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem' }}>Annuler</button>
-              <button onClick={saveProfile} disabled={savingProfile} style={{ padding: '10px 20px', background: 'var(--primary-color, #D91CD2)', color: '#fff', border: 'none', borderRadius: '8px', cursor: savingProfile ? 'wait' : 'pointer', fontSize: '0.85rem', fontWeight: 600, opacity: savingProfile ? 0.6 : 1 }}>{savingProfile ? 'Enregistrement...' : 'Enregistrer'}</button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
       {/* === V279 : MINI-PROFIL (clic sur une photo de profil) === */}
       {miniProfile && ReactDOM.createPortal(
         <div
@@ -12678,7 +12572,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
               </div>
             ) : null}
             {/* V299 : « Profil non renseigné » seulement si bio ET passions vraiment
-                vides. Si c'est SON propre profil -> proposer « Compléter mon profil ». */}
+                vides. CLEANUP PROFIL LEGACY : sur SON propre profil, « Compléter »
+                n'ouvre plus l'ancien formulaire Afroboost mais la page Spordateur
+                (handoff F3). La mini-fiche reste en LECTURE SEULE. */}
             {(() => {
               const _empty = !miniProfile.bio && !miniProfile.passions;
               if (!_empty) return null;
@@ -12691,7 +12587,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
               if (_isOwn) {
                 return (
                   <button
-                    onClick={() => { setMiniProfile(null); openProfileForm(); }}
+                    data-testid="mp-completer-spordate"
+                    onClick={() => { setMiniProfile(null); ouvrirProfilSpordateur(); }}
                     style={{ marginTop: '8px', padding: '6px 14px', background: 'var(--primary-color, #D91CD2)', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
                   >
                     Compléter mon profil
