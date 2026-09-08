@@ -3355,6 +3355,28 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     setShowProfileForm(true);
   };
 
+  // F3 SUITE — « Mon profil » ouvre désormais la VRAIE page profil Spordateur
+  // (/rencontre/profile), pas l'ancien mini-formulaire Nom/Bio/Âge/Passions.
+  // On passe par le pont (auto-login) : POST /spordate/access renvoie l'URL
+  // signée, on y accroche next=/profile pour atterrir directement sur le profil.
+  // Filet de sécurité 1,5 s -> /rencontre si le pont tarde. Aucune vente, aucune
+  // écriture : simple navigation. `openProfileForm` reste pour le mini-profil de
+  // conversation (affiché entre participants), qui est un autre objet.
+  const ouvrirProfilSpordateur = () => {
+    setShowUserMenu(false);
+    var parti = false;
+    var aller = function (url) {
+      if (parti) return; parti = true;
+      var u = url || '/rencontre';
+      var sep = u.indexOf('?') >= 0 ? '&' : '?';
+      window.location.href = u + sep + 'next=' + encodeURIComponent('/profile');
+    };
+    var filet = setTimeout(function () { aller('/rencontre'); }, 1500);
+    axios.post(`${API}/spordate/access`, {}, { timeout: 1500 })
+      .then(function (r) { clearTimeout(filet); aller((r && r.data && r.data.url) || '/rencontre'); })
+      .catch(function () { clearTimeout(filet); aller('/rencontre'); });
+  };
+
   const saveProfile = async () => {
     // V299 : clé = email pour tous les rôles (cf. getProfileKey).
     var profileKey = getProfileKey();
@@ -8316,7 +8338,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
 
                       {/* V279b : « Mon profil » — bio / âge / passions (mini-profil) */}
                       <button
-                        onClick={openProfileForm}
+                        onClick={ouvrirProfilSpordateur}
                         style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '12px', textAlign: 'left' }}
                         className="hover:bg-white/10"
                         data-testid="open-profile-form"
@@ -9436,7 +9458,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }} className="coach-icons-menu">
                     {/* V286 : accès « Mon profil » (bio/âge/passions) depuis le dashboard coach */}
                     <button
-                      onClick={openProfileForm}
+                      onClick={ouvrirProfilSpordateur}
                       title="Mon profil"
                       style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.7 }}
                     >

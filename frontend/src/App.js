@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { prechargerSpordate, entrerDansSpordate } from "./utils/spordateHandoff"; // F3 handoff
 import "@/App.css";
 import axios from "axios";
 // V277 : langues supplementaires (africaines + creole) + contexte de langue.
@@ -8482,51 +8483,18 @@ function App() {
                son login normal. Le `href` reste donc VRAI : clic milieu,
                « ouvrir dans un nouvel onglet » et navigation sans JS
                continuent de fonctionner. */
-            onClick={async (e) => {
+            /* F3 — PLUS D'ATTENTE VISIBLE. Le jeton de passage est
+               pré-obtenu au survol/focus (`prechargerSpordate`) ; au clic, il
+               est déjà là et la navigation est IMMÉDIATE. L'auto-login est
+               conservé — le pont reste, il est juste préparé d'avance. Le
+               `href` demeure vrai (clic milieu / nouvel onglet marchent). */
+            onMouseEnter={() => { prechargerSpordate(); }}
+            onFocus={() => { prechargerSpordate(); }}
+            onTouchStart={() => { prechargerSpordate(); }}
+            onClick={(e) => {
               if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
               e.preventDefault();
-              // V410 — LE CLIC DOIT TOUJOURS ABOUTIR SUR /rencontre.
-              // Le `preventDefault()` ci-dessus supprime la navigation native du
-              // `href` TOUT DE SUITE. Tout reposait ensuite sur la suite
-              // asynchrone : si elle n'allait pas au bout, plus rien ne faisait
-              // partir l'utilisateur et le bouton paraissait MORT. Deux facons
-              // d'en arriver la, toutes deux reelles :
-              //   1. `axios` attend SANS LIMITE par defaut (timeout: 0) — un POST
-              //      qui ne se termine jamais (mobile qui decroche, portail
-              //      captif, hoquet Cloudflare) gelait le clic indefiniment ;
-              //   2. une `alert()` bloquante pouvait s'intercaler avant le rejet.
-              // On garantit donc le depart, quoi qu'il arrive.
-              let parti = false;
-              const aller = (url) => {
-                if (parti) return;          // une seule navigation, jamais deux
-                parti = true;
-                window.location.href = url || '/rencontre';
-              };
-              // F3 — ON GARDE L'AUTO-LOGIN, MAIS ON RÉDUIT L'ATTENTE RESSENTIE.
-              // Le pont (`/spordate/access`) est ce qui fait entrer dans
-              // Rencontre DÉJÀ connecté : on ne le supprime pas. Mais l'attente
-              // du jeton donnait l'impression d'une « page intermédiaire ». On
-              // raccourcit donc le filet et le timeout de 2500 à 1200 ms : au
-              // pire, on part sur /rencontre en 1,2 s (login Spordate normal),
-              // au mieux on entre connecté encore plus vite. 1,2 s couvre
-              // largement un aller-retour local (le pont et Rencontre sont sur
-              // la MÊME machine).
-              const filet = setTimeout(() => aller('/rencontre'), 1200);
-              try {
-                const r = await axios.post(`${API}/spordate/access`, {}, { timeout: 1200 });
-                aller((r.data && r.data.url) || '/rencontre');
-              } catch (err) {
-                // V403 — ON VA TOUJOURS SUR /rencontre, JAMAIS SUR UN ECRAN DE
-                // CONNEXION. 403 (non reconnu) ou 503 (pont non configure) sont
-                // des cas NORMAUX : Spordate propose alors son propre login.
-                // Ce qu'il ne faut surtout pas faire ici, c'est ouvrir la
-                // connexion coach d'afroboost — c'est ce qui envoyait
-                // l'utilisateur sur l'ecran d'une marque tierce au lieu de la
-                // page Rencontre.
-                aller('/rencontre');
-              } finally {
-                clearTimeout(filet);
-              }
+              entrerDansSpordate();
             }}
             className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all"
             style={{

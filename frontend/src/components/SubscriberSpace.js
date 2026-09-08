@@ -11,8 +11,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { copyToClipboard } from "../utils/clipboard";
 import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
-import ProfilSocialPartage from './ProfilSocialPartage'; // F2 — profil social partagé
-import EditeurProfilSpordateur from './EditeurProfilSpordateur'; // F3 — édition du profil Spordateur
+import CarteProfilSpordateur from './CarteProfilSpordateur'; // F3 SUITE — carte compacte vers la VRAIE page profil Spordateur
 // V334 etape 2 : « Mon cockpit » charge A LA DEMANDE (React.lazy).
 // Il embarque recharts, qui pese ~98 ko gzip : l'inclure dans le bundle
 // principal ferait payer ce poids a CHAQUE visiteur, pour une section repliee
@@ -1061,17 +1060,14 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           </button>
         </header>
 
-        {/* F2 — LE PROFIL SOCIAL PARTAGÉ. Read-only : ce panneau LIT le profil
-            Spordateur de l'abonné (s'il est relié) et l'affiche ici. Il n'écrit
-            rien, ne duplique aucune photo, et disparaît discrètement si le pont
-            est indisponible. Placé sous l'en-tête de bienvenue, jamais dans le
-            parcours d'essai (aucun `order`, donc il suit l'ordre du DOM). */}
-        <ProfilSocialPartage />
-
-        {/* F3 — L'ÉDITEUR du profil social Spordateur, sous le panneau de
-            lecture. Édite bio/ville/sports du VRAI users/{uid} Spordateur, avec
-            les mêmes règles que l'éditeur Spordateur. Read-only si non relié. */}
-        <EditeurProfilSpordateur />
+        {/* F3 SUITE — L'ENTRÉE VERS LE VRAI PROFIL SPORDATEUR.
+            On NE reconstruit PAS le profil ici (ça allongeait la page et il
+            manquait Parrainage / Confidentialité). Une carte compacte
+            [avatar][nom] « Gérer mon profil » ouvre la VRAIE page complète
+            /rencontre/profile, déjà connecté (auto-login préchargé au survol).
+            Non relié → « Profil social non encore activé ». Aucun `order` :
+            suit l'ordre du DOM, jamais dans le parcours d'essai. */}
+        <CarteProfilSpordateur />
 
         {/* ═══ P2-UX SIMPLE — LA CONFIRMATION QUI MANQUAIT ═══════════════
             Elle prend la place de tete (`order: -2`, donc au-dessus du bloc
