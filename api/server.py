@@ -4201,7 +4201,42 @@ def _v306_avatar_url(name: str) -> str:
 
 
 @api_router.get("/users/{participant_id}/profile")
-async def get_user_profile(participant_id: str):
+async def get_user_profile(participant_id: str, request: Request):
+    """F3 FINAL — hub du mini-profil, avec annotation « profil social Spordateur ».
+
+    Le corps de la résolution est INCHANGÉ (`_get_user_profile_impl`). On ajoute,
+    et SEULEMENT pour un viewer AUTHENTIFIÉ (sinon fuite d'appartenance sur une
+    route publique), un champ `social_profile` : l'utilisateur affiché est-il lié
+    à Spordateur, et si oui une capacité de navigation OPAQUE (jamais le uid).
+    Tout est derrière le drapeau `SOCIAL_PROFILE_LINKS` : `annoter_social_profile`
+    rend None quand il est OFF, et on n'ajoute alors rien."""
+    rep = await _get_user_profile_impl(participant_id)
+
+    # Viewer authentifié UNIQUEMENT (JWT coach signé OU jeton abonné signé) — on
+    # n'annote jamais pour un appel anonyme : cette route est publique, et révéler
+    # « qui est sur l'app de rencontre » à n'importe qui est exactement l'oracle
+    # interdit (§5). Aucune identité falsifiable (X-User-Email) ne compte ici.
+    _viewer = _v311_coach_email_from_jwt(request)
+    if not _viewer:
+        try:
+            from api.routes.shared import subscriber_from_request
+            _ab = subscriber_from_request(request)
+            if _ab and _ab.get("email"):
+                _viewer = str(_ab["email"]).strip().lower()
+        except Exception:
+            _viewer = ""
+    if _viewer and isinstance(rep, dict) and rep.get("email"):
+        try:
+            from api.routes.spordate_routes import annoter_social_profile
+            _sp = await annoter_social_profile(rep.get("email"))
+            if _sp is not None:
+                rep["social_profile"] = _sp
+        except Exception as _e:
+            logger.warning(f"[SOCIAL] annotation mini-profil ignorée: {_e}")
+    return rep
+
+
+async def _get_user_profile_impl(participant_id: str):
     """
     Récupère le profil utilisateur depuis la DB (PAS localStorage).
     Cherche dans 'users' puis 'chat_participants'.

@@ -19,6 +19,7 @@ resterait lisible dans l'URL et dans l'historique du navigateur), ni de rôle.
 Seulement l'e-mail, un identifiant unique et une expiration courte.
 """
 import os
+import time
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -423,3 +424,110 @@ async def spordate_unified_profile_patch(request: Request):
         raise HTTPException(status_code=401, detail="Jeton de profil refusé")
     logger.warning(f"[F3] pont profil (écriture) statut {r.status_code}")
     return {"lie": False, "motif": "pont_indisponible"}
+
+
+# ============================================================================
+# F3 FINAL (2/2) — PROFIL SOCIAL DES AUTRES COMPTES LIÉS (RÉSOLUTION SERVEUR)
+# ============================================================================
+# afroboost, pour un utilisateur qu'il AFFICHE DÉJÀ (mini-profil, publication…),
+# veut : (a) savoir s'il est lié à Spordateur, (b) pouvoir ouvrir son profil.
+#
+# LA RÈGLE DE CONFIDENTIALITÉ QUI COMMANDE TOUT (GO §5, §6) :
+#   - AUCUNE API d'appartenance par e-mail exposée au navigateur. Le navigateur
+#     n'envoie jamais d'e-mail à tester ; il reçoit une annotation sur une donnée
+#     qu'il est DÉJÀ autorisé à voir.
+#   - La correspondance e-mail → uid est lue SERVEUR À SERVEUR (jeton
+#     `spordate-link-resolve`, secret partagé), jamais côté client.
+#   - Le navigateur ne reçoit JAMAIS le uid : il reçoit un jeton de VUE OPAQUE
+#     (`spordate-profile-view`) qui l'emballe ; seule la garde Spordateur
+#     `/u/<jeton>` sait l'ouvrir.
+#   - Tout est derrière le drapeau `SOCIAL_PROFILE_LINKS` (défaut OFF) : livré
+#     dormant, aucun effet tant qu'il n'est pas activé en base.
+
+AUDIENCE_RESOLUTION = "spordate-link-resolve"
+AUDIENCE_VUE_PROFIL = "spordate-profile-view"
+DUREE_JETON_RESOLUTION_S = 30          # aller-retour serveur, pas davantage
+DUREE_JETON_VUE_S = 5 * 60             # le temps d'un clic vers un profil
+_CACHE_LIENS_TTL_S = 120               # un lien change rarement : cache court
+_cache_liens = {}                      # email -> (uid|None, ts monotone)
+
+
+async def _social_links_actif() -> bool:
+    """Le drapeau `SOCIAL_PROFILE_LINKS`, lu EN DIRECT (bascule/kill-switch sans
+    redéploiement). Une panne de lecture ferme (OFF) — jamais d'annotation par
+    accident."""
+    try:
+        from api.server import get_feature_flags
+        return bool((await get_feature_flags()).get("SOCIAL_PROFILE_LINKS"))
+    except Exception:
+        return False
+
+
+def _signer(charge: dict, secret: str, duree_s: int) -> str:
+    import jwt as _pyjwt
+    emis = int(datetime.now(timezone.utc).timestamp())
+    charge = dict(charge)
+    charge.update({"iss": "afroboost", "iat": emis, "exp": emis + duree_s})
+    j = _pyjwt.encode(charge, secret, algorithm="HS256")
+    return j.decode("utf-8") if isinstance(j, bytes) else j
+
+
+async def _resoudre_liens_sociaux(emails) -> dict:
+    """SERVEUR À SERVEUR : {email(min) -> uid|None}. Cache court, échec fermé
+    (une base injoignable = « non lié » pour cette fois, jamais une supposition
+    positive). Ne part JAMAIS d'une saisie libre du navigateur — l'appelant lui
+    fournit des e-mails d'utilisateurs déjà affichés."""
+    secret = os.environ.get("AFRO_SPORDATE_SHARED_SECRET", "")
+    if not secret or not emails:
+        return {}
+    maintenant = time.monotonic()
+    resu, besoin = {}, []
+    for e in emails:
+        e = (e or "").strip().lower()
+        if not e:
+            continue
+        c = _cache_liens.get(e)
+        if c and (maintenant - c[1]) < _CACHE_LIENS_TTL_S:
+            resu[e] = c[0]
+        elif e not in besoin:
+            besoin.append(e)
+    if besoin:
+        import httpx
+        jeton = _signer({"aud": AUDIENCE_RESOLUTION}, secret, DUREE_JETON_RESOLUTION_S)
+        url = f"{_f2_base_spordate()}/api/bridge/resolve-links"
+        rs = {}
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                r = await client.post(url, json={"t": jeton, "emails": besoin})
+            if r.status_code == 200:
+                rs = (r.json() or {}).get("resultats", {}) or {}
+        except Exception as ex:  # noqa: BLE001
+            logger.warning(f"[SOCIAL] resolve-links injoignable: {ex}")
+        for e in besoin:
+            info = rs.get(e) or {}
+            uid = (info.get("uid") or "").strip() if info.get("lie") else None
+            uid = uid or None
+            resu[e] = uid
+            _cache_liens[e] = (uid, maintenant)
+    return resu
+
+
+async def annoter_social_profile(email) -> dict:
+    """Annotation pour UN e-mail déjà affiché : {"available": bool,
+    "target": <jeton de vue opaque>?}. Le navigateur ne reçoit JAMAIS le uid.
+    Renvoie None si le drapeau est OFF, le pont non configuré, ou l'e-mail vide —
+    l'appelant n'ajoute alors rien à sa réponse."""
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    if not await _social_links_actif():
+        return None
+    secret = os.environ.get("AFRO_SPORDATE_SHARED_SECRET", "")
+    if not secret:
+        return None
+    liens = await _resoudre_liens_sociaux([email])
+    uid = liens.get(email)
+    if not uid:
+        return {"available": False}
+    return {"available": True, "target": _signer({"aud": AUDIENCE_VUE_PROFIL, "uid": uid},
+                                                 secret, DUREE_JETON_VUE_S)}

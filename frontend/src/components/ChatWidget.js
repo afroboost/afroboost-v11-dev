@@ -3299,11 +3299,29 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
 
   // === V279 : mini-profil (clic sur une photo de profil) ===
   const [miniProfile, setMiniProfile] = useState(null);
+  // F3 FINAL — le viewer (celui qui REGARDE) est-il lui-même lié à Spordateur ?
+  // null = pas encore su. Sert à décider, pour un autre compte lié, entre
+  // « Voir le profil Spordateur » (viewer lié) et « Active ton profil social »
+  // (viewer non lié) — sans jamais contourner l'AuthGuard de Spordateur (§7).
+  const [viewerLie, setViewerLie] = useState(null);
+  const assurerViewerLie = async () => {
+    if (viewerLie !== null) return;
+    try {
+      const r = await axios.get(`${API}/spordate/unified-profile/me`);
+      setViewerLie(!!(r && r.data && r.data.lie));
+    } catch (e) { setViewerLie(false); }
+  };
+
   const openMiniProfile = async (pid, fallbackName) => {
     if (!pid) return;
     try {
       const res = await axios.get(`${API}/users/${encodeURIComponent(pid)}/profile`);
       setMiniProfile({ ...(res.data || {}), participant_id: pid, name: (res.data && res.data.name) || fallbackName });
+      // Si l'utilisateur affiché a un profil social ouvrable, on a besoin de
+      // savoir si le VIEWER est lié pour choisir l'action. Résolu une seule fois.
+      if (res.data && res.data.social_profile && res.data.social_profile.available) {
+        assurerViewerLie();
+      }
     } catch (e) {
       setMiniProfile({ participant_id: pid, name: fallbackName || 'Utilisateur' });
     }
@@ -12682,6 +12700,49 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
               }
               return (<div style={{ fontSize: '0.8rem', color: '#666', marginTop: '4px' }}>Profil non renseigné</div>);
             })()}
+
+            {/* F3 FINAL — LE PROFIL SPORDATEUR D'UN AUTRE COMPTE LIÉ. Le serveur
+                a annoté (pour un viewer authentifié) si cet utilisateur est lié.
+                On ne fabrique JAMAIS un faux profil, on ne fusionne jamais par
+                e-mail, et on ne contourne jamais l'AuthGuard : un viewer NON lié
+                voit une invitation à activer son propre profil, pas le profil
+                d'autrui. La cible est OPAQUE (jeton de vue), jamais un uid. */}
+            {(() => {
+              const sp = miniProfile.social_profile;
+              if (!sp) return null;
+              if (!sp.available) {
+                return (
+                  <div data-testid="mp-social-non-active" style={{ fontSize: '0.78rem', color: '#888', marginTop: '10px' }}>
+                    Profil social non encore activé
+                  </div>
+                );
+              }
+              if (viewerLie === true) {
+                return (
+                  <button
+                    data-testid="mp-social-voir"
+                    onClick={() => {
+                      var target = sp.target;
+                      setMiniProfile(null);
+                      if (target) entrerDansSpordate('/u/' + encodeURIComponent(target));
+                    }}
+                    style={{ marginTop: '10px', padding: '8px 16px', background: 'var(--primary-color, #D91CD2)', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600 }}
+                  >
+                    Voir le profil Spordateur
+                  </button>
+                );
+              }
+              if (viewerLie === false) {
+                return (
+                  <div data-testid="mp-social-viewer-non-lie" style={{ fontSize: '0.78rem', color: '#aaa', marginTop: '10px', lineHeight: 1.4 }}>
+                    Active ton profil social pour accéder à ce profil.
+                  </div>
+                );
+              }
+              // viewerLie === null : on attend la réponse, rien d'alarmant.
+              return (<div data-testid="mp-social-attente" style={{ fontSize: '0.75rem', color: '#666', marginTop: '10px' }}>…</div>);
+            })()}
+
             <button
               onClick={() => setMiniProfile(null)}
               style={{ marginTop: '16px', padding: '6px 20px', background: '#333', color: '#aaa', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem' }}
