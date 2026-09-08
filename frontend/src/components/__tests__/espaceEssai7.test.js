@@ -241,8 +241,13 @@ describe('session_booked — une fois, au bon moment', () => {
 
     expect(parTestId('essai7-reserve')).not.toBeNull();
     expect(parTestId('essai7-priorite')).toBeNull();
-    // le serveur n'a PAS ete rappele : l'etat a avance tout seul
-    expect(axios.get).toHaveBeenCalledTimes(1);
+    // le serveur n'a PAS ete rappele POUR LES DONNEES DE L'ESPACE : l'etat a
+    // avance tout seul. On EXCLUT l'appel du panneau de profil social (F2), qui
+    // charge une fois au montage et n'a aucun rapport avec le rechargement des
+    // donnees d'essai que ce test surveille.
+    const getsEspace = axios.get.mock.calls.filter(
+      (c) => !String(c[0] || '').includes('unified-profile'));
+    expect(getsEspace).toHaveLength(1);
   });
 });
 

@@ -148,3 +148,117 @@ async def spordate_access(request: Request):
         "url": f"{CHEMIN_RENCONTRE}?t={jeton}",
         "expires_in": DUREE_JETON_S,
     }
+
+
+# ============================================================================
+# F2 — LE PROFIL SOCIAL PARTAGÉ, LU EN RETOUR (READ-ONLY)
+# ============================================================================
+# Le pont ci-dessus fait ENTRER un membre afroboost dans Spordateur. Ce lot
+# fait le chemin INVERSE : afroboost affiche, dans son propre espace profil, le
+# profil social que la personne tient sur Spordateur — sans jamais le recopier.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# LE POINT DE SÉCURITÉ QUI COMMANDE TOUT (GO §3)
+# ─────────────────────────────────────────────────────────────────────────
+# afroboost identifie ses appelants par JWT signé (fiable) OU, en repli
+# transitoire V265, par l'en-tête `X-User-Email` — que N'IMPORTE QUI peut
+# écrire. Le pont d'accès tolère ce repli parce qu'il ne fait qu'ouvrir une
+# session que l'utilisateur pouvait déjà ouvrir. ICI, c'est INTERDIT : accepter
+# `X-User-Email` laisserait un `curl` lire le profil de n'importe qui en
+# changeant une chaîne. Cette route n'accepte donc QUE deux identités SIGNÉES :
+#   - le JWT coach/admin (`_v311_coach_email_from_jwt`, rejette même les jetons
+#     abonné) ;
+#   - le jeton d'appareil abonné (`subscriber_from_request`, signé HS256).
+# Aucun repli `X-User-Email`. Pas d'identité signée -> 401, point final.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# CE QU'AFROBOOST N'A PAS, ET NE DOIT PAS AVOIR
+# ─────────────────────────────────────────────────────────────────────────
+# afroboost n'a aucun accès Firebase à Spordateur, et n'en aura pas : le profil
+# et le bridge vivent chez Spordateur, seul détenteur légitime. afroboost se
+# contente d'émettre un jeton signé prouvant « voici QUI j'ai authentifié »,
+# puis appelle Spordateur, qui fait le reste (bridge -> uid -> profil ->
+# liste blanche). afroboost RELAIE le résultat, il ne le fabrique pas.
+
+# Audience DÉDIÉE, distincte de "spordate" (le pont d'accès) : un jeton de
+# lecture de profil ne doit jamais pouvoir ouvrir une session, ni l'inverse.
+AUDIENCE_PROFIL = "spordate-profile"
+DUREE_JETON_PROFIL_S = 60  # une lecture est immédiate ; 60 s suffisent largement
+
+
+def _f2_base_spordate() -> str:
+    """L'URL de base de Spordateur, servie sous afroboost.com/rencontre.
+
+    Configurable par `SPORDATE_INTERNAL_URL` (permet de viser le conteneur en
+    interne si un réseau Docker partagé existe un jour) ; à défaut, le domaine
+    public — qui fonctionne sans configuration supplémentaire.
+    """
+    return (os.environ.get("SPORDATE_INTERNAL_URL", "").strip()
+            or "https://afroboost.com/rencontre")
+
+
+@router.get("/unified-profile/me")
+async def spordate_unified_profile_me(request: Request):
+    """Le profil social Spordateur de l'appelant afroboost — LECTURE SEULE.
+
+    Renvoie toujours 200 avec l'un de :
+      - {"lie": true,  "profil": {...whitelist...}}
+      - {"lie": false, "motif": "non_lie"|"introuvable"|"pont_indisponible"}
+    Sauf 401 si l'appelant n'a pas d'identité SIGNÉE, et 503 si le secret du
+    pont n'est pas configuré. Aucune écriture, ici comme chez Spordateur.
+    """
+    secret = os.environ.get("AFRO_SPORDATE_SHARED_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="Le pont Spordateur n'est pas configuré.")
+
+    # Import TARDIF : api.server importe ce module ; un import en tête créerait un
+    # cycle. Même motif que le pont d'accès ci-dessus.
+    from api.server import _v311_coach_email_from_jwt
+
+    # ── IDENTITÉ SIGNÉE UNIQUEMENT — JAMAIS X-User-Email (GO §3, §4) ──────────
+    email = _v311_coach_email_from_jwt(request)  # JWT coach/admin signé
+    if not email:
+        try:
+            from api.routes.shared import subscriber_from_request
+            abonne = subscriber_from_request(request)  # jeton abonné signé HS256
+        except Exception:
+            abonne = None
+        if abonne and abonne.get("email"):
+            email = str(abonne["email"]).strip().lower()
+    if not email:
+        # Ni JWT coach ni jeton abonné : on ne lit RIEN. Le repli falsifiable
+        # n'existe pas ici.
+        raise HTTPException(status_code=401, detail="Identité signée requise")
+
+    # ── LE JETON DE LECTURE, signé, à audience dédiée et à vie courte ─────────
+    import jwt as _pyjwt
+    emis = int(datetime.now(timezone.utc).timestamp())
+    jeton = _pyjwt.encode(
+        {"email": email, "aud": AUDIENCE_PROFIL, "iss": "afroboost",
+         "iat": emis, "exp": emis + DUREE_JETON_PROFIL_S},
+        secret, algorithm="HS256",
+    )
+    if isinstance(jeton, bytes):
+        jeton = jeton.decode("utf-8")
+
+    # ── APPEL À SPORDATEUR, qui détient bridge + profil + liste blanche ───────
+    import httpx
+    url = f"{_f2_base_spordate()}/api/bridge/unified-profile"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.post(url, json={"t": jeton})
+    except Exception as e:  # réseau : on ne casse pas l'espace profil afroboost
+        logger.warning(f"[F2] pont profil injoignable: {e}")
+        return {"lie": False, "motif": "pont_indisponible"}
+
+    if r.status_code == 200:
+        try:
+            return r.json()
+        except Exception:
+            return {"lie": False, "motif": "pont_indisponible"}
+    if r.status_code == 401:
+        # Spordateur a refusé le jeton : on ne réémet pas, on ferme.
+        raise HTTPException(status_code=401, detail="Jeton de profil refusé")
+    # 503/erreurs Spordateur : dégradation douce, jamais une page cassée.
+    logger.warning(f"[F2] pont profil statut {r.status_code}")
+    return {"lie": False, "motif": "pont_indisponible"}
