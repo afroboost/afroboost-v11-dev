@@ -30,7 +30,7 @@
  * hexadécimaux après la virgule sont des REPLIS, jamais des valeurs imposées.
  * ICÔNES : SVG inline via `SvgIcon`, jamais d'emoji.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import SvgIcon from '../SvgIcon';
 import useChargement, { SECTION } from '../../hooks/useChargement';
@@ -587,9 +587,12 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
   /* AI-P2 — LA CORRECTION À LA MAIN, ENREGISTRÉE.
      Un brouillon dont la correction disparaît au premier repli n'est pas
      modifiable : c'est un piège. Le texte part donc au serveur. */
-  const enregistrerBrouillon = useCallback(async (id) => {
+  const enregistrerBrouillon = useCallback(async (id, options) => {
     const carte = carteDe(id);
     const texte = (carte.texte || '').trim();
+    // §7-D — UNE REPONSE VIDE NE PART PAS, et le bouton est deja desactive :
+    // cette garde est la seconde, pour le jour ou un raccourci clavier
+    // contournerait le bouton.
     if (!id || !texte || carte.chargement) return;
     majCarte(id, { chargement: true, erreur: '' });
     try {
@@ -597,10 +600,19 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
         `${base}/prospect-inbound/${encodeURIComponent(id)}/brouillon`,
         { reponse_proposee: texte });
       majCarte(id, { brouillon: (r && r.data && r.data.brouillon) || carte.brouillon,
-                     chargement: false, edition: false, texte: '' });
+                     chargement: false, edition: false, composerFerme: true, texte: '' });
+      // §6 — « Enregistrer et verifier » enchaine sur l'apercu SERVEUR. Il
+      // n'envoie toujours rien : l'ecran de confirmation reste le seul endroit
+      // d'ou un e-mail peut partir.
+      if (options && options.puisVerifier) {
+        await preparerEnvoiRef.current(id, { ignorerOccupe: true });
+      }
     } catch (e) {
+      // §6 — LE TEXTE ECRIT NE DOIT JAMAIS DISPARAITRE SUR UNE ERREUR. On ne
+      // referme pas le composer et on ne vide pas `texte` : ce serait perdre
+      // le travail du coach au moment ou il en a le plus besoin.
       majCarte(id, { chargement: false,
-                     erreur: "La correction n'a pas pu être enregistrée." });
+                     erreur: "La réponse n'a pas pu être enregistrée. Votre texte est conservé." });
     }
   }, [base, carteDe, majCarte]);
 
@@ -615,8 +627,20 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
      ou l'objet créerait une seconde vérité : le jour où elle diverge, le coach
      approuve un texte et un autre part. L'écran affiche ce que le serveur dit
      qu'il ferait — destinataire compris. */
-  const preparerEnvoi = useCallback(async (id) => {
-    if (!id || carteDe(id).chargement) return;
+  /* Le chainage « enregistrer puis verifier » a besoin de `preparerEnvoi`, qui
+     est declare plus bas. Une reference mutable evite de reordonner les deux
+     rappels — donc d'introduire une dependance circulaire entre eux. */
+  const preparerEnvoiRef = useRef(() => {});
+
+  const preparerEnvoi = useCallback(async (id, options) => {
+    /* `ignorerOccupe` n'est PAS un contournement de la garde anti-double-clic :
+       il sert à l'enchaînement interne « enregistrer puis vérifier », qui
+       appelle cette fonction alors que `chargement` est encore à `true` dans
+       l'état React — une mise à jour d'état n'est pas visible dans le même
+       tour. Sans lui, l'aperçu ne s'ouvrait jamais après un enregistrement,
+       et le coach restait devant un brouillon sans savoir quoi faire. Le
+       chemin déclenché par un CLIC, lui, garde la garde intacte. */
+    if (!id || (carteDe(id).chargement && !(options && options.ignorerOccupe))) return;
     majCarte(id, { chargement: true, erreur: '' });
     try {
       const r = await axios.get(`${base}/prospect-inbound/${encodeURIComponent(id)}/apercu-envoi`);
@@ -627,6 +651,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
       majCarte(id, { chargement: false, erreur: String(detail) });
     }
   }, [base, carteDe, majCarte]);
+  preparerEnvoiRef.current = preparerEnvoi;
 
   /* L'ENVOI RÉEL. Il porte l'empreinte du texte AFFICHÉ : si le brouillon a
      changé entre l'aperçu et la confirmation, le serveur refuse plutôt que
@@ -1286,6 +1311,16 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
                attente du partenaire n'a rien à envoyer : lui consacrer la
                moitié de l'écran ferait croire qu'une action est due. */
             const montrerReponse = attendUneAction(convActive) || !!carte.repondre;
+            /* REPONSE-MANUELLE — LA ZONE OU ECRIRE EXISTE MEME SANS BROUILLON.
+               Avant : le champ n'apparaissait QUE pour corriger un brouillon
+               IA (`bro && carte.edition`). Sans analyse prealable, le bloc
+               s'ouvrait sur une phrase et un bouton « Generer avec l'IA » —
+               nulle part ou ecrire, rien a envoyer. Repondre de ses propres
+               mots etait impossible.
+               Il n'y a rien d'autre a montrer quand aucun brouillon n'existe :
+               le composer est donc l'etat par defaut, et « Annuler » le
+               replie (`composerFerme`) sans rien envoyer. */
+            const composerOuvert = !!carte.edition || (!bro && !carte.composerFerme);
             const suivante = suivanteATraiter(conversations, convActive.cle);
             return (
               <div data-testid="conversation-active" data-inbound={r.id}
@@ -1493,7 +1528,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
                           : 'En attente du partenaire.'}
                     </span>
                     <button type="button" data-testid="repondre-quand-meme"
-                            onClick={() => majCarte(r.id, { repondre: true })}
+                            onClick={() => majCarte(r.id, { repondre: true, composerFerme: false })}
                             style={stylePetitBouton}>
                       Répondre quand même
                     </button>
@@ -1528,10 +1563,11 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
 
                     <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
                                   color: TEXTE, letterSpacing: '0.05em', marginBottom: '5px' }}>
-                      {bro ? `RÉPONSE PROPOSÉE POUR ${bro.to_email}` : 'RÉPONSE PROPOSÉE'}
+                      {bro ? `RÉPONSE PROPOSÉE POUR ${bro.to_email}`
+                        : `RÉPONSE À ${r.from_email || 'CE PARTENAIRE'}`}
                     </div>
 
-                    {bro && carte.edition ? (
+                    {composerOuvert ? (
                       <>
                         <textarea
                           data-testid="editeur-brouillon"
@@ -1547,15 +1583,19 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
                           }} />
                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
                                       marginTop: '7px' }}>
+                          {/* §7-D/E — VIDE : desactive. EN COURS : desactive aussi,
+                              donc un double-clic ne peut pas produire deux envois. */}
                           <button type="button" data-testid="enregistrer-brouillon"
-                                  onClick={() => enregistrerBrouillon(r.id)}
+                                  onClick={() => enregistrerBrouillon(r.id, { puisVerifier: !bro })}
                                   disabled={occupe || !(carte.texte || '').trim()}
                                   style={{ ...styleBouton,
                                            opacity: occupe || !(carte.texte || '').trim() ? 0.6 : 1 }}>
-                            {occupe ? 'Enregistrement…' : 'Enregistrer'}
+                            {occupe ? 'Enregistrement…'
+                              : (bro ? 'Enregistrer' : 'Enregistrer et vérifier')}
                           </button>
                           <button type="button" data-testid="annuler-edition"
-                                  onClick={() => majCarte(r.id, { edition: false, texte: '' })}
+                                  onClick={() => majCarte(r.id, { edition: false, texte: '',
+                                                                  composerFerme: true })}
                                   style={stylePetitBouton}>
                             Annuler
                           </button>
@@ -1570,8 +1610,18 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
                         {bro.reponse_proposee}
                       </div>
                     ) : (
-                      <div style={{ fontSize: '12px', opacity: 0.75, color: TEXTE }}>
-                        Aucune réponse n'a encore été préparée pour ce partenaire.
+                      <div data-testid="composer-replie"
+                           style={{ fontSize: '12px', opacity: 0.75, color: TEXTE,
+                                    display: 'flex', gap: '8px', alignItems: 'center',
+                                    flexWrap: 'wrap' }}>
+                        <span style={{ flex: '1 1 180px' }}>
+                          Aucune réponse n'a encore été préparée pour ce partenaire.
+                        </span>
+                        <button type="button" data-testid="ecrire-reponse"
+                                onClick={() => majCarte(r.id, { composerFerme: false })}
+                                style={stylePetitBouton}>
+                          Écrire la réponse
+                        </button>
                       </div>
                     )}
 

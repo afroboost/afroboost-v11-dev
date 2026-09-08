@@ -626,12 +626,28 @@ for _mauvais, _code in ((None, 400), ("", 400), ("   ", 400)):
         _ok = e.status_code == _code
     verifier("9ter-f. un brouillon vide (%r) est refuse" % _mauvais, _ok)
 
-try:
-    modifier("inb-zrhd5", "aucun brouillon ici")
-    _sans = False
-except HTTPException as e:
-    _sans = e.status_code == 404
-verifier("9ter-g. corriger un brouillon inexistant -> 404", _sans)
+# ─────────── REPONSE-MANUELLE : CETTE ROUTE CREE AUSSI, DESORMAIS ───────────
+# L'ASSERTION D'AVANT EXIGEAIT UN 404 ICI, et c'est elle qui figeait le defaut :
+# un brouillon ne pouvait naitre que de l'analyse IA, donc le coach ne pouvait
+# PAS repondre de ses propres mots. Ecrire la ou il n'y a rien est desormais le
+# cas NORMAL — c'est ce que fait « Repondre » sur un dossier sans analyse.
+# Les gardes, elles, n'ont pas bouge : `_v309_require_coach_or_admin`, le filtre
+# de tenance et la propriete sont verifies AVANT, et sont eprouves ailleurs
+# dans ce banc.
+_avant_ecriture = len(_b[S.P3AI_BROUILLONS].documents)
+_r_ecrit = modifier("inb-zrhd5", "reponse ecrite a la main par le coach")
+_doc_ecrit = _r_ecrit["brouillon"]
+verifier("9ter-g. ecrire un brouillon la ou il n'y en avait pas -> cree",
+         _doc_ecrit is not None
+         and _doc_ecrit["reponse_proposee"] == "reponse ecrite a la main par le coach")
+verifier("9ter-g2. il porte le bon message",
+         _doc_ecrit["inbound_id"] == "inb-zrhd5")
+verifier("9ter-g3. son origine dit qu'il vient du coach, pas du modele",
+         _doc_ecrit.get("origine") == "coach")
+verifier("9ter-g4. il ne porte PAS de destinataire ecrit depuis la requete",
+         not _doc_ecrit.get("to_email"))
+verifier("9ter-g5. un seul document de plus, pas deux",
+         len(_b[S.P3AI_BROUILLONS].documents) == _avant_ecriture + 1)
 
 verifier("9ter-h. corriger ETU-04 ne touche pas le brouillon de LSN-A3",
          all(d["inbound_id"] != "inb-lsna3" or "corrige" not in d["reponse_proposee"]

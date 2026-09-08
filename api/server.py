@@ -27688,6 +27688,32 @@ async def p3ai_modifier_brouillon(inbound_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Un brouillon vide ne se garde pas")
 
     maintenant = datetime.now(timezone.utc).isoformat()
+    # ─────────── REPONSE-MANUELLE : CETTE ROUTE CREE AUSSI, DESORMAIS ────────
+    #
+    # LE DEFAUT QU'ELLE CORRIGE, MESURE LE 08/09/2026. Cette route etait en
+    # modification SEULE : `update_one` sans `upsert`, puis `404 Aucun
+    # brouillon a modifier`. Un brouillon ne pouvait donc naitre QUE de
+    # l'analyse IA. Cote ecran, la consequence etait exactement celle que
+    # Bassi decrit : « Repondre » et « Repondre quand meme » ouvrent bien le
+    # bloc, mais il n'y a NULLE PART OU ECRIRE — seulement « Generer une
+    # reponse avec l'IA ». Vouloir repondre de ses propres mots, ou repondre
+    # quand le modele est indisponible, etait impossible. Les boutons
+    # existaient, la reponse ne pouvait pas exister.
+    #
+    # `upsert=True` suffit, et ne relache AUCUNE garde : l'authentification
+    # coach/admin, le filtre de tenance (`p3ai_message_du_coach`) et la
+    # propriete (`p3ai_est_proprietaire`) sont deja passes plus haut.
+    #
+    # ⚠️ `to_email` N'EST TOUJOURS PAS ECRIT ICI, et surtout pas depuis le
+    # corps de la requete. Le destinataire reel est resolu au moment de
+    # l'envoi par `p3ai4_destinataire(message, action)`, en base. Un brouillon
+    # ecrit a la main ne peut donc pas changer l'adresse d'arrivee — c'est la
+    # garantie qui empeche une reponse d'etre detournee en falsifiant le
+    # navigateur, et elle vaut pour les deux origines de brouillon.
+    #
+    # `$setOnInsert` marque l'origine : un brouillon ecrit a la main n'est pas
+    # une analyse, et « Regenerer » doit pouvoir le dire plutot que d'ecraser
+    # en silence le texte du coach.
     resultat = await db[P3AI_BROUILLONS].update_one(
         {"inbound_id": message["id"]},
         {"$set": {"reponse_proposee": texte[:P3AI_REPONSE_MAX],
@@ -27697,10 +27723,14 @@ async def p3ai_modifier_brouillon(inbound_id: str, request: Request):
                   "motifs_validation": p3ai_sujets_sensibles(texte),
                   "validation_requise": bool(p3ai_sujets_sensibles(texte)),
                   "edite_le": maintenant, "edite_par": email,
-                  "updated_at": maintenant}})
-    if not getattr(resultat, "matched_count", 0):
-        raise HTTPException(status_code=404, detail="Aucun brouillon a modifier")
-    logger.info("%s brouillon corrige a la main pour %s par %s", P3AI_PREFIXE,
+                  "updated_at": maintenant},
+         "$setOnInsert": {"inbound_id": message["id"],
+                          "origine": "coach",
+                          "created_at": maintenant}},
+        upsert=True)
+    cree = not getattr(resultat, "matched_count", 0)
+    logger.info("%s brouillon %s a la main pour %s par %s", P3AI_PREFIXE,
+                "ecrit" if cree else "corrige",
                 message.get("recipient_key") or "-", email[:24])
     return {"brouillon": await db[P3AI_BROUILLONS].find_one(
         {"inbound_id": message["id"]}, {"_id": 0})}

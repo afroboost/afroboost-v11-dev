@@ -210,7 +210,19 @@ class CollectionBouchon:
         self.documents.append(candidat)
         return None
 
-    async def update_one(self, filtre, maj, *a, **k):
+    async def update_one(self, filtre, maj, upsert=False, *a, **k):
+        """Le vrai driver INSERE quand `upsert=True` et que rien ne correspond.
+
+        Ce bouchon avalait le drapeau dans `**k` et rendait `matched_count: 0`
+        sans rien ecrire — il MENTAIT donc sur une semantique que la production
+        utilise. Un banc qui verifiait « le document a ete cree » s'y serait cru
+        vert en mesurant le bouchon. (`test_aip4_envoi_reponse.py` avait deja
+        du redefinir cette methode chez lui pour cette raison exacte ; elle
+        remonte ici, ou les quatorze autres fichiers en profitent.)
+
+        AJOUT PUR : `upsert=False` par defaut, donc tout appelant existant se
+        comporte exactement comme avant.
+        """
         for d in self.documents:
             if self._ok(d, filtre):
                 candidat = dict(d)
@@ -218,8 +230,19 @@ class CollectionBouchon:
                 self._verifier_uniques(candidat, sauf=d)
                 d.update(maj.get("$set") or {})
                 self.ecritures += 1
-                return type("R", (), {"matched_count": 1, "modified_count": 1})()
-        return type("R", (), {"matched_count": 0, "modified_count": 0})()
+                return type("R", (), {"matched_count": 1, "modified_count": 1,
+                                      "upserted_id": None})()
+        if not upsert:
+            return type("R", (), {"matched_count": 0, "modified_count": 0,
+                                  "upserted_id": None})()
+        candidat = dict(filtre)
+        candidat.update(maj.get("$setOnInsert") or {})
+        candidat.update(maj.get("$set") or {})
+        self._verifier_uniques(candidat)
+        self.documents.append(candidat)
+        self.ecritures += 1
+        return type("R", (), {"matched_count": 0, "modified_count": 0,
+                              "upserted_id": candidat.get("id") or True})()
 
     async def insert_many(self, docs, *a, **k):
         for d in docs:

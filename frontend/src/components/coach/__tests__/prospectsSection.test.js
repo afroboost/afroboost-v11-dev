@@ -2364,3 +2364,195 @@ describe('GOOGLE-2 — la case « Synchroniser avec Google Calendar »', () => {
     expect(axios.post).toHaveBeenCalledTimes(1);
   });
 });
+
+/* ==========================================================================
+   REPONSE-MANUELLE — ON POUVAIT OUVRIR LE BLOC, PAS ECRIRE DEDANS
+   ==========================================================================
+   LE DEFAUT, MESURE LE 08/09/2026. « Repondre » et « Repondre quand meme »
+   ouvraient bien le bloc — mais la zone de saisie etait conditionnee a
+   l'existence d'un brouillon IA (`bro && carte.edition`). Sans analyse
+   prealable, le bloc s'ouvrait sur une phrase et un bouton « Generer une
+   reponse avec l'IA » : NULLE PART OU ECRIRE, rien a envoyer. Et cote
+   serveur, `PATCH /brouillon` etait en modification SEULE — un 404 « Aucun
+   brouillon a modifier » — donc meme un texte ecrit a la main n'aurait pas pu
+   etre range.
+   Ces tests verrouillent les deux moities.                                */
+describe('REPONSE-MANUELLE — écrire une réponse sans passer par l’IA', () => {
+  const SOURCE_S = require('fs').readFileSync(
+    require('path').join(__dirname, '..', '..', '..', '..', '..', 'api', 'server.py'), 'utf8');
+
+  const avecReponses = (messages) => {
+    const avecStatut = messages.map((m) => ({
+      ...m, statut_commercial: m.statut_commercial || 'a_repondre',
+    }));
+    const conversations = conversationsDe(avecStatut, null);
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect()], null, 142) },
+      campagnes: { etat: SECTION.OK, donnees: { total: 0, campaigns: [] } },
+      reponses: { etat: SECTION.OK,
+                  donnees: { messages: avecStatut, total: avecStatut.length, a_rattacher: 0,
+                             non_lues: 0, a_repondre: 1, appel_a_faire: 0, en_attente: 0,
+                             refus: 0, traite: 0, conversations,
+                             conversations_total: conversations.length,
+                             conversations_counts: compteursDe(conversations) } },
+    };
+  };
+  const ouvrir = async (indice = 0) => {
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 0, a_repondre: 1 } });
+    axios.get.mockResolvedValue({ data: { brouillon: null } });
+    await act(async () => {
+      tous('[data-testid="conversation-ligne"]')[indice].click();
+    });
+  };
+  const ecrire = async (texte) => {
+    await act(async () => { saisir(par('editeur-brouillon'), texte); });
+  };
+  const brouillonDe = (extra = {}) => ({
+    id: 'b-1', inbound_id: 'inb-etu04', action_id: 'act-1',
+    organisation: 'BDE HE-ARC', to_email: 'info@bde-hearc.ch',
+    intention: 'question', langue: 'fr', version: 1,
+    reponse_proposee: 'Bonjour, merci pour votre intérêt. Bassi',
+    validation_requise: false, motifs_validation: [], ...extra,
+  });
+
+  test('A. À RÉPONDRE → le composer est là, sans avoir rien demandé', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrir();
+    expect(par('bloc-reponse')).toBeTruthy();
+    expect(par('editeur-brouillon')).toBeTruthy();
+    // Le destinataire est nommé, sinon on écrit sans savoir à qui.
+    expect(par('bloc-reponse').textContent).toContain('RÉPONSE À');
+    // AUCUN appel d'analyse n'a été déclenché : écrire ne coûte pas un appel IA.
+    expect(axios.post.mock.calls.map((c) => String(c[0]))
+      .some((u) => u.includes('/analyser'))).toBe(false);
+  });
+
+  test('B. EN ATTENTE → « Répondre quand même » ouvre le composer', async () => {
+    avecReponses([reponseFictive({ statut_commercial: 'en_attente' })]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrir();
+    expect(par('editeur-brouillon')).toBeNull();
+    await act(async () => { par('repondre-quand-meme').click(); });
+    expect(par('editeur-brouillon')).toBeTruthy();
+    expect(axios.post.mock.calls.map((c) => String(c[0]))
+      .some((u) => u.includes('envoyer-reponse'))).toBe(false);
+  });
+
+  test('C. Annuler ne referme pas seulement : il n’envoie rien', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrir();
+    await ecrire('Bonjour, merci de votre message.');
+    await act(async () => { par('annuler-edition').click(); });
+    expect(par('editeur-brouillon')).toBeNull();
+    expect(par('ecrire-reponse')).toBeTruthy();   // on peut rouvrir
+    expect(axios.patch).not.toHaveBeenCalled();
+    expect(axios.post.mock.calls.map((c) => String(c[0]))
+      .some((u) => u.includes('envoyer-reponse'))).toBe(false);
+  });
+
+  test('D. une réponse vide ne peut pas partir', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrir();
+    expect(par('enregistrer-brouillon').disabled).toBe(true);
+    await ecrire('   ');
+    expect(par('enregistrer-brouillon').disabled).toBe(true);
+    await act(async () => { par('enregistrer-brouillon').click(); });
+    expect(axios.patch).not.toHaveBeenCalled();
+  });
+
+  test('E. double clic → un seul enregistrement', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrir();
+    await ecrire('Réponse écrite à la main.');
+    let debloquer;
+    axios.patch.mockImplementation(() => new Promise((res) => { debloquer = res; }));
+    await act(async () => { par('enregistrer-brouillon').click(); });
+    // Pendant l'envoi, le bouton est desactive : le second clic ne peut pas
+    // produire un second appel.
+    expect(par('enregistrer-brouillon').disabled).toBe(true);
+    await act(async () => { par('enregistrer-brouillon').click(); });
+    expect(axios.patch).toHaveBeenCalledTimes(1);
+    await act(async () => { debloquer({ data: { brouillon: brouillonDe() } }); });
+  });
+
+  test('F. erreur API → message visible ET texte conservé', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrir();
+    await ecrire('Un texte qu’il ne faut surtout pas perdre.');
+    axios.patch.mockRejectedValue(new Error('réseau'));
+    await act(async () => { par('enregistrer-brouillon').click(); });
+    expect(conteneur.textContent).toContain('Votre texte est conservé');
+    // Le composer reste ouvert, et le texte est toujours là.
+    expect(par('editeur-brouillon')).toBeTruthy();
+    expect(par('editeur-brouillon').value).toContain('ne faut surtout pas perdre');
+  });
+
+  test('G. succès → le texte enregistré devient le brouillon, et l’aperçu s’ouvre', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrir();
+    await ecrire('Réponse écrite à la main.');
+    axios.patch.mockResolvedValue({
+      data: { brouillon: { ...brouillonDe(), reponse_proposee: 'Réponse écrite à la main.' } } });
+    axios.get.mockResolvedValue({ data: {
+      organisation: 'BDE HE-Arc', destinataire: 'info@bde-hearc.ch',
+      objet: 'Re: Proposition', texte: 'Réponse écrite à la main.',
+      envoi_possible: false, deja_envoye: false, contexte_obsolete: false,
+      statut_commercial: 'a_repondre', motifs_validation: [] } });
+    await act(async () => { par('enregistrer-brouillon').click(); });
+    expect(par('reponse-proposee').textContent).toContain('écrite à la main');
+    // §6 — l'apercu SERVEUR s'ouvre : rien n'est parti, mais on voit quoi.
+    expect(par('confirmation-envoi')).toBeTruthy();
+    expect(par('apercu-destinataire').textContent).toBe('info@bde-hearc.ch');
+    // K — AUCUN envoi reel : la route d'envoi n'a jamais ete appelee.
+    expect(axios.post.mock.calls.map((c) => String(c[0]))
+      .some((u) => u.includes('envoyer-reponse'))).toBe(false);
+  });
+
+  /* ---- H / I / J : les gardes du SERVEUR, lues dans sa source ------------
+     Elles ne peuvent pas s'eprouver depuis le navigateur : ce sont
+     precisement les verifications que le navigateur ne fait pas. */
+  test('H. la route de brouillon exige un coach ou un admin', () => {
+    const i = SOURCE_S.indexOf('async def p3ai_modifier_brouillon');
+    const j = SOURCE_S.indexOf('\n@api_router', i);
+    const route = SOURCE_S.slice(i, j);
+    expect(route).toContain('_v309_require_coach_or_admin');
+  });
+
+  test('I. un identifiant falsifié ne donne pas accès au dossier d’un autre', () => {
+    const i = SOURCE_S.indexOf('async def p3ai_modifier_brouillon');
+    const j = SOURCE_S.indexOf('\n@api_router', i);
+    const route = SOURCE_S.slice(i, j);
+    // Filtre de tenance PUIS propriete : deux gardes, pas une.
+    expect(route).toContain('p3ai_message_du_coach');
+    expect(route).toContain('p3ai_est_proprietaire');
+  });
+
+  test('J. le destinataire ne vient JAMAIS du navigateur', () => {
+    const i = SOURCE_S.indexOf('async def p3ai_modifier_brouillon');
+    const j = SOURCE_S.indexOf('\n@api_router', i);
+    const route = SOURCE_S.slice(i, j);
+    // La route ne lit qu'un seul champ du corps.
+    expect(route).toContain('corps.get("reponse_proposee")');
+    expect(route.includes('corps.get("to_email")')).toBe(false);
+    expect(route.includes('corps.get("destinataire")')).toBe(false);
+    // Et l'apercu resout l'adresse en base, jamais depuis le brouillon.
+    expect(SOURCE_S).toContain('destinataire = p3ai4_destinataire(message, action)');
+  });
+
+  test('K. la route de brouillon peut désormais CRÉER, pas seulement modifier', () => {
+    const i = SOURCE_S.indexOf('async def p3ai_modifier_brouillon');
+    const j = SOURCE_S.indexOf('\n@api_router', i);
+    const route = SOURCE_S.slice(i, j);
+    expect(route).toContain('upsert=True');
+    // Le 404 qui rendait l'ecriture manuelle impossible a disparu.
+    expect(route.includes('Aucun brouillon a modifier')).toBe(false);
+    // L'origine est marquee : un texte du coach n'est pas une analyse.
+    expect(route).toContain('"origine": "coach"');
+  });
+});
