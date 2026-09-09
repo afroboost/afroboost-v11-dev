@@ -8308,6 +8308,9 @@ async def stripe_webhook(request: Request):
                     # passe en metadata — evite de le redemander dans l'espace abonne.
                     "whatsapp": (session.get("customer_details") or {}).get("phone") or metadata.get("customer_phone", "") or "",
                     "code": new_code,
+                    # CLE METIER : l'IDENTIFIANT. `offer_name` reste un instantane
+                    # d'affichage — renommer l'offre ne doit plus rien casser.
+                    "offer_id": str((metadata or {}).get("offer_id") or ""),
                     "offer_name": product_name,
                     "coach_id": _sub_coach_id,  # V237
                     "total_sessions": sessions_count,
@@ -8925,7 +8928,7 @@ async def admin_create_code(request: Request):
         if not _manual_coach_id and product_name:
             try:
                 _manual_offer = await db.offers.find_one(
-                    {"name": product_name}, {"_id": 0, "coach_id": 1}
+                    {"name": product_name}, {"_id": 0, "coach_id": 1, "id": 1}
                 )
                 if _manual_offer and _manual_offer.get("coach_id"):
                     _manual_coach_id = _manual_offer["coach_id"]
@@ -8938,6 +8941,7 @@ async def admin_create_code(request: Request):
             "id": str(uuid.uuid4()), "email": customer_email, "name": customer_name,
             "whatsapp": (body.get("whatsapp") or body.get("customer_phone") or ""),  # V251
             "code": new_code, "offer_name": product_name,
+            "offer_id": str((_manual_offer or {}).get("id") or ""),
             "coach_id": _manual_coach_id,  # V237
             "total_sessions": sessions_count, "used_sessions": 0,
             "remaining_sessions": sessions_count, "expires_at": None, "status": "active",
@@ -9522,6 +9526,7 @@ async def review_social_proof(proof_id: str, request: Request):
                 "id": str(uuid.uuid4()), "email": proof.get("client_email", ""),
                 "name": proof.get("client_name", ""), "whatsapp": proof.get("client_phone", ""),
                 "code": granted_code, "offer_name": offer.get("name") or proof.get("offer_name", ""),
+                "offer_id": str((offer or {}).get("id") or ""),
                 "coach_id": proof.get("coach_id") or DEFAULT_COACH_ID,
                 "total_sessions": sessions_count, "used_sessions": 0,
                 "remaining_sessions": sessions_count, "expires_at": None, "status": "active",
@@ -13976,10 +13981,30 @@ async def fix_all_stripe_amounts(request: Request):
     return {"success": True, "unique_codes": len(code_groups), "fixed": fixed_count, "results": results}
 
 
-async def _v426_offre_de_labonnement(offer_name: str, code_upper: str):
-    """V426 — resout l'offre d'un abonnement, en trois etapes DETERMINISTES :
+# Motifs de non-resolution — journalises tels quels, pour etre cherchables.
+OFFRE_ECHEC = "OFFER_RESOLUTION_FAILED"
+OFFRE_AMBIGU = "OFFER_RESOLUTION_AMBIGUOUS"
 
-    1. nom exact ; 2. nom desaccentue (repli V252) ; 3. PREUVE D'ACHAT.
+
+async def _v426_offre_de_labonnement(offer_name: str, code_upper: str, offer_id: str = ""):
+    """V426 — resout l'offre d'un abonnement. L'IDENTIFIANT D'ABORD, le nom ensuite.
+
+    0. `offer_id` ; 1. nom exact ; 2. nom desaccentue (repli V252) ; 3. PREUVE D'ACHAT.
+
+    ETAPE 0 — POURQUOI ELLE EXISTE (mesure du 09/09/2026). Le rapprochement se
+    faisait par NOM. Or `subscriptions.offer_name` fige le libelle AU MOMENT DE
+    L'ACHAT : renommer ou dupliquer une offre rend invisibles tous les
+    abonnements anterieurs. Constate en production sur le compte du proprietaire
+    — « Cours a l'unite test » et « Cours a l'unite (copie) » ne correspondaient
+    plus a aucune offre, et ces abonnes ne recevaient donc AUCUN rappel. Un nom
+    est un libelle d'affichage ; un identifiant est une cle metier.
+
+    UN `offer_id` PRESENT MAIS INTROUVABLE NE RETOMBE PAS SUR LE NOM. Ce serait
+    rattacher silencieusement un abonnement a une offre qui n'est peut-etre pas
+    la sienne. On renvoie None et on le dit.
+
+    UN NOM PORTE PAR PLUSIEURS OFFRES N'EST PAS TRANCHE. On ne choisit pas au
+    hasard : None, et le motif est journalise.
 
     L'etape 3 existe parce que `offer_name` stocke le `product_name` Stripe — un
     libelle commercial, pas un nom d'offre. « PULSE x10 cours (Membres) » ne
@@ -13990,7 +14015,26 @@ async def _v426_offre_de_labonnement(offer_name: str, code_upper: str):
     Partage par l'espace abonne ET par la reservation : l'affichage et le
     controle d'eligibilite ne peuvent donc pas diverger.
     """
-    offer = await db.offers.find_one({"name": offer_name}, {"_id": 0}) if offer_name else None
+    # 0) L'IDENTIFIANT. Seul lien qu'un renommage ne casse pas.
+    _oid = str(offer_id or "").strip()
+    if _oid:
+        _par_id = await db.offers.find_one({"id": _oid}, {"_id": 0})
+        if _par_id:
+            return _par_id
+        logger.warning("[OFFRE] %s : offer_id=%s introuvable — aucun repli sur le nom",
+                       OFFRE_ECHEC, _oid[:40])
+        return None
+
+    # 1) Nom exact. Deux offres du meme nom ne se departagent PAS.
+    if offer_name:
+        _homonymes = await db.offers.find({"name": offer_name}, {"_id": 0}).to_list(5)
+        if len(_homonymes) > 1:
+            logger.warning("[OFFRE] %s : %d offres portent le nom « %s » — aucune retenue",
+                           OFFRE_AMBIGU, len(_homonymes), str(offer_name)[:60])
+            return None
+        offer = _homonymes[0] if _homonymes else None
+    else:
+        offer = None
     if not offer and offer_name:
         _target_slug = _v252_slug_name(offer_name)
         for _o in await db.offers.find({}, {"_id": 0}).to_list(200):
@@ -14381,6 +14425,7 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
             if remaining_sessions is None:
                 remaining_sessions = max(0, total_sessions - used_sessions)
         offer_name = (subscription or {}).get("offer_name") or (discount or {}).get("name") or "Abonnement"
+        _offre_id_abo = (subscription or {}).get("offer_id") or ""
         expires_at = (subscription or {}).get("expires_at") or (discount or {}).get("expiresAt")
         coach_id_hint = (subscription or {}).get("coach_id") or (discount or {}).get("coach_id")
     elif subscription:
@@ -14392,6 +14437,8 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
         if remaining_sessions is None:
             remaining_sessions = max(0, (total_sessions or 0) - (used_sessions or 0))
         offer_name = subscription.get("offer_name") or (discount.get("name") if discount else "") or "Abonnement"
+        # L'IDENTIFIANT PASSE AVANT LE NOM (cf. `_v426_offre_de_labonnement`).
+        _offre_id_abo = subscription.get("offer_id") or ""
         expires_at = subscription.get("expires_at") or (discount.get("expiresAt") if discount else None)
         coach_id_hint = subscription.get("coach_id")
     else:
@@ -14401,6 +14448,7 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
         used_sessions = discount.get("used") or 0
         remaining_sessions = max(0, total_sessions - used_sessions)
         offer_name = discount.get("name") or "Abonnement"
+        _offre_id_abo = ""     # aucun abonnement ici : rien a identifier
         expires_at = discount.get("expiresAt")
         coach_id_hint = discount.get("coach_id")
 
@@ -14437,7 +14485,7 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
     # V252 : repli tolerant aux accents/apostrophes. V426 : repli par preuve
     # d'achat. Les deux vivent desormais dans `_v426_offre_de_labonnement`,
     # partage avec la reservation pour que les deux ne divergent jamais.
-    offer = await _v426_offre_de_labonnement(offer_name, code_upper)
+    offer = await _v426_offre_de_labonnement(offer_name, code_upper, _offre_id_abo)
 
     # V250: l'offre porte les cours qui lui sont rattaches (`linked_course_ids`).
     # Jusqu'ici ce champ etait ignore : l'espace affichait TOUS les cours du
@@ -15122,9 +15170,10 @@ async def subscriber_stripe_checkout(access_code: str, request: Request):
     try:
         _lotr_sub = await db.subscriptions.find_one(
             {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}},
-            {"_id": 0, "offer_name": 1})
+            {"_id": 0, "offer_name": 1, "offer_id": 1})
         _lotr_offre = await _v426_offre_de_labonnement(
-            (_lotr_sub or {}).get("offer_name") or "", code_upper)
+            (_lotr_sub or {}).get("offer_name") or "", code_upper,
+            (_lotr_sub or {}).get("offer_id") or "")
     except Exception as _lotr_e:
         logger.warning(f"[LOT R] offre du forfait {code_upper} non resolue: {_lotr_e}")
 
@@ -15658,7 +15707,8 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     #
     # Offre non resolue (`_v426_linked` vide) -> aucun refus : le comportement
     # historique est strictement conserve, aucun droit n'est retire.
-    _v426_offer = await _v426_offre_de_labonnement(subscription.get("offer_name"), code_upper)
+    _v426_offer = await _v426_offre_de_labonnement(subscription.get("offer_name"), code_upper,
+                                                   subscription.get("offer_id") or "")
     _v426_linked = (_v426_offer or {}).get("linked_course_ids") or []
     _v426_inclus = (not _v426_linked) or (course_id in _v426_linked)
 
@@ -40420,7 +40470,7 @@ async def _rvab_passage(now, zurich, demi, horizon, instant_du_cours, lire_cours
 
     from api.routes.shared import (
         rvab_abonnes_du_cours, rvab_fusionner, rvab_cle_envoi,
-        rvab_normaliser_email, RVAB_ORIGINE_ABONNEMENT,
+        rvab_normaliser_email, rvab_abonnement_actif, RVAB_ORIGINE_ABONNEMENT,
     )
 
     _recenses = _envoyes = 0
@@ -40429,11 +40479,9 @@ async def _rvab_passage(now, zurich, demi, horizon, instant_du_cours, lire_cours
             {"reminders_enabled": True}, {"_id": 0}).to_list(200)
         if not _cours_actifs:
             return {"actif": True, "recenses": 0, "envoyes": 0}
-        _offres = await db.offers.find(
-            {}, {"_id": 0, "name": 1, "linked_course_ids": 1}).to_list(500)
         _abos = await db.subscriptions.find(
             {"status": "active"},
-            {"_id": 0, "email": 1, "offer_name": 1, "status": 1,
+            {"_id": 0, "id": 1, "email": 1, "offer_name": 1, "offer_id": 1, "status": 1,
              "remaining_sessions": 1, "expires_at": 1, "code": 1}).to_list(3000)
     except Exception as _e:
         logger.warning("%s lecture impossible (%s)", RVAB_PREFIXE, type(_e).__name__)
@@ -40445,6 +40493,52 @@ async def _rvab_passage(now, zurich, demi, horizon, instant_du_cours, lire_cours
         _accent_ab = await _v259_primary_color()
     except Exception:
         _accent_ab = _V259_DEFAULT_COLOR
+
+    # ═══ L'OFFRE DE CHAQUE ABONNEMENT, RESOLUE UNE SEULE FOIS PAR PASSAGE ═══
+    #
+    # On appelle `_v426_offre_de_labonnement` — la MEME resolution que l'espace
+    # abonne et que la porte de reservation, pour qu'aucune des trois ne puisse
+    # diverger. Elle prend l'IDENTIFIANT d'abord ; le nom n'est qu'un repli pour
+    # les abonnements historiques qui n'en portent pas.
+    #
+    # LE RESULTAT EST MIS EN CACHE par (identifiant, nom, code) : 48 abonnements
+    # actifs ne doivent pas coûter 48 x N requetes a chaque passage horaire.
+    #
+    # L'EXCLUSION N'EST PLUS SILENCIEUSE. Un abonnement actif, non expire, dont
+    # l'offre reste introuvable est journalise avec son motif — c'est ce silence
+    # qui a fait chercher du cote du Push pendant que la cause etait ici.
+    _cache_offres: dict = {}
+    _entrees = []
+    _echecs = 0
+    for _a in _abos:
+        if not rvab_abonnement_actif(_a, now):
+            continue                      # expire / solde epuise : deja couvert
+        _mail = rvab_normaliser_email(_a.get("email"))
+        if not _mail:
+            continue
+        _cle_cache = (str(_a.get("offer_id") or ""), str(_a.get("offer_name") or ""),
+                      str(_a.get("code") or "").upper())
+        if _cle_cache not in _cache_offres:
+            try:
+                _cache_offres[_cle_cache] = await _v426_offre_de_labonnement(
+                    _a.get("offer_name") or "", _cle_cache[2], _a.get("offer_id") or "")
+            except Exception as _eo:
+                logger.warning("%s resolution d'offre impossible (%s)",
+                               RVAB_PREFIXE, type(_eo).__name__)
+                _cache_offres[_cle_cache] = None
+        _offre = _cache_offres[_cle_cache]
+        if not _offre:
+            _echecs += 1
+            logger.warning(
+                "%s %s subscription_id=%s email=%s*** offer_id=%s offer_name=%s",
+                RVAB_PREFIXE, OFFRE_ECHEC, _a.get("id") or "?", _mail[:3],
+                _a.get("offer_id") or "-", str(_a.get("offer_name") or "-")[:60])
+            continue
+        _entrees.append({"email": _mail, "abonnement": _a,
+                         "cours_ouverts": _offre.get("linked_course_ids") or []})
+    if _echecs:
+        logger.warning("%s %d abonnement(s) actif(s) ecarte(s) faute d'offre resoluble",
+                       RVAB_PREFIXE, _echecs)
 
     _codes_par_mail = {}
     for _a in _abos:
@@ -40491,7 +40585,7 @@ async def _rvab_passage(now, zurich, demi, horizon, instant_du_cours, lire_cours
                     r.get("userEmail") for r in _resas
                     if instant_du_cours(str(r.get("datetime") or "")) == _instant
                 ]
-                _mails_abo = rvab_abonnes_du_cours(_abos, _offres, _cid, now)
+                _mails_abo = rvab_abonnes_du_cours(_entrees, _cid, now)
                 for _mail, _origine in rvab_fusionner(_mails_resa, _mails_abo):
                     if _origine != RVAB_ORIGINE_ABONNEMENT:
                         continue          # déjà servi par sa réservation

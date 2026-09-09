@@ -5875,45 +5875,39 @@ def rvab_abonnement_actif(abonnement: dict, maintenant) -> bool:
         return True
 
 
-def rvab_offres_ouvrant_le_cours(offres, course_id: str) -> set:
-    """Noms des offres dont `linked_course_ids` contient CE cours.
+def rvab_abonnes_du_cours(entrees, course_id: str, maintenant) -> list:
+    """Adresses des abonnés ACTIFS dont l'offre RÉSOLUE ouvre ce cours précis.
 
-    On passe par le NOM parce que c'est ce que l'abonnement stocke
-    (`subscriptions.offer_name`) : l'identifiant d'offre n'y figure pas.
+    CHANGEMENT DE CLÉ MÉTIER (09/09/2026). Cette fonction rapprochait
+    l'abonnement de l'offre PAR LE NOM (`subscriptions.offer_name` ↔
+    `offers.name`). C'était faux : `offer_name` fige le libellé au moment de
+    l'achat, si bien qu'un renommage ou une copie rendait invisibles tous les
+    abonnements antérieurs. Mesuré en production sur le compte du propriétaire —
+    « Cours à l'unité test » ne correspondait plus à rien, et cet abonné ne
+    recevait aucun rappel.
+
+    L'offre est désormais résolue EN AMONT, par `_v426_offre_de_labonnement`
+    (identifiant d'abord, puis nom, puis preuve d'achat) — la MÊME fonction que
+    l'espace abonné et que la porte de réservation. Cette fonction-ci ne fait
+    plus que filtrer, et reste donc pure.
+
+    `entrees` : liste de dicts
+        {"email": str, "abonnement": dict, "cours_ouverts": [ids de cours]}
+    Un abonnement dont l'offre n'a pas pu être résolue n'a simplement pas
+    d'entrée — l'appelant l'a journalisé.
     """
     _cid = str(course_id or "").strip()
-    _noms = set()
     if not _cid:
-        return _noms
-    for _o in (offres or []):
-        if not isinstance(_o, dict):
-            continue
-        _lies = _o.get("linked_course_ids") or []
-        if any(str(_x).strip() == _cid for _x in _lies):
-            _nom = str(_o.get("name") or "").strip()
-            if _nom:
-                _noms.add(_nom)
-    return _noms
-
-
-def rvab_abonnes_du_cours(abonnements, offres, course_id: str, maintenant) -> list:
-    """Adresses des abonnés ACTIFS dont l'offre ouvre ce cours précis.
-
-    Un abonné dont l'offre ne mentionne pas ce cours n'est PAS rappelé : la
-    distinction existe déjà dans les données, on la respecte au lieu d'arroser.
-    """
-    _noms = rvab_offres_ouvrant_le_cours(offres, course_id)
-    if not _noms:
         return []
     _vus, _sortie = set(), []
-    for _a in (abonnements or []):
-        if not isinstance(_a, dict):
+    for _e in (entrees or []):
+        if not isinstance(_e, dict):
             continue
-        if str(_a.get("offer_name") or "").strip() not in _noms:
+        if not any(str(_c).strip() == _cid for _c in (_e.get("cours_ouverts") or [])):
             continue
-        if not rvab_abonnement_actif(_a, maintenant):
+        if not rvab_abonnement_actif(_e.get("abonnement") or {}, maintenant):
             continue
-        _mail = rvab_normaliser_email(_a.get("email"))
+        _mail = rvab_normaliser_email(_e.get("email"))
         if not _mail or _mail in _vus:
             continue
         _vus.add(_mail)

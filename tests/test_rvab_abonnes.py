@@ -18,7 +18,7 @@ sys.path.insert(0, RACINE)
 os.environ.setdefault("MONGO_URL", "mongodb://bouchon-rvab:27017")
 
 from api.routes.shared import (            # noqa: E402
-    rvab_abonnement_actif, rvab_offres_ouvrant_le_cours, rvab_abonnes_du_cours,
+    rvab_abonnement_actif, rvab_abonnes_du_cours,
     rvab_fusionner, rvab_cle_envoi,
     RVAB_ORIGINE_RESERVATION, RVAB_ORIGINE_ABONNEMENT,
 )
@@ -52,6 +52,12 @@ def abo(email, offre="Cours à l'unité", statut="active", restant=5, expire=Non
             "remaining_sessions": restant, "expires_at": expire}
 
 
+def entree(email, cours=(COURS,), **kw):
+    """Une entrée telle que le moteur la construit : l'offre est DÉJÀ résolue
+    (par identifiant), on ne passe plus par le nom."""
+    return {"email": email, "abonnement": abo(email, **kw), "cours_ouverts": list(cours)}
+
+
 print("\n--- A : QUI EST UN ABONNÉ ACTIF ---")
 verifie("abonnement actif, solde positif, sans échéance",
         rvab_abonnement_actif(abo("a@x.ch"), MAINTENANT))
@@ -70,17 +76,22 @@ verifie("solde INCONNU (None) -> accepté, on ne fabrique jamais un 0 (LOT A)",
 verifie("échéance illisible -> on ne prive pas sur un doute",
         rvab_abonnement_actif(abo("a@x.ch", expire="pas-une-date"), MAINTENANT))
 
-print("\n--- B : QUELLE OFFRE OUVRE QUEL COURS (carte existante) ---")
-verifie("l'offre liée au cours est retenue",
-        rvab_offres_ouvrant_le_cours(OFFRES, COURS) == {"Cours à l'unité"})
-verifie("une offre sans lien n'ouvre rien",
-        "T-shirt" not in rvab_offres_ouvrant_le_cours(OFFRES, COURS))
-verifie("cours inconnu -> aucune offre",
-        rvab_offres_ouvrant_le_cours(OFFRES, "cours-fantome") == set())
+print("\n--- B : L'OFFRE EST RÉSOLUE EN AMONT, PLUS RAPPROCHÉE PAR NOM ---")
+verifie("un abonné dont l'offre ouvre ce cours est retenu",
+        rvab_abonnes_du_cours([entree("a@x.ch")], COURS, MAINTENANT) == ["a@x.ch"])
+verifie("un abonné dont l'offre n'ouvre PAS ce cours est écarté",
+        rvab_abonnes_du_cours([entree("a@x.ch", cours=(AUTRE_COURS,))], COURS, MAINTENANT) == [])
+verifie("une offre sans cours lié n'ouvre rien",
+        rvab_abonnes_du_cours([entree("a@x.ch", cours=())], COURS, MAINTENANT) == [])
+verifie("cours inconnu -> personne",
+        rvab_abonnes_du_cours([entree("a@x.ch")], "cours-fantome", MAINTENANT) == [])
+verifie("le nom de l'offre n'entre plus dans la décision (renommage sans effet)",
+        rvab_abonnes_du_cours([entree("a@x.ch", offre="Nom totalement different")],
+                              COURS, MAINTENANT) == ["a@x.ch"])
 
 print("\n--- C : LES 6 PREMIERS CAS DU LOT ---")
 # 1. abonné actif, aucune réservation -> rappel OUI
-_dest = rvab_abonnes_du_cours([abo("abonne@x.ch")], OFFRES, COURS, MAINTENANT)
+_dest = rvab_abonnes_du_cours([entree("abonne@x.ch")], COURS, MAINTENANT)
 verifie("1. abonné actif sans réservation -> rappel", _dest == ["abonne@x.ch"])
 
 # 2. abonné actif + réservation -> UN SEUL rappel
@@ -97,12 +108,12 @@ verifie("3. non-abonné mais réservé -> rappel", _f3 == [("visiteur@x.ch", RVA
 verifie("4. ni abonné ni réservé -> aucun rappel", rvab_fusionner([], []) == [])
 
 # 5. abonnement expiré, aucune réservation -> NON
-_exp = abo("expire@x.ch", expire=(MAINTENANT - timedelta(days=2)).isoformat())
+_exp = entree("expire@x.ch", expire=(MAINTENANT - timedelta(days=2)).isoformat())
 verifie("5. abonnement expiré sans réservation -> aucun rappel",
-        rvab_abonnes_du_cours([_exp], OFFRES, COURS, MAINTENANT) == [])
+        rvab_abonnes_du_cours([_exp], COURS, MAINTENANT) == [])
 
 # 6. abonnement expiré MAIS réservation valide -> rappel par la voie réservation
-_f6 = rvab_fusionner(["expire@x.ch"], rvab_abonnes_du_cours([_exp], OFFRES, COURS, MAINTENANT))
+_f6 = rvab_fusionner(["expire@x.ch"], rvab_abonnes_du_cours([_exp], COURS, MAINTENANT))
 verifie("6. expiré mais réservé -> rappel par la réservation",
         _f6 == [("expire@x.ch", RVAB_ORIGINE_RESERVATION)])
 
@@ -112,16 +123,16 @@ _f8 = rvab_fusionner(["Meme@X.CH"], ["meme@x.ch  "])
 verifie("8. déduplication réelle malgré casse et espaces", len(_f8) == 1, str(_f8))
 
 verifie("un abonné PULSE n'est pas rappelé pour un cours que son offre n'ouvre pas",
-        rvab_abonnes_du_cours([abo("pulse@x.ch", offre="PULSE x10 cours")],
-                              OFFRES, COURS, MAINTENANT) == [])
+        rvab_abonnes_du_cours([entree("pulse@x.ch", cours=(AUTRE_COURS,))],
+                              COURS, MAINTENANT) == [])
 verifie("...mais il l'est pour le cours que son offre ouvre",
-        rvab_abonnes_du_cours([abo("pulse@x.ch", offre="PULSE x10 cours")],
-                              OFFRES, AUTRE_COURS, MAINTENANT) == ["pulse@x.ch"])
+        rvab_abonnes_du_cours([entree("pulse@x.ch", cours=(AUTRE_COURS,))],
+                              AUTRE_COURS, MAINTENANT) == ["pulse@x.ch"])
 verifie("un abonné sans adresse est ignoré, sans exception",
-        rvab_abonnes_du_cours([abo("")], OFFRES, COURS, MAINTENANT) == [])
+        rvab_abonnes_du_cours([entree("")], COURS, MAINTENANT) == [])
 verifie("deux abonnements de la même personne -> une seule adresse",
-        rvab_abonnes_du_cours([abo("double@x.ch"), abo("DOUBLE@x.ch")],
-                              OFFRES, COURS, MAINTENANT) == ["double@x.ch"])
+        rvab_abonnes_du_cours([entree("double@x.ch"), entree("DOUBLE@x.ch")],
+                              COURS, MAINTENANT) == ["double@x.ch"])
 
 print("\n--- E : CLÉ D'ANTI-DOUBLON (cas 9 et 10) ---")
 _occ = "2026-09-09T18:30:00"

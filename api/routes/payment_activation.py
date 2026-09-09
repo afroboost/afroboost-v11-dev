@@ -296,6 +296,8 @@ async def activate_after_payment(
                 "name": local_tx.get("customer_name", "") or customer_email.split("@")[0],
                 "whatsapp": local_tx.get("customer_phone", "") or "",
                 "code": access_code,
+                # L'identifiant voyage dans la transaction locale, comme pour Stripe.
+                "offer_id": str(local_tx.get("offer_id") or ""),
                 "offer_name": local_tx.get("pack_name") or "Abonnement Afroboost",
                 "total_sessions": sessions_count,
                 "used_sessions": 0,

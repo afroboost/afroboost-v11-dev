@@ -134,7 +134,8 @@ def _ns_promo(db):
     }
 
     async def _resolve_offer_details(courses_list, max_uses, offer_name_override=None):
-        return (int(max_uses or 1), offer_name_override or "Abonnement", None)
+        # 4e valeur : l'identifiant d'offre (cle metier depuis le 09/09/2026).
+        return (int(max_uses or 1), offer_name_override or "Abonnement", None, "")
 
     async def _rien(*a, **k):
         return None
