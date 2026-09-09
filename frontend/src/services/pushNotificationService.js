@@ -37,6 +37,136 @@ export const isSubscribed = () => {
   return localStorage.getItem(PUSH_SUBSCRIPTION_KEY) === 'true';
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// RENOUVELLEMENT DE L'ABONNEMENT PUSH — CE QUI MANQUAIT
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// LE DÉFAUT MESURÉ (09/09/2026). `isSubscribed()` ci-dessus lit un DRAPEAU
+// LOCAL, jamais le navigateur. Une fois posé, il reste `true` à vie. Or le
+// service de push révoque régulièrement un abonnement (réponse `410 Gone`) :
+// le serveur le désactivait bien, mais le téléphone, lui, croyait toujours
+// être inscrit et ne se réabonnait JAMAIS. Constat sur le compte du
+// propriétaire : le seul abonnement Android a répondu 410 le 06/09, et aucun
+// nouveau n'a été créé depuis — le téléphone était devenu injoignable en
+// silence.
+//
+// LA SEULE QUESTION QUI VAILLE est `pushManager.getSubscription()` : elle
+// interroge le navigateur, pas notre mémoire. C'est ce que font les fonctions
+// ci-dessous.
+//
+// AUCUNE LOGIQUE NOUVELLE. Elles reprennent, à l'identique, la réconciliation
+// déjà éprouvée du tableau de bord coach (P1-a..d) : état lu, abonnement
+// courant réutilisé s'il existe, recréé sinon, endpoint remplacé DÉCLARÉ au
+// serveur pour qu'il mette l'ancien au rebut. On la sort de l'écran coach pour
+// que la PWA en bénéficie aussi, au lieu d'en écrire une deuxième version qui
+// divergerait au premier correctif.
+
+/** Clé locale : le dernier endpoint que CE navigateur a fait enregistrer. */
+const CLE_DERNIER_ENDPOINT = 'af_push_last_endpoint';
+
+/**
+ * L'état des notifications, tel qu'on peut l'AFFICHER :
+ * 'non_supporte' | 'denied' | 'default' | 'granted'.
+ * Ne demande jamais rien, n'ouvre aucune popup.
+ */
+export const etatNotifications = () => {
+  // `'Notification' in window` reste VRAI si la propriété existe avec la valeur
+  // `undefined` — on ne s'en contente donc pas, sous peine de lire `.permission`
+  // sur rien du tout et de casser l'écran au lieu de se taire.
+  if (!isPushSupported() || typeof Notification === 'undefined' || !Notification) {
+    return 'non_supporte';
+  }
+  return Notification.permission;   // 'granted' | 'denied' | 'default'
+};
+
+/** Convertit la clé VAPID. Identique à l'existant, factorisée ici. */
+const enTableauOctets = (b64) => {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const base = (b64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const brut = window.atob(base);
+  const out = new Uint8Array(brut.length);
+  for (let i = 0; i < brut.length; ++i) out[i] = brut.charCodeAt(i);
+  return out;
+};
+
+/**
+ * Enregistre l'abonnement ET NOMME CELUI QU'IL REMPLACE.
+ *
+ * Le serveur ne peut pas deviner que deux endpoints viennent du même
+ * navigateur — rien dans les données ne le dit. Le navigateur, lui, le sait :
+ * il garde le dernier endpoint qu'il a fait enregistrer. C'est ce qui arrête
+ * l'accumulation (184 endpoints pour un ou deux appareils réels).
+ */
+export const enregistrerAbonnement = async (sub, { participantId, role, email }) => {
+  if (!sub || !participantId) return null;
+  const endpoint = sub.endpoint;
+  let precedent = null;
+  try { precedent = localStorage.getItem(CLE_DERNIER_ENDPOINT) || null; } catch (e) { /* navigation privée */ }
+  const reponse = await axios.post(`${API}/push/subscribe`, {
+    participant_id: participantId,
+    subscription: typeof sub.toJSON === 'function' ? sub.toJSON() : sub,
+    role: role || undefined,
+    email: email || undefined,
+    // Jamais l'endpoint courant : le serveur refuse déjà ce cas, mais on ne lui
+    // demande pas de nous protéger de nous-mêmes.
+    previous_endpoint: precedent && precedent !== endpoint ? precedent : null,
+  });
+  if (!reponse || !reponse.data || reponse.data.success !== true) return null;
+  try { localStorage.setItem(CLE_DERNIER_ENDPOINT, endpoint); } catch (e) { /* ignore */ }
+  try { localStorage.setItem(PUSH_SUBSCRIPTION_KEY, 'true'); } catch (e) { /* ignore */ }
+  // Relais pour le Service Worker : sans session, c'est son seul moyen de savoir
+  // au nom de qui déclarer une rotation d'endpoint.
+  try {
+    const c = await caches.open('afroboost-push-owner');
+    await c.put('owner', new Response(participantId));
+  } catch (e) { /* le cache n'est qu'un relais */ }
+  return endpoint;
+};
+
+/**
+ * RÉCONCILIE l'abonnement de CET appareil. À appeler à l'ouverture de l'app.
+ *
+ * N'OUVRE JAMAIS DE POPUP : si la permission n'est pas déjà accordée, on se
+ * contente de rendre l'état, et c'est l'interface qui proposera un bouton.
+ * C'est ce que les navigateurs exigent, et cela évite de harceler quiconque.
+ */
+export const assurerAbonnementPush = async ({ participantId, role, email } = {}) => {
+  const etat = etatNotifications();
+  if (etat !== 'granted' || !participantId) return { etat, abonne: false };
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    let sub = await registration.pushManager.getSubscription();
+    const existait = !!sub;
+    if (!sub) {
+      // La permission est DÉJÀ accordée : ce `subscribe` n'ouvre aucune popup.
+      const cle = (await axios.get(`${API}/push/vapid-key`)).data.publicKey;
+      if (!cle) return { etat, abonne: false, motif: 'vapid_absente' };
+      sub = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: enTableauOctets(cle),
+      });
+    }
+    const endpoint = await enregistrerAbonnement(sub, { participantId, role, email });
+    return { etat, abonne: !!endpoint, recree: !existait, endpoint };
+  } catch (e) {
+    return { etat, abonne: false, motif: (e && e.message) || 'erreur' };
+  }
+};
+
+/**
+ * Le clic sur « Activer les notifications ». SEUL endroit qui demande la
+ * permission — et uniquement sur un geste de l'utilisateur.
+ * Ne boucle jamais : si c'est refusé, on rend l'état et on n'insiste pas.
+ */
+export const activerNotifications = async ({ participantId, role, email } = {}) => {
+  if (!isPushSupported()) return { etat: 'non_supporte', abonne: false };
+  if (Notification.permission === 'denied') return { etat: 'denied', abonne: false };
+  const perm = await Notification.requestPermission();
+  markAsAsked();
+  if (perm !== 'granted') return { etat: perm, abonne: false };
+  return assurerAbonnementPush({ participantId, role, email });
+};
+
 /**
  * Convertit une clé base64 URL-safe en Uint8Array
  */
@@ -287,6 +417,10 @@ export default {
   isPushSupported,
   hasAskedForPermission,
   isSubscribed,
+  etatNotifications,
+  enregistrerAbonnement,
+  assurerAbonnementPush,
+  activerNotifications,
   registerServiceWorker,
   requestNotificationPermission,
   subscribeToPush,

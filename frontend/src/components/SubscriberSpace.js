@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { copyToClipboard } from "../utils/clipboard";
 import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 import CarteProfilSpordateur from './CarteProfilSpordateur'; // F3 SUITE — carte compacte vers la VRAIE page profil Spordateur
+import CarteNotifications from './CarteNotifications'; // PUSH-PWA — état des notifications + réactivation automatique
 // V334 etape 2 : « Mon cockpit » charge A LA DEMANDE (React.lazy).
 // Il embarque recharts, qui pese ~98 ko gzip : l'inclure dans le bundle
 // principal ferait payer ce poids a CHAQUE visiteur, pour une section repliee
@@ -1068,6 +1069,20 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             Non relié → « Profil social non encore activé ». Aucun `order` :
             suit l'ordre du DOM, jamais dans le parcours d'essai. */}
         <CarteProfilSpordateur />
+
+        {/* 🔔 PUSH-PWA — L'ABONNEMENT DE CET APPAREIL, RÉCONCILIÉ À CHAQUE OUVERTURE.
+            Le service de push révoque régulièrement un abonnement (« 410 ») ; le
+            serveur le désactive, mais rien ne le recréait : le téléphone devenait
+            injoignable en silence. Au montage, la carte relit l'abonnement RÉEL du
+            navigateur (jamais un drapeau local) et le recrée si la permission est
+            déjà accordée — sans ouvrir la moindre popup. Si elle n'a jamais été
+            demandée, elle propose un bouton ; si elle a été refusée, elle le dit une
+            fois et n'insiste plus. */}
+        <CarteNotifications
+          participantId={subscriber?.email ? `sub_${String(subscriber.email).toLowerCase()}` : null}
+          role="subscriber"
+          email={subscriber?.email || ''}
+        />
 
         {/* ═══ P2-UX SIMPLE — LA CONFIRMATION QUI MANQUAIT ═══════════════
             Elle prend la place de tete (`order: -2`, donc au-dessus du bloc
