@@ -233,5 +233,46 @@ verifie("le lieu est échappé (pas de balise injectée)", "<b>X</b>" not in _h_
 verifie("le lien du CTA est échappé (pas d'attribut injecté)",
         'onmouseover="x' not in _h_x)
 
+print("\n--- I : PUSH — DEUX PUBLICS, DEUX MESSAGES, DEUX CANAUX ---")
+_t_nb = S.rvab_push_titre("same_day:09:30", "18:30")
+_c_nb = S.rvab_push_corps("Cours à l'unité")
+_t_ok2 = S.n1b2_titre("same_day:09:30")
+_c_ok2 = S.n1b2_corps("same_day:09:30", "Cours à l'unité", "18:30")
+
+verifie("le push NON-RÉSERVÉ diffère du push RÉSERVÉ", _t_nb != _t_ok2 and _c_nb != _c_ok2)
+verifie("le push NON-RÉSERVÉ constate l'absence de réservation",
+        "pas encore réservé" in _c_nb)
+verifie("le push NON-RÉSERVÉ porte l'heure du cours", "18:30" in _t_nb)
+verifie("le push RÉSERVÉ ne dit JAMAIS « réserve »",
+        "réserv" not in (_t_ok2 + _c_ok2).lower())
+verifie("le push RÉSERVÉ n'a pas bougé (titre historique)",
+        _t_ok2 == "📅 Afroboost, c'est aujourd'hui", _t_ok2)
+
+_SRC = open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
+_bloc = _SRC[_SRC.find("async def _rvab_passage"):_SRC.find("async def notify_coach_new_message")]
+verifie("CAS C/D — les deux canaux sont testés SÉPARÉMENT",
+        "rv2_canal_autorise(_mail, RV2_CANAL_EMAIL)" in _bloc
+        and "rv2_canal_autorise(_mail, RV2_CANAL_PUSH)" in _bloc)
+verifie("un e-mail réussi ne remplace PAS le push (les deux sont tentés)",
+        "_ok = _ok_mail or _ok_push" in _bloc)
+verifie("CAS E/F — un push sans abonnement exploitable est JOURNALISÉ, pas compté",
+        "push non parti" in _bloc and "aucun \n" not in _bloc)
+verifie("CAS F — une panne push n'empêche pas l'e-mail (try séparés)",
+        _bloc.count("except Exception as _err") >= 2)
+verifie("CAS I — le push porte un deeplink exploitable par le service worker",
+        '"url": _lien or "/"' in _bloc and "course_reminder_not_booked" in _bloc)
+verifie("CAS H — le marqueur d'anti-doublon est posé AVANT les envois",
+        _bloc.find("insert_one") < _bloc.find("_ok_mail = await"))
+
+print("\n--- J : SÉCURITÉ — LES DEUX GABARITS ÉCHAPPENT ---")
+_charge = 'X<script>alert(1)</script>'
+for _nom, _fn in (("RÉSERVÉ", S.rv2_contenu_rappel),
+                  ("NON-RÉSERVÉ", S.rv2_contenu_rappel_non_reserve)):
+    _s2, _h2, _t2 = _fn(_charge, _charge, "jeudi", "18:30", "#D91CD2", "", "", "")
+    verifie("%s : le prénom et le cours sont échappés dans le HTML" % _nom,
+            "<script>" not in _h2, _h2[:0])
+    verifie("%s : la version TEXTE garde la valeur brute (pas du balisage)" % _nom,
+            "<script>" in _t2)
+
 print("\n%d PASS · %d FAIL\n" % (_ok, _ko))
 sys.exit(0 if _ko == 0 else 1)

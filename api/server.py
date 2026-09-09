@@ -37620,13 +37620,20 @@ def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
     else:
         _quand = ""
 
-    _bonjour = ("Bonjour %s," % prenom.strip()) if (prenom or "").strip() else "Bonjour,"
+    # SÉCURITÉ (dette d'origine, enfin traitée) : ce HTML est CONCATÉNÉ. `prenom`
+    # est saisi par le participant et `course_name` vient du tableau de bord :
+    # les deux sont désormais échappés AVANT d'entrer dans le balisage. La
+    # version TEXTE et le SUJET gardent la valeur brute — ce ne sont pas du HTML.
+    _prenom = (prenom or "").strip()
+    _bonjour = ("Bonjour %s," % _prenom) if _prenom else "Bonjour,"
+    _bonjour_h = ("Bonjour %s," % _e2_html(_prenom)) if _prenom else "Bonjour,"
+    _cours_h = _e2_html(_cours)
 
     _ligne_quand_html = ""
     if _quand:
         _ligne_quand_html = (
             '<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:0 0 8px;">'
-            'C&rsquo;est <strong style="color:%s;">%s</strong>.</p>' % (accent, _quand))
+            'C&rsquo;est <strong style="color:%s;">%s</strong>.</p>' % (accent, _e2_html(_quand)))
 
     # E2 — « OU ». L'adresse ne disparait JAMAIS parce que l'itineraire manque
     # ou a ete refuse par le filtre : c'est elle qui fait venir les gens, le
@@ -37667,7 +37674,7 @@ def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
         '%s%s%s'
         '<p style="color:rgba(255,255,255,0.6);line-height:1.6;margin:12px 0 0;font-size:13px;">'
         'À tout de suite, et pense à arriver un peu en avance.</p>'
-        '</div>' % (_bonjour, accent, _cours, _ligne_quand_html,
+        '</div>' % (_bonjour_h, accent, _cours_h, _ligne_quand_html,
                     _ligne_ou_html, _ligne_espace_html))
 
     _html = _email_wrapper("linear-gradient(135deg,#9333EA,%s)" % accent,
@@ -37716,6 +37723,11 @@ def rv2_contenu_rappel_non_reserve(prenom: str, course_name: str, date_lisible: 
     """
     from html import escape as _h
     _cours = (course_name or "ton cours").strip()
+    # SÉCURITÉ — ce HTML est CONCATÉNÉ : tout ce qui vient de la base est échappé
+    # avant d'y entrer. Les versions HTML et TEXTE divergent donc volontairement :
+    # `_cours_h`/`_prenom_h` pour le HTML, la valeur brute pour le texte et le
+    # sujet, qui ne sont pas du balisage.
+    _cours_h = _h(_cours)
     _heure = (heure or "").strip()
     _date = (date_lisible or "").strip()
 
@@ -37731,13 +37743,15 @@ def rv2_contenu_rappel_non_reserve(prenom: str, course_name: str, date_lisible: 
     else:
         _quand = ""
 
-    _bonjour = ("Bonjour %s," % prenom.strip()) if (prenom or "").strip() else "Bonjour,"
+    _prenom = (prenom or "").strip()
+    _bonjour = ("Bonjour %s," % _prenom) if _prenom else "Bonjour,"
+    _bonjour_h = ("Bonjour %s," % _h(_prenom)) if _prenom else "Bonjour,"
 
     _ligne_quand_html = ""
     if _quand:
         _ligne_quand_html = (
             '<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:0 0 8px;">'
-            'C&rsquo;est <strong style="color:%s;">%s</strong>.</p>' % (accent, _quand))
+            'C&rsquo;est <strong style="color:%s;">%s</strong>.</p>' % (accent, _h(_quand)))
 
     _lieu_p = (lieu or "").strip()
     _maps = (lieu_maps or "").strip()
@@ -37773,7 +37787,7 @@ def rv2_contenu_rappel_non_reserve(prenom: str, course_name: str, date_lisible: 
         '<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:12px 0 0;">'
         'Rejoins-nous pour une session pleine d&rsquo;énergie 💪</p>'
         '%s'
-        '</div>' % (_bonjour, accent, _cours, _ligne_quand_html,
+        '</div>' % (_bonjour_h, accent, _cours_h, _ligne_quand_html,
                     _ligne_ou_html, _ligne_cta_html))
 
     _html = _email_wrapper("linear-gradient(135deg,#9333EA,%s)" % accent, _corps_html, accent)
@@ -37792,6 +37806,22 @@ def rv2_contenu_rappel_non_reserve(prenom: str, course_name: str, date_lisible: 
                     "Ta réservation se fait avec les séances de ton abonnement."]
     _lignes += ["", "Afroboost — Move, Groove, Boost"]
     return _sujet, _html, "\n".join(_lignes)
+
+
+def rvab_push_titre(cle: str, heure: str) -> str:
+    """Titre du Push pour qui n'a PAS réservé. Distinct du titre historique, qui
+    reste intact — un banc le vérifie mot pour mot."""
+    _h = (" à %s" % heure) if heure else ""
+    if cle.startswith("same_day:"):
+        return "🔥 Afroboost aujourd'hui%s" % _h
+    return "🔥 Afroboost demain%s" % _h
+
+
+def rvab_push_corps(course_name: str) -> str:
+    """Corps du Push NON-RÉSERVÉ. Il CONSTATE l'absence de réservation et invite —
+    il n'affirme jamais une place ni une inscription."""
+    _c = (course_name or "ton cours").strip()
+    return "%s — tu n'as pas encore réservé ta place. Rejoins-nous !" % _c
 
 
 async def rv2_envoyer_email_rappel(destinataire: str, prenom: str, course_name: str,
@@ -40476,18 +40506,34 @@ async def _rvab_passage(now, zurich, demi, horizon, instant_du_cours, lire_cours
                             {"_id": _cle_envoi, "envoye_le": now.isoformat()})
                     except Exception:
                         continue          # clé déjà posée : un seul envoi, par construction
-                    _ok = False
+                    # DEUX CANAUX INDÉPENDANTS. Un e-mail réussi ne remplace pas
+                    # le Push, et l'échec de l'un ne condamne pas l'autre : chacun
+                    # a sa préférence, et le marqueur ne tient que si AU MOINS un
+                    # canal est réellement parti.
+                    _lien = rv2_lien_espace(_codes_par_mail.get(_mail, ""))
+                    _ok_mail = _ok_push = False
                     try:
                         if await rv2_canal_autorise(_mail, RV2_CANAL_EMAIL) and rv2_email_valide(_mail):
-                            _ok = await rv2_envoyer_email_rappel(
+                            _ok_mail = await rv2_envoyer_email_rappel(
                                 _mail, "", _c.get("name") or "ton cours",
                                 rv2_date_lisible(_instant.astimezone(zurich)),
                                 _c.get("time") or "", _accent_ab, "", "",
-                                rv2_lien_espace(_codes_par_mail.get(_mail, "")),
-                                non_reserve=True)
+                                _lien, non_reserve=True)
                     except Exception as _err:
-                        logger.warning("%s envoi impossible (%s)", RVAB_PREFIXE, type(_err).__name__)
-                        _ok = False
+                        logger.warning("%s e-mail impossible (%s)", RVAB_PREFIXE, type(_err).__name__)
+                    try:
+                        if await rv2_canal_autorise(_mail, RV2_CANAL_PUSH):
+                            _ok_push = await send_push_by_email(
+                                _mail, rvab_push_titre(_cle, _c.get("time") or ""),
+                                rvab_push_corps(_c.get("name") or ""),
+                                {"type": "course_reminder_not_booked",
+                                 "url": _lien or "/", "course_id": _cid})
+                            if not _ok_push:
+                                logger.info("%s push non parti pour %s*** — aucun "
+                                            "abonnement exploitable", RVAB_PREFIXE, _mail[:3])
+                    except Exception as _err:
+                        logger.warning("%s push impossible (%s)", RVAB_PREFIXE, type(_err).__name__)
+                    _ok = _ok_mail or _ok_push
                     if _ok:
                         _envoyes += 1
                     else:
