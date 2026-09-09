@@ -173,8 +173,20 @@ def tests():
     def bloc(txt, evt):
         d = txt.index("addEventListener('%s'" % evt)
         return txt[d:txt.index("});", d)]
-    verifier("F1. le handler `notificationclick` est INCHANGE",
-             bloc(ancien, "notificationclick") == bloc(SRC_SW, "notificationclick"), "")
+    # PUSH-CLIC : cette sonde comparait l'ARBRE DE TRAVAIL a 1fe9276 — le defaut
+    # que ce fichier decrit lui-meme dix lignes plus bas (« borner au COMMIT,
+    # jamais a l'arbre », deja vu en V442 et V443). Elle tombait donc des qu'un
+    # lot ULTERIEUR touchait le handler, ce qui est arrive : le clic d'un rappel
+    # doit desormais EMMENER la fenetre deja ouverte sur la page visee.
+    # Ce qui est verifie reste ce que V445 protegeait : V445 n'a pas touche au
+    # clic, et ce qu'il ouvre — `data.url` — n'a pas bouge depuis.
+    apres_v445 = subprocess.check_output(["git", "show", "ff5846d:frontend/public/sw.js"],
+                                         cwd=RACINE).decode()
+    verifier("F1. V445 n'a pas touche au handler `notificationclick`",
+             bloc(ancien, "notificationclick") == bloc(apres_v445, "notificationclick"), "")
+    verifier("F1b. et ce qu'il ouvre est toujours `data.url`",
+             "notification.data.url" in bloc(SRC_SW, "notificationclick")
+             and "event.action === 'close'" in bloc(SRC_SW, "notificationclick"), "")
 
     # V446 — CES SONDES SE JUGENT SUR LE LOT V445, PAS SUR L'ARBRE DE TRAVAIL.
     # Bornees a `git diff 1fe9276` (donc a l'arbre courant), elles tombaient des

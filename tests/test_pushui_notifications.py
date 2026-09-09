@@ -204,14 +204,47 @@ _APP = io.open(os.path.join(RACINE, "frontend", "src", "App.js"), encoding="utf-
 _CW = io.open(os.path.join(RACINE, "frontend", "src", "components", "ChatWidget.js"),
               encoding="utf-8").read()
 verifie("O1. application FERMÉE : le SW ouvre l'url de la notification",
-        "self.clients.openWindow(targetUrl)" in _clic)
-verifie("O2. application OUVERTE : App navigue vers la page visée",
-        "window.location.assign(url)" in _APP)
-verifie("O3. on ne recharge pas quand on y est déjà", "if (url !== ici)" in _APP)
+        "self.clients.openWindow(cible)" in _clic)
+verifie("O2. application OUVERTE : on emmène vraiment la fenêtre sur la page",
+        "client.navigate(cible)" in _clic or "window.location.assign(chemin)" in _APP)
+verifie("O3. on ne recharge pas quand on y est déjà",
+        "if (chemin !== ici)" in _APP and "client.url !== cible" in _clic)
 verifie("O4. le chat ne s'ouvre plus par-dessus une notification qui vise une page",
-        "url.indexOf('openChat') === -1) return;" in _CW)
+        "if (vise && vise !== '/') return;" in _CW)
 verifie("O5. la prospection garde son chemin (aucune régression READ-P2)",
         "prospection=1" in _APP and "prospection=1" in _CW)
+
+print("\n--- P : LA DESTINATION EST ABSOLUE (le defaut du 09/09) ---")
+# Le serveur envoie « https://afroboost.com/espace/<CODE> », pas un chemin.
+# Les gardes qui testaient `url.charAt(0) === '/'` ne se declenchaient donc
+# JAMAIS : rien ne naviguait, et le chat s'ouvrait par-dessus.
+verifie("P1. le lien de l'espace est bien ABSOLU (c'est la cause du defaut)",
+        S.rv2_lien_espace("AFR-9CB0A0").startswith("http"), S.rv2_lien_espace("AFR-9CB0A0"))
+# Le code EXECUTE, commentaires exclus : App.js explique le defaut en toutes
+# lettres, et une recherche brute prendrait cette explication pour du code.
+def _code_js(txt):
+    return "\n".join(l for l in txt.split("\n") if not l.strip().startswith("//"))
+verifie("P2. plus aucune garde ne suppose un chemin relatif",
+        "url.charAt(0) === '/'" not in _code_js(_APP)
+        and "url.charAt(0) === '/'" not in _code_js(_CW))
+verifie("P3. sw.js ramene toute destination a une url absolue",
+        "new URL(targetUrl, self.location.origin)" in _clic)
+verifie("P4. sw.js emmene la fenetre DEJA OUVERTE sur la page visee",
+        "client.navigate(cible)" in _clic
+        and "typeof client.navigate === 'function'" in _clic)
+verifie("P5. si `navigate` manque ou echoue, le message d'hier reste le repli",
+        ".catch(function () {" in _clic and "client.postMessage(message);" in _clic)
+verifie("P6. prospection et chat gardent le chemin par MESSAGE (READ-P2 intact)",
+        "var parMessage = (cible.indexOf('prospection=1') !== -1" in _clic
+        and "|| cible.indexOf('openChat') !== -1);" in _clic)
+verifie("P7. application fermee : la fenetre s'ouvre sur l'url absolue",
+        "self.clients.openWindow(cible)" in _clic)
+verifie("P8. App n'accepte que le MEME site (une url recue ne redirige pas ailleurs)",
+        "u.origin === window.location.origin" in _APP)
+verifie("P9. App navigue sur le chemin, pas sur l'url brute",
+        "window.location.assign(chemin)" in _APP)
+verifie("P10. le chat ne s'ouvre plus quand la notification vise une page",
+        "if (vise && vise !== '/') return;" in _CW)
 
 print("\n--- N : CE LOT N'ENVOIE RIEN ---")
 # La preuve se lit sur l'ARBRE du fichier, pas sur son texte : un banc qui

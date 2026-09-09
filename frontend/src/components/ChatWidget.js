@@ -2588,7 +2588,15 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       // « 🎟️ Réserver maintenant » n'ouvrirait jamais la réservation.
       // On ne garde donc ici que les notifications SANS destination propre :
       // celles du chat, dont l'url est `/?openChat=true` ou vide.
-      if (url && url.charAt(0) === '/' && url.indexOf('openChat') === -1) return;
+      // PUSH-CLIC : même correction qu'App.js. L'url d'un rappel est ABSOLUE
+      // (« https://afroboost.com/espace/<CODE> ») : la garde ne se déclenchait
+      // pas, et le chat s'ouvrait par-dessus l'espace que l'abonné venait de
+      // toucher. On reconnaît maintenant les deux formes.
+      if (url && url.indexOf('openChat') === -1) {
+        let vise = '';
+        try { vise = new URL(url, window.location.origin).pathname; } catch (e) { vise = ''; }
+        if (vise && vise !== '/') return;
+      }
       if (t === 'NOTIFICATION_CLICK' || t === 'OPEN_CHAT') {
         setIsOpen(true);
       }

@@ -4681,11 +4681,22 @@ function App() {
       // `/espace/<CODE>` ramenait donc l'abonné au premier plan… sur l'écran
       // qu'il avait quitté. On navigue, et seulement si la destination diffère
       // vraiment de la page affichée (sinon on rechargerait pour rien).
-      if (url && url.charAt(0) === '/' && url.indexOf('prospection=1') === -1
-          && url.indexOf('openChat') === -1) {
+      // PUSH-CLIC : LA DESTINATION EST ABSOLUE. `rv2_lien_espace` rend
+      // « https://afroboost.com/espace/<CODE> », pas « /espace/<CODE> » : la
+      // garde `url.charAt(0) === '/'` ne se déclenchait donc JAMAIS pour un
+      // rappel de cours, et rien ne naviguait. On accepte les deux formes, et
+      // on refuse tout ce qui sort du site (une url reçue ne redirige pas
+      // l'abonné ailleurs).
+      let chemin = '';
+      try {
+        const u = new URL(url, window.location.origin);
+        if (u.origin === window.location.origin) chemin = u.pathname + u.search;
+      } catch (e) { /* url illisible : aucune navigation */ }
+      if (chemin && chemin.indexOf('prospection=1') === -1
+          && chemin.indexOf('openChat') === -1) {
         try {
           const ici = window.location.pathname + window.location.search;
-          if (url !== ici) window.location.assign(url);
+          if (chemin !== ici) window.location.assign(chemin);
         } catch (e) { /* navigation impossible : l'onglet reste où il est */ }
         return;
       }
