@@ -14336,6 +14336,75 @@ async def _b3s13_porteur_autorise(request, code_upper, member_slug):
     return charge, "ok"
 
 
+async def _b3s1_renouveler_si_proche(charge):
+    """SESSION PERSISTANTE — prolonge la session de l'abonné QUI S'EN SERT.
+
+    Renvoie soit `{}` (rien à faire), soit les deux champs que le navigateur
+    doit ranger à la place des anciens. Le `jti` est CONSERVÉ : c'est la même
+    session qui continue, donc la même ligne révocable en base. Une session
+    révoquée ou expirée n'arrive jamais ici — la porte la refuse avant.
+
+    Aucun échec de renouvellement ne casse la lecture en cours : au pire
+    l'abonné garde son jeton actuel et retentera au prochain passage.
+    """
+    from api.routes.shared import (lotb3s1_doit_renouveler, lotb3s1_make_token,
+                                   LOTB3S1_JETON_JOURS)
+    try:
+        if not lotb3s1_doit_renouveler(charge):
+            return {}
+        _jti = charge.get("jti")
+        _jeton, _ = lotb3s1_make_token(
+            charge.get("code"), charge.get("email"), charge.get("coach_id"),
+            charge.get("slug"), jti=_jti)
+        if not _jeton:
+            return {}
+        _fin = datetime.now(timezone.utc) + timedelta(days=LOTB3S1_JETON_JOURS)
+        _maj = await db[_B3S1_COLL_SESSIONS].update_one(
+            {"jti": _jti, "revoked": {"$ne": True}},
+            {"$set": {"expires_at": _fin.isoformat(),
+                      "renewed_at": datetime.now(timezone.utc).isoformat()}})
+        # Si la session vient d'être révoquée entre la porte et ici, on ne rend
+        # PAS de jeton neuf : la révocation gagne toujours.
+        if not getattr(_maj, "modified_count", 0):
+            return {}
+        logger.info("[B3-S1] session prolongee (jti=%s)", str(_jti)[:8])
+        return {"espace_token": _jeton, "espace_token_expires_at": _fin.isoformat()}
+    except Exception as _err:
+        logger.warning("[B3-S1] renouvellement impossible (%s)", type(_err).__name__)
+        return {}
+
+
+@api_router.post("/subscriber/session/revoke")
+async def b3s1_revoquer_session(request: Request):
+    """SESSION PERSISTANTE — la déconnexion, côté serveur.
+
+    Se déconnecter en effaçant seulement le navigateur laisserait la session
+    VIVANTE en base : un jeton recopié ailleurs continuerait d'ouvrir l'espace
+    pendant 30 jours. On ferme donc la ligne, et c'est elle qui fait foi.
+
+    L'appelant s'authentifie avec le jeton qu'il révoque, et rien d'autre : on
+    ne peut fermer QUE sa propre session. Réponse toujours neutre — dire « cette
+    session n'existe pas » renseignerait sur les jetons des autres.
+    """
+    from api.routes.shared import lotb3s1_lire_token
+    try:
+        _entete = (request.headers.get("x-espace-token", "") or "").strip()
+    except Exception:
+        _entete = ""
+    charge = lotb3s1_lire_token(_entete)
+    if not charge or not charge.get("jti"):
+        return {"success": True}
+    try:
+        await db[_B3S1_COLL_SESSIONS].update_one(
+            {"jti": charge.get("jti")},
+            {"$set": {"revoked": True,
+                      "revoked_at": datetime.now(timezone.utc).isoformat()}})
+        logger.info("[B3-S1] session revoquee (jti=%s)", str(charge.get("jti"))[:8])
+    except Exception as _err:
+        logger.warning("[B3-S1] revocation impossible (%s)", type(_err).__name__)
+    return {"success": True}
+
+
 @api_router.get("/subscriber/space/{access_code}")
 async def get_subscriber_space(access_code: str, request: Request, m: Optional[str] = None):
     """V184: Données complètes de la page d'accès rapide d'un abonné.
@@ -14350,6 +14419,11 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
     if not _b3s13_charge:
         logger.warning("[B3-S1.3] espace refuse (motif=%s)", _b3s13_motif)
         raise _b3s13_refus()
+    # SESSION PERSISTANTE : la lecture qui reussit prolonge la session. Ces deux
+    # champs voyagent avec la reponse ; le navigateur les range a la place des
+    # anciens. Quand il n'y a rien a renouveler, le dictionnaire est vide et la
+    # reponse est EXACTEMENT celle d'avant.
+    _espace_renouv = await _b3s1_renouveler_si_proche(_b3s13_charge)
 
     # V201: Log pour diagnostic
     logger.info(f"[V202] subscriber/space code={code_upper}, member_slug={m}")
@@ -14464,6 +14538,7 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
         _expires = (subscription or {}).get("expires_at") or (discount or {}).get("expiresAt")
         _shared = (discount or {}).get("shared_sessions", True)
         return {
+            **_espace_renouv,
             "success": True,
             "multi_member": True,
             "shared_sessions": _shared,
@@ -14915,6 +14990,7 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
         logger.warning("[LOT B2] miroir d'affichage indisponible: %s", type(_b2_err).__name__)
 
     return {
+        **_espace_renouv,
         "success": True,
         "multi_member": is_multi,
         "member": {"slug": member.get("slug"), "name": member.get("name")} if member else None,

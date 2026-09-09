@@ -18,6 +18,7 @@ import { attributionEnregistrer, attributionActuelle } from "./utils/attribution
 // Elle n'accepte que le code renvoye par le serveur — jamais le localStorage,
 // jamais une reconstruction. Voir utils/essaiReservation.js.
 import { cibleRedirectionEssai, DELAI_REDIRECTION_ESSAI_MS } from "./utils/essaiReservation";
+import { lireSession as lireSessionEspace, urlDeLaSession, ESPACE_CLE_RETOUR } from "./utils/espaceSession"; // session abonnee persistante
 
 // V133: Intercepteur global — JWT prioritaire + fallback X-User-Email
 axios.interceptors.request.use((config) => {
@@ -69,17 +70,11 @@ axios.interceptors.request.use((config) => {
     //    serveur rejette l'un la ou il accepte l'autre (`type` different).
     //    Ecraser la cle V296 casserait le chat ; les deux cohabitent.
     if (!config.headers['X-Espace-Token']) {
-      const espaceBrut = localStorage.getItem('afroboost_espace_token');
-      if (espaceBrut) {
-        try {
-          const espace = JSON.parse(espaceBrut);
-          // Un jeton perime n'est pas envoye : inutile de faire refuser une
-          // requete que l'on sait deja perdue.
-          if (espace && espace.token && (!espace.expires_at || new Date(espace.expires_at) > new Date())) {
-            config.headers['X-Espace-Token'] = espace.token;
-          }
-        } catch (e) { /* entree illisible : on n'envoie rien */ }
-      }
+      // SESSION PERSISTANTE : la meme lecture que partout ailleurs. Cette
+      // copie-ci verifiait deja la peremption ; elle vit desormais dans
+      // `utils/espaceSession`, avec celle de l'espace abonne.
+      const espace = lireSessionEspace();
+      if (espace) config.headers['X-Espace-Token'] = espace.token;
     }
   } catch (e) { /* ignore */ }
   return config;
@@ -5551,6 +5546,38 @@ function App() {
     const handlePopState = () => checkCoachVitrine();
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  /* === SESSION ABONNÉE PERSISTANTE — LE RETOUR AU LANCEMENT ================
+     LE DÉFAUT MESURÉ. La session existait déjà et durait 30 jours (LOT B3-S1 :
+     jeton signé + `subscriber_sessions` révocable ; mesure du 09/09 : 19
+     sessions, toutes à +30 jours, aucune révoquée). Ce qui manquait n'était
+     donc PAS la persistance : c'était la PORTE. `start_url` de la PWA vaut
+     « / », et rien dans l'application ne ramenait l'abonné chez lui. Ouvrir
+     Afroboost installé menait à la vitrine, et il fallait retrouver son code
+     dans un vieil e-mail pour revenir dans son espace.
+     CE QUI EST FAIT ICI. Au LANCEMENT seulement — page d'accueil, aucun
+     paramètre, aucune session coach en cours — une session d'espace valide
+     rouvre l'espace de son propriétaire. Sans rechargement (`replaceState`),
+     donc sans aller-retour réseau.
+     UNE SEULE FOIS PAR OUVERTURE. Le pense-bête vit en sessionStorage : sans
+     lui, un abonné qui touche « Accueil » serait renvoyé dans son espace et ne
+     verrait plus jamais la vitrine. */
+  useEffect(() => {
+    try {
+      if (window.location.pathname !== '/' || window.location.search) return;
+      // Le coach est aussi un abonné : le renvoyer dans son espace à chaque
+      // ouverture du tableau de bord serait une régression pour lui.
+      if (localStorage.getItem('afroboost_coach_mode') === 'true'
+          || localStorage.getItem('afroboost_coach_user')) return;
+      if (sessionStorage.getItem(ESPACE_CLE_RETOUR)) return;
+      const session = lireSessionEspace();
+      const cible = urlDeLaSession(session);
+      if (!session || !cible) return;
+      sessionStorage.setItem(ESPACE_CLE_RETOUR, '1');
+      window.history.replaceState({}, '', cible);
+      setShowSubscriberSpace((session.code || '').toUpperCase());
+    } catch (e) { /* stockage indisponible : la vitrine reste, rien n'est cassé */ }
   }, []);
 
   // V184: Détecter l'URL /espace/:accessCode pour afficher la page d'accès rapide abonné

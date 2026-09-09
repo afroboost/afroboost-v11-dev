@@ -10,6 +10,7 @@ import ConversionApresEssai from './ConversionApresEssai'; // LOT A
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { copyToClipboard } from "../utils/clipboard";
+import { sessionPourEspace, ecrireSession, oublierSession } from "../utils/espaceSession";
 import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 import CarteProfilSpordateur from './CarteProfilSpordateur'; // F3 SUITE — carte compacte vers la VRAIE page profil Spordateur
 import CarteNotifications from './CarteNotifications'; // PUSH-PWA — état des notifications + réactivation automatique
@@ -114,36 +115,13 @@ function formatOccurrence(input) {
 // CLE ET EN-TETE DISTINCTS de V296 (`afroboost_subscriber_token` /
 // `X-Subscriber-Token`) : le serveur rejette l'un la ou il accepte l'autre, et
 // ecraser la cle du chat le casserait.
-const B3S1_CLE_JETON = "afroboost_espace_token";
-
-function b3s1LireJeton(code, slug) {
-  try {
-    const brut = window.localStorage.getItem(B3S1_CLE_JETON);
-    if (!brut) return null;
-    const j = JSON.parse(brut);
-    if (!j || !j.token) return null;
-    // Le jeton vaut pour UN code et UN membre : celui d'un autre espace ne doit
-    // jamais ouvrir celui-ci, meme sur le meme appareil.
-    if ((j.code || "") !== (code || "")) return null;
-    if ((j.slug || "") !== (slug || "")) return null;
-    if (j.expires_at && new Date(j.expires_at) <= new Date()) return null;
-    return j;
-  } catch (e) {
-    return null;
-  }
-}
-
-function b3s1EcrireJeton(code, slug, token, expiresAt) {
-  try {
-    window.localStorage.setItem(B3S1_CLE_JETON, JSON.stringify({
-      token, code: code || "", slug: slug || "", expires_at: expiresAt || null,
-    }));
-  } catch (e) { /* stockage indisponible : l'acces prime, on reidentifiera */ }
-}
-
-function b3s1OublierJeton() {
-  try { window.localStorage.removeItem(B3S1_CLE_JETON); } catch (e) { /* ignore */ }
-}
+// SESSION PERSISTANTE : la definition de « session valide » a quitte ce fichier
+// pour `utils/espaceSession`. Elle etait lue ici ET dans l'intercepteur axios
+// d'App.js ; un troisieme lecteur arrivait (le retour automatique au lancement),
+// et trois copies d'une meme regle finissent toujours par diverger.
+const b3s1LireJeton = sessionPourEspace;
+const b3s1EcrireJeton = ecrireSession;
+const b3s1OublierJeton = oublierSession;
 
 export default function SubscriberSpace({ accessCode: propCode }) {
   const accessCode = useMemo(() => {
@@ -238,6 +216,19 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         ? `${API}/subscriber/space/${encodeURIComponent(accessCode)}?m=${encodeURIComponent(memberSlug)}`
         : `${API}/subscriber/space/${encodeURIComponent(accessCode)}`;
       const res = await axios.get(url);
+      // SESSION PERSISTANTE : quand le serveur prolonge la session (il ne le
+      // fait qu'a l'approche de l'echeance), il renvoie un jeton neuf. On le
+      // range a la place de l'ancien, sinon la prolongation ne servirait a rien.
+      // ON N'APPELLE PAS `setJetonEspace` ICI, et ce n'est pas un oubli :
+      // l'effet de chargement DEPEND de cet etat. Y poser un objet neuf
+      // relancerait `loadSpace`, qui reposerait un objet neuf — la boucle
+      // d'appels que ce depot connait deja (regle absolue du CLAUDE.md).
+      // L'etat ne sert que de porte (« ai-je une session ? ») et la reponse
+      // reste OUI ; l'en-tete, lui, est relu du stockage a chaque requete.
+      if (res?.data?.espace_token) {
+        ecrireSession(accessCode, memberSlug, res.data.espace_token,
+                      res.data.espace_token_expires_at);
+      }
       setData(res.data);
     } catch (err) {
       const message = err?.response?.data?.detail || "Impossible de charger ton espace abonné.";
@@ -273,6 +264,28 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   }, [renvoiDispoA, jetonEspace]);
 
   const b3s1Secondes = Math.max(0, Math.ceil((renvoiDispoA - maintenantSec) / 1000));
+
+  // ── Se deconnecter ───────────────────────────────────────────────────────
+  // EFFACER LE NAVIGATEUR NE SUFFIT PAS. La session vivrait encore 30 jours en
+  // base, et un jeton recopie ailleurs continuerait d'ouvrir cet espace. On
+  // demande donc la revocation AVANT d'oublier quoi que ce soit — sinon on
+  // n'aurait plus le jeton qui prouve qu'on a le droit de la fermer.
+  const [deconnexionEnCours, setDeconnexionEnCours] = useState(false);
+  const b3s1SeDeconnecter = useCallback(async () => {
+    setDeconnexionEnCours(true);
+    try {
+      await axios.post(`${API}/subscriber/session/revoke`, {});
+    } catch (e) {
+      // Le serveur injoignable ne doit pas retenir quelqu'un dans son espace :
+      // on oublie quand meme cote navigateur, et la session finira par expirer.
+    }
+    oublierSession();
+    setJetonEspace(null);
+    setData(null);
+    // On quitte l'espace : rester sur `/espace/<CODE>` reafficherait l'ecran
+    // d'identification, ce qui donne l'impression d'un echec.
+    try { window.location.assign("/"); } catch (e) { /* ignore */ }
+  }, []);
 
   // ── Demander le code a 6 chiffres ────────────────────────────────────────
   const b3s1DemanderCode = useCallback(async () => {
@@ -2135,6 +2148,23 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           >
             <span className="inline-flex items-center gap-1.5"><SvgIcon name="clipboard" size={14} /> Conditions d'utilisation</span>
           </a>
+        </div>
+
+        {/* ===== SESSION PERSISTANTE : la sortie explicite =====
+            Afroboost reconnait desormais l'abonne d'une ouverture a l'autre.
+            Il faut donc un moyen clair de dire « ce n'est plus mon telephone » :
+            c'est CE bouton, et lui seul, qui remet le code d'acces en jeu. */}
+        <div className="text-center pb-2">
+          <button
+            type="button"
+            onClick={b3s1SeDeconnecter}
+            disabled={deconnexionEnCours}
+            data-testid="espace-deconnexion"
+            className="text-xs underline disabled:opacity-40"
+            style={{ color: "rgba(255,255,255,0.5)" }}
+          >
+            {deconnexionEnCours ? "Déconnexion…" : "Se déconnecter de cet appareil"}
+          </button>
         </div>
       </div>
 

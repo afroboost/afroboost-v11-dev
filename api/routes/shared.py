@@ -5415,6 +5415,20 @@ LOTB3S1_RENVOI_SECONDES = 120     # anti-renvoi, calqué sur auth_routes.py:660
 LOTB3S1_DEMANDES_MAX = 3          # sur la fenêtre ci-dessous
 LOTB3S1_FENETRE_MINUTES = 10      # même barème que /subscriber/recover
 LOTB3S1_JETON_JOURS = 30
+# SESSION PERSISTANTE — LE RENOUVELLEMENT GLISSANT.
+#
+# Un jeton de 30 jours FIXES finit toujours par tomber, et il tombe sur
+# quelqu'un qui se sert de son espace toutes les semaines : le 31e jour, on lui
+# redemande un code par e-mail alors qu'il n'a jamais cessé de venir. On
+# prolonge donc la session de l'abonné QUI S'EN SERT, sans jamais prolonger
+# celle qu'on a oubliée : à moins de ce nombre de jours de la fin, une lecture
+# réussie de l'espace réémet un jeton neuf.
+#
+# LE `jti` NE CHANGE PAS. C'est ce qui distingue un renouvellement d'une
+# nouvelle session : la révocation continue de porter sur la même ligne en base,
+# et une session révoquée ne peut pas se ressusciter en se renouvelant — la
+# porte vérifie la révocation AVANT d'en arriver là.
+LOTB3S1_RENOUVELLEMENT_JOURS = 7
 
 # La réponse est TOUJOURS celle-ci, que le code existe ou non, que l'e-mail
 # corresponde ou non. C'est ce qui empêche la route de servir d'oracle : on ne
@@ -5542,6 +5556,28 @@ def lotb3s1_make_token(code, email, coach_id, member_slug=None, jti=None,
     except Exception as _err:
         logger.warning("[B3-S1] jeton non emis (%s)", type(_err).__name__)
         return "", ""
+
+
+def lotb3s1_doit_renouveler(charge, maintenant=None, seuil_jours=LOTB3S1_RENOUVELLEMENT_JOURS):
+    """Ce jeton approche-t-il de sa fin au point de mériter un jeton neuf ?
+
+    Fonction PURE : elle ne lit ni base ni horloge imposée. Un jeton sans `exp`
+    ne se renouvelle pas — on ne devine pas une échéance qui n'est pas écrite.
+    Un jeton DÉJÀ expiré ne se renouvelle pas non plus : il ne serait jamais
+    arrivé jusqu'ici, et le prolonger reviendrait à ressusciter une session
+    morte.
+    """
+    try:
+        _exp = int((charge or {}).get("exp") or 0)
+    except (TypeError, ValueError):
+        return False
+    if _exp <= 0:
+        return False
+    _now = maintenant or datetime.now(timezone.utc)
+    _restant = _exp - int(_now.timestamp())
+    if _restant <= 0:
+        return False
+    return _restant <= int(seuil_jours) * 86400
 
 
 def lotb3s1_lire_token(jeton):

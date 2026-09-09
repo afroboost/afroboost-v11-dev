@@ -17,6 +17,16 @@ import path from 'path';
 import { EVENEMENTS_FUNNEL } from '../funnelEssai';
 
 const APP = fs.readFileSync(path.join(__dirname, '..', '..', 'App.js'), 'utf8');
+// SESSION PERSISTANTE : le CODE EXECUTE, commentaires exclus. App.js explique
+// desormais en toutes lettres pourquoi une url `/espace/<CODE>` ne doit pas se
+// fabriquer ici — et une recherche de texte brute prenait cette explication
+// pour du code. La garantie, elle, ne bouge pas : c'est bien le code qui est
+// verifie, et c'est meme la seule chose qui pouvait envoyer quelqu'un ailleurs.
+const APP_CODE = APP
+  .split('\n')
+  .filter((l) => l.trim().indexOf('//') !== 0)
+  .join('\n')
+  .replace(/\/\*[\s\S]*?\*\//g, '');
 // ESSAI-7 : le funnel ne s'arrete plus a la vitrine. `session_booked` part de
 // l'espace participant, ou la reservation est REELLEMENT confirmee.
 const ESPACE = fs.readFileSync(
@@ -189,7 +199,7 @@ describe('la redirection apres octroi', () => {
     // d'un ancien achat) enverrait la personne sur l'espace de quelqu'un
     // d'autre — ou sur un 404 juste apres un essai reellement accorde.
     // La seule fabrication autorisee vit dans `utils/essaiReservation.js`.
-    expect(APP).not.toMatch(/['"`]\/espace\//);
+    expect(APP_CODE).not.toMatch(/['"`]\/espace\//);
   });
 
   test('App.js delegue la decision a cibleRedirectionEssai', () => {
