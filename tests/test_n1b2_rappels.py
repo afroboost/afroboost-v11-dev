@@ -10,6 +10,9 @@ from zoneinfo import ZoneInfo
 
 SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api", "server.py")
 A_EXTRAIRE = {"n1b2_cle", "n1b2_titre", "n1b2_corps", "n1b2_cible",
+              # PUSH-UI : le titre du jour meme s'appuie dessus depuis que le
+              # rappel porte le moment de la journee et l'heure.
+              "push_ui_heure", "push_ui_moment", "push_ui_titre",
               "n1b2_valider_regles", "n1b_deja_envoye",
               "n1b3b2_plan", "n1b3b2_regles_trop_proches", "n1b3b2_collisions",
               # N1B-3B2 : les DEUX routes sont extraites comme le reste. Le
@@ -353,7 +356,7 @@ verifier("corps 24 h", CORPS("relative:1440m", "Danse Afro", "19:00"),
 verifier("corps 48 h", CORPS("relative:2880m", "Danse Afro", "19:00"),
          "Danse Afro après-demain à 19:00. Pense à garder ce moment pour toi 🎧")
 verifier("corps jour meme", CORPS("same_day:07:00", "Danse Afro", "19:00"),
-         "Danse Afro aujourd'hui à 19:00. À tout à l'heure 🎧🔥")
+         "🎧 Danse Afro — ta place est réservée ! Prépare-toi, on se retrouve à 19:00 💪🏾")
 
 # Heure absente : la portion horaire disparait sans ponctuation orpheline.
 verifier("sans heure — 1 h", CORPS("defaut", "Danse Afro", ""),
@@ -365,7 +368,7 @@ verifier("sans heure — 24 h", CORPS("relative:1440m", "Danse Afro", ""),
 verifier("sans heure — 48 h", CORPS("relative:2880m", "Danse Afro", ""),
          "Danse Afro après-demain. Pense à garder ce moment pour toi 🎧")
 verifier("sans heure — jour meme", CORPS("same_day:07:00", "Danse Afro", ""),
-         "Danse Afro aujourd'hui. À tout à l'heure 🎧🔥")
+         "🎧 Danse Afro — ta place est réservée ! Prépare-toi, on se retrouve tout à l'heure 💪🏾")
 
 # Aucun corps ne doit contenir « à  » double, « à.» ou une virgule orpheline.
 _anomalies = []
@@ -444,8 +447,11 @@ verifier("07:00 et 07:30 restent deux regles distinctes",
          NS["n1b2_valider_regles"]([SD7, SD730]), [SD7, SD730])
 
 # Le titre reste celui de la famille same_day, quelle que soit la minute.
+# PUSH-UI : le libelle du jour meme passe en capitales avec l'heure. Ce qui
+# est verifie ici reste le MEME invariant qu'avant : la minute de la regle
+# (07:00 / 07:30) ne doit rien changer au titre — seule l'heure du COURS compte.
 verifier("titre same_day identique a la demi-heure",
-         NS["n1b2_titre"]("same_day:07:30"), "📅 Afroboost, c'est aujourd'hui")
+         NS["n1b2_titre"]("same_day:07:30", "19:00"), "🎧 AFROBOOST CE SOIR — 19H00")
 
 # === N1B-3B2 : jamais deux notifications rapprochees ========================
 PLAN = NS["n1b3b2_plan"]
@@ -453,10 +459,12 @@ TROP_PROCHES = NS["n1b3b2_regles_trop_proches"]
 COLLISIONS = NS["n1b3b2_collisions"]
 
 # Libelle C4, tranche par le coach.
-verifier("titre C4 — jour meme", NS["n1b2_titre"]("same_day:07:00"),
-         "📅 Afroboost, c'est aujourd'hui")
+verifier("titre C4 — jour meme", NS["n1b2_titre"]("same_day:07:00", "19:00"),
+         "🎧 AFROBOOST CE SOIR — 19H00")
+verifier("titre C4 — sans heure, aucun tiret orphelin",
+         NS["n1b2_titre"]("same_day:07:00"), "🎧 AFROBOOST AUJOURD'HUI")
 verifier("corps C4 — exemple du coach", CORPS("same_day:07:00", "Danse Afro", "08:00"),
-         "Danse Afro aujourd'hui à 08:00. À tout à l'heure 🎧🔥")
+         "🎧 Danse Afro — ta place est réservée ! Prépare-toi, on se retrouve à 08:00 💪🏾")
 # Les quatre autres titres ne bougent pas.
 verifier("titre 1 h inchange", NS["n1b2_titre"]("defaut"), "📅 Ton cours commence dans 1h")
 verifier("titre 3 h inchange", NS["n1b2_titre"]("relative:180m"), "📅 Ton cours commence dans 3h")

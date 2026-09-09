@@ -91,11 +91,35 @@ _V184_WEEKDAY_LABELS_FR = ["lundi", "mardi", "mercredi", "jeudi",
                            "vendredi", "samedi", "dimanche"]
 """
 
+
+def constante(nom):
+    """La valeur REELLE du fichier, jamais une recopie.
+
+    PUSH-UI : ces constantes decrivent l'APPARENCE envoyee au telephone. Les
+    recopier ici garantirait qu'un jour le banc valide un libelle que personne
+    ne recoit plus. On lit donc l'affectation du vrai `server.py`.
+    """
+    for n in ARBRE.body:
+        if isinstance(n, ast.Assign) and any(
+                isinstance(c, ast.Name) and c.id == nom for c in n.targets):
+            return "".join(LIGNES[n.lineno - 1:n.end_lineno])
+    raise AssertionError("constante introuvable : %s" % nom)
+
+
+CONSTANTES += "\n" + "\n".join(constante(n) for n in (
+    "PUSH_UI_VIBRATION", "PUSH_UI_IMAGE_COURS", "PUSH_UI_FERMER",
+    "PUSH_UI_ACTIONS_RESERVER", "PUSH_UI_ACTIONS_MON_COURS"))
+
 A_EXTRAIRE = ["_v259_primary_rgb", "_email_wrapper",
               "_v184_parse_time_hhmm", "_v184_next_occurrences",
               "e1b_cours_encore_servi", "e1b_seance_encore_au_planning",
               "_v184_public_origin", "rv2_lien_espace",
               "n1b2_cle", "n1b2_cible", "n1b2_titre", "n1b2_corps",
+              # PUSH-UI : `n1b2_titre` et les deux sites d'appel s'appuient
+              # desormais dessus. Sans elles, le push echoue en silence et la
+              # moitie du banc tombe sans dire pourquoi.
+              "push_ui_heure", "push_ui_moment", "push_ui_titre",
+              "push_ui_tag_cours",
               "n1b2_valider_regles", "n1b3b2_plan", "n1b2_regles_du_coach",
               "n1b3b2_regles_trop_proches", "rv3_ecrire_rappels_du_cours",
               "rv2_deja_envoye", "rv2_normaliser_marqueur", "rv2_reserver_canal",

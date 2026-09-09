@@ -2582,6 +2582,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       // de demander à voir. On regarde donc l'url portée par la notification.
       const url = (event.data && event.data.url) || '';
       if (url.indexOf('prospection=1') !== -1) return;
+      // PUSH-UI : MÊME RAISON, AUTRE NOTIFICATION. Un rappel de cours vise une
+      // PAGE (`/espace/<CODE>`), pas le chat. Ouvrir le widget par-dessus
+      // reviendrait à cacher exactement ce que l'abonné vient de toucher — et
+      // « 🎟️ Réserver maintenant » n'ouvrirait jamais la réservation.
+      // On ne garde donc ici que les notifications SANS destination propre :
+      // celles du chat, dont l'url est `/?openChat=true` ou vide.
+      if (url && url.charAt(0) === '/' && url.indexOf('openChat') === -1) return;
       if (t === 'NOTIFICATION_CLICK' || t === 'OPEN_CHAT') {
         setIsOpen(true);
       }

@@ -247,17 +247,25 @@ verifie("le lien du CTA est échappé (pas d'attribut injecté)",
 print("\n--- I : PUSH — DEUX PUBLICS, DEUX MESSAGES, DEUX CANAUX ---")
 _t_nb = S.rvab_push_titre("same_day:09:30", "18:30")
 _c_nb = S.rvab_push_corps("Cours à l'unité")
-_t_ok2 = S.n1b2_titre("same_day:09:30")
+_t_ok2 = S.n1b2_titre("same_day:09:30", "18:30")
 _c_ok2 = S.n1b2_corps("same_day:09:30", "Cours à l'unité", "18:30")
 
 verifie("le push NON-RÉSERVÉ diffère du push RÉSERVÉ", _t_nb != _t_ok2 and _c_nb != _c_ok2)
 verifie("le push NON-RÉSERVÉ constate l'absence de réservation",
         "pas encore réservé" in _c_nb)
-verifie("le push NON-RÉSERVÉ porte l'heure du cours", "18:30" in _t_nb)
-verifie("le push RÉSERVÉ ne dit JAMAIS « réserve »",
-        "réserv" not in (_t_ok2 + _c_ok2).lower())
-verifie("le push RÉSERVÉ n'a pas bougé (titre historique)",
-        _t_ok2 == "📅 Afroboost, c'est aujourd'hui", _t_ok2)
+# PUSH-UI : l'heure s'affiche 18H30 (format d'affiche). C'est toujours
+# l'heure DU COURS, et elle est toujours dans le titre — seul le style change.
+verifie("le push NON-RÉSERVÉ porte l'heure du cours", "18H30" in _t_nb, _t_nb)
+# PUSH-UI : le message RÉSERVÉ CONSTATE la place tenue (« ta place est
+# réservée »). Ce qu'il ne doit jamais faire, c'est INVITER a reserver
+# quelqu'un qui a deja sa place — c'est cela, et cela seul, qui est verifie.
+verifie("le push RÉSERVÉ n'invite JAMAIS à réserver",
+        "réserver" not in (_t_ok2 + _c_ok2).lower()
+        and "réserve ta place" not in (_t_ok2 + _c_ok2).lower(), _c_ok2)
+verifie("le push RÉSERVÉ annonce la place tenue",
+        "ta place est réservée" in _c_ok2, _c_ok2)
+verifie("le push RÉSERVÉ porte le nouveau titre PUSH-UI",
+        _t_ok2 == "🎧 AFROBOOST CE SOIR — 18H30", _t_ok2)
 
 _SRC = open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
 _bloc = _SRC[_SRC.find("async def _rvab_passage"):_SRC.find("async def notify_coach_new_message")]

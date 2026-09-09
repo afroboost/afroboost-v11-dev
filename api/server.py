@@ -37242,16 +37242,30 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
     # payload (cf. sw.js). On les y expose : au clic, la notification ouvre le
     # chat (`/?openChat=true` par defaut) au lieu de la seule page d'accueil.
     _push_url = (data or {}).get("url") or "/?openChat=true"
-    payload = json.dumps({
+    _corps_payload = {
         "title": title, "body": body,
         "icon": "/logo192.png", "badge": "/notification-badge-96.png",  # V445 : le badge
         # Android n'est qu'un masque alpha — le logo couleur y donnait un carre blanc.
-        # (Le Service Worker code ses propres valeurs en dur et ignore celles-ci ;
-        #  on les corrige tout de meme pour qu'aucune des deux ne mente.)
         "url": _push_url, "session_id": session_id,
         "data": data or {},
         "timestamp": datetime.now(timezone.utc).isoformat()
-    })
+    }
+    # === PUSH-UI — L'APPARENCE VOYAGE AVEC LE MESSAGE ===
+    #
+    # Le Service Worker codait TOUTES ces options en dur et jetait celles du
+    # payload (le commentaire precedent le disait ici meme). Depuis sw.js v503
+    # il les LIT, en gardant ses valeurs d'hier pour defaut. On ne pose donc une
+    # cle QUE si l'appelant en a fourni une : un appel qui n'en fournit aucune
+    # produit exactement le meme rendu qu'avant.
+    #
+    # Ces cles vivent a la RACINE du payload, comme `url` et `session_id` :
+    # c'est la que sw.js les lit. Elles restent AUSSI dans `data`, que le clic
+    # transporte — aucune des deux copies ne ment.
+    for _cle_ui in ("tag", "vibrate", "actions", "image", "renotify", "requireInteraction"):
+        _val_ui = (data or {}).get(_cle_ui)
+        if _val_ui is not None:
+            _corps_payload[_cle_ui] = _val_ui
+    payload = json.dumps(_corps_payload)
     any_sent = False
     # === V439-DIAG : statut HTTP REEL retourne par FCH pour CHAQUE endpoint ===
     #
@@ -37941,20 +37955,106 @@ def rv2_contenu_rappel_non_reserve(prenom: str, course_name: str, date_lisible: 
     return _sujet, _html, "\n".join(_lignes)
 
 
+# =====================================================================
+# PUSH-UI — L'APPARENCE DES RAPPELS DE COURS
+# =====================================================================
+#
+# Un rappel de cours ne se lit PAS dans les mêmes conditions qu'un message de
+# chat : il arrive sur un écran verrouillé, au milieu d'une journée, et il doit
+# se reconnaître en une seconde. D'où le format en capitales avec l'heure — la
+# seule information qui décide si on se lève ou non.
+#
+# Ces valeurs ne sont lues par le téléphone que depuis sw.js v503 : avant ce
+# Service Worker, elles étaient reçues puis jetées. Un appareil qui n'a pas
+# encore le nouveau SW retombe simplement sur les valeurs d'hier.
+PUSH_UI_VIBRATION = [300, 120, 300]
+# Bannière 1200×630 déjà servie par le site (og-image.png). Chrome/Android
+# l'affiche sous le texte ; Firefox et iOS l'IGNORENT sans erreur. On ne
+# fabrique donc aucun asset et on ne promet rien à personne.
+PUSH_UI_IMAGE_COURS = "/og-image.png"
+PUSH_UI_FERMER = {"action": "close", "title": "Fermer"}
+# `open` est l'action que sw.js traite déjà comme « ouvrir l'URL » : tout id
+# autre que `close` ouvre le lien. Seul le LIBELLÉ change selon le public.
+PUSH_UI_ACTIONS_RESERVER = [{"action": "open", "title": "🎟️ Réserver maintenant"},
+                            PUSH_UI_FERMER]
+PUSH_UI_ACTIONS_MON_COURS = [{"action": "open", "title": "👟 Voir mon cours"},
+                             PUSH_UI_FERMER]
+
+
+def push_ui_tag_cours(course_id: str) -> str:
+    """Un tag PAR COURS. Deux push de même tag s'écrasent au lieu de s'empiler.
+
+    Le tag commun `afroboost-push` faisait qu'un rappel de cours écrasait un
+    message de chat, et réciproquement. Ici, deux règles visant LE MÊME cours
+    (07:00 puis 09:30, cas réellement observé) se remplacent l'une l'autre :
+    l'abonné voit un seul rappel, le dernier. Sans identifiant de cours, on
+    laisse le défaut du Service Worker plutôt que d'inventer une clé.
+    """
+    _cid = str(course_id or "").strip()
+    return ("afroboost-cours-%s" % _cid[:64]) if _cid else "afroboost-push"
+
+
+def push_ui_heure(heure: str) -> str:
+    """`18:30` -> `18H30`. Format d'affiche, lisible d'un coup d'œil."""
+    _h = str(heure or "").strip()
+    return _h.replace(":", "H") if _h else ""
+
+
+def push_ui_moment(cle: str, heure: str) -> str:
+    """« CE SOIR », « CE MATIN »… Le moment se DÉDUIT de l'heure du cours.
+
+    Sans heure exploitable, on retombe sur « AUJOURD'HUI » : un mot toujours
+    vrai vaut mieux qu'un « CE SOIR » qui se trompe de moitié de journée.
+    """
+    # La regle dit DEJA si le rappel part le jour du cours. `same_day:` bien sur,
+    # mais aussi les regles relatives COURTES : un rappel « 1 h avant » tombe
+    # forcement le meme jour. Seules les regles de 12 h ou plus peuvent viser la
+    # veille — c'est la seule frontiere que la cle permette de trancher
+    # honnetement, et l'ancien code disait « demain » meme pour un rappel d'1 h.
+    _cle = str(cle or "")
+    if not _cle.startswith("same_day:"):
+        try:
+            _min = int(_cle.split(":")[1].rstrip("m")) if _cle.startswith("relative:") else 60
+        except (ValueError, IndexError):
+            _min = 60
+        if _min >= 720:
+            return "DEMAIN"
+    try:
+        _hh = int(str(heure or "").split(":")[0])
+    except (ValueError, IndexError):
+        return "AUJOURD'HUI"
+    if not 0 <= _hh <= 23:
+        return "AUJOURD'HUI"
+    if _hh < 12:
+        return "CE MATIN"
+    if _hh < 17:
+        return "CET APRÈS-MIDI"
+    return "CE SOIR"
+
+
+def push_ui_titre(emoji: str, cle: str, heure: str) -> str:
+    """Titre commun aux deux publics : même forme, emoji différent.
+
+    Une seule fonction pour les deux, sinon les deux titres divergeront un jour
+    sans que personne ne l'ait décidé.
+    """
+    _h = push_ui_heure(heure)
+    _fin = (" — %s" % _h) if _h else ""
+    return "%s AFROBOOST %s%s" % (emoji, push_ui_moment(cle, heure), _fin)
+
+
 def rvab_push_titre(cle: str, heure: str) -> str:
-    """Titre du Push pour qui n'a PAS réservé. Distinct du titre historique, qui
-    reste intact — un banc le vérifie mot pour mot."""
-    _h = (" à %s" % heure) if heure else ""
-    if cle.startswith("same_day:"):
-        return "🔥 Afroboost aujourd'hui%s" % _h
-    return "🔥 Afroboost demain%s" % _h
+    """Titre du Push pour qui n'a PAS réservé. Le 🔥 appelle ; le 🎧 du public
+    déjà inscrit rassure. Les deux titres restent DISTINCTS — un banc l'exige."""
+    return push_ui_titre("🔥", cle, heure)
 
 
 def rvab_push_corps(course_name: str) -> str:
     """Corps du Push NON-RÉSERVÉ. Il CONSTATE l'absence de réservation et invite —
     il n'affirme jamais une place ni une inscription."""
     _c = (course_name or "ton cours").strip()
-    return "%s — tu n'as pas encore réservé ta place. Rejoins-nous !" % _c
+    return ("⚡ %s — tu n'as pas encore réservé ta place. "
+            "Réserve maintenant et rejoins-nous 💪🏾" % _c)
 
 
 async def rv2_envoyer_email_rappel(destinataire: str, prenom: str, course_name: str,
@@ -38037,17 +38137,25 @@ def n1b2_cle(regle: dict) -> str:
     return "relative:%dm" % _m
 
 
-def n1b2_titre(cle: str) -> str:
+def n1b2_titre(cle: str, heure: str = "") -> str:
     """Titre du push. Celui de la cle historique est INCHANGE, au caractere pres.
 
     Les autres libelles sont derives mecaniquement ; ils sont inatteignables
     tant qu'aucune regle n'est configurable (N1B-3).
+
+    `heure` est FACULTATIVE : tout appelant existant garde son titre. Elle ne
+    sert qu'au rappel du jour meme, seul libelle reellement envoye en
+    production, et seul a passer au format PUSH-UI.
     """
     if cle.startswith("same_day:"):
         # N1B-3B2 : libelle C4, tranche par le coach. « Ton cours » disparait au
         # profit de la marque — le rappel du jour meme est celui qu'on lit le
         # plus souvent sur un ecran verrouille, il doit se reconnaitre seul.
-        return "📅 Afroboost, c'est aujourd'hui"
+        # PUSH-UI : ce meme constat pousse plus loin. Capitales, moment de la
+        # journee et HEURE, parce que c'est l'heure qui decide si on se leve.
+        # Le 🎧 dit « ta place est deja prise » ; le 🔥 du public non inscrit
+        # appelle. Les deux titres ne doivent JAMAIS se confondre.
+        return push_ui_titre("🎧", cle, heure)
     return {
         N1B_CLE_HERITEE: "📅 Ton cours commence dans 1h",
         "relative:180m": "📅 Ton cours commence dans 3h",
@@ -38068,7 +38176,11 @@ def n1b2_corps(cle: str, nom: str, heure: str) -> str:
     if cle == N1B_CLE_HERITEE:
         return "%s%s — prépare-toi !" % (nom, _h)
     if cle.startswith("same_day:"):
-        return "%s aujourd'hui%s. À tout à l'heure 🎧🔥" % (nom, _h)
+        # PUSH-UI : le message CONSTATE la reservation. Il ne dit jamais
+        # « reserve » ni « reserver » a quelqu'un qui a deja sa place — un banc
+        # le verifie, c'est la difference meme entre les deux publics.
+        _rdv = ("on se retrouve à %s" % heure) if heure else "on se retrouve tout à l'heure"
+        return "🎧 %s — ta place est réservée ! Prépare-toi, %s 💪🏾" % (nom, _rdv)
     if cle == "relative:180m":
         return "%s%s — ton moment Afroboost approche 🎧" % (nom, _h)
     if cle == "relative:1440m":
@@ -40322,9 +40434,16 @@ async def cron_reservation_reminders():
                 if _canal == RV2_CANAL_PUSH:
                     ok = await send_push_by_email(
                         email,
-                        n1b2_titre(_cle_regle),
+                        n1b2_titre(_cle_regle, course_time),
                         n1b2_corps(_cle_regle, course_name, course_time),
-                        {"type": "course_reminder", "reservation_id": _rid}
+                        # PUSH-UI : l'apparence voyage avec le message. Le tag
+                        # par cours evite qu'un rappel de 07:00 et un de 09:30
+                        # s'empilent — le second REMPLACE le premier.
+                        {"type": "course_reminder", "reservation_id": _rid,
+                         "tag": push_ui_tag_cours(r.get("courseId")),
+                         "vibrate": PUSH_UI_VIBRATION,
+                         "actions": PUSH_UI_ACTIONS_MON_COURS,
+                         "image": PUSH_UI_IMAGE_COURS}
                     )
                 else:
                     ok = await rv2_envoyer_email_rappel(
@@ -40704,7 +40823,14 @@ async def _rvab_passage(now, zurich, demi, horizon, instant_du_cours, lire_cours
                                 _mail, rvab_push_titre(_cle, _c.get("time") or ""),
                                 rvab_push_corps(_c.get("name") or ""),
                                 {"type": "course_reminder_not_booked",
-                                 "url": _lien or "/", "course_id": _cid})
+                                 "url": _lien or "/", "course_id": _cid,
+                                 # PUSH-UI : meme apparence que le rappel
+                                 # RESERVE, seul le libelle de l'action change
+                                 # — ici, il MENE a la reservation.
+                                 "tag": push_ui_tag_cours(_cid),
+                                 "vibrate": PUSH_UI_VIBRATION,
+                                 "actions": PUSH_UI_ACTIONS_RESERVER,
+                                 "image": PUSH_UI_IMAGE_COURS})
                             if not _ok_push:
                                 logger.info("%s push non parti pour %s*** — aucun "
                                             "abonnement exploitable", RVAB_PREFIXE, _mail[:3])

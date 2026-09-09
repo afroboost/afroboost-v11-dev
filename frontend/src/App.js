@@ -4675,6 +4675,20 @@ function App() {
     if (!('serviceWorker' in navigator)) return undefined;
     const surMessage = (event) => {
       const url = (event.data && event.data.url) || '';
+      // PUSH-UI : UNE NOTIFICATION QUI VISE UNE PAGE DOIT Y EMMENER.
+      // Quand l'application est déjà ouverte, le Service Worker ne recharge
+      // rien : il focus l'onglet et poste l'url. Un rappel de cours visant
+      // `/espace/<CODE>` ramenait donc l'abonné au premier plan… sur l'écran
+      // qu'il avait quitté. On navigue, et seulement si la destination diffère
+      // vraiment de la page affichée (sinon on rechargerait pour rien).
+      if (url && url.charAt(0) === '/' && url.indexOf('prospection=1') === -1
+          && url.indexOf('openChat') === -1) {
+        try {
+          const ici = window.location.pathname + window.location.search;
+          if (url !== ici) window.location.assign(url);
+        } catch (e) { /* navigation impossible : l'onglet reste où il est */ }
+        return;
+      }
       if (url.indexOf('prospection=1') === -1) return;
       let cible = '';
       try {

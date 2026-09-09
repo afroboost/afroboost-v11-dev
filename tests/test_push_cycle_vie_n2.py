@@ -434,8 +434,14 @@ def perimetre():
     verifier("HP3. moteur ESSAI intact",
              "_essai1_garde" in lire("api", "routes", "checkout_routes.py")
              and "_essai4_garde" in lire("api", "routes", "checkout_routes.py"))
-    verifier("HP4. le tag commun n'est PAS touche (lot separe)",
-             "data.tag || 'afroboost-push'" in SW and '"tag"' not in code_seul(extraire(SERVEUR, "send_push_notification")))
+    # PUSH-UI : le lot separe annonce ici a EU LIEU. Le serveur pose desormais
+    # un tag PAR COURS ; le Service Worker garde le tag commun pour DEFAUT,
+    # donc tout push qui n'en envoie pas se comporte comme avant. Ce qui est
+    # verifie devient : le defaut existe toujours, et le serveur ne l'impose
+    # a personne (il ne pose la cle que si l'appelant en fournit une).
+    verifier("HP4. le tag commun reste le defaut ; le tag par cours est optionnel",
+             "data.tag || 'afroboost-push'" in SW
+             and "if _val_ui is not None" in code_seul(extraire(SERVEUR, "send_push_notification")))
     verifier("HP5. aucune migration, aucun index",
              SERVEUR.count("create_index") == 7)
 

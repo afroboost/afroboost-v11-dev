@@ -152,8 +152,14 @@ def tests():
 
     # === E. LE RESTE DU PAYLOAD DE NOTIFICATION EST INTACT ===
     for cle in ("body: data.body || 'Vous avez une nouvelle notification'",
-                "vibrate: [200, 100, 200]", "tag: data.tag || 'afroboost-push'",
-                "renotify: true", "requireInteraction: false",
+                # PUSH-UI : ces trois options sont devenues SURCHARGEABLES par le
+                # payload, avec la valeur de V445 pour defaut. Ce qui est verifie
+                # ici reste donc le meme : un push qui n'envoie rien de plus est
+                # rendu exactement comme apres V445.
+                "var vibration = [200, 100, 200];", "vibrate: vibration",
+                "tag: data.tag || 'afroboost-push'",
+                "renotify: data.renotify !== false",
+                "requireInteraction: data.requireInteraction === true",
                 "{ action: 'open', title: 'Voir' }", "{ action: 'close', title: 'Fermer' }",
                 "url: data.url || '/?openChat=true'",
                 "session_id: data.session_id || null",

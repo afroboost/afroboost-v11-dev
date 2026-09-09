@@ -494,8 +494,11 @@ def scenario_sw():
     verifier("J1. le SW lit le titre et le corps de la charge",
              "data.title" in push and "data.body" in push)
     verifier("J2. il affiche reellement la notification", "showNotification" in push)
-    verifier("J3. `renotify` est vrai — une reservation qui remplace la precedente re-alerte",
-             re.search(r"renotify:\s*true", push) is not None)
+    # PUSH-UI : `renotify` reste VRAI, mais il est desormais surchargeable.
+    # `data.renotify !== false` dit exactement cela : vrai par defaut, faux
+    # seulement si le serveur le demande explicitement. L'invariant tient.
+    verifier("J3. `renotify` est vrai par defaut — une reservation qui remplace la precedente re-alerte",
+             re.search(r"renotify:\s*(true|data\.renotify !== false)", push) is not None)
     verifier("J4. le tag reste surchargeable par le serveur (dette du tag commun non traitee ici)",
              "data.tag ||" in push)
     verifier("J5. une charge illisible ne casse pas le SW", "catch" in push)
