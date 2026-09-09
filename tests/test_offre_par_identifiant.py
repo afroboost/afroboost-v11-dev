@@ -44,8 +44,8 @@ def bac(offres):
 
 
 def resoudre(nom="", code="", oid=""):
-    return asyncio.get_event_loop().run_until_complete(
-        S._v426_offre_de_labonnement(nom, code, oid))
+    from tests._base_memoire import _attrape as _a
+    return _a(S._v426_offre_de_labonnement(nom, code, oid))[0]
 
 
 OFFRE = {"id": "OFFER-123", "name": "PULSE x10 cours",
@@ -117,6 +117,70 @@ verifie("preuve sociale écrit offer_id", '"offer_id": str((offer or {}).get("id
 verifie("les 3 portes de promo_routes écrivent offer_id", _promo.count('"offer_id":') >= 3,
         str(_promo.count('"offer_id":')))
 verifie("Mobile Money écrit offer_id", '"offer_id": str(local_tx.get("offer_id") or "")' in _activ)
+
+print("\n--- LA MIGRATION HISTORIQUE : UN PLAN, PAS UNE DEVINETTE ---")
+from tests._base_memoire import _Requete, ADMIN, _attrape   # noqa: E402
+
+
+class _Abos(_Base):
+    pass
+
+
+def bac_migration(abos, offres):
+    b = _Base()
+    b.offers.docs = [dict(o) for o in offres]
+    b.subscriptions = type(b.offers)([dict(a) for a in abos])
+    S.db = b
+    return b
+
+
+ABOS = [
+    {"id": "s1", "email": "a@x.ch", "offer_name": "PULSE x10 cours", "status": "active"},
+    {"id": "s2", "email": "b@x.ch", "offer_name": "Cours a l'unite test", "status": "active"},
+    {"id": "s3", "email": "c@x.ch", "offer_name": "PULSE x10 cours", "status": "active",
+     "offer_id": "DEJA-POSE"},
+]
+
+# Le super-admin est exige : une route qui ECRIT ne s'ouvre pas.
+b = bac_migration(ABOS, [OFFRE])
+_r, _code = _attrape(S.backfill_offer_id(_Requete(email=None), dry_run=True))
+verifie("sans super-admin -> refus", _code == 403, str(_code))
+
+# L'IDENTITE SIGNEE est remplacee le temps des bancs suivants : ils portent sur
+# la MIGRATION, pas sur l'authentification — celle-ci vient d'etre prouvee par le
+# refus 403 ci-dessus, avec la vraie fonction.
+_vraie_identite = S._v311_coach_email_from_jwt
+S._v311_coach_email_from_jwt = lambda _r: ADMIN
+
+# Simulation : le plan est rendu, RIEN n'est ecrit.
+b = bac_migration(ABOS, [OFFRE])
+_sim, _ = _attrape(S.backfill_offer_id(_Requete(email=ADMIN), dry_run=True))
+verifie("dry_run est le DEFAUT et n'ecrit rien", _sim["ecrits"] == 0 and _sim["dry_run"] is True)
+verifie("le plan ne retient que les resolutions CERTAINES", _sim["resolution_certaine"] == 1,
+        str(_sim["resolution_certaine"]))
+verifie("l'abonnement introuvable est LISTE, jamais devine",
+        _sim["sans_correspondance"] == 1
+        and _sim["decision_humaine_requise"][0]["offer_name"] == "Cours a l'unite test")
+verifie("l'abonnement qui a deja un identifiant n'est meme pas candidat",
+        _sim["total_sans_offer_id"] == 2, str(_sim["total_sans_offer_id"]))
+verifie("aucune ecriture en simulation",
+        all("offer_id" not in d or d["id"] == "s3" for d in b.subscriptions.docs))
+
+# Application : seul le cas certain est ecrit.
+b = bac_migration(ABOS, [OFFRE])
+_app, _ = _attrape(S.backfill_offer_id(_Requete(email=ADMIN), dry_run=False))
+verifie("appliquee : un seul document ecrit", _app["ecrits"] == 1, str(_app["ecrits"]))
+_par_id = {d["id"]: d for d in b.subscriptions.docs}
+verifie("le cas certain recoit l'identifiant", _par_id["s1"].get("offer_id") == "OFFER-123")
+verifie("le cas non resolu reste INTACT", not _par_id["s2"].get("offer_id"))
+verifie("l'identifiant deja pose n'est JAMAIS ecrase",
+        _par_id["s3"].get("offer_id") == "DEJA-POSE")
+verifie("aucun autre champ n'est touche (ni solde, ni expiration, ni statut)",
+        _par_id["s2"].get("status") == "active" and "expires_at" not in _par_id["s2"])
+verifie("la provenance de l'ecriture est tracee",
+        _par_id["s1"].get("offer_id_source") == "backfill_resolution_canonique")
+
+S._v311_coach_email_from_jwt = _vraie_identite   # on rend l'identite reelle
 
 print("\n%d PASS · %d FAIL\n" % (_ok, _ko))
 sys.exit(0 if _ko == 0 else 1)

@@ -13853,6 +13853,89 @@ async def migrate_subscriptions_coach_id(request: Request, dry_run: bool = True,
     }
 
 
+@api_router.post("/admin/backfill-offer-id")
+async def backfill_offer_id(request: Request, dry_run: bool = True):
+    """Rattache les abonnements HISTORIQUES a leur offre par IDENTIFIANT.
+
+    POURQUOI. `subscriptions.offer_name` fige le libelle a l'achat : renommer
+    une offre rendait invisibles tous les abonnements anterieurs. Le code ne
+    rapproche plus par nom — mais les 59 abonnements deja en base n'ont pas
+    d'`offer_id`, et rien ne peut le leur inventer apres coup. Cette route le
+    RENSEIGNE, uniquement quand la resolution est CERTAINE.
+
+    AUCUNE DEVINETTE. On appelle `_v426_offre_de_labonnement`, la resolution
+    canonique deja partagee par les quatre ecrans : nom EXACT, nom desaccentue,
+    ou PREUVE D'ACHAT. Pas de suppression de « test », pas de « (copie) »
+    ignore, aucun rapprochement approximatif, aucune similarite de texte. Un
+    abonnement dont l'offre ne se resout pas est LISTE, jamais devine — c'est
+    une decision humaine, offre par offre.
+
+    `dry_run=true` PAR DEFAUT, comme la migration `coach_id` : l'appel decrit ce
+    qu'il ferait et n'ecrit rien. C'est le defaut voulu sur des donnees reelles.
+
+    N'ECRIT QUE `offer_id`, et JAMAIS sur un document qui en porte deja un.
+    Aucune date d'expiration, aucun solde, aucun statut n'est touche.
+    """
+    _appelant = _v311_coach_email_from_jwt(request)
+    if not _appelant or not is_super_admin(_appelant):
+        raise HTTPException(status_code=403, detail="Super-admin requis")
+
+    _sans = await db.subscriptions.find(
+        {"$or": [{"offer_id": {"$exists": False}}, {"offer_id": None}, {"offer_id": ""}]},
+        {"_id": 0, "id": 1, "email": 1, "offer_name": 1, "status": 1,
+         "expires_at": 1, "code": 1},
+    ).to_list(3000)
+
+    _certains, _sans_correspondance = [], []
+    _ecrits = 0
+    for _a in _sans:
+        _sid = _a.get("id")
+        if not _sid:
+            continue
+        try:
+            _offre = await _v426_offre_de_labonnement(
+                _a.get("offer_name") or "", str(_a.get("code") or "").upper(), "")
+        except Exception:
+            _offre = None
+        _ligne = {"subscription_id": _sid,
+                  "email": (str(_a.get("email") or "")[:3] + "***"),
+                  "offer_name": str(_a.get("offer_name") or "")[:60],
+                  "statut": _a.get("status")}
+        if not _offre or not _offre.get("id"):
+            _sans_correspondance.append(_ligne)
+            continue
+        _ligne["offer_id"] = _offre.get("id")
+        _ligne["offre"] = str(_offre.get("name") or "")[:60]
+        _certains.append(_ligne)
+        if not dry_run:
+            # Filtre defensif : on n'ecrase JAMAIS un identifiant deja pose,
+            # meme si un autre appel l'avait ecrit entre-temps.
+            _r = await db.subscriptions.update_one(
+                {"id": _sid, "$or": [{"offer_id": {"$exists": False}},
+                                     {"offer_id": None}, {"offer_id": ""}]},
+                {"$set": {"offer_id": _offre["id"],
+                          "offer_id_source": "backfill_resolution_canonique",
+                          "updated_at": datetime.now(timezone.utc).isoformat()}},
+            )
+            _ecrits += int(getattr(_r, "modified_count", 0) or 0)
+
+    logger.info("[BACKFILL-OFFRE] %s : %d certains, %d sans correspondance, %d ecrits",
+                "SIMULATION" if dry_run else "APPLIQUE",
+                len(_certains), len(_sans_correspondance), _ecrits)
+    return {
+        "success": True,
+        "dry_run": dry_run,
+        "message": ("SIMULATION — aucune ecriture. Relancer avec ?dry_run=false pour appliquer."
+                    if dry_run else "Migration appliquee."),
+        "total_sans_offer_id": len(_sans),
+        "resolution_certaine": len(_certains),
+        "sans_correspondance": len(_sans_correspondance),
+        "ecrits": _ecrits,
+        "plan": _certains,
+        "decision_humaine_requise": _sans_correspondance,
+    }
+
+
 @api_router.post("/admin/fix-stripe-amount/{access_code}")
 async def fix_stripe_amount(access_code: str, request: Request):
     """V207c: Fix ponctuel — écrire stripe_amount en base pour un code existant."""
