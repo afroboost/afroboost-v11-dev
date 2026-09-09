@@ -1750,6 +1750,8 @@ class FeatureFlagsUpdate(BaseModel):
     P3_REPONSE_ENVOI_REEL: Optional[bool] = None  # AI-P4
     SOCIAL_PROFILE_LINKS: Optional[bool] = None  # F3 FINAL : profils Spordateur des autres comptes liés
     SOCIAL_ACTIVATION_ENABLED: Optional[bool] = None  # F4 : activation volontaire du profil social
+    REMINDERS_SUBSCRIBERS_ENABLED: Optional[bool] = None  # RV-AB : rappeler AUSSI les abonnés sans réservation
+    REMINDERS_SUBSCRIBERS_DRY_RUN: Optional[bool] = None  # RV-AB : recenser sans envoyer (défaut : oui)
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -18781,6 +18783,8 @@ async def get_feature_flags():
             "P3_RELANCE_ENVOI_REEL": False,    # P3-R2 : défaut OFF (simulation même si activé)
             "SOCIAL_PROFILE_LINKS": False,     # F3 FINAL : défaut OFF (profils liés dormants)
             "SOCIAL_ACTIVATION_ENABLED": False,  # F4 : défaut OFF (activation dormante)
+            "REMINDERS_SUBSCRIBERS_ENABLED": False,  # RV-AB : défaut OFF (aucun envoi nouveau)
+            "REMINDERS_SUBSCRIBERS_DRY_RUN": True,   # RV-AB : recensement seul tant qu'on n'a pas mesuré
             "updatedAt": None,
             "updatedBy": None
         }
@@ -18811,7 +18815,9 @@ async def get_feature_flags():
                          ("P3_REPONSE_ACTIF", False),
                          ("P3_REPONSE_ENVOI_REEL", False),
                          ("SOCIAL_PROFILE_LINKS", False),
-                         ("SOCIAL_ACTIVATION_ENABLED", False)):
+                         ("SOCIAL_ACTIVATION_ENABLED", False),
+                         ("REMINDERS_SUBSCRIBERS_ENABLED", False),
+                         ("REMINDERS_SUBSCRIBERS_DRY_RUN", True)):
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -37979,7 +37985,19 @@ def n1b3b2_collisions(regles, occurrences, zurich):
 
 
 async def n1b2_regles_du_coach(coach_id: str, cache: dict):
-    """Regles du coach, ou le defaut. Lecture seule, mise en cache par passage."""
+    """Regles du coach, ou le defaut. Lecture seule, mise en cache par passage.
+
+    ⚠️ SANS AUCUN APPELANT depuis RAPPELS V2 : la configuration a migre SUR LE
+    COURS (`courses.reminder_rules`, lu par le moteur) et ce niveau coach n'est
+    plus consulte. La carte qui l'alimentait (`ReminderRulesCard.js`) n'est
+    montee nulle part non plus — personne n'est donc trompe aujourd'hui. On la
+    garde parce que les routes `/coach/reminder-rules` existent toujours et que
+    `coach_profiles.reminder_rules` porte encore des valeurs en production
+    (mesure du 09/09/2026 : `same_day 07:00`, alors que les cours disent 09:00).
+    NE PAS la rebrancher sans decider laquelle des deux sources fait foi : ce
+    serait rendre au coach un reglage fantome le jour ou un cours n'a pas de
+    regle propre.
+    """
     if not coach_id:
         return list(N1B2_REGLES_DEFAUT)
     if coach_id in cache:
@@ -40070,8 +40088,21 @@ async def cron_reservation_reminders():
     logger.info(f"[REMINDER-V183] {sent}/{len(taches)} rappels envoyés "
                 f"(push {_par_canal[RV2_CANAL_PUSH]}, email {_par_canal[RV2_CANAL_EMAIL]}) "
                 f"— {_lectures_cours[0]} lecture(s) de cours pour {len(_candidates)} candidat(s)")
+    # RV-AB : le second flux de destinataires — les abonnés actifs sans
+    # réservation. Dormant par défaut ; une panne ici ne doit jamais empêcher
+    # les rappels de réservation, qui viennent d'être envoyés.
+    _rvab = {"actif": False}
+    try:
+        # On passe la FONCTION, pas son resultat : `await` ici forcerait une
+        # lecture des offres a chaque passage, y compris quand le lot dort.
+        _rvab = await _rvab_passage(now, _zurich, _demi, _horizon,
+                                    _v435_instant_du_cours, _e1b_cours_vendus,
+                                    _e1b_jours)
+    except Exception as _rvab_err:
+        logger.warning("[RV-AB] passage ignoré (%s)", type(_rvab_err).__name__)
     return {"checked": len(taches), "sent": sent,
-            "push": _par_canal[RV2_CANAL_PUSH], "email": _par_canal[RV2_CANAL_EMAIL]}
+            "push": _par_canal[RV2_CANAL_PUSH], "email": _par_canal[RV2_CANAL_EMAIL],
+            "abonnes": _rvab}
 
 
 # ============================================================================
@@ -40200,6 +40231,170 @@ async def send_backup_email(participant_id: str, message_preview: str):
     except Exception as e:
         logger.error(f"Backup email failed: {str(e)}")
         return False
+
+# ═══════════════════════════════════════════════════════════════════════════
+# RV-AB — UN ABONNÉ ACTIF EST RAPPELÉ, MÊME SANS RÉSERVATION
+# ═══════════════════════════════════════════════════════════════════════════
+# CE QUI CHANGE. Le moteur ne partait que des RÉSERVATIONS : personne d'autre ne
+# pouvait recevoir un rappel. Or le rappel n'est pas un accusé de réservation,
+# c'est un rendez-vous — il sert d'abord à celui qui n'a pas encore réservé.
+#
+# CE QUI NE CHANGE PAS, ET C'EST L'ESSENTIEL. Aucun second moteur : ce passage
+# réutilise les mêmes occurrences (`_v184_next_occurrences`), les mêmes règles
+# du cours, le même plan (`n1b3b2_plan`), la même fenêtre (±30 min), le même
+# gabarit et le même transport (`rv2_envoyer_email_rappel`), la même préférence
+# de canal (`rv2_canal_autorise`). Le gabarit n'a pas eu à bouger : il ne dit
+# nulle part « tu as réservé », il annonce un cours — il vaut donc tel quel pour
+# les deux publics.
+#
+# QUI PASSE AVANT QUI. Une personne à la fois abonnée ET réservée est traitée
+# par le chemin RÉSERVATION, jamais ici : il est plus précis (il connaît son
+# code et son espace). C'est `rvab_fusionner` qui tranche, et c'est ce qui rend
+# le double envoi impossible.
+#
+# L'ANTI-DOUBLON. Un abonné sans réservation n'a AUCUN document où poser un
+# marqueur — c'est la seule vraie lacune de ce lot. On ouvre donc une collection
+# dédiée dont l'`_id` EST la clé (personne + cours + séance + règle) : MongoDB
+# refuse alors le second envoi de lui-même, même si deux passages se croisent.
+# En cas d'échec d'envoi, le marqueur est retiré : le canal reste réessayable
+# tant que la fenêtre est ouverte, exactement comme `rv2_liberer_canal`.
+#
+# LIVRÉ DORMANT, ET MÊME DEUX FOIS. `REMINDERS_SUBSCRIBERS_ENABLED` est à false :
+# rien ne change au déploiement. Et lorsqu'il passera à true,
+# `REMINDERS_SUBSCRIBERS_DRY_RUN` (true par défaut) fait RECENSER sans envoyer —
+# on saura combien de personnes seraient touchées avant qu'un seul e-mail parte.
+
+RVAB_COLLECTION = "reminder_sends"
+RVAB_PREFIXE = "[RV-AB]"
+
+
+async def _rvab_passage(now, zurich, demi, horizon, instant_du_cours, lire_cours_vendus, jours):
+    """Le second flux de destinataires : les abonnés actifs sans réservation.
+
+    Renvoie un compte rendu. N'écrit rien et n'envoie rien tant que le drapeau
+    d'activation est faux — la boucle appelle donc cette fonction à chaque
+    passage sans le moindre effet, ce qui permet de l'allumer sans redéployer.
+    """
+    _vide = {"actif": False, "recenses": 0, "envoyes": 0}
+    try:
+        _flags = await get_feature_flags()
+    except Exception:
+        return _vide
+    if _flags.get("REMINDERS_SUBSCRIBERS_ENABLED") is not True:
+        return _vide
+    _sec = _flags.get("REMINDERS_SUBSCRIBERS_DRY_RUN") is not False  # défaut : recensement
+
+    from api.routes.shared import (
+        rvab_abonnes_du_cours, rvab_fusionner, rvab_cle_envoi,
+        rvab_normaliser_email, RVAB_ORIGINE_ABONNEMENT,
+    )
+
+    _recenses = _envoyes = 0
+    try:
+        _cours_actifs = await db.courses.find(
+            {"reminders_enabled": True}, {"_id": 0}).to_list(200)
+        if not _cours_actifs:
+            return {"actif": True, "recenses": 0, "envoyes": 0}
+        _offres = await db.offers.find(
+            {}, {"_id": 0, "name": 1, "linked_course_ids": 1}).to_list(500)
+        _abos = await db.subscriptions.find(
+            {"status": "active"},
+            {"_id": 0, "email": 1, "offer_name": 1, "status": 1,
+             "remaining_sessions": 1, "expires_at": 1, "code": 1}).to_list(3000)
+    except Exception as _e:
+        logger.warning("%s lecture impossible (%s)", RVAB_PREFIXE, type(_e).__name__)
+        return _vide
+
+    # Couleur de marque : lue UNE fois par passage, jamais par destinataire, et
+    # par la même fonction que le reste des e-mails (règle des couleurs coach).
+    try:
+        _accent_ab = await _v259_primary_color()
+    except Exception:
+        _accent_ab = _V259_DEFAULT_COLOR
+
+    _codes_par_mail = {}
+    for _a in _abos:
+        _m = rvab_normaliser_email(_a.get("email"))
+        if _m and _m not in _codes_par_mail and _a.get("code"):
+            _codes_par_mail[_m] = str(_a["code"]).strip()
+
+    for _c in _cours_actifs:
+        _cid = str(_c.get("id") or "")
+        if not _cid:
+            continue
+        # E1B : un cours archivé n'est éligible que sous les MÊMES preuves que
+        # pour une réservation. La règle est appelée, jamais recopiée.
+        # PARESSEUX, ET C'EST LA CONDITION DE LA GARANTIE « une seule lecture des
+        # offres par passage » : on ne demande la liste des cours vendus que si
+        # un cours ARCHIVE se presente, et `_e1b_cours_vendus` la memorise.
+        if _c.get("archived") is True and not e1b_cours_encore_servi(_c, await lire_cours_vendus()):
+            continue
+        _regles = n1b2_valider_regles(_c.get("reminder_rules"))
+        if not _regles:
+            continue
+        try:
+            _occs = _v184_next_occurrences(_c, days_ahead=jours) or []
+        except Exception:
+            continue
+        for _occ in _occs:
+            _iso = str(_occ.get("datetime") or "")
+            _instant = instant_du_cours(_iso)
+            if not _instant or _instant <= now or _instant > horizon:
+                continue
+            _gardees, _ = n1b3b2_plan(_regles, _instant, zurich)
+            for _cible, _cle in _gardees:
+                if not ((_cible - demi) < now <= (_cible + demi)):
+                    continue
+                # Les réservations de CETTE séance : leurs porteurs sont servis
+                # par le chemin historique, on ne les touche pas ici.
+                try:
+                    _resas = await db.reservations.find(
+                        {"courseId": _cid}, {"_id": 0, "userEmail": 1, "datetime": 1}
+                    ).to_list(1000)
+                except Exception:
+                    _resas = []
+                _mails_resa = [
+                    r.get("userEmail") for r in _resas
+                    if instant_du_cours(str(r.get("datetime") or "")) == _instant
+                ]
+                _mails_abo = rvab_abonnes_du_cours(_abos, _offres, _cid, now)
+                for _mail, _origine in rvab_fusionner(_mails_resa, _mails_abo):
+                    if _origine != RVAB_ORIGINE_ABONNEMENT:
+                        continue          # déjà servi par sa réservation
+                    _recenses += 1
+                    _cle_envoi = rvab_cle_envoi(_mail, _cid, _iso, _cle)
+                    if _sec:
+                        logger.info("%s [RECENSEMENT] %s — %s (%s) : AUCUN envoi",
+                                    RVAB_PREFIXE, _mail[:3] + "***", _c.get("name"), _cle)
+                        continue
+                    try:
+                        await db[RVAB_COLLECTION].insert_one(
+                            {"_id": _cle_envoi, "envoye_le": now.isoformat()})
+                    except Exception:
+                        continue          # clé déjà posée : un seul envoi, par construction
+                    _ok = False
+                    try:
+                        if await rv2_canal_autorise(_mail, RV2_CANAL_EMAIL) and rv2_email_valide(_mail):
+                            _ok = await rv2_envoyer_email_rappel(
+                                _mail, "", _c.get("name") or "ton cours",
+                                rv2_date_lisible(_instant.astimezone(zurich)),
+                                _c.get("time") or "", _accent_ab, "", "",
+                                rv2_lien_espace(_codes_par_mail.get(_mail, "")))
+                    except Exception as _err:
+                        logger.warning("%s envoi impossible (%s)", RVAB_PREFIXE, type(_err).__name__)
+                        _ok = False
+                    if _ok:
+                        _envoyes += 1
+                    else:
+                        try:
+                            await db[RVAB_COLLECTION].delete_one({"_id": _cle_envoi})
+                        except Exception:
+                            logger.error("%s marqueur %s non libéré", RVAB_PREFIXE, _cle_envoi)
+    if _recenses or _envoyes:
+        logger.info("%s %d abonné(s) sans réservation — %d envoi(s)%s",
+                    RVAB_PREFIXE, _recenses, _envoyes, " [RECENSEMENT SEUL]" if _sec else "")
+    return {"actif": True, "recenses": _recenses, "envoyes": _envoyes, "recensement": _sec}
+
 
 async def notify_coach_new_message(participant_name: str, message_preview: str, session_id: str):
     """

@@ -5806,3 +5806,156 @@ def p12_submission_id_propre(valeur):
         return jeton if P12_UUID.match(jeton) else ""
     except Exception:
         return ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# RV-AB — UN ABONNÉ ACTIF EST RAPPELÉ, MÊME SANS RÉSERVATION
+#
+# RÈGLE PRODUIT. Le rappel n'est pas une confirmation de réservation : c'est un
+# rendez-vous. Un abonné dont le forfait ouvre ce cours doit le recevoir même
+# s'il n'a encore rien réservé — c'est précisément à lui qu'il sert.
+#
+# DESTINATAIRES = (abonnés actifs dont l'offre ouvre CE cours)
+#               ∪ (porteurs d'une réservation valide sur CE cours)
+# puis DÉDUPLICATION par personne.
+#
+# AUCUN SECOND MODÈLE D'ABONNEMENT. On lit `subscriptions` (status/expires_at/
+# remaining_sessions) et `offers.linked_course_ids` — la carte offre→cours qui
+# existe déjà et que la vitrine utilise. Rien n'est inventé ici.
+#
+# CES FONCTIONS SONT PURES. Elles ne touchent ni la base, ni le réseau, ni
+# l'horloge : c'est ce qui rend les 12 cas de ce lot vérifiables sans envoyer
+# le moindre e-mail.
+# ═══════════════════════════════════════════════════════════════════════════
+
+RVAB_ORIGINE_RESERVATION = "reservation"
+RVAB_ORIGINE_ABONNEMENT = "abonnement"
+
+
+def rvab_normaliser_email(valeur) -> str:
+    """Adresse comparable. Deux écritures de la même personne ne doivent pas
+    produire deux rappels — c'est la clé de toute la déduplication."""
+    return str(valeur or "").strip().lower()
+
+
+def rvab_abonnement_actif(abonnement: dict, maintenant) -> bool:
+    """Cet abonnement ouvre-t-il encore des droits ?
+
+    Trois conditions, toutes lues sur des champs EXISTANTS :
+      1. `status == "active"` — le même critère que `lota_droits_membre` ;
+      2. `expires_at` absent (pas d'échéance) ou encore à venir ;
+      3. `remaining_sessions` strictement positif.
+
+    `remaining_sessions` ABSENT ou None ne vaut PAS zéro : c'est un solde
+    inconnu, et la règle du 27/08 interdit de fabriquer un 0 (cf. LOT A). Un
+    solde inconnu laisse donc passer le rappel — au pire on motive quelqu'un
+    qui devra recharger, jamais on ne prive un abonné valide.
+    """
+    if not isinstance(abonnement, dict):
+        return False
+    if str(abonnement.get("status") or "").strip().lower() != "active":
+        return False
+    _exp = abonnement.get("expires_at")
+    if _exp:
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            _d = _dt.fromisoformat(str(_exp).replace("Z", "+00:00"))
+            if _d.tzinfo is None:
+                _d = _d.replace(tzinfo=_tz.utc)
+            if _d <= maintenant:
+                return False
+        except (ValueError, TypeError):
+            pass          # échéance illisible : on ne prive personne sur un doute
+    _restant = abonnement.get("remaining_sessions")
+    if _restant is None:
+        return True
+    try:
+        return int(_restant) > 0
+    except (TypeError, ValueError):
+        return True
+
+
+def rvab_offres_ouvrant_le_cours(offres, course_id: str) -> set:
+    """Noms des offres dont `linked_course_ids` contient CE cours.
+
+    On passe par le NOM parce que c'est ce que l'abonnement stocke
+    (`subscriptions.offer_name`) : l'identifiant d'offre n'y figure pas.
+    """
+    _cid = str(course_id or "").strip()
+    _noms = set()
+    if not _cid:
+        return _noms
+    for _o in (offres or []):
+        if not isinstance(_o, dict):
+            continue
+        _lies = _o.get("linked_course_ids") or []
+        if any(str(_x).strip() == _cid for _x in _lies):
+            _nom = str(_o.get("name") or "").strip()
+            if _nom:
+                _noms.add(_nom)
+    return _noms
+
+
+def rvab_abonnes_du_cours(abonnements, offres, course_id: str, maintenant) -> list:
+    """Adresses des abonnés ACTIFS dont l'offre ouvre ce cours précis.
+
+    Un abonné dont l'offre ne mentionne pas ce cours n'est PAS rappelé : la
+    distinction existe déjà dans les données, on la respecte au lieu d'arroser.
+    """
+    _noms = rvab_offres_ouvrant_le_cours(offres, course_id)
+    if not _noms:
+        return []
+    _vus, _sortie = set(), []
+    for _a in (abonnements or []):
+        if not isinstance(_a, dict):
+            continue
+        if str(_a.get("offer_name") or "").strip() not in _noms:
+            continue
+        if not rvab_abonnement_actif(_a, maintenant):
+            continue
+        _mail = rvab_normaliser_email(_a.get("email"))
+        if not _mail or _mail in _vus:
+            continue
+        _vus.add(_mail)
+        _sortie.append(_mail)
+    return _sortie
+
+
+def rvab_fusionner(emails_reservation, emails_abonnement) -> list:
+    """L'union des deux sources, SANS doublon, avec l'origine retenue.
+
+    LA RÉSERVATION L'EMPORTE. Quelqu'un qui a réservé ET qui est abonné reçoit
+    UN SEUL rappel, et c'est celui de la réservation : elle est plus précise
+    (elle connaît son code, sa place, son espace). Sans cette priorité, la même
+    personne recevrait deux messages pour le même cours — le défaut que ce lot
+    doit rendre impossible.
+    """
+    _sortie, _vus = [], set()
+    for _m in (emails_reservation or []):
+        _n = rvab_normaliser_email(_m)
+        if _n and _n not in _vus:
+            _vus.add(_n)
+            _sortie.append((_n, RVAB_ORIGINE_RESERVATION))
+    for _m in (emails_abonnement or []):
+        _n = rvab_normaliser_email(_m)
+        if _n and _n not in _vus:
+            _vus.add(_n)
+            _sortie.append((_n, RVAB_ORIGINE_ABONNEMENT))
+    return _sortie
+
+
+def rvab_cle_envoi(email: str, course_id: str, occurrence_iso: str, cle_regle: str) -> str:
+    """Clé d'anti-doublon pour un rappel SANS réservation.
+
+    Un abonné sans réservation n'a aucun document où poser un marqueur — c'est
+    la seule vraie lacune que ce lot doit combler. La clé porte les quatre
+    dimensions qui définissent un envoi unique : QUI, QUEL cours, QUELLE séance,
+    QUELLE règle. Deux passages du cron sur la même fenêtre produisent la même
+    clé, donc un seul envoi.
+    """
+    return "|".join([
+        rvab_normaliser_email(email),
+        str(course_id or "").strip(),
+        str(occurrence_iso or "").strip(),
+        str(cle_regle or "").strip(),
+    ])
