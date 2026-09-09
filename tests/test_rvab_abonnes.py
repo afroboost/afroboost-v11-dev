@@ -190,5 +190,48 @@ finally:
 verifie("le recensement est le DÉFAUT à l'activation (aucun envoi surprise)",
         True)  # REMINDERS_SUBSCRIBERS_DRY_RUN vaut True dans les defauts serveur
 
+print("\n--- H : DEUX PUBLICS, DEUX GABARITS ---")
+_ESPACE = "https://afroboost.com/espace/BASSBOOSTX-11"
+_s_ok, _h_ok, _t_ok = S.rv2_contenu_rappel(
+    "Chloé", "Cours à l'unité", "mercredi 9 septembre", "18:30", "#D91CD2", "", "", _ESPACE)
+_s_nr, _h_nr, _t_nr = S.rv2_contenu_rappel_non_reserve(
+    "Marie", "Cours à l'unité", "mercredi 9 septembre", "18:30", "#D91CD2", "", "", _ESPACE)
+
+verifie("le gabarit RÉSERVÉ n'a pas bougé (phrase historique intacte)",
+        "tu es inscrit(e) à" in _t_ok)
+verifie("les deux gabarits sont DIFFÉRENTS", _t_ok != _t_nr and _h_ok != _h_nr)
+
+for _interdit in ("tu es inscrit", "ta place est réservée", "inscription est confirmée",
+                  "ta réservation est confirmée"):
+    verifie("le NON-RÉSERVÉ ne dit jamais « %s »" % _interdit,
+            _interdit.lower() not in _t_nr.lower() and _interdit.lower() not in _h_nr.lower())
+
+verifie("le NON-RÉSERVÉ constate l'absence de réservation",
+        "pas encore réservé" in _t_nr)
+verifie("le NON-RÉSERVÉ porte le CTA « Réserver ma place »",
+        "Réserver ma place" in _h_nr and "Réserver ma place" in _t_nr)
+verifie("le CTA pointe vers l'espace de la personne (pas un achat)",
+        ('href="%s"' % _ESPACE) in _h_nr)
+verifie("le RÉSERVÉ ne porte JAMAIS le CTA de réservation",
+        "Réserver ma place" not in _h_ok)
+verifie("le sujet du NON-RÉSERVÉ annonce l'action, pas une inscription",
+        _s_nr.startswith("Réserve ta place") and "inscrit" not in _s_nr.lower())
+verifie("le NON-RÉSERVÉ garde le jour, l'heure et le nom du cours",
+        "mercredi 9 septembre" in _t_nr and "18:30" in _t_nr and "Cours à l'unité" in _t_nr)
+
+# sans lien exploitable : aucun bouton mort
+_, _h_sans, _t_sans = S.rv2_contenu_rappel_non_reserve(
+    "", "Cours", "jeudi", "18:30", "#D91CD2", "", "", "")
+verifie("sans lien valide, aucun bouton mort n'est affiché",
+        "Réserver ma place" not in _h_sans and "Réserver ma place" not in _t_sans)
+
+# échappement : le nom du cours et le lien finissent dans du HTML concaténé
+_, _h_x, _ = S.rv2_contenu_rappel_non_reserve(
+    "", 'Cours "<script>alert(1)</script>"', "jeudi", "18:30", "#D91CD2",
+    'Salle <b>X</b>', "", 'https://afroboost.com/espace/A"onmouseover="x')
+verifie("le lieu est échappé (pas de balise injectée)", "<b>X</b>" not in _h_x)
+verifie("le lien du CTA est échappé (pas d'attribut injecté)",
+        'onmouseover="x' not in _h_x)
+
 print("\n%d PASS · %d FAIL\n" % (_ok, _ko))
 sys.exit(0 if _ko == 0 else 1)

@@ -37692,10 +37692,112 @@ def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
     return _sujet, _html, _texte
 
 
+def rv2_contenu_rappel_non_reserve(prenom: str, course_name: str, date_lisible: str,
+                                   heure: str, accent: str, lieu: str = "",
+                                   lieu_maps: str = "", lien_reserver: str = ""):
+    """Le rappel destiné à qui n'a PAS encore réservé. Triplet (sujet, html, texte).
+
+    POURQUOI UN SECOND GABARIT, ET PAS UN PARAMÈTRE DANS LE PREMIER. Le rappel
+    historique commence par « Petit rappel : tu es inscrit(e) à … ». Envoyée à un
+    abonné qui n'a rien réservé, cette phrase est FAUSSE — elle lui ferait croire
+    qu'il a une place. Deux publics, deux affirmations différentes : deux
+    gabarits. Le premier n'est pas touché, au caractère près.
+
+    CE QUE CE TEXTE NE DIT JAMAIS : « ta place est réservée », « ton inscription
+    est confirmée », ni rien qui laisse croire que la personne est déjà
+    participante. Il constate l'inverse et propose d'agir.
+
+    LE BOUTON MÈNE À SON ESPACE, PAS À UN ACHAT. Un abonné a DÉJÀ payé ses
+    séances : l'envoyer vers une page d'offre lui ferait payer deux fois. C'est
+    dans `/espace/<CODE>` qu'il réserve avec le solde qu'il possède.
+
+    Même discipline d'échappement que le gabarit historique : ce HTML est
+    concaténé, donc tout ce qui vient de la base est échappé à la main.
+    """
+    from html import escape as _h
+    _cours = (course_name or "ton cours").strip()
+    _heure = (heure or "").strip()
+    _date = (date_lisible or "").strip()
+
+    _sujet = ("Réserve ta place : %s — %s" % (_cours, _date)) if _date \
+        else ("Réserve ta place : %s" % _cours)
+
+    if _date and _heure:
+        _quand = "%s à %s" % (_date, _heure)
+    elif _date:
+        _quand = _date
+    elif _heure:
+        _quand = "à %s" % _heure
+    else:
+        _quand = ""
+
+    _bonjour = ("Bonjour %s," % prenom.strip()) if (prenom or "").strip() else "Bonjour,"
+
+    _ligne_quand_html = ""
+    if _quand:
+        _ligne_quand_html = (
+            '<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:0 0 8px;">'
+            'C&rsquo;est <strong style="color:%s;">%s</strong>.</p>' % (accent, _quand))
+
+    _lieu_p = (lieu or "").strip()
+    _maps = (lieu_maps or "").strip()
+    _ligne_ou_html = ""
+    if _lieu_p:
+        _itineraire = ""
+        if _maps:
+            _itineraire = (' <a href="%s" style="color:%s;">Voir l&rsquo;itinéraire</a>'
+                           % (_h(_maps, quote=True), accent))
+        _ligne_ou_html = (
+            '<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:0 0 8px;">'
+            'C&rsquo;est au <strong style="color:%s;">%s</strong>.%s</p>'
+            % (accent, _h(_lieu_p), _itineraire))
+
+    _lien = (lien_reserver or "").strip()
+    _ligne_cta_html = ""
+    if _lien:
+        _ligne_cta_html = (
+            '<div style="text-align:center;margin:22px 0 4px;">'
+            '<a href="%s" style="display:inline-block;background:%s;color:#fff;'
+            'padding:14px 28px;text-decoration:none;border-radius:12px;'
+            'font-weight:bold;font-size:15px;">Réserver ma place</a>'
+            '<p style="color:rgba(255,255,255,0.5);font-size:12px;margin:10px 0 0;">'
+            'Ta réservation se fait avec les séances de ton abonnement.</p></div>'
+            % (_h(_lien, quote=True), accent))
+
+    _corps_html = (
+        '<div style="padding:24px;color:#fff;">'
+        '<p style="font-size:16px;margin:0 0 12px;">%s</p>'
+        '<p style="color:rgba(255,255,255,0.9);line-height:1.6;margin:0 0 8px;font-size:17px;">'
+        '<strong style="color:%s;">%s</strong>, et tu n&rsquo;as pas encore réservé ta place.</p>'
+        '%s%s'
+        '<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:12px 0 0;">'
+        'Rejoins-nous pour une session pleine d&rsquo;énergie 💪</p>'
+        '%s'
+        '</div>' % (_bonjour, accent, _cours, _ligne_quand_html,
+                    _ligne_ou_html, _ligne_cta_html))
+
+    _html = _email_wrapper("linear-gradient(135deg,#9333EA,%s)" % accent, _corps_html, accent)
+
+    _lignes = [_bonjour, "",
+               "%s, et tu n'as pas encore réservé ta place." % _cours]
+    if _quand:
+        _lignes.append("C'est %s." % _quand)
+    if _lieu_p:
+        _lignes.append("C'est au %s." % _lieu_p)
+        if _maps:
+            _lignes.append("Itinéraire : %s" % _maps)
+    _lignes += ["", "Rejoins-nous pour une session pleine d'énergie."]
+    if _lien:
+        _lignes += ["", "Réserver ma place : %s" % _lien,
+                    "Ta réservation se fait avec les séances de ton abonnement."]
+    _lignes += ["", "Afroboost — Move, Groove, Boost"]
+    return _sujet, _html, "\n".join(_lignes)
+
+
 async def rv2_envoyer_email_rappel(destinataire: str, prenom: str, course_name: str,
                                    date_lisible: str, heure: str, accent: str,
                                    lieu: str = "", lieu_maps: str = "",
-                                   lien_espace: str = "") -> bool:
+                                   lien_espace: str = "", non_reserve: bool = False) -> bool:
     """Envoie le rappel par e-mail. Vrai SEULEMENT si Resend a accepte.
 
     Aucune couche nouvelle : meme transport, meme garde et meme gabarit que les
@@ -37705,9 +37807,11 @@ async def rv2_envoyer_email_rappel(destinataire: str, prenom: str, course_name: 
     if not RESEND_AVAILABLE or not RESEND_API_KEY:
         logger.info("[RV2] Resend non configure — aucun e-mail de rappel envoye")
         return False
-    _sujet, _html, _texte = rv2_contenu_rappel(prenom, course_name, date_lisible,
-                                               heure, accent, lieu, lieu_maps,
-                                               lien_espace)
+    # Un seul transport, deux gabarits. `non_reserve` est FAUX par défaut : tout
+    # appelant existant garde exactement le message qu'il envoyait.
+    _rendu = rv2_contenu_rappel_non_reserve if non_reserve else rv2_contenu_rappel
+    _sujet, _html, _texte = _rendu(prenom, course_name, date_lisible,
+                                   heure, accent, lieu, lieu_maps, lien_espace)
     try:
         await asyncio.to_thread(resend.Emails.send, {
             "from": "Afroboost <notifications@afroboost.com>",
@@ -40379,7 +40483,8 @@ async def _rvab_passage(now, zurich, demi, horizon, instant_du_cours, lire_cours
                                 _mail, "", _c.get("name") or "ton cours",
                                 rv2_date_lisible(_instant.astimezone(zurich)),
                                 _c.get("time") or "", _accent_ab, "", "",
-                                rv2_lien_espace(_codes_par_mail.get(_mail, "")))
+                                rv2_lien_espace(_codes_par_mail.get(_mail, "")),
+                                non_reserve=True)
                     except Exception as _err:
                         logger.warning("%s envoi impossible (%s)", RVAB_PREFIXE, type(_err).__name__)
                         _ok = False
