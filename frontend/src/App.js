@@ -256,6 +256,7 @@ import SessionsModal from "./components/SessionsModal";
 import ConditionsParticipation from './components/ConditionsParticipation'; // ESSAI-5a-1
 import TemoignagesPublics from './components/TemoignagesPublics'; // ESSAI-5a-2
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
+import { lieuOffre as u_lieuOffre, lienMapsLieu as u_lienMapsLieu } from './utils/lieuOffre';
 import { applyPrimaryColor, persistThemeColors } from "./utils/themeColor"; // V259 + V295 (anti-FOUC)
 import { PublicationsCarousel } from "./components/Publications"; // V261
 import { ConfirmationBoost } from "./components/publications/Boost"; // V342
@@ -2174,7 +2175,12 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // le rendu de la ligne epingle ci-dessous, et la suppression du doublon avec
   // la ligne V224 `offer.location` (~l.1735). Vaut null pour toute offre sans
   // cours lie, cas de 100 % des offres en base : rien ne change pour elles.
-  const v225CourseLoc = (offer.linkedCourses || []).find(c => c && c.locationName) || null;
+  // BUG-LIEU (14/09/2026) : UNE seule résolution, partagée par la ligne épinglée
+  // et la ligne V224 plus bas. Le lieu écrit SUR L'OFFRE gagne — c'est le seul
+  // champ que le coach modifie dans « Mes offres », donc le seul dont il peut
+  // attendre un effet. Le cours lié n'est plus qu'un repli. Voir utils/lieuOffre.js.
+  const v225Lieu = u_lieuOffre(offer);
+  const v225CourseLoc = v225Lieu.texte ? v225Lieu : null;
 
   // V225 (revue): URL du lien de lieu.
   // 1) `mapsUrl` vaut "" par defaut dans le modele (api/server.py:346) et les
@@ -2184,12 +2190,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // 2) Garde XSS : le champ est saisi au dashboard par le coach ; une URL
   //    `javascript:` y passerait. On n'accepte `mapsUrl` que s'il commence par
   //    http, sinon on retombe sur la recherche.
-  const v225LocHref = (() => {
-    if (!v225CourseLoc) return null;
-    const raw = typeof v225CourseLoc.mapsUrl === 'string' ? v225CourseLoc.mapsUrl.trim() : '';
-    if (/^https?:\/\//i.test(raw)) return raw;
-    return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(v225CourseLoc.locationName);
-  })();
+  const v225LocHref = u_lienMapsLieu(offer);
 
   return (
     <>
@@ -2547,7 +2548,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                     <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
                     <circle cx="12" cy="10" r="3" />
                   </svg>
-                  <span>{loc.locationName}</span>
+                  <span>{loc.texte}</span>
                 </a>
               );
             })()}
@@ -2654,6 +2655,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 plus precis (et cliquable vers Maps) : il prime. La condition ne
                 change RIEN pour les offres existantes, qui n'ont aucun cours lie
                 — `v225CourseLoc` y vaut null et la ligne V224 reste rendue. */}
+            {/* BUG-LIEU : cette ligne ne peut plus faire doublon — `v225CourseLoc`
+                vaut désormais le lieu RÉSOLU (offre d'abord). Elle ne se rend
+                donc que s'il n'y a aucun lieu du tout, c'est-à-dire jamais. */}
             {offer.location && !v225CourseLoc ? (
               <p className="text-xs mt-1 flex items-center gap-1" style={{ color: '#aaa' }}>
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

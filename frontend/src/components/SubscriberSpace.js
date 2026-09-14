@@ -332,8 +332,15 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       const res = await axios.post(`${API}/subscriber/otp/verify`, corps);
       const tok = res?.data?.token;
       if (!tok) throw new Error("sans jeton");
-      b3s1EcrireJeton(accessCode, memberSlug, tok, res?.data?.expires_at);
-      setJetonEspace({ token: tok, code: accessCode, slug: memberSlug || "" });
+      // CLUB MULTI : le serveur peut avoir RECONNU un membre à partir de la
+      // seule adresse saisie (participant d'un club arrivé sans son lien
+      // personnel). Le jeton est alors lié à SON slug — il faut ouvrir SON
+      // espace, sinon le client rappellerait l'espace sans `?m=` et sa propre
+      // session le refuserait (« autre_membre »).
+      const slugRendu = res?.data?.member_slug || memberSlug || "";
+      b3s1EcrireJeton(accessCode, slugRendu, tok, res?.data?.expires_at);
+      setJetonEspace({ token: tok, code: accessCode, slug: slugRendu });
+      if (slugRendu && slugRendu !== memberSlug) setMemberSlug(slugRendu);
       setIdentOtp(""); setIdentInfo("");
     } catch (err) {
       // Le serveur ne distingue pas « faux », « expire » et « essais epuises » :

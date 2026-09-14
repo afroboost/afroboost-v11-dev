@@ -15255,6 +15255,170 @@ async def join_subscriber_space(access_code: str, request: Request):
 
 
 # V208b: Admin — lister et purger les membres d'un code groupe
+async def _bug2_consommer_seances(code_upper: str, quantite: int) -> dict:
+    """Débite `quantite` séances sur LA fiche du code. UNE règle, deux garde-fous.
+
+    ═══ POURQUOI CETTE FONCTION EXISTE ═══
+
+    `discount_codes.used` est un compteur LIBRE : huit endroits l'incrémentent
+    ou le décrémentent, et rien ne le rattache aux événements qui le
+    justifieraient. Il ne peut donc pas se corriger, et personne ne voit qu'il
+    dérive — c'est le coach qui finit par le remarquer. Audit du 14/09/2026 :
+    **26 codes sur 57** ont un `used` qui ne correspond pas au nombre de
+    réservations portant ce code.
+
+    DEUX DÉFAUTS STRUCTURELS SONT FERMÉS ICI, et seulement ceux-là :
+
+    1. LA CIBLE. L'écriture se faisait par `update_one({"code": regex})`, donc
+       sur la PREMIÈRE fiche venue. Or plusieurs codes ont deux fiches en base
+       (`BASSBOOSTX-02` : 10 et 47 séances ; `BASSBOOSTX-15` : 8 et 6). La
+       consommation partait sur l'une pendant que l'écran lisait l'autre.
+       On débite désormais une fiche DÉSIGNÉE, par son `id`, choisie comme
+       partout ailleurs (`stripe_amount` décroissant) — et s'il y a plusieurs
+       fiches, on le JOURNALISE au lieu de le taire.
+
+    2. LE PLAFOND. `$inc` ne connaissait aucune borne : `used` pouvait dépasser
+       `maxUses`, ce qu'aucun événement réel ne peut justifier. La condition
+       `used + quantite <= maxUses` est portée par la requête elle-même, donc
+       atomique : deux débits simultanés ne peuvent pas la franchir ensemble.
+
+    CE QUI N'EST PAS FAIT ICI, VOLONTAIREMENT : aucune réécriture de compteur
+    existant. Un écart constaté n'est pas une erreur prouvée — une réservation
+    supprimée avant le LOT B3 (27/08) décrémentait l'abonnement sans toucher au
+    code. On corrige la mécanique, on mesure l'écart (`GET /admin/audit-seances`),
+    on ne réinvente pas le passé.
+
+    Rend un compte-rendu : `{"debite": bool, "motif": str, "used": int|None}`.
+    """
+    # Import LOCAL, comme `_bt_debit_subscriber` : `ReturnDocument` n'existe pas
+    # au niveau du module, et les tests (extraction AST) ne l'auraient pas vu.
+    from pymongo import ReturnDocument
+    _q = int(quantite or 0)
+    if _q <= 0:
+        return {"debite": False, "motif": "quantite_nulle", "used": None}
+    _m = {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}
+    _fiches = await db.discount_codes.find(
+        _m, {"_id": 0, "id": 1, "used": 1, "maxUses": 1}
+    ).sort("stripe_amount", -1).to_list(10)
+    if not _fiches:
+        logger.info("[BUG2] %s : aucune fiche, rien a debiter", code_upper)
+        return {"debite": False, "motif": "code_absent", "used": None}
+    if len(_fiches) > 1:
+        # On débite quand même — s'abstenir offrirait des séances gratuites —
+        # mais l'ambiguïté est DITE : c'est elle qu'il faudra trancher.
+        logger.warning("[BUG2] %s : %d fiches pour un seul code — debit sur la 1re",
+                       code_upper, len(_fiches))
+    _cible = _fiches[0]
+    _plafond = int(_cible.get("maxUses") or 0)
+    _res = await db.discount_codes.find_one_and_update(
+        {"id": _cible.get("id"),
+         "$expr": {"$lte": [{"$add": [{"$ifNull": ["$used", 0]}, _q]},
+                            {"$ifNull": ["$maxUses", 0]}]}},
+        {"$inc": {"used": _q}},
+        projection={"_id": 0, "used": 1, "maxUses": 1},
+        return_document=ReturnDocument.AFTER,
+    )
+    if _res is None:
+        # Le plafond aurait été franchi. La réservation, elle, a déjà été
+        # autorisée en amont sur le solde de l'abonnement : on ne l'annule pas,
+        # on refuse seulement d'écrire un compteur impossible, et on le dit.
+        logger.warning("[BUG2] %s : debit de %d refuse (plafond %d atteint)",
+                       code_upper, _q, _plafond)
+        return {"debite": False, "motif": "plafond_atteint", "used": None}
+    _apres = int(_res.get("used") or 0)
+    logger.info("[BUG2] %s : used %d -> %d (plafond %d)",
+                code_upper, _apres - _q, _apres, _plafond)
+    return {"debite": True, "motif": "ok", "used": _apres}
+
+
+@api_router.get("/admin/audit-seances")
+async def bug2_audit_seances(request: Request):
+    """Où les compteurs de séances ne collent plus au registre. LECTURE SEULE.
+
+    Le compteur `discount_codes.used` n'était comparé à RIEN. Il dérivait sans
+    que personne ne le voie, et c'est le coach qui finissait par le remarquer
+    sur un code au hasard. Cette route pose la question à toute la flotte, d'un
+    coup : pour chaque code plafonné, combien de séances le compteur annonce-t-il,
+    et combien de réservations portent réellement ce code ?
+
+    LE REGISTRE, C'EST `reservations`. Une réservation est l'événement qui
+    consomme une séance (`reservation_routes.py`, `POST /subscriber/space/.../reserve`) :
+    elle est datée, attribuée, annulable. Le compteur n'en est que le résumé.
+
+    UN ÉCART N'EST PAS UNE ERREUR PROUVÉE, et cette route ne corrige rien.
+    Une réservation supprimée avant le LOT B3 (27/08/2026) décrémentait
+    l'abonnement sans toucher au code : l'écart est alors réel mais ancien, et
+    le registre ne peut plus le raconter. On mesure, on nomme, on laisse
+    trancher. `ecart > 0` = le compteur compte plus que le registre ;
+    `ecart < 0` = il en compte moins.
+
+    Réservée à l'administrateur : elle nomme des codes, donc des personnes.
+    """
+    email = require_auth(request)
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
+
+    fiches = await db.discount_codes.find(
+        {"maxUses": {"$gt": 0}},
+        {"_id": 0, "id": 1, "code": 1, "maxUses": 1, "used": 1, "active": 1,
+         "multi_member": 1}
+    ).to_list(2000)
+
+    # Le registre, en UNE passe : les deux champs où un code peut être inscrit
+    # (`promoCode` historique et `discountCode`) désignent la même chose, et une
+    # réservation qui porte les deux ne vaut qu'une séance.
+    registre: dict = {}
+    async for r in db.reservations.find(
+            {"$or": [{"promoCode": {"$nin": [None, ""]}},
+                     {"discountCode": {"$nin": [None, ""]}}]},
+            {"_id": 0, "id": 1, "promoCode": 1, "discountCode": 1}):
+        for _c in (r.get("promoCode"), r.get("discountCode")):
+            _k = str(_c or "").strip().upper()
+            if _k:
+                registre.setdefault(_k, set()).add(r.get("id"))
+
+    # Plusieurs fiches pour un même code : le compteur d'une seule est comparé
+    # au registre du code entier. On le signale plutôt que de sommer — sommer
+    # inventerait un total que personne n'a jamais écrit.
+    doublons: dict = {}
+    for f in fiches:
+        doublons[str(f.get("code") or "").strip().upper()] = \
+            doublons.get(str(f.get("code") or "").strip().upper(), 0) + 1
+
+    lignes = []
+    for f in fiches:
+        cle = str(f.get("code") or "").strip().upper()
+        compteur = int(f.get("used") or 0)
+        reel = len(registre.get(cle, ()))
+        lignes.append({
+            "code": f.get("code"),
+            "fiche_id": f.get("id"),
+            "plafond": int(f.get("maxUses") or 0),
+            "compteur_used": compteur,
+            "registre_reservations": reel,
+            "ecart": compteur - reel,
+            "actif": bool(f.get("active")),
+            "multi_member": bool(f.get("multi_member")),
+            "fiches_pour_ce_code": doublons.get(cle, 1),
+            "depasse_le_plafond": compteur > int(f.get("maxUses") or 0),
+        })
+
+    incoherents = [l for l in lignes if l["ecart"] != 0]
+    incoherents.sort(key=lambda l: -abs(l["ecart"]))
+    logger.info("[BUG2] audit demande par %s : %d/%d codes incoherents",
+                email, len(incoherents), len(lignes))
+    return {
+        "success": True,
+        "regle": "registre = nombre de reservations portant le code ; "
+                 "un ecart n'est pas une erreur prouvee, il est a trancher",
+        "codes_plafonnes": len(lignes),
+        "incoherents": len(incoherents),
+        "codes_a_fiches_multiples": sorted(c for c, n in doublons.items() if n > 1),
+        "au_dessus_du_plafond": [l["code"] for l in lignes if l["depasse_le_plafond"]],
+        "lignes": incoherents,
+    }
+
+
 @api_router.get("/admin/code-members/{access_code}")
 async def admin_list_code_members(access_code: str, request: Request):
     """Liste tous les membres inscrits pour un code groupe."""
@@ -15972,11 +16136,10 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
                 update_data["status"] = "completed"
             await db.subscriptions.update_one({"id": subscription.get("id")}, {"$set": update_data})
 
-    # V186: Incrément discount_codes.used du nombre de places
-    await db.discount_codes.update_one(
-        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}},
-        {"$inc": {"used": quantity}}
-    )
+    # V186 / BUG2 : incrément du nombre de places, sur LA fiche du code et sous
+    # son plafond. `update_one({"code": regex})` visait la première fiche venue
+    # — sur un code à deux fiches, on débitait l'une et on affichait l'autre.
+    await _bug2_consommer_seances(code_upper, quantity)
 
     coach_id = subscription.get("coach_id") or course.get("coach_id") or DEFAULT_COACH_ID  # V244
 
@@ -44912,12 +45075,39 @@ _B3S1_COLL_OTP = "subscriber_otp"
 _B3S1_COLL_SESSIONS = "subscriber_sessions"
 
 
-async def _b3s1_contact_enregistre(code_upper: str, slug: str = ""):
-    """(email_enregistre, coach_id) pour ce code — ou (None, None).
+async def _b3s1_contact_enregistre(code_upper: str, slug: str = "",
+                                   email_demande: str = ""):
+    """(email_enregistre, coach_id, slug_membre) pour ce code — ou (None, None, "").
 
     L'adresse vient TOUJOURS de la base, jamais du corps de la requête : c'est
     ce qui empêche de se faire envoyer l'OTP chez soi en présentant le code
     d'un autre. Même principe que `_v261_resolve_subscriber` pour le nom.
+
+    ═══ CLUB MULTI — LE PARTICIPANT S'IDENTIFIE PAR SA PROPRE ADRESSE ═══
+
+    LE BUG FERMÉ ICI, constaté sur `CLUBPMI` le 14/09/2026. Un code de club
+    porte UN titulaire (`assignedEmail`) et N participants (`code_members`),
+    chacun avec son `slug` et son espace. Sans `?m=slug` dans l'URL, cette
+    fonction retombait sur `assignedEmail` — l'adresse du TITULAIRE. Donc :
+
+      * le participant qui saisissait sa propre adresse ne recevait RIEN
+        (`_correspond` était faux : son adresse n'est pas celle du titulaire) ;
+      * l'OTP, quand il partait, partait chez le titulaire ;
+      * et l'écran qui révèle les liens personnels `?m=slug` est LUI-MÊME
+        derrière cette porte.
+
+    Autrement dit, la seule façon d'obtenir son lien personnel était de déjà
+    l'avoir. Six des sept membres de `CLUBPMI` ne pouvaient pas entrer, et tout
+    convergeait vers la boîte du titulaire.
+
+    CE QUI NE CHANGE PAS, ET C'EST L'ESSENTIEL : l'adresse reste vérifiée
+    CONTRE LA BASE. On ne fait pas confiance à ce qui est saisi — on regarde si
+    cette adresse est DÉJÀ enregistrée comme membre de ce code. Une adresse
+    inconnue n'ouvre toujours rien, et la réponse reste neutre. Le titulaire,
+    lui, garde exactement son chemin d'avant.
+
+    Le `slug` rendu est celui du membre reconnu : c'est lui qui liera la session
+    au BON espace, et non au premier de la liste.
     """
     _m = {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}
     if slug:
@@ -44925,18 +45115,28 @@ async def _b3s1_contact_enregistre(code_upper: str, slug: str = ""):
         # le titulaire — et la liste des autres membres n'est jamais lue ici.
         membre = await db.code_members.find_one(dict(_m, slug=slug), {"_id": 0, "email": 1})
         if not membre:
-            return None, None
+            return None, None, ""
         _em = (membre.get("email") or "").strip().lower()
         _dc = await db.discount_codes.find_one(_m, {"_id": 0, "coach_id": 1})
-        return (_em or None), ((_dc or {}).get("coach_id") or DEFAULT_COACH_ID)
-    _dc = await db.discount_codes.find_one(_m, {"_id": 0, "assignedEmail": 1, "coach_id": 1})
+        return (_em or None), ((_dc or {}).get("coach_id") or DEFAULT_COACH_ID), slug
+    _dc = await db.discount_codes.find_one(
+        _m, {"_id": 0, "assignedEmail": 1, "coach_id": 1, "multi_member": 1})
     _em = ((_dc or {}).get("assignedEmail") or "").strip().lower()
     _cid = (_dc or {}).get("coach_id")
+    # Club sans slug : l'adresse saisie est-elle celle d'un MEMBRE enregistré ?
+    # Recherche par égalité exacte sur une valeur normalisée — jamais de regex
+    # construite avec une saisie utilisateur.
+    _demande = (email_demande or "").strip().lower()
+    if _demande and _demande != _em and (_dc or {}).get("multi_member"):
+        _membre = await db.code_members.find_one(
+            dict(_m, email=_demande), {"_id": 0, "email": 1, "slug": 1})
+        if _membre and (_membre.get("slug") or ""):
+            return (_demande, (_cid or DEFAULT_COACH_ID), str(_membre.get("slug")))
     if not _em:
         _sub = await db.subscriptions.find_one(_m, {"_id": 0, "email": 1, "coach_id": 1})
         _em = ((_sub or {}).get("email") or "").strip().lower()
         _cid = _cid or (_sub or {}).get("coach_id")
-    return (_em or None), (_cid or DEFAULT_COACH_ID)
+    return (_em or None), (_cid or DEFAULT_COACH_ID), ""
 
 
 @api_router.post("/subscriber/otp/request")
@@ -44980,10 +45180,18 @@ async def b3s1_demander_otp(request: Request):
         raise HTTPException(status_code=429,
                             detail="Trop de demandes. Réessaie dans quelques minutes.")
 
-    _enregistre, _coach = await _b3s1_contact_enregistre(code, slug)
+    # CLUB MULTI : l'adresse saisie sert à RECONNAÎTRE le membre, pas à décider
+    # où l'on envoie. Ce que rend `_b3s1_contact_enregistre` vient de la base ;
+    # `_correspond` reste la comparaison stricte d'avant. Un inconnu n'ouvre rien.
+    _enregistre, _coach, _slug_resolu = await _b3s1_contact_enregistre(code, slug, email)
     _correspond = bool(_enregistre) and _enregistre == email
     _doc = {
         "id": str(uuid.uuid4()), "code": code, "slug": slug or "",
+        # `slug` reste la CLÉ de recherche (celle que /verify présentera aussi) ;
+        # `membre_slug` est le membre réellement authentifié — c'est lui qui
+        # liera la session au bon espace. Les séparer évite de toucher au
+        # couple requête/vérification, qui doit rester symétrique.
+        "membre_slug": _slug_resolu if _correspond else "",
         "created_at": _maintenant.isoformat(),
         "expires_at": (_maintenant + timedelta(minutes=LOTB3S1_OTP_MINUTES)).isoformat(),
         "essais": 0, "used": False, "envoye": bool(_correspond),
@@ -45093,6 +45301,10 @@ async def b3s1_verifier_otp(request: Request):
         raise _refus
 
     _coach = _doc.get("coach_id") or DEFAULT_COACH_ID
+    # CLUB MULTI : le membre reconnu à la demande d'OTP fait foi. Sans cela, un
+    # participant de club obtenait un jeton sans slug — donc un jeton qui
+    # n'ouvre AUCUN espace individuel, et le renvoyait vers le titulaire.
+    slug = str(_doc.get("membre_slug") or "").strip() or slug
     _jeton, _jti = lotb3s1_make_token(code, email, _coach, slug or None)
     if not _jeton:
         # `JWT_SECRET` absent : aucun jeton n'est émis, et on le dit clairement
@@ -45111,7 +45323,11 @@ async def b3s1_verifier_otp(request: Request):
         raise HTTPException(status_code=503,
                             detail="Vérification indisponible. Réessaie plus tard.")
     logger.info("[B3-S1] session ouverte pour un espace (jti=%s)", str(_jti)[:8])
-    return {"success": True, "token": _jeton, "expires_at": _fin.isoformat()}
+    # CLUB MULTI : le navigateur DOIT savoir quel espace ouvrir. Le jeton est lié
+    # à un membre précis ; sans son slug, le client rappellerait l'espace sans
+    # `?m=` et se ferait refuser (« autre_membre ») par sa propre session.
+    return {"success": True, "token": _jeton, "expires_at": _fin.isoformat(),
+            "member_slug": slug or None}
 
 
 # === STAFF ACCESS: Code d'accès pour scanner uniquement ===
