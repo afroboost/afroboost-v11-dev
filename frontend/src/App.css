@@ -1066,3 +1066,7 @@ input.v224-input[type="time"] {
 @media (prefers-reduced-motion: reduce) { .af-live-dot--on { animation: none; } }
 /* Champ « Rechercher… » : placeholder lisible en thème sombre. */
 .af-nav-search::placeholder { color: rgba(255, 255, 255, 0.6); opacity: 1; }
+/* Le fond des champs est imposé en !important plus haut (dégradé quasi noir) :
+   c'est lui qui rendait « Rechercher… » invisible. Ce champ-ci reçoit un fond
+   clair translucide, à la même force. */
+input.af-nav-search { background: rgba(255, 255, 255, 0.08) !important; }
