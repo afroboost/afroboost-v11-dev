@@ -138,13 +138,48 @@ class CollectionSupprimable(_Collection):
                 return types_simple_maj(1)
         return types_simple_maj(0)
 
-    async def delete_one(self, filtre):
+    async def delete_one(self, filtre, session=None):
         for i, d in enumerate(list(self.docs)):
             if _match_tx(d, filtre):
-                self.docs.pop(i)
+                doc = self.docs.pop(i)
                 self.ecritures.append(("delete", dict(filtre), None))
+                if session is not None and session.ouverte:
+                    session.journal.append(lambda i=i, doc=doc: self.docs.insert(i, doc))
                 return types_simple(1)
         return types_simple(0)
+
+    # SEANCES (14/09/2026) : la restitution du code passe par la regle unique
+    # (`seances_restituer`) — `find` + `insert_one` (mouvement, `_id` unique) +
+    # `find_one_and_update` sous `used >= q`, tous avec `session=`.
+    def find(self, filtre, projection=None, session=None):
+        return _Collection.find(self, filtre, projection)
+
+    async def insert_one(self, doc, session=None):
+        if "_id" in doc and any(d.get("_id") == doc["_id"] for d in self.docs):
+            raise _Doublon("E11000 duplicate key")
+        self.docs.append(dict(doc))
+        self.ecritures.append(("insert", dict(doc), None))
+        if session is not None and session.ouverte:
+            session.journal.append(lambda d=self.docs[-1]: self.docs.remove(d))
+        return types_simple(1)
+
+    async def find_one_and_update(self, filtre, maj, projection=None,
+                                  return_document=None, session=None):
+        for d in self.docs:
+            if _match_tx(d, filtre):
+                avant = dict(d)
+                d.update(maj.get("$set", {}))
+                for cle, pas in (maj.get("$inc") or {}).items():
+                    d[cle] = int(float(d.get(cle) or 0)) + int(pas)
+                self.ecritures.append(("update", dict(filtre), maj))
+                if session is not None and session.ouverte:
+                    session.journal.append(lambda d=d, avant=avant: (d.clear(), d.update(avant)))
+                return dict(d)
+        return None
+
+
+class _Doublon(Exception):
+    code = 11000
 
 
 def types_simple(n):
@@ -166,8 +201,12 @@ class BaseAvecNotifs(_Base):
         self.reservations = CollectionSupprimable()
         self.subscriptions = CollectionSupprimable()
         self.discount_codes = CollectionSupprimable()
+        self.seance_mouvements = CollectionSupprimable()
         self.notifications = _Collection()
         self.client = FauxClient()
+
+    def __getitem__(self, nom):
+        return getattr(self, nom)
 
 
 def resa(id_="res-1", coach_id=COACH, **kw):
@@ -208,7 +247,7 @@ def espace(db, appelant=COACH, admins=(ADMIN,)):
     faux_api_server(appelant)
     faux_shared()
     for _n in ("lotb3_actif", "lotb3_montant_debite", "lotb3_montant_restitue",
-               "lotb3_code_decrementable"):
+               "lotb3_code_decrementable", "seances_restituer"):
         setattr(sys.modules["api.routes.shared"], _n, getattr(_S_REEL, _n))
     os.environ["LOTB3_ANNULATION_CANONIQUE_ENABLED"] = "true"
     ns = construire(db)
@@ -355,8 +394,8 @@ verifier("9. il garde son controle de propriete",
          "ne t'appartient pas" in _corps_abonne, "")
 verifier("9. il garde son delai d'annulation",
          "T1_DELAI_ANNULATION_H" in _corps_abonne, "")
-verifier("9. il garde son decrement discount_codes (V186)",
-         "discount_codes.update_one" in _corps_abonne, "")
+verifier("9. il garde son decrement discount_codes (V186, via la regle unique SEANCES)",
+         "seances_restituer" in _corps_abonne and "subscriber_space_cancel" in _corps_abonne, "")
 verifier("9. LOT B3-S0 n'y a introduit aucune garde R11",
          "_r11_scanneur" not in _corps_abonne, "")
 

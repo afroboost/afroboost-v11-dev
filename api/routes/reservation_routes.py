@@ -1443,18 +1443,24 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
                 except Exception as _e:
                     logger.warning(f"[PUSH-V180] notif 0 séances échec: {_e}")
 
+    _seances_reservation_id = None
     if promo_code:
         discount = await db.discount_codes.find_one({"code": {"$regex": f"^{re.escape(promo_code)}$", "$options": "i"}, "active": True}, {"_id": 0})
         _lot3_code = discount             # LOT 3a : lecture seule, pour le snapshot
         if discount:
             # V430 : l'autorisation a été vérifiée EN TÊTE de route, avant toute
             # écriture. Rien à refaire ici.
-            # v95: Incrémenter le compteur d'utilisation du code promo
-            await db.discount_codes.update_one(
-                {"id": discount.get("id")},
-                {"$inc": {"used": 1}}
-            )
-            logger.info(f"[RESERVATION] Code promo {promo_code} utilisé (compteur incrémenté)")
+            # v95 / SEANCES : le compteur du code passe par la règle unique
+            # (`seances_consommer`) — fiche désignée, plafond atomique, et clé
+            # d'événement = l'`id` de la réservation insérée plus bas, tiré ICI.
+            # Ce chemin déduit UNE séance de l'abonnement (ci-dessus) : le code
+            # en apprend exactement une, jamais `quantity`.
+            _seances_reservation_id = str(uuid.uuid4())
+            from api.routes.shared import seances_consommer as _seances_consommer
+            _seances_r = await _seances_consommer(
+                db, promo_code, 1, reservation_id=_seances_reservation_id,
+                source="reservations_create")
+            logger.info(f"[RESERVATION] Code promo {promo_code} : {_seances_r.get('motif')}")
         else:
             logger.info(f"[RESERVATION] Code promo invalide: {promo_code}")
 
@@ -1515,6 +1521,10 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         coach_id=effective_coach_id
     ).model_dump()
     reservation_data.update(_t1_champs)
+    # SEANCES : la réservation porte l'`id` sur lequel le mouvement de débit a
+    # été inscrit (quand un code a été débité) — sinon celui du modèle.
+    if _seances_reservation_id:
+        reservation_data["id"] = _seances_reservation_id
     if reservation.courseId:
         reservation_data["courseId"] = reservation.courseId
     # LOT 3a : le tarif fige. Pose ICI, a cote de `_t1_champs` qui fige deja les
@@ -1950,10 +1960,19 @@ async def delete_reservation(reservation_id: str, request: Request):
                     _b3_maj, session=_b3_ses)
                 recredited = True
 
-            if _b3_doc is not None and _b3_rendu > 0:
-                await db.discount_codes.update_one(
-                    {"id": _b3_fiche_id, "used": {"$gte": _b3_rendu}},
-                    {"$inc": {"used": -_b3_rendu}}, session=_b3_ses)
+            if _b3_rendu > 0 and (_b3_doc is not None or _b3_code):
+                # SEANCES : la restitution passe par la règle unique, DANS la
+                # transaction. Avec un mouvement `debit:<id>` connu, elle rend
+                # la quantité et la fiche exactes de ce débit ; sinon elle
+                # retombe sur la cible calculée ci-dessus (`_b3_fiche_id`).
+                from api.routes.shared import seances_restituer as _seances_restituer
+                _b3_rest = await _seances_restituer(
+                    db, _b3_code, _b3_rendu,
+                    reservation_id=_b3_supprimee.get("id") or reservation_id,
+                    source="reservations_delete", session=_b3_ses)
+                if not _b3_rest.get("restitue"):
+                    logger.warning("[LOT B3] %s : code non restitue (%s)",
+                                   _b3_code, _b3_rest.get("motif"))
 
             await _b3_ses.commit_transaction()
             logger.info("[LOT B3] %s annulee : %d seance(s) rendue(s) — abonnement=%s code=%s (%s)",
@@ -3247,7 +3266,8 @@ async def qr_scan_validate(request: Request):
         raise HTTPException(status_code=500, detail=f"Erreur interne scanner: {type(e).__name__}: {str(e)}")
 
 
-async def _lotb0_refleter_la_consommation(code: str, used_sessions_apres: int):
+async def _lotb0_refleter_la_consommation(code: str, used_sessions_apres: int,
+                                          reservation_id: str = None):
     """LOT B0 — le scan a debite une seance : le CODE doit l'apprendre aussi.
 
     LE DEFAUT, PROUVE PAR LES DONNEES. Ce chemin ecrivait `used_sessions +1` et
@@ -3255,66 +3275,35 @@ async def _lotb0_refleter_la_consommation(code: str, used_sessions_apres: int):
     `discount_codes.used`. Trois codes de production le montrent a la seconde
     pres — `AFR-0C60A3`, `AFR-B7E009`, `AFR-E77BD4` : l'abonnement passe a
     `used: 1` a l'instant exact du `validatedAt` d'une reservation
-    `source: qr_scan_coach`, pendant que le code reste a `used: 0`. Depuis le
-    LOT A, la page « Code promo » fait foi : une presence invisible pour elle
-    est une seance RENDUE — pour deux de ces trois cas, un cours d'essai gratuit
-    une deuxieme fois.
+    `source: qr_scan_coach`, pendant que le code reste a `used: 0`.
 
-    CE QUE CETTE FONCTION NE FAIT PAS, ET C'EST DELIBERE :
-      * elle ne decide RIEN sur la consommation — celle-ci a deja eu lieu, elle
-        se contente de la refleter ;
-      * elle ne choisit JAMAIS entre plusieurs fiches. Deux fiches pour un meme
-        code, c'est une ambiguite que le LOT A sait deja nommer et que le LOT C
-        tranchera : ici on s'abstient et on le journalise ;
-      * elle ne ressuscite aucun code. `$inc` ne peut qu'AUGMENTER `used`, donc
-        que reduire le restant : un code expire ou epuise le reste.
-
-    `$inc` et non `$set` : deux portiers qui scannent en meme temps ne doivent
-    pas s'ecraser l'un l'autre. L'increment est atomique AU NIVEAU DU DOCUMENT.
+    SEANCES (14/09/2026) : ce chemin n'ecrit plus lui-meme. Il passe par la
+    regle unique `seances_consommer` (`api/routes/shared.py`) : meme cible que
+    l'annulation (fiche canonique ou seule fiche vivante, sinon abstention
+    DITE), plafond atomique, et clé d'événement = l'`id` de la reservation que
+    le scan cree juste apres. Un scan rejoue ne debite pas deux fois.
 
     Aucune exception ne remonte : quelqu'un attend a la porte. Une trace
     d'historique qui echoue ne doit pas lui refuser l'entree.
     """
     try:
-        _fiches = await db.discount_codes.find(
-            {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}},
-            {"_id": 0, "id": 1, "used": 1},
-        ).to_list(50)
-    except Exception as _err:
-        logger.warning("[LOT B0] %s : fiches illisibles (%s) — compteur du code inchange",
-                       code, type(_err).__name__)
-        return
-    if not _fiches:
-        # Un abonnement peut exister sans fiche `discount_codes` : il n'y a
-        # alors aucun compteur a refleter, et aucune divergence possible.
-        logger.info("[LOT B0] %s : aucune fiche code — rien a refleter", code)
-        return
-    if len(_fiches) > 1:
-        logger.warning("[LOT B0] %s : %d fiches concurrentes — AUCUNE ecriture "
-                       "(le code reste AMBIGU, cf. LOT C)", code, len(_fiches))
-        return
-    _cible = _fiches[0].get("id")
-    if not _cible:
-        logger.warning("[LOT B0] %s : fiche sans `id` — aucune ecriture ciblee possible", code)
-        return
-    _avant = _fiches[0].get("used")
-    try:
-        await db.discount_codes.update_one({"id": _cible}, {"$inc": {"used": 1}})
+        from api.routes.shared import seances_consommer as _seances_consommer
+        _r = await _seances_consommer(db, code, 1, reservation_id=reservation_id,
+                                      source="qr_scan_coach")
     except Exception as _err:
         # Le seul cas ou une divergence subsiste. On la NOMME dans le journal :
         # c'est ce marqueur que la sonde de coherence cherchera.
         logger.error("[LOT B0] %s : ECART — abonnement debite, code NON incremente (%s)",
                      code, type(_err).__name__)
         return
-    try:
-        _apres = int(float(_avant or 0)) + 1
-    except (TypeError, ValueError):
-        _apres = None
+    if not _r.get("debite"):
+        logger.warning("[LOT B0] %s : code non incremente (%s)", code, _r.get("motif"))
+        return
     # Observation en LECTURE SEULE, sans aucune donnee personnelle : elle permet
     # de confirmer sur un VRAI scan que l'invariant tient, sans rejouer un scan.
-    logger.info("[LOT B0] %s : used %s -> %s | used_sessions=%s | invariant=%s",
-                code, _avant, _apres, used_sessions_apres,
-                "OK" if _apres == used_sessions_apres else "ECART")
+    logger.info("[LOT B0] %s : used -> %s | used_sessions=%s | invariant=%s",
+                code, _r.get("used"), used_sessions_apres,
+                "OK" if _r.get("used") == used_sessions_apres else "ECART")
 
 
 async def _qr_scan_validate_inner(request: Request):
@@ -3608,11 +3597,14 @@ async def _qr_scan_validate_inner(request: Request):
     # d'aujourd'hui, et il penche du cote du client. L'ordre inverse lui
     # retirerait une seance qu'il a payee. La fenetre se compte en
     # millisecondes et l'ecart eventuel est journalise `ECART`.
-    await _lotb0_refleter_la_consommation(code, new_used)
+    # SEANCES : l'identifiant de la reservation creee ci-dessous est tire ICI,
+    # pour que le mouvement `debit:<id>` et le document portent le meme `id`.
+    _seances_reservation_id = str(uuid.uuid4())
+    await _lotb0_refleter_la_consommation(code, new_used, reservation_id=_seances_reservation_id)
 
     new_res_code = _generate_afro_code()
     new_reservation = {
-        "id": str(uuid.uuid4()), "reservationCode": new_res_code,
+        "id": _seances_reservation_id, "reservationCode": new_res_code,
         "userId": subscription.get("userId", ""), "userName": user_name, "userEmail": user_email,
         "userWhatsapp": subscription.get("whatsapp", ""), "courseId": course_id, "courseName": course_name,
         # A1-3 : la reservation designe L'OCCURRENCE (date du jour + heure du

@@ -5989,3 +5989,314 @@ def rvab_cle_envoi(email: str, course_id: str, occurrence_iso: str, cle_regle: s
         str(occurrence_iso or "").strip(),
         str(cle_regle or "").strip(),
     ])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SÉANCES — LA RÈGLE UNIQUE DE CONSOMMATION ET DE RESTITUTION (14/09/2026)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# POURQUOI. `discount_codes.used` était écrit par SEPT chemins concurrents
+# (réservation vitrine, espace abonné, scan QR, annulation coach, annulation
+# abonné, essai non honoré, accès BoostTribe), chacun avec sa propre façon de
+# choisir la fiche, sa propre borne, et aucune clé d'événement. Audit du
+# 14/09/2026 : 26 codes sur 57 avaient un compteur qui ne correspondait à
+# aucune somme de réservations. Un compteur libre ne se corrige pas — il dérive.
+#
+# LA RÈGLE, EN QUATRE POINTS :
+#
+#   1. UNE CIBLE. `seances_fiche_cible` = `lotb3_code_decrementable`, la
+#      discipline du 27/08 : fiche `canonical`, sinon la SEULE fiche vivante,
+#      sinon on s'abstient (`ambigu`, `code_mort`, `aucune_fiche`). On ne
+#      choisit jamais « la première venue ». Mesuré en production le 14/09 :
+#      avec ce filtre, AUCUN code n'est ambigu — les doublons sont tous des
+#      fiches expirées ou inactives.
+#
+#   2. UN PLAFOND, PORTÉ PAR LA REQUÊTE. `used + q <= maxUses` est dans le
+#      filtre du `find_one_and_update`, donc atomique au niveau du document :
+#      deux débits simultanés ne peuvent pas franchir la borne ensemble. En
+#      restitution, `used >= q` empêche de descendre sous zéro.
+#
+#   3. UNE CLÉ D'ÉVÉNEMENT. Le seul identifiant métier qui existe déjà est
+#      `reservations.id`. Chaque mouvement est inscrit dans `seance_mouvements`
+#      avec `_id = "debit:<reservation_id>"` ou `"restitution:<reservation_id>"`
+#      — la clé primaire fait l'unicité (même verrou que LOT R, `adh:<id>`).
+#      Un rejeu, un double clic, un retry réseau : le second insert échoue en
+#      DuplicateKey, et RIEN n'est débité une seconde fois.
+#
+#   4. UNE RESTITUTION EXACTE. Annuler rend CE QUI A ÉTÉ DÉBITÉ pour CETTE
+#      réservation : même fiche, même quantité, lues dans le mouvement de débit.
+#      Sans mouvement connu (réservation antérieure à ce lot), repli sur la
+#      règle de cible et la quantité demandée, bornée par le compteur.
+#
+# ORDRE DES ÉCRITURES ET PANNE À MI-CHEMIN. Le mouvement est réclamé AVANT le
+# compteur (`statut: en_cours`), puis confirmé (`applique`). Si le processus
+# tombe entre les deux, le mouvement reste `en_cours` : un rejeu ne débite pas
+# (la clé existe) et l'audit le liste. C'est le demi-état choisi : il penche
+# du côté du client (séance non comptée) et il est VISIBLE — l'inverse
+# (compteur écrit, mouvement absent) serait un double débit au rejeu, invisible.
+# Quand l'appelant tient une transaction (LOT B3), `session=` est passé à
+# toutes les écritures et l'ensemble devient atomique.
+#
+# CE QUE CE MODULE NE FAIT PAS : il ne touche ni `subscriptions` ni
+# `code_members`. Ces compteurs-là restent aux routes ; ce module n'est la
+# règle QUE de `discount_codes.used`. Un seul compteur, une seule règle.
+
+SEANCES_COLL = "seance_mouvements"
+SEANCES_SOURCES_CONSO = (
+    "reservations_create",     # POST /reservations (vitrine, chat, coach)
+    "subscriber_space",        # POST /subscriber/space/{code}/reserve/{course}
+    "qr_scan_coach",           # scan à la porte sans réservation préalable
+    "boosttribe_access",       # crédit live (sans réservation : sans clé)
+)
+
+
+def seances_fiche_cible(docs, aujourdhui=None):
+    """(id_de_la_fiche, motif) — LA règle de cible, commune aux deux sens."""
+    return lotb3_code_decrementable(docs, aujourdhui)
+
+
+async def seances_fiches_du_code(db, code_upper: str, session=None) -> list:
+    _m = {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}
+    _proj = {"_id": 0, "id": 1, "used": 1, "maxUses": 1, "active": 1,
+             "expiresAt": 1, "canonical": 1}
+    if session is not None:
+        return await db.discount_codes.find(_m, _proj, session=session).to_list(50)
+    return await db.discount_codes.find(_m, _proj).to_list(50)
+
+
+def _seances_maintenant() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _seances_reclamer(db, cle: str, doc: dict, session=None) -> bool:
+    """Inscrit le mouvement `cle` ; False s'il existe déjà (rejeu)."""
+    try:
+        if session is not None:
+            await db[SEANCES_COLL].insert_one(dict(doc, _id=cle), session=session)
+        else:
+            await db[SEANCES_COLL].insert_one(dict(doc, _id=cle))
+        return True
+    except Exception as _err:                # noqa: BLE001
+        if lot2_est_doublon(_err):
+            return False
+        raise
+
+
+async def _seances_marquer(db, cle: str, champs: dict, session=None) -> None:
+    if session is not None:
+        await db[SEANCES_COLL].update_one({"_id": cle}, {"$set": champs}, session=session)
+    else:
+        await db[SEANCES_COLL].update_one({"_id": cle}, {"$set": champs})
+
+
+async def _seances_liberer(db, cle: str, session=None) -> None:
+    if session is not None:
+        await db[SEANCES_COLL].delete_one({"_id": cle}, session=session)
+    else:
+        await db[SEANCES_COLL].delete_one({"_id": cle})
+
+
+async def seances_consommer(db, code, quantite, reservation_id=None,
+                            source: str = "", session=None) -> dict:
+    """Débite `quantite` séances sur LA fiche du code, une seule fois par réservation.
+
+    Rend `{"debite": bool, "motif": str, "used": int|None, "maxUses": int|None,
+    "fiche_id": str|None}`. Motifs : `ok`, `deja_debite`, `quantite_nulle`,
+    `aucune_fiche`, `ambigu`, `code_mort`, `plafond_atteint`.
+
+    `reservation_id=None` (accès BoostTribe) : débit sans clé d'événement — il
+    n'existe aucun identifiant métier pour ce mouvement ; il est journalisé
+    comme tel et reste borné par le plafond.
+    """
+    code_upper = str(code or "").strip().upper()
+    try:
+        _q = int(quantite or 0)
+    except (TypeError, ValueError):
+        _q = 0
+    _sortie = {"debite": False, "motif": "", "used": None, "maxUses": None, "fiche_id": None}
+    if _q <= 0:
+        return dict(_sortie, motif="quantite_nulle")
+    if not code_upper:
+        return dict(_sortie, motif="aucune_fiche")
+
+    _fiches = await seances_fiches_du_code(db, code_upper, session=session)
+    _cible, _voie = seances_fiche_cible(_fiches)
+    if _cible is None:
+        # Abstention DITE : l'événement (la réservation) existe, l'audit verra
+        # qu'aucun mouvement ne lui correspond et nommera le code.
+        logger.warning("[SEANCES] %s : aucun debit (%s, %d fiche(s))",
+                       code_upper, _voie, len(_fiches))
+        return dict(_sortie, motif=_voie)
+
+    _cle = f"debit:{reservation_id}" if reservation_id else None
+    if _cle:
+        _pris = await _seances_reclamer(db, _cle, {
+            "type": "debit", "reservation_id": reservation_id, "code": code_upper,
+            "fiche_id": _cible, "quantite": _q, "source": source or "",
+            "statut": "en_cours", "at": _seances_maintenant(),
+        }, session=session)
+        if not _pris:
+            logger.info("[SEANCES] %s : rejeu ignore (%s deja debitee)", code_upper, reservation_id)
+            return dict(_sortie, motif="deja_debite", fiche_id=_cible)
+
+    from pymongo import ReturnDocument
+    _filtre = {"id": _cible,
+               "$expr": {"$lte": [{"$add": [{"$ifNull": ["$used", 0]}, _q]},
+                                  {"$ifNull": ["$maxUses", 0]}]}}
+    _maj = {"$inc": {"used": _q}}
+    _proj = {"_id": 0, "used": 1, "maxUses": 1}
+    if session is not None:
+        _res = await db.discount_codes.find_one_and_update(
+            _filtre, _maj, projection=_proj, return_document=ReturnDocument.AFTER,
+            session=session)
+    else:
+        _res = await db.discount_codes.find_one_and_update(
+            _filtre, _maj, projection=_proj, return_document=ReturnDocument.AFTER)
+    if _res is None:
+        if _cle:
+            await _seances_liberer(db, _cle, session=session)
+        logger.warning("[SEANCES] %s : debit de %d refuse (plafond) fiche=%s",
+                       code_upper, _q, str(_cible)[:8])
+        return dict(_sortie, motif="plafond_atteint", fiche_id=_cible)
+    _apres = int(_res.get("used") or 0)
+    if _cle:
+        await _seances_marquer(db, _cle, {"statut": "applique", "used_apres": _apres},
+                               session=session)
+    logger.info("[SEANCES] %s : used %d -> %d / %s (%s, %s)", code_upper, _apres - _q,
+                _apres, _res.get("maxUses"), source or "?", _voie)
+    return {"debite": True, "motif": "ok", "used": _apres,
+            "maxUses": int(_res.get("maxUses") or 0), "fiche_id": _cible}
+
+
+async def seances_restituer(db, code, quantite, reservation_id=None,
+                            source: str = "", session=None) -> dict:
+    """Rend à la fiche ce qu'une réservation lui a pris — une seule fois.
+
+    Avec un mouvement `debit:<id>` connu : même fiche, même quantité (bornée
+    par `quantite` si l'appelant demande moins). Sans mouvement : règle de
+    cible + `quantite`, bornée par `used >= q`.
+
+    Rend `{"restitue": bool, "motif": str, "used": int|None, "fiche_id": str|None,
+    "quantite": int}`. Motifs : `ok`, `deja_restitue`, `quantite_nulle`,
+    `aucune_fiche`, `ambigu`, `code_mort`, `compteur_insuffisant`.
+    """
+    code_upper = str(code or "").strip().upper()
+    try:
+        _q = int(quantite or 0)
+    except (TypeError, ValueError):
+        _q = 0
+    _sortie = {"restitue": False, "motif": "", "used": None, "fiche_id": None, "quantite": 0}
+    if _q <= 0:
+        return dict(_sortie, motif="quantite_nulle")
+
+    _debit = None
+    if reservation_id:
+        if session is not None:
+            _debit = await db[SEANCES_COLL].find_one({"_id": f"debit:{reservation_id}"},
+                                                     session=session)
+        else:
+            _debit = await db[SEANCES_COLL].find_one({"_id": f"debit:{reservation_id}"})
+    if _debit and _debit.get("statut") == "applique" and _debit.get("fiche_id"):
+        _cible, _voie = _debit.get("fiche_id"), "mouvement"
+        _q = min(_q, int(_debit.get("quantite") or _q))
+        if not code_upper:
+            code_upper = str(_debit.get("code") or "")
+    else:
+        if not code_upper:
+            return dict(_sortie, motif="aucune_fiche")
+        _fiches = await seances_fiches_du_code(db, code_upper, session=session)
+        _cible, _voie = seances_fiche_cible(_fiches)
+        if _cible is None:
+            logger.warning("[SEANCES] %s : aucune restitution (%s)", code_upper, _voie)
+            return dict(_sortie, motif=_voie)
+
+    _cle = f"restitution:{reservation_id}" if reservation_id else None
+    if _cle:
+        _pris = await _seances_reclamer(db, _cle, {
+            "type": "restitution", "reservation_id": reservation_id, "code": code_upper,
+            "fiche_id": _cible, "quantite": _q, "source": source or "",
+            "statut": "en_cours", "at": _seances_maintenant(),
+        }, session=session)
+        if not _pris:
+            logger.info("[SEANCES] %s : restitution deja faite pour %s", code_upper, reservation_id)
+            return dict(_sortie, motif="deja_restitue", fiche_id=_cible)
+
+    from pymongo import ReturnDocument
+    _filtre = {"id": _cible, "used": {"$gte": _q}}
+    _maj = {"$inc": {"used": -_q}}
+    _proj = {"_id": 0, "used": 1}
+    if session is not None:
+        _res = await db.discount_codes.find_one_and_update(
+            _filtre, _maj, projection=_proj, return_document=ReturnDocument.AFTER,
+            session=session)
+    else:
+        _res = await db.discount_codes.find_one_and_update(
+            _filtre, _maj, projection=_proj, return_document=ReturnDocument.AFTER)
+    if _res is None:
+        if _cle:
+            await _seances_liberer(db, _cle, session=session)
+        logger.warning("[SEANCES] %s : restitution de %d refusee (compteur < %d) fiche=%s",
+                       code_upper, _q, _q, str(_cible)[:8])
+        return dict(_sortie, motif="compteur_insuffisant", fiche_id=_cible)
+    _apres = int(_res.get("used") or 0)
+    if _cle:
+        await _seances_marquer(db, _cle, {"statut": "applique", "used_apres": _apres},
+                               session=session)
+    logger.info("[SEANCES] %s : used %d -> %d (restitution %s, %s)", code_upper,
+                _apres + _q, _apres, source or "?", _voie)
+    return {"restitue": True, "motif": "ok", "used": _apres, "fiche_id": _cible, "quantite": _q}
+
+
+def seances_confiance(used, registre, abonnements_used, fiches_vivantes=1,
+                      fiches_total=1, multi_member=False, sources=None,
+                      est_cible=True):
+    """(niveau, cause) — que peut-on affirmer d'un écart compteur/registre ?
+
+    FONCTION PURE, pour que la règle de classement soit testable cas par cas.
+    `used` = compteur stocké ; `registre` = somme des `quantity` des
+    réservations vivantes portant le code (hors essais restitués) ;
+    `abonnements_used` = les `used_sessions` des abonnements du code.
+
+      COHERENT  — `used == registre`.
+      CERTAIN   — une seule fiche vivante, un seul abonnement, l'abonnement
+                  DIT LA MÊME CHOSE que le registre, et le code compte MOINS :
+                  deux témoins indépendants contre un, et la cause mécanique
+                  est connue (scan antérieur au LOT B0 : `AFR-0C60A3`,
+                  `AFR-B7E009`, `AFR-E77BD4`, à la seconde près). La bonne
+                  valeur est `registre`.
+      PROBABLE  — code et abonnement concordent mais le registre diffère :
+                  édition manuelle (V206 synchronise les deux) ou réservation
+                  supprimée sans trace. La valeur vraie n'est pas prouvable.
+      AMBIGU    — tout le reste : fiches multiples, quota partagé (club),
+                  aucun ou plusieurs abonnements, trois témoins différents.
+
+    `est_cible` : cette fiche est-elle celle que la règle unique désigne ?
+    Une fiche MORTE d'un code à plusieurs fiches (`BASSBOOSTX-31`, 0/9 expirée
+    à côté d'une vivante 7/7 cohérente) n'est jamais corrigible : son compteur
+    ne pilote rien — `HORS_CIBLE`, aucune écriture.
+
+    Seul CERTAIN autorise une correction automatique — jamais les autres.
+    """
+    try:
+        _u = int(used or 0); _r = int(registre or 0)
+    except (TypeError, ValueError):
+        return "AMBIGU", "compteurs_illisibles"
+    if _u == _r:
+        return "COHERENT", ""
+    if int(fiches_total or 1) > 1 and not est_cible:
+        return "HORS_CIBLE", "fiche_non_designee"
+    if int(fiches_total or 1) > 1 and int(fiches_vivantes or 0) != 1:
+        return "AMBIGU", "fiches_multiples"
+    if multi_member:
+        return "AMBIGU", "quota_partage"
+    _subs = [int(x) for x in (abonnements_used or []) if x is not None]
+    if len(_subs) != 1:
+        return "AMBIGU", "aucun_abonnement" if not _subs else "plusieurs_abonnements"
+    _s = _subs[0]
+    if _s == _r and _u < _r:
+        return "CERTAIN", "code_non_incremente"
+    if _s == _u:
+        return "PROBABLE", "compteurs_concordants_registre_different"
+    if _s == _r and _u > _r:
+        return "PROBABLE", "code_non_decremente"
+    return "AMBIGU", "trois_temoins_differents"

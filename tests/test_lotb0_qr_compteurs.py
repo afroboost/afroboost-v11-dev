@@ -159,8 +159,10 @@ async def principal():
              db.discount_codes.ecritures == [] and
              [d["used"] for d in db.discount_codes.docs] == [2, 7],
              [d["used"] for d in db.discount_codes.docs])
+    # SEANCES (14/09/2026) : l'abstention vient desormais de la regle unique
+    # (`seances_consommer` -> motif `ambigu`), que le LOT B0 journalise.
     verifier("F. l'abstention est journalisee pour le LOT C",
-             any("LOT B0" in str(x) and "fiches concurrentes" in str(x)
+             any("LOT B0" in str(x) and "ambigu" in str(x)
                  for x in ns["logger"].lignes), ns["logger"].lignes[-3:])
 
     # ══ G. ESSAI GRATUIT : COMPORTEMENT EXISTANT NON REGRESSE ══════════════

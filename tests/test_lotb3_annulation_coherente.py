@@ -127,13 +127,51 @@ class CollectionTx(_Collection):
                 return types.SimpleNamespace(matched_count=1, modified_count=1)
         return types.SimpleNamespace(matched_count=0, modified_count=0)
 
-    async def delete_one(self, filtre):
+    async def delete_one(self, filtre, session=None):
         for i, d in enumerate(list(self.docs)):
             if _match_tx(d, filtre):
-                self.docs.pop(i)
+                doc = self.docs.pop(i)
                 self.ecritures.append(("delete", dict(filtre), None))
+                if session is not None and session.ouverte:
+                    session.journal.append(lambda i=i, doc=doc: self.docs.insert(i, doc))
                 return types.SimpleNamespace(deleted_count=1)
         return types.SimpleNamespace(deleted_count=0)
+
+    # SEANCES (14/09/2026) : la restitution du code passe desormais par la regle
+    # unique `seances_restituer`, qui lit les fiches (`find` + session), reclame
+    # un mouvement (`insert_one` avec `_id`, unicite = rejeu refuse) et decremente
+    # par `find_one_and_update` sous la garde `used >= q`. Les trois sont simules
+    # ici AVEC journal d'annulation, pour que l'abort les defasse aussi.
+    def find(self, filtre, projection=None, session=None):
+        return _Collection.find(self, filtre, projection)
+
+    async def insert_one(self, doc, session=None):
+        if "_id" in doc and any(d.get("_id") == doc["_id"] for d in self.docs):
+            raise _Doublon("E11000 duplicate key")
+        self.docs.append(dict(doc))
+        self.ecritures.append(("insert", dict(doc), None))
+        if session is not None and session.ouverte:
+            session.journal.append(lambda d=self.docs[-1]: self.docs.remove(d))
+        return types.SimpleNamespace(inserted_id=doc.get("_id"))
+
+    async def find_one_and_update(self, filtre, maj, projection=None,
+                                  return_document=None, session=None):
+        for d in self.docs:
+            if _match_tx(d, filtre):
+                avant = dict(d)
+                d.update(maj.get("$set", {}))
+                for cle, pas in (maj.get("$inc") or {}).items():
+                    d[cle] = int(float(d.get(cle) or 0)) + int(pas)
+                self.ecritures.append(("update", dict(filtre), maj))
+                if session is not None and session.ouverte:
+                    session.journal.append(lambda d=d, avant=avant: (d.clear(), d.update(avant)))
+                return dict(d)
+        return None
+
+
+class _Doublon(Exception):
+    """Le double de `DuplicateKeyError` : reconnu par `lot2_est_doublon` (code 11000)."""
+    code = 11000
 
 
 class FauxClient:
@@ -153,10 +191,14 @@ class BaseTx(_Base):
         self.reservations = CollectionTx(nom="reservations")
         self.subscriptions = CollectionTx(nom="subscriptions")
         self.discount_codes = CollectionTx(nom="discount_codes")
+        self.seance_mouvements = CollectionTx(nom="seance_mouvements")
         self.notifications = _Collection()
         self.client = FauxClient(self)
         self._planter_apres = planter_apres
         self._mutations = 0
+
+    def __getitem__(self, nom):
+        return getattr(self, nom)
 
     def compter(self):
         self._mutations += 1
@@ -180,6 +222,22 @@ class CollectionPannable(CollectionTx):
     async def update_one(self, filtre, maj, session=None):
         r = await CollectionTx.update_one(self, filtre, maj, session)
         if r.modified_count:
+            self.base.compter()
+        return r
+
+    # SEANCES : les deux nouvelles ecritures de la regle unique comptent aussi
+    # comme mutations — la panne peut tomber APRES le mouvement et AVANT le
+    # compteur, et l'abort doit defaire les deux.
+    async def insert_one(self, doc, session=None):
+        r = await CollectionTx.insert_one(self, doc, session)
+        self.base.compter()
+        return r
+
+    async def find_one_and_update(self, filtre, maj, projection=None,
+                                  return_document=None, session=None):
+        r = await CollectionTx.find_one_and_update(self, filtre, maj, projection,
+                                                   return_document, session)
+        if r is not None:
             self.base.compter()
         return r
 
@@ -215,6 +273,7 @@ def monde(reservation=None, sub=None, fiches=None, planter_apres=None):
         db.reservations = CollectionPannable(db, nom="reservations")
         db.subscriptions = CollectionPannable(db, nom="subscriptions")
         db.discount_codes = CollectionPannable(db, nom="discount_codes")
+        db.seance_mouvements = CollectionPannable(db, nom="seance_mouvements")
     db.reservations.docs.append(reservation if reservation is not None else resa())
     if sub is not False:
         db.subscriptions.docs.append(sub if sub is not None else forfait())
@@ -231,7 +290,7 @@ def espace(db, appelant=COACH):
     # la regle reelle, pas une copie.
     _stub = sys.modules["api.routes.shared"]
     for _n in ("lotb3_actif", "lotb3_montant_debite", "lotb3_montant_restitue",
-               "lotb3_code_decrementable"):
+               "lotb3_code_decrementable", "seances_restituer"):
         setattr(_stub, _n, getattr(S, _n))
     ns = construire(db)
     ns["is_super_admin"] = lambda e: (e or "").lower().strip() == ADMIN
@@ -386,12 +445,14 @@ async def principal():
              getattr(err, "status_code", "accepte"))
 
     # ══ 10. PANNE INJECTEE APRES CHAQUE MUTATION -> ABORT ═════════════════
-    for n, libelle in ((1, "la suppression"), (2, "le compteur abonnement")):
+    for n, libelle in ((1, "la suppression"), (2, "le compteur abonnement"),
+                       (3, "le mouvement de restitution (SEANCES)")):
         db = monde(planter_apres=n)
         rep, err = await annuler(espace(db))
         verifier("10. panne apres %s -> 500, aucune mutation conservee" % libelle,
-                 err is not None and err.status_code == 500 and etat(db) == (1, 5, 5, 5),
-                 (getattr(err, "status_code", "accepte"), etat(db)))
+                 err is not None and err.status_code == 500 and etat(db) == (1, 5, 5, 5)
+                 and db.seance_mouvements.docs == [],
+                 (getattr(err, "status_code", "accepte"), etat(db), db.seance_mouvements.docs))
         verifier("10. ... et `abort` a bien ete appele (%s)" % libelle,
                  db.client.sessions and db.client.sessions[0].aborts == 1
                  and db.client.sessions[0].commits == 0,

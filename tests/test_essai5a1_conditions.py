@@ -78,6 +78,22 @@ for _n in ast.parse(_SRC_SHARED).body:
         exec(compile(ast.get_source_segment(_SRC_SHARED, _n), "<e6>", "exec"), _ns_e6)
 sys.modules["api.routes.shared"].est_un_essai = _ns_e6["est_un_essai"]
 
+# SEANCES (14/09/2026) : la restitution du compteur du code passe par la regle
+# unique `seances_restituer`. Elle est chargee REELLE depuis `shared.py`, avec
+# ses dependances (cible, verrou de doublon), pour la meme raison qu'au-dessus :
+# aucune copie de la regle dans un banc.
+for _n in ast.parse(_SRC_SHARED).body:
+    if isinstance(_n, ast.Assign) and any(
+            isinstance(c, ast.Name) and c.id == "SEANCES_COLL" for c in _n.targets):
+        exec(compile(ast.get_source_segment(_SRC_SHARED, _n), "<seances>", "exec"), _ns_e6)
+    if isinstance(_n, (ast.FunctionDef, ast.AsyncFunctionDef)) and _n.name in (
+            "lotb3_code_decrementable", "lot2_est_doublon", "seances_fiche_cible",
+            "seances_fiches_du_code", "_seances_maintenant", "_seances_reclamer",
+            "_seances_marquer", "_seances_liberer", "seances_restituer"):
+        exec(compile(ast.get_source_segment(_SRC_SHARED, _n), "<seances>", "exec"), _ns_e6)
+_ns_e6.update({"re": __import__("re"), "datetime": datetime, "timezone": timezone})
+sys.modules["api.routes.shared"].seances_restituer = _ns_e6["seances_restituer"]
+
 
 def code_nu(nom):
     _n = ast.parse(ast.unparse(_NOEUDS[nom])).body[0]
@@ -127,13 +143,48 @@ def _match(doc, f):
     return True
 
 
+class _Doublon(Exception):
+    code = 11000
+
+
 class _Coll:
     def __init__(self, docs=None):
         self.docs = [dict(d) for d in (docs or [])]
         self.ecritures = []
 
-    def find(self, f=None, p=None):
+    def find(self, f=None, p=None, **k):
         return _Curseur([d for d in self.docs if _match(d, f)])
+
+    # SEANCES : les trois primitives de la regle unique.
+    async def insert_one(self, doc, **k):
+        await asyncio.sleep(0)
+        if "_id" in doc and any(d.get("_id") == doc["_id"] for d in self.docs):
+            raise _Doublon("E11000")
+        self.docs.append(dict(doc))
+        return type("R", (), {"inserted_id": doc.get("_id")})()
+
+    async def delete_one(self, f, **k):
+        await asyncio.sleep(0)
+        for i, d in enumerate(self.docs):
+            if _match(d, f):
+                del self.docs[i]
+                return type("R", (), {"deleted_count": 1})()
+        return type("R", (), {"deleted_count": 0})()
+
+    async def find_one_and_update(self, f, u, projection=None, return_document=None, **k):
+        await asyncio.sleep(0)
+        f = dict(f)
+        gte = {c: v["$gte"] for c, v in f.items() if isinstance(v, dict) and "$gte" in v}
+        for c in gte: f.pop(c)
+        for d in self.docs:
+            if _match(d, f) and all((d.get(c) or 0) >= v for c, v in gte.items()):
+                d.update(u.get("$set") or {})
+                for kk, vv in (u.get("$inc") or {}).items():
+                    d[kk] = (d.get(kk) or 0) + vv
+                self.ecritures.append(("update", dict(d)))
+                return dict(d)
+        return None
+
 
     async def find_one(self, f=None, p=None, **k):
         await asyncio.sleep(0)
@@ -390,7 +441,10 @@ async def captation():
 # ════════════════════════════════════════════════════════════════════════════
 #      E — L'ESSAI N'EST CONSOMME QU'A LA PRESENCE CONFIRMEE
 # ════════════════════════════════════════════════════════════════════════════
-CODE_ESSAI = [{"code": "AFR-ESSAI", "payment_method": "free", "total_paid": 0, "used": 1}]
+# SEANCES : une fiche reelle porte toujours `id` et `active` — la regle unique
+# cible par `id` et ne restitue jamais a un code mort (discipline LOT B3).
+CODE_ESSAI = [{"id": "dc-essai", "code": "AFR-ESSAI", "payment_method": "free",
+               "total_paid": 0, "used": 1, "active": True}]
 CODE_PAYE = [{"code": "AFR-PAYE", "source": "stripe_payment", "used": 1}]
 
 

@@ -12861,14 +12861,13 @@ async def _bt_debit_subscriber(code: str):
     )
     if sub is not None:
         return int(sub.get("remaining_sessions") or 0)
-    dc = await db.discount_codes.find_one_and_update(
-        {"code": code, "active": True,
-         "$expr": {"$gt": [{"$subtract": [{"$ifNull": ["$maxUses", 0]}, {"$ifNull": ["$used", 0]}]}, 0]}},
-        {"$inc": {"used": 1}},
-        projection={"_id": 0, "maxUses": 1, "used": 1},
-        return_document=ReturnDocument.AFTER,
-    )
-    if dc is not None:
+    # SEANCES : le repli sur le code passe par la règle unique (fiche désignée,
+    # plafond atomique). Aucune réservation ne porte ce mouvement : c'est le
+    # seul débit SANS clé d'événement, et il est journalisé comme tel.
+    from api.routes.shared import seances_consommer as _seances_consommer
+    dc = await _seances_consommer(db, code, 1, reservation_id=None,
+                                  source="boosttribe_access")
+    if dc.get("debite"):
         return int(dc.get("maxUses") or 0) - int(dc.get("used") or 0)
     return None
 
@@ -15255,105 +15254,28 @@ async def join_subscriber_space(access_code: str, request: Request):
 
 
 # V208b: Admin — lister et purger les membres d'un code groupe
-async def _bug2_consommer_seances(code_upper: str, quantite: int) -> dict:
-    """Débite `quantite` séances sur LA fiche du code. UNE règle, deux garde-fous.
-
-    ═══ POURQUOI CETTE FONCTION EXISTE ═══
-
-    `discount_codes.used` est un compteur LIBRE : huit endroits l'incrémentent
-    ou le décrémentent, et rien ne le rattache aux événements qui le
-    justifieraient. Il ne peut donc pas se corriger, et personne ne voit qu'il
-    dérive — c'est le coach qui finit par le remarquer. Audit du 14/09/2026 :
-    **26 codes sur 57** ont un `used` qui ne correspond pas au nombre de
-    réservations portant ce code.
-
-    DEUX DÉFAUTS STRUCTURELS SONT FERMÉS ICI, et seulement ceux-là :
-
-    1. LA CIBLE. L'écriture se faisait par `update_one({"code": regex})`, donc
-       sur la PREMIÈRE fiche venue. Or plusieurs codes ont deux fiches en base
-       (`BASSBOOSTX-02` : 10 et 47 séances ; `BASSBOOSTX-15` : 8 et 6). La
-       consommation partait sur l'une pendant que l'écran lisait l'autre.
-       On débite désormais une fiche DÉSIGNÉE, par son `id`, choisie comme
-       partout ailleurs (`stripe_amount` décroissant) — et s'il y a plusieurs
-       fiches, on le JOURNALISE au lieu de le taire.
-
-    2. LE PLAFOND. `$inc` ne connaissait aucune borne : `used` pouvait dépasser
-       `maxUses`, ce qu'aucun événement réel ne peut justifier. La condition
-       `used + quantite <= maxUses` est portée par la requête elle-même, donc
-       atomique : deux débits simultanés ne peuvent pas la franchir ensemble.
-
-    CE QUI N'EST PAS FAIT ICI, VOLONTAIREMENT : aucune réécriture de compteur
-    existant. Un écart constaté n'est pas une erreur prouvée — une réservation
-    supprimée avant le LOT B3 (27/08) décrémentait l'abonnement sans toucher au
-    code. On corrige la mécanique, on mesure l'écart (`GET /admin/audit-seances`),
-    on ne réinvente pas le passé.
-
-    Rend un compte-rendu : `{"debite": bool, "motif": str, "used": int|None}`.
-    """
-    # Import LOCAL, comme `_bt_debit_subscriber` : `ReturnDocument` n'existe pas
-    # au niveau du module, et les tests (extraction AST) ne l'auraient pas vu.
-    from pymongo import ReturnDocument
-    _q = int(quantite or 0)
-    if _q <= 0:
-        return {"debite": False, "motif": "quantite_nulle", "used": None}
-    _m = {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}
-    _fiches = await db.discount_codes.find(
-        _m, {"_id": 0, "id": 1, "used": 1, "maxUses": 1}
-    ).sort("stripe_amount", -1).to_list(10)
-    if not _fiches:
-        logger.info("[BUG2] %s : aucune fiche, rien a debiter", code_upper)
-        return {"debite": False, "motif": "code_absent", "used": None}
-    if len(_fiches) > 1:
-        # On débite quand même — s'abstenir offrirait des séances gratuites —
-        # mais l'ambiguïté est DITE : c'est elle qu'il faudra trancher.
-        logger.warning("[BUG2] %s : %d fiches pour un seul code — debit sur la 1re",
-                       code_upper, len(_fiches))
-    _cible = _fiches[0]
-    _plafond = int(_cible.get("maxUses") or 0)
-    _res = await db.discount_codes.find_one_and_update(
-        {"id": _cible.get("id"),
-         "$expr": {"$lte": [{"$add": [{"$ifNull": ["$used", 0]}, _q]},
-                            {"$ifNull": ["$maxUses", 0]}]}},
-        {"$inc": {"used": _q}},
-        projection={"_id": 0, "used": 1, "maxUses": 1},
-        return_document=ReturnDocument.AFTER,
-    )
-    if _res is None:
-        # Le plafond aurait été franchi. La réservation, elle, a déjà été
-        # autorisée en amont sur le solde de l'abonnement : on ne l'annule pas,
-        # on refuse seulement d'écrire un compteur impossible, et on le dit.
-        logger.warning("[BUG2] %s : debit de %d refuse (plafond %d atteint)",
-                       code_upper, _q, _plafond)
-        return {"debite": False, "motif": "plafond_atteint", "used": None}
-    _apres = int(_res.get("used") or 0)
-    logger.info("[BUG2] %s : used %d -> %d (plafond %d)",
-                code_upper, _apres - _q, _apres, _plafond)
-    return {"debite": True, "motif": "ok", "used": _apres}
-
-
 @api_router.get("/admin/audit-seances")
-async def bug2_audit_seances(request: Request):
+async def seances_audit(request: Request):
     """Où les compteurs de séances ne collent plus au registre. LECTURE SEULE.
 
-    Le compteur `discount_codes.used` n'était comparé à RIEN. Il dérivait sans
-    que personne ne le voie, et c'est le coach qui finissait par le remarquer
-    sur un code au hasard. Cette route pose la question à toute la flotte, d'un
-    coup : pour chaque code plafonné, combien de séances le compteur annonce-t-il,
-    et combien de réservations portent réellement ce code ?
-
     LE REGISTRE, C'EST `reservations`. Une réservation est l'événement qui
-    consomme une séance (`reservation_routes.py`, `POST /subscriber/space/.../reserve`) :
-    elle est datée, attribuée, annulable. Le compteur n'en est que le résumé.
+    consomme une séance : datée, attribuée, annulable. Le compteur
+    `discount_codes.used` n'en est que le résumé. Ici on somme les `quantity`
+    des réservations vivantes qui portent le code (hors essais restitués par
+    T1), et on compare à `used`. Deux TÉMOINS supplémentaires sont lus : les
+    `used_sessions` des abonnements du code, et les mouvements
+    `seance_mouvements` de la règle unique (14/09/2026).
 
     UN ÉCART N'EST PAS UNE ERREUR PROUVÉE, et cette route ne corrige rien.
-    Une réservation supprimée avant le LOT B3 (27/08/2026) décrémentait
-    l'abonnement sans toucher au code : l'écart est alors réel mais ancien, et
-    le registre ne peut plus le raconter. On mesure, on nomme, on laisse
-    trancher. `ecart > 0` = le compteur compte plus que le registre ;
-    `ecart < 0` = il en compte moins.
+    `seances_confiance` (shared.py, fonction pure) classe chaque écart :
+    COHERENT / CERTAIN / PROBABLE / AMBIGU. Seul CERTAIN désigne une valeur
+    vraie ; les deux autres restent à trancher par le propriétaire.
 
     Réservée à l'administrateur : elle nomme des codes, donc des personnes.
     """
+    from api.routes.shared import (seances_confiance as _confiance,
+                                   seances_fiche_cible as _cible,
+                                   SEANCES_COLL as _COLL)
     email = require_auth(request)
     if not is_super_admin(email):
         raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
@@ -15361,60 +15283,107 @@ async def bug2_audit_seances(request: Request):
     fiches = await db.discount_codes.find(
         {"maxUses": {"$gt": 0}},
         {"_id": 0, "id": 1, "code": 1, "maxUses": 1, "used": 1, "active": 1,
-         "multi_member": 1}
+         "multi_member": 1, "expiresAt": 1, "canonical": 1}
     ).to_list(2000)
 
-    # Le registre, en UNE passe : les deux champs où un code peut être inscrit
-    # (`promoCode` historique et `discountCode`) désignent la même chose, et une
-    # réservation qui porte les deux ne vaut qu'une séance.
+    # Le registre, en UNE passe : `promoCode` (historique) et `discountCode`
+    # désignent la même chose ; une réservation qui porte les deux ne vaut
+    # qu'une fois. Les essais restitués (T1) ont déjà rendu leur séance.
     registre: dict = {}
+    sources: dict = {}
+    ids_reservations: set = set()
     async for r in db.reservations.find(
             {"$or": [{"promoCode": {"$nin": [None, ""]}},
                      {"discountCode": {"$nin": [None, ""]}}]},
-            {"_id": 0, "id": 1, "promoCode": 1, "discountCode": 1}):
+            {"_id": 0, "id": 1, "promoCode": 1, "discountCode": 1, "quantity": 1,
+             "trial_credit_restored": 1, "source": 1}):
+        ids_reservations.add(r.get("id"))
+        vus = set()
         for _c in (r.get("promoCode"), r.get("discountCode")):
             _k = str(_c or "").strip().upper()
-            if _k:
-                registre.setdefault(_k, set()).add(r.get("id"))
+            if not _k or _k in vus:
+                continue
+            vus.add(_k)
+            try:
+                _q = max(1, int(r.get("quantity") or 1))
+            except (TypeError, ValueError):
+                _q = 1
+            if r.get("trial_credit_restored"):
+                continue
+            registre[_k] = registre.get(_k, 0) + _q
+            sources.setdefault(_k, {})
+            _src = str(r.get("source") or "?")
+            sources[_k][_src] = sources[_k].get(_src, 0) + 1
 
-    # Plusieurs fiches pour un même code : le compteur d'une seule est comparé
-    # au registre du code entier. On le signale plutôt que de sommer — sommer
-    # inventerait un total que personne n'a jamais écrit.
-    doublons: dict = {}
+    temoins: dict = {}
+    async for s_ in db.subscriptions.find({}, {"_id": 0, "code": 1, "used_sessions": 1}):
+        _k = str(s_.get("code") or "").strip().upper()
+        if _k:
+            temoins.setdefault(_k, []).append(s_.get("used_sessions"))
+
+    par_code: dict = {}
     for f in fiches:
-        doublons[str(f.get("code") or "").strip().upper()] = \
-            doublons.get(str(f.get("code") or "").strip().upper(), 0) + 1
+        par_code.setdefault(str(f.get("code") or "").strip().upper(), []).append(f)
 
     lignes = []
-    for f in fiches:
-        cle = str(f.get("code") or "").strip().upper()
-        compteur = int(f.get("used") or 0)
-        reel = len(registre.get(cle, ()))
-        lignes.append({
-            "code": f.get("code"),
-            "fiche_id": f.get("id"),
-            "plafond": int(f.get("maxUses") or 0),
-            "compteur_used": compteur,
-            "registre_reservations": reel,
-            "ecart": compteur - reel,
-            "actif": bool(f.get("active")),
-            "multi_member": bool(f.get("multi_member")),
-            "fiches_pour_ce_code": doublons.get(cle, 1),
-            "depasse_le_plafond": compteur > int(f.get("maxUses") or 0),
-        })
+    for cle, docs in par_code.items():
+        _fiche_cible, _voie = _cible(docs)
+        _vivantes = 1 if _fiche_cible else (0 if _voie in ("code_mort", "aucune_fiche") else 2)
+        for f in docs:
+            compteur = int(f.get("used") or 0)
+            reel = int(registre.get(cle, 0))
+            niveau, cause = _confiance(
+                compteur, reel, temoins.get(cle, []), fiches_vivantes=_vivantes,
+                fiches_total=len(docs), multi_member=bool(f.get("multi_member")),
+                est_cible=(len(docs) == 1 or f.get("id") == _fiche_cible))
+            lignes.append({
+                "code": f.get("code"), "fiche_id": f.get("id"),
+                "plafond": int(f.get("maxUses") or 0),
+                "stored_used": compteur, "canonical_used": reel,
+                "delta": compteur - reel,
+                "temoin_abonnements_used": temoins.get(cle, []),
+                "niveau_de_confiance": niveau, "cause": cause,
+                "actif": bool(f.get("active")), "multi_member": bool(f.get("multi_member")),
+                "fiches_pour_ce_code": len(docs), "fiche_cible": _fiche_cible, "voie": _voie,
+                "sources": sources.get(cle, {}),
+                "depasse_le_plafond": compteur > int(f.get("maxUses") or 0),
+            })
 
-    incoherents = [l for l in lignes if l["ecart"] != 0]
-    incoherents.sort(key=lambda l: -abs(l["ecart"]))
-    logger.info("[BUG2] audit demande par %s : %d/%d codes incoherents",
-                email, len(incoherents), len(lignes))
+    # Les mouvements de la règle unique : un débit `en_cours` = panne à
+    # mi-chemin ; un débit dont la réservation a disparu sans restitution =
+    # séance comptée pour rien.
+    en_cours, orphelins = [], []
+    restitues: set = set()
+    async for m in db[_COLL].find({"type": "restitution", "statut": "applique"},
+                                  {"_id": 0, "reservation_id": 1}):
+        restitues.add(m.get("reservation_id"))
+    async for m in db[_COLL].find({"type": "debit"},
+                                  {"_id": 1, "reservation_id": 1, "statut": 1, "code": 1}):
+        if m.get("statut") != "applique":
+            en_cours.append(m.get("_id"))
+        elif m.get("reservation_id") not in ids_reservations \
+                and m.get("reservation_id") not in restitues:
+            orphelins.append(m.get("_id"))
+
+    incoherents = [l for l in lignes if l["delta"] != 0]
+    incoherents.sort(key=lambda l: -abs(l["delta"]))
+    compte = {n: sum(1 for l in lignes if l["niveau_de_confiance"] == n)
+              for n in ("COHERENT", "CERTAIN", "PROBABLE", "AMBIGU", "HORS_CIBLE")}
+    logger.info("[SEANCES] audit par %s : %d/%d incoherents %s", email,
+                len(incoherents), len(lignes), compte)
     return {
         "success": True,
-        "regle": "registre = nombre de reservations portant le code ; "
-                 "un ecart n'est pas une erreur prouvee, il est a trancher",
+        "regle": "canonical_used = somme des quantity des reservations vivantes "
+                 "portant le code (hors essais restitues) ; seul CERTAIN designe "
+                 "une valeur vraie, rien n'est corrige ici",
         "codes_plafonnes": len(lignes),
+        "coherents": compte["COHERENT"],
         "incoherents": len(incoherents),
-        "codes_a_fiches_multiples": sorted(c for c, n in doublons.items() if n > 1),
+        "par_confiance": compte,
+        "codes_a_fiches_multiples": sorted(c for c, d in par_code.items() if len(d) > 1),
         "au_dessus_du_plafond": [l["code"] for l in lignes if l["depasse_le_plafond"]],
+        "mouvements_en_cours": en_cours,
+        "debits_orphelins": orphelins,
         "lignes": incoherents,
     }
 
@@ -16136,15 +16105,21 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
                 update_data["status"] = "completed"
             await db.subscriptions.update_one({"id": subscription.get("id")}, {"$set": update_data})
 
-    # V186 / BUG2 : incrément du nombre de places, sur LA fiche du code et sous
-    # son plafond. `update_one({"code": regex})` visait la première fiche venue
-    # — sur un code à deux fiches, on débitait l'une et on affichait l'autre.
-    await _bug2_consommer_seances(code_upper, quantity)
+    # V186 / SEANCES : incrément du nombre de places par LA règle unique
+    # (`api/routes/shared.py`, `seances_consommer`) — fiche désignée, plafond
+    # atomique, et clé d'événement = l'identifiant de CETTE réservation, tiré
+    # ICI pour que le mouvement et le document portent le même `id`. Un rejeu
+    # de la même réservation ne débite pas deux fois.
+    _seances_reservation_id = str(uuid.uuid4())
+    from api.routes.shared import seances_consommer as _seances_consommer
+    await _seances_consommer(db, code_upper, quantity,
+                             reservation_id=_seances_reservation_id,
+                             source="subscriber_space")
 
     coach_id = subscription.get("coach_id") or course.get("coach_id") or DEFAULT_COACH_ID  # V244
 
     reservation_doc = {
-        "id": str(uuid.uuid4()),
+        "id": _seances_reservation_id,
         "reservationCode": f"AF{uuid.uuid4().hex[:8].upper()}",
         "userName": user_name,
         "userEmail": user_email,
@@ -17346,11 +17321,13 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
             {"id": subscription.get("id")}, {"$set": update_data}
         )
 
-    # V186: Décrémenter discount_codes.used du nombre de places (sans descendre sous 0)
-    await db.discount_codes.update_one(
-        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "used": {"$gte": qty_to_refund}},
-        {"$inc": {"used": -qty_to_refund}}
-    )
+    # V186 / SEANCES : restitution par LA règle unique — même fiche et même
+    # quantité que le débit de CETTE réservation (mouvement `debit:<id>`),
+    # une seule fois : deux annulations simultanées ne rendent qu'une séance.
+    from api.routes.shared import seances_restituer as _seances_restituer
+    await _seances_restituer(db, code_upper, qty_to_refund,
+                             reservation_id=reservation_id,
+                             source="subscriber_space_cancel")
 
     # V208c: Recrédit du membre individuel (groupe avec séances non-partagées)
     res_member_slug = reservation.get("member_slug")
@@ -39472,7 +39449,12 @@ async def t1_restituer_essais_non_honores(code: str) -> int:
                  "$set": {"status": "active",
                           "updated_at": _maintenant}},
             )
-            await db.discount_codes.update_one({"code": _code}, {"$inc": {"used": -_q}})
+            # SEANCES : la restitution passe par la règle unique, avec la
+            # réservation comme clé — `trial_credit_restored` ci-dessus reste
+            # le verrou métier, le mouvement `restitution:<id>` le double.
+            from api.routes.shared import seances_restituer as _seances_restituer
+            await _seances_restituer(db, _code, _q, reservation_id=_r.get("id"),
+                                     source="t1_essai_non_honore")
             _rendus += _q
             logger.info("[T1] essai non honore : %d credit(s) rendu(s) sur %s…",
                         _q, _code[:4])

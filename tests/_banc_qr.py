@@ -135,13 +135,13 @@ class _Collection:
         self.docs = list(docs or [])
         self.ecritures = []
 
-    async def find_one(self, filtre, projection=None):
+    async def find_one(self, filtre, projection=None, session=None):
         for d in self.docs:
             if _match(d, filtre):
                 return dict(d)
         return None
 
-    def find(self, filtre, projection=None):
+    def find(self, filtre, projection=None, session=None):
         return _Curseur(self.docs, filtre)
 
     async def count_documents(self, filtre):
@@ -174,10 +174,68 @@ class _Collection:
             self.ecritures.append(("update_many", dict(filtre), maj))
         return _MajResultat(n)
 
-    async def insert_one(self, doc):
+    async def insert_one(self, doc, session=None):
+        # SEANCES (14/09/2026) : l'unicite de `_id` est simulee, c'est elle qui
+        # porte l'idempotence de la regle unique (`debit:<reservation_id>`).
+        if "_id" in doc and any(d.get("_id") == doc["_id"] for d in self.docs):
+            raise _DuplicateKeyError("E11000 duplicate key")
         self.docs.append(dict(doc))
         self.ecritures.append(("insert", dict(doc), None))
-        return types.SimpleNamespace(inserted_id="x")
+        return types.SimpleNamespace(inserted_id=doc.get("_id", "x"))
+
+    async def delete_one(self, filtre, session=None):
+        for i, d in enumerate(list(self.docs)):
+            if _match(d, filtre):
+                self.docs.pop(i)
+                self.ecritures.append(("delete", dict(filtre), None))
+                return types.SimpleNamespace(deleted_count=1)
+        return types.SimpleNamespace(deleted_count=0)
+
+    async def find_one_and_update(self, filtre, maj, projection=None,
+                                  return_document=None, session=None):
+        """SEANCES : `$inc` sous condition `$expr` (plafond) ou `$gte` (plancher)."""
+        for d in self.docs:
+            if _match_seances(d, filtre):
+                d.update(maj.get("$set", {}))
+                for _cle, _pas in (maj.get("$inc") or {}).items():
+                    d[_cle] = int(float(d.get(_cle) or 0)) + int(_pas)
+                self.ecritures.append(("update", dict(filtre), maj))
+                return dict(d)
+        return None
+
+
+class _DuplicateKeyError(Exception):
+    """Reconnue par `lot2_est_doublon` : code 11000 ET nom de classe."""
+    code = 11000
+
+
+def _expr(doc, e):
+    if isinstance(e, str) and e.startswith("$"):
+        return doc.get(e[1:])
+    if isinstance(e, dict):
+        (op, args), = e.items()
+        if op == "$ifNull":
+            v = _expr(doc, args[0]); return args[1] if v is None else v
+        if op == "$add":
+            return sum(_expr(doc, a) for a in args)
+        if op == "$lte":
+            return _expr(doc, args[0]) <= _expr(doc, args[1])
+        raise AssertionError("operateur $expr non simule : %s" % op)
+    return e
+
+
+def _match_seances(doc, filtre):
+    reste = {}
+    for cle, cond in filtre.items():
+        if cle == "$expr":
+            if not _expr(doc, cond):
+                return False
+        elif isinstance(cond, dict) and "$gte" in cond:
+            if int(float(doc.get(cle) or 0)) < cond["$gte"]:
+                return False
+        else:
+            reste[cle] = cond
+    return _match(doc, reste) if reste else True
 
 
 class _Base:
@@ -187,6 +245,8 @@ class _Base:
         self.discount_codes = _Collection()
         self.code_members = _Collection()
         self.users = _Collection()
+        # SEANCES : le registre des mouvements de la regle unique.
+        self.seance_mouvements = _Collection()
         # LOT 3c-0 : les gardes d'authentification des routes promo verifient
         # que l'appelant EXISTE (`coaches` ou `coach_auth`) avant de lui ouvrir
         # une ecriture. Le banc doit donc porter ces deux collections, sinon
@@ -318,6 +378,34 @@ def faux_api_server(email=COACH_TEST):
     sys.modules["api.server"] = m
 
 
+_VRAI_SHARED = None
+
+
+def _charger_vrai_shared():
+    global _VRAI_SHARED
+    if _VRAI_SHARED is None:
+        import importlib.util
+        _spec = importlib.util.spec_from_file_location(
+            "banc_vrai_shared", os.path.join(RACINE, "api", "routes", "shared.py"))
+        _VRAI_SHARED = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_VRAI_SHARED)
+        _VRAI_SHARED.logger = _JournalSeances()
+    return _VRAI_SHARED
+
+
+class _JournalSeances:
+    """Le `logger` du vrai shared.py, redirige vers le journal du banc."""
+    def _l(self, niveau, msg, *a, **k):
+        try:
+            texte = msg % a if a else msg
+        except Exception:
+            texte = msg
+        JOURNAL.append(niveau + " " + texte) if "JOURNAL" in globals() else None
+    def info(self, msg, *a, **k): self._l("INFO", msg, *a)
+    def warning(self, msg, *a, **k): self._l("WARNING", msg, *a)
+    def error(self, msg, *a, **k): self._l("ERROR", msg, *a)
+
+
 def faux_shared(forfait_ok=(True, ""), abonnement=None):
     """`api.routes.shared`, remplace le temps du test."""
     m = types.ModuleType("api.routes.shared")
@@ -330,6 +418,14 @@ def faux_shared(forfait_ok=(True, ""), abonnement=None):
 
     m.lire_abonnement_par_code = lire_abonnement_par_code
     m.forfait_utilisable = forfait_utilisable
+    # SEANCES (14/09/2026) : la regle unique de `discount_codes.used` est
+    # REELLE, chargee depuis le vrai `shared.py` — le banc teste la regle, pas
+    # une copie. Ses dependances internes se resolvent dans son propre module.
+    _vrai = _charger_vrai_shared()
+    for _n in ("seances_consommer", "seances_restituer", "seances_fiche_cible",
+               "seances_fiches_du_code", "seances_confiance", "SEANCES_COLL",
+               "lotb3_code_decrementable", "lot2_est_doublon"):
+        setattr(m, _n, getattr(_vrai, _n))
     # SCAN : la SEULE regle qui dit « c'est un essai ». Recopiee ici a
     # l'identique de shared.py — le test la compare a la vraie ci-dessous.
     m.ESSAI2_FILTRE_GRATUIT = {
