@@ -11,6 +11,7 @@ import axios from 'axios';
 import Cropper from 'react-easy-crop'; // V268c (F1)
 import SvgIcon from './SvgIcon'; // UI-PUB2 : icones des actions sur les cartes
 import { PrixBoost, BoutonBoost, estSuperAdmin } from './publications/Boost'; // V342 : Boost payant / V343 : pouvoirs super-admin
+import { useBoostTribeLive, BoostTribeLiveOverlay, iconLive } from './live/BoostTribeLive'; // LIVE RAPIDE : porte unique
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -927,75 +928,17 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
 // L'iframe exige `allow="camera; microphone; ..."` sinon la visio ne marche pas.
 // On ecoute les postMessage de BoostTribe en FILTRANT strictement l'origine.
 // =====================================================================
-const BT_ORIGIN = 'https://boosttribe.pro';
-
 export const BoostTribeSection = ({ subscriberCode }) => {
-  const [state, setState] = useState('idle');   // idle | loading | denied | live
-  const [reason, setReason] = useState('');       // subscription_required | no_credit
-  const [embedUrl, setEmbedUrl] = useState('');
+  // LIVE RAPIDE : la logique (jeton d'accès, iframe, postMessage, annonce du
+  // live) vit dans components/live/BoostTribeLive.js — la MÊME que le bouton
+  // « Live » de la barre de navigation. Cette section n'en est qu'une entrée.
+  const live = useBoostTribeLive();
+  const state = live.state;
+  const reason = live.reason;
+  const setState = live.setState;
+  const openLive = () => live.ouvrir({ subscriberCode });
 
-  // postMessage : n'accepter QUE l'origine BoostTribe (securite).
-  useEffect(() => {
-    const onMsg = (event) => {
-      if (event.origin !== BT_ORIGIN) return;
-      const t = event.data && event.data.type;
-      if (t === 'bt:session-started') {
-        // Le credit vient d'etre debite cote serveur : on demande a l'app de
-        // rafraichir l'affichage du credit (ecoute ailleurs si besoin).
-        window.dispatchEvent(new CustomEvent('afroboost:credit-refresh'));
-      } else if (t === 'bt:session-ended') {
-        setState('idle');
-      }
-    };
-    window.addEventListener('message', onMsg);
-    return () => window.removeEventListener('message', onMsg);
-  }, []);
-
-  const openLive = async () => {
-    setState('loading');
-    setReason('');
-    try {
-      // V280 (revue sécurité) : code AFR- dans le CORPS (POST), pas en query
-      // string, pour ne pas exposer ce secret long terme dans les logs/URL.
-      const payload = {};
-      if (subscriberCode && subscriberCode.indexOf('@') === -1) payload.subscriber_code = subscriberCode;
-      const res = await axios.post(`${API}/boosttribe/access`, payload);
-      setEmbedUrl(res.data.embedUrl);
-      setState('live');
-    } catch (err) {
-      const r = err && err.response;
-      setReason((r && r.data && r.data.reason) || 'subscription_required');
-      setState('denied');
-    }
-  };
-
-  const iconLive = (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polygon points="23 7 16 12 23 17 23 7" />
-      <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-    </svg>
-  );
-
-  // Overlay plein ecran avec l'iframe (camera/micro autorises).
-  if (state === 'live' && embedUrl) {
-    return createPortal(
-      <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 2147483000, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#0a0a0a' }}>
-          <span style={{ color: '#fff', fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8 }}>{iconLive} BoostTribe live</span>
-          <button onClick={() => setState('idle')} style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 6 }} aria-label="Fermer" title="Fermer">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-          </button>
-        </div>
-        <iframe
-          src={embedUrl}
-          allow="camera; microphone; autoplay; fullscreen; display-capture; clipboard-write"
-          style={{ flex: 1, width: '100%', border: 0 }}
-          title="BoostTribe live"
-        />
-      </div>,
-      document.body
-    );
-  }
+  if (state === 'live' && live.embedUrl) return <BoostTribeLiveOverlay live={live} />;
 
   return (
     <div style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', borderRadius: 12, padding: 14, marginBottom: 16, background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)' }}>

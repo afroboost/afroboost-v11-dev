@@ -1056,3 +1056,13 @@ input.v224-input[type="time"] {
     height: 100px;
   }
 }
+
+/* LIVE RAPIDE — point « en direct » du bouton Live : pulsation légère, jamais agressive. */
+@keyframes af-live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.85); }
+}
+.af-live-dot--on { animation: af-live-pulse 2.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .af-live-dot--on { animation: none; } }
+/* Champ « Rechercher… » : placeholder lisible en thème sombre. */
+.af-nav-search::placeholder { color: rgba(255, 255, 255, 0.6); opacity: 1; }

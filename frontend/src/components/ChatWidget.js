@@ -3351,7 +3351,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       if (d && d.id) openMiniProfile(d.id, d.name);
     };
     window.addEventListener('afroboost:open-miniprofile', onOpen);
-    return () => window.removeEventListener('afroboost:open-miniprofile', onOpen);
+    // LIVE RAPIDE : le bouton « Live » de la barre ouvre le chat quand personne
+    // n'est identifié — c'est ICI que vivent la connexion abonné et coach.
+    const onOpenChat = function () { setIsOpen(true); };
+    window.addEventListener('afroboost:open-chat', onOpenChat);
+    return () => { window.removeEventListener('afroboost:open-miniprofile', onOpen); window.removeEventListener('afroboost:open-chat', onOpenChat); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

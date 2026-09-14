@@ -19,6 +19,7 @@ import { attributionEnregistrer, attributionActuelle } from "./utils/attribution
 // jamais une reconstruction. Voir utils/essaiReservation.js.
 import { cibleRedirectionEssai, DELAI_REDIRECTION_ESSAI_MS } from "./utils/essaiReservation";
 import { lireSession as lireSessionEspace, urlDeLaSession, ESPACE_CLE_RETOUR } from "./utils/espaceSession"; // session abonnee persistante
+import { useBoostTribeLive, BoostTribeLiveOverlay, useLiveEnCours, resoudreCodeAbonne } from "./components/live/BoostTribeLive"; // LIVE RAPIDE
 
 // V133: Intercepteur global — JWT prioritaire + fallback X-User-Email
 axios.interceptors.request.use((config) => {
@@ -496,6 +497,9 @@ const translations = {
     sessions: "Sessions",
     offersFilter: "Offres",
     shopFilter: "Shop",
+    liveNav: "Live",
+    liveNavEnCours: "LIVE EN COURS",
+    liveNavTitre: "Live Visio — rejoindre le direct",
     noResults: "Aucun résultat",
     tryAnotherSearch: "Essayez un autre terme de recherche",
     results: "résultat(s)",
@@ -647,6 +651,9 @@ const translations = {
     sessions: "Sessions",
     offersFilter: "Offers",
     shopFilter: "Shop",
+    liveNav: "Live",
+    liveNavEnCours: "LIVE NOW",
+    liveNavTitre: "Live video — join the stream",
     noResults: "No results",
     tryAnotherSearch: "Try another search term",
     results: "result(s)",
@@ -797,6 +804,9 @@ const translations = {
     sessions: "Sitzungen",
     offersFilter: "Angebote",
     shopFilter: "Shop",
+    liveNav: "Live",
+    liveNavEnCours: "LIVE JETZT",
+    liveNavTitre: "Live-Video — dem Stream beitreten",
     noResults: "Keine Ergebnisse",
     tryAnotherSearch: "Versuchen Sie einen anderen Suchbegriff",
     results: "Ergebnis(se)",
@@ -5082,6 +5092,50 @@ function App() {
   const [activeFilter, setActiveFilter] = useState('all');
   // « Sessions » ouvre une fenetre : la page de fond ne change pas d'un pixel.
   const [showSessionsModal, setShowSessionsModal] = useState(false);
+
+  // ═══════════ LIVE RAPIDE — bouton « Live » de la barre (porte unique) ═══════
+  //
+  //  Le chemin était : Publier -> modale -> Sessions live -> Rejoindre -> hub ->
+  //  Live Visio. Ce bouton ouvre le MÊME système (hook partagé avec la section
+  //  de la modale, même overlay, même route serveur `/boosttribe/access`) en un
+  //  clic. Le rôle n'est pas décidé ici : le SERVEUR l'établit (jeton signé du
+  //  coach -> accès admin ; code abonné avec crédit -> accès abonné ; sinon
+  //  refus) — le navigateur ne fait que fournir le code abonné qu'il connaît
+  //  déjà (session d'espace, identité chat), comme « Publier ».
+  //
+  //  Live EN COURS : le coach l'annonce depuis son iframe ; si un live est
+  //  actif, `/boosttribe/access` renvoie une URL qui mène DIRECTEMENT dans
+  //  cette session (`bt_session`) — abonné comme coach : 1 clic.
+  //
+  //  Non identifié : aucun accès silencieux. Le serveur refuse, et on ouvre le
+  //  mécanisme d'identification EXISTANT (le ChatWidget), rien de nouveau.
+  const btLive = useBoostTribeLive();
+  const liveEnCours = useLiveEnCours(60000);
+  const [liveNavInfo, setLiveNavInfo] = useState('');
+  const ouvrirLiveDepuisLaBarre = useCallback(async () => {
+    if (btLive.state === 'loading') return;
+    setLiveNavInfo('');
+    const code = authValide() ? '' : await resoudreCodeAbonne();
+    const r = await btLive.ouvrir({ subscriberCode: code });
+    if (r.ok) return;
+    if (r.reason === 'no_credit') {
+      setLiveNavInfo("Tu es abonné(e) mais il ne te reste plus de crédit live. Recharge depuis ton espace.");
+      return;
+    }
+    if (!code && !authValide()) {
+      // Personne d'identifié : on ouvre le chat, qui porte déjà la connexion
+      // abonné et la connexion coach. Aucune seconde authentification.
+      window.dispatchEvent(new CustomEvent('afroboost:open-chat', { detail: { raison: 'live' } }));
+      setLiveNavInfo("Identifie-toi (abonné ou coach) pour rejoindre le live.");
+      return;
+    }
+    setLiveNavInfo("Le live est réservé aux abonné(e)s avec crédit.");
+  }, [btLive]);
+  useEffect(() => {
+    if (!liveNavInfo) return undefined;
+    const t = setTimeout(() => setLiveNavInfo(''), 7000);
+    return () => clearTimeout(t);
+  }, [liveNavInfo]);
   const [searchQuery, setSearchQuery] = useState('');
   
   // Indicateur de scroll pour les nouveaux utilisateurs
@@ -8153,6 +8207,8 @@ function App() {
       {/* Calendrier des sessions. Le composant se rend lui-meme par PORTAIL :
           place ici a l'interieur d'une `.fade-in-section`, son `position: fixed`
           serait capture par le `transform` permanent que laisse l'animation. */}
+      {/* LIVE RAPIDE : l'overlay du live (iframe) — un seul, partagé avec la modale Publier. */}
+      <BoostTribeLiveOverlay live={btLive} />
       <SessionsModal
         open={showSessionsModal}
         onClose={() => setShowSessionsModal(false)}
@@ -8531,11 +8587,50 @@ function App() {
             </button>
           ))}
 
+          {/* LIVE RAPIDE : « Live » — même pastille que les filtres, PORTE vers le
+              système Live existant (hook partagé, même overlay, même serveur).
+              « LIVE EN COURS » + point rouge discret quand le coach est en direct
+              (état lu sur GET /boosttribe/live-status, onglet visible seulement).
+              La couleur du point est sémantique (rouge = en direct), posée en
+              variable avec repli, jamais en dur. */}
+          <button
+            type="button"
+            onClick={ouvrirLiveDepuisLaBarre}
+            disabled={btLive.state === 'loading'}
+            data-testid="nav-live"
+            data-live-en-cours={liveEnCours ? 'true' : 'false'}
+            title={t('liveNavTitre')}
+            aria-label={liveEnCours ? t('liveNavEnCours') : t('liveNavTitre')}
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all"
+            style={{
+              background: liveEnCours
+                ? 'rgba(var(--live-rgb, 239, 68, 68), 0.16)'
+                : 'rgba(255, 255, 255, 0.06)',
+              border: liveEnCours
+                ? '1px solid rgba(var(--live-rgb, 239, 68, 68), 0.55)'
+                : '1px solid rgba(255, 255, 255, 0.1)',
+              color: liveEnCours ? '#fff' : 'rgba(255, 255, 255, 0.6)',
+              fontWeight: liveEnCours ? 700 : 500,
+              cursor: btLive.state === 'loading' ? 'wait' : 'pointer',
+              flexShrink: 0
+            }}
+          >
+            <span
+              aria-hidden="true"
+              className={liveEnCours ? 'af-live-dot af-live-dot--on' : 'af-live-dot'}
+              style={{
+                width: 8, height: 8, borderRadius: 9999, display: 'inline-block', flexShrink: 0,
+                background: liveEnCours ? 'var(--live-color, #ef4444)' : 'rgba(255, 255, 255, 0.35)'
+              }}
+            />
+            <span>{btLive.state === 'loading' ? '…' : (liveEnCours ? t('liveNavEnCours') : t('liveNav'))}</span>
+          </button>
+
           {/* V386 : entrée vers Spordateur, servi sous afroboost.com/rencontre.
-              Volontairement DISTINCT des pastilles au-dessus : celles-ci filtrent
-              la page, celui-ci NAVIGUE ailleurs — d'où la bordure pleine plutôt
-              qu'un fond. Couleur de marque via la variable, jamais en dur : les
-              deux marques partagent #D91CD2. Icône SVG inline (règle du projet). */}
+              LIVE RAPIDE : même pastille que les autres (fond discret, bordure
+              fine, texte atténué) — il NAVIGUE ailleurs mais ne doit pas peser
+              plus que « Live ». Couleur de marque conservée sur l'icône via la
+              variable, jamais en dur. Icône SVG inline (règle du projet). */}
           <a
             href={urlEntreeServeur()}
             data-testid="nav-rencontre"
@@ -8556,16 +8651,16 @@ function App() {
               e.preventDefault();
               entrerDansSpordate();
             }}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all"
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all"
             style={{
-              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)',
-              border: '1px solid var(--primary-color, #D91CD2)',
-              color: 'var(--primary-color, #D91CD2)',
+              background: 'rgba(255, 255, 255, 0.06)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              color: 'rgba(255, 255, 255, 0.6)',
               textDecoration: 'none',
               flexShrink: 0
             }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color, #D91CD2)"
                  strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
               <circle cx="9" cy="7" r="4" />
@@ -8577,7 +8672,10 @@ function App() {
 
           {/* V106: Barre de recherche universelle dans la sticky nav */}
           <div style={{ position: 'relative', marginLeft: 'auto', minWidth: '140px', maxWidth: '200px' }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--primary-rgb, 217, 28, 210), 0.5)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+            {/* LIVE RAPIDE (lisibilité) : le champ était noir sur noir — bordure
+                à 0,12, icône à 0,5, texte fin. Bordure, icône et texte remontent
+                à un contraste lisible en thème sombre ; fonctionnement inchangé. */}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255, 255, 255, 0.75)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
               style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
@@ -8586,14 +8684,17 @@ function App() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t('searchPlaceholder')}
+              aria-label={t('searchPlaceholder')}
+              className="af-nav-search"
+              data-testid="nav-search"
               style={{
                 width: '100%', padding: '6px 30px 6px 32px', borderRadius: '16px',
-                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', background: 'rgba(0,0,0,0.3)',
-                color: '#fff', fontSize: '11px', fontWeight: '300', outline: 'none',
+                border: '1px solid rgba(255, 255, 255, 0.28)', background: 'rgba(255, 255, 255, 0.08)',
+                color: '#fff', fontSize: '12px', fontWeight: '400', outline: 'none',
                 transition: 'all 0.3s ease'
               }}
-              onFocus={(e) => { e.target.style.borderColor = 'var(--primary-color, #D91CD2)'; e.target.style.boxShadow = '0 0 8px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'; }}
-              onBlur={(e) => { e.target.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)'; e.target.style.boxShadow = 'none'; }}
+              onFocus={(e) => { e.target.style.borderColor = 'var(--primary-color, #D91CD2)'; e.target.style.boxShadow = '0 0 8px rgba(var(--primary-rgb, 217, 28, 210), 0.35)'; }}
+              onBlur={(e) => { e.target.style.borderColor = 'rgba(255, 255, 255, 0.28)'; e.target.style.boxShadow = 'none'; }}
             />
             {searchQuery && (
               <button onClick={() => setSearchQuery('')}
@@ -8606,6 +8707,12 @@ function App() {
             )}
           </div>
         </div>
+        {/* LIVE RAPIDE : retour du bouton « Live » (refus, identification), sous la barre, 7 s. */}
+        {liveNavInfo && (
+          <div role="status" data-testid="nav-live-info" className="max-w-4xl mx-auto px-4 pb-2" style={{ color: 'rgba(255,255,255,0.85)', fontSize: '12px' }}>
+            {liveNavInfo}
+          </div>
+        )}
       </div>
 
       {/* v9.5.8: Contenu scrollable SOUS le flux Reels */}

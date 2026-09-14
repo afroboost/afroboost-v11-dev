@@ -12936,7 +12936,94 @@ async def boosttribe_access(request: Request):
     if isinstance(token, bytes):  # PyJWT < 2 renvoyait des bytes
         token = token.decode("utf-8")
     await db.boosttribe_usage.insert_one(usage)
-    return {"token": token, "embedUrl": f"{BOOSTTRIBE_EMBED_BASE}?bt_token={token}"}
+    # LIVE RAPIDE : si un live du coach est EN COURS, l'URL d'embed emmène
+    # directement dans cette session (BoostTribe lit `bt_session` sur /embed).
+    # Le code de session ne circule QUE dans cette réponse authentifiée par le
+    # droit d'accès (admin ou code abonné avec crédit) — jamais sur une route
+    # publique.
+    _live = await _btlive_etat()
+    _embed_url = f"{BOOSTTRIBE_EMBED_BASE}?bt_token={token}"
+    if _live.get("active") and _live.get("session_code"):
+        _embed_url += "&bt_session=" + urllib.parse.quote(str(_live["session_code"]))
+    return {"token": token, "embedUrl": _embed_url,
+            "live": {"active": bool(_live.get("active")), "kind": usage.get("kind")}}
+
+
+# ═══════════════ LIVE RAPIDE — « un live est-il en cours ? » ═══════════════
+#
+# Afroboost ne voit pas la base BoostTribe : il ne sait qu'une chose, ce que la
+# page du coach lui DIT via les postMessage de l'iframe (`bt:session-started`,
+# `bt:session-ended`, avec le code de session). On tient un unique document
+# `boosttribe_live/actuel` : le dernier live démarré par un coach, et s'il est
+# terminé. Un live sans « ended » depuis plus de BTLIVE_MAX_H heures est
+# considéré terminé (onglet fermé sans démontage, coupure) — jamais actif à vie.
+#
+# Lecture PUBLIQUE minimale (`GET /boosttribe/live-status`) : `{active}` et
+# rien d'autre. Le code de session ne sort que par `/boosttribe/access`.
+# Écriture réservée à un coach/admin authentifié (jeton signé).
+BTLIVE_MAX_H = 3
+
+
+async def _btlive_etat() -> dict:
+    try:
+        d = await db.boosttribe_live.find_one({"_id": "actuel"}, {"_id": 0})
+    except Exception as _err:                        # noqa: BLE001
+        logger.warning("[BT-LIVE] etat illisible (%s)", type(_err).__name__)
+        return {"active": False}
+    if not d or d.get("ended") or not d.get("session_code"):
+        return {"active": False}
+    try:
+        depuis = datetime.fromisoformat(str(d.get("started_at")))
+        if depuis.tzinfo is None:
+            depuis = depuis.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - depuis > timedelta(hours=BTLIVE_MAX_H):
+            return {"active": False}
+    except (TypeError, ValueError):
+        return {"active": False}
+    return {"active": True, "session_code": d.get("session_code"),
+            "started_at": d.get("started_at")}
+
+
+@api_router.get("/boosttribe/live-status")
+async def boosttribe_live_status():
+    """Public, minimal : un live coach est-il en cours ? (`{active: bool}`)."""
+    etat = await _btlive_etat()
+    return {"active": bool(etat.get("active")), "started_at": etat.get("started_at") if etat.get("active") else None}
+
+
+@api_router.post("/boosttribe/live-status")
+async def boosttribe_live_status_set(request: Request):
+    """Le coach (page Afroboost hôte de l'iframe) annonce le début / la fin de SON live."""
+    email = require_auth(request)
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="Réservé au coach")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    evenement = str(body.get("event") or "").strip().lower()
+    code = str(body.get("session_code") or "").strip().upper()
+    if evenement not in ("started", "ended"):
+        raise HTTPException(status_code=400, detail="event attendu : started | ended")
+    if not re.fullmatch(r"[A-Z0-9-]{4,40}", code):
+        raise HTTPException(status_code=400, detail="session_code invalide")
+    maintenant = datetime.now(timezone.utc).isoformat()
+    if evenement == "started":
+        await db.boosttribe_live.update_one(
+            {"_id": "actuel"},
+            {"$set": {"session_code": code, "started_at": maintenant, "ended": False,
+                      "host": email, "updated_at": maintenant}},
+            upsert=True)
+    else:
+        # « ended » ne ferme QUE le live annoncé : un « ended » tardif d'une
+        # ancienne session ne coupe pas le live suivant.
+        await db.boosttribe_live.update_one(
+            {"_id": "actuel", "session_code": code},
+            {"$set": {"ended": True, "ended_at": maintenant, "updated_at": maintenant}})
+    logger.info("[BT-LIVE] %s %s par %s", evenement, code, email)
+    return {"ok": True, "live": await _btlive_etat()}
 
 
 @api_router.post("/boosttribe/consume")
