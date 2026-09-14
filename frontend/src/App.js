@@ -8542,7 +8542,12 @@ function App() {
           WebkitBackdropFilter: 'blur(12px)'
         }}
       >
-        <div className="max-w-4xl mx-auto flex items-center gap-1 px-4 py-2 overflow-x-auto hide-scrollbar">
+        {/* LIVE RAPIDE (mobile) : mesuré à 360–430 px, « Live » commençait à
+            x=401 — hors écran, caché derrière le défilement horizontal. Sous
+            640 px la barre passe sur DEUX lignes (filtres, puis Live ·
+            Spordateur · recherche) : tout est visible et atteignable au pouce,
+            rien n'est retiré. Au-dessus, une ligne comme avant. */}
+        <div className="max-w-4xl mx-auto flex flex-wrap sm:flex-nowrap items-center gap-1 px-3 sm:px-4 py-2 overflow-x-auto hide-scrollbar">
           {/* V245: emoji des onglets remplaces par SvgIcon (icones vectorielles
               qui suivent currentColor, coherentes avec la migration V228+). */}
           {[
@@ -8571,7 +8576,7 @@ function App() {
                   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 }
               }}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all"
+              className="flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 rounded-full text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all"
               style={{
                 background: activeFilter === tab.key
                   ? 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.3), rgba(139, 92, 246, 0.3))'
@@ -8601,7 +8606,7 @@ function App() {
             data-live-en-cours={liveEnCours ? 'true' : 'false'}
             title={t('liveNavTitre')}
             aria-label={liveEnCours ? t('liveNavEnCours') : t('liveNavTitre')}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all"
+            className="flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 rounded-full text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all"
             style={{
               background: liveEnCours
                 ? 'rgba(var(--live-rgb, 239, 68, 68), 0.16)'
@@ -8651,7 +8656,7 @@ function App() {
               e.preventDefault();
               entrerDansSpordate();
             }}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all"
+            className="flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 rounded-full text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all"
             style={{
               background: 'rgba(255, 255, 255, 0.06)',
               border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -8671,7 +8676,7 @@ function App() {
           </a>
 
           {/* V106: Barre de recherche universelle dans la sticky nav */}
-          <div style={{ position: 'relative', marginLeft: 'auto', minWidth: '140px', maxWidth: '200px' }}>
+          <div style={{ position: 'relative', marginLeft: 'auto', flex: '1 1 120px', minWidth: '120px', maxWidth: '200px' }}>
             {/* LIVE RAPIDE (lisibilité) : le champ était noir sur noir — bordure
                 à 0,12, icône à 0,5, texte fin. Bordure, icône et texte remontent
                 à un contraste lisible en thème sombre ; fonctionnement inchangé. */}
