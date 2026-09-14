@@ -223,7 +223,9 @@ class _Requete(object):
 # `lot2_proprietaire`, le normaliseur central des trois formes de « sans
 # proprietaire ». C'est une dependance REELLE de la route : sans elle ici, le
 # banc tombe sur un ImportError, pas sur une regression.
-CONV = ["normaliser_email", "est_un_essai", "conv_presence_reelle",
+# ANALYTICS phase 1 : `est_un_essai` delegue ses preuves P2/P3 a `essai6_verdict`
+# (regle pure, partagee avec le cockpit) — meme famille de dependance REELLE.
+CONV = ["normaliser_email", "essai2_filtre_gratuit_pur", "essai6_verdict", "est_un_essai", "conv_presence_reelle",
         "lot2_proprietaire",
         "essai2_nature_est_un_cours", "essai2_prix_catalogue",
         "essai2_lire_offre", "essai2_offre_est_un_cours",

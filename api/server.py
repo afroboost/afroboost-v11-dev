@@ -45982,6 +45982,10 @@ init_bot_db(db)
 # Deux routes seulement — creer, lister — et une collection que RIEN d'autre
 # ne lit : le retrait de ces deux lignes suffit a annuler le lot.
 fastapi_app.include_router(membership_router, prefix="/api")
+# ANALYTICS (phase 1) : le cockpit vit dans son propre module — moteur pur dans
+# `analytics_shared.py`, route dans `analytics_routes.py`. Rien ici.
+from api.routes.analytics_routes import analytics_router
+fastapi_app.include_router(analytics_router, prefix="/api")
 init_membership_db(db)
 
 # V433 : réponses de VENTE sur WhatsApp (lien de paiement réel) + assainissement

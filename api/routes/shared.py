@@ -1714,6 +1714,50 @@ async def essai6_offres_gratuites(db, coach_id=None) -> list:
     return [str(r.get("id")) for r in (_rows or []) if r.get("id")]
 
 
+def essai2_filtre_gratuit_pur(doc) -> bool:
+    """`ESSAI2_FILTRE_GRATUIT`, appliqué EN MÉMOIRE à un document déjà lu.
+
+    Même règle que le filtre Mongo, sans base : (paiement `free` ET 0 payé) OU
+    origine `social_proof`. Sert au cockpit analytics, qui lit les fiches en un
+    nombre fixe de requêtes puis raisonne en mémoire. Un banc vérifie que les
+    deux formulations disent la même chose.
+    """
+    _d = doc if isinstance(doc, dict) else {}
+    if str(_d.get("source") or "") == "social_proof":
+        return True
+    if str(_d.get("payment_method") or "") != "free":
+        return False
+    try:
+        return float(_d.get("total_paid") or 0) == 0.0 and _d.get("total_paid") is not None
+    except (TypeError, ValueError):
+        return False
+
+
+def essai6_verdict(code_doc=None, forfait=None, offre=None) -> bool:
+    """LA definition, en PUR : ce droit d'acces est-il un premier cours gratuit ?
+
+    Les trois preuves, dans l'ordre historique, sur des documents deja lus :
+      P1 — la fiche `discount_codes` du code porte le fait de paiement gratuit ;
+      P2 — le forfait porte `origine_paiement = offert` (trace LOT B, a l'octroi) ;
+      P3 — l'offre du forfait est a 0 (catalogue, dernier recours).
+    `est_un_essai` (avec base) lit les documents puis appelle ceci : une seule
+    regle, deux facons de l'alimenter. Ne leve jamais.
+    """
+    if isinstance(code_doc, dict) and essai2_filtre_gratuit_pur(code_doc):
+        return True
+    _f = forfait if isinstance(forfait, dict) else None
+    if not _f:
+        return False
+    if str(_f.get("origine_paiement") or "").strip().lower() == ESSAI6_ORIGINE_OFFERTE:
+        return True
+    if not isinstance(offre, dict):
+        return False
+    try:
+        return float(offre.get("price") or 0) == 0.0
+    except (TypeError, ValueError):
+        return False
+
+
 async def est_un_essai(db, forfait=None, code: str = "") -> bool:
     """LA definition. Ce droit d'acces est-il un premier cours gratuit ?
 
@@ -1725,10 +1769,14 @@ async def est_un_essai(db, forfait=None, code: str = "") -> bool:
     coute un ecran de conversion manquant ; un forfait payant pris pour un
     essai ferait perdre a un client ses seances payees dans les ecrans qui
     requalifient. Le cout n'est pas symetrique, la valeur de repli non plus.
+
+    ANALYTICS (phase 1) : cette fonction ne porte plus la regle, elle ne fait
+    que LIRE les trois documents puis appelle `essai6_verdict` — la meme regle
+    que le cockpit applique en memoire. Les preuves sont lues dans le meme
+    ordre qu'avant et la premiere qui suffit arrete la lecture.
     """
     _f = forfait if isinstance(forfait, dict) else None
     _code = (str((_f or {}).get("code") or code or "")).strip().upper()
-
     if _f is None and _code:
         try:
             _f = await db["subscriptions"].find_one(
@@ -1737,7 +1785,6 @@ async def est_un_essai(db, forfait=None, code: str = "") -> bool:
         except Exception as _err:  # noqa: BLE001
             logger.warning("[ESSAI-6] forfait %s illisible: %s", _code[:6], _err)
             _f = None
-
     # P1 — le fait de paiement porte par le code. Preuve historique.
     if _code:
         try:
@@ -1748,15 +1795,11 @@ async def est_un_essai(db, forfait=None, code: str = "") -> bool:
         except Exception as _err:  # noqa: BLE001
             logger.warning("[ESSAI-6] nature du code %s indeterminee: %s",
                            _code[:6], _err)
-
     if not _f:
         return False
-
-    # P2 — la trace LOT B, ecrite sur le forfait a l'octroi. Non supprimable
-    # depuis l'ecran des codes, et c'est tout le point de ce lot.
-    if str(_f.get("origine_paiement") or "").strip().lower() == ESSAI6_ORIGINE_OFFERTE:
+    # P2 — sans lecture supplementaire.
+    if essai6_verdict(None, _f, None):
         return True
-
     # P3 — le catalogue, en dernier recours seulement.
     _oid = str(_f.get("offer_id") or "").strip()
     if not _oid:
@@ -1766,12 +1809,7 @@ async def est_un_essai(db, forfait=None, code: str = "") -> bool:
     except Exception as _err:  # noqa: BLE001
         logger.warning("[ESSAI-6] offre %s illisible: %s", _oid[:12], _err)
         return False
-    if not _o:
-        return False
-    try:
-        return float(_o.get("price") or 0) == 0.0
-    except (TypeError, ValueError):
-        return False
+    return essai6_verdict(None, _f, _o) if _o else False
 
 
 async def essai6_forfaits(db, email: str = "", telephone: str = "",

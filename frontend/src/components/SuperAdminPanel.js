@@ -6,6 +6,7 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import SvgIcon from "./SvgIcon";
 import CockpitGlobal from "./CockpitGlobal"; // V334 etape 4
+import AnalyticsCockpit from "./analytics/AnalyticsCockpit"; // ANALYTICS phase 1
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -389,6 +390,21 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
             >
               <span className="inline-flex items-center gap-1.5"><SvgIcon name="barChart" size={14} /> Cockpit global</span>
             </button>
+            {/* ANALYTICS phase 1 : participants / réservations. Le serveur exige un
+                JWT signé sur /analytics/cockpit ; le composant ne charge QUE
+                quand cet onglet est actif (montage), sans aucun sondage. */}
+            <button
+              onClick={() => setActiveTab(activeTab === 'analytics' ? '' : 'analytics')}
+              className={`px-4 py-2 text-sm font-medium transition-all ${
+                activeTab === 'analytics'
+                  ? 'text-white'
+                  : 'text-white/40 hover:text-white/70'
+              }`}
+              style={activeTab === 'analytics' ? { color: 'var(--primary-color, #D91CD2)' } : {}}
+              data-testid="tab-analytics"
+            >
+              <span className="inline-flex items-center gap-1.5"><SvgIcon name="barChart" size={14} /> Analytics</span>
+            </button>
           </div>
 
           {/* Erreur - v12.1: Design Sans Cadre */}
@@ -578,6 +594,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
 
           {/* Tab Coaches */}
           {activeTab === 'cockpit' && <CockpitGlobal />}
+          {activeTab === 'analytics' && <AnalyticsCockpit coaches={coaches} />}
 
           {activeTab === 'coaches' && (
             <div className="space-y-4">
