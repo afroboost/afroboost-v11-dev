@@ -12881,11 +12881,45 @@ async def update_publication(pub_id: str, request: Request):
             if not owns:
                 raise HTTPException(status_code=403, detail="Accès refusé")
 
-    # V268b: on edite la legende ET le nom affiche — le media reste fige.
-    update = {"caption": (body.get("caption") or "").strip()[:500]}
+    # V268b: on edite la legende ET le nom affiche.
+    update = {}
+    if "caption" in body:
+        update["caption"] = (body.get("caption") or "").strip()[:500]
     if "display_name" in body:
         # Un nom vide retombe sur le nom d'origine plutot que d'afficher un blanc.
         update["display_name"] = (body.get("display_name") or "").strip()[:60] or (pub.get("subscriber_name") or "Abonné")
+
+    # MODIFIER UNE PUBLICATION VIDÉO (éditeur partagé) — mêmes gardes qu'à la
+    # création : un média n'est accepté que s'il vient de NOTRE serveur
+    # (/api/files/) ou du dossier Cloudinary des publications. L'ancien média
+    # n'est remplacé qu'ici, après validation ; il n'est jamais supprimé (la
+    # purge existante ne concerne que l'expiration).
+    def _media_ok(u):
+        return bool(u) and (
+            (u.startswith(V418_MEDIA_LOCAL) and not u.startswith("//") and "://" not in u)
+            or (u.startswith(V261_MEDIA_PREFIX) and ("/" + V261_FOLDER) in u))
+    media_type_final = pub.get("media_type") or "image"
+    if "media_url" in body:
+        nouveau = (body.get("media_url") or "").strip()
+        if not _media_ok(nouveau):
+            raise HTTPException(status_code=400, detail="Média invalide")
+        media_type_final = "video" if body.get("media_type") == "video" else "image"
+        update["media_url"] = nouveau
+        update["media_type"] = media_type_final
+        update["cloudinary_public_id"] = _v261_public_id_from_url(nouveau)
+    if "thumbnail_url" in body:
+        thumb = (body.get("thumbnail_url") or "").strip()
+        if thumb and not _media_ok(thumb):
+            thumb = ""
+        update["thumbnail_url"] = thumb
+        update["thumbnail_public_id"] = _v261_public_id_from_url(thumb) if thumb else ""
+    if "trim_start" in body or "trim_end" in body:
+        if media_type_final == "video":
+            update["trim_start"], update["trim_end"] = video_trim_valide(body.get("trim_start"), body.get("trim_end"))
+        else:
+            update["trim_start"], update["trim_end"] = None, None
+    if not update:
+        return {"status": "ok"}
     await db.publications.update_one({"id": pub_id}, {"$set": update})
     return {"status": "ok", **update}
 

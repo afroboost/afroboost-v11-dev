@@ -64,6 +64,7 @@ export default function VideoTrimEditor({
   videoUrl, trimStart, trimEnd, aspectRatio, thumbnail,
   onTrimChange, onThumbnailCapture, onMetadata, onAutoCapture,
   hauteurMax = '320px', posterUrl = '', libelleCapture = 'Capturer cette image comme miniature',
+  disposition = 'colonne', complement = null, sousApercu = null,
 }) {
   // Capture AUTOMATIQUE (une fois par vidéo) : une miniature par défaut, prise
   // à ~1 s (la frame 0 est souvent noire) une fois une vraie frame décodée.
@@ -74,6 +75,10 @@ export default function VideoTrimEditor({
   const [enLecture, setEnLecture] = useState(false);
   const [erreur, setErreur] = useState('');
   const [captureEnCours, setCaptureEnCours] = useState(false);
+  // SON : coupé tant que l'utilisateur n'a rien demandé (règles navigateur) ;
+  // « Lire l'extrait » est un geste utilisateur → la lecture part AVEC le son,
+  // sauf si le coach l'a coupé lui-même (🔇).
+  const [son, setSon] = useState(true);
 
   const trim = useMemo(() => trimValide(trimStart, trimEnd, duree || undefined), [trimStart, trimEnd, duree]);
   const debut = trim ? trim.start : 0;
@@ -116,7 +121,21 @@ export default function VideoTrimEditor({
     const v = videoRef.current;
     if (!v) return;
     if (v.currentTime < debut - 0.05 || v.currentTime >= fin) aller(debut);
-    const p = v.play(); if (p && p.catch) p.catch(() => {});
+    v.muted = !son;
+    const p = v.play();
+    if (p && p.catch) {
+      p.catch(() => {
+        // Le navigateur refuse l'audio : on relance en muet plutôt qu'une vidéo figée.
+        v.muted = true; setSon(false);
+        const q = v.play(); if (q && q.catch) q.catch(() => {});
+      });
+    }
+  };
+  const basculerSon = () => {
+    const v = videoRef.current;
+    const suivant = !son;
+    setSon(suivant);
+    if (v) v.muted = !suivant;
   };
   const pause = () => { const v = videoRef.current; if (v) v.pause(); };
   const rejouer = () => { aller(debut); lire(); };
@@ -153,8 +172,16 @@ export default function VideoTrimEditor({
   const pct = (t) => (duree > 0 ? Math.max(0, Math.min(100, (t / duree) * 100)) : 0);
   const pas = duree > 60 ? 0.5 : 0.1;
 
+  // DISPOSITION : « colonne » (mobile / étroit) empile tout ; « colonnes »
+  // (desktop) met la grande vidéo à gauche et la découpe, la miniature et le
+  // `complement` du parent (légende, actions…) à droite — moins de défilement.
+  const colonnes = disposition === 'colonnes';
+  const styleRacine = colonnes
+    ? { display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr)', gap: 20, alignItems: 'start' }
+    : { display: 'grid', gap: 10 };
   return (
-    <div data-testid="video-trim-editor" style={{ display: 'grid', gap: 10 }}>
+    <div data-testid="video-trim-editor" data-disposition={disposition} style={styleRacine}>
+      <div style={{ display: 'grid', gap: 10, minWidth: 0 }} data-testid="vte-zone-video">
       <style>{`
         .vte-range{-webkit-appearance:none;appearance:none;width:100%;height:4px;background:rgba(255,255,255,0.18);border-radius:2px;outline:none;margin:0}
         .vte-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;background:var(--primary-color,#D91CD2);border:2px solid #fff;cursor:pointer}
@@ -175,7 +202,7 @@ export default function VideoTrimEditor({
           src={videoUrl}
           poster={posterUrl || undefined}
           playsInline
-          muted
+          muted={!son || !enLecture}
           preload="auto"
           crossOrigin={estAutreOrigine(videoUrl) ? 'anonymous' : undefined}
           style={st.video}
@@ -208,17 +235,21 @@ export default function VideoTrimEditor({
         {!enLecture ? (
           <button type="button" onClick={lire} data-testid="vte-lire" disabled={!duree}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 999, border: 'none', background: COULEUR, color: '#fff', fontSize: 12, fontWeight: 700, cursor: duree ? 'pointer' : 'default', opacity: duree ? 1 : 0.5 }}>
-            <SvgIcon name="video" size={14} /> Lire l'extrait
+            <SvgIcon name="play" size={14} /> Lire l'extrait
           </button>
         ) : (
           <button type="button" onClick={pause} data-testid="vte-pause"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 999, border: `1px solid ${COULEUR}`, background: 'transparent', color: COULEUR, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-            <SvgIcon name="hourglass" size={14} /> Pause
+            <SvgIcon name="stop" size={14} /> Pause
           </button>
         )}
         <button type="button" onClick={rejouer} data-testid="vte-rejouer" disabled={!duree}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
           <SvgIcon name="refresh" size={14} /> Rejouer
+        </button>
+        <button type="button" onClick={basculerSon} data-testid="vte-son" aria-pressed={son} aria-label={son ? 'Couper le son' : 'Activer le son'} title={son ? 'Son activé' : 'Son coupé'}
+          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 16, border: `1px solid ${son ? COULEUR : 'rgba(255,255,255,0.2)'}`, background: son ? `rgba(${RGB}, 0.15)` : 'transparent', color: son ? COULEUR : 'rgba(255,255,255,0.6)', cursor: 'pointer' }}>
+          <SvgIcon name={son ? 'volume2' : 'volumeX'} size={14} />
         </button>
         <span style={{ marginLeft: 'auto', fontSize: 12, color: 'rgba(255,255,255,0.7)', fontVariantNumeric: 'tabular-nums' }} data-testid="vte-position">
           {formatTemps(position)} / {formatTemps(duree)}
@@ -234,6 +265,9 @@ export default function VideoTrimEditor({
         </div>
       </div>
 
+      {sousApercu}
+      </div>
+      <div style={{ display: 'grid', gap: 10, minWidth: 0 }} data-testid="vte-zone-reglages">
       {/* DÉCOUPE — deux poignées sur une même piste, zone conservée surlignée. */}
       <div style={{ padding: '10px 10px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: 10 }} data-testid="vte-decoupe">
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: '#fff', marginBottom: 6 }}>
@@ -244,16 +278,32 @@ export default function VideoTrimEditor({
         ) : (
           <>
             <div style={{ position: 'relative', height: 22 }} data-testid="vte-timeline">
-              <div style={{ position: 'absolute', left: 0, right: 0, top: 8, height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.15)' }} />
-              <div data-testid="vte-zone" style={{ position: 'absolute', top: 8, height: 6, borderRadius: 3, background: COULEUR, left: `${pct(debut)}%`, width: `${Math.max(0, pct(fin) - pct(debut))}%`, boxShadow: `0 0 8px rgba(${RGB}, 0.6)` }} />
+              {/* Parties SUPPRIMÉES (assombries) | zone CONSERVÉE (couleur de marque) | supprimées */}
+              <div style={{ position: 'absolute', left: 0, right: 0, top: 6, height: 10, borderRadius: 5, background: 'rgba(0,0,0,0.45)', border: '1px solid rgba(255,255,255,0.12)' }} />
+              <div data-testid="vte-exclu-avant" style={{ position: 'absolute', top: 6, height: 10, left: 0, width: `${pct(debut)}%`, background: 'repeating-linear-gradient(135deg, rgba(255,255,255,0.08) 0 4px, transparent 4px 8px)', borderRadius: '5px 0 0 5px' }} />
+              <div data-testid="vte-exclu-apres" style={{ position: 'absolute', top: 6, height: 10, left: `${pct(fin)}%`, right: 0, background: 'repeating-linear-gradient(135deg, rgba(255,255,255,0.08) 0 4px, transparent 4px 8px)', borderRadius: '0 5px 5px 0' }} />
+              <div data-testid="vte-zone" style={{ position: 'absolute', top: 6, height: 10, borderRadius: 3, background: `linear-gradient(90deg, ${COULEUR}, rgba(139, 92, 246, 0.9))`, left: `${pct(debut)}%`, width: `${Math.max(0, pct(fin) - pct(debut))}%`, boxShadow: `0 0 10px rgba(${RGB}, 0.6)` }} />
               <input className="vte-poignee" type="range" min={0} max={duree} step={pas} value={debut} aria-label="Début de l'extrait" data-testid="vte-start"
                 onChange={(e) => poserTrim(parseFloat(e.target.value), fin)} />
               <input className="vte-poignee" type="range" min={0} max={duree} step={pas} value={fin} aria-label="Fin de l'extrait" data-testid="vte-end"
                 onChange={(e) => poserTrim(debut, parseFloat(e.target.value))} />
             </div>
+            {/* Réglage FIN au dixième de seconde : [-] 00:05.0 [+] */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginTop: 8 }} data-testid="vte-fin-reglage">
+              {[{ cle: 'debut', libelle: 'Début', val: debut, poser: (t) => poserTrim(t, fin) }, { cle: 'fin', libelle: 'Fin', val: fin, poser: (t) => poserTrim(debut, t) }].map((c) => (
+                <div key={c.cle} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(0,0,0,0.25)', borderRadius: 8, padding: '4px 6px' }}>
+                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', minWidth: 36 }}>{c.libelle}</span>
+                  <button type="button" data-testid={`vte-${c.cle}-moins`} onClick={() => c.poser(Math.round((c.val - 0.1) * 10) / 10)} aria-label={`${c.libelle} : reculer de 0,1 s`}
+                    style={{ width: 28, height: 28, borderRadius: 14, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>−</button>
+                  <span data-testid={`vte-${c.cle}-precis`} style={{ flex: 1, textAlign: 'center', fontSize: 13, fontWeight: 700, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{formatTemps(c.val)}.{Math.round((c.val % 1) * 10) % 10}</span>
+                  <button type="button" data-testid={`vte-${c.cle}-plus`} onClick={() => c.poser(Math.round((c.val + 0.1) * 10) / 10)} aria-label={`${c.libelle} : avancer de 0,1 s`}
+                    style={{ width: 28, height: 28, borderRadius: 14, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>+</button>
+                </div>
+              ))}
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '2px 12px', fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 8 }} data-testid="vte-resume">
               <span>Vidéo originale : <b data-testid="vte-total">{r.total}</b></span>
-              <span>Durée finale : <b data-testid="vte-extrait">{r.extrait}</b></span>
+              <span>Extrait final : <b data-testid="vte-extrait">{r.extrait}</b></span>
               <span>Début : <b data-testid="vte-debut">{r.debut}</b></span>
               <span>Fin : <b data-testid="vte-fin">{r.fin}</b></span>
             </div>
@@ -287,6 +337,8 @@ export default function VideoTrimEditor({
         </div>
       ) : null}
       {erreur ? <p style={{ margin: 0, fontSize: 11, color: 'var(--danger-color, #f87171)' }} data-testid="vte-erreur">{erreur}</p> : null}
+      {complement}
+      </div>
     </div>
   );
 }
