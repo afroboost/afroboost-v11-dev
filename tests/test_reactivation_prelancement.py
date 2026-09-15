@@ -674,6 +674,11 @@ base.chat_participants.docs = [{"id": "p2", "email": "bruno@exemple.ch"}]
 base.subscribers.docs = [{"channel": "email", "value": "bruno@exemple.ch", "status": "opted_out"}]
 verifier("K1. broadcast sans identité super-admin -> 403 (rien n'est envoyé)",
          _refus(S.push_broadcast, _Req(None, {"title": "t", "body": "b"})) == 403)
+class _ReqXUE(_Req):
+    def __init__(self):
+        super().__init__(None, {"title": "t", "body": "b"}); self.headers = {"X-User-Email": ADMIN}
+verifier("K1b. broadcast avec SEUL X-User-Email (falsifiable) -> 403 : le jeton signé est exigé", _refus(S.push_broadcast, _ReqXUE()) == 403)
+verifier("K1c. broadcast par un coach signé non super-admin -> 403", _refus(S.push_broadcast, _Req(jeton("autre@coach.ch"), {"title": "t", "body": "b"})) == 403)
 # Le registre est HONORABLE : la résolution des refus (fiche push -> e-mail -> registre) donne le bon ensemble.
 async def _resoudre_refus_push():
     subs = await base.push_subscriptions.find({"active": True}, {"_id": 0, "participant_id": 1, "email": 1}).to_list(2000)
@@ -687,5 +692,44 @@ async def _resoudre_refus_push():
     return {pid for pid, m in par_pid.items() if m in refus}
 verifier("K2. registre honorable : p2 (bruno, opt-out via sa fiche CRM) exclu, p1 servi — aucun push émis", run(_resoudre_refus_push()) == {"p2"})
 
+# ═══ L. CONSENTEMENT (audit multi-agents 15/09) : sans_relation, POST /campaigns, chat interne ═══
+print("\n[L] relation client ≠ consentement inventé")
+base = base_scenario(); brancher(base)
+base.users.docs += [{"id": "u10", "name": "Sun Set", "email": "sunset@exemple.ch"},          # e-mail, AUCUNE relation (profil Sunset)
+                    {"id": "u11", "name": "News Letter", "email": "news@exemple.ch"}]        # consentement e-mail confirmé
+base.subscribers.docs = [{"channel": "email", "value": "news@exemple.ch", "status": "confirmed", "consent_at": "2026-08-01T10:00:00+00:00"}]
+base.campaigns.docs = [campagne("camp-l", (), targetType="selected", targetIds=["u1", "u10", "u11"])]
+apercu = run(S.r3_previsualiser_campagne("camp-l", _Req(jeton())))
+verifier("L1. e-mail sans relation ni consentement -> sans_relation (jamais servi, jamais `customer`)", apercu["compteurs"]["sans_relation"] == 1 and apercu["compteurs"]["destinataires"] == 2, apercu["compteurs"])
+res = run(S.launch_campaign("camp-l"))
+verifier("L2. lancement : Sunset exclu et journalisé, le consentement e-mail confirmé est servi, `customer` non écrit pour l'exclu",
+         any(r.get("exclu") == "sans_relation" and r["contactEmail"] == "sunset@exemple.ch" for r in res["results"])
+         and any(p["to"][0] == "news@exemple.ch" for p in _FauxEmails.envoyes)
+         and not any(d["value"] == "sunset@exemple.ch" for d in base.subscribers.docs), (res["results"], base.subscribers.docs))
+verifier("L3. POST /campaigns sans jeton -> 403 (une campagne programmée = un envoi différé)", _refus(S.create_campaign, S.CampaignCreate(name="x", message="y"), _Req()) == 403)
+cree = run(S.create_campaign(S.CampaignCreate(name="Reprise", message="y", targetCategories=["ancien_abonne"]), _Req(jeton())))
+verifier("L4. POST /campaigns avec jeton -> créée, coach_id = identité SIGNÉE, targetCategories stocké", cree["coach_id"] == ADMIN and cree["targetCategories"] == ["ancien_abonne"], cree)
+
+print("\n[M] chat interne reconnecté (segments, refus, jamais un groupe, aucune copie double)")
+base = base_scenario(); brancher(base)
+base.chat_sessions.docs = [{"id": "grp_1", "mode": "group", "title": "Communauté", "participant_ids": ["u1", "u2", "u3"]},
+                           {"id": "s-u2", "mode": "user", "participant_ids": ["u2"], "participantEmail": "bruno@exemple.ch"}]
+base.subscribers.docs = [{"channel": "email", "value": "chloe@exemple.ch", "status": "opted_out"}]
+base.campaigns.docs = [campagne("camp-m", ("essai_non_converti",), channels={"email": True, "whatsapp": False, "internal": True})]
+res = run(S.launch_campaign("camp-m"))
+interne = [r for r in res["results"] if r["channel"] == "internal"]
+verifier("M1. segment -> canal interne : 2 messages (Amina, Bruno), Chloé écartée `opt_out` (son refus e-mail vaut pour le chat)",
+         sum(1 for r in interne if r["status"] == "sent") == 2 and any(r.get("exclu") == "opt_out" and r["targetId"] == "u3" for r in interne), interne)
+verifier("M2. aucun message individuel posté dans le GROUPE", not any(m["session_id"] == "grp_1" for m in base.chat_messages.docs), base.chat_messages.docs)
+verifier("M3. Bruno reçoit dans SA session existante, Amina dans une session créée `user`", any(m["session_id"] == "s-u2" for m in base.chat_messages.docs)
+         and any(x.get("mode") == "user" and "u1" in x.get("participant_ids", []) for x in base.chat_sessions.docs))
+verifier("M4. pas de copie omnicanale en double : un seul message de campagne par personne dans le chat",
+         sum(1 for m in base.chat_messages.docs if m.get("session_id") == "s-u2") == 1 and len(_FauxEmails.envoyes) == 2, base.chat_messages.docs)
+verifier("M5. journal interne : clé d'idempotence + segment", all(r.get("cle", "").startswith("camp-m|internal|") and r.get("segment") == "essai_non_converti" for r in interne if r["status"] == "sent"), interne)
+base.campaigns.docs[0]["status"] = "draft"
+run(S.launch_campaign("camp-m"))
+verifier("M6. retry : aucun second message interne", sum(1 for m in base.chat_messages.docs if m.get("session_id") == "s-u2") == 1)
+
 print("\n%d/%d au vert" % (OK, OK + RATE))
-sys.exit(0 if RATE == 0 else 1)
+if __name__ == "__main__":
+    sys.exit(0 if RATE == 0 else 1)

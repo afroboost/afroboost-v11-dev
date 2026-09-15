@@ -308,8 +308,10 @@ async def d_stop_fonctionnel():
     # identiquement — seule la tracabilite RGPD du MOMENT du refus differe. Le
     # test le CONSTATE plutot que de l'exiger : corriger cette asymetrie
     # changerait le traitement du STOP, ce que ce lot s'interdit.
-    verifier("D3b. (dette constatee) le STOP WhatsApp n'horodate pas `opted_out_at`",
-             reg.docs[0].get("opted_out_at") is None, repr(reg.docs[0]))
+    # Dette REGLEE le 15/09/2026 (audit consentement multi-agents) : le STOP
+    # WhatsApp horodate desormais `opted_out_at`, comme la desinscription e-mail.
+    verifier("D3b. le STOP WhatsApp horodate `opted_out_at` (dette S1 reglee)",
+             bool(reg.docs[0].get("opted_out_at")), repr(reg.docs[0]))
 
     refus = await b["c3_refus_exprimes"]("whatsapp", [SUISSE])
     verifier("D4. la campagne suivante l'ecarte",
