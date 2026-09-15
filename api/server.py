@@ -7644,6 +7644,15 @@ async def create_checkout_session(request: CreateCheckoutRequest,
             raise
         except Exception as _hiver_err:  # noqa: BLE001 — une panne de lecture ne bloque pas la caisse
             logger.error("[HIVER] garde offre limitée indisponible, achat poursuivi: %s", _hiver_err)
+        # V526: ANTI-DOUBLE ABONNEMENT — un client qui possède déjà cet abonnement
+        # récurrent actif n'ouvre pas un second checkout Stripe (409, message clair,
+        # rendu tel quel par le front). Seulement quand l'e-mail est connu ici : le
+        # parcours anonyme de la fiche saisit l'adresse chez Stripe, hors de portée.
+        if _hiver_offre and request.customerEmail:
+            _ok_dbl, _motif_dbl = await _hiver.garde_abonnement_actif(db, request.customerEmail, _hiver_offre)
+            if not _ok_dbl:
+                logger.info("[HIVER] checkout refusé — abonnement déjà actif offre=%s", str(request.offerId)[:32])
+                raise HTTPException(status_code=409, detail=_motif_dbl)
 
     # V220: Lire la clé Stripe depuis la base de données (dashboard admin) d'abord
     active_stripe_key = None
@@ -9080,6 +9089,21 @@ async def stripe_webhook(request: Request):
                         await db.payment_transactions.update_one({"session_id": session.get("id")}, {"$set": {"attribution": _m2a_wh}})
                 except Exception as _m2ae:
                     logger.warning("[M2-A] origine non recopiee au webhook (%s)", type(_m2ae).__name__)
+                # V526: un second abonnement récurrent actif (même e-mail, même offre)
+                # est MARQUÉ, jamais ignoré : le client a payé, Stripe le prélèvera.
+                # Le rapprochement (remboursement / résiliation) reste une décision du
+                # coach — rien n'est annulé ici.
+                try:
+                    if subscription_data.get("stripe_subscription_id"):
+                        _dbl = await _hiver.abonnement_actif_meme_offre(
+                            db, subscription_data.get("email"), subscription_data.get("offer_id"))
+                        if _dbl and _dbl.get("id") != subscription_data.get("id"):
+                            subscription_data["doublon_de"] = _dbl.get("id")
+                            logger.warning("[HIVER] DOUBLON abonnement récurrent : %s double %s (offre %s)",
+                                           str(subscription_data.get("id") or "")[:8], str(_dbl.get("id") or "")[:8],
+                                           str(subscription_data.get("offer_id") or "")[:8])
+                except Exception as _dbl_err:  # noqa: BLE001
+                    logger.error("[HIVER] détection doublon indisponible: %s", _dbl_err)
                 await db.subscriptions.insert_one(subscription_data)
                 logger.info(f"[PAYMENT] Subscription auto-creee: {customer_email} - {product_name} ({sessions_count} seances) auto_renew={subscription_data['auto_renew']}")
                 if _hiver_mode_wh == _hiver.BILLING_SAISON_2X and subscription_data.get("stripe_subscription_id"):
@@ -47777,7 +47801,33 @@ _M1_BADGES = {"lancement": "Offre lancement", "saison_1x": "Meilleur prix", "sai
               "mensuel": "Le plus flexible", "unite": "", "offert": "Premier cours offert"}
 
 
-def _m1_badge(o, mensuel_max):
+def _m1_cout_par_seance(o):
+    """V526 : coût par SÉANCE d'une offre payante (prix d'UN paiement / séances ouvertes par
+    ce paiement), ou None. Miroir de `coutParSeance` (frontend/src/utils/offresAimants.js)."""
+    try:
+        _p = float((o or {}).get("price") or 0)
+        _n = int(float((o or {}).get("pack_sessions") or 0))
+    except (TypeError, ValueError):
+        return None
+    if _p <= 0 or _n <= 0 or (o or {}).get("isProduct") or (o or {}).get("creates_membership"):
+        return None
+    _f = _m1_famille(o)[1]
+    return _p / float(_n * _hiver.SAISON_2X_INTERVALLE_MOIS if _f == "saison_2x" else _n)
+
+
+def _m1_est_meilleur_prix(o, offres):
+    """V526 : vrai si `o` a le coût par séance le plus bas parmi toutes les offres affichées."""
+    _mien = _m1_cout_par_seance(o)
+    if _mien is None:
+        return False
+    for _x in (offres or []):
+        _c = _m1_cout_par_seance(_x)
+        if _c is not None and _c < _mien - 0.005:
+            return False
+    return True
+
+
+def _m1_badge(o, mensuel_max, offres=None):
     _f = _m1_famille(o)[1]
     _nom = str((o or {}).get("name") or "").lower()
     if _f == "mensuel":
@@ -47786,6 +47836,10 @@ def _m1_badge(o, mensuel_max):
         # « Le plus flexible » = LE mensuel de référence (le plus cher) ; Flex 4 et les
         # autres mensuels n'ont pas de badge — un badge sur chaque carte n'en est plus un.
         return _M1_BADGES["mensuel"] if mensuel_max and o is mensuel_max else ""
+    if _f == "saison_1x":
+        # V526: « Meilleur prix » seulement quand c'est VRAI face aux autres formules
+        # (Fondateurs : 59 CHF / 8 séances = 7.38 ; saison : 549 / 64 = 8.58).
+        return _M1_BADGES["saison_1x"] if (offres is None or _m1_est_meilleur_prix(o, offres)) else "Saison complète"
     return _M1_BADGES.get(_f, "")
 
 
@@ -47886,7 +47940,7 @@ def _m1_deadline_html(o):
                _m1_echapper(_lim.strftime("%H:%M"))))
 
 
-def _m1_carte_offre(o, lien_offre, mensuel_max=None):
+def _m1_carte_offre(o, lien_offre, mensuel_max=None, formules=None):
     """Une carte tarif — tout vient du document, rien n'est écrit en dur."""
     _nom = _m1_echapper(o.get("name"))
     _prix = float(o.get("price") or 0)
@@ -47906,7 +47960,7 @@ def _m1_carte_offre(o, lien_offre, mensuel_max=None):
     elif _prix > 0 and _hiver.billing_mode_valide(o.get("billing_mode")) == _hiver.BILLING_MENSUEL:
         _unite = " / mois"
     _lignes = []
-    _badge = _m1_badge(o, mensuel_max)
+    _badge = _m1_badge(o, mensuel_max, formules)
     if _badge:
         _lignes.append('<p class="t-badge t-badge-%s">%s</p>' % (_fam, _m1_echapper(_badge)))
     if _fam == "saison_2x":
@@ -48039,7 +48093,7 @@ async def m1_page_essai_neuchatel(request: Request):
     if _offres:
         # La carte « offert » mène au tunnel d'essai EXISTANT (avec l'origine), pas à une offre.
         _tarifs = '<div class="tarifs">%s</div>' % "".join(
-            _m1_carte_offre(o, _lien if float(o.get("price") or 0) == 0 else _lien_offre(o), _mensuel_max)
+            _m1_carte_offre(o, _lien if float(o.get("price") or 0) == 0 else _lien_offre(o), _mensuel_max, _formules)
             for o in _formules + _gratuites)
     else:
         _tarifs = '<p class="vide">Les tarifs sont affichés sur la page de réservation.</p>'

@@ -292,6 +292,46 @@ async def traiter_abonnement_termine(db, subscription) -> dict:
     return {"termine": bool(getattr(_r, "matched_count", 0))}
 
 
+MSG_DEJA_ABONNE = ("Tu as déjà cet abonnement actif : inutile de le souscrire une seconde fois. "
+                   "Retrouve tes séances dans ton espace abonné.")
+
+
+async def abonnement_actif_meme_offre(db, email, offre_id):
+    """V526 : l'abonnement RÉCURRENT encore actif de `email` à `offre_id`, ou None.
+    Actif = `status: active`, un `stripe_subscription_id`, non résilié
+    (`stripe_subscription_status` ≠ canceled) et des droits non expirés."""
+    from api.routes.shared import normaliser_email
+    _e = normaliser_email(email)
+    _o = str(offre_id or "").strip()
+    if not _e or not _o:
+        return None
+    _now = datetime.now(timezone.utc).isoformat()
+    return await db["subscriptions"].find_one(
+        {"email": _e, "offer_id": _o, "status": "active",
+         "stripe_subscription_id": {"$nin": [None, ""]},
+         "stripe_subscription_status": {"$ne": "canceled"},
+         "$or": [{"expires_at": {"$in": [None, ""]}}, {"expires_at": {"$gt": _now}}]},
+        {"_id": 0, "id": 1, "code": 1, "expires_at": 1})
+
+
+async def garde_abonnement_actif(db, email, offre) -> tuple:
+    """V526 — ANTI-DOUBLE ABONNEMENT. (True, "") si `email` peut ouvrir un checkout
+    pour cette offre ; (False, motif) s'il possède DÉJÀ cet abonnement récurrent actif.
+    Ne concerne que les offres récurrentes (mensuel_auto / saison_2x) et la MÊME offre :
+    une autre offre reste achetable. Sans e-mail connu (visiteur anonyme, l'adresse est
+    saisie chez Stripe), la garde ne peut rien décider : fail-open. Fail-open aussi sur
+    panne de lecture — une caisse ne se bloque pas sur un compteur muet."""
+    _mode = billing_mode_valide((offre or {}).get("billing_mode"))
+    if _mode not in (BILLING_MENSUEL, BILLING_SAISON_2X):
+        return True, ""
+    try:
+        _d = await abonnement_actif_meme_offre(db, email, (offre or {}).get("id"))
+        return (not _d), (MSG_DEJA_ABONNE if _d else "")
+    except Exception as _err:  # noqa: BLE001
+        logger.error("[HIVER] garde anti-double indisponible (%s) — achat poursuivi", type(_err).__name__)
+        return True, ""
+
+
 async def garde_offre_limitee(db, offre_id, maintenant=None) -> tuple:
     """(True, "") si l'offre `offre_id` peut encore être achetée ; sinon (False, motif).
     Places = stock − souscriptions réelles − checkouts ouverts (< 30 min) ; date

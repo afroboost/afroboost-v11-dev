@@ -5,7 +5,7 @@
 import {
   familleOffre, FAMILLE, regrouperOffres, ficheOffre, badgeOffre, economieOffre, infoCompacteLimitee,
   prixAffiche, libelleSeances, libellePaiement, libelleEngagement, visiteurEstConnecte, libelleDepuis,
-  mensuelDeReference, promesseCourte,
+  mensuelDeReference, promesseCourte, coutParSeance, estMeilleurPrix,
 } from '../offresAimants';
 
 const essai = { id: 'o-essai', name: "🎁 Cours d'essai GRATUIT", price: 0, offer_type: 'single_class', pack_sessions: 1, stock: -1, position: 0 };
@@ -74,7 +74,21 @@ describe('badges', () => {
   const ref = mensuelDeReference(CATALOGUE);
   test('OFFRE LANCEMENT / MEILLEUR PRIX / SAISON EN 2 FOIS / LE PLUS FLEXIBLE / ÉTUDIANT, rien sur Flex', () => {
     expect(badgeOffre(fond, ref)).toBe('Offre lancement');
-    expect(badgeOffre(s1, ref)).toBe('Meilleur prix');
+    expect(badgeOffre(s1, ref)).toBe('Meilleur prix'); // sans liste : règle historique
+    // V526: face au catalogue, « Meilleur prix » n'est vrai que si la saison a le
+    // coût par séance le plus bas — Fondateurs (59/8 = 7.38) bat la saison (549/64 = 8.58).
+    expect(coutParSeance(fond)).toBeCloseTo(7.375, 3);
+    expect(coutParSeance(s1)).toBeCloseTo(8.578, 3);
+    expect(coutParSeance(s2)).toBeCloseTo(9.344, 3); // 299 / (8 × 4)
+    expect(coutParSeance(flex)).toBeCloseTo(12.25, 3);
+    expect(estMeilleurPrix(fond, CATALOGUE)).toBe(true);
+    expect(estMeilleurPrix(s1, CATALOGUE)).toBe(false);
+    expect(badgeOffre(s1, ref, CATALOGUE)).toBe('Saison complète');
+    const sansFondateurs = CATALOGUE.filter((o) => o !== fond);
+    expect(estMeilleurPrix(s1, sansFondateurs)).toBe(true); // 8.58 < Étudiant 8.63
+    expect(badgeOffre(s1, ref, sansFondateurs)).toBe('Meilleur prix');
+    expect(regrouperOffres(CATALOGUE).aimants.find((a) => a.cle === 'saison').badge).toBe('Saison complète');
+    expect(regrouperOffres(sansFondateurs).aimants.find((a) => a.cle === 'saison').badge).toBe('Meilleur prix');
     expect(badgeOffre(s2, ref)).toBe('Saison en 2 fois');
     expect(badgeOffre(mensuel, ref)).toBe('Le plus flexible');
     expect(badgeOffre(etu, ref)).toBe('Étudiant');

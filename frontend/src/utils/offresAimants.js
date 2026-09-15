@@ -92,11 +92,40 @@ export const mensuelDeReference = (offres) => {
   return mensuels.reduce((a, b) => (prixUnitaire(b) > prixUnitaire(a) ? b : a));
 };
 
-export const badgeOffre = (o, mensuelRef) => {
+// V526: « Meilleur prix » n'est plus décrété par la famille : il est CALCULÉ.
+// Coût par SÉANCE d'une offre payante (prix d'UN paiement / séances ouvertes par ce
+// paiement — pack × 4 mois pour la saison en 2 fois) ; null si rien à comparer.
+export const coutParSeance = (o) => {
+  if (!o) return null;
+  const p = prixUnitaire(o);
+  const n = parseInt(o.pack_sessions, 10);
+  if (!(p > 0) || !(Number.isFinite(n) && n > 0)) return null;
+  const f = familleOffre(o);
+  if (f === FAMILLE.PRODUIT || f === FAMILLE.MEMBRE) return null;
+  return p / (f === FAMILLE.SAISON_2X ? n * SAISON_2X_INTERVALLE_MOIS : n);
+};
+
+/** Vrai si `o` a le coût par séance le plus bas parmi TOUTES les offres affichées. */
+export const estMeilleurPrix = (o, offres) => {
+  const mien = coutParSeance(o);
+  if (mien == null) return false;
+  return (offres || []).every((x) => {
+    const c = coutParSeance(x);
+    return c == null || c >= mien - 0.005;
+  });
+};
+
+const BADGE_SAISON_SINON = 'Saison complète';
+
+export const badgeOffre = (o, mensuelRef, offres) => {
   const f = familleOffre(o);
   if (f === FAMILLE.MENSUEL) {
     if (/tudiant/i.test(String(o.name || ''))) return 'Étudiant';
     return (mensuelRef && o && mensuelRef.id === o.id) ? BADGES.mensuel : '';
+  }
+  if (f === FAMILLE.SAISON_1X) {
+    // V526: badge factuel — « Meilleur prix » seulement si c'est vrai face aux autres formules
+    return (offres == null || estMeilleurPrix(o, offres)) ? BADGES.saison_1x : BADGE_SAISON_SINON;
   }
   return BADGES[f] || '';
 };
@@ -251,13 +280,13 @@ export const inclusOffre = (o) => {
  * demandé (badge, nom, prix, promesse, inclus, séances, durée, paiement,
  * engagement, conditions, pour qui, avantage réel).
  */
-export const ficheOffre = (o, mensuelRef) => {
+export const ficheOffre = (o, mensuelRef, offres) => {
   if (!o) return null;
   const eco = economieOffre(o, mensuelRef);
   return {
     id: o.id,
     famille: familleOffre(o),
-    badge: badgeOffre(o, mensuelRef),
+    badge: badgeOffre(o, mensuelRef, offres), // V526: badge saison calculé face aux autres formules
     nom: o.name || '',
     prix: prixAffiche(o),
     promesse: promesseCourte(o),
@@ -296,7 +325,9 @@ export const regrouperOffres = (offres) => {
   if (saison1x || saison2x) {
     const choix = [saison1x, saison2x].filter(Boolean);
     const depuis = Math.min(...choix.map((o) => (familleOffre(o) === FAMILLE.SAISON_2X ? prixUnitaire(o) * SAISON_2X_ECHEANCES : prixUnitaire(o))));
-    aimants.push({ cle: 'saison', offre: saison1x || saison2x, offres: choix, depuis });
+    // V526: le badge de la carte saison est calculé, jamais décrété
+    const badgeSaison = (choix.some((o) => estMeilleurPrix(o, services))) ? BADGES.saison_1x : BADGE_SAISON_SINON;
+    aimants.push({ cle: 'saison', offre: saison1x || saison2x, offres: choix, depuis, badge: badgeSaison });
   }
   if (mensuelRef) aimants.push({ cle: 'mensuel', offre: mensuelRef, offres: [mensuelRef] });
   const ordre = (o) => [RANG[familleOffre(o)] != null ? RANG[familleOffre(o)] : 9,

@@ -138,15 +138,14 @@ const resolveHeroUrl = (url) => {
 
 // V148: URL optimisée pour images — compressée JPEG via backend (~100KB au lieu de 1.5MB)
 var resolveOptimizedImageUrl = function(url) {
-  if (!url) return '';
-  // Extraire le file_id de /api/files/{file_id}/{filename}
-  var match = url.match(/\/api\/files\/([a-zA-Z0-9]+)\//);
-  if (match) {
-    var base = BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '');
-    return base + '/api/files/' + match[1] + '/optimized?w=1200&q=80';
-  }
-  // Pour les URLs externes, retourner tel quel
-  return url;
+  // V526: la route serveur `/files/{id}/optimized` a été RETIRÉE le 26/03/2026 (v162,
+  // c245cd08). Depuis, chaque hero image partait d'abord vers `/optimized` -> 500
+  // « Données fichier manquantes » (le chemin tombait sur `/files/{id}/{filename}`
+  // avec filename = « optimized »), puis le repli onError rechargeait l'original :
+  // une requête en erreur, un délai et une ligne de log à chaque affichage. On sert
+  // directement l'original (même rendu, zéro 500). La fonction est conservée pour
+  // ses 4 appelants ; aucune route n'est recréée.
+  return url || '';
 };
 
 // v32: Respecter l'ordre MANUEL défini dans le Dashboard (plus de tri automatique)

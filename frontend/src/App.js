@@ -2508,7 +2508,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             {!showDescription && (
               <div className="mb-2">
                 {offer.description && (
-                  <p className="text-xs" style={{ color: 'rgba(255,255,255,0.45)', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'pre-wrap' }}>
+                  <p className="text-xs" style={{ color: 'rgba(255,255,255,0.5)', lineHeight: '1.4' /* V526: contraste 4.41 -> 4.7 */, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'pre-wrap' }}>
                     {offer.description}
                   </p>
                 )}
@@ -6716,6 +6716,14 @@ function App() {
       // quel — « momentanément indisponible » faisait croire à une panne.
       const detail409 = err && err.response && err.response.status === 409 && err.response.data && err.response.data.detail;
       alert(detail409 ? String(detail409) : 'Le paiement est momentanement indisponible. Merci de reessayer.');
+      // V526: « Tu as déjà cet abonnement actif » -> proposer l'espace abonné existant
+      // (session persistante), rien d'autre : aucun nouveau tunnel.
+      if (detail409 && /espace abonn/i.test(String(detail409))) {
+        const cibleEspace = urlDeLaSession(lireSessionEspace());
+        if (cibleEspace && window.confirm('Ouvrir mon espace abonné ?')) {
+          window.location.href = cibleEspace;
+        }
+      }
     }
   };
 
@@ -9854,7 +9862,7 @@ function App() {
         <footer style={{ marginTop: '60px', paddingBottom: '40px' }}>
 
           {/* Sous-titre centré */}
-          <p className="text-center" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem', marginBottom: '24px', letterSpacing: '0.3px' }}>{t('platform')}</p>
+          <p className="text-center" style={{ color: 'rgba(255,255,255,0.62)', fontSize: '0.85rem', marginBottom: '24px', letterSpacing: '0.3px' }}>{t('platform')}</p>
 
           {/* Séparateur petit */}
           <div style={{ width: '40px', height: '2px', background: 'rgba(255,255,255,0.15)', margin: '0 auto 20px' }} />
@@ -9862,22 +9870,22 @@ function App() {
           {/* Ligne unique : © Afroboost | Association | logos paiement */}
           <div className="flex justify-center items-center flex-wrap gap-x-4 gap-y-3" style={{ padding: '0 16px' }}>
             {/* © Afroboost (avec icône © au lieu du mot Copyright) */}
-            <span onClick={handleCopyrightClick} className="copyright-secret" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem', cursor: 'pointer', letterSpacing: '0.3px' }} data-testid="copyright-secret">© Afroboost</span>
+            <span onClick={handleCopyrightClick} className="copyright-secret" style={{ color: 'rgba(255,255,255,0.62)', fontSize: '0.8rem', cursor: 'pointer', letterSpacing: '0.3px' }} data-testid="copyright-secret">© Afroboost</span>
 
             <span style={{ color: 'rgba(255,255,255,0.15)', fontSize: '0.8rem' }}>|</span>
 
             {/* Association */}
-            <a href="https://www.afroboosteur.com" target="_blank" rel="noopener noreferrer" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem', textDecoration: 'none', transition: 'color 0.2s' }}
+            <a href="https://www.afroboosteur.com" target="_blank" rel="noopener noreferrer" style={{ color: 'rgba(255,255,255,0.62)', fontSize: '0.8rem', textDecoration: 'none', transition: 'color 0.2s' }}
               onMouseEnter={(e) => e.target.style.color = '#d946ef'}
-              onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.4)'}
+              onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.62)'}
             >Association</a>
 
             <span style={{ color: 'rgba(255,255,255,0.15)', fontSize: '0.8rem' }}>|</span>
 
             {/* V235: Mentions légales — exigé par Stripe/TWINT */}
-            <button onClick={() => setShowLegalModal(true)} style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem', background: 'none', border: 'none', cursor: 'pointer', transition: 'color 0.2s' }}
+            <button onClick={() => setShowLegalModal(true)} style={{ color: 'rgba(255,255,255,0.62)', fontSize: '0.8rem', background: 'none', border: 'none', cursor: 'pointer', transition: 'color 0.2s' }}
               onMouseEnter={(e) => e.target.style.color = '#d946ef'}
-              onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.4)'}
+              onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.62)'}
             >Mentions légales</button>
 
             {/* Séparateur avant paiement */}
@@ -9914,7 +9922,7 @@ function App() {
                 <a href={concept.externalLink2Url} target="_blank" rel="noopener noreferrer" style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.75rem', textDecoration: 'none' }} data-testid="external-link-2">{concept.externalLink2Title}</a>
               )}
               {(deferredPrompt || isIOS) && !window.matchMedia('(display-mode: standalone)').matches && (
-                <button onClick={handleInstallClick} style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.75rem', background: 'none', border: 'none', cursor: 'pointer' }} data-testid="footer-install-link">Installer l'app</button>
+                <button onClick={handleInstallClick} style={{ color: 'rgba(255,255,255,0.62)' /* V526: contraste 2.46 -> ~5.2 */, fontSize: '0.75rem', background: 'none', border: 'none', cursor: 'pointer' }} data-testid="footer-install-link">Installer l'app</button>
               )}
             </div>
           )}

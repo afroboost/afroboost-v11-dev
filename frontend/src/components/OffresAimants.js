@@ -303,13 +303,13 @@ function LigneFiche({ icone, libelle, valeur }) {
   );
 }
 
-function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkoutBusy, estMobile, Countdown }) {
+function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkoutBusy, estMobile, Countdown, toutesOffres }) {
   // `choix` = { offres: [...] } — 1 offre, ou les 2 offres de la saison.
   const offres = (choix && choix.offres) || [];
   const [selection, setSelection] = useState(offres[0] ? offres[0].id : null);
   useEffect(() => { setSelection(offres[0] ? offres[0].id : null); }, [choix]); // eslint-disable-line react-hooks/exhaustive-deps
   const offre = offres.find((o) => o.id === selection) || offres[0];
-  const fiche = useMemo(() => ficheOffre(offre, mensuelRef), [offre, mensuelRef]);
+  const fiche = useMemo(() => ficheOffre(offre, mensuelRef, toutesOffres), [offre, mensuelRef, toutesOffres]);
   if (!choix || !offre || !fiche) return null;
   const groupeSaison = offres.length > 1;
   const titre = groupeSaison ? 'Saison 8 mois' : fiche.nom;
@@ -318,7 +318,7 @@ function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkout
     <Panneau ouvert onFermer={onFermer} titre="Détail de l’offre" estMobile={estMobile} testId="fiche-offre">
       <LecteurOffre offre={offre} analyser={analyser} estMobile={estMobile} />
       <div style={{ padding: '14px 18px 18px' }}>
-        <Badge texte={groupeSaison ? 'Meilleur prix' : fiche.badge} fort={fiche.famille === FAMILLE.LANCEMENT} />
+        <Badge texte={fiche.badge} fort={fiche.famille === FAMILLE.LANCEMENT} /> {/* V526: jamais « Meilleur prix » décrété */}
         <h3 style={{ fontSize: 22, fontWeight: 800, margin: '8px 0 2px', color: '#fff' }} data-testid="fiche-nom">{titre}</h3>
         {!groupeSaison ? (
           <p style={{ margin: 0, fontSize: 26, fontWeight: 900, color: COULEUR }} data-testid="fiche-prix">
@@ -380,24 +380,38 @@ function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkout
         </div>
         {!groupeSaison && fiche.economie ? <p style={{ margin: '10px 0 0', fontSize: 14, fontWeight: 700, color: 'var(--eco-color, #8ef0b0)' }} data-testid="fiche-economie">{fiche.economie}</p> : null}
 
-        <button
-          type="button"
-          data-testid="fiche-cta"
-          disabled={!!checkoutBusy}
-          onClick={() => { onFermer(); onChoisir(offre); }}
-          style={{
-            marginTop: 16, width: '100%', padding: '14px 18px', borderRadius: 999, border: 'none', cursor: checkoutBusy ? 'wait' : 'pointer',
-            background: COULEUR, color: '#fff', fontWeight: 800, fontSize: 16,
-            boxShadow: `0 6px 24px rgba(${RGB}, 0.45)`, opacity: checkoutBusy ? 0.7 : 1,
-          }}
+        {/* V526: sur mobile le bouton d'achat était ~340 px sous la ligne de flottaison
+            (mesuré : CTA y=1002 pour 664 px de viewport, sur les 3 offres). Le bloc CTA
+            devient COLLANT en bas de la feuille — même mécanisme que l'en-tête collant
+            du Panneau (position: sticky), même fond ; le contenu au-dessus défile
+            toujours. Sur desktop rien ne change. */}
+        <div
+          data-testid="fiche-cta-bloc"
+          style={estMobile ? {
+            position: 'sticky', bottom: 0, zIndex: 2, marginTop: 16, marginLeft: -18, marginRight: -18,
+            padding: '10px 18px calc(10px + env(safe-area-inset-bottom))',
+            background: 'rgba(8,2,16,0.92)', backdropFilter: 'blur(8px)', borderTop: '1px solid rgba(255,255,255,0.08)',
+          } : { marginTop: 16 }}
         >
-          {fiche.gratuit ? 'Réserver mon 1er cours gratuit' : 'Choisir cette formule'}
-        </button>
-        {payant ? (
-          <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center' }}>
-            <PawaPayOfferButton offer={offre} priceChf={prixUnitaire(offre)} disabled={!!checkoutBusy} />
-          </div>
-        ) : null}
+          <button
+            type="button"
+            data-testid="fiche-cta"
+            disabled={!!checkoutBusy}
+            onClick={() => { onFermer(); onChoisir(offre); }}
+            style={{
+              width: '100%', padding: '14px 18px', borderRadius: 999, border: 'none', cursor: checkoutBusy ? 'wait' : 'pointer',
+              background: COULEUR, color: '#fff', fontWeight: 800, fontSize: 16,
+              boxShadow: `0 6px 24px rgba(${RGB}, 0.45)`, opacity: checkoutBusy ? 0.7 : 1,
+            }}
+          >
+            {fiche.gratuit ? 'Réserver mon 1er cours gratuit' : 'Choisir cette formule'}
+          </button>
+          {payant ? (
+            <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center' }}>
+              <PawaPayOfferButton offer={offre} priceChf={prixUnitaire(offre)} disabled={!!checkoutBusy} />
+            </div>
+          ) : null}
+        </div>
       </div>
     </Panneau>
   );
@@ -494,7 +508,7 @@ function ToutesLesOffres({ ouvert, offres, mensuelRef, analyser, onOuvrirFiche, 
 function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir, Countdown }) {
   const o = aimant.offre;
   const fam = familleOffre(o);
-  const badge = aimant.cle === 'saison' ? 'Meilleur prix' : badgeOffre(o, mensuelRef);
+  const badge = aimant.cle === 'saison' ? aimant.badge : badgeOffre(o, mensuelRef); // V526: badge saison calculé
   const prix = aimant.cle === 'saison' ? { montant: libelleDepuis(aimant), unite: '' } : prixAffiche(o);
   const seances = libelleSeances(o);
   const limitee = fam === FAMILLE.LANCEMENT ? infoCompacteLimitee(o) : '';
@@ -625,6 +639,7 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
           checkoutBusy={checkoutBusy}
           estMobile={estMobile}
           Countdown={Countdown}
+          toutesOffres={offres}
         />
       ) : null}
     </section>

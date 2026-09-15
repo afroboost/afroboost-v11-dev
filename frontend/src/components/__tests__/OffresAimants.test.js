@@ -73,7 +73,9 @@ test('la vitrine ne montre que 3 cartes : Fondateurs, Saison 8 mois, Mensuel Lib
   expect(texte('aimant-limitee')).toBe('47 places restantes · offre jusqu’au 30/09');
   expect(texte('aimant-saison')).toMatch(/Saison 8 mois/);
   expect(texte('aimant-saison')).toMatch(/Dès 549 CHF/);
-  expect(texte('aimant-saison')).toMatch(/Meilleur prix/);
+  // V526: avec Fondateurs ouverte (7.38 CHF/séance), la saison (8.58) n'est PAS le meilleur prix
+  expect(texte('aimant-saison')).toMatch(/Saison complète/);
+  expect(texte('aimant-saison')).not.toMatch(/Meilleur prix/);
   expect(texte('aimant-mensuel')).toMatch(/Mensuel Liberté/);
   expect(texte('aimant-mensuel')).toMatch(/89 CHF/);
   expect(texte('aimant-mensuel')).toMatch(/Le plus flexible/);
@@ -298,4 +300,23 @@ test('V525 — la prop Countdown est rendue sur la carte de lancement et dans sa
   // Sans la prop : aucun compteur, rien ne casse.
   await rerendre({});
   expect(document.querySelectorAll('[data-testid="countdown-stub"]').length).toBe(0);
+});
+
+test('V526 — sur mobile, le bloc CTA de la fiche est COLLANT en bas (position sticky) ; sur desktop non', async () => {
+  const largeur = window.innerWidth;
+  Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 390 });
+  await monter();
+  await act(async () => { conteneur.querySelector('[data-testid="aimant-mensuel"]').click(); });
+  const bloc = document.querySelector('[data-testid="fiche-cta-bloc"]');
+  expect(bloc).not.toBeNull();
+  expect(bloc.style.position).toBe('sticky');
+  expect(bloc.style.bottom).toBe('0px');
+  expect(bloc.querySelector('[data-testid="fiche-cta"]')).not.toBeNull(); // le bouton reste DANS le bloc
+  await act(async () => { bloc.querySelector('[data-testid="fiche-cta"]').click(); });
+  expect(choisis.map((o) => o.id)).toEqual(['o-men']); // et il fonctionne (onChoisir)
+  Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 1280 });
+  await monter();
+  await act(async () => { conteneur.querySelector('[data-testid="aimant-mensuel"]').click(); });
+  expect(document.querySelector('[data-testid="fiche-cta-bloc"]').style.position).toBe('');
+  Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: largeur });
 });

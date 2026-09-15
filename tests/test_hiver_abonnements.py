@@ -157,6 +157,49 @@ v("garde : deadline passée -> refusée même avec des places", run(H.garde_offr
 v("garde : stock -1 (illimité) -> toujours ouverte", run(H.garde_offre_limitee(BaseGarde(-1, 999, 5), "f")) == (True, ""))
 v("garde : sans identifiant -> ouverte", run(H.garde_offre_limitee(BaseGarde(50, 50, 0), "")) == (True, ""))
 
+# ═══ 2b. V526 ANTI-DOUBLE ABONNEMENT (garde caisse) ═══
+class BaseDbl:
+    """subscriptions en mémoire ; find_one honore email/offer_id/status/stripe_subscription_id/
+    stripe_subscription_status/expires_at ($nin, $ne, $or/$gt/$in) — juste ce que la garde utilise."""
+    def __init__(self, docs): self.docs = docs
+    def __getitem__(self, k): return self
+    def _ok(self, d, f):
+        for k, cond in f.items():
+            if k == "$or":
+                if not any(self._ok(d, alt) for alt in cond): return False
+                continue
+            val = d.get(k)
+            if isinstance(cond, dict):
+                if "$nin" in cond and val in cond["$nin"]: return False
+                if "$in" in cond and val not in cond["$in"]: return False
+                if "$ne" in cond and val == cond["$ne"]: return False
+                if "$gt" in cond and not (val is not None and val > cond["$gt"]): return False
+            elif val != cond: return False
+        return True
+    async def find_one(self, f, p=None):
+        for d in self.docs:
+            if self._ok(d, f): return dict(d)
+        return None
+_FUTUR, _PASSE = "2099-01-01T23:59:59+00:00", "2020-01-01T23:59:59+00:00"
+_actif = {"id": "s-a", "email": "ana@test.ch", "offer_id": "flex", "status": "active", "stripe_subscription_id": "sub_a", "expires_at": _FUTUR}
+_mensuel, _saison2x, _unique = {"id": "flex", "billing_mode": "mensuel_auto"}, {"id": "s2x", "billing_mode": "saison_2x"}, {"id": "u", "billing_mode": "unique"}
+v("A. abonné actif + MÊME offre récurrente -> refusé (409), message clair",
+  run(H.garde_abonnement_actif(BaseDbl([_actif]), "Ana@Test.ch ", _mensuel)) == (False, H.MSG_DEJA_ABONNE))
+v("A2. l'e-mail est normalisé (majuscules/espaces) avant comparaison", run(H.abonnement_actif_meme_offre(BaseDbl([_actif]), "  ANA@test.CH", "flex")) is not None)
+v("B. utilisateur non abonné -> checkout normal", run(H.garde_abonnement_actif(BaseDbl([_actif]), "bob@test.ch", _mensuel)) == (True, ""))
+v("B2. abonné actif à une AUTRE offre -> l'autre offre reste achetable",
+  run(H.garde_abonnement_actif(BaseDbl([_actif]), "ana@test.ch", dict(_saison2x))) == (True, ""))
+v("B3. abonnement résilié (stripe_subscription_status canceled) -> re-souscription autorisée",
+  run(H.garde_abonnement_actif(BaseDbl([dict(_actif, stripe_subscription_status="canceled")]), "ana@test.ch", _mensuel)) == (True, ""))
+v("B4. droits expirés -> re-souscription autorisée", run(H.garde_abonnement_actif(BaseDbl([dict(_actif, expires_at=_PASSE)]), "ana@test.ch", _mensuel)) == (True, ""))
+v("B5. abonnement NON récurrent (unique) du même e-mail/offre -> jamais bloqué par cette garde",
+  run(H.garde_abonnement_actif(BaseDbl([dict(_actif, offer_id="u", stripe_subscription_id="")]), "ana@test.ch", _unique)) == (True, ""))
+v("B6. sans e-mail connu -> fail-open (l'anonyme saisit son adresse chez Stripe)", run(H.garde_abonnement_actif(BaseDbl([_actif]), "", _mensuel)) == (True, ""))
+class _Panne:
+    def __getitem__(self, k): return self
+    async def find_one(self, f, p=None): raise RuntimeError("mongo hs")
+v("B7. panne de lecture -> fail-open, la caisse ne se bloque pas", run(H.garde_abonnement_actif(_Panne(), "ana@test.ch", _mensuel)) == (True, ""))
+
 # ═══ 3. intégration server.py / checkout_routes (structure) ═══
 S = open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
 C = open(os.path.join(RACINE, "api", "routes", "checkout_routes.py"), encoding="utf-8").read()
@@ -165,6 +208,9 @@ v("checkout principal : Session.create en mode récurrent SEULEMENT si billing_m
   "if _hiver_mode != _hiver.BILLING_UNIQUE:" in S and "session = stripe.checkout.Session.create(api_key=active_stripe_key, **_p)" in S and "mode='payment'," in S)
 v("checkout principal : métadonnées billing_mode + duree_mois transmises au webhook", 'metadata["billing_mode"] = _hiver_mode' in S and 'metadata["duree_mois"]' in S)
 v("checkout vitrine (checkout_routes) : même garde, fail-open", "garde_offre_limitee as _hiver_garde" in C and "status_code=409, detail=_motif" in C)
+v("V526 : anti-double branché sur la caisse principale (e-mail connu) ET la vitrine ; doublon MARQUÉ au webhook, jamais ignoré",
+  "_hiver.garde_abonnement_actif(db, request.customerEmail, _hiver_offre)" in S and "raise HTTPException(status_code=409, detail=_motif_dbl)" in S
+  and "garde_abonnement_actif as _hiver_garde_dbl" in C and 'subscription_data["doublon_de"]' in S and "await db.subscriptions.insert_one(subscription_data)" in S)
 v("webhook : pack 0 accepté, saison_2x = pack × 4, expiration par durée (code ET forfait)",
   '_pack == "0" and metadata.get("offer_id")' in S and '"expiresAt": _hiver_exp_jour' in S and '"expires_at": _hiver_exp_iso' in S)
 v("webhook : abonnement Stripe -> auto_renew False (jamais V195), stripe_subscription_id, stripe_invoices []",

@@ -208,10 +208,18 @@ async def create_checkout_session(req: CreateCheckoutRequest):
     # la caisse principale. Fail-open si la lecture échoue.
     try:
         from api.routes.hiver import garde_offre_limitee as _hiver_garde
+        from api.routes.hiver import garde_abonnement_actif as _hiver_garde_dbl
         for _it in (req.items or []):
             _ok, _motif = await _hiver_garde(db, getattr(_it, "id", ""))
             if not _ok:
                 raise HTTPException(status_code=409, detail=_motif)
+            # V526: anti-double abonnement, même règle que la caisse principale
+            if req.customer_email:
+                _o_dbl = await db["offers"].find_one({"id": getattr(_it, "id", "")}, {"_id": 0})
+                if _o_dbl:
+                    _ok, _motif = await _hiver_garde_dbl(db, req.customer_email, _o_dbl)
+                    if not _ok:
+                        raise HTTPException(status_code=409, detail=_motif)
     except HTTPException:
         raise
     except Exception as _hiver_err:  # noqa: BLE001
