@@ -5484,10 +5484,14 @@ async def sanitize_data(request: Request):
 
 @api_router.post("/campaigns")
 async def create_campaign(campaign: CampaignCreate, request: Request = None):
-    # v11: Récupérer le coach_id depuis le header
-    coach_email = ""
-    if request:
-        coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    # RÉACTIVATION multi-agents (15/09/2026) — CONSTAT : cette route n'exigeait
+    # RIEN (X-User-Email ne servait qu'au débit des crédits). Or une campagne
+    # créée avec `scheduledAt` est lancée par `_campaign_scheduler_loop` en
+    # ≤ 60 s, sans jeton ni propriétaire : un envoi de masse différé, anonyme.
+    # Même garde que le lancement : JWT coach/admin signé ; le propriétaire est
+    # l'identité SIGNÉE, jamais un en-tête. (Le dashboard passe par l'intercepteur
+    # axios qui pose le jeton — preuve V310c à refaire en prod : 403 sans, 422/200 avec.)
+    coach_email = await _v309_require_coach_or_admin(request)
 
     # v13: Vérification crédits AVANT création (0 crédits = pas d'envoi)
     if coach_email and not is_super_admin(coach_email):
@@ -5610,8 +5614,13 @@ async def _save_campaign_chat_message(
     """
     display_name = contact_name or contact_id
     # Chercher ou créer la session chat du contact
+    # RÉACTIVATION multi-agents (15/09/2026) — CONSTAT : `{"participant_ids": contact_id}`
+    # renvoyait la PREMIÈRE session contenant la personne, souvent un GROUPE
+    # (campagne 1ef3f41e : 158 copies « individuelles » postées dans grp_24057418,
+    # 165 membres ; 620/1 495 copies omnicanales tombées dans des groupes). Une copie
+    # personnelle ne va que dans une session PERSONNELLE : jamais group/community.
     session = await db.chat_sessions.find_one(
-        {"participant_ids": contact_id},
+        {"participant_ids": contact_id, "mode": {"$nin": ["group", "community", "vip", "promo"]}},
         {"_id": 0, "id": 1}
     )
     if session:
@@ -5872,17 +5881,34 @@ async def r3_previsualiser_campagne(campaign_id: str, request: Request):
     contacts = await _campagne_resoudre_contacts(_campagne, _ids)
     prep = await r3_preparer_email(_campagne, contacts, None, ecrire=False)
     segments = [str(c) for c in (_campagne.get("targetCategories") or []) if str(c or "").strip()]
-    return {
+    _canaux = _campagne.get("channels") or {}
+    _canal = "+".join(k for k in ("email", "whatsapp", "internal") if _canaux.get(k)) or "aucun"
+    reponse = {
         "campagne": {"id": campaign_id, "nom": _campagne.get("name"), "statut": _campagne.get("status"),
                      "utm_campaign": _r3_camp, "message": (_campagne.get("message") or "")[:2000],
                      "media_url": _campagne.get("mediaUrl") or None},
-        "segments": [{"cle": k, "libelle": _r3_libelles.get(k, k), "lien": _r3_lien(k, _r3_camp)} for k in segments],
-        "canal": "email" if (_campagne.get("channels") or {}).get("email") else "aucun",
+        "segments": [{"cle": k, "libelle": _r3_libelles.get(k, k), "lien": _r3_lien(k, _r3_camp),
+                      "lien_whatsapp": _r3_lien(k, _r3_camp, source="whatsapp")} for k in segments],
+        "canal": _canal,
         "compteurs": prep["compteurs"],
         "liste": [{"nom": l["nom"], "email": l["email_masque"], "segment": l["segment"], "decision": l["decision"],
                    "derniere_activite": l["derniere_activite"]} for l in prep["lignes"]],
         "note": "Aperçu sans envoi : rien n'est écrit, personne n'est contacté. « présence inconnue » n'est jamais un no-show.",
     }
+    if _canaux.get("internal"):
+        # CHAT interne : cibles = panier + personnes des segments (même résolution), refus/tests écartés au lancement.
+        _int_ids = list(dict.fromkeys(_ids + [c["id"] for c in contacts if c.get("_segment") and c.get("id")]))
+        reponse["interne"] = {"cibles": len(_int_ids),
+                              "note": "Message posté dans la conversation Afroboost de chaque personne (visible à sa prochaine visite) ; "
+                                      "refus e-mail/WhatsApp, données de test et doublons écartés au lancement ; aucune copie double."}
+    if _canaux.get("whatsapp"):
+        # WHATSAPP 3C : même aperçu pour le canal WhatsApp (consentement OU relation client ; un import n'est pas un opt-in).
+        prep_wa = await r3_preparer_whatsapp(_campagne, contacts)
+        reponse["whatsapp"] = {"compteurs": prep_wa["compteurs"],
+                               "liste": [{"nom": l["nom"], "numero": l["valeur_masquee"], "segment": l["segment"],
+                                          "decision": l["decision"], "base": l["base"]} for l in prep_wa["lignes"]],
+                               "template": "afroboost_campagne"}
+    return reponse
 
 
 # ═══ RÉACTIVATION 3B — LA GARDE E-MAIL, UNE SEULE FOIS, AVANT TOUT ENVOI ═══
@@ -5930,6 +5956,23 @@ async def r3_preparer_email(campaign, contacts, refus_email=None, ecrire=False):
     except Exception as _e:
         logger.warning("[R3] lecture des droits impossible (%s) — aucun actif déduit", type(_e).__name__)
     refus = refus_email if refus_email is not None else await c3_refus_exprimes("email", emails)
+    # RÉACTIVATION multi-agents (15/09/2026) — `sans_relation`, comme sur WhatsApp :
+    # une adresse sans consentement e-mail confirmé (`subscribers` confirmed +
+    # consent_at) NI relation client (réservation, abonnement, paiement payé) n'est
+    # pas servie — et n'est donc jamais inscrite `customer`. C'est ce qui garde
+    # les 617 comptes Sunset (e-mail, 0 relation) hors de toute campagne, quel que
+    # soit le chemin (segment `email`/`visiteur`, groupe déplié, panier manuel, all).
+    relation, consentis = set(dernier.keys()), set()
+    try:
+        if emails:
+            async for p_ in db.payment_transactions.find({"customer_email": {"$in": emails}, "payment_status": "paid"}, {"_id": 0, "customer_email": 1}):
+                relation.add(_v332_normaliser("email", p_.get("customer_email") or ""))
+            async for row in db.subscribers.find({"channel": "email", "value": {"$in": emails}, "status": "confirmed"}, {"_id": 0, "value": 1, "consent_at": 1}):
+                if str(row.get("consent_at") or "").strip():
+                    consentis.add(row.get("value"))
+    except Exception as _e:
+        logger.warning("[R3] lecture des relations impossible (%s) — aucune autorisation déduite", type(_e).__name__)
+    relation.discard("")
     for c in contacts or []:
         e = _v332_normaliser("email", c.get("email") or "")
         nom = c.get("name") or ""
@@ -5946,6 +5989,8 @@ async def r3_preparer_email(campaign, contacts, refus_email=None, ecrire=False):
             decision = "doublon"
         elif deja_envoye(existants, cle):
             decision = "deja_envoye"
+        elif e not in relation and e not in consentis:
+            decision = "sans_relation"
         else:
             decision = "ok"
             vus.add(e)
@@ -5954,7 +5999,7 @@ async def r3_preparer_email(campaign, contacts, refus_email=None, ecrire=False):
                        "decision": decision, "segment": c.get("_segment") or ("selection" if (campaign or {}).get("targetType") != "all" else "tous"),
                        "derniere_activite": _d.isoformat() if _d else None, "token": ""})
     compteurs = {"destinataires": sum(1 for l in lignes if l["decision"] == "ok")}
-    for k in ("opt_out", "actif", "test", "doublon", "deja_envoye", "sans_email"):
+    for k in ("opt_out", "actif", "test", "doublon", "deja_envoye", "sans_email", "sans_relation"):
         compteurs[k] = sum(1 for l in lignes if l["decision"] == k)
     if ecrire:
         # Relation client -> registre (statut `customer`, $setOnInsert), puis jetons.
@@ -5975,6 +6020,92 @@ async def r3_preparer_email(campaign, contacts, refus_email=None, ecrire=False):
                         l["token"] = row.get("unsubscribe_token") or ""
         except Exception as _e:
             logger.warning("[R3] registre non écrit (%s) — envoi sans jeton de désinscription", type(_e).__name__)
+    return {"lignes": lignes, "compteurs": compteurs}
+
+
+# ═══ WHATSAPP 3C — LA GARDE WHATSAPP, MÊME LOGIQUE QUE L'E-MAIL ═══
+#
+# Une campagne WhatsApp n'atteint que les personnes AUTORISÉES selon ce qui est
+# réellement enregistré : un consentement explicite (`subscribers` `confirmed`
+# avec `consent_at`) OU une relation client (réservation, abonnement, paiement,
+# ou une réponse WhatsApp reçue). Un numéro simplement IMPORTÉ (164 fiches
+# `whatsapp-import` du 22/04/2026, statut `targeted` au mieux) n'est PAS un
+# opt-in : décision `sans_relation`, jamais servi par une campagne. Les autres
+# décisions sont celles de l'e-mail : opt_out (STOP), test, actif, doublon,
+# deja_envoye, sans_numero (règle S1 : un STOP qu'on ne saurait pas reconnaître).
+R3W_DECISIONS = ("ok", "sans_numero", "opt_out", "test", "actif", "doublon", "deja_envoye", "sans_relation")
+
+
+async def r3_preparer_whatsapp(campaign, contacts, refus_wa=None):
+    from api.routes.reactivation import est_donnee_test, est_droit_actif, cle_idempotence, deja_envoye
+    campaign_id = str((campaign or {}).get("id") or "")
+    existants = (campaign or {}).get("results") or []
+    valeurs, emails = [], []
+    for c in contacts or []:
+        v = s1_valeur_sure(c.get("whatsapp") or c.get("phone") or "")
+        if v:
+            valeurs.append(v)
+        e = _v332_normaliser("email", c.get("email") or "")
+        if e:
+            emails.append(e)
+    refus = refus_wa if refus_wa is not None else await c3_refus_exprimes("whatsapp", valeurs)
+    consentis, relation_tel, relation_mail, actifs_tel, actifs_mail = set(), set(), set(), set(), set()
+    try:
+        # Consentement explicite : `confirmed` ET `consent_at` (jamais déduit d'un « oui »).
+        if valeurs:
+            async for row in db.subscribers.find({"channel": "whatsapp", "value": {"$in": valeurs}, "status": "confirmed"},
+                                                 {"_id": 0, "value": 1, "consent_at": 1}):
+                if str(row.get("consent_at") or "").strip():
+                    consentis.add(row.get("value"))
+        # Relation client — par numéro (une lecture par collection, normalisée ici :
+        # les numéros sont stockés sous des formes variées) et par e-mail.
+        async for r in db.reservations.find({}, {"_id": 0, "userWhatsapp": 1, "userEmail": 1}):
+            relation_tel.add(s1_valeur_sure(r.get("userWhatsapp") or ""))
+            relation_mail.add(_v332_normaliser("email", r.get("userEmail") or ""))
+        async for sub in db.subscriptions.find({}, {"_id": 0, "whatsapp": 1, "email": 1, "status": 1, "expires_at": 1,
+                                                    "remaining_sessions": 1, "billing_mode": 1, "offer_name": 1, "origine_paiement": 1}):
+            _t, _m = s1_valeur_sure(sub.get("whatsapp") or ""), _v332_normaliser("email", sub.get("email") or "")
+            relation_tel.add(_t); relation_mail.add(_m)
+            if est_droit_actif(sub):
+                actifs_tel.add(_t); actifs_mail.add(_m)
+        if emails:
+            async for p_ in db.payment_transactions.find({"customer_email": {"$in": emails}, "payment_status": "paid"}, {"_id": 0, "customer_email": 1}):
+                relation_mail.add(_v332_normaliser("email", p_.get("customer_email") or ""))
+        async for cv in db.private_conversations.find({"channel": "whatsapp"}, {"_id": 0, "phone": 1}):
+            relation_tel.add(s1_valeur_sure(cv.get("phone") or ""))   # a répondu au numéro business
+    except Exception as _e:
+        logger.warning("[R3W] lecture des relations impossible (%s) — aucune autorisation déduite", type(_e).__name__)
+    for _s in (relation_tel, relation_mail, actifs_tel, actifs_mail):
+        _s.discard("")
+    lignes, vus = [], set()
+    for c in contacts or []:
+        v = s1_valeur_sure(c.get("whatsapp") or c.get("phone") or "")
+        e = _v332_normaliser("email", c.get("email") or "")
+        nom = c.get("name") or ""
+        cle = cle_idempotence(campaign_id, "whatsapp", v) if v else ""
+        if not v:
+            decision = "sans_numero"
+        elif v in refus:
+            decision = "opt_out"
+        elif est_donnee_test(e, nom):
+            decision = "test"
+        elif v in actifs_tel or (e and e in actifs_mail):
+            decision = "actif"
+        elif v in vus:
+            decision = "doublon"
+        elif deja_envoye(existants, cle):
+            decision = "deja_envoye"
+        elif not (v in consentis or v in relation_tel or (e and e in relation_mail)):
+            decision = "sans_relation"
+        else:
+            decision = "ok"
+            vus.add(v)
+        lignes.append({"contact": c, "valeur": v, "valeur_masquee": (v[:4] + "…" + v[-2:]) if len(v) > 6 else "", "nom": nom, "cle": cle,
+                       "decision": decision, "base": "consentement" if v in consentis else ("relation_client" if decision == "ok" else ""),
+                       "segment": c.get("_segment") or ("selection" if (campaign or {}).get("targetType") != "all" else "tous")})
+    compteurs = {"destinataires": sum(1 for l in lignes if l["decision"] == "ok")}
+    for k in R3W_DECISIONS[1:]:
+        compteurs[k] = sum(1 for l in lignes if l["decision"] == k)
     return {"lignes": lignes, "compteurs": compteurs}
 
 
@@ -6203,14 +6334,60 @@ async def launch_campaign(campaign_id: str):
     # ==================== ENVOI INTERNE (Chat) ====================
     # Filtrer les targetIds vides/null
     valid_target_ids = [tid for tid in target_ids if tid and tid.strip()]
+    # RÉACTIVATION multi-agents (15/09/2026) — le canal INTERNE est RECONNECTÉ à
+    # l'existant, sans second moteur :
+    #   - les segments (`targetCategories`) passent par LA résolution commune
+    #     (`_campagne_resoudre_contacts`) — seules les personnes venues d'un segment
+    #     sont ajoutées (un groupe du panier reste UN message dans le groupe) ;
+    #   - les refus e-mail / WhatsApp (`c3_refus_exprimes`) valent pour le chat :
+    #     un STOP n'est pas contourné par le fil de conversation ;
+    #   - données de test écartées, une personne = un message (dédup par e-mail),
+    #     clé d'idempotence `campaign|internal|id` (retry sans doublon) ;
+    #   - les personnes servies ici ne reçoivent PAS de copie omnicanale en plus.
+    _int_par_id, _int_servis = {}, set()
+    if channels.get("internal") and (valid_target_ids or campaign.get("targetCategories")):
+        try:
+            from api.routes.reactivation import est_donnee_test as _int_test, cle_idempotence as _int_cle, deja_envoye as _int_deja
+            _int_contacts = await _campagne_resoudre_contacts(campaign, valid_target_ids)
+            _int_par_id = {c.get("id"): c for c in _int_contacts if c.get("id")}
+            for c in _int_contacts:
+                if c.get("_segment") and c.get("id") and c["id"] not in valid_target_ids:
+                    valid_target_ids.append(c["id"])
+            _int_refus_mail = await c3_refus_exprimes("email", [c.get("email") or "" for c in _int_contacts])
+            _int_refus_wa = await c3_refus_exprimes("whatsapp", [(c.get("whatsapp") or c.get("phone") or "") for c in _int_contacts])
+        except Exception as _int_e:
+            logger.warning("[R3-CHAT] résolution interne indisponible (%s) — cibles du panier seules", type(_int_e).__name__)
+            _int_refus_mail, _int_refus_wa = set(), set()
+            _int_test = lambda e, n="": False
+            _int_cle = lambda cid, canal, v: "%s|%s|%s" % (cid, canal, v)
+            _int_deja = lambda results_, cle_: False
+    _int_vus_mail = set()
     if channels.get("internal") and valid_target_ids:
         for target_id in valid_target_ids:
             internal_result = {
                 "targetId": target_id,
                 "channel": "internal",
                 "status": "pending",
-                "sentAt": None
+                "sentAt": None,
+                "cle": _int_cle(campaign_id, "internal", target_id),
+                "segment": (_int_par_id.get(target_id) or {}).get("_segment", ""),
             }
+            _int_c = _int_par_id.get(target_id) or {}
+            _int_mail = _v332_normaliser("email", _int_c.get("email") or "")
+            _int_tel = _v332_normaliser("whatsapp", _int_c.get("whatsapp") or _int_c.get("phone") or "")
+            _int_exclu = ("opt_out" if (_int_mail and _int_mail in _int_refus_mail) or (_int_tel and _int_tel in _int_refus_wa)
+                          else "test" if _int_c and _int_test(_int_mail, _int_c.get("name") or "")
+                          else "doublon" if (_int_mail and _int_mail in _int_vus_mail)
+                          else "deja_envoye" if _int_deja(campaign.get("results") or [], internal_result["cle"])
+                          else "")
+            if _int_exclu:
+                skipped_count += 1
+                internal_result.update({"status": "skipped", "exclu": _int_exclu})
+                results.append(internal_result)
+                logger.info("[R3-CHAT] cible interne écartée : %s", _int_exclu)
+                continue
+            if _int_mail:
+                _int_vus_mail.add(_int_mail)
 
             try:
                 # === DÉTECTION GROUPE OU UTILISATEUR ===
@@ -6248,8 +6425,13 @@ async def launch_campaign(campaign_id: str):
                             logger.info(f"[CAMPAIGN-LAUNCH] 🔗 Session trouvée par email {contact_email}: {session.get('id')}")
 
                     if not session:
+                        # RÉACTIVATION multi-agents (15/09/2026) : un message INDIVIDUEL ne
+                        # retombe jamais dans une session de groupe (854/1 179 messages
+                        # internes d'août y sont tombés). Le cas « la cible EST un groupe »
+                        # est déjà traité plus haut (`group_session`).
                         session = await db.chat_sessions.find_one(
-                            {"$or": [{"id": target_id}, {"participant_ids": target_id}]},
+                            {"$or": [{"id": target_id}, {"participant_ids": target_id}],
+                             "mode": {"$nin": ["group", "community", "vip", "promo"]}},
                             {"_id": 0, "id": 1, "mode": 1, "title": 1}
                         )
 
@@ -6311,6 +6493,7 @@ async def launch_campaign(campaign_id: str):
                 internal_result["sentAt"] = msg_timestamp
                 internal_result["messageId"] = msg_id
                 internal_result["sessionId"] = session_id
+                _int_servis.add(target_id)
                 success_count += 1
                 logger.info(f"[CAMPAIGN-LAUNCH] ✅ Message interne envoyé à {target_id}")
                 
@@ -6418,6 +6601,17 @@ async def launch_campaign(campaign_id: str):
     # n'envoie rien deux fois.
     _r3 = {"lignes": [], "compteurs": {}}
     _r3_par_email = {}
+    # WHATSAPP 3C : la garde WhatsApp (consentement OU relation client ; opt-out,
+    # test, actif, doublon, déjà envoyé, numéro non sûr) — une fois par campagne.
+    _r3w_par_valeur = {}
+    if channels.get("whatsapp"):
+        try:
+            _r3w = await r3_preparer_whatsapp(campaign, contacts, _c3_refus.get("whatsapp", set()))
+            _r3w_par_valeur = {l["valeur"]: l for l in _r3w["lignes"] if l["valeur"]}
+            logger.info("[R3W] whatsapp : %s", _r3w["compteurs"])
+        except Exception as _r3we:
+            logger.warning("[R3W] garde WhatsApp indisponible (%s) — canal WhatsApp suspendu par prudence", type(_r3we).__name__)
+            channels = dict(channels); channels["whatsapp"] = False
     if channels.get("email"):
         try:
             _r3 = await r3_preparer_email(campaign, contacts, _c3_refus.get("email", set()), ecrire=True)
@@ -6461,6 +6655,9 @@ async def launch_campaign(campaign_id: str):
             skipped_count += 1
             logger.info("[S1] contact ecarte du canal whatsapp : indicatif absent "
                         "du numero, son STOP ne serait pas reconnu")
+            # WHATSAPP 3C : l'écart S1 est ÉCRIT au journal, comme les autres exclusions.
+            results.append({"contactId": contact_id, "contactName": contact_name, "contactPhone": contact_phone,
+                            "channel": "whatsapp", "status": "skipped", "exclu": "sans_numero", "segment": "", "cle": "", "sentAt": None})
 
         # V165: Vérifier si ce contact est le numéro business (expéditeur)
         if contact_phone and business_phone_number:
@@ -6478,7 +6675,19 @@ async def launch_campaign(campaign_id: str):
         personalized_msg = substitute_campaign_variables(message_content, contact)
 
         # ==================== ENVOI WHATSAPP (INDÉPENDANT) ====================
-        if channels.get("whatsapp") and contact_phone and _s1_val and not _c3_wa:
+        _r3w_ligne = _r3w_par_valeur.get(_s1_val) if (channels.get("whatsapp") and _s1_val) else None
+        if channels.get("whatsapp") and _r3w_ligne and _r3w_ligne["decision"] not in ("ok", "opt_out"):
+            # WHATSAPP 3C : l'exclusion est ÉCRITE au journal (jamais silencieuse).
+            skipped_count += 1
+            results.append({"contactId": contact_id, "contactName": contact_name, "contactPhone": contact_phone,
+                            "channel": "whatsapp", "status": "skipped", "exclu": _r3w_ligne["decision"],
+                            "segment": _r3w_ligne["segment"], "cle": _r3w_ligne["cle"], "sentAt": None})
+            logger.info("[R3W] contact écarté du canal whatsapp : %s", _r3w_ligne["decision"])
+        elif channels.get("whatsapp") and contact_phone and _s1_val and _c3_wa:
+            results.append({"contactId": contact_id, "contactName": contact_name, "contactPhone": contact_phone,
+                            "channel": "whatsapp", "status": "skipped", "exclu": "opt_out",
+                            "segment": (_r3w_ligne or {}).get("segment", ""), "cle": (_r3w_ligne or {}).get("cle", ""), "sentAt": None})
+        if channels.get("whatsapp") and contact_phone and _s1_val and not _c3_wa and (_r3w_ligne is None or _r3w_ligne["decision"] == "ok"):
             whatsapp_result = {
                 "contactId": contact_id,
                 "contactName": contact_name,
@@ -6488,7 +6697,11 @@ async def launch_campaign(campaign_id: str):
                 "status": "pending",
                 "sentAt": None,
                 "deliveredAt": None,  # v11: tracking
-                "readAt": None        # v11: tracking
+                "readAt": None,       # v11: tracking
+                # WHATSAPP 3C : clé d'idempotence + segment + base d'autorisation (journal).
+                "cle": (_r3w_ligne or {}).get("cle", ""),
+                "segment": (_r3w_ligne or {}).get("segment", ""),
+                "base": (_r3w_ligne or {}).get("base", ""),
             }
             
             try:
@@ -6619,7 +6832,9 @@ async def launch_campaign(campaign_id: str):
                     success_count += 1
                     logger.info(f"[CAMPAIGN-LAUNCH] ✅ WhatsApp envoyé à {contact_name} ({contact_phone})")
                     # Omnicanalité : écrire le message dans chat_messages pour l'UI client
+                    # (sauf si la personne a DÉJÀ reçu ce message par le canal interne).
                     try:
+                      if contact_id not in _int_servis:
                         await _save_campaign_chat_message(
                             contact_id=contact_id,
                             content=personalized_msg,
@@ -6775,7 +6990,9 @@ async def launch_campaign(campaign_id: str):
                     success_count += 1
                     logger.info(f"[CAMPAIGN-LAUNCH] ✅ Email envoyé à {contact_name} ({contact_email})")
                     # Omnicanalité : écrire le message dans chat_messages pour l'UI client
+                    # (sauf si la personne a DÉJÀ reçu ce message par le canal interne).
                     try:
+                      if contact_id not in _int_servis:
                         await _save_campaign_chat_message(
                             contact_id=contact_id,
                             content=personalized_msg,
@@ -13093,6 +13310,17 @@ async def _v332_stop_whatsapp(numero_brut: str, texte: str) -> bool:
     numero = format_phone_e164(numero_brut if numero_brut.startswith("+") else "+" + numero_brut)
     sub = await db.subscribers.find_one({"channel": "whatsapp", "value": numero}, {"_id": 0})
     if not sub:
+        if mot in MOTS_STOP:
+            # RÉACTIVATION multi-agents (15/09/2026) : un STOP d'un numéro jamais inscrit
+            # (écrit par une route individuelle, une notification…) était PERDU.
+            # Refuser n'exige aucune preuve : la ligne est créée `opted_out`.
+            _now = datetime.now(timezone.utc).isoformat()
+            await db.subscribers.update_one(
+                {"channel": "whatsapp", "value": numero},
+                {"$setOnInsert": {"id": str(uuid.uuid4()), "created_at": _now, "name": "", "source": "stop_whatsapp"},
+                 "$set": {"status": "opted_out", "opted_out_at": _now, "updated_at": _now}}, upsert=True)
+            logger.info("[V332] « %s » d'un numéro non inscrit -> refus ENREGISTRÉ", mot)
+            return True
         logger.info(f"[V332] « {mot} » reçu d'un numéro non inscrit — rien à faire")
         return True   # commande reconnue : on n'enchaîne pas sur l'IA
 
@@ -13110,10 +13338,10 @@ async def _v332_stop_whatsapp(numero_brut: str, texte: str) -> bool:
         return True
 
     nouveau = "opted_out" if mot in MOTS_STOP else "confirmed"
-    await db.subscribers.update_one(
-        {"channel": "whatsapp", "value": numero},
-        {"$set": {"status": nouveau, "updated_at": datetime.now(timezone.utc).isoformat()}}
-    )
+    _maj = {"status": nouveau, "updated_at": datetime.now(timezone.utc).isoformat()}
+    if nouveau == "opted_out":
+        _maj["opted_out_at"] = _maj["updated_at"]
+    await db.subscribers.update_one({"channel": "whatsapp", "value": numero}, {"$set": _maj})
     logger.info(f"[V332] WhatsApp « {mot} » -> statut {nouveau}")
     return True
 
@@ -21083,6 +21311,26 @@ async def handle_meta_whatsapp_webhook(request: Request):
                     else:
                         logger.info(f"[META-STATUT] {_st.get('status')} vers "
                                     f"…{str(_st.get('recipient_id'))[-4:]}")
+                    # WHATSAPP 3C : le statut rejoint la LIGNE de campagne (wamid = `results.sid`),
+                    # comme le webhook Twilio le faisait et comme Resend pour l'e-mail. `sent`
+                    # n'est jamais une preuve : c'est ici que `delivered` / `failed` s'écrit.
+                    try:
+                        _wamid = _st.get("id")
+                        _statut = _st.get("status")
+                        if _wamid and _statut in ("sent", "delivered", "read", "failed"):
+                            _maj = {"results.$.provider_status": _statut,
+                                    "results.$.provider_at": datetime.now(timezone.utc).isoformat()}
+                            if _statut in ("delivered", "read"):
+                                _maj["results.$.deliveredAt"] = datetime.now(timezone.utc).isoformat()
+                            if _statut == "read":
+                                _maj["results.$.readAt"] = datetime.now(timezone.utc).isoformat()
+                            if _statut == "failed":
+                                _maj["results.$.status"] = "failed"
+                                _maj["results.$.error"] = "Meta %s: %s" % ((_erreurs[0].get("code") if _erreurs else ""),
+                                                                            (_erreurs[0].get("title") or _erreurs[0].get("message") if _erreurs else ""))
+                            await db.campaigns.update_one({"results.sid": _wamid}, {"$set": _maj})
+                    except Exception as _e_join:
+                        logger.warning(f"[META-STATUT] journal de campagne non mis à jour : {_e_join}")
                 except Exception as _e_st:
                     logger.warning(f"[META-STATUT] enregistrement ignoré : {_e_st}")
 
@@ -21849,40 +22097,16 @@ async def _send_whatsapp_twilio(to_phone: str, message: str, media_url: str, con
         return {"status": "error", "error": str(e), "error_code": "EXCEPTION"}
 
 
-async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str, media_url: str = None, cta_url: str = None, cta_text: str = None, campaign_id: str = None, campaign_name: str = None) -> dict:
+def wa_variable_template(campaign_message, cta_url=None, cta_text=None) -> str:
+    """WHATSAPP 3C — la variable {{1}} du template `afroboost_campagne`, PURE.
+
+    Extraite TELLE QUELLE de `_send_whatsapp_campaign_template` (V168 → V379) pour
+    être testable sans réseau : mêmes règles, même ordre, même regex. Ce qui
+    survit : lettres, chiffres, ponctuation, accents, `?`, `&`, `=`, `/`, `_` —
+    donc un lien `afroboost.com/?utm_source=whatsapp&…&utm_content=<segment>`
+    (sans protocole, Meta le refuse) reste cliquable et traçable.
     """
-    V164: Envoie un message de campagne via le template WhatsApp approuvé 'afroboost_campagne'.
-    Template: "Afroboost vous informe: {{1}}. Rendez-vous sur afroboost.com"
-
-    Les messages template sont OBLIGATOIRES pour contacter des utilisateurs qui n'ont
-    jamais écrit au numéro business (conversations initiées par l'entreprise).
-    """
-    import httpx
-
-    config = await _get_whatsapp_config()
-    if not config or config["api_mode"] != "meta":
-        logger.warning("[WHATSAPP-CAMPAIGN] ❌ Config Meta manquante — fallback message direct")
-        return await send_whatsapp_direct(to_phone, campaign_message, media_url, campaign_id, campaign_name, cta_url, cta_text)
-
-    access_token = config["access_token"]
-    phone_number_id = config["phone_number_id"]
-    api_version = config.get("api_version", "v21.0")
-
-    clean_to = to_phone.replace(" ", "").replace("-", "").replace("+", "")
-    if clean_to.startswith("0"):
-        clean_to = "41" + clean_to[1:]
-
-    meta_url = f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    # V168: APPROCHE UNIQUE — Mettre TOUT le message dans la variable {{1}} du template
-    # Le template "afroboost_campagne" = "Afroboost vous informe: {{1}}. Rendez-vous sur afroboost.com"
-    # La variable {{1}} accepte jusqu'à 1024 caractères, on y met le message complet (nettoyé)
     import re as re_tpl
-    import json as json_log
 
     # Préparer le message COMPLET pour la variable {{1}} du template
     full_text = (campaign_message or "Découvrez nos nouveautés").strip()
@@ -21936,6 +22160,40 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
     # Limiter à 1024 chars (limite Meta pour les variables)
     template_var = template_var[:1024] if template_var else "Decouvrez nos nouveautes"
 
+    return template_var
+
+
+async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str, media_url: str = None, cta_url: str = None, cta_text: str = None, campaign_id: str = None, campaign_name: str = None) -> dict:
+    """
+    V164: Envoie un message de campagne via le template WhatsApp approuvé 'afroboost_campagne'.
+    Template: "Afroboost vous informe: {{1}}. Rendez-vous sur afroboost.com"
+
+    Les messages template sont OBLIGATOIRES pour contacter des utilisateurs qui n'ont
+    jamais écrit au numéro business (conversations initiées par l'entreprise).
+    """
+    import httpx
+
+    config = await _get_whatsapp_config()
+    if not config or config["api_mode"] != "meta":
+        logger.warning("[WHATSAPP-CAMPAIGN] ❌ Config Meta manquante — fallback message direct")
+        return await send_whatsapp_direct(to_phone, campaign_message, media_url, campaign_id, campaign_name, cta_url, cta_text)
+
+    access_token = config["access_token"]
+    phone_number_id = config["phone_number_id"]
+    api_version = config.get("api_version", "v21.0")
+
+    clean_to = to_phone.replace(" ", "").replace("-", "").replace("+", "")
+    if clean_to.startswith("0"):
+        clean_to = "41" + clean_to[1:]
+
+    meta_url = f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    import json as json_log
+    template_var = wa_variable_template(campaign_message, cta_url, cta_text)
     logger.info(f"[WHATSAPP-CAMPAIGN] Variable template: {template_var}")
 
     # ÉTAPE 1: Envoyer le template (ouvre la fenêtre de conversation 24h)
@@ -22058,6 +22316,9 @@ async def send_whatsapp_message(payload: SendWhatsAppRequest, request: Request):
     jamais cette route HTTP.
     """
     _v411_exiger_super_admin(request, "envoi WhatsApp direct (route héritée V161)")
+    # RÉACTIVATION multi-agents (15/09/2026) : même registre que les campagnes.
+    if await c3_refus_exprimes("whatsapp", [payload.to]):
+        raise HTTPException(status_code=403, detail="Ce numéro a refusé les messages WhatsApp (STOP) — envoi refusé.")
     return await send_whatsapp_direct(
         to_phone=payload.to,
         message=payload.message,
@@ -22078,6 +22339,9 @@ async def send_whatsapp_template(data: dict, request: Request):
     _v411_exiger_super_admin(request, "envoi de modèle WhatsApp (route héritée)")
     import httpx
     to_phone = data.get("to", "")
+    # RÉACTIVATION multi-agents (15/09/2026) : même registre que les campagnes.
+    if to_phone and await c3_refus_exprimes("whatsapp", [to_phone]):
+        raise HTTPException(status_code=403, detail="Ce numéro a refusé les messages WhatsApp (STOP) — envoi refusé.")
     template_name = data.get("template", "hello_world")
     template_lang = data.get("language", "en_US")
     template_params = data.get("params", [])
@@ -38322,9 +38586,14 @@ async def push_broadcast(request: Request):
     coach_id = body.get("coach_id") or DEFAULT_COACH_ID
     if not title or not message:
         raise HTTPException(status_code=400, detail="title et body requis")
-    caller_email = (request.headers.get("X-User-Email", "") or "").lower().strip()
-    if not is_super_admin(caller_email):
-        raise HTTPException(status_code=403, detail="Réservé super admin")
+    # RÉACTIVATION multi-agents (15/09/2026) : cette porte d'envoi de MASSE ne
+    # lisait que `X-User-Email` (falsifiable). Même garde que `/push/send` :
+    # super-admin PROUVÉ par jeton signé (`super_admin_signe`, aucun repli).
+    # Aucun appelant front n'existe : rien ne casse, la porte se ferme.
+    from api.routes.shared import super_admin_signe as _admin_signe
+    caller_email = _admin_signe(request)
+    if not caller_email:
+        raise HTTPException(status_code=403, detail="Réservé super admin (jeton signé requis)")
     try:
         subs = await db.push_subscriptions.find({"active": True}, {"_id": 0, "participant_id": 1, "email": 1}).to_list(2000)
     except Exception as e:
@@ -42355,9 +42624,19 @@ async def whatsapp_diagnostic(request: Request):
         app_url = f"https://graph.facebook.com/{api_version}/1656270458951182"
         app_resp = await client.get(app_url, params={
             "access_token": access_token,
-            "fields": "name,status,category"
+            "fields": "name,category"     # WHATSAPP 3C : `status` n'existe pas sur un nœud App (erreur #100)
         })
         results["app"] = app_resp.json()
+
+        # WHATSAPP 3C : la SANTÉ du compte telle que Meta la déclare — c'est ici que
+        # se lit un blocage de facturation (131042) SANS envoyer de message.
+        health_resp = await client.get(waba_url, params={"access_token": access_token, "fields": "health_status"})
+        results["sante"] = health_resp.json()
+        tpl_detail = await client.get(tpl_url, params={
+            "access_token": access_token, "name": "afroboost_campagne",
+            "fields": "name,status,language,category,components,quality_score,parameter_format"
+        })
+        results["template_afroboost_campagne"] = tpl_detail.json()
 
         # 4. Vérifier les templates disponibles
         tpl_url = f"https://graph.facebook.com/{api_version}/{waba_id}/message_templates"

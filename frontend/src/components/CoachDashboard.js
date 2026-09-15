@@ -5704,10 +5704,18 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     const segs = (apercu?.segments || []).map(sg => sg.libelle || sg.cle);
     const message = String(apercu?.campagne?.message || '').trim();
     const extrait = message.length > 220 ? `${message.slice(0, 220)}…` : message;
+    // WHATSAPP 3C : le canal WhatsApp a son propre aperçu (consentement OU relation client).
+    const w = apercu?.whatsapp?.compteurs || null;
+    const wExclus = w ? [
+      w.opt_out ? `${w.opt_out} STOP` : null, w.actif ? `${w.actif} actif(s)` : null, w.test ? `${w.test} test` : null,
+      w.doublon ? `${w.doublon} doublon(s)` : null, w.deja_envoye ? `${w.deja_envoye} déjà servi(s)` : null,
+      w.sans_numero ? `${w.sans_numero} numéro non sûr` : null, w.sans_relation ? `${w.sans_relation} sans consentement ni relation client` : null
+    ].filter(Boolean).join(' · ') : '';
     return `Lancer la campagne « ${apercu?.campagne?.nom || nomCampagne || ''} » ?\n\n` +
       `Segment(s) : ${segs.length ? segs.join(', ') : 'sélection manuelle'}\n` +
       `Destinataires e-mail : ${c.destinataires || 0}\n` +
       `Exclus automatiquement : ${r3ExclusTexte(c)}\n` +
+      (w ? `Destinataires WhatsApp (template afroboost_campagne) : ${w.destinataires || 0}\nExclus WhatsApp : ${wExclus || 'aucun'}\n` : '') +
       `Canal : ${apercu?.canal || 'aucun'}\n` +
       `Campagne (UTM) : ${apercu?.campagne?.utm_campaign || '—'}\n\n` +
       `Aperçu du message :\n${extrait || '(vide)'}\n\n` +
@@ -5727,8 +5735,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       return false;
     }
     const c = apercu?.compteurs || {};
-    if (!c.destinataires && apercu?.canal === 'email') {
-      alert(`⚠️ Aucun destinataire e-mail à servir — envoi NON lancé.\n\nExclus : ${r3ExclusTexte(c)}`);
+    const wc = apercu?.whatsapp?.compteurs || {};
+    if (!c.destinataires && !wc.destinataires && (apercu?.canal === 'email' || apercu?.canal === 'whatsapp' || apercu?.canal === 'email+whatsapp')) {
+      alert(`⚠️ Aucun destinataire à servir — envoi NON lancé.\n\nExclus e-mail : ${r3ExclusTexte(c)}${apercu?.whatsapp ? `\nExclus WhatsApp : ${JSON.stringify(wc)}` : ''}`);
       return false;
     }
     return window.confirm(r3TexteApercu(apercu, nomCampagne));
