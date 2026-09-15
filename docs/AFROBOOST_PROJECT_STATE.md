@@ -1191,3 +1191,16 @@ ne doit jamais être présentée comme l'état courant.
   d'essai ouvert et stable 12 s, une seule navigation, URL conservée.
 - **Base de test `afroboost_pw_test`** : SUPPRIMÉE le 15/09 ~19:58 UTC après vérification (6 users tous
   `pw-*@example.com`, sessions Stripe `cs_test_…`) ; prod `promo-credits-lab` intacte (126 users, 167 réservations).
+
+## U. RÉGRESSION NOTIFICATIONS + RAPPELS + COUNTDOWN (2026-09-15, `5d837ce3`, sw v525, boot `93643650`) — ✅ DÉPLOYÉ ET PROUVÉ
+
+- **Ruth (réservation `eb253c78`, 18:10 UTC, cours 16/09 18:30)** : AUCUN commit fautif. Push coach : FCM **201** sur les 3
+  appareils retenus (rang 1 = le seul abonnement Android, ré-enregistré à 18:55). E-mail coach : Resend **delivered** à
+  18:10:20 (« Nouvelle réservation Afroboost — … Session Cardio ») → chercher dans Gmail (Promotions/Spam). Notif in-app écrite.
+- **Rappels** : moteur vivant (`_rv3b_boucle_rappels` au démarrage) ; cours 16/09 `reminders_enabled: true`, règles 1440 + 07:00 ;
+  rappel 24 h parti 15/09 16:00 UTC (20 e-mails delivered, 2 push 201). Ruth a réservé après → elle aura le 07:00 (~04:30 UTC).
+  Aucune garde consentement/STOP sur le transactionnel. Bancs : test_f1f2 46/48 (2 rouges antérieurs), test_rv2 96/96.
+- **Countdown Fondateurs** : cause = `dad8864d` (OfferCountdown « compact » sans secondes + cartes/fiche OffresAimants sans compteur).
+  V525 : ancien rendu restauré (hook inchangé), passé en prop `Countdown` à OffresAimants. Preuve prod (Playwright anonyme,
+  desktop + mobile) : carte + fiche `…50m 27s → 23s`, barre aussi. Deadline/stock/409 intacts.
+- **Non prouvé** : rendu du push sur le téléphone de Bassi (test réel = GO requis).
