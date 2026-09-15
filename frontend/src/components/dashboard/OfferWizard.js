@@ -59,6 +59,16 @@ const AUDIENCES = [
   { valeur: 'men-only', label: 'Hommes', aide: 'Offre destinee aux hommes.' }
 ];
 
+// SAISON — QUAND cette offre est proposee sur la vitrine.
+// `toutes` = permanente (valeur des offres historiques : rien ne disparait).
+// `hiver` / `ete` = visible seulement quand cette saison est active (reglage
+// global du super-admin, sans redeploiement). Le tableau de bord voit tout.
+export const SAISONS = [
+  { valeur: 'toutes', label: 'Permanente', aide: 'Proposee toute l\'annee.' },
+  { valeur: 'hiver', label: 'Hiver', aide: 'Visible sur la vitrine quand la saison HIVER est active.' },
+  { valeur: 'ete', label: 'Été', aide: 'Visible sur la vitrine quand la saison ÉTÉ est active (ex. Pulse X10).' }
+];
+
 // R2c — QU'EST-CE QUE CETTE OFFRE, AU JUSTE ?
 //
 // Le serveur ne le devinera pas : ni le nom, ni le prix, ni le nombre de
@@ -994,6 +1004,38 @@ export default function OfferWizard({
         <p className="text-xs mt-1" style={HINT_STYLE}>
           {(AUDIENCES.find((a) => a.valeur === (form.audience || 'all')) || AUDIENCES[0]).aide}
           {' '}Information affichee sur l&apos;offre&nbsp;; elle ne bloque aucune reservation.
+        </p>
+      </div>
+
+      {/* SAISON — meme presentation que « Pour qui ? ». */}
+      <div>
+        <label className="block text-xs mb-1" style={LABEL_STYLE}>Saison</label>
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Saison de l'offre">
+          {SAISONS.map((sn) => {
+            const actif = (form.season || 'toutes') === sn.valeur;
+            return (
+              <button
+                key={sn.valeur}
+                type="button"
+                role="radio"
+                aria-checked={actif}
+                onClick={() => set('season', sn.valeur)}
+                data-testid={`saison-${sn.valeur}`}
+                className="text-xs px-3 py-2 rounded-lg transition-colors"
+                style={{
+                  border: `1px solid ${actif ? PINK : 'rgba(255,255,255,0.14)'}`,
+                  background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)' : 'transparent',
+                  color: actif ? PINK : 'rgba(255,255,255,0.75)'
+                }}
+              >
+                {sn.label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs mt-1" style={HINT_STYLE}>
+          {(SAISONS.find((sn) => sn.valeur === (form.season || 'toutes')) || SAISONS[0]).aide}
+          {' '}La saison active se regle dans le panneau Super Admin.
         </p>
       </div>
 

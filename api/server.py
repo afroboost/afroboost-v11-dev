@@ -1042,6 +1042,10 @@ class Offer(BaseModel):
     category: Optional[str] = ""  # Ex: "service", "tshirt", "shoes", "supplement"
     # U1a : « all » par defaut — donc les offres d'avant ce lot sont inchangees.
     audience: Optional[str] = U1A_AUDIENCE_DEFAUT
+    # SAISON — `toutes` (permanente, valeur des offres historiques), `hiver`
+    # ou `ete`. Voir api/routes/saison.py : la vitrine ne montre que la saison
+    # active + les permanentes ; le tableau de bord voit tout.
+    season: Optional[str] = "toutes"
     isProduct: bool = False  # True = physical product, False = service/course
     variants: Optional[dict] = None  # { sizes: ["S","M","L"], colors: ["Noir","Blanc"], weights: ["0.5kg","1kg"] }
     tva: float = 0.0  # TVA percentage
@@ -1187,6 +1191,10 @@ class OfferCreate(BaseModel):
     # serait EFFACE en base a chaque sauvegarde (cf. l'avertissement V224
     # quelques lignes plus bas). Les deux modeles restent symetriques.
     audience: Optional[str] = U1A_AUDIENCE_DEFAUT
+    # SAISON — `toutes` (permanente, valeur des offres historiques), `hiver`
+    # ou `ete`. Voir api/routes/saison.py : la vitrine ne montre que la saison
+    # active + les permanentes ; le tableau de bord voit tout.
+    season: Optional[str] = None   # None = « non fourni » : PUT garde la saison du document
     isProduct: bool = False
     variants: Optional[dict] = None
     tva: float = 0.0
@@ -2473,6 +2481,9 @@ R2B_CLES_OFFRE_PUBLIQUE = (
     # exactement ce qu'une carte doit pouvoir montrer. Rien ici ne designe une
     # personne — l'adresse du coach, elle, n'a jamais transite par ce modele.
     "location_city", "location_address", "location_lat", "location_lng",
+    # HIVER : la composition (nombre de séances) et la saison sont publiques —
+    # la landing calcule « dès env. X CHF/séance » depuis la base, pas en dur.
+    "pack_sessions", "season",
 )
 
 # Les seules cles qu'un coach PUBLIC peut porter. `email` en est absent.
@@ -2530,6 +2541,20 @@ def r2b_cours_public(cours) -> dict:
     return {c: d[c] for c in R2B_CLES_COURS_PUBLIC if c in d}
 
 
+from api.routes.saison import (saison_valide as _saison_valide, filtrer_offres_saison as _filtrer_saison,
+                               SAISON_DEFAUT as _SAISON_DEFAUT)
+
+
+async def _saison_active() -> str:
+    """La saison active du site (platform_settings.global), `toutes` par défaut ou sur panne."""
+    try:
+        _s = await db.platform_settings.find_one({"_id": "global"}, {"_id": 0, "saison_active": 1})
+        return _saison_valide((_s or {}).get("saison_active"), _SAISON_DEFAUT)
+    except Exception as _err:  # noqa: BLE001 — une panne de réglage ne cache aucune offre
+        logger.warning("[SAISON] réglage illisible (%s) — toutes les offres", type(_err).__name__)
+        return _SAISON_DEFAUT
+
+
 @api_router.get("/offers", response_model=List[Offer])
 async def get_offers(request: Request, scope: str = ""):
     # V237 — isolation par coach, en OPT-IN explicite (`?scope=mine`).
@@ -2579,6 +2604,10 @@ async def get_offers(request: Request, scope: str = ""):
     # rendre les masquees — sans quoi Bassi ne pourrait plus jamais republier
     # une offre qu'il a masquee.
     offers = await db.offers.find({"visible": {"$ne": False}}, {"_id": 0}).to_list(100)
+    # SAISON : la vitrine ne montre que la saison active + les permanentes
+    # (les offres historiques, sans champ, sont permanentes). Réglage lu en
+    # base à chaque appel : passer hiver -> été ne demande aucun redéploiement.
+    offers = _filtrer_saison(offers, await _saison_active())
     if not offers:
         # V241: `coach_id` pose des la creation. Ce bloc d'amorcage s'execute sur
         # un GET (potentiellement anonyme, sans header) quand la collection est
@@ -2660,6 +2689,7 @@ async def create_offer(offer: OfferCreate, request: Request):
     offer_data = offer.model_dump()
     # U1a : meme normalisation qu'a la mise a jour — une seule regle, deux portes.
     offer_data["audience"] = u1a_audience(offer_data.get("audience"))
+    offer_data["season"] = _saison_valide(offer_data.get("season"))
     # v61: Blindage conversion durée — accepte string, int, vide, null
     raw_dv = offer_data.get("duration_value")
     if raw_dv is not None and raw_dv != "" and raw_dv is not False:
@@ -2778,6 +2808,10 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
     update_data.update(r3a_localisation(update_data))
     # U1a : une valeur inconnue redevient « all » plutot que d'entrer en base.
     update_data["audience"] = u1a_audience(update_data.get("audience"))
+    # SAISON : une requête qui ne la porte pas (ancien client) garde celle du
+    # document — jamais un retour silencieux à « toutes » (le piège `audience`).
+    update_data["season"] = _saison_valide(
+        offer.season if offer.season is not None else _offre_avant.get("season"))
     # v61: Blindage conversion durée
     raw_dv = update_data.get("duration_value")
     if raw_dv is not None and raw_dv != "" and raw_dv is not False:
@@ -44562,6 +44596,7 @@ async def get_platform_settings(request: Request):
     return {
         "partner_access_enabled": settings.get("partner_access_enabled", True),
         "maintenance_mode": settings.get("maintenance_mode", False),
+        "saison_active": _saison_valide(settings.get("saison_active"), _SAISON_DEFAUT),  # HIVER
         "service_prices": service_prices,  # v12.1
         "is_super_admin": is_admin,
         "updated_at": settings.get("updated_at"),
@@ -44598,6 +44633,11 @@ async def update_platform_settings(request: Request):
     # Staff access code
     if "staff_access_code" in data:
         update_fields["staff_access_code"] = str(data["staff_access_code"]).strip()
+    if "saison_active" in data:
+        # HIVER : toutes | hiver | ete — une valeur inconnue retombe sur `toutes`
+        # (rien de caché), jamais sur une saison devinée.
+        update_fields["saison_active"] = _saison_valide(data["saison_active"], _SAISON_DEFAUT)
+        logger.info("[SAISON] saison active -> %s (par %s)", update_fields["saison_active"], user_email)
 
     # v12.1: Mise à jour des prix des services
     if "service_prices" in data:
