@@ -6,6 +6,9 @@ import axios from 'axios'; // V225: creation/modification des horaires depuis le
 import SvgIcon from '../SvgIcon';
 import { appartientAuCoach } from '../../utils/courseOwnership'; // V228: pictogrammes vectoriels a la place des emoji
 import CloudinaryUploadButton from '../CloudinaryUploadButton'; // V229
+// FORMAT VIDEO : auto / 9:16 / 16:9 / 1:1 — detection sur les dimensions
+// reelles du fichier, previsualisation fidele (contain, jamais deforme).
+import { RATIOS as VIDEO_RATIOS, ratioDepuisDimensions, stylesLecteur, libelleDetection, normaliserRatio } from '../../utils/videoRatio';
 // U1b : champ d'adresse avec suggestions OpenStreetMap. Reste un input texte
 // libre : si le service est injoignable, le champ se comporte comme avant.
 import ChampAdresse from './ChampAdresse';
@@ -2729,20 +2732,82 @@ export default function OfferWizard({
                 allowFullScreen
               />
             ) : (
+              /* FORMAT VIDEO : la previsualisation rend EXACTEMENT le format
+                 choisi (9:16 en colonne centree, 16:9 en paysage, 1:1 en carre,
+                 auto = format d'origine), object-fit contain, fond noir. Changer
+                 le selecteur ci-dessous met la preview a jour immediatement. */
+              <div style={stylesLecteur(form.video_aspect_ratio, { hauteurMax: '360px' }).conteneur} data-testid="wizard-video-preview" data-ratio={normaliserRatio(form.video_aspect_ratio)}>
               <video
                 ref={(el) => { if (el) el._v234 = true; }}
                 src={form.videoUrl}
                 controls
                 playsInline
-                style={{ width: '100%', maxHeight: '260px', background: '#000' }}
+                style={stylesLecteur(form.video_aspect_ratio, { hauteurMax: '360px' }).video}
                 onLoadedMetadata={(e) => {
                   // V234: stocker la duree pour le slider de miniature
                   const dur = Math.floor(e.currentTarget.duration || 0);
                   if (dur > 0 && !form._v234Duration) {
                     setForm(prev => ({ ...prev, _v234Duration: dur }));
                   }
+                  // FORMAT VIDEO : detection automatique sur videoWidth /
+                  // videoHeight. Le ratio detecte est PROPOSE : il ne remplace
+                  // le choix que si le coach n'en a pas fait (encore « auto »).
+                  const w = e.currentTarget.videoWidth; const h = e.currentTarget.videoHeight;
+                  if (w > 0 && h > 0) {
+                    const detecte = ratioDepuisDimensions(w, h);
+                    setForm(prev => ({
+                      ...prev,
+                      _videoDims: { w, h },
+                      video_aspect_ratio: (normaliserRatio(prev.video_aspect_ratio) === 'auto' && !prev._ratioChoisi) ? detecte : prev.video_aspect_ratio,
+                    }));
+                  }
                 }}
               />
+              </div>
+            )}
+            {/* FORMAT VIDEO : selecteur d'affichage. Une URL externe sans
+                dimensions connues reste en Auto, choix manuel possible. */}
+            {!/YouTube|youtu\.be|vimeo/i.test(form.videoUrl) && (
+              <div className="mt-3" data-testid="wizard-video-ratio">
+                <label className="block text-xs mb-1" style={LABEL_STYLE}>
+                  <SvgIcon name="video" size={14} />{' '}Format d'affichage
+                </label>
+                <div role="radiogroup" aria-label="Format d'affichage" className="grid grid-cols-2 gap-2">
+                  {VIDEO_RATIOS.map((r) => {
+                    const actif = normaliserRatio(form.video_aspect_ratio) === r.valeur;
+                    return (
+                      <label
+                        key={r.valeur}
+                        data-testid={`video-ratio-${r.valeur}`}
+                        className="flex items-start gap-2 rounded-lg px-3 py-2 cursor-pointer"
+                        style={{ border: `1px solid ${actif ? PINK : 'rgba(255,255,255,0.15)'}`, background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)' : 'rgba(255,255,255,0.04)' }}
+                      >
+                        <input
+                          type="radio"
+                          name="video_aspect_ratio"
+                          value={r.valeur}
+                          checked={actif}
+                          onChange={() => setForm(prev => ({ ...prev, video_aspect_ratio: r.valeur, _ratioChoisi: true }))}
+                          style={{ accentColor: PINK, marginTop: 3 }}
+                        />
+                        <span>
+                          <span className="block text-xs text-white font-semibold">{r.libelle}</span>
+                          <span className="block text-[11px]" style={HINT_STYLE}>{r.aide}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {form._videoDims ? (
+                  <p className="text-xs mt-2" style={HINT_STYLE} data-testid="video-ratio-detecte">
+                    Dimensions détectées : {libelleDetection(form._videoDims.w, form._videoDims.h)}
+                  </p>
+                ) : (
+                  <p className="text-xs mt-2" style={HINT_STYLE}>
+                    Après l'upload d'un MP4, le format est détecté automatiquement (1080 × 1920 → 9:16). Sans dimensions connues : Auto.
+                  </p>
+                )}
+              </div>
             )}
             {/* V234: selecteur de miniature pour videos Cloudinary */}
             {form.videoUrl && form.videoUrl.includes('cloudinary.com') && form.videoUrl.includes('/video/upload/') && (

@@ -1781,6 +1781,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     // HIVER : paiement unique par defaut, duree historique (vide = 2 mois).
     billing_mode: 'unique',
     duree_mois: null,
+    video_aspect_ratio: 'auto',
     // R2c : VOLONTAIREMENT VIDE, et pas « single_class ». Un type par defaut
     // serait accepte sans que le coach ait rien lu — et « cours a l'unite »
     // est justement celui qui rendra l'offre publique dans « Ou pratiquer ? ».
@@ -3316,6 +3317,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       season: offer.season || 'toutes',
       billing_mode: offer.billing_mode || 'unique',
       duree_mois: offer.duree_mois ?? null,
+      video_aspect_ratio: offer.video_aspect_ratio || 'auto',
       // R2c : RELU, comme son voisin. Sans cette ligne, rouvrir une offre
       // classifiee la reafficherait « sans type », et l'enregistrement
       // suivant la ramenerait a « non classifie » en base. C'est exactement
@@ -3371,6 +3373,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       season: 'toutes',
       billing_mode: 'unique',
       duree_mois: null,
+      video_aspect_ratio: 'auto',
       // R2c : meme raison. Le type de l'offre abandonnee ne doit pas etre
       // celui, silencieusement pre-rempli, de la suivante.
       offer_type: '',
@@ -3440,6 +3443,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // HIVER : mode de paiement et duree des droits — meme liste blanche.
         billing_mode: src.billing_mode || 'unique',
         duree_mois: v223Int(src.duree_mois, null),
+        video_aspect_ratio: src.video_aspect_ratio || 'auto',
         isProduct: src.isProduct || false,
         variants: src.variants || null,
         tva: parseFloat(src.tva) || 0,
