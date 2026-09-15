@@ -1,7 +1,7 @@
 // V224 — Wizard de creation/modification d'offre en 3 etapes.
 // Le state est LOCAL : il ne remonte au parent qu'une fois, via onSave,
 // ce qui preserve le comportement actuel d'une seule requete POST/PUT.
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios'; // V225: creation/modification des horaires depuis le wizard
 import SvgIcon from '../SvgIcon';
 import { appartientAuCoach } from '../../utils/courseOwnership'; // V228: pictogrammes vectoriels a la place des emoji
@@ -12,6 +12,9 @@ import { RATIOS as VIDEO_RATIOS, ratioDepuisDimensions, stylesLecteur, libelleDe
 // MÉDIAS : la même lecture que la vitrine (miniature dédiée prioritaire, le
 // champ vidéo peut contenir une image) — la preview reflète le rendu réel.
 import { analyserMediaUrl, mediaPrincipal, champVideoEstImage } from '../../utils/mediaOffre';
+// DÉCOUPE VIDÉO non destructive : début / fin en secondes sur l'offre, la
+// preview joue l'extrait (même hook que la vitrine).
+import { trimValide, resumeTrim, formatTemps, useTrimVideo } from '../../utils/videoTrim';
 // U1b : champ d'adresse avec suggestions OpenStreetMap. Reste un input texte
 // libre : si le service est injoignable, le champ se comporte comme avant.
 import ChampAdresse from './ChampAdresse';
@@ -223,6 +226,12 @@ export default function OfferWizard({
 }) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState(initialOffer || {});
+  // DÉCOUPE VIDÉO : la preview de l'étape Médias joue [début, fin] en boucle,
+  // exactement ce que verra le visiteur. `_videoDuree` = durée réelle lue sur
+  // les métadonnées (jamais persistée).
+  const previewVideoRef = useRef(null);
+  const trimPreview = trimValide(form.video_trim_start, form.video_trim_end, form._videoDuree);
+  useTrimVideo(previewVideoRef, trimPreview, { loop: true });
   // V224: chaine BRUTE saisie dans les champs variantes. Indispensable : sans
   // elle, la valeur affichee est derivee du tableau normalise, ce qui efface la
   // virgule a l'instant ou elle est tapee (« S, M » devenait « SM »).
@@ -2813,7 +2822,7 @@ export default function OfferWizard({
               <div style={{ ...stylesLecteur(form.video_aspect_ratio, { hauteurMax: '360px' }).conteneur, minHeight: '200px' }} data-testid="wizard-video-preview" data-ratio={normaliserRatio(form.video_aspect_ratio)}>
               <video
                 key={form.videoUrl}
-                ref={(el) => { if (el) el._v234 = true; }}
+                ref={(el) => { if (el) el._v234 = true; previewVideoRef.current = el; }}
                 src={form.videoUrl}
                 poster={mediaPrincipal(form).poster || undefined}
                 controls
@@ -2825,6 +2834,11 @@ export default function OfferWizard({
                   const dur = Math.floor(e.currentTarget.duration || 0);
                   if (dur > 0 && !form._v234Duration) {
                     setForm(prev => ({ ...prev, _v234Duration: dur }));
+                  }
+                  // DÉCOUPE : durée réelle (décimale) pour borner les curseurs.
+                  const dureeReelle = e.currentTarget.duration;
+                  if (Number.isFinite(dureeReelle) && dureeReelle > 0) {
+                    setForm(prev => ({ ...prev, _videoDuree: Math.round(dureeReelle * 100) / 100 }));
                   }
                   // FORMAT VIDEO : detection automatique sur videoWidth /
                   // videoHeight. Le ratio detecte est PROPOSE : il ne remplace
@@ -2886,6 +2900,77 @@ export default function OfferWizard({
                 )}
               </div>
             )}
+            {/* DÉCOUPE VIDÉO — simple : un début, une fin, un aperçu. Non
+                destructive : l'original reste tel quel, l'offre mémorise
+                `video_trim_start` / `video_trim_end` (secondes) et tous les
+                lecteurs (preview ci-dessus, carte, fiche, plein écran) jouent
+                uniquement cet extrait. Les curseurs sont bornés par la durée
+                RÉELLE lue sur la vidéo — tant qu'elle n'est pas connue, rien à
+                découper. */}
+            {!/YouTube|youtu\.be|vimeo/i.test(form.videoUrl) && !champVideoEstImage(form) && (() => {
+              const duree = form._videoDuree || 0;
+              const pas = duree > 60 ? 0.5 : 0.1;
+              const trim = trimValide(form.video_trim_start, form.video_trim_end, duree);
+              const debut = trim ? trim.start : 0;
+              const fin = trim ? trim.end : duree;
+              const r = resumeTrim(duree, trim);
+              const poserTrim = (s, e) => {
+                // Un extrait d'au moins 0,5 s ; sinon on garde l'état précédent.
+                const ns = Math.max(0, Math.min(s, duree));
+                const ne = Math.max(0, Math.min(e, duree));
+                if (ne - ns < 0.5) return;
+                setForm(prev => ({ ...prev, video_trim_start: Math.round(ns * 100) / 100, video_trim_end: Math.round(ne * 100) / 100 }));
+              };
+              const lireExtrait = () => {
+                const v = previewVideoRef.current;
+                if (!v) return;
+                try { v.currentTime = debut; } catch (e) { /* ignore */ }
+                const p = v.play(); if (p && p.catch) p.catch(() => {});
+              };
+              return (
+                <div className="mt-4" data-testid="wizard-video-trim" style={{ padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+                  <label className="block text-xs mb-1" style={LABEL_STYLE}>
+                    <SvgIcon name="edit" size={14} />{' '}Découper la vidéo
+                  </label>
+                  {duree <= 0 ? (
+                    <p className="text-xs" style={HINT_STYLE} data-testid="trim-attente">Chargement de la vidéo… la découpe apparaît dès que sa durée est connue.</p>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs" style={{ color: 'rgba(255,255,255,0.85)' }} data-testid="trim-resume">
+                        <span>Durée totale : <b data-testid="trim-total">{r.total}</b></span>
+                        <span>Extrait gardé : <b data-testid="trim-extrait">{r.extrait}</b></span>
+                        <span>Début : <b data-testid="trim-debut">{r.debut}</b></span>
+                        <span>Fin : <b data-testid="trim-fin">{r.fin}</b></span>
+                      </div>
+                      <div className="mt-2">
+                        <label className="block text-[11px]" style={HINT_STYLE}>Début — {formatTemps(debut)}</label>
+                        <input type="range" min="0" max={duree} step={pas} value={debut} data-testid="trim-start"
+                          onChange={(e) => poserTrim(parseFloat(e.target.value), fin)}
+                          style={{ width: '100%', accentColor: PINK }} />
+                        <label className="block text-[11px] mt-1" style={HINT_STYLE}>Fin — {formatTemps(fin)}</label>
+                        <input type="range" min="0" max={duree} step={pas} value={fin} data-testid="trim-end"
+                          onChange={(e) => poserTrim(debut, parseFloat(e.target.value))}
+                          style={{ width: '100%', accentColor: PINK }} />
+                      </div>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        <button type="button" onClick={lireExtrait} data-testid="trim-lire"
+                          className="text-xs px-3 py-1.5 rounded-lg" style={{ border: `1px solid ${PINK}`, color: PINK, background: 'transparent' }}>
+                          Lire l'extrait
+                        </button>
+                        <button type="button" data-testid="trim-reset"
+                          onClick={() => setForm(prev => ({ ...prev, video_trim_start: null, video_trim_end: null }))}
+                          className="text-xs px-3 py-1.5 rounded-lg" style={{ border: '1px solid rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.75)', background: 'transparent' }}>
+                          Réinitialiser
+                        </button>
+                      </div>
+                      <p className="text-xs mt-2" style={HINT_STYLE}>
+                        {trim ? `Seul l'extrait ${r.debut} → ${r.fin} sera joué (carte, fiche, plein écran). L'original n'est pas modifié.` : 'Déplace les curseurs pour garder seulement la partie voulue. La vidéo complète est jouée tant qu\'aucune découpe n\'est posée.'}
+                      </p>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
             {/* V234: selecteur de miniature pour videos Cloudinary */}
             {form.videoUrl && form.videoUrl.includes('cloudinary.com') && form.videoUrl.includes('/video/upload/') && (
               <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>

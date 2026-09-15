@@ -1783,6 +1783,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     duree_mois: null,
     video_aspect_ratio: 'auto',
     mobile_money_enabled: false,
+    video_trim_start: null, video_trim_end: null,
     // R2c : VOLONTAIREMENT VIDE, et pas « single_class ». Un type par defaut
     // serait accepte sans que le coach ait rien lu — et « cours a l'unite »
     // est justement celui qui rendra l'offre publique dans « Ou pratiquer ? ».
@@ -3325,6 +3326,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       duree_mois: offer.duree_mois ?? null,
       video_aspect_ratio: offer.video_aspect_ratio || 'auto',
       mobile_money_enabled: !!offer.mobile_money_enabled,
+      video_trim_start: offer.video_trim_start ?? null,
+      video_trim_end: offer.video_trim_end ?? null,
       // R2c : RELU, comme son voisin. Sans cette ligne, rouvrir une offre
       // classifiee la reafficherait « sans type », et l'enregistrement
       // suivant la ramenerait a « non classifie » en base. C'est exactement
@@ -3382,6 +3385,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       duree_mois: null,
       video_aspect_ratio: 'auto',
       mobile_money_enabled: false,
+      video_trim_start: null, video_trim_end: null,
       // R2c : meme raison. Le type de l'offre abandonnee ne doit pas etre
       // celui, silencieusement pre-rempli, de la suivante.
       offer_type: '',
@@ -3453,6 +3457,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         duree_mois: v223Int(src.duree_mois, null),
         video_aspect_ratio: src.video_aspect_ratio || 'auto',
         mobile_money_enabled: !!src.mobile_money_enabled,
+        // DÉCOUPE VIDÉO : le couple part TOUJOURS ensemble (null, null = aucune découpe).
+        video_trim_start: Number.isFinite(parseFloat(src.video_trim_start)) ? parseFloat(src.video_trim_start) : null,
+        video_trim_end: Number.isFinite(parseFloat(src.video_trim_end)) ? parseFloat(src.video_trim_end) : null,
         isProduct: src.isProduct || false,
         variants: src.variants || null,
         tva: parseFloat(src.tva) || 0,

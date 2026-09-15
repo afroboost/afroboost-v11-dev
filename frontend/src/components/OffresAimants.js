@@ -16,17 +16,18 @@
  * Les décisions (familles, badges, économies, libellés) viennent de
  * utils/offresAimants.js, testé à part. Ici : uniquement du rendu.
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import SvgIcon from './SvgIcon';
 import PawaPayOfferButton from './PawaPayOfferButton';
 import useLargeurEcran from '../utils/useLargeurEcran';
 import {
   regrouperOffres, ficheOffre, badgeOffre, prixAffiche, libelleSeances, infoCompacteLimitee,
-  libelleDepuis, prixUnitaire, prixFormate, economieOffre, libellePaiement, familleOffre, FAMILLE,
+  libelleDepuis, prixUnitaire, prixFormate, economieOffre, libellePaiement, familleOffre, FAMILLE, promesseCourte,
 } from '../utils/offresAimants';
-import { stylesLecteur, normaliserRatio, ratioDepuisDimensions, estPortrait } from '../utils/videoRatio';
+import { stylesLecteur, normaliserRatio, ratioDepuisDimensions } from '../utils/videoRatio';
 import { mediaPrincipal } from '../utils/mediaOffre';
+import { trimDeLOffre, useTrimVideo } from '../utils/videoTrim';
 
 const COULEUR = 'var(--primary-color, #D91CD2)';
 const RGB = 'var(--primary-rgb, 217, 28, 210)';
@@ -37,9 +38,131 @@ const ICONE_AIMANT = { lancement: 'fire', saison: 'star', mensuel: 'zap' };
 /* ───────────────────────── média d'une offre ───────────────────────── */
 
 /**
- * Fond flouté derrière un média en `contain` : la zone est « remplie »
- * visuellement (aucune bande noire nue) sans jamais déformer ni rogner le
- * média principal. Poster flouté s'il existe, sinon le dégradé de marque.
+ * RÈGLE DE RENDU MÉDIA (carte + fiche = remplissage, agrandi = format réel) :
+ *  - sur la carte et dans la fiche, le média REMPLIT son cadre (`cover`,
+ *    centré) — un vrai bloc visuel, pas un bâton vertical au milieu du vide ;
+ *  - le cadre de la fiche prend une forme proche du média (portrait → 4:5,
+ *    carré → 1:1, paysage → 16:9) pour rogner le moins possible ;
+ *  - « Agrandir » (et le plein écran natif, CSS `video:fullscreen`) montre le
+ *    format RÉEL du fichier : 9:16 vertical, 16:9 horizontal, 1:1 carré, en
+ *    `contain`, jamais déformé ni rogné.
+ */
+const cadreFiche = (ratio, mesure, estMobile) => {
+  const r = normaliserRatio(ratio);
+  const portrait = r === '9:16' || (r === 'auto' && !!mesure && mesure.h > mesure.w);
+  const carre = r === '1:1' || (r === 'auto' && !!mesure && Math.abs(mesure.w / mesure.h - 1) <= 0.08);
+  if (portrait) return { aspectRatio: '4 / 5', maxHeight: estMobile ? '64vh' : '56vh' };
+  if (carre) return { aspectRatio: '1 / 1', maxHeight: estMobile ? '60vh' : '52vh' };
+  return { aspectRatio: '16 / 9', maxHeight: estMobile ? '40vh' : '48vh' };
+};
+
+/** Bouton « Agrandir » posé sur le cadre. */
+function BoutonAgrandir({ onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Agrandir le média"
+      data-testid="fiche-agrandir"
+      style={{ position: 'absolute', right: 10, bottom: 10, zIndex: 3, width: 36, height: 36, borderRadius: 18, border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(0,0,0,0.55)', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+    >
+      <SvgIcon name="externalLink" size={16} />
+    </button>
+  );
+}
+
+/**
+ * Le média AGRANDI : format réel du fichier. Image entière ; vidéo en
+ * `contain` au ratio stocké/mesuré (9:16 reste vertical, 16:9 horizontal,
+ * 1:1 carré), avec ses contrôles natifs (le plein écran garde ce rendu).
+ */
+function MediaAgrandi({ offre, poster, video, ratio, onFermer }) {
+  const videoRef = useRef(null);
+  useTrimVideo(videoRef, trimDeLOffre(offre), { loop: false });
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onFermer(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onFermer]);
+  if (typeof document === 'undefined') return null;
+  const st = stylesLecteur(ratio, { hauteurMax: '88vh', fond: 'transparent' });
+  return createPortal(
+    <div role="dialog" aria-modal="true" aria-label="Média en grand" data-testid="media-agrandi" data-ratio={ratio}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onFermer(); }}
+      style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(0,0,0,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+      <button type="button" onClick={onFermer} aria-label="Fermer" data-testid="media-agrandi-fermer"
+        style={{ position: 'absolute', top: 12, right: 12, width: 40, height: 40, borderRadius: 20, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.08)', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+        <SvgIcon name="x" size={18} />
+      </button>
+      {video ? (
+        <video ref={videoRef} src={video} poster={poster || undefined} controls autoPlay playsInline preload="metadata" style={{ ...st.video, maxWidth: '96vw' }} />
+      ) : (
+        <img src={poster} alt={offre.name || ''} style={{ maxWidth: '96vw', maxHeight: '88vh', objectFit: 'contain', display: 'block' }} />
+      )}
+    </div>,
+    document.body,
+  );
+}
+
+/**
+ * Le média de la fiche : REMPLIT son cadre (cover), fond flouté derrière
+ * pendant le chargement, « Agrandir » pour le format réel. La vidéo joue
+ * l'extrait découpé (même hook que la vitrine et le plein écran).
+ */
+function LecteurOffre({ offre, analyser, estMobile }) {
+  const [mesure, setMesure] = useState(null);
+  const [videoKo, setVideoKo] = useState(false);
+  const [imageKo, setImageKo] = useState(false);
+  const [agrandi, setAgrandi] = useState(false);
+  const videoRef = useRef(null);
+  useTrimVideo(videoRef, trimDeLOffre(offre), { loop: false });
+  const { poster, video } = mediaPrincipal(offre, analyser);
+  const ratioStocke = normaliserRatio(offre.video_aspect_ratio);
+  const ratio = ratioStocke !== 'auto' ? ratioStocke : (mesure ? ratioDepuisDimensions(mesure.w, mesure.h) : 'auto');
+  const cadre = cadreFiche(ratio, mesure, estMobile);
+  const trim = trimDeLOffre(offre);
+  const conteneur = { position: 'relative', width: '100%', overflow: 'hidden', background: 'var(--video-bg, #000)', ...cadre };
+  const plein = { position: 'relative', zIndex: 1, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', display: 'block' };
+  const aVideo = !!video && !videoKo;
+  const aImage = !!poster && !imageKo;
+  if (!aVideo && !aImage) {
+    // Repli : aucune zone vide cassée, un bandeau de marque sobre.
+    return <div style={{ height: 96, background: `linear-gradient(135deg, rgba(${RGB}, 0.35), rgba(139, 92, 246, 0.25))` }} data-testid="fiche-repli" />;
+  }
+  return (
+    <>
+      <div style={conteneur} data-testid={aVideo ? 'fiche-lecteur' : 'fiche-image'} data-ratio={ratio}>
+        <FondFlou poster={poster} />
+        {aVideo ? (
+          <video
+            ref={videoRef}
+            src={video}
+            poster={poster || undefined}
+            controls
+            playsInline
+            preload="metadata"
+            data-trim={trim ? `${trim.start}-${trim.end}` : ''}
+            style={plein}
+            onLoadedMetadata={(e) => {
+              const v = e.currentTarget;
+              if (v.videoWidth && v.videoHeight) setMesure({ w: v.videoWidth, h: v.videoHeight });
+            }}
+            onError={() => setVideoKo(true)}
+          />
+        ) : (
+          <img src={poster} alt={offre.name || ''} onError={() => setImageKo(true)} style={plein}
+            onLoad={(e) => { const i = e.currentTarget; if (i.naturalWidth && i.naturalHeight) setMesure({ w: i.naturalWidth, h: i.naturalHeight }); }} />
+        )}
+        <BoutonAgrandir onClick={() => setAgrandi(true)} />
+      </div>
+      {agrandi ? <MediaAgrandi offre={offre} poster={poster} video={aVideo ? video : ''} ratio={ratio} onFermer={() => setAgrandi(false)} /> : null}
+    </>
+  );
+}
+
+/**
+ * Fond flouté derrière un média : la zone est « remplie » visuellement
+ * pendant le chargement. Poster flouté s'il existe, sinon le dégradé de marque.
  */
 function FondFlou({ poster }) {
   const style = {
@@ -52,88 +175,33 @@ function FondFlou({ poster }) {
 }
 
 /**
- * Le lecteur de la fiche : respecte le ratio (stocké sur l'offre, sinon mesuré
- * sur la vidéo), `object-fit: contain`, fond flouté. Jamais étiré, jamais rogné.
- * Sans vidéo : l'image (miniature dédiée en priorité). Sans rien : repli sobre.
- */
-function LecteurOffre({ offre, analyser, hauteurMax, estMobile }) {
-  const [mesure, setMesure] = useState(null);
-  const [videoKo, setVideoKo] = useState(false);
-  const [imageKo, setImageKo] = useState(false);
-  const { poster, video } = mediaPrincipal(offre, analyser);
-  const ratioStocke = normaliserRatio(offre.video_aspect_ratio);
-  const ratio = ratioStocke !== 'auto' ? ratioStocke : (mesure ? ratioDepuisDimensions(mesure.w, mesure.h) : 'auto');
-  const portrait = ratio === '9:16' || (ratio === 'auto' && !!mesure && mesure.h > mesure.w);
-  // Sur un téléphone en portrait, une vidéo verticale exploite presque toute
-  // la hauteur ; en paysage/desktop, elle reste une colonne centrée.
-  const hMax = hauteurMax || (portrait ? (estMobile ? '62vh' : '56vh') : (estMobile ? '40vh' : '48vh'));
-  const st = stylesLecteur(ratio, { hauteurMax: hMax, fond: 'transparent' });
-  if (video && !videoKo) {
-    return (
-      <div style={{ ...st.conteneur, minHeight: portrait ? hMax : undefined, background: 'var(--video-bg, #000)' }} data-testid="fiche-lecteur" data-ratio={ratio}>
-        <FondFlou poster={poster} />
-        <video
-          src={video}
-          poster={poster || undefined}
-          controls
-          playsInline
-          preload="metadata"
-          style={{ ...st.video, position: 'relative', zIndex: 1 }}
-          onLoadedMetadata={(e) => {
-            const v = e.currentTarget;
-            if (v.videoWidth && v.videoHeight) setMesure({ w: v.videoWidth, h: v.videoHeight });
-          }}
-          onError={() => setVideoKo(true)}
-        />
-      </div>
-    );
-  }
-  if (poster && !imageKo) {
-    return (
-      <div style={{ ...st.conteneur, maxHeight: hauteurMax || '46vh', background: 'var(--video-bg, #000)' }} data-testid="fiche-image">
-        <FondFlou poster={poster} />
-        <img src={poster} alt={offre.name || ''} onError={() => setImageKo(true)} style={{ position: 'relative', zIndex: 1, width: '100%', height: 'auto', maxHeight: hauteurMax || '46vh', objectFit: 'contain', display: 'block' }} />
-      </div>
-    );
-  }
-  // Repli : aucune zone vide cassée, un bandeau de marque sobre.
-  return <div style={{ height: 96, background: `linear-gradient(135deg, rgba(${RGB}, 0.35), rgba(139, 92, 246, 0.25))` }} data-testid="fiche-repli" />;
-}
-
-/**
- * La vignette d'une carte aimant : la MINIATURE (image) est prioritaire ; sans
- * image, la vidéo muette au bon format (portrait : boîte plus haute, fond
- * flouté, jamais rognée). Sans rien, ou média indisponible : repli sobre.
+ * La vignette d'une carte : la MINIATURE (image) remplit la zone ; sans image,
+ * la vidéo muette remplit la zone (cover, centrée) et joue l'extrait découpé.
+ * Sans rien, ou média indisponible : repli sobre.
  */
 function VignetteOffre({ offre, analyser, hauteur }) {
-  const [mesure, setMesure] = useState(null);
   const [videoKo, setVideoKo] = useState(false);
   const [imageKo, setImageKo] = useState(false);
+  const videoRef = useRef(null);
+  useTrimVideo(videoRef, trimDeLOffre(offre), { loop: true });
   const { poster, video } = mediaPrincipal(offre, analyser);
-  const ratio = normaliserRatio(offre.video_aspect_ratio);
-  const portrait = estPortrait(ratio, mesure && mesure.w, mesure && mesure.h);
-  const h = hauteur || 160;
+  const h = hauteur || 170;
   const repli = <div style={{ width: '100%', height: h, background: `linear-gradient(135deg, rgba(${RGB}, 0.35), rgba(139, 92, 246, 0.25))` }} data-testid="vignette-repli" />;
   if (poster && !imageKo) {
-    return <img src={poster} alt="" onError={() => setImageKo(true)} style={{ width: '100%', height: h, objectFit: 'cover', display: 'block' }} data-testid="vignette-image" />;
+    return <img src={poster} alt="" onError={() => setImageKo(true)} style={{ width: '100%', height: h, objectFit: 'cover', objectPosition: 'center', display: 'block' }} data-testid="vignette-image" />;
   }
   if (!video || videoKo) return repli;
-  const contain = portrait || ratio === '1:1';
   return (
-    <div style={{ position: 'relative', width: '100%', height: contain ? Math.round(h * 1.5) : h, overflow: 'hidden', background: 'var(--video-bg, #000)' }} data-testid="vignette-video" data-portrait={contain ? 'true' : 'false'}>
-      {contain ? <FondFlou poster="" /> : null}
+    <div style={{ position: 'relative', width: '100%', height: h, overflow: 'hidden', background: 'var(--video-bg, #000)' }} data-testid="vignette-video">
       <video
+        ref={videoRef}
         src={video}
         muted
         autoPlay
         loop
         playsInline
         preload="metadata"
-        style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%', objectFit: contain ? 'contain' : 'cover', display: 'block' }}
-        onLoadedMetadata={(e) => {
-          const v = e.currentTarget;
-          if (v.videoWidth && v.videoHeight) setMesure({ w: v.videoWidth, h: v.videoHeight });
-        }}
+        style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', display: 'block' }}
         onError={() => setVideoKo(true)}
       />
     </div>
@@ -336,41 +404,83 @@ function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkout
 
 /* ───────────────────────── toutes les offres ───────────────────────── */
 
-function ToutesLesOffres({ ouvert, offres, mensuelRef, onOuvrirFiche, onFermer, estMobile }) {
+const GROUPES = [
+  { cle: 'lancement', titre: 'Offre de lancement', familles: [FAMILLE.LANCEMENT] },
+  { cle: 'saison', titre: 'La saison', familles: [FAMILLE.SAISON_1X, FAMILLE.SAISON_2X] },
+  { cle: 'mensuel', titre: 'Chaque mois, sans engagement', familles: [FAMILLE.MENSUEL] },
+  { cle: 'unite', titre: 'À l’unité', familles: [FAMILLE.UNITE] },
+  { cle: 'membre', titre: 'Association', familles: [FAMILLE.MEMBRE] },
+  { cle: 'offert', titre: 'Pour découvrir', familles: [FAMILLE.OFFERT] },
+];
+
+/** Petite vignette carrée (miniature ou première image de la vidéo). */
+function MiniVignette({ offre, analyser }) {
+  const { poster, video } = mediaPrincipal(offre, analyser);
+  const base = { width: 56, height: 56, borderRadius: 12, flexShrink: 0, objectFit: 'cover', display: 'block', background: `rgba(${RGB}, 0.18)` };
+  if (poster) return <img src={poster} alt="" style={base} />;
+  if (video) return <video src={video} muted playsInline preload="metadata" style={base} />;
+  return <div style={{ ...base, display: 'flex', alignItems: 'center', justifyContent: 'center', color: COULEUR }}><SvgIcon name="gift" size={20} /></div>;
+}
+
+function ToutesLesOffres({ ouvert, offres, mensuelRef, analyser, onOuvrirFiche, onFermer, estMobile }) {
+  const groupes = GROUPES.map((g) => ({ ...g, offres: offres.filter((o) => g.familles.includes(familleOffre(o))) })).filter((g) => g.offres.length);
   return (
     <Panneau ouvert={ouvert} onFermer={onFermer} titre="Toutes les offres" estMobile={estMobile} testId="toutes-les-offres">
-      <ul style={{ listStyle: 'none', margin: 0, padding: '6px 8px 10px' }} data-testid="liste-toutes-offres">
-        {offres.map((o) => {
-          const p = prixAffiche(o);
-          const badge = badgeOffre(o, mensuelRef);
-          const seances = libelleSeances(o);
-          const limitee = infoCompacteLimitee(o);
-          return (
-            <li key={o.id}>
-              <button
-                type="button"
-                data-testid={`ligne-offre-${o.id}`}
-                onClick={() => onOuvrirFiche({ offres: [o] })}
-                style={{
-                  width: '100%', textAlign: 'left', display: 'grid', gridTemplateColumns: '1fr auto', gap: '2px 12px', alignItems: 'center',
-                  padding: '12px 10px', borderRadius: 12, border: 'none', background: 'transparent', color: '#fff', cursor: 'pointer',
-                  borderBottom: '1px solid rgba(255,255,255,0.06)',
-                }}
-              >
-                <span style={{ fontWeight: 700, fontSize: 15, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  {o.name}{badge ? <Badge texte={badge} fort={familleOffre(o) === FAMILLE.LANCEMENT} /> : null}
-                </span>
-                <span style={{ fontWeight: 800, color: COULEUR, whiteSpace: 'nowrap', textAlign: 'right' }}>
-                  {p.montant}{p.unite ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', fontWeight: 500 }}> {p.unite}</span> : null}
-                </span>
-                <span style={{ gridColumn: '1 / -1', fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>
-                  {[seances, limitee].filter(Boolean).join(' · ') || (o.description ? String(o.description).slice(0, 80) : '')}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      <div style={{ padding: '6px 12px 12px' }} data-testid="liste-toutes-offres">
+        {groupes.map((g) => (
+          <section key={g.cle} data-testid={`groupe-${g.cle}`} style={{ marginTop: 10 }}>
+            <h4 style={{ margin: '8px 4px 6px', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.45)' }}>{g.titre}</h4>
+            {/* `minmax(0, 1fr)` : sans lui, une ligne à contenu long élargit la
+                grille (min-width: auto des items) et le prix sort de l'écran. */}
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
+              {g.offres.map((o) => {
+                const p = prixAffiche(o);
+                const badge = badgeOffre(o, mensuelRef);
+                const fam = familleOffre(o);
+                const seances = libelleSeances(o);
+                const limitee = infoCompacteLimitee(o);
+                const eco = economieOffre(o, mensuelRef);
+                const sousTitre = [seances, limitee].filter(Boolean).join(' · ') || promesseCourte(o);
+                return (
+                  <li key={o.id} style={{ minWidth: 0 }}>
+                    <button
+                      type="button"
+                      data-testid={`ligne-offre-${o.id}`}
+                      onClick={() => onOuvrirFiche({ offres: [o] })}
+                      style={{
+                        width: '100%', maxWidth: '100%', textAlign: 'left', display: 'block', overflow: 'hidden',
+                        padding: '10px 12px', borderRadius: 14, cursor: 'pointer', color: '#fff',
+                        background: fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.10)` : 'rgba(255,255,255,0.04)',
+                        border: `1px solid ${fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.45)` : 'rgba(255,255,255,0.08)'}`,
+                      }}
+                    >
+                      {/* Un conteneur flex DANS le bouton : un <button> en flex ne
+                          laisse pas toujours ses enfants rétrécir, le prix sortait
+                          de l'écran sur mobile. */}
+                      <span style={{ display: 'flex', gap: 12, alignItems: 'center', width: '100%', minWidth: 0 }}>
+                        <MiniVignette offre={o} analyser={analyser} />
+                        <span style={{ minWidth: 0, flex: '1 1 0%', display: 'flex', flexDirection: 'column', gap: 3, overflow: 'hidden' }}>
+                          <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.2 }}>{o.name}</span>
+                            {badge ? <Badge texte={badge} fort={fam === FAMILLE.LANCEMENT} /> : null}
+                          </span>
+                          {sousTitre ? <span style={{ display: 'block', fontSize: 12, color: 'rgba(255,255,255,0.6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sousTitre}</span> : null}
+                          {eco ? <span style={{ display: 'block', fontSize: 12, color: 'var(--eco-color, #8ef0b0)', fontWeight: 600 }}>Économie : {prixFormate(eco)} CHF</span> : null}
+                        </span>
+                        <span style={{ textAlign: 'right', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                          <span style={{ fontWeight: 800, fontSize: 16, color: COULEUR, whiteSpace: 'nowrap' }}>{p.montant}</span>
+                          {p.unite ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>{p.unite}</span> : null}
+                        </span>
+                        <span style={{ color: 'rgba(255,255,255,0.35)', display: 'inline-flex', flexShrink: 0 }}><SvgIcon name="arrowRight" size={14} /></span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </div>
     </Panneau>
   );
 }
@@ -399,7 +509,7 @@ function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir }) {
         transition: 'transform 0.2s',
       }}
     >
-      <VignetteOffre offre={o} analyser={analyser} hauteur={160} />
+      <VignetteOffre offre={o} analyser={analyser} hauteur={170} />
       <div style={{ padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ color: COULEUR, display: 'inline-flex' }}><SvgIcon name={ICONE_AIMANT[aimant.cle] || 'gift'} size={16} /></span>
@@ -484,6 +594,7 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
         ouvert={toutes}
         offres={groupe.autres}
         mensuelRef={groupe.mensuelRef}
+        analyser={analyser}
         estMobile={estMobile}
         onFermer={() => setToutes(false)}
         onOuvrirFiche={(c) => { setToutes(false); setFiche(c); }}
