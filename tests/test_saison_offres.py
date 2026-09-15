@@ -102,6 +102,9 @@ def _ns(db):
           "r2b_offre_publique": lambda o: o, "_enrich_offers_with_active_price": lambda o: o, "datetime": __import__("datetime").datetime, "timezone": __import__("datetime").timezone}
     async def _same(o): return o
     ns["_enrich_offers_with_next_date"] = _same
+    # HIVER 2 : /api/offers retire les offres limitées fermées (épuisées / date passée).
+    from api.routes import hiver as _H
+    ns["_hiver"] = _H
     for nom in ("_saison_active", "_annoter_places_restantes", "_offres_encore_disponibles", "get_offers"):
         exec(compile(_src(nom), nom, "exec"), ns)
     return ns

@@ -152,19 +152,23 @@ NOMS = ("m1geo1_region_normalisee", "_m1_echapper", "_m1_jsonld", "_v184_parse_t
         "rv2_date_lisible", "_m1_seances", "m1_page_essai_neuchatel",
         # HIVER : tarifs depuis la base, places réelles, témoignages, saison
         "_saison_active", "_annoter_places_restantes", "_offres_encore_disponibles",
-        "_m1_prix", "_m1_par_seance", "_m1_offres", "_m1_temoignages", "_m1_carte_offre")
+        "_m1_prix", "_m1_par_seance", "_m1_offres", "_m1_temoignages", "_m1_carte_offre",
+        # HIVER 2 : hiérarchie commerciale, badges, économie réelle, date limite
+        "_m1_famille", "_m1_badge", "_m1_paiement", "_m1_engagement", "_m1_seances_txt",
+        "_m1_economie", "_m1_pour_qui", "_m1_deadline_html")
 CONSTANTES = ("_N456_CHAMPS_PUBLICS", "_V184_WEEKDAY_LABELS_FR", "RV2_JOURS",
               "RV2_MOIS", "COACH_EMAIL", "_M1_SITE", "_M1_CHEMIN", "_M1_TUNNEL",
               "_M1_HORIZON_JOURS", "_M1_MAX_SEANCES", "M1GEO1_REGIONS", "_M1_REGION",
               "_M1_SEANCES_VISIBLES", "_M1_FAQ", "_HIVER_SEANCES_PAR_MOIS_ESTIMEES",
               "T3_MARQUEUR", "T3_APPROVED",
-              "_M1_MOIS", "_V184_WEEKDAY_LABELS_FR")
+              "_M1_MOIS", "_V184_WEEKDAY_LABELS_FR", "_M1_BADGES")
 
 
 def monter(db, journal):
     """Les VRAIES fonctions, extraites du vrai `server.py`."""
     from fastapi.responses import HTMLResponse
     from api.routes import saison as _saison_mod
+    from api.routes import hiver as _hiver_mod
     ns = {"db": db, "logger": journal, "datetime": datetime, "timezone": timezone,
           "timedelta": timedelta, "re": re, "html": __import__("html"),
           "json": json, "HTMLResponse": HTMLResponse,
@@ -173,7 +177,7 @@ def monter(db, journal):
           # production, pas des imitations.
           "Request": object, "m2a_attribution_entrante": _m2a_entrante,
           "_saison_valide": _saison_mod.saison_valide, "_filtrer_saison": _saison_mod.filtrer_offres_saison,
-          "_SAISON_DEFAUT": _saison_mod.SAISON_DEFAUT}
+          "_SAISON_DEFAUT": _saison_mod.SAISON_DEFAUT, "_hiver": _hiver_mod}
     for n in ast.walk(ARBRE):
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in CONSTANTES:
             exec(compile("".join(LIGNES[n.lineno - 1:n.end_lineno]), "s", "exec"), ns)
@@ -210,12 +214,20 @@ def monde():
     # HIVER : un catalogue réaliste — tout ce que la page affiche en vient.
     db.offers.docs = [
         {"id": "o-essai", "name": "Cours d'essai gratuit", "price": 0, "visible": True, "offer_type": "single_class", "pack_sessions": 1, "position": 0, "stock": -1},
-        {"id": "o-fond", "name": "Fondateurs", "price": 59, "visible": True, "offer_type": "subscription", "pack_sessions": 8, "position": 1, "season": "hiver", "stock": 50, "first_purchase_eligible": True, "description": "Tarif fondateur, 50 places."},
-        {"id": "o-std", "name": "Standard", "price": 79, "visible": True, "offer_type": "subscription", "pack_sessions": 8, "position": 2, "season": "hiver", "stock": -1},
-        {"id": "o-flex", "name": "Flex 4", "price": 49, "visible": True, "offer_type": "subscription", "pack_sessions": 4, "position": 3, "season": "hiver", "stock": -1},
-        {"id": "o-unite", "name": "Cours à l'unité", "price": 30, "visible": True, "offer_type": "single_class", "pack_sessions": 1, "position": 4, "stock": -1},
-        {"id": "o-pulse", "name": "PULSE x10 cours", "price": 250, "visible": True, "offer_type": "pack", "pack_sessions": 10, "position": 5, "season": "ete", "stock": -1},
-        {"id": "o-carte", "name": "Carte membre association", "price": 100, "visible": False, "offer_type": "membership", "position": 9, "description": "Avantages membres."},
+        # HIVER 2 : le modèle commercial corrigé — mensuel = prélèvement Stripe, saison
+        # 8 mois en 1× ou 2×, Fondateurs limitée par 50 places ET une date réelle.
+        # Les positions sont VOLONTAIREMENT dans le désordre : la page doit trier
+        # par famille (lue sur les champs), pas par la position du tableau de bord.
+        {"id": "o-fond", "name": "Fondateurs", "price": 59, "visible": True, "offer_type": "subscription", "pack_sessions": 8, "position": 7, "season": "hiver", "stock": 50, "first_purchase_eligible": True, "description": "Tarif fondateur, 50 places.",
+         "billing_mode": "mensuel_auto", "countdown_enabled": True, "countdown_date": "2099-09-30", "countdown_time": "23:59", "countdown_text": "OFFRE FONDATEURS"},
+        {"id": "o-s1", "name": "Saison hiver — 8 mois", "price": 549, "visible": True, "offer_type": "subscription", "pack_sessions": 64, "position": 6, "season": "hiver", "stock": -1, "billing_mode": "unique", "duree_mois": 8},
+        {"id": "o-s2", "name": "Saison hiver — 2 paiements", "price": 299, "visible": True, "offer_type": "subscription", "pack_sessions": 8, "position": 5, "season": "hiver", "stock": -1, "billing_mode": "saison_2x"},
+        {"id": "o-std", "name": "Mensuel Liberté", "price": 89, "visible": True, "offer_type": "subscription", "pack_sessions": 8, "position": 4, "season": "hiver", "stock": -1, "billing_mode": "mensuel_auto"},
+        {"id": "o-flex", "name": "Flex 4", "price": 49, "visible": True, "offer_type": "subscription", "pack_sessions": 4, "position": 3, "season": "hiver", "stock": -1, "billing_mode": "mensuel_auto"},
+        {"id": "o-etu", "name": "Étudiant", "price": 69, "visible": True, "offer_type": "subscription", "pack_sessions": 8, "position": 8, "season": "hiver", "stock": -1, "billing_mode": "mensuel_auto"},
+        {"id": "o-unite", "name": "Cours à l'unité", "price": 30, "visible": True, "offer_type": "single_class", "pack_sessions": 1, "position": 1, "stock": -1},
+        {"id": "o-pulse", "name": "PULSE x10 cours", "price": 250, "visible": True, "offer_type": "pack", "pack_sessions": 10, "position": 2, "season": "ete", "stock": -1},
+        {"id": "o-carte", "name": "Carte membre association", "price": 100, "visible": True, "offer_type": "membership", "position": 9, "description": "Avantages membres.", "billing_mode": "unique", "duree_mois": 12, "pack_sessions": 0, "creates_membership": True},
         {"id": "o-tshirt", "name": "T-shirt", "price": 59.99, "visible": True, "isProduct": True, "offer_type": "product", "stock": 3},
         {"id": "o-event", "name": "Silent Lakeside", "price": 25, "visible": True, "offer_type": "event", "pack_sessions": 1},
         {"id": "o-cache", "name": "Offre cachée", "price": 10, "visible": False, "offer_type": "single_class"},
@@ -548,9 +560,11 @@ async def principal():
              page.count("<summary") == page.count("<details"))
     verifier("75. Aucun `<details open>` : FAQ et planning replies, un clic les ouvre",
              page.count("<details open") == 0, "ouverts=%d" % page.count("<details open"))
+    # Le seul script de la page est le décompte de l'offre limitée, en FIN de body ;
+    # les séances (et tout le reste) se lisent sans JavaScript.
     verifier("76. Aucune dependance JavaScript pour les seances",
              "onclick" not in page.lower() and "<script" not in
-             page.split('class="seances"')[-1] if 'class="seances"' in page else True)
+             page.split('class="seances"')[-1].split("</main>")[0] if 'class="seances"' in page else True)
 
     # --- rien n'a disparu du HTML ---
     for attendu in ("18:30", "19:45", LIEU_A, LIEU_B, "Afroboost Silent", "Session Cardio"):
@@ -562,24 +576,51 @@ async def principal():
              '<link rel="canonical" href="%s%s"/>' % (URL, CHEMIN) in page)
 
     # ═══ HIVER — la landing de conversion ═══
-    verifier("80. Les tarifs viennent de la base : Fondateurs 59, Standard 79, Flex 4 49, unité 30",
-             all(x in page for x in ("<h3>Fondateurs</h3>", "59 CHF<span> / mois</span>", "<h3>Standard</h3>", "79 CHF<span> / mois</span>",
-                                     "<h3>Flex 4</h3>", "49 CHF<span> / mois</span>", "30 CHF<span></span>")), page.count("t-prix"))
+    verifier("80. Les tarifs viennent de la base : Fondateurs 59, 8 mois 549, 2× 299, Mensuel 89, Flex 49, Étudiant 69, unité 30",
+             all(x in page for x in ("<h3>Fondateurs</h3>", "59 CHF<span> / mois</span>", "<h3>Saison hiver — 8 mois</h3>", "549 CHF<span> / saison</span>",
+                                     "<h3>Saison hiver — 2 paiements</h3>", "2 × 299 CHF<span></span>", "<h3>Mensuel Liberté</h3>", "89 CHF<span> / mois</span>",
+                                     "<h3>Flex 4</h3>", "49 CHF<span> / mois</span>", "<h3>Étudiant</h3>", "69 CHF<span> / mois</span>", "30 CHF<span></span>")), page.count("t-prix"))
     verifier("81. Saison HIVER active : PULSE x10 (été) ABSENT des tarifs, mais nommé dans la section été",
              '<h3>PULSE x10 cours</h3>' not in page and "PULSE x10 cours" in page.split('class="ete"')[-1])
     verifier("82. Offre cachée, produit et événement : jamais dans les tarifs",
              "Offre cachée" not in page and "<h3>T-shirt</h3>" not in page and "<h3>Silent Lakeside</h3>" not in page)
-    verifier("83. Équivalent par séance = estimation honnête depuis pack_sessions (59/8 -> 7.38, 49/4 -> 12.25)",
-             "dès env. 7.38 CHF/séance si tu viens 8 fois par mois" in page and "dès env. 12.25 CHF/séance" in page)
+    verifier("83. Équivalent par séance = estimation honnête depuis pack_sessions (59/8 -> 7.38, 49/4 -> 12.25, 549/64 -> 8.58, 598/64 -> 9.34)",
+             "dès env. 7.38 CHF/séance si tu viens 8 fois par mois" in page and "dès env. 12.25 CHF/séance" in page
+             and "env. 8.58 CHF/séance si tu viens 8 fois par mois sur la saison" in page and "dès env. 9.34 CHF/séance si tu viens 8 fois par mois" in page)
     verifier("84. Rareté RÉELLE : 50 − 3 ventes (la superseded ne compte pas) = 47 places restantes sur 50",
              "47 places restantes sur 50" in page)
-    verifier("85. Carte membre : présentée À PART (100 CHF / an), sans bouton d'achat, jamais un coût caché",
+    verifier("85. Carte membre : À PART (100 CHF / an), option achetable, jamais un coût caché, avantages nommés",
              "<h3>Carte membre association</h3>" in page and "100 CHF<span> / an</span>" in page
-             and "n’exigent aucune carte membre" in page and page.split("t-membre")[-1].split("</article>")[0].count('class="cta') == 0)
-    verifier("86. Formules mensuelles : paiement mensuel sans prélèvement automatique — jamais « résilie quand tu veux »",
-             "sans prélèvement automatique" in page and "résilie quand tu veux" not in page.lower())
-    verifier("87. Comparaison des formules : un tableau, une ligne par formule payante",
-             page.count("<tr><th scope=\"row\">") == 4)
+             and "n’exigent aucune carte membre" in page and "avantages membres" in page
+             and 'href="/?offre=o-carte"' in page.split("t-membre")[-1].split("</article>")[0]
+             and "<h3>Carte membre association</h3>" not in page.split('class="tarifs"')[1].split("</div>")[0])
+    verifier("86. Mensuel = prélèvement automatique par carte, résiliable, accès jusqu'à la fin du mois payé ; plus de « sans prélèvement »",
+             "prélèvement automatique chaque mois par carte" in page and "fin du mois déjà payé" in page
+             and "sans prélèvement automatique" not in page)
+    verifier("87. Comparaison : une ligne par formule payante (7), 7 colonnes lues sur les documents",
+             page.count("<tr><th scope=\"row\">") == 7 and "<th>Paiement</th><th>Engagement</th><th>Séances</th><th>Économie</th><th>Pour qui</th>" in page)
+    # ═══ HIVER 2 — hiérarchie, badges, économie réelle, date limite ═══
+    _ordre = [page.find("<h3>%s</h3>" % n) for n in ("Fondateurs", "Saison hiver — 8 mois", "Saison hiver — 2 paiements", "Mensuel Liberté", "Flex 4", "Étudiant", "Cours à l&#x27;unité", "Cours d&#x27;essai gratuit")]
+    verifier("87b. Hiérarchie commerciale : Fondateurs > 8 mois > 2× > Mensuel > Flex 4 > Étudiant > unité > essai (malgré les positions)",
+             all(x >= 0 for x in _ordre) and _ordre == sorted(_ordre), str(_ordre))
+    verifier("87c. Badges : OFFRE LANCEMENT / MEILLEUR PRIX / SAISON EN 2 FOIS / LE PLUS FLEXIBLE / ÉTUDIANT — un seul « plus flexible »",
+             'class="t-badge t-badge-lancement">Offre lancement<' in page and '>Meilleur prix<' in page and '>Saison en 2 fois<' in page
+             and page.count(">Le plus flexible<") == 1 and page.split("<h3>Mensuel Liberté</h3>")[0].count(">Le plus flexible<") == 0
+             and page.count('t-badge-mensuel">Étudiant<') == 1 and page.split("<h3>Flex 4</h3>")[1].split("</article>")[0].count("t-badge") == 0)
+    verifier("87d. Économie RÉELLE vs 8 × mensuel (712) : 8 mois 1× → 163 CHF ; 2× 299 → 114 CHF ; aucune sur les mensuels",
+             "Tu économises 163 CHF par rapport au mensuel" in page and "Tu économises 114 CHF par rapport au mensuel" in page
+             and page.count("Tu économises") == 2)
+    verifier("87e. Mode de paiement et engagement lus sur le document : 2× = deux paiements à 4 mois, 8 mois = 1 paiement, mensuel = prélèvement",
+             "2 paiements : à l’inscription, puis 4 mois plus tard" in page and "1 paiement (carte ou TWINT)" in page
+             and page.count("Prélèvement automatique chaque mois (carte)") >= 4 and "Saison de 8 mois" in page
+             and "Sans engagement — résiliable, accès jusqu’à la fin du mois payé" in page)
+    verifier("87f. Fondateurs : date limite RÉELLE servie (Zurich), identique pour tous, décompte inline qui la LIT (jamais un recalcul)",
+             'data-deadline="2099-09-30T23:59:00+02:00"' in page and "Jusqu’au 30 septembre 2099 à 23:59 (heure suisse)" in page
+             and page.count("data-deadline=") == 1 and "getAttribute('data-deadline')" in page and "Date.now()" in page
+             and "localStorage" not in page and "sessionStorage" not in page)
+    verifier("87g. Séances : mensuel « jusqu'à 8 / mois », 2× « 32 par échéance », 8 mois « 64 séances sur la saison », unité 1 séance",
+             "jusqu’à 8 séances / mois" in page and "(32 par échéance)" in page and "64 séances sur la saison (env. 8 / mois)" in page
+             and "jusqu’à 4 séances / mois" in page)
     verifier("88. Aucun horaire/jour/lieu en dur : les jours cités viennent du planning",
              "mercredi" not in page.lower().split("<main>")[0] and ("Les cours ont lieu le" in page))
     verifier("89. Barre CTA sticky mobile présente, masquée dès 641 px",
@@ -591,8 +632,9 @@ async def principal():
              'class="temoignages"' not in page)
     verifier("92. FAQ dans le HTML ET en JSON-LD FAQPage, un seul parcours",
              any(o.get("@type") == "FAQPage" for o in plats) and page.count('<details class="q">') == len(ns_faq))
-    verifier("93. Pas de faux compteur, pas de prix barré, pas de fausse urgence",
-             "<s>" not in page and "<del>" not in page and "plus que" not in page.lower() and "dernières heures" not in page.lower())
+    verifier("93. Pas de faux compteur, pas de prix barré, pas de fausse urgence (le seul décompte lit une date réelle)",
+             "<s>" not in page and "<del>" not in page and "plus que" not in page.lower() and "dernières heures" not in page.lower()
+             and page.count("data-deadline=") == 1)
     verifier("94. Lien de formule : ouvre l'offre sur la vitrine (?offre=<id>)", 'href="/?offre=o-fond"' in page)
     # Témoignage RÉEL approuvé -> la section apparaît, prénom seul.
     db.comments.docs = [{"text": "J'ai adoré, je reviens !", "user_name": "Léa Dupont", "source": "participant_testimonial", "moderation_status": "approved", "consent_publication": True}]
@@ -602,14 +644,28 @@ async def principal():
     # Été actif : Pulse revient, les formules hiver disparaissent.
     db.platform_settings.docs = [{"_id": "global", "saison_active": "ete"}]
     _, page_e = await rendre(db, j)
-    verifier("96. Saison ÉTÉ : PULSE x10 dans les tarifs, Fondateurs/Standard/Flex absents, permanentes présentes",
-             '<h3>PULSE x10 cours</h3>' in page_e and "<h3>Fondateurs</h3>" not in page_e and "<h3>Cours à l&#x27;unité</h3>" in page_e)
+    verifier("96. Saison ÉTÉ : PULSE x10 dans les tarifs, Fondateurs/Mensuel/8 mois absents, permanentes présentes, aucune « économie »",
+             '<h3>PULSE x10 cours</h3>' in page_e and "<h3>Fondateurs</h3>" not in page_e and "<h3>Saison hiver — 8 mois</h3>" not in page_e
+             and "<h3>Mensuel Liberté</h3>" not in page_e and "<h3>Cours à l&#x27;unité</h3>" in page_e and "Tu économises" not in page_e
+             and "data-deadline=" not in page_e)
     # Fondateurs épuisé -> disparaît de la page (rareté réelle).
     db.platform_settings.docs = [{"_id": "global", "saison_active": "hiver"}]
     db.subscriptions.docs = [{"offer_id": "o-fond", "status": "active"} for _ in range(50)]
     _, page_f = await rendre(db, j)
-    verifier("97. 50 ventes réelles -> Fondateurs sort de la page, Standard reste",
-             "<h3>Fondateurs</h3>" not in page_f and "<h3>Standard</h3>" in page_f)
+    verifier("97. 50 ventes réelles -> Fondateurs sort de la page, Mensuel reste, aucun décompte ne subsiste",
+             "<h3>Fondateurs</h3>" not in page_f and "<h3>Mensuel Liberté</h3>" in page_f and "data-deadline=" not in page_f)
+    # Date limite DÉPASSÉE (stock encore là) -> Fondateurs sort aussi : le premier des deux seuils atteint ferme l'offre.
+    db.subscriptions.docs = [{"offer_id": "o-fond", "status": "active"} for _ in range(3)]
+    db.offers.docs[1]["countdown_date"] = "2020-01-01"
+    _, page_d = await rendre(db, j)
+    verifier("97b. Date limite passée (47 places restantes) -> Fondateurs sort de la page, le reste de la hiérarchie tient",
+             "<h3>Fondateurs</h3>" not in page_d and "<h3>Saison hiver — 8 mois</h3>" in page_d and "data-deadline=" not in page_d)
+    db.offers.docs[1]["countdown_date"] = "2099-09-30"
+    # Sans mensuel de référence (été, ou catalogue sans mensuel) : aucune économie inventée.
+    db.offers.docs = [o for o in db.offers.docs if o.get("billing_mode") != "mensuel_auto"]
+    _, page_sm = await rendre(db, j)
+    verifier("97c. Sans mensuel de référence : la page n'invente aucune économie, les saisons restent",
+             "Tu économises" not in page_sm and "<h3>Saison hiver — 8 mois</h3>" in page_sm and "<h3>Saison hiver — 2 paiements</h3>" in page_sm)
 
     # --- pas de bourrage ---
     # Le bourrage se mesure sur le TEXTE VISIBLE, pas sur le document entier :

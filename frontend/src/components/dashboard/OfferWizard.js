@@ -59,6 +59,13 @@ const AUDIENCES = [
   { valeur: 'men-only', label: 'Hommes', aide: 'Offre destinee aux hommes.' }
 ];
 
+// HIVER — COMMENT cette offre se paie.
+export const BILLING_MODES = [
+  { valeur: 'unique', label: 'Paiement unique', aide: 'Un paiement, un droit — le fonctionnement actuel (Pulse X10 été, unité, essai).' },
+  { valeur: 'mensuel_auto', label: 'Abonnement mensuel automatique', aide: 'Stripe prélève chaque mois (carte uniquement) ; chaque mois payé ouvre le nombre de séances du pack. Résiliable, accès jusqu\'à la fin du mois payé.' },
+  { valeur: 'saison_2x', label: 'Saison en 2 paiements', aide: 'Deux échéances (mois 0 et mois 4), arrêt automatique à 8 mois ; chaque échéance ouvre 4 mois de séances (pack × 4).' }
+];
+
 // SAISON — QUAND cette offre est proposee sur la vitrine.
 // `toutes` = permanente (valeur des offres historiques : rien ne disparait).
 // `hiver` / `ete` = visible seulement quand cette saison est active (reglage
@@ -1293,9 +1300,46 @@ export default function OfferWizard({
             className="text-sm v224-input"
           />
           <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.5)' }}>
-            Si rempli, l'acheteur reçoit un espace personnel avec ce nombre de crédits.
+            Si rempli, l'acheteur reçoit un espace personnel avec ce nombre de crédits. 0 = aucune séance (ex. carte membre seule).
           </p>
         </div>
+
+        {/* HIVER — MODE DE PAIEMENT ET DURÉE DES DROITS.
+            `unique` = le système actuel (Pulse été, unité, essai). Les deux
+            autres ouvrent un abonnement Stripe (carte uniquement) : mensuel
+            (chaque mois ouvre `pack_sessions` séances) ou saison en deux
+            échéances (tous les 4 mois, arrêt automatique à 8 mois). */}
+        <div className="mt-4">
+          <label className="block text-xs mb-1" style={LABEL_STYLE}>Mode de paiement</label>
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Mode de paiement">
+            {BILLING_MODES.map((bm) => {
+              const actif = (form.billing_mode || 'unique') === bm.valeur;
+              return (
+                <button key={bm.valeur} type="button" role="radio" aria-checked={actif}
+                  onClick={() => set('billing_mode', bm.valeur)} data-testid={`billing-${bm.valeur}`}
+                  className="text-xs px-3 py-2 rounded-lg transition-colors"
+                  style={{
+                    border: `1px solid ${actif ? PINK : 'rgba(255,255,255,0.14)'}`,
+                    background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)' : 'transparent',
+                    color: actif ? PINK : 'rgba(255,255,255,0.75)'
+                  }}>{bm.label}</button>
+              );
+            })}
+          </div>
+          <p className="text-xs mt-1" style={HINT_STYLE}>
+            {(BILLING_MODES.find((bm) => bm.valeur === (form.billing_mode || 'unique')) || BILLING_MODES[0]).aide}
+          </p>
+        </div>
+        {(form.billing_mode || 'unique') === 'unique' && (
+          <div className="mt-4">
+            <label className="block text-xs mb-1" style={LABEL_STYLE}>Validité des droits (mois)</label>
+            <input type="number" min="1" max="24" value={form.duree_mois ?? ''}
+              onChange={(e) => set('duree_mois', e.target.value === '' ? null : parseInt(e.target.value, 10))}
+              placeholder="vide = 2 mois (règle historique, Pulse été)" style={INPUT_STYLE} className="text-sm v224-input"
+              data-testid="duree-mois" />
+            <p className="text-xs mt-1" style={HINT_STYLE}>Ex. 8 pour une saison hiver payée en une fois. Vide = 2 mois, comme aujourd'hui.</p>
+          </div>
+        )}
       </div>
 
       {/* LOT A : la SEULE chose qui autorise cette offre a apparaitre apres une

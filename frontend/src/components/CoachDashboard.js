@@ -1778,6 +1778,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     audience: 'all',
     // SAISON : permanente par defaut.
     season: 'toutes',
+    // HIVER : paiement unique par defaut, duree historique (vide = 2 mois).
+    billing_mode: 'unique',
+    duree_mois: null,
     // R2c : VOLONTAIREMENT VIDE, et pas « single_class ». Un type par defaut
     // serait accepte sans que le coach ait rien lu — et « cours a l'unite »
     // est justement celui qui rendra l'offre publique dans « Ou pratiquer ? ».
@@ -3311,6 +3314,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // `||` et non `??` : une chaine vide n'est pas une audience valide.
       audience: offer.audience || 'all',
       season: offer.season || 'toutes',
+      billing_mode: offer.billing_mode || 'unique',
+      duree_mois: offer.duree_mois ?? null,
       // R2c : RELU, comme son voisin. Sans cette ligne, rouvrir une offre
       // classifiee la reafficherait « sans type », et l'enregistrement
       // suivant la ramenerait a « non classifie » en base. C'est exactement
@@ -3364,6 +3369,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       audience: 'all',
       // SAISON : idem.
       season: 'toutes',
+      billing_mode: 'unique',
+      duree_mois: null,
       // R2c : meme raison. Le type de l'offre abandonnee ne doit pas etre
       // celui, silencieusement pre-rempli, de la suivante.
       offer_type: '',
@@ -3430,6 +3437,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // SAISON : meme liste blanche — absent d'ici, le champ ne partirait
         // jamais et le serveur garderait l'ancienne valeur.
         season: src.season || 'toutes',
+        // HIVER : mode de paiement et duree des droits — meme liste blanche.
+        billing_mode: src.billing_mode || 'unique',
+        duree_mois: v223Int(src.duree_mois, null),
         isProduct: src.isProduct || false,
         variants: src.variants || null,
         tva: parseFloat(src.tva) || 0,
