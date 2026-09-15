@@ -1,0 +1,24 @@
+# robots.txt — Afroboost (afroboost.com)
+#
+# POURQUOI CE FICHIER EXISTE. Sans lui, /robots.txt tombait sur le catch-all
+# de la SPA et renvoyait la page HTML de l'application. Un robots.txt qui
+# contient du HTML n'est pas un robots.txt : les directives etaient donc
+# indefinies, et le sitemap n'etait declare nulle part. Ce fichier vit dans
+# public/, il est copie tel quel dans le build et servi en texte brut, sans
+# passer par le catch-all.
+#
+# NOTE : Cloudflare ajoute par-dessus son propre bloc « Managed Content »
+# (signaux ai-train / Content-Signal). Il se regle dans le tableau de bord
+# Cloudflare, pas ici.
+
+User-agent: *
+Allow: /
+
+# Espaces prives ou techniques : rien a indexer, et rien de sensible expose.
+Disallow: /login
+Disallow: /admin
+Disallow: /reset.html
+Disallow: /pwa-diag.html
+Disallow: /api/
+
+Sitemap: https://afroboost.com/sitemap.xml

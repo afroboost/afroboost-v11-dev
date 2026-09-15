@@ -1320,6 +1320,22 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
   
+  // SAISON : la saison active de la vitrine (toutes | hiver | ete). Reglage
+  // global, lu en base par /api/offers a chaque appel — aucun redeploiement.
+  const changerSaison = async (saison) => {
+    const avant = platformSettings.saison_active || 'toutes';
+    setPlatformSettings(prev => ({ ...prev, saison_active: saison }));
+    try {
+      await axios.put(`${API}/platform-settings`,
+        { saison_active: saison },
+        { headers: { 'X-User-Email': safeCoachUser?.email } }
+      );
+    } catch (err) {
+      setPlatformSettings(prev => ({ ...prev, saison_active: avant }));
+      console.error('[SAISON] changement refuse:', err);
+    }
+  };
+
   // v9.2.7: Fermer Quick Control si clic extérieur
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -1760,6 +1776,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     label_early_bird: '', label_standard: '', label_last_minute: '',
     // U1a : l'audience par defaut d'une offre neuve.
     audience: 'all',
+    // SAISON : permanente par defaut.
+    season: 'toutes',
     // R2c : VOLONTAIREMENT VIDE, et pas « single_class ». Un type par defaut
     // serait accepte sans que le coach ait rien lu — et « cours a l'unite »
     // est justement celui qui rendra l'offre publique dans « Ou pratiquer ? ».
@@ -3292,6 +3310,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // « all » a la sauvegarde suivante : perte silencieuse.
       // `||` et non `??` : une chaine vide n'est pas une audience valide.
       audience: offer.audience || 'all',
+      season: offer.season || 'toutes',
       // R2c : RELU, comme son voisin. Sans cette ligne, rouvrir une offre
       // classifiee la reafficherait « sans type », et l'enregistrement
       // suivant la ramenerait a « non classifie » en base. C'est exactement
@@ -3343,6 +3362,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // U1a : sans ce reset, l'audience de l'offre qu'on vient d'abandonner
       // resterait pre-remplie — et publiee — sur l'offre suivante.
       audience: 'all',
+      // SAISON : idem.
+      season: 'toutes',
       // R2c : meme raison. Le type de l'offre abandonnee ne doit pas etre
       // celui, silencieusement pre-rempli, de la suivante.
       offer_type: '',
@@ -3406,6 +3427,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // enregistrement. Le coach choisissait « Femmes », rouvrait l'offre, et
         // relisait « Tout le monde ».
         audience: src.audience || 'all',
+        // SAISON : meme liste blanche — absent d'ici, le champ ne partirait
+        // jamais et le serveur garderait l'ancienne valeur.
+        season: src.season || 'toutes',
         isProduct: src.isProduct || false,
         variants: src.variants || null,
         tva: parseFloat(src.tva) || 0,
@@ -7215,6 +7239,26 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                   style={{ left: platformSettings.maintenance_mode ? '24px' : '4px' }}
                                 />
                               </button>
+                            </div>
+                            {/* SAISON active de la vitrine — hiver / ete sans redeploiement */}
+                            <div className="px-4 py-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+                              <p className="text-sm text-white font-medium">Saison de la vitrine</p>
+                              <p className="text-xs text-white/40 mb-2">Les offres « Hiver » ou « Été » ne s'affichent que dans leur saison ; les permanentes toujours.</p>
+                              <div className="flex gap-2" role="radiogroup" aria-label="Saison active">
+                                {[['toutes', 'Toutes'], ['hiver', 'Hiver'], ['ete', 'Été']].map(([v, l]) => {
+                                  const actif = (platformSettings.saison_active || 'toutes') === v;
+                                  return (
+                                    <button key={v} type="button" role="radio" aria-checked={actif} onClick={() => changerSaison(v)}
+                                      data-testid={`saison-active-${v}`}
+                                      className="text-xs px-3 py-1.5 rounded-lg transition-colors"
+                                      style={{
+                                        border: `1px solid ${actif ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.14)'}`,
+                                        background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)' : 'transparent',
+                                        color: actif ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.75)'
+                                      }}>{l}</button>
+                                  );
+                                })}
+                              </div>
                             </div>
                             {/* Info */}
                             <div className="px-4 py-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
