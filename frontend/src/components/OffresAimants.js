@@ -550,8 +550,15 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
   // visiteur, c'est la fiche qui s'ouvre. `&reserver=1` sur une offre gratuite
   // ouvre directement le formulaire (même règle que V371/V449 : jamais un
   // paiement tout seul).
+  // FONDATEURS / PARCOURS (15/09/2026) — UNE SEULE FOIS. `offres` est rechargé
+  // périodiquement par App : sans ce verrou, l'effet rejouait `onChoisir(o)` à
+  // chaque rechargement, et `handleSelectOffer` (bascule) REFERMAIT le
+  // formulaire d'essai qu'il venait d'ouvrir (mesuré : ouvert à 3 s, fermé à
+  // 7 s, rouvert à 8 s). Même règle que P2-FIX2 dans App.js.
+  const lienProfondTraite = useRef(false);
   useEffect(() => {
     if (!Array.isArray(offres) || !offres.length) return;
+    if (lienProfondTraite.current) return;
     let cible = ''; let reserver = false;
     try {
       const q = new URLSearchParams(window.location.search);
@@ -561,6 +568,7 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
     if (!cible) return;
     const o = offres.find((x) => x && x.id === cible);
     if (!o) return;
+    lienProfondTraite.current = true;
     if (reserver && prixUnitaire(o) <= 0) { onChoisir(o); return; }
     setFiche({ offres: [o] });
     // eslint-disable-next-line react-hooks/exhaustive-deps

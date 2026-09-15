@@ -277,6 +277,8 @@ def bac(codes=None, subs=None, resas=None, offers=None, courses=None,
           "asyncio": asyncio, "posthog_capture": faux_posthog,
           "logger": _Journal()}
     exec(compile(SHARED.constante("ESSAI2_FILTRE_GRATUIT"), "<lota>", "exec"), ns)
+    # FONDATEURS (15/09/2026) : le catalogue « sans propriétaire » inclut les offres du PROPRIÉTAIRE de la plateforme.
+    exec(compile(SHARED.constante("SUPER_ADMIN_EMAILS"), "<lota>", "exec"), ns)
     exec(compile(SHARED.constante("B_DEVISE_DEFAUT"), "<lota>", "exec"), ns)
     exec(compile(SHARED.constante("ESSAI2_CHAMP_PRODUIT"), "<lota>", "exec"), ns)
     # P1-c : les constantes dont dependent les aides LOT R / LOT 3b chargees

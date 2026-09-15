@@ -1,0 +1,21 @@
+# Parcours client Playwright — pile LOCALE (aucun paiement, aucun e-mail réel)
+
+- `pile_locale.py` : la VRAIE application (code de l'arbre) sur une base de test séparée
+  (`afroboost_pw_test`, jamais la prod), Stripe et Resend remplacés par des faux
+  (page « Paiement TEST » → événement `checkout.session.completed` posté au VRAI webhook ;
+  e-mails écrits dans `pw_emails.jsonl`). Épingle `stripe==14.1.0` (version de prod) dans `pw_lib/`.
+- `semer_base_test.py` : copie LECTURE SEULE des collections de configuration (offres, cours,
+  concept, réglages, médias) — jamais de données personnelles.
+- `parcours_fondateurs.cjs` : P1 desktop, P4 mobile, P5 double clic / refresh / rejeu webhook, P6 UTM → metadata Stripe.
+- `parcours_essai_espace.cjs` : P2 essai (lien profond du tunnel → formulaire → octroi → OTP lu dans
+  le faux Resend → réservation), P3 reconnexion (autre appareil, session d'appareil), P3b acheteur
+  Fondateurs (onboarding → espace 8/8), P5b double inscription refusée.
+
+```
+cd <scratchpad>; python3 -m pip install --target pw_lib stripe==14.1.0
+cd frontend && REACT_APP_BACKEND_URL=http://127.0.0.1:8001 BUILD_PATH=<scratchpad>/pw_build npx craco build
+python3 semer_base_test.py ; python3 pile_locale.py &
+NODE_PATH=$HOME/.claude/skills/gstack/node_modules node parcours_fondateurs.cjs
+NODE_PATH=$HOME/.claude/skills/gstack/node_modules node parcours_essai_espace.cjs
+```
+Règle du moteur à respecter dans les enchaînements : 120 s entre deux demandes d'OTP pour un même code, 3 par 10 min.

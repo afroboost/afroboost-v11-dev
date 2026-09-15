@@ -4686,6 +4686,13 @@ function App() {
       // rappel de cours, et rien ne naviguait. On accepte les deux formes, et
       // on refuse tout ce qui sort du site (une url reçue ne redirige pas
       // l'abonné ailleurs).
+      // FONDATEURS / PARCOURS (15/09/2026) — CONSTAT : le Service Worker poste
+      // aussi `{ type: 'SW_UPDATED' }` SANS url à chaque activation (première
+      // visite, chaque déploiement). `new URL('', origin)` vaut « / » : on
+      // naviguait donc vers « / » et le visiteur perdait `?offre=…&reserver=1`,
+      // `?link=…` — le tunnel d'essai et les liens de campagne finissaient sur
+      // la page d'accueil. Un message sans destination ne navigue nulle part.
+      if (!url) return;
       let chemin = '';
       try {
         const u = new URL(url, window.location.origin);
@@ -6710,8 +6717,12 @@ function App() {
     } catch (err) {
       localStorage.removeItem(V224_PROGRESSIVE_KEY); // V224
       setCheckoutBusy(false);
-      console.error('[V224] checkout progressif echoue', err);
-      alert('Le paiement est momentanement indisponible. Merci de reessayer.');
+      console.error('V224 checkout error:', err);
+      // FONDATEURS / PARCOURS (15/09/2026) : un refus MÉTIER du serveur (409 :
+      // offre complète / offre terminée, phrases de hiver.py) est montré tel
+      // quel — « momentanément indisponible » faisait croire à une panne.
+      const detail409 = err && err.response && err.response.status === 409 && err.response.data && err.response.data.detail;
+      alert(detail409 ? String(detail409) : 'Le paiement est momentanement indisponible. Merci de reessayer.');
     }
   };
 

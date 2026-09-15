@@ -409,9 +409,15 @@
                     // V130: Quand le SW se met à jour, recharger la page pour servir le nouveau contenu
                     // Empêche l'écran noir sur les PWA installées avec un ancien SW
                     var refreshing = false;
+                    // FONDATEURS / PARCOURS (15/09/2026) — CONSTAT : à la PREMIÈRE visite,
+                    // l'installation du SW (`clients.claim()`) déclenche `controllerchange`
+                    // et la page se rechargeait ~2 s après l'arrivée : formulaire d'essai
+                    // vidé, message d'erreur effacé, clic perdu. Le rechargement n'a de sens
+                    // que s'il y avait DÉJÀ un SW (mise à jour), jamais à l'installation.
+                    var avaitDejaUnSW = !!navigator.serviceWorker.controller;
                     navigator.serviceWorker.addEventListener('controllerchange', function() {
                         console.log('[V130] Controller changed — reload pour nouveau contenu');
-                        if (!refreshing) {
+                        if (!refreshing && avaitDejaUnSW) {
                             refreshing = true;
                             window.location.reload();
                         }
@@ -420,7 +426,7 @@
                     navigator.serviceWorker.addEventListener('message', function(event) {
                         if (event.data && event.data.type === 'SW_UPDATED') {
                             console.log('[V130] SW mis à jour vers', event.data.version, '— reload');
-                            if (!refreshing) {
+                            if (!refreshing && avaitDejaUnSW) {
                                 refreshing = true;
                                 window.location.reload();
                             }

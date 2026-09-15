@@ -2698,13 +2698,30 @@ async def conv_offres_premier_achat(db, coach_id: str = "", email: str = "") -> 
         # ci-dessous, qui enumere les trois formes reelles de « sans
         # proprietaire » et AUCUNE autre. Fail closed conserve : l'offre doit de
         # toute facon etre cochee.
+        # FONDATEURS / PARCOURS (15/09/2026) — CONSTAT : les 16 offres portent
+        # désormais `coach_id` = le propriétaire de la plateforme, alors que
+        # 14/17 essais historiques n'en déclarent aucun : l'écran de conversion
+        # de ces essais était VIDE (prod : 2 essais présents, `offers: []`).
+        # Les offres du PROPRIÉTAIRE sont le catalogue de la plateforme — pas
+        # celles d'un partenaire : la règle « jamais un catalogue partenaire »
+        # est conservée, seul le propriétaire s'ajoute au « sans propriétaire ».
+        _proprietaires = [e.lower() for e in SUPER_ADMIN_EMAILS]
         _q["$or"] = [{"coach_id": None}, {"coach_id": ""},
-                     {"coach_id": {"$exists": False}}]
+                     {"coach_id": {"$exists": False}}, {"coach_id": {"$in": _proprietaires}}]
     try:
         _rows = await db["offers"].find(_q, {"_id": 0}).to_list(50)
     except Exception as _err:
         logger.warning(f"[LOT-A] catalogue de conversion illisible: {_err}")
         return []
+    # FONDATEURS / PARCOURS (15/09/2026) — même filtre de SAISON que la vitrine
+    # (`saison.filtrer_offres_saison`) : PULSE x10 (été) ne se propose pas après
+    # un essai d'hiver. La saison active est lue là où la vitrine la lit.
+    try:
+        from api.routes.saison import filtrer_offres_saison as _filtrer_saison, saison_valide as _saison_valide, SAISON_DEFAUT as _saison_defaut
+        _ps = await db["platform_settings"].find_one({"_id": "global"}, {"_id": 0, "saison_active": 1})
+        _rows = _filtrer_saison(_rows, _saison_valide((_ps or {}).get("saison_active"), _saison_defaut))
+    except Exception as _err:
+        logger.warning(f"[LOT-A] filtre de saison non appliqué à la conversion: {_err}")
 
     _utiles = []
     for _o in _rows:
