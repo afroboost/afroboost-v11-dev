@@ -1023,6 +1023,24 @@ def r3a_localisation(donnees: dict) -> dict:
 VIDEO_RATIOS = ("auto", "9:16", "16:9", "1:1")
 
 
+def video_trim_valide(start, end):
+    """DÉCOUPE VIDÉO — (start, end) en secondes, ou (None, None) si absente ou
+    incohérente (fin ≤ début, extrait < 0,5 s). Pure, jamais une erreur."""
+    def _s(v):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f if f >= 0 else None
+    s, e = _s(start), _s(end)
+    if s is None and e is None:
+        return None, None
+    s = s or 0.0
+    if e is None or e - s < 0.5:
+        return None, None
+    return round(s, 2), round(e, 2)
+
+
 def video_ratio_valide(valeur) -> str:
     """FORMAT VIDEO — `auto` pour toute valeur inconnue ; jamais une erreur."""
     v = str(valeur or "").strip()
@@ -1067,6 +1085,10 @@ class Offer(BaseModel):
     # MOBILE MONEY par offre : le bouton PawaPay n'est proposé que si le coach
     # l'active (clients en Afrique). Faux par défaut ; Stripe/carte/TWINT intacts.
     mobile_money_enabled: bool = False
+    # DÉCOUPE VIDÉO non destructive : point d'entrée / de sortie en secondes.
+    # L'original n'est jamais réencodé ; chaque lecteur joue [start, end].
+    video_trim_start: Optional[float] = None
+    video_trim_end: Optional[float] = None
     isProduct: bool = False  # True = physical product, False = service/course
     variants: Optional[dict] = None  # { sizes: ["S","M","L"], colors: ["Noir","Blanc"], weights: ["0.5kg","1kg"] }
     tva: float = 0.0  # TVA percentage
@@ -1220,6 +1242,8 @@ class OfferCreate(BaseModel):
     duree_mois: Optional[int] = None
     video_aspect_ratio: Optional[str] = None
     mobile_money_enabled: Optional[bool] = None
+    video_trim_start: Optional[float] = None
+    video_trim_end: Optional[float] = None
     isProduct: bool = False
     variants: Optional[dict] = None
     tva: float = 0.0
@@ -2513,7 +2537,7 @@ R2B_CLES_OFFRE_PUBLIQUE = (
     # offre limitée (le compte à rebours V145 la lisait déjà côté coach — un
     # visiteur anonyme ne la recevait pas).
     "billing_mode", "duree_mois", "countdown_enabled", "countdown_date", "countdown_time", "countdown_text",
-    "video_aspect_ratio", "mobile_money_enabled",
+    "video_aspect_ratio", "mobile_money_enabled", "video_trim_start", "video_trim_end",
 )
 
 # Les seules cles qu'un coach PUBLIC peut porter. `email` en est absent.
@@ -2756,6 +2780,8 @@ async def create_offer(offer: OfferCreate, request: Request):
     offer_data["duree_mois"] = _hiver.duree_mois_valide(offer_data.get("duree_mois"))
     offer_data["video_aspect_ratio"] = video_ratio_valide(offer_data.get("video_aspect_ratio"))
     offer_data["mobile_money_enabled"] = bool(offer_data.get("mobile_money_enabled"))
+    offer_data["video_trim_start"], offer_data["video_trim_end"] = video_trim_valide(
+        offer_data.get("video_trim_start"), offer_data.get("video_trim_end"))
     # v61: Blindage conversion durée — accepte string, int, vide, null
     raw_dv = offer_data.get("duration_value")
     if raw_dv is not None and raw_dv != "" and raw_dv is not False:
@@ -2886,6 +2912,15 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
         offer.video_aspect_ratio if offer.video_aspect_ratio is not None else _offre_avant.get("video_aspect_ratio"))
     update_data["mobile_money_enabled"] = bool(
         offer.mobile_money_enabled if offer.mobile_money_enabled is not None else _offre_avant.get("mobile_money_enabled"))
+    # DÉCOUPE : le couple est envoyé ensemble par le tableau de bord (null, null =
+    # « pas de découpe ») ; un PUT qui n'en parle pas garde la découpe stockée.
+    _champs_envoyes = offer.model_fields_set
+    if "video_trim_start" in _champs_envoyes or "video_trim_end" in _champs_envoyes:
+        update_data["video_trim_start"], update_data["video_trim_end"] = video_trim_valide(
+            offer.video_trim_start, offer.video_trim_end)
+    else:
+        update_data["video_trim_start"], update_data["video_trim_end"] = video_trim_valide(
+            _offre_avant.get("video_trim_start"), _offre_avant.get("video_trim_end"))
     # v61: Blindage conversion durée
     raw_dv = update_data.get("duration_value")
     if raw_dv is not None and raw_dv != "" and raw_dv is not False:

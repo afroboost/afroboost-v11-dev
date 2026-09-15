@@ -266,6 +266,7 @@ import OffresAimants from "./components/OffresAimants";
 import { visiteurEstConnecte, regrouperOffres as aimantsRegrouper } from "./utils/offresAimants";
 import { normaliserRatio as videoRatioNormaliser, estPortrait as videoEstPortrait } from "./utils/videoRatio";
 import { analyserMediaUrl } from "./utils/mediaOffre";
+import { trimDeLOffre as videoTrimDeLOffre, useTrimVideo as videoUseTrim } from "./utils/videoTrim";
 import { ConfirmationBoost } from "./components/publications/Boost"; // V342
 // DEEPLINK PROSPECTION — cet import n'est PAS decoratif : le module capture
 // `?prospection=1&inbound=<id>` AU CHARGEMENT, donc avant le premier rendu.
@@ -1931,6 +1932,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // reporte au passage effectif en plein ecran (handlePlay).
   const isLandscapeRef = useRef(false);
   const videoRef = useRef(null);
+  // DÉCOUPE VIDÉO : la vignette (autoplay muet, boucle) et le plein écran —
+  // même élément — jouent uniquement [video_trim_start, video_trim_end].
+  videoUseTrim(videoRef, videoTrimDeLOffre(offer), { loop: true });
 
   // V227 CORRECTIF 1: chargement paresseux des vignettes video.
   // OffersSliderAutoPlay monte TOUTES les offres d'un coup dans un scroller
@@ -8481,11 +8485,11 @@ function App() {
       {/* V268d — MUR DES ABONNES, place AU-DESSUS de la barre de navigation
           (Tout/Sessions/Offres/Shop), comme demande. Filtre par la recherche
           quand elle est active. Le composant se rend null si la liste est vide. */}
-      {/* PUBLICATIONS : le mur est rendu APRES le bloc des offres (voir
-          `murPublications` dans les sections dynamiques), pour tout le monde —
-          l'ordre de la page est : hero, navigation, offres, « voir toutes les
-          offres », publications, boutique. (V268d le placait ici, au-dessus de
-          la barre de navigation.) */}
+      {/* PUBLICATIONS : le mur est rendu dans les sections dynamiques (voir
+          `murPublications`), AVANT le bloc des offres — l'ordre de la page est :
+          hero, navigation, publications, « choisissez votre offre » (3 offres
+          aimants), « voir toutes les offres », boutique. (V268d le placait ici,
+          au-dessus de la barre de navigation.) */}
 
       {/* V335 : le bloc d'inscriptions (WhatsApp + newsletter) a ete RETIRE de la
           page d'accueil. Le composant `OptinSubscribe` et les endpoints
@@ -8880,10 +8884,11 @@ function App() {
           // V119: Rendu dynamique selon l'ordre choisi
           // V261: le mur des abonnes passe EN TETE, quel que soit cet ordre —
           // c'est du contenu vivant, il perd son interet en bas de page.
-          // PUBLICATIONS : le mur vient APRES les offres, pour tout le monde.
+          // PUBLICATIONS : le mur vient AVANT les offres (sous la navigation),
+          // pour tout le monde — sa place d'origine par rapport aux offres.
           return isOffersFirst
-            ? <>{publicationsBlock}{offersBlock}{sessionsBlock}{murPublications}</>
-            : <>{publicationsBlock}{sessionsBlock}{offersBlock}{murPublications}</>;
+            ? <>{publicationsBlock}{murPublications}{offersBlock}{sessionsBlock}</>
+            : <>{publicationsBlock}{murPublications}{sessionsBlock}{offersBlock}</>;
         })()}
 
         {/* =====================================================

@@ -90,6 +90,10 @@ test('« Voir toutes les offres » ouvre la liste complète, ordonnée, produits
   const lignes = Array.from(document.querySelectorAll('[data-testid^="ligne-offre-"]')).map((b) => b.textContent);
   expect(lignes).toHaveLength(9);
   expect(lignes[0]).toMatch(/^Fondateurs/);
+  // Hiérarchie : groupes titrés, vignette par ligne, prix à droite.
+  expect(['lancement', 'saison', 'mensuel', 'unite', 'membre', 'offert'].map((g) => !!par(`groupe-${g}`))).toEqual([true, true, true, true, true, true]);
+  expect(par('ligne-offre-o-fond').querySelector('img').getAttribute('src')).toBe('https://x/couverture.png');
+  expect(par('ligne-offre-o-s1').textContent).toMatch(/Économie : 163 CHF/);
   expect(lignes.some((n) => /Étudiant/.test(n) && /69 CHF/.test(n))).toBe(true);
   expect(lignes.some((n) => /Flex 4/.test(n) && /49 CHF/.test(n))).toBe(true);
   expect(lignes.some((n) => /Cours à l'unité/.test(n) && /30 CHF/.test(n))).toBe(true);
@@ -152,29 +156,50 @@ test('la fiche Fondateurs garde le stock réel et la vraie date (compact, pas de
   expect(par('fiche-offre').textContent).not.toMatch(/\d+h \d+m \d+s/);
 });
 
-test('vidéo 9:16 dans la fiche : lecteur en contain, ratio respecté, fond flouté derrière, Mobile Money si activé', async () => {
+test('vidéo 9:16 dans la fiche : REMPLIT un cadre portrait (cover, 4:5), fond flouté ; « Agrandir » = format réel 9:16 en contain ; Mobile Money si activé', async () => {
   await monter();
   await cliquer(par('aimant-mensuel'));
   const lecteur = par('fiche-lecteur');
   expect(lecteur.getAttribute('data-ratio')).toBe('9:16');
+  expect(lecteur.style.aspectRatio).toBe('4 / 5');
   const video = lecteur.querySelector('video');
-  expect(video.style.objectFit).toBe('contain');
-  expect(video.style.aspectRatio).toBe('9 / 16');
+  expect(video.style.objectFit).toBe('cover');
   expect(video.hasAttribute('controls')).toBe(true);
   expect(lecteur.querySelector('[data-testid=fond-flou]')).not.toBeNull();
   expect(par('mobile-money')).not.toBeNull();
+  await cliquer(par('fiche-agrandir'));
+  const grand = par('media-agrandi');
+  expect(grand.getAttribute('data-ratio')).toBe('9:16');
+  const v = grand.querySelector('video');
+  expect(v.style.objectFit).toBe('contain');
+  expect(v.style.aspectRatio).toBe('9 / 16');
+  await cliquer(par('media-agrandi-fermer'));
+  expect(par('media-agrandi')).toBeNull();
 });
 
-test('MINIATURES : image du champ vidéo (Fondateurs) et miniature dédiée (Saison) affichées sur les cartes ; vidéo portrait sans image = boîte haute en contain', async () => {
+test('image 16:9 dans la fiche : cadre 16:9 rempli (cover) ; agrandie = image entière (contain)', async () => {
+  await monter();
+  await cliquer(par('aimant-lancement'));
+  const cadre = par('fiche-image');
+  expect(cadre.style.aspectRatio).toBe('16 / 9');
+  expect(cadre.querySelector('img').style.objectFit).toBe('cover');
+  await cliquer(par('fiche-agrandir'));
+  expect(par('media-agrandi').querySelector('img').style.objectFit).toBe('contain');
+});
+
+test('MINIATURES : image du champ vidéo (Fondateurs) et miniature dédiée (Saison) REMPLISSENT la carte ; vidéo sans image = vidéo qui remplit la zone', async () => {
   await monter();
   const vF = par('aimant-lancement').querySelector('[data-testid=vignette-image]');
   expect(vF).not.toBeNull();
   expect(vF.getAttribute('src')).toBe('https://x/couverture.png');
+  expect(vF.style.objectFit).toBe('cover');
   const vS = par('aimant-saison').querySelector('[data-testid=vignette-image]');
   expect(vS.getAttribute('src')).toBe('https://x/mini-saison.jpg');     // miniature dédiée prioritaire sur la vidéo
   const vM = par('aimant-mensuel').querySelector('[data-testid=vignette-video]');
-  expect(vM.getAttribute('data-portrait')).toBe('true');
-  expect(vM.querySelector('video').style.objectFit).toBe('contain');
+  expect(vM.querySelector('video').style.objectFit).toBe('cover');
+  // Trois offres, trois médias DIFFÉRENTS : aucun repli, aucune source partagée.
+  const sources = [vF.getAttribute('src'), vS.getAttribute('src'), vM.querySelector('video').getAttribute('src')];
+  expect(new Set(sources).size).toBe(3);
   expect(document.querySelectorAll('[data-testid=vignette-repli]')).toHaveLength(0);
   // Fiche Fondateurs : l'image, pas un <video> vide.
   await cliquer(par('aimant-lancement'));
@@ -236,4 +261,23 @@ test('Échap ferme la fiche', async () => {
   expect(par('fiche-offre')).not.toBeNull();
   await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
   expect(par('fiche-offre')).toBeNull();
+});
+
+test('✂️ la fiche et la carte jouent l’extrait découpé : tête au début, retour au début après la fin', async () => {
+  await monter({ offres: [fond, s1, { ...mensuel, thumbnail: '', video_trim_start: 2, video_trim_end: 17 }] });
+  const carte = par('aimant-mensuel').querySelector('video');
+  carte.play = () => Promise.resolve();
+  carte.currentTime = 0; await act(async () => { carte.dispatchEvent(new Event('loadedmetadata')); });
+  expect(carte.currentTime).toBe(2);
+  carte.currentTime = 17.5; await act(async () => { carte.dispatchEvent(new Event('timeupdate')); });
+  expect(carte.currentTime).toBe(2);                       // boucle sur l'extrait
+  await cliquer(par('aimant-mensuel'));
+  const v = par('fiche-lecteur').querySelector('video');
+  expect(v.getAttribute('data-trim')).toBe('2-17');
+  const pause = jest.fn(); v.pause = pause;
+  v.currentTime = 0; await act(async () => { v.dispatchEvent(new Event('loadedmetadata')); });
+  expect(v.currentTime).toBe(2);
+  v.currentTime = 17; await act(async () => { v.dispatchEvent(new Event('timeupdate')); });
+  expect(pause).toHaveBeenCalled();                        // fin de l'extrait : pause, retour au début
+  expect(v.currentTime).toBe(2);
 });
