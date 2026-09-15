@@ -297,3 +297,64 @@ describe('AnalyticsCockpit — phase 2', () => {
     expect(div.querySelector('[data-testid="kpi-participants"]')).not.toBeNull();
   });
 });
+
+// ═══ TRACKING 2B — ACQUISITION PAR SOURCE ═══
+describe('acquisition — par source', () => {
+  const SOURCES = {
+    convention: 'Source = première touche connue de la personne (attribution.first, M2-A) ; mêmes règles que le cockpit.',
+    couverture: { participants_attribues: 3, participants_total: 4, achats_attribues: 3, achats_total: 4 },
+    lignes: [
+      { cle: 'instagram', source: 'instagram', content: '', libelle: 'instagram', partenaire: false, participants: 2, reservations: 2, essais: 2, essais_reserves: 2,
+        presences_confirmees: 1, presence_essais: { confirmee: 1, absente: 0, inconnue: 1 }, achats: 2, clients: 2, convertis_confirmes: 1, convertis_probables: 2,
+        taux_conversion_confirmee: 50.0, taux_conversion_probable: 100.0, ca_prouve: 1098, panier_moyen: 549, declare_non_prouve: { nombre: 0, montant: 0 },
+        offres: [['Saison hiver — 8 mois', 2]], renouvellements: { confirmes: 1, probables: 0 }, qualite: { conversion: 'partiel', presence: 'partiel', renouvellements: 'fiable' } },
+      { cle: 'partenaire:restaurant-x', source: 'partenaire', content: 'restaurant-x', libelle: 'Partenaire — restaurant-x', partenaire: true, participants: 1, reservations: 1, essais: 1, essais_reserves: 1,
+        presences_confirmees: 1, presence_essais: { confirmee: 1, absente: 0, inconnue: 0 }, achats: 1, clients: 1, convertis_confirmes: 0, convertis_probables: 1,
+        taux_conversion_confirmee: 0.0, taux_conversion_probable: 100.0, ca_prouve: 549, panier_moyen: 549, declare_non_prouve: { nombre: 0, montant: 0 },
+        offres: [['Saison hiver — 8 mois', 1]], renouvellements: { confirmes: 0, probables: 0 }, qualite: { conversion: 'partiel', presence: 'fiable', renouvellements: 'inconnu' } },
+      { cle: 'inconnue', source: 'inconnue', content: '', libelle: 'inconnue', partenaire: false, participants: 1, reservations: 0, essais: 0, essais_reserves: 0,
+        presences_confirmees: 0, presence_essais: { confirmee: 0, absente: 0, inconnue: 0 }, achats: 1, clients: 1, convertis_confirmes: 0, convertis_probables: 0,
+        taux_conversion_confirmee: null, taux_conversion_probable: null, ca_prouve: 549, panier_moyen: 549, declare_non_prouve: { nombre: 0, montant: 0 },
+        offres: [['Saison hiver — 8 mois', 1]], renouvellements: { confirmes: 0, probables: 0 }, qualite: { conversion: 'inconnu', presence: 'inconnu', renouvellements: 'inconnu' } },
+    ],
+  };
+
+  test('une ligne par source, partenaire nommé, présence jamais déduite, CA prouvé, renouvellements confirmés à part, aucun CAC', async () => {
+    axios.get.mockResolvedValue({ data: { ...KPI, sources: SOURCES } });
+    const { div } = monter({});
+    await act(async () => {});
+    const section = div.querySelector('[data-testid="section-sources"]');
+    expect(section).not.toBeNull();
+    expect(section.textContent).toMatch(/Acquisition — par source/);
+    const ig = div.querySelector('[data-testid="source-instagram"]').textContent;
+    expect(ig).toMatch(/instagram/);
+    expect(ig).toMatch(/1 098,00 CHF/);    // CA prouvé (format chf)
+    expect(ig).toMatch(/50 %/);            // essai → client confirmé
+    expect(ig).toMatch(/Saison hiver — 8 mois ×2/);
+    const pa = div.querySelector('[data-testid="source-partenaire:restaurant-x"]').textContent;
+    expect(pa).toMatch(/Partenaire — restaurant-x/);
+    expect(pa).toMatch(/549/);
+    const inc = div.querySelector('[data-testid="source-inconnue"]').textContent;
+    expect(inc).toMatch(/inconnue/);
+    expect(inc).toMatch(/—/);               // pas de taux sans essai
+    expect(section.textContent).not.toMatch(/CAC|coût d'acquisition : 0/i);
+    expect(section.textContent).toMatch(/3\/4 participants et 3\/4 achats/);
+    // L'ordre du serveur est respecté : inconnue en dernier.
+    const ordre = [...div.querySelectorAll('[data-testid^="source-"]')].map((r) => r.getAttribute('data-testid'));
+    expect(ordre[ordre.length - 1]).toBe('source-inconnue');
+  });
+
+  test('sans origine enregistrée : message sobre, pas de tableau', async () => {
+    axios.get.mockResolvedValue({ data: { ...KPI, sources: { convention: 'x', lignes: [], couverture: {} } } });
+    const { div } = monter({});
+    await act(async () => {});
+    expect(div.querySelector('[data-testid="section-sources"]').textContent).toMatch(/Aucune origine enregistrée/);
+  });
+
+  test('cockpit sans `sources` (ancien serveur) : la section n’apparaît pas, rien ne casse', async () => {
+    axios.get.mockResolvedValue({ data: KPI });
+    const { div } = monter({});
+    await act(async () => {});
+    expect(div.querySelector('[data-testid="section-sources"]')).toBeNull();
+  });
+});

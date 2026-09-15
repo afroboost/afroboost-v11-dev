@@ -5678,8 +5678,13 @@ def lotb3s1_session_utilisable(session, charge, maintenant=None):
 # TOUT CE QUI ARRIVE D'UNE URL OU D'UN NAVIGATEUR EST SUSPECT : on ne recopie
 # jamais une chaine telle quelle, on la normalise contre une LISTE FERMEE et on
 # la tronque. Une source inconnue vaut « pas de source », jamais la chaine brute.
+# TRACKING 2B : liste STRICTEMENT identique à `SOURCES` (frontend/src/utils/attribution.js).
 M2A_SOURCES = ("google", "instagram", "tiktok", "youtube", "facebook",
-               "whatsapp", "partenaire", "direct")
+               "whatsapp", "partenaire", "direct",
+               "email", "newsletter", "sms", "qr", "flyer", "site")
+# `?ref=<slug>` = lien partenaire court, traduit dans le modèle M2-A.
+M2A_REF_SOURCE = "partenaire"
+M2A_REF_MEDIUM = "referral"
 M2A_MAX = 64
 M2A_MAX_CHEMIN = 128
 M2A_CHAMPS = ("source", "medium", "campaign", "content", "term",
@@ -5789,6 +5794,11 @@ def m2a_attribution_entrante(params, referer="", chemin=""):
         if src:
             return m2a_touche(src, lire("utm_medium"), lire("utm_campaign"),
                               lire("utm_content"), lire("utm_term"), chemin)
+        # TRACKING 2B : `?ref=<slug>` -> partenaire / referral / content = slug.
+        ref = m2a_valeur_propre(lire("ref"))
+        if ref:
+            return m2a_touche(M2A_REF_SOURCE, M2A_REF_MEDIUM, lire("utm_campaign"),
+                              ref, lire("utm_term"), chemin)
         _s, _m = m2a_source_du_referrer(referer)
         if _s:
             return m2a_touche(_s, _m, lire("utm_campaign"), lire("utm_content"),
@@ -5842,8 +5852,123 @@ def m2a_bloc_propre(bloc):
                 continue
             sortie[cle] = m2a_touche(
                 touche.get("source"), touche.get("medium"), touche.get("campaign"),
-                touche.get("content"), touche.get("term"), touche.get("landing_path"))
+                touche.get("content"), touche.get("term"), touche.get("landing_path"),
+                m2a_horodatage(touche.get("touch_at")))
         return sortie or None
+    except Exception:
+        return None
+
+
+def m2a_horodatage(valeur):
+    """L'horodatage d'une touche s'il est lisible (ISO), sinon None (= maintenant).
+    Conserver la date d'origine est ce qui permet à `first` de rester le PREMIER
+    contact quand on recopie un bloc (héritage, metadata Stripe)."""
+    try:
+        if not valeur:
+            return None
+        d = datetime.fromisoformat(str(valeur).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+# ═══ TRACKING 2B — L'ATTRIBUTION JUSQU'AU PAIEMENT, ET PAR PERSONNE ═══
+#
+# Trois outils, tous FAIL-OPEN (ils rendent None, jamais une erreur) :
+#  - `m2a_vers_metadata` : le bloc {first, last} aplati en clés Stripe
+#    (`attribution_first_source`, …) — Stripe n'accepte que des chaînes plates ;
+#  - `m2a_depuis_metadata` : le chemin inverse, au webhook ;
+#  - `m2a_attribution_heritee` / `m2a_resoudre` : la first-touch déjà CONNUE
+#    d'une personne (même e-mail normalisé) quand l'action courante n'en porte
+#    pas — autre appareil, autre navigateur, arrivée directe. On n'invente
+#    jamais une source : sans trace, il n'y a pas d'attribution.
+M2A_META_PREFIXE = "attribution_"
+M2A_META_CHAMPS = ("source", "medium", "campaign", "content", "term", "landing_path", "touch_at")
+
+
+def m2a_vers_metadata(bloc):
+    """{first, last} -> {'attribution_first_source': 'instagram', …} (chaînes)."""
+    try:
+        propre = m2a_bloc_propre(bloc)
+        if not propre:
+            return {}
+        sortie = {}
+        for cle in ("first", "last"):
+            touche = propre.get(cle)
+            if not isinstance(touche, dict) or not touche.get("source"):
+                continue
+            for champ in M2A_META_CHAMPS:
+                val = touche.get(champ)
+                if val:
+                    sortie["%s%s_%s" % (M2A_META_PREFIXE, cle, champ)] = str(val)[:500]
+        return sortie
+    except Exception:
+        return {}
+
+
+def m2a_depuis_metadata(meta):
+    """Le bloc {first, last} relu depuis des metadata plates, ou None."""
+    try:
+        if not isinstance(meta, dict):
+            return None
+        bloc = {}
+        for cle in ("first", "last"):
+            touche = {champ: meta.get("%s%s_%s" % (M2A_META_PREFIXE, cle, champ)) for champ in M2A_META_CHAMPS}
+            if m2a_source_normalisee(touche.get("source")):
+                bloc[cle] = touche
+        return m2a_bloc_propre(bloc) if bloc else None
+    except Exception:
+        return None
+
+
+def m2a_email_normalise(email):
+    return str(email or "").strip().lower()
+
+
+async def m2a_attribution_heritee(db, email):
+    """La first-touch déjà connue de cette personne (e-mail normalisé), ou None.
+
+    On lit les trois collections qui portent une attribution et on garde la
+    touche `first` la plus ANCIENNE (touch_at), pour que le premier contact
+    reste le premier. FAIL-OPEN."""
+    try:
+        cle = m2a_email_normalise(email)
+        if not cle or db is None:
+            return None
+        candidats = []
+        requetes = (
+            ("subscriptions", {"email": cle, "attribution.first.source": {"$exists": True}}),
+            ("reservations", {"userEmail": cle, "attribution.first.source": {"$exists": True}}),
+            ("payment_transactions", {"customer_email": cle, "attribution.first.source": {"$exists": True}}),
+        )
+        for coll, q in requetes:
+            try:
+                async for doc in db[coll].find(q, {"_id": 0, "attribution": 1}).limit(50):
+                    bloc = m2a_bloc_propre(doc.get("attribution"))
+                    if bloc and bloc.get("first", {}).get("source"):
+                        candidats.append(bloc)
+            except Exception:
+                continue
+        if not candidats:
+            return None
+        candidats.sort(key=lambda b: str(b["first"].get("touch_at") or ""))
+        return candidats[0]
+    except Exception:
+        return None
+
+
+async def m2a_resoudre(db, explicite, email):
+    """1. l'attribution EXPLICITE de l'action (revalidée) ; 2. sinon la first-touch
+    connue de la personne ; 3. sinon None. Jamais une source inventée."""
+    try:
+        bloc = m2a_bloc_propre(explicite)
+        src = (bloc or {}).get("first", {}).get("source") if bloc else ""
+        if src and src != "direct":
+            return bloc
+        # Une arrivée DIRECTE n'est pas une origine : elle ne remplace jamais une
+        # first-touch connue de la personne. Sans historique, elle reste « direct ».
+        heritee = await m2a_attribution_heritee(db, email)
+        return heritee or (bloc if src else None)
     except Exception:
         return None
 

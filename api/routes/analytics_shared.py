@@ -48,6 +48,45 @@ PERIODES = ("aujourdhui", "semaine", "mois", "annee", "perso")
 
 # ─────────────────────────────── outils purs ───────────────────────────────
 
+# ─────────────────── TRACKING 2B — l'origine marketing d'un fait ──────────────
+#
+# UNE seule origine officielle : `attribution.first` (M2-A), telle qu'écrite sur
+# la réservation / la souscription / la transaction (ou aplatie dans les
+# metadata Stripe : `attribution_first_source`, …). Les champs techniques
+# `source` (website, subscriber_space, stripe_auto…) ne sont JAMAIS lus ici.
+SOURCE_INCONNUE = "inconnue"
+SOURCE_PARTENAIRE = "partenaire"
+
+
+def attribution_first(*docs):
+    """(source, content) de la PREMIÈRE touche connue parmi les documents fournis
+    (chacun : un dict portant `attribution` ou des metadata plates). ("", "") si aucune."""
+    for d in docs:
+        if not isinstance(d, dict):
+            continue
+        bloc = d.get("attribution") if isinstance(d.get("attribution"), dict) else None
+        first = (bloc or {}).get("first") if isinstance((bloc or {}).get("first"), dict) else None
+        if first and _texte(first.get("source")):
+            return _texte(first.get("source")).lower(), _texte(first.get("content")).lower()
+        meta = d.get("metadata") if isinstance(d.get("metadata"), dict) else d
+        if isinstance(meta, dict) and _texte(meta.get("attribution_first_source")):
+            return _texte(meta.get("attribution_first_source")).lower(), _texte(meta.get("attribution_first_content")).lower()
+    return "", ""
+
+
+def libelle_source(source, content=""):
+    """« Partenaire — restaurant-x » pour un partenaire, sinon la source, sinon « inconnue »."""
+    src = _texte(source).lower() or SOURCE_INCONNUE
+    if src == SOURCE_PARTENAIRE and _texte(content):
+        return "Partenaire — %s" % _texte(content)
+    return src
+
+
+def cle_source(source, content=""):
+    src = _texte(source).lower() or SOURCE_INCONNUE
+    return "%s:%s" % (src, _texte(content).lower()) if src == SOURCE_PARTENAIRE and _texte(content) else src
+
+
 def cle_participant(email) -> str:
     """La clé d'identité de la phase 1 : e-mail normalisé (minuscules, sans espaces)."""
     return str(email or "").strip().lower()
@@ -280,6 +319,10 @@ def construire_faits(reservations, cours_par_id=None, forfaits_par_id=None,
             "pulse_x10": "pulse" in _offre_nom.lower() and "x10" in _offre_nom.lower().replace(" ", ""),
             "carte_membre": bool(_membership),
             "source": str(r.get("source") or ""),
+            # TRACKING 2B : l'origine marketing (first-touch) de la réservation,
+            # jamais le canal technique `source` ci-dessus.
+            "attribution_source": attribution_first(r)[0],
+            "attribution_content": attribution_first(r)[1],
             # Phase 2 : le lien vers le DROIT (code, souscription) — le funnel
             # d'essai rattache les réservations à l'essai par ces deux clés,
             # comme le funnel existant (`subscriptionId` OU code).
@@ -729,6 +772,10 @@ def construire_achats(subscriptions, fiches_codes, paiements, offres_par_id=None
             "sub_ids": [_texte(s.get("id")) for s in subs if _texte(s.get("id"))],
             "renouvellement_confirme_dates": sorted(renouv_dates),
             "converted_dt": min([d for d in (parser_utc(s.get("converted_at")) for s in subs) if d], default=None),
+            # TRACKING 2B : la first-touch portée par le droit (souscription, fiche,
+            # transaction jumelle) — la règle « un achat = une ligne » est intacte.
+            "attribution_source": attribution_first(*subs, fiche, paiement or {})[0],
+            "attribution_content": attribution_first(*subs, fiche, paiement or {})[1],
         })
 
     for sid, p in paiements_par_session.items():
@@ -763,6 +810,7 @@ def construire_achats(subscriptions, fiches_codes, paiements, offres_par_id=None
             "essai": False, "actif": False, "consomme": False, "expire_dt": None, "statuts": ["paiement"],
             "seances": None, "fiches": 0, "fiches_dates": [], "fiches_consommees_avant": [], "sub_ids": [],
             "renouvellement_confirme_dates": [], "converted_dt": None,
+            "attribution_source": attribution_first(p)[0], "attribution_content": attribution_first(p)[1],
         })
 
     en_attente = []
@@ -1047,3 +1095,101 @@ def calculer_kpi_finance(achats, en_attente, memberships, faits, debut, fin, gra
     }
 
     return {"revenus": revenus, "abonnements": abonnements, "essais_funnel": essais}
+
+
+# ─────────────── TRACKING 2B — ACQUISITION PAR SOURCE ────────────────────────
+#
+# AUCUNE nouvelle définition. Une source = la FIRST-TOUCH de la PERSONNE (la
+# plus ancienne attribution connue sur ses réservations et ses achats) ; puis
+# les MÊMES moteurs (`calculer_kpi`, `calculer_kpi_finance`) tournent sur le
+# sous-ensemble de cette source. Essai, présence, conversion, un achat = une
+# ligne, renouvellements confirmés / probables : règles inchangées, périmètre
+# restreint. « inconnue » = personne sans aucune attribution ; on n'invente
+# jamais une source. Le coût d'acquisition n'est pas calculé (aucune donnée).
+def source_par_personne(faits, achats):
+    """{participant_key: (source, content)} — la first-touch la plus ancienne connue."""
+    meilleure = {}
+    def _poser(cle, src, content, quand):
+        if not cle or not src:
+            return
+        _q = quand or datetime.max.replace(tzinfo=timezone.utc)
+        if cle not in meilleure or _q < meilleure[cle][2]:
+            meilleure[cle] = (src, content, _q)
+    for f in (faits or []):
+        if isinstance(f, dict):
+            _poser(f.get("participant_key"), f.get("attribution_source"), f.get("attribution_content"), f.get("created_dt"))
+    for a in (achats or []):
+        if isinstance(a, dict):
+            _poser(a.get("participant_key"), a.get("attribution_source"), a.get("attribution_content"), a.get("date_dt"))
+    return {k: (v[0], v[1]) for k, v in meilleure.items()}
+
+
+def calculer_kpi_sources(faits, achats, memberships, debut, fin, maintenant=None) -> dict:
+    """Une ligne par source : participants, essais, présences, achats, clients,
+    taux essai -> client, CA prouvé, panier moyen, renouvellements. Même moteur."""
+    maintenant = maintenant or datetime.now()
+    faits = [f for f in (faits or []) if isinstance(f, dict)]
+    achats = [a for a in (achats or []) if isinstance(a, dict)]
+    personnes = source_par_personne(faits, achats)
+    groupes = {}
+    def _cle_de(cle_personne, src_doc, content_doc):
+        src, content = personnes.get(cle_personne, (src_doc, content_doc))
+        return cle_source(src, content), (src or SOURCE_INCONNUE), (content or "")
+    for f in faits:
+        k, src, content = _cle_de(f.get("participant_key"), f.get("attribution_source"), f.get("attribution_content"))
+        g = groupes.setdefault(k, {"source": src, "content": content, "faits": [], "achats": []})
+        g["faits"].append(f)
+    for a in achats:
+        k, src, content = _cle_de(a.get("participant_key"), a.get("attribution_source"), a.get("attribution_content"))
+        g = groupes.setdefault(k, {"source": src, "content": content, "faits": [], "achats": []})
+        g["achats"].append(a)
+    lignes = []
+    for k, g in groupes.items():
+        kpi = calculer_kpi(g["faits"], debut, fin, "mois") if g["faits"] else {}
+        fin_ = calculer_kpi_finance(g["achats"], [], memberships, g["faits"], debut, fin, "mois", maintenant)
+        rev, ab, es = fin_["revenus"], fin_["abonnements"], fin_["essais_funnel"]
+        achats_periode = [a for a in g["achats"] if _dans_dt(a["date_dt"], debut, fin)]
+        payants = [a for a in achats_periode if not a["essai"] and (a["montant"] or 0) > 0]
+        participants = {f.get("participant_key") for f in g["faits"] if f.get("participant_key") and _dans(f, debut, fin)} \
+            | {a.get("participant_key") for a in achats_periode if a.get("participant_key")}
+        clients = {a["participant_key"] for a in payants if a.get("participant_key")}
+        offres = {}
+        for a in payants:
+            offres[a["offre"] or "?"] = offres.get(a["offre"] or "?", 0) + 1
+        presences = sum(1 for f in g["faits"] if _dans(f, debut, fin) and f.get("presence") == PRESENCE_CONFIRMEE)
+        lignes.append({
+            "cle": k, "source": g["source"], "content": g["content"],
+            "libelle": libelle_source(g["source"], g["content"]),
+            "partenaire": g["source"] == SOURCE_PARTENAIRE and bool(g["content"]),
+            "participants": len(participants),
+            "reservations": (kpi.get("participants") or {}).get("reservations_cours", 0) if kpi else 0,
+            "essais": es["accordes"],
+            "essais_reserves": es["reserves"],
+            "presences_confirmees": presences,
+            "presence_essais": es["presence"],
+            "achats": len(payants),
+            "clients": len(clients),
+            "convertis_confirmes": es["convertis_confirmes"],
+            "convertis_probables": es["convertis_probables"]["total"],
+            "taux_conversion_confirmee": es["taux"]["conversion_confirmee"],
+            "taux_conversion_probable": es["taux"]["conversion_probable"],
+            "ca_prouve": rev["ca_encaisse"],
+            "panier_moyen": rev["panier_moyen"],
+            "declare_non_prouve": rev["declare_non_prouve"],
+            "offres": sorted(offres.items(), key=lambda x: -x[1]),
+            "renouvellements": {"confirmes": ab["renouvellements"]["confirmes"], "probables": ab["renouvellements"]["probables"]},
+            "qualite": {"conversion": es["qualite"]["conversion"], "presence": es["qualite"]["presence"],
+                        "renouvellements": fin_["abonnements"]["qualite"]["renouvellements"]},
+        })
+    lignes.sort(key=lambda l: (l["source"] == SOURCE_INCONNUE, -(l["ca_prouve"] or 0), -l["participants"], l["libelle"]))
+    attribues = [l for l in lignes if l["source"] != SOURCE_INCONNUE]
+    return {
+        "convention": "Source = première touche connue de la personne (attribution.first, M2-A) ; "
+                      "mêmes règles que le cockpit (essai, présence, un achat = une ligne, renouvellements). "
+                      "« inconnue » = aucune origine enregistrée ; aucun coût d'acquisition (donnée absente).",
+        "lignes": lignes,
+        "couverture": {"participants_attribues": sum(l["participants"] for l in attribues),
+                       "participants_total": sum(l["participants"] for l in lignes),
+                       "achats_attribues": sum(l["achats"] for l in attribues),
+                       "achats_total": sum(l["achats"] for l in lignes)},
+    }

@@ -40,10 +40,18 @@ export const DUREE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX = 64;
 const MAX_CHEMIN = 128;
 
+// TRACKING 2B : la liste est STRICTEMENT la même que `M2A_SOURCES`
+// (api/routes/shared.py) — un banc (test_m2a_attribution.py) compare les deux.
 export const SOURCES = [
   'google', 'instagram', 'tiktok', 'youtube', 'facebook',
   'whatsapp', 'partenaire', 'direct',
+  'email', 'newsletter', 'sms', 'qr', 'flyer', 'site',
 ];
+
+/** `?ref=<slug>` = le lien partenaire court. Il est traduit, jamais stocké tel
+ *  quel : source `partenaire`, medium `referral`, content = slug nettoyé. */
+export const REF_SOURCE = 'partenaire';
+export const REF_MEDIUM = 'referral';
 
 /** Hote -> [source, canal]. `google` est traite a part : domaines regionaux. */
 const HOTES = [
@@ -147,6 +155,12 @@ export function attributionDepuisUrl(recherche, referrer, chemin) {
     if (src) {
       return touche(src, params.get('utm_medium'), params.get('utm_campaign'),
         params.get('utm_content'), params.get('utm_term'), chemin);
+    }
+    // TRACKING 2B : `?ref=<slug>` (lien partenaire court) -> le modèle M2-A,
+    // sans nouveau champ : le slug vit dans `content`.
+    const ref = propre(params.get('ref'));
+    if (ref) {
+      return touche(REF_SOURCE, REF_MEDIUM, params.get('utm_campaign'), ref, params.get('utm_term'), chemin);
     }
     const duRef = attributionDuReferrer(referrer);
     if (duRef) {

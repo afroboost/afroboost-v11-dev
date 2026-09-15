@@ -674,7 +674,10 @@ class ReservationBase(BaseModel):
     courseId: Optional[str] = None
 
 class ReservationCreate(ReservationBase):
-    pass
+    # TRACKING 2B : l'origine marketing {first, last} mémorisée par le navigateur
+    # (`attributionActuelle()`), sur la REQUÊTE seulement — pas un champ du
+    # document de base (le document reçoit le bloc revalidé, jamais le brut).
+    attribution: Optional[dict] = None
 
 class Reservation(ReservationBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -1541,6 +1544,15 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         reservation_data.update(_lot3_champs(_lot3_sub, _lot3_code, reservation_data))
     except Exception as _l3e:
         logger.warning("[LOT3a] snapshot reservation ignore (%s)", type(_l3e).__name__)
+    # TRACKING 2B : UNE règle pour toute réservation — l'attribution explicite
+    # de l'action, sinon la first-touch déjà connue de la personne. FAIL-OPEN.
+    try:
+        from api.routes.shared import m2a_resoudre as _m2a_resoudre
+        _m2a = await _m2a_resoudre(db, reservation.attribution, user_email)
+        if _m2a:
+            reservation_data["attribution"] = _m2a
+    except Exception as _m2ae:
+        logger.warning("[M2-A] origine non posee sur la reservation (%s)", type(_m2ae).__name__)
     await db.reservations.insert_one(reservation_data)
     reservation_data.pop("_id", None)
     logger.info(f"[RESERVATION] Créée: {reservation_data.get('reservationCode')} pour {user_email}")
@@ -3643,6 +3655,14 @@ async def _qr_scan_validate_inner(request: Request):
         new_reservation.update(_lot3_champs(subscription, _l3c0c_dc, new_reservation))
     except Exception as _l3e:
         logger.warning("[LOT3a] snapshot scan ignore (%s)", type(_l3e).__name__)
+    # TRACKING 2B : même règle (héritage par e-mail — un scan n'a pas d'UTM).
+    try:
+        from api.routes.shared import m2a_resoudre as _m2a_resoudre
+        _m2a = await _m2a_resoudre(db, subscription.get("attribution") if isinstance(subscription, dict) else None, user_email)
+        if _m2a:
+            new_reservation["attribution"] = _m2a
+    except Exception as _m2ae:
+        logger.warning("[M2-A] origine non posee sur la reservation scan (%s)", type(_m2ae).__name__)
     await db.reservations.insert_one(new_reservation)
     logger.info(f"[QR-SCAN-V176] Création résa + déduction: {user_email} -> {course_name} ({new_remaining} restantes)")
     # A0-3 : ce chemin cree une reservation DEJA validee — c'est une presence

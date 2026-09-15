@@ -32,7 +32,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from api.routes.analytics_shared import (
     PERIODES, bornes_periode, calculer_kpi, calculer_kpi_finance, choisir_fiche_code, cle_participant,
-    construire_achats, construire_faits, mois_suivant, vers_local,
+    construire_achats, construire_faits, mois_suivant, vers_local, calculer_kpi_sources,
 )
 from api.routes.analytics_association import (
     PERIMETRE_ENSEMBLE, export_csv, export_pdf, export_xlsx, periode_precedente, projeter_association,
@@ -191,6 +191,14 @@ async def _calculer_cockpit(request: Request, periode: str = "mois", du: str = "
                                 maintenant, cours_filtre=_cid)
     kpi.update(_fin)
     kpi["achats"] = {"ecartes": _achats["ecartes"], "qualite": _achats["qualite"], "total": len(_achats["achats"])}
+    # TRACKING 2B : ACQUISITION — PAR SOURCE. Même faits, mêmes achats, mêmes
+    # moteurs, restreints à chaque source (first-touch de la personne). Aucune
+    # lecture de plus. Fail-open : une erreur ici ne prive pas du reste du cockpit.
+    try:
+        kpi["sources"] = calculer_kpi_sources(faits, _achats["achats"], cartes, debut, fin, maintenant)
+    except Exception as _src_e:
+        logger.warning("[ANALYTICS] acquisition par source indisponible (%s)", type(_src_e).__name__)
+        kpi["sources"] = {"convention": "", "lignes": [], "couverture": {}, "erreur": type(_src_e).__name__}
     kpi["requetes"] = 7
 
     # ── PHASE 3 : la projection Association — mêmes tables, AUCUNE lecture de plus ──
