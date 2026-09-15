@@ -1171,7 +1171,7 @@ ne doit jamais être présentée comme l'état courant.
   `send-bulk-email` → 410 (0 appelant) ; `DELETE /push/subscribe/{pid}` inchangée (appelant public réel).
   0 nouvelle fonction, 0 nouvelle route. Push ciblé : abandonné pour l'instant.
 
-## T. FONDATEURS + PARCOURS CLIENT (2026-09-15, commit `befc4c26` poussé 19:29 UTC, sw v524) — ⚠️ DÉPLOIEMENT NON CONFIRMÉ
+## T. FONDATEURS + PARCOURS CLIENT (2026-09-15, `befc4c26` + `068aab14`, sw v524) — ✅ DÉPLOYÉ ET PROUVÉ (19:52 UTC, boot `0d333d0e`)
 
 - **Fait** : 6 audits parallèles (offre, paiement, espace abonné, essai, tracking, UX) + Playwright bout en bout
   sur une pile LOCALE (`tests/parcours/` : vraie app, base `afroboost_pw_test`, faux Stripe/Resend) : 35/35 + 25/25,
@@ -1183,8 +1183,11 @@ ne doit jamais être présentée comme l'état courant.
 - **Trouvé, NON fait (D, GO requis)** : résiliation en ligne, anti-double abonnement, cumul des séances non
   consommées (≈ 15/10), repli `mode=payment` silencieux, `checkout.session.expired` non relayé, UX (bouton d'achat
   sous la ligne de flottaison, Flex 4 contradictoire, « MEILLEUR PRIX » faux, `/optimized` 500, contrastes).
-- **Déploiement** : à 19:41 UTC l'origine sert encore sw **v523** (boot inchangé) : le build Coolify n'a pas abouti ou
-  est en cours → à vérifier dans Coolify (app `afroboost-v11-dev:main-ae8xfe8`, projet afroboost.com), puis
-  `curl -s https://afroboost.com/sw.js | grep afroboost-v524` et le lien profond
-  `https://afroboost.com/?offre=c1e5f73c-0f16-402e-a746-2041e23f72e8&reserver=1` doit ouvrir le formulaire d'essai.
-- **Reste à vérifier** : le déploiement ci-dessus ; base de test `afroboost_pw_test` (Atlas) à supprimer après usage.
+- **Déploiement** : le build de `befc4c2` a ÉCHOUÉ dans Coolify (19:29→19:30 UTC, exit 255 pendant `npm install`
+  + `pip install` en parallèle, aucune erreur de code — profil « conteneur de build tué »). Le push docs `068aab1`
+  (même code) a relancé le webhook : **Success** (19:42→~19:50 UTC). Preuves : origine ET Cloudflare servent
+  `sw.js` **v524**, `boot_id 0d333d0e` (94 s), bundle `main.11b70b4d` identique des deux côtés, `/api/debug/config` OK.
+  Lien profond `?offre=c1e5f73c…&reserver=1` (Playwright anonyme, lecture seule, mobile + desktop) : formulaire
+  d'essai ouvert et stable 12 s, une seule navigation, URL conservée.
+- **Base de test `afroboost_pw_test`** : SUPPRIMÉE le 15/09 ~19:58 UTC après vérification (6 users tous
+  `pw-*@example.com`, sessions Stripe `cs_test_…`) ; prod `promo-credits-lab` intacte (126 users, 167 réservations).
