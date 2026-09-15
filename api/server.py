@@ -6437,6 +6437,13 @@ async def launch_campaign(campaign_id: str):
 
                     if session:
                         session_id = session.get("id")
+                    elif not contact_doc:
+                        # RÉACTIVATION multi-agents (15/09/2026) : un identifiant qui n'est
+                        # ni un utilisateur (`users`) ni une conversation existante n'a pas
+                        # de fil où poser un message — on ne fabrique plus de session
+                        # fantôme (46/47 sessions créées par campagne ne contenaient QUE
+                        # des messages de campagne, comptes Sunset compris).
+                        raise LookupError("sans_session")
                     else:
                         # Créer une session pour cet utilisateur s'il n'en a pas
                         session_id = str(uuid.uuid4())
@@ -6497,6 +6504,11 @@ async def launch_campaign(campaign_id: str):
                 success_count += 1
                 logger.info(f"[CAMPAIGN-LAUNCH] ✅ Message interne envoyé à {target_id}")
                 
+            except LookupError:
+                internal_result["status"] = "skipped"
+                internal_result["exclu"] = "sans_session"
+                skipped_count += 1
+                logger.info("[R3-CHAT] cible interne écartée : sans_session (ni utilisateur, ni conversation)")
             except Exception as e:
                 internal_result["status"] = "failed"
                 internal_result["error"] = str(e)

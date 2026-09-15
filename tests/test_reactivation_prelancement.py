@@ -729,6 +729,12 @@ verifier("M5. journal interne : clé d'idempotence + segment", all(r.get("cle", 
 base.campaigns.docs[0]["status"] = "draft"
 run(S.launch_campaign("camp-m"))
 verifier("M6. retry : aucun second message interne", sum(1 for m in base.chat_messages.docs if m.get("session_id") == "s-u2") == 1)
+# Un identifiant inconnu (fiche CRM sans compte ni conversation, ex. Sunset) : aucune session fantôme.
+base.campaigns.docs.append(campagne("camp-m2", (), targetType="selected", targetIds=["cp-inconnu"], channels={"email": False, "whatsapp": False, "internal": True}))
+_n_sessions = len(base.chat_sessions.docs)
+res = run(S.launch_campaign("camp-m2"))
+verifier("M7. cible sans compte ni conversation -> `skipped/sans_session`, aucune session créée",
+         any(r.get("exclu") == "sans_session" for r in res["results"]) and len(base.chat_sessions.docs) == _n_sessions, res["results"])
 
 print("\n%d/%d au vert" % (OK, OK + RATE))
 if __name__ == "__main__":
