@@ -1163,3 +1163,10 @@ ne doit jamais être présentée comme l'état courant.
 - Dettes signalées, non traitées : `POST /chat/messages` et `/chat/coach-response` sans auth ;
   `/subscribers/optin` WhatsApp = `confirmed` sans preuve de possession ; `send-bulk-email` sans garde
   métier (aucun appelant) ; `DELETE /push/subscribe/{pid}` sans auth.
+- **Dernière passe sécurité (`44d1b7a5`, déployée, boot `a68bb9bd`)** : `POST /chat/messages` applique la
+  règle de lecture V349 à l'écriture (403 pour un expéditeur hors conversation, `coach` réservé au coach
+  prouvé) ; `POST /chat/coach-response` = garde de `/chat/group-message` (403 sans jeton, 404 avec le
+  jeton du propriétaire sur une session inexistante = garde passée sans écrire) ; `/subscribers/optin`
+  ne remonte jamais un `opted_out` WhatsApp (réinscription uniquement par « OUI » depuis le numéro) ;
+  `send-bulk-email` → 410 (0 appelant) ; `DELETE /push/subscribe/{pid}` inchangée (appelant public réel).
+  0 nouvelle fonction, 0 nouvelle route. Push ciblé : abandonné pour l'instant.
