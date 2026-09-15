@@ -1689,11 +1689,20 @@ async def checkout_stripe_webhook(request: Request):
     # pour afroboost, et elle ne deleguait QUE `checkout.session.completed` : un
     # `invoice.upcoming` y serait tombe dans le vide avec un 200, exactement le
     # piege du paiement perdu de V384.
-    if event_data.get("type") == "invoice.upcoming":
+    # FONDATEURS / HIVER (15/09/2026) — MÊME PIÈGE, MÊME REMÈDE : les événements
+    # du cycle d'abonnement (`invoice.paid` / `invoice.payment_succeeded` =
+    # recrédit des séances du mois, `invoice.payment_failed`,
+    # `customer.subscription.deleted` = fin d'accès) ont leurs gestionnaires
+    # dans `api/server.py` (`stripe_webhook`, bloc HIVER) mais tombaient ICI
+    # dans le `return {"status": "ok"}` final : 200 pour Stripe, jamais rejoué,
+    # et le mois 2+ d'un abonné Fondateurs n'était jamais crédité. On délègue
+    # exactement comme `invoice.upcoming` (corps déjà vérifié par signature).
+    if event_data.get("type") in ("invoice.upcoming", "invoice.paid", "invoice.payment_succeeded",
+                                  "invoice.payment_failed", "customer.subscription.deleted"):
         from api.server import stripe_webhook as _webhook_client
         request.state.afroboost_event_verifie = event_data
         resultat = await _webhook_client(request)
-        logger.info("[CHECKOUT-WEBHOOK] V404 invoice.upcoming transmis au rappel")
+        logger.info("[CHECKOUT-WEBHOOK] %s transmis au rappel HIVER/V404", event_data.get("type"))
         return resultat
 
     if event_data.get("type") == "checkout.session.completed":

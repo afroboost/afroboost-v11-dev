@@ -8326,8 +8326,11 @@ async def get_checkout_status(session_id: str):
 P0_CLE_EMAIL_CLIENT = "client_acces"
 
 
-def _p0_html_email_acces(new_code: str, sessions_count, primary_color: str) -> str:
-    """HTML de l'e-mail d'acces client. Fonction pure, sans effet de bord."""
+def _p0_html_email_acces(new_code: str, sessions_count, primary_color: str, mention: str = "") -> str:
+    """HTML de l'e-mail d'acces client. Fonction pure, sans effet de bord.
+    `mention` (FONDATEURS 15/09/2026) : phrase ajoutée sous le compteur — pour un
+    abonnement mensuel, « par mois, renouvelé automatiquement » et comment
+    l'arrêter. Vide = e-mail inchangé."""
     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https://afroboost.com/?qr={new_code}&format=png"
     chat_url = f"https://afroboost.com/?qr={new_code}"
     # V225: sans ce lien, le client vient de payer et n'a aucun
@@ -8355,7 +8358,7 @@ def _p0_html_email_acces(new_code: str, sessions_count, primary_color: str) -> s
                             <div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:14px;padding:22px;margin:0 0 24px;text-align:center;">
                                 <p style="margin:0 0 6px;color:#888;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Ton code d'acces personnel</p>
                                 <p style="margin:0;color:{primary_color};font-size:30px;font-weight:bold;letter-spacing:3px;">{new_code}</p>
-                                <p style="margin:10px 0 20px;color:#888;font-size:13px;">{sessions_count} seance(s) incluse(s)</p>
+                                <p style="margin:10px 0 20px;color:#888;font-size:13px;">{sessions_count} seance(s) incluse(s){mention}</p>
                                 <img src="{qr_url}" alt="QR Code Afroboost" width="180" height="180" style="background:white;padding:12px;border-radius:10px;display:block;margin:0 auto;"/>
                                 <p style="color:#a855f7;font-size:12px;margin:14px 0 0;line-height:1.5;">
                                     <strong style="color:#fff;">Ton QR code a 2 usages :</strong><br>
@@ -8433,9 +8436,9 @@ def _p0_html_email_acces(new_code: str, sessions_count, primary_color: str) -> s
     return html
 
 
-async def _p0_envoyer_email_acces(destinataire: str, new_code: str, sessions_count, primary_color: str) -> None:
+async def _p0_envoyer_email_acces(destinataire: str, new_code: str, sessions_count, primary_color: str, mention: str = "") -> None:
     """Envoie l'e-mail d'acces. Leve si Resend echoue — l'appelant decide."""
-    await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboost.com>", "to": [destinataire], "subject": f"Bienvenue chez Afroboost - Ton code {new_code}", "html": _p0_html_email_acces(new_code, sessions_count, primary_color)})
+    await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboost.com>", "to": [destinataire], "subject": f"Bienvenue chez Afroboost - Ton code {new_code}", "html": _p0_html_email_acces(new_code, sessions_count, primary_color, mention)})
 
 
 async def _p0_marquer_email_envoye(session_id: str, cle: str) -> None:
@@ -9392,7 +9395,15 @@ async def stripe_webhook(request: Request):
                 # v163: EMAIL CONFIRMATION — QR code (double usage) + Guide de connexion au chat
                 if RESEND_AVAILABLE and RESEND_API_KEY and customer_email:
                     try:
-                        await _p0_envoyer_email_acces(customer_email, new_code, sessions_count, primary_color)
+                        # FONDATEURS (15/09/2026) : un abonnement mensuel le DIT dans l'e-mail d'accès.
+                        _mention_abo = ""
+                        try:
+                            if _hiver.billing_mode_valide(metadata.get("billing_mode")) != _hiver.BILLING_UNIQUE:
+                                _mention_abo = (" par mois, renouvel&eacute;es automatiquement (pr&eacute;l&egrave;vement mensuel par carte). "
+                                                "Pour arr&ecirc;ter l'abonnement, &eacute;cris &agrave; contact@afroboosteur.com.")
+                        except Exception:
+                            _mention_abo = ""
+                        await _p0_envoyer_email_acces(customer_email, new_code, sessions_count, primary_color, _mention_abo)
                         # Marqueur ecrit APRES le succes reel de l'envoi, jamais avant.
                         await _p0_marquer_email_envoye(session.id, P0_CLE_EMAIL_CLIENT)
                         logger.info(f"[PAYMENT] Email v163 envoye a {customer_email}")
@@ -9690,6 +9701,15 @@ async def admin_create_code(request: Request):
             # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
             primary_color = await _v259_primary_color()
             primary_rgb = _v259_primary_rgb(primary_color)
+            # FONDATEURS (15/09/2026) : un abonnement mensuel le DIT dans l'e-mail d'accès —
+            # « par mois, renouvelé automatiquement » + comment l'arrêter (aucune résiliation en ligne).
+            _mention_abo = ""
+            try:
+                if _hiver.billing_mode_valide(metadata.get("billing_mode")) != _hiver.BILLING_UNIQUE:
+                    _mention_abo = (" par mois, renouvel&eacute;es automatiquement (pr&eacute;l&egrave;vement mensuel par carte). "
+                                    "Pour arr&ecirc;ter l'abonnement, &eacute;cris &agrave; contact@afroboosteur.com.")
+            except Exception:
+                _mention_abo = ""
             html = f"""<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#0a0a0a;color:#fff;">
                 <div style="background:linear-gradient(135deg,{primary_color},#8b5cf6);padding:28px 24px;text-align:center;">
                     <h1 style="color:white;margin:0;font-size:24px;">Bienvenue chez Afroboost !</h1>
@@ -9700,7 +9720,7 @@ async def admin_create_code(request: Request):
                     <div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:14px;padding:22px;margin:16px 0;text-align:center;">
                         <p style="margin:0 0 6px;color:#888;font-size:12px;text-transform:uppercase;">Ton code d'acces personnel</p>
                         <p style="margin:0;color:{primary_color};font-size:30px;font-weight:bold;letter-spacing:3px;">{new_code}</p>
-                        <p style="margin:10px 0 20px;color:#888;font-size:13px;">{sessions_count} seance(s) incluse(s)</p>
+                        <p style="margin:10px 0 20px;color:#888;font-size:13px;">{sessions_count} seance(s) incluse(s){_mention_abo}</p>
                         <img src="{qr_url}" alt="QR Code" width="180" height="180" style="background:white;padding:12px;border-radius:10px;display:block;margin:0 auto;"/>
                     </div>
                     <div style="text-align:center;margin:20px 0;">

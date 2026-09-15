@@ -172,6 +172,14 @@ v("webhook : abonnement Stripe -> auto_renew False (jamais V195), stripe_subscri
 v("webhook : saison_2x -> cancel_at début + 8 mois posé sur l'abonnement Stripe", "stripe.Subscription.modify(subscription_data[\"stripe_subscription_id\"]" in S and "cancel_at=_hiver.cancel_at_saison" in S)
 v("webhook : invoice.paid / payment_succeeded / payment_failed / customer.subscription.deleted branchés",
   "event.type in ('invoice.paid', 'invoice.payment_succeeded')" in S and "event.type == 'invoice.payment_failed'" in S and "event.type == 'customer.subscription.deleted'" in S)
+# FONDATEURS / PARCOURS (15/09/2026) : l'URL déclarée chez Stripe est /api/checkout/webhook/stripe
+# (checkout_routes) — elle DOIT relayer les événements du cycle d'abonnement vers `stripe_webhook`,
+# sinon le mois 2+ n'est jamais crédité (constaté par 2 audits indépendants).
+v("relais (checkout_routes) : invoice.paid / payment_succeeded / payment_failed / subscription.deleted transmis au rappel HIVER",
+  '"invoice.upcoming", "invoice.paid", "invoice.payment_succeeded"' in C and '"invoice.payment_failed", "customer.subscription.deleted"' in C
+  and "request.state.afroboost_event_verifie = event_data" in C)
+v("e-mail d'accès : un abonnement mensuel dit « par mois, renouvelées automatiquement » et comment l'arrêter",
+  "_mention_abo" in S and "renouvel&eacute;es automatiquement" in S and 'mention: str = ""' in S)
 v("V195 : les deux sélections excluent les abonnements Stripe (pas de double débit)", S.count('"stripe_subscription_id": {"$in": [None, ""]}') == 2)
 v("modèles : billing_mode / duree_mois sur Offer et OfferCreate ; PUT conserve les valeurs stockées", 'billing_mode: Optional[str] = "unique"' in S and "offer.billing_mode if offer.billing_mode is not None else _offre_avant.get(\"billing_mode\")" in S)
 v("public : billing_mode, duree_mois, countdown_* exposés (aucune donnée personnelle)", '"billing_mode", "duree_mois", "countdown_enabled", "countdown_date", "countdown_time", "countdown_text",' in S)
