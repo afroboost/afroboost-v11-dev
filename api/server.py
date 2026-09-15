@@ -46867,7 +46867,8 @@ def _m1_carte_offre(o, lien_offre):
     if isinstance(_places, int):
         _badge = '<p class="t-places">%d place%s restante%s sur %d</p>' % (
             _places, "s" if _places > 1 else "", "s" if _places > 1 else "", int(o.get("stock")))
-    _mise_en_avant = ' t-star' if o.get("first_purchase_eligible") and _type == "subscription" else ""
+    # Mise en avant : l'offre LIMITÉE de la saison (rareté réelle), pas toutes les mensuelles.
+    _mise_en_avant = ' t-star' if isinstance(_places, int) else ""
     return ('<article class="tarif%s"><h3>%s</h3><p class="t-prix">%s<span>%s</span></p>'
             '%s<p class="t-desc">%s</p>%s<a class="cta cta-s" href="%s">%s</a></article>'
             % (_mise_en_avant, _nom, _montant, _unite,
