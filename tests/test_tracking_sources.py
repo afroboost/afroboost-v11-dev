@@ -113,7 +113,12 @@ verifier("B. Héritage : la first-touch la plus ANCIENNE de la personne (instagr
 verifier("B2. Personne inconnue -> None (jamais une source inventée)", run(S.m2a_attribution_heritee(db, "z@mail.ch")) is None)
 verifier("B3. Sans e-mail -> None ; base absente -> None", run(S.m2a_attribution_heritee(db, "")) is None and run(S.m2a_attribution_heritee(None, "a@mail.ch")) is None)
 _r1 = run(S.m2a_resoudre(db, {"first": {"source": "qr", "campaign": "festival2026"}}, "a@mail.ch"))
-verifier("13. Résolution : 1) explicite revalidée d'abord", _r1["first"]["source"] == "qr")
+# RÉACTIVATION 3B : une origine explicite ne remplace JAMAIS la first-touch déjà
+# connue de la personne (a@mail.ch a une first instagram) — elle se lit en `last`.
+verifier("13. Résolution : explicite revalidée en LAST, first connue conservée (3B)",
+         _r1["first"]["source"] == "instagram" and _r1["last"]["source"] == "qr" and _r1["last"]["campaign"] == "festival2026", _r1)
+verifier("13b. Sans historique, l'explicite fait foi tel quel (first = last = qr)",
+         run(S.m2a_resoudre(db, {"first": {"source": "qr", "campaign": "festival2026"}}, "z@mail.ch"))["first"]["source"] == "qr")
 _r2 = run(S.m2a_resoudre(db, None, "a@mail.ch"))
 verifier("14. Résolution : 2) sinon la first-touch connue", _r2["first"]["source"] == "instagram")
 _r3 = run(S.m2a_resoudre(db, {"first": {"source": "linkedin"}}, "a@mail.ch"))

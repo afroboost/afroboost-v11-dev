@@ -448,13 +448,10 @@ const CampaignManager = ({
         // 'youtube', 'drive'… et conditionne la FACON dont le media est rendu : la
         // copie pouvait donc afficher son media de travers, ou pas du tout.
         //
-        // NOTE, verifiee et volontairement NON « corrigee » : `targetCategories` et
-        // `categoryFilterMode` (ciblage par categories, V154) ne sont PAS recopies
-        // non plus — mais les recopier ne servirait a rien. Mesure faite : le modele
-        // CampaignCreate de server.py ne les declare pas et les jette (extra=ignore),
-        // la logique d'envoi ne les lit NULLE PART (0 occurrence), et aucune campagne
-        // reelle n'en porte. C'est une fonctionnalite jamais branchee de bout en bout.
-        // Les copier ici donnerait l'illusion qu'elle marche.
+        // RÉACTIVATION 3B : `targetCategories` (segments de réactivation) est désormais
+        // LU par le moteur (`_campagne_resoudre_contacts`) — la copie le recopie donc.
+        // La note V360 (« jamais branché ») n'est plus vraie depuis ce lot.
+        targetCategories: Array.isArray(campaign.targetCategories) ? campaign.targetCategories : [],
         mediaType: campaign.mediaType || null,
         scheduledAt: null
       };

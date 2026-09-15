@@ -56,6 +56,10 @@ CONFIG_DEFAUT = {
 SEGMENTS_CONNUS = [
     "whatsapp", "email", "abonne_actif", "essai_gratuit", "abonnement_expire",
     "visiteur", "demarchable_whatsapp", "comptes_app", "a_completer", "interne_test",
+    # RÉACTIVATION 3B : lus sur l'HISTORIQUE CLIENT (réservations, essais, achats)
+    # par les règles de api/routes/reactivation.py — même fusion de personnes.
+    "essai_non_converti", "essai_presence_inconnue", "essai_non_reserve",
+    "ancien_participant", "ancien_abonne", "recent_non_abonne",
 ]
 
 # Ordre de préférence de l'identifiant renvoyé : le CRM d'abord, car c'est celui que
@@ -209,6 +213,7 @@ async def _calcule_personnes():
                 "mail": _normalise_email(d.get("email"), cfg),
                 "source": str(d.get("source") or ""),
                 "code": str(d.get("subscriptionCode") or d.get("code") or "").strip().upper(),
+                "nom": str(d.get("name") or ""),
             })
 
     # « Interne / test » : critère STRICT — la fiche porte réellement le numéro interne.
@@ -250,6 +255,21 @@ async def _calcule_personnes():
             abo_mail.setdefault(m, []).append(s)
         if s.get("code"):
             abo_code.setdefault(str(s["code"]).strip().upper(), []).append(s)
+    # RÉACTIVATION 3B : réservations et paiements, rattachés par e-mail (une
+    # lecture chacun, projections courtes) — l'historique client d'une personne.
+    from api.routes.reactivation import classer_personne, derniere_activite, est_donnee_test
+    resa_mail, pay_mail = {}, {}
+    for r in await db.reservations.find({}, {"_id": 0, "userEmail": 1, "userName": 1, "datetime": 1, "createdAt": 1, "validated": 1,
+                                             "absence_marked_at": 1, "discountCode": 1, "subscriptionId": 1, "courseName": 1, "isProduct": 1}).to_list(20000):
+        m = _normalise_email(r.get("userEmail"), cfg)
+        if m:
+            resa_mail.setdefault(m, []).append(r)
+    for p in await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0, "customer_email": 1, "created_at": 1, "amount": 1,
+                                                                             "amount_total": 1, "payment_status": 1}).to_list(20000):
+        m = _normalise_email(p.get("customer_email"), cfg)
+        if m:
+            pay_mail.setdefault(m, []).append(p)
+    _maintenant = datetime.now(timezone.utc)
 
     personnes = []
     for _, recs in groupes.items():
@@ -282,6 +302,16 @@ async def _calcule_personnes():
             etiquettes.add("comptes_app")
         if not tel_ok and not mail_ok:
             etiquettes.add("a_completer")
+        # RÉACTIVATION 3B : segments d'historique client. Une donnée de test ou un
+        # client actif n'en reçoit aucun (règles de reactivation.py).
+        _mails = {r["mail"] for r in recs if r["mail"]}
+        _noms = " ".join(r.get("nom") or "" for r in recs)
+        if _mails and not any(est_donnee_test(m, _noms) for m in _mails):
+            _dossier = {"subs": abos,
+                        "resas": [x for m in _mails for x in resa_mail.get(m, [])],
+                        "pays": [x for m in _mails for x in pay_mail.get(m, [])],
+                        "dernier_contact": None}
+            etiquettes |= classer_personne(_dossier, _maintenant)
 
         principal = sorted(
             [r for r in recs if r["id"]],
