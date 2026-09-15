@@ -452,7 +452,10 @@ function ToutesLesOffres({ ouvert, offres, mensuelRef, analyser, onOuvrirFiche, 
                         padding: '10px 12px', borderRadius: 14, cursor: 'pointer', color: '#fff',
                         background: fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.10)` : 'rgba(255,255,255,0.04)',
                         border: `1px solid ${fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.45)` : 'rgba(255,255,255,0.08)'}`,
+                        transition: 'background 0.15s, border-color 0.15s',
                       }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = `rgba(${RGB}, 0.14)`; e.currentTarget.style.borderColor = `rgba(${RGB}, 0.5)`; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.10)` : 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.45)` : 'rgba(255,255,255,0.08)'; }}
                     >
                       {/* Un conteneur flex DANS le bouton : un <button> en flex ne
                           laisse pas toujours ses enfants rétrécir, le prix sortait
@@ -581,12 +584,13 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
           data-testid="voir-toutes-les-offres"
           onClick={() => setToutes(true)}
           style={{
-            padding: '6px 12px', borderRadius: 999, cursor: 'pointer', border: 'none', background: 'transparent',
-            color: COULEUR, fontWeight: 600, fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6,
-            textDecoration: 'underline', textDecorationColor: `rgba(${RGB}, 0.45)`, textUnderlineOffset: 3,
+            padding: '4px 8px', borderRadius: 6, cursor: 'pointer', border: 'none', background: 'transparent',
+            color: 'rgba(255,255,255,0.75)', fontWeight: 500, fontSize: 12, lineHeight: 1.2, display: 'inline-flex', alignItems: 'center', gap: 5,
           }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--primary-color, #D91CD2)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; }}
         >
-          <SvgIcon name="grid" size={14} /> Voir toutes les offres
+          <SvgIcon name="grid" size={12} /> Voir toutes les offres
         </button>
       </div>
 

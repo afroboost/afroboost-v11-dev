@@ -155,3 +155,35 @@ test('miniature automatique par défaut (~1 s) une seule fois par vidéo ; Réin
   expect(trims[trims.length - 1]).toBeNull();
   expect(texte('vte-extrait')).toBe('00:21');
 });
+
+test('25 s, extrait 5 → 20 : lecture AVEC son au clic (geste utilisateur), 🔇 coupe, 🔊 rétablit ; ± ajustent au dixième ; zones exclues visibles', async () => {
+  const v = await monter({ trimStart: 5, trimEnd: 20 });
+  await metadonnees(v, 25);
+  expect(texte('vte-total')).toBe('00:25');
+  expect(texte('vte-extrait')).toBe('00:15');
+  expect(par('vte-exclu-avant').style.width).toBe('20%');
+  expect(par('vte-exclu-apres').style.left).toBe('80%');
+  // Avant tout clic : muet (aucun son automatique).
+  expect(v.muted).toBe(true);
+  await cliquer('vte-lire');
+  expect(v.currentTime).toBe(5);
+  expect(v.muted).toBe(false);                        // le clic autorise l'audio
+  expect(par('vte-son').getAttribute('aria-pressed')).toBe('true');
+  await cliquer('vte-son');
+  expect(v.muted).toBe(true);
+  expect(par('vte-son').getAttribute('aria-pressed')).toBe('false');
+  await cliquer('vte-son');
+  expect(v.muted).toBe(false);
+  await tick(v, 20);
+  expect(v.pause).toHaveBeenCalledTimes(1);
+  expect(v.currentTime).toBe(5);                      // fin à 20, retour à 5 (jamais 0)
+  await cliquer('vte-rejouer');
+  expect(v.currentTime).toBe(5);
+  // Réglage fin : Début +0,1 / Fin −0,1.
+  await cliquer('vte-debut-plus');
+  expect(trims[trims.length - 1]).toEqual({ start: 5.1, end: 20 });
+  await cliquer('vte-fin-moins');
+  expect(trims[trims.length - 1]).toEqual({ start: 5.1, end: 19.9 });
+  expect(texte('vte-debut-precis')).toBe('00:05.1');
+  expect(texte('vte-fin-precis')).toBe('00:20.9');   // formatTemps arrondit 19,9 → 00:20, dixième affiché .9
+});

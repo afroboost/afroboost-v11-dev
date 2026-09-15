@@ -14,6 +14,7 @@ import { PrixBoost, BoutonBoost, estSuperAdmin } from './publications/Boost'; //
 import { useBoostTribeLive, BoostTribeLiveOverlay, iconLive } from './live/BoostTribeLive'; // LIVE RAPIDE : porte unique
 import VideoTrimEditor from './VideoTrimEditor'; // L'UNIQUE éditeur vidéo (partagé avec OfferWizard)
 import { trimValide, useTrimVideo } from '../utils/videoTrim'; // découpe non destructive : lecture bornée
+import useLargeurEcran from '../utils/useLargeurEcran'; // modale : plein écran mobile, deux colonnes desktop
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -714,7 +715,7 @@ export const PublicationsCarousel = ({ publications, actions }) => {
 // edition (legende + nom affiche) et suppression. Rendu sous le formulaire de
 // la modale. `subscriberCode` vide = coach (auth par en-tete/JWT via
 // l'intercepteur) ; sinon abonne (code passe explicitement).
-const V268MyPublications = ({ subscriberCode, refreshKey }) => {
+const V268MyPublications = ({ subscriberCode, refreshKey, onEditerVideo }) => {
   const [items, setItems] = useState(null); // null = chargement
   const [editing, setEditing] = useState(null); // id en cours d'edition
   const [editCaption, setEditCaption] = useState('');
@@ -740,6 +741,9 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
   }, [subscriberCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startEdit = (p) => {
+    // Une publication VIDÉO s'ouvre dans l'éditeur partagé (découpe, miniature,
+    // légende, remplacement) ; une image garde l'édition en ligne de la légende.
+    if (p.media_type === 'video' && typeof onEditerVideo === 'function') { onEditerVideo(p); return; }
     setEditing(p.id);
     setEditCaption(p.caption || '');
     setEditName(p.display_name || p.subscriber_name || '');
@@ -1026,6 +1030,12 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
   // DÉCOUPE non destructive : { start, end } en secondes, ou null. Envoyée
   // avec la publication (`trim_start` / `trim_end`), l'original reste intact.
   const [trim, setTrim] = useState(null);
+  // MODIFIER UNE PUBLICATION EXISTANTE : la publication en cours d'édition
+  // (vidéo). Même éditeur : découpe seule, miniature seule, légende, ou
+  // remplacement de la vidéo. `null` = création.
+  const [edition, setEdition] = useState(null);
+  const { estMobile, largeur } = useLargeurEcran();
+  const deuxColonnes = largeur >= 960;
 
   // V269 — progression d'upload + succes
   const [uploadPct, setUploadPct] = useState(0);
@@ -1122,7 +1132,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
   // Miniature PAR DÉFAUT (capture automatique à ~1 s) : on a toujours une
   // miniature même si l'utilisateur ne capture rien lui-même.
   const miniatureParDefaut = (blob, url) => {
-    if (thumbnailBlob) return;                 // une capture choisie existe déjà
+    if (thumbnailBlob || thumbnailPreview) return;   // une miniature choisie (ou déjà publiée) existe : prioritaire
     if (thumbnailPreview) URL.revokeObjectURL(thumbnailPreview);
     setThumbnailBlob(blob);
     setThumbnailPreview(url);
@@ -1157,6 +1167,54 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
       // Repli miniature : on garde la capture par defaut deja en place.
       setShowCrop(false);
     }
+  };
+
+  const commencerEdition = (p) => {
+    revokeAll();
+    setError(''); setSuccess(false); setShowCrop(false);
+    setFile(null); setPreview(null); setCroppedBlob(null);
+    setMediaType('video');
+    setVideoUrl(p.media_url || null);
+    setTrim(trimValide(p.trim_start, p.trim_end));
+    setThumbnailBlob(null);
+    setThumbnailPreview(p.thumbnail_url || null);
+    setCaption(p.caption || '');
+    setEdition(p);
+  };
+  const annulerEdition = () => { clearFile(); setCaption(''); setEdition(null); setError(''); if (fileInputRef.current) fileInputRef.current.accept = 'image/*,video/*'; };
+
+  const handleSaveEdition = async () => {
+    if (!edition || uploading) return;
+    setUploading(true); setError(''); setUploadPct(0);
+    try {
+      const body = { caption: caption.trim().slice(0, 500) };
+      if (subscriberCode) body.subscriber_code = subscriberCode;
+      // REMPLACER LA VIDÉO : la nouvelle est envoyée d'abord ; si l'envoi échoue,
+      // rien n'est écrit et l'ancienne vidéo reste intacte.
+      if (file) {
+        setUploadName(file.name || 'vidéo');
+        const mediaData = await v269UploadToCloudinary(file, 'video', setUploadPct);
+        if (isFinite(mediaData.duration) && mediaData.duration > V421_DUREE_MAX_S) {
+          throw new Error('La vidéo dépasse ' + Math.round(V421_DUREE_MAX_S / 60) + ' minutes.');
+        }
+        body.media_url = mediaData.secure_url;
+        body.media_type = 'video';
+      }
+      if (thumbnailBlob) {
+        try { const td = await v269UploadToCloudinary(thumbnailBlob, 'image'); body.thumbnail_url = td.secure_url; }
+        catch (e) { /* miniature : best-effort */ }
+      } else if (file) {
+        body.thumbnail_url = '';               // nouvelle vidéo sans capture : plus d'ancienne miniature
+      }
+      body.trim_start = trim ? trim.start : null;
+      body.trim_end = trim ? trim.end : null;
+      await axios.put(`${API}/publications/${edition.id}`, body);
+      try { window.dispatchEvent(new CustomEvent('afroboost:publications-changed')); } catch (e) { /* ignore */ }
+      setSuccess(true); setScheduledMsg('Publication modifiée !');
+      setTimeout(() => { setSuccess(false); setScheduledMsg(''); annulerEdition(); }, 1200);
+    } catch (e) {
+      setError((e && e.message) || 'Modification impossible.');
+    } finally { setUploading(false); }
   };
 
   const handleUploadAndPublish = async () => {
@@ -1259,169 +1317,10 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
   // V290 : createPortal vers document.body — dans le ChatWidget (plein écran
   // mobile), un ancêtre avec `transform` crée un containing block qui piégeait le
   // `position: fixed`, masquant « Mes publications » sous le formulaire sur mobile.
-  return createPortal(
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 9998, background: 'rgba(0,0,0,0.9)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ background: '#1a1a2e', borderRadius: 16, padding: 24, maxWidth: 380, width: '100%', maxHeight: '92vh', overflowY: 'auto' }}
-        data-testid="publish-modal"
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ color: '#fff', fontSize: '1rem', margin: 0 }}>Nouvelle publication</h3>
-          <button onClick={onClose} aria-label="Fermer" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', padding: 0 }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-
-        {/* V280 — Sessions live BoostTribe (réservé abonnés avec crédit) */}
-        <BoostTribeSection subscriberCode={subscriberCode} />
-
-        {/* V268c (F1A) — ecran de recadrage image, en overlay plein ecran.
-            react-easy-crop exige un conteneur POSITIONNE et dimensionne. */}
-        {showCrop && cropSrc && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'fixed', inset: 0, zIndex: 10000, background: '#000',
-              display: 'flex', flexDirection: 'column'
-            }}
-            data-testid="publish-cropper"
-          >
-            <div style={{ position: 'relative', flex: 1 }}>
-              <Cropper
-                image={cropSrc}
-                crop={crop}
-                zoom={zoom}
-                aspect={aspect}
-                onCropChange={setCrop}
-                onZoomChange={setZoom}
-                onCropComplete={(_, px) => setCroppedAreaPixels(px)}
-              />
-            </div>
-            <div style={{ padding: 14, background: '#0a0a1a' }}>
-              {/* Formats */}
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 12 }}>
-                {[{ a: 1, l: 'Carré' }, { a: 4 / 5, l: 'Portrait' }, { a: 16 / 9, l: 'Paysage' }].map(o => (
-                  <button
-                    key={o.l}
-                    type="button"
-                    onClick={() => setAspect(o.a)}
-                    style={{
-                      padding: '7px 14px', borderRadius: 20, cursor: 'pointer', fontSize: '0.8rem',
-                      border: '1px solid ' + (Math.abs(aspect - o.a) < 0.01 ? 'var(--primary-color, #D91CD2)' : '#333'),
-                      background: Math.abs(aspect - o.a) < 0.01 ? 'var(--primary-color, #D91CD2)' : 'transparent',
-                      color: '#fff', fontWeight: 600
-                    }}
-                  >
-                    {o.l}
-                  </button>
-                ))}
-              </div>
-              {/* V270 Fix 2 — slider de zoom FIN (piste 4px, pouce custom via
-                  la classe v270-range definie plus bas). */}
-              <input
-                className="v270-range"
-                type="range" min={1} max={3} step={0.01} value={zoom}
-                onChange={(e) => setZoom(Number(e.target.value))}
-                aria-label="Zoom"
-              />
-              <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-                <button type="button"
-                  onClick={() => { if (cropTarget === 'thumb') { setShowCrop(false); } else { clearFile(); } }}
-                  style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #333', background: 'transparent', color: '#999', cursor: 'pointer', fontWeight: 600 }}>
-                  Annuler
-                </button>
-                <button type="button" onClick={applyCrop}
-                  style={{ flex: 1, padding: '11px', borderRadius: 12, border: 'none', background: 'var(--primary-color, #D91CD2)', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
-                  Valider
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* V270 Fix 2 : slider FIN reutilise par le zoom du recadrage ET le
-            scrubber video. Piste 4px, pouce rond #D91CD2. */}
-        <style>{`
-          .v270-range { width: 100%; height: 4px; -webkit-appearance: none; appearance: none;
-            background: #555; border-radius: 2px; outline: none; margin-top: 8px; }
-          .v270-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
-            width: 16px; height: 16px; border-radius: 50%; background: var(--primary-color, #D91CD2);
-            cursor: pointer; border: none; }
-          .v270-range::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%;
-            background: var(--primary-color, #D91CD2); cursor: pointer; border: none; }
-        `}</style>
-
-        {(!preview && !videoUrl) ? (
-          <div
-            onClick={() => fileInputRef.current && fileInputRef.current.click()}
-            style={{
-              width: '100%', aspectRatio: '9/16', maxHeight: 380, background: '#0a0a1a',
-              borderRadius: 12, border: '2px dashed #333', display: 'flex',
-              flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              cursor: 'pointer', gap: 12
-            }}
-            data-testid="publish-picker"
-          >
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--primary-color, #D91CD2)' }} strokeWidth="2" strokeLinecap="round">
-              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            <p style={{ color: '#999', fontSize: '0.85rem', margin: 0 }}>Appuyez pour choisir</p>
-            <p style={{ color: '#666', fontSize: '0.7rem', margin: 0 }}>Image ou vidéo (format 9:16)</p>
-          </div>
-        ) : preview ? (
-          /* Apercu image (recadree). */
-          <div style={{ position: 'relative', width: '100%', borderRadius: 12, overflow: 'hidden', background: '#000' }}>
-            <img src={preview} alt="Aperçu" style={{ width: '100%', maxHeight: 380, objectFit: 'contain', display: 'block' }} />
-            <button onClick={clearFile} aria-label="Changer de média"
-              style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round">
-                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-        ) : (
-          /* L'ÉDITEUR VIDÉO PARTAGÉ (le même que « Modifier l'offre > Médias ») :
-             aperçu, ✂ découpe (début / fin / durée finale), ▶ aperçu de
-             l'extrait, choix d'une image et « Capturer cette image comme
-             miniature » — dans l'extrait. Flux : upload → découper →
-             prévisualiser → choisir une image → capturer → publier. */
-          <div style={{ position: 'relative' }} data-testid="publish-video-editor">
-            <VideoTrimEditor
-              videoUrl={videoUrl}
-              trimStart={trim ? trim.start : null}
-              trimEnd={trim ? trim.end : null}
-              aspectRatio="auto"
-              hauteurMax="300px"
-              thumbnail={thumbnailPreview || ''}
-              onTrimChange={setTrim}
-              onThumbnailCapture={captureAndCrop}
-              onAutoCapture={miniatureParDefaut}
-            />
-            <button onClick={clearFile} aria-label="Changer de média"
-              style={{ position: 'absolute', top: 8, right: 8, zIndex: 2, background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round">
-                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-        )}
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*,video/*"
-          onChange={handleFileSelect}
-          style={{ display: 'none' }}
-        />
+  // Le formulaire (légende, options, bouton) : rendu dans la colonne de droite,
+  // ou remis à l'éditeur vidéo en `complement` sur desktop.
+  const formulaire = (
+    <>
 
         {/* V268 (F5): legende. Optionnelle, 500 max, compteur discret. */}
         <textarea
@@ -1441,12 +1340,14 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
           {caption.length}/500
         </p>
 
+        {!edition && (
         <p style={{ color: '#666', fontSize: '0.7rem', marginTop: 8, display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
             <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
           </svg>
           Visible 48 h, puis supprimée automatiquement
         </p>
+        )}
 
         {error && (
           <p style={{ color: '#E53E3E', fontSize: '0.8rem', textAlign: 'center', marginTop: 8 }}>{error}</p>
@@ -1466,8 +1367,8 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
         )}
 
         {/* V327 : option « Programmer ». Repliée par défaut -> le formulaire est
-            identique à avant tant qu'on ne la déplie pas. */}
-        {(preview || videoUrl) && !success && !showCrop && (
+            identique à avant tant qu'on ne la déplie pas. Sans objet en édition. */}
+        {(preview || videoUrl) && !success && !showCrop && !edition && (
           <div style={{ marginTop: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             <button
@@ -1557,7 +1458,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
             selectionnee (videoUrl), hors ecran de recadrage. */}
         {(preview || videoUrl) && !success && !showCrop && (
           <button
-            onClick={handleUploadAndPublish}
+            onClick={edition ? handleSaveEdition : handleUploadAndPublish}
             disabled={uploading}
             style={{
               width: '100%', padding: '12px', borderRadius: 25,
@@ -1567,12 +1468,208 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
             }}
             data-testid="publish-submit"
           >
-            {uploading ? 'Publication en cours…' : (scheduleAt ? 'Programmer' : 'Publier')}
+            {uploading ? (edition ? 'Enregistrement…' : 'Publication en cours…') : (edition ? 'Enregistrer les modifications' : (scheduleAt ? 'Programmer' : 'Publier'))}
           </button>
         )}
+        {edition && !success && (
+          <button type="button" onClick={annulerEdition} data-testid="publish-annuler-edition"
+            style={{ width: '100%', padding: '9px', borderRadius: 25, border: '1px solid #333', background: 'transparent', color: '#999', fontSize: '0.85rem', cursor: 'pointer', marginTop: 8 }}>
+            Annuler la modification
+          </button>
+        )}
+    </>
+  );
 
-        {/* V268b (F8): mes publications, sous le formulaire — edition + suppression. */}
-        <V268MyPublications subscriberCode={subscriberCode} refreshKey={0} />
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9998, background: 'rgba(0,0,0,0.9)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: estMobile ? 0 : 16
+      }}
+    >
+      {/* MOBILE : quasi plein écran (100dvh, une colonne). DESKTOP : large
+          (min(1040px, 94vw)), deux colonnes dès qu'un média est choisi —
+          grande preview à gauche, réglages à droite, moins de défilement. */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={estMobile
+          ? { background: '#1a1a2e', borderRadius: 0, padding: '14px 14px max(14px, env(safe-area-inset-bottom))', width: '100%', height: '100dvh', maxHeight: '100dvh', overflowY: 'auto', boxSizing: 'border-box' }
+          : { background: '#1a1a2e', borderRadius: 16, padding: 24, width: '100%', maxWidth: (preview || videoUrl) ? 'min(1040px, 94vw)' : 480, maxHeight: '92vh', overflowY: 'auto', boxSizing: 'border-box' }}
+        data-testid="publish-modal"
+        data-mode={edition ? 'edition' : 'creation'}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h3 style={{ color: '#fff', fontSize: '1rem', margin: 0 }}>{edition ? 'Modifier la publication' : 'Nouvelle publication'}</h3>
+          <button onClick={onClose} aria-label="Fermer" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', padding: 0 }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        {/* V280 — Sessions live BoostTribe (réservé abonnés avec crédit) */}
+        <BoostTribeSection subscriberCode={subscriberCode} />
+
+        {/* V268c (F1A) — ecran de recadrage image, en overlay plein ecran.
+            react-easy-crop exige un conteneur POSITIONNE et dimensionne. */}
+        {showCrop && cropSrc && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 10000, background: '#000',
+              display: 'flex', flexDirection: 'column'
+            }}
+            data-testid="publish-cropper"
+          >
+            <div style={{ position: 'relative', flex: 1 }}>
+              <Cropper
+                image={cropSrc}
+                crop={crop}
+                zoom={zoom}
+                aspect={aspect}
+                onCropChange={setCrop}
+                onZoomChange={setZoom}
+                onCropComplete={(_, px) => setCroppedAreaPixels(px)}
+              />
+            </div>
+            <div style={{ padding: 14, background: '#0a0a1a' }}>
+              {/* Formats */}
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 12 }}>
+                {[{ a: 1, l: 'Carré' }, { a: 4 / 5, l: 'Portrait' }, { a: 16 / 9, l: 'Paysage' }].map(o => (
+                  <button
+                    key={o.l}
+                    type="button"
+                    onClick={() => setAspect(o.a)}
+                    style={{
+                      padding: '7px 14px', borderRadius: 20, cursor: 'pointer', fontSize: '0.8rem',
+                      border: '1px solid ' + (Math.abs(aspect - o.a) < 0.01 ? 'var(--primary-color, #D91CD2)' : '#333'),
+                      background: Math.abs(aspect - o.a) < 0.01 ? 'var(--primary-color, #D91CD2)' : 'transparent',
+                      color: '#fff', fontWeight: 600
+                    }}
+                  >
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+              {/* V270 Fix 2 — slider de zoom FIN (piste 4px, pouce custom via
+                  la classe v270-range definie plus bas). */}
+              <input
+                className="v270-range"
+                type="range" min={1} max={3} step={0.01} value={zoom}
+                onChange={(e) => setZoom(Number(e.target.value))}
+                aria-label="Zoom"
+              />
+              <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                <button type="button"
+                  onClick={() => { if (cropTarget === 'thumb') { setShowCrop(false); } else { clearFile(); } }}
+                  style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #333', background: 'transparent', color: '#999', cursor: 'pointer', fontWeight: 600 }}>
+                  Annuler
+                </button>
+                <button type="button" onClick={applyCrop}
+                  style={{ flex: 1, padding: '11px', borderRadius: 12, border: 'none', background: 'var(--primary-color, #D91CD2)', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
+                  Valider
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* V270 Fix 2 : slider FIN reutilise par le zoom du recadrage ET le
+            scrubber video. Piste 4px, pouce rond #D91CD2. */}
+        <style>{`
+          .v270-range { width: 100%; height: 4px; -webkit-appearance: none; appearance: none;
+            background: #555; border-radius: 2px; outline: none; margin-top: 8px; }
+          .v270-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+            width: 16px; height: 16px; border-radius: 50%; background: var(--primary-color, #D91CD2);
+            cursor: pointer; border: none; }
+          .v270-range::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%;
+            background: var(--primary-color, #D91CD2); cursor: pointer; border: none; }
+        `}</style>
+
+        {/* Deux colonnes desktop : pour une IMAGE, aperçu | formulaire ; pour une
+            VIDÉO, l'éditeur partagé prend toute la largeur et reçoit le
+            formulaire en `complement` (grande vidéo à gauche ; découpe,
+            miniature, légende et actions à droite). */}
+        <div style={deuxColonnes && preview ? { display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr)', gap: 20, alignItems: 'start' } : undefined} data-testid="publish-grille">
+        <div style={{ minWidth: 0 }}>
+        {(!preview && !videoUrl) ? (
+          <div
+            onClick={() => fileInputRef.current && fileInputRef.current.click()}
+            style={{
+              width: '100%', aspectRatio: '9/16', maxHeight: 380, background: '#0a0a1a',
+              borderRadius: 12, border: '2px dashed #333', display: 'flex',
+              flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', gap: 12
+            }}
+            data-testid="publish-picker"
+          >
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--primary-color, #D91CD2)' }} strokeWidth="2" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            <p style={{ color: '#999', fontSize: '0.85rem', margin: 0 }}>Appuyez pour choisir</p>
+            <p style={{ color: '#666', fontSize: '0.7rem', margin: 0 }}>Image ou vidéo (format 9:16)</p>
+          </div>
+        ) : preview ? (
+          /* Apercu image (recadree). */
+          <div style={{ position: 'relative', width: '100%', borderRadius: 12, overflow: 'hidden', background: '#000' }}>
+            <img src={preview} alt="Aperçu" style={{ width: '100%', maxHeight: 380, objectFit: 'contain', display: 'block' }} />
+            <button onClick={clearFile} aria-label="Changer de média"
+              style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        ) : (
+          /* L'ÉDITEUR VIDÉO PARTAGÉ (le même que « Modifier l'offre > Médias ») :
+             aperçu, ✂ découpe (début / fin / durée finale), ▶ aperçu de
+             l'extrait, choix d'une image et « Capturer cette image comme
+             miniature » — dans l'extrait. Flux : upload → découper →
+             prévisualiser → choisir une image → capturer → publier. */
+          <div style={{ position: 'relative' }} data-testid="publish-video-editor">
+            <VideoTrimEditor
+              videoUrl={videoUrl}
+              trimStart={trim ? trim.start : null}
+              trimEnd={trim ? trim.end : null}
+              aspectRatio="auto"
+              hauteurMax={deuxColonnes ? '60vh' : (estMobile ? '38vh' : '300px')}
+              thumbnail={thumbnailPreview || ''}
+              onTrimChange={setTrim}
+              onThumbnailCapture={captureAndCrop}
+              onAutoCapture={miniatureParDefaut}
+              disposition={deuxColonnes ? 'colonnes' : 'colonne'}
+              complement={deuxColonnes ? formulaire : null}
+              sousApercu={edition ? (
+                <button type="button" data-testid="publish-remplacer-video"
+                  onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'video/*'; fileInputRef.current.click(); } }}
+                  style={{ width: '100%', padding: '9px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: '#fff', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}>
+                  {file ? 'Nouvelle vidéo choisie : ' + (file.name || 'vidéo') : 'Remplacer la vidéo'}
+                </button>
+              ) : (
+                <button type="button" onClick={clearFile} data-testid="publish-changer-media"
+                  style={{ justifySelf: 'start', padding: '5px 10px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: 'rgba(255,255,255,0.75)', fontSize: '0.75rem', cursor: 'pointer' }}>
+                  Changer de média
+                </button>
+              )}
+            />
+          </div>
+        )}
+        </div>
+        {!(deuxColonnes && videoUrl) ? <div style={{ minWidth: 0 }}>{formulaire}</div> : null}
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,video/*"
+          onChange={handleFileSelect}
+          style={{ display: 'none' }}
+        />
+
+        {/* V268b (F8): mes publications, sous le formulaire — edition + suppression.
+            Une publication vidéo s'ouvre dans l'éditeur ci-dessus (même composant). */}
+        <V268MyPublications subscriberCode={subscriberCode} refreshKey={0} onEditerVideo={commencerEdition} />
       </div>
     </div>,
     document.body

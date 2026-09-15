@@ -112,3 +112,43 @@ test('le mur : une publication découpée 3 → 18 se joue depuis 3 s et reboucl
   v.currentTime = 18.2; await act(async () => { v.dispatchEvent(new Event('timeupdate')); });
   expect(v.currentTime).toBe(3);
 });
+
+test('✏️ modifier une publication vidéo existante : éditeur préchargé (trim 0 → 20, miniature), nouveau trim 4 → 16 enregistré par PUT sans réupload', async () => {
+  const pub = { id: 'pub-9', media_type: 'video', media_url: '/api/files/pub/video_pub.mp4', thumbnail_url: '/api/files/pub/image_mini.jpg', trim_start: 0, trim_end: 20, caption: 'Ancienne légende', display_name: 'Coach', created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 3600e3).toISOString(), remaining_hours: 40 };
+  axios.get.mockResolvedValue({ data: [pub] });
+  axios.put.mockResolvedValue({ data: { status: 'ok' } });
+  await monter(<PublishModal subscriberCode="" onClose={() => {}} onPublished={() => {}} />);
+  await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+  const crayon = document.querySelector('button[aria-label="Modifier"]');
+  expect(crayon).not.toBeNull();
+  await act(async () => { crayon.click(); });
+  expect(par('publish-modal').getAttribute('data-mode')).toBe('edition');
+  expect(par('video-trim-editor')).not.toBeNull();
+  expect(par('vte-apercu').querySelector('video').getAttribute('src')).toBe('/api/files/pub/video_pub.mp4');
+  expect(par('vte-miniature-apercu').getAttribute('src')).toBe('/api/files/pub/image_mini.jpg');
+  expect(par('publish-caption').value).toBe('Ancienne légende');
+  expect(par('publish-remplacer-video')).not.toBeNull();
+  const v = par('vte-apercu').querySelector('video');
+  Object.defineProperty(v, 'duration', { configurable: true, get: () => 25 });
+  Object.defineProperty(v, 'videoWidth', { configurable: true, get: () => 1920 });
+  Object.defineProperty(v, 'videoHeight', { configurable: true, get: () => 1080 });
+  Object.defineProperty(v, 'readyState', { configurable: true, get: () => 2 });
+  v.play = () => Promise.resolve(); v.pause = () => {};
+  await act(async () => { v.dispatchEvent(new Event('loadedmetadata')); v.dispatchEvent(new Event('seeked')); await new Promise((r) => setTimeout(r, 30)); });
+  expect(par('vte-debut').textContent).toBe('00:00');
+  expect(par('vte-fin').textContent).toBe('00:20');
+  // La miniature publiée reste prioritaire : l'auto-capture ne la remplace pas.
+  expect(par('vte-miniature-apercu').getAttribute('src')).toBe('/api/files/pub/image_mini.jpg');
+  await glisser('vte-start', 4);
+  await glisser('vte-end', 16);
+  expect(par('vte-extrait').textContent).toBe('00:12');
+  await act(async () => { par('publish-submit').click(); await new Promise((r) => setTimeout(r, 40)); });
+  expect(axios.put).toHaveBeenCalledTimes(1);
+  const [url, body] = axios.put.mock.calls[0];
+  expect(url).toMatch(/\/publications\/pub-9$/);
+  expect(body.trim_start).toBe(4);
+  expect(body.trim_end).toBe(16);
+  expect(body.caption).toBe('Ancienne légende');
+  expect(body.media_url).toBeUndefined();            // pas de réupload
+  expect(body.thumbnail_url).toBeUndefined();        // miniature inchangée
+});
