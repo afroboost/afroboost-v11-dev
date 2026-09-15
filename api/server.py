@@ -46560,6 +46560,72 @@ _M1_MAX_SEANCES = 12
 # autres restent dans le document (SEO, `Event` JSON-LD, navigation sans
 # JavaScript) — elles sont seulement repliees.
 _M1_SEANCES_VISIBLES = 3
+# P3-FAQ — LES QUESTIONS QU'ON NOUS POSE VRAIMENT, ECRITES UNE SEULE FOIS.
+#
+# POURQUOI ELLE EXISTE. La page prouvait qu'il y a des cours et ou les
+# reserver ; elle ne levait aucune des objections qui font fermer l'onglet.
+# Les six premieres questions ci-dessous sont celles qui reviennent le plus
+# dans les messages recus : « je ne sais pas danser », « je vais avoir l'air
+# ridicule », « je viens seul(e) ». Elles portent aussi la longue traine que
+# la page ne captait pas (« cours de danse debutant », « je ne sais pas
+# danser », « cours le dimanche »).
+#
+# CE QU'ELLE NE DIT PAS, ET POURQUOI. Aucun prix chiffre : les tarifs vivent
+# dans le tunnel de reservation, et un montant fige dans ce fichier
+# vieillirait en silence. Aucune adresse : le planning ci-dessus porte deja
+# le lieu de chaque seance, et la page n'a pas d'adresse permanente a
+# declarer. Aucun temoignage, aucun effectif, aucune promesse de resultat.
+#
+# Chaque entree est (question, reponse). Le HTML et le `FAQPage` JSON-LD
+# derivent TOUS LES DEUX de cette liste : ils ne peuvent pas diverger.
+_M1_FAQ = (
+    ("Je ne sais pas danser, est-ce que je peux venir ?",
+     "Oui. La majorite des personnes qui viennent n'ont jamais pris de cours "
+     "de danse. Le coach montre chaque mouvement face au groupe et tu le "
+     "reprends a ton rythme : personne ne te corrige devant les autres."),
+    ("J'ai peur du regard des autres.",
+     "Tout le monde regarde le coach, pas ses voisins. Avec le casque sur les "
+     "oreilles, chacun est dans sa musique et dans son effort, ce qui rend le "
+     "premier cours beaucoup moins intimidant qu'une salle classique."),
+    ("C'est quoi exactement, le cours au casque ?",
+     "Chaque participant recoit un casque audio qui diffuse la musique et la "
+     "voix du coach. Le son est net pour toi, sans sono qui hurle, et la "
+     "seance peut avoir lieu dehors comme en salle sans deranger personne. "
+     "Le casque est fourni, tu n'as rien a apporter."),
+    ("Je viens seul(e), est-ce que c'est genant ?",
+     "Non, la plupart des gens arrivent seuls. Le cours est collectif et se "
+     "fait face au coach : tu n'as pas besoin de partenaire, et tu repars "
+     "generalement en ayant parle a quelqu'un."),
+    ("Quel niveau de forme faut-il ?",
+     "Aucun niveau prealable n'est demande. Tu regles ton intensite toi-meme : "
+     "on peut suivre la choregraphie en douceur ou pousser le cardio. Si tu "
+     "as une blessure ou un doute medical, parles-en a ton medecin avant."),
+    ("Comment se passe le cours d'essai offert ?",
+     "Tu reserves ta place depuis cette page, tu recois la confirmation, et "
+     "tu viens. L'essai concerne la premiere seance, une seule fois par "
+     "personne. Tu decides ensuite si tu continues : il n'y a rien a signer "
+     "le jour meme."),
+    ("Quand ont lieu les cours ?",
+     "Les dates, horaires et lieux des prochaines seances sont affiches plus "
+     "haut sur cette page : ils viennent directement du planning et changent "
+     "selon la saison. Des seances ont lieu en semaine comme le week-end."),
+    ("Combien de temps dure une seance ?",
+     "Environ une heure, echauffement et retour au calme compris."),
+    ("Qu'est-ce que je dois porter et apporter ?",
+     "Une tenue de sport dans laquelle tu es a l'aise, des baskets propres et "
+     "une bouteille d'eau. Le casque est fourni."),
+    ("Y a-t-il un age limite ?",
+     "Les cours sont concus pour les adultes, sans limite d'age haute. "
+     "L'intensite se regle individuellement."),
+    ("Faut-il s'abonner pour venir ?",
+     "Non. Le premier cours est offert, et il existe ensuite plusieurs "
+     "formules, a la seance comme par abonnement. Le detail et les tarifs a "
+     "jour s'affichent au moment de la reservation."),
+    ("Est-ce que ca se passe en francais ?",
+     "Oui, le cours est anime en francais. Les mouvements sont montres, ce "
+     "qui permet de suivre meme si le francais n'est pas ta langue "
+     "principale."),
+)
 
 
 def _m1_echapper(valeur):
@@ -46749,6 +46815,21 @@ async def m1_page_essai_neuchatel(request: Request):
     _cta = ('<a class="cta" href="%s">Réserver mon premier cours gratuit</a>'
             % _lien)
 
+    # P3-FAQ — un seul parcours de `_M1_FAQ` alimente l'affichage ET les
+    # donnees structurees. `_m1_echapper` protege le HTML ; le JSON-LD porte
+    # le texte brut, `_m1_jsonld` se chargeant deja de neutraliser `<`.
+    _faq_html = "".join(
+        '<details class="q"><summary>%s</summary><div class="r"><p>%s</p></div></details>'
+        % (_m1_echapper(_q), _m1_echapper(_r))
+        for _q, _r in _M1_FAQ)
+    _faq_ld = {
+        "@context": "https://schema.org", "@type": "FAQPage",
+        "mainEntity": [
+            {"@type": "Question", "name": _q,
+             "acceptedAnswer": {"@type": "Answer", "text": _r}}
+            for _q, _r in _M1_FAQ],
+    }
+
     _structure = _m1_jsonld([
         {"@context": "https://schema.org", "@type": "WebPage",
          "name": _titre, "description": _desc, "url": _M1_SITE + _M1_CHEMIN,
@@ -46757,6 +46838,7 @@ async def m1_page_essai_neuchatel(request: Request):
          "name": "Afroboost", "url": _M1_SITE,
          "logo": _M1_SITE + "/logo512.png",
          "areaServed": "Neuchâtel, Suisse"},
+        _faq_ld,
     ] + _evenements)
 
     _html = """<!doctype html><html lang="fr"><head>
@@ -46841,6 +46923,11 @@ summary:focus-visible{outline:2px solid var(--p);outline-offset:2px}
 .s-lieu{color:#e8e8f0;font-size:.94rem}
 .s-nom{color:#a9a9b8;font-size:.88rem}
 .vide{color:#a9a9b8}
+/* ---- FAQ : meme <details> natif que le planning, sans JavaScript ---- */
+.q summary{font-weight:600;font-size:.98rem;line-height:1.4}
+.q summary::marker{color:var(--p)}
+.q .r{padding:0 16px 14px}
+.q .r p{margin:0;color:#d7d7e2;font-size:.95rem}
 .fin{text-align:center;border-top:1px solid rgba(255,255,255,.12);padding-top:32px}
 .fin .cta{margin-top:18px}
 </style>
@@ -46872,6 +46959,10 @@ gratuitement, puis choisis la séance qui te convient.</p>
 <p class="note">Dates, horaires et lieux viennent directement du planning
 Afroboost. Le lieu exact est indiqué avec chaque séance.</p>
 </section>
+<section class="faq">
+<h2>Questions fréquentes</h2>
+%(faq)s
+</section>
 <section class="fin">
 <h2>Ton premier cours est offert</h2>
 <p>Ton premier cours d’essai Afroboost est offert.</p>
@@ -46883,6 +46974,7 @@ Les autres formules restent payantes.</p>
 </body></html>""" % {
         "titre": _titre, "desc": _desc, "site": _M1_SITE, "chemin": _M1_CHEMIN,
         "structure": _structure, "cta": _cta, "planning": _planning, "alt": _alt,
+        "faq": _faq_html,
     }
     return HTMLResponse(content=_html, status_code=200)
 
