@@ -1,9 +1,13 @@
 /**
- * AnalyticsCockpit — PHASE 1 (participants / réservations).
+ * AnalyticsCockpit — PHASE 1 (participants / réservations) + PHASE 2 (revenus,
+ * abonnements, essais & conversion).
  *
  * Un seul appel : GET /api/analytics/cockpit. Le serveur calcule TOUT depuis sa
- * table de faits ; cet écran n'additionne rien, ne devine rien — il affiche, et
- * il affiche aussi la COUVERTURE (présence vérifiée sur N, valeur connue sur N).
+ * table de faits et sa table d'achats ; cet écran n'additionne rien, ne devine
+ * rien — il affiche, et il affiche aussi la COUVERTURE (présence vérifiée sur N,
+ * valeur connue sur N) et le PÉRIMÈTRE de chaque section (les sections de la
+ * phase 2 sont globales période/coach : le filtre cours ne s'y applique pas, et
+ * l'écran le dit au lieu de mélanger en silence).
  *
  * ACCÈS : jeton signé exigé par le serveur (401/403 sinon). Le périmètre coach
  * est imposé côté serveur ; le filtre « coach » n'a d'effet que pour le
@@ -38,6 +42,21 @@ const LIBELLES_DELAI = {
   '4_7_jours': '4 à 7 jours', plus_7_jours: '+ de 7 jours', inconnu: 'Inconnu',
 };
 const LIBELLES_FIDELITE = { '1': '1 participation', '2_5': '2 à 5', '6_10': '6 à 10', plus_10: '+ de 10' };
+const LIBELLES_MOYEN = {
+  stripe_card: 'Stripe — carte', stripe_twint: 'Stripe — TWINT', stripe_indetermine: 'Stripe — moyen non déterminé',
+  twint: 'TWINT (manuel)', virement: 'Virement', especes: 'Espèces', mobile_money: 'Mobile Money', offert: 'Offert', inconnu: 'Inconnu',
+};
+const LIBELLES_CATEGORIE = { pulse_x10: 'Pulse X10', abonnement: 'Abonnement', carte_membre: 'Carte membre', essai: 'Essai', autre: 'Autre' };
+
+/** Mise en forme d'un montant déjà calculé par le serveur — aucune addition ici. */
+export function chf(v) {
+  if (v === null || v === undefined) return '—';
+  const n = Number(v);
+  if (Number.isNaN(n)) return '—';
+  const [ent, dec] = n.toFixed(2).split('.');
+  return `${ent.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')},${dec} CHF`;
+}
+const pct = (v) => (v === null || v === undefined ? '—' : `${String(v).replace('.', ',')} %`);
 
 /** Aujourd'hui (local) au format YYYY-MM-DD — pour le mode personnalisé. */
 export function aujourdhuiISO(d) {
@@ -97,6 +116,186 @@ const Bloc = ({ titre, qualite, children, testid }) => (
 
 const styleTooltip = { background: 'rgba(15,15,25,0.95)', border: BORDURE, borderRadius: 8, color: '#fff', fontSize: 12 };
 const axe = { stroke: 'rgba(255,255,255,0.35)', fontSize: 10 };
+const note = { color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 4 };
+const titreSection = { color: '#fff', fontSize: 15, fontWeight: 800, marginTop: 6, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 };
+
+/** Le périmètre d'une section globale, dit noir sur blanc quand un cours est filtré. */
+const Perimetre = ({ courseId, texte }) => (
+  <span data-testid="perimetre-global" style={{
+    fontSize: 10, fontWeight: 600, padding: '1px 8px', borderRadius: 999, textTransform: 'uppercase',
+    border: `1px solid ${courseId ? 'rgba(251, 191, 36, 0.9)' : 'rgba(255,255,255,0.25)'}`,
+    color: courseId ? 'rgba(251, 191, 36, 0.95)' : 'rgba(255,255,255,0.5)',
+  }}>{courseId ? 'Global période/coach — filtre cours NON appliqué' : (texte || 'Global période/coach')}</span>
+);
+
+function SectionRevenus({ rev, courseId }) {
+  const moyens = Object.keys(rev.par_moyen || {}).filter((k) => rev.par_moyen[k].nombre > 0)
+    .map((k) => ({ moyen: LIBELLES_MOYEN[k] || k, montant: rev.par_moyen[k].montant, nombre: rev.par_moyen[k].nombre }));
+  const vc = rev.valeur_par_cours || { cours: [] };
+  return (
+    <div data-testid="section-revenus" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={titreSection}>Revenus <Badge niveau={rev.qualite && rev.qualite.montants} /> <Perimetre courseId={courseId} /></div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        <Carte testid="kpi-ca" valeur={chf(rev.ca_encaisse)} libelle="CA encaissé (prouvé)" precision={`Stripe ${chf(rev.ca_stripe)} · manuel ${chf(rev.ca_manuel)}`} />
+        <Carte testid="kpi-transactions" valeur={rev.transactions_payees} libelle="Achats payés" precision={`${rev.gratuits} gratuit(s) / offert(s)`} />
+        <Carte testid="kpi-panier" valeur={chf(rev.panier_moyen)} libelle="Panier moyen" />
+        <Carte testid="kpi-revenu-participant" valeur={chf(rev.revenu_par_participant)} libelle="Revenu / acheteur unique" precision={`${rev.acheteurs_uniques} acheteur(s)`} />
+        <Carte testid="kpi-pending" valeur={rev.en_attente.nombre} libelle="Paiements en attente" precision={`${chf(rev.en_attente.montant_declare)} déclarés, hors CA`} />
+        <Carte testid="kpi-non-prouve" valeur={rev.declare_non_prouve.nombre} libelle="Montants déclarés non prouvés" precision={`${chf(rev.declare_non_prouve.montant)} hors CA · ${rev.montant_inconnu} inconnu(s)`} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+        <Bloc titre="Évolution du CA encaissé" testid="graph-ca">
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={rev.evolution || []}>
+              <CartesianGrid stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="periode" tick={axe} />
+              <YAxis yAxisId="chf" tick={axe} width={40} />
+              <YAxis yAxisId="n" orientation="right" tick={axe} allowDecimals={false} width={24} />
+              <Tooltip contentStyle={styleTooltip} formatter={(v, n) => (n === 'CA' ? chf(v) : v)} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Line yAxisId="chf" isAnimationActive={false} type="monotone" dataKey="ca" name="CA" stroke={PRIMAIRE} strokeWidth={2} dot={false} />
+              <Line yAxisId="n" isAnimationActive={false} type="monotone" dataKey="achats" name="Achats" stroke={SECONDAIRE} strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </Bloc>
+        <Bloc titre="Répartition des paiements" qualite={rev.qualite && rev.qualite.moyen_paiement} testid="bloc-moyens">
+          {moyens.length === 0 ? <div style={note}>Aucun encaissement prouvé sur la période.</div> : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={moyens} layout="vertical">
+                <CartesianGrid stroke="rgba(255,255,255,0.06)" />
+                <XAxis type="number" tick={axe} />
+                <YAxis type="category" dataKey="moyen" tick={axe} width={150} />
+                <Tooltip contentStyle={styleTooltip} formatter={(v, n) => (n === 'Montant' ? chf(v) : v)} />
+                <Bar isAnimationActive={false} dataKey="montant" name="Montant" fill={PRIMAIRE} radius={[0, 6, 6, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+          <div style={note}>
+            {moyens.map((m) => `${m.moyen} : ${m.nombre} (${chf(m.montant)})`).join(' · ')}
+            {rev.qualite && rev.qualite.stripe_moyen_indetermine ? ` — carte ou TWINT non distingués sur ${rev.qualite.stripe_moyen_indetermine} paiement(s) Stripe.` : ''}
+          </div>
+        </Bloc>
+        <Bloc titre="Valeur des réservations par cours" testid="table-valeur-cours">
+          <div style={note}>{vc.perimetre}</div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', fontSize: 12, color: 'rgba(255,255,255,0.8)', borderCollapse: 'collapse', marginTop: 6 }}>
+              <thead><tr style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>
+                <th style={{ textAlign: 'left', padding: '4px 6px' }}>Cours</th><th style={{ textAlign: 'right', padding: '4px 6px' }}>Réserv.</th>
+                <th style={{ textAlign: 'right', padding: '4px 6px' }}>Valeur connue</th><th style={{ textAlign: 'right', padding: '4px 6px' }}>Couverture</th>
+              </tr></thead>
+              <tbody>
+                {(vc.cours || []).map((x) => (
+                  <tr key={x.id || x.name} style={{ borderTop: BORDURE }}>
+                    <td style={{ padding: '4px 6px' }}>{x.name}</td>
+                    <td style={{ textAlign: 'right', padding: '4px 6px' }}>{x.reservations}</td>
+                    <td style={{ textAlign: 'right', padding: '4px 6px' }}>{chf(x.valeur)}</td>
+                    <td style={{ textAlign: 'right', padding: '4px 6px' }}>{x.valeurs_connues}/{x.reservations} · {pct(x.couverture_pct)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={note}>Total connu : {chf(vc.valeur_totale)} sur {vc.valeurs_connues}/{vc.reservations} réservation(s) — {pct(vc.couverture_pct)}.</div>
+        </Bloc>
+      </div>
+      <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>
+        {rev.remboursements}. Un achat est compté une seule fois (droit d'accès = unité) ; seuls les montants prouvés entrent dans le CA.
+      </div>
+    </div>
+  );
+}
+
+function SectionAbonnements({ abo, courseId }) {
+  const cat = (o) => Object.keys(LIBELLES_CATEGORIE).filter((k) => o[k]).map((k) => `${LIBELLES_CATEGORIE[k]} ${o[k]}`).join(' · ') || '—';
+  const rn = abo.renouvellements || {}; const cm = abo.cartes_membres || {};
+  return (
+    <div data-testid="section-abonnements" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={titreSection}>Abonnements <Perimetre courseId={courseId} /></div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        <Carte testid="kpi-actifs" valeur={abo.actifs.total} libelle="Actifs aujourd'hui" precision={cat(abo.actifs.par_categorie)} />
+        <Carte testid="kpi-nouveaux-abos" valeur={abo.nouveaux.total} libelle="Nouveaux sur la période" precision={cat(abo.nouveaux.par_categorie)} />
+        <Carte testid="kpi-expires" valeur={abo.expires.total} libelle="Expirés sur la période" precision={`${abo.expirant_bientot.total} expirent sous ${abo.expirant_bientot.jours} j`} />
+        <Carte testid="kpi-pulse" valeur={abo.pulse_x10.actifs} libelle="Pulse X10 actifs" precision={`${abo.pulse_x10.vendus} vendu(s) sur la période`} />
+        <Carte testid="kpi-cartes" valeur={cm.actives} libelle="Cartes membres actives" precision={`${cm.vendues} vendue(s) · ${cm.regularisees} régularisée(s) · ${cm.expirees} expirée(s)`} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+        <Bloc titre="Évolution (nouveaux / expirés / Pulse)" testid="graph-abonnements">
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={abo.evolution || []}>
+              <CartesianGrid stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="periode" tick={axe} />
+              <YAxis tick={axe} allowDecimals={false} width={28} />
+              <Tooltip contentStyle={styleTooltip} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar isAnimationActive={false} dataKey="nouveaux" name="Nouveaux" fill={PRIMAIRE} radius={[6, 6, 0, 0]} />
+              <Bar isAnimationActive={false} dataKey="pulse" name="Pulse X10" fill={SECONDAIRE} radius={[6, 6, 0, 0]} />
+              <Bar isAnimationActive={false} dataKey="expires" name="Expirés" fill="rgba(255,255,255,0.25)" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </Bloc>
+        <Bloc titre="Renouvellements" qualite={abo.qualite && abo.qualite.renouvellements} testid="bloc-renouvellements">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            <Carte testid="kpi-renouv-confirmes" valeur={rn.confirmes} libelle="Confirmés (KPI principal)" precision="preuve explicite" />
+            <Carte testid="kpi-renouv-probables" valeur={rn.probables} libelle={rn.libelle_probables || 'Renouvellements probables — non comptés dans le KPI principal'} precision="succession de droits, sans preuve explicite" />
+            <Carte testid="kpi-renouv-inconnus" valeur={rn.inconnus} libelle="Inconnus" precision="fiches multiples sans ordre lisible" />
+          </div>
+          <div style={note}>Seuls les renouvellements CONFIRMÉS comptent dans le KPI principal ; les probables ne s'y ajoutent jamais.</div>
+          {(rn.avertissement || (abo.qualite && abo.qualite.note)) ? (
+            <div data-testid="note-renouv-test" style={note}>Qualité : {rn.avertissement || abo.qualite.note}</div>
+          ) : null}
+        </Bloc>
+      </div>
+    </div>
+  );
+}
+
+function SectionEssais({ ess, courseId }) {
+  const cp = ess.convertis_probables || {}; const pr = ess.presence || {}; const t = ess.taux || {};
+  const etages = [
+    { cle: 'accordes', libelle: 'Essais accordés', valeur: ess.accordes },
+    { cle: 'reserves', libelle: 'Réservés', valeur: ess.reserves },
+    { cle: 'presents', libelle: 'Présence confirmée', valeur: pr.confirmee },
+    { cle: 'confirmes', libelle: 'Convertis (confirmés)', valeur: ess.convertis_confirmes },
+    { cle: 'probables', libelle: 'Achat suivant (probable)', valeur: cp.total },
+  ];
+  const max = Math.max(1, ...etages.map((e) => e.valeur || 0));
+  return (
+    <div data-testid="section-essais" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={titreSection}>Essais & conversion <Badge niveau={ess.qualite && ess.qualite.conversion} /> <Perimetre courseId={courseId} /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+        <Bloc titre="Funnel" testid="funnel-essais">
+          {etages.map((e) => (
+            <div key={e.cle} data-testid={`funnel-${e.cle}`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ width: 150, fontSize: 11, color: 'rgba(255,255,255,0.65)', flexShrink: 0 }}>{e.libelle}</div>
+              <div style={{ flex: 1, background: 'rgba(255,255,255,0.05)', borderRadius: 6, height: 18, minWidth: 0 }}>
+                <div style={{ width: `${Math.round(100 * (e.valeur || 0) / max)}%`, minWidth: e.valeur ? 6 : 0, height: '100%', borderRadius: 6, background: `rgba(var(--primary-rgb, 217, 28, 210), 0.6)` }} />
+              </div>
+              <div style={{ width: 28, textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#fff' }}>{e.valeur ?? '—'}</div>
+            </div>
+          ))}
+          <div style={note}>
+            Taux : réservation {pct(t.reservation)} · présence {pct(t.presence)} · conversion confirmée {pct(t.conversion_confirmee)} · probable {pct(t.conversion_probable)}
+          </div>
+          <div style={note}>
+            Présence des essais réservés : {pr.confirmee} confirmée(s) · {pr.absente} absence(s) déclarée(s) · {pr.inconnue} inconnue(s) — couverture {pct(pr.couverture_pct)} ; une réservation non vérifiée n'est jamais une absence.
+          </div>
+        </Bloc>
+        <Bloc titre="Conversion (achat suivant, même participant)" testid="bloc-conversion">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            <Carte testid="kpi-conv-tout" valeur={cp.total} libelle="Vers n'importe quel achat" />
+            <Carte testid="kpi-conv-pulse" valeur={cp.pulse_x10} libelle="Vers Pulse X10" />
+            <Carte testid="kpi-conv-abonnement" valeur={cp.abonnement} libelle="Vers abonnement" />
+            <Carte testid="kpi-conv-carte" valeur={cp.carte_membre} libelle="Vers carte membre" />
+          </div>
+          <div style={note}>
+            Convention du funnel existant : cohorte = essais accordés sur la période, suivis sans fenêtre ; « confirmé » = marqueur converted_at (mesuré depuis le 17/08/2026).
+            {ess.delai_conversion_probable_median_jours !== null && ess.delai_conversion_probable_median_jours !== undefined ? ` Délai médian essai → achat : ${ess.delai_conversion_probable_median_jours} jour(s).` : ''}
+          </div>
+        </Bloc>
+      </div>
+    </div>
+  );
+}
 
 export default function AnalyticsCockpit({ coaches = [], courses = [] }) {
   const [periode, setPeriode] = useState('mois');
@@ -144,6 +343,7 @@ export default function AnalyticsCockpit({ coaches = [], courses = [] }) {
 
   const p = kpi && kpi.participants; const c = kpi && kpi.cours; const r = kpi && kpi.reservation;
   const pres = kpi && kpi.presence; const q = (kpi && kpi.qualite) || {};
+  const rev = kpi && kpi.revenus; const abo = kpi && kpi.abonnements; const ess = kpi && kpi.essais_funnel;
 
   const serieHeures = r ? Object.keys(r.par_heure).map((h) => ({ heure: `${h}h`, reservations: r.par_heure[h] })) : [];
   const serieDelai = r ? Object.keys(LIBELLES_DELAI).filter((k) => k !== 'inconnu' || r.anticipation[k]).map((k) => ({ categorie: LIBELLES_DELAI[k], reservations: r.anticipation[k] || 0 })) : [];
@@ -297,6 +497,11 @@ export default function AnalyticsCockpit({ coaches = [], courses = [] }) {
             Qualité — présence : {q.presence} · valeur financière : {q.valeur_financiere} ({q.valeurs_connues ?? 0} connue(s)) · identité : {q.identite}
             {q.conflits_nom_email ? ` · ${q.conflits_nom_email} e-mail(s) avec plusieurs noms` : ''}
           </div>
+
+          {/* ═══ PHASE 2 ═══ */}
+          {rev && <SectionRevenus rev={rev} courseId={courseId} />}
+          {abo && <SectionAbonnements abo={abo} courseId={courseId} />}
+          {ess && <SectionEssais ess={ess} courseId={courseId} />}
         </>
       )}
     </div>

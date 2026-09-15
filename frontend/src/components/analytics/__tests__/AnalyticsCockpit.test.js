@@ -158,3 +158,142 @@ describe('AnalyticsCockpit', () => {
     expect(axios.get).toHaveBeenLastCalledWith(expect.any(String), { params: { periode: 'mois', granularite: 'jour', coach_id: 'c@x.ch' } });
   });
 });
+
+// ═══ PHASE 2 — revenus / abonnements / essais : affichage pur des chiffres du serveur ═══
+const { chf } = require('../AnalyticsCockpit');
+
+const KPI2 = {
+  ...KPI,
+  revenus: {
+    perimetre: 'global période/coach — le filtre cours ne s\'applique pas',
+    ca_encaisse: 1979, ca_stripe: 579, ca_manuel: 1400, transactions_payees: 18, gratuits: 16, panier_moyen: 109.94,
+    acheteurs_uniques: 16, revenu_par_participant: 123.69,
+    declare_non_prouve: { nombre: 16, montant: 2836 }, montant_inconnu: 18,
+    en_attente: { nombre: 188, montant_declare: 12402.98 },
+    par_moyen: { stripe_indetermine: { nombre: 11, montant: 429 }, twint: { nombre: 5, montant: 1050 }, virement: { nombre: 1, montant: 250 }, especes: { nombre: 1, montant: 250 }, offert: { nombre: 16, montant: 0 }, stripe_card: { nombre: 0, montant: 0 } },
+    par_canal: {}, evolution: [{ periode: '2026-03-09', ca: 250, achats: 1 }],
+    valeur_par_cours: { perimetre: 'tous les cours — valeur des réservations au tarif figé, jamais additionnée au CA', cours: [{ id: 'c1', name: 'Silent', reservations: 50, valeur: 666.63, valeurs_connues: 31, couverture_pct: 62.0 }], valeur_totale: 666.63, valeurs_connues: 31, reservations: 50, couverture_pct: 62.0 },
+    remboursements: 'Remboursements non disponibles historiquement',
+    qualite: { montants: 'partiel', moyen_paiement: 'partiel', stripe_moyen_indetermine: 11 },
+  },
+  abonnements: {
+    perimetre: 'global période/coach — le filtre cours ne s\'applique pas',
+    actifs: { total: 32, par_categorie: { pulse_x10: 6, abonnement: 1, carte_membre: 0, essai: 10, autre: 15 } },
+    nouveaux: { total: 66, par_categorie: { pulse_x10: 15, abonnement: 10, carte_membre: 0, essai: 17, autre: 24 } },
+    expires: { total: 11, par_categorie: {} }, expirant_bientot: { jours: 30, total: 16 },
+    pulse_x10: { actifs: 6, vendus: 15 }, cartes_membres: { actives: 6, vendues: 2, regularisees: 4, expirees: 0, total: 6 },
+    renouvellements: { confirmes: 0, probables: 12, inconnus: 1, kpi_principal: 'confirmes', libelle_probables: 'Renouvellements probables — non comptés dans le KPI principal', avertissement: 'Certains droits probables peuvent provenir de comptes ou codes de test historiques (aucun filtrage par nom, aucune donnée supprimée).' },
+    evolution: [{ periode: '2026-09-01', nouveaux: 2, expires: 0, pulse: 0 }], qualite: { renouvellements: 'partiel' },
+  },
+  essais_funnel: {
+    perimetre: 'global', convention: { fenetre: 'aucune' }, accordes: 17, reserves: 6,
+    presence: { confirmee: 3, absente: 0, inconnue: 3, couverture_pct: 50.0 },
+    convertis_confirmes: 0, convertis_probables: { total: 2, pulse_x10: 1, abonnement: 0, carte_membre: 1, autre: 0 },
+    taux: { reservation: 35.3, presence: 50.0, conversion_confirmee: 0.0, conversion_probable: 11.8 },
+    delai_conversion_probable_median_jours: 8, qualite: { conversion: 'partiel', presence: 'partiel' },
+  },
+};
+
+describe('AnalyticsCockpit — phase 2', () => {
+  test('chf : mise en forme seulement, jamais de calcul', () => {
+    expect(chf(1979)).toBe('1 979,00 CHF');
+    expect(chf(12402.98)).toBe('12 402,98 CHF');
+    expect(chf(0)).toBe('0,00 CHF');
+    expect(chf(null)).toBe('—');
+  });
+
+  test('revenus : CA prouvé, panier, revenu/acheteur, pending et non prouvé HORS CA, remboursements explicites', async () => {
+    axios.get.mockResolvedValue({ data: KPI2 });
+    const { div } = monter({});
+    await act(async () => {});
+    const t = (id) => div.querySelector(`[data-testid="${id}"]`).textContent;
+    expect(t('kpi-ca')).toContain('1 979,00 CHF');
+    expect(t('kpi-ca')).toContain('Stripe 579,00 CHF');
+    expect(t('kpi-panier')).toContain('109,94 CHF');
+    expect(t('kpi-revenu-participant')).toContain('123,69 CHF');
+    expect(t('kpi-pending')).toContain('188');
+    expect(t('kpi-pending')).toContain('hors CA');
+    expect(t('kpi-non-prouve')).toContain('2 836,00 CHF hors CA');
+    expect(t('section-revenus')).toContain('Remboursements non disponibles historiquement');
+    expect(t('table-valeur-cours')).toContain('jamais additionnée au CA');
+    expect(t('table-valeur-cours')).toContain('31/50');
+  });
+
+  test('moyens : « Stripe — moyen non déterminé », jamais card/twint comme moyen réel ; moyens à 0 absents', async () => {
+    axios.get.mockResolvedValue({ data: KPI2 });
+    const { div } = monter({});
+    await act(async () => {});
+    const m = div.querySelector('[data-testid="bloc-moyens"]').textContent;
+    expect(m).toContain('Stripe — moyen non déterminé : 11');
+    expect(m).toContain('TWINT (manuel) : 5');
+    expect(m).not.toContain('Stripe — carte');
+    expect(m).toContain('carte ou TWINT non distingués sur 11');
+    expect(m).toContain('partiel');
+  });
+
+  test('abonnements : actifs, nouveaux, expirés, Pulse, cartes ; confirmés = KPI principal, probables à part', async () => {
+    axios.get.mockResolvedValue({ data: KPI2 });
+    const { div } = monter({});
+    await act(async () => {});
+    const t = (id) => div.querySelector(`[data-testid="${id}"]`).textContent;
+    expect(t('kpi-actifs')).toContain('32');
+    expect(t('kpi-actifs')).toContain('Pulse X10 6');
+    expect(t('kpi-nouveaux-abos')).toContain('66');
+    expect(t('kpi-expires')).toContain('11');
+    expect(t('kpi-expires')).toContain('16 expirent sous 30 j');
+    expect(t('kpi-pulse')).toContain('6');
+    expect(t('kpi-pulse')).toContain('15 vendu(s)');
+    expect(t('kpi-cartes')).toContain('6');
+    expect(t('kpi-cartes')).toContain('2 vendue(s)');
+    expect(t('kpi-renouv-confirmes')).toContain('0');
+    expect(t('kpi-renouv-probables')).toContain('12');
+    expect(t('kpi-renouv-inconnus')).toContain('1');
+    expect(t('bloc-renouvellements')).toContain('CONFIRMÉS comptent dans le KPI principal');
+    expect(t('kpi-renouv-probables')).toContain('non comptés dans le KPI principal');
+    expect(t('note-renouv-test')).toContain('codes de test');
+  });
+
+  test('essais : funnel, présence inconnue ≠ absence, conversions par cible, convention sans fenêtre', async () => {
+    axios.get.mockResolvedValue({ data: KPI2 });
+    const { div } = monter({});
+    await act(async () => {});
+    const t = (id) => div.querySelector(`[data-testid="${id}"]`).textContent;
+    expect(t('funnel-accordes')).toContain('17');
+    expect(t('funnel-reserves')).toContain('6');
+    expect(t('funnel-presents')).toContain('3');
+    expect(t('funnel-confirmes')).toContain('0');
+    expect(t('funnel-probables')).toContain('2');
+    expect(t('funnel-essais')).toContain('3 inconnue(s)');
+    expect(t('funnel-essais')).toContain("n'est jamais une absence");
+    expect(t('kpi-conv-tout')).toContain('2');
+    expect(t('kpi-conv-pulse')).toContain('1');
+    expect(t('kpi-conv-carte')).toContain('1');
+    expect(t('bloc-conversion')).toContain('sans fenêtre');
+    expect(t('bloc-conversion')).toContain('8 jour(s)');
+  });
+
+  test('filtre cours : les sections phase 2 disent « filtre cours NON appliqué », les KPI phase 1 restent', async () => {
+    axios.get.mockResolvedValue({ data: KPI2 });
+    const { div } = monter({});
+    await act(async () => {});
+    expect(div.querySelectorAll('[data-testid="perimetre-global"]').length).toBe(3);
+    expect(div.querySelector('[data-testid="perimetre-global"]').textContent).toBe('Global période/coach');
+    const sel = div.querySelector('[data-testid="filtre-cours"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(sel, 'c-dim');
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const badges = [...div.querySelectorAll('[data-testid="perimetre-global"]')].map((b) => b.textContent);
+    expect(badges).toEqual(Array(3).fill('Global période/coach — filtre cours NON appliqué'));
+    expect(div.querySelector('[data-testid="kpi-participants"]')).not.toBeNull();
+    expect(axios.get).toHaveBeenCalledTimes(2);   // toujours un appel par changement, pas plus
+  });
+
+  test('sans sections phase 2 dans la réponse : la phase 1 s\'affiche seule, sans erreur', async () => {
+    axios.get.mockResolvedValue({ data: KPI });
+    const { div } = monter({});
+    await act(async () => {});
+    expect(div.querySelector('[data-testid="section-revenus"]')).toBeNull();
+    expect(div.querySelector('[data-testid="kpi-participants"]')).not.toBeNull();
+  });
+});

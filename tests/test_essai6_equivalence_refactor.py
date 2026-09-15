@@ -36,10 +36,18 @@ def _extraire(src, nom, sans_docstring=False):
     raise AssertionError(nom)
 
 
-# ── AVANT : la fonction telle qu'en production (git HEAD) ──
-SRC_AVANT = subprocess.check_output(["git", "-C", RACINE, "show", "HEAD:api/routes/shared.py"]).decode("utf-8")
+# ── AVANT : la fonction telle qu'elle était AVANT le refactor de la phase 1 ──
+# Référence FIGÉE : le parent du commit qui a introduit `essai6_verdict`
+# (`bd3b8903` = feat(analytics) phase 1). Comparer à HEAD n'a de sens qu'avant
+# ce commit ; depuis, HEAD contient le refactor et le banc se comparerait à
+# lui-même. La règle essai ne change pas pour satisfaire ce banc : c'est le
+# banc qui compare les bonnes versions.
+REF_AVANT = "bd3b8903^"
+SRC_AVANT = subprocess.check_output(["git", "-C", RACINE, "show", REF_AVANT + ":api/routes/shared.py"]).decode("utf-8")
 SRC_APRES = io.open(os.path.join(RACINE, "api", "routes", "shared.py"), encoding="utf-8").read()
-verifier("HEAD ne connaît pas encore essai6_verdict (c'est bien l'ancienne version)", "def essai6_verdict" not in SRC_AVANT)
+verifier("la référence %s ne connaît pas encore essai6_verdict (c'est bien la version d'avant)" % REF_AVANT,
+         "def essai6_verdict" not in SRC_AVANT)
+verifier("l'arbre de travail porte bien le refactor (essai6_verdict présent)", "def essai6_verdict" in SRC_APRES)
 
 import api.routes.shared as S   # la version APRÈS, réelle
 

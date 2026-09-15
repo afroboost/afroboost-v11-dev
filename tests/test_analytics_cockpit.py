@@ -235,6 +235,7 @@ class _Base:
         self.discount_codes = _Coll2(list(CODES.values()), self)
         self.offers = _Coll2([], self)
         self.memberships = _Coll2([], self)
+        self.payment_transactions = _Coll2([], self)
 
 
 def _serveur(base, jwt_email):
@@ -278,7 +279,7 @@ try:
     verifier("JWT coach -> 200", s == 200, s)
     verifier("coach : périmètre imposé = son coach_id, l'autre coach est absent",
              r and r["perimetre"]["coach_id"] == COACH and r["participants"]["reservations_cours"] == 7, r and r["perimetre"])
-    verifier("au plus 6 requêtes, jamais une par participant", n <= 6, n)
+    verifier("au plus 7 requêtes (phase 2 : + paiements), jamais une par participant", n <= 7 and n == 7, n)
     # Le nombre de requêtes ne dépend PAS du nombre de participants : on triple
     # les réservations (participants distincts) et on recompte.
     _plus = [resa("z%d" % i, "z%d@mail.ch" % i, MER, "2026-09-08T08:00:00+00:00") for i in range(30)]
@@ -300,7 +301,7 @@ try:
              s == 200 and r["participants"]["reservations_cours"] == 3 and r["perimetre"]["course_id"] == "c-dim", r and r["participants"])
     verifier("cours précis : la liste des cours reste COMPLÈTE (2 cours) et compte les réservations",
              [c["id"] for c in r["cours_disponibles"]] == ["c-mer", "c-dim"] and r["cours_disponibles"][0]["reservations"] == 6, r and r["cours_disponibles"])
-    verifier("cours précis : toujours ≤ 6 requêtes (filtre en mémoire)", n <= 6, n)
+    verifier("cours précis : toujours ≤ 7 requêtes (filtre en mémoire)", n <= 7, n)
     s, r, _ = _appel(ADMIN, periode="perso", du="2026-09-01", au="2026-09-30", course_id="c-mer")
     verifier("changement de cours : 5 réservations (mercredi, autre coach inclus pour l'admin)", r["participants"]["reservations_cours"] == 5, r["participants"])
     s, r, _ = _appel(ADMIN, periode="perso", du="2026-09-01", au="2026-09-30", course_id="")
