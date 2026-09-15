@@ -38,6 +38,10 @@ from api.routes.analytics_association import (
     PERIMETRE_ENSEMBLE, export_csv, export_pdf, export_xlsx, periode_precedente, projeter_association,
     verifier_anonymat,
 )
+from api.routes.analytics_cloture import (
+    CLOTURE_COLLECTION, RAISON_DEJA_CLOTURE, assoc_depuis_snapshot, cle_cloture, construire_snapshot,
+    est_cloturable, meta_snapshot,
+)
 from api.routes.shared import is_super_admin
 from datetime import datetime, timezone
 from fastapi.responses import Response
@@ -218,7 +222,21 @@ async def _calculer_cockpit(request: Request, periode: str = "mois", du: str = "
             logger.error("[ANALYTICS] bilan association refusé : donnée personnelle détectée %s", _fuites[:3])
             raise HTTPException(status_code=500, detail="Bilan indisponible : donnée personnelle détectée dans la projection")
         kpi["association"] = assoc
-        kpi["requetes"] = 7 + (1 if perimetre else 0)
+        # ── PHASE 4 : l'état de clôture de cette période (UNE lecture, jamais une écriture) ──
+        # Seul le MODE MOIS peut être clôturé : une vue personnalisée reste
+        # dynamique même si ses bornes coïncident avec un mois civil.
+        _ok, _raison = est_cloturable(debut, fin, maintenant, _cid, _p)
+        _existante = None
+        if _p == "mois" and not _cid:
+            _existante = await db[CLOTURE_COLLECTION].find_one(
+                {"cle": cle_cloture(debut.year, debut.month, perimetre)}, {"_id": 0, "bilan": 0})
+        kpi["cloture"] = {
+            "existante": meta_snapshot(_existante) if _existante else None,
+            "cloturable": bool(_ok and not _existante and is_super_admin(email)),
+            "raison": (RAISON_DEJA_CLOTURE if _existante else _raison) if not (_ok and not _existante) else "",
+            "super_admin": is_super_admin(email),
+        }
+        kpi["requetes"] = 7 + (1 if perimetre else 0) + (1 if (_p == "mois" and not _cid) else 0)
     return kpi
 
 
@@ -258,3 +276,123 @@ async def analytics_export(request: Request, format: str = "csv", periode: str =
     return Response(content=contenu, media_type=_type,
                     headers={"Content-Disposition": 'attachment; filename="%s"' % _nom,
                              "Cache-Control": "no-store"})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE 4 — CLÔTURE MENSUELLE. La seule écriture d'Analytics : `insert_one`
+# dans `analytics_monthly_reports`, et rien d'autre.
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def _super_admin_analytics(request: Request) -> str:
+    """Clôturer est réservé au super-admin : 401 sans jeton, 403 pour un coach."""
+    email = await _coach_analytics(request)
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="Clôture réservée au super-admin")
+    return email
+
+
+async def _index_clotures(db):
+    """Index uniques de la collection des bilans figés — idempotent, posé AVANT
+    la première écriture. `cle` (année-mois:périmètre) rend la clôture
+    idempotente même sous deux appels simultanés : le second `insert_one`
+    tombe en DuplicateKeyError et devient un 409, jamais un second bilan."""
+    for _champ, _ in (("cle", "unique"), ("id", "unique")):
+        try:
+            await db[CLOTURE_COLLECTION].create_index(_champ, unique=True)
+        except Exception as _err:  # noqa: BLE001 — l'index existe déjà : rien à faire
+            logger.info("[ANALYTICS] index %s.%s : %s", CLOTURE_COLLECTION, _champ, _err)
+
+
+@analytics_router.post("/cloture")
+async def analytics_cloturer(request: Request, mois: str = "", coach_id: str = ""):
+    """Figer le bilan Association d'un mois civil terminé. Super-admin seulement.
+
+    Le contenu figé est EXACTEMENT la projection de la phase 3 (mêmes règles,
+    même anonymat) ; la clé unique interdit tout second bilan pour la même
+    période et le même périmètre (409, jamais un écrasement)."""
+    from api.server import db
+    from pymongo.errors import DuplicateKeyError
+
+    email = await _super_admin_analytics(request)
+    _mois = str(mois or "").strip()
+    if len(_mois) != 7:
+        raise HTTPException(status_code=400, detail="mois attendu : YYYY-MM")
+    # Le serveur est la source de vérité : `du`/`au`/`periode`/`course_id` du
+    # client ne sont JAMAIS lus ici — le périmètre mensuel officiel est
+    # reconstruit depuis `mois=YYYY-MM` seul, en mode mois, sans filtre cours.
+    kpi = await _calculer_cockpit(request, "mois", "", "", coach_id, "", "mois", _mois, "association")
+    maintenant = vers_local(datetime.now(timezone.utc))
+    debut, fin = bornes_periode("mois", maintenant, "", "", _mois)
+    perimetre = _perimetre(email, coach_id)
+    _ok, _raison = est_cloturable(debut, fin, maintenant, "", "mois")
+    if not _ok:
+        raise HTTPException(status_code=409, detail=_raison)
+    _cle = cle_cloture(debut.year, debut.month, perimetre)
+    _existante = await db[CLOTURE_COLLECTION].find_one({"cle": _cle}, {"_id": 0, "bilan": 0})
+    if _existante:
+        raise HTTPException(status_code=409, detail=RAISON_DEJA_CLOTURE)
+    doc = construire_snapshot(kpi["association"], debut, fin, perimetre, email, maintenant)
+    _fuites = verifier_anonymat(doc["bilan"])
+    if _fuites:
+        raise HTTPException(status_code=500, detail="Clôture refusée : donnée personnelle détectée")
+    await _index_clotures(db)
+    try:
+        await db[CLOTURE_COLLECTION].insert_one(dict(doc))
+    except DuplicateKeyError:
+        # Deux clics, deux onglets, un retry : le premier a gagné, on le rend.
+        raise HTTPException(status_code=409, detail=RAISON_DEJA_CLOTURE)
+    logger.info("[ANALYTICS] bilan clôturé %s par %s (empreinte %s)", _cle, email, doc["hash"][:12])
+    return {"cloture": meta_snapshot(doc), "message": "Bilan %s clôturé." % doc["periode"]["libelle"]}
+
+
+@analytics_router.get("/clotures")
+async def analytics_clotures(request: Request, coach_id: str = ""):
+    """Les archives : les bilans figés du périmètre (coach : les siens ; admin : tout ou un coach)."""
+    from api.server import db
+    email = await _coach_analytics(request)
+    perimetre = _perimetre(email, coach_id)
+    _q = {}
+    if perimetre:
+        _q = {"cle": {"$in": [cle_cloture(a, m, perimetre) for a in range(2024, 2041) for m in range(1, 13)]}}
+    docs = await db[CLOTURE_COLLECTION].find(_q, {"_id": 0, "bilan": 0}).to_list(1000)
+    docs = sorted(docs, key=lambda d: (str(d.get("annee")), str(d.get("mois")).zfill(2), str(d.get("cle"))), reverse=True)
+    return {"clotures": [meta_snapshot(d) for d in docs], "perimetre": perimetre or "tous"}
+
+
+async def _snapshot_autorise(request: Request, id: str) -> dict:
+    """Le bilan figé `id`, si le jeton a le droit de le voir (périmètre imposé au coach)."""
+    from api.server import db
+    email = await _coach_analytics(request)
+    doc = await db[CLOTURE_COLLECTION].find_one({"id": str(id or "").strip()}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Bilan clôturé introuvable")
+    _coach = str((doc.get("perimetre") or {}).get("coach_id") or "")
+    if not is_super_admin(email) and _coach != email.lower():
+        raise HTTPException(status_code=403, detail="Périmètre d'un autre coach")
+    return doc
+
+
+@analytics_router.get("/clotures/{id}")
+async def analytics_cloture_lire(request: Request, id: str):
+    doc = await _snapshot_autorise(request, id)
+    return {"cloture": meta_snapshot(doc), "bilan": assoc_depuis_snapshot(doc)}
+
+
+@analytics_router.get("/clotures/{id}/export")
+async def analytics_cloture_export(request: Request, id: str, format: str = "csv"):
+    """CSV / XLSX / PDF OFFICIELS : générés depuis le SNAPSHOT, jamais depuis les
+    données courantes — le fichier de dans six mois est celui d'aujourd'hui."""
+    _f = str(format or "csv").strip().lower()
+    if _f not in FORMATS_EXPORT:
+        raise HTTPException(status_code=400, detail="format attendu : csv|xlsx|pdf")
+    doc = await _snapshot_autorise(request, id)
+    assoc = assoc_depuis_snapshot(doc)
+    _type, _ext, _fabrique = FORMATS_EXPORT[_f]
+    try:
+        contenu = _fabrique(assoc)
+    except ImportError as _err:
+        logger.error("[ANALYTICS] export officiel %s impossible : %s", _f, _err)
+        raise HTTPException(status_code=503, detail="Export %s indisponible sur ce serveur" % _f)
+    _nom = "bilan-officiel-afroboost-%04d-%02d-v%s.%s" % (doc["annee"], doc["mois"], doc.get("version", 1), _ext)
+    return Response(content=contenu, media_type=_type,
+                    headers={"Content-Disposition": 'attachment; filename="%s"' % _nom, "Cache-Control": "no-store"})

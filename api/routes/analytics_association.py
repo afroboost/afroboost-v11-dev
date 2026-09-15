@@ -474,6 +474,9 @@ def export_csv(assoc) -> bytes:
     lignes = lignes_export(assoc)
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";", lineterminator="\r\n")
+    if (assoc.get("cloture") or {}).get("officiel"):
+        # Phase 4 : le fichier vient d'un bilan FIGÉ — il le dit en première ligne.
+        w.writerow(["Statut", assoc["cloture"]["libelle"]])
     w.writerow([l[0] for l in lignes])
     w.writerow([_csv_val(l[1]) for l in lignes])
     w.writerow([])
@@ -524,8 +527,9 @@ def feuilles_xlsx(assoc) -> list:
     sections = dict(document_bilan(assoc))
     lignes = lignes_export(assoc)
     resume = [["Bilan Afroboost — " + assoc["periode"]["libelle"]], ["Périmètre", assoc["perimetre"]["libelle"]],
-              ["Généré le", assoc["genere_le"]], [], ["Résumé exécutif", assoc["resume_executif"]], []] + \
-             [[l[0], l[1]] for l in lignes]
+              ["Généré le", assoc["genere_le"]]] + \
+             ([["Statut", assoc["cloture"]["libelle"]]] if (assoc.get("cloture") or {}).get("officiel") else [["Statut", "Données actuelles (dynamiques), non clôturées"]]) + \
+             [[], ["Résumé exécutif", assoc["resume_executif"]], []] + [[l[0], l[1]] for l in lignes]
     def _sec(titre):
         return [[titre], ["Indicateur", "Valeur", "Note"]] + [[a, b, c] for a, b, c in sections[titre]]
     activite = _sec("Activité") + [[], ["Comparaison", "Précédent → actuel", "Variation"]] + \
@@ -709,6 +713,12 @@ def export_pdf(assoc) -> bytes:
     c.setFillColor(BLANC); c.setFont("Helvetica", 8.5)
     c.drawRightString(W - marge, H - 1.5 * cm, "Afroboost / Association Afroboosteur")
     c.drawRightString(W - marge, H - 2.1 * cm, "Périmètre : " + assoc["perimetre"]["libelle"])
+    if (assoc.get("cloture") or {}).get("officiel"):
+        c.setFillColor(MAGENTA); c.setFont("Helvetica-Bold", 8.5)
+        c.drawRightString(W - marge, H - 2.7 * cm, assoc["cloture"]["libelle"])
+    else:
+        c.setFillColor(GRIS); c.setFont("Helvetica", 8)
+        c.drawRightString(W - marge, H - 2.7 * cm, "Données actuelles (dynamiques) — bilan non clôturé")
     y[0] = H - 4.4 * cm
 
     titre("Résumé exécutif")

@@ -323,7 +323,10 @@ class _Base:
         self.memberships = _Coll2(CARTES, self)
         self.payment_transactions = _Coll2(PAIEMENTS, self)
         self.concept = _Coll2([{"coach_id": COACH, "appName": "Studio Test"}], self)
-        self.monthly_reports = _Coll2([], self)
+        # Phase 4 : la vue association LIT l'état de clôture (jamais d'écriture ici).
+        self.analytics_monthly_reports = _Coll2([], self)
+    def __getitem__(self, nom):
+        return getattr(self, nom)
 
 
 def _serveur(base, jwt_email):
@@ -365,8 +368,8 @@ try:
     s, _, _ = _appel(analytics_export, COACH, format="csv", mois="2026-08", coach_id=AUTRE)
     verifier("export d'un autre coach -> 403", s == 403, s)
     s, r_admin, n = _appel(analytics_cockpit, ADMIN, periode="mois", mois="2026-08", vue="association")
-    verifier("admin vue=association -> 200, 7 requêtes (tout en mémoire), bilan présent, périmètre Ensemble",
-             s == 200 and n == 7 and r_admin["association"]["perimetre"]["libelle"] == AS.PERIMETRE_ENSEMBLE, (s, n))
+    verifier("admin vue=association -> 200, 8 requêtes (7 + lecture de l'état de clôture), bilan présent, périmètre Ensemble",
+             s == 200 and n == 8 and r_admin["association"]["perimetre"]["libelle"] == AS.PERIMETRE_ENSEMBLE, (s, n))
     verifier("route admin : le bilan de la route = la projection du banc, valeur pour valeur",
              r_admin["association"]["finances"] == ASSOC["finances"] and r_admin["association"]["activite"] == ASSOC["activite"]
              and r_admin["association"]["essais"] == ASSOC["essais"] and r_admin["association"]["abonnements"] == ASSOC["abonnements"]
@@ -375,8 +378,8 @@ try:
     verifier("route : cockpit (phase 1/2) et bilan du même appel portent les mêmes chiffres",
              r_admin["association"]["finances"]["ca_prouve"] == r_admin["revenus"]["ca_encaisse"] and r_admin["association"]["activite"]["reservations"] == r_admin["participants"]["reservations_cours"])
     s, r_coach, n = _appel(analytics_cockpit, COACH, periode="mois", mois="2026-08", vue="association")
-    verifier("coach : 200, 8 requêtes (+ concept), périmètre « Coach Studio Test » (nom public, jamais l'adresse), CA 280 (sans l'autre coach), 5 réservations",
-             s == 200 and n == 8 and r_coach["association"]["perimetre"]["libelle"] == "Coach Studio Test" and r_coach["association"]["finances"]["ca_prouve"] == 280.0
+    verifier("coach : 200, 9 requêtes (+ concept, + état de clôture), périmètre « Coach Studio Test » (nom public, jamais l'adresse), CA 280 (sans l'autre coach), 5 réservations",
+             s == 200 and n == 9 and r_coach["association"]["perimetre"]["libelle"] == "Coach Studio Test" and r_coach["association"]["finances"]["ca_prouve"] == 280.0
              and r_coach["association"]["activite"]["reservations"] == 5, (s, n, r_coach and r_coach["association"]["perimetre"]))
     verifier("coach : aucune donnée personnelle dans le bilan servi", AS.verifier_anonymat(r_coach["association"]) == [])
     s, _, _ = _appel(analytics_cockpit, ADMIN, periode="mois", mois="2026-08")
@@ -384,7 +387,7 @@ try:
     for fmt, debut_attendu, ctype in (("csv", b"\xef\xbb\xbf", "text/csv"), ("xlsx", b"PK", "spreadsheetml"), ("pdf", b"%PDF", "application/pdf")):
         s, resp, n = _appel(analytics_export, ADMIN, format=fmt, mois="2026-08")
         ok = s == 200 and resp.body.startswith(debut_attendu) and ctype in resp.media_type and "bilan-afroboost-2026-08." + fmt in resp.headers.get("content-disposition", "")
-        verifier("export %s admin -> 200, bon type, bon nom, pièce jointe, 7 requêtes" % fmt, ok and n == 7, (s, n, resp and resp.media_type))
+        verifier("export %s admin -> 200, bon type, bon nom, pièce jointe, 8 requêtes" % fmt, ok and n == 8, (s, n, resp and resp.media_type))
     s, resp, _ = _appel(analytics_export, ADMIN, format="csv", mois="2026-08")
     _l = list(_csv.reader(io.StringIO(resp.body.decode("utf-8-sig")), delimiter=";"))
     verifier("export CSV admin = bilan admin de la route (CA 380,00, 6 réservations)", dict(zip(_l[0], _l[1]))["CA prouvé (CHF)"] == "380,00" and dict(zip(_l[0], _l[1]))["Réservations"] == "6")

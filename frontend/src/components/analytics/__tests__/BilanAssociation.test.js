@@ -8,7 +8,7 @@ import { createRoot } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 import axios from 'axios';
 
-jest.mock('axios', () => ({ get: jest.fn() }));
+jest.mock('axios', () => ({ get: jest.fn(), post: jest.fn() }));
 jest.mock('recharts', () => {
   const Stub = ({ children }) => <div>{children}</div>;
   return { ResponsiveContainer: Stub, LineChart: Stub, BarChart: Stub, Line: () => null, Bar: () => null,
@@ -16,7 +16,18 @@ jest.mock('recharts', () => {
 });
 
 const BilanAssociation = require('../BilanAssociation').default;
-const { parametresBilan, nomFichier, moisCourantISO, telechargerExport } = require('../BilanAssociation');
+const { parametresBilan, nomFichier, moisCourantISO, telechargerExport, telechargerExportOfficiel } = require('../BilanAssociation');
+const appelsCockpit = () => axios.get.mock.calls.filter((c) => /\/analytics\/cockpit$/.test(c[0]));
+const appelsArchives = () => axios.get.mock.calls.filter((c) => /\/analytics\/clotures$/.test(c[0]));
+/** Le serveur factice : cockpit -> KPI, clotures -> liste, clotures/<id> -> snapshot. */
+function serveur({ kpi = KPI, clotures = [], snapshot = null } = {}) {
+  axios.get.mockImplementation((url) => {
+    if (/\/analytics\/clotures$/.test(url)) return Promise.resolve({ data: { clotures, perimetre: 'tous' } });
+    if (/\/analytics\/clotures\/[^/]+$/.test(url)) return Promise.resolve({ data: snapshot });
+    if (/\/export$/.test(url)) return Promise.resolve({ data: new Blob(['x']) });
+    return Promise.resolve({ data: kpi });
+  });
+}
 
 const ASSOC = {
   periode: { debut: '2026-08-01', fin_exclue: '2026-09-01', libelle: 'Août 2026' },
@@ -40,7 +51,11 @@ const ASSOC = {
   resume_executif: 'En août 2026, Afroboost a organisé 12 séance(s) réunissant 15 participant(s) unique(s) pour 25 réservation(s).',
   genere_le: '2026-09-15 09:14',
 };
-const KPI = { association: ASSOC, cours_disponibles: [{ id: 'c1', name: 'Silent', reservations: 20 }] };
+const KPI = { association: ASSOC, cours_disponibles: [{ id: 'c1', name: 'Silent', reservations: 20 }], cloture: { existante: null, cloturable: false, raison: 'Le mois n\'est pas terminé : la clôture n\'est possible qu\'après sa fin.', super_admin: true } };
+const META = { id: 'snap-1', cle: '2026-08:tous', annee: 2026, mois: 8, periode: { debut: '2026-08-01', fin_exclue: '2026-09-01', libelle: 'Août 2026' }, perimetre: { libelle: 'Ensemble Afroboost / Association', coach_id: null }, statut: 'officiel', version: 1, created_at: '2026-09-15T12:00:00', created_by: 'admin@exemple.invalid', hash: 'abcdef123456789' };
+const SNAPSHOT = { cloture: META, bilan: { ...ASSOC, finances: { ...ASSOC.finances, ca_prouve: 575 }, cloture: { officiel: true, version: 1, hash: META.hash, libelle: 'BILAN OFFICIEL — clôturé le 2026-09-15 12:00 (v1) — empreinte abcdef123456' } } };
+const KPI_CLOTURABLE = { ...KPI, cloture: { existante: null, cloturable: true, raison: '', super_admin: true } };
+const KPI_CLOTURE = { ...KPI, association: { ...ASSOC, finances: { ...ASSOC.finances, ca_prouve: 605 } }, cloture: { existante: META, cloturable: false, raison: 'Ce mois est déjà clôturé pour ce périmètre ; une clôture n\'est jamais écrasée.', super_admin: true } };
 
 function monter(props) {
   const div = document.createElement('div');
@@ -72,19 +87,20 @@ describe('helpers', () => {
 });
 
 describe('BilanAssociation', () => {
-  test('un appel au montage (vue=association, mois courant), aucun sondage', async () => {
+  test('un appel principal au montage (vue=association, mois courant) + un pour les archives, aucun sondage', async () => {
     jest.useFakeTimers();
-    axios.get.mockResolvedValue({ data: KPI });
+    serveur();
     monter({});
     await act(async () => {});
-    expect(axios.get).toHaveBeenCalledTimes(1);
-    expect(axios.get.mock.calls[0][1].params).toMatchObject({ vue: 'association', periode: 'mois' });
+    expect(appelsCockpit().length).toBe(1);
+    expect(appelsArchives().length).toBe(1);
+    expect(appelsCockpit()[0][1].params).toMatchObject({ vue: 'association', periode: 'mois' });
     act(() => { jest.advanceTimersByTime(10 * 60 * 1000); });
-    expect(axios.get).toHaveBeenCalledTimes(1);
+    expect(axios.get).toHaveBeenCalledTimes(2);
   });
 
   test('affiche le bilan du serveur : résumé, cartes, hors CA à part, comparaison, évolution, qualité, pied', async () => {
-    axios.get.mockResolvedValue({ data: KPI });
+    serveur();
     const { div } = monter({});
     await act(async () => {});
     const t = (id) => div.querySelector(`[data-testid="${id}"]`).textContent;
@@ -115,8 +131,8 @@ describe('BilanAssociation', () => {
     expect(div.textContent).not.toMatch(/@/);
   });
 
-  test('changer de mois / passer en année : un appel par changement, avec mois=YYYY-MM', async () => {
-    axios.get.mockResolvedValue({ data: KPI });
+  test('changer de mois / passer en année : un appel cockpit par changement, avec mois=YYYY-MM', async () => {
+    serveur();
     const { div } = monter({});
     await act(async () => {});
     const input = div.querySelector('[data-testid="filtre-mois"]');
@@ -124,15 +140,16 @@ describe('BilanAssociation', () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '2026-07');
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    expect(axios.get).toHaveBeenCalledTimes(2);
-    expect(axios.get.mock.calls[1][1].params).toMatchObject({ periode: 'mois', mois: '2026-07' });
+    expect(appelsCockpit().length).toBe(2);
+    expect(appelsCockpit()[1][1].params).toMatchObject({ periode: 'mois', mois: '2026-07' });
     await act(async () => { div.querySelector('[data-testid="mode-annee"]').click(); });
-    expect(axios.get).toHaveBeenCalledTimes(3);
-    expect(axios.get.mock.calls[2][1].params).toMatchObject({ periode: 'annee', mois: '2026-07' });
+    expect(appelsCockpit().length).toBe(3);
+    expect(appelsCockpit()[2][1].params).toMatchObject({ periode: 'annee', mois: '2026-07' });
+    expect(appelsArchives().length).toBe(1);   // les archives ne sont pas rechargées à chaque filtre
   });
 
   test('filtre cours : note de périmètre affichée quand le serveur la renvoie', async () => {
-    axios.get.mockResolvedValue({ data: { ...KPI, association: { ...ASSOC, perimetre: { libelle: 'Coach Afroboost', cours: 'c1', note: 'Le filtre cours ne s\'applique qu\'à l\'activité et à la présence ; essais, abonnements et finances restent globaux (période / coach).' } } } });
+    serveur({ kpi: { ...KPI, association: { ...ASSOC, perimetre: { libelle: 'Coach Afroboost', cours: 'c1', note: 'Le filtre cours ne s\'applique qu\'à l\'activité et à la présence ; essais, abonnements et finances restent globaux (période / coach).' } } } });
     const { div } = monter({});
     await act(async () => {});
     expect(div.querySelector('[data-testid="bilan-perimetre"]').textContent).toContain('Coach Afroboost');
@@ -140,11 +157,10 @@ describe('BilanAssociation', () => {
   });
 
   test('exports : trois boutons, clic = un GET /analytics/export en blob (pas de lien direct)', async () => {
-    axios.get.mockResolvedValue({ data: KPI });
+    serveur();
     global.URL.createObjectURL = jest.fn(() => 'blob:u'); global.URL.revokeObjectURL = jest.fn();
     const { div } = monter({});
     await act(async () => {});
-    axios.get.mockResolvedValue({ data: new Blob(['%PDF']) });
     const clic = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     await act(async () => { div.querySelector('[data-testid="export-pdf"]').click(); });
     expect(axios.get).toHaveBeenLastCalledWith(expect.stringMatching(/\/analytics\/export$/), { params: { periode: 'mois', mois: expect.any(String), format: 'pdf' }, responseType: 'blob' });
@@ -159,5 +175,107 @@ describe('BilanAssociation', () => {
     await act(async () => {});
     expect(div.querySelector('[role="alert"]').textContent).toMatch(/Accès refusé/);
     expect(div.querySelector('[data-testid="bilan-titre"]')).toBeNull();
+  });
+});
+
+describe('BilanAssociation — phase 4 clôture', () => {
+  test('mois non clôturable : ni bouton, ni bannière ; raison affichée ; statut « données actuelles »', async () => {
+    serveur();
+    const { div } = monter({});
+    await act(async () => {});
+    expect(div.querySelector('[data-testid="cloturer"]')).toBeNull();
+    expect(div.querySelector('[data-testid="bilan-cloture"]')).toBeNull();
+    expect(div.querySelector('[data-testid="cloture-raison"]').textContent).toContain("n'est pas terminé");
+    expect(div.querySelector('[data-testid="bilan-statut"]').textContent).toMatch(/Données actuelles \/ dynamiques/);
+    expect(div.querySelector('[data-testid="bilan-archives"]').textContent).toContain('Aucun bilan clôturé');
+  });
+
+  test('mois clôturable : bouton -> confirmation (texte exact, Annuler / Clôturer) -> POST une fois -> rechargement', async () => {
+    serveur({ kpi: KPI_CLOTURABLE });
+    axios.post.mockResolvedValue({ data: { cloture: META, message: 'Bilan Août 2026 clôturé.' } });
+    const { div } = monter({});
+    await act(async () => {});
+    expect(axios.post).not.toHaveBeenCalled();
+    await act(async () => { div.querySelector('[data-testid="cloturer"]').click(); });
+    expect(axios.post).not.toHaveBeenCalled();   // pas de clôture en un clic
+    const conf = div.querySelector('[data-testid="confirmation-cloture"]');
+    expect(conf.textContent).toContain("Vous allez figer définitivement le bilan d'août 2026. Les données de ce rapport ne changeront plus même si les données historiques sont corrigées.");
+    await act(async () => { div.querySelector('[data-testid="annuler-cloture"]').click(); });
+    expect(div.querySelector('[data-testid="confirmation-cloture"]')).toBeNull();
+    expect(axios.post).not.toHaveBeenCalled();
+    await act(async () => { div.querySelector('[data-testid="cloturer"]').click(); });
+    serveur({ kpi: KPI_CLOTURE, clotures: [META] });   // après clôture, le serveur répond « clôturé »
+    await act(async () => { div.querySelector('[data-testid="confirmer-cloture"]').click(); });
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(axios.post).toHaveBeenCalledWith(expect.stringMatching(/\/analytics\/cloture$/), null, { params: { mois: expect.any(String) } });
+    expect(div.querySelector('[data-testid="bilan-message"]').textContent).toContain('clôturé');
+    expect(div.querySelector('[data-testid="bilan-cloture"]').textContent).toContain('Bilan clôturé');
+    expect(div.querySelector('[data-testid="cloturer"]')).toBeNull();
+    expect(div.querySelector('[data-testid="archive-2026-08:tous"]').textContent).toContain('Officiel · v1');
+  });
+
+  test('mois clôturé : bannière (date, version, auteur), officiel ≠ dynamique, exports officiels depuis le snapshot', async () => {
+    serveur({ kpi: KPI_CLOTURE, clotures: [META], snapshot: SNAPSHOT });
+    global.URL.createObjectURL = jest.fn(() => 'blob:u'); global.URL.revokeObjectURL = jest.fn();
+    const { div } = monter({});
+    await act(async () => {});
+    const t = (id) => div.querySelector(`[data-testid="${id}"]`).textContent;
+    expect(t('bilan-cloture')).toContain('Clôturé le 2026-09-15 12:00');
+    expect(t('bilan-cloture')).toContain('version 1');
+    expect(t('bilan-cloture')).toContain('admin@exemple.invalid');
+    // vue par défaut = données ACTUELLES (605), clairement étiquetées
+    expect(t('bilan-statut')).toMatch(/Données actuelles/);
+    expect(t('bilan-ca')).toContain('605,00 CHF');
+    expect(div.querySelector('[data-testid="export-pdf"]')).not.toBeNull();
+    // bascule vers l'OFFICIEL : lecture du snapshot, 575 figé, étiquette officielle
+    await act(async () => { div.querySelector('[data-testid="voir-officiel"]').click(); });
+    expect(axios.get).toHaveBeenCalledWith(expect.stringMatching(/\/analytics\/clotures\/snap-1$/));
+    expect(t('bilan-statut')).toMatch(/Officiel \/ figé/);
+    expect(t('bilan-titre')).toContain('officiel');
+    expect(t('bilan-ca')).toContain('575,00 CHF');
+    expect(t('bilan-officiel-meta')).toContain('BILAN OFFICIEL');
+    const clic = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    await act(async () => { div.querySelector('[data-testid="export-officiel-pdf"]').click(); });
+    expect(axios.get).toHaveBeenLastCalledWith(expect.stringMatching(/\/analytics\/clotures\/snap-1\/export$/), { params: { format: 'pdf' }, responseType: 'blob' });
+    clic.mockRestore();
+    // retour aux données actuelles
+    await act(async () => { div.querySelector('[data-testid="voir-actuel"]').click(); });
+    expect(t('bilan-statut')).toMatch(/Données actuelles/);
+    expect(t('bilan-ca')).toContain('605,00 CHF');
+  });
+
+  test('archives : Voir / PDF / XLSX / CSV depuis le snapshot ; nom de fichier officiel', async () => {
+    serveur({ kpi: KPI_CLOTURE, clotures: [META], snapshot: SNAPSHOT });
+    global.URL.createObjectURL = jest.fn(() => 'blob:u'); global.URL.revokeObjectURL = jest.fn();
+    const ouvrir = jest.fn();
+    await telechargerExportOfficiel('snap-1', 'xlsx', META, ouvrir);
+    expect(ouvrir).toHaveBeenCalledWith('blob:u', 'bilan-officiel-afroboost-2026-08-v1.xlsx');
+    const { div } = monter({});
+    await act(async () => {});
+    const clic = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    await act(async () => { div.querySelector('[data-testid="archive-csv-2026-08:tous"]').click(); });
+    expect(axios.get).toHaveBeenLastCalledWith(expect.stringMatching(/\/analytics\/clotures\/snap-1\/export$/), { params: { format: 'csv' }, responseType: 'blob' });
+    clic.mockRestore();
+  });
+
+  test('période personnalisée / année : le serveur dit non clôturable -> aucun bouton actif, explication affichée', async () => {
+    serveur({ kpi: { ...KPI, cloture: { existante: null, cloturable: false, raison: 'Une période personnalisée ne peut pas être clôturée. Sélectionnez un mois complet.', super_admin: true } } });
+    const { div } = monter({});
+    await act(async () => {});
+    expect(div.querySelector('[data-testid="cloturer"]')).toBeNull();
+    expect(div.querySelector('[data-testid="confirmer-cloture"]')).toBeNull();
+    expect(div.querySelector('[data-testid="cloture-raison"]').textContent).toContain('Sélectionnez un mois complet');
+    // le mode Année de cet écran envoie periode=annee : jamais de bouton non plus
+    await act(async () => { div.querySelector('[data-testid="mode-annee"]').click(); });
+    expect(div.querySelector('[data-testid="cloturer"]')).toBeNull();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test('coach (super_admin false) : jamais de bouton Clôturer, même sur un mois terminé', async () => {
+    serveur({ kpi: { ...KPI, cloture: { existante: null, cloturable: false, raison: '', super_admin: false } } });
+    const { div } = monter({});
+    await act(async () => {});
+    expect(div.querySelector('[data-testid="cloturer"]')).toBeNull();
+    expect(div.querySelector('[data-testid="cloture-raison"]')).toBeNull();
   });
 });

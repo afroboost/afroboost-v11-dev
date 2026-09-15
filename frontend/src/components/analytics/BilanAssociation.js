@@ -13,7 +13,15 @@
  * CONFIDENTIALITÉ : le serveur refuse de servir un bilan qui contiendrait une
  * donnée personnelle ; l'écran n'en manipule donc aucune.
  *
- * Aucun sondage : un appel par changement de filtre.
+ * PHASE 4 — CLÔTURE : pour un mois civil terminé, le super-admin peut figer le
+ * bilan (POST /api/analytics/cloture) après une confirmation explicite. Un mois
+ * clôturé affiche « Bilan clôturé » et distingue SANS AMBIGUÏTÉ le bilan
+ * OFFICIEL / FIGÉ (lu depuis le snapshot, exports depuis le snapshot) des
+ * DONNÉES ACTUELLES / DYNAMIQUES (recalculées). Les archives listent les
+ * bilans figés. Aucune écriture d'un autre genre.
+ *
+ * Aucun sondage : un appel par changement de filtre (+ un pour les archives au
+ * montage, + un pour lire un snapshot quand on l'ouvre).
  */
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
@@ -57,6 +65,22 @@ export async function telechargerExport(format, params, periode, ouvrir) {
   return r;
 }
 
+/** Télécharge un export OFFICIEL, généré par le serveur depuis le snapshot. */
+export async function telechargerExportOfficiel(id, format, meta, ouvrir) {
+  const r = await axios.get(`${API}/analytics/clotures/${encodeURIComponent(id)}/export`, { params: { format }, responseType: 'blob' });
+  const url = URL.createObjectURL(r.data);
+  const nom = `bilan-officiel-afroboost-${meta && meta.annee ? `${meta.annee}-${String(meta.mois).padStart(2, '0')}` : 'periode'}-v${(meta && meta.version) || 1}.${format}`;
+  (ouvrir || ((u, n) => { const a = document.createElement('a'); a.href = u; a.download = n; document.body.appendChild(a); a.click(); a.remove(); }))(url, nom);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  return r;
+}
+
+const Cadenas = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </svg>
+);
+
 const Ligne = ({ libelle, valeur, note, testid }) => (
   <div data-testid={testid} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '5px 0', borderTop: BORDURE, fontSize: 12 }}>
     <span style={{ color: 'rgba(255,255,255,0.65)' }}>{libelle}</span>
@@ -68,6 +92,124 @@ const Ligne = ({ libelle, valeur, note, testid }) => (
 
 const n = (v) => (v === null || v === undefined ? '—' : String(v).replace('.', ','));
 
+/** Les sections du bilan — les MÊMES pour les données actuelles et le bilan officiel figé. */
+function SectionsBilan({ b }) {
+  return (
+    <>
+    <Bloc titre="Résumé exécutif" testid="bilan-resume">
+      <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13, lineHeight: 1.5 }}>{b.resume_executif}</div>
+    </Bloc>
+
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+      <Carte testid="bilan-seances" valeur={b.activite.seances} libelle="Séances" />
+      <Carte testid="bilan-reservations" valeur={b.activite.reservations} libelle="Réservations" />
+      <Carte testid="bilan-uniques" valeur={b.activite.participants_uniques} libelle="Participants uniques" precision={`${b.activite.nouveaux} nouveaux · ${b.activite.recurrents} récurrents`} />
+      <Carte testid="bilan-moyenne" valeur={n(b.activite.moyenne_par_seance)} libelle="Moyenne / séance" />
+      <Carte testid="bilan-ca" valeur={chf(b.finances.ca_prouve)} libelle="CA prouvé" precision={`Stripe ${chf(b.finances.stripe)} · manuel ${chf(b.finances.manuel)}`} />
+      <Carte testid="bilan-essais" valeur={b.essais.accordes} libelle="Essais accordés" precision={`${b.essais.presence_confirmee} présence(s) confirmée(s)`} />
+    </div>
+
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+      <Bloc titre="Activité" qualite={b.qualite.presence} testid="bilan-activite">
+        <Ligne libelle="Mercredi" valeur={`${b.activite.mercredi.reservations} réserv. · ${b.activite.mercredi.seances} séance(s)`} note={`moy. ${n(b.activite.mercredi.moyenne)}`} />
+        <Ligne libelle="Dimanche" valeur={`${b.activite.dimanche.reservations} réserv. · ${b.activite.dimanche.seances} séance(s)`} note={`moy. ${n(b.activite.dimanche.moyenne)}`} />
+        <Ligne libelle="Autres jours" valeur={b.activite.autres_jours} />
+        <Ligne libelle="Présence" valeur={b.presence.libelle} testid="bilan-presence" />
+        <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 6 }}>Les réservations non vérifiées ne sont jamais comptées comme absences.</div>
+      </Bloc>
+      <Bloc titre="Essais gratuits" qualite={b.qualite.conversion} testid="bilan-essais-bloc">
+        <Ligne libelle="Essais accordés" valeur={b.essais.accordes} />
+        <Ligne libelle="Essais réservés" valeur={b.essais.reserves} />
+        <Ligne libelle="Présences confirmées" valeur={b.essais.presence_confirmee} note={`${b.essais.presence_inconnue} inconnue(s)`} />
+        <Ligne libelle="Couverture de présence" valeur={pct(b.essais.couverture_pct)} />
+        <Ligne libelle="Conversions confirmées" valeur={b.essais.conversions_confirmees} note="KPI principal" testid="bilan-conversions" />
+        <Ligne libelle="Conversions probables" valeur={b.essais.conversions_probables} note="à part" />
+      </Bloc>
+      <Bloc titre="Fidélisation" testid="bilan-fidelisation">
+        {Object.keys(LIBELLES_FIDELITE).map((k) => <Ligne key={k} libelle={`Venus ${LIBELLES_FIDELITE[k]}`} valeur={b.fidelisation[k]} />)}
+      </Bloc>
+      <Bloc titre="Abonnements" qualite={b.qualite.renouvellements} testid="bilan-abonnements">
+        <Ligne libelle="Abonnements actifs" valeur={b.abonnements.actifs} />
+        <Ligne libelle="Nouveaux" valeur={b.abonnements.nouveaux} />
+        <Ligne libelle="Pulse X10 actifs" valeur={b.abonnements.pulse_actifs} testid="bilan-pulse" />
+        <Ligne libelle="Pulse X10 vendus" valeur={b.abonnements.pulse_vendus} />
+        <Ligne libelle="Cartes membres actives" valeur={b.abonnements.cartes_actives} testid="bilan-cartes" />
+        <Ligne libelle="Cartes membres vendues" valeur={b.abonnements.cartes_vendues} />
+        <Ligne libelle="Renouvellements confirmés" valeur={b.abonnements.renouvellements_confirmes} note="KPI principal" />
+        <Ligne libelle="Renouvellements probables" valeur={b.abonnements.renouvellements_probables} note="non comptés" />
+      </Bloc>
+      <Bloc titre="Finances" qualite={b.qualite.montants} testid="bilan-finances">
+        <Ligne libelle="CA prouvé" valeur={chf(b.finances.ca_prouve)} />
+        <Ligne libelle="dont Stripe" valeur={chf(b.finances.stripe)} />
+        <Ligne libelle="dont manuel" valeur={chf(b.finances.manuel)} />
+        <Ligne libelle="Achats payés" valeur={b.finances.achats_payes} note={`${b.finances.gratuits} offert(s)`} />
+        <Ligne libelle="Panier moyen" valeur={chf(b.finances.panier_moyen)} />
+        {Object.keys(b.finances.par_moyen || {}).map((m) => (
+          <Ligne key={m} libelle={b.finances.par_moyen[m].libelle} valeur={`${b.finances.par_moyen[m].nombre} · ${chf(b.finances.par_moyen[m].montant)}`} />
+        ))}
+        <div data-testid="bilan-hors-ca" style={{ marginTop: 10, padding: 8, borderRadius: 8, border: '1px solid rgba(251, 191, 36, 0.35)' }}>
+          <div style={{ color: 'rgba(251, 191, 36, 0.95)', fontSize: 11, fontWeight: 700, marginBottom: 4 }}>À part — jamais additionnés au CA prouvé</div>
+          <Ligne libelle="Montants déclarés non prouvés" valeur={chf(b.finances.hors_ca.declare_non_prouve_montant)} note={`${b.finances.hors_ca.declare_non_prouve_nombre} achat(s)`} />
+          <Ligne libelle="Paiements en attente" valeur={`${b.finances.hors_ca.pending_nombre} · ${chf(b.finances.hors_ca.pending_montant)} déclarés`} />
+          <Ligne libelle="Données financières inconnues" valeur={b.finances.hors_ca.inconnus} />
+        </div>
+        <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 6 }}>{b.finances.remboursements}.</div>
+      </Bloc>
+      <Bloc titre={`Comparaison avec ${b.comparaison.periode_precedente.libelle}`} testid="bilan-comparaison">
+        {Object.keys(b.comparaison.indicateurs).map((k) => {
+          const v = b.comparaison.indicateurs[k];
+          const couleur = v.variation_pct === null || v.variation_pct === undefined ? 'rgba(255,255,255,0.5)'
+            : v.variation_pct >= 0 ? 'rgba(74, 222, 128, 0.9)' : 'rgba(248,113,113,0.95)';
+          return (
+            <div key={k} data-testid={`comparaison-${k}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 0', borderTop: BORDURE, fontSize: 12 }}>
+              <span style={{ color: 'rgba(255,255,255,0.65)' }}>{v.libelle_indicateur}</span>
+              <span style={{ color: '#fff' }}>{n(v.precedent)} → {n(v.actuel)} <span style={{ color: couleur, fontWeight: 700, marginLeft: 6 }}>{v.libelle}</span></span>
+            </div>
+          );
+        })}
+      </Bloc>
+    </div>
+
+    <Bloc titre={`Évolution ${b.evolution_annuelle.annee}`} testid="bilan-evolution">
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', minWidth: 560, fontSize: 12, color: 'rgba(255,255,255,0.8)', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>
+              <th style={{ textAlign: 'left', padding: '4px 6px' }}>Mois</th>
+              <th style={{ textAlign: 'right', padding: '4px 6px' }}>Participants</th>
+              <th style={{ textAlign: 'right', padding: '4px 6px' }}>Réservations</th>
+              <th style={{ textAlign: 'right', padding: '4px 6px' }}>Séances</th>
+              <th style={{ textAlign: 'right', padding: '4px 6px' }}>Essais</th>
+              <th style={{ textAlign: 'right', padding: '4px 6px' }}>CA prouvé</th>
+            </tr>
+          </thead>
+          <tbody>
+            {b.evolution_annuelle.mois.map((m) => (
+              <tr key={m.numero} data-testid={`evolution-${m.numero}`} style={{ borderTop: BORDURE, opacity: m.futur ? 0.35 : 1 }}>
+                <td style={{ padding: '4px 6px' }}>{m.mois}{m.futur ? <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 10, marginLeft: 4 }}>(à venir)</span> : null}</td>
+                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{m.participants}</td>
+                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{m.reservations}</td>
+                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{m.seances}</td>
+                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{m.essais}</td>
+                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{chf(m.ca_prouve)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Bloc>
+
+    <Bloc titre="Qualité des données" testid="bilan-qualite">
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8, fontSize: 11, color: 'rgba(255,255,255,0.65)' }}>
+        présence <Badge niveau={b.qualite.presence} /> · montants <Badge niveau={b.qualite.montants} /> · moyen de paiement <Badge niveau={b.qualite.moyen_paiement} /> · renouvellements <Badge niveau={b.qualite.renouvellements} /> · conversion <Badge niveau={b.qualite.conversion} />
+      </div>
+      {b.qualite.phrases.map((ph, i) => <div key={i} style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 3 }}>{ph}</div>)}
+    </Bloc>
+
+    </>
+  );
+}
+
 export default function BilanAssociation({ coaches = [] }) {
   const [mode, setMode] = useState('mois');
   const [mois, setMois] = useState(moisCourantISO());
@@ -77,6 +219,13 @@ export default function BilanAssociation({ coaches = [] }) {
   const [chargement, setChargement] = useState(false);
   const [erreur, setErreur] = useState('');
   const [exportEnCours, setExportEnCours] = useState('');
+  // Phase 4 : archives, vue officielle, confirmation de clôture.
+  const [clotures, setClotures] = useState([]);
+  const [vueOfficielle, setVueOfficielle] = useState(false);
+  const [snapshot, setSnapshot] = useState(null);
+  const [confirmation, setConfirmation] = useState(false);
+  const [clotureEnCours, setClotureEnCours] = useState(false);
+  const [message, setMessage] = useState('');
 
   const params = useMemo(() => parametresBilan({ mode, mois, coachId, courseId }), [mode, mois, coachId, courseId]);
   const cleParams = JSON.stringify(params);
@@ -97,6 +246,13 @@ export default function BilanAssociation({ coaches = [] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cleParams]);
 
+  const chargerArchives = () => axios.get(`${API}/analytics/clotures`, { params: coachId ? { coach_id: coachId } : {} })
+    .then((r) => setClotures((prev) => (JSON.stringify(prev) === JSON.stringify(r.data.clotures) ? prev : (r.data.clotures || []))))
+    .catch(() => {});
+  useEffect(() => { chargerArchives(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [coachId]);
+  // Changer de période ou de périmètre ramène toujours sur les données actuelles.
+  useEffect(() => { setVueOfficielle(false); setSnapshot(null); setConfirmation(false); setMessage(''); }, [cleParams]);
+
   const [coursServeur, setCoursServeur] = useState([]);
   useEffect(() => {
     if (kpi && Array.isArray(kpi.cours_disponibles) && kpi.cours_disponibles.length) {
@@ -111,6 +267,39 @@ export default function BilanAssociation({ coaches = [] }) {
       const s = e && e.response && e.response.status;
       setErreur(s === 401 || s === 403 ? 'Export refusé : jeton signé requis.' : `Export ${format.toUpperCase()} impossible.`);
     } finally { setExportEnCours(''); }
+  };
+
+  const cloture = kpi && kpi.cloture;
+  const bAffiche = vueOfficielle && snapshot ? snapshot.bilan : b;
+  const ouvrirOfficiel = async (id) => {
+    setErreur('');
+    try {
+      const r = await axios.get(`${API}/analytics/clotures/${encodeURIComponent(id)}`);
+      setSnapshot(r.data); setVueOfficielle(true);
+    } catch (e) { setErreur('Bilan clôturé illisible.'); }
+  };
+  const cloturer = async () => {
+    setClotureEnCours(true); setErreur('');
+    try {
+      const r = await axios.post(`${API}/analytics/cloture`, null, { params: { mois: params.mois, ...(coachId ? { coach_id: coachId } : {}) } });
+      setConfirmation(false);
+      setMessage(r.data.message || 'Bilan clôturé.');
+      // Recharger la vue (elle porte désormais la clôture) et les archives : deux appels, une fois.
+      const k = await axios.get(`${API}/analytics/cockpit`, { params });
+      setKpi(k.data);
+      chargerArchives();
+    } catch (e) {
+      const s = e && e.response && e.response.status;
+      const d = e && e.response && e.response.data && e.response.data.detail;
+      setErreur(s === 401 || s === 403 ? 'Clôture refusée : réservée au super-admin (jeton signé requis).' : (d || 'Clôture impossible.'));
+    } finally { setClotureEnCours(false); }
+  };
+  const exporterOfficiel = async (format) => {
+    const meta = snapshot ? snapshot.cloture : (cloture && cloture.existante);
+    if (!meta) return;
+    setExportEnCours('officiel-' + format); setErreur('');
+    try { await telechargerExportOfficiel(meta.id, format, meta); } catch (e) { setErreur(`Export officiel ${format.toUpperCase()} impossible.`); }
+    finally { setExportEnCours(''); }
   };
 
   const select = { background: 'rgba(255,255,255,0.06)', border: BORDURE, color: '#fff', borderRadius: 8, padding: '6px 10px', fontSize: 12 };
@@ -142,141 +331,112 @@ export default function BilanAssociation({ coaches = [] }) {
 
       {erreur && <div role="alert" style={{ color: 'rgba(248,113,113,0.95)', fontSize: 12 }}>{erreur}</div>}
 
+      {message && <div data-testid="bilan-message" style={{ color: 'rgba(74, 222, 128, 0.95)', fontSize: 12 }}>{message}</div>}
+
       {b && (
         <>
+          {/* ═══ PHASE 4 — état de clôture ═══ */}
+          {cloture && cloture.existante && (
+            <div data-testid="bilan-cloture" style={{ border: `1px solid ${PRIMAIRE}`, borderRadius: 12, padding: 12, background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ color: '#fff', fontSize: 13 }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 800, color: PRIMAIRE }}><Cadenas /> Bilan clôturé</span>
+                <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: 11, marginTop: 3 }}>
+                  Clôturé le {String(cloture.existante.created_at || '').slice(0, 16).replace('T', ' ')} · version {cloture.existante.version} · par {cloture.existante.created_by} · empreinte {String(cloture.existante.hash || '').slice(0, 12)}
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                <button type="button" data-testid="voir-officiel" onClick={() => ouvrirOfficiel(cloture.existante.id)} className="px-3 py-1.5 rounded-full text-xs font-medium" style={bouton(vueOfficielle)}>Voir le bilan clôturé (officiel)</button>
+                <button type="button" data-testid="voir-actuel" onClick={() => { setVueOfficielle(false); }} className="px-3 py-1.5 rounded-full text-xs font-medium" style={bouton(!vueOfficielle)}>Voir les données actuelles</button>
+              </div>
+            </div>
+          )}
+          {cloture && cloture.cloturable && !confirmation && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              <button type="button" data-testid="cloturer" onClick={() => setConfirmation(true)} className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ ...bouton(true), display: 'inline-flex', alignItems: 'center', gap: 6 }}><Cadenas /> Clôturer le mois</button>
+              <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>Mois civil terminé : le bilan peut être figé officiellement.</span>
+            </div>
+          )}
+          {cloture && !cloture.cloturable && !cloture.existante && cloture.raison && cloture.super_admin && (
+            <div data-testid="cloture-raison" style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>Clôture indisponible : {cloture.raison}</div>
+          )}
+          {confirmation && (
+            <div role="dialog" aria-modal="true" data-testid="confirmation-cloture" style={{ border: '1px solid rgba(251, 191, 36, 0.6)', borderRadius: 12, padding: 14, background: 'rgba(251, 191, 36, 0.06)' }}>
+              <div style={{ color: '#fff', fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Confirmer la clôture</div>
+              <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, marginBottom: 10 }}>
+                Vous allez figer définitivement le bilan d'{(b.periode.libelle || '').charAt(0).toLowerCase() + (b.periode.libelle || '').slice(1)}. Les données de ce rapport ne changeront plus même si les données historiques sont corrigées.
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                <button type="button" data-testid="annuler-cloture" onClick={() => setConfirmation(false)} disabled={clotureEnCours} className="px-3 py-1.5 rounded-full text-xs font-medium" style={bouton(false)}>Annuler</button>
+                <button type="button" data-testid="confirmer-cloture" onClick={cloturer} disabled={clotureEnCours} className="px-3 py-1.5 rounded-full text-xs font-semibold" style={bouton(true)}>{clotureEnCours ? 'Clôture…' : 'Clôturer le mois'}</button>
+              </div>
+            </div>
+          )}
+
+          <div data-testid="bilan-statut" style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, alignSelf: 'flex-start', padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 800, textTransform: 'uppercase',
+            border: `1px solid ${vueOfficielle ? PRIMAIRE : 'rgba(251, 191, 36, 0.8)'}`, color: vueOfficielle ? PRIMAIRE : 'rgba(251, 191, 36, 0.95)',
+          }}>
+            {vueOfficielle ? <><Cadenas size={12} /> Officiel / figé — bilan clôturé</> : 'Données actuelles / dynamiques — non figées'}
+          </div>
+
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
-              <div data-testid="bilan-titre" style={{ color: '#fff', fontSize: 16, fontWeight: 800 }}>Bilan {b.periode.libelle}</div>
+              <div data-testid="bilan-titre" style={{ color: '#fff', fontSize: 16, fontWeight: 800 }}>Bilan {bAffiche.periode.libelle}{vueOfficielle ? ' — officiel' : ''}</div>
               <div data-testid="bilan-perimetre" style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>
-                Périmètre : {b.perimetre.libelle}{b.perimetre.cours !== 'tous' ? ` · cours : ${b.perimetre.cours}` : ''}
+                Périmètre : {bAffiche.perimetre.libelle}{bAffiche.perimetre.cours !== 'tous' ? ` · cours : ${bAffiche.perimetre.cours}` : ''}
               </div>
-              {b.perimetre.note ? <div data-testid="bilan-note-cours" style={{ color: 'rgba(251, 191, 36, 0.95)', fontSize: 11 }}>{b.perimetre.note}</div> : null}
+              {bAffiche.perimetre.note ? <div data-testid="bilan-note-cours" style={{ color: 'rgba(251, 191, 36, 0.95)', fontSize: 11 }}>{bAffiche.perimetre.note}</div> : null}
+              {vueOfficielle && snapshot && <div data-testid="bilan-officiel-meta" style={{ color: PRIMAIRE, fontSize: 11 }}>{snapshot.bilan.cloture.libelle}</div>}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {['csv', 'xlsx', 'pdf'].map((f) => (
-                <button key={f} type="button" data-testid={`export-${f}`} disabled={!!exportEnCours} onClick={() => exporter(f)}
-                  className="px-3 py-1.5 rounded-full text-xs font-medium" style={bouton(exportEnCours === f)}>
-                  {f === 'csv' ? 'Exporter CSV' : f === 'xlsx' ? 'Exporter Excel' : 'Télécharger le bilan PDF'}
+                <button key={f} type="button" data-testid={vueOfficielle ? `export-officiel-${f}` : `export-${f}`} disabled={!!exportEnCours}
+                  onClick={() => (vueOfficielle ? exporterOfficiel(f) : exporter(f))}
+                  className="px-3 py-1.5 rounded-full text-xs font-medium" style={bouton(exportEnCours === (vueOfficielle ? 'officiel-' : '') + f)}>
+                  {vueOfficielle ? (f === 'csv' ? 'CSV officiel' : f === 'xlsx' ? 'Excel officiel' : 'PDF officiel') : (f === 'csv' ? 'Exporter CSV' : f === 'xlsx' ? 'Exporter Excel' : 'Télécharger le bilan PDF')}
                 </button>
               ))}
             </div>
           </div>
 
-          <Bloc titre="Résumé exécutif" testid="bilan-resume">
-            <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13, lineHeight: 1.5 }}>{b.resume_executif}</div>
-          </Bloc>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-            <Carte testid="bilan-seances" valeur={b.activite.seances} libelle="Séances" />
-            <Carte testid="bilan-reservations" valeur={b.activite.reservations} libelle="Réservations" />
-            <Carte testid="bilan-uniques" valeur={b.activite.participants_uniques} libelle="Participants uniques" precision={`${b.activite.nouveaux} nouveaux · ${b.activite.recurrents} récurrents`} />
-            <Carte testid="bilan-moyenne" valeur={n(b.activite.moyenne_par_seance)} libelle="Moyenne / séance" />
-            <Carte testid="bilan-ca" valeur={chf(b.finances.ca_prouve)} libelle="CA prouvé" precision={`Stripe ${chf(b.finances.stripe)} · manuel ${chf(b.finances.manuel)}`} />
-            <Carte testid="bilan-essais" valeur={b.essais.accordes} libelle="Essais accordés" precision={`${b.essais.presence_confirmee} présence(s) confirmée(s)`} />
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
-            <Bloc titre="Activité" qualite={b.qualite.presence} testid="bilan-activite">
-              <Ligne libelle="Mercredi" valeur={`${b.activite.mercredi.reservations} réserv. · ${b.activite.mercredi.seances} séance(s)`} note={`moy. ${n(b.activite.mercredi.moyenne)}`} />
-              <Ligne libelle="Dimanche" valeur={`${b.activite.dimanche.reservations} réserv. · ${b.activite.dimanche.seances} séance(s)`} note={`moy. ${n(b.activite.dimanche.moyenne)}`} />
-              <Ligne libelle="Autres jours" valeur={b.activite.autres_jours} />
-              <Ligne libelle="Présence" valeur={b.presence.libelle} testid="bilan-presence" />
-              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 6 }}>Les réservations non vérifiées ne sont jamais comptées comme absences.</div>
-            </Bloc>
-            <Bloc titre="Essais gratuits" qualite={b.qualite.conversion} testid="bilan-essais-bloc">
-              <Ligne libelle="Essais accordés" valeur={b.essais.accordes} />
-              <Ligne libelle="Essais réservés" valeur={b.essais.reserves} />
-              <Ligne libelle="Présences confirmées" valeur={b.essais.presence_confirmee} note={`${b.essais.presence_inconnue} inconnue(s)`} />
-              <Ligne libelle="Couverture de présence" valeur={pct(b.essais.couverture_pct)} />
-              <Ligne libelle="Conversions confirmées" valeur={b.essais.conversions_confirmees} note="KPI principal" testid="bilan-conversions" />
-              <Ligne libelle="Conversions probables" valeur={b.essais.conversions_probables} note="à part" />
-            </Bloc>
-            <Bloc titre="Fidélisation" testid="bilan-fidelisation">
-              {Object.keys(LIBELLES_FIDELITE).map((k) => <Ligne key={k} libelle={`Venus ${LIBELLES_FIDELITE[k]}`} valeur={b.fidelisation[k]} />)}
-            </Bloc>
-            <Bloc titre="Abonnements" qualite={b.qualite.renouvellements} testid="bilan-abonnements">
-              <Ligne libelle="Abonnements actifs" valeur={b.abonnements.actifs} />
-              <Ligne libelle="Nouveaux" valeur={b.abonnements.nouveaux} />
-              <Ligne libelle="Pulse X10 actifs" valeur={b.abonnements.pulse_actifs} testid="bilan-pulse" />
-              <Ligne libelle="Pulse X10 vendus" valeur={b.abonnements.pulse_vendus} />
-              <Ligne libelle="Cartes membres actives" valeur={b.abonnements.cartes_actives} testid="bilan-cartes" />
-              <Ligne libelle="Cartes membres vendues" valeur={b.abonnements.cartes_vendues} />
-              <Ligne libelle="Renouvellements confirmés" valeur={b.abonnements.renouvellements_confirmes} note="KPI principal" />
-              <Ligne libelle="Renouvellements probables" valeur={b.abonnements.renouvellements_probables} note="non comptés" />
-            </Bloc>
-            <Bloc titre="Finances" qualite={b.qualite.montants} testid="bilan-finances">
-              <Ligne libelle="CA prouvé" valeur={chf(b.finances.ca_prouve)} />
-              <Ligne libelle="dont Stripe" valeur={chf(b.finances.stripe)} />
-              <Ligne libelle="dont manuel" valeur={chf(b.finances.manuel)} />
-              <Ligne libelle="Achats payés" valeur={b.finances.achats_payes} note={`${b.finances.gratuits} offert(s)`} />
-              <Ligne libelle="Panier moyen" valeur={chf(b.finances.panier_moyen)} />
-              {Object.keys(b.finances.par_moyen || {}).map((m) => (
-                <Ligne key={m} libelle={b.finances.par_moyen[m].libelle} valeur={`${b.finances.par_moyen[m].nombre} · ${chf(b.finances.par_moyen[m].montant)}`} />
-              ))}
-              <div data-testid="bilan-hors-ca" style={{ marginTop: 10, padding: 8, borderRadius: 8, border: '1px solid rgba(251, 191, 36, 0.35)' }}>
-                <div style={{ color: 'rgba(251, 191, 36, 0.95)', fontSize: 11, fontWeight: 700, marginBottom: 4 }}>À part — jamais additionnés au CA prouvé</div>
-                <Ligne libelle="Montants déclarés non prouvés" valeur={chf(b.finances.hors_ca.declare_non_prouve_montant)} note={`${b.finances.hors_ca.declare_non_prouve_nombre} achat(s)`} />
-                <Ligne libelle="Paiements en attente" valeur={`${b.finances.hors_ca.pending_nombre} · ${chf(b.finances.hors_ca.pending_montant)} déclarés`} />
-                <Ligne libelle="Données financières inconnues" valeur={b.finances.hors_ca.inconnus} />
-              </div>
-              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 6 }}>{b.finances.remboursements}.</div>
-            </Bloc>
-            <Bloc titre={`Comparaison avec ${b.comparaison.periode_precedente.libelle}`} testid="bilan-comparaison">
-              {Object.keys(b.comparaison.indicateurs).map((k) => {
-                const v = b.comparaison.indicateurs[k];
-                const couleur = v.variation_pct === null || v.variation_pct === undefined ? 'rgba(255,255,255,0.5)'
-                  : v.variation_pct >= 0 ? 'rgba(74, 222, 128, 0.9)' : 'rgba(248,113,113,0.95)';
-                return (
-                  <div key={k} data-testid={`comparaison-${k}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 0', borderTop: BORDURE, fontSize: 12 }}>
-                    <span style={{ color: 'rgba(255,255,255,0.65)' }}>{v.libelle_indicateur}</span>
-                    <span style={{ color: '#fff' }}>{n(v.precedent)} → {n(v.actuel)} <span style={{ color: couleur, fontWeight: 700, marginLeft: 6 }}>{v.libelle}</span></span>
-                  </div>
-                );
-              })}
-            </Bloc>
-          </div>
-
-          <Bloc titre={`Évolution ${b.evolution_annuelle.annee}`} testid="bilan-evolution">
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', minWidth: 560, fontSize: 12, color: 'rgba(255,255,255,0.8)', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>
-                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>Mois</th>
-                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>Participants</th>
-                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>Réservations</th>
-                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>Séances</th>
-                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>Essais</th>
-                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>CA prouvé</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {b.evolution_annuelle.mois.map((m) => (
-                    <tr key={m.numero} data-testid={`evolution-${m.numero}`} style={{ borderTop: BORDURE, opacity: m.futur ? 0.35 : 1 }}>
-                      <td style={{ padding: '4px 6px' }}>{m.mois}{m.futur ? <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 10, marginLeft: 4 }}>(à venir)</span> : null}</td>
-                      <td style={{ textAlign: 'right', padding: '4px 6px' }}>{m.participants}</td>
-                      <td style={{ textAlign: 'right', padding: '4px 6px' }}>{m.reservations}</td>
-                      <td style={{ textAlign: 'right', padding: '4px 6px' }}>{m.seances}</td>
-                      <td style={{ textAlign: 'right', padding: '4px 6px' }}>{m.essais}</td>
-                      <td style={{ textAlign: 'right', padding: '4px 6px' }}>{chf(m.ca_prouve)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Bloc>
-
-          <Bloc titre="Qualité des données" testid="bilan-qualite">
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8, fontSize: 11, color: 'rgba(255,255,255,0.65)' }}>
-              présence <Badge niveau={b.qualite.presence} /> · montants <Badge niveau={b.qualite.montants} /> · moyen de paiement <Badge niveau={b.qualite.moyen_paiement} /> · renouvellements <Badge niveau={b.qualite.renouvellements} /> · conversion <Badge niveau={b.qualite.conversion} />
-            </div>
-            {b.qualite.phrases.map((ph, i) => <div key={i} style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 3 }}>{ph}</div>)}
-          </Bloc>
-
+          <SectionsBilan b={bAffiche} />
           <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>
-            Généré le {b.genere_le} · Données générées à partir du système Afroboost. Les données personnelles des participants ne sont pas incluses.
+            Généré le {bAffiche.genere_le} · Données générées à partir du système Afroboost. Les données personnelles des participants ne sont pas incluses.
           </div>
         </>
       )}
+
+      {/* ═══ PHASE 4 — archives des bilans clôturés ═══ */}
+      <Bloc titre="Archives — bilans clôturés (officiels)" testid="bilan-archives">
+        {clotures.length === 0 ? (
+          <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>Aucun bilan clôturé pour ce périmètre.</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: 520, fontSize: 12, color: 'rgba(255,255,255,0.8)', borderCollapse: 'collapse' }}>
+              <thead><tr style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>
+                <th style={{ textAlign: 'left', padding: '4px 6px' }}>Période</th><th style={{ textAlign: 'left', padding: '4px 6px' }}>Clôturé le</th>
+                <th style={{ textAlign: 'left', padding: '4px 6px' }}>Statut</th><th style={{ textAlign: 'right', padding: '4px 6px' }}>Fichiers</th>
+              </tr></thead>
+              <tbody>
+                {clotures.map((c) => (
+                  <tr key={c.id} data-testid={`archive-${c.cle}`} style={{ borderTop: BORDURE }}>
+                    <td style={{ padding: '4px 6px' }}>{c.periode && c.periode.libelle}{c.perimetre && c.perimetre.coach_id ? ' · coach' : ''}</td>
+                    <td style={{ padding: '4px 6px' }}>{String(c.created_at || '').slice(0, 16).replace('T', ' ')}</td>
+                    <td style={{ padding: '4px 6px', color: PRIMAIRE, fontWeight: 700 }}>Officiel · v{c.version}</td>
+                    <td style={{ padding: '4px 6px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <button type="button" data-testid={`archive-voir-${c.cle}`} onClick={() => { setMois(`${c.annee}-${String(c.mois).padStart(2, '0')}`); setMode('mois'); setTimeout(() => ouvrirOfficiel(c.id), 0); }} className="px-2 py-1 rounded-full text-xs" style={bouton(false)}>Voir</button>
+                      {['pdf', 'xlsx', 'csv'].map((f) => (
+                        <button key={f} type="button" data-testid={`archive-${f}-${c.cle}`} disabled={!!exportEnCours} onClick={() => telechargerExportOfficiel(c.id, f, c).catch(() => setErreur(`Export officiel ${f.toUpperCase()} impossible.`))}
+                          className="px-2 py-1 rounded-full text-xs" style={{ ...bouton(false), marginLeft: 4 }}>{f.toUpperCase()}</button>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Bloc>
     </div>
   );
 }
