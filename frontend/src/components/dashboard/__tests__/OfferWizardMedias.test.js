@@ -8,7 +8,18 @@ import { createRoot } from 'react-dom/client';
 import OfferWizard from '../OfferWizard';
 
 jest.mock('axios', () => ({ __esModule: true, default: { get: jest.fn(), post: jest.fn(), put: jest.fn() } }));
-jest.mock('../../CloudinaryUploadButton', () => () => null);
+const envois = [];
+jest.mock('../../CloudinaryUploadButton', () => ({
+  __esModule: true,
+  default: () => null,
+  uploadToCloudinary: async (f) => { envois.push(f); return { url: '/api/files/mini/image_mini.jpg' }; },
+}));
+beforeEach(() => {
+  HTMLCanvasElement.prototype.getContext = () => ({ drawImage: () => {} });
+  HTMLCanvasElement.prototype.toBlob = function (cb) { cb(new Blob(['jpg'], { type: 'image/jpeg' })); };
+  window.URL.createObjectURL = jest.fn(() => 'blob:capture'); URL.createObjectURL = window.URL.createObjectURL;
+  window.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+});
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 const act = React.act;
@@ -66,10 +77,12 @@ test('vidéo + miniature : preview au format choisi (9:16, contain), miniature e
   expect(par('wizard-thumbnail-preview').getAttribute('src')).toBe('https://x/mini.jpg');
   const prev = par('wizard-video-preview');
   expect(prev.getAttribute('data-ratio')).toBe('9:16');
+  expect(par('video-trim-editor')).not.toBeNull();            // l'éditeur partagé
   const v = prev.querySelector('video');
   expect(v.getAttribute('poster')).toBe('https://x/mini.jpg');
   expect(v.style.objectFit).toBe('contain');
   expect(v.style.aspectRatio).toBe('9 / 16');
+  expect(par('vte-miniature-apercu').getAttribute('src')).toBe('https://x/mini.jpg');
   // Changer le format met la preview à jour immédiatement.
   await act(async () => { par('video-ratio-1:1').querySelector('input').click(); });
   expect(par('wizard-video-preview').getAttribute('data-ratio')).toBe('1:1');
@@ -96,11 +109,14 @@ test('sans drapeau : « Non » par défaut', async () => {
   expect(par('mobile-money-non').getAttribute('aria-checked')).toBe('true');
 });
 
-// ✂️ DÉCOUPE VIDÉO — début / fin, aperçu, réinitialisation, persistance.
+// ✂️ DÉCOUPE VIDÉO — début / fin, aperçu réel, capture, réinitialisation, persistance.
 async function metadonnees(video, duree) {
   Object.defineProperty(video, 'duration', { configurable: true, get: () => duree });
   Object.defineProperty(video, 'videoWidth', { configurable: true, get: () => 1080 });
   Object.defineProperty(video, 'videoHeight', { configurable: true, get: () => 1920 });
+  Object.defineProperty(video, 'readyState', { configurable: true, get: () => 2 });
+  video.play = jest.fn(() => { video.dispatchEvent(new Event('play')); return Promise.resolve(); });
+  video.pause = jest.fn(() => { video.dispatchEvent(new Event('pause')); });
   await act(async () => { video.dispatchEvent(new Event('loadedmetadata')); });
 }
 async function glisser(id, valeur) {
@@ -109,46 +125,55 @@ async function glisser(id, valeur) {
   await act(async () => { setter.call(el, String(valeur)); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); });
 }
 
-test('✂️ découpe : curseurs bornés par la durée réelle, résumé, extrait de 15 s enregistré avec l’offre (original intact)', async () => {
-  await monter({ ...SAISON, video_trim_start: null, video_trim_end: null });
+test('✂️ vidéo de 21 s : extrait 3 → 18 = 15 s ; Lire l’extrait part à 3 s et s’arrête à 18 s ; capture à 7 s → miniature envoyée ; tout enregistré, original intact', async () => {
+  await monter({ ...SAISON, thumbnail: '', video_trim_start: null, video_trim_end: null });
   await allerEtape(3);
-  expect(par('trim-attente')).not.toBeNull();          // durée inconnue : rien à découper
-  await metadonnees(par('wizard-video-preview').querySelector('video'), 20);
-  expect(par('trim-attente')).toBeNull();
-  expect(par('trim-total').textContent).toBe('00:20');
-  expect(par('trim-extrait').textContent).toBe('00:20');
-  expect(par('trim-start').getAttribute('max')).toBe('20');
-  await glisser('trim-start', 3);
-  await glisser('trim-end', 18);
-  expect(par('trim-debut').textContent).toBe('00:03');
-  expect(par('trim-fin').textContent).toBe('00:18');
-  expect(par('trim-extrait').textContent).toBe('00:15');
-  // La preview joue l'extrait : la tête va au début choisi.
+  expect(par('vte-attente')).not.toBeNull();
   const v = par('wizard-video-preview').querySelector('video');
-  v.currentTime = 0; await act(async () => { v.dispatchEvent(new Event('loadedmetadata')); });
+  await metadonnees(v, 21);
+  expect(par('vte-attente')).toBeNull();
+  expect(par('vte-total').textContent).toBe('00:21');
+  await glisser('vte-start', 3);
+  await glisser('vte-end', 18);
+  expect(par('vte-debut').textContent).toBe('00:03');
+  expect(par('vte-fin').textContent).toBe('00:18');
+  expect(par('vte-extrait').textContent).toBe('00:15');
+  // Aperçu réel : lecture de l'extrait bornée.
+  v.currentTime = 0;
+  await act(async () => { par('vte-lire').click(); });
   expect(v.currentTime).toBe(3);
-  // Une fin avant le début est refusée (extrait < 0,5 s) : l'état ne bouge pas.
-  await glisser('trim-end', 2);
-  expect(par('trim-fin').textContent).toBe('00:18');
+  expect(v.play).toHaveBeenCalledTimes(1);
+  v.currentTime = 18; await act(async () => { v.dispatchEvent(new Event('timeupdate')); });
+  expect(v.pause).toHaveBeenCalledTimes(1);
+  expect(v.currentTime).toBe(3);
+  // Capture à 7 s → miniature envoyée au serveur → `thumbnail` = URL serveur.
+  await glisser('vte-scrub', 7);
+  await act(async () => { par('vte-capturer').click(); await new Promise((r) => setTimeout(r, 40)); });
+  expect(envois).toHaveLength(1);
+  expect(par('vte-miniature-apercu').getAttribute('src')).toBe('/api/files/mini/image_mini.jpg');
   await bouton(/^\s*(Enregistrer|Créer l'offre)\s*$/i);
   await act(async () => { await Promise.resolve(); });
   expect(sauvegardee.video_trim_start).toBe(3);
   expect(sauvegardee.video_trim_end).toBe(18);
+  expect(sauvegardee.thumbnail).toBe('/api/files/mini/image_mini.jpg');
   expect(sauvegardee.videoUrl).toBe('/api/files/b/video_b.mp4');   // l'original n'est pas touché
-  //  est transitoire : la liste blanche du dashboard ne l'envoie jamais.
 });
 
-test('✂️ réouverture : la découpe est relue ; « Réinitialiser » la retire (null, null)', async () => {
+test('✂️ réouverture : découpe 2 → 17 et miniature relues ; « Réinitialiser » retire la découpe (null, null)', async () => {
   await monter({ ...SAISON, video_trim_start: 2, video_trim_end: 17 });
   await allerEtape(3);
-  await metadonnees(par('wizard-video-preview').querySelector('video'), 20);
-  expect(par('trim-debut').textContent).toBe('00:02');
-  expect(par('trim-fin').textContent).toBe('00:17');
-  expect(par('trim-extrait').textContent).toBe('00:15');
-  await act(async () => { par('trim-reset').click(); });
-  expect(par('trim-extrait').textContent).toBe('00:20');
+  const v = par('wizard-video-preview').querySelector('video');
+  await metadonnees(v, 20);
+  expect(v.currentTime).toBe(2);                    // la preview se place au début de l'extrait
+  expect(par('vte-debut').textContent).toBe('00:02');
+  expect(par('vte-fin').textContent).toBe('00:17');
+  expect(par('vte-extrait').textContent).toBe('00:15');
+  expect(par('vte-miniature-apercu').getAttribute('src')).toBe('https://x/mini.jpg');
+  await act(async () => { par('vte-reset').click(); });
+  expect(par('vte-extrait').textContent).toBe('00:20');
   await bouton(/^\s*(Enregistrer|Créer l'offre)\s*$/i);
   await act(async () => { await Promise.resolve(); });
   expect(sauvegardee.video_trim_start).toBeNull();
   expect(sauvegardee.video_trim_end).toBeNull();
+  expect(sauvegardee.thumbnail).toBe('https://x/mini.jpg');
 });

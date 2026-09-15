@@ -12,6 +12,8 @@ import Cropper from 'react-easy-crop'; // V268c (F1)
 import SvgIcon from './SvgIcon'; // UI-PUB2 : icones des actions sur les cartes
 import { PrixBoost, BoutonBoost, estSuperAdmin } from './publications/Boost'; // V342 : Boost payant / V343 : pouvoirs super-admin
 import { useBoostTribeLive, BoostTribeLiveOverlay, iconLive } from './live/BoostTribeLive'; // LIVE RAPIDE : porte unique
+import VideoTrimEditor from './VideoTrimEditor'; // L'UNIQUE éditeur vidéo (partagé avec OfferWizard)
+import { trimValide, useTrimVideo } from '../utils/videoTrim'; // découpe non destructive : lecture bornée
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -343,9 +345,20 @@ const UiPub2Colonne = ({ actions, ancre = 8 }) => {
 };
 
 
+// DÉCOUPE : un <video> de publication qui ne joue que l'extrait défini par
+// `trim_start` / `trim_end` (utils/videoTrim, même hook que les offres).
+const VideoPublication = ({ pub, ...props }) => {
+  const ref = useRef(null);
+  useTrimVideo(ref, trimValide(pub.trim_start, pub.trim_end), { loop: true });
+  return <video ref={ref} src={pub.media_url} {...props} />;
+};
+
 // V268 (F2): plein écran d'une publication au clic.
 const V268Lightbox = ({ pub, onClose, actions }) => {
   const videoRef = useRef(null);
+  // DÉCOUPE : la publication ne joue que [trim_start, trim_end], en boucle —
+  // jamais un retour à 00:00.
+  useTrimVideo(videoRef, trimValide(pub.trim_start, pub.trim_end), { loop: true });
   // V268b Fix B3 : en plein ecran, la video demarre AVEC le son. La lightbox
   // s'ouvre sur un clic (geste utilisateur), ce qui autorise la lecture non
   // muette. Le bouton reste dispo pour couper. La carte, elle, garde son propre
@@ -597,8 +610,8 @@ const V268PublicationCard = ({ pub, onOpen, actions }) => {
             etait prefere aux bandes noires du `contain`. La lightbox, elle,
             garde `contain` pour voir le media en entier en plein ecran. */}
         {pub.media_type === 'video' ? (
-          <video
-            src={pub.media_url}
+          <VideoPublication
+            pub={pub}
             poster={pub.thumbnail_url || undefined}
             muted autoPlay loop playsInline
             style={{ display: 'block', width: '100%', height: '250px', objectFit: 'cover', borderRadius: 12 }}
@@ -1008,11 +1021,11 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
 
   // V270 (F1) — choix LIBRE de la miniature video : scrubber + capture.
   const [videoUrl, setVideoUrl] = useState(null);
-  const [duration, setDuration] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
   const [thumbnailBlob, setThumbnailBlob] = useState(null);
   const [thumbnailPreview, setThumbnailPreview] = useState(null);
-  const videoPreviewRef = useRef(null);
+  // DÉCOUPE non destructive : { start, end } en secondes, ou null. Envoyée
+  // avec la publication (`trim_start` / `trim_end`), l'original reste intact.
+  const [trim, setTrim] = useState(null);
 
   // V269 — progression d'upload + succes
   const [uploadPct, setUploadPct] = useState(0);
@@ -1041,7 +1054,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
     revokeAll();
     setFile(null); setPreview(null);
     setShowCrop(false); setCropSrc(null); setCroppedBlob(null);
-    setVideoUrl(null); setDuration(0); setCurrentTime(0);
+    setVideoUrl(null); setTrim(null);
     setThumbnailBlob(null); setThumbnailPreview(null);
   };
 
@@ -1099,92 +1112,24 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
     setPreview(null);
     setShowCrop(false);
     setVideoUrl(URL.createObjectURL(f));
+    setTrim(null);
     setThumbnailBlob(null);
     setThumbnailPreview(null);
   };
 
-  // V270 (F1) — capture le frame courant de l'apercu video, en blob.
-  const captureCurrentFrame = () => {
-    const video = videoPreviewRef.current;
-    if (!video || !video.videoWidth) return Promise.resolve(null);
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-    return new Promise((res) => canvas.toBlob(b => res(b), 'image/jpeg', 0.9));
+  // V270/V419 — la capture de frame (attente d'une vraie frame décodée, canvas)
+  // vit désormais dans VideoTrimEditor, partagé avec « Modifier l'offre ».
+  // Miniature PAR DÉFAUT (capture automatique à ~1 s) : on a toujours une
+  // miniature même si l'utilisateur ne capture rien lui-même.
+  const miniatureParDefaut = (blob, url) => {
+    if (thumbnailBlob) return;                 // une capture choisie existe déjà
+    if (thumbnailPreview) URL.revokeObjectURL(thumbnailPreview);
+    setThumbnailBlob(blob);
+    setThumbnailPreview(url);
   };
-
-  // V419 — ATTENDRE QUE LA FRAME EXISTE VRAIMENT.
-  //
-  // `onseeked` signale que le DEPLACEMENT est fait, PAS que l'image est decodee
-  // et peignable. Comme cette capture part de `onLoadedMetadata` (readyState 1 =
-  // metadonnees seules, aucune donnee d'image), `drawImage` peignait un cadre
-  // NOIR : c'est l'origine de la miniature noire.
-  //
-  // `requestVideoFrameCallback` est l'API faite pour ca (Chrome, Safari) : elle
-  // ne se declenche QU'UNE FOIS une frame reellement presentee. La ou elle
-  // manque (Firefox), on attend `readyState >= 2` (HAVE_CURRENT_DATA) puis un
-  // tour de rendu. Delai de securite pour ne jamais rester bloque.
-  const v419AttendreFrame = (v) => new Promise((res) => {
-    let fini = false;
-    const finir = () => { if (!fini) { fini = true; res(); } };
-    const secours = setTimeout(finir, 1200);
-    const terminer = () => { clearTimeout(secours); finir(); };
-    if (typeof v.requestVideoFrameCallback === 'function') {
-      v.requestVideoFrameCallback(() => terminer());
-      return;
-    }
-    const verifier = () => {
-      if (fini) return;
-      if (v.readyState >= 2) {
-        requestAnimationFrame(() => requestAnimationFrame(terminer));
-      } else {
-        setTimeout(verifier, 60);
-      }
-    };
-    verifier();
-  });
-
-  // Capture par defaut a 1 s, des que la video est prete (si l'utilisateur ne
-  // capture rien lui-meme, on a toujours une miniature).
-  const handleVideoLoaded = async (e) => {
-    const v = e.target;
-    setDuration(v.duration || 0);
-    try {
-      // V419 : sur une video tres courte, `min(1, duree-0.05)` peut tomber a
-      // ~0 s — souvent une frame noire d'amorce. On vise 1 s, ou 25 % de la
-      // duree si la video dure moins de 2 s.
-      const duree = v.duration || 0;
-      v.currentTime = duree > 2 ? 1 : Math.max(0.1, duree * 0.25);
-      await new Promise((res) => { v.onseeked = res; });
-      await v419AttendreFrame(v);          // <- LE correctif de la miniature noire
-      setCurrentTime(v.currentTime);
-      const blob = await captureCurrentFrame();
-      if (blob) {
-        if (thumbnailPreview) URL.revokeObjectURL(thumbnailPreview);
-        setThumbnailBlob(blob);
-        setThumbnailPreview(URL.createObjectURL(blob));
-      }
-    } catch (err) { /* pas de miniature par defaut : non bloquant */ }
-  };
-
-  const handleSliderChange = (e) => {
-    const t = parseFloat(e.target.value);
-    setCurrentTime(t);
-    if (videoPreviewRef.current) videoPreviewRef.current.currentTime = t;
-  };
-
-  // V270 (F3) — « Capturer » ouvre le recadrage sur le frame choisi.
-  const captureAndCrop = async () => {
-    // V419 : meme attente que pour la capture automatique. Un utilisateur qui
-    // deplace le curseur puis clique tout de suite capturait, lui aussi, une
-    // frame pas encore decodee — donc noire.
-    const v = videoPreviewRef.current;
-    if (v) await v419AttendreFrame(v);
-    const blob = await captureCurrentFrame();
-    if (!blob) return;
-    openCropper(URL.createObjectURL(blob), 'thumb');
-  };
+  // « Capturer cette image comme miniature » → recadrage sur la frame choisie
+  // (V270 F3), forcément DANS l'extrait découpé.
+  const captureAndCrop = (blob, url) => { openCropper(url, 'thumb'); };
 
   // V268c/V270 — valide le recadrage. Selon la cible : image publiee ou
   // miniature video.
@@ -1249,6 +1194,8 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
       if (subscriberCode) payload.subscriber_code = subscriberCode;
       if (caption.trim()) payload.caption = caption.trim().slice(0, 500);
       if (thumbnailUrl) payload.thumbnail_url = thumbnailUrl;
+      // DÉCOUPE : début / fin en secondes ; le serveur les revalide.
+      if (mediaType === 'video' && trim) { payload.trim_start = trim.start; payload.trim_end = trim.end; }
 
       // V327 : si une date/heure FUTURE est choisie, on l'envoie en ISO UTC.
       // `datetime-local` donne une heure locale sans fuseau ; `new Date(...)` la lit
@@ -1442,42 +1389,29 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
             </button>
           </div>
         ) : (
-          /* V270 (F1) — apercu video + scrubber pour choisir LIBREMENT la miniature. */
-          <div>
-            <div style={{ position: 'relative', width: '100%', borderRadius: 12, overflow: 'hidden', background: '#000' }}>
-              <video
-                ref={videoPreviewRef}
-                src={videoUrl}
-                muted playsInline
-                onLoadedMetadata={handleVideoLoaded}
-                style={{ display: 'block', width: '100%', maxHeight: 240, objectFit: 'contain' }}
-              />
-              <button onClick={clearFile} aria-label="Changer de média"
-                style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-            <input
-              className="v270-range"
-              type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
-              onChange={handleSliderChange}
-              aria-label="Position dans la vidéo"
+          /* L'ÉDITEUR VIDÉO PARTAGÉ (le même que « Modifier l'offre > Médias ») :
+             aperçu, ✂ découpe (début / fin / durée finale), ▶ aperçu de
+             l'extrait, choix d'une image et « Capturer cette image comme
+             miniature » — dans l'extrait. Flux : upload → découper →
+             prévisualiser → choisir une image → capturer → publier. */
+          <div style={{ position: 'relative' }} data-testid="publish-video-editor">
+            <VideoTrimEditor
+              videoUrl={videoUrl}
+              trimStart={trim ? trim.start : null}
+              trimEnd={trim ? trim.end : null}
+              aspectRatio="auto"
+              hauteurMax="300px"
+              thumbnail={thumbnailPreview || ''}
+              onTrimChange={setTrim}
+              onThumbnailCapture={captureAndCrop}
+              onAutoCapture={miniatureParDefaut}
             />
-            <div style={{ fontSize: '0.7rem', color: '#999', textAlign: 'center', marginTop: 2 }}>
-              {Math.floor(currentTime)}s / {Math.floor(duration)}s
-            </div>
-            <button type="button" onClick={captureAndCrop}
-              style={{ width: '100%', padding: '9px', marginTop: 8, background: 'var(--primary-color, #D91CD2)', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>
-              Capturer cette image comme miniature
+            <button onClick={clearFile} aria-label="Changer de média"
+              style={{ position: 'absolute', top: 8, right: 8, zIndex: 2, background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
             </button>
-            {thumbnailPreview && (
-              <div style={{ marginTop: 8, textAlign: 'center' }}>
-                <img src={thumbnailPreview} alt="Miniature" style={{ width: 120, height: 80, objectFit: 'cover', borderRadius: 6, border: '2px solid var(--primary-color, #D91CD2)' }} />
-                <div style={{ fontSize: '0.7rem', color: '#999', marginTop: 4 }}>Miniature sélectionnée</div>
-              </div>
-            )}
           </div>
         )}
 

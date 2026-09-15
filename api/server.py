@@ -10649,6 +10649,7 @@ async def create_publication(request: Request):
     # `src` public et servira d'argument a destroy() a la purge : on n'accepte
     # qu'une URL Cloudinary du dossier publications/. Vide sinon.
     thumb = (body.get("thumbnail_url") or "").strip()
+    _pub_trim = video_trim_valide(body.get("trim_start"), body.get("trim_end")) if media_type == "video" else (None, None)
     # V418 : meme ouverture que pour `media_url` ci-dessus, mêmes garde-fous.
     # Sans cela, la miniature d'une video auto-hebergee etait SILENCIEUSEMENT
     # jetee : la publication passait, mais s'affichait avec un cadre noir.
@@ -10773,6 +10774,10 @@ async def create_publication(request: Request):
         # V268: legende + miniature video (thumbnail). Vides par defaut.
         "caption": caption,
         "thumbnail_url": thumb,
+        # DÉCOUPE VIDÉO non destructive (même règle que les offres) : l'original
+        # reste intact, les lecteurs jouent [trim_start, trim_end]. Vidéo seule.
+        "trim_start": _pub_trim[0],
+        "trim_end": _pub_trim[1],
         "thumbnail_public_id": _v261_public_id_from_url(thumb) if thumb else "",
         # ISO en chaine, comme le reste des dates de la base — les comparaisons
         # `$gt` / `$lte` restent exactes, l'ISO UTC etant ordonnable en texte.

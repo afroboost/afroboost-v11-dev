@@ -1,20 +1,21 @@
 // V224 — Wizard de creation/modification d'offre en 3 etapes.
 // Le state est LOCAL : il ne remonte au parent qu'une fois, via onSave,
 // ce qui preserve le comportement actuel d'une seule requete POST/PUT.
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios'; // V225: creation/modification des horaires depuis le wizard
 import SvgIcon from '../SvgIcon';
 import { appartientAuCoach } from '../../utils/courseOwnership'; // V228: pictogrammes vectoriels a la place des emoji
 import CloudinaryUploadButton from '../CloudinaryUploadButton'; // V229
 // FORMAT VIDEO : auto / 9:16 / 16:9 / 1:1 — detection sur les dimensions
 // reelles du fichier, previsualisation fidele (contain, jamais deforme).
-import { RATIOS as VIDEO_RATIOS, ratioDepuisDimensions, stylesLecteur, libelleDetection, normaliserRatio } from '../../utils/videoRatio';
+import { RATIOS as VIDEO_RATIOS, ratioDepuisDimensions, libelleDetection, normaliserRatio } from '../../utils/videoRatio';
 // MÉDIAS : la même lecture que la vitrine (miniature dédiée prioritaire, le
 // champ vidéo peut contenir une image) — la preview reflète le rendu réel.
 import { analyserMediaUrl, mediaPrincipal, champVideoEstImage } from '../../utils/mediaOffre';
 // DÉCOUPE VIDÉO non destructive : début / fin en secondes sur l'offre, la
 // preview joue l'extrait (même hook que la vitrine).
-import { trimValide, resumeTrim, formatTemps, useTrimVideo } from '../../utils/videoTrim';
+import VideoTrimEditor from '../VideoTrimEditor';
+import { uploadToCloudinary } from '../CloudinaryUploadButton';
 // U1b : champ d'adresse avec suggestions OpenStreetMap. Reste un input texte
 // libre : si le service est injoignable, le champ se comporte comme avant.
 import ChampAdresse from './ChampAdresse';
@@ -226,12 +227,24 @@ export default function OfferWizard({
 }) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState(initialOffer || {});
-  // DÉCOUPE VIDÉO : la preview de l'étape Médias joue [début, fin] en boucle,
-  // exactement ce que verra le visiteur. `_videoDuree` = durée réelle lue sur
-  // les métadonnées (jamais persistée).
-  const previewVideoRef = useRef(null);
-  const trimPreview = trimValide(form.video_trim_start, form.video_trim_end, form._videoDuree);
-  useTrimVideo(previewVideoRef, trimPreview, { loop: true });
+  // MÉDIAS : l'éditeur vidéo partagé (VideoTrimEditor) porte l'aperçu, la
+  // découpe et la capture de miniature. La capture est envoyée au serveur
+  // (même chemin que « Uploader ») et son URL devient `thumbnail`.
+  const [captureEtat, setCaptureEtat] = useState('');   // '' | 'envoi' | message d'erreur
+  const capturerMiniature = async (blob, apercuLocal) => {
+    setCaptureEtat('envoi');
+    // Aperçu immédiat (URL locale), puis l'URL serveur la remplace.
+    setForm(prev => ({ ...prev, thumbnail: apercuLocal, _thumbnailLocale: apercuLocal }));
+    try {
+      const fichier = new File([blob], 'miniature-' + Date.now() + '.jpg', { type: 'image/jpeg' });
+      const r = await uploadToCloudinary(fichier, { folder: 'offers' });
+      setForm(prev => ({ ...prev, thumbnail: r.url, _thumbnailLocale: null }));
+      setCaptureEtat('');
+    } catch (e) {
+      setCaptureEtat((e && e.message) || 'Envoi de la miniature impossible.');
+      setForm(prev => ({ ...prev, thumbnail: prev._thumbnailLocale === prev.thumbnail ? '' : prev.thumbnail, _thumbnailLocale: null }));
+    }
+  };
   // V224: chaine BRUTE saisie dans les champs variantes. Indispensable : sans
   // elle, la valeur affichee est derivee du tableau normalise, ce qui efface la
   // virgule a l'instant ou elle est tapee (« S, M » devenait « SM »).
@@ -2814,201 +2827,84 @@ export default function OfferWizard({
                   onError={(e) => { e.target.style.opacity = '0.3'; e.target.alt = 'Image indisponible'; }} />
               </div>
             ) : (
-              /* FORMAT VIDEO : la previsualisation rend EXACTEMENT le format
-                 choisi (9:16 en colonne centree, 16:9 en paysage, 1:1 en carre,
-                 auto = format d'origine), object-fit contain, fond noir. Changer
-                 le selecteur ci-dessous met la preview a jour immediatement.
-                 La miniature dediee sert de poster, comme sur la vitrine. */
-              <div style={{ ...stylesLecteur(form.video_aspect_ratio, { hauteurMax: '360px' }).conteneur, minHeight: '200px' }} data-testid="wizard-video-preview" data-ratio={normaliserRatio(form.video_aspect_ratio)}>
-              <video
-                key={form.videoUrl}
-                ref={(el) => { if (el) el._v234 = true; previewVideoRef.current = el; }}
-                src={form.videoUrl}
-                poster={mediaPrincipal(form).poster || undefined}
-                controls
-                playsInline
-                preload="metadata"
-                style={stylesLecteur(form.video_aspect_ratio, { hauteurMax: '360px' }).video}
-                onLoadedMetadata={(e) => {
-                  // V234: stocker la duree pour le slider de miniature
-                  const dur = Math.floor(e.currentTarget.duration || 0);
-                  if (dur > 0 && !form._v234Duration) {
-                    setForm(prev => ({ ...prev, _v234Duration: dur }));
-                  }
-                  // DÉCOUPE : durée réelle (décimale) pour borner les curseurs.
-                  const dureeReelle = e.currentTarget.duration;
-                  if (Number.isFinite(dureeReelle) && dureeReelle > 0) {
-                    setForm(prev => ({ ...prev, _videoDuree: Math.round(dureeReelle * 100) / 100 }));
-                  }
-                  // FORMAT VIDEO : detection automatique sur videoWidth /
-                  // videoHeight. Le ratio detecte est PROPOSE : il ne remplace
-                  // le choix que si le coach n'en a pas fait (encore « auto »).
-                  const w = e.currentTarget.videoWidth; const h = e.currentTarget.videoHeight;
-                  if (w > 0 && h > 0) {
-                    const detecte = ratioDepuisDimensions(w, h);
-                    setForm(prev => ({
-                      ...prev,
-                      _videoDims: { w, h },
-                      video_aspect_ratio: (normaliserRatio(prev.video_aspect_ratio) === 'auto' && !prev._ratioChoisi) ? detecte : prev.video_aspect_ratio,
-                    }));
-                  }
-                }}
-              />
-              </div>
-            )}
-            {/* FORMAT VIDEO : selecteur d'affichage. Une URL externe sans
-                dimensions connues reste en Auto, choix manuel possible. */}
-            {!/YouTube|youtu\.be|vimeo/i.test(form.videoUrl) && !champVideoEstImage(form) && (
-              <div className="mt-3" data-testid="wizard-video-ratio">
-                <label className="block text-xs mb-1" style={LABEL_STYLE}>
-                  <SvgIcon name="video" size={14} />{' '}Format d'affichage
-                </label>
-                <div role="radiogroup" aria-label="Format d'affichage" className="grid grid-cols-2 gap-2">
-                  {VIDEO_RATIOS.map((r) => {
-                    const actif = normaliserRatio(form.video_aspect_ratio) === r.valeur;
-                    return (
-                      <label
-                        key={r.valeur}
-                        data-testid={`video-ratio-${r.valeur}`}
-                        className="flex items-start gap-2 rounded-lg px-3 py-2 cursor-pointer"
-                        style={{ border: `1px solid ${actif ? PINK : 'rgba(255,255,255,0.15)'}`, background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)' : 'rgba(255,255,255,0.04)' }}
-                      >
-                        <input
-                          type="radio"
-                          name="video_aspect_ratio"
-                          value={r.valeur}
-                          checked={actif}
-                          onChange={() => setForm(prev => ({ ...prev, video_aspect_ratio: r.valeur, _ratioChoisi: true }))}
-                          style={{ accentColor: PINK, marginTop: 3 }}
-                        />
-                        <span>
-                          <span className="block text-xs text-white font-semibold">{r.libelle}</span>
-                          <span className="block text-[11px]" style={HINT_STYLE}>{r.aide}</span>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-                {form._videoDims ? (
-                  <p className="text-xs mt-2" style={HINT_STYLE} data-testid="video-ratio-detecte">
-                    Dimensions détectées : {libelleDetection(form._videoDims.w, form._videoDims.h)}
-                  </p>
-                ) : (
-                  <p className="text-xs mt-2" style={HINT_STYLE}>
-                    Après l'upload d'un MP4, le format est détecté automatiquement (1080 × 1920 → 9:16). Sans dimensions connues : Auto.
-                  </p>
-                )}
-              </div>
-            )}
-            {/* DÉCOUPE VIDÉO — simple : un début, une fin, un aperçu. Non
-                destructive : l'original reste tel quel, l'offre mémorise
-                `video_trim_start` / `video_trim_end` (secondes) et tous les
-                lecteurs (preview ci-dessus, carte, fiche, plein écran) jouent
-                uniquement cet extrait. Les curseurs sont bornés par la durée
-                RÉELLE lue sur la vidéo — tant qu'elle n'est pas connue, rien à
-                découper. */}
-            {!/YouTube|youtu\.be|vimeo/i.test(form.videoUrl) && !champVideoEstImage(form) && (() => {
-              const duree = form._videoDuree || 0;
-              const pas = duree > 60 ? 0.5 : 0.1;
-              const trim = trimValide(form.video_trim_start, form.video_trim_end, duree);
-              const debut = trim ? trim.start : 0;
-              const fin = trim ? trim.end : duree;
-              const r = resumeTrim(duree, trim);
-              const poserTrim = (s, e) => {
-                // Un extrait d'au moins 0,5 s ; sinon on garde l'état précédent.
-                const ns = Math.max(0, Math.min(s, duree));
-                const ne = Math.max(0, Math.min(e, duree));
-                if (ne - ns < 0.5) return;
-                setForm(prev => ({ ...prev, video_trim_start: Math.round(ns * 100) / 100, video_trim_end: Math.round(ne * 100) / 100 }));
-              };
-              const lireExtrait = () => {
-                const v = previewVideoRef.current;
-                if (!v) return;
-                try { v.currentTime = debut; } catch (e) { /* ignore */ }
-                const p = v.play(); if (p && p.catch) p.catch(() => {});
-              };
-              return (
-                <div className="mt-4" data-testid="wizard-video-trim" style={{ padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+              <>
+                {/* FORMAT VIDEO : selecteur d'affichage. Une URL externe sans
+                    dimensions connues reste en Auto, choix manuel possible. */}
+                <div className="mb-3" data-testid="wizard-video-ratio">
                   <label className="block text-xs mb-1" style={LABEL_STYLE}>
-                    <SvgIcon name="edit" size={14} />{' '}Découper la vidéo
+                    <SvgIcon name="video" size={14} />{' '}Format d'affichage
                   </label>
-                  {duree <= 0 ? (
-                    <p className="text-xs" style={HINT_STYLE} data-testid="trim-attente">Chargement de la vidéo… la découpe apparaît dès que sa durée est connue.</p>
+                  <div role="radiogroup" aria-label="Format d'affichage" className="grid grid-cols-2 gap-2">
+                    {VIDEO_RATIOS.map((r) => {
+                      const actif = normaliserRatio(form.video_aspect_ratio) === r.valeur;
+                      return (
+                        <label
+                          key={r.valeur}
+                          data-testid={`video-ratio-${r.valeur}`}
+                          className="flex items-start gap-2 rounded-lg px-3 py-2 cursor-pointer"
+                          style={{ border: `1px solid ${actif ? PINK : 'rgba(255,255,255,0.15)'}`, background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)' : 'rgba(255,255,255,0.04)' }}
+                        >
+                          <input
+                            type="radio"
+                            name="video_aspect_ratio"
+                            value={r.valeur}
+                            checked={actif}
+                            onChange={() => setForm(prev => ({ ...prev, video_aspect_ratio: r.valeur, _ratioChoisi: true }))}
+                            style={{ accentColor: PINK, marginTop: 3 }}
+                          />
+                          <span>
+                            <span className="block text-xs text-white font-semibold">{r.libelle}</span>
+                            <span className="block text-[11px]" style={HINT_STYLE}>{r.aide}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {form._videoDims ? (
+                    <p className="text-xs mt-2" style={HINT_STYLE} data-testid="video-ratio-detecte">
+                      Dimensions détectées : {libelleDetection(form._videoDims.w, form._videoDims.h)}
+                    </p>
                   ) : (
-                    <>
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs" style={{ color: 'rgba(255,255,255,0.85)' }} data-testid="trim-resume">
-                        <span>Durée totale : <b data-testid="trim-total">{r.total}</b></span>
-                        <span>Extrait gardé : <b data-testid="trim-extrait">{r.extrait}</b></span>
-                        <span>Début : <b data-testid="trim-debut">{r.debut}</b></span>
-                        <span>Fin : <b data-testid="trim-fin">{r.fin}</b></span>
-                      </div>
-                      <div className="mt-2">
-                        <label className="block text-[11px]" style={HINT_STYLE}>Début — {formatTemps(debut)}</label>
-                        <input type="range" min="0" max={duree} step={pas} value={debut} data-testid="trim-start"
-                          onChange={(e) => poserTrim(parseFloat(e.target.value), fin)}
-                          style={{ width: '100%', accentColor: PINK }} />
-                        <label className="block text-[11px] mt-1" style={HINT_STYLE}>Fin — {formatTemps(fin)}</label>
-                        <input type="range" min="0" max={duree} step={pas} value={fin} data-testid="trim-end"
-                          onChange={(e) => poserTrim(debut, parseFloat(e.target.value))}
-                          style={{ width: '100%', accentColor: PINK }} />
-                      </div>
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        <button type="button" onClick={lireExtrait} data-testid="trim-lire"
-                          className="text-xs px-3 py-1.5 rounded-lg" style={{ border: `1px solid ${PINK}`, color: PINK, background: 'transparent' }}>
-                          Lire l'extrait
-                        </button>
-                        <button type="button" data-testid="trim-reset"
-                          onClick={() => setForm(prev => ({ ...prev, video_trim_start: null, video_trim_end: null }))}
-                          className="text-xs px-3 py-1.5 rounded-lg" style={{ border: '1px solid rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.75)', background: 'transparent' }}>
-                          Réinitialiser
-                        </button>
-                      </div>
-                      <p className="text-xs mt-2" style={HINT_STYLE}>
-                        {trim ? `Seul l'extrait ${r.debut} → ${r.fin} sera joué (carte, fiche, plein écran). L'original n'est pas modifié.` : 'Déplace les curseurs pour garder seulement la partie voulue. La vidéo complète est jouée tant qu\'aucune découpe n\'est posée.'}
-                      </p>
-                    </>
+                    <p className="text-xs mt-2" style={HINT_STYLE}>
+                      Après l'upload d'un MP4, le format est détecté automatiquement (1080 × 1920 → 9:16). Sans dimensions connues : Auto.
+                    </p>
                   )}
                 </div>
-              );
-            })()}
-            {/* V234: selecteur de miniature pour videos Cloudinary */}
-            {form.videoUrl && form.videoUrl.includes('cloudinary.com') && form.videoUrl.includes('/video/upload/') && (
-              <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
-                <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '6px' }}>
-                  <SvgIcon name="image" size={12} /> Miniature de la vidéo
-                </p>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input
-                    type="range"
-                    min="0"
-                    max={form._v234Duration || 10}
-                    step="1"
-                    value={form._v234Sec || 0}
-                    onChange={(e) => {
-                      const sec = parseInt(e.target.value, 10);
-                      // Generer le thumbnail Cloudinary a la seconde choisie
-                      // ex: /video/upload/so_3,w_400,h_400,c_fill,f_jpg/...
-                      const thumbUrl = form.videoUrl
-                        .replace('/video/upload/', `/video/upload/so_${sec},w_400,h_400,c_fill,f_jpg/`)
-                        .replace(/\.[^.]+$/, '.jpg');
-                      setForm(prev => ({ ...prev, _v234Sec: sec, thumbnail: thumbUrl }));
+                {/* L'ÉDITEUR VIDÉO PARTAGÉ (le même que « Nouvelle publication ») :
+                    aperçu au vrai ratio, ▶ Lire l'extrait / ⏸ / ↺, scrub borné,
+                    découpe non destructive (video_trim_start / video_trim_end,
+                    l'original reste intact), capture de la miniature dans
+                    l'extrait. */}
+                <div data-testid="wizard-video-preview" data-ratio={normaliserRatio(form.video_aspect_ratio)}>
+                  <VideoTrimEditor
+                    videoUrl={form.videoUrl}
+                    trimStart={form.video_trim_start}
+                    trimEnd={form.video_trim_end}
+                    aspectRatio={form.video_aspect_ratio}
+                    thumbnail={(analyserMediaUrl(form.thumbnail || '') || {}).type === 'image' ? form.thumbnail : ''}
+                    posterUrl={mediaPrincipal(form).poster || ''}
+                    onTrimChange={(t) => setForm(prev => ({ ...prev, video_trim_start: t ? t.start : null, video_trim_end: t ? t.end : null }))}
+                    onThumbnailCapture={capturerMiniature}
+                    onMetadata={({ duration, width, height }) => {
+                      // V234 (durée) + FORMAT (détection) : le ratio détecté est
+                      // PROPOSÉ, il ne remplace le choix que s'il est encore « auto ».
+                      setForm(prev => {
+                        const suivant = { ...prev, _v234Duration: Math.floor(duration || 0), _videoDuree: duration };
+                        if (width > 0 && height > 0) {
+                          suivant._videoDims = { w: width, h: height };
+                          if (normaliserRatio(prev.video_aspect_ratio) === 'auto' && !prev._ratioChoisi) suivant.video_aspect_ratio = ratioDepuisDimensions(width, height);
+                        }
+                        return suivant;
+                      });
                     }}
-                    style={{ flex: 1, accentColor: 'var(--primary-color, #D91CD2)' }}
                   />
-                  <span style={{ fontSize: '11px', color: '#fff', minWidth: '30px' }}>{form._v234Sec || 0}s</span>
+                  {captureEtat ? (
+                    <p className="text-xs mt-1" style={captureEtat === 'envoi' ? HINT_STYLE : { color: 'var(--danger-color, #f87171)' }} data-testid="capture-etat">
+                      {captureEtat === 'envoi' ? 'Envoi de la miniature…' : captureEtat}
+                    </p>
+                  ) : null}
                 </div>
-                {form.thumbnail && form.thumbnail.includes('cloudinary.com') && (
-                  <div style={{ marginTop: '8px', display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-                    <img
-                      src={form.thumbnail}
-                      alt="Miniature"
-                      style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #333' }}
-                      onError={(e) => { e.target.style.display = 'none'; }}
-                    />
-                    <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)' }}>Aperçu miniature</span>
-                  </div>
-                )}
-              </div>
+              </>
             )}
           </div>
         )}
