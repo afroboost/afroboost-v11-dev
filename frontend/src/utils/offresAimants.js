@@ -1,0 +1,332 @@
+/**
+ * OFFRES AIMANTS — la logique PURE du parcours de conversion visiteur.
+ *
+ * La vitrine ne doit plus montrer 7+ formules d'un coup : trois « aimants »
+ * (lancement, saison 8 mois, mensuel de référence), un accès « toutes les
+ * offres », et une fiche détail par offre. Tout ce qui est décidé ici est LU
+ * sur les documents d'offre servis par /api/offers (billing_mode, duree_mois,
+ * stock, places_restantes, countdown_*, pack_sessions) — jamais sur un nom.
+ *
+ * Miroir volontaire des règles serveur de la landing (`_m1_famille`,
+ * `_m1_economie`, `_m1_paiement`…, api/server.py) : la carte visiteur et la
+ * page /cours-essai-gratuit-neuchatel disent la même chose.
+ */
+
+export const FAMILLE = {
+  LANCEMENT: 'lancement',
+  SAISON_1X: 'saison_1x',
+  SAISON_2X: 'saison_2x',
+  MENSUEL: 'mensuel',
+  UNITE: 'unite',
+  OFFERT: 'offert',
+  MEMBRE: 'membre',
+  PRODUIT: 'produit',
+};
+
+export const SAISON_MOIS = 8;
+export const SAISON_2X_ECHEANCES = 2;
+export const SAISON_2X_INTERVALLE_MOIS = 4;
+const DUREE_DROITS_DEFAUT_MOIS = 2;
+
+const RANG = { lancement: 0, saison_1x: 1, saison_2x: 2, mensuel: 3, unite: 4, membre: 5, produit: 6, offert: 7 };
+
+const BADGES = {
+  lancement: 'Offre lancement',
+  saison_1x: 'Meilleur prix',
+  saison_2x: 'Saison en 2 fois',
+  mensuel: 'Le plus flexible',
+  offert: 'Premier cours offert',
+};
+
+export const nombre = (v, defaut = 0) => {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : defaut;
+};
+
+export const prixUnitaire = (o) => {
+  if (!o) return 0;
+  return (o.progressive_pricing && o.active_price != null) ? nombre(o.active_price) : nombre(o.price);
+};
+
+export const prixFormate = (n) => {
+  const v = nombre(n);
+  return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/0$/, '');
+};
+
+const modeFacturation = (o) => {
+  const m = String((o && o.billing_mode) || 'unique').trim();
+  return (m === 'mensuel_auto' || m === 'saison_2x') ? m : 'unique';
+};
+
+const dureeMois = (o) => {
+  const d = parseInt(o && o.duree_mois, 10);
+  return (Number.isFinite(d) && d >= 1 && d <= 24) ? d : null;
+};
+
+export const estLimitee = (o) => {
+  if (!o) return false;
+  const s = o.stock;
+  const stockFini = typeof s === 'number' && Number.isFinite(s) && s >= 0;
+  return stockFini || !!(o.countdown_enabled && o.countdown_date);
+};
+
+export const familleOffre = (o) => {
+  if (!o) return FAMILLE.UNITE;
+  if (o.isProduct || o.isPhysicalProduct || o.offer_type === 'product') return FAMILLE.PRODUIT;
+  if (o.offer_type === 'membership') return FAMILLE.MEMBRE;
+  const prix = prixUnitaire(o);
+  if (prix <= 0) return FAMILLE.OFFERT;
+  if (estLimitee(o)) return FAMILLE.LANCEMENT;
+  const mode = modeFacturation(o);
+  const duree = dureeMois(o) || 0;
+  if (mode === 'unique' && duree >= SAISON_MOIS) return FAMILLE.SAISON_1X;
+  if (mode === 'saison_2x') return FAMILLE.SAISON_2X;
+  if (mode === 'mensuel_auto') return FAMILLE.MENSUEL;
+  return FAMILLE.UNITE;
+};
+
+/** Le mensuel de référence : le plus cher des mensuels (hors offre limitée). */
+export const mensuelDeReference = (offres) => {
+  const mensuels = (offres || []).filter((o) => familleOffre(o) === FAMILLE.MENSUEL);
+  if (!mensuels.length) return null;
+  return mensuels.reduce((a, b) => (prixUnitaire(b) > prixUnitaire(a) ? b : a));
+};
+
+export const badgeOffre = (o, mensuelRef) => {
+  const f = familleOffre(o);
+  if (f === FAMILLE.MENSUEL) {
+    if (/tudiant/i.test(String(o.name || ''))) return 'Étudiant';
+    return (mensuelRef && o && mensuelRef.id === o.id) ? BADGES.mensuel : '';
+  }
+  return BADGES[f] || '';
+};
+
+/** Économie RÉELLE sur la saison par rapport au mensuel de référence, sinon null. */
+export const economieOffre = (o, mensuelRef) => {
+  if (!mensuelRef || !o) return null;
+  const f = familleOffre(o);
+  const ref = prixUnitaire(mensuelRef) * SAISON_MOIS;
+  let total;
+  if (f === FAMILLE.SAISON_1X) total = prixUnitaire(o);
+  else if (f === FAMILLE.SAISON_2X) total = prixUnitaire(o) * SAISON_2X_ECHEANCES;
+  else return null;
+  const eco = Math.round((ref - total) * 100) / 100;
+  return eco > 0 ? eco : null;
+};
+
+const seancesPack = (o) => {
+  const n = parseInt(o && o.pack_sessions, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+export const libelleSeances = (o) => {
+  const n = seancesPack(o);
+  const f = familleOffre(o);
+  if (n <= 0) return '';
+  if (f === FAMILLE.MENSUEL || (f === FAMILLE.LANCEMENT && modeFacturation(o) === 'mensuel_auto')) {
+    return `jusqu’à ${n} séances / mois`;
+  }
+  if (f === FAMILLE.SAISON_2X) return `jusqu’à ${n} séances / mois (${n * SAISON_2X_INTERVALLE_MOIS} par échéance)`;
+  if (f === FAMILLE.SAISON_1X) {
+    const d = dureeMois(o) || SAISON_MOIS;
+    return `${n} séances sur la saison (env. ${Math.round(n / d)} / mois)`;
+  }
+  return `${n} séance${n > 1 ? 's' : ''}`;
+};
+
+export const libellePaiement = (o) => {
+  const mode = modeFacturation(o);
+  const f = familleOffre(o);
+  if (mode === 'mensuel_auto') return 'Prélèvement automatique chaque mois (carte)';
+  if (mode === 'saison_2x') return `2 paiements : à l’inscription, puis ${SAISON_2X_INTERVALLE_MOIS} mois plus tard`;
+  if (f === FAMILLE.SAISON_1X) return '1 paiement (carte ou TWINT)';
+  if (f === FAMILLE.OFFERT) return 'Offert';
+  return 'Paiement unique (carte ou TWINT)';
+};
+
+export const libelleEngagement = (o) => {
+  const mode = modeFacturation(o);
+  const f = familleOffre(o);
+  if (mode === 'mensuel_auto') return 'Sans engagement — résiliable à tout moment, accès jusqu’à la fin du mois payé';
+  if (f === FAMILLE.SAISON_1X || f === FAMILLE.SAISON_2X) return `Saison de ${SAISON_MOIS} mois`;
+  if (f === FAMILLE.OFFERT) return 'Aucun';
+  const d = dureeMois(o);
+  if (f === FAMILLE.MEMBRE) return `Adhésion de ${d || 12} mois`;
+  return `Aucun — valable ${d || DUREE_DROITS_DEFAUT_MOIS} mois`;
+};
+
+export const libelleDuree = (o) => {
+  const mode = modeFacturation(o);
+  const f = familleOffre(o);
+  if (mode === 'mensuel_auto') return '1 mois, renouvelé automatiquement';
+  if (f === FAMILLE.SAISON_1X || f === FAMILLE.SAISON_2X) return `${SAISON_MOIS} mois`;
+  if (f === FAMILLE.OFFERT) return '1 séance';
+  const d = dureeMois(o);
+  return `${d || DUREE_DROITS_DEFAUT_MOIS} mois`;
+};
+
+export const libellePourQui = (o) => {
+  const f = familleOffre(o);
+  if (f === FAMILLE.LANCEMENT) return 'Les premiers inscrits de la saison';
+  if (f === FAMILLE.SAISON_1X) return 'Tu es décidé·e pour toute la saison';
+  if (f === FAMILLE.SAISON_2X) return 'La saison, sans tout payer d’un coup';
+  if (f === FAMILLE.MENSUEL) {
+    if (/tudiant/i.test(String(o.name || ''))) return 'Étudiant·e, avec justificatif';
+    const n = seancesPack(o);
+    return (n > 0 && n <= 4) ? 'Une fois par semaine' : 'Tu veux rester libre chaque mois';
+  }
+  if (f === FAMILLE.MEMBRE) return 'Tu veux soutenir l’association et profiter des avantages membres';
+  if (f === FAMILLE.OFFERT) return 'Pour découvrir';
+  return 'Pour revenir une fois, sans formule';
+};
+
+export const conditionsOffre = (o) => {
+  const c = [];
+  const f = familleOffre(o);
+  if (/tudiant/i.test(String((o && o.name) || ''))) c.push('Justificatif étudiant requis');
+  if (f === FAMILLE.LANCEMENT) {
+    const s = o.stock;
+    if (typeof s === 'number' && s >= 0) c.push(`${s} places maximum`);
+    if (o.countdown_enabled && o.countdown_date) c.push(`Jusqu’au ${dateCourte(o.countdown_date)}`);
+  }
+  if (o && o.requires_active_membership) c.push('Réservé aux membres actifs');
+  return c;
+};
+
+export const dateCourte = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  return `${m[3]}/${m[2]}`;
+};
+
+/** « 47 places restantes · offre jusqu’au 30/09 » — compact, jamais un gros compteur. */
+export const infoCompacteLimitee = (o) => {
+  if (!o) return '';
+  const parts = [];
+  if (typeof o.places_restantes === 'number' && Number.isFinite(o.places_restantes)) {
+    const p = o.places_restantes;
+    parts.push(`${p} place${p > 1 ? 's' : ''} restante${p > 1 ? 's' : ''}`);
+  } else if (typeof o.stock === 'number' && o.stock >= 0) {
+    parts.push(`${o.stock} places maximum`);
+  }
+  if (o.countdown_enabled && o.countdown_date) parts.push(`offre jusqu’au ${dateCourte(o.countdown_date)}`);
+  return parts.join(' · ');
+};
+
+/** Le prix et son unité, comme sur la landing. */
+export const prixAffiche = (o) => {
+  const f = familleOffre(o);
+  const prix = prixUnitaire(o);
+  if (prix <= 0) return { montant: 'Offert', unite: '' };
+  if (f === FAMILLE.SAISON_2X) return { montant: `2 × ${prixFormate(prix)} CHF`, unite: '' };
+  if (f === FAMILLE.SAISON_1X) return { montant: `${prixFormate(prix)} CHF`, unite: '/ saison' };
+  if (modeFacturation(o) === 'mensuel_auto') return { montant: `${prixFormate(prix)} CHF`, unite: '/ mois' };
+  if (f === FAMILLE.MEMBRE) return { montant: `${prixFormate(prix)} CHF`, unite: '/ an' };
+  return { montant: `${prixFormate(prix)} CHF`, unite: '' };
+};
+
+/** La première phrase de la description = la promesse courte. */
+export const promesseCourte = (o) => {
+  const d = String((o && o.description) || '').replace(/\s+/g, ' ').trim();
+  if (!d) return '';
+  const m = /^(.{10,160}?[.!?])(\s|$)/.exec(d);
+  return m ? m[1] : (d.length > 160 ? d.slice(0, 157) + '…' : d);
+};
+
+/** Les lignes « ce qui est inclus » d'une fiche — lues sur le document. */
+export const inclusOffre = (o) => {
+  const l = [];
+  const s = libelleSeances(o);
+  if (s) l.push(s);
+  const f = familleOffre(o);
+  if (f === FAMILLE.OFFERT) l.push('Ton premier cours, offert');
+  if (o && o.creates_membership) l.push('Carte membre de l’association incluse');
+  if (o && o.member_discount_pct > 0) l.push(`${o.member_discount_pct} % de remise pour les membres`);
+  if (o && o.max_participants != null) l.push(`${o.max_participants} places par séance`);
+  return l;
+};
+
+/**
+ * La fiche complète d'une offre : tout ce que la modale affiche, dans l'ordre
+ * demandé (badge, nom, prix, promesse, inclus, séances, durée, paiement,
+ * engagement, conditions, pour qui, avantage réel).
+ */
+export const ficheOffre = (o, mensuelRef) => {
+  if (!o) return null;
+  const eco = economieOffre(o, mensuelRef);
+  return {
+    id: o.id,
+    famille: familleOffre(o),
+    badge: badgeOffre(o, mensuelRef),
+    nom: o.name || '',
+    prix: prixAffiche(o),
+    promesse: promesseCourte(o),
+    inclus: inclusOffre(o),
+    seances: libelleSeances(o),
+    duree: libelleDuree(o),
+    paiement: libellePaiement(o),
+    engagement: libelleEngagement(o),
+    conditions: conditionsOffre(o),
+    pourQui: libellePourQui(o),
+    economie: eco ? `Tu économises ${prixFormate(eco)} CHF par rapport au mensuel` : '',
+    limitee: infoCompacteLimitee(o),
+    gratuit: prixUnitaire(o) <= 0,
+  };
+};
+
+/**
+ * Le regroupement de la vitrine :
+ *  - aimants : lancement, saison (8 mois 1× ET 2× sous UNE carte), mensuel de
+ *    référence — chacun présent seulement s'il existe ;
+ *  - autres : toutes les offres de service (aimants compris, dans l'ordre
+ *    commercial), pour le panneau « Voir toutes les offres ».
+ * Aucune fusion de données : la carte « saison » garde ses deux offres réelles.
+ */
+export const regrouperOffres = (offres) => {
+  const services = (offres || []).filter((o) => o && familleOffre(o) !== FAMILLE.PRODUIT);
+  const mensuelRef = mensuelDeReference(services);
+  const lancement = services.filter((o) => familleOffre(o) === FAMILLE.LANCEMENT)
+    .sort((a, b) => nombre(a.position, 999) - nombre(b.position, 999))[0] || null;
+  const saison1x = services.filter((o) => familleOffre(o) === FAMILLE.SAISON_1X)
+    .sort((a, b) => prixUnitaire(a) - prixUnitaire(b))[0] || null;
+  const saison2x = services.filter((o) => familleOffre(o) === FAMILLE.SAISON_2X)
+    .sort((a, b) => prixUnitaire(a) - prixUnitaire(b))[0] || null;
+  const aimants = [];
+  if (lancement) aimants.push({ cle: 'lancement', offre: lancement, offres: [lancement] });
+  if (saison1x || saison2x) {
+    const choix = [saison1x, saison2x].filter(Boolean);
+    const depuis = Math.min(...choix.map((o) => (familleOffre(o) === FAMILLE.SAISON_2X ? prixUnitaire(o) * SAISON_2X_ECHEANCES : prixUnitaire(o))));
+    aimants.push({ cle: 'saison', offre: saison1x || saison2x, offres: choix, depuis });
+  }
+  if (mensuelRef) aimants.push({ cle: 'mensuel', offre: mensuelRef, offres: [mensuelRef] });
+  const ordre = (o) => [RANG[familleOffre(o)] != null ? RANG[familleOffre(o)] : 9,
+    (mensuelRef && o.id === mensuelRef.id) ? 0 : 1, nombre(o.position, 999)];
+  const autres = services.slice().sort((a, b) => {
+    const x = ordre(a); const y = ordre(b);
+    for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return x[i] - y[i];
+    return String(a.name || '').localeCompare(String(b.name || ''));
+  });
+  return { aimants, autres, mensuelRef };
+};
+
+/**
+ * Un visiteur est « connecté » s'il a une identité de coach, un jeton d'abonné
+ * ou une session d'espace. Décision d'AFFICHAGE seulement (parcours conversion
+ * contre expérience communautaire) — aucun droit n'en dépend.
+ */
+export const visiteurEstConnecte = (lire) => {
+  const get = typeof lire === 'function' ? lire : (k) => {
+    try { return window.localStorage.getItem(k); } catch (e) { return null; }
+  };
+  if (get('afroboost_coach_user')) return true;
+  if (get('afroboost_admin_persist')) return true;
+  if (get('afroboost_subscriber_token')) return true;
+  if (get('afroboost_espace_token')) return true;
+  return false;
+};
+
+/** Le libellé « Dès X CHF » de la carte saison. */
+export const libelleDepuis = (aimant) => {
+  if (!aimant || aimant.cle !== 'saison') return '';
+  return `Dès ${prixFormate(aimant.depuis)} CHF`;
+};

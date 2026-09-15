@@ -260,6 +260,11 @@ import { useDataCache, invalidateCache } from "./hooks/useDataCache";
 import { lieuOffre as u_lieuOffre, lienMapsLieu as u_lienMapsLieu } from './utils/lieuOffre';
 import { applyPrimaryColor, persistThemeColors } from "./utils/themeColor"; // V259 + V295 (anti-FOUC)
 import { PublicationsCarousel } from "./components/Publications"; // V261
+// OFFRES AIMANTS : parcours de conversion du visiteur non connecte (3 cartes,
+// « toutes les offres », fiche detail). Les regles sont dans utils/offresAimants.
+import OffresAimants from "./components/OffresAimants";
+import { visiteurEstConnecte, regrouperOffres as aimantsRegrouper } from "./utils/offresAimants";
+import { normaliserRatio as videoRatioNormaliser, estPortrait as videoEstPortrait } from "./utils/videoRatio";
 import { ConfirmationBoost } from "./components/publications/Boost"; // V342
 // DEEPLINK PROSPECTION — cet import n'est PAS decoratif : le module capture
 // `?prospection=1&inbound=<id>` AU CHARGEMENT, donc avant le premier rendu.
@@ -1440,13 +1445,24 @@ function OfferCountdown(props) {
       </div>
     );
   }
+  // COMPTE A REBOURS COMPACT : la barre du haut (StickyCountdownBar) est LE
+  // compteur principal ; la carte ne porte qu'une information discrete —
+  // « 47 places restantes · offre jusqu'au 30/09 · 15j 10h ». Deux gros
+  // compteurs concurrents sur la meme page, c'etait l'ancien rendu.
   var p = countdownParts(remaining);
-  var text = offer.countdown_text || "L'OFFRE FINIT DANS :";
-  var timerStr = countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's';
+  var timerStr = (p.d > 0 ? p.d + 'j ' : '') + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm';
+  var dateFin = (function () {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(offer.countdown_date || ''));
+    return m ? m[3] + '/' + m[2] : '';
+  })();
+  var places = (typeof offer.places_restantes === 'number')
+    ? offer.places_restantes + ' place' + (offer.places_restantes > 1 ? 's' : '') + ' restante' + (offer.places_restantes > 1 ? 's' : '')
+    : '';
+  var morceaux = [places, dateFin ? 'offre jusqu\u2019au ' + dateFin : '', timerStr].filter(Boolean);
   return (
-    <div data-countdown="active" style={{ marginTop: '10px', padding: '14px 10px', borderRadius: '12px', background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, #a716a1 100%)', textAlign: 'center', boxShadow: '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.24), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.12), inset 0 1px 0 rgba(255,255,255,0.2)', width: '100%', boxSizing: 'border-box' }}>
-      <div style={{ fontSize: '13px', color: '#FFFFFF', fontWeight: 800, letterSpacing: '1px', marginBottom: '6px', textTransform: 'uppercase', animation: 'v147blink 0.8s ease-in-out infinite' }}>{text}</div>
-      <div style={{ fontSize: '22px', color: '#FFFFFF', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2.5px', textShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>{timerStr}</div>
+    <div data-countdown="active" style={{ marginTop: '8px', fontSize: '12px', color: '#fff', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+      <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}><SvgIcon name="hourglass" size={13} /></span>
+      <span>{morceaux.join(' \u00b7 ')}</span>
     </div>
   );
 }
@@ -2041,10 +2057,18 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
     return null;
   })();
 
+  // FORMAT VIDEO : ratio stocke sur l'offre (auto / 9:16 / 16:9 / 1:1) ; en
+  // auto, les dimensions mesurees tranchent. Portrait ou carre => `contain`.
+  const [v227Mesure, setV227Mesure] = useState(null);
+  const v227Ratio = videoRatioNormaliser(offer.video_aspect_ratio);
+  const v227Contain = v227Ratio === '1:1'
+    || videoEstPortrait(v227Ratio, v227Mesure && v227Mesure.w, v227Mesure && v227Mesure.h);
+
   const handleMeta = (e) => {
     const v = e.currentTarget;
     if (!v.videoWidth || !v.videoHeight) return;
     isLandscapeRef.current = v.videoWidth > v.videoHeight;
+    setV227Mesure({ w: v.videoWidth, h: v.videoHeight });
   };
 
   // V224: deverrouillage de l'orientation. Sans lui, le visiteur ressortirait de
@@ -2321,7 +2345,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                        n'a aucune image fixe — voir v227Poster). */
                     poster={v227Poster || undefined}
                     className="w-full h-full"
-                    style={{ objectFit: 'cover', objectPosition: 'center', height: '220px', background: '#000' }}
+                    /* FORMAT VIDEO : une video verticale (9:16) ou carree n'est
+                       plus rognee en `cover` dans un cadre paysage — `contain`
+                       sur fond noir, ratio lu sur l'offre (video_aspect_ratio)
+                       ou mesure (videoWidth/videoHeight, voir handleMeta). */
+                    style={{ objectFit: v227Contain ? 'contain' : 'cover', objectPosition: 'center', height: '220px', background: 'var(--video-bg, #000)' }}
                     playsInline
                     /* V227: la vignette se joue seule, muette et en boucle
                        (autoplay muet = seul autoplay autorise par les navigateurs).
@@ -5090,6 +5118,9 @@ function App() {
 
   // Navigation et filtrage
   const [activeFilter, setActiveFilter] = useState('all');
+  // OFFRES AIMANTS : le bouton « Offres » de la barre ouvre le panneau « toutes
+  // les offres » pour un visiteur ; ce compteur est le signal qu'il ecoute.
+  const [signalToutesOffres, setSignalToutesOffres] = useState(0);
   // « Sessions » ouvre une fenetre : la page de fond ne change pas d'un pixel.
   const [showSessionsModal, setShowSessionsModal] = useState(false);
 
@@ -7666,6 +7697,12 @@ function App() {
   const urlSlug = pathSlugMatch ? decodeURIComponent(pathSlugMatch[2]).toLowerCase().trim() : null;
   const isSuperAdminSlugInUrl = urlSlug && SUPER_ADMIN_SLUGS.includes(urlSlug);
   const isVisitorMode = urlParams.get('visitor') === 'true' || isSuperAdminSlugInUrl;
+  // OFFRES AIMANTS — visiteur NON connecte = parcours conversion (3 cartes +
+  // fiche), utilisateur connecte (coach, abonne, espace) = experience
+  // communautaire actuelle (carrousel). Le mode « Vue visiteur » de l'admin
+  // force le parcours conversion pour qu'il voie ce que voit un visiteur.
+  // Decision d'AFFICHAGE : aucun droit n'en depend.
+  const parcoursConversion = isVisitorMode || !visiteurEstConnecte();
 
   // v18.2: Si l'URL est /coach/xxx, afficher la vitrine MÊME si le coach est connecté
   // v160: CoachVitrine unifiée — on rend TOUJOURS App.js, meme pour les coachs partenaires
@@ -8486,6 +8523,12 @@ function App() {
       {/* V268d — MUR DES ABONNES, place AU-DESSUS de la barre de navigation
           (Tout/Sessions/Offres/Shop), comme demande. Filtre par la recherche
           quand elle est active. Le composant se rend null si la liste est vide. */}
+      {/* OFFRES AIMANTS : pour un visiteur non connecte, le mur passe APRES les
+          offres recommandees (voir `murPublications` dans le bloc des offres) —
+          la page devient un parcours de conversion : hero, essai, 3 offres,
+          toutes les offres, puis le contenu. Un utilisateur connecte garde le
+          mur en tete, comme aujourd'hui. */}
+      {!parcoursConversion && (
       <div className="max-w-4xl mx-auto px-4">
         {/* === UI-PUB2 : titre seul. La barre horizontale globale a ete RETIREE —
             elle n'etait pas l'emplacement demande. Les actions sont desormais
@@ -8523,6 +8566,7 @@ function App() {
           }
         />
       </div>
+      )}
 
       {/* V335 : le bloc d'inscriptions (WhatsApp + newsletter) a ete RETIRE de la
           page d'accueil. Le composant `OptinSubscribe` et les endpoints
@@ -8569,6 +8613,9 @@ function App() {
                 // neutralise (`showSessions = false`, V225), et le defilement
                 // echouait donc en silence.
                 if (tab.key === 'sessions') { setShowSessionsModal(true); return; }
+                // OFFRES AIMANTS : pour un visiteur, « Offres » ouvre la liste
+                // complete (panneau) en plus du defilement vers la section.
+                if (tab.key === 'offers' && parcoursConversion) setSignalToutesOffres((n) => n + 1);
                 setActiveFilter(tab.key);
                 const sectionMap = { offers: 'offers-section', shop: 'products-section' };
                 if (sectionMap[tab.key]) {
@@ -8829,8 +8876,55 @@ function App() {
           // AU-DESSUS de la barre de navigation (voir plus haut), plus ici.
           const publicationsBlock = null;
 
+          // --- OFFRES AIMANTS : parcours de conversion du visiteur non connecte.
+          // 3 cartes (lancement, saison 8 mois, mensuel) + « Voir toutes les
+          // offres » + fiche detail. Le carrousel historique reste le rendu des
+          // utilisateurs connectes, et le repli quand le catalogue n'a aucun
+          // aimant (vitrine partenaire sans formule de saison, par exemple).
+          const aimantsActifs = parcoursConversion && filteredServices.length > 0
+            && aimantsRegrouper(filteredServices).aimants.length > 0;
+          const murPublications = parcoursConversion ? (
+            <div key="mur-publications" className="mb-8">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
+                <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', flexShrink: 0 }}>
+                  <SvgIcon name="users" size={18} />
+                </span>
+                <span style={{ color: '#fff', fontSize: '18px', fontWeight: 600 }}>Publications</span>
+              </div>
+              <PublicationsCarousel
+                actions={{
+                  likesCount: uipubLikes, liked: uipubDejaLike, onLike: uipubLiker,
+                  commentsCount: socialTotalCount || socialComments.length,
+                  onComments: () => setShowCommentsPanel(true),
+                  comments: socialComments, onReserve: uipubReserver,
+                }}
+                publications={
+                  searchQuery.trim()
+                    ? v261Publications.filter(p => {
+                        const q = searchQuery.trim().toLowerCase();
+                        return ((p.caption || '').toLowerCase().indexOf(q) !== -1)
+                          || ((p.display_name || p.subscriber_name || '').toLowerCase().indexOf(q) !== -1);
+                      })
+                    : v261Publications
+                }
+              />
+            </div>
+          ) : null;
+
           // --- BLOC OFFRES (v159: flow offer-first — cliquez offre puis horaire apparaît) ---
           const offersBlock = activeFilter !== 'shop' && filteredServices.length > 0 && (
+            aimantsActifs ? (
+              <div key="offers-block" id="offers-section" className="mb-8 fade-in-section">
+                <OffresAimants
+                  offres={filteredServices}
+                  analyserMedia={parseMediaUrl}
+                  onChoisir={handleSelectOffer}
+                  checkoutBusy={checkoutBusy}
+                  ouvrirToutesSignal={signalToutesOffres}
+                  titre={t('chooseOffer')}
+                />
+              </div>
+            ) : (
             <div key="offers-block" id="offers-section" className="mb-8 fade-in-section">
               <h2 className="font-semibold mb-2 text-white" style={{ fontSize: '18px' }}>{t('chooseOffer')}</h2>
 
@@ -8861,14 +8955,16 @@ function App() {
                 lot3bChoixDateRequis={lot3bChoixDateRequis}
               />
             </div>
+            )
           );
 
           // V119: Rendu dynamique selon l'ordre choisi
           // V261: le mur des abonnes passe EN TETE, quel que soit cet ordre —
           // c'est du contenu vivant, il perd son interet en bas de page.
+          // OFFRES AIMANTS : pour le visiteur, le mur vient APRES les offres.
           return isOffersFirst
-            ? <>{publicationsBlock}{offersBlock}{sessionsBlock}</>
-            : <>{publicationsBlock}{sessionsBlock}{offersBlock}</>;
+            ? <>{publicationsBlock}{offersBlock}{sessionsBlock}{murPublications}</>
+            : <>{publicationsBlock}{sessionsBlock}{offersBlock}{murPublications}</>;
         })()}
 
         {/* =====================================================

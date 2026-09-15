@@ -1020,6 +1020,15 @@ def r3a_localisation(donnees: dict) -> dict:
             "location_lat": _lat, "location_lng": _lng}
 
 
+VIDEO_RATIOS = ("auto", "9:16", "16:9", "1:1")
+
+
+def video_ratio_valide(valeur) -> str:
+    """FORMAT VIDEO — `auto` pour toute valeur inconnue ; jamais une erreur."""
+    v = str(valeur or "").strip()
+    return v if v in VIDEO_RATIOS else "auto"
+
+
 class Offer(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -1052,6 +1061,9 @@ class Offer(BaseModel):
     # d'un paiement unique en mois (None = règle historique de 2 mois, Pulse été).
     billing_mode: Optional[str] = "unique"
     duree_mois: Optional[int] = None
+    # FORMAT VIDEO — ratio d'affichage du média vidéo de l'offre : auto (format
+    # d'origine) / 9:16 / 16:9 / 1:1. Lu par la vitrine (contain, jamais déformé).
+    video_aspect_ratio: Optional[str] = "auto"
     isProduct: bool = False  # True = physical product, False = service/course
     variants: Optional[dict] = None  # { sizes: ["S","M","L"], colors: ["Noir","Blanc"], weights: ["0.5kg","1kg"] }
     tva: float = 0.0  # TVA percentage
@@ -1203,6 +1215,7 @@ class OfferCreate(BaseModel):
     season: Optional[str] = None   # None = « non fourni » : PUT garde la saison du document
     billing_mode: Optional[str] = None
     duree_mois: Optional[int] = None
+    video_aspect_ratio: Optional[str] = None
     isProduct: bool = False
     variants: Optional[dict] = None
     tva: float = 0.0
@@ -2496,6 +2509,7 @@ R2B_CLES_OFFRE_PUBLIQUE = (
     # offre limitée (le compte à rebours V145 la lisait déjà côté coach — un
     # visiteur anonyme ne la recevait pas).
     "billing_mode", "duree_mois", "countdown_enabled", "countdown_date", "countdown_time", "countdown_text",
+    "video_aspect_ratio",
 )
 
 # Les seules cles qu'un coach PUBLIC peut porter. `email` en est absent.
@@ -2736,6 +2750,7 @@ async def create_offer(offer: OfferCreate, request: Request):
     offer_data["season"] = _saison_valide(offer_data.get("season"))
     offer_data["billing_mode"] = _hiver.billing_mode_valide(offer_data.get("billing_mode"))
     offer_data["duree_mois"] = _hiver.duree_mois_valide(offer_data.get("duree_mois"))
+    offer_data["video_aspect_ratio"] = video_ratio_valide(offer_data.get("video_aspect_ratio"))
     # v61: Blindage conversion durée — accepte string, int, vide, null
     raw_dv = offer_data.get("duration_value")
     if raw_dv is not None and raw_dv != "" and raw_dv is not False:
@@ -2862,6 +2877,8 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
         offer.billing_mode if offer.billing_mode is not None else _offre_avant.get("billing_mode"))
     update_data["duree_mois"] = _hiver.duree_mois_valide(
         offer.duree_mois if offer.duree_mois is not None else _offre_avant.get("duree_mois"))
+    update_data["video_aspect_ratio"] = video_ratio_valide(
+        offer.video_aspect_ratio if offer.video_aspect_ratio is not None else _offre_avant.get("video_aspect_ratio"))
     # v61: Blindage conversion durée
     raw_dv = update_data.get("duration_value")
     if raw_dv is not None and raw_dv != "" and raw_dv is not False:

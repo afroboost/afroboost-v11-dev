@@ -1070,3 +1070,18 @@ input.v224-input[type="time"] {
    c'est lui qui rendait « Rechercher… » invisible. Ce champ-ci reçoit un fond
    clair translucide, à la même force. */
 input.af-nav-search { background: rgba(255, 255, 255, 0.08) !important; }
+
+/* FORMAT VIDEO — plein ecran fidele au ratio. Une vidéo 9:16 ouverte en plein
+   écran héritait de l'`object-fit: cover` de sa vignette : sur un écran
+   paysage le visage était rogné. En plein écran, la vidéo est TOUJOURS en
+   `contain` (bandes noires, jamais de déformation ni de recadrage). */
+video:fullscreen,
+video:-webkit-full-screen,
+video:-moz-full-screen,
+video:-ms-fullscreen {
+  object-fit: contain !important;
+  object-position: center !important;
+  width: 100% !important;
+  height: 100% !important;
+  background: var(--video-bg, #000) !important;
+}
