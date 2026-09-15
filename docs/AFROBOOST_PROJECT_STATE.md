@@ -1137,3 +1137,29 @@ ne doit jamais être présentée comme l'état courant.
   app Sunset) et W (153 imports WhatsApp) exclus, données intactes ; push : registre honorable, aucun broadcast.
 - **Prochaine étape** : GO explicite de Bassi pour une PREMIÈRE campagne e-mail (banc :
   `tests/test_reactivation_prelancement.py`, 77/77, aucun envoi réel).
+
+## S. RÉACTIVATION MULTI-AGENTS — WHATSAPP / CHAT / CONSENTEMENTS (2026-09-15, `4f6fac7c` + `847fb4a6` + `e6e988d3`, sw v523)
+
+- **WhatsApp — Meta VERT** (diagnostic lecture seule, jeton dans le navigateur du propriétaire) : numéro
+  `+41 76 763 99 28` CONNECTED / GREEN / TIER_250 / LIVE, WABA APPROVED + business verified (EUR),
+  jeton **SYSTEM_USER sans expiration**, app « Afroboost API » abonnée au WABA (webhook), signature
+  V453 ON + `META_APP_SECRET` posé, template `afroboost_campagne` APPROVED (MARKETING, fr). Le blocage
+  **131042 (impayés) a été levé le 26/08** (dernier template marketing `delivered` 15:04 UTC). Erreurs
+  190 / 132018 / 20003 = historiques (mars-avril 2026), aucune depuis le 24/04. Rien envoyé depuis le 26/08.
+- **Garde WhatsApp** `r3_preparer_whatsapp` : consentement `confirmed`+`consent_at` OU relation client ;
+  un import `whatsapp-import` (164, dont 153 sans relation) est `sans_relation`, jamais servi. Mesure sur
+  l'ancienne campagne de 202 contacts : **13 servables** (12 relation, 1 consentement), 157 sans_relation,
+  21 sans_numero, 9 actifs, 2 tests. Statuts Meta joints au journal (`results.sid` = wamid), STOP d'un
+  numéro inconnu ENREGISTRÉ, `/send-whatsapp*` refusent un STOP (403).
+- **Chat interne** : les messages individuels ne tombent plus dans les groupes (854/1 179 en août) ;
+  canal reconnecté aux segments, aux refus e-mail/WhatsApp, tests/doublons/idempotence ; aucune session
+  fantôme ; pas de copie omnicanale double.
+- **Consentements** : `POST /campaigns` exige le JWT (preuve V310c : 403 sans / 200 avec, brouillon
+  supprimé) ; e-mail `sans_relation` (consentement e-mail OU relation) → les 617 Sunset hors campagne ;
+  `POST /push/broadcast` fermé au super-admin SIGNÉ (X-User-Email seul = 403).
+- **Push** : 331 abonnements / 278 actifs, dont 187 du propriétaire et 38 sans identité ; ~36 personnes
+  identifiées, 13 avec relation client ; aucun canal push dans `campaigns`, `push` n'est pas une source
+  du tracking, aucun journal d'envoi → **canal NON prêt** (fonction absente, GO requis avant tout développement).
+- Dettes signalées, non traitées : `POST /chat/messages` et `/chat/coach-response` sans auth ;
+  `/subscribers/optin` WhatsApp = `confirmed` sans preuve de possession ; `send-bulk-email` sans garde
+  métier (aucun appelant) ; `DELETE /push/subscribe/{pid}` sans auth.
