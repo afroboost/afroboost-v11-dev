@@ -1170,3 +1170,21 @@ ne doit jamais être présentée comme l'état courant.
   ne remonte jamais un `opted_out` WhatsApp (réinscription uniquement par « OUI » depuis le numéro) ;
   `send-bulk-email` → 410 (0 appelant) ; `DELETE /push/subscribe/{pid}` inchangée (appelant public réel).
   0 nouvelle fonction, 0 nouvelle route. Push ciblé : abandonné pour l'instant.
+
+## T. FONDATEURS + PARCOURS CLIENT (2026-09-15, commit `befc4c26` poussé 19:29 UTC, sw v524) — ⚠️ DÉPLOIEMENT NON CONFIRMÉ
+
+- **Fait** : 6 audits parallèles (offre, paiement, espace abonné, essai, tracking, UX) + Playwright bout en bout
+  sur une pile LOCALE (`tests/parcours/` : vraie app, base `afroboost_pw_test`, faux Stripe/Resend) : 35/35 + 25/25,
+  0 paiement réel, 0 e-mail réel.
+- **Trouvé et corrigé (befc4c26)** : relais `invoice.paid`/`payment_failed`/`subscription.deleted` vers le webhook
+  HIVER (le mois 2+ n'était jamais crédité) ; lien profond `?offre=…&reserver=1` perdu par un message SW sans url ;
+  formulaire d'essai refermé par le rechargement des offres ; rechargement de page à la 1re visite ; écran de
+  conversion après essai vide (coach_id propriétaire) + filtre saison ; 409 muet ; e-mail d'accès « par mois ».
+- **Trouvé, NON fait (D, GO requis)** : résiliation en ligne, anti-double abonnement, cumul des séances non
+  consommées (≈ 15/10), repli `mode=payment` silencieux, `checkout.session.expired` non relayé, UX (bouton d'achat
+  sous la ligne de flottaison, Flex 4 contradictoire, « MEILLEUR PRIX » faux, `/optimized` 500, contrastes).
+- **Déploiement** : à 19:41 UTC l'origine sert encore sw **v523** (boot inchangé) : le build Coolify n'a pas abouti ou
+  est en cours → à vérifier dans Coolify (app `afroboost-v11-dev:main-ae8xfe8`, projet afroboost.com), puis
+  `curl -s https://afroboost.com/sw.js | grep afroboost-v524` et le lien profond
+  `https://afroboost.com/?offre=c1e5f73c-0f16-402e-a746-2041e23f72e8&reserver=1` doit ouvrir le formulaire d'essai.
+- **Reste à vérifier** : le déploiement ci-dessus ; base de test `afroboost_pw_test` (Atlas) à supprimer après usage.
