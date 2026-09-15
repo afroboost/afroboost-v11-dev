@@ -13120,9 +13120,21 @@ async def v332_optin(request: Request):
         doc["confirm_token"] = jeton_confirmation
 
     if existant:
-        # Anti-doublon : on met à jour, jamais on ne duplique. Une personne qui
-        # s'était désabonnée et revient d'elle-même est bien ré-inscrite (elle a
-        # recoché la case) — c'est un consentement neuf, horodaté à nouveau.
+        # Anti-doublon : on met à jour, jamais on ne duplique.
+        # DETTE 3 (15/09/2026) — un refus WhatsApp (`opted_out`) ne redevient JAMAIS
+        # `confirmed` par cet appel PUBLIC : rien ne prouve que c'est bien la personne
+        # qui recoche la case (aucune possession du numéro n'est vérifiée). La
+        # demande est CONSIGNÉE (`reoptin_requested_at`, source) sans changer le
+        # statut ; la seule réinscription valable est un « OUI »/« START » envoyé
+        # depuis le numéro lui-même (`_v332_stop_whatsapp`, ligne avec `consent_at`).
+        # L'e-mail garde son double opt-in : le clic sur le lien prouve la possession.
+        if canal == "whatsapp" and (existant.get("status") or "") == "opted_out":
+            await db.subscribers.update_one(
+                {"channel": canal, "value": valeur},
+                {"$set": {"reoptin_requested_at": now, "reoptin_source": source, "updated_at": now}})
+            logger.info("[V332] Opt-in WhatsApp sur un numéro désinscrit — statut opted_out CONSERVÉ, demande consignée")
+            return {"ok": True, "status": "opted_out",
+                    "message": "Ce numéro s'était désinscrit. Pour recevoir à nouveau les actualités, envoyez « OUI » à Afroboost sur WhatsApp."}
         await db.subscribers.update_one({"channel": canal, "value": valeur}, {"$set": doc})
         sub_id = existant.get("id")
     else:
@@ -34957,15 +34969,32 @@ async def sync_all_messages(participant_id: str, since: Optional[str] = None, li
         "synced_at": datetime.now(timezone.utc).isoformat()
     }
 @api_router.post("/chat/messages")
-async def create_chat_message(message: EnhancedChatMessageCreate):
+async def create_chat_message(message: EnhancedChatMessageCreate, request: Request):
     """
     Crée un nouveau message dans une session.
     Met à jour automatiquement le mode du message selon l'état de la session.
+
+    DETTE 1 (15/09/2026) — cette route n'avait AUCUN contrôle : n'importe qui
+    pouvait écrire dans n'importe quelle conversation, y compris en se déclarant
+    `sender_type: "coach"`. Appelant réel : le ChatWidget (V355, envoi d'un média
+    par un abonné/visiteur, `sender_id` = son participant_id). On applique donc
+    EXACTEMENT la règle de LECTURE V349 (`_v349_peut_lire_conversation`, même
+    drapeau `CHAT_READ_STRICT`) : l'expéditeur doit être partie prenante de la
+    conversation — super-admin / coach propriétaire (jeton signé) ou participant
+    dont le `sender_id` figure dans `participant_ids`. Et seul un coach prouvé
+    peut signer un message `coach` : pour tout autre, `sender_type` = `user`.
     """
     # Récupérer la session pour connaître le mode actuel
     session = await db.chat_sessions.find_one({"id": message.session_id}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=404, detail="Session non trouvée")
+    if await _v349_lecture_stricte():
+        _motif = await _v349_peut_lire_conversation(request, session, message.sender_id)
+        if not _motif:
+            logger.warning("[V349] REFUS écriture dans la conversation %s — expéditeur non partie prenante", message.session_id)
+            raise HTTPException(status_code=403, detail="Conversation non accessible")
+        if message.sender_type != "user" and _motif not in ("super-admin", "coach propriétaire"):
+            message.sender_type = "user"
 
     # V350 : même garde-fou que sur la réponse coach — seule une URL Cloudinary est
     # acceptée comme pièce jointe, et un message vide sans pièce jointe est refusé.
@@ -37620,7 +37649,19 @@ async def send_coach_response(request: Request):
     """
     Permet au coach d'envoyer un message dans une session.
     Utilisé en mode "human" ou "community".
+
+    DETTE 2 (15/09/2026) — aucune garde : un anonyme écrivait « Coach » dans
+    n'importe quelle conversation, avec push + e-mail de secours à l'abonné.
+    Appelants réels : CoachDashboard (axios, jeton posé par l'intercepteur),
+    ChatWidget espace coach (axios), GroupChatModule (`v349Entetes`, jeton
+    posé). Même garde que `/chat/group-message` (V349, même drapeau, en
+    production depuis août) : coach/admin sur identité SIGNÉE.
     """
+    if await _v349_lecture_stricte():
+        _emetteur = _v311_coach_email_from_jwt(request)
+        if not _emetteur or not await _v309_is_coach_or_admin(_emetteur):
+            logger.warning("[V349] REFUS réponse coach — appelant sans jeton coach signé")
+            raise HTTPException(status_code=403, detail="Réponse réservée au coach")
     body = await request.json()
     session_id = body.get("session_id")
     message_text = body.get("message", "").strip()
@@ -42361,8 +42402,12 @@ async def send_bulk_campaign_email(request: Request, background_tasks: Backgroun
     abonné rejetés, pas de drapeau d'extinction.
     """
     await _v309_require_coach_or_admin(request)
-    # Comme sur la route jumelle, la logique de crédits n'est pas touchée : ce lot
-    # ferme une porte, il ne redessine pas la facturation.
+    # DETTE 4 (15/09/2026) — DÉSACTIVÉE. Aucun appelant (dépôt entier, front et
+    # api), et elle contournait toute la garde 3B (refus, actifs, tests,
+    # idempotence, List-Unsubscribe, journal). Le seul chemin d'envoi de masse
+    # est la campagne : `POST /campaigns` → aperçu → `/launch`. Le code ci-dessous
+    # est conservé tel quel pour l'historique ; il n'est plus atteignable.
+    raise HTTPException(status_code=410, detail="Route désactivée : utilisez une campagne (aperçu puis lancement).")
     body = await request.json()
     recipients = body.get("recipients", [])  # [{email, name}, ...]
     subject = body.get("subject", "Message d'Afroboost")
