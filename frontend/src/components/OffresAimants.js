@@ -303,7 +303,7 @@ function LigneFiche({ icone, libelle, valeur }) {
   );
 }
 
-function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkoutBusy, estMobile }) {
+function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkoutBusy, estMobile, Countdown }) {
   // `choix` = { offres: [...] } — 1 offre, ou les 2 offres de la saison.
   const offres = (choix && choix.offres) || [];
   const [selection, setSelection] = useState(offres[0] ? offres[0].id : null);
@@ -331,6 +331,7 @@ function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkout
         )}
         {fiche.promesse ? <p style={{ margin: '8px 0 0', fontSize: 15, color: 'rgba(255,255,255,0.85)' }}>{fiche.promesse}</p> : null}
         {fiche.limitee ? <p style={{ margin: '8px 0 0', fontSize: 13, color: '#fff', fontWeight: 600 }} data-testid="fiche-limitee">{fiche.limitee}</p> : null}
+        {!groupeSaison && Countdown && familleOffre(offre) === FAMILLE.LANCEMENT ? <Countdown offer={offre} /> : null}
 
         {groupeSaison ? (
           <div role="radiogroup" aria-label="Mode de paiement" style={{ marginTop: 14, display: 'grid', gap: 8 }} data-testid="fiche-choix-saison">
@@ -490,7 +491,7 @@ function ToutesLesOffres({ ouvert, offres, mensuelRef, analyser, onOuvrirFiche, 
 
 /* ───────────────────────── carte aimant ───────────────────────── */
 
-function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir }) {
+function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir, Countdown }) {
   const o = aimant.offre;
   const fam = familleOffre(o);
   const badge = aimant.cle === 'saison' ? 'Meilleur prix' : badgeOffre(o, mensuelRef);
@@ -525,6 +526,7 @@ function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir }) {
         {seances && aimant.cle !== 'saison' ? <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{seances}</span> : null}
         {aimant.cle === 'saison' ? <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>En 1 ou 2 paiements</span> : null}
         {limitee ? <span style={{ fontSize: 12, color: '#fff', fontWeight: 600 }} data-testid="aimant-limitee">{limitee}</span> : null}
+        {fort && Countdown ? <Countdown offer={o} /> : null}
         <span style={{ marginTop: 'auto', paddingTop: 6, fontSize: 14, fontWeight: 700, color: COULEUR, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           Voir l’offre <SvgIcon name="arrowRight" size={14} />
         </span>
@@ -535,7 +537,9 @@ function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir }) {
 
 /* ───────────────────────── bloc principal ───────────────────────── */
 
-export default function OffresAimants({ offres, analyserMedia, onChoisir, checkoutBusy, ouvrirToutesSignal, titre }) {
+export default function OffresAimants({ offres, analyserMedia, onChoisir, checkoutBusy, ouvrirToutesSignal, titre, Countdown }) {
+  // V525: `Countdown` = le composant OfferCountdown existant d'App.js (j/h/m/s
+  // dynamiques) ; aucun compteur n'est recree ici.
   const { estMobile } = useLargeurEcran();
   const analyser = typeof analyserMedia === 'function' ? analyserMedia : () => null;
   const groupe = useMemo(() => regrouperOffres(offres), [offres]);
@@ -582,7 +586,7 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
       <h2 className="font-semibold mb-3 text-white" style={{ fontSize: 18 }}>{titre || 'Nos formules'}</h2>
       <div style={{ display: 'grid', gridTemplateColumns: colonnes, gap: 12 }}>
         {groupe.aimants.map((a) => (
-          <CarteAimant key={a.cle} aimant={a} mensuelRef={groupe.mensuelRef} analyser={analyser} onOuvrir={setFiche} />
+          <CarteAimant key={a.cle} aimant={a} mensuelRef={groupe.mensuelRef} analyser={analyser} onOuvrir={setFiche} Countdown={Countdown} />
         ))}
       </div>
       {/* Lien discret, pas un bouton massif : une petite icône + le texte. */}
@@ -620,6 +624,7 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
           onFermer={() => setFiche(null)}
           checkoutBusy={checkoutBusy}
           estMobile={estMobile}
+          Countdown={Countdown}
         />
       ) : null}
     </section>

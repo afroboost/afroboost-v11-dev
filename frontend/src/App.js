@@ -1404,24 +1404,17 @@ function OfferCountdown(props) {
       </div>
     );
   }
-  // COMPTE A REBOURS COMPACT : la barre du haut (StickyCountdownBar) est LE
-  // compteur principal ; la carte ne porte qu'une information discrete —
-  // « 47 places restantes · offre jusqu'au 30/09 · 15j 10h ». Deux gros
-  // compteurs concurrents sur la meme page, c'etait l'ancien rendu.
+  // V525: retour au rendu d'AVANT dad8864d (jours / heures / minutes / secondes,
+  // mis a jour chaque seconde par useCountdownRemaining). La version « compacte »
+  // du 15/09 avait retire les secondes, et les cartes/fiche OffresAimants
+  // n'affichaient plus AUCUN compteur — seule la barre du haut bougeait encore.
   var p = countdownParts(remaining);
-  var timerStr = (p.d > 0 ? p.d + 'j ' : '') + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm';
-  var dateFin = (function () {
-    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(offer.countdown_date || ''));
-    return m ? m[3] + '/' + m[2] : '';
-  })();
-  var places = (typeof offer.places_restantes === 'number')
-    ? offer.places_restantes + ' place' + (offer.places_restantes > 1 ? 's' : '') + ' restante' + (offer.places_restantes > 1 ? 's' : '')
-    : '';
-  var morceaux = [places, dateFin ? 'offre jusqu\u2019au ' + dateFin : '', timerStr].filter(Boolean);
+  var text = offer.countdown_text || "L'OFFRE FINIT DANS :";
+  var timerStr = countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's';
   return (
-    <div data-countdown="active" style={{ marginTop: '8px', fontSize: '12px', color: '#fff', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-      <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}><SvgIcon name="hourglass" size={13} /></span>
-      <span>{morceaux.join(' \u00b7 ')}</span>
+    <div data-countdown="active" style={{ marginTop: '10px', padding: '14px 10px', borderRadius: '12px', background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, rgba(var(--primary-rgb, 217, 28, 210), 0.78) 100%)', textAlign: 'center', boxShadow: '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.24), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.12), inset 0 1px 0 rgba(255,255,255,0.2)', width: '100%', boxSizing: 'border-box' }}>
+      <div style={{ fontSize: '13px', color: '#FFFFFF', fontWeight: 800, letterSpacing: '1px', marginBottom: '6px', textTransform: 'uppercase', animation: 'v147blink 0.8s ease-in-out infinite' }}>{text}</div>
+      <div data-countdown-timer="active" style={{ fontSize: '22px', color: '#FFFFFF', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2.5px', textShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>{timerStr}</div>
     </div>
   );
 }
@@ -8864,6 +8857,7 @@ function App() {
                   checkoutBusy={checkoutBusy}
                   ouvrirToutesSignal={signalToutesOffres}
                   titre={t('chooseOffer')}
+                  Countdown={OfferCountdown} /* V525: le compteur existant (j/h/m/s) sur carte + fiche */
                 />
               </div>
             ) : (

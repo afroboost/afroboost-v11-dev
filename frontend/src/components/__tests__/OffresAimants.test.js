@@ -281,3 +281,21 @@ test('✂️ la fiche et la carte jouent l’extrait découpé : tête au début
   expect(pause).toHaveBeenCalled();                        // fin de l'extrait : pause, retour au début
   expect(v.currentTime).toBe(2);
 });
+
+// V525 : le compteur (composant OfferCountdown existant d'App.js, passé en prop)
+// est monté sur la carte Fondateurs ET dans sa fiche — jamais sur les autres.
+test('V525 — la prop Countdown est rendue sur la carte de lancement et dans sa fiche, nulle part ailleurs', async () => {
+  const Countdown = ({ offer }) => <span data-testid="countdown-stub" data-offre={offer.id} />;
+  await monter({ Countdown });
+  const stubs = conteneur.querySelectorAll('[data-testid="countdown-stub"]');
+  expect(stubs.length).toBe(1);
+  expect(stubs[0].getAttribute('data-offre')).toBe('o-fond');
+  expect(conteneur.querySelector('[data-testid="aimant-lancement"] [data-testid="countdown-stub"]')).not.toBeNull();
+  await act(async () => { conteneur.querySelector('[data-testid="aimant-lancement"]').click(); });
+  const fiche = document.querySelector('[data-testid="fiche-offre"]');
+  expect(fiche.querySelector('[data-testid="countdown-stub"]').getAttribute('data-offre')).toBe('o-fond');
+  await act(async () => { conteneur.querySelector('[data-testid="aimant-lancement"]').click(); });
+  // Sans la prop : aucun compteur, rien ne casse.
+  await rerendre({});
+  expect(document.querySelectorAll('[data-testid="countdown-stub"]').length).toBe(0);
+});
