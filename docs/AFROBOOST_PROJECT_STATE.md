@@ -1111,3 +1111,29 @@ qu'on n'a pas prouvé qu'il était vert avant.
 commit, état production, fonctionnalités prouvées, compteurs critiques, dettes restantes, prochain lot autorisé.
 Ne pas réécrire l'ensemble. **Toujours distinguer ÉTAT ACTUEL et HISTORIQUE** : une situation passée
 ne doit jamais être présentée comme l'état courant.
+
+## R. RÉACTIVATION 3B — INFRASTRUCTURE E-MAIL PRÊTE, AUCUNE CAMPAGNE LANCÉE (vérifié 2026-09-15 16:56 UTC, `dba5cbd0`, sw v522, boot `b5250fb6`)
+
+- **Registre unique** : `subscribers` (channel `email`, `status: opted_out`) est lu par `launch_campaign`,
+  `POST /campaigns/send-email` (403 si refus) et `POST /push/broadcast`. Statut `customer` = relation
+  client (posé au lancement seulement, `$setOnInsert`, jamais un opt-in inventé). État en base : 8 WA
+  `confirmed`, 3 e-mail `opted_out`, 0 `customer` (rien n'a été lancé).
+- **Désinscription** : `GET|POST /api/subscribers/unsubscribe?token=` (jeton du registre) → `opted_out`
+  immédiat ; e-mails avec `List-Unsubscribe` (lien + `mailto:contact@afroboosteur.com`) et
+  `List-Unsubscribe-Post: One-Click`, `reply_to` réel.
+- **Segments** (`api/routes/reactivation.py`, comptés par `/contacts/segments`) — prod au 15/09 :
+  essai_non_converti 3 · essai_presence_inconnue 3 (≠ no-show) · essai_non_reserve 6 ·
+  ancien_participant 17 · ancien_abonne 7 · recent_non_abonne 22. Données de test et clients actifs
+  exclus au lancement, jamais supprimés. `targetCategories` est LU par le moteur.
+- **Avant tout envoi** : `GET /api/campaigns/{id}/preview` (JWT coach/admin + propriété ; 403 sans)
+  → confirmation dans le dashboard (segment, destinataires, exclus, canal, UTM, message) → `/launch`
+  (le moteur est le SEUL expéditeur : la boucle front `/campaigns/send-email` qui doublait chaque e-mail
+  est supprimée). Idempotence : `campaigns.results[].cle` = `campaign|email|adresse`.
+- **Auth** : `PUT /api/campaigns/{id}` (route active = server.py), `DELETE`, `purge/all` → 403 sans JWT ;
+  preuve V310c acquise (PUT 200 avec le jeton du propriétaire, 403 sans).
+- **Tracking** : lien `?utm_source=email&utm_medium=reactivation&utm_campaign=hiver2026&utm_content=<segment>` ;
+  `m2a_resoudre` conserve la first-touch connue (la campagne se lit en `last`) ; cockpit « Campagnes — dernière touche ».
+- **Non réparé / hors lot** : WhatsApp Meta (614 échecs historiques, factures impayées) ; G2 (617 comptes
+  app Sunset) et W (153 imports WhatsApp) exclus, données intactes ; push : registre honorable, aucun broadcast.
+- **Prochaine étape** : GO explicite de Bassi pour une PREMIÈRE campagne e-mail (banc :
+  `tests/test_reactivation_prelancement.py`, 77/77, aucun envoi réel).
