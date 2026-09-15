@@ -19,6 +19,17 @@ const STEPS = [
   { id: 3, label: 'Confirmation', icon: 'check' }
 ];
 
+// RÉACTIVATION 3B : les six segments de réactivation (clés = api/routes/reactivation.py).
+// « présence inconnue » n'est jamais un no-show : segment à part, jamais fusionné.
+export const R3_SEGMENTS = [
+  { cle: 'essai_non_converti', libelle: 'Essais présents non convertis', aide: 'Essai accordé, présence confirmée par scan, aucun achat ensuite' },
+  { cle: 'essai_presence_inconnue', libelle: 'Essais réservés, présence inconnue', aide: 'Essai réservé, ni scan ni absence déclarée — ce n\'est PAS un no-show' },
+  { cle: 'essai_non_reserve', libelle: 'Essais jamais réservés', aide: 'Essai accordé, jamais réservé' },
+  { cle: 'ancien_participant', libelle: 'Anciens participants', aide: 'Au moins une réservation de cours (hors essai), sans droit actif' },
+  { cle: 'ancien_abonne', libelle: 'Anciens abonnés / packs', aide: 'Au moins un abonnement ou pack payé, inactif aujourd\'hui' },
+  { cle: 'recent_non_abonne', libelle: 'Récents non abonnés', aide: 'Dernière activité il y a moins de 60 jours, sans droit actif' }
+];
+
 export default function CampaignModal({
   isOpen,
   onClose,
@@ -199,6 +210,18 @@ export default function CampaignModal({
       return [...(prev || []), ...nouvelles];
     });
   }, [setSelectedRecipients]);
+
+  // RÉACTIVATION 3B : les segments choisis vivent dans `newCampaign.targetCategories`
+  // (envoyés au serveur, résolus au lancement) — jamais dans le panier.
+  const r3Segments = Array.isArray(newCampaign?.targetCategories) ? newCampaign.targetCategories : [];
+  const basculerSegmentR3 = useCallback((cle) => {
+    setNewCampaign(prev => {
+      const actuels = Array.isArray(prev?.targetCategories) ? prev.targetCategories : [];
+      const suivants = actuels.includes(cle) ? actuels.filter(k => k !== cle) : [...actuels, cle];
+      return { ...prev, targetCategories: suivants };
+    });
+  }, [setNewCampaign]);
+  const r3Estimation = r3Segments.reduce((acc, k) => acc + (segmentsInfo?.etiquettes?.[k] || 0), 0);
 
   // V364 : déplie un SEGMENT (instantané — les routes V363 renvoient les identifiants).
   const ajouterSegment = useCallback(async (cle) => {
@@ -436,7 +459,7 @@ export default function CampaignModal({
 
   const canGoNext = () => {
     if (step === 1) return newCampaign.name?.trim() && newCampaign.message?.trim();
-    if (step === 2) return selectedRecipients?.length > 0 || newCampaign.channels?.whatsapp || newCampaign.channels?.email || newCampaign.channels?.group;
+    if (step === 2) return selectedRecipients?.length > 0 || r3Segments.length > 0 || newCampaign.channels?.whatsapp || newCampaign.channels?.email || newCampaign.channels?.group;
     return true;
   };
 
@@ -831,6 +854,50 @@ export default function CampaignModal({
                   </>
                 )}
 
+                {/* RÉACTIVATION 3B : ciblage par SEGMENT, résolu par le moteur AU LANCEMENT.
+                    Rien n'est ajouté au panier : la liste exacte (opt-out, clients actifs,
+                    tests et doublons retirés) est celle de l'aperçu serveur, juste avant
+                    l'envoi. Les nombres ci-dessous sont des estimations V363 du moment. */}
+                {segmentsInfo && (
+                  <div data-testid="r3-segments" style={{
+                    marginTop: '12px', padding: '12px', borderRadius: '12px',
+                    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.10)'
+                  }}>
+                    <div style={{ color: '#fff', fontSize: '13px', fontWeight: 700, marginBottom: '4px' }}>
+                      Réactivation par e-mail (segments)
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', marginBottom: '10px' }}>
+                      Résolu au moment de l'envoi : les refus, les clients actifs et les données de test sont retirés automatiquement. La liste exacte s'affiche à l'aperçu, avant confirmation.
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {R3_SEGMENTS.map(s => {
+                        const actif = r3Segments.includes(s.cle);
+                        const n = segmentsInfo.etiquettes?.[s.cle] || 0;
+                        return (
+                          <button key={s.cle} type="button"
+                            onClick={() => basculerSegmentR3(s.cle)}
+                            data-testid={`r3-segment-${s.cle}`}
+                            aria-pressed={actif}
+                            title={s.aide}
+                            style={{
+                              padding: '6px 11px', borderRadius: '14px', fontSize: '11px', fontWeight: 600,
+                              cursor: 'pointer', color: '#fff',
+                              background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.35)' : 'rgba(255,255,255,0.06)',
+                              border: actif ? '1px solid var(--primary-color, #D91CD2)' : '1px solid rgba(255,255,255,0.14)'
+                            }}>
+                            {actif ? '✓ ' : '+ '}{s.libelle} ({n})
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {r3Segments.length > 0 && !newCampaign.channels?.email && (
+                      <div style={{ marginTop: '8px', fontSize: '11px', color: '#fca5a5' }}>
+                        Active le canal e-mail à l'étape suivante : ces segments partent par e-mail.
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* LE nombre. Un seul, en grand, et jamais optimiste. */}
                 <div style={{
                   marginTop: '14px', padding: '16px', borderRadius: '12px', textAlign: 'center',
@@ -843,8 +910,10 @@ export default function CampaignModal({
                         ? '1px solid rgba(239,68,68,0.35)' : '1px solid rgba(34,197,94,0.35)')
                 }}>
                   {(selectedRecipients?.length || 0) === 0 ? (
-                    <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.6)' }}>
-                      Choisis à qui envoyer ci-dessus.
+                    <span style={{ fontSize: '13px', color: r3Segments.length ? '#86efac' : 'rgba(255,255,255,0.6)' }}>
+                      {r3Segments.length
+                        ? `${r3Segments.length} segment${r3Segments.length > 1 ? 's' : ''} de réactivation — ${r3Estimation} personne${r3Estimation > 1 ? 's' : ''} estimée${r3Estimation > 1 ? 's' : ''}, liste exacte à l'aperçu`
+                        : 'Choisis à qui envoyer ci-dessus.'}
                     </span>
                   ) : bilanDestinataires.joignables === null ? (
                     <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.6)' }}>

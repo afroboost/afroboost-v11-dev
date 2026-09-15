@@ -305,6 +305,7 @@ function SectionEssais({ ess, courseId }) {
 export function SectionSources({ sources, courseId }) {
   const lignes = (sources && sources.lignes) || [];
   const couv = (sources && sources.couverture) || {};
+  const campagnes = (sources && sources.campagnes && sources.campagnes.lignes) || [];
   const th = { textAlign: 'right', padding: '6px 8px', fontSize: 10, color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', fontWeight: 600 };
   const td = { textAlign: 'right', padding: '7px 8px', fontSize: 12, color: '#fff', whiteSpace: 'nowrap', borderTop: '1px solid rgba(255,255,255,0.06)' };
   return (
@@ -364,6 +365,37 @@ export function SectionSources({ sources, courseId }) {
           {sources && sources.convention}
           {couv.participants_total ? ` Couverture : ${couv.participants_attribues}/${couv.participants_total} participants et ${couv.achats_attribues}/${couv.achats_total} achats avec une origine connue.` : ''}
         </div>
+      </Bloc>
+      {/* RÉACTIVATION 3B : ce qu'une CAMPAGNE a rapporté, en dernière touche —
+          l'origine (first) ci-dessus ne bouge pas, la campagne se lit ici. */}
+      <Bloc titre="Campagnes — dernière touche (utm_campaign)" testid="tableau-campagnes">
+        {campagnes.length === 0 ? (
+          <div style={note}>Aucun achat attribué à une campagne sur la période.</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 520 }}>
+              <thead>
+                <tr>
+                  <th style={{ ...th, textAlign: 'left' }}>Source / medium / campagne / contenu</th>
+                  <th style={th}>Achats</th>
+                  <th style={th}>Acheteurs</th>
+                  <th style={th}>CA prouvé</th>
+                </tr>
+              </thead>
+              <tbody>
+                {campagnes.map((l) => (
+                  <tr key={l.libelle} data-testid={`campagne-${l.campaign || 'sans'}`}>
+                    <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{l.libelle}</td>
+                    <td style={td}>{l.achats}</td>
+                    <td style={td}>{l.acheteurs}</td>
+                    <td style={{ ...td, fontWeight: 700 }}>{chf(l.ca_prouve)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={note}>{sources && sources.campagnes && sources.campagnes.convention}</div>
       </Bloc>
     </div>
   );

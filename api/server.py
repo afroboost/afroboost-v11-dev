@@ -1498,6 +1498,7 @@ class Campaign(BaseModel):
     channels: dict = Field(default_factory=lambda: {"whatsapp": True, "email": False, "instagram": False, "group": False, "internal": False})
     targetGroupId: Optional[str] = "community"  # ID du groupe cible pour le canal "group"
     targetIds: Optional[List[str]] = []  # Tableau des IDs du panier (nouveau système)
+    targetCategories: Optional[List[str]] = []  # RÉACTIVATION 3B : segments résolus au lancement
     targetConversationId: Optional[str] = None  # ID de la conversation interne (legacy - premier du panier)
     targetConversationName: Optional[str] = None  # Nom de la conversation pour affichage
     scheduledAt: Optional[str] = None  # ISO date or null for immediate
@@ -1526,6 +1527,7 @@ class CampaignCreate(BaseModel):
     channels: dict = Field(default_factory=lambda: {"whatsapp": True, "email": False, "instagram": False, "group": False, "internal": False})
     targetGroupId: Optional[str] = "community"
     targetIds: Optional[List[str]] = []
+    targetCategories: Optional[List[str]] = []  # RÉACTIVATION 3B : segments (clés reactivation.py / V363)
     targetConversationId: Optional[str] = None
     targetConversationName: Optional[str] = None
     scheduledAt: Optional[str] = None
@@ -5510,6 +5512,7 @@ async def create_campaign(campaign: CampaignCreate, request: Request = None):
         channels=campaign.channels,
         targetGroupId=campaign.targetGroupId,
         targetIds=campaign.targetIds or [],
+        targetCategories=[str(c or "").strip() for c in (campaign.targetCategories or []) if str(c or "").strip()][:20],
         targetConversationId=campaign.targetConversationId,
         targetConversationName=campaign.targetConversationName,
         scheduledAt=campaign.scheduledAt,
@@ -5531,7 +5534,13 @@ async def update_campaign(campaign_id: str, request: Request):
     """
     Met à jour une campagne existante (nom, message, horaire, canaux, etc.)
     Seules les campagnes draft/scheduled peuvent être modifiées.
+
+    RÉACTIVATION 3B : cette route est CELLE qui répond (api_router est inclus
+    avant campaign_router, dont le PUT homonyme est masqué). Elle exige donc
+    la même garde que le lancement : JWT coach/admin signé + propriété.
     """
+    from api.routes.campaign_routes import _r3_campagne_du_proprietaire
+    await _r3_campagne_du_proprietaire(campaign_id, request)
     body = await request.json()
 
     existing = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
@@ -5548,7 +5557,7 @@ async def update_campaign(campaign_id: str, request: Request):
         "targetType", "selectedContacts", "channels", "targetGroupId",
         "targetIds", "targetConversationId", "targetConversationName",
         "scheduledAt", "ctaType", "ctaText", "ctaLink",
-        "systemPrompt", "descriptionPrompt"
+        "systemPrompt", "descriptionPrompt", "targetCategories"
     ]
 
     update_data = {}
@@ -5839,6 +5848,293 @@ async def v451_lancer_campagne_http(campaign_id: str, request: Request):
     return await launch_campaign(campaign_id)
 
 
+
+@api_router.get("/campaigns/{campaign_id}/preview")
+async def r3_previsualiser_campagne(campaign_id: str, request: Request):
+    """RÉACTIVATION 3B — L'APERÇU AVANT ENVOI, sans rien envoyer ni écrire.
+
+    Même résolution des destinataires et même garde que le lancement
+    (`_campagne_resoudre_contacts` + `r3_preparer_email`, `ecrire=False`) :
+    segment, destinataires, exclus (opt-out, actifs, tests, doublons, déjà
+    envoyés, sans e-mail), canal, campagne UTM et la liste (e-mail MASQUÉ,
+    dernière activité) — aucune donnée sensible inutile. Même garde d'accès que
+    le lancement (JWT coach/admin + propriété).
+    """
+    _appelant = await _v309_require_coach_or_admin(request)
+    _campagne = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
+    if not _campagne:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    _proprietaire = (_campagne.get("coach_id") or "").lower().strip()
+    if not is_super_admin(_appelant) and _proprietaire != _appelant:
+        raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas.")
+    from api.routes.reactivation import LIBELLES as _r3_libelles, lien_reactivation as _r3_lien, UTM_CAMPAGNE_DEFAUT as _r3_camp
+    _ids = [t for t in (_campagne.get("targetIds") or []) if t and str(t).strip()]
+    contacts = await _campagne_resoudre_contacts(_campagne, _ids)
+    prep = await r3_preparer_email(_campagne, contacts, None, ecrire=False)
+    segments = [str(c) for c in (_campagne.get("targetCategories") or []) if str(c or "").strip()]
+    return {
+        "campagne": {"id": campaign_id, "nom": _campagne.get("name"), "statut": _campagne.get("status"),
+                     "utm_campaign": _r3_camp, "message": (_campagne.get("message") or "")[:2000],
+                     "media_url": _campagne.get("mediaUrl") or None},
+        "segments": [{"cle": k, "libelle": _r3_libelles.get(k, k), "lien": _r3_lien(k, _r3_camp)} for k in segments],
+        "canal": "email" if (_campagne.get("channels") or {}).get("email") else "aucun",
+        "compteurs": prep["compteurs"],
+        "liste": [{"nom": l["nom"], "email": l["email_masque"], "segment": l["segment"], "decision": l["decision"],
+                   "derniere_activite": l["derniere_activite"]} for l in prep["lignes"]],
+        "note": "Aperçu sans envoi : rien n'est écrit, personne n'est contacté. « présence inconnue » n'est jamais un no-show.",
+    }
+
+
+# ═══ RÉACTIVATION 3B — LA GARDE E-MAIL, UNE SEULE FOIS, AVANT TOUT ENVOI ═══
+#
+# `r3_preparer_email` décide, pour CHAQUE destinataire e-mail d'une campagne,
+# s'il sera servi et sinon POURQUOI : opt-out (registre `subscribers`, C3),
+# client actif (jamais réactivé commercialement), donnée de test, doublon,
+# déjà envoyé (clé d'idempotence), sans e-mail. La prévisualisation et le
+# lancement appellent la MÊME fonction — ce que le coach voit est ce qui part.
+# `ecrire=True` (lancement seul) inscrit les destinataires servis au registre
+# avec le statut `customer` (relation client EXISTANTE — jamais un opt-in
+# inventé : `$setOnInsert`, un `opted_out`/`confirmed` n'est jamais touché) ;
+# c'est ce qui leur donne un `unsubscribe_token` et donc un lien de
+# désinscription VALIDE dans chaque e-mail.
+R3_STATUT_CLIENT = "customer"
+R3_SOURCE_CLIENT = "relation_client"
+
+
+async def r3_preparer_email(campaign, contacts, refus_email=None, ecrire=False):
+    from api.routes.reactivation import (est_donnee_test, est_droit_actif, cle_idempotence,
+                                         deja_envoye, masquer_email, derniere_activite)
+    campaign_id = str((campaign or {}).get("id") or "")
+    existants = (campaign or {}).get("results") or []
+    lignes = []
+    vus = set()
+    emails = []
+    for c in contacts or []:
+        e = _v332_normaliser("email", c.get("email") or "")
+        if e:
+            emails.append(e)
+    # UNE lecture : droits actifs des destinataires (jamais un find_one par personne).
+    actifs = set()
+    dernier = {}
+    try:
+        if emails:
+            async for sub in db.subscriptions.find({"email": {"$in": emails}}, {"_id": 0, "email": 1, "status": 1, "expires_at": 1,
+                                                                                "remaining_sessions": 1, "billing_mode": 1, "offer_name": 1,
+                                                                                "origine_paiement": 1, "created_at": 1}):
+                em_ = _v332_normaliser("email", sub.get("email") or "")
+                if est_droit_actif(sub):
+                    actifs.add(em_)
+                dernier.setdefault(em_, {"subs": [], "resas": [], "pays": []})["subs"].append(sub)
+            async for r in db.reservations.find({"userEmail": {"$in": emails}}, {"_id": 0, "userEmail": 1, "datetime": 1, "createdAt": 1}):
+                dernier.setdefault(_v332_normaliser("email", r.get("userEmail") or ""), {"subs": [], "resas": [], "pays": []})["resas"].append(r)
+    except Exception as _e:
+        logger.warning("[R3] lecture des droits impossible (%s) — aucun actif déduit", type(_e).__name__)
+    refus = refus_email if refus_email is not None else await c3_refus_exprimes("email", emails)
+    for c in contacts or []:
+        e = _v332_normaliser("email", c.get("email") or "")
+        nom = c.get("name") or ""
+        cle = cle_idempotence(campaign_id, "email", e) if e else ""
+        if not e:
+            decision = "sans_email"
+        elif e in refus:
+            decision = "opt_out"
+        elif est_donnee_test(e, nom):
+            decision = "test"
+        elif e in actifs:
+            decision = "actif"
+        elif e in vus:
+            decision = "doublon"
+        elif deja_envoye(existants, cle):
+            decision = "deja_envoye"
+        else:
+            decision = "ok"
+            vus.add(e)
+        _d = derniere_activite(dernier.get(e) or {})
+        lignes.append({"contact": c, "email": e, "email_masque": masquer_email(e), "nom": nom, "cle": cle,
+                       "decision": decision, "segment": c.get("_segment") or ("selection" if (campaign or {}).get("targetType") != "all" else "tous"),
+                       "derniere_activite": _d.isoformat() if _d else None, "token": ""})
+    compteurs = {"destinataires": sum(1 for l in lignes if l["decision"] == "ok")}
+    for k in ("opt_out", "actif", "test", "doublon", "deja_envoye", "sans_email"):
+        compteurs[k] = sum(1 for l in lignes if l["decision"] == k)
+    if ecrire:
+        # Relation client -> registre (statut `customer`, $setOnInsert), puis jetons.
+        try:
+            from pymongo import UpdateOne
+            _now = datetime.now(timezone.utc).isoformat()
+            _ops = [UpdateOne({"channel": "email", "value": l["email"]},
+                              {"$setOnInsert": {"id": str(uuid.uuid4()), "created_at": _now, "updated_at": _now,
+                                                "status": R3_STATUT_CLIENT, "source": R3_SOURCE_CLIENT, "name": "",
+                                                "unsubscribe_token": secrets.token_urlsafe(32)}}, upsert=True)
+                    for l in lignes if l["decision"] == "ok"]
+            if _ops:
+                await db.subscribers.bulk_write(_ops, ordered=False)
+            async for row in db.subscribers.find({"channel": "email", "value": {"$in": [l["email"] for l in lignes if l["decision"] == "ok"]}},
+                                                 {"_id": 0, "value": 1, "unsubscribe_token": 1}):
+                for l in lignes:
+                    if l["email"] == row.get("value"):
+                        l["token"] = row.get("unsubscribe_token") or ""
+        except Exception as _e:
+            logger.warning("[R3] registre non écrit (%s) — envoi sans jeton de désinscription", type(_e).__name__)
+    return {"lignes": lignes, "compteurs": compteurs}
+
+
+def r3_entetes_desinscription(token):
+    """Les en-têtes RFC 8058 pour un e-mail marketing : un-clic (POST) + mailto
+    vers une adresse RÉELLE (le domaine `notifications@afroboost.com` n'a pas de MX)."""
+    if not token:
+        return {}
+    lien = f"{_v332_url_publique()}/api/subscribers/unsubscribe?token={token}"
+    return {"List-Unsubscribe": f"<{lien}>, <mailto:{AFROBOOST_REPLY_TO_CANONIQUE}?subject=unsubscribe>",
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"}
+
+
+def r3_pied_desinscription(token) -> str:
+    if not token:
+        return ""
+    lien = f"{_v332_url_publique()}/api/subscribers/unsubscribe?token={token}"
+    return (f'<p style="font-size:11px;color:#888;margin:14px 0 0;">Tu reçois ce message parce que tu as déjà participé '
+            f'ou réservé chez Afroboost. <a href="{lien}" style="color:#9333EA;">Ne plus recevoir ces e-mails</a>.</p>')
+
+
+async def _campagne_resoudre_contacts(campaign, valid_target_ids):
+    """RÉACTIVATION 3B — la résolution des destinataires d'une campagne, extraite
+    TELLE QUELLE de `launch_campaign` pour servir aussi la prévisualisation
+    (même liste, même ordre, même dépliage des groupes). Ajout unique :
+    `targetCategories` (segments V363 / réactivation) devient un vrai ciblage —
+    il était accepté à la création mais ignoré par le moteur.
+    """
+    contacts = []
+    if True:
+        # V165.4: SÉCURITÉ — si des targetIds spécifiques sont fournis, les utiliser
+        # même si targetType dit "all" (bug frontend possible)
+        has_specific_targets = bool(valid_target_ids) or bool(campaign.get("selectedContacts", []))
+        # RÉACTIVATION 3B : un SEGMENT est une cible précise — une campagne « segments
+        # seuls » ne retombe JAMAIS sur « tous les utilisateurs ».
+        _a_des_segments = bool([c for c in (campaign.get("targetCategories") or []) if str(c or "").strip()])
+        use_all = campaign.get("targetType") == "all" and not has_specific_targets and not _a_des_segments
+
+        if use_all:
+            contacts = await db.users.find({}, {"_id": 0}).to_list(1000)
+            logger.info(f"[CAMPAIGN-LAUNCH] 📋 Mode 'all': {len(contacts)} contacts trouvés")
+        else:
+            if has_specific_targets and campaign.get("targetType") == "all":
+                logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ targetType='all' MAIS targetIds présents — utilisation des targetIds spécifiques (sécurité V165.4)")
+            contact_ids = valid_target_ids if valid_target_ids else campaign.get("selectedContacts", [])
+
+            # === V376 : DÉPLIAGE DES GROUPES AU MOMENT DE L'ENVOI ===
+            #
+            # Un identifiant de session de groupe (« grp_xxxxxxxx ») ne correspond à
+            # AUCUN utilisateur : les trois recherches ci-dessous (users,
+            # chat_participants, chat_sessions par participantEmail) le laissaient
+            # tomber en silence. Une campagne réglée sur « Contacts WhatsApp »
+            # (210 membres) n'atteignait donc que les contacts listés À CÔTÉ du
+            # groupe — 25 personnes le 3 août à midi, au lieu de 210.
+            #
+            # V366 avait corrigé le dépliage à la DUPLICATION et à la RÉÉDITION,
+            # côté interface. Le moteur d'envoi, lui, n'avait jamais su le faire :
+            # une campagne créée autrement (import, ancienne campagne, API) restait
+            # donc muette pour l'essentiel de sa cible.
+            #
+            # PORTÉE STRICTE : ce dépliage ne concerne QUE la résolution des
+            # destinataires WhatsApp/e-mail. Le canal `internal` plus haut continue
+            # d'utiliser `valid_target_ids` tel quel, et publie donc toujours UN
+            # message dans la conversation de groupe — comportement inchangé.
+            _ids_groupes = [c for c in contact_ids if isinstance(c, str) and c.startswith("grp_")]
+            if _ids_groupes:
+                _membres = []
+                for _gid in _ids_groupes:
+                    _session = await db.chat_sessions.find_one(
+                        {"id": _gid}, {"_id": 0, "participant_ids": 1, "group_id": 1})
+                    _liste = (_session or {}).get("participant_ids") or []
+                    if not _liste and (_session or {}).get("group_id"):
+                        _grp = await db.chat_groups.find_one(
+                            {"id": _session["group_id"]}, {"_id": 0, "member_ids": 1})
+                        _liste = (_grp or {}).get("member_ids") or []
+                    logger.info(f"[CAMPAIGN-LAUNCH] 👥 Groupe {_gid} déplié en {len(_liste)} membre(s)")
+                    _membres.extend(_liste)
+                if _membres:
+                    # On garde l'ordre et on retire les doublons ; les identifiants de
+                    # groupe sortent de la liste, ils n'ont plus rien à y faire.
+                    _sans_groupe = [c for c in contact_ids if c not in _ids_groupes]
+                    contact_ids = list(dict.fromkeys(_sans_groupe + _membres))
+                    logger.info(f"[CAMPAIGN-LAUNCH] 👥 Destinataires après dépliage : {len(contact_ids)}")
+                else:
+                    logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ Groupe(s) {_ids_groupes} sans membre exploitable")
+
+            if contact_ids:
+                # 1) Essayer de trouver directement par ID utilisateur
+                contacts = await db.users.find({"id": {"$in": contact_ids}}, {"_id": 0}).to_list(1000)
+
+                # 2) Compléter avec chat_participants (CRM) pour les IDs non trouvés dans users
+                found_ids = set(c.get("id") for c in contacts)
+                missing_ids = [cid for cid in contact_ids if cid not in found_ids]
+                if missing_ids:
+                    crm_contacts = await db.chat_participants.find(
+                        {"id": {"$in": missing_ids}}, {"_id": 0}
+                    ).to_list(1000)
+                    for p in crm_contacts:
+                        contacts.append({
+                            "id": p.get("id", ""),
+                            "name": p.get("name", ""),
+                            "email": p.get("email", ""),
+                            "whatsapp": p.get("whatsapp") or p.get("phone") or ""
+                        })
+                    found_ids.update(p.get("id") for p in crm_contacts)
+                    still_missing = [cid for cid in contact_ids if cid not in found_ids]
+
+                    # 3) Fallback: résoudre via chat_sessions pour les IDs restants
+                    for cid in still_missing:
+                        session_doc = await db.chat_sessions.find_one(
+                            {"$or": [{"id": cid}, {"participant_ids": cid}]},
+                            {"_id": 0, "participantEmail": 1, "participantName": 1}
+                        )
+                        if session_doc and session_doc.get("participantEmail"):
+                            pemail = session_doc["participantEmail"]
+                            user_by_email = await db.users.find_one({"email": pemail}, {"_id": 0})
+                            if user_by_email:
+                                contacts.append(user_by_email)
+                            else:
+                                contacts.append({
+                                    "id": cid,
+                                    "name": session_doc.get("participantName", ""),
+                                    "email": pemail,
+                                    "whatsapp": ""
+                                })
+
+                logger.info(f"[CAMPAIGN-LAUNCH] 📧 {len(contacts)} contacts résolus pour email/WhatsApp")
+
+    # RÉACTIVATION 3B : ciblage par SEGMENT (`targetCategories`) — la même
+    # fonction de calcul que /contacts/segments, jamais une seconde logique.
+    _segments = [str(c or "").strip() for c in (campaign.get("targetCategories") or []) if str(c or "").strip()]
+    if _segments:
+        try:
+            from api.routes.contact_segments_routes import _calcule_personnes as _v363_personnes, SEGMENTS_CONNUS as _v363_cles
+            _personnes, _ = await _v363_personnes()
+            _voulus = {c for c in _segments if c in _v363_cles}
+            _seg_par_id = {}
+            for p in _personnes:
+                _communs = set(p.get("etiquettes") or []) & _voulus
+                if p.get("id") and _communs:
+                    _seg_par_id[p["id"]] = next(c for c in _segments if c in _communs)
+            _deja = {c.get("id") for c in contacts}
+            _manquants = [i for i in _seg_par_id if i not in _deja]
+            if _manquants:
+                _u = await db.users.find({"id": {"$in": _manquants}}, {"_id": 0}).to_list(5000)
+                _trouves = {c.get("id") for c in _u}
+                _cp = await db.chat_participants.find({"id": {"$in": [i for i in _manquants if i not in _trouves]}}, {"_id": 0}).to_list(5000)
+                contacts.extend(_u)
+                for p_ in _cp:
+                    contacts.append({"id": p_.get("id", ""), "name": p_.get("name", ""), "email": p_.get("email", ""),
+                                     "whatsapp": p_.get("whatsapp") or p_.get("phone") or ""})
+            for c in contacts:
+                if c.get("id") in _seg_par_id:
+                    c["_segment"] = _seg_par_id[c.get("id")]
+            logger.info("[R3] ciblage par segment %s : %d personne(s) ajoutée(s)", _segments, len(_manquants))
+        except Exception as _seg_e:
+            logger.warning("[R3] ciblage par segment indisponible (%s)", type(_seg_e).__name__)
+    return contacts
+
+
 async def launch_campaign(campaign_id: str):
     """
     Lance une campagne immédiatement.
@@ -6032,100 +6328,7 @@ async def launch_campaign(campaign_id: str):
     # On essaie d'abord par ID utilisateur, puis par email via chat_sessions
     contacts = []
     if channels.get("whatsapp") or channels.get("email"):
-        # V165.4: SÉCURITÉ — si des targetIds spécifiques sont fournis, les utiliser
-        # même si targetType dit "all" (bug frontend possible)
-        has_specific_targets = bool(valid_target_ids) or bool(campaign.get("selectedContacts", []))
-        use_all = campaign.get("targetType") == "all" and not has_specific_targets
-
-        if use_all:
-            contacts = await db.users.find({}, {"_id": 0}).to_list(1000)
-            logger.info(f"[CAMPAIGN-LAUNCH] 📋 Mode 'all': {len(contacts)} contacts trouvés")
-        else:
-            if has_specific_targets and campaign.get("targetType") == "all":
-                logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ targetType='all' MAIS targetIds présents — utilisation des targetIds spécifiques (sécurité V165.4)")
-            contact_ids = valid_target_ids if valid_target_ids else campaign.get("selectedContacts", [])
-
-            # === V376 : DÉPLIAGE DES GROUPES AU MOMENT DE L'ENVOI ===
-            #
-            # Un identifiant de session de groupe (« grp_xxxxxxxx ») ne correspond à
-            # AUCUN utilisateur : les trois recherches ci-dessous (users,
-            # chat_participants, chat_sessions par participantEmail) le laissaient
-            # tomber en silence. Une campagne réglée sur « Contacts WhatsApp »
-            # (210 membres) n'atteignait donc que les contacts listés À CÔTÉ du
-            # groupe — 25 personnes le 3 août à midi, au lieu de 210.
-            #
-            # V366 avait corrigé le dépliage à la DUPLICATION et à la RÉÉDITION,
-            # côté interface. Le moteur d'envoi, lui, n'avait jamais su le faire :
-            # une campagne créée autrement (import, ancienne campagne, API) restait
-            # donc muette pour l'essentiel de sa cible.
-            #
-            # PORTÉE STRICTE : ce dépliage ne concerne QUE la résolution des
-            # destinataires WhatsApp/e-mail. Le canal `internal` plus haut continue
-            # d'utiliser `valid_target_ids` tel quel, et publie donc toujours UN
-            # message dans la conversation de groupe — comportement inchangé.
-            _ids_groupes = [c for c in contact_ids if isinstance(c, str) and c.startswith("grp_")]
-            if _ids_groupes:
-                _membres = []
-                for _gid in _ids_groupes:
-                    _session = await db.chat_sessions.find_one(
-                        {"id": _gid}, {"_id": 0, "participant_ids": 1, "group_id": 1})
-                    _liste = (_session or {}).get("participant_ids") or []
-                    if not _liste and (_session or {}).get("group_id"):
-                        _grp = await db.chat_groups.find_one(
-                            {"id": _session["group_id"]}, {"_id": 0, "member_ids": 1})
-                        _liste = (_grp or {}).get("member_ids") or []
-                    logger.info(f"[CAMPAIGN-LAUNCH] 👥 Groupe {_gid} déplié en {len(_liste)} membre(s)")
-                    _membres.extend(_liste)
-                if _membres:
-                    # On garde l'ordre et on retire les doublons ; les identifiants de
-                    # groupe sortent de la liste, ils n'ont plus rien à y faire.
-                    _sans_groupe = [c for c in contact_ids if c not in _ids_groupes]
-                    contact_ids = list(dict.fromkeys(_sans_groupe + _membres))
-                    logger.info(f"[CAMPAIGN-LAUNCH] 👥 Destinataires après dépliage : {len(contact_ids)}")
-                else:
-                    logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ Groupe(s) {_ids_groupes} sans membre exploitable")
-
-            if contact_ids:
-                # 1) Essayer de trouver directement par ID utilisateur
-                contacts = await db.users.find({"id": {"$in": contact_ids}}, {"_id": 0}).to_list(1000)
-
-                # 2) Compléter avec chat_participants (CRM) pour les IDs non trouvés dans users
-                found_ids = set(c.get("id") for c in contacts)
-                missing_ids = [cid for cid in contact_ids if cid not in found_ids]
-                if missing_ids:
-                    crm_contacts = await db.chat_participants.find(
-                        {"id": {"$in": missing_ids}}, {"_id": 0}
-                    ).to_list(1000)
-                    for p in crm_contacts:
-                        contacts.append({
-                            "id": p.get("id", ""),
-                            "name": p.get("name", ""),
-                            "email": p.get("email", ""),
-                            "whatsapp": p.get("whatsapp") or p.get("phone") or ""
-                        })
-                    found_ids.update(p.get("id") for p in crm_contacts)
-                    still_missing = [cid for cid in contact_ids if cid not in found_ids]
-
-                    # 3) Fallback: résoudre via chat_sessions pour les IDs restants
-                    for cid in still_missing:
-                        session_doc = await db.chat_sessions.find_one(
-                            {"$or": [{"id": cid}, {"participant_ids": cid}]},
-                            {"_id": 0, "participantEmail": 1, "participantName": 1}
-                        )
-                        if session_doc and session_doc.get("participantEmail"):
-                            pemail = session_doc["participantEmail"]
-                            user_by_email = await db.users.find_one({"email": pemail}, {"_id": 0})
-                            if user_by_email:
-                                contacts.append(user_by_email)
-                            else:
-                                contacts.append({
-                                    "id": cid,
-                                    "name": session_doc.get("participantName", ""),
-                                    "email": pemail,
-                                    "whatsapp": ""
-                                })
-
-                logger.info(f"[CAMPAIGN-LAUNCH] 📧 {len(contacts)} contacts résolus pour email/WhatsApp")
+        contacts = await _campagne_resoudre_contacts(campaign, valid_target_ids)
 
     # V162: DÉDUPLICATION — Empêcher d'envoyer plusieurs fois au même numéro/email
     # Les targetIds peuvent contenir des doublons qui se résolvent au même contact
@@ -6206,6 +6409,24 @@ async def launch_campaign(campaign_id: str):
             logger.info("[C3] %d refus honores sur le canal %s",
                         len(_c3_refus[_c3_canal]), _c3_canal)
     _c3_deja = {_c: set() for _c in C3_CANAUX_CAMPAGNE}
+
+    # RÉACTIVATION 3B : la garde e-mail (opt-out, actif, test, doublon, déjà
+    # envoyé) est calculée UNE fois pour toute la campagne — même fonction que la
+    # prévisualisation — et le registre reçoit les destinataires servis
+    # (statut `customer`, jetons de désinscription). Les résultats déjà
+    # enregistrés sur la campagne sont CONSERVÉS : un retry n'efface rien et
+    # n'envoie rien deux fois.
+    _r3 = {"lignes": [], "compteurs": {}}
+    _r3_par_email = {}
+    if channels.get("email"):
+        try:
+            _r3 = await r3_preparer_email(campaign, contacts, _c3_refus.get("email", set()), ecrire=True)
+            _r3_par_email = {l["email"]: l for l in _r3["lignes"] if l["email"]}
+            logger.info("[R3] e-mail : %s", _r3["compteurs"])
+        except Exception as _r3e:
+            logger.warning("[R3] garde e-mail indisponible (%s) — canal e-mail suspendu par prudence", type(_r3e).__name__)
+            channels = dict(channels); channels["email"] = False
+    results = [r for r in (campaign.get("results") or []) if isinstance(r, dict) and r.get("status") == "sent"] + results
 
     for contact in contacts:
         contact_id = contact.get("id", "")
@@ -6431,7 +6652,19 @@ async def launch_campaign(campaign_id: str):
             results.append(whatsapp_result)
         
         # ==================== ENVOI EMAIL (INDÉPENDANT) ====================
-        if channels.get("email") and contact_email and not _c3_mail:
+        _r3_ligne = _r3_par_email.get(_v332_normaliser("email", contact_email or "")) if channels.get("email") else None
+        if channels.get("email") and _r3_ligne and _r3_ligne["decision"] not in ("ok", "opt_out"):
+            # Journal : l'exclusion est ÉCRITE (statut `skipped`, raison), jamais silencieuse.
+            skipped_count += 1
+            results.append({"contactId": contact_id, "contactName": contact_name, "contactEmail": contact_email,
+                            "channel": "email", "status": "skipped", "exclu": _r3_ligne["decision"],
+                            "segment": _r3_ligne["segment"], "cle": _r3_ligne["cle"], "sentAt": None})
+            logger.info("[R3] contact écarté du canal email : %s", _r3_ligne["decision"])
+        elif channels.get("email") and contact_email and _c3_mail:
+            results.append({"contactId": contact_id, "contactName": contact_name, "contactEmail": contact_email,
+                            "channel": "email", "status": "skipped", "exclu": "opt_out",
+                            "segment": (_r3_ligne or {}).get("segment", ""), "cle": (_r3_ligne or {}).get("cle", ""), "sentAt": None})
+        if channels.get("email") and contact_email and not _c3_mail and (_r3_ligne is None or _r3_ligne["decision"] == "ok"):
             email_result = {
                 "contactId": contact_id,
                 "contactName": contact_name,
@@ -6441,7 +6674,10 @@ async def launch_campaign(campaign_id: str):
                 "status": "pending",
                 "sentAt": None,
                 "deliveredAt": None,  # v11: tracking
-                "readAt": None        # v11: tracking
+                "readAt": None,       # v11: tracking
+                # RÉACTIVATION 3B : clé d'idempotence + segment (journal).
+                "cle": (_r3_ligne or {}).get("cle", ""),
+                "segment": (_r3_ligne or {}).get("segment", ""),
             }
             
             try:
@@ -6516,12 +6752,21 @@ async def launch_campaign(campaign_id: str):
 </body>
 </html>"""
                     
+                    # RÉACTIVATION 3B : lien de désinscription VALIDE (jeton du
+                    # registre) dans le corps + en-têtes un-clic RFC 8058.
+                    _r3_token = (_r3_ligne or {}).get("token", "")
+                    html_content = html_content.replace(
+                        '<a href="https://afroboost.com" style="color:#9333EA;text-decoration:none;font-size:11px;">afroboost.com</a>',
+                        '<a href="https://afroboost.com" style="color:#9333EA;text-decoration:none;font-size:11px;">afroboost.com</a>' + r3_pied_desinscription(_r3_token))
                     params = {
                         "from": "Afroboost <notifications@afroboost.com>",
                         "to": [contact_email],
+                        "reply_to": AFROBOOST_REPLY_TO_CANONIQUE,
                         "subject": subject,
                         "html": html_content
                     }
+                    if _r3_token:
+                        params["headers"] = r3_entetes_desinscription(_r3_token)
                     
                     email_response = await asyncio.to_thread(resend.Emails.send, params)
                     email_result["status"] = "sent"
@@ -27261,6 +27506,22 @@ async def p3u3_webhook_resend(request: Request):
 
     type_evenement = (evenement.get("type") or "").strip()
 
+    # RÉACTIVATION 3B — JOURNAL DE CAMPAGNE : Resend renvoie `delivered` / `bounced`
+    # / `complained` avec l'`email_id` posé dans `campaigns.results[].email_id`.
+    # On note le statut fournisseur sur la ligne (positionnel `$`), sans rien
+    # d'autre — `campaigns.results` reste le journal, aucune collection de plus.
+    # FAIL-OPEN, et JAMAIS avant le traitement P3 existant (il continue en dessous).
+    try:
+        _r3_type = type_evenement.replace("email.", "")
+        _r3_email_id = str(((evenement.get("data") or {}).get("email_id")) or "").strip()
+        if _r3_email_id and _r3_type in ("delivered", "bounced", "complained", "delivery_delayed"):
+            await db.campaigns.update_one(
+                {"results.email_id": _r3_email_id},
+                {"$set": {"results.$.provider_status": _r3_type,
+                          "results.$.provider_at": datetime.now(timezone.utc).isoformat()}})
+    except Exception as _r3e:
+        logger.warning("[R3] journal Resend non mis à jour (%s)", type(_r3e).__name__)
+
     if type_evenement == P3U3_EVENEMENT_ENVOYE:
         issue = await p3u3_traiter_envoi(evenement)
         return {"recu": True, "type": type_evenement, "rfc_message_id_ecrit": issue["ecrit"]}
@@ -38065,14 +38326,31 @@ async def push_broadcast(request: Request):
     if not is_super_admin(caller_email):
         raise HTTPException(status_code=403, detail="Réservé super admin")
     try:
-        subs = await db.push_subscriptions.find({"active": True}, {"_id": 0, "participant_id": 1}).to_list(2000)
+        subs = await db.push_subscriptions.find({"active": True}, {"_id": 0, "participant_id": 1, "email": 1}).to_list(2000)
     except Exception as e:
         logger.error(f"[BROADCAST-V183] erreur lecture subs: {e}")
         raise HTTPException(status_code=500, detail="Erreur DB")
+    # RÉACTIVATION 3B : un broadcast est un message MARKETING -> il honore le
+    # même registre de refus (par l'e-mail de la fiche : `push_subscriptions.email`,
+    # sinon `chat_participants.email`). Un refus e-mail vaut refus de sollicitation.
+    _r3_exclus = set()
+    try:
+        _pids = [s.get("participant_id") for s in subs if s.get("participant_id")]
+        _fiches = await db.chat_participants.find({"id": {"$in": _pids}}, {"_id": 0, "id": 1, "email": 1}).to_list(5000)
+        _mail_par_pid = {f.get("id"): _v332_normaliser("email", f.get("email") or "") for f in _fiches}
+        for s in subs:
+            if s.get("email"):
+                _mail_par_pid[s.get("participant_id")] = _v332_normaliser("email", s.get("email"))
+        _refus = await c3_refus_exprimes("email", [m for m in _mail_par_pid.values() if m])
+        _r3_exclus = {pid for pid, m in _mail_par_pid.items() if m and m in _refus}
+        if _r3_exclus:
+            logger.info("[R3] broadcast push : %d refus honoré(s)", len(_r3_exclus))
+    except Exception as _e:
+        logger.warning("[R3] registre illisible pour le broadcast (%s) — aucun refus déduit", type(_e).__name__)
     sent = 0
     for s in subs:
         pid = s.get("participant_id")
-        if not pid:
+        if not pid or pid in _r3_exclus:
             continue
         try:
             if await send_push_notification(pid, title, message, {"type": "broadcast", "coach_id": coach_id}):
@@ -41602,6 +41880,16 @@ async def send_campaign_email(request: Request):
     # LOG DEBUG CRITIQUE
     if not to_email:
         raise HTTPException(status_code=400, detail="to_email requis")
+    # RÉACTIVATION 3B : ce chemin est un envoi MARKETING (message libre du coach)
+    # -> il lit le MÊME registre que les campagnes. Un refus exprimé = 403, jamais
+    # un envoi. (Les e-mails transactionnels — confirmation de réservation,
+    # rappels indispensables, codes — ne passent pas par ici.)
+    try:
+        _r3_refus = await c3_refus_exprimes("email", [to_email])
+    except Exception:
+        _r3_refus = set()
+    if _v332_normaliser("email", to_email) in _r3_refus:
+        raise HTTPException(status_code=403, detail="Cette personne a demandé à ne plus recevoir d'e-mails (registre de refus).")
     if not message:
         raise HTTPException(status_code=400, detail="message requis")
     if not RESEND_AVAILABLE or not RESEND_API_KEY:

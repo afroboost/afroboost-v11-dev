@@ -74,6 +74,24 @@ def attribution_first(*docs):
     return "", ""
 
 
+def attribution_last(*docs):
+    """(source, medium, campaign, content) de la DERNIÈRE touche connue — celle qui
+    mesure une campagne de réactivation SANS toucher à `first`."""
+    for d in docs:
+        if not isinstance(d, dict):
+            continue
+        bloc = d.get("attribution") if isinstance(d.get("attribution"), dict) else None
+        last = (bloc or {}).get("last") if isinstance((bloc or {}).get("last"), dict) else None
+        if last and _texte(last.get("source")):
+            return (_texte(last.get("source")).lower(), _texte(last.get("medium")).lower(),
+                    _texte(last.get("campaign")).lower(), _texte(last.get("content")).lower())
+        meta = d.get("metadata") if isinstance(d.get("metadata"), dict) else d
+        if isinstance(meta, dict) and _texte(meta.get("attribution_last_source")):
+            return (_texte(meta.get("attribution_last_source")).lower(), _texte(meta.get("attribution_last_medium")).lower(),
+                    _texte(meta.get("attribution_last_campaign")).lower(), _texte(meta.get("attribution_last_content")).lower())
+    return ("", "", "", "")
+
+
 def libelle_source(source, content=""):
     """« Partenaire — restaurant-x » pour un partenaire, sinon la source, sinon « inconnue »."""
     src = _texte(source).lower() or SOURCE_INCONNUE
@@ -776,6 +794,7 @@ def construire_achats(subscriptions, fiches_codes, paiements, offres_par_id=None
             # transaction jumelle) — la règle « un achat = une ligne » est intacte.
             "attribution_source": attribution_first(*subs, fiche, paiement or {})[0],
             "attribution_content": attribution_first(*subs, fiche, paiement or {})[1],
+            "attribution_last": attribution_last(*subs, fiche, paiement or {}),
         })
 
     for sid, p in paiements_par_session.items():
@@ -811,6 +830,7 @@ def construire_achats(subscriptions, fiches_codes, paiements, offres_par_id=None
             "seances": None, "fiches": 0, "fiches_dates": [], "fiches_consommees_avant": [], "sub_ids": [],
             "renouvellement_confirme_dates": [], "converted_dt": None,
             "attribution_source": attribution_first(p)[0], "attribution_content": attribution_first(p)[1],
+            "attribution_last": attribution_last(p),
         })
 
     en_attente = []
@@ -1183,11 +1203,32 @@ def calculer_kpi_sources(faits, achats, memberships, debut, fin, maintenant=None
         })
     lignes.sort(key=lambda l: (l["source"] == SOURCE_INCONNUE, -(l["ca_prouve"] or 0), -l["participants"], l["libelle"]))
     attribues = [l for l in lignes if l["source"] != SOURCE_INCONNUE]
+    # RÉACTIVATION 3B — « cette campagne a généré X achats » : lecture LAST-TOUCH
+    # (source / medium / campagne / contenu de la dernière touche), à part de la
+    # table par source (first-touch) qui ne bouge pas. Un achat = une ligne.
+    campagnes = {}
+    for a in achats:
+        if not _dans_dt(a["date_dt"], debut, fin) or a["essai"] or (a["montant"] or 0) <= 0:
+            continue
+        src, med, camp, cont = a.get("attribution_last") or ("", "", "", "")
+        if not camp and not med:
+            continue
+        k = "%s|%s|%s|%s" % (src, med, camp, cont)
+        g = campagnes.setdefault(k, {"source": src, "medium": med, "campaign": camp, "content": cont, "achats": 0, "ca_prouve": 0.0, "acheteurs": set()})
+        g["achats"] += 1
+        g["ca_prouve"] += float(a["montant"] or 0) if a.get("montant_prouve") else 0.0
+        if a.get("participant_key"):
+            g["acheteurs"].add(a["participant_key"])
+    lignes_campagnes = sorted(({**g, "ca_prouve": round(g["ca_prouve"], 2), "acheteurs": len(g["acheteurs"]),
+                                "libelle": " / ".join(x for x in (g["source"], g["medium"], g["campaign"], g["content"]) if x)}
+                               for g in campagnes.values()), key=lambda l: (-l["ca_prouve"], -l["achats"]))
     return {
         "convention": "Source = première touche connue de la personne (attribution.first, M2-A) ; "
                       "mêmes règles que le cockpit (essai, présence, un achat = une ligne, renouvellements). "
                       "« inconnue » = aucune origine enregistrée ; aucun coût d'acquisition (donnée absente).",
         "lignes": lignes,
+        "campagnes": {"convention": "Dernière touche (attribution.last) — mesure d'une campagne sans écraser l'origine (first).",
+                      "lignes": lignes_campagnes},
         "couverture": {"participants_attribues": sum(l["participants"] for l in attribues),
                        "participants_total": sum(l["participants"] for l in lignes),
                        "achats_attribues": sum(l["achats"] for l in attribues),

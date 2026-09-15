@@ -3679,7 +3679,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     ctaLink: '',     // URL du bouton (pour offre et personnalise)
     // === v11: PROMPTS INDÉPENDANTS PAR CAMPAGNE ===
     systemPrompt: '',        // Instructions système IA pour cette campagne
-    descriptionPrompt: ''    // Prompt de description/objectif spécifique
+    descriptionPrompt: '',   // Prompt de description/objectif spécifique
+    // RÉACTIVATION 3B : segments ciblés (résolus par le moteur AU LANCEMENT, jamais figés)
+    targetCategories: []
   });
   const [selectedContactsForCampaign, setSelectedContactsForCampaign] = useState([]);
   const [contactSearchQuery, setContactSearchQuery] = useState("");
@@ -5396,7 +5398,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       }] : [],
       // v11: Charger les prompts de la campagne
       systemPrompt: campaign.systemPrompt || '',
-      descriptionPrompt: campaign.descriptionPrompt || ''
+      descriptionPrompt: campaign.descriptionPrompt || '',
+      targetCategories: Array.isArray(campaign.targetCategories) ? campaign.targetCategories : []
     });
     // Pré-sélectionner les contacts CRM si mode "selected"
     if (campaign.targetType === "selected" && campaign.selectedContacts) {
@@ -5462,7 +5465,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       targetConversationName: '',
       scheduleSlots: [],
       systemPrompt: '',
-      descriptionPrompt: ''
+      descriptionPrompt: '',
+      targetCategories: []
     });
     setSelectedContactsForCampaign([]);
     setSelectedRecipients([]); // Vider aussi le panier
@@ -5519,7 +5523,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           scheduledAt: editScheduledAt, // Mise à jour de l'horaire
           // v11: Prompts indépendants
           systemPrompt: newCampaign.systemPrompt || null,
-          descriptionPrompt: newCampaign.descriptionPrompt || null
+          descriptionPrompt: newCampaign.descriptionPrompt || null,
+          targetCategories: r3SegmentsChoisis()
         };
         const res = await axios.put(`${API}/campaigns/${editingCampaignId}`, updateData);
         setCampaigns(campaigns.map(c => c.id === editingCampaignId ? res.data : c));
@@ -5568,6 +5573,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           // v11: Prompts indépendants
           systemPrompt: newCampaign.systemPrompt || null,
           descriptionPrompt: newCampaign.descriptionPrompt || null,
+          targetCategories: r3SegmentsChoisis(),
           ...ctaFields  // Ajouter les champs CTA
         };
         const res = await axios.post(`${API}/campaigns`, campaignData);
@@ -5575,16 +5581,27 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         addCampaignLog(res.data.id, `Campagne "${newCampaign.name}" créée (${targetIds.length} destinataire(s))`, 'success');
 
         // v13+V159: Auto-launch immediate campaigns (internal OR email/whatsapp)
-        const hasEmailOrWhatsappTargets = (campaignData.channels.email || campaignData.channels.whatsapp) && (campaignData.targetType === "all" || campaignData.selectedContacts.length > 0);
+        const hasEmailOrWhatsappTargets = (campaignData.channels.email || campaignData.channels.whatsapp) && (campaignData.targetType === "all" || campaignData.selectedContacts.length > 0 || campaignData.targetCategories.length > 0);
         if (targetIds.length > 0 || hasEmailOrWhatsappTargets) {
           try {
+            // RÉACTIVATION 3B : un canal externe (e-mail / WhatsApp) ne part JAMAIS sans
+            // l'aperçu serveur et une confirmation explicite — même en mode immédiat.
+            if (campaignData.channels.email || campaignData.channels.whatsapp) {
+              const ok = await r3ConfirmerAvantLancement(res.data.id, campaignData.name);
+              if (!ok) {
+                addCampaignLog(res.data.id, 'Campagne créée, envoi NON lancé (annulé à la confirmation).', 'info');
+                throw Object.assign(new Error('annulé'), { r3Annule: true });
+              }
+            }
             addCampaignLog(res.data.id, '🚀 Lancement automatique en cours...', 'info');
             const launchRes = await axios.post(`${API}/campaigns/${res.data.id}/launch`);
             setCampaigns(prev => prev.map(c => c.id === res.data.id ? launchRes.data : c));
             addCampaignLog(res.data.id, `✅ Campagne envoyée ! (${launchRes.data.results?.length || 0} envoi(s))`, 'success');
           } catch (launchErr) {
-            console.error('Auto-launch error:', launchErr);
-            addCampaignLog(res.data.id, `⚠️ Créée mais envoi échoué: ${launchErr.response?.data?.detail || launchErr.message}`, 'error');
+            if (!launchErr?.r3Annule) {
+              console.error('Auto-launch error:', launchErr);
+              addCampaignLog(res.data.id, `⚠️ Créée mais envoi échoué: ${launchErr.response?.data?.detail || launchErr.message}`, 'error');
+            }
           }
         }
       } else {
@@ -5611,6 +5628,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             // v11: Prompts indépendants
             systemPrompt: newCampaign.systemPrompt || null,
             descriptionPrompt: newCampaign.descriptionPrompt || null,
+            targetCategories: r3SegmentsChoisis(),
             ...ctaFields  // Ajouter les champs CTA
           };
           const res = await axios.post(`${API}/campaigns`, campaignData);
@@ -5627,7 +5645,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         targetGroupId: 'community',
         targetConversationId: '',
         targetConversationName: '',
-        scheduleSlots: [] 
+        scheduleSlots: [],
+        targetCategories: []
       });
       setSelectedContactsForCampaign([]);
       setSelectedRecipients([]); // Vider le panier
@@ -5654,14 +5673,75 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // Launch campaign WITH REAL SENDING via Resend and Twilio
+  // ═══ RÉACTIVATION 3B — LE LANCEMENT N'A PLUS QU'UN SEUL EXPÉDITEUR : LE MOTEUR ═══
+  //
+  // Avant : le bouton « Lancer » appelait `/campaigns/{id}/launch` (qui envoie DÉJÀ
+  // chaque e-mail via Resend), PUIS rappelait `/campaigns/send-email` pour chacun
+  // des résultats e-mail — chaque destinataire recevait donc le message DEUX fois,
+  // et la confirmation arrivait APRÈS le premier envoi. Désormais :
+  //   1. `GET /campaigns/{id}/preview` (aperçu serveur, sans envoi ni écriture) ;
+  //   2. confirmation explicite : segment, destinataires, exclus (opt-out, actifs,
+  //      tests, doublons, déjà envoyés, sans e-mail), canal, campagne UTM, message ;
+  //   3. `POST /campaigns/{id}/launch` — le moteur, et lui seul, envoie ; la garde
+  //      (registre des refus, clients actifs, idempotence) est appliquée côté serveur.
+  const r3SegmentsChoisis = () => (Array.isArray(newCampaign.targetCategories) ? newCampaign.targetCategories : [])
+    .map(k => String(k || '').trim()).filter(Boolean);
+
+  const r3ExclusTexte = (c) => {
+    const exclus = [
+      c.opt_out ? `${c.opt_out} refus (opt-out)` : null,
+      c.actif ? `${c.actif} client(s) actif(s)` : null,
+      c.test ? `${c.test} donnée(s) de test` : null,
+      c.doublon ? `${c.doublon} doublon(s)` : null,
+      c.deja_envoye ? `${c.deja_envoye} déjà servi(s)` : null,
+      c.sans_email ? `${c.sans_email} sans e-mail` : null
+    ].filter(Boolean);
+    return exclus.length ? exclus.join(' · ') : 'aucun';
+  };
+
+  const r3TexteApercu = (apercu, nomCampagne) => {
+    const c = apercu?.compteurs || {};
+    const segs = (apercu?.segments || []).map(sg => sg.libelle || sg.cle);
+    const message = String(apercu?.campagne?.message || '').trim();
+    const extrait = message.length > 220 ? `${message.slice(0, 220)}…` : message;
+    return `Lancer la campagne « ${apercu?.campagne?.nom || nomCampagne || ''} » ?\n\n` +
+      `Segment(s) : ${segs.length ? segs.join(', ') : 'sélection manuelle'}\n` +
+      `Destinataires e-mail : ${c.destinataires || 0}\n` +
+      `Exclus automatiquement : ${r3ExclusTexte(c)}\n` +
+      `Canal : ${apercu?.canal || 'aucun'}\n` +
+      `Campagne (UTM) : ${apercu?.campagne?.utm_campaign || '—'}\n\n` +
+      `Aperçu du message :\n${extrait || '(vide)'}\n\n` +
+      `Cette action envoie réellement les messages.`;
+  };
+
+  // Aperçu serveur + confirmation. Renvoie true seulement si le coach confirme.
+  const r3ConfirmerAvantLancement = async (campaignId, nomCampagne) => {
+    let apercu = null;
+    try {
+      const res = await axios.get(`${API}/campaigns/${campaignId}/preview`);
+      apercu = res.data;
+    } catch (err) {
+      const detail = err?.response?.data?.detail || err.message;
+      try { addCampaignLog(campaignId, `Aperçu impossible : ${detail}`, 'error'); } catch (_) { /* log optionnel */ }
+      alert(`❌ Aperçu impossible — envoi NON lancé.\n${detail}`);
+      return false;
+    }
+    const c = apercu?.compteurs || {};
+    if (!c.destinataires && apercu?.canal === 'email') {
+      alert(`⚠️ Aucun destinataire e-mail à servir — envoi NON lancé.\n\nExclus : ${r3ExclusTexte(c)}`);
+      return false;
+    }
+    return window.confirm(r3TexteApercu(apercu, nomCampagne));
+  };
+
+  // Launch campaign WITH REAL SENDING (par le moteur serveur uniquement)
   // === BOUTON LANCER - ISOLATION COMPLÈTE ===
   const launchCampaignWithSend = async (e, campaignId) => {
     // === BLOCAGE CRASH POSTHOG ===
     // Ces lignes DOIVENT être en premier, avant toute autre logique
     e.preventDefault();
     e.stopPropagation();
-    
+
     try {
       // 1. Récupérer la campagne
       const campaign = campaigns.find(c => c.id === campaignId);
@@ -5672,115 +5752,39 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
       // Log isolé (peut être ignoré si PostHog crash)
       try {
-        addCampaignLog(campaignId, 'Préparation de l\'envoi...', 'info');
+        addCampaignLog(campaignId, 'Préparation de l\'envoi (aperçu serveur)...', 'info');
       } catch (logErr) {
         console.warn('PostHog bloqué sur log mais envoi maintenu:', logErr);
+      }
+
+      // 2. Aperçu + confirmation AVANT tout envoi
+      const ok = await r3ConfirmerAvantLancement(campaignId, campaign.name);
+      if (!ok) {
+        try { addCampaignLog(campaignId, 'Envoi annulé — rien n\'est parti.', 'info'); } catch (_) { /* log optionnel */ }
+        return;
       }
 
       // V112: Marquer immédiatement "sending" côté UI pour feedback temps réel
       setCampaigns(prev => prev.map(c => c.id === campaignId ? { ...c, status: 'sending' } : c));
 
-      // 2. Préparer d'abord la campagne côté backend
+      // 3. Le moteur envoie (e-mail via Resend + WhatsApp) — UNE fois par personne
       const launchRes = await axios.post(`${API}/campaigns/${campaignId}/launch`);
       const launchedCampaign = launchRes.data;
-
       try {
         setCampaigns(prev => prev.map(c => c.id === campaignId ? launchedCampaign : c));
       } catch (stateErr) {
         console.warn('PostHog bloqué sur setState mais envoi maintenu:', stateErr);
       }
 
-      // 3. Récupérer les contacts à envoyer
+      // 4. Bilan depuis le journal serveur (`campaigns.results`)
       const results = launchedCampaign.results || [];
-      if (results.length === 0) {
-        alert('⚠️ Aucun contact à envoyer');
-        return;
-      }
-
-      // 4. Séparer par canal
-      const emailResults = results.filter(r => r.channel === 'email' && r.contactEmail);
-      const whatsAppResults = results.filter(r => r.channel === 'whatsapp' && r.contactPhone);
-
-      // Confirmation
-      const confirmMsg = `🚀 Lancer la campagne "${campaign.name}" ?\n\n` +
-        `📧 ${emailResults.length} email(s)\n` +
-        `📱 ${whatsAppResults.length} WhatsApp\n\n` +
-        `⚠️ Cette action est irréversible.`;
-      
-      if (!window.confirm(confirmMsg)) {
-        return;
-      }
-
-      let totalSent = 0;
-      let totalFailed = 0;
-
-      // 5. === ENVOI EMAILS VIA RESEND (BACKEND) ===
-      if (emailResults.length > 0) {
-        try {
-          addCampaignLog(campaignId, `📧 Envoi de ${emailResults.length} email(s) via Resend...`, 'info');
-        } catch (e) { console.warn('Log bloqué:', e); }
-        
-        console.log(`RESEND_DEBUG: === LANCEMENT CAMPAGNE: ${emailResults.length} destinataires ===`);
-        
-        for (let i = 0; i < emailResults.length; i++) {
-          const contact = emailResults[i];
-          
-          console.log(`RESEND_DEBUG: [${i + 1}/${emailResults.length}] Envoi à: ${contact.contactEmail}`);
-          console.log(`RESEND_DEBUG: mediaUrl = ${campaign.mediaUrl || 'AUCUN'}`);
-          
-          try {
-            // Appel API Resend via backend
-            // V468 (SECURITY-S2-A1) : `fetch` -> `axios`, pour la même raison qu'en
-            // tête de fichier — c'est CE point d'appel qui est réellement câblé sur
-            // les boutons « Lancer » (CampaignManager.js:701/705/709). Laissé en
-            // `fetch`, l'envoi de campagne du coach tomberait en 403.
-            const { data: result } = await axios.post(`${API}/campaigns/send-email`, {
-              to_email: contact.contactEmail,
-              to_name: contact.contactName || 'Client',
-              subject: campaign.name || 'Afroboost - Message',
-              message: campaign.message,
-              media_url: campaign.mediaUrl || null
-            });
-
-            if (result.success) {
-              console.log(`RESEND_DEBUG: [${i + 1}/${emailResults.length}] SUCCÈS - ID = ${result.email_id}`);
-              totalSent++;
-              
-              // Marquer comme envoyé
-              try {
-                await axios.post(`${API}/campaigns/${campaignId}/mark-sent`, {
-                  contactId: contact.contactId,
-                  channel: 'email'
-                });
-              } catch (markErr) {
-                console.warn('RESEND_DEBUG: Mark-sent bloqué mais email envoyé');
-              }
-            } else {
-              console.error(`RESEND_DEBUG: [${i + 1}/${emailResults.length}] ÉCHEC - ${result.error}`);
-              totalFailed++;
-            }
-            
-          } catch (error) {
-            console.error(`RESEND_DEBUG: [${i + 1}/${emailResults.length}] EXCEPTION - ${error.message}`);
-            totalFailed++;
-          }
-          
-          // Délai entre les envois
-          if (i < emailResults.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 300));
-          }
-        }
-      }
-
-      // 6. === WHATSAPP : Déjà envoyé par le backend /launch ===
-      // v107: Le backend gère l'envoi WhatsApp directement dans /campaigns/{id}/launch
-      // On ne fait que compter les résultats
+      const totalSent = results.filter(r => r.status === 'sent').length;
+      const totalFailed = results.filter(r => r.status === 'failed').length;
+      const totalSkipped = results.filter(r => r.status === 'skipped').length;
+      const whatsAppResults = results.filter(r => r.channel === 'whatsapp');
       if (whatsAppResults.length > 0) {
         const waSent = whatsAppResults.filter(r => r.status === 'sent').length;
         const waFailed = whatsAppResults.filter(r => r.status === 'failed').length;
-        totalSent += waSent;
-        totalFailed += waFailed;
-
         try {
           if (waFailed > 0) {
             const errors = whatsAppResults
@@ -5794,27 +5798,19 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         } catch (e) { console.warn('Log bloqué:', e); }
       }
 
-      // 7. Recharger la campagne (peut être ignoré)
+      // 5. Notification finale
       try {
-        const updatedRes = await axios.get(`${API}/campaigns/${campaignId}`);
-        setCampaigns(campaigns.map(c => c.id === campaignId ? updatedRes.data : c));
-      } catch (reloadErr) {
-        console.warn('Reload bloqué mais envois effectués:', reloadErr);
-      }
-
-      // 8. Notification finale
-      try {
-        addCampaignLog(campaignId, `✅ Terminé: ${totalSent} envoyés, ${totalFailed} échoués`, 'success');
+        addCampaignLog(campaignId, `✅ Terminé: ${totalSent} envoyés, ${totalFailed} échoués, ${totalSkipped} exclus`, 'success');
       } catch (e) { console.warn('Log final bloqué:', e); }
-      
-      alert(`✅ Campagne "${campaign.name}" terminée !\n\n✓ Envoyés: ${totalSent}\n✗ Échoués: ${totalFailed}`);
+
+      alert(`✅ Campagne "${campaign.name}" terminée !\n\n✓ Envoyés: ${totalSent}\n✗ Échoués: ${totalFailed}\n– Exclus (opt-out, actifs, doublons…): ${totalSkipped}`);
 
     } catch (err) {
       console.error("Error launching campaign with send:", err);
       try {
-        addCampaignLog(campaignId, `❌ Erreur: ${err.message}`, 'error');
+        addCampaignLog(campaignId, `❌ Erreur: ${err.response?.data?.detail || err.message}`, 'error');
       } catch (e) { console.warn('Log erreur bloqué:', e); }
-      alert(`❌ Erreur lors de l'envoi: ${err.message}`);
+      alert(`❌ Erreur lors de l'envoi: ${err.response?.data?.detail || err.message}`);
     }
   };
 

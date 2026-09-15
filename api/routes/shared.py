@@ -5963,11 +5963,17 @@ async def m2a_resoudre(db, explicite, email):
     try:
         bloc = m2a_bloc_propre(explicite)
         src = (bloc or {}).get("first", {}).get("source") if bloc else ""
+        heritee = await m2a_attribution_heritee(db, email)
         if src and src != "direct":
+            # RÉACTIVATION 3B : une origine explicite (lien de campagne cliqué sur
+            # un autre appareil, par exemple) n'ÉCRASE jamais la first-touch déjà
+            # connue de la personne — elle se lit en `last`. Sans historique, le
+            # bloc explicite fait foi tel quel (comportement 2B inchangé).
+            if heritee and heritee.get("first", {}).get("source"):
+                return {"first": dict(heritee["first"]), "last": dict(bloc.get("last") or bloc["first"])}
             return bloc
         # Une arrivée DIRECTE n'est pas une origine : elle ne remplace jamais une
         # first-touch connue de la personne. Sans historique, elle reste « direct ».
-        heritee = await m2a_attribution_heritee(db, email)
         return heritee or (bloc if src else None)
     except Exception:
         return None

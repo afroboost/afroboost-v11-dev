@@ -351,6 +351,30 @@ describe('acquisition — par source', () => {
     expect(div.querySelector('[data-testid="section-sources"]').textContent).toMatch(/Aucune origine enregistrée/);
   });
 
+  test('campagnes (dernière touche) : le bloc liste utm_campaign avec achats/acheteurs/CA, à côté des sources first', async () => {
+    const campagnes = { convention: 'Dernière touche (attribution.last).', lignes: [
+      { source: 'email', medium: 'reactivation', campaign: 'hiver2026', content: 'essai_non_converti', achats: 2, acheteurs: 2, ca_prouve: 78, libelle: 'email / reactivation / hiver2026 / essai_non_converti' },
+    ] };
+    axios.get.mockResolvedValue({ data: { ...KPI, sources: { ...SOURCES, campagnes } } });
+    const { div } = monter({});
+    await act(async () => {});
+    const bloc = div.querySelector('[data-testid="tableau-campagnes"]');
+    expect(bloc).not.toBeNull();
+    expect(bloc.textContent).toMatch(/Campagnes — dernière touche/);
+    const ligne = div.querySelector('[data-testid="campagne-hiver2026"]').textContent;
+    expect(ligne).toMatch(/email \/ reactivation \/ hiver2026 \/ essai_non_converti/);
+    expect(ligne).toMatch(/78,00 CHF/);
+    // La table des sources (first) est intacte à côté.
+    expect(div.querySelector('[data-testid="source-instagram"]')).not.toBeNull();
+  });
+
+  test('sans bloc campagnes (ancien serveur) : message sobre, aucune erreur', async () => {
+    axios.get.mockResolvedValue({ data: { ...KPI, sources: SOURCES } });
+    const { div } = monter({});
+    await act(async () => {});
+    expect(div.querySelector('[data-testid="tableau-campagnes"]').textContent).toMatch(/Aucun achat attribué à une campagne/);
+  });
+
   test('cockpit sans `sources` (ancien serveur) : la section n’apparaît pas, rien ne casse', async () => {
     axios.get.mockResolvedValue({ data: KPI });
     const { div } = monter({});

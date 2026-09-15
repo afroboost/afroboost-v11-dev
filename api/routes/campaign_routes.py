@@ -135,25 +135,55 @@ async def get_campaign(campaign_id: str):
         raise HTTPException(status_code=404, detail="Campaign not found")
     return campaign
 
+# RÉACTIVATION 3B — LES MUTATIONS DE CAMPAGNE SONT AUTHENTIFIÉES.
+# Constaté : PUT / DELETE / purge n'exigeaient RIEN (un anonyme pouvait réécrire
+# les destinataires d'une campagne ou l'effacer). Même politique que le
+# lancement (V451) : JWT coach/admin signé, puis PROPRIÉTÉ lue sur le document
+# (`coach_id`) — le super-admin passe partout, un coach ne touche qu'aux siennes.
+async def _r3_campagne_du_proprietaire(campaign_id: str, request: Request):
+    from api.routes.contact_segments_routes import _autorise as _jwt_coach_ou_admin
+    from api.routes.shared import is_super_admin as _is_super_admin
+    appelant = await _jwt_coach_ou_admin(request)
+    campagne = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0, "coach_id": 1, "name": 1})
+    if not campagne:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    proprietaire = (campagne.get("coach_id") or "").lower().strip()
+    if not _is_super_admin(appelant) and proprietaire != appelant:
+        logger.warning("[R3] REFUS mutation de « %s » — %s n'en est pas le propriétaire", campagne.get("name"), appelant)
+        raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas.")
+    return appelant
+
+
 @campaign_router.put("/campaigns/{campaign_id}")
 async def update_campaign(campaign_id: str, request: Request):
-    """Met à jour une campagne"""
+    """Met à jour une campagne (JWT coach/admin + propriété)."""
+    await _r3_campagne_du_proprietaire(campaign_id, request)
     data = await request.json()
+    # Le propriétaire et l'identifiant ne se réécrivent pas par le corps.
+    for cle in ("coach_id", "id", "_id"):
+        data.pop(cle, None)
     data["updatedAt"] = datetime.now(timezone.utc).isoformat()
     await db.campaigns.update_one({"id": campaign_id}, {"$set": data})
     return await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
 
 @campaign_router.delete("/campaigns/{campaign_id}")
-async def delete_campaign(campaign_id: str):
-    """Supprime une campagne"""
+async def delete_campaign(campaign_id: str, request: Request):
+    """Supprime une campagne (JWT coach/admin + propriété)."""
+    await _r3_campagne_du_proprietaire(campaign_id, request)
     result = await db.campaigns.delete_one({"id": campaign_id})
     logger.info(f"[HARD DELETE] Campagne {campaign_id} supprimée")
     return {"success": True, "hardDelete": True, "deleted": {"campaign": result.deleted_count}}
 
 @campaign_router.delete("/campaigns/purge/all")
-async def purge_all_campaigns():
-    """Purge toutes les campagnes terminées"""
-    result = await db.campaigns.delete_many({"status": {"$in": ["completed", "failed", "draft"]}})
+async def purge_all_campaigns(request: Request):
+    """Purge les campagnes terminées DU COACH authentifié (le super-admin : toutes)."""
+    from api.routes.contact_segments_routes import _autorise as _jwt_coach_ou_admin
+    from api.routes.shared import is_super_admin as _is_super_admin
+    appelant = await _jwt_coach_ou_admin(request)
+    filtre = {"status": {"$in": ["completed", "failed", "draft"]}}
+    if not _is_super_admin(appelant):
+        filtre["coach_id"] = appelant
+    result = await db.campaigns.delete_many(filtre)
     logger.info(f"[PURGE] {result.deleted_count} campagnes supprimées")
     return {"success": True, "purgedCount": result.deleted_count}
 

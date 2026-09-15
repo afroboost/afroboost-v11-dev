@@ -307,8 +307,13 @@ def structure():
              "subscribers.update" not in _nu and "subscribers.insert" not in _nu)
     verifier("S2. l'exclusion du numero business est intacte",
              "business_phone_number" in _nu)
+    # RÉACTIVATION 3B : la résolution des destinataires (dont le dépliage des
+    # groupes) vit dans `_campagne_resoudre_contacts`, appelée par le lancement
+    # ET par la prévisualisation — même liste des deux côtés.
+    _resol = code_nu("_campagne_resoudre_contacts")
     verifier("S3. le depliage des groupes est intact",
-             "grp_" in _nu and "participant_ids" in _nu)
+             "grp_" in _resol and "participant_ids" in _resol
+             and "_campagne_resoudre_contacts" in _nu)
     verifier("S4. le verrou anti-doublon de campagne est intact",
              "find_one_and_update" in _nu)
     verifier("S5. la normalisation est CELLE du depot, pas une seconde",
@@ -322,8 +327,10 @@ def structure():
              "$regex" not in code_nu("c3_refus_exprimes"))
     verifier("S9. aucun drapeau nouveau",
              "C3_ENABLED" not in SRC and "OPTOUT_ENABLED" not in SRC)
-    verifier("S10. push/broadcast reste hors lot, explicitement",
-             "c3_" not in code_nu("push_broadcast"))
+    # RÉACTIVATION 3B : le broadcast push est un message MARKETING — il honore
+    # désormais le même registre (par l'e-mail de la fiche). Ce n'est plus « hors lot ».
+    verifier("S10. push/broadcast honore le registre des refus (3B)",
+             "c3_refus_exprimes" in code_nu("push_broadcast"))
 
 
 def main():
