@@ -19748,7 +19748,9 @@ async def generate_master_prompt(request: Request):
         # 3. Offres (services + produits)
         offers_text = ""
         try:
-            all_offers = await db.offers.find({"visible": {"$ne": False}}, {"_id": 0}).to_list(50)
+            all_offers = _filtrer_saison(
+                await db.offers.find({"visible": {"$ne": False}}, {"_id": 0}).to_list(50),
+                await _saison_active())   # SAISON : l'IA ne propose que les offres de la saison
             if all_offers:
                 products = [o for o in all_offers if o.get('isProduct')]
                 services = [o for o in all_offers if not o.get('isProduct')]
@@ -32131,7 +32133,9 @@ async def chat_with_ai(data: ChatMessage):
         # === SECTION 1: INVENTAIRE BOUTIQUE (PRODUITS PHYSIQUES) ===
         try:
             # Récupérer TOUS les éléments de la collection offers
-            all_offers = await db.offers.find({"visible": {"$ne": False}}, {"_id": 0}).to_list(50)
+            all_offers = _filtrer_saison(
+                await db.offers.find({"visible": {"$ne": False}}, {"_id": 0}).to_list(50),
+                await _saison_active())   # SAISON : l'IA ne propose que les offres de la saison
             
             # Séparer les PRODUITS des SERVICES
             products = [o for o in all_offers if o.get('isProduct') == True]
@@ -36448,7 +36452,9 @@ async def get_ai_response_with_session(request: Request):
         # === SECTION 1: INVENTAIRE BOUTIQUE (PRODUITS PHYSIQUES) ===
         try:
             # Récupérer TOUS les éléments de la collection offers
-            all_offers = await db.offers.find({"visible": {"$ne": False}}, {"_id": 0}).to_list(50)
+            all_offers = _filtrer_saison(
+                await db.offers.find({"visible": {"$ne": False}}, {"_id": 0}).to_list(50),
+                await _saison_active())   # SAISON : l'IA ne propose que les offres de la saison
             
             # Séparer les PRODUITS des SERVICES
             products = [o for o in all_offers if o.get('isProduct') == True]
@@ -46816,7 +46822,12 @@ async def _m1_offres():
         return {"offres": [], "carte": None, "ete": [], "saison": "toutes"}
     _services = [o for o in _toutes if not o.get("isProduct") and str(o.get("offer_type") or "") not in ("product", "event")]
     _visibles = _flt([o for o in _services if o.get("visible") is not False and str(o.get("offer_type") or "") != "membership"], _saison)
-    _visibles.sort(key=lambda o: (o.get("position") if isinstance(o.get("position"), (int, float)) else 999, str(o.get("name") or "")))
+    # Les formules de la saison (abonnements) d'abord, puis le reste dans l'ordre
+    # du tableau de bord (`position`) : la landing vend la saison, la vitrine
+    # garde son propre ordre.
+    _visibles.sort(key=lambda o: (0 if str(o.get("offer_type") or "") == "subscription" else 1,
+                                  o.get("position") if isinstance(o.get("position"), (int, float)) else 999,
+                                  str(o.get("name") or "")))
     # Places restantes = stock − ventes réelles ; une offre épuisée sort de la page.
     # MÊME règle que /api/offers : la landing et la vitrine disent la même chose.
     _visibles = _offres_encore_disponibles(await _annoter_places_restantes(_visibles))

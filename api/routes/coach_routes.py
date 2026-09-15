@@ -611,6 +611,14 @@ async def get_coach_vitrine(username: str):
         # v29: Concept personnel du partenaire
         concept_id = f"concept_{coach_email}"
     offers = await db.offers.find(coach_filter, {"_id": 0}).to_list(20)
+    # SAISON : une vitrine publique ne montre que la saison active + les
+    # permanentes — même règle que GET /api/offers (api/routes/saison.py).
+    try:
+        from api.routes.saison import filtrer_offres_saison as _flt_saison, saison_valide as _sv
+        _reglage = await db.platform_settings.find_one({"_id": "global"}, {"_id": 0, "saison_active": 1})
+        offers = _flt_saison(offers, _sv((_reglage or {}).get("saison_active")))
+    except Exception as _saison_err:  # noqa: BLE001 — sans réglage lisible, rien n'est caché
+        logger.warning("[SAISON] vitrine coach : réglage illisible (%s)", type(_saison_err).__name__)
     # V225: meme enrichissement que _enrich_offers_with_active_price
     # (server.py:1152) — sans lui, active_price/active_tier sont absents sur les
     # pages partenaires et les paliers de prix y restent inertes.
