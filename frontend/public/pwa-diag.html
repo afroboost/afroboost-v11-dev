@@ -15,8 +15,8 @@ h1 { font-size: 18px; margin-bottom: 16px; color: #f0f; }
 .info { border-left: 4px solid #0af; }
 .label { font-weight: bold; color: #aaa; font-size: 12px; }
 .value { margin-top: 2px; word-break: break-all; }
-#installBtn { display: none; width: 100%; padding: 16px; margin: 16px 0; background: #f0f; color: #000; font-size: 18px; font-weight: bold; border: none; border-radius: 12px; cursor: pointer; }
-#installBtn.show { display: block; }
+#installBtn, #pushLocalBtn { display: none; width: 100%; padding: 16px; margin: 16px 0; background: #f0f; color: #000; font-size: 18px; font-weight: bold; border: none; border-radius: 12px; cursor: pointer; }
+#installBtn.show, #pushLocalBtn.show { display: block; }
 #log { margin-top: 16px; padding: 10px; background: #1a1a2e; border-radius: 8px; font-family: monospace; font-size: 11px; max-height: 300px; overflow-y: auto; }
 .logline { margin: 2px 0; }
 .logtime { color: #666; }
@@ -29,6 +29,9 @@ h1 { font-size: 18px; margin-bottom: 16px; color: #f0f; }
 <h1>Diagnostic PWA Afroboost</h1>
 <div id="results"></div>
 <button id="installBtn">INSTALLER AFROBOOST</button>
+<!-- V525: diagnostic PUSH (lecture seule) + test local sans FCM, sur geste volontaire -->
+<button id="pushLocalBtn" class="show">TEST LOCAL NOTIFICATION (sans FCM)</button>
+<div id="pushResults"></div>
 <div id="log"></div>
 
 <script>
@@ -151,6 +154,79 @@ if ('serviceWorker' in navigator) {
 } else {
   addResult('Service Worker', 'NON SUPPORTE', 'fail');
 }
+
+// -----------------------------------------------------------------
+// V525 — DIAGNOSTIC PUSH (lecture seule, aucune donnee sensible en clair)
+// -----------------------------------------------------------------
+// Constat du 15/09/2026 : FCM repond 201 (normal ET Urgency high), le
+// gestionnaire push du SW est prouve par banc, l'abonnement Android est le
+// meme depuis le 09/09 — et rien ne s'affiche. Cette section isole le maillon
+// telephone / navigateur / SW SANS passer par FCM. Elle ne modifie RIEN :
+// ni abonnement, ni permission, ni SW. L'endpoint n'est montre que par ses
+// 8 derniers caracteres (suffisant pour comparer avec le serveur).
+var pushResults = document.getElementById('pushResults');
+function addPush(label, value, status) {
+  var div = document.createElement('div');
+  div.className = 'test ' + status;
+  div.innerHTML = '<div class="label">PUSH — ' + label + '</div><div class="value">' + value + '</div>';
+  pushResults.appendChild(div);
+}
+function queueEndpoint(ep) { return ep ? ('…' + String(ep).slice(-8)) : 'AUCUN'; }
+(function diagPush() {
+  var perm = ('Notification' in window) ? Notification.permission : 'API absente';
+  addPush('Notification.permission', perm, perm === 'granted' ? 'pass' : 'fail');
+  addPush('visibilityState', document.visibilityState, 'info');
+  addPush('PWA standalone', window.matchMedia('(display-mode: standalone)').matches ? 'OUI' : 'NON (onglet Chrome)', 'info');
+  if (!('serviceWorker' in navigator)) { addPush('serviceWorker', 'NON SUPPORTE', 'fail'); return; }
+  addPush('navigator.serviceWorker.controller', navigator.serviceWorker.controller ? 'PRESENT (' + navigator.serviceWorker.controller.state + ')' : 'ABSENT', navigator.serviceWorker.controller ? 'pass' : 'warn');
+  navigator.serviceWorker.getRegistrations().then(function(regs) {
+    addPush('registrations', String(regs.length), regs.length === 1 ? 'pass' : 'warn');
+    if (!regs.length) { addPush('registration', 'AUCUNE', 'fail'); return; }
+    for (var i = 0; i < regs.length; i++) {
+      (function(reg, idx) {
+        var pre = regs.length > 1 ? '#' + (idx + 1) + ' ' : '';
+        addPush(pre + 'scope', reg.scope, reg.scope === location.origin + '/' ? 'pass' : 'warn');
+        addPush(pre + 'active.state', reg.active ? reg.active.state + ' | ' + reg.active.scriptURL.replace(location.origin, '') : 'AUCUN', reg.active ? 'pass' : 'fail');
+        addPush(pre + 'waiting', reg.waiting ? 'OUI (' + reg.waiting.state + ')' : 'non', reg.waiting ? 'warn' : 'pass');
+        addPush(pre + 'installing', reg.installing ? 'OUI (' + reg.installing.state + ')' : 'non', reg.installing ? 'warn' : 'pass');
+        if (!reg.pushManager) { addPush(pre + 'pushManager', 'ABSENT', 'fail'); return; }
+        reg.pushManager.permissionState({ userVisibleOnly: true }).then(function(st) {
+          addPush(pre + 'pushManager.permissionState', st, st === 'granted' ? 'pass' : 'fail');
+        }).catch(function(e) { addPush(pre + 'pushManager.permissionState', 'erreur: ' + e.message, 'warn'); });
+        reg.pushManager.getSubscription().then(function(sub) {
+          if (!sub) { addPush(pre + 'getSubscription()', 'AUCUN ABONNEMENT NAVIGATEUR', 'fail'); return; }
+          var j = sub.toJSON ? sub.toJSON() : {};
+          var ep = sub.endpoint || '';
+          addPush(pre + 'getSubscription()', 'PRESENT', 'pass');
+          addPush(pre + 'endpoint (8 derniers)', queueEndpoint(ep) + (ep.indexOf('https://fcm.googleapis.com/') === 0 ? ' | FCM' : ' | NON-FCM'), 'info');
+          addPush(pre + 'cles p256dh / auth', (j.keys && j.keys.p256dh ? 'p256dh ' + j.keys.p256dh.length + ' car.' : 'p256dh ABSENT') + ' | ' + (j.keys && j.keys.auth ? 'auth ' + j.keys.auth.length + ' car.' : 'auth ABSENT'), (j.keys && j.keys.p256dh && j.keys.auth) ? 'pass' : 'fail');
+          addPush(pre + 'expirationTime', sub.expirationTime === null || sub.expirationTime === undefined ? 'null' : String(sub.expirationTime), 'info');
+          var ask = sub.options && sub.options.applicationServerKey;
+          addPush(pre + 'applicationServerKey', ask ? 'PRESENT (' + ask.byteLength + ' octets)' : 'ABSENT', ask ? 'pass' : 'warn');
+          log('Push: abonnement ' + queueEndpoint(ep), 'ok');
+        }).catch(function(e) { addPush(pre + 'getSubscription()', 'erreur: ' + e.message, 'fail'); });
+      })(regs[i], i);
+    }
+  }).catch(function(e) { addPush('getRegistrations', 'erreur: ' + e.message, 'fail'); });
+})();
+// TEST LOCAL — showNotification par le SW EXISTANT, sans FCM, sur geste volontaire
+document.getElementById('pushLocalBtn').addEventListener('click', function() {
+  if (!('serviceWorker' in navigator)) { addPush('test local', 'serviceWorker non supporte', 'fail'); return; }
+  navigator.serviceWorker.getRegistration().then(function(reg) {
+    if (!reg) { addPush('test local', 'AUCUNE registration', 'fail'); return; }
+    if (!reg.active) { addPush('test local', 'SW non actif (' + (reg.installing ? 'installing' : reg.waiting ? 'waiting' : 'aucun') + ')', 'fail'); return; }
+    return reg.showNotification('Test local Afroboost', { body: 'Notification locale sans FCM', icon: '/logo192.png', badge: '/notification-badge-96.png', tag: 'afroboost-test-local' }).then(function() {
+      addPush('test local showNotification', 'APPEL OK a ' + new Date().toLocaleTimeString() + ' — regarde le volet de notifications', 'pass');
+      log('showNotification local: OK', 'ok');
+      return reg.getNotifications({ tag: 'afroboost-test-local' }).then(function(ns) {
+        addPush('getNotifications() apres le test', ns.length + ' notification(s) connue(s) du SW', ns.length ? 'pass' : 'warn');
+      });
+    }).catch(function(e) {
+      addPush('test local showNotification', 'ECHEC: ' + (e && e.message ? e.message : e), 'fail');
+      log('showNotification local ECHEC: ' + e.message, 'err');
+    });
+  });
+});
 
 // beforeinstallprompt
 var promptFired = false;
