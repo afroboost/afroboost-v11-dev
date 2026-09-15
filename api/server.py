@@ -1046,6 +1046,7 @@ class Offer(BaseModel):
     # ou `ete`. Voir api/routes/saison.py : la vitrine ne montre que la saison
     # active + les permanentes ; le tableau de bord voit tout.
     season: Optional[str] = "toutes"
+    places_restantes: Optional[int] = None   # calculé (stock − ventes réelles), jamais stocké
     isProduct: bool = False  # True = physical product, False = service/course
     variants: Optional[dict] = None  # { sizes: ["S","M","L"], colors: ["Noir","Blanc"], weights: ["0.5kg","1kg"] }
     tva: float = 0.0  # TVA percentage
@@ -2483,7 +2484,7 @@ R2B_CLES_OFFRE_PUBLIQUE = (
     "location_city", "location_address", "location_lat", "location_lng",
     # HIVER : la composition (nombre de séances) et la saison sont publiques —
     # la landing calcule « dès env. X CHF/séance » depuis la base, pas en dur.
-    "pack_sessions", "season",
+    "pack_sessions", "season", "places_restantes",
 )
 
 # Les seules cles qu'un coach PUBLIC peut porter. `email` en est absent.
@@ -2555,6 +2556,35 @@ async def _saison_active() -> str:
         return _SAISON_DEFAUT
 
 
+async def _annoter_places_restantes(offres) -> list:
+    """RARETÉ RÉELLE. Une offre de service dont `stock >= 0` est limitée : ses
+    places restantes = stock − ventes réelles (souscriptions créées par un
+    paiement, hors `superseded`). UNE requête pour toutes les offres limitées,
+    et seulement s'il y en a. Sur panne, aucune place n'est affichée (None)
+    et rien n'est caché : on ne bloque pas une vente sur un compteur muet."""
+    _limitees = [o for o in (offres or []) if not o.get("isProduct")
+                 and isinstance(o.get("stock"), (int, float)) and not isinstance(o.get("stock"), bool)
+                 and o.get("stock") >= 0]
+    if not _limitees:
+        return offres
+    try:
+        _ventes = await db.subscriptions.aggregate([
+            {"$match": {"offer_id": {"$in": [o.get("id") for o in _limitees]}, "status": {"$ne": "superseded"}}},
+            {"$group": {"_id": "$offer_id", "n": {"$sum": 1}}}]).to_list(200)
+        _par_offre = {v["_id"]: int(v["n"]) for v in _ventes}
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[HIVER] ventes illisibles (%s) — places non affichées", type(_err).__name__)
+        return offres
+    for o in _limitees:
+        o["places_restantes"] = max(0, int(o["stock"]) - _par_offre.get(o.get("id"), 0))
+    return offres
+
+
+def _offres_encore_disponibles(offres) -> list:
+    """Une offre limitée épuisée sort de la vitrine — quand c'est fini, c'est fini."""
+    return [o for o in (offres or []) if o.get("places_restantes") is None or o["places_restantes"] > 0]
+
+
 @api_router.get("/offers", response_model=List[Offer])
 async def get_offers(request: Request, scope: str = ""):
     # V237 — isolation par coach, en OPT-IN explicite (`?scope=mine`).
@@ -2608,6 +2638,7 @@ async def get_offers(request: Request, scope: str = ""):
     # (les offres historiques, sans champ, sont permanentes). Réglage lu en
     # base à chaque appel : passer hiver -> été ne demande aucun redéploiement.
     offers = _filtrer_saison(offers, await _saison_active())
+    offers = _offres_encore_disponibles(await _annoter_places_restantes(offers))
     if not offers:
         # V241: `coach_id` pose des la creation. Ce bloc d'amorcage s'execute sur
         # un GET (potentiellement anonyme, sans header) quand la collection est
@@ -46716,6 +46747,124 @@ async def _m1_seances():
 
 
 
+# ═════════════ HIVER — LA LANDING PAGE DE CONVERSION ═════════════
+#
+# CE QUE CETTE PAGE VEUT : un visiteur -> un essai gratuit -> un client. Elle
+# garde tout ce que M1 / M2-A / P3-FAQ ont prouvé (HTML servi sans JavaScript,
+# planning depuis LA source, origine lue côté serveur, FAQ unique pour le HTML
+# et le JSON-LD) et y ajoute ce qui convertit : promesse, fonctionnement,
+# pour qui, objections, tarifs, comparaison, carte membre, été, CTA répété.
+#
+# LES TARIFS VIENNENT DE LA BASE, JAMAIS DU HTML. `_m1_offres()` lit
+# `db.offers` avec la MÊME règle de saison que `/api/offers` (saison active +
+# permanentes). Un prix changé dans le tableau de bord change ici sans
+# redéploiement. Le nombre de séances (`pack_sessions`) donne l'équivalent
+# par séance ; il est présenté comme une estimation (« dès env. »), jamais
+# comme un coût garanti — le nombre réel de séances varie selon les mois.
+#
+# RARETÉ RÉELLE SEULEMENT. Une offre limitée porte `stock` (nombre de places)
+# ; les places restantes = stock − ventes RÉELLES (souscriptions créées par un
+# paiement). Aucun compteur inventé : sans `stock`, rien n'est affiché.
+#
+# TÉMOIGNAGES RÉELS SEULEMENT. La section n'apparaît que s'il existe des
+# témoignages de participants APPROUVÉS avec consentement de publication
+# (T3). Tant qu'il n'y en a pas, elle est absente — pas de faux avis.
+#
+# HORAIRES ET LIEUX : `_m1_seances()` (planning réel). Aucun jour ni lieu
+# écrit en dur : si le planning change, la page change.
+#
+# ABONNEMENTS : le dépôt n'encaisse que des paiements UNIQUES (`mode=payment`,
+# aucun `Customer` Stripe, `auto_renew` sur 0 document) — la page dit donc
+# « paiement mensuel, sans prélèvement automatique », jamais « résilie quand
+# tu veux » qui supposerait un abonnement récurrent.
+_HIVER_SEANCES_PAR_MOIS_ESTIMEES = 8   # 2 par semaine : l'hypothèse affichée, jamais une promesse
+
+
+def _m1_prix(v):
+    """« 59 » ou « 59.90 » — sans décimales inutiles."""
+    try:
+        _f = float(v)
+    except (TypeError, ValueError):
+        return ""
+    return ("%d" % _f) if _f.is_integer() else ("%.2f" % _f)
+
+
+def _m1_par_seance(offre) -> str:
+    """L'équivalent par séance, en estimation honnête, ou « »."""
+    try:
+        _prix = float(offre.get("price") or 0)
+        _n = int(float(offre.get("pack_sessions") or 0))
+    except (TypeError, ValueError):
+        return ""
+    if _prix <= 0 or _n <= 1:      # une seule séance : le prix EST le prix, rien à « estimer »
+        return ""
+    if str(offre.get("offer_type") or "") == "subscription":
+        return "dès env. %s CHF/séance si tu viens %d fois par mois" % (
+            _m1_prix(round(_prix / _n, 2)), _n)
+    return "%s CHF/séance (%d séance%s)" % (_m1_prix(round(_prix / _n, 2)), _n, "s" if _n > 1 else "")
+
+
+async def _m1_offres():
+    """Les offres de la vitrine (même règle de saison que /api/offers), la carte
+    membre, les offres d'été et les places restantes. Ne lève jamais."""
+    from api.routes.saison import filtrer_offres_saison as _flt, saison_de_l_offre as _sde, SAISON_ETE as _ETE
+    try:
+        _toutes = await db.offers.find({}, {"_id": 0}).to_list(200)
+        _saison = await _saison_active()
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[HIVER] offres illisibles (%s)", type(_err).__name__)
+        return {"offres": [], "carte": None, "ete": [], "saison": "toutes"}
+    _services = [o for o in _toutes if not o.get("isProduct") and str(o.get("offer_type") or "") not in ("product", "event")]
+    _visibles = _flt([o for o in _services if o.get("visible") is not False and str(o.get("offer_type") or "") != "membership"], _saison)
+    _visibles.sort(key=lambda o: (o.get("position") if isinstance(o.get("position"), (int, float)) else 999, str(o.get("name") or "")))
+    # Places restantes = stock − ventes réelles ; une offre épuisée sort de la page.
+    # MÊME règle que /api/offers : la landing et la vitrine disent la même chose.
+    _visibles = _offres_encore_disponibles(await _annoter_places_restantes(_visibles))
+    _carte = next((o for o in _services if str(o.get("offer_type") or "") == "membership"
+                   and _sde(o) != _ETE), None)
+    _ete = [o for o in _services if _sde(o) == _ETE and o.get("visible") is not False]
+    return {"offres": _visibles, "carte": _carte, "ete": _ete, "saison": _saison}
+
+
+async def _m1_temoignages():
+    """Les témoignages de participants APPROUVÉS avec consentement. Sinon rien."""
+    try:
+        _rows = await db.comments.find(
+            {"source": T3_MARQUEUR, "moderation_status": T3_APPROVED, "consent_publication": True},
+            {"_id": 0, "text": 1, "user_name": 1, "first_name": 1}).sort("created_at", -1).to_list(6)
+    except Exception:  # noqa: BLE001
+        return []
+    return [{"texte": _m1_echapper(r.get("text")), "prenom": _m1_echapper((r.get("first_name") or r.get("user_name") or "Participant·e").split(" ")[0])}
+            for r in _rows if str(r.get("text") or "").strip()]
+
+
+def _m1_carte_offre(o, lien_offre):
+    """Une carte tarif — tout vient du document, rien n'est écrit en dur."""
+    _nom = _m1_echapper(o.get("name"))
+    _prix = float(o.get("price") or 0)
+    _type = str(o.get("offer_type") or "")
+    _desc = _m1_echapper(o.get("description") or "")
+    if _prix == 0:
+        _montant = "Offert"
+        _unite = ""
+    else:
+        _montant = "%s CHF" % _m1_prix(_prix)
+        _unite = " / mois" if _type == "subscription" else ""
+    _par = _m1_par_seance(o)
+    _places = o.get("places_restantes")
+    _badge = ""
+    if isinstance(_places, int):
+        _badge = '<p class="t-places">%d place%s restante%s sur %d</p>' % (
+            _places, "s" if _places > 1 else "", "s" if _places > 1 else "", int(o.get("stock")))
+    _mise_en_avant = ' t-star' if o.get("first_purchase_eligible") and _type == "subscription" else ""
+    return ('<article class="tarif%s"><h3>%s</h3><p class="t-prix">%s<span>%s</span></p>'
+            '%s<p class="t-desc">%s</p>%s<a class="cta cta-s" href="%s">%s</a></article>'
+            % (_mise_en_avant, _nom, _montant, _unite,
+               ('<p class="t-par">%s</p>' % _m1_echapper(_par)) if _par else "",
+               _desc, _badge, lien_offre,
+               "Réserver mon 1er cours gratuit" if _prix == 0 else "Choisir cette formule"))
+
+
 @fastapi_app.get(_M1_CHEMIN, response_class=HTMLResponse)
 async def m1_page_essai_neuchatel(request: Request):
     """Page publique d'acquisition — lisible sans JavaScript, et sans image.
@@ -46730,33 +46879,15 @@ async def m1_page_essai_neuchatel(request: Request):
     aucune source (voir `M2A_HOTES_INTERNES`).
     """
     _mois, _evenements = await _m1_seances()
+    _catalogue = await _m1_offres()
+    _temoignages = await _m1_temoignages()
 
     if _mois:
-        # P2-UX SIMPLE — TROIS SÉANCES VISIBLES, LE RESTE REPLIÉ.
-        #
-        # CE QUI CHANGE, ET CE QUI NE CHANGE PAS. Seule la PRÉSENTATION bouge.
-        # `_m1_seances()` n'est pas touchée : elle rend toujours les mêmes 12
-        # occurrences, et `_evenements` — les 12 `Event` JSON-LD injectés plus
-        # bas — en dérive indépendamment de ce bloc. Google ne perd donc
-        # strictement rien : les 12 séances restent dans le document ET dans
-        # les données structurées.
-        #
-        # POURQUOI TROIS. Le visiteur arrive par un lien de partenaire et n'a
-        # qu'une décision à prendre : s'inscrire. Douze grosses cartes empilées
-        # lui font défiler une page entière avant d'atteindre le bouton, et lui
-        # laissent croire qu'il doit choisir ici — alors que le choix de la
-        # séance se fait APRÈS l'inscription, dans son espace. Trois suffisent à
-        # prouver qu'il y a des cours, souvent, et près de chez lui.
-        #
-        # `<details>` natif, sans JavaScript : le `<summary>` est focusable au
-        # clavier par construction, et le contenu replié reste dans le DOM —
-        # c'est ce qui permet de raccourcir la page sans rien retirer.
         _toutes = [(_g["titre"], _x) for _g in _mois for _x in _g["lignes"]]
         _carte = (lambda _x:
                   '<article class="seance"><p class="s-quand">%s<span>%s</span></p>'
                   '<p class="s-lieu">%s</p><p class="s-nom">%s</p></article>'
                   % (_x["jour"], _x["heure"], _x["lieu"], _x["nom"]))
-
         _apercu = "".join(_carte(_x) for _titre_mois, _x in _toutes[:_M1_SEANCES_VISIBLES])
         _reste = _toutes[_M1_SEANCES_VISIBLES:]
         _blocs = ['<div class="grille">%s</div>' % _apercu]
@@ -46769,30 +46900,27 @@ async def m1_page_essai_neuchatel(request: Request):
                    "s" if len(_reste) > 1 else "",
                    "".join(_carte(_x) for _titre_mois, _x in _reste)))
         _planning = "".join(_blocs)
+        # Les jours réellement au planning, dits en un mot — jamais écrits en dur.
+        _jours = []
+        for _titre_mois, _x in _toutes:
+            _j = str(_x["jour"]).split(" ")[0]
+            if _j and _j not in _jours:
+                _jours.append(_j)
+        _jours_txt = " et ".join(_jours[:2]) if _jours else ""
     else:
-        # NI DATE NI ADRESSE INVENTEE — on le dit, et le CTA reste.
         _planning = ('<p class="vide">Aucune séance n’est publiée pour le moment. '
                      'Réserve ton essai : nous te proposons la prochaine date.</p>')
+        _jours_txt = ""
 
-    _titre = "Danse africaine à Neuchâtel | Essai gratuit Afroboost"
-    _desc = ("Découvre Afroboost à Neuchâtel : danse africaine et Afrobeat, "
-             "cardio-fitness au casque, accessible aux débutants. "
-             "Premier cours d’essai offert.")
-    # `alt` STRICTEMENT descriptif : ce que la photo montre, rien de plus. Ni
-    # ville ni lieu — ils ne sont pas prouvables depuis l'image.
+    _titre = "Cours de danse africaine et cardio à Neuchâtel — 1er cours offert | Afroboost"
+    _desc = ("Afroboost Neuchâtel : cardio-danse africaine et fitness au casque, avec un coach, "
+             "en groupe. Pas besoin de savoir danser. Ton premier cours est offert.")
     _alt = ("Femme en débardeur Afroboost, casque audio sur les oreilles, "
             "en pleine séance en extérieur au coucher du soleil")
     # M2-A : le tunnel EXISTANT, eventuellement suivi de l'origine normalisee.
-    # Les valeurs sortent de `m2a_*` : elles ne contiennent que `[a-z0-9_-]`,
-    # donc rien a encoder, et aucune injection possible. Sans origine connue, le
-    # lien est exactement celui d'avant ce lot.
     _lien = _M1_TUNNEL
+    _suffixe = ""
     try:
-        # M2-A-FIX1 — L'IMPORT QUI MANQUAIT.
-        # Livre sans lui, l'appel levait un `NameError` avale par le `except`
-        # ci-dessous : la page marchait, aucune 5xx, et l'attribution restait
-        # INERTE. Meme defaut que l'incident OTP (`_RESEND_OK`). Import LOCAL,
-        # comme partout ailleurs dans ce fichier pour le module partage.
         from api.routes.shared import m2a_attribution_entrante
         _attr = m2a_attribution_entrante(
             request.query_params if request else None,
@@ -46807,13 +46935,16 @@ async def m1_page_essai_neuchatel(request: Request):
                 if _v:
                     _bouts.append("%s=%s" % (_utm, _v))
             if _bouts:
-                _lien = _M1_TUNNEL + "&amp;" + "&amp;".join(_bouts)
+                _suffixe = "&amp;".join(_bouts)
+                _lien = _M1_TUNNEL + "&amp;" + _suffixe
     except Exception as _aerr:
-        # Fail-open : une origine illisible ne doit jamais priver la page de son
-        # bouton. Le lien nu reste parfaitement fonctionnel.
         logger.warning("[M2-A] origine non lue (%s)", type(_aerr).__name__)
-    _cta = ('<a class="cta" href="%s">Réserver mon premier cours gratuit</a>'
-            % _lien)
+    _cta = ('<a class="cta" href="%s">Réserver mon 1er cours gratuit</a>' % _lien)
+    # Le lien vers une formule : la vitrine ouvre l'offre (`?offre=<id>`, R4) et
+    # l'origine suit, pour qu'un achat garde sa source.
+    def _lien_offre(o):
+        _l = "/?offre=%s" % _m1_echapper(o.get("id"))
+        return _l + ("&amp;" + _suffixe if _suffixe else "")
 
     # P3-FAQ — un seul parcours de `_M1_FAQ` alimente l'affichage ET les
     # donnees structurees. `_m1_echapper` protege le HTML ; le JSON-LD porte
@@ -46829,6 +46960,58 @@ async def m1_page_essai_neuchatel(request: Request):
              "acceptedAnswer": {"@type": "Answer", "text": _r}}
             for _q, _r in _M1_FAQ],
     }
+
+    # ── tarifs (base) ──
+    _offres = _catalogue["offres"]
+    _formules = [o for o in _offres if float(o.get("price") or 0) > 0]
+    _gratuites = [o for o in _offres if float(o.get("price") or 0) == 0]
+    if _offres:
+        # La carte « offert » mène au tunnel d'essai EXISTANT (avec l'origine), pas à une offre.
+        _tarifs = '<div class="tarifs">%s</div>' % "".join(
+            _m1_carte_offre(o, _lien if float(o.get("price") or 0) == 0 else _lien_offre(o)) for o in _formules + _gratuites)
+    else:
+        _tarifs = '<p class="vide">Les tarifs sont affichés sur la page de réservation.</p>'
+    _mensuelles = [o for o in _formules if str(o.get("offer_type") or "") == "subscription"]
+    _note_tarifs = ("Formules mensuelles : paiement mensuel, sans prélèvement automatique — tu renouvelles "
+                    "quand tu le décides. Le nombre de séances proposées varie selon les mois : "
+                    "l’équivalent par séance est une estimation, pas un prix garanti."
+                    if _mensuelles else "")
+    # Comparaison : une ligne par formule, colonnes lues sur les documents.
+    if _formules:
+        _lignes_cmp = "".join(
+            '<tr><th scope="row">%s</th><td>%s CHF%s</td><td>%s</td><td>%s</td></tr>' % (
+                _m1_echapper(o.get("name")), _m1_prix(o.get("price")),
+                " / mois" if str(o.get("offer_type") or "") == "subscription" else "",
+                (("jusqu’à %d séances / mois" % int(float(o.get("pack_sessions")))) if str(o.get("offer_type") or "") == "subscription" and o.get("pack_sessions")
+                 else ("%d séance%s" % (int(float(o.get("pack_sessions"))), "s" if int(float(o.get("pack_sessions"))) > 1 else "")) if o.get("pack_sessions")
+                 else "—"),
+                _m1_echapper(_m1_par_seance(o) or "—"))
+            for o in _formules)
+        _comparaison = ('<div class="tbl"><table><thead><tr><th>Formule</th><th>Prix</th><th>Séances</th>'
+                        '<th>Équivalent</th></tr></thead><tbody>%s</tbody></table></div>' % _lignes_cmp)
+    else:
+        _comparaison = ""
+    # Carte membre : présentée À PART, comme option — jamais comme un coût caché.
+    _carte_membre = _catalogue["carte"]
+    if _carte_membre:
+        _cm_html = ('<article class="tarif t-membre"><h3>%s</h3><p class="t-prix">%s CHF<span> / an</span></p>'
+                    '<p class="t-desc">%s</p><p class="note">Option indépendante : les formules ci-dessus '
+                    'n’exigent aucune carte membre. Elle s’obtient auprès du coach ou lors d’un achat qui l’inclut.</p></article>'
+                    % (_m1_echapper(_carte_membre.get("name")), _m1_prix(_carte_membre.get("price")),
+                       _m1_echapper(_carte_membre.get("description") or "")))
+    else:
+        _cm_html = ('<p class="note">La carte membre de l’association (avantages membres) est une option '
+                    'indépendante des formules ci-dessus : renseigne-toi auprès du coach.</p>')
+    _ete_noms = ", ".join(_m1_echapper(o.get("name")) for o in _catalogue["ete"][:4])
+    _ete_html = ('<p>À la belle saison, Afroboost sort dehors : les séances <b>Silent</b> au bord du lac, casque sur les oreilles, '
+                 'coucher de soleil en fond.%s</p>'
+                 % ((" Les formules d’été (%s) reviennent à ce moment-là." % _ete_noms) if _ete_noms else " Les formules d’été reviennent à ce moment-là."))
+    _temo_html = ""
+    if _temoignages:
+        _temo_html = ('<section class="temoignages"><h2>Ils sont venus une première fois</h2><div class="grille">%s</div>'
+                      '<p class="note">Témoignages de participants, publiés avec leur accord.</p></section>'
+                      % "".join('<blockquote class="temo"><p>« %s »</p><footer>— %s</footer></blockquote>' % (t["texte"], t["prenom"])
+                                for t in _temoignages))
 
     _structure = _m1_jsonld([
         {"@context": "https://schema.org", "@type": "WebPage",
@@ -46863,129 +47046,169 @@ async def m1_page_essai_neuchatel(request: Request):
 <style>
 :root{--p:#D91CD2;--prgb:217,28,210;--fond:#0a0a12}
 *{box-sizing:border-box}
+html{scroll-behavior:smooth}
 body{margin:0;background:var(--fond);color:#fff;line-height:1.6;
- font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;padding-bottom:84px}
+@media(min-width:641px){body{padding-bottom:0}}
 img{max-width:100%%;display:block}
 a{color:inherit}
-
-/* ---- HERO : la photo derriere, le texte devant, jamais dans l'image ---- */
-.hero{position:relative;min-height:88svh;display:flex;align-items:center;
- justify-content:center;overflow:hidden;background:var(--fond)}
-.hero-photo{position:absolute;inset:0;width:100%%;height:100%%;object-fit:cover;
- object-position:50%% 30%%}
-.hero-voile{position:absolute;inset:0;background:
- linear-gradient(180deg,rgba(10,10,18,.72) 0%%,rgba(10,10,18,.42) 38%%,
- rgba(10,10,18,.80) 78%%,var(--fond) 100%%)}
-.hero-texte{position:relative;z-index:2;max-width:640px;padding:32px 20px 40px;
- text-align:center;width:100%%}
-.kicker{margin:0 0 10px;font-size:.8rem;letter-spacing:.16em;text-transform:uppercase;
- color:var(--p);font-weight:700;text-shadow:0 2px 10px rgba(0,0,0,.8)}
-h1{font-size:clamp(1.55rem,5.6vw,2.5rem);line-height:1.15;margin:0 0 14px;
- font-weight:800;text-shadow:0 2px 18px rgba(0,0,0,.85)}
-.promesse{margin:0 0 22px;font-size:clamp(.98rem,3.6vw,1.12rem);
- text-shadow:0 2px 12px rgba(0,0,0,.9)}
+.hero{position:relative;min-height:88svh;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--fond)}
+.hero-photo{position:absolute;inset:0;width:100%%;height:100%%;object-fit:cover;object-position:50%% 30%%}
+.hero-voile{position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,10,18,.72) 0%%,rgba(10,10,18,.42) 38%%,rgba(10,10,18,.80) 78%%,var(--fond) 100%%)}
+.hero-texte{position:relative;z-index:2;max-width:680px;padding:32px 20px 40px;text-align:center;width:100%%}
+.kicker{margin:0 0 10px;font-size:.8rem;letter-spacing:.16em;text-transform:uppercase;color:var(--p);font-weight:700;text-shadow:0 2px 10px rgba(0,0,0,.8)}
+h1{font-size:clamp(1.9rem,7.5vw,3.4rem);line-height:1.05;margin:0 0 14px;font-weight:900;letter-spacing:.02em;text-shadow:0 2px 18px rgba(0,0,0,.85)}
+.promesse{margin:0 0 22px;font-size:clamp(1rem,3.8vw,1.18rem);text-shadow:0 2px 12px rgba(0,0,0,.9);color:#f2f2f8}
 .promesse b{color:#fff}
-.cta{display:block;width:100%%;max-width:330px;margin:0 auto;padding:16px 22px;
- background:var(--p);color:#fff;text-align:center;text-decoration:none;
- font-weight:700;border-radius:999px;
- box-shadow:0 8px 28px rgba(var(--prgb),.45)}
+.cta{display:block;width:100%%;max-width:340px;margin:0 auto;padding:16px 22px;background:var(--p);color:#fff;text-align:center;text-decoration:none;font-weight:800;border-radius:999px;box-shadow:0 8px 28px rgba(var(--prgb),.45)}
 .cta:hover,.cta:focus{filter:brightness(1.08)}
-.reperes{list-style:none;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;
- padding:0;margin:22px 0 0}
-.reperes li{font-size:.82rem;padding:6px 12px;border-radius:999px;
- border:1px solid rgba(var(--prgb),.45);background:rgba(10,10,18,.55);color:#f0f0f6}
-
-/* ---- CORPS ---- */
-main{max-width:720px;margin:0 auto;padding:8px 20px 56px}
-section{margin-top:40px}
-h2{font-size:clamp(1.15rem,4.6vw,1.5rem);margin:0 0 14px;font-weight:700}
+.cta-s{max-width:none;padding:12px 16px;font-size:.95rem;margin-top:12px;box-shadow:none}
+.reperes{list-style:none;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:0;margin:22px 0 0}
+.reperes li{font-size:.82rem;padding:6px 12px;border-radius:999px;border:1px solid rgba(var(--prgb),.45);background:rgba(10,10,18,.55);color:#f0f0f6}
+main{max-width:760px;margin:0 auto;padding:8px 20px 56px}
+section{margin-top:44px}
+h2{font-size:clamp(1.25rem,4.8vw,1.6rem);margin:0 0 14px;font-weight:800}
+h3{font-size:1.05rem;margin:0 0 6px;font-weight:800}
 p{margin:0 0 14px;color:#e8e8f0}
 .note{color:#a9a9b8;font-size:.9rem}
-/* P2-UX SIMPLE : la microcopie qui dit QUAND on choisit sa seance. */
 .intro{margin:0 0 14px;color:#d7d7e2;font-size:.98rem;line-height:1.5}
-/* L'apercu des 3 seances vit hors d'un <details> : il ne reprend donc pas
-   le retrait lateral prevu pour le contenu deplie. */
+.benef{list-style:none;padding:0;margin:0;display:grid;gap:10px}
+.benef li{border-left:3px solid var(--p);padding:10px 14px;background:rgba(255,255,255,.04);border-radius:10px}
+.benef b{display:block;color:#fff}
+.etapes{counter-reset:e;list-style:none;padding:0;margin:0;display:grid;gap:12px}
+.etapes li{position:relative;padding:12px 14px 12px 56px;background:rgba(255,255,255,.04);border-radius:12px;border:1px solid rgba(255,255,255,.08)}
+.etapes li::before{counter-increment:e;content:counter(e);position:absolute;left:14px;top:12px;width:30px;height:30px;border-radius:50%%;background:var(--p);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.pourqui{display:flex;flex-wrap:wrap;gap:8px;list-style:none;padding:0;margin:0}
+.pourqui li{padding:8px 14px;border-radius:999px;background:rgba(var(--prgb),.14);border:1px solid rgba(var(--prgb),.4);font-size:.92rem}
 .seances > .grille{padding:0 0 14px}
-
-/* ---- SEANCES : mois replies, HTML natif ---- */
-details{border:1px solid rgba(255,255,255,.12);border-radius:14px;margin-bottom:12px;
- background:linear-gradient(135deg,rgba(20,20,30,.95),rgba(30,10,28,.85))}
-summary{cursor:pointer;padding:14px 16px;font-weight:700;display:flex;
- justify-content:space-between;align-items:center;gap:10px;border-radius:14px}
+details{border:1px solid rgba(255,255,255,.12);border-radius:14px;margin-bottom:12px;background:linear-gradient(135deg,rgba(20,20,30,.95),rgba(30,10,28,.85))}
+summary{cursor:pointer;padding:14px 16px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:10px;border-radius:14px}
 summary:focus-visible{outline:2px solid var(--p);outline-offset:2px}
 .s-compte{font-size:.8rem;font-weight:600;color:var(--p)}
 .grille{display:grid;gap:10px;padding:0 14px 14px}
-.seance{border-left:3px solid var(--p);border-radius:10px;padding:10px 12px;
- background:rgba(255,255,255,.04)}
+.seance{border-left:3px solid var(--p);border-radius:10px;padding:10px 12px;background:rgba(255,255,255,.04)}
 .seance p{margin:0}
 .s-quand{font-weight:700;color:var(--p);display:flex;gap:10px;align-items:baseline}
 .s-quand span{color:#fff;font-weight:600}
 .s-lieu{color:#e8e8f0;font-size:.94rem}
 .s-nom{color:#a9a9b8;font-size:.88rem}
 .vide{color:#a9a9b8}
-/* ---- FAQ : meme <details> natif que le planning, sans JavaScript ---- */
-.q summary{font-weight:600;font-size:.98rem;line-height:1.4}
-.q summary::marker{color:var(--p)}
-.q .r{padding:0 16px 14px}
-.q .r p{margin:0;color:#d7d7e2;font-size:.95rem}
+.faq .q{background:rgba(255,255,255,.03)}
+.faq .r{padding:0 16px 14px}
+.faq .r p{margin:0;color:#d7d7e2}
+.tarifs{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.tarif{border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:16px;background:rgba(255,255,255,.04);display:flex;flex-direction:column}
+.tarif.t-star{border-color:var(--p);box-shadow:0 0 0 1px var(--p) inset,0 10px 30px rgba(var(--prgb),.18)}
+.t-prix{font-size:1.7rem;font-weight:900;color:var(--p);margin:0 0 4px}
+.t-prix span{font-size:.95rem;color:#e8e8f0;font-weight:600}
+.t-par{color:#f0f0f6;font-size:.9rem;margin:0 0 8px}
+.t-desc{color:#c9c9d6;font-size:.92rem;flex:1}
+.t-places{display:inline-block;align-self:flex-start;font-size:.82rem;font-weight:700;color:var(--p);border:1px solid rgba(var(--prgb),.5);border-radius:999px;padding:3px 10px;margin:0 0 8px}
+.t-membre{border-style:dashed}
+.tbl{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{width:100%%;border-collapse:collapse;font-size:.92rem;min-width:520px}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid rgba(255,255,255,.1);vertical-align:top}
+thead th{color:#a9a9b8;font-weight:600;font-size:.82rem}
+tbody th{font-weight:700;color:#fff}
+.temo{margin:0;border-left:3px solid var(--p);padding:10px 14px;background:rgba(255,255,255,.04);border-radius:10px}
+.temo p{margin:0 0 6px}
+.temo footer{color:#a9a9b8;font-size:.86rem}
 .fin{text-align:center;border-top:1px solid rgba(255,255,255,.12);padding-top:32px}
 .fin .cta{margin-top:18px}
+.sticky{position:fixed;left:0;right:0;bottom:0;z-index:50;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:rgba(10,10,18,.92);backdrop-filter:blur(8px);border-top:1px solid rgba(var(--prgb),.35)}
+.sticky .cta{max-width:none;padding:14px 18px;box-shadow:none}
+@media(min-width:641px){.sticky{display:none}}
 </style>
 </head><body>
-<header class="hero">
+<header class="hero" id="haut">
 <img class="hero-photo" src="/hero-afroboost.jpg" alt="%(alt)s" width="1024" height="1024" fetchpriority="high"/>
 <div class="hero-voile"></div>
 <div class="hero-texte">
 <p class="kicker">Afroboost · Neuchâtel</p>
-<h1>Cours de danse africaine, Afrobeat et cardio-fitness à Neuchâtel</h1>
-<p class="promesse">Une expérience immersive au casque, accessible aux débutants.<br/><b>Ton premier cours est offert.</b></p>
+<h1>DANSE. TRANSPIRE. LÂCHE PRISE.</h1>
+<p class="promesse">Afroboost Neuchâtel : cardio-danse africaine et fitness au casque, avec un coach, en groupe.<br/>Pas besoin de savoir danser. <b>Ton premier cours est offert.</b></p>
 %(cta)s
 <ul class="reperes"><li>Débutants bienvenus</li><li>Environ 1 heure</li><li>Casque fourni</li><li>Neuchâtel</li></ul>
 </div>
 </header>
 <main>
-<section>
+<section class="promesse-s">
 <h2>C’est quoi Afroboost ?</h2>
 <p>Afroboost est un concept inspiré des danses africaines et de l’Afrobeat, qui
 mélange danse, cardio et fitness. Ce n’est pas un cours de danse traditionnelle :
 tu suis le rythme, tu transpires et tu avances à ton niveau, avec la musique dans
 ton casque.</p>
+<ul class="benef">
+<li><b>Tu transpires sans t’en rendre compte.</b> Le cardio est caché dans la danse : tu suis la musique, le corps fait le reste.</li>
+<li><b>Ta musique, dans ton casque.</b> Le son est net, la voix du coach aussi : tu es dans ta bulle, et dans le groupe en même temps.</li>
+<li><b>Un coach, un groupe, une énergie.</b> Personne ne te juge, tout le monde regarde le coach — et tout le monde ressort avec le sourire.</li>
+</ul>
 </section>
-<section class="seances">
-<h2>Prochaines séances à Neuchâtel</h2>
-<p class="intro">Ton premier cours Afroboost est offert. Inscris-toi
-gratuitement, puis choisis la séance qui te convient.</p>
-%(planning)s
-<p class="note">Dates, horaires et lieux viennent directement du planning
-Afroboost. Le lieu exact est indiqué avec chaque séance.</p>
+<section>
+<h2>Comment fonctionne Afroboost</h2>
+<ol class="etapes">
+<li><b>Réserve ton premier cours offert.</b> Deux minutes, en ligne. Tu choisis ensuite la séance qui t’arrange.</li>
+<li><b>Viens comme tu es.</b> Une tenue confortable, une bouteille d’eau. Le casque est fourni sur place.</li>
+<li><b>Suis le coach, à ton rythme.</b> Chaque mouvement est montré face au groupe ; tu le reprends, tu accélères quand tu veux.</li>
+</ol>
+<p class="note">Après ton essai, tu décides — ou pas — de continuer avec une formule. Aucune obligation.</p>
+</section>
+<section>
+<h2>Pour qui ?</h2>
+<ul class="pourqui"><li>Débutant·e complet·e</li><li>Jamais dansé</li><li>Pas sportif·ve</li><li>Tu viens seul·e</li><li>Tu veux transpirer en t’amusant</li><li>Tu aimes la musique afro</li><li>Tu en as marre des salles impersonnelles</li></ul>
+<p class="intro">Les mêmes mouvements pour tout le monde, à des intensités différentes : tu règles ton effort, pas le groupe.</p>
 </section>
 <section class="faq">
-<h2>Questions fréquentes</h2>
+<h2>Tes questions, nos réponses</h2>
 %(faq)s
+</section>
+%(temoignages)s
+<section class="seances">
+<h2>Prochaines séances à Neuchâtel</h2>
+<p class="intro">%(jours)sInscris-toi gratuitement, puis choisis la séance qui te convient.</p>
+%(planning)s
+<p class="note">Dates, horaires et lieux viennent directement du planning Afroboost. Le lieu exact est indiqué avec chaque séance.</p>
+%(cta)s
+</section>
+<section class="tarifs-s" id="tarifs">
+<h2>Les formules de la saison</h2>
+<p class="intro">Ton premier cours est offert. Ensuite, tu choisis la formule qui te ressemble.</p>
+%(tarifs)s
+<p class="note">%(note_tarifs)s</p>
+</section>
+%(comparaison_section)s
+<section>
+<h2>Pourquoi Afroboost, et pas une salle de fitness ?</h2>
+<p>Ce n’est pas la même chose. Une salle te donne des machines. Afroboost te donne <b>un coach, du cardio, de la danse afro, de la musique, un casque, un groupe et une communauté</b> — une heure vivante, guidée, où tu ne t’ennuies jamais. Ce n’est pas moins cher qu’un fitness : c’est différent.</p>
+</section>
+<section class="membre">
+<h2>Carte membre de l’association</h2>
+%(carte_membre)s
+</section>
+<section class="ete">
+<h2>Et l’été, Afroboost Silent</h2>
+%(ete)s
 </section>
 <section class="fin">
 <h2>Ton premier cours est offert</h2>
-<p>Ton premier cours d’essai Afroboost est offert.</p>
+<p>Ton premier cours d’essai Afroboost est offert. Réserve-le maintenant, viens une fois, et vois par toi-même.</p>
 %(cta)s
-<p class="note">L’essai concerne la première séance, une seule fois par personne.
-Les autres formules restent payantes.</p>
+<p class="note">L’essai concerne la première séance, une seule fois par personne. Les autres formules restent payantes.</p>
 </section>
 </main>
+<div class="sticky">%(cta)s</div>
 </body></html>""" % {
         "titre": _titre, "desc": _desc, "site": _M1_SITE, "chemin": _M1_CHEMIN,
         "structure": _structure, "cta": _cta, "planning": _planning, "alt": _alt,
-        "faq": _faq_html,
+        "faq": _faq_html, "tarifs": _tarifs, "note_tarifs": _note_tarifs,
+        "comparaison_section": ('<section><h2>Comparer les formules</h2>%s</section>' % _comparaison) if _comparaison else "",
+        "carte_membre": _cm_html, "ete": _ete_html, "temoignages": _temo_html,
+        "jours": ("Les cours ont lieu le %s. " % _m1_echapper(_jours_txt.lower())) if _jours_txt else "",
     }
     return HTMLResponse(content=_html, status_code=200)
 
 
 
-# Export for Vercel Serverless
-# ============================================
-# Docker Static File Serving (React SPA)
-# Only active when /app/static exists (Docker build)
-# In Vercel, this directory won't exist — no impact
-# ============================================
 import os as _os
 _STATIC_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "static")
 

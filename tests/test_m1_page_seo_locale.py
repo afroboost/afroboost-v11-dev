@@ -82,9 +82,47 @@ class Coll:
         return _Curseur([d for d in self.docs if _corr(d, filtre)])
 
 
+class _Agg:
+    def __init__(self, docs): self._d = docs
+    async def to_list(self, n=None): return list(self._d)
+
+
+class CollSubs(Coll):
+    """`aggregate` minimal : $match offer_id $in + status $ne, $group par offer_id."""
+    def aggregate(self, pipeline):
+        self.appels += 1
+        _m = pipeline[0]["$match"]; _ids = set(_m["offer_id"]["$in"]); _ne = _m["status"]["$ne"]
+        _n = {}
+        for d in self.docs:
+            if d.get("offer_id") in _ids and d.get("status") != _ne:
+                _n[d["offer_id"]] = _n.get(d["offer_id"], 0) + 1
+        return _Agg([{"_id": k, "n": v} for k, v in _n.items()])
+
+
+class CollTri(Coll):
+    def find(self, filtre=None, projection=None):
+        c = super().find(filtre, projection)
+        c.sort = lambda *a, **k: c
+        return c
+
+
+class CollReglage(Coll):
+    async def find_one(self, filtre=None, projection=None):
+        self.appels += 1
+        for d in self.docs:
+            if _corr(d, filtre): return dict(d)
+        return None
+
+
 class Base:
     def __init__(self):
         self.courses = Coll()
+        # HIVER : les offres (tarifs depuis la base), le réglage de saison, les
+        # ventes réelles (places restantes) et les témoignages approuvés.
+        self.offers = Coll()
+        self.platform_settings = CollReglage()
+        self.subscriptions = CollSubs()
+        self.comments = CollTri()
 
 
 class Journal:
@@ -111,24 +149,31 @@ _m2a_entrante = _PARTAGE.m2a_attribution_entrante
 
 NOMS = ("m1geo1_region_normalisee", "_m1_echapper", "_m1_jsonld", "_v184_parse_time_hhmm",
         "_v184_next_occurrences", "n456_occurrences_publiques",
-        "rv2_date_lisible", "_m1_seances", "m1_page_essai_neuchatel")
+        "rv2_date_lisible", "_m1_seances", "m1_page_essai_neuchatel",
+        # HIVER : tarifs depuis la base, places réelles, témoignages, saison
+        "_saison_active", "_annoter_places_restantes", "_offres_encore_disponibles",
+        "_m1_prix", "_m1_par_seance", "_m1_offres", "_m1_temoignages", "_m1_carte_offre")
 CONSTANTES = ("_N456_CHAMPS_PUBLICS", "_V184_WEEKDAY_LABELS_FR", "RV2_JOURS",
               "RV2_MOIS", "COACH_EMAIL", "_M1_SITE", "_M1_CHEMIN", "_M1_TUNNEL",
               "_M1_HORIZON_JOURS", "_M1_MAX_SEANCES", "M1GEO1_REGIONS", "_M1_REGION",
-              "_M1_SEANCES_VISIBLES", "_M1_FAQ",
+              "_M1_SEANCES_VISIBLES", "_M1_FAQ", "_HIVER_SEANCES_PAR_MOIS_ESTIMEES",
+              "T3_MARQUEUR", "T3_APPROVED",
               "_M1_MOIS", "_V184_WEEKDAY_LABELS_FR")
 
 
 def monter(db, journal):
     """Les VRAIES fonctions, extraites du vrai `server.py`."""
     from fastapi.responses import HTMLResponse
+    from api.routes import saison as _saison_mod
     ns = {"db": db, "logger": journal, "datetime": datetime, "timezone": timezone,
           "timedelta": timedelta, "re": re, "html": __import__("html"),
           "json": json, "HTMLResponse": HTMLResponse,
           # M2-A : la page annote `request: Request` et lit l'origine via le
           # helper partage. MONTAGE seulement — ce sont les VRAIS noms de
           # production, pas des imitations.
-          "Request": object, "m2a_attribution_entrante": _m2a_entrante}
+          "Request": object, "m2a_attribution_entrante": _m2a_entrante,
+          "_saison_valide": _saison_mod.saison_valide, "_filtrer_saison": _saison_mod.filtrer_offres_saison,
+          "_SAISON_DEFAUT": _saison_mod.SAISON_DEFAUT}
     for n in ast.walk(ARBRE):
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in CONSTANTES:
             exec(compile("".join(LIGNES[n.lineno - 1:n.end_lineno]), "s", "exec"), ns)
@@ -162,11 +207,30 @@ def monde():
     # region » a son propre banc (`test_m1geo1_region.py`, controle 18).
     for _d in db.courses.docs:
         _d["region"] = "neuchatel"
+    # HIVER : un catalogue réaliste — tout ce que la page affiche en vient.
+    db.offers.docs = [
+        {"id": "o-essai", "name": "Cours d'essai gratuit", "price": 0, "visible": True, "offer_type": "single_class", "pack_sessions": 1, "position": 0, "stock": -1},
+        {"id": "o-fond", "name": "Fondateurs", "price": 59, "visible": True, "offer_type": "subscription", "pack_sessions": 8, "position": 1, "season": "hiver", "stock": 50, "first_purchase_eligible": True, "description": "Tarif fondateur, 50 places."},
+        {"id": "o-std", "name": "Standard", "price": 79, "visible": True, "offer_type": "subscription", "pack_sessions": 8, "position": 2, "season": "hiver", "stock": -1},
+        {"id": "o-flex", "name": "Flex 4", "price": 49, "visible": True, "offer_type": "subscription", "pack_sessions": 4, "position": 3, "season": "hiver", "stock": -1},
+        {"id": "o-unite", "name": "Cours à l'unité", "price": 30, "visible": True, "offer_type": "single_class", "pack_sessions": 1, "position": 4, "stock": -1},
+        {"id": "o-pulse", "name": "PULSE x10 cours", "price": 250, "visible": True, "offer_type": "pack", "pack_sessions": 10, "position": 5, "season": "ete", "stock": -1},
+        {"id": "o-carte", "name": "Carte membre association", "price": 100, "visible": False, "offer_type": "membership", "position": 9, "description": "Avantages membres."},
+        {"id": "o-tshirt", "name": "T-shirt", "price": 59.99, "visible": True, "isProduct": True, "offer_type": "product", "stock": 3},
+        {"id": "o-event", "name": "Silent Lakeside", "price": 25, "visible": True, "offer_type": "event", "pack_sessions": 1},
+        {"id": "o-cache", "name": "Offre cachée", "price": 10, "visible": False, "offer_type": "single_class"},
+    ]
+    db.platform_settings.docs = [{"_id": "global", "saison_active": "hiver"}]
+    db.subscriptions.docs = [{"offer_id": "o-fond", "status": "active"} for _ in range(3)] + [{"offer_id": "o-fond", "status": "superseded"}]
     return db, j
+
+
+ns_faq = []
 
 
 async def rendre(db, journal, coach=COACH):
     ns = monter(db, journal)
+    ns_faq[:] = list(ns.get("_M1_FAQ") or [])
     ns["COACH_EMAIL"] = coach
     # M2-A : la page lit desormais l'origine dans la requete. MONTAGE seulement —
     # une requete nue, sans UTM ni referrer, reproduit exactement l'ancien appel.
@@ -326,8 +390,8 @@ async def principal():
              all(_valide(b) for b in blocs_jsonld(corps2)))
 
     # ---- 9. LE CTA ---------------------------------------------------------
-    verifier("39. Le CTA porte le libelle demande",
-             "Réserver mon premier cours gratuit" in corps)
+    verifier("39. Le CTA porte le libelle demande (HIVER : « 1er »)",
+             "Réserver mon 1er cours gratuit" in corps)
     verifier("40. Le CTA mene au tunnel d'essai EXISTANT",
              "?link=b83914b4-c5a" in corps)
     verifier("41. Aucun nouveau tunnel n'est cree",
@@ -346,7 +410,7 @@ async def principal():
     verifier("44. Sans seance a venir : message neutre, aucune date inventee",
              "Aucune séance" in corps3 or "aucune séance" in corps3)
     verifier("45. Le CTA reste present meme sans seance",
-             "Réserver mon premier cours gratuit" in corps3 and "?link=b83914b4-c5a" in corps3)
+             "Réserver mon 1er cours gratuit" in corps3 and "?link=b83914b4-c5a" in corps3)
     verifier("46. Aucun `Event` n'est declare sans occurrence reelle",
              not [o for b in blocs_jsonld(corps3) for o in _plat(b) if o.get("@type") == "Event"])
 
@@ -401,20 +465,19 @@ async def principal():
     _, page = await rendre(db, j)
 
     # --- textes valides, au mot pres ---
-    verifier("57. TITLE exact",
-             "<title>Danse africaine à Neuchâtel | Essai gratuit Afroboost</title>" in page)
-    verifier("58. META DESCRIPTION exacte",
-             "Découvre Afroboost à Neuchâtel : danse africaine et Afrobeat, "
-             "cardio-fitness au casque, accessible aux débutants. "
-             "Premier cours d’essai offert." in page)
-    verifier("59. H1 exact et UNIQUE",
-             page.count("<h1") == 1 and
-             "Cours de danse africaine, Afrobeat et cardio-fitness à Neuchâtel" in page)
+    verifier("57. TITLE exact (HIVER)",
+             "<title>Cours de danse africaine et cardio à Neuchâtel — 1er cours offert | Afroboost</title>" in page)
+    verifier("58. META DESCRIPTION exacte (HIVER)",
+             "Afroboost Neuchâtel : cardio-danse africaine et fitness au casque, avec un coach, "
+             "en groupe. Pas besoin de savoir danser. Ton premier cours est offert." in page)
+    verifier("59. H1 exact et UNIQUE : l'accroche",
+             page.count("<h1") == 1 and "<h1>DANSE. TRANSPIRE. LÂCHE PRISE.</h1>" in page)
     for h2 in ("C’est quoi Afroboost ?", "Prochaines séances à Neuchâtel",
                "Ton premier cours est offert"):
         verifier("60. H2 « %s » present" % h2, ">%s</h2>" % h2 in page)
-    verifier("61. La promesse du hero est celle validee",
-             "Une expérience immersive au casque, accessible aux débutants." in page)
+    verifier("61. La promesse du hero (HIVER) : Neuchâtel, cardio-danse, casque, débutants, 1er cours offert",
+             "cardio-danse africaine et fitness au casque" in page and "Pas besoin de savoir danser." in page
+             and "<b>Ton premier cours est offert.</b>" in page)
     verifier("62. La formulation metier EXACTE est conservee",
              "Ton premier cours d’essai Afroboost est offert." in page)
     verifier("63. Le texte concept valide est present",
@@ -470,21 +533,21 @@ async def principal():
 
     # --- le CTA ---
     ctas = re.findall(r'<a class="cta"[^>]*href="([^"]+)"[^>]*>([^<]*)</a>', page)
-    verifier("70. Deux CTA identiques, avant et apres les seances", len(ctas) == 2, ctas)
+    verifier("70. Quatre CTA identiques : hero, apres les seances, fin, barre mobile", len(ctas) == 4, len(ctas))
     verifier("71. Meme libelle valide",
-             all("Réserver mon premier cours gratuit" in t for _, t in ctas), ctas)
+             all("Réserver mon 1er cours gratuit" in t for _, t in ctas), ctas)
     # M2-A : le lien peut desormais porter l'origine normalisee en suffixe.
     # Ce qui est verifie reste le meme : la destination est le tunnel EXISTANT.
     verifier("72. Meme destination : le tunnel EXISTANT",
              all(h.startswith("/?link=b83914b4-c5a") for h, _ in ctas), ctas)
 
     # --- les seances, groupees par mois, en HTML natif ---
-    verifier("73. Les seances sont groupees dans des `<details>`",
-             page.count("<details") >= 1)
-    verifier("74. Chaque groupe a son `<summary>` (focusable au clavier)",
+    verifier("73. Les seances : au moins 2 cartes visibles, HTML natif",
+             page.count('<article class="seance">') >= 2)
+    verifier("74. Chaque `<details>` a son `<summary>` (focusable au clavier)",
              page.count("<summary") == page.count("<details"))
-    verifier("75. Le PREMIER mois est ouvert, les suivants replies",
-             page.count("<details open") == 1, "ouverts=%d" % page.count("<details open"))
+    verifier("75. Aucun `<details open>` : FAQ et planning replies, un clic les ouvre",
+             page.count("<details open") == 0, "ouverts=%d" % page.count("<details open"))
     verifier("76. Aucune dependance JavaScript pour les seances",
              "onclick" not in page.lower() and "<script" not in
              page.split('class="seances"')[-1] if 'class="seances"' in page else True)
@@ -497,6 +560,56 @@ async def principal():
              len([o for o in plats if o.get("@type") == "Event"]) == 2)
     verifier("79. `canonical` inchangee",
              '<link rel="canonical" href="%s%s"/>' % (URL, CHEMIN) in page)
+
+    # ═══ HIVER — la landing de conversion ═══
+    verifier("80. Les tarifs viennent de la base : Fondateurs 59, Standard 79, Flex 4 49, unité 30",
+             all(x in page for x in ("<h3>Fondateurs</h3>", "59 CHF<span> / mois</span>", "<h3>Standard</h3>", "79 CHF<span> / mois</span>",
+                                     "<h3>Flex 4</h3>", "49 CHF<span> / mois</span>", "30 CHF<span></span>")), page.count("t-prix"))
+    verifier("81. Saison HIVER active : PULSE x10 (été) ABSENT des tarifs, mais nommé dans la section été",
+             '<h3>PULSE x10 cours</h3>' not in page and "PULSE x10 cours" in page.split('class="ete"')[-1])
+    verifier("82. Offre cachée, produit et événement : jamais dans les tarifs",
+             "Offre cachée" not in page and "<h3>T-shirt</h3>" not in page and "<h3>Silent Lakeside</h3>" not in page)
+    verifier("83. Équivalent par séance = estimation honnête depuis pack_sessions (59/8 -> 7.38, 49/4 -> 12.25)",
+             "dès env. 7.38 CHF/séance si tu viens 8 fois par mois" in page and "dès env. 12.25 CHF/séance" in page)
+    verifier("84. Rareté RÉELLE : 50 − 3 ventes (la superseded ne compte pas) = 47 places restantes sur 50",
+             "47 places restantes sur 50" in page)
+    verifier("85. Carte membre : présentée À PART (100 CHF / an), sans bouton d'achat, jamais un coût caché",
+             "<h3>Carte membre association</h3>" in page and "100 CHF<span> / an</span>" in page
+             and "n’exigent aucune carte membre" in page and page.split("t-membre")[-1].split("</article>")[0].count('class="cta') == 0)
+    verifier("86. Formules mensuelles : paiement mensuel sans prélèvement automatique — jamais « résilie quand tu veux »",
+             "sans prélèvement automatique" in page and "résilie quand tu veux" not in page.lower())
+    verifier("87. Comparaison des formules : un tableau, une ligne par formule payante",
+             page.count("<tr><th scope=\"row\">") == 4)
+    verifier("88. Aucun horaire/jour/lieu en dur : les jours cités viennent du planning",
+             "mercredi" not in page.lower().split("<main>")[0] and ("Les cours ont lieu le" in page))
+    verifier("89. Barre CTA sticky mobile présente, masquée dès 641 px",
+             '<div class="sticky">' in page and "@media(min-width:641px){.sticky{display:none}}" in page)
+    verifier("90. Sections dans l'ordre demandé", all(page.find(a) < page.find(b) for a, b in zip(
+        ("<h1>", "C’est quoi Afroboost", "Comment fonctionne", "Pour qui", "Tes questions", "Prochaines séances", "Les formules de la saison", "Comparer les formules", "Pourquoi Afroboost", "Carte membre", "l’été, Afroboost Silent", 'class="fin"'),
+        ("C’est quoi Afroboost", "Comment fonctionne", "Pour qui", "Tes questions", "Prochaines séances", "Les formules de la saison", "Comparer les formules", "Pourquoi Afroboost", "Carte membre", "l’été, Afroboost Silent", 'class="fin"', '<div class="sticky">'))))
+    verifier("91. Aucun faux témoignage : section absente tant qu'aucun témoignage approuvé n'existe",
+             'class="temoignages"' not in page)
+    verifier("92. FAQ dans le HTML ET en JSON-LD FAQPage, un seul parcours",
+             any(o.get("@type") == "FAQPage" for o in plats) and page.count('<details class="q">') == len(ns_faq))
+    verifier("93. Pas de faux compteur, pas de prix barré, pas de fausse urgence",
+             "<s>" not in page and "<del>" not in page and "plus que" not in page.lower() and "dernières heures" not in page.lower())
+    verifier("94. Lien de formule : ouvre l'offre sur la vitrine (?offre=<id>)", 'href="/?offre=o-fond"' in page)
+    # Témoignage RÉEL approuvé -> la section apparaît, prénom seul.
+    db.comments.docs = [{"text": "J'ai adoré, je reviens !", "user_name": "Léa Dupont", "source": "participant_testimonial", "moderation_status": "approved", "consent_publication": True}]
+    _, page_t = await rendre(db, j)
+    verifier("95. Témoignage approuvé + consentement -> affiché, prénom seul (pas de nom de famille)",
+             'class="temoignages"' in page_t and "— Léa</footer>" in page_t and "Dupont" not in page_t)
+    # Été actif : Pulse revient, les formules hiver disparaissent.
+    db.platform_settings.docs = [{"_id": "global", "saison_active": "ete"}]
+    _, page_e = await rendre(db, j)
+    verifier("96. Saison ÉTÉ : PULSE x10 dans les tarifs, Fondateurs/Standard/Flex absents, permanentes présentes",
+             '<h3>PULSE x10 cours</h3>' in page_e and "<h3>Fondateurs</h3>" not in page_e and "<h3>Cours à l&#x27;unité</h3>" in page_e)
+    # Fondateurs épuisé -> disparaît de la page (rareté réelle).
+    db.platform_settings.docs = [{"_id": "global", "saison_active": "hiver"}]
+    db.subscriptions.docs = [{"offer_id": "o-fond", "status": "active"} for _ in range(50)]
+    _, page_f = await rendre(db, j)
+    verifier("97. 50 ventes réelles -> Fondateurs sort de la page, Standard reste",
+             "<h3>Fondateurs</h3>" not in page_f and "<h3>Standard</h3>" in page_f)
 
     # --- pas de bourrage ---
     # Le bourrage se mesure sur le TEXTE VISIBLE, pas sur le document entier :
