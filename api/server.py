@@ -42632,7 +42632,7 @@ async def whatsapp_diagnostic(request: Request):
         # se lit un blocage de facturation (131042) SANS envoyer de message.
         health_resp = await client.get(waba_url, params={"access_token": access_token, "fields": "health_status"})
         results["sante"] = health_resp.json()
-        tpl_detail = await client.get(tpl_url, params={
+        tpl_detail = await client.get(f"https://graph.facebook.com/{api_version}/{waba_id}/message_templates", params={
             "access_token": access_token, "name": "afroboost_campagne",
             "fields": "name,status,language,category,components,quality_score,parameter_format"
         })
