@@ -7,7 +7,6 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import OffresAimants from '../OffresAimants';
 
-jest.mock('../PawaPayOfferButton', () => () => <span data-testid="mobile-money" />);
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 const act = React.act;
@@ -17,11 +16,16 @@ const analyser = (url) => {
   if (/\.mp4$/i.test(url)) return { type: 'video', url };
   return { type: 'image', url };
 };
+// Le bouton Mobile Money réel décide seul (drapeau de l'offre) ; ici on vérifie
+// que la fiche le monte avec l'offre, et lui rend `null` sans le drapeau.
+jest.mock('../PawaPayOfferButton', () => ({ offer }) => (offer && offer.mobile_money_enabled ? <span data-testid="mobile-money" /> : null));
 
-const fond = { id: 'o-fond', name: 'Fondateurs', price: 59, offer_type: 'subscription', pack_sessions: 8, stock: 50, places_restantes: 47, position: 1, billing_mode: 'mensuel_auto', countdown_enabled: true, countdown_date: '2026-09-30', countdown_time: '23:59', description: 'Tarif de lancement réservé aux 50 premiers inscrits.', images: ['https://x/f.jpg'] };
-const s1 = { id: 'o-s1', name: 'Saison hiver — 8 mois', price: 549, offer_type: 'subscription', pack_sessions: 64, stock: -1, position: 2, billing_mode: 'unique', duree_mois: 8 };
+// Fondateurs : comme en production, un .png dans le champ « vidéo », rien d'autre.
+const fond = { id: 'o-fond', name: 'Fondateurs', price: 59, offer_type: 'subscription', pack_sessions: 8, stock: 50, places_restantes: 47, position: 1, billing_mode: 'mensuel_auto', countdown_enabled: true, countdown_date: '2026-09-30', countdown_time: '23:59', description: 'Tarif de lancement réservé aux 50 premiers inscrits.', videoUrl: 'https://x/couverture.png', video_aspect_ratio: '16:9' };
+// Saison : vidéo + miniature dédiée → la carte montre la miniature, la fiche la vidéo.
+const s1 = { id: 'o-s1', name: 'Saison hiver — 8 mois', price: 549, offer_type: 'subscription', pack_sessions: 64, stock: -1, position: 2, billing_mode: 'unique', duree_mois: 8, videoUrl: 'https://x/saison.mp4', thumbnail: 'https://x/mini-saison.jpg' };
 const s2 = { id: 'o-s2', name: 'Saison hiver — 2 paiements', price: 299, offer_type: 'subscription', pack_sessions: 8, stock: -1, position: 3, billing_mode: 'saison_2x' };
-const mensuel = { id: 'o-men', name: 'Mensuel Liberté', price: 89, offer_type: 'subscription', pack_sessions: 8, stock: -1, position: 4, billing_mode: 'mensuel_auto', videoUrl: 'https://x/v.mp4', video_aspect_ratio: '9:16' };
+const mensuel = { id: 'o-men', name: 'Mensuel Liberté', price: 89, offer_type: 'subscription', pack_sessions: 8, stock: -1, position: 4, billing_mode: 'mensuel_auto', videoUrl: 'https://x/v.mp4', video_aspect_ratio: '9:16', mobile_money_enabled: true };
 const flex = { id: 'o-flex', name: 'Flex 4', price: 49, offer_type: 'subscription', pack_sessions: 4, stock: -1, position: 5, billing_mode: 'mensuel_auto' };
 const etu = { id: 'o-etu', name: 'Étudiant', price: 69, offer_type: 'subscription', pack_sessions: 8, stock: -1, position: 6, billing_mode: 'mensuel_auto', description: 'Tarif réservé aux étudiants.' };
 const unite = { id: 'o-unite', name: "Cours à l'unité", price: 30, offer_type: 'single_class', pack_sessions: 1, stock: -1, position: 1 };
@@ -110,7 +114,7 @@ test('la fiche Étudiant : badge, prix, promesse, inclus, justificatif, CTA → 
   expect(fiche.textContent).toMatch(/Justificatif étudiant requis/);
   expect(fiche.textContent).toMatch(/Prélèvement automatique chaque mois/);
   expect(fiche.textContent).toMatch(/Étudiant·e, avec justificatif/);
-  expect(par('mobile-money')).not.toBeNull();
+  expect(par('mobile-money')).toBeNull();                 // drapeau absent → pas de Mobile Money
   expect(texte('fiche-cta')).toBe('Choisir cette formule');
   await cliquer(par('fiche-cta'));
   expect(choisis).toHaveLength(1);
@@ -148,7 +152,7 @@ test('la fiche Fondateurs garde le stock réel et la vraie date (compact, pas de
   expect(par('fiche-offre').textContent).not.toMatch(/\d+h \d+m \d+s/);
 });
 
-test('vidéo 9:16 dans la fiche : lecteur en contain, ratio respecté, jamais en cover', async () => {
+test('vidéo 9:16 dans la fiche : lecteur en contain, ratio respecté, fond flouté derrière, Mobile Money si activé', async () => {
   await monter();
   await cliquer(par('aimant-mensuel'));
   const lecteur = par('fiche-lecteur');
@@ -157,6 +161,44 @@ test('vidéo 9:16 dans la fiche : lecteur en contain, ratio respecté, jamais en
   expect(video.style.objectFit).toBe('contain');
   expect(video.style.aspectRatio).toBe('9 / 16');
   expect(video.hasAttribute('controls')).toBe(true);
+  expect(lecteur.querySelector('[data-testid=fond-flou]')).not.toBeNull();
+  expect(par('mobile-money')).not.toBeNull();
+});
+
+test('MINIATURES : image du champ vidéo (Fondateurs) et miniature dédiée (Saison) affichées sur les cartes ; vidéo portrait sans image = boîte haute en contain', async () => {
+  await monter();
+  const vF = par('aimant-lancement').querySelector('[data-testid=vignette-image]');
+  expect(vF).not.toBeNull();
+  expect(vF.getAttribute('src')).toBe('https://x/couverture.png');
+  const vS = par('aimant-saison').querySelector('[data-testid=vignette-image]');
+  expect(vS.getAttribute('src')).toBe('https://x/mini-saison.jpg');     // miniature dédiée prioritaire sur la vidéo
+  const vM = par('aimant-mensuel').querySelector('[data-testid=vignette-video]');
+  expect(vM.getAttribute('data-portrait')).toBe('true');
+  expect(vM.querySelector('video').style.objectFit).toBe('contain');
+  expect(document.querySelectorAll('[data-testid=vignette-repli]')).toHaveLength(0);
+  // Fiche Fondateurs : l'image, pas un <video> vide.
+  await cliquer(par('aimant-lancement'));
+  expect(par('fiche-image')).not.toBeNull();
+  expect(par('fiche-lecteur')).toBeNull();
+  // Fiche Saison : la vidéo, avec la miniature en poster.
+  await cliquer(par('panneau-fermer'));
+  await cliquer(par('aimant-saison'));
+  expect(par('fiche-lecteur').querySelector('video').getAttribute('poster')).toBe('https://x/mini-saison.jpg');
+});
+
+test('média indisponible : repli sobre, jamais une zone vide cassée', async () => {
+  await monter({ offres: [{ ...fond, videoUrl: '' }, s1, mensuel] });
+  expect(par('aimant-lancement').querySelector('[data-testid=vignette-repli]')).not.toBeNull();
+  await cliquer(par('aimant-lancement'));
+  expect(par('fiche-repli')).not.toBeNull();
+});
+
+test('le lien « Voir toutes les offres » est léger : pas de bouton pleine largeur', async () => {
+  await monter();
+  const b = par('voir-toutes-les-offres');
+  expect(b.style.width).not.toBe('100%');
+  expect(b.style.background).toBe('transparent');
+  expect(b.textContent.trim()).toBe('Voir toutes les offres');
 });
 
 test('le signal « Offres » de la barre ouvre la liste', async () => {

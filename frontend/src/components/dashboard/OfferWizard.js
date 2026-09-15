@@ -9,6 +9,9 @@ import CloudinaryUploadButton from '../CloudinaryUploadButton'; // V229
 // FORMAT VIDEO : auto / 9:16 / 16:9 / 1:1 — detection sur les dimensions
 // reelles du fichier, previsualisation fidele (contain, jamais deforme).
 import { RATIOS as VIDEO_RATIOS, ratioDepuisDimensions, stylesLecteur, libelleDetection, normaliserRatio } from '../../utils/videoRatio';
+// MÉDIAS : la même lecture que la vitrine (miniature dédiée prioritaire, le
+// champ vidéo peut contenir une image) — la preview reflète le rendu réel.
+import { analyserMediaUrl, mediaPrincipal, champVideoEstImage } from '../../utils/mediaOffre';
 // U1b : champ d'adresse avec suggestions OpenStreetMap. Reste un input texte
 // libre : si le service est injoignable, le champ se comporte comme avant.
 import ChampAdresse from './ChampAdresse';
@@ -1343,6 +1346,30 @@ export default function OfferWizard({
             <p className="text-xs mt-1" style={HINT_STYLE}>Ex. 8 pour une saison hiver payée en une fois. Vide = 2 mois, comme aujourd'hui.</p>
           </div>
         )}
+        {/* MOBILE MONEY PAR OFFRE : le bouton PawaPay (clients en Afrique) n'est
+            proposé que si le coach l'active ici. Non par défaut. Stripe, carte
+            et TWINT ne sont pas concernés par ce réglage. */}
+        <div className="mt-4">
+          <label className="block text-xs mb-1" style={LABEL_STYLE}>Afficher Mobile Money</label>
+          <div className="flex gap-2" role="radiogroup" aria-label="Afficher Mobile Money">
+            {[{ v: true, l: 'Oui' }, { v: false, l: 'Non' }].map((opt) => {
+              const actif = !!form.mobile_money_enabled === opt.v;
+              return (
+                <button key={opt.l} type="button" role="radio" aria-checked={actif}
+                  onClick={() => set('mobile_money_enabled', opt.v)} data-testid={`mobile-money-${opt.v ? 'oui' : 'non'}`}
+                  className="text-xs px-4 py-2 rounded-lg transition-colors"
+                  style={{
+                    border: `1px solid ${actif ? PINK : 'rgba(255,255,255,0.14)'}`,
+                    background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)' : 'transparent',
+                    color: actif ? PINK : 'rgba(255,255,255,0.75)'
+                  }}>{opt.l}</button>
+              );
+            })}
+          </div>
+          <p className="text-xs mt-1" style={HINT_STYLE}>
+            Propose le paiement Mobile Money (PawaPay) sur la carte et la fiche de cette offre — surtout pour les clients en Afrique. Carte et TWINT restent inchangés.
+          </p>
+        </div>
       </div>
 
       {/* LOT A : la SEULE chose qui autorise cette offre a apparaitre apres une
@@ -2698,6 +2725,44 @@ export default function OfferWizard({
         </div>
       </div>
 
+      {/* MINIATURE DÉDIÉE : l'image de couverture de la carte. Prioritaire sur
+          les images et sur la vidéo côté vitrine. Avant ce lot, `thumbnail`
+          n'était posé que par le curseur Cloudinary : une offre avec une vidéo
+          hébergée ici n'avait aucun moyen d'avoir une miniature. */}
+      <div>
+        <label className="block text-xs mb-1" style={LABEL_STYLE}>
+          <SvgIcon name="image" size={14} />{' '}Miniature (image de couverture de la carte)
+        </label>
+        <input
+          type="url"
+          value={form.thumbnail || ''}
+          onChange={(e) => set('thumbnail', e.target.value)}
+          placeholder="https://… (jpg, png, webp) — prioritaire sur la vidéo pour la carte"
+          style={INPUT_STYLE}
+          className="text-sm v224-input"
+          data-testid="wizard-thumbnail"
+        />
+        <div className="mt-2">
+          <CloudinaryUploadButton
+            accept="image/*"
+            folder="offers"
+            label="Uploader"
+            data-testid="wizard-thumbnail-upload"
+            onUpload={(url) => setForm(prev => ({ ...prev, thumbnail: url }))}
+          />
+        </div>
+        {form.thumbnail && (analyserMediaUrl(form.thumbnail) || {}).type === 'image' && (
+          <img
+            key={form.thumbnail}
+            src={form.thumbnail}
+            alt="Miniature"
+            data-testid="wizard-thumbnail-preview"
+            style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #333', marginTop: '6px' }}
+            onError={(e) => { e.target.style.opacity = '0.3'; e.target.alt = 'Image indisponible'; }}
+          />
+        )}
+      </div>
+
       <div>
         <label className="block text-xs mb-1" style={LABEL_STYLE}>
           <SvgIcon name="video" size={14} />{' '}Vidéo (URL)
@@ -2731,17 +2796,29 @@ export default function OfferWizard({
                 style={{ width: '100%', aspectRatio: '16 / 9', border: 0 }}
                 allowFullScreen
               />
+            ) : champVideoEstImage(form) ? (
+              /* Le champ « vidéo » contient une IMAGE (autorisé depuis V229) :
+                 avant ce lot la preview montait un <video> sur un .png — zone
+                 vide. On rend l'image, comme la vitrine le fera. */
+              <div style={{ background: 'var(--video-bg, #000)', display: 'flex', justifyContent: 'center' }} data-testid="wizard-video-preview" data-ratio="image">
+                <img key={form.videoUrl} src={form.videoUrl} alt="Visuel de couverture" style={{ maxWidth: '100%', maxHeight: '360px', objectFit: 'contain', display: 'block' }}
+                  onError={(e) => { e.target.style.opacity = '0.3'; e.target.alt = 'Image indisponible'; }} />
+              </div>
             ) : (
               /* FORMAT VIDEO : la previsualisation rend EXACTEMENT le format
                  choisi (9:16 en colonne centree, 16:9 en paysage, 1:1 en carre,
                  auto = format d'origine), object-fit contain, fond noir. Changer
-                 le selecteur ci-dessous met la preview a jour immediatement. */
-              <div style={stylesLecteur(form.video_aspect_ratio, { hauteurMax: '360px' }).conteneur} data-testid="wizard-video-preview" data-ratio={normaliserRatio(form.video_aspect_ratio)}>
+                 le selecteur ci-dessous met la preview a jour immediatement.
+                 La miniature dediee sert de poster, comme sur la vitrine. */
+              <div style={{ ...stylesLecteur(form.video_aspect_ratio, { hauteurMax: '360px' }).conteneur, minHeight: '200px' }} data-testid="wizard-video-preview" data-ratio={normaliserRatio(form.video_aspect_ratio)}>
               <video
+                key={form.videoUrl}
                 ref={(el) => { if (el) el._v234 = true; }}
                 src={form.videoUrl}
+                poster={mediaPrincipal(form).poster || undefined}
                 controls
                 playsInline
+                preload="metadata"
                 style={stylesLecteur(form.video_aspect_ratio, { hauteurMax: '360px' }).video}
                 onLoadedMetadata={(e) => {
                   // V234: stocker la duree pour le slider de miniature
@@ -2767,7 +2844,7 @@ export default function OfferWizard({
             )}
             {/* FORMAT VIDEO : selecteur d'affichage. Une URL externe sans
                 dimensions connues reste en Auto, choix manuel possible. */}
-            {!/YouTube|youtu\.be|vimeo/i.test(form.videoUrl) && (
+            {!/YouTube|youtu\.be|vimeo/i.test(form.videoUrl) && !champVideoEstImage(form) && (
               <div className="mt-3" data-testid="wizard-video-ratio">
                 <label className="block text-xs mb-1" style={LABEL_STYLE}>
                   <SvgIcon name="video" size={14} />{' '}Format d'affichage

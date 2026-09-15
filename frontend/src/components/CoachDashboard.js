@@ -1770,7 +1770,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1,
     duration_value: '', duration_unit: '', is_auto_prolong: true,
     // V224: medias + metadonnees d'activite
-    videoUrl: '', linked_course_ids: [],
+    videoUrl: '', thumbnail: '', linked_course_ids: [],
     duration_minutes: '', location: '', max_participants: '',
     // V225: libelles des paliers de prix progressif (personnalisables).
     label_early_bird: '', label_standard: '', label_last_minute: '',
@@ -1782,6 +1782,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     billing_mode: 'unique',
     duree_mois: null,
     video_aspect_ratio: 'auto',
+    mobile_money_enabled: false,
     // R2c : VOLONTAIREMENT VIDE, et pas « single_class ». Un type par defaut
     // serait accepte sans que le coach ait rien lu — et « cours a l'unite »
     // est justement celui qui rendra l'offre publique dans « Ou pratiquer ? ».
@@ -3232,6 +3233,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       description: offer.description || "",
       keywords: offer.keywords || "", // FIX: Charger les mots-clés existants
       images: paddedImages,
+      // MÉDIAS : la miniature dédiée doit être RELUE à l'édition. Sans cette
+      // ligne, le formulaire s'ouvrait sans `thumbnail` et l'enregistrement
+      // retombait sur `images[0]` ou "" — la miniature choisie (curseur V234 ou
+      // champ dédié) disparaissait à la sauvegarde suivante.
+      thumbnail: offer.thumbnail || '',
       category: offer.category || "service",
       isProduct: offer.isProduct || false,
       variants: offer.variants || null,
@@ -3318,6 +3324,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       billing_mode: offer.billing_mode || 'unique',
       duree_mois: offer.duree_mois ?? null,
       video_aspect_ratio: offer.video_aspect_ratio || 'auto',
+      mobile_money_enabled: !!offer.mobile_money_enabled,
       // R2c : RELU, comme son voisin. Sans cette ligne, rouvrir une offre
       // classifiee la reafficherait « sans type », et l'enregistrement
       // suivant la ramenerait a « non classifie » en base. C'est exactement
@@ -3357,7 +3364,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // pré-remplis dans le formulaire suivant.
       label_early_bird: '', label_standard: '', label_last_minute: '',
       // V224
-      videoUrl: '', linked_course_ids: [],
+      videoUrl: '', thumbnail: '', linked_course_ids: [],
       duration_minutes: '', location: '', max_participants: '',
       // V256: sans ce reset, le lien partenaire de l'offre precedente resterait
       // pre-rempli — et publie — sur l'offre suivante.
@@ -3374,6 +3381,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       billing_mode: 'unique',
       duree_mois: null,
       video_aspect_ratio: 'auto',
+      mobile_money_enabled: false,
       // R2c : meme raison. Le type de l'offre abandonnee ne doit pas etre
       // celui, silencieusement pre-rempli, de la suivante.
       offer_type: '',
@@ -3444,6 +3452,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         billing_mode: src.billing_mode || 'unique',
         duree_mois: v223Int(src.duree_mois, null),
         video_aspect_ratio: src.video_aspect_ratio || 'auto',
+        mobile_money_enabled: !!src.mobile_money_enabled,
         isProduct: src.isProduct || false,
         variants: src.variants || null,
         tva: parseFloat(src.tva) || 0,
@@ -3613,7 +3622,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // pré-remplis dans le formulaire suivant.
       label_early_bird: '', label_standard: '', label_last_minute: '',
       // V224
-      videoUrl: '', linked_course_ids: [],
+      videoUrl: '', thumbnail: '', linked_course_ids: [],
       duration_minutes: '', location: '', max_participants: '',
       // V256: idem — le lien partenaire ne doit pas se reporter sur l'offre suivante.
       external_link_url: '', external_link_label: '', external_link_enabled: false,

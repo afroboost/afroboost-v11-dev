@@ -265,6 +265,7 @@ import { PublicationsCarousel } from "./components/Publications"; // V261
 import OffresAimants from "./components/OffresAimants";
 import { visiteurEstConnecte, regrouperOffres as aimantsRegrouper } from "./utils/offresAimants";
 import { normaliserRatio as videoRatioNormaliser, estPortrait as videoEstPortrait } from "./utils/videoRatio";
+import { analyserMediaUrl } from "./utils/mediaOffre";
 import { ConfirmationBoost } from "./components/publications/Boost"; // V342
 // DEEPLINK PROSPECTION — cet import n'est PAS decoratif : le module capture
 // `?prospection=1&inbound=<id>` AU CHARGEMENT, donc avant le premier rendu.
@@ -967,53 +968,10 @@ function v255UniqueSchedules(offer) {
 }
 
 // Parse media URL (YouTube, Vimeo, Image)
-function parseMediaUrl(url) {
-  if (!url || typeof url !== 'string') return null;
-  
-  const trimmedUrl = url.trim();
-  if (!trimmedUrl) return null;
-  
-  // YouTube - Support multiple formats
-  // youtube.com/watch?v=ID, youtu.be/ID, youtube.com/embed/ID, youtube.com/v/ID
-  const ytMatch = trimmedUrl.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-  if (ytMatch) return { type: 'youtube', id: ytMatch[1] };
-  
-  // Vimeo - Support multiple formats
-  const vimeoMatch = trimmedUrl.match(/vimeo\.com\/(?:video\/)?(\d+)/);
-  if (vimeoMatch) return { type: 'vimeo', id: vimeoMatch[1] };
-  
-  // Video files - MP4, WebM, MOV, AVI
-  const videoExtensions = ['.mp4', '.webm', '.mov', '.avi', '.m4v', '.ogv'];
-  const lowerUrl = trimmedUrl.toLowerCase();
-  // V224: l'extension n'est reconnue qu'en FIN de chemin, avant une eventuelle
-  // chaine de requete (?) ou une ancre (#). L'ancien `includes()` cherchait une
-  // sous-chaine n'importe ou : une image hebergee sur un domaine `cdn.movie...`
-  // ou dans un dossier `/x.movies/` etait rendue en <video> noir, sans repli.
-  // Les URL d'upload de la plateforme sont de la forme /api/files/{id}/{nom.ext},
-  // l'extension y est bien en fin de chemin : aucun cas d'usage n'est perdu.
-  const lowerPath = lowerUrl.split('#')[0].split('?')[0];
-  if (videoExtensions.some(ext => lowerPath.endsWith(ext))) {
-    return { type: 'video', url: trimmedUrl };
-  }
-
-  // V233: Cloudinary video — les URL Cloudinary video contiennent /video/upload/
-  // dans le chemin, mais ne se terminent pas par une extension video connue.
-  // Il faut les detecter AVANT le check CDN image qui attrape cloudinary.com.
-  if (lowerUrl.includes('cloudinary.com') && lowerUrl.includes('/video/upload/')) {
-    return { type: 'video', url: trimmedUrl };
-  }
-
-  // Image - Accept all common formats and CDN URLs
-  const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico'];
-  const imageCDNs = ['imgbb.com', 'cloudinary.com', 'imgur.com', 'unsplash.com', 'pexels.com', 'i.ibb.co'];
-
-  if (imageExtensions.some(ext => lowerUrl.includes(ext)) || imageCDNs.some(cdn => lowerUrl.includes(cdn))) {
-    return { type: 'image', url: trimmedUrl };
-  }
-  
-  // Default: treat as image (many CDNs don't have extensions in URLs)
-  return { type: 'image', url: trimmedUrl };
-}
+// MÉDIAS : la détection vit désormais dans utils/mediaOffre.js (partagée avec
+// les cartes aimants, la fiche et la prévisualisation du dashboard). Le nom
+// `parseMediaUrl` est conservé : il est appelé à une quinzaine d'endroits.
+const parseMediaUrl = analyserMediaUrl;
 
 // Globe Icon - Clean, no background
 const GlobeIcon = () => (
@@ -8523,50 +8481,11 @@ function App() {
       {/* V268d — MUR DES ABONNES, place AU-DESSUS de la barre de navigation
           (Tout/Sessions/Offres/Shop), comme demande. Filtre par la recherche
           quand elle est active. Le composant se rend null si la liste est vide. */}
-      {/* OFFRES AIMANTS : pour un visiteur non connecte, le mur passe APRES les
-          offres recommandees (voir `murPublications` dans le bloc des offres) —
-          la page devient un parcours de conversion : hero, essai, 3 offres,
-          toutes les offres, puis le contenu. Un utilisateur connecte garde le
-          mur en tete, comme aujourd'hui. */}
-      {!parcoursConversion && (
-      <div className="max-w-4xl mx-auto px-4">
-        {/* === UI-PUB2 : titre seul. La barre horizontale globale a ete RETIREE —
-            elle n'etait pas l'emplacement demande. Les actions sont desormais
-            SUPERPOSEES au media de chaque carte (voir Publications.js), style
-            Reel. Le titre reste ici : `PublicationsCarousel` se rend `null`
-            quand le mur est vide (expiration 48 h), il aurait disparu avec. */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
-          <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', flexShrink: 0 }}>
-            <SvgIcon name="users" size={18} />
-          </span>
-          <span style={{ color: '#fff', fontSize: '18px', fontWeight: 600 }}>Publications</span>
-        </div>
-
-        <PublicationsCarousel
-          actions={{
-            likesCount: uipubLikes,
-            liked: uipubDejaLike,
-            onLike: uipubLiker,
-            commentsCount: socialTotalCount || socialComments.length,
-            onComments: () => setShowCommentsPanel(true),
-            // UI-PUB4 : MEMES donnees que le panneau global. La vue agrandie les
-            // rend elle-meme, parce que ce panneau est en `z-50` alors que la
-            // lightbox est a `zIndex: 2147483000` — il s'ouvrait derriere.
-            comments: socialComments,
-            onReserve: uipubReserver,
-          }}
-          publications={
-            searchQuery.trim()
-              ? v261Publications.filter(p => {
-                  const q = searchQuery.trim().toLowerCase();
-                  return ((p.caption || '').toLowerCase().indexOf(q) !== -1)
-                    || ((p.display_name || p.subscriber_name || '').toLowerCase().indexOf(q) !== -1);
-                })
-              : v261Publications
-          }
-        />
-      </div>
-      )}
+      {/* PUBLICATIONS : le mur est rendu APRES le bloc des offres (voir
+          `murPublications` dans les sections dynamiques), pour tout le monde —
+          l'ordre de la page est : hero, navigation, offres, « voir toutes les
+          offres », publications, boutique. (V268d le placait ici, au-dessus de
+          la barre de navigation.) */}
 
       {/* V335 : le bloc d'inscriptions (WhatsApp + newsletter) a ete RETIRE de la
           page d'accueil. Le composant `OptinSubscribe` et les endpoints
@@ -8883,7 +8802,7 @@ function App() {
           // aimant (vitrine partenaire sans formule de saison, par exemple).
           const aimantsActifs = parcoursConversion && filteredServices.length > 0
             && aimantsRegrouper(filteredServices).aimants.length > 0;
-          const murPublications = parcoursConversion ? (
+          const murPublications = (
             <div key="mur-publications" className="mb-8">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
                 <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', flexShrink: 0 }}>
@@ -8909,7 +8828,7 @@ function App() {
                 }
               />
             </div>
-          ) : null;
+          );
 
           // --- BLOC OFFRES (v159: flow offer-first — cliquez offre puis horaire apparaît) ---
           const offersBlock = activeFilter !== 'shop' && filteredServices.length > 0 && (
@@ -8961,7 +8880,7 @@ function App() {
           // V119: Rendu dynamique selon l'ordre choisi
           // V261: le mur des abonnes passe EN TETE, quel que soit cet ordre —
           // c'est du contenu vivant, il perd son interet en bas de page.
-          // OFFRES AIMANTS : pour le visiteur, le mur vient APRES les offres.
+          // PUBLICATIONS : le mur vient APRES les offres, pour tout le monde.
           return isOffersFirst
             ? <>{publicationsBlock}{offersBlock}{sessionsBlock}{murPublications}</>
             : <>{publicationsBlock}{sessionsBlock}{offersBlock}{murPublications}</>;

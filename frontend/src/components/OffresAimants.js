@@ -26,6 +26,7 @@ import {
   libelleDepuis, prixUnitaire, prixFormate, economieOffre, libellePaiement, familleOffre, FAMILLE,
 } from '../utils/offresAimants';
 import { stylesLecteur, normaliserRatio, ratioDepuisDimensions, estPortrait } from '../utils/videoRatio';
+import { mediaPrincipal } from '../utils/mediaOffre';
 
 const COULEUR = 'var(--primary-color, #D91CD2)';
 const RGB = 'var(--primary-rgb, 217, 28, 210)';
@@ -35,90 +36,107 @@ const ICONE_AIMANT = { lancement: 'fire', saison: 'star', mensuel: 'zap' };
 
 /* ───────────────────────── média d'une offre ───────────────────────── */
 
-const imageFixe = (offre, analyser) => {
-  const candidats = [].concat(Array.isArray(offre.images) ? offre.images : [], offre.thumbnail || []);
-  for (let i = 0; i < candidats.length; i += 1) {
-    const m = analyser(candidats[i]);
-    if (m && m.type === 'image') return m.url;
-  }
-  return '';
-};
-
-const videoDe = (offre, analyser) => {
-  const candidats = [offre.videoUrl].concat(Array.isArray(offre.images) ? offre.images : []);
-  for (let i = 0; i < candidats.length; i += 1) {
-    const m = analyser(candidats[i]);
-    if (m && m.type === 'video') return m.url;
-  }
-  return '';
-};
+/**
+ * Fond flouté derrière un média en `contain` : la zone est « remplie »
+ * visuellement (aucune bande noire nue) sans jamais déformer ni rogner le
+ * média principal. Poster flouté s'il existe, sinon le dégradé de marque.
+ */
+function FondFlou({ poster }) {
+  const style = {
+    position: 'absolute', inset: 0, zIndex: 0,
+    background: poster ? `center / cover no-repeat url("${poster}")` : `linear-gradient(135deg, rgba(${RGB}, 0.35), rgba(139, 92, 246, 0.25))`,
+    filter: poster ? 'blur(18px) brightness(0.55)' : 'none',
+    transform: 'scale(1.15)',
+  };
+  return <div aria-hidden="true" style={style} data-testid="fond-flou" />;
+}
 
 /**
  * Le lecteur de la fiche : respecte le ratio (stocké sur l'offre, sinon mesuré
- * sur la vidéo), `object-fit: contain`, fond noir. Jamais étiré, jamais rogné.
+ * sur la vidéo), `object-fit: contain`, fond flouté. Jamais étiré, jamais rogné.
+ * Sans vidéo : l'image (miniature dédiée en priorité). Sans rien : repli sobre.
  */
-function LecteurOffre({ offre, analyser, hauteurMax }) {
+function LecteurOffre({ offre, analyser, hauteurMax, estMobile }) {
   const [mesure, setMesure] = useState(null);
-  const video = videoDe(offre, analyser);
-  const poster = imageFixe(offre, analyser);
+  const [videoKo, setVideoKo] = useState(false);
+  const [imageKo, setImageKo] = useState(false);
+  const { poster, video } = mediaPrincipal(offre, analyser);
   const ratioStocke = normaliserRatio(offre.video_aspect_ratio);
   const ratio = ratioStocke !== 'auto' ? ratioStocke : (mesure ? ratioDepuisDimensions(mesure.w, mesure.h) : 'auto');
-  const st = stylesLecteur(ratio, { hauteurMax: hauteurMax || '56vh' });
-  if (video) {
+  const portrait = ratio === '9:16' || (ratio === 'auto' && !!mesure && mesure.h > mesure.w);
+  // Sur un téléphone en portrait, une vidéo verticale exploite presque toute
+  // la hauteur ; en paysage/desktop, elle reste une colonne centrée.
+  const hMax = hauteurMax || (portrait ? (estMobile ? '62vh' : '56vh') : (estMobile ? '40vh' : '48vh'));
+  const st = stylesLecteur(ratio, { hauteurMax: hMax, fond: 'transparent' });
+  if (video && !videoKo) {
     return (
-      <div style={st.conteneur} data-testid="fiche-lecteur" data-ratio={ratio}>
+      <div style={{ ...st.conteneur, minHeight: portrait ? hMax : undefined, background: 'var(--video-bg, #000)' }} data-testid="fiche-lecteur" data-ratio={ratio}>
+        <FondFlou poster={poster} />
         <video
           src={video}
           poster={poster || undefined}
           controls
           playsInline
           preload="metadata"
-          style={st.video}
+          style={{ ...st.video, position: 'relative', zIndex: 1 }}
           onLoadedMetadata={(e) => {
             const v = e.currentTarget;
             if (v.videoWidth && v.videoHeight) setMesure({ w: v.videoWidth, h: v.videoHeight });
           }}
+          onError={() => setVideoKo(true)}
         />
       </div>
     );
   }
-  if (poster) {
+  if (poster && !imageKo) {
     return (
-      <div style={{ ...st.conteneur, maxHeight: hauteurMax || '40vh' }}>
-        <img src={poster} alt={offre.name || ''} style={{ width: '100%', height: 'auto', maxHeight: hauteurMax || '40vh', objectFit: 'cover', display: 'block' }} />
+      <div style={{ ...st.conteneur, maxHeight: hauteurMax || '46vh', background: 'var(--video-bg, #000)' }} data-testid="fiche-image">
+        <FondFlou poster={poster} />
+        <img src={poster} alt={offre.name || ''} onError={() => setImageKo(true)} style={{ position: 'relative', zIndex: 1, width: '100%', height: 'auto', maxHeight: hauteurMax || '46vh', objectFit: 'contain', display: 'block' }} />
       </div>
     );
   }
-  return null;
+  // Repli : aucune zone vide cassée, un bandeau de marque sobre.
+  return <div style={{ height: 96, background: `linear-gradient(135deg, rgba(${RGB}, 0.35), rgba(139, 92, 246, 0.25))` }} data-testid="fiche-repli" />;
 }
 
-/** La vignette d'une carte aimant : image fixe de préférence, sinon vidéo muette. */
+/**
+ * La vignette d'une carte aimant : la MINIATURE (image) est prioritaire ; sans
+ * image, la vidéo muette au bon format (portrait : boîte plus haute, fond
+ * flouté, jamais rognée). Sans rien, ou média indisponible : repli sobre.
+ */
 function VignetteOffre({ offre, analyser, hauteur }) {
   const [mesure, setMesure] = useState(null);
-  const poster = imageFixe(offre, analyser);
-  const video = videoDe(offre, analyser);
-  const h = hauteur || 150;
-  if (poster || !video) {
-    return poster
-      ? <img src={poster} alt="" style={{ width: '100%', height: h, objectFit: 'cover', display: 'block' }} />
-      : <div style={{ width: '100%', height: h, background: `rgba(${RGB}, 0.12)` }} />;
-  }
+  const [videoKo, setVideoKo] = useState(false);
+  const [imageKo, setImageKo] = useState(false);
+  const { poster, video } = mediaPrincipal(offre, analyser);
   const ratio = normaliserRatio(offre.video_aspect_ratio);
   const portrait = estPortrait(ratio, mesure && mesure.w, mesure && mesure.h);
+  const h = hauteur || 160;
+  const repli = <div style={{ width: '100%', height: h, background: `linear-gradient(135deg, rgba(${RGB}, 0.35), rgba(139, 92, 246, 0.25))` }} data-testid="vignette-repli" />;
+  if (poster && !imageKo) {
+    return <img src={poster} alt="" onError={() => setImageKo(true)} style={{ width: '100%', height: h, objectFit: 'cover', display: 'block' }} data-testid="vignette-image" />;
+  }
+  if (!video || videoKo) return repli;
+  const contain = portrait || ratio === '1:1';
   return (
-    <video
-      src={video}
-      muted
-      autoPlay
-      loop
-      playsInline
-      preload="metadata"
-      style={{ width: '100%', height: h, objectFit: portrait || ratio === '1:1' ? 'contain' : 'cover', background: 'var(--video-bg, #000)', display: 'block' }}
-      onLoadedMetadata={(e) => {
-        const v = e.currentTarget;
-        if (v.videoWidth && v.videoHeight) setMesure({ w: v.videoWidth, h: v.videoHeight });
-      }}
-    />
+    <div style={{ position: 'relative', width: '100%', height: contain ? Math.round(h * 1.5) : h, overflow: 'hidden', background: 'var(--video-bg, #000)' }} data-testid="vignette-video" data-portrait={contain ? 'true' : 'false'}>
+      {contain ? <FondFlou poster="" /> : null}
+      <video
+        src={video}
+        muted
+        autoPlay
+        loop
+        playsInline
+        preload="metadata"
+        style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%', objectFit: contain ? 'contain' : 'cover', display: 'block' }}
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget;
+          if (v.videoWidth && v.videoHeight) setMesure({ w: v.videoWidth, h: v.videoHeight });
+        }}
+        onError={() => setVideoKo(true)}
+      />
+    </div>
   );
 }
 
@@ -230,7 +248,7 @@ function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkout
   const payant = !fiche.gratuit;
   return (
     <Panneau ouvert onFermer={onFermer} titre="Détail de l’offre" estMobile={estMobile} testId="fiche-offre">
-      <LecteurOffre offre={offre} analyser={analyser} hauteurMax={estMobile ? '46vh' : '52vh'} />
+      <LecteurOffre offre={offre} analyser={analyser} estMobile={estMobile} />
       <div style={{ padding: '14px 18px 18px' }}>
         <Badge texte={groupeSaison ? 'Meilleur prix' : fiche.badge} fort={fiche.famille === FAMILLE.LANCEMENT} />
         <h3 style={{ fontSize: 22, fontWeight: 800, margin: '8px 0 2px', color: '#fff' }} data-testid="fiche-nom">{titre}</h3>
@@ -381,7 +399,7 @@ function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir }) {
         transition: 'transform 0.2s',
       }}
     >
-      <VignetteOffre offre={o} analyser={analyser} hauteur={150} />
+      <VignetteOffre offre={o} analyser={analyser} hauteur={160} />
       <div style={{ padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ color: COULEUR, display: 'inline-flex' }}><SvgIcon name={ICONE_AIMANT[aimant.cle] || 'gift'} size={16} /></span>
@@ -446,18 +464,21 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
           <CarteAimant key={a.cle} aimant={a} mensuelRef={groupe.mensuelRef} analyser={analyser} onOuvrir={setFiche} />
         ))}
       </div>
-      <button
-        type="button"
-        data-testid="voir-toutes-les-offres"
-        onClick={() => setToutes(true)}
-        style={{
-          marginTop: 12, width: '100%', padding: '12px 16px', borderRadius: 999, cursor: 'pointer',
-          border: '1px solid rgba(255,255,255,0.18)', background: 'rgba(255,255,255,0.06)', color: '#fff', fontWeight: 700, fontSize: 14,
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-        }}
-      >
-        <SvgIcon name="grid" size={16} /> Voir toutes les offres
-      </button>
+      {/* Lien discret, pas un bouton massif : une petite icône + le texte. */}
+      <div style={{ marginTop: 10, textAlign: 'center' }}>
+        <button
+          type="button"
+          data-testid="voir-toutes-les-offres"
+          onClick={() => setToutes(true)}
+          style={{
+            padding: '6px 12px', borderRadius: 999, cursor: 'pointer', border: 'none', background: 'transparent',
+            color: COULEUR, fontWeight: 600, fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6,
+            textDecoration: 'underline', textDecorationColor: `rgba(${RGB}, 0.45)`, textUnderlineOffset: 3,
+          }}
+        >
+          <SvgIcon name="grid" size={14} /> Voir toutes les offres
+        </button>
+      </div>
 
       <ToutesLesOffres
         ouvert={toutes}
