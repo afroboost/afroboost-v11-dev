@@ -38542,7 +38542,17 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
             # valide, FCM 201 — et aucune notification affichee. 3600 s couvre
             # ces fenetres de veille sans conserver un message devenu inutile
             # pendant des heures.
-            _rep439 = webpush(subscription_info=subscription_info, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"}, ttl=3600)
+            # V525: URGENCE DE LIVRAISON. Sans en-tete `Urgency`, FCM traite un
+            # web push en priorite NORMALE : quand l'appareil dort (Doze), le
+            # message est differe, puis abandonne a l'expiration du TTL (3600 s)
+            # — 201 accepte, jamais affiche. Diagnostic du 15/09/2026 : SW,
+            # abonnement Android, VAPID et payload prouves identiques au push
+            # valide en main le 09/09 ; seul le maillon FCM -> telephone differe.
+            # Le transactionnel (reservation, rappel de cours, vente, chat) part
+            # en `high` ; seule la campagne push (`type: broadcast`) reste en
+            # `normal`. Le discriminant est le `type` deja present dans le payload.
+            _urgence = "normal" if (data or {}).get("type") == "broadcast" else "high"
+            _rep439 = webpush(subscription_info=subscription_info, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"}, ttl=3600, headers={"Urgency": _urgence})
             _st_ok = getattr(_rep439, "status_code", "?")
             logger.info("[PUSH-FCM] push_success rang=%d emp=%s statut=%s", _rang, _emp, _st_ok)
             await _obs_verdict(_endpoint, _st_ok, _rang)

@@ -226,9 +226,11 @@ def charger_moteur_push(base, reponses):
         status_code = 201
 
     def faux_webpush(subscription_info=None, data=None, vapid_private_key=None,
-                     vapid_claims=None, ttl=None):
+                     vapid_claims=None, ttl=None, headers=None):
         ep = (subscription_info or {}).get("endpoint")
-        tentatives.append({"endpoint": ep, "ttl": ttl, "payload": data})
+        # V525: l'en-tete Urgency est releve pour etre verifie par le banc
+        tentatives.append({"endpoint": ep, "ttl": ttl, "payload": data,
+                           "urgency": (headers or {}).get("Urgency")})
         verdict = reponses.get(ep, 201)
         if verdict != 201:
             raise FauxWebPushException(verdict)
@@ -376,6 +378,26 @@ async def scenario_selection():
     verifier("E3. l'envoi est declare reussi", ok is True, ok)
     verifier("E4. TTL explicite (V434), jamais 0",
              all(t["ttl"] == 3600 for t in tentatives), [t["ttl"] for t in tentatives])
+
+    # --- E ter. V525 : URGENCE selon le type du payload ----------------------
+    # transactionnel (reservation coach, rappel de cours, sans type) -> high ;
+    # seule la campagne push (`type: broadcast`) reste en normal.
+    for _type, _attendu in (("new_reservation", "high"), ("course_reminder", "high"),
+                            ("course_reminder_not_booked", "high"), (None, "high"),
+                            ("broadcast", "normal")):
+        base = Base()
+        await base.push_subscriptions.insert_one(abo("https://fcm/URG", "2026-09-15T18:00:00"))
+        envoyer, _, tentatives = charger_moteur_push(base, {})
+        await envoyer(PID, "t", "m", {"type": _type} if _type else None)
+        verifier("E5. Urgency=%s pour type=%s" % (_attendu, _type),
+                 len(tentatives) == 1 and tentatives[0]["urgency"] == _attendu,
+                 [x["urgency"] for x in tentatives])
+    base = Base()
+    await base.push_subscriptions.insert_one(abo("https://fcm/URG2", "2026-09-15T18:00:00"))
+    envoyer, _, tentatives = charger_moteur_push(base, {})
+    await envoyer(PID, "t", "m", {"type": "new_reservation"})
+    verifier("E6. rien d'autre ne change : TTL 3600 et payload intacts",
+             tentatives[0]["ttl"] == 3600 and '"type": "new_reservation"' in tentatives[0]["payload"], tentatives[0]["ttl"])
 
     # --- E bis. endpoint en double -> un seul appel -------------------------
     base = Base()
