@@ -67,6 +67,9 @@ const PawaPayOfferButton = ({ offer, priceChf, disabled = false }) => {
   // ATTENTION : ce retour anticipé doit rester APRÈS tous les hooks ci-dessus —
   // un hook placé plus bas ne serait pas appelé à chaque rendu (règles de React).
   if (!dispo || !priceChf || priceChf <= 0) return null;
+  // MOBILE MONEY PAR OFFRE : rendu seulement si le coach l'a activé sur
+  // l'offre (dashboard → « Afficher Mobile Money »). Faux par défaut.
+  if (!offer || !offer.mobile_money_enabled) return null;
 
   const payer = async () => {
     if (occupe) return;

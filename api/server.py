@@ -1064,6 +1064,9 @@ class Offer(BaseModel):
     # FORMAT VIDEO — ratio d'affichage du média vidéo de l'offre : auto (format
     # d'origine) / 9:16 / 16:9 / 1:1. Lu par la vitrine (contain, jamais déformé).
     video_aspect_ratio: Optional[str] = "auto"
+    # MOBILE MONEY par offre : le bouton PawaPay n'est proposé que si le coach
+    # l'active (clients en Afrique). Faux par défaut ; Stripe/carte/TWINT intacts.
+    mobile_money_enabled: bool = False
     isProduct: bool = False  # True = physical product, False = service/course
     variants: Optional[dict] = None  # { sizes: ["S","M","L"], colors: ["Noir","Blanc"], weights: ["0.5kg","1kg"] }
     tva: float = 0.0  # TVA percentage
@@ -1216,6 +1219,7 @@ class OfferCreate(BaseModel):
     billing_mode: Optional[str] = None
     duree_mois: Optional[int] = None
     video_aspect_ratio: Optional[str] = None
+    mobile_money_enabled: Optional[bool] = None
     isProduct: bool = False
     variants: Optional[dict] = None
     tva: float = 0.0
@@ -2509,7 +2513,7 @@ R2B_CLES_OFFRE_PUBLIQUE = (
     # offre limitée (le compte à rebours V145 la lisait déjà côté coach — un
     # visiteur anonyme ne la recevait pas).
     "billing_mode", "duree_mois", "countdown_enabled", "countdown_date", "countdown_time", "countdown_text",
-    "video_aspect_ratio",
+    "video_aspect_ratio", "mobile_money_enabled",
 )
 
 # Les seules cles qu'un coach PUBLIC peut porter. `email` en est absent.
@@ -2751,6 +2755,7 @@ async def create_offer(offer: OfferCreate, request: Request):
     offer_data["billing_mode"] = _hiver.billing_mode_valide(offer_data.get("billing_mode"))
     offer_data["duree_mois"] = _hiver.duree_mois_valide(offer_data.get("duree_mois"))
     offer_data["video_aspect_ratio"] = video_ratio_valide(offer_data.get("video_aspect_ratio"))
+    offer_data["mobile_money_enabled"] = bool(offer_data.get("mobile_money_enabled"))
     # v61: Blindage conversion durée — accepte string, int, vide, null
     raw_dv = offer_data.get("duration_value")
     if raw_dv is not None and raw_dv != "" and raw_dv is not False:
@@ -2879,6 +2884,8 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
         offer.duree_mois if offer.duree_mois is not None else _offre_avant.get("duree_mois"))
     update_data["video_aspect_ratio"] = video_ratio_valide(
         offer.video_aspect_ratio if offer.video_aspect_ratio is not None else _offre_avant.get("video_aspect_ratio"))
+    update_data["mobile_money_enabled"] = bool(
+        offer.mobile_money_enabled if offer.mobile_money_enabled is not None else _offre_avant.get("mobile_money_enabled"))
     # v61: Blindage conversion durée
     raw_dv = update_data.get("duration_value")
     if raw_dv is not None and raw_dv != "" and raw_dv is not False:

@@ -658,6 +658,11 @@ async def create_pawapay_checkout(request: PawaPayCheckoutRequest):
             offre = None
             logger.warning(f"[PAWAPAY] Lecture de l'offre {offer_id} échouée: {e}")
         if offre:
+            # MOBILE MONEY PAR OFFRE : le coach choisit, offre par offre, si ce
+            # moyen de paiement est proposé (faux par défaut). Le bouton n'est
+            # pas rendu côté vitrine ; ce refus serveur ferme le chemin direct.
+            if not offre.get("mobile_money_enabled"):
+                raise HTTPException(status_code=403, detail="Mobile Money n'est pas proposé pour cette offre")
             brut = offre.get("pack_sessions")
             try:
                 if brut is not None and int(float(brut)) > 0:
