@@ -20,16 +20,27 @@ PHASE 2 (revenus, abonnements, essais & conversion) : les souscriptions, fiches
 et paiements sont lus sur TOUT le périmètre (pas seulement ceux des
 réservations) — un Pulse acheté et jamais consommé est une recette. La DB reste
 en LECTURE SEULE : aucune écriture, nulle part.
+
+PHASE 3 (`vue=association`, `GET /api/analytics/export?format=csv|xlsx|pdf`) :
+une PROJECTION agrégée du même résultat (période précédente et douze mois
+calculés en mémoire sur les mêmes tables, + une lecture de `concept` pour le
+nom public d'un coach filtré). Aucune donnée personnelle ne sort :
+`verifier_anonymat` refuse la réponse sinon.
 """
 import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from api.routes.analytics_shared import (
     PERIODES, bornes_periode, calculer_kpi, calculer_kpi_finance, choisir_fiche_code, cle_participant,
-    construire_achats, construire_faits, vers_local,
+    construire_achats, construire_faits, mois_suivant, vers_local,
+)
+from api.routes.analytics_association import (
+    PERIMETRE_ENSEMBLE, export_csv, export_pdf, export_xlsx, periode_precedente, projeter_association,
+    verifier_anonymat,
 )
 from api.routes.shared import is_super_admin
 from datetime import datetime, timezone
+from fastapi.responses import Response
 
 logger = logging.getLogger(__name__)
 analytics_router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -56,9 +67,10 @@ def _perimetre(email: str, coach_id: str) -> str:
     return email.lower()
 
 
-@analytics_router.get("/cockpit")
-async def analytics_cockpit(request: Request, periode: str = "mois", du: str = "", au: str = "",
-                            coach_id: str = "", course_id: str = "", granularite: str = "jour"):
+async def _calculer_cockpit(request: Request, periode: str = "mois", du: str = "", au: str = "",
+                            coach_id: str = "", course_id: str = "", granularite: str = "jour",
+                            mois: str = "", vue: str = ""):
+    """LE calcul, partagé par le cockpit et les exports : mêmes lectures, mêmes règles."""
     from api.server import db
     from api.routes.reservation_routes import lot1_occurrence_iso
 
@@ -71,9 +83,10 @@ async def analytics_cockpit(request: Request, periode: str = "mois", du: str = "
     if _g not in ("jour", "semaine", "mois"):
         raise HTTPException(status_code=400, detail="granularite attendue : jour|semaine|mois")
     maintenant = vers_local(datetime.now(timezone.utc))
-    debut, fin = bornes_periode(_p, maintenant, du, au)
+    debut, fin = bornes_periode(_p, maintenant, du, au, mois)
     if debut is None:
-        raise HTTPException(status_code=400, detail="perso : du et au (YYYY-MM-DD, du <= au) requis")
+        raise HTTPException(status_code=400, detail="perso : du et au (YYYY-MM-DD, du <= au) requis ; mois : YYYY-MM")
+    _vue = str(vue or "").strip().lower()
 
     # ── 1. les réservations de cours du périmètre (historique complet) ──────
     _q = {"isProduct": {"$ne": True}}
@@ -175,4 +188,73 @@ async def analytics_cockpit(request: Request, periode: str = "mois", du: str = "
     kpi.update(_fin)
     kpi["achats"] = {"ecartes": _achats["ecartes"], "qualite": _achats["qualite"], "total": len(_achats["achats"])}
     kpi["requetes"] = 7
+
+    # ── PHASE 3 : la projection Association — mêmes tables, AUCUNE lecture de plus ──
+    # La période précédente et les douze mois de l'année se calculent EN MÉMOIRE
+    # sur les faits et les achats déjà chargés (tout l'historique) : le bilan
+    # coûte 13 passes de plus sur quelques centaines de lignes, pas une requête.
+    if _vue == "association":
+        def _kpi_de(_d, _f):
+            _k = calculer_kpi(faits, _d, _f, "mois")
+            _k.update(calculer_kpi_finance(_achats["achats"], _achats["en_attente"], cartes, faits, _d, _f,
+                                           "mois", maintenant, cours_filtre=_cid))
+            return _k
+        _pd, _pf = periode_precedente(debut, fin)
+        _prec = _kpi_de(_pd, _pf)
+        _annee = []
+        _m = debut.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        for _i in range(12):
+            _annee.append((_m, _kpi_de(_m, mois_suivant(_m))))
+            _m = mois_suivant(_m)
+        _libelle = PERIMETRE_ENSEMBLE
+        if perimetre:
+            # Le nom public du coach (concept.appName), jamais son adresse.
+            _concept = await db.concept.find_one({"coach_id": perimetre}, {"_id": 0, "appName": 1})
+            _nom = str((_concept or {}).get("appName") or "").strip()
+            _libelle = "Coach " + (_nom or "(identité masquée)")
+        assoc = projeter_association(kpi, _prec, _annee, debut, fin, _libelle, _cid, maintenant)
+        _fuites = verifier_anonymat(assoc)
+        if _fuites:
+            logger.error("[ANALYTICS] bilan association refusé : donnée personnelle détectée %s", _fuites[:3])
+            raise HTTPException(status_code=500, detail="Bilan indisponible : donnée personnelle détectée dans la projection")
+        kpi["association"] = assoc
+        kpi["requetes"] = 7 + (1 if perimetre else 0)
     return kpi
+
+
+@analytics_router.get("/cockpit")
+async def analytics_cockpit(request: Request, periode: str = "mois", du: str = "", au: str = "",
+                            coach_id: str = "", course_id: str = "", granularite: str = "jour",
+                            mois: str = "", vue: str = ""):
+    return await _calculer_cockpit(request, periode, du, au, coach_id, course_id, granularite, mois, vue)
+
+
+FORMATS_EXPORT = {
+    "csv": ("text/csv; charset=utf-8", "csv", export_csv),
+    "xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx", export_xlsx),
+    "pdf": ("application/pdf", "pdf", export_pdf),
+}
+
+
+@analytics_router.get("/export")
+async def analytics_export(request: Request, format: str = "csv", periode: str = "mois", du: str = "", au: str = "",
+                           coach_id: str = "", course_id: str = "", mois: str = ""):
+    """Le bilan Association en CSV / XLSX / PDF — exactement le résultat de
+    `vue=association`, sérialisé. Même garde JWT (401 sans jeton, 403 hors
+    périmètre) : un lien direct ne contourne rien, le navigateur passe par
+    `fetch` avec le jeton puis enregistre le blob."""
+    _f = str(format or "csv").strip().lower()
+    if _f not in FORMATS_EXPORT:
+        raise HTTPException(status_code=400, detail="format attendu : csv|xlsx|pdf")
+    kpi = await _calculer_cockpit(request, periode, du, au, coach_id, course_id, "mois", mois, "association")
+    assoc = kpi["association"]
+    _type, _ext, _fabrique = FORMATS_EXPORT[_f]
+    try:
+        contenu = _fabrique(assoc)
+    except ImportError as _err:
+        logger.error("[ANALYTICS] export %s impossible : %s", _f, _err)
+        raise HTTPException(status_code=503, detail="Export %s indisponible sur ce serveur" % _f)
+    _nom = "bilan-afroboost-%s.%s" % (assoc["periode"]["debut"][:7] if _f else "", _ext)
+    return Response(content=contenu, media_type=_type,
+                    headers={"Content-Disposition": 'attachment; filename="%s"' % _nom,
+                             "Cache-Control": "no-store"})

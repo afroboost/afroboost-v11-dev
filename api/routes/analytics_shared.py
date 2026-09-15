@@ -155,11 +155,28 @@ def presence_de(reservation) -> str:
     return PRESENCE_INCONNUE
 
 
-def bornes_periode(periode, maintenant_local, du=None, au=None):
-    """[debut, fin) en datetimes naïfs locaux. `perso` exige `du` et `au` (YYYY-MM-DD)."""
+def mois_suivant(d):
+    """Le premier jour du mois qui suit `d` (naïf)."""
+    _d = d.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return _d.replace(year=_d.year + 1, month=1) if _d.month == 12 else _d.replace(month=_d.month + 1)
+
+
+def bornes_periode(periode, maintenant_local, du=None, au=None, mois=None):
+    """[debut, fin) en datetimes naïfs locaux. `perso` exige `du` et `au` (YYYY-MM-DD).
+
+    `mois` (YYYY-MM, phase 3) : avec `periode=mois`, LE mois demandé plutôt que
+    le mois courant — le bilan Association regarde surtout le mois écoulé.
+    Avec `periode=annee`, `mois=YYYY-MM` désigne l'année de ce mois.
+    """
     _p = str(periode or "mois").strip().lower()
     _now = maintenant_local
     _jour = _now.replace(hour=0, minute=0, second=0, microsecond=0)
+    _m = str(mois or "").strip()
+    if _m:
+        try:
+            _jour = datetime.strptime(_m[:7], "%Y-%m")
+        except ValueError:
+            return None, None
     if _p == "aujourdhui":
         return _jour, _jour + timedelta(days=1)
     if _p == "semaine":
@@ -167,9 +184,7 @@ def bornes_periode(periode, maintenant_local, du=None, au=None):
         return _lundi, _lundi + timedelta(days=7)
     if _p == "mois":
         _d = _jour.replace(day=1)
-        _f = (_d.replace(year=_d.year + 1, month=1) if _d.month == 12
-              else _d.replace(month=_d.month + 1))
-        return _d, _f
+        return _d, mois_suivant(_d)
     if _p == "annee":
         _d = _jour.replace(month=1, day=1)
         return _d, _d.replace(year=_d.year + 1)

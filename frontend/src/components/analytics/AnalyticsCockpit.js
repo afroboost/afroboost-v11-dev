@@ -56,7 +56,7 @@ export function chf(v) {
   const [ent, dec] = n.toFixed(2).split('.');
   return `${ent.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')},${dec} CHF`;
 }
-const pct = (v) => (v === null || v === undefined ? '—' : `${String(v).replace('.', ',')} %`);
+export const pct = (v) => (v === null || v === undefined ? '—' : `${String(v).replace('.', ',')} %`);
 
 /** Aujourd'hui (local) au format YYYY-MM-DD — pour le mode personnalisé. */
 export function aujourdhuiISO(d) {
@@ -79,7 +79,7 @@ export function granulariteDe(periode) {
   return periode === 'annee' ? 'semaine' : 'jour';
 }
 
-const Carte = ({ valeur, libelle, precision, testid }) => (
+export const Carte = ({ valeur, libelle, precision, testid }) => (
   <div data-testid={testid} style={{
     flex: '1 1 130px', minWidth: 120, background: 'rgba(255,255,255,0.03)',
     border: BORDURE, borderRadius: 12, padding: '14px 12px', textAlign: 'center',
@@ -94,7 +94,7 @@ const Carte = ({ valeur, libelle, precision, testid }) => (
   </div>
 );
 
-const Badge = ({ niveau }) => {
+export const Badge = ({ niveau }) => {
   const couleur = niveau === 'fiable' ? 'rgba(74, 222, 128, 0.9)'
     : niveau === 'partiel' ? 'rgba(251, 191, 36, 0.9)' : 'rgba(255,255,255,0.4)';
   return (
@@ -105,7 +105,7 @@ const Badge = ({ niveau }) => {
   );
 };
 
-const Bloc = ({ titre, qualite, children, testid }) => (
+export const Bloc = ({ titre, qualite, children, testid }) => (
   <div data-testid={testid} style={{ border: BORDURE, borderRadius: 12, padding: 14, background: 'rgba(255,255,255,0.02)', minWidth: 0 }}>
     <div style={{ color: '#fff', fontSize: 13, fontWeight: 700, marginBottom: 10 }}>
       {titre}{qualite ? <Badge niveau={qualite} /> : null}

@@ -7,6 +7,7 @@ import axios from "axios";
 import SvgIcon from "./SvgIcon";
 import CockpitGlobal from "./CockpitGlobal"; // V334 etape 4
 import AnalyticsCockpit from "./analytics/AnalyticsCockpit"; // ANALYTICS phase 1
+import BilanAssociation from "./analytics/BilanAssociation"; // ANALYTICS phase 3 : bilan Association + exports
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -405,6 +406,21 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
             >
               <span className="inline-flex items-center gap-1.5"><SvgIcon name="barChart" size={14} /> Analytics</span>
             </button>
+            {/* ANALYTICS phase 3 : le bilan Association (agrégé, sans donnée
+                personnelle) et ses exports CSV / XLSX / PDF. Même route, même
+                jeton signé, même règle : ne charge que quand l'onglet est actif. */}
+            <button
+              onClick={() => setActiveTab(activeTab === 'association' ? '' : 'association')}
+              className={`px-4 py-2 text-sm font-medium transition-all ${
+                activeTab === 'association'
+                  ? 'text-white'
+                  : 'text-white/40 hover:text-white/70'
+              }`}
+              style={activeTab === 'association' ? { color: 'var(--primary-color, #D91CD2)' } : {}}
+              data-testid="tab-association"
+            >
+              <span className="inline-flex items-center gap-1.5"><SvgIcon name="fileText" size={14} /> Association</span>
+            </button>
           </div>
 
           {/* Erreur - v12.1: Design Sans Cadre */}
@@ -595,6 +611,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
           {/* Tab Coaches */}
           {activeTab === 'cockpit' && <CockpitGlobal />}
           {activeTab === 'analytics' && <AnalyticsCockpit coaches={coaches} />}
+          {activeTab === 'association' && <BilanAssociation coaches={coaches} />}
 
           {activeTab === 'coaches' && (
             <div className="space-y-4">
