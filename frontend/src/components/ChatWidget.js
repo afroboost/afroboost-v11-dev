@@ -3844,6 +3844,15 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     console.log('[RESERVATION] 📤 Envoi des données:', JSON.stringify(reservationData, null, 2));
     
     try {
+      // TRACKING 2B : origine marketing memorisee par le navigateur (30 j), lue
+      // sans dependance ES6 — ChatWidget reste ES5. Le serveur revalide.
+      try {
+        var v2bBrut = window.localStorage.getItem('af_attribution');
+        var v2bObj = v2bBrut ? JSON.parse(v2bBrut) : null;
+        if (v2bObj && (v2bObj.first || v2bObj.last)) {
+          reservationData.attribution = { first: v2bObj.first || null, last: v2bObj.last || null };
+        }
+      } catch (e) { /* le suivi ne bloque jamais une reservation */ }
       const res = await axios.post(`${API}/reservations`, reservationData);
       console.log('[RESERVATION] Réponse serveur:', res.data);
       

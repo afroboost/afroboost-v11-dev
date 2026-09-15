@@ -297,6 +297,78 @@ function SectionEssais({ ess, courseId }) {
   );
 }
 
+/* ═══ TRACKING 2B — ACQUISITION PAR SOURCE ═══
+   Une ligne par source (first-touch de la personne, M2-A), calculée par le
+   MÊME moteur que les sections ci-dessus : essai, présence (jamais « inconnue »
+   comptée comme absence), un achat = une ligne, CA prouvé, renouvellements
+   confirmés (les probables à part). Pas de coût d'acquisition : donnée absente. */
+export function SectionSources({ sources, courseId }) {
+  const lignes = (sources && sources.lignes) || [];
+  const couv = (sources && sources.couverture) || {};
+  const th = { textAlign: 'right', padding: '6px 8px', fontSize: 10, color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', fontWeight: 600 };
+  const td = { textAlign: 'right', padding: '7px 8px', fontSize: 12, color: '#fff', whiteSpace: 'nowrap', borderTop: '1px solid rgba(255,255,255,0.06)' };
+  return (
+    <div data-testid="section-sources" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={titreSection}>Acquisition — par source <Perimetre courseId={courseId} /></div>
+      <Bloc titre="Source → essai → présence → achat → revenu → renouvellement" testid="tableau-sources">
+        {lignes.length === 0 ? (
+          <div style={note}>Aucune origine enregistrée sur la période.</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 900 }}>
+              <thead>
+                <tr>
+                  <th style={{ ...th, textAlign: 'left' }}>Source</th>
+                  <th style={th}>Participants</th>
+                  <th style={th}>Essais</th>
+                  <th style={th}>Présences</th>
+                  <th style={th}>Achats</th>
+                  <th style={th}>Clients</th>
+                  <th style={th}>Essai → client</th>
+                  <th style={th}>CA prouvé</th>
+                  <th style={th}>Panier</th>
+                  <th style={th}>Renouv. conf.</th>
+                  <th style={th}>Prob.</th>
+                  <th style={{ ...th, textAlign: 'left' }}>Offres</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lignes.map((l) => (
+                  <tr key={l.cle} data-testid={`source-${l.cle}`}>
+                    <td style={{ ...td, textAlign: 'left', fontWeight: 700, color: l.source === 'inconnue' ? 'rgba(255,255,255,0.5)' : '#fff' }}>
+                      {l.libelle}
+                    </td>
+                    <td style={td}>{l.participants}</td>
+                    <td style={td}>{l.essais}</td>
+                    <td style={td}>{l.presences_confirmees}</td>
+                    <td style={td}>{l.achats}</td>
+                    <td style={td}>{l.clients}</td>
+                    <td style={td}>
+                      {l.essais ? <>{pct(l.taux_conversion_confirmee)} <span style={{ color: 'rgba(255,255,255,0.45)' }}>(prob. {pct(l.taux_conversion_probable)})</span></> : '—'}
+                      {l.essais ? <Badge niveau={l.qualite && l.qualite.conversion} /> : null}
+                    </td>
+                    <td style={{ ...td, fontWeight: 700 }}>{chf(l.ca_prouve)}</td>
+                    <td style={td}>{l.panier_moyen === null || l.panier_moyen === undefined ? '—' : chf(l.panier_moyen)}</td>
+                    <td style={td}>{l.renouvellements ? l.renouvellements.confirmes : 0}</td>
+                    <td style={{ ...td, color: 'rgba(255,255,255,0.5)' }}>{l.renouvellements ? l.renouvellements.probables : 0}</td>
+                    <td style={{ ...td, textAlign: 'left', whiteSpace: 'normal', color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>
+                      {(l.offres || []).map(([nom, n]) => `${nom} ×${n}`).join(' · ') || '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={note}>
+          {sources && sources.convention}
+          {couv.participants_total ? ` Couverture : ${couv.participants_attribues}/${couv.participants_total} participants et ${couv.achats_attribues}/${couv.achats_total} achats avec une origine connue.` : ''}
+        </div>
+      </Bloc>
+    </div>
+  );
+}
+
 export default function AnalyticsCockpit({ coaches = [], courses = [] }) {
   const [periode, setPeriode] = useState('mois');
   const [du, setDu] = useState(aujourdhuiISO(new Date(Date.now() - 30 * 86400000)));
@@ -502,6 +574,8 @@ export default function AnalyticsCockpit({ coaches = [], courses = [] }) {
           {rev && <SectionRevenus rev={rev} courseId={courseId} />}
           {abo && <SectionAbonnements abo={abo} courseId={courseId} />}
           {ess && <SectionEssais ess={ess} courseId={courseId} />}
+          {/* ═══ TRACKING 2B ═══ */}
+          {kpi && kpi.sources && <SectionSources sources={kpi.sources} courseId={courseId} />}
         </>
       )}
     </div>

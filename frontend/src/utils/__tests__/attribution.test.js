@@ -156,3 +156,30 @@ describe('robustesse — le suivi ne casse jamais le parcours', () => {
     expect(brut).not.toContain('exemple.invalid');
   });
 });
+
+// ═══ TRACKING 2B — ?ref= et sources élargies ═══
+describe('tracking 2B — ?ref=<slug> et nouvelles sources', () => {
+  test('?ref=restaurant-x -> partenaire / referral / content = slug nettoyé', () => {
+    const t = attributionDepuisUrl('?ref=Restaurant-X', '', '/');
+    expect(t.source).toBe('partenaire');
+    expect(t.medium).toBe('referral');
+    expect(t.content).toBe('restaurant-x');
+  });
+  test('les UTM explicites gagnent sur ?ref ; ?ref vide = rien', () => {
+    expect(attributionDepuisUrl('?utm_source=instagram&utm_medium=reel&ref=x', '', '/').source).toBe('instagram');
+    expect(attributionDepuisUrl('?ref=', '', '/')).toBeNull();
+  });
+  test('email / newsletter / sms / qr / flyer / site acceptés ; linkedin rejeté', () => {
+    ['email', 'newsletter', 'sms', 'qr', 'flyer', 'site'].forEach((s) => expect(attributionNormaliser(s)).toBe(s));
+    expect(attributionNormaliser('linkedin')).toBe('');
+    expect(attributionDepuisUrl('?utm_source=qr&utm_medium=offline&utm_campaign=festival2026', '', '/').campaign).toBe('festival2026');
+  });
+  test('first Instagram, puis ?ref= partenaire : first reste Instagram, last devient partenaire', () => {
+    attributionEnregistrer('?utm_source=instagram&utm_medium=reel&utm_campaign=hiver2026', '', '/');
+    const r = attributionEnregistrer('?ref=restaurant-x', '', '/');
+    expect(r.first.source).toBe('instagram');
+    expect(r.last.source).toBe('partenaire');
+    expect(r.last.content).toBe('restaurant-x');
+    expect(attributionActuelle().first.campaign).toBe('hiver2026');
+  });
+});

@@ -5905,6 +5905,8 @@ function App() {
             // Créer la réservation dans la base de données
             const res = await axios.post(`${API}/reservations`, {
               ...reservation,
+              // TRACKING 2B : origine marketing memorisee (revalidee serveur).
+              attribution: (function () { try { return attributionActuelle(); } catch (e) { return null; } })(),
               stripeSessionId: sessionId,
               paymentStatus: 'paid'
             });
@@ -6680,7 +6682,10 @@ function App() {
         // aucune reservation) et la vente disparaissait de l'onglet Reservations,
         // alors qu'avant la V226 handleSubmit y creait une ligne « Achat Audio ».
         // Le serveur le retranscrit en metadata `v226_audio`.
-        isAudioPurchase: !!(offer && (offer.type === 'audio' || offer.type === 'video'))
+        isAudioPurchase: !!(offer && (offer.type === 'audio' || offer.type === 'video')),
+        // TRACKING 2B : l'origine marketing memorisee (30 j) part avec l'achat —
+        // le serveur la revalide et la porte jusqu'au webhook. `null` = rien.
+        attribution: (function () { try { return attributionActuelle(); } catch (e) { return null; } })()
       };
       // V224: `customerEmail` est volontairement ABSENT du payload.
       // Ne jamais l'envoyer a "" : Stripe rejette la chaine vide comme adresse
@@ -7330,7 +7335,10 @@ function App() {
     if (!pendingReservation) return;
     setLoading(true);
     try {
-      const res = await axios.post(`${API}/reservations`, pendingReservation);
+      // TRACKING 2B : origine marketing memorisee, jointe a la reservation du retour Stripe.
+      let v2bAttribution = null;
+      try { v2bAttribution = attributionActuelle(); } catch (e) { v2bAttribution = null; }
+      const res = await axios.post(`${API}/reservations`, { ...pendingReservation, attribution: v2bAttribution });
       if (pendingReservation.appliedDiscount) await axios.post(`${API}/discount-codes/${pendingReservation.appliedDiscount.id}/use`);
       
       // MÉMORISATION CLIENT: Save client info after successful payment

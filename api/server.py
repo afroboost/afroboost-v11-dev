@@ -2598,6 +2598,9 @@ def r2b_cours_public(cours) -> dict:
 from api.routes.saison import (saison_valide as _saison_valide, filtrer_offres_saison as _filtrer_saison,
                                SAISON_DEFAUT as _SAISON_DEFAUT)
 from api.routes import hiver as _hiver
+# TRACKING 2B : attribution jusqu'au paiement + héritage par personne (shared.py).
+from api.routes.shared import (m2a_bloc_propre, m2a_vers_metadata, m2a_depuis_metadata,
+                               m2a_attribution_heritee, m2a_resoudre)
 
 
 async def _saison_active() -> str:
@@ -6756,6 +6759,8 @@ class CreateCheckoutRequest(BaseModel):
     # lui-meme et calcule la remise ; le navigateur ne transmet plus de montant
     # faisant foi. Absent du parcours progressif, qui delegue a Stripe (V224).
     promoCode: Optional[str] = None
+    # TRACKING 2B : origine marketing {first, last} du navigateur (attributionActuelle()).
+    attribution: Optional[dict] = None
     # LOT 3b : les dates d'occurrence REELLEMENT choisies par le client.
     #
     # POURQUOI CE CHAMP N'EXISTAIT PAS. Jusqu'ici le serveur n'avait besoin que
@@ -7574,6 +7579,13 @@ async def create_checkout_session(request: CreateCheckoutRequest,
     # HIVER : le mode de paiement est celui de l'OFFRE. `unique` = l'appel
     # historique ci-dessous, à l'identique. Récurrent = `mode=subscription`
     # (paramètres construits par `hiver.parametres_checkout`, carte seule).
+    # TRACKING 2B : l'origine marketing voyage dans les metadata Stripe (clés
+    # plates `attribution_first_*` / `attribution_last_*`), revalidée ici ; le
+    # webhook la recopie sur la souscription et la transaction. FAIL-OPEN.
+    try:
+        metadata.update(m2a_vers_metadata(getattr(request, "attribution", None)))
+    except Exception as _m2ae:
+        logger.warning("[M2-A] attribution non jointe au checkout (%s)", type(_m2ae).__name__)
     _hiver_mode = _hiver.billing_mode_valide((_hiver_offre or {}).get("billing_mode"))
     if _hiver_offre is not None:
         metadata["billing_mode"] = _hiver_mode
@@ -8579,6 +8591,18 @@ async def stripe_webhook(request: Request):
                 except Exception as _lotr_te:
                     logger.warning(f"[LOT R] trace de recharge ignoree: {_lotr_te}")
 
+                # TRACKING 2B : l'origine marketing arrive par les metadata Stripe
+                # (posées au checkout) ; sinon la first-touch déjà connue de cette
+                # personne (essai, réservation, achat précédent — autre appareil).
+                # Recopiée sur la souscription ET la transaction, pour que
+                # SOURCE -> PERSONNE -> ACHAT -> OFFRE -> MONTANT se relise. FAIL-OPEN.
+                try:
+                    _m2a_wh = m2a_depuis_metadata(metadata) or await m2a_attribution_heritee(db, customer_email)
+                    if _m2a_wh:
+                        subscription_data["attribution"] = _m2a_wh
+                        await db.payment_transactions.update_one({"session_id": session.get("id")}, {"$set": {"attribution": _m2a_wh}})
+                except Exception as _m2ae:
+                    logger.warning("[M2-A] origine non recopiee au webhook (%s)", type(_m2ae).__name__)
                 await db.subscriptions.insert_one(subscription_data)
                 logger.info(f"[PAYMENT] Subscription auto-creee: {customer_email} - {product_name} ({sessions_count} seances) auto_renew={subscription_data['auto_renew']}")
                 if _hiver_mode_wh == _hiver.BILLING_SAISON_2X and subscription_data.get("stripe_subscription_id"):
@@ -16547,6 +16571,8 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         _m2a = subscription.get("attribution") if isinstance(subscription, dict) else None
         if not _m2a and isinstance(discount_for_mode, dict):
             _m2a = discount_for_mode.get("attribution")
+        # TRACKING 2B : sans origine sur le droit, la first-touch connue de la personne.
+        _m2a = await m2a_resoudre(db, _m2a, reservation_doc.get("userEmail"))
         if _m2a:
             reservation_doc["attribution"] = _m2a
     except Exception as _m2ae:

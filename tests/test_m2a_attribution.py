@@ -251,8 +251,10 @@ async def principal():
     verifier("38. `/checkout/free` accepte un champ `attribution` OPTIONNEL",
              re.search(r"attribution\s*:\s*Optional", fc) is not None, fc[-160:])
     corps_fc = source_de("free_checkout", ARBRE_CHECKOUT, LIGNES_CHECKOUT)
+    # TRACKING 2B : la revalidation passe par `m2a_resoudre` (qui appelle
+    # `m2a_bloc_propre` puis l'héritage par e-mail) — même garantie.
     verifier("39. Il re-valide l'attribution recue (aucune confiance au client)",
-             "m2a_bloc_propre" in corps_fc)
+             "m2a_bloc_propre" in corps_fc or "m2a_resoudre" in corps_fc)
     verifier("40. Il la PERSISTE sur l'objet durable du code",
              "attribution" in corps_fc and "update_one" in corps_fc)
     verifier("41. La persistance est fail-open (dans un `try`)",
@@ -282,11 +284,30 @@ async def principal():
     _debut = rr.index("    # M2-A : l'origine suit la PERSONNE")
     _fin = rr.index("await db.reservations.insert_one", _debut)
     _extrait = rr[_debut:_fin].rstrip()
+    # TRACKING 2B : le bloc est devenu ASYNC (héritage par e-mail via
+    # `m2a_resoudre`) ; on l'exécute dans une coroutine avec une base vide —
+    # sans historique, la résolution rend l'explicite tel quel.
+    import textwrap as _tw
+    class _VideCurseur:
+        def limit(self, n): return self
+        def __aiter__(self):
+            async def g():
+                return
+                yield
+            return g()
+    class _VideColl:
+        def find(self, *a, **k): return _VideCurseur()
+    class _VideDB(dict):
+        def __getitem__(self, k): return _VideColl()
+    async def _executer(ns):
+        ns.update({"m2a_resoudre": S.m2a_resoudre, "db": _VideDB()})
+        code = "async def _bloc():\n" + _tw.indent(_tw.dedent(_extrait), "    ") + "\n"
+        exec(compile(code, "recopie", "exec"), ns)
+        await ns["_bloc"]()
     _ns = {"logger": Journal(),
            "subscription": {"code": "AFR-TEST", "attribution": persiste},
            "discount_for_mode": {}, "reservation_doc": {"userEmail": "x"}}
-    import textwrap as _tw
-    exec(compile(_tw.dedent(_extrait), "recopie", "exec"), _ns)
+    await _executer(_ns)
     _reserve = _ns["reservation_doc"]
     verifier("44b. CROSS-DEVICE : la reservation recupere l'origine sans navigateur",
              _reserve.get("attribution", {}).get("first", {}).get("source") == "instagram",
@@ -296,14 +317,14 @@ async def principal():
     _ns2 = {"logger": Journal(), "subscription": {},
             "discount_for_mode": {"attribution": persiste},
             "reservation_doc": {}}
-    exec(compile(_tw.dedent(_extrait), "recopie", "exec"), _ns2)
+    await _executer(_ns2)
     verifier("44c. Repli sur le code si la souscription n'en porte pas",
              _ns2["reservation_doc"].get("attribution") == persiste)
 
     # AUCUNE origine : la reservation part quand meme, sans cle parasite.
     _ns3 = {"logger": Journal(), "subscription": {}, "discount_for_mode": {},
             "reservation_doc": {"userEmail": "x"}}
-    exec(compile(_tw.dedent(_extrait), "recopie", "exec"), _ns3)
+    await _executer(_ns3)
     verifier("44d. SANS origine : aucune cle `attribution` inventee",
              "attribution" not in _ns3["reservation_doc"], str(_ns3["reservation_doc"]))
 
@@ -311,7 +332,7 @@ async def principal():
     _ns4 = {"logger": Journal(), "subscription": "pas un dict",
             "discount_for_mode": None, "reservation_doc": {}}
     try:
-        exec(compile(_tw.dedent(_extrait), "recopie", "exec"), _ns4)
+        await _executer(_ns4)
         _sans_erreur = True
     except Exception:
         _sans_erreur = False
@@ -395,6 +416,12 @@ def _noms_libres(nom_fonction, arbre=None):
     for n in ast.walk(cible):
         if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
             locaux.add(n.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n is not cible:
+            # Une fonction IMBRIQUEE (def dans la route) est un nom local — et
+            # ses propres parametres aussi.
+            locaux.add(n.name)
+            for _a in list(n.args.args) + list(n.args.posonlyargs) + list(n.args.kwonlyargs):
+                locaux.add(_a.arg)
         elif isinstance(n, (ast.Import, ast.ImportFrom)):
             for al in n.names:
                 locaux.add((al.asname or al.name).split(".")[0])

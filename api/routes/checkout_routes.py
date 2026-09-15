@@ -1514,8 +1514,9 @@ async def free_checkout(req: FreeCheckoutRequest, http_request: Request):
     # `reserve_course_from_space` la recopiera le jour venu.
     # FAIL-OPEN : toute panne de ce bloc laisse l'essai intact.
     try:
-        from api.routes.shared import m2a_bloc_propre as _m2a_propre
-        _m2a_attribution = _m2a_propre(getattr(req, "attribution", None))
+        from api.routes.shared import m2a_resoudre as _m2a_resoudre
+        # TRACKING 2B : explicite (revalidée), sinon la first-touch connue de la personne.
+        _m2a_attribution = await _m2a_resoudre(db, getattr(req, "attribution", None), getattr(req, "customer_email", ""))
         _m2a_code = str((result or {}).get("access_code") or "").strip().upper()
         if _m2a_attribution and _m2a_code:
             await db["subscriptions"].update_one(
