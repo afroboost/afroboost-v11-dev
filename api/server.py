@@ -1047,6 +1047,11 @@ class Offer(BaseModel):
     # active + les permanentes ; le tableau de bord voit tout.
     season: Optional[str] = "toutes"
     places_restantes: Optional[int] = None   # calculé (stock − ventes réelles), jamais stocké
+    # HIVER — mode de paiement (`unique` = système actuel, `mensuel_auto` = abonnement
+    # Stripe récurrent, `saison_2x` = saison en 2 échéances) et durée des droits
+    # d'un paiement unique en mois (None = règle historique de 2 mois, Pulse été).
+    billing_mode: Optional[str] = "unique"
+    duree_mois: Optional[int] = None
     isProduct: bool = False  # True = physical product, False = service/course
     variants: Optional[dict] = None  # { sizes: ["S","M","L"], colors: ["Noir","Blanc"], weights: ["0.5kg","1kg"] }
     tva: float = 0.0  # TVA percentage
@@ -1196,6 +1201,8 @@ class OfferCreate(BaseModel):
     # ou `ete`. Voir api/routes/saison.py : la vitrine ne montre que la saison
     # active + les permanentes ; le tableau de bord voit tout.
     season: Optional[str] = None   # None = « non fourni » : PUT garde la saison du document
+    billing_mode: Optional[str] = None
+    duree_mois: Optional[int] = None
     isProduct: bool = False
     variants: Optional[dict] = None
     tva: float = 0.0
@@ -2485,6 +2492,10 @@ R2B_CLES_OFFRE_PUBLIQUE = (
     # HIVER : la composition (nombre de séances) et la saison sont publiques —
     # la landing calcule « dès env. X CHF/séance » depuis la base, pas en dur.
     "pack_sessions", "season", "places_restantes",
+    # HIVER : mode de paiement, durée des droits, et la date limite RÉELLE d'une
+    # offre limitée (le compte à rebours V145 la lisait déjà côté coach — un
+    # visiteur anonyme ne la recevait pas).
+    "billing_mode", "duree_mois", "countdown_enabled", "countdown_date", "countdown_time", "countdown_text",
 )
 
 # Les seules cles qu'un coach PUBLIC peut porter. `email` en est absent.
@@ -2544,6 +2555,7 @@ def r2b_cours_public(cours) -> dict:
 
 from api.routes.saison import (saison_valide as _saison_valide, filtrer_offres_saison as _filtrer_saison,
                                SAISON_DEFAUT as _SAISON_DEFAUT)
+from api.routes import hiver as _hiver
 
 
 async def _saison_active() -> str:
@@ -2639,6 +2651,7 @@ async def get_offers(request: Request, scope: str = ""):
     # base à chaque appel : passer hiver -> été ne demande aucun redéploiement.
     offers = _filtrer_saison(offers, await _saison_active())
     offers = _offres_encore_disponibles(await _annoter_places_restantes(offers))
+    offers = _hiver.offres_ouvertes(offers)      # date limite réelle passée -> retirée
     if not offers:
         # V241: `coach_id` pose des la creation. Ce bloc d'amorcage s'execute sur
         # un GET (potentiellement anonyme, sans header) quand la collection est
@@ -2721,6 +2734,8 @@ async def create_offer(offer: OfferCreate, request: Request):
     # U1a : meme normalisation qu'a la mise a jour — une seule regle, deux portes.
     offer_data["audience"] = u1a_audience(offer_data.get("audience"))
     offer_data["season"] = _saison_valide(offer_data.get("season"))
+    offer_data["billing_mode"] = _hiver.billing_mode_valide(offer_data.get("billing_mode"))
+    offer_data["duree_mois"] = _hiver.duree_mois_valide(offer_data.get("duree_mois"))
     # v61: Blindage conversion durée — accepte string, int, vide, null
     raw_dv = offer_data.get("duration_value")
     if raw_dv is not None and raw_dv != "" and raw_dv is not False:
@@ -2843,6 +2858,10 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
     # document — jamais un retour silencieux à « toutes » (le piège `audience`).
     update_data["season"] = _saison_valide(
         offer.season if offer.season is not None else _offre_avant.get("season"))
+    update_data["billing_mode"] = _hiver.billing_mode_valide(
+        offer.billing_mode if offer.billing_mode is not None else _offre_avant.get("billing_mode"))
+    update_data["duree_mois"] = _hiver.duree_mois_valide(
+        offer.duree_mois if offer.duree_mois is not None else _offre_avant.get("duree_mois"))
     # v61: Blindage conversion durée
     raw_dv = update_data.get("duration_value")
     if raw_dv is not None and raw_dv != "" and raw_dv is not False:
@@ -7065,6 +7084,29 @@ async def create_checkout_session(request: CreateCheckoutRequest,
     if _lotr_refus:
         raise HTTPException(status_code=403, detail=_lotr_refus)
 
+    # HIVER — OFFRE LIMITÉE / DATE LIMITE : la 51e vente est impossible, et une
+    # offre dont la date limite est passée ne s'achète plus. Les checkouts ouverts
+    # depuis moins de 30 min comptent comme des places prises (dernière place).
+    _hiver_offre = None
+    if request.offerId:
+        try:
+            _hiver_offre = await db.offers.find_one({"id": request.offerId}, {"_id": 0})
+            if _hiver_offre:
+                await _annoter_places_restantes([_hiver_offre])
+                _en_cours = 0
+                if isinstance(_hiver_offre.get("places_restantes"), int):
+                    _depuis = (datetime.now(timezone.utc) - timedelta(minutes=_hiver.PLACES_RESERVEES_MINUTES)).isoformat()
+                    _en_cours = await db.payment_transactions.count_documents(
+                        {"metadata.offer_id": request.offerId, "payment_status": "pending", "created_at": {"$gte": _depuis}})
+                _ok, _motif = _hiver.offre_reservable(_hiver_offre, _en_cours)
+                if not _ok:
+                    logger.info("[HIVER] checkout refusé — offre=%s motif=%s", str(request.offerId)[:32], _motif)
+                    raise HTTPException(status_code=409, detail=_motif)
+        except HTTPException:
+            raise
+        except Exception as _hiver_err:  # noqa: BLE001 — une panne de lecture ne bloque pas la caisse
+            logger.error("[HIVER] garde offre limitée indisponible, achat poursuivi: %s", _hiver_err)
+
     # V220: Lire la clé Stripe depuis la base de données (dashboard admin) d'abord
     active_stripe_key = None
 
@@ -7470,10 +7512,24 @@ async def create_checkout_session(request: CreateCheckoutRequest,
 
     # Méthodes de paiement: card + twint (devise CHF obligatoire pour TWINT)
     payment_methods = ['card', 'twint']
+    # HIVER : le mode de paiement est celui de l'OFFRE. `unique` = l'appel
+    # historique ci-dessous, à l'identique. Récurrent = `mode=subscription`
+    # (paramètres construits par `hiver.parametres_checkout`, carte seule).
+    _hiver_mode = _hiver.billing_mode_valide((_hiver_offre or {}).get("billing_mode"))
+    if _hiver_offre is not None:
+        metadata["billing_mode"] = _hiver_mode
+        if _hiver.duree_mois_valide(_hiver_offre.get("duree_mois")):
+            metadata["duree_mois"] = str(_hiver.duree_mois_valide(_hiver_offre.get("duree_mois")))
 
     try:
         # V221: Passer api_key en paramètre au lieu de muter stripe.api_key global
-        session = stripe.checkout.Session.create(
+        if _hiver_mode != _hiver.BILLING_UNIQUE:
+            _p = _hiver.parametres_checkout(_hiver_offre, request.productName, amount_cents,
+                                            success_url, cancel_url, request.customerEmail, metadata)
+            session = stripe.checkout.Session.create(api_key=active_stripe_key, **_p)
+            logger.info("[HIVER] session %s ouverte (%s) pour l'offre %s", _hiver_mode, session.id, str(request.offerId)[:32])
+        else:
+          session = stripe.checkout.Session.create(
             payment_method_types=payment_methods,
             line_items=[{
                 'price_data': {
@@ -7493,7 +7549,7 @@ async def create_checkout_session(request: CreateCheckoutRequest,
             metadata=metadata,
             api_key=active_stripe_key,
             **v226_shipping,  # V226: vide si collectShipping est False
-        )
+          )
 
         # V237: rattachement du paiement a son coach, via l'offre achetee.
         # Sans lui, l'onglet Transactions ne pourrait pas isoler les paiements
@@ -8205,8 +8261,19 @@ async def stripe_webhook(request: Request):
                 # forgé avec un pack_sessions numérique (non-chaîne) ferait sinon
                 # planter .isdigit() en AttributeError.
                 _pack = str(metadata.get("pack_sessions") or "")
+                # HIVER : `pack_sessions = 0` est une valeur VOULUE (une adhésion seule
+                # n'ouvre aucune séance) ; `saison_2x` ouvre pack × 4 mois par échéance
+                # (appliqué juste avant la création du code). Durée des droits de CE
+                # paiement : cycle (récurrent) ou `duree_mois` (saison en une fois) ;
+                # absents = règle historique de 2 mois (été).
+                _hiver_mode_wh = _hiver.billing_mode_valide(metadata.get("billing_mode"))
+                _hiver_mois_wh = _hiver.duree_droits_mois(
+                    {"billing_mode": _hiver_mode_wh, "duree_mois": metadata.get("duree_mois")})
+                _hiver_exp_iso, _hiver_exp_jour = _hiver.expiration_droits(datetime.now(timezone.utc), _hiver_mois_wh)
                 if _pack.isdigit() and int(_pack) > 0:
                     sessions_count = int(_pack)
+                elif _pack == "0" and metadata.get("offer_id"):
+                    sessions_count = 0
                 elif metadata.get("offer_id"):
                     # V223: l'offre a été résolue en base au moment du checkout et
                     # ne déclare aucun pack — c'est donc une prestation à l'unité.
@@ -8278,6 +8345,9 @@ async def stripe_webhook(request: Request):
                     logger.info(f"[PAYMENT] Session {session.id} deja traitee (code {_deja.get('code')}) — rien refait (e-mail: {_issue})")
                     return {"status": "already_processed", "code": _deja.get("code")}
 
+                if _hiver_mode_wh == _hiver.BILLING_SAISON_2X:
+                    sessions_count = _hiver.seances_par_paiement(
+                        {"billing_mode": _hiver_mode_wh, "pack_sessions": sessions_count})
                 new_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
                 # V384 : `stripe_amount` = le montant réellement payé. Le champ
                 # existe déjà dans le schéma (les codes créés à la main le
@@ -8297,7 +8367,7 @@ async def stripe_webhook(request: Request):
                     _montant_paye = float(session.amount_total or 0) / 100.0
                 except Exception:
                     _montant_paye = None
-                discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id, "stripe_amount": _montant_paye, "paid_currency": (session.currency or "chf").upper(), "expiresAt": _date_expiration_code(),
+                discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id, "stripe_amount": _montant_paye, "paid_currency": (session.currency or "chf").upper(), "expiresAt": _hiver_exp_jour,
                                  # V385 : mêmes champs que les codes créés à la main et que
                                  # le chemin Mobile Money — un seul « formulaire » de code.
                                  # Valeurs STRICTEMENT identiques aux défauts de lecture
@@ -8388,13 +8458,21 @@ async def stripe_webhook(request: Request):
                     # valables indéfiniment pour un pack de 2 mois payé.
                     # Même constante que le code (`DUREE_VALIDITE_CODE_MOIS`) : les
                     # deux ne peuvent plus diverger.
-                    "expires_at": _v397_expiration(),
+                    "expires_at": _hiver_exp_iso,
                     "status": "active",
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                     "source": "stripe_auto",
                     # V195: Reconduction automatique (opt-in par défaut au checkout Stripe)
-                    "auto_renew": bool(stripe_customer_id and stripe_payment_method),
+                    # HIVER : un abonnement géré par Stripe n'est JAMAIS reconduit par
+                    # le moteur V195 (double débit) — Stripe facture, le webhook crédite.
+                    "auto_renew": (bool(stripe_customer_id and stripe_payment_method)
+                                   if _hiver_mode_wh == _hiver.BILLING_UNIQUE else False),
+                    "billing_mode": _hiver_mode_wh,
+                    "duree_mois": _hiver_mois_wh,
+                    "stripe_subscription_id": ((str(session.get("subscription") or "") or None)
+                                               if _hiver_mode_wh != _hiver.BILLING_UNIQUE else None),
+                    "stripe_invoices": [],
                     "renewal_price": amount_chf,
                     "renewal_sessions": sessions_count,
                     "renewal_warnings_sent": [],
@@ -8444,6 +8522,16 @@ async def stripe_webhook(request: Request):
 
                 await db.subscriptions.insert_one(subscription_data)
                 logger.info(f"[PAYMENT] Subscription auto-creee: {customer_email} - {product_name} ({sessions_count} seances) auto_renew={subscription_data['auto_renew']}")
+                if _hiver_mode_wh == _hiver.BILLING_SAISON_2X and subscription_data.get("stripe_subscription_id"):
+                    # SAISON EN 2 FOIS : l'abonnement Stripe s'arrête à début + 8 mois —
+                    # deux factures (mois 0 et mois 4), jamais une troisième.
+                    try:
+                        stripe.Subscription.modify(subscription_data["stripe_subscription_id"],
+                                                   cancel_at=_hiver.cancel_at_saison(datetime.now(timezone.utc)),
+                                                   api_key=stripe.api_key)
+                        logger.info("[HIVER] saison_2x : cancel_at posé sur %s", subscription_data["stripe_subscription_id"][:16])
+                    except Exception as _cancel_err:  # noqa: BLE001
+                        logger.error("[HIVER] cancel_at NON posé sur %s : %s", subscription_data["stripe_subscription_id"][:16], _cancel_err)
 
                 # === LOT 2 — CHEMIN D'AUTORITE A : L'ADHESION QUI NAIT DE CET ACHAT ===
                 #
@@ -8857,6 +8945,25 @@ async def stripe_webhook(request: Request):
                 # ne recevrait JAMAIS son code : c'est exactement la panne P0.
                 if _p0_email_echec:
                     raise HTTPException(status_code=503, detail="email_acces_non_envoye")
+        elif event.type in ('invoice.paid', 'invoice.payment_succeeded'):
+            # HIVER — NOUVEAU CYCLE PAYÉ : les droits du cycle sont crédités UNE fois
+            # (idempotent par facture). La première facture est ignorée ici : elle
+            # a déjà créé le code et le forfait dans `checkout.session.completed`.
+            _res = await _hiver.traiter_facture_payee(db, event.data.object)
+            logger.info("[HIVER] %s -> %s", event.type, _res)
+            return {"status": "ok", "type": event.type, **{k: v for k, v in _res.items() if k != "expires_at"}}
+        elif event.type == 'invoice.payment_failed' and str((event.data.object or {}).get("subscription") or ""):
+            # HIVER — ÉCHÉANCE ÉCHOUÉE : notée, jamais de retrait de droits déjà payés ;
+            # Stripe relance, et l'abonnement se termine s'il échoue définitivement.
+            _res = await _hiver.traiter_facture_echouee(db, event.data.object)
+            logger.warning("[HIVER] invoice.payment_failed -> %s", _res)
+            return {"status": "ok", "type": event.type, **_res}
+        elif event.type == 'customer.subscription.deleted':
+            # HIVER — FIN D'ABONNEMENT : plus de renouvellement, accès jusqu'à la fin
+            # de la période déjà payée (`expires_at` inchangé).
+            _res = await _hiver.traiter_abonnement_termine(db, event.data.object)
+            logger.info("[HIVER] customer.subscription.deleted -> %s", _res)
+            return {"status": "ok", "type": event.type, **_res}
         elif event.type == 'invoice.upcoming':
             # V400 — ÉCHÉANCE À VENIR : c'est le déclencheur du rappel J-3.
             #
@@ -17099,6 +17206,7 @@ async def v398_rappel_renouvellement(request: Request, apercu: bool = True):
     # Seuls les abonnements RÉELLEMENT en reconduction automatique sont concernés.
     concernes = await db.subscriptions.find(
         {"status": "active", "auto_renew": True,
+         "stripe_subscription_id": {"$in": [None, ""]},   # HIVER : jamais un abonnement Stripe
          "expires_at": {"$gte": debut, "$lte": fin}},
         {"_id": 0},
     ).to_list(500)
@@ -17226,6 +17334,7 @@ async def cron_check_subscription_renewal(request: Request):
         {
             "status": "active",
             "auto_renew": True,
+            "stripe_subscription_id": {"$in": [None, ""]},   # HIVER : jamais un abonnement Stripe
             "remaining_sessions": {"$lte": 3, "$gte": 0},
         },
         {"_id": 0}
@@ -46804,6 +46913,18 @@ def _m1_par_seance(offre) -> str:
         return ""
     if _prix <= 0 or _n <= 1:      # une seule séance : le prix EST le prix, rien à « estimer »
         return ""
+    _fam = _m1_famille(offre)[1]
+    if _fam == "saison_1x":
+        # Le pack est le total de la saison : prix / séances, rythme mensuel estimé.
+        _mois = _hiver.duree_droits_mois(offre)
+        return "env. %s CHF/séance si tu viens %d fois par mois sur la saison" % (
+            _m1_prix(round(_prix / _n, 2)), max(1, round(_n / max(1, _mois))))
+    if _fam == "saison_2x":
+        # Deux échéances, chacune ouvre pack × 4 mois : le total se compare au total.
+        _total = _prix * _hiver.SAISON_2X_ECHEANCES
+        _seances = _n * _hiver.SAISON_MOIS
+        return "dès env. %s CHF/séance si tu viens %d fois par mois" % (
+            _m1_prix(round(_total / _seances, 2)), _n)
     if str(offre.get("offer_type") or "") == "subscription":
         return "dès env. %s CHF/séance si tu viens %d fois par mois" % (
             _m1_prix(round(_prix / _n, 2)), _n)
@@ -46822,19 +46943,23 @@ async def _m1_offres():
         return {"offres": [], "carte": None, "ete": [], "saison": "toutes"}
     _services = [o for o in _toutes if not o.get("isProduct") and str(o.get("offer_type") or "") not in ("product", "event")]
     _visibles = _flt([o for o in _services if o.get("visible") is not False and str(o.get("offer_type") or "") != "membership"], _saison)
-    # Les formules de la saison (abonnements) d'abord, puis le reste dans l'ordre
-    # du tableau de bord (`position`) : la landing vend la saison, la vitrine
-    # garde son propre ordre.
-    _visibles.sort(key=lambda o: (0 if str(o.get("offer_type") or "") == "subscription" else 1,
+    # HIÉRARCHIE COMMERCIALE : lancement (limitée) > saison 8 mois en 1 fois >
+    # saison en 2 fois > mensuels (ordre du tableau de bord) > unité > offert.
+    # Chaque famille est LUE sur le document (stock, durée, mode), jamais sur un nom.
+    _mensuels = [o for o in _visibles if _m1_famille(o)[1] == "mensuel"]
+    _ref = max(_mensuels, key=lambda o: float(o.get("price") or 0)) if _mensuels else None
+    _visibles.sort(key=lambda o: (_m1_famille(o)[0], 0 if o is _ref else 1,
                                   o.get("position") if isinstance(o.get("position"), (int, float)) else 999,
                                   str(o.get("name") or "")))
-    # Places restantes = stock − ventes réelles ; une offre épuisée sort de la page.
-    # MÊME règle que /api/offers : la landing et la vitrine disent la même chose.
-    _visibles = _offres_encore_disponibles(await _annoter_places_restantes(_visibles))
+    # Places restantes = stock − ventes réelles ; une offre épuisée OU dont la date
+    # limite est passée sort de la page. MÊME règle que /api/offers.
+    _visibles = _hiver.offres_ouvertes(_offres_encore_disponibles(await _annoter_places_restantes(_visibles)))
     _carte = next((o for o in _services if str(o.get("offer_type") or "") == "membership"
                    and _sde(o) != _ETE), None)
     _ete = [o for o in _services if _sde(o) == _ETE and o.get("visible") is not False]
-    return {"offres": _visibles, "carte": _carte, "ete": _ete, "saison": _saison}
+    # Carte membre visible et payante = achetable en ligne (option) ; sinon auprès du coach.
+    _carte_achetable = bool(_carte) and _carte.get("visible") is not False and float(_carte.get("price") or 0) > 0
+    return {"offres": _visibles, "carte": _carte, "carte_achetable": _carte_achetable, "ete": _ete, "saison": _saison}
 
 
 async def _m1_temoignages():
@@ -46849,7 +46974,141 @@ async def _m1_temoignages():
             for r in _rows if str(r.get("text") or "").strip()]
 
 
-def _m1_carte_offre(o, lien_offre):
+def _m1_famille(o):
+    """(rang, code) — la famille commerciale d'une offre, lue sur ses champs."""
+    _o = o or {}
+    _prix = float(_o.get("price") or 0)
+    _mode = _hiver.billing_mode_valide(_o.get("billing_mode"))
+    _duree = _hiver.duree_mois_valide(_o.get("duree_mois")) or 0
+    _stock = _o.get("stock")
+    _limitee = isinstance(_stock, (int, float)) and not isinstance(_stock, bool) and _stock >= 0
+    if _prix <= 0:
+        return (5, "offert")
+    if _limitee or _hiver.date_limite(_o):
+        return (0, "lancement")
+    if _mode == _hiver.BILLING_UNIQUE and _duree >= _hiver.SAISON_MOIS:
+        return (1, "saison_1x")
+    if _mode == _hiver.BILLING_SAISON_2X:
+        return (2, "saison_2x")
+    if _mode == _hiver.BILLING_MENSUEL:
+        return (3, "mensuel")
+    return (4, "unite")
+
+
+_M1_BADGES = {"lancement": "Offre lancement", "saison_1x": "Meilleur prix", "saison_2x": "Saison en 2 fois",
+              "mensuel": "Le plus flexible", "unite": "", "offert": "Premier cours offert"}
+
+
+def _m1_badge(o, mensuel_max):
+    _f = _m1_famille(o)[1]
+    _nom = str((o or {}).get("name") or "").lower()
+    if _f == "mensuel":
+        if "tudiant" in _nom:
+            return "Étudiant"
+        # « Le plus flexible » = LE mensuel de référence (le plus cher) ; Flex 4 et les
+        # autres mensuels n'ont pas de badge — un badge sur chaque carte n'en est plus un.
+        return _M1_BADGES["mensuel"] if mensuel_max and o is mensuel_max else ""
+    return _M1_BADGES.get(_f, "")
+
+
+def _m1_paiement(o):
+    _f = _m1_famille(o)[1]
+    _mode = _hiver.billing_mode_valide((o or {}).get("billing_mode"))
+    if _mode == _hiver.BILLING_MENSUEL:
+        return "Prélèvement automatique chaque mois (carte)"
+    if _mode == _hiver.BILLING_SAISON_2X:
+        return "2 paiements : à l’inscription, puis 4 mois plus tard"
+    if _f == "saison_1x":
+        return "1 paiement (carte ou TWINT)"
+    return "Paiement unique (carte ou TWINT)"
+
+
+def _m1_engagement(o):
+    _f = _m1_famille(o)[1]
+    _mode = _hiver.billing_mode_valide((o or {}).get("billing_mode"))
+    if _mode == _hiver.BILLING_MENSUEL:
+        return "Sans engagement — résiliable, accès jusqu’à la fin du mois payé"
+    if _f in ("saison_1x", "saison_2x"):
+        return "Saison de %d mois" % _hiver.SAISON_MOIS
+    _d = _hiver.duree_droits_mois(o or {})
+    return "Aucun — valable %d mois" % _d
+
+
+def _m1_seances_txt(o):
+    _mode = _hiver.billing_mode_valide((o or {}).get("billing_mode"))
+    _f = _m1_famille(o)[1]
+    try:
+        _n = int(float((o or {}).get("pack_sessions") or 0))
+    except (TypeError, ValueError):
+        _n = 0
+    if _n <= 0:
+        return "—"
+    if _mode == _hiver.BILLING_MENSUEL:
+        return "jusqu’à %d séances / mois" % _n
+    if _mode == _hiver.BILLING_SAISON_2X:
+        return "jusqu’à %d séances / mois (%d par échéance)" % (_n, _n * _hiver.SAISON_2X_INTERVALLE_MOIS)
+    if _f == "saison_1x":
+        _d = _hiver.duree_droits_mois(o)
+        return "%d séances sur la saison (env. %d / mois)" % (_n, round(_n / max(1, _d)))
+    return "%d séance%s" % (_n, "s" if _n > 1 else "")
+
+
+def _m1_economie(o, mensuel_max):
+    """CHF économisés sur la saison par rapport au mensuel de référence — calcul RÉEL, sinon None."""
+    if not mensuel_max:
+        return None
+    _f = _m1_famille(o)[1]
+    _prix = float((o or {}).get("price") or 0)
+    _ref = float(mensuel_max.get("price") or 0) * _hiver.SAISON_MOIS
+    if _f == "saison_1x":
+        _eco = _ref - _prix
+    elif _f == "saison_2x":
+        _eco = _ref - _prix * _hiver.SAISON_2X_ECHEANCES
+    else:
+        return None
+    return round(_eco, 2) if _eco > 0 else None
+
+
+def _m1_pour_qui(o):
+    _f = _m1_famille(o)[1]
+    _nom = str((o or {}).get("name") or "").lower()
+    if _f == "lancement":
+        return "Les premiers inscrits de la saison"
+    if _f == "saison_1x":
+        return "Tu es décidé·e pour toute la saison"
+    if _f == "saison_2x":
+        return "La saison, sans tout payer d’un coup"
+    if _f == "mensuel":
+        if "tudiant" in _nom:
+            return "Étudiant·e, avec justificatif"
+        try:
+            _n = int(float((o or {}).get("pack_sessions") or 0))
+        except (TypeError, ValueError):
+            _n = 0
+        return "Une fois par semaine" if 0 < _n <= 4 else "Tu veux rester libre chaque mois"
+    if _f == "unite":
+        return "Pour revenir une fois, sans formule"
+    return "Pour découvrir"
+
+
+def _m1_deadline_html(o):
+    """Le bloc date limite d'une offre limitée : date RÉELLE de l'offre (heure suisse),
+    identique pour tous les visiteurs ; le décompte inline la lit, il ne la recalcule pas."""
+    _lim = _hiver.date_limite(o)
+    if not _lim:
+        return ""
+    try:
+        from zoneinfo import ZoneInfo
+        _iso = _lim.replace(tzinfo=ZoneInfo("Europe/Zurich")).isoformat()
+    except Exception:  # noqa: BLE001
+        _iso = _lim.isoformat()
+    return ('<p class="t-deadline" data-deadline="%s">Jusqu’au %s à %s (heure suisse) — '
+            '<span class="cr" aria-live="polite"></span></p>'
+            % (_m1_echapper(_iso), _m1_echapper("%d %s %d" % (_lim.day, _M1_MOIS[_lim.month - 1], _lim.year)),
+               _m1_echapper(_lim.strftime("%H:%M"))))
+
+
+def _m1_carte_offre(o, lien_offre, mensuel_max=None):
     """Une carte tarif — tout vient du document, rien n'est écrit en dur."""
     _nom = _m1_echapper(o.get("name"))
     _prix = float(o.get("price") or 0)
@@ -46863,17 +47122,35 @@ def _m1_carte_offre(o, lien_offre):
         _unite = " / mois" if _type == "subscription" else ""
     _par = _m1_par_seance(o)
     _places = o.get("places_restantes")
-    _badge = ""
+    _fam = _m1_famille(o)[1]
+    if _prix > 0 and _fam == "saison_1x":
+        _unite = " / saison"
+    elif _prix > 0 and _hiver.billing_mode_valide(o.get("billing_mode")) == _hiver.BILLING_MENSUEL:
+        _unite = " / mois"
+    _lignes = []
+    _badge = _m1_badge(o, mensuel_max)
+    if _badge:
+        _lignes.append('<p class="t-badge t-badge-%s">%s</p>' % (_fam, _m1_echapper(_badge)))
+    if _fam == "saison_2x":
+        _montant = "2 × %s CHF" % _m1_prix(_prix)
+        _unite = ""
+    if _prix > 0:
+        _lignes.append('<p class="t-mode">%s</p>' % _m1_echapper(_m1_paiement(o)))
+        _lignes.append('<p class="t-mode">%s</p>' % _m1_echapper(_m1_seances_txt(o)))
+    _eco = _m1_economie(o, mensuel_max)
+    if _eco:
+        _lignes.append('<p class="t-eco">Tu économises %s CHF par rapport au mensuel</p>' % _m1_prix(_eco))
     if isinstance(_places, int):
-        _badge = '<p class="t-places">%d place%s restante%s sur %d</p>' % (
-            _places, "s" if _places > 1 else "", "s" if _places > 1 else "", int(o.get("stock")))
-    # Mise en avant : l'offre LIMITÉE de la saison (rareté réelle), pas toutes les mensuelles.
-    _mise_en_avant = ' t-star' if isinstance(_places, int) else ""
-    return ('<article class="tarif%s"><h3>%s</h3><p class="t-prix">%s<span>%s</span></p>'
-            '%s<p class="t-desc">%s</p>%s<a class="cta cta-s" href="%s">%s</a></article>'
-            % (_mise_en_avant, _nom, _montant, _unite,
+        _lignes.append('<p class="t-places">%d place%s restante%s sur %d</p>' % (
+            _places, "s" if _places > 1 else "", "s" if _places > 1 else "", int(o.get("stock"))))
+    _lignes.append(_m1_deadline_html(o))
+    # Mise en avant : l'offre de lancement (rareté réelle) et le meilleur prix.
+    _mise_en_avant = ' t-star' if _fam in ("lancement", "saison_1x") else ""
+    return ('<article class="tarif%s t-%s"><h3>%s</h3><p class="t-prix">%s<span>%s</span></p>'
+            '%s%s<p class="t-desc">%s</p><a class="cta cta-s" href="%s">%s</a></article>'
+            % (_mise_en_avant, _fam, _nom, _montant, _unite,
                ('<p class="t-par">%s</p>' % _m1_echapper(_par)) if _par else "",
-               _desc, _badge, lien_offre,
+               "".join(_lignes), _desc, lien_offre,
                "Réserver mon 1er cours gratuit" if _prix == 0 else "Choisir cette formule"))
 
 
@@ -46977,40 +47254,56 @@ async def m1_page_essai_neuchatel(request: Request):
     _offres = _catalogue["offres"]
     _formules = [o for o in _offres if float(o.get("price") or 0) > 0]
     _gratuites = [o for o in _offres if float(o.get("price") or 0) == 0]
+    # Le mensuel de référence (le plus cher, hors offre limitée) : c'est lui que
+    # les économies « saison » comparent — un calcul réel, ou rien.
+    _mensuels = [o for o in _formules if _m1_famille(o)[1] == "mensuel"]
+    _mensuel_max = max(_mensuels, key=lambda o: float(o.get("price") or 0)) if _mensuels else None
     if _offres:
         # La carte « offert » mène au tunnel d'essai EXISTANT (avec l'origine), pas à une offre.
         _tarifs = '<div class="tarifs">%s</div>' % "".join(
-            _m1_carte_offre(o, _lien if float(o.get("price") or 0) == 0 else _lien_offre(o)) for o in _formules + _gratuites)
+            _m1_carte_offre(o, _lien if float(o.get("price") or 0) == 0 else _lien_offre(o), _mensuel_max)
+            for o in _formules + _gratuites)
     else:
         _tarifs = '<p class="vide">Les tarifs sont affichés sur la page de réservation.</p>'
-    _mensuelles = [o for o in _formules if str(o.get("offer_type") or "") == "subscription"]
-    _note_tarifs = ("Formules mensuelles : paiement mensuel, sans prélèvement automatique — tu renouvelles "
-                    "quand tu le décides. Le nombre de séances proposées varie selon les mois : "
-                    "l’équivalent par séance est une estimation, pas un prix garanti."
-                    if _mensuelles else "")
-    # Comparaison : une ligne par formule, colonnes lues sur les documents.
+    _note_tarifs = ("Mensuel : prélèvement automatique chaque mois par carte, résiliable à tout moment — "
+                    "l’accès reste ouvert jusqu’à la fin du mois déjà payé. Saison 8 mois : engagement sur la saison, "
+                    "en 1 ou 2 paiements. Le nombre de séances proposées varie selon les mois : l’équivalent par séance "
+                    "est une estimation, pas un prix garanti."
+                    if _formules else "")
+    # Comparaison : une ligne par formule, TOUT est lu sur les documents.
     if _formules:
+        def _cmp_prix(o):
+            _f = _m1_famille(o)[1]
+            if _f == "saison_2x":
+                return "2 × %s CHF" % _m1_prix(o.get("price"))
+            return "%s CHF%s" % (_m1_prix(o.get("price")), " / mois" if _m1_famille(o)[1] in ("mensuel", "lancement") and _hiver.billing_mode_valide(o.get("billing_mode")) == _hiver.BILLING_MENSUEL else "")
         _lignes_cmp = "".join(
-            '<tr><th scope="row">%s</th><td>%s CHF%s</td><td>%s</td><td>%s</td></tr>' % (
-                _m1_echapper(o.get("name")), _m1_prix(o.get("price")),
-                " / mois" if str(o.get("offer_type") or "") == "subscription" else "",
-                (("jusqu’à %d séances / mois" % int(float(o.get("pack_sessions")))) if str(o.get("offer_type") or "") == "subscription" and o.get("pack_sessions")
-                 else ("%d séance%s" % (int(float(o.get("pack_sessions"))), "s" if int(float(o.get("pack_sessions"))) > 1 else "")) if o.get("pack_sessions")
-                 else "—"),
-                _m1_echapper(_m1_par_seance(o) or "—"))
+            '<tr><th scope="row">%s</th><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
+                _m1_echapper(o.get("name")), _cmp_prix(o), _m1_echapper(_m1_paiement(o)), _m1_echapper(_m1_engagement(o)),
+                _m1_echapper(_m1_seances_txt(o)),
+                ("%s CHF" % _m1_prix(_m1_economie(o, _mensuel_max))) if _m1_economie(o, _mensuel_max) else "—",
+                _m1_echapper(_m1_pour_qui(o)))
             for o in _formules)
-        _comparaison = ('<div class="tbl"><table><thead><tr><th>Formule</th><th>Prix</th><th>Séances</th>'
-                        '<th>Équivalent</th></tr></thead><tbody>%s</tbody></table></div>' % _lignes_cmp)
+        _comparaison = ('<div class="tbl"><table><thead><tr><th>Formule</th><th>Prix</th><th>Paiement</th><th>Engagement</th>'
+                        '<th>Séances</th><th>Économie</th><th>Pour qui</th></tr></thead><tbody>%s</tbody></table></div>' % _lignes_cmp)
     else:
         _comparaison = ""
     # Carte membre : présentée À PART, comme option — jamais comme un coût caché.
     _carte_membre = _catalogue["carte"]
     if _carte_membre:
+        # Visible = achetable en ligne (option, jamais incluse en douce dans un prix) ;
+        # masquée = elle s'obtient auprès du coach. Le texte dit toujours qu'aucune
+        # formule ne l'exige.
+        _cm_achetable = bool(_catalogue.get("carte_achetable"))
+        _cm_cta = ('<a class="cta cta-s" href="%s">Prendre ma carte membre</a>' % _lien_offre(_carte_membre)) if _cm_achetable else ""
         _cm_html = ('<article class="tarif t-membre"><h3>%s</h3><p class="t-prix">%s CHF<span> / an</span></p>'
                     '<p class="t-desc">%s</p><p class="note">Option indépendante : les formules ci-dessus '
-                    'n’exigent aucune carte membre. Elle s’obtient auprès du coach ou lors d’un achat qui l’inclut.</p></article>'
+                    'n’exigent aucune carte membre. %s</p>%s</article>'
                     % (_m1_echapper(_carte_membre.get("name")), _m1_prix(_carte_membre.get("price")),
-                       _m1_echapper(_carte_membre.get("description") or "")))
+                       _m1_echapper(_carte_membre.get("description") or ""),
+                       "Elle donne accès aux avantages membres (tarifs réservés aux membres) pendant un an."
+                       if _cm_achetable else "Elle s’obtient auprès du coach ou lors d’un achat qui l’inclut.",
+                       _cm_cta))
     else:
         _cm_html = ('<p class="note">La carte membre de l’association (avantages membres) est une option '
                     'indépendante des formules ci-dessus : renseigne-toi auprès du coach.</p>')
@@ -47117,6 +47410,12 @@ summary:focus-visible{outline:2px solid var(--p);outline-offset:2px}
 .t-desc{color:#c9c9d6;font-size:.92rem;flex:1}
 .t-places{display:inline-block;align-self:flex-start;font-size:.82rem;font-weight:700;color:var(--p);border:1px solid rgba(var(--prgb),.5);border-radius:999px;padding:3px 10px;margin:0 0 8px}
 .t-membre{border-style:dashed}
+.t-badge{display:inline-block;align-self:flex-start;font-size:.72rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:3px 10px;border-radius:999px;margin:0 0 8px;background:rgba(var(--prgb),.18);color:var(--p);border:1px solid rgba(var(--prgb),.5)}
+.t-badge-lancement{background:var(--p);color:#fff}
+.t-mode{color:#c9c9d6;font-size:.86rem;margin:0 0 4px}
+.t-eco{color:#8ef0b0;font-weight:700;font-size:.9rem;margin:6px 0}
+.t-deadline{color:#f0f0f6;font-size:.86rem;margin:6px 0 8px}
+.t-deadline .cr{font-family:"Courier New",monospace;font-weight:800;color:var(--p)}
 .tbl{overflow-x:auto;-webkit-overflow-scrolling:touch}
 table{width:100%%;border-collapse:collapse;font-size:.92rem;min-width:520px}
 th,td{text-align:left;padding:10px 8px;border-bottom:1px solid rgba(255,255,255,.1);vertical-align:top}
@@ -47209,6 +47508,13 @@ ton casque.</p>
 </section>
 </main>
 <div class="sticky">%(cta)s</div>
+<script>
+(function(){var els=document.querySelectorAll('[data-deadline]');if(!els.length)return;
+function tick(){var now=Date.now();for(var i=0;i<els.length;i++){var end=new Date(els[i].getAttribute('data-deadline')).getTime();var r=Math.max(0,Math.floor((end-now)/1000));var s=els[i].querySelector('.cr');if(!s)continue;
+if(r<=0){s.textContent='offre terminée';continue;}var d=Math.floor(r/86400),h=Math.floor(r%%86400/3600),m=Math.floor(r%%3600/60),x=r%%60;
+s.textContent=(d?d+'j ':'')+(h<10?'0':'')+h+'h '+(m<10?'0':'')+m+'m '+(x<10?'0':'')+x+'s restants';}}
+tick();setInterval(tick,1000);})();
+</script>
 </body></html>""" % {
         "titre": _titre, "desc": _desc, "site": _M1_SITE, "chemin": _M1_CHEMIN,
         "structure": _structure, "cta": _cta, "planning": _planning, "alt": _alt,

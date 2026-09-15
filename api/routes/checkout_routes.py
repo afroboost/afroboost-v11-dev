@@ -204,6 +204,19 @@ async def create_checkout_session(req: CreateCheckoutRequest):
     # exactement le raisonnement qui a place ESSAI-1 et ESSAI-4 ici.
     await _lotr_garde(req.items, req.customer_email)
 
+    # HIVER — offre limitée (places réelles) / date limite : 409, même règle que
+    # la caisse principale. Fail-open si la lecture échoue.
+    try:
+        from api.routes.hiver import garde_offre_limitee as _hiver_garde
+        for _it in (req.items or []):
+            _ok, _motif = await _hiver_garde(db, getattr(_it, "id", ""))
+            if not _ok:
+                raise HTTPException(status_code=409, detail=_motif)
+    except HTTPException:
+        raise
+    except Exception as _hiver_err:  # noqa: BLE001
+        logger.error("[HIVER] garde indisponible, achat poursuivi: %s", _hiver_err)
+
     # ESSAI-1B : le total qui DECIDE vient du catalogue. `discount_amount`,
     # fourni par le navigateur, n'est plus une autorite metier.
     total, _prix_resolus = await _essai1b_total_autorite(req.items)
