@@ -385,13 +385,19 @@ function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkout
             devient COLLANT en bas de la feuille — même mécanisme que l'en-tête collant
             du Panneau (position: sticky), même fond ; le contenu au-dessus défile
             toujours. Sur desktop rien ne change. */}
+        {/* V530: le collant ne s'appliquait QUE sur mobile ; sur desktop la fiche
+            (média 48vh + texte, maxHeight 90vh) ouvrait avec le CTA à y=1088 pour
+            900 px de viewport. Même mécanisme, sur tous les écrans : le contenu
+            au-dessus défile, l'achat reste visible sans masquer le texte. */}
         <div
           data-testid="fiche-cta-bloc"
-          style={estMobile ? {
+          style={{
             position: 'sticky', bottom: 0, zIndex: 2, marginTop: 16, marginLeft: -18, marginRight: -18,
-            padding: '10px 18px calc(10px + env(safe-area-inset-bottom))',
-            background: 'rgba(8,2,16,0.92)', backdropFilter: 'blur(8px)', borderTop: '1px solid rgba(255,255,255,0.08)',
-          } : { marginTop: 16 }}
+            padding: estMobile ? '10px 18px calc(10px + env(safe-area-inset-bottom))' : '10px 18px 14px',
+            background: 'rgba(8,2,16,0.92)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+            borderTop: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: estMobile ? 0 : '0 0 20px 20px',
+          }}
         >
           <button
             type="button"
@@ -598,27 +604,32 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
     <section data-testid="offres-aimants" style={{ marginBottom: 24 }}>
       <style>{`@keyframes aimantsMonter{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}@keyframes aimantsApparaitre{from{transform:scale(.97);opacity:0}to{transform:none;opacity:1}}`}</style>
       <h2 className="font-semibold mb-3 text-white" style={{ fontSize: 18 }}>{titre || 'Nos formules'}</h2>
-      <div style={{ display: 'grid', gridTemplateColumns: colonnes, gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: colonnes, gap: 12, alignItems: 'stretch' }} data-testid="grille-aimants">
         {groupe.aimants.map((a) => (
           <CarteAimant key={a.cle} aimant={a} mensuelRef={groupe.mensuelRef} analyser={analyser} onOuvrir={setFiche} Countdown={Countdown} />
         ))}
       </div>
-      {/* Lien discret, pas un bouton massif : une petite icône + le texte. */}
-      <div style={{ marginTop: 10, textAlign: 'center' }}>
-        <button
-          type="button"
-          data-testid="voir-toutes-les-offres"
-          onClick={() => setToutes(true)}
-          style={{
-            padding: '4px 8px', borderRadius: 6, cursor: 'pointer', border: 'none', background: 'transparent',
-            color: 'rgba(255,255,255,0.75)', fontWeight: 500, fontSize: 12, lineHeight: 1.2, display: 'inline-flex', alignItems: 'center', gap: 5,
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--primary-color, #D91CD2)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; }}
-        >
-          <SvgIcon name="grid" size={12} /> Voir toutes les offres
-        </button>
-      </div>
+      {/* V530: le lien de 12 px détaché sous les cartes passait inaperçu. Il devient
+          une action SECONDAIRE rattachée au bloc : même largeur que la grille, même
+          espacement (12 px), contour couleur de marque — jamais une 4e carte. */}
+      <button
+        type="button"
+        data-testid="voir-toutes-les-offres"
+        onClick={() => setToutes(true)}
+        style={{
+          marginTop: 12, width: '100%', padding: '12px 16px', borderRadius: 14, cursor: 'pointer',
+          border: `1px solid rgba(${RGB}, 0.5)`, background: `rgba(${RGB}, 0.08)`,
+          color: '#fff', fontWeight: 700, fontSize: 14, lineHeight: 1.2,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          transition: 'background 0.2s, border-color 0.2s',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = `rgba(${RGB}, 0.18)`; e.currentTarget.style.borderColor = COULEUR; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = `rgba(${RGB}, 0.08)`; e.currentTarget.style.borderColor = `rgba(${RGB}, 0.5)`; }}
+      >
+        <span style={{ color: COULEUR, display: 'inline-flex' }}><SvgIcon name="grid" size={14} /></span>
+        Voir toutes les offres
+        <span style={{ color: COULEUR, display: 'inline-flex' }}><SvgIcon name="arrowRight" size={14} /></span>
+      </button>
 
       <ToutesLesOffres
         ouvert={toutes}

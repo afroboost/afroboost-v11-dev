@@ -220,12 +220,21 @@ test('média indisponible : repli sobre, jamais une zone vide cassée', async ()
   expect(par('fiche-repli')).not.toBeNull();
 });
 
-test('le lien « Voir toutes les offres » est léger : pas de bouton pleine largeur', async () => {
+test('V530 — « Voir toutes les offres » est une action SECONDAIRE rattachée à la grille : pleine largeur, contour de marque, pas une carte', async () => {
   await monter();
   const b = par('voir-toutes-les-offres');
-  expect(b.style.width).not.toBe('100%');
-  expect(b.style.background).toBe('transparent');
+  expect(b.style.width).toBe('100%');
+  // jsdom refuse `border`/`background` contenant rgba(var()) (le navigateur les accepte) :
+  // la couleur de marque se vérifie sur le SOURCE du bouton, le rendu sur le DOM.
+  const src = require('fs').readFileSync(require.resolve('../OffresAimants'), 'utf8');
+  const bloc = src.slice(src.indexOf('data-testid="voir-toutes-les-offres"'), src.indexOf('Voir toutes les offres', src.indexOf('data-testid="voir-toutes-les-offres"')));
+  expect(bloc).toContain('border: `1px solid rgba(${RGB}'); // contour couleur de marque
+  expect(bloc).toContain('background: `rgba(${RGB}'); // fond léger de marque, pas le dégradé d'une carte
+  expect(bloc).not.toMatch(/#[0-9a-fA-F]{6}/); // aucun hex codé en dur
+  expect((b.getAttribute('style') || '')).not.toContain('linear-gradient');
   expect(b.textContent.trim()).toBe('Voir toutes les offres');
+  expect(b.querySelectorAll('svg').length).toBe(2); // grille + flèche en SVG, aucun emoji
+  expect(b.previousElementSibling).toBe(par('grille-aimants')); // juste sous la grille
 });
 
 test('le signal « Offres » de la barre ouvre la liste', async () => {
@@ -302,7 +311,7 @@ test('V525 — la prop Countdown est rendue sur la carte de lancement et dans sa
   expect(document.querySelectorAll('[data-testid="countdown-stub"]').length).toBe(0);
 });
 
-test('V526 — sur mobile, le bloc CTA de la fiche est COLLANT en bas (position sticky) ; sur desktop non', async () => {
+test('V526/V530 — le bloc CTA de la fiche est COLLANT en bas (position sticky) sur mobile ET desktop', async () => {
   const largeur = window.innerWidth;
   Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 390 });
   await monter();
@@ -317,6 +326,8 @@ test('V526 — sur mobile, le bloc CTA de la fiche est COLLANT en bas (position 
   Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 1280 });
   await monter();
   await act(async () => { conteneur.querySelector('[data-testid="aimant-mensuel"]').click(); });
-  expect(document.querySelector('[data-testid="fiche-cta-bloc"]').style.position).toBe('');
+  const blocDesktop = document.querySelector('[data-testid="fiche-cta-bloc"]');
+  expect(blocDesktop.style.position).toBe('sticky'); // V530 : desktop aussi (CTA à y=1088 pour 900 px avant)
+  expect(blocDesktop.style.bottom).toBe('0px');
   Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: largeur });
 });
