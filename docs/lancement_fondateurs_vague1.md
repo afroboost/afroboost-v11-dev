@@ -51,7 +51,6 @@ Canal : **un seul par personne**. WhatsApp si numéro légitime (E.164 ou mobile
 Liens : **WA** = `afroboost.com/?offre=cc73f6ee-163a-433d-b5f0-c00c6392b437&utm_source=whatsapp&utm_medium=messaging&utm_campaign=fondateurs2026`
 (sans protocole : le moteur le retire lui-même pour Meta) · **EMAIL** = `https://afroboost.com/?offre=cc73f6ee-163a-433d-b5f0-c00c6392b437&utm_source=email&utm_medium=email&utm_campaign=fondateurs2026`.
 Vérifié le 16/09 (Playwright, lecture seule) : HTTP 200, fiche Fondateurs ouverte (nom, 59, 8 séances), attribution `af_attribution` first/last écrite.
-Alternative essai : `afroboost.com/cours-essai-gratuit-neuchatel?utm_source=<canal>&utm_medium=<medium>&utm_campaign=fondateurs2026` (200, vérifié).
 
 ## Non retenus pour la vague 1 (vague 2 potentielle) — 22
 
@@ -59,7 +58,7 @@ Alternative essai : `afroboost.com/cours-essai-gratuit-neuchatel?utm_source=<can
 |---|---|---|---|
 | Essai réservé pour le **20/09** (Garance H., Camille B.) | 2 | essai à venir : laisser la relance après essai (P1-b/P1-d) faire son travail ; recontacter après le 20/09 | WhatsApp |
 | Anciens participants > 90 j (Ceylan, Laura B., Nadia O., Elsa G. — 17-21/06 ; Oswald C. 17/05 ; Sandra C. 26/04 ; Enock A. 22/04 ; Léa P. 12/04) | 8 | signal réel mais plus ancien → vague 2 | 7 WhatsApp, 1 e-mail |
-| Essais **jamais réservés** (Andreia M. 12/09, Rose, Margotine H. 02/09, G., Y. 25/08, M. 24/08) | 6 | essai octroyé mais jamais réservé : message « ton premier cours est offert » plus adapté que Fondateurs | WhatsApp |
+| Essais **jamais réservés** (Andreia M. 12/09, Rose, Margotine H. 02/09, G., Y. 25/08, M. 24/08) | 6 | essai octroyé mais jamais réservé : → corrigé 16/09 : message Fondateurs (connaissent déjà Afroboost) | WhatsApp |
 | Public **Laff Festival** 21-22/08 (C. L., B. L., A. M., L. C., T. (pseudos)) | 5 | présence à un événement, pas aux cours de Neuchâtel ; 2 numéros français | 3 WhatsApp, 2 e-mail |
 | Testfunel2 | 1 | **donnée de test** (« Testfunel2 » échappe à la regex `\btest\b` de `est_donnee_test`) — à exclure de toute campagne ; petite dette : élargir la regex | — |
 
@@ -73,35 +72,38 @@ Alternative essai : `afroboost.com/cours-essai-gratuit-neuchatel?utm_source=<can
 - Liens : 3/3 en 200, fiche ouverte, attribution posée.
 - Monitoring premier client : `python3 tests/monitoring_premier_fondateur.py [email]` — prêt (syntaxe OK, sortie « aucun abonné » propre), **ne pas lancer avant le premier achat réel**.
 
-## Messages (brouillons E1, adaptés au moteur existant)
+## Messages FINAUX (correction du 16/09 — AUCUN essai gratuit : les 13 connaissent déjà Afroboost)
 
-### A. WhatsApp — via le gabarit Meta approuvé `afroboost_campagne`
-Le gabarit est « *Afroboost vous informe: {{1}}. Rendez-vous sur afroboost.com* » : **{{1}} = tout le message**, aplati par le moteur
-(pas de saut de ligne, pas d'emoji, pas de `https://`, ≤ 1024 caractères). La personnalisation passe par la variable
-`{prenom}` du moteur de campagne (remplacée avant l'envoi) — pour les 3 prénoms incertains (#4, #9, #11), utiliser la variante sans prénom.
+Brouillons créés en base (statut `draft`, aperçu serveur 12 WA `ok` + 1 e-mail `ok`, Patricia sur sa fiche `chat_login`) :
+`123b7bb9…` « Fondateurs V1 FINAL — WhatsApp (prénom) » (8) · `bf9a0c39…` « Fondateurs V1 FINAL — WhatsApp (sans prénom) » (4 : Carel,
+avitanshannon, Bourgouin, Kim) · `0aa0ad1c…` « Nouvelles offres Afroboost — Offre Fondateurs à 59 CHF/mois » (1, e-mail).
+⚠️ Les 3 premiers brouillons (`33531e64…`, `e6f44e66…`, `ccd0026c…`, textes avec essai) sont OBSOLÈTES : ne jamais les lancer.
 
-Texte à coller dans le message de campagne (canal WhatsApp) — **version courte validée E2.2** (le moteur aplatit les
-sauts de ligne en une seule ligne dans la variable Meta ; ≈ 560 caractères, sans accent dans la version envoyée) :
-
+### A. WhatsApp — gabarit Meta `afroboost_campagne`
 > Bonjour {prenom}, c'est Bassi d'Afroboost.
-> La saison reprend a Neuchatel et j'ouvre l'offre Fondateurs : 59 CHF/mois pour 8 seances/mois.
-> 50 places maximum, offre disponible jusqu'au 30 septembre.
-> Decouvrir l'offre : afroboost.com/?offre=cc73f6ee-163a-433d-b5f0-c00c6392b437&utm_source=whatsapp&utm_medium=messaging&utm_campaign=fondateurs2026
-> Si tu preferes essayer avant, ton premier cours est offert.
-> Reponds STOP si tu ne souhaites plus recevoir de messages Afroboost.
+> La saison reprend à Neuchâtel et les nouvelles offres Afroboost sont disponibles.
+> L'offre Fondateurs est à 59 CHF/mois pour 8 séances/mois.
+> 50 places maximum, disponible jusqu'au 30 septembre.
+> Découvrir les nouvelles offres :
+> afroboost.com/?offre=cc73f6ee-163a-433d-b5f0-c00c6392b437&utm_source=whatsapp&utm_medium=messaging&utm_campaign=fondateurs2026
+> Réponds STOP si tu ne souhaites plus recevoir de messages Afroboost
 
-Variante sans prénom (#4, #9, #11) : remplacer « Bonjour {prenom}, c'est Bassi d'Afroboost. » par « Bonjour, c'est Bassi d'Afroboost. ».
+Variante sans prénom : « Bonjour, c'est Bassi d'Afroboost. »
+Rendu reçu : « Afroboost vous informe: Bonjour Amanda, c'est Bassi d'Afroboost. La saison reprend à Neuchâtel et les nouvelles offres Afroboost sont disponibles. L'offre Fondateurs est à 59 CHF/mois pour 8 séances/mois. 50 places maximum, disponible jusqu'au 30 septembre. Découvrir les nouvelles offres : afroboost.com/?offre=cc73f6ee-163a-433d-b5f0-c00c6392b437&utm_source=whatsapp&utm_medium=messaging&utm_campaign=fondateurs2026. Réponds STOP si tu ne souhaites plus recevoir de messages Afroboost. Rendez-vous sur afroboost.com »
 
-**STOP automatique — prouvé le 16/09 (lecture seule + mock)** : `POST /webhook/whatsapp-meta` (server.py:21549) → `_v332_stop_whatsapp`
-(13391 : casse, accents, ponctuation ; mots stop / stop tout / arret / unsubscribe / desabonner / desinscrire) → `subscribers.status = opted_out`
-(créé même pour un numéro jamais inscrit) → `c3_refus_exprimes` → campagne suivante : décision `opt_out`, `skipped`. Mock : STOP / Stop / stop /
-« Stop ! » / Arrêt / STOP TOUT → 7/7 ; bancs existants `test_s1_registre_stop` 95/95, `test_whatsapp_remise_en_etat` 42/42.
+### B. E-mail (Ozgul)
+Objet : Nouvelles offres Afroboost — Offre Fondateurs à 59 CHF/mois (le moteur préfixe « 📢 »)
+> Bonjour Ozgul,
+> La saison reprend à Neuchâtel et les nouvelles offres Afroboost sont maintenant disponibles.
+> L'offre Fondateurs est proposée à 59 CHF/mois pour 8 séances/mois.
+> 50 places maximum, disponible jusqu'au 30 septembre.
+> [Découvrir les nouvelles offres] → https://afroboost.com/?offre=cc73f6ee-163a-433d-b5f0-c00c6392b437&utm_source=email&utm_medium=email&utm_campaign=fondateurs2026
+> À très vite,
+> Bassi — Afroboost
+> (désinscription un-clic 3B ajoutée par le moteur)
 
-### B. E-mail (1 destinataire en vague 1)
-Objet : **Offre Fondateurs — 59 CHF/mois, 50 places, jusqu'au 30 septembre**
-Corps : brouillon B de `docs/lancement_fondateurs_brouillons.md` (variable **`{prenom}`** — prouvé : `{{prénom}}` rendrait `{Ozgul}` ; `{prenom}` rend `Bonjour Ozgul,` ; lien EMAIL ci-dessus ;
-lien essai `utm_source=email` ; désinscription un-clic 3B).
-
+**STOP automatique — prouvé le 16/09** : `POST /webhook/whatsapp-meta` → `_v332_stop_whatsapp` (casse/accents/ponctuation) → `subscribers.opted_out`
+→ `c3_refus_exprimes` → campagne suivante `opt_out`/`skipped`. Mock 7/7 ; bancs 95/95 et 42/42.
 ## Après GO — comment ça s'envoie (rappel, rien n'est fait ici)
 Campagne 3B existante : sélection des 13 contacts (`selectedContacts`), canal WhatsApp pour 12 / e-mail pour 1 (deux campagnes ou une
 campagne par canal), **aperçu serveur** (`GET …/apercu` : compteurs `ok / opt_out / test / actif / doublon / sans_relation`) → les 13 doivent
