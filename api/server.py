@@ -16060,6 +16060,31 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
         # l'écran retombe alors sur son affichage d'avant ce lot, à l'identique.
         logger.warning("[LOT A] verite canonique indisponible: %s", type(_lota_err).__name__)
 
+    # V531 — L'ÉCRAN SUIT LE CANONIQUE QUAND IL EST SANS AMBIGUÏTÉ (miroir de la
+    # garde d'écriture V531). Sans cela l'espace affichait « Plus de séances
+    # disponibles » (`subscriptions.remaining_sessions = 0`) alors que la page
+    # « Code promo » — la vérité — donnait 1 séance, et que la réservation V531
+    # l'accepte. Les compteurs renvoyés et `_v393_bloque` sont recalculés sur les
+    # valeurs canoniques ; AUCUNE ÉCRITURE. AMBIGU / INDISPONIBLE : inchangé.
+    try:
+        from api.routes.shared import (v531_actif as _v531_actif,
+                                       v531_valeurs_canoniques as _v531_valeurs)
+        _v531_canon = _v531_valeurs(_lota) if _v531_actif() else None
+        if _v531_canon and not member:
+            if _v531_canon["remaining_sessions"] != remaining_sessions:
+                logger.info("[V531] %s : ecran %s -> canonique %s", code_upper,
+                            remaining_sessions, _v531_canon["remaining_sessions"])
+            remaining_sessions = _v531_canon["remaining_sessions"]
+            used_sessions = _v531_canon["used_sessions"]
+            total_sessions = _v531_canon["total_sessions"]
+            _v531_valide, _v531_message = _v393_ok(
+                {"expires_at": _v531_canon.get("expires_at") or expires_at,
+                 "remaining_sessions": remaining_sessions}, 1)
+            _v393_bloque = not _v531_valide
+            _v393_message = _v531_message
+    except Exception as _v531_err:
+        logger.warning("[V531] miroir d'affichage indisponible: %s", type(_v531_err).__name__)
+
     # LOT B2 — L'ECRAN NE DOIT PAS PROPOSER CE QUE LA RESERVATION REFUSERA.
     #
     # La garde canonique vient d'etre posee sur les deux chemins d'ECRITURE.
@@ -17125,6 +17150,31 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         _ref["remaining_sessions"] = remaining   # quota individuel du membre
     else:
         _ref["remaining_sessions"] = remaining
+    # V531 — LE CANONIQUE GOUVERNE LA GARDE D'ÉCRITURE. `subscriptions` peut
+    # porter un compteur faux (Amanda : 9/9 pour 8 réservations, page « Code
+    # promo » à 8/9). Quand `lota_droits_du_code` est SANS AMBIGUÏTÉ, ce sont
+    # ses valeurs (restant, expiration) que `forfait_utilisable` juge — jamais
+    # le compteur dérivé. Quota individuel de membre : inchangé (compteur du
+    # membre). AMBIGU / INDISPONIBLE : inchangé (LOT B2 tranche les refus).
+    _v531_canon = None
+    if not (member and not shared_mode):
+        try:
+            from api.routes.shared import (v531_actif as _v531_actif,
+                                           v531_valeurs_canoniques as _v531_valeurs,
+                                           lota_droits_du_code as _v531_lire)
+            if _v531_actif():
+                _v531_canon = _v531_valeurs(await _v531_lire(db, code_upper))
+        except Exception as _v531_err:
+            logger.warning("[V531] canonique illisible pour %s : %s", code_upper, type(_v531_err).__name__)
+            _v531_canon = None
+        if _v531_canon:
+            if _v531_canon["remaining_sessions"] != remaining:
+                logger.info("[V531] %s : subscriptions %s -> canonique %s (code promo fait foi)",
+                            code_upper, remaining, _v531_canon["remaining_sessions"])
+            remaining = _v531_canon["remaining_sessions"]
+            _ref["remaining_sessions"] = remaining
+            if _v531_canon.get("expires_at"):
+                _ref["expires_at"] = _v531_canon["expires_at"]
     _ok, _pourquoi = _v393_ok(_ref, quantity)
     if not _ok:
         logger.info(f"[V393] Reservation refusee sur {code_upper} : {_pourquoi}")
@@ -17239,6 +17289,25 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     # V186/V202: Déduction des séances — partagées ou individuelles
     new_remaining = remaining - quantity
 
+    # V531 — LE DÉBIT CANONIQUE PASSE EN PREMIER, ET SON VERDICT EST LU.
+    # `seances_consommer` est atomique (plafond `$expr`) mais son résultat
+    # n'était pas consulté : deux réservations simultanées sur la dernière
+    # séance passaient toutes les deux, la 2e sur un plafond déjà atteint. Il
+    # est désormais appelé AVANT toute écriture ; `plafond_atteint` -> 409 sans
+    # rien avoir écrit. Les abstentions (`ambigu`, `code_mort`, `aucune_fiche`)
+    # laissent passer, comme avant. (V186 / SEANCES : clé d'événement = l'id de
+    # CETTE réservation, tiré ici pour que mouvement et document le partagent.)
+    _seances_reservation_id = str(uuid.uuid4())
+    from api.routes.shared import (seances_consommer as _seances_consommer,
+                                   v531_refus_plafond as _v531_refus_plafond)
+    _v531_debit = await _seances_consommer(db, code_upper, quantity,
+                                           reservation_id=_seances_reservation_id,
+                                           source="subscriber_space")
+    _v531_ferme, _v531_msg = _v531_refus_plafond(_v531_debit)
+    if _v531_ferme:
+        logger.warning("[V531] %s : derniere seance deja prise (plafond) — reservation refusee", code_upper)
+        raise HTTPException(status_code=409, detail=_v531_msg)
+
     if member and not shared_mode:
         # V202: Déduire du quota individuel du membre
         member_used = member.get("used_sessions", 0) + quantity
@@ -17254,26 +17323,44 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     else:
         # Déduire du pool partagé (subscription)
         if not subscription.get("_is_virtual"):
-            new_used = subscription.get("used_sessions", 0) + quantity
-            update_data = {
-                "remaining_sessions": new_remaining,
-                "used_sessions": new_used,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-            if new_remaining <= 0:
-                update_data["status"] = "completed"
-            await db.subscriptions.update_one({"id": subscription.get("id")}, {"$set": update_data})
-
-    # V186 / SEANCES : incrément du nombre de places par LA règle unique
-    # (`api/routes/shared.py`, `seances_consommer`) — fiche désignée, plafond
-    # atomique, et clé d'événement = l'identifiant de CETTE réservation, tiré
-    # ICI pour que le mouvement et le document portent le même `id`. Un rejeu
-    # de la même réservation ne débite pas deux fois.
-    _seances_reservation_id = str(uuid.uuid4())
-    from api.routes.shared import seances_consommer as _seances_consommer
-    await _seances_consommer(db, code_upper, quantity,
-                             reservation_id=_seances_reservation_id,
-                             source="subscriber_space")
+            # V531 — le `$set` d'une valeur LUE AVANT (non atomique) devient un
+            # décrément CONDITIONNEL ; si le document a dérivé (compteur déjà à 0
+            # alors que le canonique vient de débiter), il est RESYNCHRONISÉ sur
+            # la fiche canonique — aucune remise à zéro, aucun effacement.
+            from pymongo import ReturnDocument as _v531_RD
+            _v531_now = datetime.now(timezone.utc).isoformat()
+            _v531_sub = await db.subscriptions.find_one_and_update(
+                {"id": subscription.get("id"), "remaining_sessions": {"$gte": quantity}},
+                {"$inc": {"remaining_sessions": -quantity, "used_sessions": quantity},
+                 "$set": {"updated_at": _v531_now}},
+                projection={"_id": 0, "remaining_sessions": 1},
+                return_document=_v531_RD.AFTER)
+            if _v531_sub is not None:
+                if int(_v531_sub.get("remaining_sessions") or 0) <= 0:
+                    await db.subscriptions.update_one({"id": subscription.get("id")},
+                                                      {"$set": {"status": "completed"}})
+            elif _v531_debit.get("debite") and _v531_debit.get("maxUses"):
+                _v531_used = int(_v531_debit.get("used") or 0)
+                _v531_rest = max(0, int(_v531_debit.get("maxUses") or 0) - _v531_used)
+                logger.info("[V531] %s : subscriptions resynchronise sur le canonique (used %s, restant %s)",
+                            code_upper, _v531_used, _v531_rest)
+                await db.subscriptions.update_one({"id": subscription.get("id")}, {"$set": {
+                    "used_sessions": _v531_used,
+                    "remaining_sessions": _v531_rest,
+                    "total_sessions": int(_v531_debit.get("maxUses") or 0),
+                    "status": "completed" if _v531_rest <= 0 else "active",
+                    "updated_at": _v531_now,
+                }})
+            else:
+                new_used = subscription.get("used_sessions", 0) + quantity
+                update_data = {
+                    "remaining_sessions": new_remaining,
+                    "used_sessions": new_used,
+                    "updated_at": _v531_now,
+                }
+                if new_remaining <= 0:
+                    update_data["status"] = "completed"
+                await db.subscriptions.update_one({"id": subscription.get("id")}, {"$set": update_data})
 
     coach_id = subscription.get("coach_id") or course.get("coach_id") or DEFAULT_COACH_ID  # V244
 

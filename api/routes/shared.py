@@ -5279,6 +5279,86 @@ def lotb2_verdict(etat: dict, quantite: int = 1):
     return False, ""
 
 
+# =====================================================================
+# V531 — LE CANONIQUE GOUVERNE AUSSI L'ACCEPTATION (hotfix Amanda, 16/09/2026)
+# =====================================================================
+# Constat de production : `AmandaBoost-26` = 8/9 sur la page « Code promo »
+# (LOT A : la vérité), 8 réservations vivantes, mais `subscriptions` porte
+# `used_sessions 9 / remaining 0 / completed` (un débit de plus que les
+# réservations — compteur non canonique, jamais réaligné : LOT B ouvert).
+# La garde d'écriture (`forfait_utilisable` sur `subscriptions`) et l'écran
+# (`remaining_sessions` du même document) fermaient donc la porte AVANT que
+# le canonique ne soit consulté ; LOT B2 n'ajoutait que des REFUS canoniques,
+# jamais une acceptation. Un abonné à jour de paiement était bloqué.
+#
+# Règle : quand la vérité canonique est SANS AMBIGUÏTÉ (`etat == "OK"`, un
+# `restant` entier, un seul code), ce sont SES valeurs (restant, utilisé,
+# total, expiration) qui alimentent la garde d'écriture et l'écran — et non
+# le compteur `subscriptions`. En AMBIGU / INDISPONIBLE / AUCUN_DROIT, rien
+# ne change : comportement d'avant (le LOT B2 gère déjà les refus canoniques).
+# Aucune écriture ici. Drapeau de rollback : `V531_CANONIQUE_GOUVERNE=false`.
+def v531_actif() -> bool:
+    return os.environ.get("V531_CANONIQUE_GOUVERNE", "true").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def v531_valeurs_canoniques(etat: dict):
+    """PUR. `etat` = sortie de `lota_droits_du_code`. Rend
+    `{"remaining_sessions", "used_sessions", "total_sessions", "expires_at"}`
+    quand le canonique gouverne, sinon `None` (on garde alors les valeurs de
+    `subscriptions`, à l'identique d'avant V531)."""
+    if not etat or etat.get("etat") != "OK":
+        return None
+    try:
+        restant = int(etat.get("restant"))
+        total = int(etat.get("total"))
+        utilise = int(etat.get("utilise"))
+    except (TypeError, ValueError):
+        return None
+    if restant < 0 or total <= 0:
+        return None
+    return {
+        "remaining_sessions": restant,
+        "used_sessions": utilise,
+        "total_sessions": total,
+        # `expiresAt` de la fiche : "AAAA-MM-JJ" — `_v391_est_expire` sait le lire.
+        "expires_at": etat.get("expire_le") or None,
+    }
+
+
+def v531_refus_plafond(resultat_debit: dict):
+    """PUR. `seances_consommer` a-t-il refusé le débit faute de séances ?
+    Avant V531 son verdict n'était pas lu : deux réservations simultanées sur
+    la dernière séance passaient toutes les deux (la 2e sur un plafond déjà
+    atteint). Seul `plafond_atteint` ferme ; `ambigu` / `code_mort` /
+    `aucune_fiche` restent des abstentions (LOT B2 décide de ces cas)."""
+    if not resultat_debit:
+        return False, ""
+    if resultat_debit.get("motif") == "plafond_atteint":
+        return True, ("La dernière séance de ton abonnement vient d'être prise. "
+                      "Contacte le coach pour le renouveler.")
+    return False, ""
+
+
+async def v531_fiche_vivante_existante(db, code):
+    """La fiche `discount_codes` encore VIVANTE (active et non expirée) qui porte
+    déjà ce code, ou `None`. Lecture seule ; insensible à la casse."""
+    import re as _re
+    _c = str(code or "").strip()
+    if not _c:
+        return None
+    async for _d in db.discount_codes.find(
+            {"code": {"$regex": f"^{_re.escape(_c)}$", "$options": "i"}},
+            {"_id": 0, "id": 1, "code": 1, "active": 1, "expiresAt": 1}):
+        if _d.get("active") is False:
+            continue
+        if _v391_est_expire(_d.get("expiresAt")):
+            continue
+        return _d
+    return None
+
+
 async def lotb2_refus_canonique(db, code, quantite: int = 1):
     """(refus, message) — la page « Code promo » autorise-t-elle cette réservation ?
 
