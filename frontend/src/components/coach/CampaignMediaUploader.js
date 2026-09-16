@@ -242,7 +242,7 @@ export default function CampaignMediaUploader({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: fichier ? 8 : 0 }}>
           {etat === 'done' && <SvgIcon name="check" size={14} color={COULEUR} />}
           {(etat === 'uploading' || etat === 'processing') && <SvgIcon name="loader" size={14} className="animate-spin" />}
-          <span data-testid="v533-etat" style={{ color: etat === 'error' ? '#FF2DAA' : '#fff', fontSize: 12, fontWeight: 600 }}>
+          <span data-testid="v533-etat" style={{ color: etat === 'error' ? '#ef4444' : '#fff', fontSize: 12, fontWeight: 600 }}>
             {etat === 'idle' && videoPrete ? 'Vidéo prête' : libelleEtat(etat, pct)}{etat === 'error' && erreur ? ' — ' + erreur : ''}
           </span>
           <span data-testid="v533-pct" style={{ marginLeft: 'auto', color: 'rgba(255,255,255,0.6)', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
@@ -314,7 +314,7 @@ export default function CampaignMediaUploader({
               </div>
             </div>
           </div>
-          {erreur && etat !== 'error' && <div role="alert" style={{ color: '#FF2DAA', fontSize: 12 }}>{erreur}</div>}
+          {erreur && etat !== 'error' && <div role="alert" style={{ color: '#ef4444', fontSize: 12 }}>{erreur}</div>}
           {thumbnailUrl && (
             <div data-testid="v533-miniature" data-source={thumbnailSource || ''} data-temps={thumbnailTime == null ? '' : String(thumbnailTime)}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#fff', fontSize: 12 }}>
@@ -338,7 +338,7 @@ export default function CampaignMediaUploader({
             <Cropper image={cropSrc} crop={crop} zoom={zoom} aspect={RATIO_REEL} minZoom={1} maxZoom={3}
               onCropChange={setCrop} onZoomChange={setZoom} onCropComplete={(_, px) => setCropPixels(px)} />
           </div>
-          <div style={{ padding: 14, background: '#0a0a1a', display: 'grid', gap: 10 }}>
+          <div style={{ padding: 14, background: 'rgba(0,0,0,0.8)', display: 'grid', gap: 10 }}>
             <div style={{ color: '#fff', fontSize: 12, textAlign: 'center' }}>Cadre 9:16 — déplacez l'image, zoomez légèrement ; ce que vous voyez dans le cadre est la miniature finale.</div>
             <input type="range" min={1} max={3} step={0.01} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} data-testid="v533-zoom" style={{ width: '100%', accentColor: COULEUR }} />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
