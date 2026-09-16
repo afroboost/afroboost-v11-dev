@@ -603,10 +603,20 @@ async def principal():
     _ordre = [page.find("<h3>%s</h3>" % n) for n in ("Fondateurs", "Saison hiver — 8 mois", "Saison hiver — 2 paiements", "Mensuel Liberté", "Flex 4", "Étudiant", "Cours à l&#x27;unité", "Cours d&#x27;essai gratuit")]
     verifier("87b. Hiérarchie commerciale : Fondateurs > 8 mois > 2× > Mensuel > Flex 4 > Étudiant > unité > essai (malgré les positions)",
              all(x >= 0 for x in _ordre) and _ordre == sorted(_ordre), str(_ordre))
-    verifier("87c. Badges : OFFRE LANCEMENT / MEILLEUR PRIX / SAISON EN 2 FOIS / LE PLUS FLEXIBLE / ÉTUDIANT — un seul « plus flexible »",
-             'class="t-badge t-badge-lancement">Offre lancement<' in page and '>Meilleur prix<' in page and '>Saison en 2 fois<' in page
+    # V528 : « Meilleur prix » n'est plus posé d'office sur la saison — V526 le CALCULE
+    # (coût/séance le plus bas parmi les offres affichées). Dans cette fixture Fondateurs
+    # (59/8 = 7.38) bat la saison (549/64 = 8.58) : la saison porte le texte factuel
+    # « Saison complète » et « Meilleur prix » n'apparaît nulle part.
+    verifier("87c. Badges : OFFRE LANCEMENT / SAISON COMPLÈTE (Fondateurs moins chère par séance → PAS « Meilleur prix ») / SAISON EN 2 FOIS / LE PLUS FLEXIBLE / ÉTUDIANT — un seul « plus flexible »",
+             'class="t-badge t-badge-lancement">Offre lancement<' in page and '>Meilleur prix<' not in page and '>Saison complète<' in page and '>Saison en 2 fois<' in page
              and page.count(">Le plus flexible<") == 1 and page.split("<h3>Mensuel Liberté</h3>")[0].count(">Le plus flexible<") == 0
              and page.count('t-badge-mensuel">Étudiant<') == 1 and page.split("<h3>Flex 4</h3>")[1].split("</article>")[0].count("t-badge") == 0)
+    _ns87 = monter(db, j)
+    _offres87 = [o for o in db.offers.docs if o.get("visible")]
+    _saison_seule = [o for o in _offres87 if str(o.get("name", "")).startswith("Saison hiver — 8 mois")]
+    verifier("87c2. `_m1_est_meilleur_prix` : la saison redevient « Meilleur prix » dès que Fondateurs n'est plus dans la liste (calcul, pas décor)",
+             bool(_saison_seule) and _ns87["_m1_est_meilleur_prix"](_saison_seule[0], [o for o in _offres87 if "Fondateurs" not in str(o.get("name", ""))]) is True
+             and _ns87["_m1_est_meilleur_prix"](_saison_seule[0], _offres87) is False)
     verifier("87d. Économie RÉELLE vs 8 × mensuel (712) : 8 mois 1× → 163 CHF ; 2× 299 → 114 CHF ; aucune sur les mensuels",
              "Tu économises 163 CHF par rapport au mensuel" in page and "Tu économises 114 CHF par rapport au mensuel" in page
              and page.count("Tu économises") == 2)

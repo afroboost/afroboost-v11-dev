@@ -111,6 +111,7 @@ export default function SubscriberOnboarding({ code, subscription, onDone }) {
           Nom complet
         </label>
         <input
+          data-testid="onboarding-nom"
           value={name}
           onChange={(e) => setName(e.target.value)}
           style={{
@@ -131,6 +132,7 @@ export default function SubscriberOnboarding({ code, subscription, onDone }) {
           value={whatsapp}
           onChange={(e) => setWhatsapp(e.target.value)}
           placeholder="+41 76 000 00 00"
+          data-testid="onboarding-whatsapp"
           style={{
             width: "100%",
             padding: "12px",
@@ -198,6 +200,7 @@ export default function SubscriberOnboarding({ code, subscription, onDone }) {
         {error && <p style={{ color: "#ff6b6b", fontSize: 13, marginBottom: 12 }}>{error}</p>}
 
         <button
+          data-testid="onboarding-valider"
           onClick={submit}
           disabled={saving}
           style={{

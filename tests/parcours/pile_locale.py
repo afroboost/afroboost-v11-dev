@@ -53,19 +53,35 @@ def _faux_session_create(api_key=None, **p):
     return _Obj(id=sid, url="http://127.0.0.1:8001/faux-stripe?cs=" + sid, payment_status="unpaid", mode=p.get("mode"))
 
 
+MODIFS = []   # V528 : journal des `Subscription.modify` (résiliation / réactivation), lu par /faux-stripe/modifs
+
+
 class _FauxRessource:
     @staticmethod
     def create(*a, **k): return _Obj(id="faux_" + uuid.uuid4().hex[:10], **{kk: vv for kk, vv in k.items() if kk != "api_key"})
     @staticmethod
     def retrieve(id_, *a, **k): return _Obj(id=id_, status="active")
     @staticmethod
-    def modify(id_, *a, **k): return _Obj(id=id_, **{kk: vv for kk, vv in k.items() if kk != "api_key"})
+    def modify(id_, *a, **k):
+        MODIFS.append({"id": id_, **{kk: vv for kk, vv in k.items() if kk != "api_key"}, "t": time.time()})
+        return _Obj(id=id_, **{kk: vv for kk, vv in k.items() if kk != "api_key"})
     @staticmethod
     def list(*a, **k): return _Obj(data=[])
 
 
 stripe.checkout.Session.create = _faux_session_create
-stripe.checkout.Session.retrieve = lambda id_, *a, **k: _Obj(id=id_, payment_status="paid", **(SESSIONS.get(id_) or {}))
+def _faux_session_retrieve(id_, *a, **k):
+    # V528 : comme le vrai Stripe, la session RÉCUPÉRÉE porte amount_total (absent des
+    # params de create). Sans lui, renewal_price tombait à 0 dans le webhook (harnais only).
+    _p = SESSIONS.get(id_) or {}
+    _li = (_p.get("line_items") or [{}])[0]
+    _amount = int(_li.get("price_data", {}).get("unit_amount", 0)) * int(_li.get("quantity", 1) or 1)
+    _base = {kk: vv for kk, vv in _p.items() if kk not in ("amount_total", "customer", "payment_intent")}
+    return _Obj(id=id_, payment_status="paid", amount_total=_amount, customer="cus_faux_" + id_[-6:],
+                payment_intent=None, **_base)
+
+
+stripe.checkout.Session.retrieve = _faux_session_retrieve
 for nom in ("Subscription", "Customer", "PaymentIntent", "Invoice", "Product", "Price", "Refund", "Account", "AccountLink"):
     setattr(stripe, nom, _FauxRessource)
 
@@ -167,6 +183,21 @@ async def faux_stripe_rejouer(request: Request):
     if cs not in SESSIONS:
         return HTMLResponse("inconnue", status_code=404)
     return await faux_stripe_payer(request)
+
+
+@S.fastapi_app.get("/faux-stripe/modifs")
+async def faux_stripe_modifs():
+    """V528 : les appels Stripe `Subscription.modify` reçus (cancel_at_period_end, cancel_at…)."""
+    return {"modifs": MODIFS}
+
+
+@S.fastapi_app.get("/faux-stripe/abonnement")
+async def faux_stripe_abonnement(email: str = ""):
+    """V528 : lecture BASE DE TEST d'un abonnement par e-mail (code d'accès + drapeaux Stripe) — pile locale seulement."""
+    docs = await S.db.subscriptions.find({"email": email.strip().lower()}, {"_id": 0}).sort("created_at", -1).to_list(10)
+    return {"n": len(docs), "abonnements": [{k: d.get(k) for k in ("id", "code", "access_code", "status", "offer_id", "offer_name", "stripe_subscription_id",
+                                                                     "cancel_at_period_end", "resiliation_demandee_le", "expires_at", "remaining_sessions",
+                                                                     "renewal_sessions", "renewal_price", "billing_mode")} for d in docs]}
 
 
 @S.fastapi_app.get("/faux-stripe/etat")

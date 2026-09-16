@@ -287,9 +287,12 @@ v("V527 webhook : customer.subscription.updated branché (sync cancel_at_period_
 v("V527 filet webhook : doublon -> 0 séance créditée (forfait ET code), cancel_at_period_end sur le doublon, journal explicite, AUCUN remboursement",
   'subscription_data["remaining_sessions"] = 0' in S and '{"$set": {"maxUses": 0, "doublon_de": _dbl.get("id")}}' in S
   and "stripe.Subscription.modify(_sid_dbl, cancel_at_period_end=True, api_key=stripe.api_key)" in S and "Refund" not in S.split("V527: FILET")[1][:3000])
-v("I. anti-double anonyme AVANT Stripe : offre récurrente -> e-mail connu ou saisi (jamais la chaîne vide) -> customerEmail -> garde 409 serveur ; offre unique : rien",
-  "const v527Email = v527EmailPourAbonnement(offer);" in A and "if (!v527Email.ok) return;" in A and "if (v527Email.email) payload.customerEmail = v527Email.email;" in A
+v("I. anti-double anonyme AVANT Stripe (V528) : offre récurrente -> e-mail connu, sinon étape modale (plus de window.prompt) -> customerEmail -> garde 409 serveur ; offre unique : rien",
+  "const v527Email = v527EmailPourAbonnement(offer, emailForce);" in A and "if (!v527Email.ok) {" in A and "if (v527Email.email) payload.customerEmail = v527Email.email;" in A
   and "if (!offreEstRecurrente(offer)) return { ok: true, email: null };" in A and "export const estRecurrente = (o) => modeFacturation(o) !== 'unique';" in U
+  and "window.prompt(" not in A and 'data-testid="v528-etape-email"' in A and 'data-testid="v528-email-input"' in A
+  and "return { ok: false, email: null, demander: true };" in A
+  and "startProgressiveCheckout(etape.offer, etape.quantity, etape.variants, adresse);" in A
   and "_hiver.garde_abonnement_actif(db, request.customerEmail, _hiver_offre)" in S)
 v("H/J/K. la saisie précède setCheckoutBusy et le garde-fou checkoutBusy reste le premier test (double clic = 1 checkout)",
   A.index("if (checkoutBusy) return;\n    const v527Email") < A.index("setCheckoutBusy(true);", A.index("const v527Email")))

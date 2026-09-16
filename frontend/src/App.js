@@ -6593,32 +6593,47 @@ function App() {
   // saisie minimale. Le serveur applique `garde_abonnement_actif` (409 « Tu as déjà
   // cet abonnement actif ») et Stripe est prérempli. Les achats uniques ne passent
   // PAS par cette étape.
-  const v527EmailPourAbonnement = (offer) => {
+  // V528: plus de window.prompt. Quand l'adresse est inconnue, on rend
+  // `{ ok: false, demander: true }` : startProgressiveCheckout ouvre alors la
+  // petite étape « Ton e-mail » (modale existante `modal-overlay`) et se
+  // rappelle lui-même avec l'adresse saisie (4e paramètre `emailForce`).
+  const v528EmailValide = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || '').trim());
+  const v527EmailPourAbonnement = (offer, emailForce = null) => {
     if (!offreEstRecurrente(offer)) return { ok: true, email: null };
-    const valide = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || '').trim());
+    if (v528EmailValide(emailForce)) return { ok: true, email: String(emailForce).trim().toLowerCase() };
     let connu = String(userEmail || '').trim();
-    if (!valide(connu)) {
+    if (!v528EmailValide(connu)) {
       try {
         const idRaw = localStorage.getItem('afroboost_identity') || localStorage.getItem('af_chat_client');
         if (idRaw) connu = String(JSON.parse(idRaw).email || '').trim();
       } catch (e) { connu = ''; }
     }
-    if (valide(connu)) return { ok: true, email: connu.toLowerCase() };
-    const saisi = window.prompt("Abonnement mensuel : indique ton adresse e-mail (elle sert à retrouver ton espace abonné et à éviter un double abonnement) :", '');
-    if (saisi === null) return { ok: false, email: null };
-    if (!valide(saisi)) { alert("Adresse e-mail invalide."); return { ok: false, email: null }; }
-    return { ok: true, email: String(saisi).trim().toLowerCase() };
+    if (v528EmailValide(connu)) return { ok: true, email: connu.toLowerCase() };
+    return { ok: false, email: null, demander: true };
   };
+  // V528: étape e-mail minimale avant Stripe (offres récurrentes, adresse inconnue).
+  // `null` = fermée ; sinon { offer, quantity, variants } — les arguments du
+  // checkout interrompu, rejoués tels quels après « Continuer ».
+  const [v528EtapeEmail, setV528EtapeEmail] = useState(null);
+  const [v528EmailSaisi, setV528EmailSaisi] = useState('');
+  const [v528EmailErreur, setV528EmailErreur] = useState('');
 
-  const startProgressiveCheckout = async (offer, quantity = 1, variants = null) => {
+  const startProgressiveCheckout = async (offer, quantity = 1, variants = null, emailForce = null) => {
     // V224: garde de ré-entrance — sans elle, un double-clic pendant l'appel
     // réseau (démarrage à froid Vercel possible) crée plusieurs sessions
     // Stripe et plusieurs lignes payment_transactions pour le même achat.
     // V224: la garde porte sur `checkoutBusy` et NON sur `loading` — voir la
     // declaration de checkoutBusy : un `loading` remanent s'auto-bloquait ici.
     if (checkoutBusy) return;
-    const v527Email = v527EmailPourAbonnement(offer);
-    if (!v527Email.ok) return;
+    const v527Email = v527EmailPourAbonnement(offer, emailForce);
+    if (!v527Email.ok) {
+      // V528: adresse inconnue → petite étape « Ton e-mail », puis rejeu du checkout.
+      if (v527Email.demander) {
+        setV528EmailSaisi(''); setV528EmailErreur('');
+        setV528EtapeEmail({ offer, quantity, variants });
+      }
+      return;
+    }
     try {
       setCheckoutBusy(true);
       // V224: efface toute réservation en attente laissée par un parcours
@@ -9798,6 +9813,47 @@ function App() {
 
         {/* ESSAI-5a-1 : l'ancienne modal CGV est retiree — ConditionsParticipation
             porte desormais la case ET son detail, sur les trois chemins. */}
+
+        {/* V528: étape e-mail avant Stripe — offres récurrentes dont l'adresse est
+            inconnue. Réutilise la modale existante (modal-overlay / glass / neon-input /
+            btn-primary), aucun compte à créer : l'adresse sert à la garde anti-double
+            (409 serveur) et au préremplissage Stripe. Icônes en SVG, couleurs via var(). */}
+        {v528EtapeEmail && (
+          <div className="modal-overlay" data-testid="v528-etape-email" onClick={() => setV528EtapeEmail(null)}>
+            <div className="modal-content glass rounded-xl p-6 max-w-md w-full neon-border" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="text-xl font-bold text-white" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>
+                  </span>
+                  Ton e-mail
+                </h3>
+                <button type="button" onClick={() => setV528EtapeEmail(null)} className="text-2xl text-white hover:opacity-80" aria-label="Fermer">×</button>
+              </div>
+              <p className="text-white text-sm mb-4" style={{ opacity: 0.8, lineHeight: 1.5 }}>
+                Abonnement mensuel : ton adresse sert à retrouver ton espace abonné et à éviter un double abonnement.
+              </p>
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                const adresse = String(v528EmailSaisi || '').trim().toLowerCase();
+                if (!v528EmailValide(adresse)) { setV528EmailErreur('Adresse e-mail invalide.'); return; }
+                const etape = v528EtapeEmail;
+                setV528EtapeEmail(null);
+                startProgressiveCheckout(etape.offer, etape.quantity, etape.variants, adresse);
+              }}>
+                <input type="email" required autoFocus placeholder="ton@email.ch" value={v528EmailSaisi}
+                  onChange={e => { setV528EmailSaisi(e.target.value); if (v528EmailErreur) setV528EmailErreur(''); }}
+                  className="w-full p-3 rounded-lg neon-input" data-testid="v528-email-input" autoComplete="email" inputMode="email" />
+                {v528EmailErreur && (
+                  <p className="text-sm mt-2" role="alert" style={{ color: 'var(--primary-color, #D91CD2)' }}>{v528EmailErreur}</p>
+                )}
+                <button type="submit" className="mt-4 w-full py-3 rounded-lg btn-primary" data-testid="v528-email-continuer" disabled={checkoutBusy}>
+                  Continuer
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* V235: Modal Mentions légales (Impressum) — exigé par Stripe pour TWINT */}
         {showLegalModal && (
