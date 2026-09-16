@@ -12,7 +12,7 @@ import uuid
 import logging
 import asyncio
 import os
-from api.routes.shared import get_primary_color, hex_to_rgb_triplet, coach_jwt_email, is_super_admin  # V259 / V313
+from api.routes.shared import get_primary_color, hex_to_rgb_triplet, coach_jwt_email, is_super_admin, v531_fiche_vivante_existante  # V259 / V313 / V531
 
 logger = logging.getLogger(__name__)
 
@@ -450,6 +450,17 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
 
     code_obj = DiscountCode(**code_data)
     _code_stocke = code_obj.model_dump()
+    # V531 — PLUS DE DEUXIÈME FICHE VIVANTE POUR UN MÊME CODE. Cette route ne
+    # vérifiait rien : recréer « BASSBOOSTX-09 » lors d'une recharge produisait
+    # une 2e fiche (6 codes en double en production, d'où les écrans qui se
+    # contredisent). Une fiche MORTE (inactive ou expirée) ne bloque pas : un
+    # renouvellement peut reprendre le même code, LOT A ignore les fiches mortes.
+    _v531_doublon = await v531_fiche_vivante_existante(_db, _code_stocke.get("code"))
+    if _v531_doublon:
+        raise HTTPException(status_code=409, detail=(
+            f"Le code {_code_stocke.get('code')} existe déjà et est encore valide "
+            "(jusqu'au " + str(_v531_doublon.get("expiresAt") or "sans date")[:10] +
+            "). Modifie la fiche existante ou choisis un autre code."))
     await _db.discount_codes.insert_one(_code_stocke)
 
     # v96: Auto-créer la subscription si un bénéficiaire est assigné
