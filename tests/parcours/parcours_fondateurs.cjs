@@ -110,14 +110,12 @@ async function parcours(nom, fn) { if (process.env.PARCOURS && !process.env.PARC
     await p.locator('[data-testid="fiche-cta"]').dblclick({ timeout: 8000 }).catch(() => null);
     await p.waitForTimeout(800);
     const etapeApresDbl = await p.locator('[data-testid="v528-etape-email"]').count();
-    v('P5. double clic sur Acheter : 0 checkout créé (l\'étape e-mail s\'ouvre au 1er clic ; CONSTAT : le 2e clic tombe sur le fond et la referme)', (await nbSessions(p)) === avant, `sessions ${avant} -> ${await nbSessions(p)} | étape visible après double clic = ${etapeApresDbl}`);
-    if (!etapeApresDbl) {
-      await p.screenshot({ path: `${CAP}/P5-apres-double-clic.png` });
-      const ficheEncore = await p.locator('[data-testid="fiche-cta"]').isVisible().catch(() => false);
-      v('P5. CONSTAT après double clic : la fiche est-elle encore ouverte ?', true, `fiche visible = ${ficheEncore}`);
-      if (!ficheEncore) { await ouvrirFondateurs(p, 'P5bis'); }
-      await p.locator('[data-testid="fiche-cta"]').click({ timeout: 8000 }); await p.locator('[data-testid="v528-etape-email"]').waitFor({ timeout: 8000 });
-    }
+    v('P5. double clic sur Acheter : 0 checkout créé', (await nbSessions(p)) === avant, `sessions ${avant} -> ${await nbSessions(p)}`);
+    // V529 (E1.1) : Acheter n'est jamais un toggle — le 2e clic, qui tombe sur le fond de la
+    // modale à peine montée, ne la referme plus. L'étape e-mail RESTE ouverte.
+    v('P5. double clic sur Acheter : l\'étape e-mail reste OUVERTE (V529, plus de toggle par le fond)', etapeApresDbl === 1, `étape présente = ${etapeApresDbl}`);
+    await p.screenshot({ path: `${CAP}/P5-apres-double-clic.png` });
+    if (!etapeApresDbl) { await p.locator('[data-testid="fiche-cta"]').click({ timeout: 8000 }); await p.locator('[data-testid="v528-etape-email"]').waitFor({ timeout: 8000 }); }
     await p.fill('[data-testid="v528-email-input"]', emailP5);
     await Promise.all([p.waitForNavigation({ url: /faux-stripe/, timeout: 30000 }).catch(() => null), p.locator('[data-testid="v528-email-continuer"]').dblclick({ timeout: 8000 }).catch(() => null)]);
     await p.waitForTimeout(1500);
@@ -217,26 +215,50 @@ async function parcours(nom, fn) { if (process.env.PARCOURS && !process.env.PARC
   });
 
   await parcours('P9', async () => {
-    // E1 : anti-double ANONYME — un abonné actif (fixture) redonne son e-mail dans l'étape -> 409, 0 checkout, proposition d'espace
+    // E1 : anti-double ANONYME — un abonné actif (fixture) redonne son e-mail dans l'étape -> 409, 0 checkout.
+    // E1.1 (V529) : le refus est une MODALE (plus d'alert()), avec « Accéder à mon espace » / « Fermer ».
     const emailP9 = 'pw-p9-' + uid + '@example.com';
     fixture('abonne-actif ' + emailP9);
     try {
-      const { ctx, p } = await page(browser, true);
-      const cta = await ouvrirFondateurs(p, 'P9');
-      const avant = await nbSessions(p);
-      const nDialogsAvant = dialogs.length;
-      await cta.click({}, emailP9.toUpperCase());
-      for (let i = 0; i < 60 && dialogs.length === nDialogsAvant; i++) { await p.waitForTimeout(500); }
-      const nouveaux = dialogs.slice(nDialogsAvant);
-      v('P9. abonné actif (e-mail en MAJUSCULES) -> refus 409 « Tu as déjà cet abonnement actif » (rendu par alert()), 0 checkout créé', nouveaux.some(d => /déjà cet abonnement actif/i.test(d)) && (await nbSessions(p)) === avant && !/faux-stripe/.test(p.url()), nouveaux.join(' | ').slice(0, 200) + ' | ' + p.url());
-      v('P9. CONSTAT : l\'espace abonné n\'est proposé (confirm) QUE si une session d\'espace existe déjà sur l\'appareil — ici appareil neuf : aucune proposition', !nouveaux.some(d => /Ouvrir mon espace/i.test(d)), nouveaux.join(' | '));
-      await p.screenshot({ path: `${CAP}/P9-409-mobile.png` });
-      await ctx.close();
+      for (const mobile of [true, false]) {
+        const tag = mobile ? 'P9m' : 'P9d';
+        const { ctx, p } = await page(browser, mobile);
+        const cta = await ouvrirFondateurs(p, tag);
+        const avant = await nbSessions(p);
+        const nDialogsAvant = dialogs.length;
+        const recovers = []; p.on('request', r => { if (/\/api\/subscriber\/recover$/.test(r.url()) && r.method() === 'POST') recovers.push(r.url()); });
+        const checkouts = []; p.on('response', r => { if (/create-checkout-session|checkout\/create-session/.test(r.url())) checkouts.push(r.status()); });
+        await cta.click({}, emailP9.toUpperCase());
+        const modale = p.locator('[data-testid="v529-refus"]');
+        const ouverte = await modale.waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+        v(`${tag}. abonné actif (e-mail en MAJUSCULES) -> modale propre « Tu as déjà cette formule » (V529)`, ouverte && /Tu as déjà cette formule/.test(await p.textContent('[data-testid="v529-refus"]') || ''), String(ouverte));
+        v(`${tag}. texte « Aucun nouveau paiement n'a été créé. »`, /Aucun nouveau paiement n.a été créé/.test(await p.textContent('[data-testid="v529-refus-texte"]').catch(() => '') || ''));
+        v(`${tag}. aucune boîte de dialogue NATIVE (alert/confirm)`, dialogs.length === nDialogsAvant, dialogs.slice(nDialogsAvant).join(' | '));
+        v(`${tag}. 0 checkout Stripe créé (409 serveur, aucune session)`, (await nbSessions(p)) === avant && !/faux-stripe/.test(p.url()) && checkouts.every(c => c === 409), `sessions ${avant} -> ${await nbSessions(p)} | statuts ${checkouts.join(',')}`);
+        const bEspace = p.locator('[data-testid="v529-refus-espace"]');
+        const bFermer = p.locator('[data-testid="v529-refus-fermer"]');
+        v(`${tag}. boutons « Accéder à mon espace » + « Fermer » présents`, (await bEspace.count()) === 1 && (await bFermer.count()) === 1);
+        await p.screenshot({ path: `${CAP}/${tag}-409-modale.png` });
+        // B : appareil NEUF (aucune session d'espace) -> le bouton mène au parcours d'accès existant :
+        // POST /subscriber/recover (« Retrouver mes accès »), lien /espace/<CODE> envoyé par e-mail (faux Resend).
+        await bEspace.click();
+        for (let i = 0; i < 30 && !(await p.locator('[data-testid="v529-refus-envoi"]').count()); i++) { await p.waitForTimeout(300); }
+        const statut = (await p.locator('[data-testid="v529-refus-envoi"]').textContent().catch(() => '')) || '';
+        v(`${tag}. sans session : « Accéder à mon espace » appelle le parcours d'accès existant (POST /subscriber/recover, 1×)`, recovers.length === 1, `appels = ${recovers.length}`);
+        v(`${tag}. la modale confirme l'envoi du lien d'accès à l'adresse masquée`, /vient d.être envoyé à pw•+@example\.com|envoyé à/.test(statut), statut.slice(0, 160));
+        const mails = fs.existsSync(__dirname + '/pw_emails.jsonl') ? fs.readFileSync(__dirname + '/pw_emails.jsonl', 'utf8') : (fs.existsSync(process.env.PW_SCRATCH + '/pw_emails.jsonl') ? fs.readFileSync(process.env.PW_SCRATCH + '/pw_emails.jsonl', 'utf8') : '');
+        const mailsP9 = mails.split('\n').filter(l => l.includes(emailP9) && /code d.acc/i.test(l));
+        v(`${tag}. le faux Resend a bien reçu l'e-mail « Votre code d'accès » pour cet abonné (code AFR-… dedans)`, mailsP9.length >= 1 && /AFR-[A-Z0-9]{4,}/.test(mailsP9.join('')), mails ? `${mailsP9.length} e-mail(s)` : 'pw_emails.jsonl introuvable');
+        v(`${tag}. aucune boîte native non plus après le clic`, dialogs.length === nDialogsAvant);
+        await bFermer.click();
+        v(`${tag}. « Fermer » referme la modale`, (await p.locator('[data-testid="v529-refus"]').count()) === 0);
+        await p.screenshot({ path: `${CAP}/${tag}-409-apres.png` });
+        await ctx.close();
+      }
     } finally { fixture('nettoyer-abonnes'); }
   });
 
-  const dialogsInattendus = dialogs.filter(d => !/déjà cet abonnement actif|Ouvrir mon espace/i.test(d));
-  v('Global. aucune boîte de dialogue inattendue pendant les parcours (les alert() 409 de P9 sont attendus — CONSTAT : rendu natif)', dialogsInattendus.length === 0, dialogsInattendus.join(' | '));
+  v('Global. AUCUNE boîte de dialogue native pendant les parcours (V529 : le 409 est une modale)', dialogs.length === 0, dialogs.join(' | '));
   await browser.close();
   console.log(R.join('\n'));
   console.log(`\n${OK}/${OK + KO} au vert (Playwright parcours 0, 1, 4, 5, 6, 6b, 7, 8, 9)`);

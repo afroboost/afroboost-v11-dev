@@ -6617,6 +6617,35 @@ function App() {
   const [v528EtapeEmail, setV528EtapeEmail] = useState(null);
   const [v528EmailSaisi, setV528EmailSaisi] = useState('');
   const [v528EmailErreur, setV528EmailErreur] = useState('');
+  // V529: instant d'ouverture de l'étape e-mail. Un double tap sur « Choisir cette
+  // formule » : le 1er tap ouvre la modale, le 2e tombe sur le FOND (modal-overlay)
+  // qui vient de monter sous le doigt et la refermait. Acheter n'est jamais un
+  // toggle : le fond ignore les clics pendant les 600 ms qui suivent l'ouverture.
+  const v528OuvertA = useRef(0);
+  const v528Ouvrir = (etape) => { v528OuvertA.current = Date.now(); setV528EtapeEmail(etape); };
+  const v528FermerParLeFond = () => { if (Date.now() - v528OuvertA.current < 600) return; setV528EtapeEmail(null); };
+  // V529: refus métier 409 rendu dans une modale (plus d'alert() natif).
+  // { dejaAbonne, texte, email, envoi } — `envoi` = état de « Accéder à mon espace »
+  // sans session : null | 'en_cours' | { masque } | { erreur }.
+  const [v529Refus, setV529Refus] = useState(null);
+  const v529AccederEspace = async () => {
+    const cible = urlDeLaSession(lireSessionEspace());
+    if (cible) { window.location.href = cible; return; }
+    // Pas de session sur cet appareil : parcours d'accès EXISTANT (« Retrouver mes
+    // accès », POST /subscriber/recover) — le lien /espace/<CODE> part par e-mail
+    // à l'adresse enregistrée, jamais à l'écran (V389).
+    const email = v529Refus && v529Refus.email;
+    if (!email) { setV529Refus(prev => prev ? { ...prev, envoi: { erreur: 'Adresse e-mail inconnue.' } } : prev); return; }
+    setV529Refus(prev => prev ? { ...prev, envoi: 'en_cours' } : prev);
+    try {
+      const r = await axios.post(`${API}/subscriber/recover`, { email });
+      const masque = (r.data && (r.data.email_masked || r.data.masked_email || r.data.email)) || email;
+      setV529Refus(prev => prev ? { ...prev, envoi: { masque } } : prev);
+    } catch (e) {
+      const d = e && e.response && e.response.data && e.response.data.detail;
+      setV529Refus(prev => prev ? { ...prev, envoi: { erreur: d ? String(d) : 'Envoi impossible pour le moment.' } } : prev);
+    }
+  };
 
   const startProgressiveCheckout = async (offer, quantity = 1, variants = null, emailForce = null) => {
     // V224: garde de ré-entrance — sans elle, un double-clic pendant l'appel
@@ -6630,7 +6659,7 @@ function App() {
       // V528: adresse inconnue → petite étape « Ton e-mail », puis rejeu du checkout.
       if (v527Email.demander) {
         setV528EmailSaisi(''); setV528EmailErreur('');
-        setV528EtapeEmail({ offer, quantity, variants });
+        v528Ouvrir({ offer, quantity, variants }); // V529: horodaté (anti double tap)
       }
       return;
     }
@@ -6760,14 +6789,14 @@ function App() {
       // offre complète / offre terminée, phrases de hiver.py) est montré tel
       // quel — « momentanément indisponible » faisait croire à une panne.
       const detail409 = err && err.response && err.response.status === 409 && err.response.data && err.response.data.detail;
-      alert(detail409 ? String(detail409) : 'Le paiement est momentanement indisponible. Merci de reessayer.');
-      // V526: « Tu as déjà cet abonnement actif » -> proposer l'espace abonné existant
-      // (session persistante), rien d'autre : aucun nouveau tunnel.
-      if (detail409 && /espace abonn/i.test(String(detail409))) {
-        const cibleEspace = urlDeLaSession(lireSessionEspace());
-        if (cibleEspace && window.confirm('Ouvrir mon espace abonné ?')) {
-          window.location.href = cibleEspace;
-        }
+      if (detail409) {
+        // V529: plus d'alert()/confirm() natifs. Le refus 409 s'affiche dans la
+        // modale existante ; « Tu as déjà cet abonnement actif » propose l'accès à
+        // l'espace (session persistante, sinon lien d'accès par e-mail — route
+        // /subscriber/recover existante). Aucun nouveau tunnel, 0 checkout créé.
+        setV529Refus({ dejaAbonne: /espace abonn/i.test(String(detail409)), texte: String(detail409), email: v527Email.email || null, envoi: null });
+      } else {
+        alert('Le paiement est momentanement indisponible. Merci de reessayer.');
       }
     }
   };
@@ -9819,7 +9848,7 @@ function App() {
             btn-primary), aucun compte à créer : l'adresse sert à la garde anti-double
             (409 serveur) et au préremplissage Stripe. Icônes en SVG, couleurs via var(). */}
         {v528EtapeEmail && (
-          <div className="modal-overlay" data-testid="v528-etape-email" onClick={() => setV528EtapeEmail(null)}>
+          <div className="modal-overlay" data-testid="v528-etape-email" onClick={v528FermerParLeFond}>
             <div className="modal-content glass rounded-xl p-6 max-w-md w-full neon-border" onClick={e => e.stopPropagation()}>
               <div className="flex justify-between items-center mb-2">
                 <h3 className="text-xl font-bold text-white" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -9851,6 +9880,48 @@ function App() {
                   Continuer
                 </button>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* V529: refus métier 409 (déjà abonné / offre complète / offre terminée) —
+            même modale que l'étape e-mail, plus d'alert() natif. « Accéder à mon
+            espace » : session persistante -> espace direct ; sinon lien d'accès
+            envoyé par e-mail via le parcours existant (/subscriber/recover). */}
+        {v529Refus && (
+          <div className="modal-overlay" data-testid="v529-refus" onClick={() => setV529Refus(null)}>
+            <div className="modal-content glass rounded-xl p-6 max-w-md w-full neon-border" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="text-xl font-bold text-white" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9 12l2 2 4-4" /></svg>
+                  </span>
+                  {v529Refus.dejaAbonne ? 'Tu as déjà cette formule' : 'Offre indisponible'}
+                </h3>
+                <button type="button" onClick={() => setV529Refus(null)} className="text-2xl text-white hover:opacity-80" aria-label="Fermer">×</button>
+              </div>
+              <p className="text-white text-sm mb-4" style={{ opacity: 0.85, lineHeight: 1.5 }} data-testid="v529-refus-texte">
+                {v529Refus.dejaAbonne ? 'Aucun nouveau paiement n\u2019a été créé.' : v529Refus.texte}
+              </p>
+              {v529Refus.dejaAbonne && v529Refus.envoi && v529Refus.envoi !== 'en_cours' && (
+                <p className="text-sm mb-4" role="status" style={{ color: v529Refus.envoi.erreur ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.85)', lineHeight: 1.5 }} data-testid="v529-refus-envoi">
+                  {v529Refus.envoi.erreur
+                    ? v529Refus.envoi.erreur
+                    : `Ton lien d\u2019accès vient d\u2019être envoyé à ${v529Refus.envoi.masque}. Ouvre l\u2019e-mail pour entrer dans ton espace.`}
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                {v529Refus.dejaAbonne && (
+                  <button type="button" onClick={v529AccederEspace} className="flex-1 py-3 rounded-lg btn-primary" data-testid="v529-refus-espace"
+                    disabled={v529Refus.envoi === 'en_cours' || !!(v529Refus.envoi && v529Refus.envoi.masque)} style={{ minWidth: '160px' }}>
+                    {v529Refus.envoi === 'en_cours' ? 'Envoi…' : 'Accéder à mon espace'}
+                  </button>
+                )}
+                <button type="button" onClick={() => setV529Refus(null)} className="flex-1 py-3 rounded-lg text-white" data-testid="v529-refus-fermer"
+                  style={{ minWidth: '120px', border: '1px solid rgba(255,255,255,0.25)', background: 'transparent' }}>
+                  Fermer
+                </button>
+              </div>
             </div>
           </div>
         )}

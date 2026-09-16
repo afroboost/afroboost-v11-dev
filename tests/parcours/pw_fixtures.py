@@ -44,9 +44,15 @@ elif a == "abonne-actif":
     email = sys.argv[2].strip().lower()
     assert email.endswith("@example.com")
     db.subscriptions.insert_one(abonnement_fictif(email, 999))
-    print("abonné actif fictif :", email)
+    # E1.1 : comme le webhook, l'abonné porte aussi son code d'accès (discount_codes) —
+    # c'est lui que « Retrouver mes accès » (/subscriber/recover) cherche par assignedEmail.
+    db.discount_codes.insert_one({"id": str(uuid.uuid4()), "code": "AFR-PW" + uuid.uuid4().hex[:4].upper(), "name": "Abonné fixture",
+                                  "assignedEmail": email, "active": True, "maxUses": 8, "usedCount": 0, "type": "access",
+                                  "created_at": datetime.now(timezone.utc).isoformat(), MARQUE: True})
+    print("abonné actif fictif (+ code d'accès) :", email)
 elif a == "nettoyer-abonnes":
     r = db.subscriptions.delete_many({MARQUE: True})
-    print("fixtures retirées :", r.deleted_count)
+    r2 = db.discount_codes.delete_many({MARQUE: True})
+    print("fixtures retirées :", r.deleted_count, "abonnements,", r2.deleted_count, "codes")
 else:
     sys.exit("action inconnue")
