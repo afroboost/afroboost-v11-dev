@@ -57,22 +57,58 @@ Bassi — Afroboost
 
 Se désinscrire : {lien_desinscription_un_clic} (généré par le moteur 3B) (mécanisme 3B existant)
 
-## C. Instagram / Facebook (post)
+## C. Instagram — post / reel (PRÊT À COLLER, vérifié le 16/09 : liens HTTP 200, fiche Fondateurs et landing essai ouvertes)
+
+**Légende (post ou reel) :**
 
 OFFRE FONDATEURS — la saison reprend à Neuchâtel.
-59 CHF/mois · 8 séances/mois · 50 places maximum · jusqu'au 30 septembre.
-Cardio-danse africaine au casque, en groupe, au bord du lac. Pas besoin de savoir danser.
-Sans engagement — résiliable à tout moment depuis ton espace.
-Lien en bio → Découvrir l'offre / Réserver ma place. Premier cours offert si tu veux d'abord essayer.
-#afroboost #neuchatel #danse #cardio #silentfitness
 
-(Lien en bio : lien Instagram/Facebook ci-dessus. Aucun chiffre de places dans le visuel : le site l'affiche en direct.)
+59 CHF/mois
+8 séances/mois
+50 places maximum
+jusqu'au 30 septembre
 
-## D. Story (3 écrans)
+Cardio-danse afrobeat au casque, en groupe, au bord du lac. Pas besoin de savoir danser.
+Sans engagement : résiliable à tout moment depuis ton espace abonné.
 
-1. « La saison reprend. » — visuel cours au bord du lac.
-2. « Offre Fondateurs : 59 CHF/mois, 8 séances/mois, 50 places, jusqu'au 30 septembre. »
-3. « Réserver ma place » (sticker lien Story) — « Ou teste d'abord : 1er cours offert » (sticker lien essai).
+Découvrir l'offre → lien en bio
+Tu préfères essayer d'abord ? Ton premier cours est offert → lien en bio
+
+#afroboost #neuchatel #cardiodanse #afrobeat #silentfitness #fitnessneuchatel
+
+**Texte du reel (à l'écran, 3 cartons) :** « La saison reprend à Neuchâtel » · « Offre Fondateurs : 59 CHF/mois, 8 séances/mois » · « 50 places, jusqu'au 30 septembre — Découvrir l'offre (lien en bio) ».
+
+Liens à poser (bio / bouton) :
+- Découvrir l'offre : `https://afroboost.com/?offre=cc73f6ee-163a-433d-b5f0-c00c6392b437&utm_source=instagram&utm_medium=social&utm_campaign=fondateurs2026`
+- Essai gratuit : `https://afroboost.com/cours-essai-gratuit-neuchatel?utm_source=instagram&utm_medium=social&utm_campaign=fondateurs2026`
+
+## C bis. Facebook — publication (PRÊT À COLLER)
+
+La saison Afroboost reprend à Neuchâtel — et j'ouvre l'**offre Fondateurs** pour les premiers inscrits :
+
+• 59 CHF par mois
+• 8 séances par mois
+• 50 places maximum
+• disponible jusqu'au 30 septembre
+
+Cardio-danse afrobeat au casque, en groupe, au bord du lac. Aucun niveau requis. Sans engagement : résiliable à tout moment.
+
+👉 Découvrir l'offre : https://afroboost.com/?offre=cc73f6ee-163a-433d-b5f0-c00c6392b437&utm_source=facebook&utm_medium=social&utm_campaign=fondateurs2026
+Tu préfères essayer d'abord ? Ton premier cours est offert : https://afroboost.com/cours-essai-gratuit-neuchatel?utm_source=facebook&utm_medium=social&utm_campaign=fondateurs2026
+
+## D. Story Instagram / Facebook (3 écrans, PRÊT À COLLER)
+
+1. « La saison reprend à Neuchâtel. » — visuel cours au bord du lac.
+2. « OFFRE FONDATEURS — 59 CHF/mois · 8 séances/mois · 50 places maximum · jusqu'au 30 septembre. »
+3. Sticker lien **« Découvrir l'offre »** → `https://afroboost.com/?offre=cc73f6ee-163a-433d-b5f0-c00c6392b437&utm_source=instagram&utm_medium=social&utm_content=story&utm_campaign=fondateurs2026` · second sticker **« Essai gratuit »** → `https://afroboost.com/cours-essai-gratuit-neuchatel?utm_source=instagram&utm_medium=social&utm_content=story&utm_campaign=fondateurs2026`
+
+Note tracking : `story` n'est pas une source reconnue par l'attribution existante (liste fermée : instagram, facebook, tiktok, whatsapp, email, qr…) — la Story est donc trackée en `utm_source=instagram` + `utm_content=story`, ce que le tracking M2-A conserve (first/last + content).
+
+Règles : aucun chiffre de places restantes dans le visuel (le site l'affiche en direct) ; aucun témoignage ; pas de « dernières heures » avant le 30/09.
+
+## D bis. Lien bio / CTA
+
+**Pas de système « lien bio » dans Afroboost** (aucune page de liens dans le dépôt). Poser directement dans la bio Instagram le lien « Découvrir l'offre » (`utm_source=instagram`) ; le lien essai va dans le bouton d'action ou en second lien. Les UTM sont lus par le tracking existant M2-A (`af_attribution`, first/last) et remontent jusqu'aux metadata Stripe et au cockpit « par source » — aucun nouveau système.
 
 ## E. SMS
 
