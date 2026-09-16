@@ -352,6 +352,11 @@ async def get_discount_codes(request: Request):
     ]}
 
     codes = await _db.discount_codes.find(query, {"_id": 0}).to_list(1000)
+    # V532: étiquette calculée « actuel / historique / à vérifier » (lecture seule,
+    # règles canoniques LOT A rejouées) — l'admin distingue enfin le droit courant
+    # de l'historique sans qu'aucune fiche ne soit touchée.
+    from api.routes.shared import v532_enrichir_codes as _v532
+    codes = await _v532(_db, codes)
     return codes
 
 

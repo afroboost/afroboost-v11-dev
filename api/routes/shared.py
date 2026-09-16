@@ -5359,6 +5359,99 @@ async def v531_fiche_vivante_existante(db, code):
     return None
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# V532 — ADMIN « CODES PROMO » : ABONNEMENT ACTUEL vs HISTORIQUE, CALCULÉ, JAMAIS ÉCRIT
+# ═══════════════════════════════════════════════════════════════════════════════
+# Le 16/09/2026, l'admin listait toutes les fiches d'une même personne à plat :
+# BASSBOOSTX-09 (expiré, 2 fiches) à côté d'AmandaBoost-26 (8/9, le vrai droit).
+# On confondait l'ancien et l'actuel. Ce lot n'invente AUCUNE règle : il rejoue
+# la classification canonique existante (LOT A `lota_etat_du_code`,
+# `lota_droit_utilisable`, `lota_resoudre_code`) et pose une ÉTIQUETTE :
+#   actuel      — la fiche que LOT A retient (état OK) et qui a encore du droit ;
+#   historique  — fiche morte (inactive, expirée, épuisée) ou remplacée ;
+#   a_verifier  — LOT A dit AMBIGU (plusieurs fiches VIVANTES pour un même code,
+#                 canonique indéterminé, abonnements contradictoires…) : on
+#                 n'en choisit aucune, on les montre groupées, rien n'est
+#                 désactivé. Un doublon technique reste en base.
+# Lecture seule : aucune fiche n'est modifiée, aucun compteur touché.
+V532_ACTUEL, V532_HISTORIQUE, V532_A_VERIFIER = "actuel", "historique", "a_verifier"
+
+
+def v532_classer_fiches(docs, abonnements=None, porteurs=0, aujourdhui=None) -> dict:
+    """PUR. Les fiches `discount_codes` d'UN code -> {clé: étiquette}.
+    clé = `id` de la fiche (sinon son `code`) ; étiquette = {classement, motif,
+    utilise, total, restant, expire_le, etat_code, motif_code}.
+    En `actuel`, les compteurs sont ceux du canonique LOT A (utilise/total/restant) ;
+    ailleurs ce sont ceux de la fiche elle-même, à titre indicatif."""
+    docs = [d for d in (docs or []) if isinstance(d, dict)]
+    if not docs:
+        return {}
+    etat = lota_etat_du_code(docs, abonnements, porteurs, aujourdhui)
+    vivants = [d for d in docs if lota_droit_utilisable(d, aujourdhui)[0]]
+    choisi = None
+    if etat.get("etat") == "OK":
+        doc, _voie = lota_resoudre_code(docs)
+        if doc is not None and doc in vivants:
+            choisi = doc
+        elif len(vivants) == 1:
+            choisi = vivants[0]
+    out = {}
+    for d in docs:
+        cle = d.get("id") or d.get("code")
+        ok, motif = lota_droit_utilisable(d, aujourdhui)
+        try:
+            total = int(float(d.get("maxUses") or 0))
+            utilise = int(float(d.get("used") or 0))
+        except (TypeError, ValueError):
+            total, utilise = 0, 0
+        fiche = {"classement": V532_HISTORIQUE,
+                 "motif": motif if not ok else "remplace",
+                 "utilise": utilise, "total": total,
+                 "restant": (max(0, total - utilise) if total else None),
+                 "expire_le": d.get("expiresAt"),
+                 "etat_code": etat.get("etat"), "motif_code": etat.get("motif")}
+        if choisi is not None and d is choisi:
+            fiche.update(classement=V532_ACTUEL, motif=etat.get("motif"),
+                         utilise=etat.get("utilise"), total=etat.get("total"),
+                         restant=etat.get("restant"))
+        elif etat.get("etat") == "AMBIGU" and ok:
+            fiche.update(classement=V532_A_VERIFIER, motif=etat.get("motif"))
+        out[cle] = fiche
+    return out
+
+
+async def v532_enrichir_codes(db, codes: list) -> list:
+    """Pose `v532` sur chaque fiche renvoyée par `GET /discount-codes`.
+    Trois lectures (fiches déjà chargées, abonnements, porteurs), ZÉRO écriture.
+    Toute erreur laisse la liste intacte : l'admin d'hier reste l'admin d'hier."""
+    try:
+        par_code = {}
+        for d in codes:
+            k = str(d.get("code") or "").strip().upper()
+            if k:
+                par_code.setdefault(k, []).append(d)
+        abos = {}
+        async for a in db.subscriptions.find(
+                {}, {"_id": 0, "code": 1, "status": 1, "used_sessions": 1, "remaining_sessions": 1}):
+            k = str(a.get("code") or "").strip().upper()
+            if k in par_code:
+                abos.setdefault(k, []).append(a)
+        porteurs = {}
+        async for m in db.code_members.find({}, {"_id": 0, "code": 1}):
+            k = str(m.get("code") or "").strip().upper()
+            if k in par_code:
+                porteurs[k] = porteurs.get(k, 0) + 1
+        for k, docs in par_code.items():
+            etiquettes = v532_classer_fiches(docs, abos.get(k, []), porteurs.get(k, 0))
+            for d in docs:
+                e = etiquettes.get(d.get("id") or d.get("code"))
+                if e:
+                    d["v532"] = e
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[V532] classement admin impossible : %s", type(_err).__name__)
+    return codes
+
+
 async def lotb2_refus_canonique(db, code, quantite: int = 1):
     """(refus, message) — la page « Code promo » autorise-t-elle cette réservation ?
 

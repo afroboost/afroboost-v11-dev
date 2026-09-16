@@ -143,6 +143,10 @@ def _ns_promo(db):
     ns["_resolve_offer_details"] = _resolve_offer_details
     ns["_send_welcome_email"] = _rien
     ns["_send_coach_sale_email"] = _rien
+    # V532: `create_discount_code` appelle désormais la garde V531 (fiche vivante
+    # existante -> 409). Le faux Mongo du banc n'a pas de fiche portant le code
+    # créé : la garde répond « aucune », le reste du banc est inchangé.
+    ns["v531_fiche_vivante_existante"] = _rien
     for nom in ("update_subscription", "create_discount_code"):
         exec(compile(_extraire(("api", "routes", "promo_routes.py"), nom),
                      "promo_routes.py", "exec"), ns)
