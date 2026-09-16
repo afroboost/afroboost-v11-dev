@@ -110,14 +110,16 @@ _fin_nov = int(datetime(2026, 11, 30, 12, 0, tzinfo=timezone.utc).timestamp())
 inv = {"id": "in_2", "subscription": "sub_1", "billing_reason": "subscription_cycle", "status": "paid", "lines": {"data": [{"period": {"start": 0, "end": _fin_nov}}]}}
 r1 = run(H.traiter_facture_payee(db, inv))
 s1 = db.subscriptions.docs[0]; c1 = db.discount_codes.docs[0]
-v("renouvellement mensuel : +8 séances (2 -> 10), total 16, expires_at = fin de période Stripe (30/11), statut actif, last_renewal_date posé",
-  r1["credite"] and s1["remaining_sessions"] == 10 and s1["total_sessions"] == 16 and s1["expires_at"].startswith("2026-11-30T23:59:59") and s1["status"] == "active" and s1.get("last_renewal_date"), (r1, dict(s1)))
-v("le code d'accès suit : maxUses 8 -> 16, expiresAt 2026-11-30, actif", c1["maxUses"] == 16 and c1["expiresAt"] == "2026-11-30" and c1["active"] is True, dict(c1))
+# V527 — QUOTA MENSUEL : les 2 séances non utilisées du mois 1 EXPIRENT ; remaining = pack (8), PAS 10.
+v("D/F. renouvellement mensuel : remaining REMIS à 8 (2 -> 8, pas 10), total historique 16, expires_at = fin de période Stripe (30/11), statut actif, last_renewal_date posé",
+  r1["credite"] and s1["remaining_sessions"] == 8 and s1["total_sessions"] == 16 and s1["expires_at"].startswith("2026-11-30T23:59:59") and s1["status"] == "active" and s1.get("last_renewal_date"), (r1, dict(s1)))
+v("D/F. le code d'accès (canonique LOT A) suit : maxUses = used + pack = 6 + 8 = 14 (restant 8, pas 10), used intact, expiresAt 2026-11-30, actif",
+  c1["maxUses"] == 14 and c1["used"] == 6 and c1["expiresAt"] == "2026-11-30" and c1["active"] is True, dict(c1))
 v("webhook livré en retard (sans période) : repli maintenant + 1 mois", H.fin_periode_facture({}, 1)[1] == H.expiration_droits(datetime.now(timezone.utc), 1)[1])
 v("marqueur renewed_AAAAMMJJ posé (renouvellement CONFIRMÉ pour Analytics)", any(str(x).startswith("renewed_") for x in s1["renewal_warnings_sent"]))
 r2 = run(H.traiter_facture_payee(db, inv))
 v("RETRY du même webhook : 0 crédit (facture déjà créditée), séances et code inchangés",
-  not r2["credite"] and r2["motif"] == "facture_deja_creditee" and s1["remaining_sessions"] == 10 and c1["maxUses"] == 16)
+  not r2["credite"] and r2["motif"] == "facture_deja_creditee" and s1["remaining_sessions"] == 8 and c1["maxUses"] == 14)
 r3 = run(H.traiter_facture_payee(db, {"id": "in_first", "subscription": "sub_1", "billing_reason": "subscription_create"}))
 v("première facture (subscription_create) : ignorée — déjà créditée par checkout.session.completed", not r3["credite"] and r3["motif"] == "premiere_facture_deja_creditee")
 r4 = run(H.traiter_facture_payee(db, {"id": "in_x", "subscription": "sub_inconnu", "billing_reason": "subscription_cycle"}))
@@ -125,15 +127,75 @@ v("abonnement inconnu : rien", not r4["credite"] and r4["motif"] == "abonnement_
 _fin_mai = int(datetime(2027, 5, 31, 12, 0, tzinfo=timezone.utc).timestamp())
 r5 = run(H.traiter_facture_payee(db, {"id": "in_s2", "subscription": "sub_2", "billing_reason": "subscription_cycle", "lines": {"data": [{"period": {"end": _fin_mai}}]}}))
 s2 = db.subscriptions.docs[1]
-v("deuxième échéance saison_2x : +32 séances (pack 8 × 4 mois), droits jusqu'à la fin de la période facturée (31/05)", r5["credite"] and r5["seances"] == 32 and s2["remaining_sessions"] == 42 and s2["expires_at"].startswith("2027-05-31"), (r5, dict(s2)))
+v("G. SAISON INCHANGÉE — deuxième échéance saison_2x : +32 séances ADDITIVES (10 -> 42, pack 8 × 4 mois), code maxUses 32 -> 64, droits jusqu'au 31/05",
+  r5["credite"] and r5["seances"] == 32 and s2["remaining_sessions"] == 42 and s2["total_sessions"] == 64 and db.discount_codes.docs[1]["maxUses"] == 64 and s2["expires_at"].startswith("2027-05-31"), (r5, dict(s2)))
 rf = run(H.traiter_facture_echouee(db, {"id": "in_f", "subscription": "sub_1"}))
-v("échec de paiement : noté (paiement_echoue_le, payment_failed), AUCUN retrait de droits", rf["note"] and s1.get("paiement_echoue_le") and s1["remaining_sessions"] == 10 and s1["status"] == "active")
+v("échec de paiement : noté (paiement_echoue_le, payment_failed), AUCUN retrait de droits", rf["note"] and s1.get("paiement_echoue_le") and s1["remaining_sessions"] == 8 and s1["status"] == "active")
 exp_avant = s1["expires_at"]
 rd = run(H.traiter_abonnement_termine(db, {"id": "sub_1", "status": "canceled"}))
 v("annulation : plus de renouvellement (auto_renew False, statut Stripe canceled), accès jusqu'à expires_at inchangé",
   rd["termine"] and s1["auto_renew"] is False and s1["stripe_subscription_status"] == "canceled" and s1["expires_at"] == exp_avant)
 rp = run(H.traiter_facture_payee(db, {"id": "in_3", "subscription": "sub_1", "billing_reason": "subscription_cycle"}))
 v("un cycle payé après un échec efface la note d'échec (paiement_echoue_le None)", rp["credite"] and s1["paiement_echoue_le"] is None)
+
+# ═══ 2a. V527 quotas mensuels par offre + résiliation / réactivation / fin réelle ═══
+def _base_mensuel(pack, restantes, used, sid="sub_m", code="AFR-M"):
+    b = Base()
+    b.subscriptions = Coll([{"id": "sm", "code": code, "stripe_subscription_id": sid, "billing_mode": "mensuel_auto",
+                             "renewal_sessions": pack, "remaining_sessions": restantes, "total_sessions": pack, "status": "active",
+                             "expires_at": "2026-10-31T23:59:59+00:00", "stripe_invoices": ["in_first"], "renewal_warnings_sent": []}])
+    b.discount_codes = Coll([{"code": code, "maxUses": pack, "used": used, "active": True, "expiresAt": "2026-10-31", "stripe_invoices": []}])
+    return b
+def _cycle(b, iid="in_c"):
+    return run(H.traiter_facture_payee(b, {"id": iid, "subscription": "sub_m", "billing_reason": "subscription_cycle",
+                                           "lines": {"data": [{"period": {"end": _fin_nov}}]}}))
+bf = _base_mensuel(4, 2, 2); _cycle(bf)
+v("D. Flex 4 : remaining 2 -> 4 (PAS 6) ; canonique maxUses = used + 4 = 6 (restant 4) ; total 8",
+  bf.subscriptions.docs[0]["remaining_sessions"] == 4 and bf.discount_codes.docs[0]["maxUses"] == 6 and bf.subscriptions.docs[0]["total_sessions"] == 8, (dict(bf.subscriptions.docs[0]), dict(bf.discount_codes.docs[0])))
+bo = _base_mensuel(8, 3, 5); _cycle(bo)
+v("E. Fondateurs : remaining 3 -> 8 (PAS 11) ; canonique maxUses = 5 + 8 = 13 (restant 8)",
+  bo.subscriptions.docs[0]["remaining_sessions"] == 8 and bo.discount_codes.docs[0]["maxUses"] == 13, (dict(bo.subscriptions.docs[0]), dict(bo.discount_codes.docs[0])))
+bl = _base_mensuel(8, 0, 8); _cycle(bl)
+v("F. Liberté / Étudiant : mois entièrement consommé (0 restante, used 8) -> 8 (maxUses 16, restant 8)",
+  bl.subscriptions.docs[0]["remaining_sessions"] == 8 and bl.discount_codes.docs[0]["maxUses"] == 16)
+bz = _base_mensuel(8, 8, 0); _cycle(bz)
+v("F2. mois jamais utilisé (8 restantes) -> toujours 8, jamais 16 : aucun cumul", bz.subscriptions.docs[0]["remaining_sessions"] == 8 and bz.discount_codes.docs[0]["maxUses"] == 8)
+br = _base_mensuel(4, 1, 3); _cycle(br, "in_1"); _cycle(br, "in_1")
+v("D2. idempotence par facture conservée : le même in_1 rejoué ne change rien (4 / maxUses 7)",
+  br.subscriptions.docs[0]["remaining_sessions"] == 4 and br.discount_codes.docs[0]["maxUses"] == 7 and br.subscriptions.docs[0]["total_sessions"] == 8)
+
+# A/B/C : résiliation, réactivation, fin réelle — Stripe est un faux injecté (jamais d'appel réseau)
+appels = []
+def faux_stripe(sid, **champs): appels.append((sid, champs))
+ba = _base_mensuel(8, 5, 3); sa = ba.subscriptions.docs[0]
+ra = run(H.resilier_abonnement(ba, dict(sa), faux_stripe))
+v("A. résiliation : Stripe cancel_at_period_end=True (1 appel), champ local + resiliation_demandee_le, accès jusqu'au 31/10/2026",
+  ra["ok"] and appels == [("sub_m", {"cancel_at_period_end": True})] and sa["cancel_at_period_end"] is True and sa.get("resiliation_demandee_le") and ra["acces_jusquau"] == "31/10/2026", (ra, appels))
+v("A2. rien n'expire immédiatement : status active, expires_at et séances intacts",
+  sa["status"] == "active" and sa["expires_at"] == "2026-10-31T23:59:59+00:00" and sa["remaining_sessions"] == 5)
+v("A3. état affiché : « Résiliation programmée — accès jusqu'au 31/10/2026 »",
+  H.etat_abonnement(sa) == {"recurrent": True, "etat": "resiliation_programmee", "libelle": "Résiliation programmée — accès jusqu'au 31/10/2026", "acces_jusquau": "31/10/2026"}, H.etat_abonnement(sa))
+rb = run(H.reactiver_abonnement(ba, dict(sa), faux_stripe))
+v("B. réactivation : cancel_at_period_end=False chez Stripe, état programmé retiré, abonnement actif",
+  rb["ok"] and appels[-1] == ("sub_m", {"cancel_at_period_end": False}) and sa["cancel_at_period_end"] is False and sa["resiliation_demandee_le"] is None
+  and H.etat_abonnement(sa)["etat"] == "actif" and H.etat_abonnement(sa)["libelle"] == "Actif — prochaine échéance le 31/10/2026", (rb, H.etat_abonnement(sa)))
+n_avant = len(appels)
+rc = run(H.traiter_abonnement_termine(ba, {"id": "sub_m", "status": "canceled"}))
+v("C. fin réelle (customer.subscription.deleted) : logique existante appelée UNE fois, canceled, expires_at inchangé, aucun appel Stripe",
+  rc["termine"] and sa["stripe_subscription_status"] == "canceled" and sa["expires_at"] == "2026-10-31T23:59:59+00:00" and len(appels) == n_avant)
+v("C2. terminé -> plus résiliable ni réactivable (409 côté route), état « Abonnement terminé »",
+  H.abonnement_resiliable(sa)[0] is False and H.etat_abonnement(sa)["etat"] == "termine")
+v("C3. un forfait unique / une saison 2× ne se résilie pas ici",
+  H.abonnement_resiliable({"stripe_subscription_id": "", "billing_mode": "unique", "status": "active"})[0] is False
+  and H.abonnement_resiliable({"stripe_subscription_id": "sub_s", "billing_mode": "saison_2x", "status": "active"})[0] is False)
+bu = _base_mensuel(8, 5, 3); su = bu.subscriptions.docs[0]
+ru = run(H.traiter_abonnement_mis_a_jour(bu, {"id": "sub_m", "cancel_at_period_end": True}))
+v("SYNC. customer.subscription.updated (résiliée depuis Stripe) : cancel_at_period_end reflété, date posée",
+  ru["sync"] and su["cancel_at_period_end"] is True and su.get("resiliation_demandee_le"))
+ru2 = run(H.traiter_abonnement_mis_a_jour(bu, {"id": "sub_m", "cancel_at_period_end": True}))
+v("SYNC2. même événement rejoué : rien réécrit (date d'origine conservée)", not ru2["sync"])
+ru3 = run(H.traiter_abonnement_mis_a_jour(bu, {"id": "sub_m", "cancel_at_period_end": False}))
+v("SYNC3. annulée depuis Stripe : état retiré", ru3["sync"] and su["cancel_at_period_end"] is False and su["resiliation_demandee_le"] is None)
 
 # garde asynchrone (checkout vitrine) : stock − ventes − checkouts ouverts
 class _Agg:
@@ -211,6 +273,34 @@ v("checkout vitrine (checkout_routes) : même garde, fail-open", "garde_offre_li
 v("V526 : anti-double branché sur la caisse principale (e-mail connu) ET la vitrine ; doublon MARQUÉ au webhook, jamais ignoré",
   "_hiver.garde_abonnement_actif(db, request.customerEmail, _hiver_offre)" in S and "raise HTTPException(status_code=409, detail=_motif_dbl)" in S
   and "garde_abonnement_actif as _hiver_garde_dbl" in C and 'subscription_data["doublon_de"]' in S and "await db.subscriptions.insert_one(subscription_data)" in S)
+# ═══ V527 — structure : routes, webhook updated, filet doublon, anti-double anonyme, textes ═══
+A = open(os.path.join(RACINE, "frontend", "src", "App.js"), encoding="utf-8").read()
+U = open(os.path.join(RACINE, "frontend", "src", "utils", "offresAimants.js"), encoding="utf-8").read()
+E = open(os.path.join(RACINE, "frontend", "src", "components", "SubscriberSpace.js"), encoding="utf-8").read()
+v("V527 routes : /resilier et /reactiver derrière la MÊME garde que GET /subscriber/space (jeton B3-S1.3 + tenant), Stripe d'abord puis base",
+  '@api_router.post("/subscriber/space/{access_code}/resilier")' in S and '@api_router.post("/subscriber/space/{access_code}/reactiver")' in S
+  and "_b3s13_porteur_autorise(request, code_upper, m)" in S.split("_v527_abonnement_du_porteur")[1] and "_b3s13_tenant_accepte(_charge, subscription, discount)" in S
+  and "stripe.Subscription.modify(sid, api_key=stripe.api_key, **champs)" in S)
+v("V527 webhook : customer.subscription.updated branché (sync cancel_at_period_end) ET relayé par l'URL déclarée ; deleted inchangé",
+  "event.type == 'customer.subscription.updated'" in S and "_hiver.traiter_abonnement_mis_a_jour(db, event.data.object)" in S
+  and '"customer.subscription.updated"' in C and S.count("_hiver.traiter_abonnement_termine(db, event.data.object)") == 1)
+v("V527 filet webhook : doublon -> 0 séance créditée (forfait ET code), cancel_at_period_end sur le doublon, journal explicite, AUCUN remboursement",
+  'subscription_data["remaining_sessions"] = 0' in S and '{"$set": {"maxUses": 0, "doublon_de": _dbl.get("id")}}' in S
+  and "stripe.Subscription.modify(_sid_dbl, cancel_at_period_end=True, api_key=stripe.api_key)" in S and "Refund" not in S.split("V527: FILET")[1][:3000])
+v("I. anti-double anonyme AVANT Stripe : offre récurrente -> e-mail connu ou saisi (jamais la chaîne vide) -> customerEmail -> garde 409 serveur ; offre unique : rien",
+  "const v527Email = v527EmailPourAbonnement(offer);" in A and "if (!v527Email.ok) return;" in A and "if (v527Email.email) payload.customerEmail = v527Email.email;" in A
+  and "if (!offreEstRecurrente(offer)) return { ok: true, email: null };" in A and "export const estRecurrente = (o) => modeFacturation(o) !== 'unique';" in U
+  and "_hiver.garde_abonnement_actif(db, request.customerEmail, _hiver_offre)" in S)
+v("H/J/K. la saisie précède setCheckoutBusy et le garde-fou checkoutBusy reste le premier test (double clic = 1 checkout)",
+  A.index("if (checkoutBusy) return;\n    const v527Email") < A.index("setCheckoutBusy(true);", A.index("const v527Email")))
+v("V527 espace abonné : bloc « Mon abonnement mensuel » (offre, prix/mois, séances, échéance, état) + Résilier / Continuer ; l'ancien interrupteur local n'est plus rendu pour un abonnement Stripe",
+  'data-testid="subscriber-space-abonnement-mensuel"' in E and "Résilier mon abonnement" in E and "Continuer mon abonnement" in E
+  and "!subscription.etat_abonnement?.recurrent && (subscription.has_payment_method || subscription.auto_renew)" in E
+  and '"etat_abonnement": _hiver.etat_abonnement(subscription),' in S)
+v("V527 textes : règle « pas reportées au mois suivant » sur le mensuel (fiche, landing, e-mail d'accès, espace) — jamais sur la saison",
+  "ne sont pas reportées au mois suivant" in U.split("mensuel_auto') return '1 mois")[1][:200] and "ne sont pas reportées au mois suivant" in S.split("def _m1_engagement")[1][:900]
+  and S.count("report&eacute;es au mois suivant") == 2 and "ne sont pas reportées au mois suivant" in E
+  and "reportées" not in H.__doc__ and "Saison de %d mois" in S)
 v("webhook : pack 0 accepté, saison_2x = pack × 4, expiration par durée (code ET forfait)",
   '_pack == "0" and metadata.get("offer_id")' in S and '"expiresAt": _hiver_exp_jour' in S and '"expires_at": _hiver_exp_iso' in S)
 v("webhook : abonnement Stripe -> auto_renew False (jamais V195), stripe_subscription_id, stripe_invoices []",

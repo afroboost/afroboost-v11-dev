@@ -1706,7 +1706,8 @@ async def checkout_stripe_webhook(request: Request):
     # et le mois 2+ d'un abonné Fondateurs n'était jamais crédité. On délègue
     # exactement comme `invoice.upcoming` (corps déjà vérifié par signature).
     if event_data.get("type") in ("invoice.upcoming", "invoice.paid", "invoice.payment_succeeded",
-                                  "invoice.payment_failed", "customer.subscription.deleted"):
+                                  "invoice.payment_failed", "customer.subscription.deleted",
+                                  "customer.subscription.updated"):  # V527: résiliation programmée/annulée depuis Stripe
         from api.server import stripe_webhook as _webhook_client
         request.state.afroboost_event_verifie = event_data
         resultat = await _webhook_client(request)

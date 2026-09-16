@@ -1369,8 +1369,76 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
         {/* V204: Bouton paiement en haut supprimé — le bouton "Renouveler" en bas suffit */}
 
-        {/* ===== V195: Reconduction automatique ===== */}
-        {subscription?.id && (subscription.has_payment_method || subscription.auto_renew) && (
+        {/* ===== V527: Abonnement mensuel Stripe — état réel + Résilier / Continuer ===== */}
+        {/* Le serveur calcule l'état (`etat_abonnement`) depuis Stripe ; ici on l'affiche
+            et on appelle les deux vraies actions. Rien n'expire avant la fin de la période
+            déjà payée ; « Continuer » annule une résiliation programmée. */}
+        {subscription?.id && subscription.etat_abonnement?.recurrent && (
+          <section
+            className="rounded-2xl p-4"
+            style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
+            data-testid="subscriber-space-abonnement-mensuel"
+          >
+            <p className="text-white text-sm font-semibold">Mon abonnement mensuel</p>
+            <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+              <dt className="text-white/50">Offre</dt>
+              <dd className="text-white text-right">{subscription.offer_name}</dd>
+              <dt className="text-white/50">Prix mensuel</dt>
+              <dd className="text-white text-right">{(Number(subscription.renewal_price) || 0).toFixed(2)} CHF / mois</dd>
+              <dt className="text-white/50">Séances ce mois</dt>
+              <dd className="text-white text-right">{remaining} restante{remaining > 1 ? "s" : ""} sur {subscription.renewal_sessions || 0}</dd>
+              <dt className="text-white/50">{subscription.etat_abonnement.etat === "actif" ? "Prochaine échéance" : "Fin d'accès"}</dt>
+              <dd className="text-white text-right">{subscription.etat_abonnement.acces_jusquau || "—"}</dd>
+              <dt className="text-white/50">État</dt>
+              <dd className="text-right" data-testid="abonnement-etat"
+                  style={{ color: subscription.etat_abonnement.etat === "actif" ? "#4ade80" : "#fbbf24" }}>
+                {subscription.etat_abonnement.etat === "actif" ? "Actif"
+                  : subscription.etat_abonnement.etat === "resiliation_programmee" ? "Résiliation programmée" : "Terminé"}
+              </dd>
+            </dl>
+            <p className="text-[11px] mt-2 text-white/60">
+              {subscription.etat_abonnement.libelle}. Les séances sont valables pendant la période mensuelle en cours et ne sont pas reportées au mois suivant.
+            </p>
+            {subscription.etat_abonnement.etat !== "termine" && (
+              <button
+                type="button"
+                disabled={autoRenewBusy}
+                data-testid={subscription.etat_abonnement.etat === "actif" ? "abonnement-resilier" : "abonnement-continuer"}
+                onClick={async () => {
+                  if (autoRenewBusy) return;
+                  const resilier = subscription.etat_abonnement.etat === "actif";
+                  if (resilier && !window.confirm(`Résilier ton abonnement ? Tu gardes ton accès et tes séances jusqu'au ${subscription.etat_abonnement.acces_jusquau || "terme de la période payée"}, sans nouveau prélèvement.`)) return;
+                  setAutoRenewBusy(true);
+                  setActionError("");
+                  try {
+                    const base = `${API}/subscriber/space/${encodeURIComponent(accessCode)}/${resilier ? "resilier" : "reactiver"}`;
+                    const res = await axios.post(memberSlug ? `${base}?m=${encodeURIComponent(memberSlug)}` : base, {});
+                    const etat = res?.data?.etat_abonnement;
+                    if (etat) setData((prev) => prev ? { ...prev, subscription: { ...prev.subscription, etat_abonnement: etat, cancel_at_period_end: etat.etat === "resiliation_programmee" } } : prev);
+                  } catch (err) {
+                    setActionError(err?.response?.data?.detail || "Modification impossible.");
+                  } finally {
+                    setAutoRenewBusy(false);
+                  }
+                }}
+                className="mt-3 w-full py-2 rounded-xl text-sm font-semibold transition-transform active:scale-95"
+                style={subscription.etat_abonnement.etat === "actif"
+                  ? { background: "rgba(255,255,255,0.08)", color: "white", border: `1px solid ${COLORS.border}`, opacity: autoRenewBusy ? 0.6 : 1 }
+                  : { background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "white", opacity: autoRenewBusy ? 0.6 : 1 }}
+              >
+                <span className="inline-flex items-center justify-center gap-1.5">
+                  <SvgIcon name={subscription.etat_abonnement.etat === "actif" ? "x" : "refresh"} size={14} />
+                  {subscription.etat_abonnement.etat === "actif" ? "Résilier mon abonnement" : "Continuer mon abonnement"}
+                </span>
+              </button>
+            )}
+          </section>
+        )}
+
+        {/* ===== V195: Reconduction automatique (forfaits NON récurrents : moteur V195) ===== */}
+        {/* V527: jamais rendu pour un abonnement Stripe — cet interrupteur n'écrit qu'un
+            champ local et ne pilote pas Stripe ; les abonnements mensuels ont le bloc ci-dessus. */}
+        {subscription?.id && !subscription.etat_abonnement?.recurrent && (subscription.has_payment_method || subscription.auto_renew) && (
           <section
             className="rounded-2xl p-4"
             style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}

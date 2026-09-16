@@ -154,7 +154,7 @@ NOMS = ("m1geo1_region_normalisee", "_m1_echapper", "_m1_jsonld", "_v184_parse_t
         "_saison_active", "_annoter_places_restantes", "_offres_encore_disponibles",
         "_m1_prix", "_m1_par_seance", "_m1_offres", "_m1_temoignages", "_m1_carte_offre",
         # HIVER 2 : hiérarchie commerciale, badges, économie réelle, date limite
-        "_m1_famille", "_m1_badge", "_m1_paiement", "_m1_engagement", "_m1_seances_txt",
+        "_m1_famille", "_m1_badge", "_m1_cout_par_seance", "_m1_est_meilleur_prix", "_m1_paiement", "_m1_engagement", "_m1_seances_txt",  # V527: _m1_est_meilleur_prix (V526) manquait au banc
         "_m1_economie", "_m1_pour_qui", "_m1_deadline_html")
 CONSTANTES = ("_N456_CHAMPS_PUBLICS", "_V184_WEEKDAY_LABELS_FR", "RV2_JOURS",
               "RV2_MOIS", "COACH_EMAIL", "_M1_SITE", "_M1_CHEMIN", "_M1_TUNNEL",

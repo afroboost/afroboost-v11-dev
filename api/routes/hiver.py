@@ -241,22 +241,43 @@ async def traiter_facture_payee(db, invoice) -> dict:
     # jamais « maintenant + n mois » : un webhook livré en retard n'ampute rien.
     _exp_iso, _exp_jour = fin_periode_facture(_inv, _mois)
     _maintenant = datetime.now(timezone.utc).isoformat()
+    # V527: QUOTA MENSUEL, PAS DE CUMUL. Pour un abonnement `mensuel_auto`, chaque
+    # facture de cycle REMET les séances restantes au pack de l'offre (Flex 4 -> 4,
+    # Fondateurs / Liberté / Étudiant -> 8) : les séances non utilisées du mois
+    # précédent expirent au renouvellement. `total_sessions` reste le cumul
+    # historique acheté (il continue de s'additionner). La saison en 2 paiements
+    # garde son crédit saisonnier additif (pack × 4 par échéance) — inchangée.
+    _remise_a_zero = billing_mode_valide(_doc.get("billing_mode")) == BILLING_MENSUEL
+    _maj_sub = {"$inc": ({"total_sessions": _seances} if _remise_a_zero
+                         else {"remaining_sessions": _seances, "total_sessions": _seances}),
+                "$set": {"status": "active", "expires_at": _exp_iso, "updated_at": _maintenant,
+                         "last_renewal_date": _maintenant, "paiement_echoue_le": None},
+                "$addToSet": {"stripe_invoices": _iid},
+                "$push": {"renewal_warnings_sent": "renewed_" + datetime.now(timezone.utc).strftime("%Y%m%d")}}
+    if _remise_a_zero:
+        _maj_sub["$set"]["remaining_sessions"] = _seances
     _r = await db.subscriptions.update_one(
-        {"stripe_subscription_id": _sid, "stripe_invoices": {"$ne": _iid}},
-        {"$inc": {"remaining_sessions": _seances, "total_sessions": _seances},
-         "$set": {"status": "active", "expires_at": _exp_iso, "updated_at": _maintenant,
-                  "last_renewal_date": _maintenant, "paiement_echoue_le": None},
-         "$addToSet": {"stripe_invoices": _iid},
-         "$push": {"renewal_warnings_sent": "renewed_" + datetime.now(timezone.utc).strftime("%Y%m%d")}})
+        {"stripe_subscription_id": _sid, "stripe_invoices": {"$ne": _iid}}, _maj_sub)
     if not getattr(_r, "modified_count", 0):
         return {"credite": False, "motif": "facture_deja_creditee"}
     # Le code d'accès suit : même séances, même échéance. Idempotent par construction
     # (la souscription ne se met à jour qu'une fois par facture, donc on n'arrive ici qu'une fois).
+    # V527: le solde CANONIQUE (LOT A) se lit `maxUses − used` sur `discount_codes` :
+    # pour le mensuel, `maxUses` est reposé à `used + pack` (restant = pack), l'historique
+    # des mouvements (`used`, `seance_mouvements`) n'est pas touché.
     try:
-        await db.discount_codes.update_one(
-            {"code": _doc.get("code"), "stripe_invoices": {"$ne": _iid}},
-            {"$inc": {"maxUses": _seances}, "$set": {"expiresAt": _exp_jour, "active": True},
-             "$addToSet": {"stripe_invoices": _iid}})
+        if _remise_a_zero:
+            _code_doc = await db.discount_codes.find_one({"code": _doc.get("code")}, {"_id": 0, "used": 1}) or {}
+            try:
+                _used = max(0, int(float(_code_doc.get("used") or 0)))
+            except (TypeError, ValueError):
+                _used = 0
+            _maj_code = {"$set": {"maxUses": _used + _seances, "expiresAt": _exp_jour, "active": True},
+                         "$addToSet": {"stripe_invoices": _iid}}
+        else:
+            _maj_code = {"$inc": {"maxUses": _seances}, "$set": {"expiresAt": _exp_jour, "active": True},
+                         "$addToSet": {"stripe_invoices": _iid}}
+        await db.discount_codes.update_one({"code": _doc.get("code"), "stripe_invoices": {"$ne": _iid}}, _maj_code)
     except Exception as _err:  # noqa: BLE001
         logger.error("[HIVER] code non prolongé pour %s : %s", _sid[:16], _err)
     logger.info("[HIVER] cycle crédité : abonnement %s +%d séances jusqu'au %s", _sid[:16], _seances, _exp_jour)
@@ -290,6 +311,92 @@ async def traiter_abonnement_termine(db, subscription) -> dict:
                   "annule_le": datetime.now(timezone.utc).isoformat(),
                   "updated_at": datetime.now(timezone.utc).isoformat()}})
     return {"termine": bool(getattr(_r, "matched_count", 0))}
+
+
+def _jour_ch(iso) -> str:
+    """JJ/MM/AAAA depuis un ISO, ou ""."""
+    try:
+        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).strftime("%d/%m/%Y")
+    except (TypeError, ValueError):
+        return ""
+
+
+def abonnement_resiliable(subscription) -> tuple:
+    """V527 — (True, "") si CE forfait est un abonnement mensuel Stripe encore actif ; sinon (False, motif).
+    Seul `mensuel_auto` est concerné : la saison en 2 paiements a déjà son `cancel_at`."""
+    _s = subscription or {}
+    if not _s.get("stripe_subscription_id"):
+        return False, "Ce forfait n'est pas un abonnement mensuel : rien à résilier."
+    if billing_mode_valide(_s.get("billing_mode")) != BILLING_MENSUEL:
+        return False, "Seul un abonnement mensuel se résilie ici."
+    if str(_s.get("stripe_subscription_status") or "") == "canceled" or _s.get("status") != "active":
+        return False, "Cet abonnement est déjà terminé."
+    return True, ""
+
+
+async def resilier_abonnement(db, subscription, modifier_stripe) -> dict:
+    """V527 — RÉSILIER : `cancel_at_period_end=True` chez Stripe (aucun renouvellement futur),
+    droits et séances CONSERVÉS jusqu'à `expires_at` (fin de la période déjà payée) ; la fin
+    réelle arrive ensuite par `customer.subscription.deleted` -> `traiter_abonnement_termine`.
+    `modifier_stripe(sid, **champs)` est injecté : le banc ne parle jamais à Stripe."""
+    _ok, _motif = abonnement_resiliable(subscription)
+    if not _ok:
+        return {"ok": False, "motif": _motif}
+    _sid = subscription["stripe_subscription_id"]
+    modifier_stripe(_sid, cancel_at_period_end=True)
+    _now = datetime.now(timezone.utc).isoformat()
+    await db.subscriptions.update_one(
+        {"stripe_subscription_id": _sid},
+        {"$set": {"cancel_at_period_end": True, "resiliation_demandee_le": _now, "updated_at": _now}})
+    logger.info("[HIVER] résiliation programmée : %s (accès jusqu'au %s)", _sid[:16], str(subscription.get("expires_at"))[:10])
+    return {"ok": True, "motif": "", "cancel_at_period_end": True, "acces_jusquau": _jour_ch(subscription.get("expires_at"))}
+
+
+async def reactiver_abonnement(db, subscription, modifier_stripe) -> dict:
+    """V527 — RÉACTIVER avant la fin de période : `cancel_at_period_end=False`, l'abonnement continue."""
+    _ok, _motif = abonnement_resiliable(subscription)
+    if not _ok:
+        return {"ok": False, "motif": _motif}
+    _sid = subscription["stripe_subscription_id"]
+    modifier_stripe(_sid, cancel_at_period_end=False)
+    _now = datetime.now(timezone.utc).isoformat()
+    await db.subscriptions.update_one(
+        {"stripe_subscription_id": _sid},
+        {"$set": {"cancel_at_period_end": False, "resiliation_demandee_le": None, "updated_at": _now}})
+    logger.info("[HIVER] résiliation annulée : %s", _sid[:16])
+    return {"ok": True, "motif": "", "cancel_at_period_end": False}
+
+
+async def traiter_abonnement_mis_a_jour(db, subscription) -> dict:
+    """V527 — `customer.subscription.updated` : ne reflète QUE `cancel_at_period_end`
+    (une résiliation programmée ou annulée depuis Stripe). La fin réelle reste le seul
+    chemin de `traiter_abonnement_termine` — rien n'est dupliqué ici."""
+    _sid = str((subscription or {}).get("id") or "")
+    if not _sid:
+        return {"sync": False}
+    _cape = bool((subscription or {}).get("cancel_at_period_end"))
+    _now = datetime.now(timezone.utc).isoformat()
+    # Ne réécrit que si l'état local diffère : une résiliation déjà enregistrée par la
+    # route `/resilier` garde sa date d'origine.
+    _r = await db.subscriptions.update_one(
+        {"stripe_subscription_id": _sid, "cancel_at_period_end": {"$ne": _cape}},
+        {"$set": {"cancel_at_period_end": _cape, "updated_at": _now,
+                  "resiliation_demandee_le": (_now if _cape else None)}})
+    return {"sync": bool(getattr(_r, "modified_count", 0)), "cancel_at_period_end": _cape}
+
+
+def etat_abonnement(subscription) -> dict:
+    """V527 — ce que l'espace abonné affiche : {recurrent, etat, libelle, acces_jusquau}."""
+    _s = subscription or {}
+    _rec = bool(_s.get("stripe_subscription_id")) and billing_mode_valide(_s.get("billing_mode")) == BILLING_MENSUEL
+    _fin = _jour_ch(_s.get("expires_at"))
+    if not _rec:
+        return {"recurrent": False, "etat": "", "libelle": "", "acces_jusquau": _fin}
+    if str(_s.get("stripe_subscription_status") or "") == "canceled":
+        return {"recurrent": True, "etat": "termine", "libelle": "Abonnement terminé — accès jusqu'au %s" % _fin, "acces_jusquau": _fin}
+    if _s.get("cancel_at_period_end"):
+        return {"recurrent": True, "etat": "resiliation_programmee", "libelle": "Résiliation programmée — accès jusqu'au %s" % _fin, "acces_jusquau": _fin}
+    return {"recurrent": True, "etat": "actif", "libelle": "Actif — prochaine échéance le %s" % _fin, "acces_jusquau": _fin}
 
 
 MSG_DEJA_ABONNE = ("Tu as déjà cet abonnement actif : inutile de le souscrire une seconde fois. "

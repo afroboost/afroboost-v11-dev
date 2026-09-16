@@ -53,6 +53,10 @@ export const prixFormate = (n) => {
   return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/0$/, '');
 };
 
+// V527: une offre RÉCURRENTE (abonnement Stripe) — l'e-mail est demandé AVANT le
+// checkout pour empêcher un second abonnement à la même offre (garde 409 serveur).
+export const estRecurrente = (o) => modeFacturation(o) !== 'unique';
+
 const modeFacturation = (o) => {
   const m = String((o && o.billing_mode) || 'unique').trim();
   return (m === 'mensuel_auto' || m === 'saison_2x') ? m : 'unique';
@@ -187,7 +191,8 @@ export const libelleEngagement = (o) => {
 export const libelleDuree = (o) => {
   const mode = modeFacturation(o);
   const f = familleOffre(o);
-  if (mode === 'mensuel_auto') return '1 mois, renouvelé automatiquement';
+  // V527: quota mensuel — pas de report des séances non utilisées (règle validée le 16/09/2026)
+  if (mode === 'mensuel_auto') return '1 mois, renouvelé automatiquement. Les séances sont valables pendant la période mensuelle en cours et ne sont pas reportées au mois suivant.';
   if (f === FAMILLE.SAISON_1X || f === FAMILLE.SAISON_2X) return `${SAISON_MOIS} mois`;
   if (f === FAMILLE.OFFERT) return '1 séance';
   const d = dureeMois(o);

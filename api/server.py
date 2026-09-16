@@ -9102,6 +9102,29 @@ async def stripe_webhook(request: Request):
                             logger.warning("[HIVER] DOUBLON abonnement récurrent : %s double %s (offre %s)",
                                            str(subscription_data.get("id") or "")[:8], str(_dbl.get("id") or "")[:8],
                                            str(subscription_data.get("offer_id") or "")[:8])
+                            # V527: FILET DE SÉCURITÉ (la prévention se fait AVANT Stripe, par
+                            # l'e-mail + la garde 409). Si un doublon passe malgré tout (course /
+                            # rejeu) : AUCUNE séance créditée une seconde fois, et plus AUCUN
+                            # renouvellement futur du doublon (`cancel_at_period_end`). Le mois
+                            # déjà payé n'est pas remboursé ici : c'est une décision humaine.
+                            subscription_data["remaining_sessions"] = 0
+                            subscription_data["total_sessions"] = 0
+                            subscription_data["renewal_sessions"] = 0
+                            # Le code d'accès du doublon (déjà inséré plus haut) ne porte aucun droit non plus.
+                            try:
+                                await db.discount_codes.update_one({"code": new_code}, {"$set": {"maxUses": 0, "doublon_de": _dbl.get("id")}})
+                            except Exception as _code_dbl_err:  # noqa: BLE001
+                                logger.error("[HIVER] DOUBLON : code %s non neutralisé : %s", str(new_code)[:10], _code_dbl_err)
+                            subscription_data["cancel_at_period_end"] = True
+                            subscription_data["resiliation_demandee_le"] = datetime.now(timezone.utc).isoformat()
+                            _sid_dbl = subscription_data.get("stripe_subscription_id")
+                            try:
+                                stripe.Subscription.modify(_sid_dbl, cancel_at_period_end=True, api_key=stripe.api_key)
+                                logger.warning("[HIVER] DOUBLON %s : 0 séance créditée, cancel_at_period_end posé sur %s — "
+                                               "remboursement à trancher par le coach", str(subscription_data.get("id") or "")[:8], str(_sid_dbl)[:16])
+                            except Exception as _cape_err:  # noqa: BLE001
+                                logger.error("[HIVER] DOUBLON %s : cancel_at_period_end NON posé sur %s : %s",
+                                             str(subscription_data.get("id") or "")[:8], str(_sid_dbl)[:16], _cape_err)
                 except Exception as _dbl_err:  # noqa: BLE001
                     logger.error("[HIVER] détection doublon indisponible: %s", _dbl_err)
                 await db.subscriptions.insert_one(subscription_data)
@@ -9424,7 +9447,8 @@ async def stripe_webhook(request: Request):
                         try:
                             if _hiver.billing_mode_valide(metadata.get("billing_mode")) != _hiver.BILLING_UNIQUE:
                                 _mention_abo = (" par mois, renouvel&eacute;es automatiquement (pr&eacute;l&egrave;vement mensuel par carte). "
-                                                "Pour arr&ecirc;ter l'abonnement, &eacute;cris &agrave; contact@afroboosteur.com.")
+                                                "Les s&eacute;ances sont valables pendant la p&eacute;riode mensuelle en cours et ne sont pas report&eacute;es au mois suivant. "
+                                                "Tu peux r&eacute;silier &agrave; tout moment depuis ton espace abonn&eacute; (acc&egrave;s conserv&eacute; jusqu'&agrave; la fin du mois pay&eacute;).")
                         except Exception:
                             _mention_abo = ""
                         await _p0_envoyer_email_acces(customer_email, new_code, sessions_count, primary_color, _mention_abo)
@@ -9555,6 +9579,13 @@ async def stripe_webhook(request: Request):
             # de la période déjà payée (`expires_at` inchangé).
             _res = await _hiver.traiter_abonnement_termine(db, event.data.object)
             logger.info("[HIVER] customer.subscription.deleted -> %s", _res)
+            return {"status": "ok", "type": event.type, **_res}
+        elif event.type == 'customer.subscription.updated':
+            # V527 — RÉSILIATION PROGRAMMÉE / ANNULÉE DEPUIS STRIPE : seul
+            # `cancel_at_period_end` est reflété ; la fin réelle reste le chemin
+            # `customer.subscription.deleted` ci-dessus.
+            _res = await _hiver.traiter_abonnement_mis_a_jour(db, event.data.object)
+            logger.info("[HIVER] customer.subscription.updated -> %s", _res)
             return {"status": "ok", "type": event.type, **_res}
         elif event.type == 'invoice.upcoming':
             # V400 — ÉCHÉANCE À VENIR : c'est le déclencheur du rappel J-3.
@@ -9731,7 +9762,8 @@ async def admin_create_code(request: Request):
             try:
                 if _hiver.billing_mode_valide(metadata.get("billing_mode")) != _hiver.BILLING_UNIQUE:
                     _mention_abo = (" par mois, renouvel&eacute;es automatiquement (pr&eacute;l&egrave;vement mensuel par carte). "
-                                    "Pour arr&ecirc;ter l'abonnement, &eacute;cris &agrave; contact@afroboosteur.com.")
+                                    "Les s&eacute;ances sont valables pendant la p&eacute;riode mensuelle en cours et ne sont pas report&eacute;es au mois suivant. "
+                                    "Tu peux r&eacute;silier &agrave; tout moment depuis ton espace abonn&eacute; (acc&egrave;s conserv&eacute; jusqu'&agrave; la fin du mois pay&eacute;).")
             except Exception:
                 _mention_abo = ""
             html = f"""<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#0a0a0a;color:#fff;">
@@ -15945,6 +15977,12 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
                 and (subscription or {}).get("stripe_payment_method")
             ),
             "last_renewal_date": (subscription or {}).get("last_renewal_date"),
+            # V527: état de l'abonnement mensuel Stripe (résiliation programmée ou non),
+            # calculé côté serveur depuis les champs existants — l'écran ne devine rien.
+            "billing_mode": (subscription or {}).get("billing_mode") or "unique",
+            "cancel_at_period_end": bool((subscription or {}).get("cancel_at_period_end")),
+            "resiliation_demandee_le": (subscription or {}).get("resiliation_demandee_le"),
+            "etat_abonnement": _hiver.etat_abonnement(subscription),
             # LOT A — la vérité canonique, À CÔTÉ des champs historiques et
             # jamais à leur place. `droits_etat` vaut OK / AUCUN_DROIT / AMBIGU
             # / INDISPONIBLE. En AMBIGU, les trois compteurs sont `null` et
@@ -16724,6 +16762,64 @@ async def post_conversion_checkout(access_code: str, request: Request):
 
     return {"success": True, "checkout_url": _url,
             "transaction_id": (reponse or {}).get("transaction_id")}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V527 — RÉSILIER / CONTINUER un abonnement mensuel Stripe depuis l'espace abonné
+# ═══════════════════════════════════════════════════════════════════════════
+# La MÊME porte que `GET /subscriber/space` : jeton d'espace (B3-S1.3, possession
+# de l'adresse prouvée par OTP) + tenant. Le seul code d'accès ne suffit pas.
+# Stripe fait foi : `cancel_at_period_end` est posé/retiré chez Stripe D'ABORD,
+# puis reflété en base ; la fin réelle arrive par `customer.subscription.deleted`
+# (`traiter_abonnement_termine`, inchangé). Rien n'est remboursé, rien n'expire
+# avant la fin de la période déjà payée.
+async def _v527_abonnement_du_porteur(request, access_code: str, m: Optional[str]):
+    code_upper = (access_code or "").strip().upper()
+    if not code_upper:
+        raise HTTPException(status_code=400, detail="Code d'accès requis")
+    _charge, _motif = await _b3s13_porteur_autorise(request, code_upper, m)
+    if not _charge:
+        logger.warning("[V527] résiliation refusée (motif=%s)", _motif)
+        raise _b3s13_refus()
+    from api.routes.shared import lire_abonnement_par_code as _lire
+    subscription = await _lire(db, code_upper)
+    _discount_list = await db.discount_codes.find(
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}).to_list(1)
+    discount = _discount_list[0] if _discount_list else None
+    if not subscription or not _b3s13_tenant_accepte(_charge, subscription, discount):
+        raise _b3s13_refus()
+    return subscription
+
+
+def _v527_modifier_stripe(sid, **champs):
+    return stripe.Subscription.modify(sid, api_key=stripe.api_key, **champs)
+
+
+@api_router.post("/subscriber/space/{access_code}/resilier")
+async def post_resilier_abonnement(access_code: str, request: Request, m: Optional[str] = None):
+    subscription = await _v527_abonnement_du_porteur(request, access_code, m)
+    try:
+        _res = await _hiver.resilier_abonnement(db, subscription, _v527_modifier_stripe)
+    except Exception as _err:  # noqa: BLE001
+        logger.error("[V527] résiliation Stripe impossible (%s)", type(_err).__name__)
+        raise HTTPException(status_code=502, detail="La résiliation n'a pas pu être enregistrée. Réessaie dans un instant.")
+    if not _res.get("ok"):
+        raise HTTPException(status_code=409, detail=_res.get("motif") or "Résiliation impossible.")
+    return {"ok": True, "etat_abonnement": _hiver.etat_abonnement(dict(subscription, cancel_at_period_end=True)),
+            "acces_jusquau": _res.get("acces_jusquau")}
+
+
+@api_router.post("/subscriber/space/{access_code}/reactiver")
+async def post_reactiver_abonnement(access_code: str, request: Request, m: Optional[str] = None):
+    subscription = await _v527_abonnement_du_porteur(request, access_code, m)
+    try:
+        _res = await _hiver.reactiver_abonnement(db, subscription, _v527_modifier_stripe)
+    except Exception as _err:  # noqa: BLE001
+        logger.error("[V527] réactivation Stripe impossible (%s)", type(_err).__name__)
+        raise HTTPException(status_code=502, detail="La réactivation n'a pas pu être enregistrée. Réessaie dans un instant.")
+    if not _res.get("ok"):
+        raise HTTPException(status_code=409, detail=_res.get("motif") or "Réactivation impossible.")
+    return {"ok": True, "etat_abonnement": _hiver.etat_abonnement(dict(subscription, cancel_at_period_end=False))}
 
 
 @api_router.post("/subscriber/space/{access_code}/reserve/{course_id}")
@@ -47859,7 +47955,9 @@ def _m1_engagement(o):
     _f = _m1_famille(o)[1]
     _mode = _hiver.billing_mode_valide((o or {}).get("billing_mode"))
     if _mode == _hiver.BILLING_MENSUEL:
-        return "Sans engagement — résiliable, accès jusqu’à la fin du mois payé"
+        # V527: quota mensuel, pas de report (validé le 16/09/2026) ; jamais sur la saison
+        return ("Sans engagement — résiliable, accès jusqu’à la fin du mois payé. "
+                "Les séances sont valables pendant la période mensuelle en cours et ne sont pas reportées au mois suivant.")
     if _f in ("saison_1x", "saison_2x"):
         return "Saison de %d mois" % _hiver.SAISON_MOIS
     _d = _hiver.duree_droits_mois(o or {})

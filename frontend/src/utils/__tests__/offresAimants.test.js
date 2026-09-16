@@ -158,7 +158,8 @@ describe('fiche détail', () => {
     expect(f.prix).toEqual({ montant: '69 CHF', unite: '/ mois' });
     expect(f.inclus).toContain('jusqu’à 8 séances / mois');
     expect(f.conditions).toContain('Justificatif étudiant requis');
-    expect(f.duree).toBe('1 mois, renouvelé automatiquement');
+    // V527: quota mensuel, pas de report
+    expect(f.duree).toBe('1 mois, renouvelé automatiquement. Les séances sont valables pendant la période mensuelle en cours et ne sont pas reportées au mois suivant.');
     expect(f.pourQui).toBe('Étudiant·e, avec justificatif');
     expect(f.economie).toBe('');
     expect(f.gratuit).toBe(false);

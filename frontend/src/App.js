@@ -263,7 +263,7 @@ import { PublicationsCarousel } from "./components/Publications"; // V261
 // OFFRES AIMANTS : parcours de conversion du visiteur non connecte (3 cartes,
 // « toutes les offres », fiche detail). Les regles sont dans utils/offresAimants.
 import OffresAimants from "./components/OffresAimants";
-import { visiteurEstConnecte, regrouperOffres as aimantsRegrouper } from "./utils/offresAimants";
+import { visiteurEstConnecte, regrouperOffres as aimantsRegrouper, estRecurrente as offreEstRecurrente } from "./utils/offresAimants";
 import { normaliserRatio as videoRatioNormaliser, estPortrait as videoEstPortrait } from "./utils/videoRatio";
 import { analyserMediaUrl } from "./utils/mediaOffre";
 import { trimDeLOffre as videoTrimDeLOffre, useTrimVideo as videoUseTrim } from "./utils/videoTrim";
@@ -6586,6 +6586,30 @@ function App() {
   // sur la carte ({ size, color, weight }). Optionnel : les appelants existants
   // (handleSelectOffer ~l.4461, qui appelle avec 2 arguments) continuent de
   // fonctionner a l'identique et envoient `variants: null`.
+  // V527: ANTI-DOUBLE AVANT STRIPE (offres récurrentes seulement). Le checkout direct
+  // (V224/V225) ne connaît pas l'adresse : Stripe la collecte, et la garde 409 du
+  // serveur ne pouvait rien décider. Pour un abonnement mensuel, on obtient l'adresse
+  // AVANT d'ouvrir Stripe : celle déjà connue (formulaire, identité chat), sinon une
+  // saisie minimale. Le serveur applique `garde_abonnement_actif` (409 « Tu as déjà
+  // cet abonnement actif ») et Stripe est prérempli. Les achats uniques ne passent
+  // PAS par cette étape.
+  const v527EmailPourAbonnement = (offer) => {
+    if (!offreEstRecurrente(offer)) return { ok: true, email: null };
+    const valide = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || '').trim());
+    let connu = String(userEmail || '').trim();
+    if (!valide(connu)) {
+      try {
+        const idRaw = localStorage.getItem('afroboost_identity') || localStorage.getItem('af_chat_client');
+        if (idRaw) connu = String(JSON.parse(idRaw).email || '').trim();
+      } catch (e) { connu = ''; }
+    }
+    if (valide(connu)) return { ok: true, email: connu.toLowerCase() };
+    const saisi = window.prompt("Abonnement mensuel : indique ton adresse e-mail (elle sert à retrouver ton espace abonné et à éviter un double abonnement) :", '');
+    if (saisi === null) return { ok: false, email: null };
+    if (!valide(saisi)) { alert("Adresse e-mail invalide."); return { ok: false, email: null }; }
+    return { ok: true, email: String(saisi).trim().toLowerCase() };
+  };
+
   const startProgressiveCheckout = async (offer, quantity = 1, variants = null) => {
     // V224: garde de ré-entrance — sans elle, un double-clic pendant l'appel
     // réseau (démarrage à froid Vercel possible) crée plusieurs sessions
@@ -6593,6 +6617,8 @@ function App() {
     // V224: la garde porte sur `checkoutBusy` et NON sur `loading` — voir la
     // declaration de checkoutBusy : un `loading` remanent s'auto-bloquait ici.
     if (checkoutBusy) return;
+    const v527Email = v527EmailPourAbonnement(offer);
+    if (!v527Email.ok) return;
     try {
       setCheckoutBusy(true);
       // V224: efface toute réservation en attente laissée par un parcours
@@ -6687,6 +6713,10 @@ function App() {
         // le serveur la revalide et la porte jusqu'au webhook. `null` = rien.
         attribution: (function () { try { return attributionActuelle(); } catch (e) { return null; } })()
       };
+      // V527: pour une offre récurrente, l'adresse obtenue ci-dessus part avec la
+      // demande (garde anti-double 409 côté serveur + préremplissage Stripe). Jamais
+      // la chaîne vide (cf. note V224 ci-dessous) : absente sinon.
+      if (v527Email.email) payload.customerEmail = v527Email.email;
       // V224: `customerEmail` est volontairement ABSENT du payload.
       // Ne jamais l'envoyer a "" : Stripe rejette la chaine vide comme adresse
       // invalide, et le fallback carte-seule (api/server.py:3498) la relaie
