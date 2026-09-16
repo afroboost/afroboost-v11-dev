@@ -38,8 +38,25 @@ async function ouvrirFondateurs(p, tag) {
   v(`${tag}. le bouton d'achat est visible dans la fenêtre`, await cta.isVisible());
   const box = await cta.boundingBox();
   v(`${tag}. taille tactile du bouton ≥ 44 px`, box && box.height >= 44, JSON.stringify(box));
-  return { click: async (opts) => { for (let i = 0; i < 4; i++) { try { await p.locator('[data-testid="fiche-cta"]').click({ timeout: 8000, ...(opts || {}) }); return; } catch (e) { if (i === 3) throw e; } } } };
+  // E1 (16/09) : depuis V528, une offre récurrente demande d'abord l'e-mail (étape modale) quand
+  // l'adresse est inconnue ; `click` la remplit et valide, `clickSeul` n'ouvre que l'étape.
+  const clickSeul = async (opts) => { for (let i = 0; i < 4; i++) { try { await p.locator('[data-testid="fiche-cta"]').click({ timeout: 8000, ...(opts || {}) }); return; } catch (e) { if (i === 3) throw e; } } };
+  const click = async (opts, email) => {
+    await clickSeul(opts);
+    const etape = p.locator('[data-testid="v528-etape-email"]');
+    if (await etape.waitFor({ timeout: 5000 }).then(() => true).catch(() => false)) {
+      await p.fill('[data-testid="v528-email-input"]', email || ('pw-' + tag.toLowerCase() + '-' + uid + '@example.com'));
+      await p.click('[data-testid="v528-email-continuer"]');
+    }
+  };
+  return { click, clickSeul };
 }
+const FID = 'cc73f6ee-163a-433d-b5f0-c00c6392b437';
+const { execSync } = require('child_process');
+const fixture = (action) => execSync('python3 ' + __dirname + '/pw_fixtures.py ' + action, { encoding: 'utf8' }).trim();
+const nbSessions = async (p) => Object.keys(await (await p.request.get(BASE + '/faux-stripe/etat')).json()).length;
+const abonnements = async (p, email) => (await (await p.request.get(BASE + '/faux-stripe/abonnement?email=' + encodeURIComponent(email))).json());
+const checkoutDirect = async (p, email) => p.request.post(BASE + '/api/create-checkout-session', { data: { productName: 'Fondateurs', amount: 59, originUrl: BASE, offerId: FID, quantity: 1, allowPromotionCodes: true, collectShipping: false, customerEmail: email } });
 async function parcours(nom, fn) { if (process.env.PARCOURS && !process.env.PARCOURS.split(',').includes(nom)) return; try { await fn(); } catch (e) { v(`${nom}. ERREUR d'exécution`, false, String(e).split('\n')[0]); } }
 
 (async () => {
@@ -89,10 +106,23 @@ async function parcours(nom, fn) { if (process.env.PARCOURS && !process.env.PARC
     const avant = Object.keys(await (await p.request.get(BASE + '/faux-stripe/etat')).json()).length;
     // Deux clics quasi simultanés sur « Choisir cette formule »
     // Double clic RÉEL (deux événements successifs, comme un utilisateur) :
-    await Promise.all([p.waitForNavigation({ url: /faux-stripe/, timeout: 30000 }).catch(() => null), p.locator('[data-testid="fiche-cta"]').dblclick({ timeout: 8000 }).catch(() => null)]);
+    const emailP5 = 'pw-p5-' + uid + '@example.com';
+    await p.locator('[data-testid="fiche-cta"]').dblclick({ timeout: 8000 }).catch(() => null);
+    await p.waitForTimeout(800);
+    const etapeApresDbl = await p.locator('[data-testid="v528-etape-email"]').count();
+    v('P5. double clic sur Acheter : 0 checkout créé (l\'étape e-mail s\'ouvre au 1er clic ; CONSTAT : le 2e clic tombe sur le fond et la referme)', (await nbSessions(p)) === avant, `sessions ${avant} -> ${await nbSessions(p)} | étape visible après double clic = ${etapeApresDbl}`);
+    if (!etapeApresDbl) {
+      await p.screenshot({ path: `${CAP}/P5-apres-double-clic.png` });
+      const ficheEncore = await p.locator('[data-testid="fiche-cta"]').isVisible().catch(() => false);
+      v('P5. CONSTAT après double clic : la fiche est-elle encore ouverte ?', true, `fiche visible = ${ficheEncore}`);
+      if (!ficheEncore) { await ouvrirFondateurs(p, 'P5bis'); }
+      await p.locator('[data-testid="fiche-cta"]').click({ timeout: 8000 }); await p.locator('[data-testid="v528-etape-email"]').waitFor({ timeout: 8000 });
+    }
+    await p.fill('[data-testid="v528-email-input"]', emailP5);
+    await Promise.all([p.waitForNavigation({ url: /faux-stripe/, timeout: 30000 }).catch(() => null), p.locator('[data-testid="v528-email-continuer"]').dblclick({ timeout: 8000 }).catch(() => null)]);
     await p.waitForTimeout(1500);
-    const apres = Object.keys(await (await p.request.get(BASE + '/faux-stripe/etat')).json()).length;
-    v('P5. double clic réel = UNE seule session de checkout créée (garde checkoutBusy)', apres - avant === 1, `${avant} -> ${apres}`);
+    const apres = await nbSessions(p);
+    v('P5. double clic réel sur « Continuer » = UNE seule session de checkout créée (garde checkoutBusy)', apres - avant === 1, `${avant} -> ${apres}`);
     const cs = new URL(p.url()).searchParams.get('cs');
     await Promise.all([p.waitForNavigation({ timeout: 60000 }), p.click('[data-testid="faux-payer"]')]);
     await p.waitForTimeout(1500);
@@ -103,6 +133,8 @@ async function parcours(nom, fn) { if (process.env.PARCOURS && !process.env.PARC
     await p.request.post(BASE + '/faux-stripe/rejouer', { form: { cs } });
     const etat = await (await p.request.get(BASE + '/faux-stripe/etat')).json();
     v('P5. le webhook rejoué répond OK sans erreur', String(etat[cs].webhook) === '200', JSON.stringify(etat[cs]));
+    const abosP5 = await abonnements(p, emailP5);
+    v('P5. refresh + retour + rejeu du webhook = UN seul abonnement, 8 séances (aucun double crédit)', abosP5.n === 1 && abosP5.abonnements[0].remaining_sessions === 8 && abosP5.abonnements[0].total_sessions !== 16, JSON.stringify(abosP5).slice(0, 300));
     await ctx.close();
   });
 
@@ -123,9 +155,90 @@ async function parcours(nom, fn) { if (process.env.PARCOURS && !process.env.PARC
     await ctx.close();
   });
 
-  v('Global. aucune boîte de dialogue bloquante (alert) pendant les parcours', dialogs.length === 0, dialogs.join(' | '));
+  await parcours('P0', async () => {
+    // E1 : landing SEO -> lien Fondateurs -> fiche (le lien porte ?offre=<id>)
+    const { ctx, p, erreurs } = await page(browser, true, BASE + '/cours-essai-gratuit-neuchatel');
+    const lien = p.locator('a[href*="offre=' + FID + '"]').first();
+    v('P0. la landing propose un lien vers l\'offre Fondateurs', (await lien.count()) >= 1);
+    const texte = ((await p.textContent('body')) || '').replace(/\s+/g, ' ');
+    v('P0. la landing dit 59 CHF / mois, 8 séances, « N places restantes sur 50 », 30 septembre, séances non reportées', /59 CHF/.test(texte) && /8 séances/.test(texte) && /\d+ places? restantes? sur 50/.test(texte) && /30 septembre 2026/.test(texte) && /ne sont pas reportées/.test(texte), texte.slice(0, 200));
+    await Promise.all([p.waitForNavigation({ timeout: 30000 }).catch(() => null), lien.click()]);
+    await p.waitForSelector('[data-testid="fiche-nom"]', { timeout: 60000 });
+    v('P0. le lien ouvre la fiche Fondateurs dans l\'app', /Fondateurs/i.test((await p.locator('[data-testid="fiche-nom"]').textContent()) || ''));
+    v('P0. mobile : aucune erreur JS', erreurs.length === 0, erreurs.join(' | '));
+    await ctx.close();
+  });
+
+  await parcours('P6b', async () => {
+    // E1 : lien partenaire court `?offre=<id>&ref=<slug>` -> source partenaire / referral / content = slug
+    const { ctx, p } = await page(browser, false, BASE + '/?offre=' + FID + '&ref=coach-test-' + uid);
+    await p.waitForSelector('[data-testid="fiche-cta"]', { timeout: 60000 });
+    const stocke = await p.evaluate(() => { try { return JSON.parse(localStorage.getItem('af_attribution') || 'null'); } catch (e) { return null; } });
+    v('P6b. `?ref=` est capturé (first.source = partenaire, content = slug)', stocke && stocke.first && stocke.first.source === 'partenaire' && stocke.first.content === 'coach-test-' + uid, JSON.stringify(stocke).slice(0, 200));
+    await Promise.all([p.waitForNavigation({ url: /faux-stripe/, timeout: 30000 }).catch(() => null), (async () => { await p.locator('[data-testid="fiche-cta"]').click(); await p.locator('[data-testid="v528-etape-email"]').waitFor({ timeout: 8000 }).catch(() => null); await p.fill('[data-testid="v528-email-input"]', 'pw-p6b-' + uid + '@example.com'); await p.click('[data-testid="v528-email-continuer"]'); })()]);
+    const cs = new URL(p.url()).searchParams.get('cs');
+    const md = ((await (await p.request.get(BASE + '/faux-stripe/etat')).json())[cs] || {}).metadata || {};
+    v('P6b. le lien partenaire voyage dans les metadata Stripe (attribution_first_source = partenaire)', md.attribution_first_source === 'partenaire' && md.attribution_first_content === 'coach-test-' + uid && md.offer_id === FID, JSON.stringify(md).slice(0, 300));
+    await ctx.close();
+  });
+
+  await parcours('P7', async () => {
+    // E1 : DEADLINE DÉPASSÉE (simulée dans la base de test) -> l'offre disparaît de la vitrine ET la caisse refuse (409)
+    fixture('deadline-passee');
+    try {
+      const { ctx, p } = await page(browser, true);
+      await p.waitForSelector('[data-testid="offres-aimants"], [data-testid="offer-card"], main', { timeout: 60000 });
+      await p.waitForTimeout(1500);
+      const offres = await (await p.request.get(BASE + '/api/offers')).json();
+      v('P7. deadline passée : Fondateurs n\'est plus servie par GET /api/offers', !offres.some(o => o.id === FID));
+      v('P7. deadline passée : la carte « lancement » n\'est plus affichée', (await p.locator('[data-testid="aimant-lancement"]').count()) === 0);
+      const r = await checkoutDirect(p, 'pw-p7-' + uid + '@example.com');
+      const corps = await r.text();
+      v('P7. deadline passée : la caisse répond 409 « offre terminée » (aucune session Stripe)', r.status() === 409 && /terminée|date limite/i.test(corps), r.status() + ' ' + corps.slice(0, 160));
+      await ctx.close();
+    } finally { fixture('deadline-restaurer'); }
+  });
+
+  await parcours('P8', async () => {
+    // E1 : 50/50 (50 abonnements Fondateurs confirmés, simulés) -> « complet » : plus en vitrine, caisse 409
+    fixture('stock-plein');
+    try {
+      const { ctx, p } = await page(browser, false);
+      await p.waitForTimeout(1500);
+      const offres = await (await p.request.get(BASE + '/api/offers')).json();
+      const f = offres.find(o => o.id === FID);
+      v('P8. 50/50 : Fondateurs sort de la vitrine (places_restantes = 0 -> retirée)', !f, f ? 'places_restantes=' + f.places_restantes : 'absente');
+      v('P8. 50/50 : la carte « lancement » n\'est plus affichée', (await p.locator('[data-testid="aimant-lancement"]').count()) === 0);
+      const r = await checkoutDirect(p, 'pw-p8-' + uid + '@example.com');
+      const corps = await r.text();
+      v('P8. 50/50 : la caisse répond 409 « offre complète » (aucune session Stripe)', r.status() === 409 && /complète|places/i.test(corps), r.status() + ' ' + corps.slice(0, 160));
+      await ctx.close();
+    } finally { fixture('stock-restaurer'); }
+  });
+
+  await parcours('P9', async () => {
+    // E1 : anti-double ANONYME — un abonné actif (fixture) redonne son e-mail dans l'étape -> 409, 0 checkout, proposition d'espace
+    const emailP9 = 'pw-p9-' + uid + '@example.com';
+    fixture('abonne-actif ' + emailP9);
+    try {
+      const { ctx, p } = await page(browser, true);
+      const cta = await ouvrirFondateurs(p, 'P9');
+      const avant = await nbSessions(p);
+      const nDialogsAvant = dialogs.length;
+      await cta.click({}, emailP9.toUpperCase());
+      for (let i = 0; i < 60 && dialogs.length === nDialogsAvant; i++) { await p.waitForTimeout(500); }
+      const nouveaux = dialogs.slice(nDialogsAvant);
+      v('P9. abonné actif (e-mail en MAJUSCULES) -> refus 409 « Tu as déjà cet abonnement actif » (rendu par alert()), 0 checkout créé', nouveaux.some(d => /déjà cet abonnement actif/i.test(d)) && (await nbSessions(p)) === avant && !/faux-stripe/.test(p.url()), nouveaux.join(' | ').slice(0, 200) + ' | ' + p.url());
+      v('P9. CONSTAT : l\'espace abonné n\'est proposé (confirm) QUE si une session d\'espace existe déjà sur l\'appareil — ici appareil neuf : aucune proposition', !nouveaux.some(d => /Ouvrir mon espace/i.test(d)), nouveaux.join(' | '));
+      await p.screenshot({ path: `${CAP}/P9-409-mobile.png` });
+      await ctx.close();
+    } finally { fixture('nettoyer-abonnes'); }
+  });
+
+  const dialogsInattendus = dialogs.filter(d => !/déjà cet abonnement actif|Ouvrir mon espace/i.test(d));
+  v('Global. aucune boîte de dialogue inattendue pendant les parcours (les alert() 409 de P9 sont attendus — CONSTAT : rendu natif)', dialogsInattendus.length === 0, dialogsInattendus.join(' | '));
   await browser.close();
   console.log(R.join('\n'));
-  console.log(`\n${OK}/${OK + KO} au vert (Playwright parcours 1, 4, 5, 6)`);
+  console.log(`\n${OK}/${OK + KO} au vert (Playwright parcours 0, 1, 4, 5, 6, 6b, 7, 8, 9)`);
   process.exit(KO ? 1 : 0);
 })().catch(e => { console.error('ERREUR', e); process.exit(2); });

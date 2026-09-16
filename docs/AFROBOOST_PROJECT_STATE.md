@@ -1204,3 +1204,22 @@ ne doit jamais être présentée comme l'état courant.
   V525 : ancien rendu restauré (hook inchangé), passé en prop `Countdown` à OffresAimants. Preuve prod (Playwright anonyme,
   desktop + mobile) : carte + fiche `…50m 27s → 23s`, barre aussi. Deadline/stock/409 intacts.
 - **Non prouvé** : rendu du push sur le téléphone de Bassi (test réel = GO requis).
+
+## V. PHASE E1 — PRÉPARATION LANCEMENT FONDATEURS (2026-09-16, aucun envoi, aucun Stripe live) — ✅ GO TECHNIQUE
+
+- **Offre prod (une seule vérité, vérifiée base + `GET /api/offers` + landing + fiche mobile/desktop)** : 59 CHF/mois, `mensuel_auto`
+  (Stripe `mode=subscription`, carte, récurrence mensuelle), 8 séances/mois non reportées, `stock 50`, `countdown 2026-09-30 23:59`
+  (heure de Zurich, `date_limite`/`maintenant_zurich`), description « réservé aux 50 premiers inscrits… résiliable à tout moment ».
+- **Stock** : `places_restantes = 50 − subscriptions{offer_id, status ≠ superseded}` (server.py `_annoter_places_restantes`) ; la caisse
+  soustrait aussi les checkouts `pending` < 30 min (`garde_offre_limitee`). Prod : **0 vendue / 50 restantes** ; 6 checkouts abandonnés
+  du 15/09 (pending, jamais payés) ne comptent pas. À 0 place → offre retirée de la vitrine + 409 « complète » ; deadline passée → retirée + 409 « terminée » (prouvé P7/P8).
+- **Parcours (pile locale, faux Stripe, `tests/parcours/parcours_fondateurs.cjs` P0/P1/P4/P5/P6/P6b/P7/P8/P9) : 62/62** — landing → fiche,
+  achat desktop + mobile, double clic = 1 checkout, refresh + rejeu webhook = 1 abonnement / 8 séances, UTM et `?ref=` jusqu'aux métadonnées
+  Stripe, deadline et 50/50 simulés, anti-double anonyme 409. Fixtures : `tests/parcours/pw_fixtures.py` (base de test uniquement).
+- **Monitoring 1er client réel** : `python3 tests/monitoring_premier_fondateur.py [email]` (lecture seule, 16 contrôles). Testé : prod « aucun abonné » propre.
+- **Brouillons + liens attribués + segments** : `docs/lancement_fondateurs_brouillons.md`. Segments (règles de l'aperçu 3B) : union 35 personnes
+  → 32 e-mail / 31 WhatsApp ; 66 clients actifs = public légitime séparé (exclus de la réactivation par conception).
+- **Constats UX à trancher (pas bloquants)** : (1) le refus 409 est rendu par `alert()` natif et l'espace n'est proposé (`confirm`) que si une
+  session d'espace existe sur l'appareil — sur un appareil neuf, un abonné existant n'a aucun bouton vers son espace ; (2) un double tap sur
+  « Choisir cette formule » ouvre l'étape e-mail puis la referme (le 2e tap tombe sur le fond) ; (3) `checkout.session.expired` non relayé :
+  les checkouts abandonnés restent `pending` à vie (dette connue).
