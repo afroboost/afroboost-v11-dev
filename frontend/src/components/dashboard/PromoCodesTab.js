@@ -319,6 +319,281 @@ const PromoCodesTab = ({
     }
   }, [editingCode]);
 
+  // V532: la LIGNE d'un code, extraite telle quelle de l'ancien `.map` pour être
+  // rendue deux fois (bloc « Abonnement actuel » et « Historique ») sans dupliquer
+  // le moindre bouton (copier, activer, modifier, partager, dupliquer, supprimer).
+  const renderCodeRow = (code) => {
+          // V200: Distinguer 3 états: actif, inactif (toggle), expiré (date passée)
+          const codeExpired = isDateExpired(code.expiresAt);
+          const cardClass = codeExpired
+            ? 'opacity-40 border border-red-500/40'  // V200: expiré = très grisé + bord rouge
+            : (!code.active ? 'opacity-50' : '');     // inactif = grisé, actif = normal
+          return (
+          <div
+            key={code.id}
+            className={`glass rounded-lg p-4 ${cardClass}`}
+            data-testid={`promo-code-${code.id}`}
+          >
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-white font-bold text-lg">{code.code}</span>
+                  {/* V202: Badge multi-membre */}
+                  {code.multi_member && (
+                    <span className="px-2 py-0.5 rounded text-xs inline-flex items-center gap-1.5" style={{ background: 'rgba(139,92,246,0.3)', color: '#c4b5fd' }}>
+                      <SvgIcon name="users" size={14} /> Multi
+                    </span>
+                  )}
+                  {/* V202: Badge prix Stripe */}
+                  {code.stripe_amount && parseFloat(code.stripe_amount) > 0 && (
+                    <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(34,197,94,0.2)', color: '#86efac' }}>
+                      <SvgIcon name="creditCard" size={14} /> {parseFloat(code.stripe_amount).toFixed(0)} CHF
+                    </span>
+                  )}
+                  {/* v14.0: Bouton Copier le code */}
+                  <button
+                    onClick={() => copyCodeToClipboard(code)}
+                    className={`p-1.5 rounded transition-all ${
+                      copiedCodeId === code.id 
+                        ? 'bg-green-500/30 text-green-400' 
+                        : 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'
+                    }`}
+                    title={copiedCodeId === code.id ? "Copié !" : "Copier le code"}
+                    data-testid={`copy-code-${code.id}`}
+                  >
+                    {copiedCodeId === code.id ? <CheckIcon /> : <CopyIcon />}
+                  </button>
+                  <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)', color: 'var(--primary-color, #D91CD2)' }}>
+                    {code.type === '100%' ? 'GRATUIT' : `${code.value}${code.type}`}
+                  </span>
+                  {code.linkedOfferName && (
+                    <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(139, 92, 246, 0.3)', color: '#a78bfa' }}>
+                      <SvgIcon name="gift" size={14} /> {code.linkedOfferName}
+                    </span>
+                  )}
+                  {/* V200: Badge EXPIRÉ — séparé de la désactivation manuelle */}
+                  {codeExpired && (
+                    <span className="px-2 py-0.5 rounded text-xs font-semibold inline-flex items-center gap-1.5" style={{ background: 'rgba(239, 68, 68, 0.25)', color: '#ef4444' }}>
+                      <SvgIcon name="warning" size={14} /> EXPIRÉ
+                    </span>
+                  )}
+                </div>
+                {/* Bénéficiaires — v106.1: support assignedEmail (string) + assignedEmails (array) */}
+                {(code.assignedEmails?.length > 0 || code.assignedEmail) && (
+                  <p className="text-white/50 text-xs mt-1">
+                    <SvgIcon name="mail" size={14} /> {(() => {
+                      const emails = code.assignedEmails?.length > 0
+                        ? code.assignedEmails
+                        : code.assignedEmail ? [code.assignedEmail] : [];
+                      return emails.slice(0, 3).join(', ') + (emails.length > 3 ? ` +${emails.length - 3}` : '');
+                    })()}
+                  </p>
+                )}
+                {/* Stats utilisation */}
+                <p className="text-white/30 text-xs mt-1">
+                  Utilisé: {code.usedCount || code.used || 0}/{code.maxUses || '∞'}
+                  {/* V200: Indicateur explicite « Expiré le » (rouge) vs « Expire le » (vert) */}
+                  {code.expiresAt && (
+                    <span style={{ color: codeExpired ? '#ef4444' : '#22c55e', marginLeft: '4px' }}>
+                      {' • '}{codeExpired ? (
+                        <><SvgIcon name="warning" size={14} /> Expiré le </>
+                      ) : (
+                        <><SvgIcon name="check" size={14} /> Expire le </>
+                      )}{formatDate(code.expiresAt)}
+                    </span>
+                  )}
+                </p>
+                {/* V194: Séances par abonné — dédupe par email et utilise code.maxUses
+                    comme dénominateur (source de vérité) au lieu du total_sessions
+                    figé de la subscription (qui peut être obsolète) */}
+                {codeSubscriptions[code.code]?.length > 0 && (() => {
+                  const seenEmails = new Set();
+                  const uniqueSubs = codeSubscriptions[code.code].filter(sub => {
+                    const key = (sub.email || sub.id || '').toLowerCase();
+                    if (!key || seenEmails.has(key)) return false;
+                    seenEmails.add(key);
+                    return true;
+                  });
+                  const liveMax = Number(code.maxUses) > 0 ? Number(code.maxUses) : null;
+                  return (
+                    <div className="mt-2 space-y-1">
+                      {uniqueSubs.map(sub => {
+                        // Préférer code.maxUses (à jour) à sub.total_sessions (peut être obsolète)
+                        const denom = liveMax != null ? liveMax : sub.total_sessions;
+                        const used = Number(sub.used_sessions) || 0;
+                        const remaining = denom != null ? Math.max(0, denom - used) : sub.remaining_sessions;
+                        const showInfinite = sub.remaining_sessions === -1;
+                        return (
+                          <div key={sub.id || sub.email} className="flex items-center gap-2 text-xs">
+                            <span className="text-purple-400"><SvgIcon name="user" size={14} /></span>
+                            <span className="text-white/60">{sub.name || sub.email}</span>
+                            <span className="px-1.5 py-0.5 rounded text-[10px]" style={{
+                              background: remaining <= 0
+                                ? 'rgba(239,68,68,0.2)'
+                                : remaining <= 2
+                                  ? 'rgba(245,158,11,0.2)'
+                                  : 'rgba(34,197,94,0.2)',
+                              color: remaining <= 0
+                                ? '#ef4444'
+                                : remaining <= 2
+                                  ? '#f59e0b'
+                                  : '#22c55e'
+                            }}>
+                              {showInfinite ? '∞' : `${used}/${denom != null ? denom : '?'}`} séances
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+              
+              {/* BOUTONS D'ACTION */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* V200: 3 états — Expiré (date passée), Actif, Inactif. Le toggle reste cliquable même si expiré */}
+                {codeExpired ? (
+                  <span
+                    className="px-3 py-1.5 rounded text-xs font-medium bg-red-500/20 text-red-400 inline-flex items-center gap-1.5"
+                    title="Date d'expiration dépassée"
+                    data-testid={`toggle-code-${code.id}`}
+                  >
+                    <SvgIcon name="clock" size={14} /> Expiré
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => toggleCode && toggleCode(code)}
+                    className={`px-3 py-1.5 rounded text-xs font-medium ${code.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}
+                    data-testid={`toggle-code-${code.id}`}
+                  >
+                    {code.active ? (
+                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Actif</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="close" size={14} /> Inactif</span>
+                    )}
+                  </button>
+                )}
+                
+                {/* Bouton Éditer */}
+                {editCode && (
+                  <button
+                    onClick={() => editCode(code)}
+                    className="px-3 py-1.5 rounded text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/40"
+                    data-testid={`edit-code-${code.id}`}
+                  >
+                    <span className="inline-flex items-center gap-1.5"><SvgIcon name="edit" size={14} /> Éditer</span>
+                  </button>
+                )}
+                
+                {/* V185 F2: Bouton Lien d'accès rapide (uniquement codes actifs) */}
+                {code.active && (
+                  <button
+                    onClick={() => copySpaceLinkToClipboard(code)}
+                    className={`px-3 py-1.5 rounded text-xs font-medium ${copiedSpaceLinkId === code.id ? 'bg-green-500/20 text-green-400' : 'bg-pink-500/20 text-pink-400 hover:bg-pink-500/40'}`}
+                    title={copiedSpaceLinkId === code.id ? 'Lien copié !' : `Copier ${window.location.origin}/espace/${code.code}`}
+                    data-testid={`share-space-link-${code.id}`}
+                  >
+                    {copiedSpaceLinkId === code.id ? (
+                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Copié</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="link" size={14} /> Lien</span>
+                    )}
+                  </button>
+                )}
+
+                {/* Bouton Dupliquer */}
+                {duplicateCode && (
+                  <button
+                    onClick={() => duplicateCode(code)}
+                    className="px-3 py-1.5 rounded text-xs bg-purple-500/20 text-purple-400 hover:bg-purple-500/40"
+                    data-testid={`duplicate-code-${code.id}`}
+                  >
+                    <span className="inline-flex items-center gap-1.5"><SvgIcon name="clipboard" size={14} /> Dupliquer</span>
+                  </button>
+                )}
+                
+                {/* Bouton Supprimer */}
+                <button
+                  onClick={() => deleteCode && deleteCode(code.id)}
+                  className="px-3 py-1.5 rounded text-xs bg-red-500/20 text-red-400 hover:bg-red-500/40"
+                  data-testid={`delete-code-${code.id}`}
+                  aria-label="Supprimer le code"
+                >
+                  <SvgIcon name="trash" size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+    );
+  };
+
+  // V532: regroupement PAR PERSONNE à partir de l'étiquette calculée par le serveur
+  // (`code.v532.classement` : actuel / historique / a_verifier — règles canoniques
+  // LOT A rejouées côté serveur, aucune écriture). Repli si l'étiquette manque :
+  // actif ∧ non expiré ∧ restant > 0 = actuel, sinon historique.
+  const v532Classement = (code) => {
+    if (code && code.v532 && code.v532.classement) return code.v532.classement;
+    const used = Number(code.usedCount || code.used || 0);
+    const max = Number(code.maxUses || 0);
+    if (code.active && !isDateExpired(code.expiresAt) && (!max || used < max)) return 'actuel';
+    return 'historique';
+  };
+  const v532Personne = (code) => {
+    const e = (Array.isArray(code.assignedEmails) && code.assignedEmails[0]) || code.assignedEmail || '';
+    return String(e || '').trim().toLowerCase();
+  };
+  const groupesParPersonne = useMemo(() => {
+    const parPersonne = new Map();
+    const sansBeneficiaire = [];
+    (filteredDiscountCodes || []).forEach((code) => {
+      const cle = v532Personne(code);
+      if (!cle) { sansBeneficiaire.push(code); return; }
+      if (!parPersonne.has(cle)) parPersonne.set(cle, { cle, actuels: [], aVerifier: [], historique: [] });
+      const g = parPersonne.get(cle);
+      const c = v532Classement(code);
+      if (c === 'actuel') g.actuels.push(code);
+      else if (c === 'a_verifier') g.aVerifier.push(code);
+      else g.historique.push(code);
+    });
+    const personnes = Array.from(parPersonne.values()).sort((a, b) => a.cle.localeCompare(b.cle));
+    return { personnes, sansBeneficiaire };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredDiscountCodes]);
+
+  const v532Compteur = (code) => {
+    const v = code.v532 || {};
+    const used = v.utilise != null ? v.utilise : Number(code.usedCount || code.used || 0);
+    const total = v.total != null ? v.total : Number(code.maxUses || 0);
+    const restant = v.restant != null ? v.restant : (total ? Math.max(0, total - used) : null);
+    return { used, total, restant };
+  };
+  const v532Badge = (label, testid) => (
+    <span data-testid={testid} style={{
+      display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 700,
+      letterSpacing: '0.04em', textTransform: 'uppercase', padding: '4px 10px', borderRadius: '999px',
+      background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)', color: 'var(--primary-color, #D91CD2)',
+      border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)'
+    }}>{label}</span>
+  );
+  const v532EtatTexte = (code) => {
+    const c = v532Classement(code);
+    if (c === 'actuel') return 'ACTIF';
+    if (c === 'a_verifier') return 'À VÉRIFIER';
+    const m = (code.v532 && code.v532.motif) || '';
+    if (m === 'expire' || isDateExpired(code.expiresAt)) return 'EXPIRÉ';
+    if (m === 'epuise') return 'TERMINÉ';
+    if (m === 'inactif' || !code.active) return 'INACTIF';
+    return 'HISTORIQUE';
+  };
+  const v532Resume = (code) => {
+    const { used, total, restant } = v532Compteur(code);
+    const parts = [v532EtatTexte(code), `${used} / ${total || '∞'} utilisées`];
+    if (restant != null) parts.push(`${restant} restante${restant > 1 ? 's' : ''}`);
+    if (code.expiresAt) parts.push(`${isDateExpired(code.expiresAt) ? 'Expiré le' : 'Expire le'} ${formatDate(code.expiresAt)}`);
+    if (code.offerName) parts.push(code.offerName);
+    return parts.join(' · ');
+  };
+
   return (
     <div className="card-gradient rounded-xl p-4 sm:p-6" data-testid="promo-codes-tab">
       {/* Vérification crédits */}
@@ -864,210 +1139,65 @@ const PromoCodesTab = ({
       </>)}
       
       {/* ============ LISTE DES CODES ============ */}
-      <div className="space-y-3" style={{ maxHeight: codesSearch ? '80vh' : '400px', overflowY: 'auto' }}>
-        {filteredDiscountCodes.map(code => {
-          // V200: Distinguer 3 états: actif, inactif (toggle), expiré (date passée)
-          const codeExpired = isDateExpired(code.expiresAt);
-          const cardClass = codeExpired
-            ? 'opacity-40 border border-red-500/40'  // V200: expiré = très grisé + bord rouge
-            : (!code.active ? 'opacity-50' : '');     // inactif = grisé, actif = normal
-          return (
-          <div
-            key={code.id}
-            className={`glass rounded-lg p-4 ${cardClass}`}
-            data-testid={`promo-code-${code.id}`}
-          >
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-white font-bold text-lg">{code.code}</span>
-                  {/* V202: Badge multi-membre */}
-                  {code.multi_member && (
-                    <span className="px-2 py-0.5 rounded text-xs inline-flex items-center gap-1.5" style={{ background: 'rgba(139,92,246,0.3)', color: '#c4b5fd' }}>
-                      <SvgIcon name="users" size={14} /> Multi
-                    </span>
-                  )}
-                  {/* V202: Badge prix Stripe */}
-                  {code.stripe_amount && parseFloat(code.stripe_amount) > 0 && (
-                    <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(34,197,94,0.2)', color: '#86efac' }}>
-                      <SvgIcon name="creditCard" size={14} /> {parseFloat(code.stripe_amount).toFixed(0)} CHF
-                    </span>
-                  )}
-                  {/* v14.0: Bouton Copier le code */}
-                  <button
-                    onClick={() => copyCodeToClipboard(code)}
-                    className={`p-1.5 rounded transition-all ${
-                      copiedCodeId === code.id 
-                        ? 'bg-green-500/30 text-green-400' 
-                        : 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'
-                    }`}
-                    title={copiedCodeId === code.id ? "Copié !" : "Copier le code"}
-                    data-testid={`copy-code-${code.id}`}
-                  >
-                    {copiedCodeId === code.id ? <CheckIcon /> : <CopyIcon />}
-                  </button>
-                  <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)', color: 'var(--primary-color, #D91CD2)' }}>
-                    {code.type === '100%' ? 'GRATUIT' : `${code.value}${code.type}`}
-                  </span>
-                  {code.linkedOfferName && (
-                    <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(139, 92, 246, 0.3)', color: '#a78bfa' }}>
-                      <SvgIcon name="gift" size={14} /> {code.linkedOfferName}
-                    </span>
-                  )}
-                  {/* V200: Badge EXPIRÉ — séparé de la désactivation manuelle */}
-                  {codeExpired && (
-                    <span className="px-2 py-0.5 rounded text-xs font-semibold inline-flex items-center gap-1.5" style={{ background: 'rgba(239, 68, 68, 0.25)', color: '#ef4444' }}>
-                      <SvgIcon name="warning" size={14} /> EXPIRÉ
-                    </span>
-                  )}
+      <div className="space-y-3" style={{ maxHeight: codesSearch ? '80vh' : '400px', overflowY: 'auto' }} data-testid="v532-liste">
+        {/* V532: une personne = son ABONNEMENT ACTUEL d'abord, l'historique replié dessous */}
+        {groupesParPersonne.personnes.map((g) => (
+          <div key={g.cle} className="glass rounded-lg p-3" data-testid={`v532-personne-${g.cle}`}
+               style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.22)' }}>
+            <p className="text-white text-sm font-semibold mb-2" style={{ wordBreak: 'break-all' }}>{g.cle}</p>
+            {g.actuels.length === 0 && g.aVerifier.length === 0 && (
+              <p className="text-white/50 text-xs mb-2" data-testid={`v532-aucun-actuel-${g.cle}`}>Aucun abonnement actuel — historique uniquement</p>
+            )}
+            {g.actuels.length > 1 && (
+              <p className="text-xs mb-2" data-testid={`v532-plusieurs-${g.cle}`}
+                 style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 600 }}>Plusieurs droits actifs — affichés séparément, rien n'est fusionné</p>
+            )}
+            {g.actuels.map((code) => (
+              <div key={code.id} data-testid={`v532-actuel-${code.id}`} className="mb-2">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  {v532Badge('Abonnement actuel', `v532-badge-actuel-${code.id}`)}
+                  <span className="text-white/80 text-xs" data-testid={`v532-resume-${code.id}`}>{v532Resume(code)}</span>
                 </div>
-                {/* Bénéficiaires — v106.1: support assignedEmail (string) + assignedEmails (array) */}
-                {(code.assignedEmails?.length > 0 || code.assignedEmail) && (
-                  <p className="text-white/50 text-xs mt-1">
-                    <SvgIcon name="mail" size={14} /> {(() => {
-                      const emails = code.assignedEmails?.length > 0
-                        ? code.assignedEmails
-                        : code.assignedEmail ? [code.assignedEmail] : [];
-                      return emails.slice(0, 3).join(', ') + (emails.length > 3 ? ` +${emails.length - 3}` : '');
-                    })()}
-                  </p>
-                )}
-                {/* Stats utilisation */}
-                <p className="text-white/30 text-xs mt-1">
-                  Utilisé: {code.usedCount || code.used || 0}/{code.maxUses || '∞'}
-                  {/* V200: Indicateur explicite « Expiré le » (rouge) vs « Expire le » (vert) */}
-                  {code.expiresAt && (
-                    <span style={{ color: codeExpired ? '#ef4444' : '#22c55e', marginLeft: '4px' }}>
-                      {' • '}{codeExpired ? (
-                        <><SvgIcon name="warning" size={14} /> Expiré le </>
-                      ) : (
-                        <><SvgIcon name="check" size={14} /> Expire le </>
-                      )}{formatDate(code.expiresAt)}
-                    </span>
-                  )}
-                </p>
-                {/* V194: Séances par abonné — dédupe par email et utilise code.maxUses
-                    comme dénominateur (source de vérité) au lieu du total_sessions
-                    figé de la subscription (qui peut être obsolète) */}
-                {codeSubscriptions[code.code]?.length > 0 && (() => {
-                  const seenEmails = new Set();
-                  const uniqueSubs = codeSubscriptions[code.code].filter(sub => {
-                    const key = (sub.email || sub.id || '').toLowerCase();
-                    if (!key || seenEmails.has(key)) return false;
-                    seenEmails.add(key);
-                    return true;
-                  });
-                  const liveMax = Number(code.maxUses) > 0 ? Number(code.maxUses) : null;
-                  return (
-                    <div className="mt-2 space-y-1">
-                      {uniqueSubs.map(sub => {
-                        // Préférer code.maxUses (à jour) à sub.total_sessions (peut être obsolète)
-                        const denom = liveMax != null ? liveMax : sub.total_sessions;
-                        const used = Number(sub.used_sessions) || 0;
-                        const remaining = denom != null ? Math.max(0, denom - used) : sub.remaining_sessions;
-                        const showInfinite = sub.remaining_sessions === -1;
-                        return (
-                          <div key={sub.id || sub.email} className="flex items-center gap-2 text-xs">
-                            <span className="text-purple-400"><SvgIcon name="user" size={14} /></span>
-                            <span className="text-white/60">{sub.name || sub.email}</span>
-                            <span className="px-1.5 py-0.5 rounded text-[10px]" style={{
-                              background: remaining <= 0
-                                ? 'rgba(239,68,68,0.2)'
-                                : remaining <= 2
-                                  ? 'rgba(245,158,11,0.2)'
-                                  : 'rgba(34,197,94,0.2)',
-                              color: remaining <= 0
-                                ? '#ef4444'
-                                : remaining <= 2
-                                  ? '#f59e0b'
-                                  : '#22c55e'
-                            }}>
-                              {showInfinite ? '∞' : `${used}/${denom != null ? denom : '?'}`} séances
-                            </span>
-                          </div>
-                        );
-                      })}
+                {renderCodeRow(code)}
+              </div>
+            ))}
+            {g.aVerifier.map((code) => (
+              <div key={code.id} data-testid={`v532-a-verifier-${code.id}`} className="mb-2">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  {v532Badge('À vérifier — doublon historique / technique', `v532-badge-averifier-${code.id}`)}
+                  <span className="text-white/80 text-xs">{v532Resume(code)}</span>
+                </div>
+                {renderCodeRow(code)}
+              </div>
+            ))}
+            {g.historique.length > 0 && (
+              <details data-testid={`v532-historique-${g.cle}`} className="mt-1">
+                <summary className="cursor-pointer text-white/70 text-xs select-none" style={{ listStyle: 'none', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9" /></svg>
+                  Historique ({g.historique.length})
+                </summary>
+                <div className="space-y-2 mt-2">
+                  {g.historique.map((code) => (
+                    <div key={code.id} data-testid={`v532-historique-${code.id}`}>
+                      <p className="text-white/50 text-xs mb-1">{v532Resume(code)}</p>
+                      {renderCodeRow(code)}
                     </div>
-                  );
-                })()}
-              </div>
-              
-              {/* BOUTONS D'ACTION */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {/* V200: 3 états — Expiré (date passée), Actif, Inactif. Le toggle reste cliquable même si expiré */}
-                {codeExpired ? (
-                  <span
-                    className="px-3 py-1.5 rounded text-xs font-medium bg-red-500/20 text-red-400 inline-flex items-center gap-1.5"
-                    title="Date d'expiration dépassée"
-                    data-testid={`toggle-code-${code.id}`}
-                  >
-                    <SvgIcon name="clock" size={14} /> Expiré
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => toggleCode && toggleCode(code)}
-                    className={`px-3 py-1.5 rounded text-xs font-medium ${code.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}
-                    data-testid={`toggle-code-${code.id}`}
-                  >
-                    {code.active ? (
-                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Actif</span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="close" size={14} /> Inactif</span>
-                    )}
-                  </button>
-                )}
-                
-                {/* Bouton Éditer */}
-                {editCode && (
-                  <button
-                    onClick={() => editCode(code)}
-                    className="px-3 py-1.5 rounded text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/40"
-                    data-testid={`edit-code-${code.id}`}
-                  >
-                    <span className="inline-flex items-center gap-1.5"><SvgIcon name="edit" size={14} /> Éditer</span>
-                  </button>
-                )}
-                
-                {/* V185 F2: Bouton Lien d'accès rapide (uniquement codes actifs) */}
-                {code.active && (
-                  <button
-                    onClick={() => copySpaceLinkToClipboard(code)}
-                    className={`px-3 py-1.5 rounded text-xs font-medium ${copiedSpaceLinkId === code.id ? 'bg-green-500/20 text-green-400' : 'bg-pink-500/20 text-pink-400 hover:bg-pink-500/40'}`}
-                    title={copiedSpaceLinkId === code.id ? 'Lien copié !' : `Copier ${window.location.origin}/espace/${code.code}`}
-                    data-testid={`share-space-link-${code.id}`}
-                  >
-                    {copiedSpaceLinkId === code.id ? (
-                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Copié</span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="link" size={14} /> Lien</span>
-                    )}
-                  </button>
-                )}
-
-                {/* Bouton Dupliquer */}
-                {duplicateCode && (
-                  <button
-                    onClick={() => duplicateCode(code)}
-                    className="px-3 py-1.5 rounded text-xs bg-purple-500/20 text-purple-400 hover:bg-purple-500/40"
-                    data-testid={`duplicate-code-${code.id}`}
-                  >
-                    <span className="inline-flex items-center gap-1.5"><SvgIcon name="clipboard" size={14} /> Dupliquer</span>
-                  </button>
-                )}
-                
-                {/* Bouton Supprimer */}
-                <button
-                  onClick={() => deleteCode && deleteCode(code.id)}
-                  className="px-3 py-1.5 rounded text-xs bg-red-500/20 text-red-400 hover:bg-red-500/40"
-                  data-testid={`delete-code-${code.id}`}
-                  aria-label="Supprimer le code"
-                >
-                  <SvgIcon name="trash" size={14} />
-                </button>
-              </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        ))}
+        {groupesParPersonne.sansBeneficiaire.length > 0 && (
+          <div data-testid="v532-sans-beneficiaire">
+            {groupesParPersonne.personnes.length > 0 && (
+              <p className="text-white/50 text-xs mb-2 mt-2">Codes sans bénéficiaire ({groupesParPersonne.sansBeneficiaire.length})</p>
+            )}
+            <div className="space-y-3">
+              {groupesParPersonne.sansBeneficiaire.map((code) => <React.Fragment key={code.id}>{renderCodeRow(code)}</React.Fragment>)}
             </div>
           </div>
-        );})}
+        )}
         {filteredDiscountCodes.length === 0 && (
           <p className="text-center py-8 text-white opacity-50">
             {codesSearch ? 'Aucun code trouvé' : t('noPromoCode')}
