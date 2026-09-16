@@ -1493,6 +1493,12 @@ class Campaign(BaseModel):
     mediaUrl: Optional[str] = ""
     mediaFormat: str = "16:9"  # "9:16" or "16:9"
     mediaType: Optional[str] = None  # v11: 'upload', 'youtube', 'drive', 'image', 'link'
+    # V533: miniature de référence du Reel (couverture). `thumbnail_source` = video_frame | upload,
+    # `thumbnail_time` = seconde de la frame capturée. Référence Afroboost : appliquée sur les
+    # réseaux qui l'acceptent, jamais promise comme couverture universelle.
+    thumbnail_url: Optional[str] = ""
+    thumbnail_source: Optional[str] = None
+    thumbnail_time: Optional[float] = None
     targetType: str = "all"  # "all" or "selected"
     selectedContacts: List[str] = []
     channels: dict = Field(default_factory=lambda: {"whatsapp": True, "email": False, "instagram": False, "group": False, "internal": False})
@@ -1522,6 +1528,9 @@ class CampaignCreate(BaseModel):
     mediaUrl: Optional[str] = ""
     mediaFormat: str = "16:9"
     mediaType: Optional[str] = None  # v11: 'upload', 'youtube', 'drive', 'image', 'link'
+    thumbnail_url: Optional[str] = ""       # V533
+    thumbnail_source: Optional[str] = None  # V533: video_frame | upload
+    thumbnail_time: Optional[float] = None  # V533
     targetType: str = "all"
     selectedContacts: List[str] = []
     channels: dict = Field(default_factory=lambda: {"whatsapp": True, "email": False, "instagram": False, "group": False, "internal": False})
@@ -5511,6 +5520,9 @@ async def create_campaign(campaign: CampaignCreate, request: Request = None):
         mediaUrl=campaign.mediaUrl,
         mediaFormat=campaign.mediaFormat,
         mediaType=campaign.mediaType,
+        thumbnail_url=campaign.thumbnail_url or "",          # V533
+        thumbnail_source=campaign.thumbnail_source,          # V533
+        thumbnail_time=campaign.thumbnail_time,              # V533
         targetType=campaign.targetType,
         selectedContacts=campaign.selectedContacts,
         channels=campaign.channels,
@@ -5558,6 +5570,7 @@ async def update_campaign(campaign_id: str, request: Request):
     # Champs modifiables
     allowed_fields = [
         "name", "message", "mediaUrl", "mediaFormat", "mediaType",
+        "thumbnail_url", "thumbnail_source", "thumbnail_time",  # V533: miniature du Reel
         "targetType", "selectedContacts", "channels", "targetGroupId",
         "targetIds", "targetConversationId", "targetConversationName",
         "scheduledAt", "ctaType", "ctaText", "ctaLink",

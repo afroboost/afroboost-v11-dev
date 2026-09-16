@@ -92,11 +92,20 @@ export function isCloudinaryConfigured() {
 }
 
 /** V420 — un POST simple, avec progression. XHR : `fetch` ne remonte pas l'avancement. */
-function v420Poster(url, formData, email, onProgress) {
+function v420Poster(url, formData, email, onProgress, signal) {
   return new Promise((resolve, reject) => {
+    // V533: annulation volontaire (bouton « Annuler » du dashboard campagnes).
+    // Un `AbortSignal` déjà déclenché refuse avant d'ouvrir la connexion ; sinon
+    // `xhr.abort()` coupe l'envoi en cours. Le message est stable pour que
+    // l'appelant reconnaisse une annulation (jamais traitée comme une panne).
+    if (signal && signal.aborted) { reject(new Error('Envoi annulé.')); return; }
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
     xhr.setRequestHeader('X-User-Email', email);
+    if (signal) {
+      signal.addEventListener('abort', () => { try { xhr.abort(); } catch (e) { /* ignore */ } }, { once: true });
+      xhr.onabort = () => reject(new Error('Envoi annulé.'));
+    }
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) onProgress(e.loaded, e.total);
@@ -114,12 +123,12 @@ function v420Poster(url, formData, email, onProgress) {
 }
 
 /** V420 — envoi monobloc (petits fichiers). */
-async function v420EnvoiSimple(file, asset, email, onProgress) {
+async function v420EnvoiSimple(file, asset, email, onProgress, signal) {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('asset_type', asset);
   return v420Poster(`${API_BASE}/coach/upload-asset`, fd, email,
-    onProgress ? (l, t) => onProgress(Math.round((l / t) * 100)) : null);
+    onProgress ? (l, t) => onProgress(Math.round((l / t) * 100)) : null, signal);
 }
 
 /**
@@ -132,7 +141,7 @@ async function v420EnvoiSimple(file, asset, email, onProgress) {
  * Chaque morceau est reessaye deux fois : sur un reseau mobile, une coupure
  * ponctuelle ne doit pas condamner un envoi de plusieurs minutes.
  */
-async function v420EnvoiParMorceaux(file, asset, email, onProgress) {
+async function v420EnvoiParMorceaux(file, asset, email, onProgress, signal) {
   const TAILLE = 4 * 1024 * 1024;
   const total = Math.ceil(file.size / TAILLE);
   // Identifiant simple : le serveur s'en sert comme NOM DE DOSSIER et refuse
@@ -160,14 +169,15 @@ async function v420EnvoiParMorceaux(file, asset, email, onProgress) {
           onProgress ? (l) => {
             const fait = debut + l;
             onProgress(Math.min(99, Math.round((fait / file.size) * 100)));
-          } : null);
+          } : null, signal);
         derniere = null;
         break;
       } catch (e) {
         derniere = e;
         // Un refus du serveur (taille, type) ne se reessaie pas : il se
         // reproduirait a l'identique. Seules les coupures reseau valent un essai.
-        if (/trop volumineux|invalide|Email coach/i.test(e.message || '')) throw e;
+        // V533: une annulation volontaire ne se reessaie jamais non plus.
+        if (/trop volumineux|invalide|Email coach|Envoi annulé/i.test(e.message || '')) throw e;
         await new Promise((r) => setTimeout(r, 800 * (essai + 1)));
       }
     }
@@ -185,7 +195,7 @@ async function v420EnvoiParMorceaux(file, asset, email, onProgress) {
  * heriter d'une seconde interface.
  *
  * @param {File} file
- * @param {{folder?: string, maxSizeMB?: number}} opts
+ * @param {{folder?: string, maxSizeMB?: number, onProgress?: (pct:number)=>void, signal?: AbortSignal}} opts
  * @returns {Promise<{url: string, resourceType: string, originalUrl: string}>}
  * @throws {Error} message deja lisible par un humain (affichable tel quel)
  */
@@ -216,8 +226,8 @@ export async function uploadToCloudinary(file, opts = {}) {
   // Decoupe en morceaux de 4 Mo, chaque requete dure une seconde ou deux : elle
   // ne s'approche d'aucune des deux limites. C'est la seule voie fiable.
   const data = file.size > 8 * 1024 * 1024
-    ? await v420EnvoiParMorceaux(file, asset, email, opts.onProgress)
-    : await v420EnvoiSimple(file, asset, email, opts.onProgress);
+    ? await v420EnvoiParMorceaux(file, asset, email, opts.onProgress, opts.signal)
+    : await v420EnvoiSimple(file, asset, email, opts.onProgress, opts.signal);
 
   if (!data.url) {
     throw new Error("Réponse inattendue du serveur (URL absente).");

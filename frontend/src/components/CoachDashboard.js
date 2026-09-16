@@ -5386,6 +5386,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       message: campaign.message || "",
       mediaUrl: campaign.mediaUrl || "",
       mediaFormat: campaign.mediaFormat || "16:9",
+      thumbnail_url: campaign.thumbnail_url || "",          // V533: miniature du Reel relue à l'édition
+      thumbnail_source: campaign.thumbnail_source || null,  // V533
+      thumbnail_time: campaign.thumbnail_time == null ? null : campaign.thumbnail_time, // V533
       targetType: campaign.targetType || "all",
       selectedContacts: campaign.selectedContacts || [],
       channels: campaign.channels || { whatsapp: false, email: false, instagram: false, internal: true },
@@ -5513,6 +5516,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           message: newCampaign.message,
           mediaUrl: newCampaign.mediaUrl,
           mediaFormat: newCampaign.mediaFormat,
+          thumbnail_url: newCampaign.thumbnail_url || "",          // V533
+          thumbnail_source: newCampaign.thumbnail_source || null,  // V533
+          thumbnail_time: newCampaign.thumbnail_time == null ? null : newCampaign.thumbnail_time, // V533
           targetType: effectiveTargetType,
           selectedContacts: effectiveTargetType === "selected" ? (selectedContactsForCampaign.length > 0 ? selectedContactsForCampaign : targetIds) : [],
           channels: { ...newCampaign.channels, internal: selectedRecipients.length > 0 },
@@ -5562,6 +5568,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           message: newCampaign.message,
           mediaUrl: newCampaign.mediaUrl,
           mediaFormat: newCampaign.mediaFormat,
+          thumbnail_url: newCampaign.thumbnail_url || "",          // V533
+          thumbnail_source: newCampaign.thumbnail_source || null,  // V533
+          thumbnail_time: newCampaign.thumbnail_time == null ? null : newCampaign.thumbnail_time, // V533
           targetType: effectiveTargetType,
           selectedContacts: effectiveTargetType === "selected" ? (selectedContactsForCampaign.length > 0 ? selectedContactsForCampaign : targetIds) : [],
           channels: { ...newCampaign.channels, internal: selectedRecipients.length > 0 },
@@ -5617,6 +5626,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             message: newCampaign.message,
             mediaUrl: newCampaign.mediaUrl,
             mediaFormat: newCampaign.mediaFormat,
+            thumbnail_url: newCampaign.thumbnail_url || "",          // V533
+            thumbnail_source: newCampaign.thumbnail_source || null,  // V533
+            thumbnail_time: newCampaign.thumbnail_time == null ? null : newCampaign.thumbnail_time, // V533
             targetType: effectiveTargetType,
             selectedContacts: effectiveTargetType === "selected" ? (selectedContactsForCampaign.length > 0 ? selectedContactsForCampaign : targetIds) : [],
             channels: { ...newCampaign.channels, internal: selectedRecipients.length > 0 },

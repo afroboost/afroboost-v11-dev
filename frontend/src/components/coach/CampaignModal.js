@@ -11,7 +11,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { parseContacts } from '../../utils/contactParser';
 import SvgIcon from '../SvgIcon';
-import CloudinaryUploadButton from '../CloudinaryUploadButton';
+// V533: le bouton V229 n'est plus rendu ici (voir CampaignMediaUploader) ; l'import est retiré pour ne pas laisser un import inutilisé.
+import CampaignMediaUploader from './CampaignMediaUploader'; // V533: progression réelle + miniature du Reel
 
 const STEPS = [
   { id: 1, label: 'Médias & Objectif', icon: 'target' },
@@ -70,6 +71,8 @@ export default function CampaignModal({
   coachEmail
 }) {
   const [step, setStep] = useState(1);
+  // V533: un envoi de média en cours bloque « Suivant » (jamais un mediaUrl vide alors que l'utilisateur croit la vidéo envoyée).
+  const [mediaEnCours, setMediaEnCours] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [aiSuggestionsLoading, setAiSuggestionsLoading] = useState(false);
   // v87: Anti-doublon bouton Programmer/Créer
@@ -458,7 +461,7 @@ export default function CampaignModal({
   };
 
   const canGoNext = () => {
-    if (step === 1) return newCampaign.name?.trim() && newCampaign.message?.trim();
+    if (step === 1) return !mediaEnCours && newCampaign.name?.trim() && newCampaign.message?.trim();
     if (step === 2) return selectedRecipients?.length > 0 || r3Segments.length > 0 || newCampaign.channels?.whatsapp || newCampaign.channels?.email || newCampaign.channels?.group;
     return true;
   };
@@ -671,15 +674,20 @@ export default function CampaignModal({
                     et l'ancien plafond unique de 50 Mo la refusait donc. Mesuré sur le
                     preset `afroboost` : un envoi de 60 Mo passe sans problème de
                     taille — on retient 100 Mo, le maximum du plan Cloudinary. */}
-                <div style={{ marginTop: '8px' }}>
-                  <CloudinaryUploadButton
-                    accept="image/*,video/*"
-                    folder="campaigns"
-                    label="Uploader média"
-                    maxSizeMB={10}
-                    maxSizeMBVideo={100}
-                    data-testid="campaign-media-upload"
-                    onUpload={(url) => setNewCampaign(prev => ({ ...prev, mediaUrl: url }))}
+                {/* V533 : l'envoi passe par CampaignMediaUploader — même endpoint
+                    (`uploadToCloudinary` → /api/coach/upload-asset), mais avec la
+                    progression RÉELLE, Annuler / Réessayer, l'aperçu 9:16 et la
+                    miniature du Reel. Le bouton V229 reste importé pour les autres
+                    écrans ; ici il est remplacé. */}
+                <div style={{ marginTop: '8px' }} data-testid="campaign-media-upload">
+                  <CampaignMediaUploader
+                    mediaUrl={newCampaign.mediaUrl || ''}
+                    thumbnailUrl={newCampaign.thumbnail_url || ''}
+                    thumbnailSource={newCampaign.thumbnail_source || null}
+                    thumbnailTime={newCampaign.thumbnail_time == null ? null : newCampaign.thumbnail_time}
+                    onBusyChange={setMediaEnCours}
+                    onFormatDetected={(fmt) => setNewCampaign(prev => (prev.mediaFormat === fmt ? prev : { ...prev, mediaFormat: fmt }))}
+                    onChange={(patch) => setNewCampaign(prev => ({ ...prev, ...patch }))}
                   />
                 </div>
                 {/* V159: Google Drive hint */}
@@ -697,7 +705,7 @@ export default function CampaignModal({
                   </div>
                 )}
                 {/* Preview */}
-                {newCampaign.mediaUrl && (
+                {newCampaign.mediaUrl && !isVideoMedia && (   /* V533: la vidéo a son propre aperçu 9:16 dans CampaignMediaUploader */
                   <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'center' }}>
                     <div style={{
                       width: newCampaign.mediaFormat === '9:16' ? '120px' : newCampaign.mediaFormat === '1:1' ? '150px' : '220px',
@@ -755,7 +763,7 @@ export default function CampaignModal({
                   {['9:16', '1:1', '16:9'].map(fmt => (
                     <label key={fmt} style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', fontSize: '12px', cursor: 'pointer' }}>
                       <input type="radio" name="fmt" checked={newCampaign.mediaFormat === fmt} onChange={() => setNewCampaign(prev => ({ ...prev, mediaFormat: fmt }))} />
-                      {fmt === '9:16' ? 'Stories' : fmt === '1:1' ? 'Carré' : 'Post'}
+                      {fmt === '9:16' ? (isVideoMedia ? 'Reel / Story 9:16' : 'Stories') : fmt === '1:1' ? 'Carré' : 'Post'}
                     </label>
                   ))}
                 </div>
