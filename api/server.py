@@ -5911,6 +5911,147 @@ async def r3_previsualiser_campagne(campaign_id: str, request: Request):
     return reponse
 
 
+# ═══ V530 — RACCORD AFROBOOST → STUDIIO (brouillons du Calendrier IA) ═══
+#
+# Afroboost ne publie rien sur les réseaux : il POUSSE des BROUILLONS dans le
+# Calendrier IA de Studiio (studiio.pro), qui garde la planification et la
+# publication. Un brouillon = un reel déjà hébergé (media_url), une légende
+# avec son lien UTM, une date/heure, une plateforme. Rien d'autre.
+#
+#  - Secret côté serveur uniquement : `STUDIIO_URL` + `STUDIIO_SERVICE_TOKEN`
+#    (variables d'environnement Coolify). Sans elles → 503 « raccord non
+#    configuré », jamais de valeur par défaut, jamais de jeton journalisé.
+#  - Statut TOUJOURS `draft` (Studiio l'impose aussi de son côté).
+#  - Idempotence par `metadata.afroboost_key` = campagne|date|plateforme :
+#    rejouer l'envoi ne duplique aucun brouillon (Studiio renvoie l'existant).
+#  - La cloison Afroboost/Spordateur est côté Studiio : le jeton de service
+#    impose l'identité Studiio « Afroboost » ; les comptes sociaux se
+#    choisissent par `post.user_id`. Afroboost ne désigne jamais un compte.
+STUDIIO_PLATEFORMES = ("instagram", "facebook", "tiktok", "youtube")
+STUDIIO_UTM_MEDIUM = "social"
+
+
+def studiio_lien_utm(url_base: str, plateforme: str, utm_campaign: str, utm_content: str = "") -> str:
+    """Lien tracké pour UNE plateforme — même tracking M2-A (`utm_source`…)."""
+    from urllib.parse import urlencode
+    sep = "&" if "?" in url_base else "?"
+    params = {"utm_source": plateforme, "utm_medium": STUDIIO_UTM_MEDIUM, "utm_campaign": utm_campaign}
+    if utm_content:
+        params["utm_content"] = utm_content
+    return url_base + sep + urlencode(params)
+
+
+def studiio_construire_brouillons(campaign_id: str, campagne: str, media_url: str, url_base: str,
+                                  utm_campaign: str, publications: list) -> list:
+    """PURE. Transforme le plan Afroboost en corps `POST /api/posts` Studiio.
+
+    `publications` = [{date:'YYYY-MM-DD', heure:'HH:MM', plateformes:[…], titre, caption}] ;
+    `{lien}` dans la légende est remplacé par le lien UTM de la plateforme.
+    Un brouillon par (publication × plateforme), statut `draft`, clé idempotente.
+    """
+    brouillons = []
+    for pub in publications or []:
+        date = str(pub.get("date") or "").strip()
+        heure = str(pub.get("heure") or "12:00").strip() or "12:00"
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+            continue
+        for plateforme in pub.get("plateformes") or []:
+            plateforme = str(plateforme).lower().strip()
+            if plateforme not in STUDIIO_PLATEFORMES:
+                continue
+            lien = studiio_lien_utm(url_base, plateforme, utm_campaign, str(pub.get("utm_content") or ""))
+            caption = str(pub.get("caption") or "").replace("{lien}", lien)
+            brouillons.append({
+                "title": str(pub.get("titre") or campagne)[:120],
+                "caption": caption,
+                "media_url": media_url,
+                "media_type": "video",
+                "format": "reel",
+                "platforms": [plateforme],
+                "scheduled_date": date,
+                "scheduled_time": heure,
+                "status": "draft",
+                "metadata": {
+                    "source": "afroboost",
+                    "campaign": campagne,
+                    "afroboost_campaign_id": campaign_id,
+                    "afroboost_key": f"{campaign_id}|{date}|{plateforme}",
+                    "utm_source": plateforme,
+                    "utm_medium": STUDIIO_UTM_MEDIUM,
+                    "utm_campaign": utm_campaign,
+                    "lien": lien,
+                },
+            })
+    return brouillons
+
+
+async def envoyer_a_studiio(campaign_id: str, campagne: str, media_url: str, url_base: str,
+                            utm_campaign: str, publications: list) -> dict:
+    """Pousse les brouillons vers Studiio. Renvoie un bilan par brouillon, sans jamais lever."""
+    base_url = (os.environ.get("STUDIIO_URL") or "").strip().rstrip("/")
+    jeton = (os.environ.get("STUDIIO_SERVICE_TOKEN") or "").strip()
+    if not base_url or not jeton:
+        raise HTTPException(status_code=503, detail="Raccord Studiio non configuré (STUDIIO_URL / STUDIIO_SERVICE_TOKEN).")
+    brouillons = studiio_construire_brouillons(campaign_id, campagne, media_url, url_base, utm_campaign, publications)
+    if not brouillons:
+        raise HTTPException(status_code=400, detail="Aucune publication valide (date YYYY-MM-DD et plateforme parmi instagram/facebook/tiktok/youtube).")
+    import httpx
+    bilan = []
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        for b in brouillons:
+            ligne = {"date": b["scheduled_date"], "plateforme": b["platforms"][0], "cle": b["metadata"]["afroboost_key"]}
+            try:
+                rep = await client.post(f"{base_url}/api/posts", json=b,
+                                        headers={"Authorization": f"Bearer {jeton}", "Content-Type": "application/json"})
+                corps = rep.json() if rep.headers.get("content-type", "").startswith("application/json") else {}
+                ligne["http"] = rep.status_code
+                ligne["studiio_id"] = (corps.get("post") or {}).get("id")
+                ligne["statut_studiio"] = (corps.get("post") or {}).get("status")
+                ligne["deja_present"] = bool(corps.get("deja_present"))
+                ligne["ok"] = rep.status_code == 200 and bool(ligne["studiio_id"])
+            except Exception as e:  # noqa: BLE001 — jamais le jeton dans le message
+                ligne["http"] = None
+                ligne["ok"] = False
+                ligne["erreur"] = type(e).__name__
+            bilan.append(ligne)
+    logger.info("[V530] Studiio : %d brouillon(s) → %d ok, %d déjà présents",
+                len(bilan), sum(1 for l in bilan if l.get("ok")), sum(1 for l in bilan if l.get("deja_present")))
+    return {"brouillons": len(brouillons), "ok": sum(1 for l in bilan if l.get("ok")), "lignes": bilan}
+
+
+@api_router.post("/campaigns/{campaign_id}/envoyer-studiio")
+async def v530_envoyer_campagne_a_studiio(campaign_id: str, request: Request):
+    """V530 — « Envoyer à Studiio » : brouillons du Calendrier IA, jamais une publication.
+
+    Corps : {media_url, url_base, utm_campaign, campagne, publications:[{date, heure,
+    plateformes, titre, caption (avec {lien})}]}. Même garde et même cloisonnement que
+    le lancement (JWT coach/admin + propriété de la campagne). Le bilan est consigné
+    sur la campagne (`studiio_envois`), le jeton n'apparaît nulle part.
+    """
+    _appelant = await _v309_require_coach_or_admin(request)
+    _campagne = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0, "id": 1, "name": 1, "coach_id": 1})
+    if not _campagne:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    _proprietaire = (_campagne.get("coach_id") or "").lower().strip()
+    if not is_super_admin(_appelant) and _proprietaire != _appelant:
+        raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas.")
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    media_url = str(body.get("media_url") or "").strip()
+    if not media_url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="media_url https requis (reel déjà hébergé).")
+    url_base = str(body.get("url_base") or "https://afroboost.com/").strip()
+    utm_campaign = re.sub(r"[^a-zA-Z0-9_-]", "", str(body.get("utm_campaign") or "afroboost"))[:60] or "afroboost"
+    campagne = str(body.get("campagne") or _campagne.get("name") or "Afroboost")[:120]
+    bilan = await envoyer_a_studiio(campaign_id, campagne, media_url, url_base, utm_campaign, body.get("publications") or [])
+    await db.campaigns.update_one({"id": campaign_id}, {"$push": {"studiio_envois": {
+        "at": datetime.now(timezone.utc).isoformat(), "par": _appelant, "brouillons": bilan["brouillons"], "ok": bilan["ok"],
+        "lignes": [{k: v for k, v in l.items() if k != "erreur_detail"} for l in bilan["lignes"]]}}})
+    return bilan
+
+
 # ═══ RÉACTIVATION 3B — LA GARDE E-MAIL, UNE SEULE FOIS, AVANT TOUT ENVOI ═══
 #
 # `r3_preparer_email` décide, pour CHAQUE destinataire e-mail d'une campagne,
