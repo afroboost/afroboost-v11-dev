@@ -80,15 +80,26 @@ Le gabarit est « *Afroboost vous informe: {{1}}. Rendez-vous sur afroboost.com*
 (pas de saut de ligne, pas d'emoji, pas de `https://`, ≤ 1024 caractères). La personnalisation passe par la variable
 `{prenom}` du moteur de campagne (remplacée avant l'envoi) — pour les 3 prénoms incertains (#4, #9, #11), utiliser la variante sans prénom.
 
-Texte à coller dans le message de campagne (canal WhatsApp) :
+Texte à coller dans le message de campagne (canal WhatsApp) — **version courte validée E2.2** (le moteur aplatit les
+sauts de ligne en une seule ligne dans la variable Meta ; ≈ 560 caractères, sans accent dans la version envoyée) :
 
-> Bonjour {prenom}, c'est Bassi d'Afroboost. La saison reprend a Neuchatel et j'ouvre une offre Fondateurs : 59 CHF par mois, 8 seances par mois, reservee aux 50 premiers inscrits, jusqu'au 30 septembre. Sans engagement : tu peux resilier a tout moment depuis ton espace. Decouvrir l'offre : afroboost.com/?offre=cc73f6ee-163a-433d-b5f0-c00c6392b437&utm_source=whatsapp&utm_medium=messaging&utm_campaign=fondateurs2026 - Tu hesites ? Ton premier cours est offert : afroboost.com/cours-essai-gratuit-neuchatel?utm_source=whatsapp&utm_medium=messaging&utm_campaign=fondateurs2026 - Reponds STOP pour ne plus recevoir de messages.
+> Bonjour {prenom}, c'est Bassi d'Afroboost.
+> La saison reprend a Neuchatel et j'ouvre l'offre Fondateurs : 59 CHF/mois pour 8 seances/mois.
+> 50 places maximum, offre disponible jusqu'au 30 septembre.
+> Decouvrir l'offre : afroboost.com/?offre=cc73f6ee-163a-433d-b5f0-c00c6392b437&utm_source=whatsapp&utm_medium=messaging&utm_campaign=fondateurs2026
+> Si tu preferes essayer avant, ton premier cours est offert.
+> Reponds STOP si tu ne souhaites plus recevoir de messages Afroboost.
 
-Variante sans prénom : remplacer « Bonjour {prenom}, » par « Bonjour, ».
+Variante sans prénom (#4, #9, #11) : remplacer « Bonjour {prenom}, c'est Bassi d'Afroboost. » par « Bonjour, c'est Bassi d'Afroboost. ».
+
+**STOP automatique — prouvé le 16/09 (lecture seule + mock)** : `POST /webhook/whatsapp-meta` (server.py:21549) → `_v332_stop_whatsapp`
+(13391 : casse, accents, ponctuation ; mots stop / stop tout / arret / unsubscribe / desabonner / desinscrire) → `subscribers.status = opted_out`
+(créé même pour un numéro jamais inscrit) → `c3_refus_exprimes` → campagne suivante : décision `opt_out`, `skipped`. Mock : STOP / Stop / stop /
+« Stop ! » / Arrêt / STOP TOUT → 7/7 ; bancs existants `test_s1_registre_stop` 95/95, `test_whatsapp_remise_en_etat` 42/42.
 
 ### B. E-mail (1 destinataire en vague 1)
 Objet : **Offre Fondateurs — 59 CHF/mois, 50 places, jusqu'au 30 septembre**
-Corps : brouillon B de `docs/lancement_fondateurs_brouillons.md` tel quel (`{prenom}` remplacé par le moteur ; lien EMAIL ci-dessus ;
+Corps : brouillon B de `docs/lancement_fondateurs_brouillons.md` (variable **`{prenom}`** — prouvé : `{{prénom}}` rendrait `{Ozgul}` ; `{prenom}` rend `Bonjour Ozgul,` ; lien EMAIL ci-dessus ;
 lien essai `utm_source=email` ; désinscription un-clic 3B).
 
 ## Après GO — comment ça s'envoie (rappel, rien n'est fait ici)

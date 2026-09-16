@@ -38,7 +38,7 @@ Reponds STOP pour ne plus recevoir de messages.
 Objet : Offre Fondateurs — 59 CHF/mois, 50 places, jusqu'au 30 septembre
 Pré-en-tête : La saison Afroboost reprend à Neuchâtel. Tarif de lancement réservé aux 50 premiers inscrits.
 
-Bonjour {{prénom}},
+Bonjour {prenom},
 
 La saison reprend et je voulais te prévenir en premier : j'ouvre une **offre Fondateurs** pour celles et ceux qui ont déjà dansé avec nous.
 
@@ -55,7 +55,7 @@ Tu hésites ? **Ton premier cours est offert** : [Réserver mon cours d'essai] �
 À très vite au bord du lac,
 Bassi — Afroboost
 
-Se désinscrire : {{lien_desinscription_un_clic}} (mécanisme 3B existant)
+Se désinscrire : {lien_desinscription_un_clic} (généré par le moteur 3B) (mécanisme 3B existant)
 
 ## C. Instagram / Facebook (post)
 
