@@ -21,7 +21,7 @@ LES ÉTATS (contrat §4) :
 """
 from datetime import datetime, timezone
 
-VERSION = "V534"
+VERSION = "V534b"
 
 # ─── États et libellés ───────────────────────────────────────────────────────
 LOCKED = "locked"
@@ -79,6 +79,30 @@ BLOCAGE_CONDITIONS = "conditions_non_acceptees"
 ROLE_SPONSOR = "sponsor"
 ROLE_INVITEE = "invitee"
 
+# ─── V534b : l'offre du pass ─────────────────────────────────────────────────
+# Qui a changé l'offre (`offer_history[].changed_by`).
+CHANGE_PAR = ("sponsor", "invitee", "coach", "admin")
+# Les états dans lesquels l'offre du pass peut encore changer (avenant §4.2).
+ETATS_OFFRE_MODIFIABLE = (LOCKED, WAITING, FRIEND_REGISTERED, UNLOCKED)
+# Raisons 400 de `_offre_autorisee` (en-tête X-Refus-Raison).
+REFUS_OFFRE_REQUISE = "offre_requise"
+REFUS_OFFRE_NON_AUTORISEE = "offre_non_autorisee"
+REFUS_OFFRE_INACTIVE = "offre_inactive"
+REFUS_OFFRE_PAYANTE = "offre_payante"
+REFUS_OFFRE_AUTRE_COACH = "offre_autre_coach"
+# Raisons 409 du changement d'offre.
+REFUS_PASS_NON_MODIFIABLE = "pass_non_modifiable"
+REFUS_CONFLIT_VERSION = "conflit_version"
+REFUS_PASS_DEJA_REJOINT = "pass_deja_rejoint"
+# Le texte EXACT de l'avenant pour un pass `used`.
+TEXTE_OFFRE_UTILISEE = ("Cette offre a déjà été utilisée. Tu peux choisir une autre offre "
+                        "pour une prochaine réservation si elle est disponible.")
+TEXTE_PRESENCE_VALIDEE = ("Une présence a déjà été validée sur ce Pass Duo : "
+                          "son offre ne peut plus changer.")
+CONDITIONS_MAX = 200
+EVENEMENT_OFFRE = "offer_changed"
+MOTIF_CHANGEMENT_OFFRE = "pass_duo_offer_change"   # `cancel_reason`, marques rollback
+
 # Libellés FR de l'historique (`events[].type` -> phrase).
 LIBELLES_EVENEMENTS = {
     "pass_created": "Pass Duo créé",
@@ -90,6 +114,8 @@ LIBELLES_EVENEMENTS = {
     "used": "Participation validée",
     "expired": "Pass expiré",
     "cancelled": "Pass annulé",
+    EVENEMENT_OFFRE: "Offre modifiée",
+    "offer_change_failed": "Changement d'offre annulé : l'offre précédente est conservée",
 }
 
 _JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
@@ -273,6 +299,235 @@ def qr_value(frontend_url, reservation_code) -> str:
                                str(reservation_code or ""))
 
 
+# ─── V534b : l'offre du pass (pur) ───────────────────────────────────────────
+def sessions_offre(offer) -> int:
+    """`offers.pack_sessions` sinon 1 — MÊME repli que `_process_successful_payment`
+    (V260c : `int(float(ps)) > 0`, une valeur 10.0 ou "10" compte 10)."""
+    try:
+        _ps = (offer or {}).get("pack_sessions")
+        if _ps is not None and int(float(_ps)) > 0:
+            return int(float(_ps))
+    except (TypeError, ValueError):
+        pass
+    return 1
+
+
+def benefit_offre(sessions) -> str:
+    try:
+        _n = int(sessions or 1)
+    except (TypeError, ValueError):
+        _n = 1
+    return "1 séance offerte" if _n <= 1 else "%d séances offertes" % _n
+
+
+_UNITES = {"days": ("jour", "jours"), "weeks": ("semaine", "semaines"), "months": ("mois", "mois")}
+
+
+def validity_offre(offer):
+    """`duree_mois` d'abord (HIVER), sinon `duration_value` + `duration_unit`
+    (v59), sinon None. Rend un libellé FR lisible (« 2 mois », « 14 jours »)."""
+    _o = offer or {}
+    try:
+        _dm = _o.get("duree_mois")
+        if _dm is not None and int(float(_dm)) > 0:
+            return "%d mois" % int(float(_dm))
+    except (TypeError, ValueError):
+        pass
+    try:
+        _dv = _o.get("duration_value")
+        _du = str(_o.get("duration_unit") or "").strip().lower()
+        if _dv is not None and int(float(_dv)) > 0 and _du in _UNITES:
+            _n = int(float(_dv))
+            return "%d %s" % (_n, _UNITES[_du][0 if _n == 1 else 1])
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def conditions_offre(offer):
+    """`description` tronquée à 200 caractères, sinon None. Jamais du HTML."""
+    _d = str((offer or {}).get("description") or "").strip()
+    if not _d:
+        return None
+    return _d if len(_d) <= CONDITIONS_MAX else _d[:CONDITIONS_MAX - 1].rstrip() + "…"
+
+
+def prix_offre(offer) -> float:
+    try:
+        return float((offer or {}).get("price") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def dto_offre(offer, recommended=False) -> dict:
+    """OffreDTO public : `{id, name, benefit, price, sessions, validity,
+    conditions, recommended}` — AUCUN champ technique (pas de coach_id,
+    linked_course_ids, source, collection). `price` 0 s'affiche « Offerte »."""
+    _o = offer or {}
+    _n = sessions_offre(_o)
+    return {
+        "id": _o.get("id"),
+        "name": str(_o.get("name") or "")[:120],
+        "benefit": benefit_offre(_n),
+        "price": prix_offre(_o),
+        "sessions": _n,
+        "validity": validity_offre(_o),
+        "conditions": conditions_offre(_o),
+        "recommended": bool(recommended),
+    }
+
+
+def snapshot_offre(offer) -> dict:
+    """Ce que le pass FIGE de l'offre au moment du choix (`offer_snapshot`) :
+    l'OffreDTO sans `recommended` (la recommandation est celle du cours, elle
+    peut changer ; le snapshot, non)."""
+    _d = dto_offre(offer, False)
+    _d.pop("recommended", None)
+    return _d
+
+
+def dto_offre_depuis_snapshot(snapshot, recommended=False) -> dict:
+    """L'OffreDTO d'un pass, depuis son snapshot (l'offre peut avoir été
+    renommée ou retirée depuis : le pass montre ce qui a été choisi)."""
+    _s = snapshot or {}
+    return {
+        "id": _s.get("id"),
+        "name": str(_s.get("name") or ""),
+        "benefit": _s.get("benefit") or benefit_offre(_s.get("sessions")),
+        "price": prix_offre(_s),
+        "sessions": _s.get("sessions") or 1,
+        "validity": _s.get("validity"),
+        "conditions": _s.get("conditions"),
+        "recommended": bool(recommended),
+    }
+
+
+def _proprietaire(coach_id) -> str:
+    return coach_id.strip().lower() if isinstance(coach_id, str) else ""
+
+
+def offre_eligible(offer, coach_id):
+    """(ok, raison) — l'offre peut-elle être l'avantage d'un Pass Duo du cours
+    dont le propriétaire est `coach_id` ? Raison ∈ `offre_inactive` (absente,
+    invisible, archivée, désactivée) | `offre_payante` (V1 : 0 CHF seulement)
+    | `offre_autre_coach` (même règle de propriété que `p1a_filtre_proprietaire` :
+    propriétaire -> égalité stricte ; sans propriétaire -> offre sans
+    propriétaire) | None."""
+    _o = offer if isinstance(offer, dict) else None
+    if not _o or not _o.get("id"):
+        return False, REFUS_OFFRE_INACTIVE
+    if _o.get("visible") is False or _o.get("archived") is True or _o.get("active") is False:
+        return False, REFUS_OFFRE_INACTIVE
+    if prix_offre(_o) != 0:
+        return False, REFUS_OFFRE_PAYANTE
+    if _proprietaire(coach_id) != _proprietaire(_o.get("coach_id")):
+        return False, REFUS_OFFRE_AUTRE_COACH
+    return True, None
+
+
+def catalogue_du_cours(course, offers) -> tuple:
+    """(offres valides dans l'ordre de `duo_offer_ids`, default_offer_id|None).
+    `offers` : les documents relus en base. Le défaut n'est rendu que s'il
+    fait partie des valides ; un cours sans `duo_offer_ids` rend ([], None)."""
+    _c = course or {}
+    _ids = [str(i).strip() for i in (_c.get("duo_offer_ids") or []) if str(i or "").strip()]
+    _par_id = {str(o.get("id")): o for o in (offers or []) if isinstance(o, dict) and o.get("id")}
+    _valides = []
+    for _oid in _ids:
+        _o = _par_id.get(_oid)
+        if _o and offre_eligible(_o, _c.get("coach_id"))[0] and _oid not in [v.get("id") for v in _valides]:
+            _valides.append(_o)
+    _defaut = str(_c.get("duo_default_offer_id") or "").strip() or None
+    if _defaut not in [v.get("id") for v in _valides]:
+        _defaut = None
+    return _valides, _defaut
+
+
+def dtos_offres(offers, default_offer_id=None) -> list:
+    return [dto_offre(o, bool(default_offer_id) and o.get("id") == default_offer_id) for o in (offers or [])]
+
+
+def entree_historique_offre(ancienne, nouvelle, changed_by, at) -> dict:
+    """`{from_offer_id, to_offer_id, from_name, to_name, changed_at, changed_by}`
+    — `ancienne` / `nouvelle` : snapshots (ou OffreDTO)."""
+    _a, _n = ancienne or {}, nouvelle or {}
+    _qui = str(changed_by or "").strip().lower()
+    if _qui not in CHANGE_PAR:
+        raise ValueError("changed_by inconnu: %r" % (changed_by,))
+    return {
+        "from_offer_id": _a.get("id"),
+        "to_offer_id": _n.get("id"),
+        "from_name": str(_a.get("name") or ""),
+        "to_name": str(_n.get("name") or ""),
+        "changed_at": at,
+        "changed_by": _qui,
+    }
+
+
+def ligne_historique_offre(entree, pass_id=None) -> dict:
+    """La ligne d'`history[]` du parrain : « Offre modifiée : A → B »."""
+    _e = entree or {}
+    _de = str(_e.get("from_name") or _e.get("from_offer_id") or "?")
+    _vers = str(_e.get("to_name") or _e.get("to_offer_id") or "?")
+    return {
+        "at": _e.get("changed_at") or _e.get("at"),
+        "type": EVENEMENT_OFFRE,
+        "label": "Offre modifiée : %s → %s" % (_de, _vers),
+        "pass_id": pass_id,
+        "from_offer_id": _e.get("from_offer_id"),
+        "to_offer_id": _e.get("to_offer_id"),
+        "changed_by": _e.get("changed_by"),
+    }
+
+
+def pass_modifiable_pour_offre(pass_doc, reservations=None, statut=None):
+    """(ok, raison) — l'offre de ce pass peut-elle encore changer ?
+    Raison : `used` | `expired` | `cancelled` | `presence_validee` (une
+    réservation du pass est validée : l'avantage est consommé) | `statut_inconnu`.
+    `statut` : le statut DÉRIVÉ (calculé par l'appelant), sinon le persisté."""
+    _p = pass_doc or {}
+    _s = statut or _p.get("status")
+    if _s in (USED, EXPIRED, CANCELLED):
+        return False, _s
+    if _s not in ETATS_OFFRE_MODIFIABLE:
+        return False, "statut_inconnu"
+    _ids = _p.get("reservations") or {}
+    _attendus = {i for i in (_ids.get("sponsor_id"), _ids.get("invitee_id")) if i}
+    for _r in (reservations or []):
+        if isinstance(_r, dict) and _r.get("id") in _attendus and _r.get("validated") is True:
+            return False, "presence_validee"
+    return True, None
+
+
+def texte_non_modifiable(raison) -> str:
+    if raison == USED:
+        return TEXTE_OFFRE_UTILISEE
+    if raison == "presence_validee":
+        return TEXTE_PRESENCE_VALIDEE
+    return "Ce Pass Duo ne peut plus changer d'offre (%s)." % LIBELLES.get(raison, raison)
+
+
+def kpi_offres(passes) -> dict:
+    """`{changements_offre, offre_la_plus_choisie: {offer_id, name, n}|None,
+    par_offre: {offer_id: n}}` — l'offre COURANTE de chaque pass compte une
+    fois ; `changements_offre` = nombre total d'entrées d'`offer_history`."""
+    _par_offre, _noms, _changements = {}, {}, 0
+    for _p in (passes or []):
+        if not isinstance(_p, dict):
+            continue
+        _changements += len([e for e in (_p.get("offer_history") or []) if isinstance(e, dict)])
+        _oid = str(_p.get("offer_id") or "").strip()
+        if not _oid:
+            continue
+        _par_offre[_oid] = _par_offre.get(_oid, 0) + 1
+        _noms.setdefault(_oid, str((_p.get("offer_snapshot") or {}).get("name") or ""))
+    _top = None
+    if _par_offre:
+        _oid = sorted(_par_offre.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+        _top = {"offer_id": _oid, "name": _noms.get(_oid, ""), "n": _par_offre[_oid]}
+    return {"changements_offre": _changements, "offre_la_plus_choisie": _top, "par_offre": _par_offre}
+
+
 # ─── DTO ─────────────────────────────────────────────────────────────────────
 def dto_course(pass_doc) -> dict:
     _p = pass_doc or {}
@@ -317,12 +572,33 @@ def tickets_du_pass(pass_doc, reservations, frontend_url) -> list:
     return _sortie
 
 
-def dto_pass(pass_doc, statut, tickets, frontend_url, deja_existant=None) -> dict:
-    """PassDTO (parrain). Aucune donnée de l'invité au-delà de son prénom."""
+def version_pass(pass_doc) -> int:
+    """`version` du pass (V534b) — un pass sans champ vaut 1."""
+    try:
+        return max(1, int((pass_doc or {}).get("version") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def offre_du_pass(pass_doc, catalogue=None) -> dict:
+    """L'OffreDTO du pass depuis son snapshot ; `recommended` recopié du
+    catalogue courant (liste d'OffreDTO) quand l'offre y figure encore."""
+    _p = pass_doc or {}
+    _snap = _p.get("offer_snapshot") or {"id": _p.get("offer_id")}
+    _reco = any(o.get("id") == _snap.get("id") and o.get("recommended")
+                for o in (catalogue or []) if isinstance(o, dict))
+    return dto_offre_depuis_snapshot(_snap, _reco)
+
+
+def dto_pass(pass_doc, statut, tickets, frontend_url, deja_existant=None, offers=None) -> dict:
+    """PassDTO (parrain). Aucune donnée de l'invité au-delà de son prénom.
+    V534b : + `offer` (OffreDTO du pass), `offers` (catalogue courant du
+    cours, OffreDTO[]), `version`, `offer_history`."""
     _p = pass_doc or {}
     _sp = _p.get("sponsor") or {}
     _inv = _p.get("invitee") or None
     _url = invite_url(frontend_url, _p.get("share_token"))
+    _offers = list(offers or [])
     _dto = {
         "id": _p.get("id"),
         "status": statut,
@@ -339,19 +615,25 @@ def dto_pass(pass_doc, statut, tickets, frontend_url, deja_existant=None) -> dic
         "created_at": _p.get("created_at"),
         "unlocked_at": _p.get("unlocked_at"),
         "expires_at": _p.get("expires_at"),
+        "offer": offre_du_pass(_p, _offers),
+        "offers": _offers,
+        "version": version_pass(_p),
+        "offer_history": [dict(e) for e in (_p.get("offer_history") or []) if isinstance(e, dict)],
     }
     if deja_existant is not None:
         _dto["deja_existant"] = bool(deja_existant)
     return _dto
 
 
-def dto_public(pass_doc, statut, now) -> dict:
+def dto_public(pass_doc, statut, now, offers=None) -> dict:
     """La page publique `/duo/<token>` : AUCUN e-mail, AUCUN téléphone, AUCUN
-    code. Juste de quoi dire « X t'invite à tel cours, tel jour »."""
+    code. Juste de quoi dire « X t'invite à tel cours, tel jour ».
+    V534b : + `offer`, `offers` (catalogue courant), `version`."""
     _p = pass_doc or {}
     _sp = _p.get("sponsor") or {}
     _c = dto_course(_p)
     _c.pop("id", None)
+    _offers = list(offers or [])
     return {
         "status": statut,
         "status_label": LIBELLES.get(statut, statut),
@@ -359,12 +641,15 @@ def dto_public(pass_doc, statut, now) -> dict:
         "course": _c,
         "occurrence": _p.get("occurrence"),
         "expired": statut in (EXPIRED, CANCELLED) or est_passee(_p.get("expires_at") or _p.get("occurrence"), now),
+        "offer": offre_du_pass(_p, _offers),
+        "offers": _offers,
+        "version": version_pass(_p),
     }
 
 
-def dto_admin(pass_doc, statut, tickets, frontend_url) -> dict:
+def dto_admin(pass_doc, statut, tickets, frontend_url, offers=None) -> dict:
     """PassAdminDTO = PassDTO + prénoms ET e-mails (admin seulement)."""
-    _d = dto_pass(pass_doc, statut, tickets, frontend_url)
+    _d = dto_pass(pass_doc, statut, tickets, frontend_url, offers=offers)
     _sp = (pass_doc or {}).get("sponsor") or {}
     _inv = (pass_doc or {}).get("invitee") or {}
     _d["coach_id"] = (pass_doc or {}).get("coach_id")
@@ -383,6 +668,12 @@ def historique(passes, limite=50) -> list:
             if not isinstance(_e, dict):
                 continue
             _t = str(_e.get("type") or "")
+            if _t == EVENEMENT_OFFRE:
+                # V534b : « Offre modifiée : A → B » depuis le détail de l'événement.
+                _ligne = ligne_historique_offre(dict(_e.get("detail") or {}, changed_at=_e.get("at")),
+                                                (_p or {}).get("id"))
+                _sortie.append(_ligne)
+                continue
             _sortie.append({"at": _e.get("at"), "type": _t,
                             "label": LIBELLES_EVENEMENTS.get(_t, _t),
                             "pass_id": (_p or {}).get("id")})

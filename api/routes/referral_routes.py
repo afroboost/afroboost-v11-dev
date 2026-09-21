@@ -19,6 +19,15 @@ défaut, le jeton abonné V296 (`X-Subscriber-Token`). Sinon 403.
 CE QUI N'EST PAS ICI : le scanner (CAS A-E) — les billets Duo sont des
 réservations ordinaires, il les valide déjà ; `_process_successful_payment` —
 appelé, jamais modifié ; les push existants — appelés, jamais modifiés.
+
+V534b — L'OFFRE DU PASS EST CHOISIE PAR LE PARTICIPANT. Le coach définit par
+cours le catalogue autorisé (`courses.duo_offer_ids`, 0 CHF seulement), le
+participant choisit (`POST /pass` exige `offer_id`) et peut changer tant que
+l'avantage n'est pas consommé (`PATCH /pass/{id|token}/offer`, contrôle de
+version optimiste, 409 `conflit_version`). L'octroi du join utilise l'offre
+DU PASS ; plus aucun réglage `parrainage_duo_offer_id`. Un changement après
+join sans présence neutralise l'ancien octroi puis re-octroie par le MÊME
+chemin que le join (`_octroyer_essai` -> `_reserver_ami`).
 """
 import asyncio
 import logging
@@ -42,10 +51,8 @@ db = None
 PREFIXE = "[V534 DUO]"
 FLAG_ID = "feature_flags"
 FLAG_CHAMP = "parrainage_duo_enabled"
-# Réglage facultatif : l'identifiant de l'offre d'essai à octroyer. Absent, la
-# première offre gratuite (prix 0) visible du propriétaire du cours est prise,
-# de préférence celle qui lie ce cours (`linked_course_ids`).
-FLAG_OFFRE = "parrainage_duo_offer_id"
+# V534b : `FLAG_OFFRE` (`parrainage_duo_offer_id`) n'existe plus — l'offre est
+# celle du pass, choisie par le participant dans le catalogue du cours.
 COLL_PASSES = "referral_passes"
 COLL_INVITATIONS = "referral_invitations"
 COLL_SESSIONS = "subscriber_sessions"      # = `_B3S1_COLL_SESSIONS` (server.py)
@@ -57,6 +64,7 @@ OCCURRENCES_MAX = 6
 LISTE_MAX = 50
 DEBIT_PREFIXE_PASS = "duo_pass:"
 DEBIT_PREFIXE_JOIN = "duo_join:"
+DEBIT_PREFIXE_OFFRE = "duo_offer:"            # V534b : PATCH public (avant join)
 
 
 def init_db(database):
@@ -236,14 +244,15 @@ async def _cours_eligibles() -> list:
         return await db["courses"].find(
             {"duo_enabled": True, "visible": {"$ne": False}, "archived": {"$ne": True}},
             {"_id": 0, "id": 1, "name": 1, "weekday": 1, "date": 1, "time": 1,
-             "locationName": 1, "location": 1, "mapsUrl": 1, "coach_id": 1},
+             "locationName": 1, "location": 1, "mapsUrl": 1, "coach_id": 1,
+             "duo_offer_ids": 1, "duo_default_offer_id": 1},
         ).to_list(LISTE_MAX)
     except Exception as _err:  # noqa: BLE001
         logger.warning("%s cours illisibles (%s)", PREFIXE, type(_err).__name__)
         return []
 
 
-def _dto_config_cours(course) -> dict:
+def _dto_config_cours(course, offres_dto, default_offer_id) -> dict:
     return {
         "id": course.get("id"),
         "name": course.get("name") or "",
@@ -253,7 +262,90 @@ def _dto_config_cours(course) -> dict:
         "locationName": course.get("locationName") or course.get("location") or "",
         "mapsUrl": course.get("mapsUrl") or "",
         "occurrences": _occurrences(course),
+        # V534b : le catalogue autorisé (OffreDTO[]) et la « Recommandée ».
+        "offers": list(offres_dto or []),
+        "default_offer_id": default_offer_id,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V534b — Le catalogue d'offres d'un cours et l'offre autorisée
+# ═══════════════════════════════════════════════════════════════════════════
+def _filtre_proprietaire(coach_id) -> dict:
+    """LA définition de la propriété du dépôt (`p1a_filtre_proprietaire`) :
+    propriétaire -> ses offres ; sans propriétaire -> les offres sans
+    propriétaire. Jamais un mélange."""
+    from api.routes.membership_routes import p1a_filtre_proprietaire
+    return dict(p1a_filtre_proprietaire(coach_id if isinstance(coach_id, str) else None))
+
+
+async def _offres_du_cours(course) -> tuple:
+    """(offres valides RELUES en base dans l'ordre de `duo_offer_ids`,
+    default_offer_id|None). Valide = autorisée ∩ visible ∩ non archivée ∩
+    prix 0 ∩ du propriétaire du cours. Un cours sans `duo_offer_ids` rend
+    ([], None) — absent vaut aucune offre."""
+    _ids = [str(i).strip() for i in ((course or {}).get("duo_offer_ids") or []) if str(i or "").strip()]
+    if not _ids:
+        return [], None
+    _q = _filtre_proprietaire((course or {}).get("coach_id"))
+    _q["id"] = {"$in": _ids[:LISTE_MAX]}
+    try:
+        _rows = await db["offers"].find(_q, {"_id": 0}).to_list(LISTE_MAX)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s offres illisibles (%s)", PREFIXE, type(_err).__name__)
+        return [], None
+    return E.catalogue_du_cours(course, _rows)
+
+
+async def _catalogue_dto(course) -> list:
+    """Les OffreDTO du catalogue COURANT d'un cours (`recommended` posé)."""
+    _valides, _defaut = await _offres_du_cours(course)
+    return E.dtos_offres(_valides, _defaut)
+
+
+async def _catalogue_par_cours(course_id, cache) -> list:
+    """Même chose, par identifiant de cours, avec mémo par requête (le /me
+    d'un parrain porte plusieurs passes du même cours : une seule lecture)."""
+    _cid = str(course_id or "").strip()
+    if _cid in cache:
+        return cache[_cid]
+    _c = None
+    if _cid:
+        try:
+            _c = await db["courses"].find_one({"id": _cid}, {"_id": 0})
+        except Exception:  # noqa: BLE001
+            _c = None
+    cache[_cid] = (await _catalogue_dto(_c)) if _c else []
+    return cache[_cid]
+
+
+async def _offre_autorisee(course, offer_id) -> dict:
+    """L'offre RELUE en base si elle est autorisée pour ce cours, sinon 400
+    `X-Refus-Raison` ∈ offre_requise | offre_non_autorisee | offre_inactive |
+    offre_payante | offre_autre_coach. Le backend valide TOUJOURS : jamais un
+    `offer_id` du front accepté tel quel."""
+    _oid = str(offer_id or "").strip()
+    if not _oid:
+        raise _refus(400, E.REFUS_OFFRE_REQUISE, "Choisis l'offre du Pass Duo.")
+    _ids = [str(i).strip() for i in ((course or {}).get("duo_offer_ids") or []) if str(i or "").strip()]
+    if _oid not in _ids:
+        raise _refus(400, E.REFUS_OFFRE_NON_AUTORISEE, "Cette offre n'est pas proposée pour ce cours.")
+    _o = await db["offers"].find_one({"id": _oid}, {"_id": 0})
+    if not _o:
+        raise _refus(400, E.REFUS_OFFRE_INACTIVE, "Cette offre n'est plus disponible.")
+    _ok, _raison = E.offre_eligible(_o, (course or {}).get("coach_id"))
+    if not _ok:
+        raise _refus(400, _raison, {
+            E.REFUS_OFFRE_INACTIVE: "Cette offre n'est plus disponible.",
+            E.REFUS_OFFRE_PAYANTE: "Pass Duo V1 : offres offertes uniquement (0 CHF).",
+            E.REFUS_OFFRE_AUTRE_COACH: "Cette offre n'appartient pas au coach de ce cours.",
+        }.get(_raison, "Offre refusée."))
+    # La propriété, relue avec le filtre du dépôt (et pas seulement en mémoire).
+    _q = _filtre_proprietaire((course or {}).get("coach_id"))
+    _q["id"] = _oid
+    if not await db["offers"].find_one(_q, {"_id": 0, "id": 1}):
+        raise _refus(400, E.REFUS_OFFRE_AUTRE_COACH, "Cette offre n'appartient pas au coach de ce cours.")
+    return _o
 
 
 async def _cours_eligible(course_id: str):
@@ -282,9 +374,11 @@ async def _reservations_du_pass(pass_doc) -> list:
 
 
 async def _evenement(pass_id: str, type_: str, detail=None, maj=None) -> None:
-    """Journalise un événement sur le pass (+ `$set` facultatif)."""
+    """Journalise un événement sur le pass (+ `$set` facultatif).
+    V534b : chaque écriture incrémente `version` (contrôle optimiste)."""
     _e = {"at": _iso(), "type": type_, "detail": detail}
-    _upd = {"$push": {"events": _e}, "$set": dict(maj or {}, updated_at=_iso())}
+    _upd = {"$push": {"events": _e}, "$set": dict(maj or {}, updated_at=_iso()),
+            "$inc": {"version": 1}}
     try:
         await db[COLL_PASSES].update_one({"id": pass_id}, _upd)
     except Exception as _err:  # noqa: BLE001
@@ -303,11 +397,13 @@ async def _statut_reel(pass_doc, now=None, reservations=None):
     return _s
 
 
-async def _dto(pass_doc, deja_existant=None, now=None):
+async def _dto(pass_doc, deja_existant=None, now=None, cache_offres=None):
     _resas = await _reservations_du_pass(pass_doc)
     _s = await _statut_reel(pass_doc, now, _resas)
+    _offres = await _catalogue_par_cours(pass_doc.get("course_id"),
+                                         cache_offres if cache_offres is not None else {})
     return E.dto_pass(pass_doc, _s, E.tickets_du_pass(pass_doc, _resas, _frontend_url()),
-                      _frontend_url(), deja_existant)
+                      _frontend_url(), deja_existant, offers=_offres)
 
 
 async def _pass_du_parrain(pass_id: str, parrain: dict):
@@ -372,9 +468,12 @@ async def _reserver_seance_duo(code, email, name, whatsapp, course, occurrence,
     if _b2:
         raise HTTPException(status_code=400, detail=_b2_msg)
 
+    # V534b : une réservation ANNULÉE par un changement d'offre (`status:
+    # "cancelled"`, jamais supprimée) n'est pas « existante » — sinon le
+    # re-octroi la rattacherait au lieu de créer le nouveau billet.
     _existante = await db["reservations"].find_one(
         {"userEmail": {"$regex": "^%s$" % re.escape(_email), "$options": "i"},
-         "courseId": _cid, "datetime": _occ}, {"_id": 0})
+         "courseId": _cid, "datetime": _occ, "status": {"$ne": "cancelled"}}, {"_id": 0})
     if _existante:
         _autre = _existante.get("pass_id")
         if _autre and _autre != pass_doc.get("id"):
@@ -597,39 +696,8 @@ async def _debloquer_ou_bloquer(pass_doc, course) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Offre d'essai et transaction
+# Transaction, octroi de l'essai (chemin UNIQUE du join et du changement d'offre)
 # ═══════════════════════════════════════════════════════════════════════════
-async def _offre_essai(course) -> dict:
-    """L'offre d'essai gratuite RÉELLE (prix 0, relue en base) du propriétaire
-    du cours — préférence à celle qui lie ce cours ; réglage possible par
-    `feature_flags.parrainage_duo_offer_id`."""
-    try:
-        _flags = await db[FLAG_ID].find_one({"id": FLAG_ID}, {"_id": 0}) or {}
-        _forcee = str(_flags.get(FLAG_OFFRE) or "").strip()
-        if _forcee:
-            _o = await db["offers"].find_one({"id": _forcee}, {"_id": 0})
-            if _o:
-                return _o
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        from api.routes.membership_routes import p1a_filtre_proprietaire
-        _q = dict(p1a_filtre_proprietaire((course or {}).get("coach_id")))
-    except Exception:  # noqa: BLE001
-        _q = {}
-    _q.update({"price": {"$in": [0, 0.0]}, "archived": {"$ne": True}})
-    try:
-        _rows = await db["offers"].find(_q, {"_id": 0}).to_list(LISTE_MAX)
-    except Exception:  # noqa: BLE001
-        _rows = []
-    _rows = [o for o in _rows if o.get("visible") is not False]
-    _cid = str((course or {}).get("id") or "")
-    for _o in _rows:
-        if _cid and _cid in (_o.get("linked_course_ids") or []):
-            return _o
-    return _rows[0] if _rows else None
-
-
 async def _avec_session(travail):
     """Transaction Mongo (LOT B3) quand le pilote la propose, repli PROPRE
     sinon : `travail(session)` avec `session=None`. Une transaction refusée
@@ -665,16 +733,22 @@ async def _avec_session(travail):
         raise
 
 
-async def _rollback_filleul(pass_doc, email, telephone, access_code, sub_id=None) -> None:
+async def _rollback_filleul(pass_doc, email, telephone, access_code, sub_id=None,
+                            motif="pass_duo_rollback", rouvrir=True) -> None:
     """La réservation de l'ami a échoué APRÈS l'octroi : on rend son droit à
     l'essai (`_essai1_liberer`), on neutralise le code et le forfait qui
-    viennent de naître (marqués, jamais supprimés) et on rouvre le pass."""
+    viennent de naître (marqués, jamais supprimés) et on rouvre le pass.
+
+    V534b : réutilisé par le changement d'offre après join — `motif` =
+    `pass_duo_offer_change` (marque `pass_duo_rollback_motif`), `rouvrir=False`
+    (l'invité RESTE sur le pass : on remplace son avantage, pas sa place)."""
     try:
         from api.routes.checkout_routes import _essai1_liberer
         await _essai1_liberer(email, telephone=telephone)
     except Exception as _err:  # noqa: BLE001
         logger.error("%s libération de l'essai impossible (%s)", PREFIXE, type(_err).__name__)
-    _marque = {"pass_duo_rollback": True, "pass_duo_rollback_at": _iso()}
+    _marque = {"pass_duo_rollback": True, "pass_duo_rollback_at": _iso(),
+               "pass_duo_rollback_motif": str(motif or "pass_duo_rollback")[:48]}
     try:
         if access_code:
             await db["discount_codes"].update_one(
@@ -686,12 +760,318 @@ async def _rollback_filleul(pass_doc, email, telephone, access_code, sub_id=None
                               total_sessions=0)})
     except Exception as _err:  # noqa: BLE001
         logger.error("%s neutralisation du forfait impossible (%s)", PREFIXE, type(_err).__name__)
+    if not rouvrir:
+        return
     try:
         await db[COLL_PASSES].update_one(
             {"id": pass_doc["id"]},
-            {"$set": {"invitee": None, "invitee_access_code": None, "updated_at": _iso()}})
+            {"$set": {"invitee": None, "invitee_access_code": None, "updated_at": _iso()},
+             "$inc": {"version": 1}})
     except Exception as _err:  # noqa: BLE001
         logger.error("%s pass non rouvert (%s)", PREFIXE, type(_err).__name__)
+
+
+async def _octroyer_essai(pass_doc, offre, email, nom, tel_brut, attribution_client=None) -> tuple:
+    """LE chemin d'octroi de l'avantage de l'ami — le même pour le join et pour
+    un changement d'offre après join : ESSAI-1b (0 CHF confirmé par le
+    catalogue) -> T1 -> ESSAI-4 (abonné actif, LIT) -> ESSAI-1 (verrou, ÉCRIT)
+    -> `_process_successful_payment(free)` -> marquage pass_duo + M2-A.
+
+    Rend `(access_code, attribution)`. Lève l'HTTPException des gardes telle
+    quelle (409 `abonne_actif` / `free_trial_already_*`, 400 gratuit) ; une
+    panne de l'octroi libère le verrou et lève 500. NE TOUCHE PAS au pass :
+    l'appelant gère `invitee` (rouvrir ou non)."""
+    from api.routes.checkout_routes import (
+        _essai4_garde, _essai1_garde, _essai1b_exiger_gratuit, _essai1_liberer,
+        _process_successful_payment, _t1_preuve_checkout, _r2b_resoudre_vendeur,
+        CheckoutItem)
+    _item = CheckoutItem(type="offer", id=str(offre.get("id")), name=str(offre.get("name") or "Essai"),
+                         price=0.0, quantity=1)
+    try:
+        await _essai1b_exiger_gratuit([_item])
+        _t1_champs = await _t1_preuve_checkout(True, [_item], "")
+        await _essai4_garde(email, str(offre.get("id")))
+    except HTTPException as _e:
+        _raison = (getattr(_e, "headers", None) or {}).get("X-Refus-Raison") or ""
+        if _raison == "active_subscription":
+            raise _refus(409, E.REFUS_ABONNE_ACTIF,
+                         "Tu as déjà un abonnement actif : le Pass Duo est réservé aux nouveaux.")
+        raise
+    await _essai1_garde(email, str(offre.get("id")), telephone=tel_brut)
+    # 409 `free_trial_already_used` | `free_trial_already_granted`, tel quel
+
+    _vendeur = ""
+    try:
+        _vendeur = await _r2b_resoudre_vendeur([_item])
+    except Exception:  # noqa: BLE001
+        _vendeur = ""
+    _transaction_id = "duo_%s" % uuid.uuid4().hex[:12]
+    try:
+        _octroi = await _process_successful_payment(
+            transaction_id=_transaction_id, coach_email=_vendeur, customer_name=nom,
+            customer_email=email, customer_phone=tel_brut, items=[_item], total=0,
+            currency="CHF", payment_method="free", discount_code=None,
+            terms_fields=_t1_champs)
+    except Exception as _err:  # noqa: BLE001
+        await _essai1_liberer(email, telephone=tel_brut)
+        logger.error("%s octroi de l'essai en erreur (%s)", PREFIXE, type(_err).__name__)
+        raise HTTPException(status_code=500, detail="L'inscription a échoué, rien n'a été enregistré.")
+    _access_code = str((_octroi or {}).get("access_code") or "").strip().upper()
+
+    # Source ADDITIVE sur ce que l'octroi vient d'écrire (`source` d'origine
+    # intact : ESSAI-1/ESSAI-6 le lisent), + M2-A `parrainage` sur le forfait.
+    _attrib = None
+    try:
+        from api.routes.shared import m2a_resoudre
+        _attrib = await m2a_resoudre(db, _attribution_parrainage(pass_doc, attribution_client), email)
+    except Exception:  # noqa: BLE001
+        _attrib = None
+    try:
+        _marque = {"pass_duo_id": pass_doc["id"], "pass_duo_role": E.ROLE_INVITEE,
+                   "acquisition_source": SOURCE, "pass_duo_offer_id": str(offre.get("id"))}
+        await db["discount_codes"].update_one({"code": _access_code}, {"$set": dict(_marque)})
+        _maj_sub = dict(_marque)
+        if _attrib:
+            _maj_sub["attribution"] = _attrib
+        await db["subscriptions"].update_one({"code": _access_code}, {"$set": _maj_sub})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s marquage pass_duo non écrit (%s)", PREFIXE, type(_err).__name__)
+    return _access_code, _attrib
+
+
+async def _reserver_ami(pass_doc, course, access_code, email, nom, tel_brut, maj, push=None) -> dict:
+    """La réservation de l'ami + la mise à jour du pass, dans UNE transaction
+    quand le pilote la propose (`_avec_session`). `maj` = le `$set` du pass,
+    `push` = le `$push` (événements, historique). Rend la réservation."""
+    async def _travail(session):
+        _r = await _reserver_seance_duo(access_code, email, nom, tel_brut, course,
+                                        pass_doc.get("occurrence"), pass_doc, E.ROLE_INVITEE, True,
+                                        session=session)
+        _set = dict(maj, **{"reservations.invitee_id": _r.get("id"),
+                            "reservations.invitee_code": _r.get("reservationCode"),
+                            "invitee_access_code": access_code,
+                            "updated_at": _iso()})
+        _upd = {"$set": _set, "$inc": {"version": 1}}
+        if push:
+            _upd["$push"] = dict(push)
+        _kw = {"session": session} if session is not None else {}
+        await db[COLL_PASSES].update_one({"id": pass_doc["id"]}, _upd, **_kw)
+        return _r
+    return await _avec_session(_travail)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V534b — Changement d'offre
+# ═══════════════════════════════════════════════════════════════════════════
+def _filtre_version(pass_id, version) -> dict:
+    """`{"id", "version"}` — un pass né avant V534b (sans champ) vaut 1."""
+    _f = {"id": pass_id}
+    if int(version) == 1:
+        _f["$or"] = [{"version": 1}, {"version": {"$exists": False}}]
+    else:
+        _f["version"] = int(version)
+    return _f
+
+
+def _version_du_corps(corps) -> int:
+    _v = (corps or {}).get("version")
+    if isinstance(_v, bool) or _v is None:
+        raise _refus(400, "version_requise", "Version du pass requise (recharge la page).")
+    try:
+        return int(_v)
+    except (TypeError, ValueError):
+        raise _refus(400, "version_requise", "Version du pass requise (recharge la page).")
+
+
+async def _annuler_reservation_ami(reservation_id, code, motif) -> dict:
+    """Restitue la séance de CETTE réservation (`seances_restituer`, clé =
+    id de la réservation) et la marque `cancelled` — jamais supprimée.
+    Rend `{restitution, avant}` pour une restauration éventuelle."""
+    from api.routes.shared import seances_restituer
+    _avant = await db["reservations"].find_one({"id": reservation_id}, {"_id": 0, "status": 1, "cancel_reason": 1,
+                                                                        "cancelled_at": 1}) or {}
+    _rest = await seances_restituer(db, code, 1, reservation_id=reservation_id, source=motif)
+    await db["reservations"].update_one(
+        {"id": reservation_id},
+        {"$set": {"status": "cancelled", "cancel_reason": motif, "cancelled_at": _iso()}})
+    return {"restitution": _rest, "avant": _avant}
+
+
+async def _restaurer_ancien_octroi(pass_doc, ancien, email, tel) -> None:
+    """(d) de l'avenant §4.5 : le re-octroi a échoué -> on RÉTABLIT l'ancien
+    état exactement (code, forfait, réservation, séance, verrou d'essai).
+    Chaque étape est indépendante : une panne n'empêche pas les suivantes."""
+    from api.routes.shared import SEANCES_COLL
+    _code = ancien.get("access_code")
+    _rid = ancien.get("reservation_id")
+    _unset_marques = {"pass_duo_rollback": "", "pass_duo_rollback_at": "", "pass_duo_rollback_motif": ""}
+    try:
+        if _code and ancien.get("code_doc") is not None:
+            _c = ancien["code_doc"]
+            await db["discount_codes"].update_one(
+                {"code": _code},
+                {"$set": {"active": _c.get("active", True), "maxUses": _c.get("maxUses", 1)},
+                 "$unset": _unset_marques})
+        if _code and ancien.get("sub_doc") is not None:
+            _s = ancien["sub_doc"]
+            await db["subscriptions"].update_one(
+                {"code": _code},
+                {"$set": {"status": _s.get("status", "active"),
+                          "remaining_sessions": _s.get("remaining_sessions", 0),
+                          "total_sessions": _s.get("total_sessions", 1)},
+                 "$unset": _unset_marques})
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s restauration du forfait impossible (%s)", PREFIXE, type(_err).__name__)
+    try:
+        if _rid:
+            _av = (ancien.get("annulation") or {}).get("avant") or {}
+            _set = {k: _av[k] for k in ("status", "cancel_reason", "cancelled_at") if k in _av}
+            _unset = {k: "" for k in ("status", "cancel_reason", "cancelled_at") if k not in _av}
+            _upd = {}
+            if _set:
+                _upd["$set"] = _set
+            if _unset:
+                _upd["$unset"] = _unset
+            if _upd:
+                await db["reservations"].update_one({"id": _rid}, _upd)
+            _rest = (ancien.get("annulation") or {}).get("restitution") or {}
+            if _rest.get("restitue") and _rest.get("fiche_id"):
+                # La séance rendue est REPRISE sur la même fiche, et le mouvement
+                # de restitution effacé : une vraie annulation future pourra
+                # restituer à son tour (règle « une fois par clé »).
+                await db["discount_codes"].update_one(
+                    {"id": _rest["fiche_id"]}, {"$inc": {"used": int(_rest.get("quantite") or 1)}})
+                await db[SEANCES_COLL].delete_one({"_id": "restitution:%s" % _rid})
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s restauration de la réservation impossible (%s)", PREFIXE, type(_err).__name__)
+    try:
+        from api.routes.checkout_routes import _essai1_reclamer
+        await _essai1_reclamer(email, tel)
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s verrou d'essai non repris (%s)", PREFIXE, type(_err).__name__)
+
+
+async def _changer_offre_apres_join(pass_doc, course, nouvelle, entree, changed_by) -> dict:
+    """§4.5 friend_registered / unlocked SANS présence : (a) neutraliser
+    l'ancien octroi ; (b) re-octroyer par le MÊME chemin que le join ; (c) la
+    réservation du parrain n'est pas touchée ; (d) échec en (b) -> rollback de
+    (b) + restauration de (a), 500 propre, le pass garde l'ancienne offre.
+
+    ATOMICITÉ RÉELLE : `_process_successful_payment` et le verrou ESSAI-1
+    n'acceptent pas de session Mongo (et on ne les modifie pas) — la
+    transaction `_avec_session` couvre la réservation de l'ami + le pass
+    (comme au join) ; le reste est COMPENSÉ explicitement. Aucune écriture
+    n'est faite sur le pass avant que (b) ait réussi : un lecteur concurrent
+    voit toujours l'ancienne offre, jamais un entre-deux."""
+    _inv = pass_doc.get("invitee") or {}
+    _email = E.normaliser_email(_inv.get("email_norm"))
+    _tel = str(_inv.get("whatsapp_norm") or "")
+    _nom = str(_inv.get("name") or "")
+    _ancien_code = str(pass_doc.get("invitee_access_code") or "").strip().upper()
+    _ancien_rid = (pass_doc.get("reservations") or {}).get("invitee_id")
+    _ancien = {"access_code": _ancien_code, "reservation_id": _ancien_rid,
+               "code_doc": None, "sub_doc": None, "annulation": None}
+    if _ancien_code:
+        _ancien["code_doc"] = await db["discount_codes"].find_one(
+            {"code": _ancien_code}, {"_id": 0, "active": 1, "maxUses": 1})
+        _ancien["sub_doc"] = await db["subscriptions"].find_one(
+            {"code": _ancien_code}, {"_id": 0, "status": 1, "remaining_sessions": 1, "total_sessions": 1})
+
+    # ── (a) neutralisation de l'ancien octroi ──────────────────────────────
+    if _ancien_rid:
+        _ancien["annulation"] = await _annuler_reservation_ami(_ancien_rid, _ancien_code, E.MOTIF_CHANGEMENT_OFFRE)
+    await _rollback_filleul(pass_doc, _email, _tel, _ancien_code, motif=E.MOTIF_CHANGEMENT_OFFRE, rouvrir=False)
+
+    # ── (b) re-octroi, MÊME chemin que le join ─────────────────────────────
+    _nouveau_code = ""
+    try:
+        _nouveau_code, _attrib = await _octroyer_essai(pass_doc, nouvelle, _email, _nom, _tel, None)
+        _resa = await _reserver_ami(
+            pass_doc, course, _nouveau_code, _email, _nom, _tel,
+            {"offer_id": nouvelle.get("id"), "offer_snapshot": E.snapshot_offre(nouvelle),
+             "attribution": _attrib or pass_doc.get("attribution"),
+             "offer_change": None},
+            {"offer_history": entree,
+             "events": {"at": _iso(), "type": E.EVENEMENT_OFFRE, "detail": dict(entree)}})
+    except Exception as _err:  # noqa: BLE001
+        # ── (d) rollback de (b), puis restauration de (a) ──────────────────
+        _detail = getattr(_err, "detail", None) if isinstance(_err, HTTPException) else None
+        logger.error("%s re-octroi échoué (%s) — ancienne offre restaurée", PREFIXE,
+                     _detail or type(_err).__name__)
+        if _nouveau_code:
+            _orpheline = await db["reservations"].find_one(
+                {"pass_id": pass_doc["id"], "pass_role": E.ROLE_INVITEE, "promoCode": _nouveau_code,
+                 "status": {"$ne": "cancelled"}}, {"_id": 0, "id": 1})
+            if _orpheline:
+                await _annuler_reservation_ami(_orpheline["id"], _nouveau_code, E.MOTIF_CHANGEMENT_OFFRE + "_echec")
+            await _rollback_filleul(pass_doc, _email, _tel, _nouveau_code,
+                                    motif=E.MOTIF_CHANGEMENT_OFFRE + "_echec", rouvrir=False)
+        await _restaurer_ancien_octroi(pass_doc, _ancien, _email, _tel)
+        await _evenement(pass_doc["id"], "offer_change_failed",
+                         {"to_offer_id": nouvelle.get("id"), "changed_by": changed_by},
+                         {"offer_change": None})
+        raise HTTPException(status_code=500,
+                            detail="Le changement d'offre a échoué : ton Pass Duo garde son offre actuelle.")
+    _p = await db[COLL_PASSES].find_one({"id": pass_doc["id"]}, {"_id": 0}) or pass_doc
+    _sub = await db["subscriptions"].find_one({"code": _nouveau_code}, {"_id": 0})
+    await _notifier_reservation(_resa, _sub)
+    return _p
+
+
+async def _changer_offre(pass_doc, offer_id, version, changed_by) -> dict:
+    """L'avenant §4, dans l'ordre : 2 pass modifiable ; 3 version ; 4 offre
+    autorisée / idempotence ; 5 effet selon l'état ; 6 historique. (1 —
+    drapeau, appelant — est fait par la route.) Rend le pass à jour."""
+    _resas = await _reservations_du_pass(pass_doc)
+    _s = await _statut_reel(pass_doc, None, _resas)
+    _ok, _raison = E.pass_modifiable_pour_offre(pass_doc, _resas, _s)
+    if not _ok:
+        raise _refus(409, E.REFUS_PASS_NON_MODIFIABLE, E.texte_non_modifiable(_raison))
+    if int(version) != E.version_pass(pass_doc):
+        raise _refus(409, E.REFUS_CONFLIT_VERSION,
+                     "Ce pass a été modifié entre-temps : recharge la page et réessaie.")
+    _course = await db["courses"].find_one({"id": pass_doc.get("course_id")}, {"_id": 0})
+    if not _course or _course.get("archived") is True:
+        raise HTTPException(status_code=410, detail="Ce cours n'est plus disponible.")
+    _nouvelle = await _offre_autorisee(_course, offer_id)
+    if str(_nouvelle.get("id")) == str(pass_doc.get("offer_id") or ""):
+        return pass_doc                                  # idempotent, aucune écriture
+    _entree = E.entree_historique_offre(pass_doc.get("offer_snapshot") or {"id": pass_doc.get("offer_id")},
+                                        E.snapshot_offre(_nouvelle), changed_by, _iso())
+    from pymongo import ReturnDocument
+
+    if _s in (E.LOCKED, E.WAITING) or not pass_doc.get("invitee"):
+        # Personne n'a rien reçu : UNE écriture, gardée par la version.
+        _apres = await db[COLL_PASSES].find_one_and_update(
+            _filtre_version(pass_doc["id"], version),
+            {"$set": {"offer_id": _nouvelle.get("id"), "offer_snapshot": E.snapshot_offre(_nouvelle),
+                      "updated_at": _iso()},
+             "$push": {"offer_history": _entree,
+                       "events": {"at": _iso(), "type": E.EVENEMENT_OFFRE, "detail": dict(_entree)}},
+             "$inc": {"version": 1}},
+            projection={"_id": 0}, return_document=ReturnDocument.AFTER)
+        if not _apres:
+            raise _refus(409, E.REFUS_CONFLIT_VERSION,
+                         "Ce pass a été modifié entre-temps : recharge la page et réessaie.")
+        logger.info("%s offre du pass %s changée (%s -> %s, %s)", PREFIXE, pass_doc["id"][:8],
+                    str(_entree["from_offer_id"])[:8], str(_entree["to_offer_id"])[:8], changed_by)
+        return _apres
+
+    # Ami inscrit, aucune présence : le VERROU de version est pris d'abord
+    # (le concurrent perd ici, avant toute écriture métier), puis l'effet.
+    _verrou = await db[COLL_PASSES].find_one_and_update(
+        _filtre_version(pass_doc["id"], version),
+        {"$set": {"offer_change": {"to_offer_id": _nouvelle.get("id"), "by": changed_by,
+                                   "started_at": _iso()}, "updated_at": _iso()},
+         "$inc": {"version": 1}},
+        projection={"_id": 0}, return_document=ReturnDocument.AFTER)
+    if not _verrou:
+        raise _refus(409, E.REFUS_CONFLIT_VERSION,
+                     "Ce pass a été modifié entre-temps : recharge la page et réessaie.")
+    _p = await _changer_offre_apres_join(_verrou, _course, _nouvelle, _entree, changed_by)
+    logger.info("%s offre du pass %s changée après join (%s -> %s, %s)", PREFIXE, pass_doc["id"][:8],
+                str(_entree["from_offer_id"])[:8], str(_entree["to_offer_id"])[:8], changed_by)
+    return _p
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -699,10 +1079,20 @@ async def _rollback_filleul(pass_doc, email, telephone, access_code, sub_id=None
 # ═══════════════════════════════════════════════════════════════════════════
 @router.get("/config")
 async def referral_config():
-    """Public. OFF -> `{enabled:false, courses:[]}` (jamais 404 ici)."""
+    """Public. OFF -> `{enabled:false, courses:[]}` (jamais 404 ici).
+    V534b : chaque cours porte `offers[]` (OffreDTO) + `default_offer_id` ;
+    un cours `duo_enabled` SANS offre valide est OMIS et journalisé."""
     if not await parrainage_duo_actif(db):
         return {"enabled": False, "courses": []}
-    return {"enabled": True, "courses": [_dto_config_cours(c) for c in await _cours_eligibles()]}
+    _sortie = []
+    for _c in await _cours_eligibles():
+        _valides, _defaut = await _offres_du_cours(_c)
+        if not _valides:
+            logger.info("%s cours %s omis du /config : aucune offre Duo valide (duo_offer_ids=%s)",
+                        PREFIXE, str(_c.get("id"))[:12], len(_c.get("duo_offer_ids") or []))
+            continue
+        _sortie.append(_dto_config_cours(_c, E.dtos_offres(_valides, _defaut), _defaut))
+    return {"enabled": True, "courses": _sortie}
 
 
 @router.get("/me")
@@ -720,9 +1110,9 @@ async def referral_me(request: Request):
     except Exception as _err:  # noqa: BLE001
         logger.warning("%s lecture /me impossible (%s)", PREFIXE, type(_err).__name__)
         raise HTTPException(status_code=503, detail="Parrainage momentanément indisponible")
-    _dtos, _statuts = [], {}
+    _dtos, _statuts, _cache = [], {}, {}
     for _pd in _passes:
-        _d = await _dto(_pd, now=_now)
+        _d = await _dto(_pd, now=_now, cache_offres=_cache)
         _dtos.append(_d)
         _statuts[_pd.get("id")] = _d["status"]
     return {
@@ -739,9 +1129,11 @@ async def referral_me(request: Request):
 
 @router.post("/pass")
 async def referral_creer_pass(request: Request):
-    """`{course_id, occurrence, terms_accepted?}` -> 201 PassDTO ; pass actif
-    déjà existant -> 200 `deja_existant:true` ; cours inéligible / occurrence
-    invalide -> 400. Débit par IP AVANT tout."""
+    """`{course_id, occurrence, offer_id, terms_accepted?}` -> 201 PassDTO ;
+    pass actif déjà existant -> 200 `deja_existant:true` ; cours inéligible /
+    occurrence invalide -> 400 ; V534b : `offer_id` OBLIGATOIRE, validé par
+    `_offre_autorisee` (400 offre_requise | offre_non_autorisee |
+    offre_inactive | offre_payante | offre_autre_coach). Débit par IP AVANT tout."""
     await _exiger_actif()
     _exiger_debit(request, DEBIT_PREFIXE_PASS)
     _parrain = await _parrain_depuis_requete(request)
@@ -753,6 +1145,7 @@ async def referral_creer_pass(request: Request):
     _occ = lot1_occurrence_iso(_b.get("occurrence"))
     if not _occ or _occ not in _occurrences(_course):
         raise HTTPException(status_code=400, detail="Occurrence invalide : choisis une date proposée.")
+    _offre = await _offre_autorisee(_course, _b.get("offer_id"))
 
     _now = _maintenant()
     _cle = E.cle_pass(_parrain["email"], _course.get("id"), _occ)
@@ -791,6 +1184,11 @@ async def referral_creer_pass(request: Request):
         "blocked_reason": None,
         "attribution": None,
         "spordate_reward": {"status": "none"},
+        # V534b : l'offre choisie par le participant, figée + son historique.
+        "offer_id": _offre.get("id"),
+        "offer_snapshot": E.snapshot_offre(_offre),
+        "offer_history": [],
+        "version": 1,
         "created_at": _iso(_now),
         "updated_at": _iso(_now),
         "unlocked_at": None,
@@ -866,7 +1264,8 @@ async def referral_confirmer(pass_id: str, request: Request):
     if _s != E.FRIEND_REGISTERED:
         raise HTTPException(status_code=409, detail="Ton ami n'est pas encore inscrit.")
     if _b.get("terms_accepted") is True and not (_p.get("sponsor") or {}).get("terms_accepted"):
-        await db[COLL_PASSES].update_one({"id": _p["id"]}, {"$set": {"sponsor.terms_accepted": True}})
+        await db[COLL_PASSES].update_one({"id": _p["id"]}, {"$set": {"sponsor.terms_accepted": True},
+                                                            "$inc": {"version": 1}})
         _p["sponsor"]["terms_accepted"] = True
     _course = await db["courses"].find_one({"id": _p.get("course_id")}, {"_id": 0})
     if not _course:
@@ -877,6 +1276,56 @@ async def referral_confirmer(pass_id: str, request: Request):
                      "Ta place n'a pas pu être confirmée : recharge ton abonnement puis réessaie."
                      if _p.get("blocked_reason") != E.BLOCAGE_CONDITIONS
                      else "Merci d'accepter les conditions de participation pour confirmer ta place.")
+    return await _dto(_p)
+
+
+def _porte_identite_abonne(request) -> bool:
+    """Un jeton d'espace ou un jeton abonné est-il présenté ? (Décide quelle
+    porte du PATCH offre s'applique — jamais `X-User-Email`.)"""
+    try:
+        return bool((request.headers.get("x-espace-token", "") or "").strip()
+                    or (request.headers.get("X-Subscriber-Token", "") or "").strip())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+@router.patch("/pass/{identifiant}/offer")
+async def referral_changer_offre(identifiant: str, request: Request):
+    """V534b — `{offer_id, version}` -> 200 PassDTO. UNE URL, DEUX PORTES :
+
+    * PARRAIN (`x-espace-token` / `X-Subscriber-Token`) : `identifiant` =
+      id du pass (ou son share_token), pass DU parrain sinon 404 ;
+      `changed_by: "sponsor"` ; possible dans tout état modifiable.
+    * PUBLIC (aucun jeton, débit IP) : `identifiant` = share_token ;
+      `changed_by: "invitee"` ; AVANT join uniquement (locked/waiting, sans
+      invité) sinon 409 `pass_deja_rejoint`.
+
+    Refus : 400 offre_* / version_requise ; 409 pass_non_modifiable
+    (`used` -> texte exact de l'avenant), conflit_version (recharger),
+    pass_deja_rejoint ; 500 propre si le re-octroi échoue (ancienne offre
+    conservée). `offer_id == offre du pass` -> 200 sans écriture."""
+    await _exiger_actif()
+    _b = await _corps(request)
+    if _porte_identite_abonne(request):
+        _parrain = await _parrain_depuis_requete(request)
+        _p = await db[COLL_PASSES].find_one(
+            {"$or": [{"id": str(identifiant or "").strip()}, {"share_token": str(identifiant or "").strip()}]},
+            {"_id": 0})
+        if not _p or E.normaliser_email((_p.get("sponsor") or {}).get("email_norm")) != _parrain["email"]:
+            raise HTTPException(status_code=404, detail="Pass introuvable")
+        _qui = "sponsor"
+    else:
+        _exiger_debit(request, DEBIT_PREFIXE_OFFRE)
+        _p = await _pass_par_token(identifiant)
+        _s = await _statut_reel(_p)
+        if _p.get("invitee") or _s not in E.ETATS_OUVERTS_AU_JOIN:
+            if _s in (E.EXPIRED, E.CANCELLED):
+                raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
+            raise _refus(409, E.REFUS_PASS_DEJA_REJOINT,
+                         "Tu es déjà inscrit : seul le parrain peut encore changer l'offre.")
+        _qui = "invitee"
+    _version = _version_du_corps(_b)
+    _p = await _changer_offre(_p, _b.get("offer_id"), _version, _qui)
     return await _dto(_p)
 
 
@@ -907,7 +1356,9 @@ async def referral_pass_public(share_token: str):
             _s = E.WAITING
         await _evenement(_p["id"], "link_opened", None, _maj)
         _p.update(_maj)
-    return E.dto_public(_p, _s, _now)
+        # V534b : la `version` rendue est celle d'APRÈS l'écriture (relue).
+        _p = await db[COLL_PASSES].find_one({"id": _p["id"]}, {"_id": 0}) or _p
+    return E.dto_public(_p, _s, _now, await _catalogue_par_cours(_p.get("course_id"), {}))
 
 
 @router.post("/pass/{share_token}/join")
@@ -952,117 +1403,63 @@ async def referral_join(share_token: str, request: Request):
     _course = await db["courses"].find_one({"id": _p.get("course_id")}, {"_id": 0})
     if not _course or _course.get("archived") is True:
         raise HTTPException(status_code=410, detail="Ce cours n'est plus disponible.")
-    _offre = await _offre_essai(_course)
-    if not _offre:
-        logger.error("%s aucune offre d'essai gratuite — join impossible", PREFIXE)
-        raise HTTPException(status_code=503, detail="Offre d'essai indisponible pour le moment.")
+
+    # ── 3bis. V534b : `offer_id` facultatif = changement INVITEE avant l'octroi
+    _oid_demande = str(_b.get("offer_id") or "").strip()
+    if _oid_demande and _oid_demande != str(_p.get("offer_id") or ""):
+        _p = await _changer_offre(_p, _oid_demande, E.version_pass(_p), "invitee")
+    # L'octroi utilise L'OFFRE DU PASS, relue et revalidée (jamais un id du front).
+    _offre = await _offre_autorisee(_course, _p.get("offer_id"))
 
     # ── 4. index partiel filleul / occurrence (avant tout octroi) ──────────
     _invitee = {"email_norm": _email, "name": _nom, "whatsapp_norm": _tel or None,
                 "consent_reservation_at": _iso(_now),
                 "marketing_consent": _b.get("marketing_consent") is True}
-    try:
-        _r = await db[COLL_PASSES].update_one(
-            {"id": _p["id"], "invitee": None},
-            {"$set": {"invitee": _invitee, "updated_at": _iso(_now)}})
-    except Exception as _err:  # noqa: BLE001
-        if _est_doublon(_err):
-            raise _refus(409, E.REFUS_DEJA_FILLEUL,
-                         "Tu es déjà l'invité d'un autre Pass Duo pour cette séance.")
-        logger.error("%s pose de l'invité impossible (%s)", PREFIXE, type(_err).__name__)
-        raise HTTPException(status_code=503, detail="Inscription impossible pour le moment.")
-    if not getattr(_r, "modified_count", 1):
+    # V534b : la pose de l'invité est gardée par la `version` du pass — un
+    # changement d'offre glissé entre la lecture et l'écriture ne peut pas
+    # faire octroyer une offre que le pass ne porte plus. Un seul rejeu.
+    for _tentative in (1, 2):
+        try:
+            _r = await db[COLL_PASSES].update_one(
+                dict(_filtre_version(_p["id"], E.version_pass(_p)), invitee=None),
+                {"$set": {"invitee": _invitee, "updated_at": _iso(_now)}, "$inc": {"version": 1}})
+        except Exception as _err:  # noqa: BLE001
+            if _est_doublon(_err):
+                raise _refus(409, E.REFUS_DEJA_FILLEUL,
+                             "Tu es déjà l'invité d'un autre Pass Duo pour cette séance.")
+            logger.error("%s pose de l'invité impossible (%s)", PREFIXE, type(_err).__name__)
+            raise HTTPException(status_code=503, detail="Inscription impossible pour le moment.")
+        if getattr(_r, "modified_count", 1):
+            break
         _p = await _pass_par_token(share_token)
         if E.normaliser_email((_p.get("invitee") or {}).get("email_norm")) == _email:
             return await _reponse_join(_p, _now)
-        raise _refus(409, E.REFUS_PASS_FERME, "Ce Pass Duo a déjà un invité.")
+        if _p.get("invitee"):
+            raise _refus(409, E.REFUS_PASS_FERME, "Ce Pass Duo a déjà un invité.")
+        if _tentative == 2:
+            raise _refus(409, E.REFUS_CONFLIT_VERSION, "Ce Pass Duo vient d'être modifié : réessaie.")
+        _offre = await _offre_autorisee(_course, _p.get("offer_id"))   # l'offre a pu changer
     _p["invitee"] = _invitee
 
     async def _rouvrir():
-        await db[COLL_PASSES].update_one({"id": _p["id"]}, {"$set": {"invitee": None}})
+        await db[COLL_PASSES].update_one({"id": _p["id"]}, {"$set": {"invitee": None},
+                                                            "$inc": {"version": 1}})
 
     # ── 5. moteur d'essai EXISTANT : ESSAI-4 -> ESSAI-1 -> octroi ──────────
-    from api.routes.checkout_routes import (
-        _essai4_garde, _essai1_garde, _essai1b_exiger_gratuit, _essai1_liberer,
-        _process_successful_payment, _t1_preuve_checkout, _r2b_resoudre_vendeur,
-        CheckoutItem)
-    _item = CheckoutItem(type="offer", id=str(_offre.get("id")), name=str(_offre.get("name") or "Essai"),
-                         price=0.0, quantity=1)
+    # (`_octroyer_essai` = LE chemin, partagé avec le changement d'offre.)
     try:
-        await _essai1b_exiger_gratuit([_item])
-        _t1_champs = await _t1_preuve_checkout(True, [_item], "")
-        await _essai4_garde(_email, str(_offre.get("id")))
-    except HTTPException as _e:
+        _access_code, _attrib = await _octroyer_essai(_p, _offre, _email, _nom, _tel_brut,
+                                                      _b.get("attribution"))
+    except Exception:
         await _rouvrir()
-        _raison = (getattr(_e, "headers", None) or {}).get("X-Refus-Raison") or ""
-        if _raison == "active_subscription":
-            raise _refus(409, E.REFUS_ABONNE_ACTIF,
-                         "Tu as déjà un abonnement actif : le Pass Duo est réservé aux nouveaux.")
         raise
-    try:
-        await _essai1_garde(_email, str(_offre.get("id")), telephone=_tel_brut)
-    except HTTPException:
-        await _rouvrir()
-        raise  # 409 `free_trial_already_used` | `free_trial_already_granted`, tel quel
-
-    _vendeur = ""
-    try:
-        _vendeur = await _r2b_resoudre_vendeur([_item])
-    except Exception:  # noqa: BLE001
-        _vendeur = ""
-    _transaction_id = "duo_%s" % uuid.uuid4().hex[:12]
-    try:
-        _octroi = await _process_successful_payment(
-            transaction_id=_transaction_id, coach_email=_vendeur, customer_name=_nom,
-            customer_email=_email, customer_phone=_tel_brut, items=[_item], total=0,
-            currency="CHF", payment_method="free", discount_code=None,
-            terms_fields=_t1_champs)
-    except Exception as _err:  # noqa: BLE001
-        await _essai1_liberer(_email, telephone=_tel_brut)
-        await _rouvrir()
-        logger.error("%s octroi de l'essai en erreur (%s)", PREFIXE, type(_err).__name__)
-        raise HTTPException(status_code=500, detail="L'inscription a échoué, rien n'a été enregistré.")
-    _access_code = str((_octroi or {}).get("access_code") or "").strip().upper()
-
-    # Source ADDITIVE sur ce que l'octroi vient d'écrire (`source` d'origine
-    # intact : ESSAI-1/ESSAI-6 le lisent), + M2-A `parrainage` sur le forfait.
-    _attrib = None
-    try:
-        from api.routes.shared import m2a_resoudre
-        _attrib = await m2a_resoudre(db, _attribution_parrainage(_p, _b.get("attribution")), _email)
-    except Exception:  # noqa: BLE001
-        _attrib = None
-    try:
-        _marque = {"pass_duo_id": _p["id"], "pass_duo_role": E.ROLE_INVITEE,
-                   "acquisition_source": SOURCE}
-        await db["discount_codes"].update_one({"code": _access_code}, {"$set": dict(_marque)})
-        _maj_sub = dict(_marque)
-        if _attrib:
-            _maj_sub["attribution"] = _attrib
-        await db["subscriptions"].update_one({"code": _access_code}, {"$set": _maj_sub})
-    except Exception as _err:  # noqa: BLE001
-        logger.warning("%s marquage pass_duo non écrit (%s)", PREFIXE, type(_err).__name__)
 
     # ── 6. réservation de l'ami (transaction si disponible, rollback sinon) ──
-    async def _travail(session):
-        _r = await _reserver_seance_duo(_access_code, _email, _nom, _tel_brut, _course,
-                                        _p.get("occurrence"), _p, E.ROLE_INVITEE, True,
-                                        session=session)
-        _maj = {"status": E.transition(_s, E.FRIEND_REGISTERED),
-                "invitee_access_code": _access_code,
-                "attribution": _attrib,
-                "reservations.invitee_id": _r.get("id"),
-                "reservations.invitee_code": _r.get("reservationCode"),
-                "updated_at": _iso()}
-        _kw = {"session": session} if session is not None else {}
-        await db[COLL_PASSES].update_one(
-            {"id": _p["id"]},
-            {"$set": _maj, "$push": {"events": {"at": _iso(), "type": "friend_registered", "detail": None}}},
-            **_kw)
-        return _r
-
     try:
-        _resa_ami = await _avec_session(_travail)
+        _resa_ami = await _reserver_ami(
+            _p, _course, _access_code, _email, _nom, _tel_brut,
+            {"status": E.transition(_s, E.FRIEND_REGISTERED), "attribution": _attrib},
+            {"events": {"at": _iso(), "type": "friend_registered", "detail": None}})
     except Exception as _err:  # noqa: BLE001
         await _rollback_filleul(_p, _email, _tel_brut, _access_code)
         _detail = getattr(_err, "detail", None) if isinstance(_err, HTTPException) else None
@@ -1096,6 +1493,9 @@ async def _reponse_join(pass_doc, now) -> dict:
         "sponsor_first_name": E.prenom((pass_doc.get("sponsor") or {}).get("name")),
         "course": {k: v for k, v in E.dto_course(pass_doc).items() if k != "id"},
         "occurrence": pass_doc.get("occurrence"),
+        # V534b : l'avantage reçu (OffreDTO du pass) et la version courante.
+        "offer": E.offre_du_pass(pass_doc),
+        "version": E.version_pass(pass_doc),
     }
 
 
@@ -1149,6 +1549,7 @@ async def referral_admin_summary(request: Request):
         _statuts[_pd.get("id")] = (await _statut_reel(_pd, _now, [r for r in _resas if r.get("pass_id") == _pd.get("id")]
                                                        if _pd.get("status") == E.UNLOCKED else None))
     _sortie = E.kpi_parrainage(_passes, _invits, _resas, _statuts)
+    _sortie.update(E.kpi_offres(_passes))      # V534b : changements_offre, offre_la_plus_choisie, par_offre
     _sortie["filtres"] = {k: v for k, v in _q.items() if k != "coach_id" or _id["admin"]}
     return _sortie
 
@@ -1167,9 +1568,10 @@ async def referral_admin_passes(request: Request):
     _rows = await db[COLL_PASSES].find(_q, {"_id": 0}).sort("created_at", -1) \
         .skip((_page - 1) * LISTE_MAX).limit(LISTE_MAX).to_list(LISTE_MAX)
     _now = _maintenant()
-    _items = []
+    _items, _cache = [], {}
     for _pd in _rows:
         _resas = await _reservations_du_pass(_pd)
         _s = await _statut_reel(_pd, _now, _resas)
-        _items.append(E.dto_admin(_pd, _s, E.tickets_du_pass(_pd, _resas, _frontend_url()), _frontend_url()))
+        _items.append(E.dto_admin(_pd, _s, E.tickets_du_pass(_pd, _resas, _frontend_url()), _frontend_url(),
+                                  offers=await _catalogue_par_cours(_pd.get("course_id"), _cache)))
     return {"items": _items, "total": _total, "page": _page, "per_page": LISTE_MAX}
