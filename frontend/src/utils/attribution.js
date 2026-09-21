@@ -46,6 +46,7 @@ export const SOURCES = [
   'google', 'instagram', 'tiktok', 'youtube', 'facebook',
   'whatsapp', 'partenaire', 'direct',
   'email', 'newsletter', 'sms', 'qr', 'flyer', 'site',
+  'parrainage', // V534 : Pass Duo (ami inscrit via une invitation)
 ];
 
 /** `?ref=<slug>` = le lien partenaire court. Il est traduit, jamais stocké tel
