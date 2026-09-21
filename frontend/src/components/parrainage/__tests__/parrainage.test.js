@@ -224,12 +224,27 @@ describe('PassDuoCard — les sept états', () => {
   });
   test('sans pass → sélecteur de séance (libellé calculé) + « Créer mon Pass Duo »', async () => {
     const onCreer = jest.fn();
+    // V534: ConditionsParticipation interroge /terms/active — ici aucune condition publiée
+    axios.get.mockResolvedValue({ data: { required: false } });
     await monter(<PassDuoCard config={CONFIG} passes={[]} passAffiche={null} onCreer={onCreer} onAnnuler={jest.fn()} onConfirmer={jest.fn()} onChoisir={jest.fn()} occupe={false} erreur="" />);
     const sel = par('pass-select-seance');
     expect(sel.options.length).toBe(2);
     expect(sel.options[0].textContent).toMatch(/^Dimanche 27 sept\. · 18:30 — Bord du Lac, Auvernier$/);
     await act(async () => { par('pass-creer').click(); });
-    expect(onCreer).toHaveBeenCalledWith('c1', OCC);
+    expect(onCreer).toHaveBeenCalledWith('c1', OCC, false);
+  });
+  test('V534 conditions publiées → la création exige la case cochée, puis transmet terms_accepted=true', async () => {
+    const onCreer = jest.fn();
+    axios.get.mockResolvedValue({ data: { required: true, version: 'v1', text: 'Conditions de test' } });
+    await monter(<PassDuoCard config={CONFIG} passes={[]} passAffiche={null} onCreer={onCreer} onAnnuler={jest.fn()} onConfirmer={jest.fn()} onChoisir={jest.fn()} occupe={false} erreur="" />);
+    expect(par('pass-conditions')).not.toBeNull();
+    expect(par('pass-creer').disabled).toBe(true);
+    const cases = par('pass-conditions').querySelectorAll('input[type="checkbox"]');
+    expect(cases.length).toBeGreaterThan(0);
+    await act(async () => { cases[0].click(); });
+    expect(par('pass-creer').disabled).toBe(false);
+    await act(async () => { par('pass-creer').click(); });
+    expect(onCreer).toHaveBeenCalledWith('c1', OCC, true);
   });
   test('etapePass / passCourant / optionsSeances / libelleOccurrence', () => {
     expect([etapePass('locked'), etapePass('waiting'), etapePass('friend_registered'), etapePass('unlocked'), etapePass('used')]).toEqual([0, 1, 2, 3, 3]);

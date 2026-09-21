@@ -15,6 +15,7 @@
  * l'annulation se confirme en ligne, dans la carte.
  */
 import React, { useMemo, useState } from 'react';
+import ConditionsParticipation from '../ConditionsParticipation'; // V534: mêmes conditions de participation que l'espace abonné (ESSAI-5a-1)
 import SvgIcon from '../SvgIcon';
 import BilletsDuo from './BilletsDuo';
 import { LIBELLES_STATUT, etapePass, libelleOccurrence, libelleJour, libelleHeure } from '../../utils/parrainage';
@@ -109,11 +110,18 @@ function FormulaireCreation({ courses, onCreer, occupe, erreur }) {
   const [choix, setChoix] = useState(premiere);
   const valeur = choix || premiere;
   const plusieursCours = groupes.length > 1;
+  // V534: preuve T1 du parrain — le serveur bloque sa place (`conditions_non_acceptees`)
+  // si des conditions sont publiées et non acceptées ; sans conditions publiées, rien n'est exigé.
+  const [conditionsOk, setConditionsOk] = useState(false);
+  const [conditionsRequises, setConditionsRequises] = useState(false);
+  const idxCours = valeur.indexOf('|');
+  const coursChoisi = idxCours > 0 ? valeur.slice(0, idxCours) : '';
 
   const creer = () => {
     if (!valeur || occupe) return;
+    if (conditionsRequises && !conditionsOk) return;
     const idx = valeur.indexOf('|');
-    onCreer(valeur.slice(0, idx), valeur.slice(idx + 1));
+    onCreer(valeur.slice(0, idx), valeur.slice(idx + 1), conditionsOk);
   };
 
   if (!groupes.length) {
@@ -139,8 +147,15 @@ function FormulaireCreation({ courses, onCreer, occupe, erreur }) {
       </select>
       <Duo pass={null} />
       <Stepper status="locked" />
+      {coursChoisi ? (
+        <div className="cp-conditions" data-testid="pass-conditions">
+          <ConditionsParticipation courseId={coursChoisi} accepte={conditionsOk}
+                                   onChange={setConditionsOk} onRequired={setConditionsRequises} />
+        </div>
+      ) : null}
       {erreur ? <p className="cp-error" role="alert">{erreur}</p> : null}
-      <button type="button" className="cp-b" onClick={creer} disabled={occupe || !valeur} data-testid="pass-creer">
+      <button type="button" className="cp-b" onClick={creer}
+              disabled={occupe || !valeur || (conditionsRequises && !conditionsOk)} data-testid="pass-creer">
         <SvgIcon name="plus" size={20} />
         {occupe ? 'Création…' : 'Créer mon Pass Duo'}
       </button>
@@ -151,6 +166,7 @@ function FormulaireCreation({ courses, onCreer, occupe, erreur }) {
 
 function EtatPass({ pass, initialeParrain, urlEspace, onAnnuler, onConfirmer, onNouveau, occupe, erreur }) {
   const [confirmAnnulation, setConfirmAnnulation] = useState(false);
+  const [conditionsConfirm, setConditionsConfirm] = useState(false); // V534: preuve T1 au moment de /confirm
   const s = pass.status;
   const course = pass.course || {};
   const quand = libelleOccurrence(pass.occurrence, course.locationName);
@@ -224,9 +240,20 @@ function EtatPass({ pass, initialeParrain, urlEspace, onAnnuler, onConfirmer, on
         </>
       )}
       {s === 'friend_registered' && !bloqueSansSeance && (
-        <button type="button" className="cp-b" onClick={() => onConfirmer(pass.id)} disabled={occupe} data-testid="pass-confirmer">
-          <SvgIcon name="check" size={20} /> {occupe ? 'Confirmation…' : 'Confirmer ma place'}
-        </button>
+        <>
+          {/* V534: place bloquée faute d'acceptation des conditions (`conditions_non_acceptees`) :
+              la même case que l'espace abonné, puis confirmation avec la preuve. */}
+          {pass.blocked_reason === 'conditions_non_acceptees' ? (
+            <div className="cp-conditions" data-testid="pass-conditions-confirm">
+              <ConditionsParticipation courseId={pass.course && pass.course.id} accepte={conditionsConfirm}
+                                       onChange={setConditionsConfirm} />
+            </div>
+          ) : null}
+          <button type="button" className="cp-b" onClick={() => onConfirmer(pass.id, conditionsConfirm)}
+                  disabled={occupe || (pass.blocked_reason === 'conditions_non_acceptees' && !conditionsConfirm)} data-testid="pass-confirmer">
+            <SvgIcon name="check" size={20} /> {occupe ? 'Confirmation…' : 'Confirmer ma place'}
+          </button>
+        </>
       )}
 
       {ouvert && !confirmAnnulation && (
@@ -287,7 +314,7 @@ function ListePasses({ passes, courantId, onChoisir }) {
  * @param {object}   passAffiche     le pass montré dans la carte (ou null)
  * @param {string}   initialeParrain initiale du prénom du parrain
  * @param {string}   urlEspace       `/espace/<code>` pour « Réserver / Recharger »
- * @param {function} onCreer(course_id, occurrence)
+ * @param {function} onCreer(course_id, occurrence, terms_accepted)
  * @param {function} onAnnuler(passId)
  * @param {function} onConfirmer(passId)
  * @param {function} onChoisir(passId)
@@ -314,7 +341,7 @@ export default function PassDuoCard({
 
         {montrerFormulaire ? (
           <>
-            <FormulaireCreation courses={config && config.courses} onCreer={(c, o) => { setCreation(false); onCreer(c, o); }} occupe={occupe} erreur={erreur} />
+            <FormulaireCreation courses={config && config.courses} onCreer={(c, o, t) => { setCreation(false); onCreer(c, o, t); }} occupe={occupe} erreur={erreur} />
             {passAffiche ? (
               <button type="button" className="cp-link" onClick={() => setCreation(false)} style={{ marginTop: 12 }}>
                 <SvgIcon name="arrowLeft" size={14} /> Revenir à mon Pass

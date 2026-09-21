@@ -217,9 +217,10 @@ export default function CentreParrainage() {
       });
   };
 
-  const creerPass = (course_id, occurrence) => {
+  const creerPass = (course_id, occurrence, terms_accepted) => {
     setOccupe(true); setErreurPass('');
-    axios.post(`${API_PARRAINAGE}/pass`, { course_id, occurrence }, { headers: enteteParrain() })
+    // V534: `terms_accepted` = la case ConditionsParticipation du formulaire (preuve T1 du parrain, jamais inventée)
+    axios.post(`${API_PARRAINAGE}/pass`, { course_id, occurrence, terms_accepted: terms_accepted === true }, { headers: enteteParrain() })
       .then((r) => {
         poserPass(r.data);
         if (r.data && r.data.deja_existant) setFeedback('Tu as déjà un Pass Duo pour cette séance');
@@ -242,16 +243,20 @@ export default function CentreParrainage() {
       })
       .finally(() => setOccupe(false));
   };
-  const confirmerPass = (id) => {
+  const confirmerPass = (id, terms_accepted) => {
     setOccupe(true); setErreurPass('');
-    axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(id)}/confirm`, {}, { headers: enteteParrain() })
+    // V534: la preuve T1 n'est envoyée que si la case a été cochée (jamais inventée)
+    const corps = terms_accepted === true ? { terms_accepted: true } : {};
+    axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(id)}/confirm`, corps, { headers: enteteParrain() })
       .then((r) => poserPass(r.data))
       .catch((e) => {
         const s = e && e.response && e.response.status;
         const raison = e && e.response && e.response.headers && e.response.headers['x-refus-raison'];
         setErreurPass(s === 409 && raison === 'sponsor_sans_seance'
           ? 'Toujours aucune séance disponible : réserve ou recharge, puis confirme.'
-          : 'Confirmation impossible pour le moment.');
+          : s === 409 && raison === 'conditions_non_acceptees'
+            ? 'Accepte les conditions de participation pour confirmer ta place.'
+            : 'Confirmation impossible pour le moment.');
       })
       .finally(() => setOccupe(false));
   };

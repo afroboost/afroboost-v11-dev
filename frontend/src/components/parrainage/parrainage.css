@@ -293,3 +293,6 @@
   .cp-stats { gap: 6px; }
   .cp-stat b { font-size: 22px; }
 }
+
+/* V534: case des conditions de participation dans le formulaire Pass Duo */
+.cp-conditions{margin:12px 0 4px}
