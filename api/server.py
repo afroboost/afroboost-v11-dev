@@ -733,6 +733,14 @@ class Course(BaseModel):
     # V534: Pass Duo (parrainage). ABSENT VAUT NON — aucun cours existant n'est
     # ouvert au parrainage sans que l'admin ne le coche ; aucune migration.
     duo_enabled: Optional[bool] = None
+    # V534b: le CATALOGUE AUTORISÉ du Pass Duo, par cours — les offres (0 CHF)
+    # que le participant peut choisir. ABSENT VAUT AUCUNE OFFRE : le cours n'est
+    # alors pas proposable au Pass Duo, même avec `duo_enabled` (`/config`
+    # l'omet et le journalise). `duo_default_offer_id` = la « Recommandée »,
+    # présélectionnée à l'écran, jamais imposée. Déclarés ici parce que
+    # `/courses` a un `response_model` en `extra="ignore"`.
+    duo_offer_ids: Optional[List[str]] = None
+    duo_default_offer_id: Optional[str] = None
 
 class CourseCreate(BaseModel):
     name: str
