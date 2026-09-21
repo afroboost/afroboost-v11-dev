@@ -21,6 +21,25 @@ const M1GEO1_REGIONS = [
   { valeur: 'lausanne', libelle: 'Lausanne' }
 ];
 
+// V534b — Pass Duo V1 : seules les offres OFFERTES (prix 0) peuvent être
+// autorisées ; le serveur refuse les autres (400 `offre_payante`). La case
+// d'une offre payante est désactivée, avec la note « Pass Duo V1 : offres
+// offertes uniquement ». Pure, testable.
+export const NOTE_OFFRE_PAYANTE = 'Pass Duo V1 : offres offertes uniquement';
+export const AVERT_AUCUNE_OFFRE = 'Coche au moins une offre, sinon ce cours n’apparaîtra pas dans le Pass Duo';
+export function offreAutorisablePassDuo(offre) {
+  return !!offre && !offre.archived && Number(offre.price) === 0;
+}
+/** La liste `duo_offer_ids` après (dé)cochage, et la recommandée nettoyée si elle n'est plus cochée. */
+export function basculerOffreDuo(course, offerId) {
+  const ids = Array.isArray(course.duo_offer_ids) ? course.duo_offer_ids.map(String) : [];
+  const id = String(offerId);
+  const suivants = ids.indexOf(id) >= 0 ? ids.filter((x) => x !== id) : ids.concat([id]);
+  const reco = course.duo_default_offer_id && suivants.indexOf(String(course.duo_default_offer_id)) >= 0
+    ? course.duo_default_offer_id : null;
+  return { duo_offer_ids: suivants, duo_default_offer_id: reco };
+}
+
 const CoursesManager = ({
   courses,
   setCourses,
@@ -31,7 +50,8 @@ const CoursesManager = ({
   hideAudioButton = false,
   lang,
   t,
-  coachEmail
+  coachEmail,
+  offers = [] // V534b: les offres du coach, pour le catalogue autorisé du Pass Duo
 }) => {
   // V371 : message d'erreur VISIBLE. Jusqu'ici, un archivage refusé par le serveur
   // ne partait que dans `console.error` : le coach croyait son cours supprimé alors
@@ -379,6 +399,76 @@ const CoursesManager = ({
                   )}
                 </span>
               </div>
+              {/* V534b : « Offres autorisées » — le catalogue du Pass Duo pour CE cours.
+                  Cases à cocher sur les offres du coach (`duo_offer_ids`), sélectionnables
+                  seulement si le prix est 0 (Pass Duo V1) ; radio « Recommandée » facultative
+                  et désélectionnable (`duo_default_offer_id`). Tout part par le PUT partiel
+                  existant (updateCourse) et se relit à l'affichage. Aucune couleur en dur. */}
+              {course.duo_enabled === true && (() => {
+                const idsAutorises = (Array.isArray(course.duo_offer_ids) ? course.duo_offer_ids : []).map(String);
+                const listeOffres = (Array.isArray(offers) ? offers : []).filter((o) => o && o.id && !o.archived);
+                const poser = (champs) => {
+                  const n = [...courses];
+                  const realIdx = courses.findIndex(c => c.id === course.id);
+                  n[realIdx] = { ...n[realIdx], ...champs };
+                  setCourses(n);
+                  updateCourse({ ...course, ...champs });
+                };
+                return (
+                  <div className="mt-3 rounded-xl p-3" data-testid={`course-duo-offres-${course.id}`}
+                       style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.25)', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)' }}>
+                    <div className="text-xs font-semibold tracking-widest uppercase mb-2" style={{ color: 'var(--primary-color, #D91CD2)' }}>
+                      Offres autorisées
+                    </div>
+                    {listeOffres.length === 0 ? (
+                      <p className="text-white text-xs opacity-60 m-0">Aucune offre pour le moment : crée d’abord une offre offerte (0 CHF).</p>
+                    ) : listeOffres.map((o) => {
+                      const cochee = idsAutorises.indexOf(String(o.id)) >= 0;
+                      const autorisable = offreAutorisablePassDuo(o);
+                      const recommandee = cochee && String(course.duo_default_offer_id || '') === String(o.id);
+                      return (
+                        <div key={o.id} className="flex items-start gap-3 py-1.5" data-testid={`course-duo-offre-${course.id}-${o.id}`}
+                             style={{ opacity: autorisable ? 1 : 0.55 }}>
+                          <label className="flex items-start gap-2 flex-1 min-w-0 cursor-pointer">
+                            <input type="checkbox" checked={cochee} disabled={!autorisable}
+                                   onChange={() => poser(basculerOffreDuo(course, o.id))}
+                                   style={{ accentColor: 'var(--primary-color, #D91CD2)', marginTop: 3 }}
+                                   data-testid={`course-duo-offre-case-${course.id}-${o.id}`} />
+                            <span className="min-w-0">
+                              <span className="text-white text-sm block truncate">{o.name}</span>
+                              <span className="text-white text-xs opacity-60 block">
+                                {Number(o.price) === 0 ? 'Offerte' : `${o.price} CHF`}
+                                {!autorisable ? ` · ${NOTE_OFFRE_PAYANTE}` : ''}
+                              </span>
+                            </span>
+                          </label>
+                          {cochee ? (
+                            <label className="flex items-center gap-1.5 text-xs whitespace-nowrap cursor-pointer"
+                                   style={{ color: recommandee ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.6)' }}>
+                              <input type="radio" name={`duo-reco-${course.id}`} checked={recommandee}
+                                     onClick={() => poser({ duo_default_offer_id: recommandee ? null : o.id })}
+                                     onChange={() => {}}
+                                     style={{ accentColor: 'var(--primary-color, #D91CD2)' }}
+                                     data-testid={`course-duo-offre-reco-${course.id}-${o.id}`} />
+                              Recommandée
+                            </label>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                    {idsAutorises.filter((id) => listeOffres.some((o) => String(o.id) === id && offreAutorisablePassDuo(o))).length === 0 ? (
+                      <p className="text-xs mt-2 mb-0 inline-flex items-center gap-1.5" role="alert"
+                         style={{ color: 'rgba(240, 198, 116, 0.95)' }} data-testid={`course-duo-avert-${course.id}`}>
+                        <SvgIcon name="warning" size={14} /> {AVERT_AUCUNE_OFFRE}
+                      </p>
+                    ) : (
+                      <p className="text-white text-xs opacity-50 mt-2 mb-0">
+                        La recommandée est présélectionnée pour le participant, jamais imposée.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* === v88: Bouton Demande d'avis === */}

@@ -3,12 +3,15 @@
  *
  * Une seule carte, deux visages :
  *   - SANS pass courant : le sélecteur de séance éligible (libellé calculé
- *     depuis `occurrences[]` + `locationName` de GET /config) et « Créer mon
- *     Pass Duo » ;
+ *     depuis `occurrences[]` + `locationName` de GET /config), le choix de
+ *     l'offre (V534b : cartes radio depuis `course.offers`, recommandée
+ *     présélectionnée mais jamais imposée) et « Créer mon Pass Duo » ;
  *   - AVEC pass courant : l'état du pass — duo Toi / Ton ami, stepper à 4
  *     crans (Verrouillé → En attente → Ami inscrit → Débloqué), cadenas qui
  *     devient un check, billets quand c'est débloqué, et les actions qui ont un
- *     sens dans cet état (Confirmer ma place, Réserver / Recharger, Annuler).
+ *     sens dans cet état (Confirmer ma place, Réserver / Recharger, Annuler),
+ *     plus l'« Offre actuelle » et le lien discret « Changer d'offre » (V534b :
+ *     bottom sheet ≤ 640 px, une seule action, PATCH porté par le parent).
  *
  * Elle ne parle PAS au réseau : le parent (CentreParrainage) porte les appels
  * et lui rend l'état mis à jour depuis la réponse. Pas de `window.confirm` :
@@ -18,7 +21,11 @@ import React, { useMemo, useState } from 'react';
 import ConditionsParticipation from '../ConditionsParticipation'; // V534: mêmes conditions de participation que l'espace abonné (ESSAI-5a-1)
 import SvgIcon from '../SvgIcon';
 import BilletsDuo from './BilletsDuo';
-import { LIBELLES_STATUT, etapePass, libelleOccurrence, libelleJour, libelleHeure } from '../../utils/parrainage';
+import { SelecteurOffres, EncartOffre, SheetOffres } from './OffresDuo'; // V534b: l'offre est choisie par le participant
+import {
+  LIBELLES_STATUT, etapePass, libelleOccurrence, libelleJour, libelleHeure,
+  offreDuPass, offresDe, offrePreselectionnee, TEXTE_OFFRE_UTILISEE, NOTE_OFFRE_PASS,
+} from '../../utils/parrainage';
 
 /** Texte EXACT du contrat pour un parrain sans séance disponible. */
 export const TEXTE_SPONSOR_SANS_SEANCE = 'Ton Pass Duo est prêt, mais tu dois disposer d’une séance pour confirmer ta place.';
@@ -117,11 +124,27 @@ function FormulaireCreation({ courses, onCreer, occupe, erreur }) {
   const idxCours = valeur.indexOf('|');
   const coursChoisi = idxCours > 0 ? valeur.slice(0, idxCours) : '';
 
+  // V534b: l'offre du Pass, choisie ici. Le catalogue vient de `course.offers`
+  // (GET /config) : la recommandée est présélectionnée mais modifiable ; une
+  // seule offre → encart sans sélecteur ; plusieurs sans recommandée → rien de
+  // présélectionné et le bouton reste désactivé. `offers` absent (serveur
+  // antérieur) → aucun sélecteur, `offer_id` null. Le choix est mémorisé PAR
+  // cours (dérivé, sans effet) : changer de séance revient à la présélection.
+  const coursObjet = (Array.isArray(courses) ? courses : []).find((c) => c && String(c.id) === String(coursChoisi)) || null;
+  const offresConnues = !!(coursObjet && Array.isArray(coursObjet.offers));
+  const offres = offresDe(coursObjet);
+  const [choixOffre, setChoixOffre] = useState({ cours: '', id: null });
+  const offreChoisie = choixOffre.cours === coursChoisi && choixOffre.id != null
+    ? choixOffre.id
+    : offrePreselectionnee(offres, coursObjet && coursObjet.default_offer_id);
+  const offreManquante = offresConnues && (offreChoisie == null || !offres.some((o) => String(o.id) === String(offreChoisie)));
+
   const creer = () => {
     if (!valeur || occupe) return;
     if (conditionsRequises && !conditionsOk) return;
+    if (offreManquante) return;
     const idx = valeur.indexOf('|');
-    onCreer(valeur.slice(0, idx), valeur.slice(idx + 1), conditionsOk);
+    onCreer(valeur.slice(0, idx), valeur.slice(idx + 1), conditionsOk, offresConnues ? offreChoisie : null);
   };
 
   if (!groupes.length) {
@@ -145,6 +168,16 @@ function FormulaireCreation({ courses, onCreer, occupe, erreur }) {
           ))
           : groupes[0].options.map((o) => <option key={o.valeur} value={o.valeur}>{o.libelle}</option>)}
       </select>
+      {offresConnues && offres.length === 0 ? (
+        <p className="cp-error" role="alert" data-testid="offre-aucune">Aucune offre n'est disponible pour cette séance pour le moment.</p>
+      ) : null}
+      {offresConnues && offres.length === 1 ? (
+        <EncartOffre titre="Offre" offre={offres[0]} testid="offre-encart-creation" note={NOTE_OFFRE_PASS} />
+      ) : null}
+      {offresConnues && offres.length > 1 ? (
+        <SelecteurOffres titre="Choisis ton offre" offres={offres} choix={offreChoisie} name={`cp-creation-${coursChoisi}`}
+                         onChoisir={(id) => setChoixOffre({ cours: coursChoisi, id })} disabled={occupe} />
+      ) : null}
       <Duo pass={null} />
       <Stepper status="locked" />
       {coursChoisi ? (
@@ -155,7 +188,7 @@ function FormulaireCreation({ courses, onCreer, occupe, erreur }) {
       ) : null}
       {erreur ? <p className="cp-error" role="alert">{erreur}</p> : null}
       <button type="button" className="cp-b" onClick={creer}
-              disabled={occupe || !valeur || (conditionsRequises && !conditionsOk)} data-testid="pass-creer">
+              disabled={occupe || !valeur || (conditionsRequises && !conditionsOk) || offreManquante} data-testid="pass-creer">
         <SvgIcon name="plus" size={20} />
         {occupe ? 'Création…' : 'Créer mon Pass Duo'}
       </button>
@@ -164,9 +197,14 @@ function FormulaireCreation({ courses, onCreer, occupe, erreur }) {
   );
 }
 
-function EtatPass({ pass, initialeParrain, urlEspace, onAnnuler, onConfirmer, onNouveau, occupe, erreur }) {
+function EtatPass({ pass, initialeParrain, urlEspace, onAnnuler, onConfirmer, onNouveau, onChangerOffre, occupe, erreur }) {
   const [confirmAnnulation, setConfirmAnnulation] = useState(false);
   const [conditionsConfirm, setConditionsConfirm] = useState(false); // V534: preuve T1 au moment de /confirm
+  // V534b: changement d'offre — sheet, message (conflit de version), refus du serveur, texte « used »
+  const [sheetOffre, setSheetOffre] = useState(false);
+  const [messageOffre, setMessageOffre] = useState('');
+  const [erreurOffre, setErreurOffre] = useState('');
+  const [noteUtilisee, setNoteUtilisee] = useState(false);
   const s = pass.status;
   const course = pass.course || {};
   const quand = libelleOccurrence(pass.occurrence, course.locationName);
@@ -174,6 +212,25 @@ function EtatPass({ pass, initialeParrain, urlEspace, onAnnuler, onConfirmer, on
   const debloque = s === 'unlocked' || s === 'used';
   const ferme = s === 'expired' || s === 'cancelled';
   const bloqueSansSeance = s === 'friend_registered' && pass.blocked_reason === 'sponsor_sans_seance';
+  const offre = offreDuPass(pass);
+  const offresCatalogue = offresDe(pass);
+  // Le lien « Changer d'offre » reste visible pour un pass `used` (il explique) ; jamais pour expiré/annulé.
+  const lienOffre = !!offre && !ferme && typeof onChangerOffre === 'function';
+
+  const ouvrirSheet = () => {
+    if (s === 'used') { setNoteUtilisee((v) => !v); return; }
+    setMessageOffre(''); setErreurOffre(''); setSheetOffre(true);
+  };
+  const choisirOffre = (offerId) => {
+    setErreurOffre('');
+    Promise.resolve(onChangerOffre(pass.id, offerId, pass.version)).then((r) => {
+      const res = r || {};
+      if (res.ok) { setSheetOffre(false); setMessageOffre(''); return; }
+      // 409 conflit_version : le parent a rechargé /me UNE fois ; on réaffiche avec le message.
+      setMessageOffre(res.conflit ? (res.message || '') : '');
+      setErreurOffre(res.conflit ? '' : (res.message || 'Changement impossible pour le moment.'));
+    });
+  };
 
   return (
     <>
@@ -183,6 +240,25 @@ function EtatPass({ pass, initialeParrain, urlEspace, onAnnuler, onConfirmer, on
           <b>{course.name ? `${course.name} · ` : ''}{quand}</b>
         </span>
       </p>
+
+      {offre ? (
+        <EncartOffre titre="Offre actuelle" offre={offre} note={NOTE_OFFRE_PASS} testid="offre-actuelle">
+          {lienOffre ? (
+            <button type="button" className="cp-link cp-offre-lien" onClick={ouvrirSheet} disabled={occupe} data-testid="offre-changer">
+              <SvgIcon name="refresh" size={14} /> Changer d'offre
+            </button>
+          ) : null}
+          {noteUtilisee && s === 'used' ? (
+            <p className="cp-mini" role="status" data-testid="offre-utilisee">{TEXTE_OFFRE_UTILISEE}</p>
+          ) : null}
+        </EncartOffre>
+      ) : null}
+
+      {sheetOffre ? (
+        <SheetOffres offres={offresCatalogue} actuelleId={offre ? offre.id : null} onChoisir={choisirOffre}
+                     onFermer={() => setSheetOffre(false)} occupe={occupe} message={messageOffre} erreur={erreurOffre}
+                     titre="Changer d'offre" name={`cp-pass-${pass.id}`} />
+      ) : null}
 
       {debloque ? (
         <div className="cp-roundic cp-roundic--ok" data-testid="pass-rond-ok" style={{ margin: '16px auto 4px' }}>
@@ -314,16 +390,17 @@ function ListePasses({ passes, courantId, onChoisir }) {
  * @param {object}   passAffiche     le pass montré dans la carte (ou null)
  * @param {string}   initialeParrain initiale du prénom du parrain
  * @param {string}   urlEspace       `/espace/<code>` pour « Réserver / Recharger »
- * @param {function} onCreer(course_id, occurrence, terms_accepted)
+ * @param {function} onCreer(course_id, occurrence, terms_accepted, offer_id)   V534b: + offer_id (null si serveur sans catalogue)
  * @param {function} onAnnuler(passId)
  * @param {function} onConfirmer(passId)
  * @param {function} onChoisir(passId)
+ * @param {function} onChangerOffre(passId, offer_id, version) → Promise<{ok, conflit?, message?}>   V534b
  * @param {boolean}  occupe          un appel est en cours
  * @param {string}   erreur          message d'erreur du dernier appel
  */
 export default function PassDuoCard({
   config, passes, passAffiche, initialeParrain, urlEspace,
-  onCreer, onAnnuler, onConfirmer, onChoisir, occupe, erreur,
+  onCreer, onAnnuler, onConfirmer, onChoisir, onChangerOffre, occupe, erreur,
 }) {
   const [creation, setCreation] = useState(false);
   const liste = Array.isArray(passes) ? passes : [];
@@ -341,7 +418,7 @@ export default function PassDuoCard({
 
         {montrerFormulaire ? (
           <>
-            <FormulaireCreation courses={config && config.courses} onCreer={(c, o, t) => { setCreation(false); onCreer(c, o, t); }} occupe={occupe} erreur={erreur} />
+            <FormulaireCreation courses={config && config.courses} onCreer={(c, o, t, of) => { setCreation(false); onCreer(c, o, t, of); }} occupe={occupe} erreur={erreur} />
             {passAffiche ? (
               <button type="button" className="cp-link" onClick={() => setCreation(false)} style={{ marginTop: 12 }}>
                 <SvgIcon name="arrowLeft" size={14} /> Revenir à mon Pass
@@ -356,6 +433,7 @@ export default function PassDuoCard({
             onAnnuler={onAnnuler}
             onConfirmer={onConfirmer}
             onNouveau={() => setCreation(true)}
+            onChangerOffre={onChangerOffre}
             occupe={occupe}
             erreur={erreur}
           />

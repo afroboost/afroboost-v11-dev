@@ -14,15 +14,25 @@
  * REFUS : 409 lus dans l'en-tête `X-Refus-Raison` → messages FR précis ; 410 →
  * « Cette invitation a expiré » ; 404 → « Invitation introuvable » ; drapeau
  * OFF → « Invitation indisponible ».
+ *
+ * V534b — L'OFFRE : `GET /pass/{token}` porte `offer` (celle du pass), `offers`
+ * (le catalogue courant du cours) et `version`. Entre la séance et le
+ * formulaire : « OFFRE — nom / avantage / Offerte » + [Cette offre me convient]
+ * (déplie le formulaire) + [Voir les autres offres] (absent si une seule offre)
+ * → même sélecteur (bottom sheet) → `PATCH /pass/{token}/offer {offer_id,
+ * version}` (public, avant inscription) → puis le formulaire. Après
+ * l'inscription, l'ami ne change plus rien : seul le parrain le peut.
  */
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import SvgIcon from '../SvgIcon';
 import BilletsDuo from './BilletsDuo';
+import { EncartOffre, SheetOffres } from './OffresDuo'; // V534b
 import { attributionActuelle } from '../../utils/attribution';
 import {
   API_PARRAINAGE, enteteParrain, aUneIdentiteParrain, libelleJour, libelleHeure,
   messageRefus, messageErreurInvitation,
+  offreDuPass, offresDe, changerOffre, lireRefus, messageRefusOffre, TEXTE_OFFRE_CONFLIT, // V534b
 } from '../../utils/parrainage';
 import './parrainage.css';
 
@@ -97,6 +107,12 @@ export default function InvitationDuo({ token }) {
   const [envoi, setEnvoi] = useState(false);
   const [erreur, setErreur] = useState('');
   const [resultat, setResultat] = useState(null); // {status, tickets, blocked_reason}
+  // V534b: l'offre — le formulaire ne se déplie qu'après « Cette offre me convient »
+  const [offreOk, setOffreOk] = useState(false);
+  const [sheetOffre, setSheetOffre] = useState(false);
+  const [offreOccupe, setOffreOccupe] = useState(false);
+  const [offreMessage, setOffreMessage] = useState('');
+  const [offreErreur, setOffreErreur] = useState('');
 
   useEffect(() => {
     let vivant = true;
@@ -135,6 +151,35 @@ export default function InvitationDuo({ token }) {
       .catch(() => { /* pas abonné, ou pas le sien : rien à dire */ });
     return () => { vivant = false; };
   }, [etat, token]);
+
+  // V534b: le choix de l'ami part par le PATCH public, avec la `version` du pass ;
+  // 409 conflit_version → UN rechargement de GET /pass/{token}, puis le sélecteur
+  // se réaffiche avec le message ; 409 pass_deja_rejoint / 400 → message précis.
+  const choisirOffre = (offerId) => {
+    if (!pass || offreOccupe) return;
+    setOffreOccupe(true); setOffreErreur('');
+    changerOffre({ token, offerId, version: pass.version })
+      .then((r) => {
+        const d = (r && r.data) || {};
+        setPass((prev) => Object.assign({}, prev || {}, d.offer ? d : {
+          offer: offresDe(prev).find((o) => String(o.id) === String(offerId)) || (prev && prev.offer),
+          version: Number(prev && prev.version) + 1 || 1,
+        }));
+        setOffreMessage(''); setSheetOffre(false); setOffreOk(true);
+      })
+      .catch((e) => {
+        const refus = lireRefus(e);
+        if (refus.status === 409 && refus.raison === 'conflit_version') {
+          return axios.get(`${API_PARRAINAGE}/pass/${encodeURIComponent(token)}`, { timeout: 10000 })
+            .then((r) => { const d = (r && r.data) || {}; setPass((prev) => Object.assign({}, prev || {}, d)); })
+            .catch(() => { /* on garde l'état connu */ })
+            .then(() => { setOffreMessage(TEXTE_OFFRE_CONFLIT); });
+        }
+        setOffreErreur(messageRefusOffre(refus));
+        return undefined;
+      })
+      .finally(() => setOffreOccupe(false));
+  };
 
   const champ = (k) => (e) => {
     const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
@@ -217,6 +262,9 @@ export default function InvitationDuo({ token }) {
           </p>
         </div>
         <CarteSeance course={pass.course} occurrence={pass.occurrence} />
+        {offreDuPass(resultat) || offreDuPass(pass) ? (
+          <EncartOffre titre="Ton offre" offre={offreDuPass(resultat) || offreDuPass(pass)} testid="offre-recue" />
+        ) : null}
         <BilletsDuo tickets={resultat.tickets} />
         <p className="cp-center cp-fine">Tu recevras aussi ton billet par e-mail.</p>
       </Cadre>
@@ -225,11 +273,16 @@ export default function InvitationDuo({ token }) {
 
   // ── Invitation + formulaire ───────────────────────────────────────────────
   const dejaRejoint = pass.status === 'friend_registered' || pass.status === 'unlocked' || pass.status === 'used';
+  // V534b: l'offre du pass et son catalogue. Sans `offer` (serveur antérieur) : formulaire direct, comme avant.
+  const offre = offreDuPass(pass);
+  const offres = offresDe(pass);
+  const plusieursOffres = offres.length > 1;
+  const formulaireVisible = !offre || offreOk || dejaRejoint;
   return (
     <Cadre>
       <div className="cp-eyebrow" data-testid="invitation-de">Invitation de {prenom}</div>
       <h1 className="cp-h1">Rejoins son <em className="cp-em">Pass Duo</em></h1>
-      <p className="cp-lead">Ton essai gratuit est débloqué dès ton inscription.</p>
+      <p className="cp-lead">{offre ? 'Ton offre est débloquée dès ton inscription.' : 'Ton essai gratuit est débloqué dès ton inscription.'}</p>
 
       {monLien ? (
         <div className="cp-notice" data-testid="invitation-mon-lien">
@@ -239,12 +292,43 @@ export default function InvitationDuo({ token }) {
 
       <CarteSeance course={pass.course} occurrence={pass.occurrence} />
 
+      {offre ? (
+        <EncartOffre titre="Offre" offre={offre} testid="invitation-offre"
+                     note={dejaRejoint ? null : `${prenom} t'offre cette offre : tu la reçois à ton inscription.`}>
+          {!dejaRejoint && !offreOk ? (
+            <div className="cp-offre-actions">
+              <button type="button" className="cp-b" onClick={() => setOffreOk(true)} data-testid="offre-convient">
+                <SvgIcon name="check" size={20} /> Cette offre me convient
+              </button>
+              {plusieursOffres ? (
+                <button type="button" className="cp-b cp-b--ghost" onClick={() => { setOffreMessage(''); setOffreErreur(''); setSheetOffre(true); }} data-testid="offre-voir-autres">
+                  <SvgIcon name="layers" size={20} /> Voir les autres offres
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {!dejaRejoint && offreOk && plusieursOffres ? (
+            <button type="button" className="cp-link cp-offre-lien" onClick={() => { setOffreMessage(''); setOffreErreur(''); setSheetOffre(true); }} data-testid="offre-voir-autres">
+              <SvgIcon name="refresh" size={14} /> Voir les autres offres
+            </button>
+          ) : null}
+          {offreErreur && !sheetOffre ? <p className="cp-error" role="alert" data-testid="offre-erreur">{offreErreur}</p> : null}
+        </EncartOffre>
+      ) : null}
+
+      {sheetOffre ? (
+        <SheetOffres offres={offres} actuelleId={offre ? offre.id : null} onChoisir={choisirOffre}
+                     onFermer={() => setSheetOffre(false)} occupe={offreOccupe} message={offreMessage} erreur={offreErreur}
+                     titre="Choisis ton offre" name="cp-invitation-offre" />
+      ) : null}
+
       {dejaRejoint ? (
         <div className="cp-notice" data-testid="invitation-deja-rejoint">
           Un ami a déjà rejoint ce Pass Duo. Si c'est toi, saisis les mêmes coordonnées pour retrouver ton billet.
         </div>
       ) : null}
 
+      {formulaireVisible ? (
       <form onSubmit={soumettre} noValidate data-testid="invitation-form">
         <input className="cp-input" placeholder="Prénom" value={form.name} onChange={champ('name')} autoComplete="given-name" required data-testid="invitation-prenom" />
         <input className="cp-input" type="email" placeholder="E-mail" value={form.email} onChange={champ('email')} autoComplete="email" required data-testid="invitation-email" />
@@ -262,6 +346,7 @@ export default function InvitationDuo({ token }) {
           <SvgIcon name="users" size={20} /> {envoi ? 'Inscription…' : "M'inscrire et débloquer le duo"}
         </button>
       </form>
+      ) : null}
       <p className="cp-fine cp-center" style={{ marginTop: 14 }}>
         Une seule invitation par personne et par séance. L'essai gratuit Afroboost est unique : si tu l'as déjà utilisé, on te le dira ici.
       </p>
