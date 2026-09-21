@@ -9,6 +9,7 @@ import axios from 'axios';
 // jeton, même navigation directe. On importe le module (ES6) ; le corps ES5 de
 // ce fichier n'en est pas affecté — c'est juste un appel de fonction.
 import { prechargerSpordate, entrerDansSpordate } from '../utils/spordateHandoff';
+import { parrainageActifCache, lienWhatsApp, copier as parrainageCopier } from '../utils/parrainage'; // V534 : lectures synchrones, zéro réseau
 import ConditionsParticipation from './ConditionsParticipation'; // ESSAI-5a-1
 import { io } from 'socket.io-client';
 import { 
@@ -8343,6 +8344,24 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         Mon profil
                       </button>
 
+                      {/* V534 : « Parrainage » — même gabarit que « Mon profil ». Visible
+                          seulement si le CACHE dit le programme ouvert (aucun réseau ici). */}
+                      {!isCoachMode && parrainageActifCache() && (
+                        <button
+                          onClick={() => { setShowUserMenu(false); window.location.href = '/parrainage'; }}
+                          style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '12px', textAlign: 'left' }}
+                          className="hover:bg-white/10"
+                          data-testid="open-parrainage"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                            <circle cx="9" cy="7" r="4" />
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+                          </svg>
+                          Parrainage
+                        </button>
+                      )}
+
                       <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
 
                       {/* v84: Dashboard uniquement en Mode Coach, sinon Devenir Partenaire pour tous (abonnés + visiteurs) */}
@@ -11394,6 +11413,74 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                   </div>
                 )}
 
+
+                {/* V534 : MINI-CARTE « INVITER UN AMI » — sous « Mes Abonnements », avant
+                    les onglets. Style de la carte d'abonnement (l.11298-11303), ≤ 90 px.
+                    Garde : abonné identifié ET cache Parrainage ouvert. ZÉRO réseau au
+                    montage, zéro minuteur, zéro état nouveau : le lien partagé est celui
+                    du Centre (/parrainage) — aucun pass n'est connu ici sans appel. */}
+                {!isCoachMode && afroboostProfile && afroboostProfile.code && parrainageActifCache() && (function() {
+                  var v534Lien = window.location.origin + '/parrainage';
+                  var v534Texte = 'Rejoins-moi à Afroboost : on vient à deux avec mon Pass Duo ' + v534Lien;
+                  var v534Btn = {
+                    flex: 1, height: '36px', borderRadius: '18px', border: 'none', cursor: 'pointer',
+                    color: '#fff', fontSize: '12px', fontWeight: 600, fontFamily: 'inherit',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
+                  };
+                  var v534Copier = function(e) {
+                    var btn = e.currentTarget;
+                    parrainageCopier(v534Lien).then(function(ok) {
+                      if (!btn || !btn.lastChild) return;
+                      var avant = btn.lastChild.textContent;
+                      btn.lastChild.textContent = ok ? 'Copié' : 'Impossible';
+                      setTimeout(function() { if (btn.lastChild) btn.lastChild.textContent = avant; }, 2000);
+                    });
+                  };
+                  return React.createElement('div', {
+                    'data-testid': 'chat-parrainage-mini',
+                    style: {
+                      margin: '10px',
+                      background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.08), rgba(147, 51, 234, 0.05))',
+                      borderRadius: '12px',
+                      padding: '10px 14px',
+                      border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
+                      display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '90px', flexShrink: 0
+                    }
+                  },
+                    React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' } },
+                      React.createElement('span', { style: { fontSize: '13px', fontWeight: 700, color: '#fff' } }, 'Inviter un ami'),
+                      React.createElement('button', {
+                        type: 'button',
+                        onClick: function() { window.location.href = '/parrainage'; },
+                        'data-testid': 'chat-parrainage-voir',
+                        style: { background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--primary-color, #D91CD2)', fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px', fontFamily: 'inherit' }
+                      },
+                        'Voir mon Parrainage',
+                        React.createElement('svg', { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.5, strokeLinecap: 'round', strokeLinejoin: 'round' },
+                          React.createElement('polyline', { key: 'p', points: '9 18 15 12 9 6' })))
+                    ),
+                    React.createElement('div', { style: { display: 'flex', gap: '8px' } },
+                      React.createElement('a', {
+                        href: lienWhatsApp(v534Texte), target: '_blank', rel: 'noopener noreferrer',
+                        'data-testid': 'chat-parrainage-whatsapp',
+                        style: Object.assign({}, v534Btn, { background: 'var(--primary-color, #D91CD2)', textDecoration: 'none' })
+                      },
+                        React.createElement('svg', { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' },
+                          React.createElement('line', { key: 'a', x1: '22', y1: '2', x2: '11', y2: '13' }),
+                          React.createElement('polygon', { key: 'b', points: '22 2 15 22 11 13 2 9 22 2' })),
+                        'WhatsApp'),
+                      React.createElement('button', {
+                        type: 'button', onClick: v534Copier,
+                        'data-testid': 'chat-parrainage-copier',
+                        style: Object.assign({}, v534Btn, { background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)' })
+                      },
+                        React.createElement('svg', { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' },
+                          React.createElement('rect', { key: 'a', x: '9', y: '9', width: '13', height: '13', rx: '2', ry: '2' }),
+                          React.createElement('path', { key: 'b', d: 'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1' })),
+                        'Copier')
+                    )
+                  );
+                })()}
 
                 {/* v97.1: Onglets Privé / Groupe — avec icônes SVG, positionnés sous les abonnements */}
                 {afroboostProfile?.code && (

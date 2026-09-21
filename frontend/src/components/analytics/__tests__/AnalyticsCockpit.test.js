@@ -52,6 +52,13 @@ function monter(props) {
   return { div, root };
 }
 
+// V534 : le bloc « Parrainage » (SectionParrainage) lit /api/referral/admin/summary
+// avec les mêmes filtres — un appel par changement de filtre, lui aussi. Les
+// compteurs ci-dessous ne regardent donc QUE les appels du cockpit : la règle
+// « un appel par changement, jamais de sondage » se vérifie route par route.
+const appelsCockpit = () => axios.get.mock.calls.filter((c) => /\/analytics\/cockpit$/.test(String(c[0])));
+const dernierCockpit = () => appelsCockpit()[appelsCockpit().length - 1];
+
 beforeEach(() => { axios.get.mockReset(); jest.useRealTimers(); });
 
 describe('helpers purs', () => {
@@ -75,10 +82,10 @@ describe('AnalyticsCockpit', () => {
     axios.get.mockResolvedValue({ data: KPI });
     monter({});
     await act(async () => {});
-    expect(axios.get).toHaveBeenCalledTimes(1);
+    expect(appelsCockpit().length).toBe(1);
     expect(axios.get).toHaveBeenCalledWith(expect.stringMatching(/\/analytics\/cockpit$/), { params: { periode: 'mois', granularite: 'jour' } });
     act(() => { jest.advanceTimersByTime(10 * 60 * 1000); });
-    expect(axios.get).toHaveBeenCalledTimes(1);
+    expect(appelsCockpit().length).toBe(1);
   });
 
   test('les cartes et la couverture affichent les chiffres du serveur, sans no-show déduit', async () => {
@@ -106,8 +113,8 @@ describe('AnalyticsCockpit', () => {
     const { div } = monter({});
     await act(async () => {});
     await act(async () => { div.querySelector('[data-testid="periode-annee"]').click(); });
-    expect(axios.get).toHaveBeenCalledTimes(2);
-    expect(axios.get).toHaveBeenLastCalledWith(expect.any(String), { params: { periode: 'annee', granularite: 'semaine' } });
+    expect(appelsCockpit().length).toBe(2);
+    expect(dernierCockpit()[1]).toEqual({ params: { periode: 'annee', granularite: 'semaine' } });
   });
 
   test('403 -> message d’accès refusé, aucune carte', async () => {
@@ -130,19 +137,19 @@ describe('AnalyticsCockpit', () => {
       el.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await choisir(sel, 'c-dim');
-    expect(axios.get).toHaveBeenLastCalledWith(expect.any(String), { params: { periode: 'mois', granularite: 'jour', course_id: 'c-dim' } });
+    expect(dernierCockpit()[1]).toEqual({ params: { periode: 'mois', granularite: 'jour', course_id: 'c-dim' } });
     await choisir(sel, 'c-mer');
-    expect(axios.get).toHaveBeenLastCalledWith(expect.any(String), { params: { periode: 'mois', granularite: 'jour', course_id: 'c-mer' } });
+    expect(dernierCockpit()[1]).toEqual({ params: { periode: 'mois', granularite: 'jour', course_id: 'c-mer' } });
     // La liste reste complète après sélection (elle vient de cours_disponibles, mémorisée).
     expect([...div.querySelector('[data-testid="filtre-cours"]').options].length).toBe(3);
     await choisir(div.querySelector('[data-testid="filtre-cours"]'), '');
-    expect(axios.get).toHaveBeenLastCalledWith(expect.any(String), { params: { periode: 'mois', granularite: 'jour' } });
+    expect(dernierCockpit()[1]).toEqual({ params: { periode: 'mois', granularite: 'jour' } });
     // Combinaison période + coach + cours.
     await act(async () => { div.querySelector('[data-testid="periode-semaine"]').click(); });
     await choisir(div.querySelector('[data-testid="filtre-coach"]'), 'c@x.ch');
     await choisir(div.querySelector('[data-testid="filtre-cours"]'), 'c-dim');
-    expect(axios.get).toHaveBeenLastCalledWith(expect.any(String), { params: { periode: 'semaine', granularite: 'jour', coach_id: 'c@x.ch', course_id: 'c-dim' } });
-    expect(axios.get).toHaveBeenCalledTimes(7);   // 1 montage + 6 changements, jamais plus
+    expect(dernierCockpit()[1]).toEqual({ params: { periode: 'semaine', granularite: 'jour', coach_id: 'c@x.ch', course_id: 'c-dim' } });
+    expect(appelsCockpit().length).toBe(7);   // 1 montage + 6 changements, jamais plus
   });
 
   test('filtre coach (super-admin) : le coach_id part dans la requête', async () => {
@@ -155,7 +162,7 @@ describe('AnalyticsCockpit', () => {
       setter.call(sel, 'c@x.ch');
       sel.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    expect(axios.get).toHaveBeenLastCalledWith(expect.any(String), { params: { periode: 'mois', granularite: 'jour', coach_id: 'c@x.ch' } });
+    expect(dernierCockpit()[1]).toEqual({ params: { periode: 'mois', granularite: 'jour', coach_id: 'c@x.ch' } });
   });
 });
 
@@ -286,7 +293,7 @@ describe('AnalyticsCockpit — phase 2', () => {
     const badges = [...div.querySelectorAll('[data-testid="perimetre-global"]')].map((b) => b.textContent);
     expect(badges).toEqual(Array(3).fill('Global période/coach — filtre cours NON appliqué'));
     expect(div.querySelector('[data-testid="kpi-participants"]')).not.toBeNull();
-    expect(axios.get).toHaveBeenCalledTimes(2);   // toujours un appel par changement, pas plus
+    expect(appelsCockpit().length).toBe(2);   // toujours un appel par changement, pas plus
   });
 
   test('sans sections phase 2 dans la réponse : la phase 1 s\'affiche seule, sans erreur', async () => {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
 import { prechargerSpordate, entrerDansSpordate, urlEntreeServeur } from "./utils/spordateHandoff"; // F3 handoff
 import "@/App.css";
 import axios from "axios";
@@ -19,6 +19,8 @@ import { attributionEnregistrer, attributionActuelle } from "./utils/attribution
 // jamais une reconstruction. Voir utils/essaiReservation.js.
 import { cibleRedirectionEssai, DELAI_REDIRECTION_ESSAI_MS } from "./utils/essaiReservation";
 import { lireSession as lireSessionEspace, urlDeLaSession, ESPACE_CLE_RETOUR } from "./utils/espaceSession"; // session abonnee persistante
+// V534: Centre Parrainage / Pass Duo — lectures SYNCHRONES du cache (zéro réseau dans App.js).
+import { parrainageActifCache, coursDuoEnCache } from "./utils/parrainage";
 import { useBoostTribeLive, BoostTribeLiveOverlay, useLiveEnCours, resoudreCodeAbonne } from "./components/live/BoostTribeLive"; // LIVE RAPIDE
 
 // V133: Intercepteur global — JWT prioritaire + fallback X-User-Email
@@ -252,6 +254,10 @@ import AudioPlayer from "./components/AudioPlayer";
 import SvgIcon from "./components/SvgIcon";
 // V184: Espace abonné accès rapide (lien public /espace/AFR-XXXXXX)
 import SubscriberSpace from "./components/SubscriberSpace";
+// V534: les deux pages du Parrainage sont chargées à la demande — elles ne
+// pèsent rien sur la vitrine tant qu'on n'ouvre pas /parrainage ou /duo/<token>.
+const CentreParrainage = lazy(() => import("./components/parrainage/CentreParrainage"));
+const InvitationDuo = lazy(() => import("./components/parrainage/InvitationDuo"));
 // Calendrier des sessions, en fenetre par-dessus la vitrine (jamais une page)
 import SessionsModal from "./components/SessionsModal";
 import ConditionsParticipation from './components/ConditionsParticipation'; // ESSAI-5a-1
@@ -4584,6 +4590,23 @@ const SuccessOverlay = ({ t, data, onClose, onClearTicket }) => {
               <span>Fermer et effacer le ticket</span>
             </button>
           )}
+
+          {/* V534: une ligne discrète, jamais un bouton plein — hors de la zone
+              capturée par html2canvas. Affichée UNIQUEMENT si le cache dit le
+              programme ouvert ET le cours réservé éligible au Pass Duo : deux
+              lectures synchrones du localStorage, AUCUN réseau ajouté ici. */}
+          {parrainageActifCache() && coursDuoEnCache(data.courseId) && (
+            <p
+              className="text-xs text-white/60 pt-2"
+              style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}
+              data-testid="success-parrainage-ligne"
+            >
+              Tu viens accompagné ? Invite un ami avec ton Pass Duo.{' '}
+              <a href="/parrainage" className="font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>
+                Inviter un ami
+              </a>
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -4789,6 +4812,8 @@ function App() {
   const [showCoachSearch, setShowCoachSearch] = useState(false); // v8.9.4: Modal recherche coach
   const [showCoachVitrine, setShowCoachVitrine] = useState(null); // v8.9.6: Username du coach pour vitrine
   const [showSubscriberSpace, setShowSubscriberSpace] = useState(null); // V184: Code abonné pour espace d'accès rapide
+  const [parrainagePage, setParrainagePage] = useState(''); // V534: '' | 'centre' | 'duo'
+  const [duoToken, setDuoToken] = useState(''); // V534: jeton de /duo/<token>
   const [coachVitrineLoaded, setCoachVitrineLoaded] = useState(false); // v160: flag data coach chargee
   const [currentCoachVitrineEmail, setCurrentCoachVitrineEmail] = useState(null); // v160.5: Email du coach dont on affiche la vitrine (pour isolation commentaires/likes et Reserve button)
   const [currentCoachVitrineName, setCurrentCoachVitrineName] = useState(null); // v160.7: Nom du coach de la vitrine (pour ChatWidget header)
@@ -5642,6 +5667,22 @@ function App() {
     const handlePopState = () => checkSubscriberSpace();
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // V534: Détecter /parrainage (Centre) et /duo/<token> (invitation publique) —
+  // calqué sur /espace/ ci-dessus. Deux états PRIMITIFS (page + jeton), jamais
+  // un objet neuf : rien à comparer, aucun effet relancé pour rien.
+  useEffect(() => {
+    const checkParrainage = () => {
+      const path = window.location.pathname;
+      if (/^\/parrainage\/?$/.test(path)) { setParrainagePage('centre'); setDuoToken(''); return; }
+      const duo = path.match(/^\/duo\/([A-Za-z0-9_-]+)\/?$/);
+      if (duo) { setParrainagePage('duo'); setDuoToken(duo[1]); return; }
+      setParrainagePage(''); setDuoToken('');
+    };
+    checkParrainage();
+    window.addEventListener('popstate', checkParrainage);
+    return () => window.removeEventListener('popstate', checkParrainage);
   }, []);
 
   // v72: Charger les commentaires Social Proof pour la homepage
@@ -7650,6 +7691,24 @@ function App() {
   // Pour que les liens /#/v/{slug} fonctionnent même quand le coach est connecté
   if (mediaSlug) {
     return <MediaViewer slug={mediaSlug} />;
+  }
+
+  // V534: Centre Parrainage (/parrainage) et invitation publique (/duo/<token>) —
+  // AVANT l'espace abonné, comme lui en retour anticipé. Le repli Suspense est
+  // un fond noir muet : la page pose elle-même son écran de chargement.
+  if (parrainagePage === 'centre') {
+    return (
+      <Suspense fallback={<div style={{ minHeight: '100vh', background: 'rgb(0,0,0)' }} />}>
+        <CentreParrainage />
+      </Suspense>
+    );
+  }
+  if (parrainagePage === 'duo' && duoToken) {
+    return (
+      <Suspense fallback={<div style={{ minHeight: '100vh', background: 'rgb(0,0,0)' }} />}>
+        <InvitationDuo token={duoToken} />
+      </Suspense>
+    );
   }
 
   // V184: Espace abonné accès rapide — lien public, pas d'auth requise

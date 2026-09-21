@@ -401,6 +401,102 @@ export function SectionSources({ sources, courseId }) {
   );
 }
 
+/* ═══ V534 — PARRAINAGE / PASS DUO ═══════════════════════════════════════════
+   Bloc KPI lu sur GET /api/referral/admin/summary, avec LES MÊMES filtres que le
+   cockpit (période → from/to, cours, coach) plus un statut local. Un appel par
+   changement de filtre, jamais de sondage. 404 = drapeau OFF → bloc masqué. */
+export const STATUTS_PARRAINAGE = [
+  { key: '', label: 'Tous les états' },
+  { key: 'locked', label: 'Verrouillé' },
+  { key: 'waiting', label: 'En attente' },
+  { key: 'friend_registered', label: 'Ami inscrit' },
+  { key: 'unlocked', label: 'Débloqué' },
+  { key: 'used', label: 'Participation validée' },
+  { key: 'expired', label: 'Expiré' },
+  { key: 'cancelled', label: 'Annulé' },
+];
+
+/** Les bornes YYYY-MM-DD d'une période du cockpit (heure locale). Testable sans réseau. */
+export function bornesPeriode(periode, du, au, maintenant) {
+  const now = maintenant || new Date();
+  const to = aujourdhuiISO(now);
+  if (periode === 'perso') return { from: du || '', to: au || '' };
+  if (periode === 'aujourdhui') return { from: to, to };
+  if (periode === 'semaine') {
+    const d = new Date(now); const jour = (d.getDay() + 6) % 7; // lundi = 0
+    d.setDate(d.getDate() - jour);
+    return { from: aujourdhuiISO(d), to };
+  }
+  if (periode === 'annee') return { from: `${now.getFullYear()}-01-01`, to };
+  return { from: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`, to }; // mois
+}
+
+/** Paramètres de GET /api/referral/admin/summary depuis les filtres du cockpit. */
+export function parametresParrainage({ periode, du, au, coachId, courseId, statut }) {
+  const b = bornesPeriode(periode, du, au);
+  const p = { from: b.from, to: b.to };
+  if (courseId) p.course_id = courseId;
+  if (coachId) p.coach = coachId;
+  if (statut) p.status = statut;
+  return p;
+}
+
+export function SectionParrainage({ periode, du, au, coachId, courseId }) {
+  const [statut, setStatut] = useState('');
+  const [resume, setResume] = useState(null);
+  const [masque, setMasque] = useState(false); // 404 : drapeau OFF
+  const [erreur, setErreur] = useState('');
+  const params = useMemo(() => parametresParrainage({ periode, du, au, coachId, courseId, statut }),
+    [periode, du, au, coachId, courseId, statut]);
+  const cle = JSON.stringify(params);
+
+  useEffect(() => {
+    let vivant = true;
+    if (masque) return undefined;
+    if (periode === 'perso' && (!params.from || !params.to)) return undefined;
+    setErreur('');
+    axios.get(`${API}/referral/admin/summary`, { params })
+      .then((r) => { if (vivant) setResume(r.data || null); })
+      .catch((e) => {
+        if (!vivant) return;
+        const st = e && e.response && e.response.status;
+        if (st === 404) { setMasque(true); return; }
+        setErreur(st === 401 || st === 403 ? 'Accès refusé (jeton signé requis).' : 'Chargement impossible.');
+      });
+    return () => { vivant = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cle, masque]);
+
+  if (masque) return null;
+  const k = (resume && resume.kpi) || {};
+  const c = (resume && resume.par_canal) || {};
+  const select = { background: 'rgba(255,255,255,0.06)', border: BORDURE, color: '#fff', borderRadius: 8, padding: '6px 10px', fontSize: 12 };
+  return (
+    <div data-testid="section-parrainage" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={titreSection}>
+        Parrainage · Pass Duo
+        <select value={statut} onChange={(e) => setStatut(e.target.value)} style={select} data-testid="parrainage-statut" aria-label="État des passes">
+          {STATUTS_PARRAINAGE.map((x) => <option key={x.key || 'tous'} value={x.key}>{x.label}</option>)}
+        </select>
+      </div>
+      {erreur ? <div style={{ color: 'rgba(251, 191, 36, 0.95)', fontSize: 12 }}>{erreur}</div> : null}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        <Carte testid="kpi-parrainage-passes" valeur={k.passes_crees} libelle="Pass créés" />
+        <Carte testid="kpi-parrainage-invitations" valeur={k.invitations} libelle="Invitations"
+               precision={`WhatsApp ${c.whatsapp ?? 0} · copies ${c.copy ?? 0} · QR ${c.qr ?? 0} · partages ${c.share ?? 0}`} />
+        <Carte testid="kpi-parrainage-ouvertures" valeur={k.ouvertures} libelle="Ouvertures du lien" />
+        <Carte testid="kpi-parrainage-inscriptions" valeur={k.inscriptions} libelle="Amis inscrits" />
+        <Carte testid="kpi-parrainage-debloques" valeur={k.debloques} libelle="Pass Duo débloqués" />
+        <Carte testid="kpi-parrainage-utilises" valeur={k.utilises} libelle="Participations validées" />
+        <Carte testid="kpi-parrainage-expires" valeur={k.expires} libelle="Expirés" />
+        <Carte testid="kpi-parrainage-annules" valeur={k.annules} libelle="Annulés" />
+        <Carte testid="kpi-parrainage-presences" valeur={k.presences_duo} libelle="Présences Duo (scan)" />
+      </div>
+      <div style={note}>Période, cours et coach : les filtres du cockpit s'appliquent. Aucun sondage : un appel par changement de filtre.</div>
+    </div>
+  );
+}
+
 export default function AnalyticsCockpit({ coaches = [], courses = [] }) {
   const [periode, setPeriode] = useState('mois');
   const [du, setDu] = useState(aujourdhuiISO(new Date(Date.now() - 30 * 86400000)));
@@ -608,6 +704,8 @@ export default function AnalyticsCockpit({ coaches = [], courses = [] }) {
           {ess && <SectionEssais ess={ess} courseId={courseId} />}
           {/* ═══ TRACKING 2B ═══ */}
           {kpi && kpi.sources && <SectionSources sources={kpi.sources} courseId={courseId} />}
+          {/* ═══ V534 PARRAINAGE ═══ */}
+          <SectionParrainage periode={periode} du={du} au={au} coachId={coachId} courseId={courseId} />
         </>
       )}
     </div>

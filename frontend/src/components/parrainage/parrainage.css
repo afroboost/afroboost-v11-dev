@@ -1,0 +1,295 @@
+/* V534 — CENTRE PARRAINAGE / PASS DUO — feuille de style dédiée.
+ *
+ * Jetons repris de la maquette validée (centre-parrainage-maquette.html) :
+ * colonne centrale étroite premium (470 px, cadre 28 px dès 700 px), cartes
+ * profondes rayon 18 px, boutons généreux, rond 80 px, avatars 64 px reliés.
+ *
+ * COULEURS : UNIQUEMENT les variables du coach — `var(--primary-color)`,
+ * `var(--secondary-color)`, `rgba(var(--primary-rgb), …)`. Les hexas présents
+ * ici ne sont QUE des valeurs de secours DANS un `var()`. Les teintes
+ * sémantiques (vert « ok », vert WhatsApp, ambre « attente », rouge erreur)
+ * sont exprimées en rgb() : ce ne sont pas des couleurs de marque, la maquette
+ * les fixe elle aussi.
+ *
+ * POLICE : Inter n'est pas dans le projet — pile système d'Afroboost
+ * (index.css), tailles/graisses/espacements de la maquette. Toutes les classes
+ * sont préfixées `cp-` : rien ici ne touche la typographie du reste du site.
+ */
+
+.cp-root {
+  --cp-pink: var(--primary-color, #D91CD2);
+  --cp-violet: var(--secondary-color, #8b5cf6);
+  --cp-pink-soft: rgba(var(--primary-rgb, 217, 28, 210), .75);
+  --cp-line: rgba(var(--primary-rgb, 217, 28, 210), .35);
+  --cp-card: linear-gradient(145deg, rgba(var(--primary-rgb, 217, 28, 210), .10), rgba(0, 0, 0, .6));
+  --cp-card-solid: rgba(var(--primary-rgb, 217, 28, 210), .06);
+  --cp-input: rgba(var(--primary-rgb, 217, 28, 210), .09);
+  --cp-muted: rgba(255, 255, 255, .72);
+  --cp-fine: rgba(255, 255, 255, .58);
+  --cp-text: rgba(255, 255, 255, .9);
+  --cp-ok: rgb(30, 215, 96);
+  --cp-ok-soft: rgb(50, 220, 124);
+  --cp-wa: rgb(20, 175, 85);
+  --cp-wait: rgb(240, 198, 116);
+  --cp-err: rgb(255, 120, 109);
+  --cp-btn: linear-gradient(90deg, var(--primary-color, #D91CD2), var(--secondary-color, #8b5cf6));
+  color: rgb(255, 255, 255);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+.cp-root *, .cp-root *::before, .cp-root *::after { box-sizing: border-box; }
+
+/* ── Page (fond noir + halo de la couleur du coach) ───────────────────────── */
+.cp-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background:
+    radial-gradient(circle at 50% -10%, rgba(var(--primary-rgb, 217, 28, 210), .22) 0, rgba(0, 0, 0, .97) 38%, rgb(0, 0, 0) 75%),
+    rgb(0, 0, 0);
+}
+.cp-app {
+  width: min(100%, 470px);
+  margin: auto;
+  padding: 22px 18px 35px;
+  min-height: 100vh;
+}
+@media (min-width: 700px) {
+  .cp-app {
+    margin: 30px auto;
+    border: 1px solid rgba(var(--primary-rgb, 217, 28, 210), .3);
+    border-radius: 28px;
+    min-height: auto;
+    background: rgba(0, 0, 0, .35);
+  }
+}
+
+/* ── En-tête, titres ─────────────────────────────────────────────────────── */
+.cp-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 34px; gap: 10px; }
+.cp-logo { font-size: 31px; font-weight: 900; letter-spacing: -.02em; color: rgb(255, 255, 255); text-decoration: none; }
+.cp-logo span, .cp-em { color: var(--cp-pink); font-style: normal; }
+.cp-pill, .cp-eyebrow {
+  font-size: 11px; letter-spacing: .16em; color: var(--cp-pink-soft);
+  text-transform: uppercase; font-weight: 600;
+}
+.cp-pill { border: 1px solid var(--cp-line); padding: 7px 10px; border-radius: 20px; white-space: nowrap; }
+.cp-h1 {
+  font-size: clamp(28px, 7vw, 39px); line-height: 1.04; margin: 18px 0; font-weight: 900;
+  letter-spacing: -.02em; text-wrap: balance;
+}
+.cp-h2 {
+  font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--cp-pink-soft);
+  margin: 26px 0 10px; font-weight: 700;
+}
+.cp-h3 { display: flex; gap: 9px; align-items: center; font-size: 17px; margin: 0 0 6px; font-weight: 700; }
+.cp-h3 svg { width: 20px; height: 20px; flex: none; }
+.cp-lead { font-size: 17px; color: var(--cp-muted); line-height: 1.55; margin: 0 0 6px; }
+.cp-center { text-align: center; }
+.cp-fine { color: var(--cp-fine); font-size: 12px; line-height: 1.6; }
+.cp-mini { font-size: 12px; color: var(--cp-muted); line-height: 1.5; margin: 6px 0 0; }
+.cp-error { color: var(--cp-err); font-size: 13px; line-height: 1.5; margin: 10px 0 0; }
+.cp-ok-text { color: var(--cp-ok-soft); font-size: 13px; line-height: 1.5; margin: 10px 0 0; }
+
+/* ── Cartes ──────────────────────────────────────────────────────────────── */
+.cp-card {
+  background: var(--cp-card), var(--cp-card-solid);
+  border: 1px solid var(--cp-line);
+  border-radius: 18px;
+  padding: 20px;
+  margin: 14px 0;
+  animation: cp-in .35s ease both;
+}
+.cp-card p { margin: 8px 0; line-height: 1.5; color: var(--cp-text); }
+.cp-card--tight { padding: 6px 20px; }
+.cp-card--list { padding: 8px 20px; }
+.cp-card--current { border-color: var(--cp-pink); box-shadow: 0 0 0 1px rgba(var(--primary-rgb, 217, 28, 210), .25), 0 12px 40px rgba(var(--primary-rgb, 217, 28, 210), .12); }
+.cp-hero {
+  min-height: 150px;
+  background: linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), .45), rgba(var(--primary-rgb, 217, 28, 210), .08));
+  border-radius: 13px; display: flex; flex-direction: column; justify-content: flex-end; padding: 18px;
+}
+.cp-hero b { font-size: 18px; }
+.cp-hero small, .cp-ticket small { display: block; color: var(--cp-muted); margin-top: 5px; font-size: 13px; }
+.cp-notice {
+  padding: 14px; background: rgba(var(--primary-rgb, 217, 28, 210), .14); border-radius: 12px;
+  line-height: 1.5; font-size: 14px; margin-top: 12px;
+}
+
+/* ── Résultats ───────────────────────────────────────────────────────────── */
+.cp-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.cp-stat {
+  background: var(--cp-card), var(--cp-card-solid); border: 1px solid var(--cp-line);
+  border-radius: 14px; padding: 14px 10px; text-align: center;
+}
+.cp-stat b { display: block; font-size: 26px; font-weight: 800; color: var(--cp-pink); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.cp-stat span { font-size: 11px; color: var(--cp-muted); line-height: 1.3; display: block; margin-top: 4px; }
+
+/* ── Lien + boutons de partage ───────────────────────────────────────────── */
+.cp-code {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--cp-input); border: 1px dashed var(--cp-line); border-radius: 13px; padding: 12px 14px;
+  font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 15px; letter-spacing: .08em; min-width: 0;
+}
+.cp-code > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-code small { font-family: inherit; letter-spacing: 0; color: var(--cp-muted); font-size: 11px; display: block; margin-bottom: 3px; }
+.cp-code--off { opacity: .55; }
+.cp-share { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.cp-share .cp-b { margin: 0; padding: 14px 10px; font-size: 14px; }
+
+.cp-b, a.cp-b {
+  width: 100%; border: 0; border-radius: 14px; padding: 16px; background: var(--cp-btn);
+  color: rgb(255, 255, 255); font-weight: 800; font-size: 16px; text-decoration: none;
+  display: flex; align-items: center; justify-content: center; gap: 9px; cursor: pointer;
+  font-family: inherit; margin-top: 10px; transition: transform .15s ease, opacity .15s ease, box-shadow .15s ease;
+}
+.cp-b svg { width: 20px; height: 20px; flex: none; }
+.cp-b:hover { box-shadow: 0 8px 24px rgba(var(--primary-rgb, 217, 28, 210), .25); }
+.cp-b:active { transform: scale(.985); }
+.cp-b:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
+.cp-b--secondary { background: rgba(var(--primary-rgb, 217, 28, 210), .12); border: 1px solid var(--cp-line); }
+.cp-b--whatsapp { background: var(--cp-wa); }
+.cp-b--ghost { background: transparent; border: 1px solid var(--cp-line); color: rgb(255, 255, 255); }
+.cp-b--danger { background: transparent; border: 1px solid rgba(255, 120, 109, .45); color: var(--cp-err); font-weight: 700; font-size: 14px; padding: 12px; }
+.cp-b--small { padding: 10px 14px; font-size: 13px; width: auto; margin-top: 0; }
+.cp-b:focus-visible, .cp-input:focus-visible, .cp-select:focus-visible, .cp-link:focus-visible, .cp-iconbtn:focus-visible {
+  outline: 2px solid rgb(255, 255, 255); outline-offset: 2px;
+}
+.cp-iconbtn { background: none; border: 0; color: var(--cp-pink); cursor: pointer; padding: 6px; border-radius: 8px; flex: none; display: inline-flex; }
+.cp-iconbtn svg { width: 22px; height: 22px; }
+.cp-link {
+  color: var(--cp-pink); font-weight: 700; font-size: 13px; text-decoration: none;
+  display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 0; cursor: pointer; font-family: inherit;
+}
+.cp-link svg { width: 14px; height: 14px; }
+
+/* ── Formulaires ─────────────────────────────────────────────────────────── */
+.cp-input, .cp-select {
+  width: 100%; padding: 16px; background: var(--cp-input); border: 1px solid var(--cp-line);
+  border-radius: 13px; color: rgb(255, 255, 255); margin: 7px 0; font-size: 16px; font-family: inherit;
+  -webkit-appearance: none; appearance: none;
+}
+.cp-select {
+  background-image: linear-gradient(45deg, transparent 50%, var(--cp-pink-soft) 50%), linear-gradient(135deg, var(--cp-pink-soft) 50%, transparent 50%);
+  background-position: calc(100% - 20px) 50%, calc(100% - 14px) 50%;
+  background-size: 6px 6px, 6px 6px; background-repeat: no-repeat; padding-right: 40px;
+}
+.cp-select option { color: rgb(0, 0, 0); background: rgb(255, 255, 255); }
+.cp-input::placeholder { color: rgba(255, 255, 255, .45); }
+.cp-chk { display: flex; gap: 10px; color: var(--cp-muted); font-size: 13px; line-height: 1.4; margin: 12px 0; align-items: flex-start; cursor: pointer; }
+.cp-chk input { width: auto; margin: 2px 0; accent-color: var(--cp-pink); flex: none; }
+.cp-label { display: block; font-size: 12px; color: var(--cp-muted); margin-top: 10px; }
+
+/* ── Chips d'état ────────────────────────────────────────────────────────── */
+.cp-chip {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--cp-line);
+  color: var(--cp-pink-soft); white-space: nowrap; flex: none;
+}
+.cp-chip svg { width: 12px; height: 12px; }
+.cp-chip--wait { border-color: rgba(240, 198, 116, .6); color: var(--cp-wait); }
+.cp-chip--ok { border-color: var(--cp-ok); color: var(--cp-ok-soft); }
+.cp-chip--ext { border-color: rgba(255, 255, 255, .22); color: rgba(255, 255, 255, .7); }
+.cp-chip--err { border-color: rgba(255, 120, 109, .5); color: var(--cp-err); }
+
+/* ── Programme / progression ─────────────────────────────────────────────── */
+.cp-prog { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.cp-prog .cp-h3 { margin: 0; }
+.cp-stepper { display: flex; gap: 6px; margin: 8px 0 0; }
+.cp-stepper span { flex: 1; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .12); transition: background .4s ease; }
+.cp-stepper span.on { background: var(--cp-pink); }
+.cp-steps { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: .04em; color: var(--cp-fine); margin-top: 6px; text-transform: uppercase; }
+.cp-steps span.on { color: var(--cp-pink-soft); font-weight: 700; }
+
+/* Le duo : deux avatars 64 px reliés */
+.cp-duo { display: flex; justify-content: space-around; align-items: center; margin: 22px 0 8px; }
+.cp-duo > div { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.cp-duo b { font-size: 14px; }
+.cp-av {
+  width: 64px; height: 64px; border: 2px solid var(--cp-pink); border-radius: 50%; display: grid; place-items: center;
+  background: rgba(var(--primary-rgb, 217, 28, 210), .28); font-size: 26px; font-weight: 800; color: rgb(255, 255, 255);
+  transition: transform .3s ease, background .3s ease;
+}
+.cp-av svg { width: 28px; height: 28px; }
+.cp-av--ok { border-color: var(--cp-ok); background: rgba(30, 215, 96, .18); animation: cp-pop .4s ease both; }
+.cp-duo small { color: var(--cp-ok-soft); font-size: 12px; }
+.cp-duo .cp-muted { opacity: .5; }
+.cp-duo .cp-muted small { color: var(--cp-muted); }
+.cp-duo i { height: 3px; width: 52px; background: var(--cp-pink); opacity: .6; border-radius: 2px; flex: none; }
+.cp-duo i.on { opacity: 1; }
+
+/* Rond 80 px (cadenas / check) */
+.cp-roundic {
+  width: 80px; height: 80px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto;
+  background: rgba(var(--primary-rgb, 217, 28, 210), .18); border: 1px solid var(--cp-pink); color: var(--cp-pink);
+  transition: background .4s ease, border-color .4s ease;
+}
+.cp-roundic--ok { background: rgba(30, 215, 96, .14); border-color: var(--cp-ok); color: var(--cp-ok); animation: cp-pop .45s ease both; }
+.cp-roundic svg { width: 38px; height: 38px; }
+
+/* Avatars reliés (écran débloqué) */
+.cp-avatars { display: flex; align-items: center; justify-content: center; margin: 28px 0 40px; }
+.cp-avatars > div { position: relative; }
+.cp-avatars small { position: absolute; top: 70px; font-size: 12px; white-space: nowrap; left: 50%; transform: translateX(-50%); color: var(--cp-muted); }
+.cp-avatars i { height: 3px; width: 70px; background: var(--cp-pink); border-radius: 2px; }
+
+/* ── Billets ─────────────────────────────────────────────────────────────── */
+.cp-ticket { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.cp-ticket > div:first-child { min-width: 0; }
+.cp-ticket b { font-size: 16px; }
+.cp-ticket .cp-code-inline { font-family: "SF Mono", Menlo, Consolas, monospace; letter-spacing: .06em; }
+.cp-qr { width: 105px; height: 105px; background: rgb(255, 255, 255); border-radius: 8px; flex: none; padding: 6px; display: grid; place-items: center; }
+.cp-qr svg { width: 93px; height: 93px; display: block; }
+.cp-ticket--validated { border-color: var(--cp-ok); }
+
+/* ── Listes (invitations, historique, passes) ────────────────────────────── */
+.cp-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid rgba(255, 255, 255, .07); }
+.cp-row:last-child { border-bottom: 0; }
+.cp-row .cp-who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.cp-row .cp-who .cp-av-s {
+  width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--cp-pink); display: grid; place-items: center;
+  font-weight: 800; font-size: 15px; background: rgba(var(--primary-rgb, 217, 28, 210), .25); flex: none;
+}
+.cp-row .cp-who .cp-av-s svg { width: 16px; height: 16px; }
+.cp-row .cp-who b { display: block; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-row .cp-who small { display: block; color: var(--cp-muted); font-size: 12px; }
+.cp-row--btn { width: 100%; background: none; border: 0; border-bottom: 1px solid rgba(255, 255, 255, .07); color: inherit; text-align: left; cursor: pointer; font-family: inherit; }
+.cp-row--btn:last-child { border-bottom: 0; }
+.cp-hist { list-style: none; margin: 0; padding: 0; }
+.cp-hist li { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 9px 0; font-size: 13px; border-bottom: 1px solid rgba(255, 255, 255, .07); }
+.cp-hist li:last-child { border-bottom: 0; }
+.cp-hist time { color: var(--cp-fine); font-size: 11px; padding-top: 2px; font-variant-numeric: tabular-nums; }
+.cp-hist span { color: var(--cp-text); line-height: 1.4; }
+.cp-empty { color: var(--cp-fine); font-size: 13px; padding: 12px 0; }
+
+/* ── Modale QR ───────────────────────────────────────────────────────────── */
+.cp-modal-bg { position: fixed; inset: 0; background: rgba(0, 0, 0, .78); display: flex; align-items: center; justify-content: center; z-index: 100000; padding: 20px; animation: cp-fade .2s ease both; }
+.cp-modal {
+  width: min(100%, 360px); background: var(--cp-card), rgb(0, 0, 0); border: 1px solid var(--cp-line);
+  border-radius: 18px; padding: 22px; text-align: center; animation: cp-in .25s ease both;
+}
+.cp-modal .cp-qr-big { display: inline-block; padding: 10px; background: rgb(255, 255, 255); border-radius: 12px; margin: 14px 0; }
+
+/* ── Confirmation inline (annulation) ────────────────────────────────────── */
+.cp-confirm { margin-top: 12px; padding: 14px; border-radius: 12px; border: 1px solid rgba(255, 120, 109, .35); background: rgba(255, 120, 109, .06); }
+.cp-confirm .cp-actions { display: flex; gap: 8px; margin-top: 10px; }
+.cp-confirm .cp-b { margin: 0; padding: 12px; font-size: 14px; }
+
+/* ── Écrans d'état (chargement, non connecté, désactivé) ─────────────────── */
+.cp-state { text-align: center; padding: 30px 0 10px; }
+.cp-state .cp-lead { margin-top: 14px; }
+.cp-spinner { width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(var(--primary-rgb, 217, 28, 210), .25); border-top-color: var(--cp-pink); margin: 30px auto; animation: cp-spin .9s linear infinite; }
+
+/* ── Pied ────────────────────────────────────────────────────────────────── */
+.cp-footer { text-align: center; color: rgba(255, 255, 255, .4); font-size: 11px; letter-spacing: .16em; margin-top: 40px; text-transform: uppercase; }
+
+/* ── Micro-animations sobres ─────────────────────────────────────────────── */
+@keyframes cp-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes cp-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cp-pop { 0% { transform: scale(.85); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }
+@keyframes cp-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .cp-root *, .cp-root *::before, .cp-root *::after { animation: none !important; transition: none !important; }
+}
+@media (max-width: 480px) {
+  .cp-stats { gap: 6px; }
+  .cp-stat b { font-size: 22px; }
+}

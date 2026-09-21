@@ -348,6 +348,37 @@ const CoursesManager = ({
                   )}
                 </span>
               </div>
+              {/* V534 : « Pass Duo » — le champ `duo_enabled` part TEL QUEL dans le PUT
+                  partiel existant (updateCourse) et se relit à l'édition ; absent = décoché.
+                  Aucun cours n'est activé par le code : seule cette case le fait. */}
+              <div className="flex items-center gap-3 mt-2">
+                <label className="text-white text-xs opacity-70">Pass Duo</label>
+                <div
+                  className={`switch ${course.duo_enabled === true ? 'active' : ''}`}
+                  onClick={() => {
+                    const n = [...courses];
+                    const realIdx = courses.findIndex(c => c.id === course.id);
+                    const suivant = course.duo_enabled !== true;
+                    n[realIdx].duo_enabled = suivant;
+                    setCourses(n);
+                    updateCourse({ ...course, duo_enabled: suivant });
+                  }}
+                  role="switch"
+                  aria-checked={course.duo_enabled === true}
+                  data-testid={`course-duo-${course.id}`}
+                />
+                <span className="text-white text-xs opacity-50">
+                  {course.duo_enabled === true ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <SvgIcon name="users" size={14} /> Ouvert au parrainage (venir à deux)
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5">
+                      <SvgIcon name="lock" size={14} /> Fermé au Pass Duo
+                    </span>
+                  )}
+                </span>
+              </div>
             </div>
 
             {/* === v88: Bouton Demande d'avis === */}
