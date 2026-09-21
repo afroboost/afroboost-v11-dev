@@ -48,6 +48,7 @@ from api.routes.cinetpay_routes import router as cinetpay_router, init_db as ini
 # V325: Import routes PawaPay (mobile money, derrière le drapeau PAWAPAY_ENABLED)
 from api.routes.pawapay_routes import router as pawapay_router, init_db as init_pawapay_db
 from api.routes.spordate_routes import router as spordate_router, init_db as init_spordate_db  # V387
+from api.routes.referral_routes import router as referral_router, init_db as init_referral_db  # V534
 # v15.0: Import routes paiement multi-vendeurs
 from api.routes.payment_config_routes import router as payment_config_router, init_db as init_payment_config_db
 from api.routes.checkout_routes import router as checkout_router, init_db as init_checkout_db
@@ -729,6 +730,9 @@ class Course(BaseModel):
     filmed: Optional[bool] = None
     reminders_enabled: Optional[bool] = None
     reminder_rules: Optional[List[dict]] = None
+    # V534: Pass Duo (parrainage). ABSENT VAUT NON — aucun cours existant n'est
+    # ouvert au parrainage sans que l'admin ne le coche ; aucune migration.
+    duo_enabled: Optional[bool] = None
 
 class CourseCreate(BaseModel):
     name: str
@@ -16232,6 +16236,15 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
             response_data["group_members"] = all_members
         except Exception as e:
             logger.warning(f"[V212] Erreur chargement membres: {e}")
+
+    # V534 : le drapeau du Pass Duo, et rien d'autre — l'espace sait s'il doit
+    # afficher la carte « Parrainage ». Additif, jamais bloquant.
+    try:
+        from api.routes.referral_routes import parrainage_duo_actif as _v534_actif
+        response_data["parrainage"] = {"enabled": bool(await _v534_actif(db))}
+    except Exception as _e534:
+        logger.warning("[V534] drapeau parrainage illisible pour l'espace (%s)", type(_e534).__name__)
+        response_data["parrainage"] = {"enabled": False}
 
     return response_data
 
@@ -47277,6 +47290,11 @@ init_pawapay_db(db)
 # V387 : pont « une seule cle » vers Spordate (afroboost.com/rencontre)
 fastapi_app.include_router(spordate_router)
 init_spordate_db(db)
+# V534 : Centre Parrainage unique (Pass Duo). Toujours monté ; chaque route
+# relit `feature_flags.parrainage_duo_enabled` (OFF par défaut) et répond 404
+# tant qu'il n'est pas activé — sauf `/config`, qui dit `{enabled:false}`.
+fastapi_app.include_router(referral_router)
+init_referral_db(db)
 
 # v15.0: Include multi-vendor payment routes
 fastapi_app.include_router(payment_config_router)
@@ -47572,6 +47590,28 @@ async def startup_db():
         logger.info("[P3-S1] index partner_prospects OK (ref unique par coach)")
     except Exception:
         pass  # Index existe deja
+
+    # V534 — Pass Duo : les index du parrainage, posés AU DÉMARRAGE (avant le
+    # premier pass), idempotents. `partialFilterExpression` et JAMAIS `sparse`
+    # (leçon P3-S1) : l'unicité (parrain, cours, occurrence) ne porte que sur
+    # les pass ACTIFS, celle (filleul, cours, occurrence) que sur les pass qui
+    # ONT un filleul — sans le filtre, tous les pass sans filleul entreraient en
+    # collision sur `null`.
+    try:
+        await db["referral_passes"].create_index("id", unique=True)
+        await db["referral_passes"].create_index("share_token", unique=True)
+        await db["referral_passes"].create_index(
+            [("sponsor.email_norm", 1), ("course_id", 1), ("occurrence", 1)], unique=True,
+            partialFilterExpression={"status": {"$in": ["locked", "waiting", "friend_registered", "unlocked"]}})
+        await db["referral_passes"].create_index(
+            [("invitee.email_norm", 1), ("course_id", 1), ("occurrence", 1)], unique=True,
+            partialFilterExpression={"invitee.email_norm": {"$type": "string"}})
+        await db["referral_passes"].create_index([("coach_id", 1), ("status", 1), ("created_at", -1)])
+        await db["referral_invitations"].create_index([("pass_id", 1), ("created_at", -1)])
+        await db["referral_invitations"].create_index([("sponsor_email_norm", 1), ("created_at", -1)])
+        logger.info("[V534] index referral_passes / referral_invitations OK")
+    except Exception as _e534:
+        logger.warning("[V534] index parrainage non posés (%s)", type(_e534).__name__)
 
     # P3-S3-A : les index du moteur de campagne. Poses AU DEMARRAGE, donc
     # AVANT qu'une seule campagne existe — la lecon de P2, ou un index unique
