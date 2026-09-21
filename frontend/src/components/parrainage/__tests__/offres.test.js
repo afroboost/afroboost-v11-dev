@@ -541,7 +541,8 @@ describe('CoursesManager — offres autorisées du Pass Duo', () => {
   test('cocher → PUT partiel {…course, duo_offer_ids} ; cochée + recommandée → duo_default_offer_id ; recliquer désélectionne', async () => {
     const { updateCourse, setCourses } = await monterCM(COURS);
     await act(async () => { par('course-duo-offre-case-c1-o-gratuite').click(); });
-    expect(updateCourse).toHaveBeenCalledWith(expect.objectContaining({ id: 'c1', duo_offer_ids: ['o-gratuite'], duo_default_offer_id: null }));
+    // V534b : « aucune recommandée » part en chaîne vide — le PUT /courses ignore les null
+    expect(updateCourse).toHaveBeenCalledWith(expect.objectContaining({ id: 'c1', duo_offer_ids: ['o-gratuite'], duo_default_offer_id: '' }));
     expect(setCourses).toHaveBeenCalled();
     act(() => racine.unmount()); racine = null;
     const { updateCourse: u2 } = await monterCM({ ...COURS, duo_offer_ids: ['o-gratuite', 'o-gratuite2'] });
@@ -553,7 +554,7 @@ describe('CoursesManager — offres autorisées du Pass Duo', () => {
     const { updateCourse: u3 } = await monterCM({ ...COURS, duo_offer_ids: ['o-gratuite', 'o-gratuite2'], duo_default_offer_id: 'o-gratuite' });
     expect(par('course-duo-offre-reco-c1-o-gratuite').checked).toBe(true);
     await act(async () => { par('course-duo-offre-reco-c1-o-gratuite').click(); });
-    expect(u3).toHaveBeenLastCalledWith(expect.objectContaining({ duo_default_offer_id: null }));
+    expect(u3).toHaveBeenLastCalledWith(expect.objectContaining({ duo_default_offer_id: '' }));
     await act(async () => { par('course-duo-offre-case-c1-o-gratuite').click(); });
     expect(u3).toHaveBeenLastCalledWith(expect.objectContaining({ duo_offer_ids: ['o-gratuite2'], duo_default_offer_id: null }));
   });
