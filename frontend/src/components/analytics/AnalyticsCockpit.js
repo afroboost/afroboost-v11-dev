@@ -491,6 +491,12 @@ export function SectionParrainage({ periode, du, au, coachId, courseId }) {
         <Carte testid="kpi-parrainage-expires" valeur={k.expires} libelle="Expirés" />
         <Carte testid="kpi-parrainage-annules" valeur={k.annules} libelle="Annulés" />
         <Carte testid="kpi-parrainage-presences" valeur={k.presences_duo} libelle="Présences Duo (scan)" />
+        {/* V534b: l'offre du Pass Duo — nombre de changements, offre la plus choisie (par son NOM, jamais son id) */}
+        <Carte testid="kpi-parrainage-changements-offre" valeur={k.changements_offre} libelle="Changements d'offre" />
+        <Carte testid="kpi-parrainage-offre-choisie"
+               valeur={k.offre_la_plus_choisie && k.offre_la_plus_choisie.n != null ? k.offre_la_plus_choisie.n : null}
+               libelle="Offre la plus choisie"
+               precision={k.offre_la_plus_choisie && k.offre_la_plus_choisie.name ? k.offre_la_plus_choisie.name : 'Aucune encore'} />
       </div>
       <div style={note}>Période, cours et coach : les filtres du cockpit s'appliquent. Aucun sondage : un appel par changement de filtre.</div>
     </div>
