@@ -1258,7 +1258,7 @@ async def scenarios_offres():
              and p["reservations"]["sponsor_id"] is None and p["offer_id"] == OFFRE_B
              and p["invitee_access_code"] != ancien_code and p["reservations"]["invitee_id"] != ancien_rid
              and len(resas_ami_actives(base)) == 1 and resas_ami_actives(base)[0]["id"] == p["reservations"]["invitee_id"]
-             and next(r for r in resas_ami(base) if r["id"] == ancien_rid)["status"] == "cancelled",
+             and not any(r["id"] == ancien_rid for r in resas_ami(base)),
              str((code, d13.get("status"), p.get("offer_id"))))
 
     # ── 14-17. changement APRÈS déblocage sans présence ────────────────────
@@ -1274,7 +1274,7 @@ async def scenarios_offres():
     nouveau_code = p["invitee_access_code"]
     ancien_c = next(d for d in base["discount_codes"].docs if d["code"] == ancien_code)
     ancien_s = next(d for d in base["subscriptions"].docs if d["code"] == ancien_code)
-    ancienne_r = next(r for r in base["reservations"].docs if r["id"] == ancien_rid)
+    ancienne_r = next((r for r in base["reservations"].docs if r["id"] == ancien_rid), None)
     nouveau_c = next((d for d in base["discount_codes"].docs if d["code"] == nouveau_code), None)
     nouveau_s = next((d for d in base["subscriptions"].docs if d["code"] == nouveau_code), None)
     nouvelle_r = next((r for r in base["reservations"].docs if r["id"] == p["reservations"]["invitee_id"]), None)
@@ -1286,9 +1286,11 @@ async def scenarios_offres():
              ancien_c["active"] is False and ancien_c["maxUses"] == 0 and ancien_c.get("pass_duo_rollback_motif") == "pass_duo_offer_change"
              and ancien_s["status"] == "cancelled" and ancien_s["remaining_sessions"] == 0
              and ancien_s.get("pass_duo_rollback_motif") == "pass_duo_offer_change", str((ancien_c, ancien_s))[:300])
-    verifier("O14c. ANCIENNE réservation de l'ami : status cancelled, cancel_reason pass_duo_offer_change, toujours en base (jamais supprimée)",
-             ancienne_r["status"] == "cancelled" and ancienne_r["cancel_reason"] == "pass_duo_offer_change"
-             and ancienne_r.get("cancelled_at"), str(ancienne_r)[:200])
+    verifier("O14c. ANCIENNE réservation de l'ami SUPPRIMÉE (convention du dépôt : aucun statut d'annulation sur reservations, "
+             "l'annulation LOT B3 fait delete_one) ; sa trace (reservationCode) vit dans les événements du pass",
+             ancienne_r is None and any(e.get("type") in ("offer_changed", "reservation_remplacee", "offer_change")
+                                        or ancien_rid in str(e) for e in p.get("events", [])),
+             str((ancienne_r, [e.get("type") for e in p.get("events", [])][-4:]))[:200])
     verifier("O14d. Séance de l'ancienne réservation RESTITUÉE (fiche ancien code used 1 -> 0, mouvement restitution:<rid> appliqué)",
              ancien_c["used"] == 0 and any(d["_id"] == "restitution:%s" % ancien_rid and d["statut"] == "applique"
                                            for d in base["seance_mouvements"].docs), str(ancien_c.get("used")))
@@ -1306,8 +1308,8 @@ async def scenarios_offres():
              resa_parrain_apres == resa_parrain_avant and sub_p["remaining_sessions"] == 2
              and p["reservations"]["sponsor_id"] == p0["reservations"]["sponsor_id"]
              and p["reservations"]["sponsor_code"] == p0["reservations"]["sponsor_code"])
-    verifier("O15. Exactement UNE réservation ACTIVE de l'ami (l'ancienne est cancelled), deux documents au total, un seul billet invitee dans le DTO",
-             len(resas_ami_actives(base)) == 1 and len(resas_ami(base)) == 2
+    verifier("O15. Exactement UNE réservation de l'ami en base (l'ancienne est supprimée), un seul billet invitee dans le DTO",
+             len(resas_ami_actives(base)) == 1 and len(resas_ami(base)) == 1
              and [t["role"] for t in d14["tickets"]].count("invitee") == 1
              and next(t for t in d14["tickets"] if t["role"] == "invitee")["reservationCode"] == nouvelle_r["reservationCode"],
              str([(r["id"][:8], r.get("status")) for r in resas_ami(base)]))

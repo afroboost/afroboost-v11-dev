@@ -468,9 +468,9 @@ async def _reserver_seance_duo(code, email, name, whatsapp, course, occurrence,
     if _b2:
         raise HTTPException(status_code=400, detail=_b2_msg)
 
-    # V534b : une réservation ANNULÉE par un changement d'offre (`status:
-    # "cancelled"`, jamais supprimée) n'est pas « existante » — sinon le
-    # re-octroi la rattacherait au lieu de créer le nouveau billet.
+    # V534b : la réservation remplacée par un changement d'offre est SUPPRIMÉE
+    # (convention du dépôt, cf. `_annuler_reservation_ami`) ; le filtre sur
+    # `status` reste une ceinture si un jour un statut d'annulation apparaît.
     _existante = await db["reservations"].find_one(
         {"userEmail": {"$regex": "^%s$" % re.escape(_email), "$options": "i"},
          "courseId": _cid, "datetime": _occ, "status": {"$ne": "cancelled"}}, {"_id": 0})
@@ -885,15 +885,17 @@ def _version_du_corps(corps) -> int:
 
 async def _annuler_reservation_ami(reservation_id, code, motif) -> dict:
     """Restitue la séance de CETTE réservation (`seances_restituer`, clé =
-    id de la réservation) et la marque `cancelled` — jamais supprimée.
-    Rend `{restitution, avant}` pour une restauration éventuelle."""
+    id de la réservation) puis la SUPPRIME — la convention du dépôt : il
+    n'existe aucun statut d'annulation sur `reservations` (l'annulation LOT B3
+    fait `delete_one`, et ni l'espace, ni le scanner, ni les analytics ne
+    lisent un `status`). Une réservation « cancelled » resterait visible dans
+    « Mes prochaines séances » et scannable par CAS A : on ne l'invente pas.
+    La trace vit dans `referral_passes.events` / `offer_history` (le document
+    complet est rendu dans `avant` pour une restauration à l'identique)."""
     from api.routes.shared import seances_restituer
-    _avant = await db["reservations"].find_one({"id": reservation_id}, {"_id": 0, "status": 1, "cancel_reason": 1,
-                                                                        "cancelled_at": 1}) or {}
+    _avant = await db["reservations"].find_one({"id": reservation_id}, {"_id": 0}) or {}
     _rest = await seances_restituer(db, code, 1, reservation_id=reservation_id, source=motif)
-    await db["reservations"].update_one(
-        {"id": reservation_id},
-        {"$set": {"status": "cancelled", "cancel_reason": motif, "cancelled_at": _iso()}})
+    await db["reservations"].delete_one({"id": reservation_id})
     return {"restitution": _rest, "avant": _avant}
 
 
@@ -925,15 +927,10 @@ async def _restaurer_ancien_octroi(pass_doc, ancien, email, tel) -> None:
     try:
         if _rid:
             _av = (ancien.get("annulation") or {}).get("avant") or {}
-            _set = {k: _av[k] for k in ("status", "cancel_reason", "cancelled_at") if k in _av}
-            _unset = {k: "" for k in ("status", "cancel_reason", "cancelled_at") if k not in _av}
-            _upd = {}
-            if _set:
-                _upd["$set"] = _set
-            if _unset:
-                _upd["$unset"] = _unset
-            if _upd:
-                await db["reservations"].update_one({"id": _rid}, _upd)
+            # La réservation supprimée en (a) est RÉINSÉRÉE à l'identique (document
+            # complet conservé), si elle n'est pas déjà revenue.
+            if _av and not await db["reservations"].find_one({"id": _rid}, {"_id": 1}):
+                await db["reservations"].insert_one(dict(_av))
             _rest = (ancien.get("annulation") or {}).get("restitution") or {}
             if _rest.get("restitue") and _rest.get("fiche_id"):
                 # La séance rendue est REPRISE sur la même fiche, et le mouvement
@@ -992,7 +989,13 @@ async def _changer_offre_apres_join(pass_doc, course, nouvelle, entree, changed_
              "attribution": _attrib or pass_doc.get("attribution"),
              "offer_change": None},
             {"offer_history": entree,
-             "events": {"at": _iso(), "type": E.EVENEMENT_OFFRE, "detail": dict(entree)}})
+             # La réservation remplacée est SUPPRIMÉE (convention du dépôt) : sa trace
+             # — id et reservationCode — reste ici, dans l'événement du pass.
+             "events": {"at": _iso(), "type": E.EVENEMENT_OFFRE,
+                        "detail": dict(entree, reservation_remplacee={
+                            "id": _ancien_rid,
+                            "reservationCode": ((_ancien.get("annulation") or {}).get("avant") or {}).get("reservationCode"),
+                            "access_code_neutralise": _ancien_code})}})
     except Exception as _err:  # noqa: BLE001
         # ── (d) rollback de (b), puis restauration de (a) ──────────────────
         _detail = getattr(_err, "detail", None) if isinstance(_err, HTTPException) else None
