@@ -754,6 +754,25 @@ const V228_PATHS = {
       <path d="M14 9.3a6.5 6.5 0 1 1-4 0" />
       <path d="M5.58 16.5h12.85" />
     </>
+  ),
+
+  // --- V534 : Centre Parrainage / Pass Duo ---------------------------------
+  //   qrCode <- bouton « QR » du partage d'invitation (Feather/Lucide qr-code)
+  //   plus   <- « Créer mon Pass Duo » (le `plusCircle` existant porte un cercle)
+  qrCode: (
+    <>
+      <rect x="3" y="3" width="7" height="7" />
+      <rect x="14" y="3" width="7" height="7" />
+      <rect x="3" y="14" width="7" height="7" />
+      <path d="M14 14h3v3" />
+      <path d="M21 14v7h-7" />
+    </>
+  ),
+  plus: (
+    <>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </>
   )
 };
 
