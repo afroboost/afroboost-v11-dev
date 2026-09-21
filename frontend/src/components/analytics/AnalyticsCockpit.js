@@ -469,6 +469,12 @@ export function SectionParrainage({ periode, du, au, coachId, courseId }) {
 
   if (masque) return null;
   const k = (resume && resume.kpi) || {};
+  // V534b: les KPI d'offres sont au premier niveau de la réponse (le serveur les sert à côté de `kpi`) ;
+  // on accepte aussi une version imbriquée pour ne pas dépendre de l'ordre de déploiement.
+  const ko = {
+    changements_offre: resume && resume.changements_offre != null ? resume.changements_offre : k.changements_offre,
+    offre_la_plus_choisie: resume && resume.offre_la_plus_choisie !== undefined ? resume.offre_la_plus_choisie : k.offre_la_plus_choisie,
+  };
   const c = (resume && resume.par_canal) || {};
   const select = { background: 'rgba(255,255,255,0.06)', border: BORDURE, color: '#fff', borderRadius: 8, padding: '6px 10px', fontSize: 12 };
   return (
@@ -492,11 +498,11 @@ export function SectionParrainage({ periode, du, au, coachId, courseId }) {
         <Carte testid="kpi-parrainage-annules" valeur={k.annules} libelle="Annulés" />
         <Carte testid="kpi-parrainage-presences" valeur={k.presences_duo} libelle="Présences Duo (scan)" />
         {/* V534b: l'offre du Pass Duo — nombre de changements, offre la plus choisie (par son NOM, jamais son id) */}
-        <Carte testid="kpi-parrainage-changements-offre" valeur={k.changements_offre} libelle="Changements d'offre" />
+        <Carte testid="kpi-parrainage-changements-offre" valeur={ko.changements_offre} libelle="Changements d'offre" />
         <Carte testid="kpi-parrainage-offre-choisie"
-               valeur={k.offre_la_plus_choisie && k.offre_la_plus_choisie.n != null ? k.offre_la_plus_choisie.n : null}
+               valeur={ko.offre_la_plus_choisie && ko.offre_la_plus_choisie.n != null ? ko.offre_la_plus_choisie.n : null}
                libelle="Offre la plus choisie"
-               precision={k.offre_la_plus_choisie && k.offre_la_plus_choisie.name ? k.offre_la_plus_choisie.name : 'Aucune encore'} />
+               precision={ko.offre_la_plus_choisie && ko.offre_la_plus_choisie.name ? ko.offre_la_plus_choisie.name : 'Aucune encore'} />
       </div>
       <div style={note}>Période, cours et coach : les filtres du cockpit s'appliquent. Aucun sondage : un appel par changement de filtre.</div>
     </div>
