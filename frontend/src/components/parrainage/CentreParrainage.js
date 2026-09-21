@@ -26,6 +26,7 @@ import { entrerDansSpordate, prechargerSpordate } from '../../utils/spordateHand
 import {
   API_PARRAINAGE, enteteParrain, aUneIdentiteParrain, urlEspaceCourant, lireConfigParrainage,
   lienWhatsApp, copier, partager, passCourant, libelleJour, libelleDateCourte, STATUTS_OUVERTS,
+  changerOffre, lireRefus, messageRefusOffre, lignesHistorique, offreDuPass, TEXTE_OFFRE_CONFLIT, // V534b
 } from '../../utils/parrainage';
 import './parrainage.css';
 
@@ -217,19 +218,51 @@ export default function CentreParrainage() {
       });
   };
 
-  const creerPass = (course_id, occurrence, terms_accepted) => {
+  const creerPass = (course_id, occurrence, terms_accepted, offer_id) => {
     setOccupe(true); setErreurPass('');
     // V534: `terms_accepted` = la case ConditionsParticipation du formulaire (preuve T1 du parrain, jamais inventée)
-    axios.post(`${API_PARRAINAGE}/pass`, { course_id, occurrence, terms_accepted: terms_accepted === true }, { headers: enteteParrain() })
+    // V534b: `offer_id` = l'offre choisie dans la carte (le serveur la valide toujours ; null = serveur sans catalogue)
+    const corps = { course_id, occurrence, terms_accepted: terms_accepted === true };
+    if (offer_id) corps.offer_id = offer_id;
+    axios.post(`${API_PARRAINAGE}/pass`, corps, { headers: enteteParrain() })
       .then((r) => {
         poserPass(r.data);
         if (r.data && r.data.deja_existant) setFeedback('Tu as déjà un Pass Duo pour cette séance');
       })
       .catch((e) => {
         const s = e && e.response && e.response.status;
-        setErreurPass(s === 400 ? 'Cette séance n’est pas ouverte au Pass Duo.'
-          : s === 429 ? 'Trop de tentatives. Réessaie dans un instant.'
-            : 'Création impossible pour le moment.');
+        const detail = String((e && e.response && e.response.data && e.response.data.detail) || '');
+        setErreurPass(s === 400 && /^offre_/.test(detail)
+          ? 'Cette offre n’est plus disponible pour cette séance. Choisis-en une autre.'
+          : s === 400 ? 'Cette séance n’est pas ouverte au Pass Duo.'
+            : s === 429 ? 'Trop de tentatives. Réessaie dans un instant.'
+              : 'Création impossible pour le moment.');
+      })
+      .finally(() => setOccupe(false));
+  };
+  /**
+   * V534b: `PATCH /pass/{id}/offer {offer_id, version}` — l'état local vient du PassDTO renvoyé.
+   * 409 `conflit_version` → UN rechargement de /me (jamais en boucle), puis la carte réaffiche le
+   * sélecteur avec le message ; 409 `pass_non_modifiable` → le `detail` du serveur.
+   * Renvoie `{ok}` ou `{ok:false, conflit?, message}` à la carte (qui garde ou ferme son sheet).
+   */
+  const changerOffrePass = (id, offer_id, version) => {
+    setOccupe(true); setErreurPass('');
+    return changerOffre({ passId: id, offerId: offer_id, version, headers: enteteParrain() })
+      .then((r) => { poserPass(r.data); return { ok: true }; })
+      .catch((e) => {
+        const refus = lireRefus(e);
+        if (refus.status === 409 && refus.raison === 'conflit_version') {
+          return axios.get(`${API_PARRAINAGE}/me`, { headers: enteteParrain(), timeout: 10000 })
+            .then((r) => {
+              const d = (r && r.data) || {};
+              if (Array.isArray(d.passes)) setMe((prev) => Object.assign({}, prev || {}, d));
+              return { ok: false, conflit: true, message: TEXTE_OFFRE_CONFLIT };
+            })
+            .catch(() => ({ ok: false, conflit: true, message: TEXTE_OFFRE_CONFLIT }));
+        }
+        const pass = passes.find((p) => p && p.id === id);
+        return { ok: false, message: messageRefusOffre(refus, pass && pass.status) };
       })
       .finally(() => setOccupe(false));
   };
@@ -323,7 +356,8 @@ export default function CentreParrainage() {
 
   // ── Centre complet ────────────────────────────────────────────────────────
   const invitations = Array.isArray(me.invitations) ? me.invitations : [];
-  const history = Array.isArray(me.history) ? me.history : [];
+  // V534b: les lignes « Offre modifiée : A → B » viennent de history[] (type offer_changed), sinon des offer_history[]
+  const history = lignesHistorique(me.history, passes);
   const parId = {};
   passes.forEach((p) => { if (p && p.id) parId[p.id] = p; });
 
@@ -399,6 +433,7 @@ export default function CentreParrainage() {
         onAnnuler={annulerPass}
         onConfirmer={confirmerPass}
         onChoisir={(id) => { setErreurPass(''); setPassAfficheId(id); }}
+        onChangerOffre={changerOffrePass}
         occupe={occupe}
         erreur={erreurPass}
       />
@@ -410,6 +445,7 @@ export default function CentreParrainage() {
         ) : invitations.map((inv, i) => {
           const p = parId[inv.pass_id];
           const ami = p && p.invitee && p.invitee.first_name;
+          const offreInv = offreDuPass(p); // V534b: l'offre du pass, par son nom (jamais son id)
           return (
             <div className="cp-row" key={inv.id || i} data-testid="invitation-row">
               <div className="cp-who">
@@ -419,6 +455,7 @@ export default function CentreParrainage() {
                   <small>
                     {CANAUX[inv.channel] || inv.channel || 'Lien'}
                     {p && p.occurrence ? ` · Pass Duo ${libelleJour(p.occurrence).toLowerCase()}` : ''}
+                    {offreInv ? ` · ${offreInv.name}` : ''}
                     {inv.created_at ? ` · ${libelleDateCourte(inv.created_at)}` : ''}
                   </small>
                 </div>

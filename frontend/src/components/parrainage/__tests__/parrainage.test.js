@@ -231,7 +231,7 @@ describe('PassDuoCard — les sept états', () => {
     expect(sel.options.length).toBe(2);
     expect(sel.options[0].textContent).toMatch(/^Dimanche 27 sept\. · 18:30 — Bord du Lac, Auvernier$/);
     await act(async () => { par('pass-creer').click(); });
-    expect(onCreer).toHaveBeenCalledWith('c1', OCC, false);
+    expect(onCreer).toHaveBeenCalledWith('c1', OCC, false, null); // V534b: offer_id null = config sans catalogue
   });
   test('V534 conditions publiées → la création exige la case cochée, puis transmet terms_accepted=true', async () => {
     const onCreer = jest.fn();
@@ -244,7 +244,7 @@ describe('PassDuoCard — les sept états', () => {
     await act(async () => { cases[0].click(); });
     expect(par('pass-creer').disabled).toBe(false);
     await act(async () => { par('pass-creer').click(); });
-    expect(onCreer).toHaveBeenCalledWith('c1', OCC, true);
+    expect(onCreer).toHaveBeenCalledWith('c1', OCC, true, null); // V534b
   });
   test('etapePass / passCourant / optionsSeances / libelleOccurrence', () => {
     expect([etapePass('locked'), etapePass('waiting'), etapePass('friend_registered'), etapePass('unlocked'), etapePass('used')]).toEqual([0, 1, 2, 3, 3]);
