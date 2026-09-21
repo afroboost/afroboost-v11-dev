@@ -8044,6 +8044,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   lang={lang}
                   t={t}
                   coachEmail={safeCoachUser?.email}
+                  offers={offers} // V534b: catalogue autorisé du Pass Duo (offres du coach)
                 />
                 )}
                 {/* v69: Indicateur prochaine expiration automatique (seulement tab Contenus) */}
