@@ -417,7 +417,16 @@ PARRAIN_TEL = "+41 79 200 30 40"
 COURS_DUO = "cours-duo-0001"
 COURS_NON_DUO = "cours-sans-duo"
 COURS_CACHE = "cours-duo-cache"
-OFFRE_ESSAI = "offre-essai-0"
+COURS_SANS_OFFRE = "cours-duo-sans-offre"     # V534b : duo_enabled mais aucun catalogue
+OFFRE_ESSAI = "offre-essai-0"                 # = offre A (la « Recommandée »)
+OFFRE_A, OFFRE_B, OFFRE_C = OFFRE_ESSAI, "offre-duo-b", "offre-duo-c"
+OFFRE_D = "offre-duo-d-non-autorisee"        # gratuite, du coach, PAS dans duo_offer_ids
+OFFRE_PAYANTE = "offre-payante-30"           # dans duo_offer_ids, 30 CHF -> jamais
+OFFRE_AUTRE_COACH = "offre-autre-coach"      # dans duo_offer_ids, coach_id différent
+OFFRE_ARCHIVEE = "offre-archivee"            # dans duo_offer_ids, archivée
+OFFRE_INVISIBLE = "offre-invisible"          # dans duo_offer_ids, visible: false
+CATALOGUE_AUTORISE = [OFFRE_A, OFFRE_B, OFFRE_C, OFFRE_PAYANTE, OFFRE_AUTRE_COACH,
+                      OFFRE_ARCHIVEE, OFFRE_INVISIBLE]
 
 MOUCHARDS = {"push": [], "email_parrain": [], "notif_resa": [], "seances": [],
              "ordre": [], "paiements": []}
@@ -488,17 +497,36 @@ def base_de_depart(drapeau=True, seances_parrain=3):
     base["courses"].docs += [
         {"id": COURS_DUO, "name": "Afro Cardio", "weekday": wd, "time": "18:30",
          "locationName": "Salle Nord", "mapsUrl": "https://maps.example/x", "visible": True,
-         "archived": False, "duo_enabled": True, "coach_id": None},
+         "archived": False, "duo_enabled": True, "coach_id": None,
+         # V534b : le coach autorise 3 offres valides (+ 4 pièges que le backend doit écarter).
+         "duo_offer_ids": list(CATALOGUE_AUTORISE), "duo_default_offer_id": OFFRE_A},
         {"id": COURS_NON_DUO, "name": "Sans Duo", "weekday": wd, "time": "19:30",
          "locationName": "Salle Sud", "visible": True, "archived": False},
         {"id": COURS_CACHE, "name": "Duo caché", "weekday": wd, "time": "20:30",
-         "locationName": "Salle Est", "visible": False, "archived": False, "duo_enabled": True},
+         "locationName": "Salle Est", "visible": False, "archived": False, "duo_enabled": True,
+         "duo_offer_ids": [OFFRE_A]},
         {"id": "cours-duo-archive", "name": "Duo archivé", "weekday": wd, "time": "21:30",
-         "locationName": "Salle Ouest", "visible": True, "archived": True, "duo_enabled": True},
+         "locationName": "Salle Ouest", "visible": True, "archived": True, "duo_enabled": True,
+         "duo_offer_ids": [OFFRE_A]},
+        {"id": COURS_SANS_OFFRE, "name": "Duo sans offre", "weekday": wd, "time": "17:30",
+         "locationName": "Salle Vide", "visible": True, "archived": False, "duo_enabled": True,
+         "coach_id": None},
     ]
-    base["offers"].docs.append({"id": OFFRE_ESSAI, "name": "Essai gratuit", "price": 0.0,
-                                "visible": True, "coach_id": None,
-                                "linked_course_ids": [COURS_DUO]})
+    base["offers"].docs += [
+        {"id": OFFRE_A, "name": "Essai gratuit", "price": 0.0, "visible": True, "coach_id": None,
+         "linked_course_ids": [COURS_DUO]},
+        {"id": OFFRE_B, "name": "Duo 2 séances", "price": 0, "visible": True, "coach_id": "",
+         "pack_sessions": 2, "duree_mois": 1, "description": "Deux séances pour découvrir."},
+        {"id": OFFRE_C, "name": "Découverte 14 jours", "price": 0.0, "visible": True,
+         "duration_value": 14, "duration_unit": "days", "description": "x" * 260},
+        {"id": OFFRE_D, "name": "Gratuite non autorisée", "price": 0.0, "visible": True, "coach_id": None},
+        {"id": OFFRE_PAYANTE, "name": "Cours à l'unité", "price": 30.0, "visible": True, "coach_id": None},
+        {"id": OFFRE_AUTRE_COACH, "name": "Essai partenaire", "price": 0.0, "visible": True,
+         "coach_id": "autre@coach.test"},
+        {"id": OFFRE_ARCHIVEE, "name": "Ancien essai", "price": 0.0, "visible": True, "coach_id": None,
+         "archived": True},
+        {"id": OFFRE_INVISIBLE, "name": "Essai caché", "price": 0.0, "visible": False, "coach_id": None},
+    ]
     # Le parrain : un forfait payant vivant + sa fiche code.
     dans_3_mois = (datetime.now(timezone.utc) + timedelta(days=90)).isoformat()
     base["subscriptions"].docs.append({
@@ -557,10 +585,52 @@ def corps_ami(email=AMI_EMAIL, tel=AMI_TEL, nom="Noé Ami", **extra):
     return d
 
 
-async def creer_pass(base, occ, tok=None):
-    code, dto = await appel(R.referral_creer_pass(
-        req_parrain(base, {"course_id": COURS_DUO, "occurrence": occ, "terms_accepted": True}, tok=tok)))
+async def creer_pass(base, occ, tok=None, offer_id=OFFRE_A, **extra):
+    corps = {"course_id": COURS_DUO, "occurrence": occ, "terms_accepted": True}
+    if offer_id is not None:
+        corps["offer_id"] = offer_id
+    corps.update(extra)
+    code, dto = await appel(R.referral_creer_pass(req_parrain(base, corps, tok=tok)))
     return code, dto
+
+
+def entetes_admin():
+    return {"Authorization": "Bearer " + jeton_admin()}
+
+
+async def patch_offre(base, identifiant, offer_id, version, tok=None, public=False, ip=None):
+    """PATCH /pass/{identifiant}/offer — porte parrain (jeton) ou publique."""
+    corps = {"offer_id": offer_id, "version": version}
+    if public:
+        return await appel(R.referral_changer_offre(identifiant, Requete(corps, {}, ip=ip)))
+    return await appel(R.referral_changer_offre(identifiant, req_parrain(base, corps, tok=tok)))
+
+
+def resas_ami(base, email=AMI_EMAIL):
+    return [r for r in base["reservations"].docs if r.get("pass_role") == "invitee"
+            and (r.get("userEmail") or "").lower() == email]
+
+
+def resas_ami_actives(base, email=AMI_EMAIL):
+    return [r for r in resas_ami(base, email) if r.get("status") != "cancelled"]
+
+
+def codes_ami(base, email=AMI_EMAIL):
+    return [d for d in base["discount_codes"].docs if d.get("assignedEmail") == email]
+
+
+def subs_ami(base, email=AMI_EMAIL):
+    return [d for d in base["subscriptions"].docs if d.get("email") == email]
+
+
+def verrous_actifs(base):
+    return [v for v in base["free_trial_claims"].docs if v.get("actif") is True]
+
+
+def bilan_seances(base, code):
+    """(débits appliqués, restitutions appliquées) sur `seance_mouvements` pour ce code."""
+    m = [d for d in base["seance_mouvements"].docs if d.get("code") == code and d.get("statut") == "applique"]
+    return (sum(1 for d in m if d["type"] == "debit"), sum(1 for d in m if d["type"] == "restitution"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -607,9 +677,9 @@ async def principal():
     verifier("2. Cours sans duo_enabled : 400, rien d'écrit", code == 400 and not base["referral_passes"].docs, str(code))
     code, _ = await appel(R.referral_creer_pass(req_parrain(base, {"course_id": COURS_CACHE, "occurrence": occ})))
     verifier("2b. Cours duo mais invisible : 400", code == 400)
-    code, _ = await appel(R.referral_creer_pass(req_parrain(base, {"course_id": COURS_DUO, "occurrence": "2020-01-01T18:30:00"})))
+    code, _ = await appel(R.referral_creer_pass(req_parrain(base, {"course_id": COURS_DUO, "occurrence": "2020-01-01T18:30:00", "offer_id": OFFRE_A})))
     verifier("2c. Occurrence hors des dates proposées : 400", code == 400)
-    code, _ = await appel(R.referral_creer_pass(Requete({"course_id": COURS_DUO, "occurrence": occ},
+    code, _ = await appel(R.referral_creer_pass(Requete({"course_id": COURS_DUO, "occurrence": occ, "offer_id": OFFRE_A},
                                                         {"X-User-Email": ADMIN})))
     verifier("2d. X-User-Email seul n'identifie PAS un parrain : 403", code == 403, str(code))
 
@@ -767,9 +837,18 @@ async def principal():
              base["referral_passes"].docs[0]["invitee"] is None and not base["reservations"].docs[1:]
              and len(base["subscriptions"].docs) == 2)
     ordre_ast = _ordre_ast()
-    verifier("5d. AST de referral_join : _essai4_garde < _essai1_garde < _process_successful_payment < réservation < notifications",
-             ordre_ast["_essai4_garde"] < ordre_ast["_essai1_garde"] < ordre_ast["_process_successful_payment"]
-             < ordre_ast["_reserver_seance_duo"] < ordre_ast["_debloquer_ou_bloquer"], str(ordre_ast))
+    verifier("5d. AST : dans _octroyer_essai, _essai4_garde < _essai1_garde < _process_successful_payment ; "
+             "dans referral_join, _octroyer_essai < _reserver_ami < _debloquer_ou_bloquer ; _reserver_ami appelle "
+             "_reserver_seance_duo ; le changement d'offre après join passe par les MÊMES _octroyer_essai / _reserver_ami (V534b)",
+             ordre_ast["octroi"]["_essai4_garde"] < ordre_ast["octroi"]["_essai1_garde"]
+             < ordre_ast["octroi"]["_process_successful_payment"]
+             and ordre_ast["join"]["_octroyer_essai"] < ordre_ast["join"]["_reserver_ami"]
+             < ordre_ast["join"]["_debloquer_ou_bloquer"]
+             and "_reserver_seance_duo" in ordre_ast["reserver_ami"]
+             and ordre_ast["changement"]["_octroyer_essai"] < ordre_ast["changement"]["_reserver_ami"]
+             and not any(k in ordre_ast["join"] for k in ("_essai4_garde", "_essai1_garde", "_process_successful_payment"))
+             and not any(k in ordre_ast["changement"] for k in ("_essai4_garde", "_essai1_garde", "_process_successful_payment")),
+             str(ordre_ast))
     # Même numéro, autre adresse : ESSAI-6 ferme aussi sur le téléphone.
     code, rep = await appel(R.referral_join(dto["share_token"], Requete(corps_ami(email="nouvelle@exemple.test"))))
     verifier("5e. Même téléphone sous une autre adresse : 409 aussi (ESSAI-6)", code == 409 and "free_trial" in rep["headers"].get("X-Refus-Raison", ""), str((code, rep)))
@@ -895,7 +974,7 @@ async def principal():
     verifier("14. Drapeau OFF : /config -> {enabled:false, courses:[]}", code == 200 and cfg == {"enabled": False, "courses": []}, str(cfg))
     fermees = {
         "me": R.referral_me(req_parrain(base)),
-        "pass": R.referral_creer_pass(req_parrain(base, {"course_id": COURS_DUO, "occurrence": occ})),
+        "pass": R.referral_creer_pass(req_parrain(base, {"course_id": COURS_DUO, "occurrence": occ, "offer_id": OFFRE_A})),
         "invitations": R.referral_invitation(req_parrain(base, {"pass_id": "x", "channel": "copy"})),
         "cancel": R.referral_annuler("x", req_parrain(base)),
         "confirm": R.referral_confirmer("x", req_parrain(base)),
@@ -955,7 +1034,7 @@ async def principal():
     # ── 18. conditions publiées (T1) : la preuve du parrain n'est jamais inventée ─
     base, occ = base_de_depart()
     base["concept"].docs.append({"id": "concept", "termsText": "Conditions de participation v1."})
-    code, dto = await appel(R.referral_creer_pass(req_parrain(base, {"course_id": COURS_DUO, "occurrence": occ})))
+    code, dto = await appel(R.referral_creer_pass(req_parrain(base, {"course_id": COURS_DUO, "occurrence": occ, "offer_id": OFFRE_A})))
     verifier("18. Pass créé SANS terms_accepted : 201 (les conditions se jugent à la réservation, pas à la création)", code == 201, str(code))
     code, rep = await appel(R.referral_join(dto["share_token"], Requete(corps_ami())))
     resas = [r for r in base["reservations"].docs if r.get("pass_id")]
@@ -1011,25 +1090,33 @@ async def _debit_429(base, occ):
     n_avant = len(base["referral_passes"].docs)
     codes = []
     for _ in range(21):
-        c, _ = await appel(R.referral_creer_pass(Requete({"course_id": COURS_DUO, "occurrence": occ},
+        c, _ = await appel(R.referral_creer_pass(Requete({"course_id": COURS_DUO, "occurrence": occ, "offer_id": OFFRE_A},
                                                          {"x-espace-token": jeton_espace(base)}, ip=ip)))
         codes.append(c)
     return codes[:20].count(429) == 0 and codes[20] == 429 and len(base["referral_passes"].docs) == n_avant
 
 
 def _ordre_ast():
-    """Ligne du PREMIER appel de chaque fonction clé dans `referral_join`."""
+    """Ligne du PREMIER appel de chaque fonction clé, par fonction hôte :
+    `octroi` (_octroyer_essai), `join` (referral_join), `reserver_ami`
+    (_reserver_ami), `changement` (_changer_offre_apres_join)."""
     src = io.open(os.path.join(RACINE, "api", "routes", "referral_routes.py"), encoding="utf-8").read()
     arbre = ast.parse(src)
-    fn = [n for n in ast.walk(arbre) if isinstance(n, ast.AsyncFunctionDef) and n.name == "referral_join"][0]
-    lignes = {}
-    for n in ast.walk(fn):
-        if isinstance(n, ast.Call):
-            nom = n.func.id if isinstance(n.func, ast.Name) else getattr(n.func, "attr", "")
-            if nom in ("_essai4_garde", "_essai1_garde", "_process_successful_payment",
-                       "_reserver_seance_duo", "_debloquer_ou_bloquer") and nom not in lignes:
-                lignes[nom] = n.lineno
-    return lignes
+    cibles = ("_essai4_garde", "_essai1_garde", "_process_successful_payment", "_reserver_seance_duo",
+              "_debloquer_ou_bloquer", "_octroyer_essai", "_reserver_ami")
+    hotes = {"octroi": "_octroyer_essai", "join": "referral_join", "reserver_ami": "_reserver_ami",
+             "changement": "_changer_offre_apres_join"}
+    sortie = {}
+    for cle, nom_fn in hotes.items():
+        fn = [n for n in ast.walk(arbre) if isinstance(n, ast.AsyncFunctionDef) and n.name == nom_fn][0]
+        lignes = {}
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Call):
+                nom = n.func.id if isinstance(n.func, ast.Name) else getattr(n.func, "attr", "")
+                if nom in cibles and nom not in lignes:
+                    lignes[nom] = n.lineno
+        sortie[cle] = lignes
+    return sortie
 
 
 def main():
