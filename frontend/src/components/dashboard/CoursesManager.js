@@ -412,7 +412,11 @@ const CoursesManager = ({
                   const realIdx = courses.findIndex(c => c.id === course.id);
                   n[realIdx] = { ...n[realIdx], ...champs };
                   setCourses(n);
-                  updateCourse({ ...course, ...champs });
+                  // V534b: le PUT /courses ignore les `None` — « aucune recommandée » se dit par une chaîne vide,
+                  // que le serveur traite comme « aucune » (sinon la désélection ne serait jamais persistée).
+                  const envoi = { ...course, ...champs };
+                  if (envoi.duo_default_offer_id === null || envoi.duo_default_offer_id === undefined) envoi.duo_default_offer_id = '';
+                  updateCourse(envoi);
                 };
                 return (
                   <div className="mt-3 rounded-xl p-3" data-testid={`course-duo-offres-${course.id}`}
