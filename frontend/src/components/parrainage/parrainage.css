@@ -296,3 +296,86 @@
 
 /* V534: case des conditions de participation dans le formulaire Pass Duo */
 .cp-conditions{margin:12px 0 4px}
+
+/* ── V534b : l'offre du Pass Duo (cartes radio, encart, bottom sheet) ─────────
+ * Mêmes jetons que le reste : rayon 18/13, couleur du coach via var(), aucun
+ * hexa hors valeur de secours. Le sheet est ancré en bas ≤ 640 px (rayon 18 en
+ * haut, marge basse `env(safe-area-inset-bottom)`), modale centrée au-delà. */
+.cp-offres { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 4px; }
+.cp-offres-titre { margin-bottom: 2px; }
+.cp-offre {
+  display: flex; gap: 12px; align-items: flex-start; cursor: pointer; text-align: left;
+  padding: 14px 16px; border-radius: 13px; border: 1px solid var(--cp-line); background: var(--cp-input);
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.cp-offre:hover { border-color: var(--cp-pink-soft); }
+.cp-offre--on {
+  border-color: var(--cp-pink); background: rgba(var(--primary-rgb, 217, 28, 210), .16);
+  box-shadow: 0 0 0 1px rgba(var(--primary-rgb, 217, 28, 210), .35);
+}
+.cp-offre--off { opacity: .55; cursor: not-allowed; }
+.cp-offre:focus-within { outline: 2px solid rgb(255, 255, 255); outline-offset: 2px; }
+.cp-offre-radio { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.cp-offre-coche {
+  width: 22px; height: 22px; flex: none; margin-top: 1px; border-radius: 50%; display: grid; place-items: center;
+  border: 2px solid var(--cp-pink-soft); color: rgb(255, 255, 255); transition: background .15s ease, border-color .15s ease;
+}
+.cp-offre--on .cp-offre-coche { background: var(--cp-pink); border-color: var(--cp-pink); }
+.cp-offre-coche svg { width: 14px; height: 14px; }
+.cp-offre-corps { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.cp-offre-tete { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.cp-offre-nom { font-size: 15px; font-weight: 800; line-height: 1.3; min-width: 0; }
+.cp-offre-prix {
+  flex: none; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--cp-ok-soft); white-space: nowrap;
+}
+.cp-offre-avantage { font-size: 13px; color: var(--cp-text); line-height: 1.4; }
+.cp-offre-detail { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--cp-muted); line-height: 1.4; }
+.cp-offre-detail svg { width: 12px; height: 12px; flex: none; }
+.cp-offre-conditions { display: block; font-size: 12px; color: var(--cp-fine); }
+.cp-offre-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.cp-offre-badge { font-size: 10px; padding: 4px 8px; }
+.cp-offre-badge svg { width: 12px; height: 12px; }
+
+/* Encart « OFFRE — nom / avantage » (une seule offre, ou l'offre actuelle du pass) */
+.cp-offre-encart {
+  margin: 12px 0 4px; padding: 14px 16px; border-radius: 13px;
+  border: 1px solid var(--cp-line); background: rgba(var(--primary-rgb, 217, 28, 210), .09);
+}
+.cp-offre-encart .cp-eyebrow { margin-bottom: 6px; }
+.cp-offre-encart .cp-offre-tete { margin-bottom: 2px; }
+.cp-offre-encart .cp-offre-detail { display: flex; margin-top: 3px; }
+.cp-offre-note { margin: 8px 0 0; }
+.cp-offre-lien { margin-top: 10px; }
+.cp-offre-actions { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px; }
+.cp-offre-actions .cp-b { margin: 0; padding: 14px; font-size: 15px; }
+.cp-offre-avert { margin-top: 10px; }
+
+/* Le sheet : fond, panneau, poignée, en-tête */
+.cp-sheet-bg {
+  position: fixed; inset: 0; z-index: 100000; background: rgba(0, 0, 0, .78);
+  display: flex; align-items: center; justify-content: center; padding: 20px; animation: cp-fade .2s ease both;
+}
+.cp-sheet {
+  position: relative; width: min(100%, 420px); max-height: min(88vh, 88dvh); overflow-y: auto; -webkit-overflow-scrolling: touch;
+  background: var(--cp-card), rgb(0, 0, 0); border: 1px solid var(--cp-line); border-radius: 18px; padding: 20px;
+  animation: cp-in .25s ease both; color: rgb(255, 255, 255);
+}
+.cp-sheet-poignee { display: none; width: 44px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .25); margin: 0 auto 12px; }
+.cp-sheet-tete { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.cp-sheet-message { margin: 12px 0 0; }
+.cp-sheet .cp-b { margin-top: 14px; }
+@media (max-width: 640px) {
+  .cp-sheet-bg { align-items: flex-end; padding: 0; }
+  .cp-sheet {
+    width: 100%; max-width: none; max-height: min(92vh, 92dvh); border-radius: 18px 18px 0 0; border-bottom: 0;
+    padding: 12px 18px calc(20px + env(safe-area-inset-bottom, 0px)); animation: cp-monte .28s ease both;
+  }
+  .cp-sheet-poignee { display: block; }
+}
+@keyframes cp-monte { from { transform: translateY(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+/* `prefers-reduced-motion` : couvert par la règle globale `.cp-root *` (animation: none) ; le
+   sheet est monté hors `.cp-root` par un portail éventuel, on le répète explicitement. */
+@media (prefers-reduced-motion: reduce) {
+  .cp-sheet-bg, .cp-sheet, .cp-offre, .cp-offre-coche { animation: none !important; transition: none !important; }
+}
