@@ -310,3 +310,146 @@ export function messageErreurInvitation(status) {
   if (status === 410) return 'Cette invitation a expiré';
   return 'Invitation indisponible';
 }
+
+// ── V534b : l'offre du Pass Duo est choisie par le participant ──────────────
+//
+// L'offre publique est un `OffreDTO` : `{id, name, benefit, price, sessions,
+// validity, conditions, recommended}`. Rien de technique n'en sort à l'écran :
+// jamais l'`id`, jamais une collection, jamais un type. Le serveur valide
+// toujours l'`offer_id` renvoyé — le front ne fait que le choisir.
+
+/** Texte EXACT du serveur (et du contrat) pour un pass déjà utilisé. */
+export const TEXTE_OFFRE_UTILISEE = 'Cette offre a déjà été utilisée. Tu peux choisir une autre offre pour une prochaine réservation si elle est disponible.';
+/** Message affiché après un 409 `conflit_version` (rechargement puis réaffichage). */
+export const TEXTE_OFFRE_CONFLIT = "L'offre a changé entre-temps, revoici les offres";
+/** Note sous l'offre d'un pass existant (modèle réel : une offre commune, reçue par l'ami). */
+export const NOTE_OFFRE_PASS = 'Ton ami la reçoit à son inscription ; ta place vient de ton forfait.';
+
+/** « Offerte » si le prix est 0 (ou absent), sinon « 30 CHF ». */
+export function libelleOffre(o) {
+  const prix = Number(o && o.price);
+  if (!o || !Number.isFinite(prix) || prix <= 0) return 'Offerte';
+  return `${Number.isInteger(prix) ? prix : prix.toFixed(2)} CHF`;
+}
+
+/** L'avantage lisible d'une offre : `benefit` du serveur, sinon déduit de `sessions`. */
+export function avantageOffre(o) {
+  if (!o) return '';
+  if (o.benefit) return String(o.benefit);
+  const n = Number(o.sessions);
+  if (Number.isFinite(n) && n > 0) return n === 1 ? '1 séance offerte' : `${n} séances offertes`;
+  return '';
+}
+
+/**
+ * L'offre d'un pass : `pass.offer` (OffreDTO) si le serveur l'envoie, sinon
+ * `pass.offer_snapshot` mis au même format, sinon null (pass antérieur à V534b).
+ */
+export function offreDuPass(pass) {
+  if (!pass) return null;
+  if (pass.offer && typeof pass.offer === 'object' && pass.offer.name) return pass.offer;
+  const s = pass.offer_snapshot;
+  if (s && typeof s === 'object' && s.name) {
+    return {
+      id: s.id || pass.offer_id || '',
+      name: s.name,
+      benefit: s.benefit || avantageOffre(s),
+      price: Number(s.price) || 0,
+      sessions: s.sessions,
+      validity: s.validity || null,
+      conditions: s.conditions || null,
+      recommended: false,
+    };
+  }
+  return null;
+}
+
+/** Le catalogue courant d'un pass ou d'un cours : toujours un tableau. */
+export function offresDe(objet) {
+  return objet && Array.isArray(objet.offers) ? objet.offers.filter((o) => o && o.id && o.name) : [];
+}
+
+/**
+ * L'offre à présélectionner dans un catalogue : la recommandée (`recommended`
+ * ou `default_offer_id`) ; une seule offre → celle-là ; sinon aucune (null),
+ * et le bouton reste désactivé tant que rien n'est choisi.
+ */
+export function offrePreselectionnee(offres, defaultOfferId) {
+  const liste = Array.isArray(offres) ? offres : [];
+  if (liste.length === 1) return liste[0].id;
+  const reco = liste.find((o) => o && (o.recommended === true || (defaultOfferId && String(o.id) === String(defaultOfferId))));
+  return reco ? reco.id : null;
+}
+
+/** Un pass peut-il encore changer d'offre côté client ? (le serveur tranche toujours) */
+export function offreModifiable(status) {
+  return ['locked', 'waiting', 'friend_registered', 'unlocked'].indexOf(status) >= 0;
+}
+
+/**
+ * `PATCH /api/referral/pass/{cible}/offer {offer_id, version}`.
+ * `cible` = l'`id` du pass (parrain, en-têtes `enteteParrain()`) ou le
+ * `share_token` (public, avant inscription). Renvoie la promesse axios telle
+ * quelle : l'appelant lit le PassDTO ou le 409 (`X-Refus-Raison`).
+ */
+export function changerOffre({ passId, token, offerId, version, headers }) {
+  const cible = encodeURIComponent(passId || token || '');
+  return axios.patch(
+    `${API_PARRAINAGE}/pass/${cible}/offer`,
+    { offer_id: offerId, version: Number(version) || 1 },
+    { headers: headers || {}, timeout: 15000 },
+  );
+}
+
+/** `{status, raison, detail}` d'une erreur axios (raison = en-tête `X-Refus-Raison`). */
+export function lireRefus(err) {
+  const rep = (err && err.response) || {};
+  const h = rep.headers || {};
+  const d = rep.data;
+  return {
+    status: rep.status || 0,
+    raison: String(h['x-refus-raison'] || h['X-Refus-Raison'] || (d && d.code) || ''),
+    detail: d && typeof d.detail === 'string' ? d.detail : '',
+  };
+}
+
+/** Le message FR d'un changement d'offre refusé (hors conflit de version, géré par l'appelant). */
+export function messageRefusOffre(refus, status) {
+  const r = refus || {};
+  if (r.status === 409 && r.raison === 'pass_non_modifiable') return r.detail || (status === 'used' ? TEXTE_OFFRE_UTILISEE : 'Ce Pass ne peut plus changer d’offre.');
+  if (r.status === 409 && r.raison === 'pass_deja_rejoint') return 'Un ami a déjà rejoint ce Pass : seul le parrain peut encore changer l’offre.';
+  if (r.status === 400) return 'Cette offre n’est plus disponible pour cette séance. Choisis-en une autre.';
+  if (r.status === 429) return 'Trop de tentatives. Réessaie dans un instant.';
+  if (r.status === 401 || r.status === 403) return 'Ouvre ton espace abonné pour changer d’offre.';
+  return 'Changement impossible pour le moment. Réessaie dans un instant.';
+}
+
+/** Ligne d'historique « Offre modifiée : A → B ». */
+export function libelleChangementOffre(e) {
+  const de = (e && (e.from_name || e.from)) || '';
+  const vers = (e && (e.to_name || e.to)) || '';
+  if (de && vers) return `Offre modifiée : ${de} → ${vers}`;
+  if (vers) return `Offre choisie : ${vers}`;
+  return 'Offre modifiée';
+}
+
+/**
+ * L'historique à afficher : `history[]` du serveur, complété des lignes
+ * `offer_history[]` des passes quand le serveur n'a pas produit de ligne
+ * `offer_changed`. Récents d'abord, comme le serveur.
+ */
+export function lignesHistorique(history, passes) {
+  const base = (Array.isArray(history) ? history : []).filter(Boolean).map((h) => (
+    h.type === 'offer_changed' && !h.label ? Object.assign({}, h, { label: libelleChangementOffre(h) }) : h
+  ));
+  if (base.some((h) => h.type === 'offer_changed')) return base;
+  const extra = [];
+  (Array.isArray(passes) ? passes : []).forEach((p) => {
+    (p && Array.isArray(p.offer_history) ? p.offer_history : []).forEach((e) => {
+      if (!e) return;
+      extra.push({ at: e.changed_at || e.at || '', type: 'offer_changed', label: libelleChangementOffre(e), pass_id: p.id });
+    });
+  });
+  if (!extra.length) return base;
+  return base.concat(extra).sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+}
