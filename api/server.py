@@ -16125,9 +16125,21 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
     except Exception as _b2_err:
         logger.warning("[LOT B2] miroir d'affichage indisponible: %s", type(_b2_err).__name__)
 
+    # V534 : le drapeau du Pass Duo, et rien d'autre — l'espace sait s'il doit
+    # afficher la carte « Parrainage ». Additif, jamais bloquant. (Posé ICI, dans
+    # le dictionnaire réellement renvoyé : le bloc `response_data` plus bas est
+    # inatteignable depuis V212.)
+    try:
+        from api.routes.referral_routes import parrainage_duo_actif as _v534_actif
+        _v534_parrainage = {"enabled": bool(await _v534_actif(db))}
+    except Exception as _e534:
+        logger.warning("[V534] drapeau parrainage illisible pour l'espace (%s)", type(_e534).__name__)
+        _v534_parrainage = {"enabled": False}
+
     return {
         **_espace_renouv,
         "success": True,
+        "parrainage": _v534_parrainage,
         "multi_member": is_multi,
         "member": {"slug": member.get("slug"), "name": member.get("name")} if member else None,
         "subscriber": {
@@ -16236,15 +16248,6 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
             response_data["group_members"] = all_members
         except Exception as e:
             logger.warning(f"[V212] Erreur chargement membres: {e}")
-
-    # V534 : le drapeau du Pass Duo, et rien d'autre — l'espace sait s'il doit
-    # afficher la carte « Parrainage ». Additif, jamais bloquant.
-    try:
-        from api.routes.referral_routes import parrainage_duo_actif as _v534_actif
-        response_data["parrainage"] = {"enabled": bool(await _v534_actif(db))}
-    except Exception as _e534:
-        logger.warning("[V534] drapeau parrainage illisible pour l'espace (%s)", type(_e534).__name__)
-        response_data["parrainage"] = {"enabled": False}
 
     return response_data
 
