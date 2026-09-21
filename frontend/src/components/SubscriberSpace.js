@@ -14,6 +14,8 @@ import { sessionPourEspace, ecrireSession, oublierSession } from "../utils/espac
 import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 import CarteProfilSpordateur from './CarteProfilSpordateur'; // F3 SUITE — carte compacte vers la VRAIE page profil Spordateur
 import CarteNotifications from './CarteNotifications'; // PUSH-PWA — état des notifications + réactivation automatique
+import CarteParrainage from './parrainage/CarteParrainage'; // V534 — carte « Parrainage » vers le Centre
+import { lireConfigParrainage } from '../utils/parrainage'; // V534 — configuration (cache 10 min)
 // V334 etape 2 : « Mon cockpit » charge A LA DEMANDE (React.lazy).
 // Il embarque recharts, qui pese ~98 ko gzip : l'inclure dans le bundle
 // principal ferait payer ce poids a CHAQUE visiteur, pour une section repliee
@@ -172,6 +174,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   // Les valeurs viennent de l'occurrence REELLEMENT envoyee au serveur, jamais
   // d'un texte fabrique : si le serveur avait refuse, on ne serait pas ici.
   const [seanceConfirmee, setSeanceConfirmee] = useState(null);
+  // V534 — Parrainage : deux PRIMITIFS (ouvert ? / cours éligibles, ids joints),
+  // jamais un objet : l'effet qui les pose compare avant d'écrire.
+  const [parrainageOn, setParrainageOn] = useState(false);
+  const [parrainageCoursIds, setParrainageCoursIds] = useState('');
   const [qrFullscreen, setQrFullscreen] = useState(false);
   const [actionError, setActionError] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
@@ -254,6 +260,25 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       setLoading(false);
     }
   }, [loadSpace, jetonEspace]);
+
+  // V534 — UNE lecture de la configuration Parrainage, quand l'espace est chargé.
+  // Si le serveur renvoie déjà `parrainage.enabled` (contrat §5), c'est lui qui
+  // tranche « ouvert ? » ; la liste des cours éligibles vient du cache /config.
+  const espaceCharge = !!data;
+  const parrainageServeur = data && data.parrainage && typeof data.parrainage.enabled === 'boolean'
+    ? data.parrainage.enabled : null;
+  useEffect(() => {
+    if (!espaceCharge) return undefined;
+    let vivant = true;
+    lireConfigParrainage().then((cfg) => {
+      if (!vivant) return;
+      const ouvert = parrainageServeur === null ? !!cfg.enabled : (parrainageServeur && !!cfg.enabled);
+      const ids = (cfg.courses || []).map((c) => String(c.id)).join(',');
+      setParrainageOn((prev) => (prev === ouvert ? prev : ouvert));
+      setParrainageCoursIds((prev) => (prev === ids ? prev : ids));
+    });
+    return () => { vivant = false; };
+  }, [espaceCharge, parrainageServeur]);
 
   // Compte a rebours du bouton « Renvoyer » : une horloge locale, pas un
   // minuteur par bouton — un seul intervalle, arrete des qu'il ne sert plus.
@@ -517,6 +542,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       // dans le `catch` et n'affiche aucune confirmation.
       setSeanceConfirmee({
         cle: reservationKey,
+        course_id: occurrence.course_id || "", // V534 — pour la ligne « Pass Duo » (cours éligible ?)
         nom: occurrence.name || "",
         datetime: occurrence.datetime,
         date: occurrence.date,
@@ -1147,6 +1173,22 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             <p className="text-sm mt-3 opacity-75">
               Nous avons bien enregistré ta place. À bientôt chez Afroboost 🎧🔥
             </p>
+            {/* V534 — une ligne discrète, jamais un bouton plein (« aucune vente
+                derrière ») : seulement si le programme est ouvert ET que ce
+                cours est éligible au Pass Duo. Rien dans les cartes ESSAI-7. */}
+            {parrainageOn && seanceConfirmee.course_id
+              && parrainageCoursIds.split(',').indexOf(String(seanceConfirmee.course_id)) >= 0 && (
+              <p
+                className="text-xs mt-3 pt-3"
+                style={{ borderTop: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}
+                data-testid="p2ux-parrainage-ligne"
+              >
+                Tu viens accompagné ? Invite un ami avec ton Pass Duo.{' '}
+                <a href="/parrainage" className="font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>
+                  Inviter un ami
+                </a>
+              </p>
+            )}
           </section>
         )}
 
@@ -1561,6 +1603,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             <span className="inline-flex items-center gap-1.5"><SvgIcon name="search" size={14} /> Agrandir</span>
           </button>
         </section>
+
+        {/* ===== V534: Parrainage — entre « Mon QR Code » et « Mes prochaines
+            séances », order 0 (donc toujours après ESSAI-7 et P2-UX) ===== */}
+        <CarteParrainage enabled={parrainageOn} />
 
         {/* ===== V185 F3: Mes prochaines séances (avec annulation) ===== */}
         {upcomingReservations.length > 0 && (
