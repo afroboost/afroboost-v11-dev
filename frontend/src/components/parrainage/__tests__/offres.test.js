@@ -556,7 +556,7 @@ describe('CoursesManager — offres autorisées du Pass Duo', () => {
     await act(async () => { par('course-duo-offre-reco-c1-o-gratuite').click(); });
     expect(u3).toHaveBeenLastCalledWith(expect.objectContaining({ duo_default_offer_id: '' }));
     await act(async () => { par('course-duo-offre-case-c1-o-gratuite').click(); });
-    expect(u3).toHaveBeenLastCalledWith(expect.objectContaining({ duo_offer_ids: ['o-gratuite2'], duo_default_offer_id: null }));
+    expect(u3).toHaveBeenLastCalledWith(expect.objectContaining({ duo_offer_ids: ['o-gratuite2'], duo_default_offer_id: '' }));
   });
 });
 
