@@ -56,7 +56,7 @@ async function entrerDansEspace(p, tag, code, email) {
   const browser = await chromium.launch({ headless: true });
   const code = fixture(`parrain ${PARRAIN} 8`);
   v('0. fixture parrain (8 séances) créée dans la base de TEST', /^AFR-PD/.test(code), code);
-  let inviteUrl = '', shareToken = '', passId = '';
+  let inviteUrl = '', shareToken = '', passId = '', offreA = '', offreB = '', offreC = '';
 
   // ═══ L + A + F + I + B + C + D + E + O — le parrain (desktop 1440×900) ═══
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, permissions: ['clipboard-read', 'clipboard-write'] });
@@ -91,8 +91,10 @@ async function entrerDansEspace(p, tag, code, email) {
     v('A. ordre Résultats → Inviter → Programmes (crédits, Pass Duo) → Invitations → Historique', ordre.join(',') === 'mes-resultats,inviter-un-ami,programme-credits,pass-duo-card,mes-invitations,historique', ordre.join(','));
     const credits = await p.locator('[data-testid="programme-credits"]').textContent();
     v('A. carte crédits = règles Spordateur existantes (1 crédit / achat, 50 filleuls) + « Gérer mes crédits »', /1 crédit/.test(credits) && /50/.test(credits) && /Gérer mes crédits/.test(credits), credits.slice(0, 160));
-    const emojis = await p.evaluate(() => /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(document.querySelector('[data-testid="centre-parrainage"]').textContent));
-    v('A. aucun emoji dans le Centre', !emojis);
+    // Les NOMS d'offres viennent des données (une offre de prod s'appelle « 🎁 Cours d'essai GRATUIT ») : on contrôle
+    // les textes de l'interface elle-même, hors contenus d'offre.
+    const emojis = await p.evaluate(() => { const root = document.querySelector('[data-testid="centre-parrainage"]').cloneNode(true); root.querySelectorAll('[data-testid^="offre-"], [data-testid="historique"], [data-testid="mes-invitations"]').forEach(e => e.remove()); return /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(root.textContent); });
+    v('A. aucun emoji dans l\'interface du Centre (hors noms d\'offres issus des données)', !emojis);
     // Règle CLAUDE.md : contrôle à la SOURCE (Chrome re-sérialise les rgb() en hexa dans cssText)
     const css = fs.readFileSync(`${RACINE}/frontend/src/components/parrainage/parrainage.css`, 'utf8');
     const hex = (css.match(/#[0-9a-fA-F]{6}/g) || []); const horsVar = (css.replace(/var\([^)]*\)/g, '').match(/#[0-9a-fA-F]{6}/g) || []);
@@ -106,6 +108,15 @@ async function entrerDansEspace(p, tag, code, email) {
     v('F. sélecteur de séances éligibles (cours réels, occurrences futures)', await sel.count() === 1);
     const opts = await sel.evaluate(s => [...s.options].map(o => o.textContent));
     v('F. libellés = jour + heure + lieu réels (Auvernier / Valangines), 18:30', opts.every(o => /18:30/.test(o)) && opts.some(o => /Auvernier/.test(o)) && opts.some(o => /Valangines/.test(o)), JSON.stringify(opts.slice(0, 3)));
+    // V534b : « Choisis ton offre » — 3 offres autorisées, la recommandée présélectionnée mais modifiable
+    await p.waitForSelector('[data-testid="offre-selecteur"], [data-testid="offre-encart-creation"]', { timeout: 10000 });
+    const cartes = p.locator('[data-testid^="offre-carte-"]');
+    const nOffres = await cartes.count();
+    v('F. sélecteur d\'offres : 3 offres autorisées, aucune offre payante, aucun offer_id visible', nOffres === 3 && !/[0-9a-f]{8}-[0-9a-f]{4}-/.test(await p.locator('[data-testid="offre-selecteur"]').textContent()), String(nOffres));
+    v('F. la recommandée est présélectionnée (mercredi) et porte le badge', await p.locator('[data-testid="offre-badge-recommandee"]').count() === 1 && await p.locator('[data-testid^="offre-carte-"][data-choisie="1"]').count() === 1);
+    await cartes.nth(1).click();
+    offreA = await cartes.nth(1).getAttribute('data-testid'); offreA = offreA.replace('offre-carte-', '');
+    v('F. le participant peut choisir une autre offre que la recommandée', (await cartes.nth(1).getAttribute('data-choisie')) === '1');
     const cond = p.locator('[data-testid="pass-conditions"] input[type="checkbox"]');
     if (await cond.count()) {
       v('F. conditions publiées → bouton désactivé tant que la case n\'est pas cochée', await p.locator('[data-testid="pass-creer"]').isDisabled());
@@ -122,6 +133,34 @@ async function entrerDansEspace(p, tag, code, email) {
     inviteUrl = pass && pass.invite_url; shareToken = pass && pass.share_token; passId = pass && pass.id;
     v('F. /me : pass locked, invite_url = /duo/<token opaque>, aucun e-mail dans l\'URL', !!pass && pass.status === 'locked' && /\/duo\/[A-Za-z0-9_-]{20,}$/.test(inviteUrl) && !/@/.test(inviteUrl), inviteUrl);
     v('F. terms_accepted du parrain enregistré (pas de blocage conditions)', pass && pass.blocked_reason !== 'conditions_non_acceptees', pass && pass.blocked_reason);
+    v('F. le pass porte l\'offre choisie (A), version 1, offres du catalogue (3)', pass && pass.offer && pass.offer.id === offreA && pass.version === 1 && (pass.offers || []).length === 3, JSON.stringify({ offer: pass && pass.offer && pass.offer.name, version: pass && pass.version }));
+    v('F. « OFFRE ACTUELLE » affichée + « Changer d\'offre » discret', await p.locator('[data-testid="offre-actuelle"]').count() === 1 && await p.locator('[data-testid="offre-changer"]').count() === 1);
+  });
+
+  // ═══ Q — changer d'offre (parrain, avant join) ═══
+  await parcours('Q', async () => {
+    await p.click('[data-testid="offre-changer"]');
+    await p.waitForSelector('[data-testid="offre-sheet"]', { timeout: 10000 });
+    const cartes = p.locator('[data-testid="offre-sheet"] [data-testid^="offre-carte-"]');
+    v('Q. le sheet « Changer d\'offre » liste les 3 offres, l\'actuelle marquée', await cartes.count() === 3 && await p.locator('[data-testid="offre-badge-actuelle"]').count() === 1);
+    const autre = (await cartes.evaluateAll((els, a) => els.map(e => e.getAttribute('data-testid').replace('offre-carte-', '')).filter(id => id !== a), offreA))[0];
+    offreB = autre;
+    await p.locator(`[data-testid="offre-sheet"] [data-testid="offre-carte-${offreB}"]`).click();
+    await p.waitForTimeout(700);
+    await p.screenshot({ path: `${CAP}/14-changer-offre-1440.png` });
+    await p.click('[data-testid="offre-choisir"]');
+    await p.waitForSelector('[data-testid="offre-sheet"]', { state: 'detached', timeout: 15000 });
+    const tok = await p.evaluate(() => JSON.parse(localStorage.getItem('afroboost_espace_token')).token);
+    const me = await api(ctx, 'GET', '/api/referral/me', null, { 'x-espace-token': tok });
+    const pass = me.json.passes[0];
+    v('Q. A → B : l\'offre B est l\'offre active du pass, version 2, historique A → B (changed_by sponsor)', pass.offer.id === offreB && pass.version === 2 && pass.offer_history.length === 1 && pass.offer_history[0].from_offer_id === offreA && pass.offer_history[0].to_offer_id === offreB && pass.offer_history[0].changed_by === 'sponsor', JSON.stringify({ o: pass.offer.id === offreB, v: pass.version, h: pass.offer_history }));
+    v('Q. « OFFRE ACTUELLE » affiche B', (await p.locator('[data-testid="offre-actuelle"]').textContent()).includes(pass.offer.name));
+    const stale = await api(ctx, 'PATCH', `/api/referral/pass/${passId}/offer`, { offer_id: offreA, version: 1 }, { 'x-espace-token': tok });
+    v('Q. concurrence : PATCH avec une version périmée → 409 conflit_version, offre inchangée', stale.status === 409 && stale.headers['x-refus-raison'] === 'conflit_version', `${stale.status} ${stale.headers['x-refus-raison']}`);
+    const inj = await api(ctx, 'PATCH', `/api/referral/pass/${passId}/offer`, { offer_id: '00000000-0000-0000-0000-000000000000', version: 2 }, { 'x-espace-token': tok });
+    v('Q. offre non autorisée injectée → 400', inj.status === 400, String(inj.status));
+    const hist = await p.locator('[data-testid="historique"]').textContent();
+    v('Q. Historique : « Offre modifiée : A → B »', /Offre modifiée/.test(hist), hist.slice(0, 160));
   });
 
   await parcours('B', async () => {
@@ -178,10 +217,26 @@ async function entrerDansEspace(p, tag, code, email) {
   const lienLocal = inviteUrl.replace(/^https?:\/\/[^/]+/, BASE);
   await parcours('G', async () => {
     await a.goto(lienLocal, { waitUntil: 'domcontentloaded' });
-    await a.waitForSelector('[data-testid="invitation-form"]', { timeout: 30000 });
+    // V534b : le formulaire est replié tant que l'ami n'a pas confirmé l'offre (« Cette offre me convient »)
+    await a.waitForSelector('[data-testid="invitation-offre"], [data-testid="invitation-form"]', { timeout: 30000 });
     const de = await a.locator('[data-testid="invitation-de"]').textContent();
     const seance = await a.locator('[data-testid="invitation-seance"]').textContent();
     v('G. « Invitation de Bassi » (prénom du parrain seulement)', /Bassi/i.test(de) && !/@/.test(de), de);
+    const pubB = await api(ctxAmi, 'GET', `/api/referral/pass/${shareToken}`);
+    v('G. l\'ami voit l\'offre B choisie par le parrain + le catalogue (3)', pubB.json && pubB.json.offer && pubB.json.offer.id === offreB && (pubB.json.offers || []).length === 3 && await a.locator('[data-testid="invitation-offre"]').count() === 1, JSON.stringify(pubB.json && pubB.json.offer));
+    await a.click('[data-testid="offre-voir-autres"]');
+    await a.waitForSelector('[data-testid="offre-sheet"]', { timeout: 10000 });
+    await a.waitForTimeout(700);
+    await a.screenshot({ path: `${CAP}/15-ami-autres-offres-390.png` });
+    const ids = await a.locator('[data-testid="offre-sheet"] [data-testid^="offre-carte-"]').evaluateAll(els => els.map(e => e.getAttribute('data-testid').replace('offre-carte-', '')));
+    offreC = ids.find(id => id !== offreA && id !== offreB);
+    await a.locator(`[data-testid="offre-sheet"] [data-testid="offre-carte-${offreC}"]`).click();
+    await a.click('[data-testid="offre-choisir"]');
+    await a.waitForSelector('[data-testid="offre-sheet"]', { state: 'detached', timeout: 15000 });
+    const pubC = await api(ctxAmi, 'GET', `/api/referral/pass/${shareToken}`);
+    v('G. l\'ami change B → C avant inscription (PATCH public) : offre C active, version +1', pubC.json.offer.id === offreC && pubC.json.version === pubB.json.version + 1, JSON.stringify({ o: pubC.json.offer && pubC.json.offer.id === offreC, v: pubC.json.version }));
+    if (await a.locator('[data-testid="offre-convient"]').count()) await a.click('[data-testid="offre-convient"]');
+    await a.waitForSelector('[data-testid="invitation-form"]', { timeout: 10000 });
     v('G. vrai cours + date + heure + lieu', /18:30/.test(seance) && /(Auvernier|Valangines)/.test(seance) && /(sept|oct)/i.test(seance), seance);
     const pub = await api(ctxAmi, 'GET', `/api/referral/pass/${shareToken}`);
     const txt = JSON.stringify(pub.json);
@@ -219,6 +274,38 @@ async function entrerDansEspace(p, tag, code, email) {
     await p.reload({ waitUntil: 'domcontentloaded' });
     await p.waitForSelector('[data-testid="pass-texte-unlocked"]', { timeout: 30000 });
     v('J. côté parrain : DÉBLOQUÉ (rond check, deux avatars, stepper complet)', await p.locator('[data-testid="pass-rond-ok"]').count() === 1);
+    const tokJ = await p.evaluate(() => JSON.parse(localStorage.getItem('afroboost_espace_token')).token);
+    const meJ = await api(ctx, 'GET', '/api/referral/me', null, { 'x-espace-token': tokJ });
+    const pJ = meJ.json.passes.find(x => x.id === passId);
+    v('J. le parrain voit l\'offre C choisie par l\'ami + historique A→B (sponsor), B→C (invitee)', pJ.offer.id === offreC && pJ.offer_history.length === 2 && pJ.offer_history[1].changed_by === 'invitee', JSON.stringify(pJ.offer_history));
+    // Q2 — changement APRÈS déblocage, AVANT présence : C → A, atomique
+    const avant = JSON.parse(mongo(PY + `r=list(db.reservations.find({'pass_id':'${passId}'},{'_id':0,'pass_role':1,'status':1,'reservationCode':1}))\nc=list(db.discount_codes.find({'assignedEmail':'${AMI}'},{'_id':0,'active':1,'code':1}))\ns=db.subscriptions.find_one({'email':'${PARRAIN}'},{'_id':0,'remaining_sessions':1})\nprint(json.dumps({'res':r,'codes':c,'parrain':s}))`));
+    const ch = await api(ctx, 'PATCH', `/api/referral/pass/${passId}/offer`, { offer_id: offreA, version: pJ.version }, { 'x-espace-token': tokJ });
+    v('J. changement après déblocage sans présence : C → A accepté (200), offre A active, version incrémentée', ch.status === 200 && ch.json.offer.id === offreA && ch.json.version > pJ.version, `${ch.status} ${JSON.stringify(ch.json && ch.json.offer)}`);
+    const apres = JSON.parse(mongo(PY + `r=list(db.reservations.find({'pass_id':'${passId}'},{'_id':0,'pass_role':1,'status':1,'reservationCode':1,'cancel_reason':1}))\nc=list(db.discount_codes.find({'assignedEmail':'${AMI}'},{'_id':0,'active':1,'code':1}))\ns=db.subscriptions.find_one({'email':'${PARRAIN}'},{'_id':0,'remaining_sessions':1})\nf=db.free_trial_claims.count_documents({'_id':{'$regex':'${AMI}'}})\nprint(json.dumps({'res':r,'codes':c,'parrain':s,'claims':f}))`));
+    const actives = apres.res.filter(r => r.pass_role === 'invitee');
+    const ancienneCode = avant.res.find(r => r.pass_role === 'invitee').reservationCode;
+    v('J. base : UNE seule réservation de l\'ami (la nouvelle), l\'ancienne SUPPRIMÉE (convention du dépôt), réservation du parrain intacte, forfait parrain inchangé', actives.length === 1 && actives[0].reservationCode !== ancienneCode && apres.res.filter(r => r.pass_role === 'sponsor').length === 1 && apres.parrain.remaining_sessions === avant.parrain.remaining_sessions, JSON.stringify(apres).slice(0, 300));
+    const trace = await api(ctx, 'GET', '/api/referral/me', null, { 'x-espace-token': tokJ });
+    const pT = trace.json.passes.find(x => x.id === passId);
+    v('J. la trace de l\'ancienne réservation vit dans l\'historique du pass (offer_history A→B, B→C, C→A)', pT.offer_history.length === 3 && pT.offer_history[2].changed_by === 'sponsor', JSON.stringify(pT.offer_history.map(h => h.changed_by)));
+    v('J. base : un seul code d\'accès actif pour l\'ami (ancien neutralisé), aucune double attribution d\'essai', apres.codes.filter(c => c.active).length === 1 && apres.codes.length === 2, JSON.stringify(apres.codes));
+    v('J. les billets affichés sont ceux de la nouvelle offre (2 billets, ami ≠ ancien code)', ch.json.tickets.length === 2 && ch.json.tickets.find(t => t.role === 'invitee').reservationCode === actives[0].reservationCode, JSON.stringify(ch.json.tickets.map(t => t.reservationCode)));
+    // Q3 — présence validée → plus de changement, historique intact
+    mongo(PY + `db.reservations.update_many({'pass_id':'${passId}','status':{'$ne':'cancelled'}},{'$set':{'validated':True}})\nprint('presences')`);
+    const used = await api(ctx, 'PATCH', `/api/referral/pass/${passId}/offer`, { offer_id: offreB, version: ch.json.version }, { 'x-espace-token': tokJ });
+    v('J. présence validée → 409 pass_non_modifiable avec le texte exact', used.status === 409 && used.headers['x-refus-raison'] === 'pass_non_modifiable' && /Cette offre a déjà été utilisée\. Tu peux choisir une autre offre pour une prochaine réservation si elle est disponible\./.test(used.json.detail), `${used.status} ${used.json && used.json.detail}`);
+    const meU = await api(ctx, 'GET', '/api/referral/me', null, { 'x-espace-token': tokJ });
+    const pU = meU.json.passes.find(x => x.id === passId);
+    v('J. pass « Participation validée », historique des offres intact (3 entrées), présences intactes', pU.status === 'used' && pU.offer_history.length === 3 && pU.tickets.every(t => t.validated), JSON.stringify({ s: pU.status, h: pU.offer_history.length }));
+    await p.reload({ waitUntil: 'domcontentloaded' });
+    await p.waitForSelector('[data-testid="offre-changer"]', { timeout: 30000 });
+    await p.click('[data-testid="offre-changer"]');
+    await p.waitForTimeout(500);
+    v('J. écran : « Changer d\'offre » sur un pass utilisé affiche le texte exact', /Cette offre a déjà été utilisée/.test(await p.locator('[data-testid="offre-utilisee"]').textContent().catch(() => '')));
+    mongo(PY + `db.reservations.update_many({'pass_id':'${passId}'},{'$set':{'validated':False}})\ndb.referral_passes.update_one({'id':'${passId}'},{'$set':{'status':'unlocked'}})\nprint('restaure pour K')`);
+    await p.reload({ waitUntil: 'domcontentloaded' });
+    await p.waitForSelector('[data-testid="pass-texte-unlocked"]', { timeout: 30000 });
     await p.locator('[data-testid="pass-duo-card"]').scrollIntoViewIfNeeded();
     await p.waitForTimeout(700);
     await p.screenshot({ path: `${CAP}/07-pass-debloque-1440.png` });
@@ -340,6 +427,13 @@ async function entrerDansEspace(p, tag, code, email) {
       v(`P. centre à ${nom} px : aucun défilement horizontal`, !scrollX);
       await q.waitForTimeout(700);
       await q.screenshot({ path: `${CAP}/12-centre-${nom}.png`, fullPage: true });
+      if (nom === '390' && await q.locator('[data-testid="offre-changer"]').count()) {
+        await q.locator('[data-testid="offre-changer"]').scrollIntoViewIfNeeded(); await q.click('[data-testid="offre-changer"]');
+        await q.waitForSelector('[data-testid="offre-sheet"]', { timeout: 10000 }); await q.waitForTimeout(700);
+        const sh = await q.locator('[data-testid="offre-sheet"] > *').first().boundingBox();
+        v('P. mobile 390 : « Changer d\'offre » ouvre un sheet ancré en bas, cartes verticales', !!sh && sh.width <= 390 && (await q.locator('[data-testid="offre-sheet"] [data-testid^="offre-carte-"]').count()) === 3, JSON.stringify(sh));
+        await q.screenshot({ path: `${CAP}/16-sheet-offre-390.png` });
+      }
       await c.close();
     }
     const ci = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -360,6 +454,8 @@ async function entrerDansEspace(p, tag, code, email) {
     v('ADMIN. /admin/summary : 403 sans jeton, 200 avec JWT admin', sans.status === 403 && avec.status === 200, `${sans.status}/${avec.status}`);
     const k = avec.json && avec.json.kpi;
     v('ADMIN. KPI cohérents (base de test cumulée) : ≥ 2 passes, ≥ 4 invitations, ≥ 2 débloqués, ≥ 2 inscriptions, par_canal présent', k && k.passes_crees >= 2 && k.invitations >= 4 && k.debloques >= 2 && k.inscriptions >= 2 && avec.json.par_canal && 'whatsapp' in avec.json.par_canal, JSON.stringify(k));
+    const ko = avec.json || {};
+    v('ADMIN. KPI offres : changements_offre ≥ 3, offre la plus choisie renseignée, par_offre', ko.changements_offre >= 3 && ko.offre_la_plus_choisie && ko.offre_la_plus_choisie.name && ko.par_offre, JSON.stringify({ c: ko.changements_offre, o: ko.offre_la_plus_choisie }));
     const ref = await ctx.request.get(`${BASE}/?ref=bassi-test`);
     v('NR. ?ref= (attribution partenaire) répond toujours 200', ref.status() === 200);
     const cfg = await api(ctx, 'GET', '/api/referral/config');

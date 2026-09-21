@@ -30,3 +30,8 @@ Règle du moteur à respecter dans les enchaînements : 120 s entre deux demande
   créé en cours de route (scénario I). Captures dans `captures/`.
 - L'entrée « Parrainage » du menu ⋮ du chat n'est pas atteignable en headless (en-tête hors viewport) : à vérifier
   dans un vrai Chrome (fait le 21/09/2026).
+- V534b : `fixtures_duo.py activer` pose aussi le catalogue d'offres (`duo_offer_ids` = essai gratuit + deux offres de TEST
+  à 0 CHF « Pass découverte » / « Offre étudiant », recommandée sur le mercredi) ; le banc couvre le choix d'offre à la
+  création, « Changer d'offre » (sheet, version, 409 conflit), « Voir les autres offres » côté ami, le changement après
+  déblocage sans présence (ancienne réservation supprimée, séance restituée, un seul code actif), le refus après présence
+  validée (texte exact) et les KPI d'offres.
