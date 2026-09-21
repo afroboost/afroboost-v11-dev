@@ -19,3 +19,14 @@ NODE_PATH=$HOME/.claude/skills/gstack/node_modules node parcours_fondateurs.cjs
 NODE_PATH=$HOME/.claude/skills/gstack/node_modules node parcours_essai_espace.cjs
 ```
 Règle du moteur à respecter dans les enchaînements : 120 s entre deux demandes d'OTP pour un même code, 3 par 10 min.
+
+## V534 — Centre Parrainage / Pass Duo (`parcours_parrainage.cjs`, `fixtures_duo.py`)
+- `fixtures_duo.py activer` : drapeau `parrainage_duo_enabled` + `duo_enabled` sur les deux cours récurrents,
+  **dans la base de test uniquement** ; `fixtures_duo.py parrain <email@example.com> [séances]` : parrain fictif
+  (abonnement + code) ; `fixtures_duo.py nettoyer` : retire ces fixtures.
+- `parcours_parrainage.cjs` : scénarios A→P (centre, WhatsApp, copie, QR, partage natif, création, invitation
+  publique, ami inscrit, attente, déblocage, billets, espace abonné, chat widget, après réservation, historique,
+  responsive) + anti-abus par l'API + KPI admin (JWT local `pw-local-secret`). Un parrain « sans séance » est
+  créé en cours de route (scénario I). Captures dans `captures/`.
+- L'entrée « Parrainage » du menu ⋮ du chat n'est pas atteignable en headless (en-tête hors viewport) : à vérifier
+  dans un vrai Chrome (fait le 21/09/2026).
