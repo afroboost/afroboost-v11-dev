@@ -22,9 +22,11 @@ import ConditionsParticipation from '../ConditionsParticipation'; // V534: même
 import SvgIcon from '../SvgIcon';
 import BilletsDuo from './BilletsDuo';
 import { SelecteurOffres, EncartOffre, SheetOffres } from './OffresDuo'; // V534b: l'offre est choisie par le participant
+import SessionsModal from '../SessionsModal'; // V539b — le calendrier de la page d'accueil, réutilisé
 import {
   LIBELLES_STATUT, etapePass, libelleOccurrence, libelleJour, libelleHeure,
   offreDuPass, offresDe, offrePreselectionnee, TEXTE_OFFRE_UTILISEE, NOTE_OFFRE_PASS,
+  occurrencesPourCalendrier, // V539b
 } from '../../utils/parrainage';
 
 /** Texte EXACT du contrat pour un parrain sans séance disponible. */
@@ -197,8 +199,14 @@ function FormulaireCreation({ courses, onCreer, occupe, erreur }) {
   );
 }
 
-function EtatPass({ pass, initialeParrain, urlEspace, onAnnuler, onConfirmer, onNouveau, onChangerOffre, occupe, erreur }) {
+function EtatPass({ pass, initialeParrain, urlEspace, onAnnuler, onConfirmer, onNouveau, onChangerOffre,
+                   coursConfig, onChangerSeance, occupe, erreur }) {
   const [confirmAnnulation, setConfirmAnnulation] = useState(false);
+  // V539b : le calendrier des séances, côté parrain — le même composant que
+  // côté ami, alimenté par la même liste (celle du serveur).
+  const [calendrier, setCalendrier] = useState(false);
+  const [messageSeance, setMessageSeance] = useState('');
+  const [erreurSeance, setErreurSeance] = useState('');
   const [conditionsConfirm, setConditionsConfirm] = useState(false); // V534: preuve T1 au moment de /confirm
   // V534b: changement d'offre — sheet, message (conflit de version), refus du serveur, texte « used »
   const [sheetOffre, setSheetOffre] = useState(false);
@@ -218,6 +226,30 @@ function EtatPass({ pass, initialeParrain, urlEspace, onAnnuler, onConfirmer, on
   // V534c: jamais non plus quand le catalogue ne contient aucune AUTRE offre — un seul choix n'est pas un choix.
   const lienOffre = !!offre && !ferme && typeof onChangerOffre === 'function'
     && offresCatalogue.some((o) => o.id !== offre.id);
+  // V539b — QUAND LE PARRAIN PEUT ENCORE CHANGER LA DATE.
+  // Exactement la règle du serveur, pas une autre : tant que l'ami n'est pas
+  // inscrit (`locked` / `waiting`) et qu'aucun billet n'existe. Après, le
+  // bouton disparaît et une phrase dit pourquoi — un bouton qui échoue est
+  // pire que pas de bouton.
+  const seancesProposables = occurrencesPourCalendrier(
+    ((Array.isArray(coursConfig) ? coursConfig : []).find((c) => c && c.id === course.id) || {}).occurrences,
+    course,
+  );
+  const seanceModifiable = (s === 'locked' || s === 'waiting') && !pass.invitee
+    && typeof onChangerSeance === 'function';
+  const seanceFigee = !seanceModifiable && !ferme && (s === 'friend_registered' || debloque);
+
+  const choisirSeance = (iso) => {
+    if (!iso) return;
+    setErreurSeance(''); setMessageSeance('');
+    Promise.resolve(onChangerSeance(pass.id, iso, pass.version)).then((r) => {
+      const res = r || {};
+      if (res.ok) { setCalendrier(false); setMessageSeance('Séance mise à jour.'); return; }
+      setCalendrier(false);
+      if (res.conflit) { setMessageSeance(res.message || ''); return; }
+      setErreurSeance(res.message || "Cette séance n'est plus disponible : choisis-en une autre.");
+    });
+  };
 
   const ouvrirSheet = () => {
     if (s === 'used') { setNoteUtilisee((v) => !v); return; }
@@ -237,11 +269,40 @@ function EtatPass({ pass, initialeParrain, urlEspace, onAnnuler, onConfirmer, on
   return (
     <>
       <p style={{ marginTop: 6 }} data-testid="pass-seance">
+        <span className="cp-eyebrow" style={{ display: 'block', marginBottom: 2 }}>Séance choisie</span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <SvgIcon name="calendar" size={16} />
           <b>{course.name ? `${course.name} · ` : ''}{quand}</b>
         </span>
       </p>
+
+      {/* V539b : changer la date tant que rien n'est émis. Une seule séance
+          proposée -> aucun bouton : un choix unique n'est pas un choix. */}
+      {seanceModifiable && seancesProposables.length > 1 ? (
+        <button type="button" className="cp-b cp-b--secondary" disabled={occupe}
+                onClick={() => { setMessageSeance(''); setErreurSeance(''); setCalendrier(true); }}
+                data-testid="pass-changer-seance" style={{ marginTop: 8 }}>
+          <SvgIcon name="calendar" size={20} /> Changer de séance
+        </button>
+      ) : null}
+      {seanceFigee ? (
+        <p className="cp-mini" data-testid="pass-seance-figee">
+          La séance ne peut plus être modifiée car l'inscription est déjà confirmée.
+        </p>
+      ) : null}
+      {messageSeance ? <p className="cp-ok-text" role="status" data-testid="pass-seance-ok">{messageSeance}</p> : null}
+      {erreurSeance ? <p className="cp-error" role="alert" data-testid="pass-seance-erreur">{erreurSeance}</p> : null}
+
+      {calendrier ? (
+        <SessionsModal
+          open
+          onClose={() => setCalendrier(false)}
+          occurrencesFournies={seancesProposables}
+          libelleAction="Choisir cette séance"
+          noteAction="Ton invitation sera mise à jour avec cette date."
+          onReserve={(occ) => choisirSeance(occ && occ.iso)}
+        />
+      ) : null}
 
       {offre ? (
         <EncartOffre titre="Offre actuelle" offre={offre} note={NOTE_OFFRE_PASS} testid="offre-actuelle">
@@ -402,7 +463,7 @@ function ListePasses({ passes, courantId, onChoisir }) {
  */
 export default function PassDuoCard({
   config, passes, passAffiche, initialeParrain, urlEspace,
-  onCreer, onAnnuler, onConfirmer, onChoisir, onChangerOffre, occupe, erreur,
+  onCreer, onAnnuler, onConfirmer, onChoisir, onChangerOffre, onChangerSeance, occupe, erreur,
 }) {
   const [creation, setCreation] = useState(false);
   const liste = Array.isArray(passes) ? passes : [];
@@ -436,6 +497,11 @@ export default function PassDuoCard({
             onConfirmer={onConfirmer}
             onNouveau={() => setCreation(true)}
             onChangerOffre={onChangerOffre}
+            /* V539b : les séances du cours DU PASS, prises dans le `config` déjà
+               chargé — aucun appel de plus, et exactement la liste que le
+               serveur accepte (cours `duo_enabled`). */
+            coursConfig={(config && config.courses) || []}
+            onChangerSeance={onChangerSeance}
             occupe={occupe}
             erreur={erreur}
           />

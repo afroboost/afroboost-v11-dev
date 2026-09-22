@@ -27,6 +27,7 @@ import {
   API_PARRAINAGE, enteteParrain, aUneIdentiteParrain, urlEspaceCourant, lireConfigParrainage,
   lienWhatsApp, copier, partager, passCourant, libelleJour, libelleDateCourte, STATUTS_OUVERTS,
   changerOffre, lireRefus, messageRefusOffre, lignesHistorique, offreDuPass, TEXTE_OFFRE_CONFLIT, // V534b
+  changerSeance, // V539b — le parrain peut aussi changer la date de son Pass
 } from '../../utils/parrainage';
 import './parrainage.css';
 
@@ -293,6 +294,30 @@ export default function CentreParrainage() {
       })
       .finally(() => setOccupe(false));
   };
+  // V539b — LE PARRAIN CHANGE LA SÉANCE DE SON PASS.
+  // Même route, même règle et même verrou de version que côté ami : le serveur
+  // ne distingue que QUI appelle. En cas de conflit, on relit `/me` une fois,
+  // comme pour le changement d'offre — jamais d'écrasement silencieux.
+  const changerSeancePass = (id, occurrence, version) => {
+    setOccupe(true); setErreurPass('');
+    return changerSeance({ passId: id, occurrence, version, headers: enteteParrain() })
+      .then((r) => { poserPass(r.data); return { ok: true }; })
+      .catch((e) => {
+        const refus = lireRefus(e);
+        if (refus.status === 409 && refus.raison === 'conflit_version') {
+          return axios.get(`${API_PARRAINAGE}/me`, { headers: enteteParrain(), timeout: 10000 })
+            .then((r) => {
+              const d = (r && r.data) || {};
+              if (Array.isArray(d.passes)) setMe((prev) => Object.assign({}, prev || {}, d));
+              return { ok: false, conflit: true, message: TEXTE_OFFRE_CONFLIT };
+            })
+            .catch(() => ({ ok: false, conflit: true, message: TEXTE_OFFRE_CONFLIT }));
+        }
+        return { ok: false, message: refus.detail || "Cette séance n'est plus disponible : choisis-en une autre." };
+      })
+      .finally(() => setOccupe(false));
+  };
+
   const confirmerPass = (id, terms_accepted) => {
     setOccupe(true); setErreurPass('');
     // V534: la preuve T1 n'est envoyée que si la case a été cochée (jamais inventée)
@@ -471,6 +496,7 @@ export default function CentreParrainage() {
         onConfirmer={confirmerPass}
         onChoisir={(id) => { setErreurPass(''); setPassAfficheId(id); }}
         onChangerOffre={changerOffrePass}
+        onChangerSeance={changerSeancePass}
         occupe={occupe}
         erreur={erreurPass}
       />

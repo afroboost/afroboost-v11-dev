@@ -261,6 +261,94 @@ describe('PassDuoCard — les sept états', () => {
 });
 
 // ═══ 4. Centre : états de page + journal des invitations ═════════════════════
+// ═══ V539b : le PARRAIN change la séance de son Pass ════════════════════════
+describe('PassDuoCard — V539b : changer de séance côté parrain', () => {
+  const OCC_B = '2026-10-04T18:30:00';
+  const rendreP = (p, extra) => monter(
+    <PassDuoCard config={CONFIG} passes={[p]} passAffiche={p} initialeParrain="B" urlEspace="/espace/AFR-1"
+                 onCreer={jest.fn()} onAnnuler={jest.fn()} onConfirmer={jest.fn()} onChoisir={jest.fn()}
+                 occupe={false} erreur="" {...(extra || {})} />
+  );
+
+  test('CAS A — pass locked, ami non inscrit, plusieurs séances : « Séance choisie » + bouton', async () => {
+    await rendreP(pass('locked'), { onChangerSeance: jest.fn() });
+    expect(par('pass-seance').textContent).toContain('Séance choisie');
+    expect(par('pass-changer-seance')).not.toBeNull();
+    expect(par('pass-seance-figee')).toBeNull();
+  });
+  test('CAS K — une seule séance proposée : aucun bouton (pas de faux choix)', async () => {
+    await monter(
+      <PassDuoCard config={{ enabled: true, courses: [{ ...COURSE, occurrences: [OCC] }] }}
+                   passes={[pass('locked')]} passAffiche={pass('locked')} initialeParrain="B" urlEspace="/e"
+                   onCreer={jest.fn()} onAnnuler={jest.fn()} onConfirmer={jest.fn()} onChoisir={jest.fn()}
+                   onChangerSeance={jest.fn()} occupe={false} erreur="" />
+    );
+    expect(par('pass-changer-seance')).toBeNull();
+  });
+  test('CAS I/J — ami inscrit ou billets émis : bouton absent, explication affichée', async () => {
+    await rendreP(pass('friend_registered', { invitee: { first_name: 'Ami' } }), { onChangerSeance: jest.fn() });
+    expect(par('pass-changer-seance')).toBeNull();
+    expect(par('pass-seance-figee').textContent).toContain('ne peut plus être modifiée');
+    await rendreP(pass('unlocked', { invitee: { first_name: 'Ami' }, tickets: TICKETS }), { onChangerSeance: jest.fn() });
+    expect(par('pass-changer-seance')).toBeNull();
+    expect(par('pass-seance-figee')).not.toBeNull();
+  });
+  test('CAS B/C/D — le clic ouvre le MÊME calendrier ; le choix appelle la route V539 et la carte se met à jour', async () => {
+    const onChangerSeance = jest.fn().mockResolvedValue({ ok: true });
+    await rendreP(pass('waiting'), { onChangerSeance });
+    await act(async () => { par('pass-changer-seance').click(); });
+    expect(document.querySelector('[data-testid="sessions-modal"]')).not.toBeNull();
+    // la liste vient du `config` déjà chargé : aucun appel à l'agenda du site
+    expect(axios.get.mock.calls.filter((c) => String(c[0]).includes('/sessions/agenda')).length).toBe(0);
+    await act(async () => { document.querySelector('[data-testid="sessions-mois-suivant"]').click(); });
+    await act(async () => { document.querySelector('[data-testid^="sessions-jour-"]').click(); });
+    await act(async () => { document.querySelector('[data-testid^="sessions-occurrence-"]').click(); });
+    await act(async () => {
+      document.querySelector('[data-testid="sessions-reserver"]').click();
+      await new Promise((r) => setTimeout(r, 140));
+    });
+    expect(onChangerSeance).toHaveBeenCalledWith('p-waiting', OCC_B, undefined);
+    expect(par('pass-seance-ok').textContent).toContain('Séance mise à jour');
+    expect(document.querySelector('[data-testid="sessions-modal"]')).toBeNull();
+  });
+  test('CAS L — fermer le calendrier sans choisir : aucun appel', async () => {
+    const onChangerSeance = jest.fn();
+    await rendreP(pass('locked'), { onChangerSeance });
+    await act(async () => { par('pass-changer-seance').click(); });
+    await act(async () => { document.querySelector('[data-testid="sessions-fermer"]').click(); });
+    expect(onChangerSeance).not.toHaveBeenCalled();
+    expect(par('pass-seance').textContent).toContain('Dimanche 27 sept.');
+  });
+  test('CAS M — conflit de version : message de relecture, pas d\'écrasement', async () => {
+    const onChangerSeance = jest.fn().mockResolvedValue({ ok: false, conflit: true, message: 'Recharge la page' });
+    await rendreP(pass('locked'), { onChangerSeance });
+    await act(async () => { par('pass-changer-seance').click(); });
+    await act(async () => { document.querySelector('[data-testid="sessions-mois-suivant"]').click(); });
+    await act(async () => { document.querySelector('[data-testid^="sessions-jour-"]').click(); });
+    await act(async () => { document.querySelector('[data-testid^="sessions-occurrence-"]').click(); });
+    await act(async () => {
+      document.querySelector('[data-testid="sessions-reserver"]').click();
+      await new Promise((r) => setTimeout(r, 140));
+    });
+    expect(par('pass-seance-ok').textContent).toContain('Recharge la page');
+    expect(par('pass-seance-erreur')).toBeNull();
+  });
+  test('refus serveur : message d\'erreur, la séance affichée ne bouge pas', async () => {
+    const onChangerSeance = jest.fn().mockResolvedValue({ ok: false, message: "Cette séance n'est plus disponible" });
+    await rendreP(pass('locked'), { onChangerSeance });
+    await act(async () => { par('pass-changer-seance').click(); });
+    await act(async () => { document.querySelector('[data-testid="sessions-mois-suivant"]').click(); });
+    await act(async () => { document.querySelector('[data-testid^="sessions-jour-"]').click(); });
+    await act(async () => { document.querySelector('[data-testid^="sessions-occurrence-"]').click(); });
+    await act(async () => {
+      document.querySelector('[data-testid="sessions-reserver"]').click();
+      await new Promise((r) => setTimeout(r, 140));
+    });
+    expect(par('pass-seance-erreur').textContent).toContain("n'est plus disponible");
+    expect(par('pass-seance').textContent).toContain('Dimanche 27 sept.');
+  });
+});
+
 describe('CentreParrainage — états de page', () => {
   test('sans identité → « Ouvre ton espace abonné », AUCUN appel /me', async () => {
     await monter(<CentreParrainage />);

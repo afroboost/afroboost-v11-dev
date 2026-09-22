@@ -1758,6 +1758,79 @@ def partie_v539():
              "if (!d || Number.isNaN(d.getTime())) return null;" in SRC_UTIL)
 
 
+def partie_v539b():
+    """V539b — le PARRAIN aussi, et une seule date fait foi."""
+    import api.routes.referral_engine as _M
+    SRC_R = io.open(os.path.join(RACINE, "api", "routes", "referral_routes.py"), encoding="utf-8").read()
+    SRC_CARTE = io.open(os.path.join(RACINE, "frontend", "src", "components",
+                                     "parrainage", "PassDuoCard.js"), encoding="utf-8").read()
+    SRC_CENTRE = io.open(os.path.join(RACINE, "frontend", "src", "components",
+                                      "parrainage", "CentreParrainage.js"), encoding="utf-8").read()
+    SRC_SRV = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
+    A, B, C = "2026-09-23T18:45:00", "2026-09-30T18:45:00", "2026-10-04T18:30:00"
+
+    # ── La route sert les DEUX portes, sans logique dupliquée ───────────────
+    _r = SRC_R[SRC_R.index('@router.patch("/pass/{identifiant}/occurrence")'):
+               SRC_R.index("# ═══════════════════════════════════════════════════════════════════════════\n# Routes — publiques")]
+    verifier("V539b-1. la MÊME route sert le parrain (jeton d'espace) et l'ami (share_token)",
+             "if _porte_identite_abonne(request):" in _r and '_qui, _public = "sponsor", False' in _r
+             and '_qui, _public = "invitee", True' in _r)
+    verifier("V539b-2. le parrain ne peut agir que sur SON pass (404 sinon)",
+             'E.normaliser_email((_p.get("sponsor") or {}).get("email_norm")) != _parrain["email"]' in _r
+             and 'raise HTTPException(status_code=404, detail="Pass introuvable")' in _r)
+    verifier("V539b-3. la règle « avant inscription » est SERVEUR et commune aux deux portes",
+             'if pass_doc.get("invitee") or _s not in E.ETATS_OUVERTS_AU_JOIN:' in SRC_R
+             and "des billets ont déjà été émis" in SRC_R)
+
+    # ── Une seule date fait foi, et l'historique s'empile ───────────────────
+    _h = [_M.entree_historique_seance(A, B, "sponsor", "t1"),
+          _M.entree_historique_seance(B, C, "invitee", "t2")]
+    verifier("V539b-4. l'historique cumule les deux auteurs, dans l'ordre, sans rien perdre",
+             [e["changed_by"] for e in _h] == ["sponsor", "invitee"]
+             and _h[0]["from_occurrence"] == A and _h[0]["to_occurrence"] == B
+             and _h[1]["from_occurrence"] == B and _h[1]["to_occurrence"] == C)
+    verifier("V539b-5. l'écriture EMPILE (`$push`), elle ne remplace jamais l'historique",
+             '"$push": {"occurrence_history": _entree' in SRC_R)
+    verifier("V539b-6. une seule source de vérité : le champ `occurrence` du pass",
+             '"occurrence": _cible, "expires_at": _cible' in SRC_R
+             and SRC_R.count('"occurrence_initiale"') == 0 and SRC_R.count('"occurrence_actuelle"') == 0)
+
+    # ── Les deux écrans lisent la même date ─────────────────────────────────
+    verifier("V539b-7. la page publique rend `occurrence` (donc la date retenue, d'où qu'elle vienne)",
+             '"occurrence": _p.get("occurrence"),' in io.open(
+                 os.path.join(RACINE, "api", "routes", "referral_engine.py"), encoding="utf-8").read())
+    verifier("V539b-8. l'aperçu WhatsApp (V538) lit la MÊME occurrence : il suit le changement",
+             '_duo.og_description_invitation(_prenom, _nom_cours, _p.get("occurrence")' in SRC_SRV)
+
+    # ── L'écran du parrain ──────────────────────────────────────────────────
+    verifier("V539b-9. la carte du parrain dit « Séance choisie » et propose « Changer de séance »",
+             ">Séance choisie<" in SRC_CARTE and "Changer de séance" in SRC_CARTE
+             and 'data-testid="pass-changer-seance"' in SRC_CARTE)
+    verifier("V539b-10. c'est LE calendrier existant, alimenté par le `config` déjà chargé (aucun appel de plus)",
+             "import SessionsModal from '../SessionsModal';" in SRC_CARTE
+             and "occurrencesFournies={seancesProposables}" in SRC_CARTE
+             and "coursConfig={(config && config.courses) || []}" in SRC_CARTE)
+    verifier("V539b-11. le bouton n'apparaît que si le serveur accepterait (locked/waiting, sans invité)",
+             "const seanceModifiable = (s === 'locked' || s === 'waiting') && !pass.invitee" in SRC_CARTE
+             and "seanceModifiable && seancesProposables.length > 1" in SRC_CARTE)
+    verifier("V539b-12. sinon, une phrase explique pourquoi (jamais un bouton qui échoue)",
+             "La séance ne peut plus être modifiée car l'inscription est déjà confirmée." in SRC_CARTE
+             and 'data-testid="pass-seance-figee"' in SRC_CARTE)
+    verifier("V539b-13. le Centre appelle la route V539 avec les en-têtes du parrain et gère le conflit de version",
+             "changerSeance({ passId: id, occurrence, version, headers: enteteParrain() })" in SRC_CENTRE
+             and "refus.raison === 'conflit_version'" in SRC_CENTRE
+             and "onChangerSeance={changerSeancePass}" in SRC_CENTRE)
+    verifier("V539b-14. aucune logique dupliquée : un seul client HTTP pour les deux écrans",
+             SRC_CENTRE.count("/occurrence`") == 0
+             and "export function changerSeance(" in io.open(
+                 os.path.join(RACINE, "frontend", "src", "utils", "parrainage.js"), encoding="utf-8").read())
+    verifier("V539b-15. aucun calendrier neuf de part ni d'autre",
+             not os.path.exists(os.path.join(RACINE, "frontend", "src", "components", "parrainage", "CalendrierDuo.js"))
+             # importé une fois, rendu une fois — et jamais réimplémenté
+             and SRC_CARTE.count("<SessionsModal") == 1
+             and SRC_CARTE.count("import SessionsModal") == 1)
+
+
 def _refuse_valueerror(f):
     try:
         f()
@@ -1776,6 +1849,7 @@ def main():
     asyncio.get_event_loop().run_until_complete(principal())
     partie_v538()
     partie_v539()
+    partie_v539b()
     ok = 0
     print("=" * 78)
     print("V534 / V534b — PASS DUO : %d vérifications" % len(RESULTATS))
