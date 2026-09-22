@@ -123,7 +123,8 @@ async def contexte_afroboost():
     # « vous avez quoi d'autre ? » sans inventer.
     try:
         autres = await db.offers.find(
-            {"visible": True, "id": {"$ne": OFFRE_SILENT}},
+            # V537 : jamais une offre privée dans « vous avez quoi d'autre ? ».
+            {"visible": True, "link_only": {"$ne": True}, "id": {"$ne": OFFRE_SILENT}},
             {"_id": 0, "id": 1, "name": 1, "price": 1}).to_list(12)
         if autres:
             lignes = [f"  · {(o.get('name') or '').strip()[:70]} — "

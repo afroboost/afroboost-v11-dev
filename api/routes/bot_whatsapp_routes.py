@@ -135,9 +135,12 @@ async def lire_offres():
     """Les offres et produits affichés par la boutique : MÊME filtre que GET /api/offers."""
     offres = await db.offers.find(
         {}, {"_id": 0, "id": 1, "name": 1, "price": 1, "description": 1,
-             "category": 1, "isProduct": 1, "visible": 1, "stock": 1}
+             "category": 1, "isProduct": 1, "visible": 1, "stock": 1,
+             # V537 : une offre privée (sur lien) n'est jamais proposée par le bot.
+             "link_only": 1}
     ).to_list(100)
-    return [o for o in offres if o.get("visible") is not False]
+    return [o for o in offres
+            if o.get("visible") is not False and o.get("link_only") is not True]
 
 
 def _libelle_occurrence(occ):

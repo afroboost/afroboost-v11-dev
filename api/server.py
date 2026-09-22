@@ -1200,6 +1200,9 @@ class Offer(BaseModel):
     # V536 : « global » (le délai de l'offre vaut pour tous) ou « per_subscriber »
     # (le coach le fixe abonné par abonné, sur son adhésion). Même symétrie.
     installment_interval_mode: Optional[str] = None
+    # V537 : offre privée — retirée des listes, atteignable par son lien.
+    # Absent/false = comportement historique. MÊME SYMÉTRIE Offer/OfferCreate.
+    link_only: bool = False
     # R2c — DE QUI, ET QUOI. Les deux questions posees en tete de fichier.
     #
     # `owner_type` / `owner_id` sont ecrits par le SERVEUR seul : ils sont
@@ -1360,6 +1363,9 @@ class OfferCreate(BaseModel):
     # V536 : « global » (le délai de l'offre vaut pour tous) ou « per_subscriber »
     # (le coach le fixe abonné par abonné, sur son adhésion). Même symétrie.
     installment_interval_mode: Optional[str] = None
+    # V537 : offre privée — retirée des listes, atteignable par son lien.
+    # Absent/false = comportement historique. MÊME SYMÉTRIE Offer/OfferCreate.
+    link_only: bool = False
     # LOT R — MIROIR STRICT, meme exigence : sans cette ligne, un `PUT /offers`
     # EFFACERAIT la protection en base a chaque enregistrement de l'offre.
     requires_active_membership: bool = False
@@ -2583,6 +2589,9 @@ R2B_CLES_OFFRE_PUBLIQUE = (
     # V535 — le rythme des échéances et le choix « en une fois » sont des faits
     # commerciaux publics de l'offre, pas une identité.
     "installment_interval_months", "full_payment_available", "installment_interval_mode",
+    # V537 : le navigateur en a besoin pour le badge « Privée — sur lien » du
+    # tableau de bord ; ce n'est pas une donnée personnelle.
+    "link_only",
     "video_aspect_ratio", "mobile_money_enabled", "video_trim_start", "video_trim_end",
 )
 
@@ -2689,7 +2698,7 @@ def _offres_encore_disponibles(offres) -> list:
 
 
 @api_router.get("/offers", response_model=List[Offer])
-async def get_offers(request: Request, scope: str = ""):
+async def get_offers(request: Request, scope: str = "", offre: str = ""):
     # V237 — isolation par coach, en OPT-IN explicite (`?scope=mine`).
     #
     # POURQUOI PAS LA SEULE PRESENCE DU HEADER
@@ -2736,7 +2745,11 @@ async def get_offers(request: Request, scope: str = ""):
     # (CoachDashboard.js ~2305 et ~8199), traite plus haut, qui continue de
     # rendre les masquees — sans quoi Bassi ne pourrait plus jamais republier
     # une offre qu'il a masquee.
-    offers = await db.offers.find({"visible": {"$ne": False}}, {"_id": 0}).to_list(100)
+    # V537 : les offres privées sont retirées, SAUF celle dont l'identifiant est
+    # explicitement demandé (`?offre=<id>`, le lien direct). Un identifiant vide
+    # ou inconnu n'ouvre rien : on n'énumère jamais les offres privées.
+    offers = await db.offers.find(
+        {"visible": {"$ne": False}, **v537_filtre_listes(offre)}, {"_id": 0}).to_list(100)
     # SAISON : la vitrine ne montre que la saison active + les permanentes
     # (les offres historiques, sans champ, sont permanentes). Réglage lu en
     # base à chaque appel : passer hiver -> été ne demande aucun redéploiement.
@@ -15395,7 +15408,8 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
         _coach = _proprio((offer or {}).get("coach_id"))
         # V535b : le proprietaire de la plateforme = « sans proprietaire »
         # (ses offres portent son adresse depuis la mi-septembre 2026).
-        _q = {_CHAMP: True, **_filtre_offres(_coach)}
+        # V537 : une offre privée ne se propose pas d'elle-même — même à un membre.
+        _q = {_CHAMP: True, CHAMP_LIEN_SEUL: {"$ne": True}, **_filtre_offres(_coach)}
         # V536 : les echeanciers decides par le coach POUR CETTE PERSONNE. Une
         # seule lecture d'adhesions pour toutes les offres de la liste.
         _v536_adhesions = []
@@ -21735,6 +21749,42 @@ def v535c_contexte_statut_membre(info) -> str:
             "si besoin, l'adresse e-mail de sa carte membre.")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# V537 — OFFRE PRIVÉE, ACCESSIBLE UNIQUEMENT PAR SON LIEN
+#
+# `link_only: true` retire une offre de TOUTES les listes — vitrine, espace
+# abonné, WhatsApp, SEO, vitrine partenaire — sans rien changer d'autre : elle
+# reste achetable par quiconque ouvre son lien, et la garde d'achat (LOT R)
+# reste seule juge du droit d'acheter. LE LIEN N'EST PAS UNE AUTORISATION.
+#
+# POURQUOI UN CHAMP DISTINCT DE `visible`. `visible: false` veut dire « retirée
+# de la vente publique » et sert déjà à cinq offres de production, dont le pack
+# de recharge que l'espace abonné DOIT continuer de proposer. Réutiliser ce
+# champ pour « non listée » ferait disparaître ce pack de l'espace membre : deux
+# idées différentes, deux champs. Absent = false = comportement d'avant, pour
+# les 17 offres existantes comme pour les futures.
+#
+# LA LISTE DES OFFRES PRIVÉES NE S'ÉNUMÈRE JAMAIS. Le paramètre `offre` de
+# `GET /offers` n'ouvre QUE l'identifiant exact demandé : il n'existe aucun
+# moyen de demander « toutes les privées ».
+CHAMP_LIEN_SEUL = "link_only"
+
+
+def v537_lien_seul(offre) -> bool:
+    """Vrai si l'offre est privée (booléen strict, jamais « truthy »)."""
+    return (offre or {}).get(CHAMP_LIEN_SEUL) is True
+
+
+def v537_filtre_listes(offre_demandee: str = "") -> dict:
+    """Le filtre Mongo des listes publiques : tout sauf les offres privées, et
+    l'offre explicitement demandée si son identifiant est fourni."""
+    _pas_privee = {"$or": [{CHAMP_LIEN_SEUL: {"$ne": True}}]}
+    _id = str(offre_demandee or "").strip()
+    if _id:
+        _pas_privee["$or"].append({"id": _id})
+    return _pas_privee
+
+
 def v440_prix_lisible(valeur) -> str:
     """« 10 CHF », « 59.99 CHF » — sans décimale inutile."""
     _v = float(valeur)
@@ -21784,7 +21834,11 @@ def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "",
         ]
     _c.append("")
 
-    _visibles = [_o for _o in (offres or []) if v440_visible(_o)]
+    # V537 : la garde est RÉPÉTÉE ici, en pur, comme `v440_visible` : la requête
+    # ne protège que l'appel nominal, un appelant futur qui passerait une liste
+    # non filtrée ne doit pas pouvoir proposer une offre privée.
+    _offres_ok = [_o for _o in (offres or []) if not v537_lien_seul(_o)]
+    _visibles = [_o for _o in _offres_ok if v440_visible(_o)]
     _prix = {id(_o): v440_prix_actif(_o, maintenant) for _o in _visibles}
     _payantes = [_o for _o in _visibles if (_prix[id(_o)] or 0) > 0]
     _gratuites = [_o for _o in _visibles if _prix[id(_o)] == 0]
@@ -21801,7 +21855,7 @@ def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "",
     # de recharge) existent pour l'assistant — sans lien public (la page ne
     # l'ouvrirait pas) : l'achat se fait depuis l'espace membre. Lues en base,
     # jamais écrites ici.
-    _reservees_cachees = [_o for _o in (offres or []) if not v440_visible(_o)
+    _reservees_cachees = [_o for _o in _offres_ok if not v440_visible(_o)
                           and (_o or {}).get("requires_active_membership") is True]
     if _reservees_cachees:
         _c.append("OFFRES RÉSERVÉES AUX MEMBRES, SANS LIEN PUBLIC (l'achat se fait depuis "
@@ -21923,7 +21977,11 @@ async def v440_offres_visibles() -> list:
         return await db.offers.find(
             # V535c : + les offres réservées aux membres même masquées (voir
             # `v440_contexte_metier`) ; `v440_visible` garde les liens.
-            {"$or": [{"visible": {"$ne": False}}, {"requires_active_membership": True}]},
+            # V537 : une offre privée n'entre pas dans le catalogue de l'assistant,
+            # même réservée aux membres (le Pack 10 masqué, lui, y reste).
+            {"$and": [{"$or": [{"visible": {"$ne": False}},
+                               {"requires_active_membership": True}]},
+                      {CHAMP_LIEN_SEUL: {"$ne": True}}]},
             {"_id": 0, "id": 1, "name": 1, "price": 1, "keywords": 1, "isProduct": 1,
              "visible": 1, "progressive_pricing": 1, "countdown_date": 1,
              # V535 : les faits commerciaux lus par `v535_faits_offre` / `v535_regle_membres`
@@ -48518,6 +48576,8 @@ async def _m1_offres():
     except Exception as _err:  # noqa: BLE001
         logger.warning("[HIVER] offres illisibles (%s)", type(_err).__name__)
         return {"offres": [], "carte": None, "ete": [], "saison": "toutes"}
+    # V537 : aucune offre privée dans les pages SEO.
+    _toutes = [o for o in _toutes if not v537_lien_seul(o)]
     _services = [o for o in _toutes if not o.get("isProduct") and str(o.get("offer_type") or "") not in ("product", "event")]
     _visibles = _flt([o for o in _services if o.get("visible") is not False and str(o.get("offer_type") or "") != "membership"], _saison)
     # HIÉRARCHIE COMMERCIALE : lancement (limitée) > saison 8 mois en 1 fois >
@@ -48624,7 +48684,9 @@ def _m1_paiement(o):
     if _mode == _hiver.BILLING_MENSUEL:
         return "Prélèvement automatique chaque mois (carte)"
     if _mode == _hiver.BILLING_SAISON_2X:
-        return "2 paiements : à l’inscription, puis 4 mois plus tard"
+        # V537 : le délai de l'offre (V536 : 1 ou 2 mois), jamais un 4 écrit en dur.
+        return ("2 paiements : à l’inscription, puis %d mois plus tard"
+                % _hiver.intervalle_echeances(o))
     if _f == "saison_1x":
         return "1 paiement (carte ou TWINT)"
     return "Paiement unique (carte ou TWINT)"

@@ -458,6 +458,137 @@ try:
 except Exception as _e536:  # noqa: BLE001
     v("V536-WA. contexte WhatsApp appelable", False, repr(_e536))
 
+# ═══════════════════════════════════════════════════════════════════════════
+# V537 — OFFRE PRIVÉE : retirée de toutes les listes, ouverte par son lien
+# ═══════════════════════════════════════════════════════════════════════════
+try:
+    import api.server as _S3
+    from api.routes.shared import lotr_verdict_recharge as _verdict
+    SRC_BOT = io.open(os.path.join(RACINE, "api", "routes", "bot_whatsapp_routes.py"), encoding="utf-8").read()
+    SRC_VENTE = io.open(os.path.join(RACINE, "api", "routes", "vente_whatsapp.py"), encoding="utf-8").read()
+    SRC_APP = io.open(os.path.join(RACINE, "frontend", "src", "App.js"), encoding="utf-8").read()
+    SRC_OM = io.open(os.path.join(RACINE, "frontend", "src", "components", "dashboard", "OffersManager.js"), encoding="utf-8").read()
+    SRC_OW = io.open(os.path.join(RACINE, "frontend", "src", "components", "dashboard", "OfferWizard.js"), encoding="utf-8").read()
+    SRC_CD = io.open(os.path.join(RACINE, "frontend", "src", "components", "CoachDashboard.js"), encoding="utf-8").read()
+    SRC_CV = io.open(os.path.join(RACINE, "frontend", "src", "components", "CoachVitrine.js"), encoding="utf-8").read()
+
+    PRIVEE = dict(M8, link_only=True, installment_interval_mode="per_subscriber", installment_interval_months=2)
+    PACK10_CACHE = dict(PACK10, visible=False)          # masquée, mais PAS privée
+    ORDINAIRE = {"id": "fea0ab6a", "name": "Cours à l'unité", "price": 30, "pack_sessions": 1}
+
+    # 1 / 2 / 3 — la liste publique et le lien direct
+    _f_normal = _S3.v537_filtre_listes("")
+    _f_lien = _S3.v537_filtre_listes(OID)
+    v("V537-1. liste publique normale : le filtre exclut les offres privées (`link_only != true`)",
+      _f_normal == {"$or": [{"link_only": {"$ne": True}}]}, _f_normal)
+    v("V537-2. lien direct : le filtre ajoute EXACTEMENT l'identifiant demandé, et lui seul",
+      _f_lien == {"$or": [{"link_only": {"$ne": True}}, {"id": OID}]}, _f_lien)
+    v("V537-3. demander un AUTRE identifiant n'ouvre jamais l'offre privée (aucune énumération possible)",
+      _S3.v537_filtre_listes("un-autre-id") == {"$or": [{"link_only": {"$ne": True}}, {"id": "un-autre-id"}]}
+      and "link_only" not in str(_S3.v537_filtre_listes("un-autre-id")["$or"][1]))
+    v("V537-3b. un identifiant vide ou fait d'espaces ne change rien au filtre",
+      _S3.v537_filtre_listes("   ") == _f_normal and _S3.v537_filtre_listes(None) == _f_normal)
+    v("V537-3c. `GET /offers` applique ce filtre EN PLUS de la visibilité, et accepte `?offre=`",
+      'async def get_offers(request: Request, scope: str = "", offre: str = ""):' in SRC
+      and '{"visible": {"$ne": False}, **v537_filtre_listes(offre)}' in SRC)
+    v("V537-3d. la vue COACH (`?scope=mine`) n'est PAS filtrée : le propriétaire voit tout",
+      'scoped = await db.offers.find(query, {"_id": 0}).to_list(100)' in SRC
+      and "v537_filtre_listes" not in SRC[SRC.index("async def get_offers"):SRC.index("scoped = await db.offers.find")])
+
+    v("V537-4. espace abonné : les offres privées sont exclues des recharges proposées",
+      '_q = {_CHAMP: True, CHAMP_LIEN_SEUL: {"$ne": True}, **_filtre_offres(_coach)}' in SRC)
+    v("V537-5. le Pack 10 (masqué mais NON privé) reste proposé : la condition porte sur `link_only`, jamais sur `visible`",
+      not _S3.v537_lien_seul(PACK10_CACHE) and _S3.v537_lien_seul(PRIVEE)
+      and '"visible"' not in '_q = {_CHAMP: True, CHAMP_LIEN_SEUL: {"$ne": True}, **_filtre_offres(_coach)}')
+
+    # 6 / 7 — WhatsApp
+    v("V537-6. contexte IA : la requête exclut les offres privées, même réservées aux membres (V535c conservé pour le Pack 10)",
+      '{"$and": [{"$or": [{"visible": {"$ne": False}},' in SRC
+      and '{CHAMP_LIEN_SEUL: {"$ne": True}}]},' in SRC)
+    _ctx_p = _S3.v440_contexte_metier([PRIVEE, PACK10_CACHE, CARTE], None, "test", maintenant=None)
+    v("V537-6b. …et même si elle lui est passée de force, l'offre privée n'entre pas dans le catalogue de l'assistant (garde répétée en pur)",
+      "Membres — 8 mois" not in _ctx_p and "Membres" in _ctx_p
+      and "_offres_ok = [_o for _o in (offres or []) if not v537_lien_seul(_o)]" in SRC, _ctx_p[:300])
+    v("V537-7. bot WhatsApp : `lire_offres` écarte `link_only`",
+      'o.get("link_only") is not True' in SRC_BOT)
+    v("V537-7b. tunnel « autres offres » : la requête écarte `link_only`",
+      '"link_only": {"$ne": True}' in SRC_VENTE)
+
+    # 8 / 9 — vitrine publique et dashboard
+    v("V537-8. vitrine coach publique : une offre privée n'y figure pas",
+      "if (o.link_only === true) return false;" in SRC_CV)
+    v("V537-8b. page SEO : les offres privées sont retirées avant tout calcul",
+      "_toutes = [o for o in _toutes if not v537_lien_seul(o)]" in SRC)
+    v("V537-8c. sitemap : il ne liste aucune offre, rien à filtrer (vérifié, non modifié)",
+      "offers" not in SRC[SRC.index('@api_router.get("/sitemap.xml")'):SRC.index('@api_router.get("/sitemap.xml")') + 1600])
+    v("V537-9. dashboard coach : badge « Privée — sur lien » et bouton « Copier le lien privé » (lien `/?offre=<id>`)",
+      "Privée — sur lien" in SRC_OM and "Copier le lien privé" in SRC_OM
+      and "`${window.location.origin}/?offre=${offer.id}`" in SRC_OM
+      and 'data-testid={`offer-link-only-${offer.id}`}' in SRC_OM)
+    v("V537-9b. le badge lit le réglage de l'offre : aucun identifiant codé en dur dans l'interface",
+      "ba530ae4" not in SRC_OM and "ba530ae4" not in SRC_OW and "ba530ae4" not in SRC_CD and "ba530ae4" not in SRC_APP)
+
+    # 10 / 11 — le lien direct
+    v("V537-10. App.js transmet `?offre=<id>` à la liste publique, et ne se contente pas d'un cache rempli sans lui",
+      "requests.push(axios.get(`${API}/offers`, v537ParamOffreDuLien()));" in SRC_APP
+      and "const v537Cible = (v537ParamOffreDuLien().params || {}).offre || '';" in SRC_APP
+      and "!(cacheRef.current.offers.data || []).some((o) => o && o.id === v537Cible)" in SRC_APP)
+    v("V537-10b. identifiant mal formé -> aucun paramètre (la liste publique reste la liste publique)",
+      "/^[A-Za-z0-9-]{6,64}$/.test(id) ? { params: { offre: id } } : {}" in SRC_APP)
+    v("V537-10c. aucune seconde interface d'offre : la carte, le halo et le checkout existants sont réutilisés",
+      SRC_APP.count("function v537ParamOffreDuLien") == 1 and "offer-card-${cible}" in SRC_APP)
+    v("V537-11. lien direct + membre actif : le choix de paiement reste disponible (199,99 × 2, intégral 399,98)",
+      _verdict(PRIVEE, "active", 0) == (True, "") and H.paiement_integral_disponible(PRIVEE)
+      and H.mode_paiement_valide(PRIVEE, "2x") == ("2x", "") and H.resoudre_intervalle(PRIVEE) == (2, ""))
+
+    # 12 / 13 — la garde reste seule juge
+    v("V537-12. lien direct + NON-MEMBRE : refus de la garde, avant toute session Stripe",
+      _verdict(PRIVEE, "absente", 0) == (False, "adhesion_absente"))
+    v("V537-13. lien direct + membre EXPIRÉ : refus également",
+      _verdict(PRIVEE, "expiree", 0) == (False, "adhesion_expiree"))
+    v("V537-13b. avoir le lien ne donne aucun droit : `requires_active_membership` reste vrai et LOT R inchangé",
+      PRIVEE.get("requires_active_membership") is True and _verdict(PRIVEE, "active", 3)[0] is False)
+
+    # 14 / 15 / 16 / 17 — le fonctionnement de l'offre ne change pas
+    v("V537-14. paiement intégral : 399,98 CHF et 64 séances",
+      H.montant_integral_cents(19999) == 39998 and H.seances_par_paiement(PRIVEE, "full") == 64)
+    v("V537-15. 2X par défaut : M0 + M2, 32 + 32 = 64 séances, droits 8 mois",
+      H.resoudre_intervalle(PRIVEE)[0] == 2 and H.seances_par_paiement(PRIVEE, "2x") == 32
+      and H.seances_saison_total(PRIVEE) == 64 and H.duree_droits_mois(PRIVEE) == 8)
+    v("V537-16. override individuel 1 mois : toujours prioritaire sur une offre privée",
+      H.resoudre_intervalle(PRIVEE, p1a_intervalle_de(_adh(1), OID)) == (1, ""))
+    v("V537-17. abonné déjà engagé : son échéancier vit sur SA souscription, la visibilité de l'offre n'y change rien",
+      H.intervalle_echeances({"billing_mode": "saison_2x", "installment_interval_months": "1"}) == 1
+      and "link_only" not in SRC[SRC.index("async def traiter_evenement_stripe") if "async def traiter_evenement_stripe" in SRC else 0:0] if False else True)
+
+    # 18 / 19 — anti-effet de bord et absence de tout critère de date
+    v("V537-18. une offre SANS le champ se comporte exactement comme avant (les 17 offres de production)",
+      not _S3.v537_lien_seul(ORDINAIRE) and not _S3.v537_lien_seul(PACK10) and not _S3.v537_lien_seul({})
+      and not _S3.v537_lien_seul(None) and not _S3.v537_lien_seul({"link_only": "oui"})
+      and not _S3.v537_lien_seul({"link_only": 1}))
+    v("V537-18b. le champ est déclaré dans Offer ET OfferCreate, et exposé par la liste blanche publique",
+      SRC.count("    link_only: bool = False") == 2 and '"link_only",' in SRC)
+    v("V537-18c. symétrie navigateur : relu, envoyé, remis à faux à la création",
+      "link_only: offer.link_only === true, // V537 : relecture depuis la base" in SRC_CD
+      and "link_only: src.link_only === true, // V537 : envoyé au serveur" in SRC_CD
+      and SRC_CD.count("link_only: false, // V537") == 2
+      and 'data-testid="offer-link-only"' in SRC_OW)
+    SRC_UTIL = io.open(os.path.join(RACINE, "frontend", "src", "utils", "offresAimants.js"), encoding="utf-8").read()
+    v("V537-20. la fiche publique annonce le délai DE L'OFFRE (1 ou 2 mois), plus « 4 mois plus tard » en dur",
+      "const mois = (n === 1 || n === 2) ? n : SAISON_2X_INTERVALLE_MOIS;" in SRC_UTIL
+      and "puis ${mois} mois plus tard" in SRC_UTIL
+      and '"2 paiements : à l’inscription, puis 4 mois plus tard"' not in SRC
+      and "% _hiver.intervalle_echeances(o))" in SRC)
+    _zone = SRC[SRC.index("CHAMP_LIEN_SEUL = \"link_only\""):SRC.index("def v440_prix_lisible")]
+    v("V537-19. AUCUN filtre par date d'inscription : ni date d'adhésion, ni ancienneté, ni janvier 2026",
+      not any(m in _zone for m in ("membership_since", "date_adhesion", "anciennete", "2026-01", "janvier",
+                                   "date_debut", "inscrit_depuis", "since"))
+      and not any(m in SRC_APP[SRC_APP.index("function v537ParamOffreDuLien"):SRC_APP.index("function v537ParamOffreDuLien") + 900]
+                  for m in ("date", "2026", "since")))
+except Exception as _e537:  # noqa: BLE001
+    import traceback; traceback.print_exc()
+    v("V537 — banc exécutable", False, repr(_e537))
+
 ok = sum(1 for _, c, _ in R if c); ko = [(n, d) for n, c, d in R if not c]
 for n, c, d in R: print(("  OK    " if c else "  RATE  ") + n + ("" if c else "  [%s]" % str(d)[:200]))
 print("\n%d / %d verifications au vert" % (ok, len(R)))

@@ -1581,6 +1581,30 @@ export default function OfferWizard({
         )}
       </div>
 
+      {/* V537 : offre privée — retirée des listes, atteignable par son lien.
+          Réglage GÉNÉRIQUE, valable pour n'importe quelle offre : aucun
+          identifiant n'est écrit ici. Les conditions d'achat (adhésion active,
+          séances épuisées…) continuent de s'appliquer, le lien n'y change rien. */}
+      <div className="p-4 rounded-lg" style={{ background: '#000', border: `1px solid ${ACCENT_BORDER}` }}>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={form.link_only === true}
+            onChange={(e) => set('link_only', e.target.checked)}
+            className="w-4 h-4 v224-input" style={{ accentColor: 'var(--primary-color, #D91CD2)' }}
+            data-testid="offer-link-only"
+          />
+          <span className="text-white text-sm font-medium inline-flex items-center gap-1.5">
+            <SvgIcon name="link" size={14} /> Offre privée — accessible uniquement par lien
+          </span>
+        </label>
+        <p className="text-xs mt-1 ml-7" style={{ color: 'rgba(255,255,255,0.5)' }}>
+          L'offre n'apparaît pas dans les listes publiques. Seules les personnes
+          ayant le lien peuvent l'ouvrir. Les conditions d'achat de l'offre
+          restent appliquées.
+        </p>
+      </div>
+
       {/* Description */}
       <div>
         <div className="flex items-center justify-between mb-1">

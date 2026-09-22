@@ -155,8 +155,11 @@ NOMS = ("m1geo1_region_normalisee", "_m1_echapper", "_m1_jsonld", "_v184_parse_t
         "_m1_prix", "_m1_par_seance", "_m1_offres", "_m1_temoignages", "_m1_carte_offre",
         # HIVER 2 : hiérarchie commerciale, badges, économie réelle, date limite
         "_m1_famille", "_m1_badge", "_m1_cout_par_seance", "_m1_est_meilleur_prix", "_m1_paiement", "_m1_engagement", "_m1_seances_txt",  # V527: _m1_est_meilleur_prix (V526) manquait au banc
-        "_m1_economie", "_m1_pour_qui", "_m1_deadline_html")
-CONSTANTES = ("_N456_CHAMPS_PUBLICS", "_V184_WEEKDAY_LABELS_FR", "RV2_JOURS",
+        "_m1_economie", "_m1_pour_qui", "_m1_deadline_html",
+        # V537 : `_m1_offres` écarte les offres privées (sur lien)
+        "v537_lien_seul")
+CONSTANTES = ("CHAMP_LIEN_SEUL",      # V537 : lue par `v537_lien_seul`
+              "_N456_CHAMPS_PUBLICS", "_V184_WEEKDAY_LABELS_FR", "RV2_JOURS",
               "RV2_MOIS", "COACH_EMAIL", "_M1_SITE", "_M1_CHEMIN", "_M1_TUNNEL",
               "_M1_HORIZON_JOURS", "_M1_MAX_SEANCES", "M1GEO1_REGIONS", "_M1_REGION",
               "_M1_SEANCES_VISIBLES", "_M1_FAQ", "_HIVER_SEANCES_PAR_MOIS_ESTIMEES",

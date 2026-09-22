@@ -751,6 +751,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     const seen = new Set();
     return offers.filter(o => {
       if (o.visible === false) return false;
+      if (o.link_only === true) return false;   // V537 : offre privée, sur lien seulement
       const key = (o.name || '').toLowerCase().trim();
       if (seen.has(key)) return false;
       seen.add(key);

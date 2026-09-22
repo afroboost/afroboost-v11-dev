@@ -1784,6 +1784,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     // V535 : échéancier propre et paiement intégral (saison_2x seulement).
     installment_interval_months: null,
     installment_interval_mode: 'global', // V536
+    link_only: false, // V537
     full_payment_available: false,
     video_aspect_ratio: 'auto',
     mobile_money_enabled: false,
@@ -3330,6 +3331,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       duree_mois: offer.duree_mois ?? null,
       installment_interval_months: offer.installment_interval_months ?? null, // V535
       installment_interval_mode: offer.installment_interval_mode || 'global', // V536
+      link_only: offer.link_only === true, // V537 : relecture depuis la base
       full_payment_available: offer.full_payment_available === true, // V535
       video_aspect_ratio: offer.video_aspect_ratio || 'auto',
       mobile_money_enabled: !!offer.mobile_money_enabled,
@@ -3392,6 +3394,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       duree_mois: null,
       installment_interval_months: null, // V535
       installment_interval_mode: 'global', // V536
+      link_only: false, // V537
       full_payment_available: false, // V535
       video_aspect_ratio: 'auto',
       mobile_money_enabled: false,
@@ -3468,6 +3471,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // V535 : mêmes règles — même liste blanche, relus tels quels.
         installment_interval_months: v223Int(src.installment_interval_months, null),
         installment_interval_mode: src.installment_interval_mode === 'per_subscriber' ? 'per_subscriber' : 'global', // V536
+        link_only: src.link_only === true, // V537 : envoyé au serveur
         full_payment_available: src.full_payment_available === true,
         video_aspect_ratio: src.video_aspect_ratio || 'auto',
         mobile_money_enabled: !!src.mobile_money_enabled,

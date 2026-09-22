@@ -171,7 +171,16 @@ export const libellePaiement = (o) => {
   const mode = modeFacturation(o);
   const f = familleOffre(o);
   if (mode === 'mensuel_auto') return 'Prélèvement automatique chaque mois (carte)';
-  if (mode === 'saison_2x') return `2 paiements : à l’inscription, puis ${SAISON_2X_INTERVALLE_MOIS} mois plus tard`;
+  // V537 : le délai vient de l'OFFRE (V536 : 1 ou 2 mois), pas de la constante
+  // historique — la fiche disait « 4 mois plus tard » sur une offre réglée à 2.
+  // Le délai individuel d'un membre, lui, s'affiche dans son espace et au
+  // checkout : ici on énonce la règle générale de l'offre, celle qui est vraie
+  // pour qui n'a pas de réglage particulier.
+  if (mode === 'saison_2x') {
+    const n = parseInt(o && o.installment_interval_months, 10);
+    const mois = (n === 1 || n === 2) ? n : SAISON_2X_INTERVALLE_MOIS;
+    return `2 paiements : à l’inscription, puis ${mois} mois plus tard`;
+  }
   if (f === FAMILLE.SAISON_1X) return '1 paiement (carte ou TWINT)';
   if (f === FAMILLE.OFFERT) return 'Offert';
   return 'Paiement unique (carte ou TWINT)';

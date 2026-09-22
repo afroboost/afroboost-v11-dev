@@ -34,6 +34,15 @@ v("filtrer_offres_saison garde l'ordre", [o["n"] for o in S.filtrer_offres_saiso
 SRC = open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
 ARBRE = ast.parse(SRC); LIGNES = SRC.splitlines(keepends=True)
 
+def _const_valeur(nom):
+    """V537 — la VALEUR d'une constante de `server.py` (le `_const` voisin, plus
+    ancien, en rend le TEXTE : deux besoins, deux fonctions, pas d'ambiguïté)."""
+    for n in ast.walk(ARBRE):
+        if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == nom:
+            return ast.literal_eval(n.value)
+    raise AssertionError("constante %s introuvable" % nom)
+
+
 def _src(nom):
     for n in ast.walk(ARBRE):
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name == nom:
@@ -48,7 +57,9 @@ def _const(nom):
 
 def _corr(d, f):
     for k, c in (f or {}).items():
-        if isinstance(c, dict) and "$ne" in c:
+        if k == "$or":          # V537 : le filtre des offres privées
+            if not any(_corr(d, _s) for _s in (c or [])): return False
+        elif isinstance(c, dict) and "$ne" in c:
             if d.get(k) == c["$ne"]: return False
         elif isinstance(c, dict) and "$in" in c:
             if d.get(k) not in c["$in"]: return False
@@ -99,13 +110,17 @@ def _ns(db):
     ns = {"db": db, "logger": _Log(), "List": list, "Optional": __import__("typing").Optional, "Request": object,
           "_saison_valide": S.saison_valide, "_filtrer_saison": S.filtrer_offres_saison, "_SAISON_DEFAUT": S.SAISON_DEFAUT,
           "uuid": __import__("uuid"), "SUPER_ADMIN_EMAILS": ["admin@x"], "is_super_admin": lambda e: e == "admin@x",
+          # V537 : la constante lue par `v537_filtre_listes`, extraite de la source.
+          "CHAMP_LIEN_SEUL": _const_valeur("CHAMP_LIEN_SEUL"),
           "r2b_offre_publique": lambda o: o, "_enrich_offers_with_active_price": lambda o: o, "datetime": __import__("datetime").datetime, "timezone": __import__("datetime").timezone}
     async def _same(o): return o
     ns["_enrich_offers_with_next_date"] = _same
     # HIVER 2 : /api/offers retire les offres limitées fermées (épuisées / date passée).
     from api.routes import hiver as _H
     ns["_hiver"] = _H
-    for nom in ("_saison_active", "_annoter_places_restantes", "_offres_encore_disponibles", "get_offers"):
+    # V537 : `get_offers` applique aussi le filtre des offres privées.
+    for nom in ("_saison_active", "_annoter_places_restantes", "_offres_encore_disponibles",
+                "v537_filtre_listes", "get_offers"):
         exec(compile(_src(nom), nom, "exec"), ns)
     return ns
 
@@ -122,6 +137,23 @@ async def _go():
     v("offre sans stock : aucune place annotée", "places_restantes" not in next(o for o in pub if o["id"] == "a"))
     mine = await ns["get_offers"](_Req("admin@x"), "mine")
     v("scope=mine (tableau de bord) : TOUT, saison ignorée (5 offres)", len(mine) == 5)
+
+    # ── V537 : OFFRE PRIVÉE, ACCESSIBLE UNIQUEMENT PAR SON LIEN ───────────────
+    db.offers.docs.append({"id": "privee", "name": "Offre privée", "visible": True,
+                           "season": "toutes", "link_only": True, "price": 199.99})
+    _sans = [o["id"] for o in await ns["get_offers"](_Req(), "")]
+    v("V537. liste publique : l'offre privée n'y est PAS, les autres sont intactes",
+      "privee" not in _sans and sorted(_sans) == ["a", "h", "p"], _sans)
+    _avec = [o["id"] for o in await ns["get_offers"](_Req(), "", "privee")]
+    v("V537. `?offre=privee` : elle est rendue, en PLUS de la liste publique (le lien direct fonctionne)",
+      "privee" in _avec and sorted(_avec) == ["a", "h", "p", "privee"], _avec)
+    _autre = [o["id"] for o in await ns["get_offers"](_Req(), "", "a")]
+    v("V537. demander un AUTRE identifiant ne révèle jamais l'offre privée",
+      "privee" not in _autre and sorted(_autre) == ["a", "h", "p"], _autre)
+    _mine2 = [o["id"] for o in await ns["get_offers"](_Req("admin@x"), "mine")]
+    v("V537. le tableau de bord du propriétaire la voit toujours (6 offres, aucun filtre)",
+      "privee" in _mine2 and len(_mine2) == 6, _mine2)
+    db.offers.docs = [o for o in db.offers.docs if o["id"] != "privee"]
     db.platform_settings.docs = [{"_id": "global", "saison_active": "toutes"}]
     v("saison toutes : tout le visible, été comprise", sorted(o["id"] for o in await ns["get_offers"](_Req(), "")) == ["a", "e", "h", "p"])
     db.platform_settings.docs = []

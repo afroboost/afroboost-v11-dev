@@ -283,6 +283,23 @@ import { lire as prospectionIntentionLire,
          poser as prospectionIntentionPoser } from "./utils/prospectionIntention";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+
+// V537 — l'identifiant d'offre porté par le lien direct, pour le passer à
+// `GET /offers`. Rien d'autre n'est lu de l'URL, et un identifiant absent ou
+// mal formé rend `{}` : la liste publique reste la liste publique.
+function v537ParamOffreDuLien() {
+  try {
+    const p = new URLSearchParams(window.location.search);
+    let id = p.get('offre') || '';
+    if (!id && window.location.hash.includes('offre=')) {
+      id = new URLSearchParams(window.location.hash.split('?')[1] || '').get('offre') || '';
+    }
+    id = String(id || '').trim();
+    return /^[A-Za-z0-9-]{6,64}$/.test(id) ? { params: { offre: id } } : {};
+  } catch (e) {
+    return {};
+  }
+}
 const API = `${BACKEND_URL}/api`;
 
 // V224: cle localStorage marquant un aller-retour Stripe du parcours progressif.
@@ -6096,7 +6113,12 @@ function App() {
     try {
       // Utiliser le cache si disponible et pas de force refresh
       const cachedCourses = !forceRefresh && isCacheValid('courses') ? cacheRef.current.courses.data : null;
-      const cachedOffers = !forceRefresh && isCacheValid('offers') ? cacheRef.current.offers.data : null;
+      // V537 : quand le lien porte une offre privée, on ne se contente jamais du
+      // cache — il a été rempli par une requête SANS cet identifiant, donc sans elle.
+      const v537Cible = (v537ParamOffreDuLien().params || {}).offre || '';
+      const cachedOffers = (!forceRefresh && isCacheValid('offers')
+        && !(v537Cible && !(cacheRef.current.offers.data || []).some((o) => o && o.id === v537Cible)))
+        ? cacheRef.current.offers.data : null;
       const cachedConcept = !forceRefresh && isCacheValid('concept') ? cacheRef.current.concept.data : null;
       const cachedLinks = !forceRefresh && isCacheValid('paymentLinks') ? cacheRef.current.paymentLinks.data : null;
 
@@ -6110,7 +6132,13 @@ function App() {
       }
       if (!cachedOffers) {
         requestMap.offers = requests.length;
-        requests.push(axios.get(`${API}/offers`));
+        // V537 — OFFRE PRIVÉE : l'identifiant du lien direct (`?offre=<id>`) est
+        // transmis au serveur, qui ajoute CETTE offre-là — et elle seule — à la
+        // liste publique. Sans ce paramètre, une offre privée n'existe pour
+        // personne ; avec lui, le lien continue d'ouvrir sa carte, son choix de
+        // paiement et son checkout, exactement comme avant. Le serveur reste seul
+        // juge du droit d'acheter (LOT R).
+        requests.push(axios.get(`${API}/offers`, v537ParamOffreDuLien()));
       }
       if (!cachedLinks) {
         requestMap.links = requests.length;
