@@ -348,10 +348,55 @@ const UiPub2Colonne = ({ actions, ancre = 8 }) => {
 
 // DÉCOUPE : un <video> de publication qui ne joue que l'extrait défini par
 // `trim_start` / `trim_end` (utils/videoTrim, même hook que les offres).
+//
+// LOT 1 (poids) — LE `src` N'EST POSÉ QU'À LA VISIBILITÉ.
+//
+// Ces cartes portent `autoPlay` : le navigateur téléchargeait donc la vidéo
+// ENTIÈRE dès l'ouverture de la page, pour une carte de 240 × 250 px qui
+// commence à 858 px du haut sur un téléphone de 390 × 844 — donc SOUS le pli,
+// et pour la 3e et la 4e, hors de l'écran horizontalement. Mesuré en
+// production : 6 234 ko et 7 523 ko, soit 13,7 Mo de vidéo que personne ne
+// regarde au premier écran.
+//
+// Tant que la carte n'est pas visible, l'élément n'a AUCUN `src` : il affiche
+// son `poster` (`pub.thumbnail_url`, déjà transmis par la carte) — c'est
+// l'image de la première image du film, donc le même visuel qu'aujourd'hui à
+// l'arrêt. Dès qu'un pixel de la carte entre dans l'écran, le `src` est posé
+// et `autoPlay` reprend son travail exactement comme avant.
+//
+// POURQUOI `rootMargin: '0px'` ET PAS UNE MARGE D'ANTICIPATION : la carte est
+// à 858 px, le pli à 844 — 14 px d'écart. La moindre marge de préchargement
+// (50 px, 200 px) rattraperait la carte et rechargerait les 6 Mo au premier
+// écran : le correctif ne servirait plus à rien.
+//
+// Repli : sans `IntersectionObserver` (très vieux navigateur), on pose le
+// `src` tout de suite — le comportement redevient celui d'aujourd'hui, jamais
+// une vidéo qui ne part pas.
 const VideoPublication = ({ pub, ...props }) => {
   const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
   useTrimVideo(ref, trimValide(pub.trim_start, pub.trim_end), { loop: true });
-  return <video ref={ref} src={pub.media_url} {...props} />;
+  useEffect(() => {
+    if (visible) return undefined;
+    const el = ref.current;
+    if (!el) return undefined;
+    if (typeof IntersectionObserver !== 'function') { setVisible(true); return undefined; }
+    const obs = new IntersectionObserver((entrees) => {
+      for (let i = 0; i < entrees.length; i += 1) {
+        if (entrees[i].isIntersecting) { setVisible(true); obs.disconnect(); return; }
+      }
+    }, { rootMargin: '0px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [visible]);
+  return (
+    <video
+      ref={ref}
+      src={visible ? pub.media_url : undefined}
+      preload={visible ? 'metadata' : 'none'}
+      {...props}
+    />
+  );
 };
 
 // V268 (F2): plein écran d'une publication au clic.

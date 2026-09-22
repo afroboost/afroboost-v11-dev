@@ -1333,16 +1333,21 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
     fetchPartners();
   }, []);
 
-  // v80: Charger le compteur de likes depuis l'API
-  useEffect(() => {
-    const fetchPageLikes = async () => {
-      try {
-        const res = await axios.get(`${API}/page-likes?coach_email=contact.artboost@gmail.com`);
-        setPageLikesCount(res.data?.count || 0);
-      } catch (e) { console.error('[V80] Fetch page likes error:', e); }
-    };
-    fetchPageLikes();
-  }, []);
+  // v80 / LOT 1 (poids) — CE CHARGEMENT ALIMENTAIT UN COMPTEUR QUE PLUS RIEN
+  // N'AFFICHE.
+  //
+  // Depuis UI-PUB, le bouton ❤ et son compteur ont été déplacés dans App.js,
+  // à côté de la section « Publications ». `PartnerVideoCard` reçoit toujours
+  // `pageLikesCount`, `onLike`, `isLiked` et `likeAnimating` en props, mais ne
+  // s'en sert nulle part : vérifié sur tout le corps du composant.
+  // L'ancien `GET /page-likes` est resté ici — d'où la requête EN DOUBLE
+  // mesurée en production (une par App.js, une par ce composant) pour une
+  // valeur qui n'est jamais rendue.
+  //
+  // On retire uniquement la requête. L'état `pageLikesCount` et les props sont
+  // CONSERVÉS tels quels : le jour où l'on voudra remettre un compteur dans le
+  // hero, le câblage est encore là. Le compteur affiché à l'écran est celui
+  // d'App.js, qui fait toujours son propre appel — rien ne change à l'image.
 
   // v9.5.2: Nettoyage des timeouts
   useEffect(() => {

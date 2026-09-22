@@ -6330,10 +6330,30 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), []);
 
-  // Recharger les données quand on sort du Mode Coach (avec force refresh)
+  // Recharger les données quand on SORT du Mode Coach (avec force refresh)
+  //
+  // LOT 1 (poids) — CET EFFET PARTAIT AUSSI AU PREMIER RENDU.
+  //
+  // Pour un visiteur, `coachMode` vaut `false` dès le départ : la condition
+  // était donc vraie immédiatement, le cache était vidé et `fetchData(true)`
+  // refaisait les quatre requêtes que l'effet de montage venait d'émettre.
+  // Mesuré en production : `/courses`, `/offers`, `/payment-links` et
+  // `/concept` partaient DEUX FOIS à chaque ouverture de la page d'accueil.
+  //
+  // `sortieModeCoachRef` retient qu'on n'a pas encore vu de rendu : au premier
+  // passage on note l'état et on ne fait rien. L'INTENTION est intacte — quand
+  // le coach quitte réellement son tableau de bord, `coachMode` passe de `true`
+  // à `false`, la garde laisse passer, le cache est vidé et les données sont
+  // rechargées comme avant.
+  const sortieModeCoachRef = useRef(null);
   useEffect(() => {
-    if (!coachMode) {
-      // Invalider le cache quand on sort du mode coach car des modifications ont pu être faites
+    const precedent = sortieModeCoachRef.current;
+    sortieModeCoachRef.current = coachMode;
+    // Premier rendu : rien à recharger, `fetchData()` du montage s'en charge.
+    if (precedent === null) return;
+    // On ne recharge QUE sur la transition « était en mode coach » -> « ne l'est plus ».
+    if (precedent === true && coachMode === false) {
+      // Le coach a pu modifier offres, cours ou concept : le cache ne vaut plus rien.
       invalidateDataCache();
       fetchData(true);
     }

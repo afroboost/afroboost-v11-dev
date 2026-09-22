@@ -175,6 +175,60 @@ function FondFlou({ poster }) {
 }
 
 /**
+ * LOT 1 (poids) — L'AFFICHE D'UNE CARTE D'OFFRE NE SE TÉLÉCHARGE QU'À L'APPROCHE.
+ *
+ * Les trois affiches pèsent 5 077 ko en production (1672 × 941 affichés en
+ * 338 × 170) et commencent à 1 225 px du haut sur un téléphone de 390 × 844 :
+ * toutes sous le pli. Elles partaient pourtant EN MÊME TEMPS que l'image du
+ * hero, qui elle est visible, et lui disputaient la file réseau.
+ *
+ * POURQUOI PAS SIMPLEMENT `loading="lazy"` : MESURÉ, ÇA NE DIFFÈRE RIEN ICI.
+ * Chrome ne diffère une image `lazy` que si elle est au-delà d'un seuil de
+ * distance (~1 250 px en 4G, davantage sur une connexion lente). Nos vignettes
+ * sont à 381, 870 et 1 233 px sous le pli — toutes en deçà. Relevé sur le
+ * build local : `loading="lazy"` seul laissait passer les 5 079 ko, requêtes
+ * comprises. L'attribut est conservé (il ne coûte rien et sert de repli), mais
+ * ce qui diffère réellement, c'est l'`IntersectionObserver` ci-dessous.
+ *
+ * `rootMargin: '200px'` : la première vignette est à 381 px sous le pli. Une
+ * marge de 200 px ne la rattrape donc pas au premier écran, mais donne 200 px
+ * d'avance au défilement — l'image est déjà là quand elle entre à l'écran.
+ *
+ * RIEN NE BOUGE VISUELLEMENT : même balise, même `data-testid`, même hauteur
+ * fixe (`h`), donc la page garde exactement la même géométrie — la hauteur
+ * totale reste à 3 388 px, vérifiée avant et après.
+ */
+function VignetteImage({ poster, hauteur, onErreur }) {
+  const ref = useRef(null);
+  const [proche, setProche] = useState(false);
+  useEffect(() => {
+    if (proche) return undefined;
+    const el = ref.current;
+    if (!el) return undefined;
+    if (typeof IntersectionObserver !== 'function') { setProche(true); return undefined; }
+    const obs = new IntersectionObserver((entrees) => {
+      for (let i = 0; i < entrees.length; i += 1) {
+        if (entrees[i].isIntersecting) { setProche(true); obs.disconnect(); return; }
+      }
+    }, { rootMargin: '200px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [proche]);
+  return (
+    <img
+      ref={ref}
+      src={proche ? poster : undefined}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onError={onErreur}
+      style={{ width: '100%', height: hauteur, objectFit: 'cover', objectPosition: 'center', display: 'block' }}
+      data-testid="vignette-image"
+    />
+  );
+}
+
+/**
  * La vignette d'une carte : la MINIATURE (image) remplit la zone ; sans image,
  * la vidéo muette remplit la zone (cover, centrée) et joue l'extrait découpé.
  * Sans rien, ou média indisponible : repli sobre.
@@ -188,7 +242,7 @@ function VignetteOffre({ offre, analyser, hauteur }) {
   const h = hauteur || 170;
   const repli = <div style={{ width: '100%', height: h, background: `linear-gradient(135deg, rgba(${RGB}, 0.35), rgba(139, 92, 246, 0.25))` }} data-testid="vignette-repli" />;
   if (poster && !imageKo) {
-    return <img src={poster} alt="" onError={() => setImageKo(true)} style={{ width: '100%', height: h, objectFit: 'cover', objectPosition: 'center', display: 'block' }} data-testid="vignette-image" />;
+    return <VignetteImage poster={poster} hauteur={h} onErreur={() => setImageKo(true)} />;
   }
   if (!video || videoKo) return repli;
   return (
