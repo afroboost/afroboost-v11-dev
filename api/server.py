@@ -21701,8 +21701,25 @@ def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "",
                          v440_prix_lisible(_prix[id(_o)]), v440_lien_offre(_o),
                          (" (%s)" % _faits) if _faits else ""))
         _c.append("")
+    # V535c : les offres RÉSERVÉES AUX MEMBRES masquées de la vitrine (ex. le pack
+    # de recharge) existent pour l'assistant — sans lien public (la page ne
+    # l'ouvrirait pas) : l'achat se fait depuis l'espace membre. Lues en base,
+    # jamais écrites ici.
+    _reservees_cachees = [_o for _o in (offres or []) if not v440_visible(_o)
+                          and (_o or {}).get("requires_active_membership") is True]
+    if _reservees_cachees:
+        _c.append("OFFRES RÉSERVÉES AUX MEMBRES, SANS LIEN PUBLIC (l'achat se fait depuis "
+                  "l'espace membre du site, bouton « Recharger » — ne donne AUCUN lien) :")
+        for _o in _reservees_cachees:
+            _faits = v535_faits_offre(_o)
+            _px = v440_prix_actif(_o, maintenant)
+            _c.append("- %s — %s%s" % (str(_o.get("name") or "Offre").strip(),
+                                       v440_prix_lisible(_px or 0),
+                                       (" (%s)" % _faits) if _faits else ""))
+        _c.append("")
+    if _payantes or _reservees_cachees:
         # V535 : la règle membres, déduite des offres (rien en dur).
-        _regle = v535_regle_membres(_visibles)
+        _regle = v535_regle_membres(_visibles + _reservees_cachees)
         if _regle:
             _c += _regle + [""]
     if _gratuites:
@@ -21808,7 +21825,9 @@ async def v440_offres_visibles() -> list:
     """
     try:
         return await db.offers.find(
-            {"visible": {"$ne": False}},
+            # V535c : + les offres réservées aux membres même masquées (voir
+            # `v440_contexte_metier`) ; `v440_visible` garde les liens.
+            {"$or": [{"visible": {"$ne": False}}, {"requires_active_membership": True}]},
             {"_id": 0, "id": 1, "name": 1, "price": 1, "keywords": 1, "isProduct": 1,
              "visible": 1, "progressive_pricing": 1, "countdown_date": 1,
              # V535 : les faits commerciaux lus par `v535_faits_offre` / `v535_regle_membres`
@@ -22217,7 +22236,9 @@ async def handle_meta_whatsapp_webhook(request: Request):
                     _v440_hist = await v440_historique_fil(from_phone)
                     _v440_twint = await v440_twint_configure()
                     _v440_fil = " ".join([_t["content"] for _t in _v440_hist] + [incoming_message])
-                    _v440_ciblee, _v440_motif = v440_offre_certaine(_v440_fil, _v440_offres)
+                    # V535c : seule une offre VISIBLE peut être ciblée (et liée).
+                    _v440_ciblee, _v440_motif = v440_offre_certaine(
+                        _v440_fil, [_o for _o in _v440_offres if v440_visible(_o)])
                     # `maintenant` reste None : le palier tarifaire est donc
                     # recalculé à CET instant, à chaque message. Aucun cache.
                     context += "\n\n" + v440_contexte_metier(

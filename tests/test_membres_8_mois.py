@@ -214,6 +214,15 @@ try:
     v("SYNC. Membres — 8 mois et Pack 10 : « aucune réduction supplémentaire » ; le 50 % n'est annoncé que sur le workshop",
       S.v535_faits_offre(M8).count("aucune réduction supplémentaire") == 1 and "%" not in S.v535_faits_offre(M8) and "%" not in S.v535_faits_offre(PACK10))
     v("SYNC. la Carte membre annuelle « ouvre l'adhésion membre annuelle »", "ouvre l'adhésion membre annuelle" in S.v535_faits_offre(CARTE))
+    _p10c = dict(PACK10, visible=False, requires_active_membership=True)
+    _c7 = _ctx([M8, _p10c, CARTE, WORKSHOP])
+    v("SYNC 7. Pack 10 MASQUÉ de la vitrine mais réservé aux membres : connu de l'assistant (150 CHF, 10 séances, réservé) SANS lien public, et nommé dans la règle",
+      "SANS LIEN PUBLIC" in _c7 and "- Membres — 150 CHF (10 séances" in _c7 and "offre=484c4519" not in _c7 and "RÉSERVÉES AUX MEMBRES ACTIFS : Membres — 8 mois, Membres." in _c7, _c7[:600])
+    _c8 = _ctx([M8, dict(PACK10, visible=False, requires_active_membership=False), CARTE, WORKSHOP])
+    v("SYNC 8. une offre masquée NON réservée reste inconnue de l'assistant (un brouillon n'est jamais proposé)", "150 CHF" not in _c8, _c8[:300])
+    _src_q = S.v440_offres_visibles.__code__.co_consts
+    v("SYNC 9. la requête base remonte les offres réservées même masquées (`requires_active_membership: True` dans le `$or`)", "requires_active_membership" in repr(_src_q) and "$or" in repr(_src_q))
+    v("SYNC 10. le webhook ne cible (ne lie) qu'une offre VISIBLE", "[_o for _o in _v440_offres if v440_visible(_o)]" in io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read())
     _src_prompt = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
     v("SYNC. aucune donnée commerciale en dur : le contexte est construit par des fonctions, `systemPrompt` est lu tel quel et jamais réécrit",
       "ai_config.get(\"systemPrompt\", \"\") + context" in _src_prompt and "399" not in S.v535_faits_offre.__code__.co_consts.__repr__() and "64" not in S.v535_faits_offre.__code__.co_consts.__repr__())
