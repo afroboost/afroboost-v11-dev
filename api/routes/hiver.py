@@ -56,6 +56,19 @@ MODE_PAIEMENT_INTEGRAL = "full"
 MODES_PAIEMENT = (MODE_PAIEMENT_2X, MODE_PAIEMENT_INTEGRAL)
 RAISON_MODE_REQUIS = "Choisis ton mode de paiement : en une fois ou en 2 fois."
 RAISON_MODE_INCONNU = "Mode de paiement inconnu."
+# V536 — LE COACH CHOISIT LE DÉLAI ENTRE LES DEUX ÉCHÉANCES : 1 ou 2 mois, soit
+# pour tout le monde (`installment_interval_mode: "global"`, valeur de l'offre),
+# soit abonné par abonné (`"per_subscriber"`, décision rangée sur l'ADHÉSION du
+# membre, `memberships.echeanciers[offer_id]`). Le client ne choisit JAMAIS son
+# délai : le serveur le résout (override > global > refus). Un échéancier déjà
+# démarré est figé : il vit sur la souscription, plus jamais sur l'offre.
+CHAMP_MODE_ECHEANCIER = "installment_interval_mode"
+MODE_ECHEANCIER_GLOBAL = "global"
+MODE_ECHEANCIER_INDIVIDUEL = "per_subscriber"
+MODES_ECHEANCIER = (MODE_ECHEANCIER_GLOBAL, MODE_ECHEANCIER_INDIVIDUEL)
+INTERVALLES_ECHEANCIER = (1, 2)      # les seuls délais qu'un échéancier propre admet
+RAISON_ECHEANCIER_A_DEFINIR = "Le coach doit encore définir ton échéancier."
+RAISON_INTERVALLE_INVALIDE = "Délai entre les échéances invalide : 1 ou 2 mois."
 PLACES_RESERVEES_MINUTES = 30        # un checkout ouvert réserve sa place 30 min
 
 RAISON_COMPLETE = "Cette offre est complète : toutes les places ont été prises."
@@ -84,20 +97,59 @@ def duree_mois_valide(valeur):
     return _n if 1 <= _n <= 24 else None
 
 
+def intervalle_valide(valeur):
+    """V536 — un délai d'échéancier propre : 1 ou 2 (entier), sinon None. Tout le
+    reste (0, 3, 12, texte, booléen, valeur bricolée) est refusé ici, une fois."""
+    if isinstance(valeur, bool):
+        return None
+    try:
+        _n = int(str(valeur).strip())
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return _n if _n in INTERVALLES_ECHEANCIER else None
+
+
+def mode_echeancier(offre) -> str:
+    """V536 — « global » (défaut, valeur de l'offre) ou « per_subscriber »."""
+    _m = str((offre or {}).get(CHAMP_MODE_ECHEANCIER) or "").strip().lower()
+    return _m if _m in MODES_ECHEANCIER else MODE_ECHEANCIER_GLOBAL
+
+
 def intervalle_echeances(offre) -> int:
     """V535 — mois entre les deux échéances d'une offre `saison_2x` : sa valeur
-    propre (`installment_interval_months`, 1..12) sinon la constante historique."""
-    try:
-        _n = int(float((offre or {}).get(CHAMP_INTERVALLE)))
-    except (TypeError, ValueError):
-        return SAISON_2X_INTERVALLE_MOIS
-    return _n if 1 <= _n <= 12 else SAISON_2X_INTERVALLE_MOIS
+    propre (`installment_interval_months`, V536 : 1 ou 2) sinon la constante
+    historique. AFFICHAGE GÉNÉRIQUE seulement : pour un achat, `resoudre_intervalle`."""
+    _n = intervalle_valide((offre or {}).get(CHAMP_INTERVALLE))
+    return _n if _n else SAISON_2X_INTERVALLE_MOIS
 
 
 def echeancier_personnalise(offre) -> bool:
-    """V535 — vrai si l'offre est en `saison_2x` AVEC un intervalle propre."""
-    return (billing_mode_valide((offre or {}).get("billing_mode")) == BILLING_SAISON_2X
-            and intervalle_echeances(offre) != SAISON_2X_INTERVALLE_MOIS)
+    """V535 — vrai si l'offre est en `saison_2x` AVEC un échéancier propre : un
+    intervalle valide, ou (V536) le mode « par abonné »."""
+    if billing_mode_valide((offre or {}).get("billing_mode")) != BILLING_SAISON_2X:
+        return False
+    return (intervalle_valide((offre or {}).get(CHAMP_INTERVALLE)) is not None
+            or mode_echeancier(offre) == MODE_ECHEANCIER_INDIVIDUEL)
+
+
+def resoudre_intervalle(offre, override=None) -> tuple:
+    """V536 — (intervalle | None, motif) : LE délai d'un NOUVEL achat en 2 fois.
+
+    Priorité : override individuel valide (décidé par le coach pour CE membre)
+    > valeur globale de l'offre > refus explicite (« le coach doit encore
+    définir ton échéancier ») — jamais une valeur inventée. Les offres sans
+    échéancier propre gardent la règle historique (4 mois), à l'identique."""
+    if not echeancier_personnalise(offre):
+        return SAISON_2X_INTERVALLE_MOIS, ""
+    _ov = intervalle_valide(override)
+    if _ov:
+        return _ov, ""
+    if mode_echeancier(offre) == MODE_ECHEANCIER_INDIVIDUEL:
+        return None, RAISON_ECHEANCIER_A_DEFINIR
+    _g = intervalle_valide((offre or {}).get(CHAMP_INTERVALLE))
+    if _g:
+        return _g, ""
+    return None, RAISON_ECHEANCIER_A_DEFINIR
 
 
 def paiement_integral_disponible(offre) -> bool:
@@ -219,7 +271,7 @@ def offres_ouvertes(offres, maintenant=None) -> list:
 
 
 def parametres_checkout(offre, nom_produit, montant_cents, success_url, cancel_url, email, metadata,
-                        mode_paiement=None) -> dict:
+                        mode_paiement=None, intervalle=None) -> dict:
     """Les paramètres de `stripe.checkout.Session.create` selon le mode de l'offre.
 
     `unique` : exactement le paramétrage historique (mode=payment, carte + TWINT).
@@ -230,9 +282,12 @@ def parametres_checkout(offre, nom_produit, montant_cents, success_url, cancel_u
     _meta = dict(metadata or {})
     _meta["billing_mode"] = _mode
     # V535 : mode choisi par l'acheteur (offres à choix seulement) et rythme propre.
+    # V536 : `intervalle` = le délai RÉSOLU par le serveur (override > global) ;
+    # sans lui, la valeur générique de l'offre (offres historiques).
+    _n = intervalle_valide(intervalle) or intervalle_echeances(offre)
     if _mode == BILLING_SAISON_2X and mode_paiement in MODES_PAIEMENT:
         _meta["payment_mode"] = mode_paiement
-        _meta[CHAMP_INTERVALLE] = str(intervalle_echeances(offre))
+        _meta[CHAMP_INTERVALLE] = str(_n)
     if _mode == BILLING_UNIQUE or (_mode == BILLING_SAISON_2X and mode_paiement == MODE_PAIEMENT_INTEGRAL):
         return {
             "payment_method_types": ["card", "twint"],
@@ -241,7 +296,7 @@ def parametres_checkout(offre, nom_produit, montant_cents, success_url, cancel_u
             "mode": "payment", "success_url": success_url, "cancel_url": cancel_url,
             "customer_email": email, "metadata": _meta,
         }
-    _recurrent = {"interval": "month", "interval_count": 1 if _mode == BILLING_MENSUEL else intervalle_echeances(offre)}
+    _recurrent = {"interval": "month", "interval_count": 1 if _mode == BILLING_MENSUEL else _n}
     return {
         "payment_method_types": ["card"],
         "line_items": [{"price_data": {"currency": "chf", "product_data": {"name": nom_produit},

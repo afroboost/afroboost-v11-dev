@@ -79,10 +79,21 @@ function Pastille({ statut }) {
   );
 }
 
-export default function AdhesionsManager({ API }) {
+/** V536 — les offres dont l'échéancier se décide abonné par abonné. Rien n'est
+ *  écrit en dur : c'est l'offre qui déclare son mode (le serveur revalide). */
+function offresParAbonne(offers) {
+  return (Array.isArray(offers) ? offers : []).filter(
+    (o) => o && o.billing_mode === 'saison_2x' && o.installment_interval_mode === 'per_subscriber'
+  );
+}
+
+export default function AdhesionsManager({ API, offers }) {
   const [formulaire, setFormulaire] = useState(FORMULAIRE_VIDE);
   const [enregistrement, setEnregistrement] = useState(false);
   const [message, setMessage] = useState(null); // { type: 'ok' | 'erreur', texte }
+  // V536 : l'échéancier en cours d'enregistrement — `${id}:${offer_id}` -> '1' | '2'.
+  const [echEnCours, setEchEnCours] = useState('');
+  const [echMessage, setEchMessage] = useState(null); // { cle, type, texte }
 
   const base = API || '';
 
@@ -117,6 +128,32 @@ export default function AdhesionsManager({ API }) {
   const liste = (charge && charge.memberships) || [];
 
   const recharger = useCallback(() => chargement.reessayer('adhesions'), [chargement]);
+
+  const offresEcheancier = useMemo(() => offresParAbonne(offers), [offers]);
+
+  /** V536 — le coach fixe le délai (1 ou 2 mois) des 2 échéances de CE membre.
+   *  Le serveur refuse tout autre délai, et verrouille si l'échéancier a démarré. */
+  const definirEcheancier = async (adhesion, offre, mois) => {
+    const cle = `${adhesion.id}:${offre.id}`;
+    if (echEnCours) return;
+    setEchEnCours(cle);
+    setEchMessage(null);
+    try {
+      const rep = await axios.put(`${base}/memberships/${adhesion.id}/echeancier`, {
+        offer_id: offre.id, intervalle_mois: mois,
+      });
+      if (!rep || !rep.data || rep.data.success !== true) {
+        throw echecDeReponse('echeancier non enregistre', 'serveur');
+      }
+      setEchMessage({ cle, type: 'ok', texte: `Échéancier enregistré : M0 + M${mois}.` });
+      recharger();
+    } catch (err) {
+      const detail = err && err.response && err.response.data && err.response.data.detail;
+      setEchMessage({ cle, type: 'erreur', texte: detail || "L'échéancier n'a pas pu être enregistré." });
+    } finally {
+      setEchEnCours('');
+    }
+  };
 
   // « Offert » n'admet aucun montant : règle du lot B, rappelée ici pour que le
   // coach la voie AVANT d'envoyer — jamais à la place du serveur, qui reste
@@ -390,6 +427,46 @@ export default function AdhesionsManager({ API }) {
                   : '—'}
               </div>
               <Pastille statut={a.statut} />
+              {/* V536 : échéancier du paiement en 2 fois, décidé par le coach pour
+                  CETTE personne. S'applique au PROCHAIN achat ; une fois le paiement
+                  démarré, le serveur refuse toute modification (409). */}
+              {offresEcheancier.length > 0 && a.statut === 'active' && (
+                <div style={{ flexBasis: '100%', marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.08)' }}
+                     data-testid={`echeancier-${a.id}`}>
+                  {offresEcheancier.map((o) => {
+                    const cle = `${a.id}:${o.id}`;
+                    const choisi = parseInt(((a.echeanciers || {})[o.id] || {}).intervalle_mois, 10);
+                    const msg = echMessage && echMessage.cle === cle ? echMessage : null;
+                    return (
+                      <div key={o.id} style={{ marginBottom: 6 }}>
+                        <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '11px', marginBottom: 4 }}>
+                          {o.name} — échéancier
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="radiogroup" aria-label={`Échéancier ${o.name}`}>
+                          {[1, 2].map((n) => {
+                            const actif = choisi === n;
+                            return (
+                              <button key={n} type="button" disabled={!!echEnCours}
+                                onClick={() => definirEcheancier(a, o, n)}
+                                data-testid={`echeancier-${a.id}-${o.id}-${n}`} data-choisi={actif ? '1' : '0'}
+                                style={{
+                                  padding: '5px 10px', borderRadius: 8, fontSize: '11px', cursor: echEnCours ? 'wait' : 'pointer',
+                                  border: `1px solid ${actif ? PRIMAIRE : 'rgba(255,255,255,0.14)'}`,
+                                  background: actif ? `rgba(${PRIMAIRE_RGB}, 0.14)` : 'transparent',
+                                  color: actif ? PRIMAIRE : 'rgba(255,255,255,0.7)',
+                                }}>M0 + M{n}</button>
+                            );
+                          })}
+                        </div>
+                        <div style={{ color: msg && msg.type === 'erreur' ? '#ef4444' : 'rgba(255,255,255,0.45)', fontSize: '10px', marginTop: 4 }}>
+                          {msg ? msg.texte
+                            : "Ce choix s'appliquera au prochain achat de cette offre. Une fois le paiement démarré, l'échéancier ne pourra plus être modifié."}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           ))}
         </div>

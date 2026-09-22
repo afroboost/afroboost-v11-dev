@@ -137,6 +137,9 @@ class _RouteurBouchon(object):
             return f
         return deco
 
+    def put(self, chemin, **k):      # V536 : route d'echeancier par abonne
+        return self._enr("PUT", chemin)
+
     def post(self, chemin, **k):
         return self._enr("POST", chemin)
 

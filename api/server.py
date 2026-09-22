@@ -1197,6 +1197,9 @@ class Offer(BaseModel):
     # les voisins : absents ici, `PUT /offers` les EFFACERAIT à chaque enregistrement.
     installment_interval_months: Optional[int] = None
     full_payment_available: bool = False
+    # V536 : « global » (le délai de l'offre vaut pour tous) ou « per_subscriber »
+    # (le coach le fixe abonné par abonné, sur son adhésion). Même symétrie.
+    installment_interval_mode: Optional[str] = None
     # R2c — DE QUI, ET QUOI. Les deux questions posees en tete de fichier.
     #
     # `owner_type` / `owner_id` sont ecrits par le SERVEUR seul : ils sont
@@ -1354,6 +1357,9 @@ class OfferCreate(BaseModel):
     # les voisins : absents ici, `PUT /offers` les EFFACERAIT à chaque enregistrement.
     installment_interval_months: Optional[int] = None
     full_payment_available: bool = False
+    # V536 : « global » (le délai de l'offre vaut pour tous) ou « per_subscriber »
+    # (le coach le fixe abonné par abonné, sur son adhésion). Même symétrie.
+    installment_interval_mode: Optional[str] = None
     # LOT R — MIROIR STRICT, meme exigence : sans cette ligne, un `PUT /offers`
     # EFFACERAIT la protection en base a chaque enregistrement de l'offre.
     requires_active_membership: bool = False
@@ -2576,7 +2582,7 @@ R2B_CLES_OFFRE_PUBLIQUE = (
     "billing_mode", "duree_mois", "countdown_enabled", "countdown_date", "countdown_time", "countdown_text",
     # V535 — le rythme des échéances et le choix « en une fois » sont des faits
     # commerciaux publics de l'offre, pas une identité.
-    "installment_interval_months", "full_payment_available",
+    "installment_interval_months", "full_payment_available", "installment_interval_mode",
     "video_aspect_ratio", "mobile_money_enabled", "video_trim_start", "video_trim_end",
 )
 
@@ -8264,19 +8270,42 @@ async def create_checkout_session(request: CreateCheckoutRequest,
     if _v535_mode == _hiver.MODE_PAIEMENT_INTEGRAL:
         amount_cents = _hiver.montant_integral_cents(amount_cents)
         metadata["payment_mode"] = _v535_mode
+    # V536 — LE DÉLAI DES DEUX ÉCHÉANCES EST RÉSOLU ICI, PAR LE SERVEUR.
+    # Le client n'en propose aucun : ce qu'il enverrait serait ignoré. L'ordre
+    # est override du coach pour CE membre (rangé sur son adhésion) > valeur
+    # globale de l'offre > refus explicite. Un paiement intégral n'a pas
+    # d'échéancier : il n'est jamais bloqué par cette règle.
+    _v536_intervalle = None
+    if _hiver_offre is not None and _hiver.echeancier_personnalise(_hiver_offre):
+        _v536_override = None
+        try:
+            from api.routes.shared import (lot3b_adhesions as _v536_adh,
+                                           lot2_proprietaire as _v536_proprio)
+            from api.routes.membership_routes import p1a_intervalle_de as _v536_lire
+            _v536_override = _v536_lire(
+                await _v536_adh(db, request.customerEmail or "",
+                                _v536_proprio(_hiver_offre.get("coach_id"))),
+                str(request.offerId or ""))
+        except Exception as _v536_err:  # noqa: BLE001
+            # FAIL CLOSED SUR L'OVERRIDE SEUL : sans lui on retombe sur la règle
+            # globale, ou sur le refus explicite — jamais sur un délai inventé.
+            logger.warning("[V536] echeancier individuel illisible (%s)", type(_v536_err).__name__)
+        _v536_intervalle, _v536_refus = _hiver.resoudre_intervalle(_hiver_offre, _v536_override)
+        if _v536_refus and _v535_mode != _hiver.MODE_PAIEMENT_INTEGRAL:
+            raise HTTPException(status_code=409, detail=_v536_refus)
     if _hiver_offre is not None:
         metadata["billing_mode"] = _hiver_mode
         if _hiver.duree_mois_valide(_hiver_offre.get("duree_mois")):
             metadata["duree_mois"] = str(_hiver.duree_mois_valide(_hiver_offre.get("duree_mois")))
-        if _hiver.echeancier_personnalise(_hiver_offre):
-            metadata[_hiver.CHAMP_INTERVALLE] = str(_hiver.intervalle_echeances(_hiver_offre))
+        if _hiver.echeancier_personnalise(_hiver_offre) and _v536_intervalle:
+            metadata[_hiver.CHAMP_INTERVALLE] = str(_v536_intervalle)
 
     try:
         # V221: Passer api_key en paramètre au lieu de muter stripe.api_key global
         if _hiver_mode != _hiver.BILLING_UNIQUE:
             _p = _hiver.parametres_checkout(_hiver_offre, request.productName, amount_cents,
                                             success_url, cancel_url, request.customerEmail, metadata,
-                                            mode_paiement=_v535_mode)
+                                            mode_paiement=_v535_mode, intervalle=_v536_intervalle)
             session = stripe.checkout.Session.create(api_key=active_stripe_key, **_p)
             logger.info("[HIVER] session %s ouverte (%s) pour l'offre %s", _hiver_mode, session.id, str(request.offerId)[:32])
         else:
@@ -15367,6 +15396,14 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
         # V535b : le proprietaire de la plateforme = « sans proprietaire »
         # (ses offres portent son adresse depuis la mi-septembre 2026).
         _q = {_CHAMP: True, **_filtre_offres(_coach)}
+        # V536 : les echeanciers decides par le coach POUR CETTE PERSONNE. Une
+        # seule lecture d'adhesions pour toutes les offres de la liste.
+        _v536_adhesions = []
+        try:
+            from api.routes.shared import lot3b_adhesions as _v536_adh
+            _v536_adhesions = await _v536_adh(db, user_email or "", _coach)
+        except Exception as _v536_e:  # noqa: BLE001
+            logger.warning("[V536] adhesions illisibles pour l'espace (%s)", type(_v536_e).__name__)
         _offres = await db.offers.find(_q, {"_id": 0}).to_list(10)
         if not _offres:
             # Aucune offre de recharge declaree : ce n'est pas une anomalie,
@@ -15404,6 +15441,14 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
                 _xprix = round(float(_xp), 2) if _xp is not None and float(_xp) > 0 else None
                 _xsais = _hiver.billing_mode_valide(_x.get("billing_mode")) == _hiver.BILLING_SAISON_2X
                 _xtot = _hiver.seances_saison_total(_x) if _xsais else _seances_de(_x)
+                _xinterv, _xrefus = (None, "")
+                if _xsais:
+                    try:
+                        from api.routes.membership_routes import p1a_intervalle_de as _v536_lire
+                        _xover = _v536_lire(_v536_adhesions, str(_x.get("id") or ""))
+                    except Exception:  # noqa: BLE001
+                        _xover = None
+                    _xinterv, _xrefus = _hiver.resoudre_intervalle(_x, _xover)
                 _v535_liste.append({
                     "offer_id": str(_x.get("id") or ""),
                     "offer_name": str(_x.get("name") or ""),
@@ -15417,7 +15462,13 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
                                    else _hiver.duree_mois_valide(_x.get("duree_mois"))),
                     "billing_mode": _hiver.billing_mode_valide(_x.get("billing_mode")),
                     "echeances": _hiver.SAISON_2X_ECHEANCES if _xsais else 1,
-                    "intervalle_mois": _hiver.intervalle_echeances(_x) if _xsais else None,
+                    # V536 : le délai RÉSOLU pour CETTE personne (override du coach,
+                    # sinon règle globale). `None` + `echeancier_a_definir` quand le
+                    # coach n'a pas encore tranché : l'écran ne montre alors AUCUNE
+                    # date, il le dit. Jamais une fausse échéance.
+                    "intervalle_mois": _xinterv if _xsais else None,
+                    "echeancier_a_definir": bool(_xsais and _xrefus),
+                    "echeancier_message": _xrefus if _xsais else "",
                     "paiement_integral": _hiver.paiement_integral_disponible(_x),
                     "prix_integral": (round(_xprix * _hiver.SAISON_2X_ECHEANCES, 2)
                                       if _xsais and _hiver.paiement_integral_disponible(_x) and _xprix else None),
@@ -21494,7 +21545,31 @@ def v440_garde_urls(texte: str, autorisees: set):
     return _propre, _retirees
 
 
-def v535_faits_offre(offre) -> str:
+def v536_faits_echeancier(offre, intervalle=None, motif="") -> str:
+    """V536 — la phrase d'échéancier d'une offre `saison_2x` à choix, pour l'IA.
+
+    `intervalle` = le délai RÉSOLU quand on sait à qui on parle (override du
+    coach pour ce membre, sinon règle globale). Sans délai résolu — mode « par
+    abonné » et personne non identifiée, ou coach n'ayant pas encore tranché —
+    on dit que le délai est défini par le coach. On n'invente JAMAIS « 1 mois »
+    par commodité."""
+    _o = offre or {}
+    _p = v440_prix_actif(_o)
+    if not _p:
+        return ""
+    _k = _hiver.SAISON_2X_ECHEANCES
+    _total = v440_prix_lisible(round(_p * _k, 2))
+    _n = _hiver.intervalle_valide(intervalle)
+    if _n:
+        return ("paiement en %d fois : %s maintenant puis %s %d mois plus tard (total %s)"
+                % (_k, v440_prix_lisible(_p), v440_prix_lisible(_p), _n, _total))
+    return ("paiement en %d fois possible (%s puis %s, total %s) ; le délai de la seconde "
+            "échéance est défini par le coach selon le dossier de la personne — ne l'invente pas%s"
+            % (_k, v440_prix_lisible(_p), v440_prix_lisible(_p), _total,
+               (" (%s)" % motif) if motif else ""))
+
+
+def v535_faits_offre(offre, intervalle_resolu=None, motif_echeancier="") -> str:
     """V535 — les faits COMMERCIAUX d'une offre pour l'assistant, lus sur l'offre et
     le moteur de paiement : séances, durée, échéancier, réservation aux membres,
     avantage membre. Rien n'est écrit en dur ; une offre qui change en base
@@ -21513,9 +21588,15 @@ def v535_faits_offre(offre) -> str:
             _k = _hiver.SAISON_2X_ECHEANCES
             _m = _hiver.intervalle_echeances(_o)
             if _p:
-                _f.append("paiement en %d fois : %s maintenant puis %s %d mois plus tard (total %s)"
-                          % (_k, v440_prix_lisible(_p), v440_prix_lisible(_p), _m,
-                             v440_prix_lisible(round(_p * _k, 2))))
+                # V536 : le délai vient du RÉSOLVEUR (override du membre > règle
+                # globale > « défini par le coach »), jamais d'une valeur choisie ici.
+                if _hiver.echeancier_personnalise(_o):
+                    _n, _motif = _hiver.resoudre_intervalle(_o, intervalle_resolu)
+                    _f.append(v536_faits_echeancier(_o, _n, motif_echeancier or _motif))
+                else:
+                    _f.append("paiement en %d fois : %s maintenant puis %s %d mois plus tard (total %s)"
+                              % (_k, v440_prix_lisible(_p), v440_prix_lisible(_p), _m,
+                                 v440_prix_lisible(round(_p * _k, 2))))
                 if _hiver.paiement_integral_disponible(_o):
                     _f.append("ou paiement en une fois de %s" % v440_prix_lisible(round(_p * _k, 2)))
         elif _mens:
@@ -21582,7 +21663,7 @@ async def v535c_statut_membre_par_telephone(from_phone) -> dict:
     jamais lu dans un champ. Le propriétaire de la plateforme = « sans
     propriétaire » (V535b), donc `lot3b_adhesions(db, email, None)`.
     Toute panne -> « inconnu ». Ne lève jamais."""
-    _inconnu = {"statut": "inconnu", "date_fin": ""}
+    _inconnu = {"statut": "inconnu", "date_fin": "", "echeanciers": {}, "email": ""}
     try:
         from api.routes.shared import (essai6_normaliser_tel as _norm, lot3b_adhesions as _adh,
                                        lotr_etat_adhesion as _etat, normaliser_email as _nmail)
@@ -21615,7 +21696,21 @@ async def v535c_statut_membre_par_telephone(from_phone) -> dict:
             _fin = max(str(a.get("date_fin") or "")[:10] for a in _lignes if isinstance(a, dict))
         except ValueError:
             _fin = ""
-        return {"statut": "actif" if _st == "active" else "expiree", "date_fin": _fin}
+        # V536 : les échéanciers décidés par le coach POUR CETTE PERSONNE, par
+        # offre — l'assistant annonce alors le vrai délai (1 ou 2 mois) et non
+        # une moyenne. Absent = l'assistant dira « défini par le coach ».
+        _ech = {}
+        try:
+            from api.routes.membership_routes import CHAMP_ECHEANCIERS as _CE, p1a_intervalle_de as _lire
+            for _a in _lignes:
+                for _oid in list((_a or {}).get(_CE) or {}):
+                    _n = _lire(_lignes, _oid)
+                    if _n:
+                        _ech[str(_oid)] = _n
+        except Exception:  # noqa: BLE001
+            _ech = {}
+        return {"statut": "actif" if _st == "active" else "expiree", "date_fin": _fin,
+                "echeanciers": _ech, "email": _email}
     except Exception as _e:  # noqa: BLE001
         logger.warning("[V535c] statut membre indisponible (%s) — inconnu", type(_e).__name__)
         return _inconnu
@@ -21647,7 +21742,8 @@ def v440_prix_lisible(valeur) -> str:
 
 
 def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "",
-                         maintenant=None, twint_disponible: bool = True) -> str:
+                         maintenant=None, twint_disponible: bool = True,
+                         echeanciers: dict = None) -> str:
     """Le bloc métier ajouté au prompt système. Construit ENTIÈREMENT en Python.
 
     Tout ce que le modèle a le droit de dire d'une offre — nom, prix, lien —
@@ -21695,7 +21791,7 @@ def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "",
     if _payantes:
         _c.append("OFFRES PAYANTES ET LEURS LIENS (les seuls liens autorisés) :")
         for _o in _payantes:
-            _faits = v535_faits_offre(_o)
+            _faits = v535_faits_offre(_o, (echeanciers or {}).get(str(_o.get("id") or "")))
             _c.append("- %s — %s — %s%s"
                       % (str(_o.get("name") or "Offre").strip(),
                          v440_prix_lisible(_prix[id(_o)]), v440_lien_offre(_o),
@@ -21711,7 +21807,7 @@ def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "",
         _c.append("OFFRES RÉSERVÉES AUX MEMBRES, SANS LIEN PUBLIC (l'achat se fait depuis "
                   "l'espace membre du site, bouton « Recharger » — ne donne AUCUN lien) :")
         for _o in _reservees_cachees:
-            _faits = v535_faits_offre(_o)
+            _faits = v535_faits_offre(_o, (echeanciers or {}).get(str(_o.get("id") or "")))
             _px = v440_prix_actif(_o, maintenant)
             _c.append("- %s — %s%s" % (str(_o.get("name") or "Offre").strip(),
                                        v440_prix_lisible(_px or 0),
@@ -21834,6 +21930,7 @@ async def v440_offres_visibles() -> list:
              "pack_sessions": 1, "duree_mois": 1, "billing_mode": 1, "creates_membership": 1,
              "requires_active_membership": 1, "member_discount_pct": 1,
              "installment_interval_months": 1, "full_payment_available": 1,
+             "installment_interval_mode": 1,
              "countdown_time": 1, "early_bird_days_before": 1,
              "standard_hours_before": 1, "price_early_bird": 1,
              "price_standard": 1, "price_last_minute": 1},
@@ -22241,12 +22338,15 @@ async def handle_meta_whatsapp_webhook(request: Request):
                         _v440_fil, [_o for _o in _v440_offres if v440_visible(_o)])
                     # `maintenant` reste None : le palier tarifaire est donc
                     # recalculé à CET instant, à chaque message. Aucun cache.
+                    # V535c : le statut d'adhésion RÉEL de la personne (par son
+                    # numéro), ou « non identifié » — jamais inventé. V536 : il
+                    # porte aussi ses échéanciers décidés, lus AVANT le contexte
+                    # pour que chaque offre annonce SON délai applicable.
+                    _v535c_info = await v535c_statut_membre_par_telephone(from_phone)
                     context += "\n\n" + v440_contexte_metier(
                         _v440_offres, _v440_ciblee, _v440_motif,
-                        maintenant=None, twint_disponible=_v440_twint)
-                    # V535c : le statut d'adhésion RÉEL de la personne (par son numéro),
-                    # ou « non identifié » — jamais inventé.
-                    _v535c_info = await v535c_statut_membre_par_telephone(from_phone)
+                        maintenant=None, twint_disponible=_v440_twint,
+                        echeanciers=(_v535c_info or {}).get("echeanciers") or {})
                     context += "\n" + v535c_contexte_statut_membre(_v535c_info)
                     logger.info("[V535c] statut membre WhatsApp : %s", _v535c_info.get("statut"))
                     logger.info("[V440] %d offre(s), %d tour(s), twint=%s — %s | prix actif: %s",

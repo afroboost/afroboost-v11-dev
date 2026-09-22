@@ -7,11 +7,13 @@
 import React, { useState } from 'react';
 import { optionsPaiement } from '../utils/modePaiement';
 
-export default function ChoixModePaiement({ offre, prix, onChoisir, onFermer, occupe = false, titre = 'Choisis ton mode de paiement' }) {
+export default function ChoixModePaiement({ offre, prix, onChoisir, onFermer, occupe = false, titre = 'Choisis ton mode de paiement', sansFractionne = false }) {
   const [mode, setMode] = useState('');
   const options = optionsPaiement(offre, prix);
   if (!options) return null;
-  const lignes = [options.integral, options.deuxFois];
+  // V536 : quand le délai de la seconde échéance n'est pas encore décidé par le
+  // coach, on ne propose PAS le fractionné plutôt que d'annoncer une fausse date.
+  const lignes = sansFractionne ? [options.integral] : [options.integral, options.deuxFois];
   return (
     <div data-testid="choix-mode-paiement" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <p className="text-white text-sm" style={{ opacity: 0.85, lineHeight: 1.5, margin: 0 }}>
@@ -40,7 +42,9 @@ export default function ChoixModePaiement({ offre, prix, onChoisir, onFermer, oc
         })}
       </div>
       <p className="text-white text-xs" style={{ opacity: 0.6, margin: 0 }}>
-        Total identique dans les deux cas : {options.total.toFixed(2).replace('.', ',')} CHF.
+        {sansFractionne
+          ? `Montant total : ${options.total.toFixed(2).replace('.', ',')} CHF.`
+          : `Total identique dans les deux cas : ${options.total.toFixed(2).replace('.', ',')} CHF.`}
       </p>
       <button type="button" disabled={!mode || occupe} onClick={() => onChoisir(mode)}
         data-testid="mode-paiement-continuer"

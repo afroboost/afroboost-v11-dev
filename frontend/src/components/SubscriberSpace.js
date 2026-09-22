@@ -2059,13 +2059,23 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   {o.eligible ? (
                     o.paiement_integral ? (
                       <div className="mt-3">
+                        {/* V536 : `intervalle_mois` est le délai RÉSOLU par le serveur pour
+                            CETTE personne. Quand le coach ne l'a pas encore fixé, aucune date
+                            n'est inventée : le paiement en 2 fois est retiré et le message du
+                            serveur est affiché tel quel. */}
                         <ChoixModePaiement
                           offre={{ billing_mode: o.billing_mode, price: o.prix, full_payment_available: true,
                                    installment_interval_months: o.intervalle_mois }}
                           occupe={rechargeLoading}
                           titre="Choisis ton mode de paiement"
+                          sansFractionne={o.echeancier_a_definir === true}
                           onChoisir={(mode) => handleRecharge(o, mode)}
                         />
+                        {o.echeancier_a_definir ? (
+                          <p className="text-white/50 text-xs mt-2" data-testid={`echeancier-a-definir-${o.offer_id}`}>
+                            {o.echeancier_message || "Le coach doit encore définir ton échéancier."}
+                          </p>
+                        ) : null}
                       </div>
                     ) : (
                       <button type="button" onClick={() => handleRecharge(o)} disabled={rechargeLoading}

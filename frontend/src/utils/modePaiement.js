@@ -18,10 +18,11 @@ export function offreAvecChoixPaiement(offre) {
   return !!offre && offre.billing_mode === 'saison_2x' && offre.full_payment_available === true;
 }
 
-/** Mois entre les deux échéances : la valeur de l'offre (1..12) sinon l'historique (4). */
+/** V536 — mois entre les deux échéances : 1 ou 2 (les seules valeurs qu'un
+ *  échéancier propre admet, serveur compris) sinon l'historique (4). */
 export function intervalleMois(offre) {
   const n = parseInt(offre && offre.installment_interval_months, 10);
-  return Number.isInteger(n) && n >= 1 && n <= 12 ? n : INTERVALLE_HISTORIQUE;
+  return n === 1 || n === 2 ? n : INTERVALLE_HISTORIQUE;
 }
 
 /**
@@ -43,7 +44,7 @@ export function optionsPaiement(offre, prixAffiche) {
     deuxFois: {
       mode: MODE_2X,
       titre: 'Paiement en 2 fois',
-      detail: `${chf(echeance)} aujourd’hui puis ${chf(echeance)} dans ${mois} mois`,
+      detail: `${chf(echeance)} aujourd’hui puis ${chf(echeance)} dans ${mois} ${mois > 1 ? 'mois' : 'mois'}`,
     },
   };
 }

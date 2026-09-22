@@ -56,6 +56,8 @@ class Base:
     def __init__(self):
         self.subscriptions = Coll([]); self.discount_codes = Coll([])
 
+MSRC = io.open(os.path.join(RACINE, "api", "routes", "membership_routes.py"), encoding="utf-8").read()
+
 R = []
 def v(nom, cond, detail=""): R.append((nom, bool(cond), detail))
 def run(c): return asyncio.get_event_loop().run_until_complete(c)
@@ -167,7 +169,8 @@ v("modèles : les deux champs sont dans Offer ET OfferCreate (symétrie PUT /off
 v("espace abonné : `_lotr_etat_recharge` rend la LISTE `offres` (Pack 10 + Membres — 8 mois) avec prix, séances, échéancier",
   '"offres": _v535_liste,' in SRC and '"prix_integral"' in SRC)
 v("WhatsApp : faits d'offre et règle membres CALCULÉS depuis les offres (v535_faits_offre / v535_regle_membres), rien en dur",
-  "def v535_faits_offre" in SRC and "def v535_regle_membres" in SRC and "_faits = v535_faits_offre(_o)" in SRC
+  "def v535_faits_offre" in SRC and "def v535_regle_membres" in SRC
+  and SRC.count("_faits = v535_faits_offre(_o, (echeanciers or {}).get(str(_o.get(\"id\") or \"\")))") == 2
   and "399" not in SRC[SRC.index("def v535_faits_offre"):SRC.index("def v440_prix_lisible")])
 v("partage : la page OG redirige vers le lien profond `?offre=<id>` et l'URL canonique porte /api",
   'e_cible = _html.escape(f"{FRONT}/?offre={offer_id}", quote=True)' in SRC and 'content="0;url={e_cible}"' in SRC)
@@ -199,8 +202,10 @@ try:
       "249.99 CHF maintenant puis 249.99 CHF" in _c1 and "total 499.98 CHF" in _c1 and "une fois de 499.98 CHF" in _c1 and "199.99" not in _c1, _c1[:300])
     _c2 = _ctx([dict(M8, pack_sessions=5), PACK10, CARTE, WORKSHOP])
     v("SYNC 2. pack_sessions 8 -> 5 : « 40 séances au total » (5 × 4 × 2), plus « 64 »", "40 séances au total" in _c2 and "64 séances" not in _c2, _c2[:300])
-    _c3 = _ctx([dict(M8, installment_interval_months=3), PACK10, CARTE, WORKSHOP])
-    v("SYNC 3. intervalle 1 -> 3 : « 3 mois plus tard », plus « 1 mois plus tard »", "3 mois plus tard" in _c3 and "1 mois plus tard" not in _c3, _c3[:300])
+    _c3 = _ctx([dict(M8, installment_interval_months=2), PACK10, CARTE, WORKSHOP])
+    v("SYNC 3. intervalle 1 -> 2 (V536 : seules valeurs 1 et 2) : « 2 mois plus tard », plus « 1 mois plus tard »", "2 mois plus tard" in _c3 and "1 mois plus tard" not in _c3, _c3[:300])
+    _c3b = _ctx([dict(M8, installment_interval_months=3), PACK10, CARTE, WORKSHOP])
+    v("SYNC 3b. V536 : un intervalle hors [1, 2] (3) n'est JAMAIS annoncé — repli sur la règle historique", "3 mois plus tard" not in _c3b and "4 mois plus tard" in _c3b, _c3b[:300])
     _c4 = _ctx([PACK10, CARTE, WORKSHOP])
     v("SYNC 4. offre désactivée (absente des offres visibles) : plus proposée, la règle ne la nomme plus",
       "Membres — 8 mois" not in _c4 and "Membres" in _c4, _c4[:300])
@@ -283,6 +288,148 @@ try:
 except Exception as _e:  # noqa: BLE001
     import traceback; traceback.print_exc()
     v("WhatsApp — fonctions v535 appelables", False, repr(_e))
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V536 — LE COACH CHOISIT LE DÉLAI : 1 ou 2 mois, pour tous ou par abonné
+# ═══════════════════════════════════════════════════════════════════════════
+from api.routes.membership_routes import (p1a_intervalle_de, p1a_echeancier_de,
+                                          CHAMP_ECHEANCIERS)
+
+OFFRE_GLOBAL_1 = dict(M8, installment_interval_mode="global", installment_interval_months=1)
+OFFRE_GLOBAL_2 = dict(M8, installment_interval_mode="global", installment_interval_months=2)
+OFFRE_INDIV = dict(M8, installment_interval_mode="per_subscriber", installment_interval_months=None)
+OID = M8["id"]
+
+def _adh(mois, decide_le="2026-09-22T10:00:00+00:00"):
+    return [{"email": "m@x.test", CHAMP_ECHEANCIERS: {OID: {"intervalle_mois": mois, "decide_par": "coach", "decide_le": decide_le}}}]
+
+def _param(offre, mode, interv):
+    return H.parametres_checkout(offre, offre["name"], 19999, "https://x/ok", "https://x/ko",
+                                 "m@x.test", {}, mode_paiement=mode, intervalle=interv)
+
+# 1 / 2 — mode global
+_i1, _r1 = H.resoudre_intervalle(OFFRE_GLOBAL_1)
+v("V536-1. mode global = 1 -> nouvel abonné M0 + M1 (Stripe interval_count 1, cancel_at = début + 2 mois − 1 j)",
+  _i1 == 1 and _r1 == "" and _param(OFFRE_GLOBAL_1, "2x", _i1)["line_items"][0]["price_data"]["recurring"]["interval_count"] == 1
+  and H.cancel_at_saison(datetime(2026, 10, 1, tzinfo=timezone.utc), offre=OFFRE_GLOBAL_1)
+      == int(datetime(2026, 11, 30, tzinfo=timezone.utc).timestamp()), (_i1, _r1))
+_i2, _r2 = H.resoudre_intervalle(OFFRE_GLOBAL_2)
+v("V536-2. mode global = 2 -> nouvel abonné M0 + M2 (interval_count 2, cancel_at = début + 4 mois − 1 j)",
+  _i2 == 2 and _r2 == "" and _param(OFFRE_GLOBAL_2, "2x", _i2)["line_items"][0]["price_data"]["recurring"]["interval_count"] == 2
+  and H.cancel_at_saison(datetime(2026, 10, 1, tzinfo=timezone.utc), offre=OFFRE_GLOBAL_2)
+      == int(datetime(2027, 1, 31, tzinfo=timezone.utc).timestamp()), (_i2, _r2))
+
+# 3 / 4 — mode individuel avec override
+v("V536-3. mode par abonné + override membre = 1 -> M0 + M1", H.resoudre_intervalle(OFFRE_INDIV, p1a_intervalle_de(_adh(1), OID)) == (1, ""))
+v("V536-4. mode par abonné + override membre = 2 -> M0 + M2", H.resoudre_intervalle(OFFRE_INDIV, p1a_intervalle_de(_adh(2), OID)) == (2, ""))
+v("V536-4b. l'override PRIME sur la valeur globale (le coach a tranché pour cette personne)",
+  H.resoudre_intervalle(OFFRE_GLOBAL_2, p1a_intervalle_de(_adh(1), OID)) == (1, ""))
+v("V536-4c. deux décisions successives : la plus RÉCENTE gagne",
+  p1a_intervalle_de([{CHAMP_ECHEANCIERS: {OID: {"intervalle_mois": 2, "decide_le": "2026-09-01T00:00:00+00:00"}}},
+                     {CHAMP_ECHEANCIERS: {OID: {"intervalle_mois": 1, "decide_le": "2026-09-20T00:00:00+00:00"}}}], OID) == 1)
+v("V536-4d. un override sur une AUTRE offre ne s'applique pas ici", p1a_intervalle_de(_adh(2), "autre-offre") is None)
+
+# 5 — individuel sans override : refus propre, intégral toujours possible
+_i5, _r5 = H.resoudre_intervalle(OFFRE_INDIV)
+v("V536-5. mode par abonné SANS choix du coach -> aucun délai inventé, refus explicite « Le coach doit encore définir ton échéancier. »",
+  _i5 is None and _r5 == H.RAISON_ECHEANCIER_A_DEFINIR, (_i5, _r5))
+v("V536-5b. le paiement intégral reste disponible dans ce cas (aucun échéancier à définir)",
+  H.paiement_integral_disponible(OFFRE_INDIV) and H.mode_paiement_valide(OFFRE_INDIV, "full") == ("full", "")
+  and "subscription_data" not in _param(OFFRE_INDIV, "full", None))
+v("V536-5c. le checkout refuse le 2X (409) tant que le coach n'a pas tranché, et JAMAIS le paiement intégral",
+  'if _v536_refus and _v535_mode != _hiver.MODE_PAIEMENT_INTEGRAL:' in SRC and 'raise HTTPException(status_code=409, detail=_v536_refus)' in SRC)
+
+# 6 / 7 — valeurs refusées et payload client ignoré
+v("V536-6. intervalles refusés : 0, 3, 4, 12, « 2 mois », vrai, None, vide — seuls 1 et 2 passent",
+  [H.intervalle_valide(x) for x in (0, 3, 4, 12, "2 mois", True, None, "")] == [None] * 8
+  and (H.intervalle_valide(1), H.intervalle_valide("2")) == (1, 2))
+v("V536-6b. une offre portant un intervalle interdit (3, écrit hors interface) retombe sur la règle HISTORIQUE (4) et n'annonce jamais 3",
+  H.intervalle_echeances(dict(M8, installment_interval_months=3)) == H.SAISON_2X_INTERVALLE_MOIS
+  and H.resoudre_intervalle(dict(M8, installment_interval_mode="global", installment_interval_months=3))
+      == (H.SAISON_2X_INTERVALLE_MOIS, "")
+  and not H.echeancier_personnalise(dict(M8, installment_interval_months=3)))
+v("V536-6c. mais en mode PAR ABONNÉ, un intervalle interdit ne devient pas un délai : refus explicite",
+  H.resoudre_intervalle(dict(M8, installment_interval_mode="per_subscriber", installment_interval_months=3))
+      == (None, H.RAISON_ECHEANCIER_A_DEFINIR))
+v("V536-7. le client ne décide JAMAIS son délai : `CreateCheckoutRequest` n'a aucun champ d'intervalle, et le serveur le résout lui-même",
+  "installment_interval_months" not in SRC[SRC.index("class CreateCheckoutRequest"):SRC.index("class CreateCheckoutRequest") + 1500]
+  and "_v536_intervalle, _v536_refus = _hiver.resoudre_intervalle(_hiver_offre, _v536_override)" in SRC
+  and "mode_paiement=_v535_mode, intervalle=_v536_intervalle)" in SRC)
+v("V536-7b. l'override est lu sur l'ADHÉSION du membre côté serveur, jamais reçu du navigateur",
+  "from api.routes.membership_routes import p1a_intervalle_de as _v536_lire" in SRC)
+
+# 8 / 9 — les abonnements déjà créés sont figés
+_sub_m1 = {"billing_mode": "saison_2x", "installment_interval_months": "1", "duree_mois": "8"}
+v("V536-8. abonnement déjà créé à M+1 : la règle globale passe à 2, SON échéancier reste 1 (il vit sur la souscription, plus sur l'offre)",
+  H.intervalle_echeances(_sub_m1) == 1 and H.parametres_checkout(_sub_m1, "x", 19999, "a", "b", "e", {}, mode_paiement="2x")["line_items"][0]["price_data"]["recurring"]["interval_count"] == 1)
+_sub_m2 = {"billing_mode": "saison_2x", "installment_interval_months": "2", "duree_mois": "8"}
+v("V536-9. abonnement déjà créé à M+2 : le coach passe ce membre à 1, SON échéancier reste 2",
+  H.intervalle_echeances(_sub_m2) == 2
+  and H.cancel_at_saison(datetime(2026, 10, 1, tzinfo=timezone.utc), offre=_sub_m2) == int(datetime(2027, 1, 31, tzinfo=timezone.utc).timestamp()))
+v("V536-9b. la route d'échéancier REFUSE (409) quand une souscription 2X existe déjà pour ce membre et cette offre",
+  "Échéancier déjà démarré" in MSRC and 'status_code=409' in MSRC
+  and '"payment_mode": _regles_echeancier().MODE_PAIEMENT_2X' in MSRC)
+v("V536-9c. elle ne touche NI Stripe, NI cancel_at, NI les séances : elle n'écrit que `echeanciers` sur l'adhésion",
+  not any(x in "\n".join(l for l in MSRC.split("def definir_echeancier")[1].splitlines()
+                         if not l.strip().startswith(("#", "-", '"""')))
+          for x in ("stripe.", "Subscription.modify", "cancel_at", "seances_", "total_sessions"))
+  and '{"$set": {"%s.%s" % (CHAMP_ECHEANCIERS, _oid): _entree, "updated_at": _maintenant}}' in MSRC)
+v("V536-9d. la route est JWT-strict (coach) et ne modifie qu'une adhésion que l'appelant voit déjà",
+  "appelant, est_admin = await _p1a_appelant(request)" in MSRC.split("def definir_echeancier")[1]
+  and "p1a_filtre_proprietaire(p1a_coach_id_contexte(appelant, est_admin))" in MSRC.split("def definir_echeancier")[1])
+v("V536-9e. traçabilité : qui a décidé, pour qui, quel délai, quand",
+  '"decide_par": appelant' in MSRC and '"decide_le": _maintenant' in MSRC and '"intervalle_mois": _n' in MSRC)
+
+# 10 à 13 — montants et séances dans les trois cas
+v("V536-10. FULL : 399.98 CHF en une fois, 64 séances", H.montant_integral_cents(19999) == 39998 and H.seances_par_paiement(OFFRE_GLOBAL_1, "full") == 64)
+v("V536-11. 2X M+1 : 199.99 × 2 = 399.98, 32 + 32 = 64 séances",
+  _param(OFFRE_GLOBAL_1, "2x", 1)["line_items"][0]["price_data"]["unit_amount"] == 19999
+  and H.seances_par_paiement(OFFRE_GLOBAL_1, "2x") == 32 and H.seances_saison_total(OFFRE_GLOBAL_1) == 64)
+v("V536-12. 2X M+2 : même total 399.98 et mêmes 64 séances — le délai ne change PAS les droits",
+  _param(OFFRE_GLOBAL_2, "2x", 2)["line_items"][0]["price_data"]["unit_amount"] == 19999
+  and H.seances_par_paiement(OFFRE_GLOBAL_2, "2x") == 32 and H.seances_saison_total(OFFRE_GLOBAL_2) == 64
+  and H.duree_droits_mois(OFFRE_GLOBAL_2) == 8)
+b9 = Base()
+b9.subscriptions = Coll([{"id": "s9", "code": "AFR-M9", "stripe_subscription_id": "sub_m9", "billing_mode": "saison_2x",
+                          "installment_interval_months": 2, "payment_mode": "2x", "saison_debut": "2026-10-01T10:00:00+00:00",
+                          "created_at": "2026-10-01T10:00:00+00:00", "renewal_sessions": 32, "remaining_sessions": 32,
+                          "total_sessions": 32, "status": "active", "expires_at": "2027-06-01T23:59:59+00:00", "stripe_invoices": []}])
+b9.discount_codes = Coll([{"code": "AFR-M9", "maxUses": 32, "used": 0, "active": True, "expiresAt": "2027-06-01"}])
+_fin9 = int(datetime(2026, 12, 31, 12, 0, tzinfo=timezone.utc).timestamp())
+_f2 = run(H.traiter_facture_payee(b9, {"id": "in_a", "subscription": "sub_m9", "billing_reason": "subscription_cycle", "lines": {"data": [{"period": {"end": _fin9}}]}}))
+_f3 = run(H.traiter_facture_payee(b9, {"id": "in_b", "subscription": "sub_m9", "billing_reason": "subscription_cycle", "lines": {"data": [{"period": {"end": _fin9}}]}}))
+v("V536-13. échéancier M+2 : la 2e facture crédite (32 -> 64), la 3e ne crédite RIEN",
+  _f2["credite"] and b9.subscriptions.docs[0]["total_sessions"] == 64 and not _f3["credite"]
+  and _f3["motif"] == "echeancier_termine" and b9.subscriptions.docs[0]["total_sessions"] == 64, (_f2, _f3))
+
+# 14 / 15 — les autres offres et la constante globale
+v("V536-14. autres offres saison_2x (sans mode ni intervalle) : strictement inchangées — 4 mois, aucun choix, aucun refus",
+  H.resoudre_intervalle(AUTRE_2X) == (H.SAISON_2X_INTERVALLE_MOIS, "") and H.mode_echeancier(AUTRE_2X) == "global"
+  and not H.echeancier_personnalise(AUTRE_2X)
+  and H.parametres_checkout(AUTRE_2X, "x", 29900, "a", "b", "e", {})["line_items"][0]["price_data"]["recurring"] == {"interval": "month", "interval_count": 4})
+v("V536-15. la constante globale reste 4 et n'est jamais réécrite", H.SAISON_2X_INTERVALLE_MOIS == 4 and SRC.count("SAISON_2X_INTERVALLE_MOIS =") == 0)
+
+# WhatsApp — le délai annoncé suit la règle applicable
+try:
+    import api.server as _S2
+    _wa_g2 = _S2.v535_faits_offre(OFFRE_GLOBAL_2)
+    v("V536-WA-1. mode global = 2 : « 199.99 CHF maintenant puis 199.99 CHF 2 mois plus tard »",
+      "199.99 CHF maintenant puis 199.99 CHF 2 mois plus tard" in _wa_g2 and "1 mois plus tard" not in _wa_g2, _wa_g2[:200])
+    _wa_i1 = _S2.v535_faits_offre(OFFRE_INDIV, 1)
+    _wa_i2 = _S2.v535_faits_offre(OFFRE_INDIV, 2)
+    v("V536-WA-2. mode par abonné + membre identifié : son délai réel (1 ou 2 mois)",
+      "1 mois plus tard" in _wa_i1 and "2 mois plus tard" in _wa_i2, (_wa_i1[:120], _wa_i2[:120]))
+    _wa_x = _S2.v535_faits_offre(OFFRE_INDIV)
+    v("V536-WA-3. mode par abonné + personne NON identifiée : aucun délai inventé, « défini par le coach »",
+      "défini par le coach" in _wa_x and "mois plus tard" not in _wa_x and "199.99 CHF puis 199.99 CHF, total 399.98 CHF" in _wa_x, _wa_x[:250])
+    _ctx_i = _S2.v440_contexte_metier([OFFRE_INDIV], None, "test", maintenant=None, echeanciers={OID: 2})
+    v("V536-WA-4. le contexte reçoit les échéanciers du membre et annonce SON délai",
+      "2 mois plus tard" in _ctx_i and "défini par le coach" not in _ctx_i, _ctx_i[-400:])
+    v("V536-WA-5. rien en dur : le webhook résout le statut AVANT le contexte et lui passe les échéanciers du membre",
+      'echeanciers=(_v535c_info or {}).get("echeanciers") or {}' in SRC
+      and SRC.index("_v535c_info = await v535c_statut_membre_par_telephone(from_phone)") < SRC.index('echeanciers=(_v535c_info or {}).get("echeanciers") or {}'))
+except Exception as _e536:  # noqa: BLE001
+    v("V536-WA. contexte WhatsApp appelable", False, repr(_e536))
 
 ok = sum(1 for _, c, _ in R if c); ko = [(n, d) for n, c, d in R if not c]
 for n, c, d in R: print(("  OK    " if c else "  RATE  ") + n + ("" if c else "  [%s]" % str(d)[:200]))

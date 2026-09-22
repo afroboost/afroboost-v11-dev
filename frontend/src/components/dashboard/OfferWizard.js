@@ -1362,14 +1362,56 @@ export default function OfferWizard({
             Vide = comportement historique (M0 + M4, pas de paiement intégral). */}
         {(form.billing_mode || 'unique') === 'saison_2x' && (
           <div className="mt-4" data-testid="v535-echeancier">
-            <label className="block text-xs mb-1" style={LABEL_STYLE}>Mois entre les deux échéances</label>
-            <input type="number" min="1" max="12" value={form.installment_interval_months ?? ''}
-              placeholder="4 (règle historique)"
-              onChange={(e) => set('installment_interval_months', e.target.value === '' ? null : Math.max(1, Math.min(12, parseInt(e.target.value, 10) || 1)))}
-              className="w-full p-2 rounded-lg neon-input" data-testid="v535-intervalle" />
-            <p className="text-xs mt-1" style={HINT_STYLE}>
-              1 = deuxième échéance un mois après l'achat. Les droits couvrent toujours la saison entière (8 mois), quel que soit le rythme.
-            </p>
+            {/* V536 : le coach choisit COMMENT le délai est décidé — le même pour
+                tous, ou abonné par abonné (depuis « Adhésions »). Le serveur
+                revalide : seuls 1 et 2 mois sont acceptés. */}
+            <label className="block text-xs mb-1" style={LABEL_STYLE}>Paiement en 2 fois — gestion de l'échéancier</label>
+            <div className="flex flex-col gap-2" role="radiogroup" aria-label="Gestion de l'échéancier" data-testid="v536-mode-echeancier">
+              {[
+                { valeur: 'global', titre: 'Même délai pour tous les abonnés' },
+                { valeur: 'per_subscriber', titre: 'Choisir le délai par abonné' },
+              ].map((m) => {
+                const actif = (form.installment_interval_mode || 'global') === m.valeur;
+                return (
+                  <label key={m.valeur} data-testid={`v536-mode-${m.valeur}`} data-choisi={actif ? '1' : '0'}
+                    className="flex items-center gap-2 cursor-pointer text-xs"
+                    style={{ color: actif ? PINK : 'rgba(255,255,255,0.75)' }}>
+                    <input type="radio" name="v536-mode-echeancier" checked={actif}
+                      onChange={() => set('installment_interval_mode', m.valeur)}
+                      style={{ width: 16, height: 16, accentColor: PINK }} />
+                    <span>{m.titre}</span>
+                  </label>
+                );
+              })}
+            </div>
+            {(form.installment_interval_mode || 'global') === 'global' ? (
+              <div className="mt-3" data-testid="v536-delai-global">
+                <label className="block text-xs mb-1" style={LABEL_STYLE}>Délai entre les échéances</label>
+                <div className="flex gap-2" role="radiogroup" aria-label="Délai entre les échéances">
+                  {[1, 2].map((n) => {
+                    const actif = parseInt(form.installment_interval_months, 10) === n;
+                    return (
+                      <button key={n} type="button" onClick={() => set('installment_interval_months', n)}
+                        data-testid={`v536-intervalle-${n}`} data-choisi={actif ? '1' : '0'}
+                        className="px-3 py-2 rounded-lg text-xs"
+                        style={{
+                          border: `1px solid ${actif ? PINK : 'rgba(255,255,255,0.14)'}`,
+                          background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)' : 'transparent',
+                          color: actif ? PINK : 'rgba(255,255,255,0.75)',
+                        }}>{n} mois</button>
+                    );
+                  })}
+                </div>
+                <input type="hidden" value={form.installment_interval_months ?? ''} data-testid="v535-intervalle" readOnly />
+                <p className="text-xs mt-1" style={HINT_STYLE}>
+                  1 mois = deuxième échéance un mois après l'achat (M0 + M1). 2 mois = M0 + M2. Les droits couvrent toujours la saison entière (8 mois), quel que soit le rythme.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs mt-2" style={HINT_STYLE} data-testid="v536-aide-individuel">
+                Tu définiras le délai (1 ou 2 mois) abonné par abonné dans « Adhésions », avant son achat. Tant qu'aucun délai n'est défini pour une personne, son paiement en 2 fois est bloqué — le paiement en une fois reste possible.
+              </p>
+            )}
             <label className="flex items-center gap-2 mt-3 cursor-pointer text-xs" style={{ color: 'rgba(255,255,255,0.75)' }}>
               <input type="checkbox" checked={form.full_payment_available === true}
                 onChange={(e) => set('full_payment_available', e.target.checked)}

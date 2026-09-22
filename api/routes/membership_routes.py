@@ -190,7 +190,67 @@ def p1a_projeter(doc: dict, aujourdhui=None) -> dict:
     _d = dict(doc or {})
     _d.pop("_id", None)
     _d["statut"] = p1a_statut(_d.get("date_debut"), _d.get("date_fin"), aujourdhui)
+    # V536 : les échéanciers décidés par le coach, tels quels (l'écran en a besoin
+    # pour montrer M0+M1 / M0+M2 et pour dire « déjà démarré »).
+    _d[CHAMP_ECHEANCIERS] = _d.get(CHAMP_ECHEANCIERS) or {}
     return _d
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V536 — L'ÉCHÉANCIER D'UN ABONNÉ, DÉCIDÉ PAR LE COACH
+#
+# OÙ VIT CETTE DÉCISION, ET POURQUOI ICI. Elle concerne UNE personne et UNE
+# offre réservée aux membres : l'adhésion est déjà le document « cette personne,
+# chez ce propriétaire », déjà protégé par un jeton coach signé, déjà lu par la
+# garde d'achat (LOT R). Y ranger `echeanciers: {offer_id: {...}}` évite une
+# collection de plus pour un champ, et fait qu'un membre sans adhésion n'a
+# mécaniquement aucun override — ce qui est exactement la règle métier.
+# CE N'EST JAMAIS LE NAVIGATEUR QUI TRANCHE : le client n'envoie pas son délai,
+# le serveur le lit ici. Et une fois l'échéancier démarré, il vit sur la
+# SOUSCRIPTION (`installment_interval_months`) : changer ce champ-ci ne touche
+# plus rien de ce qui est en cours.
+CHAMP_ECHEANCIERS = "echeanciers"
+
+
+def _regles_echeancier():
+    """V536 — le moteur d'échéancier (`hiver`), importé PARESSEUSEMENT.
+
+    Import local et non en tête de module : plusieurs bancs chargent ce fichier
+    seul, dans un paquet `api.routes` reconstitué où `hiver` n'existe pas — un
+    import au sommet les casserait tous pour un champ. Même raison que les
+    imports locaux de `shared.py`."""
+    from api.routes import hiver as _h
+    return _h
+
+
+def p1a_echeancier_de(adhesions, offer_id):
+    """V536 — l'override du coach pour cette offre, ou None. NE LÈVE JAMAIS.
+
+    Plusieurs adhésions possibles (historique) : on retient la décision la plus
+    RÉCENTE (`decide_le`), et seulement si son intervalle est encore valide —
+    une valeur devenue interdite ne s'applique pas en silence."""
+    _oid = str(offer_id or "").strip()
+    if not _oid:
+        return None
+    _cands = []
+    for _a in (adhesions or []):
+        if not isinstance(_a, dict):
+            continue
+        _e = (_a.get(CHAMP_ECHEANCIERS) or {}).get(_oid)
+        if not isinstance(_e, dict):
+            continue
+        if _regles_echeancier().intervalle_valide(_e.get("intervalle_mois")) is None:
+            continue
+        _cands.append(_e)
+    if not _cands:
+        return None
+    return sorted(_cands, key=lambda e: str(e.get("decide_le") or ""))[-1]
+
+
+def p1a_intervalle_de(adhesions, offer_id):
+    """V536 — l'intervalle décidé pour cette offre (1 ou 2), ou None."""
+    _e = p1a_echeancier_de(adhesions, offer_id)
+    return _regles_echeancier().intervalle_valide((_e or {}).get("intervalle_mois")) if _e else None
 
 
 async def _p1a_appelant(request: Request) -> tuple:
@@ -325,3 +385,74 @@ async def lister_adhesions(request: Request, page: int = 1, limit: int = 50,
         "aujourdhui": jour,
         "moyens": list(B_ORIGINES_MANUELLES),
     }
+
+
+@membership_router.put("/memberships/{membership_id}/echeancier")
+async def definir_echeancier(membership_id: str, request: Request):
+    """V536 — le coach fixe le délai des 2 échéances d'UNE offre pour CE membre.
+
+    Corps : `{offer_id, intervalle_mois}` — 1 ou 2, rien d'autre (le validateur
+    est celui du moteur, `hiver.intervalle_valide`, jamais recopié ici).
+
+    CE QUE CETTE ROUTE NE FAIT PAS, et c'est l'essentiel :
+    - elle ne touche AUCUNE souscription Stripe, aucun `cancel_at`, aucune
+      échéance en cours, aucune séance déjà attribuée. La décision ne vaut que
+      pour le PROCHAIN achat de cette offre par cette personne ;
+    - elle refuse (409) si un échéancier de cette offre a déjà démarré pour ce
+      membre : un contrat commencé ne se réécrit pas, il se laisse finir ;
+    - elle n'invente pas de propriété : on ne modifie qu'une adhésion que
+      l'appelant voit déjà (`p1a_filtre_proprietaire`), sans quoi un partenaire
+      pourrait écrire sur le membre d'un autre.
+    """
+    appelant, est_admin = await _p1a_appelant(request)
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        corps = {}
+
+    _oid = str(corps.get("offer_id") or "").strip()
+    if not _oid:
+        raise HTTPException(status_code=400, detail="Offre manquante.")
+    _n = _regles_echeancier().intervalle_valide(corps.get("intervalle_mois"))
+    if _n is None:
+        raise HTTPException(status_code=400, detail=_regles_echeancier().RAISON_INTERVALLE_INVALIDE)
+
+    requete = p1a_filtre_proprietaire(p1a_coach_id_contexte(appelant, est_admin))
+    requete = dict(requete)
+    requete["id"] = str(membership_id or "").strip()
+    doc = await db["memberships"].find_one(requete, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Adhésion introuvable.")
+
+    # L'offre doit exister, être en `saison_2x` et gérer son échéancier par
+    # abonné : sinon la décision n'aurait nulle part où s'appliquer.
+    offre = await db["offers"].find_one({"id": _oid}, {"_id": 0})
+    if not offre:
+        raise HTTPException(status_code=404, detail="Offre introuvable.")
+    if not _regles_echeancier().echeancier_personnalise(offre):
+        raise HTTPException(status_code=400,
+                            detail="Cette offre n'a pas d'échéancier réglable.")
+
+    # ÉCHÉANCIER DÉJÀ DÉMARRÉ = VERROU. La preuve est la souscription du membre
+    # pour cette offre : elle porte son propre `installment_interval_months`,
+    # figé à l'achat. On la cherche par e-mail, sans regex.
+    _demarree = await db["subscriptions"].find_one(
+        {"offer_id": _oid, "payment_mode": _regles_echeancier().MODE_PAIEMENT_2X,
+         "$or": [{"email": doc.get("email")}, {"user_email": doc.get("email")}]},
+        {"_id": 0, "id": 1, _regles_echeancier().CHAMP_INTERVALLE: 1, "created_at": 1})
+    if _demarree:
+        raise HTTPException(
+            status_code=409,
+            detail="Échéancier déjà démarré : il ne peut plus être modifié pour cet achat.")
+
+    _maintenant = datetime.now(timezone.utc).isoformat()
+    _entree = {"intervalle_mois": _n, "decide_par": appelant, "decide_le": _maintenant}
+    await db["memberships"].update_one(
+        {"id": doc["id"]},
+        {"$set": {"%s.%s" % (CHAMP_ECHEANCIERS, _oid): _entree, "updated_at": _maintenant}})
+    logger.info("[V536] echeancier %s mois pour %s sur l'offre %s par %s",
+                _n, doc.get("email"), _oid[:8], appelant)
+    doc = await db["memberships"].find_one({"id": doc["id"]}, {"_id": 0})
+    return {"success": True, "membership": p1a_projeter(doc), "echeancier": _entree}
