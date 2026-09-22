@@ -23,7 +23,9 @@ from api.pricing import compute_active_price
 A_EXTRAIRE = {"v440_normaliser", "v440_singulier", "v440_mots", "v440_score_offre",
               "v440_offre_certaine", "v440_urls_autorisees", "v440_garde_urls",
               "v440_contexte_metier", "v440_visible", "v440_prix_actif",
-              "v440_prix_lisible"}
+              "v440_prix_lisible",
+              # V535 : le contexte métier appelle désormais ces deux fonctions
+              "v535_faits_offre", "v535_regle_membres", "_seances_de"}
 CONSTANTES = {"V440_MONO_COACH", "V440_MAX_HISTORIQUE", "V440_SEUIL_SCORE",
               "V440_MARGE_SCORE", "V440_SITE", "V440_MOTS_IGNORES"}
 # Cote bot : la fabrique d'URL et ses deux constantes.
