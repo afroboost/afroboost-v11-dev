@@ -3020,11 +3020,45 @@ def lot2_proprietaire(coach_id_de_loffre):
     coexisteraient pour la meme realite. Une seule forme, decidee ici.
 
     JAMAIS `DEFAULT_COACH_ID` : voir la decision 3 en tete de section.
+
+    V535b (22/09/2026) — LE PROPRIETAIRE DE LA PLATEFORME EST « SANS
+    PROPRIETAIRE ». CONSTAT : depuis la mi-septembre les 17 offres de
+    production portent `coach_id` = l'adresse du super-admin, alors que les
+    6 adhesions (achats + regularisations du 24/08) portent `None`, comme le
+    veut `p1a_coach_id_contexte` (le super-admin ECRIT sans proprietaire).
+    Consequence mesuree en production le 22/09 : `lotr_garde_achat` repondait
+    `adhesion_absente` a de vrais membres actifs sur « Membres » et
+    « Membres — 8 mois », et `lot3b_adhesions` ne retrouvait aucune adhesion
+    pour l'avantage membre. Meme regle que la conversion apres essai du 15/09
+    (`conv_offres_premier_achat`) : les offres du proprietaire SONT le
+    catalogue de la plateforme, seul le proprietaire rejoint le « sans
+    proprietaire » — un partenaire, jamais.
     """
     if not isinstance(coach_id_de_loffre, str):
         return None
     _c = coach_id_de_loffre.strip().lower()
+    if _c in [e.lower() for e in SUPER_ADMIN_EMAILS]:
+        return None
     return _c or None
+
+
+def lot2_filtre_offres(proprietaire) -> dict:
+    """V535b — le filtre `offers` symetrique de `lot2_proprietaire`.
+
+    Un partenaire identifie -> son catalogue, et lui seul. « Sans
+    proprietaire » (None) -> les offres sans proprietaire (None, "", absent)
+    ET celles au nom du proprietaire de la plateforme : depuis la mi-septembre
+    2026 les offres de production portent son adresse, et `lot2_proprietaire`
+    la traduit en None. Sans ce `$or`, `{"coach_id": None}` ne trouvait plus
+    aucune offre de recharge (espace abonne : `non_configuree`). Meme forme
+    que la conversion apres essai (`conv_offres_premier_achat`, 15/09/2026).
+    """
+    _p = lot2_proprietaire(proprietaire)
+    if _p:
+        return {"coach_id": _p}
+    return {"$or": [{"coach_id": None}, {"coach_id": ""},
+                    {"coach_id": {"$exists": False}},
+                    {"coach_id": {"$in": [e.lower() for e in SUPER_ADMIN_EMAILS]}}]}
 
 
 def lot2_fin_adhesion(date_debut_iso: str) -> str:

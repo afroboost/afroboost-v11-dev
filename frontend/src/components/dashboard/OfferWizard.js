@@ -1358,6 +1358,26 @@ export default function OfferWizard({
             {(BILLING_MODES.find((bm) => bm.valeur === (form.billing_mode || 'unique')) || BILLING_MODES[0]).aide}
           </p>
         </div>
+        {/* V535 : échéancier propre et paiement intégral — saison en 2 fois seulement.
+            Vide = comportement historique (M0 + M4, pas de paiement intégral). */}
+        {(form.billing_mode || 'unique') === 'saison_2x' && (
+          <div className="mt-4" data-testid="v535-echeancier">
+            <label className="block text-xs mb-1" style={LABEL_STYLE}>Mois entre les deux échéances</label>
+            <input type="number" min="1" max="12" value={form.installment_interval_months ?? ''}
+              placeholder="4 (règle historique)"
+              onChange={(e) => set('installment_interval_months', e.target.value === '' ? null : Math.max(1, Math.min(12, parseInt(e.target.value, 10) || 1)))}
+              className="w-full p-2 rounded-lg neon-input" data-testid="v535-intervalle" />
+            <p className="text-xs mt-1" style={HINT_STYLE}>
+              1 = deuxième échéance un mois après l'achat. Les droits couvrent toujours la saison entière (8 mois), quel que soit le rythme.
+            </p>
+            <label className="flex items-center gap-2 mt-3 cursor-pointer text-xs" style={{ color: 'rgba(255,255,255,0.75)' }}>
+              <input type="checkbox" checked={form.full_payment_available === true}
+                onChange={(e) => set('full_payment_available', e.target.checked)}
+                data-testid="v535-paiement-integral" style={{ width: 16, height: 16, accentColor: PINK }} />
+              <span>Proposer aussi le paiement en une fois (prix × 2, un seul paiement) — le client choisit</span>
+            </label>
+          </div>
+        )}
         {(form.billing_mode || 'unique') === 'unique' && (
           <div className="mt-4">
             <label className="block text-xs mb-1" style={LABEL_STYLE}>Validité des droits (mois)</label>

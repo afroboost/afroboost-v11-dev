@@ -1190,6 +1190,13 @@ class Offer(BaseModel):
     # existantes n'en ont pas, et n'en auront pas tant que le coach ne l'a pas
     # saisi. Bornes utiles STRICTES ]0, 100[ — voir `lot3b_avantage_de_l_offre`.
     member_discount_pct: Optional[float] = None
+    # V535 — ÉCHÉANCIER PROPRE ET PAIEMENT INTÉGRAL (offre `saison_2x` seulement).
+    # `installment_interval_months` : mois entre les deux échéances (absent = 4,
+    # règle historique). `full_payment_available` : l'acheteur peut aussi payer
+    # en une fois (prix × 2). MÊME SYMÉTRIE OBLIGATOIRE Offer / OfferCreate que
+    # les voisins : absents ici, `PUT /offers` les EFFACERAIT à chaque enregistrement.
+    installment_interval_months: Optional[int] = None
+    full_payment_available: bool = False
     # R2c — DE QUI, ET QUOI. Les deux questions posees en tete de fichier.
     #
     # `owner_type` / `owner_id` sont ecrits par le SERVEUR seul : ils sont
@@ -1340,6 +1347,13 @@ class OfferCreate(BaseModel):
     # declarations doivent rester identiques : c'est `OfferCreate` qui est
     # serialise par le `$set: offer.model_dump()` de PUT /offers.
     member_discount_pct: Optional[float] = None
+    # V535 — ÉCHÉANCIER PROPRE ET PAIEMENT INTÉGRAL (offre `saison_2x` seulement).
+    # `installment_interval_months` : mois entre les deux échéances (absent = 4,
+    # règle historique). `full_payment_available` : l'acheteur peut aussi payer
+    # en une fois (prix × 2). MÊME SYMÉTRIE OBLIGATOIRE Offer / OfferCreate que
+    # les voisins : absents ici, `PUT /offers` les EFFACERAIT à chaque enregistrement.
+    installment_interval_months: Optional[int] = None
+    full_payment_available: bool = False
     # LOT R — MIROIR STRICT, meme exigence : sans cette ligne, un `PUT /offers`
     # EFFACERAIT la protection en base a chaque enregistrement de l'offre.
     requires_active_membership: bool = False
@@ -2560,6 +2574,9 @@ R2B_CLES_OFFRE_PUBLIQUE = (
     # offre limitée (le compte à rebours V145 la lisait déjà côté coach — un
     # visiteur anonyme ne la recevait pas).
     "billing_mode", "duree_mois", "countdown_enabled", "countdown_date", "countdown_time", "countdown_text",
+    # V535 — le rythme des échéances et le choix « en une fois » sont des faits
+    # commerciaux publics de l'offre, pas une identité.
+    "installment_interval_months", "full_payment_available",
     "video_aspect_ratio", "mobile_money_enabled", "video_trim_start", "video_trim_end",
 )
 
@@ -7426,6 +7443,10 @@ class CreateCheckoutRequest(BaseModel):
     # la collection `discount_codes` du dashboard coach. Les deux systèmes sont
     # distincts et ne se connaissent pas.
     allowPromotionCodes: bool = False
+    # V535 — mode de paiement CHOISI par l'acheteur pour une offre `saison_2x` qui
+    # le permet (`full_payment_available`) : "full" (en une fois) ou "2x". Le
+    # serveur le REVALIDE et recalcule le montant ; jamais de fractionné par défaut.
+    paymentMode: Optional[str] = None
     # V225: nombre d'unites achetees (ex: 2 places pour un couple).
     # Borne cote serveur : cet endpoint est public, la limite de l'interface
     # ne protege rien.
@@ -8236,16 +8257,26 @@ async def create_checkout_session(request: CreateCheckoutRequest,
     except Exception as _m2ae:
         logger.warning("[M2-A] attribution non jointe au checkout (%s)", type(_m2ae).__name__)
     _hiver_mode = _hiver.billing_mode_valide((_hiver_offre or {}).get("billing_mode"))
+    # V535 — choix « en une fois » / « 2 fois » : validé côté serveur, montant recalculé.
+    _v535_mode, _v535_refus = _hiver.mode_paiement_valide(_hiver_offre, getattr(request, "paymentMode", None))
+    if _v535_refus:
+        raise HTTPException(status_code=400, detail=_v535_refus)
+    if _v535_mode == _hiver.MODE_PAIEMENT_INTEGRAL:
+        amount_cents = _hiver.montant_integral_cents(amount_cents)
+        metadata["payment_mode"] = _v535_mode
     if _hiver_offre is not None:
         metadata["billing_mode"] = _hiver_mode
         if _hiver.duree_mois_valide(_hiver_offre.get("duree_mois")):
             metadata["duree_mois"] = str(_hiver.duree_mois_valide(_hiver_offre.get("duree_mois")))
+        if _hiver.echeancier_personnalise(_hiver_offre):
+            metadata[_hiver.CHAMP_INTERVALLE] = str(_hiver.intervalle_echeances(_hiver_offre))
 
     try:
         # V221: Passer api_key en paramètre au lieu de muter stripe.api_key global
         if _hiver_mode != _hiver.BILLING_UNIQUE:
             _p = _hiver.parametres_checkout(_hiver_offre, request.productName, amount_cents,
-                                            success_url, cancel_url, request.customerEmail, metadata)
+                                            success_url, cancel_url, request.customerEmail, metadata,
+                                            mode_paiement=_v535_mode)
             session = stripe.checkout.Session.create(api_key=active_stripe_key, **_p)
             logger.info("[HIVER] session %s ouverte (%s) pour l'offre %s", _hiver_mode, session.id, str(request.offerId)[:32])
         else:
@@ -8990,8 +9021,14 @@ async def stripe_webhook(request: Request):
                 # paiement : cycle (récurrent) ou `duree_mois` (saison en une fois) ;
                 # absents = règle historique de 2 mois (été).
                 _hiver_mode_wh = _hiver.billing_mode_valide(metadata.get("billing_mode"))
-                _hiver_mois_wh = _hiver.duree_droits_mois(
-                    {"billing_mode": _hiver_mode_wh, "duree_mois": metadata.get("duree_mois")})
+                # V535 : le mode choisi et le rythme propre voyagent dans les metadata ;
+                # un échéancier propre ouvre la saison entière à chaque paiement.
+                _v535_mode_wh = str(metadata.get("payment_mode") or "")
+                _v535_offre_wh = {"billing_mode": _hiver_mode_wh, "duree_mois": metadata.get("duree_mois"),
+                                  _hiver.CHAMP_INTERVALLE: metadata.get(_hiver.CHAMP_INTERVALLE)}
+                _hiver_mois_wh = _hiver.duree_droits_mois(_v535_offre_wh)
+                if _hiver_mode_wh == _hiver.BILLING_SAISON_2X and _v535_mode_wh == _hiver.MODE_PAIEMENT_INTEGRAL:
+                    _hiver_mois_wh = _hiver.SAISON_MOIS
                 _hiver_exp_iso, _hiver_exp_jour = _hiver.expiration_droits(datetime.now(timezone.utc), _hiver_mois_wh)
                 if _pack.isdigit() and int(_pack) > 0:
                     sessions_count = int(_pack)
@@ -9069,8 +9106,10 @@ async def stripe_webhook(request: Request):
                     return {"status": "already_processed", "code": _deja.get("code")}
 
                 if _hiver_mode_wh == _hiver.BILLING_SAISON_2X:
+                    # V535 : « en une fois » ouvre les deux moitiés (64), « 2 fois » une moitié (32).
                     sessions_count = _hiver.seances_par_paiement(
-                        {"billing_mode": _hiver_mode_wh, "pack_sessions": sessions_count})
+                        {"billing_mode": _hiver_mode_wh, "pack_sessions": sessions_count},
+                        mode_paiement=_v535_mode_wh or None)
                 new_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
                 # V384 : `stripe_amount` = le montant réellement payé. Le champ
                 # existe déjà dans le schéma (les codes créés à la main le
@@ -9203,6 +9242,19 @@ async def stripe_webhook(request: Request):
                     "stripe_payment_method": stripe_payment_method,
                     "last_renewal_date": None,
                 }
+                # V535 — la souscription garde le rythme propre et le mode choisi : la
+                # facture de cycle (M+n) s'en sert pour prolonger jusqu'à la FIN DE
+                # SAISON et n'accepter que deux échéances. Absents pour les autres offres.
+                if _hiver_mode_wh == _hiver.BILLING_SAISON_2X:
+                    if _v535_mode_wh:
+                        subscription_data["payment_mode"] = _v535_mode_wh
+                    if _hiver.echeancier_personnalise(_v535_offre_wh):
+                        subscription_data[_hiver.CHAMP_INTERVALLE] = _hiver.intervalle_echeances(_v535_offre_wh)
+                        subscription_data["saison_debut"] = subscription_data["created_at"]
+                    if _v535_mode_wh == _hiver.MODE_PAIEMENT_INTEGRAL:
+                        # Un seul paiement : rien ne se renouvelle, aucune souscription Stripe.
+                        subscription_data["auto_renew"] = False
+                        subscription_data["stripe_subscription_id"] = None
                 # B : la souscription porte la meme trace que son code.
                 subscription_data.update(_b_auto("stripe", amount_chf or _montant_paye,
                                                  (session.currency or "chf"), sessions_count))
@@ -9298,9 +9350,11 @@ async def stripe_webhook(request: Request):
                 if _hiver_mode_wh == _hiver.BILLING_SAISON_2X and subscription_data.get("stripe_subscription_id"):
                     # SAISON EN 2 FOIS : l'abonnement Stripe s'arrête à début + 8 mois —
                     # deux factures (mois 0 et mois 4), jamais une troisième.
+                    # V535 : rythme propre (M0 + M+n) -> arrêt à début + 2n mois, la veille.
                     try:
                         stripe.Subscription.modify(subscription_data["stripe_subscription_id"],
-                                                   cancel_at=_hiver.cancel_at_saison(datetime.now(timezone.utc)),
+                                                   cancel_at=_hiver.cancel_at_saison(datetime.now(timezone.utc),
+                                                                                      offre=_v535_offre_wh),
                                                    api_key=stripe.api_key)
                         logger.info("[HIVER] saison_2x : cancel_at posé sur %s", subscription_data["stripe_subscription_id"][:16])
                     except Exception as _cancel_err:  # noqa: BLE001
@@ -15273,6 +15327,15 @@ async def _v426_recurrents_de_loffre(linked_ids: list) -> list:
     ]
 
 
+def _seances_de(offre):
+    """V535 — `pack_sessions` lisible et > 0, sinon None (même règle que l'espace)."""
+    try:
+        _ps = (offre or {}).get("pack_sessions")
+        return int(float(_ps)) if _ps is not None and int(float(_ps)) > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
     """LOT R — ce que l'espace abonne doit savoir de la recharge.
 
@@ -15290,6 +15353,7 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
     try:
         from api.routes.shared import (LOTR_CHAMP_PROTECTION as _CHAMP,
                                        lot2_proprietaire as _proprio,
+                                       lot2_filtre_offres as _filtre_offres,
                                        lotr_garde_achat as _garde,
                                        lotr_message_refus as _msg)
     except Exception as _err:
@@ -15300,8 +15364,9 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
         # abonne d'un partenaire ne se voie pas proposer la recharge d'un autre
         # catalogue. Meme regle de symetrie que `conv_offres_premier_achat`.
         _coach = _proprio((offer or {}).get("coach_id"))
-        _q = {_CHAMP: True}
-        _q["coach_id"] = _coach if _coach else None
+        # V535b : le proprietaire de la plateforme = « sans proprietaire »
+        # (ses offres portent son adresse depuis la mi-septembre 2026).
+        _q = {_CHAMP: True, **_filtre_offres(_coach)}
         _offres = await db.offers.find(_q, {"_id": 0}).to_list(10)
         if not _offres:
             # Aucune offre de recharge declaree : ce n'est pas une anomalie,
@@ -15325,6 +15390,41 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
                 _seances = int(float(_ps))
         except (TypeError, ValueError):
             _seances = None
+        # V535 — TOUTES les offres réservées aux membres, chacune avec son verdict
+        # LOT R, pour que l'espace propose les options (Pack 10, Membres — 8 mois…)
+        # et non la seule première. Le bloc historique ci-dessus reste tel quel :
+        # `eligible`/`offer_id` décrivent toujours la première, les anciens écrans
+        # ne changent pas. Les faits commerciaux viennent de l'offre et du moteur.
+        _v535_liste = []
+        for _x in sorted(_offres, key=lambda x: (x.get("position") is None, x.get("position") or 0,
+                                                 str(x.get("name") or ""))):
+            try:
+                _xok, _xmotif = await _garde(db, user_email or "", str(_x.get("id") or ""))
+                _xp = compute_active_price(_x).get("price")
+                _xprix = round(float(_xp), 2) if _xp is not None and float(_xp) > 0 else None
+                _xsais = _hiver.billing_mode_valide(_x.get("billing_mode")) == _hiver.BILLING_SAISON_2X
+                _xtot = _hiver.seances_saison_total(_x) if _xsais else _seances_de(_x)
+                _v535_liste.append({
+                    "offer_id": str(_x.get("id") or ""),
+                    "offer_name": str(_x.get("name") or ""),
+                    "eligible": bool(_xok),
+                    "motif": "" if _xok else _xmotif,
+                    "message": "" if _xok else _msg(_xmotif),
+                    "prix": _xprix,
+                    "devise": "CHF",
+                    "seances": _xtot,
+                    "duree_mois": (_hiver.SAISON_MOIS if _xsais
+                                   else _hiver.duree_mois_valide(_x.get("duree_mois"))),
+                    "billing_mode": _hiver.billing_mode_valide(_x.get("billing_mode")),
+                    "echeances": _hiver.SAISON_2X_ECHEANCES if _xsais else 1,
+                    "intervalle_mois": _hiver.intervalle_echeances(_x) if _xsais else None,
+                    "paiement_integral": _hiver.paiement_integral_disponible(_x),
+                    "prix_integral": (round(_xprix * _hiver.SAISON_2X_ECHEANCES, 2)
+                                      if _xsais and _hiver.paiement_integral_disponible(_x) and _xprix else None),
+                })
+            except Exception as _xerr:  # noqa: BLE001
+                logger.warning("[V535] offre membre %s ignoree dans la liste (%s)",
+                               str(_x.get("id") or "")[:8], type(_xerr).__name__)
         return {
             "eligible": bool(_ok),
             "motif": "" if _ok else _motif,
@@ -15335,6 +15435,7 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
             "prix": _prix,
             "devise": "CHF",
             "seances": _seances,
+            "offres": _v535_liste,
         }
     except Exception as _err:
         logger.warning(f"[LOT R] etat de recharge non calcule: {_err}")
@@ -19248,7 +19349,11 @@ async def share_offer_page(offer_id: str):
     e_title = _html.escape(title, quote=True)
     e_desc = _html.escape(description, quote=True)
     e_image = _html.escape(image, quote=True)
-    e_url = _html.escape(f"{FRONT}/share/offer/{offer_id}", quote=True)
+    # V535 : le lien partagé doit OUVRIR L'OFFRE, pas l'accueil — l'URL canonique
+    # est la vraie page de partage (sous /api) et la redirection va au lien profond
+    # `?offre=<id>` (V371), qui fait défiler jusqu'à la carte et ouvre sa fiche.
+    e_url = _html.escape(f"{FRONT}/api/share/offer/{offer_id}", quote=True)
+    e_cible = _html.escape(f"{FRONT}/?offre={offer_id}", quote=True)
 
     html_page = f"""<!DOCTYPE html>
 <html lang="fr">
@@ -19266,12 +19371,12 @@ async def share_offer_page(offer_id: str):
     <meta name="twitter:title" content="{e_title}"/>
     <meta name="twitter:description" content="{e_desc}"/>
     <meta name="twitter:image" content="{e_image}"/>
-    <meta http-equiv="refresh" content="0;url={FRONT}"/>
+    <meta http-equiv="refresh" content="0;url={e_cible}"/>
 </head>
 <body>
     <h1>{e_title}</h1>
     <p>{e_desc}</p>
-    <a href="{FRONT}">Voir sur Afroboost</a>
+    <a href="{e_cible}">Voir sur Afroboost</a>
 </body>
 </html>"""
     return HTMLResponse(html_page)
@@ -21389,6 +21494,82 @@ def v440_garde_urls(texte: str, autorisees: set):
     return _propre, _retirees
 
 
+def v535_faits_offre(offre) -> str:
+    """V535 — les faits COMMERCIAUX d'une offre pour l'assistant, lus sur l'offre et
+    le moteur de paiement : séances, durée, échéancier, réservation aux membres,
+    avantage membre. Rien n'est écrit en dur ; une offre qui change en base
+    change ici au message suivant. Chaîne vide si rien de notable."""
+    _o = offre or {}
+    _f = []
+    try:
+        _sais = _hiver.billing_mode_valide(_o.get("billing_mode")) == _hiver.BILLING_SAISON_2X
+        _mens = _hiver.billing_mode_valide(_o.get("billing_mode")) == _hiver.BILLING_MENSUEL
+        _n = _hiver.seances_saison_total(_o) if _sais else _seances_de(_o)
+        if _n:
+            _f.append("%d séance%s%s" % (_n, "s" if _n > 1 else "", " au total" if _sais else ""))
+        if _sais:
+            _f.append("formule de %d mois" % _hiver.SAISON_MOIS)
+            _p = v440_prix_actif(_o)
+            _k = _hiver.SAISON_2X_ECHEANCES
+            _m = _hiver.intervalle_echeances(_o)
+            if _p:
+                _f.append("paiement en %d fois : %s maintenant puis %s %d mois plus tard (total %s)"
+                          % (_k, v440_prix_lisible(_p), v440_prix_lisible(_p), _m,
+                             v440_prix_lisible(round(_p * _k, 2))))
+                if _hiver.paiement_integral_disponible(_o):
+                    _f.append("ou paiement en une fois de %s" % v440_prix_lisible(round(_p * _k, 2)))
+        elif _mens:
+            _f.append("abonnement mensuel")
+        elif _hiver.duree_mois_valide(_o.get("duree_mois")):
+            _f.append("valable %d mois" % _hiver.duree_mois_valide(_o.get("duree_mois")))
+        if _o.get("requires_active_membership") is True:
+            _f.append("RÉSERVÉE AUX MEMBRES AFROBOOST ACTIFS (carte membre annuelle valide) ; "
+                      "aucune réduction supplémentaire sur cette offre")
+        if _o.get("creates_membership") is True:
+            _f.append("ouvre l'adhésion membre annuelle")
+        from api.routes.shared import lot3b_avantage_de_l_offre as _pct
+        _a = _pct(_o)
+        if _a:
+            _f.append("avantage carte membre : −%d %% pour un membre actif" % int(round(_a)))
+    except Exception:  # noqa: BLE001
+        return ""
+    return " ; ".join(_f)
+
+
+def v535_regle_membres(offres) -> list:
+    """V535 — la règle membres, déduite des offres ELLES-MÊMES : l'offre qui ouvre
+    l'adhésion, celles réservées aux membres, et le pourcentage d'avantage des
+    offres qui le portent. Aucun chiffre en dur : si le coach change une offre,
+    la règle énoncée change avec elle."""
+    from api.routes.shared import lot3b_avantage_de_l_offre as _pct
+    _l = []
+    try:
+        _cartes = [o for o in (offres or []) if (o or {}).get("creates_membership") is True]
+        _reservees = [o for o in (offres or []) if (o or {}).get("requires_active_membership") is True]
+        _avantages = sorted({int(round(_pct(o))) for o in (offres or []) if _pct(o)})
+        if _cartes:
+            _l.append("ADHÉSION : elle s'obtient uniquement avec %s (voir prix ci-dessus)."
+                      % " ou ".join(str(o.get("name") or "").strip() for o in _cartes))
+        if _reservees:
+            _l.append("OFFRES RÉSERVÉES AUX MEMBRES ACTIFS : %s. Un non-membre ou une carte expirée "
+                      "ne peut pas les acheter ; un membre qui a encore des séances doit d'abord les "
+                      "utiliser avant de recharger."
+                      % ", ".join(str(o.get("name") or "").strip() for o in _reservees))
+        if _avantages:
+            _l.append("AVANTAGE CARTE MEMBRE : un membre actif a %s de réduction UNIQUEMENT sur les offres "
+                      "(événements, workshops) qui portent la mention « avantage carte membre » ci-dessus. "
+                      "N'annonce JAMAIS de réduction sur une offre qui ne la porte pas, ni sur les offres "
+                      "réservées aux membres."
+                      % " / ".join("%d %%" % a for a in _avantages))
+        if _l:
+            _l.append("Si la personne dit ne plus avoir de séances et être membre, propose les offres "
+                      "réservées aux membres ci-dessus avec leurs prix actuels ; vérifie qu'elle a bien "
+                      "sa carte membre valide, sinon propose l'adhésion.")
+    except Exception:  # noqa: BLE001
+        return []
+    return _l
+
+
 def v440_prix_lisible(valeur) -> str:
     """« 10 CHF », « 59.99 CHF » — sans décimale inutile."""
     _v = float(valeur)
@@ -21444,10 +21625,16 @@ def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "",
     if _payantes:
         _c.append("OFFRES PAYANTES ET LEURS LIENS (les seuls liens autorisés) :")
         for _o in _payantes:
-            _c.append("- %s — %s — %s"
+            _faits = v535_faits_offre(_o)
+            _c.append("- %s — %s — %s%s"
                       % (str(_o.get("name") or "Offre").strip(),
-                         v440_prix_lisible(_prix[id(_o)]), v440_lien_offre(_o)))
+                         v440_prix_lisible(_prix[id(_o)]), v440_lien_offre(_o),
+                         (" (%s)" % _faits) if _faits else ""))
         _c.append("")
+        # V535 : la règle membres, déduite des offres (rien en dur).
+        _regle = v535_regle_membres(_visibles)
+        if _regle:
+            _c += _regle + [""]
     if _gratuites:
         _c.append("OFFRES GRATUITES (aucun paiement, donc AUCUNE mention de TWINT) :")
         for _o in _gratuites:
@@ -21554,6 +21741,10 @@ async def v440_offres_visibles() -> list:
             {"visible": {"$ne": False}},
             {"_id": 0, "id": 1, "name": 1, "price": 1, "keywords": 1, "isProduct": 1,
              "visible": 1, "progressive_pricing": 1, "countdown_date": 1,
+             # V535 : les faits commerciaux lus par `v535_faits_offre` / `v535_regle_membres`
+             "pack_sessions": 1, "duree_mois": 1, "billing_mode": 1, "creates_membership": 1,
+             "requires_active_membership": 1, "member_discount_pct": 1,
+             "installment_interval_months": 1, "full_payment_available": 1,
              "countdown_time": 1, "early_bird_days_before": 1,
              "standard_hours_before": 1, "price_early_bird": 1,
              "price_standard": 1, "price_last_minute": 1},

@@ -346,6 +346,32 @@ async def partie_4_garde_base():
     ok, _ = await f(_monde(_adh_active, 0), "", OFFRE_150, aujourdhui=AUJ)
     verifier("4i. sans e-mail identifie -> REFUS", ok is False)
 
+    # ── V535b : LE PROPRIETAIRE DE LA PLATEFORME = « SANS PROPRIETAIRE » ──
+    # Etat REEL de la production au 22/09/2026 : les 17 offres portent
+    # `coach_id` = l'adresse du super-admin, les 6 adhesions portent `None`
+    # (le super-admin ecrit sans proprietaire, `p1a_coach_id_contexte`).
+    # Avant V535b, ce monde repondait `adhesion_absente` a de VRAIS membres.
+    _proprio = S.SUPER_ADMIN_EMAILS[0]
+    db3 = _monde(_adh_active, 0)
+    for _o in db3.offers.docs:
+        _o["coach_id"] = _proprio.upper()  # la casse ne compte pas
+    ok, motif = await f(db3, CLIENT, OFFRE_150, aujourdhui=AUJ)
+    verifier("4j. V535b — offre au nom du PROPRIETAIRE + adhesion sans "
+             "proprietaire (etat reel de la production) -> la caisse ACCEPTE",
+             ok is True and motif == "", "%r / %r" % (ok, motif))
+    db4 = _monde(_adh_active, 0)
+    for _o in db4.offers.docs:
+        _o["coach_id"] = "partenaire@exemple.test"
+    ok, motif = await f(db4, CLIENT, OFFRE_150, aujourdhui=AUJ)
+    verifier("4k. V535b — un PARTENAIRE ne rejoint PAS le « sans proprietaire » : "
+             "l'adhesion de la plateforme ne vaut rien chez lui (fail closed)",
+             ok is False and motif == "adhesion_absente", "%r / %r" % (ok, motif))
+    verifier("4l. V535b — `lot2_proprietaire` : super-admin -> None, "
+             "partenaire -> lui-meme, vide/None -> None",
+             S.lot2_proprietaire(_proprio) is None
+             and S.lot2_proprietaire("Partenaire@Exemple.test") == "partenaire@exemple.test"
+             and S.lot2_proprietaire("") is None and S.lot2_proprietaire(None) is None)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 5 — LA GARDE EST POSEE SUR TOUTES LES PORTES
