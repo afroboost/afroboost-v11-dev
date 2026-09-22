@@ -19574,9 +19574,21 @@ async def get_sitemap():
     base_url = os.environ.get("FRONTEND_URL", "https://afroboost.com").rstrip("/")
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
+    # SEO-4 (22/09/2026) — `/devenir-coach` RETIRÉE : ELLE N'EXISTE PAS.
+    # Ce sitemap l'annonçait en priorité 0.8, juste après l'accueil. Or cette
+    # adresse ne correspond à AUCUNE route du frontend : l'application y rend
+    # la page d'accueil, à l'octet près — même titre, même description, et un
+    # `canonical` qui pointe vers l'accueil. On demandait donc à Google
+    # d'indexer une deuxième adresse pour un contenu identique, tout en lui
+    # disant par le `canonical` que la vraie adresse est l'accueil : un
+    # doublon annoncé par nos soins. Les liens « Devenir partenaire » visent
+    # `/#devenir-coach` (une ancre sur l'accueil), jamais `/devenir-coach` :
+    # personne ne perd de chemin en la retirant.
+    # Le jour où une VRAIE page « Devenir coach partenaire » existera dans le
+    # frontend, c'est ce jour-là qu'elle reviendra ici — pas avant. Un sitemap
+    # ne liste que des adresses qui se présentent elles-mêmes.
     urls = [
-        f'  <url><loc>{base_url}/</loc><lastmod>{now}</lastmod><priority>1.0</priority></url>',
-        f'  <url><loc>{base_url}/devenir-coach</loc><lastmod>{now}</lastmod><priority>0.8</priority></url>'
+        f'  <url><loc>{base_url}/</loc><lastmod>{now}</lastmod><priority>1.0</priority></url>'
     ]
 
     # Ajouter toutes les vitrines de coachs actifs

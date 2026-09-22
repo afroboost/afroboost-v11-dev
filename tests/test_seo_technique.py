@@ -153,6 +153,29 @@ v("SEO-2 : le sitemap de l'API n'annonce plus `vercel.app`",
   "vercel.app" not in _sm_code
   and 'os.environ.get("FRONTEND_URL", "https://afroboost.com")' in _sm_code, _sm_code[:200])
 
+# ── 6b. SEO-4 — le sitemap n'annonce plus une adresse qui n'existe pas ─────
+# `/devenir-coach` n'est une route NULLE PART dans le frontend : l'application
+# y rend l'accueil, à l'octet près, avec le `canonical` de l'accueil. On
+# annonçait donc à Google une deuxième adresse pour le même contenu, en lui
+# disant dans la même page que la vraie adresse est l'accueil. Les liens
+# « Devenir partenaire » du produit visent `/#devenir-coach` — une ANCRE sur
+# l'accueil, pas cette adresse : la retirer ne casse aucun chemin.
+v("SEO-4 : le sitemap de l'API n'annonce plus `/devenir-coach` (aucune route ne la sert)",
+  "devenir-coach" not in _sm_code, _sm_code[:300])
+v("SEO-4 : il annonce toujours l'accueil et les vitrines de coachs",
+  "{base_url}/</loc>" in _sm_code and "{base_url}/coach/{slug}</loc>" in _sm_code, _sm_code[:300])
+# Le garde qui compte vraiment : la règle vaut pour TOUT chemin ajouté un jour.
+# Un sitemap ne liste que des adresses qui se présentent elles-mêmes. Tant que
+# `_SEO_PRIVE` et les fiches publiques sont les seules exceptions connues du
+# catch-all, la seule adresse fixe légitime est l'accueil.
+_locs_api = re.findall(r"\{base_url\}(/[^<]*)</loc>", _sm_code)
+v("SEO-4 : aucune adresse fixe du sitemap de l'API n'est privée ni inventée",
+  set(_locs_api) <= {"/", "/coach/{slug}"}, _locs_api)
+# Les ancres historiques ne sont PAS touchées : ce sont des liens vers
+# l'accueil, pas des adresses indexables.
+v("SEO-4 : les liens legacy `/#devenir-coach` restent en place (rien n'est cassé côté produit)",
+  SRC.count("/#devenir-coach") >= 2)
+
 # ── 7. Les données structurées de l'accueil ────────────────────────────────
 _ld = re.findall(r'application/ld\+json">(.*?)</script>', INDEX, re.S)
 v("l'accueil porte des données structurées", len(_ld) >= 2, len(_ld))
