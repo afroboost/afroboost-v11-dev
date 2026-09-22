@@ -135,17 +135,24 @@ def echeancier_personnalise(offre) -> bool:
 def resoudre_intervalle(offre, override=None) -> tuple:
     """V536 — (intervalle | None, motif) : LE délai d'un NOUVEL achat en 2 fois.
 
-    Priorité : override individuel valide (décidé par le coach pour CE membre)
-    > valeur globale de l'offre > refus explicite (« le coach doit encore
-    définir ton échéancier ») — jamais une valeur inventée. Les offres sans
-    échéancier propre gardent la règle historique (4 mois), à l'identique."""
+    UN SEUL ORDRE, DANS LES DEUX MODES (V536b, décision du propriétaire du
+    22/09/2026) : override du coach pour CE membre > valeur globale de l'offre
+    > refus explicite. Jamais une valeur inventée.
+
+    CE QUE « PAR ABONNÉ » VEUT DIRE. Pas « je bloque tant que je n'ai pas
+    décidé » — la première version le faisait, et une personne pour qui le
+    coach n'avait rien saisi se voyait retirer le paiement en 2 fois. C'est
+    « je peux descendre QUELQU'UN à un autre délai, les autres suivent la règle
+    générale ». Le refus ne subsiste donc que si l'offre ne porte AUCUNE valeur
+    globale valide : là, il n'existe littéralement aucune règle à appliquer, et
+    inventer un délai reviendrait à décider du contrat à la place du coach.
+
+    Les offres sans échéancier propre gardent la règle historique (4 mois)."""
     if not echeancier_personnalise(offre):
         return SAISON_2X_INTERVALLE_MOIS, ""
     _ov = intervalle_valide(override)
     if _ov:
         return _ov, ""
-    if mode_echeancier(offre) == MODE_ECHEANCIER_INDIVIDUEL:
-        return None, RAISON_ECHEANCIER_A_DEFINIR
     _g = intervalle_valide((offre or {}).get(CHAMP_INTERVALLE))
     if _g:
         return _g, ""

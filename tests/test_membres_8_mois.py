@@ -329,15 +329,36 @@ v("V536-4c. deux décisions successives : la plus RÉCENTE gagne",
                      {CHAMP_ECHEANCIERS: {OID: {"intervalle_mois": 1, "decide_le": "2026-09-20T00:00:00+00:00"}}}], OID) == 1)
 v("V536-4d. un override sur une AUTRE offre ne s'applique pas ici", p1a_intervalle_de(_adh(2), "autre-offre") is None)
 
-# 5 — individuel sans override : refus propre, intégral toujours possible
-_i5, _r5 = H.resoudre_intervalle(OFFRE_INDIV)
-v("V536-5. mode par abonné SANS choix du coach -> aucun délai inventé, refus explicite « Le coach doit encore définir ton échéancier. »",
-  _i5 is None and _r5 == H.RAISON_ECHEANCIER_A_DEFINIR, (_i5, _r5))
-v("V536-5b. le paiement intégral reste disponible dans ce cas (aucun échéancier à définir)",
+# 5 — V536b : LE REPLI. « Par abonné » ne bloque plus : sans décision, la règle
+# générale de l'offre s'applique. Le refus ne subsiste que sans règle générale.
+OFFRE_INDIV_2 = dict(M8, installment_interval_mode="per_subscriber", installment_interval_months=2)
+OFFRE_INDIV_1 = dict(M8, installment_interval_mode="per_subscriber", installment_interval_months=1)
+_i5, _r5 = H.resoudre_intervalle(OFFRE_INDIV_2)
+v("V536b-5. mode PAR ABONNÉ + AUCUN override + offre à 2 -> repli sur 2, aucun refus (personne n'est bloqué)",
+  _i5 == 2 and _r5 == "", (_i5, _r5))
+v("V536b-5a. …et l'écran propose bien le paiement en 2 fois « dans 2 mois » (rien à définir)",
+  H.paiement_integral_disponible(OFFRE_INDIV_2) and H.mode_paiement_valide(OFFRE_INDIV_2, "2x") == ("2x", "")
+  and _param(OFFRE_INDIV_2, "2x", _i5)["line_items"][0]["price_data"]["recurring"]["interval_count"] == 2)
+v("V536b-5b. mode PAR ABONNÉ + override 1 pour CE membre + offre à 2 -> 1 (l'override gagne)",
+  H.resoudre_intervalle(OFFRE_INDIV_2, p1a_intervalle_de(_adh(1), OID)) == (1, ""))
+v("V536b-5c. mode PAR ABONNÉ + override 2 pour un autre membre + offre à 1 -> 2 (l'override gagne dans les DEUX sens)",
+  H.resoudre_intervalle(OFFRE_INDIV_1, p1a_intervalle_de(_adh(2), OID)) == (2, ""))
+_i5d, _r5d = H.resoudre_intervalle(OFFRE_INDIV)
+v("V536b-5d. mode PAR ABONNÉ + aucun override + offre SANS règle générale valide -> refus explicite (rien à appliquer, rien d'inventé)",
+  _i5d is None and _r5d == H.RAISON_ECHEANCIER_A_DEFINIR
+  and H.resoudre_intervalle(dict(M8, installment_interval_mode="per_subscriber", installment_interval_months=3))[0] is None
+  and H.resoudre_intervalle(dict(M8, installment_interval_mode="per_subscriber", installment_interval_months=12))[0] is None, (_i5d, _r5d))
+v("V536b-5e. dans ce seul cas, le paiement intégral reste disponible",
   H.paiement_integral_disponible(OFFRE_INDIV) and H.mode_paiement_valide(OFFRE_INDIV, "full") == ("full", "")
   and "subscription_data" not in _param(OFFRE_INDIV, "full", None))
-v("V536-5c. le checkout refuse le 2X (409) tant que le coach n'a pas tranché, et JAMAIS le paiement intégral",
+v("V536b-5f. le checkout ne refuse (409) que le 2X, et JAMAIS le paiement intégral",
   'if _v536_refus and _v535_mode != _hiver.MODE_PAIEMENT_INTEGRAL:' in SRC and 'raise HTTPException(status_code=409, detail=_v536_refus)' in SRC)
+v("V536b-5g. un override devenu INVALIDE (3, écrit hors interface) ne s'applique pas : repli sur la règle générale, jamais 3",
+  p1a_intervalle_de(_adh(3), OID) is None
+  and H.resoudre_intervalle(OFFRE_INDIV_2, p1a_intervalle_de(_adh(3), OID)) == (2, ""))
+v("V536b-5h. le mode GLOBAL est inchangé : la valeur de l'offre s'applique, l'override la surclasse toujours",
+  H.resoudre_intervalle(OFFRE_GLOBAL_1) == (1, "") and H.resoudre_intervalle(OFFRE_GLOBAL_2) == (2, "")
+  and H.resoudre_intervalle(OFFRE_GLOBAL_2, p1a_intervalle_de(_adh(1), OID)) == (1, ""))
 
 # 6 / 7 — valeurs refusées et payload client ignoré
 v("V536-6. intervalles refusés : 0, 3, 4, 12, « 2 mois », vrai, None, vide — seuls 1 et 2 passent",
@@ -419,8 +440,14 @@ try:
     _wa_i2 = _S2.v535_faits_offre(OFFRE_INDIV, 2)
     v("V536-WA-2. mode par abonné + membre identifié : son délai réel (1 ou 2 mois)",
       "1 mois plus tard" in _wa_i1 and "2 mois plus tard" in _wa_i2, (_wa_i1[:120], _wa_i2[:120]))
+    _wa_d2 = _S2.v535_faits_offre(OFFRE_INDIV_2)
+    v("V536b-WA-3. mode par abonné + personne NON identifiée + offre à 2 : l'assistant annonce « 2 mois plus tard » (c'est la vraie règle par défaut)",
+      "199.99 CHF maintenant puis 199.99 CHF 2 mois plus tard" in _wa_d2 and "défini par le coach" not in _wa_d2, _wa_d2[:250])
+    _wa_o1 = _S2.v535_faits_offre(OFFRE_INDIV_2, 1)
+    v("V536b-WA-3b. membre identifié avec override 1 : « 1 mois plus tard »",
+      "199.99 CHF maintenant puis 199.99 CHF 1 mois plus tard" in _wa_o1 and "2 mois plus tard" not in _wa_o1, _wa_o1[:250])
     _wa_x = _S2.v535_faits_offre(OFFRE_INDIV)
-    v("V536-WA-3. mode par abonné + personne NON identifiée : aucun délai inventé, « défini par le coach »",
+    v("V536b-WA-3c. par abonné SANS règle générale : aucun délai inventé, « défini par le coach »",
       "défini par le coach" in _wa_x and "mois plus tard" not in _wa_x and "199.99 CHF puis 199.99 CHF, total 399.98 CHF" in _wa_x, _wa_x[:250])
     _ctx_i = _S2.v440_contexte_metier([OFFRE_INDIV], None, "test", maintenant=None, echeanciers={OID: 2})
     v("V536-WA-4. le contexte reçoit les échéanciers du membre et annonce SON délai",

@@ -1384,7 +1384,9 @@ export default function OfferWizard({
                 );
               })}
             </div>
-            {(form.installment_interval_mode || 'global') === 'global' ? (
+            {/* V536b : la règle générale se règle DANS LES DEUX MODES — en « par
+                abonné » elle sert de repli à tous ceux pour qui rien n'est décidé. */}
+            {true ? (
               <div className="mt-3" data-testid="v536-delai-global">
                 <label className="block text-xs mb-1" style={LABEL_STYLE}>Délai entre les échéances</label>
                 <div className="flex gap-2" role="radiogroup" aria-label="Délai entre les échéances">
@@ -1404,12 +1406,15 @@ export default function OfferWizard({
                 </div>
                 <input type="hidden" value={form.installment_interval_months ?? ''} data-testid="v535-intervalle" readOnly />
                 <p className="text-xs mt-1" style={HINT_STYLE}>
-                  1 mois = deuxième échéance un mois après l'achat (M0 + M1). 2 mois = M0 + M2. Les droits couvrent toujours la saison entière (8 mois), quel que soit le rythme.
+                  {(form.installment_interval_mode || 'global') === 'per_subscriber'
+                    ? "Règle générale : elle s'applique à tous les abonnés pour qui tu n'as rien décidé. 1 mois = M0 + M1, 2 mois = M0 + M2."
+                    : "1 mois = deuxième échéance un mois après l'achat (M0 + M1). 2 mois = M0 + M2. Les droits couvrent toujours la saison entière (8 mois), quel que soit le rythme."}
                 </p>
               </div>
-            ) : (
+            ) : null}
+            {(form.installment_interval_mode || 'global') === 'per_subscriber' && (
               <p className="text-xs mt-2" style={HINT_STYLE} data-testid="v536-aide-individuel">
-                Tu définiras le délai (1 ou 2 mois) abonné par abonné dans « Adhésions », avant son achat. Tant qu'aucun délai n'est défini pour une personne, son paiement en 2 fois est bloqué — le paiement en une fois reste possible.
+                Tu descends une personne précise à 1 ou 2 mois depuis « Adhésions », avant son achat. Les autres suivent la règle générale ci-dessus.
               </p>
             )}
             <label className="flex items-center gap-2 mt-3 cursor-pointer text-xs" style={{ color: 'rgba(255,255,255,0.75)' }}>
