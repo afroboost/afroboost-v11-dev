@@ -219,6 +219,24 @@ describe('PassDuoCard — création : choisis ton offre', () => {
 
 // ═══ 2. Pass existant : offre actuelle + changer d'offre ══════════════════════
 describe('PassDuoCard — pass existant : « Changer d\'offre »', () => {
+  // V534c : un seul choix n'est pas un choix — le lien n'apparaît que s'il existe une AUTRE offre.
+  test('V534c catalogue = 1 offre (l\'actuelle) → « Changer d\'offre » ABSENT, offre actuelle toujours affichée', async () => {
+    for (const st of ['waiting', 'unlocked', 'friend_registered']) {
+      await monter(<PassDuoCard {...propsCarte(pass(st, { offers: [OFF_A] }))} config={CONFIG_1} />);
+      expect(par('offre-actuelle')).not.toBeNull();
+      expect(par('offre-changer')).toBeNull();
+      expect(par('offre-sheet')).toBeNull();
+      await act(async () => { racine.render(null); });
+    }
+  });
+  test('V534c catalogue = offre actuelle + une autre → « Changer d\'offre » PRÉSENT', async () => {
+    await monter(<PassDuoCard {...propsCarte(pass('waiting', { offers: [OFF_A, OFF_B] }))} />);
+    expect(par('offre-changer')).not.toBeNull();
+  });
+  test('V534c catalogue = 2 entrées mais toutes = l\'offre actuelle → ABSENT (aucune offre différente)', async () => {
+    await monter(<PassDuoCard {...propsCarte(pass('waiting', { offers: [OFF_A, { ...OFF_A }] }))} />);
+    expect(par('offre-changer')).toBeNull();
+  });
   test('« Offre actuelle » + note + lien discret ; aucun offer_id dans le texte', async () => {
     await monter(<PassDuoCard {...propsCarte(pass('waiting'))} />);
     const bloc = par('offre-actuelle');

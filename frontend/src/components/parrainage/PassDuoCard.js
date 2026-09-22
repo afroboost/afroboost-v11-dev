@@ -215,7 +215,9 @@ function EtatPass({ pass, initialeParrain, urlEspace, onAnnuler, onConfirmer, on
   const offre = offreDuPass(pass);
   const offresCatalogue = offresDe(pass);
   // Le lien « Changer d'offre » reste visible pour un pass `used` (il explique) ; jamais pour expiré/annulé.
-  const lienOffre = !!offre && !ferme && typeof onChangerOffre === 'function';
+  // V534c: jamais non plus quand le catalogue ne contient aucune AUTRE offre — un seul choix n'est pas un choix.
+  const lienOffre = !!offre && !ferme && typeof onChangerOffre === 'function'
+    && offresCatalogue.some((o) => o.id !== offre.id);
 
   const ouvrirSheet = () => {
     if (s === 'used') { setNoteUtilisee((v) => !v); return; }
