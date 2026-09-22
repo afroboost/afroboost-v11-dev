@@ -21570,6 +21570,76 @@ def v535_regle_membres(offres) -> list:
     return _l
 
 
+async def v535c_statut_membre_par_telephone(from_phone) -> dict:
+    """V535c — le VRAI statut d'adhésion de la personne qui écrit sur WhatsApp,
+    ou « inconnu ». `{"statut": "actif"|"expiree"|"inconnu", "date_fin": str}`.
+
+    FAIL CLOSED, dans les deux sens : le numéro est rattaché à un e-mail par
+    ÉGALITÉ STRICTE après normalisation (`essai6_normaliser_tel`, la convention
+    Meta du dépôt), jamais par suffixe ; s'il se rattache à PLUSIEURS adresses,
+    ou à aucune, on rend « inconnu » — on n'invente jamais qu'une personne est
+    membre. Le statut est recalculé depuis les dates (`lotr_etat_adhesion`),
+    jamais lu dans un champ. Le propriétaire de la plateforme = « sans
+    propriétaire » (V535b), donc `lot3b_adhesions(db, email, None)`.
+    Toute panne -> « inconnu ». Ne lève jamais."""
+    _inconnu = {"statut": "inconnu", "date_fin": ""}
+    try:
+        from api.routes.shared import (essai6_normaliser_tel as _norm, lot3b_adhesions as _adh,
+                                       lotr_etat_adhesion as _etat, normaliser_email as _nmail)
+        _tel = _norm(from_phone)
+        if not _tel:
+            return _inconnu
+        _suffixe = re.escape(_tel[-8:])
+        _emails = set()
+        for _coll, _champs in (("users", ("whatsapp", "phone")),
+                               ("subscriptions", ("whatsapp", "phone")),
+                               ("reservations", ("whatsapp", "phone"))):
+            _q = {"$or": [{_c: {"$regex": _suffixe}} for _c in _champs]}
+            _proj = {"_id": 0, "email": 1, "user_email": 1}
+            for _c in _champs:
+                _proj[_c] = 1
+            async for _d in db[_coll].find(_q, _proj).limit(200):
+                if any(_norm(_d.get(_c)) == _tel for _c in _champs):
+                    _e = _nmail(_d.get("email") or _d.get("user_email"))
+                    if _e:
+                        _emails.add(_e)
+        if len(_emails) != 1:
+            return _inconnu
+        _email = next(iter(_emails))
+        _lignes = await _adh(db, _email, None)
+        _st = _etat(_lignes)
+        if _st not in ("active", "expiree"):
+            return _inconnu
+        _fin = ""
+        try:
+            _fin = max(str(a.get("date_fin") or "")[:10] for a in _lignes if isinstance(a, dict))
+        except ValueError:
+            _fin = ""
+        return {"statut": "actif" if _st == "active" else "expiree", "date_fin": _fin}
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[V535c] statut membre indisponible (%s) — inconnu", type(_e).__name__)
+        return _inconnu
+
+
+def v535c_contexte_statut_membre(info) -> str:
+    """V535c — la phrase de contexte IA déduite du statut réel. Sans donnée :
+    l'assistant n'affirme rien, il explique seulement la réservation aux membres."""
+    _i = info or {}
+    _st = _i.get("statut")
+    if _st == "actif":
+        return ("STATUT MEMBRE DE CETTE PERSONNE (vérifié en base) : carte membre ACTIVE"
+                + (" jusqu'au %s" % _i["date_fin"] if _i.get("date_fin") else "")
+                + " — tu peux lui proposer les offres réservées aux membres avec leurs prix actuels.")
+    if _st == "expiree":
+        return ("STATUT MEMBRE DE CETTE PERSONNE (vérifié en base) : carte membre EXPIRÉE"
+                + (" depuis le %s" % _i["date_fin"] if _i.get("date_fin") else "")
+                + " — ne présente PAS les offres réservées aux membres comme achetables ; "
+                "propose d'abord le renouvellement de l'adhésion.")
+    return ("STATUT MEMBRE DE CETTE PERSONNE : non identifié — n'affirme JAMAIS qu'elle est membre ; "
+            "explique seulement que ces offres sont réservées aux membres actifs et demande, "
+            "si besoin, l'adresse e-mail de sa carte membre.")
+
+
 def v440_prix_lisible(valeur) -> str:
     """« 10 CHF », « 59.99 CHF » — sans décimale inutile."""
     _v = float(valeur)
@@ -22153,6 +22223,11 @@ async def handle_meta_whatsapp_webhook(request: Request):
                     context += "\n\n" + v440_contexte_metier(
                         _v440_offres, _v440_ciblee, _v440_motif,
                         maintenant=None, twint_disponible=_v440_twint)
+                    # V535c : le statut d'adhésion RÉEL de la personne (par son numéro),
+                    # ou « non identifié » — jamais inventé.
+                    _v535c_info = await v535c_statut_membre_par_telephone(from_phone)
+                    context += "\n" + v535c_contexte_statut_membre(_v535c_info)
+                    logger.info("[V535c] statut membre WhatsApp : %s", _v535c_info.get("statut"))
                     logger.info("[V440] %d offre(s), %d tour(s), twint=%s — %s | prix actif: %s",
                                 len(_v440_offres), len(_v440_hist), _v440_twint, _v440_motif,
                                 v440_prix_actif(_v440_ciblee) if _v440_ciblee else "—")

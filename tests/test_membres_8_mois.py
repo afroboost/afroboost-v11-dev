@@ -187,7 +187,92 @@ try:
       "Carte membre association" in _rt and "Membres — 8 mois" in _rt and "50 %" in _rt and "UNIQUEMENT" in _rt, _rt[:300])
     v("WhatsApp — rien en dur : sans offre à avantage, aucun pourcentage n'est énoncé", "%" not in " ".join(S.v535_regle_membres([M8, PACK10, CARTE])))
     v("WhatsApp — workshop à 50 % : « avantage carte membre : −50 % »", "−50 %" in S.v535_faits_offre(WORKSHOP))
+
+    # ── V535c : SYNCHRONISATION — le contexte suit la base, rien en dur ──────────
+    _ctx = lambda offres: S.v440_contexte_metier(offres, None, "test", maintenant=None)
+    _base = _ctx([M8, PACK10, CARTE, WORKSHOP])
+    v("SYNC. contexte de base : Membres — 8 mois 64 séances, 8 mois, 2 × 199.99 (1 mois plus tard), total 399.98, en une fois 399.98 ; Pack 10 150 CHF / 10 séances",
+      all(x in _base for x in ("Membres — 8 mois", "64 séances au total", "formule de 8 mois", "199.99 CHF maintenant puis 199.99 CHF 1 mois plus tard", "total 399.98 CHF", "ou paiement en une fois de 399.98 CHF", "10 séances", "150 CHF")), _base[:400])
+    _m8b = dict(M8, price=249.99)
+    _c1 = _ctx([_m8b, PACK10, CARTE, WORKSHOP])
+    v("SYNC 1. prix 199.99 -> 249.99 : le contexte suit (249.99 puis 249.99, total 499.98, une fois 499.98) et n'a plus 199.99",
+      "249.99 CHF maintenant puis 249.99 CHF" in _c1 and "total 499.98 CHF" in _c1 and "une fois de 499.98 CHF" in _c1 and "199.99" not in _c1, _c1[:300])
+    _c2 = _ctx([dict(M8, pack_sessions=5), PACK10, CARTE, WORKSHOP])
+    v("SYNC 2. pack_sessions 8 -> 5 : « 40 séances au total » (5 × 4 × 2), plus « 64 »", "40 séances au total" in _c2 and "64 séances" not in _c2, _c2[:300])
+    _c3 = _ctx([dict(M8, installment_interval_months=3), PACK10, CARTE, WORKSHOP])
+    v("SYNC 3. intervalle 1 -> 3 : « 3 mois plus tard », plus « 1 mois plus tard »", "3 mois plus tard" in _c3 and "1 mois plus tard" not in _c3, _c3[:300])
+    _c4 = _ctx([PACK10, CARTE, WORKSHOP])
+    v("SYNC 4. offre désactivée (absente des offres visibles) : plus proposée, la règle ne la nomme plus",
+      "Membres — 8 mois" not in _c4 and "Membres" in _c4, _c4[:300])
+    _c5 = _ctx([M8, PACK10, CARTE, dict(WORKSHOP, member_discount_pct=30)])
+    v("SYNC 5. member_discount_pct 50 -> 30 sur le workshop : « −30 % » et « 30 % » dans la règle, plus 50 %", "−30 %" in _c5 and "30 %" in _c5 and "50 %" not in _c5, _c5[:300])
+    _c6 = _ctx([])
+    import re as _re
+    v("SYNC 6. aucune offre : aucun montant, aucune séance, aucun pourcentage, aucun nom d'offre ; « N'invente ni prix » et « AUCUNE OFFRE » présents",
+      not _re.search(r"\d+(\.\d+)? CHF", _c6) and "séance" not in _c6 and "%" not in _c6 and "Membres" not in _c6
+      and "N'invente ni prix" in _c6 and "AUCUNE OFFRE" in _c6, _c6[:300])
+    v("SYNC. Membres — 8 mois et Pack 10 : « aucune réduction supplémentaire » ; le 50 % n'est annoncé que sur le workshop",
+      S.v535_faits_offre(M8).count("aucune réduction supplémentaire") == 1 and "%" not in S.v535_faits_offre(M8) and "%" not in S.v535_faits_offre(PACK10))
+    v("SYNC. la Carte membre annuelle « ouvre l'adhésion membre annuelle »", "ouvre l'adhésion membre annuelle" in S.v535_faits_offre(CARTE))
+    _src_prompt = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
+    v("SYNC. aucune donnée commerciale en dur : le contexte est construit par des fonctions, `systemPrompt` est lu tel quel et jamais réécrit",
+      "ai_config.get(\"systemPrompt\", \"\") + context" in _src_prompt and "399" not in S.v535_faits_offre.__code__.co_consts.__repr__() and "64" not in S.v535_faits_offre.__code__.co_consts.__repr__())
+
+    # ── V535c : IDENTITÉ MEMBRE par numéro WhatsApp — fail closed ──────────────────
+    class _CollTel:
+        def __init__(self, docs): self.docs = docs
+        def find(self, q, proj=None):
+            docs = self.docs
+            class _Cur:
+                def __init__(s, d): s.d = d
+                def limit(s, n): return s
+                def __aiter__(s):
+                    async def g():
+                        for x in s.d: yield dict(x)
+                    return g()
+                async def to_list(s, n): return [dict(x) for x in s.d]
+            return _Cur(docs)
+    class _DbTel:
+        def __init__(self, users, subs, res, adh):
+            self.users, self.subscriptions, self.reservations, self.memberships = map(_CollTel, (users, subs, res, adh))
+        def __getitem__(self, k): return getattr(self, k)
+    _auj = datetime.now(timezone.utc).date()
+    _adh_ok = {"email": "membre@exemple.test", "coach_id": None, "date_debut": str(_auj - timedelta(days=30)), "date_fin": str(_auj + timedelta(days=300))}
+    _adh_exp = {"email": "ancien@exemple.test", "coach_id": None, "date_debut": "2024-01-01", "date_fin": "2024-12-31"}
+    _S_db = S.db
+    try:
+        S.db = _DbTel([{"email": "membre@exemple.test", "whatsapp": "+41 76 511 22 33"}], [], [], [_adh_ok])
+        _i1 = run(S.v535c_statut_membre_par_telephone("41765112233"))
+        v("IDENTITÉ. numéro relié à UN membre actif (égalité stricte après normalisation +41 76 511 22 33 = 41765112233) -> actif + date de fin",
+          _i1["statut"] == "actif" and _i1["date_fin"] == str(_auj + timedelta(days=300)), _i1)
+        v("IDENTITÉ. contexte membre actif : « carte membre ACTIVE jusqu'au … — tu peux lui proposer les offres réservées »",
+          "ACTIVE jusqu'au" in S.v535c_contexte_statut_membre(_i1) and "proposer les offres réservées" in S.v535c_contexte_statut_membre(_i1))
+        S.db = _DbTel([{"email": "ancien@exemple.test", "whatsapp": "0765112233"}], [], [], [_adh_exp])
+        _i2 = run(S.v535c_statut_membre_par_telephone("41765112233"))
+        v("IDENTITÉ. membre expiré (0765112233 = 41765112233) -> expiree ; contexte : « ne présente PAS … comme achetables »",
+          _i2["statut"] == "expiree" and "ne présente PAS" in S.v535c_contexte_statut_membre(_i2), _i2)
+        S.db = _DbTel([], [], [], [_adh_ok])
+        _i3 = run(S.v535c_statut_membre_par_telephone("41765112233"))
+        v("IDENTITÉ. numéro inconnu -> « inconnu » ; contexte : « n'affirme JAMAIS qu'elle est membre »",
+          _i3["statut"] == "inconnu" and "n'affirme JAMAIS" in S.v535c_contexte_statut_membre(_i3), _i3)
+        S.db = _DbTel([{"email": "membre@exemple.test", "whatsapp": "+41765112233"}, {"email": "autre@exemple.test", "phone": "0765112233"}], [], [], [_adh_ok])
+        _i4 = run(S.v535c_statut_membre_par_telephone("41765112233"))
+        v("IDENTITÉ. numéro partagé par DEUX adresses -> ambigu -> « inconnu » (jamais inventé)", _i4["statut"] == "inconnu", _i4)
+        S.db = _DbTel([{"email": "membre@exemple.test", "whatsapp": "+41 76 511 22 34"}], [], [], [_adh_ok])
+        _i5 = run(S.v535c_statut_membre_par_telephone("41765112233"))
+        v("IDENTITÉ. un numéro qui ne diffère que d'un chiffre n'est PAS relié (pas de suffixe)", _i5["statut"] == "inconnu", _i5)
+        class _Muet:
+            def __getitem__(self, k): raise RuntimeError("base muette")
+        S.db = _Muet()
+        _i6 = run(S.v535c_statut_membre_par_telephone("41765112233"))
+        v("IDENTITÉ. base en panne -> « inconnu », jamais une exception", _i6["statut"] == "inconnu", _i6)
+        _src_wh = _src_prompt
+        v("IDENTITÉ. le webhook WhatsApp injecte le statut APRÈS le contexte métier, avant l'appel IA",
+          _src_wh.find("v535c_contexte_statut_membre(_v535c_info)") > _src_wh.find("v440_contexte_metier(\n                        _v440_offres") > 0)
+    finally:
+        S.db = _S_db
 except Exception as _e:  # noqa: BLE001
+    import traceback; traceback.print_exc()
     v("WhatsApp — fonctions v535 appelables", False, repr(_e))
 
 ok = sum(1 for _, c, _ in R if c); ko = [(n, d) for n, c, d in R if not c]
