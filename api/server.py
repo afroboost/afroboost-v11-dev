@@ -19565,7 +19565,13 @@ async def get_sitemap():
     """v17.1: Sitemap XML dynamique"""
     from starlette.responses import Response
 
-    base_url = "https://afroboost-v11-dev-pm7l.vercel.app"
+    # SEO-2 (22/09/2026) — LE DOMAINE ETAIT FAUX. Ce sitemap annoncait
+    # `afroboost-v11-dev-pm7l.vercel.app`, residu d'une ancienne installation
+    # Vercel qui sert encore un bundle perime (voir CLAUDE.md). Un sitemap est
+    # une LISTE D'ADRESSES CANONIQUES : y mettre un autre domaine invite Google
+    # a indexer un site fantome a la place du vrai. `robots.txt` interdit
+    # /api/, donc rien n'a ete indexe — mais le piege restait arme.
+    base_url = os.environ.get("FRONTEND_URL", "https://afroboost.com").rstrip("/")
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
     urls = [
@@ -49324,6 +49330,53 @@ if _os.path.isdir(_STATIC_DIR):
     if _os.path.isdir(_static_assets):
         fastapi_app.mount("/static", StaticFiles(directory=_static_assets), name="cra-static-assets")
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # SEO-1 — UNE PAGE PRIVÉE NE S'INDEXE PAS
+    #
+    # CONSTAT (22/09/2026). Toutes les routes de l'application reçoivent le MÊME
+    # `index.html` : même titre, même `canonical` vers « / », et surtout
+    # `robots: index, follow`. Mesuré : `/espace/<code>` (l'espace personnel
+    # d'un abonné), `/duo/<token>` (une invitation nominative), `/parrainage`,
+    # `/checkout` répondaient 200 avec « index, follow ». Rien de secret n'y est
+    # servi — le contenu vient d'appels authentifiés — mais l'URL elle-même est
+    # personnelle : un code d'accès, un jeton d'invitation. Ces adresses n'ont
+    # rien à faire dans un moteur de recherche.
+    #
+    # ROBOTS.TXT NE SUFFIT PAS, et c'est la raison d'être de ce bloc : il
+    # empêche de CRAWLER, pas d'INDEXER. Une URL partagée sur WhatsApp puis
+    # citée quelque part peut entrer dans l'index sans jamais être visitée.
+    # Seule une balise `noindex` LUE SUR LA PAGE ferme la porte. On la pose donc
+    # ici, à la source, pour les chemins privés — et on ne touche à rien
+    # d'autre : même fichier, même application, même comportement pour le
+    # visiteur. La page d'accueil et la page locale ne sont pas concernées.
+    _SEO_PRIVE = ("/espace", "/duo", "/parrainage", "/checkout", "/login",
+                  "/admin", "/reset.html", "/pwa-diag.html")
+    _SEO_META_PRIVEE = '<meta name="robots" content="noindex, nofollow"/>'
+
+    def _seo_est_prive(chemin: str) -> bool:
+        """Le chemin relève-t-il d'un espace personnel ou technique ?"""
+        _c = "/" + str(chemin or "").strip().strip("/")
+        return any(_c == _p or _c.startswith(_p + "/") for _p in _SEO_PRIVE)
+
+    def _seo_index_prive(fichier: str) -> str:
+        """`index.html` avec `noindex` à la place de ce qu'il portait, et sans
+        `canonical` (il désignait la page d'accueil : une URL privée ne
+        « canonise » pas vers l'accueil, elle ne s'indexe pas du tout).
+
+        LA BALISE EST REMPLACÉE PAR MOTIF, PAS PAR ÉGALITÉ DE CHAÎNE : le build
+        CRA réécrit le HTML (les espaces avant `/>` disparaissent), et une
+        comparaison exacte échouait en silence — mesuré sur la pile locale, la
+        page restait « index, follow »."""
+        import re as _re
+        with open(fichier, "r", encoding="utf-8") as _f:
+            _html = _f.read()
+        _html, _n = _re.subn(r'<meta\s+name=["\']robots["\'][^>]*>', _SEO_META_PRIVEE,
+                             _html, count=1, flags=_re.I)
+        if not _n:
+            _html = _html.replace("</head>", _SEO_META_PRIVEE + "</head>", 1)
+        return _re.sub(r'\s*<link\s+rel=["\']canonical["\'][^>]*>', "", _html,
+                       count=1, flags=_re.I)
+
     # Catch-all: serve index.html for any non-API route (SPA routing)
     @fastapi_app.get("/{full_path:path}")
     async def _serve_spa(full_path: str):
@@ -49339,7 +49392,18 @@ if _os.path.isdir(_STATIC_DIR):
             if _os.path.basename(full_path) in ("sw.js", "index.html"):
                 return _FileResponse(file_path, headers=_no_cache)
             return _FileResponse(file_path)
-        return _FileResponse(_os.path.join(_STATIC_DIR, "index.html"), headers=_no_cache)
+        _index = _os.path.join(_STATIC_DIR, "index.html")
+        # SEO-1 : chemin privé -> la MÊME page, avec `noindex` et sans canonical.
+        if _seo_est_prive(full_path):
+            try:
+                from starlette.responses import HTMLResponse as _HTMLResponse
+                return _HTMLResponse(_seo_index_prive(_index), headers=_no_cache)
+            except Exception as _seo_err:  # noqa: BLE001
+                # L'application passe AVANT le SEO : si la réécriture échoue,
+                # on sert la page telle quelle plutôt que de casser une route.
+                logger.warning("[SEO-1] noindex non posé sur %s (%s)",
+                               str(full_path)[:40], type(_seo_err).__name__)
+        return _FileResponse(_index, headers=_no_cache)
 
 # Export for Vercel Serverless
 app = fastapi_app

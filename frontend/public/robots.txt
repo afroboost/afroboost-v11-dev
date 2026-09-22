@@ -21,4 +21,19 @@ Disallow: /reset.html
 Disallow: /pwa-diag.html
 Disallow: /api/
 
+# SEO-1 (22/09/2026) — ADRESSES PERSONNELLES. Le contenu de ces pages vient
+# d'appels authentifies : rien de secret n'est servi au robot. C'est l'URL
+# elle-meme qui est privee — un code d'acces, un jeton d'invitation — et elle
+# n'a rien a faire dans un moteur de recherche.
+#
+# CE FICHIER NE SUFFIT PAS, ET C'EST VOULU : il empeche de CRAWLER, pas
+# d'INDEXER. Une adresse partagee sur WhatsApp puis citee ailleurs peut entrer
+# dans l'index sans jamais etre visitee. Le serveur pose donc aussi un
+# `noindex` sur ces chemins (api/server.py, `_serve_spa`). Les deux ensemble,
+# pas l'un ou l'autre.
+Disallow: /espace/
+Disallow: /duo/
+Disallow: /parrainage
+Disallow: /checkout
+
 Sitemap: https://afroboost.com/sitemap.xml

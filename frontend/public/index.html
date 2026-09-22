@@ -139,6 +139,31 @@
         Learn how to configure a non-root public URL by running `npm run build`.
         -->
         <title>Afroboost | Cardio &amp; Danse Afrobeat avec Casques</title>
+        <!--
+          SEO-3 (22/09/2026) — DONNEES STRUCTUREES DE L'ACCUEIL.
+          Constat : la page locale en declarait (WebPage, Organization, FAQPage,
+          Evenements reels), l'accueil AUCUNE. Google n'avait donc aucun moyen
+          de relier le nom, le site et le logo.
+
+          CE QU'ELLES DISENT, ET RIEN DE PLUS : le nom, l'adresse du site, le
+          logo, la region servie, et le fait que le site a un moteur de
+          recherche interne. Meme forme et memes valeurs que la page locale,
+          pour qu'il n'existe qu'UNE description d'Afroboost.
+
+          CE QU'ELLES NE DISENT PAS, et c'est deliberé (meme arbitrage que
+          `_m1_page_essai_neuchatel`) : pas de `LocalBusiness`, car le planning
+          compte plusieurs lieux et il n'y a pas d'adresse permanente ; aucune
+          note, aucun avis, aucun effectif, aucun prix — rien qui ne soit prouve.
+        -->
+        <script type="application/ld+json">
+        {"@context":"https://schema.org","@type":"Organization","name":"Afroboost",
+         "url":"https://afroboost.com/","logo":"https://afroboost.com/logo512.png",
+         "areaServed":"Neuchâtel, Suisse"}
+        </script>
+        <script type="application/ld+json">
+        {"@context":"https://schema.org","@type":"WebSite","name":"Afroboost",
+         "url":"https://afroboost.com/","inLanguage":"fr-CH"}
+        </script>
         <!-- Html5Qrcode library for QR code scanning -->
         <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
         <!-- V266: script emergent.sh RETIRE. C'etait de la telemetrie
