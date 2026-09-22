@@ -42,6 +42,20 @@ BILLING_DEFAUT = BILLING_UNIQUE
 SAISON_MOIS = 8                      # la saison hiver : 8 mois contractuels
 SAISON_2X_INTERVALLE_MOIS = 4        # deux échéances : mois 0 et mois 4
 SAISON_2X_ECHEANCES = 2
+# V535 — ÉCHÉANCIER PAR OFFRE (additif). Une offre `saison_2x` peut porter
+# `installment_interval_months` (1..12) : ses deux échéances sont alors à
+# M0 et M+n au lieu de M0/M+4, et ses droits (séances ET durée) restent ceux de
+# la saison entière, quel que soit le rythme de paiement. Elle peut aussi porter
+# `full_payment_available: true` : l'acheteur choisit alors EXPLICITEMENT entre
+# « 2 fois » et « en une fois » (prix × 2, un seul paiement). ABSENT = le
+# comportement historique, à l'identique, pour toutes les autres offres.
+CHAMP_INTERVALLE = "installment_interval_months"
+CHAMP_PAIEMENT_INTEGRAL = "full_payment_available"
+MODE_PAIEMENT_2X = "2x"
+MODE_PAIEMENT_INTEGRAL = "full"
+MODES_PAIEMENT = (MODE_PAIEMENT_2X, MODE_PAIEMENT_INTEGRAL)
+RAISON_MODE_REQUIS = "Choisis ton mode de paiement : en une fois ou en 2 fois."
+RAISON_MODE_INCONNU = "Mode de paiement inconnu."
 PLACES_RESERVEES_MINUTES = 30        # un checkout ouvert réserve sa place 30 min
 
 RAISON_COMPLETE = "Cette offre est complète : toutes les places ont été prises."
@@ -70,12 +84,58 @@ def duree_mois_valide(valeur):
     return _n if 1 <= _n <= 24 else None
 
 
+def intervalle_echeances(offre) -> int:
+    """V535 — mois entre les deux échéances d'une offre `saison_2x` : sa valeur
+    propre (`installment_interval_months`, 1..12) sinon la constante historique."""
+    try:
+        _n = int(float((offre or {}).get(CHAMP_INTERVALLE)))
+    except (TypeError, ValueError):
+        return SAISON_2X_INTERVALLE_MOIS
+    return _n if 1 <= _n <= 12 else SAISON_2X_INTERVALLE_MOIS
+
+
+def echeancier_personnalise(offre) -> bool:
+    """V535 — vrai si l'offre est en `saison_2x` AVEC un intervalle propre."""
+    return (billing_mode_valide((offre or {}).get("billing_mode")) == BILLING_SAISON_2X
+            and intervalle_echeances(offre) != SAISON_2X_INTERVALLE_MOIS)
+
+
+def paiement_integral_disponible(offre) -> bool:
+    """V535 — l'acheteur peut choisir « en une fois » : offre `saison_2x` déclarée
+    `full_payment_available: true` (booléen strict, jamais « truthy »)."""
+    return (billing_mode_valide((offre or {}).get("billing_mode")) == BILLING_SAISON_2X
+            and (offre or {}).get(CHAMP_PAIEMENT_INTEGRAL) is True)
+
+
+def mode_paiement_valide(offre, mode) -> tuple:
+    """V535 — (mode_normalisé | None, motif_refus). Quand l'offre laisse le choix,
+    le mode est OBLIGATOIRE et explicite : jamais de fractionné par défaut. Quand
+    elle ne le laisse pas, le champ est ignoré (None) — comportement historique."""
+    if not paiement_integral_disponible(offre):
+        return None, ""
+    _m = str(mode or "").strip().lower()
+    if not _m:
+        return None, RAISON_MODE_REQUIS
+    if _m not in MODES_PAIEMENT:
+        return None, RAISON_MODE_INCONNU
+    return _m, ""
+
+
+def montant_integral_cents(montant_echeance_cents) -> int:
+    """V535 — le paiement en une fois vaut la somme des échéances : 2 × 199,99 = 399,98."""
+    return int(montant_echeance_cents) * SAISON_2X_ECHEANCES
+
+
 def duree_droits_mois(offre) -> int:
     """Combien de mois couvre UN paiement de cette offre — cycle pour le récurrent, `duree_mois` sinon."""
     _mode = billing_mode_valide((offre or {}).get("billing_mode"))
     if _mode == BILLING_MENSUEL:
         return 1
     if _mode == BILLING_SAISON_2X:
+        # V535 : échéancier propre -> chaque paiement ouvre la SAISON entière (8 mois) ;
+        # payer en 2 fois sur 1 mois ne fait pas une formule de 2 mois.
+        if echeancier_personnalise(offre):
+            return SAISON_MOIS
         return SAISON_2X_INTERVALLE_MOIS
     _d = duree_mois_valide((offre or {}).get("duree_mois"))
     if _d:
@@ -92,7 +152,7 @@ def expiration_droits(depuis, mois):
     return _fin.isoformat(), _fin.strftime("%Y-%m-%d")
 
 
-def seances_par_paiement(offre) -> int:
+def seances_par_paiement(offre, mode_paiement=None) -> int:
     """Les séances ouvertes par UN paiement : pack × mois du cycle pour saison_2x, pack sinon.
     `pack_sessions = 0` est respecté (une adhésion seule n'ouvre aucune séance)."""
     try:
@@ -102,8 +162,19 @@ def seances_par_paiement(offre) -> int:
     if _pack < 0:
         _pack = 0
     if billing_mode_valide((offre or {}).get("billing_mode")) == BILLING_SAISON_2X:
-        return _pack * SAISON_2X_INTERVALLE_MOIS
+        # V535 : `pack` = QUOTA MENSUEL ; une échéance ouvre pack × 4 = la moitié de la
+        # saison, quel que soit le rythme (M+4 ou M+1) ; le paiement intégral ouvre les
+        # deux moitiés d'un coup (64), jamais davantage.
+        _par_echeance = _pack * SAISON_2X_INTERVALLE_MOIS
+        if str(mode_paiement or "") == MODE_PAIEMENT_INTEGRAL:
+            return _par_echeance * SAISON_2X_ECHEANCES
+        return _par_echeance
     return _pack
+
+
+def seances_saison_total(offre) -> int:
+    """V535 — le total de la saison (les deux échéances), pour l'affichage : 64."""
+    return seances_par_paiement(offre, MODE_PAIEMENT_INTEGRAL)
 
 
 def date_limite(offre):
@@ -147,7 +218,8 @@ def offres_ouvertes(offres, maintenant=None) -> list:
     return [o for o in (offres or []) if not motif_fermeture(o, maintenant)]
 
 
-def parametres_checkout(offre, nom_produit, montant_cents, success_url, cancel_url, email, metadata) -> dict:
+def parametres_checkout(offre, nom_produit, montant_cents, success_url, cancel_url, email, metadata,
+                        mode_paiement=None) -> dict:
     """Les paramètres de `stripe.checkout.Session.create` selon le mode de l'offre.
 
     `unique` : exactement le paramétrage historique (mode=payment, carte + TWINT).
@@ -157,7 +229,11 @@ def parametres_checkout(offre, nom_produit, montant_cents, success_url, cancel_u
     _mode = billing_mode_valide((offre or {}).get("billing_mode"))
     _meta = dict(metadata or {})
     _meta["billing_mode"] = _mode
-    if _mode == BILLING_UNIQUE:
+    # V535 : mode choisi par l'acheteur (offres à choix seulement) et rythme propre.
+    if _mode == BILLING_SAISON_2X and mode_paiement in MODES_PAIEMENT:
+        _meta["payment_mode"] = mode_paiement
+        _meta[CHAMP_INTERVALLE] = str(intervalle_echeances(offre))
+    if _mode == BILLING_UNIQUE or (_mode == BILLING_SAISON_2X and mode_paiement == MODE_PAIEMENT_INTEGRAL):
         return {
             "payment_method_types": ["card", "twint"],
             "line_items": [{"price_data": {"currency": "chf", "product_data": {"name": nom_produit},
@@ -165,7 +241,7 @@ def parametres_checkout(offre, nom_produit, montant_cents, success_url, cancel_u
             "mode": "payment", "success_url": success_url, "cancel_url": cancel_url,
             "customer_email": email, "metadata": _meta,
         }
-    _recurrent = {"interval": "month", "interval_count": 1 if _mode == BILLING_MENSUEL else SAISON_2X_INTERVALLE_MOIS}
+    _recurrent = {"interval": "month", "interval_count": 1 if _mode == BILLING_MENSUEL else intervalle_echeances(offre)}
     return {
         "payment_method_types": ["card"],
         "line_items": [{"price_data": {"currency": "chf", "product_data": {"name": nom_produit},
@@ -176,12 +252,18 @@ def parametres_checkout(offre, nom_produit, montant_cents, success_url, cancel_u
     }
 
 
-def cancel_at_saison(depuis) -> int:
+def cancel_at_saison(depuis, offre=None) -> int:
     """L'instant (epoch) où l'abonnement saison_2x s'arrête : début + 8 mois — deux factures, pas trois."""
     from dateutil.relativedelta import relativedelta
     _base = depuis or datetime.now(timezone.utc)
     if _base.tzinfo is None:
         _base = _base.replace(tzinfo=timezone.utc)
+    # V535 : échéancier propre (M0 + M+n) -> début + 2n mois MOINS UN JOUR : la 2e
+    # facture (M+n) passe, la 3e (M+2n) ne peut jamais être émise. Les offres
+    # historiques gardent exactement début + 8 mois.
+    if offre is not None and echeancier_personnalise(offre):
+        _n = intervalle_echeances(offre)
+        return int((_base + relativedelta(months=+(_n * SAISON_2X_ECHEANCES), days=-1)).timestamp())
     return int((_base + relativedelta(months=+SAISON_MOIS)).timestamp())
 
 
@@ -240,6 +322,20 @@ async def traiter_facture_payee(db, invoice) -> dict:
     # La fin des droits = la fin de la période FACTURÉE par Stripe (lines[0].period.end),
     # jamais « maintenant + n mois » : un webhook livré en retard n'ampute rien.
     _exp_iso, _exp_jour = fin_periode_facture(_inv, _mois)
+    # V535 — échéancier propre (M0 + M+n) : la période Stripe de la 2e facture ne
+    # couvre qu'un mois, mais les droits courent jusqu'à la FIN DE SAISON, comptée
+    # depuis le premier paiement ; et seules les DEUX échéances créditent — une
+    # facture de plus (qui ne devrait jamais exister : `cancel_at`) n'ouvre rien.
+    if _doc.get(CHAMP_INTERVALLE):
+        try:
+            if len(list(_doc.get("stripe_invoices") or [])) >= SAISON_2X_ECHEANCES:
+                return {"credite": False, "motif": "echeancier_termine"}
+            _debut = datetime.fromisoformat(str(_doc.get("saison_debut") or _doc.get("created_at")))
+            if _debut.tzinfo is None:
+                _debut = _debut.replace(tzinfo=timezone.utc)
+            _exp_iso, _exp_jour = expiration_droits(_debut, SAISON_MOIS)
+        except (TypeError, ValueError):
+            _exp_iso, _exp_jour = expiration_droits(datetime.now(timezone.utc), SAISON_MOIS)
     _maintenant = datetime.now(timezone.utc).isoformat()
     # V527: QUOTA MENSUEL, PAS DE CUMUL. Pour un abonnement `mensuel_auto`, chaque
     # facture de cycle REMET les séances restantes au pack de l'offre (Flex 4 -> 4,
