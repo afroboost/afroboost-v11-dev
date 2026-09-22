@@ -328,7 +328,10 @@ async def traiter_facture_payee(db, invoice) -> dict:
     # facture de plus (qui ne devrait jamais exister : `cancel_at`) n'ouvre rien.
     if _doc.get(CHAMP_INTERVALLE):
         try:
-            if len(list(_doc.get("stripe_invoices") or [])) >= SAISON_2X_ECHEANCES:
+            # `stripe_invoices` ne contient que les factures de RENOUVELLEMENT :
+            # la première échéance (M0) est créditée par le checkout et n'y
+            # figure jamais. Deux échéances = M0 + UNE facture de cycle.
+            if len(list(_doc.get("stripe_invoices") or [])) >= SAISON_2X_ECHEANCES - 1:
                 return {"credite": False, "motif": "echeancier_termine"}
             _debut = datetime.fromisoformat(str(_doc.get("saison_debut") or _doc.get("created_at")))
             if _debut.tzinfo is None:

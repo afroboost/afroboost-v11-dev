@@ -115,7 +115,7 @@ b = Base()
 b.subscriptions = Coll([{"id": "s8", "code": "AFR-M8", "stripe_subscription_id": "sub_m8", "billing_mode": "saison_2x",
                          "installment_interval_months": 1, "payment_mode": "2x", "saison_debut": "2026-10-01T10:00:00+00:00",
                          "created_at": "2026-10-01T10:00:00+00:00", "renewal_sessions": 32, "remaining_sessions": 30,
-                         "total_sessions": 32, "status": "active", "expires_at": "2027-06-01T23:59:59+00:00", "stripe_invoices": ["in_1"]}])
+                         "total_sessions": 32, "status": "active", "expires_at": "2027-06-01T23:59:59+00:00", "stripe_invoices": []}])  # M0 = checkout, jamais dans stripe_invoices (état réel du webhook)
 b.discount_codes = Coll([{"code": "AFR-M8", "maxUses": 32, "used": 2, "active": True, "expiresAt": "2027-06-01"}])
 fin_nov = int(datetime(2026, 11, 30, 12, 0, tzinfo=timezone.utc).timestamp())
 r2 = run(H.traiter_facture_payee(b, {"id": "in_2", "subscription": "sub_m8", "billing_reason": "subscription_cycle", "lines": {"data": [{"period": {"end": fin_nov}}]}}))

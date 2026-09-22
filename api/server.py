@@ -15353,6 +15353,7 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
     try:
         from api.routes.shared import (LOTR_CHAMP_PROTECTION as _CHAMP,
                                        lot2_proprietaire as _proprio,
+                                       lot2_filtre_offres as _filtre_offres,
                                        lotr_garde_achat as _garde,
                                        lotr_message_refus as _msg)
     except Exception as _err:
@@ -15363,8 +15364,9 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
         # abonne d'un partenaire ne se voie pas proposer la recharge d'un autre
         # catalogue. Meme regle de symetrie que `conv_offres_premier_achat`.
         _coach = _proprio((offer or {}).get("coach_id"))
-        _q = {_CHAMP: True}
-        _q["coach_id"] = _coach if _coach else None
+        # V535b : le proprietaire de la plateforme = « sans proprietaire »
+        # (ses offres portent son adresse depuis la mi-septembre 2026).
+        _q = {_CHAMP: True, **_filtre_offres(_coach)}
         _offres = await db.offers.find(_q, {"_id": 0}).to_list(10)
         if not _offres:
             # Aucune offre de recharge declaree : ce n'est pas une anomalie,
