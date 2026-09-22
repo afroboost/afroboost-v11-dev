@@ -401,6 +401,48 @@ export function changerOffre({ passId, token, offerId, version, headers }) {
   );
 }
 
+/**
+ * V539 — Changer la SÉANCE d'un Pass Duo (avant l'inscription de l'ami) :
+ * `PATCH /api/referral/pass/{cible}/occurrence {occurrence, version}`.
+ * Même forme que `changerOffre`, mêmes deux portes (parrain par `id` avec
+ * en-têtes, ami par `share_token` sans jeton). L'occurrence envoyée vient
+ * TOUJOURS de la liste rendue par le serveur : le serveur la revérifie.
+ */
+export function changerSeance({ passId, token, occurrence, version, headers }) {
+  const cible = encodeURIComponent(passId || token || '');
+  return axios.patch(
+    `${API_PARRAINAGE}/pass/${cible}/occurrence`,
+    { occurrence: String(occurrence || ''), version: Number(version) || 1 },
+    { headers: headers || {}, timeout: 15000 },
+  );
+}
+
+/**
+ * V539 — Les occurrences du serveur, au format attendu par `SessionsModal`
+ * (`{id, nom, lieu, quand: Date, ponctuel, offres}`). Fonction pure : elle ne
+ * lit rien d'autre que ce qu'on lui donne, et écarte les dates illisibles.
+ */
+export function occurrencesPourCalendrier(occurrences, course) {
+  const c = course || {};
+  return (Array.isArray(occurrences) ? occurrences : [])
+    .map((o) => {
+      const iso = typeof o === 'string' ? o : (o && (o.occurrence || o.datetime));
+      const d = iso ? new Date(String(iso).length <= 10 ? `${iso}T00:00:00` : iso) : null;
+      if (!d || Number.isNaN(d.getTime())) return null;
+      return {
+        id: c.id || 'duo',
+        nom: c.name || 'Séance Afroboost',
+        lieu: c.locationName || c.location || '',
+        quand: d,
+        iso: String(iso),
+        ponctuel: false,
+        offres: [],
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.quand - b.quand);
+}
+
 /** `{status, raison, detail}` d'une erreur axios (raison = en-tête `X-Refus-Raison`). */
 export function lireRefus(err) {
   const rep = (err && err.response) || {};

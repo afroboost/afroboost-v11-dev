@@ -139,7 +139,8 @@ function replierSurLesCours(cours) {
   }));
 }
 
-const SessionsModal = ({ open, onClose, courses = [], onReserve }) => {
+const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFournies = null,
+                        libelleAction = 'Réserver', noteAction = 'Tu choisiras tes dates après la réservation, dans ton espace.' }) => {
   const [mois, setMois] = useState(() => {
     const n = new Date();
     return new Date(n.getFullYear(), n.getMonth(), 1);
@@ -158,6 +159,17 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve }) => {
   // regime normal.
   useEffect(() => {
     if (!open) return undefined;
+    // V539 — UNE LISTE IMPOSÉE PAR L'APPELANT COURT-CIRCUITE L'AGENDA.
+    // Le Pass Duo ne peut viser que les séances autorisées par le coach : lui
+    // montrer tout l'agenda du site laisserait choisir une date que le serveur
+    // refusera ensuite. Quand `occurrencesFournies` est donné, c'est LUI la
+    // source — aucun appel réseau, aucun repli. Sans cette prop, rien ne
+    // change pour la page d'accueil : l'agenda reste la source.
+    if (Array.isArray(occurrencesFournies)) {
+      setOccurrences(occurrencesFournies);
+      setChargement(false);
+      return undefined;
+    }
     let annule = false;
     setChargement(true);
     (async () => {
@@ -174,7 +186,7 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve }) => {
       }
     })();
     return () => { annule = true; };
-  }, [open, courses]);
+  }, [open, courses, occurrencesFournies]);
 
   const parJour = useMemo(() => {
     const m = new Map();
@@ -322,6 +334,8 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve }) => {
               occ={detail}
               onRetour={() => setDetail(null)}
               onReserve={() => { const o = detail; fermer(); setTimeout(() => onReserve && onReserve(o), 60); }}
+              libelleAction={libelleAction}
+              noteAction={noteAction}
             />
           ) : chargement ? (
             <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}
@@ -456,7 +470,9 @@ const BoutonMois = ({ sens, onClick }) => (
   </button>
 );
 
-const DetailSession = ({ occ, onRetour, onReserve }) => {
+const DetailSession = ({ occ, onRetour, onReserve,
+                        libelleAction = 'Réserver',
+                        noteAction = 'Tu choisiras tes dates après la réservation, dans ton espace.' }) => {
   const d = occ.quand;
   const lieu = occ.lieu || '';
   return (
@@ -504,11 +520,13 @@ const DetailSession = ({ occ, onRetour, onReserve }) => {
           color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer'
         }}
       >
-        Réserver
+        {libelleAction}
       </button>
-      <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, textAlign: 'center', marginTop: 10 }}>
-        Tu choisiras tes dates après la réservation, dans ton espace.
-      </p>
+      {noteAction ? (
+        <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, textAlign: 'center', marginTop: 10 }}>
+          {noteAction}
+        </p>
+      ) : null}
     </div>
   );
 };

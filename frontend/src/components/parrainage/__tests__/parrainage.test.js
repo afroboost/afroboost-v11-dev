@@ -54,6 +54,9 @@ beforeEach(() => {
   document.body.appendChild(conteneur);
   jest.clearAllMocks();
   axios.get.mockReset(); axios.post.mockReset();
+  // V539 : `patch` sert désormais aussi au changement de séance — sans remise à
+  // zéro, le mock d'un test fuit dans le suivant.
+  axios.patch.mockReset();
   window.localStorage.clear();
   _resetParrainagePourTest();
 });
@@ -383,6 +386,78 @@ describe('InvitationDuo — page publique', () => {
     expect(par('invitation-consent').checked).toBe(false);
     expect(par('invitation-marketing').checked).toBe(false);
   });
+  // ═══ V539 : l'ami choisit sa séance ══════════════════════════════════════
+  const OCC2 = '2026-10-04T18:30:00';
+  const PUB_MULTI = { status: 'waiting', sponsor_first_name: 'Bassi', course: COURSE, occurrence: OCC,
+    expired: false, version: 3, occurrences: [OCC, OCC2] };
+  test('V539 — « Séance choisie » + bouton « Choisir une autre séance » quand plusieurs dates existent', async () => {
+    axios.get.mockResolvedValue({ data: PUB_MULTI });
+    await monter(<InvitationDuo token="TOK123" />);
+    expect(par('invitation-seance').textContent).toContain('Séance choisie');
+    expect(par('invitation-changer-seance')).not.toBeNull();
+    expect(par('invitation-seance').textContent).toContain('Cette date ne te convient pas');
+  });
+  test('V539 — une seule séance proposée : aucun bouton (pas de faux choix)', async () => {
+    axios.get.mockResolvedValue({ data: Object.assign({}, PUB_MULTI, { occurrences: [OCC] }) });
+    await monter(<InvitationDuo token="TOK123" />);
+    expect(par('invitation-changer-seance')).toBeNull();
+    expect(par('invitation-seance').textContent).toContain('Dimanche 27 sept.');
+  });
+  test('V539 — serveur antérieur (aucune liste) : la carte reste, sans bouton', async () => {
+    axios.get.mockResolvedValue({ data: { status: 'waiting', sponsor_first_name: 'Bassi', course: COURSE, occurrence: OCC, expired: false } });
+    await monter(<InvitationDuo token="TOK123" />);
+    expect(par('invitation-seance')).not.toBeNull();
+    expect(par('invitation-changer-seance')).toBeNull();
+  });
+  test('V539 — le clic ouvre le calendrier ; choisir une date PATCH l\'occurrence et met la carte à jour', async () => {
+    axios.get.mockResolvedValue({ data: PUB_MULTI });
+    axios.patch.mockResolvedValue({ data: Object.assign({}, PUB_MULTI, { occurrence: OCC2, version: 4 }) });
+    await monter(<InvitationDuo token="TOK123" />);
+    await act(async () => { par('invitation-changer-seance').click(); });
+    expect(document.body.innerHTML).toContain('sessions-modal');
+    // le calendrier n'appelle PAS l'agenda : la liste lui est fournie
+    expect(axios.get.mock.calls.filter((c) => String(c[0]).includes('/sessions/agenda')).length).toBe(0);
+    // Le calendrier ouvre sur le mois courant (septembre) : on passe au mois
+    // suivant pour atteindre la séance du 4 octobre.
+    await act(async () => { document.querySelector('[data-testid="sessions-mois-suivant"]').click(); });
+    const jour = document.querySelector('[data-testid^="sessions-jour-"]');
+    await act(async () => { jour.click(); });
+    const seance = document.querySelector('[data-testid^="sessions-occurrence-"]');
+    await act(async () => { seance.click(); });
+    await act(async () => {
+      document.querySelector('[data-testid="sessions-reserver"]').click();
+      await new Promise((r) => setTimeout(r, 140));      // la modale diffère `onReserve` de 60 ms
+    });
+    const appel = axios.patch.mock.calls[0];
+    expect(String(appel[0])).toMatch(/\/pass\/TOK123\/occurrence$/);
+    expect(appel[1]).toEqual({ occurrence: OCC2, version: 3 });
+    expect(par('invitation-seance').textContent).toContain('Dimanche 4 oct.');
+    expect(par('invitation-seance-ok').textContent).toContain('Séance mise à jour');
+  });
+  test('V539 — fermer le calendrier sans choisir ne change rien', async () => {
+    axios.get.mockResolvedValue({ data: PUB_MULTI });
+    await monter(<InvitationDuo token="TOK123" />);
+    await act(async () => { par('invitation-changer-seance').click(); });
+    await act(async () => { document.querySelector('[data-testid="sessions-fermer"]').click(); });
+    expect(axios.patch).not.toHaveBeenCalled();
+    expect(par('invitation-seance').textContent).toContain('Dimanche 27 sept.');
+  });
+  test('V539 — refus serveur : message clair, la séance affichée ne bouge pas', async () => {
+    axios.get.mockResolvedValue({ data: PUB_MULTI });
+    axios.patch.mockRejectedValue({ response: { status: 400, data: { detail: "Cette séance n'est plus proposée : choisis-en une autre." }, headers: { 'x-refus-raison': 'occurrence_inconnue' } } });
+    await monter(<InvitationDuo token="TOK123" />);
+    await act(async () => { par('invitation-changer-seance').click(); });
+    const jour = Array.from(document.querySelectorAll('[data-testid^="sessions-jour-"]')).pop();
+    await act(async () => { jour.click(); });
+    await act(async () => { document.querySelector('[data-testid^="sessions-occurrence-"]').click(); });
+    await act(async () => {
+      document.querySelector('[data-testid="sessions-reserver"]').click();
+      await new Promise((r) => setTimeout(r, 140));      // la modale diffère `onReserve` de 60 ms
+    });
+    expect(par('invitation-seance-erreur').textContent).toContain("n'est plus proposée");
+    expect(par('invitation-seance').textContent).toContain('Dimanche 27 sept.');
+  });
+
   test('409 X-Refus-Raison → messages FR précis ; 410 ; 404', async () => {
     expect(messageRefus('free_trial_already_used')).toBe('Tu as déjà profité de l\'essai gratuit Afroboost');
     expect(messageRefus('free_trial_already_granted')).toBe('Tu as déjà profité de l\'essai gratuit Afroboost');

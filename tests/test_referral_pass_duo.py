@@ -1662,6 +1662,112 @@ def partie_v538():
              'http-equiv="refresh" content="0;url={e_cible}"' in _bloc and 'href="{e_cible}"' in _bloc)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# V539 — L'AMI CHOISIT SA SÉANCE (règles pures + structure des routes)
+# ═══════════════════════════════════════════════════════════════════════════
+def partie_v539():
+    import api.routes.referral_engine as _M
+    from datetime import datetime as _dt, timezone as _tz
+    SRC_R = io.open(os.path.join(RACINE, "api", "routes", "referral_routes.py"), encoding="utf-8").read()
+    SRC_INV = io.open(os.path.join(RACINE, "frontend", "src", "components",
+                                   "parrainage", "InvitationDuo.js"), encoding="utf-8").read()
+    SRC_MODAL = io.open(os.path.join(RACINE, "frontend", "src", "components",
+                                     "SessionsModal.js"), encoding="utf-8").read()
+    SRC_UTIL = io.open(os.path.join(RACINE, "frontend", "src", "utils", "parrainage.js"), encoding="utf-8").read()
+    _now = _dt(2026, 9, 22, 12, 0, tzinfo=_tz.utc)
+    A, B = "2026-09-27T18:30:00", "2026-10-04T18:30:00"
+
+    # ── La règle : la date vient de la liste du serveur, et n'est pas passée ──
+    verifier("V539-1. une occurrence de la liste du serveur, à venir -> acceptée",
+             _M.occurrence_choisissable(B, [A, B], _now) == (B, ""))
+    verifier("V539-2. une date hors de la liste -> refusée (jamais une date tapée à la main)",
+             _M.occurrence_choisissable("2026-12-24T20:00:00", [A, B], _now) == ("", _M.REFUS_OCCURRENCE_INCONNUE))
+    verifier("V539-3. une occurrence déjà passée -> refusée",
+             _M.occurrence_choisissable("2026-09-01T18:30:00", ["2026-09-01T18:30:00"], _now)
+             == ("", _M.REFUS_OCCURRENCE_PASSEE))
+    verifier("V539-4. vide, None, liste vide -> refus, jamais une exception",
+             _M.occurrence_choisissable("", [A], _now)[1] == _M.REFUS_OCCURRENCE_INCONNUE
+             and _M.occurrence_choisissable(None, [A], _now)[1] == _M.REFUS_OCCURRENCE_INCONNUE
+             and _M.occurrence_choisissable(A, [], _now)[1] == _M.REFUS_OCCURRENCE_INCONNUE)
+
+    # ── L'historique : même vocabulaire que celui des offres ─────────────────
+    _e = _M.entree_historique_seance(A, B, "invitee", "2026-09-22T12:00:00Z")
+    verifier("V539-5. l'historique dit d'où vers où, par qui et quand",
+             _e == {"from_occurrence": A, "to_occurrence": B,
+                    "changed_at": "2026-09-22T12:00:00Z", "changed_by": "invitee"}, _e)
+    verifier("V539-6. un auteur inconnu est refusé (même garde que l'historique des offres)",
+             _refuse_valueerror(lambda: _M.entree_historique_seance(A, B, "pirate", "x")))
+    verifier("V539-7. la ligne lisible : « Séance modifiée : … -> … »",
+             _M.ligne_historique_seance(_e) == "Séance modifiée : dimanche 27 septembre à 18:30 -> dimanche 4 octobre à 18:30",
+             _M.ligne_historique_seance(_e))
+
+    # ── La route : deux portes, avant inscription seulement ─────────────────
+    _bloc = SRC_R[SRC_R.index("async def _changer_seance("):SRC_R.index("# ═══════════════════════════════════════════════════════════════════════════\n# Routes — publiques")]
+    verifier("V539-8. la route existe, en PATCH, et rend le DTO public à l'ami",
+             '@router.patch("/pass/{identifiant}/occurrence")' in SRC_R
+             and "E.dto_public(_p, await _statut_reel(_p, _now), _now," in SRC_R)
+    verifier("V539-9. l'ami ne peut changer la séance qu'AVANT son inscription (409 sinon)",
+             'if _p.get("invitee") or _s not in E.ETATS_OUVERTS_AU_JOIN:' in _bloc
+             and "des billets ont déjà été émis" in _bloc)
+    verifier("V539-10. la concurrence est gardée par la `version` (même verrou que l'offre)",
+             "if int(version) != E.version_pass(pass_doc):" in _bloc
+             and "_filtre_version(pass_doc[\"id\"], version)" in _bloc
+             and "REFUS_CONFLIT_VERSION" in _bloc)
+    verifier("V539-11. l'occurrence est relue dans la liste DU SERVEUR pour ce cours",
+             "_dispos = _occurrences(_course)" in _bloc
+             and "E.occurrence_choisissable(occurrence, _dispos, _maintenant())" in _bloc)
+    verifier("V539-12. choisir la séance déjà retenue n'écrit rien (idempotent)",
+             'if _cible == str(pass_doc.get("occurrence") or ""):' in _bloc and "return pass_doc" in _bloc)
+    verifier("V539-13. le pass change de DATE, pas de cours, et son expiration suit",
+             '"occurrence": _cible, "expires_at": _cible' in _bloc
+             and "course_id" not in _bloc.split("find_one_and_update")[1][:400])
+    verifier("V539-14. un cours archivé ou masqué -> 410, jamais un choix impossible",
+             'if not _course or _course.get("archived") is True or _course.get("visible") is False:' in _bloc)
+    verifier("V539-15. l'historique et l'événement sont écrits dans la même transaction logique",
+             '"occurrence_history": _entree' in _bloc and "E.EVENEMENT_SEANCE" in _bloc)
+    verifier("V539-16. la page publique rend les séances proposables (liste serveur)",
+             '_dto["occurrences"] = await _occurrences_du_pass(_p)' in SRC_R
+             and "async def _occurrences_du_pass(pass_doc)" in SRC_R)
+    verifier("V539-17. cours indisponible -> liste vide (l'écran montre la séance actuelle, sans promesse)",
+             'return []' in SRC_R[SRC_R.index("async def _occurrences_du_pass"):SRC_R.index("async def _pass_par_token")])
+
+    # ── Le navigateur : réutilisation, pas de second calendrier ─────────────
+    verifier("V539-18. c'est LE calendrier de la page d'accueil qui est réutilisé (aucun composant neuf)",
+             "import SessionsModal from '../SessionsModal';" in SRC_INV
+             and not os.path.exists(os.path.join(RACINE, "frontend", "src", "components", "parrainage", "CalendrierDuo.js")))
+    verifier("V539-19. il est alimenté par la liste du serveur, sans appeler l'agenda du site",
+             "occurrencesFournies={seancesProposables}" in SRC_INV
+             and "if (Array.isArray(occurrencesFournies)) {" in SRC_MODAL
+             and "setOccurrences(occurrencesFournies);" in SRC_MODAL)
+    verifier("V539-20. la page d'accueil n'est PAS modifiée : sans la prop, l'agenda reste la source",
+             "const res = await axios.get(`${API}/sessions/agenda`);" in SRC_MODAL
+             and "occurrencesFournies = null" in SRC_MODAL
+             and "libelleAction = 'Réserver'" in SRC_MODAL)
+    verifier("V539-21. la carte dit « Séance choisie » et propose « Choisir une autre séance »",
+             ">Séance choisie<" in SRC_INV and "Choisir une autre séance" in SRC_INV
+             and 'data-testid="invitation-changer-seance"' in SRC_INV
+             and "Cette date ne te convient pas ?" in SRC_INV)
+    verifier("V539-22. une seule séance proposée -> aucun bouton (pas de faux choix)",
+             "seancesProposables.length > 1" in SRC_INV)
+    verifier("V539-23. après inscription, la carte reste en lecture (aucun changement possible)",
+             "!dejaRejoint && seancesProposables.length > 1" in SRC_INV)
+    verifier("V539-24. le client envoie l'occurrence ET la version, sur la route dédiée",
+             "export function changerSeance({ passId, token, occurrence, version, headers })" in SRC_UTIL
+             and "/occurrence`," in SRC_UTIL and "version: Number(version) || 1" in SRC_UTIL)
+    verifier("V539-25. les dates illisibles sont écartées avant d'atteindre le calendrier",
+             "if (!d || Number.isNaN(d.getTime())) return null;" in SRC_UTIL)
+
+
+def _refuse_valueerror(f):
+    try:
+        f()
+        return False
+    except ValueError:
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def main():
     try:
         asyncio.set_event_loop(asyncio.new_event_loop())
@@ -1669,6 +1775,7 @@ def main():
         pass
     asyncio.get_event_loop().run_until_complete(principal())
     partie_v538()
+    partie_v539()
     ok = 0
     print("=" * 78)
     print("V534 / V534b — PASS DUO : %d vérifications" % len(RESULTATS))

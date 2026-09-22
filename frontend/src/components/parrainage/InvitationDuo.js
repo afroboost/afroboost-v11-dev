@@ -33,7 +33,9 @@ import {
   API_PARRAINAGE, enteteParrain, aUneIdentiteParrain, libelleJour, libelleHeure,
   messageRefus, messageErreurInvitation,
   offreDuPass, offresDe, changerOffre, lireRefus, messageRefusOffre, TEXTE_OFFRE_CONFLIT, // V534b
+  changerSeance, occurrencesPourCalendrier, // V539
 } from '../../utils/parrainage';
+import SessionsModal from '../SessionsModal'; // V539 — le calendrier de la page d'accueil, réutilisé
 import './parrainage.css';
 
 /** Le message pour un GET /pass/{token} qui n'a pas abouti (ou un pass fermé). */
@@ -57,7 +59,7 @@ function Cadre({ children }) {
   );
 }
 
-function CarteSeance({ course, occurrence }) {
+function CarteSeance({ course, occurrence, onChanger, occupe, message, erreur }) {
   const c = course || {};
   const jour = libelleJour(occurrence);
   const heure = libelleHeure(occurrence);
@@ -69,7 +71,10 @@ function CarteSeance({ course, occurrence }) {
           <small>Cardio-danse afrobeat · Avec casques · Accessible à tous</small>
         </div>
       </div>
-      <h3 className="cp-h3" style={{ marginTop: 16 }}>
+      {/* V539 : la date n'est plus une fatalité. On dit ce qui est retenu, et on
+          ouvre le même calendrier que la page d'accueil pour en choisir une autre. */}
+      <div className="cp-eyebrow" style={{ marginTop: 16 }}>Séance choisie</div>
+      <h3 className="cp-h3" style={{ marginTop: 4 }}>
         <SvgIcon name="calendar" size={20} />
         {jour}{heure ? ` · ${heure}` : (c.time ? ` · ${c.time}` : '')}
       </h3>
@@ -83,6 +88,19 @@ function CarteSeance({ course, occurrence }) {
           ) : null}
         </p>
       ) : null}
+      {onChanger ? (
+        <>
+          <button type="button" className="cp-b cp-b--secondary" onClick={onChanger} disabled={occupe}
+                  data-testid="invitation-changer-seance" style={{ marginTop: 12 }}>
+            <SvgIcon name="calendar" size={20} /> {occupe ? 'Un instant…' : 'Choisir une autre séance'}
+          </button>
+          <p className="cp-mini" style={{ marginTop: 8 }}>
+            Cette date ne te convient pas ? Choisis une autre séance disponible.
+          </p>
+        </>
+      ) : null}
+      {message ? <p className="cp-ok-text" role="status" data-testid="invitation-seance-ok">{message}</p> : null}
+      {erreur ? <p className="cp-error" role="alert" data-testid="invitation-seance-erreur">{erreur}</p> : null}
     </div>
   );
 }
@@ -112,6 +130,11 @@ export default function InvitationDuo({ token }) {
   const [sheetOffre, setSheetOffre] = useState(false);
   const [offreOccupe, setOffreOccupe] = useState(false);
   const [offreMessage, setOffreMessage] = useState('');
+  // V539 : le calendrier de séances, et le retour du changement.
+  const [calendrier, setCalendrier] = useState(false);
+  const [seanceOccupe, setSeanceOccupe] = useState(false);
+  const [seanceMessage, setSeanceMessage] = useState('');
+  const [seanceErreur, setSeanceErreur] = useState('');
   const [offreErreur, setOffreErreur] = useState('');
 
   useEffect(() => {
@@ -179,6 +202,37 @@ export default function InvitationDuo({ token }) {
         return undefined;
       })
       .finally(() => setOffreOccupe(false));
+  };
+
+  // V539 — LE CHOIX DE SÉANCE DE L'AMI.
+  // Le calendrier ne propose QUE les occurrences rendues par le serveur pour ce
+  // cours (`pass.occurrences`) : une date choisie ailleurs serait refusée, et
+  // afficher une date qu'on refusera est pire que ne pas la montrer. En cas de
+  // conflit de version, on relit le pass, comme pour le changement d'offre.
+  const choisirSeance = (iso) => {
+    if (!pass || seanceOccupe || !iso) return;
+    setSeanceOccupe(true); setSeanceErreur(''); setSeanceMessage('');
+    changerSeance({ token, occurrence: iso, version: pass.version })
+      .then((r) => {
+        const d = (r && r.data) || {};
+        setPass((prev) => Object.assign({}, prev || {}, d.occurrence ? d : {
+          occurrence: iso, version: Number(prev && prev.version) + 1 || 1,
+        }));
+        setCalendrier(false);
+        setSeanceMessage('Séance mise à jour.');
+      })
+      .catch((e) => {
+        const refus = lireRefus(e);
+        if (refus.status === 409 && refus.raison === 'conflit_version') {
+          return axios.get(`${API_PARRAINAGE}/pass/${encodeURIComponent(token)}`, { timeout: 10000 })
+            .then((r) => { const d = (r && r.data) || {}; setPass((prev) => Object.assign({}, prev || {}, d)); })
+            .catch(() => { /* on garde l'état connu */ })
+            .then(() => { setCalendrier(false); setSeanceMessage(TEXTE_OFFRE_CONFLIT); });
+        }
+        setSeanceErreur(refus.detail || "Cette séance n'est plus disponible : choisis-en une autre.");
+        return undefined;
+      })
+      .finally(() => setSeanceOccupe(false));
   };
 
   const champ = (k) => (e) => {
@@ -276,6 +330,9 @@ export default function InvitationDuo({ token }) {
   // V534b: l'offre du pass et son catalogue. Sans `offer` (serveur antérieur) : formulaire direct, comme avant.
   const offre = offreDuPass(pass);
   const offres = offresDe(pass);
+  // V539 : les séances que le SERVEUR propose pour ce cours, au format du
+  // calendrier. Une seule (ou aucune) : on n'affiche pas de faux choix.
+  const seancesProposables = occurrencesPourCalendrier(pass.occurrences, pass.course);
   const plusieursOffres = offres.length > 1;
   const formulaireVisible = !offre || offreOk || dejaRejoint;
   return (
@@ -290,7 +347,27 @@ export default function InvitationDuo({ token }) {
         </div>
       ) : null}
 
-      <CarteSeance course={pass.course} occurrence={pass.occurrence} />
+      {/* V539 : avant l'inscription, l'ami peut changer la date. Après, la carte
+          reste en lecture (les billets sont émis) — voir l'écran « rejoint ». */}
+      <CarteSeance
+        course={pass.course}
+        occurrence={pass.occurrence}
+        onChanger={!dejaRejoint && seancesProposables.length > 1 ? () => { setSeanceMessage(''); setSeanceErreur(''); setCalendrier(true); } : null}
+        occupe={seanceOccupe}
+        message={seanceMessage}
+        erreur={seanceErreur}
+      />
+
+      {calendrier ? (
+        <SessionsModal
+          open
+          onClose={() => setCalendrier(false)}
+          occurrencesFournies={seancesProposables}
+          libelleAction="Choisir cette séance"
+          noteAction="Ton invitation sera mise à jour avec cette date."
+          onReserve={(occ) => choisirSeance(occ && occ.iso)}
+        />
+      ) : null}
 
       {offre ? (
         <EncartOffre titre="Offre" offre={offre} testid="invitation-offre"

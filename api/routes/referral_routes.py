@@ -1332,9 +1332,110 @@ async def referral_changer_offre(identifiant: str, request: Request):
     return await _dto(_p)
 
 
+async def _changer_seance(pass_doc, occurrence, version, changed_by) -> dict:
+    """V539 — la séance du pass, changée AVANT l'inscription de l'ami.
+
+    MÊME ARMATURE QUE LE CHANGEMENT D'OFFRE, volontairement : version pour la
+    concurrence, occurrence relue dans la liste DU SERVEUR, une seule écriture
+    gardée, historique et événement. Ce qui change vraiment : la date du pass,
+    et sa date d'expiration — un pass ne survit pas à sa séance.
+
+    LE COURS NE CHANGE PAS. L'avantage, l'offre et les règles sont attachés à
+    ce cours-là ; déplacer la date d'une séance est une commodité, changer de
+    cours serait un autre pass.
+    """
+    _resas = await _reservations_du_pass(pass_doc)
+    _s = await _statut_reel(pass_doc, None, _resas)
+    if pass_doc.get("invitee") or _s not in E.ETATS_OUVERTS_AU_JOIN:
+        raise _refus(409, E.REFUS_PASS_NON_MODIFIABLE,
+                     "La séance ne peut plus être changée : des billets ont déjà été émis.")
+    if int(version) != E.version_pass(pass_doc):
+        raise _refus(409, E.REFUS_CONFLIT_VERSION,
+                     "Ce pass a été modifié entre-temps : recharge la page et réessaie.")
+    _course = await db["courses"].find_one({"id": pass_doc.get("course_id")}, {"_id": 0})
+    if not _course or _course.get("archived") is True or _course.get("visible") is False:
+        raise HTTPException(status_code=410, detail="Ce cours n'est plus disponible.")
+    _dispos = _occurrences(_course)
+    _cible, _motif = E.occurrence_choisissable(occurrence, _dispos, _maintenant())
+    if not _cible:
+        raise _refus(400, _motif, "Cette séance n'est plus proposée : choisis-en une autre.")
+    if _cible == str(pass_doc.get("occurrence") or ""):
+        return pass_doc                                  # idempotent, aucune écriture
+
+    _entree = E.entree_historique_seance(pass_doc.get("occurrence"), _cible, changed_by, _iso())
+    from pymongo import ReturnDocument
+    _apres = await db[COLL_PASSES].find_one_and_update(
+        _filtre_version(pass_doc["id"], version),
+        {"$set": {"occurrence": _cible, "expires_at": _cible, "updated_at": _iso()},
+         "$push": {"occurrence_history": _entree,
+                   "events": {"at": _iso(), "type": E.EVENEMENT_SEANCE, "detail": dict(_entree)}},
+         "$inc": {"version": 1}},
+        projection={"_id": 0}, return_document=ReturnDocument.AFTER)
+    if not _apres:
+        raise _refus(409, E.REFUS_CONFLIT_VERSION,
+                     "Ce pass a été modifié entre-temps : recharge la page et réessaie.")
+    logger.info("%s seance du pass %s changee (%s -> %s, %s)", PREFIXE, pass_doc["id"][:8],
+                str(_entree["from_occurrence"])[:16], str(_entree["to_occurrence"])[:16], changed_by)
+    return _apres
+
+
+@router.patch("/pass/{identifiant}/occurrence")
+async def referral_changer_seance(identifiant: str, request: Request):
+    """V539 — `{occurrence, version}` -> 200 PassDTO (parrain) ou PassPublicDTO.
+
+    DEUX PORTES, comme pour l'offre : le PARRAIN (jeton d'espace) sur son
+    propre pass, l'AMI (public, débit IP) sur le share_token, et lui seulement
+    AVANT son inscription. L'occurrence doit figurer dans la liste rendue par
+    le serveur pour ce cours : une date tapée à la main est refusée."""
+    await _exiger_actif()
+    _b = await _corps(request)
+    if _porte_identite_abonne(request):
+        _parrain = await _parrain_depuis_requete(request)
+        _p = await db[COLL_PASSES].find_one(
+            {"$or": [{"id": str(identifiant or "").strip()}, {"share_token": str(identifiant or "").strip()}]},
+            {"_id": 0})
+        if not _p or E.normaliser_email((_p.get("sponsor") or {}).get("email_norm")) != _parrain["email"]:
+            raise HTTPException(status_code=404, detail="Pass introuvable")
+        _qui, _public = "sponsor", False
+    else:
+        _exiger_debit(request, DEBIT_PREFIXE_OFFRE)
+        _p = await _pass_par_token(identifiant)
+        _s = await _statut_reel(_p)
+        if _p.get("invitee") or _s not in E.ETATS_OUVERTS_AU_JOIN:
+            if _s in (E.EXPIRED, E.CANCELLED):
+                raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
+            raise _refus(409, E.REFUS_PASS_DEJA_REJOINT,
+                         "Tu es déjà inscrit : seul le parrain peut encore changer la séance.")
+        _qui, _public = "invitee", True
+    _p = await _changer_seance(_p, _b.get("occurrence"), _version_du_corps(_b), _qui)
+    if _public:
+        _now = _maintenant()
+        _rep = E.dto_public(_p, await _statut_reel(_p, _now), _now,
+                            await _catalogue_par_cours(_p.get("course_id"), {}))
+        # La même forme que le GET : l'écran garde sa liste de séances après le
+        # changement, sans second aller-retour.
+        _rep["occurrences"] = await _occurrences_du_pass(_p)
+        return _rep
+    return await _dto(_p)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Routes — publiques (l'ami)
 # ═══════════════════════════════════════════════════════════════════════════
+async def _occurrences_du_pass(pass_doc) -> list:
+    """V539 — les prochaines occurrences du cours du pass (la même liste que
+    celle proposée au parrain à la création). Vide si le cours n'est plus
+    disponible : l'écran affiche alors la séance actuelle, sans promesse."""
+    try:
+        _c = await db["courses"].find_one({"id": (pass_doc or {}).get("course_id")}, {"_id": 0})
+        if not _c or _c.get("archived") is True or _c.get("visible") is False:
+            return []
+        return _occurrences(_c)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s occurrences indisponibles (%s)", PREFIXE, type(_err).__name__)
+        return []
+
+
 async def _pass_par_token(share_token: str):
     _t = str(share_token or "").strip()
     if not _t or len(_t) > 64:
@@ -1361,7 +1462,11 @@ async def referral_pass_public(share_token: str):
         _p.update(_maj)
         # V534b : la `version` rendue est celle d'APRÈS l'écriture (relue).
         _p = await db[COLL_PASSES].find_one({"id": _p["id"]}, {"_id": 0}) or _p
-    return E.dto_public(_p, _s, _now, await _catalogue_par_cours(_p.get("course_id"), {}))
+    # V539 : les autres séances du MÊME cours, pour que l'ami puisse en choisir
+    # une autre sans quitter la page. Liste du serveur, jamais une date libre.
+    _dto = E.dto_public(_p, _s, _now, await _catalogue_par_cours(_p.get("course_id"), {}))
+    _dto["occurrences"] = await _occurrences_du_pass(_p)
+    return _dto
 
 
 @router.post("/pass/{share_token}/join")

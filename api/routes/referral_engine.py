@@ -660,6 +660,63 @@ def tickets_du_pass(pass_doc, reservations, frontend_url) -> list:
     return _sortie
 
 
+# ─── V539 : L'AMI CHOISIT SA SÉANCE ─────────────────────────────────────────
+#
+# CE QUI COINÇAIT. Le parrain choisissait une occurrence à la création, et
+# l'ami n'avait qu'un choix : cette date, ou rien. Or c'est LUI qu'on invite :
+# s'il ne peut pas venir ce mercredi-là, l'invitation est morte.
+#
+# CE QUE ÇA NE CHANGE PAS. Le cours reste celui du pass (l'avantage et les
+# règles y sont attachés) : on change la DATE, pas la séance d'un autre coach
+# ni une offre. Et seulement AVANT l'inscription de l'ami : une fois les
+# billets émis, deux réservations existent, et les déplacer est un autre lot.
+EVENEMENT_SEANCE = "occurrence_changed"
+REFUS_OCCURRENCE_INCONNUE = "occurrence_inconnue"
+REFUS_OCCURRENCE_PASSEE = "occurrence_passee"
+
+
+def occurrence_choisissable(occurrence, occurrences_autorisees, maintenant=None) -> tuple:
+    """(occurrence normalisée, "") ou ("", motif). L'occurrence doit venir de la
+    LISTE DU SERVEUR — jamais d'une date tapée par le navigateur — et ne pas
+    être déjà passée."""
+    _cible = str(occurrence or "").strip()
+    if not _cible:
+        return "", REFUS_OCCURRENCE_INCONNUE
+    _liste = [str(_o or "").strip() for _o in (occurrences_autorisees or []) if str(_o or "").strip()]
+    if _cible not in _liste:
+        return "", REFUS_OCCURRENCE_INCONNUE
+    # `est_passee(x, None)` vaut « passée » (fail-closed voulu ailleurs) : ici,
+    # un appelant qui ne précise pas l'instant veut dire « maintenant », pas
+    # « refuse tout ». Les bancs, eux, passent un instant fixe.
+    _now = maintenant if maintenant is not None else datetime.now(timezone.utc)
+    if est_passee(_cible, _now):
+        return "", REFUS_OCCURRENCE_PASSEE
+    return _cible, ""
+
+
+def entree_historique_seance(avant, apres, changed_by, quand) -> dict:
+    """La ligne d'historique d'un changement de séance — même forme que celle
+    des offres, pour que l'écran n'ait qu'une façon de lire un changement."""
+    _qui = str(changed_by or "").strip().lower()
+    if _qui not in CHANGE_PAR:
+        raise ValueError("changed_by inconnu: %r" % (changed_by,))
+    return {
+        "from_occurrence": str(avant or ""),
+        "to_occurrence": str(apres or ""),
+        "changed_at": str(quand or ""),
+        # MÊME liste d'auteurs autorisés que l'historique des offres : un seul
+        # vocabulaire pour « qui a changé quoi ».
+        "changed_by": _qui,
+    }
+
+
+def ligne_historique_seance(entree) -> str:
+    """« Séance modifiée : mercredi 23 septembre à 18:45 -> dimanche 27… »"""
+    _e = entree or {}
+    return "Séance modifiée : %s -> %s" % (occurrence_lisible(_e.get("from_occurrence")),
+                                           occurrence_lisible(_e.get("to_occurrence")))
+
+
 def version_pass(pass_doc) -> int:
     """`version` du pass (V534b) — un pass sans champ vaut 1."""
     try:
