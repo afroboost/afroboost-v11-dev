@@ -283,6 +283,94 @@ def invite_url(frontend_url, share_token) -> str:
                           str(share_token or ""))
 
 
+# ─── V538 : LE LIEN QU'ON PARTAGE N'EST PAS LA PAGE QU'ON OUVRE ──────────────
+#
+# CE QUI NE MARCHAIT PAS. Le lien partagé pointait sur `/duo/<token>`, servi par
+# l'application React : le robot de WhatsApp, lui, ne sait pas exécuter du
+# JavaScript. Il lisait donc les balises de `index.html` — la description
+# générale du site — et affichait un aperçu anonyme, sans nom, sans séance.
+# Une invitation personnelle ressemblait à une publicité.
+#
+# LA CORRECTION. On partage une page SERVEUR qui porte les vraies balises
+# Open Graph (nom de l'invitant, séance, image) et qui renvoie aussitôt un vrai
+# navigateur vers `/duo/<token>`. Exactement le mécanisme déjà éprouvé pour le
+# partage d'une offre (`/api/share/offer/<id>`, V278/V535) — repris, pas réinventé.
+def partage_url(frontend_url, share_token) -> str:
+    """L'URL à partager : la page d'aperçu, qui redirige vers l'invitation."""
+    return "%s/api/share/duo/%s" % (str(frontend_url or "https://afroboost.com").rstrip("/"),
+                                    str(share_token or ""))
+
+
+def og_titre_invitation(prenom_parrain) -> str:
+    """« Bassi t'invite à Afroboost » — le prénom, jamais le nom complet.
+    Sans prénom exploitable : une formule qui reste vraie."""
+    _p = str(prenom_parrain or "").strip()
+    return ("%s t'invite à Afroboost" % _p) if _p else "Un membre Afroboost t'invite"
+
+
+def og_description_invitation(prenom_parrain, cours, occurrence, offre_nom="") -> str:
+    """La phrase d'aperçu : qui, quoi, quand, et ce que l'ami reçoit."""
+    _p = str(prenom_parrain or "").strip()
+    _c = str(cours or "").strip()
+    _quand = occurrence_lisible(occurrence)
+    _qui = ("Rejoins %s" % _p) if _p else "Rejoins-nous"
+    _ou = (" pour %s" % _c) if _c else ""
+    _date = (" le %s" % _quand) if _quand and _quand != "prochainement" else ""
+    _cadeau = str(offre_nom or "").strip()
+    _fin = ("Ton Pass Duo t'offre : %s." % _cadeau) if _cadeau else "Ton premier cours est offert grâce à son Pass Duo."
+    return ("%s%s%s. %s" % (_qui, _ou, _date, _fin)).strip()
+
+
+def media_apercu(offre=None, cours=None, concept=None) -> str:
+    """V538 — L'IMAGE DE L'APERÇU, PAR ORDRE DE PRIORITÉ ET SANS INVENTER.
+
+    1. la miniature (poster) du média de l'offre — c'est elle que le coach a
+       choisie, et c'est la seule forme qu'un aperçu sait afficher : un réseau
+       social ne lit pas une vidéo, il lit une image ;
+    2. la première image de l'offre ;
+    3. l'image de la séance, si la séance en porte une (aujourd'hui aucune n'en
+       a : on lit le champ quand même, pour le jour où) ;
+    4. l'image d'accueil du concept (la bannière du coach) ;
+    5. rien — l'appelant posera le visuel Afroboost par défaut.
+
+    Une URL de VIDÉO n'est jamais rendue : elle ferait un aperçu vide.
+    """
+    def _img(valeur):
+        _v = str(valeur or "").strip()
+        if not _v:
+            return ""
+        _bas = _v.lower().split("?")[0]
+        if _bas.endswith((".mp4", ".mov", ".webm", ".m4v", ".avi")) or "/video/" in _bas or "video_" in _bas:
+            return ""
+        return _v
+
+    _o = offre or {}
+    _c = cours or {}
+    _k = concept or {}
+    for _cand in (_o.get("thumbnail"), _o.get("poster"), _o.get("video_poster")):
+        _r = _img(_cand)
+        if _r:
+            return _r
+    _images = _o.get("images")
+    if isinstance(_images, list):
+        for _i in _images:
+            _r = _img(_i)
+            if _r:
+                return _r
+    _r = _img(_o.get("videoUrl"))      # souvent une IMAGE en base (mesuré : 8 offres sur 11)
+    if _r:
+        return _r
+    for _cand in (_c.get("image"), _c.get("thumbnail"), _c.get("cover")):
+        _r = _img(_cand)
+        if _r:
+            return _r
+    for _cand in (_k.get("heroImageUrl"), _k.get("logoUrl")):
+        _r = _img(_cand)
+        if _r:
+            return _r
+    return ""
+
+
 def qr_value(frontend_url, reservation_code) -> str:
     """Le contenu du QR d'un billet — LE FORMAT QUE LE SCANNER ACCEPTE DÉJÀ.
 
@@ -607,8 +695,13 @@ def dto_pass(pass_doc, statut, tickets, frontend_url, deja_existant=None, offers
         "occurrence": _p.get("occurrence"),
         "share_token": _p.get("share_token"),
         "invite_url": _url,
+        # V538 : CE QU'ON PARTAGE. `invite_url` reste la page que l'ami ouvre ;
+        # `share_url` est la page d'aperçu qui y mène — c'est elle que WhatsApp,
+        # le QR, « Copier » et « Partager » doivent porter, sinon l'aperçu est nu.
+        "share_url": partage_url(frontend_url, _p.get("share_token")),
         "whatsapp_text": texte_whatsapp(prenom(_sp.get("name")), dto_course(_p)["name"],
-                                        _p.get("occurrence"), _url),
+                                        _p.get("occurrence"),
+                                        partage_url(frontend_url, _p.get("share_token"))),
         "invitee": {"first_name": prenom(_inv.get("name"))} if _inv else None,
         "tickets": list(tickets or []),
         "blocked_reason": _p.get("blocked_reason"),
@@ -685,12 +778,25 @@ def stats_parrain(passes, invitations, statuts) -> dict:
     """`{invited, opened, joined, unlocked, used}` pour l'écran du parrain.
     `statuts` : dict pass_id -> statut dérivé (déjà calculé par l'appelant)."""
     _st = statuts or {}
+    # V538 — « MES RÉSULTATS » COMPTE CE QUI EST ENCORE VRAI.
+    #
+    # Le propriétaire l'a constaté en testant : il annule un Pass, et le
+    # compteur « amis invités » reste gonflé. C'est que l'invitation existait
+    # toujours — et elle existe toujours, c'est bien : l'historique ne se
+    # réécrit pas. Mais un RÉSULTAT décrit ce qui est en cours, pas ce qui a
+    # été tenté puis annulé. On écarte donc des compteurs les passes annulés et
+    # expirés ; leurs invitations restent en base, et l'historique les montre.
+    _vivants = [p for p in (passes or []) if isinstance(p, dict)
+                and _st.get(p.get("id"), p.get("status")) not in (CANCELLED, EXPIRED)]
+    _ids_vivants = {p.get("id") for p in _vivants}
+    _inv_vivantes = [i for i in (invitations or []) if isinstance(i, dict)
+                     and (i.get("pass_id") in _ids_vivants or not i.get("pass_id"))]
     return {
-        "invited": len(invitations or []),
-        "opened": sum(1 for p in (passes or []) if (p or {}).get("opened_at")),
-        "joined": sum(1 for p in (passes or []) if (p or {}).get("invitee")),
-        "unlocked": sum(1 for p in (passes or []) if _st.get((p or {}).get("id")) in (UNLOCKED, USED)),
-        "used": sum(1 for p in (passes or []) if _st.get((p or {}).get("id")) == USED),
+        "invited": len(_inv_vivantes),
+        "opened": sum(1 for p in _vivants if p.get("opened_at")),
+        "joined": sum(1 for p in _vivants if p.get("invitee")),
+        "unlocked": sum(1 for p in _vivants if _st.get(p.get("id")) in (UNLOCKED, USED)),
+        "used": sum(1 for p in _vivants if _st.get(p.get("id")) == USED),
     }
 
 

@@ -151,7 +151,10 @@ export default function CentreParrainage() {
   // Le pass qui porte le lien d'invitation : celui qu'on affiche s'il est
   // ouvert, sinon le pass courant (le plus récent des ouverts).
   const passLien = passAffiche && STATUTS_OUVERTS.indexOf(passAffiche.status) >= 0 ? passAffiche : passCourant(passes);
-  const lienInvite = passLien ? passLien.invite_url : '';
+  // V538 : ce qu'on PARTAGE est la page d'apercu (`share_url`), qui redirige vers
+  // l'invitation — c'est elle qui porte le prenom, la seance et l'image dans
+  // WhatsApp. Repli sur `invite_url` si le serveur est anterieur a V538.
+  const lienInvite = passLien ? (passLien.share_url || passLien.invite_url) : '';
   const prenom = (me && me.sponsor && me.sponsor.first_name) || '';
   const initiale = prenom ? prenom.charAt(0).toUpperCase() : '';
 
@@ -167,6 +170,17 @@ export default function CentreParrainage() {
     });
     setPassAfficheId(dto.id);
   }, []);
+
+  /** V538 — relit `/me` et repose les compteurs. Silencieux : un compteur pas
+   *  rafraichi ne doit jamais casser l'ecran. */
+  const rafraichirResultats = useCallback(() => (
+    axios.get(`${API_PARRAINAGE}/me`, { headers: enteteParrain(), timeout: 10000 })
+      .then((r) => {
+        const d = (r && r.data) || {};
+        if (d && d.stats) setMe((prev) => Object.assign({}, prev || {}, d));
+      })
+      .catch(() => { /* les compteurs se remettront au prochain chargement */ })
+  ), []);
 
   /** Journalise une invitation ; met le pass en `waiting` s'il était `locked`. Silencieux en cas d'échec. */
   const journaliser = useCallback((pass, channel) => {
@@ -192,13 +206,13 @@ export default function CentreParrainage() {
 
   const surWhatsApp = () => {
     if (!passLien) return;
-    const texte = passLien.whatsapp_text || `Rejoins mon Pass Duo Afroboost : ${passLien.invite_url}`;
+    const texte = passLien.whatsapp_text || `Rejoins mon Pass Duo Afroboost : ${lienInvite}`;
     window.open(lienWhatsApp(texte), '_blank', 'noopener');
     journaliser(passLien, 'whatsapp');
   };
   const surCopier = () => {
     if (!passLien) return;
-    copier(passLien.invite_url).then((ok) => {
+    copier(lienInvite).then((ok) => {
       setFeedback(ok ? 'Lien copié' : 'Copie impossible : sélectionne le lien à la main');
       if (ok) journaliser(passLien, 'copy');
     });
@@ -210,7 +224,7 @@ export default function CentreParrainage() {
   };
   const surPartager = () => {
     if (!passLien) return;
-    partager({ title: 'Pass Duo Afroboost', text: passLien.whatsapp_text || '', url: passLien.invite_url })
+    partager({ title: 'Pass Duo Afroboost', text: passLien.whatsapp_text || '', url: lienInvite })
       .then((r) => {
         if (!r.ok) return;
         if (r.methode === 'copie') setFeedback('Lien copié');
@@ -269,7 +283,10 @@ export default function CentreParrainage() {
   const annulerPass = (id) => {
     setOccupe(true); setErreurPass('');
     axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(id)}/cancel`, {}, { headers: enteteParrain() })
-      .then((r) => poserPass(r.data))
+      // V538 : les compteurs du haut decrivent ce qui est EN COURS. Apres une
+      // annulation ils ne peuvent pas rester sur les chiffres d'avant : on relit
+      // `/me`, seule source de verite (l'historique, lui, ne bouge pas).
+      .then((r) => { poserPass(r.data); return rafraichirResultats(); })
       .catch((e) => {
         const s = e && e.response && e.response.status;
         setErreurPass(s === 409 ? 'Ce Pass est déjà débloqué : annule depuis tes réservations.' : 'Annulation impossible pour le moment.');
@@ -374,7 +391,27 @@ export default function CentreParrainage() {
         ))}
       </div>
 
-      <h2 className="cp-h2">Inviter un ami</h2>
+      {/* V538 — DEUX ÉTATS, JAMAIS LES DEUX À LA FOIS.
+          Sans Pass, quatre boutons de partage grisés ne disent pas quoi faire :
+          la première action est d'en créer un, et c'est elle qu'on montre.
+          Avec un Pass, l'écran devient ce qu'il doit être : inviter. */}
+      {!lienInvite ? (
+        <div className="cp-card" data-testid="creer-pass-cta">
+          <h2 className="cp-h2" style={{ marginTop: 0 }}>Commence par ton Pass Duo</h2>
+          <p className="cp-lead" style={{ marginTop: 0 }}>
+            Choisis ta séance, crée ton Pass, puis invite ton ami en un geste.
+          </p>
+          <button type="button" className="cp-b" data-testid="creer-pass-bouton"
+                  onClick={() => {
+                    const cible = document.querySelector('[data-testid="pass-duo-card"]');
+                    if (cible && cible.scrollIntoView) cible.scrollIntoView({ behavior: 'auto', block: 'center' });
+                  }}>
+            <SvgIcon name="plus" size={20} /> Créer mon Pass Duo
+          </button>
+        </div>
+      ) : null}
+
+      <h2 className="cp-h2">{lienInvite ? 'Inviter un ami' : 'Inviter un ami (après ton Pass)'}</h2>
       <div className="cp-card" data-testid="inviter-un-ami">
         <div className={`cp-code${lienInvite ? '' : ' cp-code--off'}`}>
           <div>

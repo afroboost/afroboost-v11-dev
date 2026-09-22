@@ -19446,6 +19446,120 @@ async def share_offer_page(offer_id: str):
 </html>"""
     return HTMLResponse(html_page)
 
+@api_router.get("/share/duo/{share_token}")
+async def share_duo_page(share_token: str):
+    """V538 — L'APERÇU D'UNE INVITATION PASS DUO (Open Graph dynamique).
+
+    C'EST CETTE PAGE QU'ON PARTAGE. Le robot de WhatsApp ne sait pas exécuter
+    l'application React : sur `/duo/<token>` il ne lisait que les balises
+    génériques du site, et l'invitation de Bassi ressemblait à une publicité
+    anonyme. Ici, les balises portent son prénom, sa séance et son image ; un
+    vrai navigateur, lui, est renvoyé aussitôt sur la page d'invitation.
+    Même mécanisme que le partage d'une offre (V278/V535), repris tel quel.
+
+    CE QU'ELLE NE MONTRE JAMAIS : ni e-mail, ni téléphone, ni code d'accès. Le
+    jeton n'ouvre que ce qui sert à inviter — prénom, séance, offre, image.
+    Tout est échappé : rien de la base n'entre brut dans le HTML.
+
+    Jeton inconnu ou périmé -> redirection silencieuse vers l'accueil : on ne
+    dit pas « ce Pass n'existe pas », ce serait un oracle.
+    """
+    from starlette.responses import HTMLResponse, RedirectResponse
+    import html as _html
+    from api.routes import referral_engine as _duo
+
+    FRONT = os.environ.get("FRONTEND_URL", "https://afroboost.com").rstrip("/")
+    _tok = str(share_token or "").strip()
+    if not _tok or len(_tok) > 128:
+        return RedirectResponse(url=FRONT, status_code=302)
+    try:
+        _p = await db["referral_passes"].find_one({"share_token": _tok}, {"_id": 0})
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[V538] pass illisible pour l'apercu (%s)", type(_e).__name__)
+        _p = None
+    if not _p:
+        return RedirectResponse(url=FRONT, status_code=302)
+
+    _prenom = _duo.prenom((_p.get("sponsor") or {}).get("name"))
+    _cours = _duo.dto_course(_p)
+    _nom_cours = str(_cours.get("name") or "")
+
+    # L'offre du pass, pour le cadeau annoncé et surtout pour son média.
+    _offre = {}
+    try:
+        _oid = str(_p.get("offer_id") or "").strip()
+        if _oid:
+            _offre = await db.offers.find_one({"id": _oid}, {"_id": 0}) or {}
+    except Exception:  # noqa: BLE001
+        _offre = {}
+    _cours_doc = {}
+    try:
+        _cid = str(_p.get("course_id") or "").strip()
+        if _cid:
+            _cours_doc = await db.courses.find_one({"id": _cid}, {"_id": 0}) or {}
+    except Exception:  # noqa: BLE001
+        _cours_doc = {}
+    _concept = {}
+    try:
+        _concept = await db.concept.find_one({}, {"_id": 0}) or {}
+    except Exception:  # noqa: BLE001
+        _concept = {}
+
+    _titre = _duo.og_titre_invitation(_prenom)
+    _desc = _duo.og_description_invitation(_prenom, _nom_cours, _p.get("occurrence"),
+                                           str((_offre or {}).get("name") or ""))
+
+    def _abs(u):
+        _u = str(u or "").strip()
+        if not _u:
+            return ""
+        if _u.startswith(("http://", "https://")):
+            return _u
+        if _u.startswith("/"):
+            return FRONT + _u
+        return ""
+
+    _image = _abs(_duo.media_apercu(_offre, _cours_doc, _concept)) or f"{FRONT}/logo512.png"
+    _cible = "%s/duo/%s" % (FRONT, _tok)
+    _url = "%s/api/share/duo/%s" % (FRONT, _tok)
+
+    e_titre = _html.escape(_titre, quote=True)
+    e_desc = _html.escape(_desc[:200], quote=True)
+    e_image = _html.escape(_image, quote=True)
+    e_url = _html.escape(_url, quote=True)
+    e_cible = _html.escape(_cible, quote=True)
+
+    _page = f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8"/>
+    <title>{e_titre}</title>
+    <meta name="description" content="{e_desc}"/>
+    <meta property="og:type" content="website"/>
+    <meta property="og:title" content="{e_titre}"/>
+    <meta property="og:description" content="{e_desc}"/>
+    <meta property="og:image" content="{e_image}"/>
+    <meta property="og:image:alt" content="{e_titre}"/>
+    <meta property="og:url" content="{e_url}"/>
+    <meta property="og:site_name" content="Afroboost"/>
+    <meta name="twitter:card" content="summary_large_image"/>
+    <meta name="twitter:title" content="{e_titre}"/>
+    <meta name="twitter:description" content="{e_desc}"/>
+    <meta name="twitter:image" content="{e_image}"/>
+    <meta http-equiv="refresh" content="0;url={e_cible}"/>
+</head>
+<body style="margin:0;background:#000;color:#fff;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;">
+    <main style="max-width:520px;margin:0 auto;padding:28px 18px;text-align:center;">
+        <p style="letter-spacing:.14em;text-transform:uppercase;font-size:12px;color:#D91CD2;margin:0 0 10px;">Pass Duo</p>
+        <h1 style="font-size:26px;line-height:1.25;margin:0 0 10px;">{e_titre}</h1>
+        <p style="color:rgba(255,255,255,.72);font-size:15px;line-height:1.5;margin:0 0 20px;">{e_desc}</p>
+        <a href="{e_cible}" style="display:inline-block;padding:14px 26px;border-radius:999px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:#fff;text-decoration:none;font-weight:700;">Voir l'invitation</a>
+    </main>
+</body>
+</html>"""
+    return HTMLResponse(_page)
+
+
 @api_router.get("/sitemap.xml")
 async def get_sitemap():
     """v17.1: Sitemap XML dynamique"""

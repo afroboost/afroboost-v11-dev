@@ -80,7 +80,9 @@ function pass(status, extra) {
   return Object.assign({
     id: `p-${status}`, status, status_label: status, course: COURSE, occurrence: OCC,
     share_token: 'TOK123', invite_url: 'https://afroboost.com/duo/TOK123',
-    whatsapp_text: 'Rejoins-moi https://afroboost.com/duo/TOK123', invitee: null, tickets: [],
+    // V538 : le lien PARTAGÉ est la page d'aperçu, pas la page React.
+    share_url: 'https://afroboost.com/api/share/duo/TOK123',
+    whatsapp_text: 'Rejoins-moi https://afroboost.com/api/share/duo/TOK123', invitee: null, tickets: [],
     blocked_reason: null, created_at: '2026-09-18T10:00:00Z', unlocked_at: null, expires_at: OCC,
   }, extra || {});
 }
@@ -286,7 +288,7 @@ describe('CentreParrainage — états de page', () => {
     expect(axios.get.mock.calls.find((c) => String(c[0]).endsWith('/me'))[1].headers).toEqual({ 'X-Subscriber-Token': 'dev-1' });
     expect(par('stat-invited').textContent).toContain('3');
     expect(par('stat-joined').textContent).toContain('1');
-    expect(par('inviter-un-ami').textContent).toContain('afroboost.com/duo/TOK123');
+    expect(par('inviter-un-ami').textContent).toContain('afroboost.com/api/share/duo/TOK123');
     expect(par('historique').textContent).toContain('Pass Duo créé.');
     expect(par('programme-credits').textContent).toContain('1 crédit Sport Date par achat de ton filleul · jusqu\'à 50 filleuls');
     await act(async () => { par('inviter-copier').click(); });
@@ -304,6 +306,67 @@ describe('CentreParrainage — états de page', () => {
     ['inviter-whatsapp', 'inviter-copier', 'inviter-qr', 'inviter-partager'].forEach((id) => expect(par(id).disabled).toBe(true));
     expect(par('inviter-un-ami').textContent).toContain('Crée ton Pass Duo');
     expect(par('pass-select-seance')).not.toBeNull();
+  });
+
+  // ═══ V538 : les deux états du parcours, et le lien réellement partagé ═════
+  test('CAS A — sans Pass : le CTA « Créer mon Pass Duo » domine, avant les boutons de partage', async () => {
+    window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
+    const ME = { enabled: true, sponsor: { first_name: 'Bassi' }, stats: {}, passes: [], invitations: [], history: [] };
+    axios.get.mockImplementation((url) => (String(url).endsWith('/me') ? Promise.resolve({ data: ME }) : Promise.resolve({ data: CONFIG })));
+    await monter(<CentreParrainage />);
+    expect(par('creer-pass-cta')).not.toBeNull();
+    expect(par('creer-pass-bouton').textContent).toContain('Créer mon Pass Duo');
+    const html = document.body.innerHTML;
+    expect(html.indexOf('creer-pass-cta')).toBeLessThan(html.indexOf('inviter-un-ami'));
+  });
+  test('CAS B — Pass créé : le CTA disparaît, « Inviter un ami » devient l\'action', async () => {
+    window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
+    const ME = { enabled: true, sponsor: { first_name: 'Bassi' }, stats: {}, passes: [pass('locked')], invitations: [], history: [] };
+    axios.get.mockImplementation((url) => (String(url).endsWith('/me') ? Promise.resolve({ data: ME }) : Promise.resolve({ data: CONFIG })));
+    await monter(<CentreParrainage />);
+    expect(par('creer-pass-cta')).toBeNull();
+    ['inviter-whatsapp', 'inviter-copier', 'inviter-qr', 'inviter-partager'].forEach((id) => expect(par(id).disabled).toBe(false));
+  });
+  test('CAS C/J/K/L — WhatsApp, Copier, QR et Partager utilisent TOUS le lien d\'aperçu', async () => {
+    window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
+    const ME = { enabled: true, sponsor: { first_name: 'Bassi' }, stats: {}, passes: [pass('locked')], invitations: [], history: [] };
+    axios.get.mockImplementation((url) => (String(url).endsWith('/me') ? Promise.resolve({ data: ME }) : Promise.resolve({ data: CONFIG })));
+    axios.post.mockResolvedValue({ data: { id: 'inv-1' } });
+    const ecrire = jest.fn().mockResolvedValue();
+    Object.assign(navigator, { clipboard: { writeText: ecrire } });
+    const ouvrir = jest.spyOn(window, 'open').mockImplementation(() => null);
+    await monter(<CentreParrainage />);
+    expect(par('inviter-un-ami').textContent).toContain('afroboost.com/api/share/duo/TOK123');
+    await act(async () => { par('inviter-whatsapp').click(); });
+    expect(String(ouvrir.mock.calls[0][0])).toContain(encodeURIComponent('https://afroboost.com/api/share/duo/TOK123'));
+    await act(async () => { par('inviter-copier').click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(ecrire).toHaveBeenCalledWith('https://afroboost.com/api/share/duo/TOK123');
+    await act(async () => { par('inviter-qr').click(); });
+    expect(document.body.innerHTML).toContain('share/duo/TOK123');   // le QR porte le même lien
+    ouvrir.mockRestore();
+  });
+  test('CAS N/O — annulation : les compteurs sont RELUS côté serveur, l\'historique reste', async () => {
+    window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
+    const AVANT = { enabled: true, sponsor: { first_name: 'Bassi' }, stats: { invited: 2, joined: 1, unlocked: 0 },
+      passes: [pass('waiting')], invitations: [{ id: 'i1', pass_id: 'p-waiting', channel: 'whatsapp', created_at: OCC }],
+      history: [{ at: OCC, type: 'pass_created', label: 'Pass Duo créé.' }] };
+    const APRES = Object.assign({}, AVANT, { stats: { invited: 0, joined: 0, unlocked: 0 }, passes: [pass('cancelled')] });
+    let appels = 0;
+    axios.get.mockImplementation((url) => {
+      if (!String(url).endsWith('/me')) return Promise.resolve({ data: CONFIG });
+      appels += 1;
+      return Promise.resolve({ data: appels === 1 ? AVANT : APRES });
+    });
+    axios.post.mockResolvedValue({ data: pass('cancelled') });
+    await monter(<CentreParrainage />);
+    expect(par('stat-invited').textContent).toContain('2');
+    await act(async () => { par('pass-annuler').click(); });        // ouvre la confirmation
+    await act(async () => { par('pass-annuler-oui').click(); });     // confirme
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(appels).toBeGreaterThan(1);                       // `/me` relu après l'annulation
+    expect(par('stat-invited').textContent).toContain('0');  // les compteurs reviennent
+    expect(par('historique').textContent).toContain('Pass Duo créé.');   // l'historique reste
   });
 });
 

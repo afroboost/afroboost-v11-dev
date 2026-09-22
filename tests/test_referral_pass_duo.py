@@ -647,9 +647,15 @@ async def principal():
     verifier("1. Création d'un Pass : 201", code == 201, str(dto)[:120])
     verifier("1b. PassDTO : status locked, invite_url /duo/<token>, texte WhatsApp sans emoji",
              dto.get("status") == "locked" and dto.get("invite_url", "").startswith("https://afroboost.com/duo/")
-             and dto.get("share_token") and all(ord(ch) < 0x2600 for ch in dto.get("whatsapp_text", ""))
-             and dto["invite_url"] in dto.get("whatsapp_text", ""),
+             and dto.get("share_token") and all(ord(ch) < 0x2600 for ch in dto.get("whatsapp_text", "")),
              str({k: dto.get(k) for k in ("status", "invite_url", "whatsapp_text")})[:200])
+    # V538 : c'est l'URL de PARTAGE (page d'aperçu) que le message porte, pas la
+    # page React — sans quoi WhatsApp affiche un aperçu anonyme.
+    verifier("1b-V538. PassDTO : `share_url` = /api/share/duo/<token>, et c'est CE lien qui part dans le message",
+             dto.get("share_url", "") == "https://afroboost.com/api/share/duo/%s" % dto.get("share_token")
+             and dto["share_url"] in dto.get("whatsapp_text", "")
+             and dto["invite_url"] not in dto.get("whatsapp_text", ""),
+             str({k: dto.get(k) for k in ("share_url", "whatsapp_text")})[:220])
     verifier("1c. Le pass est persisté avec sponsor.email_norm / subscription_code / expires_at = occurrence",
              len(base["referral_passes"].docs) == 1
              and base["referral_passes"].docs[0]["sponsor"]["email_norm"] == PARRAIN_EMAIL
@@ -1546,12 +1552,123 @@ def _ordre_ast():
     return sortie
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# V538 — L'APERÇU DU PARTAGE : une invitation, pas un lien anonyme
+# ═══════════════════════════════════════════════════════════════════════════
+def partie_v538():
+    import api.routes.referral_engine as _M
+    SRC_SRV = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
+    SRC_CENTRE = io.open(os.path.join(RACINE, "frontend", "src", "components",
+                                      "parrainage", "CentreParrainage.js"), encoding="utf-8").read()
+    FRONT = "https://afroboost.com"
+
+    # ── CAS C : le lien partagé est la page d'aperçu ─────────────────────────
+    verifier("V538-C. `partage_url` = /api/share/duo/<token> (et jamais la page React)",
+             _M.partage_url(FRONT, "TOK") == "https://afroboost.com/api/share/duo/TOK"
+             and _M.invite_url(FRONT, "TOK") == "https://afroboost.com/duo/TOK")
+
+    # ── CAS D/E : les balises et le prénom ───────────────────────────────────
+    verifier("V538-D. la route d'aperçu produit og:title / og:description / og:image / og:url / twitter:*",
+             all(_b in SRC_SRV for _b in ('@api_router.get("/share/duo/{share_token}")',
+                                          'property="og:title"', 'property="og:description"',
+                                          'property="og:image"', 'property="og:url"',
+                                          'property="og:type"', 'name="twitter:card"',
+                                          'name="twitter:title"', 'name="twitter:description"',
+                                          'name="twitter:image"')))
+    verifier("V538-E. le titre porte le PRÉNOM de l'invitant ; sans prénom, une formule qui reste vraie",
+             _M.og_titre_invitation("Bassi") == "Bassi t'invite à Afroboost"
+             and _M.og_titre_invitation("") == "Un membre Afroboost t'invite"
+             and _M.og_titre_invitation(None) == "Un membre Afroboost t'invite")
+    _d = _M.og_description_invitation("Bassi", "Afroboost Dimanche", "2026-09-27T18:30:00", "Cours d'essai GRATUIT")
+    verifier("V538-E2. la description dit qui, quoi, quand et ce que l'ami reçoit",
+             "Bassi" in _d and "Afroboost Dimanche" in _d and "27" in _d and "essai" in _d.lower(), _d)
+    verifier("V538-E3. sans offre nommée, la promesse reste celle du Pass Duo",
+             "offert" in _M.og_description_invitation("Bassi", "Cours", None, ""))
+
+    # ── CAS F/G/H/I : la priorité des médias ─────────────────────────────────
+    _off_thumb = {"thumbnail": "/api/files/a/img.jpg", "images": ["/api/files/b/autre.jpg"],
+                  "videoUrl": "/api/files/c/video_x.mp4"}
+    verifier("V538-F. priorité 1 : la miniature (poster) du média de l'offre",
+             _M.media_apercu(_off_thumb, {}, {}) == "/api/files/a/img.jpg")
+    verifier("V538-F2. une URL de VIDÉO n'est jamais rendue comme image (l'aperçu serait vide)",
+             _M.media_apercu({"videoUrl": "/api/files/c/video_x.mp4"}, {}, {}) == ""
+             and _M.media_apercu({"thumbnail": "https://res.cloudinary.com/x/video/upload/v1/a.mp4"}, {}, {}) == "")
+    verifier("V538-F3. le champ `videoUrl` qui contient en réalité une IMAGE est utilisé (8 offres de prod)",
+             _M.media_apercu({"videoUrl": "/api/files/d/image_d53c.jpg"}, {}, {}) == "/api/files/d/image_d53c.jpg")
+    verifier("V538-G. priorité 2/3 : images de l'offre, puis image de la séance",
+             _M.media_apercu({"images": ["/api/files/b/autre.jpg"]}, {}, {}) == "/api/files/b/autre.jpg"
+             and _M.media_apercu({}, {"image": "/api/files/e/cours.jpg"}, {}) == "/api/files/e/cours.jpg")
+    verifier("V538-H. priorité 4 : la bannière du concept quand l'offre et la séance n'ont rien",
+             _M.media_apercu({}, {}, {"heroImageUrl": "/api/files/f/hero.png"}) == "/api/files/f/hero.png")
+    verifier("V538-I. rien nulle part -> chaîne vide, et la route pose le visuel Afroboost",
+             _M.media_apercu({}, {}, {}) == "" and _M.media_apercu(None, None, None) == ""
+             and 'or f"{FRONT}/logo512.png"' in SRC_SRV)
+
+    # ── CAS J/K/L : un seul lien pour tous les boutons ───────────────────────
+    verifier("V538-J/K/L. WhatsApp, Copier, QR et Partager partagent la MÊME URL (`share_url`, repli `invite_url`)",
+             "const lienInvite = passLien ? (passLien.share_url || passLien.invite_url) : '';" in SRC_CENTRE
+             and "copier(lienInvite)" in SRC_CENTRE and "url: lienInvite" in SRC_CENTRE
+             # `passLien.invite_url` ne subsiste QUE comme repli dans la ligne ci-dessus
+             and SRC_CENTRE.count("passLien.invite_url") == 1)
+
+    # ── CAS A/B : l'ordre du parcours ────────────────────────────────────────
+    verifier("V538-A/B. sans Pass, le CTA « Créer mon Pass Duo » est rendu AVANT le bloc de partage",
+             'data-testid="creer-pass-cta"' in SRC_CENTRE
+             and "Créer mon Pass Duo" in SRC_CENTRE
+             and SRC_CENTRE.index('data-testid="creer-pass-cta"') < SRC_CENTRE.index('data-testid="inviter-un-ami"')
+             and "{!lienInvite ? (" in SRC_CENTRE)
+
+    # ── CAS N/O : les compteurs après annulation ─────────────────────────────
+    _passes = [{"id": "p1", "invitee": {"name": "A"}, "opened_at": "x", "status": "friend_registered"},
+               {"id": "p2", "invitee": {"name": "B"}, "opened_at": "x", "status": "cancelled"}]
+    _inv = [{"id": "i1", "pass_id": "p1", "channel": "whatsapp"},
+            {"id": "i2", "pass_id": "p2", "channel": "whatsapp"},
+            {"id": "i3", "pass_id": "p2", "channel": "copy"}]
+    _st = {"p1": "friend_registered", "p2": "cancelled"}
+    _s538 = _M.stats_parrain(_passes, _inv, _st)
+    verifier("V538-N. un Pass annulé ne gonfle plus « Mes résultats » : 3 invitations dont 2 annulées -> 1",
+             _s538["invited"] == 1 and _s538["joined"] == 1 and _s538["opened"] == 1, _s538)
+    _st2 = {"p1": "friend_registered", "p2": "expired"}
+    verifier("V538-N2. même règle pour un Pass expiré",
+             _M.stats_parrain(_passes, _inv, _st2)["invited"] == 1)
+    verifier("V538-N3. sans annulation, les compteurs sont inchangés (aucune régression)",
+             _M.stats_parrain([_passes[0]], [_inv[0]], {"p1": "friend_registered"})["invited"] == 1
+             and _M.stats_parrain(_passes, _inv, {"p1": "waiting", "p2": "waiting"})["invited"] == 3)
+    verifier("V538-O. l'historique n'est PAS touché : `kpi_parrainage` continue de tout compter",
+             _M.kpi_parrainage(_passes, _inv, None, _st)["kpi"]["invitations"] == 3
+             and _M.kpi_parrainage(_passes, _inv, None, _st)["kpi"]["annules"] == 1)
+    verifier("V538-N4. l'écran relit `/me` après une annulation (les compteurs ne restent pas figés)",
+             "rafraichirResultats()" in SRC_CENTRE
+             and "poserPass(r.data); return rafraichirResultats();" in SRC_CENTRE)
+
+    # ── CAS confidentialité + jeton inconnu ──────────────────────────────────
+    _bloc = SRC_SRV[SRC_SRV.index('@api_router.get("/share/duo/{share_token}")'):
+                    SRC_SRV.index('@api_router.get("/sitemap.xml")')]
+    # Le CODE seul (les commentaires, eux, ont le droit de NOMMER ce qu'ils excluent).
+    # Le CODE seul : on retire la docstring d'ouverture (elle NOMME ce qu'elle exclut)
+    # et les commentaires.
+    _sans_doc = _bloc.split('"""', 2)
+    _corps = _sans_doc[2] if len(_sans_doc) == 3 else _bloc
+    _code = "\n".join(_l for _l in _corps.splitlines() if not _l.strip().startswith("#"))
+    verifier("V538-P. l'aperçu n'expose AUCUNE donnée privée (ni e-mail, ni téléphone, ni code d'accès)",
+             not any(_m in _code for _m in ("email", "whatsapp", "phone", "access_code",
+                                            "invitee_access_code", "subscription_code")),
+             [_m for _m in ("email", "whatsapp", "phone", "access_code") if _m in _code])
+    verifier("V538-Q. jeton inconnu, vide ou démesuré -> redirection silencieuse, jamais un oracle",
+             "if not _tok or len(_tok) > 128:" in _bloc and _bloc.count("RedirectResponse(url=FRONT, status_code=302)") == 2)
+    verifier("V538-R. tout ce qui vient de la base est ÉCHAPPÉ avant d'entrer dans le HTML",
+             _bloc.count("_html.escape(") == 5 and "quote=True" in _bloc)
+    verifier("V538-R2. un vrai navigateur est renvoyé sur la page d'invitation (meta refresh + lien)",
+             'http-equiv="refresh" content="0;url={e_cible}"' in _bloc and 'href="{e_cible}"' in _bloc)
+
+
 def main():
     try:
         asyncio.set_event_loop(asyncio.new_event_loop())
     except Exception:
         pass
     asyncio.get_event_loop().run_until_complete(principal())
+    partie_v538()
     ok = 0
     print("=" * 78)
     print("V534 / V534b — PASS DUO : %d vérifications" % len(RESULTATS))
