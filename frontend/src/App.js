@@ -8760,6 +8760,12 @@ function App() {
           ].map(tab => (
             <button
               key={tab.key}
+              /* V540 : point d'accroche des parcours Playwright. Les onglets
+                 n'en avaient aucun : le banc visait `offres-aimants` en
+                 supposant qu'il etait visible d'emblee sur l'accueil. Le vrai
+                 parcours passe par CE bouton — le test doit donc pouvoir le
+                 cliquer sans dependre du libelle traduit. */
+              data-testid={'nav-tab-' + tab.key}
               onClick={() => {
                 // « Sessions » n'est plus un filtre : c'est une fenetre. On ne
                 // touche donc NI au filtre actif, NI au defilement — la page

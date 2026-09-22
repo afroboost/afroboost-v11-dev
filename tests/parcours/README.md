@@ -7,6 +7,12 @@
 - `semer_base_test.py` : copie LECTURE SEULE des collections de configuration (offres, cours,
   concept, réglages, médias) — jamais de données personnelles.
 - `parcours_fondateurs.cjs` : P1 desktop, P4 mobile, P5 double clic / refresh / rejeu webhook, P6 UTM → metadata Stripe.
+- `parcours_accueil.cjs` (V540) : la NOUVELLE règle de l'accueil — A le fil vertical (1 publication
+  par ligne, offres masquées mais MONTÉES), B l'onglet « Offres » (3 cartes, fil en retrait, colonne
+  Live + Spordateur, pas de doublon « Offre du moment »), C/C2 les liens profonds `?offre=` et
+  `&reserver=1` SANS passer par l'onglet, D le mobile. Toutes les mesures lisent le `display`
+  CALCULÉ : le bloc des offres reste dans le DOM pour le lien profond, un `count()` le trouverait
+  donc toujours et passerait au vert sur un écran faux.
 - `parcours_essai_espace.cjs` : P2 essai (lien profond du tunnel → formulaire → octroi → OTP lu dans
   le faux Resend → réservation), P3 reconnexion (autre appareil, session d'appareil), P3b acheteur
   Fondateurs (onboarding → espace 8/8), P5b double inscription refusée.
@@ -17,6 +23,7 @@ cd frontend && REACT_APP_BACKEND_URL=http://127.0.0.1:8001 BUILD_PATH=<scratchpa
 python3 semer_base_test.py ; python3 pile_locale.py &
 NODE_PATH=$HOME/.claude/skills/gstack/node_modules node parcours_fondateurs.cjs
 NODE_PATH=$HOME/.claude/skills/gstack/node_modules node parcours_essai_espace.cjs
+NODE_PATH=$HOME/.claude/skills/gstack/node_modules node parcours_accueil.cjs
 ```
 Règle du moteur à respecter dans les enchaînements : 120 s entre deux demandes d'OTP pour un même code, 3 par 10 min.
 

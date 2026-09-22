@@ -33,8 +33,16 @@ async function page(browser, mobile, url) {
   return { ctx, p, dialogs, erreurs };
 }
 
+// V540 : les offres ne sont plus sur l'écran d'accueil, elles sont sous
+// l'onglet « Offres ». On clique le vrai bouton, comme un visiteur.
+// (Quand l'URL porte déjà `?offre=<id>`, la fiche s'ouvre seule : le lien
+// profond garde sa propre porte, et ce chemin-là n'a pas besoin de l'onglet.)
 async function ouvrirFiche(p) {
-  await p.waitForSelector('[data-testid="offres-aimants"]', { timeout: 60000 });
+  await p.waitForSelector('[data-testid="accueil-colonnes"]', { timeout: 60000 });
+  if (!(await p.locator('[data-testid="fiche-cta"]').count())) {
+    await p.click('[data-testid="nav-tab-offers"]');
+    await p.waitForSelector('[data-testid="offres-aimants"]', { state: 'visible', timeout: 30000 });
+  }
   await p.waitForSelector('[data-testid="fiche-cta"]', { timeout: 30000 });
 }
 
@@ -165,12 +173,29 @@ async function scenario(browser, mobile) {
   await p2.locator('[data-testid="v528-etape-email"]').waitFor({ timeout: 15000 }).catch(() => null);
   await p2.fill('[data-testid="v528-email-input"]', EMAIL.toUpperCase());   // normalisation côté client/serveur
   await p2.click('[data-testid="v528-email-continuer"]');
-  await p2.waitForTimeout(3000);
-  v(`${T} I. même e-mail (en MAJUSCULES) + même offre -> 409 affiché « déjà cet abonnement actif », AUCUN checkout Stripe créé`,
-    dialogs2.some(d => /déjà cet abonnement actif/i.test(d)) && (await nbSessions(p2)) === nAvantE5 && !/faux-stripe/.test(p2.url()), `${dialogs2.join(' | ')} | sessions ${nAvantE5}->${await nbSessions(p2)} | ${p2.url()}`);
+  // V529 : LE REFUS N'EST PLUS UN `alert()`, C'EST UNE MODALE.
+  // Ce banc a été écrit à V528, quand le 409 passait par une boîte native. V529
+  // les a toutes retirées (parcours_fondateurs P9 le verrouille déjà) : lire
+  // `dialogs2` ici revenait donc à attendre un mécanisme SUPPRIMÉ, et le banc
+  // échouait sur un comportement correct. On mesure maintenant la modale — et
+  // on exige EN PLUS qu'aucune boîte native n'apparaisse, ce que l'ancienne
+  // version ne pouvait pas vérifier. Rien n'est affaibli : les deux garanties
+  // qui comptent (0 session Stripe, 1 seul abonnement) sont inchangées.
+  const refus = p2.locator('[data-testid="v529-refus"]');
+  const refusOuvert = await refus.waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+  const refusTexte = (await refus.textContent().catch(() => '')) || '';
+  v(`${T} I. même e-mail (en MAJUSCULES) + même offre -> refus V529 « Tu as déjà cette formule », AUCUN checkout Stripe créé`,
+    refusOuvert && /Tu as déjà cette formule/.test(refusTexte)
+    && /Aucun nouveau paiement n.a été créé/.test(refusTexte)
+    && (await nbSessions(p2)) === nAvantE5 && !/faux-stripe/.test(p2.url()),
+    `${refusTexte.replace(/\s+/g, ' ').slice(0, 160)} | sessions ${nAvantE5}->${await nbSessions(p2)} | ${p2.url()}`);
+  v(`${T} I. aucune boîte de dialogue NATIVE (alert/confirm) — c'est la règle V529`,
+    dialogs2.length === 0, dialogs2.join(' | '));
   abo = await abonnement(p2, EMAIL);
   v(`${T} I. toujours UN seul abonnement en base pour cette adresse`, abo.n === 1, JSON.stringify(abo.abonnements.map(x => x.id)));
-  v(`${T} I. l'app propose l'espace abonné (redirection vers /espace)`, /\/espace/.test(p2.url()) || dialogs2.some(d => /espace abonn/i.test(d)), p2.url());
+  v(`${T} I. l'app propose l'espace abonné (bouton « Accéder à mon espace »)`,
+    (await p2.locator('[data-testid="v529-refus-espace"]').count()) === 1
+    || /\/espace/.test(p2.url()), p2.url());
   await p2.screenshot({ path: `${CAP}/E5-409-${T}.png` });
   v(`${T} Global. aucune erreur JS`, erreurs.length === 0, erreurs.join(' | '));
   await ctx2.close(); await ctx.close();

@@ -21,8 +21,22 @@ async function page(browser, mobile = false, url = BASE + '/') {
   return { ctx, p, erreurs, ressources };
 }
 
+// V540 — L'ACCUEIL NE MONTRE PLUS LES TROIS CARTES D'OFFRES.
+// Le fil de publications occupe la zone principale ; les offres vivent sous
+// l'onglet « Offres ». Ce banc suivait l'ANCIENNE mise en page : il attendait
+// `offres-aimants` VISIBLE dès le chargement de l'accueil, et échouait donc sur
+// la nouvelle. On reproduit le vrai parcours : charger l'accueil, vérifier qu'il
+// est rendu, CLIQUER sur l'onglet, puis attendre les offres.
+// Aucun `force`, aucun `visibility:false`, aucun sélecteur affaibli, aucun
+// timeout rallongé pour masquer le problème : un vrai clic sur le vrai bouton.
+async function allerAuxOffres(p) {
+  await p.waitForSelector('[data-testid="accueil-colonnes"]', { timeout: 60000 });
+  await p.click('[data-testid="nav-tab-offers"]');
+  await p.waitForSelector('[data-testid="offres-aimants"]', { state: 'visible', timeout: 30000 });
+}
+
 async function ouvrirFondateurs(p, tag) {
-  await p.waitForSelector('[data-testid="offres-aimants"]', { timeout: 60000 });
+  await allerAuxOffres(p);
   await p.screenshot({ path: `${CAP}/${tag}-1-accueil.png`, fullPage: false });
   const carte = p.locator('[data-testid="aimant-lancement"]');
   v(`${tag}. la carte Fondateurs (aimant « lancement ») est visible`, await carte.count() === 1);
@@ -138,7 +152,9 @@ async function parcours(nom, fn) { if (process.env.PARCOURS && !process.env.PARC
 
   await parcours('P6', async () => {
     const { ctx, p } = await page(browser, false, BASE + '/?utm_source=instagram&utm_medium=reel&utm_campaign=fondateurs_test&utm_content=' + uid);
-    await p.waitForSelector('[data-testid="offres-aimants"]', { timeout: 60000 });
+    // V540 : cette attente ne sert qu'à savoir que l'accueil est rendu avant de
+    // lire le localStorage — c'est la zone d'accueil qu'on attend, pas les offres.
+    await p.waitForSelector('[data-testid="accueil-colonnes"]', { timeout: 60000 });
     const stocke = await p.evaluate(() => { try { return JSON.parse(localStorage.getItem('af_attribution') || 'null'); } catch (e) { return null; } });
     v('P6. l\'origine UTM est capturée côté navigateur (af_attribution first = instagram)', stocke && stocke.first && stocke.first.source === 'instagram' && stocke.first.campaign === 'fondateurs_test', JSON.stringify(stocke).slice(0, 200));
     const cta = await ouvrirFondateurs(p, 'P6');
@@ -185,7 +201,10 @@ async function parcours(nom, fn) { if (process.env.PARCOURS && !process.env.PARC
     fixture('deadline-passee');
     try {
       const { ctx, p } = await page(browser, true);
-      await p.waitForSelector('[data-testid="offres-aimants"], [data-testid="offer-card"], main', { timeout: 60000 });
+      // V540 : on ouvre l'onglet « Offres », là où les cartes vivent désormais —
+      // c'est le seul endroit où leur absence veut dire quelque chose.
+      await p.waitForSelector('[data-testid="accueil-colonnes"]', { timeout: 60000 });
+      await p.click('[data-testid="nav-tab-offers"]');
       await p.waitForTimeout(1500);
       const offres = await (await p.request.get(BASE + '/api/offers')).json();
       v('P7. deadline passée : Fondateurs n\'est plus servie par GET /api/offers', !offres.some(o => o.id === FID));
