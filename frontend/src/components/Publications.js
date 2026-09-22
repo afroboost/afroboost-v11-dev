@@ -372,9 +372,19 @@ const UiPub2Colonne = ({ actions, ancre = 8 }) => {
 // Repli : sans `IntersectionObserver` (très vieux navigateur), on pose le
 // `src` tout de suite — le comportement redevient celui d'aujourd'hui, jamais
 // une vidéo qui ne part pas.
-const VideoPublication = ({ pub, ...props }) => {
+const VideoPublication = React.forwardRef(({ pub, ...props }, refExterne) => {
   const ref = useRef(null);
   const [visible, setVisible] = useState(false);
+  /* V540 : le fil vertical a besoin d'atteindre le <video> pour lui appliquer
+     l'état du son. On GARDE la ref interne — la découpe et le chargement
+     différé V537 en dépendent — et on recopie simplement l'élément dans la ref
+     de l'appelant. Un appelant qui ne passe pas de ref (le carrousel actuel)
+     ne voit aucune différence. */
+  const poserRef = (el) => {
+    ref.current = el;
+    if (typeof refExterne === 'function') refExterne(el);
+    else if (refExterne) refExterne.current = el;
+  };
   useTrimVideo(ref, trimValide(pub.trim_start, pub.trim_end), { loop: true });
   useEffect(() => {
     if (visible) return undefined;
@@ -391,16 +401,20 @@ const VideoPublication = ({ pub, ...props }) => {
   }, [visible]);
   return (
     <video
-      ref={ref}
+      ref={poserRef}
       src={visible ? pub.media_url : undefined}
       preload={visible ? 'metadata' : 'none'}
       {...props}
     />
   );
-};
+});
 
 // V268 (F2): plein écran d'une publication au clic.
-const V268Lightbox = ({ pub, onClose, actions }) => {
+/* V540 — `liste`, `index` et `onNaviguer` sont OPTIONNELS. Sans eux, cette
+   lightbox se comporte EXACTEMENT comme avant (le carrousel n'en passe aucun).
+   Avec eux, elle gagne la navigation entre publications et le panneau auteur
+   à gauche sur grand écran. Rien n'est retiré, tout est ajouté. */
+const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
   const videoRef = useRef(null);
   // DÉCOUPE : la publication ne joue que [trim_start, trim_end], en boucle —
   // jamais un retour à 00:00.
@@ -410,11 +424,21 @@ const V268Lightbox = ({ pub, onClose, actions }) => {
   // muette. Le bouton reste dispo pour couper. La carte, elle, garde son propre
   // etat muet (element video distinct) — rien a restaurer a la fermeture.
   const [muted, setMuted] = useState(pub.media_type !== 'video' ? true : false);
+  /* V540 : navigation au clavier, uniquement quand l'appelant l'a demandée.
+     `Échap` garde son comportement d'origine dans tous les cas. */
+  const peutNaviguer = typeof onNaviguer === 'function' && Array.isArray(liste) && liste.length > 1;
+  const allerA = (n) => { if (peutNaviguer && n >= 0 && n < liste.length) onNaviguer(n); };
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+      if (!peutNaviguer) return;
+      if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') allerA(index - 1);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') allerA(index + 1);
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onClose, peutNaviguer, index, liste]);
   useEffect(() => {
     if (pub.media_type !== 'video') return;
     const v = videoRef.current;
@@ -432,7 +456,18 @@ const V268Lightbox = ({ pub, onClose, actions }) => {
       });
     }
   }, [pub]);
-  const toggleMute = v268ToggleSound(videoRef, setMuted); // V268b Fix B
+  const toggleMuteBrut = v268ToggleSound(videoRef, setMuted); // V268b Fix B
+  /* V540 — COHÉRENCE DU SON, SANS RIEN REMPLACER. Le viewer garde sa règle
+     d'origine (il s'ouvre AVEC le son : V268b Fix B3, autorisé par le geste
+     qui l'a ouvert). On ajoute seulement ceci : ce que la personne décide ICI
+     est répercuté sur le fil, pour qu'elle ne retrouve pas l'inverse en
+     fermant. Aucun moteur vidéo n'est remplacé. */
+  const toggleMute = (e) => {
+    toggleMuteBrut(e);
+    const v = videoRef.current;
+    const seraAvecSon = v ? v.muted : !muted;   // l'état APRÈS la bascule
+    if (v540SonActif() !== seraAvecSon) v540BasculerSon();
+  };
 
   // === UI-PUB4 : commentaires DANS le viewer, video qui continue ===
   // Le panneau global d'App.js est en `z-50` alors que cette lightbox est a
@@ -464,18 +499,61 @@ const V268Lightbox = ({ pub, onClose, actions }) => {
     <div
       onClick={onClose}
       style={{
-        position: 'fixed', inset: 0, zIndex: 2147483000, background: 'rgba(0,0,0,0.92)',
+        position: 'fixed', inset: 0, zIndex: 2147483000,
+        /* V540 : le viewer du fil (celui qui a la navigation) passe en fond
+           quasi opaque — à 0,92 la page derrière restait lisible et concurrençait
+           le média. Les AUTRES appelants gardent 0,92, leur rendu ne bouge pas. */
+        background: peutNaviguer ? '#0b0b0d' : 'rgba(0,0,0,0.92)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16
       }}
       data-testid="publication-lightbox"
     >
       {/* V268d : X SANS rond, plus haut (top/right 10), juste l'icone blanche
           avec un drop-shadow pour la lisibilite. */}
+      {/* V540 — PUBLICATION PRÉCÉDENTE / SUIVANTE, à l'extrême droite.
+          Elles relisent le tableau DÉJÀ chargé par l'appelant : aucun appel
+          réseau, aucun rechargement, aucun nouvel endpoint. */}
+      {peutNaviguer && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          data-testid="lightbox-navigation"
+          /* Sous 1024 px, la colonne d'actions occupe déjà le bord droit du
+             média : des flèches au même endroit se chevauchaient. Elles
+             descendent donc en bas, côte à côte, où il reste de la place. */
+          className="af-viewer-nav"
+          style={{ position: 'absolute', zIndex: 3, display: 'flex', gap: 12 }}
+        >
+          {[['prec', -1, 'Publication précédente', 'm18 15-6-6-6 6'], ['suiv', 1, 'Publication suivante', 'm6 9 6 6 6-6']].map(([cle, pas, aria, d]) => {
+            const cible = index + pas;
+            const inactif = cible < 0 || cible >= liste.length;
+            return (
+              <button
+                key={cle}
+                type="button"
+                data-testid={`lightbox-${cle}`}
+                aria-label={aria}
+                title={aria}
+                disabled={inactif}
+                onClick={() => allerA(cible)}
+                style={{
+                  width: 48, height: 48, borderRadius: '50%', padding: 0,
+                  cursor: inactif ? 'not-allowed' : 'pointer', opacity: inactif ? 0.25 : 1,
+                  border: '1px solid rgba(255,255,255,0.16)', background: 'rgba(255,255,255,0.08)', color: '#fff',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <button
         onClick={onClose}
         aria-label="Fermer"
         style={{
-          position: 'absolute', top: 10, right: 10, zIndex: 2,
+          position: 'absolute', top: 10, right: 10, zIndex: 4,
           background: 'transparent', border: 'none', padding: 4, cursor: 'pointer',
           color: '#fff', filter: 'drop-shadow(0 0 3px rgba(0,0,0,0.9))'
         }}
@@ -484,6 +562,43 @@ const V268Lightbox = ({ pub, onClose, actions }) => {
           <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
         </svg>
       </button>
+      {/* V540 — L'AUTEUR ET SA LÉGENDE, À GAUCHE DU MÉDIA.
+          Grand écran seulement : sous 1024 px il n'y a pas la place, et le
+          média doit rester dominant. Le bloc n'apparaît que si l'appelant a
+          demandé la navigation — le carrousel d'origine ne le voit jamais. */}
+      {peutNaviguer && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="hidden lg:block"
+          data-testid="lightbox-auteur"
+          style={{ width: 320, flex: '0 0 320px', alignSelf: 'flex-end', paddingBottom: '6vh', marginRight: 22 }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 10 }}>
+            <img
+              src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=8B5CF6`}
+              alt=""
+              onClick={(e) => {
+                e.stopPropagation();
+                const pid = pub.author_id || pub.coach_id;
+                if (pid) window.dispatchEvent(new CustomEvent('afroboost:open-miniprofile', { detail: { id: pid, name: pub.author_name || pub.display_name } }));
+              }}
+              style={{ width: 42, height: 42, borderRadius: '50%', objectFit: 'cover', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.25)' }}
+            />
+            <span style={{ fontSize: 16, fontWeight: 700, color: '#fff' }}>{pub.display_name || pub.subscriber_name || 'Afroboost'}</span>
+            <span style={{
+              padding: '3px 8px', borderRadius: 999, fontSize: 10, letterSpacing: '.05em', fontWeight: 700,
+              background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.8)',
+            }}>
+              {pub.author_id && pub.coach_id && String(pub.author_id).toLowerCase() === String(pub.coach_id).toLowerCase() ? 'COACH' : 'MEMBRE'}
+            </span>
+          </div>
+          <p style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', margin: '0 0 10px' }}>{v540Depuis(pub.created_at)}</p>
+          {pub.caption ? (
+            <p style={{ fontSize: 15, lineHeight: 1.55, color: 'rgba(255,255,255,0.8)', margin: 0, maxWidth: '40ch' }}>{pub.caption}</p>
+          ) : null}
+        </div>
+      )}
+
       <div
         onClick={(e) => e.stopPropagation()}
         style={{ position: 'relative', maxWidth: 'min(92vw, 480px)', width: '100%', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}
@@ -595,7 +710,10 @@ const V268Lightbox = ({ pub, onClose, actions }) => {
           </div>
         )}
 
-        <div style={{ padding: '4px 4px 0', flexBasis: '100%' }}>
+        {/* V540 : quand le panneau auteur de gauche est présent (viewer du fil),
+            cette ligne ferait doublon — même avatar, même nom, à 20 cm d'écart.
+            Elle reste le rendu NORMAL pour tous les autres appelants. */}
+        <div style={{ padding: '4px 4px 0', flexBasis: '100%', display: peutNaviguer ? 'none' : undefined }}>
           {/* V282 : avatar auteur (cliquable -> mini-profil si author_id) + nom. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '10px 0 0' }}>
             <img
@@ -714,10 +832,283 @@ const V268PublicationCard = ({ pub, onOpen, actions }) => {
   );
 };
 
-export const PublicationsCarousel = ({ publications, actions }) => {
+/**
+ * V540 — LA CARTE DU FIL VERTICAL.
+ *
+ * Elle ne remplace pas `V268PublicationCard` : celle-ci reste le rendu du
+ * carrousel horizontal, intacte, pour tout appelant qui la veut encore.
+ *
+ * Ce qui change ici, et seulement ici :
+ *  - le média est grand et seul sur sa ligne ;
+ *  - les actions EXISTANTES (j'aime de la page, avis de la page) se posent à
+ *    droite du média, verticalement ;
+ *  - leurs nombres sont affichés, avec « de toute la page » écrit dessous —
+ *    parce que c'est la vérité : le serveur ne compte ni les j'aime ni les avis
+ *    PAR publication. Les montrer sans le dire laisserait croire le contraire.
+ *  - l'auteur passe SOUS le média au lieu de le recouvrir ;
+ *  - un bouton son est posé sur la vidéo.
+ *
+ * Le média — et lui seul — agrandit la publication. Le son, le cœur et les avis
+ * arrêtent la propagation.
+ */
+const V540CartePublication = ({ pub, actions, onOpen }) => {
+  const videoRef = useRef(null);
+  const [sonActif, setSonActif] = useState(v540SonActif());
+  useEffect(() => v540EcouterSon(setSonActif), []);
+  /* React pose `muted` sur un <video> AU MONTAGE et ne le remet pas à jour
+     ensuite (travers connu du DOM vidéo). La prop ci-dessous donne donc l'état
+     de départ — muet, ce que le navigateur exige pour démarrer seul — et cette
+     ligne applique les changements suivants. Les deux sont nécessaires ; l'une
+     sans l'autre, le bouton son n'a aucun effet. Mesuré. */
+  useEffect(() => {
+    const v = videoRef.current;
+    if (v) v.muted = !sonActif;
+  }, [sonActif]);
+
+  const nom = pub.display_name || pub.subscriber_name || 'Afroboost';
+  const estCoach = pub.author_id && pub.coach_id
+    && String(pub.author_id).toLowerCase() === String(pub.coach_id).toLowerCase();
+
+  const Action = ({ nomIcone, valeur, onClick, actif, aria }) => (
+    <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+      <button
+        type="button"
+        aria-label={aria}
+        title={aria}
+        onClick={(e) => { e.stopPropagation(); if (onClick) onClick(); }}
+        style={{
+          width: 44, height: 44, padding: 0, borderRadius: '50%', cursor: 'pointer',
+          border: `1px solid ${actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.6)' : 'rgba(255,255,255,0.12)'}`,
+          background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)' : 'rgba(255,255,255,0.05)',
+          color: actif ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.8)',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        <SvgIcon name={nomIcone} size={20} />
+      </button>
+      {valeur !== null && valeur !== undefined && (
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: 'rgba(255,255,255,0.8)', fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
+          {valeur}
+        </span>
+      )}
+    </span>
+  );
+
+  return (
+    <article
+      data-testid="publication-fil-carte"
+      style={{ width: '100%', maxWidth: 500, margin: '0 auto' }}
+    >
+      <div style={{ display: 'flex', alignItems: 'stretch', gap: 10 }}>
+        <div
+          onClick={onOpen}
+          data-testid={pub.boosted ? 'publication-card-boosted' : 'publication-card'}
+          style={{
+            position: 'relative', flex: '1 1 auto', minWidth: 0, aspectRatio: '4 / 5',
+            background: '#0c0c0e', borderRadius: 14, overflow: 'hidden', cursor: 'pointer',
+            ...(pub.boosted ? { boxShadow: '0 0 0 2px rgba(var(--primary-rgb, 217, 28, 210), .45)' } : {}),
+          }}
+        >
+          {pub.media_type === 'video' ? (
+            <>
+              <VideoPublication
+                ref={videoRef}
+                pub={pub}
+                poster={pub.thumbnail_url || undefined}
+                /* `muted` est CONTRÔLÉ par React : posé en littéral, il était
+                   réimposé à chaque rendu et écrasait toute mise en sourdine
+                   faite à la main. La vidéo démarre muette — ce que le
+                   navigateur exige pour l'autoplay — puis suit l'état commun. */
+                muted={!sonActif}
+                autoPlay loop playsInline
+                style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+              <V540BoutonSon />
+            </>
+          ) : (
+            <img
+              src={pub.media_url}
+              alt={`Publication de ${nom}`}
+              loading="lazy"
+              style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+          )}
+          <V268Remaining remaining={pub.remaining_hours} noExpiry={pub.no_expiry} />
+        </div>
+
+        {/* Les actions de la PAGE, à côté du média. Pas celles de ce post-là. */}
+        <div style={{ flex: '0 0 44px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+          <Action
+            nomIcone="heart"
+            valeur={actions && actions.likesCount}
+            actif={actions && actions.liked}
+            onClick={actions && actions.onLike}
+            aria="J’aime la page Afroboost (compteur commun à toute la page)"
+          />
+          <Action
+            nomIcone="messageCircle"
+            valeur={actions && (actions.commentsCount || null)}
+            onClick={actions && actions.onComments}
+            aria="Avis Afroboost (compteur commun à toute la page)"
+          />
+          <span style={{ fontSize: 9, letterSpacing: '.04em', textAlign: 'center', lineHeight: 1.15, color: 'rgba(255,255,255,0.42)', maxWidth: 48 }}>
+            de toute la page
+          </span>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 0 0', marginRight: 54 }}>
+        <img
+          src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.author_name || nom)}&backgroundColor=8B5CF6`}
+          alt=""
+          onClick={(e) => {
+            e.stopPropagation();
+            const pid = pub.author_id || pub.coach_id;
+            if (pid) window.dispatchEvent(new CustomEvent('afroboost:open-miniprofile', { detail: { id: pid, name: pub.author_name || nom } }));
+          }}
+          style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1px solid rgba(255,255,255,0.25)', cursor: 'pointer' }}
+        />
+        {/* Couleur explicite : `body` est en rgb(10,10,10), hériter rendrait
+            le nom noir sur noir. */}
+        <span style={{ fontSize: 14, fontWeight: 650, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{nom}</span>
+        <span style={{
+          flex: '0 0 auto', padding: '3px 8px', borderRadius: 999, fontSize: 10, letterSpacing: '.05em', fontWeight: 700,
+          background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.8)',
+        }}>{estCoach ? 'COACH' : 'MEMBRE'}</span>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: 'rgba(255,255,255,0.6)', flex: '0 0 auto' }}>
+          {v540Depuis(pub.created_at)}
+        </span>
+      </div>
+      {pub.caption ? (
+        <p style={{ margin: '8px 54px 0 0', fontSize: 14, color: 'rgba(255,255,255,0.8)', lineHeight: 1.45 }}>{pub.caption}</p>
+      ) : null}
+    </article>
+  );
+};
+
+/** « il y a 3 j » — `created_at` existait et n'était affiché nulle part. */
+function v540Depuis(iso) {
+  try {
+    const h = (Date.now() - new Date(iso).getTime()) / 36e5;
+    if (!Number.isFinite(h) || h < 0) return '';
+    if (h < 1) return 'à l’instant';
+    if (h < 24) return `il y a ${Math.round(h)} h`;
+    const j = Math.round(h / 24);
+    if (j < 7) return `il y a ${j} j`;
+    const sem = Math.round(j / 7);
+    if (sem < 5) return `il y a ${sem} sem.`;
+    return `il y a ${Math.round(j / 30)} mois`;
+  } catch (e) { return ''; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V540 — LE SON, UN SEUL ÉTAT POUR TOUT LE MUR
+
+   Le fil et la publication agrandie lisent la MÊME variable. On coupe le son
+   dans le fil, on agrandit : la vidéo reste muette. On le remet en grand, on
+   revient : le fil a du son.
+
+   Un module, pas un état React : les cartes sont rendues par des composants
+   frères qui n'ont pas de parent commun porteur d'état, et remonter cet état
+   jusqu'à App.js ferait re-rendre TOUT le mur à chaque clic sur le son.
+   Ici, on prévient les abonnés et chacun se met à jour seul.
+
+   ⚠️ L'AUTOPLAY N'EST PAS TOUCHÉ : une vidéo démarre TOUJOURS muette (c'est ce
+   que le navigateur exige), et `preload`, `loop`, `playsInline`, `poster` et
+   le chargement différé V537 restent exactement ce qu'ils étaient.
+   ═══════════════════════════════════════════════════════════════════════════ */
+let v540Son = false;
+const v540Abonnes = new Set();
+export const v540SonActif = () => v540Son;
+export function v540BasculerSon(e) {
+  if (e) { e.stopPropagation(); e.preventDefault(); }   // jamais la lightbox
+  v540Son = !v540Son;
+  v540Abonnes.forEach((f) => { try { f(v540Son); } catch (err) { /* un abonné mort ne casse rien */ } });
+}
+/** S'abonner à l'état du son. Renvoie la fonction de désabonnement. */
+export function v540EcouterSon(f) {
+  v540Abonnes.add(f);
+  return () => v540Abonnes.delete(f);
+}
+
+/** L'icône du bouton son, dans l'état demandé. */
+export const V540IconeSon = ({ actif, size = 17 }) => (actif ? (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M11 5 6 9H2v6h4l5 4z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" />
+  </svg>
+) : (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M11 5 6 9H2v6h4l5 4z" /><path d="m22 9-6 6M16 9l6 6" />
+  </svg>
+));
+
+/**
+ * Le bouton son posé sur un média. Il NE FAIT QUE ça : le clic est arrêté net,
+ * il n'ouvre jamais la publication.
+ */
+export const V540BoutonSon = ({ style }) => {
+  const [actif, setActif] = useState(v540SonActif());
+  useEffect(() => v540EcouterSon(setActif), []);
+  return (
+    <button
+      type="button"
+      data-testid="publication-son"
+      aria-label={actif ? 'Couper le son' : 'Activer le son'}
+      title={actif ? 'Couper le son' : 'Activer le son'}
+      onClick={v540BasculerSon}
+      style={{
+        position: 'absolute', right: 10, bottom: 10, zIndex: 3,
+        width: 34, height: 34, borderRadius: '50%', padding: 0, cursor: 'pointer',
+        border: '1px solid rgba(255,255,255,0.28)', background: 'rgba(0,0,0,0.6)', color: '#fff',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+        ...(style || {}),
+      }}
+    >
+      <V540IconeSon actif={actif} />
+    </button>
+  );
+};
+
+export const PublicationsCarousel = ({ publications, actions, disposition = 'carrousel' }) => {
   // V268 (F2): publication ouverte en plein ecran, ou null.
   const [lightbox, setLightbox] = useState(null);
   if (!publications || publications.length === 0) return null;
+
+  /* V540 — LE FIL VERTICAL. Variante ADDITIVE : sans `disposition="fil"`, ce
+     composant se comporte exactement comme avant (carrousel horizontal), pour
+     tout appelant présent ou futur. Une seule publication par ligne, jamais
+     deux côte à côte, quelle que soit la largeur de l'écran. */
+  if (disposition === 'fil') {
+    return (
+      <div className="mb-8" data-testid="publications-fil">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
+          {publications.map((pub, i) => (
+            <V540CartePublication
+              key={pub.id}
+              pub={pub}
+              actions={actions}
+              onOpen={() => setLightbox({ pub, index: i })}
+            />
+          ))}
+        </div>
+        {lightbox && createPortal(
+          <V268Lightbox
+            pub={lightbox.pub}
+            onClose={() => setLightbox(null)}
+            actions={actions}
+            /* V540 : navigation entre publications, sur le tableau DÉJÀ chargé.
+               Aucun appel réseau, aucun rechargement. */
+            liste={publications}
+            index={lightbox.index}
+            onNaviguer={(n) => setLightbox({ pub: publications[n], index: n })}
+          />,
+          document.body
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="mb-8 fade-in-section" data-testid="publications-carousel">
       {/* UI-PUB : le titre « Publications » est desormais rendu par App.js, avec

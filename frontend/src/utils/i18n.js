@@ -78,6 +78,8 @@ export const translations = {
     searchPlaceholder: "Rechercher...",
     all: "Tout",
     sessions: "Sessions",
+    homeTab: "Accueil",
+    communityTab: "Communauté",
     offersFilter: "Offres",
     shopFilter: "Shop",
     noResults: "Aucun résultat",
@@ -175,6 +177,8 @@ export const translations = {
     searchPlaceholder: "Search...",
     all: "All",
     sessions: "Sessions",
+    homeTab: "Accueil",
+    communityTab: "Communauté",
     offersFilter: "Offers",
     shopFilter: "Shop",
     noResults: "No results",
@@ -272,6 +276,8 @@ export const translations = {
     searchPlaceholder: "Suchen...",
     all: "Alle",
     sessions: "Sitzungen",
+    homeTab: "Accueil",
+    communityTab: "Communauté",
     offersFilter: "Angebote",
     shopFilter: "Shop",
     noResults: "Keine Ergebnisse",
@@ -316,7 +322,9 @@ export const translations = {
     selectOffer: "Poná mabonza na yo", bookNow: "Komisa", email: "Email",
     login: "Kokɔta", logout: "Kobima", offers: "Mabonza", price: "Ntalo",
     searchPlaceholder: "Luká na nkombo, email...", all: "Nyonso",
-    sessions: "Masolo", offersFilter: "Mabonza", shopFilter: "Magazini",
+    sessions: "Masolo",
+    homeTab: "Accueil",
+    communityTab: "Communauté", offersFilter: "Mabonza", shopFilter: "Magazini",
     bookBtn: "Komisa", viewVisitor: "Komona ya moye", faq: "Mituna"
   },
   wo: { // Wolof
@@ -326,7 +334,9 @@ export const translations = {
     selectOffer: "Tànn sa tànn", bookNow: "Réservé", email: "Email",
     login: "Dugg", logout: "Génn", offers: "Tànn yi", price: "Njëg",
     searchPlaceholder: "Seet ci tur, email...", all: "Yépp",
-    sessions: "Ndajé yi", offersFilter: "Tànn yi", shopFilter: "Bitik",
+    sessions: "Ndajé yi",
+    homeTab: "Accueil",
+    communityTab: "Communauté", offersFilter: "Tànn yi", shopFilter: "Bitik",
     bookBtn: "Réservé", viewVisitor: "Xool bu mooy", faq: "Laaj yu bari"
   },
   sw: { // Swahili
@@ -336,7 +346,9 @@ export const translations = {
     selectOffer: "Chagua ofa yako", bookNow: "Weka nafasi", email: "Barua pepe",
     login: "Ingia", logout: "Ondoka", offers: "Ofa", price: "Bei",
     searchPlaceholder: "Tafuta kwa jina, barua pepe...", all: "Yote",
-    sessions: "Vipindi", offersFilter: "Ofa", shopFilter: "Duka",
+    sessions: "Vipindi",
+    homeTab: "Accueil",
+    communityTab: "Communauté", offersFilter: "Ofa", shopFilter: "Duka",
     bookBtn: "Weka nafasi", viewVisitor: "Mtazamo wa mgeni", faq: "Maswali yanayoulizwa"
   },
   bm: { // Bambara
@@ -346,7 +358,9 @@ export const translations = {
     selectOffer: "I ka sɔrɔyɔrɔ sugandi", bookNow: "A mara", email: "Email",
     login: "Don", logout: "Bɔ", offers: "Sɔrɔyɔrɔ", price: "Sɔngɔ",
     searchPlaceholder: "Ɲini tɔgɔ, email fɛ...", all: "Bɛɛ",
-    sessions: "Kalanso", offersFilter: "Sɔrɔyɔrɔ", shopFilter: "Jagaso",
+    sessions: "Kalanso",
+    homeTab: "Accueil",
+    communityTab: "Communauté", offersFilter: "Sɔrɔyɔrɔ", shopFilter: "Jagaso",
     bookBtn: "A mara", viewVisitor: "Jɛnkulu ka ye", faq: "Ɲininkali caman"
   },
   bas: { // Bassa (Cameroun)
@@ -356,7 +370,9 @@ export const translations = {
     selectOffer: "Sɔ mahɔl moŋ", bookNow: "Tila", email: "Email",
     login: "Kɛ bisu", logout: "So", offers: "Mahɔl", price: "Njel",
     searchPlaceholder: "Sônga ni ina, email...", all: "Hiki jam",
-    sessions: "Bihéga", offersFilter: "Mahɔl", shopFilter: "Makɛ",
+    sessions: "Bihéga",
+    homeTab: "Accueil",
+    communityTab: "Communauté", offersFilter: "Mahɔl", shopFilter: "Makɛ",
     bookBtn: "Tila", viewVisitor: "Ɓéga yak njômbi", faq: "Mambadga"
   },
   ht: { // V275d: Créole (haïtien/antillais)
@@ -366,7 +382,9 @@ export const translations = {
     selectOffer: "Chwazi òf ou", bookNow: "Rezève", email: "Imèl",
     login: "Konekte", logout: "Dekonekte", offers: "Òf yo", price: "Pri",
     searchPlaceholder: "Chèche pa non, imèl...", all: "Tout",
-    sessions: "Sesyon yo", offersFilter: "Òf yo", shopFilter: "Boutik",
+    sessions: "Sesyon yo",
+    homeTab: "Accueil",
+    communityTab: "Communauté", offersFilter: "Òf yo", shopFilter: "Boutik",
     bookBtn: "Rezève", viewVisitor: "Vi vizitè", faq: "Kesyon yo"
   }
 };

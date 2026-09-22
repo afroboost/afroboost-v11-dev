@@ -271,7 +271,10 @@ import { PublicationsCarousel } from "./components/Publications"; // V261
 import OffresAimants from "./components/OffresAimants";
 import ChoixModePaiement from "./components/ChoixModePaiement"; // V535 — paiement intégral ou en 2 fois
 import { offreAvecChoixPaiement } from "./utils/modePaiement"; // V535
-import { visiteurEstConnecte, regrouperOffres as aimantsRegrouper, estRecurrente as offreEstRecurrente } from "./utils/offresAimants";
+import { visiteurEstConnecte, regrouperOffres as aimantsRegrouper, estRecurrente as offreEstRecurrente,
+  badgeOffre, prixAffiche, promesseCourte } from "./utils/offresAimants"; // V540 : libellés de la carte « offre du moment »
+// V540 : les trois cartes de la colonne d'accueil (Live · offre · Spordateur).
+import { CarteLive, CarteOffreDuMoment, CarteSpordateur } from "./components/accueil/ColonneAccueil";
 import { normaliserRatio as videoRatioNormaliser, estPortrait as videoEstPortrait } from "./utils/videoRatio";
 import { analyserMediaUrl } from "./utils/mediaOffre";
 import { trimDeLOffre as videoTrimDeLOffre, useTrimVideo as videoUseTrim } from "./utils/videoTrim";
@@ -526,6 +529,8 @@ const translations = {
     // V106: Nouvelles traductions
     searchPlaceholder: "Rechercher...",
     all: "Tout",
+    homeTab: "Accueil",
+    communityTab: "Communauté",
     sessions: "Sessions",
     offersFilter: "Offres",
     shopFilter: "Shop",
@@ -680,6 +685,8 @@ const translations = {
     // V106: New translations
     searchPlaceholder: "Search...",
     all: "All",
+    homeTab: "Home",
+    communityTab: "Community",
     sessions: "Sessions",
     offersFilter: "Offers",
     shopFilter: "Shop",
@@ -833,6 +840,8 @@ const translations = {
     // V106: Neue Übersetzungen
     searchPlaceholder: "Suchen...",
     all: "Alle",
+    homeTab: "Start",
+    communityTab: "Community",
     sessions: "Sitzungen",
     offersFilter: "Angebote",
     shopFilter: "Shop",
@@ -8733,12 +8742,19 @@ function App() {
             640 px la barre passe sur DEUX lignes (filtres, puis Live ·
             Spordateur · recherche) : tout est visible et atteignable au pouce,
             rien n'est retiré. Au-dessus, une ligne comme avant. */}
-        <div className="max-w-4xl mx-auto flex flex-wrap sm:flex-nowrap items-center gap-1 px-3 sm:px-4 py-2 overflow-x-auto hide-scrollbar">
+        <div className="af-accueil-contenu mx-auto flex flex-wrap sm:flex-nowrap items-center gap-1 px-3 sm:px-4 py-2 overflow-x-auto hide-scrollbar">
           {/* V245: emoji des onglets remplaces par SvgIcon (icones vectorielles
               qui suivent currentColor, coherentes avec la migration V228+). */}
+          {/* V540 — CINQ ENTRÉES QUI NOMMENT DES LIEUX.
+              « Tout » ne disait rien : c'est l'accueil. « Communauté » s'ajoute
+              et mène au fil. Live et Spordateur QUITTENT la barre — non pas
+              parce qu'on les retire, mais parce qu'ils ont désormais leur
+              propre carte dans la colonne, avec les MÊMES handlers. Leurs
+              routes, leur logique et leur préchargement sont intacts. */}
           {[
-            { key: 'all', label: t('all'), icon: 'grid' },
+            { key: 'all', label: t('homeTab'), icon: 'home' },
             { key: 'sessions', label: t('sessions'), icon: 'calendar' },
+            { key: 'communaute', label: t('communityTab'), icon: 'users' },
             { key: 'offers', label: t('offersFilter'), icon: 'gift' },
             { key: 'shop', label: t('shopFilter'), icon: 'shoppingCart' }
           ].map(tab => (
@@ -8755,14 +8771,18 @@ function App() {
                 // neutralise (`showSessions = false`, V225), et le defilement
                 // echouait donc en silence.
                 if (tab.key === 'sessions') { setShowSessionsModal(true); return; }
-                // OFFRES AIMANTS : pour un visiteur, « Offres » ouvre la liste
-                // complete (panneau) en plus du defilement vers la section.
-                if (tab.key === 'offers' && parcoursConversion) setSignalToutesOffres((n) => n + 1);
+                // V540 : « Offres » n'ouvre PLUS le panneau « toutes les offres »
+                // par-dessus — les 3 cartes occupent désormais la zone
+                // principale, le panneau ferait double emploi. Il reste
+                // accessible par le bouton « Voir toutes les offres », qui est
+                // le mécanisme existant (`setSignalToutesOffres`), inchangé.
                 setActiveFilter(tab.key);
-                const sectionMap = { offers: 'offers-section', shop: 'products-section' };
+                const sectionMap = { offers: 'offers-section', shop: 'products-section', communaute: 'mur-publications' };
                 if (sectionMap[tab.key]) {
                   const el = document.getElementById(sectionMap[tab.key]);
                   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else {
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
                 }
               }}
               className="flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 rounded-full text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all"
@@ -8781,89 +8801,17 @@ function App() {
             </button>
           ))}
 
-          {/* LIVE RAPIDE : « Live » — même pastille que les filtres, PORTE vers le
-              système Live existant (hook partagé, même overlay, même serveur).
-              « LIVE EN COURS » + point rouge discret quand le coach est en direct
-              (état lu sur GET /boosttribe/live-status, onglet visible seulement).
-              La couleur du point est sémantique (rouge = en direct), posée en
-              variable avec repli, jamais en dur. */}
-          <button
-            type="button"
-            onClick={ouvrirLiveDepuisLaBarre}
-            disabled={btLive.state === 'loading'}
-            data-testid="nav-live"
-            data-live-en-cours={liveEnCours ? 'true' : 'false'}
-            title={t('liveNavTitre')}
-            aria-label={liveEnCours ? t('liveNavEnCours') : t('liveNavTitre')}
-            className="flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 rounded-full text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all"
-            style={{
-              background: liveEnCours
-                ? 'rgba(var(--live-rgb, 239, 68, 68), 0.16)'
-                : 'rgba(255, 255, 255, 0.06)',
-              border: liveEnCours
-                ? '1px solid rgba(var(--live-rgb, 239, 68, 68), 0.55)'
-                : '1px solid rgba(255, 255, 255, 0.1)',
-              color: liveEnCours ? '#fff' : 'rgba(255, 255, 255, 0.6)',
-              fontWeight: liveEnCours ? 700 : 500,
-              cursor: btLive.state === 'loading' ? 'wait' : 'pointer',
-              flexShrink: 0
-            }}
-          >
-            <span
-              aria-hidden="true"
-              className={liveEnCours ? 'af-live-dot af-live-dot--on' : 'af-live-dot'}
-              style={{
-                width: 8, height: 8, borderRadius: 9999, display: 'inline-block', flexShrink: 0,
-                background: liveEnCours ? 'var(--live-color, #ef4444)' : 'rgba(255, 255, 255, 0.35)'
-              }}
-            />
-            <span>{btLive.state === 'loading' ? '…' : (liveEnCours ? t('liveNavEnCours') : t('liveNav'))}</span>
-          </button>
-
-          {/* V386 : entrée vers Spordateur, servi sous afroboost.com/rencontre.
-              LIVE RAPIDE : même pastille que les autres (fond discret, bordure
-              fine, texte atténué) — il NAVIGUE ailleurs mais ne doit pas peser
-              plus que « Live ». Couleur de marque conservée sur l'icône via la
-              variable, jamais en dur. Icône SVG inline (règle du projet). */}
-          <a
-            href={urlEntreeServeur()}
-            data-testid="nav-rencontre"
-            title="Spordateur — trouver un partenaire de sport"
-            /* F3 FINAL — HANDOFF DIRECT, MOBILE COMPRIS. Le `href` pointe vers
-               la route serveur `/api/spordate/enter` : clic milieu, « nouvel
-               onglet » et navigation sans JS y passent aussi — un coach à cookie
-               y est redirigé (302) déjà connecté ; sinon /rencontre (login
-               normal). Au clic gauche, `entrerDansSpordate` part IMMÉDIATEMENT :
-               jeton déjà pré-obtenu au montage -> navigation directe ; sinon ->
-               la route serveur. Aucun fetch attendu avant de naviguer, aucun
-               survol requis (le mobile n'en a pas). L'auto-login est conservé. */
-            onMouseEnter={() => { prechargerSpordate(); }}
-            onFocus={() => { prechargerSpordate(); }}
-            onTouchStart={() => { prechargerSpordate(); }}
-            onClick={(e) => {
-              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-              e.preventDefault();
-              entrerDansSpordate();
-            }}
-            className="flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 rounded-full text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all"
-            style={{
-              background: 'rgba(255, 255, 255, 0.06)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              color: 'rgba(255, 255, 255, 0.6)',
-              textDecoration: 'none',
-              flexShrink: 0
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color, #D91CD2)"
-                 strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-              <circle cx="9" cy="7" r="4" />
-              <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-            </svg>
-            <span>Spordateur</span>
-          </a>
-
+          {/* V540 — LIVE ET SPORDATEUR QUITTENT LA BARRE, PAS LE SITE.
+              Ils ont désormais chacun leur carte dans la colonne d'accueil,
+              branchée sur les MÊMES fonctions qu'ici : `ouvrirLiveDepuisLaBarre`
+              pour le direct, `urlEntreeServeur` + `entrerDansSpordate` +
+              `prechargerSpordate` pour Spordateur. Rien n'est supprimé : ni
+              route, ni handler, ni préchargement, ni permission. Le message de
+              retour du bouton Live (`liveNavInfo`, juste sous la barre) reste
+              lui aussi en place et continue de s'afficher.
+              Le Live méritait mieux qu'une pastille de 31 px coincée entre
+              « Boutique » et « Spordateur » ; Spordateur est un univers
+              complémentaire, pas un onglet de cette page. */}
           {/* V106: Barre de recherche universelle dans la sticky nav */}
           <div style={{ position: 'relative', marginLeft: 'auto', flex: '1 1 120px', minWidth: '120px', maxWidth: '200px' }}>
             {/* LIVE RAPIDE (lisibilité) : le champ était noir sur noir — bordure
@@ -8910,8 +8858,12 @@ function App() {
       </div>
 
       {/* v9.5.8: Contenu scrollable SOUS le flux Reels */}
+      {/* V540 : `max-w-4xl` (896 px) ne laissait pas la place à une colonne à
+          côté du fil. 1160 px donnent 70 / 30. Tout ce qui suit — boutique,
+          formulaire, FAQ, pied de page — gagne la même largeur, et reste
+          exactement au même endroit dans l'arbre. */}
       <div
-        className="max-w-4xl mx-auto px-6 pt-4"
+        className="af-accueil-contenu mx-auto px-6 pt-4"
         style={{
           background: 'transparent',
           border: 'none',
@@ -9026,14 +8978,29 @@ function App() {
           const aimantsActifs = parcoursConversion && filteredServices.length > 0
             && aimantsRegrouper(filteredServices).aimants.length > 0;
           const murPublications = (
-            <div key="mur-publications" className="mb-8">
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
+            <div key="mur-publications" id="mur-publications" className="mb-8">
+              {/* V540 — LE TITRE PASSE À GAUCHE ET NOMME CE QU'ON REGARDE.
+                  « Publications » centré ne disait pas de QUI. Le fil est celui
+                  d'une vitrine : ce coach et ses membres, jamais un mélange —
+                  c'est déjà la règle du serveur (`GET /publications?coach_id`,
+                  V272b/V272c), on ne fait que l'écrire. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                 <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', flexShrink: 0 }}>
                   <SvgIcon name="users" size={18} />
                 </span>
-                <span style={{ color: '#fff', fontSize: '18px', fontWeight: 600 }}>Publications</span>
+                <h2 style={{ color: '#fff', fontSize: '21px', fontWeight: 700, letterSpacing: '-0.012em', margin: 0 }}>
+                  Ce qui se passe chez Afroboost
+                </h2>
               </div>
+              <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13.5px', margin: '0 0 16px' }}>
+                {v261Publications.length}
+                {v261Publications.length > 1 ? ' publications' : ' publication'} du coach et de ses membres
+              </p>
               <PublicationsCarousel
+                /* V540 : une publication par ligne, jamais deux côte à côte.
+                   Variante ADDITIVE — sans cette prop, le composant reste le
+                   carrousel horizontal d'avant pour tout autre appelant. */
+                disposition="fil"
                 actions={{
                   likesCount: uipubLikes, liked: uipubDejaLike, onLike: uipubLiker,
                   commentsCount: socialTotalCount || socialComments.length,
@@ -9051,6 +9018,57 @@ function App() {
                 }
               />
             </div>
+          );
+
+          /* V540 — L'OFFRE MISE EN AVANT DANS LA COLONNE.
+             Celle que le coach a lui-même marquée urgente (compte à rebours) ;
+             à défaut, la première offre de service publique. Aucun classement
+             inventé : on relit un réglage qui existe sur l'offre. */
+          const v540Groupes = aimantsRegrouper(filteredServices);
+          /* L'aimant qui porte une urgence (compte à rebours) passe devant ;
+             sinon le premier des trois, sinon rien. On relit le regroupement
+             existant, on n'en invente pas un second. */
+          const v540Aimant = v540Groupes.aimants.filter((a) => a && a.offre
+            && a.offre.countdown_enabled && a.offre.countdown_date)[0]
+            || v540Groupes.aimants[0] || null;
+          const v540OffreVedette = v540Aimant ? v540Aimant.offre : null;
+          const v540Prix = v540OffreVedette ? prixAffiche(v540OffreVedette) : { montant: '', unite: '' };
+          const v540ColonneAccueil = (
+            <aside key="colonne-accueil" className="af-colonne-cote" data-testid="accueil-colonne">
+              <CarteLive
+                enDirect={liveEnCours}
+                occupe={btLive.state === 'loading'}
+                onOuvrir={ouvrirLiveDepuisLaBarre}
+                titreHors="Le direct n’a pas commencé."
+                titreEnCours="Rejoindre le direct"
+              />
+              {/* Sous l'onglet « Offres », les 3 cartes occupent déjà la zone
+                  principale : montrer la même offre ici ferait doublon. */}
+              {activeFilter !== 'offers' && (
+                <CarteOffreDuMoment
+                  offre={v540OffreVedette}
+                  badge={(v540Aimant && v540Aimant.badge)
+                    || (v540OffreVedette ? badgeOffre(v540OffreVedette, v540Groupes.mensuelRef, filteredServices) : '')}
+                  prix={v540Prix.montant}
+                  unite={v540Prix.unite}
+                  detail={v540OffreVedette ? promesseCourte(v540OffreVedette) : ''}
+                  media={v540OffreVedette ? (parseMediaUrl(v540OffreVedette.videoUrl || v540OffreVedette.thumbnail || '') || {}).poster || (v540OffreVedette.videoUrl || v540OffreVedette.thumbnail) : ''}
+                  Countdown={OfferCountdown}
+                  onChoisir={handleSelectOffer}
+                  onToutesLesOffres={() => setSignalToutesOffres((n) => n + 1)}
+                  nbOffres={filteredServices.length}
+                />
+              )}
+              <CarteSpordateur
+                href={urlEntreeServeur()}
+                onPrecharger={prechargerSpordate}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                  e.preventDefault();
+                  entrerDansSpordate();
+                }}
+              />
+            </aside>
           );
 
           // --- BLOC OFFRES (v159: flow offer-first — cliquez offre puis horaire apparaît) ---
@@ -9106,9 +9124,41 @@ function App() {
           // c'est du contenu vivant, il perd son interet en bas de page.
           // PUBLICATIONS : le mur vient AVANT les offres (sous la navigation),
           // pour tout le monde — sa place d'origine par rapport aux offres.
-          return isOffersFirst
-            ? <>{publicationsBlock}{murPublications}{offersBlock}{sessionsBlock}</>
-            : <>{publicationsBlock}{murPublications}{sessionsBlock}{offersBlock}</>;
+          /* V540 — DEUX ZONES, ET UNE RÈGLE SIMPLE.
+             Zone principale (≈70 %) : le fil, SAUF sous l'onglet « Offres » où
+             ce sont les 3 offres existantes — et rien d'autre.
+             Colonne (≈30 %) : Live, l'offre du moment selon le contexte,
+             Spordateur. Sur téléphone il n'y a pas de colonne : la carte Live
+             remonte AVANT le fil, l'offre et Spordateur passent après.
+
+             `sessionsBlock` garde sa place exacte dans l'ordre : il est
+             neutralisé depuis V225 (`showSessions` reste faux), on ne le
+             supprime pas pour autant. */
+          /* ⚠️ LE BLOC DES OFFRES RESTE MONTÉ EN PERMANENCE, ON LE CACHE
+             SEULEMENT. Il ne sert pas qu'à afficher trois cartes : il PORTE le
+             lien profond `?offre=<id>` et `&reserver=1` (effet dans
+             `OffresAimants`). Le démonter hors de l'onglet « Offres » cassait
+             le parcours d'essai gratuit — mesuré : le formulaire de
+             réservation n'apparaissait plus du tout, alors qu'il s'ouvre bien
+             en production. Un `display:none` laisse React monté, les effets
+             tournent, et la fiche (rendue par portail) s'affiche par-dessus
+             tout le reste. */
+          const v540ZonePrincipale = (
+            <>
+              {activeFilter !== 'offers' && <>{publicationsBlock}{murPublications}</>}
+              <div style={activeFilter === 'offers' ? undefined : { display: 'none' }}>
+                {offersBlock}
+              </div>
+              {sessionsBlock}
+            </>
+          );
+
+          return (
+            <div className="af-accueil-colonnes" data-testid="accueil-colonnes">
+              {v540ColonneAccueil}
+              <div className="af-colonne-principale">{v540ZonePrincipale}</div>
+            </div>
+          );
         })()}
 
         {/* =====================================================

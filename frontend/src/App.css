@@ -1085,3 +1085,52 @@ video:-ms-fullscreen {
   height: 100% !important;
   background: var(--video-bg, #000) !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V540 — LA PAGE D'ACCUEIL EN DEUX ZONES
+
+   Grand écran : le fil prend ≈ 70 %, la colonne ≈ 30 % et colle au défilement.
+   Téléphone : PAS de colonne. Les trois cartes remontent dans le flux, dans
+   l'ordre demandé — Live AVANT le fil, l'offre du moment et Spordateur APRÈS.
+
+   `display: contents` fait disparaître le conteneur `<aside>` de la mise en
+   page sans retirer ses enfants du document : `order` peut alors les replacer
+   un par un autour du fil. C'est ce qui évite de dupliquer les cartes dans
+   deux emplacements du JSX — un seul rendu, deux dispositions.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.af-accueil-contenu { max-width: 1160px; }
+
+.af-accueil-colonnes { display: flex; flex-direction: column; gap: 26px; }
+.af-colonne-cote { display: contents; }
+.af-colonne-cote > *:nth-child(1) { order: 1; }   /* Live */
+.af-colonne-principale          { order: 2; min-width: 0; }
+.af-colonne-cote > *:nth-child(2) { order: 3; }   /* offre du moment */
+.af-colonne-cote > *:nth-child(3) { order: 4; }   /* Spordateur */
+
+@media (min-width: 1024px) {
+  .af-accueil-colonnes { flex-direction: row; align-items: flex-start; gap: 28px; }
+  .af-colonne-principale { order: 1; flex: 1 1 auto; }
+  .af-colonne-cote {
+    display: flex; flex-direction: column; gap: 16px;
+    width: 320px; flex: 0 0 320px; order: 2;
+    position: sticky; top: 92px;
+  }
+  .af-colonne-cote > * { order: initial; }
+}
+
+/* Les trois barres de la carte Live : elles ne bougent QUE pendant un direct,
+   et elles disent quelque chose — il y a du son en ce moment. */
+.af-live-barres i { width: 4px; border-radius: 2px; background: #ff3b30; height: 8px; animation: afLiveSon 900ms ease-in-out infinite; }
+.af-live-barres i:nth-child(2) { animation-delay: 140ms; height: 18px; }
+.af-live-barres i:nth-child(3) { animation-delay: 290ms; height: 12px; }
+@keyframes afLiveSon { 0%, 100% { height: 7px; } 50% { height: 22px; } }
+@media (prefers-reduced-motion: reduce) {
+  .af-live-barres i { animation: none; height: 14px; }
+}
+
+/* V540 — les flèches du viewer : en bas sur téléphone (la colonne d'actions
+   tient déjà le bord droit du média), à l'extrême droite sur grand écran. */
+.af-viewer-nav { left: 50%; transform: translateX(-50%); bottom: 14px; flex-direction: row; }
+@media (min-width: 1024px) {
+  .af-viewer-nav { left: auto; right: 18px; top: 50%; bottom: auto; transform: translateY(-50%); flex-direction: column; }
+}
