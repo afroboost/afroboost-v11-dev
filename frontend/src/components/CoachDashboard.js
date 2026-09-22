@@ -1781,6 +1781,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     // HIVER : paiement unique par defaut, duree historique (vide = 2 mois).
     billing_mode: 'unique',
     duree_mois: null,
+    // V535 : échéancier propre et paiement intégral (saison_2x seulement).
+    installment_interval_months: null,
+    full_payment_available: false,
     video_aspect_ratio: 'auto',
     mobile_money_enabled: false,
     video_trim_start: null, video_trim_end: null,
@@ -3324,6 +3327,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       season: offer.season || 'toutes',
       billing_mode: offer.billing_mode || 'unique',
       duree_mois: offer.duree_mois ?? null,
+      installment_interval_months: offer.installment_interval_months ?? null, // V535
+      full_payment_available: offer.full_payment_available === true, // V535
       video_aspect_ratio: offer.video_aspect_ratio || 'auto',
       mobile_money_enabled: !!offer.mobile_money_enabled,
       video_trim_start: offer.video_trim_start ?? null,
@@ -3383,6 +3388,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       season: 'toutes',
       billing_mode: 'unique',
       duree_mois: null,
+      installment_interval_months: null, // V535
+      full_payment_available: false, // V535
       video_aspect_ratio: 'auto',
       mobile_money_enabled: false,
       video_trim_start: null, video_trim_end: null,
@@ -3455,6 +3462,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // HIVER : mode de paiement et duree des droits — meme liste blanche.
         billing_mode: src.billing_mode || 'unique',
         duree_mois: v223Int(src.duree_mois, null),
+        // V535 : mêmes règles — même liste blanche, relus tels quels.
+        installment_interval_months: v223Int(src.installment_interval_months, null),
+        full_payment_available: src.full_payment_available === true,
         video_aspect_ratio: src.video_aspect_ratio || 'auto',
         mobile_money_enabled: !!src.mobile_money_enabled,
         // DÉCOUPE VIDÉO : le couple part TOUJOURS ensemble (null, null = aucune découpe).

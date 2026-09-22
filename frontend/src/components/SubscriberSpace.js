@@ -15,6 +15,7 @@ import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 import CarteProfilSpordateur from './CarteProfilSpordateur'; // F3 SUITE — carte compacte vers la VRAIE page profil Spordateur
 import CarteNotifications from './CarteNotifications'; // PUSH-PWA — état des notifications + réactivation automatique
 import CarteParrainage from './parrainage/CarteParrainage'; // V534 — carte « Parrainage » vers le Centre
+import ChoixModePaiement from './ChoixModePaiement'; // V535 — paiement intégral ou en 2 fois
 import { lireConfigParrainage } from '../utils/parrainage'; // V534 — configuration (cache 10 min)
 // V334 etape 2 : « Mon cockpit » charge A LA DEMANDE (React.lazy).
 // Il embarque recharts, qui pese ~98 ko gzip : l'inclure dans le bundle
@@ -459,13 +460,16 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   // a donne l'offre, le prix et le nombre de seances ; ce bouton ne fait que
   // transmettre. Et la caisse REVERIFIE tout (garde `lotr_garde_achat`) : un
   // bouton force depuis la console n'ouvre rien.
-  const handleRecharge = async () => {
-    const r = data?.recharge;
+  // V535 : `offre` = une entrée de `data.recharge.offres` (Pack 10, Membres — 8 mois…) ;
+  // sans argument, l'offre historique unique (`data.recharge`). `paymentMode` = le
+  // mode CHOISI par le membre pour une offre qui le permet ; le serveur le revalide.
+  const handleRecharge = async (offre = null, paymentMode = null) => {
+    const r = offre || data?.recharge;
     if (rechargeLoading || !r?.eligible || !r?.offer_id) return;
     setRechargeLoading(true);
     setActionError("");
     try {
-      const res = await axios.post(`${API}/create-checkout-session`, {
+      const corps = {
         productName: r.offer_name || "Recharge Afroboost",
         // Le serveur fait AUTORITE sur le montant des qu'`offerId` est fourni
         // (V428C) : cette valeur n'est qu'un affichage transmis.
@@ -474,7 +478,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         originUrl: window.location.origin,
         offerId: r.offer_id,
         quantity: 1,
-      });
+      };
+      if (paymentMode) corps.paymentMode = paymentMode;
+      const res = await axios.post(`${API}/create-checkout-session`, corps);
       if (res.data?.url) {
         window.location.href = res.data.url;
       } else {
@@ -2035,11 +2041,55 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               vit cote serveur, pas ici.
               Quand il n'apparait pas, la RAISON s'affiche : un bouton absent
               sans explication est un bug pour celui qui le cherche. */}
-          {data?.recharge?.eligible ? (
+          {/* V535 : TOUTES les offres réservées aux membres, chacune avec son verdict
+              serveur (LOT R) et ses faits commerciaux (séances, mois, échéancier).
+              Pack 10 et Membres — 8 mois ; « en une fois » ou « en 2 fois » quand
+              l'offre le permet. Rien n'est écrit en dur : tout vient de `offres`. */}
+          {Array.isArray(data?.recharge?.offres) && data.recharge.offres.length > 0 ? (
+            <div className="mt-4 flex flex-col gap-3" data-testid="recharge-offres">
+              {data.recharge.offres.map((o) => (
+                <div key={o.offer_id} className="rounded-2xl p-4" data-testid={`recharge-offre-${o.offer_id}`}
+                     style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)" }}>
+                  <p className="text-white font-semibold" style={{ margin: 0 }}>{o.offer_name}</p>
+                  <p className="text-white/70 text-sm" style={{ margin: "4px 0 0" }}>
+                    {[o.seances ? `${o.seances} séances` : null, o.duree_mois ? `${o.duree_mois} mois` : null,
+                      o.prix != null ? `${o.prix} ${o.devise || "CHF"}${o.echeances > 1 ? ` × ${o.echeances}` : ""}` : null]
+                      .filter(Boolean).join(" · ")}
+                  </p>
+                  {o.eligible ? (
+                    o.paiement_integral ? (
+                      <div className="mt-3">
+                        <ChoixModePaiement
+                          offre={{ billing_mode: o.billing_mode, price: o.prix, full_payment_available: true,
+                                   installment_interval_months: o.intervalle_mois }}
+                          occupe={rechargeLoading}
+                          titre="Choisis ton mode de paiement"
+                          onChoisir={(mode) => handleRecharge(o, mode)}
+                        />
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => handleRecharge(o)} disabled={rechargeLoading}
+                        data-testid={`recharge-cta-${o.offer_id}`}
+                        className="mt-3 w-full flex items-center justify-center gap-2 font-semibold rounded-2xl py-3 text-sm transition-transform active:scale-95"
+                        style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "#fff", border: "none", opacity: rechargeLoading ? 0.6 : 1 }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                          <path d="M21 12a9 9 0 1 1-3-6.7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                          <path d="M21 3v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                        {rechargeLoading ? "Redirection..." : `${o.seances ? `Recharger ${o.seances} séances` : "Choisir"}${o.prix != null ? ` — ${o.prix} ${o.devise || "CHF"}` : ""}`}
+                      </button>
+                    )
+                  ) : (
+                    o.message ? <p className="text-white/50 text-xs mt-2" data-testid={`recharge-refus-${o.offer_id}`}>{o.message}</p> : null
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : data?.recharge?.eligible ? (
             <div className="mt-4">
               <button
                 type="button"
-                onClick={handleRecharge}
+                onClick={() => handleRecharge()}
                 disabled={rechargeLoading}
                 data-testid="recharge-cta"
                 className="w-full flex items-center justify-center gap-2 font-semibold rounded-2xl py-4 text-base transition-transform active:scale-95"

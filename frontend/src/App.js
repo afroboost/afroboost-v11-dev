@@ -269,6 +269,8 @@ import { PublicationsCarousel } from "./components/Publications"; // V261
 // OFFRES AIMANTS : parcours de conversion du visiteur non connecte (3 cartes,
 // « toutes les offres », fiche detail). Les regles sont dans utils/offresAimants.
 import OffresAimants from "./components/OffresAimants";
+import ChoixModePaiement from "./components/ChoixModePaiement"; // V535 — paiement intégral ou en 2 fois
+import { offreAvecChoixPaiement } from "./utils/modePaiement"; // V535
 import { visiteurEstConnecte, regrouperOffres as aimantsRegrouper, estRecurrente as offreEstRecurrente } from "./utils/offresAimants";
 import { normaliserRatio as videoRatioNormaliser, estPortrait as videoEstPortrait } from "./utils/videoRatio";
 import { analyserMediaUrl } from "./utils/mediaOffre";
@@ -6664,6 +6666,14 @@ function App() {
   // toggle : le fond ignore les clics pendant les 600 ms qui suivent l'ouverture.
   const v528OuvertA = useRef(0);
   const v528Ouvrir = (etape) => { v528OuvertA.current = Date.now(); setV528EtapeEmail(etape); };
+  // V535 — étape « Choisis ton mode de paiement » avant Stripe, pour une offre
+  // « saison en 2 fois » qui permet aussi le paiement intégral. Même mécanique que
+  // V528 : on mémorise l'achat, on affiche la modale, on rejoue le checkout avec
+  // le mode CHOISI (jamais un fractionné par défaut). Le serveur revalide le mode.
+  const [v535EtapeMode, setV535EtapeMode] = useState(null);
+  const v535OuvertA = useRef(0);
+  const v535Ouvrir = (etape) => { v535OuvertA.current = Date.now(); setV535EtapeMode(etape); };
+  const v535FermerParLeFond = () => { if (Date.now() - v535OuvertA.current < 600) return; setV535EtapeMode(null); };
   const v528FermerParLeFond = () => { if (Date.now() - v528OuvertA.current < 600) return; setV528EtapeEmail(null); };
   // V529: refus métier 409 rendu dans une modale (plus d'alert() natif).
   // { dejaAbonne, texte, email, envoi } — `envoi` = état de « Accéder à mon espace »
@@ -6688,7 +6698,7 @@ function App() {
     }
   };
 
-  const startProgressiveCheckout = async (offer, quantity = 1, variants = null, emailForce = null) => {
+  const startProgressiveCheckout = async (offer, quantity = 1, variants = null, emailForce = null, paymentMode = null) => {
     // V224: garde de ré-entrance — sans elle, un double-clic pendant l'appel
     // réseau (démarrage à froid Vercel possible) crée plusieurs sessions
     // Stripe et plusieurs lignes payment_transactions pour le même achat.
@@ -6702,6 +6712,12 @@ function App() {
         setV528EmailSaisi(''); setV528EmailErreur('');
         v528Ouvrir({ offer, quantity, variants }); // V529: horodaté (anti double tap)
       }
+      return;
+    }
+    // V535 : l'offre laisse le choix du mode de paiement -> l'acheteur le fait
+    // explicitement AVANT toute session Stripe.
+    if (offreAvecChoixPaiement(offer) && !paymentMode) {
+      v535Ouvrir({ offer, quantity, variants, emailForce });
       return;
     }
     try {
@@ -6802,6 +6818,8 @@ function App() {
       // demande (garde anti-double 409 côté serveur + préremplissage Stripe). Jamais
       // la chaîne vide (cf. note V224 ci-dessous) : absente sinon.
       if (v527Email.email) payload.customerEmail = v527Email.email;
+      // V535 : le mode choisi part avec la demande ; le serveur le revalide et recalcule le montant.
+      if (paymentMode) payload.paymentMode = paymentMode;
       // V224: `customerEmail` est volontairement ABSENT du payload.
       // Ne jamais l'envoyer a "" : Stripe rejette la chaine vide comme adresse
       // invalide, et le fallback carte-seule (api/server.py:3498) la relaie
@@ -9906,6 +9924,34 @@ function App() {
             inconnue. Réutilise la modale existante (modal-overlay / glass / neon-input /
             btn-primary), aucun compte à créer : l'adresse sert à la garde anti-double
             (409 serveur) et au préremplissage Stripe. Icônes en SVG, couleurs via var(). */}
+        {/* V535 : choix du mode de paiement — offres « saison en 2 fois » qui
+            permettent aussi le paiement intégral. Même modale que V528. */}
+        {v535EtapeMode && (
+          <div className="modal-overlay" data-testid="v535-etape-mode" onClick={v535FermerParLeFond}>
+            <div className="modal-content glass rounded-xl p-6 max-w-md w-full neon-border" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="text-xl font-bold text-white" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></svg>
+                  </span>
+                  {(v535EtapeMode.offer && v535EtapeMode.offer.name) || 'Mode de paiement'}
+                </h3>
+                <button type="button" onClick={() => setV535EtapeMode(null)} className="text-2xl text-white hover:opacity-80" aria-label="Fermer">×</button>
+              </div>
+              <ChoixModePaiement
+                offre={v535EtapeMode.offer}
+                prix={v535EtapeMode.offer && v535EtapeMode.offer.active_price != null ? v535EtapeMode.offer.active_price : undefined}
+                occupe={checkoutBusy}
+                onFermer={() => setV535EtapeMode(null)}
+                onChoisir={(mode) => {
+                  const etape = v535EtapeMode;
+                  setV535EtapeMode(null);
+                  startProgressiveCheckout(etape.offer, etape.quantity, etape.variants, etape.emailForce, mode);
+                }}
+              />
+            </div>
+          </div>
+        )}
         {v528EtapeEmail && (
           <div className="modal-overlay" data-testid="v528-etape-email" onClick={v528FermerParLeFond}>
             <div className="modal-content glass rounded-xl p-6 max-w-md w-full neon-border" onClick={e => e.stopPropagation()}>
