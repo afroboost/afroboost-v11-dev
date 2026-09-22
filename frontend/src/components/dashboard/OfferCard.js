@@ -5,6 +5,7 @@ import React from 'react';
 // (ClockIcon/PinIcon/... ), d'ou le recours au jeu partage SvgIcon pour ces
 // deux traces uniquement. Les composants locaux restent la reference du fichier.
 import SvgIcon from '../SvgIcon';
+import { copyToClipboard } from '../../utils/clipboard';   // V537 — lien privé
 
 const PINK = 'var(--primary-color, #D91CD2)';
 
@@ -294,6 +295,35 @@ export default function OfferCard({
           {[hasPrice ? `${offer.price} CHF` : null, offer.duration_minutes ? `${offer.duration_minutes} min` : null]
             .filter(Boolean).join(' · ')}
         </p>
+        {/* V537 : l'offre est retirée des listes publiques. Le propriétaire doit le
+            voir d'un coup d'œil, et pouvoir copier SON lien — le seul chemin qui y
+            mène. Le badge ne décide rien : il lit le réglage de l'offre. */}
+        {offer.link_only === true && (
+          <div className="flex items-center gap-2 mt-2 flex-wrap" data-testid={`offer-link-only-${offer.id}`}>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs"
+                  style={{ color: PINK,
+                           border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
+                           background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.10)' }}>
+              <SvgIcon name="link" size={11} /> Privée — sur lien
+            </span>
+            <button
+              type="button"
+              data-testid={`offer-copy-link-${offer.id}`}
+              onClick={async (e) => {
+                e.stopPropagation();
+                const btn = e.currentTarget;
+                const r = await copyToClipboard(`${window.location.origin}/?offre=${offer.id}`);
+                const avant = btn.textContent;
+                btn.textContent = r && r.success ? 'Lien copié' : 'Copie impossible';
+                setTimeout(() => { btn.textContent = avant; }, 1800);
+              }}
+              className="text-xs px-2 py-0.5 rounded-full"
+              style={{ color: 'rgba(255,255,255,0.75)', background: 'transparent',
+                       border: '1px solid rgba(255,255,255,0.18)' }}>
+              Copier le lien privé
+            </button>
+          </div>
+        )}
         {/* V226: 📍 remplace par PinIcon — meme condition de masquage inchangee. */}
         {/* V227: le pin est trace en couleur de marque (#D91CD2), seul accent
             colore des lignes meta — les autres icones suivent le texte (#ccc). */}

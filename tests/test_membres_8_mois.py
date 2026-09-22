@@ -467,7 +467,11 @@ try:
     SRC_BOT = io.open(os.path.join(RACINE, "api", "routes", "bot_whatsapp_routes.py"), encoding="utf-8").read()
     SRC_VENTE = io.open(os.path.join(RACINE, "api", "routes", "vente_whatsapp.py"), encoding="utf-8").read()
     SRC_APP = io.open(os.path.join(RACINE, "frontend", "src", "App.js"), encoding="utf-8").read()
-    SRC_OM = io.open(os.path.join(RACINE, "frontend", "src", "components", "dashboard", "OffersManager.js"), encoding="utf-8").read()
+    # V537 : la carte RÉELLEMENT rendue par le tableau de bord est `OfferCard`
+    # (le rendu en liste d'`OffersManager` est derrière `{false && …}` depuis V224 :
+    # y poser le badge ne l'aurait jamais affiché, et le bundle le prouvait).
+    SRC_OM = io.open(os.path.join(RACINE, "frontend", "src", "components", "dashboard", "OfferCard.js"), encoding="utf-8").read()
+    SRC_OMGR = io.open(os.path.join(RACINE, "frontend", "src", "components", "dashboard", "OffersManager.js"), encoding="utf-8").read()
     SRC_OW = io.open(os.path.join(RACINE, "frontend", "src", "components", "dashboard", "OfferWizard.js"), encoding="utf-8").read()
     SRC_CD = io.open(os.path.join(RACINE, "frontend", "src", "components", "CoachDashboard.js"), encoding="utf-8").read()
     SRC_CV = io.open(os.path.join(RACINE, "frontend", "src", "components", "CoachVitrine.js"), encoding="utf-8").read()
@@ -524,7 +528,9 @@ try:
     v("V537-9. dashboard coach : badge « Privée — sur lien » et bouton « Copier le lien privé » (lien `/?offre=<id>`)",
       "Privée — sur lien" in SRC_OM and "Copier le lien privé" in SRC_OM
       and "`${window.location.origin}/?offre=${offer.id}`" in SRC_OM
-      and 'data-testid={`offer-link-only-${offer.id}`}' in SRC_OM)
+      and 'data-testid={`offer-link-only-${offer.id}`}' in SRC_OM
+      and "<OfferCard" in SRC_OMGR and "{false && (" in SRC_OMGR
+      and SRC_OMGR.index("<OfferCard") < SRC_OMGR.index("{false && ("))
     v("V537-9b. le badge lit le réglage de l'offre : aucun identifiant codé en dur dans l'interface",
       "ba530ae4" not in SRC_OM and "ba530ae4" not in SRC_OW and "ba530ae4" not in SRC_CD and "ba530ae4" not in SRC_APP)
 

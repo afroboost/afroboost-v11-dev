@@ -7,7 +7,6 @@ import OfferWizard from './OfferWizard';   // V224
 import OfferCard from './OfferCard';       // V224
 import SvgIcon from '../SvgIcon';          // V228
 import CloudinaryUploadButton from '../CloudinaryUploadButton'; // V229
-import { copyToClipboard } from '../../utils/clipboard';          // V537 — lien privé
 
 // V234: detecter si une URL est une video (extension ou Cloudinary /video/upload/)
 function isVideoUrl(url) {
@@ -712,35 +711,6 @@ const OffersManager = ({
                   <h4 className="text-white font-semibold text-sm truncate">{offer.name}</h4>
                   <p className="text-purple-400 text-xs">{offer.price} CHF</p>
                   <p className="text-white/50 text-xs">{offer.images?.filter(i => i).length || 0} images</p>
-                  {/* V537 : cette offre est retirée des listes publiques. Le coach doit
-                      le voir d'un coup d'œil, et pouvoir copier SON lien — le seul chemin
-                      qui y mène. Le badge ne juge rien : il lit le réglage de l'offre. */}
-                  {offer.link_only === true && (
-                    <div className="flex items-center gap-2 mt-1 flex-wrap" data-testid={`offer-link-only-${offer.id}`}>
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs"
-                            style={{ color: 'var(--primary-color, #D91CD2)',
-                                     border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
-                                     background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.10)' }}>
-                        <SvgIcon name="link" size={11} /> Privée — sur lien
-                      </span>
-                      <button
-                        type="button"
-                        data-testid={`offer-copy-link-${offer.id}`}
-                        onClick={async (e) => {
-                          const btn = e.currentTarget;
-                          const lien = `${window.location.origin}/?offre=${offer.id}`;
-                          const r = await copyToClipboard(lien);
-                          const avant = btn.textContent;
-                          btn.textContent = r && r.success ? 'Lien copié' : 'Copie impossible';
-                          setTimeout(() => { btn.textContent = avant; }, 1800);
-                        }}
-                        className="text-xs px-2 py-0.5 rounded-full"
-                        style={{ color: 'rgba(255,255,255,0.75)', background: 'transparent',
-                                 border: '1px solid rgba(255,255,255,0.18)' }}>
-                        Copier le lien privé
-                      </button>
-                    </div>
-                  )}
                 </div>
                 {/* Toggle visible */}
                 <div className="flex flex-col items-center gap-1">
