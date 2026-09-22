@@ -105,10 +105,36 @@ v("les fichiers réels (assets, sw.js) sont servis avant toute réécriture",
 v("robots.txt déclare le sitemap", "Sitemap: https://afroboost.com/sitemap.xml" in ROBOTS)
 v("robots.txt n'interdit pas le rendu (ni /static/, ni JS, ni CSS)",
   "Disallow: /static" not in ROBOTS and ".js" not in ROBOTS and ".css" not in ROBOTS)
-for _d in ("/espace/", "/duo/", "/parrainage", "/checkout", "/login", "/admin", "/api/"):
-    v("robots.txt interdit %s" % _d, ("Disallow: %s" % _d) in ROBOTS)
-v("l'accueil et la page locale restent autorisés",
-  "Disallow: /cours-essai" not in ROBOTS and re.search(r"^Allow: /$", ROBOTS, re.M))
+
+# ── SEO-1b : `noindex` ET `Disallow` s'annulent ────────────────────────────
+# Un robot qui n'a pas le droit de CHARGER la page ne lit jamais la balise qui
+# lui demande de ne pas l'indexer. Une page HTML qu'on sort de l'index par
+# `noindex` doit donc rester crawlable. C'est la règle que ce banc verrouille :
+# elle se serait re-cassée au premier « durcissons robots.txt » venu.
+_ROBOTS_REGLES = [_l.strip() for _l in ROBOTS.splitlines() if _l.strip().startswith("Disallow:")]
+
+def _bloque(chemin):
+    _c = str(chemin)
+    return any(_c.startswith(_r.split(":", 1)[1].strip()) for _r in _ROBOTS_REGLES)
+
+for _c in ("/espace/AFR-1234", "/duo/jeton-abc", "/parrainage", "/checkout"):
+    v("SEO-1b : %s est `noindex` ET reste crawlable (sinon la balise n'est jamais lue)" % _c,
+      est_prive(_c) and not _bloque(_c), [_r for _r in _ROBOTS_REGLES if _bloque(_c)])
+v("SEO-1b : les quatre règles ajoutées à tort ont bien été retirées",
+  not any(("Disallow: %s" % _d) in ROBOTS for _d in ("/espace/", "/duo/", "/parrainage", "/checkout")))
+v("les règles HISTORIQUES sont intactes (aucune retirée par mégarde)",
+  all(("Disallow: %s" % _d) in ROBOTS
+      for _d in ("/login", "/admin", "/reset.html", "/pwa-diag.html", "/api/")))
+v("/api/ reste bloqué : ce ne sont pas des pages HTML, aucune balise n'y est lisible",
+  "Disallow: /api/" in ROBOTS and _bloque("/api/sitemap.xml"))
+v("l'accueil et la page locale restent autorisés et crawlables",
+  "Disallow: /cours-essai" not in ROBOTS and re.search(r"^Allow: /$", ROBOTS, re.M)
+  and not _bloque("/") and not _bloque("/cours-essai-gratuit-neuchatel"))
+# `/reset.html` et `/pwa-diag.html` sont de VRAIS fichiers : le catch-all les
+# sert tels quels, aucune balise ne peut y être posée — robots.txt est alors la
+# seule règle possible, et il n'y a aucun conflit à signaler.
+v("les fichiers statiques privés sont servis avant toute réécriture (aucun noindex possible, donc aucun conflit)",
+  "_os.path.isfile(file_path" in _bloc("    # Catch-all: serve index.html", "# Export for Vercel Serverless"))
 
 # ── 5. Le sitemap statique : des pages réelles, et elles seules ────────────
 _urls = re.findall(r"<loc>(.*?)</loc>", SITEMAP)

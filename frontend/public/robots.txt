@@ -21,19 +21,20 @@ Disallow: /reset.html
 Disallow: /pwa-diag.html
 Disallow: /api/
 
-# SEO-1 (22/09/2026) — ADRESSES PERSONNELLES. Le contenu de ces pages vient
-# d'appels authentifies : rien de secret n'est servi au robot. C'est l'URL
-# elle-meme qui est privee — un code d'acces, un jeton d'invitation — et elle
-# n'a rien a faire dans un moteur de recherche.
+# SEO-1b (22/09/2026) — ADRESSES PERSONNELLES : `noindex`, ET SURTOUT PAS
+# `Disallow`. Le premier jet interdisait ici /espace/, /duo/, /parrainage et
+# /checkout tout en posant un `noindex` sur la page. Les deux ensemble
+# s'annulent : un robot qui n'a pas le droit de CHARGER la page ne lit jamais
+# la balise qui lui demande de ne pas l'indexer — et l'adresse peut rester
+# indexee « sans description ». Ces quatre chemins restent donc CRAWLABLES,
+# et c'est leur `noindex, nofollow` (api/server.py, `_serve_spa`) qui les tient
+# hors de l'index. Rien de secret n'y est servi au robot : le contenu vient
+# d'appels authentifies. La securite, elle, n'est pas dans ce fichier — elle
+# est dans l'authentification et les jetons.
 #
-# CE FICHIER NE SUFFIT PAS, ET C'EST VOULU : il empeche de CRAWLER, pas
-# d'INDEXER. Une adresse partagee sur WhatsApp puis citee ailleurs peut entrer
-# dans l'index sans jamais etre visitee. Le serveur pose donc aussi un
-# `noindex` sur ces chemins (api/server.py, `_serve_spa`). Les deux ensemble,
-# pas l'un ou l'autre.
-Disallow: /espace/
-Disallow: /duo/
-Disallow: /parrainage
-Disallow: /checkout
+# Les regles ci-dessus sont HISTORIQUES et laissees telles quelles.
+# `/reset.html` et `/pwa-diag.html` sont de vrais fichiers, servis tels quels
+# (aucune balise ne peut y etre posee) : pour eux, ce fichier est la seule
+# regle, et il n'y a donc aucun conflit.
 
 Sitemap: https://afroboost.com/sitemap.xml
