@@ -172,6 +172,24 @@ v("WhatsApp : faits d'offre et règle membres CALCULÉS depuis les offres (v535_
 v("partage : la page OG redirige vers le lien profond `?offre=<id>` et l'URL canonique porte /api",
   'e_cible = _html.escape(f"{FRONT}/?offre={offer_id}", quote=True)' in SRC and 'content="0;url={e_cible}"' in SRC)
 
+# ── WhatsApp : faits et règle CALCULÉS depuis les offres (appel réel des fonctions) ──
+try:
+    import api.server as S
+    _f = S.v535_faits_offre(M8)
+    v("WhatsApp — faits de « Membres — 8 mois » : 64 séances au total, 8 mois, 2 × 199,99 (2e à +1 mois, total 399,98), OU 399,98 en une fois, réservée aux membres, aucune réduction supplémentaire",
+      "64 séances au total" in _f and "formule de 8 mois" in _f and "1 mois plus tard" in _f and "399.98" in _f and "en une fois" in _f
+      and "RÉSERVÉE AUX MEMBRES" in _f and "aucune réduction supplémentaire" in _f, _f)
+    _fa = S.v535_faits_offre(AUTRE_2X)
+    v("WhatsApp — autre saison_2x : 2e échéance « 4 mois plus tard », pas de paiement en une fois", "4 mois plus tard" in _fa and "en une fois" not in _fa, _fa)
+    _r = S.v535_regle_membres([M8, PACK10, CARTE, WORKSHOP, EVENEMENT])
+    _rt = " ".join(_r)
+    v("WhatsApp — règle membres déduite : adhésion = Carte membre association ; réservées = Membres, Membres — 8 mois ; avantage 50 % UNIQUEMENT sur les offres qui le portent",
+      "Carte membre association" in _rt and "Membres — 8 mois" in _rt and "50 %" in _rt and "UNIQUEMENT" in _rt, _rt[:300])
+    v("WhatsApp — rien en dur : sans offre à avantage, aucun pourcentage n'est énoncé", "%" not in " ".join(S.v535_regle_membres([M8, PACK10, CARTE])))
+    v("WhatsApp — workshop à 50 % : « avantage carte membre : −50 % »", "−50 %" in S.v535_faits_offre(WORKSHOP))
+except Exception as _e:  # noqa: BLE001
+    v("WhatsApp — fonctions v535 appelables", False, repr(_e))
+
 ok = sum(1 for _, c, _ in R if c); ko = [(n, d) for n, c, d in R if not c]
 for n, c, d in R: print(("  OK    " if c else "  RATE  ") + n + ("" if c else "  [%s]" % str(d)[:200]))
 print("\n%d / %d verifications au vert" % (ok, len(R)))
