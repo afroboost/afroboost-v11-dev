@@ -9572,26 +9572,36 @@ function App() {
             Complètement indépendante des cours
             ===================================================== */}
         {filteredProducts.length > 0 && (activeFilter === 'shop' || activeFilter === 'all') && (
-          <div id="products-section" className="mb-8 fade-in-section" style={{ paddingTop: '10px' }}>
-            {/* v15: Header Shop amélioré avec badge livraison */}
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="font-semibold text-white" style={{ fontSize: '18px' }}>
-                  {t('shop') || 'Boutique'}
+          <div id="products-section" className="af-boutique mb-8 fade-in-section" style={{ paddingTop: '10px' }}>
+            {/* V541c — UNE VRAIE BOUTIQUE, PAS UNE LIGNE DE TITRE.
+                Le Shop possédait déjà tout ce qu'il faut — galerie de plusieurs
+                images, zoom, partage, tailles, couleurs, quantité, checkout
+                direct. Ce qui manquait était la présentation : un « Boutique »
+                de 18 px au-dessus d'une carte isolée dans une grande zone
+                noire. On lui donne son identité, et une mise en page qui
+                accueille aussi bien un produit que quatre.
+                AUCUN produit n'est inventé ici : ce qui s'affiche vient de la
+                base, et rien d'autre. */}
+            <div className="af-boutique-tete">
+              <div className="af-boutique-titres">
+                {/* « Boutique » est écrit ici, pas traduit : `t('shop')` vaut
+                    « Shop » en français comme en anglais, et c'est le nom de
+                    la section que le propriétaire veut lire. L'onglet de
+                    navigation, lui, garde son libellé traduit. */}
+                <h2 className="af-boutique-titre">
+                  Boutique <span>Afroboost</span>
                 </h2>
-                <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)', fontWeight: '300' }}>
-                  {t('shopDescription')}
+                <p className="af-boutique-accroche">
+                  Équipe-toi. Bouge. Représente Afroboost.
                 </p>
+                <p className="af-boutique-sous">{t('shopDescription')}</p>
               </div>
-              <span
-                className="text-xs px-3 py-1 rounded-full"
-                style={{
-                  background: 'rgba(34, 197, 94, 0.15)',
-                  border: '1px solid rgba(34, 197, 94, 0.3)',
-                  color: 'rgba(34, 197, 94, 0.9)'
-                }}
-              >
-                📦 {t('deliveryAvailable')}
+              <span className="af-boutique-livraison">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="1" y="3" width="15" height="13" /><path d="M16 8h4l3 3v5h-7z" />
+                  <circle cx="5.5" cy="18.5" r="2.5" /><circle cx="18.5" cy="18.5" r="2.5" />
+                </svg>
+                {t('deliveryAvailable')}
               </span>
             </div>
             

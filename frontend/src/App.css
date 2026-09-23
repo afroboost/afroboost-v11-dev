@@ -1402,3 +1402,119 @@ body {
 @media (max-width: 480px) {
   .section-gradient { overflow-x: clip !important; }
 }
+
+
+/* ═══ V541c — BOUTIQUE AFROBOOST ══════════════════════════════════════════
+
+   CE QUI EXISTAIT DÉJÀ et qu'on ne refait pas : la galerie de plusieurs
+   images avec flèches et compteur « 1 / N », le zoom, le partage
+   (`navigator.share` + repli copie), les tailles, les couleurs, la quantité,
+   le checkout direct, le lien profond `?offre=<id>`. Tout cela vit dans
+   `OfferCardSlider` / `OffersSliderAutoPlay`, qui ne sont PAS modifiés : les
+   règles ci-dessous ne changent que la MISE EN PAGE, et seulement à
+   l'intérieur de `.af-boutique`. L'autre emploi du même composant (les offres)
+   n'est donc pas touché.
+
+   CE QUI N'EXISTE PAS et qu'on n'invente pas : panier multi-produits,
+   favoris, avis produit. Aucune icône décorative ne les évoque. */
+.af-boutique-tete {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap; margin-bottom: 18px;
+}
+.af-boutique-titres { min-width: 0; }
+.af-boutique-titre {
+  margin: 0; color: #fff; font-weight: 900; letter-spacing: -0.02em;
+  font-size: clamp(1.45rem, 4.6vw, 2.1rem); line-height: 1.05;
+  text-transform: uppercase;
+}
+.af-boutique-titre span { color: var(--primary-color, #D91CD2); }
+.af-boutique-accroche {
+  margin: 7px 0 0; color: rgba(255, 255, 255, 0.88);
+  font-size: clamp(0.88rem, 2.9vw, 1rem); font-weight: 600;
+}
+.af-boutique-sous { margin: 3px 0 0; color: rgba(255, 255, 255, 0.5); font-size: 12.5px; font-weight: 300; }
+.af-boutique-livraison {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 13px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: rgba(34, 197, 94, 0.14); border: 1px solid rgba(34, 197, 94, 0.32);
+  color: rgba(134, 239, 172, 0.95);
+}
+
+/* LA MISE EN PAGE DES PRODUITS.
+   Sur téléphone, on GARDE le carrousel : glisser du doigt est naturel, et
+   c'est le mécanisme déjà en place. Sur grand écran un défilement horizontal
+   n'a aucun sens quand tout tient à l'écran — la même liste devient une
+   grille `auto-fit` qui affiche 1 carte aujourd'hui et 2 à 4 quand la
+   boutique grandira, sans qu'une ligne de JavaScript change.
+   Les flèches du carrousel sont masquées DANS CE MODE, et seulement là : en
+   grille, tout est déjà visible, elles ne commanderaient plus rien. Rien
+   n'est perdu — sur téléphone elles restent. */
+@media (min-width: 1024px) {
+  .af-boutique [data-testid="offers-slider"] {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 360px));
+    justify-content: center;
+    gap: 20px;
+    overflow: visible;
+    scroll-snap-type: none;
+    padding-left: 0; padding-right: 0;
+  }
+  .af-boutique [data-testid="offers-slider"] > * {
+    width: auto !important; min-width: 0 !important; flex-shrink: 1 !important;
+  }
+  .af-boutique .relative.group > button[class*="absolute"] { display: none; }
+}
+
+/* LE BAS DE PAGE. Boutique, FAQ et pied de page étaient séparés par de
+   grandes bandes noires vides. On resserre — sans rien retirer. */
+.af-boutique { margin-bottom: 26px !important; }
+.af-boutique + * { margin-top: 0; }
+
+
+/* LA CARTE PRODUIT, dans la boutique seulement. `OfferCardSlider` pose ses
+   styles EN LIGNE : les régler depuis une feuille demande `!important`, et
+   c'est assumé — la portée est limitée à `.af-boutique`, l'autre emploi du
+   composant (les offres) n'est pas concerné.
+
+   LES SÉLECTEURS DE VARIANTE étaient des liens gris de 11 px (« Taille → »,
+   « Couleur → ») : on ne les voyait pas. Ils deviennent des pastilles
+   cliquables, plus grandes que la cible tactile recommandée. C'est leur
+   APPARENCE qui change : même bouton, même `v230Toggle`, mêmes valeurs, même
+   règle « choisis une taille et une couleur avant d'acheter ». */
+.af-boutique [data-testid^="offer-qty-toggle-"],
+.af-boutique [data-testid^="offer-variant-toggle-"] {
+  min-height: 34px !important;
+  padding: 0 13px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: rgba(255, 255, 255, 0.92) !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  gap: 6px !important;
+}
+.af-boutique [data-testid^="offer-qty-toggle-"]:hover,
+.af-boutique [data-testid^="offer-variant-toggle-"]:hover {
+  border-color: var(--primary-color, #D91CD2) !important;
+  color: #fff !important;
+}
+
+/* LE BOUTON D'ACHAT prend toute la largeur de la carte et se lit de loin.
+   Son état désactivé reste un état désactivé — la phrase qui explique
+   pourquoi (« Choisissez une taille et une couleur ») est conservée telle
+   quelle, c'est elle qui dit au visiteur ce qu'il lui reste à faire. */
+.af-boutique [data-testid^="offer-reserve-"] {
+  width: 100% !important;
+  min-height: 48px !important;
+  border-radius: 999px !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.1px !important;
+}
+
+/* LE BAS DE PAGE. Entre la carte et « Questions fréquentes » il y avait
+   87 px de noir, puis encore une bande avant le pied de page. On resserre
+   sans rien retirer : la FAQ, les mentions, l'association, la PWA, le
+   ChatWidget et le pied de page sont tous là, simplement plus près. */
+.af-boutique { margin-bottom: 18px !important; }
+.af-boutique ~ .fade-in-section { margin-top: 0 !important; }
