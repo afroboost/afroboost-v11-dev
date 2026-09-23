@@ -17,7 +17,7 @@
 // Pile LOCALE : aucun paiement, aucun e-mail réel, jamais la production.
 const { chromium, devices } = require('playwright');
 const fs = require('fs');
-const BASE = 'http://127.0.0.1:8001';
+const BASE = process.env.BASE || 'http://127.0.0.1:8001';
 const CAP = __dirname + '/pw_captures';
 fs.mkdirSync(CAP, { recursive: true });
 const FID = 'cc73f6ee-163a-433d-b5f0-c00c6392b437';          // Fondateurs
@@ -207,8 +207,70 @@ async function parcours(nom, fn) {
     await ctx.close();
   });
 
+  // ── E. HERO MOBILE : un seul message, une seule ligne, de l'air ─────────
+  // V544. Trois choses qu'on ne veut plus jamais revoir sur téléphone :
+  //   1. le libellé du bouton cassé en deux lignes (« …1er cours » / « gratuit ») ;
+  //   2. la promesse « premier cours gratuit » écrite DEUX fois, dans la ligne
+  //      d'offre puis dans le bouton, à 26 px d'intervalle ;
+  //   3. un hero si tassé que titre, bouton et bloc coach se touchent.
+  // On mesure aux deux tailles qui servent de référence au projet. Le nombre
+  // de lignes se lit sur le nœud de TEXTE (`getClientRects()`), jamais sur la
+  // hauteur du bouton : un bouton haut n'est pas un bouton à deux lignes.
+  await parcours('E', async () => {
+    const ATTENDU = 'Réserver mon 1er cours gratuit';
+    for (const vp of [{ n: '390x844', width: 390, height: 844 }, { n: '360x640', width: 360, height: 640 }]) {
+      const ctx = await browser.newContext({
+        viewport: { width: vp.width, height: vp.height },
+        isMobile: true, hasTouch: true, deviceScaleFactor: 2,
+      });
+      const p2 = await ctx.newPage();
+      await p2.goto(BASE + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await p2.waitForSelector('[data-testid="c1-hero-cta"]', { timeout: 60000 });
+      await p2.waitForTimeout(2500);
+      const m = await p2.evaluate(() => {
+        const q = (s) => document.querySelector(s);
+        const r = (n) => { if (!n) return null; const b = n.getBoundingClientRect(); return { y: Math.round(b.y), h: Math.round(b.height) }; };
+        const cta = q('[data-testid="c1-hero-cta"]');
+        const h1 = q('.af-hero-texte h1');
+        const offre = q('.af-hero-offre');
+        let lignes = null;
+        if (cta) {
+          const t = Array.from(cta.childNodes).find((x) => x.nodeType === 3 && x.textContent.trim());
+          if (t) { const g = document.createRange(); g.selectNodeContents(t); lignes = g.getClientRects().length; }
+        }
+        return {
+          texte: cta ? cta.textContent.replace(/\s+/g, ' ').trim() : '',
+          lignes,
+          deborde: cta ? cta.scrollWidth > cta.clientWidth + 1 : null,
+          police: cta ? parseFloat(getComputedStyle(cta).fontSize) : null,
+          offreAffichee: offre ? getComputedStyle(offre).display !== 'none' : null,
+          offreMontee: !!offre,
+          ecart: h1 && cta ? Math.round(cta.getBoundingClientRect().y - (h1.getBoundingClientRect().y + h1.getBoundingClientRect().height)) : null,
+          debord: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          _h1: r(h1), _cta: r(cta),
+        };
+      });
+      v(`E. ${vp.n} : le bouton affiche exactement « ${ATTENDU} »`, m.texte === ATTENDU, m.texte);
+      v(`E. ${vp.n} : le libellé tient sur UNE ligne`, m.lignes === 1, `${m.lignes} ligne(s)`);
+      v(`E. ${vp.n} : le libellé n'est ni coupé ni en débordement`, m.deborde === false, `scrollWidth > clientWidth = ${m.deborde}`);
+      v(`E. ${vp.n} : la police du bouton reste lisible (>= 14 px)`, m.police >= 14, `${m.police} px`);
+      v(`E. ${vp.n} : la promesse n'est PLUS écrite deux fois (ligne d'offre masquée)`, m.offreAffichee === false, `affichée = ${m.offreAffichee}`);
+      v(`E. ${vp.n} : la ligne d'offre reste montée (masquée, jamais supprimée)`, m.offreMontee === true);
+      v(`E. ${vp.n} : le titre et le bouton respirent (>= 34 px)`, m.ecart !== null && m.ecart >= 34, `${m.ecart} px`);
+      v(`E. ${vp.n} : aucun débordement horizontal`, m.debord <= 1, `${m.debord} px`);
+      await p2.screenshot({ path: `${CAP}/ACCUEIL-E-hero-${vp.width}.png` });
+      await ctx.close();
+    }
+    // Sur grand écran, RIEN ne change : la ligne d'offre est toujours là.
+    const { ctx, p: pd } = await page(browser, false);
+    await pd.waitForSelector('[data-testid="c1-hero-cta"]', { timeout: 60000 });
+    await pd.waitForTimeout(1500);
+    v('E. desktop : la ligne d\'offre du hero reste affichée', (await affiche(pd, '.af-hero-offre')) !== 'none', await affiche(pd, '.af-hero-offre'));
+    await ctx.close();
+  });
+
   await browser.close();
   console.log(R.join('\n'));
-  console.log(`\n${OK}/${OK + KO} au vert (accueil V540 : A fil, B onglet Offres, C/C2 liens profonds, D mobile)`);
+  console.log(`\n${OK}/${OK + KO} au vert (accueil : A fil, B onglet Offres, C/C2 liens profonds, D mobile, E hero V544)`);
   process.exit(KO ? 1 : 0);
 })().catch((e) => { console.error('ERREUR', e); process.exit(2); });

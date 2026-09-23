@@ -8787,8 +8787,17 @@ function App() {
           {/* C1-FIX : le rose de marque sur une photo etait illisible. Passage
               en blanc — le CTA porte deja la couleur de marque juste en dessous,
               la ligne d'offre n'a pas besoin de la repeter. Texte inchange. */}
+          {/* V544 — CETTE LIGNE DIT CE QUE LE BOUTON DIT DÉJÀ.
+              Le CTA juste en dessous porte « Réserver mon 1er cours gratuit » :
+              sur un téléphone, la même promesse était écrite deux fois à 26 px
+              d'intervalle. Elle coûtait 68 px de hauteur (24 de texte + 18 et
+              26 d'écarts) dans le seul endroit de la page où la place est
+              comptée. Elle est MASQUÉE sur téléphone par `.af-hero-offre`,
+              comme l'a été le sous-titre en V541 : le texte reste dans la
+              page et sur grand écran, où il ne gêne personne. Rien n'est
+              retiré du système, c'est une décision d'affichage. */}
           <p
-            className="mt-2 font-semibold text-white"
+            className="af-hero-offre mt-2 font-semibold text-white"
             style={{ textShadow: '0 2px 12px rgba(0,0,0,0.9)' }}
           >
             Ton premier cours est gratuit.

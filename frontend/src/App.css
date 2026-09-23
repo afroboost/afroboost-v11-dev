@@ -1390,11 +1390,22 @@ body {
      centré) : de l'air au-dessus du titre, de l'air sous le bouton.
      On ne va pas plus loin : à 52vh, le début du fil reste visible dans le
      premier écran — c'est la limite qu'on s'est fixée. */
-  .af-hero { height: 52vh; max-height: 52vh; min-height: 396px; }
+  /* V544 — L'AIR VIENT D'ABORD DE CE QU'ON RETIRE, PAS DE CE QU'ON ÉTIRE.
+     Mesuré à 390×844 sur la V543 : la zone de texte offrait 259 px utiles
+     (439 de hero − 76 de bandeau − 104 de bloc coach) pour 175 px de contenu
+     — il ne restait que 42 px d'air de chaque côté. En masquant la ligne
+     d'offre redondante, le contenu tombe à ~147 px : l'air double, SANS
+     toucher à la hauteur. 52vh → 56vh n'ajoute de la place QUE sur les
+     téléphones hauts : à 360×640, 56vh valent 358 px, donc le plancher de
+     396 px gouverne toujours et le petit écran ne bouge pas d'un pixel.
+     La règle V543 tient : à 390×844 le hero finit à 474 px, il reste 370 px
+     de premier écran pour la barre et le début du fil. */
+  .af-hero { height: 56vh; max-height: 56vh; min-height: 396px; }
   .af-hero-texte { padding-top: 76px; padding-bottom: 104px; }
   /* Chaque bloc est séparé de son voisin, plutôt que collé. */
   .af-hero-texte > h1 { line-height: 1.12; }
-  .af-hero-texte > p.mt-2 { margin-top: 18px !important; }
+  /* La promesse « premier cours gratuit » est déjà dans le bouton. */
+  .af-hero-offre { display: none; }
 }
 
 /* LE CTA. Il faisait 260 px de large (67 % de l'écran) et 74 px de haut.
@@ -1416,9 +1427,16 @@ body {
     font-size: 14px !important;
     line-height: 1.2 !important;
     gap: 8px;
-    /* De l'air des deux côtés : le bouton n'est collé ni à la ligne d'offre
-       au-dessus, ni au bloc coach en dessous. */
-    margin-top: 26px;
+    /* V544 — L'ÉCART TITRE → BOUTON EST MAINTENANT LE SEUL ÉCART DU HERO.
+       La ligne d'offre ayant disparu du téléphone, il ne reste que deux
+       niveaux : la promesse (le titre) et l'action (le bouton). 40 px les
+       séparent — assez pour qu'on les lise comme deux choses distinctes,
+       assez peu pour que le bouton reste manifestement rattaché au titre.
+       La taille du texte NE bouge pas : à 360 px le bouton occupe déjà
+       toute la largeur disponible (308 px) et le libellé y tient au pixel ;
+       passer à 15 px le ferait déborder. On gagne de l'air par l'espace,
+       jamais en rapetissant le texte. */
+    margin-top: 40px;
   }
 }
 
