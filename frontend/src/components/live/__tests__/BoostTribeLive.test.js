@@ -127,6 +127,46 @@ describe('useBoostTribeLive', () => {
     authSession.authValide.mockRestore();
   });
 
+  // ═══ BATTEMENT DE CŒUR — le relais du seul départ sans événement ═══════════
+  //
+  //  Quand la connexion du coach tombe et que l'onglet reste ouvert, aucun
+  //  événement navigateur ne se produit : le live restait public trois heures.
+  //  Sa page redit « je suis là » ; ce relais transmet, et rien de plus.
+  test('battement : relayé au serveur, mais il ne touche PAS l’affichage du badge', async () => {
+    jest.spyOn(authSession, 'authValide').mockReturnValue(true);
+    const C = () => { useBoostTribeLive(); return null; };
+    monter(C);
+    axios.post.mockResolvedValue({ data: { ok: true } });
+    const vus = [];
+    const espion = (e) => vus.push(!!(e.detail && e.detail.active));
+    window.addEventListener('afroboost:live-status', espion);
+    const envoyer = (origin, data) => act(() => { window.dispatchEvent(new MessageEvent('message', { origin, data })); });
+
+    envoyer(window.location.origin, { type: 'bt:session-heartbeat', is_host: true, session_code: 'AAAA-1111' });
+    await act(async () => {});
+    expect(axios.post).toHaveBeenLastCalledWith(expect.stringMatching(/\/boosttribe\/live-status$/),
+      { event: 'heartbeat', session_code: 'AAAA-1111' });
+    // Un battement ne change RIEN à l'écran : il ne doit pas réveiller le badge.
+    expect(vus).toEqual([]);
+
+    window.removeEventListener('afroboost:live-status', espion);
+    authSession.authValide.mockRestore();
+  });
+
+  test('battement : un participant ou une origine étrangère n’en émet aucun', async () => {
+    jest.spyOn(authSession, 'authValide').mockReturnValue(true);
+    const C = () => { useBoostTribeLive(); return null; };
+    monter(C);
+    axios.post.mockResolvedValue({ data: { ok: true } });
+    const envoyer = (origin, data) => act(() => { window.dispatchEvent(new MessageEvent('message', { origin, data })); });
+    envoyer('https://evil.invalid', { type: 'bt:session-heartbeat', is_host: true, session_code: 'AAAA-1111' });
+    envoyer(window.location.origin, { type: 'bt:session-heartbeat', is_host: false, session_code: 'AAAA-1111' });
+    envoyer(window.location.origin, { type: 'bt:session-heartbeat', is_host: true });
+    await act(async () => {});
+    expect(axios.post).not.toHaveBeenCalled();
+    authSession.authValide.mockRestore();
+  });
+
   test('sans jeton coach signé, aucune annonce ne part (un participant ne peut pas déclarer un live)', async () => {
     jest.spyOn(authSession, 'authValide').mockReturnValue(false);
     let live;

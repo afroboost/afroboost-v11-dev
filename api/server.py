@@ -14090,7 +14090,80 @@ async def boosttribe_access(request: Request):
 # Lecture PUBLIQUE minimale (`GET /boosttribe/live-status`) : `{active}` et
 # rien d'autre. Le code de session ne sort que par `/boosttribe/access`.
 # Écriture réservée à un coach/admin authentifié (jeton signé).
+#
+# ═══ V543-LIVE : LE BATTEMENT DE CŒUR, ET POURQUOI 3 H NE SUFFISAIT PAS ═══
+#
+#  Les quatre départs « propres » (bouton Terminer, navigation, rafraîchissement,
+#  fermeture de l'onglet) éteignent le live en moins d'une seconde : la page du
+#  coach envoie `bt:session-ended`. Restait LE cas qui ne produit aucun événement
+#  navigateur : la connexion du coach disparaît, l'onglet reste ouvert. Personne
+#  n'annonce rien, et le live restait public jusqu'au garde-fou de TROIS HEURES.
+#  Sur une page d'accueil, « EN DIRECT » pendant trois heures après la fin, c'est
+#  pire que pas de badge du tout.
+#
+#  Le correctif : tant qu'il diffuse, le coach envoie un signe de vie. On ne
+#  retient que la DATE du dernier — `last_seen`. S'il se tait plus longtemps que
+#  la fenêtre de grâce, le live est éteint. Le serveur ne « pousse » rien : il
+#  calcule, comme avant.
+#
+#  LES VALEURS, ET CE QUI LES DÉTERMINE (elles ne sont pas choisies au hasard) :
+#
+#  • Battement toutes les 15 s. C'est plus économe que tout ce que fait déjà
+#    l'application (le chat sonde à 3 s et 5 s). Une écriture Mongo minuscule sur
+#    UN document, soit 240 écritures par heure de live — négligeable à côté des
+#    1 200 du chat.
+#  • Grâce de 90 s, soit six battements manqués. Ce nombre vient de la contrainte
+#    la plus dure, l'onglet mis en veille : Chrome ralentit les minuteries d'un
+#    onglet caché à UNE par minute. Une page qui capte micro et caméra y échappe
+#    normalement, mais « normalement » ne suffit pas pour décider d'éteindre le
+#    live de quelqu'un. 90 s laisse donc passer un battement au rythme dégradé
+#    d'une par minute, PLUS un manqué. Au passage, cela absorbe sans rien dire
+#    une bascule wifi→4G (5 à 15 s) et une reconnexion LiveKit (≤ 30 s).
+#  • Les 3 h restent, en dernier filet, pour les documents d'avant ce correctif.
+#
+#  COMPATIBILITÉ DE DÉPLOIEMENT — ce point est important. Afroboost et BoostTribe
+#  se déploient séparément. Si ce calcul arrivait AVANT que la page BoostTribe
+#  n'envoie des battements, tous les lives mourraient au bout de 90 s. Donc :
+#  tant qu'un document n'a JAMAIS reçu de battement (`last_seen` absent), on s'en
+#  tient à l'ancienne règle des 3 h. La grâce ne s'applique qu'à partir du premier
+#  battement reçu. L'ordre des deux déploiements n'a ainsi aucune importance.
 BTLIVE_MAX_H = 3
+BTLIVE_BATTEMENT_S = 15      # côté page coach : un signe de vie toutes les 15 s
+BTLIVE_GRACE_S = 90          # six battements manqués avant de déclarer l'hôte parti
+
+
+def _btlive_date(valeur) -> Optional[datetime]:
+    """Une date ISO du document, ramenée en UTC. `None` si illisible ou absente."""
+    if not valeur:
+        return None
+    try:
+        d = datetime.fromisoformat(str(valeur))
+    except (TypeError, ValueError):
+        return None
+    return d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d
+
+
+def btlive_actif(doc: Optional[dict], maintenant: datetime) -> bool:
+    """LA décision, isolée de la base pour être testable : ce live est-il en cours ?
+
+    Quatre façons de ne PAS l'être, dans l'ordre où on les constate :
+      1. rien en base, ou pas de code de session ;
+      2. une fin a été annoncée (`ended`) — le chemin normal, en moins d'une seconde ;
+      3. le live a plus de BTLIVE_MAX_H heures — dernier filet, inchangé ;
+      4. le coach s'est tu depuis plus de BTLIVE_GRACE_S — la coupure réseau.
+
+    Le point 4 ne s'applique QUE si un battement a déjà été reçu. Sans cela, un
+    live annoncé par une page qui ne bat pas encore s'éteindrait au bout de 90 s.
+    """
+    if not doc or doc.get("ended") or not doc.get("session_code"):
+        return False
+    depuis = _btlive_date(doc.get("started_at"))
+    if depuis is None or maintenant - depuis > timedelta(hours=BTLIVE_MAX_H):
+        return False
+    vu = _btlive_date(doc.get("last_seen"))
+    if vu is not None and maintenant - vu > timedelta(seconds=BTLIVE_GRACE_S):
+        return False
+    return True
 
 
 async def _btlive_etat() -> dict:
@@ -14099,18 +14172,10 @@ async def _btlive_etat() -> dict:
     except Exception as _err:                        # noqa: BLE001
         logger.warning("[BT-LIVE] etat illisible (%s)", type(_err).__name__)
         return {"active": False}
-    if not d or d.get("ended") or not d.get("session_code"):
-        return {"active": False}
-    try:
-        depuis = datetime.fromisoformat(str(d.get("started_at")))
-        if depuis.tzinfo is None:
-            depuis = depuis.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) - depuis > timedelta(hours=BTLIVE_MAX_H):
-            return {"active": False}
-    except (TypeError, ValueError):
+    if not btlive_actif(d, datetime.now(timezone.utc)):
         return {"active": False}
     return {"active": True, "session_code": d.get("session_code"),
-            "started_at": d.get("started_at")}
+            "started_at": d.get("started_at"), "last_seen": d.get("last_seen")}
 
 
 @api_router.get("/boosttribe/live-status")
@@ -14134,16 +14199,28 @@ async def boosttribe_live_status_set(request: Request):
         body = {}
     evenement = str(body.get("event") or "").strip().lower()
     code = str(body.get("session_code") or "").strip().upper()
-    if evenement not in ("started", "ended"):
-        raise HTTPException(status_code=400, detail="event attendu : started | ended")
+    if evenement not in ("started", "ended", "heartbeat"):
+        raise HTTPException(status_code=400, detail="event attendu : started | ended | heartbeat")
     if not re.fullmatch(r"[A-Z0-9-]{4,40}", code):
         raise HTTPException(status_code=400, detail="session_code invalide")
     maintenant = datetime.now(timezone.utc).isoformat()
+    if evenement == "heartbeat":
+        # Signe de vie : on ne touche QUE `last_seen`, et seulement sur la session
+        # annoncée. Un battement en retard d'une session finie ne ressuscite rien —
+        # le filtre `ended: False` s'en charge. Aucun journal : c'est répétitif par
+        # nature, et l'information utile est déjà dans le document.
+        r = await db.boosttribe_live.update_one(
+            {"_id": "actuel", "session_code": code, "ended": False},
+            {"$set": {"last_seen": maintenant, "updated_at": maintenant}})
+        return {"ok": bool(r.matched_count), "live": await _btlive_etat()}
     if evenement == "started":
         await db.boosttribe_live.update_one(
             {"_id": "actuel"},
             {"$set": {"session_code": code, "started_at": maintenant, "ended": False,
-                      "host": email, "updated_at": maintenant}},
+                      "host": email, "updated_at": maintenant,
+                      # Le démarrage vaut premier battement : sans cela, un live
+                      # serait « muet » jusqu'au premier signe, 15 s plus tard.
+                      "last_seen": maintenant}},
             upsert=True)
     else:
         # « ended » ne ferme QUE le live annoncé : un « ended » tardif d'une
