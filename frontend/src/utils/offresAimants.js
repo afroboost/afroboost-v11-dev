@@ -208,6 +208,48 @@ export const libelleDuree = (o) => {
   return `${d || DUREE_DROITS_DEFAUT_MOIS} mois`;
 };
 
+/**
+ * V542 — LE MODE DE PAIEMENT, EN TROIS MOTS. `libellePaiement` est la phrase
+ * complète de la FICHE (« Prélèvement automatique chaque mois (carte) ») : dans une
+ * carte, elle prend deux lignes et noie le reste. Ici on ne garde que ce qui
+ * DIFFÉRENCIE une formule d'une autre. Aucune donnée nouvelle : même source, même
+ * `modeFacturation`, seulement plus court.
+ */
+export const libellePaiementCourt = (o) => {
+  const mode = modeFacturation(o);
+  const f = familleOffre(o);
+  if (mode === 'mensuel_auto') return 'Chaque mois';
+  if (mode === 'saison_2x') return 'En 2 paiements';
+  if (f === FAMILLE.SAISON_1X) return 'En 1 paiement';
+  if (f === FAMILLE.OFFERT) return 'Offert';
+  return 'Paiement unique';
+};
+
+/**
+ * V542 — POURQUOI CELLE-CI PLUTÔT QU'UNE AUTRE, en une ligne.
+ *
+ * C'est la seule chose que les trois cartes ne disaient pas, et c'est précisément
+ * ce qu'on demande à un visiteur de trancher. Rien n'est inventé ici : l'économie
+ * est CALCULÉE face au mensuel de référence (`economieOffre`, déjà utilisée par la
+ * fiche), et le reste vient de `libelleEngagement` / `libellePourQui`, qui existent
+ * depuis V526. Une formule dont on ne sait rien de particulier ne reçoit aucune
+ * phrase — mieux vaut une carte plus courte qu'une promesse fabriquée.
+ */
+export const libelleAvantage = (o, mensuelRef) => {
+  if (!o) return '';
+  const f = familleOffre(o);
+  const eco = economieOffre(o, mensuelRef);
+  if (eco) return `Économie de ${prixFormate(eco)} sur la saison`;
+  // ⚠️ L'ORDRE EST LE FOND DU SUJET. Fondateurs est AUSSI un prélèvement mensuel :
+  // s'il passait par la branche « sans engagement », les deux cartes mensuelles
+  // diraient la même phrase et on n'aurait rien différencié du tout. Ce qui
+  // distingue Fondateurs, c'est à QUI il s'adresse, pas sa fréquence.
+  if (f === FAMILLE.LANCEMENT) return libellePourQui(o);
+  if (modeFacturation(o) === 'mensuel_auto') return 'Sans engagement, résiliable à tout moment';
+  if (f === FAMILLE.SAISON_1X || f === FAMILLE.SAISON_2X) return `Saison complète de ${SAISON_MOIS} mois`;
+  return '';
+};
+
 export const libellePourQui = (o) => {
   const f = familleOffre(o);
   if (f === FAMILLE.LANCEMENT) return 'Les premiers inscrits de la saison';

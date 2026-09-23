@@ -24,6 +24,7 @@ import useLargeurEcran from '../utils/useLargeurEcran';
 import {
   regrouperOffres, ficheOffre, badgeOffre, prixAffiche, libelleSeances, infoCompacteLimitee,
   libelleDepuis, prixUnitaire, prixFormate, economieOffre, libellePaiement, familleOffre, FAMILLE, promesseCourte,
+  libellePaiementCourt, libelleAvantage, conditionsOffre,
 } from '../utils/offresAimants';
 import { stylesLecteur, normaliserRatio, ratioDepuisDimensions } from '../utils/videoRatio';
 import { mediaPrincipal } from '../utils/mediaOffre';
@@ -573,6 +574,22 @@ function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir, Countdown }) {
   const seances = libelleSeances(o);
   const limitee = fam === FAMILLE.LANCEMENT ? infoCompacteLimitee(o) : '';
   const fort = fam === FAMILLE.LANCEMENT;
+  // V542 — CE QUI DIFFÉRENCIE, ET RIEN DE PLUS.
+  //
+  // La carte disait le prix et le nombre de séances : de quoi comparer deux chiffres,
+  // pas de quoi CHOISIR. Il manquait la fréquence de paiement, l'avantage propre à la
+  // formule et sa contrainte. Les trois existent déjà comme helpers (V526/V527/V537) et
+  // alimentent la fiche depuis toujours — on les remonte, on n'invente rien : une
+  // formule sans avantage calculable n'affiche simplement pas de ligne.
+  //
+  // Plafond volontaire de 4 lignes (§ hiérarchie) : au-delà, la carte redevient un pavé
+  // et le CTA « Voir l'offre » — où vivent les détails — perd sa raison d'être.
+  const paiement = libellePaiementCourt(o);
+  const avantage = libelleAvantage(o, mensuelRef);
+  // Pour « lancement », `infoCompacteLimitee` dit déjà places + date en une ligne :
+  // on ne la double pas avec `conditionsOffre`.
+  const condition = limitee ? '' : (conditionsOffre(o)[0] || '');
+  const lignes = [seances, paiement, avantage, condition].filter(Boolean).slice(0, 4);
   return (
     <button
       type="button"
@@ -597,8 +614,14 @@ function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir, Countdown }) {
         <span style={{ fontSize: 22, fontWeight: 900, color: COULEUR }}>
           {prix.montant}{prix.unite ? <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', fontWeight: 500 }}> {prix.unite}</span> : null}
         </span>
-        {seances && aimant.cle !== 'saison' ? <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{seances}</span> : null}
-        {aimant.cle === 'saison' ? <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>En 1 ou 2 paiements</span> : null}
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }} data-testid={`details-aimant-${aimant.cle}`}>
+          {lignes.map((ligne) => (
+            <span key={ligne} style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', lineHeight: 1.35, display: 'flex', gap: 6 }}>
+              <span aria-hidden="true" style={{ color: COULEUR, flex: '0 0 auto' }}>·</span>
+              <span>{ligne}</span>
+            </span>
+          ))}
+        </span>
         {limitee ? <span style={{ fontSize: 12, color: '#fff', fontWeight: 600 }} data-testid="aimant-limitee">{limitee}</span> : null}
         {fort && Countdown ? <Countdown offer={o} /> : null}
         <span style={{ marginTop: 'auto', paddingTop: 6, fontSize: 14, fontWeight: 700, color: COULEUR, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -611,7 +634,22 @@ function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir, Countdown }) {
 
 /* ───────────────────────── bloc principal ───────────────────────── */
 
-export default function OffresAimants({ offres, analyserMedia, onChoisir, checkoutBusy, ouvrirToutesSignal, titre, Countdown }) {
+/**
+ * V542 — DEUX RÔLES DANS UN SEUL COMPOSANT, ET C'EST VOULU.
+ *
+ * `OffresAimants` est à la fois la PRÉSENTATION (trois cartes) et le CONTRÔLEUR
+ * (panneau « Toutes les offres » + fiche détail, tous deux rendus en portail). Les
+ * deux étaient indissociables, et c'est ce qui a cassé le parcours connecté :
+ * `parcoursConversion` est faux pour quelqu'un de connecté, `App.js` rend alors le
+ * carrousel historique À LA PLACE, et le signal `ouvrirToutesSignal` — émis par
+ * « Voir toutes les offres » de la colonne d'accueil — n'avait plus AUCUN écouteur.
+ * Le compteur montait, personne ne l'entendait, rien ne s'ouvrait.
+ *
+ * `cartes={false}` monte donc le contrôleur SEUL : aucune carte rendue, mais le
+ * panneau, la fiche et le signal restent vivants. Une seule implémentation, un seul
+ * panneau, aucune logique recopiée ailleurs.
+ */
+export default function OffresAimants({ offres, analyserMedia, onChoisir, checkoutBusy, ouvrirToutesSignal, titre, Countdown, cartes = true }) {
   // V525: `Countdown` = le composant OfferCountdown existant d'App.js (j/h/m/s
   // dynamiques) ; aucun compteur n'est recree ici.
   const { estMobile } = useLargeurEcran();
@@ -652,7 +690,42 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [offres]);
 
-  if (!groupe.aimants.length) return null;
+  // ⚠️ LA GARDE NE VAUT QUE POUR LA PRÉSENTATION. Sans aimant il n'y a rien à
+  //    MONTRER — mais il reste tout à OUVRIR : le catalogue complet existe quand même.
+  //    En mode contrôleur, se taire ici reviendrait à recasser le bouton qu'on répare.
+  if (cartes && !groupe.aimants.length) return null;
+
+  const panneaux = (
+    <>
+      <ToutesLesOffres
+        ouvert={toutes}
+        offres={groupe.autres}
+        mensuelRef={groupe.mensuelRef}
+        analyser={analyser}
+        estMobile={estMobile}
+        onFermer={() => setToutes(false)}
+        onOuvrirFiche={(c) => { setToutes(false); setFiche(c); }}
+      />
+      {fiche ? (
+        <FicheOffre
+          choix={fiche}
+          mensuelRef={groupe.mensuelRef}
+          analyser={analyser}
+          onChoisir={onChoisir}
+          onFermer={() => setFiche(null)}
+          checkoutBusy={checkoutBusy}
+          estMobile={estMobile}
+          Countdown={Countdown}
+          toutesOffres={offres}
+        />
+      ) : null}
+    </>
+  );
+
+  // Contrôleur seul : rien à l'écran, tout reste accessible (les deux panneaux sont
+  // rendus en portail sur `document.body`, donc indépendants de cet emplacement).
+  if (!cartes) return <span data-testid="offres-controleur" hidden>{panneaux}</span>;
+
   const colonnes = estMobile ? '1fr' : `repeat(${Math.min(3, groupe.aimants.length)}, minmax(0, 1fr))`;
   return (
     <section data-testid="offres-aimants" style={{ marginBottom: 24 }}>
@@ -685,28 +758,7 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
         <span style={{ color: COULEUR, display: 'inline-flex' }}><SvgIcon name="arrowRight" size={14} /></span>
       </button>
 
-      <ToutesLesOffres
-        ouvert={toutes}
-        offres={groupe.autres}
-        mensuelRef={groupe.mensuelRef}
-        analyser={analyser}
-        estMobile={estMobile}
-        onFermer={() => setToutes(false)}
-        onOuvrirFiche={(c) => { setToutes(false); setFiche(c); }}
-      />
-      {fiche ? (
-        <FicheOffre
-          choix={fiche}
-          mensuelRef={groupe.mensuelRef}
-          analyser={analyser}
-          onChoisir={onChoisir}
-          onFermer={() => setFiche(null)}
-          checkoutBusy={checkoutBusy}
-          estMobile={estMobile}
-          Countdown={Countdown}
-          toutesOffres={offres}
-        />
-      ) : null}
+      {panneaux}
     </section>
   );
 }

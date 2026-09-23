@@ -9293,6 +9293,24 @@ function App() {
               </div>
             ) : (
             <div key="offers-block" id="offers-section" className="mb-8 fade-in-section">
+              {/* V542 — « VOIR TOUTES LES OFFRES » NE MARCHAIT PAS POUR UN CONNECTÉ.
+                  `parcoursConversion` est faux dès qu'on est connecté : c'est le
+                  carrousel historique qui s'affiche ici, et lui n'écoute PAS
+                  `ouvrirToutesSignal`. Le bouton de la colonne d'accueil incrémentait
+                  donc un compteur que plus personne ne lisait — rien ne s'ouvrait.
+                  On remonte `OffresAimants` en CONTRÔLEUR SEUL (`cartes={false}`) :
+                  aucune carte en double, le carrousel reste exactement ce qu'il est,
+                  et le panneau complet + la fiche redeviennent joignables. Un seul
+                  composant, un seul panneau, rien de recopié. */}
+              <OffresAimants
+                cartes={false}
+                offres={filteredServices}
+                analyserMedia={parseMediaUrl}
+                onChoisir={handleSelectOffer}
+                checkoutBusy={checkoutBusy}
+                ouvrirToutesSignal={signalToutesOffres}
+                Countdown={OfferCountdown}
+              />
               <h2 className="font-semibold mb-2 text-white" style={{ fontSize: '18px' }}>{t('chooseOffer')}</h2>
 
               {activeOffer ? (

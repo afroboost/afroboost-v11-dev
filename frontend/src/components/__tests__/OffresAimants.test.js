@@ -331,3 +331,78 @@ test('V526/V530 — le bloc CTA de la fiche est COLLANT en bas (position sticky)
   expect(blocDesktop.style.bottom).toBe('0px');
   Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: largeur });
 });
+
+/* ══════════════ V542 — contrôleur seul + cartes comparatives ══════════════ */
+
+test('V542 — `cartes={false}` : aucune carte rendue, mais le panneau complet répond au signal', async () => {
+  await monter({ cartes: false, ouvrirToutesSignal: 0 });
+  // Rien à l'écran : le parcours connecté garde SON carrousel, pas un doublon.
+  expect(conteneur.querySelectorAll('[data-testid^="aimant-"]')).toHaveLength(0);
+  expect(conteneur.querySelector('[data-testid="offres-aimants"]')).toBeNull();
+  expect(conteneur.querySelector('[data-testid="voir-toutes-les-offres"]')).toBeNull();
+  expect(conteneur.querySelector('[data-testid="offres-controleur"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="toutes-les-offres"]')).toBeNull();
+
+  // …mais le signal — celui de « Voir toutes les offres » de la colonne d'accueil —
+  // rouvre bien le panneau historique. C'est EXACTEMENT la régression corrigée.
+  await rerendre({ cartes: false, ouvrirToutesSignal: 1 });
+  await act(async () => {});
+  const panneau = document.querySelector('[data-testid="toutes-les-offres"]');
+  expect(panneau).not.toBeNull();
+  const liste = document.querySelector('[data-testid="liste-toutes-offres"]');
+  expect(liste.textContent).toContain('Flex 4');           // une offre SECONDAIRE
+  expect(liste.textContent).toContain('Fondateurs');       // et les aimants aussi
+  expect(liste.textContent).not.toContain('T-shirt');      // jamais un produit
+});
+
+test('V542 — le contrôleur seul ouvre la fiche détail d’une offre secondaire', async () => {
+  await monter({ cartes: false, ouvrirToutesSignal: 0 });
+  await rerendre({ cartes: false, ouvrirToutesSignal: 1 });
+  await act(async () => {});
+  const lignes = [...document.querySelectorAll('[data-testid="liste-toutes-offres"] button')];
+  const cible = lignes.find((b) => /Flex 4/.test(b.textContent));
+  expect(cible).toBeTruthy();
+  await act(async () => { cible.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+  const fiche = document.querySelector('[data-testid="fiche-offre"]') || document.body;
+  expect(fiche.textContent).toContain('Flex 4');
+});
+
+test('V542 — un catalogue SANS aimant : plus de carte, mais le catalogue reste ouvrable', async () => {
+  // La garde historique (`return null` sans aimant) ne doit fermer que la présentation.
+  await demonter();
+  conteneur = document.createElement('div');
+  document.body.appendChild(conteneur);
+  racine = createRoot(conteneur);
+  await act(async () => {
+    racine.render(<OffresAimants offres={[unite, essai]} analyserMedia={analyser} onChoisir={() => {}} cartes={false} ouvrirToutesSignal={1} />);
+  });
+  await act(async () => {});
+  expect(document.querySelector('[data-testid="toutes-les-offres"]')).not.toBeNull();
+});
+
+test('V542 — les 3 cartes disent enfin POURQUOI les choisir (données réelles, rien d’inventé)', async () => {
+  await monter();
+  const lire = (cle) => conteneur.querySelector(`[data-testid="details-aimant-${cle}"]`).textContent;
+
+  // Fondateurs : mensuel, séances réelles, et à qui il s'adresse.
+  expect(lire('lancement')).toContain('8 séances / mois');
+  expect(lire('lancement')).toContain('Chaque mois');
+  expect(lire('lancement')).toContain('premiers inscrits');
+
+  // Saison : l'économie est CALCULÉE face au mensuel (89 × 8 = 712 → 549 = 163 CHF).
+  expect(lire('saison')).toContain('Économie');
+  expect(lire('saison')).toContain('163');
+
+  // Mensuel : sa différence, c'est la liberté — pas un prix.
+  expect(lire('mensuel')).toContain('Chaque mois');
+  expect(lire('mensuel')).toContain('Sans engagement');
+
+  // Hiérarchie tenue : 4 lignes maximum par carte, le reste vit dans la fiche.
+  for (const cle of ['lancement', 'saison', 'mensuel']) {
+    const n = conteneur.querySelectorAll(`[data-testid="details-aimant-${cle}"] > span`).length;
+    expect(n).toBeGreaterThanOrEqual(2);
+    expect(n).toBeLessThanOrEqual(4);
+  }
+  // Et toujours le même point d'entrée : « Voir l'offre ».
+  expect(conteneur.querySelector('[data-testid="aimant-mensuel"]').textContent).toContain('Voir l’offre');
+});
