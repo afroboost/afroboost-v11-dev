@@ -1372,8 +1372,19 @@ body {
    contenu qu'il doit loger passe de ~258 px à ~200. */
 @media (max-width: 1023px) {
   .af-hero-sous { display: none; }
-  .af-hero { height: 46vh; max-height: 46vh; min-height: 368px; }
-  .af-hero-texte { padding-bottom: 92px; }
+  /* V543 — LE HERO RESPIRE. À 46vh, titre, ligne d'offre, bouton et bloc
+     coach se touchaient : l'écran paraissait comprimé. 52vh donnent ~440 px
+     sur un 390×844 ; une fois retirés les 76 px réservés au bandeau fixe et
+     les 104 px du bloc coach, il reste 260 px pour ~185 px de contenu. Les
+     ~75 px qui restent se répartissent de part et d'autre (le bloc est
+     centré) : de l'air au-dessus du titre, de l'air sous le bouton.
+     On ne va pas plus loin : à 52vh, le début du fil reste visible dans le
+     premier écran — c'est la limite qu'on s'est fixée. */
+  .af-hero { height: 52vh; max-height: 52vh; min-height: 396px; }
+  .af-hero-texte { padding-top: 76px; padding-bottom: 104px; }
+  /* Chaque bloc est séparé de son voisin, plutôt que collé. */
+  .af-hero-texte > h1 { line-height: 1.12; }
+  .af-hero-texte > p.mt-2 { margin-top: 18px !important; }
 }
 
 /* LE CTA. Il faisait 260 px de large (67 % de l'écran) et 74 px de haut.
@@ -1382,15 +1393,22 @@ body {
    reste très au-dessus des 44 px recommandés. */
 @media (max-width: 1023px) {
   .af-hero-texte > a[data-testid="c1-hero-cta"] {
-    max-width: 224px;
-    /* `!important` assumé : le bouton porte `padding` et `fontSize` en STYLE
-       EN LIGNE, qui l'emporte sur toute règle de feuille. Mesuré : sans lui,
-       la largeur passait bien à 224 px mais la hauteur restait à 74. */
-    padding: 10px 16px !important;
-    font-size: 13.5px !important;
-    line-height: 1.25 !important;
-    gap: 6px;
-    margin-top: 12px;
+    /* V543 — « Réserver mon 1er cours gratuit » SUR UNE SEULE LIGNE.
+       À 224 px de large le libellé passait à la ligne, et couper une phrase
+       en deux au milieu d'un bouton fait bricolé. On règle dans cet ordre :
+       d'abord la LARGEUR (jusqu'à 330 px, ou toute la place disponible si
+       l'écran est plus étroit), puis le PADDING, puis seulement la taille du
+       texte — qui reste à 14 px, lisible. `nowrap` verrouille le résultat.
+       Mesuré à 390 px comme à 360 px : le bouton tient, sans déborder. */
+    max-width: min(330px, 100%);
+    white-space: nowrap;
+    padding: 13px 18px !important;
+    font-size: 14px !important;
+    line-height: 1.2 !important;
+    gap: 8px;
+    /* De l'air des deux côtés : le bouton n'est collé ni à la ligne d'offre
+       au-dessus, ni au bloc coach en dessous. */
+    margin-top: 26px;
   }
 }
 
@@ -1573,21 +1591,22 @@ body {
     gap: 14px 10px;
   }
   .af-colonne-cote { display: contents; }
-  .af-colonne-cote > [data-testid="accueil-carte-live"]       { order: 1; grid-column: span 1; }
-  .af-colonne-cote > [data-testid="accueil-carte-spordateur"] { order: 2; grid-column: span 1; }
-  .af-colonne-principale                                       { order: 3; grid-column: 1 / -1; min-width: 0; }
-  .af-colonne-cote > [data-testid="accueil-offre-du-moment"]  { order: 4; grid-column: 1 / -1; }
-
-  /* Dans une demi-colonne, Spordateur s'empile au lieu de s'aligner. */
-  .af-carte-spordateur {
-    flex-direction: column; align-items: flex-start; gap: 9px !important; padding: 14px !important;
-  }
-  .af-carte-spordateur > a { margin-left: 0 !important; width: 100% !important; }
-  /* Les deux cartes se tiennent à la même hauteur, quel que soit leur texte. */
+  /* V543 — LES DEUX GRANDES CARTES QUITTENT L'ÉCRAN D'ACCUEIL MOBILE.
+     Elles occupaient la place juste avant le fil, c'est-à-dire l'endroit où
+     le contenu doit commencer. Live et Spordateur passent dans le tiroir du
+     hamburger — mêmes fonctions, mêmes routes, rien n'est supprimé — et le
+     direct, quand il y en a un, garde une pastille « EN DIRECT » dans la
+     barre. Sur grand écran, les cartes ne bougent pas. */
   .af-colonne-cote > [data-testid="accueil-carte-live"],
-  .af-colonne-cote > [data-testid="accueil-carte-spordateur"] { display: flex; }
-  .af-colonne-cote > [data-testid="accueil-carte-live"] > div,
-  .af-colonne-cote > [data-testid="accueil-carte-spordateur"] > div { width: 100%; }
+  .af-colonne-cote > [data-testid="accueil-carte-spordateur"] { display: none; }
+  .af-colonne-principale                                      { order: 1; grid-column: 1 / -1; min-width: 0; }
+  .af-colonne-cote > [data-testid="accueil-offre-du-moment"]  { order: 2; grid-column: 1 / -1; }
+
+  /* Les règles V542 qui mettaient ces deux cartes côte à côte (empilement de
+     Spordateur en demi-colonne, `display: flex` pour égaliser les hauteurs)
+     sont retirées : elles n'ont plus d'objet puisque les cartes ne sont plus
+     rendues ici — et la dernière d'entre elles ÉCRASAIT le `display: none`
+     ci-dessus, ce qui les laissait à l'écran. Mesuré, puis corrigé. */
 }
 
 /* ═══ V542 — BOUTIQUE MOBILE : L'IMAGE D'ABORD ═══════════════════════════
@@ -1640,4 +1659,24 @@ body {
     left: 16px !important;
     right: auto !important;
   }
+}
+
+
+/* ═══ V543 — LE DIRECT DANS LA BARRE, LIVE ET SPORDATEUR DANS LE TIROIR ═══ */
+.af-nav-live {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px;
+  height: 34px; padding: 0 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(255, 59, 48, 0.55);
+  background: rgba(255, 59, 48, 0.16);
+  color: #ff8a82; font-size: 11px; font-weight: 800; letter-spacing: .05em;
+}
+.af-nav-live:disabled { opacity: .6; cursor: default; }
+.af-nav-live:focus-visible { outline: 2px solid var(--primary-color, #D91CD2); outline-offset: 2px; }
+.af-menu-separateur { height: 1px; margin: 10px 8px; background: rgba(255, 255, 255, 0.10); }
+.af-menu-entree { text-decoration: none; }
+.af-menu-entree:disabled { opacity: .55; cursor: default; }
+.af-menu-direct {
+  margin-left: auto; padding: 3px 8px; border-radius: 999px;
+  background: rgba(255, 59, 48, 0.18); border: 1px solid rgba(255, 59, 48, 0.5);
+  color: #ff8a82; font-size: 9.5px; font-weight: 800; letter-spacing: .06em;
 }

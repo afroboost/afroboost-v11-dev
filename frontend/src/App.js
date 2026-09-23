@@ -8873,6 +8873,25 @@ function App() {
           >
             Afroboost
           </button>
+          {/* V543 — LA SEULE TRACE DU LIVE DANS LA BARRE, et uniquement
+              quand il y en a un. Hors direct, rien ne s'affiche : pas de
+              pastille morte. Elle appelle le même handler que la carte. */}
+          {liveEnCours && (
+            <button
+              type="button"
+              className="af-nav-live"
+              onClick={ouvrirLiveDepuisLaBarre}
+              disabled={btLive.state === 'loading'}
+              aria-label="Afroboost Live est en direct — rejoindre"
+              title="Afroboost Live est en direct"
+              data-testid="nav-mobile-live"
+            >
+              <span className="af-live-barres" aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'flex-end', gap: 2.5, height: 15 }}>
+                <i /><i /><i />
+              </span>
+              <span>EN DIRECT</span>
+            </button>
+          )}
           <button
             type="button"
             className="af-nav-rond"
@@ -9059,6 +9078,54 @@ function App() {
               </svg>
               <span>{t('searchPlaceholder')}</span>
             </button>
+
+            {/* V543 — LIVE ET SPORDATEUR ENTRENT DANS LE TIROIR.
+                Sur téléphone, leurs deux grandes cartes occupaient l'écran
+                juste avant le fil : c'est le contenu qui doit être là. Elles
+                quittent donc la colonne — et RIEN n'est perdu, ni route, ni
+                handler, ni préchargement : ces deux entrées appellent
+                exactement les mêmes fonctions que les cartes
+                (`ouvrirLiveDepuisLaBarre` pour le direct, la route serveur
+                `/api/spordate/enter` + `entrerDansSpordate` pour Spordateur).
+                Sur grand écran, les cartes restent où elles sont. */}
+            <div className="af-menu-separateur" aria-hidden="true" />
+            <button
+              type="button"
+              className="af-menu-entree"
+              data-testid="nav-menu-live"
+              data-actif={liveEnCours ? 'true' : 'false'}
+              disabled={btLive.state === 'loading'}
+              onClick={() => { setMenuMobile(false); ouvrirLiveDepuisLaBarre(); }}
+            >
+              {liveEnCours ? (
+                <span className="af-live-barres" aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'flex-end', gap: 3, height: 19, width: 19 }}>
+                  <i /><i /><i />
+                </span>
+              ) : (
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m23 7-7 5 7 5z" /><rect x="1" y="5" width="15" height="14" rx="2" />
+                </svg>
+              )}
+              <span>Afroboost Live</span>
+              {liveEnCours ? <span className="af-menu-direct">EN DIRECT</span> : null}
+            </button>
+            <a
+              className="af-menu-entree"
+              data-testid="nav-menu-spordateur"
+              href={urlEntreeServeur()}
+              onMouseEnter={prechargerSpordate}
+              onFocus={prechargerSpordate}
+              onTouchStart={prechargerSpordate}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                e.preventDefault();
+                setMenuMobile(false);
+                entrerDansSpordate();
+              }}
+            >
+              <SvgIcon name="users" size={19} />
+              <span>Spordateur</span>
+            </a>
           </nav>
         </div>
       )}
