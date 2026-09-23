@@ -239,7 +239,9 @@ export const libelleAvantage = (o, mensuelRef) => {
   if (!o) return '';
   const f = familleOffre(o);
   const eco = economieOffre(o, mensuelRef);
-  if (eco) return `Économie de ${prixFormate(eco)} sur la saison`;
+  // Le montant reste CALCULÉ (`economieOffre`) : seule l'unité manquait, alors
+  // que la même phrase dans la fiche (`economie`, plus bas) la portait déjà.
+  if (eco) return `Économie de ${prixFormate(eco)} CHF sur la saison`;
   // ⚠️ L'ORDRE EST LE FOND DU SUJET. Fondateurs est AUSSI un prélèvement mensuel :
   // s'il passait par la branche « sans engagement », les deux cartes mensuelles
   // diraient la même phrase et on n'aurait rien différencié du tout. Ce qui
