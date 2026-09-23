@@ -5133,6 +5133,9 @@ function App() {
 
   // Navigation et filtrage
   const [activeFilter, setActiveFilter] = useState('all');
+  const [menuMobile, setMenuMobile] = useState(false);   // V541 : tiroir de navigation mobile
+  const [rechercheMobile, setRechercheMobile] = useState(false);   // V541 : champ de recherche replie sous une icone
+
 
   /* V541 — DEUX HAUTEURS QU'AUCUN CSS NE PEUT DEVINER.
      La colonne d'accueil et la barre de navigation collent en haut de l'écran
@@ -5763,6 +5766,51 @@ function App() {
   // langues africaines ne traduisent qu'un sous-ensemble visiteur). Évite
   // d'afficher le nom brut de la clé. `?.` protège aussi d'une langue inconnue.
   const t = useCallback((key) => (translations[lang]?.[key]) || translations.fr[key] || key, [lang]);
+
+  /* V541 — UNE SEULE TABLE D'ONGLETS, UNE SEULE ACTION.
+     La barre horizontale (desktop) et le tiroir (mobile) lisent la MÊME liste
+     et appellent la MÊME fonction. Rien n'est dupliqué et rien n'est recréé :
+     « Sessions » ouvre toujours `SessionsModal`, « Offres » la vue Offres
+     existante, « Shop » le Shop existant, « Recherche » le champ existant.
+     Aucun routeur nouveau. Live et Spordateur ne reviennent PAS ici : ils ont
+     gardé leurs cartes dédiées dans la colonne. */
+  const v541Onglets = [
+    { key: 'all', label: t('homeTab'), icon: 'home' },
+    { key: 'sessions', label: t('sessions'), icon: 'calendar' },
+    { key: 'communaute', label: t('communityTab'), icon: 'users' },
+    { key: 'offers', label: t('offersFilter'), icon: 'gift' },
+    { key: 'shop', label: t('shopFilter'), icon: 'shoppingCart' },
+  ];
+  const v541AllerA = useCallback((cle) => {
+    setMenuMobile(false);
+    // « Sessions » n'est pas un filtre : c'est une fenêtre. On ne touche donc
+    // NI au filtre actif, NI au défilement — la page reste où le visiteur
+    // l'avait laissée, et il la retrouve intacte en fermant.
+    if (cle === 'sessions') { setShowSessionsModal(true); return; }
+    // V540 : « Offres » n'ouvre PLUS le panneau « toutes les offres » par-dessus
+    // — les 3 cartes occupent la zone principale. Le panneau reste accessible
+    // par « Voir toutes les offres » (`setSignalToutesOffres`), inchangé.
+    setActiveFilter(cle);
+    const sectionMap = { offers: 'offers-section', shop: 'products-section', communaute: 'mur-publications' };
+    if (sectionMap[cle]) {
+      const el = document.getElementById(sectionMap[cle]);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, []);
+
+  /* Le tiroir se ferme comme on l'attend : Échap, et jamais ouvert en desktop
+     (si l'écran s'élargit alors qu'il est ouvert, il se referme tout seul). */
+  useEffect(() => {
+    if (!menuMobile) return undefined;
+    const surTouche = (e) => { if (e.key === 'Escape') setMenuMobile(false); };
+    const surTaille = () => { if (window.innerWidth >= 1024) setMenuMobile(false); };
+    document.addEventListener('keydown', surTouche);
+    window.addEventListener('resize', surTaille);
+    return () => { document.removeEventListener('keydown', surTouche); window.removeEventListener('resize', surTaille); };
+  }, [menuMobile]);
+
 
   useEffect(() => { localStorage.setItem("af_lang", lang); }, [lang]);
 
@@ -8680,8 +8728,14 @@ function App() {
           >
             Danse. Transpire. Lâche prise.
           </h1>
+          {/* V541 — CETTE PHRASE RESTE, ELLE NE S'AFFICHE PLUS SUR TÉLÉPHONE.
+              Sur 390 px elle prenait deux lignes et 44 px de hauteur pour
+              redire ce que le titre et la ligne d'offre disent déjà. Elle est
+              masquée par une media query (`.af-hero-sous`) : le texte est
+              toujours dans la page, rien n'est supprimé du système, c'est une
+              décision d'affichage. Sur grand écran elle ne bouge pas. */}
           <p
-            className="text-white/90 mt-3 max-w-md"
+            className="af-hero-sous text-white/90 mt-3 max-w-md"
             style={{ fontSize: 'clamp(0.95rem, 3.4vw, 1.1rem)', textShadow: '0 2px 10px rgba(0,0,0,0.7)' }}
           >
             Vis l'expérience Afroboost : danse afrobeat et fitness au casque, même si tu n'as jamais dansé.
@@ -8803,7 +8857,56 @@ function App() {
             640 px la barre passe sur DEUX lignes (filtres, puis Live ·
             Spordateur · recherche) : tout est visible et atteignable au pouce,
             rien n'est retiré. Au-dessus, une ligne comme avant. */}
-        <div className="af-accueil-contenu mx-auto flex flex-wrap sm:flex-nowrap items-center gap-1 px-3 sm:px-4 py-2 overflow-x-auto hide-scrollbar">
+        {/* V541 — LA BARRE MOBILE. Mesuré à 390×844 : la rangée complète
+            (Accueil · Sessions · Communauté · Offres · Shop + recherche)
+            passait sur DEUX lignes et mangeait 83 px du premier écran. Elle
+            devient une ligne de 52 px : marque, loupe, hamburger. Les six
+            entrées ne disparaissent pas — elles passent dans le tiroir, qui
+            appelle exactement les mêmes fonctions. */}
+        <div className="af-nav-mobile af-accueil-contenu mx-auto">
+          <button
+            type="button"
+            className="af-nav-marque"
+            onClick={() => v541AllerA('all')}
+            aria-label="Afroboost — retour à l’accueil"
+            data-testid="nav-mobile-marque"
+          >
+            Afroboost
+          </button>
+          <button
+            type="button"
+            className="af-nav-rond"
+            onClick={() => { setRechercheMobile((v) => !v); setMenuMobile(false); }}
+            aria-label={t('searchPlaceholder')}
+            aria-expanded={rechercheMobile}
+            data-testid="nav-mobile-recherche"
+          >
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="af-nav-rond"
+            onClick={() => { setMenuMobile((v) => !v); setRechercheMobile(false); }}
+            aria-label={menuMobile ? 'Fermer le menu' : 'Ouvrir le menu'}
+            aria-expanded={menuMobile}
+            aria-controls="af-menu-mobile"
+            data-testid="nav-mobile-menu"
+          >
+            {menuMobile ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            )}
+          </button>
+        </div>
+
+        <div className="af-accueil-contenu mx-auto af-nav-rangee flex flex-wrap sm:flex-nowrap items-center gap-1 px-3 sm:px-4 py-2 overflow-x-auto hide-scrollbar" data-recherche-ouverte={rechercheMobile ? 'true' : 'false'}>
           {/* V245: emoji des onglets remplaces par SvgIcon (icones vectorielles
               qui suivent currentColor, coherentes avec la migration V228+). */}
           {/* V540 — CINQ ENTRÉES QUI NOMMENT DES LIEUX.
@@ -8812,13 +8915,7 @@ function App() {
               parce qu'on les retire, mais parce qu'ils ont désormais leur
               propre carte dans la colonne, avec les MÊMES handlers. Leurs
               routes, leur logique et leur préchargement sont intacts. */}
-          {[
-            { key: 'all', label: t('homeTab'), icon: 'home' },
-            { key: 'sessions', label: t('sessions'), icon: 'calendar' },
-            { key: 'communaute', label: t('communityTab'), icon: 'users' },
-            { key: 'offers', label: t('offersFilter'), icon: 'gift' },
-            { key: 'shop', label: t('shopFilter'), icon: 'shoppingCart' }
-          ].map(tab => (
+          {v541Onglets.map(tab => (
             <button
               key={tab.key}
               /* V540 : point d'accroche des parcours Playwright. Les onglets
@@ -8827,31 +8924,7 @@ function App() {
                  parcours passe par CE bouton — le test doit donc pouvoir le
                  cliquer sans dependre du libelle traduit. */
               data-testid={'nav-tab-' + tab.key}
-              onClick={() => {
-                // « Sessions » n'est plus un filtre : c'est une fenetre. On ne
-                // touche donc NI au filtre actif, NI au defilement — la page
-                // reste exactement ou le visiteur l'avait laissee, et il la
-                // retrouve intacte en fermant.
-                //
-                // L'ancienne cible `sessions-section` sort de la table : cette
-                // ancre n'existe plus depuis que le bloc qui la portait est
-                // neutralise (`showSessions = false`, V225), et le defilement
-                // echouait donc en silence.
-                if (tab.key === 'sessions') { setShowSessionsModal(true); return; }
-                // V540 : « Offres » n'ouvre PLUS le panneau « toutes les offres »
-                // par-dessus — les 3 cartes occupent désormais la zone
-                // principale, le panneau ferait double emploi. Il reste
-                // accessible par le bouton « Voir toutes les offres », qui est
-                // le mécanisme existant (`setSignalToutesOffres`), inchangé.
-                setActiveFilter(tab.key);
-                const sectionMap = { offers: 'offers-section', shop: 'products-section', communaute: 'mur-publications' };
-                if (sectionMap[tab.key]) {
-                  const el = document.getElementById(sectionMap[tab.key]);
-                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                } else {
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }
-              }}
+              onClick={() => v541AllerA(tab.key)}
               className="af-nav-onglet flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 rounded-full text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all"
               data-actif={activeFilter === tab.key ? 'true' : 'false'}
               style={{
@@ -8881,7 +8954,7 @@ function App() {
               « Boutique » et « Spordateur » ; Spordateur est un univers
               complémentaire, pas un onglet de cette page. */}
           {/* V106: Barre de recherche universelle dans la sticky nav */}
-          <div style={{ position: 'relative', marginLeft: 'auto', flex: '1 1 120px', minWidth: '120px', maxWidth: '200px' }}>
+          <div className="af-nav-recherche" style={{ position: 'relative', marginLeft: 'auto', flex: '1 1 120px', minWidth: '120px', maxWidth: '200px' }}>
             {/* LIVE RAPIDE (lisibilité) : le champ était noir sur noir — bordure
                 à 0,12, icône à 0,5, texte fin. Bordure, icône et texte remontent
                 à un contraste lisible en thème sombre ; fonctionnement inchangé. */}
@@ -8924,6 +8997,71 @@ function App() {
           </div>
         )}
       </div>
+
+      {/* V541 — LE TIROIR DE NAVIGATION MOBILE.
+          Il ne contient RIEN de neuf : les six entrées de la barre, dans le
+          même ordre, qui appellent `v541AllerA` — la fonction que la barre
+          desktop utilise déjà. « Recherche » ouvre le champ existant, il n'y a
+          pas d'autre moteur. Live et Spordateur n'y sont pas : ils ont leurs
+          cartes. Fermeture par la croix, par le voile, par Échap (effet
+          ci-dessus) et après chaque choix. */}
+      {menuMobile && (
+        <div
+          className="af-menu-voile"
+          onClick={() => setMenuMobile(false)}
+          data-testid="nav-mobile-voile"
+        >
+          <nav
+            id="af-menu-mobile"
+            className="af-menu-tiroir"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Menu Afroboost"
+            onClick={(e) => e.stopPropagation()}
+            data-testid="nav-mobile-tiroir"
+          >
+            <div className="af-menu-tete">
+              <span className="af-menu-titre">Afroboost</span>
+              <button
+                type="button"
+                className="af-nav-rond"
+                onClick={() => setMenuMobile(false)}
+                aria-label="Fermer le menu"
+                data-testid="nav-mobile-fermer"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            {v541Onglets.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                className="af-menu-entree"
+                data-actif={activeFilter === tab.key ? 'true' : 'false'}
+                data-testid={'nav-menu-' + tab.key}
+                onClick={() => v541AllerA(tab.key)}
+              >
+                <SvgIcon name={tab.icon} size={19} />
+                <span>{tab.label}</span>
+              </button>
+            ))}
+            <button
+              type="button"
+              className="af-menu-entree"
+              data-testid="nav-menu-recherche"
+              onClick={() => { setMenuMobile(false); setRechercheMobile(true);
+                setTimeout(() => { const c = document.querySelector('[data-testid="nav-search"]'); if (c) c.focus(); }, 60); }}
+            >
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <span>{t('searchPlaceholder')}</span>
+            </button>
+          </nav>
+        </div>
+      )}
 
       {/* v9.5.8: Contenu scrollable SOUS le flux Reels */}
       {/* V540 : `max-w-4xl` (896 px) ne laissait pas la place à une colonne à

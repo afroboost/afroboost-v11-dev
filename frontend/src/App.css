@@ -1292,3 +1292,113 @@ body {
 }
 .af-nav-onglet[data-actif="false"] { color: rgba(255, 255, 255, 0.78); }
 .af-nav-onglet[data-actif="true"] { box-shadow: 0 0 0 1px rgba(var(--primary-rgb, 217, 28, 210), 0.35); }
+
+
+/* ═══ V541 — MOBILE ════════════════════════════════════════════════════════
+
+   LA RANGÉE D'ONGLETS PASSAIT SUR DEUX LIGNES. Mesuré à 390×844 : 83 px de
+   barre, avant même d'avoir vu un seul contenu. Les six entrées ne
+   disparaissent pas, elles changent de contenant : une ligne de 52 px
+   (marque · loupe · hamburger) et un tiroir qui appelle exactement les mêmes
+   fonctions. Live et Spordateur ne reviennent pas ici : ils ont leurs cartes. */
+.af-nav-mobile {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 14px; min-height: 52px;
+}
+.af-nav-marque {
+  flex: 1 1 auto; text-align: left; min-width: 0;
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: #fff; font-size: 16px; font-weight: 800; letter-spacing: -0.01em;
+}
+.af-nav-rond {
+  flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.07); color: #fff; cursor: pointer; padding: 0;
+}
+.af-nav-rond:focus-visible { outline: 2px solid var(--primary-color, #D91CD2); outline-offset: 2px; }
+
+@media (max-width: 1023px) {
+  /* les onglets s'effacent ; le champ de recherche ne se montre qu'à la demande */
+  .af-nav-rangee > .af-nav-onglet { display: none; }
+  .af-nav-rangee { padding-top: 0; padding-bottom: 0; }
+  .af-nav-rangee[data-recherche-ouverte="false"] .af-nav-recherche { display: none; }
+  .af-nav-rangee[data-recherche-ouverte="true"] { padding-bottom: 8px; }
+  .af-nav-rangee[data-recherche-ouverte="true"] .af-nav-recherche {
+    flex: 1 1 100%; max-width: none; margin-left: 0;
+  }
+}
+@media (min-width: 1024px) {
+  .af-nav-mobile { display: none; }   /* pas de hamburger sur grand écran */
+}
+
+/* LE TIROIR. Noir profond, accent fuchsia, texte blanc. Pas d'animation
+   lourde : une apparition courte, coupée si le système demande moins de
+   mouvement. Le voile ferme au clic, la croix aussi, Échap également. */
+.af-menu-voile {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(0, 0, 0, 0.62);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  display: flex; justify-content: flex-end;
+}
+.af-menu-tiroir {
+  width: min(84vw, 320px); height: 100%;
+  background: #08080c; border-left: 1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35);
+  box-shadow: -18px 0 46px rgba(0, 0, 0, 0.6);
+  padding: 14px 12px calc(14px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; gap: 4px;
+  overflow-y: auto;
+  animation: afMenuEntre 160ms ease-out;
+}
+@keyframes afMenuEntre { from { transform: translateX(14px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .af-menu-tiroir { animation: none; } }
+.af-menu-tete { display: flex; align-items: center; justify-content: space-between; padding: 2px 6px 12px; }
+.af-menu-titre { color: #fff; font-size: 17px; font-weight: 800; letter-spacing: -0.01em; }
+.af-menu-entree {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  min-height: 52px; padding: 0 14px; border-radius: 12px;
+  border: 1px solid transparent; background: none; cursor: pointer;
+  color: rgba(255, 255, 255, 0.86); font-size: 15.5px; font-weight: 600; text-align: left;
+}
+.af-menu-entree[data-actif="true"] {
+  color: #fff;
+  background: rgba(var(--primary-rgb, 217, 28, 210), 0.16);
+  border-color: rgba(var(--primary-rgb, 217, 28, 210), 0.45);
+}
+.af-menu-entree:focus-visible { outline: 2px solid var(--primary-color, #D91CD2); outline-offset: 2px; }
+
+/* LE HERO MOBILE, ALLÉGÉ. Le sous-titre de deux lignes s'efface (le texte
+   reste dans la page), et le hero peut redescendre à 46vh sans serrer : le
+   contenu qu'il doit loger passe de ~258 px à ~200. */
+@media (max-width: 1023px) {
+  .af-hero-sous { display: none; }
+  .af-hero { height: 46vh; max-height: 46vh; min-height: 368px; }
+  .af-hero-texte { padding-bottom: 92px; }
+}
+
+/* LE CTA. Il faisait 260 px de large (67 % de l'écran) et 74 px de haut.
+   Il reste le même bouton, le même lien, le même événement de mesure —
+   seulement plus mesuré : 224 px, texte 13,5 px, et une zone tactile qui
+   reste très au-dessus des 44 px recommandés. */
+@media (max-width: 1023px) {
+  .af-hero-texte > a[data-testid="c1-hero-cta"] {
+    max-width: 224px;
+    /* `!important` assumé : le bouton porte `padding` et `fontSize` en STYLE
+       EN LIGNE, qui l'emporte sur toute règle de feuille. Mesuré : sans lui,
+       la largeur passait bien à 224 px mais la hauteur restait à 74. */
+    padding: 10px 16px !important;
+    font-size: 13.5px !important;
+    line-height: 1.25 !important;
+    gap: 6px;
+    margin-top: 12px;
+  }
+}
+
+/* `.section-gradient` porte `overflow-x: hidden !important` sous 480 px
+   (V146, anti-débordement du tableau de bord coach). Comme pour `body`, cela
+   en fait un conteneur de défilement et casse `position: sticky` à
+   l'intérieur — mesuré : la barre mobile partait à −1 176 px. `clip` coupe
+   pareil sans créer de conteneur ; la protection est conservée. */
+@media (max-width: 480px) {
+  .section-gradient { overflow-x: clip !important; }
+}
