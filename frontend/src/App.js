@@ -8169,7 +8169,25 @@ function App() {
   // =====================================================
   // FILTRAGE SÉPARÉ : Sessions/Offres vs Produits vs Cours
   // =====================================================
-  
+
+  /* V545 — UNE RECHERCHE EN COURS N'EST PAS UN ONGLET.
+     Depuis V540, l'accueil montre le FIL et garde les offres montées mais
+     masquées : elles n'apparaissent que sous l'onglet « Offres ». Ce choix est
+     bon quand on navigue — il devient un piège dès qu'on cherche. Mesuré sur
+     la production : en tapant « promotion » (un mot qui n'existe QUE dans les
+     mots-clés de l'offre Fondateurs), le moteur trouvait bien l'offre — la
+     carte était dans le DOM — mais sa zone restait à 0 px de haut, le fil
+     disparaissait faute de publication correspondante, et la colonne
+     principale tombait à 88 px. Résultat : un écran vide, sans même le
+     message « aucun résultat » — celui-ci exige que les TROIS listes soient
+     vides, or les offres, elles, n'étaient pas vides.
+     Le moteur n'a jamais été en cause : `keywords` est indexé depuis
+     longtemps (voir `filteredServices` / `filteredProducts` ci-dessous).
+     Ce drapeau dit simplement : tant qu'on cherche, une zone qui a des
+     résultats se montre, quel que soit l'onglet choisi. Il n'enlève aucune
+     condition existante, il en ajoute une par « ou ». */
+  const v545RechercheEnCours = searchQuery.trim().length > 0;
+
   // Filtrer les SERVICES (sessions, abonnements) selon la recherche
   let filteredServices = visibleServices;
   if (searchQuery.trim()) {
@@ -9474,7 +9492,7 @@ function App() {
           );
 
           // --- BLOC OFFRES (v159: flow offer-first — cliquez offre puis horaire apparaît) ---
-          const offersBlock = activeFilter !== 'shop' && filteredServices.length > 0 && (
+          const offersBlock = (activeFilter !== 'shop' || v545RechercheEnCours) && filteredServices.length > 0 && (
             aimantsActifs ? (
               <div key="offers-block" id="offers-section" className="mb-8 fade-in-section">
                 <OffresAimants
@@ -9566,7 +9584,12 @@ function App() {
           const v540ZonePrincipale = (
             <>
               {activeFilter !== 'offers' && <>{publicationsBlock}{murPublications}</>}
-              <div style={activeFilter === 'offers' ? undefined : { display: 'none' }}>
+              {/* V545 — « ou la recherche ». Sans ce second cas, une offre
+                  trouvée restait invisible : le `display:none` de l'onglet
+                  l'emportait sur le résultat. Hors recherche, le comportement
+                  V540 est strictement inchangé — et le bloc reste MONTÉ dans
+                  tous les cas, comme l'exige le lien profond `?offre=`. */}
+              <div style={(activeFilter === 'offers' || (v545RechercheEnCours && filteredServices.length > 0)) ? undefined : { display: 'none' }}>
                 {offersBlock}
               </div>
               {sessionsBlock}
@@ -9785,7 +9808,11 @@ function App() {
             SECTION PRODUITS PHYSIQUES - TOUJOURS VISIBLE si produits disponibles
             Complètement indépendante des cours
             ===================================================== */}
-        {filteredProducts.length > 0 && (activeFilter === 'shop' || activeFilter === 'all') && (
+        {/* V545 — un produit trouvé par ses mots-clés se montre, même si
+            l'onglet courant n'est pas « Shop ». Mesuré : chercher
+            « merchandising » (mot-clé du T-shirt) depuis l'onglet « Offres »
+            ne donnait RIEN à l'écran, et pas davantage de message. */}
+        {filteredProducts.length > 0 && (activeFilter === 'shop' || activeFilter === 'all' || v545RechercheEnCours) && (
           <div id="products-section" className="af-boutique mb-8 fade-in-section" style={{ paddingTop: '10px' }}>
             {/* V541c — UNE VRAIE BOUTIQUE, PAS UNE LIGNE DE TITRE.
                 Le Shop possédait déjà tout ce qu'il faut — galerie de plusieurs
