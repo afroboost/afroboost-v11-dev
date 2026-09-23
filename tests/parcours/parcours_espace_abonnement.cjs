@@ -37,10 +37,27 @@ async function page(browser, mobile, url) {
 // l'onglet « Offres ». On clique le vrai bouton, comme un visiteur.
 // (Quand l'URL porte déjà `?offre=<id>`, la fiche s'ouvre seule : le lien
 // profond garde sa propre porte, et ce chemin-là n'a pas besoin de l'onglet.)
+// V541 — LE CHEMIN VERS UN ONGLET DÉPEND DE L'ÉCRAN.
+// Sur grand écran la barre horizontale est là. Sur téléphone elle a été
+// remplacée par une barre compacte et un tiroir : cliquer `nav-tab-offers`
+// n'a plus de sens, le bouton n'est plus affiché. On regarde donc CE QUE LE
+// VISITEUR VOIT, et on emprunte le même chemin que lui — sans `force`, sans
+// sélecteur affaibli : le hamburger, puis l'entrée du tiroir.
+async function ouvrirOnglet(p, cle) {
+  const hamburger = p.locator('[data-testid="nav-mobile-menu"]');
+  if (await hamburger.isVisible().catch(() => false)) {
+    await hamburger.click();
+    await p.waitForSelector('[data-testid="nav-mobile-tiroir"]', { timeout: 15000 });
+    await p.click('[data-testid="nav-menu-' + cle + '"]');
+    return;
+  }
+  await p.click('[data-testid="nav-tab-' + cle + '"]');
+}
+
 async function ouvrirFiche(p) {
   await p.waitForSelector('[data-testid="accueil-colonnes"]', { timeout: 60000 });
   if (!(await p.locator('[data-testid="fiche-cta"]').count())) {
-    await p.click('[data-testid="nav-tab-offers"]');
+    await ouvrirOnglet(p, 'offers');
     await p.waitForSelector('[data-testid="offres-aimants"]', { state: 'visible', timeout: 30000 });
   }
   await p.waitForSelector('[data-testid="fiche-cta"]', { timeout: 30000 });

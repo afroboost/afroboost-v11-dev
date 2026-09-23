@@ -29,9 +29,26 @@ async function page(browser, mobile = false, url = BASE + '/') {
 // est rendu, CLIQUER sur l'onglet, puis attendre les offres.
 // Aucun `force`, aucun `visibility:false`, aucun sélecteur affaibli, aucun
 // timeout rallongé pour masquer le problème : un vrai clic sur le vrai bouton.
+// V541 — LE CHEMIN VERS UN ONGLET DÉPEND DE L'ÉCRAN.
+// Sur grand écran la barre horizontale est là. Sur téléphone elle a été
+// remplacée par une barre compacte et un tiroir : cliquer `nav-tab-offers`
+// n'a plus de sens, le bouton n'est plus affiché. On regarde donc CE QUE LE
+// VISITEUR VOIT, et on emprunte le même chemin que lui — sans `force`, sans
+// sélecteur affaibli : le hamburger, puis l'entrée du tiroir.
+async function ouvrirOnglet(p, cle) {
+  const hamburger = p.locator('[data-testid="nav-mobile-menu"]');
+  if (await hamburger.isVisible().catch(() => false)) {
+    await hamburger.click();
+    await p.waitForSelector('[data-testid="nav-mobile-tiroir"]', { timeout: 15000 });
+    await p.click('[data-testid="nav-menu-' + cle + '"]');
+    return;
+  }
+  await p.click('[data-testid="nav-tab-' + cle + '"]');
+}
+
 async function allerAuxOffres(p) {
   await p.waitForSelector('[data-testid="accueil-colonnes"]', { timeout: 60000 });
-  await p.click('[data-testid="nav-tab-offers"]');
+  await ouvrirOnglet(p, 'offers');
   await p.waitForSelector('[data-testid="offres-aimants"]', { state: 'visible', timeout: 30000 });
 }
 
@@ -204,7 +221,7 @@ async function parcours(nom, fn) { if (process.env.PARCOURS && !process.env.PARC
       // V540 : on ouvre l'onglet « Offres », là où les cartes vivent désormais —
       // c'est le seul endroit où leur absence veut dire quelque chose.
       await p.waitForSelector('[data-testid="accueil-colonnes"]', { timeout: 60000 });
-      await p.click('[data-testid="nav-tab-offers"]');
+      await ouvrirOnglet(p, 'offers');
       await p.waitForTimeout(1500);
       const offres = await (await p.request.get(BASE + '/api/offers')).json();
       v('P7. deadline passée : Fondateurs n\'est plus servie par GET /api/offers', !offres.some(o => o.id === FID));
