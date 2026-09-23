@@ -9211,7 +9211,15 @@ function App() {
                   likesCount: uipubLikes, liked: uipubDejaLike, onLike: uipubLiker,
                   commentsCount: socialTotalCount || socialComments.length,
                   onComments: () => setShowCommentsPanel(true),
-                  comments: socialComments, onReserve: uipubReserver,
+                  comments: socialComments,
+                  /* V542 : deux accès rapides, deux destinations différentes.
+                     `onReserve` est CONSERVÉ tel quel — il descend vers les
+                     offres, c'est ce qu'il a toujours fait — et porte
+                     désormais le nom de ce qu'il fait. `onSessions` ouvre la
+                     fenêtre des séances DÉJÀ EXISTANTE : aucun calendrier,
+                     aucune liste, aucune carte de séance n'est créée. */
+                  onReserve: uipubReserver,
+                  onSessions: () => setShowSessionsModal(true),
                 }}
                 publications={
                   searchQuery.trim()

@@ -289,20 +289,25 @@ const V268Caption = ({ caption, light }) => {
 // `stopPropagation` sur chaque bouton, indispensable DANS LES DEUX VUES :
 //   - sur la carte, le clic ouvrirait AUSSI la lightbox ;
 //   - dans la lightbox, il pourrait la FERMER (l'overlay ferme au clic).
-const UiPub2Action = ({ nom, valeur, onClick, actif, aria }) => (
+const UiPub2Action = ({ nom, valeur, onClick, actif, aria, testId }) => (
   <button
     type="button"
     aria-label={aria}
+    title={aria}
+    data-testid={testId}
     onClick={(e) => { e.stopPropagation(); if (onClick) onClick(); }}
+    /* 46 px de hauteur : la cible tactile reste confortable même si l'icône
+       n'en fait que 22. Les cinq actions tiennent ainsi dans 230 px, bien
+       moins que la hauteur d'un média vertical. */
     style={{
-      width: 44, height: 44, padding: 0, border: 'none', background: 'transparent',
+      width: 46, height: 46, padding: 0, border: 'none', background: 'transparent',
       display: 'flex', flexDirection: 'column', alignItems: 'center',
       justifyContent: 'center', gap: 1, cursor: 'pointer',
       color: actif ? 'var(--primary-color, #D91CD2)' : '#fff',
       filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.9))'
     }}
   >
-    <SvgIcon name={nom} size={21} />
+    <SvgIcon name={nom} size={22} />
     {valeur !== null && valeur !== undefined && (
       <span style={{ fontSize: 10, fontWeight: 600, lineHeight: 1, letterSpacing: '.2px' }}>
         {valeur}
@@ -311,8 +316,46 @@ const UiPub2Action = ({ nom, valeur, onClick, actif, aria }) => (
   </button>
 );
 
-const UiPub2Colonne = ({ actions, ancre = 8 }) => {
+/* V542 — LE LIEN D'UNE PUBLICATION.
+   Le partage d'une offre existe depuis longtemps et passe par une route
+   serveur qui rend un aperçu (`/api/share/offer/<id>`). Rien d'équivalent
+   n'existe pour une publication : on n'invente donc PAS un SSR dans ce lot,
+   on pose le plus petit mécanisme qui tienne — un paramètre lu par la page
+   d'accueil, `?publication=<id>`, qui ouvre la publication dans son viewer.
+   LIMITE ASSUMÉE ET DOCUMENTÉE : WhatsApp affichera l'aperçu générique du
+   site, pas la vignette de la publication. Il faudrait pour cela une route
+   serveur dédiée, comme celle des offres — c'est un lot à part. */
+export const v542LienPublication = (pub) => {
+  const base = (typeof window !== 'undefined' && window.location && window.location.origin) || 'https://afroboost.com';
+  return `${base}/?publication=${encodeURIComponent(pub && pub.id)}`;
+};
+
+const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
+  const [copie, setCopie] = useState(false);
   if (!actions) return null;
+
+  /* Partage natif quand le téléphone le propose, copie du lien sinon —
+     exactement la logique déjà employée pour les offres, transposée telle
+     quelle. On n'envoie que ce qui est public : le titre, la légende
+     tronquée, le lien. Jamais d'e-mail, de jeton ni d'identifiant interne. */
+  const partager = () => {
+    if (!pub) return;
+    const url = v542LienPublication(pub);
+    const auteur = pub.display_name || pub.subscriber_name || 'Afroboost';
+    const legende = (pub.caption || '').trim();
+    const texte = legende ? (legende.length > 140 ? legende.slice(0, 137) + '…' : legende) : `Une publication d'${auteur} sur Afroboost`;
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      navigator.share({ title: `Afroboost — ${auteur}`, text: texte, url }).catch(() => {});
+      return;
+    }
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(() => {
+        setCopie(true);
+        setTimeout(() => setCopie(false), 2000);
+      }).catch(() => {});
+    }
+  };
+
   return (
     <div
       data-testid="uipub2-actions"
@@ -323,23 +366,54 @@ const UiPub2Colonne = ({ actions, ancre = 8 }) => {
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2
       }}
     >
+      {/* LIKE et AVIS restent ce qu'ils sont : les compteurs de TOUTE LA PAGE.
+          Ce lot est visuel — aucune métrique par publication n'est créée. */}
       <UiPub2Action
-        nom="heart" aria="J'aime"
+        nom="heart" aria="J'aime la page Afroboost (compteur commun à toute la page)"
         valeur={actions.likesCount}
         actif={actions.liked}
         onClick={actions.onLike}
       />
-      {actions.commentsCount > 0 && (
-        <UiPub2Action
-          nom="messageCircle" aria="Voir les avis"
-          valeur={actions.commentsCount}
-          onClick={actions.onComments}
-        />
-      )}
       <UiPub2Action
-        nom="calendar" aria="Réserver"
-        valeur="Réserver"
+        nom="messageCircle" aria="Avis Afroboost (compteur commun à toute la page)"
+        valeur={actions.commentsCount || null}
+        onClick={actions.onComments}
+      />
+      {/* Sans ce rappel, un chiffre posé à côté d'une publication se lit comme
+          le sien. Il ne l'est pas : c'est celui de toute la page, et le dire
+          coûte deux lignes de 8,5 px. */}
+      <span style={{
+        fontSize: 8.5, lineHeight: 1.1, textAlign: 'center', letterSpacing: '.02em',
+        color: 'rgba(255,255,255,0.62)', maxWidth: 52, margin: '-1px 0 3px',
+        textShadow: '0 1px 3px rgba(0,0,0,0.95)',
+      }}>de toute la page</span>
+      {pub ? (
+        <UiPub2Action
+          nom="share" aria="Partager cette publication"
+          valeur={copie ? 'Copié' : 'Partager'}
+          onClick={partager}
+          testId="publication-partager"
+        />
+      ) : null}
+      {/* Deux accès rapides, deux destinations DIFFÉRENTES — c'est ce qui
+          justifie de les garder tous les deux : le calendrier ouvre la fenêtre
+          des séances (`SessionsModal`), « Offres » mène au catalogue. Le
+          bouton « Réserver » d'avant ne réservait pas : il descendait vers les
+          offres. Son handler est CONSERVÉ tel quel, il porte désormais le nom
+          et l'icône de ce qu'il fait vraiment. */}
+      {actions.onSessions ? (
+        <UiPub2Action
+          nom="calendar" aria="Voir les séances"
+          valeur="Séances"
+          onClick={actions.onSessions}
+          testId="publication-sessions"
+        />
+      ) : null}
+      <UiPub2Action
+        nom="gift" aria="Voir les offres"
+        valeur="Offres"
         onClick={actions.onReserve}
+        testId="publication-offres"
       />
     </div>
   );
@@ -424,6 +498,10 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
   // muette. Le bouton reste dispo pour couper. La carte, elle, garde son propre
   // etat muet (element video distinct) — rien a restaurer a la fermeture.
   const [muted, setMuted] = useState(pub.media_type !== 'video' ? true : false);
+  /* Le viewer s'ouvre AVEC le son (V268b Fix B3, autorisé par le geste qui
+     l'ouvre) : on l'inscrit donc au registre pour cette publication-là, ce qui
+     coupe au passage celle qui l'avait éventuellement dans le fil. */
+  useEffect(() => { if (pub.media_type === 'video') v542PoserSon(pub.id, true); }, [pub.id, pub.media_type]);
   /* V540 : navigation au clavier, uniquement quand l'appelant l'a demandée.
      `Échap` garde son comportement d'origine dans tous les cas. */
   const peutNaviguer = typeof onNaviguer === 'function' && Array.isArray(liste) && liste.length > 1;
@@ -465,8 +543,11 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
   const toggleMute = (e) => {
     toggleMuteBrut(e);
     const v = videoRef.current;
-    const seraAvecSon = v ? v.muted : !muted;   // l'état APRÈS la bascule
-    if (v540SonActif() !== seraAvecSon) v540BasculerSon();
+    const avecSon = v ? !v.muted : muted;   // l'état APRÈS la bascule
+    /* V542 : ce que la personne décide ICI vaut pour CETTE publication, et
+       pour elle seule. En fermant le viewer elle retrouve donc la carte dans
+       l'état qu'elle vient de choisir — et les autres inchangées. */
+    v542PoserSon(pub.id, avecSon);
   };
 
   // === UI-PUB4 : commentaires DANS le viewer, video qui continue ===
@@ -491,7 +572,7 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
       onClose();
       setTimeout(() => { if (actions.onReserve) actions.onReserve(); }, 60);
     },
-  } : null;2
+  } : null;
   return (
     // V268d : z-index tres eleve pour passer AU-DESSUS de tout (menu inclus).
     // Combine au portal vers document.body (voir le rendu du carrousel), la
@@ -599,18 +680,28 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
         </div>
       )}
 
+      {/* V542 — LE VIEWER PREND ENFIN L'ÉCRAN.
+          Mesuré à 390×844 : le média s'affichait en 300×320 px, soit 38 % de
+          la hauteur, perdu dans un grand fond noir. Deux causes : un plafond
+          de 480 px de large hérité du grand écran, et une hauteur laissée à
+          la taille intrinsèque de la vidéo. La largeur et la hauteur sont
+          maintenant PILOTÉES (`.af-viewer-media`, App.css) : presque tout
+          l'écran sur téléphone, le cadre d'avant sur grand écran.
+          `object-fit: contain` : une vidéo verticale garde son ratio, rien
+          n'est étiré ni rogné, et les sous-titres incrustés restent entiers. */}
       <div
         onClick={(e) => e.stopPropagation()}
+        className={peutNaviguer ? 'af-viewer-cadre' : undefined}
         style={{ position: 'relative', maxWidth: 'min(92vw, 480px)', width: '100%', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}
       >
-        <div style={{ flex: '1 1 320px', minWidth: 0, position: 'relative', display: 'flex', justifyContent: 'center' }}>
+        <div style={{ flex: '1 1 auto', minWidth: 0, position: 'relative', display: 'flex', justifyContent: 'center' }}>
           {pub.media_type === 'video' ? (
             <>
               <video
                 ref={videoRef}
                 src={pub.media_url}
                 autoPlay loop playsInline muted={muted}
-                className={avisOuverts ? 'max-h-[38vh] md:max-h-[78vh]' : 'max-h-[78vh]'}
+                className={(avisOuverts ? 'max-h-[38vh] md:max-h-[78vh] ' : 'max-h-[78vh] ') + (peutNaviguer ? 'af-viewer-media' : '')}
                 style={{ display: 'block', maxWidth: '100%', borderRadius: 12, background: '#000' }}
               />
               <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
@@ -621,7 +712,7 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
             <img
               src={pub.media_url}
               alt={`Publication de ${pub.display_name || pub.subscriber_name || 'un abonné'}`}
-              className={avisOuverts ? 'max-h-[38vh] md:max-h-[78vh]' : 'max-h-[78vh]'}
+              className={(avisOuverts ? 'max-h-[38vh] md:max-h-[78vh] ' : 'max-h-[78vh] ') + (peutNaviguer ? 'af-viewer-media' : '')}
               style={{ display: 'block', maxWidth: '100%', borderRadius: 12, objectFit: 'contain', background: '#000' }}
             />
           )}
@@ -634,7 +725,7 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
               en bas a droite. `zIndex: 5` passe au-dessus du media sans jamais
               masquer la croix de fermeture (`zIndex` 2 sur l'overlay, mais rendue
               APRES dans un autre conteneur). */}
-          <UiPub2Colonne actions={actionsViewer} ancre={12} />
+          <UiPub2Colonne actions={actionsViewer} pub={pub} ancre={10} />
         </div>
 
         {/* UI-PUB4 : panneau d'avis, FRERE du media et jamais son parent.
@@ -853,8 +944,8 @@ const V268PublicationCard = ({ pub, onOpen, actions }) => {
  */
 const V540CartePublication = ({ pub, actions, onOpen }) => {
   const videoRef = useRef(null);
-  const [sonActif, setSonActif] = useState(v540SonActif());
-  useEffect(() => v540EcouterSon(setSonActif), []);
+  const [sonActif, setSonActif] = useState(v542SonDe(pub.id));
+  useEffect(() => v540EcouterSon(() => setSonActif(v542SonDe(pub.id))), [pub.id]);
   /* React pose `muted` sur un <video> AU MONTAGE et ne le remet pas à jour
      ensuite (travers connu du DOM vidéo). La prop ci-dessous donne donc l'état
      de départ — muet, ce que le navigateur exige pour démarrer seul — et cette
@@ -869,34 +960,6 @@ const V540CartePublication = ({ pub, actions, onOpen }) => {
   const estCoach = pub.author_id && pub.coach_id
     && String(pub.author_id).toLowerCase() === String(pub.coach_id).toLowerCase();
 
-  const Action = ({ nomIcone, valeur, onClick, actif, aria }) => (
-    <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-      <button
-        type="button"
-        aria-label={aria}
-        title={aria}
-        onClick={(e) => { e.stopPropagation(); if (onClick) onClick(); }}
-        /* V541 : mêmes actions, même sens — seulement plus lisibles. Le cercle
-           passe de 44 à 46 px, l'icône de 20 à 23, le contour de 0,12 à 0,20 et
-           le chiffre de 11,5 à 13,5 en blanc plein. C'est de la lisibilité, pas
-           une nouvelle métrique : le compteur reste celui de TOUTE la page. */
-        style={{
-          width: 46, height: 46, padding: 0, borderRadius: '50%', cursor: 'pointer',
-          border: `1px solid ${actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.65)' : 'rgba(255,255,255,0.20)'}`,
-          background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)' : 'rgba(255,255,255,0.07)',
-          color: actif ? 'var(--primary-color, #D91CD2)' : '#fff',
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        }}
-      >
-        <SvgIcon name={nomIcone} size={23} />
-      </button>
-      {valeur !== null && valeur !== undefined && (
-        <span style={{ fontSize: 13.5, fontWeight: 700, color: '#fff', fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
-          {valeur}
-        </span>
-      )}
-    </span>
-  );
 
   return (
     <article
@@ -906,12 +969,17 @@ const V540CartePublication = ({ pub, actions, onOpen }) => {
          une media query. Le média gagne 47 % sur grand écran. */
       className="af-fil-carte"
     >
-      <div style={{ display: 'flex', alignItems: 'stretch', gap: 10 }}>
+      {/* V542 — LE MÉDIA PREND TOUTE LA CARTE. Il était rétréci de 56 px pour
+          loger une colonne d'actions À CÔTÉ : sur un écran de 390 px, il n'en
+          gardait que 282, soit 72 % de la largeur. La colonne passe DESSUS,
+          sur le bord droit du média — la même que dans le viewer agrandi,
+          même composant, mêmes handlers. Le média récupère ces 56 px. */}
+      <div style={{ display: 'block' }}>
         <div
           onClick={onOpen}
           data-testid={pub.boosted ? 'publication-card-boosted' : 'publication-card'}
           style={{
-            position: 'relative', flex: '1 1 auto', minWidth: 0, aspectRatio: '4 / 5',
+            position: 'relative', width: '100%', minWidth: 0, aspectRatio: '4 / 5',
             background: '#0c0c0e', borderRadius: 14, overflow: 'hidden', cursor: 'pointer',
             ...(pub.boosted ? { boxShadow: '0 0 0 2px rgba(var(--primary-rgb, 217, 28, 210), .45)' } : {}),
           }}
@@ -930,7 +998,15 @@ const V540CartePublication = ({ pub, actions, onOpen }) => {
                 autoPlay loop playsInline
                 style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
               />
-              <V540BoutonSon />
+              {/* LE BOUTON SON VA EN HAUT À DROITE, et le chemin pour y
+                  arriver mérite d'être écrit. En bas à droite (V540) il
+                  touchait la colonne d'actions ; en bas à gauche il
+                  recouvrait les sous-titres incrustés dans la vidéo (vu en
+                  capture) ; en haut à gauche il tombait sous le bouton
+                  flottant du chat, désormais de ce côté. En haut à droite il
+                  est au-dessus de la colonne — qui est centrée verticalement
+                  — et loin des sous-titres, qui vivent en bas. */}
+              <V540BoutonSon pubId={pub.id} style={{ right: 10, left: 'auto', top: 10, bottom: 'auto' }} />
             </>
           ) : (
             <img
@@ -941,30 +1017,14 @@ const V540CartePublication = ({ pub, actions, onOpen }) => {
             />
           )}
           <V268Remaining remaining={pub.remaining_hours} noExpiry={pub.no_expiry} />
-        </div>
-
-        {/* Les actions de la PAGE, à côté du média. Pas celles de ce post-là. */}
-        <div style={{ flex: '0 0 46px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-          <Action
-            nomIcone="heart"
-            valeur={actions && actions.likesCount}
-            actif={actions && actions.liked}
-            onClick={actions && actions.onLike}
-            aria="J’aime la page Afroboost (compteur commun à toute la page)"
-          />
-          <Action
-            nomIcone="messageCircle"
-            valeur={actions && (actions.commentsCount || null)}
-            onClick={actions && actions.onComments}
-            aria="Avis Afroboost (compteur commun à toute la page)"
-          />
-          <span style={{ fontSize: 9, letterSpacing: '.04em', textAlign: 'center', lineHeight: 1.15, color: 'rgba(255,255,255,0.42)', maxWidth: 48 }}>
-            de toute la page
-          </span>
+          {/* LA MÊME colonne que dans le viewer agrandi : un seul composant,
+              un seul jeu de handlers. Les compteurs restent ceux de toute la
+              page — rien n'est inventé par publication. */}
+          <UiPub2Colonne actions={actions} pub={pub} ancre={6} />
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 0 0', marginRight: 54 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 0 0' }}>
         <img
           src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.author_name || nom)}&backgroundColor=8B5CF6`}
           alt=""
@@ -987,7 +1047,7 @@ const V540CartePublication = ({ pub, actions, onOpen }) => {
         </span>
       </div>
       {pub.caption ? (
-        <p style={{ margin: '8px 54px 0 0', fontSize: 14, color: 'rgba(255,255,255,0.8)', lineHeight: 1.45 }}>{pub.caption}</p>
+        <p style={{ margin: '8px 0 0', fontSize: 14, color: 'rgba(255,255,255,0.8)', lineHeight: 1.45 }}>{pub.caption}</p>
       ) : null}
     </article>
   );
@@ -1024,13 +1084,34 @@ function v540Depuis(iso) {
    que le navigateur exige), et `preload`, `loop`, `playsInline`, `poster` et
    le chargement différé V537 restent exactement ce qu'ils étaient.
    ═══════════════════════════════════════════════════════════════════════════ */
-let v540Son = false;
+/* V542 — LE SON APPARTIENT À UNE PUBLICATION, PLUS À LA PAGE.
+   LE DÉFAUT, ET SA CAUSE EXACTE. V540 gardait le son dans UN booléen de
+   module (`v540Son`) partagé par tout le fil : chaque carte s'y abonnait et
+   appliquait `video.muted = !son` à SA vidéo. Activer le son sur une
+   publication le rendait donc à toutes — ce n'était pas l'icône qui mentait,
+   c'était bien l'état qui était commun.
+
+   LA RÈGLE RETENUE, simple et vérifiable : le module ne retient plus « y
+   a-t-il du son » mais « QUELLE publication a le son » — une seule, ou
+   aucune. Activer B coupe A du même geste, ce qui interdit par construction
+   deux vidéos audibles en même temps (et évite d'avoir à écouter le
+   défilement). Le défilement, justement, ne touche à rien : passer devant une
+   publication ne lui donne jamais le son sans un clic. */
+let v542SonSur = null;
 const v540Abonnes = new Set();
-export const v540SonActif = () => v540Son;
-export function v540BasculerSon(e) {
+export const v542SonDe = (id) => v542SonSur !== null && String(v542SonSur) === String(id);
+export const v542SonCourant = () => v542SonSur;
+export function v542BasculerSon(id, e) {
   if (e) { e.stopPropagation(); e.preventDefault(); }   // jamais la lightbox
-  v540Son = !v540Son;
-  v540Abonnes.forEach((f) => { try { f(v540Son); } catch (err) { /* un abonné mort ne casse rien */ } });
+  v542SonSur = v542SonDe(id) ? null : id;
+  v540Abonnes.forEach((f) => { try { f(v542SonSur); } catch (err) { /* un abonné mort ne casse rien */ } });
+}
+/** Impose l'état (utilisé par le viewer, qui s'ouvre avec le son). */
+export function v542PoserSon(id, avecSon) {
+  const cible = avecSon ? id : (v542SonDe(id) ? null : v542SonSur);
+  if (String(cible) === String(v542SonSur)) return;
+  v542SonSur = cible;
+  v540Abonnes.forEach((f) => { try { f(v542SonSur); } catch (err) {} });
 }
 /** S'abonner à l'état du son. Renvoie la fonction de désabonnement. */
 export function v540EcouterSon(f) {
@@ -1053,16 +1134,18 @@ export const V540IconeSon = ({ actif, size = 17 }) => (actif ? (
  * Le bouton son posé sur un média. Il NE FAIT QUE ça : le clic est arrêté net,
  * il n'ouvre jamais la publication.
  */
-export const V540BoutonSon = ({ style }) => {
-  const [actif, setActif] = useState(v540SonActif());
-  useEffect(() => v540EcouterSon(setActif), []);
+export const V540BoutonSon = ({ style, pubId }) => {
+  const [actif, setActif] = useState(v542SonDe(pubId));
+  useEffect(() => v540EcouterSon(() => setActif(v542SonDe(pubId))), [pubId]);
   return (
     <button
       type="button"
       data-testid="publication-son"
+      data-pub={pubId}
+      data-son={actif ? 'on' : 'off'}
       aria-label={actif ? 'Couper le son' : 'Activer le son'}
       title={actif ? 'Couper le son' : 'Activer le son'}
-      onClick={v540BasculerSon}
+      onClick={(e) => v542BasculerSon(pubId, e)}
       style={{
         position: 'absolute', right: 10, bottom: 10, zIndex: 3,
         width: 34, height: 34, borderRadius: '50%', padding: 0, cursor: 'pointer',
@@ -1080,6 +1163,42 @@ export const V540BoutonSon = ({ style }) => {
 export const PublicationsCarousel = ({ publications, actions, disposition = 'carrousel' }) => {
   // V268 (F2): publication ouverte en plein ecran, ou null.
   const [lightbox, setLightbox] = useState(null);
+
+  /* V542 — LE LIEN PARTAGÉ OUVRE LA BONNE PUBLICATION.
+     `?publication=<id>` est lu ICI, là où la liste est déjà chargée et où le
+     viewer existe déjà : aucun routeur nouveau, aucun appel réseau de plus.
+     Si l'identifiant ne correspond à rien — lien périmé, publication
+     supprimée — on ne fait simplement rien : la page d'accueil s'affiche
+     normalement, jamais d'écran blanc. Le paramètre est retiré de la barre
+     d'adresse une fois consommé, pour que fermer le viewer ne le rouvre pas,
+     et `history.replaceState` garde le bouton « retour » intact.
+     ISOLATION COACH : on ne cherche QUE dans la liste déjà servie à cette
+     page — celle du coach de cette vitrine. Un lien pointant sur la
+     publication d'un autre coach ne trouve rien et ne montre rien. */
+  const dejaOuvert = useRef(false);
+  useEffect(() => {
+    if (dejaOuvert.current || !publications || !publications.length) return;
+    if (typeof window === 'undefined') return;
+    let cible = null;
+    try { cible = new URLSearchParams(window.location.search).get('publication'); } catch (e) { return; }
+    if (!cible) return;
+    dejaOuvert.current = true;
+    const i = publications.findIndex((p) => String(p.id) === String(cible));
+    const trouvee = i >= 0 ? publications[i] : null;
+    /* LE PARAMÈTRE RESTE DANS L'ADRESSE. Premier réflexe : le retirer une
+       fois consommé, pour que fermer le viewer ne le rouvre pas. Mais alors
+       F5 ne ramène plus la publication, et c'est précisément ce qu'on attend
+       d'un lien reçu par message. Le garde ci-dessus (`dejaOuvert`) suffit :
+       il vaut pour la durée du montage, donc fermer ne rouvre rien, et
+       recharger rouvre bien la même publication. */
+    /* DEUX FORMES, UN SEUL ÉTAT. Le fil garde `{ pub, index }` — il lui faut
+       l'index pour la navigation précédent/suivant — là où le carrousel range
+       la publication elle-même. Poser la mauvaise forme faisait rendre le
+       viewer avec `pub` indéfini : écran blanc et `TypeError` sur
+       `trim_start`. Mesuré, puis corrigé ici. */
+    if (trouvee) setLightbox(disposition === 'fil' ? { pub: trouvee, index: i } : trouvee);
+  }, [publications, disposition]);
+
   if (!publications || publications.length === 0) return null;
 
   /* V540 — LE FIL VERTICAL. Variante ADDITIVE : sans `disposition="fil"`, ce

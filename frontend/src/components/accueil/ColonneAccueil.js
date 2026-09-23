@@ -175,7 +175,7 @@ export const CarteOffreDuMoment = ({ offre, badge, prix, unite, detail, media, C
  */
 export const CarteSpordateur = ({ href, onClick, onPrecharger }) => (
   <div style={{ ...CADRE, background: 'rgba(255,255,255,0.02)' }} data-testid="accueil-carte-spordateur">
-    <div style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+    <div className="af-carte-spordateur" style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
       <span
         aria-hidden="true"
         style={{

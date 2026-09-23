@@ -1518,3 +1518,126 @@ body {
    ChatWidget et le pied de page sont tous là, simplement plus près. */
 .af-boutique { margin-bottom: 18px !important; }
 .af-boutique ~ .fade-in-section { margin-top: 0 !important; }
+
+
+/* ═══ V542 — FEED ET VIEWER MOBILE ════════════════════════════════════════
+
+   LA CARTE PRESQUE PLEINE LARGEUR. Elle était plafonnée à 500 px et bordée
+   par les marges de la page : sur un écran de 390 px, mesuré, elle n'occupait
+   que 338 px et le média 282 (72 %). Sur téléphone elle prend maintenant la
+   largeur utile moins une gouttière de 8 px de chaque côté ; la colonne
+   d'actions passant PAR-DESSUS le média, ces pixels-là reviennent à l'image.
+   Sur grand écran, rien ne change : 660 px, comme validé en V541. */
+@media (max-width: 1023px) {
+  .af-fil-carte { max-width: 100%; }
+  .af-accueil-colonnes > .af-colonne-principale { min-width: 0; }
+  /* Le conteneur de la page réserve 24 px de chaque côté (`px-6`) : c'est la
+     bonne valeur pour du texte, trop pour un média. LE FIL SEUL en reprend
+     16, ce qui laisse une gouttière de 8 px. Le titre de section, les offres,
+     la boutique et le pied de page gardent leur marge. */
+  [data-testid="publications-fil"] { margin-left: -16px; margin-right: -16px; }
+}
+
+/* LE VIEWER. À 390×844 le média sortait en 300×320 px — 38 % de la hauteur —
+   parce que rien ne pilotait sa taille : il gardait son gabarit intrinsèque
+   dans un cadre plafonné à 480 px. On pilote donc les deux dimensions.
+   `contain` reste de mise : ratio préservé, aucun étirement, aucun rognage,
+   sous-titres incrustés entiers. */
+@media (max-width: 1023px) {
+  .af-viewer-cadre { max-width: 100% !important; max-height: 100% !important; }
+  .af-viewer-media {
+    width: 100%;
+    height: auto;
+    max-height: 82vh !important;
+    min-height: 62vh;
+    object-fit: contain;
+    border-radius: 10px;
+  }
+}
+
+
+/* ═══ V542 — LIVE ET SPORDATEUR CÔTE À CÔTE, SUR TÉLÉPHONE ═══════════════
+
+   Afroboost Live était déjà au bon endroit : juste au-dessus du fil. Il lui
+   manquait son voisin. Les deux forment maintenant un module de deux cartes
+   sur une ligne, à cet endroit-là — la page ne bouge pas autrement, l'offre
+   du moment reste sous le fil.
+
+   LE SÉLECTEUR VISE LES CARTES PAR LEUR NOM, pas par leur rang. La carte
+   « Offre du moment » n'est pas rendue sous l'onglet « Offres » : un
+   `nth-child` aurait alors désigné Spordateur et tout décalé d'un cran. */
+@media (max-width: 1023px) {
+  .af-accueil-colonnes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 10px;
+  }
+  .af-colonne-cote { display: contents; }
+  .af-colonne-cote > [data-testid="accueil-carte-live"]       { order: 1; grid-column: span 1; }
+  .af-colonne-cote > [data-testid="accueil-carte-spordateur"] { order: 2; grid-column: span 1; }
+  .af-colonne-principale                                       { order: 3; grid-column: 1 / -1; min-width: 0; }
+  .af-colonne-cote > [data-testid="accueil-offre-du-moment"]  { order: 4; grid-column: 1 / -1; }
+
+  /* Dans une demi-colonne, Spordateur s'empile au lieu de s'aligner. */
+  .af-carte-spordateur {
+    flex-direction: column; align-items: flex-start; gap: 9px !important; padding: 14px !important;
+  }
+  .af-carte-spordateur > a { margin-left: 0 !important; width: 100% !important; }
+  /* Les deux cartes se tiennent à la même hauteur, quel que soit leur texte. */
+  .af-colonne-cote > [data-testid="accueil-carte-live"],
+  .af-colonne-cote > [data-testid="accueil-carte-spordateur"] { display: flex; }
+  .af-colonne-cote > [data-testid="accueil-carte-live"] > div,
+  .af-colonne-cote > [data-testid="accueil-carte-spordateur"] > div { width: 100%; }
+}
+
+/* ═══ V542 — BOUTIQUE MOBILE : L'IMAGE D'ABORD ═══════════════════════════
+   La miniature produit faisait 220 px de haut dans une carte de 312 : on
+   voyait surtout du texte. Sur téléphone, la carte prend la largeur utile et
+   l'image devient dominante. `OfferCardSlider` n'est pas modifié — ces règles
+   ne valent qu'à l'intérieur de `.af-boutique`, l'autre emploi du composant
+   (les offres) n'est pas concerné. Le `!important` est assumé : ce composant
+   pose ses styles en ligne. */
+@media (max-width: 1023px) {
+  .af-boutique [data-testid="offers-slider"] > * {
+    width: min(100%, 420px) !important;
+    min-width: min(88vw, 420px) !important;
+    padding: 4px !important;
+  }
+  .af-boutique [data-testid^="offer-card-"] > div:first-child {
+    height: 300px !important;
+  }
+  /* Le conteneur grandit, mais l'image gardait sa hauteur d'avant (mesuré :
+     cadre 300 px, image 220). On la fait remplir son cadre — `cover` : elle
+     se recadre, elle ne se déforme pas. */
+  .af-boutique [data-testid^="offer-card-"] > div:first-child img,
+  .af-boutique [data-testid^="offer-card-"] > div:first-child video {
+    height: 100% !important;
+    width: 100% !important;
+    object-fit: cover !important;
+  }
+}
+
+
+/* ═══ V542 — LE BOUTON DU CHAT CHANGE DE CÔTÉ, SUR TÉLÉPHONE ═════════════
+
+   MESURE. Le bouton flottant est en bas à droite (x 314-374, y 684-744) et la
+   colonne d'actions vit sur le bord droit du média, donc dans la même bande.
+   En parcourant le fil par pas de 120 px : 9 positions où ils se chevauchent,
+   et 6 où une action est RÉELLEMENT bloquée — `elementFromPoint` au centre du
+   bouton renvoyait le chat, pas l'action. Like, Avis, Partager, Séances et
+   Offres étaient tour à tour hors d'atteinte.
+
+   Le bouton passe donc à GAUCHE, sur téléphone uniquement. Il ne recouvre
+   plus qu'un morceau d'image — rien de cliquable : le bouton son est en HAUT
+   à gauche. Seule sa POSITION change : ni sa taille, ni sa couleur, ni son
+   comportement, ni la fenêtre de chat, qui est déjà pleine largeur sous
+   640 px et n'est donc pas ancrée au bouton.
+
+   Sélecteur plus spécifique que celui du composant (qui pose ses règles en
+   `!important` depuis une balise `<style>` rendue après cette feuille). */
+@media (max-width: 1023px) {
+  body .chat-widget-button[data-testid="chat-widget-button"] {
+    left: 16px !important;
+    right: auto !important;
+  }
+}
