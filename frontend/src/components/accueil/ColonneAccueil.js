@@ -23,6 +23,15 @@ const CADRE = {
   borderRadius: 14,
   background: 'rgba(255,255,255,0.03)',
   overflow: 'hidden',
+  /* V543 — LA CARTE GARDE SA HAUTEUR. La colonne est un `flex` vertical avec
+     une `max-height` (V541) : ses enfants héritent donc de `flex-shrink: 1`
+     et se font COMPRIMER pour tenir. Combiné à l'`overflow: hidden`
+     ci-dessus, le bas de chaque carte était rogné — titre tronqué, bouton
+     « Découvrir le Live » coupé. Mesuré à 1440×900 : carte Live rendue en
+     124 px pour 139 px de contenu ; à 1280×800, 107 px pour 139.
+     `flexShrink: 0` rend à chaque carte sa hauteur intrinsèque ; c'est la
+     COLONNE qui défile si l'ensemble dépasse, ce qu'elle sait déjà faire. */
+  flexShrink: 0,
 };
 const BOUTON = {
   minHeight: 44, width: '100%', marginTop: 13,
@@ -185,7 +194,13 @@ export const CarteSpordateur = ({ href, onClick, onPrecharger }) => (
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         }}
       >
-        <SvgIcon name="users" size={18} />
+        {/* `SvgIcon` suit `currentColor` ; la couleur héritée ici est celle de
+            `body`, rgb(10,10,10) — l'icône était donc noire sur fond noir
+            (mesuré : `stroke: rgb(10, 10, 10)`). On pose la couleur de
+            marque, comme la carte Live le fait pour la sienne. */}
+        <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}>
+          <SvgIcon name="users" size={18} />
+        </span>
       </span>
       <div style={{ minWidth: 0 }}>
         <h3 style={TITRE}>Spordateur</h3>

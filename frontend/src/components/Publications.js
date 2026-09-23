@@ -502,6 +502,10 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
      l'ouvre) : on l'inscrit donc au registre pour cette publication-là, ce qui
      coupe au passage celle qui l'avait éventuellement dans le fil. */
   useEffect(() => { if (pub.media_type === 'video') v542PoserSon(pub.id, true); }, [pub.id, pub.media_type]);
+  /* V543 — TANT QUE CE VIEWER EST MONTÉ, LE FIL SE TAIT. Le nettoyage rend la
+     parole au fil : la publication qui avait le son dans le registre la
+     retrouve, dans l'état que la personne vient de choisir ici. */
+  useEffect(() => { v542PoserViewer(true); return () => v542PoserViewer(false); }, []);
   /* V540 : navigation au clavier, uniquement quand l'appelant l'a demandée.
      `Échap` garde son comportement d'origine dans tous les cas. */
   const peutNaviguer = typeof onNaviguer === 'function' && Array.isArray(liste) && liste.length > 1;
@@ -944,8 +948,8 @@ const V268PublicationCard = ({ pub, onOpen, actions }) => {
  */
 const V540CartePublication = ({ pub, actions, onOpen }) => {
   const videoRef = useRef(null);
-  const [sonActif, setSonActif] = useState(v542SonDe(pub.id));
-  useEffect(() => v540EcouterSon(() => setSonActif(v542SonDe(pub.id))), [pub.id]);
+  const [sonActif, setSonActif] = useState(v542SonCarte(pub.id));
+  useEffect(() => v540EcouterSon(() => setSonActif(v542SonCarte(pub.id))), [pub.id]);
   /* React pose `muted` sur un <video> AU MONTAGE et ne le remet pas à jour
      ensuite (travers connu du DOM vidéo). La prop ci-dessous donne donc l'état
      de départ — muet, ce que le navigateur exige pour démarrer seul — et cette
@@ -1098,20 +1102,40 @@ function v540Depuis(iso) {
    défilement). Le défilement, justement, ne touche à rien : passer devant une
    publication ne lui donne jamais le son sans un clic. */
 let v542SonSur = null;
+/* V543 — UNE PUBLICATION, MAIS AUSSI UNE SEULE INSTANCE.
+   LE DÉFAUT MESURÉ : son activé sur la publication A dans le fil, puis A
+   ouverte dans le viewer -> DEUX balises `<video>` portant le même
+   `currentSrc`, toutes deux `muted: false` et `paused: false`. Le son jouait
+   en double. V542 avait réglé « quelle publication a le son » ; il manquait
+   « quelle COPIE de cette publication ». Le registre par identifiant ne
+   pouvait pas trancher : les deux copies partagent le même identifiant.
+   La règle : tant que le viewer est ouvert, c'est LUI l'instance active. Le
+   fil se tait — on coupe le son plutôt que de mettre en pause, pour ne pas
+   faire repartir la vidéo de zéro à la fermeture. */
+let v542Viewer = false;
 const v540Abonnes = new Set();
+const v542Prevenir = () => { v540Abonnes.forEach((f) => { try { f(v542SonSur); } catch (e) { /* un abonné mort ne casse rien */ } }); };
 export const v542SonDe = (id) => v542SonSur !== null && String(v542SonSur) === String(id);
+/** Ce que doit jouer une carte DU FIL : jamais rien quand le viewer est ouvert. */
+export const v542SonCarte = (id) => v542SonDe(id) && !v542Viewer;
+export const v542ViewerOuvert = () => v542Viewer;
+export function v542PoserViewer(ouvert) {
+  if (v542Viewer === !!ouvert) return;
+  v542Viewer = !!ouvert;
+  v542Prevenir();
+}
 export const v542SonCourant = () => v542SonSur;
 export function v542BasculerSon(id, e) {
   if (e) { e.stopPropagation(); e.preventDefault(); }   // jamais la lightbox
   v542SonSur = v542SonDe(id) ? null : id;
-  v540Abonnes.forEach((f) => { try { f(v542SonSur); } catch (err) { /* un abonné mort ne casse rien */ } });
+  v542Prevenir();
 }
 /** Impose l'état (utilisé par le viewer, qui s'ouvre avec le son). */
 export function v542PoserSon(id, avecSon) {
   const cible = avecSon ? id : (v542SonDe(id) ? null : v542SonSur);
   if (String(cible) === String(v542SonSur)) return;
   v542SonSur = cible;
-  v540Abonnes.forEach((f) => { try { f(v542SonSur); } catch (err) {} });
+  v542Prevenir();
 }
 /** S'abonner à l'état du son. Renvoie la fonction de désabonnement. */
 export function v540EcouterSon(f) {
@@ -1135,8 +1159,8 @@ export const V540IconeSon = ({ actif, size = 17 }) => (actif ? (
  * il n'ouvre jamais la publication.
  */
 export const V540BoutonSon = ({ style, pubId }) => {
-  const [actif, setActif] = useState(v542SonDe(pubId));
-  useEffect(() => v540EcouterSon(() => setActif(v542SonDe(pubId))), [pubId]);
+  const [actif, setActif] = useState(v542SonCarte(pubId));
+  useEffect(() => v540EcouterSon(() => setActif(v542SonCarte(pubId))), [pubId]);
   return (
     <button
       type="button"

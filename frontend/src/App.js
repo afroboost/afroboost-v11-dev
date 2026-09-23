@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
 import { prechargerSpordate, entrerDansSpordate, urlEntreeServeur } from "./utils/spordateHandoff"; // F3 handoff
+import { activerBulleDeplacable } from "./utils/bulleChat"; // V543 : bulle du chat déplaçable
 import "@/App.css";
 import axios from "axios";
 // V277 : langues supplementaires (africaines + creole) + contexte de langue.
@@ -4891,10 +4892,17 @@ function App() {
   // « Reserver » : sur l'accueil, le bouton d'origine tombait TOUJOURS dans la
   // branche « scroll vers les offres » (video super-admin / vitrine courante).
   // On reproduit exactement ce comportement, sans dependre d'une diapo.
+  /* V543 — « OFFRES » MENAIT À UN BLOC MASQUÉ.
+     Depuis V540, le bloc des offres reste MONTÉ mais `display: none` hors de
+     l'onglet « Offres » (il porte la logique du lien profond `?offre=`).
+     Ce handler se contentait de faire défiler jusqu'à `#offers-section` :
+     défiler vers un élément invisible ne montre rien, et le clic paraissait
+     mort. Il passe maintenant par le chemin normal — celui de l'onglet — qui
+     bascule le filtre PUIS défile. Aucune logique métier nouvelle : c'est la
+     fonction que la barre de navigation et le tiroir utilisent déjà. */
   const uipubReserver = useCallback(() => {
-    const cible = document.getElementById('offers-section')
-      || document.getElementById('sessions-section')
-      || document.getElementById('courses-section');
+    if (typeof v541AllerARef.current === 'function') { v541AllerARef.current('offers'); return; }
+    const cible = document.getElementById('offers-section');
     if (cible) cible.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, []);
 
@@ -5767,6 +5775,41 @@ function App() {
   // d'afficher le nom brut de la clé. `?.` protège aussi d'une langue inconnue.
   const t = useCallback((key) => (translations[lang]?.[key]) || translations.fr[key] || key, [lang]);
 
+  /* `uipubReserver` est déclaré AVANT `v541AllerA` dans ce composant. Plutôt
+     que de déplacer l'un des deux — et de risquer de casser l'ordre des
+     hooks — on passe par une référence, remplie juste après. */
+  const v541AllerARef = useRef(null);
+
+  /* V543 — LA BULLE DU CHAT SE DÉPLACE, DEPUIS L'ACCUEIL SEULEMENT.
+     `ChatWidget` est partagé et écrit en ES5 : on ne le modifie pas. On
+     attache le comportement au bouton une fois qu'il est monté, et on le
+     retire proprement en quittant. Le bouton reste un `<button>` : Tab,
+     Entrée et Espace continuent d'ouvrir le chat, et son `aria-label` ne
+     bouge pas. */
+  useEffect(() => {
+    let detacher = null;
+    let nœud = null;
+    let stop = false;
+    /* LA BULLE EST DÉMONTÉE PUIS RECRÉÉE à chaque ouverture/fermeture du
+       chat : le widget remplace le bouton par sa fenêtre, puis le remonte.
+       Mesuré : après un premier aller-retour, l'écouteur restait accroché à
+       l'ancien nœud et le glissé ne répondait plus. On observe donc en
+       permanence et on se rebranche sur le nouveau bouton — qui retrouve au
+       passage la position mémorisée. */
+    const brancher = () => {
+      if (stop) return;
+      const el = document.querySelector('[data-testid="chat-widget-button"]');
+      if (el === nœud) return;
+      if (detacher) { detacher(); detacher = null; }
+      nœud = el;
+      if (el) detacher = activerBulleDeplacable(el);
+    };
+    brancher();
+    const obs = new MutationObserver(brancher);
+    obs.observe(document.body, { childList: true, subtree: true });
+    return () => { stop = true; obs.disconnect(); if (detacher) detacher(); };
+  }, []);
+
   /* V541 — UNE SEULE TABLE D'ONGLETS, UNE SEULE ACTION.
      La barre horizontale (desktop) et le tiroir (mobile) lisent la MÊME liste
      et appellent la MÊME fonction. Rien n'est dupliqué et rien n'est recréé :
@@ -5799,6 +5842,7 @@ function App() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, []);
+  v541AllerARef.current = v541AllerA;
 
   /* Le tiroir se ferme comme on l'attend : Échap, et jamais ouvert en desktop
      (si l'écran s'élargit alors qu'il est ouvert, il se referme tout seul). */

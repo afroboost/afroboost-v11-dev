@@ -1123,9 +1123,19 @@ video:-ms-fullscreen {
        la laisse défiler d'elle-même au lieu de masquer sa fin. */
     max-height: calc(100vh - var(--af-bandeau, 0px) - var(--af-nav, 49px) - 24px);
     overflow-y: auto;
-    scrollbar-width: none;
+    /* V543 — LA BARRE DE DÉFILEMENT REDEVIENT VISIBLE. Elle était masquée
+       (V541) à une époque où la colonne tenait toujours dans l'écran. Depuis
+       que les cartes gardent leur hauteur intrinsèque, l'ensemble peut
+       dépasser — mesuré : 880 px de contenu pour 775 disponibles à
+       1440×900. Sans barre, la carte Spordateur devenait simplement
+       inatteignable : rien n'était « coupé », mais rien ne disait qu'il y
+       avait la suite. Une barre fine suffit à le dire. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
   }
-  .af-colonne-cote::-webkit-scrollbar { width: 0; height: 0; }
+  .af-colonne-cote::-webkit-scrollbar { width: 6px; }
+  .af-colonne-cote::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.22); border-radius: 999px; }
+  .af-colonne-cote::-webkit-scrollbar-track { background: transparent; }
   .af-colonne-cote > * { order: initial; }
 }
 
@@ -1655,9 +1665,22 @@ body {
    Sélecteur plus spécifique que celui du composant (qui pose ses règles en
    `!important` depuis une balise `<style>` rendue après cette feuille). */
 @media (max-width: 1023px) {
+  /* V543 — LA POSITION PAR DÉFAUT EST MESURÉE, PAS CHOISIE.
+     Trois contraintes à satisfaire en même temps : ne bloquer aucune action
+     de publication, ne pas recouvrir le titre « Ce qui se passe chez
+     Afroboost », et ne pas se poser sur la bande d'installation PWA. J'ai
+     balayé onze hauteurs, de 44 à 300 px, sur 61 positions de défilement, à
+     390×844 ET à 360×640. Une seule valeur passe les trois sur les deux
+     écrans : `bottom: 60px`. (À 44 la bulle tombe sur la bande PWA — 58
+     positions ; à partir de 80 elle mord le titre sur un écran de 640.)
+     Le côté gauche reste celui de V542 : à droite, la colonne d'actions des
+     publications se faisait bloquer de 11 à 13 fois.
+     Ce n'est qu'un POINT DE DÉPART : la bulle se déplace maintenant au
+     doigt, et la position choisie est mémorisée. */
   body .chat-widget-button[data-testid="chat-widget-button"] {
-    left: 16px !important;
+    left: 12px !important;
     right: auto !important;
+    bottom: 60px !important;
   }
 }
 
@@ -1679,4 +1702,30 @@ body {
   margin-left: auto; padding: 3px 8px; border-radius: 999px;
   background: rgba(255, 59, 48, 0.18); border: 1px solid rgba(255, 59, 48, 0.5);
   color: #ff8a82; font-size: 9.5px; font-weight: 800; letter-spacing: .06em;
+}
+
+
+/* ═══ V543 — LE VIEWER SUR GRAND ÉCRAN ═══════════════════════════════════
+   MESURE À 1440×900 : le média sortait en 395×702 — 27 % de la largeur —
+   avec 694 px de noir à gauche et 352 à droite. Deux plafonds en cause : le
+   cadre bloqué à 480 px, et la hauteur à 78vh.
+   On lève les deux. Une vidéo 1080×1920 (9:16) passe de 702 à ~810 px de
+   haut, donc de 395 à ~456 de large. Le noir qui reste est celui d'un format
+   portrait sur un écran paysage : le combler demanderait de ROGNER l'image,
+   ce qui est exclu — `object-fit: contain` reste la règle, le ratio est
+   préservé et rien n'est coupé. Un média paysage, lui, profite bien de la
+   largeur rendue. */
+@media (min-width: 1024px) {
+  .af-viewer-cadre { max-width: min(94vw, 760px) !important; max-height: 94vh !important; }
+  .af-viewer-cadre .af-viewer-media { max-height: 90vh !important; }
+  /* Le panneau auteur reprend 20 px au profit du média, sans rien tronquer. */
+  [data-testid="lightbox-auteur"] { width: 300px !important; flex-basis: 300px !important; }
+}
+
+/* ═══ V543 — LA COLONNE NE COMPRIME PLUS SES CARTES ══════════════════════
+   `max-height` + `display: flex` faisaient rétrécir les enfants. Avec
+   `flex-shrink: 0` posé sur les cartes (ColonneAccueil.js), c'est la colonne
+   qui défile — comportement déjà prévu en V541. On le rend explicite ici. */
+@media (min-width: 1024px) {
+  .af-colonne-cote > * { flex-shrink: 0; }
 }
