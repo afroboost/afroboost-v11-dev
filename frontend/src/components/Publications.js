@@ -876,18 +876,22 @@ const V540CartePublication = ({ pub, actions, onOpen }) => {
         aria-label={aria}
         title={aria}
         onClick={(e) => { e.stopPropagation(); if (onClick) onClick(); }}
+        /* V541 : mêmes actions, même sens — seulement plus lisibles. Le cercle
+           passe de 44 à 46 px, l'icône de 20 à 23, le contour de 0,12 à 0,20 et
+           le chiffre de 11,5 à 13,5 en blanc plein. C'est de la lisibilité, pas
+           une nouvelle métrique : le compteur reste celui de TOUTE la page. */
         style={{
-          width: 44, height: 44, padding: 0, borderRadius: '50%', cursor: 'pointer',
-          border: `1px solid ${actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.6)' : 'rgba(255,255,255,0.12)'}`,
-          background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)' : 'rgba(255,255,255,0.05)',
-          color: actif ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.8)',
+          width: 46, height: 46, padding: 0, borderRadius: '50%', cursor: 'pointer',
+          border: `1px solid ${actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.65)' : 'rgba(255,255,255,0.20)'}`,
+          background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)' : 'rgba(255,255,255,0.07)',
+          color: actif ? 'var(--primary-color, #D91CD2)' : '#fff',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         }}
       >
-        <SvgIcon name={nomIcone} size={20} />
+        <SvgIcon name={nomIcone} size={23} />
       </button>
       {valeur !== null && valeur !== undefined && (
-        <span style={{ fontSize: 11.5, fontWeight: 600, color: 'rgba(255,255,255,0.8)', fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
+        <span style={{ fontSize: 13.5, fontWeight: 700, color: '#fff', fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
           {valeur}
         </span>
       )}
@@ -897,7 +901,10 @@ const V540CartePublication = ({ pub, actions, onOpen }) => {
   return (
     <article
       data-testid="publication-fil-carte"
-      style={{ width: '100%', maxWidth: 500, margin: '0 auto' }}
+      /* V541 : la largeur passe en CSS (`.af-fil-carte`, App.css) — desktop et
+         mobile n'ont pas la même cible et un style en ligne ne sait pas porter
+         une media query. Le média gagne 47 % sur grand écran. */
+      className="af-fil-carte"
     >
       <div style={{ display: 'flex', alignItems: 'stretch', gap: 10 }}>
         <div
@@ -937,7 +944,7 @@ const V540CartePublication = ({ pub, actions, onOpen }) => {
         </div>
 
         {/* Les actions de la PAGE, à côté du média. Pas celles de ce post-là. */}
-        <div style={{ flex: '0 0 44px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+        <div style={{ flex: '0 0 46px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
           <Action
             nomIcone="heart"
             valeur={actions && actions.likesCount}

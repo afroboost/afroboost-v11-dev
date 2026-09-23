@@ -1098,7 +1098,10 @@ video:-ms-fullscreen {
    un par un autour du fil. C'est ce qui évite de dupliquer les cartes dans
    deux emplacements du JSX — un seul rendu, deux dispositions.
    ═══════════════════════════════════════════════════════════════════════════ */
-.af-accueil-contenu { max-width: 1160px; }
+/* V541 — LA LARGEUR UTILE. 1160 px laissaient 140 px de marge de chaque côté
+   d'un écran 1440, pour un média de publication de 446 px seulement. 1280
+   rendent ces marges au contenu sans coller aux bords. */
+.af-accueil-contenu { max-width: 1280px; }
 
 .af-accueil-colonnes { display: flex; flex-direction: column; gap: 26px; }
 .af-colonne-cote { display: contents; }
@@ -1112,9 +1115,17 @@ video:-ms-fullscreen {
   .af-colonne-principale { order: 1; flex: 1 1 auto; }
   .af-colonne-cote {
     display: flex; flex-direction: column; gap: 16px;
-    width: 320px; flex: 0 0 320px; order: 2;
-    position: sticky; top: 92px;
+    width: 340px; flex: 0 0 340px; order: 2;
+    /* Le `top` se calcule : bandeau du compte à rebours (mesuré à l'exécution,
+       0 quand il n'y en a pas) + barre de navigation + 12 px d'air. */
+    position: sticky; top: calc(var(--af-bandeau, 0px) + var(--af-nav, 49px) + 12px);
+    /* Une colonne plus haute que l'écran ne doit pas se retrouver coupée : on
+       la laisse défiler d'elle-même au lieu de masquer sa fin. */
+    max-height: calc(100vh - var(--af-bandeau, 0px) - var(--af-nav, 49px) - 24px);
+    overflow-y: auto;
+    scrollbar-width: none;
   }
+  .af-colonne-cote::-webkit-scrollbar { width: 0; height: 0; }
   .af-colonne-cote > * { order: initial; }
 }
 
@@ -1228,3 +1239,56 @@ video:-ms-fullscreen {
 .af-hero video.inset-0.object-cover {
   object-position: 50% 30%;
 }
+
+
+/* ─── V541 — POLISH DESKTOP ────────────────────────────────────────────────
+
+   1. `position: sticky` NE FONCTIONNAIT PAS. Mesuré : la colonne portait bien
+   `position: sticky; top: 92px`, et pourtant après 1 400 px de défilement la
+   carte Live se retrouvait à −892 px, partie avec la page. La barre de
+   navigation, elle aussi déclarée `sticky`, filait pareil (−957 px).
+
+   LA CAUSE est `overflow-x: hidden` sur `html, body` (App.css, « FIX SCROLL
+   MOBILE ») : une valeur autre que `visible` fait de l'élément un CONTENEUR DE
+   DÉFILEMENT, et un `sticky` se calle alors sur ce conteneur — c'est-à-dire
+   nulle part d'utile. `clip` coupe exactement pareil MAIS ne crée pas de
+   conteneur de défilement : les deux `sticky` se remettent à fonctionner sans
+   qu'on touche à la protection anti-débordement. `hidden` reste écrit juste
+   avant pour les navigateurs qui ignorent `clip` (Safari < 16) : ils gardent
+   le comportement d'aujourd'hui, ni mieux ni pire. */
+body {
+  /* LA CAUSE, ISOLÉE PAR L'EXPÉRIENCE. `overflow-y: auto !important` (posé
+     plus haut sous le titre « FIX SCROLL MOBILE ») fait de `body` un
+     CONTENEUR DE DÉFILEMENT à part entière. Un `position: sticky` se cale
+     alors sur ce conteneur-là — qui, lui, ne défile jamais, puisque c'est
+     `html` qui porte le défilement de la page. Résultat : le `sticky` ne
+     s'accroche à rien.
+     Mesure de l'expérience, sur la page réelle : en repassant CE SEUL réglage
+     à `visible`, la carte Live s'arrête à 113 px et la barre de navigation à
+     50 px, au lieu de partir à −1 090 et −1 157. Le défilement de la page
+     n'est pas touché : il reste sur `html`, qui garde son `overflow-y: auto`.
+     `overflow-x` conserve la protection anti-débordement : `clip` coupe comme
+     `hidden` SANS créer de conteneur de défilement, et `hidden` reste écrit
+     juste avant pour les navigateurs qui ignorent `clip` (Safari < 16), qui
+     retrouvent alors exactement le comportement d'aujourd'hui. */
+  overflow-y: visible !important;
+  overflow-x: hidden;
+  overflow-x: clip;
+}
+
+/* 2. LA PUBLICATION. La carte était plafonnée à 500 px, dont 54 pris par la
+   colonne d'actions : le média n'en gardait que 446, perdus au milieu d'une
+   colonne de 764. Sur grand écran elle passe à 660 px — le média gagne 47 %
+   sans devenir une affiche : à 4/5, 606 px de large font déjà 757 de haut, et
+   au-delà une seule publication mangerait tout l'écran. */
+.af-fil-carte { width: 100%; max-width: 500px; margin: 0 auto; }
+@media (min-width: 1024px) { .af-fil-carte { max-width: 660px; } }
+
+/* 3. LA BARRE DE NAVIGATION, maintenant qu'elle tient vraiment. Un peu plus
+   d'air, un état actif qui se voit de loin, et un contraste d'inactif qui
+   passe le seuil de lisibilité (0,6 -> 0,78). */
+@media (min-width: 1024px) {
+  .af-nav-onglet { padding-top: 8px; padding-bottom: 8px; font-size: 12.5px; }
+}
+.af-nav-onglet[data-actif="false"] { color: rgba(255, 255, 255, 0.78); }
+.af-nav-onglet[data-actif="true"] { box-shadow: 0 0 0 1px rgba(var(--primary-rgb, 217, 28, 210), 0.35); }

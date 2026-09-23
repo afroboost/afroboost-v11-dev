@@ -5133,6 +5133,38 @@ function App() {
 
   // Navigation et filtrage
   const [activeFilter, setActiveFilter] = useState('all');
+
+  /* V541 — DEUX HAUTEURS QU'AUCUN CSS NE PEUT DEVINER.
+     La colonne d'accueil et la barre de navigation collent en haut de l'écran
+     (`position: sticky`). Encore faut-il savoir À PARTIR D'OÙ : le bandeau du
+     compte à rebours est `position: fixed`, il n'occupe donc aucune place dans
+     le flux, il mesure 50 px en desktop et 64 en mobile — et il DISPARAÎT
+     quand l'offre n'a plus de date limite. Une valeur écrite en dur serait
+     fausse un jour sur deux.
+     On mesure donc les deux éléments réels et on les publie en variables CSS.
+     `ResizeObserver` suffit : rien à sonder, rien à recalculer au défilement. */
+  useEffect(() => {
+    const racine = document.documentElement;
+    const mesurer = () => {
+      const bandeau = document.querySelector('[data-sticky-countdown="active"]');
+      const barre = document.querySelector('[data-af-nav="1"]');
+      racine.style.setProperty('--af-bandeau', (bandeau ? Math.round(bandeau.getBoundingClientRect().height) : 0) + 'px');
+      if (barre) racine.style.setProperty('--af-nav', Math.round(barre.getBoundingClientRect().height) + 'px');
+    };
+    mesurer();
+    const obs = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(mesurer) : null;
+    if (obs) {
+      const b = document.querySelector('[data-sticky-countdown="active"]');
+      const n = document.querySelector('[data-af-nav="1"]');
+      if (b) obs.observe(b);
+      if (n) obs.observe(n);
+    }
+    window.addEventListener('resize', mesurer);
+    // Le bandeau apparaît/disparaît avec le compte à rebours : on remesure au
+    // rythme de la seconde qu'il affiche déjà, c'est assez et ça ne coûte rien.
+    const t = setInterval(mesurer, 2000);
+    return () => { window.removeEventListener('resize', mesurer); clearInterval(t); if (obs) obs.disconnect(); };
+  }, []);
   // OFFRES AIMANTS : le bouton « Offres » de la barre ouvre le panneau « toutes
   // les offres » pour un visiteur ; ce compteur est le signal qu'il ecoute.
   const [signalToutesOffres, setSignalToutesOffres] = useState(0);
@@ -8752,9 +8784,13 @@ function App() {
       {/* v15: BARRE DE NAVIGATION STICKY - Sections claires */}
       <div
         className="w-full"
+        data-af-nav="1"
         style={{
           position: 'sticky',
-          top: 0,
+          /* V541 : sous le bandeau du compte à rebours, qui est `fixed` et ne
+             laisse donc aucune place derrière lui. `0px` par défaut : sans
+             bandeau, la barre colle bien au bord de l'écran. */
+          top: 'var(--af-bandeau, 0px)',
           zIndex: 40,
           background: 'rgba(10, 10, 20, 0.95)',
           borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
@@ -8816,7 +8852,8 @@ function App() {
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }
               }}
-              className="flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 rounded-full text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all"
+              className="af-nav-onglet flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 rounded-full text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all"
+              data-actif={activeFilter === tab.key ? 'true' : 'false'}
               style={{
                 background: activeFilter === tab.key
                   ? 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.3), rgba(139, 92, 246, 0.3))'
