@@ -8532,13 +8532,30 @@ function App() {
       )}
 
       {/* v9.7.2: Flux Reels - IMMERSIF 85vh pour Samsung Ultra 24 */}
-      <div 
-        className="relative w-full" 
-        style={{ 
-          height: '85vh',  // v9.7.2: 85vh pour Samsung Ultra 24
-          maxHeight: '85vh',
-          background: '#000000' 
-        }}
+      {/* V540c — LE HERO REND LA PREMIÈRE PLACE AU CONTENU.
+          MESURE AVANT (build du 22/09, pile locale) : ce conteneur faisait
+          85vh — 765 px sur un 1440×900, 717 px sur un 390×844. Résultat : le
+          fil de publications commençait à 106 % de la hauteur d'écran en
+          desktop et 125 % en mobile. Autrement dit, le visiteur devait faire
+          défiler UNE PAGE ENTIÈRE avant de voir le moindre contenu — ce qui
+          contredit exactement la refonte V540, dont la promesse est « le
+          contenu d'abord ».
+
+          SEULE LA HAUTEUR CHANGE. `PartnersCarousel` n'est pas touché (0 ligne)
+          — il est partagé avec CoachVitrine. Le média garde son `object-fit:
+          cover`, donc il se recadre au lieu de se déformer ; le titre, le
+          sous-titre, le CTA d'essai gratuit, PostHog, la navigation partenaire
+          et le countdown au-dessus sont tous conservés. Rien n'est supprimé.
+
+          La hauteur passe en CSS (`.af-hero`, App.css) plutôt qu'en style en
+          ligne : desktop et mobile n'ont pas la même cible, et un style en
+          ligne ne sait pas porter une media query. `min-height` garde le bloc
+          titre + CTA lisible sur un écran bas (un portable 1024×600 ou un
+          téléphone en paysage), où 43vh ne suffirait pas à le contenir. */}
+      <div
+        className="relative w-full af-hero"
+        data-testid="hero-carrousel"
+        style={{ background: '#000000' }}
       >
         <PartnersCarousel
           onPartnerClick={(partner) => {
@@ -8609,8 +8626,16 @@ function App() {
 
             Le degrade est un scrim LOCAL au hero, pour detacher le texte de
             l'image sans toucher a l'image source. */}
+        {/* V540c — `af-hero-texte` : DÉGAGEMENT DU BAS.
+            Mesure sur le hero réduit (390×844) : le CTA descendait à 334 px
+            alors que le bloc « Afroboost / Coach Afroboost » du carrousel
+            commence à 316 px — le bouton passait DESSUS et coupait le nom.
+            À 85vh le problème n'existait pas : 140 px les séparaient.
+            On ne touche pas au carrousel, qui garde sa position : c'est le
+            texte du hero qui se réserve moins de place, en rendant le bas au
+            bloc qui s'y trouvait déjà. */}
         <div
-          className="absolute inset-0 flex flex-col items-center justify-center text-center px-6"
+          className="absolute inset-0 flex flex-col items-center justify-center text-center px-6 af-hero-texte"
           style={{
             pointerEvents: 'none',
             zIndex: 5,

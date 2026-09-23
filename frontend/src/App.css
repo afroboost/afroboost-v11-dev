@@ -1134,3 +1134,97 @@ video:-ms-fullscreen {
 @media (min-width: 1024px) {
   .af-viewer-nav { left: auto; right: 18px; top: 50%; bottom: auto; transform: translateY(-50%); flex-direction: column; }
 }
+
+
+/* ─── V540c — HAUTEUR DU HERO ──────────────────────────────────────────────
+   Cible : mobile 45–50vh, desktop 40–45vh. Avant, le conteneur du carrousel
+   était figé à 85vh en style en ligne, et le fil ne commençait qu'à 106 %
+   (desktop) / 125 % (mobile) de l'écran.
+
+   `min-height` n'est PAS une hauteur fixe déguisée : il ne s'applique que
+   lorsque le pourcentage descend sous la place nécessaire au titre, au
+   sous-titre et au bouton (mesuré : ~260 px de contenu). Sur un écran bas —
+   portable 1024×600, téléphone en paysage — il évite un hero où le CTA
+   déborderait ; partout ailleurs il est inactif.
+
+   La barre de navigation du carrousel vit en `bottom-*` DANS ce conteneur :
+   réduire la hauteur la remonte avec lui, sans y toucher. */
+.af-hero {
+  height: 50vh;
+  max-height: 50vh;
+  /* PLANCHER CALCULE, PAS CHOISI. Mesure sur un 360x640 (petit Android) avec
+     un plancher a 340 px : le bandeau masquait 38 px du titre et le CTA
+     repassait sur le nom du coach — une regression que le hero a 85vh ne
+     pouvait pas avoir. Le contenu exige 68 (bandeau) + 248 (titre, sous-titre,
+     ligne d'offre, bouton) + 96 (bloc coach) = 412 px. 420 laisse la marge.
+     Sur un 390x844 le pourcentage (422 px) l'emporte : le plancher dort. */
+  min-height: 420px;
+}
+@media (min-width: 1024px) {
+  .af-hero {
+    height: 43vh;
+    max-height: 43vh;
+    min-height: 340px;
+  }
+}
+
+/* Le texte du hero rend de la place EN HAUT ET EN BAS. Deux obstacles réels,
+   tous deux mesurés sur le hero réduit — ils n'existaient pas à 85vh, où le
+   bloc centré flottait loin des deux bords :
+
+   EN BAS, le carrousel pose le nom du coach en bas à gauche de ce conteneur.
+   Le CTA descendait à 334 px, le nom commence à 373 px : le bouton passait
+   dessus et coupait le nom.
+
+   EN HAUT, le bandeau du compte à rebours est `position: fixed`, z-index 40,
+   50 px en desktop et 64 px en mobile. En desktop la page réserve 56 px
+   au-dessus du hero, donc rien ne se recouvre. EN MOBILE elle n'en réserve
+   que 2 : le bandeau flotte AU-DESSUS du hero, et 23 px du titre passaient
+   dessous. Ce décalage est ANTÉRIEUR à V540c — il était simplement invisible
+   tant que le titre était centré dans 717 px. Le corriger à la racine
+   (réserver la hauteur du bandeau sur toute la page mobile) déplacerait tout
+   l'écran : c'est un lot à part. Ici, le hero se contente de ne plus écrire
+   sous le bandeau.
+
+   `padding` et non `transform` : le centrage vertical reste un vrai centrage,
+   dans la boîte qui reste. */
+.af-hero-texte {
+  padding-top: 68px;     /* bandeau fixe mesure a 64 px en mobile */
+  padding-bottom: 96px;  /* avatar + « Afroboost » + « Coach Afroboost - … » */
+}
+@media (min-width: 1024px) {
+  .af-hero-texte {
+    padding-top: 0;      /* la page reserve deja 56 px au-dessus du hero */
+    padding-bottom: 56px;
+  }
+}
+
+/* LE COMPTE EXACT, EN MOBILE (390x844) : hero 422 px, moins 68 px de bandeau,
+   moins 96 px de bloc coach = 258 px utiles. Le bloc titre + sous-titre +
+   ligne d'offre + CTA en mesure 258 : il entrerait AU PIXEL PRES, sans aucune
+   marge — la premiere traduction un peu plus longue deborderait.
+   On reprend donc 10 px sur le seul ecart qui peut les rendre : celui qui
+   precede le bouton (24 px, `mt-6`). Le bouton garde sa taille, sa couleur,
+   sa cible tactile et son texte. Desktop non concerne : la place y est. */
+@media (max-width: 1023px) {
+  .af-hero-texte > a[data-testid="c1-hero-cta"] {
+    margin-top: 14px;
+  }
+}
+
+/* LE RECADRAGE. Le média du hero est servi en 1024x1024 (carré) et rendu en
+   1440x387 : `object-fit: cover` en garde donc une BANDE. À `50% 50%` — le
+   défaut — cette bande est le milieu de l'image, et sur la photo réelle de
+   production le visage passait au-dessus du cadre : on ne voyait qu'un buste.
+   Le hero à 85vh ne montrait pas ce défaut (1440x765, bande deux fois plus
+   haute). `50% 30%` remonte la fenêtre là où se trouvent les visages — c'est
+   exactement ce que fait déjà la page d'atterrissage M1 (`.hero-photo`,
+   api/server.py), on ne fait que reprendre la règle de la maison.
+
+   Le sélecteur vise `inset-0` : c'est le média PLEIN CADRE du carrousel.
+   L'avatar du coach (`w-10 h-10 rounded-full`) ne le porte pas et garde son
+   centrage. `PartnersCarousel.js` n'est pas modifié. */
+.af-hero img.inset-0.object-cover,
+.af-hero video.inset-0.object-cover {
+  object-position: 50% 30%;
+}
