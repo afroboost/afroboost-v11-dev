@@ -325,6 +325,27 @@ function Panneau({ ouvert, onFermer, titre, children, estMobile, testId }) {
 
 /* ───────────────────────── badge ───────────────────────── */
 
+/**
+ * V546 — LE BADGE DISCRET ÉTAIT ILLISIBLE.
+ *
+ * Le badge « doux » (tout sauf l'offre de lancement) écrivait son texte DANS la
+ * couleur de marque, posée sur un simple voile de cette même couleur à 18 %
+ * au-dessus d'une carte quasi noire. Texte et fond étaient donc la MÊME teinte,
+ * l'un à peine plus clair que l'autre : avec la couleur réelle de la production
+ * (`--primary-color` = #9f2d70, un prune sombre), le contraste tombait à
+ * 2,65:1 — sous le minimum lisible de 4,5:1, d'où le badge « presque invisible ».
+ *
+ * Le texte passe donc en BLANC dans les deux variantes. Le blanc n'est pas une
+ * couleur de marque : il ne fige rien, et la personnalisation du coach continue
+ * de piloter le fond et la bordure (`var(--primary-color)` / `var(--primary-rgb)`).
+ * La hiérarchie « fort / doux » reste dite par le FOND (aplat de marque contre
+ * voile léger), pas par la couleur du texte.
+ *
+ * Mesures WCAG (luminance relative), sur le fond RÉEL du badge :
+ *  - doux, #9f2d70 : 2,65:1 avant  →  18,05:1 après ;
+ *  - doux, secours #D91CD2 : 4,11:1 avant  →  17,12:1 après ;
+ *  - fort (Fondateurs) : inchangé, déjà blanc (6,81:1 sur #9f2d70).
+ */
 function Badge({ texte, fort }) {
   if (!texte) return null;
   return (
@@ -334,7 +355,7 @@ function Badge({ texte, fort }) {
         display: 'inline-block', fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase',
         padding: '3px 10px', borderRadius: 999,
         background: fort ? COULEUR : `rgba(${RGB}, 0.18)`,
-        color: fort ? '#fff' : COULEUR,
+        color: '#fff', // V546: jamais la couleur de marque sur elle-même — cf. bloc ci-dessus
         border: `1px solid rgba(${RGB}, 0.5)`,
       }}
     >

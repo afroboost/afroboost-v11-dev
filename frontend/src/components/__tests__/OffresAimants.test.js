@@ -406,3 +406,43 @@ test('V542 — les 3 cartes disent enfin POURQUOI les choisir (données réelles
   // Et toujours le même point d'entrée : « Voir l'offre ».
   expect(conteneur.querySelector('[data-testid="aimant-mensuel"]').textContent).toContain('Voir l’offre');
 });
+
+/* ────────────────── V546 — contraste des badges ────────────────── */
+
+// Luminance relative + rapport de contraste (WCAG 2.1, 1.4.3).
+const canal = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+const luminance = ([r, g, b]) => 0.2126 * canal(r) + 0.7152 * canal(g) + 0.0722 * canal(b);
+const contraste = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+// Voile de `couleur` à `alpha` posé sur `fond`.
+const composer = (couleur, alpha, fond) => couleur.map((c, i) => Math.round(c * alpha + fond[i] * (1 - alpha)));
+
+// Couleur de marque RÉELLE en production (`/api/concept` → primaryColor) et
+// valeur de secours du `var()`. Le fond de la carte (`FOND_CARTE`) au niveau du
+// badge, composé sur la page noire.
+const PRIMAIRE_PROD = [159, 45, 112]; // #9f2d70
+const PRIMAIRE_SECOURS = [217, 28, 210]; // #D91CD2
+const CARTE = [12, 5, 22];
+const BLANC = [255, 255, 255];
+
+test('V546 — le texte des badges est blanc, jamais la couleur de marque posée sur elle-même', async () => {
+  await monter();
+  const badges = Array.from(conteneur.querySelectorAll('[data-testid="badge-offre"]'));
+  expect(badges.length).toBeGreaterThanOrEqual(3);
+  // `color: var(--primary-color, …)` n'est pas analysable : jsdom rendrait ''.
+  // Exiger le blanc exact interdit donc AUSSI tout retour à la couleur de marque.
+  badges.forEach((b) => { expect(b.style.color).toBe('rgb(255, 255, 255)'); });
+});
+
+test('V546 — le fond réel des badges tient 4.5:1 avec un texte blanc', () => {
+  // Badge « doux » : voile de marque à 18 % sur la carte. Vrai pour la couleur
+  // de production comme pour la valeur de secours du var().
+  [PRIMAIRE_PROD, PRIMAIRE_SECOURS].forEach((marque) => {
+    expect(contraste(BLANC, composer(marque, 0.18, CARTE))).toBeGreaterThanOrEqual(4.5);
+  });
+  // Badge « fort » (Fondateurs) : aplat de la couleur de marque RÉELLE.
+  expect(contraste(BLANC, PRIMAIRE_PROD)).toBeGreaterThanOrEqual(4.5);
+
+  // Ce que faisait l'ancien badge doux : la marque écrite sur elle-même. La
+  // mesure reste ici, elle prouve pourquoi le badge était illisible.
+  expect(contraste(PRIMAIRE_PROD, composer(PRIMAIRE_PROD, 0.18, CARTE))).toBeLessThan(3);
+});

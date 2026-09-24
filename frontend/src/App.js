@@ -8010,7 +8010,38 @@ function App() {
   const pathSlugMatch = window.location.pathname.match(/^\/(coach|partner)\/(.+)$/);
   const urlSlug = pathSlugMatch ? decodeURIComponent(pathSlugMatch[2]).toLowerCase().trim() : null;
   const isSuperAdminSlugInUrl = urlSlug && SUPER_ADMIN_SLUGS.includes(urlSlug);
-  const isVisitorMode = urlParams.get('visitor') === 'true' || isSuperAdminSlugInUrl;
+  // V546 — LE LIEN PRIVÉ D'UNE OFFRE (`/?offre=<id>`) MOURAIT DANS LE NAVIGATEUR
+  // DE SON PROPRIÉTAIRE, ET DE LUI SEUL.
+  //
+  // MESURE EN PRODUCTION (23/09/2026, offre « Membres — 8 mois »,
+  // `ba530ae4-934c-46b1-8bc5-4999448f1e86`) :
+  //   - session anonyme : la fiche s'ouvre, le CTA ouvre bien l'étape V535
+  //     « mode de paiement » (399,98 / 2 × 199,99). La chaîne est SAINE.
+  //   - session coach/admin : `dashboard: true, fiche: false, aimants: false,
+  //     controleur: false` — la vitrine n'est JAMAIS montée.
+  //
+  // POURQUOI. Quelques lignes plus bas, `if (coachMode && !isVisitorMode)` rend
+  // `CoachDashboard` et sort. Les DEUX lecteurs du lien profond (l'effet de
+  // `OffresAimants` et celui de `OffersSliderAutoPlay`) vivent dans la vitrine :
+  // non montée, personne ne lit `?offre=`, et le serveur — qui renvoie pourtant
+  // bien l'offre privée quand l'identifiant est fourni (`GET /offers?offre=<id>`
+  // : 11 offres au lieu de 10, vérifié) — n'est jamais interrogé pour rien.
+  //
+  // OR C'EST EXACTEMENT CE NAVIGATEUR-LÀ QUI OUVRE CE LIEN : le bouton « Copier
+  // le lien privé » est dans le tableau de bord (OfferCard.js), donc la première
+  // personne à cliquer le lien est toujours celle qui vient de le copier.
+  //
+  // LA CORRECTION RÉUTILISE LE MÉCANISME EXISTANT, elle n'en crée aucun : un
+  // lien profond d'offre vaut « Vue Visiteur » — le même mode que `?visitor=true`,
+  // avec son bouton « Retour au dashboard » déjà en place pour repartir.
+  // ⚠️ LA CONDITION EST BORNÉE À `coachMode` : sans session coach, rien ne change
+  // pour personne — un visiteur anonyme ne doit surtout pas voir surgir le bouton
+  // « Retour au dashboard ». Aucune garde n'est levée : l'offre reste absente des
+  // listes publiques, seul son identifiant exact l'ouvre, et le droit d'acheter
+  // reste jugé par le serveur.
+  const v546LienOffreDansUrl = !!((v537ParamOffreDuLien().params || {}).offre);
+  const isVisitorMode = urlParams.get('visitor') === 'true' || isSuperAdminSlugInUrl
+    || (coachMode && v546LienOffreDansUrl);
   // OFFRES AIMANTS — visiteur NON connecte = parcours conversion (3 cartes +
   // fiche), utilisateur connecte (coach, abonne, espace) = experience
   // communautaire actuelle (carrousel). Le mode « Vue visiteur » de l'admin
