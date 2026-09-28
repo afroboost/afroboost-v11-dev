@@ -42,3 +42,4 @@ Règle du moteur à respecter dans les enchaînements : 120 s entre deux demande
   création, « Changer d'offre » (sheet, version, 409 conflit), « Voir les autres offres » côté ami, le changement après
   déblocage sans présence (ancienne réservation supprimée, séance restituée, un seul code actif), le refus après présence
   validée (texte exact) et les KPI d'offres.
+- `parcours_hero_editeur.cjs` (V554) : Hero — A accueil sans disposition (7 tailles), B compte à rebours × Vue visiteur, C disposition libre (zones sûres, desktop ≠ mobile), D parité aperçu de l'éditeur ↔ accueil, E persistance (PUT unique capturé) ; D/E en SKIP tant que `[data-testid=hero-editeur]` n'existe pas. Build statique : `BUILD_DIR=<build hors dépôt> RELAIS_API=https://afroboost.com CAPTURES=<hors dépôt> node parcours_hero_editeur.cjs` (GET relayés sans identité, écritures bloquées).
