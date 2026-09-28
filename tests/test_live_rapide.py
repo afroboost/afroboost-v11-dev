@@ -18,6 +18,7 @@ AUCUNE BASE REELLE, AUCUN RESEAU.
 """
 import ast, asyncio, io, os, re, sys, types, urllib.parse
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
@@ -77,8 +78,11 @@ def charger(admin="coach@exemple.invalid"):
     env = {"db": base, "datetime": datetime, "timezone": timezone, "timedelta": timedelta,
            "logger": Log(), "HTTPException": HTTPException, "re": re, "urllib": urllib,
            "require_auth": lambda r: getattr(r, "email", None) or (_ for _ in ()).throw(HTTPException(401)),
-           "is_super_admin": lambda e: e == admin, "BTLIVE_MAX_H": 3, "Request": object}
-    for nom in ("_btlive_etat", "boosttribe_live_status", "boosttribe_live_status_set"):
+           "is_super_admin": lambda e: e == admin, "BTLIVE_MAX_H": 3, "Request": object,
+           # battement (b8c432d3) : la décision « en cours ? » vit dans btlive_actif
+           "BTLIVE_GRACE_S": 90, "Optional": Optional}
+    for nom in ("_btlive_date", "btlive_actif", "_btlive_etat", "boosttribe_live_status",
+                "boosttribe_live_status_set"):
         exec(compile(_source(nom), "<prod>", "exec"), env)
     return env, base
 
