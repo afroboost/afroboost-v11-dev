@@ -17,6 +17,7 @@ import SvgIcon from '../SvgIcon';
 // on change ou va le fichier, pas l'interface.
 import CloudinaryUploadButton, { uploadToCloudinary, isCloudinaryConfigured } from '../CloudinaryUploadButton';
 import { applyPrimaryColor, persistThemeColors } from '../../utils/themeColor'; // V259 + V295 (anti-FOUC)
+import HeroEditeurVisuel from './HeroEditeurVisuel'; // V554 : éditeur visuel du Hero
 
 // V547 : défauts des textes du Hero — identiques à App.js et au modèle
 // Concept (api/server.py). Vide = défaut.
@@ -25,7 +26,6 @@ const V547_HERO_DEFAUTS = {
   sousTitre: "Vis l'expérience Afroboost : danse afrobeat et fitness au casque, même si tu n'as jamais dansé.",
   cta: "Réserver mon 1er cours gratuit",
 };
-const v547Texte = (v, d) => (typeof v === 'string' && v.trim() ? v : d);
 
 // V291 — Color picker avancé style Canva (React pur + Canvas, aucune dépendance).
 const AfroColorPicker = ({ value, onChange, label }) => {
@@ -824,7 +824,8 @@ const ConceptEditor = ({
               serveur retire ces champs pour tout autre compte). Mêmes
               règles que le reste de l'écran : `setConcept` déclenche
               l'auto-save existant. Vide = texte par défaut. L'aperçu est
-              dérivé des props, aucun état. */}
+              dérivé des props, aucun état.
+              V554 : l'aperçu est désormais l'éditeur visuel, juste dessous. */}
           {isSuperAdmin && (
             <div
               data-testid="v547-hero-textes"
@@ -867,26 +868,14 @@ const ConceptEditor = ({
                 maxLength={60}
                 data-testid="v547-hero-cta"
               />
-              {/* Aperçu simple (le sous-titre est masqué sur téléphone côté vitrine) */}
-              <div
-                data-testid="v547-hero-apercu"
-                style={{ marginTop: '10px', padding: '12px', borderRadius: '8px', background: 'rgba(0,0,0,0.55)', textAlign: 'center' }}
-              >
-                <p style={{ color: '#fff', fontWeight: 800, fontSize: '16px', lineHeight: 1.2 }}>
-                  {v547Texte(concept.heroTitle, V547_HERO_DEFAUTS.titre)}
-                </p>
-                <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '11px', marginTop: '4px' }}>
-                  {v547Texte(concept.heroSubtitle, V547_HERO_DEFAUTS.sousTitre)}
-                </p>
-                <span style={{
-                  display: 'inline-block', marginTop: '8px', padding: '6px 14px', borderRadius: '999px',
-                  background: 'var(--primary-color, #D91CD2)', color: '#fff', fontSize: '11px', fontWeight: 700
-                }}>
-                  {v547Texte(concept.heroCtaLabel, V547_HERO_DEFAUTS.cta)}
-                </span>
-              </div>
             </div>
           )}
+          {/* V554 : l'ancien « aperçu simple » V547 devient l'ÉDITEUR VISUEL du
+              Hero, pour TOUT coach (chacun règle la disposition de SA vitrine,
+              dans son propre document concept). Même prop `concept` que les
+              champs ci-dessus : un texte tapé apparaît aussitôt dans l'aperçu.
+              L'enregistrement passe par l'auto-save existant (setConcept). */}
+          <HeroEditeurVisuel concept={concept} setConcept={setConcept} conceptSaveStatus={conceptSaveStatus} />
         </div>)}
 
         {/* v37.2: BRANDING & IDENTITÉ (Logo, Favicon) — section vitrine */}
