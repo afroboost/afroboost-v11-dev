@@ -1633,6 +1633,11 @@ class Concept(BaseModel):
     heroTitle: str = "Danse. Transpire. Lâche prise."
     heroSubtitle: str = "Vis l'expérience Afroboost : danse afrobeat et fitness au casque, même si tu n'as jamais dansé."
     heroCtaLabel: str = "Réserver mon 1er cours gratuit"
+    # V554 : disposition du Hero (positions / tailles / alignements des textes),
+    # propre a CHAQUE coach, desktop et mobile independants. None = mise en page
+    # historique (bloc centre) : un concept existant rend exactement la meme chose.
+    # Toujours normalisee par v554_normaliser_hero_layout avant ecriture.
+    heroLayout: Optional[dict] = None
 
 class ConceptUpdate(BaseModel):
     appName: Optional[str] = None  # Nom de l'application
@@ -1672,6 +1677,11 @@ class ConceptUpdate(BaseModel):
     heroTitle: Optional[str] = None
     heroSubtitle: Optional[str] = None
     heroCtaLabel: Optional[str] = None
+    # V554 : disposition du Hero. Ecrite par CHAQUE coach dans son propre
+    # document (pas reservee au super-admin, contrairement aux textes V547).
+    # Remise a zero : le client envoie {"v":1,"desktop":null,"mobile":null}
+    # (un None tout court serait filtre par `if v is not None`).
+    heroLayout: Optional[dict] = None
 
 # V547 : bornes des textes du Hero. On TRONQUE cote serveur au lieu d'un
 # Field(max_length) : un 422 ferait echouer tout l'auto-save du ConceptEditor
@@ -1695,6 +1705,82 @@ def v547_filtrer_textes_hero(updates: dict, is_admin: bool) -> dict:
             continue
         updates[_cle] = _v[:_max]
     return updates
+
+# V554 : schema de la disposition du Hero (contrat CONTRAT_HERO_V554).
+# Tout ce qui n'est pas dans ce schema est RETIRE ; la sortie est donc de
+# taille bornee quel que soit le volume envoye.
+V554_HERO_APPAREILS = ("desktop", "mobile")
+V554_HERO_ELEMENTS = ("title", "subtitle", "cta")
+V554_HERO_ALIGNS = ("left", "center", "right")
+V554_HERO_TAILLE_MIN = 0.6
+V554_HERO_TAILLE_MAX = 1.8
+
+
+def _v554_nombre(brut):
+    """V554 : un nombre fini, sinon None. Un bool N'EST PAS un nombre ici
+    (True vaudrait 1.0 en Python). NaN / inf / entiers geants refuses."""
+    if isinstance(brut, bool) or not isinstance(brut, (int, float)):
+        return None
+    try:
+        f = float(brut)
+    except (OverflowError, ValueError):
+        return None
+    if f != f or f in (float("inf"), float("-inf")):
+        return None
+    return f
+
+
+def _v554_element(brut, el):
+    """V554 : {x, y, size[, align]} propre, ou None. x et y sont obligatoires
+    (bornes a [0, 1]) ; size absente/invalide -> 1, bornee [0.6, 1.8] ;
+    align absent/invalide -> 'center' (titre et sous-titre seulement)."""
+    if not isinstance(brut, dict):
+        return None
+    x = _v554_nombre(brut.get("x"))
+    y = _v554_nombre(brut.get("y"))
+    if x is None or y is None:
+        return None
+    taille = _v554_nombre(brut.get("size"))
+    if taille is None:
+        taille = 1.0
+    propre = {
+        "x": min(1.0, max(0.0, x)),
+        "y": min(1.0, max(0.0, y)),
+        "size": min(V554_HERO_TAILLE_MAX, max(V554_HERO_TAILLE_MIN, taille)),
+    }
+    if el != "cta":
+        align = brut.get("align")
+        propre["align"] = align if isinstance(align, str) and align in V554_HERO_ALIGNS else "center"
+    return propre
+
+
+def v554_normaliser_hero_layout(brut):
+    """V554 : fonction PURE. Renvoie {"v": 1, "desktop": ..., "mobile": ...}
+    ou None.
+
+    - valeur non-dict -> None ;
+    - disposition d'appareil sans aucun element valide -> None pour cet
+      appareil (= mise en page historique sur cet appareil) ;
+    - CHOIX DOCUMENTE : si les DEUX appareils sont None, la fonction renvoie
+      None tout court. C'est la remise a zero complete : `update_concept`
+      ecrit alors heroLayout = null en base, et GET /concept renvoie null,
+      que le front lit comme « disposition nulle sur les deux appareils ».
+    """
+    if not isinstance(brut, dict):
+        return None
+    sortie = {"v": 1}
+    for app in V554_HERO_APPAREILS:
+        dispo = brut.get(app)
+        propre = None
+        if isinstance(dispo, dict):
+            elements = {el: _v554_element(dispo.get(el), el) for el in V554_HERO_ELEMENTS}
+            if any(v is not None for v in elements.values()):
+                propre = elements
+        sortie[app] = propre
+    if sortie["desktop"] is None and sortie["mobile"] is None:
+        return None
+    return sortie
+
 
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -19560,6 +19646,13 @@ async def update_concept(concept: ConceptUpdate, request: Request):
                 updates.pop(_f, None)
         # V547 : textes du Hero -> super-admin seulement, tronques.
         v547_filtrer_textes_hero(updates, is_admin)
+        # V554 : disposition du Hero -> normalisee (bornes, whitelist). Chaque
+        # coach n'ecrit que SON document (concept_id ci-dessus) : pas de filtre
+        # super-admin ici. Un resultat None est ECRIT tel quel (= null en base)
+        # : c'est la remise a zero, envoyee par le client sous la forme
+        # {"v":1,"desktop":null,"mobile":null}.
+        if "heroLayout" in updates:
+            updates["heroLayout"] = v554_normaliser_hero_layout(updates["heroLayout"])
         updates["coach_id"] = user_email if not is_admin else None
         result = await db.concept.update_one({"id": concept_id}, {"$set": updates}, upsert=True)
         updated = await db.concept.find_one({"id": concept_id}, {"_id": 0})
