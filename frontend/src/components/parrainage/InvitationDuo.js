@@ -84,7 +84,9 @@ function CarteSeance({ course, occurrence, onChanger, occupe, message, erreur, c
       </div>}
       {/* V539 : la date n'est plus une fatalité. On dit ce qui est retenu, et on
           ouvre le même calendrier que la page d'accueil pour en choisir une autre. */}
-      <div className="cp-eyebrow" style={{ marginTop: compact ? 0 : 16 }}>{compact && c.name ? `${c.name} · séance choisie` : 'Séance choisie'}</div>
+      {compact && c.name
+        ? <div className="cp-eyebrow" style={{ marginTop: 0 }}>{`${c.name} · séance choisie`}</div>
+        : <div className="cp-eyebrow" style={{ marginTop: compact ? 0 : 16 }}>Séance choisie</div>}
       <h3 className="cp-h3" style={{ marginTop: 4 }}>
         <SvgIcon name="calendar" size={20} />
         {jour}{heure ? ` · ${heure}` : (c.time ? ` · ${c.time}` : '')}
