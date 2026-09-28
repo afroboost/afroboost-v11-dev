@@ -66,7 +66,7 @@ TRANSITIONS = {
 }
 
 # Canaux d'invitation acceptés (contrat §3).
-CANAUX = ("whatsapp", "copy", "qr", "share")
+CANAUX = ("whatsapp", "copy", "qr", "share", "share_image")   # V556 : + partage natif avec la carte
 
 # Motifs de refus du join (contrat §5), portés par l'en-tête X-Refus-Raison.
 REFUS_AUTO_PARRAINAGE = "auto_parrainage"
@@ -301,12 +301,29 @@ def nom_parrain_affichable(pass_doc) -> str:
     return nom_affichable(_sp.get("name"), _sp.get("email_norm"))
 
 
+def version_apercu(pass_doc) -> int:
+    """V556 — compteur d'APERÇU : +1 à chaque partage déclenché. Ne touche ni
+    au jeton, ni au filleul, ni aux crédits : il ne sert qu'au cache WhatsApp."""
+    try:
+        return max(0, int((pass_doc or {}).get("preview_version") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def version_partage(pass_doc) -> int:
+    """V556 — le `v` de la share_url = invitation_version + preview_version.
+    Deux compteurs qui ne font que monter : leur somme monte dès que l'un
+    bouge, donc un partage n'a JAMAIS l'URL du partage précédent."""
+    return version_invitation(pass_doc) + version_apercu(pass_doc)
+
+
 def url_partage_versionnee(frontend_url, pass_doc) -> str:
-    """`share_url` : inchangée si aucune invitation (version 0), sinon `?v=N`
-    — même jeton, mais une URL neuve pour le cache d'aperçu de WhatsApp."""
+    """`share_url` : inchangée si aucune version (0), sinon `?v=N` — même
+    jeton, mais une URL neuve pour le cache d'aperçu de WhatsApp.
+    V556 : N = `version_partage` (invitation + aperçu)."""
     _p = pass_doc or {}
     _url = partage_url(frontend_url, _p.get("share_token"))
-    _v = version_invitation(_p)
+    _v = version_partage(_p)
     return ("%s?v=%d" % (_url, _v)) if _v > 0 else _url
 
 
@@ -332,6 +349,10 @@ def version_carte(pass_doc) -> str:
             str(_p.get("offer_id") or _o.get("id") or ""), str(_o.get("name") or ""),
             str(_p.get("course_id") or ""), str(_c.get("name") or ""), str(_c.get("locationName") or ""),
             nom_parrain_affichable(_p), _i["photo_url"] or "", _i["message"] or ""]
+    # V556 : la version d'aperçu entre dans l'empreinte SEULEMENT si elle
+    # existe — les cartes déjà partagées (compteur absent) gardent leur URL.
+    if version_apercu(_p) > 0:
+        _cle.append("apercu:%d" % version_apercu(_p))
     return hashlib.sha256(json.dumps(_cle, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
 
 
@@ -1014,7 +1035,14 @@ def dto_admin(pass_doc, statut, tickets, frontend_url, offers=None) -> dict:
     _sp = (pass_doc or {}).get("sponsor") or {}
     _inv = (pass_doc or {}).get("invitee") or {}
     _d["coach_id"] = (pass_doc or {}).get("coach_id")
-    _d["sponsor"] = {"first_name": prenom(_sp.get("name")), "email": _sp.get("email_norm") or ""}
+    _d["sponsor"] = {"first_name": prenom(_sp.get("name")),
+                     # V556 : un parrain de chaîne pas encore inscrit n'a pas d'adresse
+                     "email": "" if parrain_en_attente(pass_doc) else (_sp.get("email_norm") or "")}
+    # V556 : qui a invité qui — l'identifiant du pass parent et la profondeur.
+    _ch = chaine_du_pass(pass_doc)
+    if _ch.get("parent_pass_id"):
+        _d["chain"] = {"parent_pass_id": _ch.get("parent_pass_id"), "root_pass_id": _ch.get("root_pass_id"),
+                       "depth": _ch.get("depth"), "sponsor_pending": parrain_en_attente(pass_doc)}
     _d["invitee"] = ({"first_name": prenom(_inv.get("name")), "email": _inv.get("email_norm") or ""}
                      if _inv else None)
     _d["opened_at"] = (pass_doc or {}).get("opened_at")
@@ -1080,9 +1108,12 @@ def kpi_parrainage(passes, invitations, reservations=None, statuts=None) -> dict
     def _s(p):
         return _st.get(p.get("id")) or p.get("status")
 
-    _par_canal = {c: 0 for c in CANAUX}
+    # V556 : `share_image` (partage natif avec la carte) compte comme `share` —
+    # la forme du KPI (4 canaux) ne change pas pour le cockpit.
+    _par_canal = {c: 0 for c in CANAUX if c != "share_image"}
     for _i in (invitations or []):
         _c = str((_i or {}).get("channel") or "")
+        _c = "share" if _c == "share_image" else _c
         if _c in _par_canal:
             _par_canal[_c] += 1
     _ids = {p.get("id") for p in _passes}
@@ -1122,3 +1153,228 @@ def contient_pii(objet, cles=("email", "whatsapp", "email_norm", "subscription_c
 
     _marche(objet, "$")
     return _trouves
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V556 — PARRAINAGE V3 : LA CHAÎNE (« boule de neige »)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Bassi invite A (pass P0). Avant de pouvoir s'inscrire, A prépare et PARTAGE
+# une invitation ENFANT (pass P1, parrain = A) ; B ouvre P1 et fait de même...
+# Ce n'est PAS un second moteur : l'enfant est un `referral_passes` ordinaire
+# (mêmes états, même join, même essai, même anti-double), avec un bloc `chain`
+# en plus. Qui a invité qui = `chain.parent_pass_id` remonté jusqu'à la racine.
+#
+# « PARTAGÉE » = l'action de partage a été DÉCLENCHÉE (WhatsApp ouvert, feuille
+# de partage résolue, lien copié). Un navigateur ne peut pas savoir si le
+# message est vraiment parti : on ne le prétend jamais.
+#
+# LE PARRAIN DE L'ENFANT N'EST PAS ENCORE CONNU à sa création (A n'est pas
+# inscrit). Son `sponsor.email_norm` vaut `chaine-en-attente:<id du parent>` —
+# unique par parent, donc sans collision sur l'index (parrain, cours,
+# occurrence) — jusqu'au join de A sur le parent, qui le LIE (vraie adresse).
+REFUS_INVITATION_REQUISE = "invitation_requise"
+REFUS_CHAINE_EN_ATTENTE = "chaine_en_attente"
+BLOCAGE_PARRAIN_NON_INSCRIT = "parrain_non_inscrit"
+REFUS_AUTRE_APPAREIL = "invitation_autre_appareil"   # clé de l'appareil qui a partagé absente
+PARTAGES_MAX = 30               # partages journalisés par invitation enfant (au-delà : accepté, rien écrit)
+MESSAGE_CHAINE_DEFAUT = "Je t'invite à venir découvrir Afroboost avec moi 👇"
+CHAINE_ATTENTE_MAX = 3          # maillons consécutifs dont le parrain n'est pas inscrit
+PREFIXE_PARRAIN_EN_ATTENTE = "chaine-en-attente:"
+EVENEMENT_CHAINE_CREEE = "chain_child_created"
+EVENEMENT_CHAINE_PARTAGEE = "chain_shared"
+EVENEMENT_PARRAIN_LIE = "chain_sponsor_bound"
+
+
+def cle_parrain_en_attente(parent_id) -> str:
+    return "%s%s" % (PREFIXE_PARRAIN_EN_ATTENTE, str(parent_id or ""))
+
+
+def parrain_en_attente(pass_doc) -> bool:
+    """Le parrain de ce pass n'est-il pas encore inscrit (enfant non lié) ?"""
+    _sp = (pass_doc or {}).get("sponsor") or {}
+    return _sp.get("pending") is True or str(_sp.get("email_norm") or "").startswith(PREFIXE_PARRAIN_EN_ATTENTE)
+
+
+def chaine_du_pass(pass_doc) -> dict:
+    _c = (pass_doc or {}).get("chain")
+    return _c if isinstance(_c, dict) else {}
+
+
+def chaine_partagee(pass_doc) -> bool:
+    return bool(chaine_du_pass(pass_doc).get("shared_at"))
+
+
+def chaine_requise(pass_doc, statut, drapeau) -> bool:
+    """Le visiteur de ce pass doit-il inviter avant de s'inscrire ? Oui si la
+    règle est active, que le pass attend encore son ami et que personne ne
+    l'a rejoint. Les anciens liens y passent aussi, sans changer de jeton."""
+    return bool(drapeau) and statut in ETATS_OUVERTS_AU_JOIN and not (pass_doc or {}).get("invitee")
+
+
+def dto_chaine_public(pass_doc) -> dict:
+    """Ce que la page publique a le droit de savoir : existe / partagée."""
+    _c = chaine_du_pass(pass_doc)
+    return {"exists": bool(_c.get("child_pass_id")), "shared": bool(_c.get("shared_at"))}
+
+
+def attente_trop_longue(maillons_en_attente) -> bool:
+    try:
+        return int(maillons_en_attente) >= CHAINE_ATTENTE_MAX
+    except (TypeError, ValueError):
+        return True
+
+
+def message_enfant(pass_doc) -> str:
+    return invitation_du_pass(pass_doc)["message"] or MESSAGE_CHAINE_DEFAUT
+
+
+def dto_enfant(pass_doc, frontend_url) -> dict:
+    """L'invitation enfant telle que son créateur la voit : de quoi partager,
+    rien de plus (ni e-mail, ni téléphone, ni identifiant interne)."""
+    _p = pass_doc or {}
+    _inv = invitation_du_pass(_p)
+    _share = url_partage_versionnee(frontend_url, _p)
+    _msg = message_enfant(_p)
+    _c = dto_course(_p)
+    _c.pop("id", None)
+    _d = {
+        "share_token": _p.get("share_token"),
+        "share_url": _share,
+        "invite_url": invite_url(frontend_url, _p.get("share_token")),
+        "display_name": _inv["display_name"],
+        "message": _msg,
+        "whatsapp_text": "%s\n%s" % (_msg, _share),
+        "course": _c,
+        "occurrence": _p.get("occurrence"),
+        "offer": offre_du_pass(_p),
+        "preview_version": version_partage(_p),
+        "joined": bool(_p.get("invitee")),
+    }
+    _carte = url_carte(frontend_url, _p)
+    if _carte:
+        _d["card_url"] = _carte
+    return _d
+
+
+def identite_correspond(email_norm, tel_norm, autres) -> bool:
+    """`autres` = [(email, tel)] : l'une des identités est-elle la même
+    personne (e-mail normalisé OU chiffres du téléphone) ?"""
+    _e = normaliser_email(email_norm)
+    _t = "".join(ch for ch in str(tel_norm or "") if ch.isdigit())
+    for _ae, _at in (autres or []):
+        _ae = normaliser_email(_ae)
+        if _e and _ae and not _ae.startswith(PREFIXE_PARRAIN_EN_ATTENTE) and _e == _ae:
+            return True
+        _atc = "".join(ch for ch in str(_at or "") if ch.isdigit())
+        if _t and _atc and _t == _atc:
+            return True
+    return False
+
+
+# ─── V556 : l'aperçu (Open Graph) — pur, testable, partagé avec le contrôle ──
+ROBOTS_APERCU = ("facebookexternalhit", "facebookcatalog", "meta-externalagent", "whatsapp",
+                 "twitterbot", "telegrambot", "slackbot", "linkedinbot", "discordbot",
+                 "skypeuripreview", "googlebot", "bingbot", "applebot", "pinterest", "redditbot",
+                 "embedly", "vkshare", "iframely", "snapchat", "signal", "viber", "line/")
+
+
+def est_robot_apercu(user_agent) -> bool:
+    """Un robot d'aperçu ne doit PAS recevoir la redirection `meta refresh` :
+    certains la suivent et lisent alors les balises génériques de l'appli."""
+    _ua = str(user_agent or "").lower()
+    return any(r in _ua for r in ROBOTS_APERCU)
+
+
+def version_depuis_requete(v) -> int:
+    """`?v=` nettoyé : des chiffres (7 au plus), sinon 0. Jamais recopié brut."""
+    _v = str(v or "").strip()
+    if not _v or len(_v) > 7 or not _v.isdigit():
+        return 0
+    return int(_v)
+
+
+def page_apercu_html(titre, description, image, url, cible, robot=False) -> str:
+    """LA page d'aperçu (`/api/share/duo/<token>`), tout échappé. `url` =
+    l'adresse EXACTE partagée (avec `?v=`) : og:url doit la répéter, sinon le
+    robot range l'aperçu sous l'URL nue et ressert l'ancien. `robot` : pas de
+    `meta refresh` (un robot qui la suit lirait les balises de l'accueil)."""
+    import html as _html
+    e_titre = _html.escape(str(titre or ""), quote=True)
+    e_desc = _html.escape(str(description or "")[:200], quote=True)
+    e_image = _html.escape(str(image or ""), quote=True)
+    e_url = _html.escape(str(url or ""), quote=True)
+    e_cible = _html.escape(str(cible or ""), quote=True)
+    _refresh = "" if robot else '\n    <meta http-equiv="refresh" content="0;url=%s"/>' % e_cible
+    return """<!DOCTYPE html>
+<html lang="fr" prefix="og: https://ogp.me/ns#">
+<head>
+    <meta charset="utf-8"/>
+    <title>{t}</title>
+    <meta name="description" content="{d}"/>
+    <meta property="og:type" content="website"/>
+    <meta property="og:title" content="{t}"/>
+    <meta property="og:description" content="{d}"/>
+    <meta property="og:image" content="{i}"/>
+    <meta property="og:image:secure_url" content="{i}"/>
+    <meta property="og:image:type" content="image/jpeg"/>
+    <meta property="og:image:width" content="1200"/>
+    <meta property="og:image:height" content="630"/>
+    <meta property="og:image:alt" content="{t}"/>
+    <meta property="og:url" content="{u}"/>
+    <meta property="og:site_name" content="Afroboost"/>
+    <meta property="og:locale" content="fr_FR"/>
+    <meta name="robots" content="noindex, nofollow"/>
+    <meta name="twitter:card" content="summary_large_image"/>
+    <meta name="twitter:title" content="{t}"/>
+    <meta name="twitter:description" content="{d}"/>
+    <meta name="twitter:image" content="{i}"/>{r}
+</head>
+<body style="margin:0;background:#000;color:#fff;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;">
+    <main style="max-width:520px;margin:0 auto;padding:28px 18px;text-align:center;">
+        <p style="letter-spacing:.14em;text-transform:uppercase;font-size:12px;color:#D91CD2;margin:0 0 10px;">Pass Duo</p>
+        <h1 style="font-size:26px;line-height:1.25;margin:0 0 10px;">{t}</h1>
+        <p style="color:rgba(255,255,255,.72);font-size:15px;line-height:1.5;margin:0 0 20px;">{d}</p>
+        <a href="{c}" style="display:inline-block;padding:14px 26px;border-radius:999px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:#fff;text-decoration:none;font-weight:700;">Voir l'invitation</a>
+    </main>
+</body>
+</html>""".format(t=e_titre, d=e_desc, i=e_image, u=e_url, c=e_cible, r=_refresh)
+
+
+_RE_META_OG = _re.compile(r'<meta\s+(?:property|name)="([^"]+)"\s+content="([^"]*)"', _re.I)
+
+
+def extraire_og(html_texte) -> dict:
+    """{propriété: contenu (dé-échappé)} des balises <meta> d'une page."""
+    import html as _html
+    _sortie = {}
+    for _k, _v in _RE_META_OG.findall(str(html_texte or "")):
+        _sortie.setdefault(_k.lower(), _html.unescape(_v))
+    return _sortie
+
+
+def controle_apercu(html_texte, image_octets, image_type) -> dict:
+    """Le bilan d'aperçu — ce que WhatsApp exige pour afficher une carte :
+    titre, description, image absolue HTTPS, image lisible de type image/*.
+    `ok` = tout est vert ; sinon l'appelant sert un repli, jamais un trou."""
+    _og = extraire_og(html_texte)
+    _img = _og.get("og:image") or ""
+    _octets = image_octets or b""
+    _type = str(image_type or "")
+    _jpeg = _octets[:3] == b"\xff\xd8\xff"
+    _png = _octets[:8] == b"\x89PNG\r\n\x1a\n"
+    _checks = {
+        "share_page": bool(html_texte) and "<html" in str(html_texte)[:200].lower(),
+        "og_title": bool(_og.get("og:title")),
+        "og_description": bool(_og.get("og:description")),
+        "og_image": bool(_img),
+        "og_image_https": _img.startswith("https://"),
+        "og_url": bool(_og.get("og:url")),
+        "image_ok": bool(_octets) and (_jpeg or _png) and _type.startswith("image/"),
+        "image_type": _type,
+        "image_bytes": len(_octets),
+    }
+    _checks["image_leger"] = 0 < len(_octets) <= 600 * 1024     # au-delà, WhatsApp renonce souvent
+    _ok = all(_checks[k] for k in ("share_page", "og_title", "og_description", "og_image",
+                                   "og_image_https", "og_url", "image_ok", "image_leger"))
+    return {"ok": _ok, "checks": _checks}
