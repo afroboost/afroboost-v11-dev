@@ -299,6 +299,13 @@ export function messageRefus(raison) {
       return 'Tu es déjà membre : réserve directement depuis ton espace';
     case 'pass_ferme':
       return "Ce Pass Duo n'est plus ouvert.";
+    // V556 — la chaîne « boule de neige »
+    case 'invitation_requise':
+      return "Invite d'abord un ami pour débloquer ton essai gratuit.";
+    case 'invitation_autre_appareil': // V556 : celui qui a partagé termine l'inscription
+      return "Termine ton inscription sur l'appareil qui a partagé ton invitation.";
+    case 'chaine_en_attente':
+      return "Trop d'invitations attendent encore une inscription avant toi. Réessaie un peu plus tard.";
     default:
       return "Inscription impossible pour le moment. Réessaie dans un instant.";
   }
@@ -638,4 +645,145 @@ export function texteWhatsAppInvitation(pass, message) {
   if (serveur && url && serveur.indexOf(url) >= 0) return serveur;
   const m = String(message || '').trim();
   return m ? `${m}\n${url}` : `Rejoins mon Pass Duo Afroboost : ${url}`;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// V556 — PARRAINAGE V3 « BOULE DE NEIGE » : L'INVITATION ENFANT DU FILLEUL
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Le filleul (page /duo/<T0>) prépare puis PARTAGE une invitation enfant (T1)
+// AVANT de pouvoir s'inscrire. Toutes les routes sont publiques par jeton :
+//   POST  /pass/{T0}/chain         crée (201 + edit_key) ou rend (200) l'enfant ;
+//   PATCH /pass/{T0}/chain         modifie prénom / message (en-tête X-Chain-Key) ;
+//   POST  /pass/{T0}/chain/share   enregistre que le partage a été DÉCLENCHÉ
+//                                  (rend le PROCHAIN share_url) ;
+//   GET   /pass/{T0}/chain/preview relance le contrôle d'aperçu.
+// « Partagée » = l'action de partage a été déclenchée ; jamais « envoyée ».
+
+/** Message par défaut de la carte du filleul (texte du message, pas une icône). */
+export const MESSAGE_CHAINE_DEFAUT = "Je t'invite à venir découvrir Afroboost avec moi 👇";
+
+/** Clé localStorage de la clé d'édition de l'invitation enfant du pass `token`. */
+export function cleChaine(token) {
+  return `afroboost_chaine_${token || ''}`;
+}
+
+/** La clé d'édition gardée pour ce pass, ou "" (stockage indisponible = pas de clé). */
+export function lireCleChaine(token) {
+  try { return window.localStorage.getItem(cleChaine(token)) || ''; } catch (e) { return ''; }
+}
+
+/** Garde la clé d'édition (silencieux si le stockage est indisponible). */
+export function ecrireCleChaine(token, cle) {
+  if (!cle) return;
+  try { window.localStorage.setItem(cleChaine(token), String(cle)); } catch (e) { /* mode privé : pas d'édition au retour */ }
+}
+
+function _corpsChaine({ display_name, message }) {
+  const corps = {};
+  const n = nomAffichable(display_name);
+  if (n) corps.display_name = n;
+  const m = bornerMessage(message).trim();
+  if (m) corps.message = m;
+  return corps;
+}
+
+/** `POST /pass/{token}/chain` — crée ou rend l'invitation enfant (promesse axios). */
+export function creerInvitationChaine({ token, display_name, message }) {
+  return axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(token || '')}/chain`,
+    _corpsChaine({ display_name, message }), { timeout: 20000 });
+}
+
+/** `PATCH /pass/{token}/chain` avec `X-Chain-Key` — même jeton enfant, nouvelle carte. */
+export function modifierInvitationChaine({ token, editKey, display_name, message }) {
+  return axios.patch(`${API_PARRAINAGE}/pass/${encodeURIComponent(token || '')}/chain`,
+    _corpsChaine({ display_name, message }),
+    { headers: { 'X-Chain-Key': editKey || '' }, timeout: 20000 });
+}
+
+/** `POST /pass/{token}/chain/share {channel}` — whatsapp | share | share_image | copy. */
+export function enregistrerPartageChaine({ token, channel }) {
+  // V556 : la clé de l'appareil qui a préparé l'invitation (exigée par le serveur).
+  return axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(token || '')}/chain/share`,
+    { channel }, { headers: { 'X-Chain-Key': lireCleChaine(token) }, timeout: 15000 });
+}
+
+/** `GET /pass/{token}/chain/preview` — `{child, shared, preview}`. */
+export function santeApercuChaine({ token }) {
+  return axios.get(`${API_PARRAINAGE}/pass/${encodeURIComponent(token || '')}/chain/preview`, { timeout: 15000 });
+}
+
+function _fetchAvecDelai(url, delaiMs) {
+  if (typeof fetch !== 'function') return Promise.reject(new Error('fetch_indisponible'));
+  let ctrl = null;
+  try { ctrl = typeof AbortController === 'function' ? new AbortController() : null; } catch (e) { ctrl = null; }
+  const t = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (e) { /* ignore */ } }, delaiMs) : null;
+  return fetch(url, ctrl ? { method: 'GET', signal: ctrl.signal } : { method: 'GET' })
+    .finally(() => { if (t) clearTimeout(t); });
+}
+
+function _enTete(rep, nom) {
+  try { return (rep && rep.headers && typeof rep.headers.get === 'function' && rep.headers.get(nom)) || ''; } catch (e) { return ''; }
+}
+
+/**
+ * Contrôle d'aperçu CÔTÉ NAVIGATEUR, avant d'activer les boutons :
+ *   - `card_url` → 200 + `content-type: image/*` ; le Blob devient un `File`
+ *     (pré-chargé ici pour que `navigator.share({files})` garde le geste) ;
+ *   - `share_url` → 200 + HTML portant og:title, og:description, og:image.
+ * Ne rejette JAMAIS : un contrôle raté donne `ok:false` (repli « Aperçu
+ * simplifié », le partage par lien reste possible).
+ * @returns {Promise<{ok:boolean, file:(File|null), checks:object}>}
+ */
+export function verifierApercuNavigateur({ cardUrl, shareUrl, delaiMs }) {
+  const delai = Number(delaiMs) > 0 ? Number(delaiMs) : 8000;
+  const checks = { image_ok: false, image_type: '', share_page: false, og_title: false, og_description: false, og_image: false };
+  let file = null;
+  const image = !cardUrl ? Promise.resolve() : _fetchAvecDelai(cardUrl, delai)
+    .then((rep) => {
+      const type = String(_enTete(rep, 'content-type') || '').split(';')[0].trim();
+      if (!rep || !rep.ok || type.indexOf('image/') !== 0) return undefined;
+      checks.image_type = type;
+      return rep.blob().then((blob) => {
+        if (!blob || !blob.size) return;
+        checks.image_ok = true;
+        try {
+          const ext = type === 'image/png' ? 'png' : (type === 'image/webp' ? 'webp' : 'jpg');
+          file = new File([blob], `invitation-afroboost.${ext}`, { type });
+        } catch (e) { file = null; }
+      });
+    })
+    .catch(() => undefined);
+  const page = !shareUrl ? Promise.resolve() : _fetchAvecDelai(shareUrl, delai)
+    .then((rep) => {
+      if (!rep || !rep.ok) return undefined;
+      checks.share_page = true;
+      return rep.text().then((html) => {
+        let doc = null;
+        try { doc = new DOMParser().parseFromString(String(html || ''), 'text/html'); } catch (e) { doc = null; }
+        const og = (prop) => {
+          if (doc) {
+            const el = doc.querySelector(`meta[property="og:${prop}"], meta[name="og:${prop}"]`);
+            return !!(el && String(el.getAttribute('content') || '').trim());
+          }
+          return new RegExp(`og:${prop}`).test(String(html || ''));
+        };
+        checks.og_title = og('title');
+        checks.og_description = og('description');
+        checks.og_image = og('image');
+      });
+    })
+    .catch(() => undefined);
+  return Promise.all([image, page]).then(() => ({
+    ok: !!(checks.image_ok && checks.share_page && checks.og_title && checks.og_description && checks.og_image),
+    file,
+    checks,
+  }));
+}
+
+/** Le texte partagé : message + saut de ligne + lien COURANT. */
+export function texteChaine(message, shareUrl) {
+  const m = String(message || '').trim();
+  return m ? `${m}\n${shareUrl || ''}` : String(shareUrl || '');
 }

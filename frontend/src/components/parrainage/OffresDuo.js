@@ -71,7 +71,7 @@ export function SelecteurOffres({ offres, choix, onChoisir, actuelleId, name, di
 }
 
 /** Une offre affichée telle quelle : « OFFRE — nom / avantage » (ou un autre en-tête). */
-export function EncartOffre({ offre, titre, note, testid, children }) {
+export function EncartOffre({ offre, titre, note, testid, children, compact }) {
   if (!offre) return null;
   return (
     <div className="cp-offre-encart" data-testid={testid || 'offre-encart'}>
@@ -82,7 +82,8 @@ export function EncartOffre({ offre, titre, note, testid, children }) {
       </div>
       {avantageOffre(offre) ? <div className="cp-offre-avantage">{avantageOffre(offre)}</div> : null}
       {offre.validity ? <div className="cp-offre-detail"><SvgIcon name="clock" size={12} /> Valable {offre.validity}</div> : null}
-      {offre.conditions ? <div className="cp-offre-detail cp-offre-conditions">{offre.conditions}</div> : null}
+      {/* V556 : `compact` masque la description longue (étape 1 du parcours filleul) */}
+      {offre.conditions && !compact ? <div className="cp-offre-detail cp-offre-conditions">{offre.conditions}</div> : null}
       {note ? <p className="cp-fine cp-offre-note">{note}</p> : null}
       {children}
     </div>

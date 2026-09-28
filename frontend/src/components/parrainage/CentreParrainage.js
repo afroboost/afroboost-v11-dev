@@ -220,11 +220,18 @@ export default function CentreParrainage() {
           if (!prev) return prev;
           const invitations = [{ id, pass_id: pass.id, channel, created_at: new Date().toISOString() }]
             .concat(Array.isArray(prev.invitations) ? prev.invitations : []);
-          const passes2 = (Array.isArray(prev.passes) ? prev.passes : []).map((p) => (
-            p && p.id === pass.id && p.status === 'locked'
-              ? Object.assign({}, p, { status: 'waiting', status_label: 'En attente de ton ami' })
-              : p
-          ));
+          // V556 : la réponse porte le PROCHAIN `share_url` / `card_url` (version
+          // d'aperçu incrémentée) — le prochain partage aura une URL neuve.
+          const d = (r && r.data) || {};
+          const neuf = {};
+          if (typeof d.share_url === 'string' && d.share_url) neuf.share_url = d.share_url;
+          if (typeof d.card_url === 'string' && d.card_url) neuf.card_url = d.card_url;
+          const passes2 = (Array.isArray(prev.passes) ? prev.passes : []).map((p) => {
+            if (!p || p.id !== pass.id) return p;
+            const maj = Object.assign({}, neuf);
+            if (p.status === 'locked') Object.assign(maj, { status: 'waiting', status_label: 'En attente de ton ami' });
+            return Object.keys(maj).length ? Object.assign({}, p, maj) : p;
+          });
           const stats = Object.assign({}, prev.stats || {}, { invited: (Number(prev.stats && prev.stats.invited) || 0) + 1 });
           return Object.assign({}, prev, { invitations, passes: passes2, stats });
         });
