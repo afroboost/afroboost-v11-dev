@@ -120,10 +120,12 @@ describe('useBoostTribeLive', () => {
     expect(axios.post).not.toHaveBeenCalled();
     envoyer('https://boosttribe.pro', { type: 'bt:session-started', is_host: true, session_code: 'AAAA-1111' });
     await act(async () => {});
-    expect(axios.post).toHaveBeenCalledWith(expect.stringMatching(/\/boosttribe\/live-status$/), { event: 'started', session_code: 'AAAA-1111' });
+    expect(axios.post).toHaveBeenCalledWith(expect.stringMatching(/\/boosttribe\/live-status$/),
+      expect.objectContaining({ event: 'started', session_code: 'AAAA-1111' }), expect.any(Object));
     envoyer(window.location.origin, { type: 'bt:session-ended', is_host: true, session_code: 'AAAA-1111' });
     await act(async () => {});
-    expect(axios.post).toHaveBeenLastCalledWith(expect.any(String), { event: 'ended', session_code: 'AAAA-1111' });
+    expect(axios.post).toHaveBeenLastCalledWith(expect.any(String),
+      expect.objectContaining({ event: 'ended', session_code: 'AAAA-1111' }), expect.any(Object));
     authSession.authValide.mockRestore();
   });
 
@@ -144,8 +146,10 @@ describe('useBoostTribeLive', () => {
 
     envoyer(window.location.origin, { type: 'bt:session-heartbeat', is_host: true, session_code: 'AAAA-1111' });
     await act(async () => {});
+    // V553 : le corps du battement est INCHANGÉ (ni reason ni source) ; seul un X-Request-ID s'ajoute.
     expect(axios.post).toHaveBeenLastCalledWith(expect.stringMatching(/\/boosttribe\/live-status$/),
-      { event: 'heartbeat', session_code: 'AAAA-1111' });
+      { event: 'heartbeat', session_code: 'AAAA-1111' },
+      { headers: { 'X-Request-ID': expect.any(String) } });
     // Un battement ne change RIEN à l'écran : il ne doit pas réveiller le badge.
     expect(vus).toEqual([]);
 
@@ -176,6 +180,100 @@ describe('useBoostTribeLive', () => {
     await act(async () => {});
     expect(axios.post).not.toHaveBeenCalled();
     authSession.authValide.mockRestore();
+  });
+});
+
+// ═══ V553 — OBSERVABILITÉ DES FINS DE LIVE ═════════════════════════════════
+describe('V553 : chaque fin annoncée dit POURQUOI et D’OÙ', () => {
+  const envoyer = (data) => act(() => {
+    window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, data }));
+  });
+  const monterInstance = (nom, sink) => {
+    const C = () => { sink.live = useBoostTribeLive(nom); return null; };
+    return monter(C);
+  };
+  // Les bancs précédents laissent des instances montées (nom `inconnu`) qui
+  // écoutent aussi : on ne regarde que les instances nommées de ce bloc.
+  const corpsEnded = () => axios.post.mock.calls
+    .filter((c) => c[1] && c[1].event === 'ended' && !/:inconnu:/.test(c[1].source || ''))
+    .map((c) => c[1]);
+
+  beforeEach(() => { jest.spyOn(authSession, 'authValide').mockReturnValue(true); axios.post.mockResolvedValue({ data: { ok: true } }); });
+  afterEach(() => { authSession.authValide.mockRestore(); });
+
+  test('motifIframe : liste blanche recopiée, inconnu -> unknown, absent -> iframe_ended_sans_motif', () => {
+    const { motifIframe } = require('../BoostTribeLive');
+    ['host_terminate', 'host_leave', 'page_unmount', 'consume_refused', 'unknown']
+      .forEach((m) => expect(motifIframe({ reason: m })).toBe(m));
+    expect(motifIframe({ reason: 'overlay_close' })).toBe('unknown');   // l'iframe ne peut pas se faire passer pour la croix
+    expect(motifIframe({ reason: '<script>' })).toBe('unknown');
+    expect(motifIframe({})).toBe('iframe_ended_sans_motif');
+  });
+
+  test('le relais recopie le motif de l’iframe et nomme son instance', async () => {
+    const s = {};
+    const { root } = monterInstance('barre_app', s);
+    axios.post.mockClear();
+    envoyer({ type: 'bt:session-ended', is_host: true, session_code: 'AAAA-1111', reason: 'host_terminate' });
+    await act(async () => {});
+    const c = corpsEnded();
+    expect(c).toHaveLength(1);
+    expect(c[0].reason).toBe('host_terminate');
+    expect(c[0].source).toMatch(/^iframe:barre_app:/);
+    const appel = axios.post.mock.calls.find((x) => x[1] && x[1].source === c[0].source);
+    expect(appel[2].headers['X-Request-ID']).toEqual(expect.any(String));
+    act(() => root.unmount());
+  });
+
+  test('ancien bundle sans reason -> iframe_ended_sans_motif', async () => {
+    const s = {};
+    const { root } = monterInstance('barre_app', s);
+    axios.post.mockClear();
+    envoyer({ type: 'bt:session-ended', is_host: true, session_code: 'AAAA-1111' });
+    await act(async () => {});
+    expect(corpsEnded()[0].reason).toBe('iframe_ended_sans_motif');
+    act(() => root.unmount());
+  });
+
+  test('fermer(origine) -> overlay_close avec l’origine ; un événement React est ignoré', async () => {
+    const s = {};
+    const { root } = monterInstance('publier_modale', s);
+    envoyer({ type: 'bt:session-started', is_host: true, session_code: 'AAAA-1111' });
+    await act(async () => {});
+    axios.post.mockClear();
+    await act(async () => { s.live.fermer('croix_test'); });
+    let c = corpsEnded();
+    expect(c).toHaveLength(1);
+    expect(c[0]).toEqual(expect.objectContaining({ event: 'ended', session_code: 'AAAA-1111', reason: 'overlay_close' }));
+    expect(c[0].source).toMatch(/^overlay:croix_test:/);
+    // Sans origine (ou avec un événement de clic) : c'est le nom de l'instance qui part.
+    envoyer({ type: 'bt:session-started', is_host: true, session_code: 'AAAA-1111' });
+    await act(async () => {});
+    axios.post.mockClear();
+    await act(async () => { s.live.fermer({ type: 'click' }); });
+    c = corpsEnded();
+    expect(c[0].source).toMatch(/^overlay:publier_modale:/);
+    act(() => root.unmount());
+  });
+
+  test('DEUX instances montées : un seul message de l’iframe produit DEUX annonces (cause probable des fins fantômes)', async () => {
+    const a = {}; const b = {};
+    const ra = monterInstance('barre_app', a);
+    const rb = monterInstance('publier_modale', b);
+    axios.post.mockClear();
+    envoyer({ type: 'bt:session-started', is_host: true, session_code: 'AAAA-1111' });
+    await act(async () => {});
+    const sources = axios.post.mock.calls
+      .filter((x) => x[1] && x[1].event === 'started' && !/:inconnu:/.test(x[1].source || ''))
+      .map((x) => x[1].source.split(':')[1]).sort();
+    expect(sources).toEqual(['barre_app', 'publier_modale']);   // les DEUX instances ont mémorisé le code
+    axios.post.mockClear();
+    // La croix de l'instance B (dont l'overlay n'est même pas celui de l'iframe) termine le live.
+    await act(async () => { b.live.fermer(); });
+    const c = corpsEnded();
+    expect(c).toHaveLength(1);
+    expect(c[0].source).toMatch(/^overlay:publier_modale:/);
+    act(() => { ra.root.unmount(); rb.root.unmount(); });
   });
 });
 

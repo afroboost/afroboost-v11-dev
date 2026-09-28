@@ -14200,6 +14200,135 @@ def btlive_actif(doc: Optional[dict], maintenant: datetime) -> bool:
     return True
 
 
+# ═══ V553 : OBSERVABILITÉ DES FINS DE LIVE (instrumentation, aucun changement de décision) ═══
+#
+#  Incident du 28/09 12:06 : le serveur a reçu un `ended` alors que l'iframe
+#  n'avait émis AUCUN `bt:session-ended` et que les battements continuaient.
+#  Impossible de dire QUI l'avait envoyé. Désormais chaque fin laisse une trace :
+#    • dans le document `actuel` : ended_reason / ended_by / ended_source /
+#      ended_request_id / ended_user_agent / ended_prev (écrits UNE fois, à la
+#      transition vers `ended` — un `ended` répété n'écrase pas la première trace) ;
+#    • dans `boosttribe_live_journal` (append-only) : une ligne par started / ended /
+#      refus, et une par expiration calculée. JAMAIS pour un battement réussi.
+#  Rien de ce qui est journalisé ne contient de jeton, d'en-tête Authorization ni
+#  le corps de la requête : seulement des champs choisis un par un.
+#  Motifs : les cinq premiers viennent de l'iframe (BoostTribe 18ccbfc,
+#  `bt:session-ended.reason`) ; `iframe_ended_sans_motif` = ancien bundle sans
+#  `reason` ; `overlay_close` = croix de l'overlay Afroboost (`fermer()`).
+BTLIVE_MOTIFS_FIN = ("host_terminate", "host_leave", "page_unmount", "consume_refused",
+                     "overlay_close", "explicit_api_end", "server_expiration",
+                     "iframe_ended_sans_motif", "unknown")
+BTLIVE_REFUS_DEDUP_S = 60    # un refus de battement journalisé au plus 1×/min par session
+_btlive_refus_vus: dict = {}
+
+
+def btlive_motif_fin(valeur) -> str:
+    """Le motif annoncé, s'il est dans la liste blanche ; sinon `unknown`."""
+    v = str(valeur or "").strip().lower()
+    return v if v in BTLIVE_MOTIFS_FIN else "unknown"
+
+
+def _btlive_propre(valeur, n: int) -> str:
+    """Un libellé court et inoffensif (lettres, chiffres, `_-.:`), tronqué à n."""
+    return re.sub(r"[^A-Za-z0-9_.:\-]", "", str(valeur or ""))[:n]
+
+
+def btlive_source(valeur) -> Optional[str]:
+    """`canal:instance:onglet` (ex. `overlay:barre_app:k3x9za`) ou rien. Un libellé
+    libre n'est JAMAIS recopié (il pourrait contenir un jeton) : `non_conforme`."""
+    v = str(valeur or "").strip()
+    if not v:
+        return None
+    if re.fullmatch(r"(iframe|overlay|api):[A-Za-z0-9_.\-]{1,24}:[A-Za-z0-9]{1,12}", v):
+        return v
+    return "non_conforme"
+
+
+def _btlive_entetes(request) -> dict:
+    h = getattr(request, "headers", None)
+    return h if h is not None else {}
+
+
+def btlive_request_id(request) -> str:
+    """`X-Request-ID` du client s'il est propre, sinon un identifiant court généré."""
+    rid = _btlive_propre(_btlive_entetes(request).get("x-request-id"), 64)
+    return rid or uuid.uuid4().hex[:12]
+
+
+def _btlive_user_agent(request) -> str:
+    return str(_btlive_entetes(request).get("user-agent") or "")[:200]
+
+
+def _btlive_prev(doc: Optional[dict]) -> dict:
+    d = doc or {}
+    return {"session_code": d.get("session_code"), "ended": d.get("ended"),
+            "started_at": d.get("started_at"), "last_seen": d.get("last_seen")}
+
+
+async def _btlive_journaliser(ligne: dict) -> None:
+    """Ajoute une ligne au journal d'audit. Ne lève jamais : l'observabilité ne
+    doit pas pouvoir casser le live."""
+    ligne = dict(ligne)
+    ligne.setdefault("at", datetime.now(timezone.utc).isoformat())
+    try:
+        await db.boosttribe_live_journal.insert_one(ligne)
+    except Exception as _err:                        # noqa: BLE001
+        logger.warning("[BT-LIVE-JOURNAL] ecriture impossible (%s)", type(_err).__name__)
+
+
+async def _btlive_refus(evenement: str, code: str, statut: int, email: str,
+                        request_id: str, request, dedup: bool = False) -> None:
+    """Journalise un refus (403/404/409). Les battements refusés sont dédupliqués
+    (≤ 1 par minute et par session/statut) pour ne pas inonder le journal."""
+    if dedup:
+        cle = (evenement, code, statut)
+        now_ts = datetime.now(timezone.utc).timestamp()
+        if now_ts - _btlive_refus_vus.get(cle, 0) < BTLIVE_REFUS_DEDUP_S:
+            return
+        _btlive_refus_vus[cle] = now_ts
+    logger.info("[BT-LIVE-REFUS] event=%s session=%s statut=%s par=%s rid=%s",
+                evenement, code, statut, email, request_id)
+    await _btlive_journaliser({"event": evenement, "outcome": "refus", "status": statut,
+                               "session_code": code, "by": email, "request_id": request_id,
+                               "user_agent": _btlive_user_agent(request)})
+
+
+async def _btlive_noter_expiration(doc: Optional[dict], maintenant: datetime,
+                                   declencheur: str) -> None:
+    """V553 : un live non terminé, devenu inactif par le calcul (grâce 90 s ou
+    3 h), est journalisé UNE fois (`reason=server_expiration`). N'écrit PAS
+    `ended` et ne change ni le calcul ni l'état renvoyé. Dédup par le champ
+    `expiration_journalisee_at` (posé sous condition qu'il soit encore vide)."""
+    try:
+        if not doc or doc.get("ended") or not doc.get("session_code"):
+            return
+        if doc.get("expiration_journalisee_at") or btlive_actif(doc, maintenant):
+            return
+        r = await db.boosttribe_live.update_one(
+            {"_id": "actuel", "session_code": doc.get("session_code"),
+             "expiration_journalisee_at": None},
+            {"$set": {"expiration_journalisee_at": maintenant.isoformat()}})
+        if not getattr(r, "matched_count", 0):
+            return                                   # déjà journalisée par un autre appel
+        debut = _btlive_date(doc.get("started_at"))
+        vu = _btlive_date(doc.get("last_seen"))
+        age_s = int((maintenant - debut).total_seconds()) if debut else None
+        silence_s = int((maintenant - vu).total_seconds()) if vu else None
+        cause = "max_3h" if (debut is None or age_s is None
+                             or age_s > BTLIVE_MAX_H * 3600) else "grace_90s"
+        logger.info("[BT-LIVE-FIN] reason=server_expiration cause=%s session=%s age_s=%s "
+                    "silence_s=%s last_seen=%s via=%s", cause, doc.get("session_code"),
+                    age_s, silence_s, doc.get("last_seen"), declencheur)
+        await _btlive_journaliser({"event": "expiration", "outcome": "ok",
+                                   "reason": "server_expiration", "cause": cause,
+                                   "session_code": doc.get("session_code"),
+                                   "host": doc.get("host"), "started_at": doc.get("started_at"),
+                                   "last_seen": doc.get("last_seen"), "age_s": age_s,
+                                   "silence_s": silence_s, "via": declencheur})
+    except Exception as _err:                        # noqa: BLE001
+        logger.warning("[BT-LIVE-JOURNAL] expiration non notee (%s)", type(_err).__name__)
+
+
 async def _btlive_etat() -> dict:
     try:
         d = await db.boosttribe_live.find_one({"_id": "actuel"}, {"_id": 0})
@@ -14207,6 +14336,7 @@ async def _btlive_etat() -> dict:
         logger.warning("[BT-LIVE] etat illisible (%s)", type(_err).__name__)
         return {"active": False}
     if not btlive_actif(d, datetime.now(timezone.utc)):
+        await _btlive_noter_expiration(d, datetime.now(timezone.utc), "lecture")   # V553
         return {"active": False}
     return {"active": True, "session_code": d.get("session_code"),
             "started_at": d.get("started_at"), "last_seen": d.get("last_seen")}
@@ -14220,11 +14350,15 @@ async def boosttribe_live_status():
 
 
 @api_router.post("/boosttribe/live-status")
-async def boosttribe_live_status_set(request: Request):
+async def boosttribe_live_status_set(request: Request, response: Response = None):
     """Le coach (page Afroboost hôte de l'iframe) annonce le début / la fin de SON live."""
     email = require_auth(request)
     if not is_super_admin(email):
         raise HTTPException(status_code=403, detail="Réservé au coach")
+    # V553 : identifiant de corrélation client -> serveur -> journal, renvoyé en en-tête.
+    request_id = btlive_request_id(request)
+    if response is not None:
+        response.headers["X-Request-ID"] = request_id
     try:
         body = await request.json()
     except Exception:
@@ -14248,13 +14382,21 @@ async def boosttribe_live_status_set(request: Request):
         # seul code de session. L'hôte est celui qu'a posé `started` (identité
         # serveur `require_auth`), jamais un champ envoyé par le client.
         actuel = await db.boosttribe_live.find_one(
-            {"_id": "actuel"}, {"_id": 0, "session_code": 1, "host": 1, "ended": 1})
+            {"_id": "actuel"}, {"_id": 0, "session_code": 1, "host": 1, "ended": 1,
+                                "started_at": 1, "last_seen": 1,
+                                "expiration_journalisee_at": 1})   # V553 : champs lus pour la trace
+        # V553 : un battement qui arrive sur un live déjà expiré par le calcul le note (1×).
+        await _btlive_noter_expiration(actuel if actuel and actuel.get("session_code") == code
+                                       else None, datetime.now(timezone.utc), "battement")
         if not actuel or actuel.get("session_code") != code:
+            await _btlive_refus("heartbeat", code, 404, email, request_id, request, dedup=True)
             raise HTTPException(status_code=404, detail="Aucun live annoncé pour ce code")
         hote = str(actuel.get("host") or "").strip().lower()
         if not hote or hote != email.strip().lower():
+            await _btlive_refus("heartbeat", code, 403, email, request_id, request, dedup=True)
             raise HTTPException(status_code=403, detail="Seul l'hôte de ce live peut le maintenir")
         if actuel.get("ended"):
+            await _btlive_refus("heartbeat", code, 409, email, request_id, request, dedup=True)
             raise HTTPException(status_code=409, detail="Ce live est terminé")
         r = await db.boosttribe_live.update_one(
             {"_id": "actuel", "session_code": code, "ended": False, "host": actuel.get("host")},
@@ -14262,9 +14404,14 @@ async def boosttribe_live_status_set(request: Request):
         return {"ok": bool(r.matched_count), "live": await _btlive_etat()}
     # V550 : le document courant sert aux deux décisions qui suivent.
     courant = await db.boosttribe_live.find_one(
-        {"_id": "actuel"}, {"_id": 0, "session_code": 1, "host": 1, "ended": 1})
+        {"_id": "actuel"}, {"_id": 0, "session_code": 1, "host": 1, "ended": 1,
+                            "started_at": 1, "last_seen": 1})   # V553 : started_at/last_seen pour ended_prev
     meme_live = bool(courant) and courant.get("session_code") == code
     hote_courant = str((courant or {}).get("host") or "").strip().lower()
+    # V553 : la trace de CETTE requête (jamais de jeton ni de corps complet).
+    motif = btlive_motif_fin(body.get("reason")) if evenement == "ended" else None
+    source = btlive_source(body.get("source"))
+    ua = _btlive_user_agent(request)
     if evenement == "started" and meme_live and not courant.get("ended") \
             and hote_courant == email.strip().lower():
         # V550 : RECONNEXION, pas un nouveau live. Mesuré le 28/09 : cinq
@@ -14273,12 +14420,20 @@ async def boosttribe_live_status_set(request: Request):
         # fin. On garde le début réel ; la grâce se réarme au prochain battement.
         await db.boosttribe_live.update_one(
             {"_id": "actuel", "session_code": code, "ended": False},
-            {"$set": {"updated_at": maintenant}, "$unset": {"last_seen": ""}})
+            {"$set": {"updated_at": maintenant, "expiration_journalisee_at": None},   # V553
+             "$unset": {"last_seen": ""}})
+        await _btlive_journaliser({"event": "started", "outcome": "ok", "reconnexion": True,
+                                   "session_code": code, "by": email, "source": source,
+                                   "request_id": request_id, "user_agent": ua})
     elif evenement == "started":
         await db.boosttribe_live.update_one(
             {"_id": "actuel"},
             {"$set": {"session_code": code, "started_at": maintenant, "ended": False,
-                      "host": email, "updated_at": maintenant},
+                      "host": email, "updated_at": maintenant,
+                      # V553 : un nouveau live repart sans la trace de fin du précédent.
+                      "expiration_journalisee_at": None, "ended_reason": None,
+                      "ended_by": None, "ended_source": None, "ended_request_id": None,
+                      "ended_user_agent": None, "ended_prev": None},
              # V549b : le démarrage N'EST PAS un battement. Poser `last_seen` ici
              # éteignait au bout de 90 s tout live dont la page ne bat pas
              # (BoostTribe pas encore déployé, ancienne page en cache). Et on
@@ -14287,15 +14442,38 @@ async def boosttribe_live_status_set(request: Request):
              # la règle des 3 h s'applique (voir `btlive_actif`).
              "$unset": {"last_seen": ""}},
             upsert=True)
+        await _btlive_journaliser({"event": "started", "outcome": "ok", "reconnexion": False,
+                                   "session_code": code, "by": email, "source": source,
+                                   "request_id": request_id, "user_agent": ua,
+                                   "prev": _btlive_prev(courant)})
     else:
         # « ended » ne ferme QUE le live annoncé : un « ended » tardif d'une
         # ancienne session ne coupe pas le live suivant.
         # V550 : et seul SON hôte le termine (même règle que le battement).
         if meme_live and hote_courant and hote_courant != email.strip().lower():
+            await _btlive_refus("ended", code, 403, email, request_id, request)   # V553
             raise HTTPException(status_code=403, detail="Seul l'hôte de ce live peut le terminer")
+        # V553 : la trace s'écrit UNIQUEMENT à la transition (live encore ouvert) :
+        # un `ended` répété n'écrase pas le motif du premier.
+        prev = _btlive_prev(courant)
+        trace = await db.boosttribe_live.update_one(
+            {"_id": "actuel", "session_code": code, "ended": False},
+            {"$set": {"ended_reason": motif, "ended_by": email, "ended_source": source,
+                      "ended_request_id": request_id, "ended_user_agent": ua,
+                      "ended_prev": prev}})
+        transition = bool(getattr(trace, "matched_count", 0))
         await db.boosttribe_live.update_one(
             {"_id": "actuel", "session_code": code},
             {"$set": {"ended": True, "ended_at": maintenant, "updated_at": maintenant}})
+        logger.info("[BT-LIVE-FIN] reason=%s source=%s session=%s par=%s rid=%s transition=%s "
+                    "meme_live=%s prev_last_seen=%s prev_started_at=%s ua=%s",
+                    motif, source, code, email, request_id, transition, meme_live,
+                    prev.get("last_seen"), prev.get("started_at"), ua)
+        await _btlive_journaliser({"event": "ended", "outcome": "ok", "reason": motif,
+                                   "source": source, "session_code": code, "by": email,
+                                   "request_id": request_id, "user_agent": ua,
+                                   "transition": transition, "meme_live": meme_live,
+                                   "prev": prev})
     logger.info("[BT-LIVE] %s %s par %s", evenement, code, email)
     return {"ok": True, "live": await _btlive_etat()}
 

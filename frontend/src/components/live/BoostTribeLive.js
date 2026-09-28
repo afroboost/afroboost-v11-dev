@@ -88,22 +88,57 @@ export async function resoudreCodeAbonne() {
   } catch (e) { return ''; }
 }
 
-export function useBoostTribeLive() {
+// ═══ V553 : OBSERVABILITÉ DES FINS DE LIVE ═══════════════════════════════════
+// Incident du 28/09 12:06 : un `ended` est arrivé au serveur sans que l'iframe
+// ait émis `bt:session-ended`. Ce hook est instancié PLUSIEURS fois (barre de
+// App.js, BoostTribeSection de la modale Publier) et CHAQUE instance écoute les
+// postMessage de TOUTES les iframes de la fenêtre : chacune relaie, chacune peut
+// annoncer une fin. On ne change rien à la logique ; on dit désormais au serveur
+// POURQUOI (`reason`) et D'OÙ (`source` = canal:instance:onglet) part chaque fin.
+export const MOTIFS_IFRAME = ['host_terminate', 'host_leave', 'page_unmount', 'consume_refused', 'unknown'];
+
+/** Motif d'une fin annoncée par l'iframe : liste blanche, sinon `unknown` ; absent (ancien bundle) -> `iframe_ended_sans_motif`. */
+export function motifIframe(d) {
+  if (!d || d.reason === undefined || d.reason === null || d.reason === '') return 'iframe_ended_sans_motif';
+  const r = String(d.reason);
+  return MOTIFS_IFRAME.indexOf(r) !== -1 ? r : 'unknown';
+}
+
+function idCourt() {
+  try {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+  } catch (e) { /* pas de crypto : repli */ }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Un identifiant par chargement de page : distingue deux onglets / appareils du même compte.
+const ONGLET_ID = Math.random().toString(36).slice(2, 8);
+
+function nomPropre(v) {
+  return String(v || '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 24) || 'inconnu';
+}
+
+export function useBoostTribeLive(instance) {
   const [state, setState] = useState('idle');   // idle | loading | denied | live
   const [reason, setReason] = useState('');       // subscription_required | no_credit
   const [embedUrl, setEmbedUrl] = useState('');
   const [kind, setKind] = useState('');           // admin | subscriber
   const sessionRef = useRef({ code: '', isHost: false });
+  const nomInstance = nomPropre(instance);         // V553 : quel composant porte ce hook
 
   // Le coach annonce son live à Afroboost (jeton signé requis côté serveur).
   //
   // Trois événements, un seul appel : `started`, `heartbeat`, `ended`. Le battement
   // ne déclenche PAS l'événement local — il ne change rien à l'écran, il dit juste
   // au serveur que le coach est toujours là.
-  const annoncer = useCallback(async (event, code) => {
+  // V553 : `extra` = { reason, source } (trace seulement) ; chaque POST porte un X-Request-ID.
+  const annoncer = useCallback(async (event, code, extra) => {
     if (!code || !authValide()) return;
     try {
-      await axios.post(`${API}/boosttribe/live-status`, { event, session_code: code });
+      const corps = { event, session_code: code };
+      if (extra && extra.reason) corps.reason = extra.reason;
+      if (extra && extra.source) corps.source = extra.source;
+      await axios.post(`${API}/boosttribe/live-status`, corps, { headers: { 'X-Request-ID': idCourt() } });
       if (event !== 'heartbeat') {
         window.dispatchEvent(new CustomEvent(EVENEMENT_LIVE, { detail: { active: event === 'started' } }));
       }
@@ -119,7 +154,7 @@ export function useBoostTribeLive() {
         window.dispatchEvent(new CustomEvent('afroboost:credit-refresh'));
         if (d.is_host && d.session_code) {
           sessionRef.current = { code: String(d.session_code), isHost: true };
-          annoncer('started', sessionRef.current.code);
+          annoncer('started', sessionRef.current.code, { source: `iframe:${nomInstance}:${ONGLET_ID}` });
         }
       } else if (t === 'bt:session-heartbeat') {
         // LE CAS QUI N'A PAS D'ÉVÉNEMENT : la connexion du coach tombe, l'onglet
@@ -130,13 +165,17 @@ export function useBoostTribeLive() {
         // autre chose.
         if (d.is_host && d.session_code) annoncer('heartbeat', String(d.session_code));
       } else if (t === 'bt:session-ended') {
-        if (d.is_host && d.session_code) annoncer('ended', String(d.session_code));
+        // V553 : le motif de l'iframe est recopié tel quel s'il est connu.
+        if (d.is_host && d.session_code) {
+          annoncer('ended', String(d.session_code),
+            { reason: motifIframe(d), source: `iframe:${nomInstance}:${ONGLET_ID}` });
+        }
         setState('idle');
       }
     };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
-  }, [annoncer]);
+  }, [annoncer, nomInstance]);
 
   const ouvrir = useCallback(async (options) => {
     const opts = options || {};
@@ -161,14 +200,18 @@ export function useBoostTribeLive() {
     }
   }, []);
 
-  const fermer = useCallback(() => {
+  const fermer = useCallback((origine) => {
     // Le coach ferme l'overlay : son live n'est plus « en cours » pour Afroboost.
+    // V553 : `origine` (chaîne) nomme l'appelant ; un événement React passé par
+    // `onClick={live.fermer}` est ignoré et remplacé par le nom de l'instance.
+    const qui = typeof origine === 'string' && origine ? nomPropre(origine) : nomInstance;
     if (sessionRef.current.isHost && sessionRef.current.code) {
-      annoncer('ended', sessionRef.current.code);
+      annoncer('ended', sessionRef.current.code,
+        { reason: 'overlay_close', source: `overlay:${qui}:${ONGLET_ID}` });
       sessionRef.current = { code: '', isHost: false };
     }
     setState('idle');
-  }, [annoncer]);
+  }, [annoncer, nomInstance]);
 
   return { state, reason, embedUrl, kind, ouvrir, fermer, setState };
 }
@@ -187,7 +230,7 @@ export function BoostTribeLiveOverlay({ live }) {
     <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 2147483000, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#0a0a0a' }}>
         <span style={{ color: '#fff', fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8 }}>{iconLive} BoostTribe live</span>
-        <button onClick={live.fermer} style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 6 }} aria-label="Fermer" title="Fermer">
+        <button onClick={() => live.fermer()} style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 6 }} aria-label="Fermer" title="Fermer">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
         </button>
       </div>

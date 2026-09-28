@@ -1535,7 +1535,7 @@ export const BoostTribeSection = ({ subscriberCode }) => {
   // LIVE RAPIDE : la logique (jeton d'accès, iframe, postMessage, annonce du
   // live) vit dans components/live/BoostTribeLive.js — la MÊME que le bouton
   // « Live » de la barre de navigation. Cette section n'en est qu'une entrée.
-  const live = useBoostTribeLive();
+  const live = useBoostTribeLive('publier_modale'); // V553 : nom d'instance (trace des fins de live)
   const state = live.state;
   const reason = live.reason;
   const setState = live.setState;

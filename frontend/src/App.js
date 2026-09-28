@@ -5221,7 +5221,7 @@ function App() {
   //
   //  Non identifié : aucun accès silencieux. Le serveur refuse, et on ouvre le
   //  mécanisme d'identification EXISTANT (le ChatWidget), rien de nouveau.
-  const btLive = useBoostTribeLive();
+  const btLive = useBoostTribeLive('barre_app'); // V553 : nom d'instance (trace des fins de live)
   const liveEnCours = useLiveEnCours(60000);
   const [liveNavInfo, setLiveNavInfo] = useState('');
   const ouvrirLiveDepuisLaBarre = useCallback(async () => {
