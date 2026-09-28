@@ -125,6 +125,16 @@ export function useBoostTribeLive(instance) {
   const [kind, setKind] = useState('');           // admin | subscriber
   const sessionRef = useRef({ code: '', isHost: false });
   const nomInstance = nomPropre(instance);         // V553 : quel composant porte ce hook
+  // V555 : PROPRIÉTÉ DE L'OVERLAY. Le hook est monté plusieurs fois (barre App.js,
+  // modale Publier) et `message` est un événement de la FENÊTRE : chaque instance
+  // recevait les postMessage de TOUTES les iframes. L'instance B mémorisait donc la
+  // session de l'iframe de A, et la croix de B envoyait `ended` pendant que A
+  // diffusait (prouvé au banc). Désormais une instance ne traite QUE les messages
+  // de SA propre iframe (`event.source === iframe.contentWindow`) ; `ownerRef`
+  // identifie l'ouverture de CET overlay auprès du serveur (autre onglet = autre
+  // owner : il ne peut pas éteindre automatiquement le live d'un autre).
+  const iframeRef = useRef(null);
+  const ownerRef = useRef('');
 
   // Le coach annonce son live à Afroboost (jeton signé requis côté serveur).
   //
@@ -138,6 +148,7 @@ export function useBoostTribeLive(instance) {
       const corps = { event, session_code: code };
       if (extra && extra.reason) corps.reason = extra.reason;
       if (extra && extra.source) corps.source = extra.source;
+      if (extra && extra.owner) corps.owner = extra.owner;   // V555
       await axios.post(`${API}/boosttribe/live-status`, corps, { headers: { 'X-Request-ID': idCourt() } });
       if (event !== 'heartbeat') {
         window.dispatchEvent(new CustomEvent(EVENEMENT_LIVE, { detail: { active: event === 'started' } }));
@@ -148,13 +159,18 @@ export function useBoostTribeLive(instance) {
   useEffect(() => {
     const onMsg = (event) => {
       if (!origineAcceptee(event.origin)) return;
+      // V555 : un message d'une AUTRE iframe (overlay d'une autre instance) ne
+      // concerne pas cette instance — ni crédit, ni annonce, ni fermeture.
+      const f = iframeRef.current;
+      if (!f || !event.source || event.source !== f.contentWindow) return;
       const d = event.data || {};
       const t = d.type;
       if (t === 'bt:session-started') {
         window.dispatchEvent(new CustomEvent('afroboost:credit-refresh'));
         if (d.is_host && d.session_code) {
           sessionRef.current = { code: String(d.session_code), isHost: true };
-          annoncer('started', sessionRef.current.code, { source: `iframe:${nomInstance}:${ONGLET_ID}` });
+          annoncer('started', sessionRef.current.code,
+            { source: `iframe:${nomInstance}:${ONGLET_ID}`, owner: ownerRef.current });
         }
       } else if (t === 'bt:session-heartbeat') {
         // LE CAS QUI N'A PAS D'ÉVÉNEMENT : la connexion du coach tombe, l'onglet
@@ -168,8 +184,9 @@ export function useBoostTribeLive(instance) {
         // V553 : le motif de l'iframe est recopié tel quel s'il est connu.
         if (d.is_host && d.session_code) {
           annoncer('ended', String(d.session_code),
-            { reason: motifIframe(d), source: `iframe:${nomInstance}:${ONGLET_ID}` });
+            { reason: motifIframe(d), source: `iframe:${nomInstance}:${ONGLET_ID}`, owner: ownerRef.current });
         }
+        sessionRef.current = { code: '', isHost: false };   // V555 : fin annoncée, plus rien à fermer
         setState('idle');
       }
     };
@@ -181,6 +198,9 @@ export function useBoostTribeLive(instance) {
     const opts = options || {};
     setState('loading');
     setReason('');
+    // V555 : une nouvelle ouverture = un nouveau propriétaire, sans session héritée.
+    ownerRef.current = `${ONGLET_ID}${idCourt().replace(/[^A-Za-z0-9]/g, '').slice(0, 10)}`;
+    sessionRef.current = { code: '', isHost: false };
     try {
       // V280 (revue sécurité) : code dans le CORPS (POST), jamais en query string.
       const payload = {};
@@ -207,13 +227,13 @@ export function useBoostTribeLive(instance) {
     const qui = typeof origine === 'string' && origine ? nomPropre(origine) : nomInstance;
     if (sessionRef.current.isHost && sessionRef.current.code) {
       annoncer('ended', sessionRef.current.code,
-        { reason: 'overlay_close', source: `overlay:${qui}:${ONGLET_ID}` });
+        { reason: 'overlay_close', source: `overlay:${qui}:${ONGLET_ID}`, owner: ownerRef.current });
       sessionRef.current = { code: '', isHost: false };
     }
     setState('idle');
   }, [annoncer, nomInstance]);
 
-  return { state, reason, embedUrl, kind, ouvrir, fermer, setState };
+  return { state, reason, embedUrl, kind, ouvrir, fermer, setState, iframeRef };
 }
 
 export const iconLive = (
@@ -235,6 +255,7 @@ export function BoostTribeLiveOverlay({ live }) {
         </button>
       </div>
       <iframe
+        ref={live.iframeRef}
         src={live.embedUrl}
         allow="camera; microphone; autoplay; fullscreen; display-capture; clipboard-write"
         style={{ flex: 1, width: '100%', border: 0 }}

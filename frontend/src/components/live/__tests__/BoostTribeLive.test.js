@@ -82,6 +82,23 @@ function monter(Composant) {
   return { div, root };
 }
 
+// V555 : un message n'est traité que s'il vient de L'IFRAME de l'instance
+// (`event.source === iframe.contentWindow`). Les bancs ouvrent donc un vrai
+// overlay et envoient depuis sa fenêtre.
+async function monterOuvert(nom, sink) {
+  const C = () => { sink.live = useBoostTribeLive(nom); return <BoostTribeLiveOverlay live={sink.live} />; };
+  const m = monter(C);
+  const avant = axios.post.getMockImplementation();
+  axios.post.mockResolvedValueOnce({ data: { embedUrl: `https://afroboost.com/live/embed?i=${nom || 'x'}`, live: { kind: 'admin' } } });
+  await act(async () => { await sink.live.ouvrir(); });
+  if (avant) axios.post.mockImplementation(avant);
+  sink.iframe = m.div.ownerDocument.querySelector(`iframe[src*="i=${nom || 'x'}"]`);
+  return m;
+}
+const depuis = (sink, origin, data) => act(() => {
+  window.dispatchEvent(new MessageEvent('message', { origin, data, source: sink.iframe.contentWindow }));
+});
+
 describe('useBoostTribeLive', () => {
   test('ouvrir : le code abonné part dans le CORPS, jamais en query ; un e-mail ne part pas', async () => {
     let live;
@@ -109,11 +126,11 @@ describe('useBoostTribeLive', () => {
 
   test('postMessage : origine étrangère ignorée ; hôte -> annonce started ; participant -> rien', async () => {
     jest.spyOn(authSession, 'authValide').mockReturnValue(true);
-    let live;
-    const C = () => { live = useBoostTribeLive(); return null; };
-    monter(C);
+    const s = {};
+    const { root } = await monterOuvert('orig', s);
+    axios.post.mockReset();
     axios.post.mockResolvedValue({ data: { ok: true } });
-    const envoyer = (origin, data) => act(() => { window.dispatchEvent(new MessageEvent('message', { origin, data })); });
+    const envoyer = (origin, data) => depuis(s, origin, data);
     envoyer('https://evil.invalid', { type: 'bt:session-started', is_host: true, session_code: 'AAAA-1111' });
     expect(axios.post).not.toHaveBeenCalled();
     envoyer(window.location.origin, { type: 'bt:session-started', is_host: false, session_code: 'AAAA-1111' });
@@ -126,6 +143,7 @@ describe('useBoostTribeLive', () => {
     await act(async () => {});
     expect(axios.post).toHaveBeenLastCalledWith(expect.any(String),
       expect.objectContaining({ event: 'ended', session_code: 'AAAA-1111' }), expect.any(Object));
+    act(() => root.unmount());
     authSession.authValide.mockRestore();
   });
 
@@ -136,13 +154,14 @@ describe('useBoostTribeLive', () => {
   //  Sa page redit « je suis là » ; ce relais transmet, et rien de plus.
   test('battement : relayé au serveur, mais il ne touche PAS l’affichage du badge', async () => {
     jest.spyOn(authSession, 'authValide').mockReturnValue(true);
-    const C = () => { useBoostTribeLive(); return null; };
-    monter(C);
+    const s = {};
+    const { root } = await monterOuvert('bat1', s);
+    axios.post.mockReset();
     axios.post.mockResolvedValue({ data: { ok: true } });
     const vus = [];
     const espion = (e) => vus.push(!!(e.detail && e.detail.active));
     window.addEventListener('afroboost:live-status', espion);
-    const envoyer = (origin, data) => act(() => { window.dispatchEvent(new MessageEvent('message', { origin, data })); });
+    const envoyer = (origin, data) => depuis(s, origin, data);
 
     envoyer(window.location.origin, { type: 'bt:session-heartbeat', is_host: true, session_code: 'AAAA-1111' });
     await act(async () => {});
@@ -154,44 +173,44 @@ describe('useBoostTribeLive', () => {
     expect(vus).toEqual([]);
 
     window.removeEventListener('afroboost:live-status', espion);
+    act(() => root.unmount());
     authSession.authValide.mockRestore();
   });
 
   test('battement : un participant ou une origine étrangère n’en émet aucun', async () => {
     jest.spyOn(authSession, 'authValide').mockReturnValue(true);
-    const C = () => { useBoostTribeLive(); return null; };
-    monter(C);
+    const s = {};
+    const { root } = await monterOuvert('bat2', s);
+    axios.post.mockReset();
     axios.post.mockResolvedValue({ data: { ok: true } });
-    const envoyer = (origin, data) => act(() => { window.dispatchEvent(new MessageEvent('message', { origin, data })); });
+    const envoyer = (origin, data) => depuis(s, origin, data);
     envoyer('https://evil.invalid', { type: 'bt:session-heartbeat', is_host: true, session_code: 'AAAA-1111' });
     envoyer(window.location.origin, { type: 'bt:session-heartbeat', is_host: false, session_code: 'AAAA-1111' });
     envoyer(window.location.origin, { type: 'bt:session-heartbeat', is_host: true });
     await act(async () => {});
     expect(axios.post).not.toHaveBeenCalled();
+    act(() => root.unmount());
     authSession.authValide.mockRestore();
   });
 
   test('sans jeton coach signé, aucune annonce ne part (un participant ne peut pas déclarer un live)', async () => {
     jest.spyOn(authSession, 'authValide').mockReturnValue(false);
-    let live;
-    const C = () => { live = useBoostTribeLive(); return null; };
-    monter(C);
-    act(() => { window.dispatchEvent(new MessageEvent('message', { origin: 'https://boosttribe.pro', data: { type: 'bt:session-started', is_host: true, session_code: 'AAAA-1111' } })); });
+    const s = {};
+    const { root } = await monterOuvert('sansjeton', s);
+    axios.post.mockReset();
+    depuis(s, 'https://boosttribe.pro', { type: 'bt:session-started', is_host: true, session_code: 'AAAA-1111' });
     await act(async () => {});
     expect(axios.post).not.toHaveBeenCalled();
+    act(() => root.unmount());
     authSession.authValide.mockRestore();
   });
 });
 
 // ═══ V553 — OBSERVABILITÉ DES FINS DE LIVE ═════════════════════════════════
 describe('V553 : chaque fin annoncée dit POURQUOI et D’OÙ', () => {
-  const envoyer = (data) => act(() => {
-    window.dispatchEvent(new MessageEvent('message', { origin: window.location.origin, data }));
-  });
-  const monterInstance = (nom, sink) => {
-    const C = () => { sink.live = useBoostTribeLive(nom); return null; };
-    return monter(C);
-  };
+  let courant = null;   // l'instance dont l'iframe émet
+  const envoyer = (data) => depuis(courant, window.location.origin, data);
+  const monterInstance = async (nom, sink) => { const m = await monterOuvert(nom, sink); courant = sink; return m; };
   // Les bancs précédents laissent des instances montées (nom `inconnu`) qui
   // écoutent aussi : on ne regarde que les instances nommées de ce bloc.
   const corpsEnded = () => axios.post.mock.calls
@@ -212,7 +231,7 @@ describe('V553 : chaque fin annoncée dit POURQUOI et D’OÙ', () => {
 
   test('le relais recopie le motif de l’iframe et nomme son instance', async () => {
     const s = {};
-    const { root } = monterInstance('barre_app', s);
+    const { root } = await monterInstance('barre_app', s);
     axios.post.mockClear();
     envoyer({ type: 'bt:session-ended', is_host: true, session_code: 'AAAA-1111', reason: 'host_terminate' });
     await act(async () => {});
@@ -227,7 +246,7 @@ describe('V553 : chaque fin annoncée dit POURQUOI et D’OÙ', () => {
 
   test('ancien bundle sans reason -> iframe_ended_sans_motif', async () => {
     const s = {};
-    const { root } = monterInstance('barre_app', s);
+    const { root } = await monterInstance('barre_app', s);
     axios.post.mockClear();
     envoyer({ type: 'bt:session-ended', is_host: true, session_code: 'AAAA-1111' });
     await act(async () => {});
@@ -237,7 +256,7 @@ describe('V553 : chaque fin annoncée dit POURQUOI et D’OÙ', () => {
 
   test('fermer(origine) -> overlay_close avec l’origine ; un événement React est ignoré', async () => {
     const s = {};
-    const { root } = monterInstance('publier_modale', s);
+    const { root } = await monterInstance('publier_modale', s);
     envoyer({ type: 'bt:session-started', is_host: true, session_code: 'AAAA-1111' });
     await act(async () => {});
     axios.post.mockClear();
@@ -247,6 +266,10 @@ describe('V553 : chaque fin annoncée dit POURQUOI et D’OÙ', () => {
     expect(c[0]).toEqual(expect.objectContaining({ event: 'ended', session_code: 'AAAA-1111', reason: 'overlay_close' }));
     expect(c[0].source).toMatch(/^overlay:croix_test:/);
     // Sans origine (ou avec un événement de clic) : c'est le nom de l'instance qui part.
+    // V555 : la croix a fermé l'overlay (plus d'iframe) — on le rouvre.
+    axios.post.mockResolvedValueOnce({ data: { embedUrl: 'https://afroboost.com/live/embed?i=publier_modale', live: { kind: 'admin' } } });
+    await act(async () => { await s.live.ouvrir(); });
+    s.iframe = document.querySelector('iframe[src*="i=publier_modale"]');
     envoyer({ type: 'bt:session-started', is_host: true, session_code: 'AAAA-1111' });
     await act(async () => {});
     axios.post.mockClear();
@@ -256,23 +279,22 @@ describe('V553 : chaque fin annoncée dit POURQUOI et D’OÙ', () => {
     act(() => root.unmount());
   });
 
-  test('DEUX instances montées : un seul message de l’iframe produit DEUX annonces (cause probable des fins fantômes)', async () => {
+  test('V555 — DEUX instances montées : seule celle dont l’iframe émet annonce ; la croix de l’autre ne termine rien', async () => {
     const a = {}; const b = {};
-    const ra = monterInstance('barre_app', a);
-    const rb = monterInstance('publier_modale', b);
+    const ra = await monterInstance('barre_app', a);
+    const rb = await monterInstance('publier_modale', b);
+    courant = a;                                   // c'est l'iframe de A qui diffuse
     axios.post.mockClear();
     envoyer({ type: 'bt:session-started', is_host: true, session_code: 'AAAA-1111' });
     await act(async () => {});
     const sources = axios.post.mock.calls
-      .filter((x) => x[1] && x[1].event === 'started' && !/:inconnu:/.test(x[1].source || ''))
-      .map((x) => x[1].source.split(':')[1]).sort();
-    expect(sources).toEqual(['barre_app', 'publier_modale']);   // les DEUX instances ont mémorisé le code
+      .filter((x) => x[1] && x[1].event === 'started')
+      .map((x) => x[1].source.split(':')[1]);
+    expect(sources).toEqual(['barre_app']);        // avant V555 : ['barre_app', 'publier_modale']
     axios.post.mockClear();
-    // La croix de l'instance B (dont l'overlay n'est même pas celui de l'iframe) termine le live.
-    await act(async () => { b.live.fermer(); });
-    const c = corpsEnded();
-    expect(c).toHaveLength(1);
-    expect(c[0].source).toMatch(/^overlay:publier_modale:/);
+    await act(async () => { b.live.fermer(); });   // avant V555 : ended overlay_close pour le live de A
+    expect(corpsEnded()).toHaveLength(0);
+    expect(a.live.state).toBe('live');
     act(() => { ra.root.unmount(); rb.root.unmount(); });
   });
 });

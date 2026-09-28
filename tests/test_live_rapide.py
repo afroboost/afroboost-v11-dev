@@ -80,9 +80,19 @@ def charger(admin="coach@exemple.invalid"):
            "require_auth": lambda r: getattr(r, "email", None) or (_ for _ in ()).throw(HTTPException(401)),
            "is_super_admin": lambda e: e == admin, "BTLIVE_MAX_H": 3, "Request": object,
            # battement (b8c432d3) : la décision « en cours ? » vit dans btlive_actif
-           "BTLIVE_GRACE_S": 90, "Optional": Optional}
-    for nom in ("_btlive_date", "btlive_actif", "_btlive_etat", "boosttribe_live_status",
-                "boosttribe_live_status_set"):
+           "BTLIVE_GRACE_S": 90, "Optional": Optional,
+           # V553/V555 : la route porte `response: Response`, trace les fins et le propriétaire.
+           "Response": object, "uuid": __import__("uuid"), "_btlive_refus_vus": {},
+           "BTLIVE_REFUS_DEDUP_S": 60,
+           "BTLIVE_MOTIFS_FIN": ("host_terminate", "host_leave", "page_unmount", "consume_refused",
+                                 "overlay_close", "explicit_api_end", "server_expiration",
+                                 "iframe_ended_sans_motif", "unknown"),
+           "BTLIVE_FINS_EXPLICITES": ("host_terminate", "host_leave")}
+    for nom in ("_btlive_date", "btlive_actif", "btlive_motif_fin", "_btlive_propre", "btlive_source",
+                "_btlive_entetes", "btlive_request_id", "_btlive_user_agent", "_btlive_prev",
+                "_btlive_journaliser", "_btlive_refus", "_btlive_noter_expiration",
+                "btlive_owner", "btlive_fin_refusee_owner",
+                "_btlive_etat", "boosttribe_live_status", "boosttribe_live_status_set"):
         exec(compile(_source(nom), "<prod>", "exec"), env)
     return env, base
 
