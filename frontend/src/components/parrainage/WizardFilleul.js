@@ -27,8 +27,35 @@ import {
   MESSAGE_CHAINE_DEFAUT, MESSAGE_MAX, NOM_MAX, bornerMessage, nomAffichable,
   creerInvitationChaine, modifierInvitationChaine, enregistrerPartageChaine,
   verifierApercuNavigateur, lireCleChaine, ecrireCleChaine, lireRefus, messageRefus,
-  lienWhatsApp, copier, texteChaine, libelleOccurrence,
+  lienWhatsApp, copier, texteChaine, libelleOccurrence, TEXTE_AUTRE_APPAREIL,
 } from '../../utils/parrainage';
+
+/**
+ * V556 — AUTRE APPAREIL. L'invitation a été préparée (et parfois partagée) sur un
+ * autre appareil : le serveur n'accepte le partage et l'inscription qu'avec la clé
+ * de CET appareil-là. On le dit simplement, sans erreur technique.
+ * « Recommencer sur cet appareil » a été AUDITÉ et ÉCARTÉ : ré-émettre une clé sans
+ * identité vérifiée rendrait l'invitation à quiconque possède le même lien (groupe
+ * WhatsApp) — l'attaque exacte que la clé empêche. Seule action proposée : copier le
+ * lien de cette page pour l'ouvrir sur le bon appareil (inoffensif, rien n'est écrit).
+ */
+function AutreAppareil() {
+  const [copie, setCopie] = useState('');
+  const url = typeof window !== 'undefined' && window.location ? window.location.href : '';
+  return (
+    <div className="cp-notice cp-wf-autre" role="status" data-testid="wf-autre-appareil">
+      <p style={{ margin: 0 }}>{TEXTE_AUTRE_APPAREIL}</p>
+      {url ? (
+        <button type="button" className="cp-b cp-b--secondary cp-wz-cible" style={{ marginTop: 12 }}
+                onClick={() => copier(url).then((ok) => setCopie(ok ? 'Lien copié : ouvre-le sur ton autre appareil.' : 'Copie impossible.'))}
+                data-testid="wf-copier-page">
+          <SvgIcon name="link" size={20} /> Copier le lien de cette invitation
+        </button>
+      ) : null}
+      {copie ? <p className="cp-mini" role="status" style={{ marginBottom: 0 }}>{copie}</p> : null}
+    </div>
+  );
+}
 import './invitationWizard.css'; // V556 : cibles 44 px (cp-wz-tap / cp-wz-cible) et cadre de carte, absents de /duo sinon
 import './wizardFilleul.css';
 
@@ -278,10 +305,12 @@ export default function WizardFilleul({
           <SvgIcon name="calendar" size={16} />
           <span>{c.name ? `${c.name} · ` : ''}{libelleOccurrence(pass && pass.occurrence, c.locationName)}</span>
         </p>
-        {formulaire}
-        <button type="button" className="cp-link cp-wz-tap cp-wf-encore" onClick={() => { setInfo(''); setEtape(2); }} data-testid="wf-partager-encore">
-          <SvgIcon name="share" size={14} /> Partager encore
-        </button>
+        {editKey ? formulaire : <AutreAppareil />}
+        {editKey ? (
+          <button type="button" className="cp-link cp-wz-tap cp-wf-encore" onClick={() => { setInfo(''); setEtape(2); }} data-testid="wf-partager-encore">
+            <SvgIcon name="share" size={14} /> Partager encore
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -316,7 +345,9 @@ export default function WizardFilleul({
       ) : null}
       {apercuSimplifie ? <p className="cp-fine cp-wf-simplifie" data-testid="wf-apercu-simplifie">Aperçu simplifié : le lien reste valable.</p> : null}
 
-      {child ? (
+      {child && !editable ? <AutreAppareil /> : null}
+
+      {child && editable ? (
         <div className="cp-wf-perso">
           <label className="cp-label" htmlFor="wf-nom">Ton prénom (sur ta carte)</label>
           <input id="wf-nom" className="cp-input" value={nom} maxLength={NOM_MAX} disabled={!editable} placeholder="Ex. : Henri"
@@ -337,7 +368,6 @@ export default function WizardFilleul({
               <SvgIcon name="edit" size={14} /> Modifier le message
             </button>
           )}
-          {!editable ? <p className="cp-fine">Ton invitation a été préparée sur un autre appareil : termine ton parcours depuis celui-ci.</p> : null}
           {modifie && editable ? (
             <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={mettreAJour} disabled={maj} data-testid="wf-mettre-a-jour">
               <SvgIcon name="refresh" size={20} /> {maj ? 'Mise à jour…' : 'Mettre à jour ma carte'}
@@ -347,7 +377,7 @@ export default function WizardFilleul({
         </div>
       ) : null}
 
-      {child ? (
+      {child && editable ? (
         <div className="cp-wf-actions">
           <button type="button" className="cp-b cp-b--whatsapp cp-wz-cible" onClick={surWhatsApp} disabled={boutonsInactifs} data-testid="wf-whatsapp">
             <SvgIcon name="messageCircle" size={20} /> WhatsApp

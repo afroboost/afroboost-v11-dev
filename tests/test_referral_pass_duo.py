@@ -495,10 +495,9 @@ def _prochaine_occurrence(jours=1, heure="18:30"):
 def base_de_depart(drapeau=True, seances_parrain=3, chaine=False):
     base = _Base()
     occ, wd = _prochaine_occurrence(1)
-    # V556 : la règle « invite avant de t'inscrire » est ACTIVE par défaut en
-    # production (champ absent). Ce banc-ci prouve le Pass Duo V534-V552 SANS
-    # elle (`false` explicite = le coupe-circuit) ; test_parrainage_v3.py
-    # prouve la chaîne avec `chaine=True`.
+    # V556 : la règle « invite avant de t'inscrire » n'est ACTIVE que si le
+    # drapeau vaut `true` (absent = éteint). Ce banc-ci prouve le Pass Duo
+    # V534-V552 SANS elle ; test_parrainage_v3.py prouve la chaîne (`chaine=True`).
     base["feature_flags"].docs.append({"id": "feature_flags", "parrainage_duo_enabled": drapeau,
                                        "parrainage_chaine_enabled": chaine})
     base["courses"].docs += [

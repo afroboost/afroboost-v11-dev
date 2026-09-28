@@ -201,6 +201,7 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
   });
 
   test('chain.shared:true → directement l\'étape 3 (vérité serveur), aucun POST', async () => {
+    window.localStorage.setItem(cleChaine('T0'), 'K1'); // même appareil que le partage
     axios.get.mockResolvedValue({ data: Object.assign({}, PUB, { chain: { exists: true, shared: true } }) });
     await monter(<InvitationDuo token="T0" />);
     expect(par('wf-etape-3')).not.toBeNull();
@@ -208,19 +209,32 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     expect(axios.post).not.toHaveBeenCalled();
   });
 
-  // V556 (audit) : sans la clé de CET appareil, le serveur refuse le partage (403) —
-  // les boutons sont donc désactivés avec une explication, jamais un faux succès.
-  test('chain.exists sans clé locale : POST /chain idempotent (200 sans edit_key) → édition ET partage désactivés', async () => {
+  // V556 : sans la clé de CET appareil (autre téléphone), message clair, aucune
+  // erreur technique, aucun bouton de partage ni formulaire qui échouerait (403).
+  test('chain.exists sans clé locale : message « autre appareil », ni champs ni partage', async () => {
     axios.post.mockResolvedValue({ status: 200, data: { child: CHILD(3), shared: false, preview: PREVIEW_OK } });
     axios.get.mockResolvedValue({ data: Object.assign({}, PUB, { chain: { exists: true, shared: false } }) });
     await monter(<InvitationDuo token="T0" />);
     await cliquer('wf-continuer');
-    expect(par('wf-nom').disabled).toBe(true);
-    expect(par('wf-whatsapp').disabled).toBe(true);
-    expect(conteneur.textContent).toContain("préparée sur un autre appareil");
+    expect(par('wf-autre-appareil')).not.toBeNull();
+    expect(conteneur.textContent).toContain("Pour protéger ton invitation, termine l'inscription sur l'appareil avec lequel tu as partagé ton invitation.");
+    expect(par('wf-whatsapp')).toBeNull();
+    expect(par('wf-nom')).toBeNull();
+    expect(par('wf-copier-page')).not.toBeNull();
+  });
+
+  test('déjà partagée depuis un autre appareil : étape 3 SANS formulaire, message clair', async () => {
+    axios.get.mockResolvedValue({ data: Object.assign({}, PUB, { chain: { exists: true, shared: true } }) });
+    await monter(<InvitationDuo token="T0" />);
+    expect(par('wf-etape-3')).not.toBeNull();
+    expect(par('invitation-form')).toBeNull();
+    expect(par('wf-autre-appareil')).not.toBeNull();
+    expect(par('wf-partager-encore')).toBeNull();
+    expect(axios.post).not.toHaveBeenCalled();
   });
 
   test('409 invitation_requise au join → retour à l\'étape 2 avec le message', async () => {
+    window.localStorage.setItem(cleChaine('T0'), 'K1'); // même appareil que le partage
     routerPost({ join: () => Promise.reject({ response: { status: 409, headers: { 'x-refus-raison': 'invitation_requise' }, data: {} } }) });
     axios.get.mockResolvedValue({ data: Object.assign({}, PUB, { chain: { exists: true, shared: true } }) });
     await monter(<InvitationDuo token="T0" />);
@@ -241,6 +255,7 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
   });
 
   test('succès du join en mode chaîne : l\'invitation reste active', async () => {
+    window.localStorage.setItem(cleChaine('T0'), 'K1'); // même appareil que le partage
     routerPost();
     axios.get.mockResolvedValue({ data: Object.assign({}, PUB, { chain: { exists: true, shared: true } }) });
     await monter(<InvitationDuo token="T0" />);

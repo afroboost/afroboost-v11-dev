@@ -229,13 +229,33 @@ async def partie_drapeau_porte_routes():
              c == 200 and j.get("status") == "unlocked" and len(j.get("tickets", [])) == 2, (c, str(j)[:200]))
     c, r = await chaine(p0_off["share_token"])
     verifier("1d. chaine=False : POST /chain -> 404 (règle coupée)", c == 404, (c, r))
-    # champ ABSENT = règle ACTIVE (contrat)
+    # champ ABSENT = règle ÉTEINTE (décision du 28/09 : on déploie éteint, on allume ensuite)
     base_abs, occ_abs = H.base_de_depart()
     base_abs["feature_flags"].docs[0].pop("parrainage_chaine_enabled", None)
     _, p_abs = await H.creer_pass(base_abs, occ_abs)
     c, g = await pub(p_abs["share_token"])
-    verifier("1e. drapeau ABSENT en base = règle ACTIVE (chain_required:true)",
-             c == 200 and g.get("chain_required") is True, g)
+    verifier("1e. drapeau ABSENT en base = règle ÉTEINTE (chain_required:false)",
+             c == 200 and g.get("chain_required") is False, g)
+    # et le join direct V2 marche avec le drapeau absent (aucune invitation exigée)
+    c, r = await H.appel(H.R.referral_join(p_abs["share_token"], H.Requete(H.corps_ami(), {})))
+    verifier("1f. drapeau ABSENT : join direct V2 accepté (aucune 409 invitation_requise)",
+             c == 200 and r.get("status") in ("unlocked", "friend_registered"), (c, r))
+    # base illisible = règle éteinte aussi
+    class _Muette:
+        async def find_one(self, *a, **k):
+            raise RuntimeError("base muette")
+    _vrai = H.R.db
+    class _Enveloppe:
+        def __getitem__(self, nom):
+            return _Muette() if nom == "feature_flags" else _vrai[nom]
+        def __getattr__(self, nom):
+            return getattr(_vrai, nom)
+    H.R.db = _Enveloppe()
+    try:
+        _act = await H.R._chaine_active()
+    finally:
+        H.R.db = _vrai
+    verifier("1g. drapeau ILLISIBLE = règle ÉTEINTE (repli sûr)", _act is False, _act)
 
     # ── 2. porte ───────────────────────────────────────────────────────────
     base, occ, p0 = await depart()

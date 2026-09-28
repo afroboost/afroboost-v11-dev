@@ -69,7 +69,7 @@ DEBIT_PREFIXE_OFFRE = "duo_offer:"            # V534b : PATCH public (avant join
 DEBIT_PREFIXE_CHAINE = "duo_chain:"           # V556 : création de l'invitation enfant
 DEBIT_PREFIXE_CHAINE_ACTION = "duo_chain_a:"  # V556 : modification / partage (quota séparé)
 DEBIT_PREFIXE_CHAINE_LECTURE = "duo_chain_l:" # V556 : contrôle d'aperçu (lecture)
-FLAG_CHAINE = "parrainage_chaine_enabled"    # V556 : absent = ACTIF, `false` = coupe-circuit
+FLAG_CHAINE = "parrainage_chaine_enabled"    # V556 : `true` = actif ; absent / false = parcours V2
 
 
 def init_db(database):
@@ -113,16 +113,18 @@ async def parrainage_duo_actif(database) -> bool:
 
 
 async def _chaine_active() -> bool:
-    """V556 — la règle « invite avant de t'inscrire ». ABSENTE = ACTIVE (c'est
-    le parcours voulu) ; `false` explicite en base = coupe-circuit, sans
-    redéploiement : le filleul retrouve alors le formulaire direct."""
+    """V556 — la règle « invite avant de t'inscrire ». Décision de Bassi
+    (28/09) : ACTIVE SEULEMENT si `parrainage_chaine_enabled` vaut `true` en
+    base. Absent, `false` ou base illisible = parcours V2 (formulaire direct).
+    On déploie donc le code éteint, on vérifie, puis on allume — et on
+    éteint sans rollback en remettant `false`."""
     try:
         _f = await db[FLAG_ID].find_one({"id": FLAG_ID}, {"_id": 0}) or {}
     except Exception as _err:  # noqa: BLE001
-        logger.warning("%s drapeau %s illisible (%s) — règle maintenue", PREFIXE, FLAG_CHAINE,
+        logger.warning("%s drapeau %s illisible (%s) — règle considérée OFF", PREFIXE, FLAG_CHAINE,
                        type(_err).__name__)
-        return True
-    return _f.get(FLAG_CHAINE) is not False
+        return False
+    return _f.get(FLAG_CHAINE) is True
 
 
 async def _exiger_actif() -> None:

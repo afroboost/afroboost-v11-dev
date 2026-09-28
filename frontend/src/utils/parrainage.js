@@ -303,7 +303,7 @@ export function messageRefus(raison) {
     case 'invitation_requise':
       return "Invite d'abord un ami pour débloquer ton essai gratuit.";
     case 'invitation_autre_appareil': // V556 : celui qui a partagé termine l'inscription
-      return "Termine ton inscription sur l'appareil qui a partagé ton invitation.";
+      return TEXTE_AUTRE_APPAREIL;
     case 'chaine_en_attente':
       return "Trop d'invitations attendent encore une inscription avant toi. Réessaie un peu plus tard.";
     default:
@@ -662,6 +662,9 @@ export function texteWhatsAppInvitation(pass, message) {
 // « Partagée » = l'action de partage a été déclenchée ; jamais « envoyée ».
 
 /** Message par défaut de la carte du filleul (texte du message, pas une icône). */
+/** V556 — le visiteur revient d'un AUTRE appareil que celui qui a partagé. */
+export const TEXTE_AUTRE_APPAREIL = "Pour protéger ton invitation, termine l'inscription sur l'appareil avec lequel tu as partagé ton invitation.";
+
 export const MESSAGE_CHAINE_DEFAUT = "Je t'invite à venir découvrir Afroboost avec moi 👇";
 
 /** Clé localStorage de la clé d'édition de l'invitation enfant du pass `token`. */
