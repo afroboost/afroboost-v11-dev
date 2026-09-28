@@ -22,6 +22,8 @@ import { cibleRedirectionEssai, DELAI_REDIRECTION_ESSAI_MS } from "./utils/essai
 import { lireSession as lireSessionEspace, urlDeLaSession, ESPACE_CLE_RETOUR } from "./utils/espaceSession"; // session abonnee persistante
 // V534: Centre Parrainage / Pass Duo — lectures SYNCHRONES du cache (zéro réseau dans App.js).
 import { parrainageActifCache, coursDuoEnCache } from "./utils/parrainage";
+import BarreHaute from "./components/accueil/BarreHaute"; // V554 : barre haute unique (compte à rebours + retour)
+import { minuteurBarre } from "./utils/barreHaute"; // V554
 import { useBoostTribeLive, BoostTribeLiveOverlay, useLiveEnCours, resoudreCodeAbonne } from "./components/live/BoostTribeLive"; // LIVE RAPIDE
 
 // V133: Intercepteur global — JWT prioritaire + fallback X-User-Email
@@ -1402,6 +1404,10 @@ function countdownParts(remaining) {
 }
 
 // === V146.1: Sticky Countdown Bar — mobile-responsive + aggressive ===
+// V554 : le bandeau devient la BARRE HAUTE (components/accueil/BarreHaute.js).
+// Il y accueille aussi le bouton « Retour au dashboard » de la Vue visiteur,
+// qui flottait en z-index 9999 par-dessus le compte à rebours et le globe de
+// langue. Ce composant ne garde que le choix de l'offre et le décompte.
 function StickyCountdownBar(props) {
   var offers = props.offers || [];
   var activeOffer = null;
@@ -1412,30 +1418,20 @@ function StickyCountdownBar(props) {
     }
   }
   var remaining = useCountdownRemaining(activeOffer || {});
-
-  if (!activeOffer || remaining <= 0) return null;
-  var p = countdownParts(remaining);
-  var text = activeOffer.countdown_text || 'OFFRE LIMITÉE';
-  var timerStr = countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's';
+  var compte = (activeOffer && remaining > 0) ? {
+    texte: activeOffer.countdown_text || 'OFFRE LIMITÉE',
+    minuteur: minuteurBarre(remaining),
+    slogan: 'Réserve vite !'
+  } : null;
 
   return (
-    <div data-sticky-countdown="active" style={{
-      /* V248 FIX3: zIndex 10000 -> 40. A 10000 le bandeau passait AU-DESSUS de
-         tout, y compris les modals produit — il masquait leur contenu et leur
-         bouton fermer. 40 le garde en tete de page (au-dessus du contenu normal)
-         mais SOUS le widget chat (50) et les modals (>=1000). */
-      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 40,
-      background: '#000000', borderBottom: '3px solid var(--primary-color, #D91CD2)',
-      minHeight: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      flexWrap: 'wrap', gap: '2px 6px',
-      padding: '6px 12px', textAlign: 'center',
-      fontFamily: 'system-ui, sans-serif',
-      boxShadow: '0 4px 25px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
-    }}>
-      <span style={{ color: '#FFFFFF', fontSize: 'clamp(13px, 3.5vw, 18px)', fontWeight: 700, whiteSpace: 'nowrap' }}>{'\uD83D\uDD25'} {text} :</span>
-      <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: 'clamp(16px, 4.5vw, 22px)', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2px', textShadow: '0 0 10px var(--primary-color, #D91CD2), 0 0 20px var(--primary-color, #D91CD2), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.4)', whiteSpace: 'nowrap' }}>{timerStr}</span>
-      <span style={{ color: '#FFFFFF', fontSize: 'clamp(13px, 3.5vw, 18px)', fontWeight: 700, whiteSpace: 'nowrap' }}>— Réserve vite ! {'\uD83D\uDE80'}</span>
-    </div>
+    <BarreHaute
+      compte={compte}
+      modeVisiteur={!!props.modeVisiteur}
+      libelleRetour={props.libelleRetour}
+      libelleCourt={props.libelleCourt}
+      onRetour={props.onRetour}
+    />
   );
 }
 
@@ -5179,18 +5175,19 @@ function App() {
      `ResizeObserver` suffit : rien à sonder, rien à recalculer au défilement. */
   useEffect(() => {
     const racine = document.documentElement;
+    // V554 : `--af-bandeau` n'est plus écrit ici. La barre haute (BarreHaute.js)
+    // le publie elle-même, à son montage, à chaque changement de taille, et le
+    // remet à 0 px en disparaissant. Deux écrivains du même nombre, c'était
+    // la garantie qu'un jour l'un écraserait l'autre (la Vue visiteur sans
+    // compte à rebours aurait été remise à 0 toutes les 2 s).
     const mesurer = () => {
-      const bandeau = document.querySelector('[data-sticky-countdown="active"]');
       const barre = document.querySelector('[data-af-nav="1"]');
-      racine.style.setProperty('--af-bandeau', (bandeau ? Math.round(bandeau.getBoundingClientRect().height) : 0) + 'px');
       if (barre) racine.style.setProperty('--af-nav', Math.round(barre.getBoundingClientRect().height) + 'px');
     };
     mesurer();
     const obs = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(mesurer) : null;
     if (obs) {
-      const b = document.querySelector('[data-sticky-countdown="active"]');
       const n = document.querySelector('[data-af-nav="1"]');
-      if (b) obs.observe(b);
       if (n) obs.observe(n);
     }
     window.addEventListener('resize', mesurer);
@@ -8248,57 +8245,26 @@ function App() {
     return <MediaViewer slug={mediaSlug} />;
   }
 
-  // V145: Check if any offer has active countdown for sticky bar padding
-  var hasActiveCountdown = offers.some(function(o) { return o.countdown_enabled && o.countdown_date; });
+  // V554 : la page ne devine plus la hauteur du bandeau (56 px en dur, et
+  // 2 px seulement sous 480 px à cause de V146) : elle réserve exactement la
+  // hauteur MESURÉE de la barre haute, publiée dans `--af-bandeau` (0 px quand
+  // il n'y a pas de barre). Voir `.af-barre-haute-page` dans App.css.
 
   return (
     // V277 : Provider alimenté par l'état d'App (source unique). Permet à tout
     // composant visiteur descendant d'utiliser useLanguage()/t().
     <LanguageContext.Provider value={{ language: lang, setLanguage: setLang, t }}>
-    <div className="w-full min-h-screen relative section-gradient" style={{ fontFamily: 'system-ui, sans-serif', paddingTop: hasActiveCountdown ? '56px' : '0px' }}>
-      {/* V145: Sticky Countdown Bar — top of page */}
-      <StickyCountdownBar offers={offers} />
+    <div className="w-full min-h-screen relative section-gradient af-barre-haute-page" style={{ fontFamily: 'system-ui, sans-serif', paddingTop: 'var(--af-bandeau, 0px)' }}>
+      {/* V145 / V554 : barre haute — compte à rebours + « Retour au dashboard »
+          (Vue visiteur, ex-bouton flottant V93.5 en z-index 9999) dans UNE barre. */}
+      <StickyCountdownBar
+        offers={offers}
+        modeVisiteur={isVisitorMode}
+        libelleRetour={t('backToDashboard')}
+        libelleCourt="Dashboard"
+        onRetour={() => { window.location.href = window.location.origin + '/#partner-dashboard'; }}
+      />
       <LanguageSelector lang={lang} setLang={setLang} />
-
-      {/* V93.5: Bouton flottant "Retour au dashboard" en mode Vue Visiteur */}
-      {isVisitorMode && (
-        <div style={{
-          position: 'fixed',
-          top: '16px',
-          right: '16px',
-          zIndex: 9999,
-          animation: 'fadeIn 0.3s ease-in'
-        }}>
-          <button
-            onClick={() => {
-              window.location.href = window.location.origin + '/#partner-dashboard';
-            }}
-            style={{
-              background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #7B2FBE)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '12px',
-              padding: '12px 20px',
-              fontSize: '14px',
-              fontWeight: '600',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              boxShadow: '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.16)',
-              transition: 'transform 0.2s, box-shadow 0.2s'
-            }}
-            onMouseEnter={e => { e.target.style.transform = 'scale(1.05)'; e.target.style.boxShadow = '0 6px 25px rgba(var(--primary-rgb, 217, 28, 210), 0.24)'; }}
-            onMouseLeave={e => { e.target.style.transform = 'scale(1)'; e.target.style.boxShadow = '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.16)'; }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M19 12H5"></path>
-              <path d="M12 19l-7-7 7-7"></path>
-            </svg>
-            {t('backToDashboard')}
-          </button>
-        </div>
-      )}
 
       {/* V260: choix « essai gratuit contre preuve sociale » / « payer » */}
       {v260ChoiceOffer && (

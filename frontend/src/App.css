@@ -1753,3 +1753,98 @@ body {
 @media (min-width: 1024px) {
   .af-colonne-cote > * { flex-shrink: 0; }
 }
+
+
+/* ═══ V554 — LA BARRE HAUTE RÉSERVE SA PLACE ════════════════════════════════
+
+   Compte à rebours + « Retour au dashboard » (Vue visiteur) dans UNE barre
+   `fixed` (components/accueil/BarreHaute.js). Zones réservées en grille :
+     ≥ 1024 px : [ Retour ] [ Compte à rebours ] [ zone droite ]
+     < 1024 px : [ Retour ] [ Compte à rebours, libellé puis minuteur ]
+   Aucune surenchère de z-index : 40 (comme l'ancien bandeau), sous le chat
+   (50) et les modales (≥ 1000). Ce qui empêche le chevauchement n'est pas la
+   pile, c'est la PLACE : la page réserve la hauteur mesurée (`--af-bandeau`). */
+.af-barre-haute {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 40;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-areas: "retour compte droite";
+  align-items: center;
+  column-gap: 12px;
+  min-height: 50px;
+  padding: 6px 16px;
+  box-sizing: border-box;
+  background: #000;
+  border-bottom: 3px solid var(--primary-color, #D91CD2);
+  box-shadow: 0 4px 25px rgba(var(--primary-rgb, 217, 28, 210), 0.2);
+  font-family: system-ui, sans-serif;
+  color: #fff;
+}
+.af-barre-haute--compte,
+.af-barre-haute--retour { grid-template-columns: minmax(0, 1fr); grid-template-areas: "seul"; }
+.af-barre-haute--compte .af-barre-haute-compte { grid-area: seul; }
+.af-barre-haute--retour .af-barre-haute-retour { grid-area: seul; }
+
+.af-barre-haute-retour {
+  grid-area: retour; justify-self: start;
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 44px; min-width: 44px; padding: 0 16px;
+  border: none; border-radius: 12px; cursor: pointer;
+  background: linear-gradient(135deg, var(--primary-color, #D91CD2), rgba(var(--primary-rgb, 217, 28, 210), 0.7));
+  color: #fff; font-size: 14px; font-weight: 600; line-height: 1.1; white-space: nowrap;
+  box-shadow: 0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.16);
+  transition: box-shadow 0.2s, filter 0.2s;
+}
+.af-barre-haute-retour:hover { filter: brightness(1.08); box-shadow: 0 6px 25px rgba(var(--primary-rgb, 217, 28, 210), 0.28); }
+.af-barre-haute-retour:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.af-barre-haute-retour-court { display: none; }
+
+.af-barre-haute-compte {
+  grid-area: compte; justify-self: center; min-width: 0;
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+  gap: 2px 8px; text-align: center;
+}
+.af-barre-haute-libelle {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  font-size: 17px; font-weight: 700; color: #fff;
+}
+.af-barre-haute-icone { flex: 0 0 auto; color: var(--primary-color, #D91CD2); }
+.af-barre-haute-texte { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.af-barre-haute-minuteur {
+  font-family: 'Courier New', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 21px; font-weight: 900; letter-spacing: 1.5px; white-space: nowrap;
+  color: var(--primary-color, #D91CD2);
+  text-shadow: 0 0 10px var(--primary-color, #D91CD2), 0 0 24px rgba(var(--primary-rgb, 217, 28, 210), 0.4);
+}
+.af-barre-haute-slogan { font-size: 17px; font-weight: 700; color: #fff; white-space: nowrap; }
+
+@media (max-width: 1023px) {
+  .af-barre-haute { column-gap: 10px; padding: 6px 12px; }
+  .af-barre-haute--retour-compte {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "retour compte";
+  }
+  .af-barre-haute-droite { display: none; }
+  /* Libellé sur une ligne, minuteur sur la suivante : jamais de retour à la
+     ligne imprévu, donc une hauteur stable. */
+  .af-barre-haute-compte { flex-direction: column; gap: 1px; justify-self: stretch; }
+  .af-barre-haute-libelle { font-size: 13px; letter-spacing: 0.3px; max-width: 100%; }
+  .af-barre-haute-minuteur { font-size: 17px; letter-spacing: 1px; }
+  .af-barre-haute-slogan { display: none; }
+}
+@media (max-width: 639px) {
+  .af-barre-haute-retour { padding: 0 12px; font-size: 13px; }
+  .af-barre-haute-retour-long { display: none; }
+  .af-barre-haute-retour-court { display: inline; }
+}
+
+/* LA RÉSERVE. Inline, la page pose `padding-top: var(--af-bandeau, 0px)`.
+   Sous 480 px, V146 écrase TOUT le padding de `.section-gradient` à 2 px
+   (`!important`, anti-débordement du tableau de bord) : c'est ELLE qui ne
+   laissait que 2 px sous un bandeau de 64 px. Deux classes battent une : la
+   page d'accueil — et elle seule — retrouve la réserve mesurée ; les 2 px de
+   V146 restent le plancher quand il n'y a pas de barre. */
+@media (max-width: 480px) {
+  .section-gradient.af-barre-haute-page { padding-top: max(2px, var(--af-bandeau, 0px)) !important; }
+}
