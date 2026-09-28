@@ -16,7 +16,12 @@ import fs from 'fs';
 import path from 'path';
 import { EVENEMENTS_FUNNEL } from '../funnelEssai';
 
-const APP = fs.readFileSync(path.join(__dirname, '..', '..', 'App.js'), 'utf8');
+const APP_SEUL = fs.readFileSync(path.join(__dirname, '..', '..', 'App.js'), 'utf8');
+// V554 : le bloc texte du Hero (CTA + `trial_cta_click`) a quitté App.js pour
+// son renderer unique, components/HeroTexte.js, que App.js monte à la même
+// place. Les garanties du Hero sont donc lues dans les DEUX fichiers.
+const HERO = fs.readFileSync(path.join(__dirname, '..', '..', 'components', 'HeroTexte.js'), 'utf8');
+const APP = APP_SEUL + '\n' + HERO;
 // SESSION PERSISTANTE : le CODE EXECUTE, commentaires exclus. App.js explique
 // desormais en toutes lettres pourquoi une url `/espace/<CODE>` ne doit pas se
 // fabriquer ici — et une recherche de texte brute prenait cette explication
@@ -142,7 +147,10 @@ describe('chaque evenement part au bon moment', () => {
 describe('ETAPE 1 — ce qui ne doit PAS avoir bouge', () => {
   test('le CTA du Hero pointe TOUJOURS sur le tunnel Chat', () => {
     // Le changement de navigation est l'ETAPE 2, explicitement non autorisee.
-    expect(APP).toContain('href="/?link=b83914b4-c5a"');
+    // V554 : le lien vit dans HeroTexte (constante HREF_ESSAI, `href={HREF_ESSAI}`).
+    expect(HERO).toContain("const HREF_ESSAI = '/?link=b83914b4-c5a';");
+    expect(HERO).toContain('href={HREF_ESSAI}');
+    expect(APP_SEUL).toMatch(/<HeroTexte concept=\{concept\} \/>/);
     expect(APP).not.toContain('href="/?offre=');
   });
 
