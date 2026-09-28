@@ -96,11 +96,17 @@ export function useBoostTribeLive() {
   const sessionRef = useRef({ code: '', isHost: false });
 
   // Le coach annonce son live à Afroboost (jeton signé requis côté serveur).
+  //
+  // Trois événements, un seul appel : `started`, `heartbeat`, `ended`. Le battement
+  // ne déclenche PAS l'événement local — il ne change rien à l'écran, il dit juste
+  // au serveur que le coach est toujours là.
   const annoncer = useCallback(async (event, code) => {
     if (!code || !authValide()) return;
     try {
       await axios.post(`${API}/boosttribe/live-status`, { event, session_code: code });
-      window.dispatchEvent(new CustomEvent(EVENEMENT_LIVE, { detail: { active: event === 'started' } }));
+      if (event !== 'heartbeat') {
+        window.dispatchEvent(new CustomEvent(EVENEMENT_LIVE, { detail: { active: event === 'started' } }));
+      }
     } catch (e) { /* annonce impossible : le live, lui, continue */ }
   }, []);
 
@@ -115,6 +121,14 @@ export function useBoostTribeLive() {
           sessionRef.current = { code: String(d.session_code), isHost: true };
           annoncer('started', sessionRef.current.code);
         }
+      } else if (t === 'bt:session-heartbeat') {
+        // LE CAS QUI N'A PAS D'ÉVÉNEMENT : la connexion du coach tombe, l'onglet
+        // reste ouvert. Personne n'annonce rien, et le live restait public trois
+        // heures. Tant qu'il diffuse, sa page dit « je suis là » ; quand elle se
+        // tait, le serveur éteint. Le message traverse l'iframe SANS réseau ;
+        // c'est donc bien la coupure du coach qui interrompt la chaîne, et pas
+        // autre chose.
+        if (d.is_host && d.session_code) annoncer('heartbeat', String(d.session_code));
       } else if (t === 'bt:session-ended') {
         if (d.is_host && d.session_code) annoncer('ended', String(d.session_code));
         setState('idle');
@@ -206,7 +220,11 @@ export function useLiveEnCours(intervalleMs) {
       } catch (e) { /* réseau : on garde l'état connu */ }
     };
     lire();
-    const timer = setInterval(lire, intervalleMs || 60000);
+    // Sondage ADAPTATIF. Le serveur peut désormais éteindre un live 90 s après le
+    // dernier signe de vie du coach ; sonder toutes les minutes ajouterait jusqu'à
+    // 60 s d'affichage « EN DIRECT » en trop. Pendant un live — donc rarement — on
+    // sonde à 25 s ; le reste du temps, on ne change rien.
+    const timer = setInterval(lire, actif ? 25000 : (intervalleMs || 60000));
     const onLocal = (ev) => { const a = !!(ev.detail && ev.detail.active); setActif((prev) => (prev === a ? prev : a)); };
     const onVisible = () => { if (document.visibilityState === 'visible') lire(); };
     window.addEventListener(EVENEMENT_LIVE, onLocal);
@@ -217,6 +235,6 @@ export function useLiveEnCours(intervalleMs) {
       window.removeEventListener(EVENEMENT_LIVE, onLocal);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [intervalleMs]);
+  }, [intervalleMs, actif]);
   return actif;
 }
