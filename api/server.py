@@ -14260,7 +14260,21 @@ async def boosttribe_live_status_set(request: Request):
             {"_id": "actuel", "session_code": code, "ended": False, "host": actuel.get("host")},
             {"$set": {"last_seen": maintenant, "updated_at": maintenant}})
         return {"ok": bool(r.matched_count), "live": await _btlive_etat()}
-    if evenement == "started":
+    # V550 : le document courant sert aux deux décisions qui suivent.
+    courant = await db.boosttribe_live.find_one(
+        {"_id": "actuel"}, {"_id": 0, "session_code": 1, "host": 1, "ended": 1})
+    meme_live = bool(courant) and courant.get("session_code") == code
+    hote_courant = str((courant or {}).get("host") or "").strip().lower()
+    if evenement == "started" and meme_live and not courant.get("ended") \
+            and hote_courant == email.strip().lower():
+        # V550 : RECONNEXION, pas un nouveau live. Mesuré le 28/09 : cinq
+        # `started` pour une seule session (chaque remontage de la page hôte),
+        # et `started_at` repartait à zéro — le garde-fou des 3 h glissait sans
+        # fin. On garde le début réel ; la grâce se réarme au prochain battement.
+        await db.boosttribe_live.update_one(
+            {"_id": "actuel", "session_code": code, "ended": False},
+            {"$set": {"updated_at": maintenant}, "$unset": {"last_seen": ""}})
+    elif evenement == "started":
         await db.boosttribe_live.update_one(
             {"_id": "actuel"},
             {"$set": {"session_code": code, "started_at": maintenant, "ended": False,
@@ -14276,6 +14290,9 @@ async def boosttribe_live_status_set(request: Request):
     else:
         # « ended » ne ferme QUE le live annoncé : un « ended » tardif d'une
         # ancienne session ne coupe pas le live suivant.
+        # V550 : et seul SON hôte le termine (même règle que le battement).
+        if meme_live and hote_courant and hote_courant != email.strip().lower():
+            raise HTTPException(status_code=403, detail="Seul l'hôte de ce live peut le terminer")
         await db.boosttribe_live.update_one(
             {"_id": "actuel", "session_code": code},
             {"$set": {"ended": True, "ended_at": maintenant, "updated_at": maintenant}})

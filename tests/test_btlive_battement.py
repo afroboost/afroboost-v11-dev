@@ -243,6 +243,30 @@ verifier("page hote SANS battement, 120 s apres le debut : le live reste en cour
 st, _ = appel(COACH_A, "heartbeat", "SESS-BBBB")
 verifier("le premier battement arme la grace de 90 s", st == 200 and last_seen() is not None)
 
+print("\n=== 9. V550 — RECONNEXION != NOUVEAU LIVE ; LA FIN AUSSI EST A L'HOTE ===")
+# Mesure du 28/09 (E97T2UNA-3Z3W5H) : CINQ `started` pour une seule session, a
+# chaque remontage de la page hote. `started_at` repartait a zero a chaque fois :
+# le garde-fou des 3 h glissait indefiniment.
+DEBUT_ORIGINE = "2026-09-28T08:06:41+00:00"
+S.db.boosttribe_live.docs["actuel"]["started_at"] = DEBUT_ORIGINE
+st, _ = appel(COACH_A, "started", "SESS-BBBB")          # refresh / remontage
+d = S.db.boosttribe_live.docs["actuel"]
+verifier("G : re-annonce de la MEME session par le MEME hote -> started_at conserve",
+         st == 200 and d["started_at"] == DEBUT_ORIGINE, repr(d.get("started_at")))
+verifier("C : la reconnexion efface last_seen (la grace se rearme au prochain battement)",
+         "last_seen" not in d, repr(d.get("last_seen")))
+st, _ = appel(COACH_A, "heartbeat", "SESS-BBBB")
+verifier("C : le battement reprend apres la reconnexion", st == 200 and last_seen() is not None)
+st, det = appel(COACH_B, "ended", "SESS-BBBB")
+verifier("F : coach B ne peut PAS terminer le live de A (403)", st == 403, "statut %s %s" % (st, det))
+verifier("F : le live de A est toujours en cours", S.db.boosttribe_live.docs["actuel"]["ended"] is False)
+st, _ = appel(COACH_A, "ended", "SESS-BBBB")
+verifier("A termine SON live", st == 200 and S.db.boosttribe_live.docs["actuel"]["ended"] is True)
+st, _ = appel(COACH_A, "started", "SESS-CCCC")
+verifier("un VRAI nouveau live (autre code) repart avec un nouveau started_at",
+         st == 200 and S.db.boosttribe_live.docs["actuel"]["started_at"] != DEBUT_ORIGINE
+         and S.db.boosttribe_live.docs["actuel"]["ended"] is False)
+
 echecs = [r for r in RESULTATS if not r[1]]
 print("\n%d verifications, %d echec(s)" % (len(RESULTATS), len(echecs)))
 sys.exit(1 if echecs else 0)
