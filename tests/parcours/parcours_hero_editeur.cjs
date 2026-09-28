@@ -510,7 +510,7 @@ async function parcoursD(browser) {
     await choisirAppareil(p, app);
     apercu[app] = await p.evaluate(mesurerNormalise, SEL_APERCU);
     await p.locator('[data-testid="hero-editeur"]').first().screenshot({ path: path.join(CAP, `D_apercu_${app}.png`) }).catch(() => {});
-    const attendu = app === 'desktop' ? [1440, 387] : [390, 473];
+    const attendu = app === 'desktop' ? [1440, 387] : [386, 473];
     const nat = apercu[app] && apercu[app].natif;
     v(`D. aperçu ${app} : boîte simulée ${attendu[0]}×${attendu[1]} (taille native)`, !!nat && Math.abs(nat.L - attendu[0]) <= 1 && Math.abs(nat.H - attendu[1]) <= 1, nat ? `${nat.L}×${nat.H}` : 'absente');
   }
@@ -519,7 +519,7 @@ async function parcoursD(browser) {
     const acc = await mesurerAccueilNormalise(browser, t, { heroLayout: LAYOUT_TEST });
     // Constat, pas une condition : si la boîte réelle diffère de la boîte simulée,
     // seule la comparaison NORMALISÉE ci-dessous fait foi (consigne du contrat).
-    const cible = app === 'desktop' ? [1440, 387] : [390, 473];
+    const cible = app === 'desktop' ? [1440, 387] : [386, 473];
     const memeBoite = !!acc && Math.abs(acc.L - cible[0]) <= 1 && Math.abs(acc.H - cible[1]) <= 1;
     info(`D. accueil ${t.n} : .af-hero ${memeBoite ? '=' : '≠'} boîte simulée ${cible[0]}×${cible[1]}${memeBoite ? '' : ' → comparaison normalisée seule'}`,
       acc ? `${f1(acc.L)}×${f1(acc.H)}` : 'absent');

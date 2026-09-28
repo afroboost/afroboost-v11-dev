@@ -33,9 +33,9 @@ describe('echelle de l\'apercu', () => {
     expect(echelleApercu(0, 'mobile')).toBe(0);
     expect(echelleApercu(undefined, 'mobile')).toBe(0);
   });
-  test('mobile 390 dans 312 px -> 0,8', () => {
-    expect(echelleApercu(312, 'mobile')).toBeCloseTo(0.8, 5);
-    expect(APERCU_DIMENSIONS.mobile).toEqual({ largeur: 390, hauteur: 473 });
+  test('mobile 386 dans 308,8 px -> 0,8', () => {
+    expect(echelleApercu(308.8, 'mobile')).toBeCloseTo(0.8, 5);
+    expect(APERCU_DIMENSIONS.mobile).toEqual({ largeur: 386, hauteur: 473 });
   });
 });
 

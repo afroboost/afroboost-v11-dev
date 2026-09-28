@@ -19,10 +19,13 @@ import {
 } from './heroLayout';
 
 // V554 : tailles simulees de la boite Hero (contrat) : fenetre 1440x900 ->
-// boite 1440x387 ; fenetre 390x844 -> boite 390x473.
+// boite 1440x387 ; fenetre 390x844 -> boite 386x473.
+// V554 : 386 et non 390 — MESURE : sous 480 px, `.section-gradient` (V146)
+// garde 2 px de marge de chaque cote ; la vraie `.af-hero` d'un 390x844 fait
+// 386x472,6. Simuler 390 decalerait les retours a la ligne du titre.
 export const APERCU_DIMENSIONS = {
   desktop: { largeur: 1440, hauteur: 387 },
-  mobile: { largeur: 390, hauteur: 473 },
+  mobile: { largeur: 386, hauteur: 473 },
 };
 
 // V554 : pas des fleches (1 % ; Maj = 5 %) et de la taille (0,1).
