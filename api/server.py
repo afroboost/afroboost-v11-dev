@@ -1626,6 +1626,13 @@ class Concept(BaseModel):
     # v9.4.4: Couleurs avancées
     backgroundColor: str = "#000000"  # Couleur de fond du site
     glowColor: str = ""  # Couleur du glow (auto si vide = primaryColor)
+    # V547 : textes du Hero de l'accueil, modifiables par le super-admin.
+    # Valeurs par defaut = le texte qui etait code en dur dans App.js : un
+    # concept existant (sans ces champs) rend exactement la meme chose.
+    # Chaine vide = texte par defaut (decide cote vitrine). Aucune migration.
+    heroTitle: str = "Danse. Transpire. Lâche prise."
+    heroSubtitle: str = "Vis l'expérience Afroboost : danse afrobeat et fitness au casque, même si tu n'as jamais dansé."
+    heroCtaLabel: str = "Réserver mon 1er cours gratuit"
 
 class ConceptUpdate(BaseModel):
     appName: Optional[str] = None  # Nom de l'application
@@ -1661,6 +1668,33 @@ class ConceptUpdate(BaseModel):
     # v9.4.4: Couleurs avancées
     backgroundColor: Optional[str] = None
     glowColor: Optional[str] = None
+    # V547 : textes du Hero (reserves au super-admin, voir update_concept)
+    heroTitle: Optional[str] = None
+    heroSubtitle: Optional[str] = None
+    heroCtaLabel: Optional[str] = None
+
+# V547 : bornes des textes du Hero. On TRONQUE cote serveur au lieu d'un
+# Field(max_length) : un 422 ferait echouer tout l'auto-save du ConceptEditor
+# (logo, couleurs, CGV...) pour un caractere de trop.
+V547_HERO_LIMITES = {"heroTitle": 120, "heroSubtitle": 240, "heroCtaLabel": 60}
+
+
+def v547_filtrer_textes_hero(updates: dict, is_admin: bool) -> dict:
+    """V547 : les textes du Hero sont ceux de l'accueil public -> super-admin
+    seulement. Pour tout autre appelant, les champs sont RETIRES (pas rejetes),
+    comme le filtre V259 de l'affiche. Pour le super-admin, ils sont tronques."""
+    for _cle, _max in V547_HERO_LIMITES.items():
+        if _cle not in updates:
+            continue
+        if not is_admin:
+            updates.pop(_cle, None)
+            continue
+        _v = updates.get(_cle)
+        if not isinstance(_v, str):
+            updates.pop(_cle, None)
+            continue
+        updates[_cle] = _v[:_max]
+    return updates
 
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -19235,6 +19269,8 @@ async def update_concept(concept: ConceptUpdate, request: Request):
             for _f in ("eventPosterEnabled", "eventPosterMediaUrl",
                        "eventPosterReserveLabel", "eventPosterOffersLabel"):
                 updates.pop(_f, None)
+        # V547 : textes du Hero -> super-admin seulement, tronques.
+        v547_filtrer_textes_hero(updates, is_admin)
         updates["coach_id"] = user_email if not is_admin else None
         result = await db.concept.update_one({"id": concept_id}, {"$set": updates}, upsert=True)
         updated = await db.concept.find_one({"id": concept_id}, {"_id": 0})

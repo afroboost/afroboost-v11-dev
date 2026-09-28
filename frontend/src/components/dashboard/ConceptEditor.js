@@ -18,6 +18,15 @@ import SvgIcon from '../SvgIcon';
 import CloudinaryUploadButton, { uploadToCloudinary, isCloudinaryConfigured } from '../CloudinaryUploadButton';
 import { applyPrimaryColor, persistThemeColors } from '../../utils/themeColor'; // V259 + V295 (anti-FOUC)
 
+// V547 : défauts des textes du Hero — identiques à App.js et au modèle
+// Concept (api/server.py). Vide = défaut.
+const V547_HERO_DEFAUTS = {
+  titre: "Danse. Transpire. Lâche prise.",
+  sousTitre: "Vis l'expérience Afroboost : danse afrobeat et fitness au casque, même si tu n'as jamais dansé.",
+  cta: "Réserver mon 1er cours gratuit",
+};
+const v547Texte = (v, d) => (typeof v === 'string' && v.trim() ? v : d);
+
 // V291 — Color picker avancé style Canva (React pur + Canvas, aucune dépendance).
 const AfroColorPicker = ({ value, onChange, label }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -811,6 +820,73 @@ const ConceptEditor = ({
               </div>
             ))}
           </div>
+          {/* V547 : TEXTES DU HERO de l'accueil — super-admin seulement (le
+              serveur retire ces champs pour tout autre compte). Mêmes
+              règles que le reste de l'écran : `setConcept` déclenche
+              l'auto-save existant. Vide = texte par défaut. L'aperçu est
+              dérivé des props, aucun état. */}
+          {isSuperAdmin && (
+            <div
+              data-testid="v547-hero-textes"
+              style={{
+                marginTop: '12px', padding: '12px', borderRadius: '8px',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.05)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
+              }}
+            >
+              <p style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Textes du Hero</p>
+              <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '10px', marginBottom: '8px' }}>
+                Laisser un champ vide = texte par défaut.
+              </p>
+              <label className="block mb-1 text-white text-xs opacity-70">Titre du Hero</label>
+              <input
+                type="text"
+                value={concept.heroTitle ?? ''}
+                onChange={(e) => setConcept({ ...concept, heroTitle: e.target.value })}
+                className="w-full px-3 py-2 rounded-lg neon-input text-sm mb-2"
+                placeholder={V547_HERO_DEFAUTS.titre}
+                maxLength={120}
+                data-testid="v547-hero-title"
+              />
+              <label className="block mb-1 text-white text-xs opacity-70">Sous-titre du Hero</label>
+              <input
+                type="text"
+                value={concept.heroSubtitle ?? ''}
+                onChange={(e) => setConcept({ ...concept, heroSubtitle: e.target.value })}
+                className="w-full px-3 py-2 rounded-lg neon-input text-sm mb-2"
+                placeholder={V547_HERO_DEFAUTS.sousTitre}
+                maxLength={240}
+                data-testid="v547-hero-subtitle"
+              />
+              <label className="block mb-1 text-white text-xs opacity-70">Texte du bouton</label>
+              <input
+                type="text"
+                value={concept.heroCtaLabel ?? ''}
+                onChange={(e) => setConcept({ ...concept, heroCtaLabel: e.target.value })}
+                className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+                placeholder={V547_HERO_DEFAUTS.cta}
+                maxLength={60}
+                data-testid="v547-hero-cta"
+              />
+              {/* Aperçu simple (le sous-titre est masqué sur téléphone côté vitrine) */}
+              <div
+                data-testid="v547-hero-apercu"
+                style={{ marginTop: '10px', padding: '12px', borderRadius: '8px', background: 'rgba(0,0,0,0.55)', textAlign: 'center' }}
+              >
+                <p style={{ color: '#fff', fontWeight: 800, fontSize: '16px', lineHeight: 1.2 }}>
+                  {v547Texte(concept.heroTitle, V547_HERO_DEFAUTS.titre)}
+                </p>
+                <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '11px', marginTop: '4px' }}>
+                  {v547Texte(concept.heroSubtitle, V547_HERO_DEFAUTS.sousTitre)}
+                </p>
+                <span style={{
+                  display: 'inline-block', marginTop: '8px', padding: '6px 14px', borderRadius: '999px',
+                  background: 'var(--primary-color, #D91CD2)', color: '#fff', fontSize: '11px', fontWeight: 700
+                }}>
+                  {v547Texte(concept.heroCtaLabel, V547_HERO_DEFAUTS.cta)}
+                </span>
+              </div>
+            </div>
+          )}
         </div>)}
 
         {/* v37.2: BRANDING & IDENTITÉ (Logo, Favicon) — section vitrine */}

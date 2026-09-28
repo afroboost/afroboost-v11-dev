@@ -331,6 +331,29 @@ const isSuperAdminEmail = (email) => {
 // v42: Clé de persistance admin — ne jamais supprimer lors du logout
 const ADMIN_AUTH_TOKEN_KEY = 'afroboost_admin_persist';
 
+// V547 : textes du Hero modifiables par le super-admin (concept.heroTitle,
+// heroSubtitle, heroCtaLabel). Défauts = le texte qui était écrit en dur ici,
+// caractère pour caractère : un concept sans ces champs rend la même chose.
+const V547_HERO_TITRE = "Danse. Transpire. Lâche prise.";
+const V547_HERO_SOUS_TITRE = "Vis l'expérience Afroboost : danse afrobeat et fitness au casque, même si tu n'as jamais dansé.";
+const V547_HERO_CTA = "Réserver mon 1er cours gratuit";
+// Une valeur vide (ou faite d'espaces) retombe sur le défaut : un champ vidé
+// dans l'éditeur ne laisse jamais un hero sans titre ni un bouton muet.
+const heroTexte = (v, d) => (typeof v === 'string' && v.trim() ? v : d);
+
+// V547 : INDICE d'affichage seulement (aucun droit n'en dépend) — la pastille
+// Live de la barre mobile apparaît hors direct pour qui a une session coach.
+// Le serveur (`POST /api/boosttribe/access`) reste seul juge de l'accès.
+// Pas les clés abonné : ce n'est pas l'hôte (cf. visiteurEstConnecte).
+const v547IndiceSessionCoach = () => {
+  try {
+    if (authValide()) return true;
+    if (window.localStorage.getItem('afroboost_coach_user')) return true;
+    if (window.localStorage.getItem(ADMIN_AUTH_TOKEN_KEY)) return true;
+  } catch (e) { /* stockage indisponible : aucun indice */ }
+  return false;
+};
+
 // v9.2.4: DÉTECTION IMMÉDIATE PROPULSION STRIPE (avant tout rendu) - MÉMOIRE MORTE
 // Cette logique s'exécute AVANT React pour capturer l'intention de redirection
 const detectStripeSuccess = () => {
@@ -8801,7 +8824,8 @@ function App() {
             className="text-white font-extrabold leading-tight"
             style={{ fontSize: 'clamp(1.75rem, 6vw, 3rem)', textShadow: '0 2px 14px rgba(0,0,0,0.75)' }}
           >
-            Danse. Transpire. Lâche prise.
+            {/* V547 : texte modifiable (Ma Vitrine > Vidéo Hero), défaut sinon */}
+            {heroTexte(concept.heroTitle, V547_HERO_TITRE)}
           </h1>
           {/* V541 — CETTE PHRASE RESTE, ELLE NE S'AFFICHE PLUS SUR TÉLÉPHONE.
               Sur 390 px elle prenait deux lignes et 44 px de hauteur pour
@@ -8813,7 +8837,7 @@ function App() {
             className="af-hero-sous text-white/90 mt-3 max-w-md"
             style={{ fontSize: 'clamp(0.95rem, 3.4vw, 1.1rem)', textShadow: '0 2px 10px rgba(0,0,0,0.7)' }}
           >
-            Vis l'expérience Afroboost : danse afrobeat et fitness au casque, même si tu n'as jamais dansé.
+            {heroTexte(concept.heroSubtitle, V547_HERO_SOUS_TITRE)}
           </p>
           {/* C1-FIX : le rose de marque sur une photo etait illisible. Passage
               en blanc — le CTA porte deja la couleur de marque juste en dessous,
@@ -8893,7 +8917,7 @@ function App() {
             data-testid="c1-hero-cta"
           >
             <SvgIcon name="headphones" size={18} />
-            Réserver mon 1er cours gratuit
+            {heroTexte(concept.heroCtaLabel, V547_HERO_CTA)}
           </a>
         </div>
         {/* =============== FIN C1 =============== */}
@@ -8960,20 +8984,33 @@ function App() {
           {/* V543 — LA SEULE TRACE DU LIVE DANS LA BARRE, et uniquement
               quand il y en a un. Hors direct, rien ne s'affiche : pas de
               pastille morte. Elle appelle le même handler que la carte. */}
-          {liveEnCours && (
+          {/* V547 — HORS DIRECT, L'HÔTE DOIT POUVOIR LANCER SON LIVE.
+              Sous 1024 px la carte Live est masquée : un coach connecté
+              n'avait aucune entrée hors direct. La pastille s'affiche donc
+              aussi quand un INDICE de session coach existe (booléen, lu au
+              rendu, jamais en dépendance d'effet). Même handler : le serveur
+              décide. Visiteur anonyme hors direct : toujours rien. */}
+          {(liveEnCours || v547IndiceSessionCoach()) && (
             <button
               type="button"
-              className="af-nav-live"
+              className={liveEnCours ? 'af-nav-live' : 'af-nav-live af-nav-live-hote'}
               onClick={ouvrirLiveDepuisLaBarre}
               disabled={btLive.state === 'loading'}
-              aria-label="Afroboost Live est en direct — rejoindre"
-              title="Afroboost Live est en direct"
+              aria-label={liveEnCours ? 'Afroboost Live est en direct — rejoindre' : 'Ouvrir Afroboost Live'}
+              title={liveEnCours ? 'Afroboost Live est en direct' : 'Afroboost Live'}
               data-testid="nav-mobile-live"
+              data-direct={liveEnCours ? 'true' : 'false'}
             >
-              <span className="af-live-barres" aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'flex-end', gap: 2.5, height: 15 }}>
-                <i /><i /><i />
-              </span>
-              <span>EN DIRECT</span>
+              {liveEnCours ? (
+                <span className="af-live-barres" aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'flex-end', gap: 2.5, height: 15 }}>
+                  <i /><i /><i />
+                </span>
+              ) : (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="m23 7-7 5 7 5z" /><rect x="1" y="5" width="15" height="14" rx="2" />
+                </svg>
+              )}
+              <span>{liveEnCours ? 'EN DIRECT' : 'LIVE'}</span>
             </button>
           )}
           <button
