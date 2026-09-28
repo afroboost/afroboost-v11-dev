@@ -27,6 +27,7 @@ import ReservationTab from "./coach/ReservationTab"; // Import Reservation Tab
 import CourseRemindersCard from "./coach/CourseRemindersCard"; // RAPPELS V2 : rappels choisis cours par cours
 import SuiviAbonnes from "./coach/SuiviAbonnes"; // V334 etape 3
 import FunnelEssaiCard from "./coach/FunnelEssaiCard"; // ESSAI-3
+import InvitationPartageCard from "./coach/InvitationPartageCard"; // V551 : Parrainage V2
 import ModerationTemoignages from "./coach/ModerationTemoignages"; // ESSAI-5a-2
 import MessagesWhatsApp from "./coach/MessagesWhatsApp"; // V411
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
@@ -7868,6 +7869,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   // ESSAI-3 : le funnel de l'essai gratuit. Pas de badge — un
                   // compteur ici n'appellerait aucune action, il ferait du bruit.
                   { id: 'funnel', icon: 'target', label: 'Funnel essai', badge: 0 },
+                  // V551 : Parrainage V2 — image et message d'invitation des membres.
+                  { id: 'parrainage', icon: 'users', label: 'Invitation & partage', badge: 0 },
                   // V411 : les echanges WhatsApp recus sur le numero Afroboost.
                   // V441 : le badge compte les messages ENTRANTS non lus. Il etait
                   // code en dur a 0, donc la pastille n'apparaissait jamais.
@@ -8734,6 +8737,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             {offersSubTab === 'funnel' && (
               <div style={{ marginTop: 12 }}>
                 <FunnelEssaiCard />
+              </div>
+            )}
+
+            {/* V551 : Parrainage V2 — « Invitation & partage ». Identite = jeton. */}
+            {offersSubTab === 'parrainage' && (
+              <div style={{ marginTop: 12 }}>
+                <InvitationPartageCard API={API} />
               </div>
             )}
 
