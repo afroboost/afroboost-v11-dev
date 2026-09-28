@@ -290,6 +290,89 @@ describe('V551 — InvitationWizard : pass existant', () => {
   });
 });
 
+// ═══ V552 — la vraie carte (og:image) dans l'aperçu ══════════════════════════
+const CARTE = 'https://afroboost.com/api/share/duo/TOK123/carte.jpg?v=2';
+describe('V552 — InvitationWizard : vraie carte dans l\'aperçu', () => {
+  test('« prête » : la carte card_url est affichée (ratio 1200:630), titre + message + séance dessous', async () => {
+    routerGet({ profil: PROFIL_LIE });
+    const p = passOuvert({ card_url: CARTE, invitation: { display_name: 'Aïcha', photo_url: null, message: 'On danse ?', version: 2 } });
+    await monter(<InvitationWizard courses={COURSES} passOuvert={p} />);
+    const img = par('wizard-apercu-carte');
+    expect(img).not.toBeNull();
+    expect(img.getAttribute('src')).toBe(CARTE);
+    expect(img.getAttribute('alt')).toBe('Aperçu de ton invitation');
+    expect(img.getAttribute('width')).toBe('1200');
+    expect(img.getAttribute('height')).toBe('630');
+    const apercu = par('wizard-apercu').textContent;
+    expect(apercu).toContain("Aïcha t'invite à Afroboost");
+    expect(apercu).toContain('On danse ?');
+    expect(apercu).toContain('Afroboost Dimanche');
+    expect(par('wizard-apercu-image')).toBeNull();
+    expect(par('wizard-carte-a-venir')).toBeNull();
+  });
+
+  test('étape 3 d\'une modification : la carte card_url est l\'aperçu', async () => {
+    routerGet({ profil: PROFIL_LIE });
+    await monter(<InvitationWizard courses={COURSES} passOuvert={passOuvert({ card_url: CARTE })} />);
+    await cliquer('wizard-modifier');
+    await cliquer('wizard-suivant');
+    await cliquer('wizard-suivant');
+    expect(par('wizard-etape-3')).not.toBeNull();
+    expect(par('wizard-apercu-carte').getAttribute('src')).toBe(CARTE);
+  });
+
+  test('sans card_url : aperçu actuel + « La carte finale est générée à l\'envoi »', async () => {
+    routerGet({ profil: PROFIL_LIE });
+    await monter(<InvitationWizard courses={COURSES} passOuvert={passOuvert()} />);
+    expect(par('wizard-apercu-carte')).toBeNull();
+    expect(par('wizard-apercu')).not.toBeNull();
+    expect(par('wizard-carte-a-venir').textContent).toContain("La carte finale est générée à l'envoi");
+  });
+
+  test('création : étape 3 avant POST = aperçu actuel ; après POST, la card_url renvoyée', async () => {
+    routerGet({ profil: PROFIL_LIE });
+    axios.post.mockResolvedValue({ data: passOuvert({ card_url: CARTE }) });
+    await monter(<InvitationWizard courses={COURSES} passOuvert={null} />);
+    await cliquer('wizard-suivant');
+    await cliquer('wizard-suivant');
+    expect(par('wizard-apercu-carte')).toBeNull();
+    expect(par('wizard-carte-a-venir')).not.toBeNull();
+    await cliquer('wizard-creer');
+    expect(par('wizard-prete')).not.toBeNull();
+    expect(par('wizard-apercu-carte').getAttribute('src')).toBe(CARTE);
+  });
+
+  test('image en erreur → retour à l\'aperçu actuel, jamais d\'image cassée', async () => {
+    routerGet({ profil: PROFIL_LIE });
+    await monter(<InvitationWizard courses={COURSES} passOuvert={passOuvert({ card_url: CARTE })} />);
+    const img = par('wizard-apercu-carte');
+    await act(async () => { img.dispatchEvent(new Event('error')); });
+    await flush();
+    expect(par('wizard-apercu-carte')).toBeNull();
+    expect(par('wizard-apercu')).not.toBeNull();
+    expect(conteneur.querySelector(`img[src="${CARTE}"]`)).toBeNull();
+  });
+});
+
+// ═══ V552 — cibles tactiles ≥ 44 px ══════════════════════════════════════════
+describe('V552 — InvitationWizard : cibles tactiles', () => {
+  test('Modifier et QR portent la classe de cible tactile ; les boutons pleins aussi', async () => {
+    routerGet({ profil: PROFIL_LIE });
+    await monter(<InvitationWizard courses={COURSES} passOuvert={passOuvert()} onQr={jest.fn()} />);
+    expect(par('wizard-modifier').classList.contains('cp-wz-tap')).toBe(true);
+    expect(par('inviter-qr').classList.contains('cp-wz-tap')).toBe(true);
+    ['inviter-whatsapp', 'inviter-partager', 'inviter-copier'].forEach((id) => {
+      expect(par(id).classList.contains('cp-wz-cible')).toBe(true);
+    });
+    await cliquer('wizard-modifier');
+    expect(par('wizard-suivant').classList.contains('cp-wz-cible')).toBe(true);
+    await cliquer('wizard-suivant');
+    expect(par('wizard-precedent').classList.contains('cp-wz-cible')).toBe(true);
+    await cliquer('wizard-suivant');
+    expect(par('wizard-enregistrer').classList.contains('cp-wz-cible')).toBe(true);
+  });
+});
+
 // ═══ Page invité ═════════════════════════════════════════════════════════════
 describe('V551 — InvitationDuo : nom et photo de l\'invitation', () => {
   const PUB = { status: 'waiting', sponsor_first_name: 'Bassi', course: COURSE, occurrence: OCC, expired: false };
