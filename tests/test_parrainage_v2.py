@@ -199,7 +199,15 @@ async def partie_membre():
         d["coach_id"] = COACH_A
     c, inv = await appel(R.referral_invitation_get(H.req_parrain(base)))
     verifier("5c. message par défaut : coach du membre > plateforme", inv.get("default_message") == "Message du coach A", inv)
+    # V551 (intégration) : l'aperçu membre montre l'image choisie par SON coach.
+    base["referral_share_settings"].docs[0]["share_image_url"] = "/api/files/imgA/share_a.png"
+    c, inv = await appel(R.referral_invitation_get(H.req_parrain(base)))
+    verifier("5c2. GET /invitation expose l'image de partage effective du coach",
+             (inv.get("effective") or {}).get("image_url") == "/api/files/imgA/share_a.png", inv)
     base["referral_share_settings"].docs[:] = []
+    c, inv = await appel(R.referral_invitation_get(H.req_parrain(base)))
+    verifier("5c3. sans image configurée : effective.image_url = None (le front garde le visuel de l'offre)",
+             "effective" in inv and inv["effective"].get("image_url") is None, inv)
     c, inv = await appel(R.referral_invitation_get(H.req_parrain(base)))
     verifier("5d. sans réglage : message intégré", inv.get("default_message") == E.MESSAGE_INVITATION_DEFAUT, inv)
 

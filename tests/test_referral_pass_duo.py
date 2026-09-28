@@ -1605,18 +1605,21 @@ def partie_v538():
              and 'or f"{FRONT}/logo512.png"' in SRC_SRV)
 
     # ── CAS J/K/L : un seul lien pour tous les boutons ───────────────────────
+    # V551 : le partage vit désormais dans l'assistant d'invitation (InvitationWizard) ;
+    # la garantie reste la même — UN seul lien pour tous les boutons.
+    SRC_WIZ = io.open(os.path.join(RACINE, "frontend", "src", "components", "parrainage",
+                                   "InvitationWizard.js"), encoding="utf-8").read()
     verifier("V538-J/K/L. WhatsApp, Copier, QR et Partager partagent la MÊME URL (`share_url`, repli `invite_url`)",
-             "const lienInvite = passLien ? (passLien.share_url || passLien.invite_url) : '';" in SRC_CENTRE
-             and "copier(lienInvite)" in SRC_CENTRE and "url: lienInvite" in SRC_CENTRE
-             # `passLien.invite_url` ne subsiste QUE comme repli dans la ligne ci-dessus
-             and SRC_CENTRE.count("passLien.invite_url") == 1)
+             "const lien = pass ? (pass.share_url || pass.invite_url || '') : '';" in SRC_WIZ
+             and "copier(lien)" in SRC_WIZ and "url: lien" in SRC_WIZ and "onQr(pass, lien)" in SRC_WIZ
+             and SRC_WIZ.count("invite_url") == 1)
 
     # ── CAS A/B : l'ordre du parcours ────────────────────────────────────────
-    verifier("V538-A/B. sans Pass, le CTA « Créer mon Pass Duo » est rendu AVANT le bloc de partage",
-             'data-testid="creer-pass-cta"' in SRC_CENTRE
-             and "Créer mon Pass Duo" in SRC_CENTRE
-             and SRC_CENTRE.index('data-testid="creer-pass-cta"') < SRC_CENTRE.index('data-testid="inviter-un-ami"')
-             and "{!lienInvite ? (" in SRC_CENTRE)
+    # V551 : sans Pass, l'assistant s'ouvre sur l'étape 1 (préparer) — le partage
+    # n'existe qu'une fois le lien obtenu, jamais en boutons morts.
+    verifier("V538-A/B. sans Pass, le parcours commence par préparer l'invitation, le partage vient APRÈS",
+             "InvitationWizard" in SRC_CENTRE and "useState(1)" in SRC_WIZ
+             and 'disabled={!lien}' in SRC_WIZ and "if (!lien) return;" in SRC_WIZ)
 
     # ── CAS N/O : les compteurs après annulation ─────────────────────────────
     _passes = [{"id": "p1", "invitee": {"name": "A"}, "opened_at": "x", "status": "friend_registered"},

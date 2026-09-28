@@ -1499,6 +1499,9 @@ async def referral_invitation_get(request: Request):
     return {
         "identity": {"display_name": _nom or "", "photo_url": _photo or None},
         "default_message": _reg["message"],
+        # V551 : l'aperçu du membre montre l'image de partage de SON coach (None = le
+        # front garde le visuel de l'offre, comme la page de partage).
+        "effective": {"image_url": _reg["image_url"]},
         "pass": (await _dto(_pd)) if _pd else None,
     }
 
