@@ -253,6 +253,8 @@ import PartnersCarousel from "./components/PartnersCarousel";
 import AudioPlayer from "./components/AudioPlayer";
 // V230 — chevron du repliage de la quantite (coherent avec la migration V228)
 import SvgIcon from "./components/SvgIcon";
+import HeroTexte from "./components/HeroTexte"; // V554 : renderer unique du texte du Hero
+import { fusionnerConceptVitrine } from "./utils/heroLayout"; // V554
 // V184: Espace abonné accès rapide (lien public /espace/AFR-XXXXXX)
 import SubscriberSpace from "./components/SubscriberSpace";
 // V534: les deux pages du Parrainage sont chargées à la demande — elles ne
@@ -331,15 +333,8 @@ const isSuperAdminEmail = (email) => {
 // v42: Clé de persistance admin — ne jamais supprimer lors du logout
 const ADMIN_AUTH_TOKEN_KEY = 'afroboost_admin_persist';
 
-// V547 : textes du Hero modifiables par le super-admin (concept.heroTitle,
-// heroSubtitle, heroCtaLabel). Défauts = le texte qui était écrit en dur ici,
-// caractère pour caractère : un concept sans ces champs rend la même chose.
-const V547_HERO_TITRE = "Danse. Transpire. Lâche prise.";
-const V547_HERO_SOUS_TITRE = "Vis l'expérience Afroboost : danse afrobeat et fitness au casque, même si tu n'as jamais dansé.";
-const V547_HERO_CTA = "Réserver mon 1er cours gratuit";
-// Une valeur vide (ou faite d'espaces) retombe sur le défaut : un champ vidé
-// dans l'éditeur ne laisse jamais un hero sans titre ni un bouton muet.
-const heroTexte = (v, d) => (typeof v === 'string' && v.trim() ? v : d);
+// V547 -> V554 : les textes par défaut du Hero et leur repli vivent désormais
+// dans utils/heroLayout.js (HERO_TEXTES_DEFAUT, texteHero), rendus par HeroTexte.
 
 // V547 : INDICE d'affichage seulement (aucun droit n'en dépend) — la pastille
 // Live de la barre mobile apparaît hors direct pour qui a une session coach.
@@ -5646,7 +5641,9 @@ function App() {
       if (Array.isArray(data.offers)) setOffers(data.offers);
       if (Array.isArray(data.courses)) setCourses(data.courses);
       if (data.concept) {
-        setConcept(prev => ({ ...prev, ...data.concept }));
+        // V554 : la disposition du Hero (heroLayout) du super-admin ne doit
+        // JAMAIS fuir sur la vitrine d'un partenaire : celle du partenaire, ou null.
+        setConcept(prev => fusionnerConceptVitrine(prev, data.concept));
         if (data.concept.primaryColor) {
           applyPrimaryColor(data.concept.primaryColor); // V259: pose aussi --primary-rgb
         }
@@ -8830,114 +8827,12 @@ function App() {
             On ne touche pas au carrousel, qui garde sa position : c'est le
             texte du hero qui se réserve moins de place, en rendant le bas au
             bloc qui s'y trouvait déjà. */}
-        <div
-          className="absolute inset-0 flex flex-col items-center justify-center text-center px-6 af-hero-texte"
-          style={{
-            pointerEvents: 'none',
-            zIndex: 5,
-            background: 'linear-gradient(to bottom, rgba(0,0,0,0) 12%, rgba(0,0,0,0.5) 34%, rgba(0,0,0,0.5) 66%, rgba(0,0,0,0) 88%)'
-          }}
-        >
-          <h1
-            className="text-white font-extrabold leading-tight"
-            style={{ fontSize: 'clamp(1.75rem, 6vw, 3rem)', textShadow: '0 2px 14px rgba(0,0,0,0.75)' }}
-          >
-            {/* V547 : texte modifiable (Ma Vitrine > Vidéo Hero), défaut sinon */}
-            {heroTexte(concept.heroTitle, V547_HERO_TITRE)}
-          </h1>
-          {/* V541 — CETTE PHRASE RESTE, ELLE NE S'AFFICHE PLUS SUR TÉLÉPHONE.
-              Sur 390 px elle prenait deux lignes et 44 px de hauteur pour
-              redire ce que le titre et la ligne d'offre disent déjà. Elle est
-              masquée par une media query (`.af-hero-sous`) : le texte est
-              toujours dans la page, rien n'est supprimé du système, c'est une
-              décision d'affichage. Sur grand écran elle ne bouge pas. */}
-          <p
-            className="af-hero-sous text-white/90 mt-3 max-w-md"
-            style={{ fontSize: 'clamp(0.95rem, 3.4vw, 1.1rem)', textShadow: '0 2px 10px rgba(0,0,0,0.7)' }}
-          >
-            {heroTexte(concept.heroSubtitle, V547_HERO_SOUS_TITRE)}
-          </p>
-          {/* C1-FIX : le rose de marque sur une photo etait illisible. Passage
-              en blanc — le CTA porte deja la couleur de marque juste en dessous,
-              la ligne d'offre n'a pas besoin de la repeter. Texte inchange. */}
-          {/* V544 — CETTE LIGNE DIT CE QUE LE BOUTON DIT DÉJÀ.
-              Le CTA juste en dessous porte « Réserver mon 1er cours gratuit » :
-              sur un téléphone, la même promesse était écrite deux fois à 26 px
-              d'intervalle. Elle coûtait 68 px de hauteur (24 de texte + 18 et
-              26 d'écarts) dans le seul endroit de la page où la place est
-              comptée. Elle est MASQUÉE sur téléphone par `.af-hero-offre`,
-              comme l'a été le sous-titre en V541 : le texte reste dans la
-              page et sur grand écran, où il ne gêne personne. Rien n'est
-              retiré du système, c'est une décision d'affichage. */}
-          <p
-            className="af-hero-offre mt-2 font-semibold text-white"
-            style={{ textShadow: '0 2px 12px rgba(0,0,0,0.9)' }}
-          >
-            Ton premier cours est gratuit.
-          </p>
-
-          {/* Vrai <a> : si le JavaScript du clic echoue, la navigation se fait
-              quand meme. La mesure est un BONUS, jamais une condition. */}
-          <a
-            href="/?link=b83914b4-c5a"
-            onClick={() => {
-              // C1 : `trial_cta_click` explicite. `autocapture` reste a false —
-              // la configuration globale de PostHog n'est pas touchee.
-              // Enveloppe dans un try : une erreur ou une lenteur de PostHog ne
-              // doit JAMAIS empecher le visiteur d'entrer dans le tunnel.
-              //
-              // C16-pre — POURQUOI `transport: 'sendBeacon'`.
-              // L'evenement n'arrivait JAMAIS dans PostHog alors que les
-              // `$pageview` passaient. Cause constatee dans la page en direct :
-              // `config.request_batching === true`. Le SDK met l'evenement en
-              // FILE et l'envoie un peu plus tard ; or ce clic declenche
-              // immediatement la navigation native vers le tunnel, ce qui
-              // annule la requete en vol. Un `$pageview` ne souffre pas de ca :
-              // aucune navigation ne le suit.
-              //
-              // `sendBeacon` est justement concu pour survivre au dechargement
-              // de la page : le navigateur prend l'envoi a sa charge et le
-              // termine apres la navigation.
-              //
-              // API VERIFIEE dans la version reellement chargee, pas supposee :
-              // `capture.length === 3` (event, properties, options) et un appel
-              // avec `{transport:'sendBeacon'}` produit bien une requete
-              // `initiatorType: "beacon"` vers `/i/v0/e/`.
-              //
-              // ⚠️ On NE fait toujours PAS de `preventDefault` : la navigation
-              // reste native et immediate. Zero attente, zero retard — la mesure
-              // ne conditionne rien. Si PostHog est bloque (adblock) ou absent,
-              // le `try` avale et le lien fonctionne comme avant.
-              // FUNNEL ESSAI — passe desormais par `funnelTracer`, qui porte le
-              // try/catch et le filtre de donnees personnelles. `sendBeacon`
-              // est CONSERVE : sans lui, la navigation qui suit le clic annule
-              // la requete et le clic n'est jamais compte.
-              // `variante: 'chat'` decrit la DESTINATION de ce CTA — il pointe
-              // aujourd'hui sur le tunnel. Le jour ou l'etape 2 le fera pointer
-              // sur l'offre, cette valeur devra devenir 'direct' : c'est elle
-              // qui rendra les deux periodes comparables.
-              funnelTracer(
-                'trial_cta_click',
-                { source: 'homepage_hero', variante: 'chat' },
-                { transport: 'sendBeacon' }
-              );
-            }}
-            className="mt-6 inline-flex items-center justify-center gap-2 font-bold rounded-full w-full max-w-[260px] md:w-auto md:max-w-none"
-            style={{
-              pointerEvents: 'auto',
-              background: 'var(--primary-color, #D91CD2)',
-              color: '#fff',
-              padding: '14px 26px',
-              fontSize: 'clamp(0.95rem, 3.6vw, 1.05rem)',
-              textDecoration: 'none',
-              boxShadow: '0 6px 24px rgba(var(--primary-rgb, 217, 28, 210), 0.45)'
-            }}
-            data-testid="c1-hero-cta"
-          >
-            <SvgIcon name="headphones" size={18} />
-            {heroTexte(concept.heroCtaLabel, V547_HERO_CTA)}
-          </a>
-        </div>
+        {/* V554 : le bloc texte est rendu par HeroTexte, LE renderer unique du Hero
+            (components/HeroTexte.js) : même classes, mêmes textes, même lien, même
+            mesure `trial_cta_click` en sendBeacon, même `pointer-events`. L'aperçu
+            de l'éditeur visuel rend ce MÊME composant. Sans `concept.heroLayout`,
+            le rendu est celui décrit par les commentaires ci-dessus. */}
+        <HeroTexte concept={concept} />
         {/* =============== FIN C1 =============== */}
       </div>
 

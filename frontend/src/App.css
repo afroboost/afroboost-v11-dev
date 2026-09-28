@@ -1209,16 +1209,20 @@ video:-ms-fullscreen {
 
    `padding` et non `transform` : le centrage vertical reste un vrai centrage,
    dans la boîte qui reste. */
+/* V554 : les media queries `(min|max)-width: 1023/1024px` du texte du Hero
+   deviennent des regles `[data-appareil]` posees par HeroTexte depuis la
+   LARGEUR DE LA BOITE `.af-hero` (et non de la fenetre) : l'apercu mobile de
+   l'editeur, affiche sur un ecran d'ordinateur, est ainsi identique a un vrai
+   telephone. Valeurs INCHANGEES. Les paddings effectifs (desktop 0/56,
+   mobile 76/104) sont poses en ligne par HeroTexte depuis HERO_ZONES_SURES ;
+   68/96 ci-dessous n'est plus qu'un repli. */
 .af-hero-texte {
   padding-top: 68px;     /* bandeau fixe mesure a 64 px en mobile */
   padding-bottom: 96px;  /* avatar + « Afroboost » + « Coach Afroboost - … » */
 }
-@media (min-width: 1024px) {
-  .af-hero-texte {
-    padding-top: 0;      /* la page reserve deja 56 px au-dessus du hero */
-    padding-bottom: 56px;
-  }
-}
+/* V554 : les paddings haut / bas par appareil (desktop 0 / 56, mobile 76 / 104)
+   ne vivent PLUS ici : HeroTexte les pose en ligne depuis HERO_ZONES_SURES
+   (utils/heroLayout.js), source unique partagee avec les limites de l'editeur. */
 
 /* LE COMPTE EXACT, EN MOBILE (390x844) : hero 422 px, moins 68 px de bandeau,
    moins 96 px de bloc coach = 258 px utiles. Le bloc titre + sous-titre +
@@ -1227,10 +1231,8 @@ video:-ms-fullscreen {
    On reprend donc 10 px sur le seul ecart qui peut les rendre : celui qui
    precede le bouton (24 px, `mt-6`). Le bouton garde sa taille, sa couleur,
    sa cible tactile et son texte. Desktop non concerne : la place y est. */
-@media (max-width: 1023px) {
-  .af-hero-texte > a[data-testid="c1-hero-cta"] {
-    margin-top: 14px;
-  }
+.af-hero-texte[data-appareil="mobile"] > a[data-testid="c1-hero-cta"] {
+  margin-top: 14px; /* V554 : ecrase plus bas par le 40 px de V544 (inchange) */
 }
 
 /* LE RECADRAGE. Le média du hero est servi en 1024x1024 (carré) et rendu en
@@ -1380,8 +1382,11 @@ body {
 /* LE HERO MOBILE, ALLÉGÉ. Le sous-titre de deux lignes s'efface (le texte
    reste dans la page), et le hero peut redescendre à 46vh sans serrer : le
    contenu qu'il doit loger passe de ~258 px à ~200. */
+/* V554 : ex-`@media (max-width: 1023px)`, desormais `[data-appareil="mobile"]`
+   (largeur de la boite Hero). La hauteur `.af-hero` reste, elle, en media
+   query : c'est la page, pas le texte. */
+.af-hero-texte[data-appareil="mobile"] .af-hero-sous { display: none; }
 @media (max-width: 1023px) {
-  .af-hero-sous { display: none; }
   /* V543 — LE HERO RESPIRE. À 46vh, titre, ligne d'offre, bouton et bloc
      coach se touchaient : l'écran paraissait comprimé. 52vh donnent ~440 px
      sur un 390×844 ; une fois retirés les 76 px réservés au bandeau fixe et
@@ -1401,19 +1406,19 @@ body {
      La règle V543 tient : à 390×844 le hero finit à 474 px, il reste 370 px
      de premier écran pour la barre et le début du fil. */
   .af-hero { height: 56vh; max-height: 56vh; min-height: 396px; }
-  .af-hero-texte { padding-top: 76px; padding-bottom: 104px; }
-  /* Chaque bloc est séparé de son voisin, plutôt que collé. */
-  .af-hero-texte > h1 { line-height: 1.12; }
-  /* La promesse « premier cours gratuit » est déjà dans le bouton. */
-  .af-hero-offre { display: none; }
 }
+/* V554 : padding mobile 76 / 104 -> HERO_ZONES_SURES.mobile (utils/heroLayout.js). */
+/* Chaque bloc est séparé de son voisin, plutôt que collé. */
+.af-hero-texte[data-appareil="mobile"] > h1 { line-height: 1.12; }
+/* La promesse « premier cours gratuit » est déjà dans le bouton. */
+.af-hero-texte[data-appareil="mobile"] .af-hero-offre { display: none; }
 
 /* LE CTA. Il faisait 260 px de large (67 % de l'écran) et 74 px de haut.
    Il reste le même bouton, le même lien, le même événement de mesure —
    seulement plus mesuré : 224 px, texte 13,5 px, et une zone tactile qui
    reste très au-dessus des 44 px recommandés. */
-@media (max-width: 1023px) {
-  .af-hero-texte > a[data-testid="c1-hero-cta"] {
+/* V554 : ex-media query, desormais `[data-appareil="mobile"]` (mode flux). */
+.af-hero-texte[data-appareil="mobile"] > a[data-testid="c1-hero-cta"] {
     /* V543 — « Réserver mon 1er cours gratuit » SUR UNE SEULE LIGNE.
        À 224 px de large le libellé passait à la ligne, et couper une phrase
        en deux au milieu d'un bouton fait bricolé. On règle dans cet ordre :
@@ -1437,7 +1442,6 @@ body {
        passer à 15 px le ferait déborder. On gagne de l'air par l'espace,
        jamais en rapetissant le texte. */
     margin-top: 40px;
-  }
 }
 
 /* `.section-gradient` porte `overflow-x: hidden !important` sous 480 px

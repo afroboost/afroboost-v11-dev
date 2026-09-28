@@ -22,6 +22,10 @@ from pydantic import BaseModel, ConfigDict
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
 APP = io.open(os.path.join(RACINE, "frontend", "src", "App.js"), encoding="utf-8").read()
+# V554 : les défauts du Hero ont quitté App.js pour utils/heroLayout.js
+# (HERO_TEXTES_DEFAUT), rendus par components/HeroTexte.js. La garantie
+# « le front porte le texte historique » est vérifiée là où il vit désormais.
+APP += io.open(os.path.join(RACINE, "frontend", "src", "utils", "heroLayout.js"), encoding="utf-8").read()
 ARBRE = ast.parse(SRC)
 RESULTATS = []
 
