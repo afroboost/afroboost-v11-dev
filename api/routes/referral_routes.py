@@ -1121,7 +1121,9 @@ async def referral_me(request: Request):
         _statuts[_pd.get("id")] = _d["status"]
     return {
         "enabled": True,
-        "sponsor": {"first_name": E.prenom(_p["name"]), "code": _p["code"]},
+        # V551 : même filtre que partout ailleurs — jamais la partie locale de l'e-mail
+        # (« MON CENTRE · BASSICUSTOMSHOES » vu en production le 28/09).
+        "sponsor": {"first_name": E.nom_affichable(_p.get("name"), _p.get("email")), "code": _p["code"]},
         "stats": E.stats_parrain(_passes, _invits, _statuts),
         "passes": _dtos,
         "invitations": [{"id": i.get("id"), "pass_id": i.get("pass_id"),

@@ -353,6 +353,13 @@ async def partie_page():
              and pub["sponsor_photo_url"] is None and "bassicustomshoes" not in json.dumps(pub).lower(), pub)
     verifier("7j. le whatsapp_text du parrain ne porte plus la partie locale",
              "bassicustomshoes" not in (await R._dto(p))["whatsapp_text"].lower())
+    # V551 (prod 28/09) : l'en-tête « MON CENTRE · BASSICUSTOMSHOES » venait de GET /me.
+    _local = H.PARRAIN_EMAIL.split("@")[0]
+    for _d in base2["subscriptions"].docs + base2["discount_codes"].docs:
+        _d["name"] = _local
+    c, me = await appel(R.referral_me(H.req_parrain(base2)))
+    verifier("7k. GET /me : sponsor.first_name filtré (jamais la partie locale de l'e-mail)",
+             c == 200 and me["sponsor"]["first_name"] == "" and _local.lower() not in json.dumps(me["sponsor"]).lower(), me.get("sponsor"))
 
 
 def partie_nom():
