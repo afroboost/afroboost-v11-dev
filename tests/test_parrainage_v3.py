@@ -1181,6 +1181,36 @@ async def partie_anciens_liens_og():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+async def partie_interrupteur_super_admin():
+    """V556 — l'interrupteur du Super Admin : PUT /feature-flags accepte
+    `parrainage_chaine_enabled`, SEULEMENT avec un JWT super-admin signé ; la
+    valeur écrite est celle que lit la porte de la chaîne (preuve V310c)."""
+    base, occ = H.base_de_depart(chaine=False)
+    S.db = base
+    try:
+        S.FeatureFlagsUpdate(parrainage_chaine_enabled=True)
+        _modele = True
+    except Exception:  # noqa: BLE001
+        _modele = False
+    verifier("SA-1. le modèle PUT /feature-flags accepte parrainage_chaine_enabled", _modele)
+    c, _ = await H.appel(S.update_feature_flags(S.FeatureFlagsUpdate(parrainage_chaine_enabled=True),
+                                                H.Requete({}, {})))
+    verifier("SA-2. SANS jeton -> 403 et rien d'écrit", c == 403 and await R._chaine_active() is False, c)
+    c, _ = await H.appel(S.update_feature_flags(S.FeatureFlagsUpdate(parrainage_chaine_enabled=True),
+                                                H.Requete({}, {"Authorization": "Bearer " + H.jeton_admin("coach.x@exemple.test")})))
+    verifier("SA-3. JWT d'un coach NON super-admin -> 403", c == 403 and await R._chaine_active() is False, c)
+    c, r = await H.appel(S.update_feature_flags(S.FeatureFlagsUpdate(parrainage_chaine_enabled=True),
+                                                H.Requete({}, {"Authorization": "Bearer " + H.jeton_admin(H.ADMIN)})))
+    verifier("SA-4. JWT super-admin -> 200, valeur relue true, la porte s'allume",
+             c == 200 and (r or {}).get("parrainage_chaine_enabled") is True and await R._chaine_active() is True, (c, r))
+    c, r = await H.appel(S.update_feature_flags(S.FeatureFlagsUpdate(parrainage_chaine_enabled=False),
+                                                H.Requete({}, {"Authorization": "Bearer " + H.jeton_admin(H.ADMIN)})))
+    verifier("SA-5. coupe-circuit : false -> la porte s'éteint (parcours V2)",
+             c == 200 and await R._chaine_active() is False, (c, r))
+    g = await S.get_feature_flags()
+    verifier("SA-6. GET /feature-flags rend parrainage_chaine_enabled", "parrainage_chaine_enabled" in g, g)
+
+
 def main():
     _tmp = tempfile.mkdtemp(prefix="banc_v556_")
     _orig = S._V413_MEDIA_DIR
@@ -1193,7 +1223,7 @@ def main():
         boucle = asyncio.get_event_loop()
         for partie in (partie_drapeau_porte_routes, partie_partages_successifs, partie_chaine_complete,
                        partie_ordre_inverse_anti_boucle, partie_double_recompense_fantome, partie_seance,
-                       partie_anciens_liens_og, partie_correctifs_audit):
+                       partie_anciens_liens_og, partie_correctifs_audit, partie_interrupteur_super_admin):
             try:
                 boucle.run_until_complete(partie())
             except Exception as err:  # noqa: BLE001  (banc ROUGE : on le dit, on ne plante pas)
