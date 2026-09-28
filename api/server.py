@@ -14308,15 +14308,21 @@ BTLIVE_REFUS_DEDUP_S = 60    # un refus de battement journalisé au plus 1×/min
 _btlive_refus_vus: dict = {}
 
 
-# V555 : PROPRIÉTÉ D'UN LIVE. Chaque ouverture d'overlay Afroboost porte un `owner`
-# (identifiant opaque, jamais une identité). Le dernier `started` l'enregistre
-# (reconnexion après rechargement comprise). Une fin AUTOMATIQUE (croix de l'overlay,
-# démontage, crédit refusé, motif inconnu) venant d'un AUTRE owner — autre onglet,
-# autre appareil, autre instance du même compte — est refusée (409) : connaître le
-# code ne suffit plus pour éteindre le live d'un autre. Les gestes explicites de
-# l'hôte (Terminer, Quitter) restent acceptés partout. Owner absent d'un côté ou de
-# l'autre (ancien bundle, live d'avant V555) : règle d'avant, inchangée.
+# V555 : SURFACES D'UN LIVE. Chaque ouverture d'overlay Afroboost porte un `owner`
+# (identifiant opaque, jamais une identité). `started` et chaque battement notent la
+# surface dans `surfaces` ({owner: dernier signe de vie}). Mesuré en prod le 28/09 :
+# un 2e onglet du même coach qui ouvre le Live REJOINT la session en hôte et émet
+# `started` — « le dernier started possède » faisait de lui le propriétaire, et sa
+# croix éteignait le live de l'onglet qui diffusait. Règle retenue : une fin
+# AUTOMATIQUE (croix, démontage, crédit refusé, motif inconnu) n'éteint le live que
+# si AUCUNE AUTRE surface n'a battu depuis BTLIVE_SURFACE_S ; sinon 409 journalisé,
+# et la surface qui part est retirée. Le live s'éteint quand la DERNIÈRE surface part.
+# Terminer / Quitter (gestes explicites de l'hôte) restent immédiats partout. Owner
+# absent (ancien bundle, live d'avant V555) : règle d'avant, inchangée.
+# Limite connue : rechargement puis fermeture en moins de 35 s -> refus, et le
+# live s'éteint par la grâce de 90 s (l'ancienne page ne bat plus).
 BTLIVE_FINS_EXPLICITES = ("host_terminate", "host_leave")
+BTLIVE_SURFACE_S = 35        # une surface est vivante si elle a battu il y a < 35 s (2 battements + marge)
 
 
 def btlive_owner(valeur) -> Optional[str]:
@@ -14327,13 +14333,26 @@ def btlive_owner(valeur) -> Optional[str]:
     return v if re.fullmatch(r"[A-Za-z0-9]{6,32}", v) else None
 
 
+def btlive_autres_surfaces(courant: Optional[dict], owner: Optional[str],
+                           maintenant: datetime) -> list:
+    """Les AUTRES surfaces de ce live qui ont donné signe de vie depuis < BTLIVE_SURFACE_S."""
+    surfaces = (courant or {}).get("surfaces")
+    if not isinstance(surfaces, dict):
+        return []
+    vivantes = []
+    for autre, vu in surfaces.items():
+        d = _btlive_date(vu)
+        if autre != owner and d is not None and maintenant - d <= timedelta(seconds=BTLIVE_SURFACE_S):
+            vivantes.append(autre)
+    return sorted(vivantes)
+
+
 def btlive_fin_refusee_owner(courant: Optional[dict], motif: Optional[str],
-                             owner: Optional[str]) -> bool:
-    """Vrai si cette fin automatique vient d'un autre propriétaire que celui du live ouvert."""
-    if not courant or courant.get("ended") or motif in BTLIVE_FINS_EXPLICITES:
+                             owner: Optional[str], maintenant: datetime) -> bool:
+    """Vrai si cette fin AUTOMATIQUE laisserait derrière elle une autre surface vivante."""
+    if not courant or courant.get("ended") or not owner or motif in BTLIVE_FINS_EXPLICITES:
         return False
-    detenteur = courant.get("owner")
-    return bool(detenteur and owner and owner != detenteur)
+    return bool(btlive_autres_surfaces(courant, owner, maintenant))
 
 
 def btlive_motif_fin(valeur) -> str:
@@ -14486,6 +14505,7 @@ async def boosttribe_live_status_set(request: Request, response: Response = None
     if not re.fullmatch(r"[A-Z0-9-]{4,40}", code):
         raise HTTPException(status_code=400, detail="session_code invalide")
     maintenant = datetime.now(timezone.utc).isoformat()
+    owner = btlive_owner(body.get("owner"))                      # V555 : la surface qui parle
     if evenement == "heartbeat":
         # Signe de vie : on ne touche QUE `last_seen`, et seulement sur la session
         # annoncée. Un battement en retard d'une session finie ne ressuscite rien —
@@ -14512,21 +14532,23 @@ async def boosttribe_live_status_set(request: Request, response: Response = None
         if actuel.get("ended"):
             await _btlive_refus("heartbeat", code, 409, email, request_id, request, dedup=True)
             raise HTTPException(status_code=409, detail="Ce live est terminé")
+        pose = {"last_seen": maintenant, "updated_at": maintenant}
+        if owner:
+            pose[f"surfaces.{owner}"] = maintenant               # V555 : cette surface est vivante
         r = await db.boosttribe_live.update_one(
             {"_id": "actuel", "session_code": code, "ended": False, "host": actuel.get("host")},
-            {"$set": {"last_seen": maintenant, "updated_at": maintenant}})
+            {"$set": pose})
         return {"ok": bool(r.matched_count), "live": await _btlive_etat()}
     # V550 : le document courant sert aux deux décisions qui suivent.
     courant = await db.boosttribe_live.find_one(
         {"_id": "actuel"}, {"_id": 0, "session_code": 1, "host": 1, "ended": 1,
                             "started_at": 1, "last_seen": 1,    # V553 : started_at/last_seen pour ended_prev
-                            "owner": 1})                         # V555 : propriétaire de l'overlay
+                            "surfaces": 1})                      # V555 : surfaces hôtes vivantes
     meme_live = bool(courant) and courant.get("session_code") == code
     hote_courant = str((courant or {}).get("host") or "").strip().lower()
     # V553 : la trace de CETTE requête (jamais de jeton ni de corps complet).
     motif = btlive_motif_fin(body.get("reason")) if evenement == "ended" else None
     source = btlive_source(body.get("source"))
-    owner = btlive_owner(body.get("owner"))                      # V555
     ua = _btlive_user_agent(request)
     if evenement == "started" and meme_live and not courant.get("ended") \
             and hote_courant == email.strip().lower():
@@ -14534,11 +14556,12 @@ async def boosttribe_live_status_set(request: Request, response: Response = None
         # `started` pour une seule session (chaque remontage de la page hôte),
         # et `started_at` repartait à zéro — le garde-fou des 3 h glissait sans
         # fin. On garde le début réel ; la grâce se réarme au prochain battement.
+        pose = {"updated_at": maintenant, "expiration_journalisee_at": None}   # V553
+        if owner:
+            pose[f"surfaces.{owner}"] = maintenant                           # V555 : une surface de plus
         await db.boosttribe_live.update_one(
             {"_id": "actuel", "session_code": code, "ended": False},
-            {"$set": {"updated_at": maintenant, "expiration_journalisee_at": None,   # V553
-                      "owner": owner},                                             # V555 : le dernier started possède
-             "$unset": {"last_seen": ""}})
+            {"$set": pose, "$unset": {"last_seen": ""}})
         await _btlive_journaliser({"event": "started", "outcome": "ok", "reconnexion": True,
                                    "session_code": code, "by": email, "source": source,
                                    "owner": owner, "request_id": request_id, "user_agent": ua})
@@ -14546,7 +14569,8 @@ async def boosttribe_live_status_set(request: Request, response: Response = None
         await db.boosttribe_live.update_one(
             {"_id": "actuel"},
             {"$set": {"session_code": code, "started_at": maintenant, "ended": False,
-                      "host": email, "updated_at": maintenant, "owner": owner,   # V555
+                      "host": email, "updated_at": maintenant,
+                      "surfaces": ({owner: maintenant} if owner else {}),   # V555
                       # V553 : un nouveau live repart sans la trace de fin du précédent.
                       "expiration_journalisee_at": None, "ended_reason": None,
                       "ended_by": None, "ended_source": None, "ended_request_id": None,
@@ -14570,17 +14594,23 @@ async def boosttribe_live_status_set(request: Request, response: Response = None
         if meme_live and hote_courant and hote_courant != email.strip().lower():
             await _btlive_refus("ended", code, 403, email, request_id, request)   # V553
             raise HTTPException(status_code=403, detail="Seul l'hôte de ce live peut le terminer")
-        # V555 : une fin automatique d'un AUTRE overlay/onglet n'éteint pas ce live.
-        if meme_live and btlive_fin_refusee_owner(courant, motif, owner):
-            logger.info("[BT-LIVE-REFUS] event=ended owner_mismatch reason=%s source=%s session=%s rid=%s",
+        # V555 : une fin automatique n'éteint pas un live qu'une AUTRE surface diffuse encore.
+        if meme_live and btlive_fin_refusee_owner(courant, motif, owner, datetime.now(timezone.utc)):
+            autres = btlive_autres_surfaces(courant, owner, datetime.now(timezone.utc))
+            # Cette surface part : elle ne compte plus comme vivante pour les autres.
+            # `last_seen` est (ré)armé : après une reconnexion (qui l'efface, V549b),
+            # un live dont plus personne ne bat s'éteindrait sinon au bout de 3 h, pas 90 s.
+            await db.boosttribe_live.update_one(
+                {"_id": "actuel", "session_code": code, "ended": False},
+                {"$unset": {f"surfaces.{owner}": ""}, "$set": {"last_seen": maintenant}})
+            logger.info("[BT-LIVE-REFUS] event=ended autre_surface_vivante reason=%s source=%s session=%s rid=%s",
                         motif, source, code, request_id)
             await _btlive_journaliser({"event": "ended", "outcome": "refus", "status": 409,
-                                       "reason": motif, "refus": "owner_mismatch",
-                                       "source": source, "owner": owner,
-                                       "owner_courant": courant.get("owner"),
+                                       "reason": motif, "refus": "autre_surface_vivante",
+                                       "source": source, "owner": owner, "autres_surfaces": autres,
                                        "session_code": code, "by": email,
                                        "request_id": request_id, "user_agent": ua})
-            raise HTTPException(status_code=409, detail="Ce live appartient à un autre écran")
+            raise HTTPException(status_code=409, detail="Une autre surface diffuse encore ce live")
         # V553 : la trace s'écrit UNIQUEMENT à la transition (live encore ouvert) :
         # un `ended` répété n'écrase pas le motif du premier.
         prev = _btlive_prev(courant)

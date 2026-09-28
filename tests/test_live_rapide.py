@@ -87,11 +87,12 @@ def charger(admin="coach@exemple.invalid"):
            "BTLIVE_MOTIFS_FIN": ("host_terminate", "host_leave", "page_unmount", "consume_refused",
                                  "overlay_close", "explicit_api_end", "server_expiration",
                                  "iframe_ended_sans_motif", "unknown"),
-           "BTLIVE_FINS_EXPLICITES": ("host_terminate", "host_leave")}
+           "BTLIVE_FINS_EXPLICITES": ("host_terminate", "host_leave"),
+           "BTLIVE_SURFACE_S": 35}
     for nom in ("_btlive_date", "btlive_actif", "btlive_motif_fin", "_btlive_propre", "btlive_source",
                 "_btlive_entetes", "btlive_request_id", "_btlive_user_agent", "_btlive_prev",
                 "_btlive_journaliser", "_btlive_refus", "_btlive_noter_expiration",
-                "btlive_owner", "btlive_fin_refusee_owner",
+                "btlive_owner", "btlive_autres_surfaces", "btlive_fin_refusee_owner",
                 "_btlive_etat", "boosttribe_live_status", "boosttribe_live_status_set"):
         exec(compile(_source(nom), "<prod>", "exec"), env)
     return env, base

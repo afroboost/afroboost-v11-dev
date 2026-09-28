@@ -112,9 +112,13 @@ verifier("un debut sans fuseau est lu en UTC, pas rejete",
 print("\n=== 6. STRUCTUREL — LA ROUTE ET SES GARDES ===")
 verifier("l'evenement `heartbeat` est accepte par la route",
          'if evenement not in ("started", "ended", "heartbeat")' in SRC)
-verifier("un battement n'ecrit QUE last_seen, sur la session annoncee et NON terminee",
-         '{"_id": "actuel", "session_code": code, "ended": False, "host": actuel.get("host")},\n'
-         '            {"$set": {"last_seen": maintenant, "updated_at": maintenant}})' in SRC)
+# V555 : le battement pose aussi `surfaces.<owner>` (signe de vie de la surface) ;
+# il n'écrit toujours QUE last_seen/updated_at (+ sa surface), sur la session non terminée.
+verifier("un battement n'ecrit QUE last_seen (+ sa surface V555), sur la session annoncee et NON terminee",
+         'pose = {"last_seen": maintenant, "updated_at": maintenant}' in SRC
+         and 'pose[f"surfaces.{owner}"] = maintenant' in SRC
+         and '{"_id": "actuel", "session_code": code, "ended": False, "host": actuel.get("host")},\n'
+             '            {"$set": pose})' in SRC)
 verifier("V549b : le demarrage EFFACE last_seen (il n'est pas un battement)",
          '"$unset": {"last_seen": ""}},' in SRC)
 verifier("l'ecriture reste reservee au coach authentifie",

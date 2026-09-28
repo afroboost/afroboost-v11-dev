@@ -179,7 +179,9 @@ export function useBoostTribeLive(instance) {
         // tait, le serveur éteint. Le message traverse l'iframe SANS réseau ;
         // c'est donc bien la coupure du coach qui interrompt la chaîne, et pas
         // autre chose.
-        if (d.is_host && d.session_code) annoncer('heartbeat', String(d.session_code));
+        // V555 : le battement dit aussi QUELLE surface est vivante (owner) — une autre
+        // surface ne peut alors pas éteindre le live par sa simple fermeture.
+        if (d.is_host && d.session_code) annoncer('heartbeat', String(d.session_code), { owner: ownerRef.current });
       } else if (t === 'bt:session-ended') {
         // V553 : le motif de l'iframe est recopié tel quel s'il est connu.
         if (d.is_host && d.session_code) {

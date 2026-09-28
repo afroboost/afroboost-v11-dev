@@ -165,9 +165,9 @@ describe('useBoostTribeLive', () => {
 
     envoyer(window.location.origin, { type: 'bt:session-heartbeat', is_host: true, session_code: 'AAAA-1111' });
     await act(async () => {});
-    // V553 : le corps du battement est INCHANGÉ (ni reason ni source) ; seul un X-Request-ID s'ajoute.
+    // V553 : ni reason ni source ; V555 : la surface (owner) qui bat. Plus un X-Request-ID.
     expect(axios.post).toHaveBeenLastCalledWith(expect.stringMatching(/\/boosttribe\/live-status$/),
-      { event: 'heartbeat', session_code: 'AAAA-1111' },
+      { event: 'heartbeat', session_code: 'AAAA-1111', owner: expect.stringMatching(/^[A-Za-z0-9]{6,32}$/) },
       { headers: { 'X-Request-ID': expect.any(String) } });
     // Un battement ne change RIEN à l'écran : il ne doit pas réveiller le badge.
     expect(vus).toEqual([]);
