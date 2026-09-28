@@ -19593,6 +19593,9 @@ async def share_offer_page(offer_id: str):
 </html>"""
     return HTMLResponse(html_page)
 
+# V551 : HEAD aussi (certains robots d'aperçu sondent en HEAD avant de lire) ;
+# `?v=<n>` est toléré (chaîne de requête ignorée : seul le jeton compte).
+@api_router.head("/share/duo/{share_token}")
 @api_router.get("/share/duo/{share_token}")
 async def share_duo_page(share_token: str):
     """V538 — L'APERÇU D'UNE INVITATION PASS DUO (Open Graph dynamique).
@@ -19627,7 +19630,10 @@ async def share_duo_page(share_token: str):
     if not _p:
         return RedirectResponse(url=FRONT, status_code=302)
 
-    _prenom = _duo.prenom((_p.get("sponsor") or {}).get("name"))
+    # V551 : le nom choisi pour l'invitation, sinon le prénom FILTRÉ (jamais une
+    # adresse ni sa partie locale — cas « bassicustomshoes »).
+    _prenom = _duo.nom_parrain_affichable(_p)
+    _invitation = _duo.invitation_du_pass(_p)
     _cours = _duo.dto_course(_p)
     _nom_cours = str(_cours.get("name") or "")
 
@@ -19652,9 +19658,25 @@ async def share_duo_page(share_token: str):
     except Exception:  # noqa: BLE001
         _concept = {}
 
+    # V551 : l'image de partage choisie par le coach du pass, puis celle de la
+    # plateforme (clé ""). Seules nos URL `/api/files/...` sont admises.
+    _img_coach = ""
+    try:
+        _cles = [str(_p.get("coach_id") or "").strip().lower()]
+        if _cles[0]:
+            _cles.append("")
+        for _cle in _cles:
+            _reg = await db["referral_share_settings"].find_one({"_id": _cle}) or {}
+            if _duo.url_image_partage_valide(_reg.get("share_image_url")):
+                _img_coach = _reg["share_image_url"]
+                break
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[V551] reglages de partage illisibles (%s)", type(_e).__name__)
+        _img_coach = ""
+
     _titre = _duo.og_titre_invitation(_prenom)
-    _desc = _duo.og_description_invitation(_prenom, _nom_cours, _p.get("occurrence"),
-                                           str((_offre or {}).get("name") or ""))
+    _desc = _invitation["message"] or _duo.og_description_invitation(_prenom, _nom_cours, _p.get("occurrence"),
+                                                                     str((_offre or {}).get("name") or ""))
 
     def _abs(u):
         _u = str(u or "").strip()
@@ -19666,7 +19688,8 @@ async def share_duo_page(share_token: str):
             return FRONT + _u
         return ""
 
-    _image = _abs(_duo.media_apercu(_offre, _cours_doc, _concept)) or f"{FRONT}/logo512.png"
+    _image = (_abs(_img_coach) or _abs(_duo.media_apercu(_offre, _cours_doc, _concept))
+              or f"{FRONT}/logo512.png")
     _cible = "%s/duo/%s" % (FRONT, _tok)
     _url = "%s/api/share/duo/%s" % (FRONT, _tok)
 

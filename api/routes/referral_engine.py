@@ -19,6 +19,7 @@ LES ÉTATS (contrat §4) :
   expired           dérivé en lecture : occurrence passée, pass jamais débloqué
   cancelled         annulé par le parrain (jamais depuis unlocked/used)
 """
+import re as _re  # V551 : forme des URL de fichiers
 from datetime import datetime, timezone
 
 VERSION = "V534b"
@@ -141,6 +142,172 @@ def prenom(nom) -> str:
     if not _n or "@" in _n:
         return ""
     return _n.split()[0][:40]
+
+
+# ─── V551 : LE NOM QU'ON MONTRE N'EST JAMAIS UN IDENTIFIANT ─────────────────
+#
+# Beaucoup de fiches ont été créées avec `name = email.split("@")[0]` : le nom
+# « bassicustomshoes » partait alors dans l'aperçu WhatsApp. On ne réécrit PAS
+# les données : on filtre ce qu'on AFFICHE, partout, avec cette seule fonction.
+def _sans_accents(texte) -> str:
+    import unicodedata
+    _n = unicodedata.normalize("NFKD", str(texte or ""))
+    return "".join(c for c in _n if not unicodedata.combining(c)).casefold()
+
+
+def _capitaliser(mot) -> str:
+    """« léa » -> « Léa », « JEAN-PIERRE » -> « Jean-Pierre » ; une casse déjà
+    mixte (« McLean ») est respectée."""
+    _m = str(mot or "")
+    if _m != _m.lower() and _m != _m.upper():
+        return _m
+    return "-".join(p[:1].upper() + p[1:].lower() for p in _m.split("-"))
+
+
+def nom_affichable(nom, email_norm) -> str:
+    """V551 — "" si vide, contient « @ », égal (sans casse ni accents) à la
+    partie locale de l'e-mail, ou ressemble à un identifiant (aucune lettre, ou
+    >= 20 caractères sans espace) ; sinon le premier mot, capitalisé. Pure."""
+    _n = str(nom or "").strip()
+    if not _n or "@" in _n:
+        return ""
+    _local = normaliser_email(email_norm).split("@")[0] if "@" in normaliser_email(email_norm) else ""
+    _cle = _sans_accents(_n)
+    _premier = _n.split()[0]
+    if _local and (_cle == _sans_accents(_local) or _sans_accents(_premier) == _sans_accents(_local)):
+        return ""
+    if not any(c.isalpha() for c in _n):
+        return ""
+    if len(_n) >= 20 and not any(c.isspace() for c in _n):
+        return ""
+    return _capitaliser(_premier)[:40]
+
+
+# ─── V551 : l'invitation personnalisée d'un pass ────────────────────────────
+MESSAGE_INVITATION_DEFAUT = "Je t'invite à venir essayer Afroboost avec moi. Réserve ta place ici :"
+MESSAGE_MAX = 280
+NOM_INVITATION_MAX = 40
+PHOTO_URL_MAX = 500
+HOTES_PHOTO = ("afroboost.com", "firebasestorage.googleapis.com", "storage.googleapis.com",
+               "lh3.googleusercontent.com")
+_RE_FICHIER = _re.compile(r"^/api/files/[A-Za-z0-9_-]+/[^/?#]+$")
+
+
+class InvitationInvalide(ValueError):
+    """Une valeur d'invitation refusée (422 côté route)."""
+
+
+def url_image_partage_valide(url) -> bool:
+    """V551 — seule forme admise pour l'image de partage d'un coach : un de NOS
+    fichiers (`/api/files/<id>/<nom>`), jamais une URL externe ni un `..`."""
+    if not isinstance(url, str) or not _RE_FICHIER.match(url):
+        return False
+    _nom = url.rsplit("/", 1)[-1]
+    return _nom not in (".", "..") and ".." not in url and "\\" not in url and "%" not in url \
+        and not any(c.isspace() for c in url)
+
+
+def valider_message(valeur, champ="message"):
+    """trim ; None / "" -> None ; > 280 -> InvitationInvalide."""
+    if valeur is None:
+        return None
+    if not isinstance(valeur, str):
+        raise InvitationInvalide("%s : texte attendu" % champ)
+    _v = valeur.strip()
+    if not _v:
+        return None
+    if len(_v) > MESSAGE_MAX:
+        raise InvitationInvalide("%s : %d caractères maximum" % (champ, MESSAGE_MAX))
+    return _v
+
+
+def valider_nom_invitation(valeur):
+    if valeur is None:
+        return None
+    if not isinstance(valeur, str):
+        raise InvitationInvalide("display_name : texte attendu")
+    _v = " ".join(valeur.split())
+    if not _v or len(_v) > NOM_INVITATION_MAX:
+        raise InvitationInvalide("display_name : entre 1 et %d caractères" % NOM_INVITATION_MAX)
+    if "@" in _v:
+        raise InvitationInvalide("display_name : une adresse e-mail n'est pas un nom")
+    return _v
+
+
+def valider_photo_url(valeur):
+    if valeur is None:
+        return None
+    if not isinstance(valeur, str):
+        raise InvitationInvalide("photo_url : texte attendu")
+    _v = valeur.strip()
+    if not _v:
+        return None
+    if len(_v) > PHOTO_URL_MAX:
+        raise InvitationInvalide("photo_url : trop longue")
+    if url_image_partage_valide(_v):
+        return _v
+    from urllib.parse import urlsplit
+    try:
+        _u = urlsplit(_v)
+    except ValueError:
+        raise InvitationInvalide("photo_url : adresse illisible")
+    _hote = (_u.hostname or "").lower()
+    if _u.scheme != "https" or _hote not in HOTES_PHOTO or _u.username or _u.password \
+            or any(c.isspace() for c in _v):
+        raise InvitationInvalide("photo_url : hôte non autorisé")
+    return _v
+
+
+def valider_invitation(corps, existante=None) -> dict:
+    """Fusionne les champs PRÉSENTS de `corps` sur l'invitation existante.
+    Rend `{display_name, photo_url, message}` ; lève InvitationInvalide."""
+    if not isinstance(corps, dict):
+        raise InvitationInvalide("invitation : objet attendu")
+    _e = existante if isinstance(existante, dict) else {}
+    _sortie = {"display_name": _e.get("display_name"), "photo_url": _e.get("photo_url"),
+               "message": _e.get("message")}
+    if "display_name" in corps:
+        _sortie["display_name"] = valider_nom_invitation(corps.get("display_name"))
+    if "photo_url" in corps:
+        _sortie["photo_url"] = valider_photo_url(corps.get("photo_url"))
+    if "message" in corps:
+        _sortie["message"] = valider_message(corps.get("message"))
+    return _sortie
+
+
+def version_invitation(pass_doc) -> int:
+    try:
+        return max(0, int((pass_doc or {}).get("invitation_version") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def invitation_du_pass(pass_doc) -> dict:
+    """`{display_name, photo_url, message, version}` — null partout, version 0,
+    pour un pass sans invitation (rétro-compatible)."""
+    _i = (pass_doc or {}).get("invitation")
+    _i = _i if isinstance(_i, dict) else {}
+    return {"display_name": _i.get("display_name") or None, "photo_url": _i.get("photo_url") or None,
+            "message": _i.get("message") or None, "version": version_invitation(pass_doc)}
+
+
+def nom_parrain_affichable(pass_doc) -> str:
+    """Le nom montré au monde : celui choisi pour l'invitation, sinon le prénom
+    réel FILTRÉ (jamais une adresse ni sa partie locale), sinon ""."""
+    _i = invitation_du_pass(pass_doc)
+    if _i["display_name"]:
+        return _i["display_name"]
+    _sp = (pass_doc or {}).get("sponsor") or {}
+    return nom_affichable(_sp.get("name"), _sp.get("email_norm"))
+
+
+def url_partage_versionnee(frontend_url, pass_doc) -> str:
+    """`share_url` : inchangée si aucune invitation (version 0), sinon `?v=N`
+    — même jeton, mais une URL neuve pour le cache d'aperçu de WhatsApp."""
+    _p = pass_doc or {}
+    _url = partage_url(frontend_url, _p.get("share_token"))
+    _v = version_invitation(_p)
+    return ("%s?v=%d" % (_url, _v)) if _v > 0 else _url
 
 
 def cle_pass(sponsor_email, course_id, occurrence) -> tuple:
@@ -744,6 +911,8 @@ def dto_pass(pass_doc, statut, tickets, frontend_url, deja_existant=None, offers
     _inv = _p.get("invitee") or None
     _url = invite_url(frontend_url, _p.get("share_token"))
     _offers = list(offers or [])
+    _invitation = invitation_du_pass(_p)                     # V551
+    _share = url_partage_versionnee(frontend_url, _p)        # V551
     _dto = {
         "id": _p.get("id"),
         "status": statut,
@@ -755,10 +924,11 @@ def dto_pass(pass_doc, statut, tickets, frontend_url, deja_existant=None, offers
         # V538 : CE QU'ON PARTAGE. `invite_url` reste la page que l'ami ouvre ;
         # `share_url` est la page d'aperçu qui y mène — c'est elle que WhatsApp,
         # le QR, « Copier » et « Partager » doivent porter, sinon l'aperçu est nu.
-        "share_url": partage_url(frontend_url, _p.get("share_token")),
-        "whatsapp_text": texte_whatsapp(prenom(_sp.get("name")), dto_course(_p)["name"],
-                                        _p.get("occurrence"),
-                                        partage_url(frontend_url, _p.get("share_token"))),
+        # V551 : `?v=<invitation_version>` quand l'invitation a été personnalisée.
+        "share_url": _share,
+        "whatsapp_text": ("%s\n%s" % (_invitation["message"], _share)) if _invitation["message"] else
+        texte_whatsapp(nom_parrain_affichable(_p), dto_course(_p)["name"], _p.get("occurrence"), _share),
+        "invitation": _invitation,
         "invitee": {"first_name": prenom(_inv.get("name"))} if _inv else None,
         "tickets": list(tickets or []),
         "blocked_reason": _p.get("blocked_reason"),
@@ -787,7 +957,10 @@ def dto_public(pass_doc, statut, now, offers=None) -> dict:
     return {
         "status": statut,
         "status_label": LIBELLES.get(statut, statut),
-        "sponsor_first_name": prenom(_sp.get("name")),
+        # V551 : le prénom passe par le filtre (jamais une partie locale d'e-mail).
+        "sponsor_first_name": nom_affichable(_sp.get("name"), _sp.get("email_norm")),
+        "sponsor_display_name": nom_parrain_affichable(_p),
+        "sponsor_photo_url": invitation_du_pass(_p)["photo_url"],
         "course": _c,
         "occurrence": _p.get("occurrence"),
         "expired": statut in (EXPIRED, CANCELLED) or est_passee(_p.get("expires_at") or _p.get("occurrence"), now),

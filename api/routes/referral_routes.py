@@ -37,7 +37,7 @@ import secrets
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from api.routes import referral_engine as E
@@ -56,6 +56,7 @@ FLAG_CHAMP = "parrainage_duo_enabled"
 COLL_PASSES = "referral_passes"
 COLL_INVITATIONS = "referral_invitations"
 COLL_SESSIONS = "subscriber_sessions"      # = `_B3S1_COLL_SESSIONS` (server.py)
+COLL_REGLAGES_PARTAGE = "referral_share_settings"   # V551 : {_id: clé coach, "" = plateforme}
 DETAIL_DESACTIVE = "parrainage_duo_desactive"
 SOURCE = "pass_duo"                          # `reservations.source` des billets Duo
 SOURCE_ATTRIBUTION = "parrainage"            # M2-A (`M2A_SOURCES`)
@@ -1149,6 +1150,13 @@ async def referral_creer_pass(request: Request):
     if not _occ or _occ not in _occurrences(_course):
         raise HTTPException(status_code=400, detail="Occurrence invalide : choisis une date proposée.")
     _offre = await _offre_autorisee(_course, _b.get("offer_id"))
+    # V551 : invitation personnalisée facultative, validée AVANT toute écriture.
+    _invitation = None
+    if _b.get("invitation") is not None:
+        try:
+            _invitation = E.valider_invitation(_b.get("invitation"))
+        except E.InvitationInvalide as _err:
+            raise HTTPException(status_code=422, detail=str(_err))
 
     _now = _maintenant()
     _cle = E.cle_pass(_parrain["email"], _course.get("id"), _occ)
@@ -1198,6 +1206,9 @@ async def referral_creer_pass(request: Request):
         "expires_at": _occ,
         "events": [{"at": _iso(_now), "type": "pass_created", "detail": None}],
     }
+    if _invitation is not None:             # V551 : appliquée à la création seulement
+        _doc["invitation"] = dict(_invitation, updated_at=_iso(_now))
+        _doc["invitation_version"] = 1
     try:
         await db[COLL_PASSES].insert_one(dict(_doc))
     except Exception as _err:  # noqa: BLE001
@@ -1420,6 +1431,223 @@ async def referral_changer_seance(identifiant: str, request: Request):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# V551 — PARRAINAGE V2 : l'invitation personnalisée du membre
+# ═══════════════════════════════════════════════════════════════════════════
+async def _reglage_partage(cle):
+    """Le document de réglages d'une clé (coach en minuscules, "" = plateforme)."""
+    try:
+        return await db[COLL_REGLAGES_PARTAGE].find_one({"_id": str(cle or "")}) or {}
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s réglages de partage illisibles (%s)", PREFIXE, type(_err).__name__)
+        return {}
+
+
+async def _reglages_effectifs(cle) -> dict:
+    """V551 — message et image effectifs : clé coach > plateforme ("") > intégré."""
+    _cles = [str(cle or "").strip().lower()]
+    if _cles[0]:
+        _cles.append("")
+    _msg, _img = None, None
+    for _c in _cles:
+        _r = await _reglage_partage(_c)
+        _msg = _msg or (_r.get("default_message") or None)
+        _img = _img or (_r.get("share_image_url") if E.url_image_partage_valide(_r.get("share_image_url")) else None)
+    return {"message": _msg or E.MESSAGE_INVITATION_DEFAUT, "image_url": _img}
+
+
+async def _pass_courant(parrain) -> dict:
+    """Le pass ouvert le plus récent du membre (statut dérivé actif), ou None."""
+    try:
+        _passes = await db[COLL_PASSES].find(
+            {"sponsor.email_norm": parrain["email"], "status": {"$in": list(E.ETATS_ACTIFS)}},
+            {"_id": 0}).sort("created_at", -1).to_list(LISTE_MAX)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s pass courant illisible (%s)", PREFIXE, type(_err).__name__)
+        return None
+    _now = _maintenant()
+    for _pd in _passes:
+        if await _statut_reel(_pd, _now) in E.ETATS_ACTIFS:
+            return _pd
+    return None
+
+
+async def _photo_profil(email) -> str:
+    """La photo du profil (lecture seule), si c'est une URL admise ; sinon None."""
+    if not email:
+        return None
+    try:
+        _u = await db["users"].find_one({"email": email}, {"_id": 0, "photo_url": 1, "photoUrl": 1}) or {}
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        return E.valider_photo_url(_u.get("photo_url") or _u.get("photoUrl"))
+    except E.InvitationInvalide:
+        return None
+
+
+@router.get("/invitation")
+async def referral_invitation_get(request: Request):
+    """V551 — `{identity: {display_name, photo_url}, default_message, pass}`.
+    Identité = jeton abonné (jamais un e-mail du corps ni X-User-Email)."""
+    await _exiger_actif()
+    _parrain = await _parrain_depuis_requete(request)
+    _pd = await _pass_courant(_parrain)
+    _inv = E.invitation_du_pass(_pd) if _pd else E.invitation_du_pass(None)
+    _nom = _inv["display_name"] or E.nom_affichable(_parrain.get("name"), _parrain.get("email"))
+    _photo = _inv["photo_url"] or await _photo_profil(_parrain.get("email"))
+    _reg = await _reglages_effectifs(_parrain.get("coach_id"))
+    return {
+        "identity": {"display_name": _nom or "", "photo_url": _photo or None},
+        "default_message": _reg["message"],
+        "pass": (await _dto(_pd)) if _pd else None,
+    }
+
+
+@router.put("/pass/{pass_id}/invitation")
+async def referral_pass_invitation_put(pass_id: str, request: Request):
+    """V551 — personnalise l'invitation d'UN pass (propriétaire seulement).
+    Le `share_token` ne change JAMAIS ; seul `invitation_version` s'incrémente
+    (-> `share_url?v=N`). Le profil principal n'est jamais touché."""
+    await _exiger_actif()
+    _parrain = await _parrain_depuis_requete(request)
+    _p = await _pass_du_parrain(pass_id, _parrain)
+    _s = await _statut_reel(_p)
+    if _s in (E.CANCELLED, E.EXPIRED):
+        raise HTTPException(status_code=409, detail="Ce pass n'est plus actif (%s)." % E.LIBELLES.get(_s, _s))
+    _b = await _corps(request)
+    try:
+        _inv = E.valider_invitation(_b, _p.get("invitation"))
+    except E.InvitationInvalide as _err:
+        raise HTTPException(status_code=422, detail=str(_err))
+    _now = _iso()
+    await db[COLL_PASSES].update_one(
+        {"id": _p["id"], "share_token": _p.get("share_token")},
+        {"$set": {"invitation": dict(_inv, updated_at=_now), "updated_at": _now},
+         "$inc": {"invitation_version": 1}})
+    _p = await db[COLL_PASSES].find_one({"id": _p["id"]}, {"_id": 0}) or _p
+    logger.info("%s invitation du pass %s personnalisée (v%s)", PREFIXE, _p["id"][:8],
+                E.version_invitation(_p))
+    return await _dto(_p)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V551 — PARRAINAGE V2 : réglages de partage du coach (JWT signé STRICT)
+# ═══════════════════════════════════════════════════════════════════════════
+IMAGE_MAX_OCTETS = 3 * 1024 * 1024
+IMAGE_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+IMAGE_EXTENSIONS = {"jpg": "jpg", "jpeg": "jpg", "png": "png", "webp": "webp"}
+
+
+def _type_reel_image(octets) -> str:
+    """La famille d'après la SIGNATURE binaire (jamais d'après le client)."""
+    _b = bytes(octets or b"")
+    if _b[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if _b[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if len(_b) >= 12 and _b[:4] == b"RIFF" and _b[8:12] == b"WEBP":
+        return "webp"
+    return ""
+
+
+async def _coach_strict(request) -> dict:
+    """`{email, cle}` — 401 sans jeton Bearer, 403 si le jeton n'est pas celui
+    d'un coach/admin. `X-User-Email` n'est JAMAIS lu ici."""
+    try:
+        _auth = (request.headers.get("Authorization", "") or "").strip()
+    except Exception:  # noqa: BLE001
+        _auth = ""
+    if not _auth.lower().startswith("bearer ") or not _auth.split(" ", 1)[1].strip():
+        raise HTTPException(status_code=401, detail="Authentification coach requise — reconnectez-vous")
+    _id = await _admin(request)
+    return {"email": _id["email"], "cle": "" if _id["admin"] else str(_id["email"] or "").strip().lower()}
+
+
+async def _reponse_reglages(cle) -> dict:
+    _r = await _reglage_partage(cle)
+    _eff = await _reglages_effectifs(cle)
+    return {
+        "default_message": _r.get("default_message") or None,
+        "share_image_url": _r.get("share_image_url") or None,
+        # `image_url` : l'image du coach, sinon celle de la plateforme, sinon le
+        # visuel Afroboost (la page d'aperçu tente encore le média de l'offre avant).
+        "effective": {"message": _eff["message"], "image_url": _eff["image_url"] or "/logo512.png"},
+        "defaults": {"message": E.MESSAGE_INVITATION_DEFAUT},
+        "updated_at": _r.get("updated_at"),
+    }
+
+
+async def _ecrire_reglages(cle, email, maj) -> None:
+    await db[COLL_REGLAGES_PARTAGE].update_one(
+        {"_id": cle}, {"$set": dict(maj, updated_at=_iso(), updated_by=email)}, upsert=True)
+
+
+@router.get("/share-settings")
+async def referral_share_settings_get(request: Request):
+    """V551 — réglages de partage de l'appelant (clé = identité serveur)."""
+    _c = await _coach_strict(request)
+    return await _reponse_reglages(_c["cle"])
+
+
+@router.put("/share-settings")
+async def referral_share_settings_put(request: Request):
+    """V551 — `{default_message?, share_image_url?}` ; tout autre champ ignoré."""
+    _c = await _coach_strict(request)
+    _b = await _corps(request)
+    _maj = {}
+    if "default_message" in _b:
+        try:
+            _maj["default_message"] = E.valider_message(_b.get("default_message"), "default_message")
+        except E.InvitationInvalide as _err:
+            raise HTTPException(status_code=422, detail=str(_err))
+    if "share_image_url" in _b:
+        _u = _b.get("share_image_url")
+        if _u is not None and not E.url_image_partage_valide(_u):
+            raise HTTPException(status_code=400, detail="Image refusée : utilise l'envoi d'image Afroboost.")
+        _maj["share_image_url"] = _u
+    if _maj:
+        await _ecrire_reglages(_c["cle"], _c["email"], _maj)
+    return await _reponse_reglages(_c["cle"])
+
+
+@router.post("/share-settings/image")
+async def referral_share_settings_image(request: Request, file: UploadFile = File(...)):
+    """V551 — image de partage : JWT strict, JPEG/PNG/WebP (type déclaré +
+    signature + extension concordants), <= 3 Mo, nom serveur (uuid). Stockage
+    = celui de `/api/files/{id}/{nom}` (`_v413_enregistrer_media`), SANS passer
+    par `/coach/upload-asset` (qui croit X-User-Email)."""
+    _c = await _coach_strict(request)
+    _type = str(getattr(file, "content_type", "") or "").split(";")[0].strip().lower()
+    _nom_client = str(getattr(file, "filename", "") or "")
+    _ext = _nom_client.rsplit(".", 1)[-1].strip().lower() if "." in _nom_client else ""
+    if _type not in IMAGE_TYPES or _ext not in IMAGE_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="Formats acceptés : JPG, PNG ou WebP.")
+    _octets = await file.read(IMAGE_MAX_OCTETS + 1)
+    if len(_octets) > IMAGE_MAX_OCTETS:
+        raise HTTPException(status_code=413, detail="Image trop lourde (3 Mo maximum).")
+    _reel = _type_reel_image(_octets)
+    if not _reel or _reel != IMAGE_TYPES[_type] or _reel != IMAGE_EXTENSIONS[_ext]:
+        raise HTTPException(status_code=415, detail="Ce fichier n'est pas une image JPG, PNG ou WebP valide.")
+    from api.server import _v413_enregistrer_media
+    _file_id = uuid.uuid4().hex[:16]
+    _filename = "share_%s.%s" % (uuid.uuid4().hex[:12], _reel)
+    _mime = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}[_reel]
+    try:
+        await _v413_enregistrer_media(_file_id, _filename, _octets, {
+            "file_id": _file_id, "filename": _filename, "original_name": _filename,
+            "content_type": _mime, "asset_type": "referral_share",
+            "coach_email": _c["email"], "created_at": datetime.utcnow(),
+        })
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s image de partage non enregistrée (%s)", PREFIXE, type(_err).__name__)
+        raise HTTPException(status_code=503, detail="Image non enregistrée, réessaie dans un instant.")
+    _url = "/api/files/%s/%s" % (_file_id, _filename)
+    await _ecrire_reglages(_c["cle"], _c["email"], {"share_image_url": _url})
+    logger.info("%s image de partage enregistrée (%s, %d o)", PREFIXE, _file_id, len(_octets))
+    return JSONResponse(status_code=201, content=await _reponse_reglages(_c["cle"]))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Routes — publiques (l'ami)
 # ═══════════════════════════════════════════════════════════════════════════
 async def _occurrences_du_pass(pass_doc) -> list:
@@ -1598,7 +1826,8 @@ async def _reponse_join(pass_doc, now) -> dict:
         "status_label": E.LIBELLES.get(_s, _s),
         "tickets": E.tickets_du_pass(pass_doc, _resas, _frontend_url()),
         "blocked_reason": pass_doc.get("blocked_reason"),
-        "sponsor_first_name": E.prenom((pass_doc.get("sponsor") or {}).get("name")),
+        # V551 : même filtre que la page publique (jamais une partie locale d'e-mail).
+        "sponsor_first_name": E.nom_parrain_affichable(pass_doc),
         "course": {k: v for k, v in E.dto_course(pass_doc).items() if k != "id"},
         "occurrence": pass_doc.get("occurrence"),
         # V534b : l'avantage reçu (OffreDTO du pass) et la version courante.
