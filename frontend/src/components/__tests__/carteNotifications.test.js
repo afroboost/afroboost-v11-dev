@@ -74,7 +74,9 @@ test('A. permission accordée + abonnement présent -> aucun nouvel abonnement',
   await monter();
   expect(abonner).not.toHaveBeenCalled();
   expect(axios.post).toHaveBeenCalledTimes(1);          // simple réenregistrement
-  expect(par('carte-notifications').textContent).toMatch(/activées/i);
+  // V548 : quand tout fonctionne, la carte ne s'affiche plus — la
+  // réconciliation, elle, a bien eu lieu (réenregistrement ci-dessus).
+  expect(par('carte-notifications')).toBeNull();
 });
 
 test('B/F. permission accordée + abonnement absent (ex. 410) -> recréé automatiquement', async () => {
@@ -91,7 +93,9 @@ test('C. permission jamais demandée -> un bouton, et AUCUNE popup', async () =>
   expect(global.Notification.requestPermission).not.toHaveBeenCalled();
   expect(abonner).not.toHaveBeenCalled();
   expect(par('carte-notifications-activer')).not.toBeNull();
-  expect(par('carte-notifications').textContent).toMatch(/Activer les notifications/i);
+  // V548 : une ligne compacte ; le bouton garde son nom accessible complet.
+  expect(par('carte-notifications').textContent).toMatch(/rappels de cours/i);
+  expect(par('carte-notifications-activer').getAttribute('aria-label')).toBe('Activer les notifications');
 });
 
 test('D. le clic demande la permission et crée l’abonnement', async () => {

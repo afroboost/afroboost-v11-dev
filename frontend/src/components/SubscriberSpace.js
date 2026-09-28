@@ -5,7 +5,6 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef, lazy, Suspense } from "react";
 import axios from "axios";
 import ConditionsParticipation from './ConditionsParticipation'; // ESSAI-5a-1
-import InvitationTemoignage, { enRepos } from './InvitationTemoignage'; // ESSAI-5a-2
 import ConversionApresEssai from './ConversionApresEssai'; // LOT A
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
@@ -431,6 +430,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
   // V202: Paiement Stripe
   const [rechargeLoading, setRechargeLoading] = useState(false);
+  // V548 : la recharge est repliee sous « Recharger mes seances ». `null` =
+  // l'abonne n'a pas encore touche au bouton : l'etat par defaut s'applique.
+  const [rechargeOuvert, setRechargeOuvert] = useState(null);
 
   const handleStripeCheckout = async () => {
     if (stripeLoading) return;
@@ -970,6 +972,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   // serveur. Ce lot ne touche pas a la reservation : le bouton s'active donc
   // exactement comme avant, meme quand l'affichage, lui, change.
   const noSessions = (subscription.remaining_sessions || 0) <= 0;
+  // V548 : la recharge ne s'ouvre d'elle-meme que pour qui n'a PLUS de seance —
+  // c'est alors l'action utile. Sinon elle reste repliee : l'abonne qui vient
+  // reserver ne la voit pas. AUCUNE eligibilite n'est jugee ici : le contenu
+  // (offres, CTA, motif) reste decide par le serveur, a l'identique.
+  const rechargeVisible = rechargeOuvert !== null ? rechargeOuvert : remaining <= 0;
 
   // ESSAI-7 — L'ETAT QUE CET ECRAN MONTRE.
   // `t2_etat_essai` derive l'etat au CHARGEMENT. Une reservation faite juste
@@ -1319,17 +1326,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           <SubscriberCockpit accessCode={accessCode} />
         </Suspense>
 
-        {/* ESSAI-5a-2 : proposée UNIQUEMENT à qui le coach a classé
-            « Participant » dans Contacts. Facultative, sans conséquence. */}
-        {data?.testimonial?.eligible
-          && !data.testimonial.already_submitted
-          && !enRepos(subscription.code || accessCode) && (
-          <InvitationTemoignage
-            code={subscription.code || accessCode}
-            prenom={firstName}
-            offerId={data?.offer?.id || ''}
-          />
-        )}
+        {/* V548 : « Partager mon expérience » (InvitationTemoignage, ESSAI-5a-2)
+            ne s'affiche plus dans l'espace : demander un témoignage ici, avant
+            le cours, n'était pas le bon moment. Le composant et la route
+            /api/testimonials restent intacts ; le point d'entrée prévu est
+            l'après-cours (cron /api/cron/post-course-feedback). */}
 
         {/* ===== LOT A : la suite, apres un essai REELLEMENT effectue =====
             `etatEssai === "done"` n'est qu'un INDICE pour eviter un appel
@@ -1609,10 +1610,6 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             <span className="inline-flex items-center gap-1.5"><SvgIcon name="search" size={14} /> Agrandir</span>
           </button>
         </section>
-
-        {/* ===== V534: Parrainage — entre « Mon QR Code » et « Mes prochaines
-            séances », order 0 (donc toujours après ESSAI-7 et P2-UX) ===== */}
-        <CarteParrainage enabled={parrainageOn} />
 
         {/* ===== V185 F3: Mes prochaines séances (avec annulation) ===== */}
         {upcomingReservations.length > 0 && (
@@ -2034,115 +2031,163 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               </div>
             );
           })()}
-          {/* ═══ LOT R — LA RECHARGE DU PACK ═══════════════════════════════
-              Le CTA n'apparait QUE si le serveur l'a autorise. Il ne se
-              montre donc jamais a quelqu'un qui a encore des seances, ni a un
-              non-membre, ni a une adhesion echue — la decision du proprietaire
-              vit cote serveur, pas ici.
-              Quand il n'apparait pas, la RAISON s'affiche : un bouton absent
-              sans explication est un bug pour celui qui le cherche. */}
-          {/* V535 : TOUTES les offres réservées aux membres, chacune avec son verdict
-              serveur (LOT R) et ses faits commerciaux (séances, mois, échéancier).
-              Pack 10 et Membres — 8 mois ; « en une fois » ou « en 2 fois » quand
-              l'offre le permet. Rien n'est écrit en dur : tout vient de `offres`. */}
-          {Array.isArray(data?.recharge?.offres) && data.recharge.offres.length > 0 ? (
-            <div className="mt-4 flex flex-col gap-3" data-testid="recharge-offres">
-              {data.recharge.offres.map((o) => (
-                <div key={o.offer_id} className="rounded-2xl p-4" data-testid={`recharge-offre-${o.offer_id}`}
-                     style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)" }}>
-                  <p className="text-white font-semibold" style={{ margin: 0 }}>{o.offer_name}</p>
-                  <p className="text-white/70 text-sm" style={{ margin: "4px 0 0" }}>
-                    {[o.seances ? `${o.seances} séances` : null, o.duree_mois ? `${o.duree_mois} mois` : null,
-                      o.prix != null ? `${o.prix} ${o.devise || "CHF"}${o.echeances > 1 ? ` × ${o.echeances}` : ""}` : null]
-                      .filter(Boolean).join(" · ")}
-                  </p>
-                  {o.eligible ? (
-                    o.paiement_integral ? (
-                      <div className="mt-3">
-                        {/* V536 : `intervalle_mois` est le délai RÉSOLU par le serveur pour
-                            CETTE personne. Quand le coach ne l'a pas encore fixé, aucune date
-                            n'est inventée : le paiement en 2 fois est retiré et le message du
-                            serveur est affiché tel quel. */}
-                        <ChoixModePaiement
-                          offre={{ billing_mode: o.billing_mode, price: o.prix, full_payment_available: true,
-                                   installment_interval_months: o.intervalle_mois }}
-                          occupe={rechargeLoading}
-                          titre="Choisis ton mode de paiement"
-                          sansFractionne={o.echeancier_a_definir === true}
-                          onChoisir={(mode) => handleRecharge(o, mode)}
-                        />
-                        {o.echeancier_a_definir ? (
-                          <p className="text-white/50 text-xs mt-2" data-testid={`echeancier-a-definir-${o.offer_id}`}>
-                            {o.echeancier_message || "Le coach doit encore définir ton échéancier."}
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <button type="button" onClick={() => handleRecharge(o)} disabled={rechargeLoading}
-                        data-testid={`recharge-cta-${o.offer_id}`}
-                        className="mt-3 w-full flex items-center justify-center gap-2 font-semibold rounded-2xl py-3 text-sm transition-transform active:scale-95"
-                        style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "#fff", border: "none", opacity: rechargeLoading ? 0.6 : 1 }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        </section>
+
+        {/* ===== V534 / V548 : Parrainage — juste SOUS « Réserver une séance ».
+            order 0 : pendant l'essai, la réservation remonte seule (order -1),
+            la carte garde sa place dans l'ordre du DOM. ===== */}
+        <CarteParrainage enabled={parrainageOn} />
+
+        {/* ===== V548 : « Recharger mes séances » — la recharge SORT du
+            formulaire de réservation. Repliée par défaut ; ouverte d'office
+            quand il ne reste plus de séance. Le contenu ci-dessous (offres,
+            verdicts, Stripe, motif) est celui de LOT R / V535, inchangé. ===== */}
+        {(
+          (Array.isArray(data?.recharge?.offres) && data.recharge.offres.length > 0)
+          || data?.recharge?.eligible
+          || data?.recharge?.message
+          || remaining <= 0
+        ) && (
+          <section
+            className="rounded-2xl"
+            style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, overflow: "hidden" }}
+            data-testid="subscriber-space-recharge"
+          >
+            <button
+              type="button"
+              onClick={() => setRechargeOuvert(!rechargeVisible)}
+              aria-expanded={rechargeVisible}
+              data-testid="recharge-toggle"
+              className="w-full flex items-center justify-between gap-2 text-left"
+              style={{ padding: "14px 20px", background: "none", border: "none", color: "#fff", cursor: "pointer" }}
+            >
+              <span className="inline-flex items-center gap-2 text-base font-semibold">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                     style={{ color: "var(--primary-color, #D91CD2)" }}>
+                  <path d="M21 12a9 9 0 1 1-3-6.7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <path d="M21 3v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Recharger mes séances
+              </span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+                   style={{ color: "rgba(255,255,255,0.5)", transform: rechargeVisible ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>
+                <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+            {rechargeVisible && (
+              <div style={{ padding: "0 20px 16px", marginTop: "-8px" }}>
+              {/* ═══ LOT R — LA RECHARGE DU PACK ═══════════════════════════════
+                  Le CTA n'apparait QUE si le serveur l'a autorise. Il ne se
+                  montre donc jamais a quelqu'un qui a encore des seances, ni a un
+                  non-membre, ni a une adhesion echue — la decision du proprietaire
+                  vit cote serveur, pas ici.
+                  Quand il n'apparait pas, la RAISON s'affiche : un bouton absent
+                  sans explication est un bug pour celui qui le cherche. */}
+              {/* V535 : TOUTES les offres réservées aux membres, chacune avec son verdict
+                  serveur (LOT R) et ses faits commerciaux (séances, mois, échéancier).
+                  Pack 10 et Membres — 8 mois ; « en une fois » ou « en 2 fois » quand
+                  l'offre le permet. Rien n'est écrit en dur : tout vient de `offres`. */}
+              {Array.isArray(data?.recharge?.offres) && data.recharge.offres.length > 0 ? (
+                <div className="mt-4 flex flex-col gap-3" data-testid="recharge-offres">
+                  {data.recharge.offres.map((o) => (
+                    <div key={o.offer_id} className="rounded-2xl p-4" data-testid={`recharge-offre-${o.offer_id}`}
+                         style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)" }}>
+                      <p className="text-white font-semibold" style={{ margin: 0 }}>{o.offer_name}</p>
+                      <p className="text-white/70 text-sm" style={{ margin: "4px 0 0" }}>
+                        {[o.seances ? `${o.seances} séances` : null, o.duree_mois ? `${o.duree_mois} mois` : null,
+                          o.prix != null ? `${o.prix} ${o.devise || "CHF"}${o.echeances > 1 ? ` × ${o.echeances}` : ""}` : null]
+                          .filter(Boolean).join(" · ")}
+                      </p>
+                      {o.eligible ? (
+                        o.paiement_integral ? (
+                          <div className="mt-3">
+                            {/* V536 : `intervalle_mois` est le délai RÉSOLU par le serveur pour
+                                CETTE personne. Quand le coach ne l'a pas encore fixé, aucune date
+                                n'est inventée : le paiement en 2 fois est retiré et le message du
+                                serveur est affiché tel quel. */}
+                            <ChoixModePaiement
+                              offre={{ billing_mode: o.billing_mode, price: o.prix, full_payment_available: true,
+                                       installment_interval_months: o.intervalle_mois }}
+                              occupe={rechargeLoading}
+                              titre="Choisis ton mode de paiement"
+                              sansFractionne={o.echeancier_a_definir === true}
+                              onChoisir={(mode) => handleRecharge(o, mode)}
+                            />
+                            {o.echeancier_a_definir ? (
+                              <p className="text-white/50 text-xs mt-2" data-testid={`echeancier-a-definir-${o.offer_id}`}>
+                                {o.echeancier_message || "Le coach doit encore définir ton échéancier."}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => handleRecharge(o)} disabled={rechargeLoading}
+                            data-testid={`recharge-cta-${o.offer_id}`}
+                            className="mt-3 w-full flex items-center justify-center gap-2 font-semibold rounded-2xl py-3 text-sm transition-transform active:scale-95"
+                            style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "#fff", border: "none", opacity: rechargeLoading ? 0.6 : 1 }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                              <path d="M21 12a9 9 0 1 1-3-6.7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                              <path d="M21 3v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                            {rechargeLoading ? "Redirection..." : `${o.seances ? `Recharger ${o.seances} séances` : "Choisir"}${o.prix != null ? ` — ${o.prix} ${o.devise || "CHF"}` : ""}`}
+                          </button>
+                        )
+                      ) : (
+                        o.message ? <p className="text-white/50 text-xs mt-2" data-testid={`recharge-refus-${o.offer_id}`}>{o.message}</p> : null
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : data?.recharge?.eligible ? (
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={() => handleRecharge()}
+                    disabled={rechargeLoading}
+                    data-testid="recharge-cta"
+                    className="w-full flex items-center justify-center gap-2 font-semibold rounded-2xl py-4 text-base transition-transform active:scale-95"
+                    style={{
+                      background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`,
+                      color: "#fff",
+                      border: "none",
+                      opacity: rechargeLoading ? 0.6 : 1,
+                      boxShadow: "0 6px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.35)",
+                    }}
+                  >
+                    {rechargeLoading ? "Redirection..." : (
+                      <>
+                        {/* Icône recharge — SVG inline, jamais un emoji */}
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                           <path d="M21 12a9 9 0 1 1-3-6.7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                           <path d="M21 3v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                         </svg>
-                        {rechargeLoading ? "Redirection..." : `${o.seances ? `Recharger ${o.seances} séances` : "Choisir"}${o.prix != null ? ` — ${o.prix} ${o.devise || "CHF"}` : ""}`}
-                      </button>
-                    )
-                  ) : (
-                    o.message ? <p className="text-white/50 text-xs mt-2" data-testid={`recharge-refus-${o.offer_id}`}>{o.message}</p> : null
-                  )}
+                        {/* Le libelle vient du SERVEUR : ni le nombre de seances ni
+                            le prix ne sont ecrits en dur ici. */}
+                        {data.recharge.seances
+                          ? `Recharger ${data.recharge.seances} séances`
+                          : "Recharger mon pack"}
+                        {data.recharge.prix != null
+                          && ` — ${data.recharge.prix} ${data.recharge.devise || "CHF"}`}
+                      </>
+                    )}
+                  </button>
                 </div>
-              ))}
-            </div>
-          ) : data?.recharge?.eligible ? (
-            <div className="mt-4">
-              <button
-                type="button"
-                onClick={() => handleRecharge()}
-                disabled={rechargeLoading}
-                data-testid="recharge-cta"
-                className="w-full flex items-center justify-center gap-2 font-semibold rounded-2xl py-4 text-base transition-transform active:scale-95"
-                style={{
-                  background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`,
-                  color: "#fff",
-                  border: "none",
-                  opacity: rechargeLoading ? 0.6 : 1,
-                  boxShadow: "0 6px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.35)",
-                }}
-              >
-                {rechargeLoading ? "Redirection..." : (
-                  <>
-                    {/* Icône recharge — SVG inline, jamais un emoji */}
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                      <path d="M21 12a9 9 0 1 1-3-6.7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                      <path d="M21 3v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                    {/* Le libelle vient du SERVEUR : ni le nombre de seances ni
-                        le prix ne sont ecrits en dur ici. */}
-                    {data.recharge.seances
-                      ? `Recharger ${data.recharge.seances} séances`
-                      : "Recharger mon pack"}
-                    {data.recharge.prix != null
-                      && ` — ${data.recharge.prix} ${data.recharge.devise || "CHF"}`}
-                  </>
-                )}
-              </button>
-            </div>
-          ) : (
-            data?.recharge?.message ? (
-              <p data-testid="recharge-motif" className="text-white/50 text-xs mt-3">
-                {data.recharge.message}
-              </p>
-            ) : (
-              remaining <= 0 && (
-                <p className="text-white/50 text-xs mt-3">
-                  Tu as utilisé toutes tes séances. Contacte ton coach pour renouveler.
-                </p>
-              )
-            )
-          )}
-        </section>
+              ) : (
+                data?.recharge?.message ? (
+                  <p data-testid="recharge-motif" className="text-white/50 text-xs mt-3">
+                    {data.recharge.message}
+                  </p>
+                ) : (
+                  remaining <= 0 && (
+                    <p className="text-white/50 text-xs mt-3">
+                      Tu as utilisé toutes tes séances. Contacte ton coach pour renouveler.
+                    </p>
+                  )
+                )
+              )}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* ===== Guide rapide ===== */}
         <section

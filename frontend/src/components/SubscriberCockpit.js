@@ -109,7 +109,7 @@ export default function SubscriberCockpit({ accessCode }) {
         }}
         data-testid="cockpit-toggle"
       >
-        <span style={{ fontSize: 15, fontWeight: 700 }}>Mon cockpit</span>
+        <span style={{ fontSize: 15, fontWeight: 700 }}>Ma progression</span>{/* V548 : « Mon cockpit » renommé */}
         <span style={{ color: "rgba(255,255,255,0.5)" }}><IconeChevron ouvert={ouvert} /></span>
       </button>
 
