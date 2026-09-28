@@ -1978,6 +1978,7 @@ class FeatureFlagsUpdate(BaseModel):
     SOCIAL_ACTIVATION_ENABLED: Optional[bool] = None  # F4 : activation volontaire du profil social
     REMINDERS_SUBSCRIBERS_ENABLED: Optional[bool] = None  # RV-AB : rappeler AUSSI les abonnés sans réservation
     REMINDERS_SUBSCRIBERS_DRY_RUN: Optional[bool] = None  # RV-AB : recenser sans envoyer (défaut : oui)
+    parrainage_chaine_enabled: Optional[bool] = None  # V556 : Parrainage V3 « invite avant de t'inscrire » (absent = éteint)
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -21517,7 +21518,8 @@ async def get_feature_flags():
                          ("SOCIAL_PROFILE_LINKS", False),
                          ("SOCIAL_ACTIVATION_ENABLED", False),
                          ("REMINDERS_SUBSCRIBERS_ENABLED", False),
-                         ("REMINDERS_SUBSCRIBERS_DRY_RUN", True)):
+                         ("REMINDERS_SUBSCRIBERS_DRY_RUN", True),
+                         ("parrainage_chaine_enabled", False)):   # V556 : lu `is True` par referral_routes
         if _k not in flags:
             flags[_k] = _default
     return flags

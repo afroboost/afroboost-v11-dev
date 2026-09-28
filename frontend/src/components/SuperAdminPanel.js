@@ -64,15 +64,41 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
   const [noExpiryLoading, setNoExpiryLoading] = useState(false);
   const [noExpiryError, setNoExpiryError] = useState("");
 
+  // V556 : interrupteur « Parrainage V3 » (drapeau parrainage_chaine_enabled) —
+  // le coupe-circuit du parcours « invite avant de t'inscrire », sans redéploiement.
+  const [chaine, setChaine] = useState(null);
+  const [chaineLoading, setChaineLoading] = useState(false);
+  const [chaineError, setChaineError] = useState("");
+
   useEffect(() => {
     let vivant = true;
     axios.get(`${API}/feature-flags`)
-      .then((r) => { if (vivant) setNoExpiry(!!(r.data && r.data.PUBLICATIONS_NO_EXPIRY)); })
+      .then((r) => {
+        if (!vivant) return;
+        setNoExpiry(!!(r.data && r.data.PUBLICATIONS_NO_EXPIRY));
+        setChaine(!!(r.data && r.data.parrainage_chaine_enabled === true));
+      })
       .catch(() => {
-        if (vivant) { setNoExpiry(null); setNoExpiryError("Impossible de lire l'état pour le moment."); }
+        if (vivant) {
+          setNoExpiry(null); setNoExpiryError("Impossible de lire l'état pour le moment.");
+          setChaine(null); setChaineError("Impossible de lire l'état pour le moment.");
+        }
       });
     return () => { vivant = false; };
   }, []);
+
+  const basculerChaine = async (suivant) => {
+    setChaineLoading(true); setChaineError("");
+    try {
+      const r = await axios.put(`${API}/feature-flags`, { parrainage_chaine_enabled: suivant });
+      setChaine(!!(r.data && r.data.parrainage_chaine_enabled === true));
+    } catch (e) {
+      const code = e && e.response && e.response.status;
+      setChaineError(code === 403
+        ? "Réservé au super-admin — reconnectez-vous."
+        : "Le changement n'a pas pu être enregistré. Réessayez.");
+    } finally { setChaineLoading(false); }
+  };
 
   // Le PUT exige un JWT super-admin (403 sinon) — l'intercepteur axios l'attache.
   const basculerNoExpiry = async (suivant) => {
@@ -335,6 +361,51 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
             </div>
             {noExpiryError ? (
               <p style={{ color: '#ef4444', fontSize: '11px', margin: '6px 0 0' }}>{noExpiryError}</p>
+            ) : null}
+            {/* V556 : même gabarit que l'interrupteur ci-dessus */}
+            <div className="flex items-center justify-between" style={{ gap: '8px', marginTop: '12px' }}>
+              <div style={{ minWidth: 0 }}>
+                <span className="text-white/80" style={{ fontSize: '12px' }}>
+                  Parrainage V3 — « invite avant de t'inscrire »
+                </span>
+                <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '11px', margin: '2px 0 0' }}>
+                  Activé : l'invité partage sa propre invitation avant son essai gratuit. Désactivé : formulaire direct (V2).
+                </p>
+              </div>
+              <div className="flex items-center" style={{ gap: '6px', flexShrink: 0 }}>
+                {chaine === null ? (
+                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+                    background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)' }}>Inconnu</span>
+                ) : chaine ? (
+                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+                    background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.35)' }}>Activé</span>
+                ) : (
+                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+                    background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)' }}>Désactivé</span>
+                )}
+                <button
+                  onClick={() => basculerChaine(!chaine)}
+                  disabled={chaineLoading || chaine === null}
+                  title={chaine ? 'Désactiver' : 'Activer'}
+                  data-testid="toggle-parrainage-chaine"
+                  style={{
+                    position: 'relative', width: '38px', height: '20px', borderRadius: '999px', border: 'none',
+                    cursor: (chaineLoading || chaine === null) ? 'not-allowed' : 'pointer',
+                    background: chaine ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.18)',
+                    opacity: (chaineLoading || chaine === null) ? 0.5 : 1,
+                    transition: 'background 0.2s ease', flexShrink: 0
+                  }}
+                >
+                  <span style={{
+                    position: 'absolute', top: '3px', left: chaine ? '21px' : '3px',
+                    width: '14px', height: '14px', borderRadius: '50%', background: '#fff',
+                    transition: 'left 0.2s ease'
+                  }} />
+                </button>
+              </div>
+            </div>
+            {chaineError ? (
+              <p style={{ color: '#ef4444', fontSize: '11px', margin: '6px 0 0' }}>{chaineError}</p>
             ) : null}
           </div>
 
