@@ -658,7 +658,12 @@ async def get_coach_vitrine(username: str):
             "externalLink1Url": concept.get("externalLink1Url", ""),
             "externalLink2Title": concept.get("externalLink2Title", ""),
             "externalLink2Url": concept.get("externalLink2Url", ""),
+            # V554 : disposition du Hero DU PARTENAIRE (positions propres a chaque coach)
+            "heroLayout": concept.get("heroLayout"),
         }
+    # V554 : cle toujours presente (null si absente) -- sinon le front fusionne
+    # {...prev, ...data.concept} et la vitrine heriterait de la disposition du super-admin.
+    concept_data.setdefault("heroLayout", None)
     logger.info(f"[VITRINE-V29] {username} → concept_id={concept_id}, heroVideos={len(concept_data.get('heroVideos', []))}, offers={len(offers)}, courses={len(courses)}")
     # R2b — LA VITRINE EST UNE PAGE PUBLIQUE, ET ELLE LE RESTE.
     # `coach` et `offers` portaient tous deux l'e-mail du proprietaire
