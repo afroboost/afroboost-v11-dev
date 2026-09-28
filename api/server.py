@@ -19593,6 +19593,270 @@ async def share_offer_page(offer_id: str):
 </html>"""
     return HTMLResponse(html_page)
 
+# ═══════════════════════════════════════════════════════════════════════════
+# V552 — LA CARTE SOCIALE D'UNE INVITATION PASS DUO
+# ═══════════════════════════════════════════════════════════════════════════
+async def _v552_image_repli(pass_doc, FRONT):
+    """(offre, URL absolue) — l'image d'aperçu V551 : image de partage du coach
+    du pass, puis celle de la plateforme, puis le média de l'offre / séance /
+    concept, puis le logo. Jamais vide. Utilisée par la page d'aperçu (pour la
+    description) et par la carte (dernier repli)."""
+    from api.routes import referral_engine as _duo
+    _p = pass_doc or {}
+    # L'offre du pass, pour le cadeau annoncé et surtout pour son média.
+    _offre = {}
+    try:
+        _oid = str(_p.get("offer_id") or "").strip()
+        if _oid:
+            _offre = await db.offers.find_one({"id": _oid}, {"_id": 0}) or {}
+    except Exception:  # noqa: BLE001
+        _offre = {}
+    _cours_doc = {}
+    try:
+        _cid = str(_p.get("course_id") or "").strip()
+        if _cid:
+            _cours_doc = await db.courses.find_one({"id": _cid}, {"_id": 0}) or {}
+    except Exception:  # noqa: BLE001
+        _cours_doc = {}
+    _concept = {}
+    try:
+        _concept = await db.concept.find_one({}, {"_id": 0}) or {}
+    except Exception:  # noqa: BLE001
+        _concept = {}
+
+    # V551 : l'image de partage choisie par le coach du pass, puis celle de la
+    # plateforme (clé ""). Seules nos URL `/api/files/...` sont admises.
+    _img_coach = ""
+    try:
+        _cles = [str(_p.get("coach_id") or "").strip().lower()]
+        if _cles[0]:
+            _cles.append("")
+        for _cle in _cles:
+            _reg = await db["referral_share_settings"].find_one({"_id": _cle}) or {}
+            if _duo.url_image_partage_valide(_reg.get("share_image_url")):
+                _img_coach = _reg["share_image_url"]
+                break
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[V551] reglages de partage illisibles (%s)", type(_e).__name__)
+        _img_coach = ""
+
+    def _abs(u):
+        _u = str(u or "").strip()
+        if not _u:
+            return ""
+        if _u.startswith(("http://", "https://")):
+            return _u
+        if _u.startswith("/"):
+            return FRONT + _u
+        return ""
+
+    _image = (_abs(_img_coach) or _abs(_duo.media_apercu(_offre, _cours_doc, _concept))
+              or f"{FRONT}/logo512.png")
+    return _offre, _image
+
+
+async def _v552_lire_fichier_local(file_id: str, filename: str, max_octets: int = 5 * 1024 * 1024):
+    """Les octets d'un de NOS médias (`/api/files/<id>/<nom>`), lus SANS HTTP :
+    disque V413 d'abord, repli MongoDB. None si absent, pas une image, ou trop gros."""
+    try:
+        _doc = await db.uploaded_files.find_one({"file_id": file_id})
+        if not _doc or not str(_doc.get("content_type") or "image/").startswith("image/"):
+            return None
+        _chemin = _v413_chemin(file_id, filename)
+        if _chemin and os.path.isfile(_chemin):
+            if os.path.getsize(_chemin) > max_octets:
+                return None
+            with open(_chemin, "rb") as _f:
+                return _f.read()
+        _brut = _doc.get("data")
+        if _brut is None:
+            return None
+        if hasattr(_brut, "read"):
+            _o = _brut.read()
+        elif isinstance(_brut, (bytes, bytearray)):
+            _o = bytes(_brut)                      # `bson.Binary` est un `bytes`
+        else:
+            return None
+        return _o if len(_o) <= max_octets else None
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[V552] media local illisible (%s)", type(_e).__name__)
+        return None
+
+
+# Cache des cartes : mémoire (64 dernières) + disque sous MEDIA_DIR/cartes_duo.
+# Clé = empreinte du jeton + version de carte + couleur de marque. Le JPEG d'une
+# (jeton, version) ne change jamais : c'est la version qui change d'URL.
+_V552_CACHE = {}
+_V552_CACHE_MAX = 64
+
+
+def _v552_cle_cache(token: str, version: str, couleur: str) -> str:
+    import hashlib
+    _h = hashlib.sha256(("v552|" + token).encode("utf-8")).hexdigest()[:24]
+    _c = re.sub(r"[^0-9a-fA-F]", "", str(couleur or ""))[:6].lower()
+    _v = re.sub(r"[^0-9a-f]", "", str(version or ""))[:16]
+    return "%s_%s_%s" % (_h, _v, _c or "defaut")
+
+
+def _v552_cache_lire(cle: str):
+    if cle in _V552_CACHE:
+        return _V552_CACHE[cle]
+    try:
+        _chemin = os.path.join(_V413_MEDIA_DIR, "cartes_duo", cle + ".jpg")
+        if os.path.isfile(_chemin):
+            with open(_chemin, "rb") as _f:
+                _o = _f.read()
+            if _o:
+                _v552_cache_poser_memoire(cle, _o)
+                return _o
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _v552_cache_poser_memoire(cle: str, octets: bytes):
+    if len(_V552_CACHE) >= _V552_CACHE_MAX:
+        try:
+            _V552_CACHE.pop(next(iter(_V552_CACHE)))
+        except Exception:  # noqa: BLE001
+            _V552_CACHE.clear()
+    _V552_CACHE[cle] = octets
+
+
+def _v552_cache_ecrire(cle: str, octets: bytes):
+    """Mémoire + disque (écriture atomique) ; les anciennes versions de la même
+    carte sont supprimées. Un disque indisponible n'empêche jamais de servir."""
+    _v552_cache_poser_memoire(cle, octets)
+    try:
+        if not _v413_disque_pret():
+            return
+        _dossier = os.path.join(_V413_MEDIA_DIR, "cartes_duo")
+        os.makedirs(_dossier, exist_ok=True)
+        _prefixe = cle.split("_", 1)[0] + "_"
+        for _nom in os.listdir(_dossier):
+            if _nom.startswith(_prefixe) and _nom != cle + ".jpg":
+                try:
+                    os.remove(os.path.join(_dossier, _nom))
+                except OSError:
+                    pass
+        _chemin = os.path.join(_dossier, cle + ".jpg")
+        with open(_chemin + ".part", "wb") as _f:
+            _f.write(octets)
+        os.replace(_chemin + ".part", _chemin)
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[V552] cache disque de carte indisponible (%s)", type(_e).__name__)
+
+
+def _v552_logo_octets():
+    """(octets, type) du logo servi par le site ; None si introuvable."""
+    _racine = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for _chemin in (os.path.join(_racine, "static", "logo512.png"),
+                    os.path.join(_racine, "frontend", "public", "logo512.png")):
+        try:
+            if os.path.isfile(_chemin):
+                with open(_chemin, "rb") as _f:
+                    _o = _f.read()
+                if _o:
+                    return _o, "image/png"
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+# V552: GET ET HEAD (les robots d'aperçu sondent parfois en HEAD). Publique :
+# ni cookie ni JWT — elle ne montre que ce que la page d'aperçu montre déjà.
+@api_router.head("/share/duo/{share_token}/carte.jpg")
+@api_router.get("/share/duo/{share_token}/carte.jpg")
+async def share_duo_carte(share_token: str, v: str = ""):
+    """V552 — LA CARTE SOCIALE 1200×630 d'une invitation Pass Duo (og:image).
+
+    URL publique : https://afroboost.com/api/share/duo/<token>/carte.jpg?v=<version>
+    `v` ne sert qu'à casser le cache des aperçus (WhatsApp) : on sert toujours
+    la carte COURANTE ; si `v` ne correspond pas, le cache HTTP est court.
+
+    ROBUSTESSE (jamais de 500 ni de corps vide) : rendu personnalisé -> carte
+    générique Afroboost -> octets de l'image coach/offre (si c'est un de nos
+    fichiers) -> logo -> JPEG de secours embarqué.
+    Jeton inconnu -> 404 neutre (aucune donnée, même corps pour tous).
+    """
+    from starlette.responses import Response
+    from api.routes import referral_engine as _duo
+    from api.routes import referral_carte as _carte
+
+    def _image(octets, type_mime="image/jpeg", age=86400):
+        return Response(content=octets, media_type=type_mime, headers={
+            "Cache-Control": "public, max-age=%d" % age,
+            "X-Content-Type-Options": "nosniff",
+        })
+
+    _tok = str(share_token or "").strip()
+    if not _tok or len(_tok) > 128:
+        return Response(content=b"Not Found", status_code=404, media_type="text/plain",
+                        headers={"Cache-Control": "no-store"})
+    try:
+        _p = await db["referral_passes"].find_one({"share_token": _tok}, {"_id": 0})
+    except Exception as _e:  # noqa: BLE001  (base indisponible : carte générique, cache court)
+        logger.warning("[V552] pass illisible pour la carte (%s)", type(_e).__name__)
+        try:
+            return _image(_carte.rendre_carte({}), age=300)
+        except Exception:  # noqa: BLE001
+            return _image(_carte.JPEG_SECOURS, age=60)
+    if not _p:
+        return Response(content=b"Not Found", status_code=404, media_type="text/plain",
+                        headers={"Cache-Control": "no-store"})
+
+    FRONT = os.environ.get("FRONTEND_URL", "https://afroboost.com").rstrip("/")
+    _version = _duo.version_carte(_p)
+    _age = 604800 if str(v or "") == _version else 300   # 7 j si l'URL porte LA bonne version
+    try:
+        _couleur = await _v259_primary_color(str(_p.get("coach_id") or ""))
+    except Exception:  # noqa: BLE001
+        _couleur = _carte.COULEUR_DEFAUT
+    _cle = _v552_cle_cache(_tok, _version, _couleur)
+    _deja = _v552_cache_lire(_cle)
+    if _deja:
+        return _image(_deja, age=_age)
+
+    # 1. la carte personnalisée
+    try:
+        _photo = None
+        _url_photo = _duo.invitation_du_pass(_p).get("photo_url")
+        if _url_photo:
+            from urllib.parse import urlsplit as _us
+            _photo = await _carte.recuperer_photo(_url_photo, _v552_lire_fichier_local,
+                                                  hote_front=(_us(FRONT).hostname or "afroboost.com"))
+        _octets = _carte.rendre_carte(_carte.donnees_carte(_p, _couleur, _photo))
+        if not _octets:
+            raise ValueError("rendu vide")
+        _v552_cache_ecrire(_cle, _octets)
+        return _image(_octets, age=_age)
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[V552] carte personnalisee impossible (%s) -> carte generique", type(_e).__name__)
+    # 2. la carte générique Afroboost (non mise en cache : on retentera)
+    try:
+        _octets = _carte.rendre_carte({"couleur": _couleur})
+        if _octets:
+            return _image(_octets, age=300)
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[V552] carte generique impossible (%s) -> image de repli", type(_e).__name__)
+    # 3. l'image coach / offre, si c'est un de NOS fichiers (lu sans HTTP)
+    try:
+        _, _repli = await _v552_image_repli(_p, FRONT)
+        _src = _carte.source_photo(_repli)
+        if _src and _src[0] == "local":
+            _o = await _v552_lire_fichier_local(_src[1], _src[2])
+            if _o:
+                _doc = await db.uploaded_files.find_one({"file_id": _src[1]}) or {}
+                return _image(_o, str(_doc.get("content_type") or "image/jpeg"), age=300)
+    except Exception:  # noqa: BLE001
+        pass
+    # 4. le logo, 5. le JPEG de secours embarqué
+    _logo = _v552_logo_octets()
+    if _logo:
+        return _image(_logo[0], _logo[1], age=300)
+    return _image(_carte.JPEG_SECOURS, age=60)
+
+
 # V551 : HEAD aussi (certains robots d'aperçu sondent en HEAD avant de lire) ;
 # `?v=<n>` est toléré (chaîne de requête ignorée : seul le jeton compte).
 @api_router.head("/share/duo/{share_token}")
@@ -19637,65 +19901,24 @@ async def share_duo_page(share_token: str):
     _cours = _duo.dto_course(_p)
     _nom_cours = str(_cours.get("name") or "")
 
-    # L'offre du pass, pour le cadeau annoncé et surtout pour son média.
-    _offre = {}
-    try:
-        _oid = str(_p.get("offer_id") or "").strip()
-        if _oid:
-            _offre = await db.offers.find_one({"id": _oid}, {"_id": 0}) or {}
-    except Exception:  # noqa: BLE001
-        _offre = {}
-    _cours_doc = {}
-    try:
-        _cid = str(_p.get("course_id") or "").strip()
-        if _cid:
-            _cours_doc = await db.courses.find_one({"id": _cid}, {"_id": 0}) or {}
-    except Exception:  # noqa: BLE001
-        _cours_doc = {}
-    _concept = {}
-    try:
-        _concept = await db.concept.find_one({}, {"_id": 0}) or {}
-    except Exception:  # noqa: BLE001
-        _concept = {}
-
-    # V551 : l'image de partage choisie par le coach du pass, puis celle de la
-    # plateforme (clé ""). Seules nos URL `/api/files/...` sont admises.
-    _img_coach = ""
-    try:
-        _cles = [str(_p.get("coach_id") or "").strip().lower()]
-        if _cles[0]:
-            _cles.append("")
-        for _cle in _cles:
-            _reg = await db["referral_share_settings"].find_one({"_id": _cle}) or {}
-            if _duo.url_image_partage_valide(_reg.get("share_image_url")):
-                _img_coach = _reg["share_image_url"]
-                break
-    except Exception as _e:  # noqa: BLE001
-        logger.warning("[V551] reglages de partage illisibles (%s)", type(_e).__name__)
-        _img_coach = ""
+    # V552 : l'image de REPLI (coach > offre/séance/concept > logo) est calculée
+    # par `_v552_image_repli` — la carte sociale s'en sert si son rendu échoue.
+    _offre, _image_repli = await _v552_image_repli(_p, FRONT)
 
     _titre = _duo.og_titre_invitation(_prenom)
     _desc = _invitation["message"] or _duo.og_description_invitation(_prenom, _nom_cours, _p.get("occurrence"),
                                                                      str((_offre or {}).get("name") or ""))
 
-    def _abs(u):
-        _u = str(u or "").strip()
-        if not _u:
-            return ""
-        if _u.startswith(("http://", "https://")):
-            return _u
-        if _u.startswith("/"):
-            return FRONT + _u
-        return ""
-
-    _image = (_abs(_img_coach) or _abs(_duo.media_apercu(_offre, _cours_doc, _concept))
-              or f"{FRONT}/logo512.png")
+    # V552 : og:image = LA CARTE SOCIALE (URL absolue https, versionnée) en
+    # PRIORITÉ 1. Jamais vide : si le jeton manquait (impossible ici), le repli.
+    _image = _duo.url_carte(FRONT, _p) or _image_repli
     _cible = "%s/duo/%s" % (FRONT, _tok)
     _url = "%s/api/share/duo/%s" % (FRONT, _tok)
 
     e_titre = _html.escape(_titre, quote=True)
     e_desc = _html.escape(_desc[:200], quote=True)
     e_image = _html.escape(_image, quote=True)
+    e_type = "image/jpeg"                                   # V552 : la carte est un JPEG
     e_url = _html.escape(_url, quote=True)
     e_cible = _html.escape(_cible, quote=True)
 
@@ -19709,6 +19932,10 @@ async def share_duo_page(share_token: str):
     <meta property="og:title" content="{e_titre}"/>
     <meta property="og:description" content="{e_desc}"/>
     <meta property="og:image" content="{e_image}"/>
+    <meta property="og:image:secure_url" content="{e_image}"/>
+    <meta property="og:image:type" content="{e_type}"/>
+    <meta property="og:image:width" content="1200"/>
+    <meta property="og:image:height" content="630"/>
     <meta property="og:image:alt" content="{e_titre}"/>
     <meta property="og:url" content="{e_url}"/>
     <meta property="og:site_name" content="Afroboost"/>

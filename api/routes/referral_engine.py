@@ -310,6 +310,40 @@ def url_partage_versionnee(frontend_url, pass_doc) -> str:
     return ("%s?v=%d" % (_url, _v)) if _v > 0 else _url
 
 
+# V552: ─── LA CARTE SOCIALE — une URL qui change quand le CONTENU change ───
+#
+# Le `share_token` ne change jamais. La carte, elle, doit changer d'URL dès que
+# ce qu'elle montre change (WhatsApp garde une image par URL, des jours) : la
+# version est une empreinte courte de TOUT ce qui entre dans le dessin, plus
+# `CARTE_GABARIT` (on l'incrémente quand le dessin lui-même change).
+CARTE_GABARIT = "1"
+
+
+def version_carte(pass_doc) -> str:
+    """Empreinte stable (12 hexa) : gabarit, invitation_version, occurrence,
+    offre, cours, lieu, nom affiché, photo, message. Pure."""
+    import hashlib
+    import json
+    _p = pass_doc or {}
+    _i = invitation_du_pass(_p)
+    _c = _p.get("course_snapshot") or {}
+    _o = _p.get("offer_snapshot") or {}
+    _cle = [CARTE_GABARIT, version_invitation(_p), str(_p.get("occurrence") or ""),
+            str(_p.get("offer_id") or _o.get("id") or ""), str(_o.get("name") or ""),
+            str(_p.get("course_id") or ""), str(_c.get("name") or ""), str(_c.get("locationName") or ""),
+            nom_parrain_affichable(_p), _i["photo_url"] or "", _i["message"] or ""]
+    return hashlib.sha256(json.dumps(_cle, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
+
+
+def url_carte(frontend_url, pass_doc) -> str:
+    """`<front>/api/share/duo/<token>/carte.jpg?v=<version>` ; "" sans jeton."""
+    _p = pass_doc or {}
+    _tok = str(_p.get("share_token") or "").strip()
+    if not _tok:
+        return ""
+    return "%s/carte.jpg?v=%s" % (partage_url(frontend_url, _tok), version_carte(_p))
+
+
 def cle_pass(sponsor_email, course_id, occurrence) -> tuple:
     """La clé d'unicité d'un pass actif : (parrain, cours, occurrence)."""
     return (normaliser_email(sponsor_email), str(course_id or "").strip(),
@@ -940,6 +974,10 @@ def dto_pass(pass_doc, statut, tickets, frontend_url, deja_existant=None, offers
         "version": version_pass(_p),
         "offer_history": [dict(e) for e in (_p.get("offer_history") or []) if isinstance(e, dict)],
     }
+    # V552 : LA carte sociale (la même image que l'aperçu WhatsApp) ; jamais sans jeton.
+    _carte = url_carte(frontend_url, _p)
+    if _carte:
+        _dto["card_url"] = _carte
     if deja_existant is not None:
         _dto["deja_existant"] = bool(deja_existant)
     return _dto

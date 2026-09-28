@@ -308,12 +308,18 @@ async def partie_page():
              c == 200 and _og(html_avant, "og:title") == _h.escape("Léa t'invite à Afroboost", quote=True)
              and _og(html_avant, "og:description") == _h.escape(E.og_description_invitation(
                  "Léa", "Afro Cardio", occ, "Essai gratuit")[:200], quote=True)
-             and _og(html_avant, "og:image") == "https://afroboost.com/logo512.png", html_avant[:600])
+             and _og(html_avant, "og:image") == E.url_carte("https://afroboost.com", base["referral_passes"].docs[0]),
+             html_avant[:600])
+    # V552 : og:image est désormais LA CARTE SOCIALE ; l'ordre V551 (coach > offre
+    # > logo) reste celui de l'image de REPLI de la carte (`_v552_image_repli`).
+    _, _repli = await S._v552_image_repli(base["referral_passes"].docs[0], "https://afroboost.com")
+    verifier("7-V552. sans image coach ni média : repli de la carte = logo",
+             _repli == "https://afroboost.com/logo512.png", _repli)
 
     base["referral_share_settings"].docs.append({"_id": "", "share_image_url": "/api/files/plat01/share_p.png"})
-    c, h, _ = await page(tok)
-    verifier("7a. image plateforme utilisée à défaut d'image coach (rendue absolue)",
-             _og(h, "og:image") == "https://afroboost.com/api/files/plat01/share_p.png", _og(h, "og:image"))
+    _, _repli = await S._v552_image_repli(base["referral_passes"].docs[0], "https://afroboost.com")
+    verifier("7a. image plateforme utilisée à défaut d'image coach (rendue absolue) — repli de la carte",
+             _repli == "https://afroboost.com/api/files/plat01/share_p.png", _repli)
     base["referral_passes"].docs[0]["coach_id"] = COACH_A
     base["referral_share_settings"].docs.append({"_id": COACH_A, "share_image_url": "/api/files/coach01/share_c.jpg"})
     await appel(R.referral_pass_invitation_put(dto["id"], H.req_parrain(
@@ -324,8 +330,26 @@ async def partie_page():
     verifier("7c. og:description = message ÉCHAPPÉ",
              _og(h, "og:description") == _h.escape('Viens "danser" <img src=x onerror=alert(1)> & rire', quote=True)
              and "<img src=x" not in h, _og(h, "og:description"))
-    verifier("7d. og:image = image du coach du pass, absolue",
-             _og(h, "og:image") == "https://afroboost.com/api/files/coach01/share_c.jpg", _og(h, "og:image"))
+    _, _repli = await S._v552_image_repli(base["referral_passes"].docs[0], "https://afroboost.com")
+    verifier("7d. image du coach du pass, absolue — repli prioritaire de la carte",
+             _repli == "https://afroboost.com/api/files/coach01/share_c.jpg", _repli)
+    _pp = base["referral_passes"].docs[0]
+    verifier("7d-V552. og:image = carte sociale versionnée (+ secure_url, type, 1200×630), jamais vide",
+             _og(h, "og:image") == E.url_carte("https://afroboost.com", _pp)
+             and _og(h, "og:image").startswith("https://afroboost.com/api/share/duo/%s/carte.jpg?v=" % tok)
+             and _og(h, "og:image:secure_url") == _og(h, "og:image") and _og(h, "og:image:type") == "image/jpeg"
+             and _og(h, "og:image:width") == "1200" and _og(h, "og:image:height") == "630",
+             _og(h, "og:image"))
+    _v_avant = E.version_carte(_pp)
+    await appel(R.referral_pass_invitation_put(dto["id"], H.req_parrain(base, {"message": "Autre message"})))
+    c, h2, _ = await page(tok)
+    verifier("7d-V552b. le message change -> og:image change de version, pas de jeton",
+             _og(h2, "og:image") != _og(h, "og:image") and E.version_carte(_pp) != _v_avant
+             and ("/api/share/duo/%s/carte.jpg" % tok) in _og(h2, "og:image"), _og(h2, "og:image"))
+    r = await S.share_duo_carte(tok, E.version_carte(_pp))
+    verifier("7d-V552c. la carte de ce pass : 200 image/jpeg, cache public",
+             r.status_code == 200 and r.headers.get("content-type", "").startswith("image/jpeg")
+             and "public" in r.headers.get("cache-control", "") and len(r.body) > 0, dict(r.headers))
     # ?v= est une chaîne de requête : la route ne lit que le chemin ; le jeton reste le même.
     c, _, _ = await page(tok)
     verifier("7e. ?v=3 -> 200 (paramètre toléré, jeton identique)", c == 200, c)
