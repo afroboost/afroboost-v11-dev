@@ -13,6 +13,13 @@
  * ÉTATS DE PAGE : chargement / non connecté / désactivé (« Bientôt
  * disponible ») / centre complet.
  *
+ * V552 — PAGE COMPACTE : en-tête, résultats, « Inviter un ami » (l'assistant,
+ * prioritaire, toujours monté), puis « Mes outils » : quatre raccourcis
+ * (Crédits, Pass Duo, Invitations, Historique). Chaque raccourci ouvre LE MÊME
+ * `ParrainageDrawer`, qui affiche le bloc COMPLET d'avant (rien de supprimé).
+ * Le tiroir est rendu à côté de l'assistant, jamais à sa place ; il ne fait
+ * aucun appel : tout vient du GET /me du montage.
+ *
  * CE QU'ON N'AFFICHE PAS : « crédits Spordateur gagnés » — la donnée n'est
  * pas disponible proprement côté Afroboost ; la Carte 1 renvoie au profil
  * Spordateur, source de vérité, sans rien inventer.
@@ -23,14 +30,39 @@ import { QRCodeCanvas } from 'qrcode.react';
 import SvgIcon from '../SvgIcon';
 import PassDuoCard, { ChipStatut } from './PassDuoCard';
 import InvitationWizard from './InvitationWizard'; // V551 — l'invitation personnalisée, en 3 étapes
+import ParrainageDrawer from './ParrainageDrawer'; // V552 — le tiroir commun de « Mes outils »
 import { entrerDansSpordate, prechargerSpordate } from '../../utils/spordateHandoff';
 import {
   API_PARRAINAGE, enteteParrain, aUneIdentiteParrain, urlEspaceCourant, lireConfigParrainage,
   lireContexteUrl, passCourant, libelleJour, libelleDateCourte, STATUTS_OUVERTS,
   changerOffre, lireRefus, messageRefusOffre, lignesHistorique, offreDuPass, TEXTE_OFFRE_CONFLIT, // V534b
   changerSeance, // V539b — le parrain peut aussi changer la date de son Pass
+  LIBELLES_STATUT, // V552 — l'état du Pass sur son raccourci
 } from '../../utils/parrainage';
 import './parrainage.css';
+
+/** V552 — les quatre raccourcis de « Mes outils », dans l'ordre d'affichage. */
+export const OUTILS = [
+  { id: 'credits', titre: 'Crédits', icone: 'dollarSign' },
+  { id: 'pass', titre: 'Pass Duo', icone: 'users' },
+  { id: 'invitations', titre: 'Invitations', icone: 'send' },
+  { id: 'historique', titre: 'Historique', icone: 'clock' },
+];
+
+/** V552 — la petite ligne d'état sous chaque raccourci (aucune donnée inventée). */
+export function etatsOutils({ passes, passLien, invitations, history }) {
+  const nInv = (invitations || []).length;
+  const nHist = (history || []).length;
+  let pass = 'Aucun';
+  if (passLien) pass = LIBELLES_STATUT[passLien.status] || 'En cours';
+  else if ((passes || []).length) pass = 'Aucun en cours';
+  return {
+    credits: 'Sur Spordateur',
+    pass,
+    invitations: nInv === 0 ? 'Aucune' : `${nInv} invitation${nInv > 1 ? 's' : ''}`,
+    historique: nHist === 0 ? 'Vide' : `${nHist} événement${nHist > 1 ? 's' : ''}`,
+  };
+}
 
 const CANAUX = { whatsapp: 'WhatsApp', copy: 'Lien copié', qr: 'QR partagé', share: 'Partagé' };
 
@@ -109,6 +141,8 @@ export default function CentreParrainage() {
   const [qrUrl, setQrUrl] = useState(''); // V551 : le QR s'ouvre depuis l'assistant, sur le lien qu'il partage
   const [creationForcee, setCreationForcee] = useState(false); // V551 : « Créer un nouveau Pass Duo »
   const [contexte] = useState(() => lireContexteUrl()); // V551 : ?course=&occurrence=&offer= (lu une fois)
+  const [outil, setOutil] = useState(''); // V552 : le tiroir ouvert ('' = aucun)
+  const declencheurs = useRef({});        // V552 : les raccourcis, pour y rendre le focus
   const urlEspace = urlEspaceCourant();
 
   // UN chargement au montage : /me + configuration. Jamais relancé ensuite.
@@ -207,8 +241,13 @@ export default function CentreParrainage() {
   /** V551 — « Créer un nouveau Pass Duo » / « Préparer mon invitation » : l'assistant porte la création. */
   const preparerInvitation = () => {
     if (passLien) setCreationForcee(true);
-    const cible = document.querySelector('[data-testid="invitation-zone"]');
-    if (cible && cible.scrollIntoView) cible.scrollIntoView({ behavior: 'auto', block: 'start' });
+    // V552 : appelé depuis le tiroir Pass Duo — on le ferme d'abord, puis on
+    // amène l'assistant (toujours monté) à l'écran.
+    setOutil('');
+    setTimeout(() => {
+      const cible = document.querySelector('[data-testid="invitation-zone"]');
+      if (cible && cible.scrollIntoView) cible.scrollIntoView({ behavior: 'auto', block: 'start' });
+    }, 0);
   };
 
   const creerPass = (course_id, occurrence, terms_accepted, offer_id) => {
@@ -380,38 +419,9 @@ export default function CentreParrainage() {
   const parId = {};
   passes.forEach((p) => { if (p && p.id) parId[p.id] = p; });
 
-  return (
-    <Cadre>
-      <div className="cp-eyebrow">Mon centre{prenom ? ` · ${prenom}` : ''}</div>
-      <h1 className="cp-h1">Invite un ami, <em className="cp-em">profitez à deux.</em></h1>
-      <p className="cp-lead">Tes invitations, tes programmes et tes résultats, au même endroit.</p>
-
-      <h2 className="cp-h2">Mes résultats</h2>
-      <div className="cp-stats" data-testid="mes-resultats">
-        {libellesResultats(me.stats).map((s) => (
-          <div className="cp-stat" key={s.testid} data-testid={s.testid}><b>{s.valeur}</b><span>{s.libelle}</span></div>
-        ))}
-      </div>
-
-      {/* V551 — UNE SEULE ZONE D'INVITATION, JAMAIS DEUX FORMULAIRES.
-          Sans Pass ouvert : l'assistant en 3 étapes (qui crée le Pass avec son
-          invitation). Avec un Pass ouvert : « Ton invitation est prête »,
-          partage, « Modifier ». Il remplace le CTA et les 4 boutons V538. */}
-      <h2 className="cp-h2">Inviter un ami</h2>
-      <div data-testid="invitation-zone">
-        <InvitationWizard
-          courses={config && config.courses}
-          passOuvert={passLien}
-          contexte={contexte}
-          creationForcee={creationForcee}
-          onRetour={() => setCreationForcee(false)}
-          onPass={(dto) => { poserPass(dto); setCreationForcee(false); }}
-          onJournal={journaliser}
-          onQr={surQr}
-        />
-      </div>
-
-      <h2 className="cp-h2">Mes programmes</h2>
+  // V552 — le contenu COMPLET de chaque tiroir : les blocs d'avant, tels quels.
+  const contenus = {
+    credits: (
       <div className="cp-card" data-testid="programme-credits">
         <div className="cp-prog">
           <h3 className="cp-h3"><SvgIcon name="dollarSign" size={20} />Parrainage crédits</h3>
@@ -424,25 +434,28 @@ export default function CentreParrainage() {
           <SvgIcon name="externalLink" size={20} /> Gérer mes crédits
         </button>
       </div>
-
-      <PassDuoCard
-        config={config}
-        passes={passes}
-        passAffiche={passAffiche}
-        initialeParrain={initiale}
-        urlEspace={urlEspace}
-        onCreer={creerPass}
-        onAnnuler={annulerPass}
-        onConfirmer={confirmerPass}
-        onChoisir={(id) => { setErreurPass(''); setPassAfficheId(id); }}
-        onChangerOffre={changerOffrePass}
-        onChangerSeance={changerSeancePass}
-        onPreparerInvitation={preparerInvitation}
-        occupe={occupe}
-        erreur={erreurPass}
-      />
-
-      <h2 className="cp-h2">Mes invitations</h2>
+    ),
+    pass: (
+      <>
+        <PassDuoCard
+          config={config}
+          passes={passes}
+          passAffiche={passAffiche}
+          initialeParrain={initiale}
+          urlEspace={urlEspace}
+          onCreer={creerPass}
+          onAnnuler={annulerPass}
+          onConfirmer={confirmerPass}
+          onChoisir={(id) => { setErreurPass(''); setPassAfficheId(id); }}
+          onChangerOffre={changerOffrePass}
+          onChangerSeance={changerSeancePass}
+          onPreparerInvitation={preparerInvitation}
+          occupe={occupe}
+          erreur={erreurPass}
+        />
+      </>
+    ),
+    invitations: (
       <div className="cp-card cp-card--tight" data-testid="mes-invitations">
         {invitations.length === 0 ? (
           <p className="cp-empty">Aucune invitation pour l'instant. Partage ton lien pour commencer.</p>
@@ -469,8 +482,8 @@ export default function CentreParrainage() {
           );
         })}
       </div>
-
-      <h2 className="cp-h2">Historique</h2>
+    ),
+    historique: (
       <div className="cp-card cp-card--list" data-testid="historique">
         {history.length === 0 ? (
           <p className="cp-empty">Ton historique se remplira au fil de tes invitations.</p>
@@ -482,6 +495,62 @@ export default function CentreParrainage() {
           </ul>
         )}
       </div>
+    ),
+  };
+  const etats = etatsOutils({ passes, passLien, invitations, history });
+  const outilOuvert = OUTILS.find((o) => o.id === outil) || null;
+
+  return (
+    <Cadre>
+      <div className="cp-eyebrow">Mon centre{prenom ? ` · ${prenom}` : ''}</div>
+      <h1 className="cp-h1 cp-h1--compact">Invite un ami, <em className="cp-em">profitez à deux.</em></h1>
+
+      <div className="cp-stats cp-stats--compact" data-testid="mes-resultats" role="group" aria-label="Mes résultats">
+        {libellesResultats(me.stats).map((s) => (
+          <div className="cp-stat" key={s.testid} data-testid={s.testid}><b>{s.valeur}</b><span>{s.libelle}</span></div>
+        ))}
+      </div>
+
+      {/* V551 — UNE SEULE ZONE D'INVITATION, JAMAIS DEUX FORMULAIRES.
+          V552 : elle reste PRIORITAIRE et TOUJOURS MONTÉE — les tiroirs sont
+          rendus à côté, jamais à sa place : son état survit à leur ouverture. */}
+      <h2 className="cp-h2">Inviter un ami</h2>
+      <div data-testid="invitation-zone">
+        <InvitationWizard
+          courses={config && config.courses}
+          passOuvert={passLien}
+          contexte={contexte}
+          creationForcee={creationForcee}
+          onRetour={() => setCreationForcee(false)}
+          onPass={(dto) => { poserPass(dto); setCreationForcee(false); }}
+          onJournal={journaliser}
+          onQr={surQr}
+        />
+      </div>
+
+      {/* V552 — MES OUTILS : quatre raccourcis compacts, un tiroir commun. */}
+      <h2 className="cp-h2">Mes outils</h2>
+      <div className="cp-outils" data-testid="mes-outils">
+        {OUTILS.map((o) => (
+          <button key={o.id} type="button" className="cp-outil" data-testid={`outil-${o.id}`}
+                  ref={(el) => { declencheurs.current[o.id] = el; }}
+                  aria-haspopup="dialog" aria-expanded={outil === o.id}
+                  onClick={() => { setErreurPass(''); setOutil(o.id); }}>
+            <span className="cp-outil-ic" aria-hidden="true"><SvgIcon name={o.icone} size={18} /></span>
+            <span className="cp-outil-txt">
+              <b>{o.titre}</b>
+              <small>{etats[o.id]}</small>
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {outilOuvert ? (
+        <ParrainageDrawer key={outilOuvert.id} titre={outilOuvert.titre} outil={outilOuvert.id}
+                          declencheur={declencheurs.current[outilOuvert.id]} onClose={() => setOutil('')}>
+          {contenus[outilOuvert.id]}
+        </ParrainageDrawer>
+      ) : null}
 
       {qrUrl ? <ModaleQr url={qrUrl} onClose={() => setQrUrl('')} /> : null}
     </Cadre>

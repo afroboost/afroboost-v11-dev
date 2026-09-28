@@ -68,6 +68,9 @@ afterEach(() => {
 
 const par = (id) => conteneur.querySelector(`[data-testid="${id}"]`);
 const tous = (id) => conteneur.querySelectorAll(`[data-testid="${id}"]`);
+// V552 — le Pass Duo, les invitations, l'historique et les crédits sont dans
+// des tiroirs (« Mes outils ») : on ouvre celui qu'un test inspecte.
+const ouvrirOutil = (id) => act(async () => { par(`outil-${id}`).click(); });
 
 async function monter(element) {
   await act(async () => {
@@ -383,11 +386,16 @@ describe('CentreParrainage — états de page', () => {
     expect(par('stat-invited').textContent).toContain('3');
     expect(par('stat-joined').textContent).toContain('1');
     expect(par('inviter-un-ami').textContent).toContain('afroboost.com/api/share/duo/TOK123');
+    await ouvrirOutil('historique');
     expect(par('historique').textContent).toContain('Pass Duo créé.');
+    await ouvrirOutil('credits');
     expect(par('programme-credits').textContent).toContain('1 crédit Sport Date par achat de ton filleul · jusqu\'à 50 filleuls');
+    await act(async () => { par('drawer-fermer').click(); });
     await act(async () => { par('inviter-copier').click(); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(axios.post).toHaveBeenCalledWith(expect.stringMatching(/\/referral\/invitations$/), { pass_id: 'p-locked', channel: 'copy' }, expect.anything());
+    expect(par('outil-pass').textContent).toContain('En attente de ton ami'); // V552 : raccourci à jour
+    await ouvrirOutil('pass');
     expect(par('chip-waiting')).not.toBeNull();            // état local mis à jour, sans relancer /me
     expect(par('stat-invited').textContent).toContain('4');
     expect(axios.get.mock.calls.filter((c) => String(c[0]).endsWith('/referral/me')).length).toBe(1);
@@ -407,6 +415,8 @@ describe('CentreParrainage — états de page', () => {
     expect(par('pass-select-seance')).not.toBeNull();
     ['inviter-whatsapp', 'inviter-copier', 'inviter-qr', 'inviter-partager'].forEach((id) => expect(par(id)).toBeNull());
     expect(tous('pass-select-seance').length).toBe(1);        // un seul formulaire, jamais deux
+    await ouvrirOutil('pass');                                // V552 : la carte est dans son tiroir
+    expect(tous('pass-select-seance').length).toBe(1);        // toujours un seul formulaire, tiroir ouvert
     expect(par('pass-preparer-invitation')).not.toBeNull();   // la carte renvoie vers l'assistant
   });
   test('CAS A — sans Pass : l\'assistant d\'invitation vient AVANT les programmes', async () => {
@@ -415,8 +425,9 @@ describe('CentreParrainage — états de page', () => {
     axios.get.mockImplementation((url) => (String(url).endsWith('/me') ? Promise.resolve({ data: ME }) : Promise.resolve({ data: CONFIG })));
     await monter(<CentreParrainage />);
     expect(par('wizard-suivant').textContent).toContain('Continuer');
+    // V552 : les programmes sont devenus « Mes outils » (tiroirs) ; l'assistant les précède.
     const html = document.body.innerHTML;
-    expect(html.indexOf('invitation-wizard')).toBeLessThan(html.indexOf('pass-duo-card'));
+    expect(html.indexOf('invitation-wizard')).toBeLessThan(html.indexOf('mes-outils'));
   });
   test('CAS B — Pass créé : le CTA disparaît, « Inviter un ami » devient l\'action', async () => {
     window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
@@ -460,11 +471,13 @@ describe('CentreParrainage — états de page', () => {
     axios.post.mockResolvedValue({ data: pass('cancelled') });
     await monter(<CentreParrainage />);
     expect(par('stat-invited').textContent).toContain('2');
+    await ouvrirOutil('pass');                                     // V552 : l'annulation vit dans le tiroir Pass Duo
     await act(async () => { par('pass-annuler').click(); });        // ouvre la confirmation
     await act(async () => { par('pass-annuler-oui').click(); });     // confirme
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
     expect(appels).toBeGreaterThan(1);                       // `/me` relu après l'annulation
     expect(par('stat-invited').textContent).toContain('0');  // les compteurs reviennent
+    await ouvrirOutil('historique');
     expect(par('historique').textContent).toContain('Pass Duo créé.');   // l'historique reste
   });
 });

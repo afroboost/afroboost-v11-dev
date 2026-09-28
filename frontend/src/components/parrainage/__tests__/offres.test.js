@@ -345,6 +345,8 @@ describe('CentreParrainage — changement d\'offre porté par le parent', () => 
     window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
     axios.get.mockImplementation((url) => (String(url).endsWith('/me') ? Promise.resolve({ data: me || ME() }) : Promise.resolve({ data: CONFIG_3 })));
     await monter(<CentreParrainage />);
+    // V552 — la carte Pass Duo vit dans le tiroir « Pass Duo » de « Mes outils ».
+    await act(async () => { par('outil-pass').click(); });
   };
   // V551 : `/api/spordate/unified-profile/me` finit aussi par « /me » — on compte /referral/me.
   const appelsMe = () => axios.get.mock.calls.filter((c) => String(c[0]).endsWith('/referral/me')).length;
@@ -362,7 +364,9 @@ describe('CentreParrainage — changement d\'offre porté par le parent', () => 
     expect(axios.patch.mock.calls[0][2].headers).toEqual({ 'X-Subscriber-Token': 'dev-1' });
     expect(par('offre-sheet')).toBeNull();
     expect(par('offre-actuelle').textContent).toContain('Pack bienvenue');
+    await act(async () => { par('outil-historique').click(); });   // V552 : un tiroir à la fois
     expect(par('historique').textContent).toContain('Offre modifiée : Essai découverte → Pack bienvenue');
+    await act(async () => { par('outil-invitations').click(); });
     expect(par('mes-invitations').textContent).toContain('Pack bienvenue');
     expect(appelsMe()).toBe(1);
     sansIdTechnique(conteneur.textContent);
