@@ -495,3 +495,147 @@ export function lignesHistorique(history, passes) {
   if (!extra.length) return base;
   return base.concat(extra).sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// V551 — PARRAINAGE V2 : L'INVITATION PERSONNALISÉE (nom, photo, message)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Ce que le membre personnalise ici n'appartient QU'À SON INVITATION
+// (`pass.invitation`). Aucune fonction de ce bloc n'écrit dans un profil :
+// ni /spordate/unified-profile (lu seulement), ni l'abonné. Le jeton de
+// partage ne change jamais ; seul `?v=` du `share_url` renvoyé peut bouger.
+
+/** Nom affiché quand aucun vrai prénom n'est disponible (jamais un e-mail). */
+export const NOM_NEUTRE = 'Un membre Afroboost';
+/** Longueur maximale du message d'invitation (contrat : ≤ 280). */
+export const MESSAGE_MAX = 280;
+/** Longueur maximale du nom d'invitation (contrat : 1..40). */
+export const NOM_MAX = 40;
+/** Message intégré du contrat, si le serveur n'en fournit aucun. */
+export const MESSAGE_INVITATION_DEFAUT = "Je t'invite à venir essayer Afroboost avec moi. Réserve ta place ici :";
+
+/**
+ * Le nom tel qu'on peut l'afficher, ou "" : jamais un e-mail (« @ »), jamais
+ * un identifiant technique (aucune lettre, ou ≥ 20 caractères sans espace).
+ * Même filtre que le serveur (`nom_affichable`), en plus strict côté front :
+ * mieux vaut le nom neutre qu'une adresse affichée à un inconnu.
+ */
+export function nomAffichable(nom) {
+  const s = String(nom == null ? '' : nom).trim();
+  if (!s || s.indexOf('@') >= 0) return '';
+  if (!/\p{L}/u.test(s)) return '';
+  if (s.length >= 20 && !/\s/.test(s)) return '';
+  return s.slice(0, NOM_MAX);
+}
+
+/** Une photo que le serveur acceptera (contrat PUT /invitation), sinon null. */
+export function photoAutorisee(url) {
+  const s = String(url || '').trim();
+  if (!s || s.length > 500) return null;
+  if (/^\/api\/files\//.test(s)) return s;
+  const m = /^https:\/\/([^/?#]+)(?:[/?#]|$)/i.exec(s);
+  if (!m) return null;
+  const hote = m[1].toLowerCase();
+  return ['afroboost.com', 'firebasestorage.googleapis.com', 'storage.googleapis.com', 'lh3.googleusercontent.com']
+    .indexOf(hote) >= 0 ? s : null;
+}
+
+/** Message borné à 280 caractères (le compteur l'affiche, le serveur revérifie). */
+export function bornerMessage(texte) {
+  return String(texte == null ? '' : texte).slice(0, MESSAGE_MAX);
+}
+
+/**
+ * Le contexte de séance/offre passé à /parrainage (`?course=&occurrence=&offer=`),
+ * ou des chaînes vides. Lecture pure de l'URL courante.
+ */
+export function lireContexteUrl(search) {
+  let q;
+  try {
+    q = new URLSearchParams(search != null ? search : (window.location.search || ''));
+  } catch (e) {
+    return { course: '', occurrence: '', offer: '' };
+  }
+  return {
+    course: q.get('course') || '',
+    occurrence: q.get('occurrence') || '',
+    offer: q.get('offer') || '',
+  };
+}
+
+/**
+ * Lit ce qu'il faut pour préremplir l'invitation, en UN aller-retour parallèle :
+ *   - `GET /api/referral/invitation` → { identity, default_message, pass } ;
+ *   - `GET /api/spordate/unified-profile/me` → { lie, profil } (lecture seule).
+ * Ne lève jamais : un échec donne des valeurs vides, et le front retombe sur
+ * le nom neutre et le message intégré.
+ */
+export function lireInvitation(headers) {
+  const h = headers || enteteParrain();
+  const inv = axios.get(`${API_PARRAINAGE}/invitation`, { headers: h, timeout: 10000 })
+    .then((r) => (r && r.data) || {}).catch(() => ({}));
+  const prof = axios.get(`${BACKEND_URL}/api/spordate/unified-profile/me`, { headers: h, timeout: 10000 })
+    .then((r) => (r && r.data) || {}).catch(() => ({}));
+  return Promise.all([inv, prof]).then(([i, p]) => ({
+    identity: (i && i.identity) || {},
+    default_message: (i && typeof i.default_message === 'string') ? i.default_message : '',
+    pass: (i && i.pass && i.pass.id) ? i.pass : null,
+    image_url: (i && (i.image_url || (i.effective && i.effective.image_url))) || '',
+    lie: !!(p && p.lie),
+    profil: (p && p.lie && p.profil) || null,
+  }));
+}
+
+/**
+ * Identité PRÉREMPLIE de l'invitation : l'override déjà posé sur le pass,
+ * sinon le profil Spordateur lié, sinon l'identité renvoyée par /invitation,
+ * sinon rien (le front affichera NOM_NEUTRE et l'initiale).
+ * @returns {{nom:string, photo:(string|null)}}
+ */
+export function identitePreremplie({ pass, profil, identity }) {
+  const inv = pass && pass.invitation;
+  const versionPosee = !!(inv && Number(inv.version) > 0);
+  const nomPass = inv ? nomAffichable(inv.display_name) : '';
+  const nomProfil = profil ? nomAffichable(profil.displayName) : '';
+  const nomIdentite = identity ? nomAffichable(identity.display_name) : '';
+  const nom = nomPass || nomProfil || nomIdentite || '';
+  let photo = null;
+  if (versionPosee) {
+    photo = photoAutorisee(inv.photo_url); // null = le membre l'a retirée : on respecte
+  } else {
+    const photoProfil = profil ? (profil.photoURL || (Array.isArray(profil.photos) ? profil.photos[0] : '')) : '';
+    photo = photoAutorisee(photoProfil) || photoAutorisee(identity && identity.photo_url);
+  }
+  return { nom, photo };
+}
+
+/** Le message prérempli : celui du pass s'il existe, sinon celui du coach, sinon l'intégré. */
+export function messagePrerempli({ pass, default_message }) {
+  const inv = pass && pass.invitation;
+  if (inv && typeof inv.message === 'string' && inv.message.trim()) return bornerMessage(inv.message);
+  if (typeof default_message === 'string' && default_message.trim()) return bornerMessage(default_message);
+  return MESSAGE_INVITATION_DEFAUT;
+}
+
+/** L'objet `invitation` du contrat (POST /pass et PUT /invitation). */
+export function corpsInvitation({ nom, photo, message }) {
+  const n = nomAffichable(nom);
+  const corps = { photo_url: photoAutorisee(photo), message: bornerMessage(message).trim() || null };
+  if (n) corps.display_name = n;
+  return corps;
+}
+
+/** `PUT /api/referral/pass/{id}/invitation` — même jeton, nouveau `?v=` possible. */
+export function modifierInvitation({ passId, invitation, headers }) {
+  return axios.put(`${API_PARRAINAGE}/pass/${encodeURIComponent(passId)}/invitation`, invitation,
+    { headers: headers || enteteParrain(), timeout: 10000 });
+}
+
+/** Le texte WhatsApp : celui du serveur s'il porte le lien partagé, sinon message + lien. */
+export function texteWhatsAppInvitation(pass, message) {
+  const url = (pass && (pass.share_url || pass.invite_url)) || '';
+  const serveur = pass && pass.whatsapp_text;
+  if (serveur && url && serveur.indexOf(url) >= 0) return serveur;
+  const m = String(message || '').trim();
+  return m ? `${m}\n${url}` : `Rejoins mon Pass Duo Afroboost : ${url}`;
+}

@@ -379,3 +379,51 @@
 @media (prefers-reduced-motion: reduce) {
   .cp-sheet-bg, .cp-sheet, .cp-offre, .cp-offre-coche { animation: none !important; transition: none !important; }
 }
+
+/* ── V551 — Assistant d'invitation (3 étapes) ───────────────────────────── */
+.cp-wz-etapes { list-style: none; display: flex; gap: 6px; margin: 0 0 16px; padding: 0; }
+.cp-wz-etapes li {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+  font-size: 11px; letter-spacing: .03em; color: var(--cp-fine); line-height: 1.25;
+}
+.cp-wz-etapes li span {
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 12px;
+  border: 1px solid var(--cp-line); color: var(--cp-muted); background: var(--cp-input);
+}
+.cp-wz-etapes li.on { color: var(--cp-text); font-weight: 700; }
+.cp-wz-etapes li.on span { background: var(--cp-btn); border-color: transparent; color: rgb(255, 255, 255); }
+.cp-wz-etapes li.fait span { border-color: var(--cp-pink); color: var(--cp-pink); }
+.cp-wz-identite { display: flex; align-items: center; gap: 12px; }
+.cp-wz-identite-nom { flex: 1; min-width: 0; }
+.cp-wz-identite-nom small { display: block; font-size: 11px; color: var(--cp-muted); }
+.cp-wz-identite-nom b { display: block; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-wz-av { overflow: hidden; flex: none; }
+.cp-wz-av img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cp-wz-edition { margin-top: 12px; padding-top: 4px; border-top: 1px solid var(--cp-line); }
+.cp-wz-choix { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.cp-wz-choix .cp-b { flex: 1 1 140px; }
+.cp-wz-message { resize: vertical; min-height: 110px; line-height: 1.45; }
+.cp-wz-compteur { text-align: right; margin: 0; font-variant-numeric: tabular-nums; }
+.cp-wz-nav { display: flex; gap: 10px; margin-top: 6px; }
+.cp-wz-nav .cp-b { flex: 1; }
+.cp-wz-nav .cp-b--ghost { flex: 0 0 auto; width: auto; padding-left: 16px; padding-right: 16px; }
+.cp-wz-retour, .cp-wz-qr { margin-top: 12px; }
+.cp-share--2 { grid-template-columns: 1fr 1fr; }
+.cp-invitation-photo { margin: 0 0 10px; }
+
+/* L'aperçu : ce que l'ami verra */
+.cp-apercu { border: 1px solid var(--cp-line); border-radius: 16px; overflow: hidden; margin: 12px 0; background: var(--cp-input); }
+.cp-apercu-visuel { aspect-ratio: 1.91 / 1; width: 100%; background: var(--cp-card), var(--cp-card-solid); }
+.cp-apercu-visuel img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cp-apercu-visuel-defaut { width: 100%; height: 100%; display: grid; place-items: center; color: var(--cp-pink); background: var(--cp-btn); opacity: .85; }
+.cp-apercu-visuel-defaut svg { width: 40px; height: 40px; color: rgb(255, 255, 255); }
+.cp-apercu-corps { padding: 12px 14px 14px; }
+.cp-apercu-qui { display: flex; align-items: center; gap: 10px; }
+.cp-apercu-qui .cp-av { font-size: 16px; border-width: 1px; }
+.cp-apercu-qui b { font-size: 15px; line-height: 1.3; }
+.cp-card p.cp-apercu-message, .cp-apercu-message { margin: 10px 0 6px; font-size: 14px; color: var(--cp-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cp-card p.cp-apercu-seance, .cp-apercu-seance { margin: 4px 0 0; font-size: 12px; color: var(--cp-muted); display: flex; align-items: center; gap: 6px; }
+.cp-apercu-seance svg { width: 14px; height: 14px; flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  .cp-wz-etapes li span { transition: none !important; }
+}

@@ -113,16 +113,28 @@ export function optionsSeances(courses) {
   })).filter((g) => g.options.length > 0);
 }
 
-function FormulaireCreation({ courses, onCreer, occupe, erreur }) {
+/**
+ * V551 — LE CHOIX « SÉANCE + OFFRE », PARTAGÉ.
+ * Extrait tel quel de FormulaireCreation pour que l'assistant d'invitation
+ * (InvitationWizard) réutilise le MÊME petit sélecteur au lieu d'empiler un
+ * second formulaire. `contexte` = `{course, occurrence, offer}` lus dans l'URL
+ * de /parrainage : présélection seulement, jamais imposée (une valeur absente
+ * de la liste du serveur est ignorée).
+ */
+export function useChoixSeance(courses, contexte) {
   const groupes = useMemo(() => optionsSeances(courses), [courses]);
-  const premiere = groupes.length ? groupes[0].options[0].valeur : '';
-  const [choix, setChoix] = useState(premiere);
-  const valeur = choix || premiere;
-  const plusieursCours = groupes.length > 1;
-  // V534: preuve T1 du parrain — le serveur bloque sa place (`conditions_non_acceptees`)
-  // si des conditions sont publiées et non acceptées ; sans conditions publiées, rien n'est exigé.
-  const [conditionsOk, setConditionsOk] = useState(false);
-  const [conditionsRequises, setConditionsRequises] = useState(false);
+  const ctx = contexte || {};
+  const toutes = [];
+  groupes.forEach((g) => g.options.forEach((o) => toutes.push(o.valeur)));
+  let initiale = groupes.length ? groupes[0].options[0].valeur : '';
+  if (ctx.course) {
+    const exacte = `${ctx.course}|${ctx.occurrence || ''}`;
+    const groupeCtx = groupes.find((g) => String(g.id) === String(ctx.course));
+    if (ctx.occurrence && toutes.indexOf(exacte) >= 0) initiale = exacte;
+    else if (groupeCtx) initiale = groupeCtx.options[0].valeur;
+  }
+  const [choix, setChoix] = useState(initiale);
+  const valeur = choix || initiale;
   const idxCours = valeur.indexOf('|');
   const coursChoisi = idxCours > 0 ? valeur.slice(0, idxCours) : '';
 
@@ -135,28 +147,25 @@ function FormulaireCreation({ courses, onCreer, occupe, erreur }) {
   const coursObjet = (Array.isArray(courses) ? courses : []).find((c) => c && String(c.id) === String(coursChoisi)) || null;
   const offresConnues = !!(coursObjet && Array.isArray(coursObjet.offers));
   const offres = offresDe(coursObjet);
-  const [choixOffre, setChoixOffre] = useState({ cours: '', id: null });
-  const offreChoisie = choixOffre.cours === coursChoisi && choixOffre.id != null
+  const [choixOffre, setChoixOffre] = useState({ cours: ctx.offer ? String(ctx.course || '') : '', id: ctx.offer || null });
+  const choixValide = choixOffre.cours === coursChoisi && choixOffre.id != null
+    && offres.some((o) => String(o.id) === String(choixOffre.id));
+  const offreChoisie = choixValide
     ? choixOffre.id
     : offrePreselectionnee(offres, coursObjet && coursObjet.default_offer_id);
   const offreManquante = offresConnues && (offreChoisie == null || !offres.some((o) => String(o.id) === String(offreChoisie)));
-
-  const creer = () => {
-    if (!valeur || occupe) return;
-    if (conditionsRequises && !conditionsOk) return;
-    if (offreManquante) return;
-    const idx = valeur.indexOf('|');
-    onCreer(valeur.slice(0, idx), valeur.slice(idx + 1), conditionsOk, offresConnues ? offreChoisie : null);
+  return {
+    groupes, valeur, setChoix, coursChoisi, offresConnues, offres, offreChoisie, offreManquante,
+    choisirOffre: (id) => setChoixOffre({ cours: coursChoisi, id }),
+    occurrence: idxCours > 0 ? valeur.slice(idxCours + 1) : '',
   };
+}
 
-  if (!groupes.length) {
-    return (
-      <p className="cp-mini" data-testid="pass-aucune-seance">
-        Aucune séance n'est ouverte au Pass Duo pour le moment. Reviens bientôt.
-      </p>
-    );
-  }
-
+/** Le sélecteur de séance + l'offre (V534b), sans rien d'autre. */
+export function ChampsSeanceOffre({ choix, occupe }) {
+  const { groupes, valeur, setChoix, coursChoisi, offresConnues, offres, offreChoisie, choisirOffre } = choix;
+  const plusieursCours = groupes.length > 1;
+  if (!groupes.length) return null;
   return (
     <>
       <label htmlFor="cp-seance" className="cp-label">Séance</label>
@@ -178,8 +187,39 @@ function FormulaireCreation({ courses, onCreer, occupe, erreur }) {
       ) : null}
       {offresConnues && offres.length > 1 ? (
         <SelecteurOffres titre="Choisis ton offre" offres={offres} choix={offreChoisie} name={`cp-creation-${coursChoisi}`}
-                         onChoisir={(id) => setChoixOffre({ cours: coursChoisi, id })} disabled={occupe} />
+                         onChoisir={choisirOffre} disabled={occupe} />
       ) : null}
+    </>
+  );
+}
+
+function FormulaireCreation({ courses, onCreer, occupe, erreur }) {
+  const choix = useChoixSeance(courses);
+  const { groupes, valeur, coursChoisi, offresConnues, offreChoisie, offreManquante } = choix;
+  // V534: preuve T1 du parrain — le serveur bloque sa place (`conditions_non_acceptees`)
+  // si des conditions sont publiées et non acceptées ; sans conditions publiées, rien n'est exigé.
+  const [conditionsOk, setConditionsOk] = useState(false);
+  const [conditionsRequises, setConditionsRequises] = useState(false);
+
+  const creer = () => {
+    if (!valeur || occupe) return;
+    if (conditionsRequises && !conditionsOk) return;
+    if (offreManquante) return;
+    const idx = valeur.indexOf('|');
+    onCreer(valeur.slice(0, idx), valeur.slice(idx + 1), conditionsOk, offresConnues ? offreChoisie : null);
+  };
+
+  if (!groupes.length) {
+    return (
+      <p className="cp-mini" data-testid="pass-aucune-seance">
+        Aucune séance n'est ouverte au Pass Duo pour le moment. Reviens bientôt.
+      </p>
+    );
+  }
+
+  return (
+    <>
+      <ChampsSeanceOffre choix={choix} occupe={occupe} />
       <Duo pass={null} />
       <Stepper status="locked" />
       {coursChoisi ? (
@@ -460,14 +500,19 @@ function ListePasses({ passes, courantId, onChoisir }) {
  * @param {function} onChangerOffre(passId, offer_id, version) → Promise<{ok, conflit?, message?}>   V534b
  * @param {boolean}  occupe          un appel est en cours
  * @param {string}   erreur          message d'erreur du dernier appel
+ * @param {function} onPreparerInvitation  V551 : si fourni, la CRÉATION est portée par
+ *                   l'assistant d'invitation (InvitationWizard) — la carte n'empile pas
+ *                   un second formulaire, elle renvoie vers l'assistant.
  */
 export default function PassDuoCard({
   config, passes, passAffiche, initialeParrain, urlEspace,
   onCreer, onAnnuler, onConfirmer, onChoisir, onChangerOffre, onChangerSeance, occupe, erreur,
+  onPreparerInvitation,
 }) {
   const [creation, setCreation] = useState(false);
   const liste = Array.isArray(passes) ? passes : [];
-  const montrerFormulaire = !passAffiche || creation;
+  const deleguee = typeof onPreparerInvitation === 'function';
+  const montrerFormulaire = !passAffiche || (creation && !deleguee);
 
   return (
     <>
@@ -479,7 +524,18 @@ export default function PassDuoCard({
         </div>
         <p>Choisis une séance, invite un ami : dès son inscription, vous avez chacun votre billet.</p>
 
-        {montrerFormulaire ? (
+        {montrerFormulaire && deleguee ? (
+          <>
+            <Duo pass={null} />
+            <Stepper status="locked" />
+            <p className="cp-mini" data-testid="pass-via-invitation">
+              Ton Pass Duo se crée avec ton invitation, juste au-dessus : séance, message, puis partage.
+            </p>
+            <button type="button" className="cp-b cp-b--secondary" onClick={onPreparerInvitation} data-testid="pass-preparer-invitation">
+              <SvgIcon name="send" size={20} /> Préparer mon invitation
+            </button>
+          </>
+        ) : montrerFormulaire ? (
           <>
             <FormulaireCreation courses={config && config.courses} onCreer={(c, o, t, of) => { setCreation(false); onCreer(c, o, t, of); }} occupe={occupe} erreur={erreur} />
             {passAffiche ? (
@@ -495,7 +551,7 @@ export default function PassDuoCard({
             urlEspace={urlEspace}
             onAnnuler={onAnnuler}
             onConfirmer={onConfirmer}
-            onNouveau={() => setCreation(true)}
+            onNouveau={deleguee ? onPreparerInvitation : () => setCreation(true)}
             onChangerOffre={onChangerOffre}
             /* V539b : les séances du cours DU PASS, prises dans le `config` déjà
                chargé — aucun appel de plus, et exactement la liste que le

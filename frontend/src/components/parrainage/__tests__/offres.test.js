@@ -67,7 +67,8 @@ const par = (id) => conteneur.querySelector(`[data-testid="${id}"]`);
 const tous = (id) => conteneur.querySelectorAll(`[data-testid="${id}"]`);
 async function monter(element) {
   await act(async () => { racine = createRoot(conteneur); racine.render(element); });
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  // V551 : l'assistant d'invitation lit /invitation + unified-profile après /me.
+  await act(async () => { for (let i = 0; i < 10; i += 1) await Promise.resolve(); });
 }
 const attendre = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 
@@ -200,6 +201,8 @@ describe('PassDuoCard — création : choisis ton offre', () => {
     expect(onCreer).toHaveBeenCalledWith('c1', OCC, false, OFF_C.id);
   });
 
+  // V551 : dans le Centre, la création passe par l'assistant (3 étapes) — même
+  // POST /pass, même offer_id, plus l'objet `invitation` du contrat.
   test('Centre : la création envoie offer_id dans POST /pass ; 400 offre_* → message dédié', async () => {
     window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
     const ME = { enabled: true, sponsor: { first_name: 'Bassi' }, stats: {}, passes: [], invitations: [], history: [] };
@@ -210,10 +213,13 @@ describe('PassDuoCard — création : choisis ton offre', () => {
     });
     axios.post.mockRejectedValueOnce({ response: { status: 400, data: { detail: 'offre_non_autorisee' } } });
     await monter(<CentreParrainage />);
-    await act(async () => { par('pass-creer').click(); });
+    await act(async () => { par('wizard-suivant').click(); });
+    await act(async () => { par('wizard-suivant').click(); });
+    await act(async () => { par('wizard-creer').click(); });
     await attendre();
-    expect(axios.post).toHaveBeenCalledWith(expect.stringMatching(/\/referral\/pass$/), { course_id: 'c1', occurrence: OCC, terms_accepted: false, offer_id: OFF_A.id }, expect.anything());
-    expect(par('pass-duo-card').textContent).toContain('Cette offre n’est plus disponible');
+    expect(axios.post).toHaveBeenCalledWith(expect.stringMatching(/\/referral\/pass$/),
+      expect.objectContaining({ course_id: 'c1', occurrence: OCC, terms_accepted: false, offer_id: OFF_A.id, invitation: expect.any(Object) }), expect.anything());
+    expect(par('invitation-wizard').textContent).toContain('Cette offre n’est plus disponible');
   });
 });
 
@@ -340,7 +346,8 @@ describe('CentreParrainage — changement d\'offre porté par le parent', () => 
     axios.get.mockImplementation((url) => (String(url).endsWith('/me') ? Promise.resolve({ data: me || ME() }) : Promise.resolve({ data: CONFIG_3 })));
     await monter(<CentreParrainage />);
   };
-  const appelsMe = () => axios.get.mock.calls.filter((c) => String(c[0]).endsWith('/me')).length;
+  // V551 : `/api/spordate/unified-profile/me` finit aussi par « /me » — on compte /referral/me.
+  const appelsMe = () => axios.get.mock.calls.filter((c) => String(c[0]).endsWith('/referral/me')).length;
 
   test('PATCH /pass/{id}/offer {offer_id, version} avec enteteParrain() ; état local depuis le PassDTO renvoyé ; /me UNE fois', async () => {
     await monterCentre();

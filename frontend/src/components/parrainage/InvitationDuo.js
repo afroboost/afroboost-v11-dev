@@ -34,6 +34,7 @@ import {
   messageRefus, messageErreurInvitation,
   offreDuPass, offresDe, changerOffre, lireRefus, messageRefusOffre, TEXTE_OFFRE_CONFLIT, // V534b
   changerSeance, occurrencesPourCalendrier, // V539
+  nomAffichable, photoAutorisee, // V551
 } from '../../utils/parrainage';
 import SessionsModal from '../SessionsModal'; // V539 — le calendrier de la page d'accueil, réutilisé
 import './parrainage.css';
@@ -292,7 +293,10 @@ export default function InvitationDuo({ token }) {
     );
   }
 
-  const prenom = pass.sponsor_first_name || 'ton ami';
+  // V551 : le nom de L'INVITATION (`sponsor_display_name`) passe avant le prénom ;
+  // jamais un e-mail, même s'il arrivait du serveur (filtre `nomAffichable`).
+  const prenom = nomAffichable(pass.sponsor_display_name) || nomAffichable(pass.sponsor_first_name) || 'ton ami';
+  const photoParrain = photoAutorisee(pass.sponsor_photo_url);
 
   // ── Succès ────────────────────────────────────────────────────────────────
   if (resultat) {
@@ -337,6 +341,11 @@ export default function InvitationDuo({ token }) {
   const formulaireVisible = !offre || offreOk || dejaRejoint;
   return (
     <Cadre>
+      {photoParrain ? (
+        <div className="cp-av cp-wz-av cp-invitation-photo">
+          <img src={photoParrain} alt="" data-testid="invitation-photo" />
+        </div>
+      ) : null}
       <div className="cp-eyebrow" data-testid="invitation-de">Invitation de {prenom}</div>
       <h1 className="cp-h1">Rejoins son <em className="cp-em">Pass Duo</em></h1>
       <p className="cp-lead">{offre ? 'Ton offre est débloquée dès ton inscription.' : 'Ton essai gratuit est débloqué dès ton inscription.'}</p>

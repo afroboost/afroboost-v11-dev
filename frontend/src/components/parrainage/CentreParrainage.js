@@ -22,10 +22,11 @@ import axios from 'axios';
 import { QRCodeCanvas } from 'qrcode.react';
 import SvgIcon from '../SvgIcon';
 import PassDuoCard, { ChipStatut } from './PassDuoCard';
+import InvitationWizard from './InvitationWizard'; // V551 — l'invitation personnalisée, en 3 étapes
 import { entrerDansSpordate, prechargerSpordate } from '../../utils/spordateHandoff';
 import {
   API_PARRAINAGE, enteteParrain, aUneIdentiteParrain, urlEspaceCourant, lireConfigParrainage,
-  lienWhatsApp, copier, partager, passCourant, libelleJour, libelleDateCourte, STATUTS_OUVERTS,
+  lireContexteUrl, passCourant, libelleJour, libelleDateCourte, STATUTS_OUVERTS,
   changerOffre, lireRefus, messageRefusOffre, lignesHistorique, offreDuPass, TEXTE_OFFRE_CONFLIT, // V534b
   changerSeance, // V539b — le parrain peut aussi changer la date de son Pass
 } from '../../utils/parrainage';
@@ -105,8 +106,9 @@ export default function CentreParrainage() {
   const [passAfficheId, setPassAfficheId] = useState('');
   const [occupe, setOccupe] = useState(false);
   const [erreurPass, setErreurPass] = useState('');
-  const [feedback, setFeedback] = useState('');
-  const [qrOuvert, setQrOuvert] = useState(false);
+  const [qrUrl, setQrUrl] = useState(''); // V551 : le QR s'ouvre depuis l'assistant, sur le lien qu'il partage
+  const [creationForcee, setCreationForcee] = useState(false); // V551 : « Créer un nouveau Pass Duo »
+  const [contexte] = useState(() => lireContexteUrl()); // V551 : ?course=&occurrence=&offer= (lu une fois)
   const urlEspace = urlEspaceCourant();
 
   // UN chargement au montage : /me + configuration. Jamais relancé ensuite.
@@ -140,22 +142,13 @@ export default function CentreParrainage() {
   // Le handoff Spordateur se précharge au montage (mobile : pas de survol).
   useEffect(() => { if (etat === 'ok') prechargerSpordate(); }, [etat]);
 
-  // Le retour visuel (« Lien copié ») s'efface seul.
-  useEffect(() => {
-    if (!feedback) return undefined;
-    const t = setTimeout(() => setFeedback(''), 2600);
-    return () => clearTimeout(t);
-  }, [feedback]);
-
   const passes = (me && Array.isArray(me.passes)) ? me.passes : [];
   const passAffiche = passes.find((p) => p && p.id === passAfficheId) || null;
   // Le pass qui porte le lien d'invitation : celui qu'on affiche s'il est
   // ouvert, sinon le pass courant (le plus récent des ouverts).
   const passLien = passAffiche && STATUTS_OUVERTS.indexOf(passAffiche.status) >= 0 ? passAffiche : passCourant(passes);
-  // V538 : ce qu'on PARTAGE est la page d'apercu (`share_url`), qui redirige vers
-  // l'invitation — c'est elle qui porte le prenom, la seance et l'image dans
-  // WhatsApp. Repli sur `invite_url` si le serveur est anterieur a V538.
-  const lienInvite = passLien ? (passLien.share_url || passLien.invite_url) : '';
+  // V538 : ce qu'on PARTAGE est la page d'apercu (`share_url`) — c'est
+  // désormais l'assistant V551 qui la partage (WhatsApp, Partager, Copier, QR).
   const prenom = (me && me.sponsor && me.sponsor.first_name) || '';
   const initiale = prenom ? prenom.charAt(0).toUpperCase() : '';
 
@@ -205,32 +198,17 @@ export default function CentreParrainage() {
       .catch(() => { /* le partage a eu lieu ; le journal n'est pas bloquant */ });
   }, []);
 
-  const surWhatsApp = () => {
-    if (!passLien) return;
-    const texte = passLien.whatsapp_text || `Rejoins mon Pass Duo Afroboost : ${lienInvite}`;
-    window.open(lienWhatsApp(texte), '_blank', 'noopener');
-    journaliser(passLien, 'whatsapp');
+  /** V551 — le QR (action secondaire de l'assistant) : même lien, même journal. */
+  const surQr = (pass, url) => {
+    if (!pass || !url) return;
+    setQrUrl(url);
+    journaliser(pass, 'qr');
   };
-  const surCopier = () => {
-    if (!passLien) return;
-    copier(lienInvite).then((ok) => {
-      setFeedback(ok ? 'Lien copié' : 'Copie impossible : sélectionne le lien à la main');
-      if (ok) journaliser(passLien, 'copy');
-    });
-  };
-  const surQr = () => {
-    if (!passLien) return;
-    setQrOuvert(true);
-    journaliser(passLien, 'qr');
-  };
-  const surPartager = () => {
-    if (!passLien) return;
-    partager({ title: 'Pass Duo Afroboost', text: passLien.whatsapp_text || '', url: lienInvite })
-      .then((r) => {
-        if (!r.ok) return;
-        if (r.methode === 'copie') setFeedback('Lien copié');
-        journaliser(passLien, r.methode === 'copie' ? 'copy' : 'share');
-      });
+  /** V551 — « Créer un nouveau Pass Duo » / « Préparer mon invitation » : l'assistant porte la création. */
+  const preparerInvitation = () => {
+    if (passLien) setCreationForcee(true);
+    const cible = document.querySelector('[data-testid="invitation-zone"]');
+    if (cible && cible.scrollIntoView) cible.scrollIntoView({ behavior: 'auto', block: 'start' });
   };
 
   const creerPass = (course_id, occurrence, terms_accepted, offer_id) => {
@@ -242,7 +220,6 @@ export default function CentreParrainage() {
     axios.post(`${API_PARRAINAGE}/pass`, corps, { headers: enteteParrain() })
       .then((r) => {
         poserPass(r.data);
-        if (r.data && r.data.deja_existant) setFeedback('Tu as déjà un Pass Duo pour cette séance');
       })
       .catch((e) => {
         const s = e && e.response && e.response.status;
@@ -416,59 +393,22 @@ export default function CentreParrainage() {
         ))}
       </div>
 
-      {/* V538 — DEUX ÉTATS, JAMAIS LES DEUX À LA FOIS.
-          Sans Pass, quatre boutons de partage grisés ne disent pas quoi faire :
-          la première action est d'en créer un, et c'est elle qu'on montre.
-          Avec un Pass, l'écran devient ce qu'il doit être : inviter. */}
-      {!lienInvite ? (
-        <div className="cp-card" data-testid="creer-pass-cta">
-          <h2 className="cp-h2" style={{ marginTop: 0 }}>Commence par ton Pass Duo</h2>
-          <p className="cp-lead" style={{ marginTop: 0 }}>
-            Choisis ta séance, crée ton Pass, puis invite ton ami en un geste.
-          </p>
-          <button type="button" className="cp-b" data-testid="creer-pass-bouton"
-                  onClick={() => {
-                    const cible = document.querySelector('[data-testid="pass-duo-card"]');
-                    if (cible && cible.scrollIntoView) cible.scrollIntoView({ behavior: 'auto', block: 'center' });
-                  }}>
-            <SvgIcon name="plus" size={20} /> Créer mon Pass Duo
-          </button>
-        </div>
-      ) : null}
-
-      <h2 className="cp-h2">{lienInvite ? 'Inviter un ami' : 'Inviter un ami (après ton Pass)'}</h2>
-      <div className="cp-card" data-testid="inviter-un-ami">
-        <div className={`cp-code${lienInvite ? '' : ' cp-code--off'}`}>
-          <div>
-            <small>Mon lien d'invitation</small>
-            {lienInvite ? lienAffiche(lienInvite) : 'Crée ton Pass Duo ci-dessous'}
-          </div>
-          {lienInvite ? (
-            <button type="button" className="cp-iconbtn" onClick={surCopier} aria-label="Copier le lien" data-testid="inviter-copier-icone">
-              <SvgIcon name="copy" size={22} />
-            </button>
-          ) : <SvgIcon name="lock" size={22} />}
-        </div>
-        <div className="cp-share">
-          <button type="button" className="cp-b cp-b--whatsapp" onClick={surWhatsApp} disabled={!lienInvite} data-testid="inviter-whatsapp">
-            <SvgIcon name="send" size={20} />WhatsApp
-          </button>
-          <button type="button" className="cp-b cp-b--secondary" onClick={surCopier} disabled={!lienInvite} data-testid="inviter-copier">
-            <SvgIcon name="copy" size={20} />Copier
-          </button>
-          <button type="button" className="cp-b cp-b--secondary" onClick={surQr} disabled={!lienInvite} data-testid="inviter-qr">
-            <SvgIcon name="qrCode" size={20} />QR
-          </button>
-          <button type="button" className="cp-b cp-b--secondary" onClick={surPartager} disabled={!lienInvite} data-testid="inviter-partager">
-            <SvgIcon name="share" size={20} />Partager
-          </button>
-        </div>
-        {feedback ? <p className="cp-ok-text" role="status" data-testid="inviter-feedback">{feedback}</p> : null}
-        <p className="cp-mini">
-          {lienInvite
-            ? "Ton ami profite d'un essai gratuit. Le lien ne contient jamais ton e-mail."
-            : 'Les boutons s’activent dès que tu as créé un Pass Duo pour une séance.'}
-        </p>
+      {/* V551 — UNE SEULE ZONE D'INVITATION, JAMAIS DEUX FORMULAIRES.
+          Sans Pass ouvert : l'assistant en 3 étapes (qui crée le Pass avec son
+          invitation). Avec un Pass ouvert : « Ton invitation est prête »,
+          partage, « Modifier ». Il remplace le CTA et les 4 boutons V538. */}
+      <h2 className="cp-h2">Inviter un ami</h2>
+      <div data-testid="invitation-zone">
+        <InvitationWizard
+          courses={config && config.courses}
+          passOuvert={passLien}
+          contexte={contexte}
+          creationForcee={creationForcee}
+          onRetour={() => setCreationForcee(false)}
+          onPass={(dto) => { poserPass(dto); setCreationForcee(false); }}
+          onJournal={journaliser}
+          onQr={surQr}
+        />
       </div>
 
       <h2 className="cp-h2">Mes programmes</h2>
@@ -497,6 +437,7 @@ export default function CentreParrainage() {
         onChoisir={(id) => { setErreurPass(''); setPassAfficheId(id); }}
         onChangerOffre={changerOffrePass}
         onChangerSeance={changerSeancePass}
+        onPreparerInvitation={preparerInvitation}
         occupe={occupe}
         erreur={erreurPass}
       />
@@ -542,7 +483,7 @@ export default function CentreParrainage() {
         )}
       </div>
 
-      {qrOuvert && lienInvite ? <ModaleQr url={lienInvite} onClose={() => setQrOuvert(false)} /> : null}
+      {qrUrl ? <ModaleQr url={qrUrl} onClose={() => setQrUrl('')} /> : null}
     </Cadre>
   );
 }

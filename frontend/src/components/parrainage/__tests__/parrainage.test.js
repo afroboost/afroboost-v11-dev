@@ -74,7 +74,9 @@ async function monter(element) {
     racine = createRoot(conteneur);
     racine.render(element);
   });
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  // V551 : l'assistant d'invitation lit /invitation + unified-profile APRÈS /me —
+  // quelques micro-tâches de plus pour que la page soit complète.
+  await act(async () => { for (let i = 0; i < 10; i += 1) await Promise.resolve(); });
 }
 
 const COURSE = { id: 'c1', name: 'Afroboost Dimanche', time: '18:30', locationName: 'Bord du Lac, Auvernier', mapsUrl: 'https://maps.google.com/?q=x' };
@@ -375,8 +377,9 @@ describe('CentreParrainage — états de page', () => {
     axios.post.mockResolvedValue({ data: { id: 'inv-1' } });
     Object.assign(navigator, { clipboard: { writeText: jest.fn().mockResolvedValue() } });
     await monter(<CentreParrainage />);
-    expect(axios.get.mock.calls.filter((c) => String(c[0]).endsWith('/me')).length).toBe(1);
-    expect(axios.get.mock.calls.find((c) => String(c[0]).endsWith('/me'))[1].headers).toEqual({ 'X-Subscriber-Token': 'dev-1' });
+    // V551 : `/api/spordate/unified-profile/me` finit aussi par « /me » — on compte /referral/me.
+    expect(axios.get.mock.calls.filter((c) => String(c[0]).endsWith('/referral/me')).length).toBe(1);
+    expect(axios.get.mock.calls.find((c) => String(c[0]).endsWith('/referral/me'))[1].headers).toEqual({ 'X-Subscriber-Token': 'dev-1' });
     expect(par('stat-invited').textContent).toContain('3');
     expect(par('stat-joined').textContent).toContain('1');
     expect(par('inviter-un-ami').textContent).toContain('afroboost.com/api/share/duo/TOK123');
@@ -387,28 +390,33 @@ describe('CentreParrainage — états de page', () => {
     expect(axios.post).toHaveBeenCalledWith(expect.stringMatching(/\/referral\/invitations$/), { pass_id: 'p-locked', channel: 'copy' }, expect.anything());
     expect(par('chip-waiting')).not.toBeNull();            // état local mis à jour, sans relancer /me
     expect(par('stat-invited').textContent).toContain('4');
-    expect(axios.get.mock.calls.filter((c) => String(c[0]).endsWith('/me')).length).toBe(1);
+    expect(axios.get.mock.calls.filter((c) => String(c[0]).endsWith('/referral/me')).length).toBe(1);
   });
-  test('sans pass → les quatre boutons sont désactivés avec explication', async () => {
+  // V551 — ces deux tests décrivaient l'écran V538 (CTA « Créer mon Pass Duo »
+  // + quatre boutons de partage grisés). L'assistant d'invitation le remplace
+  // VOLONTAIREMENT : sans Pass, on ne montre plus de boutons morts, on montre
+  // l'étape 1 (avec le sélecteur de séance existant) ; le partage n'apparaît
+  // qu'une fois l'invitation créée. La carte Pass Duo renvoie vers l'assistant.
+  test('sans pass → l\'assistant (étape 1 + sélecteur de séance), AUCUN bouton de partage mort', async () => {
     window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
     const ME = { enabled: true, sponsor: { first_name: 'Bassi' }, stats: {}, passes: [], invitations: [], history: [] };
     axios.get.mockImplementation((url) => (String(url).endsWith('/me') ? Promise.resolve({ data: ME }) : Promise.resolve({ data: CONFIG })));
     await monter(<CentreParrainage />);
-    ['inviter-whatsapp', 'inviter-copier', 'inviter-qr', 'inviter-partager'].forEach((id) => expect(par(id).disabled).toBe(true));
-    expect(par('inviter-un-ami').textContent).toContain('Crée ton Pass Duo');
+    expect(par('invitation-wizard')).not.toBeNull();
+    expect(par('wizard-etape-1')).not.toBeNull();
     expect(par('pass-select-seance')).not.toBeNull();
+    ['inviter-whatsapp', 'inviter-copier', 'inviter-qr', 'inviter-partager'].forEach((id) => expect(par(id)).toBeNull());
+    expect(tous('pass-select-seance').length).toBe(1);        // un seul formulaire, jamais deux
+    expect(par('pass-preparer-invitation')).not.toBeNull();   // la carte renvoie vers l'assistant
   });
-
-  // ═══ V538 : les deux états du parcours, et le lien réellement partagé ═════
-  test('CAS A — sans Pass : le CTA « Créer mon Pass Duo » domine, avant les boutons de partage', async () => {
+  test('CAS A — sans Pass : l\'assistant d\'invitation vient AVANT les programmes', async () => {
     window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
     const ME = { enabled: true, sponsor: { first_name: 'Bassi' }, stats: {}, passes: [], invitations: [], history: [] };
     axios.get.mockImplementation((url) => (String(url).endsWith('/me') ? Promise.resolve({ data: ME }) : Promise.resolve({ data: CONFIG })));
     await monter(<CentreParrainage />);
-    expect(par('creer-pass-cta')).not.toBeNull();
-    expect(par('creer-pass-bouton').textContent).toContain('Créer mon Pass Duo');
+    expect(par('wizard-suivant').textContent).toContain('Continuer');
     const html = document.body.innerHTML;
-    expect(html.indexOf('creer-pass-cta')).toBeLessThan(html.indexOf('inviter-un-ami'));
+    expect(html.indexOf('invitation-wizard')).toBeLessThan(html.indexOf('pass-duo-card'));
   });
   test('CAS B — Pass créé : le CTA disparaît, « Inviter un ami » devient l\'action', async () => {
     window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
@@ -445,7 +453,7 @@ describe('CentreParrainage — états de page', () => {
     const APRES = Object.assign({}, AVANT, { stats: { invited: 0, joined: 0, unlocked: 0 }, passes: [pass('cancelled')] });
     let appels = 0;
     axios.get.mockImplementation((url) => {
-      if (!String(url).endsWith('/me')) return Promise.resolve({ data: CONFIG });
+      if (!String(url).endsWith('/referral/me')) return Promise.resolve({ data: CONFIG }); // V551 : pas unified-profile/me
       appels += 1;
       return Promise.resolve({ data: appels === 1 ? AVANT : APRES });
     });
