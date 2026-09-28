@@ -22,6 +22,13 @@
  * → même sélecteur (bottom sheet) → `PATCH /pass/{token}/offer {offer_id,
  * version}` (public, avant inscription) → puis le formulaire. Après
  * l'inscription, l'ami ne change plus rien : seul le parrain le peut.
+ *
+ * V556 — PARRAINAGE V3 « BOULE DE NEIGE » : si le serveur répond
+ * `chain_required: true` (et que le pass n'est pas déjà rejoint), la page passe
+ * par `WizardFilleul` (1. Ton invitation → 2. Invite un ami → 3. Ton essai) :
+ * le formulaire n'apparaît qu'APRÈS le partage d'une invitation enfant. Un
+ * 409 `invitation_requise` au join ramène à l'étape 2. Drapeau OFF / serveur
+ * ancien (champ absent) : formulaire direct, exactement comme avant.
  */
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
@@ -32,11 +39,13 @@ import { attributionActuelle } from '../../utils/attribution';
 import {
   API_PARRAINAGE, enteteParrain, aUneIdentiteParrain, libelleJour, libelleHeure,
   messageRefus, messageErreurInvitation,
+  lireCleChaine, // V556 : la clé de l'appareil qui a partagé, exigée au join
   offreDuPass, offresDe, changerOffre, lireRefus, messageRefusOffre, TEXTE_OFFRE_CONFLIT, // V534b
   changerSeance, occurrencesPourCalendrier, // V539
   nomAffichable, photoAutorisee, // V551
 } from '../../utils/parrainage';
 import SessionsModal from '../SessionsModal'; // V539 — le calendrier de la page d'accueil, réutilisé
+import WizardFilleul from './WizardFilleul'; // V556
 import './parrainage.css';
 
 /** Le message pour un GET /pass/{token} qui n'a pas abouti (ou un pass fermé). */
@@ -60,21 +69,24 @@ function Cadre({ children }) {
   );
 }
 
-function CarteSeance({ course, occurrence, onChanger, occupe, message, erreur }) {
+function CarteSeance({ course, occurrence, onChanger, occupe, message, erreur, compact }) {
   const c = course || {};
   const jour = libelleJour(occurrence);
   const heure = libelleHeure(occurrence);
   return (
     <div className="cp-card" data-testid="invitation-seance">
-      <div className="cp-hero">
+      {/* V556 : `compact` (étape 1 du parcours boule de neige) — sans la vignette, pour garder [Continuer] près du haut */}
+      {compact ? null : <div className="cp-hero">
         <div>
           <b>{c.name || 'Séance Afroboost'}</b>
           <small>Cardio-danse afrobeat · Avec casques · Accessible à tous</small>
         </div>
-      </div>
+      </div>}
       {/* V539 : la date n'est plus une fatalité. On dit ce qui est retenu, et on
           ouvre le même calendrier que la page d'accueil pour en choisir une autre. */}
-      <div className="cp-eyebrow" style={{ marginTop: 16 }}>Séance choisie</div>
+      {compact && c.name
+        ? <div className="cp-eyebrow" style={{ marginTop: 0 }}>{`${c.name} · séance choisie`}</div>
+        : <div className="cp-eyebrow" style={{ marginTop: compact ? 0 : 16 }}>Séance choisie</div>}
       <h3 className="cp-h3" style={{ marginTop: 4 }}>
         <SvgIcon name="calendar" size={20} />
         {jour}{heure ? ` · ${heure}` : (c.time ? ` · ${c.time}` : '')}
@@ -83,7 +95,7 @@ function CarteSeance({ course, occurrence, onChanger, occupe, message, erreur })
         <p style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <SvgIcon name="mapPin" size={16} /> {c.locationName}
           {c.mapsUrl && /^https?:\/\//i.test(c.mapsUrl) ? (
-            <a className="cp-link" href={c.mapsUrl} target="_blank" rel="noopener noreferrer" data-testid="invitation-itineraire">
+            <a className="cp-link cp-wz-tap" href={c.mapsUrl} target="_blank" rel="noopener noreferrer" data-testid="invitation-itineraire">
               Itinéraire <SvgIcon name="externalLink" size={14} />
             </a>
           ) : null}
@@ -95,9 +107,11 @@ function CarteSeance({ course, occurrence, onChanger, occupe, message, erreur })
                   data-testid="invitation-changer-seance" style={{ marginTop: 12 }}>
             <SvgIcon name="calendar" size={20} /> {occupe ? 'Un instant…' : 'Choisir une autre séance'}
           </button>
-          <p className="cp-mini" style={{ marginTop: 8 }}>
-            Cette date ne te convient pas ? Choisis une autre séance disponible.
-          </p>
+          {compact ? null : (
+            <p className="cp-mini" style={{ marginTop: 8 }}>
+              Cette date ne te convient pas ? Choisis une autre séance disponible.
+            </p>
+          )}
         </>
       ) : null}
       {message ? <p className="cp-ok-text" role="status" data-testid="invitation-seance-ok">{message}</p> : null}
@@ -137,6 +151,9 @@ export default function InvitationDuo({ token }) {
   const [seanceMessage, setSeanceMessage] = useState('');
   const [seanceErreur, setSeanceErreur] = useState('');
   const [offreErreur, setOffreErreur] = useState('');
+  // V556 : 409 invitation_requise → le wizard revient à l'étape 2 (compteur = primitive).
+  const [retourEtape2, setRetourEtape2] = useState(0);
+  const [messageEtape2, setMessageEtape2] = useState('');
 
   useEffect(() => {
     let vivant = true;
@@ -259,13 +276,20 @@ export default function InvitationDuo({ token }) {
       consent_reservation: true, terms_accepted: true, marketing_consent: !!form.marketing,
     };
     if (attribution) corps.attribution = attribution;
-    axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(token)}/join`, corps, { timeout: 20000 })
+    const cleChaine = lireCleChaine(token);
+    axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(token)}/join`, corps,
+      { timeout: 20000, headers: cleChaine ? { 'X-Chain-Key': cleChaine } : {} })
       .then((r) => { setResultat((r && r.data) || { status: 'unlocked', tickets: [] }); })
       .catch((err) => {
         const s = err && err.response && err.response.status;
         const h = (err && err.response && err.response.headers) || {};
         const raison = h['x-refus-raison'] || h['X-Refus-Raison'];
-        if (s === 409) setErreur(messageRefus(raison));
+        if (s === 409 && raison === 'invitation_requise' && pass && pass.chain_required === true) {
+          // V556 : le serveur tranche — pas d'invitation partagée, retour à l'étape 2.
+          setErreur('');
+          setMessageEtape2(messageRefus(raison));
+          setRetourEtape2((n) => n + 1);
+        } else if (s === 409 || (s === 403 && raison)) setErreur(messageRefus(raison));
         else if (s === 410) setErreur('Cette invitation a expiré');
         else if (s === 404) setErreur(messageInvitationDepuisReponse(404, err.response.data && err.response.data.detail));
         else if (s === 429) setErreur('Trop de tentatives. Réessaie dans un instant.');
@@ -325,6 +349,11 @@ export default function InvitationDuo({ token }) {
         ) : null}
         <BilletsDuo tickets={resultat.tickets} />
         <p className="cp-center cp-fine">Tu recevras aussi ton billet par e-mail.</p>
+        {pass.chain_required === true ? (
+          <p className="cp-center cp-mini" data-testid="invitation-chaine-active">
+            Ton invitation reste active : quand ton ami s'inscrit, vous venez ensemble.
+          </p>
+        ) : null}
       </Cadre>
     );
   }
@@ -339,6 +368,101 @@ export default function InvitationDuo({ token }) {
   const seancesProposables = occurrencesPourCalendrier(pass.occurrences, pass.course);
   const plusieursOffres = offres.length > 1;
   const formulaireVisible = !offre || offreOk || dejaRejoint;
+  // V556 : parcours « boule de neige » — seulement si le serveur l'exige.
+  const chaine = pass.chain_required === true && !dejaRejoint;
+
+  const formulaire = (libelle) => (
+    <form onSubmit={soumettre} noValidate data-testid="invitation-form">
+      <input className="cp-input" placeholder="Prénom" value={form.name} onChange={champ('name')} autoComplete="given-name" required data-testid="invitation-prenom" />
+      <input className="cp-input" type="email" placeholder="E-mail" value={form.email} onChange={champ('email')} autoComplete="email" required data-testid="invitation-email" />
+      <input className="cp-input" type="tel" placeholder="Numéro WhatsApp" value={form.whatsapp} onChange={champ('whatsapp')} autoComplete="tel" required data-testid="invitation-whatsapp" />
+      <label className="cp-chk">
+        <input type="checkbox" checked={form.consent} onChange={champ('consent')} required data-testid="invitation-consent" />
+        <span>J'accepte de recevoir les informations liées à cette réservation (obligatoire).</span>
+      </label>
+      <label className="cp-chk">
+        <input type="checkbox" checked={form.marketing} onChange={champ('marketing')} data-testid="invitation-marketing" />
+        <span>Je souhaite recevoir les prochaines offres Afroboost (facultatif).</span>
+      </label>
+      {erreur ? <p className="cp-error" role="alert" data-testid="invitation-erreur">{erreur}</p> : null}
+      <button type="submit" className="cp-b" disabled={envoi} data-testid="invitation-rejoindre">
+        <SvgIcon name="users" size={20} /> {envoi ? 'Inscription…' : libelle}
+      </button>
+    </form>
+  );
+
+  const modales = (
+    <>
+      {calendrier ? (
+        <SessionsModal
+          open
+          onClose={() => setCalendrier(false)}
+          occurrencesFournies={seancesProposables}
+          libelleAction="Choisir cette séance"
+          noteAction="Ton invitation sera mise à jour avec cette date."
+          onReserve={(occ) => choisirSeance(occ && occ.iso)}
+        />
+      ) : null}
+      {sheetOffre ? (
+        <SheetOffres offres={offres} actuelleId={offre ? offre.id : null} onChoisir={choisirOffre}
+                     onFermer={() => setSheetOffre(false)} occupe={offreOccupe} message={offreMessage} erreur={offreErreur}
+                     titre="Choisis ton offre" name="cp-invitation-offre" />
+      ) : null}
+    </>
+  );
+
+  if (chaine) {
+    const ouvrirOffres = () => { setOffreMessage(''); setOffreErreur(''); setSheetOffre(true); };
+    const blocInvitation = (
+      <>
+        <CarteSeance
+          compact
+          course={pass.course}
+          occurrence={pass.occurrence}
+          onChanger={seancesProposables.length > 1 ? () => { setSeanceMessage(''); setSeanceErreur(''); setCalendrier(true); } : null}
+          occupe={seanceOccupe}
+          message={seanceMessage}
+          erreur={seanceErreur}
+        />
+        {offre ? (
+          <EncartOffre titre="Offre" offre={offre} testid="invitation-offre" compact
+                       note={`${prenom} t'offre cette offre : tu la reçois à ton inscription.`}>
+            {plusieursOffres ? (
+              <button type="button" className="cp-link cp-offre-lien cp-wz-tap" onClick={ouvrirOffres} data-testid="offre-voir-autres">
+                <SvgIcon name="refresh" size={14} /> Voir les autres offres
+              </button>
+            ) : null}
+            {offreErreur && !sheetOffre ? <p className="cp-error" role="alert" data-testid="offre-erreur">{offreErreur}</p> : null}
+          </EncartOffre>
+        ) : null}
+      </>
+    );
+    return (
+      <Cadre>
+        {monLien ? (
+          <div className="cp-notice" data-testid="invitation-mon-lien">
+            C'est ton lien : partage-le à un ami. <a className="cp-link" href="/parrainage">Voir mon Parrainage <SvgIcon name="arrowRight" size={14} /></a>
+          </div>
+        ) : null}
+        <WizardFilleul
+          token={token}
+          pass={pass}
+          prenom={prenom}
+          photo={photoParrain}
+          blocInvitation={blocInvitation}
+          formulaire={formulaire("M'inscrire à mon essai gratuit")}
+          onPrenom={(n) => setForm((prev) => (prev.name.trim() ? prev : Object.assign({}, prev, { name: n })))}
+          retourEtape2={retourEtape2}
+          messageEtape2={messageEtape2}
+        />
+        {modales}
+        <p className="cp-fine cp-center" style={{ marginTop: 14 }}>
+          Une seule invitation par personne et par séance. L'essai gratuit Afroboost est unique : si tu l'as déjà utilisé, on te le dira ici.
+        </p>
+      </Cadre>
+    );
+  }
+
   return (
     <Cadre>
       {photoParrain ? (
@@ -367,17 +491,6 @@ export default function InvitationDuo({ token }) {
         erreur={seanceErreur}
       />
 
-      {calendrier ? (
-        <SessionsModal
-          open
-          onClose={() => setCalendrier(false)}
-          occurrencesFournies={seancesProposables}
-          libelleAction="Choisir cette séance"
-          noteAction="Ton invitation sera mise à jour avec cette date."
-          onReserve={(occ) => choisirSeance(occ && occ.iso)}
-        />
-      ) : null}
-
       {offre ? (
         <EncartOffre titre="Offre" offre={offre} testid="invitation-offre"
                      note={dejaRejoint ? null : `${prenom} t'offre cette offre : tu la reçois à ton inscription.`}>
@@ -402,11 +515,7 @@ export default function InvitationDuo({ token }) {
         </EncartOffre>
       ) : null}
 
-      {sheetOffre ? (
-        <SheetOffres offres={offres} actuelleId={offre ? offre.id : null} onChoisir={choisirOffre}
-                     onFermer={() => setSheetOffre(false)} occupe={offreOccupe} message={offreMessage} erreur={offreErreur}
-                     titre="Choisis ton offre" name="cp-invitation-offre" />
-      ) : null}
+      {modales}
 
       {dejaRejoint ? (
         <div className="cp-notice" data-testid="invitation-deja-rejoint">
@@ -414,25 +523,7 @@ export default function InvitationDuo({ token }) {
         </div>
       ) : null}
 
-      {formulaireVisible ? (
-      <form onSubmit={soumettre} noValidate data-testid="invitation-form">
-        <input className="cp-input" placeholder="Prénom" value={form.name} onChange={champ('name')} autoComplete="given-name" required data-testid="invitation-prenom" />
-        <input className="cp-input" type="email" placeholder="E-mail" value={form.email} onChange={champ('email')} autoComplete="email" required data-testid="invitation-email" />
-        <input className="cp-input" type="tel" placeholder="Numéro WhatsApp" value={form.whatsapp} onChange={champ('whatsapp')} autoComplete="tel" required data-testid="invitation-whatsapp" />
-        <label className="cp-chk">
-          <input type="checkbox" checked={form.consent} onChange={champ('consent')} required data-testid="invitation-consent" />
-          <span>J'accepte de recevoir les informations liées à cette réservation (obligatoire).</span>
-        </label>
-        <label className="cp-chk">
-          <input type="checkbox" checked={form.marketing} onChange={champ('marketing')} data-testid="invitation-marketing" />
-          <span>Je souhaite recevoir les prochaines offres Afroboost (facultatif).</span>
-        </label>
-        {erreur ? <p className="cp-error" role="alert" data-testid="invitation-erreur">{erreur}</p> : null}
-        <button type="submit" className="cp-b" disabled={envoi} data-testid="invitation-rejoindre">
-          <SvgIcon name="users" size={20} /> {envoi ? 'Inscription…' : "M'inscrire et débloquer le duo"}
-        </button>
-      </form>
-      ) : null}
+      {formulaireVisible ? formulaire("M'inscrire et débloquer le duo") : null}
       <p className="cp-fine cp-center" style={{ marginTop: 14 }}>
         Une seule invitation par personne et par séance. L'essai gratuit Afroboost est unique : si tu l'as déjà utilisé, on te le dira ici.
       </p>

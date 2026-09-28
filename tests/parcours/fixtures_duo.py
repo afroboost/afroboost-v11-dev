@@ -44,5 +44,32 @@ elif a == "parrain":
 elif a == "nettoyer":
     n = {c: db[c].delete_many({MARQUE: True}).deleted_count for c in ("subscriptions", "discount_codes", "offers")}
     print("fixtures retirées :", n)
+elif a == "nettoyer_prefixe":
+    # V556 : nettoyage CIBLÉ d'un banc (base de TEST) : tout document qui contient le préfixe d'e-mail de test
+    # (`pw-v3-…`) ou l'une des aiguilles passées (id de pass, jeton, téléphone de test), + la descendance
+    # de chaîne des passes trouvés (chain.parent_pass_id). Collections de configuration jamais touchées.
+    # DRY=1 : compte sans rien supprimer.
+    import json
+    pref = sys.argv[2].strip().lower(); assert pref.startswith("pw-") and len(pref) >= 10, "préfixe de test requis"
+    aig = [pref] + [x for x in sys.argv[3:] if len(x) >= 10]
+    dump = lambda d: json.dumps(d, default=str).lower()
+    ids = {p["id"] for p in db.referral_passes.find({}, {"_id": 0}) if any(x.lower() in dump(p) for x in aig)}
+    while True:
+        n = {p["id"] for p in db.referral_passes.find({"chain.parent_pass_id": {"$in": list(ids)}}, {"id": 1})} - ids
+        if not n: break
+        ids |= n
+    toks = [p.get("share_token") for p in db.referral_passes.find({"id": {"$in": list(ids)}}, {"share_token": 1}) if p.get("share_token")]
+    aig = aig + list(ids) + toks
+    CONFIG = {"courses", "offers", "concept", "feature_flags", "terms_versions", "uploaded_files", "media_links", "audio_tracks",
+              "publications", "platform_settings", "coaches", "coach_profiles", "ai_config", "faqs", "categories", "payment_links",
+              "bot_quick_replies", "contact_categories", "contact_segments_config"}
+    bilan = {}
+    for c in db.list_collection_names():
+        if c in CONFIG: continue
+        vis = [d["_id"] for d in db[c].find({}) if any(x.lower() in dump(d) for x in aig)]
+        if vis:
+            bilan[c] = len(vis)
+            if os.environ.get("DRY") != "1": db[c].delete_many({"_id": {"$in": vis}})
+    print(("à supprimer (DRY) :" if os.environ.get("DRY") == "1" else "supprimés :"), bilan, "passes:", len(ids))
 else:
     sys.exit("action inconnue")

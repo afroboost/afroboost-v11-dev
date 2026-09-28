@@ -145,8 +145,15 @@ v("V552b : la page de partage Pass Duo et sa carte restent lisibles par les robo
 v("V552b : le reste de /api/ reste interdit aux robots",
   not _autorise("/api/sitemap.xml") and not _autorise("/api/referral/me"))
 _page_duo = SRC_SRV.split("async def share_duo_page", 1)[1][:6000]
+# V556 : le gabarit HTML vit dans le moteur pur (`page_apercu_html`), partagé par la
+# page ET par le contrôle d'aperçu avant partage ; la page y passe par `_v556_html_apercu`.
+SRC_ENG = io.open(os.path.join(RACINE, "api", "routes", "referral_engine.py"), encoding="utf-8").read()
+_gabarit_duo = SRC_ENG.split("def page_apercu_html(", 1)[1].split("_RE_META_OG = ", 1)[0]
+_html_duo = SRC_SRV.split("async def _v556_html_apercu", 1)[1][:4000]
 v("V552b : la page de partage est `noindex` (lisible pour l'aperçu, jamais indexée)",
-  '<meta name="robots" content="noindex, nofollow"/>' in _page_duo)
+  '<meta name="robots" content="noindex, nofollow"/>' in _gabarit_duo
+  and "_v556_html_apercu(_p, v, robot=" in _page_duo
+  and "_duo.page_apercu_html(" in _html_duo)
 v("/api/ reste bloqué : ce ne sont pas des pages HTML, aucune balise n'y est lisible",
   "Disallow: /api/" in ROBOTS and _bloque("/api/sitemap.xml"))
 v("l'accueil et la page locale restent autorisés et crawlables",

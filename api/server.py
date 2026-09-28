@@ -20148,9 +20148,24 @@ async def share_duo_carte(share_token: str, v: str = ""):
         return Response(content=b"Not Found", status_code=404, media_type="text/plain",
                         headers={"Cache-Control": "no-store"})
 
-    FRONT = os.environ.get("FRONTEND_URL", "https://afroboost.com").rstrip("/")
     _version = _duo.version_carte(_p)
     _age = 604800 if str(v or "") == _version else 300   # 7 j si l'URL porte LA bonne version
+    _octets, _type, _perso = await _v556_octets_carte(_p)
+    # V556 : une carte de repli (non personnalisée) n'est jamais gardée 7 jours.
+    return _image(_octets, _type, age=(_age if _perso else min(_age, 300)))
+
+
+async def _v556_octets_carte(_p):
+    """V556 — (octets, type, personnalisée?) de LA carte d'un pass. Extrait de
+    `share_duo_carte` (V552) SANS changer l'ordre des replis, pour que le
+    contrôle d'aperçu (avant partage) produise EXACTEMENT l'image servie et
+    remplisse le cache disque : le robot de WhatsApp la trouve déjà prête.
+    Jamais d'exception, jamais d'octets vides."""
+    from api.routes import referral_engine as _duo
+    from api.routes import referral_carte as _carte
+    FRONT = os.environ.get("FRONTEND_URL", "https://afroboost.com").rstrip("/")
+    _tok = str((_p or {}).get("share_token") or "")
+    _version = _duo.version_carte(_p)
     try:
         _couleur = await _v259_primary_color(str(_p.get("coach_id") or ""))
     except Exception:  # noqa: BLE001
@@ -20158,7 +20173,7 @@ async def share_duo_carte(share_token: str, v: str = ""):
     _cle = _v552_cle_cache(_tok, _version, _couleur)
     _deja = _v552_cache_lire(_cle)
     if _deja:
-        return _image(_deja, age=_age)
+        return _deja, "image/jpeg", True
 
     # 1. la carte personnalisée
     try:
@@ -20172,14 +20187,14 @@ async def share_duo_carte(share_token: str, v: str = ""):
         if not _octets:
             raise ValueError("rendu vide")
         _v552_cache_ecrire(_cle, _octets)
-        return _image(_octets, age=_age)
+        return _octets, "image/jpeg", True
     except Exception as _e:  # noqa: BLE001
         logger.warning("[V552] carte personnalisee impossible (%s) -> carte generique", type(_e).__name__)
     # 2. la carte générique Afroboost (non mise en cache : on retentera)
     try:
         _octets = _carte.rendre_carte({"couleur": _couleur})
         if _octets:
-            return _image(_octets, age=300)
+            return _octets, "image/jpeg", False
     except Exception as _e:  # noqa: BLE001
         logger.warning("[V552] carte generique impossible (%s) -> image de repli", type(_e).__name__)
     # 3. l'image coach / offre, si c'est un de NOS fichiers (lu sans HTTP)
@@ -20190,21 +20205,21 @@ async def share_duo_carte(share_token: str, v: str = ""):
             _o = await _v552_lire_fichier_local(_src[1], _src[2])
             if _o:
                 _doc = await db.uploaded_files.find_one({"file_id": _src[1]}) or {}
-                return _image(_o, str(_doc.get("content_type") or "image/jpeg"), age=300)
+                return _o, str(_doc.get("content_type") or "image/jpeg"), False
     except Exception:  # noqa: BLE001
         pass
     # 4. le logo, 5. le JPEG de secours embarqué
     _logo = _v552_logo_octets()
     if _logo:
-        return _image(_logo[0], _logo[1], age=300)
-    return _image(_carte.JPEG_SECOURS, age=60)
+        return _logo[0], _logo[1], False
+    return _carte.JPEG_SECOURS, "image/jpeg", False
 
 
 # V551 : HEAD aussi (certains robots d'aperçu sondent en HEAD avant de lire) ;
 # `?v=<n>` est toléré (chaîne de requête ignorée : seul le jeton compte).
 @api_router.head("/share/duo/{share_token}")
 @api_router.get("/share/duo/{share_token}")
-async def share_duo_page(share_token: str):
+async def share_duo_page(share_token: str, request: Request = None, v: str = ""):
     """V538 — L'APERÇU D'UNE INVITATION PASS DUO (Open Graph dynamique).
 
     C'EST CETTE PAGE QU'ON PARTAGE. Le robot de WhatsApp ne sait pas exécuter
@@ -20222,7 +20237,6 @@ async def share_duo_page(share_token: str):
     dit pas « ce Pass n'existe pas », ce serait un oracle.
     """
     from starlette.responses import HTMLResponse, RedirectResponse
-    import html as _html
     from api.routes import referral_engine as _duo
 
     FRONT = os.environ.get("FRONTEND_URL", "https://afroboost.com").rstrip("/")
@@ -20237,6 +20251,29 @@ async def share_duo_page(share_token: str):
     if not _p:
         return RedirectResponse(url=FRONT, status_code=302)
 
+    try:
+        _ua = request.headers.get("user-agent", "") if request is not None else ""
+    except Exception:  # noqa: BLE001
+        _ua = ""
+    _page = await _v556_html_apercu(_p, v, robot=_duo.est_robot_apercu(_ua))
+    # V556 : cache court et explicite — une page neuve à chaque version, et un
+    # robot qui repasse relit les balises au lieu d'un vieil exemplaire.
+    return HTMLResponse(_page, headers={"Cache-Control": "public, max-age=300",
+                                        "Vary": "User-Agent",   # robot sans redirection ≠ navigateur
+                                        "X-Content-Type-Options": "nosniff"})
+
+
+async def _v556_html_apercu(_p, v="", robot=True) -> str:
+    """V556 — le HTML d'aperçu d'un pass (celui que le robot lit). Utilisé par
+    la page ET par le contrôle d'aperçu avant partage : une seule source.
+
+    CAUSE DU « 2e ENVOI SANS MINIATURE » (audit V556) : og:url annonçait
+    l'URL NUE, sans `?v=`. Le robot range l'aperçu sous og:url : chaque
+    version retombait sur la même entrée de cache. og:url répète désormais
+    l'adresse EXACTE partagée ; `v` n'y entre que nettoyé (chiffres)."""
+    from api.routes import referral_engine as _duo
+    FRONT = os.environ.get("FRONTEND_URL", "https://afroboost.com").rstrip("/")
+    _tok = str(_p.get("share_token") or "")
     # V551 : le nom choisi pour l'invitation, sinon le prénom FILTRÉ (jamais une
     # adresse ni sa partie locale — cas « bassicustomshoes »).
     _prenom = _duo.nom_parrain_affichable(_p)
@@ -20249,56 +20286,40 @@ async def share_duo_page(share_token: str):
     _offre, _image_repli = await _v552_image_repli(_p, FRONT)
 
     _titre = _duo.og_titre_invitation(_prenom)
-    _desc = _invitation["message"] or _duo.og_description_invitation(_prenom, _nom_cours, _p.get("occurrence"),
-                                                                     str((_offre or {}).get("name") or ""))
+    _desc_auto = _duo.og_description_invitation(_prenom, _nom_cours, _p.get("occurrence"),
+                                                str((_offre or {}).get("name") or ""))
+    # V556 : une invitation de la CHAÎNE garde la description informative (qui,
+    # quoi, quand) ; son message court part dans le texte WhatsApp.
+    _desc = _desc_auto if _duo.chaine_du_pass(_p).get("parent_pass_id") else (_invitation["message"] or _desc_auto)
 
     # V552 : og:image = LA CARTE SOCIALE (URL absolue https, versionnée) en
     # PRIORITÉ 1. Jamais vide : si le jeton manquait (impossible ici), le repli.
     _image = _duo.url_carte(FRONT, _p) or _image_repli
     _cible = "%s/duo/%s" % (FRONT, _tok)
-    _url = "%s/api/share/duo/%s" % (FRONT, _tok)
+    _v = _duo.version_depuis_requete(v)
+    _url = "%s/api/share/duo/%s%s" % (FRONT, _tok, ("?v=%d" % _v) if _v else "")
+    return _duo.page_apercu_html(_titre, _desc, _image, _url, _cible, robot=robot)
 
-    e_titre = _html.escape(_titre, quote=True)
-    e_desc = _html.escape(_desc[:200], quote=True)
-    e_image = _html.escape(_image, quote=True)
-    e_type = "image/jpeg"                                   # V552 : la carte est un JPEG
-    e_url = _html.escape(_url, quote=True)
-    e_cible = _html.escape(_cible, quote=True)
 
-    _page = f"""<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="utf-8"/>
-    <title>{e_titre}</title>
-    <meta name="description" content="{e_desc}"/>
-    <meta property="og:type" content="website"/>
-    <meta property="og:title" content="{e_titre}"/>
-    <meta property="og:description" content="{e_desc}"/>
-    <meta property="og:image" content="{e_image}"/>
-    <meta property="og:image:secure_url" content="{e_image}"/>
-    <meta property="og:image:type" content="{e_type}"/>
-    <meta property="og:image:width" content="1200"/>
-    <meta property="og:image:height" content="630"/>
-    <meta property="og:image:alt" content="{e_titre}"/>
-    <meta property="og:url" content="{e_url}"/>
-    <meta property="og:site_name" content="Afroboost"/>
-    <meta name="robots" content="noindex, nofollow"/>
-    <meta name="twitter:card" content="summary_large_image"/>
-    <meta name="twitter:title" content="{e_titre}"/>
-    <meta name="twitter:description" content="{e_desc}"/>
-    <meta name="twitter:image" content="{e_image}"/>
-    <meta http-equiv="refresh" content="0;url={e_cible}"/>
-</head>
-<body style="margin:0;background:#000;color:#fff;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;">
-    <main style="max-width:520px;margin:0 auto;padding:28px 18px;text-align:center;">
-        <p style="letter-spacing:.14em;text-transform:uppercase;font-size:12px;color:#D91CD2;margin:0 0 10px;">Pass Duo</p>
-        <h1 style="font-size:26px;line-height:1.25;margin:0 0 10px;">{e_titre}</h1>
-        <p style="color:rgba(255,255,255,.72);font-size:15px;line-height:1.5;margin:0 0 20px;">{e_desc}</p>
-        <a href="{e_cible}" style="display:inline-block;padding:14px 26px;border-radius:999px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:#fff;text-decoration:none;font-weight:700;">Voir l'invitation</a>
-    </main>
-</body>
-</html>"""
-    return HTMLResponse(_page)
+async def _v556_bilan_apercu(_p) -> dict:
+    """V556 — CONTRÔLE D'APERÇU AVANT PARTAGE (sans réseau, sans Cloudflare) :
+    la page que le robot lira pour la share_url COURANTE + la carte produite
+    par le même chemin que la route (ce qui la met en cache disque). Rend
+    `{ok, fallback, checks}` ; jamais d'exception."""
+    from api.routes import referral_engine as _duo
+    try:
+        _html = await _v556_html_apercu(_p, str(_duo.version_partage(_p) or ""), robot=True)
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[V556] page d'apercu impossible (%s)", type(_e).__name__)
+        _html = ""
+    try:
+        _octets, _type, _perso = await _v556_octets_carte(_p)
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[V556] carte impossible au controle (%s)", type(_e).__name__)
+        _octets, _type, _perso = b"", "", False
+    _bilan = _duo.controle_apercu(_html, _octets, _type)
+    _bilan["fallback"] = not _perso
+    return _bilan
 
 
 @api_router.get("/sitemap.xml")
@@ -48936,6 +48957,11 @@ async def startup_db():
             [("invitee.email_norm", 1), ("course_id", 1), ("occurrence", 1)], unique=True,
             partialFilterExpression={"invitee.email_norm": {"$type": "string"}})
         await db["referral_passes"].create_index([("coach_id", 1), ("status", 1), ("created_at", -1)])
+        # V556 : UNE invitation enfant par pass (la chaîne ne se ramifie pas
+        # sous un même lien) ; filtre partiel : les pass sans parent n'y entrent pas.
+        await db["referral_passes"].create_index(
+            "chain.parent_pass_id", unique=True,
+            partialFilterExpression={"chain.parent_pass_id": {"$type": "string"}})
         await db["referral_invitations"].create_index([("pass_id", 1), ("created_at", -1)])
         await db["referral_invitations"].create_index([("sponsor_email_norm", 1), ("created_at", -1)])
         logger.info("[V534] index referral_passes / referral_invitations OK")

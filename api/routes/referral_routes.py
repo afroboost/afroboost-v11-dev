@@ -66,6 +66,10 @@ LISTE_MAX = 50
 DEBIT_PREFIXE_PASS = "duo_pass:"
 DEBIT_PREFIXE_JOIN = "duo_join:"
 DEBIT_PREFIXE_OFFRE = "duo_offer:"            # V534b : PATCH public (avant join)
+DEBIT_PREFIXE_CHAINE = "duo_chain:"           # V556 : création de l'invitation enfant
+DEBIT_PREFIXE_CHAINE_ACTION = "duo_chain_a:"  # V556 : modification / partage (quota séparé)
+DEBIT_PREFIXE_CHAINE_LECTURE = "duo_chain_l:" # V556 : contrôle d'aperçu (lecture)
+FLAG_CHAINE = "parrainage_chaine_enabled"    # V556 : `true` = actif ; absent / false = parcours V2
 
 
 def init_db(database):
@@ -106,6 +110,21 @@ async def parrainage_duo_actif(database) -> bool:
         logger.warning("%s drapeau %s illisible (%s) — considéré OFF", PREFIXE, FLAG_CHAMP,
                        type(_err).__name__)
         return False
+
+
+async def _chaine_active() -> bool:
+    """V556 — la règle « invite avant de t'inscrire ». Décision de Bassi
+    (28/09) : ACTIVE SEULEMENT si `parrainage_chaine_enabled` vaut `true` en
+    base. Absent, `false` ou base illisible = parcours V2 (formulaire direct).
+    On déploie donc le code éteint, on vérifie, puis on allume — et on
+    éteint sans rollback en remettant `false`."""
+    try:
+        _f = await db[FLAG_ID].find_one({"id": FLAG_ID}, {"_id": 0}) or {}
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s drapeau %s illisible (%s) — règle considérée OFF", PREFIXE, FLAG_CHAINE,
+                       type(_err).__name__)
+        return False
+    return _f.get(FLAG_CHAINE) is True
 
 
 async def _exiger_actif() -> None:
@@ -588,6 +607,8 @@ async def _notifier_reservation(reservation, subscription) -> None:
 
 
 async def _push_parrain(email, titre, corps, data) -> None:
+    if "@" not in str(email or ""):          # V556 : parrain de chaîne pas encore inscrit
+        return
     try:
         from api.server import send_push_by_email
         await send_push_by_email(email, titre, corps, data)
@@ -600,7 +621,7 @@ async def _email_parrain_debloque(pass_doc) -> bool:
     inséré dans le HTML passe par `html.escape`. Non bloquant."""
     from html import escape as _esc
     _key = os.environ.get("RESEND_API_KEY", "")
-    if not _key:
+    if not _key or "@" not in str(((pass_doc or {}).get("sponsor") or {}).get("email_norm") or ""):
         return False
     try:
         import resend
@@ -650,6 +671,16 @@ async def _tenter_reservation_parrain(pass_doc, course) -> tuple:
     """(reservation|None, blocked_reason|None) — la place du parrain, sans
     jamais fabriquer un billet ni laisser une réservation orpheline."""
     _sp = pass_doc.get("sponsor") or {}
+    # V556 — CHAÎNE : le parrain d'une invitation enfant (A) a DÉJÀ sa place
+    # sur cette séance — celle de filleul du pass parent. On la reprend telle
+    # quelle : aucun second débit, aucune seconde réservation, et la
+    # réservation reste liée au parent (jamais réécrite).
+    if E.chaine_du_pass(pass_doc).get("parent_pass_id"):
+        if E.parrain_en_attente(pass_doc):
+            return None, E.BLOCAGE_PARRAIN_NON_INSCRIT
+        _place = await _place_du_parrain_chaine(pass_doc)
+        if _place:
+            return _place, None
     try:
         _r = await _reserver_seance_duo(
             _sp.get("subscription_code"), _sp.get("email_norm"), _sp.get("name"),
@@ -673,12 +704,20 @@ async def _debloquer_ou_bloquer(pass_doc, course) -> dict:
     _r, _blocage = await _tenter_reservation_parrain(pass_doc, course)
     if _r:
         _now = _iso()
-        await _evenement(pass_doc["id"], "unlocked", None, {
-            "status": E.transition(pass_doc.get("status"), E.UNLOCKED),
-            "unlocked_at": _now, "blocked_reason": None,
-            "reservations.sponsor_id": _r.get("id"),
-            "reservations.sponsor_code": _r.get("reservationCode")})
+        # V556 : écriture CONDITIONNELLE (`status != unlocked`) — deux déblocages
+        # simultanés (join de l'ami + liaison du parrain de chaîne) ne notifient
+        # qu'une fois, et le second ne réécrit rien.
+        _cible = E.transition(pass_doc.get("status"), E.UNLOCKED)
+        _ecrit = await db[COLL_PASSES].update_one(
+            {"id": pass_doc["id"], "status": {"$ne": E.UNLOCKED}},
+            {"$set": {"status": _cible, "unlocked_at": _now, "blocked_reason": None,
+                      "reservations.sponsor_id": _r.get("id"),
+                      "reservations.sponsor_code": _r.get("reservationCode"), "updated_at": _now},
+             "$push": {"events": {"at": _now, "type": "unlocked", "detail": None}},
+             "$inc": {"version": 1}})
         pass_doc = await db[COLL_PASSES].find_one({"id": pass_doc["id"]}, {"_id": 0}) or pass_doc
+        if not getattr(_ecrit, "modified_count", 1):
+            return pass_doc
         _sub = (await db["subscriptions"].find_one({"id": _r.get("subscriptionId")}, {"_id": 0})
                 if _r.get("subscriptionId") else None)
         if not _r.get("_rattachee"):
@@ -690,8 +729,13 @@ async def _debloquer_ou_bloquer(pass_doc, course) -> dict:
                             {"type": "pass_duo_unlocked", "pass_id": pass_doc["id"], "url": "/parrainage"})
         asyncio.create_task(_email_parrain_debloque(pass_doc))
         return pass_doc
-    await _evenement(pass_doc["id"], "sponsor_blocked", _blocage, {
-        "status": pass_doc.get("status"), "blocked_reason": _blocage})
+    # V556 : jamais par-dessus un `unlocked` écrit entre-temps par un autre chemin.
+    _now = _iso()
+    await db[COLL_PASSES].update_one(
+        {"id": pass_doc["id"], "status": {"$ne": E.UNLOCKED}},
+        {"$set": {"blocked_reason": _blocage, "updated_at": _now},
+         "$push": {"events": {"at": _now, "type": "sponsor_blocked", "detail": _blocage}},
+         "$inc": {"version": 1}})
     pass_doc["blocked_reason"] = _blocage
     return pass_doc
 
@@ -1019,6 +1063,7 @@ async def _changer_offre_apres_join(pass_doc, course, nouvelle, entree, changed_
     _p = await db[COLL_PASSES].find_one({"id": pass_doc["id"]}, {"_id": 0}) or pass_doc
     _sub = await db["subscriptions"].find_one({"code": _nouveau_code}, {"_id": 0})
     await _notifier_reservation(_resa, _sub)
+    await _suivre_place_enfant(pass_doc["id"], _ancien_rid, _resa, _nouveau_code)   # V556
     return _p
 
 
@@ -1246,8 +1291,14 @@ async def referral_invitation(request: Request):
     if _s == E.LOCKED:
         _maj["status"] = E.transition(E.LOCKED, E.WAITING)
     await _evenement(_p["id"], "invitation_sent", _canal, _maj)
-    return JSONResponse(status_code=201, content={"id": _inv["id"], "pass_id": _p["id"],
-                                                  "channel": _canal, "created_at": _inv["created_at"]})
+    # V556 : ce partage a utilisé la share_url courante ; le PROCHAIN aura une
+    # URL neuve (même jeton, même parrain, aucun crédit) — WhatsApp refait
+    # l'aperçu au lieu de ressortir un envoi sans miniature.
+    _apres = await _nouvelle_version_apercu(_p["id"]) or _p
+    return JSONResponse(status_code=201, content={
+        "id": _inv["id"], "pass_id": _p["id"], "channel": _canal, "created_at": _inv["created_at"],
+        "share_url": E.url_partage_versionnee(_frontend_url(), _apres),
+        "card_url": E.url_carte(_frontend_url(), _apres) or None})
 
 
 @router.post("/pass/{pass_id}/cancel")
@@ -1274,6 +1325,9 @@ async def referral_confirmer(pass_id: str, request: Request):
     _parrain = await _parrain_depuis_requete(request)
     _b = await _corps(request)
     _p = await _pass_du_parrain(pass_id, _parrain)
+    await _relier_enfant_si_besoin(_p)          # V556 : l'enfant de CE pass (son filleul inscrit)
+    await _relier_enfant_si_besoin(await _parent_de(_p) if E.chaine_du_pass(_p).get("parent_pass_id") else None)  # V556
+    _p = await db[COLL_PASSES].find_one({"id": _p["id"]}, {"_id": 0}) or _p
     _s = await _statut_reel(_p)
     if _s == E.UNLOCKED:
         return await _dto(_p)
@@ -1362,6 +1416,14 @@ async def _changer_seance(pass_doc, occurrence, version, changed_by) -> dict:
     if pass_doc.get("invitee") or _s not in E.ETATS_OUVERTS_AU_JOIN:
         raise _refus(409, E.REFUS_PASS_NON_MODIFIABLE,
                      "La séance ne peut plus être changée : des billets ont déjà été émis.")
+    # V556 : l'invitation enfant suit la séance de son parent tant que son ami
+    # ne l'a pas rejointe ; ensuite, déplacer le parent séparerait le duo.
+    # Toute la DESCENDANCE suit (enfant, petit-enfant...) : un maillon laissé à
+    # l'ancienne date ne retrouverait jamais la place de son parrain.
+    _descendants = await _descendance(pass_doc)
+    if any(_d.get("invitee") for _d in _descendants):
+        raise _refus(409, E.REFUS_PASS_NON_MODIFIABLE,
+                     "Ton ami s'est déjà inscrit à cette séance : elle ne peut plus changer.")
     if int(version) != E.version_pass(pass_doc):
         raise _refus(409, E.REFUS_CONFLIT_VERSION,
                      "Ce pass a été modifié entre-temps : recharge la page et réessaie.")
@@ -1387,6 +1449,8 @@ async def _changer_seance(pass_doc, occurrence, version, changed_by) -> dict:
     if not _apres:
         raise _refus(409, E.REFUS_CONFLIT_VERSION,
                      "Ce pass a été modifié entre-temps : recharge la page et réessaie.")
+    for _d in _descendants:
+        await _synchroniser_seance_enfant(_d, _cible, _entree)
     logger.info("%s seance du pass %s changee (%s -> %s, %s)", PREFIXE, pass_doc["id"][:8],
                 str(_entree["from_occurrence"])[:16], str(_entree["to_occurrence"])[:16], changed_by)
     return _apres
@@ -1409,6 +1473,10 @@ async def referral_changer_seance(identifiant: str, request: Request):
             {"_id": 0})
         if not _p or E.normaliser_email((_p.get("sponsor") or {}).get("email_norm")) != _parrain["email"]:
             raise HTTPException(status_code=404, detail="Pass introuvable")
+        if E.chaine_du_pass(_p).get("parent_pass_id"):
+            # V556 : sa place est celle de filleul du pass parent, sur CETTE séance.
+            raise _refus(409, E.REFUS_PASS_NON_MODIFIABLE,
+                         "Cette invitation suit ta séance : change-la depuis ton invitation d'origine.")
         _qui, _public = "sponsor", False
     else:
         _exiger_debit(request, DEBIT_PREFIXE_OFFRE)
@@ -1419,6 +1487,11 @@ async def referral_changer_seance(identifiant: str, request: Request):
                 raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
             raise _refus(409, E.REFUS_PASS_DEJA_REJOINT,
                          "Tu es déjà inscrit : seul le parrain peut encore changer la séance.")
+        if E.chaine_du_pass(_p).get("parent_pass_id"):
+            # V556 : une invitation de la chaîne vaut pour LA séance de son
+            # parrain (sa place y est déjà) — la déplacer séparerait le duo.
+            raise _refus(409, E.REFUS_PASS_NON_MODIFIABLE,
+                         "Cette invitation est liée à la séance de ton parrain.")
         _qui, _public = "invitee", True
     _p = await _changer_seance(_p, _b.get("occurrence"), _version_du_corps(_b), _qui)
     if _public:
@@ -1699,6 +1772,11 @@ async def referral_pass_public(share_token: str):
     # une autre sans quitter la page. Liste du serveur, jamais une date libre.
     _dto = E.dto_public(_p, _s, _now, await _catalogue_par_cours(_p.get("course_id"), {}))
     _dto["occurrences"] = await _occurrences_du_pass(_p)
+    if E.chaine_du_pass(_p).get("parent_pass_id"):
+        _dto["occurrences"] = []     # V556 : liée à la séance de son parrain (sa place y est)
+    # V556 : faut-il inviter avant de s'inscrire ? et où en est ce visiteur ?
+    _dto["chain_required"] = E.chaine_requise(_p, _s, await _chaine_active())
+    _dto["chain"] = E.dto_chaine_public(_p)
     return _dto
 
 
@@ -1728,6 +1806,7 @@ async def referral_join(share_token: str, request: Request):
     if _code_http == 410:
         raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
     if _email and _raison == "idempotent":
+        await _relier_enfant_si_besoin(_p)       # V556 : reprise d'une liaison manquée
         return await _reponse_join(_p, _now)
     if _code_http == 409:
         raise _refus(409, E.REFUS_PASS_FERME, "Ce Pass Duo a déjà un invité.")
@@ -1739,6 +1818,22 @@ async def referral_join(share_token: str, request: Request):
                             detail="Merci d'accepter la réservation et les conditions de participation.")
     _ok, _motif = E.invite_autorise(_p, _email, _tel)
     if not _ok:
+        raise _refus(409, E.REFUS_AUTO_PARRAINAGE, "Tu ne peux pas être ton propre invité.")
+    # V556 — LA RÈGLE BOULE DE NEIGE : pas d'inscription tant que l'invitation
+    # enfant n'a pas été partagée (action déclenchée ; jamais « WhatsApp a
+    # confirmé l'envoi », ce qu'un navigateur ne peut pas savoir).
+    if await _chaine_active():
+        if not E.chaine_partagee(_p):
+            raise _refus(409, E.REFUS_INVITATION_REQUISE,
+                         "Invite d'abord un ami pour débloquer ton essai gratuit.")
+        # V556 : c'est CELUI qui a partagé qui s'inscrit (clé de l'appareil) —
+        # un tiers qui a le même lien ne franchit pas la porte à sa place.
+        if not _cle_chaine_valide(request, await _enfant_de(_p)):
+            raise _refus(403, E.REFUS_AUTRE_APPAREIL,
+                         "Termine ton inscription sur l'appareil qui a partagé ton invitation.")
+    # V556 — ANTI-BOUCLE : ni un maillon amont (parrains, filleuls), ni l'ami
+    # qu'on vient soi-même d'inviter. (Le verrou ESSAI-1 reste la garde de fond.)
+    if E.identite_correspond(_email, _tel, await _identites_de_la_chaine(_p)):
         raise _refus(409, E.REFUS_AUTO_PARRAINAGE, "Tu ne peux pas être ton propre invité.")
 
     _course = await db["courses"].find_one({"id": _p.get("course_id")}, {"_id": 0})
@@ -1814,7 +1909,12 @@ async def referral_join(share_token: str, request: Request):
 
     # ── 7. place du parrain ; 8. notifications ─────────────────────────────
     _p = await _debloquer_ou_bloquer(_p, _course)
-    if _p.get("status") == E.FRIEND_REGISTERED:
+    # V556 — le nouvel inscrit devient le parrain de SON invitation enfant.
+    try:
+        await _lier_enfant(_p, _email, _nom, _tel, _access_code)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s invitation enfant non liée (%s)", PREFIXE, type(_err).__name__)
+    if _p.get("status") == E.FRIEND_REGISTERED and _p.get("blocked_reason") != E.BLOCAGE_PARRAIN_NON_INSCRIT:
         _sp = _p.get("sponsor") or {}
         await _push_parrain(_sp.get("email_norm"), "Ton ami est inscrit",
                             "%s a rejoint ton Pass Duo. Recharge ton abonnement pour confirmer ta place."
@@ -1839,6 +1939,449 @@ async def _reponse_join(pass_doc, now) -> dict:
         "offer": E.offre_du_pass(pass_doc),
         "version": E.version_pass(pass_doc),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V556 — PARRAINAGE V3 : LA CHAÎNE « boule de neige »
+# ═══════════════════════════════════════════════════════════════════════════
+# Règles dans `referral_engine` (section V556). Ici : les lectures/écritures.
+# L'invitation enfant est un pass ORDINAIRE (mêmes états, même join, même
+# essai unique, mêmes index) : il n'y a pas de second moteur de parrainage.
+CHAINE_REMONTEE_MAX = 12        # garde-fou de boucle sur `chain.parent_pass_id`
+
+
+async def _enfant_de(pass_doc):
+    """L'invitation enfant d'un pass (au plus UNE : index unique), ou None."""
+    try:
+        return await db[COLL_PASSES].find_one(
+            {"chain.parent_pass_id": (pass_doc or {}).get("id")}, {"_id": 0})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s invitation enfant illisible (%s)", PREFIXE, type(_err).__name__)
+        return None
+
+
+async def _descendance(pass_doc) -> list:
+    """Les invitations AVAL (enfant, petit-enfant...), une par niveau, bornée."""
+    _sortie, _vus, _cur = [], {(pass_doc or {}).get("id")}, pass_doc
+    for _ in range(CHAINE_REMONTEE_MAX):
+        _cur = await _enfant_de(_cur)
+        if not _cur or _cur.get("id") in _vus:
+            break
+        _vus.add(_cur.get("id"))
+        _sortie.append(_cur)
+    return _sortie
+
+
+async def _parent_de(pass_doc):
+    _pid = E.chaine_du_pass(pass_doc).get("parent_pass_id")
+    if not _pid:
+        return None
+    try:
+        return await db[COLL_PASSES].find_one({"id": _pid}, {"_id": 0})
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _ancetres(pass_doc) -> list:
+    """Les pass AMONT (parent, grand-parent...), du plus proche au plus loin."""
+    _sortie, _vus, _cur = [], {(pass_doc or {}).get("id")}, pass_doc
+    for _ in range(CHAINE_REMONTEE_MAX):
+        _cur = await _parent_de(_cur)
+        if not _cur or _cur.get("id") in _vus:
+            break
+        _vus.add(_cur.get("id"))
+        _sortie.append(_cur)
+    return _sortie
+
+
+async def _maillons_en_attente(pass_doc) -> int:
+    """Combien de maillons consécutifs, depuis ce pass, ont un parrain PAS
+    encore inscrit ? (Borne la chaîne fantôme d'un script qui n'inscrit jamais.)"""
+    _n, _cur = 0, pass_doc
+    _amont = await _ancetres(pass_doc)
+    for _cur in [pass_doc] + _amont:
+        if not E.parrain_en_attente(_cur):
+            break
+        _n += 1
+    return _n
+
+
+async def _identites_de_la_chaine(pass_doc) -> list:
+    """[(e-mail, téléphone)] de toutes les personnes de la chaîne AMONT
+    (parrains et filleuls) + l'ami déjà inscrit sur l'invitation ENFANT de ce
+    pass. Lu côté serveur uniquement : jamais renvoyé au navigateur."""
+    _sortie = []
+    for _a in await _ancetres(pass_doc):
+        for _role in ("sponsor", "invitee"):
+            _x = _a.get(_role) or {}
+            if _x:
+                _sortie.append((_x.get("email_norm"), _x.get("whatsapp_norm")))
+    _enf = await _enfant_de(pass_doc)
+    if _enf and _enf.get("invitee"):
+        _sortie.append((_enf["invitee"].get("email_norm"), _enf["invitee"].get("whatsapp_norm")))
+    return _sortie
+
+
+async def _place_du_parrain_chaine(pass_doc):
+    """La réservation de filleul de A sur le pass PARENT, si c'est bien lui et
+    bien cette séance ; sinon None (le chemin ordinaire reprend la main)."""
+    _parent = await _parent_de(pass_doc)
+    if not _parent:
+        return None
+    _sp = pass_doc.get("sponsor") or {}
+    _inv = _parent.get("invitee") or {}
+    _rid = (_parent.get("reservations") or {}).get("invitee_id")
+    if (not _rid or str(_parent.get("occurrence") or "") != str(pass_doc.get("occurrence") or "")
+            or E.normaliser_email(_inv.get("email_norm")) != E.normaliser_email(_sp.get("email_norm"))):
+        return None
+    try:
+        _r = await db["reservations"].find_one({"id": _rid, "status": {"$ne": "cancelled"}}, {"_id": 0})
+    except Exception:  # noqa: BLE001
+        _r = None
+    if _r:
+        _r["_rattachee"] = True          # jamais persisté : « aucune notification neuve »
+    return _r
+
+
+async def _synchroniser_seance_enfant(enfant, occurrence, entree) -> None:
+    """La séance du parent a changé : l'invitation enfant (pas encore
+    rejointe) la suit — même jeton, sa carte change d'URL (empreinte)."""
+    try:
+        await db[COLL_PASSES].update_one(
+            {"id": enfant["id"], "invitee": None},
+            {"$set": {"occurrence": occurrence, "expires_at": occurrence, "updated_at": _iso()},
+             "$push": {"events": {"at": _iso(), "type": E.EVENEMENT_SEANCE, "detail": dict(entree)}},
+             "$inc": {"version": 1}})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s séance de l'invitation enfant non suivie (%s)", PREFIXE, type(_err).__name__)
+
+
+async def _lier_enfant(parent, email, nom, tel_norm, access_code) -> None:
+    """Le filleul du parent vient de s'inscrire : il devient le VRAI parrain
+    de son invitation enfant. Si son ami s'y est déjà inscrit, le duo se
+    débloque maintenant (sa place = celle qu'il vient d'obtenir)."""
+    _enf = await _enfant_de(parent)
+    if not _enf or not E.parrain_en_attente(_enf):
+        return
+    _now = _iso()
+    try:
+        _r = await db[COLL_PASSES].update_one(
+            {"id": _enf["id"], "sponsor.email_norm": E.cle_parrain_en_attente(parent["id"])},
+            {"$set": {"sponsor.email_norm": E.normaliser_email(email),
+                      "sponsor.name": str(nom or "").strip()[:80],
+                      "sponsor.whatsapp_norm": tel_norm or None,
+                      "sponsor.subscription_code": access_code,
+                      "sponsor.terms_accepted": True,
+                      "sponsor.pending": False, "sponsor.bound_at": _now, "updated_at": _now},
+             "$push": {"events": {"at": _now, "type": E.EVENEMENT_PARRAIN_LIE, "detail": None}},
+             "$inc": {"version": 1}})
+    except Exception as _err:  # noqa: BLE001
+        # Doublon (A est déjà parrain d'un pass actif sur cette séance) : on
+        # laisse l'enfant en attente plutôt que d'écraser un autre pass.
+        logger.warning("%s parrain de l'invitation enfant non lié (%s)", PREFIXE, type(_err).__name__)
+        return
+    if not getattr(_r, "modified_count", 1):
+        return
+    try:
+        await db[COLL_INVITATIONS].update_many(
+            {"pass_id": _enf["id"], "sponsor_email_norm": E.cle_parrain_en_attente(parent["id"])},
+            {"$set": {"sponsor_email_norm": E.normaliser_email(email)}})
+    except Exception:  # noqa: BLE001
+        pass
+    _enf = await db[COLL_PASSES].find_one({"id": _enf["id"]}, {"_id": 0}) or _enf
+    if _enf.get("status") == E.FRIEND_REGISTERED:
+        _course = await db["courses"].find_one({"id": _enf.get("course_id")}, {"_id": 0})
+        if _course:
+            await _debloquer_ou_bloquer(_enf, _course)
+
+
+async def _nouvelle_version_apercu(pass_id):
+    """+1 sur `preview_version` : la PROCHAINE share_url (et la carte) change
+    d'adresse. Rien d'autre ne bouge : ni jeton, ni filleul, ni crédit."""
+    try:
+        await db[COLL_PASSES].update_one({"id": pass_id}, {"$inc": {"preview_version": 1},
+                                                          "$set": {"updated_at": _iso()}})
+        return await db[COLL_PASSES].find_one({"id": pass_id}, {"_id": 0})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s version d'aperçu non incrémentée (%s)", PREFIXE, type(_err).__name__)
+        return None
+
+
+async def _bilan_apercu(pass_doc) -> dict:
+    """Contrôle d'aperçu du serveur (page OG + carte, cache chauffé)."""
+    try:
+        from api.server import _v556_bilan_apercu
+        return await _v556_bilan_apercu(pass_doc)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s contrôle d'aperçu indisponible (%s)", PREFIXE, type(_err).__name__)
+        return {"ok": False, "fallback": True, "checks": {}}
+
+
+def _cle_chaine_valide(request, enfant) -> bool:
+    """`X-Chain-Key` == la clé rendue à la création de l'invitation enfant
+    (comparaison à temps constant sur l'empreinte ; jamais stockée en clair)."""
+    import hmac
+    try:
+        _cle = (request.headers.get("x-chain-key", "") or "").strip()
+    except Exception:  # noqa: BLE001
+        _cle = ""
+    _attendu = str(E.chaine_du_pass(enfant).get("edit_key_hash") or "")
+    return bool(_cle and _attendu and hmac.compare_digest(_hache_cle(_cle), _attendu))
+
+
+async def _journal_parent(pass_id, type_, detail, maj) -> None:
+    """Événement de chaîne sur le parent SANS toucher à `version` : créer ou
+    partager son invitation ne doit pas faire échouer (409) un changement de
+    séance ou d'offre que la page tient avec la version qu'elle a lue."""
+    _now = _iso()
+    try:
+        await db[COLL_PASSES].update_one(
+            {"id": pass_id},
+            {"$set": dict(maj or {}, updated_at=_now),
+             "$push": {"events": {"at": _now, "type": type_, "detail": detail}}})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s événement %s non journalisé (%s)", PREFIXE, type_, type(_err).__name__)
+
+
+async def _relier_enfant_si_besoin(parent) -> None:
+    """Retente la liaison parrain de chaîne (idempotente) pour un parent déjà rejoint."""
+    _inv = (parent or {}).get("invitee") or {}
+    if not _inv or not parent.get("invitee_access_code"):
+        return
+    try:
+        await _lier_enfant(parent, _inv.get("email_norm"), _inv.get("name"),
+                           _inv.get("whatsapp_norm"), parent.get("invitee_access_code"))
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s liaison de chaîne non reprise (%s)", PREFIXE, type(_err).__name__)
+
+
+async def _suivre_place_enfant(parent_id, ancien_rid, resa, nouveau_code) -> None:
+    """Le filleul du parent a changé d'offre après son join : sa réservation et
+    son code ont été remplacés. Son invitation enfant pointe vers la nouvelle."""
+    if not ancien_rid or not resa:
+        return
+    try:
+        await db[COLL_PASSES].update_one(
+            {"chain.parent_pass_id": parent_id, "reservations.sponsor_id": ancien_rid},
+            {"$set": {"reservations.sponsor_id": resa.get("id"),
+                      "reservations.sponsor_code": resa.get("reservationCode"), "updated_at": _iso()}})
+        await db[COLL_PASSES].update_one(
+            {"chain.parent_pass_id": parent_id, "sponsor.pending": False},
+            {"$set": {"sponsor.subscription_code": nouveau_code}})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s place de l'invitation enfant non suivie (%s)", PREFIXE, type(_err).__name__)
+
+
+def _hache_cle(cle) -> str:
+    import hashlib
+    return hashlib.sha256(str(cle or "").encode("utf-8")).hexdigest()
+
+
+async def _reponse_chaine(parent, enfant, code=200, edit_key=None, apercu=True):
+    _corps_rep = {"child": E.dto_enfant(enfant, _frontend_url()),
+                  "shared": E.chaine_partagee(parent)}
+    if apercu:
+        _corps_rep["preview"] = await _bilan_apercu(enfant)
+    if edit_key:
+        _corps_rep["edit_key"] = edit_key
+    return JSONResponse(status_code=code, content=_corps_rep)
+
+
+async def _parent_ouvert(share_token):
+    """Le pass parent d'une requête de chaîne : 404 inconnu, 410 fermé."""
+    _p = await _pass_par_token(share_token)
+    _s = await _statut_reel(_p)
+    if _s in (E.EXPIRED, E.CANCELLED):
+        raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
+    return _p, _s
+
+
+def _champs_invitation_enfant(corps) -> dict:
+    """Seuls `display_name` et `message` : jamais une photo, un e-mail, un id."""
+    _sous = {k: corps.get(k) for k in ("display_name", "message") if k in (corps or {})}
+    try:
+        return E.valider_invitation(_sous)
+    except E.InvitationInvalide as _err:
+        raise HTTPException(status_code=422, detail=str(_err))
+
+
+@router.post("/pass/{share_token}/chain")
+async def referral_chaine_creer(share_token: str, request: Request):
+    """V556 — crée (201) ou rend (200, idempotent) L'invitation enfant de ce
+    pass : `{child, shared, preview, edit_key?}`. Public (le jeton du parent
+    est la seule capacité) ; débit par IP ; une seule enfant par pass."""
+    await _exiger_actif()
+    _exiger_debit(request, DEBIT_PREFIXE_CHAINE)
+    _p, _s = await _parent_ouvert(share_token)
+    _enf = await _enfant_de(_p)
+    if _enf:
+        return await _reponse_chaine(_p, _enf, 200)
+    if not await _chaine_active():
+        raise HTTPException(status_code=404, detail="parrainage_chaine_desactive")
+    if not E.chaine_requise(_p, _s, True):
+        # V556 : un lien déjà utilisé ne fabrique pas d'invitation orpheline.
+        raise _refus(409, E.REFUS_PASS_FERME, "Cette invitation a déjà été utilisée.")
+    if E.attente_trop_longue(await _maillons_en_attente(_p)):
+        raise _refus(409, E.REFUS_CHAINE_EN_ATTENTE,
+                     "Cette invitation sera active dès que la personne qui te l'a envoyée "
+                     "aura terminé son inscription.")
+    _inv = _champs_invitation_enfant(await _corps(request))
+    _inv["message"] = _inv.get("message") or E.MESSAGE_CHAINE_DEFAUT
+    _now = _maintenant()
+    _cle = secrets.token_urlsafe(18)
+    _ch_parent = E.chaine_du_pass(_p)
+    try:
+        _prof = int(_ch_parent.get("depth") or 0) + 1
+    except (TypeError, ValueError):
+        _prof = 1
+    _doc = {
+        "id": str(uuid.uuid4()),
+        "coach_id": _p.get("coach_id") or "",
+        "course_id": _p.get("course_id"),
+        "occurrence": _p.get("occurrence"),
+        "course_snapshot": dict(_p.get("course_snapshot") or {}),
+        "sponsor": {
+            "email_norm": E.cle_parrain_en_attente(_p["id"]),
+            "name": _inv.get("display_name") or "",
+            "whatsapp_norm": None, "subscription_code": None,
+            "terms_accepted": False, "pending": True,
+        },
+        "invitee": None,
+        "status": E.LOCKED,
+        "share_token": secrets.token_urlsafe(24),
+        "opened_at": None,
+        "reservations": {"sponsor_id": None, "sponsor_code": None,
+                         "invitee_id": None, "invitee_code": None},
+        "invitee_access_code": None,
+        "blocked_reason": None,
+        "attribution": None,
+        "spordate_reward": {"status": "none"},
+        "offer_id": _p.get("offer_id"),
+        "offer_snapshot": dict(_p.get("offer_snapshot") or {}),
+        "offer_history": [],
+        "version": 1,
+        "invitation": {"display_name": _inv.get("display_name"), "photo_url": None,
+                       "message": _inv["message"], "updated_at": _iso(_now)},
+        "invitation_version": 1,
+        "preview_version": 0,
+        "chain": {"parent_pass_id": _p["id"],
+                  "root_pass_id": _ch_parent.get("root_pass_id") or _p["id"],
+                  "depth": _prof, "edit_key_hash": _hache_cle(_cle), "created_at": _iso(_now)},
+        "created_at": _iso(_now),
+        "updated_at": _iso(_now),
+        "unlocked_at": None,
+        "expires_at": _p.get("occurrence"),
+        "events": [{"at": _iso(_now), "type": E.EVENEMENT_CHAINE_CREEE, "detail": None}],
+    }
+    try:
+        await db[COLL_PASSES].insert_one(dict(_doc))
+    except Exception as _err:  # noqa: BLE001
+        if _est_doublon(_err):              # deux onglets en même temps : on rend l'existante
+            _enf = await _enfant_de(_p)
+            if _enf:
+                return await _reponse_chaine(_p, _enf, 200)
+        logger.error("%s invitation enfant non créée (%s)", PREFIXE, type(_err).__name__)
+        raise HTTPException(status_code=503, detail="Invitation non préparée, réessaie dans un instant.")
+    await _journal_parent(_p["id"], E.EVENEMENT_CHAINE_CREEE, None,
+                          {"chain.child_pass_id": _doc["id"], "chain.child_created_at": _iso(_now)})
+    logger.info("%s invitation enfant %s créée sous %s (profondeur %s)", PREFIXE, _doc["id"][:8],
+                _p["id"][:8], _prof)
+    return await _reponse_chaine(_p, _doc, 201, edit_key=_cle)
+
+
+@router.patch("/pass/{share_token}/chain")
+async def referral_chaine_modifier(share_token: str, request: Request):
+    """V556 — prénom / message de la carte, avec la clé rendue à la création
+    (`X-Chain-Key`). Même jeton ; nouvelle version d'aperçu."""
+    await _exiger_actif()
+    _exiger_debit(request, DEBIT_PREFIXE_CHAINE_ACTION)
+    _p, _s = await _parent_ouvert(share_token)
+    _enf = await _enfant_de(_p)
+    if not _enf:
+        raise HTTPException(status_code=404, detail="Prépare d'abord ton invitation.")
+    if not _cle_chaine_valide(request, _enf):
+        raise HTTPException(status_code=403, detail="Cette invitation ne peut être modifiée que depuis l'appareil qui l'a créée.")
+    if _enf.get("invitee"):
+        raise _refus(409, E.REFUS_PASS_DEJA_REJOINT, "Ton ami a déjà rejoint cette invitation.")
+    _b = await _corps(request)
+    _inv = _champs_invitation_enfant(_b)
+    _inv["message"] = _inv.get("message") or E.MESSAGE_CHAINE_DEFAUT
+    _existante = E.invitation_du_pass(_enf)
+    _fusion = {"display_name": _inv.get("display_name") if "display_name" in _b else _existante["display_name"],
+               "photo_url": None,
+               "message": _inv["message"] if "message" in _b else (_existante["message"] or E.MESSAGE_CHAINE_DEFAUT),
+               "updated_at": _iso()}
+    _set = {"invitation": _fusion, "updated_at": _iso()}
+    if E.parrain_en_attente(_enf):
+        _set["sponsor.name"] = _fusion["display_name"] or ""
+    await db[COLL_PASSES].update_one({"id": _enf["id"], "share_token": _enf.get("share_token")},
+                                     {"$set": _set, "$inc": {"invitation_version": 1, "version": 1}})
+    _enf = await db[COLL_PASSES].find_one({"id": _enf["id"]}, {"_id": 0}) or _enf
+    return await _reponse_chaine(_p, _enf, 200)
+
+
+@router.post("/pass/{share_token}/chain/share")
+async def referral_chaine_partager(share_token: str, request: Request):
+    """V556 — l'action de partage vient d'être DÉCLENCHÉE (`{channel}`).
+    Débloque l'inscription du visiteur (une fois pour toutes) et prépare une
+    share_url NEUVE pour un éventuel partage suivant (même jeton)."""
+    await _exiger_actif()
+    _exiger_debit(request, DEBIT_PREFIXE_CHAINE_ACTION)
+    _p, _s = await _parent_ouvert(share_token)
+    _b = await _corps(request)
+    _canal = str(_b.get("channel") or "").strip().lower()
+    if _canal not in E.CANAUX:
+        raise HTTPException(status_code=400, detail="Canal inconnu (%s)." % ", ".join(E.CANAUX))
+    _enf = await _enfant_de(_p)
+    if not _enf:
+        raise HTTPException(status_code=404, detail="Prépare d'abord ton invitation.")
+    if not _cle_chaine_valide(request, _enf):
+        raise _refus(403, E.REFUS_AUTRE_APPAREIL,
+                     "Partage ton invitation depuis l'appareil qui l'a préparée.")
+    _se = await _statut_reel(_enf)
+    if _se in (E.EXPIRED, E.CANCELLED):
+        raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
+    _now = _iso()
+    # V556 : au-delà de PARTAGES_MAX, le partage reste accepté mais n'écrit plus
+    # rien (ni journal, ni événement, ni nouvelle carte) — la base ne grossit pas.
+    _plafond = E.version_apercu(_enf) >= E.PARTAGES_MAX
+    try:
+        if _plafond:
+            raise StopIteration
+        await db[COLL_INVITATIONS].insert_one({
+            "id": str(uuid.uuid4()), "pass_id": _enf["id"],
+            "sponsor_email_norm": (_enf.get("sponsor") or {}).get("email_norm"),
+            "channel": _canal, "created_at": _now, "chain_parent_pass_id": _p["id"]})
+    except StopIteration:
+        pass
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s partage non journalisé (%s)", PREFIXE, type(_err).__name__)
+    if not _plafond:
+        await _evenement(_enf["id"], "invitation_sent", _canal,
+                         {"status": E.transition(E.LOCKED, E.WAITING)} if _se == E.LOCKED else None)
+    if not E.chaine_partagee(_p):
+        await _journal_parent(_p["id"], E.EVENEMENT_CHAINE_PARTAGEE, _canal,
+                              {"chain.shared_at": _now, "chain.share_channel": _canal})
+        _p = await db[COLL_PASSES].find_one({"id": _p["id"]}, {"_id": 0}) or _p
+    if not _plafond:
+        _enf = await _nouvelle_version_apercu(_enf["id"]) or _enf
+    _rep = {"shared": True, "shared_at": E.chaine_du_pass(_p).get("shared_at") or _now,
+            "child": E.dto_enfant(_enf, _frontend_url()),
+            # la PROCHAINE carte est rendue maintenant (cache chaud pour le robot)
+            "preview": await _bilan_apercu(_enf)}
+    return JSONResponse(status_code=200, content=_rep)
+
+
+@router.get("/pass/{share_token}/chain/preview")
+async def referral_chaine_apercu(share_token: str, request: Request):
+    """V556 — relance le contrôle d'aperçu de l'invitation enfant."""
+    await _exiger_actif()
+    _exiger_debit(request, DEBIT_PREFIXE_CHAINE_LECTURE)
+    _p = await _pass_par_token(share_token)
+    _enf = await _enfant_de(_p)
+    if not _enf:
+        raise HTTPException(status_code=404, detail="Prépare d'abord ton invitation.")
+    return await _reponse_chaine(_p, _enf, 200)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

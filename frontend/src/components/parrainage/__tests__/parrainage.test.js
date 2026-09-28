@@ -355,6 +355,18 @@ describe('PassDuoCard — V539b : changer de séance côté parrain', () => {
 });
 
 describe('CentreParrainage — états de page', () => {
+  test('V556 — le journal renvoie le PROCHAIN share_url/card_url : le pass en état les reprend', async () => {
+    window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
+    const ME = { enabled: true, sponsor: { first_name: 'Bassi', code: 'AFR-1' }, stats: { invited: 0 },
+      passes: [pass('waiting')], invitations: [], history: [] };
+    axios.get.mockImplementation((url) => (String(url).endsWith('/me') ? Promise.resolve({ data: ME }) : Promise.resolve({ data: CONFIG })));
+    axios.post.mockResolvedValue({ data: { id: 'inv-1', share_url: 'https://afroboost.com/api/share/duo/TOK123?v=2', card_url: 'https://afroboost.com/api/share/duo/TOK123/carte.jpg?v=2' } });
+    Object.assign(navigator, { clipboard: { writeText: jest.fn().mockResolvedValue() } });
+    await monter(<CentreParrainage />);
+    await act(async () => { par('inviter-copier').click(); });
+    await act(async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); });
+    expect(par('inviter-un-ami').textContent).toContain('TOK123?v=2');
+  });
   test('sans identité → « Ouvre ton espace abonné », AUCUN appel /me', async () => {
     await monter(<CentreParrainage />);
     expect(par('centre-non-connecte')).not.toBeNull();

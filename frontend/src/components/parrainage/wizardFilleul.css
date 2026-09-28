@@ -1,0 +1,55 @@
+/*
+ * V556 — Parcours du filleul (WizardFilleul) : classes cp-wf-* uniquement.
+ * Couleurs : jetons du Centre (--cp-*), eux-mêmes issus des couleurs du coach.
+ * Mobile d'abord (360 px) : aucune largeur fixe, cibles ≥ 44 px.
+ */
+.cp-wf { min-width: 0; }
+.cp-wf-etapes { margin-bottom: 14px; }
+.cp-wf-qui { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.cp-wf-av { width: 64px; height: 64px; flex: none; font-size: 24px; }
+.cp-wf-qui-txt { min-width: 0; flex: 1; }
+.cp-h1.cp-wf-h1 { font-size: clamp(22px, 6vw, 30px); margin: 8px 0 0; overflow-wrap: anywhere; }
+.cp-lead.cp-wf-lead { margin-top: 12px; font-size: 16px; }
+.cp-wf-titre { font-size: clamp(22px, 6vw, 28px); font-weight: 900; margin: 0 0 4px; letter-spacing: -.01em; }
+.cp-wf-sous { margin: 0 0 10px; }
+.cp-wf-prep { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.cp-spinner.cp-wf-spin { width: 18px; height: 18px; margin: 0; border-width: 2px; flex: none; }
+.cp-wz-carte.cp-wf-carte { border-radius: 16px; margin: 6px 0 4px; border: 1px solid var(--cp-line); }
+.cp-wf-simplifie { margin: 4px 0 0; }
+.cp-wf-perso { margin-top: 6px; }
+.cp-wf-perso .cp-input { margin: 4px 0; }
+.cp-wf-message { min-height: 84px; }
+.cp-wf-lien { padding-left: 0; }
+.cp-wf-actions { margin-top: 4px; }
+.cp-share.cp-wf-share { margin-top: 10px; }
+.cp-share.cp-wf-share .cp-b { min-width: 0; }
+.cp-wf-seul { grid-column: 1 / -1; }
+.cp-wf-ok {
+  display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 14px;
+  border: 1px solid var(--cp-ok); background: rgba(30, 215, 96, .08);
+}
+.cp-wf-ok b { display: block; font-size: 17px; }
+.cp-wf-ok p { margin: 2px 0 0; color: var(--cp-text); font-size: 14px; line-height: 1.4; }
+.cp-wf-ok-ic {
+  width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  color: var(--cp-ok-soft); border: 2px solid var(--cp-ok);
+}
+.cp-wf-rappel {
+  display: flex; align-items: center; gap: 8px; margin: 12px 0 6px; font-size: 14px; color: var(--cp-muted);
+  min-width: 0;
+}
+.cp-wf-rappel svg { flex: none; color: var(--cp-pink); }
+.cp-wf-rappel span { min-width: 0; overflow-wrap: anywhere; }
+.cp-wf-encore { margin-top: 8px; padding-left: 0; }
+@media (max-width: 380px) {
+  .cp-share.cp-wf-share { grid-template-columns: 1fr; }
+}
+
+/* V556 (parcours navigateur) — [Continuer] collant : visible dès le premier écran à
+   toutes les tailles, sans masquer le contenu (il reprend sa place en fin d'étape). */
+.cp-b.cp-wf-cta { position: sticky; bottom: 12px; z-index: 3; margin-top: 16px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .45); }
+/* Cibles tactiles ≥ 44 px sur /duo (consentements, liens, logo de l'en-tête). */
+.cp-wf .cp-chk { min-height: 44px; align-items: center; }
+.cp-wf .cp-link, .cp-page .cp-link.cp-wz-tap { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; }
+.cp-page .cp-logo { min-height: 44px; display: inline-flex; align-items: center; }

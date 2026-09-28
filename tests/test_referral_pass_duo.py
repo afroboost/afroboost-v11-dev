@@ -369,6 +369,8 @@ class _Base:
              {"status": {"$in": list(E.ETATS_ACTIFS)}}),
             (("invitee.email_norm", "course_id", "occurrence"),
              {"invitee.email_norm": {"$type": "string"}}),
+            # V556 : une invitation enfant par pass (chaîne boule de neige)
+            (("chain.parent_pass_id",), {"chain.parent_pass_id": {"$type": "string"}}),
         ])
 
     def __getitem__(self, nom):
@@ -490,10 +492,14 @@ def _prochaine_occurrence(jours=1, heure="18:30"):
     return dt.strftime("%Y-%m-%dT%H:%M:%S"), (jour.weekday() + 1) % 7
 
 
-def base_de_depart(drapeau=True, seances_parrain=3):
+def base_de_depart(drapeau=True, seances_parrain=3, chaine=False):
     base = _Base()
     occ, wd = _prochaine_occurrence(1)
-    base["feature_flags"].docs.append({"id": "feature_flags", "parrainage_duo_enabled": drapeau})
+    # V556 : la règle « invite avant de t'inscrire » n'est ACTIVE que si le
+    # drapeau vaut `true` (absent = éteint). Ce banc-ci prouve le Pass Duo
+    # V534-V552 SANS elle ; test_parrainage_v3.py prouve la chaîne (`chaine=True`).
+    base["feature_flags"].docs.append({"id": "feature_flags", "parrainage_duo_enabled": drapeau,
+                                       "parrainage_chaine_enabled": chaine})
     base["courses"].docs += [
         {"id": COURS_DUO, "name": "Afro Cardio", "weekday": wd, "time": "18:30",
          "locationName": "Salle Nord", "mapsUrl": "https://maps.example/x", "visible": True,
@@ -1558,6 +1564,7 @@ def _ordre_ast():
 def partie_v538():
     import api.routes.referral_engine as _M
     SRC_SRV = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
+    SRC_E = io.open(os.path.join(RACINE, "api", "routes", "referral_engine.py"), encoding="utf-8").read()
     SRC_CENTRE = io.open(os.path.join(RACINE, "frontend", "src", "components",
                                       "parrainage", "CentreParrainage.js"), encoding="utf-8").read()
     FRONT = "https://afroboost.com"
@@ -1659,10 +1666,14 @@ def partie_v538():
              [_m for _m in ("email", "whatsapp", "phone", "access_code") if _m in _code])
     verifier("V538-Q. jeton inconnu, vide ou démesuré -> redirection silencieuse, jamais un oracle",
              "if not _tok or len(_tok) > 128:" in _bloc and _bloc.count("RedirectResponse(url=FRONT, status_code=302)") == 2)
+    # V556 : le gabarit HTML vit désormais dans le moteur pur (`page_apercu_html`),
+    # partagé par la page ET par le contrôle d'aperçu avant partage.
+    _gab = SRC_E[SRC_E.index("def page_apercu_html("):SRC_E.index("_RE_META_OG = ")]
     verifier("V538-R. tout ce qui vient de la base est ÉCHAPPÉ avant d'entrer dans le HTML",
-             _bloc.count("_html.escape(") == 5 and "quote=True" in _bloc)
+             _gab.count("_html.escape(") == 5 and "quote=True" in _gab
+             and "_v556_html_apercu(_p, v, robot=" in _bloc)
     verifier("V538-R2. un vrai navigateur est renvoyé sur la page d'invitation (meta refresh + lien)",
-             'http-equiv="refresh" content="0;url={e_cible}"' in _bloc and 'href="{e_cible}"' in _bloc)
+             '<meta http-equiv="refresh" content="0;url=%s"/>' in _gab and 'href="{c}"' in _gab)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
