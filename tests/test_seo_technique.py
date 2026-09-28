@@ -125,6 +125,28 @@ v("SEO-1b : les quatre règles ajoutées à tort ont bien été retirées",
 v("les règles HISTORIQUES sont intactes (aucune retirée par mégarde)",
   all(("Disallow: %s" % _d) in ROBOTS
       for _d in ("/login", "/admin", "/reset.html", "/pwa-diag.html", "/api/")))
+# V552b — APERÇU DES INVITATIONS : la page de partage et sa carte doivent être
+# lisibles par les robots d'aperçu (Meta/Messenger respectent robots.txt), tout
+# en restant hors index (`noindex` sur la page, cf. SEO-1b). Règle standard :
+# la correspondance la plus LONGUE l'emporte, `Allow` gagnant à égalité.
+def _autorise(chemin):
+    _best, _ok = -1, True
+    for _l in ROBOTS.splitlines():
+        _l = _l.strip()
+        for _k, _val in (("Allow:", True), ("Disallow:", False)):
+            if _l.startswith(_k):
+                _pref = _l.split(":", 1)[1].strip()
+                if _pref and str(chemin).startswith(_pref) and (len(_pref) > _best or (len(_pref) == _best and _val)):
+                    _best, _ok = len(_pref), _val
+    return _ok
+SRC_SRV = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
+v("V552b : la page de partage Pass Duo et sa carte restent lisibles par les robots d'aperçu",
+  _autorise("/api/share/duo/jeton-abc") and _autorise("/api/share/duo/jeton-abc/carte.jpg"))
+v("V552b : le reste de /api/ reste interdit aux robots",
+  not _autorise("/api/sitemap.xml") and not _autorise("/api/referral/me"))
+_page_duo = SRC_SRV.split("async def share_duo_page", 1)[1][:6000]
+v("V552b : la page de partage est `noindex` (lisible pour l'aperçu, jamais indexée)",
+  '<meta name="robots" content="noindex, nofollow"/>' in _page_duo)
 v("/api/ reste bloqué : ce ne sont pas des pages HTML, aucune balise n'y est lisible",
   "Disallow: /api/" in ROBOTS and _bloque("/api/sitemap.xml"))
 v("l'accueil et la page locale restent autorisés et crawlables",

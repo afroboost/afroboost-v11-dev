@@ -19939,6 +19939,7 @@ async def share_duo_page(share_token: str):
     <meta property="og:image:alt" content="{e_titre}"/>
     <meta property="og:url" content="{e_url}"/>
     <meta property="og:site_name" content="Afroboost"/>
+    <meta name="robots" content="noindex, nofollow"/>
     <meta name="twitter:card" content="summary_large_image"/>
     <meta name="twitter:title" content="{e_titre}"/>
     <meta name="twitter:description" content="{e_desc}"/>

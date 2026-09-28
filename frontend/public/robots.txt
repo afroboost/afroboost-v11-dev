@@ -20,6 +20,12 @@ Disallow: /admin
 Disallow: /reset.html
 Disallow: /pwa-diag.html
 Disallow: /api/
+# V552b (28/09/2026) — APERCU DES INVITATIONS. La page de partage d'un Pass Duo
+# et sa carte (og:image) doivent etre lisibles par les robots d'apercu (Meta,
+# Messenger...), sinon le lien part sans miniature. La regle la plus longue
+# l'emporte : /api/share/ est autorise, le reste de /api/ reste interdit. Ces
+# pages portent `noindex, nofollow` : lisibles pour l'apercu, jamais indexees.
+Allow: /api/share/
 
 # SEO-1b (22/09/2026) — ADRESSES PERSONNELLES : `noindex`, ET SURTOUT PAS
 # `Disallow`. Le premier jet interdisait ici /espace/, /duo/, /parrainage et
