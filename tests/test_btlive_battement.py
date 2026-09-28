@@ -113,7 +113,7 @@ print("\n=== 6. STRUCTUREL — LA ROUTE ET SES GARDES ===")
 verifier("l'evenement `heartbeat` est accepte par la route",
          'if evenement not in ("started", "ended", "heartbeat")' in SRC)
 verifier("un battement n'ecrit QUE last_seen, sur la session annoncee et NON terminee",
-         '{"_id": "actuel", "session_code": code, "ended": False},\n'
+         '{"_id": "actuel", "session_code": code, "ended": False, "host": actuel.get("host")},\n'
          '            {"$set": {"last_seen": maintenant, "updated_at": maintenant}})' in SRC)
 verifier("le demarrage pose le premier battement",
          '"last_seen": maintenant}},' in SRC)
@@ -124,6 +124,105 @@ verifier("la lecture publique ne renvoie toujours que `active` et `started_at`",
          'return {"active": bool(etat.get("active")), "started_at"' in SRC)
 verifier("`last_seen` ne sort PAS de la lecture publique",
          '"last_seen": etat' not in SRC.split('@api_router.get("/boosttribe/live-status")')[1][:500])
+
+print("\n=== 7. PROPRIETE — SEUL L'HOTE MAINTIENT SON LIVE EN VIE ===")
+# La route est APPELEE (base simulee en memoire, aucune sortie reseau). L'identite
+# vient de `require_auth`, jamais du corps : un champ `host` / `coach_id` envoye
+# par le client est ignore.
+import asyncio  # noqa: E402
+
+
+class _Res:
+    def __init__(self, n):
+        self.matched_count = n
+
+
+class _Coll:
+    def __init__(self):
+        self.docs = {}
+
+    @staticmethod
+    def _ok(d, f):
+        return all(d.get(k) == v for k, v in f.items())
+
+    async def find_one(self, f, proj=None):
+        for d in self.docs.values():
+            if self._ok(d, f):
+                return dict(d)
+        return None
+
+    async def update_one(self, f, u, upsert=False):
+        for d in self.docs.values():
+            if self._ok(d, f):
+                d.update(u.get("$set", {}))
+                return _Res(1)
+        if upsert:
+            d = {k: v for k, v in f.items()}
+            d.update(u.get("$set", {}))
+            self.docs[d["_id"]] = d
+            return _Res(0)
+        return _Res(0)
+
+
+class _Req:
+    def __init__(self, email, corps):
+        self.email, self.corps = email, corps
+
+    async def json(self):
+        return self.corps
+
+
+COACH_A, COACH_B = "coach-a@exemple.invalid", "coach-b@exemple.invalid"
+
+
+def _auth(req):
+    if not req.email:
+        raise S.HTTPException(status_code=401, detail="Authentification requise")
+    return req.email
+
+
+S.require_auth = _auth
+S.is_super_admin = lambda e: e in (COACH_A, COACH_B)
+S.db = type("DB", (), {})()
+S.db.boosttribe_live = _Coll()
+
+
+def appel(email, event, code, extra=None):
+    corps = {"event": event, "session_code": code}
+    corps.update(extra or {})
+    try:
+        r = asyncio.new_event_loop().run_until_complete(
+            S.boosttribe_live_status_set(_Req(email, corps)))
+        return 200, r
+    except S.HTTPException as e:
+        return e.status_code, e.detail
+
+
+def last_seen():
+    return (S.db.boosttribe_live.docs.get("actuel") or {}).get("last_seen")
+
+
+verifier("A demarre SON live", appel(COACH_A, "started", "SESS-AAAA")[0] == 200)
+S.db.boosttribe_live.docs["actuel"]["last_seen"] = "2000-01-01T00:00:00+00:00"
+st, _ = appel(COACH_A, "heartbeat", "SESS-AAAA")
+verifier("l'hote reel bat : accepte, last_seen rafraichi",
+         st == 200 and last_seen() != "2000-01-01T00:00:00+00:00", "statut %s" % st)
+S.db.boosttribe_live.docs["actuel"]["last_seen"] = "2000-01-01T00:00:00+00:00"
+st, det = appel(COACH_B, "heartbeat", "SESS-AAAA")
+verifier("coach B (authentifie, connait le code) : 403", st == 403, "statut %s %s" % (st, det))
+verifier("coach B n'a PAS prolonge le live de A", last_seen() == "2000-01-01T00:00:00+00:00")
+st, _ = appel(COACH_B, "heartbeat", "SESS-AAAA", {"host": COACH_A, "coach_id": COACH_A})
+verifier("un `host`/`coach_id` fourni par le client ne change rien : 403", st == 403, "statut %s" % st)
+st, _ = appel("", "heartbeat", "SESS-AAAA")
+verifier("sans authentification : 401", st == 401, "statut %s" % st)
+st, _ = appel(COACH_A, "heartbeat", "SESS-ZZZZ")
+verifier("session inexistante : refus propre (404)", st == 404, "statut %s" % st)
+appel(COACH_A, "ended", "SESS-AAAA")
+S.db.boosttribe_live.docs["actuel"]["last_seen"] = "2000-01-01T00:00:00+00:00"
+st, _ = appel(COACH_A, "heartbeat", "SESS-AAAA")
+verifier("session terminee : refusee (409) et NON prolongee",
+         st == 409 and last_seen() == "2000-01-01T00:00:00+00:00"
+         and S.db.boosttribe_live.docs["actuel"]["ended"] is True, "statut %s" % st)
 
 echecs = [r for r in RESULTATS if not r[1]]
 print("\n%d verifications, %d echec(s)" % (len(RESULTATS), len(echecs)))

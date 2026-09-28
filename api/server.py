@@ -14209,8 +14209,21 @@ async def boosttribe_live_status_set(request: Request):
         # annoncée. Un battement en retard d'une session finie ne ressuscite rien —
         # le filtre `ended: False` s'en charge. Aucun journal : c'est répétitif par
         # nature, et l'information utile est déjà dans le document.
+        # V548 : SEUL L'HÔTE maintient son live. Deux super-admins partagent ce
+        # rôle : sans ce contrôle, l'un prolongeait le live de l'autre avec le
+        # seul code de session. L'hôte est celui qu'a posé `started` (identité
+        # serveur `require_auth`), jamais un champ envoyé par le client.
+        actuel = await db.boosttribe_live.find_one(
+            {"_id": "actuel"}, {"_id": 0, "session_code": 1, "host": 1, "ended": 1})
+        if not actuel or actuel.get("session_code") != code:
+            raise HTTPException(status_code=404, detail="Aucun live annoncé pour ce code")
+        hote = str(actuel.get("host") or "").strip().lower()
+        if not hote or hote != email.strip().lower():
+            raise HTTPException(status_code=403, detail="Seul l'hôte de ce live peut le maintenir")
+        if actuel.get("ended"):
+            raise HTTPException(status_code=409, detail="Ce live est terminé")
         r = await db.boosttribe_live.update_one(
-            {"_id": "actuel", "session_code": code, "ended": False},
+            {"_id": "actuel", "session_code": code, "ended": False, "host": actuel.get("host")},
             {"$set": {"last_seen": maintenant, "updated_at": maintenant}})
         return {"ok": bool(r.matched_count), "live": await _btlive_etat()}
     if evenement == "started":
