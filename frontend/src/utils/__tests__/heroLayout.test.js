@@ -42,8 +42,8 @@ describe('constantes', () => {
     expect(HERO_SEUIL_MOBILE).toBe(1024);
   });
   test('zones sûres = paddings historiques du mode flux (origin/main)', () => {
-    expect(HERO_ZONES_SURES.mobile).toEqual({ haut: 76, bas: 104, cote: 12 });
-    expect(HERO_ZONES_SURES.desktop).toEqual({ haut: 0, bas: 56, cote: 12 });
+    expect(HERO_ZONES_SURES.mobile).toEqual({ haut: 44, bas: 104, cote: 12 });
+    expect(HERO_ZONES_SURES.desktop).toEqual({ haut: 44, bas: 56, cote: 12 });
   });
   test('défauts : dans [0,1], size 1, align center (sauf CTA)', () => {
     ['desktop', 'mobile'].forEach((app) => HERO_ELEMENTS.forEach((e) => {

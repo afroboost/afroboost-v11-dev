@@ -37,8 +37,12 @@ export const HERO_TAILLE_MAX = 1.8;
 // ⚠️ INTEGRATION (barre haute reservee par la page, lot BARRE) : passer `haut`
 // a 44 sur les DEUX appareils, ici et nulle part ailleurs.
 export const HERO_ZONES_SURES = {
-  desktop: { haut: 0, bas: 56, cote: 12 },
-  mobile: { haut: 76, bas: 104, cote: 12 },
+  // V554 (barre haute) : la page réserve désormais la hauteur MESURÉE de la barre
+  // (compte à rebours / retour) sur toutes les largeurs. Le hero commence donc
+  // SOUS la barre : il ne reste à éviter que le header du carrousel (logo +
+  // globe, 36 px) + 8 px d'air = 44 px, en mobile comme en desktop.
+  desktop: { haut: 44, bas: 56, cote: 12 },
+  mobile: { haut: 44, bas: 104, cote: 12 },
 };
 
 // V554 : positions par defaut normalisees, MESUREES sur le mode flux (build de
