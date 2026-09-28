@@ -14264,10 +14264,14 @@ async def boosttribe_live_status_set(request: Request):
         await db.boosttribe_live.update_one(
             {"_id": "actuel"},
             {"$set": {"session_code": code, "started_at": maintenant, "ended": False,
-                      "host": email, "updated_at": maintenant,
-                      # Le démarrage vaut premier battement : sans cela, un live
-                      # serait « muet » jusqu'au premier signe, 15 s plus tard.
-                      "last_seen": maintenant}},
+                      "host": email, "updated_at": maintenant},
+             # V549b : le démarrage N'EST PAS un battement. Poser `last_seen` ici
+             # éteignait au bout de 90 s tout live dont la page ne bat pas
+             # (BoostTribe pas encore déployé, ancienne page en cache). Et on
+             # EFFACE celui du live précédent, qui l'aurait tué d'emblée. La
+             # grâce de 90 s ne s'arme qu'au premier vrai battement ; avant,
+             # la règle des 3 h s'applique (voir `btlive_actif`).
+             "$unset": {"last_seen": ""}},
             upsert=True)
     else:
         # « ended » ne ferme QUE le live annoncé : un « ended » tardif d'une

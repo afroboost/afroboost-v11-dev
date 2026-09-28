@@ -115,8 +115,8 @@ verifier("l'evenement `heartbeat` est accepte par la route",
 verifier("un battement n'ecrit QUE last_seen, sur la session annoncee et NON terminee",
          '{"_id": "actuel", "session_code": code, "ended": False, "host": actuel.get("host")},\n'
          '            {"$set": {"last_seen": maintenant, "updated_at": maintenant}})' in SRC)
-verifier("le demarrage pose le premier battement",
-         '"last_seen": maintenant}},' in SRC)
+verifier("V549b : le demarrage EFFACE last_seen (il n'est pas un battement)",
+         '"$unset": {"last_seen": ""}},' in SRC)
 verifier("l'ecriture reste reservee au coach authentifie",
          'email = require_auth(request)' in SRC.split("async def boosttribe_live_status_set")[1][:400]
          and 'is_super_admin(email)' in SRC.split("async def boosttribe_live_status_set")[1][:400])
@@ -155,6 +155,8 @@ class _Coll:
         for d in self.docs.values():
             if self._ok(d, f):
                 d.update(u.get("$set", {}))
+                for k in u.get("$unset", {}):
+                    d.pop(k, None)
                 return _Res(1)
         if upsert:
             d = {k: v for k, v in f.items()}
@@ -223,6 +225,23 @@ st, _ = appel(COACH_A, "heartbeat", "SESS-AAAA")
 verifier("session terminee : refusee (409) et NON prolongee",
          st == 409 and last_seen() == "2000-01-01T00:00:00+00:00"
          and S.db.boosttribe_live.docs["actuel"]["ended"] is True, "statut %s" % st)
+
+print("\n=== 8. V549b — LE DEMARRAGE N'EST PAS UN BATTEMENT ===")
+# Mesure du 28/09 : Afroboost deploye AVANT BoostTribe, une page hote qui ne bat
+# pas encore. Si `started` posait `last_seen`, ce live mourait 90 s plus tard.
+# Et un `last_seen` laisse par le live PRECEDENT le tuerait immediatement.
+S.db.boosttribe_live.docs["actuel"]["last_seen"] = "2000-01-01T00:00:00+00:00"   # reste du live d'avant
+verifier("A redemarre un NOUVEAU live", appel(COACH_A, "started", "SESS-BBBB")[0] == 200)
+d = dict(S.db.boosttribe_live.docs["actuel"])
+verifier("le demarrage efface le last_seen du live precedent (aucun battement recu)",
+         "last_seen" not in d, repr(d.get("last_seen")))
+d["started_at"] = (MAINTENANT - timedelta(seconds=120)).isoformat()
+if "last_seen" in d:   # pose au demarrage, jamais rafraichi : il a le meme age
+    d["last_seen"] = d["started_at"]
+verifier("page hote SANS battement, 120 s apres le debut : le live reste en cours (regle des 3 h)",
+         actif(d), repr(d))
+st, _ = appel(COACH_A, "heartbeat", "SESS-BBBB")
+verifier("le premier battement arme la grace de 90 s", st == 200 and last_seen() is not None)
 
 echecs = [r for r in RESULTATS if not r[1]]
 print("\n%d verifications, %d echec(s)" % (len(RESULTATS), len(echecs)))
