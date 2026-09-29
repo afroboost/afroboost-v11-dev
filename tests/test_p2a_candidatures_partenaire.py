@@ -401,9 +401,13 @@ verifier("5f. la propriete se lit sur le document, pas sur le corps",
 verifier("5g. `application_decision` est calcule, avec « pending » par defaut",
          'd.get("application_decision") or "pending"' in CORPS)
 
+# MT-2 (29/09/2026) : l'ancre verifiait que P2-A n'avait pas touche GET /leads,
+# en epinglant sa forme NON SURE (`X-User-Email` brut). MT-2 l'a fermee
+# (JWT signe). L'intention de 5h — P2-A ne modifie pas cette route — reste
+# verifiee : la route porte la garde MT-2 et rien de P2-A.
 verifier("5h. GET /api/leads n'a PAS ete modifie par ce lot",
-         'caller_email = request.headers.get("X-User-Email", "").lower().strip()'
-         in _corps_de("get_leads"))
+         "await _v309_require_coach_or_admin(request)" in _corps_de("get_leads")
+         and "p2a" not in _corps_de("get_leads").lower())
 
 
 print("\n=== 6. LE FRONT LIT LA ROUTE, SANS RECOPIER LA LOGIQUE DU JETON ===")
