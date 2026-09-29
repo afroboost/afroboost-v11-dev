@@ -577,6 +577,16 @@ class Matrice:
                      {"ok": "200 + effet", "objet": "403/404", "auth": "401/403", "mixte": "401/403/404"}[attendu])
 
     # ─── helpers base ────────────────────────────────────────────────────────
+    def _contact_neuf(self, x):
+        """MT-7 : un VRAI contact du propriétaire `x`, pas encore membre d'un groupe
+        (un id inexistant est refusé à juste titre par la règle « portefeuille »)."""
+        i = f"mt-cp-{x}-neuf-{self.uid()}"
+        self.db.chat_participants.insert_one({"id": i, "name": f"MTBANC-{x.upper()}-Neuf",
+                                              "email": f"mtbanc-{x}-neuf-{i[-4:]}@banc.test",
+                                              "coach_id": EMAIL_COACH[x], "source": "banc",
+                                              "created_at": _maintenant()})
+        return i
+
     def doc(self, coll, filtre, champ=None):
         d = self.db[coll].find_one(filtre, {"_id": 0})
         if champ is None:
@@ -1390,7 +1400,7 @@ class Matrice:
         # AJOUTER UN MEMBRE (sans jeton d'invitation) : réservé au propriétaire.
         self.mutation("POST /api/chat/groups/{id}/join (ajout de membre)", "POST", "/api/chat/groups/{}/join",
                       self._grp_reset, lambda i: self.doc("chat_groups", {"id": i}, "member_ids"),
-                      lambda i: {"participant_id": "mt-cp-" + i[5] + "-nouveau"})
+                      lambda i: {"participant_id": self._contact_neuf(i[5])})
         for x in ("a", "b"):
             self._grp_reset(x)
 
