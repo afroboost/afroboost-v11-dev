@@ -311,3 +311,13 @@ describe('PAR — intégration : partage par la chaîne', () => {
     expect(st({ id: 'p1', status: 'locked', chain_shared: false }, []).cle).toBe('a_partager');
   });
 });
+
+
+describe('PAR — intégration : ami_rejoint sans identité', () => {
+  it('invitee null + ami_rejoint=true → « Ton ami a rejoint »', () => {
+    const { statutInvitation: st } = require('../InvitationParrainage');
+    const r = st({ id: 'p1', status: 'unlocked', invitee: null, ami_rejoint: true }, []);
+    expect(r.amiRejoint).toBe(true);
+    expect(st({ id: 'p1', status: 'locked', invitee: null, ami_rejoint: false }, []).amiRejoint).toBe(false);
+  });
+});

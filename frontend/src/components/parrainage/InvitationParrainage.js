@@ -35,7 +35,8 @@ import './parrainage.css';
 export function statutInvitation(pass, invitations) {
   if (!pass || !pass.id) return null;
   const s = pass.status;
-  const amiRejoint = !!pass.invitee || s === 'friend_registered';
+  // PAR : `ami_rejoint` (booléen du serveur) — l'identité de l'invité d'une chaîne n'est jamais renvoyée.
+  const amiRejoint = pass.ami_rejoint === true || !!pass.invitee || s === 'friend_registered';
   if (s === 'unlocked' || s === 'used') return { cle: 'debloque', libelle: 'Avantage débloqué', amiRejoint };
   const journalise = (Array.isArray(invitations) ? invitations : []).some((i) => i && i.pass_id === pass.id);
   // PAR : `chain_shared` (booléen du serveur, sans PII) couvre le partage fait par la chaîne.
