@@ -8,6 +8,11 @@
  *
  * Deux boutons, une seule destination : le Centre (/parrainage). Aucun appel
  * réseau ici — la carte n'apparaît que si le parent sait le programme ouvert.
+ *
+ * PAR-2 — prop `onOuvrir` FACULTATIVE : si elle est fournie, le premier bouton
+ * devient « Invitation & parrainage » et l'appelle avec son élément (le
+ * déclencheur, pour y rendre le focus) ; « Voir mon Parrainage » garde /parrainage.
+ * Sans elle, la carte est STRICTEMENT celle d'avant.
  */
 import React from 'react';
 import SvgIcon from '../SvgIcon';
@@ -15,9 +20,10 @@ import SvgIcon from '../SvgIcon';
 const PANEL = 'rgba(255,255,255,0.04)';
 const BORDER = 'rgba(255,255,255,0.08)';
 
-export default function CarteParrainage({ enabled }) {
+export default function CarteParrainage({ enabled, onOuvrir }) {
   if (!enabled) return null;
   const aller = () => { window.location.href = '/parrainage'; };
+  const ouvrable = typeof onOuvrir === 'function';
   return (
     <section
       className="rounded-2xl p-5"
@@ -37,6 +43,21 @@ export default function CarteParrainage({ enabled }) {
         <span>Ton ami profite d'un essai gratuit, vous avez chacun votre billet.</span>
       </div>
       <div className="grid grid-cols-2 gap-2 mt-2">
+        {ouvrable ? (
+          <button
+            type="button"
+            onClick={(e) => onOuvrir(e.currentTarget)}
+            data-testid="carte-parrainage-ouvrir"
+            aria-haspopup="dialog"
+            className="py-2.5 rounded-xl text-sm font-semibold transition-transform active:scale-95"
+            style={{
+              color: 'white', border: 'none', minHeight: 44,
+              background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), var(--secondary-color, #8b5cf6))',
+            }}
+          >
+            Invitation &amp; parrainage
+          </button>
+        ) : (
         <button
           type="button"
           onClick={aller}
@@ -49,15 +70,16 @@ export default function CarteParrainage({ enabled }) {
         >
           Inviter un ami
         </button>
+        )}
         <button
           type="button"
           onClick={aller}
           data-testid="carte-parrainage-voir"
           className="py-2.5 rounded-xl text-sm font-semibold transition-transform active:scale-95"
-          style={{
+          style={Object.assign({
             color: 'white', background: 'transparent',
             border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
-          }}
+          }, ouvrable ? { minHeight: 44 } : null)}
         >
           Voir mon Parrainage
         </button>
