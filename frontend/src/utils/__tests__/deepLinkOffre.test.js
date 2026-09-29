@@ -69,7 +69,8 @@ describe('P2-FIX2 — le verrou du lien profond', () => {
 
   test('`&reserver=1` appelle toujours onSelectOffer', () => {
     expect(code).toContain("get('reserver') === '1'");
-    expect(code).toContain('onSelectOffer(v449Offre)');
+    // DL-1 : par l'ouverture EXPLICITE, jamais par la bascule du clic.
+    expect(code).toContain('onSelectOffer(v449Offre, { lienProfond: true })');
   });
 
   test('la garde « offre inconnue » est conservee', () => {

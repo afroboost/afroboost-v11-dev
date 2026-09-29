@@ -3271,7 +3271,9 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
       } catch (e) { v449Reserver = false; }
       if (v449Reserver && typeof onSelectOffer === 'function') {
         const v449Offre = offers.find(o => o && o.id === cible);
-        if (v449Offre) onSelectOffer(v449Offre);
+        // DL-1 : ouverture EXPLICITE (`lienProfond`), jamais la bascule du
+        // clic : si l'offre est déjà ouverte, `handleSelectOffer` n'y touche pas.
+        if (v449Offre) onSelectOffer(v449Offre, { lienProfond: true });
       }
     }, 200);   // sonde : le slider peut mettre plusieurs secondes à monter
     return () => clearInterval(t);
@@ -7059,7 +7061,12 @@ function App() {
   };
 
   // Sélection d'offre avec smooth scroll vers le formulaire "Vos informations"
-  const handleSelectOffer = (offer) => {
+  // DL-1 : `options.lienProfond` = OUVERTURE EXPLICITE, demandée par un lien
+  // profond (`?offre=<id>&reserver=1`). Elle ouvre, elle ne referme jamais : les
+  // deux bascules ci-dessous (v56, v159) sont réservées au clic manuel, qui garde
+  // son comportement actuel. Sans ce second argument, rien ne change.
+  const handleSelectOffer = (offer, options) => {
+    const dl1LienProfond = !!(options && options.lienProfond === true);
     // V260: offre a 0 CHF proposant la preuve sociale -> le visiteur choisit
     // d'abord sa voie (essai gratuit contre preuve, ou prix alternatif).
     //
@@ -7118,12 +7125,16 @@ function App() {
     }
     // v56: Toggle — si la même offre est déjà sélectionnée, on la désélectionne (ferme le formulaire)
     if (selectedOffer && offer && selectedOffer.id === offer.id && selectedOffer.name === offer.name) {
+      // DL-1 : un lien profond ne désélectionne JAMAIS — l'offre est déjà ouverte.
+      if (dl1LienProfond) return;
       setSelectedOffer(null);
       setSelectedVariants({});
       return;
     }
     // v159: Toggle aussi pour l'offre en attente (pending)
     if (pendingOffer && offer && pendingOffer.id === offer.id) {
+      // DL-1 : même règle pour l'offre en attente — le lien ne l'annule pas.
+      if (dl1LienProfond) return;
       setPendingOffer(null);
       // Retirer le toast si visible
       const existingToast = document.getElementById('v158-session-toast');

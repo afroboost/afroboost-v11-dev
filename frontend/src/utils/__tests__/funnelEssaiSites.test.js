@@ -39,7 +39,9 @@ const ESPACE = fs.readFileSync(
 const SOURCES = APP + '\n' + ESPACE;
 
 // Reperes stables du fichier, verifies un a un a l'audit du 25/08/2026.
-const ANCRE_SELECT_OFFER = 'const handleSelectOffer = (offer) => {';
+// DL-1 : `handleSelectOffer` reçoit un 2e argument facultatif (`options`,
+// ouverture explicite d'un lien profond) — l'ancre suit la signature.
+const ANCRE_SELECT_OFFER = 'const handleSelectOffer = (offer, options) => {';
 const ANCRE_SUBMIT = 'const handleSubmit = async (e) => {';
 const ANCRE_BRANCHE_GRATUIT = 'if (totalPrice === 0) {';
 const ANCRE_POST_FREE = "axios.post(`${API}/checkout/free`";

@@ -692,10 +692,19 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
   // chaque rechargement, et `handleSelectOffer` (bascule) REFERMAIT le
   // formulaire d'essai qu'il venait d'ouvrir (mesuré : ouvert à 3 s, fermé à
   // 7 s, rouvert à 8 s). Même règle que P2-FIX2 dans App.js.
+  //
+  // DL-1 — UN SEUL COMPOSANT TRAITE LE LIEN, ET C'EST CELUI QUI MONTRE LES CARTES.
+  // En CONTRÔLEUR (`cartes={false}`, V542), c'est le carrousel historique
+  // (`OffersSliderAutoPlay`, effet V371/V449 d'App.js) qui est à l'écran et qui
+  // traite déjà le lien. Le traiter AUSSI ici ouvrait le formulaire, puis la sonde
+  // du carrousel rappelait `handleSelectOffer` sur la même offre et la bascule v56
+  // le REFERMAIT (~200 ms plus tard). Le contrôleur laisse donc la main, et
+  // consomme son verrou : le lien ne sera jamais rejoué par ce composant.
   const lienProfondTraite = useRef(false);
   useEffect(() => {
     if (!Array.isArray(offres) || !offres.length) return;
     if (lienProfondTraite.current) return;
+    if (!cartes) { lienProfondTraite.current = true; return; }
     let cible = ''; let reserver = false;
     try {
       const q = new URLSearchParams(window.location.search);
@@ -706,10 +715,12 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
     const o = offres.find((x) => x && x.id === cible);
     if (!o) return;
     lienProfondTraite.current = true;
-    if (reserver && prixUnitaire(o) <= 0) { onChoisir(o); return; }
+    // DL-1 : ouverture EXPLICITE — jamais la bascule du clic manuel.
+    if (reserver && prixUnitaire(o) <= 0) { onChoisir(o, { lienProfond: true }); return; }
     setFiche({ offres: [o] });
+    // `cartes` est un booléen (dépendance primitive) : aucun risque de boucle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [offres]);
+  }, [offres, cartes]);
 
   // ⚠️ LA GARDE NE VAUT QUE POUR LA PRÉSENTATION. Sans aimant il n'y a rien à
   //    MONTRER — mais il reste tout à OUVRIR : le catalogue complet existe quand même.
