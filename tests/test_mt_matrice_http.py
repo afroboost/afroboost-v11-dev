@@ -808,12 +808,18 @@ class Matrice:
 
         def fab_cp2(x):
             self.db.chat_participants.update_one({"id": f"mt-cp-{x}2"},
-                                                 {"$unset": {"mt_marque": "", "contact_type": ""},
+                                                 {"$unset": {"notes": "", "contact_type": ""},
                                                   "$set": {"tags": [], "categories": []}})
             return f"mt-cp-{x}2"
+        # MT-3 : on modifie un champ de la LISTE BLANCHE (`notes`) ; un champ hors liste
+        # (ex. `coach_id`) doit être refusé — vérifié juste après.
         self.mutation("PUT /api/chat/participants/{id}", "PUT", "/api/chat/participants/{}", fab_cp2,
-                      lambda i: self.doc("chat_participants", {"id": i}, "mt_marque"),
-                      lambda i: {"mt_marque": "modifie-" + self.uid()})
+                      lambda i: self.doc("chat_participants", {"id": i}, "notes"),
+                      lambda i: {"notes": "modifie-" + self.uid()})
+        _cible = fab_cp2("a")
+        r = self.c("PUT", f"/api/chat/participants/{_cible}", self.hA, {"coach_id": EMAIL_COACH["b"]})
+        verifier("PUT /api/chat/participants/{id}", "A tente de changer coach_id (refusé, base intacte)", r.s,
+                 r.s in (400, 403, 404) and (self.doc("chat_participants", {"id": _cible}) or {}).get("coach_id") == EMAIL_COACH["a"])
 
         def fab_cp_jet(x):
             i = f"mt-cp-{x}-jetable-{self.uid()}"
