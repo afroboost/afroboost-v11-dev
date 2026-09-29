@@ -13,6 +13,7 @@ import { parseContacts } from '../../utils/contactParser';
 import SvgIcon from '../SvgIcon';
 // V533: le bouton V229 n'est plus rendu ici (voir CampaignMediaUploader) ; l'import est retiré pour ne pas laisser un import inutilisé.
 import CampaignMediaUploader from './CampaignMediaUploader'; // V533: progression réelle + miniature du Reel
+import { canalCampagneAutorise, MESSAGE_WHATSAPP_PARTENAIRE } from '../../utils/co1OngletsCoach'; // CO-1
 
 const STEPS = [
   { id: 1, label: 'Médias & Objectif', icon: 'target' },
@@ -98,6 +99,16 @@ export default function CampaignModal({
   }, [API]);
   // Sync si les externes changent
   useEffect(() => { if (externalChatLinks.length > 0) setChatLinks(externalChatLinks); }, [externalChatLinks]);
+
+  // CO-1 : une campagne de coach partenaire ne part jamais du numéro WhatsApp
+  // officiel (le serveur la refuserait). Un canal WhatsApp hérité (édition d'une
+  // ancienne campagne) est retiré. Dépendance PRIMITIVE + `prev` rendu inchangé
+  // quand il n'y a rien à retirer : aucune boucle possible.
+  const waActif = !!newCampaign?.channels?.whatsapp;
+  useEffect(() => {
+    if (isSuperAdmin || !waActif) return;
+    setNewCampaign(prev => (prev.channels?.whatsapp ? { ...prev, channels: { ...prev.channels, whatsapp: false } } : prev));
+  }, [isSuperAdmin, waActif, setNewCampaign]);
 
   // v17.3: Import contacts
   const importFileRef = useRef(null);
@@ -1281,7 +1292,7 @@ export default function CampaignModal({
                     { key: 'whatsapp', icon: 'phone', label: 'WhatsApp', color: '#25d366' },
                     { key: 'email', icon: 'mail', label: 'Email', color: '#3b82f6' },
                     { key: 'group', icon: 'users', label: 'Groupe', color: '#a855f7' }
-                  ].map(ch => (
+                  ].filter(ch => canalCampagneAutorise(ch.key, isSuperAdmin)).map(ch => (
                     <button key={ch.key} type="button"
                       onClick={() => setNewCampaign(prev => ({ ...prev, channels: { ...prev.channels, [ch.key]: !prev.channels?.[ch.key] } }))}
                       style={{
@@ -1296,8 +1307,16 @@ export default function CampaignModal({
                 </div>
               </div>
 
+              {/* CO-1 : le partenaire sait pourquoi WhatsApp n'est pas proposé. */}
+              {!isSuperAdmin && (
+                <p data-testid="co1-whatsapp-reserve" style={{ margin: '-8px 0 16px', fontSize: '11px', lineHeight: 1.4, color: 'rgba(255,255,255,0.5)' }}>
+                  {MESSAGE_WHATSAPP_PARTENAIRE}
+                </p>
+              )}
+
               {/* V115: Sélecteur d'expéditeur WhatsApp — prod par défaut, option numéro partenaire */}
-              {newCampaign.channels?.whatsapp && (
+              {/* CO-1 : réservé au super-admin — seul lui peut envoyer depuis le numéro officiel. */}
+              {isSuperAdmin && newCampaign.channels?.whatsapp && (
                 <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '10px', background: 'rgba(37,211,102,0.06)', border: '1px solid rgba(37,211,102,0.18)' }}>
                   <label style={{ display: 'block', color: '#4ade80', fontSize: '12px', fontWeight: 500, marginBottom: '8px' }}>📲 Expéditeur WhatsApp</label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>

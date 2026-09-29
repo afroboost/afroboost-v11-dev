@@ -48,6 +48,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# CO-1 : la porte de lancement importe `api.routes.co1_onglets_coach` (règle pure
+# « WhatsApp = numéro officiel ») ; l'extrait exécuté doit pouvoir la résoudre.
+sys.path.insert(0, RACINE)
 SERVEUR = os.path.join(RACINE, "api", "server.py")
 SOURCE = io.open(SERVEUR, encoding="utf-8").read()
 ARBRE = ast.parse(SOURCE)

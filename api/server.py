@@ -5770,6 +5770,13 @@ async def create_campaign(campaign: CampaignCreate, request: Request = None):
     # axios qui pose le jeton — preuve V310c à refaire en prod : 403 sans, 422/200 avec.)
     coach_email = await _v309_require_coach_or_admin(request)
 
+    # CO-1 : le canal WhatsApp d'une campagne part du numéro OFFICIEL Afroboost
+    # (le moteur n'a pas d'autre configuration). Refusé pour un coach partenaire.
+    from api.routes.co1_onglets_coach import whatsapp_campagne_interdit, MESSAGE_WHATSAPP_RESERVE
+    if whatsapp_campagne_interdit(coach_email, campaign.channels):
+        logger.warning(f"[CO-1] REFUS création campagne WhatsApp pour {coach_email}")
+        raise HTTPException(status_code=403, detail=MESSAGE_WHATSAPP_RESERVE)
+
     # v13: Vérification crédits AVANT création (0 crédits = pas d'envoi)
     if coach_email and not is_super_admin(coach_email):
         campaign_cost = await get_service_price("campaign")
@@ -5834,6 +5841,13 @@ async def update_campaign(campaign_id: str, request: Request):
     # Empêcher la modification d'une campagne en cours d'envoi uniquement
     if existing.get("status") == "sending":
         raise HTTPException(status_code=400, detail="Cannot edit a campaign while it is being sent")
+
+    # CO-1 : même règle qu'à la création — pas de canal WhatsApp (numéro officiel)
+    # pour une campagne de coach partenaire. La propriété se lit sur le DOCUMENT.
+    from api.routes.co1_onglets_coach import whatsapp_campagne_interdit, MESSAGE_WHATSAPP_RESERVE
+    if "channels" in body and whatsapp_campagne_interdit(existing.get("coach_id"), body.get("channels")):
+        logger.warning(f"[CO-1] REFUS ajout WhatsApp sur la campagne {campaign_id} ({existing.get('coach_id')})")
+        raise HTTPException(status_code=403, detail=MESSAGE_WHATSAPP_RESERVE)
 
     # Champs modifiables
     allowed_fields = [
@@ -6142,6 +6156,14 @@ async def v451_lancer_campagne_http(campaign_id: str, request: Request):
                        _campagne.get("name"), _appelant)
         raise HTTPException(status_code=403,
                             detail="Cette campagne ne vous appartient pas.")
+
+    # CO-1 : refus AVANT le moteur -> aucun crédit débité, message clair. Couvre les
+    # campagnes créées avant CO-1 (le moteur les neutralise aussi, cf. launch_campaign).
+    from api.routes.co1_onglets_coach import whatsapp_campagne_interdit, MESSAGE_WHATSAPP_RESERVE
+    _co1_canaux = (await db.campaigns.find_one({"id": campaign_id}, {"_id": 0, "channels": 1}) or {}).get("channels")
+    if whatsapp_campagne_interdit(_proprietaire, _co1_canaux):
+        logger.warning("[CO-1] REFUS lancement WhatsApp de « %s » (%s)", _campagne.get("name"), _proprietaire)
+        raise HTTPException(status_code=403, detail=MESSAGE_WHATSAPP_RESERVE)
 
     return await launch_campaign(campaign_id)
 
@@ -6800,6 +6822,13 @@ async def launch_campaign(campaign_id: str):
     # Prepare results and tracking
     results = []
     channels = campaign.get("channels", {})
+    # CO-1 : défense en profondeur pour la boucle programmée (qui n'a pas de porte
+    # HTTP) — une campagne de coach partenaire ne part JAMAIS du numéro officiel.
+    from api.routes.co1_onglets_coach import whatsapp_campagne_interdit as _co1_wa_interdit
+    if _co1_wa_interdit(coach_email, channels):
+        logger.warning(f"[CO-1] canal WhatsApp neutralisé pour la campagne '{campaign.get('name')}' de {coach_email}")
+        channels = dict(channels)
+        channels["whatsapp"] = False
     message_content = campaign.get("message", "")
     media_url = campaign.get("mediaUrl", "")
     campaign_name = campaign.get("name", "Campagne")
@@ -22172,23 +22201,48 @@ class WhatsAppWebhook(BaseModel):
     MediaUrl0: Optional[str] = None
 
 # --- AI Config Routes ---
+def _co1_exiger_super_admin_signe(request: Request, quoi: str) -> str:
+    """CO-1 : réglage PLATEFORME -> JWT SIGNÉ de super-admin, rien d'autre.
+    `X-User-Email` ne vaut rien ici (en-tête que n'importe qui écrit). Même règle
+    que `_v411_exiger_super_admin`, avec un message qui ne parle pas de conversations."""
+    from api.routes.co1_onglets_coach import MESSAGE_IA_RESERVEE
+    appelant = _v311_coach_email_from_jwt(request) if request is not None else ""
+    if not appelant or not is_super_admin(appelant):
+        revendique = ((request.headers.get("X-User-Email", "") if request is not None else "") or "").lower().strip()
+        logger.warning(f"[CO-1] REFUS {quoi} — « {appelant or revendique or 'anonyme'} » sans JWT super-admin")
+        raise HTTPException(status_code=403, detail=MESSAGE_IA_RESERVEE)
+    return appelant
+
+
 @api_router.get("/ai-config")
-async def get_ai_config():
+async def get_ai_config(request: Request = None):
+    # CO-1 : `ai_config` est UN document PLATEFORME (prompt, lien Twint, dernier
+    # média). Il n'est rendu en entier qu'au super-admin SIGNÉ. Tout autre appelant
+    # (visiteur, coach partenaire dont l'onglet Campagnes est désormais ouvert)
+    # ne reçoit que `enabled` — ce que lit la sonde #12 de nonregression.py.
+    from api.routes.co1_onglets_coach import ia_config_publique
     config = await db.ai_config.find_one({"id": "ai_config"}, {"_id": 0})
     if not config:
         default_config = AIConfig().model_dump()
         await db.ai_config.insert_one(default_config)
-        return default_config
-    return config
+        default_config.pop("_id", None)
+        config = default_config
+    _signe = _v311_coach_email_from_jwt(request) if request is not None else ""
+    if _signe and is_super_admin(_signe):
+        return config
+    return ia_config_publique(config)
 
 @api_router.put("/ai-config")
 async def update_ai_config(config: AIConfigUpdate, request: Request):
     # V303 : réglage RÉSERVÉ au coach/admin authentifié (activer/désactiver l'IA,
     # prompt système…). Avant, l'endpoint était ouvert -> un visiteur anonyme aurait
-    # pu couper l'IA ou modifier le prompt. Repli X-User-Email accepté (transition V265).
-    _caller = await _v263_authenticated_coach(request)
-    if not _caller:
-        raise HTTPException(status_code=403, detail="Authentification requise")
+    # pu couper l'IA ou modifier le prompt.
+    # CO-1 : « coach authentifié » ne suffit plus. `ai_config` est GLOBAL : avec
+    # l'onglet Campagnes ouvert aux partenaires, l'auto-sauvegarde du tableau de
+    # bord et l'envoi groupé (`lastMediaUrl`) auraient réécrit le prompt et
+    # l'activation de l'IA de TOUTE la plateforme. Super-admin SIGNÉ uniquement ;
+    # le refus tombe AVANT toute écriture (un corps vide anonyme -> 403, inerte).
+    _co1_exiger_super_admin_signe(request, "écriture de ai_config")
     updates = {k: v for k, v in config.model_dump().items() if v is not None}
     await db.ai_config.update_one({"id": "ai_config"}, {"$set": updates}, upsert=True)
     return await db.ai_config.find_one({"id": "ai_config"}, {"_id": 0})
@@ -22385,12 +22439,17 @@ Si tu ne connais pas la réponse à une question, oriente vers le contact email 
 
 # --- AI Logs Routes ---
 @api_router.get("/ai-logs")
-async def get_ai_logs():
+async def get_ai_logs(request: Request = None):
+    # CO-1 : ce journal porte les numéros WhatsApp et les messages entrants de
+    # TOUTE la plateforme — il était public. Super-admin SIGNÉ uniquement.
+    _co1_exiger_super_admin_signe(request, "lecture de ai_logs")
     logs = await db.ai_logs.find({}, {"_id": 0}).sort("timestamp", -1).to_list(50)
     return logs
 
 @api_router.delete("/ai-logs")
-async def clear_ai_logs():
+async def clear_ai_logs(request: Request = None):
+    # CO-1 : un anonyme pouvait VIDER ce journal. Super-admin SIGNÉ uniquement.
+    _co1_exiger_super_admin_signe(request, "effacement de ai_logs")
     await db.ai_logs.delete_many({})
     return {"success": True}
 
