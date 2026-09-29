@@ -2525,6 +2525,33 @@ def t115_inv1_acces_legitime():
         record(115, "INV-1 : accès légitime aux invitations", False, str(e))
 
 
+# INV-3 — `GET /api/subscriber/space/{code}` accepte `?course=&occurrence=`
+# (séance d'une invitation, ajoutée à la liste si elle est autorisée). La surface
+# change : on prouve que les nouveaux paramètres n'ouvrent RIEN sans jeton
+# d'espace — même refus neutre, mot pour mot, qu'avant. Lecture seule.
+def t116_inv3_espace_seance_sans_auth():
+    try:
+        code = "AFR-NONREG-INV3"
+        base = _url(f"/api/subscriber/space/{code}")
+        ref = requests.get(base, timeout=TIMEOUT)
+        cas = [("invitation valide", "?course=cours-nonreg&occurrence=2026-10-20T18:30"),
+               ("paramètres malformés", "?course=..%2Fx&occurrence=2026-10-20%2018:30"),
+               ("injection", "?course[$ne]=x&occurrence[$gt]=")]
+        profils = {"anonyme": {}, "X-User-Email usurpe": {"X-User-Email": ADMIN}}
+        details, ok = [], ref.status_code in (401, 403, 404)
+        for nom_cas, qs in cas:
+            for nom, hdr in profils.items():
+                r = requests.get(base + qs, headers=hdr, timeout=TIMEOUT)
+                fuite = [c for c in ("upcoming_courses", "subscriber", "@") if c in (r.text or "")]
+                if r.status_code != ref.status_code or (r.text or "") != (ref.text or "") or fuite:
+                    ok = False
+                    details.append(f"{nom_cas} [{nom}]={r.status_code}" + (f" FUITE:{fuite}" if fuite else ""))
+        record(116, "INV-3 : /subscriber/space?course=&occurrence= refusé sans jeton (réponse identique)",
+               ok, " | ".join(details) or f"6 appels = refus de référence HTTP {ref.status_code}")
+    except Exception as e:
+        record(116, "INV-3 : /subscriber/space?course=&occurrence= sans auth", False, str(e))
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -2573,6 +2600,7 @@ def main():
                    t112_s0_conversations_acces_legitime,
                    t113_inv1_invitations_fermees_sans_auth, t114_inv1_partage_public_jeton_inconnu,
                    t115_inv1_acces_legitime,
+                   t116_inv3_espace_seance_sans_auth,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

@@ -31,7 +31,9 @@ import { funnelTracer } from "../utils/funnelEssai";
 import { etatEssaiAffiche } from "../utils/essaiReservation";
 // INV-2 : la seance d'une invitation (`?course=&occurrence=`) arrive preselectionnee
 // dans la liste EXISTANTE ci-dessous (`selectedCourseIdx`). Rien n'est reserve.
-import { lireSeanceInvitation, indexSeanceInvitation } from "../utils/invitationSeance";
+// INV-3 : `seancesVisibles` = la liste AFFICHEE (12 + la seance invitee au-dela),
+// seule source de l'affichage ET de la preselection.
+import { lireSeanceInvitation, indexSeanceInvitation, seancesVisibles } from "../utils/invitationSeance";
 import InvitationSeanceBandeau from "./InvitationSeanceBandeau";
 // N2 : la MEME lecture de l'heure que le serveur (`n2_instant_reel`). Sans
 // elle, une date naive serait lue dans le fuseau du navigateur et l'ecran
@@ -197,6 +199,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   // "" (rien a dire) | "ok" (preselectionnee) | "indisponible" (message). Primitif.
   const [inv2Etat, setInv2Etat] = useState("");
   const inv2Applique = useRef(false);
+  // INV-3 : valeurs PRIMITIVES (jamais l'objet) pour la requete de l'espace.
+  const inv3Course = inv2Seance ? inv2Seance.course : "";
+  const inv3Occurrence = inv2Seance ? inv2Seance.occurrence : "";
   const inv2DonneesPretes = data != null;
   useEffect(() => {
     // INV-2 : usage unique, meme verrou que le lien profond d'App.js (P2-FIX2).
@@ -204,8 +209,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     // apres une reservation) ne relance rien, et aucun setState n'est rejoue.
     if (inv2Applique.current || !inv2Seance || !inv2DonneesPretes) return;
     inv2Applique.current = true;
-    // La liste REELLEMENT affichee (12 premieres), filtree par les regles du serveur.
-    const visibles = (data?.upcoming_courses || []).slice(0, 12);
+    // INV-3 : la liste REELLEMENT affichee (la meme fonction que le rendu ci-dessous) :
+    // 12 premieres + la seance invitee si le serveur l'a ajoutee au-dela.
+    const visibles = seancesVisibles(data?.upcoming_courses, inv2Seance);
     const i = indexSeanceInvitation(inv2Seance, visibles);
     if (i >= 0) {
       setSelectedCourseIdx(i);
@@ -247,9 +253,17 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     setError(null);
     try {
       // V202: Passer le slug membre dans la query si disponible
-      const url = memberSlug
-        ? `${API}/subscriber/space/${encodeURIComponent(accessCode)}?m=${encodeURIComponent(memberSlug)}`
-        : `${API}/subscriber/space/${encodeURIComponent(accessCode)}`;
+      // INV-3 : la seance d'invitation (deja validee par `lireSeanceInvitation`)
+      // voyage jusqu'au serveur, qui l'ajoute a la liste s'il l'autorise (J+15..J+30).
+      // Chaines PRIMITIVES, lues une fois : aucune boucle d'appels (CLAUDE.md).
+      const params = [];
+      if (memberSlug) params.push(`m=${encodeURIComponent(memberSlug)}`);
+      if (inv3Course && inv3Occurrence) {
+        params.push(`course=${encodeURIComponent(inv3Course)}`);
+        params.push(`occurrence=${encodeURIComponent(inv3Occurrence)}`);
+      }
+      const url = `${API}/subscriber/space/${encodeURIComponent(accessCode)}`
+        + (params.length ? `?${params.join("&")}` : "");
       const res = await axios.get(url);
       // SESSION PERSISTANTE : quand le serveur prolonge la session (il ne le
       // fait qu'a l'approche de l'echeance), il renvoie un jeton neuf. On le
@@ -271,7 +285,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     } finally {
       setLoading(false);
     }
-  }, [accessCode, memberSlug]);
+  }, [accessCode, memberSlug, inv3Course, inv3Occurrence]);
 
   // LOT B3-S1.2 : on relit le jeton a chaque changement de code ou de membre.
   useEffect(() => {
@@ -1849,7 +1863,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               <p className="text-white/50 text-sm">Aucun cours disponible pour le moment.</p>
             )
           ) : (() => {
-            const visibleCourses = courses.slice(0, 12);
+            // INV-3 : meme fonction que la preselection — la seance invitee n'est jamais coupee.
+            const visibleCourses = seancesVisibles(courses, inv2Seance);
             const safeIdx = Math.min(selectedCourseIdx, visibleCourses.length - 1);
             const occ = visibleCourses[safeIdx];
             if (!occ) return null;

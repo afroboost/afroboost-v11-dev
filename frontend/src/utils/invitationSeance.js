@@ -153,3 +153,24 @@ export function indexSeanceInvitation(seance, occurrences) {
   }
   return -1;
 }
+
+/** INV-3 : la limite d'affichage historique de l'espace participant (V203f). */
+export const SEANCES_VISIBLES_MAX = 12;
+
+/**
+ * INV-3 : la liste RÉELLEMENT affichée par l'espace participant — la SEULE
+ * source de l'affichage ET de la présélection (`indexSeanceInvitation`).
+ *
+ * Les 12 premières séances, comme avant ; plus la séance de l'invitation si
+ * elle est au-delà (le serveur l'ajoute jusqu'à J+30, en fin de liste triée) :
+ * elle n'est jamais coupée. Sans invitation, ou si elle est absente / billet
+ * séparé : exactement les 12 premières.
+ */
+export function seancesVisibles(courses, seanceInvitee) {
+  const liste = Array.isArray(courses) ? courses : [];
+  const tete = liste.slice(0, SEANCES_VISIBLES_MAX);
+  if (!seanceInvitee || liste.length <= SEANCES_VISIBLES_MAX) return tete;
+  const i = indexSeanceInvitation(seanceInvitee, liste);
+  if (i < SEANCES_VISIBLES_MAX) return tete;
+  return [...tete, liste[i]];
+}

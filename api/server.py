@@ -16172,10 +16172,75 @@ async def b3s1_revoquer_session(request: Request):
     return {"success": True}
 
 
+# ═══════════════ INV-3 — LA SEANCE D'UNE INVITATION RESTE CHOISISSABLE ═══════════════
+#
+# INV-3 : le coach choisit la seance d'une invitation « Essai gratuit » /
+# « Evenement gratuit » jusqu'a 30 jours (`referral_routes._occurrences`,
+# JOURS_AVANT=30). L'espace ne calcule que 14 jours : une seance a J+15..J+30
+# affichait un faux « n'est plus disponible ». On n'elargit PAS la liste : on y
+# ajoute CETTE seance-la, et elle seule, quand tout ce qui suit est vrai.
+_INV3_MOTIF_COURS = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_INV3_MOTIF_OCCURRENCE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
+_INV3_JOURS_MAX = 30   # INV-3 : = referral_routes.JOURS_AVANT (fenetre du coach)
+
+
+def _inv3_seance_invitee(courses_autorises, linked_ids, course, occurrence, maintenant=None):
+    """INV-3 : l'occurrence (format `_v184_next_occurrences`) a ajouter, ou None.
+
+    Regle PURE, aucune lecture en base : elle ne peut rien ouvrir que les cours
+    deja autorises pour cet abonne ne contiennent.
+      * parametres bien formes (course `[A-Za-z0-9_-]{1,64}`, occurrence
+        `AAAA-MM-JJTHH:MM`) — sinon ignores ;
+      * cours PRESENT dans `courses_autorises` (= `courses_raw` de la route :
+        meme filtre coach, visible, archivage, offre/forfait) — aucun nouveau
+        droit ;
+      * couvert par l'offre (`linked_ids` vide = comportement historique) ;
+      * VRAIE occurrence : produite par `_v184_next_occurrences(course, 30)` ;
+      * future, et au plus a 30 jours (date locale Zurich).
+    """
+    if not isinstance(course, str) or not isinstance(occurrence, str):
+        return None
+    if not _INV3_MOTIF_COURS.match(course) or not _INV3_MOTIF_OCCURRENCE.match(occurrence):
+        return None
+    cours = None
+    for _c in courses_autorises or []:
+        if isinstance(_c, dict) and _c.get("id") == course:
+            cours = _c
+            break
+    if cours is None:
+        return None
+    if cours.get("visible") is False:
+        return None
+    if linked_ids and course not in linked_ids:
+        return None
+    try:
+        _cible = datetime.strptime(occurrence, "%Y-%m-%dT%H:%M")
+    except ValueError:
+        return None
+    if maintenant is None:
+        try:
+            from zoneinfo import ZoneInfo
+            maintenant = datetime.now(ZoneInfo("Europe/Zurich")).replace(tzinfo=None)
+        except Exception:
+            maintenant = datetime.utcnow() + timedelta(hours=2)
+    if _cible <= maintenant or _cible.date() > maintenant.date() + timedelta(days=_INV3_JOURS_MAX):
+        return None
+    for _o in _v184_next_occurrences(cours, days_ahead=_INV3_JOURS_MAX) or []:
+        if str((_o or {}).get("datetime") or "")[:16] == occurrence:
+            return dict(_o)
+    return None
+
+
 @api_router.get("/subscriber/space/{access_code}")
-async def get_subscriber_space(access_code: str, request: Request, m: Optional[str] = None):
+async def get_subscriber_space(access_code: str, request: Request, m: Optional[str] = None,
+                               course: Optional[str] = None, occurrence: Optional[str] = None):
     """V184: Données complètes de la page d'accès rapide d'un abonné.
-    V202: Supporte les codes multi-membres via ?m=slug."""
+    V202: Supporte les codes multi-membres via ?m=slug.
+    INV-3 : `?course=&occurrence=` (lien d'invitation) ajoutent CETTE seance si
+    `_inv3_seance_invitee` l'autorise ; sinon la reponse est strictement celle d'avant."""
+    # INV-3 : copies IMMEDIATES — plus bas, `for course in courses_raw` reutilise
+    # le nom `course` et ecraserait le parametre de requete.
+    _inv3_course, _inv3_occurrence = course, occurrence
     code_upper = (access_code or "").strip().upper()
     if not code_upper:
         raise HTTPException(status_code=400, detail="Code d'accès requis")
@@ -16475,6 +16540,18 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
                     f"[V244] Repli cours: coach_id={_cid} orphelin (aucun compte), "
                     f"{len(occurrences)} occurrences servies depuis tous les cours visibles."
                 )
+
+    # INV-3 : la seance de l'invitation, AVANT deduplication et tri — elle suit
+    # donc exactement le meme traitement que les autres (V250/V251/V252/V426).
+    # Seuls les cours de `courses_raw` (jamais le repli V244) peuvent la fournir.
+    # Deja presente (fenetre de 14 j) -> rien n'est ajoute : reponse identique.
+    if _inv3_course is not None or _inv3_occurrence is not None:
+        _inv3_occ = _inv3_seance_invitee(courses_raw, linked_ids, _inv3_course, _inv3_occurrence)
+        if _inv3_occ and not any(
+                o.get("course_id") == _inv3_occ.get("course_id")
+                and str(o.get("datetime") or "")[:16] == str(_inv3_occ.get("datetime") or "")[:16]
+                for o in occurrences):
+            occurrences.append(_inv3_occ)
 
     # V250: deduplication. La meme seance apparaissait plusieurs fois dans le
     # selecteur parce que le cours est DUPLIQUE en base (« Nouveau cours »
