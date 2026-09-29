@@ -6642,12 +6642,22 @@ async def _campagne_resoudre_contacts(campaign, valid_target_ids):
             if _ids_groupes:
                 _membres = []
                 for _gid in _ids_groupes:
+                    # MT-7 : propriétaire coach -> la session ET le groupe de repli
+                    # doivent être à LUI (jamais un dépliage par simple id : une
+                    # session de A pointant vers le groupe de B ne livre rien).
+                    # Super-admin / historique : lecture globale inchangée.
+                    _mt7_qs = {"id": _gid}
+                    if _mt1_proprio:
+                        _mt7_qs["coach_id"] = _mt1_proprio
                     _session = await db.chat_sessions.find_one(
-                        {"id": _gid}, {"_id": 0, "participant_ids": 1, "group_id": 1})
+                        _mt7_qs, {"_id": 0, "participant_ids": 1, "group_id": 1})
                     _liste = (_session or {}).get("participant_ids") or []
                     if not _liste and (_session or {}).get("group_id"):
+                        _mt7_qg = {"id": _session["group_id"]}
+                        if _mt1_proprio:
+                            _mt7_qg["coach_id"] = _mt1_proprio
                         _grp = await db.chat_groups.find_one(
-                            {"id": _session["group_id"]}, {"_id": 0, "member_ids": 1})
+                            _mt7_qg, {"_id": 0, "member_ids": 1})
                         _liste = (_grp or {}).get("member_ids") or []
                     logger.info(f"[CAMPAIGN-LAUNCH] 👥 Groupe {_gid} déplié en {len(_liste)} membre(s)")
                     _membres.extend(_liste)
@@ -35823,17 +35833,38 @@ async def join_group_automatically(request: GroupJoinRequest):
         
         logger.info(f"[GROUP-JOIN] 🚀 Tentative adhésion: {email} -> groupe {group_id}")
         
-        # Vérifier si le groupe existe
-        # Chercher dans les sessions avec ce ID ou ce mode
-        group_session = await db.chat_sessions.find_one(
-            {"$or": [
-                {"id": group_id},
-                {"mode": group_id},
-                {"title": {"$regex": group_id, "$options": "i"}}
-            ]},
-            {"_id": 0}
-        )
-        
+        # MT-7 : RÉSOLUTION STRICTE. Avant : `id` OU `mode` OU `title` en REGEX
+        # construite depuis l'entrée utilisateur, sur TOUTES les sessions — un
+        # anonyme s'ajoutait à n'importe quelle conversation (groupe d'un autre
+        # coach, session PRIVÉE) puis en lisait l'historique en participant.
+        # Désormais, trois cibles seulement, par égalité stricte :
+        #   1. le `link_token` d'un groupe (`chat_groups`) — c'est ce que porte
+        #      le lien `?group=<jeton>` généré par GroupChatModule ;
+        #   2. un salon public standard (community / vip / promo) par son mode ;
+        #   3. l'id exact d'un tel salon public.
+        # Aucune session privée ni groupe sans jeton n'est jamais rejoignable.
+        _mt7_publics = ["community", "vip", "promo"]
+        group_session = None
+        _mt7_groupe = None
+        if not isinstance(group_id, str) or not group_id.strip() or "$" in group_id or len(group_id) > 128:
+            raise HTTPException(status_code=404, detail="Groupe non trouvé")
+        group_id = group_id.strip()
+        _mt7_groupe = await db.chat_groups.find_one(
+            {"link_token": group_id, "is_deleted": {"$ne": True}}, {"_id": 0, "id": 1, "name": 1})
+        if _mt7_groupe:
+            group_session = await db.chat_sessions.find_one(
+                {"id": f"grp_{_mt7_groupe['id'][:8]}", "is_deleted": {"$ne": True}}, {"_id": 0})
+            if not group_session:
+                raise HTTPException(status_code=404, detail="Groupe non trouvé")
+        elif group_id in _mt7_publics:
+            group_session = await db.chat_sessions.find_one(
+                {"mode": group_id, "is_deleted": {"$ne": True}}, {"_id": 0})
+        else:
+            group_session = await db.chat_sessions.find_one(
+                {"id": group_id, "mode": {"$in": _mt7_publics}, "is_deleted": {"$ne": True}}, {"_id": 0})
+            if not group_session:
+                raise HTTPException(status_code=404, detail="Groupe non trouvé")
+
         # Si le groupe n'existe pas, créer un groupe standard
         if not group_session:
             # Vérifier si c'est un mode standard (community, vip, promo)
@@ -35886,6 +35917,10 @@ async def join_group_automatically(request: GroupJoinRequest):
                     "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
                 }
             )
+            if _mt7_groupe:
+                # MT-7 : garder `chat_groups.member_ids` cohérent avec la session.
+                await db.chat_groups.update_one({"id": _mt7_groupe["id"]},
+                                                {"$addToSet": {"member_ids": participant_id}})
             logger.info(f"[GROUP-JOIN] ✅ {name} ajouté au groupe {session_id}")
         else:
             logger.info(f"[GROUP-JOIN] ℹ️ {name} déjà membre du groupe {session_id}")
@@ -36771,27 +36806,78 @@ async def _v349_exiger_proprietaire(request: Request, group_id: str, action: str
     """
     V349 — écriture sur un groupe : identité SIGNÉE **et** propriété.
 
-    Les routes de modification, suppression et visibilité se contentaient de
-    `require_auth` — qui accepte le repli `X-User-Email` (V265) — et ne vérifiaient
-    AUCUNE appartenance : n'importe quel coach authentifié pouvait modifier ou
-    supprimer le groupe d'un autre. Un MEMBRE n'obtient jamais ces droits : seuls
-    le propriétaire et le super-admin passent.
-
-    Sans effet tant que le drapeau est OFF (comportement actuel préservé).
+    MT-7 : la garde ne dépend PLUS du drapeau `CHAT_READ_STRICT` (drapeau OFF,
+    `require_auth` laissait passer le repli X-User-Email et AUCUNE propriété
+    n'était vérifiée). Désormais, toujours :
+      - JWT coach/admin signé exigé (`_v309_require_coach_or_admin`) -> 403 sinon ;
+      - groupe d'un AUTRE coach -> 404 (existence non révélée) ;
+      - groupe historique sans `coach_id` -> super-admin seul (fail-closed).
+    Appelants : GroupChatModule.js (`v349Entetes` -> Bearer), aucun autre.
     """
-    if not await _v349_lecture_stricte():
-        return ""
-    email = _v311_coach_email_from_jwt(request)
-    if not email:
-        logger.warning(f"[V349] REFUS {action} du groupe {group_id} — aucun jeton signé")
-        raise HTTPException(status_code=403, detail="Action réservée au coach propriétaire")
-    groupe = await db.chat_groups.find_one({"id": group_id}, {"_id": 0, "coach_id": 1})
-    if not groupe:
-        raise HTTPException(status_code=404, detail="Groupe introuvable")
-    if not is_super_admin(email) and (groupe.get("coach_id") or "").strip().lower() != email:
-        logger.warning(f"[V349] REFUS {action} du groupe {group_id} — {email} n'en est pas propriétaire")
-        raise HTTPException(status_code=403, detail="Action réservée au coach propriétaire")
+    email, _ = await _mt7_groupe_du_coach(request, group_id, action)
     return email
+
+
+def _mt7_peut_administrer(email: str, groupe: dict) -> bool:
+    """MT-7 : super-admin (identité signée) -> tout groupe ; coach -> SES groupes.
+    Un groupe sans `coach_id` n'appartient à aucun coach (fail-closed)."""
+    if is_super_admin(email):
+        return True
+    _proprio = (groupe.get("coach_id") or "") if isinstance(groupe.get("coach_id"), str) else ""
+    return bool(_proprio.strip()) and _proprio.strip().lower() == email
+
+
+async def _mt7_groupe_du_coach(request: Request, group_id: str, action: str):
+    """MT-7 : (email signé, groupe) si l'appelant administre ce groupe, sinon
+    403 (pas de jeton coach signé) ou 404 (groupe absent OU d'un autre coach)."""
+    email = await _v309_require_coach_or_admin(request)
+    groupe = None
+    if isinstance(group_id, str) and group_id and "$" not in group_id and len(group_id) <= 128:
+        groupe = await db.chat_groups.find_one({"id": group_id}, {"_id": 0})
+    if not groupe or not _mt7_peut_administrer(email, groupe):
+        if groupe:
+            logger.warning(f"[MT-7] REFUS {action} du groupe {group_id} — l'appelant n'en est pas propriétaire")
+        raise HTTPException(status_code=404, detail="Groupe introuvable")
+    return email, groupe
+
+
+def _mt7_portee_membres(groupe: dict, appelant: str = "") -> str:
+    """MT-7 : portefeuille qui borne les membres d'un groupe = celui de son
+    PROPRIÉTAIRE. '' = portée globale : appelant super-admin (identité signée),
+    ou groupe d'un super-admin / historique (administrable par lui seul)."""
+    if appelant and is_super_admin(appelant):
+        return ""
+    _p = groupe.get("coach_id") if isinstance(groupe.get("coach_id"), str) else ""
+    _p = (_p or "").strip().lower()
+    if not _p or _p in ("bassi_default", DEFAULT_COACH_ID) or is_super_admin(_p):
+        return ""
+    return _p
+
+
+async def _mt7_membres_autorises(proprietaire: str, demandes, existants=()) -> list:
+    """MT-7 : liste des membres à ENREGISTRER.
+
+    - un membre déjà présent reste (on n'éjecte pas un invité entré par lien) ;
+    - un NOUVEAU membre doit appartenir au portefeuille du propriétaire
+      (`tenant_contacts.filtrer_ids` sur chat_participants + users, lectures
+      groupées `$in`) ; portée globale : tout identifiant texte sain.
+    Ordre de la demande conservé, doublons et ids hostiles retirés."""
+    from api.routes.tenant_contacts import filtrer_ids as _mt7_filtrer
+    _deja = {i for i in (existants or []) if isinstance(i, str)}
+    _propres = []
+    for _i in demandes or []:
+        if isinstance(_i, str) and _i.strip() and "$" not in _i and len(_i) <= 128 and _i not in _propres:
+            _propres.append(_i)
+    _nouveaux = [i for i in _propres if i not in _deja]
+    if proprietaire and _nouveaux:
+        _ok = set(await _mt7_filtrer(db, proprietaire, "chat_participants", _nouveaux))
+        _ok |= set(await _mt7_filtrer(db, proprietaire, "users", [i for i in _nouveaux if i not in _ok]))
+    else:
+        _ok = set(_nouveaux)
+    _out = [i for i in _propres if i in _deja or i in _ok]
+    if len(_out) < len(_propres):
+        logger.warning("[MT-7] %d membre(s) hors portefeuille du propriétaire refusé(s)", len(_propres) - len(_out))
+    return _out
 
 
 async def _v349_lecture_stricte() -> bool:
@@ -38378,8 +38464,12 @@ async def get_chat_link_by_token(token: str):
     Récupère un lien de chat par son link_token.
     Utilisé par le tunnel d'onboarding pour charger les questions personnalisées.
     """
+    # MT-7 : une session de GROUPE n'est pas un lien intelligent — sans ce
+    # filtre, son id (visible des membres) rendait le jeton d'invitation et le
+    # prompt IA du groupe à un anonyme.
     link = await db.chat_sessions.find_one(
-        {"$or": [{"link_token": token}, {"id": token}], "is_deleted": {"$ne": True}},
+        {"$or": [{"link_token": token}, {"id": token}], "is_deleted": {"$ne": True},
+         "mode": {"$ne": "group"}, "group_id": {"$exists": False}},
         {"_id": 0, "id": 1, "link_token": 1, "title": 1, "custom_prompt": 1, "lead_type": 1,
          "tunnel_questions": 1, "end_actions": 1, "welcome_message": 1, "is_ai_active": 1}
     )
@@ -38454,8 +38544,12 @@ async def delete_chat_link(link_id: str):
     """
     logger.info(f"[DELETE] Suppression lien: {link_id}")
     
+    # MT-7 : route SANS identité — elle ne doit au moins jamais atteindre une
+    # session de GROUPE (un anonyme supprimait le groupe d'un coach par son id).
+    # Les groupes se suppriment par DELETE /chat/groups/{id} (propriétaire signé).
     result = await db.chat_sessions.update_one(
-        {"$or": [{"id": link_id}, {"link_token": link_id}]},
+        {"$or": [{"id": link_id}, {"link_token": link_id}],
+         "mode": {"$ne": "group"}, "group_id": {"$exists": False}},
         {"$set": {"is_deleted": True, "deleted_at": datetime.now(timezone.utc).isoformat()}}
     )
     
@@ -38505,8 +38599,11 @@ async def update_chat_link(link_id: str, request: Request):
     if len(update_fields) <= 1:  # Only updated_at
         raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
 
+    # MT-7 : jamais une session de GROUPE (titre / prompt IA d'un groupe d'un
+    # autre coach réécrits sans identité) — voir PUT /chat/groups/{id}.
     result = await db.chat_sessions.update_one(
-        {"$or": [{"id": link_id}, {"link_token": link_id}], "is_deleted": {"$ne": True}},
+        {"$or": [{"id": link_id}, {"link_token": link_id}], "is_deleted": {"$ne": True},
+         "mode": {"$ne": "group"}, "group_id": {"$exists": False}},
         {"$set": update_fields}
     )
 
@@ -39862,11 +39959,15 @@ async def send_group_message(request: Request):
     d'identité — n'importe qui pouvait écrire à tous tes contacts au nom du coach.
     Elle est désormais réservée au coach, sur identité SIGNÉE (comme V348).
     """
-    if await _v349_lecture_stricte():
-        _emetteur = _v311_coach_email_from_jwt(request)
-        if not _emetteur or not await _v309_is_coach_or_admin(_emetteur):
-            logger.warning("[V349] REFUS diffusion de groupe — appelant sans jeton coach signé")
-            raise HTTPException(status_code=403, detail="Diffusion réservée au coach")
+    # MT-7 : cette diffusion part à TOUS les `chat_participants` de TOUS les
+    # coachs (e-mails de secours compris) et s'affiche sur le mur COMMUN : c'est
+    # un outil PLATEFORME. Réservé au super-admin signé, drapeau ou non (avant :
+    # rien drapeau OFF, n'importe quel coach drapeau ON). Aucun écran ne l'appelle
+    # aujourd'hui (`sendGroupMessage` de CoachDashboard n'est branché nulle part).
+    _emetteur = _v311_coach_email_from_jwt(request)
+    if not _emetteur or not is_super_admin(_emetteur):
+        logger.warning("[MT-7] REFUS diffusion de groupe — appelant non super-admin signé")
+        raise HTTPException(status_code=403, detail="Diffusion réservée à l'administrateur")
     body = await request.json()
     message_text = body.get("message", "").strip()
     coach_name = body.get("coach_name", "Coach Bassi")
@@ -39904,16 +40005,30 @@ async def send_group_message(request: Request):
 # ====== v101: CRUD Groupes de Chat ======
 @api_router.post("/chat/groups")
 async def create_chat_group(request: Request):
-    """v101: Créer un groupe de chat avec membres sélectionnés et prompt IA dédié"""
-    require_auth(request)
+    """v101: Créer un groupe de chat avec membres sélectionnés et prompt IA dédié
+
+    MT-7 : `require_auth` + `X-User-Email` BRUT décidaient du propriétaire — un
+    en-tête suffisait à créer un groupe au nom d'un autre coach, peuplé de
+    n'importe quels contacts (le groupe devenait ensuite une CIBLE de campagne).
+    Désormais : JWT coach/admin signé, `coach_id` = identité du jeton, membres
+    bornés au portefeuille du créateur (super-admin : global).
+    Appelant : GroupChatModule.js `handleCreate` (`v349Entetes` -> Bearer).
+    """
+    coach_email = await _v309_require_coach_or_admin(request)
     body = await request.json()
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
-    name = body.get("name", "").strip()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Corps invalide")
+    name = body.get("name", "")
+    name = name.strip() if isinstance(name, str) else ""
     if not name:
         raise HTTPException(status_code=400, detail="Le nom du groupe est requis")
-    member_ids = body.get("members", [])
+    _mt7_membres = body.get("members", [])
+    if not isinstance(_mt7_membres, list):
+        raise HTTPException(status_code=400, detail="members doit être une liste")
+    member_ids = await _mt7_membres_autorises(_mt7_portee_membres({"coach_id": coach_email}), _mt7_membres)
     system_prompt = body.get("system_prompt", "")
-    is_ai_active = body.get("is_ai_active", True)
+    system_prompt = system_prompt if isinstance(system_prompt, str) else ""
+    is_ai_active = bool(body.get("is_ai_active", True))
 
     group_id = str(uuid.uuid4())
     link_token = str(uuid.uuid4())[:8]
@@ -39965,16 +40080,16 @@ async def get_chat_groups(request: Request):
     `link_token` d'invitation et les prompts IA.
     Désormais : identité SIGNÉE obligatoire, et cadrage sur SES propres groupes.
     """
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if await _v349_lecture_stricte():
-        _signe = _v311_coach_email_from_jwt(request)
-        if not _signe:
-            logger.warning(f"[V349] REFUS liste des groupes — « {caller_email or 'anonyme'} » "
-                           f"sans jeton signé")
-            raise HTTPException(status_code=403, detail="Accès réservé au coach")
-        caller_email = _signe
+    # MT-7 : identité SIGNÉE toujours exigée (plus seulement drapeau ON) —
+    # drapeau OFF, `X-User-Email` d'un super-admin listait TOUS les groupes et
+    # leurs membres. Coach -> ses groupes ; super-admin -> global (historiques
+    # sans coach_id compris). Appelants : CoachDashboard, CampaignModal,
+    # CampaignManager (axios -> Bearer par l'intercepteur), GroupChatModule
+    # (`v349Entetes`) ; `authSession.js` range déjà `/chat/groups` parmi les
+    # routes à signature requise.
+    caller_email = await _v309_require_coach_or_admin(request)
     query = {"is_deleted": {"$ne": True}}
-    if caller_email and not is_super_admin(caller_email):
+    if not is_super_admin(caller_email):
         query["coach_id"] = caller_email
     groups = await db.chat_groups.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
 
@@ -40009,12 +40124,21 @@ async def get_chat_groups(request: Request):
             ).to_list(len(manquants)):
                 par_id.setdefault(u.get("id"), u)
 
+    # MT-7 : un coach ne lit l'e-mail que des membres de SON portefeuille (un
+    # invité venu d'ailleurs par le lien garde son nom, pas son adresse).
+    _mt7_visibles = None
+    if not is_super_admin(caller_email) and ids_uniques:
+        from api.routes.tenant_contacts import filtrer_ids as _mt7_filtrer
+        _mt7_visibles = set(await _mt7_filtrer(db, caller_email, "chat_participants", ids_uniques))
+        _mt7_visibles |= set(await _mt7_filtrer(db, caller_email, "users",
+                                                [i for i in ids_uniques if i not in _mt7_visibles]))
     for g in groups:
         members_info = []
         for mid in g.get("member_ids", []):
             p = par_id.get(mid)
             if p:
-                members_info.append({"id": mid, "name": p.get("name", ""), "email": p.get("email", "")})
+                _mt7_mail = p.get("email", "") if (_mt7_visibles is None or mid in _mt7_visibles) else ""
+                members_info.append({"id": mid, "name": p.get("name", ""), "email": _mt7_mail})
             else:
                 members_info.append({"id": mid, "name": "Inconnu", "email": ""})
         g["members_info"] = members_info
@@ -40030,20 +40154,34 @@ async def update_chat_group(group_id: str, request: Request):
     propriété — n'importe quel coach authentifié pouvait modifier le groupe d'un
     autre. Identité signée + propriétaire, désormais.
     """
-    require_auth(request)
-    await _v349_exiger_proprietaire(request, group_id, "modification")
+    # MT-7 : garde inconditionnelle (JWT signé, 404 hors propriété), liste
+    # blanche TYPÉE, `coach_id` / `link_token` jamais modifiables, nouveaux
+    # membres bornés au portefeuille du PROPRIÉTAIRE du groupe.
+    _mt7_appelant, _mt7_groupe = await _mt7_groupe_du_coach(request, group_id, "modification")
     body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Corps invalide")
     update_fields = {"updated_at": datetime.now(timezone.utc).isoformat()}
-    for key in ["name", "member_ids", "system_prompt", "is_ai_active"]:
-        if key in body:
-            update_fields[key] = body[key]
+    if "name" in body:
+        if not isinstance(body["name"], str) or not body["name"].strip():
+            raise HTTPException(status_code=400, detail="Le nom du groupe est requis")
+        update_fields["name"] = body["name"].strip()
+    if "system_prompt" in body:
+        update_fields["system_prompt"] = body["system_prompt"] if isinstance(body["system_prompt"], str) else ""
+    if "is_ai_active" in body:
+        update_fields["is_ai_active"] = bool(body["is_ai_active"])
+    if "member_ids" in body:
+        if not isinstance(body["member_ids"], list):
+            raise HTTPException(status_code=400, detail="member_ids doit être une liste")
+        update_fields["member_ids"] = await _mt7_membres_autorises(
+            _mt7_portee_membres(_mt7_groupe, _mt7_appelant), body["member_ids"], _mt7_groupe.get("member_ids") or [])
     await db.chat_groups.update_one({"id": group_id}, {"$set": update_fields})
     # Sync session liée
     session_update = {}
-    if "name" in body: session_update["title"] = body["name"]
-    if "system_prompt" in body: session_update["custom_prompt"] = body["system_prompt"]
-    if "is_ai_active" in body: session_update["is_ai_active"] = body["is_ai_active"]
-    if "member_ids" in body: session_update["participant_ids"] = body["member_ids"]
+    if "name" in update_fields: session_update["title"] = update_fields["name"]
+    if "system_prompt" in update_fields: session_update["custom_prompt"] = update_fields["system_prompt"]
+    if "is_ai_active" in update_fields: session_update["is_ai_active"] = update_fields["is_ai_active"]
+    if "member_ids" in update_fields: session_update["participant_ids"] = update_fields["member_ids"]
     if session_update:
         session_update["updated_at"] = update_fields["updated_at"]
         await db.chat_sessions.update_one({"group_id": group_id}, {"$set": session_update})
@@ -40057,8 +40195,7 @@ async def delete_chat_group(group_id: str, request: Request):
 
     V349 : identite signee + proprietaire (voir _v349_exiger_proprietaire).
     """
-    require_auth(request)
-    await _v349_exiger_proprietaire(request, group_id, "suppression")
+    await _v349_exiger_proprietaire(request, group_id, "suppression")  # MT-7 : JWT signé + 404 hors propriété
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.chat_groups.update_one({"id": group_id}, {"$set": {"is_deleted": True, "deleted_at": now_iso}})
     await db.chat_sessions.update_one({"group_id": group_id}, {"$set": {"is_deleted": True}})
@@ -40090,7 +40227,11 @@ async def get_public_groups(request: Request):
     #   2. `member_ids` et `link_token` ne sortent JAMAIS : un membre n'a aucun
     #      besoin de la liste des identifiants des autres, et le jeton d'invitation
     #      est précisément ce qui permet de rejoindre. Seul le NOMBRE est renvoyé.
-    if await _v349_lecture_stricte():
+    # MT-7 : filtre INCONDITIONNEL (plus seulement drapeau ON) — ce n'est pas
+    # une vitrine publique : chaque appelant ne voit que les groupes où il est
+    # membre (ou, coach signé, les siens ; super-admin : tous). Aucune identité
+    # -> 403. C'était déjà le comportement de production (drapeau ON).
+    if True:
         _signe = _v311_coach_email_from_jwt(request)
         _pid = (request.query_params.get("participant_id") or "").strip()
         _mes_pids = {_pid} if _pid else set()
@@ -40124,10 +40265,14 @@ async def get_public_groups(request: Request):
         g["member_count"] = len(g.get("member_ids", []))
 
     # V349 : retrait des données sensibles APRÈS le calcul du compteur.
-    if await _v349_lecture_stricte():
-        for g in groups:
-            g.pop("member_ids", None)
-            g.pop("link_token", None)
+    # MT-7 : TOUJOURS (plus seulement drapeau ON) — la vue membre n'a besoin ni
+    # des identifiants des autres membres, ni du jeton d'invitation, ni du
+    # prompt IA d'administration (ChatWidget n'en lit aucun). `coach_id` reste :
+    # c'est l'e-mail professionnel du coach, déjà affiché sur sa vitrine.
+    for g in groups:
+        g.pop("member_ids", None)
+        g.pop("link_token", None)
+        g.pop("system_prompt", None)
 
     return groups
 
@@ -40138,8 +40283,7 @@ async def v198_toggle_group_visibility(group_id: str, request: Request):
 
     V349 : identite signee + proprietaire.
     """
-    require_auth(request)
-    await _v349_exiger_proprietaire(request, group_id, "visibilité")
+    await _v349_exiger_proprietaire(request, group_id, "visibilité")  # MT-7 : JWT signé + 404 hors propriété
     body = await request.json()
     visible = bool(body.get("visible_to_subscribers", True))
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -40164,36 +40308,56 @@ async def join_chat_group(group_id: str, request: Request):
         déjà sur chaque groupe, il n'attendait que d'être exigé.
     """
     body = await request.json()
-    participant_id = body.get("participant_id", "").strip()
-    if not participant_id:
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Corps invalide")
+    participant_id = body.get("participant_id", "")
+    participant_id = participant_id.strip() if isinstance(participant_id, str) else ""
+    if not participant_id or "$" in participant_id or len(participant_id) > 128:
         raise HTTPException(status_code=400, detail="participant_id requis")
 
     # Vérifier que le groupe existe
-    group = await db.chat_groups.find_one(
-        {"id": group_id, "is_deleted": {"$ne": True}}, {"_id": 0}
-    )
+    group = None
+    if isinstance(group_id, str) and "$" not in group_id and len(group_id) <= 128:
+        group = await db.chat_groups.find_one(
+            {"id": group_id, "is_deleted": {"$ne": True}}, {"_id": 0}
+        )
     if not group:
         raise HTTPException(status_code=404, detail="Groupe introuvable")
 
-    if await _v349_lecture_stricte():
-        _email = _v311_coach_email_from_jwt(request)
-        _est_proprio = bool(_email) and (is_super_admin(_email)
-                                         or (group.get("coach_id") or "").strip().lower() == _email)
-        _jeton_fourni = (body.get("link_token") or "").strip()
-        _jeton_attendu = (group.get("link_token") or "").strip()
-        _invite = bool(_jeton_attendu) and _jeton_fourni == _jeton_attendu
-        if not _est_proprio and not _invite:
-            logger.warning(f"[V349] REFUS inscription au groupe {group_id} — "
-                           f"ni propriétaire signé, ni jeton d'invitation valide")
-            raise HTTPException(status_code=403,
-                                detail="Inscription réservée au coach ou à un invité muni du lien")
-
     session_id = f"grp_{group_id[:8]}"
+
+    # MT-7 : garde INCONDITIONNELLE (plus seulement drapeau ON). Trois voies :
+    #   1. déjà membre -> succès sans écriture (ChatWidget rappelle /join à
+    #      chaque sélection d'un groupe dont le visiteur fait déjà partie) ;
+    #   2. PROPRIÉTAIRE signé (ou super-admin) -> seulement un contact de SON
+    #      portefeuille (celui du propriétaire du groupe) ;
+    #   3. INVITÉ muni du `link_token` -> s'inscrit, SANS que sa fiche `users`
+    #      soit recopiée dans le portefeuille du coach (un id seul ne prouve pas
+    #      qui appelle : on ne fabrique pas de relation).
+    if participant_id in (group.get("member_ids") or []):
+        return {"success": True, "session_id": session_id, "group_name": group.get("name", "")}
+    _email = _v311_coach_email_from_jwt(request)
+    _est_proprio = bool(_email) and await _v309_is_coach_or_admin(_email) and _mt7_peut_administrer(_email, group)
+    _jeton_fourni = body.get("link_token") or ""
+    _jeton_fourni = _jeton_fourni.strip() if isinstance(_jeton_fourni, str) else ""
+    _jeton_attendu = (group.get("link_token") or "").strip()
+    _invite = bool(_jeton_attendu) and _jeton_fourni == _jeton_attendu
+    if _est_proprio:
+        if not await _mt7_membres_autorises(_mt7_portee_membres(group, _email), [participant_id]):
+            logger.warning(f"[MT-7] REFUS ajout au groupe {group_id} — contact hors portefeuille du propriétaire")
+            raise HTTPException(status_code=404, detail="Contact introuvable")
+    elif not _invite:
+        logger.warning(f"[V349] REFUS inscription au groupe {group_id} — "
+                       f"ni propriétaire signé, ni jeton d'invitation valide")
+        raise HTTPException(status_code=403,
+                            detail="Inscription réservée au coach ou à un invité muni du lien")
 
     # v108: S'assurer que le participant existe dans chat_participants
     # Si il est dans users mais pas dans chat_participants, le créer
+    # MT-7 : seulement sur la voie PROPRIÉTAIRE (contact déjà prouvé de son
+    # portefeuille) — jamais sur la seule foi d'un jeton d'invitation.
     existing_participant = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0})
-    if not existing_participant:
+    if not existing_participant and _est_proprio:
         user_record = await db.users.find_one({"id": participant_id}, {"_id": 0})
         if user_record:
             new_participant = {
@@ -45206,8 +45370,14 @@ async def test_campaign_3steps(request: Request, to: str = "41765203363"):
 
 
 @api_router.get("/create-sunset-group")
-async def create_sunset_group():
+async def create_sunset_group(request: Request):
     """V169: Endpoint temporaire — crée le groupe 'Inscription Sunset Experience 6 Mai' avec tous les contacts"""
+    # MT-7 : route d'amorçage qui crée un groupe avec TOUS les contacts de la
+    # plateforme et renvoie noms + téléphones — ouverte à un anonyme (GET).
+    # Aucun écran ne l'appelle : super-admin signé uniquement.
+    _mt7_admin = _v311_coach_email_from_jwt(request)
+    if not _mt7_admin or not is_super_admin(_mt7_admin):
+        raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
     import uuid as _uuid
     group_name = "Inscription Sunset Experience 6 Mai"
     coach_email = "contact.artboost@gmail.com"
@@ -45251,8 +45421,14 @@ async def create_sunset_group():
 
 
 @api_router.get("/create-whatsapp-group")
-async def create_whatsapp_group():
+async def create_whatsapp_group(request: Request):
     """V171.2: Crée un groupe avec SEULEMENT les contacts qui ont un numéro WhatsApp"""
+    # MT-7 : route d'amorçage qui crée un groupe avec TOUS les contacts de la
+    # plateforme et renvoie noms + téléphones — ouverte à un anonyme (GET).
+    # Aucun écran ne l'appelle : super-admin signé uniquement.
+    _mt7_admin = _v311_coach_email_from_jwt(request)
+    if not _mt7_admin or not is_super_admin(_mt7_admin):
+        raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
     import uuid as _uuid
     group_name = "Contacts WhatsApp"
     coach_email = "contact.artboost@gmail.com"
