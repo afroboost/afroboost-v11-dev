@@ -23,7 +23,8 @@ describe('V548 — ordre et allègement de l espace membre', () => {
       'data-testid="subscriber-space-sessions"',
       'data-testid="subscriber-space-qr"',
       'data-testid="subscriber-space-reservation"',
-      '<CarteParrainage enabled={parrainageOn} />',
+      // PAR-2 : la carte ouvre le tiroir « Invitation & parrainage ».
+      '<CarteParrainage enabled={parrainageOn} onOuvrir={ouvrirInvitation} />',
       'data-testid="subscriber-space-recharge"',
       'data-testid="subscriber-space-guide"',
     ].map(pos);

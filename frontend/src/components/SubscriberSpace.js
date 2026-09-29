@@ -14,6 +14,7 @@ import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 import CarteProfilSpordateur from './CarteProfilSpordateur'; // F3 SUITE — carte compacte vers la VRAIE page profil Spordateur
 import CarteNotifications from './CarteNotifications'; // PUSH-PWA — état des notifications + réactivation automatique
 import CarteParrainage from './parrainage/CarteParrainage'; // V534 — carte « Parrainage » vers le Centre
+import { TiroirInvitationParrainage } from './parrainage/InvitationParrainage'; // PAR-2 — « Invitation & parrainage » dans le tiroir existant
 import ChoixModePaiement from './ChoixModePaiement'; // V535 — paiement intégral ou en 2 fois
 import { lireConfigParrainage } from '../utils/parrainage'; // V534 — configuration (cache 10 min)
 // V334 etape 2 : « Mon cockpit » charge A LA DEMANDE (React.lazy).
@@ -184,6 +185,15 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   // jamais un objet : l'effet qui les pose compare avant d'écrire.
   const [parrainageOn, setParrainageOn] = useState(false);
   const [parrainageCoursIds, setParrainageCoursIds] = useState('');
+  // PAR-2 — le tiroir « Invitation & parrainage » : un booléen + le déclencheur
+  // (pour y rendre le focus). Le parcours ne lit /me qu'à son ouverture.
+  const [invitationOuverte, setInvitationOuverte] = useState(false);
+  const declencheurInvitation = useRef(null);
+  const ouvrirInvitation = useCallback((el) => {
+    declencheurInvitation.current = el || null;
+    setInvitationOuverte(true);
+  }, []);
+  const fermerInvitation = useCallback(() => setInvitationOuverte(false), []);
   const [qrFullscreen, setQrFullscreen] = useState(false);
   const [actionError, setActionError] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
@@ -1240,7 +1250,14 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                 data-testid="p2ux-parrainage-ligne"
               >
                 Tu viens accompagné ? Invite un ami avec ton Pass Duo.{' '}
-                <a href="/parrainage" className="font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>
+                {/* PAR-2 : ouvre le MÊME tiroir que la carte ; le href reste le repli. */}
+                <a
+                  href="/parrainage"
+                  className="font-semibold"
+                  style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', alignItems: 'center', minHeight: 44 }}
+                  onClick={(e) => { e.preventDefault(); ouvrirInvitation(e.currentTarget); }}
+                  data-testid="p2ux-parrainage-ouvrir"
+                >
                   Inviter un ami
                 </a>
               </p>
@@ -2089,7 +2106,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         {/* ===== V534 / V548 : Parrainage — juste SOUS « Réserver une séance ».
             order 0 : pendant l'essai, la réservation remonte seule (order -1),
             la carte garde sa place dans l'ordre du DOM. ===== */}
-        <CarteParrainage enabled={parrainageOn} />
+        <CarteParrainage enabled={parrainageOn} onOuvrir={ouvrirInvitation} />
 
         {/* ===== V548 : « Recharger mes séances » — la recharge SORT du
             formulaire de réservation. Repliée par défaut ; ouverte d'office
@@ -2446,6 +2463,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           </button>
         </div>
       </div>
+
+      {/* ===== PAR-2 : « Invitation & parrainage » — le tiroir existant, le parcours existant ===== */}
+      {parrainageOn && invitationOuverte ? (
+        <TiroirInvitationParrainage onFermer={fermerInvitation} declencheur={declencheurInvitation.current} />
+      ) : null}
 
       {/* ===== QR Fullscreen Dialog ===== */}
       <Dialog open={qrFullscreen} onOpenChange={setQrFullscreen}>
