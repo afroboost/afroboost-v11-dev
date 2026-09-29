@@ -34,7 +34,7 @@ import ParrainageDrawer from './ParrainageDrawer'; // V552 — le tiroir commun 
 import { entrerDansSpordate, prechargerSpordate } from '../../utils/spordateHandoff';
 import {
   API_PARRAINAGE, enteteParrain, aUneIdentiteParrain, urlEspaceCourant, lireConfigParrainage,
-  lireContexteUrl, passCourant, libelleJour, libelleDateCourte, STATUTS_OUVERTS,
+  lireContexteUrl, lireCampagneUrl, avecCampagne, passCourant, libelleJour, libelleDateCourte, STATUTS_OUVERTS,
   changerOffre, lireRefus, messageRefusOffre, lignesHistorique, offreDuPass, TEXTE_OFFRE_CONFLIT, // V534b
   changerSeance, // V539b — le parrain peut aussi changer la date de son Pass
   LIBELLES_STATUT, // V552 — l'état du Pass sur son raccourci
@@ -141,6 +141,9 @@ export default function CentreParrainage() {
   const [qrUrl, setQrUrl] = useState(''); // V551 : le QR s'ouvre depuis l'assistant, sur le lien qu'il partage
   const [creationForcee, setCreationForcee] = useState(false); // V551 : « Créer un nouveau Pass Duo »
   const [contexte] = useState(() => lireContexteUrl()); // V551 : ?course=&occurrence=&offer= (lu une fois)
+  // Invitation du coach : `?campagne=<token>` (lu une fois). Absent → aucun champ ajouté nulle part.
+  const [campagne] = useState(() => lireCampagneUrl());
+  const [contexteAssistant] = useState(() => (campagne ? Object.assign({}, contexte, { campagne }) : contexte));
   const [outil, setOutil] = useState(''); // V552 : le tiroir ouvert ('' = aucun)
   const declencheurs = useRef({});        // V552 : les raccourcis, pour y rendre le focus
   const urlEspace = urlEspaceCourant();
@@ -263,7 +266,7 @@ export default function CentreParrainage() {
     // V534b: `offer_id` = l'offre choisie dans la carte (le serveur la valide toujours ; null = serveur sans catalogue)
     const corps = { course_id, occurrence, terms_accepted: terms_accepted === true };
     if (offer_id) corps.offer_id = offer_id;
-    axios.post(`${API_PARRAINAGE}/pass`, corps, { headers: enteteParrain() })
+    axios.post(`${API_PARRAINAGE}/pass`, avecCampagne(corps, campagne), { headers: enteteParrain() })
       .then((r) => {
         poserPass(r.data);
       })
@@ -526,7 +529,7 @@ export default function CentreParrainage() {
         <InvitationWizard
           courses={config && config.courses}
           passOuvert={passLien}
-          contexte={contexte}
+          contexte={contexteAssistant}
           creationForcee={creationForcee}
           onRetour={() => setCreationForcee(false)}
           onPass={(dto) => { poserPass(dto); setCreationForcee(false); }}

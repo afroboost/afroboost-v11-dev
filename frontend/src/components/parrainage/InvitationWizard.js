@@ -42,7 +42,7 @@ import './invitationWizard.css';
 import {
   API_PARRAINAGE, enteteParrain, lireInvitation, identitePreremplie, messagePrerempli, corpsInvitation,
   modifierInvitation, nomAffichable, bornerMessage, texteWhatsAppInvitation, lienWhatsApp, copier, partager,
-  libelleOccurrence, offreDuPass, NOM_NEUTRE, MESSAGE_MAX, NOM_MAX,
+  libelleOccurrence, offreDuPass, NOM_NEUTRE, MESSAGE_MAX, NOM_MAX, avecCampagne,
 } from '../../utils/parrainage';
 
 const ETAPES = ['Ton invitation', 'Personnaliser', 'Aperçu & partager'];
@@ -257,7 +257,8 @@ export default function InvitationWizard({
     const corps = { course_id: choix.coursChoisi, occurrence: choix.occurrence, terms_accepted: conditionsOk === true };
     if (choix.offresConnues && choix.offreChoisie) corps.offer_id = choix.offreChoisie;
     corps.invitation = invitation();
-    axios.post(`${API_PARRAINAGE}/pass`, corps, { headers: enteteParrain() })
+    // Invitation du coach : `referral_campaign` seulement si /parrainage?campagne= l'a porté.
+    axios.post(`${API_PARRAINAGE}/pass`, avecCampagne(corps, contexte && contexte.campagne), { headers: enteteParrain() })
       .then((r) => {
         const dto = r && r.data;
         if (dto && dto.id) {

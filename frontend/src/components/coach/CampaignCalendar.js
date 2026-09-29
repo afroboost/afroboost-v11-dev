@@ -117,7 +117,12 @@ export default function CampaignCalendar({
   onDayClick,          // (dateStr) => création à cette date
   onEvenementClick,    // (evenement) => édition
   onMoveEvenement,     // (evenement, newDateStr) => déplacer
-  onDuplicateEvenement // (evenement) => dupliquer
+  onDuplicateEvenement, // (evenement) => dupliquer
+  /* INVITATION — FACULTATIF. Le bouton « + Créer » appelle `onCreer` s'il est
+     fourni (le gestionnaire y propose le choix Campagne / Invitation) ; sinon,
+     comportement strictement inchangé : `onDayClick(aujourd'hui)`. Le clic sur
+     un JOUR, lui, ne passe jamais par ici. */
+  onCreer
 }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [vue, setVue] = useState('mois');
@@ -246,7 +251,7 @@ export default function CampaignCalendar({
                   style={{ ...boutonBase, padding: '5px 8px', fontSize: '11px',
                            background: `rgba(${RGB}, 0.15)`, color: PRIMAIRE }}>Auj.</button>
           <button type="button" data-testid="creer"
-                  onClick={() => onDayClick?.(iso(new Date()))}
+                  onClick={() => (onCreer ? onCreer(iso(new Date())) : onDayClick?.(iso(new Date())))}
                   style={{ ...boutonBase, background: PRIMAIRE, border: 'none',
                            fontSize: '11px', padding: '5px 10px', fontWeight: 600,
                            whiteSpace: 'nowrap' }}>+ Créer</button>

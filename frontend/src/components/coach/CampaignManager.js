@@ -11,6 +11,7 @@ import axios from 'axios';
 import CampaignCalendar from './CampaignCalendar';
 import TasksPanel from './TasksPanel';
 import CampaignModal from './CampaignModal';
+import InvitationModal from './InvitationModal';
 import SvgIcon from '../SvgIcon';
 import { deplierTargetIds, estIdentifiantDeGroupe } from '../../utils/deplierGroupes';
 
@@ -323,6 +324,26 @@ const CampaignManager = ({
     setShowModal(true);
   };
 
+  /* INVITATION — LE CHOIX DERRIÈRE « + Créer ».
+     « Campagne » appelle `openNewCampaign` tel quel (mêmes crédits, même
+     modale, même date) ; « Invitation » ouvre InvitationModal. Le clic sur un
+     JOUR du calendrier ne passe PAS par ce choix : il reste une campagne. */
+  const [choixCreer, setChoixCreer] = useState(null); // date 'YYYY-MM-DD' | null
+  const [invitationOuverte, setInvitationOuverte] = useState(false);
+  const [dateInvitation, setDateInvitation] = useState(null);
+  useEffect(() => {
+    if (!choixCreer) return undefined;
+    const surTouche = (e) => { if (e.key === 'Escape') setChoixCreer(null); };
+    document.addEventListener('keydown', surTouche);
+    return () => document.removeEventListener('keydown', surTouche);
+  }, [choixCreer]);
+  const choisirCampagne = () => { const d = choixCreer; setChoixCreer(null); openNewCampaign(d); };
+  const choisirInvitation = () => {
+    setDateInvitation(choixCreer || null);
+    setChoixCreer(null);
+    setInvitationOuverte(true);
+  };
+
   // Open modal for editing
   const openEditCampaign = (campaign) => {
     handleEditCampaign?.(campaign);
@@ -574,10 +595,72 @@ const CampaignManager = ({
       <CampaignCalendar
         evenements={evenementsCalendrier}
         onDayClick={openNewCampaign}
+        onCreer={(d) => setChoixCreer(d)}
         onEvenementClick={(e) => { const c = campagneDe(e); if (c) openEditCampaign(c); }}
         onMoveEvenement={(e, d) => { const c = campagneDe(e); if (c) handleMoveCampaign(c.id, d); }}
         onDuplicateEvenement={(e) => { const c = campagneDe(e); if (c) handleDuplicateCampaign(c); }}
       />
+
+      {/* === INVITATION : LE PETIT CHOIX DE « + Créer » ===
+           Fenêtre centrée sur ordinateur, mini-feuille en bas sous 480 px.
+           Échap ou clic sur le fond : fermeture sans rien ouvrir. */}
+      {choixCreer && (
+        <div data-testid="creer-choix-fond" onClick={() => setChoixCreer(null)}
+             className="creer-choix-fond"
+             style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(0,0,0,0.55)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <style>{`
+            @media (max-width: 479px) {
+              .creer-choix-fond { align-items: flex-end !important; padding: 0 !important; }
+              .creer-choix-carte { max-width: 100% !important; border-radius: 16px 16px 0 0 !important;
+                                   padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important; }
+            }
+          `}</style>
+          <div data-testid="creer-choix" role="dialog" aria-modal="true" aria-label="Créer"
+               className="creer-choix-carte" onClick={(e) => e.stopPropagation()}
+               style={{ background: '#12121f', borderRadius: '14px', padding: '16px', width: '100%',
+                        maxWidth: '340px', boxSizing: 'border-box',
+                        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)',
+                        boxShadow: '0 12px 32px rgba(0,0,0,0.5)' }}>
+            <h4 style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 600, margin: '0 0 12px' }}>Créer</h4>
+            {[
+              { id: 'creer-campagne', icone: 'megaphone', titre: 'Campagne',
+                aide: 'Envoyer un message à tes contacts', action: choisirCampagne },
+              { id: 'creer-invitation', icone: 'share', titre: 'Invitation',
+                aide: 'Créer un lien et une carte à partager', action: choisirInvitation },
+            ].map((o, i) => (
+              <button key={o.id} type="button" data-testid={o.id} onClick={o.action}
+                      style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%',
+                               minHeight: '44px', padding: '10px 12px', marginBottom: i === 0 ? '8px' : 0,
+                               borderRadius: '10px', cursor: 'pointer', textAlign: 'left',
+                               background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
+                               border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+                               color: '#fff', boxSizing: 'border-box' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                               width: '32px', height: '32px', borderRadius: '8px', flexShrink: 0,
+                               background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.25)',
+                               color: 'var(--primary-color, #D91CD2)' }}>
+                  <SvgIcon name={o.icone} size={16} />
+                </span>
+                <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                  <span style={{ fontSize: '14px', fontWeight: 600 }}>{o.titre}</span>
+                  <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>{o.aide}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* === INVITATION : la modale (composant dédié) === */}
+      {invitationOuverte && (
+        <InvitationModal
+          isOpen={invitationOuverte}
+          onClose={() => { setInvitationOuverte(false); setDateInvitation(null); }}
+          API={API}
+          dateInitiale={dateInvitation}
+        />
+      )}
 
       {/* === V360 : SELECTEUR DE DATE TACTILE ===
            Champs `date` et `time` NATIFS : sur telephone ils ouvrent le selecteur

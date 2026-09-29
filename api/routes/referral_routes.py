@@ -1178,6 +1178,29 @@ async def referral_me(request: Request):
     }
 
 
+async def _campagne_pass_duo(jeton, course_id=None) -> dict:
+    """INV-1 — l'invitation de coach `{id, message}` désignée par son share_token,
+    SEULEMENT si elle est `active`, de type `pass_duo` ET porte sur le MÊME cours
+    que le pass (audit P2) ; sinon None. Ne lève
+    jamais : le parcours du Pass Duo ne change pas quand elle est absente."""
+    if not isinstance(jeton, str):
+        return None
+    _t = jeton.strip()
+    _cid = str(course_id or "").strip()
+    if not _t or len(_t) > 64 or not _cid:
+        return None
+    try:
+        _c = await db["referral_campaigns"].find_one(
+            {"share_token": _t, "status": "active", "type": "pass_duo", "course_id": _cid},
+            {"_id": 0, "id": 1, "message": 1})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s invitation de coach illisible (%s) — ignorée", PREFIXE, type(_err).__name__)
+        return None
+    if not _c or not _c.get("id"):
+        return None
+    return {"id": _c["id"], "message": _c.get("message") or None}
+
+
 @router.post("/pass")
 async def referral_creer_pass(request: Request):
     """`{course_id, occurrence, offer_id, terms_accepted?}` -> 201 PassDTO ;
@@ -1204,6 +1227,9 @@ async def referral_creer_pass(request: Request):
             _invitation = E.valider_invitation(_b.get("invitation"))
         except E.InvitationInvalide as _err:
             raise HTTPException(status_code=422, detail=str(_err))
+    # INV-1 : invitation de coach facultative (`referral_campaign` = son share_token).
+    # Inconnue / inactive / d'un autre type -> ignorée SILENCIEUSEMENT.
+    _campagne = await _campagne_pass_duo(_b.get("referral_campaign"), _course.get("id"))
 
     _now = _maintenant()
     _cle = E.cle_pass(_parrain["email"], _course.get("id"), _occ)
@@ -1253,6 +1279,13 @@ async def referral_creer_pass(request: Request):
         "expires_at": _occ,
         "events": [{"at": _iso(_now), "type": "pass_created", "detail": None}],
     }
+    if _campagne:
+        # INV-1 : le pass garde la trace de l'invitation du coach ; son message
+        # préremplit celui du membre s'il n'en a donné aucun.
+        _doc["referral_campaign_id"] = _campagne["id"]
+        if _campagne.get("message") and not (_invitation or {}).get("message"):
+            _invitation = dict(_invitation or {"display_name": None, "photo_url": None},
+                               message=_campagne["message"])
     if _invitation is not None:             # V551 : appliquée à la création seulement
         _doc["invitation"] = dict(_invitation, updated_at=_iso(_now))
         _doc["invitation_version"] = 1

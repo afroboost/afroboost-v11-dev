@@ -21519,7 +21519,8 @@ async def get_feature_flags():
                          ("SOCIAL_ACTIVATION_ENABLED", False),
                          ("REMINDERS_SUBSCRIBERS_ENABLED", False),
                          ("REMINDERS_SUBSCRIBERS_DRY_RUN", True),
-                         ("parrainage_chaine_enabled", False)):   # V556 : lu `is True` par referral_routes
+                         ("parrainage_chaine_enabled", False),    # V556 : lu `is True` par referral_routes
+                         ("invitation_event_paid_enabled", False)):  # INV-1 : OFF tant que le fuseau des paliers n'est pas corrigé
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -48647,6 +48648,15 @@ init_spordate_db(db)
 # tant qu'il n'est pas activé — sauf `/config`, qui dit `{enabled:false}`.
 fastapi_app.include_router(referral_router)
 init_referral_db(db)
+# INV-1 : invitations partageables du coach (collection `referral_campaigns`, JAMAIS
+# `campaigns` : une invitation n'entre pas dans le moteur d'envoi). JWT coach strict.
+from api.routes.referral_campaigns_routes import router as referral_campaigns_router, init_db as init_referral_campaigns_db, assurer_index as inv1_assurer_index  # noqa: E402
+fastapi_app.include_router(referral_campaigns_router)
+init_referral_campaigns_db(db)
+# INV-3 : page OG + carte 1200×630 publiques d'une invitation active, aperçu coach.
+from api.routes.share_invite_routes import router as share_invite_router, init_db as init_share_invite_db  # noqa: E402
+fastapi_app.include_router(share_invite_router)
+init_share_invite_db(db)
 
 # v15.0: Include multi-vendor payment routes
 fastapi_app.include_router(payment_config_router)
@@ -48969,6 +48979,12 @@ async def startup_db():
         logger.info("[V534] index referral_passes / referral_invitations OK")
     except Exception as _e534:
         logger.warning("[V534] index parrainage non posés (%s)", type(_e534).__name__)
+    # INV-1 : index des invitations (id + share_token uniques, liste par coach).
+    try:
+        await inv1_assurer_index(db)
+        logger.info("[INV-1] index referral_campaigns OK")
+    except Exception as _einv1:
+        logger.warning("[INV-1] index referral_campaigns non posés (%s)", type(_einv1).__name__)
 
     # P3-S3-A : les index du moteur de campagne. Poses AU DEMARRAGE, donc
     # AVANT qu'une seule campagne existe — la lecon de P2, ou un index unique

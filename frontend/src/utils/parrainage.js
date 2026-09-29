@@ -572,6 +572,32 @@ export function lireContexteUrl(search) {
 }
 
 /**
+ * Invitation du coach (page Campagnes) : le jeton `?campagne=<token>` porté
+ * par le lien /parrainage, ou "" (absent ou illisible). Lecture pure.
+ */
+export function lireCampagneUrl(search) {
+  let q;
+  try {
+    q = new URLSearchParams(search != null ? search : (window.location.search || ''));
+  } catch (e) {
+    return '';
+  }
+  const k = String(q.get('campagne') || '').trim();
+  return /^[A-Za-z0-9_-]{1,128}$/.test(k) ? k : '';
+}
+
+/**
+ * Le corps de création d'un pass avec `referral_campaign` SEULEMENT si un
+ * jeton de campagne existe : sans jeton, le corps est rendu tel quel (même
+ * objet) — strictement rien ne change pour le parcours habituel.
+ */
+export function avecCampagne(corps, campagne) {
+  const k = String(campagne || '').trim();
+  if (!k) return corps;
+  return Object.assign({}, corps, { referral_campaign: k });
+}
+
+/**
  * Lit ce qu'il faut pour préremplir l'invitation, en UN aller-retour parallèle :
  *   - `GET /api/referral/invitation` → { identity, default_message, pass } ;
  *   - `GET /api/spordate/unified-profile/me` → { lie, profil } (lecture seule).

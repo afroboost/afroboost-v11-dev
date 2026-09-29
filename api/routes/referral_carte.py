@@ -329,3 +329,161 @@ async def recuperer_photo(url, lire_local, telecharger=None, hote_front="afroboo
     if not _o or len(_o) > PHOTO_MAX_OCTETS:
         return None
     return bytes(_o)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# INV-3 : LA CARTE D'UNE INVITATION-CAMPAGNE (`referral_campaigns`)
+# ═══════════════════════════════════════════════════════════════════════════
+# INV-3 : AJOUT PUR. Rien ci-dessus n'est modifié : la carte Pass Duo
+# (`rendre_carte`) garde ses octets et sa version. On RÉUTILISE ses briques
+# (_police, _lignes, _tronquer, _nettoyer, _photo_ronde, couleur_valide,
+# date_courte) ; seule la mise en page diffère (image de fond, sous-titre, CTA).
+GABARIT_INVITATION = "inv1"
+TITRE_INVITATION_DEFAUT = "Invitation Afroboost"
+CTA_INVITATION_DEFAUT = "Réserver ma place"
+FOND_MAX_PIXELS = 12_000_000     # INV-3 (audit P2) : fond d'invitation, plus strict que PHOTO_MAX_PIXELS
+
+
+def donnees_carte_invitation(dto, couleur=None, fond=None, photo=None) -> dict:
+    """INV-3 — ce que la carte affiche, depuis le `dto_public` d'une invitation
+    (pur). `fond` et `photo` sont des octets déjà lus. Jamais d'e-mail : un
+    prénom contenant « @ » est effacé."""
+    _d = dto if isinstance(dto, dict) else {}
+    _inv = _d.get("inviter_display") if isinstance(_d.get("inviter_display"), dict) else {}
+    _prenom = _nettoyer(_inv.get("prenom"), 40)
+    if "@" in _prenom:
+        _prenom = ""
+    _date = _nettoyer(_d.get("date_label"), 60)
+    _heure = _nettoyer(_d.get("time_label"), 20)
+    _quand = " · ".join(t for t in (_date, _heure) if t) or date_courte(_d.get("occurrence"))
+    return {
+        "titre": _nettoyer(_d.get("title"), 120),
+        "sous_titre": _nettoyer(_d.get("subtitle"), 160),
+        "quand": _quand,
+        "lieu": _nettoyer(_d.get("lieu"), 80),
+        "cta": _nettoyer(_d.get("cta_label"), 40),
+        "prenom": _prenom,
+        "couleur": couleur,
+        "fond": fond,
+        "photo": photo,
+    }
+
+
+def _fond_marque_invitation(marque):
+    """Le fond de marque (même recette que la carte Duo), sans image."""
+    from PIL import Image, ImageDraw, ImageFilter
+    _sombre = Image.new("RGB", (LARGEUR, HAUTEUR), (10, 4, 16))
+    _teinte = Image.new("RGB", (LARGEUR, HAUTEUR), tuple(int(c * 0.42) for c in marque))
+    _horiz = Image.linear_gradient("L").rotate(90).transpose(Image.FLIP_LEFT_RIGHT).resize((LARGEUR, HAUTEUR))
+    _vert = Image.linear_gradient("L").resize((LARGEUR, HAUTEUR))
+    _fond = Image.composite(_teinte, _sombre, Image.blend(_horiz, _vert, 0.35))
+    _halo = Image.new("L", (LARGEUR, HAUTEUR), 0)
+    ImageDraw.Draw(_halo).ellipse((720, -260, 1440, 460), fill=120)
+    _halo = _halo.filter(ImageFilter.GaussianBlur(120))
+    return Image.composite(Image.new("RGB", (LARGEUR, HAUTEUR), marque), _fond, _halo)
+
+
+def _fond_image_invitation(octets):
+    """L'image de l'invitation recadrée 1200×630 et assombrie à gauche/en bas
+    (lisibilité du texte) ; None si absente, trop grosse ou illisible."""
+    from PIL import Image, ImageOps
+    if not octets or len(octets) > PHOTO_MAX_OCTETS:
+        return None
+    try:
+        _img = Image.open(io.BytesIO(octets))      # INV-3 : en-tête seul, rien n'est décodé ici
+        _l, _h0 = _img.size
+        # INV-3 (audit P2) : plafond du FOND plus bas que celui de la photo Duo,
+        # vérifié AVANT tout décodage (pic mémoire borné) ; au-delà -> fond de marque.
+        if _l <= 0 or _h0 <= 0 or _l * _h0 > FOND_MAX_PIXELS:
+            return None
+        _img.draft("RGB", (LARGEUR * 2, HAUTEUR * 2))
+        _img = ImageOps.exif_transpose(_img).convert("RGB")
+        # INV-3 : réduction AVANT le recadrage — on ne garde que ce qu'il faut pour
+        # couvrir 2× la carte (le côté court reste assez grand pour `fit`).
+        _l, _h0 = _img.size
+        _echelle = max(LARGEUR * 2.0 / _l, HAUTEUR * 2.0 / _h0)
+        if _echelle < 1:
+            _img.thumbnail((max(1, int(_l * _echelle + 1)), max(1, int(_h0 * _echelle + 1))), Image.LANCZOS)
+        _img = ImageOps.fit(_img, (LARGEUR, HAUTEUR), method=Image.LANCZOS)
+    except Exception:  # noqa: BLE001  (image corrompue : fond de marque)
+        return None
+    # Voile noir : 88 % à gauche -> 38 % à droite, renforcé vers le bas.
+    _h = Image.new("L", (256, 1))
+    _h.putdata([int(225 - i * 0.5) for i in range(256)])
+    _v = Image.new("L", (1, 256))
+    _v.putdata([int(max(0, (i - 110)) * 0.9) for i in range(256)])
+    _voile = Image.composite(Image.new("L", (LARGEUR, HAUTEUR), 255),
+                             _h.resize((LARGEUR, HAUTEUR)), _v.resize((LARGEUR, HAUTEUR)))
+    return Image.composite(Image.new("RGB", (LARGEUR, HAUTEUR), (6, 2, 10)), _img, _voile)
+
+
+def rendre_carte_invitation(donnees=None) -> bytes:
+    """INV-3 — JPEG 1200×630 d'une invitation-campagne. Clés lues : titre,
+    sous_titre, quand, lieu, cta, prenom, couleur, fond (octets), photo (octets).
+    `donnees` vide -> carte « Invitation Afroboost » aux couleurs de marque."""
+    from PIL import ImageDraw
+    _d = donnees if isinstance(donnees, dict) else {}
+    _marque = couleur_valide(_d.get("couleur"))
+    _fond = _fond_image_invitation(_d.get("fond")) if _d.get("fond") else None
+    if _fond is None:
+        _fond = _fond_marque_invitation(_marque)
+    _dessin = ImageDraw.Draw(_fond)
+    _blanc, _gris = (255, 255, 255), (220, 212, 228)
+    _clair = tuple(min(255, int(c + (255 - c) * 0.45)) for c in _marque)
+    _largeur = LARGEUR - 160
+    _limite = 500                      # rien ne descend sous le CTA / le pied
+
+    _dessin.text((80, 56), "AFROBOOST", font=_police(True, 38), fill=_clair)
+    _dessin.text((80 + _dessin.textlength("AFROBOOST", font=_police(True, 38)) + 18, 64), "Invitation",
+                 font=_police(False, 30), fill=_gris)
+
+    # Bandeau invitant : photo ronde + « Prénom t'invite ».
+    _y = 150
+    _prenom = _nettoyer(_d.get("prenom"), 40)
+    if "@" in _prenom:
+        _prenom = ""
+    _photo = _photo_ronde(_d.get("photo"), 72, _marque) if _d.get("photo") else None
+    if _photo is not None or _prenom:
+        _x = 80
+        if _photo is not None:
+            _fond.paste(_photo, (80, 122), _photo)
+            _x = 80 + _photo.size[0] + 18
+        _txt = ("%s t'invite" % _prenom) if _prenom else "On t'invite"
+        _pb = _police(True, 34)
+        _dessin.text((_x, 148), _tronquer(_dessin, _txt, _pb, LARGEUR - _x - 80), font=_pb, fill=_blanc)
+        _y = 236
+
+    # Titre (2 lignes), sous-titre (2 lignes), quand, lieu — tant qu'il y a la place.
+    _pt = _police(True, 58)
+    for _l in _lignes(_dessin, _nettoyer(_d.get("titre"), 120) or TITRE_INVITATION_DEFAUT, _pt, _largeur, 2):
+        _dessin.text((80, _y), _l, font=_pt, fill=_blanc)
+        _y += 68
+    _y += 8
+    _ps = _police(False, 34)
+    for _l in _lignes(_dessin, _nettoyer(_d.get("sous_titre"), 160), _ps, _largeur, 2) if _d.get("sous_titre") else []:
+        if _y + 42 > _limite:
+            break
+        _dessin.text((80, _y), _l, font=_ps, fill=_gris)
+        _y += 44
+    _y += 6
+    for _texte, _pl, _coul in ((_nettoyer(_d.get("quand"), 80), _police(True, 34), _clair),
+                               (_nettoyer(_d.get("lieu"), 80), _police(False, 30), _gris)):
+        if not _texte or _y + 40 > _limite:
+            continue
+        _dessin.text((80, _y), _tronquer(_dessin, _texte, _pl, _largeur), font=_pl, fill=_coul)
+        _y += 48
+
+    # CTA : pilule couleur de marque, en bas à droite.
+    _pc = _police(True, 32)
+    _cta = _tronquer(_dessin, _nettoyer(_d.get("cta"), 40) or CTA_INVITATION_DEFAUT, _pc, 560)
+    _lc = int(_dessin.textlength(_cta, font=_pc)) + 72
+    _x0, _y0 = LARGEUR - 80 - _lc, 516
+    _dessin.rounded_rectangle((_x0, _y0, _x0 + _lc, _y0 + 68), radius=34, fill=_marque)
+    _dessin.text((_x0 + 36, _y0 + 16), _cta, font=_pc, fill=_blanc)
+
+    _dessin.rectangle((0, HAUTEUR - 12, LARGEUR, HAUTEUR), fill=_marque)
+    _dessin.text((80, HAUTEUR - 74), "afroboost.com", font=_police(False, 28), fill=_gris)
+
+    _sortie = io.BytesIO()
+    _fond.save(_sortie, "JPEG", quality=QUALITE_JPEG, optimize=True, progressive=True)
+    return _sortie.getvalue()
