@@ -461,7 +461,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   const isBlocked = maintenanceMode && !isSuperAdmin;
   
   // v11.7: Identifier si cette vidéo appartient au Super Admin (pas de double-clic)
-  const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+  const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com']; // SA-1 : un seul super-admin
   const partnerEmail = (partner.email || '').toLowerCase().trim();
   const isSuperAdminVideo = SUPER_ADMIN_EMAILS.some(email => email.toLowerCase() === partnerEmail);
 
@@ -1404,7 +1404,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
   
   // Navigation vers vitrine - v9.7.2: VITRINE UNIQUE - Pas de redirection si même partenaire
   // v11.7: DÉSACTIVÉ pour Super Admin - Pas de redirection vers vitrine Super Admin
-  const SUPER_ADMIN_EMAILS_NAV = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+  const SUPER_ADMIN_EMAILS_NAV = ['contact.artboost@gmail.com']; // SA-1 : un seul super-admin
   
   const handleNavigate = useCallback((partner) => {
     // v9.5.7: QUICK CONTROL - Bloquer navigation si maintenance ON (sauf Super Admin)

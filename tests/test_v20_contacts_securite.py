@@ -92,7 +92,13 @@ for _a in ADMINS:
     verifier("super-admin (%s...) -> {} " % _a[:6], PERIMETRE(_a), {})
 verifier("super-admin en MAJUSCULES -> {}", PERIMETRE(ADMINS[0].upper()), {})
 verifier("super-admin avec espaces -> {}", PERIMETRE("  " + ADMINS[0] + " "), {})
-verifier_vrai("les DEUX super-admins sont reconnus", len(ADMINS) == 2 and all(EST_ADMIN(a) for a in ADMINS))
+# SA-1 : UN SEUL super-admin. L'ancien second (afroboost.bassi@gmail.com) n'a
+# plus aucune vue globale : son périmètre est celui d'un coach ordinaire.
+verifier_vrai("SA-1 : un seul super-admin reconnu", len(ADMINS) == 1 and all(EST_ADMIN(a) for a in ADMINS))
+verifier_vrai("SA-1 : afroboost.bassi@gmail.com n'est PAS super-admin",
+              not EST_ADMIN("afroboost.bassi@gmail.com"))
+verifier_vrai("SA-1 : afroboost.bassi@gmail.com n'a PAS la vue globale",
+              PERIMETRE("afroboost.bassi@gmail.com") != {})
 
 # === 3. Coach ordinaire : cadre strict ======================================
 verifier("coach -> filtre sur son email", PERIMETRE("coach.a@example.com"),

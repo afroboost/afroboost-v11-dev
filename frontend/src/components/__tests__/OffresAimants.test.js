@@ -36,20 +36,22 @@ const OFFRES = [unite, essai, etu, flex, carte, mensuel, s2, s1, fond];
 let conteneur = null;
 let racine = null;
 let choisis = [];
+let optionsChoix = [];
 
 async function monter(props = {}) {
   choisis = [];
+  optionsChoix = [];
   conteneur = document.createElement('div');
   document.body.appendChild(conteneur);
   racine = createRoot(conteneur);
   await act(async () => {
-    racine.render(<OffresAimants offres={OFFRES} analyserMedia={analyser} onChoisir={(o) => choisis.push(o)} {...props} />);
+    racine.render(<OffresAimants offres={OFFRES} analyserMedia={analyser} onChoisir={(o, opt) => { choisis.push(o); optionsChoix.push(opt); }} {...props} />);
   });
   await act(async () => {});
 }
 async function rerendre(props = {}) {
   await act(async () => {
-    racine.render(<OffresAimants offres={OFFRES} analyserMedia={analyser} onChoisir={(o) => choisis.push(o)} {...props} />);
+    racine.render(<OffresAimants offres={OFFRES} analyserMedia={analyser} onChoisir={(o, opt) => { choisis.push(o); optionsChoix.push(opt); }} {...props} />);
   });
 }
 async function demonter() {
@@ -259,6 +261,28 @@ test('lien profond ?offre=<id> ouvre la fiche ; &reserver=1 sur une offre gratui
   await monter();
   expect(choisis).toHaveLength(0);              // payant : jamais tout seul
   expect(texte('fiche-nom')).toMatch(/Saison hiver — 8 mois/);
+});
+
+test('DL-1 — cartes affichées : `&reserver=1` passe par l’ouverture EXPLICITE (lienProfond), jamais par la bascule', async () => {
+  window.history.replaceState({}, '', '/?offre=o-essai&reserver=1');
+  await monter();
+  expect(choisis.map((o) => o.id)).toEqual(['o-essai']);
+  expect(optionsChoix[0]).toEqual({ lienProfond: true });
+  // Un rechargement du catalogue ne rejoue pas le lien (verrou d'usage unique).
+  await rerendre({ offres: OFFRES.slice() });
+  expect(choisis).toHaveLength(1);
+});
+
+test.each([
+  ['/?offre=o-essai&reserver=1', 'gratuite + reserver=1'],
+  ['/?offre=o-etu', 'payante sans reserver'],
+  ['/?offre=o-s1&reserver=1', 'payante + reserver=1'],
+])('DL-1 — contrôleur seul (`cartes={false}`) : le lien profond (%s, %s) n’est PAS traité ici — le carrousel garde la main', async (url) => {
+  window.history.replaceState({}, '', url);
+  await monter({ cartes: false });
+  await rerendre({ cartes: false, offres: OFFRES.slice() });
+  expect(choisis).toHaveLength(0);          // aucun onChoisir → aucune bascule
+  expect(par('fiche-offre')).toBeNull();     // aucune fiche ouverte par-dessus le carrousel
 });
 
 test('sans aucun aimant, le bloc ne se rend pas (la vitrine garde son carrousel)', async () => {

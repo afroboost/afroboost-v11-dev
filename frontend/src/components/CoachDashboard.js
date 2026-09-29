@@ -988,7 +988,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   // Email Super Admin
   // v9.5.6: Liste des Super Admins autorisés
-  const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+  const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com']; // SA-1 : un seul super-admin
   const isSuperAdmin = SUPER_ADMIN_EMAILS.some(email => 
     (safeCoachUser?.email || '').toLowerCase() === email.toLowerCase()
   );
@@ -4649,8 +4649,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         whatsapp,
         source
       });
-      setChatParticipants(prev => [response.data, ...prev]);
-      return response.data;
+      // MT-2 : la réponse de création ne ré-émet plus e-mail/WhatsApp (le
+      // serveur ne sert pas de sonde) : on complète avec ce qu'on vient d'envoyer.
+      const cree = { ...(response.data || {}), email: (response.data && response.data.email) || email, whatsapp: (response.data && response.data.whatsapp) || whatsapp };
+      setChatParticipants(prev => [cree, ...prev]);
+      return cree;
     } catch (err) {
       console.error("Error adding manual participant:", err);
       return null;
@@ -7114,7 +7117,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       }}>
         <button
           onClick={() => {
-            const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+            const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com']; // SA-1 : un seul super-admin
             const isSA = SUPER_ADMIN_EMAILS.includes(safeCoachUser?.email?.toLowerCase());
             const finalUrl = isSA
               ? `${window.location.origin}/?visitor=true&t=${Date.now()}`

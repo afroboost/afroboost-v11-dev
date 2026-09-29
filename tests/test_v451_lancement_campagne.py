@@ -55,6 +55,7 @@ LIGNES = SOURCE.splitlines(True)
 
 SECRET = "secret-de-test-v451-jamais-en-production-32o+"
 ADMIN = "contact.artboost@gmail.com"
+# SA-1 : ancien second super-admin — désormais un compte ORDINAIRE, sans droit global.
 ADMIN2 = "afroboost.bassi@gmail.com"
 COACH = "coach.proprietaire@example.com"
 AUTRE_COACH = "coach.voisin@example.com"
@@ -156,7 +157,7 @@ def construire():
     os.environ["JWT_SECRET"] = SECRET
     bac = {
         "os": os, "HTTPException": HTTPException, "Request": FausseRequete,
-        "SUPER_ADMIN_EMAILS": [ADMIN, ADMIN2],
+        "SUPER_ADMIN_EMAILS": [ADMIN],   # SA-1 : un seul super-admin (= api/server.py)
         "db": FausseBase,
         "launch_campaign": faux_launch_campaign,
         "logger": type("l", (), {"warning": staticmethod(lambda *a, **k: None),
@@ -236,9 +237,22 @@ async def scenario_refus(bac):
 # 2. CLOISONNEMENT — un coach ne lance pas la campagne d'un autre
 # ----------------------------------------------------------------------------
 async def scenario_cloisonnement(bac):
+    # SA-1 : la liste injectée dans le bac est bien celle du serveur réel.
+    import re as _re
+    _src = open(SERVEUR, encoding="utf-8").read()
+    _m = _re.search(r"^SUPER_ADMIN_EMAILS = \[(.*?)\]", _src, _re.S | _re.M)
+    _reelle = _re.findall(r"[\"']([^\"']+)[\"']", _m.group(1)) if _m else None
+    verifier("3. SA-1  SUPER_ADMIN_EMAILS de server.py == [super-admin unique] == bac",
+             _reelle == [ADMIN] == bac["SUPER_ADMIN_EMAILS"], str(_reelle))
     LANCEMENTS.clear()
     etat, val = await appeler(bac, "camp-du-voisin", B(jeton(COACH)))
     verifier("3. CLOISON  un coach ne lance pas la campagne d'un AUTRE coach",
+             etat == "refus" and val == 403, "%s %s" % (etat, val))
+    verifier("3. ^ AUCUN fournisseur appele", LANCEMENTS == [], str(LANCEMENTS))
+
+    LANCEMENTS.clear()
+    etat, val = await appeler(bac, "camp-du-voisin", B(jeton(ADMIN2)))
+    verifier("3. CLOISON  SA-1 : l'ancien second super-admin ne lance PAS la campagne d'un coach",
              etat == "refus" and val == 403, "%s %s" % (etat, val))
     verifier("3. ^ AUCUN fournisseur appele", LANCEMENTS == [], str(LANCEMENTS))
 
@@ -263,7 +277,6 @@ async def scenario_legitime(bac):
             ("le coach proprietaire", COACH, "camp-du-coach"),
             ("le super-admin sur sa campagne", ADMIN, "camp-admin"),
             ("le super-admin sur la campagne d'un coach", ADMIN, "camp-du-coach"),
-            ("le second super-admin", ADMIN2, "camp-du-voisin"),
             ("un coach avec casse/espaces differents", "  Coach.Proprietaire@EXAMPLE.com  ",
              "camp-du-coach")):
         LANCEMENTS.clear()

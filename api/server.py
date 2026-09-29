@@ -263,9 +263,10 @@ COACH_EMAIL = "contact.artboost@gmail.com"
 # === SYSTÈME MULTI-COACH v8.9 ===
 # Super Admin: Contrôle total sur les offres, les coachs et les tarifs
 # v9.5.6: Liste des Super Admins autorisés
+# SA-1 : UN SEUL super-admin (décision définitive du propriétaire, 29/09/2026).
+# `afroboost.bassi@gmail.com` n'est PLUS super-admin et n'a aucun droit global.
 SUPER_ADMIN_EMAILS = [
     "contact.artboost@gmail.com",
-    "afroboost.bassi@gmail.com"
 ]
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"  # Legacy - pour compatibilité
 DEFAULT_COACH_ID = SUPER_ADMIN_EMAILS[0]  # V244: etait "bassi_default" (sentinelle sans compte, invisible a tout coach). Pointe desormais sur l'admin, seul coach reel — les replis coach_id inconnu lui reviennent.
@@ -3424,30 +3425,77 @@ async def get_users(request: Request):
     return users
 
 @api_router.post("/users", response_model=User)
-async def create_user(user: UserCreate):
+async def create_user(user: UserCreate, request: Request):
+    """Inscription PUBLIQUE (App.js : réservation d'un visiteur) ET ajout manuel
+    d'un contact par le coach (CoachDashboard).
+
+    MT-2 : chemin public CONSERVÉ — il crée, il ne lit ni ne modifie jamais une
+    autre fiche, et ne renvoie que ce que l'appelant vient d'envoyer. Seul ajout :
+    quand un coach NON super-admin est prouvé par JWT signé, la fiche lui est
+    rattachée (`coach_id`) — sinon il ne la reverrait jamais dans GET /users
+    (filtrée par `coach_id` depuis V311c). Un visiteur, un en-tête
+    `X-User-Email` ou le super-admin écrivent SANS propriétaire, comme avant.
+    """
     user_obj = User(**user.model_dump())
     doc = user_obj.model_dump()
     doc['createdAt'] = doc['createdAt'].isoformat()
+    try:
+        _mt2_coach = _v311_coach_email_from_jwt(request)
+        if (_mt2_coach and not is_super_admin(_mt2_coach)
+                and await _v309_is_coach_or_admin(_mt2_coach)):
+            doc["coach_id"] = _mt2_coach
+    except Exception:
+        pass
     await db.users.insert_one(doc)
     return user_obj
 
-@api_router.get("/users/{user_id}", response_model=User)
-async def get_user(user_id: str):
-    user = await db.users.find_one({"id": user_id}, {"_id": 0})
-    if not user:
+
+async def _mt2_user_du_coach(request: Request, user_id: str, ecriture: bool = False):
+    """MT-2 : (appelant, fiche) si le `user` est dans le portefeuille du coach.
+
+    Lecture : super-admin, ou `coach_id` == appelant, ou relation PROUVÉE
+    (`tenant_contacts.contact_appartient`). Sinon 404 — même réponse qu'une
+    fiche inexistante.
+    Écriture : un `user` GLOBAL (sans propriétaire) est partagé par tous les
+    coachs qui y sont reliés ; le modifier ou le supprimer toucherait les
+    autres. Seul le super-admin, ou le coach propriétaire (`coach_id`), écrit.
+    Un coach simplement relié reçoit 403 (il VOIT déjà la fiche : aucun secret
+    révélé).
+    """
+    from api.routes.tenant_contacts import contact_appartient as _mt2_app
+    appelant = await _v309_require_coach_or_admin(request)
+    if not await _mt2_app(db, appelant, "users", user_id):
         raise HTTPException(status_code=404, detail="User not found")
+    fiche = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not fiche:
+        raise HTTPException(status_code=404, detail="User not found")
+    if ecriture and not is_super_admin(appelant):
+        if (fiche.get("coach_id") or "").strip().lower() != appelant:
+            raise HTTPException(status_code=403,
+                                detail="Contact partagé : modification réservée au super-admin")
+    return appelant, fiche
+
+
+@api_router.get("/users/{user_id}", response_model=User)
+async def get_user(user_id: str, request: Request):
+    # MT-2 : était PUBLIQUE (nom, e-mail, WhatsApp contre un id). Aucun appelant
+    # frontend. JWT signé + portefeuille du coach, 404 sinon.
+    _, user = await _mt2_user_du_coach(request, user_id)
     if isinstance(user.get('createdAt'), str):
         user['createdAt'] = datetime.fromisoformat(user['createdAt'].replace('Z', '+00:00'))
     return user
 
 @api_router.put("/users/{user_id}", response_model=User)
-async def update_user(user_id: str, user: UserCreate):
-    """Update an existing user/contact"""
-    existing = await db.users.find_one({"id": user_id}, {"_id": 0})
-    if not existing:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    update_data = user.model_dump()
+async def update_user(user_id: str, user: UserCreate, request: Request):
+    """Update an existing user/contact
+
+    MT-2 : était SANS AUTHENTIFICATION. Aucun appelant frontend. JWT signé +
+    propriétaire. Liste blanche = les trois champs de `UserCreate` (name, email,
+    whatsapp) : `coach_id`, `id`, `createdAt` ne sont jamais modifiables.
+    """
+    await _mt2_user_du_coach(request, user_id, ecriture=True)
+    _brut = user.model_dump()
+    update_data = {k: _brut.get(k) for k in ("name", "email", "whatsapp")}
     await db.users.update_one({"id": user_id}, {"$set": update_data})
     updated = await db.users.find_one({"id": user_id}, {"_id": 0})
     if isinstance(updated.get('createdAt'), str):
@@ -3458,20 +3506,13 @@ async def update_user(user_id: str, user: UserCreate):
 async def delete_user(user_id: str, request: Request):
     """Supprime un utilisateur/contact et nettoie les références dans les codes promo"""
     # V432 : cette route SUPPRIMAIT un contact sans demander la moindre identité.
-    # Un simple `curl -X DELETE` suffisait. Même garde que les autres endpoints
-    # touchant des données personnelles (V309) : `require_auth` accepte le JWT
-    # signé ET le repli `X-User-Email` de la transition V265 — c'est ce repli que
-    # le tableau de bord emprunte, il ne casse donc pas.
-    _v432_appelant = require_auth(request)
-    if not await _v309_is_coach_or_admin(_v432_appelant):
-        logger.warning(f"[V432] DELETE /users/{user_id} refusé pour {_v432_appelant or 'anonyme'}")
-        raise HTTPException(status_code=403, detail="Accès refusé")
+    # MT-2 : le repli `require_auth` (X-User-Email) faisait encore foi, et aucun
+    # contrôle de propriétaire n'existait : tout coach supprimait la fiche de
+    # n'importe qui. JWT SIGNÉ (appelant : CoachDashboard, axios -> Bearer) +
+    # propriétaire ; fiche hors portefeuille -> 404, fiche partagée -> 403.
+    _v432_appelant, user = await _mt2_user_du_coach(request, user_id, ecriture=True)
 
-    # 1. Récupérer l'email de l'utilisateur avant suppression
-    user = await db.users.find_one({"id": user_id}, {"_id": 0})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
+    # 1. L'email de l'utilisateur (fiche déjà relue par la garde MT-2)
     user_email = user.get("email")
     
     # 2. Supprimer l'utilisateur
@@ -3487,8 +3528,13 @@ async def delete_user(user_id: str, request: Request):
     _v431 = {"vides": 0, "proteges": 0}
     if user_email:
         from api.routes.shared import purger_assigned_email as _v431_purger
+        # MT-2 : un coach ne libère QUE ses propres codes — jamais ceux qu'un
+        # autre coach a attribués à la même adresse.
+        _mt2_filtre_codes = {"assignedEmail": user_email}
+        if not is_super_admin(_v432_appelant):
+            _mt2_filtre_codes["coach_id"] = _v432_appelant
         _v431 = await _v431_purger(
-            db, {"assignedEmail": user_email}, motif=f"suppression du contact {user_id}"
+            db, _mt2_filtre_codes, motif=f"suppression du contact {user_id}"
         )
 
     return {"success": True, "message": "Contact supprimé et références nettoyées",
@@ -4488,7 +4534,7 @@ async def api_deduct_credit(request: Request):
     """
     Déduit 1 crédit du compte partenaire.
     Utilisé par le frontend pour les actions consommant des crédits.
-    Super Admin (afroboost.bassi@gmail.com) ne consomme jamais de crédits.
+    Le Super Admin (SA-1 : contact.artboost@gmail.com, seul) ne consomme jamais de crédits.
     """
     try:
         body = await request.json()
@@ -4563,6 +4609,33 @@ async def get_user_profile(participant_id: str, request: Request):
                 rep["social_profile"] = _sp
         except Exception as _e:
             logger.warning(f"[SOCIAL] annotation mini-profil ignorée: {_e}")
+
+    # MT-2 : LA MINI-FICHE RESTE PUBLIQUE (avatars de la communauté, visiteurs
+    # compris : nom, photo, bio, âge, passions). Mais l'E-MAIL n'en fait pas
+    # partie : `GET /users/<id>/profile` devenait sinon un annuaire id -> adresse
+    # pour un anonyme. Le front ne s'en sert pas (clé = `participant_id`).
+    # L'adresse n'est rendue que si elle n'apprend rien (l'id demandé EST
+    # l'adresse), à la personne elle-même (jeton abonné), au super-admin, ou au
+    # coach qui a une relation PROUVÉE avec elle.
+    if isinstance(rep, dict) and rep.get("email"):
+        _mt2_mail = str(rep.get("email") or "").strip().lower()
+        _mt2_ok = "@" in participant_id and participant_id.strip().lower() == _mt2_mail
+        if not _mt2_ok:
+            try:
+                _mt2_coach = _v311_coach_email_from_jwt(request)
+                if _mt2_coach and is_super_admin(_mt2_coach):
+                    _mt2_ok = True
+                elif _mt2_coach and await _v309_is_coach_or_admin(_mt2_coach):
+                    from api.routes.tenant_contacts import email_relie as _mt2_relie
+                    _mt2_ok = await _mt2_relie(db, _mt2_coach, _mt2_mail)
+                if not _mt2_ok:
+                    from api.routes.shared import subscriber_from_request as _mt2_sub
+                    _ab = _mt2_sub(request)
+                    _mt2_ok = bool(_ab and str(_ab.get("email") or "").strip().lower() == _mt2_mail)
+            except Exception:
+                _mt2_ok = False
+        if not _mt2_ok:
+            rep.pop("email", None)
     return rep
 
 
@@ -4742,7 +4815,18 @@ async def update_user_mini_profile(participant_id: str, request: Request):
     if not linked_email and "@" in participant_id:
         linked_email = participant_id.strip()
     if linked_email:
-        caller = await _v263_authenticated_coach(request)  # email authentifie ou '' (sans lever)
+        # MT-2b : `_v263_authenticated_coach` acceptait `X-User-Email` -> écrire
+        # l'adresse d'un compte en en-tête suffisait à réécrire son profil.
+        # Seules des identités SIGNÉES font foi : JWT coach, ou jeton abonné de
+        # la personne elle-même. Aucun appelant frontend (route dépréciée).
+        caller = _v311_coach_email_from_jwt(request)
+        if not caller:
+            try:
+                from api.routes.shared import subscriber_from_request as _mt2b_sub
+                _ab = _mt2b_sub(request)
+                caller = str((_ab or {}).get("email") or "").strip().lower()
+            except Exception:
+                caller = ""
         allowed = bool(caller) and (caller.strip().lower() == linked_email.lower() or is_super_admin(caller))
         if not allowed:
             raise HTTPException(status_code=403, detail="Accès refusé")
@@ -4787,9 +4871,21 @@ async def save_participant_birthday(participant_id: str, request: Request):
     Le frontend V160 utilise PUT ; le formulaire abonné (V285) utilise POST — on
     accepte les DEUX. L'age n'est PAS public par defaut (`show_age_public`).
     """
-    body = await request.json()
-    birthday = (body.get("birthday") or "").strip()  # "MM-DD"
-    if not birthday or len(birthday) != 5 or birthday[2] != "-":
+    # MT-2 : CHEMIN PUBLIC CONSERVÉ, ET POURQUOI IL EST SÛR. Appelé par le
+    # ChatWidget d'un VISITEUR/ABONNÉ (ES5, `fetch` sans jeton) pour SA propre
+    # fiche : l'identifiant de participant (UUID) fait office de capacité. La
+    # route n'écrit que la LISTE BLANCHE (`birthday`, `show_age_public`,
+    # horodatage), ne renvoie rien d'autre que la date saisie, et ne lit jamais
+    # la fiche. Durci ici : date strictement « MM-JJ » numérique, corps non-objet
+    # refusé (plus d'`AttributeError` -> 500).
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    birthday = str(body.get("birthday") or "").strip()  # "MM-DD"
+    if not re.fullmatch(r"(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])", birthday):
         raise HTTPException(status_code=400, detail="Format attendu: MM-DD")
 
     update = {
@@ -4820,9 +4916,12 @@ async def save_participant_birthday(participant_id: str, request: Request):
 async def cleanup_ghost_users(request: Request):
     """V289 : supprime les documents `users` fantômes (sans name NI email) créés
     par d'anciens upserts birthday/photo. À appeler une seule fois après déploiement."""
-    user_email = require_auth(request)
-    if not is_super_admin(user_email):
-        raise HTTPException(status_code=403, detail="Admin only")
+    # MT-2b : `require_auth` acceptait le repli `X-User-Email` — l'adresse
+    # (publique) du super-admin en en-tête déclenchait une suppression de masse.
+    # JWT SIGNÉ d'un super-admin exigé.
+    user_email = _v311_coach_email_from_jwt(request)
+    if not user_email or not is_super_admin(user_email):
+        raise HTTPException(status_code=403, detail="Authentification super-admin requise — reconnectez-vous")
     result = await db.users.delete_many({
         "$and": [
             {"$or": [{"name": {"$exists": False}}, {"name": ""}, {"name": None}]},
@@ -5784,7 +5883,9 @@ async def _save_campaign_chat_message(
     cta_type: str = None,
     cta_text: str = None,
     cta_link: str = None,
-    contact_name: str = None
+    contact_name: str = None,
+    proprietaire: str = "",
+    sender_name: str = "Coach Bassi"
 ):
     """
     Écrit le message de campagne dans la collection chat_messages
@@ -5801,10 +5902,13 @@ async def _save_campaign_chat_message(
     # (campagne 1ef3f41e : 158 copies « individuelles » postées dans grp_24057418,
     # 165 membres ; 620/1 495 copies omnicanales tombées dans des groupes). Une copie
     # personnelle ne va que dans une session PERSONNELLE : jamais group/community.
-    session = await db.chat_sessions.find_one(
-        {"participant_ids": contact_id, "mode": {"$nin": ["group", "community", "vip", "promo"]}},
-        {"_id": 0, "id": 1}
-    )
+    # MT-1 (audit P1) : campagne d'un COACH (`proprietaire` non vide) -> seule SA
+    # conversation avec la personne ; jamais celle qu'elle a avec un autre coach.
+    # Super-admin / historique (`proprietaire` vide) : recherche inchangée.
+    _mt1_q = {"participant_ids": contact_id, "mode": {"$nin": ["group", "community", "vip", "promo"]}}
+    if proprietaire:
+        _mt1_q["coach_id"] = proprietaire
+    session = await db.chat_sessions.find_one(_mt1_q, {"_id": 0, "id": 1})
     if session:
         session_id = session["id"]
         # V167.3: Mettre à jour le nom si manquant
@@ -5815,14 +5919,17 @@ async def _save_campaign_chat_message(
             )
     else:
         session_id = str(uuid.uuid4())
-        await db.chat_sessions.insert_one({
+        _mt1_nouvelle = {
             "id": session_id,
             "mode": "user",
             "participant_ids": [contact_id],
             "participant_name": display_name,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
-        })
+        }
+        if proprietaire:
+            _mt1_nouvelle["coach_id"] = proprietaire  # MT-1 : la session créée appartient au coach
+        await db.chat_sessions.insert_one(_mt1_nouvelle)
         logger.info(f"[CAMPAIGN-CHAT] Session créée pour contact {contact_id} ({display_name}): {session_id}")
 
     msg_id = str(uuid.uuid4())
@@ -5834,7 +5941,7 @@ async def _save_campaign_chat_message(
         "content": content,
         "media_url": media_url or None,
         "sender_type": "coach",
-        "sender_name": "Coach Bassi",
+        "sender_name": sender_name,  # MT-1 : nom du coach propriétaire (défaut inchangé)
         "sender_id": f"coach-campaign-{channel}",
         "channel": channel,
         "campaign_id": campaign_id,
@@ -6060,6 +6167,11 @@ async def r3_previsualiser_campagne(campaign_id: str, request: Request):
         raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas.")
     from api.routes.reactivation import LIBELLES as _r3_libelles, lien_reactivation as _r3_lien, UTM_CAMPAGNE_DEFAUT as _r3_camp
     _ids = [t for t in (_campagne.get("targetIds") or []) if t and str(t).strip()]
+    # MT-1 : l'aperçu montre EXACTEMENT ce que le lancement enverra — cibles bornées
+    # au portefeuille du propriétaire (coach), inchangées pour un super-admin.
+    from api.routes.campaign_routes import mt1_proprietaire_restreint as _mt1_r, mt1_portefeuille as _mt1_p, mt1_filtrer_cibles as _mt1_f
+    if _mt1_r(_campagne):
+        _ids = await _mt1_f(db, await _mt1_p(db, _mt1_r(_campagne)), _ids)
     contacts = await _campagne_resoudre_contacts(_campagne, _ids)
     prep = await r3_preparer_email(_campagne, contacts, None, ecrire=False)
     segments = [str(c) for c in (_campagne.get("targetCategories") or []) if str(c or "").strip()]
@@ -6456,24 +6568,58 @@ async def _campagne_resoudre_contacts(campaign, valid_target_ids):
     (même liste, même ordre, même dépliage des groupes). Ajout unique :
     `targetCategories` (segments V363 / réactivation) devient un vrai ciblage —
     il était accepté à la création mais ignoré par le moteur.
+
+    MT-1 : le périmètre des destinataires est celui du PROPRIÉTAIRE de la
+    campagne (`campaign.coach_id`), jamais celui de l'appelant. Propriétaire
+    coach -> « tous » = son portefeuille, cibles/groupes/segments filtrés ;
+    propriétaire super-admin ou campagne historique sans propriétaire ->
+    résolution globale STRICTEMENT inchangée.
     """
+    from api.routes.campaign_routes import (mt1_proprietaire_restreint, mt1_portefeuille,
+                                            mt1_filtrer_cibles, mt1_filtrer_contacts)
+    _mt1_proprio = mt1_proprietaire_restreint(campaign)
+    _mt1_pf = await mt1_portefeuille(db, _mt1_proprio) if _mt1_proprio else None
+    _mt1_selection = campaign.get("selectedContacts", []) or []
+    # MT-1 : « des cibles précises étaient demandées » se juge AVANT le filtrage —
+    # une cible entièrement hors portefeuille ne doit jamais retomber sur « tous ».
+    # (`launch_campaign` peut transmettre une liste DÉJÀ filtrée : on relit aussi
+    # les `targetIds` bruts de la campagne, seulement pour un propriétaire coach.)
+    _mt1_cibles_demandees = bool(valid_target_ids) or (
+        _mt1_pf is not None and any(t and str(t).strip() for t in (campaign.get("targetIds") or [])))
+    if _mt1_pf is not None:
+        # MT-1 : un id d'un autre coach sort de la cible AVANT toute résolution.
+        valid_target_ids = await mt1_filtrer_cibles(db, _mt1_pf, valid_target_ids)
+        _mt1_selection = await mt1_filtrer_cibles(db, _mt1_pf, _mt1_selection)
     contacts = []
     if True:
         # V165.4: SÉCURITÉ — si des targetIds spécifiques sont fournis, les utiliser
         # même si targetType dit "all" (bug frontend possible)
-        has_specific_targets = bool(valid_target_ids) or bool(campaign.get("selectedContacts", []))
+        has_specific_targets = _mt1_cibles_demandees or bool(campaign.get("selectedContacts", []))
         # RÉACTIVATION 3B : un SEGMENT est une cible précise — une campagne « segments
         # seuls » ne retombe JAMAIS sur « tous les utilisateurs ».
         _a_des_segments = bool([c for c in (campaign.get("targetCategories") or []) if str(c or "").strip()])
         use_all = campaign.get("targetType") == "all" and not has_specific_targets and not _a_des_segments
 
-        if use_all:
+        if use_all and _mt1_pf is not None:
+            # MT-1 : « tous » d'un COACH = son portefeuille (users rattachés +
+            # ses chat_participants), jamais `db.users.find({})`.
+            from api.routes.tenant_contacts import filtre_users_du_coach as _mt1_fu
+            contacts = await db.users.find(await _mt1_fu(db, _mt1_proprio), {"_id": 0}).to_list(1000)
+            _mt1_vus = {c.get("id") for c in contacts} | {(c.get("email") or "").strip().lower() for c in contacts if c.get("email")}
+            for p in await db.chat_participants.find({"coach_id": _mt1_proprio}, {"_id": 0}).to_list(1000):
+                _pm = (p.get("email") or "").strip().lower()
+                if p.get("id") in _mt1_vus or (_pm and _pm in _mt1_vus):
+                    continue
+                contacts.append({"id": p.get("id", ""), "name": p.get("name", ""), "email": p.get("email", ""),
+                                 "whatsapp": p.get("whatsapp") or p.get("phone") or ""})
+            logger.info(f"[CAMPAIGN-LAUNCH] 📋 Mode 'all' (portefeuille du propriétaire): {len(contacts)} contacts trouvés")
+        elif use_all:
             contacts = await db.users.find({}, {"_id": 0}).to_list(1000)
             logger.info(f"[CAMPAIGN-LAUNCH] 📋 Mode 'all': {len(contacts)} contacts trouvés")
         else:
             if has_specific_targets and campaign.get("targetType") == "all":
                 logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ targetType='all' MAIS targetIds présents — utilisation des targetIds spécifiques (sécurité V165.4)")
-            contact_ids = valid_target_ids if valid_target_ids else campaign.get("selectedContacts", [])
+            contact_ids = valid_target_ids if valid_target_ids else _mt1_selection
 
             # === V376 : DÉPLIAGE DES GROUPES AU MOMENT DE L'ENVOI ===
             #
@@ -6497,12 +6643,22 @@ async def _campagne_resoudre_contacts(campaign, valid_target_ids):
             if _ids_groupes:
                 _membres = []
                 for _gid in _ids_groupes:
+                    # MT-7 : propriétaire coach -> la session ET le groupe de repli
+                    # doivent être à LUI (jamais un dépliage par simple id : une
+                    # session de A pointant vers le groupe de B ne livre rien).
+                    # Super-admin / historique : lecture globale inchangée.
+                    _mt7_qs = {"id": _gid}
+                    if _mt1_proprio:
+                        _mt7_qs["coach_id"] = _mt1_proprio
                     _session = await db.chat_sessions.find_one(
-                        {"id": _gid}, {"_id": 0, "participant_ids": 1, "group_id": 1})
+                        _mt7_qs, {"_id": 0, "participant_ids": 1, "group_id": 1})
                     _liste = (_session or {}).get("participant_ids") or []
                     if not _liste and (_session or {}).get("group_id"):
+                        _mt7_qg = {"id": _session["group_id"]}
+                        if _mt1_proprio:
+                            _mt7_qg["coach_id"] = _mt1_proprio
                         _grp = await db.chat_groups.find_one(
-                            {"id": _session["group_id"]}, {"_id": 0, "member_ids": 1})
+                            _mt7_qg, {"_id": 0, "member_ids": 1})
                         _liste = (_grp or {}).get("member_ids") or []
                     logger.info(f"[CAMPAIGN-LAUNCH] 👥 Groupe {_gid} déplié en {len(_liste)} membre(s)")
                     _membres.extend(_liste)
@@ -6586,6 +6742,12 @@ async def _campagne_resoudre_contacts(campaign, valid_target_ids):
             logger.info("[R3] ciblage par segment %s : %d personne(s) ajoutée(s)", _segments, len(_manquants))
         except Exception as _seg_e:
             logger.warning("[R3] ciblage par segment indisponible (%s)", type(_seg_e).__name__)
+    if _mt1_pf is not None:
+        # MT-1 : filtre FINAL sur les contacts résolus — segments (`_calcule_personnes`
+        # est global : on intersecte ici, sans toucher au module des segments),
+        # membres de groupes dépliés, replis par conversation. Aucun contact d'un
+        # autre coach ne franchit cette ligne.
+        contacts = mt1_filtrer_contacts(_mt1_pf, contacts)
     return contacts
 
 
@@ -6657,6 +6819,18 @@ async def launch_campaign(campaign_id: str):
     # ==================== ENVOI INTERNE (Chat) ====================
     # Filtrer les targetIds vides/null
     valid_target_ids = [tid for tid in target_ids if tid and tid.strip()]
+    # MT-1 : les cibles d'une campagne de COACH sont bornées à SON portefeuille
+    # (propriétaire = `campaign.coach_id`, y compris pour le moteur programmé qui
+    # n'a pas d'appelant). Couvre le canal interne (messages dans des sessions /
+    # groupes) : un groupe ou un contact d'un autre coach est retiré. Propriétaire
+    # super-admin ou campagne historique -> liste inchangée.
+    from api.routes.campaign_routes import (mt1_proprietaire_restreint as _mt1_restreint,
+                                            mt1_portefeuille as _mt1_pf_de, mt1_filtrer_cibles as _mt1_filtrer)
+    _mt1_proprio_launch = _mt1_restreint(campaign)
+    if _mt1_proprio_launch:
+        valid_target_ids = await _mt1_filtrer(db, await _mt1_pf_de(db, _mt1_proprio_launch), valid_target_ids)
+    from api.routes.campaign_routes import mt1_nom_expediteur as _mt1_nom
+    _mt1_expediteur = await _mt1_nom(db, _mt1_proprio_launch)  # « Coach Bassi » si super-admin/historique
     # RÉACTIVATION multi-agents (15/09/2026) — le canal INTERNE est RECONNECTÉ à
     # l'existant, sans second moteur :
     #   - les segments (`targetCategories`) passent par LA résolution commune
@@ -6715,11 +6889,14 @@ async def launch_campaign(campaign_id: str):
             try:
                 # === DÉTECTION GROUPE OU UTILISATEUR ===
                 # Chercher d'abord si le targetId est une session de groupe
-                group_session = await db.chat_sessions.find_one(
-                    {"id": target_id, "$or": [
+                _mt1_qg = {"id": target_id, "$or": [
                         {"title": {"$exists": True, "$ne": ""}},
                         {"mode": {"$in": ["community", "vip", "promo", "group"]}}
-                    ]},
+                    ]}
+                if _mt1_proprio_launch:
+                    _mt1_qg["coach_id"] = _mt1_proprio_launch  # MT-1 : groupe du propriétaire uniquement
+                group_session = await db.chat_sessions.find_one(
+                    _mt1_qg,
                     {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1}
                 )
 
@@ -6739,9 +6916,12 @@ async def launch_campaign(campaign_id: str):
 
                     # Stratégie de recherche: email (fiable) > participant_ids > id direct
                     session = None
+                    # MT-1 (audit P1) : campagne d'un COACH -> uniquement SES conversations
+                    # (`coach_id` == propriétaire) ; jamais celle du contact avec un autre coach.
+                    _mt1_qs = {"coach_id": _mt1_proprio_launch} if _mt1_proprio_launch else {}
                     if contact_email:
                         session = await db.chat_sessions.find_one(
-                            {"participantEmail": contact_email},
+                            dict({"participantEmail": contact_email}, **_mt1_qs),
                             {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1}
                         )
                         if session:
@@ -6753,8 +6933,8 @@ async def launch_campaign(campaign_id: str):
                         # internes d'août y sont tombés). Le cas « la cible EST un groupe »
                         # est déjà traité plus haut (`group_session`).
                         session = await db.chat_sessions.find_one(
-                            {"$or": [{"id": target_id}, {"participant_ids": target_id}],
-                             "mode": {"$nin": ["group", "community", "vip", "promo"]}},
+                            dict({"$or": [{"id": target_id}, {"participant_ids": target_id}],
+                                  "mode": {"$nin": ["group", "community", "vip", "promo"]}}, **_mt1_qs),
                             {"_id": 0, "id": 1, "mode": 1, "title": 1}
                         )
 
@@ -6770,7 +6950,7 @@ async def launch_campaign(campaign_id: str):
                     else:
                         # Créer une session pour cet utilisateur s'il n'en a pas
                         session_id = str(uuid.uuid4())
-                        await db.chat_sessions.insert_one({
+                        _mt1_nouvelle = {
                             "id": session_id,
                             "mode": "user",
                             "participant_ids": [target_id],
@@ -6778,7 +6958,10 @@ async def launch_campaign(campaign_id: str):
                             "participantName": contact_name_internal,
                             "created_at": datetime.now(timezone.utc).isoformat(),
                             "updated_at": datetime.now(timezone.utc).isoformat()
-                        })
+                        }
+                        if _mt1_proprio_launch:
+                            _mt1_nouvelle["coach_id"] = _mt1_proprio_launch  # MT-1 : session du coach
+                        await db.chat_sessions.insert_one(_mt1_nouvelle)
                         logger.info(f"[CAMPAIGN-LAUNCH] 📝 Session créée pour {target_id} ({contact_email}): {session_id}")
                 
                 # Substituer les variables {prénom} etc. avec les infos du contact
@@ -6797,7 +6980,7 @@ async def launch_campaign(campaign_id: str):
                     "content": personalized_message,
                     "media_url": media_url or None,
                     "sender_type": "coach",
-                    "sender_name": "Coach Bassi",
+                    "sender_name": _mt1_expediteur,  # MT-1 : nom du coach propriétaire
                     "sender_id": "coach-campaign",
                     "is_group": is_group,
                     "timestamp": msg_timestamp,
@@ -7180,7 +7363,9 @@ async def launch_campaign(campaign_id: str):
                             cta_type=cta_type,
                             cta_text=cta_text,
                             cta_link=cta_link,
-                            contact_name=contact_name
+                            contact_name=contact_name,
+                            proprietaire=_mt1_proprio_launch,  # MT-1
+                            sender_name=_mt1_expediteur
                         )
                     except Exception as chat_err:
                         logger.warning(f"[CAMPAIGN-CHAT] Écriture chat_messages échouée (WhatsApp, {contact_id}): {chat_err}")
@@ -7338,7 +7523,9 @@ async def launch_campaign(campaign_id: str):
                             cta_type=cta_type,
                             cta_text=cta_text,
                             cta_link=cta_link,
-                            contact_name=contact_name
+                            contact_name=contact_name,
+                            proprietaire=_mt1_proprio_launch,  # MT-1
+                            sender_name=_mt1_expediteur
                         )
                     except Exception as chat_err:
                         logger.warning(f"[CAMPAIGN-CHAT] Écriture chat_messages échouée (email, {contact_id}): {chat_err}")
@@ -7436,10 +7623,29 @@ async def twilio_status_webhook(request: Request):
         return {"ok": True}  # Toujours retourner 200 à Twilio
 
 @api_router.post("/campaigns/{campaign_id}/mark-sent")
-async def mark_campaign_sent(campaign_id: str, data: dict):
-    """Mark specific result as sent"""
+async def mark_campaign_sent(campaign_id: str, request: Request):
+    """Mark specific result as sent
+
+    MT-1 : c'est CETTE route qui répond (la copie de campaign_routes est masquée).
+    Elle n'avait AUCUNE garde : un anonyme passait n'importe quelle campagne en
+    `completed` — et comme `all([])` est vrai, une campagne PROGRAMMÉE (sans
+    résultat) était ainsi annulée. Désormais : même garde que PUT (JWT signé +
+    propriétaire, `_r3_campagne_du_proprietaire`), et jamais `completed` sans
+    résultat. Appelant : CoachDashboard.js `markResultSent` (axios -> Bearer).
+    """
+    from api.routes.campaign_routes import _r3_campagne_du_proprietaire
+    await _r3_campagne_du_proprietaire(campaign_id, request)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
     contact_id = data.get("contactId")
     channel = data.get("channel")
+    # MT-1 : valeurs du corps dans un filtre Mongo -> chaînes uniquement (pas d'opérateur).
+    if not isinstance(contact_id, str) or not isinstance(channel, str):
+        raise HTTPException(status_code=400, detail="contactId et channel requis")
     
     await db.campaigns.update_one(
         {"id": campaign_id, "results.contactId": contact_id, "results.channel": channel},
@@ -7452,7 +7658,9 @@ async def mark_campaign_sent(campaign_id: str, data: dict):
     # Check if all results are sent
     campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     if campaign:
-        all_sent = all(r.get("status") == "sent" for r in campaign.get("results", []))
+        # MT-1 : `all([])` est vrai — sans résultat, on ne complète JAMAIS.
+        _mt1_resultats = campaign.get("results") or []
+        all_sent = bool(_mt1_resultats) and all(r.get("status") == "sent" for r in _mt1_resultats)
         if all_sent:
             await db.campaigns.update_one(
                 {"id": campaign_id},
@@ -12274,7 +12482,12 @@ async def _v334_autoriser(request: Request, code_cible: str, code_fourni: str = 
         pass
 
     # --- Chemin COACH / ADMIN : identité authentifiée, jamais déclarée.
-    email = await _v263_authenticated_coach(request)
+    # MT-2b : `_v263_authenticated_coach` acceptait `X-User-Email` -> l'adresse
+    # du coach (ou du super-admin) en en-tête ouvrait mesures, cockpit et
+    # abonnements. Seul un JWT coach SIGNÉ fait foi (appelants : SuiviAbonnes,
+    # CockpitGlobal, ChatWidget, en axios -> Bearer). Le chemin ABONNÉ (code AFR
+    # ou jeton abonné, ci-dessus) est inchangé.
+    email = _v311_coach_email_from_jwt(request)
     if email:
         if is_super_admin(email):
             return "admin", email, coach_id_cible
@@ -12570,7 +12783,12 @@ async def _v338_autoriser_note(request: Request, cible_type: str, cible_id: str,
     if not cible_id:
         raise HTTPException(status_code=400, detail="Cible manquante")
 
-    email = await _v263_authenticated_coach(request)
+    # MT-2 : l'identité COACH venait de `_v263_authenticated_coach` (repli
+    # `X-User-Email`) : l'adresse d'un coach en en-tête suffisait à lire et
+    # ÉCRIRE les notes de ses abonnés, celle du super-admin à tout lire. Seul un
+    # JWT coach SIGNÉ fait foi désormais (DetailAbonne : axios -> Bearer). Le
+    # chemin ABONNÉ (code ou jeton abonné) est inchangé.
+    email = _v311_coach_email_from_jwt(request)
     admin = bool(email) and is_super_admin(email)
 
     if cible_type == "coach":
@@ -12820,9 +13038,11 @@ async def v334_suivi_abonnes_coach(request: Request):
     (`$in`), une pour TOUTES les dernières mesures (`$in`), puis l'agrégation en
     mémoire. Trois requêtes, quel que soit le nombre d'abonnés.
     """
-    email = await _v263_authenticated_coach(request)
-    if not email:
-        raise HTTPException(status_code=403, detail="Authentification requise")
+    # MT-2 : `_v263_authenticated_coach` acceptait `X-User-Email` -> l'adresse
+    # du super-admin en en-tête rendait les abonnés de TOUTE la plateforme
+    # (nom, e-mail, WhatsApp, code AFR). JWT SIGNÉ désormais (SuiviAbonnes et
+    # CockpitGlobal appellent en axios -> Bearer).
+    email = await _v309_require_coach_or_admin(request)
     admin = is_super_admin(email)
 
     # Comparaison INSENSIBLE À LA CASSE : `_v334_autoriser` compare déjà les e-mails
@@ -14512,8 +14732,8 @@ async def boosttribe_live_status_set(request: Request, response: Response = None
         # annoncée. Un battement en retard d'une session finie ne ressuscite rien —
         # le filtre `ended: False` s'en charge. Aucun journal : c'est répétitif par
         # nature, et l'information utile est déjà dans le document.
-        # V548 : SEUL L'HÔTE maintient son live. Deux super-admins partagent ce
-        # rôle : sans ce contrôle, l'un prolongeait le live de l'autre avec le
+        # V548 : SEUL L'HÔTE maintient son live. Deux super-admins partageaient ce
+        # rôle (SA-1 : un seul désormais, le contrôle reste) : sans ce contrôle, l'un prolongeait le live de l'autre avec le
         # seul code de session. L'hôte est celui qu'a posé `started` (identité
         # serveur `require_auth`), jamais un champ envoyé par le client.
         actuel = await db.boosttribe_live.find_one(
@@ -18323,19 +18543,28 @@ async def get_space_link_by_email(email: str, request: Request):
     l'affichage du coach — ce serait une régression silencieuse.
     """
     from api.routes.shared import v20_exiger_coach_signe
-    await v20_exiger_coach_signe(request, db, "lien d'espace abonné")
+    _mt2_appelant = await v20_exiger_coach_signe(request, db, "lien d'espace abonné")
     email_clean = (email or "").lower().strip()
     if not email_clean:
         raise HTTPException(status_code=400, detail="Email requis")
 
+    # MT-2 : le jeton prouvait QUI appelle, pas que l'abonné est À LUI. Tout
+    # coach enregistré obtenait le code AFR (clé de l'espace abonné) de
+    # n'importe quel abonné de la plateforme. Désormais un coach ne reçoit que
+    # le code d'un abonnement / code d'accès dont il est PROPRIÉTAIRE
+    # (`coach_id`, écrit par le serveur). Sinon : le MÊME 404 « Aucun code
+    # abonné » qu'une adresse inconnue — l'appartenance n'est jamais révélée,
+    # et ContactsManager continue d'afficher « Pas abonné ».
+    _mt2_portee = {} if is_super_admin(_mt2_appelant) else {"coach_id": _mt2_appelant}
+
     subscription = await db.subscriptions.find_one(
-        {"email": email_clean, "status": "active"}, {"_id": 0, "code": 1}
+        {"email": email_clean, "status": "active", **_mt2_portee}, {"_id": 0, "code": 1}
     )
     code = (subscription or {}).get("code")
     if not code:
         # Fallback : code assigné dans discount_codes
         discount = await db.discount_codes.find_one(
-            {"assignedEmail": email_clean, "active": True}, {"_id": 0, "code": 1}
+            {"assignedEmail": email_clean, "active": True, **_mt2_portee}, {"_id": 0, "code": 1}
         )
         code = (discount or {}).get("code")
     if not code:
@@ -19880,7 +20109,7 @@ async def get_og_meta(username: str, request: Request):
     from starlette.responses import HTMLResponse
 
     # Trouver le coach — même logique que coach/vitrine
-    SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com']
+    SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com']  # SA-1 : un seul super-admin
     # v65: Redirection 301 pour "artboost" → "bassi"
     if username.lower() == "artboost":
         from starlette.responses import RedirectResponse as RR
@@ -20581,38 +20810,38 @@ async def delete_faq(faq_id: str, request: Request):
 # --- v17.3: Import Auto Contacts ---
 @api_router.post("/contacts/check-duplicates")
 async def check_duplicate_contacts(request: Request):
-    """Vérifie les doublons dans la liste de contacts importés"""
-    body = await request.json()
-    phones = [p.strip() for p in body.get("phones", []) if p.strip()]
-    emails = [e.strip().lower() for e in body.get("emails", []) if e.strip()]
-    coach_email = request.headers.get('X-User-Email', '').lower().strip()
+    """Vérifie les doublons dans la liste de contacts importés
 
-    if not coach_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    MT-2 : identité JWT SIGNÉE (plus `X-User-Email`) ; portée = celle où un
+    import du même appelant ÉCRIRAIT (`portee_ecriture`) — le super-admin ne
+    « trouve » plus les contacts d'un partenaire ; comparaison sur les formes
+    canoniques (e-mail normalisé, numéro canonique), jamais une regex.
+    Réponse inchangée : les valeurs SOUMISES qui existent déjà.
+    """
+    from api.routes.tenant_contacts import (
+        portee_ecriture as _mt2_portee, index_doublons as _mt2_index,
+        normaliser_telephone as _mt2_tel, normaliser_email as _mt2_mail,
+    )
+    coach_email = await _v309_require_coach_or_admin(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    phones = [p.strip() for p in (body.get("phones") or []) if isinstance(p, str) and p.strip()]
+    emails = [e.strip().lower() for e in (body.get("emails") or []) if isinstance(e, str) and e.strip()]
 
-    existing_phones = set()
-    existing_emails = set()
+    # MT-2 : LECTURE -> super-admin = portée GLOBALE ; coach = sa portée.
+    _portee = {} if is_super_admin(coach_email) else _mt2_portee(coach_email)[1]
+    _idx = await _mt2_index(db, _portee) if (phones or emails) else {}
 
-    # v68: Isolation multi-tenant — ne chercher les doublons que dans les contacts du coach
-    coach_filter = {} if is_super_admin(coach_email) else {"coach_id": coach_email}
-
-    if phones:
-        phone_query = {**coach_filter, "phone": {"$in": phones}}
-        cursor = db.chat_participants.find(phone_query, {"_id": 0, "phone": 1})
-        async for doc in cursor:
-            if doc.get("phone"):
-                existing_phones.add(doc["phone"])
-
-    if emails:
-        email_query = {**coach_filter, "email": {"$in": emails}}
-        cursor = db.chat_participants.find(email_query, {"_id": 0, "email": 1})
-        async for doc in cursor:
-            if doc.get("email"):
-                existing_emails.add(doc["email"].lower())
+    existing_phones = [p for p in phones if _mt2_tel(p) and ("t:" + _mt2_tel(p)) in _idx]
+    existing_emails = [e for e in emails if ("m:" + _mt2_mail(e)) in _idx]
 
     return {
-        "existing_phones": list(existing_phones),
-        "existing_emails": list(existing_emails),
+        "existing_phones": sorted(set(existing_phones)),
+        "existing_emails": sorted(set(existing_emails)),
         "total_checked": len(phones) + len(emails)
     }
 
@@ -20622,29 +20851,45 @@ async def check_duplicate_contacts(request: Request):
 # ============================================================
 
 @api_router.post("/contacts/deduplicate")
-async def deduplicate_contacts(request: Request):
+async def deduplicate_contacts(request: Request, scope: Optional[str] = None):
     """v104: Nettoie les doublons existants dans chat_participants.
     Fusionne par email (case-insensitive) ou phone normalisé.
     Garde le contact le plus ancien (created_at), met à jour avec les infos des doublons."""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    # MT-2 : l'identité venait de `X-User-Email` (falsifiable) sur une route qui
+    # SUPPRIME physiquement ; et pour le super-admin la fusion était GLOBALE —
+    # la fiche d'un partenaire pouvait être fusionnée dans celle d'un autre coach
+    # puis effacée. Désormais : JWT signé ; les groupes sont formés PAR
+    # PROPRIÉTAIRE (`coach_id` + e-mail normalisé / numéro canonique) — deux
+    # coachs qui connaissent la même personne gardent chacun leur fiche.
+    from api.routes.tenant_contacts import (
+        filtre_proprietaire as _mt2_filtre, normaliser_telephone as _mt2_tel,
+    )
+    caller_email = await _v309_require_coach_or_admin(request)
 
     try:
         # Récupérer tous les contacts du coach
-        query = {} if is_super_admin(caller_email) else {"coach_id": caller_email}
+        # MT-2b : route DESTRUCTIVE -> pour le super-admin, portée PLATEFORME par
+        # défaut (`portee_ecriture` : ses propres fiches et le stock sans
+        # propriétaire). La portée GLOBALE (tous les coachs, toujours groupée
+        # par propriétaire) exige un choix explicite `?scope=global`.
+        from api.routes.tenant_contacts import portee_ecriture as _mt2_portee
+        if is_super_admin(caller_email) and (scope or "").strip().lower() == "global":
+            query = _mt2_filtre(caller_email)
+        else:
+            query = _mt2_portee(caller_email)[1]
         all_contacts = await db.chat_participants.find(query, {"_id": 0}).to_list(10000)
 
-        # Grouper par email normalisé
+        # Grouper par (propriétaire, email normalisé) puis (propriétaire, numéro canonique)
         email_groups = {}
         phone_groups = {}
         for c in all_contacts:
+            _proprio = (c.get("coach_id") or "").strip().lower() if isinstance(c.get("coach_id"), str) else ""
             email = (c.get("email") or "").strip().lower()
-            phone = (c.get("whatsapp") or c.get("phone") or "").replace(" ", "").replace("-", "").replace("+", "")
+            phone = _mt2_tel(c.get("whatsapp") or c.get("phone") or "")
             if email:
-                email_groups.setdefault(email, []).append(c)
+                email_groups.setdefault((_proprio, email), []).append(c)
             elif phone:
-                phone_groups.setdefault(phone, []).append(c)
+                phone_groups.setdefault((_proprio, phone), []).append(c)
 
         merged = 0
         deleted_ids = []
@@ -20672,10 +20917,10 @@ async def deduplicate_contacts(request: Request):
                 if dup_tags - keeper_tags:
                     updates["tags"] = list(keeper_tags | dup_tags)
                 if updates:
-                    await db.chat_participants.update_one({"id": keeper["id"]}, {"$set": updates})
+                    await db.chat_participants.update_one({"id": keeper["id"], "coach_id": keeper.get("coach_id")}, {"$set": updates})  # MT-2 : id + propriétaire
                     keeper.update(updates)
                 # Supprimer le doublon
-                await db.chat_participants.delete_one({"id": dup["id"]})
+                await db.chat_participants.delete_one({"id": dup["id"], "coach_id": dup.get("coach_id")})  # MT-2 : id + propriétaire
                 deleted_ids.append(dup["id"])
                 merged += 1
 
@@ -20697,9 +20942,9 @@ async def deduplicate_contacts(request: Request):
                 if dup_tags - keeper_tags:
                     updates["tags"] = list(keeper_tags | dup_tags)
                 if updates:
-                    await db.chat_participants.update_one({"id": keeper["id"]}, {"$set": updates})
+                    await db.chat_participants.update_one({"id": keeper["id"], "coach_id": keeper.get("coach_id")}, {"$set": updates})  # MT-2 : id + propriétaire
                     keeper.update(updates)
-                await db.chat_participants.delete_one({"id": dup["id"]})
+                await db.chat_participants.delete_one({"id": dup["id"], "coach_id": dup.get("coach_id")})  # MT-2 : id + propriétaire
                 deleted_ids.append(dup["id"])
                 merged += 1
 
@@ -20789,16 +21034,26 @@ async def get_all_contacts_unified(request: Request):
 
         _si_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email}
         _filtre_participants = {} if is_super_admin(caller_email) else {"coach_id": caller_email}
+        # MT-2 : `users` et `chat_sessions` étaient lus SANS filtre — tout coach
+        # recevait (et exportait en CSV) les inscrits de toute la plateforme et
+        # les groupes des autres coachs. Désormais : super-admin global
+        # (inchangé) ; coach = ses sessions (`coach_id`) et les seuls `users`
+        # qu'une relation serveur rattache à lui (`filtre_users_du_coach`).
+        from api.routes.tenant_contacts import filtre_users_du_coach as _mt2_users
+        _filtre_sessions = {"is_deleted": {"$ne": True}}
+        if not is_super_admin(caller_email):
+            _filtre_sessions["coach_id"] = caller_email
+        _filtre_users = await _mt2_users(db, caller_email)
 
         (
             sessions, participants, all_users, infos, _abos, _cons,
         ) = await asyncio.gather(
             db.chat_sessions.find(
-                {"is_deleted": {"$ne": True}},
+                _filtre_sessions,
                 {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1, "updated_at": 1}
             ).sort("updated_at", -1).to_list(500),
             db.chat_participants.find(_filtre_participants, _P1A_CHAMPS_CONTACT).to_list(5000),
-            db.users.find({}, {"_id": 0, "id": 1, "name": 1, "email": 1, "created_at": 1}).to_list(5000),
+            db.users.find(_filtre_users, {"_id": 0, "id": 1, "name": 1, "email": 1, "created_at": 1}).to_list(5000),
             db.subscriber_infos.find(
                 _si_query, {"_id": 0, "email": 1, "whatsapp": 1, "birthday": 1, "code": 1}
             ).to_list(5000),
@@ -21100,13 +21355,30 @@ async def bulk_import_contacts(request: Request):
     Accepte un tableau de {name, phone, email, source, tags}.
     Déduplique par phone/email. Retourne le nombre importé.
     """
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    # MT-2 : JWT SIGNÉ (appelant : ContactsManager, axios -> Bearer). Le
+    # dédoublonnage était GLOBAL (un contact d'un autre coach bloquait l'import
+    # et voyait son nom réécrit) et le téléphone passait dans une regex NON
+    # ancrée (« 079 » = doublon de tout numéro le contenant). Désormais : UNE
+    # lecture de la portée du coach, puis comparaisons canoniques en mémoire.
+    from api.routes.tenant_contacts import (
+        portee_ecriture as _mt2_portee, index_doublons as _mt2_index,
+        chercher_doublon as _mt2_cherche, indexer_fiche as _mt2_indexer,
+    )
+    caller_email = await _v309_require_coach_or_admin(request)
+    _mt2_coach_id, _mt2_scope = _mt2_portee(caller_email)
 
-    body = await request.json()
-    contacts_list = body.get("contacts", [])
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    contacts_list = body.get("contacts") or []
+    if not isinstance(contacts_list, list):
+        contacts_list = []
     source = body.get("source", "import")
+    if not isinstance(source, str):
+        source = "import"
 
     if not contacts_list:
         return {"imported": 0, "duplicates": 0, "errors": 0}
@@ -21114,39 +21386,33 @@ async def bulk_import_contacts(request: Request):
     imported = 0
     duplicates = 0
     errors = 0
+    _mt2_idx = await _mt2_index(db, _mt2_scope)
 
     for c in contacts_list:
         try:
-            email = (c.get("email") or "").strip().lower()
-            phone = (c.get("phone") or c.get("whatsapp") or "").strip()
-            name = (c.get("name") or "").strip()
+            if not isinstance(c, dict):
+                errors += 1
+                continue
+            email = str(c.get("email") or "").strip().lower()
+            phone = str(c.get("phone") or c.get("whatsapp") or "").strip()
+            name = str(c.get("name") or "").strip()
 
             if not email and not phone:
                 errors += 1
                 continue
 
-            # Check duplicate
-            dup_query = {"$or": []}
-            if email:
-                dup_query["$or"].append({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
-            if phone:
-                import re as re_dup
-                clean = phone.replace(" ", "").replace("-", "")
-                escaped = re_dup.escape(clean)
-                dup_query["$or"].append({"whatsapp": {"$regex": escaped}})
-                dup_query["$or"].append({"phone": {"$regex": escaped}})
-
-            if dup_query["$or"]:
-                existing = await db.chat_participants.find_one(dup_query, {"_id": 0})
-                if existing:
-                    # Update name if better
-                    if name and not existing.get("name"):
-                        await db.chat_participants.update_one(
-                            {"id": existing["id"]},
-                            {"$set": {"name": name, "last_seen_at": datetime.now(timezone.utc).isoformat()}}
-                        )
-                    duplicates += 1
-                    continue
+            # Check duplicate — MT-2 : dans la portée du coach, formes canoniques
+            existing = _mt2_cherche(_mt2_idx, email=email, telephone=phone)
+            if existing:
+                # Update name if better
+                if name and not existing.get("name"):
+                    await db.chat_participants.update_one(
+                        {"$and": [{"id": existing["id"]}, _mt2_scope]},
+                        {"$set": {"name": name, "last_seen_at": datetime.now(timezone.utc).isoformat()}}
+                    )
+                    existing["name"] = name
+                duplicates += 1
+                continue
 
             # Insert new
             new_participant = {
@@ -21156,12 +21422,15 @@ async def bulk_import_contacts(request: Request):
                 "whatsapp": phone or None,
                 "phone": phone or None,
                 "source": source,
-                "coach_id": caller_email if not is_super_admin(caller_email) else DEFAULT_COACH_ID,
-                "tags": c.get("tags", []),
+                "coach_id": _mt2_coach_id,
+                "tags": [str(t)[:60] for t in (c.get("tags") or []) if isinstance(t, (str, int))][:50]
+                        if isinstance(c.get("tags"), list) else [],
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_seen_at": datetime.now(timezone.utc).isoformat()
             }
             await db.chat_participants.insert_one(new_participant)
+            new_participant.pop("_id", None)
+            _mt2_indexer(_mt2_idx, new_participant)  # doublons DANS le même lot
             imported += 1
 
         except Exception as err:
@@ -21387,40 +21656,39 @@ async def sync_google_contacts(request: Request):
                 page_count += 1
 
         # 3. Bulk import with dedup
+        # MT-2 : le numéro venu de Google (donnée EXTERNE) partait BRUT dans une
+        # regex non échappée, et la recherche couvrait toute la collection.
+        # Même moteur que /contacts/bulk-import : portée du coach, formes
+        # canoniques, une seule lecture.
+        from api.routes.tenant_contacts import (
+            portee_ecriture as _mt2_portee, index_doublons as _mt2_index,
+            chercher_doublon as _mt2_cherche, indexer_fiche as _mt2_indexer,
+        )
+        _mt2_coach_id, _mt2_scope = _mt2_portee(caller_email)
+        _mt2_idx = await _mt2_index(db, _mt2_scope)
         imported = 0
         duplicates = 0
 
         for c in all_contacts:
-            email = c.get("email")
-            phone = c.get("phone")
+            if _mt2_cherche(_mt2_idx, email=c.get("email"), telephone=c.get("phone")):
+                duplicates += 1
+                continue
 
-            dup_query = {"$or": []}
-            if email:
-                dup_query["$or"].append({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
-            if phone:
-                clean = (phone or "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
-                if clean:
-                    dup_query["$or"].append({"whatsapp": {"$regex": clean}})
-                    dup_query["$or"].append({"phone": {"$regex": clean}})
-
-            if dup_query["$or"]:
-                existing = await db.chat_participants.find_one(dup_query, {"_id": 0, "id": 1})
-                if existing:
-                    duplicates += 1
-                    continue
-
-            await db.chat_participants.insert_one({
+            _mt2_neuf = {
                 "id": str(uuid.uuid4()),
                 "name": c["name"] or c["email"] or c["phone"],
                 "email": c.get("email"),
                 "whatsapp": c.get("phone"),
                 "phone": c.get("phone"),
                 "source": "google",
-                "coach_id": caller_email if not is_super_admin(caller_email) else DEFAULT_COACH_ID,
+                "coach_id": _mt2_coach_id,
                 "tags": ["google"],
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_seen_at": datetime.now(timezone.utc).isoformat()
-            })
+            }
+            await db.chat_participants.insert_one(_mt2_neuf)
+            _mt2_neuf.pop("_id", None)
+            _mt2_indexer(_mt2_idx, _mt2_neuf)
             imported += 1
 
         # Update last sync time
@@ -21447,18 +21715,40 @@ async def sync_google_contacts(request: Request):
 @api_router.post("/contacts/add-tags")
 async def add_tags_to_contacts(request: Request):
     """Ajoute des tags à une liste de contacts (pour grouper/catégoriser)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    body = await request.json()
-    contact_ids = body.get("contact_ids", [])
-    tags = body.get("tags", [])
+    # MT-2 : était SANS AUTHENTIFICATION (l'en-tête lu n'était même pas
+    # vérifié) et taguait n'importe quelle fiche de n'importe quel coach.
+    # Aucun appelant frontend. JWT signé ; seuls les ids du portefeuille du
+    # coach sont touchés (`filtrer_ids`, lecture groupée) ; tags = chaînes courtes.
+    from api.routes.tenant_contacts import (
+        filtrer_ids as _mt2_filtrer, filtre_proprietaire as _mt2_filtre,
+    )
+    caller_email = await _v309_require_coach_or_admin(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    contact_ids = body.get("contact_ids") or []
+    tags = body.get("tags") or []
+    if not isinstance(contact_ids, list) or not isinstance(tags, list):
+        raise HTTPException(status_code=400, detail="contact_ids et tags doivent être des listes")
+    tags = [str(t).strip()[:60] for t in tags if isinstance(t, (str, int)) and str(t).strip()][:50]
 
     if not contact_ids or not tags:
         return {"updated": 0}
 
+    # MT-2 : un seul identifiant hors portefeuille -> 404, RIEN n'est écrit
+    # (avant : ignoré en silence derrière un 200).
+    _mt2_ok = await _mt2_filtrer(db, caller_email, "chat_participants", contact_ids)
+    if len(_mt2_ok) != len({c for c in contact_ids if isinstance(c, str)}) or \
+            any(not isinstance(c, str) for c in contact_ids):
+        raise HTTPException(status_code=404, detail="Contact introuvable")
+
     updated = 0
-    for cid in contact_ids:
+    for cid in _mt2_ok:
         result = await db.chat_participants.update_one(
-            {"id": cid},
+            {"id": cid, **_mt2_filtre(caller_email)},
             {"$addToSet": {"tags": {"$each": tags}}}
         )
         if result.modified_count:
@@ -21545,7 +21835,7 @@ async def get_feature_flags():
             "CHAT_READ_STRICT": False,         # V349 : défaut OFF (lecture du chat encore ouverte)
             "POSTHOG_IDENTIFY_ENABLED": False, # C9-B : défaut OFF (aucune identification)
             "MEMBER_PRICING_ENABLED": False,   # LOT 3b : défaut OFF (aucun tarif membre)
-            "RESERVATIONS_JWT_STRICT": False,  # LOT 3c-0 : défaut OFF (en-tête encore accepté)
+            "RESERVATIONS_JWT_STRICT": False,  # LOT 3c-0 ; INERTE depuis MT-5 : GET /reservations exige TOUJOURS un JWT signé
             "P1_TRIAL_J0_ENABLED": False,      # P1-b : défaut OFF (aucune relance)
             "P1_TRIAL_J0_ENVOI_REEL": False,   # P1-b : défaut OFF (simulation même si activé)
             "P1_TRIAL_J3_ENABLED": False,      # P1-d : défaut OFF (aucune relance J+3)
@@ -30132,8 +30422,9 @@ import unicodedata
 # sur le document suffisent — pas de collection par lecteur.
 #
 # LA SEULE NUANCE, ET ELLE TIENT EN UN `if`. `get_coach_filter` rend `{}` pour
-# un super-admin, et le depot en declare DEUX (`SUPER_ADMIN_EMAILS`). Le second
-# voit donc ces reponses sans en etre le proprietaire. S'il en ouvrait une, il
+# un super-admin, et le depot en declarait DEUX (`SUPER_ADMIN_EMAILS`). Le second
+# voyait donc ces reponses sans en etre le proprietaire (SA-1, 29/09/2026 : il
+# n'en reste qu'UN — la regle ci-dessous reste une defense en profondeur). S'il en ouvrait une, il
 # effacerait la pastille de celui qui doit repondre. D'ou la regle :
 # SEULE L'OUVERTURE PAR LE PROPRIETAIRE ECRIT `read_at`. Un autre compte peut
 # lire — il ne peut pas decider a sa place que c'est lu.
@@ -30228,7 +30519,7 @@ async def p3ai_ouvrir_reponse(inbound_id: str, request: Request):
     message = await p3ai_message_du_coach(inbound_id, email)
 
     if not p3ai_est_proprietaire(message, email):
-        # Consultation par un autre compte (second super-admin) : elle est
+        # Consultation par un autre compte (ex-second super-admin ; SA-1 : il n'y en a plus qu'un) : elle est
         # legitime, elle ne decide rien. On rend l'etat REEL du proprietaire.
         logger.info("[READ-P1] %s consulte %s sans en etre proprietaire",
                     email[:24], (message.get("id") or "")[:8])
@@ -34335,63 +34626,82 @@ async def g2_route_desactiver(evenement_id: str, request: Request):
 # --- Leads Routes (Widget IA) ---
 # v68: ISOLATION MULTI-TENANT — chaque lead est lié à un coach_id
 @api_router.get("/leads")
-async def get_leads(request: Request):
-    """Récupère les leads capturés via le widget IA — filtré par coach_id"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+async def get_leads(request: Request, limit: Optional[int] = None, skip: Optional[int] = None):
+    """Récupère les leads capturés via le widget IA — filtré par coach_id
 
-    # v68: Super Admin voit TOUS les leads, partenaire voit les siens
-    if is_super_admin(caller_email):
-        leads = await db.leads.find({}, {"_id": 0}).sort("createdAt", -1).to_list(500)
-    else:
-        leads = await db.leads.find(
-            {"coach_id": caller_email}, {"_id": 0}
-        ).sort("createdAt", -1).to_list(500)
-    return leads
+    MT-2 : identité `X-User-Email` BRUTE -> l'adresse du super-admin en en-tête
+    rendait TOUS les leads (prénom, e-mail, WhatsApp). JWT SIGNÉ désormais.
+    Aucun appelant frontend (vérifié) : la pagination est donc appliquée
+    d'office, 50 par page (`limit`/`skip`), conformément à la règle PII.
+    """
+    from api.routes.tenant_contacts import filtre_proprietaire as _mt2_filtre
+    caller_email = await _v309_require_coach_or_admin(request)
+    _l, _s = _mt2_pagination(limit, skip, 50, 50)
+    return await db.leads.find(_mt2_filtre(caller_email), {"_id": 0}).sort(
+        "createdAt", -1).skip(_s).limit(_l).to_list(_l)
 
 @api_router.post("/leads")
 async def create_lead(request: Request, lead: Lead):
-    """Enregistre un nouveau lead depuis le widget IA"""
-    from datetime import datetime, timezone
+    """Enregistre un nouveau lead depuis le widget IA
 
-    # v68: Récupérer le coach_id depuis le header ou le referer
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    # Si pas de header (widget public), utiliser DEFAULT_COACH_ID
-    coach_id = caller_email if caller_email else DEFAULT_COACH_ID
+    MT-2 — CHEMIN PUBLIC CONSERVÉ (ChatWidget, visiteur anonyme), rendu sûr :
+      * propriétaire : un JWT coach SIGNÉ, sinon la plateforme. `X-User-Email`
+        ne choisit plus le coach (n'importe qui plantait des leads chez un
+        coach de son choix) ;
+      * dédoublonnage : seulement sur des critères NON VIDES (un e-mail vide
+        retrouvait n'importe quel lead sans e-mail et renommait son prénom) ;
+        numéro comparé sous ses formes exactes, jamais une regex ;
+      * réponse : UNIQUEMENT ce que le visiteur vient d'envoyer. Avant, le lead
+        EXISTANT était renvoyé tel quel : soumettre le WhatsApp d'un tiers
+        rendait son e-mail. Le ChatWidget n'exploite pas la réponse.
+    """
+    from datetime import datetime, timezone
+    from api.routes.tenant_contacts import variantes_telephone as _mt2_vars
+
+    coach_id = DEFAULT_COACH_ID
+    try:
+        _mt2_coach = _v311_coach_email_from_jwt(request)
+        if _mt2_coach and not is_super_admin(_mt2_coach) and await _v309_is_coach_or_admin(_mt2_coach):
+            coach_id = _mt2_coach
+    except Exception:
+        coach_id = DEFAULT_COACH_ID
 
     lead_data = lead.model_dump()
-    lead_data["id"] = f"lead_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{lead.whatsapp[-4:]}"
+    lead_data["email"] = (lead.email or "").strip().lower()
+    lead_data["id"] = f"lead_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{(lead.whatsapp or '')[-4:]}"
     lead_data["createdAt"] = datetime.now(timezone.utc).isoformat()
     lead_data["coach_id"] = coach_id  # v68: Association au coach
 
     # Vérifier si le lead existe déjà (même email ou WhatsApp) POUR CE COACH
-    dup_filter = {"coach_id": coach_id, "$or": [{"email": lead.email}, {"whatsapp": lead.whatsapp}]}
-    existing = await db.leads.find_one(dup_filter)
+    _ou = []
+    if lead_data["email"]:
+        _ou.append({"email": lead_data["email"]})
+    _v = _mt2_vars(lead.whatsapp or "")
+    if _v:
+        _ou.append({"whatsapp": {"$in": _v}})
+    existing = await db.leads.find_one({"coach_id": coach_id, "$or": _ou}) if _ou else None
 
     if existing:
         await db.leads.update_one(
-            {"id": existing["id"]},
+            {"id": existing["id"], "coach_id": coach_id},
             {"$set": {"firstName": lead.firstName, "updatedAt": lead_data["createdAt"]}}
         )
-        existing["firstName"] = lead.firstName
-        return {**existing, "_id": None}
+        return {"success": True, "id": existing.get("id"), "firstName": lead.firstName,
+                "email": lead_data["email"], "whatsapp": lead.whatsapp,
+                "source": lead.source, "existing": True}
 
     await db.leads.insert_one(lead_data)
-    return {k: v for k, v in lead_data.items() if k != "_id"}
+    return {k: v for k, v in lead_data.items() if k not in ("_id", "coach_id")}
 
 @api_router.delete("/leads/{lead_id}")
 async def delete_lead(lead_id: str, request: Request):
-    """Supprime un lead — vérifie l'ownership"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    """Supprime un lead — vérifie l'ownership
 
-    # v68: Super Admin peut supprimer n'importe quel lead, partenaire seulement les siens
-    if is_super_admin(caller_email):
-        result = await db.leads.delete_one({"id": lead_id})
-    else:
-        result = await db.leads.delete_one({"id": lead_id, "coach_id": caller_email})
+    MT-2 : identité JWT SIGNÉE (plus `X-User-Email`) ; hors portefeuille -> 404.
+    """
+    from api.routes.tenant_contacts import filtre_proprietaire as _mt2_filtre
+    caller_email = await _v309_require_coach_or_admin(request)
+    result = await db.leads.delete_one({"id": lead_id, **_mt2_filtre(caller_email)})
 
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -35081,49 +35391,91 @@ appuie-toi dessus.
 # Système de chat amélioré avec reconnaissance utilisateur, modes et liens partageables
 
 # --- Chat Participants (CRM) ---
+# MT-2 : champs qu'un coach peut modifier sur SA fiche via PUT générique. Tout
+# le reste est ignoré — en particulier `coach_id` (propriétaire), `id`,
+# `contact_type` (route dédiée), `categories` (route dédiée), et les marqueurs
+# d'abonnement (`isSubscriber`, `subscriptionCode`, `code`) qui sont des faits
+# serveur, pas des saisies.
+MT2_CHAMPS_PARTICIPANT_MODIFIABLES = (
+    "name", "email", "whatsapp", "phone", "tags", "notes", "birthday", "source",
+)
+
+
+def _mt2_pagination(limit, skip, defaut: int, plafond: int):
+    """(limit, skip) bornés. `defaut` garde la compatibilité de l'écran existant."""
+    try:
+        _l = int(limit) if limit is not None else defaut
+    except (TypeError, ValueError):
+        _l = defaut
+    try:
+        _s = int(skip) if skip is not None else 0
+    except (TypeError, ValueError):
+        _s = 0
+    return max(1, min(_l, plafond)), max(0, _s)
+
+
 @api_router.get("/chat/participants")
-async def get_chat_participants(request: Request):
-    """Récupère les participants du chat (CRM) - Filtré par coach_id v8.9.5"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    
-    # RÈGLE ANTI-CASSE BASSI: Super Admin voit TOUT
-    if is_super_admin(caller_email):
-        participants = await db.chat_participants.find({}, {"_id": 0}).to_list(1000)
-    else:
-        # Coach normal: uniquement ses données (coach_id == son email)
-        participants = await db.chat_participants.find(
-            {"coach_id": caller_email}, {"_id": 0}
-        ).to_list(1000) if caller_email else []
-    return participants
+async def get_chat_participants(request: Request, limit: Optional[int] = None,
+                                skip: Optional[int] = None):
+    """Récupère les participants du chat (CRM) - Filtré par coach_id v8.9.5
+
+    MT-2 : l'identité venait de `X-User-Email` BRUT — l'adresse du super-admin
+    (publique dans le bundle) en en-tête rendait TOUT le CRM, même à un anonyme.
+    Désormais JWT SIGNÉ (`_v309_require_coach_or_admin`), filtre propriétaire
+    (`tenant_contacts.filtre_proprietaire`). Pagination OPTIONNELLE : sans
+    paramètre, le plafond historique de 1000 est conservé (l'écran Conversations
+    et le calendrier des anniversaires attendent la liste d'un coup).
+    """
+    from api.routes.tenant_contacts import filtre_proprietaire as _mt2_filtre
+    caller_email = await _v309_require_coach_or_admin(request)
+    _l, _s = _mt2_pagination(limit, skip, 1000, 1000)
+    return await db.chat_participants.find(
+        _mt2_filtre(caller_email), {"_id": 0}).skip(_s).limit(_l).to_list(_l)
+
 
 @api_router.get("/chat/participants/{participant_id}")
-async def get_chat_participant(participant_id: str):
-    """Récupère un participant par son ID"""
-    participant = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0})
+async def get_chat_participant(participant_id: str, request: Request):
+    """Récupère un participant par son ID.
+
+    MT-2 : était PUBLIQUE (fiche complète — e-mail, WhatsApp — contre un id).
+    Aucun appelant visiteur (le ChatWidget passe par /chat/smart-entry). JWT
+    signé + propriétaire ; la fiche d'un autre coach répond 404, comme une
+    fiche inexistante (on ne révèle pas son existence).
+    """
+    from api.routes.tenant_contacts import filtre_proprietaire as _mt2_filtre
+    caller_email = await _v309_require_coach_or_admin(request)
+    participant = await db.chat_participants.find_one(
+        {"id": participant_id, **_mt2_filtre(caller_email)}, {"_id": 0})
     if not participant:
         raise HTTPException(status_code=404, detail="Participant non trouvé")
     return participant
+
+
 @api_router.post("/chat/participants")
 async def create_chat_participant(participant: ChatParticipantCreate, request: Request):
-    """v104: Upsert contact — déduplique par email/phone, met à jour si existant"""
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
-    coach_id = coach_email if (coach_email and not is_super_admin(coach_email)) else DEFAULT_COACH_ID
+    """v104: Upsert contact — déduplique par email/phone, met à jour si existant
+
+    MT-2 — trois défauts fermés :
+      1. identité : JWT SIGNÉ (plus `X-User-Email`). Appelants : ContactsManager
+         et CoachDashboard, tous deux en axios (Bearer ajouté par l'intercepteur).
+      2. dédoublonnage : BORNÉ à la portée du coach. Avant, la fiche EXISTANTE
+         d'un autre coach était retrouvée, renommée, et RENVOYÉE (fuite + écrasement).
+      3. regex : le numéro saisi était injecté dans `$regex` (`whatsapp: "."`
+         = fiche au hasard ; `+` = 500). Désormais égalité stricte sur les
+         variantes exactes du numéro canonique (`tenant_contacts`).
+    """
+    from api.routes.tenant_contacts import (
+        portee_ecriture as _mt2_portee, doublon_dans_portee as _mt2_doublon,
+        normaliser_telephone as _mt2_tel,
+    )
+    coach_email = await _v309_require_coach_or_admin(request)
+    coach_id, _portee = _mt2_portee(coach_email)
 
     p = participant.model_dump()
     email = (p.get("email") or "").strip().lower()
     phone = (p.get("whatsapp") or p.get("phone") or "").replace(" ", "").replace("-", "")
 
-    # v104: Recherche doublon par email ou phone
-    dup_query = {"$or": []}
-    if email:
-        dup_query["$or"].append({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
-    if phone:
-        dup_query["$or"].append({"whatsapp": {"$regex": phone}})
-        dup_query["$or"].append({"phone": {"$regex": phone}})
-
-    existing = None
-    if dup_query["$or"]:
-        existing = await db.chat_participants.find_one(dup_query, {"_id": 0})
+    existing = await _mt2_doublon(db, _portee, email=email, telephone=phone)
 
     if existing:
         # Mettre à jour les champs non vides
@@ -35132,7 +35484,7 @@ async def create_chat_participant(participant: ChatParticipantCreate, request: R
             updates["name"] = p["name"]
         if email and not existing.get("email"):
             updates["email"] = email
-        if phone and not existing.get("whatsapp"):
+        if phone and _mt2_tel(phone) and not existing.get("whatsapp"):
             updates["whatsapp"] = phone
         if p.get("source") and p["source"] != existing.get("source"):
             updates["source"] = p["source"]
@@ -35140,8 +35492,11 @@ async def create_chat_participant(participant: ChatParticipantCreate, request: R
         new_tags = p.get("tags", [])
         if new_tags:
             updates["tags"] = list(set(existing.get("tags", []) + new_tags))
-        await db.chat_participants.update_one({"id": existing["id"]}, {"$set": updates})
-        updated = await db.chat_participants.find_one({"id": existing["id"]}, {"_id": 0})
+        # MT-2 : l'écriture reprend le filtre de portée — ceinture ET bretelles.
+        await db.chat_participants.update_one(
+            {"$and": [{"id": existing["id"]}, _portee]}, {"$set": updates})
+        updated = await db.chat_participants.find_one(
+            {"$and": [{"id": existing["id"]}, _portee]}, {"_id": 0})
         return updated
 
     # Nouveau contact — vérifier crédits
@@ -35151,15 +35506,23 @@ async def create_chat_participant(participant: ChatParticipantCreate, request: R
             raise HTTPException(status_code=402, detail="Crédits insuffisants. Achetez un pack pour continuer.")
         await deduct_credit(coach_email, "création contact")
 
+    if email:
+        p["email"] = email  # MT-2 : stocké normalisé, comme la clé de dédoublonnage
     participant_obj = ChatParticipant(**p)
     participant_data = participant_obj.model_dump()
     participant_data["coach_id"] = coach_id
     await db.chat_participants.insert_one(participant_data)
     participant_data.pop("_id", None)
-    return participant_data
+    # MT-2 : la réponse de CRÉATION ne ré-émet pas les coordonnées (e-mail,
+    # WhatsApp) : l'appelant les connaît déjà, et la réponse ne doit jamais
+    # pouvoir servir de sonde « cette adresse existe-t-elle ailleurs ? ». Les
+    # deux écrans appelants rechargent la liste juste après (CoachDashboard :
+    # refetch V193 ; ContactsManager : loadContacts).
+    return {k: v for k, v in participant_data.items() if k not in ("email", "whatsapp", "phone")}
 
 @api_router.get("/chat/participants/find")
 async def find_participant(
+    request: Request,
     name: Optional[str] = None,
     email: Optional[str] = None,
     whatsapp: Optional[str] = None
@@ -35167,33 +35530,71 @@ async def find_participant(
     """
     Recherche un participant par nom, email ou WhatsApp.
     Utilisé pour la reconnaissance automatique des utilisateurs.
+
+    MT-2 : route MASQUÉE en pratique (déclarée après `/chat/participants/{id}`,
+    qui capture « find »), mais elle injectait `name` et `whatsapp` BRUTS dans
+    `$regex` sur toute la collection, sans authentification. Si l'ordre des
+    routes changeait, elle deviendrait un annuaire public. Fermée : JWT signé,
+    portée du coach, littéraux échappés/égalité stricte.
     """
-    query = {"$or": []}
-    
-    if name:
-        query["$or"].append({"name": {"$regex": name, "$options": "i"}})
-    if email:
-        query["$or"].append({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
+    from api.routes.tenant_contacts import (
+        filtre_proprietaire as _mt2_filtre, variantes_telephone as _mt2_vars,
+    )
+    caller_email = await _v309_require_coach_or_admin(request)
+    ou = []
+    if name and name.strip():
+        ou.append({"name": {"$regex": "^" + re.escape(name.strip()) + "$", "$options": "i"}})
+    if email and email.strip():
+        ou.append({"email": {"$regex": f"^{re.escape(email.strip())}$", "$options": "i"}})
     if whatsapp:
-        # Nettoyer le numéro WhatsApp pour la recherche
-        clean_whatsapp = whatsapp.replace(" ", "").replace("-", "").replace("+", "")
-        query["$or"].append({"whatsapp": {"$regex": clean_whatsapp}})
-    
-    if not query["$or"]:
+        _v = _mt2_vars(whatsapp)
+        if _v:
+            ou.append({"whatsapp": {"$in": _v}})
+    if not ou:
         return None
-    
-    participant = await db.chat_participants.find_one(query, {"_id": 0})
-    return participant
+    return await db.chat_participants.find_one(
+        {"$and": [_mt2_filtre(caller_email), {"$or": ou}]}, {"_id": 0})
 
 @api_router.put("/chat/participants/{participant_id}")
-async def update_chat_participant(participant_id: str, update_data: dict):
-    """Met à jour un participant"""
-    update_data["last_seen_at"] = datetime.now(timezone.utc).isoformat()
-    await db.chat_participants.update_one(
-        {"id": participant_id},
-        {"$set": update_data}
-    )
-    updated = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0})
+async def update_chat_participant(participant_id: str, update_data: dict, request: Request):
+    """Met à jour un participant
+
+    MT-2 : était SANS AUTHENTIFICATION, avec un `$set` LIBRE — y compris
+    `coach_id` (voler la fiche d'un autre coach) et n'importe quel champ.
+    Aucun appelant frontend (vérifié : seul `/birthday`, route distincte, est
+    appelé par le ChatWidget). Désormais : JWT signé, propriétaire (404 sinon),
+    LISTE BLANCHE `MT2_CHAMPS_PARTICIPANT_MODIFIABLES`.
+    """
+    from api.routes.tenant_contacts import filtre_proprietaire as _mt2_filtre
+    caller_email = await _v309_require_coach_or_admin(request)
+    _filtre = {"id": participant_id, **_mt2_filtre(caller_email)}
+    if not await db.chat_participants.find_one(_filtre, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Participant non trouvé")
+    if not isinstance(update_data, dict):
+        raise HTTPException(status_code=400, detail="Corps invalide")
+    # MT-2 : un champ hors liste blanche est REFUSÉ (400), jamais ignoré en
+    # silence derrière un 200 sans effet.
+    _refuses = sorted(k for k in update_data
+                      if k not in MT2_CHAMPS_PARTICIPANT_MODIFIABLES and k != "last_seen_at")
+    if _refuses:
+        raise HTTPException(status_code=400,
+                            detail="Champ(s) non modifiable(s) : " + ", ".join(str(k) for k in _refuses)[:200])
+    _maj = {}
+    for _k in MT2_CHAMPS_PARTICIPANT_MODIFIABLES:
+        if isinstance(update_data, dict) and _k in update_data:
+            _v = update_data[_k]
+            if _k == "tags":
+                if not isinstance(_v, list):
+                    continue
+                _v = [str(t)[:60] for t in _v if isinstance(t, (str, int))][:50]
+            elif _v is not None and not isinstance(_v, (str, int, float, bool)):
+                continue  # jamais d'objet : pas d'opérateur Mongo glissé dans une valeur
+            if _k == "email" and isinstance(_v, str):
+                _v = _v.strip().lower()
+            _maj[_k] = _v
+    _maj["last_seen_at"] = datetime.now(timezone.utc).isoformat()
+    await db.chat_participants.update_one(_filtre, {"$set": _maj})
+    updated = await db.chat_participants.find_one(_filtre, {"_id": 0})
     return updated
 
 @api_router.delete("/chat/participants/{participant_id}")
@@ -35217,7 +35618,9 @@ async def delete_chat_participant(participant_id: str, request: Request):
     if not is_super_admin(caller):
         owner = (participant.get("coach_id") or "").lower().strip()
         if not owner or owner != caller.lower().strip():
-            raise HTTPException(status_code=403, detail="Cette fiche ne vous appartient pas")
+            # MT-2 : 404 et non 403 — un 403 confirmait l'EXISTENCE de la fiche
+            # d'un autre coach (oracle d'appartenance).
+            raise HTTPException(status_code=404, detail="Participant non trouve")
 
     participant_name = participant.get('name', 'inconnu')
     # Relever les sessions AVANT modification, pour restaurer l'appartenance.
@@ -35510,17 +35913,38 @@ async def join_group_automatically(request: GroupJoinRequest):
         
         logger.info(f"[GROUP-JOIN] 🚀 Tentative adhésion: {email} -> groupe {group_id}")
         
-        # Vérifier si le groupe existe
-        # Chercher dans les sessions avec ce ID ou ce mode
-        group_session = await db.chat_sessions.find_one(
-            {"$or": [
-                {"id": group_id},
-                {"mode": group_id},
-                {"title": {"$regex": group_id, "$options": "i"}}
-            ]},
-            {"_id": 0}
-        )
-        
+        # MT-7 : RÉSOLUTION STRICTE. Avant : `id` OU `mode` OU `title` en REGEX
+        # construite depuis l'entrée utilisateur, sur TOUTES les sessions — un
+        # anonyme s'ajoutait à n'importe quelle conversation (groupe d'un autre
+        # coach, session PRIVÉE) puis en lisait l'historique en participant.
+        # Désormais, trois cibles seulement, par égalité stricte :
+        #   1. le `link_token` d'un groupe (`chat_groups`) — c'est ce que porte
+        #      le lien `?group=<jeton>` généré par GroupChatModule ;
+        #   2. un salon public standard (community / vip / promo) par son mode ;
+        #   3. l'id exact d'un tel salon public.
+        # Aucune session privée ni groupe sans jeton n'est jamais rejoignable.
+        _mt7_publics = ["community", "vip", "promo"]
+        group_session = None
+        _mt7_groupe = None
+        if not isinstance(group_id, str) or not group_id.strip() or "$" in group_id or len(group_id) > 128:
+            raise HTTPException(status_code=404, detail="Groupe non trouvé")
+        group_id = group_id.strip()
+        _mt7_groupe = await db.chat_groups.find_one(
+            {"link_token": group_id, "is_deleted": {"$ne": True}}, {"_id": 0, "id": 1, "name": 1})
+        if _mt7_groupe:
+            group_session = await db.chat_sessions.find_one(
+                {"id": f"grp_{_mt7_groupe['id'][:8]}", "is_deleted": {"$ne": True}}, {"_id": 0})
+            if not group_session:
+                raise HTTPException(status_code=404, detail="Groupe non trouvé")
+        elif group_id in _mt7_publics:
+            group_session = await db.chat_sessions.find_one(
+                {"mode": group_id, "is_deleted": {"$ne": True}}, {"_id": 0})
+        else:
+            group_session = await db.chat_sessions.find_one(
+                {"id": group_id, "mode": {"$in": _mt7_publics}, "is_deleted": {"$ne": True}}, {"_id": 0})
+            if not group_session:
+                raise HTTPException(status_code=404, detail="Groupe non trouvé")
+
         # Si le groupe n'existe pas, créer un groupe standard
         if not group_session:
             # Vérifier si c'est un mode standard (community, vip, promo)
@@ -35573,6 +35997,10 @@ async def join_group_automatically(request: GroupJoinRequest):
                     "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
                 }
             )
+            if _mt7_groupe:
+                # MT-7 : garder `chat_groups.member_ids` cohérent avec la session.
+                await db.chat_groups.update_one({"id": _mt7_groupe["id"]},
+                                                {"$addToSet": {"member_ids": participant_id}})
             logger.info(f"[GROUP-JOIN] ✅ {name} ajouté au groupe {session_id}")
         else:
             logger.info(f"[GROUP-JOIN] ℹ️ {name} déjà membre du groupe {session_id}")
@@ -36458,27 +36886,78 @@ async def _v349_exiger_proprietaire(request: Request, group_id: str, action: str
     """
     V349 — écriture sur un groupe : identité SIGNÉE **et** propriété.
 
-    Les routes de modification, suppression et visibilité se contentaient de
-    `require_auth` — qui accepte le repli `X-User-Email` (V265) — et ne vérifiaient
-    AUCUNE appartenance : n'importe quel coach authentifié pouvait modifier ou
-    supprimer le groupe d'un autre. Un MEMBRE n'obtient jamais ces droits : seuls
-    le propriétaire et le super-admin passent.
-
-    Sans effet tant que le drapeau est OFF (comportement actuel préservé).
+    MT-7 : la garde ne dépend PLUS du drapeau `CHAT_READ_STRICT` (drapeau OFF,
+    `require_auth` laissait passer le repli X-User-Email et AUCUNE propriété
+    n'était vérifiée). Désormais, toujours :
+      - JWT coach/admin signé exigé (`_v309_require_coach_or_admin`) -> 403 sinon ;
+      - groupe d'un AUTRE coach -> 404 (existence non révélée) ;
+      - groupe historique sans `coach_id` -> super-admin seul (fail-closed).
+    Appelants : GroupChatModule.js (`v349Entetes` -> Bearer), aucun autre.
     """
-    if not await _v349_lecture_stricte():
-        return ""
-    email = _v311_coach_email_from_jwt(request)
-    if not email:
-        logger.warning(f"[V349] REFUS {action} du groupe {group_id} — aucun jeton signé")
-        raise HTTPException(status_code=403, detail="Action réservée au coach propriétaire")
-    groupe = await db.chat_groups.find_one({"id": group_id}, {"_id": 0, "coach_id": 1})
-    if not groupe:
-        raise HTTPException(status_code=404, detail="Groupe introuvable")
-    if not is_super_admin(email) and (groupe.get("coach_id") or "").strip().lower() != email:
-        logger.warning(f"[V349] REFUS {action} du groupe {group_id} — {email} n'en est pas propriétaire")
-        raise HTTPException(status_code=403, detail="Action réservée au coach propriétaire")
+    email, _ = await _mt7_groupe_du_coach(request, group_id, action)
     return email
+
+
+def _mt7_peut_administrer(email: str, groupe: dict) -> bool:
+    """MT-7 : super-admin (identité signée) -> tout groupe ; coach -> SES groupes.
+    Un groupe sans `coach_id` n'appartient à aucun coach (fail-closed)."""
+    if is_super_admin(email):
+        return True
+    _proprio = (groupe.get("coach_id") or "") if isinstance(groupe.get("coach_id"), str) else ""
+    return bool(_proprio.strip()) and _proprio.strip().lower() == email
+
+
+async def _mt7_groupe_du_coach(request: Request, group_id: str, action: str):
+    """MT-7 : (email signé, groupe) si l'appelant administre ce groupe, sinon
+    403 (pas de jeton coach signé) ou 404 (groupe absent OU d'un autre coach)."""
+    email = await _v309_require_coach_or_admin(request)
+    groupe = None
+    if isinstance(group_id, str) and group_id and "$" not in group_id and len(group_id) <= 128:
+        groupe = await db.chat_groups.find_one({"id": group_id}, {"_id": 0})
+    if not groupe or not _mt7_peut_administrer(email, groupe):
+        if groupe:
+            logger.warning(f"[MT-7] REFUS {action} du groupe {group_id} — l'appelant n'en est pas propriétaire")
+        raise HTTPException(status_code=404, detail="Groupe introuvable")
+    return email, groupe
+
+
+def _mt7_portee_membres(groupe: dict, appelant: str = "") -> str:
+    """MT-7 : portefeuille qui borne les membres d'un groupe = celui de son
+    PROPRIÉTAIRE. '' = portée globale : appelant super-admin (identité signée),
+    ou groupe d'un super-admin / historique (administrable par lui seul)."""
+    if appelant and is_super_admin(appelant):
+        return ""
+    _p = groupe.get("coach_id") if isinstance(groupe.get("coach_id"), str) else ""
+    _p = (_p or "").strip().lower()
+    if not _p or _p in ("bassi_default", DEFAULT_COACH_ID) or is_super_admin(_p):
+        return ""
+    return _p
+
+
+async def _mt7_membres_autorises(proprietaire: str, demandes, existants=()) -> list:
+    """MT-7 : liste des membres à ENREGISTRER.
+
+    - un membre déjà présent reste (on n'éjecte pas un invité entré par lien) ;
+    - un NOUVEAU membre doit appartenir au portefeuille du propriétaire
+      (`tenant_contacts.filtrer_ids` sur chat_participants + users, lectures
+      groupées `$in`) ; portée globale : tout identifiant texte sain.
+    Ordre de la demande conservé, doublons et ids hostiles retirés."""
+    from api.routes.tenant_contacts import filtrer_ids as _mt7_filtrer
+    _deja = {i for i in (existants or []) if isinstance(i, str)}
+    _propres = []
+    for _i in demandes or []:
+        if isinstance(_i, str) and _i.strip() and "$" not in _i and len(_i) <= 128 and _i not in _propres:
+            _propres.append(_i)
+    _nouveaux = [i for i in _propres if i not in _deja]
+    if proprietaire and _nouveaux:
+        _ok = set(await _mt7_filtrer(db, proprietaire, "chat_participants", _nouveaux))
+        _ok |= set(await _mt7_filtrer(db, proprietaire, "users", [i for i in _nouveaux if i not in _ok]))
+    else:
+        _ok = set(_nouveaux)
+    _out = [i for i in _propres if i in _deja or i in _ok]
+    if len(_out) < len(_propres):
+        logger.warning("[MT-7] %d membre(s) hors portefeuille du propriétaire refusé(s)", len(_propres) - len(_out))
+    return _out
 
 
 async def _v349_lecture_stricte() -> bool:
@@ -38065,8 +38544,12 @@ async def get_chat_link_by_token(token: str):
     Récupère un lien de chat par son link_token.
     Utilisé par le tunnel d'onboarding pour charger les questions personnalisées.
     """
+    # MT-7 : une session de GROUPE n'est pas un lien intelligent — sans ce
+    # filtre, son id (visible des membres) rendait le jeton d'invitation et le
+    # prompt IA du groupe à un anonyme.
     link = await db.chat_sessions.find_one(
-        {"$or": [{"link_token": token}, {"id": token}], "is_deleted": {"$ne": True}},
+        {"$or": [{"link_token": token}, {"id": token}], "is_deleted": {"$ne": True},
+         "mode": {"$ne": "group"}, "group_id": {"$exists": False}},
         {"_id": 0, "id": 1, "link_token": 1, "title": 1, "custom_prompt": 1, "lead_type": 1,
          "tunnel_questions": 1, "end_actions": 1, "welcome_message": 1, "is_ai_active": 1}
     )
@@ -38141,8 +38624,12 @@ async def delete_chat_link(link_id: str):
     """
     logger.info(f"[DELETE] Suppression lien: {link_id}")
     
+    # MT-7 : route SANS identité — elle ne doit au moins jamais atteindre une
+    # session de GROUPE (un anonyme supprimait le groupe d'un coach par son id).
+    # Les groupes se suppriment par DELETE /chat/groups/{id} (propriétaire signé).
     result = await db.chat_sessions.update_one(
-        {"$or": [{"id": link_id}, {"link_token": link_id}]},
+        {"$or": [{"id": link_id}, {"link_token": link_id}],
+         "mode": {"$ne": "group"}, "group_id": {"$exists": False}},
         {"$set": {"is_deleted": True, "deleted_at": datetime.now(timezone.utc).isoformat()}}
     )
     
@@ -38192,8 +38679,11 @@ async def update_chat_link(link_id: str, request: Request):
     if len(update_fields) <= 1:  # Only updated_at
         raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
 
+    # MT-7 : jamais une session de GROUPE (titre / prompt IA d'un groupe d'un
+    # autre coach réécrits sans identité) — voir PUT /chat/groups/{id}.
     result = await db.chat_sessions.update_one(
-        {"$or": [{"id": link_id}, {"link_token": link_id}], "is_deleted": {"$ne": True}},
+        {"$or": [{"id": link_id}, {"link_token": link_id}], "is_deleted": {"$ne": True},
+         "mode": {"$ne": "group"}, "group_id": {"$exists": False}},
         {"$set": update_fields}
     )
 
@@ -39549,11 +40039,15 @@ async def send_group_message(request: Request):
     d'identité — n'importe qui pouvait écrire à tous tes contacts au nom du coach.
     Elle est désormais réservée au coach, sur identité SIGNÉE (comme V348).
     """
-    if await _v349_lecture_stricte():
-        _emetteur = _v311_coach_email_from_jwt(request)
-        if not _emetteur or not await _v309_is_coach_or_admin(_emetteur):
-            logger.warning("[V349] REFUS diffusion de groupe — appelant sans jeton coach signé")
-            raise HTTPException(status_code=403, detail="Diffusion réservée au coach")
+    # MT-7 : cette diffusion part à TOUS les `chat_participants` de TOUS les
+    # coachs (e-mails de secours compris) et s'affiche sur le mur COMMUN : c'est
+    # un outil PLATEFORME. Réservé au super-admin signé, drapeau ou non (avant :
+    # rien drapeau OFF, n'importe quel coach drapeau ON). Aucun écran ne l'appelle
+    # aujourd'hui (`sendGroupMessage` de CoachDashboard n'est branché nulle part).
+    _emetteur = _v311_coach_email_from_jwt(request)
+    if not _emetteur or not is_super_admin(_emetteur):
+        logger.warning("[MT-7] REFUS diffusion de groupe — appelant non super-admin signé")
+        raise HTTPException(status_code=403, detail="Diffusion réservée à l'administrateur")
     body = await request.json()
     message_text = body.get("message", "").strip()
     coach_name = body.get("coach_name", "Coach Bassi")
@@ -39591,16 +40085,30 @@ async def send_group_message(request: Request):
 # ====== v101: CRUD Groupes de Chat ======
 @api_router.post("/chat/groups")
 async def create_chat_group(request: Request):
-    """v101: Créer un groupe de chat avec membres sélectionnés et prompt IA dédié"""
-    require_auth(request)
+    """v101: Créer un groupe de chat avec membres sélectionnés et prompt IA dédié
+
+    MT-7 : `require_auth` + `X-User-Email` BRUT décidaient du propriétaire — un
+    en-tête suffisait à créer un groupe au nom d'un autre coach, peuplé de
+    n'importe quels contacts (le groupe devenait ensuite une CIBLE de campagne).
+    Désormais : JWT coach/admin signé, `coach_id` = identité du jeton, membres
+    bornés au portefeuille du créateur (super-admin : global).
+    Appelant : GroupChatModule.js `handleCreate` (`v349Entetes` -> Bearer).
+    """
+    coach_email = await _v309_require_coach_or_admin(request)
     body = await request.json()
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
-    name = body.get("name", "").strip()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Corps invalide")
+    name = body.get("name", "")
+    name = name.strip() if isinstance(name, str) else ""
     if not name:
         raise HTTPException(status_code=400, detail="Le nom du groupe est requis")
-    member_ids = body.get("members", [])
+    _mt7_membres = body.get("members", [])
+    if not isinstance(_mt7_membres, list):
+        raise HTTPException(status_code=400, detail="members doit être une liste")
+    member_ids = await _mt7_membres_autorises(_mt7_portee_membres({"coach_id": coach_email}), _mt7_membres)
     system_prompt = body.get("system_prompt", "")
-    is_ai_active = body.get("is_ai_active", True)
+    system_prompt = system_prompt if isinstance(system_prompt, str) else ""
+    is_ai_active = bool(body.get("is_ai_active", True))
 
     group_id = str(uuid.uuid4())
     link_token = str(uuid.uuid4())[:8]
@@ -39652,16 +40160,16 @@ async def get_chat_groups(request: Request):
     `link_token` d'invitation et les prompts IA.
     Désormais : identité SIGNÉE obligatoire, et cadrage sur SES propres groupes.
     """
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if await _v349_lecture_stricte():
-        _signe = _v311_coach_email_from_jwt(request)
-        if not _signe:
-            logger.warning(f"[V349] REFUS liste des groupes — « {caller_email or 'anonyme'} » "
-                           f"sans jeton signé")
-            raise HTTPException(status_code=403, detail="Accès réservé au coach")
-        caller_email = _signe
+    # MT-7 : identité SIGNÉE toujours exigée (plus seulement drapeau ON) —
+    # drapeau OFF, `X-User-Email` d'un super-admin listait TOUS les groupes et
+    # leurs membres. Coach -> ses groupes ; super-admin -> global (historiques
+    # sans coach_id compris). Appelants : CoachDashboard, CampaignModal,
+    # CampaignManager (axios -> Bearer par l'intercepteur), GroupChatModule
+    # (`v349Entetes`) ; `authSession.js` range déjà `/chat/groups` parmi les
+    # routes à signature requise.
+    caller_email = await _v309_require_coach_or_admin(request)
     query = {"is_deleted": {"$ne": True}}
-    if caller_email and not is_super_admin(caller_email):
+    if not is_super_admin(caller_email):
         query["coach_id"] = caller_email
     groups = await db.chat_groups.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
 
@@ -39696,12 +40204,21 @@ async def get_chat_groups(request: Request):
             ).to_list(len(manquants)):
                 par_id.setdefault(u.get("id"), u)
 
+    # MT-7 : un coach ne lit l'e-mail que des membres de SON portefeuille (un
+    # invité venu d'ailleurs par le lien garde son nom, pas son adresse).
+    _mt7_visibles = None
+    if not is_super_admin(caller_email) and ids_uniques:
+        from api.routes.tenant_contacts import filtrer_ids as _mt7_filtrer
+        _mt7_visibles = set(await _mt7_filtrer(db, caller_email, "chat_participants", ids_uniques))
+        _mt7_visibles |= set(await _mt7_filtrer(db, caller_email, "users",
+                                                [i for i in ids_uniques if i not in _mt7_visibles]))
     for g in groups:
         members_info = []
         for mid in g.get("member_ids", []):
             p = par_id.get(mid)
             if p:
-                members_info.append({"id": mid, "name": p.get("name", ""), "email": p.get("email", "")})
+                _mt7_mail = p.get("email", "") if (_mt7_visibles is None or mid in _mt7_visibles) else ""
+                members_info.append({"id": mid, "name": p.get("name", ""), "email": _mt7_mail})
             else:
                 members_info.append({"id": mid, "name": "Inconnu", "email": ""})
         g["members_info"] = members_info
@@ -39717,20 +40234,34 @@ async def update_chat_group(group_id: str, request: Request):
     propriété — n'importe quel coach authentifié pouvait modifier le groupe d'un
     autre. Identité signée + propriétaire, désormais.
     """
-    require_auth(request)
-    await _v349_exiger_proprietaire(request, group_id, "modification")
+    # MT-7 : garde inconditionnelle (JWT signé, 404 hors propriété), liste
+    # blanche TYPÉE, `coach_id` / `link_token` jamais modifiables, nouveaux
+    # membres bornés au portefeuille du PROPRIÉTAIRE du groupe.
+    _mt7_appelant, _mt7_groupe = await _mt7_groupe_du_coach(request, group_id, "modification")
     body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Corps invalide")
     update_fields = {"updated_at": datetime.now(timezone.utc).isoformat()}
-    for key in ["name", "member_ids", "system_prompt", "is_ai_active"]:
-        if key in body:
-            update_fields[key] = body[key]
+    if "name" in body:
+        if not isinstance(body["name"], str) or not body["name"].strip():
+            raise HTTPException(status_code=400, detail="Le nom du groupe est requis")
+        update_fields["name"] = body["name"].strip()
+    if "system_prompt" in body:
+        update_fields["system_prompt"] = body["system_prompt"] if isinstance(body["system_prompt"], str) else ""
+    if "is_ai_active" in body:
+        update_fields["is_ai_active"] = bool(body["is_ai_active"])
+    if "member_ids" in body:
+        if not isinstance(body["member_ids"], list):
+            raise HTTPException(status_code=400, detail="member_ids doit être une liste")
+        update_fields["member_ids"] = await _mt7_membres_autorises(
+            _mt7_portee_membres(_mt7_groupe, _mt7_appelant), body["member_ids"], _mt7_groupe.get("member_ids") or [])
     await db.chat_groups.update_one({"id": group_id}, {"$set": update_fields})
     # Sync session liée
     session_update = {}
-    if "name" in body: session_update["title"] = body["name"]
-    if "system_prompt" in body: session_update["custom_prompt"] = body["system_prompt"]
-    if "is_ai_active" in body: session_update["is_ai_active"] = body["is_ai_active"]
-    if "member_ids" in body: session_update["participant_ids"] = body["member_ids"]
+    if "name" in update_fields: session_update["title"] = update_fields["name"]
+    if "system_prompt" in update_fields: session_update["custom_prompt"] = update_fields["system_prompt"]
+    if "is_ai_active" in update_fields: session_update["is_ai_active"] = update_fields["is_ai_active"]
+    if "member_ids" in update_fields: session_update["participant_ids"] = update_fields["member_ids"]
     if session_update:
         session_update["updated_at"] = update_fields["updated_at"]
         await db.chat_sessions.update_one({"group_id": group_id}, {"$set": session_update})
@@ -39744,8 +40275,7 @@ async def delete_chat_group(group_id: str, request: Request):
 
     V349 : identite signee + proprietaire (voir _v349_exiger_proprietaire).
     """
-    require_auth(request)
-    await _v349_exiger_proprietaire(request, group_id, "suppression")
+    await _v349_exiger_proprietaire(request, group_id, "suppression")  # MT-7 : JWT signé + 404 hors propriété
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.chat_groups.update_one({"id": group_id}, {"$set": {"is_deleted": True, "deleted_at": now_iso}})
     await db.chat_sessions.update_one({"group_id": group_id}, {"$set": {"is_deleted": True}})
@@ -39777,7 +40307,11 @@ async def get_public_groups(request: Request):
     #   2. `member_ids` et `link_token` ne sortent JAMAIS : un membre n'a aucun
     #      besoin de la liste des identifiants des autres, et le jeton d'invitation
     #      est précisément ce qui permet de rejoindre. Seul le NOMBRE est renvoyé.
-    if await _v349_lecture_stricte():
+    # MT-7 : filtre INCONDITIONNEL (plus seulement drapeau ON) — ce n'est pas
+    # une vitrine publique : chaque appelant ne voit que les groupes où il est
+    # membre (ou, coach signé, les siens ; super-admin : tous). Aucune identité
+    # -> 403. C'était déjà le comportement de production (drapeau ON).
+    if True:
         _signe = _v311_coach_email_from_jwt(request)
         _pid = (request.query_params.get("participant_id") or "").strip()
         _mes_pids = {_pid} if _pid else set()
@@ -39811,10 +40345,14 @@ async def get_public_groups(request: Request):
         g["member_count"] = len(g.get("member_ids", []))
 
     # V349 : retrait des données sensibles APRÈS le calcul du compteur.
-    if await _v349_lecture_stricte():
-        for g in groups:
-            g.pop("member_ids", None)
-            g.pop("link_token", None)
+    # MT-7 : TOUJOURS (plus seulement drapeau ON) — la vue membre n'a besoin ni
+    # des identifiants des autres membres, ni du jeton d'invitation, ni du
+    # prompt IA d'administration (ChatWidget n'en lit aucun). `coach_id` reste :
+    # c'est l'e-mail professionnel du coach, déjà affiché sur sa vitrine.
+    for g in groups:
+        g.pop("member_ids", None)
+        g.pop("link_token", None)
+        g.pop("system_prompt", None)
 
     return groups
 
@@ -39825,8 +40363,7 @@ async def v198_toggle_group_visibility(group_id: str, request: Request):
 
     V349 : identite signee + proprietaire.
     """
-    require_auth(request)
-    await _v349_exiger_proprietaire(request, group_id, "visibilité")
+    await _v349_exiger_proprietaire(request, group_id, "visibilité")  # MT-7 : JWT signé + 404 hors propriété
     body = await request.json()
     visible = bool(body.get("visible_to_subscribers", True))
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -39851,36 +40388,56 @@ async def join_chat_group(group_id: str, request: Request):
         déjà sur chaque groupe, il n'attendait que d'être exigé.
     """
     body = await request.json()
-    participant_id = body.get("participant_id", "").strip()
-    if not participant_id:
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Corps invalide")
+    participant_id = body.get("participant_id", "")
+    participant_id = participant_id.strip() if isinstance(participant_id, str) else ""
+    if not participant_id or "$" in participant_id or len(participant_id) > 128:
         raise HTTPException(status_code=400, detail="participant_id requis")
 
     # Vérifier que le groupe existe
-    group = await db.chat_groups.find_one(
-        {"id": group_id, "is_deleted": {"$ne": True}}, {"_id": 0}
-    )
+    group = None
+    if isinstance(group_id, str) and "$" not in group_id and len(group_id) <= 128:
+        group = await db.chat_groups.find_one(
+            {"id": group_id, "is_deleted": {"$ne": True}}, {"_id": 0}
+        )
     if not group:
         raise HTTPException(status_code=404, detail="Groupe introuvable")
 
-    if await _v349_lecture_stricte():
-        _email = _v311_coach_email_from_jwt(request)
-        _est_proprio = bool(_email) and (is_super_admin(_email)
-                                         or (group.get("coach_id") or "").strip().lower() == _email)
-        _jeton_fourni = (body.get("link_token") or "").strip()
-        _jeton_attendu = (group.get("link_token") or "").strip()
-        _invite = bool(_jeton_attendu) and _jeton_fourni == _jeton_attendu
-        if not _est_proprio and not _invite:
-            logger.warning(f"[V349] REFUS inscription au groupe {group_id} — "
-                           f"ni propriétaire signé, ni jeton d'invitation valide")
-            raise HTTPException(status_code=403,
-                                detail="Inscription réservée au coach ou à un invité muni du lien")
-
     session_id = f"grp_{group_id[:8]}"
+
+    # MT-7 : garde INCONDITIONNELLE (plus seulement drapeau ON). Trois voies :
+    #   1. déjà membre -> succès sans écriture (ChatWidget rappelle /join à
+    #      chaque sélection d'un groupe dont le visiteur fait déjà partie) ;
+    #   2. PROPRIÉTAIRE signé (ou super-admin) -> seulement un contact de SON
+    #      portefeuille (celui du propriétaire du groupe) ;
+    #   3. INVITÉ muni du `link_token` -> s'inscrit, SANS que sa fiche `users`
+    #      soit recopiée dans le portefeuille du coach (un id seul ne prouve pas
+    #      qui appelle : on ne fabrique pas de relation).
+    if participant_id in (group.get("member_ids") or []):
+        return {"success": True, "session_id": session_id, "group_name": group.get("name", "")}
+    _email = _v311_coach_email_from_jwt(request)
+    _est_proprio = bool(_email) and await _v309_is_coach_or_admin(_email) and _mt7_peut_administrer(_email, group)
+    _jeton_fourni = body.get("link_token") or ""
+    _jeton_fourni = _jeton_fourni.strip() if isinstance(_jeton_fourni, str) else ""
+    _jeton_attendu = (group.get("link_token") or "").strip()
+    _invite = bool(_jeton_attendu) and _jeton_fourni == _jeton_attendu
+    if _est_proprio:
+        if not await _mt7_membres_autorises(_mt7_portee_membres(group, _email), [participant_id]):
+            logger.warning(f"[MT-7] REFUS ajout au groupe {group_id} — contact hors portefeuille du propriétaire")
+            raise HTTPException(status_code=404, detail="Contact introuvable")
+    elif not _invite:
+        logger.warning(f"[V349] REFUS inscription au groupe {group_id} — "
+                       f"ni propriétaire signé, ni jeton d'invitation valide")
+        raise HTTPException(status_code=403,
+                            detail="Inscription réservée au coach ou à un invité muni du lien")
 
     # v108: S'assurer que le participant existe dans chat_participants
     # Si il est dans users mais pas dans chat_participants, le créer
+    # MT-7 : seulement sur la voie PROPRIÉTAIRE (contact déjà prouvé de son
+    # portefeuille) — jamais sur la seule foi d'un jeton d'invitation.
     existing_participant = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0})
-    if not existing_participant:
+    if not existing_participant and _est_proprio:
         user_record = await db.users.find_one({"id": participant_id}, {"_id": 0})
         if user_record:
             new_participant = {
@@ -42699,7 +43256,7 @@ async def t3_classer_contact(contact_id: str, request: Request):
     declasse le contact, ce qui doit rester possible — se tromper doit pouvoir
     se defaire.
     """
-    _email = await _n1b3b2_coach_appelant(request)
+    _email = await _v309_require_coach_or_admin(request)  # MT-2 : JWT signé, plus de repli X-User-Email
     try:
         _b = await request.json()
     except Exception:
@@ -42739,7 +43296,7 @@ async def t3_suggestions_participant(request: Request):
     n'est pas une participation, et on ne proposera jamais de la traiter comme
     telle.
     """
-    _email = await _n1b3b2_coach_appelant(request)
+    _email = await _v309_require_coach_or_admin(request)  # MT-2 : JWT signé, plus de repli X-User-Email
     try:
         _q = {"validated": True}
         if not is_super_admin(_email):
@@ -42762,8 +43319,11 @@ async def t3_suggestions_participant(request: Request):
     _suggestions = []
     for _m, _quand in sorted(_par_mail.items()):
         try:
+            # MT-2 : la fiche cherchée l'était dans TOUTE la collection — un
+            # coach recevait l'id et le nom de la fiche d'un autre coach.
             _c = await db.chat_participants.find_one(
-                {"email": {"$regex": "^%s$" % re.escape(_m), "$options": "i"}},
+                {"email": {"$regex": "^%s$" % re.escape(_m), "$options": "i"},
+                 **({} if is_super_admin(_email) else {"coach_id": _email.strip().lower()})},
                 {"_id": 0, "id": 1, "name": 1, "contact_type": 1})
         except Exception:
             _c = None
@@ -42802,7 +43362,7 @@ async def t3_dry_run_participant(request: Request, groupe: str = "", ids: int = 
       - une presence REELLEMENT confirmee (`reservations.validated`), seule
         preuve forte que la personne a vecu Afroboost.
     """
-    _email = await _n1b3b2_coach_appelant(request)
+    _email = await _v309_require_coach_or_admin(request)  # MT-2 : JWT signé, plus de repli X-User-Email
     _filtre = {} if is_super_admin(_email) else {"coach_id": _email.strip().lower()}
 
     # ── Les presences confirmees, par adresse. Une seule lecture.
@@ -44003,29 +44563,25 @@ async def send_campaign_email(request: Request):
     déplacement aurait supprimé EN SILENCE la notification de chaque
     réservation payée — le défaut exact que la règle V310c interdit de livrer.
     """
-    await _v309_require_coach_or_admin(request)
-    # V468 — LA LIGNE SUIVANTE N'EST PAS TOUCHÉE, ET C'EST DÉLIBÉRÉ.
-    # Il serait tentant de brancher le débit sur l'identité signée qu'on vient de
-    # vérifier. Ce serait une RÉGRESSION DE FACTURATION : `launch_campaign`
-    # (server.py:4945) débite DÉJÀ le coût total de la campagne, puis le front
-    # (`launchCampaignWithSend`) boucle sur CETTE route, un appel par
-    # destinataire. Aujourd'hui ces appels partaient en `fetch` nu, donc sans
-    # `X-User-Email`, donc sans débit — le double débit n'existait pas par
-    # accident. En passant le front à `axios` (qui pose le Bearer) ET en
-    # branchant le débit sur l'identité, chaque campagne d'un coach partenaire
-    # serait facturée DEUX FOIS, et un coach à zéro crédit se prendrait un 402
-    # en plein envoi. C'est exactement « casser l'envoi légitime ».
-    # Le débit reste donc sur l'en-tête, inchangé : il ne décide plus de l'ACCÈS
-    # (le JWT s'en charge au-dessus), seulement de la facturation. Dette
-    # consignée : un coach authentifié peut encore désigner un autre coach dans
-    # cet en-tête pour lui débiter des crédits. À traiter avec la question du
-    # double débit, dans un lot de FACTURATION — pas dans un lot de sécurité.
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
-    if coach_email and not is_super_admin(coach_email):
-        credit_check = await check_credits(coach_email)
-        if not credit_check.get("has_credits"):
-            raise HTTPException(status_code=402, detail="Crédits insuffisants. Achetez un pack pour continuer.")
-        await deduct_credit(coach_email, "envoi campagne email")
+    _mt1_appelant = await _v309_require_coach_or_admin(request)
+    # V468 — (historique) le débit restait sur l'en-tête `X-User-Email` pour ne pas
+    # créer de DOUBLE débit : le front bouclait alors sur cette route après
+    # `launch_campaign`, qui débite déjà le coût global.
+    #
+    # MT-1 — CE QUI A CHANGÉ DEPUIS, ET POURQUOI LE DÉBIT PASSE SUR L'IDENTITÉ SIGNÉE.
+    # 1) La boucle a DISPARU : le lancement n'a plus qu'un expéditeur, le moteur
+    #    (RÉACTIVATION 3B, CoachDashboard.js « LE LANCEMENT N'A PLUS QU'UN SEUL
+    #    EXPÉDITEUR »). Plus aucun écran n'enchaîne launch + send-email.
+    # 2) Appelants front vérifiés (grep `send-email` dans frontend/src, 29/09) :
+    #    `performEmailSend` (CoachDashboard.js) via `handleTestEmail` et
+    #    `handleSendEmailCampaign` — deux gestionnaires passés en props à
+    #    CampaignManager.js qui ne les branche sur AUCUN bouton. Et l'onglet
+    #    Campagnes est réservé au super-admin (ADMIN_ONLY_TAB_IDS), non débité.
+    # 3) La dette consignée (« un coach authentifié peut désigner un autre coach
+    #    dans l'en-tête pour lui débiter des crédits ») est ainsi fermée : on débite
+    #    QUI a signé la requête, jamais un nom écrit par le navigateur.
+    coach_email = _mt1_appelant
+    _mt1_global = is_super_admin(coach_email)
     body = await request.json()
     to_email = body.get("to_email")
     to_name = body.get("to_name", "")
@@ -44034,8 +44590,23 @@ async def send_campaign_email(request: Request):
     media_url = body.get("media_url", None)
     
     # LOG DEBUG CRITIQUE
-    if not to_email:
+    if not to_email or not isinstance(to_email, str):
         raise HTTPException(status_code=400, detail="to_email requis")
+    # MT-1 : un coach n'écrit qu'à SON portefeuille (ou à lui-même : e-mail de
+    # test). Destinataire libre = relais d'hameçonnage au nom d'Afroboost et
+    # contact d'un autre coach. Super-admin : exempté (portée plateforme).
+    if not _mt1_global:
+        from api.routes.campaign_routes import mt1_portefeuille as _mt1_pf_de
+        _mt1_dest = to_email.strip().lower()
+        if _mt1_dest != coach_email and _mt1_dest not in (await _mt1_pf_de(db, coach_email))["emails"]:
+            logger.warning("[MT-1] REFUS send-email — destinataire hors portefeuille du coach")
+            raise HTTPException(status_code=403, detail="Ce destinataire ne fait pas partie de vos contacts.")
+    # MT-1 : le débit se fait APRÈS les refus (destinataire, opt-out ci-dessous
+    # n'est pas débité non plus), sur l'identité SIGNÉE — plus jamais l'en-tête.
+    if coach_email and not _mt1_global:
+        credit_check = await check_credits(coach_email)
+        if not credit_check.get("has_credits"):
+            raise HTTPException(status_code=402, detail="Crédits insuffisants. Achetez un pack pour continuer.")
     # RÉACTIVATION 3B : ce chemin est un envoi MARKETING (message libre du coach)
     # -> il lit le MÊME registre que les campagnes. Un refus exprimé = 403, jamais
     # un envoi. (Les e-mails transactionnels — confirmation de réservation,
@@ -44050,6 +44621,10 @@ async def send_campaign_email(request: Request):
         raise HTTPException(status_code=400, detail="message requis")
     if not RESEND_AVAILABLE or not RESEND_API_KEY:
         return {"success": False, "error": "Resend non configuré"}
+    if coach_email and not _mt1_global:
+        # MT-1 : un crédit, débité sur l'identité SIGNÉE, une fois toutes les
+        # vérifications passées (jamais pour un envoi refusé).
+        await deduct_credit(coach_email, "envoi campagne email")
     
     # === TRAITEMENT DU MEDIA URL ===
     media_html = ""
@@ -44629,8 +45204,17 @@ async def whatsapp_app_info(request: Request):
 
 
 @api_router.get("/campaign-debug/{campaign_id}")
-async def get_campaign_debug(campaign_id: str):
-    """V165: Endpoint diagnostic — affiche le contenu complet d'une campagne"""
+async def get_campaign_debug(campaign_id: str, request: Request):
+    """V165: Endpoint diagnostic — affiche le contenu complet d'une campagne
+
+    MT-1 : répondait à un ANONYME (campagne complète, résultats nominatifs).
+    Aucun appelant dans frontend/src : réservé au super-admin prouvé par JWT
+    signé. Tout autre appelant (coach compris) reçoit 403 — un coach lit ses
+    campagnes par `GET /campaigns/{id}`, cadré sur son périmètre.
+    """
+    _appelant = await _v309_require_coach_or_admin(request)
+    if not is_super_admin(_appelant):
+        raise HTTPException(status_code=403, detail="Réservé au super-admin")
     try:
         campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
         if not campaign:
@@ -44642,21 +45226,17 @@ async def get_campaign_debug(campaign_id: str):
 @api_router.get("/campaigns-list")
 async def get_campaigns_list(request: Request):
     """V165: Liste les campagnes récentes avec leur ID et message
-    V237: isolation par coach — une campagne appartient a son auteur. Cet
-    endpoint n'a aucun usage public (il n'est appele que depuis le dashboard),
-    le filtrage sur la presence du header est donc sans risque ici, a la
-    difference de /offers et /courses."""
+    V237: isolation par coach — une campagne appartient a son auteur.
+
+    MT-1 : le périmètre se lisait dans `X-User-Email` brut (l'e-mail super-admin
+    en en-tête = toutes les campagnes, même anonyme). Désormais JWT signé, et
+    périmètre tiré du jeton seul (`tenant_contacts.filtre_proprietaire`).
+    Aucun appelant dans frontend/src (vérifié le 29/09).
+    """
+    _appelant = await _v309_require_coach_or_admin(request)
+    from api.routes.campaign_routes import mt1_filtre_campagnes
+    query = mt1_filtre_campagnes(_appelant)
     try:
-        caller_email = request.headers.get("x-user-email", "").strip().lower()
-        if is_super_admin(caller_email):
-            query = {}
-        elif caller_email:
-            query = {"coach_id": caller_email}
-        else:
-            # Non authentifie : liste vide plutot que 401, pour ne pas faire
-            # apparaitre une erreur dans un dashboard dont le header n'aurait
-            # pas encore ete injecte au premier rendu.
-            return []
         campaigns = await db.campaigns.find(query, {"_id": 0, "id": 1, "name": 1, "status": 1, "targetType": 1, "channels": 1, "createdAt": 1, "launchedAt": 1, "updatedAt": 1}).sort("createdAt", -1).limit(20).to_list(20)
         return campaigns
     except Exception as ex:
@@ -44870,8 +45450,14 @@ async def test_campaign_3steps(request: Request, to: str = "41765203363"):
 
 
 @api_router.get("/create-sunset-group")
-async def create_sunset_group():
+async def create_sunset_group(request: Request):
     """V169: Endpoint temporaire — crée le groupe 'Inscription Sunset Experience 6 Mai' avec tous les contacts"""
+    # MT-7 : route d'amorçage qui crée un groupe avec TOUS les contacts de la
+    # plateforme et renvoie noms + téléphones — ouverte à un anonyme (GET).
+    # Aucun écran ne l'appelle : super-admin signé uniquement.
+    _mt7_admin = _v311_coach_email_from_jwt(request)
+    if not _mt7_admin or not is_super_admin(_mt7_admin):
+        raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
     import uuid as _uuid
     group_name = "Inscription Sunset Experience 6 Mai"
     coach_email = "contact.artboost@gmail.com"
@@ -44915,8 +45501,14 @@ async def create_sunset_group():
 
 
 @api_router.get("/create-whatsapp-group")
-async def create_whatsapp_group():
+async def create_whatsapp_group(request: Request):
     """V171.2: Crée un groupe avec SEULEMENT les contacts qui ont un numéro WhatsApp"""
+    # MT-7 : route d'amorçage qui crée un groupe avec TOUS les contacts de la
+    # plateforme et renvoie noms + téléphones — ouverte à un anonyme (GET).
+    # Aucun écran ne l'appelle : super-admin signé uniquement.
+    _mt7_admin = _v311_coach_email_from_jwt(request)
+    if not _mt7_admin or not is_super_admin(_mt7_admin):
+        raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
     import uuid as _uuid
     group_name = "Contacts WhatsApp"
     coach_email = "contact.artboost@gmail.com"
@@ -46985,13 +47577,50 @@ async def reservations_ended_for_review(request: Request):
     # droit — code abonné VALIDE (le secret, modèle « capability » du site) OU identité
     # coach/admin. Sinon réponse neutre {has_ended_session:false} (JSON valide, aucune
     # fuite, pas de boucle). Empêche de sonder un email sans posséder de code valide.
+    #
+    # MT-5 (29/09/2026) — DEUX PORTES, CHACUNE BORNEE A CE QU'ELLE PROUVE.
+    #   * COACH : identite = JWT SIGNE (`_v311_coach_email_from_jwt` + role relu
+    #     en base), jamais `X-User-Email`. Avant, n'importe quel en-tete
+    #     ouvrait la sonde : « tel e-mail a-t-il eu une seance il y a moins de
+    #     6 h, et laquelle ? », sur TOUS les coachs. Desormais la recherche est
+    #     intersectee avec le perimetre du coach (super-admin : tout).
+    #   * ABONNE (appel du ChatWidget, `fetch` sans jeton — il le reste) : le
+    #     code prouve le droit sur CE code, pas sur n'importe quel e-mail. L'e-mail
+    #     n'est retenu que s'il est celui rattache au code (forfait / code).
     _authorized = False
-    _coach_id = await _v263_authenticated_coach(request)
-    if _coach_id:
+    _mt5_perim = None
+    _mt5_coach = _v311_coach_email_from_jwt(request)
+    if _mt5_coach and await _v309_is_coach_or_admin(_mt5_coach):
+        from api.routes.shared import lot3c0_perimetre as _mt5_lot3c0
+        _mt5_perim = _mt5_lot3c0(_mt5_coach, is_super_admin(_mt5_coach))
         _authorized = True
     elif code:
         _ok, _n, _cid = await _v261_resolve_subscriber(code)
         _authorized = bool(_ok)
+        if _authorized and email:
+            _mt5_mails = set()
+            try:
+                async for _d in db.subscriptions.find({"code": code}, {"_id": 0, "email": 1}):
+                    _mt5_mails.add(str(_d.get("email") or "").strip().lower())
+                async for _d in db.discount_codes.find({"code": code},
+                                                      {"_id": 0, "assignedEmail": 1, "email": 1}):
+                    _mt5_mails.add(str(_d.get("assignedEmail") or "").strip().lower())
+                    _mt5_mails.add(str(_d.get("email") or "").strip().lower())
+                # MT-5b : les MEMBRES d'un code collectif (`code_members`, V202)
+                # sont des titulaires legitimes du code — meme ensemble que
+                # `email_autorise_pour_code` (V430) : {assignedEmail} ∪ membres
+                # non bloques. Sans eux, un membre dont la reservation ne porte
+                # que `discountCode` + son e-mail ne recevait plus l'invitation
+                # a l'avis. Egalite stricte sur le code : aucune regex.
+                async for _d in db.code_members.find({"code": code},
+                                                    {"_id": 0, "email": 1, "blocked": 1}):
+                    if not _d.get("blocked"):
+                        _mt5_mails.add(str(_d.get("email") or "").strip().lower())
+            except Exception as _mt5_err:
+                logger.warning("[MT-5] ended-for-review : titulaire du code illisible (%s)",
+                               type(_mt5_err).__name__)
+            if email not in _mt5_mails:
+                email = ""   # l'e-mail d'un tiers ne s'interroge pas avec son propre code
     if not _authorized:
         return {"has_ended_session": False, "session_name": None}
     if not email and not code:
@@ -47005,8 +47634,11 @@ async def reservations_ended_for_review(request: Request):
             q["$or"].append({"userEmail": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
         if code:
             q["$or"].append({"promoCode": code})
+            q["$or"].append({"discountCode": code})   # MT-5b : codes de groupe
         if not q["$or"]:
             return {"has_ended_session": False, "session_name": None}
+        if _mt5_perim:
+            q = {"$and": [_mt5_perim, q]}
         # Réservation récente (datetime dans les 6 dernières heures) = séance passée.
         resa = await db.reservations.find_one(
             {"$and": [q, {"datetime": {"$gte": window_start, "$lte": now.isoformat()}}]},
@@ -47723,57 +48355,166 @@ async def update_coach_profile(request: Request):
 # naissance étaient « redemandés » à chaque nouvel appareil ou vidage de cache.
 # Ces deux endpoints font du backend la source de vérité, indexée par le CODE
 # abonné (tous formats acceptés depuis V293, cf. _v261_resolve_subscriber).
-@api_router.get("/subscriber-info/{code}")
-async def v294_get_subscriber_info(code: str):
-    """V294 : renvoie { exists, name, whatsapp, email, birthday } pour un code abonné.
+#
+# MT-6 — FIN DE LA FUITE « CODE -> E-MAIL + WHATSAPP + ANNIVERSAIRE ».
+# Le code d'accès circule (e-mail de confirmation, QR imprimé, codes collectifs
+# partagés) : le traiter comme une preuve d'identité suffisante livrait les
+# coordonnées de l'abonné à quiconque le connaissait, et permettait de les
+# RÉÉCRIRE (numéro WhatsApp injecté dans le CRM du coach). Trois lecteurs
+# légitimes seulement, par ordre de priorité :
+#   1. l'abonné porteur du JETON D'APPAREIL de CE code (X-Subscriber-Token,
+#      V296 — émis par /subscriber/token après appariement code/e-mail V390)
+#      -> fiche complète. Sur un code COLLECTIF, le jeton doit en plus porter
+#      l'e-mail de la fiche : un autre membre du même code ne lit pas le premier ;
+#   2. un coach au JWT SIGNÉ propriétaire du code (subscriptions/discount_codes
+#      .coach_id), super-admin = global -> fiche complète ; tout autre coach
+#      reçoit le MÊME 404 qu'un code inconnu (aucun oracle) ;
+#   3. l'anonyme qui ne présente que le code -> {exists, name} (pré-remplissage
+#      du prénom dans le formulaire ChatWidget), JAMAIS de coordonnées.
+# X-User-Email n'ouvre jamais le chemin coach (falsifiable).
+_MT6_CHAMPS_FICHE = ("name", "whatsapp", "email", "birthday")
+_MT6_LONGUEUR_MAX = {"name": 120, "whatsapp": 32, "birthday": 10, "email": 254}
 
-    Le code EST déjà le justificatif d'accès de l'abonné (comme /subscriber/{code}),
-    donc pas d'auth supplémentaire. Si aucune info n'a encore été enregistrée, on
-    tente au moins de renvoyer le nom connu via l'abonnement (jamais redemandé).
-    """
+
+def _mt6_fiche_complete(doc: dict, exists: bool, repli_nom: str = "") -> dict:
+    doc = doc or {}
+    return {
+        "exists": bool(exists),
+        "name": doc.get("name", "") or repli_nom or "",
+        "whatsapp": doc.get("whatsapp", "") or "",
+        "email": doc.get("email", "") or "",
+        "birthday": doc.get("birthday", "") or "",
+    }
+
+
+def _mt6_jeton_de_ce_code(request: Request, code_norm: str):
+    """Jeton abonné VALIDE portant exactement ce code, sinon None."""
+    try:
+        from api.routes.shared import subscriber_from_request
+        tok = subscriber_from_request(request)
+    except Exception:
+        tok = None
+    if tok and tok.get("code") and tok["code"] == code_norm:
+        return tok
+    return None
+
+
+def _mt6_jeton_titulaire_de_la_fiche(tok, doc) -> bool:
+    """Le porteur du jeton est-il la personne de la fiche ? Une fiche sans e-mail
+    n'appartient encore à personne en particulier ; une fiche avec e-mail n'est
+    ouverte qu'au jeton portant ce même e-mail (codes collectifs)."""
+    if not tok:
+        return False
+    fiche_email = ((doc or {}).get("email") or "").strip().lower()
+    return (not fiche_email) or fiche_email == (tok.get("email") or "").strip().lower()
+
+
+async def _mt6_coach_proprietaire_du_code(email: str, code_norm: str) -> bool:
+    """Le coach (JWT déjà vérifié) possède-t-il ce code ? Super-admin = global.
+    Égalité stricte sur un motif ÉCHAPPÉ (aucune entrée brute dans une regex)."""
+    if is_super_admin(email):
+        return True
+    motif = {"$regex": f"^{re.escape(code_norm)}$", "$options": "i"}
+    if await db.subscriptions.find_one({"code": motif, "coach_id": email}, {"_id": 0, "code": 1}):
+        return True
+    if await db.discount_codes.find_one({"code": motif, "coach_id": email}, {"_id": 0, "code": 1}):
+        return True
+    return False
+
+
+@api_router.get("/subscriber-info/{code}")
+async def v294_get_subscriber_info(code: str, request: Request):
+    """V294 / MT-6 : infos d'un abonné. Réponse selon QUI demande (cf. bloc MT-6) :
+    porteur du jeton de ce code ou coach propriétaire -> fiche complète ;
+    anonyme -> {exists, name} seulement ; autre coach -> 404 (= code inconnu)."""
     code_norm = (code or "").strip().upper()
-    if not code_norm or len(code_norm) < 3:
-        return {"exists": False, "name": "", "whatsapp": "", "email": "", "birthday": ""}
+    if not code_norm or len(code_norm) < 3 or len(code_norm) > 64:
+        return {"exists": False, "name": ""}
     doc = await db.subscriber_infos.find_one({"code": code_norm}, {"_id": 0})
-    if doc:
-        return {
-            "exists": True,
-            "name": doc.get("name", ""),
-            "whatsapp": doc.get("whatsapp", ""),
-            "email": doc.get("email", ""),
-            "birthday": doc.get("birthday", ""),
-        }
-    # Repli : nom déjà connu via l'abonnement actif (le formulaire pré-remplit le nom)
+
+    # 1. Abonné porteur du jeton d'appareil de CE code.
+    tok = _mt6_jeton_de_ce_code(request, code_norm)
+    if tok and (not doc or _mt6_jeton_titulaire_de_la_fiche(tok, doc)):
+        if doc:
+            return _mt6_fiche_complete(doc, True)
+        ok, name, _cid = await _v261_resolve_subscriber(code_norm)
+        return _mt6_fiche_complete({}, bool(ok), (name or "") if ok else "")
+
+    # 2. Coach : JWT SIGNÉ uniquement (jamais X-User-Email), rôle relu en base.
+    coach = _v311_coach_email_from_jwt(request)
+    if coach:
+        if not await _v309_is_coach_or_admin(coach):
+            raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
+        if not await _mt6_coach_proprietaire_du_code(coach, code_norm):
+            # Même réponse qu'un code inconnu : un coach ne peut pas sonder les codes des autres.
+            raise HTTPException(status_code=404, detail="Abonné introuvable")
+        ok, name, _cid = await _v261_resolve_subscriber(code_norm)
+        if not doc and not ok:
+            # Code possédé (historique) mais sans fiche ni abonnement actif.
+            return _mt6_fiche_complete({}, False)
+        return _mt6_fiche_complete(doc, True, (name or "") if ok else "")
+
+    # 3. Anonyme (ou jeton d'un autre code) : existence + nom, AUCUNE coordonnée.
     ok, name, _cid = await _v261_resolve_subscriber(code_norm)
-    return {"exists": bool(ok), "name": (name or "") if ok else "", "whatsapp": "", "email": "", "birthday": ""}
+    if not ok:
+        return {"exists": False, "name": ""}
+    return {"exists": True, "name": ((doc or {}).get("name") or name or "")}
+
+
+def _mt6_valeur_propre(champ: str, brut):
+    """Chaîne nettoyée et bornée, ou None (non-chaîne, vide, trop longue)."""
+    if not isinstance(brut, str):
+        return None
+    val = brut.strip()
+    if not val or len(val) > _MT6_LONGUEUR_MAX.get(champ, 120):
+        return None
+    return val
 
 
 @api_router.put("/subscriber-info/{code}")
 async def v294_put_subscriber_info(code: str, request: Request):
-    """V294 : enregistre les infos d'un abonné { name, whatsapp, email, birthday }.
+    """V294 / MT-6 : enregistre les infos d'un abonné.
 
-    Le code doit correspondre à un abonnement ACTIF (via _v261_resolve_subscriber,
-    V293 — tous formats de codes clients). Champs AJOUTÉS uniquement : on ne pose un
-    champ QUE s'il est fourni ET non vide, donc jamais d'écrasement par du vide.
+    Le code doit correspondre à un abonnement ACTIF (via _v261_resolve_subscriber)
+    ET l'appelant doit présenter le JETON D'APPAREIL de CE code (MT-6 : le code
+    seul ne suffit plus — il circule). Liste blanche : name, whatsapp, birthday ;
+    l'e-mail écrit est celui du JETON (apparié au code par V390), jamais celui du
+    corps. Champs AJOUTÉS uniquement : jamais d'écrasement par du vide. Une fiche
+    appartenant à un autre e-mail (code collectif) n'est pas réécrite (403).
+    Aucun chemin coach en écriture : aucun écran coach n'appelle cette route.
     """
     code_norm = (code or "").strip().upper()
     ok, _name, coach_id = await _v261_resolve_subscriber(code_norm)
     if not ok:
         raise HTTPException(status_code=403, detail="Code abonné invalide ou inactif")
-    data = await request.json()
+    tok = _mt6_jeton_de_ce_code(request, code_norm)
+    if not tok:
+        raise HTTPException(status_code=403, detail="Jeton abonné requis pour ce code")
+    existant = await db.subscriber_infos.find_one({"code": code_norm}, {"_id": 0})
+    if existant and not _mt6_jeton_titulaire_de_la_fiche(tok, existant):
+        logger.warning("[MT-6] PUT subscriber-info refusé : fiche %s tenue par un autre e-mail", code_norm)
+        raise HTTPException(status_code=403, detail="Cette fiche appartient à un autre abonné")
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
     update = {
         "code": code_norm,
         "coach_id": coach_id or DEFAULT_COACH_ID,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    for field in ("name", "whatsapp", "email", "birthday"):
-        raw = data.get(field)
-        val = raw.strip() if isinstance(raw, str) else raw
+    for field in ("name", "whatsapp", "birthday"):
+        val = _mt6_valeur_propre(field, data.get(field))
         if val:
             update[field] = val
+    _email_jeton = (tok.get("email") or "").strip().lower()
+    if _email_jeton and not (existant or {}).get("email"):
+        update["email"] = _email_jeton
     await db.subscriber_infos.update_one({"code": code_norm}, {"$set": update}, upsert=True)
     doc = await db.subscriber_infos.find_one({"code": code_norm}, {"_id": 0})
-    return {"success": True, "info": doc}
+    return {"success": True, "info": _mt6_fiche_complete(doc, True)}
 
 
 # === V296 : JETON D'APPAREIL ABONNÉ (connexion rapide ET sécurisée) ===
@@ -47859,7 +48600,8 @@ async def v296_subscriber_token(request: Request):
     #
     # CE QUE CELA PROUVE, EXACTEMENT : la possession d'un code individuel apparie
     # a cet e-mail. PAS le controle de la boite (le code circule, ne tourne pas,
-    # n'expire pas, et `/subscriber-info/{code}` livre l'adresse a qui le detient).
+    # n'expire pas ; `/subscriber-info/{code}` livrait l'adresse a qui le detenait,
+    # fermé par MT-6 : le code seul n'y rend plus que {exists, name}).
     # Compromis assume — cf. le bilan C9-B.
     #
     # `analytics_id` est un sha256 sale tronque : non reversible, et le sel ne

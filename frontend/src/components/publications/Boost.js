@@ -29,7 +29,8 @@ const DUREE_BOOST_H = 48;
 
 // Les mêmes que côté serveur. Sert UNIQUEMENT à décider d'afficher ou non le
 // crayon : l'écriture, elle, est refusée par le serveur (403) sans JWT admin.
-const SUPER_ADMINS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+// SA-1 : un seul super-admin (décision définitive du propriétaire).
+const SUPER_ADMINS = ['contact.artboost@gmail.com'];
 
 /** Email de l'utilisateur courant, lu là où l'application le range déjà. */
 export const emailCourant = () => {

@@ -9,10 +9,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Constantes
-SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"
+SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"  # héritage (lu par d'anciens imports)
+
 
 def is_super_admin(email: str) -> bool:
-    return email and email.lower().strip() == SUPER_ADMIN_EMAIL.lower()
+    # MT-1 : alignée sur `api.routes.shared.is_super_admin`, qui connaît les DEUX
+    # super-admins. L'ancienne version n'en reconnaissait qu'un : le second
+    # (afroboost.bassi@gmail.com) était traité ici comme un coach ordinaire.
+    # SA-1 (29/09/2026) : il n'existe plus qu'UN super-admin
+    # (contact.artboost@gmail.com) ; la délégation à `shared` reste la règle.
+    from api.routes.shared import is_super_admin as _is_super_admin_partage
+    return bool(_is_super_admin_partage(email))
 
 # Router
 campaign_router = APIRouter(tags=["campaigns"])
@@ -23,6 +30,183 @@ db = None
 def init_campaign_db(database):
     global db
     db = database
+
+
+# =====================================================================
+# MT-1 — CAMPAGNES MULTI-COACH : IDENTITÉ SIGNÉE + PÉRIMÈTRE PROPRIÉTAIRE
+# =====================================================================
+# Règle unique, appliquée à chaque route de campagne :
+#   1. identité = JWT SIGNÉ uniquement (`coach_jwt_email`) — `X-User-Email` n'est
+#      JAMAIS lu pour décider d'un accès ni d'un périmètre ;
+#   2. super-admin (les DEUX, `shared.is_super_admin`) -> portée globale ;
+#   3. coach -> uniquement ses campagnes (`tenant_contacts.filtre_proprietaire`) ;
+#   4. objet d'un autre coach en lecture -> 404 (on ne révèle pas son existence).
+#
+# DESTINATAIRES : le périmètre d'un envoi est celui du PROPRIÉTAIRE de la
+# campagne (`campaign.coach_id`), jamais celui de l'appelant du moment — le
+# moteur programmé n'a d'ailleurs pas d'appelant. Propriétaire super-admin ou
+# campagne historique sans propriétaire exploitable -> comportement global
+# INCHANGÉ (non-régression admin).
+
+# MT-1 : valeurs de `coach_id` qui ne désignent aucun coach réel (historique).
+_MT1_SANS_PROPRIETAIRE = {"", "bassi_default", "none", "null"}
+
+
+async def mt1_appelant_signe(request: Request, quoi: str = "campagnes") -> str:
+    """MT-1 : e-mail coach/admin porté par un JWT SIGNÉ, sinon 403. Aucun repli.
+
+    Même règle que `_v309_require_coach_or_admin` (server.py) : jeton coach
+    vérifié (les jetons abonné sont rejetés par `coach_jwt_email`), puis rôle
+    relu en base (`coaches` / `coach_auth`) — le navigateur ne décide de rien.
+    """
+    from api.routes.shared import coach_jwt_email
+    email = coach_jwt_email(request)
+    if not email:
+        logger.warning("[MT-1] REFUS %s — aucun jeton coach signé", quoi)
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
+    if is_super_admin(email):
+        return email
+    try:
+        if await db.coaches.find_one({"email": email}, {"_id": 1}):
+            return email
+        if await db.coach_auth.find_one({"email": email}, {"_id": 1}):
+            return email
+    except Exception as _e:
+        logger.warning("[MT-1] vérification du rôle impossible (%s)", type(_e).__name__)
+    logger.warning("[MT-1] REFUS %s — jeton valide mais ni coach ni admin", quoi)
+    raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
+
+
+def mt1_filtre_campagnes(appelant: str) -> dict:
+    """MT-1 : `{}` pour un super-admin, `{"coach_id": e-mail}` pour un coach."""
+    from api.routes.tenant_contacts import filtre_proprietaire, PerimetreRefuse
+    try:
+        return filtre_proprietaire(appelant)
+    except PerimetreRefuse:
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
+
+
+async def mt1_campagne_visible(campaign_id: str, appelant: str, projection=None) -> dict:
+    """MT-1 : la campagne si elle est dans le périmètre de l'appelant, sinon 404."""
+    if not isinstance(campaign_id, str) or not campaign_id or "$" in campaign_id:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    _q = {"id": campaign_id}
+    _q.update(mt1_filtre_campagnes(appelant))
+    campagne = await db.campaigns.find_one(_q, projection or {"_id": 0})
+    if not campagne:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campagne
+
+
+def mt1_proprietaire_restreint(campaign: dict) -> str:
+    """MT-1 : e-mail du coach propriétaire dont le PORTEFEUILLE borne les envois.
+
+    '' = portée globale (comportement historique inchangé) : propriétaire
+    super-admin, ou campagne sans propriétaire exploitable (absent, "",
+    "bassi_default"…). Toute autre valeur = un coach -> périmètre restreint.
+    """
+    _brut = (campaign or {}).get("coach_id")
+    _e = _brut.strip().lower() if isinstance(_brut, str) else ""
+    if _e in _MT1_SANS_PROPRIETAIRE or is_super_admin(_e):
+        return ""
+    return _e
+
+
+async def mt1_portefeuille(database, proprietaire: str) -> dict:
+    """MT-1 : ids et e-mails du portefeuille d'un coach, en DEUX requêtes groupées.
+
+    Même définition que `tenant_contacts` (module partagé, non modifié ici) :
+    `users` visibles via `filtre_users_du_coach` + `chat_participants` dont
+    `coach_id` == propriétaire. Chargé une fois par envoi (jamais un find_one
+    par contact : groupes de 800+ membres).
+    """
+    from api.routes.tenant_contacts import filtre_users_du_coach, normaliser_email
+    _ids, _emails = set(), set()
+    _uf = await filtre_users_du_coach(database, proprietaire)
+    async for _u in database.users.find(_uf, {"_id": 0, "id": 1, "email": 1}):
+        if _u.get("id"):
+            _ids.add(_u["id"])
+        _m = normaliser_email(_u.get("email"))
+        if _m:
+            _emails.add(_m)
+    async for _p in database.chat_participants.find({"coach_id": proprietaire}, {"_id": 0, "id": 1, "email": 1}):
+        if _p.get("id"):
+            _ids.add(_p["id"])
+        _m = normaliser_email(_p.get("email"))
+        if _m:
+            _emails.add(_m)
+    return {"proprietaire": proprietaire, "ids": _ids, "emails": _emails}
+
+
+async def mt1_filtrer_cibles(database, portefeuille: dict, ids) -> list:
+    """MT-1 : ne garde, parmi des cibles brutes (`targetIds`, `selectedContacts`),
+    que celles du portefeuille : contact (users / chat_participants) ou
+    conversation/groupe (`chat_sessions`) appartenant au propriétaire.
+
+    Un id d'un autre coach est RETIRÉ SILENCIEUSEMENT ; seul le NOMBRE retiré est
+    journalisé (aucune donnée personnelle dans les logs). Ordre conservé.
+    """
+    # MT-1 (audit P2) : UNE requête `$in` groupée pour toutes les cibles absentes
+    # du portefeuille (plus un find_one par id : groupes de 800+ membres). Même
+    # règle que `tenant_contacts.contact_appartient(…, "chat_sessions", …)` :
+    # session dont `coach_id` == propriétaire, ids hostiles (`$`, > 128) écartés.
+    _propres = []
+    for _i in ids or []:
+        if isinstance(_i, str) and _i.strip():
+            _propres.append(_i)
+    _a_verifier = sorted({_i for _i in _propres if _i not in portefeuille["ids"]
+                          and "$" not in _i and len(_i) <= 128})
+    _sessions = set()
+    if _a_verifier:
+        try:
+            async for _s in database.chat_sessions.find(
+                    {"id": {"$in": _a_verifier}, "coach_id": portefeuille["proprietaire"]},
+                    {"_id": 0, "id": 1}):
+                if _s.get("id"):
+                    _sessions.add(_s["id"])
+        except Exception as _e:
+            logger.warning("[MT-1] vérification des conversations impossible (%s)", type(_e).__name__)
+    _out, _retires = [], 0
+    for _i in _propres:
+        if _i in portefeuille["ids"] or _i in _sessions:
+            _out.append(_i)
+        else:
+            _retires += 1
+    if _retires:
+        logger.warning("[MT-1] %d cible(s) hors portefeuille du propriétaire retirée(s)", _retires)
+    return _out
+
+
+async def mt1_nom_expediteur(database, proprietaire: str, defaut: str = "Coach Bassi") -> str:
+    """MT-1 : nom affiché des messages de campagne dans le chat.
+
+    Propriétaire restreint (coach partenaire) -> son `platform_name` ou `name`
+    (collection `coaches`) ; sinon (super-admin / historique) -> l'affichage
+    actuel, inchangé."""
+    if not proprietaire:
+        return defaut
+    try:
+        _c = await database.coaches.find_one({"email": proprietaire}, {"_id": 0, "name": 1, "platform_name": 1}) or {}
+    except Exception:
+        _c = {}
+    _n = (_c.get("platform_name") or _c.get("name") or "").strip() if isinstance(_c, dict) else ""
+    return _n or "Coach"
+
+
+def mt1_filtrer_contacts(portefeuille: dict, contacts) -> list:
+    """MT-1 : filtre final des contacts RÉSOLUS (groupes dépliés, segments,
+    replis par conversation) : id OU e-mail dans le portefeuille du propriétaire."""
+    from api.routes.tenant_contacts import normaliser_email
+    _out, _retires = [], 0
+    for _c in contacts or []:
+        if (_c.get("id") in portefeuille["ids"]
+                or normaliser_email(_c.get("email")) in portefeuille["emails"]):
+            _out.append(_c)
+        else:
+            _retires += 1
+    if _retires:
+        logger.warning("[MT-1] %d destinataire(s) hors portefeuille du propriétaire écarté(s)", _retires)
+    return _out
 
 # === MODÈLES ===
 class CampaignCreate(BaseModel):
@@ -52,12 +236,17 @@ class CampaignCreate(BaseModel):
 # === ENDPOINTS CAMPAGNES ===
 @campaign_router.get("/campaigns")
 async def get_campaigns(request: Request):
-    """Récupère les campagnes - Filtré par coach_id"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if is_super_admin(caller_email):
-        campaigns = await db.campaigns.find({}, {"_id": 0}).sort("createdAt", -1).to_list(100)
-    else:
-        campaigns = await db.campaigns.find({"coach_id": caller_email}, {"_id": 0}).sort("createdAt", -1).to_list(100) if caller_email else []
+    """Récupère les campagnes du coach authentifié (super-admin : toutes).
+
+    MT-1 : avant, le périmètre se lisait dans `X-User-Email` BRUT — l'e-mail
+    super-admin en en-tête suffisait, même en anonyme ou devant le JWT valide
+    d'un autre coach, à lister TOUTES les campagnes (messages, cibles, résultats
+    nominatifs). Désormais : JWT signé exigé, périmètre tiré du jeton seul.
+    Appelant : CoachDashboard.js `loadCampaigns` (axios -> Bearer par
+    l'intercepteur global d'App.js).
+    """
+    appelant = await mt1_appelant_signe(request, "liste des campagnes")
+    campaigns = await db.campaigns.find(mt1_filtre_campagnes(appelant), {"_id": 0}).sort("createdAt", -1).to_list(100)
     return campaigns
 
 @campaign_router.get("/campaigns/logs")
@@ -128,12 +317,15 @@ async def get_campaigns_error_logs(request: Request):
         return {"success": False, "total_errors": 0, "errors": [], "error": str(e)}
 
 @campaign_router.get("/campaigns/{campaign_id}")
-async def get_campaign(campaign_id: str):
-    """Récupère une campagne par ID"""
-    campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    return campaign
+async def get_campaign(campaign_id: str, request: Request):
+    """Récupère une campagne par ID.
+
+    MT-1 : route SANS authentification jusqu'ici (campagne complète, résultats
+    nominatifs compris, à n'importe qui). JWT signé + propriétaire ; la campagne
+    d'un autre coach répond 404, comme une campagne inexistante.
+    """
+    appelant = await mt1_appelant_signe(request, "lecture d'une campagne")
+    return await mt1_campagne_visible(campaign_id, appelant)
 
 # RÉACTIVATION 3B — LES MUTATIONS DE CAMPAGNE SONT AUTHENTIFIÉES.
 # Constaté : PUT / DELETE / purge n'exigeaient RIEN (un anonyme pouvait réécrire
@@ -141,9 +333,11 @@ async def get_campaign(campaign_id: str):
 # lancement (V451) : JWT coach/admin signé, puis PROPRIÉTÉ lue sur le document
 # (`coach_id`) — le super-admin passe partout, un coach ne touche qu'aux siennes.
 async def _r3_campagne_du_proprietaire(campaign_id: str, request: Request):
-    from api.routes.contact_segments_routes import _autorise as _jwt_coach_ou_admin
     from api.routes.shared import is_super_admin as _is_super_admin
-    appelant = await _jwt_coach_ou_admin(request)
+    # MT-1 : même authentification (JWT signé, rôle relu en base) mais par la garde
+    # des campagnes, qui connaissait les DEUX super-admins (SA-1 : un seul désormais ; `_autorise` des segments
+    # n'en reconnaissait qu'un en dur).
+    appelant = await mt1_appelant_signe(request, "modification d'une campagne")
     campagne = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0, "coach_id": 1, "name": 1})
     if not campagne:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -177,9 +371,8 @@ async def delete_campaign(campaign_id: str, request: Request):
 @campaign_router.delete("/campaigns/purge/all")
 async def purge_all_campaigns(request: Request):
     """Purge les campagnes terminées DU COACH authentifié (le super-admin : toutes)."""
-    from api.routes.contact_segments_routes import _autorise as _jwt_coach_ou_admin
     from api.routes.shared import is_super_admin as _is_super_admin
-    appelant = await _jwt_coach_ou_admin(request)
+    appelant = await mt1_appelant_signe(request, "purge des campagnes")  # MT-1 / SA-1 : le super-admin unique
     filtre = {"status": {"$in": ["completed", "failed", "draft"]}}
     if not _is_super_admin(appelant):
         filtre["coach_id"] = appelant
@@ -189,17 +382,29 @@ async def purge_all_campaigns(request: Request):
 
 @campaign_router.post("/campaigns/{campaign_id}/mark-sent")
 async def mark_campaign_sent(campaign_id: str, request: Request):
-    """Marque un résultat comme envoyé"""
+    """Marque un résultat comme envoyé.
+
+    ⚠️ Copie MASQUÉE : `api_router` (server.py) est inclus avant ce routeur, c'est
+    SA route homonyme qui répond. MT-1 : les deux portent la même garde (JWT +
+    propriétaire) et la même règle « jamais `completed` sans résultat ».
+    """
+    await _r3_campagne_du_proprietaire(campaign_id, request)
     data = await request.json()
     contact_id = data.get("contactId")
     channel = data.get("channel")
+    # MT-1 : valeurs du corps dans un filtre Mongo -> chaînes uniquement (pas d'opérateur).
+    if not isinstance(contact_id, str) or not isinstance(channel, str):
+        raise HTTPException(status_code=400, detail="contactId et channel requis")
     await db.campaigns.update_one(
         {"id": campaign_id, "results.contactId": contact_id, "results.channel": channel},
         {"$set": {"results.$.status": "sent", "results.$.sentAt": datetime.now(timezone.utc).isoformat()}}
     )
     campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     if campaign:
-        all_sent = all(r.get("status") == "sent" for r in campaign.get("results", []))
+        # MT-1 : `all([])` est VRAI — une campagne sans résultat (programmée,
+        # brouillon) passait en `completed`, ce qui annulait son envoi programmé.
+        _resultats = campaign.get("results") or []
+        all_sent = bool(_resultats) and all(r.get("status") == "sent" for r in _resultats)
         if all_sent:
             await db.campaigns.update_one({"id": campaign_id}, {"$set": {"status": "completed"}})
     return await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})

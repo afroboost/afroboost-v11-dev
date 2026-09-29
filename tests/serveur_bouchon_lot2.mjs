@@ -43,7 +43,8 @@ const TYPES = {
 /** L'email coach utilise : « contacts » est un onglet reserve aux super-admins
  *  (ADMIN_ONLY_TAB_IDS, CoachDashboard.js). Un autre email masquerait l'ecran
  *  meme a tester. Cette valeur ne quitte jamais 127.0.0.1. */
-export const EMAIL_COACH = 'afroboost.bassi@gmail.com';
+// SA-1 : UN SEUL super-admin — afroboost.bassi@gmail.com n'en est plus un.
+export const EMAIL_COACH = 'contact.artboost@gmail.com';
 
 /** Etat mutable : le test le reecrit entre deux scenarios. */
 export function etatInitial() {

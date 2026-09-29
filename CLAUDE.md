@@ -21,6 +21,16 @@ Afroboost is a SaaS fitness platform built on FastAPI + React, deployed on Cooli
 - `vercel.json` — Deployment config + cron jobs
 - `api/routes/` — Modular route files (13 files)
 
+## 👑 RÈGLE ABSOLUE — UN SEUL SUPER-ADMIN
+
+- Il n'existe qu'**UN SEUL** super-admin : **`contact.artboost@gmail.com`**.
+- **Aucun autre compte** ne possède de droits globaux plateforme — `afroboost.bassi@gmail.com`
+  compris (compte ordinaire depuis SA-1, 30/09/2026).
+- Le rôle se décide **côté serveur**, depuis l'e-mail d'un **JWT signé** — jamais depuis
+  `X-User-Email`, jamais depuis une variable d'environnement (`ADMIN_EMAILS` est ignorée).
+- Toute liste `SUPER_ADMIN_EMAILS` (serveur ou front) ne contient que cette adresse.
+- Les coachs partenaires ne voient que leurs propres données.
+
 ## Key Conventions
 - Version comments: changes are marked with `# V{number}: description` (e.g., `# V171.1: Fix template cleaning`)
 - Coach Bassi speaks French — respond in French
@@ -492,7 +502,7 @@ Requête → Vercel Edge → vercel.json rewrites
 
 ### Isolation multi-tenant (coach_id)
 - Chaque enregistrement porte un `coach_id` pour isoler les données par coach
-- Les Super Admins voient tout (`is_super_admin()` → filtre vide `{}`)
+- Le super-admin UNIQUE (`contact.artboost@gmail.com`) voit tout (`is_super_admin()` → filtre vide `{}`)
 - Les coachs ne voient que leurs données (`{"coach_id": email}`)
 - Fallback : `DEFAULT_COACH_ID = "bassi_default"` pour les données pré-existantes
 
@@ -533,7 +543,7 @@ Requête → Vercel Edge → vercel.json rewrites
 
 ```python
 COACH_EMAIL = "contact.artboost@gmail.com"
-SUPER_ADMIN_EMAILS = ["contact.artboost@gmail.com", "afroboost.bassi@gmail.com"]
+SUPER_ADMIN_EMAILS = ["contact.artboost@gmail.com"]   # SA-1 : UN SEUL super-admin, aucun autre compte
 DEFAULT_COACH_ID = "bassi_default"
 ```
 
@@ -675,7 +685,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 - Uploader photo de profil, audio tracks
 - Accès staff limité (Réservations + Scanner uniquement) avec code `STAFF2026`
 
-### Super Admin
+### Super Admin (UN SEUL : contact.artboost@gmail.com)
 - Vue globale de toutes les données (tous coachs)
 - Panel admin dédié
 - Gestion des paramètres plateforme

@@ -96,9 +96,10 @@ def coach_jwt_email(request) -> str:
         return ""
 
 # v9.5.6: Liste des Super Admins autorisés
+# SA-1 : UN SEUL super-admin (décision définitive du propriétaire, 29/09/2026).
+# `afroboost.bassi@gmail.com` n'est PLUS super-admin et n'a aucun droit global.
 SUPER_ADMIN_EMAILS = [
     "contact.artboost@gmail.com",
-    "afroboost.bassi@gmail.com"
 ]
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"  # Legacy compatibilité
 DEFAULT_COACH_ID = SUPER_ADMIN_EMAILS[0]  # V244: etait "bassi_default" (sentinelle sans compte, invisible a tout coach). Pointe desormais sur l'admin, seul coach reel — les replis coach_id inconnu lui reviennent.
@@ -284,8 +285,13 @@ async def v20_exiger_coach_signe(request, database, quoi: str = ""):
                             detail="Authentification coach requise — reconnectez-vous")
     if is_super_admin(email):
         return email
+    # MT-2b : MÊME source de rôle que `_v309_is_coach_or_admin` (server.py) :
+    # `coaches` OU `coach_auth`. Avant, un coach présent seulement dans
+    # `coach_auth` était accepté par les routes V309 et refusé ici.
     try:
-        if database is not None and await database.coaches.find_one({"email": email}, {"_id": 1}):
+        if database is not None and (
+                await database.coaches.find_one({"email": email}, {"_id": 1})
+                or await database.coach_auth.find_one({"email": email}, {"_id": 1})):
             return email
     except Exception as _e:
         logger.warning("[V2-0] vérification du rôle impossible pour %s : %s", email, _e)

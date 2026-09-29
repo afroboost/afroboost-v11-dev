@@ -36,10 +36,37 @@ auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
 # Référence DB (initialisée depuis server.py)
 _db = None
 
-# V133: Emails admin depuis variable d'environnement
-_admin_emails_env = os.environ.get('ADMIN_EMAILS', 'contact.artboost@gmail.com,afroboost.bassi@gmail.com')
-SUPER_ADMIN_EMAILS = [e.strip().lower() for e in _admin_emails_env.split(',') if e.strip()]
-AUTHORIZED_COACH_EMAIL = SUPER_ADMIN_EMAILS[0] if SUPER_ADMIN_EMAILS else "contact.artboost@gmail.com"
+# SA-1 : UN SEUL super-admin, FIGÉ EN DUR (décision définitive du propriétaire,
+# 29/09/2026). Jusqu'ici (V133) la liste était lue depuis la variable
+# d'environnement `ADMIN_EMAILS` (Coolify), avec DEUX adresses par défaut : le
+# rôle super-admin — qui signe des JWT `role: super_admin` — pouvait donc être
+# ÉLARGI par une simple variable d'hébergement. C'est fini : l'environnement ne
+# peut plus accorder ce rôle à personne. Si `ADMIN_EMAILS` est encore défini et
+# contient d'autres adresses, elles sont IGNORÉES et on le journalise (sans
+# afficher les adresses : le journal n'a pas à les recopier).
+_SA1_SUPER_ADMIN_UNIQUE = "contact.artboost@gmail.com"
+SUPER_ADMIN_EMAILS = [_SA1_SUPER_ADMIN_UNIQUE]
+
+
+def _sa1_verifier_admin_emails_env() -> int:
+    """SA-1 — nombre d'adresses de `ADMIN_EMAILS` IGNORÉES (0 si rien à signaler).
+
+    Lecture purement informative : la valeur de la variable n'entre JAMAIS dans
+    `SUPER_ADMIN_EMAILS`. Un WARNING est émis si elle tente d'ajouter quelqu'un.
+    """
+    _brut = os.environ.get('ADMIN_EMAILS', '') or ''
+    _autres = {e.strip().lower() for e in _brut.split(',') if e.strip()} - {_SA1_SUPER_ADMIN_UNIQUE}
+    if _autres:
+        logger.warning(
+            "[SA-1] ADMIN_EMAILS contient %d adresse(s) autre(s) que le super-admin "
+            "unique : IGNORÉE(S). Le rôle super-admin n'est plus configurable par "
+            "l'environnement.", len(_autres)
+        )
+    return len(_autres)
+
+
+_sa1_verifier_admin_emails_env()
+AUTHORIZED_COACH_EMAIL = SUPER_ADMIN_EMAILS[0]
 
 # V133: JWT configuration
 # V311 : NE PAS figer le secret ici. Coolify n'injecte PAS JWT_SECRET ; il est
@@ -336,6 +363,11 @@ async def register(request: Request, response: Response, user_data: RegisterRequ
         # RÉELLEMENT SIGNÉ, qui franchissait toutes les gardes de V2-0/b/c.
         # Mesuré : `afroboost.bassi@gmail.com` est super-admin dans les trois
         # listes du code et n'a AUCUNE fiche `users_auth`. La place était libre.
+        # SA-1 (29/09/2026) : cette adresse n'est PLUS super-admin — elle est
+        # redevenue une adresse ORDINAIRE. S'y inscrire suit le chemin commun
+        # (compte `pending_validation`, rôle `coach` à la connexion) : aucun
+        # privilège ne s'y attache plus. Seul contact.artboost@gmail.com reste
+        # réservé ici.
         #
         # ⚠️ MÊME RÉPONSE QUE « déjà enregistré », ET C'EST VOULU. Un 403 dédié
         # (« cette adresse est celle du super-admin ») serait un oracle : il

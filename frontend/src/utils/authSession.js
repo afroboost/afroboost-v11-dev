@@ -59,8 +59,12 @@ const CLE_MODE = 'afroboost_coach_mode';
  * ⚠️ RÈGLE V310c — NE JAMAIS DURCIR SANS PROUVER QUE LE CHEMIN LÉGITIME MARCHE.
  * N'ajouter une route ICI qu'après avoir mesuré `403` sans jeton ET `200` avec.
  * Sont VOLONTAIREMENT ABSENTES, bien qu'elles renvoient parfois 403 :
- *   - `/reservations`   : accepte le repli `X-User-Email` (mesuré 200). La bloquer
- *                         priverait de leurs réservations les sessions sans jeton.
+ *   - `/reservations`   : MT-5 (29/09/2026) — le serveur exige désormais un jeton
+ *                         signé sur la LISTE et les actions coach, mais le même
+ *                         préfixe porte `POST /reservations`, la réservation d'un
+ *                         VISITEUR sans compte : un portillon par préfixe la
+ *                         bloquerait. Un refus de la liste reste qualifié
+ *                         « session » par `classerEchec` (403 sans jeton).
  *   - `/chat/sessions`  : sa garde `_v319_coach_identity` dépend de l'interrupteur
  *                         serveur `REQUIRE_COACH_JWT`, qui peut être basculé sans
  *                         redéploiement. Un portillon figé côté navigateur

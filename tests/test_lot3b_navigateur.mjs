@@ -83,7 +83,7 @@ const CAPTURES = path.join(TRAVAIL, 'captures');
 const EMPREINTE = path.join(TRAVAIL, 'empreinte.txt');
 const SANS_BUILD = process.argv.includes('--sans-build');
 
-const EMAIL_COACH = 'afroboost.bassi@gmail.com';   // super-admin : ne quitte jamais 127.0.0.1
+const EMAIL_COACH = 'contact.artboost@gmail.com';   // SA-1 : le super-admin UNIQUE ; ne quitte jamais 127.0.0.1
 
 // ---------------------------------------------------------------------------
 // 0. LE BUNDLE — un seul, le vrai.

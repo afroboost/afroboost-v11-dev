@@ -349,6 +349,10 @@ def construire(db):
                 # LOT B0 — le reflet de la consommation sur le code. Absent des
                 # commits anterieurs, donc simplement ignore la aussi.
                 "_lotb0_refleter_la_consommation",
+                # MT-5 — propriete des reservations (404 pour un autre coach).
+                # Absent des commits anterieurs, donc simplement ignore la aussi.
+                "mt5_coach_signe", "mt5_est_proprietaire", "mt5_exiger_proprietaire",
+                "mt5_borner", "_mt5_forfait_d_un_autre", "_mt5_nom_si_proprietaire",
                 "_qr_scan_validate_inner"):
         _code = extraire(nom, obligatoire=False)
         if _code:
@@ -357,7 +361,9 @@ def construire(db):
     for n in ast.walk(ARBRE):
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in (
                 "A0_TOLERANCE_MIN", "R11_MSG_ANONYME", "R11_MSG_AUTRE_COACH",
-                "A1_JOURS_JS", "SCAN_LIBELLE_ESSAI"):
+                "A1_JOURS_JS", "SCAN_LIBELLE_ESSAI",
+                "MT5_PREFIXE", "MT5_INTROUVABLE", "MT5_LIMITE_PAGE",
+                "MT5_CODE_INTROUVABLE"):
             exec(compile("".join(LIGNES[n.lineno - 1:n.end_lineno]), FICHIER, "exec"), ns)
     return ns
 
@@ -424,8 +430,11 @@ def faux_shared(forfait_ok=(True, ""), abonnement=None):
     _vrai = _charger_vrai_shared()
     for _n in ("seances_consommer", "seances_restituer", "seances_fiche_cible",
                "seances_fiches_du_code", "seances_confiance", "SEANCES_COLL",
-               "lotb3_code_decrementable", "lot2_est_doublon"):
-        setattr(m, _n, getattr(_vrai, _n))
+               "lotb3_code_decrementable", "lot2_est_doublon",
+               # MT-5 : le perimetre des reservations est la VRAIE regle LOT 3c-0.
+               "lot3c0_perimetre", "V20AccesRefuse"):
+        if hasattr(_vrai, _n):
+            setattr(m, _n, getattr(_vrai, _n))
     # SCAN : la SEULE regle qui dit « c'est un essai ». Recopiee ici a
     # l'identique de shared.py — le test la compare a la vraie ci-dessous.
     m.ESSAI2_FILTRE_GRATUIT = {

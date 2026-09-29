@@ -2456,6 +2456,360 @@ def t112_s0_conversations_acces_legitime():
         record(112, "SECURITY-S0 : acces legitime a /api/conversations", False, str(e))
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# MT-3 — MULTI-COACH : routes Campagnes / Contacts SANS authentification
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Pendant PRODUCTION du banc local `tests/test_mt_matrice_http.py` (qui, lui,
+# prouve le cloisonnement A/B et le super-admin sur une base jetable).
+# Ici : trois profils NON autorisés — anonyme, `X-User-Email` usurpé (adresse
+# super-admin, publique dans le bundle), jeton de forme valide mais mal signé —
+# doivent recevoir 401/403/404, et le corps ne doit contenir AUCUNE donnée
+# personnelle (valeur e-mail/WhatsApp/téléphone/code, ni adresse e-mail).
+#
+# LECTURE SEULE EN PRODUCTION, Y COMPRIS SI UNE ROUTE ÉTAIT VULNÉRABLE :
+#   - toute sonde d'écriture vise un identifiant INEXISTANT (`mt-nonreg-…`) ou
+#     un corps qui ne peut rien produire (texte vide, listes vides) : une route
+#     restée ouverte répondrait 200/404 sans rien écrire ;
+#   - les routes dont une simple sonde pourrait écrire EN MASSE si elles
+#     régressaient (purge des campagnes, déduplication, import en masse,
+#     création de fiche, PATCH du mini-profil qui fait un upsert) ne sont PAS
+#     sondées ici : elles sont couvertes par le banc local uniquement.
+# Limite assumée : sur une route d'écriture encore ouverte, un identifiant
+# inexistant peut répondre 404 « par chance » — c'est le banc local qui prouve
+# le refus sur une VRAIE fiche, jamais la production.
+_MT_INEXISTANT = "mt-nonreg-inexistant"
+_MT_PROFILS = {
+    "anonyme": {},
+    "X-User-Email usurpe": {"X-User-Email": ADMIN},
+    "jeton invalide": {"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9."
+                                        "eyJlbWFpbCI6ImFAYi5jIn0.mauvaise_signature"},
+}
+# Une VALEUR de champ personnel (pas seulement son nom : un message d'erreur peut
+# légitimement dire « Email requis »), ou toute adresse e-mail autre que celle
+# que la sonde a elle-même envoyée dans l'en-tête usurpé.
+_MT_RX_PII = re.compile(r'"(email|whatsapp|phone|birthday|code|userEmail|assignedEmail|customer_email)"'
+                        r'\s*:\s*"[^"]')
+_MT_RX_MAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def _mt_sonder(num, titre, sondes):
+    """Chaque sonde (méthode, chemin, corps) x chaque profil non autorisé.
+    Le détail n'imprime JAMAIS un corps de réponse : seulement route, profil, code."""
+    try:
+        echecs = []
+        for methode, chemin, corps in sondes:
+            for nom, hdr in _MT_PROFILS.items():
+                r = requests.request(methode, _url(chemin), headers=hdr, json=corps, timeout=TIMEOUT)
+                texte = r.text or ""
+                mails = [m for m in _MT_RX_MAIL.findall(texte)
+                         if m.lower() not in (ADMIN.lower(), "a@b.c")
+                         and not m.lower().endswith("@invalid.test")]
+                pii = bool(_MT_RX_PII.search(texte)) or bool(mails)
+                if r.status_code not in (401, 403, 404) or pii:
+                    echecs.append(f"{methode} {chemin} [{nom}]={r.status_code}" + (" PII" if pii else ""))
+        record(num, titre, not echecs,
+               " | ".join(echecs) if echecs else f"{len(sondes) * len(_MT_PROFILS)} sondes refusées, 0 PII")
+    except Exception as e:
+        record(num, titre, False, str(e))
+
+
+def t113_mt_campagnes_lecture_sans_auth():
+    """MT-3 : lister / lire une campagne (nom, message, destinataires `results`)
+    exige une identité coach SIGNÉE. Constat du banc : GET /campaigns et
+    /campaigns-list lisaient `X-User-Email`, /campaigns/{id} et
+    /campaign-debug/{id} ne demandaient RIEN."""
+    i = _MT_INEXISTANT
+    _mt_sonder(113, "MT-3 : Campagnes (lecture) sans authentification -> refus, 0 PII", [
+        ("GET", "/api/campaigns", None),
+        ("GET", "/api/campaigns-list", None),
+        ("GET", f"/api/campaigns/{i}", None),
+        ("GET", f"/api/campaign-debug/{i}", None),
+        ("GET", f"/api/campaigns/{i}/preview", None),
+    ])
+
+
+def t114_mt_campagnes_ecriture_sans_auth():
+    """MT-3 : modifier / supprimer / marquer envoyée / envoyer un e-mail de
+    campagne exige une identité SIGNÉE. Sondes inoffensives : campagne
+    inexistante, et `send-email` sans destinataire (400 au pire, jamais d'envoi)."""
+    i = _MT_INEXISTANT
+    _mt_sonder(114, "MT-3 : Campagnes (écriture) sans authentification -> refus", [
+        ("PUT", f"/api/campaigns/{i}", {"message": "nonreg"}),
+        ("DELETE", f"/api/campaigns/{i}", None),
+        ("POST", f"/api/campaigns/{i}/mark-sent", {"contactId": i, "channel": "email"}),
+        ("POST", "/api/campaigns/send-email", {}),
+    ])
+
+
+def t115_mt_contacts_lecture_sans_auth():
+    """MT-3 : le CRM (fiches, doublons, filtres par catégorie) ne se lit
+    qu'avec une identité coach SIGNÉE — jamais sur la foi de `X-User-Email`."""
+    i = _MT_INEXISTANT
+    _mt_sonder(115, "MT-3 : Contacts (lecture CRM) sans authentification -> refus, 0 PII", [
+        ("GET", "/api/chat/participants", None),
+        ("GET", f"/api/chat/participants/{i}", None),
+        ("GET", "/api/contacts/all", None),
+        ("POST", "/api/contacts/check-duplicates", {"emails": [f"{i}@invalid.test"], "phones": []}),
+        ("POST", "/api/contacts/filter-by-categories", {"category_ids": [i]}),
+    ])
+
+
+def t116_mt_categories_segments_sans_auth():
+    _mt_sonder(116, "MT-3 : Catégories et segments de contacts sans authentification -> refus", [
+        ("GET", "/api/contact-categories", None),
+        ("GET", "/api/contact-categories/stats", None),
+        ("GET", "/api/contacts/segments", None),
+        ("GET", "/api/contacts/segment/email", None),
+    ])
+
+
+def t117_mt_contacts_ecriture_sans_auth():
+    """MT-3 : aucune écriture CRM sans identité SIGNÉE (fiche, type, étiquettes,
+    catégories). Cibles inexistantes : même une route ouverte n'écrirait rien."""
+    i = _MT_INEXISTANT
+    _mt_sonder(117, "MT-3 : Contacts (écriture CRM) sans authentification -> refus", [
+        ("PUT", f"/api/chat/participants/{i}", {"nonreg": True}),
+        ("DELETE", f"/api/chat/participants/{i}", None),
+        ("PUT", f"/api/contacts/{i}/type", {"contact_type": ""}),
+        ("POST", "/api/contacts/add-tags", {"contact_ids": [i], "tags": ["nonreg"]}),
+        ("POST", "/api/contacts/set-categories", {"contact_ids": [i], "category_ids": [], "mode": "add"}),
+        ("PUT", f"/api/contact-categories/{i}", {"icon": "nonreg"}),
+        ("DELETE", f"/api/contact-categories/{i}", None),
+    ])
+
+
+def t118_mt_users_leads_sans_auth():
+    i = _MT_INEXISTANT
+    _mt_sonder(118, "MT-3 : fiches users et leads sans authentification -> refus, 0 PII", [
+        ("GET", f"/api/users/{i}", None),
+        ("PUT", f"/api/users/{i}", {"name": "nonreg", "email": f"{i}@invalid.test", "whatsapp": ""}),
+        ("DELETE", f"/api/users/{i}", None),
+        ("GET", "/api/leads", None),
+        ("DELETE", f"/api/leads/{i}", None),
+    ])
+
+
+def t119_mt_abonnes_sans_auth():
+    """MT-3 : lien d'espace (code AFR en clair), notes de coaching et suivi des
+    abonnés ne sortent jamais sans identité SIGNÉE. La note est sondée avec un
+    texte VIDE sur un code inexistant : au pire, suppression d'une note qui
+    n'existe pas."""
+    i = _MT_INEXISTANT
+    _mt_sonder(119, "MT-3 : espace abonné, notes, suivi sans authentification -> refus, 0 PII", [
+        ("GET", f"/api/subscriber/by-email/{i}@invalid.test/space-link", None),
+        ("GET", "/api/notes/subscriber/AFR-NONREG0", None),
+        ("POST", "/api/notes", {"target_type": "subscriber", "target_id": "AFR-NONREG0", "text": ""}),
+        ("GET", "/api/progress/coach/subscribers", None),
+    ])
+
+
+def t120_mt1_campagnes_fermees():
+    """MT-1 — les routes de LECTURE / marquage des campagnes exigent un JWT signé.
+
+    Avant : GET /campaigns/{id} et /campaign-debug/{id} répondaient à un anonyme
+    (campagne complète, résultats nominatifs) ; GET /campaigns et /campaigns-list
+    rendaient TOUT à qui posait l'e-mail super-admin en en-tête ; mark-sent
+    passait une campagne en `completed` pour n'importe qui. Identifiant
+    volontairement INEXISTANT : la garde répond AVANT toute lecture (403, jamais
+    404), et rien n'est écrit."""
+    faux = "id-inexistant-sonde-mt1"
+    try:
+        mesures = {
+            "get_id_anonyme": requests.get(_url(f"/api/campaigns/{faux}"), timeout=TIMEOUT).status_code,
+            "debug_anonyme": requests.get(_url(f"/api/campaign-debug/{faux}"), timeout=TIMEOUT).status_code,
+            "liste_entete_admin": requests.get(_url("/api/campaigns"),
+                                               headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code,
+            "list_entete_admin": requests.get(_url("/api/campaigns-list"),
+                                              headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code,
+            "mark_sent_anonyme": requests.post(_url(f"/api/campaigns/{faux}/mark-sent"),
+                                               json={"contactId": "x", "channel": "email"},
+                                               timeout=TIMEOUT).status_code,
+        }
+        ok = all(v in (401, 403) for v in mesures.values())
+        record(120, "MT-1 : campagnes fermées à l'anonyme et à X-User-Email seul", ok,
+               " ".join(f"{k}={v}" for k, v in mesures.items()))
+    except Exception as e:
+        record(120, "MT-1 : campagnes fermées", False, str(e))
+
+
+def t121_mt1_campagnes_acces_legitime():
+    """MT-1 — PENDANT OBLIGATOIRE (règle V310c) : le super-admin signé garde sa
+    liste de campagnes. SKIP sans ADMIN_JWT = livraison du durcissement INTERDITE."""
+    if not ADMIN_JWT:
+        skip(121, "MT-1 : super-admin signé -> GET /api/campaigns 200",
+             "ADMIN_JWT non fourni — ⛔ parcours légitime NON prouvé (règle V310c)")
+        return
+    try:
+        h = {"Authorization": f"Bearer {ADMIN_JWT}"}
+        r1 = requests.get(_url("/api/campaigns"), headers=h, timeout=TIMEOUT)
+        r2 = requests.get(_url("/api/campaigns-list"), headers=h, timeout=TIMEOUT)
+        ok = (r1.status_code == 200 and isinstance(r1.json(), list) and len(r1.json()) > 0
+              and r2.status_code == 200 and isinstance(r2.json(), list))
+        record(121, "MT-1 : super-admin signé -> /campaigns et /campaigns-list 200 NON vide", ok,
+               f"campaigns HTTP {r1.status_code} n={len(r1.json()) if r1.status_code == 200 else '-'} "
+               f"| campaigns-list HTTP {r2.status_code}")
+    except Exception as e:
+        record(121, "MT-1 : accès légitime aux campagnes", False, str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MT-8 — RÉSERVATIONS, SUBSCRIBER-INFO, GROUPES DU CHAT sans authentification
+# ═══════════════════════════════════════════════════════════════════════════
+# Même contrat que 113-119 : LECTURE SEULE en production. Cibles INEXISTANTES
+# pour toute sonde d'écriture ; la création de groupe (POST /api/chat/groups)
+# n'est PAS sondée — elle écrirait si elle régressait : banc local seulement.
+# La liste des réservations est sondée avec `limit=1` : si la route régressait,
+# la sonde ne rapatrierait qu'une ligne (jamais imprimée), pas le carnet entier.
+
+
+def t122_mt8_reservations_lecture_sans_auth():
+    """MT-8 : carnet de réservations et export CSV des présences (noms, e-mails,
+    WhatsApp) — identité coach SIGNÉE exigée. Constat du banc avant correctif :
+    `GET /api/reservations` servait le carnet sur la foi de `X-User-Email`."""
+    _mt_sonder(122, "MT-8 : Réservations (lecture) sans authentification -> refus, 0 PII", [
+        ("GET", "/api/reservations?limit=1", None),
+        ("GET", "/api/reservations/export/attendance?date=1900-01-01", None),
+    ])
+
+
+def t123_mt8_reservations_ecriture_sans_auth():
+    """MT-8 : valider, supprimer, déclarer une absence, poser un suivi ou un casque,
+    annuler depuis un espace abonné — jamais sans identité. Constat du banc : suivi
+    et casque n'avaient AUCUNE garde. Réservation inexistante : rien ne s'écrit."""
+    i = _MT_INEXISTANT
+    _mt_sonder(123, "MT-8 : Réservations (écriture) sans authentification -> refus", [
+        ("POST", f"/api/reservations/{i}/validate", None),
+        ("DELETE", f"/api/reservations/{i}", None),
+        ("POST", f"/api/reservations/{i}/absence", None),
+        ("PUT", f"/api/reservations/{i}/tracking", {"trackingNumber": "", "shippingStatus": "shipped"}),
+        ("PUT", f"/api/reservations/{i}/headphone", {"status": None}),
+        ("DELETE", f"/api/subscriber/space/AFR-NONREG0/cancel/{i}", None),
+    ])
+
+
+def t124_mt8_subscriber_info_sans_pii():
+    """MT-8 : `GET /api/subscriber-info/{code}` sans identité ne rend JAMAIS une
+    adresse e-mail ni un numéro WhatsApp. Contrat final : le chemin public rend
+    au plus {exists, name} ; sur un code INEXISTANT -> 404 ou {exists: false}.
+    Aucun code réel n'est sondé."""
+    try:
+        echecs = []
+        for nom, hdr in _MT_PROFILS.items():
+            r = requests.get(_url("/api/subscriber-info/AFR-NONREG0"), headers=hdr, timeout=TIMEOUT)
+            texte = r.text or ""
+            mails = [m for m in _MT_RX_MAIL.findall(texte) if m.lower() not in (ADMIN.lower(), "a@b.c")]
+            pii = bool(_MT_RX_PII.search(texte)) or bool(mails)
+            # Contrat : 404, ou 200 EXACTEMENT {exists: false[, name]} — rien d'autre.
+            forme_ok = r.status_code == 404
+            if r.status_code == 200:
+                try:
+                    d = r.json()
+                    forme_ok = (isinstance(d, dict) and d.get("exists") is False
+                                and set(d.keys()) <= {"exists", "name"})
+                except Exception:
+                    forme_ok = False
+            if not forme_ok or pii:
+                echecs.append(f"[{nom}]={r.status_code}" + (" PII" if pii else "")
+                              + ("" if forme_ok else " forme hors contrat"))
+        record(124, "MT-8 : subscriber-info sans identité -> 0 e-mail, 0 WhatsApp", not echecs,
+               " | ".join(echecs) if echecs else f"{len(_MT_PROFILS)} sondes, 0 PII")
+    except Exception as e:
+        record(124, "MT-8 : subscriber-info sans identité", False, str(e))
+
+
+def t125_mt8_subscriber_info_ecriture_sans_auth():
+    """MT-8 : `PUT /api/subscriber-info/{code}` exige le jeton abonné de CE code :
+    sans lui -> 403 (contrat final). Code INEXISTANT : aucune écriture possible."""
+    try:
+        echecs = []
+        for nom, hdr in _MT_PROFILS.items():
+            r = requests.put(_url("/api/subscriber-info/AFR-NONREG0"), headers=hdr,
+                             json={"email": "mt-nonreg@invalid.test", "whatsapp": "+41000000000"},
+                             timeout=TIMEOUT)
+            if r.status_code != 403:
+                echecs.append(f"[{nom}]={r.status_code}")
+        record(125, "MT-8 : subscriber-info (écriture) sans jeton abonné -> 403", not echecs,
+               " | ".join(echecs) if echecs else f"{len(_MT_PROFILS)} sondes -> 403")
+    except Exception as e:
+        record(125, "MT-8 : subscriber-info (écriture)", False, str(e))
+
+
+def t126_mt8_groupes_lecture_sans_auth():
+    """MT-8 : groupes du chat (membres, e-mails, jetons d'invitation, prompts) —
+    jamais servis à un anonyme ni sur la foi de `X-User-Email`."""
+    _mt_sonder(126, "MT-8 : Groupes du chat (lecture) sans authentification -> refus, 0 PII", [
+        ("GET", "/api/chat/groups", None),
+        ("GET", "/api/chat/groups/public", None),
+    ])
+
+
+def t127_mt8_groupes_ecriture_sans_auth():
+    """MT-8 : modifier, supprimer, changer la visibilité, ajouter un membre —
+    groupe INEXISTANT : même une route ouverte n'écrirait rien."""
+    i = _MT_INEXISTANT
+    _mt_sonder(127, "MT-8 : Groupes du chat (écriture) sans authentification -> refus", [
+        ("PUT", f"/api/chat/groups/{i}", {"system_prompt": ""}),
+        ("DELETE", f"/api/chat/groups/{i}", None),
+        ("PUT", f"/api/chat/groups/{i}/visibility", {"visible_to_subscribers": True}),
+        ("POST", f"/api/chat/groups/{i}/join", {"participant_id": i}),
+    ])
+
+
+def _mt8_admin():
+    return {"Authorization": f"Bearer {ADMIN_JWT}"}
+
+
+def t128_mt8_reservations_acces_legitime():
+    """MT-8 — PENDANT OBLIGATOIRE (V310c) : le super-admin signé garde son carnet.
+    SKIP sans ADMIN_JWT = livraison du durcissement INTERDITE."""
+    titre = "MT-8 : super-admin signé -> GET /api/reservations 200 NON vide"
+    if not ADMIN_JWT:
+        return skip(128, titre, "ADMIN_JWT non fourni — ⛔ parcours légitime NON prouvé (règle V310c)")
+    try:
+        r = requests.get(_url("/api/reservations?limit=1"), headers=_mt8_admin(), timeout=TIMEOUT)
+        total = ((r.json() or {}).get("pagination") or {}).get("total", 0) if r.status_code == 200 else 0
+        record(128, titre, r.status_code == 200 and total > 0, f"HTTP {r.status_code} total={total}")
+    except Exception as e:
+        record(128, titre, False, str(e))
+
+
+def t129_mt8_subscriber_info_acces_legitime():
+    """MT-8 — PENDANT OBLIGATOIRE (V310c) : le super-admin signé lit la fiche d'un
+    abonné réel (SUB_CODE, sinon le premier code actif de /api/discount-codes).
+    Seuls le code HTTP et `exists` sont relevés : aucune valeur n'est imprimée."""
+    titre = "MT-8 : super-admin signé -> GET /api/subscriber-info/{code} 200"
+    if not ADMIN_JWT:
+        return skip(129, titre, "ADMIN_JWT non fourni — ⛔ parcours légitime NON prouvé (règle V310c)")
+    try:
+        code = SUB_CODE
+        if not code:
+            rc = requests.get(_url("/api/discount-codes"), headers=_mt8_admin(), timeout=TIMEOUT)
+            d = rc.json() if rc.status_code == 200 else []
+            liste = d if isinstance(d, list) else (d.get("data") or d.get("codes") or [])
+            code = next((c.get("code") for c in liste if isinstance(c, dict) and c.get("code")
+                         and c.get("active") is not False), "")
+        if not code:
+            return skip(129, titre, "aucun code abonné disponible (SUB_CODE absent, liste vide)")
+        r = requests.get(_url(f"/api/subscriber-info/{code}"), headers=_mt8_admin(), timeout=TIMEOUT)
+        existe = r.status_code == 200 and (r.json() or {}).get("exists") is True
+        record(129, titre, r.status_code == 200 and existe, f"HTTP {r.status_code} exists={existe}")
+    except Exception as e:
+        record(129, titre, False, str(e))
+
+
+def t130_mt8_groupes_acces_legitime():
+    """MT-8 — PENDANT OBLIGATOIRE (V310c) : le super-admin signé garde la liste
+    de ses groupes du chat (la production en compte plusieurs)."""
+    titre = "MT-8 : super-admin signé -> GET /api/chat/groups 200 NON vide"
+    if not ADMIN_JWT:
+        return skip(130, titre, "ADMIN_JWT non fourni — ⛔ parcours légitime NON prouvé (règle V310c)")
+    try:
+        r = requests.get(_url("/api/chat/groups"), headers=_mt8_admin(), timeout=TIMEOUT)
+        n = len(r.json()) if r.status_code == 200 and isinstance(r.json(), list) else 0
+        record(130, titre, r.status_code == 200 and n > 0, f"HTTP {r.status_code} n={n}")
+    except Exception as e:
+        record(130, titre, False, str(e))
 # INV-1 : « Invitation » de la page Campagnes (collection `referral_campaigns`).
 # Routes coach JWT strict (`_coach_strict`) : 401 sans jeton, 403 jeton non coach,
 # X-User-Email JAMAIS lu. Aucun appel n'écrit quoi que ce soit : les écritures
@@ -2594,10 +2948,20 @@ def main():
                    t103_drapeau_tarif_membre_expose, t104_drapeau_tarif_membre_admin_seul,
                    t105_estimation_sans_jeton_prix_public, t106_estimation_offre_inconnue,
                    t107_estimation_aucun_oracle_par_email,
+                   t120_mt1_campagnes_fermees, t121_mt1_campagnes_acces_legitime,
                    t108_offres_exposent_avantage_membre,
                    t109_p1d_drapeaux_exposes_et_dormants, t110_p1d_drapeaux_admin_seulement,
                    t111_s0_conversations_fermee_et_sans_pii,
                    t112_s0_conversations_acces_legitime,
+                   t113_mt_campagnes_lecture_sans_auth, t114_mt_campagnes_ecriture_sans_auth,
+                   t115_mt_contacts_lecture_sans_auth, t116_mt_categories_segments_sans_auth,
+                   t117_mt_contacts_ecriture_sans_auth, t118_mt_users_leads_sans_auth,
+                   t119_mt_abonnes_sans_auth,
+                   t122_mt8_reservations_lecture_sans_auth, t123_mt8_reservations_ecriture_sans_auth,
+                   t124_mt8_subscriber_info_sans_pii, t125_mt8_subscriber_info_ecriture_sans_auth,
+                   t126_mt8_groupes_lecture_sans_auth, t127_mt8_groupes_ecriture_sans_auth,
+                   t128_mt8_reservations_acces_legitime, t129_mt8_subscriber_info_acces_legitime,
+                   t130_mt8_groupes_acces_legitime,
                    t140_inv1_invitations_fermees_sans_auth, t141_inv1_partage_public_jeton_inconnu,
                    t142_inv1_acces_legitime,
                    t143_inv3_espace_seance_sans_auth,

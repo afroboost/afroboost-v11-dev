@@ -227,8 +227,14 @@ verifier("15d. les DEUX cas d'isolation restent couverts par le filtre unique",
          'is_super_admin(caller_email) else {"coach_id": caller_email}' in _FONCTION)
 # Hors perimetre, mais consigne : /chat/participants lit encore le document
 # entier (limite a 1000). Ce lot ne le touche PAS.
+# MT-2 (29/09/2026) : l'ancre pointait sur la forme NON SURE de la route
+# (lecture `{}` decidee par `X-User-Email` brut). MT-2 l'a fermee : JWT signe +
+# filtre proprietaire, document entier toujours lu, plafond 1000 inchange.
+# L'ancre suit la nouvelle forme ; ce que P1-A garantissait (route non
+# projetee, plafond 1000) reste verifie.
 verifier("15c. /chat/participants reste inchange (hors perimetre de ce lot)",
-         SERVEUR.count('db.chat_participants.find({}, {"_id": 0})') == 1)
+         SERVEUR.count('_mt2_filtre(caller_email), {"_id": 0}).skip(_s).limit(_l).to_list(_l)') == 1
+         and "_mt2_pagination(limit, skip, 1000, 1000)" in SERVEUR)
 verifier("16. l'enrichissement V300 lit toujours subscriber_infos",
          'db.subscriber_infos.find(' in SERVEUR)
 verifier("17. l'enrichissement Contacts V2 est toujours appele",

@@ -1781,6 +1781,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   };
 
   // V294 : lit les infos abonné depuis le BACKEND (source de vérité). Best-effort.
+  // MT-6 : la réponse dépend de l'appelant. Avec le jeton d'appareil de CE code
+  // (afroboost_subscriber_token, joint par l'intercepteur) -> fiche complète ;
+  // avec le code seul -> { exists, name } uniquement (plus d'e-mail, WhatsApp ni
+  // anniversaire). Conséquence voulue : la connexion AUTOMATIQUE par QR / lien
+  // ?code= ne se fait plus que sur un appareil déjà connecté ; ailleurs, le
+  // formulaire s'ouvre pré-rempli (code + prénom) et l'abonné confirme son e-mail.
   const v294FetchSubscriberInfo = async (code) => {
     const c = (code || '').trim();
     if (!c) return null;
@@ -2152,8 +2158,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       if (savedIdentity || savedClient) {
         const data = JSON.parse(savedIdentity || savedClient);
         const email = data?.email?.toLowerCase();
-        // v9.5.6: Liste des Super Admins
-        return email === 'contact.artboost@gmail.com' || email === 'afroboost.bassi@gmail.com';
+        // v9.5.6: Liste des Super Admins — SA-1 : un seul super-admin
+        return email === 'contact.artboost@gmail.com';
       }
     } catch (e) {}
     return false;
@@ -2403,7 +2409,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           var raw = localStorage.getItem(AFROBOOST_IDENTITY_KEY) || localStorage.getItem(CHAT_CLIENT_KEY);
           var em = raw ? (JSON.parse(raw) || {}).email : '';
           em = (em || '').toLowerCase();
-          if (em === 'contact.artboost@gmail.com' || em === 'afroboost.bassi@gmail.com') claimsCoach = true;
+          if (em === 'contact.artboost@gmail.com') claimsCoach = true;   // SA-1 : super-admin unique
         }
       } catch (e) {}
       if (!claimsCoach) return;
@@ -3667,9 +3673,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           return;
         }
         
-        // Super Admin est toujours un coach - v9.5.6
+        // Super Admin est toujours un coach - v9.5.6 (SA-1 : un seul super-admin)
         const email = userEmail.toLowerCase();
-        if (email === 'contact.artboost@gmail.com' || email === 'afroboost.bassi@gmail.com') {
+        if (email === 'contact.artboost@gmail.com') {
           setIsRegisteredCoach(true);
           return;
         }
@@ -3933,8 +3939,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     }
   }, [selectedCourse, afroboostProfile, leadData, participantId, setMessages]);
 
-  // v9.5.6: Liste des emails coach/admin autorisés
-  const COACH_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+  // v9.5.6: Liste des emails coach/admin autorisés — SA-1 : le super-admin unique
+  const COACH_EMAILS = ['contact.artboost@gmail.com'];
   
   // Sauvegarder subscriber_data quand un code promo est validé
   const saveSubscriberData = useCallback((code, name, type = 'abonné') => {
@@ -4020,6 +4026,17 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         _subTok = _jeton && _jeton.token;
         _c9bPseudo = (_jeton && _jeton.analyticsId) || '';
       } catch (e) { /* silencieux */ }
+
+      // MT-6 : `/subscriber-info/<code>` ne livre plus le WhatsApp à qui ne
+      // présente que le code. Sur un appareil neuf, le WhatsApp manquant est
+      // donc relu APRÈS l'émission du jeton d'appareil de CE code (l'intercepteur
+      // global le joint en X-Subscriber-Token) : rien n'est redemandé à l'abonné.
+      if (_subTok && !profile.whatsapp) {
+        try {
+          var _infoJeton = await v294FetchSubscriberInfo(profile.code);
+          if (_infoJeton && _infoJeton.whatsapp) profile.whatsapp = String(_infoJeton.whatsapp).trim();
+        } catch (e) { /* silencieux : on continue avec ce qu'on a */ }
+      }
 
       var _entree = await handleSmartEntry({
         firstName: profile.name,

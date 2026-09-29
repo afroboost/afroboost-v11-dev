@@ -458,6 +458,8 @@ async def register_free_pack(request: RegisterFreePackRequest, response: Respons
         # Lancement » à 0 CHF et visible, et `afroboost.bassi@gmail.com` absent
         # de `coaches` comme de `users_auth` — les deux contrôles d'unicité
         # ci-dessous passaient donc sans rien bloquer.
+        # SA-1 (29/09/2026) : cette adresse n'est plus super-admin ; seule
+        # contact.artboost@gmail.com reste réservée ici.
         #
         # Même réponse que « déjà enregistré », pour ne pas créer d'oracle.
         from api.routes.shared import is_super_admin as _v20d_est_admin

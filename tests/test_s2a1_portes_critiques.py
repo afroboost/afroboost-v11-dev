@@ -387,6 +387,12 @@ CORPS_VALIDE = {"to_email": DEST_FICTIF, "to_name": "Destinataire Fictif",
                 "subject": SUJET_FICTIF, "message": MESSAGE_FICTIF, "media_url": None}
 
 # --- 4.1 send-email avec un jeton COACH legitime -----------------------------
+# MT-1 (29/09) : un coach n'ecrit plus qu'a SON portefeuille, et le credit est
+# debite sur son identite SIGNEE. Le destinataire fictif est donc rattache au
+# coach (chat_participants) et le coach dispose d'un credit.
+S.db.chat_participants = CollectionBouchon([{"id": "p-dest", "coach_id": COACH_FICTIF,
+                                             "email": DEST_FICTIF}])
+S.db.coaches.documents[0]["credits"] = 1
 ENVOIS.clear()
 credits_avant = S.db.coaches.ecritures
 statut, reponse = appeler(S.send_campaign_email(
@@ -460,12 +466,21 @@ taches.executer_tout()
 verifier("4n. BULK, SUPER-ADMIN : autorise, 3 envois exacts",
          statut == 200 and len(ENVOIS) == 3, "statut=%s envois=%d" % (statut, len(ENVOIS)))
 
-# --- 4.5 la facturation n'a pas bouge ----------------------------------------
-verifier("4o. AUCUN debit de credits n'a eu lieu — la logique est INCHANGEE",
-         S.db.coaches.ecritures == credits_avant,
-         "ecritures sur `coaches` = %d (attendu %d). `launch_campaign` debite deja "
-         "le cout global : un debit ici serait un DOUBLE debit."
-         % (S.db.coaches.ecritures, credits_avant))
+# --- 4.5 la facturation : MT-1 -------------------------------------------------
+# MT-1 : le debit suit l'identite SIGNEE (un credit pour l'envoi du coach, aucun
+# pour le super-admin, aucun pour les BULK desactives). Le double debit redoute
+# par V468 n'existe plus : le lancement ne rappelle plus send-email.
+verifier("4o. MT-1 : exactement UN debit (le coach signe), aucun pour le super-admin",
+         S.db.coaches.ecritures == credits_avant + 1,
+         "ecritures sur `coaches` = %d (attendu %d)" % (S.db.coaches.ecritures, credits_avant + 1))
+
+ENVOIS.clear()
+_ecr = S.db.coaches.ecritures
+statut, _ = appeler(S.send_campaign_email(
+    RequeteFictive(JETON_COACH, None, dict(CORPS_VALIDE, to_email="hors.portefeuille@exemple.test"))))
+verifier("4p. MT-1 : COACH vers une adresse HORS portefeuille -> 403, aucun envoi, aucun debit",
+         statut == 403 and not ENVOIS and S.db.coaches.ecritures == _ecr,
+         "statut=%s envois=%d" % (statut, len(ENVOIS)))
 
 
 print("\n=== 5. PUT /whatsapp-config — SUPER-ADMIN STRICT, ET RIEN N'EST ECRIT ===")
@@ -636,8 +651,9 @@ verifier("7h. la destination de la notification vient de la BASE, jamais du corp
          and 'payload.coachEmail' not in CORPS_NOTIFY
          and 'payload.to_email' not in CORPS_NOTIFY)
 
-verifier("7i. le debit de credits de send-email n'a PAS ete deplace (pas de double debit)",
-         'coach_email = request.headers.get("X-User-Email", "").lower().strip()' in CORPS_SEND)
+verifier("7i. MT-1 : le debit de send-email suit l'identite SIGNEE, jamais `X-User-Email`",
+         'coach_email = _mt1_appelant' in CORPS_SEND
+         and 'request.headers.get("X-User-Email"' not in CORPS_SEND)
 
 verifier("7j. le modele de notify-coach n'expose AUCUN champ de destination",
          not any(champ in S.CoachNotificationPayload.model_fields
@@ -711,8 +727,9 @@ verifier("9d. tous les destinataires touches sont des adresses fictives `.test`"
          all(str(a).endswith(".test") for e in ENVOIS for a in (e.get("to") or [])),
          "destinataires=%s" % [e.get("to") for e in ENVOIS])
 
-verifier("9e. aucune ecriture simulee ailleurs que sur `whatsapp_config`",
-         S.db.coaches.ecritures == 0 and S.db.subscribers.ecritures == 0,
+# MT-1 : l'unique ecriture `coaches` est le credit debite en 4o (identite signee).
+verifier("9e. aucune ecriture simulee ailleurs que sur `whatsapp_config` (+ le debit MT-1 de 4o)",
+         S.db.coaches.ecritures == 1 and S.db.subscribers.ecritures == 0,
          "coaches=%d subscribers=%d" % (S.db.coaches.ecritures, S.db.subscribers.ecritures))
 
 

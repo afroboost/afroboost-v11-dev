@@ -29,12 +29,25 @@
 export const C9B_FORMAT = /^[0-9a-f]{32}$/;
 
 // Le funnel d'acquisition ne doit jamais contenir le proprietaire du site.
-// ⚠️ Liste dupliquee de `ChatWidget.js` (COACH_EMAILS) et `App.js`
-// (SUPER_ADMINS) : un test de source verifie qu'elles restent identiques.
-export const C9B_EMAILS_COACH = [
-  'contact.artboost@gmail.com',
+//
+// SA-1 : CETTE LISTE EST UNE EXCLUSION STATISTIQUE, PAS UN DROIT. Elle a deux
+// parts, volontairement separees :
+//   * C9B_EMAILS_SUPER_ADMIN — le super-admin UNIQUE. ⚠️ Dupliquee de
+//     `ChatWidget.js` (COACH_EMAILS) et `App.js` (SUPER_ADMINS) : un test de
+//     source verifie qu'elles restent alignees.
+//   * C9B_EMAILS_EXCLUS_SANS_DROIT — adresses du proprietaire qui n'ont AUCUN
+//     droit (afroboost.bassi@gmail.com n'est plus super-admin depuis SA-1) mais
+//     qu'on continue d'EXCLURE du funnel : les mesurer fusionnerait l'historique
+//     du proprietaire dans une fiche client. Exclure ne donne rien — c'est le
+//     sens prudent. Un test verifie qu'elles n'apparaissent dans AUCUNE liste
+//     de droits (App.js, ChatWidget.js).
+export const C9B_EMAILS_SUPER_ADMIN = [
+  'contact.artboost@gmail.com'
+];
+export const C9B_EMAILS_EXCLUS_SANS_DROIT = [
   'afroboost.bassi@gmail.com'
 ];
+export const C9B_EMAILS_COACH = C9B_EMAILS_SUPER_ADMIN.concat(C9B_EMAILS_EXCLUS_SANS_DROIT);
 
 function c9bLire(cle) {
   try { return window.localStorage.getItem(cle); } catch (e) { return null; }

@@ -55,7 +55,8 @@ axios.interceptors.request.use((config) => {
     // X-User-Email est déjà falsifiable en transition V265).
     if (!config.headers['X-User-Email']) {
       try {
-        const SUPER_ADMINS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+        // SA-1 : UN SEUL super-admin (décision définitive du propriétaire).
+        const SUPER_ADMINS = ['contact.artboost@gmail.com'];
         let em = '';
         const idRaw = localStorage.getItem('afroboost_identity') || localStorage.getItem('af_chat_client');
         if (idRaw) { try { em = (JSON.parse(idRaw).email || '').toLowerCase().trim(); } catch (e) {} }
@@ -323,16 +324,20 @@ const V224_PROGRESSIVE_KEY = 'v224_progressive_checkout';
 
 // Configuration Admin - Vercel Compatible
 // v9.5.6: Liste des Super Admins autorisés
-const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+// SA-1 : UN SEUL super-admin (décision définitive du propriétaire, 29/09/2026).
+// `afroboost.bassi@gmail.com` n'a plus aucun droit global, ni ici ni au serveur.
+const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com'];
 const ADMIN_EMAIL = 'contact.artboost@gmail.com'; // Legacy
 const APP_VERSION = '2.0.0';
 
 // v9.5.6 + v41: Helper pour vérifier si un email est Super Admin
-// Inclut les emails @afroboost.com + la whitelist
+// SA-1 : l'ancien joker « toute adresse @afroboost.com » est RETIRÉ — il faisait
+// de n'importe quelle adresse de ce domaine un super-admin À L'ÉCRAN. Seule la
+// liste ci-dessus (une adresse) fait foi, comme au serveur.
 const isSuperAdminEmail = (email) => {
   if (!email) return false;
   const e = email.toLowerCase().trim();
-  return SUPER_ADMIN_EMAILS.some(a => e === a.toLowerCase()) || e.endsWith('@afroboost.com');
+  return SUPER_ADMIN_EMAILS.some(a => e === a.toLowerCase());
 };
 
 // v42: Clé de persistance admin — ne jamais supprimer lors du logout
@@ -3274,7 +3279,9 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
       } catch (e) { v449Reserver = false; }
       if (v449Reserver && typeof onSelectOffer === 'function') {
         const v449Offre = offers.find(o => o && o.id === cible);
-        if (v449Offre) onSelectOffer(v449Offre);
+        // DL-1 : ouverture EXPLICITE (`lienProfond`), jamais la bascule du
+        // clic : si l'offre est déjà ouverte, `handleSelectOffer` n'y touche pas.
+        if (v449Offre) onSelectOffer(v449Offre, { lienProfond: true });
       }
     }, 200);   // sonde : le slider peut mettre plusieurs secondes à monter
     return () => clearInterval(t);
@@ -7072,7 +7079,12 @@ function App() {
   };
 
   // Sélection d'offre avec smooth scroll vers le formulaire "Vos informations"
-  const handleSelectOffer = (offer) => {
+  // DL-1 : `options.lienProfond` = OUVERTURE EXPLICITE, demandée par un lien
+  // profond (`?offre=<id>&reserver=1`). Elle ouvre, elle ne referme jamais : les
+  // deux bascules ci-dessous (v56, v159) sont réservées au clic manuel, qui garde
+  // son comportement actuel. Sans ce second argument, rien ne change.
+  const handleSelectOffer = (offer, options) => {
+    const dl1LienProfond = !!(options && options.lienProfond === true);
     // V260: offre a 0 CHF proposant la preuve sociale -> le visiteur choisit
     // d'abord sa voie (essai gratuit contre preuve, ou prix alternatif).
     //
@@ -7131,12 +7143,16 @@ function App() {
     }
     // v56: Toggle — si la même offre est déjà sélectionnée, on la désélectionne (ferme le formulaire)
     if (selectedOffer && offer && selectedOffer.id === offer.id && selectedOffer.name === offer.name) {
+      // DL-1 : un lien profond ne désélectionne JAMAIS — l'offre est déjà ouverte.
+      if (dl1LienProfond) return;
       setSelectedOffer(null);
       setSelectedVariants({});
       return;
     }
     // v159: Toggle aussi pour l'offre en attente (pending)
     if (pendingOffer && offer && pendingOffer.id === offer.id) {
+      // DL-1 : même règle pour l'offre en attente — le lien ne l'annule pas.
+      if (dl1LienProfond) return;
       setPendingOffer(null);
       // Retirer le toast si visible
       const existingToast = document.getElementById('v158-session-toast');
