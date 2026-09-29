@@ -144,25 +144,51 @@ async def mt1_filtrer_cibles(database, portefeuille: dict, ids) -> list:
     Un id d'un autre coach est RETIRÉ SILENCIEUSEMENT ; seul le NOMBRE retiré est
     journalisé (aucune donnée personnelle dans les logs). Ordre conservé.
     """
-    from api.routes.tenant_contacts import contact_appartient
-    _out, _retires = [], 0
+    # MT-1 (audit P2) : UNE requête `$in` groupée pour toutes les cibles absentes
+    # du portefeuille (plus un find_one par id : groupes de 800+ membres). Même
+    # règle que `tenant_contacts.contact_appartient(…, "chat_sessions", …)` :
+    # session dont `coach_id` == propriétaire, ids hostiles (`$`, > 128) écartés.
+    _propres = []
     for _i in ids or []:
-        if not isinstance(_i, str) or not _i.strip():
-            continue
-        if _i in portefeuille["ids"]:
-            _out.append(_i)
-            continue
+        if isinstance(_i, str) and _i.strip():
+            _propres.append(_i)
+    _a_verifier = sorted({_i for _i in _propres if _i not in portefeuille["ids"]
+                          and "$" not in _i and len(_i) <= 128})
+    _sessions = set()
+    if _a_verifier:
         try:
-            _ok = await contact_appartient(database, portefeuille["proprietaire"], "chat_sessions", _i)
-        except Exception:
-            _ok = False
-        if _ok:
+            async for _s in database.chat_sessions.find(
+                    {"id": {"$in": _a_verifier}, "coach_id": portefeuille["proprietaire"]},
+                    {"_id": 0, "id": 1}):
+                if _s.get("id"):
+                    _sessions.add(_s["id"])
+        except Exception as _e:
+            logger.warning("[MT-1] vérification des conversations impossible (%s)", type(_e).__name__)
+    _out, _retires = [], 0
+    for _i in _propres:
+        if _i in portefeuille["ids"] or _i in _sessions:
             _out.append(_i)
         else:
             _retires += 1
     if _retires:
         logger.warning("[MT-1] %d cible(s) hors portefeuille du propriétaire retirée(s)", _retires)
     return _out
+
+
+async def mt1_nom_expediteur(database, proprietaire: str, defaut: str = "Coach Bassi") -> str:
+    """MT-1 : nom affiché des messages de campagne dans le chat.
+
+    Propriétaire restreint (coach partenaire) -> son `platform_name` ou `name`
+    (collection `coaches`) ; sinon (super-admin / historique) -> l'affichage
+    actuel, inchangé."""
+    if not proprietaire:
+        return defaut
+    try:
+        _c = await database.coaches.find_one({"email": proprietaire}, {"_id": 0, "name": 1, "platform_name": 1}) or {}
+    except Exception:
+        _c = {}
+    _n = (_c.get("platform_name") or _c.get("name") or "").strip() if isinstance(_c, dict) else ""
+    return _n or "Coach"
 
 
 def mt1_filtrer_contacts(portefeuille: dict, contacts) -> list:

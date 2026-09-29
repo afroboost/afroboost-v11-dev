@@ -5868,7 +5868,9 @@ async def _save_campaign_chat_message(
     cta_type: str = None,
     cta_text: str = None,
     cta_link: str = None,
-    contact_name: str = None
+    contact_name: str = None,
+    proprietaire: str = "",
+    sender_name: str = "Coach Bassi"
 ):
     """
     Écrit le message de campagne dans la collection chat_messages
@@ -5885,10 +5887,13 @@ async def _save_campaign_chat_message(
     # (campagne 1ef3f41e : 158 copies « individuelles » postées dans grp_24057418,
     # 165 membres ; 620/1 495 copies omnicanales tombées dans des groupes). Une copie
     # personnelle ne va que dans une session PERSONNELLE : jamais group/community.
-    session = await db.chat_sessions.find_one(
-        {"participant_ids": contact_id, "mode": {"$nin": ["group", "community", "vip", "promo"]}},
-        {"_id": 0, "id": 1}
-    )
+    # MT-1 (audit P1) : campagne d'un COACH (`proprietaire` non vide) -> seule SA
+    # conversation avec la personne ; jamais celle qu'elle a avec un autre coach.
+    # Super-admin / historique (`proprietaire` vide) : recherche inchangée.
+    _mt1_q = {"participant_ids": contact_id, "mode": {"$nin": ["group", "community", "vip", "promo"]}}
+    if proprietaire:
+        _mt1_q["coach_id"] = proprietaire
+    session = await db.chat_sessions.find_one(_mt1_q, {"_id": 0, "id": 1})
     if session:
         session_id = session["id"]
         # V167.3: Mettre à jour le nom si manquant
@@ -5899,14 +5904,17 @@ async def _save_campaign_chat_message(
             )
     else:
         session_id = str(uuid.uuid4())
-        await db.chat_sessions.insert_one({
+        _mt1_nouvelle = {
             "id": session_id,
             "mode": "user",
             "participant_ids": [contact_id],
             "participant_name": display_name,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
-        })
+        }
+        if proprietaire:
+            _mt1_nouvelle["coach_id"] = proprietaire  # MT-1 : la session créée appartient au coach
+        await db.chat_sessions.insert_one(_mt1_nouvelle)
         logger.info(f"[CAMPAIGN-CHAT] Session créée pour contact {contact_id} ({display_name}): {session_id}")
 
     msg_id = str(uuid.uuid4())
@@ -5918,7 +5926,7 @@ async def _save_campaign_chat_message(
         "content": content,
         "media_url": media_url or None,
         "sender_type": "coach",
-        "sender_name": "Coach Bassi",
+        "sender_name": sender_name,  # MT-1 : nom du coach propriétaire (défaut inchangé)
         "sender_id": f"coach-campaign-{channel}",
         "channel": channel,
         "campaign_id": campaign_id,
@@ -6796,6 +6804,8 @@ async def launch_campaign(campaign_id: str):
     _mt1_proprio_launch = _mt1_restreint(campaign)
     if _mt1_proprio_launch:
         valid_target_ids = await _mt1_filtrer(db, await _mt1_pf_de(db, _mt1_proprio_launch), valid_target_ids)
+    from api.routes.campaign_routes import mt1_nom_expediteur as _mt1_nom
+    _mt1_expediteur = await _mt1_nom(db, _mt1_proprio_launch)  # « Coach Bassi » si super-admin/historique
     # RÉACTIVATION multi-agents (15/09/2026) — le canal INTERNE est RECONNECTÉ à
     # l'existant, sans second moteur :
     #   - les segments (`targetCategories`) passent par LA résolution commune
@@ -6854,11 +6864,14 @@ async def launch_campaign(campaign_id: str):
             try:
                 # === DÉTECTION GROUPE OU UTILISATEUR ===
                 # Chercher d'abord si le targetId est une session de groupe
-                group_session = await db.chat_sessions.find_one(
-                    {"id": target_id, "$or": [
+                _mt1_qg = {"id": target_id, "$or": [
                         {"title": {"$exists": True, "$ne": ""}},
                         {"mode": {"$in": ["community", "vip", "promo", "group"]}}
-                    ]},
+                    ]}
+                if _mt1_proprio_launch:
+                    _mt1_qg["coach_id"] = _mt1_proprio_launch  # MT-1 : groupe du propriétaire uniquement
+                group_session = await db.chat_sessions.find_one(
+                    _mt1_qg,
                     {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1}
                 )
 
@@ -6878,9 +6891,12 @@ async def launch_campaign(campaign_id: str):
 
                     # Stratégie de recherche: email (fiable) > participant_ids > id direct
                     session = None
+                    # MT-1 (audit P1) : campagne d'un COACH -> uniquement SES conversations
+                    # (`coach_id` == propriétaire) ; jamais celle du contact avec un autre coach.
+                    _mt1_qs = {"coach_id": _mt1_proprio_launch} if _mt1_proprio_launch else {}
                     if contact_email:
                         session = await db.chat_sessions.find_one(
-                            {"participantEmail": contact_email},
+                            dict({"participantEmail": contact_email}, **_mt1_qs),
                             {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1}
                         )
                         if session:
@@ -6892,8 +6908,8 @@ async def launch_campaign(campaign_id: str):
                         # internes d'août y sont tombés). Le cas « la cible EST un groupe »
                         # est déjà traité plus haut (`group_session`).
                         session = await db.chat_sessions.find_one(
-                            {"$or": [{"id": target_id}, {"participant_ids": target_id}],
-                             "mode": {"$nin": ["group", "community", "vip", "promo"]}},
+                            dict({"$or": [{"id": target_id}, {"participant_ids": target_id}],
+                                  "mode": {"$nin": ["group", "community", "vip", "promo"]}}, **_mt1_qs),
                             {"_id": 0, "id": 1, "mode": 1, "title": 1}
                         )
 
@@ -6909,7 +6925,7 @@ async def launch_campaign(campaign_id: str):
                     else:
                         # Créer une session pour cet utilisateur s'il n'en a pas
                         session_id = str(uuid.uuid4())
-                        await db.chat_sessions.insert_one({
+                        _mt1_nouvelle = {
                             "id": session_id,
                             "mode": "user",
                             "participant_ids": [target_id],
@@ -6917,7 +6933,10 @@ async def launch_campaign(campaign_id: str):
                             "participantName": contact_name_internal,
                             "created_at": datetime.now(timezone.utc).isoformat(),
                             "updated_at": datetime.now(timezone.utc).isoformat()
-                        })
+                        }
+                        if _mt1_proprio_launch:
+                            _mt1_nouvelle["coach_id"] = _mt1_proprio_launch  # MT-1 : session du coach
+                        await db.chat_sessions.insert_one(_mt1_nouvelle)
                         logger.info(f"[CAMPAIGN-LAUNCH] 📝 Session créée pour {target_id} ({contact_email}): {session_id}")
                 
                 # Substituer les variables {prénom} etc. avec les infos du contact
@@ -6936,7 +6955,7 @@ async def launch_campaign(campaign_id: str):
                     "content": personalized_message,
                     "media_url": media_url or None,
                     "sender_type": "coach",
-                    "sender_name": "Coach Bassi",
+                    "sender_name": _mt1_expediteur,  # MT-1 : nom du coach propriétaire
                     "sender_id": "coach-campaign",
                     "is_group": is_group,
                     "timestamp": msg_timestamp,
@@ -7319,7 +7338,9 @@ async def launch_campaign(campaign_id: str):
                             cta_type=cta_type,
                             cta_text=cta_text,
                             cta_link=cta_link,
-                            contact_name=contact_name
+                            contact_name=contact_name,
+                            proprietaire=_mt1_proprio_launch,  # MT-1
+                            sender_name=_mt1_expediteur
                         )
                     except Exception as chat_err:
                         logger.warning(f"[CAMPAIGN-CHAT] Écriture chat_messages échouée (WhatsApp, {contact_id}): {chat_err}")
@@ -7477,7 +7498,9 @@ async def launch_campaign(campaign_id: str):
                             cta_type=cta_type,
                             cta_text=cta_text,
                             cta_link=cta_link,
-                            contact_name=contact_name
+                            contact_name=contact_name,
+                            proprietaire=_mt1_proprio_launch,  # MT-1
+                            sender_name=_mt1_expediteur
                         )
                     except Exception as chat_err:
                         logger.warning(f"[CAMPAIGN-CHAT] Écriture chat_messages échouée (email, {contact_id}): {chat_err}")
