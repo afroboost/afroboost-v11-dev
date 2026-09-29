@@ -156,8 +156,28 @@ def construire(docs):
     bac["logger"] = type("L", (), {"info": lambda *a, **k: None,
                                    "warning": lambda *a, **k: None,
                                    "error": lambda *a, **k: None})()
+    # MT-5 : l'identite est un JWT SIGNE, verifie par `_v309_require_coach_or_admin`
+    # (api.server). Le banc la remplace par une garde qui ne connait QUE
+    # `Authorization: Bearer jwt:<email>` — jamais `X-User-Email` — et leve 403
+    # sinon, exactement le contrat de la vraie.
+    _srv = types.ModuleType("api.server")
+
+    async def _garde(request):
+        _a = request.headers.get("Authorization", "")
+        _e = _a[len("Bearer jwt:"):].strip().lower() if _a.startswith("Bearer jwt:") else ""
+        if not _e:
+            raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
+        return _e
+    _srv._v309_require_coach_or_admin = _garde
+    sys.modules["api.server"] = _srv
+    bac["MT5_LIMITE_PAGE"] = 50
+    exec(compile(extraire("mt5_coach_signe"), "<v443-extrait>", "exec"), bac)
     exec(compile(extraire("get_reservations"), "<v443-extrait>", "exec"), bac)
     return bac, base
+
+
+def jwt(email):
+    return {"Authorization": "Bearer jwt:" + email}
 
 
 def docs_prod():
@@ -170,7 +190,7 @@ def docs_prod():
 async def scenario():
     # --- 1. identite valide -> la liste historique, a l'identique
     bac, base = construire(docs_prod())
-    r = await bac["get_reservations"](FausseRequete({"X-User-Email": ADMIN}), page=1, limit=20)
+    r = await bac["get_reservations"](FausseRequete(jwt(ADMIN)), page=1, limit=20)
     verifier("1. admin -> 20 reservations sur la page 1",
              len(r["data"]) == 20, str(len(r["data"])))
     verifier("1b. admin -> total = 128", r["pagination"]["total"] == 128, str(r["pagination"]))
@@ -179,16 +199,20 @@ async def scenario():
 
     # --- 2. coach non-admin : filtre sur SON coach_id, comportement inchange
     bac, base = construire(docs_prod() + [{"id": "x1", "coach_id": COACH, "createdAt": "2026-08-01T10:00:00+00:00"}])
-    r = await bac["get_reservations"](FausseRequete({"X-User-Email": COACH}), page=1, limit=20)
+    r = await bac["get_reservations"](FausseRequete(jwt(COACH)), page=1, limit=20)
     verifier("2. coach -> ne voit QUE ses reservations",
              r["pagination"]["total"] == 1 and all(d.get("id") == "x1" for d in r["data"]), str(r["pagination"]))
     verifier("2b. coach -> requete filtree sur son coach_id",
              base.reservations.requetes[0][1] == {"coach_id": COACH}, str(base.reservations.requetes[0]))
 
     # --- 3. identite absente -> REFUS EXPLICITE, jamais une liste vide
+    # MT-5 : `X-User-Email` SEUL (meme celui du proprietaire) est une absence
+    # d'identite — il ne prouve rien.
     for nom, h in (("aucun en-tete", {}),
                    ("en-tete vide", {"X-User-Email": ""}),
-                   ("en-tete d'espaces", {"X-User-Email": "   "})):
+                   ("en-tete d'espaces", {"X-User-Email": "   "}),
+                   ("X-User-Email admin SANS jeton", {"X-User-Email": ADMIN}),
+                   ("X-User-Email coach SANS jeton", {"X-User-Email": COACH})):
         bac, base = construire(docs_prod())
         try:
             r = await bac["get_reservations"](FausseRequete(h), page=1, limit=20)
@@ -208,36 +232,27 @@ async def scenario():
              "__no_access__" not in [l for l in litteraux], str([l for l in litteraux if "no_access" in l]))
 
     # --- 5. aucune erreur d'auth ne peut redevenir une liste vide
-    verifier("5. le refus precede toute construction de requete",
-             src.index("raise HTTPException") < src.index("base_query ="), "")
+    verifier("5. le refus (garde signee) precede toute construction de requete",
+             src.index("mt5_coach_signe(request)") < src.index("base_query ="), "")
 
-    # --- 6. LOT 3c-0 : LE DURCISSEMENT JWT EXISTE, MAIS SOUS DRAPEAU
+    # --- 6. MT-5 : LE JWT SIGNE EST INCONDITIONNEL, LE DRAPEAU NE GOUVERNE PLUS
     #
-    # V443 verifiait ici que la strategie d'authentification n'avait PAS change.
-    # LOT 3c-0 la change — volontairement, et seulement quand le drapeau
-    # `RESERVATIONS_JWT_STRICT` est a `true`. L'invariant est donc REECRIT, pas
-    # supprime : ce qui doit rester vrai, c'est que DRAPEAU ETEINT — son defaut,
-    # et l'etat de la production — le parcours du proprietaire est EXACTEMENT
-    # celui d'avant. C'est litteralement la regle V310c : on ne durcit pas le
-    # chemin legitime sans preuve, et la preuve est ici que le chemin par defaut
-    # ne contient aucune autre source d'identite que l'en-tete.
+    # LOT 3c-0 avait pose le durcissement SOUS DRAPEAU (`RESERVATIONS_JWT_STRICT`,
+    # a `false` en production) : le parcours par defaut prenait l'identite dans
+    # `X-User-Email`, falsifiable — un coach lisait le carnet d'un autre, et
+    # l'adresse d'un super-admin ouvrait toute la base. MT-5 retire la
+    # condition, a la demande du proprietaire. L'invariant est REECRIT : ce qui
+    # doit rester vrai, c'est qu'AUCUN chemin de cette route ne lit l'en-tete.
     SRC_EXEC = _sans_commentaires_py(src)
-    _bloc = _lignes_du_bloc_drapeau(src)
-    verifier("6-0. le durcissement est bien un bloc conditionnel identifiable",
-             bool(_bloc), "aucun `if _l3c0_strict:` trouve")
-    _hors_drapeau = "".join(l for i, l in enumerate(SRC_EXEC.splitlines(True), 1)
-                            if i not in _bloc)
-    for interdit in ("coach_jwt_email", "_v311_coach_email_from_jwt", "_v319_coach_identity",
-                     "v20_exiger_coach_signe", "_v309_require_coach_or_admin",
-                     "Authorization", "jwt", "Bearer"):
-        verifier("6. drapeau eteint : %s absent du parcours par defaut" % interdit,
-                 interdit not in _hors_drapeau, interdit)
-    verifier("6b. l'identite reste X-User-Email, comme avant",
-             'request.headers.get("X-User-Email"' in SRC_EXEC, "")
-    verifier("6c. drapeau allume : la garde est une garde JWT SIGNEE, pas un en-tete",
-             "_v309_require_coach_or_admin" in SRC_EXEC, "")
-    verifier("6d. une panne de lecture du drapeau laisse la porte OUVERTE (V310c)",
-             "_l3c0_strict = False" in SRC_EXEC, "")
+    verifier("6-0. plus aucun bloc `if _l3c0_strict:` (le drapeau ne gouverne plus la route)",
+             not _lignes_du_bloc_drapeau(src), "")
+    verifier("6a. le drapeau n'est plus lu par la route",
+             "RESERVATIONS_JWT_STRICT" not in SRC_EXEC, "")
+    verifier("6b. l'en-tete X-User-Email n'est plus lu du tout",
+             "X-User-Email" not in SRC_EXEC, "")
+    verifier("6c. l'identite vient de la garde JWT SIGNEE (mt5_coach_signe -> _v309_require_coach_or_admin)",
+             "mt5_coach_signe(request)" in SRC_EXEC
+             and "_v309_require_coach_or_admin" in _sans_commentaires_py(extraire("mt5_coach_signe")), "")
 
 
 def tests_frontend():

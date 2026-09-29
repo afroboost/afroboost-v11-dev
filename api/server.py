@@ -21747,7 +21747,7 @@ async def get_feature_flags():
             "CHAT_READ_STRICT": False,         # V349 : défaut OFF (lecture du chat encore ouverte)
             "POSTHOG_IDENTIFY_ENABLED": False, # C9-B : défaut OFF (aucune identification)
             "MEMBER_PRICING_ENABLED": False,   # LOT 3b : défaut OFF (aucun tarif membre)
-            "RESERVATIONS_JWT_STRICT": False,  # LOT 3c-0 : défaut OFF (en-tête encore accepté)
+            "RESERVATIONS_JWT_STRICT": False,  # LOT 3c-0 ; INERTE depuis MT-5 : GET /reservations exige TOUJOURS un JWT signé
             "P1_TRIAL_J0_ENABLED": False,      # P1-b : défaut OFF (aucune relance)
             "P1_TRIAL_J0_ENVOI_REEL": False,   # P1-b : défaut OFF (simulation même si activé)
             "P1_TRIAL_J3_ENABLED": False,      # P1-d : défaut OFF (aucune relance J+3)
@@ -47321,13 +47321,40 @@ async def reservations_ended_for_review(request: Request):
     # droit — code abonné VALIDE (le secret, modèle « capability » du site) OU identité
     # coach/admin. Sinon réponse neutre {has_ended_session:false} (JSON valide, aucune
     # fuite, pas de boucle). Empêche de sonder un email sans posséder de code valide.
+    #
+    # MT-5 (29/09/2026) — DEUX PORTES, CHACUNE BORNEE A CE QU'ELLE PROUVE.
+    #   * COACH : identite = JWT SIGNE (`_v311_coach_email_from_jwt` + role relu
+    #     en base), jamais `X-User-Email`. Avant, n'importe quel en-tete
+    #     ouvrait la sonde : « tel e-mail a-t-il eu une seance il y a moins de
+    #     6 h, et laquelle ? », sur TOUS les coachs. Desormais la recherche est
+    #     intersectee avec le perimetre du coach (super-admin : tout).
+    #   * ABONNE (appel du ChatWidget, `fetch` sans jeton — il le reste) : le
+    #     code prouve le droit sur CE code, pas sur n'importe quel e-mail. L'e-mail
+    #     n'est retenu que s'il est celui rattache au code (forfait / code).
     _authorized = False
-    _coach_id = await _v263_authenticated_coach(request)
-    if _coach_id:
+    _mt5_perim = None
+    _mt5_coach = _v311_coach_email_from_jwt(request)
+    if _mt5_coach and await _v309_is_coach_or_admin(_mt5_coach):
+        from api.routes.shared import lot3c0_perimetre as _mt5_lot3c0
+        _mt5_perim = _mt5_lot3c0(_mt5_coach, is_super_admin(_mt5_coach))
         _authorized = True
     elif code:
         _ok, _n, _cid = await _v261_resolve_subscriber(code)
         _authorized = bool(_ok)
+        if _authorized and email:
+            _mt5_mails = set()
+            try:
+                async for _d in db.subscriptions.find({"code": code}, {"_id": 0, "email": 1}):
+                    _mt5_mails.add(str(_d.get("email") or "").strip().lower())
+                async for _d in db.discount_codes.find({"code": code},
+                                                      {"_id": 0, "assignedEmail": 1, "email": 1}):
+                    _mt5_mails.add(str(_d.get("assignedEmail") or "").strip().lower())
+                    _mt5_mails.add(str(_d.get("email") or "").strip().lower())
+            except Exception as _mt5_err:
+                logger.warning("[MT-5] ended-for-review : titulaire du code illisible (%s)",
+                               type(_mt5_err).__name__)
+            if email not in _mt5_mails:
+                email = ""   # l'e-mail d'un tiers ne s'interroge pas avec son propre code
     if not _authorized:
         return {"has_ended_session": False, "session_name": None}
     if not email and not code:
@@ -47343,6 +47370,8 @@ async def reservations_ended_for_review(request: Request):
             q["$or"].append({"promoCode": code})
         if not q["$or"]:
             return {"has_ended_session": False, "session_name": None}
+        if _mt5_perim:
+            q = {"$and": [_mt5_perim, q]}
         # Réservation récente (datetime dans les 6 dernières heures) = séance passée.
         resa = await db.reservations.find_one(
             {"$and": [q, {"datetime": {"$gte": window_start, "$lte": now.isoformat()}}]},
