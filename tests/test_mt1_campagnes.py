@@ -101,9 +101,32 @@ class _CollCampagnes(H._Coll):
         return type("R", (), {"matched_count": 0, "modified_count": 0})()
 
 
+class _CollSessions(H._Coll):
+    """Ajoute au faux Mongo l'appartenance à un TABLEAU (`{"participant_ids": x}`),
+    comme MongoDB — utilisée par les recherches de conversation des campagnes."""
+
+    @staticmethod
+    def _vue(d, q):
+        v = dict(d)
+        for c, attendu in (q or {}).items():
+            if (not str(c).startswith("$") and not isinstance(attendu, (dict, list))
+                    and isinstance(d.get(c), list) and attendu in d[c]):
+                v[c] = attendu
+        for sous in (q or {}).get("$or") or []:
+            v = _CollSessions._vue(v, sous) if isinstance(sous, dict) else v
+        return v
+
+    async def find_one(self, q=None, proj=None, **k):
+        for d in self.docs:
+            if H._match(self._vue(d, q), q):
+                return H._projeter(d, proj)
+        return None
+
+
 def base_de_depart():
     base = H._Base()
     base._c["campaigns"] = _CollCampagnes("campaigns")
+    base._c["chat_sessions"] = _CollSessions("chat_sessions")
     base["coaches"].docs += [{"email": A, "credits": 5}, {"email": B, "credits": 5}]
     base["users"].docs += [
         {"id": "uA1", "name": "Alice A", "email": "a1@exemple.test", "coach_id": A},
@@ -317,6 +340,92 @@ async def partie_destinataires():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# C-bis. Conversations (audit P1) + filtrage groupé (audit P2)
+# ─────────────────────────────────────────────────────────────────────────────
+async def partie_conversations():
+    base = base_de_depart()
+    next(d for d in base["coaches"].docs if d["email"] == A)["name"] = "Studio A"
+    # Contact PARTAGÉ : dans le portefeuille de A, mais sa conversation existante est chez B.
+    base["users"].docs.append({"id": "uS", "name": "Sam Partage", "email": "sam.partage@mail-client.ch", "coach_id": A})
+    base["chat_sessions"].docs.append({"id": "sB", "coach_id": B, "mode": "user",
+                                       "participantEmail": "sam.partage@mail-client.ch", "participant_ids": ["uS"]})
+
+    base["campaigns"].docs.append({"id": "cIntS", "name": "Interne A", "coach_id": A, "status": "draft",
+                                   "results": [], "channels": {"internal": True},
+                                   "targetIds": ["uS"], "message": "Bonjour"})
+    await S.launch_campaign("cIntS")
+    dans_sb = [m for m in base["chat_messages"].docs if m.get("session_id") == "sB"]
+    msgs = list(base["chat_messages"].docs)
+    sess_a = [d for d in base["chat_sessions"].docs if d.get("coach_id") == A and "uS" in (d.get("participant_ids") or [])]
+    verifier("P1a. canal interne : le message de A n'atterrit JAMAIS dans la conversation du contact avec B",
+             not dans_sb, len(dans_sb))
+    verifier("P1b. ... une session appartenant à A (coach_id=A) est créée et reçoit le message",
+             len(sess_a) == 1 and any(m.get("session_id") == sess_a[0]["id"] for m in msgs),
+             [d.get("id") for d in sess_a])
+    _m = next((m for m in msgs if sess_a and m.get("session_id") == sess_a[0]["id"]), {})
+    verifier("P1c. ... expéditeur = nom du coach propriétaire (pas « Coach Bassi »)",
+             _m.get("sender_name") == "Studio A", _m.get("sender_name"))
+
+    # Relance : la session de A est RÉUTILISÉE (pas de nouvelle session).
+    base["campaigns"].docs.append({"id": "cIntS2", "name": "Interne A 2", "coach_id": A, "status": "draft",
+                                   "results": [], "channels": {"internal": True},
+                                   "targetIds": ["uS"], "message": "Re"})
+    await S.launch_campaign("cIntS2")
+    sess_a2 = [d for d in base["chat_sessions"].docs if d.get("coach_id") == A and "uS" in (d.get("participant_ids") or [])]
+    verifier("P1d. 2e campagne de A : réutilise SA session, toujours rien chez B",
+             len(sess_a2) == 1 and not [m for m in base["chat_messages"].docs if m.get("session_id") == "sB"])
+
+    # Copie omnicanale (e-mail / WhatsApp) — même règle.
+    avant = len(base["chat_sessions"].docs)
+    await S._save_campaign_chat_message(contact_id="uS", content="omni", channel="email",
+                                        campaign_id="cX", campaign_name="X", proprietaire=A,
+                                        sender_name="Studio A")
+    omni = [m for m in base["chat_messages"].docs if m.get("content") == "omni"]
+    verifier("P1e. copie omnicanale d'une campagne de A : jamais dans sB, session de A",
+             omni and omni[0]["session_id"] != "sB"
+             and next(d for d in base["chat_sessions"].docs if d["id"] == omni[0]["session_id"]).get("coach_id") == A
+             and len(base["chat_sessions"].docs) == avant, (omni[0]["session_id"] if omni else None))
+
+    # Super-admin / historique : comportement INCHANGÉ (retrouve la conversation existante).
+    base["campaigns"].docs.append({"id": "cIntAdm", "name": "Interne admin", "coach_id": ADMIN, "status": "draft",
+                                   "results": [], "channels": {"internal": True},
+                                   "targetIds": ["uS"], "message": "Admin"})
+    await S.launch_campaign("cIntAdm")
+    adm = [m for m in base["chat_messages"].docs if m.get("content") == "Admin"]
+    verifier("P1f. campagne super-admin : session existante utilisée, expéditeur « Coach Bassi » (inchangé)",
+             adm and adm[0]["session_id"] == "sB" and adm[0]["sender_name"] == "Coach Bassi",
+             adm and (adm[0]["session_id"], adm[0]["sender_name"]))
+    await S._save_campaign_chat_message(contact_id="uS", content="omni-adm", channel="email")
+    oa = [m for m in base["chat_messages"].docs if m.get("content") == "omni-adm"]
+    verifier("P1g. copie omnicanale sans propriétaire : recherche historique inchangée",
+             oa and oa[0]["session_id"] == "sB" and oa[0]["sender_name"] == "Coach Bassi")
+
+    # Audit P2 : filtrage GROUPÉ ($in) — aucun find_one par cible.
+    coll = base["chat_sessions"]
+    compteur = {"find_one": 0, "find": 0}
+    _fo, _f = coll.find_one, coll.find
+
+    async def fo(*a, **k):
+        compteur["find_one"] += 1
+        return await _fo(*a, **k)
+
+    def f(*a, **k):
+        compteur["find"] += 1
+        return _f(*a, **k)
+    coll.find_one, coll.find = fo, f
+    try:
+        pf = await CR.mt1_portefeuille(base, A)
+        ids = ["etranger-%d" % i for i in range(900)] + ["uA1", "grp_A", "grp_B", "x$y"]
+        garde = await CR.mt1_filtrer_cibles(base, pf, ids)
+    finally:
+        coll.find_one, coll.find = _fo, _f
+    verifier("P2a. 904 cibles filtrées en UNE requête groupée (0 find_one)",
+             compteur == {"find_one": 0, "find": 1}, compteur)
+    verifier("P2b. ... résultat identique à la règle : uA1 + grp_A gardés, le reste retiré",
+             garde == ["uA1", "grp_A"], garde[:5])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # D. send-email
 # ─────────────────────────────────────────────────────────────────────────────
 def credits(base, email):
@@ -387,7 +496,7 @@ def main():
     except Exception:
         pass
     boucle = asyncio.get_event_loop()
-    for partie in (partie_lectures, partie_mark_sent, partie_destinataires,
+    for partie in (partie_lectures, partie_mark_sent, partie_destinataires, partie_conversations,
                    partie_send_email, partie_routes_existantes):
         try:
             boucle.run_until_complete(partie())
