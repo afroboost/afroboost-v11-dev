@@ -250,9 +250,11 @@ describe('session_booked — une fois, au bon moment', () => {
         const u = String(c[0] || '');
         // La carte profil social lit son propre profil ET le drapeau F4 :
         // deux appels étrangers au parcours d'essai que ce test surveille.
-        return !u.includes('unified-profile') && !u.includes('feature-flags');
+        // V559 : la carte Créateur lit UNE fois son statut au montage — même exclusion.
+        return !u.includes('unified-profile') && !u.includes('feature-flags') && !u.includes('/api/createur/');
       });
     expect(getsEspace).toHaveLength(1);
+    expect(axios.get.mock.calls.filter((c) => String(c[0] || '').includes('/api/createur/'))).toHaveLength(1);
   });
 });
 

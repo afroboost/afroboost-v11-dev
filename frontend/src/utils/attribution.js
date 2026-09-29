@@ -189,11 +189,46 @@ function lireBrut() {
   }
 }
 
-/** L'attribution memorisee, ou `null`. Ne leve jamais. */
+// ═══ V559 — LE LIEN CRÉATEUR (`?createur=<jeton>`) ════════════════════════
+// Dernier clic, 30 jours, stocké À PART de l'origine marketing (il ne remplace
+// ni `first` ni `last`). Ce n'est qu'un jeton opaque : le SERVEUR relit le
+// créateur (approuvé ?) et ne paie une commission que sur un paiement confirmé.
+export const CLE_CREATEUR = 'af_createur';
+const MOTIF_JETON_CREATEUR = /^[A-Za-z0-9_-]{8,40}$/;
+
+/** Le jeton créateur de l'URL, s'il a la bonne forme, sinon ''. */
+export function createurDepuisUrl(recherche) {
+  try {
+    const t = String(new URLSearchParams(recherche || '').get('createur') || '').trim();
+    return MOTIF_JETON_CREATEUR.test(t) ? t : '';
+  } catch (e) { return ''; }
+}
+
+/** Mémorise le jeton de l'URL (dernier clic). Ne lève jamais. */
+export function createurEnregistrer(recherche) {
+  const t = createurDepuisUrl(recherche);
+  if (!t) return;
+  try { window.localStorage.setItem(CLE_CREATEUR, JSON.stringify({ t, at: Date.now() })); } catch (e) { /* ignore */ }
+}
+
+/** Le jeton créateur mémorisé (30 jours), sinon ''. */
+export function createurActuel() {
+  try {
+    const o = JSON.parse(window.localStorage.getItem(CLE_CREATEUR) || 'null');
+    if (!o || !o.t || !MOTIF_JETON_CREATEUR.test(o.t) || (Date.now() - Number(o.at || 0)) > DUREE_MS) return '';
+    return o.t;
+  } catch (e) { return ''; }
+}
+
+/** L'attribution memorisee, ou `null`. Ne leve jamais. V559 : `createur` s'y
+ *  ajoute s'il existe — il voyage ainsi avec CHAQUE paiement, sans nouveau champ. */
 export function attributionActuelle() {
   const objet = lireBrut();
-  if (!objet || (!objet.first && !objet.last)) return null;
-  return { first: objet.first || null, last: objet.last || null };
+  const createur = createurActuel();
+  if (!objet || (!objet.first && !objet.last)) return createur ? { first: null, last: null, createur } : null;
+  const a = { first: objet.first || null, last: objet.last || null };
+  if (createur) a.createur = createur;
+  return a;
 }
 
 /**
@@ -203,6 +238,7 @@ export function attributionActuelle() {
  * directe ne touche a rien — c'est l'invariant n°2.
  */
 export function attributionEnregistrer(recherche, referrer, chemin) {
+  createurEnregistrer(recherche); // V559 : le lien créateur, à part
   try {
     const neuf = attributionDepuisUrl(recherche, referrer, chemin);
     const ancien = attributionActuelle();

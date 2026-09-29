@@ -195,6 +195,9 @@ describe('INV-2 — usage unique : un rechargement des données ne rejoue pas', 
     const b0 = conteneur.querySelector('[data-testid="seance-date-0"]');
     await act(async () => { b0.click(); });
     expect(indexSelectionne()).toBe(0);
-    expect(axios.get.mock.calls.length).toBeLessThanOrEqual(3);
+    // V559 : la carte Créateur lit UNE fois son statut au montage (hors données de l'espace).
+    const createur = axios.get.mock.calls.filter((c) => String(c[0] || '').includes('/api/createur/'));
+    expect(createur.length).toBeLessThanOrEqual(1);
+    expect(axios.get.mock.calls.length - createur.length).toBeLessThanOrEqual(3);
   });
 });

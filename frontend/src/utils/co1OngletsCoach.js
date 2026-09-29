@@ -17,7 +17,9 @@ export const ONGLETS_COMMUNS = [
 
 // Onglets propres au coach partenaire (le super-admin ne paie pas de crédits
 // et n'a pas de compte Stripe Connect à relier).
-export const ONGLETS_PARTENAIRE_SEUL = ['boutique', 'stripe'];
+// V559 : « Créateur » — un coach partenaire peut rejoindre le programme d'affiliation
+// (même Dashboard Créateur que l'abonné). La super-admin ne touche pas de commission.
+export const ONGLETS_PARTENAIRE_SEUL = ['boutique', 'stripe', 'createur'];
 
 export const ONGLET_PAR_DEFAUT = 'reservations';
 

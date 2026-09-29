@@ -33,6 +33,7 @@ import InvitationPartageCard from "./coach/InvitationPartageCard"; // V551 : Par
 import ModerationTemoignages from "./coach/ModerationTemoignages"; // ESSAI-5a-2
 import MessagesWhatsApp from "./coach/MessagesWhatsApp"; // V411
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
+import EspaceCreateur from './createur/EspaceCreateur'; // V559 — Programme Créateur (même écran que l'abonné)
 import CRMSection from "./coach/CRMSection"; // v9.2.0 Import CRM Section
 import SmartLinksSection from "./coach/SmartLinksSection"; // v98: Liens Intelligents
 import { parseMediaUrl, getMediaThumbnail } from "../services/MediaParser"; // Media Parser
@@ -6630,7 +6631,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const tabs = [
     ...baseTabs,
     { id: "boutique", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="diamond" size={14} /> Boutique</span> },
-    { id: "stripe", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="link" size={14} /> Mon Stripe</span> }
+    { id: "stripe", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="link" size={14} /> Mon Stripe</span> },
+    // V559 : le MÊME Dashboard Créateur que l'espace abonné (droits coach inchangés).
+    { id: "createur", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="star" size={14} /> Créateur</span> }
   ].filter(t => co1Ids.includes(t.id));
 
   // v9.2.5: COMPOSANT DE SECOURS - Affiche le squelette du dashboard pendant le chargement
@@ -9019,6 +9022,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             bandeau « Crédits insuffisants », bloque la création sans crédits
             (openNewCampaign / CampaignModal) et le serveur vérifie check_credits.
             Le reste de la page (invitations, calendrier) ne coûte rien. */}
+        {/* V559 : Programme Créateur — composant COMMUN (identité = JWT du coach, posé par l'intercepteur). */}
+        {tab === "createur" && (
+          <div style={{ maxWidth: 880, margin: '0 auto' }} data-testid="coach-createur">
+            <EspaceCreateur />
+          </div>
+        )}
         {tab === "campaigns" && co1CampagnesMotif && (
           <div style={{ marginBottom: '12px' }}>
             <SectionErreur motif={co1CampagnesMotif} quoi="tes campagnes"

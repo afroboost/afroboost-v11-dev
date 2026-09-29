@@ -8,6 +8,7 @@ import SvgIcon from "./SvgIcon";
 import CockpitGlobal from "./CockpitGlobal"; // V334 etape 4
 import AnalyticsCockpit from "./analytics/AnalyticsCockpit"; // ANALYTICS phase 1
 import BilanAssociation from "./analytics/BilanAssociation"; // ANALYTICS phase 3 : bilan Association + exports
+import AdminCreateurs from "./createur/AdminCreateurs"; // V559 : Créateurs / Affiliation
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -492,6 +493,19 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
             >
               <span className="inline-flex items-center gap-1.5"><SvgIcon name="fileText" size={14} /> Association</span>
             </button>
+            {/* V559 : Programme Créateur — demandes, créateurs, programmes, commissions, retraits. */}
+            <button
+              onClick={() => setActiveTab(activeTab === 'createurs' ? '' : 'createurs')}
+              className={`px-4 py-2 text-sm font-medium transition-all ${
+                activeTab === 'createurs'
+                  ? 'text-white'
+                  : 'text-white/40 hover:text-white/70'
+              }`}
+              style={activeTab === 'createurs' ? { color: 'var(--primary-color, #D91CD2)' } : {}}
+              data-testid="tab-createurs"
+            >
+              <span className="inline-flex items-center gap-1.5"><SvgIcon name="star" size={14} /> Créateurs</span>
+            </button>
           </div>
 
           {/* Erreur - v12.1: Design Sans Cadre */}
@@ -683,6 +697,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
           {activeTab === 'cockpit' && <CockpitGlobal />}
           {activeTab === 'analytics' && <AnalyticsCockpit coaches={coaches} />}
           {activeTab === 'association' && <BilanAssociation coaches={coaches} />}
+          {activeTab === 'createurs' && <AdminCreateurs />}
 
           {activeTab === 'coaches' && (
             <div className="space-y-4">

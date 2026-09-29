@@ -14,9 +14,10 @@ import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 import CarteProfilSpordateur from './CarteProfilSpordateur'; // F3 SUITE — carte compacte vers la VRAIE page profil Spordateur
 import CarteNotifications from './CarteNotifications'; // PUSH-PWA — état des notifications + réactivation automatique
 import CarteParrainage from './parrainage/CarteParrainage'; // V534 — carte « Parrainage » vers le Centre
+import CarteCreateur from './createur/CarteCreateur'; // V559 — « Devenir créateur » / « Dashboard Créateur »
 import { TiroirInvitationParrainage } from './parrainage/InvitationParrainage'; // PAR-2 — « Invitation & parrainage » dans le tiroir existant
 import ChoixModePaiement from './ChoixModePaiement'; // V535 — paiement intégral ou en 2 fois
-import { lireConfigParrainage } from '../utils/parrainage'; // V534 — configuration (cache 10 min)
+import { lireConfigParrainage, enteteParrain } from '../utils/parrainage'; // V534 — configuration (cache 10 min) ; V559 — identité de l'espace
 // V334 etape 2 : « Mon cockpit » charge A LA DEMANDE (React.lazy).
 // Il embarque recharts, qui pese ~98 ko gzip : l'inclure dans le bundle
 // principal ferait payer ce poids a CHAQUE visiteur, pour une section repliee
@@ -2107,6 +2108,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             order 0 : pendant l'essai, la réservation remonte seule (order -1),
             la carte garde sa place dans l'ordre du DOM. ===== */}
         <CarteParrainage enabled={parrainageOn} onOuvrir={ouvrirInvitation} />
+
+        {/* ===== V559 : Programme Créateur — juste à côté de « Invitation & parrainage ».
+            Le libellé suit le statut serveur ; le contenu = le MÊME EspaceCreateur que le coach. ===== */}
+        <CarteCreateur entetes={enteteParrain} />
 
         {/* ===== V548 : « Recharger mes séances » — la recharge SORT du
             formulaire de réservation. Repliée par défaut ; ouverte d'office
