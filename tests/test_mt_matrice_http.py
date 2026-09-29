@@ -513,7 +513,7 @@ class Matrice:
         self.lecture_liste("GET /api/campaigns", "GET", "/api/campaigns")
         self.lecture_liste("GET /api/campaigns-list", "GET", "/api/campaigns-list")
         self.lecture_id("GET /api/campaigns/{id}", "/api/campaigns/{}", self.camp["a"], self.camp["b"])
-        self.lecture_id("GET /api/campaign-debug/{id}", "/api/campaign-debug/{}", self.camp["a"], self.camp["b"])
+        self.campaign_debug()
         self.lecture_id("GET /api/campaigns/{id}/preview", "/api/campaigns/{}/preview",
                         self.camp["a"], self.camp["b"])
 
@@ -549,6 +549,26 @@ class Matrice:
 
         self.send_email()
 
+    def campaign_debug(self):
+        """Outil de DIAGNOSTIC : réservé au super-admin signé (règle MT-1) — un coach
+        est refusé même sur SA propre campagne ; le super-admin voit tout."""
+        route = "GET /api/campaign-debug/{id}"
+        pa = "/api/campaign-debug/" + quote(self.camp["a"], safe="")
+        pb = "/api/campaign-debug/" + quote(self.camp["b"], safe="")
+        for nom, chemin, h, codes, marque in (
+                ("A lit A (coach refusé : outil super-admin)", pa, self.hA, (403,), MA),
+                ("A lit B", pb, self.hA, (403,), MB),
+                ("B lit A", pa, self.hB, (403,), MA),
+                ("anonyme", pa, self.ANON, REFUS_AUTH, MA),
+                ("X-User-Email A sans JWT", pa, self.SPOOF_A, REFUS_AUTH, MA),
+                ("JWT B + X-User-Email A", pa, self.MIXTE, (403,), MA)):
+            r = self.c("GET", chemin, h)
+            verifier(route, nom, r.s, r.s in codes and marque not in r.t,
+                     "fuite données" if marque in r.t else "", "/".join(map(str, codes)))
+        for nom, chemin, marque in (("SUPER-ADMIN lit A", pa, MA), ("SUPER-ADMIN lit B", pb, MB)):
+            r = self.c("GET", chemin, self.hSA)
+            verifier(route, nom, r.s, r.s == 200 and marque in r.t, "", "200 + données")
+
     def send_email(self):
         route = "POST /api/campaigns/send-email"
         corps = {"to_email": "destinataire@banc.test", "to_name": "Banc", "subject": "banc", "message": "banc"}
@@ -558,8 +578,22 @@ class Matrice:
         r = self.c("POST", "/api/campaigns/send-email", self.SPOOF_A, corps)
         verifier(route, "X-User-Email A sans JWT", r.s, r.s in REFUS_AUTH and self.credits("a") == a0,
                  "" if self.credits("a") == a0 else "A DÉBITÉ")
-        r = self.c("POST", "/api/campaigns/send-email", self.hA, corps)
-        verifier(route, "A autorisé (JWT, sans clé Resend)", r.s, r.s == 200)
+        # Règle MT-1 : un coach n'écrit qu'à SON portefeuille (ou à lui-même), sinon 403 SANS débit.
+        # Le débit n'a lieu qu'APRÈS un envoi réellement possible : le banc n'a aucune clé
+        # Resend (voulu : aucun envoi), donc A peut ne pas être débité ici — mais s'il y a
+        # débit, il porte sur A (identité signée) et JAMAIS sur B.
+        a0, b0 = self.credits("a"), self.credits("b")
+        r = self.c("POST", "/api/campaigns/send-email", self.hA,
+                   dict(corps, to_email="mtbanc-a-contact1@banc.test"))
+        verifier(route, "A vers un contact de A (200, débit éventuel sur A seul)", r.s,
+                 r.s == 200 and self.credits("a") in (a0, a0 - 1) and self.credits("b") == b0,
+                 f"crédits A {a0} -> {self.credits('a')}, B {b0} -> {self.credits('b')}")
+        a0, b0 = self.credits("a"), self.credits("b")
+        r = self.c("POST", "/api/campaigns/send-email", self.hA,
+                   dict(corps, to_email="mtbanc-b-contact1@banc.test"))
+        verifier(route, "A vers un contact de B (403, aucun débit)", r.s,
+                 r.s == 403 and self.credits("a") == a0 and self.credits("b") == b0,
+                 f"crédits A {a0} -> {self.credits('a')}, B {b0} -> {self.credits('b')}")
         b0 = self.credits("b")
         r = self.c("POST", "/api/campaigns/send-email", dict(self.hA, **{"X-User-Email": EMAIL_B}), corps)
         verifier(route, "JWT A + X-User-Email B : aucun débit de B", r.s,
