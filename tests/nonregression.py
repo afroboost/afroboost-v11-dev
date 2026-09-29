@@ -2653,6 +2653,165 @@ def t121_mt1_campagnes_acces_legitime():
         record(121, "MT-1 : accès légitime aux campagnes", False, str(e))
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# MT-8 — RÉSERVATIONS, SUBSCRIBER-INFO, GROUPES DU CHAT sans authentification
+# ═══════════════════════════════════════════════════════════════════════════
+# Même contrat que 113-119 : LECTURE SEULE en production. Cibles INEXISTANTES
+# pour toute sonde d'écriture ; la création de groupe (POST /api/chat/groups)
+# n'est PAS sondée — elle écrirait si elle régressait : banc local seulement.
+# La liste des réservations est sondée avec `limit=1` : si la route régressait,
+# la sonde ne rapatrierait qu'une ligne (jamais imprimée), pas le carnet entier.
+
+
+def t122_mt8_reservations_lecture_sans_auth():
+    """MT-8 : carnet de réservations et export CSV des présences (noms, e-mails,
+    WhatsApp) — identité coach SIGNÉE exigée. Constat du banc avant correctif :
+    `GET /api/reservations` servait le carnet sur la foi de `X-User-Email`."""
+    _mt_sonder(122, "MT-8 : Réservations (lecture) sans authentification -> refus, 0 PII", [
+        ("GET", "/api/reservations?limit=1", None),
+        ("GET", "/api/reservations/export/attendance?date=1900-01-01", None),
+    ])
+
+
+def t123_mt8_reservations_ecriture_sans_auth():
+    """MT-8 : valider, supprimer, déclarer une absence, poser un suivi ou un casque,
+    annuler depuis un espace abonné — jamais sans identité. Constat du banc : suivi
+    et casque n'avaient AUCUNE garde. Réservation inexistante : rien ne s'écrit."""
+    i = _MT_INEXISTANT
+    _mt_sonder(123, "MT-8 : Réservations (écriture) sans authentification -> refus", [
+        ("POST", f"/api/reservations/{i}/validate", None),
+        ("DELETE", f"/api/reservations/{i}", None),
+        ("POST", f"/api/reservations/{i}/absence", None),
+        ("PUT", f"/api/reservations/{i}/tracking", {"trackingNumber": "", "shippingStatus": "shipped"}),
+        ("PUT", f"/api/reservations/{i}/headphone", {"status": None}),
+        ("DELETE", f"/api/subscriber/space/AFR-NONREG0/cancel/{i}", None),
+    ])
+
+
+def t124_mt8_subscriber_info_sans_pii():
+    """MT-8 : `GET /api/subscriber-info/{code}` sans identité ne rend JAMAIS une
+    adresse e-mail ni un numéro WhatsApp. Contrat final : le chemin public rend
+    au plus {exists, name} ; sur un code INEXISTANT -> 404 ou {exists: false}.
+    Aucun code réel n'est sondé."""
+    try:
+        echecs = []
+        for nom, hdr in _MT_PROFILS.items():
+            r = requests.get(_url("/api/subscriber-info/AFR-NONREG0"), headers=hdr, timeout=TIMEOUT)
+            texte = r.text or ""
+            mails = [m for m in _MT_RX_MAIL.findall(texte) if m.lower() not in (ADMIN.lower(), "a@b.c")]
+            pii = bool(_MT_RX_PII.search(texte)) or bool(mails)
+            # Contrat : 404, ou 200 EXACTEMENT {exists: false[, name]} — rien d'autre.
+            forme_ok = r.status_code == 404
+            if r.status_code == 200:
+                try:
+                    d = r.json()
+                    forme_ok = (isinstance(d, dict) and d.get("exists") is False
+                                and set(d.keys()) <= {"exists", "name"})
+                except Exception:
+                    forme_ok = False
+            if not forme_ok or pii:
+                echecs.append(f"[{nom}]={r.status_code}" + (" PII" if pii else "")
+                              + ("" if forme_ok else " forme hors contrat"))
+        record(124, "MT-8 : subscriber-info sans identité -> 0 e-mail, 0 WhatsApp", not echecs,
+               " | ".join(echecs) if echecs else f"{len(_MT_PROFILS)} sondes, 0 PII")
+    except Exception as e:
+        record(124, "MT-8 : subscriber-info sans identité", False, str(e))
+
+
+def t125_mt8_subscriber_info_ecriture_sans_auth():
+    """MT-8 : `PUT /api/subscriber-info/{code}` exige le jeton abonné de CE code :
+    sans lui -> 403 (contrat final). Code INEXISTANT : aucune écriture possible."""
+    try:
+        echecs = []
+        for nom, hdr in _MT_PROFILS.items():
+            r = requests.put(_url("/api/subscriber-info/AFR-NONREG0"), headers=hdr,
+                             json={"email": "mt-nonreg@invalid.test", "whatsapp": "+41000000000"},
+                             timeout=TIMEOUT)
+            if r.status_code != 403:
+                echecs.append(f"[{nom}]={r.status_code}")
+        record(125, "MT-8 : subscriber-info (écriture) sans jeton abonné -> 403", not echecs,
+               " | ".join(echecs) if echecs else f"{len(_MT_PROFILS)} sondes -> 403")
+    except Exception as e:
+        record(125, "MT-8 : subscriber-info (écriture)", False, str(e))
+
+
+def t126_mt8_groupes_lecture_sans_auth():
+    """MT-8 : groupes du chat (membres, e-mails, jetons d'invitation, prompts) —
+    jamais servis à un anonyme ni sur la foi de `X-User-Email`."""
+    _mt_sonder(126, "MT-8 : Groupes du chat (lecture) sans authentification -> refus, 0 PII", [
+        ("GET", "/api/chat/groups", None),
+        ("GET", "/api/chat/groups/public", None),
+    ])
+
+
+def t127_mt8_groupes_ecriture_sans_auth():
+    """MT-8 : modifier, supprimer, changer la visibilité, ajouter un membre —
+    groupe INEXISTANT : même une route ouverte n'écrirait rien."""
+    i = _MT_INEXISTANT
+    _mt_sonder(127, "MT-8 : Groupes du chat (écriture) sans authentification -> refus", [
+        ("PUT", f"/api/chat/groups/{i}", {"system_prompt": ""}),
+        ("DELETE", f"/api/chat/groups/{i}", None),
+        ("PUT", f"/api/chat/groups/{i}/visibility", {"visible_to_subscribers": True}),
+        ("POST", f"/api/chat/groups/{i}/join", {"participant_id": i}),
+    ])
+
+
+def _mt8_admin():
+    return {"Authorization": f"Bearer {ADMIN_JWT}"}
+
+
+def t128_mt8_reservations_acces_legitime():
+    """MT-8 — PENDANT OBLIGATOIRE (V310c) : le super-admin signé garde son carnet.
+    SKIP sans ADMIN_JWT = livraison du durcissement INTERDITE."""
+    titre = "MT-8 : super-admin signé -> GET /api/reservations 200 NON vide"
+    if not ADMIN_JWT:
+        return skip(128, titre, "ADMIN_JWT non fourni — ⛔ parcours légitime NON prouvé (règle V310c)")
+    try:
+        r = requests.get(_url("/api/reservations?limit=1"), headers=_mt8_admin(), timeout=TIMEOUT)
+        total = ((r.json() or {}).get("pagination") or {}).get("total", 0) if r.status_code == 200 else 0
+        record(128, titre, r.status_code == 200 and total > 0, f"HTTP {r.status_code} total={total}")
+    except Exception as e:
+        record(128, titre, False, str(e))
+
+
+def t129_mt8_subscriber_info_acces_legitime():
+    """MT-8 — PENDANT OBLIGATOIRE (V310c) : le super-admin signé lit la fiche d'un
+    abonné réel (SUB_CODE, sinon le premier code actif de /api/discount-codes).
+    Seuls le code HTTP et `exists` sont relevés : aucune valeur n'est imprimée."""
+    titre = "MT-8 : super-admin signé -> GET /api/subscriber-info/{code} 200"
+    if not ADMIN_JWT:
+        return skip(129, titre, "ADMIN_JWT non fourni — ⛔ parcours légitime NON prouvé (règle V310c)")
+    try:
+        code = SUB_CODE
+        if not code:
+            rc = requests.get(_url("/api/discount-codes"), headers=_mt8_admin(), timeout=TIMEOUT)
+            d = rc.json() if rc.status_code == 200 else []
+            liste = d if isinstance(d, list) else (d.get("data") or d.get("codes") or [])
+            code = next((c.get("code") for c in liste if isinstance(c, dict) and c.get("code")
+                         and c.get("active") is not False), "")
+        if not code:
+            return skip(129, titre, "aucun code abonné disponible (SUB_CODE absent, liste vide)")
+        r = requests.get(_url(f"/api/subscriber-info/{code}"), headers=_mt8_admin(), timeout=TIMEOUT)
+        existe = r.status_code == 200 and (r.json() or {}).get("exists") is True
+        record(129, titre, r.status_code == 200 and existe, f"HTTP {r.status_code} exists={existe}")
+    except Exception as e:
+        record(129, titre, False, str(e))
+
+
+def t130_mt8_groupes_acces_legitime():
+    """MT-8 — PENDANT OBLIGATOIRE (V310c) : le super-admin signé garde la liste
+    de ses groupes du chat (la production en compte plusieurs)."""
+    titre = "MT-8 : super-admin signé -> GET /api/chat/groups 200 NON vide"
+    if not ADMIN_JWT:
+        return skip(130, titre, "ADMIN_JWT non fourni — ⛔ parcours légitime NON prouvé (règle V310c)")
+    try:
+        r = requests.get(_url("/api/chat/groups"), headers=_mt8_admin(), timeout=TIMEOUT)
+        n = len(r.json()) if r.status_code == 200 and isinstance(r.json(), list) else 0
+        record(130, titre, r.status_code == 200 and n > 0, f"HTTP {r.status_code} n={n}")
+    except Exception as e:
+        record(130, titre, False, str(e))
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -2704,6 +2863,11 @@ def main():
                    t115_mt_contacts_lecture_sans_auth, t116_mt_categories_segments_sans_auth,
                    t117_mt_contacts_ecriture_sans_auth, t118_mt_users_leads_sans_auth,
                    t119_mt_abonnes_sans_auth,
+                   t122_mt8_reservations_lecture_sans_auth, t123_mt8_reservations_ecriture_sans_auth,
+                   t124_mt8_subscriber_info_sans_pii, t125_mt8_subscriber_info_ecriture_sans_auth,
+                   t126_mt8_groupes_lecture_sans_auth, t127_mt8_groupes_ecriture_sans_auth,
+                   t128_mt8_reservations_acces_legitime, t129_mt8_subscriber_info_acces_legitime,
+                   t130_mt8_groupes_acces_legitime,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
