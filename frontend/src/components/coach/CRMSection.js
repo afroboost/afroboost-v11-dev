@@ -1563,7 +1563,8 @@ const CRMSection = ({
       {/* v105: Communauté supprimée — tout passe par GroupChatModule */}
 
       {/* v107.5: Prompt Système IA */}
-      <SystemPromptBlock API={API_URL} coachEmail={coachEmail} />
+      {/* CO-1 : le prompt et l'activation de l'IA sont GLOBAUX (ai_config) — super-admin signé seul. */}
+      {isSuperAdmin && <SystemPromptBlock API={API_URL} coachEmail={coachEmail} />}
 
       {/* v104: Module Groupes de Chat — contacts unifiés (même source que Contacts + Campagnes) */}
       <GroupChatModule

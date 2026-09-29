@@ -23,6 +23,8 @@ import { playNotificationSound, linkifyText } from "../services/notificationServ
 import { QRScannerModal } from "./QRScanner";
 // ArticleManager supprimé - v8.9 Nettoyage SAAS
 import { classerEchec } from "../utils/authSession"; // P0-SOCLE : qualifier un echec
+import { SectionErreur } from "./ui/EtatChargement"; // CO-1 : refus de session dit, jamais une liste vide muette
+import { ongletsAutorises, ongletValide } from "../utils/co1OngletsCoach"; // CO-1 : une seule liste d'onglets
 import ReservationTab from "./coach/ReservationTab"; // Import Reservation Tab
 import CourseRemindersCard from "./coach/CourseRemindersCard"; // RAPPELS V2 : rappels choisis cours par cours
 import SuiviAbonnes from "./coach/SuiviAbonnes"; // V334 etape 3
@@ -992,8 +994,6 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const isSuperAdmin = SUPER_ADMIN_EMAILS.some(email => 
     (safeCoachUser?.email || '').toLowerCase() === email.toLowerCase()
   );
-  // v90: Partner dashboard - admin-only tabs hidden for partners
-  const isPartnerOnly = !isSuperAdmin;
 
   // v93 Onboarding Dashboard
   const [showDashOnboarding, setShowDashOnboarding] = useState(() => {
@@ -1004,8 +1004,6 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setShowDashOnboarding(false);
     try { localStorage.setItem('afroboost_onboarding_dashboard', '1'); } catch(e) {}
   };
-  const ADMIN_ONLY_TABS = ["Réservations", "Contacts"];
-  const ADMIN_ONLY_TAB_IDS = ['contacts', 'campaigns']; // v92: tab IDs hidden for partners
   
   // v9.2.5: Valeurs par défaut TOUJOURS présentes pour éviter page blanche
   const displayEmail = safeCoachUser?.email || 'Partenaire';
@@ -1562,20 +1560,17 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   }, [coachUser?.email]);
   
   // === PERSISTANCE ONGLET : Restaurer l'onglet depuis localStorage ===
-  const [tab, setTab] = useState(() => {
+  // CO-1 : l'onglet restauré est VALIDÉ contre la liste autorisée (utils/co1OngletsCoach.js,
+  // migrations v36 comprises) ; tout autre valeur retombe sur Réservations.
+  const [tabBrut, setTab] = useState(() => {
     try {
-      const savedTab = localStorage.getItem(COACH_TAB_KEY);
-      // v36: Migration — "concept" et "courses" redirigent vers "offers"
-      if (savedTab && ['reservations', 'concept', 'courses', 'offers', 'payments', 'page-vente', 'codes', 'campaigns', 'articles', 'media', 'conversations'].includes(savedTab)) {
-        const migratedTab = savedTab === 'payments' ? 'page-vente'
-          : (savedTab === 'concept' || savedTab === 'courses') ? 'offers'
-          : savedTab;
-        console.log('[COACH] ✅ Onglet restauré:', migratedTab);
-        return migratedTab;
-      }
+      return ongletValide(localStorage.getItem(COACH_TAB_KEY), isSuperAdmin);
     } catch (e) {}
     return "reservations";
   });
+  // CO-1 : GARDE DE RENDU — un onglet qui ne figure pas dans la barre n'est jamais
+  // affiché (setTab('boutique') côté super-admin, valeur périmée…) : repli Réservations.
+  const tab = ongletValide(tabBrut, isSuperAdmin);
 
   // V314 : CORBEILLE (deleted_items). Lecture + restauration via les endpoints V313.
   // ⚠️ Auth : /trash et /trash/{id}/restore REJETTENT X-User-Email — on passe par
@@ -2366,8 +2361,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         appliquer('Cours', crs, (r) => setCourses(r.data));
         appliquer('Offres', off, (r) => setOffers(
           isSuperAdmin ? r.data : r.data.filter(o => (o.coach_id || '').toLowerCase() === (safeCoachUser?.email || '').toLowerCase())));
-        // v92: Partners don't see full user database
-        appliquer('Utilisateurs', usr, (r) => setUsers(isSuperAdmin ? r.data : []));
+        // CO-1 : GET /users est CLOISONNÉ par le serveur (V311c : un coach ne reçoit
+        // que ses propres fiches). La réponse n'est plus jetée : elle alimente les
+        // contacts de l'onglet Campagnes du partenaire.
+        appliquer('Utilisateurs', usr, (r) => setUsers(r.data));
         appliquer('Liens de paiement', lnk, (r) => setPaymentLinks(r.data));
         appliquer('Vitrine', cpt, (r) => setConcept(r.data));
 
@@ -3782,6 +3779,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const isAiConfigLoaded = useRef(false); // Éviter save au premier chargement
   
   useEffect(() => {
+    // CO-1 : ai_config est GLOBAL — jamais écrit depuis la session d'un partenaire.
+    if (!isSuperAdmin) return;
     // Ne pas sauvegarder au premier chargement
     if (!isAiConfigLoaded.current) {
       isAiConfigLoaded.current = true;
@@ -3935,15 +3934,26 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   }, [tab]);
 
+  // CO-1 : chargement des campagnes hors de l'effet pour pouvoir le RELANCER depuis
+  // le message d'échec. Un refus est QUALIFIÉ (session / droit / réseau) au lieu
+  // d'une liste vide muette — cas du partenaire sans jeton signé (register-free,
+  // Google) : les routes de campagne sont en JWT strict.
+  const [co1CampagnesMotif, setCo1CampagnesMotif] = useState('');
+  const co1ChargerCampagnes = async () => {
+    try {
+      // v8.9.5: Isolation coach_id
+      const res = await axios.get(`${API}/campaigns`, getCoachHeaders());
+      setCampaigns(res.data);
+      setCo1CampagnesMotif('');
+    } catch (err) {
+      console.error("Error loading campaigns:", err);
+      setCo1CampagnesMotif(classerEchec(err));
+    }
+  };
+
   // Load campaigns
   useEffect(() => {
-    const loadCampaigns = async () => {
-      try {
-        // v8.9.5: Isolation coach_id
-        const res = await axios.get(`${API}/campaigns`, getCoachHeaders());
-        setCampaigns(res.data);
-      } catch (err) { console.error("Error loading campaigns:", err); }
-    };
+    const loadCampaigns = co1ChargerCampagnes;
     
     const loadActiveConversations = async () => {
       try {
@@ -3957,8 +3967,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     if (tab === "campaigns") {
       loadCampaigns();
       loadActiveConversations();
-      loadAIConfig();
-      loadAILogs();
+      // CO-1 : ai-config / ai-logs sont des réglages PLATEFORME (super-admin signé).
+      if (isSuperAdmin) {
+        loadAIConfig();
+        loadAILogs();
+      }
       // v87: Déclenche le check des campagnes programmées puis toutes les 60s
       // (Vercel Hobby = cron limité, donc on compense avec polling frontend)
       const triggerCheck = () => {
@@ -6458,7 +6471,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
     
     // Mettre à jour le dernier média envoyé pour l'IA
-    if (newCampaign.mediaUrl) {
+    // CO-1 : réglage plateforme -> super-admin seulement.
+    if (newCampaign.mediaUrl && isSuperAdmin) {
       setLastMediaUrlService(newCampaign.mediaUrl);
       // Aussi mettre à jour côté backend
       axios.put(`${API}/ai-config`, { lastMediaUrl: newCampaign.mediaUrl }).catch(() => {});
@@ -6469,6 +6483,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   
   // Charger la config IA depuis le backend
   const loadAIConfig = async () => {
+    if (!isSuperAdmin) return; // CO-1
     try {
       const res = await axios.get(`${API}/ai-config`);
       setAiConfig(res.data);
@@ -6479,6 +6494,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   // Charger les logs IA
   const loadAILogs = async () => {
+    if (!isSuperAdmin) return; // CO-1
     try {
       const res = await axios.get(`${API}/ai-logs`);
       setAiLogs(res.data || []);
@@ -6489,6 +6505,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   // Sauvegarder la config IA
   const handleSaveAIConfig = async () => {
+    if (!isSuperAdmin) return; // CO-1
     try {
       await axios.put(`${API}/ai-config`, aiConfig);
       alert('✅ Configuration IA sauvegardée !');
@@ -6522,6 +6539,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   // Effacer les logs IA
   const handleClearAILogs = async () => {
+    if (!isSuperAdmin) return; // CO-1
     if (!window.confirm('Effacer tous les logs IA ?')) return;
     try {
       await axios.delete(`${API}/ai-logs`);
@@ -6606,9 +6624,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   ];
 
   // v37.2: Boutique et Stripe pour coachs partenaires uniquement
-  const tabs = !isSuperAdmin
-    ? [...baseTabs.filter(t => !ADMIN_ONLY_TAB_IDS.includes(t.id)), { id: "boutique", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="diamond" size={14} /> Boutique</span> }, { id: "stripe", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="link" size={14} /> Mon Stripe</span> }]
-    : [...baseTabs];
+  // CO-1 : Contacts et Campagnes ouverts aux partenaires (le serveur cloisonne par
+  // coach). La barre est dérivée de la MÊME liste que la garde de rendu.
+  const co1Ids = ongletsAutorises(isSuperAdmin);
+  const tabs = [
+    ...baseTabs,
+    { id: "boutique", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="diamond" size={14} /> Boutique</span> },
+    { id: "stripe", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="link" size={14} /> Mon Stripe</span> }
+  ].filter(t => co1Ids.includes(t.id));
 
   // v9.2.5: COMPOSANT DE SECOURS - Affiche le squelette du dashboard pendant le chargement
   // Garantit qu'on ne voit JAMAIS une page blanche
@@ -6658,7 +6681,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
 
         <div className="flex flex-wrap gap-2 mb-6">
-          {['Réservations', '🎛️ Gestion', '🏪 Ma Page', 'Codes promo', 'Contacts', 'Campagnes', 'Conversations'].filter(t => isSuperAdmin || !ADMIN_ONLY_TABS.includes(t)).map((tabName, i) => (
+          {['Réservations', '🎛️ Gestion', '🏪 Ma Page', 'Codes promo', 'Contacts', 'Campagnes', 'Conversations'].map((tabName, i) => (
             <div 
               key={i}
               className="px-4 py-2 rounded-lg text-white/60 text-sm"
@@ -8992,18 +9015,17 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
         {/* === CAMPAIGNS TAB === */}
         {/* [CAMPAGNE_START] - Section extraite vers CampaignManager.js */}
-        {/* v13.2: Verrouillage crédits avec composant CreditsGate */}
-        {tab === "campaigns" && !hasCreditsFor('campaign') ? (
-          <div className="card-gradient rounded-xl p-4 sm:p-6">
-            <CreditsGate 
-              serviceName="campaigns"
-              requiredCredits={servicePrices.campaign}
-              currentCredits={coachCredits}
-              onGoToBoutique={() => setTab('boutique')}
-              testId="credits-lock-campaigns"
-            />
+        {/* CO-1 : plus de CreditsGate pleine page. CampaignManager affiche son propre
+            bandeau « Crédits insuffisants », bloque la création sans crédits
+            (openNewCampaign / CampaignModal) et le serveur vérifie check_credits.
+            Le reste de la page (invitations, calendrier) ne coûte rien. */}
+        {tab === "campaigns" && co1CampagnesMotif && (
+          <div style={{ marginBottom: '12px' }}>
+            <SectionErreur motif={co1CampagnesMotif} quoi="tes campagnes"
+                           onReessayer={co1ChargerCampagnes} data-testid="co1-erreur-campagnes" />
           </div>
-        ) : tab === "campaigns" && (
+        )}
+        {tab === "campaigns" && (
           <CampaignManager
             // === ÉTATS PRINCIPAUX ===
             campaigns={campaigns}
@@ -9128,7 +9150,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             API={API}
             
             // === v9.0.2: CRÉDITS ===
-            hasInsufficientCredits={hasInsufficientCredits}
+            hasInsufficientCredits={hasInsufficientCredits || !hasCreditsFor('campaign')}
             coachCredits={coachCredits}
             // v11: Super Admin + coût campagne
             isSuperAdmin={isSuperAdmin}

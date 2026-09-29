@@ -2906,6 +2906,62 @@ def t143_inv3_espace_seance_sans_auth():
         record(143, "INV-3 : /subscriber/space?course=&occurrence= sans auth", False, str(e))
 
 
+def t131_co1_ai_logs_sans_auth():
+    """CO-1 : le journal IA (numéros WhatsApp + messages entrants de TOUTE la
+    plateforme) n'est lisible que par le super-admin SIGNÉ. LECTURE SEULE.
+    ⚠️ DELETE /api/ai-logs n'est volontairement PAS sondé : tant que CO-1 n'est pas
+    déployé, la route est ouverte et une sonde EFFACERAIT le journal de production.
+    Le refus du DELETE est prouvé par tests/test_co1_onglets_coach.py (A13)."""
+    _mt_sonder(131, "CO-1 : GET /api/ai-logs sans authentification -> refus, 0 PII", [
+        ("GET", "/api/ai-logs", None),
+    ])
+
+
+def t132_co1_ai_config_ecriture_sans_auth():
+    """CO-1 : PUT /api/ai-config exige un JWT SIGNÉ de super-admin, jugé AVANT
+    toute écriture. Corps VIDE `{}` : même une route ouverte n'aurait rien à écrire
+    (`updates` vide -> `$set: {}`, sans effet sur MongoDB >= 5, erreur avant) — la
+    sonde est inerte. Avant le déploiement de CO-1, le profil « X-User-Email usurpé »
+    passe encore (repli V265) : attendu ROUGE, et toujours sans écriture."""
+    _mt_sonder(132, "CO-1 : PUT /api/ai-config (corps vide) sans super-admin signé -> refus", [
+        ("PUT", "/api/ai-config", {}),
+    ])
+
+
+def t133_co1_ai_config_lecture_publique():
+    """CO-1 : la lecture publique de /api/ai-config ne livre que `enabled`
+    (sonde #12) — jamais le prompt, le lien Twint ni le dernier média."""
+    titre = "CO-1 : GET /api/ai-config public -> {enabled} seul"
+    try:
+        echecs = []
+        for nom, hdr in _MT_PROFILS.items():
+            r = requests.get(_url("/api/ai-config"), headers=hdr, timeout=TIMEOUT)
+            d = r.json() if r.status_code == 200 else None
+            if not (isinstance(d, dict) and set(d.keys()) <= {"enabled"}):
+                cles = sorted(d.keys()) if isinstance(d, dict) else "?"
+                echecs.append(f"[{nom}]={r.status_code} clés={cles}")
+        record(133, titre, not echecs, " | ".join(echecs) if echecs else f"{len(_MT_PROFILS)} sondes, `enabled` seul")
+    except Exception as e:
+        record(133, titre, False, str(e))
+
+
+def t134_co1_ia_acces_legitime():
+    """CO-1 — PENDANT OBLIGATOIRE (V310c) : le super-admin SIGNÉ lit toujours la
+    configuration IA complète et le journal IA. LECTURE SEULE (aucune valeur imprimée).
+    SKIP sans ADMIN_JWT = livraison du durcissement INTERDITE."""
+    titre = "CO-1 : super-admin signé -> GET /api/ai-config complet + GET /api/ai-logs 200"
+    if not ADMIN_JWT:
+        return skip(134, titre, "ADMIN_JWT non fourni — ⛔ parcours légitime NON prouvé (règle V310c)")
+    try:
+        rc = requests.get(_url("/api/ai-config"), headers=_mt8_admin(), timeout=TIMEOUT)
+        complet = rc.status_code == 200 and "systemPrompt" in (rc.json() or {})
+        rl = requests.get(_url("/api/ai-logs"), headers=_mt8_admin(), timeout=TIMEOUT)
+        record(134, titre, complet and rl.status_code == 200,
+               f"ai-config HTTP {rc.status_code} complet={complet} | ai-logs HTTP {rl.status_code}")
+    except Exception as e:
+        record(134, titre, False, str(e))
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -2965,6 +3021,8 @@ def main():
                    t140_inv1_invitations_fermees_sans_auth, t141_inv1_partage_public_jeton_inconnu,
                    t142_inv1_acces_legitime,
                    t143_inv3_espace_seance_sans_auth,
+                   t131_co1_ai_logs_sans_auth, t132_co1_ai_config_ecriture_sans_auth,
+                   t133_co1_ai_config_lecture_publique, t134_co1_ia_acces_legitime,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
