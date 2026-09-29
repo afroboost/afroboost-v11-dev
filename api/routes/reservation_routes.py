@@ -862,7 +862,6 @@ async def _a_enrichir_finance(reservations: list, perimetre: dict = None) -> lis
 @reservation_router.get("/reservations")
 async def get_reservations(request: Request, page: int = 1, limit: int = 20, all_data: bool = False):
     """Get reservations with pagination - Filtré par coach_id"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
 
     # V443 — UNE ABSENCE D'IDENTITÉ N'EST PAS UNE LISTE VIDE.
     #
@@ -900,21 +899,45 @@ async def get_reservations(request: Request, page: int = 1, limit: int = 20, all
     # LE DRAPEAU RESTE, malgre cela. `REQUIRE_COACH_JWT` a ete pose de la meme
     # facon, et c'est ce qui a permis de le basculer sans redeployer. Un lot
     # qui touche a la porte d'entree d'un dashboard garde son coupe-circuit.
-    _l3c0_strict = False
+    #
+    # MT-5 (29/09/2026) — LE DRAPEAU NE GOUVERNE PLUS CETTE ROUTE : LE JWT SIGNE
+    # EST EXIGE INCONDITIONNELLEMENT.
+    #
+    # Tant que `RESERVATIONS_JWT_STRICT` valait `false` (sa valeur en production
+    # depuis LOT 3c-0), l'identite etait `X-User-Email` : un coach partenaire A
+    # lisait le carnet de B — et, en inscrivant l'adresse d'un super-admin,
+    # `?all_data=true` rendait TOUTE la base (noms, e-mails, WhatsApp). Le
+    # proprietaire a demande la correction : un defaut « ouvert » sur une liste
+    # nominative n'est pas un defaut sur. Garder le drapeau avec un defaut sur
+    # (`true`) aurait laisse un interrupteur capable de rouvrir la fuite par un
+    # simple `PUT /feature-flags` ; on le retire donc du chemin (la cle reste
+    # declaree dans `server.py`, inerte, pour ne casser aucun lecteur).
+    #
+    # V310c — CE QUI REND LE DURCISSEMENT SUR, ET CE QUI RESTE A PROUVER :
+    #   * tous les appelants du front passent par l'instance axios globale dont
+    #     l'intercepteur (`App.js`) pose `Authorization: Bearer <afroboost_jwt>`
+    #     (CoachDashboard : liste paginee, rechargement, export CSV all_data ;
+    #     ChatWidget : repli de /all-transactions) — aucun `fetch` brut ;
+    #   * `_v309_require_coach_or_admin` est deja la porte de /users,
+    #     /contacts/all, /chat/sessions, que le meme dashboard consomme ;
+    #   * banc local : super-admin en « JWT seul » 200 (tests/test_mt5_reservations.py
+    #     et tests/test_mt_superadmin_http.py).
+    # ⚠️ AVANT LIVRAISON : mesurer en production, sur CETTE route, `200` avec le
+    # jeton du proprietaire SEUL et `403` sans. Une session ouverte par Google
+    # OAuth n'a AUCUN jeton : elle recevra 403 (bandeau V443 « Réservations »),
+    # comme deja sur /users et /contacts/all — se reconnecter par e-mail + mot
+    # de passe.
+    caller_email = await mt5_coach_signe(request)   # 403 sans JWT coach signe
+    # MT-5 : liste PAGINEE, 50 au plus (regle du depot). `all_data` (export CSV
+    # du dashboard) reste borne au perimetre du proprietaire et a 10 000.
     try:
-        from api.server import get_feature_flags as _l3c0_flags
-        _l3c0_strict = bool((await _l3c0_flags()).get("RESERVATIONS_JWT_STRICT"))
-    except Exception:  # noqa: BLE001
-        # Une panne de lecture ne FERME jamais une porte : elle laisserait le
-        # proprietaire dehors sans qu'il comprenne pourquoi (lecon V310c).
-        _l3c0_strict = False
-
-    if _l3c0_strict:
-        from api.server import _v309_require_coach_or_admin as _l3c0_garde
-        caller_email = await _l3c0_garde(request)   # 403 si pas de JWT coach signe
-
-    if not caller_email:
-        raise HTTPException(status_code=403, detail="Authentification coach requise")
+        page = max(1, int(page or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        limit = max(1, min(int(limit or 20), MT5_LIMITE_PAGE))
+    except (TypeError, ValueError):
+        limit = 20
 
     # LOT 3c-0 : le perimetre vient d'UNE seule fonction, importee et jamais
     # recopiee. Le depot comptait deja six regles de propriete divergentes ;
@@ -1664,7 +1687,17 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
 
 @reservation_router.put("/reservations/{reservation_id}/tracking")
 async def update_reservation_tracking(reservation_id: str, request: Request):
-    """Met à jour les informations de suivi d'une réservation"""
+    """Met à jour les informations de suivi d'une réservation
+
+    MT-5 : cette route n'avait AUCUNE authentification — un anonyme reecrivait
+    le suivi d'expedition de n'importe quelle reservation et recevait le
+    document complet (nom, e-mail, WhatsApp) en reponse. Coach signe exige,
+    propriete verifiee sur le document reel, 404 pour la reservation d'un autre.
+    Appelant : CoachDashboard (axios -> Bearer pose par l'intercepteur).
+    """
+    _mt5_appelant = await mt5_coach_signe(request)
+    _mt5_doc = await db.reservations.find_one({"id": reservation_id}, {"_id": 0, "id": 1, "coach_id": 1})
+    mt5_exiger_proprietaire(_mt5_appelant, _mt5_doc, "suivi")
     body = await request.json()
     tracking_number = body.get("trackingNumber")
     shipping_status = body.get("shippingStatus", "shipped")
@@ -1758,6 +1791,9 @@ async def validate_reservation(reservation_code: str, request: Request):
     reservation = await db.reservations.find_one({"reservationCode": reservation_code}, {"_id": 0})
     if not reservation:
         raise HTTPException(status_code=404, detail="Réservation non trouvée")
+    # MT-5 : la propriete AVANT toute reponse — la branche « deja validee »
+    # rendait le document COMPLET d'un autre coach sans rien verifier.
+    mt5_exiger_proprietaire(_scanneur, reservation, "validation")
     _c9_deja = bool(reservation.get("validated"))   # C9-A : lu AVANT l'écriture
     if _c9_deja:
         # Comportement inchange : on renvoie le meme succes qu'avant, sans
@@ -2070,7 +2106,13 @@ async def _update_headphone_impl(reservation_id: str, request: Request):
     - Si body.guest_index est absent/None → met à jour headphone_status (abonné principal)
     - Si body.guest_index est un entier ≥ 0 → met à jour guest_headphones[index]
     V186 : lookup robuste (id OU reservationCode), parsing tolérant du body.
+
+    MT-5 : route jusqu'ici SANS authentification (un anonyme changeait l'etat
+    casque de n'importe quelle reservation). Coach signe + proprietaire, 404
+    pour la reservation d'un autre. Appelants : CoachDashboard et ChatWidget
+    (mode coach), tous deux via axios -> Bearer pose par l'intercepteur.
     """
+    _mt5_appelant = await mt5_coach_signe(request)
     body = {}
     try:
         raw = await request.body()
@@ -2102,10 +2144,12 @@ async def _update_headphone_impl(reservation_id: str, request: Request):
     filter_doc = {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]}
     reservation = await db.reservations.find_one(
         filter_doc,
-        {"_id": 0, "id": 1, "reservationCode": 1, "quantity": 1, "guests": 1, "guest_headphones": 1}
+        {"_id": 0, "id": 1, "reservationCode": 1, "quantity": 1, "guests": 1, "guest_headphones": 1,
+         "coach_id": 1}
     )
     if not reservation:
         raise HTTPException(status_code=404, detail=f"Réservation introuvable: {reservation_id}")
+    mt5_exiger_proprietaire(_mt5_appelant, reservation, "casque")
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -2193,6 +2237,8 @@ async def staff_validate_reservation(request: Request):
     reservation = await db.reservations.find_one({"reservationCode": code}, {"_id": 0})
     if not reservation:
         raise HTTPException(status_code=404, detail="Réservation non trouvée")
+    # MT-5 : propriete avant « Deja validé » (qui rendait le nom du client).
+    mt5_exiger_proprietaire(_scanneur, reservation, "staff")
     if reservation.get("validated"):
         return {"success": False, "message": "Déjà validé", "userName": reservation.get("userName", ""), "validatedAt": reservation.get("validatedAt", "")}
     await _a0_marquer_presente(reservation, _scanneur)
@@ -2227,9 +2273,9 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
         from datetime import timedelta as _td2
         swiss_tz2 = timezone(_td2(hours=2))
         today_str2 = datetime.now(swiss_tz2).strftime("%Y-%m-%d")
-        today_reservations = await db.reservations.find(
+        today_reservations = await db.reservations.find(mt5_borner(   # MT-5 : perimetre
             {"discountCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}, "datetime": {"$regex": today_str2}, "validated": {"$ne": True}},
-            {"_id": 0}
+            scanneur), {"_id": 0}
         ).to_list(50)
         if today_reservations:
             # Valider toutes les réservations non-validées du groupe pour aujourd'hui
@@ -2245,9 +2291,9 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
                     "reservation": {"userName": ", ".join(names), "reservationCode": code, "courseName": today_reservations[0].get("courseName", "")},
                     "subscriber": {"name": f"Groupe {code}", "remaining": discount.get("remaining_sessions", 0), "total": discount.get("total_sessions", 0)}}
         # Vérifier s'il y a des réservations déjà validées
-        already_validated = await db.reservations.count_documents(
-            {"discountCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}, "datetime": {"$regex": today_str2}, "validated": True}
-        )
+        already_validated = await db.reservations.count_documents(mt5_borner(   # MT-5
+            {"discountCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}, "datetime": {"$regex": today_str2}, "validated": True},
+            scanneur))
         if already_validated > 0:
             return {"success": True, "type": "subscription", "message": f"Déjà validé ({already_validated} présence(s))",
                     "reservation": {"userName": f"Groupe {code}", "reservationCode": code, "courseName": ""},
@@ -2264,7 +2310,7 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
     elif member_email:
         res_query["userEmail"] = {"$regex": f"^{re.escape(member_email)}$", "$options": "i"}
 
-    reservation = await db.reservations.find_one(res_query, {"_id": 0})
+    reservation = await db.reservations.find_one(mt5_borner(res_query, scanneur), {"_id": 0})   # MT-5
 
     if reservation:
         if reservation.get("validated"):
@@ -2320,7 +2366,7 @@ async def _validate_user_access_code(code: str, user: dict, forced_course_id: st
         "userEmail": {"$regex": f"^{re.escape(user_email)}$", "$options": "i"},
         "datetime": {"$regex": today_str}
     }
-    reservation = await db.reservations.find_one(res_query, {"_id": 0})
+    reservation = await db.reservations.find_one(mt5_borner(res_query, scanneur), {"_id": 0})   # MT-5
 
     if reservation:
         if reservation.get("validated"):
@@ -2338,8 +2384,9 @@ async def _validate_user_access_code(code: str, user: dict, forced_course_id: st
                                 "courseName": reservation.get("courseName", "")}}
 
     # Pas de réservation — chercher un abonnement actif pour déduire une séance
-    sub = await db.subscriptions.find_one(
-        {"email": {"$regex": f"^{re.escape(user_email)}$", "$options": "i"}, "status": "active"}, {"_id": 0}
+    sub = await db.subscriptions.find_one(mt5_borner(   # MT-5 : pas le forfait d'un autre coach
+        {"email": {"$regex": f"^{re.escape(user_email)}$", "$options": "i"}, "status": "active"}, scanneur),
+        {"_id": 0}
     )
     if sub:
         # Rediriger vers le flux CAS B en passant le code subscription
@@ -2449,6 +2496,72 @@ def _r11_verifier_proprietaire(scanneur: str, document: dict, quoi: str = "rése
         logger.warning("[R11] REFUS %s : %s n'est pas le proprietaire (%s)",
                        quoi, scanneur, _proprio)
         raise HTTPException(status_code=403, detail=R11_MSG_AUTRE_COACH)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MT-5 — RESERVATIONS MULTI-COACH : IDENTITE SIGNEE, PROPRIETAIRE REEL, 404
+#
+# LA REGLE, UNE SEULE FOIS :
+#   * l'identite est celle d'un JWT SIGNE coach/admin (`_v309_require_coach_or_admin`) ;
+#     `X-User-Email` ne prouve rien — JWT B + en-tete A reste B ;
+#   * super-admin (les DEUX adresses de `shared.is_super_admin`) -> tout ;
+#   * coach -> les reservations dont `coach_id` est le sien, et elles seules.
+#     `coach_id` est ecrit a la creation par `lot3c0_proprietaire_de_la_seance`
+#     (cours > coach declare verifie > plateforme) : c'est LUI le proprietaire
+#     reel. Une reservation historique SANS `coach_id` appartient a la
+#     plateforme : invisible pour un coach, exactement comme dans
+#     `lot3c0_perimetre` (la liste) — une meme regle pour lire et pour agir ;
+#   * la reservation d'un autre coach repond 404, jamais 403 : un 403 dirait
+#     « elle existe, chez quelqu'un d'autre » (oracle d'enumeration, cf. B3-S0).
+#     Le journal garde la vraie raison.
+# ═══════════════════════════════════════════════════════════════════════════
+MT5_PREFIXE = "[MT-5]"
+MT5_INTROUVABLE = "Réservation introuvable"
+MT5_LIMITE_PAGE = 50
+
+
+async def mt5_coach_signe(request) -> str:
+    """E-mail du coach/admin PROUVE par un JWT signe ; 403 sinon. Aucun repli."""
+    from api.server import _v309_require_coach_or_admin as _garde
+    return await _garde(request)
+
+
+def mt5_est_proprietaire(appelant, reservation) -> bool:
+    # `is_super_admin` du module : meme liste (les DEUX adresses) que
+    # `shared.is_super_admin`, et celle qu'utilisent deja la liste et R11.
+    _e = str(appelant or "").strip().lower()
+    if not _e or not isinstance(reservation, dict):
+        return False
+    if is_super_admin(_e):
+        return True
+    _p = str(reservation.get("coach_id") or "").strip().lower()
+    return bool(_p) and _p == _e
+
+
+def mt5_exiger_proprietaire(appelant, reservation, quoi: str = "réservation") -> None:
+    """Rien si l'appelant peut agir sur CE document ; 404 sinon (absent ou pas a lui)."""
+    if mt5_est_proprietaire(appelant, reservation):
+        return
+    if isinstance(reservation, dict):
+        logger.warning("%s REFUS %s %s : %s n'est pas le proprietaire (%s)", MT5_PREFIXE, quoi,
+                       str(reservation.get("id") or reservation.get("reservationCode") or "?")[:12],
+                       str(appelant or "anonyme")[:40],
+                       str(reservation.get("coach_id") or "plateforme/historique")[:40])
+    raise HTTPException(status_code=404, detail=MT5_INTROUVABLE)
+
+
+def mt5_borner(requete: dict, appelant) -> dict:
+    """La requete Mongo, intersectee avec le perimetre de l'appelant.
+
+    `{}` (super-admin) ne restreint rien. Appelant vide = appel interne deja
+    verifie : requete inchangee (aucun appelant de ce type aujourd'hui).
+    """
+    if not str(appelant or "").strip():
+        return requete
+    from api.routes.shared import lot3c0_perimetre
+    _perim = lot3c0_perimetre(appelant, bool(is_super_admin(str(appelant).strip().lower())))
+    return {"$and": [_perim, requete]} if _perim else requete
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2675,9 +2788,9 @@ async def marquer_absence(reservation_id: str, request: Request):
     """
     _scanneur = await _r11_scanneur(request)
     reservation = await db.reservations.find_one({"id": reservation_id}, {"_id": 0})
-    if not reservation:
-        raise HTTPException(status_code=404, detail="Réservation introuvable")
-    _r11_verifier_proprietaire(_scanneur, reservation, "réservation")
+    # MT-5 : 404 (et non plus 403) pour la reservation d'un autre coach — meme
+    # reponse que « n'existe pas », comme la suppression (B3-S0).
+    mt5_exiger_proprietaire(_scanneur, reservation, "absence")
 
     # Une presence CONSTATEE ne se defait pas par une declaration d'absence :
     # le scan est la preuve forte, la declaration la preuve faible.
@@ -3351,6 +3464,9 @@ async def _qr_scan_validate_inner(request: Request):
     # CAS A : code de réservation existante
     reservation = await db.reservations.find_one({"reservationCode": code}, {"_id": 0})
     if reservation:
+        # MT-5 : la reservation d'un autre coach -> 404, AVANT « Déjà validé »
+        # (qui rendait le nom du client a n'importe quel coach connecte).
+        mt5_exiger_proprietaire(_scanneur, reservation, "scan")
         if reservation.get("validated"):
             return {"success": True, "type": "reservation", "message": "Déjà validé",
                     "reservation": {"userName": reservation.get("userName", ""), "reservationCode": code,
@@ -3473,13 +3589,13 @@ async def _qr_scan_validate_inner(request: Request):
         # passe par la meme garde, et on retient la premiere qui designe une
         # seance reelle. `find_one` est devenu `find(...).to_list(20)` : meme
         # requete, meme filtre, seule la garde s'ajoute.
-        _cas_e = await db.reservations.find({
+        _cas_e = await db.reservations.find(mt5_borner({   # MT-5 : perimetre du scanneur
             "$or": [
                 {"discountCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}},
                 {"promoCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}}
             ],
             "datetime": {"$regex": _today}
-        }, {"_id": 0}).to_list(20)
+        }, _scanneur), {"_id": 0}).to_list(20)
         _cas_e = await _a1b_occurrences_reelles(_cas_e)
         direct_res = _cas_e[0] if _cas_e else None
         if direct_res:
@@ -3719,10 +3835,12 @@ async def export_attendance(request: Request, date: str = "", course: str = ""):
         raise HTTPException(status_code=403, detail="Authentification coach requise")
     query = {"validated": True}
     query.update(_perimetre)
+    # MT-5 : aucune entree utilisateur dans une regex (regle du depot) —
+    # `course=.*` exportait tout le perimetre au lieu d'un cours.
     if date:
-        query["selectedDatesText"] = {"$regex": date, "$options": "i"}
+        query["selectedDatesText"] = {"$regex": re.escape(str(date)[:40]), "$options": "i"}
     if course:
-        query["courseName"] = {"$regex": course, "$options": "i"}
+        query["courseName"] = {"$regex": re.escape(str(course)[:120]), "$options": "i"}
 
     reservations = await db.reservations.find(query, {"_id": 0}).sort("validatedAt", -1).to_list(500)
 
@@ -3793,7 +3911,15 @@ async def get_my_access_code(request: Request, email: str = ""):
 
 @reservation_router.post("/check-reservation-eligibility")
 async def check_reservation_eligibility(request: Request):
-    """Vérifie si un utilisateur peut réserver (abonné actif ou code promo valide)"""
+    """Vérifie si un utilisateur peut réserver (abonné actif ou code promo valide)
+
+    MT-5 : route PUBLIQUE par conception (appel visiteur/abonne du ChatWidget,
+    sans jeton) — elle le reste. Mais elle rendait le document de code ENTIER
+    (e-mail assigne, proprietaire, compteurs) et, contre un simple e-mail, le
+    nom et l'adresse d'un abonne. Elle ne rend plus que la reponse : eligible
+    ou non, et le type. Le ChatWidget ne lit rien d'autre (`canReserve`,
+    `remaining`, `expiry_date` n'ont jamais ete fournis par cette route).
+    """
     body = await request.json()
     email = body.get("email", "").lower().strip()
     code = body.get("code", "").strip()
@@ -3803,12 +3929,12 @@ async def check_reservation_eligibility(request: Request):
     if code:
         discount = await db.discount_codes.find_one({"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}, "active": True}, {"_id": 0})
         if discount:
-            return {"eligible": True, "discount": discount, "type": "discount_code"}
+            return {"eligible": True, "type": "discount_code"}
     # Chercher par email (abonné actif)
     if email:
         subscriber = await db.chat_participants.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0})
         if subscriber and subscriber.get("isSubscriber"):
-            return {"eligible": True, "subscriber": {"name": subscriber.get("name"), "email": subscriber.get("email")}, "type": "subscriber"}
+            return {"eligible": True, "type": "subscriber"}
     return {"eligible": False, "reason": "Aucun abonnement ou code valide trouvé"}
 
 

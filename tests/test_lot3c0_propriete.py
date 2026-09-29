@@ -332,8 +332,13 @@ def partie_7_perimetre_du_lot():
              "durcissement de lecture reste eteint tant qu'il n'est pas prouve",
              'RESERVATIONS_JWT_STRICT: bool = False' in SRC_SERVER
              and '"RESERVATIONS_JWT_STRICT": False' in SRC_SERVER)
-    verifier("7c. une panne de lecture du drapeau laisse la porte OUVERTE (V310c)",
-             "_l3c0_strict = False" in SRC_RESA)
+    # MT-5 (29/09/2026) : l'invariant « drapeau eteint = en-tete accepte » est
+    # RETIRE a la demande du proprietaire — la liste exige desormais un JWT
+    # signe quel que soit le drapeau (declare, inerte). Il est remplace par son
+    # contraire, verifiable : la route ne lit plus ni le drapeau ni l'en-tete.
+    verifier("7c. MT-5 : GET /reservations ne depend plus du drapeau (JWT signe inconditionnel)",
+             "_l3c0_strict" not in SRC_RESA
+             and "caller_email = await mt5_coach_signe(request)" in SRC_RESA)
     verifier("7d. AUCUN backfill, AUCUNE migration : le stock ancien n'est pas "
              "reecrit — il reste lisible par le proprietaire (regle 3a)",
              "update_many" not in _extraire(("api", "routes", "shared.py"),
