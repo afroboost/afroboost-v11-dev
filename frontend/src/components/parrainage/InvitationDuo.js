@@ -46,6 +46,7 @@ import {
 } from '../../utils/parrainage';
 import SessionsModal from '../SessionsModal'; // V539 — le calendrier de la page d'accueil, réutilisé
 import WizardFilleul from './WizardFilleul'; // V556
+import { AvatarInvitant } from './BandeauInvitant'; // L0
 import './parrainage.css';
 
 /** Le message pour un GET /pass/{token} qui n'a pas abouti (ou un pass fermé). */
@@ -319,8 +320,12 @@ export default function InvitationDuo({ token }) {
 
   // V551 : le nom de L'INVITATION (`sponsor_display_name`) passe avant le prénom ;
   // jamais un e-mail, même s'il arrivait du serveur (filtre `nomAffichable`).
-  const prenom = nomAffichable(pass.sponsor_display_name) || nomAffichable(pass.sponsor_first_name) || 'ton ami';
-  const photoParrain = photoAutorisee(pass.sponsor_photo_url);
+  // L0 : `inviter_display` (prénom + photo, jamais d'e-mail) passe en premier ;
+  // repli sur les champs sponsor_* des serveurs antérieurs.
+  const inviteur = (pass.inviter_display && typeof pass.inviter_display === 'object') ? pass.inviter_display : {};
+  const prenom = nomAffichable(inviteur.prenom) || nomAffichable(pass.sponsor_display_name)
+    || nomAffichable(pass.sponsor_first_name) || 'ton ami';
+  const photoParrain = photoAutorisee(inviteur.photo_url) || photoAutorisee(pass.sponsor_photo_url);
 
   // ── Succès ────────────────────────────────────────────────────────────────
   if (resultat) {
@@ -335,7 +340,8 @@ export default function InvitationDuo({ token }) {
             {attente ? <>Inscription <em className="cp-em">confirmée</em></> : <>Votre Pass Duo est <em className="cp-em">débloqué</em></>}
           </h1>
           <div className="cp-avatars" aria-hidden="true">
-            <div className="cp-av">{prenom.charAt(0).toUpperCase()}<small>{prenom}</small></div>
+            {/* L0 : la photo du parrain, sinon l'avatar Afroboost (plus d'initiale). */}
+            <div className="cp-av-col"><AvatarInvitant photoUrl={photoParrain} /><small>{prenom}</small></div>
             <i />
             <div className={`cp-av${attente ? '' : ' cp-av--ok'}`}>{form.name.trim().charAt(0).toUpperCase() || '?'}<small>{form.name.trim() || 'Toi'}</small></div>
           </div>
@@ -465,11 +471,9 @@ export default function InvitationDuo({ token }) {
 
   return (
     <Cadre>
-      {photoParrain ? (
-        <div className="cp-av cp-wz-av cp-invitation-photo">
-          <img src={photoParrain} alt="" data-testid="invitation-photo" />
-        </div>
-      ) : null}
+      {/* L0 : toujours un visage — la photo de l'invitant, sinon l'avatar Afroboost. */}
+      <AvatarInvitant photoUrl={photoParrain} className="cp-invitation-photo"
+                      testidPhoto="invitation-photo" testidAvatar="invitation-avatar-afroboost" />
       <div className="cp-eyebrow" data-testid="invitation-de">Invitation de {prenom}</div>
       <h1 className="cp-h1">Rejoins son <em className="cp-em">Pass Duo</em></h1>
       <p className="cp-lead">{offre ? 'Ton offre est débloquée dès ton inscription.' : 'Ton essai gratuit est débloqué dès ton inscription.'}</p>

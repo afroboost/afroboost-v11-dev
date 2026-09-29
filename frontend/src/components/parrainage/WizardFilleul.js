@@ -23,6 +23,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import SvgIcon from '../SvgIcon';
+import BandeauInvitant, { AvatarInvitant } from './BandeauInvitant'; // L0
 import {
   MESSAGE_CHAINE_DEFAUT, MESSAGE_MAX, NOM_MAX, bornerMessage, nomAffichable,
   creerInvitationChaine, modifierInvitationChaine, enregistrerPartageChaine,
@@ -268,11 +269,8 @@ export default function WizardFilleul({
       <div className="cp-wf" data-testid="wf-etape-1">
         <Etapes etape={1} />
         <div className="cp-wf-qui">
-          {photo ? (
-            <div className="cp-av cp-wz-av cp-wf-av"><img src={photo} alt="" data-testid="invitation-photo" /></div>
-          ) : (
-            <div className="cp-av cp-wf-av" aria-hidden="true">{(prenom || '?').charAt(0).toUpperCase()}</div>
-          )}
+          {/* L0 : sans photo, l'avatar Afroboost (jamais une initiale). */}
+          <AvatarInvitant photoUrl={photo} className="cp-wf-av" testidPhoto="invitation-photo" testidAvatar="invitation-avatar-afroboost" />
           <div className="cp-wf-qui-txt">
             <span className="cp-chip">Pass Duo</span>
             <h1 className="cp-h1 cp-wf-h1" data-testid="invitation-de">{prenom} t'invite à découvrir Afroboost.</h1>
@@ -319,6 +317,12 @@ export default function WizardFilleul({
   return (
     <div className="cp-wf" data-testid="wf-etape-2">
       <Etapes etape={2} />
+      {/* L0 : pourquoi cette étape — court, pour ne pas repousser le partage hors écran.
+          On ne dit jamais que l'ami « a reçu » quoi que ce soit. */}
+      <div className="cp-wf-derniere" data-testid="wf-derniere-etape">
+        <b>Une dernière étape pour débloquer ton essai</b>
+        <p>Invite une personne à découvrir Afroboost. Dès que ton invitation est prête à être partagée, tu peux finaliser ton inscription à l’essai gratuit.</p>
+      </div>
       <h2 className="cp-wf-titre">Invite un ami</h2>
       <p className="cp-mini cp-wf-sous">Ton ami reçoit la même invitation que toi : un essai gratuit, à deux.</p>
       {avis ? <p className="cp-notice" role="alert" data-testid="wf-avis">{avis}</p> : null}
@@ -379,6 +383,9 @@ export default function WizardFilleul({
 
       {child && editable ? (
         <div className="cp-wf-actions">
+          {/* L0 : qui invite, tel que l'ami le verra (prénom saisi, photo du DTO enfant). */}
+          <BandeauInvitant prenom={nomValide || nomChild}
+                           photoUrl={child.inviter_display ? child.inviter_display.photo_url : null} />
           <button type="button" className="cp-b cp-b--whatsapp cp-wz-cible" onClick={surWhatsApp} disabled={boutonsInactifs} data-testid="wf-whatsapp">
             <SvgIcon name="messageCircle" size={20} /> WhatsApp
           </button>

@@ -35,6 +35,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import SvgIcon from '../SvgIcon';
+import BandeauInvitant from './BandeauInvitant'; // L0
 import ConditionsParticipation from '../ConditionsParticipation';
 import { useChoixSeance, ChampsSeanceOffre } from './PassDuoCard';
 import './invitationWizard.css';
@@ -316,6 +317,8 @@ export default function InvitationWizard({
           </div>
           {apercu}
         </div>
+        {/* L0 : qui invite, juste au-dessus du lien et des boutons de partage. */}
+        <BandeauInvitant prenom={nomValide} photoUrl={photo} />
         <div className="cp-code">
           <div>
             <small>Mon lien d'invitation</small>

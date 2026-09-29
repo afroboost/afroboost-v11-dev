@@ -1256,6 +1256,9 @@ async def referral_creer_pass(request: Request):
     if _invitation is not None:             # V551 : appliquée à la création seulement
         _doc["invitation"] = dict(_invitation, updated_at=_iso(_now))
         _doc["invitation_version"] = 1
+    # L0 : QUI invite, figé à la création (photo de l'invitation, sinon du profil du membre).
+    _doc["inviter_display"] = E.identite_invitant(
+        _doc, await _photo_profil((_doc.get("sponsor") or {}).get("email_norm")))
     try:
         await db[COLL_PASSES].insert_one(dict(_doc))
     except Exception as _err:  # noqa: BLE001
@@ -1598,9 +1601,13 @@ async def referral_pass_invitation_put(pass_id: str, request: Request):
     except E.InvitationInvalide as _err:
         raise HTTPException(status_code=422, detail=str(_err))
     _now = _iso()
+    # L0 : l'identité de l'invitant est re-figée avec l'invitation, dans la MÊME écriture.
+    _idt = E.identite_invitant(dict(_p, invitation=_inv),
+                               await _photo_profil((_p.get("sponsor") or {}).get("email_norm")))
     await db[COLL_PASSES].update_one(
         {"id": _p["id"], "share_token": _p.get("share_token")},
-        {"$set": {"invitation": dict(_inv, updated_at=_now), "updated_at": _now},
+        {"$set": {"invitation": dict(_inv, updated_at=_now), "inviter_display": _idt,
+                  "updated_at": _now},
          "$inc": {"invitation_version": 1}})
     _p = await db[COLL_PASSES].find_one({"id": _p["id"]}, {"_id": 0}) or _p
     logger.info("%s invitation du pass %s personnalisée (v%s)", PREFIXE, _p["id"][:8],
@@ -2273,6 +2280,9 @@ async def referral_chaine_creer(share_token: str, request: Request):
         "expires_at": _p.get("occurrence"),
         "events": [{"at": _iso(_now), "type": E.EVENEMENT_CHAINE_CREEE, "detail": None}],
     }
+    # L0 : l'enfant porte le prénom saisi ; pas de photo (le filleul n'est pas encore inscrit)
+    # -> avatar Afroboost, jamais la photo du coach à la place d'un membre.
+    _doc["inviter_display"] = E.identite_invitant(_doc)
     try:
         await db[COLL_PASSES].insert_one(dict(_doc))
     except Exception as _err:  # noqa: BLE001
@@ -2314,6 +2324,10 @@ async def referral_chaine_modifier(share_token: str, request: Request):
     _set = {"invitation": _fusion, "updated_at": _iso()}
     if E.parrain_en_attente(_enf):
         _set["sponsor.name"] = _fusion["display_name"] or ""
+    _apres = dict(_enf, invitation=_fusion)
+    if "sponsor.name" in _set:
+        _apres["sponsor"] = dict(_enf.get("sponsor") or {}, name=_set["sponsor.name"])
+    _set["inviter_display"] = E.identite_invitant(_apres)   # L0 : re-figée avec l'invitation
     await db[COLL_PASSES].update_one({"id": _enf["id"], "share_token": _enf.get("share_token")},
                                      {"$set": _set, "$inc": {"invitation_version": 1, "version": 1}})
     _enf = await db[COLL_PASSES].find_one({"id": _enf["id"]}, {"_id": 0}) or _enf

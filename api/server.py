@@ -20179,7 +20179,7 @@ async def _v556_octets_carte(_p):
     # 1. la carte personnalisée
     try:
         _photo = None
-        _url_photo = _duo.invitation_du_pass(_p).get("photo_url")
+        _url_photo = _duo.inviter_display_du_pass(_p)["photo_url"]  # L0 : photo de l'invitant
         if _url_photo:
             from urllib.parse import urlsplit as _us
             _photo = await _carte.recuperer_photo(_url_photo, _v552_lire_fichier_local,

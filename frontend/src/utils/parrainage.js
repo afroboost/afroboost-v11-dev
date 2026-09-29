@@ -543,7 +543,8 @@ export function photoAutorisee(url) {
   const m = /^https:\/\/([^/?#]+)(?:[/?#]|$)/i.exec(s);
   if (!m) return null;
   const hote = m[1].toLowerCase();
-  return ['afroboost.com', 'firebasestorage.googleapis.com', 'storage.googleapis.com', 'lh3.googleusercontent.com']
+  // L0 : res.cloudinary.com (https seulement) — beaucoup de photos de profil y vivent.
+  return ['afroboost.com', 'firebasestorage.googleapis.com', 'storage.googleapis.com', 'lh3.googleusercontent.com', 'res.cloudinary.com']
     .indexOf(hote) >= 0 ? s : null;
 }
 

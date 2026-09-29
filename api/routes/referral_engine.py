@@ -189,7 +189,10 @@ MESSAGE_MAX = 280
 NOM_INVITATION_MAX = 40
 PHOTO_URL_MAX = 500
 HOTES_PHOTO = ("afroboost.com", "firebasestorage.googleapis.com", "storage.googleapis.com",
-               "lh3.googleusercontent.com")
+               "lh3.googleusercontent.com",
+               # L0 (29/09) : beaucoup de photos de profil sont sur Cloudinary ; sans cet hôte,
+               # elles étaient refusées SANS erreur et n'apparaissaient nulle part.
+               "res.cloudinary.com")
 _RE_FICHIER = _re.compile(r"^/api/files/[A-Za-z0-9_-]+/[^/?#]+$")
 
 
@@ -301,6 +304,46 @@ def nom_parrain_affichable(pass_doc) -> str:
     return nom_affichable(_sp.get("name"), _sp.get("email_norm"))
 
 
+# ─── L0 (29/09) : QUI invite — figé côté serveur, sans donnée personnelle ─────────
+# Règle : invitation d'un MEMBRE -> photo choisie pour l'invitation, sinon photo de son
+# profil ; aucune -> avatar Afroboost (photo None). Jamais la photo du coach à la place
+# d'un membre (« coach » est réservé à une invitation directe du coach).
+SOURCES_INVITANT = ("member", "coach", "afroboost")
+
+
+def identite_invitant(pass_doc, photo_profil=None) -> dict:
+    """`{prenom, photo_url, source}` (pure). `photo_profil` : URL de la photo de profil
+    du membre invitant (lue par la route), revalidée ici."""
+    _p = pass_doc or {}
+    _prenom = nom_parrain_affichable(_p) or ""
+    _photo = invitation_du_pass(_p)["photo_url"]
+    if not _photo and photo_profil:
+        try:
+            _photo = valider_photo_url(photo_profil)
+        except InvitationInvalide:
+            _photo = None
+    _membre = bool(_prenom or _photo or (_p.get("sponsor") or {}).get("name"))
+    return {"prenom": _prenom, "photo_url": _photo or None, "source": "member" if _membre else "afroboost"}
+
+
+def inviter_display_du_pass(pass_doc) -> dict:
+    """L'identité montrée au monde. Le choix EXPLICITE de l'invitation (prénom, photo)
+    prime toujours ; l'identité FIGÉE ne complète que ce qui manque (photo de profil).
+    Anciens pass (sans identité figée) : même photo que l'invitation -> même carte."""
+    _vif = identite_invitant(pass_doc)
+    _d = (pass_doc or {}).get("inviter_display")
+    if not (isinstance(_d, dict) and _d.get("source") in SOURCES_INVITANT):
+        return _vif
+    _photo = _d.get("photo_url")
+    try:
+        _photo = valider_photo_url(_photo) if _photo else None
+    except InvitationInvalide:
+        _photo = None
+    return {"prenom": _vif["prenom"] or str(_d.get("prenom") or "")[:NOM_INVITATION_MAX],
+            "photo_url": _vif["photo_url"] or _photo,
+            "source": _d["source"] if _d["source"] != "afroboost" else _vif["source"]}
+
+
 def version_apercu(pass_doc) -> int:
     """V556 — compteur d'APERÇU : +1 à chaque partage déclenché. Ne touche ni
     au jeton, ni au filleul, ni aux crédits : il ne sert qu'au cache WhatsApp."""
@@ -353,6 +396,11 @@ def version_carte(pass_doc) -> str:
     # existe — les cartes déjà partagées (compteur absent) gardent leur URL.
     if version_apercu(_p) > 0:
         _cle.append("apercu:%d" % version_apercu(_p))
+    # L0 : la photo de l'invitant n'entre dans l'empreinte QUE si elle diffère de celle de
+    # l'invitation (photo de profil utilisée) — les anciens liens gardent leur version.
+    _idt = inviter_display_du_pass(_p)
+    if _idt["photo_url"] and _idt["photo_url"] != (_i["photo_url"] or None):
+        _cle.append("invitant:%s" % _idt["photo_url"])
     return hashlib.sha256(json.dumps(_cle, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
 
 
@@ -1019,7 +1067,9 @@ def dto_public(pass_doc, statut, now, offers=None) -> dict:
         # V551 : le prénom passe par le filtre (jamais une partie locale d'e-mail).
         "sponsor_first_name": nom_affichable(_sp.get("name"), _sp.get("email_norm")),
         "sponsor_display_name": nom_parrain_affichable(_p),
-        "sponsor_photo_url": invitation_du_pass(_p)["photo_url"],
+        "sponsor_photo_url": inviter_display_du_pass(_p)["photo_url"],
+        # L0 : QUI invite (prénom, photo ou avatar Afroboost) — jamais d'e-mail/téléphone.
+        "inviter_display": inviter_display_du_pass(_p),
         "course": _c,
         "occurrence": _p.get("occurrence"),
         "expired": statut in (EXPIRED, CANCELLED) or est_passee(_p.get("expires_at") or _p.get("occurrence"), now),
@@ -1250,6 +1300,7 @@ def dto_enfant(pass_doc, frontend_url) -> dict:
         "offer": offre_du_pass(_p),
         "preview_version": version_partage(_p),
         "joined": bool(_p.get("invitee")),
+        "inviter_display": inviter_display_du_pass(_p),   # L0
     }
     _carte = url_carte(frontend_url, _p)
     if _carte:
