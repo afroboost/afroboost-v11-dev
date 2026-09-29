@@ -1714,6 +1714,21 @@ async def checkout_stripe_webhook(request: Request):
         logger.info("[CHECKOUT-WEBHOOK] %s transmis au rappel HIVER/V404", event_data.get("type"))
         return resultat
 
+    # V559 — REMBOURSEMENT : la commission du créateur suit (pending/confirmed ->
+    # refunded ; déjà payée -> régularisation tracée). Rien n'est supprimé. Cet
+    # événement doit être coché pour cette URL dans le tableau de bord Stripe.
+    if event_data.get("type") == "charge.refunded":
+        try:
+            _charge = (event_data.get("data") or {}).get("object") or {}
+            _complet = bool(_charge.get("refunded")) or (
+                int(_charge.get("amount_refunded") or 0) >= int(_charge.get("amount") or 0) > 0)
+            from api.routes.creator_routes import creator_remboursement as _v559_remb
+            _n = await _v559_remb(db, _charge.get("payment_intent"), _complet)
+            logger.info("[CREATEUR] remboursement Stripe répercuté sur %s commission(s)", _n)
+        except Exception as _v559e:
+            logger.warning("[CREATEUR] remboursement non répercuté (%s)", type(_v559e).__name__)
+        return {"status": "ok"}
+
     if event_data.get("type") == "checkout.session.completed":
         session = event_data["data"]["object"]
         metadata = session.get("metadata", {})
@@ -1791,6 +1806,14 @@ async def checkout_stripe_webhook(request: Request):
         )
 
         logger.info(f"[CHECKOUT-WEBHOOK] Paiement Stripe confirmé: {transaction_id}")
+
+        # V559 — CRÉATEUR : même porte que les achats clients (commission directe,
+        # une seule par session). FAIL-OPEN.
+        try:
+            from api.routes.creator_routes import creator_conversion_stripe as _v559_conv
+            await _v559_conv(db, session, dict(metadata or {}))
+        except Exception as _v559e:
+            logger.warning("[CREATEUR] conversion vitrine non enregistrée (%s)", type(_v559e).__name__)
 
     return {"status": "ok"}
 

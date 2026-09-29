@@ -8662,6 +8662,16 @@ async def create_checkout_session(request: CreateCheckoutRequest,
         metadata.update(m2a_vers_metadata(getattr(request, "attribution", None)))
     except Exception as _m2ae:
         logger.warning("[M2-A] attribution non jointe au checkout (%s)", type(_m2ae).__name__)
+    # V559 — LIEN CRÉATEUR : le jeton (dernier clic, 30 j) voyage dans l'attribution ;
+    # seul son FORMAT est vérifié ici — le webhook relit le créateur (approuvé ?) et
+    # n'écrit une commission que sur un paiement confirmé. FAIL-OPEN.
+    try:
+        from api.routes.creator_engine import jeton_valide as _v559_jeton_ok
+        _v559_jeton = str((getattr(request, "attribution", None) or {}).get("createur") or "").strip()
+        if _v559_jeton and _v559_jeton_ok(_v559_jeton):
+            metadata["creator_token"] = _v559_jeton
+    except Exception as _v559e:
+        logger.warning("[CREATEUR] jeton non joint au checkout (%s)", type(_v559e).__name__)
     _hiver_mode = _hiver.billing_mode_valide((_hiver_offre or {}).get("billing_mode"))
     # V535 — choix « en une fois » / « 2 fois » : validé côté serveur, montant recalculé.
     _v535_mode, _v535_refus = _hiver.mode_paiement_valide(_hiver_offre, getattr(request, "paymentMode", None))
@@ -9377,6 +9387,15 @@ async def stripe_webhook(request: Request):
             else:
                 # Paiement Client standard (ou paiement sans metadata)
                 await db.payment_transactions.update_one({"session_id": session.id}, {"$set": {"payment_status": session.payment_status, "status": "completed", "webhook_received_at": datetime.now(timezone.utc).isoformat()}})
+
+                # V559 — CRÉATEUR : commission DIRECTE sur paiement confirmé (`paid`), une
+                # seule par session Stripe (index unique) — un webhook rejoué n'en crée pas
+                # une seconde. FAIL-OPEN : l'achat encaissé ne dépend jamais de l'affiliation.
+                try:
+                    from api.routes.creator_routes import creator_conversion_stripe as _v559_conv
+                    await _v559_conv(db, session, dict(metadata or {}))
+                except Exception as _v559e:
+                    logger.warning("[CREATEUR] conversion non enregistrée (%s)", type(_v559e).__name__)
 
                 # V204: Si c'est un paiement subscriber_space, juste logger (le code existe déjà)
                 if metadata.get("source") == "subscriber_space":
@@ -49561,6 +49580,10 @@ init_referral_db(db)
 # `campaigns` : une invitation n'entre pas dans le moteur d'envoi). JWT coach strict.
 from api.routes.referral_campaigns_routes import router as referral_campaigns_router, init_db as init_referral_campaigns_db, assurer_index as inv1_assurer_index  # noqa: E402
 fastapi_app.include_router(referral_campaigns_router)
+# V559 — PROGRAMME CRÉATEUR / AFFILIATION : même moteur (referral_programs, referral_passes).
+from api.routes.creator_routes import router as createur_router, init_db as init_createur_db, assurer_index as createur_assurer_index  # noqa: E402
+fastapi_app.include_router(createur_router)
+init_createur_db(db)
 init_referral_campaigns_db(db)
 # INV-3 : page OG + carte 1200×630 publiques d'une invitation active, aperçu coach.
 from api.routes.share_invite_routes import router as share_invite_router, init_db as init_share_invite_db  # noqa: E402
@@ -49898,6 +49921,8 @@ async def startup_db():
         logger.info("[INV-1] index referral_campaigns OK")
     except Exception as _einv1:
         logger.warning("[INV-1] index referral_campaigns non posés (%s)", type(_einv1).__name__)
+    # V559 : index du programme Créateur (unicité d'une commission par paiement) — AVANT toute donnée.
+    await createur_assurer_index(db)
 
     # P3-S3-A : les index du moteur de campagne. Poses AU DEMARRAGE, donc
     # AVANT qu'une seule campagne existe — la lecon de P2, ou un index unique

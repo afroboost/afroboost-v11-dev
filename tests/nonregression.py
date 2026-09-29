@@ -2921,6 +2921,46 @@ def t144_v558_options_chaine_jeton_inconnu():
         record(144, "V558 : /referral/pass/<jeton inconnu>/chain/options", False, str(e))
 
 
+def t145_v559_createur_sans_auth():
+    """V559 — Programme Créateur : sans identité, ni statut, ni demande, ni retrait."""
+    try:
+        r1 = requests.get(_url("/api/createur/me"), timeout=TIMEOUT)
+        r2 = requests.post(_url("/api/createur/demande"), json={"prenom": "X"}, timeout=TIMEOUT)
+        r3 = requests.post(_url("/api/createur/retrait"), json={}, timeout=TIMEOUT)
+        ok = all(r.status_code in (401, 403) for r in (r1, r2, r3)) and "@" not in (r1.text + r2.text + r3.text)
+        record(145, "V559 : /api/createur/me, /demande, /retrait refusés sans identité (401/403)", ok,
+               f"me {r1.status_code} | demande {r2.status_code} | retrait {r3.status_code}")
+    except Exception as e:
+        record(145, "V559 : routes créateur sans identité", False, str(e))
+
+
+def t146_v559_admin_createur_sans_auth():
+    """V559 — console Créateurs : aucune liste (e-mails, IBAN, TWINT) sans super-admin."""
+    try:
+        codes = []
+        for chemin in ("/api/createur/admin/createurs", "/api/createur/admin/commissions",
+                       "/api/createur/admin/retraits", "/api/createur/admin/programmes"):
+            r = requests.get(_url(chemin), timeout=TIMEOUT)
+            codes.append(r.status_code)
+        r = requests.post(_url("/api/createur/admin/createurs/inconnu/decision"), json={"decision": "approve"},
+                          timeout=TIMEOUT)
+        codes.append(r.status_code)
+        record(146, "V559 : /api/createur/admin/* refusé sans jeton super-admin (401/403)",
+               all(c in (401, 403) for c in codes), f"codes {codes}")
+    except Exception as e:
+        record(146, "V559 : /api/createur/admin/* sans auth", False, str(e))
+
+
+def t147_v559_partage_jeton_inconnu():
+    try:
+        r = requests.get(_url("/api/createur/partage/jetonInconnuNR01"), timeout=TIMEOUT, allow_redirects=False)
+        r2 = requests.get(_url("/api/createur/partage/jetonInconnuNR01/carte.jpg"), timeout=TIMEOUT, allow_redirects=False)
+        record(147, "V559 : /api/createur/partage/<jeton inconnu> (+ /carte.jpg) -> 404",
+               r.status_code == 404 and r2.status_code == 404, f"page {r.status_code} | carte {r2.status_code}")
+    except Exception as e:
+        record(147, "V559 : partage créateur jeton inconnu", False, str(e))
+
+
 def t131_co1_ai_logs_sans_auth():
     """CO-1 : le journal IA (numéros WhatsApp + messages entrants de TOUTE la
     plateforme) n'est lisible que par le super-admin SIGNÉ. LECTURE SEULE.
@@ -3037,6 +3077,8 @@ def main():
                    t142_inv1_acces_legitime,
                    t143_inv3_espace_seance_sans_auth,
                    t144_v558_options_chaine_jeton_inconnu,
+                   t145_v559_createur_sans_auth, t146_v559_admin_createur_sans_auth,
+                   t147_v559_partage_jeton_inconnu,
                    t131_co1_ai_logs_sans_auth, t132_co1_ai_config_ecriture_sans_auth,
                    t133_co1_ai_config_lecture_publique, t134_co1_ia_acces_legitime,
                    t39_redos_input, t40_nosql_injection):
