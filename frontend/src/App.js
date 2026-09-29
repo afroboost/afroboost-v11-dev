@@ -271,6 +271,7 @@ import SubscriberSpace from "./components/SubscriberSpace";
 // pèsent rien sur la vitrine tant qu'on n'ouvre pas /parrainage ou /duo/<token>.
 const CentreParrainage = lazy(() => import("./components/parrainage/CentreParrainage"));
 const InvitationDuo = lazy(() => import("./components/parrainage/InvitationDuo"));
+const EntreeCampagne = lazy(() => import("./components/parrainage/EntreeCampagne")); // PAR-3 : /duo/c/<token>
 // Calendrier des sessions, en fenetre par-dessus la vitrine (jamais une page)
 import SessionsModal from "./components/SessionsModal";
 import ConditionsParticipation from './components/ConditionsParticipation'; // ESSAI-5a-1
@@ -5792,6 +5793,9 @@ function App() {
     const checkParrainage = () => {
       const path = window.location.pathname;
       if (/^\/parrainage\/?$/.test(path)) { setParrainagePage('centre'); setDuoToken(''); return; }
+      // PAR-3 : /duo/c/<token> (entrée de campagne) testé AVANT /duo/<token>.
+      const campagne = path.match(/^\/duo\/c\/([A-Za-z0-9_-]+)\/?$/);
+      if (campagne) { setParrainagePage('campagne'); setDuoToken(campagne[1]); return; }
       const duo = path.match(/^\/duo\/([A-Za-z0-9_-]+)\/?$/);
       if (duo) { setParrainagePage('duo'); setDuoToken(duo[1]); return; }
       setParrainagePage(''); setDuoToken('');
@@ -7955,6 +7959,14 @@ function App() {
     return (
       <Suspense fallback={<div style={{ minHeight: '100vh', background: 'rgb(0,0,0)' }} />}>
         <CentreParrainage />
+      </Suspense>
+    );
+  }
+  // PAR-3 : entrée d'une invitation de campagne — un seul appel, puis /duo/<share_token>.
+  if (parrainagePage === 'campagne' && duoToken) {
+    return (
+      <Suspense fallback={<div style={{ minHeight: '100vh', background: 'rgb(0,0,0)' }} />}>
+        <EntreeCampagne token={duoToken} />
       </Suspense>
     );
   }
