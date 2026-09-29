@@ -323,8 +323,12 @@ def semer_coach(db, x):
     db.users.insert_many([
         {"id": f"mt-user-{x}1", "name": f"{m}-User1", "email": e("user1"), "whatsapp": _tel(x, 11),
          "coach_id": coach, "createdAt": _maintenant(-20)},
-        # Fiche SANS coach_id rattachée au coach par une RELATION (abonnement + code).
+        # Fiche SANS coach_id rattachée au coach par une RELATION FORTE (abonnement PAYÉ, MT-2).
         {"id": f"mt-user-{x}2", "name": f"{m}-Abonne", "email": e("abonne"), "whatsapp": _tel(x, 12),
+         "createdAt": _maintenant(-20)},
+        # Fiche SANS coach_id dont l'adresse n'est reliée au coach que par SON CRM (preuve
+        # fabricable) : elle ne doit JAMAIS lui être exposée (audit final P1).
+        {"id": f"mt-user-{x}3", "name": f"{m}-CrmSeul", "email": e("contact1"), "whatsapp": _tel(x, 13),
          "createdAt": _maintenant(-20)},
     ])
     db.reservations.insert_one({"id": f"mt-resa-{x}", "userEmail": e("user1"), "userName": f"{m}-User1",
@@ -334,6 +338,7 @@ def semer_coach(db, x):
     code = f"AFR-MT{X}001"
     db.subscriptions.insert_one({"id": f"mt-sub-{x}", "code": code, "email": e("abonne"), "name": f"{m}-Abonne",
                                  "whatsapp": _tel(x, 12), "status": "active", "coach_id": coach,
+                                 "source": "stripe_auto",
                                  "offer_name": "Banc 10 séances", "total_sessions": 10, "used_sessions": 5,
                                  "remaining_sessions": 5, "expires_at": _maintenant(60),
                                  "created_at": _maintenant(-30)})
@@ -703,6 +708,9 @@ class Matrice:
         self.lecture_id("GET /api/users/{id}", "/api/users/{}", "mt-user-a1", "mt-user-b1")
         r = self.c("GET", "/api/users/mt-user-a2", self.hA)
         verifier("GET /api/users/{id}", "A lit A (fiche liée par relation)", r.s, r.s == 200 and MA in r.t)
+        r = self.c("GET", "/api/users/mt-user-a3", self.hA)
+        verifier("GET /api/users/{id}", "A lit une fiche globale reliée par son CRM seul (refus, 0 WhatsApp)", r.s,
+                 r.s in REFUS_OBJET and _tel("a", 13) not in r.t)
         r = self.c("GET", "/api/users/mt-user-g1", self.hA)
         verifier("GET /api/users/{id}", "A lit hérité (sans propriétaire)", r.s,
                  r.s in REFUS_OBJET and MG not in r.t)
@@ -1017,8 +1025,8 @@ class Matrice:
         verifier(route, "A modifie A (ses doublons fusionnés)", r.s, r.s == 200 and n("a") == 1, f"A={n('a')}")
         verifier(route, "A supprime B (doublons de B intacts)", r.s, n("b") == 2, f"B={n('b')}")
         semer_doublons(self.db, "a")
-        r = self.c("POST", p, self.hSA)
-        verifier(route, "SUPER-ADMIN global", r.s, r.s == 200 and n("a") == 1 and n("b") == 1,
+        r = self.c("POST", p + "?scope=global", self.hSA)
+        verifier(route, "SUPER-ADMIN global (scope=global explicite)", r.s, r.s == 200 and n("a") == 1 and n("b") == 1,
                  f"A={n('a')} B={n('b')}")
 
     # ═══════════════════════════ REGEX WHATSAPP (en dernier : écrit) ════════
