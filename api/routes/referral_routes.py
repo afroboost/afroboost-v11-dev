@@ -2516,9 +2516,11 @@ async def _parent_ouvert(share_token):
     return _p, _s
 
 
-def _champs_invitation_enfant(corps) -> dict:
-    """Seuls `display_name` et `message` : jamais une photo, un e-mail, un id."""
-    _sous = {k: corps.get(k) for k in ("display_name", "message") if k in (corps or {})}
+def _champs_invitation_enfant(corps, avec_photo=False) -> dict:
+    """Seuls `display_name` et `message` (+ `photo_url` au PATCH, UX-P1, validée
+    par `valider_photo_url`) : jamais un e-mail, un id."""
+    _cles = ("display_name", "message", "photo_url") if avec_photo else ("display_name", "message")
+    _sous = {k: corps.get(k) for k in _cles if k in (corps or {})}
     try:
         return E.valider_invitation(_sous)
     except E.InvitationInvalide as _err:
@@ -2536,7 +2538,7 @@ async def referral_chaine_creer(share_token: str, request: Request):
     await _exiger_campagne_vivante(_p)          # PAR-1 (audit P2)
     _enf = await _enfant_de(_p)
     if _enf:
-        return await _reponse_chaine(_p, _enf, 200)
+        return await _reponse_chaine(_p, await _apprendre_photo_profil(request, _enf), 200)
     if not await _chaine_active():
         raise HTTPException(status_code=404, detail="parrainage_chaine_desactive")
     if not E.chaine_requise(_p, _s, True):
@@ -2604,7 +2606,12 @@ async def referral_chaine_creer(share_token: str, request: Request):
                           "root_source_id": _org.get("root_source_id") if _racine else _org.get("source_id")}
     # L0 : l'enfant porte le prénom saisi ; pas de photo (le filleul n'est pas encore inscrit)
     # -> avatar Afroboost, jamais la photo du coach à la place d'un membre.
-    _doc["inviter_display"] = E.identite_invitant(_doc)
+    # UX-P1 : si le créateur présente une identité abonné, sa photo de PROFIL est
+    # proposée (`photo_suggeree`) et sert de repli tant qu'aucune photo n'est choisie.
+    _prof_photo = await _photo_profil_requete(request)
+    if _prof_photo:
+        _doc["inviter_profile_photo"] = _prof_photo
+    _doc["inviter_display"] = E.identite_invitant(_doc, _prof_photo)
     try:
         await db[COLL_PASSES].insert_one(dict(_doc))
     except Exception as _err:  # noqa: BLE001
@@ -2624,7 +2631,15 @@ async def referral_chaine_creer(share_token: str, request: Request):
 @router.patch("/pass/{share_token}/chain")
 async def referral_chaine_modifier(share_token: str, request: Request):
     """V556 — prénom / message de la carte, avec la clé rendue à la création
-    (`X-Chain-Key`). Même jeton ; nouvelle version d'aperçu."""
+    (`X-Chain-Key`). Même jeton ; nouvelle version d'aperçu.
+
+    UX-P1 — accepte aussi `photo_url` (validée ; null = retirer), `whatsapp`
+    (saisie avec indicatif, normalisée E.164 ; invalide -> 422 ; null/"" =
+    retirer) et `consent_contact` (booléen). Tout est validé AVANT la moindre
+    écriture. Seul un changement VISUEL (prénom, message, photo — ou un corps
+    sans champ de contact, comportement V556) incrémente les versions ; le
+    numéro ne sort jamais (`whatsapp_renseigne`). Un numéro valide crée /
+    complète le contact du COACH PROPRIÉTAIRE (`_contact_coach_chaine`)."""
     await _exiger_actif()
     _exiger_debit(request, DEBIT_PREFIXE_CHAINE_ACTION)
     _p, _s = await _parent_ouvert(share_token)
@@ -2636,24 +2651,268 @@ async def referral_chaine_modifier(share_token: str, request: Request):
     if _enf.get("invitee"):
         raise _refus(409, E.REFUS_PASS_DEJA_REJOINT, "Ton ami a déjà rejoint cette invitation.")
     _b = await _corps(request)
-    _inv = _champs_invitation_enfant(_b)
-    _inv["message"] = _inv.get("message") or E.MESSAGE_CHAINE_DEFAUT
-    _existante = E.invitation_du_pass(_enf)
-    _fusion = {"display_name": _inv.get("display_name") if "display_name" in _b else _existante["display_name"],
-               "photo_url": None,
-               "message": _inv["message"] if "message" in _b else (_existante["message"] or E.MESSAGE_CHAINE_DEFAUT),
-               "updated_at": _iso()}
-    _set = {"invitation": _fusion, "updated_at": _iso()}
-    if E.parrain_en_attente(_enf):
-        _set["sponsor.name"] = _fusion["display_name"] or ""
-    _apres = dict(_enf, invitation=_fusion)
-    if "sponsor.name" in _set:
-        _apres["sponsor"] = dict(_enf.get("sponsor") or {}, name=_set["sponsor.name"])
-    _set["inviter_display"] = E.identite_invitant(_apres)   # L0 : re-figée avec l'invitation
-    await db[COLL_PASSES].update_one({"id": _enf["id"], "share_token": _enf.get("share_token")},
-                                     {"$set": _set, "$inc": {"invitation_version": 1, "version": 1}})
+    _inv = _champs_invitation_enfant(_b, avec_photo=True)
+    _contact = _champs_contact_enfant(_b, E.contact_invitant(_enf))      # 422 avant toute écriture
+    _visuel = any(k in _b for k in CHAMPS_VISUELS_ENFANT) or _contact is None
+    _enf = await _apprendre_photo_profil(request, _enf)
+    _prof_photo = E.photo_suggeree_enfant(_enf)
+    _now = _iso()
+    _set, _inc = {"updated_at": _now}, {}
+    if _visuel:
+        _inv["message"] = _inv.get("message") or E.MESSAGE_CHAINE_DEFAUT
+        _existante = E.invitation_du_pass(_enf)
+        _fusion = {"display_name": _inv.get("display_name") if "display_name" in _b else _existante["display_name"],
+                   "photo_url": _inv.get("photo_url") if "photo_url" in _b else _existante["photo_url"],
+                   "message": _inv["message"] if "message" in _b else (_existante["message"] or E.MESSAGE_CHAINE_DEFAUT),
+                   "updated_at": _now}
+        _set["invitation"] = _fusion
+        if E.parrain_en_attente(_enf):
+            _set["sponsor.name"] = _fusion["display_name"] or ""
+        _apres = dict(_enf, invitation=_fusion)
+        if "sponsor.name" in _set:
+            _apres["sponsor"] = dict(_enf.get("sponsor") or {}, name=_set["sponsor.name"])
+        # L0 : re-figée avec l'invitation ; sans photo -> profil connu -> logo (jamais le coach)
+        _set["inviter_display"] = E.identite_invitant(_apres, _prof_photo)
+        _inc = {"invitation_version": 1, "version": 1}
+    if _contact is not None:
+        _set["contact_invitant"] = dict(_contact, updated_at=_now)
+    _maj = {"$set": _set}
+    if _inc:
+        _maj["$inc"] = _inc
+    await db[COLL_PASSES].update_one({"id": _enf["id"], "share_token": _enf.get("share_token")}, _maj)
     _enf = await db[COLL_PASSES].find_one({"id": _enf["id"]}, {"_id": 0}) or _enf
+    if _contact is not None and _contact.get("whatsapp_e164"):
+        await _contact_coach_chaine(_p, _enf, _contact["whatsapp_e164"], _contact.get("consent") is True)
     return await _reponse_chaine(_p, _enf, 200)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# UX-P1 (29/09) — photo, numéro et contact du coach sur l'invitation enfant
+# ═══════════════════════════════════════════════════════════════════════════
+CHAMPS_VISUELS_ENFANT = ("display_name", "message", "photo_url")
+DEBIT_PREFIXE_CHAINE_PHOTO = "duo_chain_p:"      # UX-P1 : envoi de photo (quota séparé)
+PHOTO_CHAINE_MAX_OCTETS = 5 * 1024 * 1024
+SOURCE_CONTACT_PARRAINAGE = "referral"
+SOURCE_REGISTRE_SANS_CONSENTEMENT = "referral_no_consent"
+MESSAGE_WHATSAPP_INVALIDE = ("Numéro WhatsApp invalide : saisis-le avec l'indicatif du pays "
+                             "(ex. +41 79 123 45 67).")
+
+
+def _champs_contact_enfant(corps, existant) -> dict:
+    """`{whatsapp_e164, consent}` fusionné sur l'existant, ou None si le corps
+    ne porte aucun champ de contact. 422 (message clair) si invalide."""
+    if "whatsapp" not in (corps or {}) and "consent_contact" not in (corps or {}):
+        return None
+    from api.routes.tenant_contacts import telephone_e164
+    _sortie = {"whatsapp_e164": (existant or {}).get("whatsapp_e164") or None,
+               "consent": (existant or {}).get("consent") is True}
+    if "whatsapp" in corps:
+        _v = corps.get("whatsapp")
+        if _v is None or (isinstance(_v, str) and not _v.strip()):
+            _sortie["whatsapp_e164"] = None
+        else:
+            _e164 = telephone_e164(_v)
+            if not _e164:
+                raise HTTPException(status_code=422, detail=MESSAGE_WHATSAPP_INVALIDE)
+            _sortie["whatsapp_e164"] = _e164
+    if "consent_contact" in corps:
+        if not isinstance(corps.get("consent_contact"), bool):
+            raise HTTPException(status_code=422, detail="consent_contact : vrai ou faux attendu.")
+        _sortie["consent"] = corps["consent_contact"]
+    return _sortie
+
+
+async def _photo_profil_requete(request):
+    """La photo de profil de l'abonné qui présente SON identité (`x-espace-token`
+    / `X-Subscriber-Token`, jamais X-User-Email) ; None sinon. Jamais bloquant :
+    une identité absente ou refusée laisse la route publique telle quelle."""
+    if not _porte_identite_abonne(request):
+        return None
+    try:
+        _parrain = await _parrain_depuis_requete(request)
+    except HTTPException:
+        return None
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s identité abonné illisible (%s)", PREFIXE, type(_err).__name__)
+        return None
+    return await _photo_profil(_parrain.get("email"))
+
+
+async def _apprendre_photo_profil(request, enfant):
+    """Mémorise la photo de profil proposée sur l'invitation enfant (sans toucher
+    aux versions : ce n'est qu'une suggestion). Rend l'enfant à jour."""
+    _photo = await _photo_profil_requete(request)
+    if not _photo or _photo == (enfant or {}).get("inviter_profile_photo"):
+        return enfant
+    _maj = {"inviter_profile_photo": _photo}
+    if not E.invitation_du_pass(enfant)["photo_url"]:
+        _maj["inviter_display"] = E.identite_invitant(enfant, _photo)
+    try:
+        await db[COLL_PASSES].update_one({"id": enfant["id"]}, {"$set": _maj})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s photo de profil non mémorisée (%s)", PREFIXE, type(_err).__name__)
+        return enfant
+    return dict(enfant, **_maj)
+
+
+async def _proprietaire_contact(enfant):
+    """(coach_id propriétaire brut, type de parrainage, campagne) : campagne ->
+    son propriétaire ; sinon le `coach_id` du pass ("" = plateforme)."""
+    _cid = E.campagne_du_pass(enfant)
+    if _cid:
+        _camp = await _campagne_par_id(_cid) or {}
+        return str(_camp.get("coach_id") or "").strip().lower(), str(_camp.get("type") or "trial"), _cid
+    return str((enfant or {}).get("coach_id") or "").strip().lower(), SOURCE, None
+
+
+async def _registre_consentement(e164, consent) -> bool:
+    """Le choix marketing dans le registre EXISTANT `subscribers` (celui que lisent
+    `c3_refus_exprimes` / `c3_verdict` avant TOUTE campagne) — aucun second système.
+
+    * consent False -> `status: opted_out` (ligne créée, ou `targeted`/`pending`/
+      `confirmed` basculée) : C3 écarte ce numéro de toutes les campagnes.
+    * consent True  -> `$setOnInsert` d'une ligne neutre `targeted` (S1 : STOP
+      exprimable). Jamais `confirmed` (aucune preuve de possession), et un refus
+      existant n'est JAMAIS levé par une route publique (règle DETTE 3 / V332).
+    Rend False si le registre est illisible / non écrit."""
+    _now = _iso()
+    _cle = {"channel": "whatsapp", "value": e164}
+    try:
+        if consent:
+            await db["subscribers"].update_one(
+                _cle, {"$setOnInsert": {"id": str(uuid.uuid4()), "created_at": _now, "updated_at": _now,
+                                        "status": "targeted", "source": SOURCE_CONTACT_PARRAINAGE, "name": ""}},
+                upsert=True)
+            return True
+        _ex = await db["subscribers"].find_one(_cle, {"_id": 0, "status": 1})
+        if _ex and _ex.get("status") == "opted_out":
+            return True
+        if _ex:
+            await db["subscribers"].update_one(
+                _cle, {"$set": {"status": "opted_out", "opted_out_at": _now, "updated_at": _now,
+                                "opted_out_source": SOURCE_REGISTRE_SANS_CONSENTEMENT,
+                                "status_before_opt_out": _ex.get("status")}})
+        else:
+            await db["subscribers"].update_one(
+                _cle, {"$setOnInsert": {"id": str(uuid.uuid4()), "created_at": _now, "name": "",
+                                        "source": SOURCE_REGISTRE_SANS_CONSENTEMENT},
+                       "$set": {"status": "opted_out", "opted_out_at": _now, "updated_at": _now}},
+                upsert=True)
+        return True
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s registre de consentement non écrit (%s)", PREFIXE, type(_err).__name__)
+        return False
+
+
+async def _contact_coach_chaine(parent, enfant, e164, consent) -> None:
+    """Crée / complète le contact `chat_participants` du COACH PROPRIÉTAIRE.
+
+    Dédoublonnage (coach, téléphone) DANS SA SEULE PORTÉE (`doublon_dans_portee`,
+    variantes exactes, aucune regex) ; jamais chez un autre coach. Fiche
+    existante : prénom seulement s'il est vide, sources et provenances AJOUTÉES,
+    `marketing_consent` = dernier choix ; rien d'autre n'est réécrit.
+    Le refus marketing est inscrit AVANT : sans lui, aucun contact n'est créé."""
+    from api.routes.tenant_contacts import (portee_proprietaire, doublon_dans_portee,
+                                            index_doublons, chercher_doublon)
+    if not await _registre_consentement(e164, consent) and not consent:
+        logger.warning("%s refus marketing non inscrit : contact NON créé (réessai au prochain PATCH)", PREFIXE)
+        return
+    _brut, _type, _cid = await _proprietaire_contact(enfant)
+    _coach_id, _portee = portee_proprietaire(_brut)
+    _lig = E.lignage(enfant)
+    _now = _iso()
+    _prov = {"campaign_id": _cid or _lig.get("campaign_id"),
+             "root_referral_id": _lig.get("root_referral_id"),
+             "parent_referral_id": _lig.get("parent_referral_id"),
+             "pass_id": enfant.get("id"), "inviter_pass_id": (parent or {}).get("id"),
+             "type": _type, "created_at": _now}
+    _prenom = E.invitation_du_pass(enfant)["display_name"] or ""
+    try:
+        # Chemin rapide : variantes exactes. Repli : l'index canonique de la
+        # portée (une lecture projetée) — une fiche saisie « 079 123 45 67 »
+        # (espaces) n'est pas une variante exacte mais reste le même numéro.
+        _ex = await doublon_dans_portee(db, _portee, telephone=e164)
+        if not _ex:
+            _trouve = chercher_doublon(await index_doublons(db, _portee), telephone=e164)
+            if _trouve and _trouve.get("id"):
+                _ex = await db["chat_participants"].find_one(
+                    {"$and": [_portee, {"id": _trouve["id"]}]}, {"_id": 0})
+        if _ex:
+            _sources = [x for x in (_ex.get("sources") or []) if isinstance(x, str)]
+            if not _sources and _ex.get("source"):
+                _sources = [str(_ex["source"])]
+            if SOURCE_CONTACT_PARRAINAGE not in _sources:
+                _sources.append(SOURCE_CONTACT_PARRAINAGE)
+            _provs = [x for x in (_ex.get("referrals") or []) if isinstance(x, dict)]
+            if not any(x.get("pass_id") == enfant.get("id") for x in _provs):
+                _provs.append(_prov)
+            _set = {"sources": _sources, "referrals": _provs[-50:], "marketing_consent": bool(consent),
+                    "updated_at": _now}
+            if not isinstance(_ex.get("referral"), dict):
+                _set["referral"] = _prov
+            if not str(_ex.get("name") or "").strip() and _prenom:
+                _set["name"] = _prenom
+            await db["chat_participants"].update_one(
+                {"$and": [_portee, {"id": _ex.get("id")}]}, {"$set": _set})
+            return
+        await db["chat_participants"].update_one(
+            {"coach_id": _coach_id, "whatsapp": e164},
+            {"$setOnInsert": {"id": str(uuid.uuid4()), "name": _prenom, "email": "",
+                              "source": SOURCE_CONTACT_PARRAINAGE, "sources": [SOURCE_CONTACT_PARRAINAGE],
+                              "referral": _prov, "referrals": [_prov], "link_token": None,
+                              "created_at": _now, "last_seen_at": None},
+             "$set": {"marketing_consent": bool(consent), "updated_at": _now}},
+            upsert=True)
+        logger.info("%s contact de parrainage créé chez %s", PREFIXE, "la plateforme"
+                    if _coach_id != _brut else "le coach propriétaire")
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s contact de parrainage non écrit (%s)", PREFIXE, type(_err).__name__)
+
+
+@router.post("/pass/{share_token}/chain/photo")
+async def referral_chaine_photo(share_token: str, request: Request, file: UploadFile = File(...)):
+    """UX-P1 — photo de l'invitation enfant : `X-Chain-Key` obligatoire (403),
+    JPEG/PNG/WebP (type déclaré + extension + SIGNATURE binaire concordants,
+    415), <= 5 Mo (413), débit par IP. Stockage V413 (`_v413_enregistrer_media`,
+    comme l'image de partage V551), nom serveur, AUCUNE donnée personnelle.
+    201 `{photo_url: "/api/files/<id>/<nom>"}` — l'appareil l'applique ensuite
+    par PATCH /chain (`photo_url`) : elle ne sert qu'à CETTE invitation."""
+    await _exiger_actif()
+    _exiger_debit(request, DEBIT_PREFIXE_CHAINE_PHOTO)
+    _p, _s = await _parent_ouvert(share_token)
+    _enf = await _enfant_de(_p)
+    if not _enf:
+        raise HTTPException(status_code=404, detail="Prépare d'abord ton invitation.")
+    if not _cle_chaine_valide(request, _enf):
+        raise HTTPException(status_code=403, detail="Cette invitation ne peut être modifiée que depuis l'appareil qui l'a créée.")
+    if _enf.get("invitee"):
+        raise _refus(409, E.REFUS_PASS_DEJA_REJOINT, "Ton ami a déjà rejoint cette invitation.")
+    _type = str(getattr(file, "content_type", "") or "").split(";")[0].strip().lower()
+    _nom_client = str(getattr(file, "filename", "") or "")
+    _ext = _nom_client.rsplit(".", 1)[-1].strip().lower() if "." in _nom_client else ""
+    if _type not in IMAGE_TYPES or _ext not in IMAGE_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="Formats acceptés : JPG, PNG ou WebP.")
+    _octets = await file.read(PHOTO_CHAINE_MAX_OCTETS + 1)
+    if len(_octets) > PHOTO_CHAINE_MAX_OCTETS:
+        raise HTTPException(status_code=413, detail="Photo trop lourde (5 Mo maximum).")
+    _reel = _type_reel_image(_octets)
+    if not _reel or _reel != IMAGE_TYPES[_type] or _reel != IMAGE_EXTENSIONS[_ext]:
+        raise HTTPException(status_code=415, detail="Ce fichier n'est pas une image JPG, PNG ou WebP valide.")
+    from api.server import _v413_enregistrer_media
+    _file_id = uuid.uuid4().hex[:16]
+    _filename = "chain_%s.%s" % (uuid.uuid4().hex[:12], _reel)
+    _mime = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}[_reel]
+    try:
+        await _v413_enregistrer_media(_file_id, _filename, _octets, {
+            "file_id": _file_id, "filename": _filename, "original_name": _filename,
+            "content_type": _mime, "asset_type": "referral_chain_photo",
+            "created_at": datetime.utcnow(),
+        })
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s photo d'invitation non enregistrée (%s)", PREFIXE, type(_err).__name__)
+        raise HTTPException(status_code=503, detail="Photo non enregistrée, réessaie dans un instant.")
+    logger.info("%s photo d'invitation enfant enregistrée (%s, %d o)", PREFIXE, _file_id, len(_octets))
+    return JSONResponse(status_code=201, content={"photo_url": "/api/files/%s/%s" % (_file_id, _filename)})
 
 
 @router.post("/pass/{share_token}/chain/share")
@@ -2718,7 +2977,7 @@ async def referral_chaine_apercu(share_token: str, request: Request):
     _enf = await _enfant_de(_p)
     if not _enf:
         raise HTTPException(status_code=404, detail="Prépare d'abord ton invitation.")
-    return await _reponse_chaine(_p, _enf, 200)
+    return await _reponse_chaine(_p, await _apprendre_photo_profil(request, _enf), 200)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

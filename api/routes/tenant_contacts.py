@@ -337,3 +337,42 @@ async def doublon_dans_portee(db, filtre_portee: dict, email=None, telephone=Non
         return None
     return await db.chat_participants.find_one(
         {"$and": [filtre_portee, {"$or": _ou}]}, {"_id": 0})
+
+
+# ===========================================================================
+# UX-P1 (29/09) — LE NUMÉRO SAISI DANS UNE INVITATION DE CHAÎNE
+#
+# `telephone_e164` : la saisie libre d'un visiteur (« 079 123 45 67 »,
+# « +41791234567 », « 0041 79… ») ramenée à UNE forme E.164, par la convention
+# du dépôt (`normaliser_telephone` -> `essai6_normaliser_tel` ->
+# `normaliser_numero`). '' = invalide (lettres, 2e « + », < 8 ou > 15 chiffres).
+#
+# `portee_proprietaire` : la portée d'écriture d'un PROPRIÉTAIRE DE PASS (un
+# `coach_id` stocké, pas une identité de requête). Vide, « bassi_default » ou
+# super-admin = l'espace PLATEFORME ; sinon ce coach, et lui seul.
+# ===========================================================================
+_UXP1_SAISIE_TEL = re.compile(r"^[0-9+\s().\-/]{1,32}$")
+
+
+def telephone_e164(valeur) -> str:
+    if not isinstance(valeur, str):
+        return ""
+    _brut = valeur.strip()
+    if not _brut or not _UXP1_SAISIE_TEL.match(_brut) or "+" in _brut[1:]:
+        return ""
+    _canon = normaliser_telephone(_brut)
+    if not _canon or len(_canon) > 15:
+        return ""
+    return "+" + _canon
+
+
+def portee_proprietaire(coach_id):
+    """(coach_id à écrire, filtre de dédoublonnage) pour le propriétaire d'un pass."""
+    _e = normaliser_email(coach_id)
+    if _e and _e not in MT2_COACH_IDS_PLATEFORME and not is_super_admin(_e):
+        return _e, {"coach_id": _e}
+    from api.routes.shared import DEFAULT_COACH_ID
+    return DEFAULT_COACH_ID, {"$or": [
+        {"coach_id": {"$in": [DEFAULT_COACH_ID] + list(MT2_COACH_IDS_PLATEFORME)}},
+        {"coach_id": {"$exists": False}},
+    ]}

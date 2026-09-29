@@ -1308,6 +1308,25 @@ def message_enfant(pass_doc) -> str:
     return invitation_du_pass(pass_doc)["message"] or MESSAGE_CHAINE_DEFAUT
 
 
+def contact_invitant(pass_doc) -> dict:
+    """UX-P1 — `{whatsapp_e164, consent, updated_at}` saisi sur une invitation
+    enfant (serveur seulement : le numéro ne sort JAMAIS dans un DTO)."""
+    _c = (pass_doc or {}).get("contact_invitant")
+    return _c if isinstance(_c, dict) else {}
+
+
+def photo_suggeree_enfant(pass_doc):
+    """UX-P1 — la photo de PROFIL connue du créateur de l'invitation enfant
+    (lue via son identité abonné), revalidée ; None sinon."""
+    _u = (pass_doc or {}).get("inviter_profile_photo")
+    if not _u:
+        return None
+    try:
+        return valider_photo_url(_u)
+    except InvitationInvalide:
+        return None
+
+
 def dto_enfant(pass_doc, frontend_url) -> dict:
     """L'invitation enfant telle que son créateur la voit : de quoi partager,
     rien de plus (ni e-mail, ni téléphone, ni identifiant interne)."""
@@ -1330,6 +1349,12 @@ def dto_enfant(pass_doc, frontend_url) -> dict:
         "preview_version": version_partage(_p),
         "joined": bool(_p.get("invitee")),
         "inviter_display": inviter_display_du_pass(_p),   # L0
+        # UX-P1 : la photo CHOISIE pour l'invitation, la photo de profil proposée
+        # (identité abonné présentée), et l'état du contact — jamais le numéro.
+        "photo_url": _inv["photo_url"],
+        "photo_suggeree": photo_suggeree_enfant(_p),
+        "whatsapp_renseigne": bool(contact_invitant(_p).get("whatsapp_e164")),
+        "consent_contact": contact_invitant(_p).get("consent") is True,
     }
     _carte = url_carte(frontend_url, _p)
     if _carte:
