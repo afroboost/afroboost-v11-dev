@@ -97,10 +97,10 @@ async def _autorise(request: Request) -> str:
     email = _coach_email_depuis_jwt(request)
     if not email:
         logger.warning("[SEGMENTS] Refus — aucun jeton coach signé")
-        raise HTTPException(status_code=403, detail="Authentification coach requise")
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
     if not await _est_coach_ou_admin(email):
         logger.warning("[SEGMENTS] Refus — jeton valide mais ni coach ni admin")
-        raise HTTPException(status_code=403, detail="Authentification coach requise")
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
     return email
 
 
@@ -108,7 +108,13 @@ async def _est_coach_ou_admin(email: str) -> bool:
     email = (email or "").lower().strip()
     if not email:
         return False
-    if email == "contact.artboost@gmail.com":
+    # MT-2 : seule `contact.artboost@gmail.com` était reconnue -> le SECOND
+    # super-admin (afroboost.bassi@gmail.com), sans fiche `coaches`, recevait
+    # 403 sur /contacts/segments. Définition UNIQUE du dépôt : `shared.is_super_admin`
+    # (les DEUX admins). Signature et sémantique (JWT strict) inchangées :
+    # `campaign_routes._r3_campagne_du_proprietaire` en dépend.
+    from api.routes.shared import is_super_admin as _mt2_admin
+    if _mt2_admin(email):
         return True
     if await db.coaches.find_one({"email": email}, {"_id": 1}):
         return True
@@ -188,9 +194,46 @@ def _etat_abonnement(abos, cfg):
     return resultat, sans_date
 
 
-async def _calcule_personnes():
+async def _mt2_filtres_portefeuille(coach_email):
+    """MT-2 : filtres de LECTURE par collection pour un coach, ou None (global).
+
+    None = vue plateforme (super-admin, ou appel INTERNE sans coach — la
+    signature historique `_calcule_personnes()` est conservée pour le moteur de
+    campagnes, qui passera son propriétaire). Coach : uniquement son
+    portefeuille — ses fiches (`coach_id`), les `users` que le serveur lui
+    rattache (`tenant_contacts.filtre_users_du_coach`), SES abonnements et SES
+    réservations. `payment_transactions` ne porte aucun propriétaire : pour un
+    coach, cette preuve est ÉCARTÉE (fail-closed) plutôt que prêtée.
+    """
+    if coach_email is None:
+        return None
+    from api.routes.tenant_contacts import (
+        est_global as _mt2_global, normaliser_email as _mt2_mail,
+        filtre_users_du_coach as _mt2_users,
+    )
+    _e = _mt2_mail(coach_email)
+    if _mt2_global(_e):  # lève PerimetreRefuse si identité vide
+        return None
+    _proprio = {"coach_id": _e}
+    return {
+        "chat_participants": _proprio,
+        "users": await _mt2_users(db, _e),
+        "leads": _proprio,
+        "subscriber_infos": _proprio,
+        "subscriptions": _proprio,
+        "reservations": _proprio,
+        "payment_transactions": None,  # aucune preuve de propriété -> rien
+    }
+
+
+async def _calcule_personnes(coach_email=None):
     """Lit les collections de contacts, fusionne en personnes, étiquette. LECTURE SEULE.
-    Renvoie (liste_de_personnes, config)."""
+    Renvoie (liste_de_personnes, config).
+
+    MT-2 : `coach_email` borne le calcul au PORTEFEUILLE du coach (routes
+    /contacts/segments et /contacts/segment/{cle}). Absent (`None`) = vue
+    plateforme, comportement historique, pour les appelants internes."""
+    _mt2 = await _mt2_filtres_portefeuille(coach_email)
     cfg = await _config()
     internes = set(cfg.get("numeros_internes") or [])
     sources_essai = set(cfg.get("regles", {}).get("essai_gratuit", {}).get("sources") or [])
@@ -202,7 +245,8 @@ async def _calcule_personnes():
         projection = {"_id": 0, "id": 1, "name": 1, "email": 1, "whatsapp": 1,
                       "phone": 1, "source": 1, "code": 1, "subscriptionCode": 1,
                       "participant_id": 1}
-        for d in await db[nom].find({}, projection).to_list(20000):
+        _filtre_coll = {} if _mt2 is None else _mt2.get(nom, {"_mt2_aucun": True})
+        for d in await db[nom].find(_filtre_coll, projection).to_list(20000):
             brut = d.get("whatsapp") or d.get("phone") or ""
             enregistrements.append({
                 "coll": nom,
@@ -249,7 +293,7 @@ async def _calcule_personnes():
 
     # Abonnements, rattachés par e-mail et par code
     abo_mail, abo_code = {}, {}
-    for s in await db.subscriptions.find({}, {"_id": 0}).to_list(20000):
+    for s in await db.subscriptions.find({} if _mt2 is None else _mt2["subscriptions"], {"_id": 0}).to_list(20000):
         m = _normalise_email(s.get("email"), cfg)
         if m:
             abo_mail.setdefault(m, []).append(s)
@@ -259,13 +303,15 @@ async def _calcule_personnes():
     # lecture chacun, projections courtes) — l'historique client d'une personne.
     from api.routes.reactivation import classer_personne, derniere_activite, est_donnee_test
     resa_mail, pay_mail = {}, {}
-    for r in await db.reservations.find({}, {"_id": 0, "userEmail": 1, "userName": 1, "datetime": 1, "createdAt": 1, "validated": 1,
+    for r in await db.reservations.find({} if _mt2 is None else _mt2["reservations"], {"_id": 0, "userEmail": 1, "userName": 1, "datetime": 1, "createdAt": 1, "validated": 1,
                                              "absence_marked_at": 1, "discountCode": 1, "subscriptionId": 1, "courseName": 1, "isProduct": 1}).to_list(20000):
         m = _normalise_email(r.get("userEmail"), cfg)
         if m:
             resa_mail.setdefault(m, []).append(r)
-    for p in await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0, "customer_email": 1, "created_at": 1, "amount": 1,
-                                                                             "amount_total": 1, "payment_status": 1}).to_list(20000):
+    _pays = [] if _mt2 is not None else await db.payment_transactions.find(
+        {"payment_status": "paid"}, {"_id": 0, "customer_email": 1, "created_at": 1, "amount": 1,
+                                     "amount_total": 1, "payment_status": 1}).to_list(20000)
+    for p in _pays:
         m = _normalise_email(p.get("customer_email"), cfg)
         if m:
             pay_mail.setdefault(m, []).append(p)
@@ -339,8 +385,8 @@ async def _calcule_personnes():
 async def compter_segments(request: Request):
     """V363 — comptes par segment, recalculés à l'instant. LECTURE SEULE.
     Ne renvoie AUCUNE donnée personnelle : uniquement des nombres."""
-    await _autorise(request)
-    personnes, cfg = await _calcule_personnes()
+    _appelant = await _autorise(request)
+    personnes, cfg = await _calcule_personnes(_appelant)  # MT-2 : portefeuille du coach
 
     comptes = {cle: 0 for cle in SEGMENTS_CONNUS}
     for p in personnes:
@@ -372,10 +418,10 @@ async def lister_segment(cle: str, request: Request, limite: int = 5000):
     """V363 — identifiants des personnes d'un segment, recalculés à l'instant.
     LECTURE SEULE. Renvoie des identifiants, jamais de numéros ni d'e-mails :
     l'appelant croise avec /contacts/all s'il a besoin des noms."""
-    await _autorise(request)
+    _appelant = await _autorise(request)
     if cle not in SEGMENTS_CONNUS:
         raise HTTPException(status_code=404, detail=f"Segment inconnu : {cle}")
-    personnes, cfg = await _calcule_personnes()
+    personnes, cfg = await _calcule_personnes(_appelant)  # MT-2 : portefeuille du coach
     du_segment = [p for p in personnes if cle in p["etiquettes"]]
     # V363b : une personne sans identifiant exploitable ne peut PAS être ciblée par une
     # campagne (launch_campaign résout des ids). On le dit au lieu de la faire
