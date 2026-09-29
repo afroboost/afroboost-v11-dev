@@ -271,7 +271,7 @@ async def partie_chaine_5():
             c, x = await rejoindre(tp, niveau, cle="mauvaise-cle")
             verifier("K2. B avec une mauvaise clé d'appareil -> 403 invitation_autre_appareil",
                      c == 403 and raison(x) == "invitation_autre_appareil", (c, x))
-            c, x = await rejoindre(tp, 1)
+            c, x = await rejoindre(tp, 1, cle=None)     # A, depuis SON appareil (pas celui qui a partagé P2)
             verifier("K3. anti-boucle : A sur P1 -> 409 auto_parrainage", c == 409 and raison(x) == "auto_parrainage", (c, x))
         c, j = await rejoindre(tp, niveau)
         verifier("K4.%d personne %d s'inscrit sur P%d -> unlocked" % (niveau, niveau, niveau - 1),
@@ -466,6 +466,121 @@ async def partie_audit():
     verifier("P2c. pass Duo classique : POST /chain inchangé (201)", c == 201, (c, x))
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 5. A1 : un refus d'IDENTITÉ libère la place d'enfant de CET appareil
+#    A3 : le parrain d'une chaîne ne voit pas les données de son filleul
+# ═══════════════════════════════════════════════════════════════════════════
+def _enfants_vivants(base, parent_id):
+    return [d for d in base["referral_passes"].docs
+            if (d.get("chain") or {}).get("parent_pass_id") == parent_id]
+
+
+async def _cas_liberation(base, t_parent, libelle):
+    """Sur le pass `t_parent` (sans invité) : A (déjà inscrit plus haut) prépare
+    et partage un enfant puis se fait refuser (identité) -> l'enfant est libéré ;
+    ensuite un ami légitime (personne 6) recrée l'enfant et s'inscrit."""
+    d_par = doc_par_tok(base, t_parent)
+    t_enf, _ = await preparer_et_partager(t_parent)
+    d_enf = doc_par_tok(base, t_enf)
+    c, x = await rejoindre(t_parent, 1)
+    d_par, d_enf = doc_par_tok(base, t_parent), doc_par_tok(base, t_enf)
+    verifier("L1%s. A refusé (identité, 409 auto_parrainage) : son enfant passe cancelled, jamais supprimé" % libelle,
+             c == 409 and raison(x) == "auto_parrainage" and d_enf is not None and d_enf["status"] == "cancelled"
+             and any(e.get("type") == "cancelled" and "auto_parrainage" in str(e.get("detail"))
+                     for e in d_enf.get("events", [])), (c, x, d_enf and d_enf.get("status")))
+    verifier("L1%sb. le parent est rouvert : plus de child_pass_id / shared_at / share_channel, aucun enfant vivant" % libelle,
+             not any(k in (d_par.get("chain") or {}) for k in ("child_pass_id", "child_created_at", "shared_at", "share_channel"))
+             and not _enfants_vivants(base, d_par["id"]) and d_par["invitee"] is None, d_par.get("chain"))
+    c, g = await pub(t_parent)
+    verifier("L1%sc. le prochain visiteur repart de l'étape 1-2 : chain {exists:false, shared:false}" % libelle,
+             g.get("chain") == {"exists": False, "shared": False} and g.get("chain_required") is True, g.get("chain"))
+    t_enf2, _ = await preparer_et_partager(t_parent)
+    c, j = await rejoindre(t_parent, 6)
+    verifier("L1%sd. un ami légitime recrée l'enfant (nouveau jeton) et s'inscrit" % libelle,
+             t_enf2 != t_enf and c == 200 and j.get("status") == "unlocked", (c, str(j)[:200]))
+
+
+async def partie_liberation_et_filleul():
+    # V556 classique : Léa -> P0 ; A inscrit sur P0 ; A refusé sur P1
+    base, occ, p0 = await V3.depart()
+    t0 = p0["share_token"]
+    t1, _ = await preparer_et_partager(t0)
+    c, _ = await rejoindre(t0, 1)
+    await _cas_liberation(base, t1, "")
+    # chaîne de campagne : P0 -> A inscrit ; A refusé sur P1
+    base, occ = depart()
+    c, r = await entree()
+    t0 = r["share_token"]
+    t1, _ = await preparer_et_partager(t0)
+    c, _ = await rejoindre(t0, 1)
+    await _cas_liberation(base, t1, "-camp")
+
+    # jamais de libération : refus transitoire, mauvaise clé, enfant qui a un invité
+    base, occ, p0 = await V3.depart()
+    t0 = p0["share_token"]
+    t1, _ = await preparer_et_partager(t0)
+    c, _ = await rejoindre(t0, 1)                       # A inscrit sur P0
+    c, x = await V3.chaine(t1)                          # enfant P2 préparé, NON partagé
+    c2, x2 = await rejoindre(t1, 6)                     # un vrai inconnu, pas encore partagé
+    d1 = doc_par_tok(base, t1)
+    verifier("L2. refus TRANSITOIRE (invitation_requise) : l'enfant reste (non libéré)",
+             c2 == 409 and raison(x2) == "invitation_requise" and _enfants_vivants(base, d1["id"])
+             and (d1.get("chain") or {}).get("child_pass_id"), (c2, x2))
+    await V3.partager(t1)
+    c3, x3 = await rejoindre(t1, 1, cle="cle-d-un-autre-appareil")
+    verifier("L3. refus avec une AUTRE clé d'appareil : rien n'est libéré",
+             c3 in (403, 409) and _enfants_vivants(base, d1["id"])
+             and (doc_par_tok(base, t1).get("chain") or {}).get("shared_at"), (c3, x3))
+    # enfant qui a DÉJÀ un invité : B prépare P2, C s'y inscrit (ordre inverse), puis A refusé avec la clé de B
+    base, occ, p0 = await V3.depart()
+    t0 = p0["share_token"]
+    t1, _ = await preparer_et_partager(t0)
+    c, _ = await rejoindre(t0, 1)
+    t2, _ = await preparer_et_partager(t1)              # clé de P2 = CLES[t1]
+    t3, _ = await preparer_et_partager(t2)
+    c, jc = await rejoindre(t2, 3)                      # C inscrit sur P2 (B pas encore)
+    c4, x4 = await rejoindre(t1, 1)                     # A refusé sur P1 avec la clé de P2
+    d2 = doc_par_tok(base, t2)
+    verifier("L4. enfant qui a déjà un invité : JAMAIS libéré", c4 == 409 and d2["status"] != "cancelled"
+             and d2["invitee"] and (doc_par_tok(base, t1)["chain"] or {}).get("child_pass_id") == d2["id"], (c4, d2["status"]))
+
+    # A3 : le parrain d'une chaîne ne voit ni le prénom, ni le billet, ni le QR de son filleul
+    base, occ = depart()
+    c, r = await entree()
+    t0 = r["share_token"]
+    t1, _ = await preparer_et_partager(t0)
+    c, _ = await rejoindre(t0, 1)
+    t2, _ = await preparer_et_partager(t1)
+    c, jb = await rejoindre(t1, 2)
+    _ea, _eb = ident(1)[0], ident(2)[0]
+    _code_b = doc_par_tok(base, t1)["reservations"]["invitee_code"]
+    _tok_a = H.jeton_espace(base, code=codes_de(base, _ea)[0]["code"], email=_ea)
+    c, me = await appel(R.referral_me(H.Requete({}, {"x-espace-token": _tok_a})))
+    _p1 = [x for x in (me or {}).get("passes", []) if x.get("share_token") == t1]
+    _txt = json.dumps(_p1, ensure_ascii=False)
+    verifier("F1. /me de A (chaîne) : ami_rejoint true, invitee null, AUCUN billet/QR/code/prénom de B",
+             c == 200 and _p1 and _p1[0].get("ami_rejoint") is True and _p1[0].get("invitee") is None
+             and all(t.get("role") != "invitee" for t in _p1[0].get("tickets", []))
+             and _code_b not in _txt and "Bruno" not in _txt and not E.contient_pii(_p1[0]), _txt[:500])
+    verifier("F1b. A garde SON billet (place de parrain = sa réservation de filleul du parent)",
+             len(_p1[0].get("tickets", [])) == 1 and _p1[0]["tickets"][0]["role"] == "sponsor")
+    _dp0 = doc_par_tok(base, t0)
+    _d = E.dto_pass(_dp0, "unlocked", E.tickets_du_pass(_dp0, [], FRONT), FRONT)
+    verifier("F2. pass d'origine campagne : dto_pass masque aussi l'invité (ami_rejoint seul)",
+             _d.get("invitee") is None and _d.get("ami_rejoint") is True)
+    _adm = E.dto_admin(doc_par_tok(base, t1), "unlocked", [], FRONT)
+    verifier("F3. la vue ADMIN garde l'invité (prénom + e-mail)", (_adm.get("invitee") or {}).get("email") == _eb)
+    # Pass Duo classique : inchangé
+    base, occ, p0 = await V3.depart(chaine_active=False)
+    c, j = await rejoindre(p0["share_token"], 2)
+    c, me = await appel(R.referral_me(H.req_parrain(base)))
+    _pc = me["passes"][0]
+    verifier("F4. Pass Duo classique : /me inchangé (prénom de l'ami, 2 billets) + ami_rejoint true",
+             _pc["invitee"] == {"first_name": "Bruno"} and len(_pc["tickets"]) == 2
+             and {t["role"] for t in _pc["tickets"]} == {"sponsor", "invitee"} and _pc.get("ami_rejoint") is True,
+             (_pc.get("invitee"), len(_pc.get("tickets", []))))
+
+
 def main():
     _tmp = tempfile.mkdtemp(prefix="banc_par1_")
     _orig = S._V413_MEDIA_DIR
@@ -476,7 +591,8 @@ def main():
         except Exception:  # noqa: BLE001
             pass
         boucle = asyncio.get_event_loop()
-        for partie in (partie_cible, partie_page_og, partie_entree, partie_chaine_5, partie_audit):
+        for partie in (partie_cible, partie_page_og, partie_entree, partie_chaine_5, partie_audit,
+                       partie_liberation_et_filleul):
             try:
                 _r = partie()
                 if asyncio.iscoroutine(_r):

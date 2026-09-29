@@ -2013,7 +2013,71 @@ async def referral_pass_public(share_token: str):
     return _dto
 
 
+async def _liberer_enfant_refuse(share_token, request, raison) -> bool:
+    """PAR-1 (A1) — le visiteur refusé (identité) avait préparé/partagé
+    l'UNIQUE invitation enfant du pass : sans libération, le lien resterait
+    bloqué pour le vrai ami (« termine sur l'appareil qui a partagé »).
+
+    Conditions, TOUTES requises : l'enfant existe ; la `X-Chain-Key` du join est
+    la SIENNE (même appareil) ; son parrain est encore en attente ; ni invité
+    ni petit-enfant ; le pass parent n'a pas d'invité. Effet : l'enfant passe
+    `cancelled` (motif dans `events`, jamais supprimé ; `chain.parent_pass_id`
+    renommé en `chain.released_parent_pass_id` pour libérer l'index unique) et
+    le parent perd `child_pass_id / child_created_at / shared_at /
+    share_channel` — écritures conditionnelles."""
+    _p = await db[COLL_PASSES].find_one({"share_token": str(share_token or "").strip()[:64]}, {"_id": 0})
+    if not _p or _p.get("invitee"):
+        return False
+    _enf = await _enfant_de(_p)
+    if not _enf or _enf.get("invitee") or not E.parrain_en_attente(_enf) \
+            or E.chaine_du_pass(_enf).get("child_pass_id") or not _cle_chaine_valide(request, _enf):
+        return False
+    if await _enfant_de(_enf):
+        return False
+    _now = _iso()
+    _r = await db[COLL_PASSES].update_one(
+        {"id": _enf["id"], "invitee": None, "chain.parent_pass_id": _p["id"],
+         "chain.child_pass_id": {"$exists": False}, "status": {"$in": list(E.ETATS_OUVERTS_AU_JOIN)}},
+        {"$set": {"status": E.CANCELLED, "cancel_reason": "chain_released:%s" % raison,
+                  "chain.released_parent_pass_id": _p["id"], "chain.released_at": _now, "updated_at": _now},
+         "$unset": {"chain.parent_pass_id": ""},
+         "$push": {"events": {"at": _now, "type": "cancelled", "detail": "chain_released:%s" % raison}},
+         "$inc": {"version": 1}})
+    if not getattr(_r, "modified_count", 1):
+        return False
+    await db[COLL_PASSES].update_one(
+        {"id": _p["id"], "invitee": None, "chain.child_pass_id": _enf["id"]},
+        {"$unset": {"chain.child_pass_id": "", "chain.child_created_at": "", "chain.shared_at": "",
+                    "chain.share_channel": ""},
+         "$set": {"updated_at": _now},
+         "$push": {"events": {"at": _now, "type": E.EVENEMENT_CHAINE_LIBEREE, "detail": raison}}})
+    logger.info("%s place d'enfant %s libérée sous %s (%s)", PREFIXE, _enf["id"][:8], _p["id"][:8], raison)
+    return True
+
+
+def _liberer_si_refus_identite(fn):
+    """PAR-1 (A1) — enveloppe du join : un refus d'IDENTITÉ définitif libère la
+    place d'enfant que CET appareil avait prise (`_liberer_enfant_refuse`). Le
+    refus d'origine reste la réponse ; le corps du join n'est pas modifié."""
+    import functools
+
+    @functools.wraps(fn)
+    async def _enveloppe(share_token: str, request: Request):
+        try:
+            return await fn(share_token, request)
+        except HTTPException as _e:
+            _raison = (getattr(_e, "headers", None) or {}).get("X-Refus-Raison")
+            if E.refus_identite_definitif(_e.status_code, _raison):
+                try:
+                    await _liberer_enfant_refuse(share_token, request, _raison)
+                except Exception as _err:  # noqa: BLE001
+                    logger.warning("%s place d'enfant non libérée (%s)", PREFIXE, type(_err).__name__)
+            raise
+    return _enveloppe
+
+
 @router.post("/pass/{share_token}/join")
+@_liberer_si_refus_identite
 async def referral_join(share_token: str, request: Request):
     """L'ami rejoint — l'ordre du contrat §6, et pas un autre :
     1 drapeau/pass/état/occurrence ; 2 normalisation + auto-parrainage ;

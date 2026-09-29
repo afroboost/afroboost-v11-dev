@@ -1009,7 +1009,15 @@ def offre_du_pass(pass_doc, catalogue=None) -> dict:
     return dto_offre_depuis_snapshot(_snap, _reco)
 
 
-def dto_pass(pass_doc, statut, tickets, frontend_url, deja_existant=None, offers=None) -> dict:
+def invite_masque(pass_doc) -> bool:
+    """PAR-1 (A3) — le parrain de CE pass voit-il son filleul ? Non pour une
+    invitation de chaîne (enfant) ni pour un pass d'origine campagne : « sans
+    exposer les données privées du filleul ». Pass Duo classique : oui (inchangé)."""
+    return bool(chaine_du_pass(pass_doc).get("parent_pass_id")) or bool(campagne_du_pass(pass_doc))
+
+
+def dto_pass(pass_doc, statut, tickets, frontend_url, deja_existant=None, offers=None,
+             masquer_invite=None) -> dict:
     """PassDTO (parrain). Aucune donnée de l'invité au-delà de son prénom.
     V534b : + `offer` (OffreDTO du pass), `offers` (catalogue courant du
     cours, OffreDTO[]), `version`, `offer_history`."""
@@ -1020,6 +1028,9 @@ def dto_pass(pass_doc, statut, tickets, frontend_url, deja_existant=None, offers
     _offers = list(offers or [])
     _invitation = invitation_du_pass(_p)                     # V551
     _share = url_partage_versionnee(frontend_url, _p)        # V551
+    # PAR-1 (A3) : chaîne / campagne -> ni prénom, ni billet, ni QR du filleul.
+    _masque = invite_masque(_p) if masquer_invite is None else bool(masquer_invite)
+    _tickets = [t for t in (tickets or []) if not (_masque and isinstance(t, dict) and t.get("role") == ROLE_INVITEE)]
     _dto = {
         "id": _p.get("id"),
         "status": statut,
@@ -1036,8 +1047,10 @@ def dto_pass(pass_doc, statut, tickets, frontend_url, deja_existant=None, offers
         "whatsapp_text": ("%s\n%s" % (_invitation["message"], _share)) if _invitation["message"] else
         texte_whatsapp(nom_parrain_affichable(_p), dto_course(_p)["name"], _p.get("occurrence"), _share),
         "invitation": _invitation,
-        "invitee": {"first_name": prenom(_inv.get("name"))} if _inv else None,
-        "tickets": list(tickets or []),
+        "invitee": {"first_name": prenom(_inv.get("name"))} if (_inv and not _masque) else None,
+        # PAR-1 (A3) : le seul signal sur le filleul, pour TOUS les pass (booléen).
+        "ami_rejoint": bool(_inv),
+        "tickets": _tickets,
         "blocked_reason": _p.get("blocked_reason"),
         "created_at": _p.get("created_at"),
         "unlocked_at": _p.get("unlocked_at"),
@@ -1090,7 +1103,7 @@ def dto_public(pass_doc, statut, now, offers=None) -> dict:
 
 def dto_admin(pass_doc, statut, tickets, frontend_url, offers=None) -> dict:
     """PassAdminDTO = PassDTO + prénoms ET e-mails (admin seulement)."""
-    _d = dto_pass(pass_doc, statut, tickets, frontend_url, offers=offers)
+    _d = dto_pass(pass_doc, statut, tickets, frontend_url, offers=offers, masquer_invite=False)
     _sp = (pass_doc or {}).get("sponsor") or {}
     _inv = (pass_doc or {}).get("invitee") or {}
     _d["coach_id"] = (pass_doc or {}).get("coach_id")
@@ -1523,3 +1536,16 @@ def partage_chaine(pass_doc) -> dict:
         if isinstance(_e, dict) and _e.get("type") == "invitation_sent":
             _canal = _e.get("detail") if _e.get("detail") in CANAUX else _canal
     return {"shared": bool(_canal) or version_apercu(_p) > 0, "channel": _canal}
+
+
+# PAR-1 (A1) — refus du join qui disent « cette personne ne pourra JAMAIS
+# s'inscrire sur ce maillon » : la place d'enfant qu'elle a prise est libérée.
+# Jamais un refus transitoire (invitation_requise, autre appareil, pass fermé,
+# campagne complète, conflit de version, 410, 5xx).
+REFUS_IDENTITE_DEFINITIFS = (REFUS_AUTO_PARRAINAGE, REFUS_DEJA_FILLEUL, REFUS_ABONNE_ACTIF,
+                             "free_trial_already_used", "free_trial_already_granted")
+EVENEMENT_CHAINE_LIBEREE = "chain_released"
+
+
+def refus_identite_definitif(code_http, raison) -> bool:
+    return code_http == 409 and str(raison or "") in REFUS_IDENTITE_DEFINITIFS
