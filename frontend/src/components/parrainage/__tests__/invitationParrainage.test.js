@@ -302,3 +302,12 @@ describe('SubscriberSpace — le bouton ouvre le tiroir', () => {
     expect(appelsMe()).toBe(0);
   });
 });
+
+
+describe('PAR — intégration : partage par la chaîne', () => {
+  it('chain_shared=true sans journal → « Partagée »', () => {
+    const { statutInvitation: st } = require('../InvitationParrainage');
+    expect(st({ id: 'p1', status: 'locked', chain_shared: true }, []).cle).toBe('partagee');
+    expect(st({ id: 'p1', status: 'locked', chain_shared: false }, []).cle).toBe('a_partager');
+  });
+});

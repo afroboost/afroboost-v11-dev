@@ -38,7 +38,8 @@ export function statutInvitation(pass, invitations) {
   const amiRejoint = !!pass.invitee || s === 'friend_registered';
   if (s === 'unlocked' || s === 'used') return { cle: 'debloque', libelle: 'Avantage débloqué', amiRejoint };
   const journalise = (Array.isArray(invitations) ? invitations : []).some((i) => i && i.pass_id === pass.id);
-  if (s === 'waiting' || s === 'friend_registered' || journalise) {
+  // PAR : `chain_shared` (booléen du serveur, sans PII) couvre le partage fait par la chaîne.
+  if (s === 'waiting' || s === 'friend_registered' || journalise || pass.chain_shared === true) {
     return { cle: 'partagee', libelle: 'Partagée', amiRejoint };
   }
   return { cle: 'a_partager', libelle: 'À partager', amiRejoint };
