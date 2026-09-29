@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
 import { prechargerSpordate, entrerDansSpordate, urlEntreeServeur } from "./utils/spordateHandoff"; // F3 handoff
 import { activerBulleDeplacable } from "./utils/bulleChat"; // V543 : bulle du chat déplaçable
+import { surErreurImage, IMAGE_SECOURS_LOCAL } from "./utils/imageSecours"; // IMG-1 : anti-boucle des images
 import "@/App.css";
 import axios from "axios";
 // V277 : langues supplementaires (africaines + creole) + contexte de langue.
@@ -212,6 +213,9 @@ if (typeof document !== 'undefined' && !window.__v416_installe) {
       cible.style.background = V416_FOND;
       cible.style.objectFit = 'cover';
       if (t === 'IMG') {
+        // IMG-1 : memorise l'URL en echec, pour que le secours local
+        // (utils/imageSecours) ne redemande pas une URL qui vient d'echouer.
+        cible.setAttribute('data-src-echec', cible.getAttribute('src') || '');
         cible.removeAttribute('srcset');
         cible.src = V416_VIDE;      // efface l'icone brisee, conserve les dimensions
         cible.alt = '';             // pas de texte de remplacement disgracieux
@@ -1480,7 +1484,8 @@ function OfferCountdown(props) {
 const OfferCard = ({ offer, selected, onClick }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const defaultImage = "https://picsum.photos/seed/default/400/200";
+  // IMG-1 : secours LOCAL (plus jamais picsum, qui bouclait une fois bloque).
+  const defaultImage = IMAGE_SECOURS_LOCAL;
 
   // PRIORITÉ: offer.videoUrl > offer.images[0] > offer.thumbnail > defaultImage
   // V233: inclure videoUrl dans la liste des medias pour afficher les videos
@@ -1515,7 +1520,8 @@ const OfferCard = ({ offer, selected, onClick }) => {
               src={currentImage} 
               alt={offer.name} 
               className="offer-card-image"
-              onError={(e) => { e.target.src = defaultImage; }}
+              key={currentImage}
+              onError={(e) => surErreurImage(e, defaultImage)}
             />
             
             {/* Points discrets cliquables si plusieurs images */}
@@ -1778,7 +1784,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
       if (v226FlashTimerRef.current) clearTimeout(v226FlashTimerRef.current);
     };
   }, []);
-  const defaultImage = "https://picsum.photos/seed/default/400/300";
+  // IMG-1 : secours LOCAL (plus jamais picsum, qui bouclait une fois bloque).
+  const defaultImage = IMAGE_SECOURS_LOCAL;
 
   // PRIORITÉ: offer.videoUrl > offer.images[0] > offer.thumbnail > defaultImage
   // V233: inclure videoUrl dans la liste des medias pour afficher les videos
@@ -2055,7 +2062,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // On cherche d'abord une image REELLE deja portee par l'offre (images[] hors
   // fichiers video, puis thumbnail). Si l'offre n'a que des videos, on ne pose
   // AUCUN poster : mieux vaut le fond noir existant qu'une image de remplissage
-  // sans rapport (defaultImage est un picsum aleatoire).
+  // sans rapport (defaultImage = visuel de secours local, IMG-1).
   const v227Poster = (() => {
     const still = images.find((img) => {
       const m = parseMediaUrl(img);
@@ -2411,7 +2418,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   alt={offer.name}
                   className="w-full h-full"
                   style={{ objectFit: 'cover', objectPosition: 'center', height: '220px' }}
-                  onError={(e) => { e.target.src = defaultImage; }}
+                  key={currentImage}
+                  onError={(e) => surErreurImage(e, defaultImage)}
                 />
                 )}
 
@@ -10928,4 +10936,6 @@ function App() {
   );
 }
 
+// IMG-1 : exports nommes pour les tests anti-boucle des cartes d'offre.
+export { OfferCard, OfferCardSlider };
 export default App;

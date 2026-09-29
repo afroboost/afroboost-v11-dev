@@ -18,6 +18,7 @@ import SvgIcon from '../SvgIcon';
 import CloudinaryUploadButton, { uploadToCloudinary, isCloudinaryConfigured } from '../CloudinaryUploadButton';
 import { applyPrimaryColor, persistThemeColors } from '../../utils/themeColor'; // V259 + V295 (anti-FOUC)
 import HeroEditeurVisuel from './HeroEditeurVisuel'; // V554 : éditeur visuel du Hero
+import { surErreurImageSansSecours } from '../../utils/imageSecours'; // IMG-1 : anti-boucle des images
 
 // V547 : défauts des textes du Hero — identiques à App.js et au modèle
 // Concept (api/server.py). Vide = défaut.
@@ -1152,7 +1153,7 @@ const ConceptEditor = ({
             {/* Toggle PayPal */}
             <div className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'rgba(139, 92, 246, 0.1)' }}>
               <div className="flex items-center gap-3">
-                <img src="https://upload.wikimedia.org/wikipedia/commons/b/b5/PayPal.svg" alt="PayPal" style={{ height: '18px' }} onError={(e) => { e.target.src = ''; e.target.alt = 'PayPal'; }} />
+                <img src="https://upload.wikimedia.org/wikipedia/commons/b/b5/PayPal.svg" alt="PayPal" style={{ height: '18px' }} onError={(e) => surErreurImageSansSecours(e, 'PayPal')} /* IMG-1 : plus de src='' qui reboucle */ />
                 <span className="text-white text-sm">PayPal</span>
               </div>
               <button
@@ -1316,10 +1317,11 @@ const ConceptEditor = ({
                       />
                     ) : (
                       <img
+                        key={concept.eventPosterMediaUrl}
                         src={concept.eventPosterMediaUrl}
                         alt="Aperçu affiche événement"
                         style={{ width: '100%', display: 'block', maxHeight: 300, objectFit: 'contain', background: '#000' }}
-                        onError={(e) => { e.target.src = ''; e.target.alt = 'Image non valide'; }}
+                        onError={(e) => surErreurImageSansSecours(e, 'Image non valide')} /* IMG-1 : plus de src='' qui reboucle */
                       />
                     )}
                   </div>

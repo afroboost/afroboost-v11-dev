@@ -1,6 +1,7 @@
 // OfferCard.js - Composants de rendu des offres avec multi-images
 // Compatible Vercel - Extrait de App.js pour architecture modulaire
 import { useState, useEffect } from 'react';
+import { surErreurImage, IMAGE_SECOURS_LOCAL } from '../utils/imageSecours'; // IMG-1
 
 // === V159: COUNTDOWN TIMER COMPONENT (ES5-compatible logic) ===
 var CountdownTimer = function CountdownTimer(props) {
@@ -89,7 +90,7 @@ const CloseIcon = () => (
 export const OfferCard = ({ offer, selected, onClick }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const defaultImage = "https://picsum.photos/seed/default/400/200";
+  const defaultImage = IMAGE_SECOURS_LOCAL; // IMG-1 : secours local, plus de picsum
   
   // PRIORITÉ: offer.images[0] > offer.thumbnail > defaultImage
   const images = (offer.images && Array.isArray(offer.images) && offer.images.length > 0) 
@@ -114,7 +115,8 @@ export const OfferCard = ({ offer, selected, onClick }) => {
               alt={offer.name}
               className="offer-card-image"
               loading="lazy"
-              onError={(e) => { e.target.src = defaultImage; }}
+              key={currentImage}
+              onError={(e) => surErreurImage(e, defaultImage)}
             />
             
             {/* Points discrets cliquables si plusieurs images */}
@@ -200,7 +202,7 @@ export const OfferCardSlider = ({ offer, selected, onClick }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const defaultImage = "https://picsum.photos/seed/default/400/300";
+  const defaultImage = IMAGE_SECOURS_LOCAL; // IMG-1 : secours local, plus de picsum
   
   // PRIORITÉ: offer.images[0] > offer.thumbnail > defaultImage
   const images = (offer.images && Array.isArray(offer.images) && offer.images.length > 0) 
@@ -308,7 +310,8 @@ export const OfferCardSlider = ({ offer, selected, onClick }) => {
                   className="w-full h-full"
                   style={{ objectFit: 'cover', objectPosition: 'center', height: '250px' }}
                   loading="lazy"
-                  onError={(e) => { e.target.src = defaultImage; }}
+                  key={currentImage}
+                  onError={(e) => surErreurImage(e, defaultImage)}
                 />
                 
                 {/* Points discrets cliquables - PAS de flèches */}

@@ -14,6 +14,7 @@ import { copyToClipboard } from "../utils/clipboard";
 import VitrineCheckout from "./VitrineCheckout"; // v15.0
 import AudioPlayer from "./AudioPlayer"; // v17.4
 import SvgIcon from "./SvgIcon";
+import { surErreurImage, IMAGE_SECOURS_LOCAL } from "../utils/imageSecours"; // IMG-1
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -842,9 +843,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       if (loader) loader.style.display = 'none';
                     }}
                     onError={(e) => {
-                      // Fallback vers HQ si maxres n'existe pas
-                      console.log('[VITRINE-MEDIA] maxresdefault indisponible, fallback hqdefault');
-                      e.target.src = ytThumbHQ;
+                      // Fallback vers HQ si maxres n'existe pas.
+                      // IMG-1 : borne — maxres -> hqdefault -> placeholder final, jamais plus.
+                      surErreurImage(e, ytThumbHQ);
                     }}
                   />
                   {/* Bouton play centré — ouvre YouTube dans un nouvel onglet */}
@@ -1397,7 +1398,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               className="flex gap-4 overflow-x-auto snap-x snap-mandatory pb-4"
               style={{ scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
               {uniqueOffers.map((offer) => {
-                const defaultImage = "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=400&h=300&fit=crop";
+                const defaultImage = IMAGE_SECOURS_LOCAL; // IMG-1 : secours local (plus d'unsplash)
                 // V233: inclure videoUrl comme media principal de la carte
                 const imageUrl = offer.videoUrl || offer.imageUrl || offer.thumbnail || offer.images?.[0] || defaultImage;
                 const v233IsVideo = isVideoUrl(imageUrl);
@@ -1444,8 +1445,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                             onError={(e) => { e.target.style.display = 'none'; }} />
                         ) : (
                           <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
-                            loading="lazy"
-                            onError={(e) => { e.target.src = defaultImage; }} />
+                            loading="lazy" key={imageUrl}
+                            onError={(e) => surErreurImage(e, defaultImage)} />
                         )}
                         {/* Photo/Video Icon - Top Left */}
                         <div className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center"
@@ -1534,7 +1535,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory pb-4"
                   style={{ scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
                   {filtered.map((offer) => {
-                    const defaultImage = "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=400&h=300&fit=crop";
+                    const defaultImage = IMAGE_SECOURS_LOCAL; // IMG-1 : secours local (plus d'unsplash)
                     // V233: inclure videoUrl comme media principal
                     const imageUrl = offer.videoUrl || offer.imageUrl || offer.thumbnail || offer.images?.[0] || defaultImage;
                     const v233IsVid = isVideoUrl(imageUrl);
@@ -1576,8 +1577,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                                 onError={(e) => { e.target.style.display = 'none'; }} />
                             ) : (
                               <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
-                                loading="lazy"
-                                onError={(e) => { e.target.src = defaultImage; }} />
+                                loading="lazy" key={imageUrl}
+                                onError={(e) => surErreurImage(e, defaultImage)} />
                             )}
                             {/* Photo/Video Icon - Top Left */}
                             <div className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center"

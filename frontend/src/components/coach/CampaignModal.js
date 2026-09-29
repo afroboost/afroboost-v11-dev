@@ -14,6 +14,7 @@ import SvgIcon from '../SvgIcon';
 // V533: le bouton V229 n'est plus rendu ici (voir CampaignMediaUploader) ; l'import est retiré pour ne pas laisser un import inutilisé.
 import CampaignMediaUploader from './CampaignMediaUploader'; // V533: progression réelle + miniature du Reel
 import { canalCampagneAutorise, MESSAGE_WHATSAPP_PARTENAIRE } from '../../utils/co1OngletsCoach'; // CO-1
+import { surErreurImage } from '../../utils/imageSecours'; // IMG-1 : anti-boucle des images
 
 const STEPS = [
   { id: 1, label: 'Médias & Objectif', icon: 'target' },
@@ -725,7 +726,7 @@ export default function CampaignModal({
                     }}>
                       {ytMatch ? (
                         <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-                          <img src={`https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`} alt="YT" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.src = `https://img.youtube.com/vi/${ytMatch[1]}/default.jpg`; }} />
+                          <img key={ytMatch[1]} src={`https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`} alt="YT" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => surErreurImage(e, `https://img.youtube.com/vi/${ytMatch[1]}/default.jpg`)} /* IMG-1 : borne */ />
                           <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: '40px', height: '40px', background: 'rgba(255,0,0,0.85)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                             <div style={{ width: 0, height: 0, borderTop: '8px solid transparent', borderBottom: '8px solid transparent', borderLeft: '14px solid #fff', marginLeft: '2px' }} />
                           </div>

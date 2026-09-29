@@ -12,6 +12,7 @@ import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
 import SvgIcon from "./SvgIcon";
 import { t } from "../utils/i18n"; // V275d: traductions interface visiteur
+import { surErreurImage } from "../utils/imageSecours"; // IMG-1 : anti-boucle des images
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -192,6 +193,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
 
   // v31: Carousel multi-slots — utiliser TOUS les heroVideos (pas juste [0])
   const [activeHeroIdx, setActiveHeroIdx] = useState(0);
+  // IMG-1 : nombre d'images hero en echec definitif (borne le saut au visuel suivant).
+  const heroEchecsRef = useRef(0);
 
   // v34: Preview 30s — overlay achat pour vidéos premium
   const [showPreviewOverlay, setShowPreviewOverlay] = useState(false);
@@ -583,10 +586,20 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                       fetchpriority="high"
                       loading="eager"
                       onError={(e) => {
-                        // V148: Fallback to original URL if optimized fails
-                        if (e.target.src !== currentHeroUrl) {
-                          e.target.src = currentHeroUrl;
-                        } else {
+                        // V148: Fallback to original URL if optimized fails.
+                        // IMG-1 : borne par marqueur DOM (la comparaison d'URL
+                        // pouvait rater sur une URL re-encodee et reaffecter
+                        // indefiniment). optimisee -> originale -> placeholder
+                        // final ; on passe au visuel suivant UNE seule fois, et
+                        // jamais en boucle quand tous les visuels echouent.
+                        const img = e.currentTarget;
+                        const etape = img.getAttribute('data-secours');
+                        if (etape === 'final') return;
+                        const optimisee = resolveOptimizedImageUrl(currentHero?.url || '') || currentHeroUrl;
+                        if (!etape && currentHeroUrl && optimisee !== currentHeroUrl) { surErreurImage(e, currentHeroUrl); return; }
+                        surErreurImage(e, null); // -> placeholder final, plus aucune requete
+                        heroEchecsRef.current += 1;
+                        if (heroSlidesCount > 1 && heroEchecsRef.current < heroSlidesCount) {
                           setActiveHeroIdx(function(prev) { return (prev + 1) % heroSlidesCount; });
                         }
                       }}
@@ -676,13 +689,14 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                       {!ytPlaying ? (
                         <>
                           <img
+                            key={`yt-mini-${currentYoutubeId}`}
                             src={`https://img.youtube.com/vi/${currentYoutubeId}/hqdefault.jpg`}
                             alt={displayName}
                             className="absolute inset-0 w-full h-full object-cover"
                             style={{ filter: 'brightness(0.85)' }}
                             fetchpriority="high"
                             loading="eager"
-                            onError={(e) => { e.target.src = `https://img.youtube.com/vi/${currentYoutubeId}/0.jpg`; }}
+                            onError={(e) => surErreurImage(e, `https://img.youtube.com/vi/${currentYoutubeId}/0.jpg`)} /* IMG-1 : borne */
                           />
                           <div
                             className="absolute inset-0 flex items-center justify-center cursor-pointer"
@@ -843,12 +857,14 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                     <>
                       {/* Thumbnail YouTube haute qualité */}
                       <img
+                        key={`yt-mini-${activeMedia.youtubeId}`}
                         src={`https://img.youtube.com/vi/${activeMedia.youtubeId}/0.jpg`}
                         alt={displayName}
                         className="absolute inset-0 w-full h-full object-cover"
                         style={{ filter: 'brightness(0.85)' }}
                         onError={(e) => {
-                          e.target.src = `https://img.youtube.com/vi/${activeMedia.youtubeId}/hqdefault.jpg`;
+                          // IMG-1 : 0.jpg -> hqdefault -> placeholder final, jamais plus.
+                          surErreurImage(e, `https://img.youtube.com/vi/${activeMedia.youtubeId}/hqdefault.jpg`);
                         }}
                       />
                       {/* Bouton Play central */}
