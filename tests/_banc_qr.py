@@ -352,7 +352,7 @@ def construire(db):
                 # MT-5 — propriete des reservations (404 pour un autre coach).
                 # Absent des commits anterieurs, donc simplement ignore la aussi.
                 "mt5_coach_signe", "mt5_est_proprietaire", "mt5_exiger_proprietaire",
-                "mt5_borner",
+                "mt5_borner", "_mt5_forfait_d_un_autre", "_mt5_nom_si_proprietaire",
                 "_qr_scan_validate_inner"):
         _code = extraire(nom, obligatoire=False)
         if _code:
@@ -362,7 +362,8 @@ def construire(db):
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in (
                 "A0_TOLERANCE_MIN", "R11_MSG_ANONYME", "R11_MSG_AUTRE_COACH",
                 "A1_JOURS_JS", "SCAN_LIBELLE_ESSAI",
-                "MT5_PREFIXE", "MT5_INTROUVABLE", "MT5_LIMITE_PAGE"):
+                "MT5_PREFIXE", "MT5_INTROUVABLE", "MT5_LIMITE_PAGE",
+                "MT5_CODE_INTROUVABLE"):
             exec(compile("".join(LIGNES[n.lineno - 1:n.end_lineno]), FICHIER, "exec"), ns)
     return ns
 

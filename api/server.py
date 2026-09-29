@@ -47526,6 +47526,16 @@ async def reservations_ended_for_review(request: Request):
                                                       {"_id": 0, "assignedEmail": 1, "email": 1}):
                     _mt5_mails.add(str(_d.get("assignedEmail") or "").strip().lower())
                     _mt5_mails.add(str(_d.get("email") or "").strip().lower())
+                # MT-5b : les MEMBRES d'un code collectif (`code_members`, V202)
+                # sont des titulaires legitimes du code — meme ensemble que
+                # `email_autorise_pour_code` (V430) : {assignedEmail} ∪ membres
+                # non bloques. Sans eux, un membre dont la reservation ne porte
+                # que `discountCode` + son e-mail ne recevait plus l'invitation
+                # a l'avis. Egalite stricte sur le code : aucune regex.
+                async for _d in db.code_members.find({"code": code},
+                                                    {"_id": 0, "email": 1, "blocked": 1}):
+                    if not _d.get("blocked"):
+                        _mt5_mails.add(str(_d.get("email") or "").strip().lower())
             except Exception as _mt5_err:
                 logger.warning("[MT-5] ended-for-review : titulaire du code illisible (%s)",
                                type(_mt5_err).__name__)
@@ -47544,6 +47554,7 @@ async def reservations_ended_for_review(request: Request):
             q["$or"].append({"userEmail": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
         if code:
             q["$or"].append({"promoCode": code})
+            q["$or"].append({"discountCode": code})   # MT-5b : codes de groupe
         if not q["$or"]:
             return {"has_ended_session": False, "session_name": None}
         if _mt5_perim:
