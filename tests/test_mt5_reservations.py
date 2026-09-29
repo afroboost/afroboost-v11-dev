@@ -345,13 +345,104 @@ async def partie_public():
              c == 200 and cree and cree[0].get("coach_id") == A, (c, str(r)[:200]))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# S. Scan d'un CODE (forfait / code collectif) d'un autre coach — MT-5b
+# ─────────────────────────────────────────────────────────────────────────────
+def _semer_codes(base):
+    jour = _aujourdhui_ch() + "T18:30:00"
+    fin = (datetime.now(timezone.utc) + timedelta(days=60)).isoformat()
+    for code, coach, email, nom in (("AFR-SUBA01", A, "sa1@exemple.test", "Sabine Abonnee"),
+                                    ("AFR-SUBA02", A, "sa2@exemple.test", "Samuel Abonne"),
+                                    ("AFR-SUBLEG", None, "sl@exemple.test", "Sylvie Legacy")):
+        d = {"id": "sub-" + code, "code": code, "email": email, "name": nom, "status": "active",
+             "total_sessions": 10, "used_sessions": 3, "remaining_sessions": 7, "expires_at": fin}
+        if coach:
+            d["coach_id"] = coach
+        base["subscriptions"].docs.append(d)
+    # réservations du jour SANS courseId (stock chat/website) : candidates A0
+    base["reservations"].docs += [
+        {"id": "rS1", "reservationCode": "AFRS0001", "userName": "Sabine Abonnee", "userEmail": "sa1@exemple.test",
+         "promoCode": "AFR-SUBA01", "subscriptionId": "sub-AFR-SUBA01", "datetime": jour, "coach_id": A,
+         "validated": True, "validatedAt": "2026-09-01T18:31:00+00:00", "createdAt": "2026-09-01T10:00:00+00:00"},
+        {"id": "rS2", "reservationCode": "AFRS0002", "userName": "Samuel Abonne", "userEmail": "sa2@exemple.test",
+         "promoCode": "AFR-SUBA02", "subscriptionId": "sub-AFR-SUBA02", "datetime": jour, "coach_id": A,
+         "validated": False, "createdAt": "2026-09-01T10:00:00+00:00"},
+        {"id": "rSL", "reservationCode": "AFRS000L", "userName": "Sylvie Legacy", "userEmail": "sl@exemple.test",
+         "promoCode": "AFR-SUBLEG", "subscriptionId": "sub-AFR-SUBLEG", "datetime": jour, "coach_id": A,
+         "validated": True, "validatedAt": "2026-09-01T18:31:00+00:00", "createdAt": "2026-09-01T10:00:00+00:00"},
+    ]
+    base["discount_codes"].docs += [
+        {"id": "dc-grp", "code": "AFR-GRPA01", "active": True, "multi_member": True, "maxUses": 20,
+         "used": 0, "assignedEmail": "payeur@exemple.test", "name": "Payeur Groupe", "coach_id": A},
+        {"id": "dc-solo", "code": "AFR-SOLOA1", "active": True, "maxUses": 5, "used": 0,
+         "assignedEmail": "solo@exemple.test", "name": "Solange Solo", "coach_id": A},
+    ]
+    base["code_members"].docs += [
+        {"id": "m1", "code": "AFR-GRPA01", "slug": "mbr001", "name": "Mireille Membre",
+         "email": "membre@exemple.test"},
+    ]
+
+
+def _fuite(r, *mots):
+    t = str(r)
+    return [m for m in mots if m in t]
+
+
+async def partie_scan_codes():
+    base = base_de_depart()
+    _semer_codes(base)
+    c, r = await appel(RR.qr_scan_validate(req(B, corps={"code": "AFR-SUBA01"})))
+    verifier("S1. B scanne l'abonnement de A (réservation du jour VALIDÉE) -> 404 neutre, sans nom ni solde",
+             c == 404 and not _fuite(r, "Sabine", "7", "remaining"), (c, r))
+    c, r = await appel(RR.qr_scan_validate(req(B, corps={"code": "AFR-SUBA02"})))
+    verifier("S2. B scanne l'abonnement de A (réservation NON validée) -> 404 neutre, rien validé",
+             c == 404 and not _fuite(r, "Samuel", "remaining") and not resa_doc(base, "rS2").get("validated"), (c, r))
+    c, r = await appel(RR.qr_scan_validate(req(B, corps={"code": "AFR-SUBLEG"})))
+    verifier("S3. B scanne un forfait SANS coach_id dont la réservation du jour est à A -> jamais le nom/solde",
+             c != 200 and not _fuite(r, "Sylvie", "remaining"), (c, r))
+    c, r = await appel(RR.qr_scan_validate(req(A, corps={"code": "AFR-SUBA02"})))
+    verifier("S4. témoin : A scanne SON abonné -> présence validée",
+             c == 200 and resa_doc(base, "rS2").get("validated") is True, (c, r))
+    c, r = await appel(RR.qr_scan_validate(req(ADMIN2, corps={"code": "AFR-SUBA01"})))
+    verifier("S5. témoin : 2e super-admin -> « Déjà validé » (global)",
+             c == 200 and "Déjà validé" in str(r), (c, r))
+    # CAS C
+    c, r = await appel(RR.qr_scan_validate(req(B, corps={"code": "AFR-GRPA01::mbr001"})))
+    verifier("S6. B scanne le code COLLECTIF de A (membre) -> 404 neutre, sans nom de membre",
+             c == 404 and not _fuite(r, "Mireille", "Payeur"), (c, r))
+    c, r = await appel(RR.qr_scan_validate(req(B, corps={"code": "AFR-SOLOA1"})))
+    verifier("S7. B scanne le code individuel de A -> 404 neutre, sans nom",
+             c == 404 and not _fuite(r, "Solange"), (c, r))
+    c, r = await appel(RR.qr_scan_validate(req(A, corps={"code": "AFR-SOLOA1"})))
+    verifier("S8. témoin : A scanne son code sans réservation -> 404 AVEC le nom (il est à lui)",
+             c == 404 and "Solange" in str(r), (c, r))
+
+    # ended-for-review : membre d'un code collectif
+    il_y_a_1h = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    base["reservations"].docs.append(
+        {"id": "rG", "reservationCode": "AFRG0001", "userName": "Mireille Membre",
+         "userEmail": "membre@exemple.test", "discountCode": "AFR-GRPA01", "member_slug": "mbr001",
+         "courseName": "Cours Groupe", "datetime": il_y_a_1h, "coach_id": A, "validated": True})
+    q = lambda **p: Req({}, {}, p)  # noqa: E731
+    c, r = await appel(S.reservations_ended_for_review(q(email="membre@exemple.test", code="AFR-GRPA01")))
+    verifier("S9. ended-for-review : MEMBRE d'un code collectif (réservation discountCode + e-mail) -> son avis",
+             c == 200 and r.get("has_ended_session") is True, (c, r))
+    base["reservations"].docs = [x for x in base["reservations"].docs if x.get("id") != "rG"]
+    base["reservations"].docs.append(
+        {"id": "rX", "reservationCode": "AFRX0001", "userName": "Tiers", "userEmail": "tiers@exemple.test",
+         "courseName": "Cours X", "datetime": il_y_a_1h, "coach_id": B, "validated": True})
+    c, r = await appel(S.reservations_ended_for_review(q(email="tiers@exemple.test", code="AFR-GRPA01")))
+    verifier("S10. ended-for-review : code collectif + e-mail d'un NON-membre -> neutre (pas de sonde)",
+             c == 200 and r.get("has_ended_session") is False, (c, r))
+
+
 def main():
     try:
         asyncio.set_event_loop(asyncio.new_event_loop())
     except Exception:
         pass
     boucle = asyncio.get_event_loop()
-    for partie in (partie_liste, partie_mutations, partie_export, partie_public):
+    for partie in (partie_liste, partie_mutations, partie_export, partie_public, partie_scan_codes):
         try:
             boucle.run_until_complete(partie())
         except Exception as e:  # une partie qui plante est un échec, pas un arrêt du banc

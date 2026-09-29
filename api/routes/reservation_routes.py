@@ -2254,6 +2254,8 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
     now_swiss = datetime.now(swiss_tz)
     today_str = now_swiss.strftime("%Y-%m-%d")
     is_multi = discount.get("multi_member", False)
+    # MT-5 : le code d'un autre coach -> 404 neutre, avant tout nom de membre.
+    _mt5_forfait_d_un_autre(scanneur, discount)
 
     # Identifier le membre
     member_name = "Abonné"
@@ -2343,7 +2345,7 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
 
     # Pas de réservation pour aujourd'hui
     raise HTTPException(status_code=404,
-                        detail=f"{member_name} n'a pas de réservation pour aujourd'hui. Demande-lui de réserver d'abord.")
+                        detail=f"{_mt5_nom_si_proprietaire(scanneur, discount, member_name)} n'a pas de réservation pour aujourd'hui. Demande-lui de réserver d'abord.")
 
 
 async def _validate_user_access_code(code: str, user: dict, forced_course_id: str = None,
@@ -2399,7 +2401,7 @@ async def _validate_user_access_code(code: str, user: dict, forced_course_id: st
                 "subscriber": {"name": user_name, "remaining": remaining, "total": total}}
 
     raise HTTPException(status_code=404,
-                        detail=f"{user_name} n'a pas de réservation pour aujourd'hui.")
+                        detail=f"{_mt5_nom_si_proprietaire(scanneur, user, user_name)} n'a pas de réservation pour aujourd'hui.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2518,6 +2520,7 @@ def _r11_verifier_proprietaire(scanneur: str, document: dict, quoi: str = "rése
 MT5_PREFIXE = "[MT-5]"
 MT5_INTROUVABLE = "Réservation introuvable"
 MT5_LIMITE_PAGE = 50
+MT5_CODE_INTROUVABLE = "Code introuvable"
 
 
 async def mt5_coach_signe(request) -> str:
@@ -2561,6 +2564,34 @@ def mt5_borner(requete: dict, appelant) -> dict:
     from api.routes.shared import lot3c0_perimetre
     _perim = lot3c0_perimetre(appelant, bool(is_super_admin(str(appelant).strip().lower())))
     return {"$and": [_perim, requete]} if _perim else requete
+
+
+def _mt5_forfait_d_un_autre(scanneur, doc) -> None:
+    """404 neutre si `doc` (forfait / code) est DECLARE a un autre coach.
+
+    `coach_id` vide = proprietaire non declare : on ne tranche pas ici (le stock
+    ancien de `subscriptions` et 100 % des `discount_codes` mesures le 20/08 sont
+    dans ce cas) — la suite du chemin reste bornee par les reservations et le
+    cours. Super-admin et scanneur vide (appel interne) : rien.
+    """
+    _e = str(scanneur or "").strip().lower()
+    if not _e or is_super_admin(_e) or not isinstance(doc, dict):
+        return
+    _p = str(doc.get("coach_id") or "").strip().lower()
+    if _p and _p != _e:
+        logger.warning("%s REFUS scan : %s n'est pas le proprietaire du code (%s)",
+                       MT5_PREFIXE, _e[:40], _p[:40])
+        raise HTTPException(status_code=404, detail=MT5_CODE_INTROUVABLE)
+
+
+def _mt5_nom_si_proprietaire(scanneur, doc, nom) -> str:
+    """Le nom d'une personne n'apparait dans un message d'erreur que pour le
+    super-admin ou le coach DECLARE proprietaire du document ; sinon, neutre."""
+    _e = str(scanneur or "").strip().lower()
+    if not _e or is_super_admin(_e):
+        return nom
+    _p = str((doc or {}).get("coach_id") or "").strip().lower()
+    return nom if (_p and _p == _e) else "Cette personne"
 
 
 
@@ -2726,8 +2757,11 @@ async def _a0_marquer_presente(reservation: dict, scanneur: str = "",
     """
     # R11 : la propriete se verifie AVANT l'ecriture, sur le document reel.
     # `scanneur` vide = appelant interne qui a deja verifie (aucun aujourd'hui).
+    # MT-5 : 404 neutre (et non plus 403 R11) — un 403 confirmait qu'une
+    # reservation existe chez un autre coach. Meme regle que la liste : un
+    # document sans `coach_id` (historique) n'appartient qu'a la plateforme.
     if scanneur:
-        _r11_verifier_proprietaire(scanneur, reservation, "réservation")
+        mt5_exiger_proprietaire(scanneur, reservation, "presence")
     _id = reservation.get("id")
     _quand = datetime.now(timezone.utc).isoformat()
     if not _id:
@@ -2941,7 +2975,8 @@ async def _a1b_occurrences_reelles(reservations: list) -> list:
     return _gardees
 
 
-async def _a0_reservations_du_jour(subscription: dict, code: str, member_slug: str = None) -> list:
+async def _a0_reservations_du_jour(subscription: dict, code: str, member_slug: str = None,
+                                   scanneur: str = "") -> list:
     """Les reservations de CET abonnement pour la journee en cours.
 
     DEUX PASSES, de la plus precise a la plus large — et jamais l'inverse :
@@ -2980,7 +3015,10 @@ async def _a0_reservations_du_jour(subscription: dict, code: str, member_slug: s
         _q["$or"] = criteres
         if member_slug:
             _q["member_slug"] = {"$regex": f"^{re.escape(member_slug)}$", "$options": "i"}
-        _rows = await db.reservations.find(_q, {"_id": 0}).to_list(20)
+        # MT-5 : borne au perimetre du scanneur. Sans lui, un coach A qui
+        # scannait le code d'un abonne de B recevait « Déjà validé » + le nom
+        # et le solde de l'abonne. Super-admin : `{}`, rien ne change.
+        _rows = await db.reservations.find(mt5_borner(_q, scanneur), {"_id": 0}).to_list(20)
         _dujour = [r for r in _rows if _a0_est_aujourdhui(r.get("datetime"))]
         # A1b : une reservation du jour ne suffit pas — encore faut-il qu'elle
         # designe une seance qui a REELLEMENT lieu. Filtre ICI, donc sur les
@@ -3047,7 +3085,7 @@ async def _a0_presence_deja_reservee(subscription: dict, code: str, member_slug:
     creation de reservation — uniquement `validated` / `validatedAt` sur la
     reservation qui existe deja.
     """
-    _candidates = await _a0_reservations_du_jour(subscription, code, member_slug)
+    _candidates = await _a0_reservations_du_jour(subscription, code, member_slug, scanneur)
     _resa = _a0_choisir_occurrence(_candidates)
     if not _resa:
         return None
@@ -3506,6 +3544,12 @@ async def _qr_scan_validate_inner(request: Request):
     from api.routes.shared import lire_abonnement_par_code as _v391_lire
     subscription = await _v391_lire(db, code)
     if subscription:
+        # MT-5 : un forfait DECLARE a un autre coach n'existe pas pour ce
+        # scanneur — 404 neutre, avant tout message d'etat (solde, expiration,
+        # cours du jour de son coach). Un forfait SANS `coach_id` (stock ancien)
+        # n'est pas tranche ici : ce sont ses reservations bornees ci-dessous
+        # et la propriete du cours qui decident.
+        _mt5_forfait_d_un_autre(_scanneur, subscription)
         # A0-1 — LA PRESENCE D'ABORD, LE CREDIT ENSUITE.
         #
         # Si une reservation existe deja pour aujourd'hui, la seance a ete
@@ -3530,6 +3574,7 @@ async def _qr_scan_validate_inner(request: Request):
     if not subscription:
         any_sub = await db.subscriptions.find_one({"code": code}, {"_id": 0})
         if any_sub:
+            _mt5_forfait_d_un_autre(_scanneur, any_sub)   # MT-5
             raise HTTPException(status_code=400, detail="Abonnement inactif ou expiré")
 
         # CAS C (V213): Code promo / groupe — cherche dans discount_codes

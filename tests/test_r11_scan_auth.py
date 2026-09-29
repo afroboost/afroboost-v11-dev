@@ -135,8 +135,26 @@ async def principal():
     db.courses.docs.append(cours_du_moment(r.get("coach_id", "")))
     B.faux_shared(abonnement=B.forfait(remaining_sessions=5))
     ns = B.construire_routes(db, coach="coach.b@test", admins=())
+    # MT-5 (29/09/2026) : le repli R11 « orpheline = n'importe quel coach » est
+    # RETIRE. Une reservation sans `coach_id` appartient a la plateforme — la
+    # meme regle que la liste (`lot3c0_perimetre`) : un coach partenaire ne la
+    # voit pas, ne la valide pas (404 neutre) ; le super-admin, si (6e).
+    # Mesure du 27/08/2026 : 143/143 reservations portent un `coach_id`.
+    try:
+        rep = await ns["_qr_scan_validate_inner"](B._Requete({"code": "AFR-ESSAI1"}))
+        verifier("6d. MT-5 : reservation sans coach_id -> refusee a un coach partenaire",
+                 not rep.get("success") and r["validated"] is False, str(rep)[:160])
+    except B._HTTPException as e:
+        verifier("6d. MT-5 : reservation sans coach_id -> refusee a un coach partenaire (404/403/422)",
+                 e.status_code in (403, 404, 422) and r["validated"] is False, "HTTP %s" % e.status_code)
+    db = B._Base()
+    r = B.resa(coach_id="")
+    db.reservations.docs.append(r)
+    db.courses.docs.append(cours_du_moment(""))
+    B.faux_shared(abonnement=B.forfait(remaining_sessions=5))
+    ns = B.construire_routes(db, coach="admin@test", admins=("admin@test",))
     rep = await ns["_qr_scan_validate_inner"](B._Requete({"code": "AFR-ESSAI1"}))
-    verifier("6d. reservation sans coach_id : validation possible (repli documente)",
+    verifier("6e. MT-5 : reservation sans coach_id -> le super-admin la valide",
              rep.get("success") and r["validated"] is True, "")
 
     # ═══ 7. occurrence recurrente : la bonne, et elle seule ═══════════════
