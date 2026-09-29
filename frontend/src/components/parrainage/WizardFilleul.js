@@ -121,6 +121,14 @@ export function messageErreurChaine(refus) {
 export const DELAI_AUTOSAVE_MS = 500;
 
 /** UX-P2 : libellé de la case de consentement (non cochée par défaut). */
+// UX-P4 — le badge suit le type RÉEL renvoyé par le serveur ; jamais « Pass Duo » par défaut.
+export function libelleTypeInvitation(type) {
+  if (type === 'trial') return 'Essai gratuit';
+  if (type === 'pass_duo') return 'Pass Duo';
+  if (type === 'event_free') return 'Événement';
+  return 'Invitation';
+}
+
 export const TEXTE_CONSENT_CONTACT = "J'accepte d'être contacté(e) par Afroboost au sujet de cette invitation et de mon essai.";
 
 const MSG_WHATSAPP_INVALIDE = 'Ce numéro WhatsApp n’est pas valide. Corrige-le (ex. : +41 79 123 45 67) ou efface-le pour partager.';
@@ -493,7 +501,7 @@ export default function WizardFilleul({
           {/* L0 : sans photo, l'avatar Afroboost (jamais une initiale). */}
           <AvatarInvitant photoUrl={photo} className="cp-wf-av" testidPhoto="invitation-photo" testidAvatar="invitation-avatar-afroboost" />
           <div className="cp-wf-qui-txt">
-            <span className="cp-chip">Pass Duo</span>
+            <span className="cp-chip" data-testid="wf-badge-type">{libelleTypeInvitation(pass && pass.invitation_type)}</span>
             <h1 className="cp-h1 cp-wf-h1" data-testid="invitation-de">{prenom} t'invite à découvrir Afroboost.</h1>
           </div>
         </div>

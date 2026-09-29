@@ -1521,6 +1521,14 @@ def campagne_du_pass(pass_doc) -> str:
     return str(origine_du_pass(pass_doc).get("campaign_id") or "")
 
 
+def type_invitation(pass_doc) -> str:
+    """UX-P4 — le type affiché par le badge de la page publique (aucune PII, aucune
+    lecture en base). Une chaîne de campagne ne naît aujourd'hui que d'une campagne
+    « Essai gratuit » (seul type admis à /entry) et ses maillons héritent de
+    `origin.campaign_id` → "trial" ; tout autre pass est un vrai Pass Duo."""
+    return "trial" if campagne_du_pass(pass_doc) else "pass_duo"
+
+
 def sans_place_parrain(pass_doc) -> bool:
     """Racine de campagne : `origin.source_type` ∈ coach/partner/super_admin ET
     aucun parent. Son déblocage ne réserve aucune place de parrain."""

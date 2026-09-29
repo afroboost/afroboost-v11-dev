@@ -2010,6 +2010,7 @@ async def referral_pass_public(share_token: str):
     # V556 : faut-il inviter avant de s'inscrire ? et où en est ce visiteur ?
     _dto["chain_required"] = E.chaine_requise(_p, _s, await _chaine_active())
     _dto["chain"] = E.dto_chaine_public(_p)
+    _dto["invitation_type"] = E.type_invitation(_p)   # UX-P4 : badge « Essai gratuit » / « Pass Duo »
     return _dto
 
 

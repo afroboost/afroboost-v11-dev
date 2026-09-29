@@ -329,3 +329,14 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     expect(css).toMatch(/\.cp-select\.cp-wf-indicatif \{[^}]*font-size: 16px/);
   });
 });
+
+describe('UX-P4 — badge du type réel', () => {
+  it('trial → Essai gratuit, pass_duo → Pass Duo, event_free → Événement, inconnu → Invitation (jamais Pass Duo par défaut)', () => {
+    const { libelleTypeInvitation } = require('../WizardFilleul');
+    expect(libelleTypeInvitation('trial')).toBe('Essai gratuit');
+    expect(libelleTypeInvitation('pass_duo')).toBe('Pass Duo');
+    expect(libelleTypeInvitation('event_free')).toBe('Événement');
+    expect(libelleTypeInvitation(undefined)).toBe('Invitation');
+    expect(libelleTypeInvitation('autre')).toBe('Invitation');
+  });
+});
