@@ -134,20 +134,27 @@ function routerChaine(child) {
 }
 
 describe('L0 — WizardFilleul étape 2', () => {
-  test('bloc « Une dernière étape » présent AVANT le titre « Invite un ami », sans « a reçu »', async () => {
+  test('UX-P3 — les textes disent que les informations sont celles de la personne à l’écran, sans « a reçu »', async () => {
     routerChaine(CHILD());
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
     await cliquer('wf-continuer');
     const bloc = par('wf-derniere-etape');
     expect(bloc).not.toBeNull();
-    expect(bloc.textContent).toContain('Une dernière étape pour débloquer ton essai');
-    expect(bloc.textContent).toContain('Invite une personne à découvrir Afroboost. Dès que ton invitation est prête à être partagée, tu peux finaliser ton inscription à l’essai gratuit.');
     const h2 = par('wf-etape-2').querySelector('h2');
-    expect(h2.textContent).toBe('Invite un ami');
+    expect(h2.textContent).toBe('Crée ton invitation pour un ami');
+    expect(bloc.textContent).toContain('Pour débloquer ton essai, invite une personne à découvrir Afroboost. Commence par personnaliser la carte que ton ami recevra.');
+    const t = par('wf-etape-2').textContent;
+    expect(t).toContain('Tes informations');
+    expect(t).toContain('Ces informations apparaîtront sur l’invitation envoyée à ton ami.');
+    expect(t).toContain('Aperçu de l’invitation que ton ami recevra');
+    expect(t).toContain('C’est ton numéro, pas celui de la personne que tu invites.');
+    expect(t).toContain('Maintenant, invite ton ami');
+    expect(t).toContain('Tu n’as pas besoin de saisir les coordonnées de ton ami. Il renseignera ses propres informations lorsqu’il ouvrira ton invitation.');
+    // « Maintenant, invite ton ami » précède les boutons de partage
     // eslint-disable-next-line no-bitwise
-    expect(bloc.compareDocumentPosition(h2) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(par('wf-etape-2').textContent).not.toMatch(/a reçu/);
+    expect(par('wf-maintenant').compareDocumentPosition(par('wf-whatsapp')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(t).not.toMatch(/a reçu/);
   });
 
   test('bandeau au-dessus des boutons : photo de child.inviter_display, prénom saisi', async () => {

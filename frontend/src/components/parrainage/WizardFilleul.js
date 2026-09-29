@@ -541,12 +541,11 @@ export default function WizardFilleul({
       <Etapes etape={2} />
       {/* L0 : pourquoi cette étape — court, pour ne pas repousser le partage hors écran.
           On ne dit jamais que l'ami « a reçu » quoi que ce soit. */}
+      {/* UX-P3 : dire clairement que les informations sont celles de la personne À L'ÉCRAN. */}
       <div className="cp-wf-derniere" data-testid="wf-derniere-etape">
-        <b>Une dernière étape pour débloquer ton essai</b>
-        <p>Invite une personne à découvrir Afroboost. Dès que ton invitation est prête à être partagée, tu peux finaliser ton inscription à l’essai gratuit.</p>
+        <h2 className="cp-wf-titre">Crée ton invitation pour un ami</h2>
+        <p>Pour débloquer ton essai, invite une personne à découvrir Afroboost. Commence par personnaliser la carte que ton ami recevra.</p>
       </div>
-      <h2 className="cp-wf-titre">Invite un ami</h2>
-      <p className="cp-mini cp-wf-sous">Ton ami reçoit la même invitation que toi : un essai gratuit, à deux.</p>
       {avis ? <p className="cp-notice" role="alert" data-testid="wf-avis">{avis}</p> : null}
 
       {erreurCreation ? (
@@ -566,6 +565,9 @@ export default function WizardFilleul({
 
       {/* UX-P2 : aperçu IMMÉDIAT (état local) — prénom et photo suivent la frappe. */}
       {child && editable ? (
+        <p className="cp-label cp-wf-apercu-titre" data-testid="wf-apercu-titre">Aperçu de l’invitation que ton ami recevra</p>
+      ) : null}
+      {child && editable ? (
         <BandeauInvitant prenom={nomValide} photoUrl={photoCarte} />
       ) : null}
 
@@ -580,6 +582,8 @@ export default function WizardFilleul({
 
       {child && editable ? (
         <div className="cp-wf-perso">
+          <h3 className="cp-wf-soustitre" data-testid="wf-tes-infos">Tes informations</h3>
+          <p className="cp-mini cp-wf-sous">Ces informations apparaîtront sur l’invitation envoyée à ton ami.</p>
           <label className="cp-label" htmlFor="wf-nom">Ton prénom</label>
           <input id="wf-nom" className="cp-input" value={nom} maxLength={NOM_MAX} placeholder="Ex. : Henri"
                  onChange={(e) => setNom(e.target.value.slice(0, NOM_MAX))} autoComplete="given-name" data-testid="wf-nom" />
@@ -616,6 +620,7 @@ export default function WizardFilleul({
                    placeholder="79 123 45 67" autoComplete="tel-national"
                    onChange={(e) => setNumero(e.target.value.slice(0, 30))} data-testid="wf-whatsapp-numero" />
           </div>
+          <p className="cp-fine" data-testid="wf-whatsapp-aide">C’est ton numéro, pas celui de la personne que tu invites.</p>
           {child.whatsapp_renseigne === true && !numero.trim() ? (
             <p className="cp-fine" data-testid="wf-whatsapp-connu">Ton numéro est déjà enregistré.</p>
           ) : null}
@@ -631,6 +636,12 @@ export default function WizardFilleul({
         </div>
       ) : null}
 
+      {child && editable ? (
+        <div className="cp-wf-inviter" data-testid="wf-maintenant">
+          <h3 className="cp-wf-soustitre">Maintenant, invite ton ami</h3>
+          <p className="cp-mini cp-wf-sous">Tu n’as pas besoin de saisir les coordonnées de ton ami. Il renseignera ses propres informations lorsqu’il ouvrira ton invitation.</p>
+        </div>
+      ) : null}
       {child && editable ? (
         <div className="cp-wf-actions">
           <button type="button" className="cp-b cp-b--whatsapp cp-wz-cible" onClick={surWhatsApp} disabled={boutonsInactifs} data-testid="wf-whatsapp">

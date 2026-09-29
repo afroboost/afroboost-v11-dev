@@ -66,3 +66,8 @@
 .cp-wf-statut { min-height: 18px; margin: 4px 0 0; }
 .cp-wf-qr { text-align: center; }
 .cp-wf-msg { margin-top: 10px; }
+
+/* UX-P3 : intertitres qui disent à qui appartiennent les informations. */
+.cp-wf-soustitre { font-size: 17px; font-weight: 800; margin: 14px 0 2px; }
+.cp-wf-apercu-titre { margin: 10px 0 4px; }
+.cp-wf-inviter { margin-top: 8px; }
