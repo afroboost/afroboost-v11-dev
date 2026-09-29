@@ -71,3 +71,38 @@
 .cp-wf-soustitre { font-size: 17px; font-weight: 800; margin: 14px 0 2px; }
 .cp-wf-apercu-titre { margin: 10px 0 4px; }
 .cp-wf-inviter { margin-top: 8px; }
+
+/* V558 — Wizard 4 étapes : cartes d'offre (radio), résumé de séance, aperçu.
+   Couleurs : jetons --cp-* uniquement (issus des couleurs du coach). */
+.cp-wf .cp-wf-titre + p, .cp-wf-derniere p { margin: 0 0 12px; color: var(--cp-muted); line-height: 1.45; }
+.cp-wf-offres { display: grid; gap: 10px; margin: 8px 0 4px; }
+.cp-wf-offre {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; min-height: 44px; padding: 14px;
+  text-align: left; border-radius: 14px; border: 1px solid var(--cp-line); background: transparent;
+  color: var(--cp-text); cursor: pointer; font: inherit;
+}
+.cp-wf-offre.on { border-color: var(--cp-pink); box-shadow: 0 0 0 1px var(--cp-pink) inset; }
+.cp-wf-offre:disabled { opacity: .5; cursor: default; }
+.cp-wf-offre:focus-visible { outline: 2px solid var(--cp-pink); outline-offset: 2px; }
+.cp-wf-offre-radio {
+  width: 22px; height: 22px; flex: none; border-radius: 50%; border: 2px solid var(--cp-line);
+  display: grid; place-items: center; margin-top: 1px;
+}
+.cp-wf-offre.on .cp-wf-offre-radio { border-color: var(--cp-pink); background: var(--cp-pink); color: rgb(255, 255, 255); }
+.cp-wf-offre-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cp-wf-offre-txt b { font-size: 15px; letter-spacing: .04em; text-transform: uppercase; }
+.cp-wf-offre-txt span { font-size: 14px; color: var(--cp-muted); line-height: 1.4; overflow-wrap: anywhere; }
+.cp-wf-offre-txt .cp-wf-offre-recompense { color: var(--cp-text); font-weight: 700; }
+.cp-wf-seance {
+  margin: 8px 0; padding: 14px; border-radius: 14px; border: 1px solid var(--cp-line); min-width: 0;
+}
+.cp-wf-seance-titre { display: block; margin-bottom: 6px; }
+.cp-wf-seance-quand { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 0; font-size: 16px; }
+.cp-wf-seance-quand svg { flex: none; color: var(--cp-pink); }
+.cp-wf-seance-cours { margin: 6px 0 0; font-weight: 700; overflow-wrap: anywhere; }
+.cp-wf-seance-lieu { margin: 2px 0 0; overflow-wrap: anywhere; }
+.cp-wf-seance .cp-link { padding-left: 0; }
+.cp-wf-apercu { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.cp-wf-apercu .cp-chip { align-self: flex-start; }
+.cp-wf-apercu-seance { display: flex; flex-direction: column; gap: 2px; margin: 0; font-size: 14px; min-width: 0; }
+.cp-wf-apercu-seance span { overflow-wrap: anywhere; }

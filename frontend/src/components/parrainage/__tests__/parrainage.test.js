@@ -417,18 +417,21 @@ describe('CentreParrainage — états de page', () => {
   // VOLONTAIREMENT : sans Pass, on ne montre plus de boutons morts, on montre
   // l'étape 1 (avec le sélecteur de séance existant) ; le partage n'apparaît
   // qu'une fois l'invitation créée. La carte Pass Duo renvoie vers l'assistant.
-  test('sans pass → l\'assistant (étape 1 + sélecteur de séance), AUCUN bouton de partage mort', async () => {
+  // V558 : l'assistant est le Wizard 4 étapes ; la séance se choisit à l'étape 2
+  // dans le calendrier existant (résumé compact), plus dans un sélecteur.
+  test('sans pass → l\'assistant (étape 1 « Offre », puis la séance), AUCUN bouton de partage mort', async () => {
     window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
     const ME = { enabled: true, sponsor: { first_name: 'Bassi' }, stats: {}, passes: [], invitations: [], history: [] };
     axios.get.mockImplementation((url) => (String(url).endsWith('/me') ? Promise.resolve({ data: ME }) : Promise.resolve({ data: CONFIG })));
     await monter(<CentreParrainage />);
     expect(par('invitation-wizard')).not.toBeNull();
     expect(par('wizard-etape-1')).not.toBeNull();
-    expect(par('pass-select-seance')).not.toBeNull();
+    expect(par('wizard-offre-titre')).not.toBeNull();
     ['inviter-whatsapp', 'inviter-copier', 'inviter-qr', 'inviter-partager'].forEach((id) => expect(par(id)).toBeNull());
-    expect(tous('pass-select-seance').length).toBe(1);        // un seul formulaire, jamais deux
+    await act(async () => { par('wizard-suivant').click(); });
+    expect(tous('wf-seance-resume').length).toBe(1);          // un seul choix de séance, jamais deux
     await ouvrirOutil('pass');                                // V552 : la carte est dans son tiroir
-    expect(tous('pass-select-seance').length).toBe(1);        // toujours un seul formulaire, tiroir ouvert
+    expect(tous('wf-seance-resume').length).toBe(1);          // toujours un seul, tiroir ouvert
     expect(par('pass-preparer-invitation')).not.toBeNull();   // la carte renvoie vers l'assistant
   });
   test('CAS A — sans Pass : l\'assistant d\'invitation vient AVANT les programmes', async () => {
@@ -580,8 +583,10 @@ describe('InvitationDuo — page publique', () => {
   });
 
   test('409 X-Refus-Raison → messages FR précis ; 410 ; 404', async () => {
-    expect(messageRefus('free_trial_already_used')).toBe('Tu as déjà profité de l\'essai gratuit Afroboost');
-    expect(messageRefus('free_trial_already_granted')).toBe('Tu as déjà profité de l\'essai gratuit Afroboost');
+    // V558 : l'essai est UNE fois par personne, à vie — dit clairement.
+    expect(messageRefus('free_trial_already_used')).toBe('Tu as déjà utilisé ton essai gratuit.');
+    expect(messageRefus('free_trial_already_granted')).toBe('Tu as déjà un essai gratuit en attente : il n’y en a qu’un par personne.');
+    expect(messageRefus('whatsapp_requis')).toBe('Indique ton numéro WhatsApp.');
     expect(messageRefus('abonne_actif')).toBe('Tu es déjà membre : réserve directement depuis ton espace');
     expect(messageRefus('auto_parrainage')).toContain('ton lien');
     expect(messageRefus('deja_filleul_occurrence')).toContain('déjà inscrit');

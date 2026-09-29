@@ -162,23 +162,29 @@ export function useChoixSeance(courses, contexte) {
 }
 
 /** Le sélecteur de séance + l'offre (V534b), sans rien d'autre. */
-export function ChampsSeanceOffre({ choix, occupe }) {
+export function ChampsSeanceOffre({ choix, occupe, sansSelecteurSeance }) {
   const { groupes, valeur, setChoix, coursChoisi, offresConnues, offres, offreChoisie, choisirOffre } = choix;
   const plusieursCours = groupes.length > 1;
   if (!groupes.length) return null;
   return (
     <>
-      <label htmlFor="cp-seance" className="cp-label">Séance</label>
-      <select id="cp-seance" className="cp-select" value={valeur} onChange={(e) => setChoix(e.target.value)}
-              disabled={occupe} data-testid="pass-select-seance">
-        {plusieursCours
-          ? groupes.map((g) => (
-            <optgroup key={g.id} label={g.name}>
-              {g.options.map((o) => <option key={o.valeur} value={o.valeur}>{o.libelle}</option>)}
-            </optgroup>
-          ))
-          : groupes[0].options.map((o) => <option key={o.valeur} value={o.valeur}>{o.libelle}</option>)}
-      </select>
+      {/* V558 : le Wizard choisit la séance dans le calendrier EXISTANT (SessionsModal) ;
+          il ne garde ici que l'offre du cours choisi. */}
+      {sansSelecteurSeance ? null : (
+        <>
+          <label htmlFor="cp-seance" className="cp-label">Séance</label>
+          <select id="cp-seance" className="cp-select" value={valeur} onChange={(e) => setChoix(e.target.value)}
+                  disabled={occupe} data-testid="pass-select-seance">
+            {plusieursCours
+              ? groupes.map((g) => (
+                <optgroup key={g.id} label={g.name}>
+                  {g.options.map((o) => <option key={o.valeur} value={o.valeur}>{o.libelle}</option>)}
+                </optgroup>
+              ))
+              : groupes[0].options.map((o) => <option key={o.valeur} value={o.valeur}>{o.libelle}</option>)}
+          </select>
+        </>
+      )}
       {offresConnues && offres.length === 0 ? (
         <p className="cp-error" role="alert" data-testid="offre-aucune">Aucune offre n'est disponible pour cette séance pour le moment.</p>
       ) : null}

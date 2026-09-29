@@ -1,11 +1,12 @@
 /**
- * V551 — PARRAINAGE V2 : l'assistant d'invitation du membre (3 étapes).
+ * V551 — PARRAINAGE V2 : l'assistant d'invitation du membre.
+ * V558 — le MÊME Wizard que le filleul : Offre · Séance · Ta carte · Partage.
  *
  * CE QU'IL PROUVE
  *   1. préremplissage du nom et de la photo depuis le profil Spordateur lié
  *      (GET /api/spordate/unified-profile/me, en-tête du parrain) ;
  *   2. un e-mail n'est JAMAIS affiché comme nom (ni depuis le profil, ni depuis
- *      /invitation) → « Un membre Afroboost » ;
+ *      /invitation) → « Afroboost » (V558 : jamais « Un membre ») ;
  *   3. « Modifier » ne touche QUE l'invitation : aucune route de profil appelée,
  *      le nom modifié part dans `invitation` du POST /pass ;
  *   4. pass existant → AUCUN POST /pass ; « Modifier » fait un PUT
@@ -61,6 +62,7 @@ async function monter(element) {
   await act(async () => { racine = createRoot(conteneur); racine.render(element); });
   await flush();
 }
+const versLaCarte = async () => { await cliquer('wizard-suivant'); await cliquer('wizard-suivant'); };
 async function cliquer(id) {
   const el = par(id);
   if (!el) throw new Error(`élément absent : ${id}`);
@@ -150,47 +152,54 @@ describe('V551 — InvitationWizard : création en 3 étapes', () => {
     const appelProfil = axios.get.mock.calls.find((c) => String(c[0]).endsWith('/spordate/unified-profile/me'));
     expect(appelProfil).toBeTruthy();
     expect(appelProfil[1].headers).toEqual({ 'X-Subscriber-Token': 'dev-1' });
+    await cliquer('wizard-suivant');
+    expect(par('wf-seance-resume')).not.toBeNull(); // V558 : le résumé de la séance (calendrier existant)
+    expect(par('pass-select-seance')).toBeNull();
+    await cliquer('wizard-suivant');
     expect(par('wizard-nom').textContent).toBe('Aïcha');
     expect(par('wizard-photo').getAttribute('src')).toBe(PROFIL_LIE.profil.photoURL);
-    expect(par('pass-select-seance')).not.toBeNull(); // le petit sélecteur existant
   });
 
   test('un e-mail comme nom est refusé → nom neutre + initiale', async () => {
     routerGet({ profil: { lie: true, profil: { displayName: 'aicha.b@gmail.com', photoURL: null } },
       invitation: { identity: { display_name: 'aicha.b@gmail.com' }, default_message: '', pass: null } });
     await monter(<InvitationWizard courses={COURSES} passOuvert={null} />);
+    await versLaCarte();
     expect(par('wizard-nom').textContent).toBe(NOM_NEUTRE);
     expect(conteneur.textContent).not.toContain('@');
     expect(par('wizard-photo')).toBeNull();
     expect(par('wizard-initiale')).not.toBeNull();
   });
 
-  test('3 étapes au plus ; « Modifier » ne touche QUE l\'invitation ; POST /pass porte `invitation`', async () => {
+  test('4 étapes (Offre · Séance · Ta carte · Partage) ; « Modifier » ne touche QUE l\'invitation ; POST /pass porte `invitation`', async () => {
     routerGet({ profil: PROFIL_LIE });
     const cree = passOuvert({ share_url: 'https://afroboost.com/api/share/duo/TOK123?v=1',
       invitation: { display_name: 'Aïcha la reine', photo_url: null, message: 'Viens danser avec moi !', version: 1 } });
     axios.post.mockResolvedValue({ data: cree });
     const onPass = jest.fn();
     await monter(<InvitationWizard courses={COURSES} passOuvert={null} onPass={onPass} />);
-    expect(par('wizard-etapes').children.length).toBe(3);
-    expect(par('wizard-etape-1')).not.toBeNull();
+    expect(par('wizard-etapes').children.length).toBe(4);
+    expect(par('wizard-etapes').textContent.replace(/\s+/g, '')).toBe('1Offre2Séance3Tacarte4Partage');
 
-    // Étape 1 : Modifier → nom + retirer la photo
+    // Étape 1 : l'offre (le Pass Duo du membre)
+    expect(par('wizard-etape-1')).not.toBeNull();
+    expect(par('wf-offre-pass_duo').getAttribute('aria-checked')).toBe('true');
+    await cliquer('wizard-suivant');
+
+    // Étape 2 : la séance (résumé compact + « Changer de séance »)
+    expect(par('wizard-etape-2')).not.toBeNull();
+    expect(par('wf-seance-changer')).not.toBeNull();
+    await cliquer('wizard-suivant');
+
+    // Étape 3 : TES informations + message + aperçu réel
+    expect(par('wizard-etape-3')).not.toBeNull();
+    expect(par('wizard-suivant')).toBeNull(); // la 4e étape est le partage, après la création
     await cliquer('wizard-modifier-identite');
     saisir(par('wizard-champ-nom'), 'Aïcha la reine');
     await cliquer('wizard-photo-retirer');
-    await cliquer('wizard-suivant');
-
-    // Étape 2 : message prérempli, compteur, borné
-    expect(par('wizard-etape-2')).not.toBeNull();
     expect(par('wizard-message').value).toBe('Viens danser avec moi !');
     expect(par('wizard-compteur').textContent).toContain(`/${MESSAGE_MAX}`);
     expect(Number(par('wizard-message').getAttribute('maxLength'))).toBe(MESSAGE_MAX);
-    await cliquer('wizard-suivant');
-
-    // Étape 3 : aperçu réel
-    expect(par('wizard-etape-3')).not.toBeNull();
-    expect(par('wizard-suivant')).toBeNull(); // pas de 4e étape
     expect(par('wizard-apercu').textContent).toContain("Aïcha la reine t'invite à Afroboost");
     expect(par('wizard-apercu').textContent).toContain('Viens danser avec moi !');
     await cliquer('wizard-creer');
@@ -210,8 +219,8 @@ describe('V551 — InvitationWizard : création en 3 étapes', () => {
     routerGet();
     axios.post.mockResolvedValue({ data: passOuvert() });
     await monter(<InvitationWizard courses={COURSES} passOuvert={null} contexte={{ course: 'c1', occurrence: OCC2, offer: 'o2' }} />);
-    expect(par('pass-select-seance').value).toBe(`c1|${OCC2}`);
     await cliquer('wizard-suivant');
+    expect(par('wf-seance-resume')).not.toBeNull();
     await cliquer('wizard-suivant');
     await cliquer('wizard-creer');
     expect(axios.post.mock.calls[0][1].occurrence).toBe(OCC2);
@@ -264,11 +273,11 @@ describe('V551 — InvitationWizard : pass existant', () => {
     const { rerender } = { rerender: (el) => act(() => racine.render(el)) };
     await monter(<InvitationWizard courses={COURSES} passOuvert={p} onPass={onPass} />);
     await cliquer('wizard-modifier');
-    expect(par('wizard-etapes').children.length).toBeLessThanOrEqual(3);
+    // V558 : une modification ouvre directement « Ta carte » (étape 3 du même Wizard).
+    expect(par('wizard-etape-3')).not.toBeNull();
     expect(par('pass-select-seance')).toBeNull(); // la séance se change dans la carte du Pass (V539b)
-    await cliquer('wizard-suivant');
+    expect(par('wf-seance-resume')).toBeNull();
     saisir(par('wizard-message'), 'On bouge !');
-    await cliquer('wizard-suivant');
     await cliquer('wizard-enregistrer');
 
     expect(axios.post).not.toHaveBeenCalled();
@@ -315,9 +324,7 @@ describe('V552 — InvitationWizard : vraie carte dans l\'aperçu', () => {
     routerGet({ profil: PROFIL_LIE });
     await monter(<InvitationWizard courses={COURSES} passOuvert={passOuvert({ card_url: CARTE })} />);
     await cliquer('wizard-modifier');
-    await cliquer('wizard-suivant');
-    await cliquer('wizard-suivant');
-    expect(par('wizard-etape-3')).not.toBeNull();
+    expect(par('wizard-etape-3')).not.toBeNull();   // V558 : directement « Ta carte »
     expect(par('wizard-apercu-carte').getAttribute('src')).toBe(CARTE);
   });
 
@@ -365,11 +372,19 @@ describe('V552 — InvitationWizard : cibles tactiles', () => {
       expect(par(id).classList.contains('cp-wz-cible')).toBe(true);
     });
     await cliquer('wizard-modifier');
+    expect(par('wizard-enregistrer').classList.contains('cp-wz-cible')).toBe(true);
+    expect(par('wizard-annuler').classList.contains('cp-wz-tap')).toBe(true);
+  });
+
+  test('création : Continuer / Retour / Créer portent la cible tactile ; la séance se change dans le calendrier', async () => {
+    routerGet({ profil: PROFIL_LIE });
+    await monter(<InvitationWizard courses={COURSES} passOuvert={null} />);
     expect(par('wizard-suivant').classList.contains('cp-wz-cible')).toBe(true);
     await cliquer('wizard-suivant');
     expect(par('wizard-precedent').classList.contains('cp-wz-cible')).toBe(true);
+    expect(par('wf-seance-changer').classList.contains('cp-wz-tap')).toBe(true);
     await cliquer('wizard-suivant');
-    expect(par('wizard-enregistrer').classList.contains('cp-wz-cible')).toBe(true);
+    expect(par('wizard-creer').classList.contains('cp-wz-cible')).toBe(true);
   });
 });
 

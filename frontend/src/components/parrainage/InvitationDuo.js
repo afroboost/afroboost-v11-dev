@@ -259,6 +259,8 @@ export default function InvitationDuo({ token }) {
     setForm((prev) => (prev[k] === v ? prev : Object.assign({}, prev, { [k]: v })));
   };
 
+  // V558 : refus « déjà client » (jamais un abus) — la chaîne de son ami continue.
+  const CLIENT_EXISTANT = ['free_trial_already_used', 'free_trial_already_granted', 'abonne_actif'];
   const soumettre = (e) => {
     e.preventDefault();
     if (envoi) return;
@@ -290,7 +292,12 @@ export default function InvitationDuo({ token }) {
           setErreur('');
           setMessageEtape2(messageRefus(raison));
           setRetourEtape2((n) => n + 1);
+        } else if (s === 409 && CLIENT_EXISTANT.indexOf(raison) >= 0 && pass && pass.chain_required === true) {
+          // V558 : l'essai est UNE fois par personne — mais l'invitation déjà envoyée
+          // à son ami reste valable : la chaîne ne casse pas.
+          setErreur(`${messageRefus(raison)} L’invitation que tu as envoyée reste valable : ton ami pourra profiter de son propre essai s’il n’en a jamais bénéficié.`);
         } else if (s === 409 || (s === 403 && raison)) setErreur(messageRefus(raison));
+        else if (s === 400 && raison === 'whatsapp_requis') setErreur(messageRefus(raison));
         else if (s === 410) setErreur('Cette invitation a expiré');
         else if (s === 404) setErreur(messageInvitationDepuisReponse(404, err.response.data && err.response.data.detail));
         else if (s === 429) setErreur('Trop de tentatives. Réessaie dans un instant.');

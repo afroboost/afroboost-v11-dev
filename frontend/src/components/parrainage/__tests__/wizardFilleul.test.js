@@ -52,6 +52,9 @@ async function monter(element) {
   await vider();
 }
 const cliquer = async (id) => { await act(async () => { par(id).click(); }); await vider(); };
+// V558 : Offre → Séance → Ta carte (l'enfant naît ici) → Partage.
+const allerALaCarte = async () => { await cliquer('wf-continuer'); await cliquer('wf-seance-continuer'); };
+const allerAuPartage = async () => { await allerALaCarte(); await cliquer('wf-carte-continuer'); };
 
 const COURSE = { id: 'c1', name: 'Afroboost Dimanche', time: '18:30', locationName: 'Bord du Lac, Auvernier' };
 const OCC = '2026-09-27T18:30:00';
@@ -99,12 +102,15 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     await monter(<InvitationDuo token="T0" />);
     expect(par('wf-etape-1')).not.toBeNull();
     expect(conteneur.textContent).toContain("Bassi t'invite à découvrir Afroboost.");
-    expect(conteneur.textContent).toContain('Pour débloquer ton essai gratuit, invite à ton tour un ami.');
+    expect(conteneur.textContent).toContain('Ton premier essai est offert si tu n’en as encore jamais bénéficié. Pour le débloquer, invite à ton tour un ami.');
     expect(par('invitation-seance')).not.toBeNull();
     expect(par('invitation-form')).toBeNull();
     expect(conteneur.textContent).not.toContain("M'inscrire et débloquer le duo");
     await cliquer('wf-continuer');
-    expect(par('wf-etape-2')).not.toBeNull();
+    expect(par('wf-etape-2')).not.toBeNull();          // V558 : l'étape « Séance »
+    expect(axios.post).not.toHaveBeenCalled();         // l'enfant n'existe pas avant la séance
+    await cliquer('wf-seance-continuer');
+    expect(par('wf-etape-carte')).not.toBeNull();
     const appels = axios.post.mock.calls.map((c) => String(c[0]));
     expect(appels).toEqual([expect.stringMatching(/\/pass\/T0\/chain$/)]);
     expect(window.localStorage.getItem(cleChaine('T0'))).toBe('K1');
@@ -117,14 +123,16 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     axios.post.mockImplementation(() => new Promise((r) => { resoudre = r; }));
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
-    await cliquer('wf-continuer');
+    await allerALaCarte();
     expect(par('wf-preparation').textContent).toContain('Préparation de ton invitation…');
     expect(par('wf-whatsapp')).toBeNull(); // rien de cliquable avant l'enfant
+    expect(par('wf-carte-continuer')).toBeNull();
     // l'enfant arrive, mais le contrôle navigateur n'a pas encore répondu → toujours désactivé
     const enAttente = [];
     global.fetch = jest.fn(() => new Promise((r) => { enAttente.push(r); }));
     await act(async () => { resoudre({ status: 201, data: { child: CHILD(3), edit_key: 'K1', preview: PREVIEW_OK } }); });
     await vider();
+    await cliquer('wf-carte-continuer');
     expect(par('wf-whatsapp').disabled).toBe(true);
     expect(par('wf-copier').disabled).toBe(true);
     expect(par('wf-preparation')).not.toBeNull();
@@ -140,7 +148,7 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     routerPost();
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
-    await cliquer('wf-continuer');
+    await allerAuPartage();
     expect(par('invitation-form')).toBeNull();
     await cliquer('wf-whatsapp');
     expect(window.open).toHaveBeenCalledTimes(1);
@@ -149,14 +157,14 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     const share = axios.post.mock.calls.find((c) => String(c[0]).endsWith('/chain/share'));
     expect(share[1]).toEqual({ channel: 'whatsapp' });
     expect(par('wf-etape-3')).not.toBeNull();
-    expect(conteneur.textContent).toContain('Invitation prête');
+    expect(conteneur.textContent).toContain('Invitation envoyée');
     expect(conteneur.textContent).toContain('Termine ton inscription pour réserver ta place.');
     expect(conteneur.textContent).not.toContain('essai gratuit est maintenant débloqué');
     expect(par('invitation-form')).not.toBeNull();
     expect(par('invitation-rejoindre').textContent).toContain("M'inscrire à mon essai gratuit");
     // « Partager encore » : le 2e partage utilise la NOUVELLE share_url (v=4)
     await cliquer('wf-partager-encore');
-    expect(par('wf-etape-2')).not.toBeNull();
+    expect(par('wf-etape-partage')).not.toBeNull();
     expect(axios.post.mock.calls.filter((c) => String(c[0]).endsWith('/chain')).length).toBe(1);
     await cliquer('wf-whatsapp');
     expect(decodeURIComponent(String(window.open.mock.calls[1][0]))).toContain('/duo/T1?v=4');
@@ -168,7 +176,7 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
       : Promise.reject({ response: { status: 500 } })));
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
-    await cliquer('wf-continuer');
+    await allerAuPartage();
     await cliquer('wf-whatsapp');
     expect(par('wf-etape-3')).toBeNull();
     expect(par('wf-erreur-partage')).not.toBeNull();
@@ -186,7 +194,7 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     window.open = jest.fn(() => fen);
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
-    await cliquer('wf-continuer');
+    await allerALaCarte();
     const input = par('wf-nom');
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -194,13 +202,15 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
     expect(par('wf-mettre-a-jour')).toBeNull();
-    expect(par('wf-whatsapp').disabled).toBe(false);
-    await cliquer('wf-whatsapp');
+    // V558 : « Continuer » vers le partage FORCE l'enregistrement (PATCH avant tout partage).
+    await cliquer('wf-carte-continuer');
     const appel = axios.patch.mock.calls[0];
     expect(String(appel[0])).toMatch(/\/pass\/T0\/chain$/);
     expect(appel[1]).toEqual({ display_name: 'Henri', message: MESSAGE_CHAINE_DEFAUT });
     expect(appel[2].headers).toEqual({ 'X-Chain-Key': 'K1' });
-    expect(decodeURIComponent(fen.location.href)).toContain('/duo/T1?v=5');
+    expect(par('wf-whatsapp').disabled).toBe(false);
+    await cliquer('wf-whatsapp');
+    expect(decodeURIComponent(String(window.open.mock.calls[0][0]))).toContain('/duo/T1?v=5');
     expect(par('invitation-prenom').value).toBe('Henri'); // prérempli par l'étape 2
   });
 
@@ -219,7 +229,7 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     axios.post.mockResolvedValue({ status: 200, data: { child: CHILD(3), shared: false, preview: PREVIEW_OK } });
     axios.get.mockResolvedValue({ data: Object.assign({}, PUB, { chain: { exists: true, shared: false } }) });
     await monter(<InvitationDuo token="T0" />);
-    await cliquer('wf-continuer');
+    await allerALaCarte();
     expect(par('wf-autre-appareil')).not.toBeNull();
     expect(conteneur.textContent).toContain("Pour protéger ton invitation, termine l'inscription sur l'appareil avec lequel tu as partagé ton invitation.");
     expect(par('wf-whatsapp')).toBeNull();
@@ -253,7 +263,7 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     await cliquer('invitation-consent');
     await act(async () => { par('invitation-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
     await vider();
-    expect(par('wf-etape-2')).not.toBeNull();
+    expect(par('wf-etape-partage')).not.toBeNull();
     expect(par('wf-avis').textContent).toBe(messageRefus('invitation_requise'));
     expect(axios.post.mock.calls.some((c) => String(c[0]).endsWith('/chain'))).toBe(true);
   });
@@ -288,7 +298,7 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     navigator.canShare = jest.fn(() => true);
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
-    await cliquer('wf-continuer');
+    await allerAuPartage();
     expect(par('wf-apercu-simplifie')).toBeNull();
     expect(par('wf-partager-carte')).not.toBeNull();
     await cliquer('wf-partager-carte');
@@ -304,18 +314,18 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     navigator.share = jest.fn(() => Promise.reject(Object.assign(new Error('x'), { name: 'AbortError' })));
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
-    await cliquer('wf-continuer');
+    await allerAuPartage();
     expect(par('wf-partager-carte')).toBeNull(); // pas de fichier : pas de partage avec carte
     await cliquer('wf-partager');
     expect(axios.post.mock.calls.some((c) => String(c[0]).endsWith('/chain/share'))).toBe(false);
-    expect(par('wf-etape-2')).not.toBeNull();
+    expect(par('wf-etape-partage')).not.toBeNull();
   });
 
   test('409 chaine_en_attente à la création → message FR + Réessayer', async () => {
     axios.post.mockRejectedValue({ response: { status: 409, headers: { 'x-refus-raison': 'chaine_en_attente' }, data: {} } });
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
-    await cliquer('wf-continuer');
+    await allerALaCarte();
     expect(par('wf-erreur-creation').textContent).toContain(messageRefus('chaine_en_attente'));
     expect(par('wf-reessayer-creation')).not.toBeNull();
   });

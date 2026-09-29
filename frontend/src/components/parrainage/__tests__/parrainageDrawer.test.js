@@ -159,6 +159,8 @@ describe('V552 — le tiroir commun', () => {
 
   test('fermer (bouton, Échap, fond) : l\'assistant reste MONTÉ avec son état, focus rendu au raccourci', async () => {
     await monterCentre(ME_VIDE(), CONFIG_1);
+    // V558 : Offre → Séance → Ta carte (le message y est saisi).
+    await act(async () => { par('wizard-suivant').click(); });
     await act(async () => { par('wizard-suivant').click(); });
     const champ = par('wizard-message');
     await act(async () => { ecrire(champ, 'Viens danser avec moi dimanche !'); });
@@ -184,7 +186,7 @@ describe('V552 — le tiroir commun', () => {
     expect(par('parrainage-drawer')).toBeNull();
 
     expect(par('invitation-wizard')).toBe(wizardAvant);    // même nœud : jamais démonté
-    expect(par('wizard-etape-2')).not.toBeNull();
+    expect(par('wizard-etape-3')).not.toBeNull();
     expect(par('wizard-message').value).toBe('Viens danser avec moi dimanche !');
   });
 

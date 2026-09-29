@@ -197,7 +197,7 @@ describe('InvitationParrainage — le même parcours, un seul GET /me', () => {
     axios.put.mockResolvedValue({ data: maj });
     await monter(<InvitationParrainage />);
     await act(async () => { par('wizard-modifier').click(); });
-    for (let i = 0; i < 2; i += 1) await act(async () => { par('wizard-suivant').click(); });
+    // V558 : une modification ouvre directement « Ta carte ».
     await act(async () => { par('wizard-enregistrer').click(); });
     await attendre();
     expect(axios.put).toHaveBeenCalledTimes(1);

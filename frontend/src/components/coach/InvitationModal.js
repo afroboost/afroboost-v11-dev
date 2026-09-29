@@ -5,13 +5,16 @@
  * aucun canal, aucune programmation, aucun crédit. Le coach prépare une carte
  * et la partage lui-même (WhatsApp, partage natif, lien, QR).
  *
- * TROIS ÉTAPES :
- *   1. Type      — Essai gratuit, Pass Duo, Événement gratuit, Événement payant ;
- *   2. Contenu   — titre, sous-titre, message (≤ 280), miniature, cours / date /
- *                  heure / lieu, offre, texte du bouton ;
- *   3. Aperçu    — enregistre (POST la 1re fois, PUT ensuite : l'id est gardé,
+ * V558 — LE MÊME WIZARD QUE L'ABONNÉ ET LE FILLEUL, QUATRE ÉTAPES (stepper commun) :
+ *   1. Offre     — Essai gratuit, Pass Duo, Événement gratuit, Événement payant ;
+ *   2. Séance    — l'offre, puis la séance : le calendrier EXISTANT (SessionsModal,
+ *                  séances des cours proposés) remplit cours / date / heure, que
+ *                  les champs détaillés gardent modifiables (événements) ;
+ *   3. Ta carte  — titre, sous-titre, message (≤ 280), miniature, texte du bouton ;
+ *   4. Partage   — enregistre (POST la 1re fois, PUT ensuite : l'id est gardé,
  *                  jamais deux POST), aperçu 1200×630, bandeau « Prénom
  *                  t'invite… », « Activer le lien », puis le partage.
+ * Le coach / partenaire crée ici la RACINE de la chaîne.
  *
  * Événement payant : l'activation répond 409 tant que le fuseau horaire des
  * paliers n'est pas corrigé → brouillon seulement, partage désactivé.
@@ -29,10 +32,13 @@ import { QRCodeSVG } from 'qrcode.react';
 import SvgIcon from '../SvgIcon';
 import InvitationMiniature from './InvitationMiniature';
 import BandeauInvitant from '../parrainage/BandeauInvitant';
+import SessionsModal from '../SessionsModal'; // V558 — le calendrier EXISTANT
+import { ETAPES_WIZARD, ResumeSeance } from '../parrainage/wizardCommun'; // V558 — le MÊME Wizard
 import useLargeurEcran from '../../utils/useLargeurEcran';
 import '../parrainage/parrainage.css';
 import '../parrainage/invitationWizard.css';
-import { lienWhatsApp, copier, partager, verifierApercuNavigateur } from '../../utils/parrainage';
+import '../parrainage/wizardFilleul.css'; // V558 : résumé de séance (cp-wf-seance)
+import { lienWhatsApp, copier, partager, verifierApercuNavigateur, seancesPourCalendrier } from '../../utils/parrainage';
 import {
   TYPES_INVITATION, CTA_DEFAUT, TITRE_DEFAUT, TITRE_MAX, SOUS_TITRE_MAX, MESSAGE_MAX, CTA_MAX,
   TEXTE_FUSEAU_PALIERS, offresPourType, paliersOffre, libellePrix, heureDuCours, prochaineDate,
@@ -41,11 +47,12 @@ import {
   lireApercuBrouillon, coursPourInvitation, ecartSeanceCours,
 } from '../../utils/invitationCampagne';
 
-const STEPS = [
-  { id: 1, label: 'Type', icon: 'layers' },
-  { id: 2, label: 'Contenu', icon: 'edit' },
-  { id: 3, label: 'Aperçu & partage', icon: 'share' },
-];
+// V558 : les libellés du stepper COMMUN (Offre · Séance · Ta carte · Partage).
+const ICONES_ETAPES = ['layers', 'calendar', 'edit', 'share'];
+const STEPS = ETAPES_WIZARD.map((label, i) => ({ id: i + 1, label, icon: ICONES_ETAPES[i] }));
+const DERNIERE = STEPS.length;
+// Les champs de l'étape « Séance » (les autres appartiennent à « Ta carte »).
+const CHAMPS_SEANCE = ['type', 'course_id', 'date', 'heure', 'offer_id'];
 
 const SEUIL_BOTTOM_SHEET = 480;
 
@@ -131,6 +138,7 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
   const [qrVisible, setQrVisible] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [confirmFermeture, setConfirmFermeture] = useState(false);
+  const [calendrier, setCalendrier] = useState(false); // V558 : le calendrier existant
   const enVolRef = useRef(false); // un seul enregistrement à la fois
   const idRef = useRef('');       // l'id reçu au 1er POST : ensuite, PUT seulement
   const defilementRef = useRef(null); // le conteneur défilant (remis en haut à chaque étape)
@@ -249,6 +257,19 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
     });
   };
 
+  // V558 : une séance choisie dans le calendrier remplit cours + date + heure d'un coup
+  // (le calendrier ne propose que les séances des cours proposés pour cette offre).
+  const choisirSeanceCalendrier = (occ) => {
+    setCalendrier(false);
+    if (!occ || !occ.id || !occ.iso) return;
+    const iso = String(occ.iso);
+    const date = iso.slice(0, 10);
+    const heure = heureDuCours(iso.slice(11, 16)) || '';
+    setTouche(true);
+    setForm((prev) => (prev.course_id === String(occ.id) && prev.date === date && prev.heure === heure
+      ? prev : Object.assign({}, prev, { course_id: String(occ.id), date, heure })));
+  };
+
   // INV-5 : changer d'offre retire un cours qui ne lui est pas rattaché.
   const choisirOffre = (id) => {
     setTouche(true);
@@ -314,7 +335,7 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
 
   // ── Aperçu ───────────────────────────────────────────────────────────────
   const carteActive = dto && dto.status === 'active' ? urlHttps(dto.card_url) : '';
-  const cleApercu = etape === 3 && dto && dto.id && !carteActive
+  const cleApercu = etape === DERNIERE && dto && dto.id && !carteActive
     ? `${dto.id}|${dto.version || 0}|${dto.updated_at || ''}`
     : '';
 
@@ -405,7 +426,14 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
   const suivant = () => {
     setErreur('');
     if (etape === 1) { if (type) setEtape(2); return; }
-    if (etape === 2) enregistrer({ puis: () => setEtape(3) });
+    if (etape === 2) {
+      // V558 : la séance doit être complète avant « Ta carte » (rien n'est encore écrit).
+      if (CHAMPS_SEANCE.some((k) => erreurs[k])) { setMontrerErreurs(true); return; }
+      setMontrerErreurs(false);
+      setEtape(3);
+      return;
+    }
+    if (etape === 3) enregistrer({ puis: () => setEtape(DERNIERE) });
   };
   const precedent = () => { setErreur(''); setQrVisible(false); setEtape((e) => Math.max(1, e - 1)); };
 
@@ -416,7 +444,7 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
   const etape1 = (
     <div>
       <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: '14px', margin: '0 0 14px' }}>
-        Que veux-tu offrir ? Tu partageras ensuite le lien toi-même.
+        Qu’est-ce que tu veux offrir ? Tu partageras ensuite le lien toi-même.
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
         {TYPES_INVITATION.map((t) => {
@@ -506,13 +534,64 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
     </Champ>
   ) : null;
 
+  const bandeType = infoType ? (
+    <p style={{ display: 'flex', alignItems: 'center', gap: '8px', color: PRIMAIRE, fontSize: '13px', fontWeight: 700, margin: '0 0 14px' }}>
+      <SvgIcon name={infoType.icone} size={16} /> {infoType.libelle}
+    </p>
+  ) : null;
+
+  // V558 — étape « Séance » : le calendrier EXISTANT sur les séances des cours proposés.
+  const seancesCal = seancesPourCalendrier(coursProposes.map((c) => ({
+    course_id: c.id, name: c.name, location: c.location, occurrences: c.occurrences,
+  })));
+  const seanceResumee = coursChoisi && form.date && heureDuCours(form.heure)
+    ? { occurrence: `${form.date}T${heureDuCours(form.heure)}:00`, nom: coursChoisi.name || '', lieu: coursChoisi.location || '' }
+    : null;
+  const etapeSeance = (
+    <div>
+      {bandeType}
+      {offreEnPremier ? blocOffre : null}
+      {seanceResumee ? (
+        <div className="cp-root">
+          <ResumeSeance seance={seanceResumee} titre="Séance offerte" onChanger={seancesCal.length ? () => setCalendrier(true) : null} />
+        </div>
+      ) : null}
+      {!seanceResumee && seancesCal.length ? (
+        <button type="button" data-testid="inv-calendrier" onClick={() => setCalendrier(true)}
+                style={Object.assign(styleBouton('contour', true), { width: '100%', marginBottom: '14px' })}>
+          <SvgIcon name="calendar" size={18} /> Choisir la séance dans le calendrier
+        </button>
+      ) : null}
+      {calendrier ? (
+        <SessionsModal open onClose={() => setCalendrier(false)} occurrencesFournies={seancesCal}
+                       libelleAction="Choisir cette séance" noteAction="C’est la séance annoncée sur ton invitation."
+                       onReserve={choisirSeanceCalendrier} />
+      ) : null}
+      {blocCours}
+      {offreEnPremier ? null : blocOffre}
+      {eventPaid && offreChoisie ? (
+        <div data-testid="inv-paliers" style={{ marginBottom: '14px', padding: '12px', borderRadius: '10px', background: rgbaP(0.08), border: `1px solid ${rgbaP(0.25)}` }}>
+          <span style={styleLabel}>Tarifs de l'offre (lecture seule)</span>
+          {paliers.length ? (
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${paliers.length}, 1fr)`, gap: '8px' }}>
+              {paliers.map((p) => (
+                <div key={p.cle} style={{ padding: '8px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.65)' }}>{p.libelle}</div>
+                  <div style={{ fontSize: '15px', fontWeight: 700, color: 'rgba(255,255,255,0.96)' }}>{libellePrix(p.prix)}</div>
+                </div>
+              ))}
+            </div>
+          ) : <p style={styleAide}>Aucun prix renseigné sur cette offre.</p>}
+          <p style={styleAide}>Les paliers se modifient dans l'offre elle-même.</p>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  // V558 — étape « Ta carte » : ce que l'invité verra.
   const etape2 = (
     <div>
-      {infoType ? (
-        <p style={{ display: 'flex', alignItems: 'center', gap: '8px', color: PRIMAIRE, fontSize: '13px', fontWeight: 700, margin: '0 0 14px' }}>
-          <SvgIcon name={infoType.icone} size={16} /> {infoType.libelle}
-        </p>
-      ) : null}
+      {bandeType}
 
       <Champ id="inv-titre" label="Titre" erreur={err('title')}>
         <input id="inv-titre" data-testid="inv-titre" style={styleChamp} maxLength={TITRE_MAX}
@@ -535,27 +614,6 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
                              defaultUrl={urlHttps(offreChoisie && (offreChoisie.image_url || offreChoisie.image)) || urlHttps(options && options.default_image_url)}
                              onChange={surMiniature} onBusyChange={surMiniatureOccupee} />
       </div>
-
-      {offreEnPremier ? blocOffre : null}
-      {blocCours}
-      {offreEnPremier ? null : blocOffre}
-
-      {eventPaid && offreChoisie ? (
-        <div data-testid="inv-paliers" style={{ marginBottom: '14px', padding: '12px', borderRadius: '10px', background: rgbaP(0.08), border: `1px solid ${rgbaP(0.25)}` }}>
-          <span style={styleLabel}>Tarifs de l'offre (lecture seule)</span>
-          {paliers.length ? (
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${paliers.length}, 1fr)`, gap: '8px' }}>
-              {paliers.map((p) => (
-                <div key={p.cle} style={{ padding: '8px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', textAlign: 'center' }}>
-                  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.65)' }}>{p.libelle}</div>
-                  <div style={{ fontSize: '15px', fontWeight: 700, color: 'rgba(255,255,255,0.96)' }}>{libellePrix(p.prix)}</div>
-                </div>
-              ))}
-            </div>
-          ) : <p style={styleAide}>Aucun prix renseigné sur cette offre.</p>}
-          <p style={styleAide}>Les paliers se modifient dans l'offre elle-même.</p>
-        </div>
-      ) : null}
 
       <Champ id="inv-cta" label="Texte du bouton" erreur={err('cta_label')}>
         <input id="inv-cta" data-testid="inv-cta" style={styleChamp} maxLength={CTA_MAX}
@@ -635,7 +693,7 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
   const brouillon = !dto || dto.status !== 'active';
   // Lien ACTIF : plus de « brouillon » ; à l'étape 3, le bouton n'apparaît que
   // s'il reste des changements non enregistrés (le PUT n'envoie jamais `status`).
-  const montrerEnregistrer = etape >= 2 && (brouillon || etape === 2 || nonEnregistre);
+  const montrerEnregistrer = etape >= 3 && (brouillon || etape === 3 || nonEnregistre);
   let libelleEnregistrer;
   if (occupe) libelleEnregistrer = mobile ? '…' : 'Enregistrement…';
   else if (brouillon) libelleEnregistrer = mobile ? 'Brouillon' : 'Enregistrer le brouillon';
@@ -683,14 +741,15 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
         <div ref={defilementRef} data-testid="inv-defilement" style={{ flex: 1, overflowY: 'auto', padding: '8px 20px 16px', WebkitOverflowScrolling: 'touch' }}>
           {erreurOptions ? <p role="alert" style={Object.assign({}, styleErreur, { fontSize: '14px', marginBottom: '12px' })} data-testid="inv-erreur-options">{erreurOptions}</p> : null}
           {etape === 1 ? etape1 : null}
-          {etape === 2 ? (options ? etape2 : <p style={styleAide}>Chargement de tes cours et offres…</p>) : null}
-          {etape === 3 ? etape3 : null}
+          {etape === 2 ? (options ? etapeSeance : <p style={styleAide}>Chargement de tes cours et offres…</p>) : null}
+          {etape === 3 ? (options ? etape2 : <p style={styleAide}>Chargement de tes cours et offres…</p>) : null}
+          {etape === DERNIERE ? etape3 : null}
         </div>
 
         {/* Pied fixe */}
         <div style={{ padding: '12px 20px', paddingBottom: mobile ? 'calc(12px + env(safe-area-inset-bottom, 0px))' : '12px', borderTop: `1px solid ${rgbaP(0.2)}` }}>
           {erreur ? <p role="alert" data-testid="inv-erreur" style={Object.assign({}, styleErreur, { fontSize: '13px', margin: '0 0 10px' })}>{erreur}</p> : null}
-          {montrerErreurs && !valide && etape === 2 ? (
+          {montrerErreurs && !valide && (etape === 2 || etape === 3) ? (
             <p role="alert" style={Object.assign({}, styleErreur, { margin: '0 0 10px' })}>Corrige les champs signalés pour continuer.</p>
           ) : null}
           {feedback ? <p role="status" data-testid="inv-feedback" style={{ color: 'rgba(255,255,255,0.85)', fontSize: '13px', margin: '0 0 10px' }}>{feedback}</p> : null}
@@ -706,20 +765,20 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
               </button>
             ) : null}
             {montrerEnregistrer ? (
-              <button type="button" data-testid="inv-enregistrer" onClick={() => enregistrer({ force: etape === 3 })}
+              <button type="button" data-testid="inv-enregistrer" onClick={() => enregistrer({ force: etape === DERNIERE })}
                       disabled={!peutEnregistrer}
                       style={Object.assign(styleBouton('contour', peutEnregistrer), mobile ? { flex: 'none', padding: '10px 12px' } : {})}>
                 <SvgIcon name="save" size={16} /> {libelleEnregistrer}
               </button>
             ) : null}
-            {etape < 3 ? (
+            {etape < DERNIERE ? (
               <button type="button" data-testid="inv-suivant" onClick={suivant}
                       disabled={occupe || miniatureOccupee || (etape === 1 && !type)}
                       style={Object.assign(styleBouton('plein', !(occupe || miniatureOccupee || (etape === 1 && !type))), mobile ? { flex: 1, minWidth: 0 } : {})}>
                 Suivant <SvgIcon name="arrowRight" size={16} />
               </button>
             ) : null}
-            {etape === 3 && brouillon && !eventPaid && dto ? (
+            {etape === DERNIERE && brouillon && !eventPaid && dto ? (
               <button type="button" data-testid="inv-activer" onClick={activer} disabled={occupe}
                       style={Object.assign(styleBouton('plein', !occupe), mobile ? { flex: 1, minWidth: 0 } : {})}>
                 <SvgIcon name="zap" size={16} /> Activer le lien

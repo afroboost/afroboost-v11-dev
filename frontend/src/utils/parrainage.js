@@ -292,9 +292,13 @@ export function messageRefus(raison) {
       return "C'est ton lien : partage-le à un ami (tu ne peux pas être ton propre invité).";
     case 'deja_filleul_occurrence':
       return 'Tu es déjà inscrit à cette séance avec un autre Pass Duo.';
+    // V558 : l'essai gratuit est UNE FOIS PAR PERSONNE, à vie — on le dit clairement.
     case 'free_trial_already_used':
+      return 'Tu as déjà utilisé ton essai gratuit.';
     case 'free_trial_already_granted':
-      return "Tu as déjà profité de l'essai gratuit Afroboost";
+      return 'Tu as déjà un essai gratuit en attente : il n’y en a qu’un par personne.';
+    case 'whatsapp_requis':
+      return 'Indique ton numéro WhatsApp.';
     case 'abonne_actif':
       return 'Tu es déjà membre : réserve directement depuis ton espace';
     case 'pass_ferme':
@@ -513,7 +517,8 @@ export function lignesHistorique(history, passes) {
 // partage ne change jamais ; seul `?v=` du `share_url` renvoyé peut bouger.
 
 /** Nom affiché quand aucun vrai prénom n'est disponible (jamais un e-mail). */
-export const NOM_NEUTRE = 'Un membre Afroboost';
+// V558 : repli UNIQUEMENT si l'identité est réellement inconnue — jamais « Un membre Afroboost ».
+export const NOM_NEUTRE = 'Afroboost';
 /** Longueur maximale du message d'invitation (contrat : ≤ 280). */
 export const MESSAGE_MAX = 280;
 /** Longueur maximale du nom d'invitation (contrat : 1..40). */
@@ -720,9 +725,54 @@ function _corpsChaine({ display_name, message }) {
 }
 
 /** `POST /pass/{token}/chain` — crée ou rend l'invitation enfant (promesse axios). */
-export function creerInvitationChaine({ token, display_name, message }) {
+export function creerInvitationChaine({ token, display_name, message, kind, course_id, occurrence }) {
+  // V558 : le type et la séance CHOISIS pour l'ami partent avec la création ; si
+  // l'enfant existe déjà, la clé de CET appareil permet au serveur de les reprendre.
+  const corps = _corpsChaine({ display_name, message });
+  if (kind) corps.kind = kind;
+  if (course_id && occurrence) { corps.course_id = course_id; corps.occurrence = occurrence; }
+  const cle = lireCleChaine(token);
   return axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(token || '')}/chain`,
-    _corpsChaine({ display_name, message }), { timeout: 20000 });
+    corps, { timeout: 20000, headers: cle ? { 'X-Chain-Key': cle } : {} });
+}
+
+/** V558 — `GET /pass/{token}/chain/options` → `{types, seances, seance_parent}` (aucune PII). */
+export function lireOptionsChaine({ token }) {
+  return axios.get(`${API_PARRAINAGE}/pass/${encodeURIComponent(token || '')}/chain/options`, { timeout: 15000 });
+}
+
+/** V558 — change la séance (et/ou le type) de l'invitation enfant AVANT son envoi. */
+export function choisirSeanceChaine({ token, editKey, kind, course_id, occurrence }) {
+  const corps = {};
+  if (kind) corps.kind = kind;
+  if (course_id && occurrence) { corps.course_id = course_id; corps.occurrence = occurrence; }
+  return axios.patch(`${API_PARRAINAGE}/pass/${encodeURIComponent(token || '')}/chain`,
+    corps, { headers: { 'X-Chain-Key': editKey || '' }, timeout: 20000 });
+}
+
+/**
+ * V558 — les séances offrables → le format du calendrier EXISTANT (SessionsModal,
+ * `occurrencesFournies`) : une entrée par date, avec le cours, l'heure et le lieu.
+ */
+export function seancesPourCalendrier(seances) {
+  const sortie = [];
+  (Array.isArray(seances) ? seances : []).forEach((s) => {
+    occurrencesPourCalendrier(s && s.occurrences, {
+      id: s && s.course_id, name: s && s.name, locationName: s && s.location,
+    }).forEach((o) => sortie.push(o));
+  });
+  return sortie.sort((a, b) => a.quand - b.quand);
+}
+
+/** V558 — le message d'un refus du choix de séance (400 / 409). */
+export function messageRefusSeance(refus) {
+  const r = refus || {};
+  if (r.raison === 'seance_indisponible' || r.raison === 'seance_non_autorisee') return 'Cette séance n’est plus disponible.';
+  if (r.raison === 'invitation_deja_partagee') return 'Ton invitation a déjà été envoyée : sa séance ne peut plus changer.';
+  if (r.raison === 'type_non_autorise') return 'Cette offre n’est plus proposée. Choisis-en une autre.';
+  if (r.status === 403) return 'Cette invitation ne peut être modifiée que depuis l’appareil qui l’a créée.';
+  if (r.status === 429) return 'Trop de tentatives. Réessaie dans un instant.';
+  return 'La séance n’a pas pu être enregistrée. Réessaie dans un instant.';
 }
 
 /**

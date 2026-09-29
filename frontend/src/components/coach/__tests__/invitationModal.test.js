@@ -119,7 +119,7 @@ describe('InvitationModal — ouverture et types (B, C)', () => {
     expect(axios.get.mock.calls.filter((c) => /campaigns\/options$/.test(String(c[0]))).length).toBe(1);
   });
 
-  test('C — aucun contact, destinataire, canal, programmation ni case à cocher (étapes 1 et 2)', async () => {
+  test('C — aucun contact, destinataire, canal, programmation ni case à cocher (étapes Offre et Séance)', async () => {
     await monter();
     const verifier = () => {
       const txt = par('inv-modal').textContent;
@@ -129,7 +129,7 @@ describe('InvitationModal — ouverture et types (B, C)', () => {
     verifier();
     for (const t of ['trial', 'pass_duo', 'event_free', 'event_paid']) {
       await cliquer(`inv-type-${t}`);
-      expect(par('inv-titre')).not.toBeNull(); // étape 2
+      expect(par('inv-cours') || par('inv-offre')).not.toBeNull(); // V558 : étape 2 « Séance »
       verifier();
       await cliquer('inv-precedent');
     }
@@ -141,14 +141,16 @@ describe('InvitationModal — création par type (D, E, F)', () => {
     axios.post.mockResolvedValue({ data: dto() });
     await monter();
     await cliquer('inv-type-trial');
-    expect(par('inv-cta').value).toBe('Réserver mon essai');
     await saisir('inv-cours', 'c1');
     expect(par('inv-heure').value).toBe('18:30');
     expect(par('inv-date').value).toBe(DATE);
     expect(par('inv-modal').textContent).toContain('Bord du Lac, Auvernier');
     await saisir('inv-offre', 'free1');
+    await cliquer('inv-suivant');                      // V558 : Séance → Ta carte (rien n'est écrit)
+    expect(axios.post).not.toHaveBeenCalled();
+    expect(par('inv-cta').value).toBe('Réserver mon essai');
     await saisir('inv-message', 'Viens danser !');
-    await cliquer('inv-suivant');
+    await cliquer('inv-suivant');                      // Ta carte → Partage : enregistrement
     expect(axios.post).toHaveBeenCalledTimes(1);
     const [url, corps] = axios.post.mock.calls[0];
     expect(url).toBe('/api/referral/campaigns');
@@ -165,6 +167,7 @@ describe('InvitationModal — création par type (D, E, F)', () => {
     await saisir('inv-cours', 'c2');
     expect(par('inv-heure').value).toBe('19:15');
     await cliquer('inv-suivant');
+    await cliquer('inv-suivant');
     const corps = axios.post.mock.calls[0][1];
     expect(corps).toMatchObject({ type: 'pass_duo', course_id: 'c2', occurrence: `${DATE}T19:15`, offer_id: null, cta_label: 'Créer mon Pass Duo' });
     INTERDITS.forEach((k) => expect(corps).not.toHaveProperty(k));
@@ -177,7 +180,9 @@ describe('InvitationModal — création par type (D, E, F)', () => {
     await saisir('inv-offre', '');
     await cliquer('inv-suivant');
     expect(axios.post).not.toHaveBeenCalled();
+    expect(par('inv-offre')).not.toBeNull();           // V558 : on reste sur « Séance »
     await saisir('inv-offre', 'free1');
+    await cliquer('inv-suivant');
     await cliquer('inv-suivant');
     const corps = axios.post.mock.calls[0][1];
     expect(corps).toMatchObject({ type: 'event_free', offer_id: 'free1', course_id: null, occurrence: null, cta_label: "Je m'inscris" });
@@ -196,6 +201,7 @@ describe('InvitationModal — event_paid (G), PUT, partage', () => {
     expect(txt).toContain('Standard');
     expect(txt).toContain('Dernière minute');
     await cliquer('inv-suivant');
+    await cliquer('inv-suivant');
     expect(axios.post.mock.calls[0][1]).toMatchObject({ type: 'event_paid', offer_id: 'pay1', status: 'draft', occurrence: null, course_id: null });
     expect(par('inv-activer')).toBeNull();
     expect(par('inv-modal').textContent).toContain(TEXTE_FUSEAU_PALIERS);
@@ -208,7 +214,7 @@ describe('InvitationModal — event_paid (G), PUT, partage', () => {
     expect(axios.put).toHaveBeenCalledTimes(1);
     expect(axios.put.mock.calls[0][0]).toBe('/api/referral/campaigns/inv-1');
     expect(axios.put.mock.calls[0][1]).not.toHaveProperty('type');
-    // retour à l'étape 2, modification, Suivant → PUT encore, jamais un 2e POST
+    // retour à « Ta carte », modification, Suivant → PUT encore, jamais un 2e POST
     await cliquer('inv-precedent');
     await saisir('inv-titre', 'Grande soirée');
     await cliquer('inv-suivant');
@@ -227,6 +233,7 @@ describe('InvitationModal — event_paid (G), PUT, partage', () => {
     await monter();
     await cliquer('inv-type-pass_duo');
     await saisir('inv-cours', 'c1');
+    await cliquer('inv-suivant');
     await cliquer('inv-suivant');
     const appelApercu = axios.get.mock.calls.find((c) => /invite-preview\/inv-1\.jpg$/.test(String(c[0])));
     expect(appelApercu).toBeTruthy();
@@ -253,18 +260,22 @@ describe('InvitationModal — event_paid (G), PUT, partage', () => {
 });
 
 describe('InvitationModal — validation, erreurs, fermeture', () => {
-  test('titre vide ou cours manquant (trial) bloque Suivant', async () => {
+  test('cours manquant (trial) bloque « Séance » ; titre vide bloque « Ta carte »', async () => {
     await monter();
     await cliquer('inv-type-trial');
+    await cliquer('inv-suivant');
+    expect(axios.post).not.toHaveBeenCalled();
+    expect(par('inv-cours-erreur')).not.toBeNull();
+    expect(par('inv-cours')).not.toBeNull(); // toujours « Séance »
+    await saisir('inv-cours', 'c1');
+    await saisir('inv-offre', 'free1');
+    await cliquer('inv-suivant');
+    expect(par('inv-titre')).not.toBeNull(); // « Ta carte »
     await saisir('inv-titre', '');
     await cliquer('inv-suivant');
     expect(axios.post).not.toHaveBeenCalled();
     expect(par('inv-titre-erreur')).not.toBeNull();
-    expect(par('inv-cours-erreur')).not.toBeNull();
-    expect(par('inv-titre')).not.toBeNull(); // toujours étape 2
-    await saisir('inv-titre', 'Mon essai');
-    await cliquer('inv-suivant');
-    expect(axios.post).not.toHaveBeenCalled(); // le cours manque encore
+    expect(par('inv-titre')).not.toBeNull(); // toujours « Ta carte »
   });
 
   test('401 au chargement des options → « Reconnecte-toi »', async () => {
@@ -279,14 +290,15 @@ describe('InvitationModal — validation, erreurs, fermeture', () => {
     await cliquer('inv-type-pass_duo');
     await saisir('inv-cours', 'c1');
     await cliquer('inv-suivant');
+    await cliquer('inv-suivant');
     expect(par('inv-modal').textContent).toContain(TEXTE_RECONNEXION);
-    expect(par('inv-titre')).not.toBeNull(); // on reste sur l'étape 2
+    expect(par('inv-titre')).not.toBeNull(); // on reste sur « Ta carte »
   });
 
   test('fermer avec saisie non enregistrée → confirmation dans la modale (Échap aussi)', async () => {
     const p = await monter();
     await cliquer('inv-type-trial');
-    await saisir('inv-message', 'Brouillon en cours');
+    await saisir('inv-cours', 'c1'); // une saisie non enregistrée
     await cliquer('inv-fermer');
     expect(p.onClose).not.toHaveBeenCalled();
     expect(par('inv-confirmer-fermeture')).not.toBeNull();
@@ -319,7 +331,10 @@ describe('InvitationModal — retours des captures (360 → 1440)', () => {
     await cliquer('inv-type-pass_duo');
     expect(valeur).toBe(0);
     await saisir('inv-cours', 'c1');
-    valeur = 900; // l'étape 2 a défilé jusqu'au pied
+    valeur = 900; // l'étape « Séance » a défilé jusqu'au pied
+    await cliquer('inv-suivant');
+    expect(valeur).toBe(0);
+    valeur = 900; // « Ta carte » aussi
     await cliquer('inv-suivant');
     expect(par('inv-apercu')).not.toBeNull();
     expect(valeur).toBe(0); // l'aperçu arrive en haut, jamais tronqué
@@ -332,8 +347,10 @@ describe('InvitationModal — retours des captures (360 → 1440)', () => {
     expect(par('inv-date').value).toBe('');
     expect(par('inv-heure').value).toBe('');
     await cliquer('inv-suivant'); // offre unique présélectionnée : rien ne bloque
+    await cliquer('inv-suivant');
     expect(axios.post).toHaveBeenCalledTimes(1);
     expect(axios.post.mock.calls[0][1]).toMatchObject({ occurrence: null, course_id: null });
+    await cliquer('inv-precedent');
     await cliquer('inv-precedent');
     await saisir('inv-cours', 'c1');
     expect(par('inv-date').value).toBe(DATE);
@@ -352,6 +369,8 @@ describe('InvitationModal — retours des captures (360 → 1440)', () => {
     window.innerWidth = 360;
     await monter();
     await cliquer('inv-type-pass_duo');
+    await saisir('inv-cours', 'c1');
+    await cliquer('inv-suivant'); // V558 : le brouillon s'enregistre depuis « Ta carte »
     const pied = par('inv-pied-boutons');
     expect(pied.style.flexWrap).toBe('nowrap');
     const prec = par('inv-precedent');
@@ -370,6 +389,7 @@ describe('InvitationModal — retours des captures (360 → 1440)', () => {
     await monter();
     await cliquer('inv-type-pass_duo');
     await saisir('inv-cours', 'c1');
+    await cliquer('inv-suivant');
     await cliquer('inv-suivant');
     expect(par('inv-enregistrer').textContent).toContain('Enregistrer le brouillon');
     await cliquer('inv-activer');
@@ -390,6 +410,9 @@ describe('InvitationModal — retours des captures (360 → 1440)', () => {
     expect(CTA_MAX).toBe(30);
     await monter();
     await cliquer('inv-type-trial');
+    await saisir('inv-cours', 'c1');
+    await saisir('inv-offre', 'free1');
+    await cliquer('inv-suivant');
     expect(Number(par('inv-cta').getAttribute('maxLength'))).toBe(30);
     await saisir('inv-cta', 'x'.repeat(45));
     expect(par('inv-cta').value.length).toBe(30);
@@ -454,5 +477,43 @@ describe('InvitationModal — INV-5 cohérence offre / cours', () => {
     await cliquer('inv-type-trial');
     expect(valeurs('inv-offre')).toEqual([]);
     expect(par('inv-modal').textContent).toContain('Aucune offre gratuite publiée avec un cours publié');
+  });
+});
+
+// ═══ V558 — le MÊME Wizard : stepper commun + calendrier existant ═══════════
+describe('InvitationModal — V558 : Offre · Séance · Ta carte · Partage', () => {
+  test('stepper commun ; la séance choisie dans le calendrier existant remplit cours + date + heure', async () => {
+    const pad = (n) => String(n).padStart(2, '0');
+    const j = new Date(Date.now() + 86400000);
+    const jour = `${j.getFullYear()}-${pad(j.getMonth() + 1)}-${pad(j.getDate())}`;
+    const occ = `${jour}T19:15:00`;
+    axios.get.mockImplementation((url) => (/campaigns\/options$/.test(String(url))
+      ? Promise.resolve({ data: Object.assign({}, OPTIONS, { courses: [
+        Object.assign({}, OPTIONS.courses[0], { occurrences: [] }),
+        Object.assign({}, OPTIONS.courses[1], { occurrences: [occ] })] }) })
+      : Promise.resolve({ data: {} })));
+    window.scrollTo = jest.fn();
+    await monter();
+    expect(par('inv-modal').textContent).toContain('Offre');
+    expect(par('inv-modal').textContent).toContain('Ta carte');
+    await cliquer('inv-type-pass_duo');
+    await cliquer('inv-calendrier');
+    const q = (id) => document.querySelector(`[data-testid="${id}"]`);
+    expect(q('sessions-modal')).not.toBeNull();
+    if (!q(`sessions-jour-${jour}`)) await act(async () => { q('sessions-mois-suivant').click(); });
+    await act(async () => { q(`sessions-jour-${jour}`).click(); });
+    await act(async () => { q('sessions-occurrence-0').click(); });
+    await act(async () => { q('sessions-reserver').click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
+    await flush();
+    expect(par('inv-cours').value).toBe('c2');
+    expect(par('inv-date').value).toBe(jour);
+    expect(par('inv-heure').value).toBe('19:15');
+    expect(par('wf-seance-resume').textContent).toContain('Afroboost Mercredi');
+    expect(par('wf-seance-resume').textContent).toContain('Neuchâtel');
+    axios.post.mockResolvedValue({ data: dto({ type: 'pass_duo' }) });
+    await cliquer('inv-suivant');
+    await cliquer('inv-suivant');
+    expect(axios.post.mock.calls[0][1]).toMatchObject({ type: 'pass_duo', course_id: 'c2', occurrence: `${jour}T19:15` });
   });
 });

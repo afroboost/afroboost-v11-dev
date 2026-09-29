@@ -1,9 +1,16 @@
 /**
  * V551 — PARRAINAGE V2 : L'ASSISTANT D'INVITATION DU MEMBRE.
  *
+ * V558 — LE MÊME WIZARD QUE LE PARCOURS DU FILLEUL (briques de wizardCommun) :
+ *   1 Offre (« Qu'est-ce que tu veux offrir à ton ami ? ») · 2 Séance (le
+ *   calendrier EXISTANT, SessionsModal, puis le résumé compact et l'offre du
+ *   cours) · 3 Ta carte (tes informations + message + aperçu, « Créer ») ·
+ *   4 Partage (« Ton invitation est prête »). Une modification d'invitation
+ *   existante n'ouvre que « Ta carte ». Ce qui suit décrit V551 (données, réseau).
+ *
  * TROIS ÉTAPES, JAMAIS UNE DE PLUS (mobile d'abord) :
  *   1. « Ton invitation » — photo + nom préremplis (profil Spordateur lié,
- *      sinon l'identité de GET /invitation, sinon « Un membre Afroboost »),
+ *      sinon l'identité de GET /invitation, sinon « Afroboost » (V558 : jamais « Un membre »),
  *      « Modifier » pour CETTE invitation seulement, et — à la création — le
  *      petit sélecteur séance/offre EXISTANT (useChoixSeance / ChampsSeanceOffre
  *      de PassDuoCard, jamais un second formulaire) ;
@@ -38,14 +45,18 @@ import SvgIcon from '../SvgIcon';
 import BandeauInvitant from './BandeauInvitant'; // L0
 import ConditionsParticipation from '../ConditionsParticipation';
 import { useChoixSeance, ChampsSeanceOffre } from './PassDuoCard';
+import SessionsModal from '../SessionsModal'; // V558 — le calendrier EXISTANT
+import { Etapes, CartesOffre, ResumeSeance, typesDeRepli } from './wizardCommun'; // V558 — le MÊME Wizard
 import './invitationWizard.css';
+import './wizardFilleul.css'; // V558 : cartes d'offre et résumé de séance (classes cp-wf-*)
 import {
   API_PARRAINAGE, enteteParrain, lireInvitation, identitePreremplie, messagePrerempli, corpsInvitation,
   modifierInvitation, nomAffichable, bornerMessage, texteWhatsAppInvitation, lienWhatsApp, copier, partager,
-  libelleOccurrence, offreDuPass, NOM_NEUTRE, MESSAGE_MAX, NOM_MAX, avecCampagne,
+  libelleOccurrence, offreDuPass, NOM_NEUTRE, MESSAGE_MAX, NOM_MAX, avecCampagne, seancesPourCalendrier,
 } from '../../utils/parrainage';
 
-const ETAPES = ['Ton invitation', 'Personnaliser', 'Aperçu & partager'];
+/** V558 — le type offert par un membre : son Pass Duo (aucun programme exposé ici). */
+const TYPES_MEMBRE = typesDeRepli('pass_duo');
 
 /** Le lien sans protocole, pour l'afficher comme un code. */
 function lienCourt(url) {
@@ -146,6 +157,8 @@ export default function InvitationWizard({
   const [occupe, setOccupe] = useState(false);
   const [erreur, setErreur] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [kind, setKind] = useState(TYPES_MEMBRE[0].id);   // V558 : étape « Offre »
+  const [calendrier, setCalendrier] = useState(false);    // V558 : étape « Séance »
   const choix = useChoixSeance(courses, contexte);
 
   // UNE lecture au montage, jamais relancée (aucune dépendance objet).
@@ -308,6 +321,11 @@ export default function InvitationWizard({
   if (!creation && !edition) {
     return (
       <div className="cp-card cp-card--current" data-testid="inviter-un-ami">
+        {/* V558 : l'étape « Partage » du MÊME Wizard. */}
+        <Etapes etape={4} className="cp-wf-etapes" testid="wizard-etapes" />
+        <p className="cp-mini" data-testid="wizard-partage-aide">
+          Ton ami recevra cette invitation et renseignera ses propres informations quand il l’ouvrira.
+        </p>
         <div data-testid="wizard-prete">
           <div className="cp-prog">
             <h3 className="cp-h3"><SvgIcon name="check" size={20} />Ton invitation est prête</h3>
@@ -352,7 +370,7 @@ export default function InvitationWizard({
     );
   }
 
-  // ── Création (ou édition) en 3 étapes ─────────────────────────────────────
+  // ── Création (Offre · Séance · Ta carte) ou modification (Ta carte seule) ──
   if (creation && !choix.groupes.length) {
     return (
       <div className="cp-card" data-testid="invitation-wizard">
@@ -363,23 +381,70 @@ export default function InvitationWizard({
     );
   }
 
-  const etape1Ok = !nomRefuse && (!creation || (!!choix.valeur && !choix.offreManquante && (!conditionsRequises || conditionsOk)));
-  const suivant = () => { if (etape === 1 && !etape1Ok) return; setEtape((e) => Math.min(3, e + 1)); };
+  // Une modification n'ouvre que « Ta carte » : la séance se change dans la carte du Pass (V539b).
+  const etapeAffichee = creation ? etape : 3;
+  const seanceOk = !!choix.valeur && !choix.offreManquante && (!conditionsRequises || conditionsOk);
+  const carteOk = !nomRefuse;
+  const peutContinuer = etapeAffichee === 1 ? !!kind : (etapeAffichee === 2 ? seanceOk : carteOk);
+  const suivant = () => { if (!peutContinuer) return; setEtape((e) => Math.min(3, e + 1)); };
   const precedent = () => setEtape((e) => Math.max(1, e - 1));
+  const coursObjet = (Array.isArray(courses) ? courses : []).find((x) => x && String(x.id) === String(choix.coursChoisi)) || {};
+  const seanceChoisie = choix.occurrence
+    ? { occurrence: choix.occurrence, nom: coursObjet.name || '', lieu: coursObjet.locationName || coursObjet.location || '' }
+    : null;
+  const seancesCal = seancesPourCalendrier((Array.isArray(courses) ? courses : []).map((c) => ({
+    course_id: c && c.id, name: c && c.name, location: c && (c.locationName || c.location), occurrences: c && c.occurrences,
+  })));
 
   return (
     <div className="cp-card" data-testid="invitation-wizard" data-mode={creation ? 'creation' : 'edition'}>
-      <ol className="cp-wz-etapes" data-testid="wizard-etapes" aria-label="Étapes de ton invitation">
-        {ETAPES.map((libelle, i) => (
-          <li key={libelle} className={i + 1 === etape ? 'on' : (i + 1 < etape ? 'fait' : '')}
-              aria-current={i + 1 === etape ? 'step' : undefined}>
-            <span>{i + 1}</span>{libelle}
-          </li>
-        ))}
-      </ol>
+      <Etapes etape={etapeAffichee} className="cp-wf-etapes" testid="wizard-etapes" />
 
-      {etape === 1 ? (
+      {etapeAffichee === 1 ? (
         <div data-testid="wizard-etape-1">
+          <h3 className="cp-wf-titre" data-testid="wizard-offre-titre">Qu’est-ce que tu veux offrir à ton ami ?</h3>
+          <CartesOffre types={TYPES_MEMBRE} choisi={kind} onChoisir={setKind} />
+        </div>
+      ) : null}
+
+      {etapeAffichee === 2 ? (
+        <div data-testid="wizard-etape-2">
+          <h3 className="cp-wf-titre" data-testid="wizard-seance-titre">Choisis la séance de ton ami</h3>
+          <p className="cp-mini">C’est la séance que tu lui offres.</p>
+          <ResumeSeance seance={seanceChoisie} onChanger={() => setCalendrier(true)} />
+          {!seanceChoisie ? (
+            <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={() => setCalendrier(true)}
+                    data-testid="wf-seance-choisir">
+              <SvgIcon name="calendar" size={20} /> Choisir la séance
+            </button>
+          ) : null}
+          {calendrier ? (
+            <SessionsModal
+              open
+              onClose={() => setCalendrier(false)}
+              occurrencesFournies={seancesCal}
+              libelleAction="Choisir cette séance"
+              noteAction="C’est la séance que ton ami recevra avec ton invitation."
+              onReserve={(occ) => {
+                if (occ && occ.id && occ.iso) choix.setChoix(`${occ.id}|${occ.iso}`);
+                setCalendrier(false);
+              }}
+            />
+          ) : null}
+          <ChampsSeanceOffre choix={choix} occupe={occupe} sansSelecteurSeance />
+          {choix.coursChoisi ? (
+            <div className="cp-conditions" data-testid="pass-conditions">
+              <ConditionsParticipation courseId={choix.coursChoisi} accepte={conditionsOk}
+                                       onChange={setConditionsOk} onRequired={setConditionsRequises} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {etapeAffichee === 3 ? (
+        <div data-testid="wizard-etape-3">
+          <h3 className="cp-wf-titre" data-testid="wizard-carte-titre">Personnalise ton invitation</h3>
+          <p className="cp-mini">Ce sont TES informations. Ton ami verra qui l’invite.</p>
           <div className="cp-wz-identite">
             <Avatar photo={photo} nom={nomValide} />
             <div className="cp-wz-identite-nom">
@@ -394,9 +459,9 @@ export default function InvitationWizard({
           </div>
           {identiteOuverte || edition ? (
             <div className="cp-wz-edition" data-testid="wizard-identite-edition">
-              <label htmlFor="cp-wz-nom" className="cp-label">Nom affiché sur cette invitation</label>
+              <label htmlFor="cp-wz-nom" className="cp-label">Ton prénom sur cette invitation</label>
               <input id="cp-wz-nom" className="cp-input" maxLength={NOM_MAX} value={nomBrut}
-                     placeholder={NOM_NEUTRE} autoComplete="off"
+                     placeholder="Ton prénom" autoComplete="off"
                      onChange={(e) => setNomSaisi(e.target.value)} data-testid="wizard-champ-nom" />
               {nomRefuse ? (
                 <p className="cp-error" role="alert" data-testid="wizard-nom-refuse">Écris un prénom, pas une adresse e-mail.</p>
@@ -416,32 +481,12 @@ export default function InvitationWizard({
               <p className="cp-fine">Ce changement ne concerne que cette invitation : ton profil ne bouge pas.</p>
             </div>
           ) : null}
-          {creation ? (
-            <>
-              <ChampsSeanceOffre choix={choix} occupe={occupe} />
-              {choix.coursChoisi ? (
-                <div className="cp-conditions" data-testid="pass-conditions">
-                  <ConditionsParticipation courseId={choix.coursChoisi} accepte={conditionsOk}
-                                           onChange={setConditionsOk} onRequired={setConditionsRequises} />
-                </div>
-              ) : null}
-            </>
-          ) : null}
-        </div>
-      ) : null}
-
-      {etape === 2 ? (
-        <div data-testid="wizard-etape-2">
           <label htmlFor="cp-wz-message" className="cp-label">Ton message</label>
           <textarea id="cp-wz-message" className="cp-input cp-wz-message" rows={4} maxLength={MESSAGE_MAX}
                     value={message} onChange={(e) => setMessageSaisi(bornerMessage(e.target.value))}
                     data-testid="wizard-message" />
           <p className="cp-fine cp-wz-compteur" data-testid="wizard-compteur">{message.length}/{MESSAGE_MAX}</p>
-        </div>
-      ) : null}
-
-      {etape === 3 ? (
-        <div data-testid="wizard-etape-3">
+          <p className="cp-label cp-wf-apercu-titre">Aperçu de ce que ton ami recevra</p>
           {apercu}
           {creation ? (
             <p className="cp-fine cp-center">Un Pass par séance. L'invitation seule ne débloque rien.</p>
@@ -452,17 +497,17 @@ export default function InvitationWizard({
       {erreur ? <p className="cp-error" role="alert" data-testid="wizard-erreur">{erreur}</p> : null}
 
       <div className="cp-wz-nav">
-        {etape > 1 ? (
+        {creation && etapeAffichee > 1 ? (
           <button type="button" className="cp-b cp-b--ghost cp-wz-cible" onClick={precedent} disabled={occupe} data-testid="wizard-precedent">
             <SvgIcon name="arrowLeft" size={18} /> Retour
           </button>
         ) : null}
-        {etape < 3 ? (
-          <button type="button" className="cp-b cp-wz-cible" onClick={suivant} disabled={occupe || (etape === 1 && !etape1Ok)} data-testid="wizard-suivant">
+        {creation && etapeAffichee < 3 ? (
+          <button type="button" className="cp-b cp-wz-cible" onClick={suivant} disabled={occupe || !peutContinuer} data-testid="wizard-suivant">
             Continuer <SvgIcon name="arrowRight" size={18} />
           </button>
         ) : creation ? (
-          <button type="button" className="cp-b cp-wz-cible" onClick={creer} disabled={occupe || !etape1Ok} data-testid="wizard-creer">
+          <button type="button" className="cp-b cp-wz-cible" onClick={creer} disabled={occupe || !seanceOk || !carteOk} data-testid="wizard-creer">
             <SvgIcon name="send" size={20} /> {occupe ? 'Création…' : 'Créer mon invitation'}
           </button>
         ) : (

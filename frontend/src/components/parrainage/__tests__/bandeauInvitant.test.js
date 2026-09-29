@@ -133,48 +133,54 @@ function routerChaine(child) {
   });
 }
 
-describe('L0 — WizardFilleul étape 2', () => {
-  test('UX-P3 — les textes disent que les informations sont celles de la personne à l’écran, sans « a reçu »', async () => {
+describe('L0 — WizardFilleul étapes « Ta carte » et « Partage » (V558)', () => {
+  const versLaCarte = async () => { await cliquer('wf-continuer'); await cliquer('wf-seance-continuer'); };
+
+  test('UX-P3 / V558 — les textes disent que les informations sont celles de la personne à l’écran, sans « a reçu »', async () => {
     routerChaine(CHILD());
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
-    await cliquer('wf-continuer');
+    await versLaCarte();
     const bloc = par('wf-derniere-etape');
     expect(bloc).not.toBeNull();
-    const h2 = par('wf-etape-2').querySelector('h2');
-    expect(h2.textContent).toBe('Crée ton invitation pour un ami');
-    expect(bloc.textContent).toContain('Pour débloquer ton essai, invite une personne à découvrir Afroboost. Commence par personnaliser la carte que ton ami recevra.');
-    const t = par('wf-etape-2').textContent;
+    const h2 = par('wf-etape-carte').querySelector('h2');
+    expect(h2.textContent).toBe('Personnalise ton invitation');
+    expect(bloc.textContent).toContain('Ce sont TES informations. Ton ami verra qui l’invite.');
+    const t = par('wf-etape-carte').textContent;
     expect(t).toContain('Tes informations');
     expect(t).toContain('Ces informations apparaîtront sur l’invitation envoyée à ton ami.');
-    expect(t).toContain('Aperçu de l’invitation que ton ami recevra');
+    expect(t).toContain('Aperçu de ce que ton ami recevra');
     expect(t).toContain('C’est ton numéro, pas celui de la personne que tu invites.');
-    expect(t).toContain('Maintenant, invite ton ami');
-    expect(t).toContain('Tu n’as pas besoin de saisir les coordonnées de ton ami. Il renseignera ses propres informations lorsqu’il ouvrira ton invitation.');
-    // « Maintenant, invite ton ami » précède les boutons de partage
+    expect(t).not.toMatch(/a reçu/);
+    await cliquer('wf-carte-continuer');
+    const t4 = par('wf-etape-partage').textContent;
+    expect(t4).toContain('Envoie ton invitation');
+    expect(t4).toContain('Ton ami recevra cette invitation et renseignera ses propres informations quand il l’ouvrira.');
+    // le titre précède les boutons de partage
     // eslint-disable-next-line no-bitwise
     expect(par('wf-maintenant').compareDocumentPosition(par('wf-whatsapp')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(t).not.toMatch(/a reçu/);
+    expect(t4).not.toMatch(/a reçu/);
   });
 
-  test('bandeau au-dessus des boutons : photo de child.inviter_display, prénom saisi', async () => {
+  test('aperçu : photo de child.inviter_display, prénom saisi, badge du type ; puis les boutons de partage', async () => {
     routerChaine(CHILD({ display_name: 'Henri', inviter_display: { prenom: 'Henri', photo_url: PHOTO, source: 'member' } }));
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
-    await cliquer('wf-continuer');
+    await versLaCarte();
     const bandeau = par('bandeau-invitant');
     expect(bandeau).not.toBeNull();
     expect(par('bandeau-photo').getAttribute('src')).toBe(PHOTO);
     expect(par('bandeau-texte').textContent).toBe('Henri t’invite à découvrir Afroboost');
-    // eslint-disable-next-line no-bitwise
-    expect(bandeau.compareDocumentPosition(par('wf-whatsapp')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(par('wf-apercu-type')).not.toBeNull();
+    await cliquer('wf-carte-continuer');
+    expect(par('wf-whatsapp')).not.toBeNull();
   });
 
   test('sans inviter_display ni prénom : avatar Afroboost et « Afroboost t’invite »', async () => {
     routerChaine(CHILD());
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
-    await cliquer('wf-continuer');
+    await versLaCarte();
     expect(par('bandeau-avatar-afroboost')).not.toBeNull();
     expect(par('bandeau-texte').textContent).toBe('Afroboost t’invite');
   });

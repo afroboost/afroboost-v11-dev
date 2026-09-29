@@ -1,6 +1,21 @@
 /**
  * V556 — PARRAINAGE V3 « BOULE DE NEIGE » : LE PARCOURS DU FILLEUL.
  *
+ * V558 — LE WIZARD « INVITATION & PARRAINAGE » EN QUATRE ÉTAPES, une seule visible
+ * à la fois : 1 Offre · 2 Séance · 3 Ta carte · 4 Partage (puis l'inscription).
+ *   1. « Qu'est-ce que tu veux offrir à ton ami ? » — les types AUTORISÉS par le
+ *      serveur (GET /chain/options) : Essai gratuit / Pass Duo, et Parrainage /
+ *      Affiliation seulement si un programme réel existe ;
+ *   2. « Choisis la séance de ton ami » — le calendrier EXISTANT (SessionsModal,
+ *      `occurrencesFournies`) sur les seules séances renvoyées par le serveur ;
+ *      puis un résumé compact et « Changer de séance ». La séance reçue et la
+ *      séance offerte sont DEUX choses : l'enfant porte la sienne ;
+ *   3. « Personnalise ton invitation » — l'enfant est créé ICI (après le choix de
+ *      la séance), avec le type et la séance ; tes informations + aperçu ;
+ *   4. « Envoie ton invitation » — les partages existants, puis l'inscription.
+ * L'essai gratuit n'est jamais promis : il est UNE fois par personne, et seul le
+ * serveur le sait au moment de l'inscription.
+ *
  * Utilisé par InvitationDuo quand le serveur répond `chain_required: true`
  * (et que le pass n'est pas déjà rejoint). Trois étapes courtes :
  *   1. « Ton invitation »  — qui t'invite, la séance, l'offre → [Continuer] ;
@@ -48,12 +63,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import SvgIcon from '../SvgIcon';
 import BandeauInvitant, { AvatarInvitant } from './BandeauInvitant'; // L0
+import SessionsModal from '../SessionsModal'; // V558 — le calendrier EXISTANT, réutilisé
 import {
   MESSAGE_CHAINE_DEFAUT, MESSAGE_MAX, NOM_MAX, bornerMessage, nomAffichable,
   creerInvitationChaine, modifierInvitationChaine, enregistrerPartageChaine,
   verifierApercuNavigateur, lireCleChaine, ecrireCleChaine, lireRefus, messageRefus,
   lienWhatsApp, copier, texteChaine, libelleOccurrence, TEXTE_AUTRE_APPAREIL,
   envoyerPhotoChaine, refusPhotoChaine, numeroWhatsAppChaine, INDICATIFS, INDICATIF_DEFAUT,
+  lireOptionsChaine, choisirSeanceChaine, seancesPourCalendrier, messageRefusSeance,
+  libelleJour, libelleHeure,
 } from '../../utils/parrainage';
 
 /**
@@ -82,26 +100,9 @@ function AutreAppareil() {
     </div>
   );
 }
+import { Etapes, CartesOffre, ResumeSeance, libelleTypeInvitation, typesDeRepli } from './wizardCommun'; // V558
 import './invitationWizard.css'; // V556 : cibles 44 px (cp-wz-tap / cp-wz-cible) et cadre de carte, absents de /duo sinon
 import './wizardFilleul.css';
-
-const ETAPES = ['Ton invitation', 'Invite un ami', 'Ton essai'];
-
-function Etapes({ etape }) {
-  return (
-    <ol className="cp-wz-etapes cp-wf-etapes" aria-label={`Étape ${etape} sur 3`} data-testid="wf-etapes">
-      {ETAPES.map((t, i) => {
-        const n = i + 1;
-        const cls = n === etape ? 'on' : (n < etape ? 'fait' : '');
-        return (
-          <li key={t} className={cls} aria-current={n === etape ? 'step' : undefined}>
-            <span>{n < etape ? <SvgIcon name="check" size={12} strokeWidth="3" /> : n}</span>{t}
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
 
 /** Le message FR d'un refus de création / modification de l'invitation enfant. */
 export function messageErreurChaine(refus) {
@@ -122,11 +123,15 @@ export const DELAI_AUTOSAVE_MS = 500;
 
 /** UX-P2 : libellé de la case de consentement (non cochée par défaut). */
 // UX-P4 — le badge suit le type RÉEL renvoyé par le serveur ; jamais « Pass Duo » par défaut.
-export function libelleTypeInvitation(type) {
-  if (type === 'trial') return 'Essai gratuit';
-  if (type === 'pass_duo') return 'Pass Duo';
-  if (type === 'event_free') return 'Événement';
-  return 'Invitation';
+// V558 : badge, cartes d'offre, stepper et résumé de séance viennent du module COMMUN
+// (le même Wizard que l'espace abonné) ; ré-exportés pour les appelants existants.
+export { libelleTypeInvitation, ResumeSeance };
+
+/** V558 — la séance CHOISIE pour l'ami, telle que la carte la montre. */
+function seanceDepuisEnfant(c) {
+  if (!c || c.seance_choisie !== true || !c.occurrence) return null;
+  const co = c.course || {};
+  return { course_id: null, occurrence: c.occurrence, nom: co.name || '', lieu: co.locationName || '' };
 }
 
 export const TEXTE_CONSENT_CONTACT = "J'accepte d'être contacté(e) par Afroboost au sujet de cette invitation et de mon essai.";
@@ -157,7 +162,16 @@ export default function WizardFilleul({
   token, pass, prenom, photo, blocInvitation, formulaire, onPrenom, onWhatsApp, retourEtape2, messageEtape2,
 }) {
   const dejaPartagee = !!(pass && pass.chain && pass.chain.shared === true);
-  const [etape, setEtape] = useState(dejaPartagee ? 3 : 1);
+  const [etape, setEtape] = useState(dejaPartagee ? 4 : 1);
+  const [partage, setPartage] = useState(dejaPartagee);      // V558 : partage enregistré -> inscription
+  const [opts, setOpts] = useState(null);                    // V558 : {types, seances} du serveur
+  const [optsKo, setOptsKo] = useState(false);
+  const [kind, setKind] = useState('');
+  const [seance, setSeance] = useState(null);                // {course_id, occurrence, nom, lieu}
+  const [calendrier, setCalendrier] = useState(false);
+  const [erreurSeance, setErreurSeance] = useState('');
+  const [seanceKo, setSeanceKo] = useState(false);           // « Choisir une autre séance »
+  const [majSeance, setMajSeance] = useState(false);
   const [child, setChild] = useState(null);
   const [editKey, setEditKey] = useState(() => lireCleChaine(token));
   const [creation, setCreation] = useState(false);
@@ -200,12 +214,26 @@ export default function WizardFilleul({
   childRef.current = child;
   sauveRef.current = sauve;
 
-  // 409 invitation_requise au join → retour à l'étape 2 (vérité serveur).
+  // 409 invitation_requise au join → retour au PARTAGE (vérité serveur).
   useEffect(() => {
     if (!retourEtape2) return;
-    setEtape(2);
+    setEtape(4);
+    setPartage(false);
     setAvis(messageEtape2 || messageRefus('invitation_requise'));
   }, [retourEtape2, messageEtape2]);
+
+  // V558 : UNE lecture des options au montage (jeton = primitive ; aucune boucle).
+  useEffect(() => {
+    let vivant = true;
+    lireOptionsChaine({ token })
+      .then((r) => {
+        if (!vivant) return;
+        const d = (r && r.data) || {};
+        setOpts({ types: Array.isArray(d.types) ? d.types : [], seances: Array.isArray(d.seances) ? d.seances : [] });
+      })
+      .catch(() => { if (vivant) setOptsKo(true); });
+    return () => { vivant = false; };
+  }, [token]);
 
   // Démontage : aucun minuteur orphelin.
   useEffect(() => () => { if (minuteur.current) clearTimeout(minuteur.current); }, []);
@@ -223,6 +251,9 @@ export default function WizardFilleul({
     const base = { nom: n, message: m, photo: surCarte, wa: '', consent: false };
     sauveValeurs.current = base;
     setChild(c);
+    const sc = seanceDepuisEnfant(c);
+    if (sc) setSeance((prev) => (prev && prev.occurrence === sc.occurrence ? prev : sc));
+    if (c.kind) setKind((prev) => prev || c.kind);
     setNom(n);
     setMessage(m);
     setPhotoCarte(initiale);
@@ -231,25 +262,78 @@ export default function WizardFilleul({
   };
 
   // ÉTAPE 2 : l'invitation enfant est créée (ou relue, idempotent) AVANT tout partage.
+  // V558 : l'enfant naît À L'ÉTAPE 3 — APRÈS le choix de l'offre et de la séance,
+  // qui partent avec lui (le serveur les revalide ; le parent garde sa séance).
   const aUnChild = !!child;
+  const typesAffiches = (opts && opts.types && opts.types.length) ? opts.types : typesDeRepli(pass && pass.invitation_type);
+  const kindEffectif = kind || (typesAffiches[0] && typesAffiches[0].id) || '';
   const creer = () => {
     if (enVol.current) return;
     enVol.current = true;
     setCreation(true); setErreurCreation('');
-    creerInvitationChaine({ token, message: MESSAGE_CHAINE_DEFAUT })
+    const s0 = seanceRef.current;
+    creerInvitationChaine({
+      token, message: MESSAGE_CHAINE_DEFAUT, kind: kindRef.current || undefined,
+      course_id: s0 && s0.course_id, occurrence: s0 && s0.course_id ? s0.occurrence : undefined,
+    })
       .then((r) => {
         const d = (r && r.data) || {};
         if (d.edit_key) { ecrireCleChaine(token, d.edit_key); setEditKey(String(d.edit_key)); }
         poserChild(d.child ? Object.assign({}, d.child, d.preview ? { preview: d.preview } : {}) : null);
         if (!d.child) setErreurCreation(messageErreurChaine({}));
       })
-      .catch((e) => { setErreurCreation(messageErreurChaine(lireRefus(e))); })
+      .catch((e) => {
+        const refus = lireRefus(e);
+        if (/^seance_|^type_non_autorise$/.test(refus.raison || '')) {
+          // Jamais de bascule silencieuse vers une autre séance : on revient au choix.
+          setErreurSeance(messageRefusSeance(refus));
+          setSeanceKo(refus.raison !== 'type_non_autorise');
+          setEtape(refus.raison === 'type_non_autorise' ? 1 : 2);
+          return;
+        }
+        setErreurCreation(messageErreurChaine(refus));
+      })
       .finally(() => { enVol.current = false; setCreation(false); });
   };
+  const kindRef = useRef('');
+  const seanceRef = useRef(null);
+  kindRef.current = kindEffectif;
+  seanceRef.current = seance;
   useEffect(() => {
-    if (etape === 2 && !aUnChild) creer();
+    if ((etape === 3 || (etape === 4 && !partage)) && !aUnChild) creer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [etape, aUnChild, token]);
+  }, [etape, partage, aUnChild, token]);
+
+  /** Étape 2 → 3 : l'enfant existe déjà (retour en arrière) → sa séance / son type suivent (PATCH). */
+  const validerSeance = () => {
+    setErreurSeance(''); setSeanceKo(false);
+    const c = childRef.current;
+    const change = c && !c.shared && editKey && (
+      (seance && seance.course_id && seance.occurrence !== c.occurrence) || (kindEffectif && kindEffectif !== c.kind));
+    if (!change) { setEtape(3); return; }
+    setMajSeance(true);
+    choisirSeanceChaine({
+      token, editKey, kind: kindEffectif !== c.kind ? kindEffectif : undefined,
+      course_id: seance && seance.course_id, occurrence: seance && seance.course_id ? seance.occurrence : undefined,
+    })
+      .then((r) => {
+        const d = (r && r.data) || {};
+        if (d.child && d.child.share_url) {
+          const suivant = Object.assign({}, childRef.current || {}, d.child,
+            { preview: d.preview || (childRef.current && childRef.current.preview) });
+          childRef.current = suivant;
+          setChild(suivant);
+          setCarteKo(false);
+        }
+        setEtape(3);
+      })
+      .catch((e) => {
+        const refus = lireRefus(e);
+        setErreurSeance(messageRefusSeance(refus));
+        setSeanceKo(/^seance_/.test(refus.raison || ''));
+      })
+      .finally(() => setMajSeance(false));
+  };
 
   // Contrôle d'aperçu côté navigateur (card_url + share_url COURANTS). Clé = les deux URL.
   const cardUrl = (child && child.card_url) || '';
@@ -370,7 +454,7 @@ export default function WizardFilleul({
         const n = nomAffichable(v.nom);
         if (typeof onPrenom === 'function' && n) onPrenom(n);
         if (typeof onWhatsApp === 'function' && v.wa) onWhatsApp(v.wa);
-        setEtape(3);
+        setPartage(true);
       })
       .catch(() => { setAReessayer(channel); })
       .finally(() => setEnregistrement(false));
@@ -492,11 +576,26 @@ export default function WizardFilleul({
   };
   const ouvrir = (ref) => { if (ref.current && !envoiPhoto) ref.current.click(); };
 
-  // ── ÉTAPE 1 ────────────────────────────────────────────────────────────────
+  const retour = (n) => (
+    <button type="button" className="cp-link cp-wz-tap cp-wz-retour" onClick={() => { setInfo(''); setEtape(n); }} data-testid="wf-retour">
+      <SvgIcon name="arrowLeft" size={14} /> Retour
+    </button>
+  );
+  const seancesCal = seancesPourCalendrier(opts && opts.seances);
+  const dejaEnvoyee = !!(child && child.shared);
+  // Aucune séance proposable (serveur ancien, liste vide) : l'ami est invité à TA séance.
+  const sansChoix = optsKo || (opts && seancesCal.length === 0);
+  const maSeance = { occurrence: pass && pass.occurrence, nom: ((pass && pass.course) || {}).name || '',
+                     lieu: ((pass && pass.course) || {}).locationName || '' };
+  const seanceAmi = seance || (child && child.occurrence
+    ? { occurrence: child.occurrence, nom: (child.course || {}).name || '', lieu: (child.course || {}).locationName || '' }
+    : null);
+
+  // ── ÉTAPE 1 : OFFRE ────────────────────────────────────────────────────────
   if (etape === 1) {
     return (
       <div className="cp-wf" data-testid="wf-etape-1">
-        <Etapes etape={1} />
+        <Etapes className="cp-wf-etapes" etape={1} />
         <div className="cp-wf-qui">
           {/* L0 : sans photo, l'avatar Afroboost (jamais une initiale). */}
           <AvatarInvitant photoUrl={photo} className="cp-wf-av" testidPhoto="invitation-photo" testidAvatar="invitation-avatar-afroboost" />
@@ -505,26 +604,98 @@ export default function WizardFilleul({
             <h1 className="cp-h1 cp-wf-h1" data-testid="invitation-de">{prenom} t'invite à découvrir Afroboost.</h1>
           </div>
         </div>
-        <p className="cp-lead cp-wf-lead">Pour débloquer ton essai gratuit, invite à ton tour un ami.</p>
+        {/* V558 : l'essai n'est JAMAIS promis — une fois par personne, vérifié à l'inscription. */}
+        <p className="cp-lead cp-wf-lead" data-testid="wf-lead">
+          Ton premier essai est offert si tu n’en as encore jamais bénéficié. Pour le débloquer, invite à ton tour un ami.
+        </p>
         {blocInvitation}
+        <h2 className="cp-wf-titre" data-testid="wf-offre-titre">Qu’est-ce que tu veux offrir à ton ami ?</h2>
+        {erreurSeance && !seanceKo ? <p className="cp-error" role="alert" data-testid="wf-offre-erreur">{erreurSeance}</p> : null}
+        <CartesOffre types={typesAffiches} choisi={kindEffectif} verrouille={dejaEnvoyee}
+                     onChoisir={(id) => { setKind(id); setErreurSeance(''); }} />
         {/* collant en bas d'écran : [Continuer] est visible dès le premier écran */}
-        <button type="button" className="cp-b cp-wz-cible cp-wf-cta" onClick={() => setEtape(2)} data-testid="wf-continuer">
+        <button type="button" className="cp-b cp-wz-cible cp-wf-cta" onClick={() => { setErreurSeance(''); setEtape(2); }}
+                disabled={!kindEffectif} data-testid="wf-continuer">
           Continuer <SvgIcon name="arrowRight" size={20} />
         </button>
       </div>
     );
   }
 
-  // ── ÉTAPE 3 ────────────────────────────────────────────────────────────────
-  if (etape === 3) {
+  // ── ÉTAPE 2 : SÉANCE DE L'AMI ─────────────────────────────────────────────
+  if (etape === 2) {
+    const choixRequis = !sansChoix && !dejaEnvoyee;
+    return (
+      <div className="cp-wf" data-testid="wf-etape-2">
+        <Etapes className="cp-wf-etapes" etape={2} />
+        <div className="cp-wf-derniere">
+          <h2 className="cp-wf-titre" data-testid="wf-seance-titre">Choisis la séance de ton ami</h2>
+          <p>C’est la séance que tu lui offres. Elle peut être différente de la tienne.</p>
+        </div>
+        {!opts && !optsKo ? (
+          <p className="cp-mini cp-wf-prep" role="status" data-testid="wf-seances-chargement">
+            <span className="cp-spinner cp-wf-spin" aria-hidden="true" /> Chargement des séances…
+          </p>
+        ) : null}
+        {erreurSeance ? <p className="cp-error" role="alert" data-testid="wf-seance-erreur">{erreurSeance}</p> : null}
+        {seanceKo && !dejaEnvoyee ? (
+          <button type="button" className="cp-b cp-b--secondary cp-wz-cible"
+                  onClick={() => { setSeance(null); setErreurSeance(''); setSeanceKo(false); setCalendrier(true); }}
+                  data-testid="wf-seance-autre">
+            <SvgIcon name="calendar" size={20} /> Choisir une autre séance
+          </button>
+        ) : null}
+        {dejaEnvoyee ? (
+          <>
+            <ResumeSeance seance={seanceAmi} />
+            <p className="cp-fine" data-testid="wf-seance-figee">Ton invitation a déjà été envoyée : sa séance ne change plus.</p>
+          </>
+        ) : null}
+        {!dejaEnvoyee && sansChoix ? (
+          <ResumeSeance seance={maSeance} titre="Ton ami est invité à la même séance que toi" testid="wf-seance-meme" />
+        ) : null}
+        {choixRequis && seance && !seanceKo ? (
+          <ResumeSeance seance={seance} onChanger={() => { setErreurSeance(''); setCalendrier(true); }} />
+        ) : null}
+        {choixRequis && !seance && !seanceKo ? (
+          <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={() => setCalendrier(true)}
+                  disabled={!opts} data-testid="wf-seance-choisir">
+            <SvgIcon name="calendar" size={20} /> Choisir la séance
+          </button>
+        ) : null}
+        {calendrier ? (
+          <SessionsModal
+            open
+            onClose={() => setCalendrier(false)}
+            occurrencesFournies={seancesCal}
+            libelleAction="Choisir cette séance"
+            noteAction="C’est la séance que ton ami recevra avec ton invitation."
+            onReserve={(occ) => {
+              if (!occ || !occ.iso) return;
+              setSeance({ course_id: occ.id, occurrence: occ.iso, nom: occ.nom || '', lieu: occ.lieu || '' });
+              setErreurSeance(''); setSeanceKo(false); setCalendrier(false);
+            }}
+          />
+        ) : null}
+        <button type="button" className="cp-b cp-wz-cible cp-wf-cta" onClick={validerSeance}
+                disabled={majSeance || (choixRequis && (!seance || seanceKo)) || (!opts && !optsKo)} data-testid="wf-seance-continuer">
+          {majSeance ? 'Un instant…' : 'Continuer'} <SvgIcon name="arrowRight" size={20} />
+        </button>
+        {retour(1)}
+      </div>
+    );
+  }
+
+  // ── ÉTAPE 4 (après partage) : L'INSCRIPTION ────────────────────────────────
+  if (etape === 4 && partage) {
     const c = (pass && pass.course) || {};
     return (
       <div className="cp-wf" data-testid="wf-etape-3">
-        <Etapes etape={3} />
+        <Etapes className="cp-wf-etapes" etape={4} />
         <div className="cp-wf-ok" role="status">
           <span className="cp-wf-ok-ic"><SvgIcon name="check" size={22} strokeWidth="2.5" /></span>
           <div>
-            <b>Invitation prête</b>
+            <b>Invitation envoyée</b>
             {/* PAR-3 (A2) : rien n'est promis avant la réponse du serveur (l'essai peut être refusé au join). */}
             <p>Termine ton inscription pour réserver ta place.</p>
           </div>
@@ -535,7 +706,7 @@ export default function WizardFilleul({
         </p>
         {editKey ? formulaire : <AutreAppareil />}
         {editKey ? (
-          <button type="button" className="cp-link cp-wz-tap cp-wf-encore" onClick={() => { setInfo(''); setEtape(2); }} data-testid="wf-partager-encore">
+          <button type="button" className="cp-link cp-wz-tap cp-wf-encore" onClick={() => { setInfo(''); setPartage(false); }} data-testid="wf-partager-encore">
             <SvgIcon name="share" size={14} /> Partager encore
           </button>
         ) : null}
@@ -543,19 +714,9 @@ export default function WizardFilleul({
     );
   }
 
-  // ── ÉTAPE 2 ────────────────────────────────────────────────────────────────
-  return (
-    <div className="cp-wf" data-testid="wf-etape-2">
-      <Etapes etape={2} />
-      {/* L0 : pourquoi cette étape — court, pour ne pas repousser le partage hors écran.
-          On ne dit jamais que l'ami « a reçu » quoi que ce soit. */}
-      {/* UX-P3 : dire clairement que les informations sont celles de la personne À L'ÉCRAN. */}
-      <div className="cp-wf-derniere" data-testid="wf-derniere-etape">
-        <h2 className="cp-wf-titre">Crée ton invitation pour un ami</h2>
-        <p>Pour débloquer ton essai, invite une personne à découvrir Afroboost. Commence par personnaliser la carte que ton ami recevra.</p>
-      </div>
+  const blocsCommuns = (
+    <>
       {avis ? <p className="cp-notice" role="alert" data-testid="wf-avis">{avis}</p> : null}
-
       {erreurCreation ? (
         <div data-testid="wf-erreur-creation">
           <p className="cp-error" role="alert">{erreurCreation}</p>
@@ -564,92 +725,135 @@ export default function WizardFilleul({
           </button>
         </div>
       ) : null}
-
       {!erreurCreation && preparation ? (
         <p className="cp-mini cp-wf-prep" role="status" data-testid="wf-preparation">
           <span className="cp-spinner cp-wf-spin" aria-hidden="true" /> Préparation de ton invitation…
         </p>
       ) : null}
-
-      {/* UX-P2 : aperçu IMMÉDIAT (état local) — prénom et photo suivent la frappe. */}
-      {child && editable ? (
-        <p className="cp-label cp-wf-apercu-titre" data-testid="wf-apercu-titre">Aperçu de l’invitation que ton ami recevra</p>
-      ) : null}
-      {child && editable ? (
-        <BandeauInvitant prenom={nomValide} photoUrl={photoCarte} />
-      ) : null}
-
-      {child && cardUrl && !carteKo ? (
-        <div className="cp-wz-carte cp-wf-carte" data-testid="wf-carte">
-          <img src={cardUrl} alt="La carte d'invitation que ton ami verra" onError={() => setCarteKo(true)} />
-        </div>
-      ) : null}
-      {apercuSimplifie ? <p className="cp-fine cp-wf-simplifie" data-testid="wf-apercu-simplifie">Aperçu simplifié : le lien reste valable.</p> : null}
-
       {child && !editable ? <AutreAppareil /> : null}
+    </>
+  );
 
-      {child && editable ? (
-        <div className="cp-wf-perso">
-          <h3 className="cp-wf-soustitre" data-testid="wf-tes-infos">Tes informations</h3>
-          <p className="cp-mini cp-wf-sous">Ces informations apparaîtront sur l’invitation envoyée à ton ami.</p>
-          <label className="cp-label" htmlFor="wf-nom">Ton prénom</label>
-          <input id="wf-nom" className="cp-input" value={nom} maxLength={NOM_MAX} placeholder="Ex. : Henri"
-                 onChange={(e) => setNom(e.target.value.slice(0, NOM_MAX))} autoComplete="given-name" data-testid="wf-nom" />
+  // ── ÉTAPE 3 : TA CARTE ─────────────────────────────────────────────────────
+  if (etape === 3) {
+    // Continuer n'attend PAS le contrôle d'aperçu (seul le partage en a besoin).
+    const carteInactive = !child || creation || enregistrement || !editable || envoiPhoto;
+    const continuer = () => {
+      if (carteInactive) return;
+      garantirAJour().then(() => { setInfo(''); setEtape(4); }).catch(() => {});
+    };
+    return (
+      <div className="cp-wf" data-testid="wf-etape-carte">
+        <Etapes className="cp-wf-etapes" etape={3} />
+        {/* UX-P3 / V558 : dire clairement que les informations sont celles de la personne À L'ÉCRAN. */}
+        <div className="cp-wf-derniere" data-testid="wf-derniere-etape">
+          <h2 className="cp-wf-titre">Personnalise ton invitation</h2>
+          <p>Ce sont TES informations. Ton ami verra qui l’invite.</p>
+        </div>
+        {blocsCommuns}
 
-          <span className="cp-label" id="wf-photo-titre">Ta photo</span>
-          <div className="cp-wf-photo" data-testid="wf-photo">
-            <AvatarInvitant photoUrl={photoCarte} className="cp-wf-photo-av" testidPhoto="wf-photo-img" testidAvatar="wf-photo-logo" />
-            <div className="cp-wf-photo-actions">
-              <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={() => ouvrir(inputGalerie)} disabled={envoiPhoto} data-testid="wf-photo-ajouter">
-                <SvgIcon name="image" size={20} /> {photoCarte ? 'Changer de photo' : 'Ajouter une photo'}
-              </button>
-              <button type="button" className="cp-link cp-wz-tap" onClick={() => ouvrir(inputCamera)} disabled={envoiPhoto} data-testid="wf-photo-prendre">
-                <SvgIcon name="camera" size={14} /> Prendre une photo
-              </button>
-              {photoCarte ? (
-                <button type="button" className="cp-link cp-wz-tap" onClick={() => setPhotoCarte(null)} disabled={envoiPhoto} data-testid="wf-photo-retirer">
-                  <SvgIcon name="x" size={14} /> Retirer
+        {/* UX-P2 : aperçu IMMÉDIAT (état local) — prénom et photo suivent la frappe. */}
+        {child && editable ? (
+          <p className="cp-label cp-wf-apercu-titre" data-testid="wf-apercu-titre">Aperçu de ce que ton ami recevra</p>
+        ) : null}
+        {child && editable ? (
+          <div className="cp-wf-apercu" data-testid="wf-apercu">
+            <BandeauInvitant prenom={nomValide} photoUrl={photoCarte} />
+            <span className="cp-chip" data-testid="wf-apercu-type">{libelleTypeInvitation(child.kind || kindEffectif)}</span>
+            {seanceAmi ? (
+              <p className="cp-wf-apercu-seance" data-testid="wf-apercu-seance">
+                <b>{[libelleJour(seanceAmi.occurrence), libelleHeure(seanceAmi.occurrence)].filter(Boolean).join(' · ')}</b>
+                {seanceAmi.nom ? <span>{seanceAmi.nom}</span> : null}
+                {seanceAmi.lieu ? <span className="cp-fine">{seanceAmi.lieu}</span> : null}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {child && cardUrl && !carteKo ? (
+          <div className="cp-wz-carte cp-wf-carte" data-testid="wf-carte">
+            <img src={cardUrl} alt="La carte d'invitation que ton ami verra" onError={() => setCarteKo(true)} />
+          </div>
+        ) : null}
+        {apercuSimplifie ? <p className="cp-fine cp-wf-simplifie" data-testid="wf-apercu-simplifie">Aperçu simplifié : le lien reste valable.</p> : null}
+
+        {child && editable ? (
+          <div className="cp-wf-perso">
+            <h3 className="cp-wf-soustitre" data-testid="wf-tes-infos">Tes informations</h3>
+            <p className="cp-mini cp-wf-sous">Ces informations apparaîtront sur l’invitation envoyée à ton ami.</p>
+            <label className="cp-label" htmlFor="wf-nom">Ton prénom</label>
+            <input id="wf-nom" className="cp-input" value={nom} maxLength={NOM_MAX} placeholder="Ex. : Henri"
+                   onChange={(e) => setNom(e.target.value.slice(0, NOM_MAX))} autoComplete="given-name" data-testid="wf-nom" />
+
+            <span className="cp-label" id="wf-photo-titre">Ta photo</span>
+            <div className="cp-wf-photo" data-testid="wf-photo">
+              <AvatarInvitant photoUrl={photoCarte} className="cp-wf-photo-av" testidPhoto="wf-photo-img" testidAvatar="wf-photo-logo" />
+              <div className="cp-wf-photo-actions">
+                <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={() => ouvrir(inputGalerie)} disabled={envoiPhoto} data-testid="wf-photo-ajouter">
+                  <SvgIcon name="image" size={20} /> {photoCarte ? 'Changer de photo' : 'Ajouter une photo'}
                 </button>
-              ) : null}
+                <button type="button" className="cp-link cp-wz-tap" onClick={() => ouvrir(inputCamera)} disabled={envoiPhoto} data-testid="wf-photo-prendre">
+                  <SvgIcon name="camera" size={14} /> Prendre une photo
+                </button>
+                {photoCarte ? (
+                  <button type="button" className="cp-link cp-wz-tap" onClick={() => setPhotoCarte(null)} disabled={envoiPhoto} data-testid="wf-photo-retirer">
+                    <SvgIcon name="x" size={14} /> Retirer
+                  </button>
+                ) : null}
+              </div>
+              <input ref={inputGalerie} type="file" accept="image/*" hidden onChange={choisirPhoto} aria-labelledby="wf-photo-titre" data-testid="wf-photo-fichier" />
+              <input ref={inputCamera} type="file" accept="image/*" capture="user" hidden onChange={choisirPhoto} aria-labelledby="wf-photo-titre" data-testid="wf-photo-camera" />
             </div>
-            <input ref={inputGalerie} type="file" accept="image/*" hidden onChange={choisirPhoto} aria-labelledby="wf-photo-titre" data-testid="wf-photo-fichier" />
-            <input ref={inputCamera} type="file" accept="image/*" capture="user" hidden onChange={choisirPhoto} aria-labelledby="wf-photo-titre" data-testid="wf-photo-camera" />
+            {envoiPhoto ? <p className="cp-mini" role="status" data-testid="wf-photo-envoi">Envoi de ta photo…</p> : null}
+            {erreurPhoto ? <p className="cp-error" role="alert" data-testid="wf-photo-erreur">{erreurPhoto}</p> : null}
+
+            <label className="cp-label" htmlFor="wf-whatsapp-numero">Ton numéro WhatsApp</label>
+            <div className="cp-wf-tel">
+              <select className="cp-select cp-wf-indicatif" value={indicatif} aria-label="Indicatif du pays"
+                      onChange={(e) => setIndicatif(e.target.value)} data-testid="wf-indicatif">
+                {INDICATIFS.map(([code, pays]) => <option key={code} value={code}>{`${code} ${pays}`}</option>)}
+              </select>
+              <input id="wf-whatsapp-numero" className="cp-input" type="tel" inputMode="tel" value={numero}
+                     placeholder="79 123 45 67" autoComplete="tel-national"
+                     onChange={(e) => setNumero(e.target.value.slice(0, 30))} data-testid="wf-whatsapp-numero" />
+            </div>
+            <p className="cp-fine" data-testid="wf-whatsapp-aide">C’est ton numéro, pas celui de la personne que tu invites.</p>
+            {child.whatsapp_renseigne === true && !numero.trim() ? (
+              <p className="cp-fine" data-testid="wf-whatsapp-connu">Ton numéro est déjà enregistré.</p>
+            ) : null}
+            <label className="cp-chk">
+              <input type="checkbox" checked={consent} onChange={(e) => setConsent(!!e.target.checked)} data-testid="wf-consent" />
+              <span>{TEXTE_CONSENT_CONTACT}</span>
+            </label>
+
+            <p className="cp-fine cp-wf-statut" role="status" aria-live="polite" data-testid="wf-statut">
+              {maj ? 'Enregistrement…' : (!enAttente && statut === 'enregistre' ? 'Enregistré' : '')}
+            </p>
+            {erreurMaj ? <p className="cp-error" role="alert" data-testid="wf-erreur-maj">{erreurMaj}</p> : null}
           </div>
-          {envoiPhoto ? <p className="cp-mini" role="status" data-testid="wf-photo-envoi">Envoi de ta photo…</p> : null}
-          {erreurPhoto ? <p className="cp-error" role="alert" data-testid="wf-photo-erreur">{erreurPhoto}</p> : null}
+        ) : null}
+        {child && editable ? (
+          <button type="button" className="cp-b cp-wz-cible cp-wf-cta" onClick={continuer} disabled={carteInactive}
+                  data-testid="wf-carte-continuer">
+            Continuer <SvgIcon name="arrowRight" size={20} />
+          </button>
+        ) : null}
+        {retour(2)}
+      </div>
+    );
+  }
 
-          <label className="cp-label" htmlFor="wf-whatsapp-numero">Ton numéro WhatsApp</label>
-          <div className="cp-wf-tel">
-            <select className="cp-select cp-wf-indicatif" value={indicatif} aria-label="Indicatif du pays"
-                    onChange={(e) => setIndicatif(e.target.value)} data-testid="wf-indicatif">
-              {INDICATIFS.map(([code, pays]) => <option key={code} value={code}>{`${code} ${pays}`}</option>)}
-            </select>
-            <input id="wf-whatsapp-numero" className="cp-input" type="tel" inputMode="tel" value={numero}
-                   placeholder="79 123 45 67" autoComplete="tel-national"
-                   onChange={(e) => setNumero(e.target.value.slice(0, 30))} data-testid="wf-whatsapp-numero" />
-          </div>
-          <p className="cp-fine" data-testid="wf-whatsapp-aide">C’est ton numéro, pas celui de la personne que tu invites.</p>
-          {child.whatsapp_renseigne === true && !numero.trim() ? (
-            <p className="cp-fine" data-testid="wf-whatsapp-connu">Ton numéro est déjà enregistré.</p>
-          ) : null}
-          <label className="cp-chk">
-            <input type="checkbox" checked={consent} onChange={(e) => setConsent(!!e.target.checked)} data-testid="wf-consent" />
-            <span>{TEXTE_CONSENT_CONTACT}</span>
-          </label>
-
-          <p className="cp-fine cp-wf-statut" role="status" aria-live="polite" data-testid="wf-statut">
-            {maj ? 'Enregistrement…' : (!enAttente && statut === 'enregistre' ? 'Enregistré' : '')}
-          </p>
-          {erreurMaj ? <p className="cp-error" role="alert" data-testid="wf-erreur-maj">{erreurMaj}</p> : null}
-        </div>
-      ) : null}
-
-      {child && editable ? (
-        <div className="cp-wf-inviter" data-testid="wf-maintenant">
-          <h3 className="cp-wf-soustitre">Maintenant, invite ton ami</h3>
-          <p className="cp-mini cp-wf-sous">Tu n’as pas besoin de saisir les coordonnées de ton ami. Il renseignera ses propres informations lorsqu’il ouvrira ton invitation.</p>
-        </div>
-      ) : null}
+  // ── ÉTAPE 4 : PARTAGE ──────────────────────────────────────────────────────
+  return (
+    <div className="cp-wf" data-testid="wf-etape-partage">
+      <Etapes className="cp-wf-etapes" etape={4} />
+      <div className="cp-wf-inviter" data-testid="wf-maintenant">
+        <h2 className="cp-wf-titre">Envoie ton invitation</h2>
+        <p className="cp-mini cp-wf-sous">Ton ami recevra cette invitation et renseignera ses propres informations quand il l’ouvrira.</p>
+      </div>
+      {blocsCommuns}
+      {child && editable && seanceAmi ? <ResumeSeance seance={seanceAmi} testid="wf-partage-seance" /> : null}
+      {apercuSimplifie ? <p className="cp-fine cp-wf-simplifie" data-testid="wf-apercu-simplifie">Aperçu simplifié : le lien reste valable.</p> : null}
       {child && editable ? (
         <div className="cp-wf-actions">
           <button type="button" className="cp-b cp-b--whatsapp cp-wz-cible" onClick={surWhatsApp} disabled={boutonsInactifs} data-testid="wf-whatsapp">
@@ -699,6 +903,7 @@ export default function WizardFilleul({
               </button>
             </div>
           ) : null}
+          {erreurMaj ? <p className="cp-error" role="alert" data-testid="wf-erreur-maj">{erreurMaj}</p> : null}
           {messageOuvert ? (
             <div className="cp-wf-msg">
               <label className="cp-label" htmlFor="wf-message">Ton message</label>
@@ -714,10 +919,7 @@ export default function WizardFilleul({
           )}
         </div>
       ) : null}
-
-      <button type="button" className="cp-link cp-wz-tap cp-wz-retour" onClick={() => setEtape(1)} data-testid="wf-retour">
-        <SvgIcon name="arrowLeft" size={14} /> Retour
-      </button>
+      {retour(3)}
     </div>
   );
 }

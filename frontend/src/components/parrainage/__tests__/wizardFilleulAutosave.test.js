@@ -90,12 +90,28 @@ const patchOk = (v) => axios.patch.mockImplementation((url, corps) => Promise.re
 }));
 const postsVers = (fin) => axios.post.mock.calls.filter((c) => String(c[0]).endsWith(fin));
 
+// V558 : Offre → Séance → « Ta carte » (les champs, l'enfant naît ici).
 async function entrerEtape2(opts) {
   routerPost(opts);
   axios.get.mockResolvedValue({ data: PUB });
   await monter(<InvitationDuo token="T0" />);
   await cliquer('wf-continuer');
+  await cliquer('wf-seance-continuer');
 }
+// V558 : puis « Partage » ; la modification EN ATTENTE au moment du partage est le message.
+async function entrerPartage(opts) {
+  await entrerEtape2(opts);
+  await cliquer('wf-carte-continuer');
+}
+const saisirMessage = async (v) => {
+  await cliquer('wf-modifier-message');
+  const el = par('wf-message');
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(el, v);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+};
 
 describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatique', () => {
   test('plus de bouton « Mettre à jour ma carte » ; prénom → aperçu IMMÉDIAT puis UN PATCH après 500 ms', async () => {
@@ -146,8 +162,8 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     patchOk(7);
     const fen = { location: { href: '' }, close: jest.fn() };
     window.open = jest.fn(() => fen);
-    await entrerEtape2();
-    await saisir('wf-nom', 'Henri');
+    await entrerPartage();
+    await saisirMessage('Viens avec moi');
     await cliquer('wf-whatsapp'); // avant les 500 ms : flush
     expect(window.open).toHaveBeenCalledTimes(1);
     expect(window.open.mock.calls[0][0]).toBe(''); // synchrone, vide
@@ -166,8 +182,8 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
 
   test('WhatsApp avec modif en attente et fenêtre refusée → « touche encore », jamais l’ancienne URL', async () => {
     patchOk(7);
-    await entrerEtape2();
-    await saisir('wf-nom', 'Henri');
+    await entrerPartage();
+    await saisirMessage('Viens avec moi');
     await cliquer('wf-whatsapp');
     expect(axios.patch).toHaveBeenCalledTimes(1);
     expect(postsVers('/chain/share').length).toBe(0);
@@ -178,8 +194,8 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
 
   test('Copier le lien avec modif en attente → PATCH puis copie du share_url renvoyé', async () => {
     patchOk(8);
-    await entrerEtape2();
-    await saisir('wf-nom', 'Henri');
+    await entrerPartage();
+    await saisirMessage('Viens avec moi');
     await cliquer('wf-copier');
     expect(axios.patch).toHaveBeenCalledTimes(1);
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('https://afroboost.com/api/share/duo/T1?v=8');
@@ -189,8 +205,8 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
   test('Partager (natif) avec modif en attente → PATCH puis navigator.share avec la nouvelle URL', async () => {
     patchOk(6);
     navigator.share = jest.fn(() => Promise.resolve());
-    await entrerEtape2();
-    await saisir('wf-nom', 'Henri');
+    await entrerPartage();
+    await saisirMessage('Viens avec moi');
     await cliquer('wf-partager');
     expect(axios.patch).toHaveBeenCalledTimes(1);
     expect(navigator.share.mock.calls[0][0].url).toBe('https://afroboost.com/api/share/duo/T1?v=6');
@@ -198,8 +214,8 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
 
   test('QR → après enregistrement, code du share_url courant', async () => {
     patchOk(6);
-    await entrerEtape2();
-    await saisir('wf-nom', 'Henri');
+    await entrerPartage();
+    await saisirMessage('Viens avec moi');
     await cliquer('wf-qr');
     expect(axios.patch).toHaveBeenCalledTimes(1);
     expect(par('qr-svg').getAttribute('data-value')).toBe('https://afroboost.com/api/share/duo/T1?v=6');
@@ -207,7 +223,7 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
 
   test('QR : « C’est fait » enregistre le partage avec le canal qr', async () => {
     patchOk(6);
-    await entrerEtape2();
+    await entrerPartage();
     await cliquer('wf-qr');
     await cliquer('wf-qr-fait');
     const partage = postsVers('/chain/share')[0];
@@ -262,6 +278,7 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     routerPost();
     await monter(<InvitationDuo token="T0" />);
     await cliquer('wf-continuer');
+    await cliquer('wf-seance-continuer');
     expect(par('wf-photo-logo')).not.toBeNull();
     expect(par('bandeau-avatar-afroboost')).not.toBeNull();
     expect(conteneur.querySelector('.cp-wf-perso').innerHTML).not.toContain('coach.jpg');
@@ -281,6 +298,7 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     expect(axios.patch).toHaveBeenCalledTimes(1);
     expect(axios.patch.mock.calls[0][1]).toEqual(expect.objectContaining({ whatsapp: '+41 79 123 45 67', consent_contact: true }));
     window.open = jest.fn(() => null);
+    await cliquer('wf-carte-continuer');
     await cliquer('wf-whatsapp');
     expect(par('invitation-whatsapp').value).toBe('+41 79 123 45 67');
   });
@@ -304,11 +322,12 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     await attendre(3000);
     expect(axios.patch).toHaveBeenCalledTimes(1); // pas de boucle
     window.open = jest.fn(() => fen);
-    await cliquer('wf-whatsapp');
+    // V558 : « Continuer » vers le partage retente l'enregistrement ; refusé → on RESTE sur la carte.
+    await cliquer('wf-carte-continuer');
     expect(axios.patch).toHaveBeenCalledTimes(2); // retentée au clic
-    expect(fen.location.href).toBe('');
-    expect(fen.close).toHaveBeenCalled();
-    await cliquer('wf-copier');
+    expect(par('wf-etape-carte')).not.toBeNull();
+    expect(par('wf-whatsapp')).toBeNull();
+    expect(window.open).not.toHaveBeenCalled();
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
     expect(postsVers('/chain/share').length).toBe(0);
   });
@@ -336,6 +355,8 @@ describe('UX-P4 — badge du type réel', () => {
     expect(libelleTypeInvitation('trial')).toBe('Essai gratuit');
     expect(libelleTypeInvitation('pass_duo')).toBe('Pass Duo');
     expect(libelleTypeInvitation('event_free')).toBe('Événement');
+    expect(libelleTypeInvitation('parrainage')).toBe('Parrainage');   // V558
+    expect(libelleTypeInvitation('affiliation')).toBe('Affiliation'); // V558
     expect(libelleTypeInvitation(undefined)).toBe('Invitation');
     expect(libelleTypeInvitation('autre')).toBe('Invitation');
   });
