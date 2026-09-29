@@ -117,6 +117,9 @@ LIBELLES_EVENEMENTS = {
     "cancelled": "Pass annulé",
     EVENEMENT_OFFRE: "Offre modifiée",
     "offer_change_failed": "Changement d'offre annulé : l'offre précédente est conservée",
+    # PAR-3 (A4) : les deux événements de chaîne V556 s'affichaient bruts dans l'historique.
+    "chain_shared": "Invitation partagée",
+    "chain_child_created": "Invitation de ton ami préparée",
 }
 
 _JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
