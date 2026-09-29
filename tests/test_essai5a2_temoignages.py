@@ -188,6 +188,9 @@ def bac(comments=None, contacts=None, resas=None, coach=COACH, admin=True,
         "DEFAULT_COACH_ID": COACH,
         "is_super_admin": lambda e: bool(admin),
         "_n1b3b2_coach_appelant": _garde,
+        # MT-2 : PUT /contacts/{id}/type exige désormais un JWT signé
+        # (`_v309_require_coach_or_admin`) — même bouchon de garde que ci-dessus.
+        "_v309_require_coach_or_admin": _garde,
         "_v261_resolve_subscriber": _resolve,
         "_random": __import__("random"),
     }

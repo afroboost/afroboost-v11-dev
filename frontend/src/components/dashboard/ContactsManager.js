@@ -167,7 +167,13 @@ export default function ContactsManager({ API, coachEmail }) {
   // V161: Fetch all participants with birthdays
   var fetchBirthdays = React.useCallback(function() {
     setBirthdayLoading(true);
-    fetch(API + '/chat/participants', { headers: headers })
+    // MT-2 : GET /chat/participants exige désormais un JWT SIGNÉ. Ce `fetch`
+    // brut n'envoyait que X-User-Email (l'intercepteur axios ne s'applique pas
+    // à fetch) -> 403 -> calendrier vide. On joint le jeton de la session.
+    var _mt2Jwt = null;
+    try { _mt2Jwt = localStorage.getItem('afroboost_jwt'); } catch (e) { _mt2Jwt = null; }
+    var _mt2Headers = Object.assign({}, headers, _mt2Jwt ? { Authorization: 'Bearer ' + _mt2Jwt } : {});
+    fetch(API + '/chat/participants', { headers: _mt2Headers })
       .then(function(r) { return r.json(); })
       .then(function(data) {
         var arr = Array.isArray(data) ? data : [];

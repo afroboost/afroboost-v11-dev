@@ -10,8 +10,25 @@ logger = logging.getLogger(__name__)
 
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"
 
-def is_super_admin(email: str) -> bool:
-    return email and email.lower().strip() == SUPER_ADMIN_EMAIL.lower()
+# MT-2 : la version locale ne connaissait qu'UN super-admin — le second
+# (afroboost.bassi@gmail.com) recevait un espace de catégories à lui, distinct
+# de celui de la plateforme. Une seule définition dans tout le dépôt : celle de
+# `shared.py` (les DEUX admins). `SUPER_ADMIN_EMAIL` reste l'ESPACE DE NOMS des
+# catégories de la plateforme (valeur historique en base, inchangée).
+from api.routes.shared import is_super_admin  # noqa: E402
+from api.routes.shared import v20_exiger_coach_signe as _mt2_exiger  # noqa: E402
+
+
+async def _mt2_appelant(request: Request, quoi: str) -> str:
+    """MT-2 : identité coach/admin par JWT SIGNÉ uniquement (plus
+    `X-User-Email`, falsifiable). 403 « reconnectez-vous » sinon."""
+    return await _mt2_exiger(request, db, quoi)
+
+
+def _mt2_espace(appelant: str) -> str:
+    """Espace de noms des catégories : la plateforme pour un super-admin, le
+    coach lui-même sinon (règle historique, désormais sur identité signée)."""
+    return SUPER_ADMIN_EMAIL if is_super_admin(appelant) else appelant
 
 # Router
 category_router = APIRouter(tags=["contact-categories"])
@@ -34,12 +51,10 @@ DEFAULT_CATEGORIES = [
 @category_router.get("/contact-categories")
 async def get_contact_categories(request: Request):
     """Liste toutes les catégories de contacts pour ce coach"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Non authentifié")
+    caller_email = await _mt2_appelant(request, "liste des catégories")  # MT-2
 
     try:
-        coach_id = caller_email if not is_super_admin(caller_email) else SUPER_ADMIN_EMAIL
+        coach_id = _mt2_espace(caller_email)
 
         # Vérifier si le coach a déjà des catégories, sinon créer les défauts
         existing = await db.contact_categories.find(
@@ -76,9 +91,7 @@ async def get_contact_categories(request: Request):
 @category_router.post("/contact-categories")
 async def create_contact_category(request: Request):
     """Créer une nouvelle catégorie personnalisée"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Non authentifié")
+    caller_email = await _mt2_appelant(request, "création de catégorie")  # MT-2
 
     body = await request.json()
     name = (body.get("name") or "").strip()
@@ -88,7 +101,7 @@ async def create_contact_category(request: Request):
     if not name:
         raise HTTPException(status_code=400, detail="Nom requis")
 
-    coach_id = caller_email if not is_super_admin(caller_email) else SUPER_ADMIN_EMAIL
+    coach_id = _mt2_espace(caller_email)
 
     # Vérifier doublon
     existing = await db.contact_categories.find_one(
@@ -124,50 +137,56 @@ async def create_contact_category(request: Request):
 @category_router.put("/contact-categories/{category_id}")
 async def update_contact_category(category_id: str, request: Request):
     """Modifier une catégorie"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Non authentifié")
+    caller_email = await _mt2_appelant(request, "modification de catégorie")  # MT-2
 
-    body = await request.json()
+    # MT-2 : aucune vérification de propriétaire — tout appelant renommait la
+    # catégorie de n'importe quel coach. Filtre (id, espace) ; hors espace -> 404.
+    _filtre = {"id": category_id, "coach_id": _mt2_espace(caller_email)}
+    if not await db.contact_categories.find_one(_filtre, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Catégorie non trouvée")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
     update_fields = {}
-    if "name" in body and body["name"]:
-        update_fields["name"] = body["name"].strip()
-    if "color" in body:
-        update_fields["color"] = body["color"]
-    if "icon" in body:
-        update_fields["icon"] = body["icon"]
-    if "order" in body:
+    if isinstance(body.get("name"), str) and body["name"].strip():
+        update_fields["name"] = body["name"].strip()[:80]
+    if isinstance(body.get("color"), str):
+        update_fields["color"] = body["color"][:32]
+    if isinstance(body.get("icon"), str):
+        update_fields["icon"] = body["icon"][:16]
+    if isinstance(body.get("order"), (int, float)) and not isinstance(body.get("order"), bool):
         update_fields["order"] = body["order"]
 
     if not update_fields:
         return {"success": True, "message": "Rien à modifier"}
 
-    result = await db.contact_categories.update_one(
-        {"id": category_id},
-        {"$set": update_fields}
-    )
-    updated = await db.contact_categories.find_one({"id": category_id}, {"_id": 0})
+    await db.contact_categories.update_one(_filtre, {"$set": update_fields})
+    updated = await db.contact_categories.find_one(_filtre, {"_id": 0})
     return {"success": True, "category": updated}
 
 
 @category_router.delete("/contact-categories/{category_id}")
 async def delete_contact_category(category_id: str, request: Request):
     """Supprimer une catégorie (retire aussi la catégorie des contacts)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Non authentifié")
+    caller_email = await _mt2_appelant(request, "suppression de catégorie")  # MT-2
 
-    cat = await db.contact_categories.find_one({"id": category_id}, {"_id": 0})
+    # MT-2 : suppression de la catégorie d'un autre coach possible -> 404.
+    _filtre = {"id": category_id, "coach_id": _mt2_espace(caller_email)}
+    cat = await db.contact_categories.find_one(_filtre, {"_id": 0})
     if not cat:
         raise HTTPException(status_code=404, detail="Catégorie non trouvée")
 
-    # Retirer cette catégorie de tous les contacts qui l'ont
+    # Retirer cette catégorie de tous les contacts qui l'ont (identifiant UUID
+    # propre à cette catégorie : le retrait ne peut toucher qu'elle).
     await db.chat_participants.update_many(
         {"categories": category_id},
         {"$pull": {"categories": category_id}}
     )
 
-    await db.contact_categories.delete_one({"id": category_id})
+    await db.contact_categories.delete_one(_filtre)
     logger.info(f"[CATEGORIES] Catégorie supprimée: {cat.get('name')} ({category_id})")
     return {"success": True, "deleted": True}
 
@@ -175,24 +194,59 @@ async def delete_contact_category(category_id: str, request: Request):
 @category_router.post("/contacts/set-categories")
 async def set_contact_categories(request: Request):
     """Attribuer des catégories à une liste de contacts"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Non authentifié")
+    caller_email = await _mt2_appelant(request, "attribution de catégories")  # MT-2
 
-    body = await request.json()
-    contact_ids = body.get("contact_ids", [])
-    category_ids = body.get("category_ids", [])
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    contact_ids = body.get("contact_ids") or []
+    category_ids = body.get("category_ids") or []
     mode = body.get("mode", "add")  # "add" = ajouter, "set" = remplacer, "remove" = retirer
+    if not isinstance(contact_ids, list) or not isinstance(category_ids, list):
+        raise HTTPException(status_code=400, detail="contact_ids et category_ids doivent être des listes")
+    if mode not in ("add", "set", "remove"):
+        mode = "add"
 
     if not contact_ids:
         return {"updated": 0}
 
+    # MT-2 — QUATRE GARDES :
+    #  1. seules les catégories de l'ESPACE de l'appelant s'appliquent (un coach
+    #     ne pose pas l'identifiant de catégorie d'un autre) ;
+    #  2. une fiche `chat_participants` n'est modifiée que dans le portefeuille
+    #     de l'appelant (écriture filtrée par propriétaire) ;
+    #  3. la copie `users` -> `chat_participants` (V154b) n'a lieu que si le
+    #     `user` est VISIBLE par l'appelant (relation serveur prouvée,
+    #     `tenant_contacts.contact_appartient`). Avant, n'importe quelle fiche
+    #     de la plateforme était copiée dans le CRM de l'appelant ;
+    #  4. si l'identifiant existe déjà chez un AUTRE coach, on ne crée pas de
+    #     doublon d'`id` (qui rendrait ambiguës toutes les écritures par id) :
+    #     le contact est ignoré.
+    from api.routes.tenant_contacts import (
+        contact_appartient as _mt2_app, filtre_proprietaire as _mt2_filtre,
+        portee_ecriture as _mt2_portee,
+    )
+    _espace = _mt2_espace(caller_email)
+    _cats_ok = {c.get("id") async for c in db.contact_categories.find(
+        {"coach_id": _espace, "id": {"$in": [c for c in category_ids if isinstance(c, str)]}},
+        {"_id": 0, "id": 1})}
+    category_ids = [c for c in category_ids if c in _cats_ok]
+    _proprio = _mt2_filtre(caller_email)
+    _coach_id_copie, _ = _mt2_portee(caller_email)
+
     updated = 0
     for cid in contact_ids:
-        # V154b: Vérifier si le contact existe dans chat_participants
-        existing = await db.chat_participants.find_one({"id": cid}, {"_id": 0, "id": 1})
+        if not isinstance(cid, str) or not cid or "$" in cid:
+            continue
+        existing = await db.chat_participants.find_one({"id": cid, **_proprio}, {"_id": 0, "id": 1})
         if not existing:
-            # Contact vient peut-être de la collection users — le copier dans chat_participants
+            if await db.chat_participants.find_one({"id": cid}, {"_id": 1}):
+                continue  # garde 4 : fiche d'un autre coach
+            if not await _mt2_app(db, caller_email, "users", cid):
+                continue  # garde 3 : user hors portefeuille (ou inexistant)
             user = await db.users.find_one({"id": cid}, {"_id": 0})
             if user:
                 from datetime import datetime, timezone
@@ -203,7 +257,7 @@ async def set_contact_categories(request: Request):
                     "whatsapp": None,
                     "phone": None,
                     "source": "app",
-                    "coach_id": caller_email,
+                    "coach_id": _coach_id_copie,
                     "tags": [],
                     "categories": [],
                     "created_at": datetime.now(timezone.utc).isoformat(),
@@ -214,19 +268,20 @@ async def set_contact_categories(request: Request):
             else:
                 continue  # Contact introuvable, skip
 
+        _cible = {"id": cid, **_proprio}
         if mode == "set":
             result = await db.chat_participants.update_one(
-                {"id": cid},
+                _cible,
                 {"$set": {"categories": category_ids}}
             )
         elif mode == "remove":
             result = await db.chat_participants.update_one(
-                {"id": cid},
+                _cible,
                 {"$pullAll": {"categories": category_ids}}
             )
         else:  # add
             result = await db.chat_participants.update_one(
-                {"id": cid},
+                _cible,
                 {"$addToSet": {"categories": {"$each": category_ids}}}
             )
         if result.modified_count:
@@ -239,18 +294,22 @@ async def set_contact_categories(request: Request):
 @category_router.post("/contacts/filter-by-categories")
 async def filter_contacts_by_categories(request: Request):
     """Filtrer les contacts par catégories (pour campagnes et codes promo)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Non authentifié")
+    caller_email = await _mt2_appelant(request, "filtre par catégories")  # MT-2
 
-    body = await request.json()
-    category_ids = body.get("category_ids", [])
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    category_ids = [c for c in (body.get("category_ids") or []) if isinstance(c, str)] \
+        if isinstance(body.get("category_ids"), list) else []
     filter_mode = body.get("filter_mode", "any")  # "any" = OR, "all" = AND
 
     if not category_ids:
         return {"success": True, "contacts": [], "total": 0}
 
-    coach_id = caller_email if not is_super_admin(caller_email) else SUPER_ADMIN_EMAIL
+    coach_id = _mt2_espace(caller_email)
 
     if filter_mode == "all":
         # Contacts qui ont TOUTES les catégories sélectionnées
@@ -259,18 +318,24 @@ async def filter_contacts_by_categories(request: Request):
         # Contacts qui ont AU MOINS UNE des catégories
         query = {"coach_id": coach_id, "categories": {"$in": category_ids}}
 
-    contacts = await db.chat_participants.find(query, {"_id": 0}).to_list(5000)
-    return {"success": True, "contacts": contacts, "total": len(contacts)}
+    # MT-2 : liste de données personnelles -> paginée (50 max, `limit`/`skip`
+    # dans le corps). Aucun appelant frontend (vérifié). `total` = compte réel.
+    try:
+        _l = max(1, min(int(body.get("limit") or 50), 50))
+        _s = max(0, int(body.get("skip") or 0))
+    except (TypeError, ValueError):
+        _l, _s = 50, 0
+    total = await db.chat_participants.count_documents(query)
+    contacts = await db.chat_participants.find(query, {"_id": 0}).skip(_s).limit(_l).to_list(_l)
+    return {"success": True, "contacts": contacts, "total": total, "limit": _l, "skip": _s}
 
 
 @category_router.get("/contact-categories/stats")
 async def get_category_stats(request: Request):
     """Obtenir le nombre de contacts par catégorie"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Non authentifié")
+    caller_email = await _mt2_appelant(request, "statistiques des catégories")  # MT-2
 
-    coach_id = caller_email if not is_super_admin(caller_email) else SUPER_ADMIN_EMAIL
+    coach_id = _mt2_espace(caller_email)
 
     categories = await db.contact_categories.find(
         {"coach_id": coach_id}, {"_id": 0}
