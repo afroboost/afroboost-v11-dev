@@ -38,7 +38,7 @@ import {
   TEXTE_FUSEAU_PALIERS, offresPourType, paliersOffre, libellePrix, heureDuCours, prochaineDate,
   dateIso, formulaireInitial, construireCorps, validerInvitation, texteWhatsAppCampagne,
   lienPartage, partageable, messageErreur, lireOptions, creerInvitation, modifierInvitation,
-  lireApercuBrouillon,
+  lireApercuBrouillon, coursPourInvitation, ecartSeanceCours,
 } from '../../utils/invitationCampagne';
 
 const STEPS = [
@@ -48,6 +48,13 @@ const STEPS = [
 ];
 
 const SEUIL_BOTTOM_SHEET = 480;
+
+// INV-5 : aucune combinaison ouvrable -> on dit quoi faire, au lieu d'un lien cassé.
+export const AIDE_AUCUN_ESSAI = "Aucune offre gratuite publiée avec un cours publié : rends ton offre d'essai visible "
+  + 'et rattache-lui un cours visible, puis reviens ici.';
+export const AIDE_AUCUNE_OFFRE_GRATUITE = "Aucune offre gratuite publiée : rends ton offre visible sur la vitrine, puis reviens ici.";
+export const AIDE_AUCUN_COURS_OFFRE = "Aucun cours publié n'est rattaché à cette offre.";
+export const AIDE_AUCUN_COURS_PUBLIC = "Aucun cours publié pour le moment.";
 
 // ── Styles (en ligne, comme CampaignModal ; couleurs du coach uniquement) ──
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
@@ -160,10 +167,13 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
   const courses = (options && options.courses) || [];
   const offers = (options && options.offers) || [];
   const type = form.type;
-  const offresType = offresPourType(type, offers);
+  // INV-5 : trial / event_free ne proposent que des offres que leur lien ouvre, et
+  // les cours publics rattachés à l'offre choisie (même règle que l'activation).
+  const offresType = offresPourType(type, offers, courses);
   const coursChoisi = courses.find((c) => String(c.id) === String(form.course_id)) || null;
   const offreChoisie = offers.find((o) => String(o.id) === String(form.offer_id)) || null;
-  const erreurs = validerInvitation(form, offers, aujourdhui);
+  const coursProposes = coursPourInvitation(type, offreChoisie, courses);
+  const erreurs = validerInvitation(form, offers, aujourdhui, courses);
   const valide = Object.keys(erreurs).length === 0;
   const corps = construireCorps(form);
   const cleCorps = JSON.stringify(corps);
@@ -200,9 +210,14 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
         const evenement = t === 'event_free' || t === 'event_paid';
         if (evenement && !prev.course_id && dateCalendrier && prev.date === dateCalendrier) suivant.date = '';
         if (!evenement && !prev.date && dateCalendrier) suivant.date = dateCalendrier;
-        const liste = offresPourType(t, offers);
+        const liste = offresPourType(t, offers, courses);
         if (!liste.some((o) => String(o.id) === String(prev.offer_id))) {
           suivant.offer_id = liste.length === 1 ? String(liste[0].id) : '';
+        }
+        // INV-5 : un cours hors de la liste proposée pour ce type / cette offre est retiré.
+        const o = offers.find((x) => String(x.id) === String(suivant.offer_id)) || null;
+        if (prev.course_id && !coursPourInvitation(t, o, courses).some((c) => String(c.id) === String(prev.course_id))) {
+          suivant.course_id = '';
         }
         return suivant;
       });
@@ -220,6 +235,29 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
         const h = heureDuCours(c.time);
         if (h) suivant.heure = h;
         if (!prev.date) suivant.date = dateCalendrier || prochaineDate(c.weekday, aujourdhui);
+        // INV-5 : essai / événement gratuit — la date doit être une séance du cours
+        // (sinon la vitrine l'annoncerait « plus disponible »). On la cale sur la date
+        // fixe du cours, ou sur le prochain jour du cours à partir de la date choisie.
+        if ((prev.type === 'trial' || prev.type === 'event_free')
+          && ecartSeanceCours(c, suivant.date, suivant.heure).date) {
+          const fixe = typeof c.date === 'string' ? c.date.trim().slice(0, 10) : '';
+          const base = suivant.date && suivant.date >= aujourdhui ? suivant.date : aujourdhui;
+          suivant.date = fixe || prochaineDate(c.weekday, base) || suivant.date;
+        }
+      }
+      return suivant;
+    });
+  };
+
+  // INV-5 : changer d'offre retire un cours qui ne lui est pas rattaché.
+  const choisirOffre = (id) => {
+    setTouche(true);
+    const o = offers.find((x) => String(x.id) === String(id)) || null;
+    setForm((prev) => {
+      if (prev.offer_id === id) return prev;
+      const suivant = Object.assign({}, prev, { offer_id: id });
+      if (prev.course_id && !coursPourInvitation(prev.type, o, courses).some((c) => String(c.id) === String(prev.course_id))) {
+        suivant.course_id = '';
       }
       return suivant;
     });
@@ -414,6 +452,60 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
   const avecOffre = type === 'trial' || type === 'event_free' || type === 'event_paid';
   const paliers = eventPaid ? paliersOffre(offreChoisie) : [];
 
+  // INV-5 : essai / événement gratuit — l'OFFRE d'abord (elle décide des cours
+  // proposables), puis la séance. Événement payant et Pass Duo : ordre d'avant.
+  const offreEnPremier = type === 'trial' || type === 'event_free';
+  const aideCours = !options ? '' : (courses.length === 0 ? "Aucun cours n'est disponible pour le moment."
+    : (coursProposes.length === 0 ? (offreChoisie ? AIDE_AUCUN_COURS_OFFRE : AIDE_AUCUN_COURS_PUBLIC) : ''));
+  const blocCours = avecCours ? (
+    <>
+      <Champ id="inv-cours" label={coursFacultatif ? 'Séance (facultatif)' : 'Séance'} erreur={err('course_id')}
+             aide={aideCours}>
+        <select id="inv-cours" data-testid="inv-cours" style={styleChamp} value={form.course_id}
+                onChange={(e) => choisirCours(e.target.value)}>
+          <option value="">{coursFacultatif ? 'Aucune séance liée' : 'Choisis un cours'}</option>
+          {coursProposes.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}{c.time ? ` · ${heureDuCours(c.time) || c.time}` : ''}</option>
+          ))}
+        </select>
+      </Champ>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+        <Champ id="inv-date" label={coursFacultatif ? 'Date (facultatif)' : 'Date'} erreur={err('date')}>
+          <input id="inv-date" data-testid="inv-date" type="date" style={styleChamp} min={aujourdhui}
+                 value={form.date} onChange={(e) => maj('date', e.target.value)} />
+        </Champ>
+        <Champ id="inv-heure" label={coursFacultatif ? 'Heure (facultatif)' : 'Heure'} erreur={err('heure')}>
+          <input id="inv-heure" data-testid="inv-heure" type="time" style={styleChamp}
+                 value={form.heure} onChange={(e) => maj('heure', e.target.value)} />
+        </Champ>
+      </div>
+      {coursChoisi && coursChoisi.location ? (
+        <div style={{ marginBottom: '14px' }}>
+          <span style={styleLabel}>Lieu</span>
+          <p data-testid="inv-lieu" style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0, color: 'rgba(255,255,255,0.85)', fontSize: '14px' }}>
+            <SvgIcon name="mapPin" size={16} /> {coursChoisi.location}
+          </p>
+        </div>
+      ) : null}
+    </>
+  ) : null;
+
+  const blocOffre = avecOffre ? (
+    <Champ id="inv-offre" label={eventPaid ? "Offre payante de l'événement" : 'Offre gratuite'} erreur={err('offer_id')}
+           aide={options && offresType.length === 0
+             ? (eventPaid ? "Aucune offre payante n'est disponible : crée-la d'abord dans tes offres."
+               : (type === 'trial' ? AIDE_AUCUN_ESSAI : AIDE_AUCUNE_OFFRE_GRATUITE))
+             : ''}>
+      <select id="inv-offre" data-testid="inv-offre" style={styleChamp} value={form.offer_id}
+              onChange={(e) => choisirOffre(e.target.value)}>
+        <option value="">Choisis une offre</option>
+        {offresType.map((o) => (
+          <option key={o.id} value={o.id}>{o.name}{eventPaid && Number(o.price) > 0 ? ` · ${libellePrix(o.price)}` : ''}</option>
+        ))}
+      </select>
+    </Champ>
+  ) : null;
+
   const etape2 = (
     <div>
       {infoType ? (
@@ -444,54 +536,9 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
                              onChange={surMiniature} onBusyChange={surMiniatureOccupee} />
       </div>
 
-      {avecCours ? (
-        <>
-          <Champ id="inv-cours" label={coursFacultatif ? 'Séance (facultatif)' : 'Séance'} erreur={err('course_id')}
-                 aide={courses.length === 0 && options ? "Aucun cours n'est disponible pour le moment." : ''}>
-            <select id="inv-cours" data-testid="inv-cours" style={styleChamp} value={form.course_id}
-                    onChange={(e) => choisirCours(e.target.value)}>
-              <option value="">{coursFacultatif ? 'Aucune séance liée' : 'Choisis un cours'}</option>
-              {courses.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}{c.time ? ` · ${heureDuCours(c.time) || c.time}` : ''}</option>
-              ))}
-            </select>
-          </Champ>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-            <Champ id="inv-date" label={coursFacultatif ? 'Date (facultatif)' : 'Date'} erreur={err('date')}>
-              <input id="inv-date" data-testid="inv-date" type="date" style={styleChamp} min={aujourdhui}
-                     value={form.date} onChange={(e) => maj('date', e.target.value)} />
-            </Champ>
-            <Champ id="inv-heure" label={coursFacultatif ? 'Heure (facultatif)' : 'Heure'} erreur={err('heure')}>
-              <input id="inv-heure" data-testid="inv-heure" type="time" style={styleChamp}
-                     value={form.heure} onChange={(e) => maj('heure', e.target.value)} />
-            </Champ>
-          </div>
-          {coursChoisi && coursChoisi.location ? (
-            <div style={{ marginBottom: '14px' }}>
-              <span style={styleLabel}>Lieu</span>
-              <p data-testid="inv-lieu" style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0, color: 'rgba(255,255,255,0.85)', fontSize: '14px' }}>
-                <SvgIcon name="mapPin" size={16} /> {coursChoisi.location}
-              </p>
-            </div>
-          ) : null}
-        </>
-      ) : null}
-
-      {avecOffre ? (
-        <Champ id="inv-offre" label={eventPaid ? "Offre payante de l'événement" : 'Offre gratuite'} erreur={err('offer_id')}
-               aide={options && offresType.length === 0
-                 ? (eventPaid ? "Aucune offre payante n'est disponible : crée-la d'abord dans tes offres."
-                   : "Aucune offre gratuite n'est disponible : crée-la d'abord dans tes offres.")
-                 : ''}>
-          <select id="inv-offre" data-testid="inv-offre" style={styleChamp} value={form.offer_id}
-                  onChange={(e) => maj('offer_id', e.target.value)}>
-            <option value="">Choisis une offre</option>
-            {offresType.map((o) => (
-              <option key={o.id} value={o.id}>{o.name}{eventPaid && Number(o.price) > 0 ? ` · ${libellePrix(o.price)}` : ''}</option>
-            ))}
-          </select>
-        </Champ>
-      ) : null}
+      {offreEnPremier ? blocOffre : null}
+      {blocCours}
+      {offreEnPremier ? null : blocOffre}
 
       {eventPaid && offreChoisie ? (
         <div data-testid="inv-paliers" style={{ marginBottom: '14px', padding: '12px', borderRadius: '10px', background: rgbaP(0.08), border: `1px solid ${rgbaP(0.25)}` }}>

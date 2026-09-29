@@ -271,6 +271,64 @@ def offre_payante(offre) -> bool:
     return any(v is not None and v > 0 for v in paliers_offre(offre).values())
 
 
+# ─── INV-5 : la séance que le lien profond peut RÉELLEMENT annoncer ─────────
+# Copie Python EXACTE de `verdictSeanceInvitation` (frontend/src/utils/
+# invitationSeance.js, INV-2) : ce que le front refuserait (« La séance de ton
+# invitation n'est plus disponible »), le serveur le refuse à l'activation.
+_RE_HEURE = _re.compile(r"^\s*(\d{1,2})\s*[:hH.]\s*(\d{2})")
+
+
+def cours_public(cours) -> bool:
+    """Le cours est-il servi au public ? `GET /courses` retire `archived: true`,
+    la vitrine retire `visible: false` (App.js `baseCourses`, `v225EnrichedOffers`)."""
+    return isinstance(cours, dict) and cours.get("visible") is not False and cours.get("archived") is not True
+
+
+def cours_lies(offre) -> list:
+    """Les cours rattachés à l'offre (`linked_course_ids`), sans valeur vide."""
+    _l = (offre or {}).get("linked_course_ids") if isinstance(offre, dict) else None
+    return [str(c) for c in _l if c] if isinstance(_l, list) else []
+
+
+def cours_rattache(offre, cours_id) -> bool:
+    """INV-2 : une offre qui LISTE ses cours n'accepte qu'eux ; une offre qui
+    n'en liste aucun accepte tout cours public."""
+    _l = cours_lies(offre)
+    return not _l or str(cours_id or "") in _l
+
+
+def _heure(t) -> str:
+    _m = _RE_HEURE.match(str(t or ""))
+    if not _m:
+        return ""
+    _h, _mn = int(_m.group(1)), int(_m.group(2))
+    if _h > 23 or _mn > 59:
+        return ""
+    return "%02d:%02d" % (_h, _mn)
+
+
+def seance_du_cours(cours, occurrence) -> bool:
+    """L'occurrence (« AAAA-MM-JJTHH:MM[:SS] », heure de Zurich) est-elle une
+    séance de CE cours ? Même heure ; même date si le cours est à date fixe,
+    sinon même jour de semaine (convention des cours : JS, Dim=0..Sam=6)."""
+    if not isinstance(cours, dict):
+        return False
+    try:
+        _d = datetime.fromisoformat(str(occurrence or "")[:19])
+    except (TypeError, ValueError):
+        return False
+    if _heure(cours.get("time")) != "%02d:%02d" % (_d.hour, _d.minute):
+        return False
+    _fixe = cours.get("date").strip()[:10] if isinstance(cours.get("date"), str) else ""
+    if _fixe:
+        return _fixe == _d.strftime("%Y-%m-%d")
+    try:
+        _wd = int(cours.get("weekday"))
+    except (TypeError, ValueError):
+        return False
+    return 0 <= _wd <= 6 and (_d.weekday() + 1) % 7 == _wd
+
+
 # ─── Où le destinataire humain est envoyé ───────────────────────────────────
 # INV-2 : la SÉANCE de l'invitation voyage avec le lien. Noms de paramètres
 # RÉUTILISÉS : `course` / `occurrence` sont déjà ceux du contexte de séance lu

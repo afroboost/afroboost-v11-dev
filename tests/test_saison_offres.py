@@ -120,6 +120,7 @@ def _ns(db):
     ns["_hiver"] = _H
     # V537 : `get_offers` applique aussi le filtre des offres privées.
     for nom in ("_saison_active", "_annoter_places_restantes", "_offres_encore_disponibles",
+                "_inv5_filtres_porte_publique",  # INV-5 : la porte publique factorisée
                 "v537_filtre_listes", "get_offers"):
         exec(compile(_src(nom), nom, "exec"), ns)
     return ns

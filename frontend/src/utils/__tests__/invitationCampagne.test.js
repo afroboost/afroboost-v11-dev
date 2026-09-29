@@ -156,3 +156,38 @@ describe('appels API', () => {
     expect(axios.get.mock.calls[1][1].responseType).toBe('blob');
   });
 });
+
+// INV-5 — la modale ne propose que ce que le lien profond peut réellement ouvrir.
+describe('INV-5 — offres ouvrables et cours de l’offre', () => {
+  // eslint-disable-next-line global-require
+  const M = require('../invitationCampagne');
+  const COURS = [
+    { id: 'c1', name: 'Dimanche', time: '18:30', weekday: 0, public: true },
+    { id: 'c2', name: 'Mercredi', time: '19:15', weekday: 3, public: true },
+    { id: 'c3', name: 'Archivé', time: '18:30', weekday: 0, public: false },
+  ];
+  const OFF = [
+    { id: 'lie', price: 0, is_free: true, openable: true, course_ids: ['c1'] },
+    { id: 'libre', price: 0, is_free: true, openable: true, course_ids: [] },
+    { id: 'cachee', price: 0, is_free: true, openable: false, course_ids: [] },
+    { id: 'morte', price: 0, is_free: true, openable: true, course_ids: ['c3'] },
+  ];
+  test('trial : offres ouvrables ET avec au moins un cours public ; event_free : ouvrables', () => {
+    expect(offresPourType('trial', OFF, COURS).map((o) => o.id)).toEqual(['lie', 'libre']);
+    expect(offresPourType('event_free', OFF, COURS).map((o) => o.id)).toEqual(['lie', 'libre', 'morte']);
+  });
+  test('cours proposés : ceux de l’offre, publics ; offre sans cours liés -> tous les publics', () => {
+    expect(M.coursPourInvitation('trial', OFF[0], COURS).map((c) => c.id)).toEqual(['c1']);
+    expect(M.coursPourInvitation('trial', OFF[1], COURS).map((c) => c.id)).toEqual(['c1', 'c2']);
+    expect(M.coursPourInvitation('trial', null, COURS).map((c) => c.id)).toEqual(['c1', 'c2']);
+    expect(M.coursPourInvitation('pass_duo', OFF[0], COURS).map((c) => c.id)).toEqual(['c1', 'c2', 'c3']);
+  });
+  test('validation : cours hors offre, offre non ouvrable, date hors séance', () => {
+    const base = { type: 'trial', title: 'T', cta_label: 'Go', date: '2030-10-06', heure: '18:30' };
+    expect(validerInvitation({ ...base, offer_id: 'lie', course_id: 'c1' }, OFF, '2030-01-01', COURS)).toEqual({});
+    expect(validerInvitation({ ...base, offer_id: 'lie', course_id: 'c2', heure: '19:15' }, OFF, '2030-01-01', COURS).course_id).toBeTruthy();
+    expect(validerInvitation({ ...base, offer_id: 'cachee', course_id: 'c1' }, OFF, '2030-01-01', COURS).offer_id).toBeTruthy();
+    expect(validerInvitation({ ...base, offer_id: 'lie', course_id: 'c1', date: '2030-10-07' }, OFF, '2030-01-01', COURS).date).toBeTruthy();
+    expect(validerInvitation({ ...base, offer_id: 'lie', course_id: 'c1', heure: '19:00' }, OFF, '2030-01-01', COURS).heure).toBeTruthy();
+  });
+});

@@ -160,6 +160,41 @@ def _valider(corps, existant=None) -> dict:
         raise HTTPException(status_code=422, detail=str(_err))
 
 
+async def _ouvrables(offres) -> set:
+    """INV-5 — les ids des offres que le lien profond ouvre réellement
+    (`inv5_offres_ouvrables_par_lien`, server.py : la même porte que `GET /offers`)."""
+    _liste = [o for o in (offres or []) if isinstance(o, dict)]
+    if not _liste:
+        return set()
+    from api.server import inv5_offres_ouvrables_par_lien
+    return {o.get("id") for o in await inv5_offres_ouvrables_par_lien(_liste)}
+
+
+MSG_OFFRE_NON_PUBLIEE = ("Cette offre n'est pas publiée (masquée, archivée, hors saison, complète ou close) : "
+                         "le lien de l'invitation ne pourrait pas l'ouvrir. Choisis une offre visible sur la vitrine.")
+MSG_COURS_NON_PUBLIC = ("Ce cours est masqué ou archivé : la vitrine ne pourrait pas annoncer cette séance. "
+                        "Choisis un cours publié.")
+MSG_COURS_NON_RATTACHE = "Ce cours n'est pas rattaché à cette offre : choisis un des cours de l'offre."
+MSG_SEANCE_HORS_COURS = ("Cette date ne correspond pas à une séance de ce cours (jour ou heure différents) : "
+                         "choisis une date où le cours a lieu.")
+
+
+def _verifier_lien_ouvrable(champs, cours, offre, ouvrables) -> None:
+    """INV-5 — trial / event_free en `active` : ce que la vitrine refuserait
+    (lien profond d'App.js, `verdictSeanceInvitation` d'INV-2) est refusé ICI,
+    avant que le lien parte. 422 avec un message clair."""
+    if not offre or offre.get("id") not in ouvrables:
+        raise HTTPException(status_code=422, detail=MSG_OFFRE_NON_PUBLIEE)
+    if not champs.get("course_id"):
+        return                              # event_free sans séance : l'offre suffit
+    if not IC.cours_public(cours):
+        raise HTTPException(status_code=422, detail=MSG_COURS_NON_PUBLIC)
+    if not IC.cours_rattache(offre, cours.get("id")):
+        raise HTTPException(status_code=422, detail=MSG_COURS_NON_RATTACHE)
+    if champs.get("occurrence") and not IC.seance_du_cours(cours, champs["occurrence"]):
+        raise HTTPException(status_code=422, detail=MSG_SEANCE_HORS_COURS)
+
+
 async def _controler(coach, champs) -> tuple:
     """Propriété (toujours) + règles d'activation (en `active`). Rend (cours, offre)."""
     _cours = _offre = None
@@ -186,6 +221,8 @@ async def _controler(coach, champs) -> tuple:
         raise HTTPException(status_code=422, detail="Choisis une offre gratuite (0 CHF).")
     if _type == "event_paid" and not IC.offre_payante(_offre):
         raise HTTPException(status_code=422, detail="Choisis une offre payante.")
+    if _type in ("trial", "event_free"):
+        _verifier_lien_ouvrable(champs, _cours, _offre, await _ouvrables([_offre]))
     if _type == "pass_duo" and (_cours or {}).get("duo_enabled") is not True:
         # INV-1 : sans `duo_enabled`, le Centre Parrainage refuserait le pass (400) :
         # l'invitation serait une impasse pour le membre.
@@ -271,14 +308,21 @@ async def invitations_options(request: Request):
             "time": _co.get("time") or "", "weekday": _co.get("weekday"),
             "date": _co.get("date"), "duo_enabled": _co.get("duo_enabled") is True,
             "occurrences": _occ,
+            # INV-5 : la vitrine peut-elle annoncer ce cours ? (visible, non archivé)
+            "public": IC.cours_public(_co),
         })
         if len(_sortie_cours) >= LISTE_MAX:
             break
     _sortie_offres = []
+    # INV-5 : UNE lecture de la porte publique pour toutes les offres (jamais une par offre).
+    _ids_ouvrables = await _ouvrables(_offres[:LISTE_MAX])
     for _o in _offres[:LISTE_MAX]:
         _pal = IC.paliers_offre(_o)
         _sortie_offres.append({
             "id": _o.get("id"), "name": str(_o.get("name") or "")[:120],
+            # INV-5 : le lien `/?offre=<id>&reserver=1` l'ouvre-t-il ? + ses cours rattachés.
+            "openable": _o.get("id") in _ids_ouvrables,
+            "course_ids": IC.cours_lies(_o),
             "price": IC._nombre(_o.get("price")),
             "is_free": IC.offre_gratuite(_o),
             "has_progressive_pricing": _o.get("progressive_pricing") is True,

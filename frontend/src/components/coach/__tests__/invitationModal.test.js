@@ -407,3 +407,52 @@ describe('InvitationModal — retours des captures (360 → 1440)', () => {
     expect(urlHttps('javascript:alert(1)')).toBe('');
   });
 });
+
+// INV-5 — la modale ne propose que les cours de l'offre choisie, et que des offres ouvrables.
+describe('InvitationModal — INV-5 cohérence offre / cours', () => {
+  const OPTIONS_INV5 = {
+    courses: [
+      { id: 'c1', name: 'Afroboost Dimanche', time: '18:30', weekday: 0, public: true },
+      { id: 'c2', name: 'Afroboost Mercredi', time: '19h15', weekday: 3, public: true },
+      { id: 'c3', name: 'Ancien cours', time: '18:30', weekday: 0, public: false },
+    ],
+    offers: [
+      { id: 'lie', name: 'Essai lié', price: 0, is_free: true, openable: true, course_ids: ['c2'] },
+      { id: 'libre', name: 'Essai libre', price: 0, is_free: true, openable: true, course_ids: [] },
+      { id: 'cachee', name: 'Essai caché', price: 0, is_free: true, openable: false, course_ids: [] },
+    ],
+  };
+  const valeurs = (id) => Array.from(par(id).querySelectorAll('option')).map((o) => o.value).filter(Boolean);
+
+  test('trial : offres non ouvrables absentes ; cours = ceux de l’offre, publics ; changer d’offre retire le cours', async () => {
+    axios.get.mockImplementation((url) => (/campaigns\/options$/.test(String(url))
+      ? Promise.resolve({ data: OPTIONS_INV5 }) : Promise.resolve({ data: {} })));
+    await monter();
+    await cliquer('inv-type-trial');
+    expect(valeurs('inv-offre')).toEqual(['lie', 'libre']);
+    expect(valeurs('inv-cours')).toEqual(['c1', 'c2']);          // sans offre : les cours publics
+    await saisir('inv-offre', 'lie');
+    expect(valeurs('inv-cours')).toEqual(['c2']);                // l'offre liste ses cours
+    await saisir('inv-cours', 'c2');
+    expect(par('inv-heure').value).toBe('19:15');
+    expect(new Date(`${par('inv-date').value}T12:00:00`).getDay()).toBe(3); // date calée sur le mercredi
+    await saisir('inv-offre', 'libre');
+    expect(valeurs('inv-cours')).toEqual(['c1', 'c2']);
+    expect(par('inv-cours').value).toBe('c2');                   // toujours permis : gardé
+    await saisir('inv-offre', 'lie');
+    await saisir('inv-cours', 'c2');
+    expect(axios.get.mock.calls.filter((c) => /campaigns\/options$/.test(String(c[0]))).length).toBe(1);
+  });
+
+  test('aucune combinaison possible -> message clair', async () => {
+    axios.get.mockImplementation((url) => (/campaigns\/options$/.test(String(url))
+      ? Promise.resolve({ data: { courses: [{ id: 'c3', name: 'Ancien', time: '18:30', weekday: 0, public: false }],
+        offers: [{ id: 'lie', name: 'Essai', price: 0, is_free: true, openable: true, course_ids: [] },
+          { id: 'cachee', name: 'Caché', price: 0, is_free: true, openable: false, course_ids: [] }] } })
+      : Promise.resolve({ data: {} })));
+    await monter();
+    await cliquer('inv-type-trial');
+    expect(valeurs('inv-offre')).toEqual([]);
+    expect(par('inv-modal').textContent).toContain('Aucune offre gratuite publiée avec un cours publié');
+  });
+});

@@ -2819,6 +2819,37 @@ def _offres_encore_disponibles(offres) -> list:
     return [o for o in (offres or []) if o.get("places_restantes") is None or o["places_restantes"] > 0]
 
 
+async def _inv5_filtres_porte_publique(offers) -> list:
+    """INV-5 — ce que la porte publique `GET /offers` retire APRÈS sa requête
+    Mongo (`visible != false` + V537 `link_only` sauf l'id demandé).
+
+    SAISON : la vitrine ne montre que la saison active + les permanentes
+    (les offres historiques, sans champ, sont permanentes). Réglage lu en
+    base à chaque appel : passer hiver -> été ne demande aucun redéploiement.
+    Puis les offres limitées épuisées, puis celles dont la date limite réelle
+    est passée (HIVER)."""
+    offers = [o for o in (offers or []) if o and o.get("visible") is not False]
+    offers = _filtrer_saison(offers, await _saison_active())
+    offers = _offres_encore_disponibles(await _annoter_places_restantes(offers))
+    return _hiver.offres_ouvertes(offers)      # date limite réelle passée -> retirée
+
+
+async def inv5_offres_ouvrables_par_lien(offres) -> list:
+    """INV-5 — les offres que le lien profond `/?offre=<id>&reserver=1` OUVRE
+    réellement. Lu dans le front, pas deviné :
+      - App.js charge `GET /offers?offre=<id>` (`v537ParamOffreDuLien`) : une offre
+        `link_only` y figure donc (son id est demandé), une offre masquée, hors
+        saison, complète ou close n'y figure pas -> `_inv5_filtres_porte_publique` ;
+      - l'effet V371/V449 (OffersSliderAutoPlay) et OffresAimants ne cherchent la
+        cible QUE dans les services (`visibleServices` : `!isProduct`) ;
+      - une offre archivée n'est jamais proposée à une invitation (déjà le cas
+        dans `/options` depuis INV-1).
+    Rend des COPIES (l'annotation `places_restantes` ne touche pas l'appelant)."""
+    _cand = [dict(o) for o in (offres or [])
+             if isinstance(o, dict) and not o.get("isProduct") and o.get("archived") is not True]
+    return await _inv5_filtres_porte_publique(_cand)
+
+
 @api_router.get("/offers", response_model=List[Offer])
 async def get_offers(request: Request, scope: str = "", offre: str = ""):
     # V237 — isolation par coach, en OPT-IN explicite (`?scope=mine`).
@@ -2872,12 +2903,9 @@ async def get_offers(request: Request, scope: str = "", offre: str = ""):
     # ou inconnu n'ouvre rien : on n'énumère jamais les offres privées.
     offers = await db.offers.find(
         {"visible": {"$ne": False}, **v537_filtre_listes(offre)}, {"_id": 0}).to_list(100)
-    # SAISON : la vitrine ne montre que la saison active + les permanentes
-    # (les offres historiques, sans champ, sont permanentes). Réglage lu en
-    # base à chaque appel : passer hiver -> été ne demande aucun redéploiement.
-    offers = _filtrer_saison(offers, await _saison_active())
-    offers = _offres_encore_disponibles(await _annoter_places_restantes(offers))
-    offers = _hiver.offres_ouvertes(offers)      # date limite réelle passée -> retirée
+    # INV-5 : saison, places et date limite — une seule définition, partagée avec
+    # la validation des invitations (`inv5_offres_ouvrables_par_lien`).
+    offers = await _inv5_filtres_porte_publique(offers)
     if not offers:
         # V241: `coach_id` pose des la creation. Ce bloc d'amorcage s'execute sur
         # un GET (potentiellement anonyme, sans header) quand la collection est

@@ -76,10 +76,49 @@ export function offreGratuite(o) {
   return !Number.isFinite(p) || p <= 0;
 }
 
-/** Les offres proposables pour un type : gratuites (trial, event_free), payantes (event_paid), aucune (pass_duo). */
-export function offresPourType(type, offers) {
+// INV-5 — CE QUE LE LIEN PROFOND PEUT RÉELLEMENT OUVRIR.
+// Le serveur (`/options`) annote chaque offre (`openable` : `/?offre=<id>&reserver=1`
+// l'ouvre-t-il ? + `course_ids` : ses cours rattachés) et chaque cours (`public` :
+// visible et non archivé). Même règle qu'à l'activation (422 sinon) et que le front
+// INV-2 (`verdictSeanceInvitation`) : une offre qui liste ses cours n'accepte
+// qu'eux, une offre qui n'en liste aucun accepte tout cours public.
+// Champ absent (réponse d'avant INV-5) = accepté : le serveur reste juge.
+
+/** L'offre s'ouvre-t-elle par son lien ? */
+export function offreOuvrable(o) {
+  return !!o && o.openable !== false;
+}
+
+/** Essai / événement gratuit : la séance passe par la vitrine (INV-2). */
+function _viaVitrine(type) {
+  return type === 'trial' || type === 'event_free';
+}
+
+/**
+ * Les cours proposables : pour trial / event_free, les cours PUBLICS, et — une
+ * offre choisie qui liste ses cours — seulement ceux-là. Autres types : tous.
+ */
+export function coursPourInvitation(type, offre, courses) {
+  const liste = (Array.isArray(courses) ? courses : []).filter((c) => c && c.id);
+  if (!_viaVitrine(type)) return liste;
+  const publics = liste.filter((c) => c.public !== false);
+  const lies = offre && Array.isArray(offre.course_ids) ? offre.course_ids.map(String) : [];
+  return lies.length ? publics.filter((c) => lies.indexOf(String(c.id)) >= 0) : publics;
+}
+
+/**
+ * Les offres proposables pour un type : gratuites ET ouvrables par leur lien
+ * (trial, event_free), payantes (event_paid), aucune (pass_duo). Un essai exige
+ * une séance : avec `courses`, une offre d'essai sans aucun cours proposable
+ * n'est pas proposée (aucune combinaison possible).
+ */
+export function offresPourType(type, offers, courses) {
   const liste = (Array.isArray(offers) ? offers : []).filter((o) => o && o.id);
-  if (type === 'trial' || type === 'event_free') return liste.filter(offreGratuite);
+  if (_viaVitrine(type)) {
+    const ouvrables = liste.filter((o) => offreGratuite(o) && offreOuvrable(o));
+    if (type !== 'trial' || !Array.isArray(courses)) return ouvrables;
+    return ouvrables.filter((o) => coursPourInvitation(type, o, courses).length > 0);
+  }
   if (type === 'event_paid') return liste.filter((o) => !offreGratuite(o));
   return [];
 }
@@ -143,6 +182,28 @@ export function prochaineDate(weekday, aujourdhui) {
   const d = new Date(base.getTime());
   d.setDate(d.getDate() + delta);
   return dateIso(d);
+}
+
+/**
+ * INV-5 — la date / l'heure tombent-elles sur une séance du cours ? (même règle
+ * que le serveur `seance_du_cours` et le front INV-2). Rend `{date?, heure?}` :
+ * un message par champ en défaut ; vide si c'est bon ou si on ne peut pas juger.
+ */
+export function ecartSeanceCours(cours, date, heure) {
+  const e = {};
+  if (!cours || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) || !heureDuCours(heure)) return e;
+  const hc = heureDuCours(cours.time);
+  if (hc && hc !== heureDuCours(heure)) e.heure = `Ce cours a lieu à ${hc}.`;
+  const fixe = typeof cours.date === 'string' ? cours.date.trim().slice(0, 10) : '';
+  if (fixe) {
+    if (fixe !== date) e.date = "Ce cours n'a lieu qu'à sa date fixe.";
+  } else {
+    const w = Number(cours.weekday);
+    if (Number.isInteger(w) && w >= 0 && w <= 6 && new Date(`${date}T12:00:00`).getDay() !== w) {
+      e.date = "Ce cours n'a pas lieu ce jour-là.";
+    }
+  }
+  return e;
 }
 
 /** `occurrence` = "YYYY-MM-DDTHH:MM" si date ET heure sont valides, sinon "". */
@@ -210,7 +271,7 @@ export function construireCorps(f) {
  * vide = valide. `offers` sert à vérifier gratuité / payant ; `aujourdhui`
  * ("YYYY-MM-DD") refuse une date passée.
  */
-export function validerInvitation(f, offers, aujourdhui) {
+export function validerInvitation(f, offers, aujourdhui, courses) {
   const x = f || {};
   const e = {};
   const type = x.type;
@@ -248,6 +309,18 @@ export function validerInvitation(f, offers, aujourdhui) {
   if (type === 'trial' || type === 'event_free') {
     if (!x.offer_id) e.offer_id = "Choisis l'offre gratuite.";
     else if (offre && !offreGratuite(offre)) e.offer_id = 'Cette offre est payante : choisis une offre gratuite.';
+    else if (offre && !offreOuvrable(offre)) e.offer_id = "Cette offre n'est pas publiée : son lien ne s'ouvrirait pas.";
+    // INV-5 : le cours doit être public et rattaché à l'offre ; la date, une vraie séance.
+    if (x.course_id && Array.isArray(courses)) {
+      const permis = coursPourInvitation(type, offre, courses);
+      const c = permis.find((k) => String(k.id) === String(x.course_id));
+      if (!c) e.course_id = "Ce cours n'est pas proposé avec cette offre : choisis un des cours de l'offre.";
+      else {
+        const ecart = ecartSeanceCours(c, date, heure);
+        if (ecart.date && !e.date) e.date = ecart.date;
+        if (ecart.heure && !e.heure) e.heure = ecart.heure;
+      }
+    }
   } else if (type === 'event_paid') {
     if (!x.offer_id) e.offer_id = "Choisis l'offre payante de l'événement.";
     else if (offre && offreGratuite(offre)) e.offer_id = 'Cette offre est gratuite : choisis une offre payante.';
