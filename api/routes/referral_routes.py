@@ -41,6 +41,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from api.routes import referral_engine as E
+from api.routes import referral_campaigns_engine as IC   # PAR-1 : règles pures des campagnes
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,12 @@ DEBIT_PREFIXE_CHAINE = "duo_chain:"           # V556 : création de l'invitation
 DEBIT_PREFIXE_CHAINE_ACTION = "duo_chain_a:"  # V556 : modification / partage (quota séparé)
 DEBIT_PREFIXE_CHAINE_LECTURE = "duo_chain_l:" # V556 : contrôle d'aperçu (lecture)
 FLAG_CHAINE = "parrainage_chaine_enabled"    # V556 : `true` = actif ; absent / false = parcours V2
+# PAR-1 : une campagne `trial` devient la RACINE d'une chaîne V556 (lu `is True`,
+# absent / false / base illisible = liens de campagne d'avant, aucune entrée).
+FLAG_CHAINE_CAMPAGNE = "invitation_chaine_campagne_enabled"
+DEBIT_PREFIXE_CAMPAGNE = "duo_campaign:"      # PAR-1 : POST /campaign/{token}/entry
+CAMPAGNE_ENTREES_OUVERTES_MAX = 500           # PAR-1 : P0 ouverts sans invité par campagne
+PREFIXE_PARRAIN_CAMPAGNE = "campagne:"        # PAR-1 : `sponsor.email_norm` d'un P0 (jamais une adresse)
 
 
 def init_db(database):
@@ -125,6 +132,25 @@ async def _chaine_active() -> bool:
                        type(_err).__name__)
         return False
     return _f.get(FLAG_CHAINE) is True
+
+
+async def invitation_chaine_campagne_active(database=None) -> bool:
+    """PAR-1 — le lien d'une campagne `trial` entre-t-il dans la chaîne ?
+    Oui seulement si les TROIS drapeaux le disent, en UNE lecture :
+    `parrainage_duo_enabled` (le parrainage existe), `parrainage_chaine_enabled`
+    ET `invitation_chaine_campagne_enabled` (`is True`). Base illisible = NON :
+    les liens déjà partagés gardent leur cible d'avant."""
+    _base = database if database is not None else db
+    if _base is None:
+        return False
+    try:
+        _f = await _base[FLAG_ID].find_one({"id": FLAG_ID}, {"_id": 0}) or {}
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s drapeau %s illisible (%s) — considéré OFF", PREFIXE, FLAG_CHAINE_CAMPAGNE,
+                       type(_err).__name__)
+        return False
+    return bool(_f.get(FLAG_CHAMP, False)) and _f.get(FLAG_CHAINE) is True \
+        and _f.get(FLAG_CHAINE_CAMPAGNE) is True
 
 
 async def _exiger_actif() -> None:
@@ -368,6 +394,94 @@ async def _offre_autorisee(course, offer_id) -> dict:
     return _o
 
 
+# ─── PAR-1 : la porte UNIQUE de l'offre d'un pass ──────────────────────────
+# Un pass sans `origin.campaign_id` (tous les pass d'avant PAR-1) passe par
+# `_offre_autorisee` EXACTEMENT comme avant. Un pass d'une campagne (P0 et ses
+# descendants) : l'offre est CELLE de la campagne, revalidée à chaque octroi —
+# campagne `active` de type `trial`, même `offer_id`, 0 CHF certain
+# (`offre_gratuite`), offre publiée, du propriétaire de la campagne. Archiver
+# la campagne ferme donc P0 ET toute sa descendance (coupe-circuit).
+async def _campagne_par_id(campaign_id):
+    _cid = str(campaign_id or "").strip()
+    if not _cid or len(_cid) > 64:
+        return None
+    try:
+        return await db["referral_campaigns"].find_one({"id": _cid}, {"_id": 0})
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s campagne illisible (%s)", PREFIXE, type(_err).__name__)
+        return None
+
+
+async def _offre_de_campagne(campagne, offer_id=None):
+    """L'offre RELUE si la campagne peut encore l'octroyer, sinon None."""
+    _c = campagne if isinstance(campagne, dict) else None
+    if not _c or _c.get("status") != "active" or _c.get("type") != "trial":
+        return None
+    _oid = str(_c.get("offer_id") or "").strip()
+    if not _oid or (offer_id is not None and str(offer_id or "").strip() != _oid):
+        return None
+    try:
+        _o = await db["offers"].find_one({"id": _oid}, {"_id": 0})
+    except Exception:  # noqa: BLE001
+        _o = None
+    if not _o or _o.get("visible") is False or _o.get("archived") is True or _o.get("active") is False:
+        return None
+    if not IC.offre_gratuite(_o):
+        return None
+    _cle = str(_c.get("coach_id") or "").strip().lower()
+    if _cle and E._proprietaire(_o.get("coach_id")) != _cle:
+        return None
+    return _o
+
+
+async def _offre_du_pass(pass_doc, course) -> dict:
+    """L'offre que le join octroie. Sans campagne : `_offre_autorisee` (inchangé)."""
+    _cid = E.campagne_du_pass(pass_doc)
+    if not _cid:
+        return await _offre_autorisee(course, (pass_doc or {}).get("offer_id"))
+    _o = await _offre_de_campagne(await _campagne_par_id(_cid), (pass_doc or {}).get("offer_id"))
+    if not _o:
+        raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
+    return _o
+
+
+async def _catalogue_du_pass(pass_doc, cache) -> list:
+    """Le catalogue montré avec un pass. Sans campagne : celui du cours
+    (inchangé) ; d'une campagne : sa seule offre (« Recommandée »)."""
+    if not E.campagne_du_pass(pass_doc):
+        return await _catalogue_par_cours((pass_doc or {}).get("course_id"), cache)
+    _oid = str((pass_doc or {}).get("offer_id") or "").strip()
+    _k = "offre-campagne:" + _oid
+    if _k not in cache:
+        _o = None
+        if _oid:
+            try:
+                _o = await db["offers"].find_one({"id": _oid}, {"_id": 0})
+            except Exception:  # noqa: BLE001
+                _o = None
+        cache[_k] = [E.dto_offre(_o, True)] if _o else []
+    return cache[_k]
+
+
+async def _proprietaires_campagne(pass_doc) -> list:
+    """Les adresses du propriétaire de la campagne racine : la clé du coach, ou
+    les super-admins pour une campagne plateforme (clé "")."""
+    _c = await _campagne_par_id(E.campagne_du_pass(pass_doc))
+    if not _c:
+        return []
+    _cle = str(_c.get("coach_id") or "").strip().lower()
+    if _cle:
+        return [_cle]
+    try:
+        from api.routes.shared import SUPER_ADMIN_EMAILS as _SA
+    except Exception:  # noqa: BLE001
+        try:
+            from api.server import SUPER_ADMIN_EMAILS as _SA
+        except Exception:  # noqa: BLE001
+            _SA = []
+    return [E.normaliser_email(x) for x in (_SA or [])]
+
+
 async def _cours_eligible(course_id: str):
     _cid = str(course_id or "").strip()
     if not _cid:
@@ -420,8 +534,7 @@ async def _statut_reel(pass_doc, now=None, reservations=None):
 async def _dto(pass_doc, deja_existant=None, now=None, cache_offres=None):
     _resas = await _reservations_du_pass(pass_doc)
     _s = await _statut_reel(pass_doc, now, _resas)
-    _offres = await _catalogue_par_cours(pass_doc.get("course_id"),
-                                         cache_offres if cache_offres is not None else {})
+    _offres = await _catalogue_du_pass(pass_doc, cache_offres if cache_offres is not None else {})
     return E.dto_pass(pass_doc, _s, E.tickets_du_pass(pass_doc, _resas, _frontend_url()),
                       _frontend_url(), deja_existant, offers=_offres)
 
@@ -701,6 +814,18 @@ async def _tenter_reservation_parrain(pass_doc, course) -> tuple:
 
 async def _debloquer_ou_bloquer(pass_doc, course) -> dict:
     """Depuis `friend_registered` : tente la place du parrain. Rend le pass à jour."""
+    if E.sans_place_parrain(pass_doc):
+        # PAR-1 : racine de campagne — le coach n'a pas de place à réserver :
+        # débloqué SANS réservation parrain, sans push ni e-mail (aucune adresse).
+        # Même écriture conditionnelle que ci-dessous (`status != unlocked`).
+        _now = _iso()
+        _cible = E.transition(pass_doc.get("status"), E.UNLOCKED)
+        await db[COLL_PASSES].update_one(
+            {"id": pass_doc["id"], "status": {"$ne": E.UNLOCKED}},
+            {"$set": {"status": _cible, "unlocked_at": _now, "blocked_reason": None, "updated_at": _now},
+             "$push": {"events": {"at": _now, "type": "unlocked", "detail": "sans_place_parrain"}},
+             "$inc": {"version": 1}})
+        return await db[COLL_PASSES].find_one({"id": pass_doc["id"]}, {"_id": 0}) or pass_doc
     _r, _blocage = await _tenter_reservation_parrain(pass_doc, course)
     if _r:
         _now = _iso()
@@ -1430,6 +1555,9 @@ async def referral_changer_offre(identifiant: str, request: Request):
             raise _refus(409, E.REFUS_PASS_DEJA_REJOINT,
                          "Tu es déjà inscrit : seul le parrain peut encore changer l'offre.")
         _qui = "invitee"
+    if E.campagne_du_pass(_p):
+        # PAR-1 : l'offre d'une invitation de campagne est celle de la campagne.
+        raise _refus(409, E.REFUS_PASS_NON_MODIFIABLE, "L'offre de cette invitation est fixée par le coach.")
     _version = _version_du_corps(_b)
     _p = await _changer_offre(_p, _b.get("offer_id"), _version, _qui)
     return await _dto(_p)
@@ -1529,11 +1657,14 @@ async def referral_changer_seance(identifiant: str, request: Request):
             raise _refus(409, E.REFUS_PASS_NON_MODIFIABLE,
                          "Cette invitation est liée à la séance de ton parrain.")
         _qui, _public = "invitee", True
+    if E.campagne_du_pass(_p):
+        # PAR-1 : toute la chaîne d'une campagne vit sur SA séance.
+        raise _refus(409, E.REFUS_PASS_NON_MODIFIABLE, "Cette invitation vaut pour la séance choisie par le coach.")
     _p = await _changer_seance(_p, _b.get("occurrence"), _version_du_corps(_b), _qui)
     if _public:
         _now = _maintenant()
         _rep = E.dto_public(_p, await _statut_reel(_p, _now), _now,
-                            await _catalogue_par_cours(_p.get("course_id"), {}))
+                            await _catalogue_du_pass(_p, {}))
         # La même forme que le GET : l'écran garde sa liste de séances après le
         # changement, sans second aller-retour.
         _rep["occurrences"] = await _occurrences_du_pass(_p)
@@ -1810,10 +1941,12 @@ async def referral_pass_public(share_token: str):
         _p = await db[COLL_PASSES].find_one({"id": _p["id"]}, {"_id": 0}) or _p
     # V539 : les autres séances du MÊME cours, pour que l'ami puisse en choisir
     # une autre sans quitter la page. Liste du serveur, jamais une date libre.
-    _dto = E.dto_public(_p, _s, _now, await _catalogue_par_cours(_p.get("course_id"), {}))
+    _dto = E.dto_public(_p, _s, _now, await _catalogue_du_pass(_p, {}))
     _dto["occurrences"] = await _occurrences_du_pass(_p)
-    if E.chaine_du_pass(_p).get("parent_pass_id"):
-        _dto["occurrences"] = []     # V556 : liée à la séance de son parrain (sa place y est)
+    if E.chaine_du_pass(_p).get("parent_pass_id") or E.campagne_du_pass(_p):
+        # V556 : liée à la séance de son parrain (sa place y est) ;
+        # PAR-1 : une campagne vaut pour SA séance (figée par le coach).
+        _dto["occurrences"] = []
     # V556 : faut-il inviter avant de s'inscrire ? et où en est ce visiteur ?
     _dto["chain_required"] = E.chaine_requise(_p, _s, await _chaine_active())
     _dto["chain"] = E.dto_chaine_public(_p)
@@ -1859,6 +1992,9 @@ async def referral_join(share_token: str, request: Request):
     _ok, _motif = E.invite_autorise(_p, _email, _tel)
     if not _ok:
         raise _refus(409, E.REFUS_AUTO_PARRAINAGE, "Tu ne peux pas être ton propre invité.")
+    # PAR-1 : le coach d'une campagne ne s'offre pas son propre essai.
+    if E.campagne_du_pass(_p) and _email in await _proprietaires_campagne(_p):
+        raise _refus(409, E.REFUS_AUTO_PARRAINAGE, "Tu ne peux pas être ton propre invité.")
     # V556 — LA RÈGLE BOULE DE NEIGE : pas d'inscription tant que l'invitation
     # enfant n'a pas été partagée (action déclenchée ; jamais « WhatsApp a
     # confirmé l'envoi », ce qu'un navigateur ne peut pas savoir).
@@ -1883,9 +2019,12 @@ async def referral_join(share_token: str, request: Request):
     # ── 3bis. V534b : `offer_id` facultatif = changement INVITEE avant l'octroi
     _oid_demande = str(_b.get("offer_id") or "").strip()
     if _oid_demande and _oid_demande != str(_p.get("offer_id") or ""):
+        if E.campagne_du_pass(_p):          # PAR-1 : offre fixée par la campagne
+            raise _refus(409, E.REFUS_PASS_NON_MODIFIABLE, "L'offre de cette invitation est fixée par le coach.")
         _p = await _changer_offre(_p, _oid_demande, E.version_pass(_p), "invitee")
     # L'octroi utilise L'OFFRE DU PASS, relue et revalidée (jamais un id du front).
-    _offre = await _offre_autorisee(_course, _p.get("offer_id"))
+    # PAR-1 : porte unique (`_offre_autorisee` inchangé pour un pass sans campagne).
+    _offre = await _offre_du_pass(_p, _course)
 
     # ── 4. index partiel filleul / occurrence (avant tout octroi) ──────────
     _invitee = {"email_norm": _email, "name": _nom, "whatsapp_norm": _tel or None,
@@ -1914,7 +2053,7 @@ async def referral_join(share_token: str, request: Request):
             raise _refus(409, E.REFUS_PASS_FERME, "Ce Pass Duo a déjà un invité.")
         if _tentative == 2:
             raise _refus(409, E.REFUS_CONFLIT_VERSION, "Ce Pass Duo vient d'être modifié : réessaie.")
-        _offre = await _offre_autorisee(_course, _p.get("offer_id"))   # l'offre a pu changer
+        _offre = await _offre_du_pass(_p, _course)   # l'offre a pu changer
     _p["invitee"] = _invitee
 
     async def _rouvrir():
@@ -2313,6 +2452,14 @@ async def referral_chaine_creer(share_token: str, request: Request):
         "expires_at": _p.get("occurrence"),
         "events": [{"at": _iso(_now), "type": E.EVENEMENT_CHAINE_CREEE, "detail": None}],
     }
+    # PAR-1 : l'enfant d'une chaîne de campagne hérite de la campagne et de la
+    # source racine (jamais de `source_type` propre : il est subscriber).
+    _org = E.origine_du_pass(_p)
+    if _org.get("campaign_id"):
+        _racine = "root_source_type" in _org
+        _doc["origin"] = {"campaign_id": _org.get("campaign_id"),
+                          "root_source_type": _org.get("root_source_type") if _racine else _org.get("source_type"),
+                          "root_source_id": _org.get("root_source_id") if _racine else _org.get("source_id")}
     # L0 : l'enfant porte le prénom saisi ; pas de photo (le filleul n'est pas encore inscrit)
     # -> avatar Afroboost, jamais la photo du coach à la place d'un membre.
     _doc["inviter_display"] = E.identite_invitant(_doc)
@@ -2432,6 +2579,152 @@ async def referral_chaine_apercu(share_token: str, request: Request):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# PAR-1 — L'ENTRÉE D'UNE CAMPAGNE : un pass racine (P0) par visiteur
+# ═══════════════════════════════════════════════════════════════════════════
+# Le visiteur d'un lien de campagne `trial` (`/duo/c/<jeton>`) reçoit UN pass
+# ORDINAIRE dont le « parrain » est la campagne : ensuite InvitationDuo,
+# WizardFilleul et /join font le reste, sans rien changer. Public : la seule
+# capacité est le jeton de la campagne ; `X-Entry-Key` (rendue une fois, à la
+# création) retrouve le MÊME P0 sur le même appareil. Réponse SANS PII.
+DETAIL_ENTREE_INTROUVABLE = "Invitation introuvable"
+ENTREE_CLE_MAX = 64
+
+
+def _jeton_campagne(token) -> str:
+    _t = str(token or "").strip()
+    if not _t or len(_t) > 128 or any(c.isspace() or c in "/\\?#%$" for c in _t):
+        return ""
+    return _t
+
+
+@router.post("/campaign/{token}/entry")
+async def referral_campagne_entree(token: str, request: Request):
+    """`{attribution?}` (+ `X-Entry-Key` facultatif) -> 201 `{share_token,
+    entry_key, target}` (P0 neuf) | 200 `{share_token, target}` (P0 de cette
+    clé). 404 neutre (inconnue, brouillon, archivée, autre type, séance ou
+    offre invalide) ; 404 `parrainage_chaine_desactive` (drapeaux) ; 410 séance
+    passée ; 409 `X-Refus-Raison: campagne_complete` ; 429 débit IP."""
+    await _exiger_actif()
+    _exiger_debit(request, DEBIT_PREFIXE_CAMPAGNE)
+    if not await invitation_chaine_campagne_active(db):
+        raise HTTPException(status_code=404, detail="parrainage_chaine_desactive")
+    _tok = _jeton_campagne(token)
+    _camp = None
+    if _tok:
+        try:
+            _camp = await db["referral_campaigns"].find_one({"share_token": _tok}, {"_id": 0})
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("%s campagne illisible (%s)", PREFIXE, type(_err).__name__)
+            raise HTTPException(status_code=503, detail="Invitation momentanément indisponible")
+    if not _camp or _camp.get("status") != "active" or _camp.get("type") != "trial" or not _camp.get("id"):
+        raise HTTPException(status_code=404, detail=DETAIL_ENTREE_INTROUVABLE)
+
+    # Le même appareil revient : le MÊME P0, sans rien écrire.
+    try:
+        _cle_client = (request.headers.get("x-entry-key", "") or "").strip()
+    except Exception:  # noqa: BLE001
+        _cle_client = ""
+    if _cle_client and len(_cle_client) <= ENTREE_CLE_MAX:
+        _deja = await db[COLL_PASSES].find_one(
+            {"origin.campaign_id": _camp["id"], "origin.entry_key_hash": _hache_cle(_cle_client)}, {"_id": 0})
+        if _deja:
+            return JSONResponse(status_code=200, content={
+                "share_token": _deja.get("share_token"), "target": "/duo/%s" % _deja.get("share_token")})
+
+    from api.routes.reservation_routes import lot1_occurrence_iso
+    _occ = lot1_occurrence_iso(_camp.get("occurrence"))
+    _course = None
+    if _camp.get("course_id"):
+        _course = await db["courses"].find_one({"id": str(_camp.get("course_id"))}, {"_id": 0})
+    _offre = await _offre_de_campagne(_camp)
+    if not _occ or not _course or _course.get("archived") is True or _course.get("visible") is False \
+            or not _offre or not IC.seance_du_cours(_course, _occ):
+        raise HTTPException(status_code=404, detail=DETAIL_ENTREE_INTROUVABLE)
+    _now = _maintenant()
+    if E.est_passee(_occ, _now):
+        raise HTTPException(status_code=410, detail="La séance de cette invitation est passée.")
+
+    # Plafond : P0 encore ouverts (sans invité) pour cette campagne.
+    _ouverts = await db[COLL_PASSES].count_documents(
+        {"origin.campaign_id": _camp["id"], "origin.source_type": {"$in": list(E.SOURCES_RACINE)},
+         "status": {"$in": [E.LOCKED, E.WAITING]}, "invitee": None})
+    if _ouverts >= CAMPAGNE_ENTREES_OUVERTES_MAX:
+        raise _refus(409, "campagne_complete", "Cette invitation est complète pour le moment.")
+
+    _cle_camp = str(_camp.get("coach_id") or "").strip().lower()
+    _idt = IC._inviter_public(_camp)
+    try:
+        _prenom = E.valider_nom_invitation(_idt.get("prenom")) if _idt.get("prenom") else None
+    except E.InvitationInvalide:
+        _prenom = None
+    try:
+        _message = E.valider_message(_camp.get("message"))
+    except E.InvitationInvalide:
+        _message = None
+    _attrib = None
+    try:
+        from api.routes.shared import m2a_bloc_propre
+        _attrib = m2a_bloc_propre((await _corps(request)).get("attribution")) or None
+    except Exception:  # noqa: BLE001
+        _attrib = None
+    _pid = str(uuid.uuid4())
+    _entry_key = secrets.token_urlsafe(18)
+    _doc = {
+        "id": _pid,
+        "coach_id": str(_course.get("coach_id") or "").strip().lower() or _cle_camp,
+        "course_id": _course.get("id"),
+        "occurrence": _occ,
+        "course_snapshot": {
+            "name": _course.get("name") or "",
+            "time": _course.get("time") or "",
+            "locationName": _course.get("locationName") or _course.get("location") or "",
+            "mapsUrl": _course.get("mapsUrl") or "",
+        },
+        "sponsor": {
+            "email_norm": E.cle_parrain_campagne(_camp["id"], _pid),
+            "name": _prenom or "",
+            "whatsapp_norm": None, "subscription_code": None,
+            "terms_accepted": False, "pending": False,
+        },
+        "invitee": None,
+        "status": E.LOCKED,
+        "share_token": secrets.token_urlsafe(24),
+        "opened_at": None,
+        "reservations": {"sponsor_id": None, "sponsor_code": None,
+                         "invitee_id": None, "invitee_code": None},
+        "invitee_access_code": None,
+        "blocked_reason": None,
+        "attribution": _attrib,
+        "spordate_reward": {"status": "none"},
+        "offer_id": _offre.get("id"),
+        "offer_snapshot": E.snapshot_offre(_offre),
+        "offer_history": [],
+        "version": 1,
+        "invitation": {"display_name": _prenom, "photo_url": _idt.get("photo_url"),
+                       "message": _message, "updated_at": _iso(_now)},
+        "invitation_version": 1,
+        "inviter_display": {"prenom": _prenom or "", "photo_url": _idt.get("photo_url"), "source": "coach"},
+        "chain": {"root_pass_id": _pid, "depth": 0},
+        "origin": {"source_type": "partner" if _cle_camp else "super_admin",
+                   "source_id": _cle_camp, "campaign_id": _camp["id"],
+                   "entry_key_hash": _hache_cle(_entry_key)},
+        "created_at": _iso(_now),
+        "updated_at": _iso(_now),
+        "unlocked_at": None,
+        "expires_at": _occ,
+        "events": [{"at": _iso(_now), "type": "pass_created", "detail": "campaign"}],
+    }
+    try:
+        await db[COLL_PASSES].insert_one(dict(_doc))
+    except Exception as _err:  # noqa: BLE001
+        logger.error("%s entrée de campagne non créée (%s)", PREFIXE, type(_err).__name__)
+        raise HTTPException(status_code=503, detail="Invitation non préparée, réessaie dans un instant.")
+    logger.info("%s P0 %s créé pour la campagne %s", PREFIXE, _pid[:8], str(_camp["id"])[:8])
+    return JSONResponse(status_code=201, content={
+        "share_token": _doc["share_token"], "entry_key": _entry_key, "target": "/duo/%s" % _doc["share_token"]})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Routes — admin (JWT signé, cloisonnement `get_coach_filter`)
 # ═══════════════════════════════════════════════════════════════════════════
 async def _admin(request) -> dict:
@@ -2505,5 +2798,5 @@ async def referral_admin_passes(request: Request):
         _resas = await _reservations_du_pass(_pd)
         _s = await _statut_reel(_pd, _now, _resas)
         _items.append(E.dto_admin(_pd, _s, E.tickets_du_pass(_pd, _resas, _frontend_url()), _frontend_url(),
-                                  offers=await _catalogue_par_cours(_pd.get("course_id"), _cache)))
+                                  offers=await _catalogue_du_pass(_pd, _cache)))
     return {"items": _items, "total": _total, "page": _page, "per_page": LISTE_MAX}

@@ -133,6 +133,15 @@ async def partie_moteur_pur():
                        ("cours objet", {"course_id": {"$ne": None}})):
         verifier("INV-2e %s -> cible d'avant (…&reserver=1)" % nom,
                  IC.cible_front(dict(s, **extra)) == "/?offre=offre-1&reserver=1", IC.cible_front(dict(s, **extra)))
+    # PAR-1 : drapeaux de chaîne allumés -> un trial COMPLET entre dans la chaîne ;
+    # tout le reste (et le défaut chaine=False ci-dessus) reste identique.
+    verifier("INV-PAR1a trial complet + chaine=True -> /duo/c/<jeton> (sans reserver=1)",
+             IC.cible_front(s, chaine=True) == "/duo/c/t", IC.cible_front(s, chaine=True))
+    verifier("INV-PAR1b chaine=True : trial incomplet, event_free, event_paid, pass_duo inchangés",
+             IC.cible_front(dict(s, occurrence=None), chaine=True) == "/?offre=offre-1&reserver=1"
+             and IC.cible_front(dict(s, type="event_free"), chaine=True) == IC.cible_front(dict(s, type="event_free"))
+             and IC.cible_front(dict(s, type="event_paid"), chaine=True) == "/?offre=offre-1"
+             and IC.cible_front(dict(s, type="pass_duo"), chaine=True) == "/parrainage?campagne=t")
     e = IC.valider_entree({"type": "trial", "title": "<b>Viens</b>  danser", "coach_id": "x@y",
                            "scheduled": True, "recipients": ["a"], "channel": "email", "send_at": "x"})
     verifier("INV-M4 liste blanche + HTML retiré", e["title"] == "Viens danser" and not any(
@@ -232,6 +241,11 @@ async def partie_types():
              and r.get("target_url") == "/?offre=%s&reserver=1&course=%s&occurrence=%s" % (
                  OFFRE_A_ESSAI, COURS_A, occ[:16].replace(":", "%3A"))
              and r.get("lieu") == "Salle A" and r.get("time_label") == "18:30" and r.get("date_label"), (c, r))
+    base["feature_flags"].docs[0].update(parrainage_chaine_enabled=True, invitation_chaine_campagne_enabled=True)
+    c2, r2 = await appel(RC.invitations_lire(d["id"], rq(COACH_A)))
+    verifier("INV-PAR1c DTO coach drapeaux allumés : target_url = /duo/c/<jeton>",
+             c2 == 200 and r2.get("target_url") == "/duo/c/" + r2.get("share_token"), (c2, r2.get("target_url")))
+    base["feature_flags"].docs[0].update(parrainage_chaine_enabled=False, invitation_chaine_campagne_enabled=False)
     verifier("INV-D5 inviter_display figé (coach)", doc(base, d["id"])["inviter_display"] ==
              {"prenom": "Mariam", "photo_url": PHOTO_A, "source": "coach"}, doc(base, d["id"]).get("inviter_display"))
     c, r = await creer(COACH_A, {"type": "trial", "status": "active", "course_id": COURS_A, "occurrence": occ,

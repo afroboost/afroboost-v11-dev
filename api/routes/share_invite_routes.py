@@ -93,10 +93,11 @@ def _version(doc) -> int:
         return 1
 
 
-def _cible(doc) -> str:
-    """`FRONT + cible_front(doc)` ; un chemin non relatif (ou `//hôte`) -> l'accueil."""
+def _cible(doc, chaine=False) -> str:
+    """`FRONT + cible_front(doc)` ; un chemin non relatif (ou `//hôte`) -> l'accueil.
+    PAR-1 : `chaine` (drapeaux lus par la page) -> `/duo/c/<jeton>` pour un `trial` complet."""
     try:
-        _c = str(CE.cible_front(doc) or "/")
+        _c = str(CE.cible_front(doc, chaine) or "/")
     except Exception as _e:  # noqa: BLE001
         logger.warning("%s cible_front impossible (%s)", PREFIXE, type(_e).__name__)
         _c = "/"
@@ -336,8 +337,16 @@ async def share_invite_page(token: str, request: Request = None, v: str = ""):
         _ua = request.headers.get("user-agent", "") if request is not None else ""
     except Exception:  # noqa: BLE001
         _ua = ""
+    # PAR-1 : les liens DÉJÀ partagés basculent vers la chaîne quand les drapeaux
+    # sont allumés (même URL, nouvelle cible) ; éteints = cible d'avant.
+    try:
+        from api.routes.referral_routes import invitation_chaine_campagne_active
+        _chaine = await invitation_chaine_campagne_active(_base())
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("%s drapeaux de chaîne illisibles (%s) — cible d'avant", PREFIXE, type(_e).__name__)
+        _chaine = False
     _page = page_invitation_html(_titre(_dto_pub), _description(_dto_pub), _image_url, _url,
-                                 _cible(_doc), await _couleur(_doc), robot=E.est_robot_apercu(_ua))
+                                 _cible(_doc, _chaine), await _couleur(_doc), robot=E.est_robot_apercu(_ua))
     return HTMLResponse(_page, headers={"Cache-Control": "public, max-age=300", "Vary": "User-Agent",
                                         "X-Content-Type-Options": "nosniff"})
 

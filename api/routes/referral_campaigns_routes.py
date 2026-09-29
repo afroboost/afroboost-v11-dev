@@ -239,7 +239,9 @@ async def _dto(doc, cours=None, offre=None, charger=True) -> dict:
                 offre = await _db()["offers"].find_one({"id": doc["offer_id"]}, {"_id": 0})
         except Exception:  # noqa: BLE001
             pass
-    return IC.dto_coach(doc, cours, offre, R._frontend_url())
+    # PAR-1 : `target_url` = la cible RÉELLE du lien (chaîne si les drapeaux sont allumés).
+    return IC.dto_coach(doc, cours, offre, R._frontend_url(),
+                        chaine=await R.invitation_chaine_campagne_active(_db()))
 
 
 # ═══════════════════════════════════════════════════════════════════════════

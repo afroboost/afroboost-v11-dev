@@ -1980,6 +1980,7 @@ class FeatureFlagsUpdate(BaseModel):
     REMINDERS_SUBSCRIBERS_ENABLED: Optional[bool] = None  # RV-AB : rappeler AUSSI les abonnés sans réservation
     REMINDERS_SUBSCRIBERS_DRY_RUN: Optional[bool] = None  # RV-AB : recenser sans envoyer (défaut : oui)
     parrainage_chaine_enabled: Optional[bool] = None  # V556 : Parrainage V3 « invite avant de t'inscrire » (absent = éteint)
+    invitation_chaine_campagne_enabled: Optional[bool] = None  # PAR-1 : une campagne trial devient racine de chaîne (absent = éteint)
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -21944,6 +21945,7 @@ async def get_feature_flags():
                          ("REMINDERS_SUBSCRIBERS_ENABLED", False),
                          ("REMINDERS_SUBSCRIBERS_DRY_RUN", True),
                          ("parrainage_chaine_enabled", False),    # V556 : lu `is True` par referral_routes
+                         ("invitation_chaine_campagne_enabled", False),  # PAR-1 : lu `is True` (défaut éteint)
                          ("invitation_event_paid_enabled", False)):  # INV-1 : OFF tant que le fuseau des paliers n'est pas corrigé
         if _k not in flags:
             flags[_k] = _default
@@ -49880,6 +49882,10 @@ async def startup_db():
         await db["referral_passes"].create_index(
             "chain.parent_pass_id", unique=True,
             partialFilterExpression={"chain.parent_pass_id": {"$type": "string"}})
+        # PAR-1 : racines de campagne (plafond des P0 ouverts ; X-Entry-Key) —
+        # index NON uniques, ajoutés : aucun index existant n'est modifié.
+        await db["referral_passes"].create_index([("origin.campaign_id", 1), ("status", 1)])
+        await db["referral_passes"].create_index([("origin.campaign_id", 1), ("origin.entry_key_hash", 1)])
         await db["referral_invitations"].create_index([("pass_id", 1), ("created_at", -1)])
         await db["referral_invitations"].create_index([("sponsor_email_norm", 1), ("created_at", -1)])
         logger.info("[V534] index referral_passes / referral_invitations OK")

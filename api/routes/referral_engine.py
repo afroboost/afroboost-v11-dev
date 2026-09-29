@@ -487,6 +487,10 @@ def statut_derive(pass_doc, now, reservations=None):
         _resas = [r for r in (reservations or []) if isinstance(r, dict)]
         _ids = _p.get("reservations") or {}
         _attendus = [_ids.get("sponsor_id"), _ids.get("invitee_id")]
+        if sans_place_parrain(_p):
+            # PAR-1 : racine de campagne — le coach n'a pas de place : seule la
+            # présence de l'invité compte (jamais pour un pass sans `origin`).
+            _attendus = [_ids.get("invitee_id")]
         if all(_attendus):
             _valides = {r.get("id") for r in _resas if r.get("validated") is True}
             if all(i in _valides for i in _attendus):
@@ -1043,6 +1047,11 @@ def dto_pass(pass_doc, statut, tickets, frontend_url, deja_existant=None, offers
         "version": version_pass(_p),
         "offer_history": [dict(e) for e in (_p.get("offer_history") or []) if isinstance(e, dict)],
     }
+    # PAR-1 : une invitation de CHAÎNE (enfant) a-t-elle été partagée ? Booléen +
+    # canal, sans aucune donnée personnelle (l'espace abonné affiche « Partagée »).
+    _partage = partage_chaine(_p)
+    _dto["chain_shared"] = _partage["shared"]
+    _dto["chain_share_channel"] = _partage["channel"]
     # V552 : LA carte sociale (la même image que l'aperçu WhatsApp) ; jamais sans jeton.
     _carte = url_carte(frontend_url, _p)
     if _carte:
@@ -1087,7 +1096,11 @@ def dto_admin(pass_doc, statut, tickets, frontend_url, offers=None) -> dict:
     _d["coach_id"] = (pass_doc or {}).get("coach_id")
     _d["sponsor"] = {"first_name": prenom(_sp.get("name")),
                      # V556 : un parrain de chaîne pas encore inscrit n'a pas d'adresse
-                     "email": "" if parrain_en_attente(pass_doc) else (_sp.get("email_norm") or "")}
+                     # PAR-1 : ni la clé « campagne: » d'une racine de campagne
+                     "email": "" if (parrain_en_attente(pass_doc) or parrain_campagne(pass_doc))
+                     else (_sp.get("email_norm") or "")}
+    # PAR-1 : la lignée (source, campagne, parent, racine, profondeur), déduite.
+    _d["lignage"] = lignage(pass_doc)
     # V556 : qui a invité qui — l'identifiant du pass parent et la profondeur.
     _ch = chaine_du_pass(pass_doc)
     if _ch.get("parent_pass_id"):
@@ -1429,3 +1442,84 @@ def controle_apercu(html_texte, image_octets, image_type) -> dict:
     _ok = all(_checks[k] for k in ("share_page", "og_title", "og_description", "og_image",
                                    "og_image_https", "og_url", "image_ok", "image_leger"))
     return {"ok": _ok, "checks": _checks}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PAR-1 — LOT 1 : LA CAMPAGNE D'UN COACH, RACINE D'UNE CHAÎNE V556
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Un visiteur d'une campagne `trial` reçoit UN pass racine ORDINAIRE (P0) : son
+# « parrain » est la campagne (clé `campagne:<campaign_id>:<p0_id>`, jamais une
+# adresse), il n'a PAS de place sur la séance. Le bloc additif `origin`
+# ({source_type, source_id, campaign_id, entry_key_hash}) n'existe QUE sur ces
+# pass et sur leurs descendants ({campaign_id, root_source_type, root_source_id}) :
+# un pass sans `origin` suit exactement le chemin d'avant.
+SOURCES_RACINE = ("coach", "partner", "super_admin")
+SOURCE_ABONNE = "subscriber"
+PREFIXE_PARRAIN_CAMPAGNE = "campagne:"
+
+
+def cle_parrain_campagne(campaign_id, pass_id) -> str:
+    return "%s%s:%s" % (PREFIXE_PARRAIN_CAMPAGNE, str(campaign_id or ""), str(pass_id or ""))
+
+
+def parrain_campagne(pass_doc) -> bool:
+    """Le « parrain » de ce pass est-il une campagne (P0) ?"""
+    _sp = (pass_doc or {}).get("sponsor") or {}
+    return str(_sp.get("email_norm") or "").startswith(PREFIXE_PARRAIN_CAMPAGNE)
+
+
+def origine_du_pass(pass_doc) -> dict:
+    """Le bloc `origin` (dict) ; {} pour tout pass d'avant PAR-1."""
+    _o = (pass_doc or {}).get("origin")
+    return _o if isinstance(_o, dict) else {}
+
+
+def campagne_du_pass(pass_doc) -> str:
+    """L'identifiant de la campagne racine (P0 et descendants), sinon ""."""
+    return str(origine_du_pass(pass_doc).get("campaign_id") or "")
+
+
+def sans_place_parrain(pass_doc) -> bool:
+    """Racine de campagne : `origin.source_type` ∈ coach/partner/super_admin ET
+    aucun parent. Son déblocage ne réserve aucune place de parrain."""
+    return (origine_du_pass(pass_doc).get("source_type") in SOURCES_RACINE
+            and not chaine_du_pass(pass_doc).get("parent_pass_id"))
+
+
+def lignage(pass_doc) -> dict:
+    """`{source_type, source_id, campaign_id, parent_referral_id,
+    root_referral_id, depth}` DÉDUIT de `chain` + `origin` (aucune migration) :
+    un ancien pass vaut subscriber, sans parent, racine lui-même, profondeur 0."""
+    _p = pass_doc or {}
+    _o = origine_du_pass(_p)
+    _c = chaine_du_pass(_p)
+    _parent = _c.get("parent_pass_id") or None
+    try:
+        _prof = int(_c.get("depth") or 0)
+    except (TypeError, ValueError):
+        _prof = 0
+    _type = _o.get("source_type") if (_o.get("source_type") in SOURCES_RACINE and not _parent) else SOURCE_ABONNE
+    return {
+        "source_type": _type,
+        "source_id": (_o.get("source_id") if _type != SOURCE_ABONNE else None),
+        "campaign_id": _o.get("campaign_id") or _p.get("referral_campaign_id") or None,
+        "parent_referral_id": _parent,
+        "root_referral_id": _c.get("root_pass_id") or _p.get("id"),
+        "depth": _prof,
+    }
+
+
+def partage_chaine(pass_doc) -> dict:
+    """PAR-1 — `{shared, channel}` d'une invitation ENFANT de chaîne : partagée
+    dès qu'un partage a été DÉCLENCHÉ (`POST /chain/share` journalise
+    `invitation_sent` sur l'enfant et incrémente `preview_version`). Canal = le
+    dernier journalisé (∈ CANAUX), sinon None. Un pass hors chaîne : faux/None."""
+    _p = pass_doc or {}
+    if not chaine_du_pass(_p).get("parent_pass_id"):
+        return {"shared": False, "channel": None}
+    _canal = None
+    for _e in (_p.get("events") or []):
+        if isinstance(_e, dict) and _e.get("type") == "invitation_sent":
+            _canal = _e.get("detail") if _e.get("detail") in CANAUX else _canal
+    return {"shared": bool(_canal) or version_apercu(_p) > 0, "channel": _canal}
