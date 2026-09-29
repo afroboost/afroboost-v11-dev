@@ -330,6 +330,11 @@ export default function InvitationDuo({ token }) {
   // ── Succès ────────────────────────────────────────────────────────────────
   if (resultat) {
     const attente = resultat.status === 'friend_registered';
+    // PAR-3 : pass racine d'une campagne — pas de place parrain, le serveur ne
+    // renvoie que le billet de l'invité. Un pass ordinaire débloqué porte
+    // toujours le billet du parrain : son texte ne change pas.
+    const billets = Array.isArray(resultat.tickets) ? resultat.tickets.filter(Boolean) : [];
+    const billetSeul = !attente && billets.length > 0 && !billets.some((t) => t.role === 'sponsor');
     return (
       <Cadre>
         <div className="cp-state" style={{ paddingTop: 10 }} data-testid={attente ? 'invitation-succes-attente' : 'invitation-succes'}>
@@ -337,7 +342,7 @@ export default function InvitationDuo({ token }) {
             <SvgIcon name={attente ? 'hourglass' : 'check'} size={38} strokeWidth="2.5" />
           </div>
           <h1 className="cp-h1 cp-center">
-            {attente ? <>Inscription <em className="cp-em">confirmée</em></> : <>Votre Pass Duo est <em className="cp-em">débloqué</em></>}
+            {attente ? <>Inscription <em className="cp-em">confirmée</em></> : billetSeul ? <>Ta place est <em className="cp-em">réservée</em></> : <>Votre Pass Duo est <em className="cp-em">débloqué</em></>}
           </h1>
           <div className="cp-avatars" aria-hidden="true">
             {/* L0 : la photo du parrain, sinon l'avatar Afroboost (plus d'initiale). */}
@@ -346,7 +351,7 @@ export default function InvitationDuo({ token }) {
             <div className={`cp-av${attente ? '' : ' cp-av--ok'}`}>{form.name.trim().charAt(0).toUpperCase() || '?'}<small>{form.name.trim() || 'Toi'}</small></div>
           </div>
           <p className="cp-center">
-            {attente ? `Ta place est réservée. ${prenom} confirme la sienne, et vous serez deux.` : 'Vous avez chacun votre billet pour la même séance.'}
+            {attente ? `Ta place est réservée. ${prenom} confirme la sienne, et vous serez deux.` : billetSeul ? 'Ton billet pour la séance est prêt.' : 'Vous avez chacun votre billet pour la même séance.'}
           </p>
         </div>
         <CarteSeance course={pass.course} occurrence={pass.occurrence} />
