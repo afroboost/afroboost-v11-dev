@@ -16,6 +16,8 @@ def is_super_admin(email: str) -> bool:
     # MT-1 : alignée sur `api.routes.shared.is_super_admin`, qui connaît les DEUX
     # super-admins. L'ancienne version n'en reconnaissait qu'un : le second
     # (afroboost.bassi@gmail.com) était traité ici comme un coach ordinaire.
+    # SA-1 (29/09/2026) : il n'existe plus qu'UN super-admin
+    # (contact.artboost@gmail.com) ; la délégation à `shared` reste la règle.
     from api.routes.shared import is_super_admin as _is_super_admin_partage
     return bool(_is_super_admin_partage(email))
 
@@ -333,7 +335,7 @@ async def get_campaign(campaign_id: str, request: Request):
 async def _r3_campagne_du_proprietaire(campaign_id: str, request: Request):
     from api.routes.shared import is_super_admin as _is_super_admin
     # MT-1 : même authentification (JWT signé, rôle relu en base) mais par la garde
-    # des campagnes, qui connaît les DEUX super-admins (`_autorise` des segments
+    # des campagnes, qui connaissait les DEUX super-admins (SA-1 : un seul désormais ; `_autorise` des segments
     # n'en reconnaissait qu'un en dur).
     appelant = await mt1_appelant_signe(request, "modification d'une campagne")
     campagne = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0, "coach_id": 1, "name": 1})
@@ -370,7 +372,7 @@ async def delete_campaign(campaign_id: str, request: Request):
 async def purge_all_campaigns(request: Request):
     """Purge les campagnes terminées DU COACH authentifié (le super-admin : toutes)."""
     from api.routes.shared import is_super_admin as _is_super_admin
-    appelant = await mt1_appelant_signe(request, "purge des campagnes")  # MT-1 : les deux super-admins
+    appelant = await mt1_appelant_signe(request, "purge des campagnes")  # MT-1 / SA-1 : le super-admin unique
     filtre = {"status": {"$in": ["completed", "failed", "draft"]}}
     if not _is_super_admin(appelant):
         filtre["coach_id"] = appelant

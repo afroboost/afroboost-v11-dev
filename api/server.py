@@ -263,9 +263,10 @@ COACH_EMAIL = "contact.artboost@gmail.com"
 # === SYSTÈME MULTI-COACH v8.9 ===
 # Super Admin: Contrôle total sur les offres, les coachs et les tarifs
 # v9.5.6: Liste des Super Admins autorisés
+# SA-1 : UN SEUL super-admin (décision définitive du propriétaire, 29/09/2026).
+# `afroboost.bassi@gmail.com` n'est PLUS super-admin et n'a aucun droit global.
 SUPER_ADMIN_EMAILS = [
     "contact.artboost@gmail.com",
-    "afroboost.bassi@gmail.com"
 ]
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"  # Legacy - pour compatibilité
 DEFAULT_COACH_ID = SUPER_ADMIN_EMAILS[0]  # V244: etait "bassi_default" (sentinelle sans compte, invisible a tout coach). Pointe desormais sur l'admin, seul coach reel — les replis coach_id inconnu lui reviennent.
@@ -4533,7 +4534,7 @@ async def api_deduct_credit(request: Request):
     """
     Déduit 1 crédit du compte partenaire.
     Utilisé par le frontend pour les actions consommant des crédits.
-    Super Admin (afroboost.bassi@gmail.com) ne consomme jamais de crédits.
+    Le Super Admin (SA-1 : contact.artboost@gmail.com, seul) ne consomme jamais de crédits.
     """
     try:
         body = await request.json()
@@ -14731,8 +14732,8 @@ async def boosttribe_live_status_set(request: Request, response: Response = None
         # annoncée. Un battement en retard d'une session finie ne ressuscite rien —
         # le filtre `ended: False` s'en charge. Aucun journal : c'est répétitif par
         # nature, et l'information utile est déjà dans le document.
-        # V548 : SEUL L'HÔTE maintient son live. Deux super-admins partagent ce
-        # rôle : sans ce contrôle, l'un prolongeait le live de l'autre avec le
+        # V548 : SEUL L'HÔTE maintient son live. Deux super-admins partageaient ce
+        # rôle (SA-1 : un seul désormais, le contrôle reste) : sans ce contrôle, l'un prolongeait le live de l'autre avec le
         # seul code de session. L'hôte est celui qu'a posé `started` (identité
         # serveur `require_auth`), jamais un champ envoyé par le client.
         actuel = await db.boosttribe_live.find_one(
@@ -20031,7 +20032,7 @@ async def get_og_meta(username: str, request: Request):
     from starlette.responses import HTMLResponse
 
     # Trouver le coach — même logique que coach/vitrine
-    SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com']
+    SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com']  # SA-1 : un seul super-admin
     # v65: Redirection 301 pour "artboost" → "bassi"
     if username.lower() == "artboost":
         from starlette.responses import RedirectResponse as RR
@@ -30343,8 +30344,9 @@ import unicodedata
 # sur le document suffisent — pas de collection par lecteur.
 #
 # LA SEULE NUANCE, ET ELLE TIENT EN UN `if`. `get_coach_filter` rend `{}` pour
-# un super-admin, et le depot en declare DEUX (`SUPER_ADMIN_EMAILS`). Le second
-# voit donc ces reponses sans en etre le proprietaire. S'il en ouvrait une, il
+# un super-admin, et le depot en declarait DEUX (`SUPER_ADMIN_EMAILS`). Le second
+# voyait donc ces reponses sans en etre le proprietaire (SA-1, 29/09/2026 : il
+# n'en reste qu'UN — la regle ci-dessous reste une defense en profondeur). S'il en ouvrait une, il
 # effacerait la pastille de celui qui doit repondre. D'ou la regle :
 # SEULE L'OUVERTURE PAR LE PROPRIETAIRE ECRIT `read_at`. Un autre compte peut
 # lire — il ne peut pas decider a sa place que c'est lu.
@@ -30439,7 +30441,7 @@ async def p3ai_ouvrir_reponse(inbound_id: str, request: Request):
     message = await p3ai_message_du_coach(inbound_id, email)
 
     if not p3ai_est_proprietaire(message, email):
-        # Consultation par un autre compte (second super-admin) : elle est
+        # Consultation par un autre compte (ex-second super-admin ; SA-1 : il n'y en a plus qu'un) : elle est
         # legitime, elle ne decide rien. On rend l'etat REEL du proprietaire.
         logger.info("[READ-P1] %s consulte %s sans en etre proprietaire",
                     email[:24], (message.get("id") or "")[:8])

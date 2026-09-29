@@ -49,6 +49,7 @@ def verifier(nom, cond, detail=""):
 
 
 ADMIN = "contact.artboost@gmail.com"
+# SA-1 : UN SEUL super-admin. L'ancien second compte est vérifié NON super-admin.
 ADMIN2 = "afroboost.bassi@gmail.com"
 A = "coach.a@exemple.test"
 B = "coach.b@exemple.test"
@@ -159,10 +160,13 @@ async def partie_liste():
         c, r = await appel(RR.get_reservations(req(B), 1, 20, all_data))
         verifier("L2. %s : B voit UNIQUEMENT les siennes (rien de A)" % m,
                  c == 200 and noms(r) == ["Client B1", "Client B2"], (c, noms(r) if c == 200 else r))
-        for adm, n in ((ADMIN, "L3"), (ADMIN2, "L4")):
+        for adm, n in ((ADMIN, "L3"),):
             c, r = await appel(RR.get_reservations(req(adm), 1, 20, all_data))
             verifier("%s. %s : super-admin %s -> global (A + B + plateforme + historique)" % (n, m, adm),
                      c == 200 and noms(r) == TOUS, (c, noms(r) if c == 200 else r))
+        c, r = await appel(RR.get_reservations(req(ADMIN2), 1, 20, all_data))
+        verifier("L4. %s : SA-1 — ancien 2e super-admin -> AUCUNE vue globale" % m,
+                 c in (403, 404) or (c == 200 and not noms(r)), (c, noms(r) if c == 200 else r))
         c, r = await appel(RR.get_reservations(req(), 1, 20, all_data))
         verifier("L5. %s : anonyme -> 403" % m, c == 403, (c, r))
         c, r = await appel(RR.get_reservations(req(entete=A), 1, 20, all_data))
@@ -200,8 +204,11 @@ async def partie_mutations():
              c == 404 and not resa_doc(base, "rA1").get("trackingNumber"), (c, r))
     c, r = await appel(RR.update_reservation_tracking("rA1", req(A, corps={"trackingNumber": "CH123", "shippingStatus": "shipped"})))
     verifier("M4. suivi : propriétaire A -> 200", c == 200 and resa_doc(base, "rA1").get("trackingNumber") == "CH123", (c, r))
-    c, r = await appel(RR.update_reservation_tracking("rB1", req(ADMIN2, corps={"trackingNumber": "ADM", "shippingStatus": "shipped"})))
-    verifier("M5. suivi : 2e super-admin sur B -> 200", c == 200 and resa_doc(base, "rB1").get("trackingNumber") == "ADM", (c, r))
+    c, r = await appel(RR.update_reservation_tracking("rB1", req(ADMIN2, corps={"trackingNumber": "PIRATE", "shippingStatus": "shipped"})))
+    verifier("M5. suivi : SA-1 — ancien 2e super-admin sur B -> refus, intact",
+             c in (403, 404) and resa_doc(base, "rB1").get("trackingNumber") != "PIRATE", (c, r))
+    c, r = await appel(RR.update_reservation_tracking("rB1", req(ADMIN, corps={"trackingNumber": "ADM", "shippingStatus": "shipped"})))
+    verifier("M5b. suivi : super-admin sur B -> 200", c == 200 and resa_doc(base, "rB1").get("trackingNumber") == "ADM", (c, r))
     c, r = await appel(RR.update_reservation_tracking("rO", req(A, corps=corps)))
     verifier("M6. suivi : réservation historique sans propriétaire -> 404 pour un coach", c == 404, (c, r))
 
@@ -265,7 +272,10 @@ async def partie_mutations():
     verifier("M23. scan : propriétaire A -> 200, validée",
              c == 200 and resa_doc(base, "rA1").get("validated") is True, (c, r))
     c, r = await appel(RR.qr_scan_validate(req(ADMIN2, corps={"code": "AFRB0001"})))
-    verifier("M24. scan : 2e super-admin sur B -> 200", c == 200 and resa_doc(base, "rB1").get("validated") is True, (c, r))
+    verifier("M24. scan : SA-1 — ancien 2e super-admin sur B -> refus, non validée",
+             c != 200 and not resa_doc(base, "rB1").get("validated"), (c, r))
+    c, r = await appel(RR.qr_scan_validate(req(ADMIN, corps={"code": "AFRB0001"})))
+    verifier("M24b. scan : super-admin sur B -> 200", c == 200 and resa_doc(base, "rB1").get("validated") is True, (c, r))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -404,7 +414,10 @@ async def partie_scan_codes():
     verifier("S4. témoin : A scanne SON abonné -> présence validée",
              c == 200 and resa_doc(base, "rS2").get("validated") is True, (c, r))
     c, r = await appel(RR.qr_scan_validate(req(ADMIN2, corps={"code": "AFR-SUBA01"})))
-    verifier("S5. témoin : 2e super-admin -> « Déjà validé » (global)",
+    verifier("S5. SA-1 : ancien 2e super-admin -> refus, jamais le nom/solde",
+             c != 200 and not _fuite(r, "Sabine", "remaining"), (c, r))
+    c, r = await appel(RR.qr_scan_validate(req(ADMIN, corps={"code": "AFR-SUBA01"})))
+    verifier("S5b. témoin : super-admin -> « Déjà validé » (global)",
              c == 200 and "Déjà validé" in str(r), (c, r))
     # CAS C
     c, r = await appel(RR.qr_scan_validate(req(B, corps={"code": "AFR-GRPA01::mbr001"})))

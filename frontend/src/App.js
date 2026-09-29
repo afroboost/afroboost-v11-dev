@@ -52,7 +52,8 @@ axios.interceptors.request.use((config) => {
     // X-User-Email est déjà falsifiable en transition V265).
     if (!config.headers['X-User-Email']) {
       try {
-        const SUPER_ADMINS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+        // SA-1 : UN SEUL super-admin (décision définitive du propriétaire).
+        const SUPER_ADMINS = ['contact.artboost@gmail.com'];
         let em = '';
         const idRaw = localStorage.getItem('afroboost_identity') || localStorage.getItem('af_chat_client');
         if (idRaw) { try { em = (JSON.parse(idRaw).email || '').toLowerCase().trim(); } catch (e) {} }
@@ -320,16 +321,20 @@ const V224_PROGRESSIVE_KEY = 'v224_progressive_checkout';
 
 // Configuration Admin - Vercel Compatible
 // v9.5.6: Liste des Super Admins autorisés
-const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+// SA-1 : UN SEUL super-admin (décision définitive du propriétaire, 29/09/2026).
+// `afroboost.bassi@gmail.com` n'a plus aucun droit global, ni ici ni au serveur.
+const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com'];
 const ADMIN_EMAIL = 'contact.artboost@gmail.com'; // Legacy
 const APP_VERSION = '2.0.0';
 
 // v9.5.6 + v41: Helper pour vérifier si un email est Super Admin
-// Inclut les emails @afroboost.com + la whitelist
+// SA-1 : l'ancien joker « toute adresse @afroboost.com » est RETIRÉ — il faisait
+// de n'importe quelle adresse de ce domaine un super-admin À L'ÉCRAN. Seule la
+// liste ci-dessus (une adresse) fait foi, comme au serveur.
 const isSuperAdminEmail = (email) => {
   if (!email) return false;
   const e = email.toLowerCase().trim();
-  return SUPER_ADMIN_EMAILS.some(a => e === a.toLowerCase()) || e.endsWith('@afroboost.com');
+  return SUPER_ADMIN_EMAILS.some(a => e === a.toLowerCase());
 };
 
 // v42: Clé de persistance admin — ne jamais supprimer lors du logout

@@ -13,7 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import {
   c9bIdentifier, c9bCoupeCircuit, c9bSessionCoach,
-  C9B_FORMAT, C9B_EMAILS_COACH
+  C9B_FORMAT, C9B_EMAILS_COACH, C9B_EMAILS_SUPER_ADMIN, C9B_EMAILS_EXCLUS_SANS_DROIT
 } from '../analyticsIdentity';
 
 // Version du SDK analysee ligne a ligne pendant le pre-flight C9-B (sources
@@ -398,7 +398,28 @@ describe('cas 16 et 17 — garanties de source', () => {
   test('la liste des adresses coach reste alignee sur celle de ChatWidget', () => {
     // Elle y est dupliquee (COACH_EMAILS). Une divergence rouvrirait la porte a
     // l'identification du proprietaire comme prospect.
+    // SA-1 : seule la part SUPER-ADMIN est un droit, donc seule elle est dupliquee.
     const cw = fs.readFileSync(path.join(RACINE, 'src', 'components', 'ChatWidget.js'), 'utf8');
-    C9B_EMAILS_COACH.forEach((mail) => expect(cw).toContain(mail));
+    C9B_EMAILS_SUPER_ADMIN.forEach((mail) => expect(cw).toContain(mail));
+    const m = /const COACH_EMAILS = (\[[^\]]*\])/.exec(cw);
+    expect(m).not.toBeNull();
+    expect(JSON.parse(m[1].replace(/'/g, '"'))).toEqual(C9B_EMAILS_SUPER_ADMIN);
+  });
+
+  test('SA-1 — l\'exclusion statistique = super-admin unique + adresses SANS droit', () => {
+    expect(C9B_EMAILS_SUPER_ADMIN).toEqual(['contact.artboost@gmail.com']);
+    expect(C9B_EMAILS_COACH).toEqual(C9B_EMAILS_SUPER_ADMIN.concat(C9B_EMAILS_EXCLUS_SANS_DROIT));
+    expect(C9B_EMAILS_EXCLUS_SANS_DROIT).toContain('afroboost.bassi@gmail.com');
+  });
+
+  test('SA-1 — une adresse exclue des statistiques n\'apparait dans AUCUNE liste de droits', () => {
+    const sources = ['App.js', path.join('components', 'ChatWidget.js'),
+      path.join('components', 'CoachDashboard.js'), path.join('components', 'PartnersCarousel.js'),
+      path.join('components', 'dashboard', 'DashboardHeader.js'),
+      path.join('components', 'publications', 'Boost.js')]
+      .map((f) => sansCommentaires(fs.readFileSync(path.join(RACINE, 'src', f), 'utf8')));
+    C9B_EMAILS_EXCLUS_SANS_DROIT.forEach((mail) => {
+      sources.forEach((src) => expect(src).not.toContain(mail));
+    });
   });
 });

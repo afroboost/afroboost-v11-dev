@@ -211,7 +211,7 @@ const DashboardHeader = ({
         {/* Bouton Vue Visiteur — V66: Super Admin → homepage visiteur, Partenaire → /coach/{slug} */}
         <button
           onClick={() => {
-            const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+            const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com']; // SA-1 : un seul super-admin
             const isSA = SUPER_ADMIN_EMAILS.includes(coachUser?.email?.toLowerCase());
             const vitrineUrl = isSA
               ? `${window.location.origin}/?visitor=true&t=${Date.now()}`

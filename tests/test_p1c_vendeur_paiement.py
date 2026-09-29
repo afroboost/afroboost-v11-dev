@@ -82,7 +82,7 @@ def caisse_reelle(configs, env_stripe="sk_test_env"):
     esp = {"__builtins__": __builtins__, "os": types.SimpleNamespace(
         environ={"STRIPE_SECRET_KEY": env_stripe} if env_stripe else {}),
         "db": _Base(configs),
-        "SUPER_ADMIN_EMAILS": [PLATEFORME, "afroboost.bassi@gmail.com"]}
+        "SUPER_ADMIN_EMAILS": [PLATEFORME]}  # SA-1 : un seul super-admin
     for fn in ("is_super_admin", "get_payment_keys"):
         exec(compile(_extraire_ck(fn), "<ck>", "exec"), esp)
     return esp

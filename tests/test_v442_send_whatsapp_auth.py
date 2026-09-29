@@ -20,6 +20,7 @@ LIGNES = SOURCE.splitlines(True)
 
 SECRET = "secret-de-test-v442-jamais-en-production-32o+"
 ADMIN = "contact.artboost@gmail.com"
+# SA-1 : ancien second super-admin — désormais un compte ORDINAIRE, sans droit global.
 ADMIN2 = "afroboost.bassi@gmail.com"
 COACH = "un.coach.partenaire@example.com"
 
@@ -86,7 +87,7 @@ def construire():
     bac = {
         "os": os, "HTTPException": HTTPException, "Request": FausseRequete,
         "SendWhatsAppRequest": Payload,
-        "SUPER_ADMIN_EMAILS": [ADMIN, ADMIN2],
+        "SUPER_ADMIN_EMAILS": [ADMIN],   # SA-1 : un seul super-admin (= api/server.py)
         "send_whatsapp_direct": faux_send_whatsapp_direct,
         "logger": type("l", (), {"warning": staticmethod(lambda *a, **k: None),
                                  "info": staticmethod(lambda *a, **k: None)}),
@@ -144,7 +145,14 @@ async def scenario():
                  "%d envoi(s) parasite(s)" % (len(ENVOIS) - avant))
 
     # ---------- TESTS BLOQUANTS : ce qui doit PASSER ----------
-    for nom, email in (("super-admin principal", ADMIN), ("second super-admin", ADMIN2)):
+    # SA-1 : l'ancien second super-admin, JWT signe, est REFUSE sans envoi.
+    avant = len(ENVOIS)
+    etat, val = await appeler(bac, B(jeton(ADMIN2)))
+    verifier("REFUS  SA-1 : ancien second super-admin (JWT signe)", etat == "refus" and val == 403,
+             "%s %s" % (etat, val))
+    verifier("       ^ et AUCUN envoi declenche", len(ENVOIS) == avant, "")
+
+    for nom, email in (("super-admin principal", ADMIN),):
         avant = len(ENVOIS)
         etat, val = await appeler(bac, B(jeton(email)))
         verifier("PASSE  %s (JWT signe valide)" % nom, etat == "ok", "%s %s" % (etat, val))

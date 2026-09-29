@@ -305,13 +305,15 @@ class BaseFictive:
 # 2. IDENTITÉS ET REQUÊTES
 # ============================================================================
 ADMIN = SUPER_ADMIN_EMAILS[0]
-ADMIN2 = SUPER_ADMIN_EMAILS[1]
+# SA-1 : un seul super-admin ; l'ancien second est vérifié comme NON super-admin.
+ANCIEN_SECOND = "afroboost.bassi@gmail.com"
 A = "coach.a.mt2@exemple.test"
 B = "coach.b.mt2@exemple.test"
 
 
 ADMIN = SUPER_ADMIN_EMAILS[0]
-ADMIN2 = SUPER_ADMIN_EMAILS[1]
+# SA-1 : un seul super-admin ; l'ancien second est vérifié comme NON super-admin.
+ANCIEN_SECOND = "afroboost.bassi@gmail.com"
 A = "coach.a.mt6@exemple.test"
 B = "coach.b.mt6@exemple.test"
 
@@ -480,12 +482,17 @@ r, c = get(CODE_B, Req(B))
 verifier("B lit son abonné -> 200", c == 200 and complet(r, "bob@x.test", "+41765550002"), (c, r))
 r, c = get(CODE_A, Req(B, entete=A))
 verifier("JWT B + X-User-Email A -> reste B (404 sur l'abonné de A)", c == 404, (c, r))
-for adm in (ADMIN, ADMIN2):
+for adm in (ADMIN,):
     r1, c1 = get(CODE_A, Req(adm))
     r2, c2 = get(CODE_B, Req(adm))
     verifier("super-admin %s -> global (A et B lisibles)" % adm,
              c1 == 200 and complet(r1, "alice@x.test", "+41765550001")
              and c2 == 200 and complet(r2, "bob@x.test", "+41765550002"), ((c1, r1), (c2, r2)))
+verifier("SA-1 : un seul super-admin", SUPER_ADMIN_EMAILS == [ADMIN], SUPER_ADMIN_EMAILS)
+for _code in (CODE_A, CODE_B):
+    r, c = get(_code, Req(ANCIEN_SECOND))
+    verifier("SA-1 : ancien second super-admin -> refusé (403/404), aucune PII sur %s" % _code,
+             c in (403, 404) and "alice@x.test" not in str(r) and "bob@x.test" not in str(r), (c, r))
 r, c = get(CODE_A, Req("inconnu.pas.coach@exemple.test"))
 verifier("JWT signé d'un non-coach -> refusé (403/404), aucune PII", c in (403, 404), (c, r))
 r, c = get(CODE_A, Req(B, abonne=(CODE_A, "alice@x.test")))

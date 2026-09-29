@@ -51,6 +51,7 @@ def verifier(nom, cond, detail=""):
 
 
 ADMIN = "contact.artboost@gmail.com"
+# SA-1 : UN SEUL super-admin. L'ancien second compte est vérifié NON super-admin.
 ADMIN2 = "afroboost.bassi@gmail.com"
 A = "coach.a@exemple.test"
 B = "coach.b@exemple.test"
@@ -198,8 +199,8 @@ async def partie_liste():
         verifier("L7. super-admin -> global (historique compris)" + t,
                  c == 200 and sorted(g["id"] for g in r) == sorted([GA, GB, GH]), (c, r))
         c, r = await appel(S.get_chat_groups(req(ADMIN2)))
-        verifier("L8. 2e super-admin -> global" + t,
-                 c == 200 and sorted(g["id"] for g in r) == sorted([GA, GB, GH]), (c, r))
+        verifier("L8. SA-1 : ancien 2e super-admin -> AUCUNE vue globale" + t,
+                 c in (403, 404) or (c == 200 and not r), (c, r))
     base_de_depart()
     c, r = await appel(S.get_chat_groups(req(A)))
     info = {m["id"]: m for m in (r[0].get("members_info") if c == 200 and r else [])}
@@ -247,8 +248,12 @@ async def partie_mutations():
             verifier("M8. A sur SON groupe -> 200" + t, c == 200, (c, r))
             c, r = await appel(f(GH, req(ADMIN, corps=CORPS[nom])))
             verifier("M9. super-admin sur l'historique -> 200" + t, c == 200, (c, r))
+            _avant10 = instantane(base)
             c, r = await appel(f(GB, req(ADMIN2, corps=CORPS[nom])))
-            verifier("M10. 2e super-admin sur le groupe de B -> 200" + t, c == 200, (c, r))
+            verifier("M10. SA-1 : ancien 2e super-admin sur le groupe de B -> refus, intact" + t,
+                     c in (403, 404) and instantane(base) == _avant10, (c, r))
+            c, r = await appel(f(GB, req(ADMIN, corps=CORPS[nom])))
+            verifier("M10b. super-admin sur le groupe de B -> 200" + t, c == 200, (c, r))
 
     base = base_de_depart()
     c, r = await appel(S.update_chat_group(GA, req(A, corps={
@@ -319,7 +324,10 @@ async def partie_adhesion():
         verifier("J2b. propriétaire ajoute un id qui n'est PAS un contact de son portefeuille -> refusé" + t,
                  c in (403, 404) and "inconnu-123" not in groupe(base, GA)["member_ids"], (c, r))
         c, r = await appel(S.join_chat_group(GB, req(ADMIN2, corps={"participant_id": "pA2"})))
-        verifier("J2c. super-admin : ajout global -> 200" + t,
+        verifier("J2c. SA-1 : ancien 2e super-admin : ajout global -> refusé" + t,
+                 c in (403, 404) and "pA2" not in groupe(base, GB)["member_ids"], (c, r))
+        c, r = await appel(S.join_chat_group(GB, req(ADMIN, corps={"participant_id": "pA2"})))
+        verifier("J2d. super-admin : ajout global -> 200" + t,
                  c == 200 and "pA2" in groupe(base, GB)["member_ids"], (c, r))
         c, r = await appel(S.join_chat_group(GB, req(A, corps={"participant_id": "pA1"})))
         verifier("J3. A inscrit quelqu'un dans le groupe de B sans jeton -> refusé" + t,

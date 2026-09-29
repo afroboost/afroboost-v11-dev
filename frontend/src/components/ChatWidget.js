@@ -2158,8 +2158,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       if (savedIdentity || savedClient) {
         const data = JSON.parse(savedIdentity || savedClient);
         const email = data?.email?.toLowerCase();
-        // v9.5.6: Liste des Super Admins
-        return email === 'contact.artboost@gmail.com' || email === 'afroboost.bassi@gmail.com';
+        // v9.5.6: Liste des Super Admins — SA-1 : un seul super-admin
+        return email === 'contact.artboost@gmail.com';
       }
     } catch (e) {}
     return false;
@@ -2409,7 +2409,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           var raw = localStorage.getItem(AFROBOOST_IDENTITY_KEY) || localStorage.getItem(CHAT_CLIENT_KEY);
           var em = raw ? (JSON.parse(raw) || {}).email : '';
           em = (em || '').toLowerCase();
-          if (em === 'contact.artboost@gmail.com' || em === 'afroboost.bassi@gmail.com') claimsCoach = true;
+          if (em === 'contact.artboost@gmail.com') claimsCoach = true;   // SA-1 : super-admin unique
         }
       } catch (e) {}
       if (!claimsCoach) return;
@@ -3673,9 +3673,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           return;
         }
         
-        // Super Admin est toujours un coach - v9.5.6
+        // Super Admin est toujours un coach - v9.5.6 (SA-1 : un seul super-admin)
         const email = userEmail.toLowerCase();
-        if (email === 'contact.artboost@gmail.com' || email === 'afroboost.bassi@gmail.com') {
+        if (email === 'contact.artboost@gmail.com') {
           setIsRegisteredCoach(true);
           return;
         }
@@ -3939,8 +3939,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     }
   }, [selectedCourse, afroboostProfile, leadData, participantId, setMessages]);
 
-  // v9.5.6: Liste des emails coach/admin autorisés
-  const COACH_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+  // v9.5.6: Liste des emails coach/admin autorisés — SA-1 : le super-admin unique
+  const COACH_EMAILS = ['contact.artboost@gmail.com'];
   
   // Sauvegarder subscriber_data quand un code promo est validé
   const saveSubscriberData = useCallback((code, name, type = 'abonné') => {

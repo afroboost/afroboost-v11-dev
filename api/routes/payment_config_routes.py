@@ -179,7 +179,7 @@ async def get_payment_status(coach_email: str):
     import os
 
     # Super Admin : vérifier aussi les clés dans les variables d'environnement
-    SUPER_ADMIN_EMAILS = ["contact.artboost@gmail.com", "afroboost.bassi@gmail.com"]
+    SUPER_ADMIN_EMAILS = ["contact.artboost@gmail.com"]  # SA-1 : un seul super-admin
     is_admin = coach_email.lower().strip() in SUPER_ADMIN_EMAILS
 
     config = await db["partner_payment_config"].find_one({"coach_email": coach_email})

@@ -17,9 +17,9 @@ from api.pricing import compute_active_price  # V225
 logger = logging.getLogger(__name__)
 
 # v9.5.6: Liste des Super Admins autorisés
+# SA-1 : UN SEUL super-admin (décision définitive du propriétaire, 29/09/2026).
 SUPER_ADMIN_EMAILS = [
     "contact.artboost@gmail.com",
-    "afroboost.bassi@gmail.com"
 ]
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"  # Legacy
 DEFAULT_COACH_ID = SUPER_ADMIN_EMAILS[0]  # V244: etait "bassi_default" (sentinelle sans compte, invisible a tout coach). Pointe desormais sur l'admin, seul coach reel — les replis coach_id inconnu lui reviennent.

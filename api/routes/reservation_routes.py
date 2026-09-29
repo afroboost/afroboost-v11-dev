@@ -612,9 +612,9 @@ async def _send_coach_reservation_email(coach_email: str, reservation: dict) -> 
 
 
 # v9.5.8: Liste des Super Admins
+# SA-1 : UN SEUL super-admin (décision définitive du propriétaire, 29/09/2026).
 SUPER_ADMIN_EMAILS = [
     "contact.artboost@gmail.com",
-    "afroboost.bassi@gmail.com"
 ]
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"  # Legacy
 # V244: etait "bassi_default" (sentinelle sans compte). Pointe desormais sur

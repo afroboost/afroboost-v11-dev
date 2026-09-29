@@ -20,7 +20,7 @@ from api.routes.shared import get_primary_color, hex_to_rgb_triplet  # V259
 
 db = None
 
-SUPER_ADMIN_EMAILS = ["contact.artboost@gmail.com", "afroboost.bassi@gmail.com"]
+SUPER_ADMIN_EMAILS = ["contact.artboost@gmail.com"]  # SA-1 : un seul super-admin
 FRONTEND_URL = os.environ.get("REACT_APP_FRONTEND_URL", "https://afroboost-v11-dev-pm7l.vercel.app")
 
 def init_db(database):

@@ -988,7 +988,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   // Email Super Admin
   // v9.5.6: Liste des Super Admins autorisés
-  const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+  const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com']; // SA-1 : un seul super-admin
   const isSuperAdmin = SUPER_ADMIN_EMAILS.some(email => 
     (safeCoachUser?.email || '').toLowerCase() === email.toLowerCase()
   );
@@ -7117,7 +7117,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       }}>
         <button
           onClick={() => {
-            const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+            const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com']; // SA-1 : un seul super-admin
             const isSA = SUPER_ADMIN_EMAILS.includes(safeCoachUser?.email?.toLowerCase());
             const finalUrl = isSA
               ? `${window.location.origin}/?visitor=true&t=${Date.now()}`

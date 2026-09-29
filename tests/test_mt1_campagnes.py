@@ -47,6 +47,7 @@ def verifier(nom, cond, detail=""):
 
 
 ADMIN = "contact.artboost@gmail.com"
+# SA-1 : UN SEUL super-admin. L'ancien second compte est vérifié NON super-admin.
 ADMIN2 = "afroboost.bassi@gmail.com"
 A = "coach.a@exemple.test"
 B = "coach.b@exemple.test"
@@ -196,7 +197,7 @@ async def partie_lectures():
     c, r = await appel(CR.get_campaign("cB", req(ADMIN)))
     verifier("A7. super-admin signé lit la campagne de B -> 200", c == 200 and r.get("id") == "cB", (c, r))
     c, r = await appel(CR.get_campaign("cB", req(ADMIN2)))
-    verifier("A8. 2e super-admin (afroboost.bassi) signé -> 200", c == 200 and r.get("id") == "cB", (c, r))
+    verifier("A8. SA-1 : ancien 2e super-admin (afroboost.bassi) signé -> refus", c in (403, 404), (c, r))
 
     # GET /campaigns
     c, r = await appel(CR.get_campaigns(req(A)))
@@ -208,9 +209,11 @@ async def partie_lectures():
     verifier("A11. X-User-Email super-admin anonyme -> 403 (fin du passe-partout)", c == 403, (c, r))
     c, r = await appel(CR.get_campaigns(req()))
     verifier("A12. anonyme -> 403", c == 403, (c, r))
-    for adm, n in ((ADMIN, "A13"), (ADMIN2, "A14")):
+    for adm, n in ((ADMIN, "A13"),):
         c, r = await appel(CR.get_campaigns(req(adm)))
         verifier("%s. super-admin %s -> TOUTES les campagnes (5)" % (n, adm), c == 200 and len(r) == 5, (c, len(r) if c == 200 else r))
+    c, r = await appel(CR.get_campaigns(req(ADMIN2)))
+    verifier("A14. SA-1 : ancien 2e super-admin -> aucune vue globale (refus)", c == 403, (c, r))
     c, r = await appel(CR.get_campaigns(req("inconnu@exemple.test")))
     verifier("A15. jeton valide d'un non-coach -> 403", c == 403, (c, r))
 
@@ -223,7 +226,7 @@ async def partie_lectures():
     verifier("A18. /campaigns-list JWT B + en-tête admin -> reste B",
              c == 200 and sorted(x["id"] for x in r) == ["cB", "cB2"], (c, r))
     c, r = await appel(S.get_campaigns_list(req(ADMIN2)))
-    verifier("A19. /campaigns-list 2e super-admin -> global (5)", c == 200 and len(r) == 5, (c, r))
+    verifier("A19. SA-1 : /campaigns-list ancien 2e super-admin -> refus", c == 403, (c, r))
 
     # GET /campaign-debug (server.py)
     c, r = await appel(S.get_campaign_debug("cA", req()))
@@ -262,7 +265,9 @@ async def partie_mark_sent():
         c, r = await appel(route("cB", req(B, corps={"contactId": {"$ne": None}, "channel": "email"})))
         verifier("B6. %s : opérateur Mongo dans le corps -> 400" % nom_route, c == 400, (c, r))
         c, r = await appel(route("cB", req(ADMIN2, corps=corps)))
-        verifier("B7. %s : 2e super-admin signé -> autorisé" % nom_route, c == 200, (c, r))
+        verifier("B7. %s : SA-1 — ancien 2e super-admin signé -> refusé" % nom_route, c in (403, 404), (c, r))
+        c, r = await appel(route("cB", req(ADMIN, corps=corps)))
+        verifier("B7b. %s : super-admin signé -> autorisé" % nom_route, c == 200, (c, r))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -309,7 +314,10 @@ async def partie_destinataires():
         SEG._calcule_personnes = _orig
 
     TOUS = ["a1@exemple.test", "a2@exemple.test", "b1@exemple.test", "x@exemple.test"]
-    for nom, cid in (("super-admin", ADMIN), ("2e super-admin", ADMIN2), ("historique sans coach_id", None),
+    r = await resoudre(base, targetType="all", coach_id=ADMIN2)
+    verifier("C9. SA-1 : « tous » d'une campagne de l'ancien 2e super-admin -> PAS le global",
+             emails(r) != TOUS, emails(r))
+    for nom, cid in (("super-admin", ADMIN), ("historique sans coach_id", None),
                      ("historique « bassi_default »", "bassi_default"), ("historique vide", "")):
         champs = {"targetType": "all"}
         if cid is not None:
@@ -456,7 +464,10 @@ async def partie_send_email():
     verifier("D7. A s'écrit à lui-même (e-mail de test) -> 200", c == 200 and len(ENVOIS) == 1, (c, r))
 
     ENVOIS[:] = []
-    for adm in (ADMIN, ADMIN2):
+    c, r = await appel(S.send_campaign_email(req(ADMIN2, corps=corps("b1@exemple.test"))))
+    verifier("D8. SA-1 : ancien 2e super-admin -> destinataire libre REFUSÉ, aucun envoi",
+             c in (403, 404) and not ENVOIS, (c, r))
+    for adm in (ADMIN,):
         c, r = await appel(S.send_campaign_email(req(adm, corps=corps("b1@exemple.test"))))
         verifier("D8. super-admin %s : destinataire libre autorisé" % adm, c == 200, (c, r))
     verifier("D9. ... et aucun débit de coach pour le super-admin",
@@ -470,8 +481,11 @@ async def partie_routes_existantes():
     base = base_de_depart()
     c, r = await appel(S.update_campaign("cB", req(A, corps={"name": "pirate"})))
     verifier("E1. PUT : A sur la campagne de B -> 403, intacte", c == 403 and camp(base, "cB")["name"] == "Camp B", (c, r))
-    c, r = await appel(S.update_campaign("cB", req(ADMIN2, corps={"name": "Camp B"})))
-    verifier("E2. PUT : 2e super-admin signé -> 200 (ne dépend plus de `_autorise`)", c == 200, (c, r))
+    c, r = await appel(S.update_campaign("cB", req(ADMIN2, corps={"name": "pirate SA-1"})))
+    verifier("E2. PUT : SA-1 — ancien 2e super-admin signé -> 403, intacte",
+             c == 403 and camp(base, "cB")["name"] == "Camp B", (c, r))
+    c, r = await appel(S.update_campaign("cB", req(ADMIN, corps={"name": "Camp B"})))
+    verifier("E2b. PUT : super-admin signé -> 200 (ne dépend plus de `_autorise`)", c == 200, (c, r))
     c, r = await appel(CR.delete_campaign("cB", req(entete=ADMIN)))
     verifier("E3. DELETE : en-tête admin sans jeton -> 403", c == 403 and any(d["id"] == "cB" for d in base["campaigns"].docs), (c, r))
     c, r = await appel(CR.delete_campaign("cB", req(A)))

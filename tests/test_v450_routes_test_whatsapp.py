@@ -57,6 +57,7 @@ LIGNES = SOURCE.splitlines(True)
 
 SECRET = "secret-de-test-v450-jamais-en-production-32o+"
 ADMIN = "contact.artboost@gmail.com"
+# SA-1 : ancien second super-admin — désormais un compte ORDINAIRE, sans droit global.
 ADMIN2 = "afroboost.bassi@gmail.com"
 COACH = "un.coach.partenaire@example.com"
 
@@ -183,7 +184,7 @@ def construire():
                                   "post": staticmethod(lambda *a, **k: (lambda f: f))})
     bac = {
         "os": os, "HTTPException": HTTPException, "Request": FausseRequete,
-        "SUPER_ADMIN_EMAILS": [ADMIN, ADMIN2],
+        "SUPER_ADMIN_EMAILS": [ADMIN],   # SA-1 : un seul super-admin (= api/server.py)
         "_get_whatsapp_config": fausse_config,
         "httpx": FauxHttpx, "asyncio": FauxAsyncio,
         "logger": faux_logger, "api_router": faux_routeur,
@@ -301,12 +302,25 @@ async def scenario_legitime(bac):
         verifier("G.   %s  ^ la reponse ne contient pas le jeton" % libelle,
                  FAUX_JETON not in str(val), str(val)[:160])
 
-    # Second super-admin, casse et espaces : le legitime ne doit pas etre refuse
-    # pour si peu.
-    for nom, email in (("second super-admin", ADMIN2),
-                       ("casse/espaces differents", "  CONTACT.ArtBoost@Gmail.COM  ")):
+    # Casse et espaces : le legitime ne doit pas etre refuse pour si peu.
+    for nom, email in (("casse/espaces differents", "  CONTACT.ArtBoost@Gmail.COM  "),):
         etat, _ = await appeler(bac, "whatsapp_diagnostic", B(jeton(email)))
         verifier("F.   GET /api/whatsapp-diagnostic  PASSE %s" % nom, etat == "ok", etat)
+
+    # SA-1 : l'ancien second super-admin, JWT signe, est REFUSE sur chaque route.
+    for fonction, libelle, _ in ROUTES:
+        APPELS_META.clear()
+        etat, val = await appeler(bac, fonction, B(jeton(ADMIN2)))
+        verifier("F.   %s  SA-1 : ancien second super-admin (JWT signe) -> REFUSE" % libelle,
+                 etat == "refus" and val == 403, "%s %s" % (etat, str(val)[:80]))
+        verifier("F.   %s  ^ SA-1 : aucun appel Meta" % libelle,
+                 not [a for a in APPELS_META if a["methode"] == "POST"], str(APPELS_META)[:120])
+    import re as _re
+    _src = open(SERVEUR, encoding="utf-8").read()
+    _m = _re.search(r"^SUPER_ADMIN_EMAILS = \[(.*?)\]", _src, _re.S | _re.M)
+    _reelle = _re.findall(r"[\"']([^\"']+)[\"']", _m.group(1)) if _m else None
+    verifier("F.   SA-1 : SUPER_ADMIN_EMAILS de server.py == [super-admin unique] == bac",
+             _reelle == [ADMIN] == bac["SUPER_ADMIN_EMAILS"], str(_reelle))
 
 
 # ----------------------------------------------------------------------------

@@ -111,8 +111,10 @@ async def _est_coach_ou_admin(email: str) -> bool:
     # MT-2 : seule `contact.artboost@gmail.com` était reconnue -> le SECOND
     # super-admin (afroboost.bassi@gmail.com), sans fiche `coaches`, recevait
     # 403 sur /contacts/segments. Définition UNIQUE du dépôt : `shared.is_super_admin`
-    # (les DEUX admins). Signature et sémantique (JWT strict) inchangées :
+    # (alors les DEUX admins). Signature et sémantique (JWT strict) inchangées :
     # `campaign_routes._r3_campagne_du_proprietaire` en dépend.
+    # SA-1 (29/09/2026) : `shared` ne reconnaît plus qu'UN super-admin
+    # (contact.artboost@gmail.com) ; l'ancien second compte est ordinaire.
     from api.routes.shared import is_super_admin as _mt2_admin
     if _mt2_admin(email):
         return True

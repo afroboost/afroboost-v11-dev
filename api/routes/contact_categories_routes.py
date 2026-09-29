@@ -13,8 +13,10 @@ SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"
 # MT-2 : la version locale ne connaissait qu'UN super-admin — le second
 # (afroboost.bassi@gmail.com) recevait un espace de catégories à lui, distinct
 # de celui de la plateforme. Une seule définition dans tout le dépôt : celle de
-# `shared.py` (les DEUX admins). `SUPER_ADMIN_EMAIL` reste l'ESPACE DE NOMS des
+# `shared.py` (qui comptait alors les DEUX admins). `SUPER_ADMIN_EMAIL` reste l'ESPACE DE NOMS des
 # catégories de la plateforme (valeur historique en base, inchangée).
+# SA-1 (29/09/2026) : `shared.py` ne connaît plus qu'UN super-admin
+# (contact.artboost@gmail.com) ; afroboost.bassi@gmail.com est un compte ordinaire.
 from api.routes.shared import is_super_admin  # noqa: E402
 from api.routes.shared import v20_exiger_coach_signe as _mt2_exiger  # noqa: E402
 

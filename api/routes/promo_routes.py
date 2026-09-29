@@ -410,6 +410,8 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
     # reconnaissait QU'UNE adresse alors que `shared.is_super_admin()` en
     # reconnait deux : `afroboost.bassi@gmail.com` etait traite comme un coach
     # ordinaire. On supprime l'ombre et on appelle la vraie fonction.
+    # SA-1 (29/09/2026) : `shared.is_super_admin` ne reconnaît plus qu'UNE
+    # adresse (contact.artboost@gmail.com) — c'est désormais voulu.
     code_data.pop("coach_id", None)
     code_data["coach_id"] = caller
     if is_super_admin(caller):

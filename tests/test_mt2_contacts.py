@@ -308,7 +308,11 @@ class BaseFictive:
 # 2. IDENTITÉS ET REQUÊTES
 # ============================================================================
 ADMIN = SUPER_ADMIN_EMAILS[0]
-ADMIN2 = SUPER_ADMIN_EMAILS[1]
+# SA-1 : il n'existe plus qu'UN super-admin. L'ancien second compte
+# (afroboost.bassi@gmail.com) est désormais vérifié comme NON super-admin :
+# aucune vue globale, refus sur les routes réservées.
+ANCIEN_SECOND = "afroboost.bassi@gmail.com"
+assert SUPER_ADMIN_EMAILS == [ADMIN], SUPER_ADMIN_EMAILS
 A = "coach.a.mt2@exemple.test"
 B = "coach.b.mt2@exemple.test"
 
@@ -489,8 +493,8 @@ verifier("JWT B + X-User-Email A -> reste B", c == 200 and {p["id"] for p in r} 
          [p["id"] for p in r] if c == 200 else c)
 r, c = appel(lambda: S.get_chat_participants(Req(ADMIN)))
 verifier("super-admin : vue globale (5 fiches)", c == 200 and len(r) == 5, len(r) if c == 200 else c)
-r, c = appel(lambda: S.get_chat_participants(Req(ADMIN2)))
-verifier("SECOND super-admin : vue globale aussi", c == 200 and len(r) == 5)
+r, c = appel(lambda: S.get_chat_participants(Req(ANCIEN_SECOND)))
+verifier("SA-1 : ancien second super-admin -> PAS de vue globale (refus)", refuse(c), c)
 r, c = appel(lambda: S.get_chat_participants(Req(ADMIN), limit=2, skip=1))
 verifier("pagination optionnelle limit/skip", c == 200 and len(r) == 2)
 r, c = appel(lambda: S.get_chat_participants(Req(A, type_="subscriber")))
@@ -535,8 +539,11 @@ r, c = appel(lambda: S.update_chat_participant("pB1", {"coach_id": A}, Req()))
 verifier("anonyme : 403 (avant : $set libre sans auth)", refuse(c), c)
 r, c = appel(lambda: S.update_chat_participant("pB1", {"name": "x"}, Req(entete=B)))
 verifier("X-User-Email B sans JWT : 403", refuse(c), c)
-r, c = appel(lambda: S.update_chat_participant("pB1", {"name": "Par admin"}, Req(ADMIN2)))
-verifier("super-admin (2e) modifie B : 200", c == 200 and (doc(db, "chat_participants", "pB1") or {}).get("name") == "Par admin")
+r, c = appel(lambda: S.update_chat_participant("pB1", {"name": "Par l'ancien second"}, Req(ANCIEN_SECOND)))
+verifier("SA-1 : ancien second modifie B -> refus, fiche intacte",
+         refuse(c) and (doc(db, "chat_participants", "pB1") or {}).get("name") != "Par l'ancien second", c)
+r, c = appel(lambda: S.update_chat_participant("pB1", {"name": "Par admin"}, Req(ADMIN)))
+verifier("super-admin modifie B : 200", c == 200 and (doc(db, "chat_participants", "pB1") or {}).get("name") == "Par admin")
 
 print("\n== 4. DELETE /chat/participants/{id} ==")
 db = base_neuve()
@@ -637,8 +644,10 @@ r, c = appel(lambda: S.get_user("uA", Req()))
 verifier("anonyme : 403 (était PUBLIC)", refuse(c), c)
 r, c = appel(lambda: S.get_user("uA", Req(entete=A)))
 verifier("X-User-Email A sans JWT : 403", refuse(c), c)
-r, c = appel(lambda: S.get_user("uNone", Req(ADMIN2)))
-verifier("super-admin (2e) : global", c == 200)
+r, c = appel(lambda: S.get_user("uNone", Req(ADMIN)))
+verifier("super-admin : global", c == 200)
+r, c = appel(lambda: S.get_user("uNone", Req(ANCIEN_SECOND)))
+verifier("SA-1 : ancien second -> refus", refuse(c) or c == 404, c)
 r, c = appel(lambda: S.update_user("uA", S.UserCreate(name="Nouveau", email="ua@x.test"), Req(A)))
 verifier("A modifie son user : 200", c == 200 and (doc(db, "users", "uA") or {}).get("name") == "Nouveau")
 verifier("... coach_id conservé", (doc(db, "users", "uA") or {}).get("coach_id") == A)
@@ -732,15 +741,18 @@ verifier("appel interne sans coach : vue plateforme (compatibilité moteur campa
          {"pB1", "pA1"} <= {p["id"] for p in pers_g})
 r, c = appel(lambda: SEG.compter_segments(Req(A)))
 verifier("A : /contacts/segments 200, personnes = son portefeuille", c == 200 and r["personnes"] == len(pers_a), r if c != 200 else r["personnes"])
-r, c = appel(lambda: SEG.compter_segments(Req(ADMIN2)))
-verifier("SECOND super-admin : /contacts/segments 200 (était 403)", c == 200, c)
+r, c = appel(lambda: SEG.compter_segments(Req(ADMIN)))
+verifier("super-admin : /contacts/segments 200", c == 200, c)
 verifier("... vue globale", c == 200 and r["personnes"] == len(pers_g))
+r, c = appel(lambda: SEG.compter_segments(Req(ANCIEN_SECOND)))
+verifier("SA-1 : ancien second : /contacts/segments -> refus (plus de vue globale)", refuse(c), c)
 r, c = appel(lambda: SEG.lister_segment("whatsapp", Req(A)))
 verifier("A : segment whatsapp sans fiche de B", c == 200 and "pB1" not in {x["id"] for x in r["contacts"]}, r)
 r, c = appel(lambda: SEG.compter_segments(Req(entete=A)))
 verifier("X-User-Email seul : 403 « reconnectez-vous »", c == 403 and "reconnectez-vous" in str(r), r)
 verifier("`_autorise` garde sa signature (campagnes AGENT 1)",
-         sur(lambda: asyncio.run(SEG._est_coach_ou_admin(ADMIN2)) is True
+         sur(lambda: asyncio.run(SEG._est_coach_ou_admin(ADMIN)) is True
+             and asyncio.run(SEG._est_coach_ou_admin(ANCIEN_SECOND)) is False
              and asyncio.run(SEG._est_coach_ou_admin("")) is False, False))
 
 print("\n== 13. space-link : propriété de l'abonnement ==")
@@ -755,8 +767,10 @@ r404, c404 = appel(lambda: S.get_space_link_by_email("inconnu@x.test", Req(A)))
 verifier("... réponse IDENTIQUE à une adresse inconnue", (c, r) == (c404, r404), (r, r404))
 r, c = appel(lambda: S.get_space_link_by_email("suba@x.test", Req(B)))
 verifier("B : abonné de A -> 404", c == 404, c)
-r, c = appel(lambda: S.get_space_link_by_email("relb@x.test", Req(ADMIN2)))
-verifier("super-admin (2e) : global", c == 200 and r["code"] == "AFR-BBB111")
+r, c = appel(lambda: S.get_space_link_by_email("relb@x.test", Req(ADMIN)))
+verifier("super-admin : global", c == 200 and r["code"] == "AFR-BBB111")
+r, c = appel(lambda: S.get_space_link_by_email("relb@x.test", Req(ANCIEN_SECOND)))
+verifier("SA-1 : ancien second : pas de lien d'espace d'autrui", c != 200, c)
 r, c = appel(lambda: S.get_space_link_by_email("suba@x.test", Req(entete=A)))
 verifier("X-User-Email A sans JWT : 403", refuse(c), c)
 r, c = appel(lambda: S.get_space_link_by_email("suba@x.test", Req(B, entete=A)))
@@ -766,8 +780,11 @@ print("\n== 14. Catégories ==")
 db = base_neuve()
 r, c = appel(lambda: CAT.get_contact_categories(Req(A)))
 verifier("A lit ses catégories", c == 200 and {x["id"] for x in r["categories"]} == {"cA"}, r)
-r, c = appel(lambda: CAT.get_contact_categories(Req(ADMIN2)))
-verifier("SECOND super-admin -> catégories de la PLATEFORME", c == 200 and {x["id"] for x in r["categories"]} == {"cPlat"}, r)
+r, c = appel(lambda: CAT.get_contact_categories(Req(ADMIN)))
+verifier("super-admin -> catégories de la PLATEFORME", c == 200 and {x["id"] for x in r["categories"]} == {"cPlat"}, r)
+r, c = appel(lambda: CAT.get_contact_categories(Req(ANCIEN_SECOND)))
+verifier("SA-1 : ancien second -> jamais les catégories de la PLATEFORME",
+         c != 200 or "cPlat" not in {x["id"] for x in r.get("categories", [])}, (c, r))
 r, c = appel(lambda: CAT.get_contact_categories(Req(entete=A)))
 verifier("X-User-Email A sans JWT : 403", refuse(c), c)
 r, c = appel(lambda: CAT.get_contact_categories(Req()))
@@ -794,7 +811,10 @@ r, c = appel(lambda: CAT.set_contact_categories(Req(A, corps={"contact_ids": ["p
 verifier("lot mixte A+B : 404 et RIEN écrit (même pas la fiche de A)", c == 404
          and doc(db, "chat_participants", "pA1").get("categories") == ["cA"], c)
 db.chat_participants.docs.append({"id": "pA3", "coach_id": A, "name": "A3"})
-r, c = appel(lambda: CAT.set_contact_categories(Req(ADMIN2, corps={"contact_ids": ["pB1", "pA3"], "category_ids": ["cB", "cA"]})))
+r, c = appel(lambda: CAT.set_contact_categories(Req(ANCIEN_SECOND, corps={"contact_ids": ["pB1", "pA3"], "category_ids": ["cB", "cA"]})))
+verifier("SA-1 : ancien second ne catégorise pas les fiches d'autrui",
+         c != 200 and doc(db, "chat_participants", "pB1").get("categories") != ["cB", "cA"], (c, r))
+r, c = appel(lambda: CAT.set_contact_categories(Req(ADMIN, corps={"contact_ids": ["pB1", "pA3"], "category_ids": ["cB", "cA"]})))
 verifier("super-admin : catégorise toute fiche avec toute catégorie (global)", c == 200 and r["updated"] == 2
          and doc(db, "chat_participants", "pB1").get("categories") == ["cB", "cA"], (c, r))
 n_avant = len(db.chat_participants.docs)
@@ -820,8 +840,10 @@ r, c = appel(lambda: S.get_leads(Req(A)))
 verifier("A lit ses leads", c == 200 and {x["id"] for x in r} == {"lA"})
 r, c = appel(lambda: S.get_leads(Req(entete=ADMIN)))
 verifier("X-User-Email admin sans JWT : 403 (P0 fermé)", refuse(c), c)
-r, c = appel(lambda: S.get_leads(Req(ADMIN2)))
+r, c = appel(lambda: S.get_leads(Req(ADMIN)))
 verifier("super-admin : global, paginé (<= 50)", c == 200 and len(r) == 3)
+r, c = appel(lambda: S.get_leads(Req(ANCIEN_SECOND)))
+verifier("SA-1 : ancien second : pas la liste globale des leads", refuse(c) or (c == 200 and len(r) == 0), (c, r))
 r, c = appel(lambda: S.delete_lead("lB", Req(A)))
 verifier("A supprime le lead de B : 404", c == 404 and doc(db, "leads", "lB") is not None, c)
 r, c = appel(lambda: S.delete_lead("lB", Req(entete=B)))
@@ -972,7 +994,10 @@ verifier("cleanup-ghost-users : X-User-Email super-admin sans JWT -> 403 (plus d
          c == 403 and doc(db, "users", "fantome") is not None, c)
 r, c = appel(lambda: S.cleanup_ghost_users(Req(A)))
 verifier("cleanup-ghost-users : JWT coach -> 403", c == 403, c)
-r, c = appel(lambda: S.cleanup_ghost_users(Req(ADMIN2)))
+r, c = appel(lambda: S.cleanup_ghost_users(Req(ANCIEN_SECOND)))
+verifier("SA-1 : cleanup-ghost-users : JWT de l'ancien second -> 403, rien supprimé",
+         c == 403 and doc(db, "users", "fantome") is not None, c)
+r, c = appel(lambda: S.cleanup_ghost_users(Req(ADMIN)))
 verifier("cleanup-ghost-users : JWT super-admin -> 200", c == 200 and doc(db, "users", "fantome") is None, (c, r))
 r, c = appel(lambda: S._v334_autoriser(Req(entete=A), "AFR-AAA111"))
 verifier("_v334_autoriser : X-User-Email du coach sans JWT -> 403", c == 403, c)
