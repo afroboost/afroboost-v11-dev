@@ -909,8 +909,11 @@ async def _debloquer_ou_bloquer(pass_doc, course) -> dict:
             await _notifier_reservation(_r, _sub)
         _sp = pass_doc.get("sponsor") or {}
         _cours = E.dto_course(pass_doc)["name"] or "ton cours"
-        await _push_parrain(_sp.get("email_norm"), "Pass Duo débloqué",
-                            "Vos deux places pour %s sont réservées." % _cours,
+        # V558 : séance choisie pour l'ami ≠ séance du parrain — on ne dit pas « vos deux places ».
+        _texte = ("Ton ami est inscrit à la séance que tu lui as offerte (%s)." % _cours
+                  if E.seance_choisie(pass_doc) else "Vos deux places pour %s sont réservées." % _cours)
+        await _push_parrain(_sp.get("email_norm"), "Pass Duo débloqué" if not E.seance_choisie(pass_doc)
+                            else "Invitation réussie", _texte,
                             {"type": "pass_duo_unlocked", "pass_id": pass_doc["id"], "url": "/parrainage"})
         asyncio.create_task(_email_parrain_debloque(pass_doc))
         return pass_doc
@@ -1645,6 +1648,14 @@ async def _changer_seance(pass_doc, occurrence, version, changed_by) -> dict:
     # Toute la DESCENDANCE suit (enfant, petit-enfant...) : un maillon laissé à
     # l'ancienne date ne retrouverait jamais la place de son parrain.
     _descendants = await _descendance(pass_doc)
+    # V558 : un maillon qui a CHOISI sa séance ne suit plus son parent — ni lui,
+    # ni sa descendance (elle suit la séance de SON parent à lui).
+    _suiveurs = []
+    for _d in _descendants:
+        if E.seance_choisie(_d):
+            break
+        _suiveurs.append(_d)
+    _descendants = _suiveurs
     if any(_d.get("invitee") for _d in _descendants):
         raise _refus(409, E.REFUS_PASS_NON_MODIFIABLE,
                      "Ton ami s'est déjà inscrit à cette séance : elle ne peut plus changer.")
@@ -2014,7 +2025,7 @@ async def referral_pass_public(share_token: str):
     return _dto
 
 
-async def _liberer_enfant_refuse(share_token, request, raison) -> bool:
+async def _liberer_enfant_refuse(share_token, request, raison, code_http=409) -> bool:
     """PAR-1 (A1) — le visiteur refusé (identité) avait préparé/partagé
     l'UNIQUE invitation enfant du pass : sans libération, le lien resterait
     bloqué pour le vrai ami (« termine sur l'appareil qui a partagé »).
@@ -2034,6 +2045,11 @@ async def _liberer_enfant_refuse(share_token, request, raison) -> bool:
             or E.chaine_du_pass(_enf).get("child_pass_id") or not _cle_chaine_valide(request, _enf):
         return False
     if await _enfant_de(_enf):
+        return False
+    # V558 : « déjà client » (essai déjà utilisé / détenu, abonné actif) n'est pas
+    # un abus — l'invitation DÉJÀ ENVOYÉE à son ami reste valable (la chaîne ne
+    # casse pas ; son ami garde SON essai s'il y a droit).
+    if not E.refus_libere_enfant(code_http, raison, E.partage_chaine(_enf)["shared"]):
         return False
     _now = _iso()
     _r = await db[COLL_PASSES].update_one(
@@ -2070,7 +2086,7 @@ def _liberer_si_refus_identite(fn):
             _raison = (getattr(_e, "headers", None) or {}).get("X-Refus-Raison")
             if E.refus_identite_definitif(_e.status_code, _raison):
                 try:
-                    await _liberer_enfant_refuse(share_token, request, _raison)
+                    await _liberer_enfant_refuse(share_token, request, _raison, _e.status_code)
                 except Exception as _err:  # noqa: BLE001
                     logger.warning("%s place d'enfant non libérée (%s)", PREFIXE, type(_err).__name__)
             raise
@@ -2114,6 +2130,10 @@ async def referral_join(share_token: str, request: Request):
     if _b.get("consent_reservation") is not True or _b.get("terms_accepted") is not True:
         raise HTTPException(status_code=400,
                             detail="Merci d'accepter la réservation et les conditions de participation.")
+    # V558 — L'ESSAI EST UNE FOIS PAR PERSONNE, À VIE : ESSAI-1 verrouille l'e-mail
+    # ET le numéro. Une nouvelle adresse sans numéro contournerait le verrou.
+    if not _tel:
+        raise _refus(400, "whatsapp_requis", "Indique ton numéro WhatsApp : il sert à réserver ta place.")
     _ok, _motif = E.invite_autorise(_p, _email, _tel)
     if not _ok:
         raise _refus(409, E.REFUS_AUTO_PARRAINAGE, "Tu ne peux pas être ton propre invité.")
@@ -2341,7 +2361,11 @@ async def _place_du_parrain_chaine(pass_doc):
     _sp = pass_doc.get("sponsor") or {}
     _inv = _parent.get("invitee") or {}
     _rid = (_parent.get("reservations") or {}).get("invitee_id")
-    if (not _rid or str(_parent.get("occurrence") or "") != str(pass_doc.get("occurrence") or "")
+    # V558 : quand l'enfant porte SA séance (choisie pour l'ami), la place du
+    # parrain reste celle qu'il a déjà sur le parent — jamais une seconde
+    # réservation, jamais un second débit, jamais un nouvel essai pour lui.
+    _meme_seance = str(_parent.get("occurrence") or "") == str(pass_doc.get("occurrence") or "")
+    if (not _rid or not (_meme_seance or E.seance_choisie(pass_doc))
             or E.normaliser_email(_inv.get("email_norm")) != E.normaliser_email(_sp.get("email_norm"))):
         return None
     try:
@@ -2528,6 +2552,172 @@ def _champs_invitation_enfant(corps, avec_photo=False) -> dict:
         raise HTTPException(status_code=422, detail=str(_err))
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# V558 — WIZARD « INVITATION & PARRAINAGE » : l'offre et LA SÉANCE DE L'AMI
+# ═══════════════════════════════════════════════════════════════════════════
+# Chaque maillon choisit la séance qu'IL offre au suivant : l'enfant porte son
+# propre `course_id` / `occurrence` (`chain.seance_choisie`), le parent garde la
+# sienne. Les séances proposées viennent TOUJOURS du serveur (jamais une date ou
+# un cours tapés par le navigateur) : futures, cours publics, du MÊME
+# propriétaire, compatibles avec l'offre du pass. Le type (`chain.kind`) est
+# relu contre `types_offrables` : Parrainage / Affiliation n'existent que si un
+# programme réel est configuré (`referral_programs`), sinon ils sont refusés.
+COLL_PROGRAMMES = "referral_programs"
+DEBIT_PREFIXE_CHAINE_OPTIONS = "duo_chain_o:"   # V558 : lecture des options du Wizard
+COURS_CANDIDATS_MAX = 60
+
+
+async def _proprietaire_chaine(pass_doc) -> str:
+    """La clé du propriétaire de la chaîne ("" = plateforme) : celle de la
+    campagne racine si le pass en vient, sinon celle du cours du pass."""
+    _cid = E.campagne_du_pass(pass_doc)
+    if _cid:
+        _camp = await _campagne_par_id(_cid)
+        return E._proprietaire((_camp or {}).get("coach_id"))
+    try:
+        _co = await db["courses"].find_one({"id": (pass_doc or {}).get("course_id")}, {"_id": 0, "coach_id": 1})
+    except Exception:  # noqa: BLE001
+        _co = None
+    return E._proprietaire((_co or {}).get("coach_id") if _co else (pass_doc or {}).get("coach_id"))
+
+
+async def _programmes_actifs(proprietaire) -> list:
+    """Les programmes Parrainage / Affiliation ACTIFS de ce propriétaire (lecture
+    seule). Aucun document -> [] : les cartes correspondantes n'apparaissent pas."""
+    try:
+        return await db[COLL_PROGRAMMES].find(
+            {"coach_id": str(proprietaire or ""), "status": "active"}, {"_id": 0}).to_list(10)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s programmes illisibles (%s)", PREFIXE, type(_err).__name__)
+        return []
+
+
+async def _cours_offrables(pass_doc) -> list:
+    """Les cours dont une séance peut être offerte au suivant (documents complets)."""
+    _p = pass_doc or {}
+    _proprio = await _proprietaire_chaine(_p)
+    _cid = E.campagne_du_pass(_p)
+    if _cid:
+        _camp = await _campagne_par_id(_cid)
+        _offre = await _offre_de_campagne(_camp, _p.get("offer_id")) if _camp else None
+        if not _offre:
+            return []
+        _ids = IC.cours_lies(_offre) or [str(_p.get("course_id") or "")]
+        if str(_p.get("course_id") or "") not in _ids:
+            _ids.append(str(_p.get("course_id") or ""))
+        _q = {"id": {"$in": [i for i in _ids if i][:COURS_CANDIDATS_MAX]}}
+    else:
+        _oid = str(_p.get("offer_id") or "").strip()
+        if not _oid:
+            return []
+        # l'offre est filtrée plus bas, en mémoire (bornée à COURS_CANDIDATS_MAX)
+        _q = {"duo_enabled": True, "archived": {"$ne": True}}
+    try:
+        _rows = await db["courses"].find(_q, {"_id": 0}).to_list(COURS_CANDIDATS_MAX)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s cours offrables illisibles (%s)", PREFIXE, type(_err).__name__)
+        return []
+    _sortie = []
+    for _co in _rows:
+        # Coach A ne propose JAMAIS une séance du coach B (propriété du cours).
+        # Le cours du pass lui-même reste offrable : c'est déjà celui de la chaîne.
+        _sien = _co.get("id") == _p.get("course_id")
+        if not IC.cours_public(_co) or (not _sien and E._proprietaire(_co.get("coach_id")) != _proprio):
+            continue
+        if not _cid and _oid not in [str(i).strip() for i in (_co.get("duo_offer_ids") or [])]:
+            continue
+        _sortie.append(_co)
+    _sortie.sort(key=lambda c: (0 if c.get("id") == _p.get("course_id") else 1, str(c.get("name") or "")))
+    return _sortie
+
+
+async def _seances_offrables(pass_doc) -> list:
+    """`[{course_id, name, location, time, occurrences[]}]` — futures uniquement."""
+    _sortie = []
+    for _co in await _cours_offrables(pass_doc):
+        try:
+            _occ = [o for o in _occurrences(_co) if not E.est_passee(o, _maintenant())]
+        except Exception:  # noqa: BLE001
+            _occ = []
+        if _occ:
+            _sortie.append(E.dto_seance_offrable(_co, _occ))
+    return _sortie
+
+
+async def _valider_seance_enfant(pass_doc, course_id, occurrence) -> tuple:
+    """(cours, occurrence) relus côté serveur, sinon 400 `seance_non_autorisee`
+    (cours hors liste : autre coach, caché, incompatible) ou `seance_indisponible`
+    (date absente de la liste du serveur, passée, pleine au moment du choix)."""
+    _cid = str(course_id or "").strip()
+    _cours = next((c for c in await _cours_offrables(pass_doc) if c.get("id") == _cid), None)
+    if not _cours:
+        raise _refus(400, E.REFUS_SEANCE_NON_AUTORISEE, "Cette séance ne peut pas être offerte.")
+    _cible, _motif = E.occurrence_choisissable(occurrence, _occurrences(_cours), _maintenant())
+    if not _cible:
+        raise _refus(400, E.REFUS_SEANCE_INDISPONIBLE, "Cette séance n'est plus disponible.")
+    return _cours, _cible
+
+
+def _instantane_cours(course) -> dict:
+    return {"name": course.get("name") or "", "time": course.get("time") or "",
+            "locationName": course.get("locationName") or course.get("location") or "",
+            "mapsUrl": course.get("mapsUrl") or ""}
+
+
+async def _choix_enfant(parent, corps) -> dict:
+    """Le `$set` du choix Wizard (type et/ou séance) lu dans `corps`, VALIDÉ ; {}
+    si le corps n'en porte aucun. Lève 400/422 AVANT toute écriture."""
+    _set = {}
+    if "kind" in (corps or {}):
+        _k = str(corps.get("kind") or "").strip()
+        if not E.type_offrable(_k, parent, await _programmes_actifs(await _proprietaire_chaine(parent))):
+            raise _refus(400, E.REFUS_TYPE_NON_AUTORISE, "Cette offre n'est pas proposée pour ton invitation.")
+        _set["chain.kind"] = _k
+    if "course_id" in (corps or {}) or "occurrence" in (corps or {}):
+        _cours, _occ = await _valider_seance_enfant(parent, corps.get("course_id"), corps.get("occurrence"))
+        _set.update({"course_id": _cours.get("id"), "occurrence": _occ, "expires_at": _occ,
+                     "course_snapshot": _instantane_cours(_cours), "chain.seance_choisie": True})
+    return _set
+
+
+async def _appliquer_choix_enfant(enfant, choix):
+    """Écrit le choix sur l'enfant ENCORE modifiable (ni rejoint, ni partagé) ;
+    le parent n'est jamais touché. Rend l'enfant relu."""
+    _change = {k: v for k, v in choix.items()
+               if (E.chaine_du_pass(enfant).get(k.split(".", 1)[1]) if k.startswith("chain.") else enfant.get(k)) != v}
+    if not _change:
+        return enfant
+    if enfant.get("invitee"):
+        raise _refus(409, E.REFUS_PASS_DEJA_REJOINT, "Ton ami a déjà rejoint cette invitation.")
+    if E.partage_chaine(enfant)["shared"] and any(k in _change for k in ("occurrence", "course_id", "chain.kind")):
+        # Jamais un changement silencieux de ce qui a DÉJÀ été envoyé.
+        raise _refus(409, E.REFUS_INVITATION_DEJA_PARTAGEE,
+                     "Ton invitation a déjà été envoyée : sa séance ne peut plus changer.")
+    _now = _iso()
+    _detail = {"course_id": _change.get("course_id"), "occurrence": _change.get("occurrence"),
+               "kind": _change.get("chain.kind")}
+    await db[COLL_PASSES].update_one(
+        {"id": enfant["id"], "invitee": None},
+        {"$set": dict(_change, updated_at=_now),
+         "$push": {"events": {"at": _now, "type": E.EVENEMENT_SEANCE_ENFANT, "detail": _detail}},
+         "$inc": {"version": 1, "invitation_version": 1}})
+    return await db[COLL_PASSES].find_one({"id": enfant["id"]}, {"_id": 0}) or enfant
+
+
+@router.get("/pass/{share_token}/chain/options")
+async def referral_chaine_options(share_token: str, request: Request):
+    """V558 — de quoi remplir les étapes « Offre » et « Séance » du Wizard, sans
+    aucune donnée personnelle : `{types, seances, seance_parent}`. Public (le jeton
+    du parent est la capacité), débit IP."""
+    await _exiger_actif()
+    _exiger_debit(request, DEBIT_PREFIXE_CHAINE_OPTIONS)
+    _p, _s = await _parent_ouvert(share_token)
+    _progs = await _programmes_actifs(await _proprietaire_chaine(_p))
+    return {"types": E.types_offrables(_p, _progs),
+            "seances": await _seances_offrables(_p),
+            "seance_parent": {"course_id": _p.get("course_id"), "occurrence": _p.get("occurrence")}}
+
+
 @router.post("/pass/{share_token}/chain")
 async def referral_chaine_creer(share_token: str, request: Request):
     """V556 — crée (201) ou rend (200, idempotent) L'invitation enfant de ce
@@ -2537,8 +2727,15 @@ async def referral_chaine_creer(share_token: str, request: Request):
     _exiger_debit(request, DEBIT_PREFIXE_CHAINE)
     _p, _s = await _parent_ouvert(share_token)
     await _exiger_campagne_vivante(_p)          # PAR-1 (audit P2)
+    _b = await _corps(request)
     _enf = await _enfant_de(_p)
     if _enf:
+        # V558 : l'appareil qui l'a créée peut encore changer type / séance tant
+        # que rien n'est envoyé ; un autre appareil relit l'enfant sans rien changer.
+        if _cle_chaine_valide(request, _enf):
+            _choix = await _choix_enfant(_p, _b)
+            if _choix:
+                _enf = await _appliquer_choix_enfant(_enf, _choix)
         return await _reponse_chaine(_p, await _apprendre_photo_profil(request, _enf), 200)
     if not await _chaine_active():
         raise HTTPException(status_code=404, detail="parrainage_chaine_desactive")
@@ -2549,8 +2746,9 @@ async def referral_chaine_creer(share_token: str, request: Request):
         raise _refus(409, E.REFUS_CHAINE_EN_ATTENTE,
                      "Cette invitation sera active dès que la personne qui te l'a envoyée "
                      "aura terminé son inscription.")
-    _inv = _champs_invitation_enfant(await _corps(request))
+    _inv = _champs_invitation_enfant(_b)
     _inv["message"] = _inv.get("message") or E.MESSAGE_CHAINE_DEFAUT
+    _choix = await _choix_enfant(_p, _b)        # V558 : type + séance de l'ami, validés
     _now = _maintenant()
     _cle = secrets.token_urlsafe(18)
     _ch_parent = E.chaine_du_pass(_p)
@@ -2597,6 +2795,13 @@ async def referral_chaine_creer(share_token: str, request: Request):
         "expires_at": _p.get("occurrence"),
         "events": [{"at": _iso(_now), "type": E.EVENEMENT_CHAINE_CREEE, "detail": None}],
     }
+    # V558 : la séance (et le type) CHOISIS pour l'ami remplacent ceux hérités du
+    # parent — le parent, lui, garde sa séance.
+    for _k, _v in _choix.items():
+        if _k.startswith("chain."):
+            _doc["chain"][_k.split(".", 1)[1]] = _v
+        else:
+            _doc[_k] = _v
     # PAR-1 : l'enfant d'une chaîne de campagne hérite de la campagne et de la
     # source racine (jamais de `source_type` propre : il est subscriber).
     _org = E.origine_du_pass(_p)
@@ -2654,6 +2859,11 @@ async def referral_chaine_modifier(share_token: str, request: Request):
     _b = await _corps(request)
     _inv = _champs_invitation_enfant(_b, avec_photo=True)
     _contact = _champs_contact_enfant(_b, E.contact_invitant(_enf))      # 422 avant toute écriture
+    _choix = await _choix_enfant(_p, _b)                                 # V558 : 400 avant toute écriture
+    if _choix:
+        _enf = await _appliquer_choix_enfant(_enf, _choix)
+        if not any(k in _b for k in CHAMPS_VISUELS_ENFANT) and _contact is None:
+            return await _reponse_chaine(_p, _enf, 200)
     _visuel = any(k in _b for k in CHAMPS_VISUELS_ENFANT) or _contact is None
     _enf = await _apprendre_photo_profil(request, _enf)
     _prof_photo = E.photo_suggeree_enfant(_enf)

@@ -395,6 +395,10 @@ def version_carte(pass_doc) -> str:
             str(_p.get("offer_id") or _o.get("id") or ""), str(_o.get("name") or ""),
             str(_p.get("course_id") or ""), str(_c.get("name") or ""), str(_c.get("locationName") or ""),
             nom_parrain_affichable(_p), _i["photo_url"] or "", _i["message"] or ""]
+    # V558 : le type choisi entre dans l'empreinte SEULEMENT s'il existe — les
+    # cartes déjà partagées (sans `chain.kind`) gardent leur URL.
+    if chaine_du_pass(_p).get("kind"):
+        _cle.append("kind:%s" % chaine_du_pass(_p).get("kind"))
     # V556 : la version d'aperçu entre dans l'empreinte SEULEMENT si elle
     # existe — les cartes déjà partagées (compteur absent) gardent leur URL.
     if version_apercu(_p) > 0:
@@ -582,11 +586,13 @@ def og_titre_invitation(prenom_parrain) -> str:
     """« Bassi t'invite à Afroboost » — le prénom, jamais le nom complet.
     Sans prénom exploitable : une formule qui reste vraie."""
     _p = str(prenom_parrain or "").strip()
-    return ("%s t'invite à Afroboost" % _p) if _p else "Un membre Afroboost t'invite"
+    # V558 : repli UNIQUEMENT si l'identité est réellement inconnue — « Afroboost ».
+    return ("%s t'invite à Afroboost" % _p) if _p else "Afroboost t'invite"
 
 
-def og_description_invitation(prenom_parrain, cours, occurrence, offre_nom="") -> str:
-    """La phrase d'aperçu : qui, quoi, quand, et ce que l'ami reçoit."""
+def og_description_invitation(prenom_parrain, cours, occurrence, offre_nom="", type_=None) -> str:
+    """La phrase d'aperçu : qui, quoi, quand, et ce que l'ami reçoit.
+    V558 : `type_` = type_invitation(pass) ; hors Pass Duo, on ne parle pas de Pass Duo."""
     _p = str(prenom_parrain or "").strip()
     _c = str(cours or "").strip()
     _quand = occurrence_lisible(occurrence)
@@ -595,6 +601,8 @@ def og_description_invitation(prenom_parrain, cours, occurrence, offre_nom="") -
     _date = (" le %s" % _quand) if _quand and _quand != "prochainement" else ""
     _cadeau = str(offre_nom or "").strip()
     _fin = ("Ton Pass Duo t'offre : %s." % _cadeau) if _cadeau else "Ton premier cours est offert grâce à son Pass Duo."
+    if type_ not in (None, "pass_duo"):
+        _fin = ("Ton invitation t'offre : %s." % _cadeau) if _cadeau else "Ton premier cours est offert."
     return ("%s%s%s. %s" % (_qui, _ou, _date, _fin)).strip()
 
 
@@ -1355,6 +1363,10 @@ def dto_enfant(pass_doc, frontend_url) -> dict:
         "photo_suggeree": photo_suggeree_enfant(_p),
         "whatsapp_renseigne": bool(contact_invitant(_p).get("whatsapp_e164")),
         "consent_contact": contact_invitant(_p).get("consent") is True,
+        # V558 : le type choisi (badge) et l'état de la séance propre à cet enfant.
+        "kind": type_invitation(_p),
+        "seance_choisie": seance_choisie(_p),
+        "shared": partage_chaine(_p)["shared"],
     }
     _carte = url_carte(frontend_url, _p)
     if _carte:
@@ -1521,12 +1533,20 @@ def campagne_du_pass(pass_doc) -> str:
     return str(origine_du_pass(pass_doc).get("campaign_id") or "")
 
 
-def type_invitation(pass_doc) -> str:
-    """UX-P4 — le type affiché par le badge de la page publique (aucune PII, aucune
-    lecture en base). Une chaîne de campagne ne naît aujourd'hui que d'une campagne
-    « Essai gratuit » (seul type admis à /entry) et ses maillons héritent de
-    `origin.campaign_id` → "trial" ; tout autre pass est un vrai Pass Duo."""
+def type_base(pass_doc) -> str:
+    """UX-P4 — le type NATUREL d'un pass : une chaîne de campagne ne naît que d'une
+    campagne « Essai gratuit » (seul type admis à /entry) → "trial" ; tout autre
+    pass est un vrai Pass Duo."""
     return "trial" if campagne_du_pass(pass_doc) else "pass_duo"
+
+
+def type_invitation(pass_doc) -> str:
+    """UX-P4 / V558 — le type affiché par le badge (aucune PII, aucune lecture en
+    base) : celui CHOISI à l'étape « Offre » du Wizard (`chain.kind`, validé à
+    l'écriture), sinon le type naturel du pass. Jamais « pass_duo » par défaut
+    pour une chaîne de campagne."""
+    _k = chaine_du_pass(pass_doc).get("kind")
+    return _k if _k in TYPES_INVITATION else type_base(pass_doc)
 
 
 def sans_place_parrain(pass_doc) -> bool:
@@ -1581,7 +1601,160 @@ def partage_chaine(pass_doc) -> dict:
 REFUS_IDENTITE_DEFINITIFS = (REFUS_AUTO_PARRAINAGE, REFUS_DEJA_FILLEUL, REFUS_ABONNE_ACTIF,
                              "free_trial_already_used", "free_trial_already_granted")
 EVENEMENT_CHAINE_LIBEREE = "chain_released"
+# V558 — « DÉJÀ CLIENT » n'est PAS un abus : la personne ne recevra jamais de second
+# essai, mais la chaîne ne casse pas pour autant — l'invitation qu'elle a DÉJÀ
+# PARTAGÉE reste valable pour son ami (qui garde SON propre essai s'il y a droit).
+REFUS_CLIENT_EXISTANT = (REFUS_ABONNE_ACTIF, "free_trial_already_used", "free_trial_already_granted")
 
 
 def refus_identite_definitif(code_http, raison) -> bool:
     return code_http == 409 and str(raison or "") in REFUS_IDENTITE_DEFINITIFS
+
+
+def refus_libere_enfant(code_http, raison, enfant_partage) -> bool:
+    """V558 — le refus du join libère-t-il l'invitation enfant de ce maillon ?
+    Abus (auto-parrainage, déjà filleul) : oui, comme A1. Déjà client : seulement
+    si l'enfant n'a encore été envoyé à personne (sinon son ami perdrait son lien)."""
+    if not refus_identite_definitif(code_http, raison):
+        return False
+    if str(raison or "") in REFUS_CLIENT_EXISTANT:
+        return not enfant_partage
+    return True
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V558 — WIZARD « INVITATION & PARRAINAGE » : offre, séance, récompense
+# ═══════════════════════════════════════════════════════════════════════════
+# LE TYPE (ce que l'AMI reçoit / ce que la carte annonce) :
+#   trial       — SON premier essai gratuit (s'il y a droit : ESSAI-1, serveur) ;
+#   pass_duo    — le Pass Duo V534 ;
+#   event_free  — un événement offert (campagnes) ;
+#   parrainage  — l'ami reçoit l'offre du pass ; l'INVITANT peut gagner la
+#                 récompense de SON programme (jamais un essai) ;
+#   affiliation — coachs / partenaires : commission sur conversion éligible.
+TYPES_INVITATION = ("trial", "pass_duo", "event_free", "parrainage", "affiliation")
+LIBELLES_TYPE = {"trial": "Essai gratuit", "pass_duo": "Pass Duo", "event_free": "Événement",
+                 "parrainage": "Parrainage", "affiliation": "Affiliation"}
+TEXTES_TYPE = {
+    "trial": "Offre à ton ami son premier cours Afroboost.",
+    "pass_duo": "Offre à ton ami une place à tes côtés.",
+    "event_free": "Offre à ton ami une place à cet événement.",
+    "parrainage": "Invite un ami et profite de l'avantage prévu par ton programme.",
+    "affiliation": ("Recommande Afroboost à tes clients et gagne une commission "
+                    "sur les conversions éligibles."),
+}
+TYPES_PROGRAMME = ("parrainage", "affiliation")
+REWARD_TYPES = ("none", "credit", "free_session", "discount", "fixed_amount", "percentage")
+REWARD_TYPES_AFFILIATION = ("fixed_amount", "percentage")
+ROLES_AFFILIATION = ("coach", "partner", "super_admin")
+REFUS_SEANCE_INDISPONIBLE = "seance_indisponible"
+REFUS_SEANCE_NON_AUTORISEE = "seance_non_autorisee"
+REFUS_TYPE_NON_AUTORISE = "type_non_autorise"
+REFUS_INVITATION_DEJA_PARTAGEE = "invitation_deja_partagee"
+EVENEMENT_SEANCE_ENFANT = "chain_child_session"
+
+
+def nature_avantage(type_ou_programme) -> str:
+    """LA distinction à ne jamais perdre : « premier_essai » (le bénéficiaire est
+    l'AMI, une fois par personne, à vie — ESSAI-1) contre « recompense_parrainage »
+    (le bénéficiaire est l'INVITANT, selon son programme). Une `free_session` de
+    parrainage est une récompense, JAMAIS un essai."""
+    if isinstance(type_ou_programme, dict):
+        return "commission" if type_ou_programme.get("type") == "affiliation" else "recompense_parrainage"
+    return "premier_essai" if type_ou_programme == "trial" else "offre_du_pass"
+
+
+def programme_valide(doc):
+    """Un programme `referral_programs` normalisé, ou None. Le montant est fixé par
+    le coach / super-admin — jamais par le partenaire ni par le navigateur."""
+    _d = doc if isinstance(doc, dict) else {}
+    _t = _d.get("type")
+    _r = _d.get("reward_type") or "none"
+    if _t not in TYPES_PROGRAMME or _d.get("status") != "active" or _r not in REWARD_TYPES:
+        return None
+    if _t == "affiliation" and _r not in REWARD_TYPES_AFFILIATION:
+        return None
+    _v = _d.get("reward_value")
+    if _r != "none" and _r != "free_session":
+        try:
+            _v = float(_v)
+        except (TypeError, ValueError):
+            return None
+        if _v <= 0 or (_r == "percentage" and _v > 100):
+            return None
+    elif _r == "free_session":
+        try:
+            _v = max(1, int(_v or 1))
+        except (TypeError, ValueError):
+            _v = 1
+    else:
+        _v = None
+    return {"type": _t, "reward_type": _r, "reward_value": _v,
+            "offer_name": str(_d.get("offer_name") or "")[:80] or None}
+
+
+def _montant(v) -> str:
+    return ("%d" % v) if float(v).is_integer() else ("%.2f" % v)
+
+
+def libelle_recompense(programme) -> str:
+    """La phrase montrée à l'INVITANT (jamais « essai gratuit »)."""
+    _p = programme_valide(programme) if programme and "status" in programme else programme
+    if not _p:
+        return ""
+    _r, _v = _p.get("reward_type"), _p.get("reward_value")
+    _cible = (" si ton client achète %s" % _p["offer_name"]) if _p.get("offer_name") else ""
+    if _p.get("type") == "affiliation":
+        if _r == "fixed_amount":
+            return "Tu gagnes %s CHF%s." % (_montant(_v), _cible or " par conversion éligible")
+        return "Tu gagnes %s %%%s." % (_montant(_v), _cible or " de chaque conversion éligible")
+    _quand = " quand les conditions sont remplies."
+    if _r == "free_session":
+        return ("Tu gagnes %d séance%s offerte%s de parrainage" % (_v, "s" if _v > 1 else "", "s" if _v > 1 else "")) + _quand
+    if _r == "credit":
+        return "Tu gagnes %s CHF de crédit" % _montant(_v) + _quand
+    if _r in ("discount", "percentage"):
+        return "Tu gagnes %s %% de réduction" % _montant(_v) + _quand
+    if _r == "fixed_amount":
+        return "Tu gagnes %s CHF" % _montant(_v) + _quand
+    return "Ce programme ne prévoit pas de récompense."
+
+
+def types_offrables(pass_doc, programmes=(), role="subscriber") -> list:
+    """Les cartes de l'étape « Offre », dans l'ordre : le type naturel du pass
+    (toujours), puis Parrainage / Affiliation SEULEMENT si un programme réel et
+    actif existe (Affiliation : coachs / partenaires / super-admin uniquement).
+    Aucun programme -> aucune carte fantôme, aucun faux solde."""
+    _base = type_base(pass_doc)
+    _sortie = [{"id": _base, "libelle": LIBELLES_TYPE[_base], "texte": TEXTES_TYPE[_base],
+                "nature": nature_avantage(_base), "recompense": None}]
+    _vus = set()
+    for _brut in (programmes or []):
+        _p = programme_valide(_brut)
+        if not _p or _p["type"] in _vus:
+            continue
+        if _p["type"] == "affiliation" and role not in ROLES_AFFILIATION:
+            continue
+        _vus.add(_p["type"])
+        _sortie.append({"id": _p["type"], "libelle": LIBELLES_TYPE[_p["type"]],
+                        "texte": TEXTES_TYPE[_p["type"]], "nature": nature_avantage(_p),
+                        "recompense": libelle_recompense(_p)})
+    return _sortie
+
+
+def type_offrable(kind, pass_doc, programmes=(), role="subscriber") -> bool:
+    return any(t["id"] == kind for t in types_offrables(pass_doc, programmes, role))
+
+
+def seance_choisie(pass_doc) -> bool:
+    """V558 — l'invitation enfant porte-t-elle SA séance (choisie par son créateur)
+    plutôt que celle de son parent ? Elle ne suit alors plus le parent."""
+    return chaine_du_pass(pass_doc).get("seance_choisie") is True
+
+
+def dto_seance_offrable(course, occurrences) -> dict:
+    """Un cours proposable à l'étape « Séance » : aucune donnée personnelle."""
+    _c = course or {}
+    return {"course_id": _c.get("id"), "name": _c.get("name") or "",
+            "location": _c.get("locationName") or _c.get("location") or "",
+            "time": _c.get("time") or "", "occurrences": list(occurrences or [])}

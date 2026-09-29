@@ -370,7 +370,7 @@ async def partie_page():
     c, h, _ = await page(d["share_token"])
     verifier("7h. sponsor.name == partie locale de l'e-mail : ni adresse ni partie locale dans le HTML",
              c == 200 and "bassicustomshoes" not in h.lower() and "@gmail" not in h
-             and _og(h, "og:title") == _h.escape("Un membre Afroboost t'invite", quote=True), _og(h, "og:title"))
+             and _og(h, "og:title") == _h.escape("Afroboost t'invite", quote=True), _og(h, "og:title"))
     c, pub = await appel(R.referral_pass_public(d["share_token"]))
     verifier("7i. dto_public : sponsor_first_name / sponsor_display_name filtrés, sponsor_photo_url null",
              c == 200 and pub["sponsor_first_name"] == "" and pub["sponsor_display_name"] == ""

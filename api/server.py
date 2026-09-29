@@ -20652,7 +20652,8 @@ async def _v556_html_apercu(_p, v="", robot=True) -> str:
 
     _titre = _duo.og_titre_invitation(_prenom)
     _desc_auto = _duo.og_description_invitation(_prenom, _nom_cours, _p.get("occurrence"),
-                                                str((_offre or {}).get("name") or ""))
+                                                str((_offre or {}).get("name") or ""),
+                                                _duo.type_invitation(_p))   # V558 : le vrai type
     # V556 : une invitation de la CHAÎNE garde la description informative (qui,
     # quoi, quand) ; son message court part dans le texte WhatsApp.
     _desc = _desc_auto if _duo.chaine_du_pass(_p).get("parent_pass_id") else (_invitation["message"] or _desc_auto)

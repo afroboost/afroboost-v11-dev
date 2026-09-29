@@ -1584,8 +1584,8 @@ def partie_v538():
                                           'name="twitter:image"')))
     verifier("V538-E. le titre porte le PRÉNOM de l'invitant ; sans prénom, une formule qui reste vraie",
              _M.og_titre_invitation("Bassi") == "Bassi t'invite à Afroboost"
-             and _M.og_titre_invitation("") == "Un membre Afroboost t'invite"
-             and _M.og_titre_invitation(None) == "Un membre Afroboost t'invite")
+             and _M.og_titre_invitation("") == "Afroboost t'invite"
+             and _M.og_titre_invitation(None) == "Afroboost t'invite")
     _d = _M.og_description_invitation("Bassi", "Afroboost Dimanche", "2026-09-27T18:30:00", "Cours d'essai GRATUIT")
     verifier("V538-E2. la description dit qui, quoi, quand et ce que l'ami reçoit",
              "Bassi" in _d and "Afroboost Dimanche" in _d and "27" in _d and "essai" in _d.lower(), _d)

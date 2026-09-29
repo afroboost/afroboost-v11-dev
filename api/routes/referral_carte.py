@@ -92,7 +92,8 @@ def date_courte(occurrence_iso) -> str:
 def titre_carte(nom) -> str:
     _n = _nettoyer(nom, 40)
     if not _n or "@" in _n:
-        return "Un membre Afroboost t'invite à découvrir Afroboost"
+        # V558 : repli UNIQUEMENT si l'identité est réellement inconnue.
+        return "Afroboost t'invite à essayer un cours"
     return "%s t'invite à découvrir Afroboost" % _n
 
 
@@ -123,6 +124,8 @@ def donnees_carte(pass_doc, couleur=None, photo=None) -> dict:
         "lieu": _cours.get("locationName") or "",
         "couleur": couleur,
         "photo": photo,
+        # V558 : l'en-tête de la carte suit le type RÉEL (jamais « Pass Duo » par défaut).
+        "type": E.LIBELLES_TYPE.get(E.type_invitation(_p), "Invitation"),
     }
 
 
@@ -218,7 +221,8 @@ def rendre_carte(donnees=None) -> bytes:
 
     # En-tête : le mot-marque.
     _dessin.text((80, 62), "AFROBOOST", font=_police(True, 38), fill=_clair)
-    _dessin.text((80 + _dessin.textlength("AFROBOOST", font=_police(True, 38)) + 18, 70), "Pass Duo",
+    _dessin.text((80 + _dessin.textlength("AFROBOOST", font=_police(True, 38)) + 18, 70),
+                 _nettoyer(_d.get("type") or "Invitation", 24),
                  font=_police(False, 30), fill=_gris)
 
     # Photo ronde (facultative) et colonne de texte.

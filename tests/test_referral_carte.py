@@ -79,8 +79,8 @@ def partie_rendu():
              _image(long_) is not None and _image(long_).size == (1200, 630))
     verifier("C6. titre : prénom, sinon formule neutre ; jamais une adresse",
              RC.titre_carte("Léa") == "Léa t'invite à découvrir Afroboost"
-             and RC.titre_carte("") == "Un membre Afroboost t'invite à découvrir Afroboost"
-             and RC.titre_carte("lea@exemple.test") == "Un membre Afroboost t'invite à découvrir Afroboost")
+             and RC.titre_carte("") == "Afroboost t'invite à essayer un cours"
+             and RC.titre_carte("lea@exemple.test") == "Afroboost t'invite à essayer un cours")
     verifier("C7. date FR courte « Mercredi 30 sept. · 18:45 » ; illisible -> \"\"",
              RC.date_courte("2026-09-30T18:45:00") == "Mercredi 30 sept. · 18:45"
              and RC.date_courte("n'importe quoi") == "" and RC.date_courte(None) == "",

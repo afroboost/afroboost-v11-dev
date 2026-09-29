@@ -2906,6 +2906,21 @@ def t143_inv3_espace_seance_sans_auth():
         record(143, "INV-3 : /subscriber/space?course=&occurrence= sans auth", False, str(e))
 
 
+def t144_v558_options_chaine_jeton_inconnu():
+    """V558 — GET /api/referral/pass/<jeton>/chain/options est public PAR CONCEPTION (le
+    jeton du pass est la capacité) : un jeton inconnu -> 404, sans aucune donnée, et
+    jamais une séance ou un type fabriqués."""
+    try:
+        r = requests.get(_url("/api/referral/pass/jeton-inconnu-nonregression/chain/options"), timeout=TIMEOUT,
+                         allow_redirects=False)
+        corps = r.text[:400]
+        ok = r.status_code == 404 and "seances" not in corps and "@" not in corps
+        record(144, "V558 : /referral/pass/<jeton inconnu>/chain/options -> 404, sans donnée",
+               ok, f"HTTP {r.status_code} -> {corps[:120]}")
+    except Exception as e:
+        record(144, "V558 : /referral/pass/<jeton inconnu>/chain/options", False, str(e))
+
+
 def t131_co1_ai_logs_sans_auth():
     """CO-1 : le journal IA (numéros WhatsApp + messages entrants de TOUTE la
     plateforme) n'est lisible que par le super-admin SIGNÉ. LECTURE SEULE.
@@ -3021,6 +3036,7 @@ def main():
                    t140_inv1_invitations_fermees_sans_auth, t141_inv1_partage_public_jeton_inconnu,
                    t142_inv1_acces_legitime,
                    t143_inv3_espace_seance_sans_auth,
+                   t144_v558_options_chaine_jeton_inconnu,
                    t131_co1_ai_logs_sans_auth, t132_co1_ai_config_ecriture_sans_auth,
                    t133_co1_ai_config_lecture_publique, t134_co1_ia_acces_legitime,
                    t39_redos_input, t40_nosql_injection):
