@@ -54,34 +54,48 @@ def filtre_proprietaire(coach_email: str) -> dict:
 # MT-2 : LES PREUVES DE RELATION SERVEUR (un `user` global n'a pas de coach).
 #
 # Un document `users` est créé par l'inscription publique (POST /users) SANS
-# propriétaire. Le rattacher à un coach sur la foi d'un en-tête ou d'un corps
-# de requête reviendrait à laisser le navigateur choisir. On ne retient donc
-# QUE des faits écrits par le serveur, dont le `coach_id` est lui-même décidé
-# côté serveur :
+# propriétaire. L'exposer à un coach (nom, e-mail, WhatsApp via /contacts/all
+# et GET /users/{id}) exige une PREUVE FORTE : un fait né d'une action de la
+# PERSONNE ELLE-MÊME, que le coach ne peut PAS fabriquer seul.
 #
-#   collection         champ e-mail      d'où vient le coach_id
-#   chat_participants  email             fiche CRM du coach (création JWT)
-#   reservations       userEmail         LOT 3C-0 : cours > coach déclaré vérifié
-#                                        > plateforme (lot3c0_proprietaire_de_la_seance)
-#   subscriptions      email             abonnement vendu par le coach
-#   discount_codes     assignedEmail     code d'accès émis par le coach (POST /discount-codes
-#                                        force coach_id = appelant JWT)
-#   subscriber_infos   email             fiche abonné du coach (V294/V300)
-#   memberships        email             adhésion du coach (p1a_coach_id_contexte)
+# MT-2b (audit AGENT 5) — chaque source a été passée au crible « le coach
+# peut-il créer ce document tout seul, avec l'adresse de son choix ? » :
 #
-# Écartés volontairement :
-#   - `leads` : POST /leads est PUBLIC, n'importe qui peut en fabriquer un ;
-#   - `payment_transactions` : ne portent aucun propriétaire ;
-#   - tout document sans `coach_id` (fail-closed : il n'appartient à personne,
-#     seul le super-admin le voit).
+#   source              fabricable par le coach ?                 retenue
+#   chat_participants   OUI (POST /chat/participants, import CSV,  NON
+#                       synchro Google : adresse saisie par lui)
+#   discount_codes      OUI (POST /discount-codes, assignedEmail   NON
+#                       saisi par le coach)
+#   reservations        OUI (POST /reservations est PUBLIC : n'importe qui
+#                       réserve le cours du coach au nom de n'importe quelle
+#                       adresse ; le cours tranche le coach_id)       NON
+#   subscriber_infos    OUI (PUT /subscriber-info/{code} : quiconque connaît
+#                       le code — le coach connaît ses codes manuels) NON
+#   subscriptions       OUI pour source admin_manual / manual_sync /
+#                       social_proof (création à la main) ;
+#                       NON pour `source: "stripe_auto"` (webhook Stripe
+#                       après PAIEMENT de la personne) ou un `stripe_customer_id`
+#                       (client Stripe réel). `source` et `stripe_customer_id`
+#                       ne sont PAS modifiables par PUT /subscriptions (liste
+#                       blanche promo_routes).                      OUI (payé)
+#   memberships         OUI pour `saisie_manuelle` (POST coach) ;
+#                       NON pour `source: "achat"` (LOT 2 : adhésion créée
+#                       par le paiement). `source` n'est pas modifiable.  OUI (achat)
+#
+# La FICHE CRM du coach (`chat_participants`, coach_id = lui) reste visible
+# pour lui : c'est la sienne, il l'a saisie. Ce qui change : elle n'ouvre plus
+# le `user` GLOBAL homonyme ni ses coordonnées.
+#
+# Écartés aussi : `leads` (POST public), `payment_transactions` (aucun
+# propriétaire), tout document sans `coach_id` (fail-closed).
+#
+# Forme : (collection, champ e-mail, filtre supplémentaire de preuve forte).
 # ---------------------------------------------------------------------------
 MT2_PREUVES_RELATION = (
-    ("chat_participants", "email"),
-    ("reservations", "userEmail"),
-    ("subscriptions", "email"),
-    ("discount_codes", "assignedEmail"),
-    ("subscriber_infos", "email"),
-    ("memberships", "email"),
+    ("subscriptions", "email",
+     {"$or": [{"source": "stripe_auto"},
+              {"stripe_customer_id": {"$nin": [None, ""]}}]}),
+    ("memberships", "email", {"source": "achat"}),
 )
 
 
@@ -96,8 +110,9 @@ def _mt2_emails_du_champ(valeur) -> list:
 async def emails_relies(db, coach_email: str) -> set:
     """E-mails (normalisés) que le SERVEUR rattache au coach — preuve de relation.
 
-    MT-2 : union des preuves de `MT2_PREUVES_RELATION`, chacune filtrée sur
-    `coach_id == <e-mail du coach>` (égalité stricte, jamais une regex). Une
+    MT-2b : union des preuves FORTES de `MT2_PREUVES_RELATION` (faits nés d'un
+    paiement de la personne), chacune filtrée sur `coach_id == <e-mail du
+    coach>` (égalité stricte, jamais une regex). Une
     collection illisible prive de SA preuve sans faire tomber les autres : on
     rend moins, jamais plus.
     """
@@ -105,9 +120,9 @@ async def emails_relies(db, coach_email: str) -> set:
     if not _e:
         raise PerimetreRefuse("identité requise")
     _out = set()
-    for _coll, _champ in MT2_PREUVES_RELATION:
+    for _coll, _champ, _preuve in MT2_PREUVES_RELATION:
         try:
-            async for _d in db[_coll].find({"coach_id": _e}, {"_id": 0, _champ: 1}):
+            async for _d in db[_coll].find({"coach_id": _e, **_preuve}, {"_id": 0, _champ: 1}):
                 _out.update(_mt2_emails_du_champ(_d.get(_champ)))
         except Exception:  # noqa: BLE001 — fail-closed : la preuve manque, rien de plus
             continue
@@ -123,9 +138,9 @@ async def email_relie(db, coach_email: str, email: str) -> bool:
     _m = normaliser_email(email)
     if not _m:
         return False
-    for _coll, _champ in MT2_PREUVES_RELATION:
+    for _coll, _champ, _preuve in MT2_PREUVES_RELATION:
         try:
-            if await db[_coll].find_one({"coach_id": _e, _champ: _m}, {"_id": 1}):
+            if await db[_coll].find_one({"coach_id": _e, _champ: _m, **_preuve}, {"_id": 1}):
                 return True
         except Exception:  # noqa: BLE001
             continue

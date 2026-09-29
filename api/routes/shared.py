@@ -284,8 +284,13 @@ async def v20_exiger_coach_signe(request, database, quoi: str = ""):
                             detail="Authentification coach requise — reconnectez-vous")
     if is_super_admin(email):
         return email
+    # MT-2b : MÊME source de rôle que `_v309_is_coach_or_admin` (server.py) :
+    # `coaches` OU `coach_auth`. Avant, un coach présent seulement dans
+    # `coach_auth` était accepté par les routes V309 et refusé ici.
     try:
-        if database is not None and await database.coaches.find_one({"email": email}, {"_id": 1}):
+        if database is not None and (
+                await database.coaches.find_one({"email": email}, {"_id": 1})
+                or await database.coach_auth.find_one({"email": email}, {"_id": 1})):
             return email
     except Exception as _e:
         logger.warning("[V2-0] vérification du rôle impossible pour %s : %s", email, _e)
