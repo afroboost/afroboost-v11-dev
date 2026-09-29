@@ -2456,6 +2456,154 @@ def t112_s0_conversations_acces_legitime():
         record(112, "SECURITY-S0 : acces legitime a /api/conversations", False, str(e))
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# MT-3 — MULTI-COACH : routes Campagnes / Contacts SANS authentification
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Pendant PRODUCTION du banc local `tests/test_mt_matrice_http.py` (qui, lui,
+# prouve le cloisonnement A/B et le super-admin sur une base jetable).
+# Ici : trois profils NON autorisés — anonyme, `X-User-Email` usurpé (adresse
+# super-admin, publique dans le bundle), jeton de forme valide mais mal signé —
+# doivent recevoir 401/403/404, et le corps ne doit contenir AUCUNE donnée
+# personnelle (valeur e-mail/WhatsApp/téléphone/code, ni adresse e-mail).
+#
+# LECTURE SEULE EN PRODUCTION, Y COMPRIS SI UNE ROUTE ÉTAIT VULNÉRABLE :
+#   - toute sonde d'écriture vise un identifiant INEXISTANT (`mt-nonreg-…`) ou
+#     un corps qui ne peut rien produire (texte vide, listes vides) : une route
+#     restée ouverte répondrait 200/404 sans rien écrire ;
+#   - les routes dont une simple sonde pourrait écrire EN MASSE si elles
+#     régressaient (purge des campagnes, déduplication, import en masse,
+#     création de fiche, PATCH du mini-profil qui fait un upsert) ne sont PAS
+#     sondées ici : elles sont couvertes par le banc local uniquement.
+# Limite assumée : sur une route d'écriture encore ouverte, un identifiant
+# inexistant peut répondre 404 « par chance » — c'est le banc local qui prouve
+# le refus sur une VRAIE fiche, jamais la production.
+_MT_INEXISTANT = "mt-nonreg-inexistant"
+_MT_PROFILS = {
+    "anonyme": {},
+    "X-User-Email usurpe": {"X-User-Email": ADMIN},
+    "jeton invalide": {"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9."
+                                        "eyJlbWFpbCI6ImFAYi5jIn0.mauvaise_signature"},
+}
+# Une VALEUR de champ personnel (pas seulement son nom : un message d'erreur peut
+# légitimement dire « Email requis »), ou toute adresse e-mail autre que celle
+# que la sonde a elle-même envoyée dans l'en-tête usurpé.
+_MT_RX_PII = re.compile(r'"(email|whatsapp|phone|birthday|code|userEmail|assignedEmail|customer_email)"'
+                        r'\s*:\s*"[^"]')
+_MT_RX_MAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def _mt_sonder(num, titre, sondes):
+    """Chaque sonde (méthode, chemin, corps) x chaque profil non autorisé.
+    Le détail n'imprime JAMAIS un corps de réponse : seulement route, profil, code."""
+    try:
+        echecs = []
+        for methode, chemin, corps in sondes:
+            for nom, hdr in _MT_PROFILS.items():
+                r = requests.request(methode, _url(chemin), headers=hdr, json=corps, timeout=TIMEOUT)
+                texte = r.text or ""
+                mails = [m for m in _MT_RX_MAIL.findall(texte)
+                         if m.lower() not in (ADMIN.lower(), "a@b.c")
+                         and not m.lower().endswith("@invalid.test")]
+                pii = bool(_MT_RX_PII.search(texte)) or bool(mails)
+                if r.status_code not in (401, 403, 404) or pii:
+                    echecs.append(f"{methode} {chemin} [{nom}]={r.status_code}" + (" PII" if pii else ""))
+        record(num, titre, not echecs,
+               " | ".join(echecs) if echecs else f"{len(sondes) * len(_MT_PROFILS)} sondes refusées, 0 PII")
+    except Exception as e:
+        record(num, titre, False, str(e))
+
+
+def t113_mt_campagnes_lecture_sans_auth():
+    """MT-3 : lister / lire une campagne (nom, message, destinataires `results`)
+    exige une identité coach SIGNÉE. Constat du banc : GET /campaigns et
+    /campaigns-list lisaient `X-User-Email`, /campaigns/{id} et
+    /campaign-debug/{id} ne demandaient RIEN."""
+    i = _MT_INEXISTANT
+    _mt_sonder(113, "MT-3 : Campagnes (lecture) sans authentification -> refus, 0 PII", [
+        ("GET", "/api/campaigns", None),
+        ("GET", "/api/campaigns-list", None),
+        ("GET", f"/api/campaigns/{i}", None),
+        ("GET", f"/api/campaign-debug/{i}", None),
+        ("GET", f"/api/campaigns/{i}/preview", None),
+    ])
+
+
+def t114_mt_campagnes_ecriture_sans_auth():
+    """MT-3 : modifier / supprimer / marquer envoyée / envoyer un e-mail de
+    campagne exige une identité SIGNÉE. Sondes inoffensives : campagne
+    inexistante, et `send-email` sans destinataire (400 au pire, jamais d'envoi)."""
+    i = _MT_INEXISTANT
+    _mt_sonder(114, "MT-3 : Campagnes (écriture) sans authentification -> refus", [
+        ("PUT", f"/api/campaigns/{i}", {"message": "nonreg"}),
+        ("DELETE", f"/api/campaigns/{i}", None),
+        ("POST", f"/api/campaigns/{i}/mark-sent", {"contactId": i, "channel": "email"}),
+        ("POST", "/api/campaigns/send-email", {}),
+    ])
+
+
+def t115_mt_contacts_lecture_sans_auth():
+    """MT-3 : le CRM (fiches, doublons, filtres par catégorie) ne se lit
+    qu'avec une identité coach SIGNÉE — jamais sur la foi de `X-User-Email`."""
+    i = _MT_INEXISTANT
+    _mt_sonder(115, "MT-3 : Contacts (lecture CRM) sans authentification -> refus, 0 PII", [
+        ("GET", "/api/chat/participants", None),
+        ("GET", f"/api/chat/participants/{i}", None),
+        ("GET", "/api/contacts/all", None),
+        ("POST", "/api/contacts/check-duplicates", {"emails": [f"{i}@invalid.test"], "phones": []}),
+        ("POST", "/api/contacts/filter-by-categories", {"category_ids": [i]}),
+    ])
+
+
+def t116_mt_categories_segments_sans_auth():
+    _mt_sonder(116, "MT-3 : Catégories et segments de contacts sans authentification -> refus", [
+        ("GET", "/api/contact-categories", None),
+        ("GET", "/api/contact-categories/stats", None),
+        ("GET", "/api/contacts/segments", None),
+        ("GET", "/api/contacts/segment/email", None),
+    ])
+
+
+def t117_mt_contacts_ecriture_sans_auth():
+    """MT-3 : aucune écriture CRM sans identité SIGNÉE (fiche, type, étiquettes,
+    catégories). Cibles inexistantes : même une route ouverte n'écrirait rien."""
+    i = _MT_INEXISTANT
+    _mt_sonder(117, "MT-3 : Contacts (écriture CRM) sans authentification -> refus", [
+        ("PUT", f"/api/chat/participants/{i}", {"nonreg": True}),
+        ("DELETE", f"/api/chat/participants/{i}", None),
+        ("PUT", f"/api/contacts/{i}/type", {"contact_type": ""}),
+        ("POST", "/api/contacts/add-tags", {"contact_ids": [i], "tags": ["nonreg"]}),
+        ("POST", "/api/contacts/set-categories", {"contact_ids": [i], "category_ids": [], "mode": "add"}),
+        ("PUT", f"/api/contact-categories/{i}", {"icon": "nonreg"}),
+        ("DELETE", f"/api/contact-categories/{i}", None),
+    ])
+
+
+def t118_mt_users_leads_sans_auth():
+    i = _MT_INEXISTANT
+    _mt_sonder(118, "MT-3 : fiches users et leads sans authentification -> refus, 0 PII", [
+        ("GET", f"/api/users/{i}", None),
+        ("PUT", f"/api/users/{i}", {"name": "nonreg", "email": f"{i}@invalid.test", "whatsapp": ""}),
+        ("DELETE", f"/api/users/{i}", None),
+        ("GET", "/api/leads", None),
+        ("DELETE", f"/api/leads/{i}", None),
+    ])
+
+
+def t119_mt_abonnes_sans_auth():
+    """MT-3 : lien d'espace (code AFR en clair), notes de coaching et suivi des
+    abonnés ne sortent jamais sans identité SIGNÉE. La note est sondée avec un
+    texte VIDE sur un code inexistant : au pire, suppression d'une note qui
+    n'existe pas."""
+    i = _MT_INEXISTANT
+    _mt_sonder(119, "MT-3 : espace abonné, notes, suivi sans authentification -> refus, 0 PII", [
+        ("GET", f"/api/subscriber/by-email/{i}@invalid.test/space-link", None),
+        ("GET", "/api/notes/subscriber/AFR-NONREG0", None),
+        ("POST", "/api/notes", {"target_type": "subscriber", "target_id": "AFR-NONREG0", "text": ""}),
+        ("GET", "/api/progress/coach/subscribers", None),
+    ])
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -2502,6 +2650,10 @@ def main():
                    t109_p1d_drapeaux_exposes_et_dormants, t110_p1d_drapeaux_admin_seulement,
                    t111_s0_conversations_fermee_et_sans_pii,
                    t112_s0_conversations_acces_legitime,
+                   t113_mt_campagnes_lecture_sans_auth, t114_mt_campagnes_ecriture_sans_auth,
+                   t115_mt_contacts_lecture_sans_auth, t116_mt_categories_segments_sans_auth,
+                   t117_mt_contacts_ecriture_sans_auth, t118_mt_users_leads_sans_auth,
+                   t119_mt_abonnes_sans_auth,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
