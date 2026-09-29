@@ -205,6 +205,16 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     expect(par('qr-svg').getAttribute('data-value')).toBe('https://afroboost.com/api/share/duo/T1?v=6');
   });
 
+  test('QR : « C’est fait » enregistre le partage avec le canal qr', async () => {
+    patchOk(6);
+    await entrerEtape2();
+    await cliquer('wf-qr');
+    await cliquer('wf-qr-fait');
+    const partage = postsVers('/chain/share')[0];
+    expect(partage).toBeDefined();
+    expect(partage[1]).toEqual(expect.objectContaining({ channel: 'qr' }));
+  });
+
   test('photo : envoi (multipart + X-Chain-Key) → PATCH photo_url → aperçu', async () => {
     patchOk(5);
     await entrerEtape2();

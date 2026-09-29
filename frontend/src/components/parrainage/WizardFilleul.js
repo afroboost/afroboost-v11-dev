@@ -659,7 +659,15 @@ export default function WizardFilleul({
               {!enAttente && shareUrl ? (
                 <div className="cp-qr-big"><QRCodeSVG value={shareUrl} size={180} level="M" includeMargin={false} /></div>
               ) : <p className="cp-mini" role="status">Enregistrement de ta carte…</p>}
-              <p className="cp-fine">Ton ami scanne ce code pour ouvrir ton invitation. Pour débloquer ton essai, partage aussi par WhatsApp, Partager ou Copier le lien.</p>
+              <p className="cp-fine">Ton ami scanne ce code pour ouvrir ton invitation.</p>
+              {/* UX : le serveur accepte le canal « qr » (CANAUX) — un geste explicite, pour que le QR reste
+                  affiché le temps du scan au lieu de passer tout de suite à l'inscription. */}
+              {!enAttente && shareUrl ? (
+                <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={() => enregistrer('qr')}
+                        disabled={enregistrement} data-testid="wf-qr-fait">
+                  <SvgIcon name="check" size={20} /> C’est fait, mon ami a scanné le QR code
+                </button>
+              ) : null}
             </div>
           ) : null}
           {enregistrement ? <p className="cp-mini" role="status">Un instant…</p> : null}
