@@ -600,26 +600,38 @@ async def partie_ordre_inverse_anti_boucle():
     t2, _ = await preparer_et_partager(t1)         # le visiteur de P1 a partagé P2
     ea, ta, _ = ident(1)
     avant = etat(base)
+    # PAR-1 (A1) : un refus d'IDENTITÉ depuis l'appareil qui a partagé libère sa
+    # place d'enfant (annulée, jamais supprimée) ; chaque nouvel essai de cet
+    # appareil repart donc de « préparer + partager » (nouvelle enfant).
     c, r = await rejoindre(t1, 1)
     verifier("10. B = A (même e-mail) sur P1 -> 409 auto_parrainage", c == 409 and raison(r) == "auto_parrainage", (c, r))
+    verifier("10-lib. PAR-1 : ce refus libère l'enfant P2 de l'appareil (cancelled, parent rouvert)",
+             doc_par_tok(base, t2)["status"] == "cancelled"
+             and not (doc_par_tok(base, t1).get("chain") or {}).get("shared_at"), doc_par_tok(base, t2)["status"])
     c, r = await rejoindre(t1, 5, tel=ta)
     verifier("10b. B = A (même téléphone, autre e-mail) sur P1 -> 409 auto_parrainage",
              c == 409 and raison(r) == "auto_parrainage", (c, r))
+    await preparer_et_partager(t1)
     c, r = await rejoindre(t1, 5, email=H.PARRAIN_EMAIL, tel=ident(5)[1])
     verifier("10c. B = Léa (parrain racine, par e-mail) sur P1 -> 409 auto_parrainage",
              c == 409 and raison(r) == "auto_parrainage", (c, r))
+    await preparer_et_partager(t1)
     c, r = await rejoindre(t1, 5, tel=H.PARRAIN_TEL)
     verifier("10d. B = Léa (par téléphone, autre e-mail) sur P1 -> 409 auto_parrainage",
              c == 409 and raison(r) == "auto_parrainage", (c, r))
+    _sans_passes = lambda e: {k: v for k, v in e.items() if k != "passes"}  # noqa: E731
     verifier("10e. aucune écriture laissée par ces refus (pas d'invité, ni code, ni résa, ni verrou)",
-             etat(base) == avant and doc_par_tok(base, t1)["invitee"] is None, (etat(base), avant))
+             _sans_passes(etat(base)) == _sans_passes(avant) and doc_par_tok(base, t1)["invitee"] is None,
+             (etat(base), avant))
     # plus loin dans la chaîne : C = A sur P2
+    t2, _ = await preparer_et_partager(t1)
     c, _ = await rejoindre(t1, 2)                  # B inscrit sur P1
     t3, _ = await preparer_et_partager(t2)
     avant = etat(base)
     c, r = await rejoindre(t2, 1)
     verifier("10f. C = A (grand-parrain, 2 maillons plus haut) sur P2 -> 409 auto_parrainage, rien écrit",
              c == 409 and raison(r) == "auto_parrainage" and etat(base) == avant, (c, r))
+    await preparer_et_partager(t2)
     c, r = await rejoindre(t2, 6, email=H.PARRAIN_EMAIL.upper(), tel=ident(6)[1])
     verifier("10g. C = Léa (racine, casse différente) sur P2 -> 409 auto_parrainage", c == 409 and raison(r) == "auto_parrainage", (c, r))
 
