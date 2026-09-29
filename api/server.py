@@ -48059,57 +48059,166 @@ async def update_coach_profile(request: Request):
 # naissance étaient « redemandés » à chaque nouvel appareil ou vidage de cache.
 # Ces deux endpoints font du backend la source de vérité, indexée par le CODE
 # abonné (tous formats acceptés depuis V293, cf. _v261_resolve_subscriber).
-@api_router.get("/subscriber-info/{code}")
-async def v294_get_subscriber_info(code: str):
-    """V294 : renvoie { exists, name, whatsapp, email, birthday } pour un code abonné.
+#
+# MT-6 — FIN DE LA FUITE « CODE -> E-MAIL + WHATSAPP + ANNIVERSAIRE ».
+# Le code d'accès circule (e-mail de confirmation, QR imprimé, codes collectifs
+# partagés) : le traiter comme une preuve d'identité suffisante livrait les
+# coordonnées de l'abonné à quiconque le connaissait, et permettait de les
+# RÉÉCRIRE (numéro WhatsApp injecté dans le CRM du coach). Trois lecteurs
+# légitimes seulement, par ordre de priorité :
+#   1. l'abonné porteur du JETON D'APPAREIL de CE code (X-Subscriber-Token,
+#      V296 — émis par /subscriber/token après appariement code/e-mail V390)
+#      -> fiche complète. Sur un code COLLECTIF, le jeton doit en plus porter
+#      l'e-mail de la fiche : un autre membre du même code ne lit pas le premier ;
+#   2. un coach au JWT SIGNÉ propriétaire du code (subscriptions/discount_codes
+#      .coach_id), super-admin = global -> fiche complète ; tout autre coach
+#      reçoit le MÊME 404 qu'un code inconnu (aucun oracle) ;
+#   3. l'anonyme qui ne présente que le code -> {exists, name} (pré-remplissage
+#      du prénom dans le formulaire ChatWidget), JAMAIS de coordonnées.
+# X-User-Email n'ouvre jamais le chemin coach (falsifiable).
+_MT6_CHAMPS_FICHE = ("name", "whatsapp", "email", "birthday")
+_MT6_LONGUEUR_MAX = {"name": 120, "whatsapp": 32, "birthday": 10, "email": 254}
 
-    Le code EST déjà le justificatif d'accès de l'abonné (comme /subscriber/{code}),
-    donc pas d'auth supplémentaire. Si aucune info n'a encore été enregistrée, on
-    tente au moins de renvoyer le nom connu via l'abonnement (jamais redemandé).
-    """
+
+def _mt6_fiche_complete(doc: dict, exists: bool, repli_nom: str = "") -> dict:
+    doc = doc or {}
+    return {
+        "exists": bool(exists),
+        "name": doc.get("name", "") or repli_nom or "",
+        "whatsapp": doc.get("whatsapp", "") or "",
+        "email": doc.get("email", "") or "",
+        "birthday": doc.get("birthday", "") or "",
+    }
+
+
+def _mt6_jeton_de_ce_code(request: Request, code_norm: str):
+    """Jeton abonné VALIDE portant exactement ce code, sinon None."""
+    try:
+        from api.routes.shared import subscriber_from_request
+        tok = subscriber_from_request(request)
+    except Exception:
+        tok = None
+    if tok and tok.get("code") and tok["code"] == code_norm:
+        return tok
+    return None
+
+
+def _mt6_jeton_titulaire_de_la_fiche(tok, doc) -> bool:
+    """Le porteur du jeton est-il la personne de la fiche ? Une fiche sans e-mail
+    n'appartient encore à personne en particulier ; une fiche avec e-mail n'est
+    ouverte qu'au jeton portant ce même e-mail (codes collectifs)."""
+    if not tok:
+        return False
+    fiche_email = ((doc or {}).get("email") or "").strip().lower()
+    return (not fiche_email) or fiche_email == (tok.get("email") or "").strip().lower()
+
+
+async def _mt6_coach_proprietaire_du_code(email: str, code_norm: str) -> bool:
+    """Le coach (JWT déjà vérifié) possède-t-il ce code ? Super-admin = global.
+    Égalité stricte sur un motif ÉCHAPPÉ (aucune entrée brute dans une regex)."""
+    if is_super_admin(email):
+        return True
+    motif = {"$regex": f"^{re.escape(code_norm)}$", "$options": "i"}
+    if await db.subscriptions.find_one({"code": motif, "coach_id": email}, {"_id": 0, "code": 1}):
+        return True
+    if await db.discount_codes.find_one({"code": motif, "coach_id": email}, {"_id": 0, "code": 1}):
+        return True
+    return False
+
+
+@api_router.get("/subscriber-info/{code}")
+async def v294_get_subscriber_info(code: str, request: Request):
+    """V294 / MT-6 : infos d'un abonné. Réponse selon QUI demande (cf. bloc MT-6) :
+    porteur du jeton de ce code ou coach propriétaire -> fiche complète ;
+    anonyme -> {exists, name} seulement ; autre coach -> 404 (= code inconnu)."""
     code_norm = (code or "").strip().upper()
-    if not code_norm or len(code_norm) < 3:
-        return {"exists": False, "name": "", "whatsapp": "", "email": "", "birthday": ""}
+    if not code_norm or len(code_norm) < 3 or len(code_norm) > 64:
+        return {"exists": False, "name": ""}
     doc = await db.subscriber_infos.find_one({"code": code_norm}, {"_id": 0})
-    if doc:
-        return {
-            "exists": True,
-            "name": doc.get("name", ""),
-            "whatsapp": doc.get("whatsapp", ""),
-            "email": doc.get("email", ""),
-            "birthday": doc.get("birthday", ""),
-        }
-    # Repli : nom déjà connu via l'abonnement actif (le formulaire pré-remplit le nom)
+
+    # 1. Abonné porteur du jeton d'appareil de CE code.
+    tok = _mt6_jeton_de_ce_code(request, code_norm)
+    if tok and (not doc or _mt6_jeton_titulaire_de_la_fiche(tok, doc)):
+        if doc:
+            return _mt6_fiche_complete(doc, True)
+        ok, name, _cid = await _v261_resolve_subscriber(code_norm)
+        return _mt6_fiche_complete({}, bool(ok), (name or "") if ok else "")
+
+    # 2. Coach : JWT SIGNÉ uniquement (jamais X-User-Email), rôle relu en base.
+    coach = _v311_coach_email_from_jwt(request)
+    if coach:
+        if not await _v309_is_coach_or_admin(coach):
+            raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
+        if not await _mt6_coach_proprietaire_du_code(coach, code_norm):
+            # Même réponse qu'un code inconnu : un coach ne peut pas sonder les codes des autres.
+            raise HTTPException(status_code=404, detail="Abonné introuvable")
+        ok, name, _cid = await _v261_resolve_subscriber(code_norm)
+        if not doc and not ok:
+            # Code possédé (historique) mais sans fiche ni abonnement actif.
+            return _mt6_fiche_complete({}, False)
+        return _mt6_fiche_complete(doc, True, (name or "") if ok else "")
+
+    # 3. Anonyme (ou jeton d'un autre code) : existence + nom, AUCUNE coordonnée.
     ok, name, _cid = await _v261_resolve_subscriber(code_norm)
-    return {"exists": bool(ok), "name": (name or "") if ok else "", "whatsapp": "", "email": "", "birthday": ""}
+    if not ok:
+        return {"exists": False, "name": ""}
+    return {"exists": True, "name": ((doc or {}).get("name") or name or "")}
+
+
+def _mt6_valeur_propre(champ: str, brut):
+    """Chaîne nettoyée et bornée, ou None (non-chaîne, vide, trop longue)."""
+    if not isinstance(brut, str):
+        return None
+    val = brut.strip()
+    if not val or len(val) > _MT6_LONGUEUR_MAX.get(champ, 120):
+        return None
+    return val
 
 
 @api_router.put("/subscriber-info/{code}")
 async def v294_put_subscriber_info(code: str, request: Request):
-    """V294 : enregistre les infos d'un abonné { name, whatsapp, email, birthday }.
+    """V294 / MT-6 : enregistre les infos d'un abonné.
 
-    Le code doit correspondre à un abonnement ACTIF (via _v261_resolve_subscriber,
-    V293 — tous formats de codes clients). Champs AJOUTÉS uniquement : on ne pose un
-    champ QUE s'il est fourni ET non vide, donc jamais d'écrasement par du vide.
+    Le code doit correspondre à un abonnement ACTIF (via _v261_resolve_subscriber)
+    ET l'appelant doit présenter le JETON D'APPAREIL de CE code (MT-6 : le code
+    seul ne suffit plus — il circule). Liste blanche : name, whatsapp, birthday ;
+    l'e-mail écrit est celui du JETON (apparié au code par V390), jamais celui du
+    corps. Champs AJOUTÉS uniquement : jamais d'écrasement par du vide. Une fiche
+    appartenant à un autre e-mail (code collectif) n'est pas réécrite (403).
+    Aucun chemin coach en écriture : aucun écran coach n'appelle cette route.
     """
     code_norm = (code or "").strip().upper()
     ok, _name, coach_id = await _v261_resolve_subscriber(code_norm)
     if not ok:
         raise HTTPException(status_code=403, detail="Code abonné invalide ou inactif")
-    data = await request.json()
+    tok = _mt6_jeton_de_ce_code(request, code_norm)
+    if not tok:
+        raise HTTPException(status_code=403, detail="Jeton abonné requis pour ce code")
+    existant = await db.subscriber_infos.find_one({"code": code_norm}, {"_id": 0})
+    if existant and not _mt6_jeton_titulaire_de_la_fiche(tok, existant):
+        logger.warning("[MT-6] PUT subscriber-info refusé : fiche %s tenue par un autre e-mail", code_norm)
+        raise HTTPException(status_code=403, detail="Cette fiche appartient à un autre abonné")
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
     update = {
         "code": code_norm,
         "coach_id": coach_id or DEFAULT_COACH_ID,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    for field in ("name", "whatsapp", "email", "birthday"):
-        raw = data.get(field)
-        val = raw.strip() if isinstance(raw, str) else raw
+    for field in ("name", "whatsapp", "birthday"):
+        val = _mt6_valeur_propre(field, data.get(field))
         if val:
             update[field] = val
+    _email_jeton = (tok.get("email") or "").strip().lower()
+    if _email_jeton and not (existant or {}).get("email"):
+        update["email"] = _email_jeton
     await db.subscriber_infos.update_one({"code": code_norm}, {"$set": update}, upsert=True)
     doc = await db.subscriber_infos.find_one({"code": code_norm}, {"_id": 0})
-    return {"success": True, "info": doc}
+    return {"success": True, "info": _mt6_fiche_complete(doc, True)}
 
 
 # === V296 : JETON D'APPAREIL ABONNÉ (connexion rapide ET sécurisée) ===
@@ -48195,7 +48304,8 @@ async def v296_subscriber_token(request: Request):
     #
     # CE QUE CELA PROUVE, EXACTEMENT : la possession d'un code individuel apparie
     # a cet e-mail. PAS le controle de la boite (le code circule, ne tourne pas,
-    # n'expire pas, et `/subscriber-info/{code}` livre l'adresse a qui le detient).
+    # n'expire pas ; `/subscriber-info/{code}` livrait l'adresse a qui le detenait,
+    # fermé par MT-6 : le code seul n'y rend plus que {exists, name}).
     # Compromis assume — cf. le bilan C9-B.
     #
     # `analytics_id` est un sha256 sale tronque : non reversible, et le sel ne
