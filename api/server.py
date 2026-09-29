@@ -6060,6 +6060,11 @@ async def r3_previsualiser_campagne(campaign_id: str, request: Request):
         raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas.")
     from api.routes.reactivation import LIBELLES as _r3_libelles, lien_reactivation as _r3_lien, UTM_CAMPAGNE_DEFAUT as _r3_camp
     _ids = [t for t in (_campagne.get("targetIds") or []) if t and str(t).strip()]
+    # MT-1 : l'aperçu montre EXACTEMENT ce que le lancement enverra — cibles bornées
+    # au portefeuille du propriétaire (coach), inchangées pour un super-admin.
+    from api.routes.campaign_routes import mt1_proprietaire_restreint as _mt1_r, mt1_portefeuille as _mt1_p, mt1_filtrer_cibles as _mt1_f
+    if _mt1_r(_campagne):
+        _ids = await _mt1_f(db, await _mt1_p(db, _mt1_r(_campagne)), _ids)
     contacts = await _campagne_resoudre_contacts(_campagne, _ids)
     prep = await r3_preparer_email(_campagne, contacts, None, ecrire=False)
     segments = [str(c) for c in (_campagne.get("targetCategories") or []) if str(c or "").strip()]
@@ -6456,24 +6461,58 @@ async def _campagne_resoudre_contacts(campaign, valid_target_ids):
     (même liste, même ordre, même dépliage des groupes). Ajout unique :
     `targetCategories` (segments V363 / réactivation) devient un vrai ciblage —
     il était accepté à la création mais ignoré par le moteur.
+
+    MT-1 : le périmètre des destinataires est celui du PROPRIÉTAIRE de la
+    campagne (`campaign.coach_id`), jamais celui de l'appelant. Propriétaire
+    coach -> « tous » = son portefeuille, cibles/groupes/segments filtrés ;
+    propriétaire super-admin ou campagne historique sans propriétaire ->
+    résolution globale STRICTEMENT inchangée.
     """
+    from api.routes.campaign_routes import (mt1_proprietaire_restreint, mt1_portefeuille,
+                                            mt1_filtrer_cibles, mt1_filtrer_contacts)
+    _mt1_proprio = mt1_proprietaire_restreint(campaign)
+    _mt1_pf = await mt1_portefeuille(db, _mt1_proprio) if _mt1_proprio else None
+    _mt1_selection = campaign.get("selectedContacts", []) or []
+    # MT-1 : « des cibles précises étaient demandées » se juge AVANT le filtrage —
+    # une cible entièrement hors portefeuille ne doit jamais retomber sur « tous ».
+    # (`launch_campaign` peut transmettre une liste DÉJÀ filtrée : on relit aussi
+    # les `targetIds` bruts de la campagne, seulement pour un propriétaire coach.)
+    _mt1_cibles_demandees = bool(valid_target_ids) or (
+        _mt1_pf is not None and any(t and str(t).strip() for t in (campaign.get("targetIds") or [])))
+    if _mt1_pf is not None:
+        # MT-1 : un id d'un autre coach sort de la cible AVANT toute résolution.
+        valid_target_ids = await mt1_filtrer_cibles(db, _mt1_pf, valid_target_ids)
+        _mt1_selection = await mt1_filtrer_cibles(db, _mt1_pf, _mt1_selection)
     contacts = []
     if True:
         # V165.4: SÉCURITÉ — si des targetIds spécifiques sont fournis, les utiliser
         # même si targetType dit "all" (bug frontend possible)
-        has_specific_targets = bool(valid_target_ids) or bool(campaign.get("selectedContacts", []))
+        has_specific_targets = _mt1_cibles_demandees or bool(campaign.get("selectedContacts", []))
         # RÉACTIVATION 3B : un SEGMENT est une cible précise — une campagne « segments
         # seuls » ne retombe JAMAIS sur « tous les utilisateurs ».
         _a_des_segments = bool([c for c in (campaign.get("targetCategories") or []) if str(c or "").strip()])
         use_all = campaign.get("targetType") == "all" and not has_specific_targets and not _a_des_segments
 
-        if use_all:
+        if use_all and _mt1_pf is not None:
+            # MT-1 : « tous » d'un COACH = son portefeuille (users rattachés +
+            # ses chat_participants), jamais `db.users.find({})`.
+            from api.routes.tenant_contacts import filtre_users_du_coach as _mt1_fu
+            contacts = await db.users.find(await _mt1_fu(db, _mt1_proprio), {"_id": 0}).to_list(1000)
+            _mt1_vus = {c.get("id") for c in contacts} | {(c.get("email") or "").strip().lower() for c in contacts if c.get("email")}
+            for p in await db.chat_participants.find({"coach_id": _mt1_proprio}, {"_id": 0}).to_list(1000):
+                _pm = (p.get("email") or "").strip().lower()
+                if p.get("id") in _mt1_vus or (_pm and _pm in _mt1_vus):
+                    continue
+                contacts.append({"id": p.get("id", ""), "name": p.get("name", ""), "email": p.get("email", ""),
+                                 "whatsapp": p.get("whatsapp") or p.get("phone") or ""})
+            logger.info(f"[CAMPAIGN-LAUNCH] 📋 Mode 'all' (portefeuille du propriétaire): {len(contacts)} contacts trouvés")
+        elif use_all:
             contacts = await db.users.find({}, {"_id": 0}).to_list(1000)
             logger.info(f"[CAMPAIGN-LAUNCH] 📋 Mode 'all': {len(contacts)} contacts trouvés")
         else:
             if has_specific_targets and campaign.get("targetType") == "all":
                 logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ targetType='all' MAIS targetIds présents — utilisation des targetIds spécifiques (sécurité V165.4)")
-            contact_ids = valid_target_ids if valid_target_ids else campaign.get("selectedContacts", [])
+            contact_ids = valid_target_ids if valid_target_ids else _mt1_selection
 
             # === V376 : DÉPLIAGE DES GROUPES AU MOMENT DE L'ENVOI ===
             #
@@ -6586,6 +6625,12 @@ async def _campagne_resoudre_contacts(campaign, valid_target_ids):
             logger.info("[R3] ciblage par segment %s : %d personne(s) ajoutée(s)", _segments, len(_manquants))
         except Exception as _seg_e:
             logger.warning("[R3] ciblage par segment indisponible (%s)", type(_seg_e).__name__)
+    if _mt1_pf is not None:
+        # MT-1 : filtre FINAL sur les contacts résolus — segments (`_calcule_personnes`
+        # est global : on intersecte ici, sans toucher au module des segments),
+        # membres de groupes dépliés, replis par conversation. Aucun contact d'un
+        # autre coach ne franchit cette ligne.
+        contacts = mt1_filtrer_contacts(_mt1_pf, contacts)
     return contacts
 
 
@@ -6657,6 +6702,16 @@ async def launch_campaign(campaign_id: str):
     # ==================== ENVOI INTERNE (Chat) ====================
     # Filtrer les targetIds vides/null
     valid_target_ids = [tid for tid in target_ids if tid and tid.strip()]
+    # MT-1 : les cibles d'une campagne de COACH sont bornées à SON portefeuille
+    # (propriétaire = `campaign.coach_id`, y compris pour le moteur programmé qui
+    # n'a pas d'appelant). Couvre le canal interne (messages dans des sessions /
+    # groupes) : un groupe ou un contact d'un autre coach est retiré. Propriétaire
+    # super-admin ou campagne historique -> liste inchangée.
+    from api.routes.campaign_routes import (mt1_proprietaire_restreint as _mt1_restreint,
+                                            mt1_portefeuille as _mt1_pf_de, mt1_filtrer_cibles as _mt1_filtrer)
+    _mt1_proprio_launch = _mt1_restreint(campaign)
+    if _mt1_proprio_launch:
+        valid_target_ids = await _mt1_filtrer(db, await _mt1_pf_de(db, _mt1_proprio_launch), valid_target_ids)
     # RÉACTIVATION multi-agents (15/09/2026) — le canal INTERNE est RECONNECTÉ à
     # l'existant, sans second moteur :
     #   - les segments (`targetCategories`) passent par LA résolution commune
@@ -7436,10 +7491,29 @@ async def twilio_status_webhook(request: Request):
         return {"ok": True}  # Toujours retourner 200 à Twilio
 
 @api_router.post("/campaigns/{campaign_id}/mark-sent")
-async def mark_campaign_sent(campaign_id: str, data: dict):
-    """Mark specific result as sent"""
+async def mark_campaign_sent(campaign_id: str, request: Request):
+    """Mark specific result as sent
+
+    MT-1 : c'est CETTE route qui répond (la copie de campaign_routes est masquée).
+    Elle n'avait AUCUNE garde : un anonyme passait n'importe quelle campagne en
+    `completed` — et comme `all([])` est vrai, une campagne PROGRAMMÉE (sans
+    résultat) était ainsi annulée. Désormais : même garde que PUT (JWT signé +
+    propriétaire, `_r3_campagne_du_proprietaire`), et jamais `completed` sans
+    résultat. Appelant : CoachDashboard.js `markResultSent` (axios -> Bearer).
+    """
+    from api.routes.campaign_routes import _r3_campagne_du_proprietaire
+    await _r3_campagne_du_proprietaire(campaign_id, request)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
     contact_id = data.get("contactId")
     channel = data.get("channel")
+    # MT-1 : valeurs du corps dans un filtre Mongo -> chaînes uniquement (pas d'opérateur).
+    if not isinstance(contact_id, str) or not isinstance(channel, str):
+        raise HTTPException(status_code=400, detail="contactId et channel requis")
     
     await db.campaigns.update_one(
         {"id": campaign_id, "results.contactId": contact_id, "results.channel": channel},
@@ -7452,7 +7526,9 @@ async def mark_campaign_sent(campaign_id: str, data: dict):
     # Check if all results are sent
     campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     if campaign:
-        all_sent = all(r.get("status") == "sent" for r in campaign.get("results", []))
+        # MT-1 : `all([])` est vrai — sans résultat, on ne complète JAMAIS.
+        _mt1_resultats = campaign.get("results") or []
+        all_sent = bool(_mt1_resultats) and all(r.get("status") == "sent" for r in _mt1_resultats)
         if all_sent:
             await db.campaigns.update_one(
                 {"id": campaign_id},
@@ -43925,29 +44001,25 @@ async def send_campaign_email(request: Request):
     déplacement aurait supprimé EN SILENCE la notification de chaque
     réservation payée — le défaut exact que la règle V310c interdit de livrer.
     """
-    await _v309_require_coach_or_admin(request)
-    # V468 — LA LIGNE SUIVANTE N'EST PAS TOUCHÉE, ET C'EST DÉLIBÉRÉ.
-    # Il serait tentant de brancher le débit sur l'identité signée qu'on vient de
-    # vérifier. Ce serait une RÉGRESSION DE FACTURATION : `launch_campaign`
-    # (server.py:4945) débite DÉJÀ le coût total de la campagne, puis le front
-    # (`launchCampaignWithSend`) boucle sur CETTE route, un appel par
-    # destinataire. Aujourd'hui ces appels partaient en `fetch` nu, donc sans
-    # `X-User-Email`, donc sans débit — le double débit n'existait pas par
-    # accident. En passant le front à `axios` (qui pose le Bearer) ET en
-    # branchant le débit sur l'identité, chaque campagne d'un coach partenaire
-    # serait facturée DEUX FOIS, et un coach à zéro crédit se prendrait un 402
-    # en plein envoi. C'est exactement « casser l'envoi légitime ».
-    # Le débit reste donc sur l'en-tête, inchangé : il ne décide plus de l'ACCÈS
-    # (le JWT s'en charge au-dessus), seulement de la facturation. Dette
-    # consignée : un coach authentifié peut encore désigner un autre coach dans
-    # cet en-tête pour lui débiter des crédits. À traiter avec la question du
-    # double débit, dans un lot de FACTURATION — pas dans un lot de sécurité.
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
-    if coach_email and not is_super_admin(coach_email):
-        credit_check = await check_credits(coach_email)
-        if not credit_check.get("has_credits"):
-            raise HTTPException(status_code=402, detail="Crédits insuffisants. Achetez un pack pour continuer.")
-        await deduct_credit(coach_email, "envoi campagne email")
+    _mt1_appelant = await _v309_require_coach_or_admin(request)
+    # V468 — (historique) le débit restait sur l'en-tête `X-User-Email` pour ne pas
+    # créer de DOUBLE débit : le front bouclait alors sur cette route après
+    # `launch_campaign`, qui débite déjà le coût global.
+    #
+    # MT-1 — CE QUI A CHANGÉ DEPUIS, ET POURQUOI LE DÉBIT PASSE SUR L'IDENTITÉ SIGNÉE.
+    # 1) La boucle a DISPARU : le lancement n'a plus qu'un expéditeur, le moteur
+    #    (RÉACTIVATION 3B, CoachDashboard.js « LE LANCEMENT N'A PLUS QU'UN SEUL
+    #    EXPÉDITEUR »). Plus aucun écran n'enchaîne launch + send-email.
+    # 2) Appelants front vérifiés (grep `send-email` dans frontend/src, 29/09) :
+    #    `performEmailSend` (CoachDashboard.js) via `handleTestEmail` et
+    #    `handleSendEmailCampaign` — deux gestionnaires passés en props à
+    #    CampaignManager.js qui ne les branche sur AUCUN bouton. Et l'onglet
+    #    Campagnes est réservé au super-admin (ADMIN_ONLY_TAB_IDS), non débité.
+    # 3) La dette consignée (« un coach authentifié peut désigner un autre coach
+    #    dans l'en-tête pour lui débiter des crédits ») est ainsi fermée : on débite
+    #    QUI a signé la requête, jamais un nom écrit par le navigateur.
+    coach_email = _mt1_appelant
+    _mt1_global = is_super_admin(coach_email)
     body = await request.json()
     to_email = body.get("to_email")
     to_name = body.get("to_name", "")
@@ -43956,8 +44028,23 @@ async def send_campaign_email(request: Request):
     media_url = body.get("media_url", None)
     
     # LOG DEBUG CRITIQUE
-    if not to_email:
+    if not to_email or not isinstance(to_email, str):
         raise HTTPException(status_code=400, detail="to_email requis")
+    # MT-1 : un coach n'écrit qu'à SON portefeuille (ou à lui-même : e-mail de
+    # test). Destinataire libre = relais d'hameçonnage au nom d'Afroboost et
+    # contact d'un autre coach. Super-admin : exempté (portée plateforme).
+    if not _mt1_global:
+        from api.routes.campaign_routes import mt1_portefeuille as _mt1_pf_de
+        _mt1_dest = to_email.strip().lower()
+        if _mt1_dest != coach_email and _mt1_dest not in (await _mt1_pf_de(db, coach_email))["emails"]:
+            logger.warning("[MT-1] REFUS send-email — destinataire hors portefeuille du coach")
+            raise HTTPException(status_code=403, detail="Ce destinataire ne fait pas partie de vos contacts.")
+    # MT-1 : le débit se fait APRÈS les refus (destinataire, opt-out ci-dessous
+    # n'est pas débité non plus), sur l'identité SIGNÉE — plus jamais l'en-tête.
+    if coach_email and not _mt1_global:
+        credit_check = await check_credits(coach_email)
+        if not credit_check.get("has_credits"):
+            raise HTTPException(status_code=402, detail="Crédits insuffisants. Achetez un pack pour continuer.")
     # RÉACTIVATION 3B : ce chemin est un envoi MARKETING (message libre du coach)
     # -> il lit le MÊME registre que les campagnes. Un refus exprimé = 403, jamais
     # un envoi. (Les e-mails transactionnels — confirmation de réservation,
@@ -43972,6 +44059,10 @@ async def send_campaign_email(request: Request):
         raise HTTPException(status_code=400, detail="message requis")
     if not RESEND_AVAILABLE or not RESEND_API_KEY:
         return {"success": False, "error": "Resend non configuré"}
+    if coach_email and not _mt1_global:
+        # MT-1 : un crédit, débité sur l'identité SIGNÉE, une fois toutes les
+        # vérifications passées (jamais pour un envoi refusé).
+        await deduct_credit(coach_email, "envoi campagne email")
     
     # === TRAITEMENT DU MEDIA URL ===
     media_html = ""
@@ -44551,8 +44642,17 @@ async def whatsapp_app_info(request: Request):
 
 
 @api_router.get("/campaign-debug/{campaign_id}")
-async def get_campaign_debug(campaign_id: str):
-    """V165: Endpoint diagnostic — affiche le contenu complet d'une campagne"""
+async def get_campaign_debug(campaign_id: str, request: Request):
+    """V165: Endpoint diagnostic — affiche le contenu complet d'une campagne
+
+    MT-1 : répondait à un ANONYME (campagne complète, résultats nominatifs).
+    Aucun appelant dans frontend/src : réservé au super-admin prouvé par JWT
+    signé. Tout autre appelant (coach compris) reçoit 403 — un coach lit ses
+    campagnes par `GET /campaigns/{id}`, cadré sur son périmètre.
+    """
+    _appelant = await _v309_require_coach_or_admin(request)
+    if not is_super_admin(_appelant):
+        raise HTTPException(status_code=403, detail="Réservé au super-admin")
     try:
         campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
         if not campaign:
@@ -44564,21 +44664,17 @@ async def get_campaign_debug(campaign_id: str):
 @api_router.get("/campaigns-list")
 async def get_campaigns_list(request: Request):
     """V165: Liste les campagnes récentes avec leur ID et message
-    V237: isolation par coach — une campagne appartient a son auteur. Cet
-    endpoint n'a aucun usage public (il n'est appele que depuis le dashboard),
-    le filtrage sur la presence du header est donc sans risque ici, a la
-    difference de /offers et /courses."""
+    V237: isolation par coach — une campagne appartient a son auteur.
+
+    MT-1 : le périmètre se lisait dans `X-User-Email` brut (l'e-mail super-admin
+    en en-tête = toutes les campagnes, même anonyme). Désormais JWT signé, et
+    périmètre tiré du jeton seul (`tenant_contacts.filtre_proprietaire`).
+    Aucun appelant dans frontend/src (vérifié le 29/09).
+    """
+    _appelant = await _v309_require_coach_or_admin(request)
+    from api.routes.campaign_routes import mt1_filtre_campagnes
+    query = mt1_filtre_campagnes(_appelant)
     try:
-        caller_email = request.headers.get("x-user-email", "").strip().lower()
-        if is_super_admin(caller_email):
-            query = {}
-        elif caller_email:
-            query = {"coach_id": caller_email}
-        else:
-            # Non authentifie : liste vide plutot que 401, pour ne pas faire
-            # apparaitre une erreur dans un dashboard dont le header n'aurait
-            # pas encore ete injecte au premier rendu.
-            return []
         campaigns = await db.campaigns.find(query, {"_id": 0, "id": 1, "name": 1, "status": 1, "targetType": 1, "channels": 1, "createdAt": 1, "launchedAt": 1, "updatedAt": 1}).sort("createdAt", -1).limit(20).to_list(20)
         return campaigns
     except Exception as ex:
