@@ -515,8 +515,9 @@ verifier("fiche historique sans propriétaire : invisible pour A", c == 404, c)
 print("\n== 3. PUT /chat/participants/{id} (liste blanche) ==")
 db = base_neuve()
 r, c = appel(lambda: S.update_chat_participant("pA1", {"name": "Alice modifiée", "coach_id": B,
-                                               "isSubscriber": True, "id": "vol",
-                                               "email": {"$ne": ""}}, Req(A)))
+                                               "isSubscriber": True, "id": "vol"}, Req(A)))
+verifier("champ hors liste blanche -> 400 (jamais un 200 sans effet)", c == 400, c)
+r, c = appel(lambda: S.update_chat_participant("pA1", {"name": "Alice modifiée", "email": {"$ne": ""}}, Req(A)))
 verifier("A modifie A : 200", c == 200, c)
 d = doc(db, "chat_participants", "pA1")
 verifier("le nom est modifié", d and d.get("name") == "Alice modifiée")
@@ -556,6 +557,7 @@ verifier("aucune fiche existante n'a été renommée",
 r, c = appel(lambda: S.create_chat_participant(S.ChatParticipantCreate(name="Tentative", whatsapp="+41 79 123 45 67"), Req(A)))
 verifier("numéro d'un contact de B saisi par A -> nouvelle fiche de A (pas celle de B)",
          c == 200 and r["id"] != "pB1" and r["coach_id"] == A, r)
+verifier("... la réponse de création ne ré-émet aucune coordonnée", c == 200 and r["whatsapp"] is None and r["email"] is None, r)
 verifier("... la fiche de B n'est ni renvoyée ni renommée", (doc(db, "chat_participants", "pB1") or {}).get("name") == "Bob chez B")
 # Même e-mail chez A (existe) : A retrouve SA fiche, pas celle de B.
 r, c = appel(lambda: S.create_chat_participant(S.ChatParticipantCreate(name="Alice bis", email="ALICE@x.test"), Req(A)))
@@ -754,27 +756,34 @@ verifier("B modifie la catégorie de A : 404", c == 404, c)
 r, c = appel(lambda: CAT.delete_contact_category("cB", Req(A)))
 verifier("A supprime la catégorie de B : 404", c == 404 and doc(db, "contact_categories", "cB") is not None, c)
 r, c = appel(lambda: CAT.update_contact_category("cB", Req(ADMIN, corps={"name": "Admin"})))
-verifier("super-admin : espace plateforme seulement (catégorie de B -> 404)", c == 404, c)
+verifier("super-admin : modifie la catégorie de B (global)", c == 200 and doc(db, "contact_categories", "cB")["name"] == "Admin", c)
 # set-categories
 r, c = appel(lambda: CAT.set_contact_categories(Req(A, corps={"contact_ids": ["pA1"], "category_ids": ["cA", "cB"]})))
 verifier("A catégorise sa fiche : 1 mise à jour", c == 200 and r["updated"] == 1)
 verifier("... la catégorie de B est filtrée", (doc(db, "chat_participants", "pA1") or {}).get("categories") == ["cA"],
          doc(db, "chat_participants", "pA1").get("categories"))
 r, c = appel(lambda: CAT.set_contact_categories(Req(A, corps={"contact_ids": ["pB1"], "category_ids": ["cA"]})))
-verifier("A catégorise la fiche de B : 0 et fiche intacte",
-         c == 200 and r["updated"] == 0 and "categories" not in doc(db, "chat_participants", "pB1"))
+verifier("A catégorise la fiche de B : 404 et fiche intacte",
+         c == 404 and "categories" not in doc(db, "chat_participants", "pB1"), c)
+r, c = appel(lambda: CAT.set_contact_categories(Req(A, corps={"contact_ids": ["pA1", "pB1"], "category_ids": ["cA"], "mode": "set"})))
+verifier("lot mixte A+B : 404 et RIEN écrit (même pas la fiche de A)", c == 404
+         and doc(db, "chat_participants", "pA1").get("categories") == ["cA"], c)
+db.chat_participants.docs.append({"id": "pA3", "coach_id": A, "name": "A3"})
+r, c = appel(lambda: CAT.set_contact_categories(Req(ADMIN2, corps={"contact_ids": ["pB1", "pA3"], "category_ids": ["cB", "cA"]})))
+verifier("super-admin : catégorise toute fiche avec toute catégorie (global)", c == 200 and r["updated"] == 2
+         and doc(db, "chat_participants", "pB1").get("categories") == ["cB", "cA"], (c, r))
 n_avant = len(db.chat_participants.docs)
 r, c = appel(lambda: CAT.set_contact_categories(Req(A, corps={"contact_ids": ["uNone"], "category_ids": ["cA"]})))
-verifier("user SANS relation : pas copié dans le CRM de A", c == 200 and len(db.chat_participants.docs) == n_avant)
+verifier("user SANS relation : 404, pas copié dans le CRM de A", c == 404 and len(db.chat_participants.docs) == n_avant, c)
 r, c = appel(lambda: CAT.set_contact_categories(Req(A, corps={"contact_ids": ["uRelA"], "category_ids": ["cA"]})))
 cp = doc(db, "chat_participants", "uRelA")
 verifier("user RELIÉ : copié chez A et catégorisé", c == 200 and cp and cp["coach_id"] == A and cp["categories"] == ["cA"], cp)
 r, c = appel(lambda: CAT.set_contact_categories(Req(B, corps={"contact_ids": ["uRelA"], "category_ids": ["cB"]})))
-verifier("id déjà copié chez A : B ne crée pas de doublon d'id",
-         c == 200 and sum(1 for d in db.chat_participants.docs if d.get("id") == "uRelA") == 1)
+verifier("id déjà copié chez A : B reçoit 404, pas de doublon d'id",
+         c == 404 and sum(1 for d in db.chat_participants.docs if d.get("id") == "uRelA") == 1)
 r, c = appel(lambda: CAT.filter_contacts_by_categories(Req(A, corps={"category_ids": ["cA"]})))
 verifier("filter-by-categories : portefeuille de A, paginé", c == 200 and r["limit"] == 50 and
-         {x["id"] for x in r["contacts"]} == {"pA1", "uRelA"}, r)
+         {"pA1", "uRelA"} <= {x["id"] for x in r["contacts"]} and "pB1" not in {x["id"] for x in r["contacts"]}, r)
 r, c = appel(lambda: CAT.filter_contacts_by_categories(Req(entete=A, corps={"category_ids": ["cA"]})))
 verifier("filter-by-categories X-User-Email seul : 403", refuse(c), c)
 r, c = appel(lambda: CAT.get_category_stats(Req(entete=A)))
@@ -814,6 +823,8 @@ r, c = appel(lambda: S.check_duplicate_contacts(Req(A, corps={"emails": ["bob@x.
 verifier("check-duplicates A : ses doublons seulement (e-mail)", c == 200 and r["existing_emails"] == ["alice@x.test"], r)
 verifier("check-duplicates A : numéro canonique de A trouvé, celui de B non",
          c == 200 and r["existing_phones"] == ["0765112233"], r)
+r, c = appel(lambda: S.check_duplicate_contacts(Req(ADMIN, corps={"emails": ["bob@x.test", "alice@x.test"]})))
+verifier("check-duplicates super-admin : vue GLOBALE", c == 200 and r["existing_emails"] == ["alice@x.test", "bob@x.test"], r)
 r, c = appel(lambda: S.check_duplicate_contacts(Req(entete=A, corps={"emails": ["bob@x.test"]})))
 verifier("check-duplicates X-User-Email seul : 403", refuse(c), c)
 r, c = appel(lambda: S.bulk_import_contacts(Req(A, corps={"contacts": [
@@ -833,8 +844,11 @@ verifier("... fiches créées chez A", sum(1 for d in db.chat_participants.docs
 r, c = appel(lambda: S.bulk_import_contacts(Req(entete=A, corps={"contacts": [{"email": "q@x.test"}]})))
 verifier("bulk-import X-User-Email seul : 403", refuse(c), c)
 r, c = appel(lambda: S.add_tags_to_contacts(Req(A, corps={"contact_ids": ["pA1", "pB1"], "tags": ["vip"]})))
-verifier("add-tags : seule la fiche de A est taguée", c == 200 and r["updated"] == 1
-         and "vip" not in (doc(db, "chat_participants", "pB1").get("tags") or []))
+verifier("add-tags lot mixte A+B : 404, rien n'est tagué", c == 404
+         and "vip" not in (doc(db, "chat_participants", "pB1").get("tags") or [])
+         and "vip" not in (doc(db, "chat_participants", "pA1").get("tags") or []), c)
+r, c = appel(lambda: S.add_tags_to_contacts(Req(A, corps={"contact_ids": ["pA1"], "tags": ["vip"]})))
+verifier("add-tags A sur SA fiche : 1", c == 200 and r["updated"] == 1)
 r, c = appel(lambda: S.add_tags_to_contacts(Req(corps={"contact_ids": ["pB1"], "tags": ["x"]})))
 verifier("add-tags anonyme : 403 (était SANS auth)", refuse(c), c)
 # deduplicate

@@ -141,7 +141,10 @@ async def update_contact_category(category_id: str, request: Request):
 
     # MT-2 : aucune vérification de propriétaire — tout appelant renommait la
     # catégorie de n'importe quel coach. Filtre (id, espace) ; hors espace -> 404.
-    _filtre = {"id": category_id, "coach_id": _mt2_espace(caller_email)}
+    # MT-2 : super-admin = portée GLOBALE (toute catégorie de tout coach) ;
+    # coach = son espace seulement, 404 sinon.
+    _filtre = {"id": category_id} if is_super_admin(caller_email) \
+        else {"id": category_id, "coach_id": _mt2_espace(caller_email)}
     if not await db.contact_categories.find_one(_filtre, {"_id": 1}):
         raise HTTPException(status_code=404, detail="Catégorie non trouvée")
     try:
@@ -174,7 +177,10 @@ async def delete_contact_category(category_id: str, request: Request):
     caller_email = await _mt2_appelant(request, "suppression de catégorie")  # MT-2
 
     # MT-2 : suppression de la catégorie d'un autre coach possible -> 404.
-    _filtre = {"id": category_id, "coach_id": _mt2_espace(caller_email)}
+    # MT-2 : super-admin = portée GLOBALE (toute catégorie de tout coach) ;
+    # coach = son espace seulement, 404 sinon.
+    _filtre = {"id": category_id} if is_super_admin(caller_email) \
+        else {"id": category_id, "coach_id": _mt2_espace(caller_email)}
     cat = await db.contact_categories.find_one(_filtre, {"_id": 0})
     if not cat:
         raise HTTPException(status_code=404, detail="Catégorie non trouvée")
@@ -230,23 +236,36 @@ async def set_contact_categories(request: Request):
         portee_ecriture as _mt2_portee,
     )
     _espace = _mt2_espace(caller_email)
-    _cats_ok = {c.get("id") async for c in db.contact_categories.find(
-        {"coach_id": _espace, "id": {"$in": [c for c in category_ids if isinstance(c, str)]}},
-        {"_id": 0, "id": 1})}
+    _f_cats = {"id": {"$in": [c for c in category_ids if isinstance(c, str)]}}
+    if not is_super_admin(caller_email):
+        _f_cats["coach_id"] = _espace  # super-admin : toute catégorie existante
+    _cats_ok = {c.get("id") async for c in db.contact_categories.find(_f_cats, {"_id": 0, "id": 1})}
     category_ids = [c for c in category_ids if c in _cats_ok]
     _proprio = _mt2_filtre(caller_email)
     _coach_id_copie, _ = _mt2_portee(caller_email)
 
-    updated = 0
+    # MT-2 : VALIDATION D'ABORD, ÉCRITURE ENSUITE. Un seul identifiant hors
+    # portefeuille (fiche d'un autre coach, user sans relation prouvée,
+    # identifiant inconnu) -> 404 pour toute la requête, RIEN n'est écrit.
+    # Avant, ces ids étaient ignorés en silence derrière un 200.
+    _a_copier = []
+    _valides = []
     for cid in contact_ids:
-        if not isinstance(cid, str) or not cid or "$" in cid:
+        if not isinstance(cid, str) or not cid or "$" in cid or len(cid) > 128:
+            raise HTTPException(status_code=404, detail="Contact introuvable")
+        if await db.chat_participants.find_one({"id": cid, **_proprio}, {"_id": 1}):
+            _valides.append(cid)
             continue
-        existing = await db.chat_participants.find_one({"id": cid, **_proprio}, {"_id": 0, "id": 1})
-        if not existing:
-            if await db.chat_participants.find_one({"id": cid}, {"_id": 1}):
-                continue  # garde 4 : fiche d'un autre coach
-            if not await _mt2_app(db, caller_email, "users", cid):
-                continue  # garde 3 : user hors portefeuille (ou inexistant)
+        if await db.chat_participants.find_one({"id": cid}, {"_id": 1}):
+            raise HTTPException(status_code=404, detail="Contact introuvable")  # garde 4
+        if not await _mt2_app(db, caller_email, "users", cid):
+            raise HTTPException(status_code=404, detail="Contact introuvable")  # garde 3
+        _a_copier.append(cid)
+        _valides.append(cid)
+
+    updated = 0
+    for cid in _valides:
+        if cid in _a_copier:
             user = await db.users.find_one({"id": cid}, {"_id": 0})
             if user:
                 from datetime import datetime, timezone
@@ -266,7 +285,7 @@ async def set_contact_categories(request: Request):
                 await db.chat_participants.insert_one(new_participant)
                 logger.info(f"[CATEGORIES] Contact app_user copié dans chat_participants: {cid}")
             else:
-                continue  # Contact introuvable, skip
+                continue
 
         _cible = {"id": cid, **_proprio}
         if mode == "set":

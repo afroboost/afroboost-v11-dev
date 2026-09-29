@@ -20702,7 +20702,8 @@ async def check_duplicate_contacts(request: Request):
     phones = [p.strip() for p in (body.get("phones") or []) if isinstance(p, str) and p.strip()]
     emails = [e.strip().lower() for e in (body.get("emails") or []) if isinstance(e, str) and e.strip()]
 
-    _, _portee = _mt2_portee(coach_email)
+    # MT-2 : LECTURE -> super-admin = portée GLOBALE ; coach = sa portée.
+    _portee = {} if is_super_admin(coach_email) else _mt2_portee(coach_email)[1]
     _idx = await _mt2_index(db, _portee) if (phones or emails) else {}
 
     existing_phones = [p for p in phones if _mt2_tel(p) and ("t:" + _mt2_tel(p)) in _idx]
@@ -21599,8 +21600,15 @@ async def add_tags_to_contacts(request: Request):
     if not contact_ids or not tags:
         return {"updated": 0}
 
+    # MT-2 : un seul identifiant hors portefeuille -> 404, RIEN n'est écrit
+    # (avant : ignoré en silence derrière un 200).
+    _mt2_ok = await _mt2_filtrer(db, caller_email, "chat_participants", contact_ids)
+    if len(_mt2_ok) != len({c for c in contact_ids if isinstance(c, str)}) or \
+            any(not isinstance(c, str) for c in contact_ids):
+        raise HTTPException(status_code=404, detail="Contact introuvable")
+
     updated = 0
-    for cid in await _mt2_filtrer(db, caller_email, "chat_participants", contact_ids):
+    for cid in _mt2_ok:
         result = await db.chat_participants.update_one(
             {"id": cid, **_mt2_filtre(caller_email)},
             {"$addToSet": {"tags": {"$each": tags}}}
@@ -35365,7 +35373,12 @@ async def create_chat_participant(participant: ChatParticipantCreate, request: R
     participant_data["coach_id"] = coach_id
     await db.chat_participants.insert_one(participant_data)
     participant_data.pop("_id", None)
-    return participant_data
+    # MT-2 : la réponse de CRÉATION ne ré-émet pas les coordonnées (e-mail,
+    # WhatsApp) : l'appelant les connaît déjà, et la réponse ne doit jamais
+    # pouvoir servir de sonde « cette adresse existe-t-elle ailleurs ? ». Les
+    # deux écrans appelants rechargent la liste juste après (CoachDashboard :
+    # refetch V193 ; ContactsManager : loadContacts).
+    return {k: v for k, v in participant_data.items() if k not in ("email", "whatsapp", "phone")}
 
 @api_router.get("/chat/participants/find")
 async def find_participant(
@@ -35417,6 +35430,15 @@ async def update_chat_participant(participant_id: str, update_data: dict, reques
     _filtre = {"id": participant_id, **_mt2_filtre(caller_email)}
     if not await db.chat_participants.find_one(_filtre, {"_id": 1}):
         raise HTTPException(status_code=404, detail="Participant non trouvé")
+    if not isinstance(update_data, dict):
+        raise HTTPException(status_code=400, detail="Corps invalide")
+    # MT-2 : un champ hors liste blanche est REFUSÉ (400), jamais ignoré en
+    # silence derrière un 200 sans effet.
+    _refuses = sorted(k for k in update_data
+                      if k not in MT2_CHAMPS_PARTICIPANT_MODIFIABLES and k != "last_seen_at")
+    if _refuses:
+        raise HTTPException(status_code=400,
+                            detail="Champ(s) non modifiable(s) : " + ", ".join(str(k) for k in _refuses)[:200])
     _maj = {}
     for _k in MT2_CHAMPS_PARTICIPANT_MODIFIABLES:
         if isinstance(update_data, dict) and _k in update_data:

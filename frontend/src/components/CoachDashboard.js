@@ -4649,8 +4649,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         whatsapp,
         source
       });
-      setChatParticipants(prev => [response.data, ...prev]);
-      return response.data;
+      // MT-2 : la réponse de création ne ré-émet plus e-mail/WhatsApp (le
+      // serveur ne sert pas de sonde) : on complète avec ce qu'on vient d'envoyer.
+      const cree = { ...(response.data || {}), email: (response.data && response.data.email) || email, whatsapp: (response.data && response.data.whatsapp) || whatsapp };
+      setChatParticipants(prev => [cree, ...prev]);
+      return cree;
     } catch (err) {
       console.error("Error adding manual participant:", err);
       return null;
