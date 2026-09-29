@@ -20,8 +20,32 @@
  *     utilisateur est perdu si on télécharge au moment du clic) ;
  *   - aucune boucle d'appels : les effets dépendent de primitives, et la
  *     création de l'enfant est gardée par une référence (un seul POST en vol).
+ *
+ * UX-P2 — ENREGISTREMENT AUTOMATIQUE (plus de bouton « Mettre à jour ma carte ») :
+ *   - le bandeau « <Prénom> t'invite à découvrir Afroboost » suit la frappe
+ *     (état local) ; la photo aussi ;
+ *   - prénom / message / photo / WhatsApp / consentement → PATCH 500 ms après la
+ *     DERNIÈRE modification (un seul minuteur, en référence ; aucun PATCH si la
+ *     signature — une chaîne — n'a pas changé ; un échec n'est pas relancé tant
+ *     que rien ne change : pas de boucle) ;
+ *   - un clic de partage avec une modification en attente FORCE l'enregistrement
+ *     (minuteur annulé, requête attendue) et partage le share_url / card_url
+ *     RENVOYÉS. Si l'enregistrement échoue : AUCUN partage (on ne partage jamais
+ *     une ancienne version), le message d'erreur dit quoi corriger ;
+ *   - OUVERTURE DE FENÊTRE après un `await` (bloquée par les navigateurs) :
+ *       · WhatsApp : rien en attente → `window.open(lien)` synchrone comme avant ;
+ *         en attente → fenêtre VIDE ouverte synchrone dans le clic (opener coupé),
+ *         puis `fen.location.href = lien` après l'enregistrement (fermée en cas
+ *         d'échec) ; fenêtre refusée → « touche encore WhatsApp » ;
+ *       · Partager : on tente `navigator.share` après l'enregistrement ; si le
+ *         navigateur refuse (NotAllowedError, geste perdu) → « touche encore » ;
+ *       · Partager avec la carte : le fichier de la NOUVELLE carte doit être
+ *         pré-chargé → après l'enregistrement, on demande de toucher à nouveau ;
+ *       · Copier : copie tentée après l'enregistrement, sinon « touche encore » ;
+ *       · QR : affiché après l'enregistrement (aucun geste requis).
  */
 import React, { useEffect, useRef, useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import SvgIcon from '../SvgIcon';
 import BandeauInvitant, { AvatarInvitant } from './BandeauInvitant'; // L0
 import {
@@ -29,6 +53,7 @@ import {
   creerInvitationChaine, modifierInvitationChaine, enregistrerPartageChaine,
   verifierApercuNavigateur, lireCleChaine, ecrireCleChaine, lireRefus, messageRefus,
   lienWhatsApp, copier, texteChaine, libelleOccurrence, TEXTE_AUTRE_APPAREIL,
+  envoyerPhotoChaine, refusPhotoChaine, numeroWhatsAppChaine, INDICATIFS, INDICATIF_DEFAUT,
 } from '../../utils/parrainage';
 
 /**
@@ -92,19 +117,36 @@ export function messageErreurChaine(refus) {
   return 'Ton invitation ne se prépare pas pour le moment. Réessaie dans un instant.';
 }
 
+/** UX-P2 : délai de l'enregistrement automatique après la dernière frappe. */
+export const DELAI_AUTOSAVE_MS = 500;
+
+/** UX-P2 : libellé de la case de consentement (non cochée par défaut). */
+export const TEXTE_CONSENT_CONTACT = "J'accepte d'être contacté(e) par Afroboost au sujet de cette invitation et de mon essai.";
+
+const MSG_WHATSAPP_INVALIDE = 'Ce numéro WhatsApp n’est pas valide. Corrige-le (ex. : +41 79 123 45 67) ou efface-le pour partager.';
+
+function _signature(v) {
+  return JSON.stringify([String(v.nom || '').trim(), v.message || '', v.photo || null, v.wa || '', !!v.consent]);
+}
+
+function _chiffres(s) {
+  return (String(s || '').match(/\d/g) || []).length;
+}
+
 /**
  * @param {string}   token          le jeton du pass reçu (T0)
  * @param {object}   pass           le PassDTO public (chain, course, occurrence…)
  * @param {string}   prenom         le prénom affichable du parrain
- * @param {string}   photo          sa photo autorisée, ou null
+ * @param {string}   photo          sa photo autorisée, ou null (étape 1 seulement : jamais sur la carte du filleul)
  * @param {node}     blocInvitation la séance + l'offre (rendus par InvitationDuo)
  * @param {node}     formulaire     le formulaire d'inscription (rendu par InvitationDuo)
  * @param {function} onPrenom       (prénom saisi à l'étape 2) → préremplit l'inscription
+ * @param {function} onWhatsApp     (numéro saisi à l'étape 2) → préremplit l'inscription (UX-P2)
  * @param {number}   retourEtape2   compteur : chaque incrément ramène à l'étape 2 (409 invitation_requise)
  * @param {string}   messageEtape2  message affiché à l'étape 2 après ce retour
  */
 export default function WizardFilleul({
-  token, pass, prenom, photo, blocInvitation, formulaire, onPrenom, retourEtape2, messageEtape2,
+  token, pass, prenom, photo, blocInvitation, formulaire, onPrenom, onWhatsApp, retourEtape2, messageEtape2,
 }) {
   const dejaPartagee = !!(pass && pass.chain && pass.chain.shared === true);
   const [etape, setEtape] = useState(dejaPartagee ? 3 : 1);
@@ -115,8 +157,18 @@ export default function WizardFilleul({
   const [nom, setNom] = useState('');
   const [message, setMessage] = useState('');
   const [messageOuvert, setMessageOuvert] = useState(false);
+  const [photoCarte, setPhotoCarte] = useState(null);     // UX-P2 : photo choisie (URL) ou null
+  const [indicatif, setIndicatif] = useState(INDICATIF_DEFAUT);
+  const [numero, setNumero] = useState('');
+  const [consent, setConsent] = useState(false);
+  const [sauve, setSauve] = useState('');                 // signature des valeurs enregistrées
+  const [echec, setEchec] = useState('');                 // signature dont l'enregistrement a échoué
   const [maj, setMaj] = useState(false);
+  const [statut, setStatut] = useState('');               // '' | 'enregistre'
   const [erreurMaj, setErreurMaj] = useState('');
+  const [envoiPhoto, setEnvoiPhoto] = useState(false);
+  const [erreurPhoto, setErreurPhoto] = useState('');
+  const [qrOuvert, setQrOuvert] = useState(false);
   const [verif, setVerif] = useState({ cle: '', ok: false, file: null }); // contrôle navigateur
   const [carteKo, setCarteKo] = useState(false);
   const [enregistrement, setEnregistrement] = useState(false);
@@ -124,6 +176,21 @@ export default function WizardFilleul({
   const [info, setInfo] = useState('');
   const [avis, setAvis] = useState(''); // message venu d'InvitationDuo (409 invitation_requise)
   const enVol = useRef(false);
+  const enVolMaj = useRef(null);      // promesse du PATCH en vol (une seule)
+  const minuteur = useRef(null);      // minuteur de l'enregistrement automatique
+  const childRef = useRef(null);
+  const sauveRef = useRef('');
+  const sauveValeurs = useRef(null);  // valeurs du dernier enregistrement réussi
+  const inputGalerie = useRef(null);
+  const inputCamera = useRef(null);
+
+  const wa = numeroWhatsAppChaine(indicatif, numero);
+  const valeurs = { nom, message, photo: photoCarte || null, wa, consent };
+  const valeursRef = useRef(valeurs);
+  valeursRef.current = valeurs;
+  const sigCourante = _signature(valeurs);
+  childRef.current = child;
+  sauveRef.current = sauve;
 
   // 409 invitation_requise au join → retour à l'étape 2 (vérité serveur).
   useEffect(() => {
@@ -132,11 +199,26 @@ export default function WizardFilleul({
     setAvis(messageEtape2 || messageRefus('invitation_requise'));
   }, [retourEtape2, messageEtape2]);
 
+  // Démontage : aucun minuteur orphelin.
+  useEffect(() => () => { if (minuteur.current) clearTimeout(minuteur.current); }, []);
+
+  // Création : les champs locaux partent des valeurs de l'enfant. JAMAIS rappelé après
+  // un PATCH (on écraserait la frappe en cours).
   const poserChild = (c) => {
     if (!c || !c.share_url) return;
+    const n = nomAffichable(c.display_name) || '';
+    const m = typeof c.message === 'string' && c.message.trim() ? bornerMessage(c.message) : MESSAGE_CHAINE_DEFAUT;
+    const surCarte = (c.inviter_display && c.inviter_display.photo_url) || null;
+    // Photo : celle déjà sur la carte, sinon la photo de profil suggérée (préremplie :
+    // l'enregistrement automatique la pose sur la carte), sinon rien (logo Afroboost).
+    const initiale = surCarte || (typeof c.photo_suggeree === 'string' && c.photo_suggeree) || null;
+    const base = { nom: n, message: m, photo: surCarte, wa: '', consent: false };
+    sauveValeurs.current = base;
     setChild(c);
-    setNom(nomAffichable(c.display_name) || '');
-    setMessage(typeof c.message === 'string' && c.message.trim() ? bornerMessage(c.message) : MESSAGE_CHAINE_DEFAUT);
+    setNom(n);
+    setMessage(m);
+    setPhotoCarte(initiale);
+    setSauve(_signature(base));
     setCarteKo(false);
   };
 
@@ -177,37 +259,94 @@ export default function WizardFilleul({
     return () => { vivant = false; };
   }, [cardUrl, shareUrl, cleVerif]);
 
-  const preparation = creation || !child || verif.cle !== cleVerif;
+  // UX-P2 : seule la PREMIÈRE préparation bloque le partage. Après un enregistrement
+  // (nouvelle carte), le contrôle repart en arrière-plan : seul « Partager avec la
+  // carte » attend le fichier de la nouvelle carte.
+  const verifActuelle = verif.cle === cleVerif;
+  const preparation = creation || !child || !verif.cle;
   // L'aperçu serveur voyage à côté de `child` (réponse POST/PATCH) : on le range dessus.
   // Absent (serveur ancien) : on ne pénalise pas, seul le contrôle navigateur tranche.
   const serveurOk = !(child && child.preview && child.preview.ok === false);
-  const apercuSimplifie = !preparation && (!verif.ok || !serveurOk || carteKo);
+  const apercuSimplifie = !preparation && ((verifActuelle && (!verif.ok || !serveurOk)) || carteKo);
 
   const nomValide = nomAffichable(nom);
-  const nomChild = child ? (nomAffichable(child.display_name) || '') : '';
-  const msgChild = child ? ((typeof child.message === 'string' && child.message.trim()) ? bornerMessage(child.message) : MESSAGE_CHAINE_DEFAUT) : '';
-  const modifie = !!child && (nom.trim() !== nomChild || message !== msgChild);
   const editable = !!editKey;
+  const enAttente = sigCourante !== sauve || maj;
   // V556 : sans la clé de CET appareil, le serveur refuse le partage (403) — on le dit.
-  const boutonsInactifs = preparation || modifie || enregistrement || maj || !editable;
+  const boutonsInactifs = preparation || enregistrement || !editable || envoiPhoto;
+  // Un numéro en cours de frappe (1 à 7 chiffres) n'est pas envoyé automatiquement.
+  const waIncomplet = _chiffres(numero) > 0 && _chiffres(numero) < 8;
 
-  const mettreAJour = () => {
-    if (!child || !editable || maj) return;
-    if (nom.trim() && !nomValide) { setErreurMaj('Indique un prénom (sans adresse e-mail).'); return; }
-    setMaj(true); setErreurMaj('');
-    modifierInvitationChaine({ token, editKey, display_name: nom, message })
+  /** Un PATCH avec les valeurs COURANTES. Résout avec l'enfant à jour, rejette si refusé. */
+  const sauvegarder = () => {
+    const v = valeursRef.current;
+    const sig = _signature(v);
+    if (String(v.nom || '').trim() && !nomAffichable(v.nom)) {
+      setErreurMaj('Indique un prénom (sans adresse e-mail).'); setEchec(sig); setStatut('');
+      return Promise.reject({ status: 0, raison: 'prenom' });
+    }
+    const avant = sauveValeurs.current || {};
+    const corps = { token, editKey, display_name: v.nom, message: v.message };
+    if ((v.photo || null) !== (avant.photo || null)) corps.photo_url = v.photo || null;
+    if ((v.wa || '') !== (avant.wa || '')) corps.whatsapp = v.wa || '';
+    if (!!v.consent !== !!avant.consent) corps.consent_contact = !!v.consent;
+    setMaj(true); setStatut('');
+    const p = modifierInvitationChaine(corps)
       .then((r) => {
         const d = (r && r.data) || {};
-        if (d.child) poserChild(Object.assign({}, d.child, d.preview ? { preview: d.preview } : {}));
-        setInfo('Ta carte est à jour.');
+        let suivant = childRef.current;
+        if (d.child && d.child.share_url) {
+          suivant = Object.assign({}, childRef.current || {}, d.child,
+            { preview: d.preview || d.child.preview || (childRef.current && childRef.current.preview) });
+          childRef.current = suivant;
+          setChild(suivant);
+          setCarteKo(false);
+        }
+        sauveValeurs.current = v;
+        sauveRef.current = sig;
+        setSauve(sig); setEchec(''); setErreurMaj(''); setStatut('enregistre');
+        return suivant;
       })
       .catch((e) => {
-        const refus = lireRefus(e);
+        const refus = e && e.response ? lireRefus(e) : (e || {});
         if (refus.status === 403) setEditKey('');
-        setErreurMaj(messageErreurChaine(refus));
+        const waEnvoye = corps.whatsapp !== undefined;
+        const raisonWa = /whatsapp|phone|telephone|numero/i.test(`${refus.raison || ''} ${refus.detail || ''}`);
+        setErreurMaj(refus.status === 422 && (raisonWa || waEnvoye) ? MSG_WHATSAPP_INVALIDE : messageErreurChaine(refus));
+        setEchec(sig); setStatut('');
+        throw refus;
       })
-      .finally(() => setMaj(false));
+      .finally(() => { enVolMaj.current = null; setMaj(false); });
+    enVolMaj.current = p;
+    return p;
   };
+
+  // ENREGISTREMENT AUTOMATIQUE : un minuteur, relancé à chaque changement de signature.
+  useEffect(() => {
+    if (!aUnChild || !editKey || maj || waIncomplet) return undefined;
+    if (sigCourante === sauve || sigCourante === echec) return undefined;
+    const t = setTimeout(() => {
+      if (minuteur.current === t) minuteur.current = null;
+      sauvegarder().catch(() => { /* message déjà affiché */ });
+    }, DELAI_AUTOSAVE_MS);
+    minuteur.current = t;
+    return () => { clearTimeout(t); if (minuteur.current === t) minuteur.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sigCourante, sauve, echec, aUnChild, editKey, maj, waIncomplet]);
+
+  /**
+   * Avant un partage : annule le minuteur, attend le PATCH en vol, enregistre ce
+   * qui reste. Résout avec l'enfant À JOUR (share_url / card_url renvoyés).
+   */
+  const garantirAJour = () => {
+    if (minuteur.current) { clearTimeout(minuteur.current); minuteur.current = null; }
+    const attente = enVolMaj.current ? enVolMaj.current.catch(() => null) : Promise.resolve();
+    return attente.then(() => {
+      if (_signature(valeursRef.current) === sauveRef.current) return childRef.current;
+      return sauvegarder();
+    });
+  };
+  const aEnregistrer = () => _signature(valeursRef.current) !== sauveRef.current || !!enVolMaj.current;
 
   // Enregistre le partage DÉCLENCHÉ, remplace l'enfant (nouveau share_url), passe à l'étape 3.
   const enregistrer = (channel) => {
@@ -219,49 +358,131 @@ export default function WizardFilleul({
           setChild((prev) => Object.assign({}, prev || {}, d.child, { preview: (d.child.preview || (prev && prev.preview)) }));
         }
         setAvis('');
-        if (typeof onPrenom === 'function' && nomValide) onPrenom(nomValide);
+        const v = valeursRef.current;
+        const n = nomAffichable(v.nom);
+        if (typeof onPrenom === 'function' && n) onPrenom(n);
+        if (typeof onWhatsApp === 'function' && v.wa) onWhatsApp(v.wa);
         setEtape(3);
       })
       .catch(() => { setAReessayer(channel); })
       .finally(() => setEnregistrement(false));
   };
 
+  const messageSauve = () => ((sauveValeurs.current && sauveValeurs.current.message) || message);
   const texte = texteChaine(message, shareUrl);
   const surWhatsApp = () => {
     if (boutonsInactifs || !shareUrl) return;
-    window.open(lienWhatsApp(texte), '_blank', 'noopener'); // synchrone : geste utilisateur
-    enregistrer('whatsapp');
+    setInfo('');
+    if (!aEnregistrer()) {
+      window.open(lienWhatsApp(texte), '_blank', 'noopener'); // synchrone : geste utilisateur
+      enregistrer('whatsapp');
+      return;
+    }
+    // Modification en attente : fenêtre vide ouverte DANS le geste, URL posée après.
+    let fen = null;
+    try { fen = window.open('', '_blank'); } catch (e) { fen = null; }
+    if (fen) { try { fen.opener = null; } catch (e) { /* ignore */ } }
+    garantirAJour()
+      .then((c) => {
+        const lien = lienWhatsApp(texteChaine(messageSauve(), c && c.share_url));
+        if (fen) {
+          try { fen.location.href = lien; } catch (e) { /* ignore */ }
+          enregistrer('whatsapp');
+        } else {
+          setInfo('Ta carte est enregistrée. Touche encore WhatsApp pour la partager.');
+        }
+      })
+      .catch(() => { if (fen) { try { fen.close(); } catch (e) { /* ignore */ } } });
   };
   const nav = typeof navigator !== 'undefined' ? navigator : null;
   const peutPartager = !!(nav && typeof nav.share === 'function');
   let peutCarte = false;
-  if (peutPartager && verif.file && typeof nav.canShare === 'function') {
+  if (peutPartager && verifActuelle && verif.file && typeof nav.canShare === 'function') {
     try { peutCarte = !!nav.canShare({ files: [verif.file] }); } catch (e) { peutCarte = false; }
   }
-  const apresShare = (channel) => (p) => Promise.resolve(p)
+  const apresShare = (channel, libelle) => (p) => Promise.resolve(p)
     .then(() => enregistrer(channel))
     .catch((e) => {
       if (e && e.name === 'AbortError') return; // annulé : rien
+      if (e && e.name === 'NotAllowedError') { setInfo(`Ta carte est enregistrée. Touche encore « ${libelle} ».`); return; }
       setInfo('Le partage n’a pas abouti. Essaie WhatsApp ou copie le lien.');
     });
   const surPartagerCarte = () => {
     if (boutonsInactifs || !peutCarte) return;
+    setInfo('');
+    if (aEnregistrer()) {
+      // Le fichier de la NOUVELLE carte doit être pré-chargé : on redemande le geste.
+      garantirAJour()
+        .then(() => setInfo('Ta carte est enregistrée. Touche encore « Partager avec la carte ».'))
+        .catch(() => {});
+      return;
+    }
     let p;
     try { p = nav.share({ files: [verif.file], text: texte }); } catch (e) { p = Promise.reject(e); }
-    apresShare('share_image')(p);
+    apresShare('share_image', 'Partager avec la carte')(p);
   };
   const surPartager = () => {
     if (boutonsInactifs || !peutPartager) return;
+    setInfo('');
+    if (aEnregistrer()) {
+      garantirAJour()
+        .then((c) => {
+          let p;
+          try { p = nav.share({ title: 'Afroboost', text: messageSauve(), url: c && c.share_url }); } catch (e) { p = Promise.reject(e); }
+          return apresShare('share', 'Partager')(p);
+        })
+        .catch(() => {});
+      return;
+    }
     let p;
     try { p = nav.share({ title: 'Afroboost', text: message, url: shareUrl }); } catch (e) { p = Promise.reject(e); }
-    apresShare('share')(p);
+    apresShare('share', 'Partager')(p);
   };
+  const copierUrl = (url, apresEnregistrement) => copier(url).then((ok) => {
+    if (ok) { setInfo('Lien copié'); enregistrer('copy'); } else if (apresEnregistrement) {
+      setInfo('Ta carte est enregistrée. Touche encore « Copier le lien ».');
+    } else setInfo('Copie impossible : réessaie ou choisis WhatsApp.');
+  });
   const surCopier = () => {
     if (boutonsInactifs || !shareUrl) return;
-    copier(shareUrl).then((ok) => {
-      if (ok) { setInfo('Lien copié'); enregistrer('copy'); } else setInfo('Copie impossible : réessaie ou choisis WhatsApp.');
-    });
+    setInfo('');
+    if (aEnregistrer()) {
+      garantirAJour().then((c) => copierUrl(c && c.share_url, true)).catch(() => {});
+      return;
+    }
+    copierUrl(shareUrl, false);
   };
+  const surQr = () => {
+    if (boutonsInactifs || !shareUrl) return;
+    if (qrOuvert) { setQrOuvert(false); return; }
+    garantirAJour().then(() => setQrOuvert(true)).catch(() => {});
+  };
+
+  // ── Photo ──
+  const choisirPhoto = (e) => {
+    const cible = e && e.target;
+    const f = cible && cible.files && cible.files[0];
+    try { if (cible) cible.value = ''; } catch (err) { /* ignore */ }
+    if (!f || !editKey) return;
+    const refus = refusPhotoChaine(f);
+    if (refus) { setErreurPhoto(refus); return; }
+    setEnvoiPhoto(true); setErreurPhoto('');
+    envoyerPhotoChaine({ token, editKey, file: f })
+      .then((r) => {
+        const u = r && r.data && r.data.photo_url;
+        if (u) setPhotoCarte(String(u)); // l'enregistrement automatique pose photo_url
+        else setErreurPhoto('Ta photo n’a pas pu être envoyée. Réessaie.');
+      })
+      .catch((err) => {
+        const r = lireRefus(err);
+        if (r.status === 403) setEditKey('');
+        if (r.status === 413) setErreurPhoto('Cette photo dépasse 5 Mo : choisis-en une plus légère.');
+        else if (r.status === 415 || r.status === 422 || r.status === 400) setErreurPhoto('Choisis une photo JPEG, PNG ou WebP.');
+        else setErreurPhoto('Ta photo n’a pas pu être envoyée. Réessaie.');
+      })
+      .finally(() => setEnvoiPhoto(false));
+  };
+  const ouvrir = (ref) => { if (ref.current && !envoiPhoto) ref.current.click(); };
 
   // ── ÉTAPE 1 ────────────────────────────────────────────────────────────────
   if (etape === 1) {
@@ -343,6 +564,11 @@ export default function WizardFilleul({
         </p>
       ) : null}
 
+      {/* UX-P2 : aperçu IMMÉDIAT (état local) — prénom et photo suivent la frappe. */}
+      {child && editable ? (
+        <BandeauInvitant prenom={nomValide} photoUrl={photoCarte} />
+      ) : null}
+
       {child && cardUrl && !carteKo ? (
         <div className="cp-wz-carte cp-wf-carte" data-testid="wf-carte">
           <img src={cardUrl} alt="La carte d'invitation que ton ami verra" onError={() => setCarteKo(true)} />
@@ -354,39 +580,59 @@ export default function WizardFilleul({
 
       {child && editable ? (
         <div className="cp-wf-perso">
-          <label className="cp-label" htmlFor="wf-nom">Ton prénom (sur ta carte)</label>
-          <input id="wf-nom" className="cp-input" value={nom} maxLength={NOM_MAX} disabled={!editable} placeholder="Ex. : Henri"
+          <label className="cp-label" htmlFor="wf-nom">Ton prénom</label>
+          <input id="wf-nom" className="cp-input" value={nom} maxLength={NOM_MAX} placeholder="Ex. : Henri"
                  onChange={(e) => setNom(e.target.value.slice(0, NOM_MAX))} autoComplete="given-name" data-testid="wf-nom" />
-          {editable && !nomChild ? (
-            <p className="cp-fine" data-testid="wf-astuce-prenom">Ajoute ton prénom : ton ami verra « {nomValide || 'Henri'} t'invite » sur la carte.</p>
+
+          <span className="cp-label" id="wf-photo-titre">Ta photo</span>
+          <div className="cp-wf-photo" data-testid="wf-photo">
+            <AvatarInvitant photoUrl={photoCarte} className="cp-wf-photo-av" testidPhoto="wf-photo-img" testidAvatar="wf-photo-logo" />
+            <div className="cp-wf-photo-actions">
+              <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={() => ouvrir(inputGalerie)} disabled={envoiPhoto} data-testid="wf-photo-ajouter">
+                <SvgIcon name="image" size={20} /> {photoCarte ? 'Changer de photo' : 'Ajouter une photo'}
+              </button>
+              <button type="button" className="cp-link cp-wz-tap" onClick={() => ouvrir(inputCamera)} disabled={envoiPhoto} data-testid="wf-photo-prendre">
+                <SvgIcon name="camera" size={14} /> Prendre une photo
+              </button>
+              {photoCarte ? (
+                <button type="button" className="cp-link cp-wz-tap" onClick={() => setPhotoCarte(null)} disabled={envoiPhoto} data-testid="wf-photo-retirer">
+                  <SvgIcon name="x" size={14} /> Retirer
+                </button>
+              ) : null}
+            </div>
+            <input ref={inputGalerie} type="file" accept="image/*" hidden onChange={choisirPhoto} aria-labelledby="wf-photo-titre" data-testid="wf-photo-fichier" />
+            <input ref={inputCamera} type="file" accept="image/*" capture="user" hidden onChange={choisirPhoto} aria-labelledby="wf-photo-titre" data-testid="wf-photo-camera" />
+          </div>
+          {envoiPhoto ? <p className="cp-mini" role="status" data-testid="wf-photo-envoi">Envoi de ta photo…</p> : null}
+          {erreurPhoto ? <p className="cp-error" role="alert" data-testid="wf-photo-erreur">{erreurPhoto}</p> : null}
+
+          <label className="cp-label" htmlFor="wf-whatsapp-numero">Ton numéro WhatsApp</label>
+          <div className="cp-wf-tel">
+            <select className="cp-select cp-wf-indicatif" value={indicatif} aria-label="Indicatif du pays"
+                    onChange={(e) => setIndicatif(e.target.value)} data-testid="wf-indicatif">
+              {INDICATIFS.map(([code, pays]) => <option key={code} value={code}>{`${code} ${pays}`}</option>)}
+            </select>
+            <input id="wf-whatsapp-numero" className="cp-input" type="tel" inputMode="tel" value={numero}
+                   placeholder="79 123 45 67" autoComplete="tel-national"
+                   onChange={(e) => setNumero(e.target.value.slice(0, 30))} data-testid="wf-whatsapp-numero" />
+          </div>
+          {child.whatsapp_renseigne === true && !numero.trim() ? (
+            <p className="cp-fine" data-testid="wf-whatsapp-connu">Ton numéro est déjà enregistré.</p>
           ) : null}
-          {messageOuvert ? (
-            <>
-              <label className="cp-label" htmlFor="wf-message">Ton message</label>
-              <textarea id="wf-message" className="cp-input cp-wz-message cp-wf-message" rows={3} value={message}
-                        maxLength={MESSAGE_MAX} disabled={!editable}
-                        onChange={(e) => setMessage(bornerMessage(e.target.value))} data-testid="wf-message" />
-              <p className="cp-fine cp-wz-compteur">{message.length}/{MESSAGE_MAX}</p>
-            </>
-          ) : (
-            <button type="button" className="cp-link cp-wz-tap cp-wf-lien" onClick={() => setMessageOuvert(true)} data-testid="wf-modifier-message">
-              <SvgIcon name="edit" size={14} /> Modifier le message
-            </button>
-          )}
-          {modifie && editable ? (
-            <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={mettreAJour} disabled={maj} data-testid="wf-mettre-a-jour">
-              <SvgIcon name="refresh" size={20} /> {maj ? 'Mise à jour…' : 'Mettre à jour ma carte'}
-            </button>
-          ) : null}
+          <label className="cp-chk">
+            <input type="checkbox" checked={consent} onChange={(e) => setConsent(!!e.target.checked)} data-testid="wf-consent" />
+            <span>{TEXTE_CONSENT_CONTACT}</span>
+          </label>
+
+          <p className="cp-fine cp-wf-statut" role="status" aria-live="polite" data-testid="wf-statut">
+            {maj ? 'Enregistrement…' : (!enAttente && statut === 'enregistre' ? 'Enregistré' : '')}
+          </p>
           {erreurMaj ? <p className="cp-error" role="alert" data-testid="wf-erreur-maj">{erreurMaj}</p> : null}
         </div>
       ) : null}
 
       {child && editable ? (
         <div className="cp-wf-actions">
-          {/* L0 : qui invite, tel que l'ami le verra (prénom saisi, photo du DTO enfant). */}
-          <BandeauInvitant prenom={nomValide || nomChild}
-                           photoUrl={child.inviter_display ? child.inviter_display.photo_url : null} />
           <button type="button" className="cp-b cp-b--whatsapp cp-wz-cible" onClick={surWhatsApp} disabled={boutonsInactifs} data-testid="wf-whatsapp">
             <SvgIcon name="messageCircle" size={20} /> WhatsApp
           </button>
@@ -405,7 +651,17 @@ export default function WizardFilleul({
               <SvgIcon name="link" size={20} /> Copier le lien
             </button>
           </div>
-          {modifie && editable ? <p className="cp-fine" data-testid="wf-valider-avant">Mets à jour ta carte avant de la partager.</p> : null}
+          <button type="button" className="cp-link cp-wz-qr cp-wz-tap" onClick={surQr} disabled={boutonsInactifs} aria-expanded={qrOuvert} data-testid="wf-qr">
+            <SvgIcon name="qrCode" size={14} /> {qrOuvert ? 'Masquer le QR code' : 'Afficher le QR code'}
+          </button>
+          {qrOuvert ? (
+            <div className="cp-wf-qr" data-testid="wf-qr-bloc">
+              {!enAttente && shareUrl ? (
+                <div className="cp-qr-big"><QRCodeSVG value={shareUrl} size={180} level="M" includeMargin={false} /></div>
+              ) : <p className="cp-mini" role="status">Enregistrement de ta carte…</p>}
+              <p className="cp-fine">Ton ami scanne ce code pour ouvrir ton invitation. Pour débloquer ton essai, partage aussi par WhatsApp, Partager ou Copier le lien.</p>
+            </div>
+          ) : null}
           {enregistrement ? <p className="cp-mini" role="status">Un instant…</p> : null}
           {info ? <p className="cp-mini" role="status" data-testid="wf-info">{info}</p> : null}
           {aReessayer ? (
@@ -416,6 +672,19 @@ export default function WizardFilleul({
               </button>
             </div>
           ) : null}
+          {messageOuvert ? (
+            <div className="cp-wf-msg">
+              <label className="cp-label" htmlFor="wf-message">Ton message</label>
+              <textarea id="wf-message" className="cp-input cp-wz-message cp-wf-message" rows={3} value={message}
+                        maxLength={MESSAGE_MAX}
+                        onChange={(e) => setMessage(bornerMessage(e.target.value))} data-testid="wf-message" />
+              <p className="cp-fine cp-wz-compteur">{message.length}/{MESSAGE_MAX}</p>
+            </div>
+          ) : (
+            <button type="button" className="cp-link cp-wz-tap cp-wf-lien" onClick={() => setMessageOuvert(true)} data-testid="wf-modifier-message">
+              <SvgIcon name="edit" size={14} /> Modifier le message
+            </button>
+          )}
         </div>
       ) : null}
 

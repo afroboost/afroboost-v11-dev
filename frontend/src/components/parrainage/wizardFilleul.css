@@ -53,3 +53,16 @@
 .cp-wf .cp-chk { min-height: 44px; align-items: center; }
 .cp-wf .cp-link, .cp-page .cp-link.cp-wz-tap { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; }
 .cp-page .cp-logo { min-height: 44px; display: inline-flex; align-items: center; }
+
+/* UX-P2 — photo, WhatsApp, statut d'enregistrement, QR (mobile d'abord, cibles ≥ 44 px). */
+.cp-wf-perso .cp-label { display: block; margin-top: 12px; }
+.cp-wf-photo { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 6px 0; }
+.cp-av.cp-wf-photo-av { width: 56px; height: 56px; flex: none; }
+.cp-wf-photo-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; flex: 1; }
+.cp-wf-photo-actions .cp-b { width: auto; flex: 1 1 100%; }
+.cp-wf-tel { display: flex; gap: 8px; min-width: 0; }
+.cp-select.cp-wf-indicatif { width: 7.5em; flex: none; font-size: 16px; }
+.cp-wf-tel .cp-input { flex: 1; min-width: 0; font-size: 16px; }
+.cp-wf-statut { min-height: 18px; margin: 4px 0 0; }
+.cp-wf-qr { text-align: center; }
+.cp-wf-msg { margin-top: 10px; }

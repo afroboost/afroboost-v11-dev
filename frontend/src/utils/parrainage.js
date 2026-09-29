@@ -725,11 +725,64 @@ export function creerInvitationChaine({ token, display_name, message }) {
     _corpsChaine({ display_name, message }), { timeout: 20000 });
 }
 
-/** `PATCH /pass/{token}/chain` avec `X-Chain-Key` — même jeton enfant, nouvelle carte. */
-export function modifierInvitationChaine({ token, editKey, display_name, message }) {
+/**
+ * `PATCH /pass/{token}/chain` avec `X-Chain-Key` — même jeton enfant, nouvelle carte.
+ * UX-P2 : `photo_url` (URL ou null), `whatsapp` (texte avec indicatif, normalisé
+ * par le serveur, 422 si invalide) et `consent_contact` (bool) ne partent QUE
+ * s'ils sont fournis (undefined = champ inchangé, jamais écrasé).
+ */
+export function modifierInvitationChaine({ token, editKey, display_name, message, photo_url, whatsapp, consent_contact }) {
+  const corps = _corpsChaine({ display_name, message });
+  if (photo_url !== undefined) corps.photo_url = photo_url || null;
+  if (whatsapp !== undefined) corps.whatsapp = String(whatsapp || '');
+  if (consent_contact !== undefined) corps.consent_contact = !!consent_contact;
   return axios.patch(`${API_PARRAINAGE}/pass/${encodeURIComponent(token || '')}/chain`,
-    _corpsChaine({ display_name, message }),
+    corps,
     { headers: { 'X-Chain-Key': editKey || '' }, timeout: 20000 });
+}
+
+/** UX-P2 — photo de la carte : JPEG / PNG / WebP, 5 Mo au plus (le serveur revérifie). */
+export const PHOTO_CHAINE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+export const PHOTO_CHAINE_MAX = 5 * 1024 * 1024;
+
+/** '' si le fichier est acceptable, sinon le message FR du refus. */
+export function refusPhotoChaine(file) {
+  if (!file) return 'Choisis une photo.';
+  if (PHOTO_CHAINE_TYPES.indexOf(String(file.type || '').toLowerCase()) < 0) return 'Choisis une photo JPEG, PNG ou WebP.';
+  if (Number(file.size) > PHOTO_CHAINE_MAX) return 'Cette photo dépasse 5 Mo : choisis-en une plus légère.';
+  return '';
+}
+
+/** UX-P2 — `POST /pass/{token}/chain/photo` (multipart `file`, X-Chain-Key) → `{photo_url}`. */
+export function envoyerPhotoChaine({ token, editKey, file }) {
+  const fd = new FormData();
+  fd.append('file', file);
+  return axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(token || '')}/chain/photo`,
+    fd, { headers: { 'X-Chain-Key': editKey || '' }, timeout: 60000 });
+}
+
+/**
+ * UX-P2 — indicatifs proposés (Suisse par défaut). La normalisation DÉFINITIVE
+ * est faite par le serveur ; ici on assemble seulement « +41 79 123 45 67 ».
+ */
+export const INDICATIF_DEFAUT = '+41';
+export const INDICATIFS = [
+  ['+41', 'Suisse'], ['+33', 'France'], ['+49', 'Allemagne'], ['+39', 'Italie'], ['+43', 'Autriche'],
+  ['+32', 'Belgique'], ['+352', 'Luxembourg'], ['+34', 'Espagne'], ['+351', 'Portugal'], ['+44', 'Royaume-Uni'],
+  ['+225', "Côte d'Ivoire"], ['+221', 'Sénégal'], ['+237', 'Cameroun'], ['+243', 'RD Congo'], ['+242', 'Congo'],
+  ['+229', 'Bénin'], ['+228', 'Togo'], ['+223', 'Mali'], ['+226', 'Burkina Faso'], ['+224', 'Guinée'],
+  ['+1', 'États-Unis / Canada'],
+];
+
+/**
+ * Le numéro à envoyer : '' si vide ; tel quel s'il porte déjà un indicatif
+ * (« +… » ou « 00… ») ; sinon indicatif + numéro sans le 0 national de tête.
+ */
+export function numeroWhatsAppChaine(indicatif, numero) {
+  const n = String(numero || '').trim();
+  if (!/\d/.test(n)) return '';
+  if (/^(\+|00)/.test(n)) return n;
+  return `${indicatif || INDICATIF_DEFAUT} ${n.replace(/^0+/, '')}`;
 }
 
 /** `POST /pass/{token}/chain/share {channel}` — whatsapp | share | share_image | copy. */

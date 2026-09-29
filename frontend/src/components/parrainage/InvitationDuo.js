@@ -463,6 +463,7 @@ export default function InvitationDuo({ token }) {
           blocInvitation={blocInvitation}
           formulaire={formulaire("M'inscrire à mon essai gratuit")}
           onPrenom={(n) => setForm((prev) => (prev.name.trim() ? prev : Object.assign({}, prev, { name: n })))}
+          onWhatsApp={(w) => setForm((prev) => (prev.whatsapp.trim() ? prev : Object.assign({}, prev, { whatsapp: w })))} // UX-P2
           retourEtape2={retourEtape2}
           messageEtape2={messageEtape2}
         />
