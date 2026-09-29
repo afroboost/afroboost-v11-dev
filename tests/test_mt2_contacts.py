@@ -420,8 +420,12 @@ def base_neuve():
         {"id": "uDcA", "name": "Code de A", "email": "dca@x.test", "whatsapp": ""},
     ]
     db.reservations.docs += [{"id": "r1", "coach_id": A, "userEmail": "rel@x.test"}]
+    # MT-2b : preuves FORTES (nées d'un paiement de la personne) :
+    #   rel@  -> adhésion ACHETÉE chez A ; relb@ -> abonnement Stripe chez B.
+    db.memberships.docs += [{"id": "mA", "coach_id": A, "email": "rel@x.test", "source": "achat"}]
     db.subscriptions.docs += [
-        {"id": "sB", "coach_id": B, "email": "relb@x.test", "status": "active", "code": "AFR-BBB111"},
+        {"id": "sB", "coach_id": B, "email": "relb@x.test", "status": "active", "code": "AFR-BBB111",
+         "source": "stripe_auto"},
         {"id": "sA", "coach_id": A, "email": "suba@x.test", "status": "active", "code": "AFR-AAA111"},
     ]
     db.discount_codes.docs += [
@@ -597,9 +601,30 @@ db = base_neuve()
 r, c = appel(lambda: S.get_user("uA", Req(A)))
 verifier("A lit son user : 200", c == 200)
 r, c = appel(lambda: S.get_user("uRelA", Req(A)))
-verifier("user GLOBAL relié à A par réservation : visible", c == 200)
+verifier("user GLOBAL relié à A par adhésion ACHETÉE : visible", c == 200)
 r, c = appel(lambda: S.get_user("uDcA", Req(A)))
-verifier("user GLOBAL relié à A par code d'accès : visible", c == 200)
+verifier("user GLOBAL relié seulement par un code saisi par A : 404 (preuve fabricable)", c == 404, c)
+# MT-2b — P1 audit : le coach importe l'adresse d'un inscrit global, lui crée
+# réservation, code, fiche abonné et abonnement MANUEL : rien de cela n'ouvre le user.
+db.users.docs.append({"id": "uCible", "name": "Cible", "email": "cible@x.test", "whatsapp": "+41790000099"})
+db.chat_participants.docs.append({"id": "pFab", "coach_id": A, "name": "Importée", "email": "cible@x.test"})
+db.reservations.docs.append({"id": "rFab", "coach_id": A, "userEmail": "cible@x.test"})
+db.discount_codes.docs.append({"id": "dFab", "coach_id": A, "assignedEmail": "cible@x.test", "active": True, "code": "AFR-FAB111"})
+db.subscriber_infos.docs.append({"code": "AFR-FAB111", "coach_id": A, "email": "cible@x.test"})
+db.subscriptions.docs.append({"id": "sFab", "coach_id": A, "email": "cible@x.test", "status": "active",
+                              "code": "AFR-FAB111", "source": "admin_manual", "stripe_customer_id": None})
+db.memberships.docs.append({"id": "mFab", "coach_id": A, "email": "cible@x.test", "source": "saisie_manuelle"})
+r, c = appel(lambda: S.get_user("uCible", Req(A)))
+verifier("preuves FABRICABLES (CRM, résa, code, fiche abonné, abo manuel, adhésion saisie) : 404", c == 404, c)
+r, c = appel(lambda: S.get_all_contacts_unified(Req(A)))
+_mt2b_ids = {x["id"] for x in r["contacts"]} if c == 200 else set()
+verifier("... /contacts/all : le user global n'apparaît pas (seule SA fiche CRM)",
+         c == 200 and "uCible" not in _mt2b_ids and "pFab" in _mt2b_ids, _mt2b_ids)
+verifier("... et le WhatsApp du user global n'est nulle part", c == 200 and "+41790000099" not in str(r), "")
+db.subscriptions.docs.append({"id": "sPaye", "coach_id": A, "email": "cible@x.test", "status": "active",
+                              "code": "AFR-PAY111", "source": "stripe_auto"})
+r, c = appel(lambda: S.get_user("uCible", Req(A)))
+verifier("abonnement PAYÉ (stripe_auto) chez A : user visible", c == 200, c)
 r, c = appel(lambda: S.get_user("uNone", Req(A)))
 verifier("user GLOBAL sans relation : 404", c == 404, c)
 r, c = appel(lambda: S.get_user("uRelB", Req(A)))
@@ -682,7 +707,7 @@ r, c = appel(lambda: S.get_all_contacts_unified(Req(A)))
 ok = c == 200 and r.get("success")
 verifier("A : 200", ok, r if not ok else "")
 ids = {x["id"] for x in r["contacts"]} if ok else set()
-verifier("A voit son user et les users RELIÉS", {"uA", "uRelA", "uDcA"} <= ids, ids)
+verifier("A voit son user et les users RELIÉS (preuve forte)", {"uA", "uRelA"} <= ids and "uDcA" not in ids, ids)
 verifier("A ne voit PAS les users sans relation ni ceux de B", not ({"uNone", "uRelB"} & ids), ids & {"uNone", "uRelB"})
 verifier("A voit SON groupe, pas celui de B", "sessA" in ids and "sessB" not in ids)
 verifier("A ne voit pas les fiches CRM de B", not ({"pB1", "pB2"} & ids))
@@ -863,6 +888,9 @@ verifier("deduplicate A : fusionne SES doublons", c == 200 and r["merged"] == 1 
 verifier("... la fiche de B (plus ancienne) n'est PAS touchée", doc(db, "chat_participants", "dB1") is not None)
 db.chat_participants.docs.append({"id": "dB2", "coach_id": B, "name": "Dup", "email": "dup@x.test", "created_at": "2026-03-01"})
 r, c = appel(lambda: S.deduplicate_contacts(Req(ADMIN)))
+verifier("deduplicate super-admin SANS paramètre : portée PLATEFORME (fiches de B intactes)",
+         c == 200 and doc(db, "chat_participants", "dB2") is not None, r)
+r, c = appel(lambda: S.deduplicate_contacts(Req(ADMIN), scope="global"))
 verifier("deduplicate super-admin : par propriétaire (A et B gardent chacun une fiche)",
          c == 200 and doc(db, "chat_participants", "dA1") and doc(db, "chat_participants", "dB1")
          and doc(db, "chat_participants", "dB2") is None, r)
@@ -906,8 +934,8 @@ verifier("suivi abonnés : A (JWT) -> 200", c == 200, (c, r))
 print("\n== 18. Module commun : preuves de relation & contrat AGENT 1 ==")
 db = base_neuve()
 rel = sur(lambda: asyncio.run(TC.emails_relies(db, A)), set())
-verifier("emails_relies(A) = fiche CRM + réservation + abonnement + code",
-         {"alice@x.test", "rel@x.test", "suba@x.test", "dca@x.test"} <= rel, rel)
+verifier("emails_relies(A) = preuves FORTES seulement (adhésion achetée)",
+         rel == {"rel@x.test"}, rel)
 verifier("... sans aucune adresse de B", not ({"bob@x.test", "relb@x.test"} & rel), rel)
 db.leads.docs.append({"id": "lX", "coach_id": A, "email": "none@x.test"})
 verifier("un LEAD (public, fabricable) n'est PAS une preuve",
@@ -925,6 +953,61 @@ verifier("variantes_telephone('.') = [] (pas une identité)", sur(lambda: TC.var
 verifier("variantes_telephone canonise 0041/0/+41",
          sur(lambda: "0765112233" in TC.variantes_telephone("+41 76 511 22 33")
              and "+41765112233" in TC.variantes_telephone("0041765112233"), False))
+
+print("\n== 19. MT-2b : replis X-User-Email restants, rôle coach_auth, entrées invalides ==")
+db = base_neuve()
+db.users.docs.append({"id": "uProf", "name": "Profil", "email": "prof@x.test"})
+r, c = appel(lambda: S.update_user_mini_profile("uProf", Req(entete="prof@x.test", corps={"bio": "piraté"})))
+verifier("PATCH /users/{id}/profile : X-User-Email de la personne sans jeton -> 403", c == 403
+         and "bio" not in doc(db, "users", "uProf"), c)
+r, c = appel(lambda: S.update_user_mini_profile("uProf", Req(entete=ADMIN, corps={"bio": "piraté"})))
+verifier("PATCH profile : X-User-Email super-admin sans JWT -> 403", c == 403, c)
+r, c = appel(lambda: S.update_user_mini_profile("uProf", Req("prof@x.test", type_="subscriber", corps={"bio": "ok"})))
+verifier("PATCH profile : jeton ABONNÉ de la personne -> 200", c == 200, (c, r))
+r, c = appel(lambda: S.update_user_mini_profile("uProf", Req(ADMIN, corps={"bio": "admin"})))
+verifier("PATCH profile : JWT super-admin -> 200", c == 200, (c, r))
+db.users.docs.append({"id": "fantome"})
+r, c = appel(lambda: S.cleanup_ghost_users(Req(entete=ADMIN)))
+verifier("cleanup-ghost-users : X-User-Email super-admin sans JWT -> 403 (plus de delete_many)",
+         c == 403 and doc(db, "users", "fantome") is not None, c)
+r, c = appel(lambda: S.cleanup_ghost_users(Req(A)))
+verifier("cleanup-ghost-users : JWT coach -> 403", c == 403, c)
+r, c = appel(lambda: S.cleanup_ghost_users(Req(ADMIN2)))
+verifier("cleanup-ghost-users : JWT super-admin -> 200", c == 200 and doc(db, "users", "fantome") is None, (c, r))
+r, c = appel(lambda: S._v334_autoriser(Req(entete=A), "AFR-AAA111"))
+verifier("_v334_autoriser : X-User-Email du coach sans JWT -> 403", c == 403, c)
+r, c = appel(lambda: S._v334_autoriser(Req(A), "AFR-AAA111"))
+verifier("_v334_autoriser : JWT du coach propriétaire -> coach", c == 200 and r[0] == "coach", r)
+r, c = appel(lambda: S._v334_autoriser(Req(B), "AFR-AAA111"))
+verifier("_v334_autoriser : JWT d'un autre coach -> 403", c == 403, c)
+r, c = appel(lambda: S._v334_autoriser(Req(), "AFR-AAA111", "AFR-AAA111"))
+verifier("_v334_autoriser : chemin ABONNÉ par code AFR conservé", c == 200 and r[0] == "subscriber", r)
+C_AUTH = "coach.auth.seul@exemple.test"
+db.coach_auth.docs.append({"email": C_AUTH})
+from api.routes.shared import v20_exiger_coach_signe as _v20
+r, c = appel(lambda: _v20(Req(C_AUTH), db, "banc"))
+verifier("v20_exiger_coach_signe : coach présent seulement dans coach_auth -> accepté (comme _v309)",
+         c == 200 and r == C_AUTH, (c, r))
+r, c = appel(lambda: CAT.create_contact_category(Req(A, corps={"name": 123})))
+verifier("POST /contact-categories name non-chaîne -> 400 (pas 500)", c == 400, (c, r))
+r, c = appel(lambda: CAT.create_contact_category(Req(A, corps={"name": {"$ne": 1}})))
+verifier("POST /contact-categories name objet -> 400", c == 400, (c, r))
+r, c = appel(lambda: CAT.create_contact_category(Req(A, corps={"name": "Nouvelle", "color": 5})))
+verifier("POST /contact-categories valide (couleur invalide -> défaut) -> 200", c == 200 and r["category"]["color"] == "#6B7280", (c, r))
+# set-categories : lectures groupées
+_compteur = {"find_one": 0}
+_orig = Collection.find_one
+async def _fo(self, *a, **k):
+    if self.nom in ("chat_participants", "users"):
+        _compteur["find_one"] += 1
+    return await _orig(self, *a, **k)
+Collection.find_one = _fo
+try:
+    r, c = appel(lambda: CAT.set_contact_categories(Req(A, corps={"contact_ids": ["pA1", "uRelA"], "category_ids": ["cA"]})))
+finally:
+    Collection.find_one = _orig
+verifier("set-categories : 0 find_one par contact (lectures $in groupées)", c == 200 and _compteur["find_one"] == 0,
+         (c, _compteur))
 
 # ============================================================================
 ok = sum(1 for _, v, _ in RESULTATS if v)

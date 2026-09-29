@@ -93,10 +93,21 @@ async def create_contact_category(request: Request):
     """Créer une nouvelle catégorie personnalisée"""
     caller_email = await _mt2_appelant(request, "création de catégorie")  # MT-2
 
-    body = await request.json()
-    name = (body.get("name") or "").strip()
-    color = body.get("color", "#6B7280")
-    icon = body.get("icon", "📋")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    # MT-2b : un `name` non-chaîne (nombre, objet, liste) levait une 500 sur
+    # `.strip()`. -> 400. Couleur / icône : chaînes courtes, défaut sinon.
+    if "name" in body and body["name"] is not None and not isinstance(body["name"], str):
+        raise HTTPException(status_code=400, detail="Nom invalide")
+    name = (body.get("name") or "").strip()[:80]
+    color = body.get("color") if isinstance(body.get("color"), str) else "#6B7280"
+    color = color[:32]
+    icon = body.get("icon") if isinstance(body.get("icon"), str) else "📋"
+    icon = icon[:16]
 
     if not name:
         raise HTTPException(status_code=400, detail="Nom requis")
@@ -248,25 +259,34 @@ async def set_contact_categories(request: Request):
     # portefeuille (fiche d'un autre coach, user sans relation prouvée,
     # identifiant inconnu) -> 404 pour toute la requête, RIEN n'est écrit.
     # Avant, ces ids étaient ignorés en silence derrière un 200.
-    _a_copier = []
-    _valides = []
+    _ids = []
     for cid in contact_ids:
         if not isinstance(cid, str) or not cid or "$" in cid or len(cid) > 128:
             raise HTTPException(status_code=404, detail="Contact introuvable")
-        if await db.chat_participants.find_one({"id": cid, **_proprio}, {"_id": 1}):
-            _valides.append(cid)
-            continue
-        if await db.chat_participants.find_one({"id": cid}, {"_id": 1}):
-            raise HTTPException(status_code=404, detail="Contact introuvable")  # garde 4
-        if not await _mt2_app(db, caller_email, "users", cid):
-            raise HTTPException(status_code=404, detail="Contact introuvable")  # garde 3
-        _a_copier.append(cid)
-        _valides.append(cid)
+        if cid not in _ids:
+            _ids.append(cid)
+    # MT-2b : lectures GROUPÉES (`$in`), jamais 2 à 9 `find_one` par contact.
+    #   1. les fiches CRM du portefeuille ; 2. les ids qui existent chez un
+    #   autre coach ; 3. les users visibles (relation prouvée, `filtrer_ids`).
+    from api.routes.tenant_contacts import filtrer_ids as _mt2_filtrer
+    _miens = {d.get("id") async for d in db.chat_participants.find(
+        {"id": {"$in": _ids}, **_proprio}, {"_id": 0, "id": 1})}
+    _reste = [i for i in _ids if i not in _miens]
+    _ailleurs = {d.get("id") async for d in db.chat_participants.find(
+        {"id": {"$in": _reste}}, {"_id": 0, "id": 1})} if _reste else set()
+    if _ailleurs:
+        raise HTTPException(status_code=404, detail="Contact introuvable")  # garde 4
+    _a_copier = await _mt2_filtrer(db, caller_email, "users", _reste) if _reste else []
+    if len(_a_copier) != len(_reste):
+        raise HTTPException(status_code=404, detail="Contact introuvable")  # garde 3
+    _valides = _ids
+    _users = {u.get("id"): u async for u in db.users.find(
+        {"id": {"$in": _a_copier}}, {"_id": 0})} if _a_copier else {}
 
     updated = 0
     for cid in _valides:
         if cid in _a_copier:
-            user = await db.users.find_one({"id": cid}, {"_id": 0})
+            user = _users.get(cid)
             if user:
                 from datetime import datetime, timezone
                 new_participant = {

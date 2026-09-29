@@ -4814,7 +4814,18 @@ async def update_user_mini_profile(participant_id: str, request: Request):
     if not linked_email and "@" in participant_id:
         linked_email = participant_id.strip()
     if linked_email:
-        caller = await _v263_authenticated_coach(request)  # email authentifie ou '' (sans lever)
+        # MT-2b : `_v263_authenticated_coach` acceptait `X-User-Email` -> écrire
+        # l'adresse d'un compte en en-tête suffisait à réécrire son profil.
+        # Seules des identités SIGNÉES font foi : JWT coach, ou jeton abonné de
+        # la personne elle-même. Aucun appelant frontend (route dépréciée).
+        caller = _v311_coach_email_from_jwt(request)
+        if not caller:
+            try:
+                from api.routes.shared import subscriber_from_request as _mt2b_sub
+                _ab = _mt2b_sub(request)
+                caller = str((_ab or {}).get("email") or "").strip().lower()
+            except Exception:
+                caller = ""
         allowed = bool(caller) and (caller.strip().lower() == linked_email.lower() or is_super_admin(caller))
         if not allowed:
             raise HTTPException(status_code=403, detail="Accès refusé")
@@ -4904,9 +4915,12 @@ async def save_participant_birthday(participant_id: str, request: Request):
 async def cleanup_ghost_users(request: Request):
     """V289 : supprime les documents `users` fantômes (sans name NI email) créés
     par d'anciens upserts birthday/photo. À appeler une seule fois après déploiement."""
-    user_email = require_auth(request)
-    if not is_super_admin(user_email):
-        raise HTTPException(status_code=403, detail="Admin only")
+    # MT-2b : `require_auth` acceptait le repli `X-User-Email` — l'adresse
+    # (publique) du super-admin en en-tête déclenchait une suppression de masse.
+    # JWT SIGNÉ d'un super-admin exigé.
+    user_email = _v311_coach_email_from_jwt(request)
+    if not user_email or not is_super_admin(user_email):
+        raise HTTPException(status_code=403, detail="Authentification super-admin requise — reconnectez-vous")
     result = await db.users.delete_many({
         "$and": [
             {"$or": [{"name": {"$exists": False}}, {"name": ""}, {"name": None}]},
@@ -12457,7 +12471,12 @@ async def _v334_autoriser(request: Request, code_cible: str, code_fourni: str = 
         pass
 
     # --- Chemin COACH / ADMIN : identité authentifiée, jamais déclarée.
-    email = await _v263_authenticated_coach(request)
+    # MT-2b : `_v263_authenticated_coach` acceptait `X-User-Email` -> l'adresse
+    # du coach (ou du super-admin) en en-tête ouvrait mesures, cockpit et
+    # abonnements. Seul un JWT coach SIGNÉ fait foi (appelants : SuiviAbonnes,
+    # CockpitGlobal, ChatWidget, en axios -> Bearer). Le chemin ABONNÉ (code AFR
+    # ou jeton abonné, ci-dessus) est inchangé.
+    email = _v311_coach_email_from_jwt(request)
     if email:
         if is_super_admin(email):
             return "admin", email, coach_id_cible
@@ -20744,7 +20763,7 @@ async def check_duplicate_contacts(request: Request):
 # ============================================================
 
 @api_router.post("/contacts/deduplicate")
-async def deduplicate_contacts(request: Request):
+async def deduplicate_contacts(request: Request, scope: Optional[str] = None):
     """v104: Nettoie les doublons existants dans chat_participants.
     Fusionne par email (case-insensitive) ou phone normalisé.
     Garde le contact le plus ancien (created_at), met à jour avec les infos des doublons."""
@@ -20761,7 +20780,15 @@ async def deduplicate_contacts(request: Request):
 
     try:
         # Récupérer tous les contacts du coach
-        query = _mt2_filtre(caller_email)
+        # MT-2b : route DESTRUCTIVE -> pour le super-admin, portée PLATEFORME par
+        # défaut (`portee_ecriture` : ses propres fiches et le stock sans
+        # propriétaire). La portée GLOBALE (tous les coachs, toujours groupée
+        # par propriétaire) exige un choix explicite `?scope=global`.
+        from api.routes.tenant_contacts import portee_ecriture as _mt2_portee
+        if is_super_admin(caller_email) and (scope or "").strip().lower() == "global":
+            query = _mt2_filtre(caller_email)
+        else:
+            query = _mt2_portee(caller_email)[1]
         all_contacts = await db.chat_participants.find(query, {"_id": 0}).to_list(10000)
 
         # Grouper par (propriétaire, email normalisé) puis (propriétaire, numéro canonique)
