@@ -296,7 +296,8 @@ export default function WizardFilleul({
           <span className="cp-wf-ok-ic"><SvgIcon name="check" size={22} strokeWidth="2.5" /></span>
           <div>
             <b>Invitation prête</b>
-            <p>Ton essai gratuit est maintenant débloqué.</p>
+            {/* PAR-3 (A2) : rien n'est promis avant la réponse du serveur (l'essai peut être refusé au join). */}
+            <p>Termine ton inscription pour réserver ta place.</p>
           </div>
         </div>
         <p className="cp-wf-rappel" data-testid="wf-rappel-seance">

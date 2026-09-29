@@ -112,6 +112,12 @@ def partie_cible():
     verifier("C1f. dto_public(chaine=True).target_url = /duo/c/<jeton> ; défaut inchangé",
              IC.dto_public(s, chaine=True)["target_url"] == "/duo/c/tokA-b_1"
              and IC.dto_public(s)["target_url"].startswith("/?offre="))
+    # PAR-3 (A4) : l'historique du parrain ne montre plus les types bruts de la chaîne.
+    _h = E.historique([{"id": "p1", "events": [
+        {"type": "chain_child_created", "at": "2026-10-01T10:00:00"},
+        {"type": "chain_shared", "at": "2026-10-01T10:05:00"}]}])
+    verifier("C1g. historique : chain_shared / chain_child_created traduits",
+             [x["label"] for x in _h] == ["Invitation partagée", "Invitation de ton ami préparée"], _h)
 
 
 async def partie_page_og():

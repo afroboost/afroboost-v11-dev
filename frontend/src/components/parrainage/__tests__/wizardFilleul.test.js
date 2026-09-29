@@ -150,7 +150,8 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     expect(share[1]).toEqual({ channel: 'whatsapp' });
     expect(par('wf-etape-3')).not.toBeNull();
     expect(conteneur.textContent).toContain('Invitation prête');
-    expect(conteneur.textContent).toContain('Ton essai gratuit est maintenant débloqué.');
+    expect(conteneur.textContent).toContain('Termine ton inscription pour réserver ta place.');
+    expect(conteneur.textContent).not.toContain('essai gratuit est maintenant débloqué');
     expect(par('invitation-form')).not.toBeNull();
     expect(par('invitation-rejoindre').textContent).toContain("M'inscrire à mon essai gratuit");
     // « Partager encore » : le 2e partage utilise la NOUVELLE share_url (v=4)
