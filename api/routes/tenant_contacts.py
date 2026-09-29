@@ -69,8 +69,9 @@ def filtre_proprietaire(coach_email: str) -> dict:
 #   reservations        OUI (POST /reservations est PUBLIC : n'importe qui
 #                       réserve le cours du coach au nom de n'importe quelle
 #                       adresse ; le cours tranche le coach_id)       NON
-#   subscriber_infos    OUI (PUT /subscriber-info/{code} : quiconque connaît
-#                       le code — le coach connaît ses codes manuels) NON
+#   subscriber_infos    OUI (PUT /subscriber-info/{code} : porteur du jeton
+#                       abonné du code depuis MT-6 — le coach connaît ses codes
+#                       manuels ET leur assignedEmail, il peut l'obtenir) NON
 #   subscriptions       OUI pour source admin_manual / manual_sync /
 #                       social_proof (création à la main) ;
 #                       NON pour `source: "stripe_auto"` (webhook Stripe

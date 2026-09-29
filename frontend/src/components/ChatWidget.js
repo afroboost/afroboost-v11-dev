@@ -1781,6 +1781,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   };
 
   // V294 : lit les infos abonné depuis le BACKEND (source de vérité). Best-effort.
+  // MT-6 : la réponse dépend de l'appelant. Avec le jeton d'appareil de CE code
+  // (afroboost_subscriber_token, joint par l'intercepteur) -> fiche complète ;
+  // avec le code seul -> { exists, name } uniquement (plus d'e-mail, WhatsApp ni
+  // anniversaire). Conséquence voulue : la connexion AUTOMATIQUE par QR / lien
+  // ?code= ne se fait plus que sur un appareil déjà connecté ; ailleurs, le
+  // formulaire s'ouvre pré-rempli (code + prénom) et l'abonné confirme son e-mail.
   const v294FetchSubscriberInfo = async (code) => {
     const c = (code || '').trim();
     if (!c) return null;
@@ -4020,6 +4026,17 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         _subTok = _jeton && _jeton.token;
         _c9bPseudo = (_jeton && _jeton.analyticsId) || '';
       } catch (e) { /* silencieux */ }
+
+      // MT-6 : `/subscriber-info/<code>` ne livre plus le WhatsApp à qui ne
+      // présente que le code. Sur un appareil neuf, le WhatsApp manquant est
+      // donc relu APRÈS l'émission du jeton d'appareil de CE code (l'intercepteur
+      // global le joint en X-Subscriber-Token) : rien n'est redemandé à l'abonné.
+      if (_subTok && !profile.whatsapp) {
+        try {
+          var _infoJeton = await v294FetchSubscriberInfo(profile.code);
+          if (_infoJeton && _infoJeton.whatsapp) profile.whatsapp = String(_infoJeton.whatsapp).trim();
+        } catch (e) { /* silencieux : on continue avec ce qu'on a */ }
+      }
 
       var _entree = await handleSmartEntry({
         firstName: profile.name,
