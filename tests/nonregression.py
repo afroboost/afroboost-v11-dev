@@ -2456,6 +2456,55 @@ def t112_s0_conversations_acces_legitime():
         record(112, "SECURITY-S0 : acces legitime a /api/conversations", False, str(e))
 
 
+def t113_mt1_campagnes_fermees():
+    """MT-1 — les routes de LECTURE / marquage des campagnes exigent un JWT signé.
+
+    Avant : GET /campaigns/{id} et /campaign-debug/{id} répondaient à un anonyme
+    (campagne complète, résultats nominatifs) ; GET /campaigns et /campaigns-list
+    rendaient TOUT à qui posait l'e-mail super-admin en en-tête ; mark-sent
+    passait une campagne en `completed` pour n'importe qui. Identifiant
+    volontairement INEXISTANT : la garde répond AVANT toute lecture (403, jamais
+    404), et rien n'est écrit."""
+    faux = "id-inexistant-sonde-mt1"
+    try:
+        mesures = {
+            "get_id_anonyme": requests.get(_url(f"/api/campaigns/{faux}"), timeout=TIMEOUT).status_code,
+            "debug_anonyme": requests.get(_url(f"/api/campaign-debug/{faux}"), timeout=TIMEOUT).status_code,
+            "liste_entete_admin": requests.get(_url("/api/campaigns"),
+                                               headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code,
+            "list_entete_admin": requests.get(_url("/api/campaigns-list"),
+                                              headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code,
+            "mark_sent_anonyme": requests.post(_url(f"/api/campaigns/{faux}/mark-sent"),
+                                               json={"contactId": "x", "channel": "email"},
+                                               timeout=TIMEOUT).status_code,
+        }
+        ok = all(v in (401, 403) for v in mesures.values())
+        record(113, "MT-1 : campagnes fermées à l'anonyme et à X-User-Email seul", ok,
+               " ".join(f"{k}={v}" for k, v in mesures.items()))
+    except Exception as e:
+        record(113, "MT-1 : campagnes fermées", False, str(e))
+
+
+def t114_mt1_campagnes_acces_legitime():
+    """MT-1 — PENDANT OBLIGATOIRE (règle V310c) : le super-admin signé garde sa
+    liste de campagnes. SKIP sans ADMIN_JWT = livraison du durcissement INTERDITE."""
+    if not ADMIN_JWT:
+        skip(114, "MT-1 : super-admin signé -> GET /api/campaigns 200",
+             "ADMIN_JWT non fourni — ⛔ parcours légitime NON prouvé (règle V310c)")
+        return
+    try:
+        h = {"Authorization": f"Bearer {ADMIN_JWT}"}
+        r1 = requests.get(_url("/api/campaigns"), headers=h, timeout=TIMEOUT)
+        r2 = requests.get(_url("/api/campaigns-list"), headers=h, timeout=TIMEOUT)
+        ok = (r1.status_code == 200 and isinstance(r1.json(), list) and len(r1.json()) > 0
+              and r2.status_code == 200 and isinstance(r2.json(), list))
+        record(114, "MT-1 : super-admin signé -> /campaigns et /campaigns-list 200 NON vide", ok,
+               f"campaigns HTTP {r1.status_code} n={len(r1.json()) if r1.status_code == 200 else '-'} "
+               f"| campaigns-list HTTP {r2.status_code}")
+    except Exception as e:
+        record(114, "MT-1 : accès légitime aux campagnes", False, str(e))
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -2498,6 +2547,7 @@ def main():
                    t103_drapeau_tarif_membre_expose, t104_drapeau_tarif_membre_admin_seul,
                    t105_estimation_sans_jeton_prix_public, t106_estimation_offre_inconnue,
                    t107_estimation_aucun_oracle_par_email,
+                   t113_mt1_campagnes_fermees, t114_mt1_campagnes_acces_legitime,
                    t108_offres_exposent_avantage_membre,
                    t109_p1d_drapeaux_exposes_et_dormants, t110_p1d_drapeaux_admin_seulement,
                    t111_s0_conversations_fermee_et_sans_pii,
