@@ -380,6 +380,92 @@ async def partie_chaine_5():
     verifier("K15b. campagne archivée : join sur l'enfant P1 -> 410", c == 410, (c, x))
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 4. Audit sécurité (P1-A, P1-B, P2)
+# ═══════════════════════════════════════════════════════════════════════════
+def _faux_p0(i, created_at, invitee=None):
+    return {"id": "faux-p0-%d-%s" % (i, created_at[:10]), "share_token": "faux-tok-%d-%s" % (i, created_at[:10]),
+            "status": "waiting" if not invitee else "unlocked", "invitee": invitee,
+            "course_id": H.COURS_DUO, "occurrence": "x-%d" % i, "created_at": created_at,
+            "sponsor": {"email_norm": "campagne:%s:faux-%d-%s" % (CAMP_ID, i, created_at[:10])},
+            "origin": {"source_type": "partner", "source_id": PARTENAIRE, "campaign_id": CAMP_ID,
+                       "entry_key_hash": "h%d" % i}}
+
+
+async def partie_audit():
+    from datetime import datetime, timedelta, timezone
+    _vieux = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
+    _recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    # P1-A (1) : 500 P0 abandonnés de plus de 24 h ne bloquent plus
+    base, occ = depart()
+    base["referral_passes"].docs += [_faux_p0(i, _vieux) for i in range(500)]
+    c, r = await entree()
+    verifier("A1. 500 P0 ouverts VIEUX (> 24 h) : ignorés du plafond -> 201", c == 201, (c, r))
+    base["referral_passes"].docs += [_faux_p0(i, _recent) for i in range(499)]
+    c, r = await entree()
+    verifier("A1b. 500 P0 ouverts RÉCENTS -> 409 campagne_complete", c == 409 and raison(r) == "campagne_complete", (c, r))
+    # P1-A (2) : débit par IP ET par campagne (5 P0 / heure) ; une clé connue ne le consomme pas
+    base, occ = depart()
+    R._DEBIT_ENTREE_CAMPAGNE.clear()
+    _ip = {"CF-Connecting-IP": "203.0.113.77"}
+
+    async def _e(cle=None):
+        _h = dict(_ip)
+        if cle:
+            _h["X-Entry-Key"] = cle
+        return await appel(R.referral_campagne_entree(TOK_CAMP, H.Requete({}, _h)))
+    res = [await _e() for _ in range(5)]
+    c6, r6 = await _e()
+    verifier("A2. même IP, même campagne : 5 P0 créés puis 429 au 6e, rien écrit",
+             [x[0] for x in res] == [201] * 5 and c6 == 429 and len(p0s(base)) == 5, ([x[0] for x in res], c6))
+    c7, r7 = await _e(cle=res[0][1]["entry_key"])
+    verifier("A2b. clé X-Entry-Key connue : 200 même P0 malgré le débit épuisé", c7 == 200
+             and r7.get("share_token") == res[0][1]["share_token"], (c7, r7))
+    verifier("A2c. débit par campagne : constante 5 / heure", R.CAMPAGNE_ENTREES_PAR_IP_HEURE == 5)
+    # P1-B : plafond d'ESSAIS par campagne (défaut 30)
+    verifier("B0. CAMPAGNE_ESSAIS_MAX = 30 par défaut", R.CAMPAGNE_ESSAIS_MAX == 30, R.CAMPAGNE_ESSAIS_MAX)
+    base, occ = depart()
+    c, r = await entree()
+    t0 = r["share_token"]
+    await preparer_et_partager(t0)
+    base["referral_passes"].docs += [_faux_p0(i, _recent, invitee={"email_norm": "deja%d@exemple.test" % i})
+                                     for i in range(30)]
+    avant = V3.etat(base)
+    n_psp = len(H.MOUCHARDS["paiements"])
+    c, x = await rejoindre(t0, 1)
+    verifier("B1. 31e essai de la campagne -> 409 campagne_complete, RIEN consommé (ni invité, verrou, code, résa)",
+             c == 409 and raison(x) == "campagne_complete" and doc_par_tok(base, t0)["invitee"] is None
+             and V3.etat(base) == avant and len(H.MOUCHARDS["paiements"]) == n_psp
+             and not base["free_trial_claims"].docs, (c, x, V3.etat(base), avant))
+    c, x = await entree()
+    verifier("B2. /entry quand le plafond d'essais est atteint -> 409 campagne_complete",
+             c == 409 and raison(x) == "campagne_complete", (c, x))
+    base["referral_passes"].docs = [d for d in base["referral_passes"].docs if not d["id"].startswith("faux-p0-29")]
+    c, j = await rejoindre(t0, 1)
+    verifier("B3. sous le plafond (29 essais) : le 30e s'inscrit", c == 200 and j.get("status") == "unlocked", (c, str(j)[:200]))
+    # P2 : campagne archivée -> la chaîne ne s'étend plus
+    base, occ = depart()
+    c, r = await entree()
+    t0 = r["share_token"]
+    c, x = await V3.chaine(t0)
+    k_ok = c == 201
+    base["referral_campaigns"].docs[0]["status"] = "archived"
+    c, x = await V3.partager(t0)
+    verifier("P2a. campagne archivée : /chain/share -> 410, parent non marqué partagé",
+             k_ok and c == 410 and not (doc_par_tok(base, t0).get("chain") or {}).get("shared_at"), (c, x))
+    base, occ = depart()
+    c, r = await entree()
+    base["referral_campaigns"].docs[0]["status"] = "archived"
+    n = len(base["referral_passes"].docs)
+    c, x = await V3.chaine(r["share_token"])
+    verifier("P2b. campagne archivée : POST /chain -> 410, aucun enfant créé",
+             c == 410 and len(base["referral_passes"].docs) == n, (c, x))
+    # pass d'avant : /chain inchangé (aucune lecture de campagne)
+    base, occ, p0 = await V3.depart()
+    c, x = await V3.chaine(p0["share_token"])
+    verifier("P2c. pass Duo classique : POST /chain inchangé (201)", c == 201, (c, x))
+
+
 def main():
     _tmp = tempfile.mkdtemp(prefix="banc_par1_")
     _orig = S._V413_MEDIA_DIR
@@ -390,7 +476,7 @@ def main():
         except Exception:  # noqa: BLE001
             pass
         boucle = asyncio.get_event_loop()
-        for partie in (partie_cible, partie_page_og, partie_entree, partie_chaine_5):
+        for partie in (partie_cible, partie_page_og, partie_entree, partie_chaine_5, partie_audit):
             try:
                 _r = partie()
                 if asyncio.iscoroutine(_r):

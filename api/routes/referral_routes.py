@@ -76,6 +76,10 @@ FLAG_CHAINE = "parrainage_chaine_enabled"    # V556 : `true` = actif ; absent / 
 FLAG_CHAINE_CAMPAGNE = "invitation_chaine_campagne_enabled"
 DEBIT_PREFIXE_CAMPAGNE = "duo_campaign:"      # PAR-1 : POST /campaign/{token}/entry
 CAMPAGNE_ENTREES_OUVERTES_MAX = 500           # PAR-1 : P0 ouverts sans invité par campagne
+CAMPAGNE_ENTREES_FENETRE_H = 24               # PAR-1 (audit P1-A) : seuls les P0 RÉCENTS comptent au plafond
+CAMPAGNE_ENTREES_PAR_IP_HEURE = 5             # PAR-1 (audit P1-A) : P0 créés / heure / IP / campagne
+CAMPAGNE_ESSAIS_MAX = 30                      # PAR-1 (audit P1-B) : essais octroyés par campagne (une séance)
+_DEBIT_ENTREE_CAMPAGNE = {}                   # PAR-1 : {"<campagne>|<ip>": [instants monotones]}
 PREFIXE_PARRAIN_CAMPAGNE = "campagne:"        # PAR-1 : `sponsor.email_norm` d'un P0 (jamais une adresse)
 
 
@@ -159,12 +163,46 @@ async def _exiger_actif() -> None:
 
 
 def _ip(request) -> str:
+    # PAR-1 (audit P1-A, À TRAITER DANS UN LOT INFRA SÉPARÉ — comportement NON
+    # modifié ici) : `CF-Connecting-IP` puis `X-Forwarded-For` sont crus SANS
+    # vérifier que la requête vient bien de Cloudflare. L'origine Hetzner
+    # (178.105.201.62, servie en HTTP par Traefik) répond aussi en direct : un
+    # client qui l'appelle en forçant `Host: afroboost.com` choisit librement ces
+    # en-têtes, donc SA clé de débit — chaque débit par IP de ce module
+    # (`_exiger_debit` : duo_pass, duo_join, duo_offer, duo_chain*, duo_campaign ;
+    # `_debit_entree_campagne`) et celui d'ESSAI-7 (checkout_routes
+    # `_essai7_exiger_debit`, même lecture) sont alors contournables. Correctif
+    # attendu côté infra : n'accepter l'origine que depuis les plages Cloudflare
+    # (pare-feu / Traefik), ou ne lire `CF-Connecting-IP` que si `client.host`
+    # appartient à ces plages.
     try:
         return (request.headers.get("CF-Connecting-IP")
                 or (request.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
                 or (request.client.host if getattr(request, "client", None) else "")).strip()
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _debit_entree_campagne(request, campaign_id) -> bool:
+    """PAR-1 (audit P1-A) — `CAMPAGNE_ENTREES_PAR_IP_HEURE` P0 créés par heure,
+    par IP ET par campagne (compteur mémoire du processus, même mécanique
+    qu'ESSAI-7). Faux = refus. Sans IP lisible : accepté (comme `_exiger_debit`)."""
+    import time as _t
+    _adresse = _ip(request)
+    if not _adresse:
+        return True
+    _cle = "%s|%s" % (str(campaign_id or "")[:64], _adresse[:64])
+    _now = _t.monotonic()
+    _hist = [h for h in _DEBIT_ENTREE_CAMPAGNE.get(_cle, []) if _now - h < 3600]
+    if len(_hist) >= CAMPAGNE_ENTREES_PAR_IP_HEURE:
+        _DEBIT_ENTREE_CAMPAGNE[_cle] = _hist
+        return False
+    _hist.append(_now)
+    _DEBIT_ENTREE_CAMPAGNE[_cle] = _hist
+    if len(_DEBIT_ENTREE_CAMPAGNE) > 5000:          # borne mémoire
+        for _k in list(_DEBIT_ENTREE_CAMPAGNE.keys())[:1000]:
+            _DEBIT_ENTREE_CAMPAGNE.pop(_k, None)
+    return True
 
 
 def _exiger_debit(request, prefixe: str) -> None:
@@ -480,6 +518,28 @@ async def _proprietaires_campagne(pass_doc) -> list:
         except Exception:  # noqa: BLE001
             _SA = []
     return [E.normaliser_email(x) for x in (_SA or [])]
+
+
+def _essais_max(campagne) -> int:
+    """PAR-1 (audit P1-B) — plafond d'essais d'une campagne : `essais_max` de la
+    campagne s'il est un entier > 0 (réglage futur), sinon `CAMPAGNE_ESSAIS_MAX`."""
+    try:
+        _n = int((campagne or {}).get("essais_max"))
+        if _n > 0:
+            return _n
+    except (TypeError, ValueError):
+        pass
+    return CAMPAGNE_ESSAIS_MAX
+
+
+async def _campagne_complete_essais(campagne) -> bool:
+    """Les pass de cette campagne ayant un invité inscrit atteignent-ils le plafond ?"""
+    _cid = str((campagne or {}).get("id") or "")
+    if not _cid:
+        return False
+    _n = await db[COLL_PASSES].count_documents(
+        {"origin.campaign_id": _cid, "invitee.email_norm": {"$type": "string"}})
+    return _n >= _essais_max(campagne)
 
 
 async def _cours_eligible(course_id: str):
@@ -2011,6 +2071,12 @@ async def referral_join(share_token: str, request: Request):
     # qu'on vient soi-même d'inviter. (Le verrou ESSAI-1 reste la garde de fond.)
     if E.identite_correspond(_email, _tel, await _identites_de_la_chaine(_p)):
         raise _refus(409, E.REFUS_AUTO_PARRAINAGE, "Tu ne peux pas être ton propre invité.")
+    # PAR-1 (audit P1-B) : une campagne n'octroie pas plus d'essais que son plafond
+    # (une seule séance) — vérifié AVANT la pose de l'invité et l'octroi ESSAI.
+    if E.campagne_du_pass(_p):
+        _camp = await _campagne_par_id(E.campagne_du_pass(_p))
+        if _camp and await _campagne_complete_essais(_camp):
+            raise _refus(409, "campagne_complete", "Cette invitation est complète : plus de place d'essai.")
 
     _course = await db["courses"].find_one({"id": _p.get("course_id")}, {"_id": 0})
     if not _course or _course.get("archived") is True:
@@ -2296,6 +2362,17 @@ async def _bilan_apercu(pass_doc) -> dict:
         return {"ok": False, "fallback": True, "checks": {}}
 
 
+async def _exiger_campagne_vivante(pass_doc) -> None:
+    """PAR-1 (audit P2) — un pass de campagne dont la campagne ne peut plus
+    octroyer (archivée, offre retirée...) ne fabrique ni ne partage d'enfant
+    voué au 410. Un pass sans campagne : aucune lecture, rien ne change."""
+    if not E.campagne_du_pass(pass_doc):
+        return
+    if not await _offre_de_campagne(await _campagne_par_id(E.campagne_du_pass(pass_doc)),
+                                    (pass_doc or {}).get("offer_id")):
+        raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
+
+
 def _cle_chaine_valide(request, enfant) -> bool:
     """`X-Chain-Key` == la clé rendue à la création de l'invitation enfant
     (comparaison à temps constant sur l'empreinte ; jamais stockée en clair)."""
@@ -2392,6 +2469,7 @@ async def referral_chaine_creer(share_token: str, request: Request):
     await _exiger_actif()
     _exiger_debit(request, DEBIT_PREFIXE_CHAINE)
     _p, _s = await _parent_ouvert(share_token)
+    await _exiger_campagne_vivante(_p)          # PAR-1 (audit P2)
     _enf = await _enfant_de(_p)
     if _enf:
         return await _reponse_chaine(_p, _enf, 200)
@@ -2522,6 +2600,7 @@ async def referral_chaine_partager(share_token: str, request: Request):
     await _exiger_actif()
     _exiger_debit(request, DEBIT_PREFIXE_CHAINE_ACTION)
     _p, _s = await _parent_ouvert(share_token)
+    await _exiger_campagne_vivante(_p)          # PAR-1 (audit P2)
     _b = await _corps(request)
     _canal = str(_b.get("channel") or "").strip().lower()
     if _canal not in E.CANAUX:
@@ -2645,11 +2724,20 @@ async def referral_campagne_entree(token: str, request: Request):
         raise HTTPException(status_code=410, detail="La séance de cette invitation est passée.")
 
     # Plafond : P0 encore ouverts (sans invité) pour cette campagne.
+    # Audit P1-A : seuls les P0 RÉCENTS (< 24 h) sans invité comptent — des P0
+    # abandonnés ne bloquent plus les vrais visiteurs.
+    from datetime import timedelta
+    _depuis = _iso(_now - timedelta(hours=CAMPAGNE_ENTREES_FENETRE_H))
     _ouverts = await db[COLL_PASSES].count_documents(
         {"origin.campaign_id": _camp["id"], "origin.source_type": {"$in": list(E.SOURCES_RACINE)},
-         "status": {"$in": [E.LOCKED, E.WAITING]}, "invitee": None})
-    if _ouverts >= CAMPAGNE_ENTREES_OUVERTES_MAX:
+         "status": {"$in": [E.LOCKED, E.WAITING]}, "invitee": None, "created_at": {"$gte": _depuis}})
+    if _ouverts >= CAMPAGNE_ENTREES_OUVERTES_MAX or await _campagne_complete_essais(_camp):
         raise _refus(409, "campagne_complete", "Cette invitation est complète pour le moment.")
+    # Audit P1-A : débit PAR IP ET PAR CAMPAGNE, seulement pour un P0 NEUF (une
+    # clé X-Entry-Key connue est rendue plus haut sans le consommer).
+    if not _debit_entree_campagne(request, _camp["id"]):
+        raise HTTPException(status_code=429,
+                            detail="Trop de demandes depuis cette connexion. Réessayez dans un moment.")
 
     _cle_camp = str(_camp.get("coach_id") or "").strip().lower()
     _idt = IC._inviter_public(_camp)
