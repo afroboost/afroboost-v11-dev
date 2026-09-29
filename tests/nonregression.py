@@ -2464,7 +2464,7 @@ _INV1_JETON_INVALIDE = ("Bearer eyJhbGciOiJIUzI1NiJ9."
                         "eyJlbWFpbCI6ImFAYi5jIn0.mauvaise_signature")
 
 
-def t113_inv1_invitations_fermees_sans_auth():
+def t140_inv1_invitations_fermees_sans_auth():
     try:
         cas = [("GET", "/api/referral/campaigns", None),
                ("GET", "/api/referral/campaigns/options", None),
@@ -2484,31 +2484,31 @@ def t113_inv1_invitations_fermees_sans_auth():
                 if r.status_code not in (401, 403) or fuite:
                     ok = False
                     details.append(f"{meth} {chemin} [{nom}]={r.status_code}" + (f" FUITE:{fuite}" if fuite else ""))
-        record(113, "INV-1 : /api/referral/campaigns refuse sans jeton coach (401/403, sans fuite)",
+        record(140, "INV-1 : /api/referral/campaigns refuse sans jeton coach (401/403, sans fuite)",
                ok, " | ".join(details) or "21 appels refusés")
     except Exception as e:
-        record(113, "INV-1 : /api/referral/campaigns fermée sans auth", False, str(e))
+        record(140, "INV-1 : /api/referral/campaigns fermée sans auth", False, str(e))
 
 
-def t114_inv1_partage_public_jeton_inconnu():
+def t141_inv1_partage_public_jeton_inconnu():
     try:
         r = requests.get(_url("/api/share/invite/jeton-inconnu-nonregression"), timeout=TIMEOUT,
                          allow_redirects=False)
         # INV-1 (audit P2) : la carte d'un jeton inconnu n'existe pas non plus.
         r2 = requests.get(_url("/api/share/invite/jeton-inconnu-nonregression/carte.jpg"), timeout=TIMEOUT,
                           allow_redirects=False)
-        record(114, "INV-1 : /api/share/invite/<jeton inconnu> (+ /carte.jpg) -> 404",
+        record(141, "INV-1 : /api/share/invite/<jeton inconnu> (+ /carte.jpg) -> 404",
                r.status_code == 404 and r2.status_code == 404,
                f"page HTTP {r.status_code} | carte HTTP {r2.status_code}")
     except Exception as e:
-        record(114, "INV-1 : /api/share/invite/<jeton inconnu>", False, str(e))
+        record(141, "INV-1 : /api/share/invite/<jeton inconnu>", False, str(e))
 
 
-def t115_inv1_acces_legitime():
+def t142_inv1_acces_legitime():
     """Pendant obligatoire du test 113 (règle V310c) : 200 AVEC le jeton légitime.
     Lecture seule (liste + options) : rien n'est créé en production."""
     if not ADMIN_JWT:
-        skip(115, "INV-1 : accès légitime aux invitations",
+        skip(142, "INV-1 : accès légitime aux invitations",
              "ADMIN_JWT non fourni — ⛔ un SKIP ici INTERDIT la livraison (règle V310c).")
         return
     try:
@@ -2519,17 +2519,17 @@ def t115_inv1_acces_legitime():
         d2 = r2.json() if r2.status_code == 200 else {}
         ok = (r1.status_code == 200 and isinstance(d1.get("items"), list) and "total" in d1
               and r2.status_code == 200 and isinstance(d2.get("courses"), list) and isinstance(d2.get("offers"), list))
-        record(115, "INV-1 : coach légitime (JWT) -> liste + options 200", ok,
+        record(142, "INV-1 : coach légitime (JWT) -> liste + options 200", ok,
                f"liste HTTP {r1.status_code} | options HTTP {r2.status_code} cours={len(d2.get('courses') or [])}")
     except Exception as e:
-        record(115, "INV-1 : accès légitime aux invitations", False, str(e))
+        record(142, "INV-1 : accès légitime aux invitations", False, str(e))
 
 
 # INV-3 — `GET /api/subscriber/space/{code}` accepte `?course=&occurrence=`
 # (séance d'une invitation, ajoutée à la liste si elle est autorisée). La surface
 # change : on prouve que les nouveaux paramètres n'ouvrent RIEN sans jeton
 # d'espace — même refus neutre, mot pour mot, qu'avant. Lecture seule.
-def t116_inv3_espace_seance_sans_auth():
+def t143_inv3_espace_seance_sans_auth():
     try:
         code = "AFR-NONREG-INV3"
         base = _url(f"/api/subscriber/space/{code}")
@@ -2546,10 +2546,10 @@ def t116_inv3_espace_seance_sans_auth():
                 if r.status_code != ref.status_code or (r.text or "") != (ref.text or "") or fuite:
                     ok = False
                     details.append(f"{nom_cas} [{nom}]={r.status_code}" + (f" FUITE:{fuite}" if fuite else ""))
-        record(116, "INV-3 : /subscriber/space?course=&occurrence= refusé sans jeton (réponse identique)",
+        record(143, "INV-3 : /subscriber/space?course=&occurrence= refusé sans jeton (réponse identique)",
                ok, " | ".join(details) or f"6 appels = refus de référence HTTP {ref.status_code}")
     except Exception as e:
-        record(116, "INV-3 : /subscriber/space?course=&occurrence= sans auth", False, str(e))
+        record(143, "INV-3 : /subscriber/space?course=&occurrence= sans auth", False, str(e))
 
 
 def main():
@@ -2598,9 +2598,9 @@ def main():
                    t109_p1d_drapeaux_exposes_et_dormants, t110_p1d_drapeaux_admin_seulement,
                    t111_s0_conversations_fermee_et_sans_pii,
                    t112_s0_conversations_acces_legitime,
-                   t113_inv1_invitations_fermees_sans_auth, t114_inv1_partage_public_jeton_inconnu,
-                   t115_inv1_acces_legitime,
-                   t116_inv3_espace_seance_sans_auth,
+                   t140_inv1_invitations_fermees_sans_auth, t141_inv1_partage_public_jeton_inconnu,
+                   t142_inv1_acces_legitime,
+                   t143_inv3_espace_seance_sans_auth,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
