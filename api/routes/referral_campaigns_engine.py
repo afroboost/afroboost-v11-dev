@@ -352,13 +352,37 @@ def _seance_params(doc) -> str:
     return "&course=%s&occurrence=%s" % (quote(_c, safe=""), quote(_occ, safe=""))
 
 
-def cible_front(doc) -> str:
+# PAR-1 : le jeton d'une campagne dans `/duo/c/<jeton>` — même motif que la
+# route du front (`^\/duo\/c\/([A-Za-z0-9_-]+)\/?$`) ; hors motif -> lien d'avant.
+_RE_JETON_CAMPAGNE = _re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def cible_chaine(doc) -> str:
+    """PAR-1 — `/duo/c/<share_token>` pour une campagne `trial` qui porte une
+    séance COMPLÈTE (la racine de chaîne P0 est créée sur CETTE séance) ; ""
+    sinon (le lien d'avant s'applique)."""
+    _d = doc or {}
+    if _d.get("type") != "trial" or not _seance_params(_d):
+        return ""
+    _tok = str(_d.get("share_token") or "").strip()
+    if not _RE_JETON_CAMPAGNE.match(_tok):
+        return ""
+    return "/duo/c/%s" % _tok
+
+
+def cible_front(doc, chaine=False) -> str:
     """Chemin RELATIF du front, par les liens profonds EXISTANTS (App.js) :
     `/?offre=<id>` ouvre la fiche offre ; `&reserver=1` ouvre la réservation —
     SEULEMENT si gratuit (sur une offre payante, Stripe s'ouvrirait seul) ;
-    `/parrainage` = Centre Parrainage."""
+    `/parrainage` = Centre Parrainage.
+    PAR-1 : `chaine=True` (drapeaux lus par l'appelant) -> une campagne `trial`
+    complète mène à `/duo/c/<jeton>` (entrée dans la chaîne V556)."""
     _d = doc or {}
     _t = _d.get("type")
+    if chaine:
+        _c = cible_chaine(_d)
+        if _c:
+            return _c
     if _t == "pass_duo":
         return "/parrainage?campagne=%s" % quote(str(_d.get("share_token") or ""), safe="")
     _o = quote(str(_d.get("offer_id") or ""), safe="")
@@ -442,7 +466,7 @@ def _version(doc) -> int:
         return 1
 
 
-def dto_public(doc, cours=None, offre=None) -> dict:
+def dto_public(doc, cours=None, offre=None, chaine=False) -> dict:
     """SANS AUCUNE PII : jamais coach_id, e-mail, téléphone, ni id interne."""
     _d = doc or {}
     _c = cours if isinstance(cours, dict) else {}
@@ -463,18 +487,18 @@ def dto_public(doc, cours=None, offre=None) -> dict:
         "time_label": time_label(_occ) if _occ else None,
         "lieu": _lieu or None,
         "inviter_display": _inviter_public(_d),
-        "target_url": cible_front(_d),
+        "target_url": cible_front(_d, chaine),       # PAR-1 : `chaine` lu par l'appelant
         "prix": paliers_offre(_o) if (_d.get("type") == "event_paid" and _o) else None,
     }
 
 
-def dto_coach(doc, cours=None, offre=None, base_url="https://afroboost.com") -> dict:
+def dto_coach(doc, cours=None, offre=None, base_url="https://afroboost.com", chaine=False) -> dict:
     """dto_public + ce dont l'écran du coach a besoin. Pas de coach_id (inutile)."""
     _d = doc or {}
     _base = str(base_url or "https://afroboost.com").rstrip("/")
     _tok = quote(str(_d.get("share_token") or ""), safe="")
     _v = _version(_d)
-    _sortie = dto_public(_d, cours, offre)
+    _sortie = dto_public(_d, cours, offre, chaine)
     _sortie.update({
         "id": _d.get("id"),
         "status": _d.get("status"),

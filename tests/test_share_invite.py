@@ -237,6 +237,18 @@ async def partie_routes():
     verifier("O6b. navigateur : la séance voyage (&course=cours-inv&occurrence=2026-10-01T18%3A30)",
              _cible == FRONT + "/?offre=offre-inv&reserver=1&course=cours-inv&occurrence=2026-10-01T18%3A30"
              and 'href="%s"' % _cible.replace("&", "&amp;") in hn, _cible)
+    # PAR-1 : drapeaux allumés (parrainage + chaîne + campagne) -> le MÊME lien
+    # mène à l'entrée de chaîne `/duo/c/<jeton>` ; éteints (cas ci-dessus) = inchangé.
+    base["feature_flags"].docs.append({"id": "feature_flags", "parrainage_duo_enabled": True,
+                                       "parrainage_chaine_enabled": True,
+                                       "invitation_chaine_campagne_enabled": True})
+    c, hc, _ = await page(TOK, "", UA_NAV)
+    verifier("O6c. PAR-1 drapeaux allumés : navigateur -> FRONT/duo/c/<jeton>, sans reserver=1",
+             'content="0;url=%s/duo/c/%s"' % (FRONT, TOK) in hc and "reserver=1" not in hc, hc[-400:])
+    base["feature_flags"].docs[0]["invitation_chaine_campagne_enabled"] = False
+    c, hc, _ = await page(TOK, "", UA_NAV)
+    verifier("O6d. PAR-1 drapeau campagne éteint : cible d'avant", "/duo/c/" not in hc and "reserver=1" in hc)
+    base["feature_flags"].docs[:] = []
     c, hv, _ = await page(TOK, "12\"><script>", UA_ROBOT)
     verifier("O7. ?v= hostile : ignoré (og:url sans v), og:image garde la version courante",
              _og(hv, "og:url") == "%s/api/share/invite/%s" % (FRONT, TOK) and _og(hv, "og:image") == _attendu

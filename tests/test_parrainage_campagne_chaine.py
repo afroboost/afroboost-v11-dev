@@ -68,6 +68,7 @@ def depart(drapeau_campagne=True, chaine=True, **extra_camp):
     base["offers"].docs.append({"id": OFFRE_CAMP, "name": "Essai partenaire", "price": 0.0, "visible": True,
                                 "coach_id": PARTENAIRE})
     base["concept"].docs.append({"id": "concept", "primaryColor": "#D91CD2"})
+    base["coaches"].docs.append({"id": "cp", "email": PARTENAIRE, "name": "Mariam Coach"})
     base["referral_campaigns"].docs.append(campagne(occ, **extra_camp))
     RCR.init_db(base)
     SI.init_db(base)
@@ -229,6 +230,17 @@ async def partie_entree():
              [x[0] for x in a] == [201, 201, 409] and raison(a[2][1]) == "campagne_complete"
              and len(p0s(base)) == 2, [(x[0], raison(x[1])) for x in a])
     verifier("N9b. constante de plafond = 500", _orig == 500, _orig)
+    # drapeau exposé et pilotable (défaut éteint)
+    try:
+        S.FeatureFlagsUpdate(invitation_chaine_campagne_enabled=True)
+        _modele = True
+    except Exception:  # noqa: BLE001
+        _modele = False
+    base, occ = depart()
+    base["feature_flags"].docs[0].pop("invitation_chaine_campagne_enabled")
+    g = await S.get_feature_flags()
+    verifier("N11. modèle PUT /feature-flags accepte le drapeau ; GET le rend (défaut false)",
+             _modele and g.get("invitation_chaine_campagne_enabled") is False, g.get("invitation_chaine_campagne_enabled"))
     # super-admin (clé "")
     base, occ = depart(coach_id="")
     base["offers"].docs[-1]["coach_id"] = None
@@ -318,6 +330,22 @@ async def partie_chaine_5():
     verifier("K13. statut_derive P0 : used dès que la présence de l'invité est validée",
              E.statut_derive(docs[0], None, [dict(_resa, validated=True)])[0] == "used"
              and E.statut_derive(docs[0], None, [_resa])[0] == "unlocked")
+
+    # /me de A : son invitation enfant P1 porte « partagée » (booléen + canal, sans PII)
+    _ea = ident(1)[0]
+    _tok_a = H.jeton_espace(base, code=codes_de(base, _ea)[0]["code"], email=_ea)
+    c, me = await appel(R.referral_me(H.Requete({}, {"x-espace-token": _tok_a})))
+    _p1 = [x for x in (me or {}).get("passes", []) if x.get("share_token") == toks[1]]
+    verifier("K14a. GET /me de A : P1 chain_shared true, chain_share_channel whatsapp, aucune PII",
+             c == 200 and _p1 and _p1[0].get("chain_shared") is True
+             and _p1[0].get("chain_share_channel") == "whatsapp" and not E.contient_pii(_p1[0]),
+             (c, str(_p1)[:400]))
+    verifier("K14a-bis. /chain/share journalise dans referral_invitations (pass P1, rattaché à A après liaison)",
+             any(i.get("pass_id") == docs[1]["id"] and i.get("sponsor_email_norm") == _ea
+                 and i.get("channel") == "whatsapp" for i in base["referral_invitations"].docs)
+             and any(i.get("pass_id") == docs[1]["id"] for i in (me or {}).get("invitations", [])))
+    verifier("K14a-ter. pass hors chaîne : chain_shared false, canal None",
+             E.partage_chaine(docs[0]) == {"shared": False, "channel": None})
 
     # 409 essai déjà reçu (autre séance, autre chaîne)
     base, occ = depart()
