@@ -111,6 +111,28 @@ async def partie_moteur_pur():
              IC.cible_front(dict(d, type="event_paid")) == "/?offre=o%201%2F%C3%A9")
     verifier("INV-M3d cible pass_duo", IC.cible_front({"type": "pass_duo", "share_token": "ab-C_"})
              == "/parrainage?campagne=ab-C_")
+    # INV-2 : la SÉANCE voyage avec le lien (`&course=&occurrence=`, les noms déjà lus
+    # par /parrainage — `lireContexteUrl`). trial / event_free SEULEMENT, et
+    # seulement si course_id ET occurrence existent et sont bien formés.
+    s = {"type": "trial", "offer_id": "offre-1", "share_token": "t",
+         "course_id": "cours-A_1", "occurrence": "2026-10-01T18:30:00"}
+    verifier("INV-2a trial + séance -> &course=&occurrence= (AAAA-MM-JJTHH:MM, encodé)",
+             IC.cible_front(s) == "/?offre=offre-1&reserver=1&course=cours-A_1&occurrence=2026-10-01T18%3A30",
+             IC.cible_front(s))
+    verifier("INV-2b event_free + séance -> mêmes paramètres",
+             IC.cible_front(dict(s, type="event_free"))
+             == "/?offre=offre-1&reserver=1&course=cours-A_1&occurrence=2026-10-01T18%3A30",
+             IC.cible_front(dict(s, type="event_free")))
+    verifier("INV-2c event_paid : inchangé (aucune séance transportée)",
+             IC.cible_front(dict(s, type="event_paid")) == "/?offre=offre-1", IC.cible_front(dict(s, type="event_paid")))
+    verifier("INV-2d pass_duo : inchangé", IC.cible_front(dict(s, type="pass_duo")) == "/parrainage?campagne=t")
+    for nom, extra in (("sans occurrence", {"occurrence": None}), ("sans cours", {"course_id": None}),
+                       ("occurrence date seule", {"occurrence": "2026-10-01"}),
+                       ("occurrence illisible", {"occurrence": "demain 18h30xxxxx"}),
+                       ("cours hors motif", {"course_id": "a b/c"}), ("cours trop long", {"course_id": "x" * 65}),
+                       ("cours objet", {"course_id": {"$ne": None}})):
+        verifier("INV-2e %s -> cible d'avant (…&reserver=1)" % nom,
+                 IC.cible_front(dict(s, **extra)) == "/?offre=offre-1&reserver=1", IC.cible_front(dict(s, **extra)))
     e = IC.valider_entree({"type": "trial", "title": "<b>Viens</b>  danser", "coach_id": "x@y",
                            "scheduled": True, "recipients": ["a"], "channel": "email", "send_at": "x"})
     verifier("INV-M4 liste blanche + HTML retiré", e["title"] == "Viens danser" and not any(
@@ -206,7 +228,9 @@ async def partie_types():
     c, r = await modifier(COACH_A, d["id"], {"status": "active", "course_id": COURS_A, "occurrence": occ,
                                              "offer_id": OFFRE_A_ESSAI})
     verifier("INV-D4 trial active -> 200", c == 200 and r.get("status") == "active"
-             and r.get("target_url") == "/?offre=%s&reserver=1" % OFFRE_A_ESSAI
+             # INV-2 : la séance choisie voyage désormais avec le lien.
+             and r.get("target_url") == "/?offre=%s&reserver=1&course=%s&occurrence=%s" % (
+                 OFFRE_A_ESSAI, COURS_A, occ[:16].replace(":", "%3A"))
              and r.get("lieu") == "Salle A" and r.get("time_label") == "18:30" and r.get("date_label"), (c, r))
     verifier("INV-D5 inviter_display figé (coach)", doc(base, d["id"])["inviter_display"] ==
              {"prenom": "Mariam", "photo_url": PHOTO_A, "source": "coach"}, doc(base, d["id"]).get("inviter_display"))
@@ -408,6 +432,29 @@ async def partie_pass_duo():
     pd4 = V3.doc_par_tok(base4, p4.get("share_token"))
     verifier("INV-P4 message du membre prioritaire", c == 201 and pd4["invitation"]["message"] == "Mon message à moi"
              and pd4.get("referral_campaign_id") == inv4["id"], pd4.get("invitation"))
+
+    # INV-2 — OCCURRENCES NON MÉLANGÉES (comportement ACTUEL documenté, moteur inchangé).
+    # La règle d'attache reste « même cours obligatoire » ; l'occurrence n'y entre pas.
+    # Le pass garde TOUJOURS l'occurrence choisie par le parrain ; celle de
+    # l'invitation n'est jamais recopiée dans le pass, ni l'inverse.
+    base5, occ5 = depart()
+    _cours5 = [x for x in base5["courses"].docs if x["id"] == H.COURS_DUO][0]
+    _occs5 = R._occurrences(_cours5)
+    verifier("INV-2P0 le cours Duo propose au moins deux occurrences", len(_occs5) >= 2, _occs5)
+    _autre = [o for o in _occs5 if o != occ5][0]
+    c, inv5 = await creer(H.ADMIN, {"type": "pass_duo", "status": "active", "course_id": H.COURS_DUO,
+                                    "occurrence": occ5, "message": "Séance du coach"})
+    _occ_inv5 = doc(base5, inv5["id"])["occurrence"]
+    c, p5 = await H.creer_pass(base5, _autre, referral_campaign=inv5["share_token"])
+    pd5 = V3.doc_par_tok(base5, p5.get("share_token")) or {}
+    verifier("INV-2P1 même cours, AUTRE occurrence -> pass créé, invitation attachée (règle inchangée)",
+             c == 201 and pd5.get("referral_campaign_id") == inv5["id"], (c, pd5.get("referral_campaign_id")))
+    verifier("INV-2P2 le pass garde SON occurrence (celle du parrain), pas celle de l'invitation",
+             pd5.get("occurrence") == _autre and pd5.get("occurrence") != _occ_inv5, (pd5.get("occurrence"), _occ_inv5))
+    verifier("INV-2P3 l'invitation garde la sienne (aucune écriture croisée)",
+             doc(base5, inv5["id"])["occurrence"] == _occ_inv5, doc(base5, inv5["id"]).get("occurrence"))
+    verifier("INV-2P4 le lien public du pass_duo ne transporte AUCUNE séance",
+             IC.cible_front(doc(base5, inv5["id"])) == "/parrainage?campagne=%s" % inv5["share_token"])
 
 
 async def partie_audit_p2():

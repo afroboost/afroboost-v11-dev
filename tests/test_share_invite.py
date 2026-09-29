@@ -232,6 +232,11 @@ async def partie_routes():
     verifier("O6. navigateur : meta refresh + lien vers FRONT + cible_front(doc)",
              'content="0;url=%s"' % _cible.replace("&", "&amp;") in hn
              and 'href="%s"' % _cible.replace("&", "&amp;") in hn, _cible)
+    # INV-2 : l'invitation « Essai » porte une séance -> l'humain est renvoyé
+    # vers le formulaire AVEC cette séance (cours + AAAA-MM-JJTHH:MM).
+    verifier("O6b. navigateur : la séance voyage (&course=cours-inv&occurrence=2026-10-01T18%3A30)",
+             _cible == FRONT + "/?offre=offre-inv&reserver=1&course=cours-inv&occurrence=2026-10-01T18%3A30"
+             and 'href="%s"' % _cible.replace("&", "&amp;") in hn, _cible)
     c, hv, _ = await page(TOK, "12\"><script>", UA_ROBOT)
     verifier("O7. ?v= hostile : ignoré (og:url sans v), og:image garde la version courante",
              _og(hv, "og:url") == "%s/api/share/invite/%s" % (FRONT, TOK) and _og(hv, "og:image") == _attendu

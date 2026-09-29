@@ -272,6 +272,28 @@ def offre_payante(offre) -> bool:
 
 
 # ─── Où le destinataire humain est envoyé ───────────────────────────────────
+# INV-2 : la SÉANCE de l'invitation voyage avec le lien. Noms de paramètres
+# RÉUTILISÉS : `course` / `occurrence` sont déjà ceux du contexte de séance lu
+# par /parrainage (`lireContexteUrl`, frontend/src/utils/parrainage.js).
+# Mêmes motifs que la validation du front : hors motif -> rien n'est ajouté.
+_RE_SEANCE_COURS = _re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_RE_SEANCE_OCC = _re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
+
+
+def _seance_params(doc) -> str:
+    """INV-2 — `&course=<id>&occurrence=<AAAA-MM-JJTHH:MM>` (quote), ou "" si
+    l'invitation ne porte pas une séance complète et bien formée."""
+    _c = doc.get("course_id")
+    _occ = doc.get("occurrence")
+    if not isinstance(_c, str) or not isinstance(_occ, str):
+        return ""
+    _c = _c.strip()
+    _occ = _occ.strip()[:16]
+    if not _RE_SEANCE_COURS.match(_c) or not _RE_SEANCE_OCC.match(_occ):
+        return ""
+    return "&course=%s&occurrence=%s" % (quote(_c, safe=""), quote(_occ, safe=""))
+
+
 def cible_front(doc) -> str:
     """Chemin RELATIF du front, par les liens profonds EXISTANTS (App.js) :
     `/?offre=<id>` ouvre la fiche offre ; `&reserver=1` ouvre la réservation —
@@ -283,7 +305,7 @@ def cible_front(doc) -> str:
         return "/parrainage?campagne=%s" % quote(str(_d.get("share_token") or ""), safe="")
     _o = quote(str(_d.get("offer_id") or ""), safe="")
     if _t in ("trial", "event_free"):
-        return "/?offre=%s&reserver=1" % _o
+        return "/?offre=%s&reserver=1%s" % (_o, _seance_params(_d))
     if _t == "event_paid":
         return "/?offre=%s" % _o
     return "/"

@@ -19,6 +19,9 @@ import { attributionEnregistrer, attributionActuelle } from "./utils/attribution
 // Elle n'accepte que le code renvoye par le serveur — jamais le localStorage,
 // jamais une reconstruction. Voir utils/essaiReservation.js.
 import { cibleRedirectionEssai, DELAI_REDIRECTION_ESSAI_MS } from "./utils/essaiReservation";
+// INV-2 : la seance d'une invitation (`&course=&occurrence=`) voyage jusqu'a l'espace participant.
+import { lireSeanceInvitation, verdictSeanceInvitation, cibleAvecSeance } from "./utils/invitationSeance";
+import InvitationSeanceBandeau from "./components/InvitationSeanceBandeau";
 import { lireSession as lireSessionEspace, urlDeLaSession, ESPACE_CLE_RETOUR } from "./utils/espaceSession"; // session abonnee persistante
 // V534: Centre Parrainage / Pass Duo — lectures SYNCHRONES du cache (zéro réseau dans App.js).
 import { parrainageActifCache, coursDuoEnCache } from "./utils/parrainage";
@@ -5103,6 +5106,16 @@ function App() {
   const [selectedOffer, setSelectedOffer] = useState(null);
   const [pendingOffer, setPendingOffer] = useState(null); // v159: offre cliquée en attente d'une session
   const [selectedSession, setSelectedSession] = useState(null);
+  // INV-2 : la seance d'une invitation « Essai » / « Evenement gratuit ».
+  // Lue UNE fois (initialiseur paresseux : aucun effet, donc aucune boucle
+  // possible), validee strictement ; hors motif -> null = parcours d'avant.
+  // Le formulaire gratuit n'a PAS de selecteur de seance (V225) : on l'ANNONCE
+  // ici, puis la redirection ESSAI-7 la porte jusqu'a /espace/<CODE>, ou la
+  // liste existante (`selectedCourseIdx`) la preselectionne. Rien n'est reserve.
+  const [inv2Seance] = useState(() => lireSeanceInvitation());
+  // Calcul pur a chaque rendu (aucun setState) : `null` hors invitation, ou si
+  // l'offre ouverte n'est pas celle du lien ; sinon 'ok' | 'indisponible'.
+  const inv2Verdict = verdictSeanceInvitation(inv2Seance, selectedOffer, courses);
   const [quantity, setQuantity] = useState(1); // Quantité pour achats multiples
   const [showLegalModal, setShowLegalModal] = useState(false); // V235: Modal mentions légales (Impressum)
   const [selectedVariants, setSelectedVariants] = useState({}); // Variantes sélectionnées { size: "M", color: "Noir" }
@@ -7505,7 +7518,9 @@ function App() {
         // La cible est calculee par le module dedie, a partir du SEUL code
         // renvoye par le serveur. Elle vaut `null` s'il n'y a pas d'octroi
         // prouve — et dans ce cas on ne bouge pas d'un pixel.
-        const cibleEssai = cibleRedirectionEssai(freeRes.data);
+        // INV-2 : + `?course=&occurrence=` si la seance de l'invitation est valide
+        // (sinon la cible est rendue telle quelle, `null` compris).
+        const cibleEssai = cibleAvecSeance(cibleRedirectionEssai(freeRes.data), inv2Verdict);
 
         // Toast — le code d'acces AFR- existe desormais reellement.
         try {
@@ -10042,6 +10057,11 @@ function App() {
           <form onSubmit={handleSubmit}>
             <div id="user-info-section" className="form-section rounded-xl p-6 mb-6" data-testid="user-info-section">
               <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>{t('yourInfo')}</h2>
+              {/* INV-2 : la seance de l'invitation, deja retenue (ou pourquoi elle ne l'est plus). */}
+              {inv2Verdict && (
+                <InvitationSeanceBandeau etat={inv2Verdict.etat} nom={inv2Verdict.cours && inv2Verdict.cours.name}
+                  occurrence={inv2Verdict.occurrence} variante="formulaire" />
+              )}
               <div className="space-y-4">
                 {/* Private input fields with auto-fill support */}
                 <input type="text" required placeholder={t('fullName')} value={userName} onChange={e => setUserName(e.target.value)} className="w-full p-3 rounded-lg neon-input" data-testid="user-name-input" autoComplete="name" />

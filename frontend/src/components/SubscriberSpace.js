@@ -29,6 +29,10 @@ import { funnelTracer } from "../utils/funnelEssai";
 // teste a part. Il avance d'un cran des qu'une reservation est confirmee, sans
 // attendre un rechargement.
 import { etatEssaiAffiche } from "../utils/essaiReservation";
+// INV-2 : la seance d'une invitation (`?course=&occurrence=`) arrive preselectionnee
+// dans la liste EXISTANTE ci-dessous (`selectedCourseIdx`). Rien n'est reserve.
+import { lireSeanceInvitation, indexSeanceInvitation } from "../utils/invitationSeance";
+import InvitationSeanceBandeau from "./InvitationSeanceBandeau";
 // N2 : la MEME lecture de l'heure que le serveur (`n2_instant_reel`). Sans
 // elle, une date naive serait lue dans le fuseau du navigateur et l'ecran
 // pourrait offrir « Annuler » alors que le serveur refuse.
@@ -187,6 +191,31 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [guestNames, setGuestNames] = useState({});
   // V203f: Index de la séance affichée (système compact)
   const [selectedCourseIdx, setSelectedCourseIdx] = useState(0);
+  // INV-2 : lue UNE fois au montage (initialiseur paresseux, aucun effet), validee
+  // strictement (`lireSeanceInvitation`) ; hors motif -> null, parcours d'avant.
+  const [inv2Seance] = useState(() => lireSeanceInvitation());
+  // "" (rien a dire) | "ok" (preselectionnee) | "indisponible" (message). Primitif.
+  const [inv2Etat, setInv2Etat] = useState("");
+  const inv2Applique = useRef(false);
+  const inv2DonneesPretes = data != null;
+  useEffect(() => {
+    // INV-2 : usage unique, meme verrou que le lien profond d'App.js (P2-FIX2).
+    // Dependance PRIMITIVE (booleen) : un rechargement de `data` (nouvel objet
+    // apres une reservation) ne relance rien, et aucun setState n'est rejoue.
+    if (inv2Applique.current || !inv2Seance || !inv2DonneesPretes) return;
+    inv2Applique.current = true;
+    // La liste REELLEMENT affichee (12 premieres), filtree par les regles du serveur.
+    const visibles = (data?.upcoming_courses || []).slice(0, 12);
+    const i = indexSeanceInvitation(inv2Seance, visibles);
+    if (i >= 0) {
+      setSelectedCourseIdx(i);
+      setInv2Etat("ok");
+    } else {
+      // Rien d'autre n'est preselectionne en silence : message + choix normal.
+      setInv2Etat("indisponible");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inv2DonneesPretes]);
 
   // V202: États pour le formulaire d'inscription multi-membre
   const [joinForm, setJoinForm] = useState({ name: "", email: "", whatsapp: "" });
@@ -1850,6 +1879,13 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
             return (
               <div>
+                {/* INV-2 : l'annonce de la seance d'invitation (ou son indisponibilite).
+                    « Seance de ton invitation » seulement tant que c'est ELLE qui est affichee. */}
+                {inv2Etat === "indisponible" && <InvitationSeanceBandeau etat="indisponible" variante="espace" />}
+                {inv2Etat === "ok" && inv2Seance && occ.course_id === inv2Seance.course
+                  && String(occ.datetime || "").slice(0, 16) === inv2Seance.occurrence && (
+                  <InvitationSeanceBandeau etat="ok" nom={occ.name} occurrence={inv2Seance.occurrence} variante="espace" />
+                )}
                 {/* Boutons de dates — scrollable horizontalement */}
                 <div className="grid pb-3 mb-3" style={{ gridTemplateColumns: `repeat(${Math.min(visibleCourses.length, 4)}, 1fr)`, gap: "8px" }}>
                   {visibleCourses.map((c, i) => {
@@ -1863,6 +1899,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     const singleReady = visibleCourses.length === 1 && isSelected && !isConfirmed;
                     return (
                       <button key={i} type="button"
+                        data-testid={`seance-date-${i}`}
+                        aria-pressed={isSelected}
                         onClick={() => { setSelectedCourseIdx(i); setActionError(""); }}
                         className="flex flex-col items-center px-2 py-2 rounded-xl text-xs transition-all"
                         style={{
