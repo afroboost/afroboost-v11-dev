@@ -178,9 +178,12 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     expect(window.open).toHaveBeenCalledTimes(1); // réessayer n'ouvre pas une 2e fois WhatsApp
   });
 
-  test('message modifié → partage désactivé jusqu\'à « Mettre à jour ma carte » (PATCH avec X-Chain-Key)', async () => {
+  // UX-P2 : plus de bouton « Mettre à jour ma carte » — le partage force l'enregistrement.
+  test('prénom modifié puis WhatsApp tout de suite → PATCH (X-Chain-Key) AVANT le partage, prénom prérempli', async () => {
     routerPost();
     axios.patch.mockResolvedValue({ data: { child: Object.assign(CHILD(5), { display_name: 'Henri' }), preview: PREVIEW_OK } });
+    const fen = { location: { href: '' }, close: jest.fn() };
+    window.open = jest.fn(() => fen);
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
     await cliquer('wf-continuer');
@@ -190,14 +193,14 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
       setter.call(input, 'Henri');
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    expect(par('wf-whatsapp').disabled).toBe(true);
-    await cliquer('wf-mettre-a-jour');
+    expect(par('wf-mettre-a-jour')).toBeNull();
+    expect(par('wf-whatsapp').disabled).toBe(false);
+    await cliquer('wf-whatsapp');
     const appel = axios.patch.mock.calls[0];
     expect(String(appel[0])).toMatch(/\/pass\/T0\/chain$/);
     expect(appel[1]).toEqual({ display_name: 'Henri', message: MESSAGE_CHAINE_DEFAUT });
     expect(appel[2].headers).toEqual({ 'X-Chain-Key': 'K1' });
-    expect(par('wf-whatsapp').disabled).toBe(false);
-    await cliquer('wf-whatsapp');
+    expect(decodeURIComponent(fen.location.href)).toContain('/duo/T1?v=5');
     expect(par('invitation-prenom').value).toBe('Henri'); // prérempli par l'étape 2
   });
 
