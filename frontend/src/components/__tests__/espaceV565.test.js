@@ -89,54 +89,108 @@ const cliquer = async (id) => { await act(async () => { par(id).click(); }); awa
 
 
 const OFFRES = [
-  { offer_id: 'o-10', offer_name: 'Pulse X10', seances: 10, duree_mois: 2, prix: 150, devise: 'CHF', eligible: true, action: 'renouveler', actuelle: true },
-  { offer_id: 'o-1', offer_name: 'Cours à l’unité', seances: 1, duree_mois: 2, prix: 30, devise: 'CHF', eligible: true, action: 'acheter', actuelle: false },
-  { offer_id: 'o-m', offer_name: 'Membres', seances: 10, duree_mois: 2, prix: 150, devise: 'CHF', eligible: false,
-    message: 'Il te reste des séances sur ton pack actuel. Termine-les avant de le recharger.', action: 'acheter', actuelle: false },
+  { offer_id: 'o-fond', offer_name: 'Fondateurs', eligible: true, action: 'acheter', actuelle: false },
+  { offer_id: 'o-sais', offer_name: 'Saison hiver — 8 mois', eligible: true, action: 'acheter', actuelle: false },
+  { offer_id: 'o-mens', offer_name: 'Mensuel Liberté', eligible: true, action: 'renouveler', actuelle: true },
+  { offer_id: 'o-1', offer_name: 'Cours à l’unité', eligible: true, action: 'acheter', actuelle: false },
+  { offer_id: 'o-m', offer_name: 'Membres', eligible: false, action: 'acheter', actuelle: false,
+    message: 'Il te reste des séances sur ton pack actuel. Termine-les avant de le recharger.' },
+  { offer_id: 'o-s2', offer_name: 'Saison hiver — 2 paiements', eligible: true, action: 'acheter', actuelle: false,
+    paiement_integral: true, billing_mode: 'saison_2x', prix: 299 },
+];
+// Les offres telles que `GET /offers` les donne à la vitrine (catalogue V566).
+const CATALOGUE = [
+  { id: 'o-fond', name: 'Fondateurs', price: 59, billing_mode: 'mensuel_auto', stock: 50, places_restantes: 50, pack_sessions: 8, thumbnail: 'https://res.cloudinary.com/x/fond.jpg', position: 1 },
+  { id: 'o-sais', name: 'Saison hiver — 8 mois', price: 549, duree_mois: 8, pack_sessions: 64, thumbnail: 'https://res.cloudinary.com/x/saison.jpg', position: 2 },
+  { id: 'o-s2', name: 'Saison hiver — 2 paiements', price: 299, billing_mode: 'saison_2x', pack_sessions: 8, position: 3 },
+  { id: 'o-mens', name: 'Mensuel Liberté', price: 89, billing_mode: 'mensuel_auto', pack_sessions: 8, position: 4 },
+  { id: 'o-1', name: 'Cours à l’unité', price: 30, position: 5 },
+  { id: 'o-m', name: 'Membres', price: 150, pack_sessions: 10, position: 6 },
 ];
 const AFFICHE = { media_url: 'https://res.cloudinary.com/x/affiche.jpg', reserve_label: 'Je réserve', cle: 'k1' };
+const RECH = { eligible: false, offres: OFFRES, catalogue: CATALOGUE };
 const ouvrirRecharger = async () => { await cliquer('menu-rapide-recharger'); };
+const ligne = (id) => document.querySelector(`[data-testid="ligne-offre-${id}"]`);
 
-describe('V565 — Recharger', () => {
+describe('V566 — Recharger = le sélecteur d’offres de la vitrine', () => {
   beforeEach(() => { try { window.sessionStorage.clear(); } catch (e) { /* */ } });
 
-  test('toutes les offres du serveur, avec séances · validité · prix', async () => {
-    await monter(espace({ recharge: { eligible: false, offres: OFFRES } }));
+  test('Recharger ouvre LE panneau « Toutes les offres » du site, titré « Recharger mes séances »', async () => {
+    await monter(espace({ recharge: RECH }));
     await ouvrirRecharger();
-    expect(par('recharge-offre-o-10').textContent).toContain('10 séances · 2 mois · 150 CHF');
-    expect(par('recharge-offre-o-1').textContent).toContain('1 séance · 2 mois · 30 CHF');
-    expect(par('recharge-offre-o-1').textContent).not.toContain('1 séances');
+    const panneau = par('toutes-les-offres');
+    expect(panneau).not.toBeNull();
+    expect(panneau.getAttribute('aria-label')).toBe('Recharger mes séances');
+    expect(par('recharge-offres')).toBeNull();            // l'ancienne liste maison n'existe plus
+    expect(document.querySelector('[data-testid^="recharge-cta-"]')).toBeNull();
+    expect(par('parrainage-drawer')).toBeNull();
   });
 
-  test('offre détenue → « Renouveler » (+ « Ton offre ») ; autre offre → « Acheter »', async () => {
-    await monter(espace({ recharge: { eligible: false, offres: OFFRES } }));
+  test('mêmes groupes, badges, images, économies et prix que la vitrine', async () => {
+    await monter(espace({ recharge: RECH }));
     await ouvrirRecharger();
-    expect(par('recharge-cta-o-10').textContent).toContain('Renouveler — 150 CHF');
-    expect(par('recharge-actuelle-o-10').textContent).toBe('Ton offre');
-    expect(par('recharge-cta-o-1').textContent).toContain('Acheter — 30 CHF');
-    expect(par('recharge-actuelle-o-1')).toBeNull();
+    ['groupe-lancement', 'groupe-saison', 'groupe-mensuel', 'groupe-unite'].forEach((g) => expect(par(g)).not.toBeNull());
+    expect(par('groupe-lancement').textContent).toContain('Offre de lancement');
+    expect(par('groupe-mensuel').textContent).toContain('Chaque mois, sans engagement');
+    expect(ligne('o-fond').textContent).toContain('Offre lancement');
+    expect(ligne('o-mens').textContent).toContain('Le plus flexible');
+    expect(ligne('o-fond').querySelector('img').getAttribute('src')).toBe('https://res.cloudinary.com/x/fond.jpg');
+    expect(ligne('o-sais').textContent).toContain('Économie');
+    expect(ligne('o-mens').textContent).toContain('89');
+    // ordre de la vitrine : lancement, saison, mensuel, unité
+    const ordre = Array.from(document.querySelectorAll('[data-testid^="ligne-offre-"]')).map((b) => b.getAttribute('data-testid'));
+    expect(ordre.indexOf('ligne-offre-o-fond')).toBeLessThan(ordre.indexOf('ligne-offre-o-sais'));
+    expect(ordre.indexOf('ligne-offre-o-sais')).toBeLessThan(ordre.indexOf('ligne-offre-o-mens'));
+    expect(ordre.indexOf('ligne-offre-o-mens')).toBeLessThan(ordre.indexOf('ligne-offre-o-1'));
   });
 
-  test('aucune carte morte : sans CTA, la carte dit POURQUOI', async () => {
-    await monter(espace({ recharge: { eligible: false, offres: OFFRES } }));
+  test('offre détenue → « Ton offre » discret ; refus → la vraie raison, discrètement', async () => {
+    await monter(espace({ recharge: RECH }));
     await ouvrirRecharger();
-    expect(par('recharge-cta-o-m')).toBeNull();
-    expect(par('recharge-refus-o-m').textContent).toContain('Termine-les');
-    expect(document.body.textContent).not.toContain("Commence par l'offre d'entrée");
+    expect(par('note-offre-o-mens').textContent).toBe('Ton offre');
+    expect(par('note-offre-o-m').textContent).toContain('Termine-les');
+    expect(par('note-offre-o-1')).toBeNull();
   });
 
-  test('CTA → checkout EXISTANT (/create-checkout-session) avec l’offre choisie', async () => {
+  test('clic sur une ligne → la fiche du site → « Choisir cette formule » → checkout EXISTANT', async () => {
     const loc = window.location;
     delete window.location; window.location = { ...loc, href: '', origin: 'https://afroboost.com', pathname: loc.pathname };
     axios.post.mockResolvedValue({ data: { url: 'https://checkout.stripe.com/x' } });
-    await monter(espace({ recharge: { eligible: false, offres: OFFRES } }));
+    await monter(espace({ recharge: RECH }));
     await ouvrirRecharger();
-    await cliquer('recharge-cta-o-1');
+    await act(async () => { ligne('o-1').click(); });
+    expect(par('fiche-offre')).not.toBeNull();
+    await cliquer('fiche-cta');
     const [url, corps] = axios.post.mock.calls[0];
     expect(String(url)).toMatch(/\/create-checkout-session$/);
     expect(corps.offerId).toBe('o-1');
     expect(window.location.href).toBe('https://checkout.stripe.com/x');
     window.location = loc;
+  });
+
+  test('offre à choix de paiement → le choix existant (ChoixModePaiement), jamais un paiement direct', async () => {
+    await monter(espace({ recharge: RECH }));
+    await ouvrirRecharger();
+    await act(async () => { ligne('o-s2').click(); });
+    await cliquer('fiche-cta');
+    expect(par('recharge-choix')).not.toBeNull();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test('offre refusée : la fiche ne lance rien, la raison est dite', async () => {
+    await monter(espace({ recharge: RECH }));
+    await ouvrirRecharger();
+    await act(async () => { ligne('o-m').click(); });
+    await cliquer('fiche-cta');
+    expect(par('recharge-choix-refus').textContent).toContain('Termine-les');
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test('sans catalogue : repli historique (tiroir, motif), rien d’inventé', async () => {
+    await monter(espace({ recharge: { eligible: false, message: 'Cette recharge est réservée aux membres.' } }));
+    await ouvrirRecharger();
+    expect(par('toutes-les-offres')).toBeNull();
+    expect(par('recharge-motif').textContent).toContain('réservée aux membres');
   });
 });
 
@@ -172,9 +226,9 @@ describe('V565 — Affiche Événement dans l’espace', () => {
   });
 
   test('« Nos offres » ouvre le catalogue du coach (Recharger)', async () => {
-    await monter(espace({ evenement: AFFICHE, recharge: { eligible: false, offres: OFFRES } }));
+    await monter(espace({ evenement: AFFICHE, recharge: RECH }));
     await cliquer('espace-affiche-offres');
-    expect(par('parrainage-drawer').getAttribute('data-outil')).toBe('recharger');
+    expect(par('toutes-les-offres').getAttribute('aria-label')).toBe('Recharger mes séances'); // V566
   });
 
   test('X → masquée ici seulement (aucun appel serveur) ; une NOUVELLE affiche réapparaît', async () => {

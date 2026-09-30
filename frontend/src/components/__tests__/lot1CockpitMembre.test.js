@@ -55,9 +55,12 @@ describe('V548 — ordre et allègement de l espace membre', () => {
 
   test('la recharge garde tout son contenu serveur (offres, CTA, motif, Stripe)', () => {
     const recharge = SRC.slice(pos('data-testid="subscriber-space-recharge"'), pos('data-testid="renew-subscription-btn"'));
-    expect(recharge.indexOf('{rechargeVisible && (')).toBeLessThan(recharge.indexOf('recharge-offres'));
-    ['recharge-offres', 'recharge-cta', 'recharge-motif', 'handleRecharge', 'ChoixModePaiement']
-      .forEach((m) => expect(recharge).toContain(m));
+    expect(recharge.indexOf('{rechargeVisible && (')).toBeLessThan(recharge.indexOf('recharge-cta'));
+    ['recharge-cta', 'recharge-motif', 'handleRecharge'].forEach((m) => expect(recharge).toContain(m));
+    // V566 : les offres passent par LE sélecteur de la vitrine, jamais par une liste maison.
+    expect(recharge).not.toContain('recharge-offres');
+    expect(SRC).toMatch(/<OffresAimants\s+cartes=\{false\}[\s\S]{0,400}titreToutes="Recharger mes séances"/);
+    expect(SRC).toContain('<ChoixModePaiement');
     expect(recharge).not.toContain('data-testid="recharge-toggle"'); // plus d'accordéon en double
   });
 

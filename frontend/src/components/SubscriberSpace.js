@@ -16,6 +16,8 @@ import CarteNotifications from './CarteNotifications'; // PUSH-PWA — état des
 import CarteCreateur from './createur/CarteCreateur'; // V559 — « Devenir créateur » / « Dashboard Créateur »
 import MenuRapide from './espace/MenuRapide'; // V560 — raccourcis en haut de l'espace
 import AfficheEvenementEspace from './espace/AfficheEvenementEspace'; // V565 — l'affiche du coach, en ligne
+import OffresAimants from './OffresAimants'; // V566 — Recharger = LE sélecteur d'offres de la vitrine
+import { analyserMediaUrl } from '../utils/mediaOffre'; // V566 — même lecture des médias que la vitrine
 import ParrainageDrawer from './parrainage/ParrainageDrawer'; // V561 — Réserver / Recharger hors du dashboard
 import './parrainage/parrainage.css'; // V561 — jetons de la fenêtre (cp-root)
 import { TiroirInvitationParrainage } from './parrainage/InvitationParrainage'; // PAR-2 — « Invitation & parrainage » dans le tiroir existant
@@ -498,6 +500,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   // V548 : la recharge est repliee sous « Recharger mes seances ». `null` =
   // l'abonne n'a pas encore touche au bouton : l'etat par defaut s'applique.
   const [rechargeOuvert, setRechargeOuvert] = useState(null);
+  // V566 : Recharger ouvre le sélecteur de la vitrine (signal) ; `rechargeChoix` =
+  // le verdict d'une offre dont il faut choisir le mode de paiement ou dire le refus.
+  const [signalRecharge, setSignalRecharge] = useState(0);
+  const [rechargeChoix, setRechargeChoix] = useState(null);
 
   const handleStripeCheckout = async () => {
     if (stripeLoading) return;
@@ -1051,6 +1057,30 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const rechargeDisponible = (Array.isArray(data?.recharge?.offres) && data.recharge.offres.length > 0)
     || !!data?.recharge?.eligible || !!data?.recharge?.message || remaining <= 0 || renouvelable;
 
+  // V566 — RECHARGER = LE SÉLECTEUR D'OFFRES DE LA VITRINE (OffresAimants).
+  // `catalogue` : les offres retenues par le serveur pour CET abonné (coach, règles
+  // LOT R), sous la forme exacte de `GET /offers`. `offres` porte leur verdict.
+  const catalogueRecharge = Array.isArray(data?.recharge?.catalogue) ? data.recharge.catalogue : [];
+  const verdictsRecharge = Array.isArray(data?.recharge?.offres) ? data.recharge.offres : [];
+  // (pas de hook ici : des retours anticipés précèdent ce point ; objet sans effet dépendant)
+  const notesRecharge = {};
+  verdictsRecharge.forEach((o) => {
+    if (!o || !o.offer_id) return;
+    if (!o.eligible && o.message) notesRecharge[o.offer_id] = { texte: o.message, ton: 'refus' };
+    else if (o.actuelle) notesRecharge[o.offer_id] = { texte: 'Ton offre', ton: 'info' };
+  });
+  const ouvrirRecharger = () => {
+    if (catalogueRecharge.length) { setSignalRecharge((x) => x + 1); return; }
+    setRechargeOuvert(true); setRechargeModale(true); // repli : motif + renouvellement
+  };
+  // Le CTA de la fiche (« Choisir cette formule ») : le checkout EXISTANT, avec l'offre.
+  const choisirOffreRecharge = (offre) => {
+    const v = verdictsRecharge.find((x) => x && x.offer_id === (offre && offre.id));
+    if (!v) return;
+    if (!v.eligible || v.paiement_integral) { setRechargeChoix(v); return; }
+    handleRecharge(v);
+  };
+
   // ESSAI-7 — L'ETAT QUE CET ECRAN MONTRE.
   // `t2_etat_essai` derive l'etat au CHARGEMENT. Une reservation faite juste
   // apres n'y figure donc pas : sans ce rattrapage, l'ecran continuerait a
@@ -1213,7 +1243,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           { id: 'createur', libelle: infoCreateur.statut === 'approved' ? 'Créateur' : 'Devenir créateur', icone: 'star',
             onClick: () => setDemandeCreateur((n) => n + 1) },
           rechargeDisponible ? { id: 'recharger', libelle: 'Recharger', icone: 'refresh',
-            onClick: () => { setRechargeOuvert(true); setRechargeModale(true); } } : null,
+            onClick: ouvrirRecharger } : null,
           // V561 : le système partenaire EXISTANT (tableau de bord coach / inscription partenaire).
           { id: 'partenaire', libelle: infoCreateur.estPartenaire ? 'Partenaire' : 'Devenir partenaire', icone: 'users',
             onClick: () => { window.location.href = infoCreateur.estPartenaire ? '/#partner-dashboard' : '/#become-coach'; } },
@@ -1428,7 +1458,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             <AfficheEvenementEspace
               evenement={data.evenement}
               onReserver={scrollToReservation}
-              onOffres={rechargeDisponible ? () => { setRechargeOuvert(true); setRechargeModale(true); } : undefined}
+              onOffres={rechargeDisponible ? ouvrirRecharger : undefined}
             />
           </div>
         ) : null}
@@ -2229,6 +2259,48 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         </div>
       ) : null}
 
+      {/* ===== V566 : RECHARGER — le sélecteur d'offres de la vitrine, tel quel =====
+          Contrôleur seul (`cartes={false}`) : son panneau « Toutes les offres » (ici
+          titré « Recharger mes séances ») puis SA fiche d'offre. Même composant,
+          mêmes images, badges, familles, ordre, économies et prix que le site. */}
+      {catalogueRecharge.length ? (
+        <OffresAimants
+          cartes={false}
+          offres={catalogueRecharge}
+          analyserMedia={analyserMediaUrl}
+          onChoisir={choisirOffreRecharge}
+          checkoutBusy={rechargeLoading}
+          ouvrirToutesSignal={signalRecharge}
+          titreToutes="Recharger mes séances"
+          notes={notesRecharge}
+        />
+      ) : null}
+      {rechargeChoix ? (
+        <div className="cp-root">
+          <ParrainageDrawer titre={rechargeChoix.offer_name || "Recharger mes séances"} outil="recharger-choix" onClose={() => setRechargeChoix(null)}>
+            <div style={{ paddingTop: 8 }} data-testid="recharge-choix">
+              {!rechargeChoix.eligible ? (
+                <p className="text-white/70 text-sm" data-testid="recharge-choix-refus">{rechargeChoix.message}</p>
+              ) : (
+                <>
+                  <ChoixModePaiement
+                    offre={{ billing_mode: rechargeChoix.billing_mode, price: rechargeChoix.prix, full_payment_available: true,
+                             installment_interval_months: rechargeChoix.intervalle_mois }}
+                    occupe={rechargeLoading}
+                    titre="Choisis ton mode de paiement"
+                    sansFractionne={rechargeChoix.echeancier_a_definir === true}
+                    onChoisir={(mode) => handleRecharge(rechargeChoix, mode)}
+                  />
+                  {rechargeChoix.echeancier_a_definir ? (
+                    <p className="text-white/50 text-xs mt-2">{rechargeChoix.echeancier_message || "Le coach doit encore définir ton échéancier."}</p>
+                  ) : null}
+                </>
+              )}
+            </div>
+          </ParrainageDrawer>
+        </div>
+      ) : null}
+
       {/* ===== V561 : RECHARGER — offres réelles + renouvellement Stripe, dans une fenêtre ===== */}
       {rechargeModale && rechargeDisponible ? (
         <div className="cp-root">
@@ -2253,67 +2325,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   serveur (LOT R) et ses faits commerciaux (séances, mois, échéancier).
                   Pack 10 et Membres — 8 mois ; « en une fois » ou « en 2 fois » quand
                   l'offre le permet. Rien n'est écrit en dur : tout vient de `offres`. */}
-              {Array.isArray(data?.recharge?.offres) && data.recharge.offres.length > 0 ? (
-                <div className="mt-4 flex flex-col gap-3" data-testid="recharge-offres">
-                  {data.recharge.offres.map((o) => (
-                    <div key={o.offer_id} className="rounded-2xl p-4" data-testid={`recharge-offre-${o.offer_id}`}
-                         style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)" }}>
-                      <p className="text-white font-semibold" style={{ margin: 0 }}>
-                        {o.offer_name}
-                        {o.actuelle ? (
-                          <span className="ml-2 text-[11px] font-semibold px-2 py-0.5 rounded-full align-middle"
-                                data-testid={`recharge-actuelle-${o.offer_id}`}
-                                style={{ background: "rgba(var(--primary-rgb, 217, 28, 210), 0.18)", color: "rgba(255,255,255,0.9)" }}>
-                            Ton offre
-                          </span>
-                        ) : null}
-                      </p>
-                      <p className="text-white/70 text-sm" style={{ margin: "4px 0 0" }}>
-                        {[o.seances ? `${o.seances} séance${o.seances > 1 ? "s" : ""}` : null, o.duree_mois ? `${o.duree_mois} mois` : null,
-                          o.prix != null ? `${o.prix} ${o.devise || "CHF"}${o.echeances > 1 ? ` × ${o.echeances}` : ""}` : null]
-                          .filter(Boolean).join(" · ")}
-                      </p>
-                      {o.eligible ? (
-                        o.paiement_integral ? (
-                          <div className="mt-3">
-                            {/* V536 : `intervalle_mois` est le délai RÉSOLU par le serveur pour
-                                CETTE personne. Quand le coach ne l'a pas encore fixé, aucune date
-                                n'est inventée : le paiement en 2 fois est retiré et le message du
-                                serveur est affiché tel quel. */}
-                            <ChoixModePaiement
-                              offre={{ billing_mode: o.billing_mode, price: o.prix, full_payment_available: true,
-                                       installment_interval_months: o.intervalle_mois }}
-                              occupe={rechargeLoading}
-                              titre="Choisis ton mode de paiement"
-                              sansFractionne={o.echeancier_a_definir === true}
-                              onChoisir={(mode) => handleRecharge(o, mode)}
-                            />
-                            {o.echeancier_a_definir ? (
-                              <p className="text-white/50 text-xs mt-2" data-testid={`echeancier-a-definir-${o.offer_id}`}>
-                                {o.echeancier_message || "Le coach doit encore définir ton échéancier."}
-                              </p>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <button type="button" onClick={() => handleRecharge(o)} disabled={rechargeLoading}
-                            data-testid={`recharge-cta-${o.offer_id}`}
-                            className="mt-3 w-full flex items-center justify-center gap-2 font-semibold rounded-2xl py-3 text-sm transition-transform active:scale-95"
-                            style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "#fff", border: "none", opacity: rechargeLoading ? 0.6 : 1 }}>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                              <path d="M21 12a9 9 0 1 1-3-6.7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                              <path d="M21 3v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                            </svg>
-                            {/* V565 : « Renouveler » l'offre détenue, « Acheter » une autre — verbe décidé par le serveur. */}
-                            {rechargeLoading ? "Redirection..." : `${o.action === "renouveler" ? "Renouveler" : o.action === "acheter" ? "Acheter" : (o.seances ? `Recharger ${o.seances} séances` : "Choisir")}${o.prix != null ? ` — ${o.prix} ${o.devise || "CHF"}` : ""}`}
-                          </button>
-                        )
-                      ) : (
-                        o.message ? <p className="text-white/50 text-xs mt-2" data-testid={`recharge-refus-${o.offer_id}`}>{o.message}</p> : null
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : data?.recharge?.eligible ? (
+              {/* V566 : la liste de cartes maison est SUPPRIMÉE — les offres passent par le
+                  sélecteur de la vitrine (OffresAimants, ci-dessous). Ce tiroir ne garde que le
+                  repli historique (offre unique, motif) et le renouvellement Stripe. */}
+              {data?.recharge?.eligible ? (
                 <div className="mt-4">
                   <button
                     type="button"

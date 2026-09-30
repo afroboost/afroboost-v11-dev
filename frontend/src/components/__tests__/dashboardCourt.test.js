@@ -200,7 +200,8 @@ describe('V561 — dashboard court (menu, fenêtres hors réservation)', () => {
     await monter(espace({ stripe_amount: 150 }));
     await cliquer('menu-rapide-recharger');
     expect(par('parrainage-drawer').getAttribute('data-outil')).toBe('recharger');
-    expect(par('recharge-offre-o-10').textContent).toContain('Pulse X10');
+    // V566 : sans `catalogue`, le tiroir garde le repli historique (CTA unique du serveur).
+    expect(par('recharge-cta').textContent).toContain('Recharger');
     expect(par('renew-subscription-btn')).not.toBeNull();
     expect(par('recharge-toggle')).toBeNull();
   });

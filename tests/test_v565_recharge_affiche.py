@@ -158,6 +158,12 @@ v("séances restantes : « Membres » visible AVEC son explication (règle LOT R
 rb = recharge(base(), OFFRE_B)
 v("7bis. abonné du coach B -> offres du coach B uniquement", [o["offer_id"] for o in rb["offres"]] == ["o-b"], rb)
 
+cat = r.get("catalogue") or []
+v("V566. catalogue = les MÊMES offres que la liste, forme publique de GET /offers",
+  [c.get("id") for c in cat] == ids and all("name" in c and "price" in c for c in cat), [c.get("id") for c in cat])
+v("V566. catalogue : jamais l'e-mail du coach (projection r2b_offre_publique)", all("coach_id" not in c for c in cat))
+v("V566. catalogue du coach B : ses offres seulement", [c.get("id") for c in rb.get("catalogue") or []] == ["o-b"])
+
 print("PURES")
 v("seances créditées : pack 10 -> 10, absent -> 1, 0 -> None (miroir du webhook)",
   (S.v565_seances_creditees(PULSE), S.v565_seances_creditees(UNITE), S.v565_seances_creditees(ENTREE)) == (10, 1, None))

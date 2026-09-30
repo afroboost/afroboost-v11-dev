@@ -470,3 +470,16 @@ test('V546 — le fond réel des badges tient 4.5:1 avec un texte blanc', () => 
   // mesure reste ici, elle prouve pourquoi le badge était illisible.
   expect(contraste(PRIMAIRE_PROD, composer(PRIMAIRE_PROD, 0.18, CARTE))).toBeLessThan(3);
 });
+
+// V566 — le panneau est réutilisé par l'espace abonné (Recharger) : SANS `titreToutes`
+// ni `notes`, la vitrine garde EXACTEMENT son rendu (titre, aucune note).
+describe('V566 — vitrine inchangée quand Recharger réutilise le panneau', () => {
+  test('sans titreToutes / notes : titre « Toutes les offres », aucune note', () => {
+    const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'OffresAimants.js'), 'utf8');
+    expect(src).toContain("titre={titre || 'Toutes les offres'}");
+    expect(src).toContain('const note = notes && notes[o.id];');
+    const app = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'App.js'), 'utf8');
+    expect(app).not.toMatch(/titreToutes=/);   // la vitrine ne passe ni titre ni notes
+    expect(app).not.toMatch(/<OffresAimants[^>]*notes=/);
+  });
+});

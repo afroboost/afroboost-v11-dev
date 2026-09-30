@@ -16272,6 +16272,18 @@ def v565_carte_recharge(offre, ok, motif, etat_adhesion, offre_courante_id) -> d
     return {"visible": True, "action": _act}
 
 
+async def _v566_catalogue_public(offres) -> list:
+    """V566 — la projection de `GET /offers` (V223 + V252 + R2b) sur ces offres.
+    NE LÈVE JAMAIS : sur panne, liste vide (l'espace garde alors son repli)."""
+    try:
+        _pub = await _enrich_offers_with_next_date(
+            _enrich_offers_with_active_price([dict(o) for o in (offres or [])]))
+        return [r2b_offre_publique(o) for o in _pub]
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[V566] catalogue public illisible pour la recharge (%s)", type(_err).__name__)
+        return []
+
+
 async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
     """LOT R — ce que l'espace abonne doit savoir de la recharge.
 
@@ -16369,6 +16381,7 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
         # `eligible`/`offer_id` décrivent toujours la première, les anciens écrans
         # ne changent pas. Les faits commerciaux viennent de l'offre et du moteur.
         _v535_liste = []
+        _v566_catalogue = []   # V566 : les offres RETENUES, telles que la vitrine les reçoit
         for _x in sorted(_v565_toutes, key=lambda x: (x.get("position") is None, x.get("position") or 0,
                                                       str(x.get("name") or ""))):
             try:
@@ -16397,6 +16410,7 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
                     except Exception:  # noqa: BLE001
                         _xover = None
                     _xinterv, _xrefus = _hiver.resoudre_intervalle(_x, _xover)
+                _v566_catalogue.append(_x)
                 _v535_liste.append({
                     "offer_id": str(_x.get("id") or ""),
                     "offer_name": str(_x.get("name") or ""),
@@ -16439,6 +16453,12 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
             "devise": "CHF",
             "seances": _seances,
             "offres": _v535_liste,
+            # V566 — LE SÉLECTEUR D'OFFRES DE LA VITRINE, RÉUTILISÉ TEL QUEL.
+            # `catalogue` = les mêmes offres que `offres`, sous la forme EXACTE que
+            # `GET /offers` donne à la vitrine (prix actif, prochaine date, projection
+            # publique `r2b_offre_publique`) : images, badges, familles, économies et
+            # prix y sont calculés par le même composant (OffresAimants).
+            "catalogue": await _v566_catalogue_public(_v566_catalogue),
         }
     except Exception as _err:
         logger.warning(f"[LOT R] etat de recharge non calcule: {_err}")

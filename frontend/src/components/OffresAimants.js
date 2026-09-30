@@ -519,10 +519,10 @@ function MiniVignette({ offre, analyser }) {
   return <div style={{ ...base, display: 'flex', alignItems: 'center', justifyContent: 'center', color: COULEUR }}><SvgIcon name="gift" size={20} /></div>;
 }
 
-function ToutesLesOffres({ ouvert, offres, mensuelRef, analyser, onOuvrirFiche, onFermer, estMobile }) {
+function ToutesLesOffres({ ouvert, offres, mensuelRef, analyser, onOuvrirFiche, onFermer, estMobile, titre, notes }) {
   const groupes = GROUPES.map((g) => ({ ...g, offres: offres.filter((o) => g.familles.includes(familleOffre(o))) })).filter((g) => g.offres.length);
   return (
-    <Panneau ouvert={ouvert} onFermer={onFermer} titre="Toutes les offres" estMobile={estMobile} testId="toutes-les-offres">
+    <Panneau ouvert={ouvert} onFermer={onFermer} titre={titre || 'Toutes les offres'} estMobile={estMobile} testId="toutes-les-offres">
       <div style={{ padding: '6px 12px 12px' }} data-testid="liste-toutes-offres">
         {groupes.map((g) => (
           <section key={g.cle} data-testid={`groupe-${g.cle}`} style={{ marginTop: 10 }}>
@@ -538,6 +538,9 @@ function ToutesLesOffres({ ouvert, offres, mensuelRef, analyser, onOuvrirFiche, 
                 const limitee = infoCompacteLimitee(o);
                 const eco = economieOffre(o, mensuelRef);
                 const sousTitre = [seances, limitee].filter(Boolean).join(' · ') || promesseCourte(o);
+                // V566 : note DISCRÈTE fournie par l'appelant (espace abonné : « Ton offre »,
+                // ou la vraie raison d'un refus). Absente sur la vitrine : rendu inchangé.
+                const note = notes && notes[o.id];
                 return (
                   <li key={o.id} style={{ minWidth: 0 }}>
                     <button
@@ -566,6 +569,13 @@ function ToutesLesOffres({ ouvert, offres, mensuelRef, analyser, onOuvrirFiche, 
                           </span>
                           {sousTitre ? <span style={{ display: 'block', fontSize: 12, color: 'rgba(255,255,255,0.6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sousTitre}</span> : null}
                           {eco ? <span style={{ display: 'block', fontSize: 12, color: 'var(--eco-color, #8ef0b0)', fontWeight: 600 }}>Économie : {prixFormate(eco)} CHF</span> : null}
+                          {note && note.texte ? (
+                            <span data-testid={`note-offre-${o.id}`} data-ton={note.ton || 'info'}
+                                  style={{ display: 'block', fontSize: 12, fontWeight: 600,
+                                    color: note.ton === 'refus' ? 'rgba(255,200,170,0.95)' : 'rgba(255,255,255,0.8)' }}>
+                              {note.texte}
+                            </span>
+                          ) : null}
                         </span>
                         <span style={{ textAlign: 'right', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                           <span style={{ fontWeight: 800, fontSize: 16, color: COULEUR, whiteSpace: 'nowrap' }}>{p.montant}</span>
@@ -670,7 +680,9 @@ function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir, Countdown }) {
  * panneau, la fiche et le signal restent vivants. Une seule implémentation, un seul
  * panneau, aucune logique recopiée ailleurs.
  */
-export default function OffresAimants({ offres, analyserMedia, onChoisir, checkoutBusy, ouvrirToutesSignal, titre, Countdown, cartes = true }) {
+export default function OffresAimants({ offres, analyserMedia, onChoisir, checkoutBusy, ouvrirToutesSignal, titre, Countdown, cartes = true, titreToutes, notes }) {
+  // V566 : `titreToutes` / `notes` — l'espace abonné (Recharger) réutilise CE panneau ;
+  // la vitrine ne les passe pas et reste identique.
   // V525: `Countdown` = le composant OfferCountdown existant d'App.js (j/h/m/s
   // dynamiques) ; aucun compteur n'est recree ici.
   const { estMobile } = useLargeurEcran();
@@ -735,6 +747,8 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
         mensuelRef={groupe.mensuelRef}
         analyser={analyser}
         estMobile={estMobile}
+        titre={titreToutes}
+        notes={notes}
         onFermer={() => setToutes(false)}
         onOuvrirFiche={(c) => { setToutes(false); setFiche(c); }}
       />
