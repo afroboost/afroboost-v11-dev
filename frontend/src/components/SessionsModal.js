@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
+import { jetonCoachUtilisable } from '../utils/jwt'; // V567 — compteurs réservés au coach
+import InscritsSession, { BadgeInscrits, cleOccurrence } from './coach/InscritsSession'; // V567
 
 /**
  * SessionsModal — le calendrier des cours et evenements, en fenetre.
@@ -152,6 +154,27 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
 
   const [occurrences, setOccurrences] = useState([]);
   const [chargement, setChargement] = useState(false);
+
+  // V567 — LE COACH VOIT SES INSCRITS. Seulement sur l'agenda du site (jamais
+  // quand l'appelant impose ses séances : Pass Duo, invitation) et seulement avec
+  // un jeton coach : un visiteur ne déclenche aucun appel. Le serveur recompte à
+  // chaque ouverture depuis les réservations réelles (rien de stocké ici).
+  const modeCoach = open && !Array.isArray(occurrencesFournies) && jetonCoachUtilisable();
+  const [inscriptions, setInscriptions] = useState({});
+  useEffect(() => {
+    if (!modeCoach) return undefined;
+    let annule = false;
+    const p = (n) => String(n).padStart(2, '0');
+    const iso = (d) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    const auj = new Date();
+    const debut = new Date(auj.getFullYear(), auj.getMonth(), auj.getDate() - 7);
+    const fin = new Date(auj.getFullYear(), auj.getMonth(), auj.getDate() + 70);
+    axios.get(`${API}/coach/sessions/inscriptions`, { params: { debut: iso(debut), fin: iso(fin) } })
+      .then((r) => { if (!annule) setInscriptions((r && r.data && r.data.sessions) || {}); })
+      .catch(() => { if (!annule) setInscriptions({}); });   // pas coach / hors ligne : rien affiché
+    return () => { annule = true; };
+  }, [modeCoach]);
+  const inscritsDe = (o) => (modeCoach ? inscriptions[cleOccurrence(o.id, o.quand)] : null) || null;
 
   // La source est le serveur. Le repli local ne sert que si la route manque :
   // il ne voit pas les activites recurrentes rattachees a un forfait, et
@@ -336,6 +359,7 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
               onReserve={() => { const o = detail; fermer(); setTimeout(() => onReserve && onReserve(o), 60); }}
               libelleAction={libelleAction}
               noteAction={noteAction}
+              complementCoach={modeCoach ? <InscritsSession courseId={detail.id} quand={detail.quand} /> : null}
             />
           ) : chargement ? (
             <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}
@@ -394,12 +418,21 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
                       }}
                     >
                       {d.getDate()}
-                      {combien > 0 && (
-                        <span style={{
-                          position: 'absolute', bottom: 4, left: '50%', transform: 'translateX(-50%)',
-                          width: 4, height: 4, borderRadius: '50%', background: ROSE
-                        }} />
-                      )}
+                      {combien > 0 && (() => {
+                        // V567 : pour le coach, le total d'inscrits du jour (discret) à la place du point.
+                        const total = modeCoach ? (parJour.get(k) || []).reduce((n, o) => n + ((inscritsDe(o) || {}).inscrits || 0), 0) : 0;
+                        return total > 0 ? (
+                          <span data-testid={`sessions-jour-inscrits-${k}`} style={{
+                            position: 'absolute', bottom: 1, left: '50%', transform: 'translateX(-50%)',
+                            fontSize: 9, fontWeight: 700, lineHeight: 1, color: ROSE
+                          }}>{total}</span>
+                        ) : (
+                          <span style={{
+                            position: 'absolute', bottom: 4, left: '50%', transform: 'translateX(-50%)',
+                            width: 4, height: 4, borderRadius: '50%', background: ROSE
+                          }} />
+                        );
+                      })()}
                     </button>
                   );
                 })}
@@ -437,6 +470,12 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
                           {o.lieu}
                         </div>
                       )}
+                      {modeCoach ? (
+                        <div style={{ marginTop: 6 }}>
+                          <BadgeInscrits inscrits={(inscritsDe(o) || {}).inscrits || 0} capacite={(inscritsDe(o) || {}).capacite}
+                                         testId={`sessions-inscrits-${i}`} />
+                        </div>
+                      ) : null}
                     </button>
                   ))}
                 </div>
@@ -470,7 +509,7 @@ const BoutonMois = ({ sens, onClick }) => (
   </button>
 );
 
-const DetailSession = ({ occ, onRetour, onReserve,
+const DetailSession = ({ occ, onRetour, onReserve, complementCoach = null,
                         libelleAction = 'Réserver',
                         noteAction = 'Tu choisiras tes dates après la réservation, dans ton espace.' }) => {
   const d = occ.quand;
@@ -509,6 +548,9 @@ const DetailSession = ({ occ, onRetour, onReserve,
           {occ.ponctuel ? 'Événement — date unique' : `Chaque ${JOURS_LONGS[d.getDay()]}`}
         </Ligne>
       </div>
+
+      {/* V567 : pour le coach seulement — qui est inscrit, places, annulations. */}
+      {complementCoach}
 
       <button
         type="button"

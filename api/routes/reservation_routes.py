@@ -2057,6 +2057,12 @@ async def delete_reservation(reservation_id: str, request: Request):
             "created_at": datetime.now(timezone.utc).isoformat(),
             "read": False,
             "coach_id": reservation.get("coach_id", DEFAULT_COACH_ID),  # V244
+            # V567 : la session annulée, lisible par l'onglet Sessions du coach
+            # (journal écrit APRÈS la transaction : aucune règle d'annulation ne change).
+            "course_id": str(reservation.get("courseId") or ""),
+            "occurrence_cle": v567_cle_occurrence(reservation.get("courseId"), reservation.get("datetime")),
+            "user_name": str(reservation.get("userName") or "").strip(),
+            "places": v567_places(reservation),
         })
     except Exception as _e:
         logger.warning(f"[CANCEL] Erreur sauvegarde notification: {_e}")
@@ -4498,3 +4504,189 @@ async def post_paiement_seance(request: Request, payload: PaiementSeanceRequest)
     logger.info("[LOT3s] paiement partenaire %s pour %s @ %s declare par %s",
                 "DECLARE" if payload.paye else "RETIRE", _cid, _occ, caller_email)
     return _doc
+
+
+# ═══ V567 — SESSIONS : QUI EST INSCRIT, COMBIEN DE PLACES, VUE PAR LE COACH ═══════
+#
+# AUCUN SECOND SYSTÈME. Tout est CALCULÉ à la lecture depuis `reservations` (les
+# réservations actives : une annulation SUPPRIME le document, LOT B3) — aucun
+# compteur stocké qui pourrait diverger. Une occurrence = `courseId` + la minute
+# de `datetime` normalisée (`lot1_occurrence_iso`) : deux cours à la même heure,
+# au même lieu, restent DEUX sessions.
+#
+# PLACES RÉELLES : `quantity` (une réservation « 3 places » = 3) ; un Pass Duo
+# crée deux réservations d'une place chacune -> 2 places.
+#
+# CAPACITÉ : un cours n'en porte aucune ; elle vient de `max_participants` des
+# offres LIÉES à ce cours (`linked_course_ids`), seulement si elles s'accordent
+# sur une valeur unique. Sinon aucune — jamais une capacité inventée.
+#
+# ISOLATION : JWT coach SIGNÉ (`mt5_coach_signe`, 403 sinon) puis LA règle de
+# périmètre du carnet (`lot3c0_perimetre`) : un partenaire ne lit que ses
+# réservations, le super-admin existant garde sa vue globale. Aucun coach_id
+# n'est jamais lu depuis le navigateur. Lecture seule : rien n'est écrit.
+V567_LIMITE_RESERVATIONS = 5000
+V567_LIMITE_PARTICIPANTS = 50
+
+
+def v567_cle_occurrence(course_id, valeur_datetime) -> str:
+    """PURE — « <courseId>|AAAA-MM-JJTHH:MM » (heure locale Zurich), ou "" si illisible."""
+    _c = str(course_id or "").strip()
+    _o = lot1_occurrence_iso(valeur_datetime)
+    return f"{_c}|{_o[:16]}" if _c and _o else ""
+
+
+def v567_places(reservation) -> int:
+    """PURE — les places qu'occupe UNE réservation (`quantity`, au moins 1)."""
+    try:
+        return max(1, int(float((reservation or {}).get("quantity") or 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def v567_capacite(offres_liees):
+    """PURE — la capacité commune des offres liées, ou None (aucune, ou désaccord)."""
+    _vals = set()
+    for _o in offres_liees or []:
+        try:
+            _m = int(float((_o or {}).get("max_participants") or 0))
+        except (TypeError, ValueError):
+            _m = 0
+        if _m > 0:
+            _vals.add(_m)
+    return _vals.pop() if len(_vals) == 1 else None
+
+
+def v567_paiement(reservation, essai: bool) -> str:
+    """PURE — le libellé de paiement, sans jargon : Essai gratuit / Inclus dans
+    le forfait / Payé / Gratuit."""
+    _r = reservation or {}
+    if essai:
+        return "Essai gratuit"
+    try:
+        _prix = float(_r.get("totalPrice") or 0)
+    except (TypeError, ValueError):
+        _prix = 0.0
+    if _r.get("subscriptionId") or _r.get("source") in ("pass_duo", "subscriber_space") \
+            or (_prix <= 0 and (_r.get("discountCode") or _r.get("promoCode"))):
+        return "Inclus dans le forfait"
+    if _prix > 0:
+        return "Payé"
+    return "Gratuit"
+
+
+async def _v567_perimetre(request) -> dict:
+    _appelant = await mt5_coach_signe(request)           # 403 sans JWT coach signé
+    from api.routes.shared import lot3c0_perimetre as _perim
+    return _perim(_appelant, is_super_admin(_appelant))
+
+
+def _v567_bornes(debut: str, fin: str):
+    """Fenêtre de lecture (chaînes ISO), bornée à 120 jours ; ±1 jour de marge
+    pour les anciennes valeurs en UTC."""
+    from datetime import timedelta as _td
+    try:
+        _d = datetime.fromisoformat(str(debut)[:10])
+        _f = datetime.fromisoformat(str(fin)[:10])
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Période illisible.")
+    if _f < _d or (_f - _d).days > 120:
+        raise HTTPException(status_code=400, detail="Période trop longue (120 jours au plus).")
+    return (_d - _td(days=1)).strftime("%Y-%m-%d"), (_f + _td(days=2)).strftime("%Y-%m-%d")
+
+
+@reservation_router.get("/coach/sessions/inscriptions")
+async def v567_inscriptions_par_session(request: Request, debut: str, fin: str):
+    """Le nombre d'inscrits (places actives) par occurrence, et la capacité si elle
+    existe. Aucune donnée personnelle : seulement des nombres."""
+    _perim = await _v567_perimetre(request)
+    _bas, _haut = _v567_bornes(debut, fin)
+    _q = {**_perim, "courseId": {"$nin": [None, ""]}, "datetime": {"$gte": _bas, "$lt": _haut}}
+    _resas = await db.reservations.find(
+        _q, {"_id": 0, "courseId": 1, "datetime": 1, "quantity": 1}).to_list(V567_LIMITE_RESERVATIONS)
+    _par_cle, _cours = {}, set()
+    for _r in _resas:
+        _k = v567_cle_occurrence(_r.get("courseId"), _r.get("datetime"))
+        if not _k:
+            continue
+        _par_cle[_k] = _par_cle.get(_k, 0) + v567_places(_r)
+        _cours.add(str(_r.get("courseId")))
+    _cap = {}
+    if _cours:
+        _liees = await db.offers.find({"linked_course_ids": {"$in": list(_cours)}},
+                                      {"_id": 0, "linked_course_ids": 1, "max_participants": 1}).to_list(500)
+        for _c in _cours:
+            _cap[_c] = v567_capacite([o for o in _liees if _c in (o.get("linked_course_ids") or [])])
+    return {"sessions": {k: {"inscrits": n, "capacite": _cap.get(k.split("|", 1)[0])}
+                         for k, n in _par_cle.items()}}
+
+
+@reservation_router.get("/coach/sessions/detail")
+async def v567_detail_session(request: Request, course_id: str, occurrence: str):
+    """Les participants ACTIFS d'une occurrence (50 au plus), avec l'offre utilisée,
+    le paiement, l'essai, et les annulations tracées pour cette occurrence."""
+    _perim = await _v567_perimetre(request)
+    _cle = v567_cle_occurrence(course_id, occurrence)
+    if not _cle:
+        raise HTTPException(status_code=400, detail="Session illisible.")
+    _jour = _cle.split("|", 1)[1][:10]
+    _bas, _haut = _v567_bornes(_jour, _jour)
+    _resas = await db.reservations.find(
+        {**_perim, "courseId": str(course_id), "datetime": {"$gte": _bas, "$lt": _haut}},
+        {"_id": 0, "id": 1, "userName": 1, "userEmail": 1, "userWhatsapp": 1, "datetime": 1,
+         "quantity": 1, "offerName": 1, "totalPrice": 1, "createdAt": 1, "validated": 1,
+         "subscriptionId": 1, "discountCode": 1, "promoCode": 1, "source": 1, "guests": 1},
+    ).sort("createdAt", 1).to_list(500)
+    _resas = [r for r in _resas if v567_cle_occurrence(course_id, r.get("datetime")) == _cle]
+    # L'essai : LA règle qui fait foi (même filtre que le scan), en UNE requête.
+    _codes = {str(r.get("discountCode") or r.get("promoCode") or "").strip().upper() for r in _resas} - {""}
+    _essais = set()
+    if _codes:
+        from api.routes.shared import ESSAI2_FILTRE_GRATUIT as _GRATUIT
+        _docs = await db.discount_codes.find({"code": {"$in": list(_codes)}, **_GRATUIT},
+                                             {"_id": 0, "code": 1}).to_list(500)
+        _essais = {str(d.get("code") or "").upper() for d in _docs}
+    _participants = []
+    for _r in _resas[:V567_LIMITE_PARTICIPANTS]:
+        _code = str(_r.get("discountCode") or _r.get("promoCode") or "").strip().upper()
+        _essai = bool(_code and _code in _essais)
+        _ca = _r.get("createdAt")
+        _participants.append({
+            "id": _r.get("id"),
+            "nom": str(_r.get("userName") or "").strip() or "Participant",
+            "statut": "Présent" if _r.get("validated") is True else "Confirmé",
+            "places": v567_places(_r),
+            "accompagnants": [str(g.get("name") if isinstance(g, dict) else g) for g in (_r.get("guests") or []) if g],
+            "offre": "Pass Duo" if _r.get("source") == "pass_duo" else (str(_r.get("offerName") or "").strip() or "—"),
+            "forfait": str(_r.get("offerName") or "").strip() if _r.get("source") == "pass_duo" else "",
+            "essai": _essai,
+            "paiement": v567_paiement(_r, _essai),
+            "reserve_le": _ca.isoformat() if hasattr(_ca, "isoformat") else (str(_ca) if _ca else ""),
+            # Coordonnées : celles que CE coach détient déjà dans SES réservations.
+            "email": str(_r.get("userEmail") or ""),
+            "whatsapp": str(_r.get("userWhatsapp") or ""),
+        })
+    # Annulations : le journal d'annulation (V567 : il porte désormais la session).
+    _annul = await db.notifications.find(
+        {**_perim, "type": "reservation_cancelled", "course_id": str(course_id), "occurrence_cle": _cle},
+        {"_id": 0, "user_name": 1, "places": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(V567_LIMITE_PARTICIPANTS)
+    _course = await db.courses.find_one({"id": str(course_id)},
+                                        {"_id": 0, "name": 1, "locationName": 1, "time": 1}) or {}
+    _liees = await db.offers.find({"linked_course_ids": str(course_id)},
+                                  {"_id": 0, "max_participants": 1}).to_list(100)
+    _cap = v567_capacite(_liees)
+    _inscrits = sum(v567_places(r) for r in _resas)
+    return {
+        "session": {"course_id": str(course_id), "occurrence": _cle.split("|", 1)[1],
+                    "nom": _course.get("name") or "", "lieu": _course.get("locationName") or ""},
+        "inscrits": _inscrits,
+        "capacite": _cap,
+        "restantes": (max(0, _cap - _inscrits) if _cap else None),
+        "complet": bool(_cap and _inscrits >= _cap),
+        "participants": _participants,
+        "tronque": len(_resas) > V567_LIMITE_PARTICIPANTS,
+        "annulations": [{"nom": str(a.get("user_name") or "Participant"),
+                         "places": int(a.get("places") or 1), "le": str(a.get("created_at") or "")}
+                        for a in _annul],
+    }
