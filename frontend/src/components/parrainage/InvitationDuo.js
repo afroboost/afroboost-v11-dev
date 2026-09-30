@@ -43,6 +43,7 @@ import {
   offreDuPass, offresDe, changerOffre, lireRefus, messageRefusOffre, TEXTE_OFFRE_CONFLIT, // V534b
   changerSeance, occurrencesPourCalendrier, // V539
   nomAffichable, photoAutorisee, // V551
+  urlEspaceCourant, // V562 : « Retour à mon espace »
 } from '../../utils/parrainage';
 import SessionsModal from '../SessionsModal'; // V539 — le calendrier de la page d'accueil, réutilisé
 import WizardFilleul from './WizardFilleul'; // V556
@@ -349,7 +350,7 @@ export default function InvitationDuo({ token }) {
             <SvgIcon name={attente ? 'hourglass' : 'check'} size={38} strokeWidth="2.5" />
           </div>
           <h1 className="cp-h1 cp-center">
-            {attente ? <>Inscription <em className="cp-em">confirmée</em></> : billetSeul ? <>Ta place est <em className="cp-em">réservée</em></> : <>Votre Pass Duo est <em className="cp-em">débloqué</em></>}
+            {attente ? <>Inscription <em className="cp-em">confirmée</em></> : billetSeul ? <>Ta place est <em className="cp-em">réservée</em></> : <>Pass Duo <em className="cp-em">confirmé</em></>}
           </h1>
           <div className="cp-avatars" aria-hidden="true">
             {/* L0 : la photo du parrain, sinon l'avatar Afroboost (plus d'initiale). */}
@@ -365,8 +366,12 @@ export default function InvitationDuo({ token }) {
         {offreDuPass(resultat) || offreDuPass(pass) ? (
           <EncartOffre titre="Ton offre" offre={offreDuPass(resultat) || offreDuPass(pass)} testid="offre-recue" />
         ) : null}
-        <BilletsDuo tickets={resultat.tickets} />
+        {/* V562 : TON billet (premier essai gratuit, seulement pour toi) et celui de ton parrain. */}
+        <BilletsDuo tickets={resultat.tickets} vue="ami" />
         <p className="cp-center cp-fine">Tu recevras aussi ton billet par e-mail.</p>
+        <a className="cp-b cp-b--ghost" href={urlEspaceCourant() || '/'} data-testid="invitation-retour-espace">
+          <SvgIcon name="arrowLeft" size={18} /> {urlEspaceCourant() ? 'Retour à mon espace' : 'Retour à l’accueil'}
+        </a>
         {pass.chain_required === true ? (
           <p className="cp-center cp-mini" data-testid="invitation-chaine-active">
             Ton invitation reste active : quand ton ami s'inscrit, vous venez ensemble.
@@ -468,6 +473,7 @@ export default function InvitationDuo({ token }) {
           formulaire={formulaire("M'inscrire à mon essai gratuit")}
           onPrenom={(n) => setForm((prev) => (prev.name.trim() ? prev : Object.assign({}, prev, { name: n })))}
           onWhatsApp={(w) => setForm((prev) => (prev.whatsapp.trim() ? prev : Object.assign({}, prev, { whatsapp: w })))} // UX-P2
+          onEmail={(m) => setForm((prev) => (prev.email.trim() ? prev : Object.assign({}, prev, { email: m })))} // V562 : jamais redemandé
           retourEtape2={retourEtape2}
           messageEtape2={messageEtape2}
         />

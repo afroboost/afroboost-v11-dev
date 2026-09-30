@@ -59,6 +59,7 @@ async function monter(element) {
   await vider();
 }
 const cliquer = async (id) => { await act(async () => { par(id).click(); }); await vider(); };
+const cliquerSi = async (id) => { if (document.querySelector(`[data-testid="${id}"]`)) await cliquer(id); };
 
 const PHOTO = 'https://res.cloudinary.com/dtm0r7hwq/image/upload/v1/profil.jpg';
 
@@ -134,7 +135,7 @@ function routerChaine(child) {
 }
 
 describe('L0 — WizardFilleul étapes « Ta carte » et « Partage » (V558)', () => {
-  const versLaCarte = async () => { await cliquer('wf-continuer'); await cliquer('wf-seance-continuer'); };
+  const versLaCarte = async () => { await cliquerSi('wf-continuer'); await cliquerSi('wf-seance-continuer'); };
 
   test('UX-P3 / V558 — les textes disent que les informations sont celles de la personne à l’écran, sans « a reçu »', async () => {
     routerChaine(CHILD());
@@ -233,9 +234,10 @@ describe('L0 — InvitationDuo lit inviter_display', () => {
   });
   test('parcours chaîne, étape 1 : avatar Afroboost au lieu de l’initiale', async () => {
     axios.get.mockResolvedValue({ data: { ...PUB, inviter_display: { prenom: 'Coralie', photo_url: null, source: 'member' } } });
+    axios.post.mockResolvedValue({ data: {} });
     await monter(<InvitationDuo token="T0" />);
-    expect(par('wf-etape-1')).not.toBeNull();
-    expect(par('carte-invitation-logo')).not.toBeNull();
-    expect(par('carte-invitation-titre').textContent).toBe('Coralie t’invite à découvrir Afroboost');
+    expect(par('wf-etape-carte')).not.toBeNull(); // V562 : séance unique → carte directe
+    expect(par('wf-invitation-recue-ligne').textContent).toContain('Coralie');
+    expect(par('carte-invitation-photo')).toBeNull(); // pas de photo → jamais une image cassée
   });
 });

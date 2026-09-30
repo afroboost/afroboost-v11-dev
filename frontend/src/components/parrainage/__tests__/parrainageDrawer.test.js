@@ -139,8 +139,8 @@ describe('V560 — page « Mon parrainage » en quatre onglets', () => {
 
   test('l\'assistant reste MONTÉ entre les onglets : le message saisi survit', async () => {
     await monterCentre(ME_VIDE(), CONFIG_1);
-    await act(async () => { par('wizard-suivant').click(); });
-    await act(async () => { par('wizard-suivant').click(); });
+    await act(async () => { if (par('wizard-suivant')) par('wizard-suivant').click(); }); // V562 : étapes à choix unique sautées
+    await act(async () => { if (par('wizard-suivant')) par('wizard-suivant').click(); }); // V562 : étapes à choix unique sautées
     await act(async () => { par('wizard-modifier-message').click(); });
     const wizardAvant = par('invitation-wizard');
     await act(async () => { ecrire(par('wizard-message'), 'Viens danser avec moi dimanche !'); });

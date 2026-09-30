@@ -423,16 +423,15 @@ describe('CentreParrainage — états de page', () => {
   // qu'une fois l'invitation créée. La carte Pass Duo renvoie vers l'assistant.
   // V558 : l'assistant est le Wizard 4 étapes ; la séance se choisit à l'étape 2
   // dans le calendrier existant (résumé compact), plus dans un sélecteur.
-  test('sans pass → l\'assistant (étape 1 « Offre », puis la séance), AUCUN bouton de partage mort', async () => {
+  test('sans pass → l\'assistant (V562 : offre unique sautée, la séance d\'abord), AUCUN bouton de partage mort', async () => {
     window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
     const ME = { enabled: true, sponsor: { first_name: 'Bassi' }, stats: {}, passes: [], invitations: [], history: [] };
     axios.get.mockImplementation((url) => (String(url).endsWith('/me') ? Promise.resolve({ data: ME }) : Promise.resolve({ data: CONFIG })));
     await monter(<CentreParrainage />);
     expect(par('invitation-wizard')).not.toBeNull();
-    expect(par('wizard-etape-1')).not.toBeNull();
-    expect(par('wizard-offre-titre')).not.toBeNull();
+    expect(par('wizard-etape-1')).toBeNull();
+    expect(par('wizard-offre-titre')).toBeNull();
     ['inviter-whatsapp', 'inviter-copier', 'inviter-qr', 'inviter-partager'].forEach((id) => expect(par(id)).toBeNull());
-    await act(async () => { par('wizard-suivant').click(); });
     expect(tous('wf-seance-resume').length).toBe(1);          // un seul choix de séance, jamais deux
     await ouvrirOutil('pass');                                // V552 : la carte est dans son tiroir
     expect(tous('wf-seance-resume').length).toBe(1);          // toujours un seul, tiroir ouvert
@@ -631,7 +630,7 @@ describe('InvitationDuo — page publique', () => {
     axios.post.mockResolvedValueOnce({ data: { status: 'unlocked', tickets: TICKETS, blocked_reason: null } });
     await act(async () => { par('invitation-rejoindre').click(); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(par('invitation-succes').textContent).toContain('débloqué');
+    expect(par('invitation-succes').textContent).toContain('Pass Duo confirmé');
     expect(tous('qr-svg').length).toBe(2);
   });
   test('friend_registered → « Inscription confirmée », ton ami confirme sa place', async () => {

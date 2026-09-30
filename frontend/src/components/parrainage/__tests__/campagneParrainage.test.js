@@ -76,8 +76,8 @@ async function cliquer(id) {
 }
 async function creerViaAssistant() {
   await monter();
-  await cliquer('wizard-suivant');
-  await cliquer('wizard-suivant');
+  // V562 : les étapes à choix unique sont sautées — on avance tant qu'il y a « Continuer ».
+  while (par('wizard-suivant')) await cliquer('wizard-suivant');
   await cliquer('wizard-creer');
   const appel = axios.post.mock.calls.find((c) => /\/referral\/pass$/.test(String(c[0])));
   if (!appel) throw new Error('POST /referral/pass absent');

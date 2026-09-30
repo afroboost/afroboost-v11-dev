@@ -37,7 +37,8 @@ export function statutInvitation(pass, invitations) {
   const s = pass.status;
   // PAR : `ami_rejoint` (booléen du serveur) — l'identité de l'invité d'une chaîne n'est jamais renvoyée.
   const amiRejoint = pass.ami_rejoint === true || !!pass.invitee || s === 'friend_registered';
-  if (s === 'unlocked' || s === 'used') return { cle: 'debloque', libelle: 'Avantage débloqué', amiRejoint };
+  // V562 : le VRAI résultat (un Pass Duo), jamais un « avantage » générique.
+  if (s === 'unlocked' || s === 'used') return { cle: 'debloque', libelle: 'Pass Duo confirmé', amiRejoint };
   const journalise = (Array.isArray(invitations) ? invitations : []).some((i) => i && i.pass_id === pass.id);
   // PAR : `chain_shared` (booléen du serveur, sans PII) couvre le partage fait par la chaîne.
   if (s === 'waiting' || s === 'friend_registered' || journalise || pass.chain_shared === true) {
@@ -204,7 +205,9 @@ export default function InvitationParrainage({ onFermer, compact }) {
             </span>
             {statut.amiRejoint ? (
               <span className="cp-mini" data-testid="invitation-parrainage-ami" style={{ margin: 0 }}>
-                Ton ami a rejoint Afroboost
+                {statut.cle === 'debloque'
+                  ? 'Ton ami a rejoint Afroboost. Vos billets pour la séance sont prêts.'
+                  : 'Ton ami a rejoint Afroboost'}
               </span>
             ) : null}
           </div>
@@ -222,7 +225,7 @@ export default function InvitationParrainage({ onFermer, compact }) {
         {statut && statut.cle === 'debloque' && !creationForcee ? (
           <button type="button" className="cp-b cp-b--secondary" onClick={() => setCreationForcee(true)}
                   data-testid="invitation-parrainage-nouveau">
-            <SvgIcon name="users" size={18} /> Inviter un autre ami
+            <SvgIcon name="users" size={18} /> Créer une nouvelle invitation
           </button>
         ) : null}
       </>

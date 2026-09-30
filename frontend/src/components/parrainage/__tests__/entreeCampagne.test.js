@@ -263,7 +263,7 @@ describe('InvitationDuo — pass racine de campagne : un seul billet', () => {
   test('pass ordinaire (deux billets) : texte inchangé', async () => {
     await rejoindre([SPONSOR, INVITE]);
     expect(par('invitation-succes').textContent).toContain('Vous avez chacun votre billet pour la même séance.');
-    expect(par('invitation-succes').textContent).toContain('débloqué');
+    expect(par('invitation-succes').textContent).toContain('Pass Duo confirmé');
     expect(document.querySelectorAll('[data-testid="qr-svg"]')).toHaveLength(2);
   });
 });

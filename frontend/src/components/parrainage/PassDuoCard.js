@@ -398,10 +398,12 @@ function EtatPass({ pass, initialeParrain, urlEspace, onAnnuler, onConfirmer, on
       )}
       {debloque && (
         <>
+          {/* V562 : le vrai résultat — « Pass Duo confirmé », puis TON billet et celui de ton ami. */}
           <p className="cp-mini cp-center" data-testid="pass-texte-unlocked">
-            {s === 'used' ? 'Participation validée : vous étiez là tous les deux.' : 'Vous avez chacun votre billet pour la même séance.'}
+            {s === 'used' ? 'Participation validée : vous étiez là tous les deux.'
+              : <><b>Pass Duo confirmé</b><br />Ton ami a rejoint Afroboost. Vos billets pour la séance sont prêts.</>}
           </p>
-          <BilletsDuo tickets={pass.tickets} compact />
+          <BilletsDuo tickets={pass.tickets} compact vue="parrain" />
         </>
       )}
       {ferme && (

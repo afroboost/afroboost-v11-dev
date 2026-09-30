@@ -11,6 +11,7 @@ import axios from 'axios';
 import InvitationDuo from '../InvitationDuo';
 import { MESSAGE_CHAINE_DEFAUT, _resetParrainagePourTest, numeroWhatsAppChaine } from '../../../utils/parrainage';
 import { TEXTE_CONSENT_CONTACT } from '../WizardFilleul';
+import BilletsDuo, { titreBillet } from '../BilletsDuo';
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -53,6 +54,7 @@ async function monter(element) {
   await vider();
 }
 const cliquer = async (id) => { await act(async () => { par(id).click(); }); await vider(); };
+const cliquerSi = async (id) => { if (document.querySelector(`[data-testid="${id}"]`)) await cliquer(id); };
 const attendre = async (ms) => { await act(async () => { jest.advanceTimersByTime(ms); }); await vider(); };
 const saisir = async (id, v) => {
   await act(async () => {
@@ -95,8 +97,8 @@ async function entrerEtape2(opts) {
   routerPost(opts);
   axios.get.mockResolvedValue({ data: PUB });
   await monter(<InvitationDuo token="T0" />);
-  await cliquer('wf-continuer');
-  await cliquer('wf-seance-continuer');
+  await cliquerSi('wf-continuer');
+  await cliquerSi('wf-seance-continuer');
 }
 // V558 : puis « Partage » ; la modification EN ATTENTE au moment du partage est le message.
 async function entrerPartage(opts) {
@@ -252,8 +254,10 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
   test('photo_suggeree → préremplie, posée sur la carte par l’enregistrement automatique', async () => {
     patchOk(5);
     await entrerEtape2({ enfant: CHILD(3, { photo_suggeree: 'https://res.cloudinary.com/dtm0r7hwq/moi.jpg' }) });
-    expect(par('wf-photo-img').getAttribute('src')).toBe('https://res.cloudinary.com/dtm0r7hwq/moi.jpg');
     expect(par('carte-invitation-photo').getAttribute('src')).toBe('https://res.cloudinary.com/dtm0r7hwq/moi.jpg');
+    expect(par('wf-photo-img')).toBeNull(); // V562 : photo connue → pas redemandée
+    await act(async () => { par('wf-modifier-infos').click(); });
+    expect(par('wf-photo-img').getAttribute('src')).toBe('https://res.cloudinary.com/dtm0r7hwq/moi.jpg');
     expect(par('wf-photo-ajouter').textContent).toContain('Changer de photo');
     await attendre(500);
     expect(axios.patch.mock.calls[0][1].photo_url).toBe('https://res.cloudinary.com/dtm0r7hwq/moi.jpg');
@@ -263,8 +267,8 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     axios.get.mockResolvedValue({ data: Object.assign({}, PUB, { sponsor_photo_url: 'https://res.cloudinary.com/x/coach.jpg' }) });
     routerPost();
     await monter(<InvitationDuo token="T0" />);
-    await cliquer('wf-continuer');
-    await cliquer('wf-seance-continuer');
+    await cliquerSi('wf-continuer');
+    await cliquerSi('wf-seance-continuer');
     expect(par('wf-photo-logo')).not.toBeNull();
     expect(par('carte-invitation-logo')).not.toBeNull();
     expect(conteneur.querySelector('.cp-wf-perso').innerHTML).not.toContain('coach.jpg');
@@ -345,5 +349,74 @@ describe('UX-P4 — badge du type réel', () => {
     expect(libelleTypeInvitation('affiliation')).toBe('Affiliation'); // V558
     expect(libelleTypeInvitation(undefined)).toBe('Invitation');
     expect(libelleTypeInvitation('autre')).toBe('Invitation');
+  });
+});
+
+// ═══ V562 — « Tes coordonnées » : seul ce qui MANQUE est demandé ═════════════
+describe('V562 — coordonnées de l’invitant', () => {
+  const PHOTO = 'https://res.cloudinary.com/dtm0r7hwq/moi.jpg';
+  const profil = (p) => window.localStorage.setItem('afroboost_profile', JSON.stringify(p));
+
+  test('profil complet → rien n’est redemandé ; prénom et photo sur la carte ; « Modifier mes informations »', async () => {
+    profil({ name: 'Henri', email: 'henri@exemple.ch', whatsapp: '+41791234567', photoUrl: PHOTO });
+    patchOk(4);
+    await entrerEtape2();
+    await attendre(0);
+    ['wf-coordonnees', 'wf-nom', 'wf-photo', 'wf-email', 'wf-whatsapp-numero'].forEach((id) => expect(par(id)).toBeNull());
+    expect(par('carte-invitation-photo').getAttribute('src')).toBe(PHOTO);
+    expect(par('wf-apercu').textContent).toContain('Henri');
+    expect(par('wf-modifier-infos')).not.toBeNull();
+    await cliquer('wf-modifier-infos');
+    expect(par('wf-nom').value).toBe('Henri');
+    expect(par('wf-whatsapp-numero').value).toBe('+41791234567');
+  });
+
+  test('seul le WhatsApp manque → seul le WhatsApp est demandé, sous « Tes coordonnées »', async () => {
+    profil({ name: 'Henri', email: 'henri@exemple.ch', photoUrl: PHOTO });
+    await entrerEtape2();
+    await attendre(0);
+    expect(par('wf-coordonnees').textContent).toBe('Tes coordonnées');
+    expect(conteneur.textContent).toContain('Ces informations servent à gérer ton invitation et ton accès Afroboost.');
+    expect(par('wf-whatsapp-numero')).not.toBeNull();
+    ['wf-nom', 'wf-photo', 'wf-email'].forEach((id) => expect(par(id)).toBeNull());
+  });
+
+  test('nouvel utilisateur → prénom, photo, e-mail et WhatsApp demandés', async () => {
+    await entrerEtape2();
+    ['wf-nom', 'wf-photo', 'wf-email', 'wf-whatsapp-numero'].forEach((id) => expect(par(id)).not.toBeNull());
+    expect(par('wf-modifier-infos')).toBeNull();
+  });
+
+  test('e-mail et WhatsApp n’apparaissent JAMAIS sur la carte publique', async () => {
+    profil({ name: 'Henri', email: 'henri@exemple.ch', whatsapp: '+41791234567', photoUrl: PHOTO });
+    patchOk(4);
+    await entrerEtape2();
+    await attendre(600);
+    const carte = par('wf-apercu').textContent;
+    expect(carte).not.toContain('henri@exemple.ch');
+    expect(carte).not.toContain('791234567');
+    const corps = axios.patch.mock.calls.map((c) => c[1]);
+    corps.forEach((c) => expect(c).not.toHaveProperty('email'));
+  });
+});
+
+// ═══ V562 — billets : propriétaire, nom affiché, origine RÉELLE ══════════════
+describe('V562 — BilletsDuo', () => {
+  const T = [
+    { role: 'sponsor', first_name: 'Henri', origine: '1 séance de ton forfait', qr_payload: 'q1', code: 'AFR-A' },
+    { role: 'invitee', first_name: 'Léa', origine: 'Premier essai gratuit', qr_payload: 'q2', code: 'AFR-B' },
+  ];
+  test('titres selon qui regarde : « Ton billet » / « Billet de <prénom> »', () => {
+    expect(titreBillet(T[0], 'parrain')).toBe('Ton billet');
+    expect(titreBillet(T[1], 'parrain')).toBe('Billet de Léa');
+    expect(titreBillet(T[1], 'ami')).toBe('Ton billet');
+    expect(titreBillet(T[0], 'ami')).toBe('Billet de Henri');
+  });
+  test('abonné : « 1 séance de ton forfait », jamais « Premier essai gratuit » ; l’essai reste à l’ami', async () => {
+    await monter(<BilletsDuo tickets={T} vue="parrain" />);
+    expect(par('billet-origine-sponsor').textContent).toBe('1 séance de ton forfait');
+    expect(par('billet-origine-sponsor').textContent).not.toContain('essai');
+    expect(par('billet-origine-invitee').textContent).toBe('Premier essai gratuit');
+    expect(par('billet-titre-invitee').textContent).toBe('Billet de Léa');
   });
 });

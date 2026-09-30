@@ -45,7 +45,7 @@ import SvgIcon from '../SvgIcon';
 import ConditionsParticipation from '../ConditionsParticipation';
 import { useChoixSeance, ChampsSeanceOffre } from './PassDuoCard';
 import SessionsModal from '../SessionsModal'; // V558 — le calendrier EXISTANT
-import { Etapes, CartesOffre, ResumeSeance, CarteInvitation, typesDeRepli } from './wizardCommun'; // V558 / V560 — le MÊME Wizard
+import { Etapes, CartesOffre, ResumeSeance, CarteInvitation, typesDeRepli, etapesNecessaires } from './wizardCommun'; // V558 / V560 — le MÊME Wizard
 import './invitationWizard.css';
 import './wizardFilleul.css'; // V558 : cartes d'offre et résumé de séance (classes cp-wf-*)
 import {
@@ -185,6 +185,14 @@ export default function InvitationWizard({
     axios.post(`${API_PARRAINAGE}/pass`, avecCampagne(corps, contexte && contexte.campagne), { headers: enteteParrain() })
       .then((r) => {
         const dto = r && r.data;
+        // V562 — RÈGLE EXISTANTE (serveur) : UN Pass Duo actif par parrain et par séance.
+        // Une NOUVELLE invitation sur une séance déjà prise n'adopte pas l'ancien pass.
+        if (creationForcee && dto && dto.deja_existant) {
+          setErreur(seanceVisible ? 'Pass Duo déjà utilisé pour cette séance. Choisis une autre séance.'
+            : 'Pass Duo déjà utilisé pour cette séance');
+          setEtape(2);
+          return;
+        }
         if (dto && dto.id) {
           setPassLocal(dto);
           if (typeof onPass === 'function') onPass(dto);
@@ -229,11 +237,21 @@ export default function InvitationWizard({
   };
 
   // ── Pass existant, hors édition : « Ton invitation est prête » ─────────────
+  // V562 — WIZARD DYNAMIQUE : une étape sans décision est choisie d'office et cachée.
+  // Séance : montrée s'il y a ≥ 2 séances, ou une vraie décision d'offre (≥ 2 offres,
+  // ou aucune offre valable : l'écran doit le dire).
+  const nbSeances = (choix.groupes || []).reduce((n, g) => n + ((g && g.options) || []).length, 0);
+  const decisionOffreCours = !!choix.offresConnues && (choix.offres || []).length !== 1;
+  const plan = etapesNecessaires({ nbOffres: TYPES_MEMBRE.length, nbSeances, decisionSeance: decisionOffreCours });
+  const NUMERO = { offre: 1, seance: 2, carte: 3 };
+  const visibles = plan.ids.filter((id) => id !== 'partage').map((id) => NUMERO[id]);
+  const seanceVisible = visibles.indexOf(2) >= 0;
+
   if (!creation && !edition) {
     return (
       <div className="cp-card cp-card--current" data-testid="inviter-un-ami">
         {/* V560 : l'étape « Partage » du MÊME Wizard — une carte, quatre boutons, « Modifier ». */}
-        <Etapes etape={4} className="cp-wf-etapes" testid="wizard-etapes" />
+        <Etapes etape={plan.libelles.length} etapes={plan.libelles} className="cp-wf-etapes" testid="wizard-etapes" />
         <div data-testid="wizard-prete">
           <h3 className="cp-wf-titre">Partage ton invitation</h3>
           <p className="cp-wf-aide" data-testid="wizard-partage-aide">
@@ -279,12 +297,13 @@ export default function InvitationWizard({
   }
 
   // Une modification n'ouvre que « Ta carte » : la séance se change dans la carte du Pass (V539b).
-  const etapeAffichee = creation ? etape : 3;
+  const etapeAffichee = creation ? (visibles.indexOf(etape) >= 0 ? etape : visibles[0]) : 3;
+  const position = visibles.indexOf(etapeAffichee);
   const seanceOk = !!choix.valeur && !choix.offreManquante && (!conditionsRequises || conditionsOk);
   const carteOk = !nomRefuse;
   const peutContinuer = etapeAffichee === 1 ? !!kind : (etapeAffichee === 2 ? seanceOk : carteOk);
-  const suivant = () => { if (!peutContinuer) return; setEtape((e) => Math.min(3, e + 1)); };
-  const precedent = () => setEtape((e) => Math.max(1, e - 1));
+  const suivant = () => { if (!peutContinuer) return; setEtape(visibles[Math.min(visibles.length - 1, position + 1)]); };
+  const precedent = () => setEtape(visibles[Math.max(0, position - 1)]);
   const coursObjet = (Array.isArray(courses) ? courses : []).find((x) => x && String(x.id) === String(choix.coursChoisi)) || {};
   const seanceChoisie = choix.occurrence
     ? { occurrence: choix.occurrence, nom: coursObjet.name || '', lieu: coursObjet.locationName || coursObjet.location || '' }
@@ -295,7 +314,8 @@ export default function InvitationWizard({
 
   return (
     <div className="cp-card" data-testid="invitation-wizard" data-mode={creation ? 'creation' : 'edition'}>
-      <Etapes etape={etapeAffichee} className="cp-wf-etapes" testid="wizard-etapes" />
+      <Etapes etape={plan.ids.indexOf(Object.keys(NUMERO).find((k) => NUMERO[k] === etapeAffichee)) + 1}
+              etapes={plan.libelles} className="cp-wf-etapes" testid="wizard-etapes" />
 
       {etapeAffichee === 1 ? (
         <div data-testid="wizard-etape-1">
@@ -343,6 +363,13 @@ export default function InvitationWizard({
         <div data-testid="wizard-etape-3">
           <h3 className="cp-wf-titre" data-testid="wizard-carte-titre">Personnalise ton invitation</h3>
           <p className="cp-wf-aide">Ton ami verra que l’invitation vient de toi.</p>
+          {/* V562 : séance unique choisie d'office — ses conditions se valident ici. */}
+          {creation && !seanceVisible && choix.coursChoisi ? (
+            <div className="cp-conditions" data-testid="pass-conditions">
+              <ConditionsParticipation courseId={choix.coursChoisi} accepte={conditionsOk}
+                                       onChange={setConditionsOk} onRequired={setConditionsRequises} />
+            </div>
+          ) : null}
           {apercu}
           {/* V560 : la carte ci-dessus montre déjà photo et prénom — ici, seulement les champs. */}
           <div className="cp-wz-edition" data-testid="wizard-identite-edition">
@@ -392,18 +419,18 @@ export default function InvitationWizard({
       {erreur ? <p className="cp-error" role="alert" data-testid="wizard-erreur">{erreur}</p> : null}
 
       <div className="cp-wz-nav">
-        {creation && etapeAffichee > 1 ? (
+        {creation && position > 0 ? (
           <button type="button" className="cp-b cp-b--ghost cp-wz-cible" onClick={precedent} disabled={occupe} data-testid="wizard-precedent">
             <SvgIcon name="arrowLeft" size={18} /> Retour
           </button>
         ) : null}
-        {creation && etapeAffichee < 3 ? (
+        {creation && etapeAffichee !== 3 ? (
           <button type="button" className="cp-b cp-wz-cible" onClick={suivant} disabled={occupe || !peutContinuer} data-testid="wizard-suivant">
             Continuer <SvgIcon name="arrowRight" size={18} />
           </button>
         ) : creation ? (
           <button type="button" className="cp-b cp-wz-cible" onClick={creer} disabled={occupe || !seanceOk || !carteOk} data-testid="wizard-creer">
-            <SvgIcon name="send" size={20} /> {occupe ? 'Création…' : 'Créer mon invitation'}
+            {occupe ? 'Un instant…' : 'Continuer vers le partage'} <SvgIcon name="arrowRight" size={18} />
           </button>
         ) : (
           <button type="button" className="cp-b cp-wz-cible" onClick={enregistrer} disabled={occupe || nomRefuse} data-testid="wizard-enregistrer">

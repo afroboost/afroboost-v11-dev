@@ -213,8 +213,8 @@ describe('PassDuoCard — création : choisis ton offre', () => {
     });
     axios.post.mockRejectedValueOnce({ response: { status: 400, data: { detail: 'offre_non_autorisee' } } });
     await monter(<CentreParrainage />);
-    await act(async () => { par('wizard-suivant').click(); });
-    await act(async () => { par('wizard-suivant').click(); });
+    await act(async () => { if (par('wizard-suivant')) par('wizard-suivant').click(); }); // V562 : étapes à choix unique sautées
+    await act(async () => { if (par('wizard-suivant')) par('wizard-suivant').click(); }); // V562 : étapes à choix unique sautées
     await act(async () => { par('wizard-creer').click(); });
     await attendre();
     expect(axios.post).toHaveBeenCalledWith(expect.stringMatching(/\/referral\/pass$/),

@@ -52,8 +52,9 @@ async function monter(element) {
   await vider();
 }
 const cliquer = async (id) => { await act(async () => { par(id).click(); }); await vider(); };
+const cliquerSi = async (id) => { if (document.querySelector(`[data-testid="${id}"]`)) await cliquer(id); };
 // V558 : Offre → Séance → Ta carte (l'enfant naît ici) → Partage.
-const allerALaCarte = async () => { await cliquer('wf-continuer'); await cliquer('wf-seance-continuer'); };
+const allerALaCarte = async () => { await cliquerSi('wf-continuer'); await cliquerSi('wf-seance-continuer'); };
 const allerAuPartage = async () => { await allerALaCarte(); await cliquer('wf-carte-continuer'); };
 
 const COURSE = { id: 'c1', name: 'Afroboost Dimanche', time: '18:30', locationName: 'Bord du Lac, Auvernier' };
@@ -96,27 +97,24 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     expect(par('invitation-form')).not.toBeNull();
   });
 
-  test('étape 1 : textes, séance, pas de formulaire ; Continuer → POST /chain AVANT tout partage', async () => {
+  test('V562 : une seule séance → étape sautée ; carte directe, POST /chain AVANT tout partage', async () => {
     routerPost();
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
-    expect(par('wf-etape-1')).not.toBeNull();
-    expect(par('carte-invitation-titre').textContent).toBe('Bassi t’invite à découvrir Afroboost'); // V560 : UNE carte
+    expect(par('wf-etape-1')).toBeNull();
+    expect(par('wf-etape-2')).toBeNull();
+    expect(par('wf-etape-carte')).not.toBeNull();
+    expect(par('wf-invitation-recue-ligne').textContent).toContain('Bassi');
     expect(par('wf-lead').textContent).toContain('Pour débloquer ton essai, invite à ton tour une autre personne.');
     expect(par('wf-regle-essai').textContent).toContain('L’essai gratuit est disponible une seule fois par personne.');
-    expect(par('carte-invitation-quand')).not.toBeNull(); // la séance est DANS la carte
     expect(par('invitation-form')).toBeNull();
-    expect(conteneur.textContent).not.toContain("M'inscrire et débloquer le duo");
-    await cliquer('wf-continuer');
-    expect(par('wf-etape-2')).not.toBeNull();          // V558 : l'étape « Séance »
-    expect(axios.post).not.toHaveBeenCalled();         // l'enfant n'existe pas avant la séance
-    await cliquer('wf-seance-continuer');
-    expect(par('wf-etape-carte')).not.toBeNull();
+    expect(document.querySelectorAll('[data-testid="wf-apercu"]')).toHaveLength(1); // UNE carte
     const appels = axios.post.mock.calls.map((c) => String(c[0]));
     expect(appels).toEqual([expect.stringMatching(/\/pass\/T0\/chain$/)]);
     expect(window.localStorage.getItem(cleChaine('T0'))).toBe('K1');
-    expect(par('wf-apercu')).not.toBeNull(); // V560 : la carte unique, rendue en direct
     expect(par('wf-nom')).not.toBeNull();
+    expect(conteneur.textContent).toContain('Continuer vers le partage');
+    expect(conteneur.textContent).not.toContain('Créer mon invitation');
   });
 
   test('boutons de partage désactivés pendant la préparation', async () => {

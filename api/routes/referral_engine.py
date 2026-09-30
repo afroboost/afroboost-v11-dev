@@ -914,9 +914,27 @@ def dto_course(pass_doc) -> dict:
     }
 
 
-def dto_ticket(reservation, role, first_name, frontend_url) -> dict:
+# V562 — L'ORIGINE RÉELLE d'un billet (jamais « premier essai » pour une place
+# payée par un forfait). L'invité n'a de billet qu'après ESSAI-1 : c'est bien SON
+# premier essai. Le parrain d'une invitation de CHAÎNE occupe la place de SON essai
+# (celle obtenue sur l'invitation reçue) ; le parrain d'un Pass Duo ordinaire paie
+# sa place avec une séance de son forfait.
+ORIGINE_ESSAI_AMI = "Premier essai gratuit"
+ORIGINE_ESSAI_PARRAIN = "Ta place d'essai"
+ORIGINE_FORFAIT = "1 séance de ton forfait"
+
+
+def origine_billet(pass_doc, role) -> str:
+    if role == ROLE_INVITEE:
+        return ORIGINE_ESSAI_AMI
+    if chaine_du_pass(pass_doc).get("parent_pass_id"):
+        return ORIGINE_ESSAI_PARRAIN
+    return ORIGINE_FORFAIT
+
+
+def dto_ticket(reservation, role, first_name, frontend_url, origine="") -> dict:
     """TicketDTO : `{role, first_name, reservationCode, qr_value, validated,
-    headphone_status}` — aucun e-mail, aucun code d'accès."""
+    headphone_status, origine, date}` — aucun e-mail, aucun code d'accès."""
     _r = reservation or {}
     _code = str(_r.get("reservationCode") or "")
     return {
@@ -926,6 +944,10 @@ def dto_ticket(reservation, role, first_name, frontend_url) -> dict:
         "qr_value": qr_value(frontend_url, _code) if _code else "",
         "validated": _r.get("validated") is True,
         "headphone_status": _r.get("headphone_status"),
+        # V562 : d'où vient la place, et POUR QUELLE séance (le parrain d'une chaîne
+        # peut avoir sa place à une autre date que celle offerte à son ami).
+        "origine": origine or "",
+        "date": _r.get("datetime") or None,
     }
 
 
@@ -941,7 +963,13 @@ def tickets_du_pass(pass_doc, reservations, frontend_url) -> list:
         _rid = _ids.get(_cle)
         _r = _par_id.get(_rid) if _rid else None
         if _r:
-            _sortie.append(dto_ticket(_r, _role, prenom((_qui or {}).get("name")), frontend_url))
+            # V562 : le parrain s'affiche par le prénom de SON invitation (display_name),
+            # puis son prénom filtré — jamais une adresse ni un identifiant technique.
+            _nom = (prenom(nom_parrain_affichable(_p)) if _role == ROLE_SPONSOR
+                    # l'ami a SAISI son prénom à l'inscription : filtres anti-identifiant,
+                    # sans la comparaison à son e-mail (« Léa » / lea@… reste « Léa »).
+                    else prenom(nom_affichable((_qui or {}).get("name"), "")))
+            _sortie.append(dto_ticket(_r, _role, _nom, frontend_url, origine_billet(_p, _role)))
     return _sortie
 
 

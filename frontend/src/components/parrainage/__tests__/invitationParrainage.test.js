@@ -127,8 +127,8 @@ describe('statutInvitation — champs publics du PassDTO seulement', () => {
     const s = statutInvitation(pass('friend_registered', { invitee: { first_name: 'Léa' } }), []);
     expect(s).toEqual({ cle: 'partagee', libelle: 'Partagée', amiRejoint: true });
   });
-  test('unlocked / used → Avantage débloqué (+ ami rejoint si invitee)', () => {
-    expect(statutInvitation(pass('unlocked', { invitee: { first_name: 'Léa' } }), [])).toEqual({ cle: 'debloque', libelle: 'Avantage débloqué', amiRejoint: true });
+  test('unlocked / used → Pass Duo confirmé (+ ami rejoint si invitee)', () => {
+    expect(statutInvitation(pass('unlocked', { invitee: { first_name: 'Léa' } }), [])).toEqual({ cle: 'debloque', libelle: 'Pass Duo confirmé', amiRejoint: true });
     expect(statutInvitation(pass('used'), []).cle).toBe('debloque');
   });
   test('pas de pass → null', () => {
@@ -156,7 +156,7 @@ describe('InvitationParrainage — le même parcours, un seul GET /me', () => {
     expect(appelsMe()).toBe(1);
   });
 
-  test('statut « Partagée » puis « Avantage débloqué » + « Ton ami a rejoint Afroboost »', async () => {
+  test('statut « Partagée » puis « Pass Duo confirmé » + « Ton ami a rejoint Afroboost »', async () => {
     reseau(me([pass('waiting')]));
     await monter(<InvitationParrainage />);
     expect(par('invitation-parrainage-statut').textContent).toContain('Partagée');
@@ -165,7 +165,7 @@ describe('InvitationParrainage — le même parcours, un seul GET /me', () => {
 
     reseau(me([pass('unlocked', { invitee: { first_name: 'Léa' } })]));
     await monter(<InvitationParrainage />);
-    expect(par('invitation-parrainage-statut').textContent).toContain('Avantage débloqué');
+    expect(par('invitation-parrainage-statut').textContent).toContain('Pass Duo confirmé');
     expect(par('invitation-parrainage-ami').textContent).toContain('Ton ami a rejoint Afroboost');
   });
 
@@ -320,5 +320,41 @@ describe('PAR — intégration : ami_rejoint sans identité', () => {
     const r = st({ id: 'p1', status: 'unlocked', invitee: null, ami_rejoint: true }, []);
     expect(r.amiRejoint).toBe(true);
     expect(st({ id: 'p1', status: 'locked', invitee: null, ami_rejoint: false }, []).amiRejoint).toBe(false);
+  });
+});
+
+// ═══ V562 — nouvelle invitation, jamais un nouvel essai ═══════════════════════
+describe('V562 — « Créer une nouvelle invitation »', () => {
+  const ouvrirNouvelle = async () => {
+    reseau(me([pass('unlocked', { invitee: { first_name: 'Léa' } })]));
+    await monter(<InvitationParrainage />);
+    expect(par('invitation-parrainage-nouveau').textContent).toContain('Créer une nouvelle invitation');
+    expect(document.body.textContent).not.toContain('Inviter un autre ami');
+    await act(async () => { par('invitation-parrainage-nouveau').click(); });
+    await attendre();
+    // Une seule séance, une seule offre → Offre et Séance sautées : « Ta carte » directement.
+    expect(par('invitation-wizard').getAttribute('data-mode')).toBe('creation');
+    expect(par('wizard-etape-3')).not.toBeNull();
+    expect(par('wizard-creer').textContent).toContain('Continuer vers le partage');
+  };
+
+  test('le parcours crée un Pass Duo de PARRAIN (POST /referral/pass) — aucun essai pour l’invitant', async () => {
+    axios.post.mockResolvedValue({ data: pass('locked', { id: 'p-neuf' }) });
+    await ouvrirNouvelle();
+    await act(async () => { par('wizard-creer').click(); });
+    await attendre();
+    const urls = axios.post.mock.calls.map((c) => String(c[0]));
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toMatch(/\/referral\/pass$/);
+    urls.forEach((u) => expect(u).not.toMatch(/trial|essai|join|chain/));
+  });
+
+  test('séance déjà prise (deja_existant) → « Pass Duo déjà utilisé pour cette séance », l’ancien pass n’est pas repris', async () => {
+    axios.post.mockResolvedValue({ data: pass('unlocked', { deja_existant: true }) });
+    await ouvrirNouvelle();
+    await act(async () => { par('wizard-creer').click(); });
+    await attendre();
+    expect(par('invitation-wizard').textContent).toContain('Pass Duo déjà utilisé pour cette séance');
+    expect(par('invitation-wizard').getAttribute('data-mode')).toBe('creation');
   });
 });

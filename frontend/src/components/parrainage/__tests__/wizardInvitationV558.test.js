@@ -57,6 +57,8 @@ const pad = (n) => String(n).padStart(2, '0');
 const demain = new Date(Date.now() + 86400000);
 const O2 = `${demain.getFullYear()}-${pad(demain.getMonth() + 1)}-${pad(demain.getDate())}T18:45:00`;
 const CLE_JOUR = O2.slice(0, 10);
+const apres = new Date(Date.now() + 2 * 86400000);
+const O2B = `${apres.getFullYear()}-${pad(apres.getMonth() + 1)}-${pad(apres.getDate())}T18:45:00`;
 const COURSE = { id: 'c1', name: 'Afroboost Dimanche', time: '18:30', locationName: 'Bord du Lac, Auvernier' };
 const OCC = '2026-09-27T18:30:00';
 const PUB = { status: 'waiting', sponsor_first_name: 'Henri', course: COURSE, occurrence: OCC, expired: false, version: 1,
@@ -68,7 +70,7 @@ const OPTS = {
       nature: 'recompense_parrainage', recompense: 'Tu gagnes 1 séance offerte de parrainage quand les conditions sont remplies.' },
   ],
   seances: [{ course_id: 'c2', name: 'Afroboost Silent – Session Cardio', location: 'Ch. des Valangines 97, 2000 Neuchâtel',
-    time: '18:45', occurrences: [O2] }],
+    time: '18:45', occurrences: [O2, O2B] }], // V562 : 2 séances → l'étape Séance est réelle
   seance_parent: { course_id: 'c1', occurrence: OCC },
 };
 const CHILD = (extra) => Object.assign({
@@ -189,11 +191,10 @@ describe('V558 — Wizard 4 étapes', () => {
     routerGet({ options: () => Promise.reject({ response: { status: 500 } }) });
     routerPost();
     await monter(<InvitationDuo token="T0" />);
-    expect(par('wf-offre-trial')).not.toBeNull();       // repli : le type du pass seul
-    expect(par('wf-offre-parrainage')).toBeNull();
-    await cliquer('wf-continuer');
-    expect(par('wf-seance-meme').textContent).toContain('Ton ami est invité à la même séance que toi');
-    await cliquer('wf-seance-continuer');
+    // V562 : un seul type (repli) et aucune séance offrable → Offre ET Séance sautées
+    expect(par('wf-offre-trial')).toBeNull();
+    expect(par('wf-etape-carte')).not.toBeNull();
+    expect(par('wf-etapes').textContent.replace(/\s+/g, '')).toBe('1Tacarte2Partage');
     const creation = axios.post.mock.calls.find((c) => String(c[0]).endsWith('/chain'));
     expect(creation[1].course_id).toBeUndefined();
     expect(creation[1].occurrence).toBeUndefined();
@@ -201,7 +202,7 @@ describe('V558 — Wizard 4 étapes', () => {
 
   test('seancesPourCalendrier : une entrée par date, cours / lieu / id du cours', () => {
     const o = seancesPourCalendrier(OPTS.seances);
-    expect(o).toHaveLength(1);
+    expect(o).toHaveLength(2);
     expect(o[0]).toEqual(expect.objectContaining({ id: 'c2', nom: 'Afroboost Silent – Session Cardio',
       lieu: 'Ch. des Valangines 97, 2000 Neuchâtel', iso: O2 }));
     expect(seancesPourCalendrier(null)).toEqual([]);

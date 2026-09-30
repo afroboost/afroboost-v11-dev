@@ -920,3 +920,25 @@ export function texteChaine(message, shareUrl) {
   const m = String(message || '').trim();
   return m ? `${m}\n${shareUrl || ''}` : String(shareUrl || '');
 }
+
+/**
+ * V562 — CE QUE L'APPAREIL SAIT DÉJÀ DE LA PERSONNE (profil de l'espace / du chat),
+ * pour ne pas lui redemander prénom, e-mail, WhatsApp ou photo. Simple
+ * PRÉREMPLISSAGE : rien n'est décidé d'après ces valeurs (le serveur revalide
+ * tout, et chaque champ reste modifiable). Ne lève jamais.
+ */
+export function profilConnu() {
+  const lire = (cle) => {
+    try { return JSON.parse(window.localStorage.getItem(cle) || 'null') || {}; } catch (e) { return {}; }
+  };
+  const p = lire('afroboost_profile');
+  const i = lire('afroboost_identity');
+  const email = String(p.email || i.email || '').trim().toLowerCase();
+  const tel = String(p.whatsapp || p.phone || i.whatsapp || '').trim();
+  return {
+    prenom: nomAffichable(p.name || i.firstName || '') || '',
+    email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '',
+    whatsapp: (tel.match(/\d/g) || []).length >= 8 ? tel : '',
+    photo: photoAutorisee(p.photoUrl || p.photo_url || '') || '',
+  };
+}

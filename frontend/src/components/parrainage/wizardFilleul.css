@@ -129,3 +129,8 @@
 .cp-wf-regle svg { color: var(--cp-pink); flex: none; margin-top: 2px; }
 .cp-wf-actions4 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .cp-wf-actions4 .cp-b { margin: 0; min-width: 0; }
+/* V562 — l'invitation reçue en une ligne (quand l'étape « Offre » est sautée). */
+.cp-wf-recue {
+  margin: 4px 0 8px; padding: 10px 12px; border-radius: 12px; font-size: 14px; line-height: 1.4;
+  background: rgba(var(--primary-rgb, 217, 28, 210), .10); border: 1px solid var(--cp-line); overflow-wrap: anywhere;
+}

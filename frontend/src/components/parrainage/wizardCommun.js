@@ -17,12 +17,17 @@ import { AvatarInvitant } from './BandeauInvitant';
 
 export const ETAPES_WIZARD = ['Offre', 'Séance', 'Ta carte', 'Partage'];
 
-/** Le stepper « 1 Offre · 2 Séance · 3 Ta carte · 4 Partage ». */
-export function Etapes({ etape, className, testid }) {
+/**
+ * Le stepper. V562 — DYNAMIQUE : `etapes` = les SEULES étapes réellement
+ * nécessaires (une étape sans décision n'est pas montrée), `etape` = la
+ * position (1…n) dans cette liste. Sans `etapes` : les quatre étapes d'origine.
+ */
+export function Etapes({ etape, className, testid, etapes }) {
+  const liste = Array.isArray(etapes) && etapes.length ? etapes : ETAPES_WIZARD;
   return (
-    <ol className={`cp-wz-etapes ${className || ''}`.trim()} aria-label={`Étape ${etape} sur ${ETAPES_WIZARD.length}`}
+    <ol className={`cp-wz-etapes ${className || ''}`.trim()} aria-label={`Étape ${etape} sur ${liste.length}`}
         data-testid={testid || 'wf-etapes'}>
-      {ETAPES_WIZARD.map((t, i) => {
+      {liste.map((t, i) => {
         const n = i + 1;
         const cls = n === etape ? 'on' : (n < etape ? 'fait' : '');
         return (
@@ -40,7 +45,7 @@ export function libelleTypeInvitation(type) {
   if (type === 'trial') return 'Essai gratuit';
   if (type === 'pass_duo') return 'Pass Duo';
   if (type === 'event_free') return 'Événement';
-  if (type === 'parrainage') return 'Parrainage';
+  if (type === 'parrainage' || type === 'referral') return 'Parrainage';
   if (type === 'affiliation') return 'Affiliation';
   return 'Invitation';
 }
@@ -138,4 +143,21 @@ export function CarteInvitation({ prenom, photo, type, occurrence, cours, lieu, 
       {children}
     </div>
   );
+}
+
+/**
+ * V562 — LES ÉTAPES RÉELLEMENT NÉCESSAIRES : une étape qui n'a qu'un seul choix
+ * possible est choisie d'office et n'est pas montrée.
+ *   offre  : affichée seulement s'il y a au moins 2 offres ;
+ *   seance : affichée seulement s'il y a au moins 2 séances (ou une vraie décision) ;
+ *   carte, partage : toujours.
+ * Rend les identifiants dans l'ordre, et leurs libellés pour le stepper.
+ */
+export const LIBELLES_ETAPES = { offre: 'Offre', seance: 'Séance', carte: 'Ta carte', partage: 'Partage' };
+export function etapesNecessaires({ nbOffres, nbSeances, decisionSeance }) {
+  const ids = [];
+  if (Number(nbOffres) > 1) ids.push('offre');
+  if (Number(nbSeances) > 1 || decisionSeance === true) ids.push('seance');
+  ids.push('carte', 'partage');
+  return { ids, libelles: ids.map((id) => LIBELLES_ETAPES[id]) };
 }
