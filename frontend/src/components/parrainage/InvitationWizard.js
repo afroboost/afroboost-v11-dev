@@ -42,93 +42,24 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import SvgIcon from '../SvgIcon';
-import BandeauInvitant from './BandeauInvitant'; // L0
 import ConditionsParticipation from '../ConditionsParticipation';
 import { useChoixSeance, ChampsSeanceOffre } from './PassDuoCard';
 import SessionsModal from '../SessionsModal'; // V558 — le calendrier EXISTANT
-import { Etapes, CartesOffre, ResumeSeance, typesDeRepli } from './wizardCommun'; // V558 — le MÊME Wizard
+import { Etapes, CartesOffre, ResumeSeance, CarteInvitation, typesDeRepli } from './wizardCommun'; // V558 / V560 — le MÊME Wizard
 import './invitationWizard.css';
 import './wizardFilleul.css'; // V558 : cartes d'offre et résumé de séance (classes cp-wf-*)
 import {
   API_PARRAINAGE, enteteParrain, lireInvitation, identitePreremplie, messagePrerempli, corpsInvitation,
   modifierInvitation, nomAffichable, bornerMessage, texteWhatsAppInvitation, lienWhatsApp, copier, partager,
-  libelleOccurrence, offreDuPass, NOM_NEUTRE, MESSAGE_MAX, NOM_MAX, avecCampagne, seancesPourCalendrier,
+  NOM_NEUTRE, MESSAGE_MAX, NOM_MAX, avecCampagne, seancesPourCalendrier,
 } from '../../utils/parrainage';
 
 /** V558 — le type offert par un membre : son Pass Duo (aucun programme exposé ici). */
 const TYPES_MEMBRE = typesDeRepli('pass_duo');
 
-/** Le lien sans protocole, pour l'afficher comme un code. */
-function lienCourt(url) {
-  return String(url || '').replace(/^https?:\/\//, '');
-}
-
 /** Version de l'invitation portée par un pass (0 si jamais personnalisée). */
 function versionInvitation(p) {
   return Number(p && p.invitation && p.invitation.version) || 0;
-}
-
-/** L'avatar : la photo si elle existe, sinon l'initiale (ou l'icône pour le nom neutre). */
-function Avatar({ photo, nom, taille }) {
-  const initiale = nom ? nom.charAt(0).toUpperCase() : '';
-  return (
-    <div className="cp-av cp-wz-av" style={taille ? { width: taille, height: taille } : undefined}>
-      {photo
-        ? <img src={photo} alt="" data-testid="wizard-photo" />
-        : <span data-testid="wizard-initiale">{initiale || <SvgIcon name="user" size={26} />}</span>}
-    </div>
-  );
-}
-
-/** V552 — la carte du pass (card_url), si le serveur l'a fournie en https. */
-function carteDuPass(p) {
-  const u = p && typeof p.card_url === 'string' ? p.card_url.trim() : '';
-  return /^https:\/\//i.test(u) ? u : '';
-}
-
-/**
- * L'aperçu tel que l'ami le verra (titre, message, séance, offre, visuel).
- * V552 : `carte` (card_url) = l'og:image exacte, montrée telle quelle ; si elle
- * échoue au chargement, on retombe sur le visuel reconstruit.
- */
-export function ApercuInvitation({ nom, photo, message, seance, offre, image, carte }) {
-  const affiche = nom || NOM_NEUTRE;
-  const [carteEnEchec, setCarteEnEchec] = useState(''); // l'URL qui a échoué (une chaîne, jamais un objet)
-  const carteVisible = !!carte && carteEnEchec !== carte;
-  return (
-    <div className="cp-apercu" data-testid="wizard-apercu" data-carte={carteVisible ? 'vraie' : 'reconstruite'}>
-      {carteVisible ? (
-        <div className="cp-wz-carte">
-          <img src={carte} alt="Aperçu de ton invitation" width="1200" height="630" decoding="async"
-               onError={() => setCarteEnEchec(carte)} data-testid="wizard-apercu-carte" />
-        </div>
-      ) : (
-        <div className="cp-apercu-visuel">
-          {image
-            ? <img src={image} alt="" data-testid="wizard-apercu-image" />
-            : <div className="cp-apercu-visuel-defaut" aria-hidden="true"><SvgIcon name="users" size={40} /></div>}
-        </div>
-      )}
-      <div className="cp-apercu-corps">
-        <div className="cp-apercu-qui">
-          <Avatar photo={photo} nom={nom} taille={40} />
-          <b>{affiche} t'invite à Afroboost</b>
-        </div>
-        {message ? <p className="cp-apercu-message">{message}</p> : null}
-        {seance ? (
-          <p className="cp-apercu-seance"><SvgIcon name="calendar" size={14} /> {seance}</p>
-        ) : null}
-        {offre ? (
-          <p className="cp-apercu-seance"><SvgIcon name="gift" size={14} /> {offre}</p>
-        ) : null}
-        {!carteVisible ? (
-          <p className="cp-apercu-seance cp-wz-carte-a-venir" data-testid="wizard-carte-a-venir">
-            La carte finale est générée à l'envoi
-          </p>
-        ) : null}
-      </div>
-    </div>
-  );
 }
 
 /**
@@ -200,34 +131,14 @@ export default function InvitationWizard({
   const photo = photoRetiree ? null : prerempli.photo;
   const message = messageSaisi != null ? messageSaisi : messagePrerempli({ pass: passRef, default_message: donnees.default_message });
 
-  // Séance / offre montrées dans l'aperçu.
-  let seance = '';
-  let offreNom = '';
-  let offreImage = '';
-  if (creation) {
-    const c = (Array.isArray(courses) ? courses : []).find((x) => x && String(x.id) === String(choix.coursChoisi)) || {};
-    seance = choix.occurrence ? `${c.name ? `${c.name} · ` : ''}${libelleOccurrence(choix.occurrence, c.locationName)}` : '';
-    const o = choix.offres.find((x) => String(x.id) === String(choix.offreChoisie));
-    offreNom = o ? o.name : '';
-    offreImage = (o && (o.image_url || o.image)) || c.image_url || c.image || '';
-  } else {
-    const c = pass.course || {};
-    seance = `${c.name ? `${c.name} · ` : ''}${libelleOccurrence(pass.occurrence, c.locationName)}`;
-    const o = offreDuPass(pass);
-    offreNom = o ? o.name : '';
-    offreImage = (o && (o.image_url || o.image)) || c.image_url || c.image || '';
-  }
-  const image = donnees.image_url || offreImage || '';
-  // V552 : la carte réelle du pass. Repli sur celle de GET /invitation → pass
-  // seulement si c'est le MÊME pass à la MÊME version (jamais une carte périmée).
-  let carte = passRef ? carteDuPass(passRef) : '';
-  if (!carte && passRef && donnees.pass && donnees.pass.id === passRef.id
-      && versionInvitation(donnees.pass) === versionInvitation(passRef)) {
-    carte = carteDuPass(donnees.pass);
-  }
+  // V560 : LA carte unique (photo, prénom, type, séance, lieu), rendue en direct.
+  const coursCarte = creation
+    ? ((Array.isArray(courses) ? courses : []).find((x) => x && String(x.id) === String(choix.coursChoisi)) || {})
+    : ((pass && pass.course) || {});
   const apercu = (
-    <ApercuInvitation key={carte || 'reconstruit'} nom={nomValide} photo={photo} message={message}
-                      seance={seance} offre={offreNom} image={image} carte={carte} />
+    <CarteInvitation testid="wizard-apercu" prenom={nomValide} photo={photo} type="pass_duo"
+                     occurrence={creation ? choix.occurrence : pass && pass.occurrence}
+                     cours={coursCarte.name} lieu={coursCarte.locationName || coursCarte.location} />
   );
 
   const reinitialiser = () => {
@@ -321,51 +232,37 @@ export default function InvitationWizard({
   if (!creation && !edition) {
     return (
       <div className="cp-card cp-card--current" data-testid="inviter-un-ami">
-        {/* V558 : l'étape « Partage » du MÊME Wizard. */}
+        {/* V560 : l'étape « Partage » du MÊME Wizard — une carte, quatre boutons, « Modifier ». */}
         <Etapes etape={4} className="cp-wf-etapes" testid="wizard-etapes" />
-        <p className="cp-mini" data-testid="wizard-partage-aide">
-          Ton ami recevra cette invitation et renseignera ses propres informations quand il l’ouvrira.
-        </p>
         <div data-testid="wizard-prete">
-          <div className="cp-prog">
-            <h3 className="cp-h3"><SvgIcon name="check" size={20} />Ton invitation est prête</h3>
-            <button type="button" className="cp-link cp-wz-tap" onClick={() => { reinitialiser(); setEdition(true); }}
-                    disabled={occupe} data-testid="wizard-modifier">
-              <SvgIcon name="edit" size={14} /> Modifier
-            </button>
-          </div>
+          <h3 className="cp-wf-titre">Partage ton invitation</h3>
+          <p className="cp-wf-aide" data-testid="wizard-partage-aide">
+            Ton ami remplira ses propres informations quand il ouvrira le lien.
+          </p>
           {apercu}
         </div>
-        {/* L0 : qui invite, juste au-dessus du lien et des boutons de partage. */}
-        <BandeauInvitant prenom={nomValide} photoUrl={photo} />
-        <div className="cp-code">
-          <div>
-            <small>Mon lien d'invitation</small>
-            {lienCourt(lien)}
-          </div>
-          <button type="button" className="cp-iconbtn cp-wz-tap" onClick={surCopier} aria-label="Copier le lien" data-testid="inviter-copier-icone">
-            <SvgIcon name="copy" size={22} />
+        <div className="cp-wf-actions4">
+          <button type="button" className="cp-b cp-b--whatsapp cp-wz-cible" onClick={surWhatsApp} disabled={!lien} data-testid="inviter-whatsapp">
+            <SvgIcon name="messageCircle" size={20} /> WhatsApp
           </button>
-        </div>
-        <button type="button" className="cp-b cp-b--whatsapp cp-wz-cible" onClick={surWhatsApp} disabled={!lien} data-testid="inviter-whatsapp">
-          <SvgIcon name="send" size={20} />Envoyer sur WhatsApp
-        </button>
-        <div className="cp-share cp-share--2">
           <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={surPartager} disabled={!lien} data-testid="inviter-partager">
-            <SvgIcon name="share" size={20} />Partager
+            <SvgIcon name="share" size={20} /> Partager
           </button>
           <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={surCopier} disabled={!lien} data-testid="inviter-copier">
-            <SvgIcon name="copy" size={20} />Copier le lien
+            <SvgIcon name="link" size={20} /> Copier le lien
           </button>
+          {typeof onQr === 'function' ? (
+            <button type="button" className="cp-b cp-b--secondary cp-wz-cible cp-wz-tap" onClick={() => onQr(pass, lien)} disabled={!lien} data-testid="inviter-qr">
+              <SvgIcon name="qrCode" size={20} /> QR code
+            </button>
+          ) : null}
         </div>
-        {typeof onQr === 'function' ? (
-          <button type="button" className="cp-link cp-wz-qr cp-wz-tap" onClick={() => onQr(pass, lien)} disabled={!lien} data-testid="inviter-qr">
-            <SvgIcon name="qrCode" size={14} /> Afficher le QR code
-          </button>
-        ) : null}
         {feedback ? <p className="cp-ok-text" role="status" data-testid="inviter-feedback">{feedback}</p> : null}
         {erreur ? <p className="cp-error" role="alert">{erreur}</p> : null}
-        <p className="cp-mini">Ton ami profite d'un essai gratuit. Le lien ne contient jamais ton e-mail.</p>
+        <button type="button" className="cp-link cp-wz-tap cp-wz-retour" onClick={() => { reinitialiser(); setEdition(true); }}
+                disabled={occupe} data-testid="wizard-modifier">
+          <SvgIcon name="edit" size={14} /> Modifier
+        </button>
       </div>
     );
   }
@@ -402,7 +299,8 @@ export default function InvitationWizard({
 
       {etapeAffichee === 1 ? (
         <div data-testid="wizard-etape-1">
-          <h3 className="cp-wf-titre" data-testid="wizard-offre-titre">Qu’est-ce que tu veux offrir à ton ami ?</h3>
+          <h3 className="cp-wf-titre" data-testid="wizard-offre-titre">Que veux-tu partager ?</h3>
+          <p className="cp-wf-aide">Choisis ce que tu veux proposer à ton ami.</p>
           <CartesOffre types={TYPES_MEMBRE} choisi={kind} onChoisir={setKind} />
         </div>
       ) : null}
@@ -410,7 +308,7 @@ export default function InvitationWizard({
       {etapeAffichee === 2 ? (
         <div data-testid="wizard-etape-2">
           <h3 className="cp-wf-titre" data-testid="wizard-seance-titre">Choisis la séance de ton ami</h3>
-          <p className="cp-mini">C’est la séance que tu lui offres.</p>
+          <p className="cp-wf-aide">Sélectionne la séance que ton ami recevra avec ton invitation.</p>
           <ResumeSeance seance={seanceChoisie} onChanger={() => setCalendrier(true)} />
           {!seanceChoisie ? (
             <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={() => setCalendrier(true)}
@@ -444,29 +342,20 @@ export default function InvitationWizard({
       {etapeAffichee === 3 ? (
         <div data-testid="wizard-etape-3">
           <h3 className="cp-wf-titre" data-testid="wizard-carte-titre">Personnalise ton invitation</h3>
-          <p className="cp-mini">Ce sont TES informations. Ton ami verra qui l’invite.</p>
-          <div className="cp-wz-identite">
-            <Avatar photo={photo} nom={nomValide} />
-            <div className="cp-wz-identite-nom">
-              <small>Invitation de</small>
-              <b data-testid="wizard-nom">{nomValide || NOM_NEUTRE}</b>
-            </div>
-            {!identiteOuverte && !edition ? (
-              <button type="button" className="cp-link cp-wz-tap" onClick={() => setIdentiteOuverte(true)} data-testid="wizard-modifier-identite">
-                <SvgIcon name="edit" size={14} /> Modifier
-              </button>
+          <p className="cp-wf-aide">Ton ami verra que l’invitation vient de toi.</p>
+          {apercu}
+          {/* V560 : la carte ci-dessus montre déjà photo et prénom — ici, seulement les champs. */}
+          <div className="cp-wz-edition" data-testid="wizard-identite-edition">
+            <label htmlFor="cp-wz-nom" className="cp-label">Ton prénom</label>
+            <input id="cp-wz-nom" className="cp-input" maxLength={NOM_MAX} value={nomBrut}
+                   placeholder="Ton prénom" autoComplete="given-name"
+                   onChange={(e) => setNomSaisi(e.target.value)} data-testid="wizard-champ-nom" />
+            {nomRefuse ? (
+              <p className="cp-error" role="alert" data-testid="wizard-nom-refuse">Écris un prénom, pas une adresse e-mail.</p>
             ) : null}
-          </div>
-          {identiteOuverte || edition ? (
-            <div className="cp-wz-edition" data-testid="wizard-identite-edition">
-              <label htmlFor="cp-wz-nom" className="cp-label">Ton prénom sur cette invitation</label>
-              <input id="cp-wz-nom" className="cp-input" maxLength={NOM_MAX} value={nomBrut}
-                     placeholder="Ton prénom" autoComplete="off"
-                     onChange={(e) => setNomSaisi(e.target.value)} data-testid="wizard-champ-nom" />
-              {nomRefuse ? (
-                <p className="cp-error" role="alert" data-testid="wizard-nom-refuse">Écris un prénom, pas une adresse e-mail.</p>
-              ) : null}
-              {prerempli.photo ? (
+            {prerempli.photo ? (
+              <>
+                <span className="cp-label">Ta photo</span>
                 <div className="cp-wz-choix" role="group" aria-label="Photo de l'invitation">
                   <button type="button" className={`cp-b cp-b--small cp-wz-cible ${photoRetiree ? 'cp-b--ghost' : 'cp-b--secondary'}`}
                           aria-pressed={!photoRetiree} onClick={() => setPhotoRetiree(false)} data-testid="wizard-photo-garder">
@@ -477,17 +366,23 @@ export default function InvitationWizard({
                     <SvgIcon name="x" size={16} /> Retirer la photo
                   </button>
                 </div>
-              ) : null}
-              <p className="cp-fine">Ce changement ne concerne que cette invitation : ton profil ne bouge pas.</p>
-            </div>
-          ) : null}
-          <label htmlFor="cp-wz-message" className="cp-label">Ton message</label>
-          <textarea id="cp-wz-message" className="cp-input cp-wz-message" rows={4} maxLength={MESSAGE_MAX}
-                    value={message} onChange={(e) => setMessageSaisi(bornerMessage(e.target.value))}
-                    data-testid="wizard-message" />
-          <p className="cp-fine cp-wz-compteur" data-testid="wizard-compteur">{message.length}/{MESSAGE_MAX}</p>
-          <p className="cp-label cp-wf-apercu-titre">Aperçu de ce que ton ami recevra</p>
-          {apercu}
+              </>
+            ) : null}
+            <p className="cp-fine">Ce changement ne concerne que cette invitation : ton profil ne bouge pas.</p>
+          </div>
+          {identiteOuverte || edition ? (
+            <>
+              <label htmlFor="cp-wz-message" className="cp-label">Ton message</label>
+              <textarea id="cp-wz-message" className="cp-input cp-wz-message" rows={3} maxLength={MESSAGE_MAX}
+                        value={message} onChange={(e) => setMessageSaisi(bornerMessage(e.target.value))}
+                        data-testid="wizard-message" />
+              <p className="cp-fine cp-wz-compteur" data-testid="wizard-compteur">{message.length}/{MESSAGE_MAX}</p>
+            </>
+          ) : (
+            <button type="button" className="cp-link cp-wz-tap" onClick={() => setIdentiteOuverte(true)} data-testid="wizard-modifier-message">
+              <SvgIcon name="edit" size={14} /> Modifier le message
+            </button>
+          )}
           {creation ? (
             <p className="cp-fine cp-center">Un Pass par séance. L'invitation seule ne débloque rien.</p>
           ) : null}

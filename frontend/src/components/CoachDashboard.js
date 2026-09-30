@@ -9036,6 +9036,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         )}
         {tab === "campaigns" && (
           <CampaignManager
+            // V560 : module « Créateur / Affiliation » — l'onglet Créateur n'existe que pour un partenaire.
+            onOuvrirCreateur={co1Ids.includes("createur") ? () => setTab("createur") : null}
             // === ÉTATS PRINCIPAUX ===
             campaigns={campaigns}
             newCampaign={newCampaign}

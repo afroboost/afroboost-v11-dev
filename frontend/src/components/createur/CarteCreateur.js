@@ -16,7 +16,7 @@ import '../parrainage/parrainage.css';
 const PANEL = 'rgba(255,255,255,0.04)';
 const BORDER = 'rgba(255,255,255,0.08)';
 
-export default function CarteCreateur({ entetes }) {
+export default function CarteCreateur({ entetes, demandeOuverture }) {
   const [statut, setStatut] = useState('');
   const [ouvert, setOuvert] = useState(false);
   const declencheur = useRef(null);
@@ -30,6 +30,9 @@ export default function CarteCreateur({ entetes }) {
       .catch(() => { /* carte discrète : le tiroir dira quoi faire */ });
     return () => { vivant = false; };
   }, []);
+
+  // V560 : le menu rapide ouvre le tiroir (compteur = primitive, aucun objet en dépendance).
+  useEffect(() => { if (demandeOuverture > 0) setOuvert(true); }, [demandeOuverture]);
 
   const surStatut = useCallback((s) => setStatut((prev) => (prev === s ? prev : String(s || 'none'))), []);
   const libelle = libelleAccesCreateur(statut);

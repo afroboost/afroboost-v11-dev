@@ -463,18 +463,25 @@
 /* Le fond ne défile pas tant qu'un tiroir est ouvert (classe posée par ParrainageDrawer). */
 html.cp-scroll-lock, body.cp-scroll-lock { overflow: hidden !important; }
 
+/* V560 — le tiroir ISOLE la page : plein écran sur mobile, fenêtre centrée sur
+   ordinateur, fond presque opaque et flouté (la page derrière n'attire plus l'œil).
+   La tête (titre + Fermer) ne défile jamais : on peut toujours sortir. */
 .cp-drawer-bg {
-  position: fixed; inset: 0; z-index: 100000; background: rgba(0, 0, 0, .78);
-  display: flex; align-items: flex-end; justify-content: center; animation: cp-fade .2s ease both;
+  position: fixed; inset: 0; z-index: 100000; background: rgba(0, 0, 0, .9);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  display: flex; align-items: stretch; justify-content: center; animation: cp-fade .2s ease both;
 }
 .cp-drawer {
-  position: relative; width: 100%; max-height: min(92vh, 92dvh); display: flex; flex-direction: column;
-  background: var(--cp-card), rgb(0, 0, 0); border: 1px solid var(--cp-line); border-bottom: 0;
-  border-radius: 18px 18px 0 0; padding: 12px 18px 0; color: rgb(255, 255, 255);
-  animation: cp-monte .28s ease both;
+  position: relative; width: 100%; height: 100%; max-height: 100dvh; display: flex; flex-direction: column;
+  background: var(--cp-card), rgb(0, 0, 0); border: 0; border-radius: 0;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 0; color: rgb(255, 255, 255);
+  animation: cp-monte .24s ease both; box-sizing: border-box;
 }
-.cp-drawer-poignee { display: block; flex: none; }
-.cp-drawer-tete { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none; }
+.cp-drawer-poignee { display: none; }
+.cp-drawer-tete {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none;
+  padding-bottom: 10px; border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
 .cp-drawer-titre { font-size: 18px; font-weight: 800; margin: 0; letter-spacing: -.01em; }
 .cp-drawer-fermer {
   width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 50%;
@@ -484,18 +491,31 @@ html.cp-scroll-lock, body.cp-scroll-lock { overflow: hidden !important; }
 .cp-drawer-fermer:focus-visible { outline: 2px solid var(--cp-pink); outline-offset: 2px; }
 .cp-drawer-corps {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
-  padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  padding: 4px 0 calc(24px + env(safe-area-inset-bottom, 0px));
 }
 .cp-drawer-corps > .cp-card:first-child { margin-top: 12px; }
 @media (min-width: 768px) {
-  .cp-drawer-bg { justify-content: flex-end; align-items: stretch; }
+  .cp-drawer-bg { align-items: center; padding: 24px; }
   .cp-drawer {
-    width: min(100%, 460px); max-height: none; height: 100%; border-radius: 0; border: 0;
-    border-left: 1px solid var(--cp-line); padding: 18px 22px 0; animation: cp-glisse .25s ease both;
+    width: min(100%, 560px); height: auto; max-height: min(88vh, 880px); border-radius: 20px;
+    border: 1px solid var(--cp-line); padding: 18px 24px 0; animation: cp-glisse .22s ease both;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, .6);
   }
-  .cp-drawer-poignee { display: none; }
 }
-@keyframes cp-glisse { from { transform: translateX(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+@keyframes cp-glisse { from { transform: translateY(12px); opacity: .6; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .cp-drawer-bg, .cp-drawer, .cp-outil { animation: none !important; transition: none !important; }
 }
+
+/* V560 — page Parrainage : retour toujours visible + quatre onglets compacts (2×2 sur mobile). */
+.cp-retour { padding-left: 0; font-weight: 700; }
+.cp-onglets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0 16px; }
+@media (min-width: 640px) { .cp-onglets { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.cp-onglet {
+  min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 10px;
+  border-radius: 12px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; min-width: 0;
+  color: var(--cp-text); background: transparent; border: 1px solid var(--cp-line);
+}
+.cp-onglet span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-onglet.on { background: rgba(var(--primary-rgb, 217, 28, 210), .18); border-color: var(--cp-pink); color: rgb(255, 255, 255); }
+.cp-onglet:focus-visible { outline: 2px solid var(--cp-pink); outline-offset: 2px; }

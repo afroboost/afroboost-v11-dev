@@ -88,7 +88,9 @@ describe('V559 — Devenir créateur', () => {
     const entetes = () => ({ 'x-espace-token': 'tok' });
     await monter(<EspaceCreateur entetes={entetes} />);
     expect(axios.get.mock.calls[0][1].headers).toEqual({ 'x-espace-token': 'tok' });
-    expect(par('devenir-createur').textContent).toContain('Recommande Afroboost à ton réseau et gagne une commission');
+    expect(par('devenir-createur').textContent).toContain('Partage Afroboost à ton réseau et gagne une commission sur les achats éligibles.');
+    expect(par('cr-principe').textContent).toContain('Afroboost valide ton profil');
+    expect(par('cr-explication').textContent).toContain('Les essais gratuits ne donnent pas de commission.');
     expect(par('cr-bareme').textContent).toContain('Pulse X10 : 15.00 CHF');
     await saisir('cr-prenom', 'Léa'); await saisir('cr-nom', 'Parrain');
     await saisir('cr-telephone', '079 200 30 40'); await saisir('cr-motivation', 'Coach de danse');
@@ -117,13 +119,20 @@ describe('V559 — Devenir créateur', () => {
     expect(par('cr-kpi-filleuls').textContent).toContain('2');
     expect(par('cr-kpi-achats').textContent).toContain('3');
     expect(par('cr-lien-texte').textContent).toBe('afroboost.com/?createur=jetonLea12345');
+    expect(par('cr-solde')).not.toBeNull();
+    // V560 : un menu — une vue à la fois.
+    expect(par('cr-filleuls')).toBeNull();
+    expect(par('cr-conversions')).toBeNull();
+    await cliquer('cr-menu-lien');
     await cliquer('cr-qr');
     expect(par('qr-svg').getAttribute('data-value')).toBe(DASH.lien);
     await cliquer('cr-whatsapp');
     expect(decodeURIComponent(String(window.open.mock.calls[0][0]))).toContain(DASH.lien_partage);
     expect(par('cr-commission').textContent).toContain('Soirée Afro : 10 %');
+    await cliquer('cr-menu-filleuls');
     expect(par('cr-filleuls').textContent).toContain('Sophie');
     expect(par('cr-filleuls').textContent).toContain('Achat confirmé');
+    await cliquer('cr-menu-conversions');
     expect(par('cr-conversions').textContent).toContain('Pulse X10');
     expect(par('cr-conversions').textContent).toContain('15.00 CHF');
     expect(par('cr-conversions').textContent).toContain('Confirmée');

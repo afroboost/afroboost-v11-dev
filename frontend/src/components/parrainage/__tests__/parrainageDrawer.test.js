@@ -96,127 +96,78 @@ async function monterCentre(me, config) {
   });
   await monter(<CentreParrainage />);
 }
-const ouvrir = (id) => act(async () => { par(`outil-${id}`).click(); });
+const onglet = (id) => act(async () => { par(`onglet-${id}`).click(); });
 
-describe('V552 — page compacte par défaut', () => {
-  test('ni Pass Duo complet, ni liste des passes, ni invitations, ni historique, ni crédits ; 4 raccourcis', async () => {
+describe('V560 — page « Mon parrainage » en quatre onglets', () => {
+  test('par défaut : « Inviter » seul (l\'assistant) ; ni Pass Duo, ni invitations, ni historique, ni crédits', async () => {
     await monterCentre(ME_PASS());
-    ['pass-duo-card', 'passes-liste', 'passes-item-p-old', 'mes-invitations', 'historique', 'programme-credits']
+    ['pass-duo-card', 'passes-liste', 'mes-invitations', 'historique', 'programme-credits', 'mes-resultats']
       .forEach((id) => expect(par(id)).toBeNull());
-    expect(par('mes-resultats')).not.toBeNull();
-    expect(par('invitation-zone')).not.toBeNull();
-    const outils = par('mes-outils').querySelectorAll('button');
-    expect(Array.from(outils).map((b) => b.getAttribute('data-testid')))
-      .toEqual(['outil-credits', 'outil-pass', 'outil-invitations', 'outil-historique']);
-    expect(par('outil-invitations').textContent).toContain('2');
-    expect(par('outil-pass').textContent).toContain('En attente');
+    const onglets = par('centre-onglets').querySelectorAll('button');
+    expect(Array.from(onglets).map((b) => b.getAttribute('data-testid')))
+      .toEqual(['onglet-inviter', 'onglet-invitations', 'onglet-recompenses', 'onglet-historique']);
+    Array.from(onglets).forEach((b) => expect(b.querySelector('svg')).not.toBeNull()); // icônes SVG, jamais d'emoji
+    expect(par('onglet-inviter').getAttribute('aria-selected')).toBe('true');
+    expect(par('invitation-zone').hidden).toBe(false);
+    expect(par('centre-retour')).not.toBeNull(); // « ← Retour » toujours visible
     expect(par('parrainage-drawer')).toBeNull();
-    // L'assistant d'invitation vient AVANT les outils.
-    const html = conteneur.innerHTML;
-    expect(html.indexOf('invitation-zone')).toBeLessThan(html.indexOf('mes-outils'));
-    // Aucune icône emoji dans les raccourcis : chaque bouton porte un SVG.
-    Array.from(outils).forEach((b) => expect(b.querySelector('svg')).not.toBeNull());
   });
 
-  test('mesure : nombre de sections rendues par défaut (h2 + blocs de premier niveau)', async () => {
-    await monterCentre(ME_PASS());
-    const app = conteneur.querySelector('.cp-app');
-    expect(app.querySelectorAll('h2.cp-h2').length).toBe(2);           // Inviter un ami · Mes outils
-    expect(app.querySelectorAll(':scope > .cp-card, :scope > [data-testid]').length).toBe(3); // résultats · invitation · outils
-  });
-});
-
-describe('V552 — le tiroir commun', () => {
-  test('chaque raccourci ouvre ParrainageDrawer avec le contenu complet, sans appel réseau', async () => {
+  test('chaque onglet montre SON contenu, sans aucun appel réseau', async () => {
     await monterCentre(ME_PASS());
     const getAvant = axios.get.mock.calls.length;
     const postAvant = axios.post.mock.calls.length;
-
-    await ouvrir('pass');
-    const tiroir = par('parrainage-drawer');
-    expect(tiroir.getAttribute('role')).toBe('dialog');
-    expect(tiroir.getAttribute('aria-modal')).toBe('true');
-    expect(document.getElementById(tiroir.getAttribute('aria-labelledby')).textContent).toBe('Pass Duo');
+    await onglet('invitations');
+    expect(par('invitation-zone').hidden).toBe(true);
+    expect(par('mes-resultats')).not.toBeNull();
+    const lignes = par('mes-invitations').querySelectorAll('[data-testid="invitation-row"]');
+    expect(lignes.length).toBe(2);
+    expect(Array.from(par('mes-invitations').querySelectorAll('[data-testid="invitation-statut"]')).map((c) => c.textContent))
+      .toEqual(['Partagée', 'Expirée']);
+    await onglet('recompenses');
+    expect(par('mes-invitations')).toBeNull();
     expect(par('pass-duo-card')).not.toBeNull();
-    expect(par('pass-annuler')).not.toBeNull();            // annuler
-    expect(par('pass-changer-seance')).not.toBeNull();     // changer de séance
-    expect(par('passes-item-p-old')).not.toBeNull();       // les autres passes
-
-    await ouvrir('invitations');
-    expect(par('pass-duo-card')).toBeNull();               // un seul tiroir à la fois
-    expect(par('mes-invitations').querySelectorAll('[data-testid="invitation-row"]').length).toBe(2);
-
-    await ouvrir('historique');
+    expect(par('pass-annuler')).not.toBeNull();
+    expect(par('programme-credits')).not.toBeNull();
+    expect(par('recompense-createur')).not.toBeNull();
+    expect(par('onglet-contenu-recompenses').textContent).toContain('L’essai gratuit n’est pas une récompense');
+    await onglet('historique');
     expect(par('historique').textContent).toContain('Pass Duo créé.');
-
-    await ouvrir('credits');
-    expect(par('programme-credits').textContent).toContain('1 crédit Sport Date par achat de ton filleul');
-    expect(par('programme-credits-gerer')).not.toBeNull();
-
     expect(axios.get.mock.calls.length).toBe(getAvant);
     expect(axios.post.mock.calls.length).toBe(postAvant);
   });
 
-  test('fermer (bouton, Échap, fond) : l\'assistant reste MONTÉ avec son état, focus rendu au raccourci', async () => {
+  test('l\'assistant reste MONTÉ entre les onglets : le message saisi survit', async () => {
     await monterCentre(ME_VIDE(), CONFIG_1);
-    // V558 : Offre → Séance → Ta carte (le message y est saisi).
     await act(async () => { par('wizard-suivant').click(); });
     await act(async () => { par('wizard-suivant').click(); });
-    const champ = par('wizard-message');
-    await act(async () => { ecrire(champ, 'Viens danser avec moi dimanche !'); });
+    await act(async () => { par('wizard-modifier-message').click(); });
     const wizardAvant = par('invitation-wizard');
-
-    // 1. bouton fermer
-    await ouvrir('pass');
-    expect(par('pass-preparer-invitation')).not.toBeNull();
-    expect(par('invitation-wizard')).toBe(wizardAvant);    // rendu À CÔTÉ, pas à la place
-    await act(async () => { par('drawer-fermer').click(); });
-    expect(par('parrainage-drawer')).toBeNull();
-    expect(document.activeElement).toBe(par('outil-pass'));
-
-    // 2. Échap
-    await ouvrir('historique');
-    await touche('Escape');
-    expect(par('parrainage-drawer')).toBeNull();
-    expect(document.activeElement).toBe(par('outil-historique'));
-
-    // 3. fond
-    await ouvrir('invitations');
-    await act(async () => { par('parrainage-drawer-fond').click(); });
-    expect(par('parrainage-drawer')).toBeNull();
-
+    await act(async () => { ecrire(par('wizard-message'), 'Viens danser avec moi dimanche !'); });
+    await onglet('historique');
+    await onglet('inviter');
     expect(par('invitation-wizard')).toBe(wizardAvant);    // même nœud : jamais démonté
     expect(par('wizard-etape-3')).not.toBeNull();
     expect(par('wizard-message').value).toBe('Viens danser avec moi dimanche !');
   });
 
-  test('« Préparer mon invitation » depuis le tiroir : le tiroir se ferme, l\'assistant reste là', async () => {
+  test('« Préparer mon invitation » depuis « Mes récompenses » ramène à « Inviter »', async () => {
     await monterCentre(ME_VIDE());
-    await ouvrir('pass');
+    await onglet('recompenses');
     await act(async () => { par('pass-preparer-invitation').click(); });
     await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-    expect(par('parrainage-drawer')).toBeNull();
-    expect(par('invitation-wizard')).not.toBeNull();
+    expect(par('onglet-inviter').getAttribute('aria-selected')).toBe('true');
+    expect(par('invitation-zone').hidden).toBe(false);
   });
 
-  test('Échap dans le sheet « Changer d\'offre » ferme le sheet, PAS le tiroir', async () => {
+  test('Échap dans le sheet « Changer d\'offre » ferme le sheet, la page reste', async () => {
     await monterCentre(ME_PASS());
-    await ouvrir('pass');
+    await onglet('recompenses');
     await act(async () => { par('offre-changer').click(); });
     expect(par('offre-sheet')).not.toBeNull();
     await touche('Escape');
     expect(par('offre-sheet')).toBeNull();
-    expect(par('parrainage-drawer')).not.toBeNull();
-    await touche('Escape');
-    expect(par('parrainage-drawer')).toBeNull();
-  });
-
-  test('le fond ne défile plus tant qu\'un tiroir est ouvert', async () => {
-    await monterCentre(ME_PASS());
-    await ouvrir('historique');
-    expect(document.body.classList.contains('cp-scroll-lock')).toBe(true);
-    await touche('Escape');
-    expect(document.body.classList.contains('cp-scroll-lock')).toBe(false);
+    expect(par('onglet-contenu-recompenses')).not.toBeNull();
   });
 });
 
@@ -230,5 +181,12 @@ describe('ParrainageDrawer — composant seul', () => {
     expect(document.activeElement).toBe(par('drawer-fermer'));   // focus posé dans le tiroir
     await touche('Escape');
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test('le fond ne défile plus tant que le tiroir est ouvert (V560 : plein écran / fenêtre centrée)', async () => {
+    await monter(<div className="cp-root"><ParrainageDrawer titre="Invitation" onClose={() => {}}><p>ok</p></ParrainageDrawer></div>);
+    expect(document.body.classList.contains('cp-scroll-lock')).toBe(true);
+    act(() => racine.unmount()); racine = null;
+    expect(document.body.classList.contains('cp-scroll-lock')).toBe(false);
   });
 });

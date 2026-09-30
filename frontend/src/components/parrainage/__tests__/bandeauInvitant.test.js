@@ -145,17 +145,15 @@ describe('L0 — WizardFilleul étapes « Ta carte » et « Partage » (V558)', 
     expect(bloc).not.toBeNull();
     const h2 = par('wf-etape-carte').querySelector('h2');
     expect(h2.textContent).toBe('Personnalise ton invitation');
-    expect(bloc.textContent).toContain('Ce sont TES informations. Ton ami verra qui l’invite.');
+    expect(bloc.textContent).toContain('Ton ami verra que l’invitation vient de toi.');
     const t = par('wf-etape-carte').textContent;
-    expect(t).toContain('Tes informations');
-    expect(t).toContain('Ces informations apparaîtront sur l’invitation envoyée à ton ami.');
-    expect(t).toContain('Aperçu de ce que ton ami recevra');
+    expect(t).toContain('Ton prénom');
     expect(t).toContain('C’est ton numéro, pas celui de la personne que tu invites.');
     expect(t).not.toMatch(/a reçu/);
     await cliquer('wf-carte-continuer');
     const t4 = par('wf-etape-partage').textContent;
-    expect(t4).toContain('Envoie ton invitation');
-    expect(t4).toContain('Ton ami recevra cette invitation et renseignera ses propres informations quand il l’ouvrira.');
+    expect(t4).toContain('Partage ton invitation');
+    expect(t4).toContain('Ton ami remplira ses propres informations quand il ouvrira le lien.');
     // le titre précède les boutons de partage
     // eslint-disable-next-line no-bitwise
     expect(par('wf-maintenant').compareDocumentPosition(par('wf-whatsapp')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -167,13 +165,15 @@ describe('L0 — WizardFilleul étapes « Ta carte » et « Partage » (V558)', 
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
     await versLaCarte();
-    const bandeau = par('bandeau-invitant');
-    expect(bandeau).not.toBeNull();
-    expect(par('bandeau-photo').getAttribute('src')).toBe(PHOTO);
-    expect(par('bandeau-texte').textContent).toBe('Henri t’invite à découvrir Afroboost');
-    expect(par('wf-apercu-type')).not.toBeNull();
+    // V560 : UNE carte — photo et prénom une seule fois, pas de bandeau en plus.
+    expect(par('bandeau-invitant')).toBeNull();
+    expect(document.querySelectorAll('[data-testid="carte-invitation-titre"]')).toHaveLength(1);
+    expect(par('carte-invitation-photo').getAttribute('src')).toBe(PHOTO);
+    expect(par('carte-invitation-titre').textContent).toBe('Henri t’invite à découvrir Afroboost');
+    expect(par('carte-invitation-type')).not.toBeNull();
     await cliquer('wf-carte-continuer');
     expect(par('wf-whatsapp')).not.toBeNull();
+    expect(document.querySelectorAll('[data-testid="carte-invitation-titre"]')).toHaveLength(1);
   });
 
   test('sans inviter_display ni prénom : avatar Afroboost et « Afroboost t’invite »', async () => {
@@ -181,14 +181,14 @@ describe('L0 — WizardFilleul étapes « Ta carte » et « Partage » (V558)', 
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
     await versLaCarte();
-    expect(par('bandeau-avatar-afroboost')).not.toBeNull();
-    expect(par('bandeau-texte').textContent).toBe('Afroboost t’invite');
+    expect(par('carte-invitation-logo')).not.toBeNull();
+    expect(par('carte-invitation-titre').textContent).toBe('Afroboost t’invite à essayer un cours');
   });
 });
 
 // ═══ 4. InvitationWizard (membre) ═════════════════════════════════════════════
-describe('L0 — InvitationWizard : bandeau au partage', () => {
-  test('pass prêt : bandeau (identité préremplie) avant WhatsApp', async () => {
+describe('L0 / V560 — InvitationWizard : UNE carte au partage', () => {
+  test('pass prêt : la carte (identité préremplie) avant WhatsApp, sans bandeau en double', async () => {
     axios.get.mockImplementation((url) => {
       const u = String(url);
       if (u.endsWith('/spordate/unified-profile/me')) return Promise.resolve({ data: { lie: false } });
@@ -200,12 +200,12 @@ describe('L0 — InvitationWizard : bandeau au partage', () => {
     const p = { id: 'p1', status: 'locked', course: COURSE, occurrence: OCC, share_token: 'TOK',
       share_url: 'https://afroboost.com/api/share/duo/TOK', invitation: { version: 0 } };
     await monter(<InvitationWizard courses={[]} passOuvert={p} />);
-    const bandeau = par('bandeau-invitant');
-    expect(bandeau).not.toBeNull();
-    expect(par('bandeau-texte').textContent).toBe('Aïcha t’invite à découvrir Afroboost');
-    expect(par('bandeau-photo').getAttribute('src')).toBe(PHOTO);
+    const carte = par('wizard-apercu');
+    expect(par('bandeau-invitant')).toBeNull();
+    expect(par('carte-invitation-titre').textContent).toBe('Aïcha t’invite à découvrir Afroboost');
+    expect(par('carte-invitation-photo').getAttribute('src')).toBe(PHOTO);
     // eslint-disable-next-line no-bitwise
-    expect(bandeau.compareDocumentPosition(par('inviter-whatsapp')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(carte.compareDocumentPosition(par('inviter-whatsapp')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 
@@ -235,7 +235,7 @@ describe('L0 — InvitationDuo lit inviter_display', () => {
     axios.get.mockResolvedValue({ data: { ...PUB, inviter_display: { prenom: 'Coralie', photo_url: null, source: 'member' } } });
     await monter(<InvitationDuo token="T0" />);
     expect(par('wf-etape-1')).not.toBeNull();
-    expect(par('invitation-avatar-afroboost')).not.toBeNull();
-    expect(par('invitation-de').textContent).toContain("Coralie t'invite");
+    expect(par('carte-invitation-logo')).not.toBeNull();
+    expect(par('carte-invitation-titre').textContent).toBe('Coralie t’invite à découvrir Afroboost');
   });
 });

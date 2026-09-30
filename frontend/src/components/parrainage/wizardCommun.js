@@ -12,7 +12,8 @@
  */
 import React from 'react';
 import SvgIcon from '../SvgIcon';
-import { libelleJour, libelleHeure } from '../../utils/parrainage';
+import { libelleJour, libelleHeure, nomAffichable } from '../../utils/parrainage';
+import { AvatarInvitant } from './BandeauInvitant';
 
 export const ETAPES_WIZARD = ['Offre', 'Séance', 'Ta carte', 'Partage'];
 
@@ -87,7 +88,7 @@ export function ResumeSeance({ seance, titre, onChanger, testid }) {
   if (!seance || !seance.occurrence) return null;
   return (
     <div className="cp-wf-seance" data-testid={testid || 'wf-seance-resume'}>
-      <span className="cp-label cp-wf-seance-titre">{titre || 'Séance offerte à ton ami'}</span>
+      <span className="cp-label cp-wf-seance-titre">{titre || 'Séance choisie'}</span>
       <p className="cp-wf-seance-quand">
         <SvgIcon name="calendar" size={16} />
         <b>{libelleJour(seance.occurrence)}</b>
@@ -97,9 +98,44 @@ export function ResumeSeance({ seance, titre, onChanger, testid }) {
       {seance.lieu ? <p className="cp-fine cp-wf-seance-lieu">{seance.lieu}</p> : null}
       {onChanger ? (
         <button type="button" className="cp-link cp-wz-tap" onClick={onChanger} data-testid="wf-seance-changer">
-          <SvgIcon name="calendar" size={14} /> Changer de séance
+          <SvgIcon name="calendar" size={14} /> Changer
         </button>
       ) : null}
+    </div>
+  );
+}
+
+/** V560 — le titre de la carte : le prénom UNE fois, sinon « Afroboost ». */
+export function titreInvitation(prenom) {
+  const n = nomAffichable(prenom);
+  return n ? `${n} t’invite à découvrir Afroboost` : 'Afroboost t’invite à essayer un cours';
+}
+
+/**
+ * V560 — LA carte d'invitation, UNE seule par écran (plus de bandeau + aperçu +
+ * résumé qui répétaient photo, prénom et séance) :
+ *   photo de l'invitant · « Prénom t'invite à découvrir Afroboost » · type ·
+ *   jour · heure · cours · lieu · (actions / CTA en `children`).
+ * Rendu LOCAL : le prénom et la photo suivent la frappe, sans attendre le serveur.
+ */
+export function CarteInvitation({ prenom, photo, type, occurrence, cours, lieu, testid, children }) {
+  const jour = occurrence ? libelleJour(occurrence) : '';
+  const heure = occurrence ? libelleHeure(occurrence) : '';
+  return (
+    <div className="cp-inv" data-testid={testid || 'carte-invitation'}>
+      <div className="cp-inv-tete">
+        <AvatarInvitant photoUrl={photo} className="cp-inv-av" testidPhoto="carte-invitation-photo" testidAvatar="carte-invitation-logo" />
+        <p className="cp-inv-titre" data-testid="carte-invitation-titre">{titreInvitation(prenom)}</p>
+      </div>
+      {type ? <span className="cp-chip cp-inv-type" data-testid="carte-invitation-type">{libelleTypeInvitation(type)}</span> : null}
+      {jour ? (
+        <p className="cp-inv-quand" data-testid="carte-invitation-quand">
+          <SvgIcon name="calendar" size={16} /> <b>{jour}</b>{heure ? <span> · {heure}</span> : null}
+        </p>
+      ) : null}
+      {cours ? <p className="cp-inv-cours">{cours}</p> : null}
+      {lieu ? <p className="cp-inv-lieu"><SvgIcon name="mapPin" size={14} /> {lieu}</p> : null}
+      {children}
     </div>
   );
 }

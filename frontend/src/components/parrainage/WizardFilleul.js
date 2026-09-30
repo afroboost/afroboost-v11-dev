@@ -62,7 +62,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import SvgIcon from '../SvgIcon';
-import BandeauInvitant, { AvatarInvitant } from './BandeauInvitant'; // L0
+import { AvatarInvitant } from './BandeauInvitant'; // L0
 import SessionsModal from '../SessionsModal'; // V558 — le calendrier EXISTANT, réutilisé
 import {
   MESSAGE_CHAINE_DEFAUT, MESSAGE_MAX, NOM_MAX, bornerMessage, nomAffichable,
@@ -71,7 +71,6 @@ import {
   lienWhatsApp, copier, texteChaine, libelleOccurrence, TEXTE_AUTRE_APPAREIL,
   envoyerPhotoChaine, refusPhotoChaine, numeroWhatsAppChaine, INDICATIFS, INDICATIF_DEFAUT,
   lireOptionsChaine, choisirSeanceChaine, seancesPourCalendrier, messageRefusSeance,
-  libelleJour, libelleHeure,
 } from '../../utils/parrainage';
 
 /**
@@ -100,7 +99,7 @@ function AutreAppareil() {
     </div>
   );
 }
-import { Etapes, CartesOffre, ResumeSeance, libelleTypeInvitation, typesDeRepli } from './wizardCommun'; // V558
+import { Etapes, CartesOffre, ResumeSeance, CarteInvitation, libelleTypeInvitation, typesDeRepli } from './wizardCommun'; // V558 / V560
 import './invitationWizard.css'; // V556 : cibles 44 px (cp-wz-tap / cp-wz-cible) et cadre de carte, absents de /duo sinon
 import './wizardFilleul.css';
 
@@ -505,16 +504,16 @@ export default function WizardFilleul({
     if (aEnregistrer()) {
       // Le fichier de la NOUVELLE carte doit être pré-chargé : on redemande le geste.
       garantirAJour()
-        .then(() => setInfo('Ta carte est enregistrée. Touche encore « Partager avec la carte ».'))
+        .then(() => setInfo('Ta carte est enregistrée. Touche encore « Partager ».'))
         .catch(() => {});
       return;
     }
     let p;
     try { p = nav.share({ files: [verif.file], text: texte }); } catch (e) { p = Promise.reject(e); }
-    apresShare('share_image', 'Partager avec la carte')(p);
+    apresShare('share_image', 'Partager')(p);
   };
   const surPartager = () => {
-    if (boutonsInactifs || !peutPartager) return;
+    if (boutonsInactifs || (!peutPartager && !peutCarte)) return;
     setInfo('');
     if (aEnregistrer()) {
       garantirAJour()
@@ -526,6 +525,9 @@ export default function WizardFilleul({
         .catch(() => {});
       return;
     }
+    // V560 : UN seul bouton « Partager » — la carte est jointe quand le téléphone
+    // sait partager un fichier (canal share_image), sinon le lien seul.
+    if (peutCarte) { surPartagerCarte(); return; }
     let p;
     try { p = nav.share({ title: 'Afroboost', text: message, url: shareUrl }); } catch (e) { p = Promise.reject(e); }
     apresShare('share', 'Partager')(p);
@@ -591,25 +593,34 @@ export default function WizardFilleul({
     ? { occurrence: child.occurrence, nom: (child.course || {}).name || '', lieu: (child.course || {}).locationName || '' }
     : null);
 
+  const coursAmi = seanceAmi ? seanceAmi.nom : '';
+  const lieuAmi = seanceAmi ? seanceAmi.lieu : '';
+  const typeAmi = (child && child.kind) || kindEffectif;
+  // V560 : LA carte de l'invitation que CETTE personne envoie (une seule par écran).
+  const maCarte = (testid) => (
+    <CarteInvitation testid={testid} prenom={nomValide} photo={photoCarte} type={typeAmi}
+                     occurrence={seanceAmi && seanceAmi.occurrence} cours={coursAmi} lieu={lieuAmi} />
+  );
+
   // ── ÉTAPE 1 : OFFRE ────────────────────────────────────────────────────────
   if (etape === 1) {
+    const c = (pass && pass.course) || {};
     return (
       <div className="cp-wf" data-testid="wf-etape-1">
         <Etapes className="cp-wf-etapes" etape={1} />
-        <div className="cp-wf-qui">
-          {/* L0 : sans photo, l'avatar Afroboost (jamais une initiale). */}
-          <AvatarInvitant photoUrl={photo} className="cp-wf-av" testidPhoto="invitation-photo" testidAvatar="invitation-avatar-afroboost" />
-          <div className="cp-wf-qui-txt">
-            <span className="cp-chip" data-testid="wf-badge-type">{libelleTypeInvitation(pass && pass.invitation_type)}</span>
-            <h1 className="cp-h1 cp-wf-h1" data-testid="invitation-de">{prenom} t'invite à découvrir Afroboost.</h1>
-          </div>
-        </div>
-        {/* V558 : l'essai n'est JAMAIS promis — une fois par personne, vérifié à l'inscription. */}
-        <p className="cp-lead cp-wf-lead" data-testid="wf-lead">
-          Ton premier essai est offert si tu n’en as encore jamais bénéficié. Pour le débloquer, invite à ton tour un ami.
+        {/* V560 : l'invitation REÇUE en une seule carte (photo, prénom, type, séance, lieu). */}
+        <CarteInvitation testid="wf-invitation-recue" prenom={prenom} photo={photo} type={pass && pass.invitation_type}
+                         occurrence={pass && pass.occurrence} cours={c.name} lieu={c.locationName}>
+          {blocInvitation}
+        </CarteInvitation>
+        <p className="cp-wf-aide" data-testid="wf-lead">
+          Pour débloquer ton essai, invite à ton tour une autre personne. Une fois ton invitation partagée, tu peux finaliser ton inscription.
         </p>
-        {blocInvitation}
-        <h2 className="cp-wf-titre" data-testid="wf-offre-titre">Qu’est-ce que tu veux offrir à ton ami ?</h2>
+        <p className="cp-wf-regle" data-testid="wf-regle-essai">
+          <SvgIcon name="info" size={14} /> L’essai gratuit est disponible une seule fois par personne.
+        </p>
+        <h2 className="cp-wf-titre" data-testid="wf-offre-titre">Que veux-tu partager ?</h2>
+        <p className="cp-wf-aide">Choisis ce que tu veux proposer à ton ami.</p>
         {erreurSeance && !seanceKo ? <p className="cp-error" role="alert" data-testid="wf-offre-erreur">{erreurSeance}</p> : null}
         <CartesOffre types={typesAffiches} choisi={kindEffectif} verrouille={dejaEnvoyee}
                      onChoisir={(id) => { setKind(id); setErreurSeance(''); }} />
@@ -628,10 +639,8 @@ export default function WizardFilleul({
     return (
       <div className="cp-wf" data-testid="wf-etape-2">
         <Etapes className="cp-wf-etapes" etape={2} />
-        <div className="cp-wf-derniere">
-          <h2 className="cp-wf-titre" data-testid="wf-seance-titre">Choisis la séance de ton ami</h2>
-          <p>C’est la séance que tu lui offres. Elle peut être différente de la tienne.</p>
-        </div>
+        <h2 className="cp-wf-titre" data-testid="wf-seance-titre">Choisis la séance de ton ami</h2>
+        <p className="cp-wf-aide">Sélectionne la séance que ton ami recevra avec ton invitation.</p>
         {!opts && !optsKo ? (
           <p className="cp-mini cp-wf-prep" role="status" data-testid="wf-seances-chargement">
             <span className="cp-spinner cp-wf-spin" aria-hidden="true" /> Chargement des séances…
@@ -745,42 +754,16 @@ export default function WizardFilleul({
     return (
       <div className="cp-wf" data-testid="wf-etape-carte">
         <Etapes className="cp-wf-etapes" etape={3} />
-        {/* UX-P3 / V558 : dire clairement que les informations sont celles de la personne À L'ÉCRAN. */}
         <div className="cp-wf-derniere" data-testid="wf-derniere-etape">
           <h2 className="cp-wf-titre">Personnalise ton invitation</h2>
-          <p>Ce sont TES informations. Ton ami verra qui l’invite.</p>
+          <p className="cp-wf-aide">Ton ami verra que l’invitation vient de toi.</p>
         </div>
         {blocsCommuns}
-
-        {/* UX-P2 : aperçu IMMÉDIAT (état local) — prénom et photo suivent la frappe. */}
-        {child && editable ? (
-          <p className="cp-label cp-wf-apercu-titre" data-testid="wf-apercu-titre">Aperçu de ce que ton ami recevra</p>
-        ) : null}
-        {child && editable ? (
-          <div className="cp-wf-apercu" data-testid="wf-apercu">
-            <BandeauInvitant prenom={nomValide} photoUrl={photoCarte} />
-            <span className="cp-chip" data-testid="wf-apercu-type">{libelleTypeInvitation(child.kind || kindEffectif)}</span>
-            {seanceAmi ? (
-              <p className="cp-wf-apercu-seance" data-testid="wf-apercu-seance">
-                <b>{[libelleJour(seanceAmi.occurrence), libelleHeure(seanceAmi.occurrence)].filter(Boolean).join(' · ')}</b>
-                {seanceAmi.nom ? <span>{seanceAmi.nom}</span> : null}
-                {seanceAmi.lieu ? <span className="cp-fine">{seanceAmi.lieu}</span> : null}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-
-        {child && cardUrl && !carteKo ? (
-          <div className="cp-wz-carte cp-wf-carte" data-testid="wf-carte">
-            <img src={cardUrl} alt="La carte d'invitation que ton ami verra" onError={() => setCarteKo(true)} />
-          </div>
-        ) : null}
-        {apercuSimplifie ? <p className="cp-fine cp-wf-simplifie" data-testid="wf-apercu-simplifie">Aperçu simplifié : le lien reste valable.</p> : null}
+        {/* UX-P2 / V560 : UNE carte, rendue en direct — prénom et photo suivent la frappe. */}
+        {child && editable ? maCarte('wf-apercu') : null}
 
         {child && editable ? (
           <div className="cp-wf-perso">
-            <h3 className="cp-wf-soustitre" data-testid="wf-tes-infos">Tes informations</h3>
-            <p className="cp-mini cp-wf-sous">Ces informations apparaîtront sur l’invitation envoyée à ton ami.</p>
             <label className="cp-label" htmlFor="wf-nom">Ton prénom</label>
             <input id="wf-nom" className="cp-input" value={nom} maxLength={NOM_MAX} placeholder="Ex. : Henri"
                    onChange={(e) => setNom(e.target.value.slice(0, NOM_MAX))} autoComplete="given-name" data-testid="wf-nom" />
@@ -825,6 +808,19 @@ export default function WizardFilleul({
               <input type="checkbox" checked={consent} onChange={(e) => setConsent(!!e.target.checked)} data-testid="wf-consent" />
               <span>{TEXTE_CONSENT_CONTACT}</span>
             </label>
+            {messageOuvert ? (
+              <div className="cp-wf-msg">
+                <label className="cp-label" htmlFor="wf-message">Ton message</label>
+                <textarea id="wf-message" className="cp-input cp-wz-message cp-wf-message" rows={3} value={message}
+                          maxLength={MESSAGE_MAX}
+                          onChange={(e) => setMessage(bornerMessage(e.target.value))} data-testid="wf-message" />
+                <p className="cp-fine cp-wz-compteur">{message.length}/{MESSAGE_MAX}</p>
+              </div>
+            ) : (
+              <button type="button" className="cp-link cp-wz-tap cp-wf-lien" onClick={() => setMessageOuvert(true)} data-testid="wf-modifier-message">
+                <SvgIcon name="edit" size={14} /> Modifier le message
+              </button>
+            )}
 
             <p className="cp-fine cp-wf-statut" role="status" aria-live="polite" data-testid="wf-statut">
               {maj ? 'Enregistrement…' : (!enAttente && statut === 'enregistre' ? 'Enregistré' : '')}
@@ -848,35 +844,29 @@ export default function WizardFilleul({
     <div className="cp-wf" data-testid="wf-etape-partage">
       <Etapes className="cp-wf-etapes" etape={4} />
       <div className="cp-wf-inviter" data-testid="wf-maintenant">
-        <h2 className="cp-wf-titre">Envoie ton invitation</h2>
-        <p className="cp-mini cp-wf-sous">Ton ami recevra cette invitation et renseignera ses propres informations quand il l’ouvrira.</p>
+        <h2 className="cp-wf-titre">Partage ton invitation</h2>
+        <p className="cp-wf-aide">Ton ami remplira ses propres informations quand il ouvrira le lien.</p>
       </div>
       {blocsCommuns}
-      {child && editable && seanceAmi ? <ResumeSeance seance={seanceAmi} testid="wf-partage-seance" /> : null}
+      {child && editable ? maCarte('wf-partage-carte') : null}
       {apercuSimplifie ? <p className="cp-fine cp-wf-simplifie" data-testid="wf-apercu-simplifie">Aperçu simplifié : le lien reste valable.</p> : null}
       {child && editable ? (
         <div className="cp-wf-actions">
-          <button type="button" className="cp-b cp-b--whatsapp cp-wz-cible" onClick={surWhatsApp} disabled={boutonsInactifs} data-testid="wf-whatsapp">
-            <SvgIcon name="messageCircle" size={20} /> WhatsApp
-          </button>
-          {peutCarte ? (
-            <button type="button" className="cp-b cp-wz-cible" onClick={surPartagerCarte} disabled={boutonsInactifs} data-testid="wf-partager-carte">
-              <SvgIcon name="image" size={20} /> Partager avec la carte
+          <div className="cp-wf-actions4">
+            <button type="button" className="cp-b cp-b--whatsapp cp-wz-cible" onClick={surWhatsApp} disabled={boutonsInactifs} data-testid="wf-whatsapp">
+              <SvgIcon name="messageCircle" size={20} /> WhatsApp
             </button>
-          ) : null}
-          <div className="cp-share cp-wf-share">
-            {peutPartager ? (
-              <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={surPartager} disabled={boutonsInactifs} data-testid="wf-partager">
-                <SvgIcon name="share" size={20} /> Partager
-              </button>
-            ) : null}
-            <button type="button" className={`cp-b cp-b--secondary cp-wz-cible${peutPartager ? '' : ' cp-wf-seul'}`} onClick={surCopier} disabled={boutonsInactifs} data-testid="wf-copier">
+            <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={surPartager}
+                    disabled={boutonsInactifs || (!peutPartager && !peutCarte)} data-testid="wf-partager">
+              <SvgIcon name="share" size={20} /> Partager
+            </button>
+            <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={surCopier} disabled={boutonsInactifs} data-testid="wf-copier">
               <SvgIcon name="link" size={20} /> Copier le lien
             </button>
+            <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={surQr} disabled={boutonsInactifs} aria-expanded={qrOuvert} data-testid="wf-qr">
+              <SvgIcon name="qrCode" size={20} /> {qrOuvert ? 'Masquer le QR' : 'QR code'}
+            </button>
           </div>
-          <button type="button" className="cp-link cp-wz-qr cp-wz-tap" onClick={surQr} disabled={boutonsInactifs} aria-expanded={qrOuvert} data-testid="wf-qr">
-            <SvgIcon name="qrCode" size={14} /> {qrOuvert ? 'Masquer le QR code' : 'Afficher le QR code'}
-          </button>
           {qrOuvert ? (
             <div className="cp-wf-qr" data-testid="wf-qr-bloc">
               {!enAttente && shareUrl ? (
@@ -904,22 +894,11 @@ export default function WizardFilleul({
             </div>
           ) : null}
           {erreurMaj ? <p className="cp-error" role="alert" data-testid="wf-erreur-maj">{erreurMaj}</p> : null}
-          {messageOuvert ? (
-            <div className="cp-wf-msg">
-              <label className="cp-label" htmlFor="wf-message">Ton message</label>
-              <textarea id="wf-message" className="cp-input cp-wz-message cp-wf-message" rows={3} value={message}
-                        maxLength={MESSAGE_MAX}
-                        onChange={(e) => setMessage(bornerMessage(e.target.value))} data-testid="wf-message" />
-              <p className="cp-fine cp-wz-compteur">{message.length}/{MESSAGE_MAX}</p>
-            </div>
-          ) : (
-            <button type="button" className="cp-link cp-wz-tap cp-wf-lien" onClick={() => setMessageOuvert(true)} data-testid="wf-modifier-message">
-              <SvgIcon name="edit" size={14} /> Modifier le message
-            </button>
-          )}
         </div>
       ) : null}
-      {retour(3)}
+      <button type="button" className="cp-link cp-wz-tap cp-wz-retour" onClick={() => { setInfo(''); setEtape(3); }} data-testid="wf-modifier">
+        <SvgIcon name="edit" size={14} /> Modifier
+      </button>
     </div>
   );
 }

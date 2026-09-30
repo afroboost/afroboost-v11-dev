@@ -156,14 +156,11 @@ export default function InvitationParrainage({ onFermer, compact }) {
 
   const lienTout = (
     <a className="cp-b cp-b--ghost" href="/parrainage" data-testid="invitation-parrainage-tout">
-      <SvgIcon name="arrowRight" size={18} /> Voir tout mon parrainage
+      <SvgIcon name="arrowRight" size={18} /> Voir mon parrainage
     </a>
   );
-  const plusTard = typeof onFermer === 'function' ? (
-    <button type="button" className="cp-b cp-b--ghost" onClick={onFermer} data-testid="invitation-parrainage-fermer">
-      Plus tard
-    </button>
-  ) : null;
+  // V560 : plus de « Plus tard » — la croix du tiroir, toujours visible, ferme.
+  const plusTard = null;
 
   let corps;
   if (etat === 'chargement') {

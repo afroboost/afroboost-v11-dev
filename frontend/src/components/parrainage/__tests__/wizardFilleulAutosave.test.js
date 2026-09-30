@@ -120,7 +120,7 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     expect(par('wf-mettre-a-jour')).toBeNull();
     expect(conteneur.textContent).not.toContain('Mettre à jour ma carte');
     await saisir('wf-nom', 'Henri');
-    expect(par('bandeau-texte').textContent).toBe('Henri t’invite à découvrir Afroboost');
+    expect(par('carte-invitation-titre').textContent).toBe('Henri t’invite à découvrir Afroboost');
     await attendre(499);
     expect(axios.patch).not.toHaveBeenCalled();
     await attendre(1);
@@ -128,7 +128,6 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     expect(axios.patch.mock.calls[0][1]).toEqual({ display_name: 'Henri', message: MESSAGE_CHAINE_DEFAUT });
     expect(axios.patch.mock.calls[0][2].headers).toEqual({ 'X-Chain-Key': 'K1' });
     expect(par('wf-statut').textContent).toBe('Enregistré');
-    expect(par('wf-carte').querySelector('img').getAttribute('src')).toContain('carte.jpg?v=5');
     await attendre(2000);
     expect(axios.patch).toHaveBeenCalledTimes(1); // rien ne change → aucun autre appel
   });
@@ -158,21 +157,24 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     expect(par('wf-statut').textContent).toBe('Enregistré');
   });
 
-  test('WhatsApp avec modif en attente : fenêtre ouverte dans le geste, PATCH d’abord, puis le share_url RENVOYÉ', async () => {
-    patchOk(7);
-    const fen = { location: { href: '' }, close: jest.fn() };
-    window.open = jest.fn(() => fen);
-    await entrerPartage();
+  // V560 : le message se modifie à l'étape « Ta carte » ; « Continuer » FORCE
+  // l'enregistrement — le partage n'envoie donc JAMAIS une ancienne version.
+  const messageEnAttentePuisPartage = async () => {
+    await entrerEtape2();
     await saisirMessage('Viens avec moi');
-    await cliquer('wf-whatsapp'); // avant les 500 ms : flush
-    expect(window.open).toHaveBeenCalledTimes(1);
-    expect(window.open.mock.calls[0][0]).toBe(''); // synchrone, vide
-    expect(fen.opener).toBeNull();
+    await cliquer('wf-carte-continuer'); // avant les 500 ms : flush
     expect(axios.patch).toHaveBeenCalledTimes(1);
-    const lien = decodeURIComponent(fen.location.href);
+    expect(axios.patch.mock.calls[0][1].message).toBe('Viens avec moi');
+    expect(par('wf-etape-partage')).not.toBeNull();
+  };
+
+  test('message modifié puis « Continuer » : PATCH d’abord, puis WhatsApp partage le share_url RENVOYÉ', async () => {
+    patchOk(7);
+    await messageEnAttentePuisPartage();
+    await cliquer('wf-whatsapp');
+    const lien = decodeURIComponent(String(window.open.mock.calls[0][0]));
     expect(lien).toContain('https://afroboost.com/api/share/duo/T1?v=7');
     expect(lien).not.toContain('?v=3');
-    // l'enregistrement du partage vient APRÈS le PATCH
     const ordrePatch = axios.patch.mock.invocationCallOrder[0];
     const share = axios.post.mock.calls.findIndex((c) => String(c[0]).endsWith('/chain/share'));
     expect(axios.post.mock.invocationCallOrder[share]).toBeGreaterThan(ordrePatch);
@@ -180,44 +182,28 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     expect(axios.patch).toHaveBeenCalledTimes(1); // le minuteur a été annulé
   });
 
-  test('WhatsApp avec modif en attente et fenêtre refusée → « touche encore », jamais l’ancienne URL', async () => {
-    patchOk(7);
-    await entrerPartage();
-    await saisirMessage('Viens avec moi');
-    await cliquer('wf-whatsapp');
-    expect(axios.patch).toHaveBeenCalledTimes(1);
-    expect(postsVers('/chain/share').length).toBe(0);
-    expect(par('wf-info').textContent).toContain('Touche encore WhatsApp');
-    await cliquer('wf-whatsapp'); // plus rien en attente : ouverture synchrone directe
-    expect(decodeURIComponent(String(window.open.mock.calls[1][0]))).toContain('?v=7');
-  });
-
-  test('Copier le lien avec modif en attente → PATCH puis copie du share_url renvoyé', async () => {
+  test('Copier le lien après enregistrement → copie du share_url renvoyé', async () => {
     patchOk(8);
-    await entrerPartage();
-    await saisirMessage('Viens avec moi');
+    await messageEnAttentePuisPartage();
     await cliquer('wf-copier');
     expect(axios.patch).toHaveBeenCalledTimes(1);
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('https://afroboost.com/api/share/duo/T1?v=8');
     expect(postsVers('/chain/share')[0][1]).toEqual({ channel: 'copy' });
   });
 
-  test('Partager (natif) avec modif en attente → PATCH puis navigator.share avec la nouvelle URL', async () => {
+  test('Partager (natif) après enregistrement → navigator.share avec la nouvelle URL', async () => {
     patchOk(6);
     navigator.share = jest.fn(() => Promise.resolve());
-    await entrerPartage();
-    await saisirMessage('Viens avec moi');
+    await messageEnAttentePuisPartage();
     await cliquer('wf-partager');
     expect(axios.patch).toHaveBeenCalledTimes(1);
     expect(navigator.share.mock.calls[0][0].url).toBe('https://afroboost.com/api/share/duo/T1?v=6');
   });
 
-  test('QR → après enregistrement, code du share_url courant', async () => {
+  test('QR → code du share_url courant', async () => {
     patchOk(6);
-    await entrerPartage();
-    await saisirMessage('Viens avec moi');
+    await messageEnAttentePuisPartage();
     await cliquer('wf-qr');
-    expect(axios.patch).toHaveBeenCalledTimes(1);
     expect(par('qr-svg').getAttribute('data-value')).toBe('https://afroboost.com/api/share/duo/T1?v=6');
   });
 
@@ -247,7 +233,7 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     expect(envoi[1].get('file')).toBe(f);
     expect(envoi[2].headers).toEqual({ 'X-Chain-Key': 'K1' });
     expect(par('wf-photo-img').getAttribute('src')).toBe('/api/files/p1.jpg');
-    expect(par('bandeau-photo').getAttribute('src')).toBe('/api/files/p1.jpg');
+    expect(par('carte-invitation-photo').getAttribute('src')).toBe('/api/files/p1.jpg');
     await attendre(500);
     expect(axios.patch).toHaveBeenCalledTimes(1);
     expect(axios.patch.mock.calls[0][1].photo_url).toBe('/api/files/p1.jpg');
@@ -267,7 +253,7 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     patchOk(5);
     await entrerEtape2({ enfant: CHILD(3, { photo_suggeree: 'https://res.cloudinary.com/dtm0r7hwq/moi.jpg' }) });
     expect(par('wf-photo-img').getAttribute('src')).toBe('https://res.cloudinary.com/dtm0r7hwq/moi.jpg');
-    expect(par('bandeau-photo').getAttribute('src')).toBe('https://res.cloudinary.com/dtm0r7hwq/moi.jpg');
+    expect(par('carte-invitation-photo').getAttribute('src')).toBe('https://res.cloudinary.com/dtm0r7hwq/moi.jpg');
     expect(par('wf-photo-ajouter').textContent).toContain('Changer de photo');
     await attendre(500);
     expect(axios.patch.mock.calls[0][1].photo_url).toBe('https://res.cloudinary.com/dtm0r7hwq/moi.jpg');
@@ -280,7 +266,7 @@ describe('UX-P2 — WizardFilleul : aperçu immédiat + enregistrement automatiq
     await cliquer('wf-continuer');
     await cliquer('wf-seance-continuer');
     expect(par('wf-photo-logo')).not.toBeNull();
-    expect(par('bandeau-avatar-afroboost')).not.toBeNull();
+    expect(par('carte-invitation-logo')).not.toBeNull();
     expect(conteneur.querySelector('.cp-wf-perso').innerHTML).not.toContain('coach.jpg');
     await attendre(1500);
     expect(axios.patch).not.toHaveBeenCalled();

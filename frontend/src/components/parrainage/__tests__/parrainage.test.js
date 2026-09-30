@@ -68,9 +68,10 @@ afterEach(() => {
 
 const par = (id) => conteneur.querySelector(`[data-testid="${id}"]`);
 const tous = (id) => conteneur.querySelectorAll(`[data-testid="${id}"]`);
-// V552 — le Pass Duo, les invitations, l'historique et les crédits sont dans
-// des tiroirs (« Mes outils ») : on ouvre celui qu'un test inspecte.
-const ouvrirOutil = (id) => act(async () => { par(`outil-${id}`).click(); });
+// V560 — la page est en ONGLETS : le Pass Duo et les crédits vivent dans « Mes
+// récompenses », les invitations (et les compteurs) dans « Mes invitations ».
+const ONGLET_DE = { pass: 'recompenses', credits: 'recompenses', invitations: 'invitations', historique: 'historique' };
+const ouvrirOutil = (id) => act(async () => { par(`onglet-${ONGLET_DE[id] || id}`).click(); });
 
 async function monter(element) {
   await act(async () => {
@@ -365,7 +366,9 @@ describe('CentreParrainage — états de page', () => {
     await monter(<CentreParrainage />);
     await act(async () => { par('inviter-copier').click(); });
     await act(async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); });
-    expect(par('inviter-un-ami').textContent).toContain('TOK123?v=2');
+    await act(async () => { par('inviter-copier').click(); });  // V560 : le lien n'est plus affiché en double
+    await act(async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); });
+    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith('https://afroboost.com/api/share/duo/TOK123?v=2');
   });
   test('sans identité → « Ouvre ton espace abonné », AUCUN appel /me', async () => {
     await monter(<CentreParrainage />);
@@ -395,20 +398,21 @@ describe('CentreParrainage — états de page', () => {
     // V551 : `/api/spordate/unified-profile/me` finit aussi par « /me » — on compte /referral/me.
     expect(axios.get.mock.calls.filter((c) => String(c[0]).endsWith('/referral/me')).length).toBe(1);
     expect(axios.get.mock.calls.find((c) => String(c[0]).endsWith('/referral/me'))[1].headers).toEqual({ 'X-Subscriber-Token': 'dev-1' });
+    await ouvrirOutil('invitations'); // V560 : les compteurs vivent dans « Mes invitations »
     expect(par('stat-invited').textContent).toContain('3');
     expect(par('stat-joined').textContent).toContain('1');
-    expect(par('inviter-un-ami').textContent).toContain('afroboost.com/api/share/duo/TOK123');
+    await act(async () => { par('onglet-inviter').click(); });
     await ouvrirOutil('historique');
     expect(par('historique').textContent).toContain('Pass Duo créé.');
     await ouvrirOutil('credits');
     expect(par('programme-credits').textContent).toContain('1 crédit Sport Date par achat de ton filleul · jusqu\'à 50 filleuls');
-    await act(async () => { par('drawer-fermer').click(); });
+    await act(async () => { par('onglet-inviter').click(); });
     await act(async () => { par('inviter-copier').click(); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(axios.post).toHaveBeenCalledWith(expect.stringMatching(/\/referral\/invitations$/), { pass_id: 'p-locked', channel: 'copy' }, expect.anything());
-    expect(par('outil-pass').textContent).toContain('En attente de ton ami'); // V552 : raccourci à jour
     await ouvrirOutil('pass');
     expect(par('chip-waiting')).not.toBeNull();            // état local mis à jour, sans relancer /me
+    await ouvrirOutil('invitations');
     expect(par('stat-invited').textContent).toContain('4');
     expect(axios.get.mock.calls.filter((c) => String(c[0]).endsWith('/referral/me')).length).toBe(1);
   });
@@ -440,9 +444,10 @@ describe('CentreParrainage — états de page', () => {
     axios.get.mockImplementation((url) => (String(url).endsWith('/me') ? Promise.resolve({ data: ME }) : Promise.resolve({ data: CONFIG })));
     await monter(<CentreParrainage />);
     expect(par('wizard-suivant').textContent).toContain('Continuer');
-    // V552 : les programmes sont devenus « Mes outils » (tiroirs) ; l'assistant les précède.
-    const html = document.body.innerHTML;
-    expect(html.indexOf('invitation-wizard')).toBeLessThan(html.indexOf('mes-outils'));
+    // V560 : l'onglet « Inviter » est celui ouvert par défaut ; les autres onglets suivent.
+    expect(par('onglet-inviter').getAttribute('aria-selected')).toBe('true');
+    expect(par('invitation-zone').hidden).toBe(false);
+    expect(par('onglet-contenu-recompenses')).toBeNull();
   });
   test('CAS B — Pass créé : le CTA disparaît, « Inviter un ami » devient l\'action', async () => {
     window.localStorage.setItem('afroboost_subscriber_token', 'dev-1');
@@ -461,7 +466,7 @@ describe('CentreParrainage — états de page', () => {
     Object.assign(navigator, { clipboard: { writeText: ecrire } });
     const ouvrir = jest.spyOn(window, 'open').mockImplementation(() => null);
     await monter(<CentreParrainage />);
-    expect(par('inviter-un-ami').textContent).toContain('afroboost.com/api/share/duo/TOK123');
+    expect(par('inviter-un-ami')).not.toBeNull();
     await act(async () => { par('inviter-whatsapp').click(); });
     expect(String(ouvrir.mock.calls[0][0])).toContain(encodeURIComponent('https://afroboost.com/api/share/duo/TOK123'));
     await act(async () => { par('inviter-copier').click(); });
@@ -485,12 +490,14 @@ describe('CentreParrainage — états de page', () => {
     });
     axios.post.mockResolvedValue({ data: pass('cancelled') });
     await monter(<CentreParrainage />);
+    await ouvrirOutil('invitations');
     expect(par('stat-invited').textContent).toContain('2');
     await ouvrirOutil('pass');                                     // V552 : l'annulation vit dans le tiroir Pass Duo
     await act(async () => { par('pass-annuler').click(); });        // ouvre la confirmation
     await act(async () => { par('pass-annuler-oui').click(); });     // confirme
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
     expect(appels).toBeGreaterThan(1);                       // `/me` relu après l'annulation
+    await ouvrirOutil('invitations');
     expect(par('stat-invited').textContent).toContain('0');  // les compteurs reviennent
     await ouvrirOutil('historique');
     expect(par('historique').textContent).toContain('Pass Duo créé.');   // l'historique reste

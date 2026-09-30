@@ -431,30 +431,27 @@ export default function InvitationDuo({ token }) {
 
   if (chaine) {
     const ouvrirOffres = () => { setOffreMessage(''); setOffreErreur(''); setSheetOffre(true); };
-    const blocInvitation = (
-      <>
-        <CarteSeance
-          compact
-          course={pass.course}
-          occurrence={pass.occurrence}
-          onChanger={seancesProposables.length > 1 ? () => { setSeanceMessage(''); setSeanceErreur(''); setCalendrier(true); } : null}
-          occupe={seanceOccupe}
-          message={seanceMessage}
-          erreur={seanceErreur}
-        />
-        {offre ? (
-          <EncartOffre titre="Offre" offre={offre} testid="invitation-offre" compact
-                       note={`${prenom} t'offre cette offre : tu la reçois à ton inscription.`}>
-            {plusieursOffres ? (
-              <button type="button" className="cp-link cp-offre-lien cp-wz-tap" onClick={ouvrirOffres} data-testid="offre-voir-autres">
-                <SvgIcon name="refresh" size={14} /> Voir les autres offres
-              </button>
-            ) : null}
-            {offreErreur && !sheetOffre ? <p className="cp-error" role="alert" data-testid="offre-erreur">{offreErreur}</p> : null}
-          </EncartOffre>
+    // V560 : la séance, le lieu et le type sont DANS la carte d'invitation (WizardFilleul) ;
+    // il ne reste ici que les actions (autre séance / autre offre) et leurs messages.
+    const blocInvitation = (seancesProposables.length > 1 || plusieursOffres || seanceMessage || seanceErreur || (offreErreur && !sheetOffre)) ? (
+      <div className="cp-inv-actions" data-testid="invitation-seance">
+        {seancesProposables.length > 1 ? (
+          <button type="button" className="cp-link cp-wz-tap" disabled={seanceOccupe}
+                  onClick={() => { setSeanceMessage(''); setSeanceErreur(''); setCalendrier(true); }}
+                  data-testid="invitation-changer-seance">
+            <SvgIcon name="calendar" size={14} /> {seanceOccupe ? 'Un instant…' : 'Autre séance'}
+          </button>
         ) : null}
-      </>
-    );
+        {plusieursOffres ? (
+          <button type="button" className="cp-link cp-offre-lien cp-wz-tap" onClick={ouvrirOffres} data-testid="offre-voir-autres">
+            <SvgIcon name="refresh" size={14} /> Autre offre
+          </button>
+        ) : null}
+        {seanceMessage ? <p className="cp-mini" role="status" style={{ margin: 0, width: '100%' }}>{seanceMessage}</p> : null}
+        {seanceErreur ? <p className="cp-error" role="alert" style={{ margin: 0, width: '100%' }}>{seanceErreur}</p> : null}
+        {offreErreur && !sheetOffre ? <p className="cp-error" role="alert" data-testid="offre-erreur" style={{ margin: 0, width: '100%' }}>{offreErreur}</p> : null}
+      </div>
+    ) : null;
     return (
       <Cadre>
         {monLien ? (
@@ -475,9 +472,7 @@ export default function InvitationDuo({ token }) {
           messageEtape2={messageEtape2}
         />
         {modales}
-        <p className="cp-fine cp-center" style={{ marginTop: 14 }}>
-          Une seule invitation par personne et par séance. L'essai gratuit Afroboost est unique : si tu l'as déjà utilisé, on te le dira ici.
-        </p>
+
       </Cadre>
     );
   }

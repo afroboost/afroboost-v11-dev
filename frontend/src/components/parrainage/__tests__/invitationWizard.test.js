@@ -156,8 +156,9 @@ describe('V551 — InvitationWizard : création en 3 étapes', () => {
     expect(par('wf-seance-resume')).not.toBeNull(); // V558 : le résumé de la séance (calendrier existant)
     expect(par('pass-select-seance')).toBeNull();
     await cliquer('wizard-suivant');
-    expect(par('wizard-nom').textContent).toBe('Aïcha');
-    expect(par('wizard-photo').getAttribute('src')).toBe(PROFIL_LIE.profil.photoURL);
+    expect(par('wizard-champ-nom').value).toBe('Aïcha');
+    expect(par('carte-invitation-titre').textContent).toBe('Aïcha t’invite à découvrir Afroboost');
+    expect(par('carte-invitation-photo').getAttribute('src')).toBe(PROFIL_LIE.profil.photoURL);
   });
 
   test('un e-mail comme nom est refusé → nom neutre + initiale', async () => {
@@ -165,10 +166,11 @@ describe('V551 — InvitationWizard : création en 3 étapes', () => {
       invitation: { identity: { display_name: 'aicha.b@gmail.com' }, default_message: '', pass: null } });
     await monter(<InvitationWizard courses={COURSES} passOuvert={null} />);
     await versLaCarte();
-    expect(par('wizard-nom').textContent).toBe(NOM_NEUTRE);
-    expect(conteneur.textContent).not.toContain('@');
-    expect(par('wizard-photo')).toBeNull();
-    expect(par('wizard-initiale')).not.toBeNull();
+    expect(par('carte-invitation-titre').textContent).toBe('Afroboost t’invite à essayer un cours');
+    expect(NOM_NEUTRE).toBe('Afroboost');
+    expect(par('carte-invitation-titre').textContent).not.toContain('@');
+    expect(par('carte-invitation-photo')).toBeNull();
+    expect(par('carte-invitation-logo')).not.toBeNull();
   });
 
   test('4 étapes (Offre · Séance · Ta carte · Partage) ; « Modifier » ne touche QUE l\'invitation ; POST /pass porte `invitation`', async () => {
@@ -194,14 +196,14 @@ describe('V551 — InvitationWizard : création en 3 étapes', () => {
     // Étape 3 : TES informations + message + aperçu réel
     expect(par('wizard-etape-3')).not.toBeNull();
     expect(par('wizard-suivant')).toBeNull(); // la 4e étape est le partage, après la création
-    await cliquer('wizard-modifier-identite');
     saisir(par('wizard-champ-nom'), 'Aïcha la reine');
     await cliquer('wizard-photo-retirer');
+    await cliquer('wizard-modifier-message'); // V560 : le message est replié par défaut
     expect(par('wizard-message').value).toBe('Viens danser avec moi !');
     expect(par('wizard-compteur').textContent).toContain(`/${MESSAGE_MAX}`);
     expect(Number(par('wizard-message').getAttribute('maxLength'))).toBe(MESSAGE_MAX);
-    expect(par('wizard-apercu').textContent).toContain("Aïcha la reine t'invite à Afroboost");
-    expect(par('wizard-apercu').textContent).toContain('Viens danser avec moi !');
+    expect(par('wizard-apercu').textContent).toContain('Aïcha la reine t’invite à découvrir Afroboost');
+    expect(document.querySelectorAll('[data-testid="carte-invitation-titre"]')).toHaveLength(1);
     await cliquer('wizard-creer');
 
     expect(axios.post).toHaveBeenCalledTimes(1);
@@ -239,7 +241,7 @@ describe('V551 — InvitationWizard : pass existant', () => {
     const partage = jest.fn().mockResolvedValue();
     Object.assign(navigator, { clipboard: { writeText: ecrire }, share: partage });
     await monter(<InvitationWizard courses={COURSES} passOuvert={p} onJournal={onJournal} />);
-    expect(par('wizard-prete').textContent).toContain('Ton invitation est prête');
+    expect(par('wizard-prete').textContent).toContain('Partage ton invitation');
     expect(par('wizard-apercu')).not.toBeNull();
 
     await cliquer('inviter-whatsapp');
@@ -301,63 +303,29 @@ describe('V551 — InvitationWizard : pass existant', () => {
 
 // ═══ V552 — la vraie carte (og:image) dans l'aperçu ══════════════════════════
 const CARTE = 'https://afroboost.com/api/share/duo/TOK123/carte.jpg?v=2';
-describe('V552 — InvitationWizard : vraie carte dans l\'aperçu', () => {
-  test('« prête » : la carte card_url est affichée (ratio 1200:630), titre + message + séance dessous', async () => {
+describe('V560 — InvitationWizard : UNE carte, rendue en direct', () => {
+  test('« prête » : la carte HTML (prénom, photo, type, séance, lieu), sans image ni bandeau en double', async () => {
     routerGet({ profil: PROFIL_LIE });
     const p = passOuvert({ card_url: CARTE, invitation: { display_name: 'Aïcha', photo_url: null, message: 'On danse ?', version: 2 } });
     await monter(<InvitationWizard courses={COURSES} passOuvert={p} />);
-    const img = par('wizard-apercu-carte');
-    expect(img).not.toBeNull();
-    expect(img.getAttribute('src')).toBe(CARTE);
-    expect(img.getAttribute('alt')).toBe('Aperçu de ton invitation');
-    expect(img.getAttribute('width')).toBe('1200');
-    expect(img.getAttribute('height')).toBe('630');
-    const apercu = par('wizard-apercu').textContent;
-    expect(apercu).toContain("Aïcha t'invite à Afroboost");
-    expect(apercu).toContain('On danse ?');
-    expect(apercu).toContain('Afroboost Dimanche');
-    expect(par('wizard-apercu-image')).toBeNull();
-    expect(par('wizard-carte-a-venir')).toBeNull();
+    const carte = par('wizard-apercu');
+    expect(carte.textContent).toContain('Aïcha t’invite à découvrir Afroboost');
+    expect(carte.textContent).toContain('Pass Duo');
+    expect(carte.textContent).toContain('Afroboost Dimanche');
+    expect(carte.textContent).toContain('Bord du Lac');
+    expect(conteneur.querySelector(`img[src="${CARTE}"]`)).toBeNull();
+    expect(par('bandeau-invitant')).toBeNull();
   });
 
-  test('étape 3 d\'une modification : la carte card_url est l\'aperçu', async () => {
+  test('modification : « Ta carte » directement, la carte suit la frappe du prénom', async () => {
     routerGet({ profil: PROFIL_LIE });
     await monter(<InvitationWizard courses={COURSES} passOuvert={passOuvert({ card_url: CARTE })} />);
     await cliquer('wizard-modifier');
-    expect(par('wizard-etape-3')).not.toBeNull();   // V558 : directement « Ta carte »
-    expect(par('wizard-apercu-carte').getAttribute('src')).toBe(CARTE);
-  });
-
-  test('sans card_url : aperçu actuel + « La carte finale est générée à l\'envoi »', async () => {
-    routerGet({ profil: PROFIL_LIE });
-    await monter(<InvitationWizard courses={COURSES} passOuvert={passOuvert()} />);
-    expect(par('wizard-apercu-carte')).toBeNull();
-    expect(par('wizard-apercu')).not.toBeNull();
-    expect(par('wizard-carte-a-venir').textContent).toContain("La carte finale est générée à l'envoi");
-  });
-
-  test('création : étape 3 avant POST = aperçu actuel ; après POST, la card_url renvoyée', async () => {
-    routerGet({ profil: PROFIL_LIE });
-    axios.post.mockResolvedValue({ data: passOuvert({ card_url: CARTE }) });
-    await monter(<InvitationWizard courses={COURSES} passOuvert={null} />);
-    await cliquer('wizard-suivant');
-    await cliquer('wizard-suivant');
-    expect(par('wizard-apercu-carte')).toBeNull();
-    expect(par('wizard-carte-a-venir')).not.toBeNull();
-    await cliquer('wizard-creer');
-    expect(par('wizard-prete')).not.toBeNull();
-    expect(par('wizard-apercu-carte').getAttribute('src')).toBe(CARTE);
-  });
-
-  test('image en erreur → retour à l\'aperçu actuel, jamais d\'image cassée', async () => {
-    routerGet({ profil: PROFIL_LIE });
-    await monter(<InvitationWizard courses={COURSES} passOuvert={passOuvert({ card_url: CARTE })} />);
-    const img = par('wizard-apercu-carte');
-    await act(async () => { img.dispatchEvent(new Event('error')); });
+    expect(par('wizard-etape-3')).not.toBeNull();
+    saisir(par('wizard-champ-nom'), 'Coralie');
     await flush();
-    expect(par('wizard-apercu-carte')).toBeNull();
-    expect(par('wizard-apercu')).not.toBeNull();
-    expect(conteneur.querySelector(`img[src="${CARTE}"]`)).toBeNull();
+    expect(par('carte-invitation-titre').textContent).toBe('Coralie t’invite à découvrir Afroboost');
+    expect(par('wizard-message')).not.toBeNull(); // en modification, le message est ouvert
   });
 });
 

@@ -108,12 +108,12 @@ describe('V558 — Wizard 4 étapes', () => {
     routerGet(); routerPost();
     await monter(<InvitationDuo token="T0" />);
     expect(par('wf-etapes').textContent.replace(/\s+/g, '')).toBe('1Offre2Séance3Tacarte4Partage');
-    expect(par('wf-offre-titre').textContent).toBe('Qu’est-ce que tu veux offrir à ton ami ?');
+    expect(par('wf-offre-titre').textContent).toBe('Que veux-tu partager ?');
     expect(par('wf-offre-trial').getAttribute('aria-checked')).toBe('true');       // premier type par défaut
     expect(par('wf-offre-parrainage').getAttribute('aria-checked')).toBe('false');
     expect(par('wf-offre-affiliation')).toBeNull();                                  // aucun programme : masquée
     expect(par('wf-recompense-parrainage').textContent).toContain('séance offerte de parrainage');
-    expect(par('wf-lead').textContent).toContain('si tu n’en as encore jamais bénéficié');
+    expect(par('wf-regle-essai').textContent).toContain('une seule fois par personne');
     expect(conteneur.textContent).not.toContain('Ton premier cours est offert');
     expect(axios.post).not.toHaveBeenCalled();
   });
@@ -129,7 +129,7 @@ describe('V558 — Wizard 4 étapes', () => {
     await choisirDansLeCalendrier();
     expect(par('sessions-modal')).toBeNull();                                         // le calendrier se ferme
     const resume = par('wf-seance-resume');
-    expect(resume.textContent).toContain('Séance offerte à ton ami');
+    expect(resume.textContent).toContain('Séance choisie');
     expect(resume.textContent).toContain('18:45');
     expect(resume.textContent).toContain('Afroboost Silent – Session Cardio');
     expect(resume.textContent).toContain('Ch. des Valangines 97, 2000 Neuchâtel');
@@ -139,8 +139,8 @@ describe('V558 — Wizard 4 étapes', () => {
     const creation = axios.post.mock.calls.find((c) => String(c[0]).endsWith('/chain'));
     expect(creation[1]).toEqual(expect.objectContaining({ kind: 'parrainage', course_id: 'c2', occurrence: O2 }));
     expect(par('wf-etape-carte')).not.toBeNull();
-    expect(par('wf-apercu-type').textContent).toBe('Parrainage');
-    expect(par('wf-apercu-seance').textContent).toContain('Afroboost Silent – Session Cardio');
+    expect(par('wf-apercu').querySelector('[data-testid="carte-invitation-type"]').textContent).toBe('Parrainage');
+    expect(par('wf-apercu').textContent).toContain('Afroboost Silent – Session Cardio');
     expect(window.localStorage.getItem(cleChaine('T0'))).toBe('K1');
   });
 

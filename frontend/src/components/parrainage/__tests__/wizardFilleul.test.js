@@ -101,9 +101,10 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     axios.get.mockResolvedValue({ data: PUB });
     await monter(<InvitationDuo token="T0" />);
     expect(par('wf-etape-1')).not.toBeNull();
-    expect(conteneur.textContent).toContain("Bassi t'invite à découvrir Afroboost.");
-    expect(conteneur.textContent).toContain('Ton premier essai est offert si tu n’en as encore jamais bénéficié. Pour le débloquer, invite à ton tour un ami.');
-    expect(par('invitation-seance')).not.toBeNull();
+    expect(par('carte-invitation-titre').textContent).toBe('Bassi t’invite à découvrir Afroboost'); // V560 : UNE carte
+    expect(par('wf-lead').textContent).toContain('Pour débloquer ton essai, invite à ton tour une autre personne.');
+    expect(par('wf-regle-essai').textContent).toContain('L’essai gratuit est disponible une seule fois par personne.');
+    expect(par('carte-invitation-quand')).not.toBeNull(); // la séance est DANS la carte
     expect(par('invitation-form')).toBeNull();
     expect(conteneur.textContent).not.toContain("M'inscrire et débloquer le duo");
     await cliquer('wf-continuer');
@@ -114,7 +115,7 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     const appels = axios.post.mock.calls.map((c) => String(c[0]));
     expect(appels).toEqual([expect.stringMatching(/\/pass\/T0\/chain$/)]);
     expect(window.localStorage.getItem(cleChaine('T0'))).toBe('K1');
-    expect(par('wf-carte').querySelector('img').getAttribute('src')).toContain('/carte.jpg');
+    expect(par('wf-apercu')).not.toBeNull(); // V560 : la carte unique, rendue en direct
     expect(par('wf-nom')).not.toBeNull();
   });
 
@@ -300,8 +301,7 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     await monter(<InvitationDuo token="T0" />);
     await allerAuPartage();
     expect(par('wf-apercu-simplifie')).toBeNull();
-    expect(par('wf-partager-carte')).not.toBeNull();
-    await cliquer('wf-partager-carte');
+    await cliquer('wf-partager'); // V560 : « Partager » joint la carte quand le téléphone le permet
     const arg = navigator.share.mock.calls[0][0];
     expect(arg.files[0].name).toBe('invitation-afroboost.jpg');
     expect(arg.text).toContain('/duo/T1?v=3');

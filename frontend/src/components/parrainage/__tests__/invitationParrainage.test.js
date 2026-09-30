@@ -202,7 +202,13 @@ describe('InvitationParrainage — le même parcours, un seul GET /me', () => {
     await attendre();
     expect(axios.put).toHaveBeenCalledTimes(1);
     expect(par('wizard-prete')).not.toBeNull();
-    expect(document.body.textContent).toContain('afroboost.com/api/share/duo/TOK123?v=2');
+    // V560 : plus de lien affiché en double — la carte suit le PUT, le partage prend la nouvelle URL.
+    expect(document.body.textContent).toContain('Ana B t’invite à découvrir Afroboost');
+    const ouvrir = window.open; window.open = jest.fn();
+    axios.post.mockResolvedValue({ data: { id: 'inv-2' } });
+    await act(async () => { par('inviter-whatsapp').click(); });
+    expect(decodeURIComponent(String(window.open.mock.calls[0][0]))).toContain('afroboost.com/api/share/duo/TOK123?v=2');
+    window.open = ouvrir;
     expect(appelsMe()).toBe(1);
   });
 

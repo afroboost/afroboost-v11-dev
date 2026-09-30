@@ -41,6 +41,25 @@ import {
 } from '../../utils/parrainage';
 import './parrainage.css';
 
+/** V560 — la page en QUATRE onglets (plus rien d'affiché d'un coup). */
+export const ONGLETS_CENTRE = [
+  { id: 'inviter', titre: 'Inviter', icone: 'send' },
+  { id: 'invitations', titre: 'Mes invitations', icone: 'users' },
+  { id: 'recompenses', titre: 'Mes récompenses', icone: 'gift' },
+  { id: 'historique', titre: 'Historique', icone: 'clock' },
+];
+
+/** V560 — le statut d'une invitation, en mots simples (jamais une donnée du filleul). */
+export function statutInvitationCentre(pass) {
+  const s = pass && pass.status;
+  if (s === 'unlocked' || s === 'used') return 'Récompense débloquée';
+  if (s === 'friend_registered') return 'Inscrit';
+  if (s === 'expired') return 'Expirée';
+  if (s === 'cancelled') return 'Annulée';
+  if (pass && pass.opened_at) return 'Ouverte';
+  return 'Partagée';
+}
+
 /** V552 — les quatre raccourcis de « Mes outils », dans l'ordre d'affichage. */
 export const OUTILS = [
   { id: 'credits', titre: 'Crédits', icone: 'dollarSign' },
@@ -82,10 +101,23 @@ export function libellesResultats(stats) {
   ];
 }
 
+/** V560 — « ← Retour » toujours visible : la page précédente, sinon l'espace abonné, sinon l'accueil. */
+function retourPrecedent() {
+  try {
+    if (window.history.length > 1 && document.referrer && new URL(document.referrer).origin === window.location.origin) {
+      window.history.back();
+      return;
+    }
+  } catch (e) { /* repli ci-dessous */ }
+  window.location.href = urlEspaceCourant() || '/';
+}
+
 function EnTete({ pill }) {
   return (
     <header className="cp-header">
-      <a className="cp-logo" href="/" aria-label="Retour à l'accueil Afroboost">Afro<span>boost</span></a>
+      <button type="button" className="cp-link cp-wz-tap cp-retour" onClick={retourPrecedent} data-testid="centre-retour">
+        <SvgIcon name="arrowLeft" size={16} /> Retour
+      </button>
       <div className="cp-pill">{pill || 'Parrainage'}</div>
     </header>
   );
@@ -145,6 +177,7 @@ export default function CentreParrainage() {
   const [campagne] = useState(() => lireCampagneUrl());
   const [contexteAssistant] = useState(() => (campagne ? Object.assign({}, contexte, { campagne }) : contexte));
   const [outil, setOutil] = useState(''); // V552 : le tiroir ouvert ('' = aucun)
+  const [onglet, setOnglet] = useState('inviter'); // V560 : l'onglet affiché
   const declencheurs = useRef({});        // V552 : les raccourcis, pour y rendre le focus
   const urlEspace = urlEspaceCourant();
 
@@ -254,6 +287,7 @@ export default function CentreParrainage() {
     // V552 : appelé depuis le tiroir Pass Duo — on le ferme d'abord, puis on
     // amène l'assistant (toujours monté) à l'écran.
     setOutil('');
+    setOnglet('inviter'); // V560 : l'assistant vit dans l'onglet « Inviter »
     setTimeout(() => {
       const cible = document.querySelector('[data-testid="invitation-zone"]');
       if (cible && cible.scrollIntoView) cible.scrollIntoView({ behavior: 'auto', block: 'start' });
@@ -472,22 +506,16 @@ export default function CentreParrainage() {
         ) : invitations.map((inv, i) => {
           const p = parId[inv.pass_id];
           const ami = p && p.invitee && p.invitee.first_name;
-          const offreInv = offreDuPass(p); // V534b: l'offre du pass, par son nom (jamais son id)
           return (
             <div className="cp-row" key={inv.id || i} data-testid="invitation-row">
               <div className="cp-who">
                 <div className="cp-av-s">{ami ? ami.charAt(0).toUpperCase() : <SvgIcon name="user" size={16} />}</div>
                 <div>
-                  <b>{ami || 'Invitation'}</b>
-                  <small>
-                    {CANAUX[inv.channel] || inv.channel || 'Lien'}
-                    {p && p.occurrence ? ` · Pass Duo ${libelleJour(p.occurrence).toLowerCase()}` : ''}
-                    {offreInv ? ` · ${offreInv.name}` : ''}
-                    {inv.created_at ? ` · ${libelleDateCourte(inv.created_at)}` : ''}
-                  </small>
+                  <b>{ami || 'Ami invité'}</b>
+                  <small>{inv.created_at ? libelleDateCourte(inv.created_at) : ''}</small>
                 </div>
               </div>
-              {p ? <ChipStatut status={p.status} /> : <span className="cp-chip cp-chip--ext">Pass retiré</span>}
+              <span className="cp-chip" data-testid="invitation-statut">{p ? statutInvitationCentre(p) : 'Pass retiré'}</span>
             </div>
           );
         })}
@@ -507,25 +535,33 @@ export default function CentreParrainage() {
       </div>
     ),
   };
-  const etats = etatsOutils({ passes, passLien, invitations, history });
   const outilOuvert = OUTILS.find((o) => o.id === outil) || null;
+
+  const stats = (
+    <div className="cp-stats cp-stats--compact" data-testid="mes-resultats" role="group" aria-label="Mes résultats">
+      {libellesResultats(me.stats).map((s) => (
+        <div className="cp-stat" key={s.testid} data-testid={s.testid}><b>{s.valeur}</b><span>{s.libelle}</span></div>
+      ))}
+    </div>
+  );
 
   return (
     <Cadre>
-      <div className="cp-eyebrow">Mon centre{prenom ? ` · ${prenom}` : ''}</div>
-      <h1 className="cp-h1 cp-h1--compact">Invite un ami, <em className="cp-em">profitez à deux.</em></h1>
-
-      <div className="cp-stats cp-stats--compact" data-testid="mes-resultats" role="group" aria-label="Mes résultats">
-        {libellesResultats(me.stats).map((s) => (
-          <div className="cp-stat" key={s.testid} data-testid={s.testid}><b>{s.valeur}</b><span>{s.libelle}</span></div>
+      <h1 className="cp-h1 cp-h1--compact">Mon parrainage</h1>
+      {/* V560 — QUATRE ONGLETS : une chose à la fois. */}
+      <div className="cp-onglets" role="tablist" aria-label="Mon parrainage" data-testid="centre-onglets">
+        {ONGLETS_CENTRE.map((o) => (
+          <button key={o.id} type="button" role="tab" aria-selected={onglet === o.id}
+                  className={`cp-onglet${onglet === o.id ? ' on' : ''}`} onClick={() => setOnglet(o.id)}
+                  data-testid={`onglet-${o.id}`}>
+            <SvgIcon name={o.icone} size={16} /> <span>{o.titre}</span>
+          </button>
         ))}
       </div>
 
-      {/* V551 — UNE SEULE ZONE D'INVITATION, JAMAIS DEUX FORMULAIRES.
-          V552 : elle reste PRIORITAIRE et TOUJOURS MONTÉE — les tiroirs sont
-          rendus à côté, jamais à sa place : son état survit à leur ouverture. */}
-      <h2 className="cp-h2">Inviter un ami</h2>
-      <div data-testid="invitation-zone">
+      {/* Inviter : l'assistant reste MONTÉ (caché hors onglet) — son état survit. */}
+      <div data-testid="invitation-zone" hidden={onglet !== 'inviter'}>
+        <p className="cp-wf-aide">Choisis une séance, personnalise ta carte et partage ton invitation.</p>
         <InvitationWizard
           courses={config && config.courses}
           passOuvert={passLien}
@@ -538,22 +574,21 @@ export default function CentreParrainage() {
         />
       </div>
 
-      {/* V552 — MES OUTILS : quatre raccourcis compacts, un tiroir commun. */}
-      <h2 className="cp-h2">Mes outils</h2>
-      <div className="cp-outils" data-testid="mes-outils">
-        {OUTILS.map((o) => (
-          <button key={o.id} type="button" className="cp-outil" data-testid={`outil-${o.id}`}
-                  ref={(el) => { declencheurs.current[o.id] = el; }}
-                  aria-haspopup="dialog" aria-expanded={outil === o.id}
-                  onClick={() => { setErreurPass(''); setOutil(o.id); }}>
-            <span className="cp-outil-ic" aria-hidden="true"><SvgIcon name={o.icone} size={18} /></span>
-            <span className="cp-outil-txt">
-              <b>{o.titre}</b>
-              <small>{etats[o.id]}</small>
-            </span>
-          </button>
-        ))}
-      </div>
+      {onglet === 'invitations' ? (
+        <div data-testid="onglet-contenu-invitations">{stats}{contenus.invitations}</div>
+      ) : null}
+      {onglet === 'recompenses' ? (
+        <div data-testid="onglet-contenu-recompenses">
+          <p className="cp-wf-regle"><SvgIcon name="info" size={14} /> L’essai gratuit n’est pas une récompense : il est disponible une seule fois par personne.</p>
+          {contenus.pass}
+          {contenus.credits}
+          <div className="cp-card" data-testid="recompense-createur">
+            <div className="cp-prog"><h3 className="cp-h3"><SvgIcon name="star" size={20} />Commission créateur</h3></div>
+            <p className="cp-mini">Réservée aux créateurs approuvés : ouvre « Créateur » dans ton espace abonné.</p>
+          </div>
+        </div>
+      ) : null}
+      {onglet === 'historique' ? contenus.historique : null}
 
       {outilOuvert ? (
         <ParrainageDrawer key={outilOuvert.id} titre={outilOuvert.titre} outil={outilOuvert.id}

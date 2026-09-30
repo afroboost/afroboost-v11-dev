@@ -236,3 +236,20 @@ describe('C — fermeture du choix', () => {
     expect(html).not.toMatch(/#(a855f7|8B5CF6|9333ea|7c3aed)/i);
   });
 });
+
+describe('V560 — modules « Invitation & Parrainage » et « Créateur / Affiliation »', () => {
+  test('« Invitation & Parrainage » ouvre la MÊME modale d’invitation ; « Créateur » seulement si autorisé', async () => {
+    await monter(<CampaignManager {...propsManager()} />);
+    expect(par('module-createur')).toBeNull();                 // super-admin / sans onglet Créateur : absent
+    await cliquer(par('module-invitation'));
+    expect(par('invitation-modal')).not.toBeNull();
+    expect(par('campaign-modal')).toBeNull();
+  });
+
+  test('partenaire : « Créateur / Affiliation » appelle l’ouverture de l’onglet Créateur', async () => {
+    const ouvrir = jest.fn();
+    await monter(<CampaignManager {...propsManager({ onOuvrirCreateur: ouvrir })} />);
+    await cliquer(par('module-createur'));
+    expect(ouvrir).toHaveBeenCalledTimes(1);
+  });
+});

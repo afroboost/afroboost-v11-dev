@@ -145,6 +145,8 @@ const CampaignManager = ({
   coachCredits = null,
   isSuperAdmin = false,
   campaignCreditCost = 1,
+  // V560 : module « Créateur / Affiliation » (partenaires) — ouvre l'onglet Créateur.
+  onOuvrirCreateur = null,
   // v16.3: Chat links pour CTA "Lier à une Conversation"
   chatLinks = [],
   // v18: Coach email for contacts sync
@@ -502,6 +504,23 @@ const CampaignManager = ({
   return (
     <div className="card-gradient rounded-xl" style={{ padding: '6px', boxSizing: 'border-box', width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
       {creditBlockMessage}
+
+      {/* V560 — MODULES : le MÊME moteur Invitation & parrainage (et, pour un partenaire,
+          le Programme Créateur). La page Campagnes elle-même ne change pas. */}
+      <div data-testid="campagnes-modules" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '8px', marginBottom: '12px' }}>
+        <button type="button" onClick={() => { setDateInvitation(null); setInvitationOuverte(true); }} data-testid="module-invitation"
+                style={{ minHeight: '44px', padding: '10px 12px', borderRadius: '10px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                         color: 'rgba(255,255,255,0.96)', fontSize: '14px', fontWeight: 600, background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)' }}>
+          <SvgIcon name="gift" size={16} /> Invitation &amp; Parrainage
+        </button>
+        {typeof onOuvrirCreateur === 'function' ? (
+          <button type="button" onClick={onOuvrirCreateur} data-testid="module-createur"
+                  style={{ minHeight: '44px', padding: '10px 12px', borderRadius: '10px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                           color: 'rgba(255,255,255,0.96)', fontSize: '14px', fontWeight: 600, background: 'transparent', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)' }}>
+            <SvgIcon name="star" size={16} /> Créateur / Affiliation
+          </button>
+        ) : null}
+      </div>
 
       {/* V146: Header simplifié — responsive */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>

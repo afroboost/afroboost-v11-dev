@@ -57,22 +57,21 @@ export function DevenirCreateur({ info, onEnvoye, entetes, refus }) {
     <div className="cr-root" data-testid="devenir-createur">
       <header className="cr-entete">
         <h2 className="cr-titre">Devenir créateur Afroboost</h2>
-        <p className="cr-sous">Recommande Afroboost à ton réseau et gagne une commission sur les achats éligibles réalisés grâce à ton lien personnel.</p>
+        <p className="cr-sous">Partage Afroboost à ton réseau et gagne une commission sur les achats éligibles.</p>
       </header>
       {refus ? <p className="cr-erreur" role="status" data-testid="cr-demande-refusee">Ta précédente demande n’a pas été retenue. Tu peux en envoyer une nouvelle.</p> : null}
-      <section className="cr-carte" data-testid="cr-principe">
-        <h3 className="cr-h3">Le principe</h3>
-        <ul className="cr-puces">
-          <li>Tu reçois un lien personnel et un QR code à partager.</li>
-          <li>Quand une personne achète une offre éligible grâce à ton lien, tu gagnes une commission.</li>
-          <li>Seuls les achats payés comptent : ni les clics, ni les inscriptions, ni les essais gratuits.</li>
-          <li>Une commission est confirmée après {info && info.delai_confirmation_jours ? info.delai_confirmation_jours : 14} jours (délai de remboursement), puis tu peux demander un retrait dès {info && info.retrait_min ? info.retrait_min : 10} CHF.</li>
-          <li>Tu touches la commission sur TES filleuls directs uniquement : jamais de commission en cascade.</li>
-        </ul>
-        <p className="cr-fine" data-testid="cr-bareme">
-          {commissions.length ? <>Taux actuels : {commissions.join(' · ')}</> : 'Les taux de commission sont communiqués à l’approbation.'}
-        </p>
-      </section>
+      {/* V560 : le parcours en TROIS étapes visuelles, puis trois lignes — pas de gros paragraphe. */}
+      <ol className="cr-etapes" data-testid="cr-principe">
+        <li><span>1</span>Fais ta demande</li>
+        <li><span>2</span>Afroboost valide ton profil</li>
+        <li><span>3</span>Reçois ton lien créateur et commence à partager</li>
+      </ol>
+      <div className="cr-carte cr-court" data-testid="cr-explication">
+        <p>Tu partages ton lien.</p>
+        <p>Si une personne achète une offre éligible grâce à ton lien, tu gagnes une commission.</p>
+        <p>Les essais gratuits ne donnent pas de commission.</p>
+        {commissions.length ? <p className="cr-fine" data-testid="cr-bareme">Taux actuels : {commissions.join(' · ')}</p> : null}
+      </div>
       <form className="cr-carte cr-form" onSubmit={soumettre} noValidate data-testid="cr-form">
         <h3 className="cr-h3">Ma demande</h3>
         <div className="cr-2col">
@@ -80,7 +79,6 @@ export function DevenirCreateur({ info, onEnvoye, entetes, refus }) {
           <label className="cr-label">Nom<input className="cr-input" value={form.nom} onChange={champ('nom')} maxLength={60} autoComplete="family-name" data-testid="cr-nom" /></label>
         </div>
         <label className="cr-label">Téléphone<input className="cr-input" type="tel" inputMode="tel" value={form.telephone} onChange={champ('telephone')} placeholder="+41 79 123 45 67" autoComplete="tel" data-testid="cr-telephone" /></label>
-        <p className="cr-fine">Ton e-mail est celui de ton compte : tu n’as pas à le saisir.</p>
         <label className="cr-label">Réseaux sociaux (facultatif)<input className="cr-input" value={form.reseaux} onChange={champ('reseaux')} maxLength={200} placeholder="@instagram, TikTok…" data-testid="cr-reseaux" /></label>
         <label className="cr-label">Motivation / activité<textarea className="cr-input" rows={3} value={form.motivation} onChange={champ('motivation')} maxLength={600} data-testid="cr-motivation" /></label>
         <span className="cr-label">Méthode de paiement souhaitée</span>
@@ -94,11 +92,11 @@ export function DevenirCreateur({ info, onEnvoye, entetes, refus }) {
         {form.payout_method === 'iban' ? (
           <label className="cr-label">IBAN<input className="cr-input" value={form.payout_detail} onChange={champ('payout_detail')} placeholder="CH93 0076 2011 6238 5295 7" autoComplete="off" data-testid="cr-iban" /></label>
         ) : (
-          <label className="cr-label">Numéro TWINT (facultatif, sinon ton téléphone)<input className="cr-input" type="tel" value={form.payout_detail} onChange={champ('payout_detail')} data-testid="cr-twint" /></label>
+          <label className="cr-label">Numéro TWINT (sinon ton téléphone)<input className="cr-input" type="tel" value={form.payout_detail} onChange={champ('payout_detail')} data-testid="cr-twint" /></label>
         )}
         <label className="cr-chk">
           <input type="checkbox" checked={form.reglement_accepte} onChange={champ('reglement_accepte')} data-testid="cr-reglement" />
-          <span>J’accepte le règlement du programme Créateur : commissions sur achats payés éligibles, confirmées après le délai de remboursement, versées manuellement par Afroboost ; aucune commission en cascade ; l’essai gratuit reste unique par personne.</span>
+          <span>J’accepte le règlement du programme Créateur (commission sur les achats payés éligibles, confirmée après {info && info.delai_confirmation_jours ? info.delai_confirmation_jours : 14} jours, jamais en cascade).</span>
         </label>
         {erreur ? <p className="cr-erreur" role="alert" data-testid="cr-form-erreur">{erreur}</p> : null}
         <button type="submit" className="cr-b cr-b--plein cr-b--grand" disabled={envoi} data-testid="cr-envoyer">
