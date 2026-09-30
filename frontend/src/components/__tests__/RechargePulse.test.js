@@ -43,7 +43,8 @@ const ZONE_CTA = (() => {
     const ouverture = SRC.lastIndexOf('{/*', i);
     if (ouverture > 0) i = ouverture;
   }
-  const j = i >= 0 ? SRC.indexOf('Guide rapide', i) : -1;
+  // V565 : le « Guide rapide » a quitté l'espace (V561) — la zone s'arrête au pied de la recharge.
+  const j = i >= 0 ? SRC.indexOf('data-testid="subscriber-space-footer"', i) : -1;
   return i >= 0 && j > i ? SRC.slice(i, j) : '';
 })();
 

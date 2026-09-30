@@ -15,6 +15,7 @@ import CarteProfilSpordateur from './CarteProfilSpordateur'; // F3 SUITE — car
 import CarteNotifications from './CarteNotifications'; // PUSH-PWA — état des notifications + réactivation automatique
 import CarteCreateur from './createur/CarteCreateur'; // V559 — « Devenir créateur » / « Dashboard Créateur »
 import MenuRapide from './espace/MenuRapide'; // V560 — raccourcis en haut de l'espace
+import AfficheEvenementEspace from './espace/AfficheEvenementEspace'; // V565 — l'affiche du coach, en ligne
 import ParrainageDrawer from './parrainage/ParrainageDrawer'; // V561 — Réserver / Recharger hors du dashboard
 import './parrainage/parrainage.css'; // V561 — jetons de la fenêtre (cp-root)
 import { TiroirInvitationParrainage } from './parrainage/InvitationParrainage'; // PAR-2 — « Invitation & parrainage » dans le tiroir existant
@@ -1416,6 +1417,22 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           <ConversionApresEssai code={subscription.code || accessCode} prenom={firstName} />
         )}
 
+        {/* ===== V565 : L'AFFICHE ÉVÉNEMENT DU COACH — juste au-dessus de la réservation =====
+            Source unique : le concept du coach (ConceptEditor), projeté par le serveur
+            (`evenement`). Absente/désactivée -> rien, aucun bloc vide. Même `order` que
+            la réservation : elle reste collée au-dessus, y compris pendant l'essai.
+            « Réserver » descend à la réservation ; « Nos offres » ouvre le catalogue du
+            coach (Recharger) — le bouton n'existe que si ce catalogue existe. */}
+        {data?.evenement ? (
+          <div style={{ order: essaiAReserver ? -1 : 0 }}>
+            <AfficheEvenementEspace
+              evenement={data.evenement}
+              onReserver={scrollToReservation}
+              onOffres={rechargeDisponible ? () => { setRechargeOuvert(true); setRechargeModale(true); } : undefined}
+            />
+          </div>
+        ) : null}
+
         {/* ===== V564 : RÉSERVER UNE SÉANCE — OUVERTE PAR DÉFAUT, EN LIGNE =====
             La même section qu'en V561 (dates, carte de la séance, quantité, conditions,
             « Réserver ») — rendue ici en mode inline : pas de fond, pas de X, pas de
@@ -2241,9 +2258,18 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   {data.recharge.offres.map((o) => (
                     <div key={o.offer_id} className="rounded-2xl p-4" data-testid={`recharge-offre-${o.offer_id}`}
                          style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)" }}>
-                      <p className="text-white font-semibold" style={{ margin: 0 }}>{o.offer_name}</p>
+                      <p className="text-white font-semibold" style={{ margin: 0 }}>
+                        {o.offer_name}
+                        {o.actuelle ? (
+                          <span className="ml-2 text-[11px] font-semibold px-2 py-0.5 rounded-full align-middle"
+                                data-testid={`recharge-actuelle-${o.offer_id}`}
+                                style={{ background: "rgba(var(--primary-rgb, 217, 28, 210), 0.18)", color: "rgba(255,255,255,0.9)" }}>
+                            Ton offre
+                          </span>
+                        ) : null}
+                      </p>
                       <p className="text-white/70 text-sm" style={{ margin: "4px 0 0" }}>
-                        {[o.seances ? `${o.seances} séances` : null, o.duree_mois ? `${o.duree_mois} mois` : null,
+                        {[o.seances ? `${o.seances} séance${o.seances > 1 ? "s" : ""}` : null, o.duree_mois ? `${o.duree_mois} mois` : null,
                           o.prix != null ? `${o.prix} ${o.devise || "CHF"}${o.echeances > 1 ? ` × ${o.echeances}` : ""}` : null]
                           .filter(Boolean).join(" · ")}
                       </p>
@@ -2277,7 +2303,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                               <path d="M21 12a9 9 0 1 1-3-6.7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                               <path d="M21 3v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                             </svg>
-                            {rechargeLoading ? "Redirection..." : `${o.seances ? `Recharger ${o.seances} séances` : "Choisir"}${o.prix != null ? ` — ${o.prix} ${o.devise || "CHF"}` : ""}`}
+                            {/* V565 : « Renouveler » l'offre détenue, « Acheter » une autre — verbe décidé par le serveur. */}
+                            {rechargeLoading ? "Redirection..." : `${o.action === "renouveler" ? "Renouveler" : o.action === "acheter" ? "Acheter" : (o.seances ? `Recharger ${o.seances} séances` : "Choisir")}${o.prix != null ? ` — ${o.prix} ${o.devise || "CHF"}` : ""}`}
                           </button>
                         )
                       ) : (

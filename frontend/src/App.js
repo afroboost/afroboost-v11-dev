@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
+import { typeMediaAffiche, urlEmbedAffiche } from './utils/afficheEvenement'; // V565 : média de l'affiche partagé
 import { prechargerSpordate, entrerDansSpordate, urlEntreeServeur } from "./utils/spordateHandoff"; // F3 handoff
 import { activerBulleDeplacable } from "./utils/bulleChat"; // V543 : bulle du chat déplaçable
 import { surErreurImage, IMAGE_SECOURS_LOCAL } from "./utils/imageSecours"; // IMG-1 : anti-boucle des images
@@ -4185,37 +4186,9 @@ const SocialProofFormModal = ({ offer, onClose }) => {
 // V257b: `reserveLabel` / `offersLabel` viennent du concept (editables au
 // dashboard). Absents, les libelles d'origine sont conserves.
 const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers, reserveLabel, offersLabel }) => {
-  const [mediaType, setMediaType] = useState('image');
-  
-  useEffect(() => {
-    if (!mediaUrl) return;
-    const url = mediaUrl.toLowerCase();
-    if (url.includes('youtube.com') || url.includes('youtu.be') || url.includes('vimeo.com')) {
-      setMediaType('video');
-    } else {
-      setMediaType('image');
-    }
-  }, [mediaUrl]);
-  
-  // Parse video URL
-  const getVideoEmbed = () => {
-    if (!mediaUrl) return null;
-    
-    if (mediaUrl.includes('youtu.be')) {
-      const id = mediaUrl.split('/').pop().split('?')[0];
-      return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1`;
-    }
-    if (mediaUrl.includes('youtube.com')) {
-      const urlParams = new URLSearchParams(new URL(mediaUrl).search);
-      const id = urlParams.get('v');
-      return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1`;
-    }
-    if (mediaUrl.includes('vimeo.com')) {
-      const id = mediaUrl.split('/').pop();
-      return `https://player.vimeo.com/video/${id}?autoplay=1&muted=1`;
-    }
-    return null;
-  };
+  // V565 : la lecture du média est partagée avec l'espace abonné (utils/afficheEvenement).
+  const mediaType = typeMediaAffiche(mediaUrl) === 'embed' ? 'video' : 'image';
+  const getVideoEmbed = () => urlEmbedAffiche(mediaUrl);
   
   if (!mediaUrl) return null;
   

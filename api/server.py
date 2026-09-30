@@ -16157,6 +16157,121 @@ def _seances_de(offre):
         return None
 
 
+# ═══ V565 — L'AFFICHE ÉVÉNEMENT DU COACH, AUSSI DANS L'ESPACE ABONNÉ ═══════════
+#
+# SOURCE UNIQUE : le document `concept` du propriétaire (« Affiche Événement
+# (Popup d'accueil) » du ConceptEditor) — `concept` pour la plateforme,
+# `concept_<e-mail>` pour un partenaire, exactement comme `GET /concept`. Rien
+# n'est copié : l'espace reçoit une PROJECTION lue à chaque ouverture.
+# Le propriétaire est celui de l'offre de l'abonné (même règle que la recharge),
+# sinon l'indice du forfait : le coach A ne montre jamais l'affiche du coach B.
+V565_CHAMPS_AFFICHE = ("eventPosterEnabled", "eventPosterMediaUrl",
+                       "eventPosterReserveLabel", "eventPosterOffersLabel")
+
+
+def v565_id_concept(coach_source) -> str:
+    """PURE — l'id du document `concept` du propriétaire (plateforme = « concept »)."""
+    try:
+        from api.routes.shared import lot2_proprietaire as _proprio
+        _p = _proprio(coach_source)
+    except Exception:  # noqa: BLE001
+        _p = None
+    if not _p or _p in (str(DEFAULT_COACH_ID).lower(), "bassi_default"):
+        return "concept"
+    return f"concept_{_p}"
+
+
+def v565_projection_affiche(concept_doc):
+    """PURE — ce que l'espace abonné reçoit de l'affiche, ou None.
+
+    None si l'affiche est désactivée ou sans média http(s) valide : l'espace ne
+    rend alors RIEN (pas de bloc vide). Un libellé ABSENT reste absent (le front
+    applique le libellé par défaut, comme la vitrine) ; un libellé VIDE masque le
+    bouton (règle V258). `cle` change dès que le média ou un libellé change : une
+    affiche fermée par l'abonné réapparaît quand le coach en publie une nouvelle.
+    """
+    _c = concept_doc if isinstance(concept_doc, dict) else {}
+    if _c.get("eventPosterEnabled") is not True:
+        return None
+    _media = str(_c.get("eventPosterMediaUrl") or "").strip()
+    if not re.match(r"^https?://", _media, re.I) or len(_media) > 2000:
+        return None
+    _out = {"media_url": _media}
+    for _src, _dst in (("eventPosterReserveLabel", "reserve_label"), ("eventPosterOffersLabel", "offers_label")):
+        if _src in _c and _c.get(_src) is not None:
+            _out[_dst] = str(_c.get(_src))[:60]
+    import hashlib as _hl
+    _out["cle"] = _hl.sha1("|".join([_media, _out.get("reserve_label", "\x00"),
+                                     _out.get("offers_label", "\x00")]).encode("utf-8")).hexdigest()[:12]
+    return _out
+
+
+async def v565_affiche_evenement(coach_source):
+    """L'affiche du propriétaire pour l'espace abonné. NE LÈVE JAMAIS (None)."""
+    try:
+        _doc = await db.concept.find_one({"id": v565_id_concept(coach_source)},
+                                         {"_id": 0, **{k: 1 for k in V565_CHAMPS_AFFICHE}})
+        return v565_projection_affiche(_doc)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[V565] affiche événement illisible pour l'espace (%s)", type(_err).__name__)
+        return None
+
+
+# ═══ V565 — RECHARGER : LE CATALOGUE DU COACH, PAS SEULEMENT LES OFFRES MEMBRES ═══
+#
+# CAUSE DU BUG (30/09/2026). La liste « Recharger mes séances » ne lisait QUE les
+# offres `requires_active_membership: true` (LOT R). Chez Afroboost il n'y en a
+# qu'une (« Membres ») : l'abonné voyait donc UNE carte, et quand la garde LOT R
+# répondait « adhesion_absente » (aucun document `memberships` pour son e-mail
+# chez ce propriétaire), la carte restait SANS bouton, avec « Commence par l'offre
+# d'entrée » — sans que l'offre d'entrée, ni aucune autre, soit proposée.
+#
+# CE QUI CHANGE. Les offres ACTIVES et ACHETABLES du propriétaire de l'abonné
+# (mêmes filtres que la porte publique `GET /offers` : visible, saison, places,
+# date limite ; jamais `link_only`, archivée, produit physique ou gratuite)
+# rejoignent les offres membres. Chaque carte garde le verdict SERVEUR de la
+# caisse (`lotr_garde_achat`, anti-double abonnement) : rien n'est décidé ici
+# qui ne soit revérifié au paiement. Une offre non pertinente est MASQUÉE, jamais
+# rendue comme une carte morte.
+V565_MOTIFS_MASQUES = ("adhesion_absente", "adhesion_expiree")
+
+
+def v565_seances_creditees(offre):
+    """PURE — les séances qu'UN paiement de cette offre crédite, miroir du webhook
+    Stripe (V223) : `pack_sessions` > 0 -> ce nombre ; absent -> 1 (prestation à
+    l'unité) ; 0 -> None (adhésion seule : aucune séance à annoncer)."""
+    _ps = (offre or {}).get("pack_sessions")
+    if _ps is None or _ps == "":
+        return 1
+    try:
+        _n = int(float(_ps))
+    except (TypeError, ValueError):
+        return None
+    return _n if _n > 0 else None
+
+
+def v565_carte_recharge(offre, ok, motif, etat_adhesion, offre_courante_id) -> dict:
+    """PURE. `{"visible": bool, "action": "renouveler"|"acheter"|""}` pour une offre.
+
+    - une offre MEMBRES refusée faute d'adhésion (absente/échue) n'est pas
+      pertinente pour cette personne -> masquée (l'offre d'entrée, elle, est
+      proposée à côté) ;
+    - l'offre d'ENTRÉE (`creates_membership`) n'est plus pertinente pour qui a
+      déjà une adhésion active -> masquée ;
+    - les autres refus (séances restantes, état indéterminé) restent visibles AVEC
+      leur explication ;
+    - « renouveler » = l'offre que la personne détient déjà ; sinon « acheter ».
+    """
+    _o = offre if isinstance(offre, dict) else {}
+    _id = str(_o.get("id") or "")
+    if not ok and str(motif or "") in V565_MOTIFS_MASQUES:
+        return {"visible": False, "action": ""}
+    if _o.get("creates_membership") is True and str(etat_adhesion or "") == "active":
+        return {"visible": False, "action": ""}
+    _act = "renouveler" if (_id and _id == str(offre_courante_id or "")) else "acheter"
+    return {"visible": True, "action": _act}
+
+
 async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
     """LOT R — ce que l'espace abonne doit savoir de la recharge.
 
@@ -16198,14 +16313,42 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
         except Exception as _v536_e:  # noqa: BLE001
             logger.warning("[V536] adhesions illisibles pour l'espace (%s)", type(_v536_e).__name__)
         _offres = await db.offers.find(_q, {"_id": 0}).to_list(10)
-        if not _offres:
+        # V565 : + le catalogue ACHETABLE du même propriétaire (porte publique).
+        _v565_publiques = []
+        try:
+            _q_pub = {CHAMP_LIEN_SEUL: {"$ne": True}, "isProduct": {"$ne": True},
+                      "archived": {"$ne": True}, **_filtre_offres(_coach)}
+            _v565_publiques = await _inv5_filtres_porte_publique(
+                await db.offers.find(_q_pub, {"_id": 0}).to_list(50))
+        except Exception as _v565_e:  # noqa: BLE001
+            logger.warning("[V565] catalogue du coach illisible pour la recharge (%s)", type(_v565_e).__name__)
+        _v565_ids = {str(x.get("id") or "") for x in _offres}
+        _v565_toutes = list(_offres) + [x for x in _v565_publiques if str(x.get("id") or "") not in _v565_ids]
+        if not _v565_toutes:
             # Aucune offre de recharge declaree : ce n'est pas une anomalie,
             # c'est le cas de tous les coachs qui n'en ont pas.
             return dict(_vide, motif="non_configuree")
-        _o = sorted(_offres, key=lambda x: (x.get("position") is None,
-                                            x.get("position") or 0,
-                                            str(x.get("name") or "")))[0]
-        _ok, _motif = await _garde(db, user_email or "", str(_o.get("id") or ""))
+        # V565 : l'état d'adhésion UNE fois (entrée non pertinente pour un membre actif).
+        _v565_etat_adh = ""
+        try:
+            from api.routes.shared import lotr_etat_adhesion as _v565_etat
+            _v565_etat_adh = _v565_etat(_v536_adhesions)
+        except Exception:  # noqa: BLE001
+            _v565_etat_adh = ""
+        _v565_courante = str((offer or {}).get("id") or "")
+        if not _offres:
+            _offres_hist = []
+        else:
+            _offres_hist = _offres
+        # Le bloc historique (`eligible`/`offer_id`) décrit toujours la première
+        # offre MEMBRES ; sans offre membres il reste « non configuré ».
+        _o = sorted(_offres_hist, key=lambda x: (x.get("position") is None,
+                                                 x.get("position") or 0,
+                                                 str(x.get("name") or "")))[0] if _offres_hist else {}
+        if _offres_hist:
+            _ok, _motif = await _garde(db, user_email or "", str(_o.get("id") or ""))
+        else:
+            _ok, _motif = False, "non_configuree"
         _prix = None
         try:
             _p = compute_active_price(_o).get("price")
@@ -16226,14 +16369,26 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
         # `eligible`/`offer_id` décrivent toujours la première, les anciens écrans
         # ne changent pas. Les faits commerciaux viennent de l'offre et du moteur.
         _v535_liste = []
-        for _x in sorted(_offres, key=lambda x: (x.get("position") is None, x.get("position") or 0,
-                                                 str(x.get("name") or ""))):
+        for _x in sorted(_v565_toutes, key=lambda x: (x.get("position") is None, x.get("position") or 0,
+                                                      str(x.get("name") or ""))):
             try:
                 _xok, _xmotif = await _garde(db, user_email or "", str(_x.get("id") or ""))
                 _xp = compute_active_price(_x).get("price")
                 _xprix = round(float(_xp), 2) if _xp is not None and float(_xp) > 0 else None
+                # V565 : une offre gratuite (essai) ou sans prix lisible ne se « recharge » pas.
+                if _xprix is None:
+                    continue
+                # V565 : un abonnement récurrent déjà actif ne se rachète pas (la caisse
+                # refuserait, 409) — il se gère dans « Mon abonnement mensuel ».
+                if _xok:
+                    _xok_dbl, _ = await _hiver.garde_abonnement_actif(db, user_email or "", _x)
+                    if not _xok_dbl:
+                        continue
+                _xcarte = v565_carte_recharge(_x, _xok, _xmotif, _v565_etat_adh, _v565_courante)
+                if not _xcarte["visible"]:
+                    continue
                 _xsais = _hiver.billing_mode_valide(_x.get("billing_mode")) == _hiver.BILLING_SAISON_2X
-                _xtot = _hiver.seances_saison_total(_x) if _xsais else _seances_de(_x)
+                _xtot = _hiver.seances_saison_total(_x) if _xsais else v565_seances_creditees(_x)
                 _xinterv, _xrefus = (None, "")
                 if _xsais:
                     try:
@@ -16245,14 +16400,18 @@ async def _lotr_etat_recharge(user_email: str, offer, remaining_sessions):
                 _v535_liste.append({
                     "offer_id": str(_x.get("id") or ""),
                     "offer_name": str(_x.get("name") or ""),
+                    # V565 : « renouveler » l'offre détenue, « acheter » une autre offre.
+                    "action": _xcarte["action"],
+                    "actuelle": _xcarte["action"] == "renouveler",
                     "eligible": bool(_xok),
                     "motif": "" if _xok else _xmotif,
                     "message": "" if _xok else _msg(_xmotif),
                     "prix": _xprix,
                     "devise": "CHF",
                     "seances": _xtot,
+                    # V565 : la validité RÉELLE d'un paiement (même règle que le webhook).
                     "duree_mois": (_hiver.SAISON_MOIS if _xsais
-                                   else _hiver.duree_mois_valide(_x.get("duree_mois"))),
+                                   else _hiver.duree_droits_mois(_x)),
                     "billing_mode": _hiver.billing_mode_valide(_x.get("billing_mode")),
                     "echeances": _hiver.SAISON_2X_ECHEANCES if _xsais else 1,
                     # V536 : le délai RÉSOLU pour CETTE personne (override du coach,
@@ -17232,6 +17391,8 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
         # LE MOTIF PART AUSSI, avec sa phrase. Un bouton qui disparait sans
         # explication est un bug pour celui qui le cherche.
         "recharge": await _lotr_etat_recharge(user_email, offer, remaining_sessions),
+        # V565 : l'affiche événement du coach de CET abonné (source : son concept).
+        "evenement": await v565_affiche_evenement((offer or {}).get("coach_id") or coach_id_hint_early),
         # ESSAI-5a-1D : la lecture qui donne son sens au compteur. Absente pour
         # un forfait payant, ou l'ecran garde exactement son comportement.
         "trial": await t2_etat_essai(code_upper, reservations_raw, remaining_sessions),
