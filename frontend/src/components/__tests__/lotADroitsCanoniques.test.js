@@ -67,6 +67,9 @@ async function monter(reponse) {
   await act(async () => {
     createRoot(conteneur).render(<SubscriberSpace accessCode={CODE} />);
   });
+  // V564 : le solde vit dans « Ma progression » (menu rapide), plus sur le dashboard.
+  const menu = conteneur.querySelector('[data-testid="menu-rapide-progression"]');
+  if (menu) await act(async () => { menu.click(); });
 }
 
 const bloc = () => conteneur.querySelector('[data-testid="subscriber-space-sessions"]');
@@ -159,7 +162,8 @@ describe('LOT A — la reservation ne regresse pas', () => {
         droits_total: null, droits_utilise: null,
         droits_message: 'Plusieurs forfaits sont enregistrés à ton nom — le coach vérifie ton solde.' },
       { total_sessions: 10, used_sessions: 8, remaining_sessions: 2 }));
-    expect(texteBloc()).toContain('Réserver une séance');
+    // V564 : la réservation est en ligne sur le dashboard, quel que soit le solde.
+    expect(document.querySelector('[data-testid="subscriber-space-reservation"]')).not.toBeNull();
   });
 
   test("sans champ LOT A, l'ecran est celui d'avant le lot", async () => {

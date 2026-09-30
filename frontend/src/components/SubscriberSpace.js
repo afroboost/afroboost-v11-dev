@@ -212,7 +212,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [inv2Seance] = useState(() => lireSeanceInvitation());
   // V561 — Réserver s'ouvre dans une FENÊTRE ; un lien d'invitation (séance
   // présélectionnée) l'ouvre d'office, pour ne jamais perdre la séance invitée.
-  const [reservationOuverte, setReservationOuverte] = useState(() => !!inv2Seance);
+  const [progressionOuverte, setProgressionOuverte] = useState(false); // V564 : « Ma progression » (menu)
   const [rechargeModale, setRechargeModale] = useState(false);          // V561 : Recharger
   const [infoCreateur, setInfoCreateur] = useState({ statut: '', estPartenaire: false }); // V561 : libellés du menu
   const [toutesSeances, setToutesSeances] = useState(false);            // V561 : prochaines séances compactes
@@ -562,7 +562,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
   // V202: Scroll fluide vers la section réservation
   // V561 : « Réserver » (menu, progression, essai) ouvre la fenêtre de réservation.
-  const scrollToReservation = () => { setReservationOuverte(true); };
+  // V564 : la réservation est sur le dashboard — on y descend, on n'ouvre plus de fenêtre.
+  const scrollToReservation = () => {
+    const el = reserveSectionRef.current;
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   const handleReserve = async (occurrence) => {
     if (!occurrence?.course_id || reservingKey) return;
@@ -611,7 +615,6 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       // P2-UX SIMPLE : posee ICI, donc APRES la reponse du serveur — au meme
       // endroit que `session_booked`, et pour la meme raison. Un refus part
       // dans le `catch` et n'affiche aucune confirmation.
-      setReservationOuverte(false); // V561 : la confirmation s'affiche sur le dashboard
       setSeanceConfirmee({
         cle: reservationKey,
         course_id: occurrence.course_id || "", // V534 — pour la ligne « Pass Duo » (cours éligible ?)
@@ -1201,7 +1204,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         {/* ===== V560 : MENU RAPIDE — Bienvenue + profil, puis ces raccourcis, puis
             la progression et « Réserver une séance ». Le reste se rejoint d'ici. ===== */}
         <MenuRapide entrees={[
-          { id: 'reserver', libelle: 'Réserver', icone: 'calendar', onClick: () => setReservationOuverte(true) },
+          // V564 : « Réserver » quitte le menu (la réservation est ouverte sur le dashboard).
+          { id: 'progression', libelle: 'Ma progression', icone: 'barChart', onClick: () => setProgressionOuverte(true) },
           { id: 'qr', libelle: 'Mon QR', icone: 'qrCode', onClick: () => setQrFullscreen(true) },
           // V561 : Invitation + Parrainage = UN bouton « Inviter » → Mon parrainage (onglet Inviter).
           parrainageOn ? { id: 'inviter', libelle: 'Inviter', icone: 'send', onClick: () => { window.location.href = '/parrainage'; } } : null,
@@ -1412,84 +1416,294 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           <ConversionApresEssai code={subscription.code || accessCode} prenom={firstName} />
         )}
 
-        {/* ===== Mes séances restantes ===== */}
+        {/* ===== V564 : RÉSERVER UNE SÉANCE — OUVERTE PAR DÉFAUT, EN LIGNE =====
+            La même section qu'en V561 (dates, carte de la séance, quantité, conditions,
+            « Réserver ») — rendue ici en mode inline : pas de fond, pas de X, pas de
+            verrou de défilement. La progression passe dans le menu (« Ma progression »). */}
         <section
+          ref={reserveSectionRef}
           className="rounded-2xl p-5"
-          style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
-          data-testid="subscriber-space-sessions"
+          style={{
+            background: COLORS.panel, border: `1px solid ${COLORS.border}`, overflow: "hidden",
+            // ESSAI-7 : remontee juste sous l'annonce tant qu'aucune seance
+            // n'est choisie. Zero autrement — l'ordre du DOM est conserve.
+            order: essaiAReserver ? -1 : 0,
+          }}
+          data-testid="subscriber-space-reservation"
+          data-mode="inline"
         >
-          <p className="text-white/60 text-xs uppercase tracking-wider mb-2" data-testid="progression-titre">Ma progression</p>
-          <div className="flex items-baseline justify-between mb-2">
-            {/* ESSAI-5a-1D : un essai ne se compte pas, il a un ETAT. Afficher
-                « 0 / 1 » a quelqu'un qui vient de reserver lui fait croire que
-                son essai est consomme, alors que seule sa presence le
-                consommera. Un forfait payant garde son compteur intact. */}
-            {estEssai ? (
-              <div data-testid="essai-etat">
-                <p className="text-white/60 text-xs uppercase tracking-wider">Séance découverte</p>
-                <p className="text-2xl font-bold mt-1" style={{ color: COLORS.primary }}>
-                  {etatEssai === "booked" ? "Essai réservé"
-                    : etatEssai === "done" ? "Essai effectué"
-                    : "Essai disponible"}
-                </p>
-                {etatEssai === "booked" && essai.next_session && (
-                  <p className="text-white/50 text-xs mt-1" data-testid="essai-seance">
-                    {essai.next_session.courseName}
-                    {essai.next_session.courseTime ? ` à ${essai.next_session.courseTime}` : ""}
-                  </p>
-                )}
-              </div>
-            ) : (
-            droitsAmbigus ? (
-              // LOT A — on ne sait pas, donc on le dit. Le nom du forfait reste
-              // affiche a droite et l'expiration plus bas : elles, ne sont pas
-              // ambigues, et les taire priverait l'abonne d'informations justes.
-              <div data-testid="droits-ambigus">
-                <p className="text-white/60 text-xs uppercase tracking-wider">Séances restantes</p>
-                <p className="text-sm mt-1 leading-snug" style={{ color: COLORS.primary }}>
-                  {subscription.droits_message
-                    || "Plusieurs forfaits sont enregistrés à ton nom — le coach vérifie ton solde."}
-                </p>
-              </div>
-            ) : (
-            <div>
-              <p className="text-white/60 text-xs uppercase tracking-wider">Séances restantes</p>
-              <p className="text-3xl font-bold mt-1" style={{ color: COLORS.primary }}>
-                {remaining}
-                <span className="text-white/40 text-base font-normal"> / {total || "—"}</span>
+          <h2 className="text-base font-semibold mb-3" data-testid="reservation-titre">Réserver une séance</h2>
+          {actionError && (
+            <p
+              className="text-xs mb-3 px-3 py-2 rounded-lg"
+              style={{ background: "rgba(239,68,68,0.15)", color: "#fca5a5" }}
+            >
+              {actionError}
+            </p>
+          )}
+          {noSessions && (
+            <p
+              data-testid="essai-bandeau"
+              className="text-xs mb-3 px-3 py-2 rounded-lg"
+              style={{ background: "rgba(245,158,11,0.15)", color: "#fbbf24" }}
+            >
+              {/* ESSAI-7 : `etatEssaiVu` et non `etatEssai` — juste apres une
+                  reservation, le serveur n'a pas encore rederive l'etat et ce
+                  bandeau annoncait « Plus de séances disponibles » a quelqu'un
+                  qui venait de reserver la sienne. */}
+              {estEssai && etatEssaiVu === "booked"
+                ? "Vous avez déjà réservé votre séance découverte. Annulez-la pour en choisir une autre."
+                : estEssai && etatEssaiVu === "done"
+                ? "Votre séance découverte a été utilisée."
+                : "Plus de séances disponibles"}
+            </p>
+          )}
+          {courses.length === 0 ? (
+            /* V449 — UNE LISTE VIDE DOIT DIRE POURQUOI ELLE EST VIDE.
+               Le serveur envoie DEJA `forfait_bloque` et `forfait_message`
+               exactement pour ca (voir `upcoming_courses` dans server.py, V393) :
+               un forfait expire ou epuise ne propose plus aucun creneau. L'ecran
+               les ignorait et affichait « Aucun cours disponible pour le moment »
+               — la phrase d'un planning vide, pas celle d'un forfait mort.
+               Une abonnee dont l'abonnement avait expire lisait donc qu'il n'y
+               avait PAS DE COURS, et le coach avec elle : le vrai motif etait
+               invisible des deux cotes. On affiche le motif du serveur, jamais
+               un motif recalcule ici. */
+            data?.forfait_bloque ? (
+              <p
+                className="text-sm"
+                data-testid="forfait-bloque-message"
+                style={{ color: COLORS.primary }}
+              >
+                {data?.forfait_message
+                  || "Ton abonnement n'est plus utilisable. Contacte le coach pour le renouveler."}
               </p>
-            </div>
-            ))}
-            <span className="text-white/40 text-xs text-right max-w-[40%] truncate">{subscription.offer_name}</span>
-          </div>
-          {/* LOT A : pas de jauge quand le solde est inconnu — une barre a une
-              longueur, et toute longueur serait un chiffre invente. */}
-          {!droitsAmbigus && (
-            <div className="w-full h-2 rounded-full overflow-hidden bg-white/10">
-              <div
-                className="h-full transition-all"
-                style={{
-                  width: `${100 - percentUsed}%`,
-                  background: `linear-gradient(90deg, ${COLORS.primary}, ${COLORS.secondary})`,
-                }}
-              />
-            </div>
-          )}
-          {/* V202: Bouton scroll vers réservation — accès rapide */}
-          {/* LOT A : le bouton reste offert quand le solde est ambigu — ne pas
-              savoir combien il reste n'est pas une raison de fermer l'acces.
-              C'est le serveur qui tranche a la reservation, comme avant. */}
-          {(droitsAmbigus || remaining > 0) && courses.length > 0 && (
-            <button type="button" onClick={scrollToReservation} data-testid="progression-reserver"
-              className="mt-3 py-2 px-5 rounded-xl text-sm font-semibold transition-transform active:scale-95"
-              style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "white", minHeight: 44 }}>
-              <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="calendar" size={14} /> Réserver</span>
-            </button>
-          )}
-          {/* V561 : le suivi détaillé (mesures, objectifs) — replié, DANS la même carte. */}
-          <Suspense fallback={null}>
-            <SubscriberCockpit accessCode={accessCode} integre />
-          </Suspense>
+            ) : (
+              <p className="text-white/50 text-sm">Aucun cours disponible pour le moment.</p>
+            )
+          ) : (() => {
+            // INV-3 : meme fonction que la preselection — la seance invitee n'est jamais coupee.
+            const visibleCourses = seancesVisibles(courses, inv2Seance);
+            const safeIdx = Math.min(selectedCourseIdx, visibleCourses.length - 1);
+            const occ = visibleCourses[safeIdx];
+            if (!occ) return null;
+            const key = `${occ.course_id}_${occ.datetime}`;
+            const confirmed = confirmedKeys[key];
+            const isBusy = reservingKey === key;
+            const qty = getQty(key);
+            const maxQty = Math.max(1, remaining);
+            const dec = () => adjustQty(key, -1, maxQty);
+            const inc = () => adjustQty(key, +1, maxQty);
+
+            // Formater les boutons de dates
+            const formatDateBtn = (o) => {
+              try {
+                if (o.date) {
+                  const d = new Date(o.date + "T12:00:00");
+                  const jour = d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+                  return { date: jour, time: o.time || "" };
+                }
+                const d = new Date(o.datetime || o);
+                return {
+                  date: d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }),
+                  time: d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
+                };
+              } catch { return { date: "—", time: "" }; }
+            };
+
+            return (
+              <div>
+                {/* INV-2 : l'annonce de la seance d'invitation (ou son indisponibilite).
+                    « Seance de ton invitation » seulement tant que c'est ELLE qui est affichee. */}
+                {inv2Etat === "indisponible" && <InvitationSeanceBandeau etat="indisponible" variante="espace" />}
+                {inv2Etat === "ok" && inv2Seance && occ.course_id === inv2Seance.course
+                  && String(occ.datetime || "").slice(0, 16) === inv2Seance.occurrence && (
+                  <InvitationSeanceBandeau etat="ok" nom={occ.name} occurrence={inv2Seance.occurrence} variante="espace" />
+                )}
+                {/* V564 : boutons de dates — retour à la ligne (mobile), jamais de défilement horizontal */}
+                <div className="grid pb-3 mb-3" data-testid="seance-dates" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(88px, 1fr))", gap: "8px" }}>
+                  {visibleCourses.map((c, i) => {
+                    const d = formatDateBtn(c);
+                    const isSelected = i === safeIdx;
+                    const cKey = `${c.course_id}_${c.datetime}`;
+                    const isConfirmed = confirmedKeys[cKey];
+                    // V252 FIX 4 : date UNIQUE non encore reservee -> presentee en vert
+                    // « pret a reserver » (present-selectionnee). Teinte plus douce que
+                    // le vert plein « confirme » (#22c55e) pour ne pas les confondre.
+                    const singleReady = visibleCourses.length === 1 && isSelected && !isConfirmed;
+                    return (
+                      <button key={i} type="button"
+                        data-testid={`seance-date-${i}`}
+                        aria-pressed={isSelected}
+                        onClick={() => { setSelectedCourseIdx(i); setActionError(""); }}
+                        className="flex flex-col items-center justify-center px-2 py-2 rounded-xl text-xs transition-all"
+                        style={{
+                          minHeight: 48, minWidth: 0, // V564 : cible tactile, jamais de débordement
+                          background: isConfirmed
+                            ? "rgba(34,197,94,0.25)"
+                            : singleReady
+                              ? "rgba(34,197,94,0.12)"
+                              : isSelected
+                                ? "rgba(255,255,255,0.10)"
+                                : "rgba(255,255,255,0.04)",
+                          border: isConfirmed
+                            ? "2px solid #22c55e"
+                            : singleReady
+                              ? "2px solid rgba(34,197,94,0.6)"
+                              : isSelected ? "2px solid rgba(255,255,255,0.5)" : "1px solid rgba(255,255,255,0.08)",
+                          color: isConfirmed ? "#86efac" : singleReady ? "#86efac" : isSelected ? "white" : "rgba(255,255,255,0.6)",
+                        }}
+                      >
+                        <span className="font-semibold" style={{ fontSize: "11px" }}>{d.date}</span>
+                        <span style={{ fontSize: "10px", opacity: 0.7 }}>{d.time}</span>
+                        {isConfirmed && <span style={{ fontSize: "10px" }}><SvgIcon name="check" size={14} /></span>}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Séance sélectionnée */}
+                <div
+                  className="p-4 rounded-xl"
+                  style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
+                >
+                  <div className="min-w-0 mb-3">
+                    <p className="text-sm font-medium">{occ.name || "Cours"}</p>
+                    <p className="text-white/50 text-xs">
+                      {formatOccurrence(occ)}
+                      {occ.locationName ? ` · ${occ.locationName}` : ""}
+                    </p>
+                  </div>
+                  {confirmed ? (() => {
+                    // V210: Trouver la réservation correspondante pour pouvoir l'annuler
+                    const matchingRes = (data?.reservations || []).find(
+                      (r) => r?.courseId === occ.course_id && r?.datetime === occ.datetime
+                    );
+                    const occTs = instantReelCours(occ.datetime);
+                    const hoursAway = (occTs - Date.now()) / 3_600_000;
+                    const tooLate = Number.isFinite(hoursAway) && hoursAway < DELAI_ANNULATION_H;
+                    const isCancelling = matchingRes && cancellingId === matchingRes.id;
+                    return (
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className="text-xs px-3 py-1 rounded-full inline-flex items-center gap-1.5"
+                          style={{ background: "rgba(34,197,94,0.15)", color: "#86efac" }}
+                        >
+                          <SvgIcon name="check" size={14} /> Réservé
+                        </span>
+                        {matchingRes && (
+                          <button type="button"
+                            disabled={tooLate || isCancelling}
+                            onClick={() => handleCancelReservation(matchingRes)}
+                            className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-40"
+                            title={tooLate ? "Annulation impossible moins de 2h avant" : "Annuler pour changer de séance"}
+                            style={{
+                              background: tooLate ? "rgba(255,255,255,0.06)" : "rgba(239,68,68,0.18)",
+                              color: tooLate ? "rgba(255,255,255,0.4)" : "#fca5a5",
+                              cursor: tooLate ? "not-allowed" : "pointer",
+                            }}>
+                            {isCancelling ? "…" : "Annuler"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })() : (
+                    <>
+                      {/* V426 : une activite NON incluse dans le forfait ne doit
+                          jamais passer par « Reserver » — elle consommerait une
+                          seance pour un evenement a billet separe. Le test
+                          `=== false` est volontaire : tant que le backend V426
+                          n'est pas deploye le champ est `undefined`, et le
+                          parcours d'origine s'affiche a l'identique. */}
+                      {occ.inclus_abonnement === false ? (
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-xs" style={{ color: "rgba(255,255,255,0.65)" }}>
+                            Événement — billet séparé
+                          </span>
+                          <a
+                            href={occ.offer_id ? `/?offre=${encodeURIComponent(occ.offer_id)}` : "/"}
+                            className="text-xs font-semibold px-4 py-2 rounded-lg"
+                            style={{
+                              background: "rgba(255,255,255,0.10)",
+                              color: "white",
+                              border: `1px solid ${COLORS.primary}`,
+                            }}
+                            data-testid={`event-${occ.course_id}`}>
+                            Voir l'événement
+                          </a>
+                        </div>
+                      ) : (
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2" data-testid={`qty-${occ.course_id}`}>
+                          <button type="button" onClick={dec}
+                            disabled={qty <= 1 || isBusy || noSessions} aria-label="Diminuer"
+                            className="w-11 h-11 rounded-full text-sm font-bold disabled:opacity-30"
+                            style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}>
+                            −
+                          </button>
+                          <span className="text-sm font-semibold w-6 text-center">{qty}</span>
+                          <button type="button" onClick={inc}
+                            disabled={qty >= maxQty || isBusy || noSessions} aria-label="Augmenter"
+                            className="w-11 h-11 rounded-full text-sm font-bold disabled:opacity-30"
+                            style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}>
+                            +
+                          </button>
+                        </div>
+                        <button type="button"
+                          disabled={isBusy || noSessions
+                            || (conditionsRequises && !conditionsOk[`${occ.course_id}_${occ.datetime}`])}
+                          onClick={() => handleReserve(occ)}
+                          className="text-sm font-bold px-6 rounded-xl disabled:opacity-50"
+                          style={{ background: `linear-gradient(135deg, ${COLORS.primary}, var(--secondary-color, #FF2DAA))`, color: "white", minHeight: 48 }} // V564 : CTA très visible
+                          data-testid={`reserve-${occ.course_id}`}>
+                          {/* ESSAI-7 : pendant l'essai, le bouton nomme ce
+                              qu'il fait — « Réserver » seul, au milieu d'une
+                              liste de dates, ne dit pas LAQUELLE. */}
+                          {isBusy ? "…"
+                            : qty > 1 ? `Réserver ${qty} places`
+                            : essaiAReserver ? "Réserver cette séance"
+                            : "Réserver"}
+                        </button>
+                      </div>
+                      )}
+
+                      {/* ESSAI-5a-1 : ce chemin porte 74 des 132 reservations
+                          reelles et n'avait jamais eu de case a cocher. */}
+                      <div className="mt-2">
+                        <ConditionsParticipation
+                          courseId={occ.course_id}
+                          accepte={!!conditionsOk[`${occ.course_id}_${occ.datetime}`]}
+                          onChange={(v) => setConditionsOk((p) => ({ ...p, [`${occ.course_id}_${occ.datetime}`]: v }))}
+                          onRequired={setConditionsRequises}
+                        />
+                      </div>
+
+                      {occ.inclus_abonnement !== false && qty > 1 && (
+                        <ol className="mt-3 space-y-1 text-xs text-white/70">
+                          <li className="flex items-center gap-2">
+                            <span className="w-4 text-white/40">1.</span>
+                            <span className="flex-1">{firstName} <span className="text-white/40">(moi)</span></span>
+                          </li>
+                          {Array.from({ length: qty - 1 }).map((_, i) => (
+                            <li key={i} className="flex items-center gap-2">
+                              <span className="w-4 text-white/40">{i + 2}.</span>
+                              <input type="text"
+                                value={(guestNames[key] || [])[i] || ""}
+                                onChange={(e) => setGuestName(key, i, e.target.value)}
+                                placeholder="Prénom" maxLength={50}
+                                data-testid={`guest-input-${occ.course_id}-${i}`}
+                                className="flex-1 px-2 py-1 rounded text-xs"
+                                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </section>
 
         {/* V204: Bouton paiement en haut supprimé — le bouton "Renouveler" en bas suffit */}
@@ -1921,295 +2135,79 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       </div>
 
 
-      {/* ===== V561 : RÉSERVER — la même section, dans une fenêtre (plus sur le dashboard) ===== */}
-      {reservationOuverte ? (
+      {/* ===== V564 : MA PROGRESSION — la carte existante (séances restantes, barre,
+          mesures, objectifs), ouverte depuis le menu rapide, plus sur le dashboard ===== */}
+      {progressionOuverte ? (
         <div className="cp-root">
-          <ParrainageDrawer titre="Réserver une séance" outil="reserver" onClose={() => setReservationOuverte(false)}>
-        {/* ===== V560 : juste après la progression. V203f: Réserver une séance — version compacte avec boutons dates ===== */}
+          <ParrainageDrawer titre="Ma progression" outil="progression" onClose={() => setProgressionOuverte(false)}>
             <section
-              ref={reserveSectionRef}
               className="rounded-2xl p-5"
-              style={{
-                background: COLORS.panel, border: `1px solid ${COLORS.border}`, overflow: "hidden",
-                // ESSAI-7 : remontee juste sous l'annonce tant qu'aucune seance
-                // n'est choisie. Zero autrement — l'ordre du DOM est conserve.
-                order: essaiAReserver ? -1 : 0,
-              }}
-              data-testid="subscriber-space-reservation"
+              style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
+              data-testid="subscriber-space-sessions"
             >
-              {actionError && (
-                <p
-                  className="text-xs mb-3 px-3 py-2 rounded-lg"
-                  style={{ background: "rgba(239,68,68,0.15)", color: "#fca5a5" }}
-                >
-                  {actionError}
-                </p>
-              )}
-              {noSessions && (
-                <p
-                  data-testid="essai-bandeau"
-                  className="text-xs mb-3 px-3 py-2 rounded-lg"
-                  style={{ background: "rgba(245,158,11,0.15)", color: "#fbbf24" }}
-                >
-                  {/* ESSAI-7 : `etatEssaiVu` et non `etatEssai` — juste apres une
-                      reservation, le serveur n'a pas encore rederive l'etat et ce
-                      bandeau annoncait « Plus de séances disponibles » a quelqu'un
-                      qui venait de reserver la sienne. */}
-                  {estEssai && etatEssaiVu === "booked"
-                    ? "Vous avez déjà réservé votre séance découverte. Annulez-la pour en choisir une autre."
-                    : estEssai && etatEssaiVu === "done"
-                    ? "Votre séance découverte a été utilisée."
-                    : "Plus de séances disponibles"}
-                </p>
-              )}
-              {courses.length === 0 ? (
-                /* V449 — UNE LISTE VIDE DOIT DIRE POURQUOI ELLE EST VIDE.
-                   Le serveur envoie DEJA `forfait_bloque` et `forfait_message`
-                   exactement pour ca (voir `upcoming_courses` dans server.py, V393) :
-                   un forfait expire ou epuise ne propose plus aucun creneau. L'ecran
-                   les ignorait et affichait « Aucun cours disponible pour le moment »
-                   — la phrase d'un planning vide, pas celle d'un forfait mort.
-                   Une abonnee dont l'abonnement avait expire lisait donc qu'il n'y
-                   avait PAS DE COURS, et le coach avec elle : le vrai motif etait
-                   invisible des deux cotes. On affiche le motif du serveur, jamais
-                   un motif recalcule ici. */
-                data?.forfait_bloque ? (
-                  <p
-                    className="text-sm"
-                    data-testid="forfait-bloque-message"
-                    style={{ color: COLORS.primary }}
-                  >
-                    {data?.forfait_message
-                      || "Ton abonnement n'est plus utilisable. Contacte le coach pour le renouveler."}
-                  </p>
-                ) : (
-                  <p className="text-white/50 text-sm">Aucun cours disponible pour le moment.</p>
-                )
-              ) : (() => {
-                // INV-3 : meme fonction que la preselection — la seance invitee n'est jamais coupee.
-                const visibleCourses = seancesVisibles(courses, inv2Seance);
-                const safeIdx = Math.min(selectedCourseIdx, visibleCourses.length - 1);
-                const occ = visibleCourses[safeIdx];
-                if (!occ) return null;
-                const key = `${occ.course_id}_${occ.datetime}`;
-                const confirmed = confirmedKeys[key];
-                const isBusy = reservingKey === key;
-                const qty = getQty(key);
-                const maxQty = Math.max(1, remaining);
-                const dec = () => adjustQty(key, -1, maxQty);
-                const inc = () => adjustQty(key, +1, maxQty);
-
-                // Formater les boutons de dates
-                const formatDateBtn = (o) => {
-                  try {
-                    if (o.date) {
-                      const d = new Date(o.date + "T12:00:00");
-                      const jour = d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
-                      return { date: jour, time: o.time || "" };
-                    }
-                    const d = new Date(o.datetime || o);
-                    return {
-                      date: d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }),
-                      time: d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
-                    };
-                  } catch { return { date: "—", time: "" }; }
-                };
-
-                return (
-                  <div>
-                    {/* INV-2 : l'annonce de la seance d'invitation (ou son indisponibilite).
-                        « Seance de ton invitation » seulement tant que c'est ELLE qui est affichee. */}
-                    {inv2Etat === "indisponible" && <InvitationSeanceBandeau etat="indisponible" variante="espace" />}
-                    {inv2Etat === "ok" && inv2Seance && occ.course_id === inv2Seance.course
-                      && String(occ.datetime || "").slice(0, 16) === inv2Seance.occurrence && (
-                      <InvitationSeanceBandeau etat="ok" nom={occ.name} occurrence={inv2Seance.occurrence} variante="espace" />
+              <p className="text-white/60 text-xs uppercase tracking-wider mb-2" data-testid="progression-titre">Ma progression</p>
+              <div className="flex items-baseline justify-between mb-2">
+                {/* ESSAI-5a-1D : un essai ne se compte pas, il a un ETAT. Afficher
+                    « 0 / 1 » a quelqu'un qui vient de reserver lui fait croire que
+                    son essai est consomme, alors que seule sa presence le
+                    consommera. Un forfait payant garde son compteur intact. */}
+                {estEssai ? (
+                  <div data-testid="essai-etat">
+                    <p className="text-white/60 text-xs uppercase tracking-wider">Séance découverte</p>
+                    <p className="text-2xl font-bold mt-1" style={{ color: COLORS.primary }}>
+                      {etatEssai === "booked" ? "Essai réservé"
+                        : etatEssai === "done" ? "Essai effectué"
+                        : "Essai disponible"}
+                    </p>
+                    {etatEssai === "booked" && essai.next_session && (
+                      <p className="text-white/50 text-xs mt-1" data-testid="essai-seance">
+                        {essai.next_session.courseName}
+                        {essai.next_session.courseTime ? ` à ${essai.next_session.courseTime}` : ""}
+                      </p>
                     )}
-                    {/* Boutons de dates — scrollable horizontalement */}
-                    <div className="grid pb-3 mb-3" style={{ gridTemplateColumns: `repeat(${Math.min(visibleCourses.length, 4)}, 1fr)`, gap: "8px" }}>
-                      {visibleCourses.map((c, i) => {
-                        const d = formatDateBtn(c);
-                        const isSelected = i === safeIdx;
-                        const cKey = `${c.course_id}_${c.datetime}`;
-                        const isConfirmed = confirmedKeys[cKey];
-                        // V252 FIX 4 : date UNIQUE non encore reservee -> presentee en vert
-                        // « pret a reserver » (present-selectionnee). Teinte plus douce que
-                        // le vert plein « confirme » (#22c55e) pour ne pas les confondre.
-                        const singleReady = visibleCourses.length === 1 && isSelected && !isConfirmed;
-                        return (
-                          <button key={i} type="button"
-                            data-testid={`seance-date-${i}`}
-                            aria-pressed={isSelected}
-                            onClick={() => { setSelectedCourseIdx(i); setActionError(""); }}
-                            className="flex flex-col items-center px-2 py-2 rounded-xl text-xs transition-all"
-                            style={{
-                              background: isConfirmed
-                                ? "rgba(34,197,94,0.25)"
-                                : singleReady
-                                  ? "rgba(34,197,94,0.12)"
-                                  : isSelected
-                                    ? "rgba(255,255,255,0.10)"
-                                    : "rgba(255,255,255,0.04)",
-                              border: isConfirmed
-                                ? "2px solid #22c55e"
-                                : singleReady
-                                  ? "2px solid rgba(34,197,94,0.6)"
-                                  : isSelected ? "2px solid rgba(255,255,255,0.5)" : "1px solid rgba(255,255,255,0.08)",
-                              color: isConfirmed ? "#86efac" : singleReady ? "#86efac" : isSelected ? "white" : "rgba(255,255,255,0.6)",
-                            }}
-                          >
-                            <span className="font-semibold" style={{ fontSize: "11px" }}>{d.date}</span>
-                            <span style={{ fontSize: "10px", opacity: 0.7 }}>{d.time}</span>
-                            {isConfirmed && <span style={{ fontSize: "10px" }}><SvgIcon name="check" size={14} /></span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {/* Séance sélectionnée */}
-                    <div
-                      className="p-4 rounded-xl"
-                      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
-                    >
-                      <div className="min-w-0 mb-3">
-                        <p className="text-sm font-medium">{occ.name || "Cours"}</p>
-                        <p className="text-white/50 text-xs">
-                          {formatOccurrence(occ)}
-                          {occ.locationName ? ` · ${occ.locationName}` : ""}
-                        </p>
-                      </div>
-                      {confirmed ? (() => {
-                        // V210: Trouver la réservation correspondante pour pouvoir l'annuler
-                        const matchingRes = (data?.reservations || []).find(
-                          (r) => r?.courseId === occ.course_id && r?.datetime === occ.datetime
-                        );
-                        const occTs = instantReelCours(occ.datetime);
-                        const hoursAway = (occTs - Date.now()) / 3_600_000;
-                        const tooLate = Number.isFinite(hoursAway) && hoursAway < DELAI_ANNULATION_H;
-                        const isCancelling = matchingRes && cancellingId === matchingRes.id;
-                        return (
-                          <div className="flex items-center justify-between gap-2">
-                            <span
-                              className="text-xs px-3 py-1 rounded-full inline-flex items-center gap-1.5"
-                              style={{ background: "rgba(34,197,94,0.15)", color: "#86efac" }}
-                            >
-                              <SvgIcon name="check" size={14} /> Réservé
-                            </span>
-                            {matchingRes && (
-                              <button type="button"
-                                disabled={tooLate || isCancelling}
-                                onClick={() => handleCancelReservation(matchingRes)}
-                                className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-40"
-                                title={tooLate ? "Annulation impossible moins de 2h avant" : "Annuler pour changer de séance"}
-                                style={{
-                                  background: tooLate ? "rgba(255,255,255,0.06)" : "rgba(239,68,68,0.18)",
-                                  color: tooLate ? "rgba(255,255,255,0.4)" : "#fca5a5",
-                                  cursor: tooLate ? "not-allowed" : "pointer",
-                                }}>
-                                {isCancelling ? "…" : "Annuler"}
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })() : (
-                        <>
-                          {/* V426 : une activite NON incluse dans le forfait ne doit
-                              jamais passer par « Reserver » — elle consommerait une
-                              seance pour un evenement a billet separe. Le test
-                              `=== false` est volontaire : tant que le backend V426
-                              n'est pas deploye le champ est `undefined`, et le
-                              parcours d'origine s'affiche a l'identique. */}
-                          {occ.inclus_abonnement === false ? (
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <span className="text-xs" style={{ color: "rgba(255,255,255,0.65)" }}>
-                                Événement — billet séparé
-                              </span>
-                              <a
-                                href={occ.offer_id ? `/?offre=${encodeURIComponent(occ.offer_id)}` : "/"}
-                                className="text-xs font-semibold px-4 py-2 rounded-lg"
-                                style={{
-                                  background: "rgba(255,255,255,0.10)",
-                                  color: "white",
-                                  border: `1px solid ${COLORS.primary}`,
-                                }}
-                                data-testid={`event-${occ.course_id}`}>
-                                Voir l'événement
-                              </a>
-                            </div>
-                          ) : (
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <div className="flex items-center gap-2" data-testid={`qty-${occ.course_id}`}>
-                              <button type="button" onClick={dec}
-                                disabled={qty <= 1 || isBusy || noSessions} aria-label="Diminuer"
-                                className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
-                                style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}>
-                                −
-                              </button>
-                              <span className="text-sm font-semibold w-6 text-center">{qty}</span>
-                              <button type="button" onClick={inc}
-                                disabled={qty >= maxQty || isBusy || noSessions} aria-label="Augmenter"
-                                className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
-                                style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}>
-                                +
-                              </button>
-                            </div>
-                            <button type="button"
-                              disabled={isBusy || noSessions
-                                || (conditionsRequises && !conditionsOk[`${occ.course_id}_${occ.datetime}`])}
-                              onClick={() => handleReserve(occ)}
-                              className="text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
-                              style={{ background: COLORS.primary, color: "white" }}
-                              data-testid={`reserve-${occ.course_id}`}>
-                              {/* ESSAI-7 : pendant l'essai, le bouton nomme ce
-                                  qu'il fait — « Réserver » seul, au milieu d'une
-                                  liste de dates, ne dit pas LAQUELLE. */}
-                              {isBusy ? "…"
-                                : qty > 1 ? `Réserver ${qty} places`
-                                : essaiAReserver ? "Réserver cette séance"
-                                : "Réserver"}
-                            </button>
-                          </div>
-                          )}
-
-                          {/* ESSAI-5a-1 : ce chemin porte 74 des 132 reservations
-                              reelles et n'avait jamais eu de case a cocher. */}
-                          <div className="mt-2">
-                            <ConditionsParticipation
-                              courseId={occ.course_id}
-                              accepte={!!conditionsOk[`${occ.course_id}_${occ.datetime}`]}
-                              onChange={(v) => setConditionsOk((p) => ({ ...p, [`${occ.course_id}_${occ.datetime}`]: v }))}
-                              onRequired={setConditionsRequises}
-                            />
-                          </div>
-
-                          {occ.inclus_abonnement !== false && qty > 1 && (
-                            <ol className="mt-3 space-y-1 text-xs text-white/70">
-                              <li className="flex items-center gap-2">
-                                <span className="w-4 text-white/40">1.</span>
-                                <span className="flex-1">{firstName} <span className="text-white/40">(moi)</span></span>
-                              </li>
-                              {Array.from({ length: qty - 1 }).map((_, i) => (
-                                <li key={i} className="flex items-center gap-2">
-                                  <span className="w-4 text-white/40">{i + 2}.</span>
-                                  <input type="text"
-                                    value={(guestNames[key] || [])[i] || ""}
-                                    onChange={(e) => setGuestName(key, i, e.target.value)}
-                                    placeholder="Prénom" maxLength={50}
-                                    data-testid={`guest-input-${occ.course_id}-${i}`}
-                                    className="flex-1 px-2 py-1 rounded text-xs"
-                                    style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
-                                </li>
-                              ))}
-                            </ol>
-                          )}
-                        </>
-                      )}
-                    </div>
                   </div>
-                );
-              })()}
+                ) : (
+                droitsAmbigus ? (
+                  // LOT A — on ne sait pas, donc on le dit. Le nom du forfait reste
+                  // affiche a droite et l'expiration plus bas : elles, ne sont pas
+                  // ambigues, et les taire priverait l'abonne d'informations justes.
+                  <div data-testid="droits-ambigus">
+                    <p className="text-white/60 text-xs uppercase tracking-wider">Séances restantes</p>
+                    <p className="text-sm mt-1 leading-snug" style={{ color: COLORS.primary }}>
+                      {subscription.droits_message
+                        || "Plusieurs forfaits sont enregistrés à ton nom — le coach vérifie ton solde."}
+                    </p>
+                  </div>
+                ) : (
+                <div>
+                  <p className="text-white/60 text-xs uppercase tracking-wider">Séances restantes</p>
+                  <p className="text-3xl font-bold mt-1" style={{ color: COLORS.primary }}>
+                    {remaining}
+                    <span className="text-white/40 text-base font-normal"> / {total || "—"}</span>
+                  </p>
+                </div>
+                ))}
+                <span className="text-white/40 text-xs text-right max-w-[40%] truncate">{subscription.offer_name}</span>
+              </div>
+              {/* LOT A : pas de jauge quand le solde est inconnu — une barre a une
+                  longueur, et toute longueur serait un chiffre invente. */}
+              {!droitsAmbigus && (
+                <div className="w-full h-2 rounded-full overflow-hidden bg-white/10">
+                  <div
+                    className="h-full transition-all"
+                    style={{
+                      width: `${100 - percentUsed}%`,
+                      background: `linear-gradient(90deg, ${COLORS.primary}, ${COLORS.secondary})`,
+                    }}
+                  />
+                </div>
+              )}
+              {/* V564 : plus de bouton « Réserver » ici — la réservation est ouverte sur le dashboard. */}
+              {/* V561 : le suivi détaillé (mesures, objectifs) — replié, DANS la même carte. */}
+              <Suspense fallback={null}>
+                <SubscriberCockpit accessCode={accessCode} integre />
+              </Suspense>
             </section>
-
-
           </ParrainageDrawer>
         </div>
       ) : null}

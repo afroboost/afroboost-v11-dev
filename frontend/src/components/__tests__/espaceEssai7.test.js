@@ -86,7 +86,7 @@ async function monter(reponse) {
 const parTestId = (id) => conteneur.querySelector(`[data-testid="${id}"]`);
 // V561 : le calendrier vit dans une fenêtre ; « Choisir ma séance » (ou le menu) l'ouvre.
 const ouvrirResa = async () => {
-  const b = parTestId('essai7-choisir') || parTestId('menu-rapide-reserver');
+  const b = parTestId('essai7-choisir') || parTestId('seance-date-0');
   await act(async () => { b.click(); });
 };
 const ordreDe = (id) => {
@@ -126,8 +126,9 @@ describe('essai accorde, aucune seance choisie', () => {
     expect(parTestId('essai7-priorite')).not.toBeNull();
     // negatif = remonte ; le QR reste a sa place, donc a 0
     expect(ordreDe('essai7-priorite')).toBeLessThan(0);
-    // V561 : aucun calendrier ni gros QR sur le dashboard ; « Choisir ma séance » ouvre la fenêtre.
-    expect(parTestId('subscriber-space-reservation')).toBeNull();
+    // V564 : la réservation est EN LIGNE sur le dashboard, remontée sous l'annonce ; pas de gros QR.
+    expect(parTestId('subscriber-space-reservation').getAttribute('data-mode')).toBe('inline');
+    expect(ordreDe('subscriber-space-reservation')).toBeLessThan(0);
     expect(parTestId('subscriber-space-qr')).toBeNull();
     // l'entete reste au-dessus de tout
     expect(ordreDe('subscriber-space-header'))
@@ -181,8 +182,9 @@ describe('la seance est reservee', () => {
     expect(bloc.textContent).toContain('Ta séance est réservée');
     expect(bloc.textContent).toContain('Présente-le au coach');
     expect(ordreDe('essai7-reserve')).toBeLessThan(0);
-    // V561 : le choix est fait — aucun calendrier sur le dashboard
-    expect(parTestId('subscriber-space-reservation')).toBeNull();
+    // V564 : la réservation reste en ligne, elle montre la séance « Réservé » (sans remonter)
+    expect(parTestId('subscriber-space-reservation').textContent).toContain('Réservé');
+    expect(ordreDe('subscriber-space-reservation')).toBe(0);
   });
 
   test('le CTA ouvre le QR sans le deplacer', () => {
@@ -279,11 +281,13 @@ describe('un forfait payant ne voit rien de tout cela', () => {
   test('aucun bloc d essai, aucun reordonnancement', () => {
     expect(parTestId('essai7-priorite')).toBeNull();
     expect(parTestId('essai7-reserve')).toBeNull();
-    expect(parTestId('subscriber-space-reservation')).toBeNull(); // V561 : dans une fenêtre
+    expect(ordreDe('subscriber-space-reservation')).toBe(0); // V564 : en ligne, sans reordonnancement
     expect(ordreDe('subscriber-space-header')).toBe(0);
   });
 
-  test('son compteur de seances reste affiche', () => {
+  test('son compteur de seances reste affiche (V564 : dans « Ma progression »)', async () => {
+    expect(parTestId('subscriber-space-sessions')).toBeNull();
+    await act(async () => { parTestId('menu-rapide-progression').click(); });
     expect(parTestId('subscriber-space-sessions').textContent)
       .toContain('Séances restantes');
   });

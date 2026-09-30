@@ -19,11 +19,12 @@ const pos = (s) => SRC.indexOf(s);
 
 describe('V548 — ordre et allègement de l espace membre', () => {
   // V561 — DASHBOARD COURT : une fonction = un seul point d'entrée (le menu rapide).
-  test('dashboard : en-tête < menu rapide < Ma progression < prochaines séances', () => {
+  // V564 — la réservation est EN LIGNE juste après le menu ; la progression passe dans une fenêtre.
+  test('dashboard : en-tête < menu rapide < Réserver une séance (en ligne) < prochaines séances', () => {
     const suite = [
       'data-testid="subscriber-space-header"',
       '<MenuRapide entrees={[',
-      'data-testid="subscriber-space-sessions"',
+      'data-testid="subscriber-space-reservation"',
       'data-testid="subscriber-space-upcoming"',
     ].map(pos);
     suite.forEach((p) => expect(p).toBeGreaterThan(0));
@@ -38,19 +39,18 @@ describe('V548 — ordre et allègement de l espace membre', () => {
     expect(SRC).not.toContain('p2ux-parrainage-ouvrir');        // « Inviter un ami » = menu « Inviter »
   });
 
-  test('Réserver et Recharger vivent dans des FENÊTRES, hors du dashboard', () => {
-    const resa = pos('data-testid="subscriber-space-reservation"');
+  test('Ma progression et Recharger vivent dans des FENÊTRES ; Réserver est en ligne (une seule fois)', () => {
     const recharge = pos('data-testid="subscriber-space-recharge"');
-    const fenResa = pos('titre="Réserver une séance"');
+    const fenProg = pos('titre="Ma progression"');
     const fenRecharge = pos('titre="Recharger mes séances"');
-    expect(fenResa).toBeGreaterThan(0);
-    expect(resa).toBeGreaterThan(fenResa);
+    expect(fenProg).toBeGreaterThan(0);
+    expect(pos('data-testid="subscriber-space-sessions"')).toBeGreaterThan(fenProg);
     expect(recharge).toBeGreaterThan(fenRecharge);
     expect(pos('data-testid="renew-subscription-btn"')).toBeGreaterThan(fenRecharge);
-    expect(SRC).toContain('{reservationOuverte ? (');
+    expect(SRC).toContain('{progressionOuverte ? (');
     expect(SRC).toContain('{rechargeModale && rechargeDisponible ? (');
-    // Un lien d'invitation (séance présélectionnée) ouvre la réservation d'office.
-    expect(SRC).toContain('useState(() => !!inv2Seance)');
+    expect(SRC).not.toContain('titre="Réserver une séance"');         // plus de fenêtre Réserver
+    expect(SRC.split('data-testid="subscriber-space-reservation"').length - 1).toBe(1);
   });
 
   test('la recharge garde tout son contenu serveur (offres, CTA, motif, Stripe)', () => {
@@ -61,10 +61,10 @@ describe('V548 — ordre et allègement de l espace membre', () => {
     expect(recharge).not.toContain('data-testid="recharge-toggle"'); // plus d'accordéon en double
   });
 
-  test('Ma progression = UNE carte : titre, compteur, barre, « Réserver », détail intégré', () => {
-    const carte = SRC.slice(pos('data-testid="subscriber-space-sessions"'), pos('data-testid="subscriber-space-upcoming"'));
+  test('Ma progression = UNE carte (dans sa fenêtre) : titre, compteur, barre, détail intégré — sans « Réserver »', () => {
+    const carte = SRC.slice(pos('data-testid="subscriber-space-sessions"'), pos('titre="Recharger mes séances"'));
     expect(carte).toContain('data-testid="progression-titre"');
-    expect(carte).toContain('data-testid="progression-reserver"');
+    expect(SRC).not.toContain('data-testid="progression-reserver"');
     expect(carte).toContain('<SubscriberCockpit accessCode={accessCode} integre />');
     expect(SRC.split('<SubscriberCockpit ').length - 1).toBe(1);
   });
