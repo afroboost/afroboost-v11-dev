@@ -59,7 +59,8 @@ const Chiffre = ({ valeur, libelle, suffixe }) => (
   </div>
 );
 
-export default function SubscriberCockpit({ accessCode }) {
+// V561 : `integre` = rendu DANS la carte « Ma progression » (plus de second bloc titré).
+export default function SubscriberCockpit({ accessCode, integre }) {
   const [ouvert, setOuvert] = useState(false);
   const [data, setData] = useState(null);      // null = pas encore chargé
   const [erreur, setErreur] = useState("");
@@ -96,7 +97,9 @@ export default function SubscriberCockpit({ accessCode }) {
 
   return (
     <section
-      style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 14, overflow: "hidden" }}
+      style={integre
+        ? { marginTop: 10, borderTop: `1px solid ${C.border}` }
+        : { background: C.panel, border: `1px solid ${C.border}`, borderRadius: 14, overflow: "hidden" }}
       data-testid="subscriber-cockpit"
     >
       <button
@@ -104,17 +107,19 @@ export default function SubscriberCockpit({ accessCode }) {
         onClick={() => setOuvert(!ouvert)}
         style={{
           width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
-          gap: 8, padding: "14px 16px", background: "none", border: "none",
+          gap: 8, padding: integre ? "12px 0 0" : "14px 16px", minHeight: 44, background: "none", border: "none",
           color: "#fff", cursor: "pointer", textAlign: "left",
         }}
         data-testid="cockpit-toggle"
       >
-        <span style={{ fontSize: 15, fontWeight: 700 }}>Ma progression</span>{/* V548 : « Mon cockpit » renommé */}
+        {integre
+          ? <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.75)" }}>Voir le détail (mesures, objectifs)</span>
+          : <span style={{ fontSize: 15, fontWeight: 700 }}>Ma progression</span>}{/* V548 : « Mon cockpit » renommé */}
         <span style={{ color: "rgba(255,255,255,0.5)" }}><IconeChevron ouvert={ouvert} /></span>
       </button>
 
       {ouvert && (
-        <div style={{ padding: "0 16px 16px" }}>
+        <div style={{ padding: integre ? "8px 0 0" : "0 16px 16px" }}>
           {erreur ? (
             <p style={{ color: "#fca5a5", fontSize: 13, margin: "8px 0" }}>{erreur}</p>
           ) : data === null ? (

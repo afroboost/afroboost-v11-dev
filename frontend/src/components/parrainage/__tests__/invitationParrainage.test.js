@@ -279,24 +279,18 @@ describe('SubscriberSpace — le bouton ouvre le tiroir', () => {
     reservations: [],
   };
 
-  test('« Invitation & parrainage » ouvre le tiroir avec le parcours ; /me n\'est lu qu\'à l\'ouverture', async () => {
+  // V561 : Invitation + Parrainage = UN bouton « Inviter » du menu rapide → Mon parrainage.
+  test('« Inviter » (menu rapide) remplace la carte ; /me n\'est jamais lu par le dashboard', async () => {
     window.history.replaceState({}, '', `/espace/${CODE}`);
     window.localStorage.setItem(CLE_CACHE_PARRAINAGE, JSON.stringify({ enabled: true, courses: CONFIG.courses, ts: Date.now() }));
     reseau(me([pass('locked')]), ESPACE);
     await monter(<SubscriberSpace accessCode={CODE} />);
-    const b = par('carte-parrainage-ouvrir');
-    expect(b).not.toBeNull();
+    expect(par('menu-rapide-inviter')).not.toBeNull();
+    expect(par('menu-rapide-inviter').textContent).toBe('Inviter');
+    expect(par('carte-parrainage')).toBeNull();
+    expect(par('menu-rapide-parrainage')).toBeNull();   // plus deux boutons séparés
     expect(par('parrainage-drawer')).toBeNull();
     expect(appelsMe()).toBe(0);
-    await act(async () => { b.click(); });
-    await attendre();
-    const tiroir = par('parrainage-drawer');
-    expect(tiroir).not.toBeNull();
-    expect(tiroir.closest('.cp-root')).not.toBeNull();
-    expect(tiroir.querySelector('[data-testid="invitation-parrainage"]')).not.toBeNull();
-    expect(appelsMe()).toBe(1);
-    await act(async () => { par('drawer-fermer').click(); });
-    expect(par('parrainage-drawer')).toBeNull();
   });
 
   test('parrainage fermé : ni carte, ni bouton', async () => {
@@ -305,6 +299,7 @@ describe('SubscriberSpace — le bouton ouvre le tiroir', () => {
     reseau(me([]), ESPACE);
     await monter(<SubscriberSpace accessCode={CODE} />);
     expect(par('carte-parrainage-ouvrir')).toBeNull();
+    expect(par('menu-rapide-inviter')).toBeNull();
     expect(appelsMe()).toBe(0);
   });
 });

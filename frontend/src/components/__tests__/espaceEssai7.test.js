@@ -84,6 +84,11 @@ async function monter(reponse) {
 }
 
 const parTestId = (id) => conteneur.querySelector(`[data-testid="${id}"]`);
+// V561 : le calendrier vit dans une fenêtre ; « Choisir ma séance » (ou le menu) l'ouvre.
+const ouvrirResa = async () => {
+  const b = parTestId('essai7-choisir') || parTestId('menu-rapide-reserver');
+  await act(async () => { b.click(); });
+};
 const ordreDe = (id) => {
   const el = parTestId(id);
   return el ? Number(el.style.order || 0) : null;
@@ -121,15 +126,18 @@ describe('essai accorde, aucune seance choisie', () => {
     expect(parTestId('essai7-priorite')).not.toBeNull();
     // negatif = remonte ; le QR reste a sa place, donc a 0
     expect(ordreDe('essai7-priorite')).toBeLessThan(0);
-    expect(ordreDe('subscriber-space-reservation')).toBeLessThan(0);
-    expect(ordreDe('subscriber-space-qr')).toBe(0);
+    // V561 : aucun calendrier ni gros QR sur le dashboard ; « Choisir ma séance » ouvre la fenêtre.
+    expect(parTestId('subscriber-space-reservation')).toBeNull();
+    expect(parTestId('subscriber-space-qr')).toBeNull();
     // l'entete reste au-dessus de tout
     expect(ordreDe('subscriber-space-header'))
       .toBeLessThan(ordreDe('essai7-priorite'));
   });
 
-  test('le QR reste accessible — il est relegue, jamais retire', () => {
-    expect(parTestId('subscriber-space-qr')).not.toBeNull();
+  test('le QR reste accessible — par le menu « Mon QR », jamais retire', async () => {
+    expect(parTestId('menu-rapide-qr')).not.toBeNull();
+    await ouvrirResa();
+    expect(parTestId('subscriber-space-reservation')).not.toBeNull();
   });
 
   test('l ecran dit ce qu il faut faire maintenant', () => {
@@ -152,7 +160,7 @@ describe('aucun creneau reservable', () => {
     expect(vide.textContent).toContain('Aucun nouveau créneau');
     expect(vide.textContent).not.toMatch(/pr[ée]viendr|notifier|alerte/i);
     // l'espace reste entierement accessible
-    expect(parTestId('subscriber-space-qr')).not.toBeNull();
+    expect(parTestId('menu-rapide-qr')).not.toBeNull();
   });
 });
 
@@ -173,13 +181,13 @@ describe('la seance est reservee', () => {
     expect(bloc.textContent).toContain('Ta séance est réservée');
     expect(bloc.textContent).toContain('Présente-le au coach');
     expect(ordreDe('essai7-reserve')).toBeLessThan(0);
-    // la reservation redescend a sa place : le choix est fait
-    expect(ordreDe('subscriber-space-reservation')).toBe(0);
+    // V561 : le choix est fait — aucun calendrier sur le dashboard
+    expect(parTestId('subscriber-space-reservation')).toBeNull();
   });
 
   test('le CTA ouvre le QR sans le deplacer', () => {
     expect(parTestId('essai7-voir-qr')).not.toBeNull();
-    expect(parTestId('subscriber-space-qr')).not.toBeNull();
+    expect(parTestId('menu-rapide-qr')).not.toBeNull();
   });
 
   test('plus aucune invitation a choisir une seance', () => {
@@ -202,7 +210,8 @@ describe('session_booked — une fois, au bon moment', () => {
                 remaining_sessions: 0 }
       });
 
-      await act(async () => { parTestId('reserve-c-42').click(); });
+      await ouvrirResa();
+    await act(async () => { parTestId('reserve-c-42').click(); });
 
       const appels = ph.capture.mock.calls.filter((c) => c[0] === 'session_booked');
       expect(appels).toHaveLength(1);
@@ -216,6 +225,7 @@ describe('session_booked — une fois, au bon moment', () => {
     await monter(espace({ trial: { is_trial: true, state: 'available' } }));
     axios.post.mockRejectedValue({ response: { status: 409, data: { detail: 'Déjà réservé.' } } });
 
+    await ouvrirResa();
     await act(async () => { parTestId('reserve-c-42').click(); });
 
     expect(ph.capture.mock.calls.filter((c) => c[0] === 'session_booked')).toHaveLength(0);
@@ -224,6 +234,7 @@ describe('session_booked — une fois, au bon moment', () => {
   test('un re-rendu ne rejoue pas l evenement', async () => {
     await monter(espace({ trial: { is_trial: true, state: 'available' } }));
     axios.post.mockResolvedValue({ data: { reservation: { id: 'r-9', courseId: 'c-42', datetime: DEMAIN } } });
+    await ouvrirResa();
     await act(async () => { parTestId('reserve-c-42').click(); });
     await act(async () => { racine.render(<SubscriberSpace accessCode={CODE} />); });
 
@@ -237,6 +248,7 @@ describe('session_booked — une fois, au bon moment', () => {
                              courseName: 'Afroboost Pulse' }, remaining_sessions: 0 }
     });
 
+    await ouvrirResa();
     await act(async () => { parTestId('reserve-c-42').click(); });
 
     expect(parTestId('essai7-reserve')).not.toBeNull();
@@ -267,7 +279,7 @@ describe('un forfait payant ne voit rien de tout cela', () => {
   test('aucun bloc d essai, aucun reordonnancement', () => {
     expect(parTestId('essai7-priorite')).toBeNull();
     expect(parTestId('essai7-reserve')).toBeNull();
-    expect(ordreDe('subscriber-space-reservation')).toBe(0);
+    expect(parTestId('subscriber-space-reservation')).toBeNull(); // V561 : dans une fenêtre
     expect(ordreDe('subscriber-space-header')).toBe(0);
   });
 
@@ -368,7 +380,7 @@ describe('N2 — le bloc d essai dit lui aussi ou', () => {
     expect(parTestId('essai7-lieu').textContent)
       .toContain('Rue des Vallangines 97');
     // et le QR reste accessible
-    expect(parTestId('subscriber-space-qr')).not.toBeNull();
+    expect(parTestId('menu-rapide-qr')).not.toBeNull();
   });
 });
 

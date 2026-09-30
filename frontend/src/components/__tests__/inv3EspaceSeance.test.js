@@ -122,6 +122,13 @@ async function monter(reponse, search) {
     racine = createRoot(conteneur);
     racine.render(<SubscriberSpace accessCode={CODE} />);
   });
+  // V561 : la réservation vit dans une fenêtre — on l'ouvre comme l'abonné (menu « Réserver »),
+  // sauf si un lien d'invitation l'a déjà ouverte d'office.
+  await act(async () => { for (let i = 0; i < 10; i += 1) await Promise.resolve(); });
+  const menuReserver = conteneur.querySelector('[data-testid="menu-rapide-reserver"]');
+  if (menuReserver && !conteneur.querySelector('[data-testid="subscriber-space-reservation"]')) {
+    await act(async () => { menuReserver.click(); });
+  }
 }
 const parTestId = (id) => conteneur.querySelector(`[data-testid="${id}"]`);
 const boutons = () => Array.from(conteneur.querySelectorAll('[data-testid^="seance-date-"]'));

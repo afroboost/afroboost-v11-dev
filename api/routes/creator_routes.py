@@ -287,11 +287,27 @@ async def createur_moi(request: Request):
             "commissions": [C.libelle_programme(p) for p in _progs],
             "delai_confirmation_jours": C.DELAI_CONFIRMATION_JOURS,
             "retrait_min": C.RETRAIT_MIN_CHF}
+    # V561 — le menu rapide dit « Partenaire » ou « Devenir partenaire » : la personne
+    # identifiée est-elle un coach partenaire (sa PROPRE fiche, jamais celle d'un tiers) ?
+    _rep["est_partenaire"] = await _est_partenaire(_id)
     if _c:
         _rep["demande"] = _dto_demande(_c)
     if _c and _c.get("status") == "approved":
         _rep["dashboard"] = await _dashboard(_c)
     return _rep
+
+
+async def _est_partenaire(identite) -> bool:
+    if (identite or {}).get("role") in ("coach", "super_admin"):
+        return True
+    _e = C.normaliser_email((identite or {}).get("email"))
+    if not _e:
+        return False
+    try:
+        return bool(await _db()["coaches"].find_one({"email": _e}, {"_id": 1})
+                    or await _db()["coach_auth"].find_one({"email": _e}, {"_id": 1}))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 @router.post("/demande")

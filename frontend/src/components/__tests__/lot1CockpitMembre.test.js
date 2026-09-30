@@ -18,41 +18,55 @@ const COCKPIT = fs.readFileSync(path.join(__dirname, '..', 'SubscriberCockpit.js
 const pos = (s) => SRC.indexOf(s);
 
 describe('V548 — ordre et allègement de l espace membre', () => {
-  test('séances < QR < réservation < parrainage < recharge < guide', () => {
+  // V561 — DASHBOARD COURT : une fonction = un seul point d'entrée (le menu rapide).
+  test('dashboard : en-tête < menu rapide < Ma progression < prochaines séances', () => {
     const suite = [
+      'data-testid="subscriber-space-header"',
+      '<MenuRapide entrees={[',
       'data-testid="subscriber-space-sessions"',
-      'data-testid="subscriber-space-qr"',
-      'data-testid="subscriber-space-reservation"',
-      // PAR-2 : la carte ouvre le tiroir « Invitation & parrainage ».
-      '<CarteParrainage enabled={parrainageOn} onOuvrir={ouvrirInvitation} />',
-      'data-testid="subscriber-space-recharge"',
-      'data-testid="subscriber-space-guide"',
+      'data-testid="subscriber-space-upcoming"',
     ].map(pos);
     suite.forEach((p) => expect(p).toBeGreaterThan(0));
     for (let i = 1; i < suite.length; i += 1) expect(suite[i]).toBeGreaterThan(suite[i - 1]);
   });
 
-  test('la carte parrainage n est rendue qu une fois', () => {
-    expect(SRC.split('<CarteParrainage ').length - 1).toBe(1);
+  test('plus de gros QR, de bloc Parrainage, de bloc Créateur visible, ni de guide rapide', () => {
+    expect(SRC).not.toContain('data-testid="subscriber-space-qr"');
+    expect(SRC).not.toContain('<CarteParrainage ');
+    expect(SRC).not.toContain('data-testid="subscriber-space-guide"');
+    expect(SRC).toMatch(/<CarteCreateur[^>]*sansCarte/);        // la fenêtre seule, ouverte par le menu
+    expect(SRC).not.toContain('p2ux-parrainage-ouvrir');        // « Inviter un ami » = menu « Inviter »
   });
 
-  test('la recharge n est plus DANS la section de réservation', () => {
-    const debut = pos('data-testid="subscriber-space-reservation"');
-    const fin = SRC.indexOf('</section>', pos('{/* Séance sélectionnée */}'));
-    const reservation = SRC.slice(debut, SRC.indexOf('<CarteParrainage', fin));
-    expect(reservation).not.toContain('recharge-offres');
-    expect(reservation).not.toContain('handleRecharge');
+  test('Réserver et Recharger vivent dans des FENÊTRES, hors du dashboard', () => {
+    const resa = pos('data-testid="subscriber-space-reservation"');
+    const recharge = pos('data-testid="subscriber-space-recharge"');
+    const fenResa = pos('titre="Réserver une séance"');
+    const fenRecharge = pos('titre="Recharger mes séances"');
+    expect(fenResa).toBeGreaterThan(0);
+    expect(resa).toBeGreaterThan(fenResa);
+    expect(recharge).toBeGreaterThan(fenRecharge);
+    expect(pos('data-testid="renew-subscription-btn"')).toBeGreaterThan(fenRecharge);
+    expect(SRC).toContain('{reservationOuverte ? (');
+    expect(SRC).toContain('{rechargeModale && rechargeDisponible ? (');
+    // Un lien d'invitation (séance présélectionnée) ouvre la réservation d'office.
+    expect(SRC).toContain('useState(() => !!inv2Seance)');
   });
 
-  test('la recharge est repliable, et son contenu passe par le verrou', () => {
-    const recharge = SRC.slice(pos('data-testid="subscriber-space-recharge"'), pos('Guide rapide ====='));
-    expect(recharge).toContain('data-testid="recharge-toggle"');
-    expect(recharge).toContain('Recharger mes séances');
-    expect(recharge).toContain('aria-expanded={rechargeVisible}');
+  test('la recharge garde tout son contenu serveur (offres, CTA, motif, Stripe)', () => {
+    const recharge = SRC.slice(pos('data-testid="subscriber-space-recharge"'), pos('data-testid="renew-subscription-btn"'));
     expect(recharge.indexOf('{rechargeVisible && (')).toBeLessThan(recharge.indexOf('recharge-offres'));
-    // Le contenu serveur (offres, CTA, motif, Stripe) est toujours là.
     ['recharge-offres', 'recharge-cta', 'recharge-motif', 'handleRecharge', 'ChoixModePaiement']
       .forEach((m) => expect(recharge).toContain(m));
+    expect(recharge).not.toContain('data-testid="recharge-toggle"'); // plus d'accordéon en double
+  });
+
+  test('Ma progression = UNE carte : titre, compteur, barre, « Réserver », détail intégré', () => {
+    const carte = SRC.slice(pos('data-testid="subscriber-space-sessions"'), pos('data-testid="subscriber-space-upcoming"'));
+    expect(carte).toContain('data-testid="progression-titre"');
+    expect(carte).toContain('data-testid="progression-reserver"');
+    expect(carte).toContain('<SubscriberCockpit accessCode={accessCode} integre />');
+    expect(SRC.split('<SubscriberCockpit ').length - 1).toBe(1);
   });
 
   test('« Partager mon expérience » n est plus rendu dans l espace', () => {

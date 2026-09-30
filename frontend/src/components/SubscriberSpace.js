@@ -13,9 +13,10 @@ import { sessionPourEspace, ecrireSession, oublierSession } from "../utils/espac
 import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 import CarteProfilSpordateur from './CarteProfilSpordateur'; // F3 SUITE — carte compacte vers la VRAIE page profil Spordateur
 import CarteNotifications from './CarteNotifications'; // PUSH-PWA — état des notifications + réactivation automatique
-import CarteParrainage from './parrainage/CarteParrainage'; // V534 — carte « Parrainage » vers le Centre
 import CarteCreateur from './createur/CarteCreateur'; // V559 — « Devenir créateur » / « Dashboard Créateur »
 import MenuRapide from './espace/MenuRapide'; // V560 — raccourcis en haut de l'espace
+import ParrainageDrawer from './parrainage/ParrainageDrawer'; // V561 — Réserver / Recharger hors du dashboard
+import './parrainage/parrainage.css'; // V561 — jetons de la fenêtre (cp-root)
 import { TiroirInvitationParrainage } from './parrainage/InvitationParrainage'; // PAR-2 — « Invitation & parrainage » dans le tiroir existant
 import ChoixModePaiement from './ChoixModePaiement'; // V535 — paiement intégral ou en 2 fois
 import { lireConfigParrainage, enteteParrain } from '../utils/parrainage'; // V534 — configuration (cache 10 min) ; V559 — identité de l'espace
@@ -209,6 +210,13 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   // INV-2 : lue UNE fois au montage (initialiseur paresseux, aucun effet), validee
   // strictement (`lireSeanceInvitation`) ; hors motif -> null, parcours d'avant.
   const [inv2Seance] = useState(() => lireSeanceInvitation());
+  // V561 — Réserver s'ouvre dans une FENÊTRE ; un lien d'invitation (séance
+  // présélectionnée) l'ouvre d'office, pour ne jamais perdre la séance invitée.
+  const [reservationOuverte, setReservationOuverte] = useState(() => !!inv2Seance);
+  const [rechargeModale, setRechargeModale] = useState(false);          // V561 : Recharger
+  const [infoCreateur, setInfoCreateur] = useState({ statut: '', estPartenaire: false }); // V561 : libellés du menu
+  const [toutesSeances, setToutesSeances] = useState(false);            // V561 : prochaines séances compactes
+  const [qrCopie, setQrCopie] = useState('');
   // "" (rien a dire) | "ok" (preselectionnee) | "indisponible" (message). Primitif.
   const [inv2Etat, setInv2Etat] = useState("");
   const inv2Applique = useRef(false);
@@ -553,9 +561,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   };
 
   // V202: Scroll fluide vers la section réservation
-  const scrollToReservation = () => {
-    reserveSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
+  // V561 : « Réserver » (menu, progression, essai) ouvre la fenêtre de réservation.
+  const scrollToReservation = () => { setReservationOuverte(true); };
 
   const handleReserve = async (occurrence) => {
     if (!occurrence?.course_id || reservingKey) return;
@@ -604,6 +611,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       // P2-UX SIMPLE : posee ICI, donc APRES la reponse du serveur — au meme
       // endroit que `session_booked`, et pour la meme raison. Un refus part
       // dans le `catch` et n'affiche aucune confirmation.
+      setReservationOuverte(false); // V561 : la confirmation s'affiche sur le dashboard
       setSeanceConfirmee({
         cle: reservationKey,
         course_id: occurrence.course_id || "", // V534 — pour la ligne « Pass Duo » (cours éligible ?)
@@ -1033,6 +1041,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   // reserver ne la voit pas. AUCUNE eligibilite n'est jugee ici : le contenu
   // (offres, CTA, motif) reste decide par le serveur, a l'identique.
   const rechargeVisible = rechargeOuvert !== null ? rechargeOuvert : remaining <= 0;
+  // V561 : « Recharger » (menu) regroupe les offres de recharge ET le renouvellement Stripe.
+  const renouvelable = !!(data?.stripe_amount && Number(data.stripe_amount) > 0
+    && (data?.multi_member ? data?.is_payer !== false : true));
+  const rechargeDisponible = (Array.isArray(data?.recharge?.offres) && data.recharge.offres.length > 0)
+    || !!data?.recharge?.eligible || !!data?.recharge?.message || remaining <= 0 || renouvelable;
 
   // ESSAI-7 — L'ETAT QUE CET ECRAN MONTRE.
   // `t2_etat_essai` derive l'etat au CHARGEMENT. Une reservation faite juste
@@ -1188,23 +1201,17 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         {/* ===== V560 : MENU RAPIDE — Bienvenue + profil, puis ces raccourcis, puis
             la progression et « Réserver une séance ». Le reste se rejoint d'ici. ===== */}
         <MenuRapide entrees={[
-          { id: 'reserver', libelle: 'Réserver', icone: 'calendar',
-            onClick: () => { const el = reserveSectionRef.current; if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } },
+          { id: 'reserver', libelle: 'Réserver', icone: 'calendar', onClick: () => setReservationOuverte(true) },
           { id: 'qr', libelle: 'Mon QR', icone: 'qrCode', onClick: () => setQrFullscreen(true) },
-          parrainageOn ? { id: 'invitation', libelle: 'Invitation', icone: 'send', onClick: (el) => ouvrirInvitation(el) } : null,
-          parrainageOn ? { id: 'parrainage', libelle: 'Parrainage', icone: 'users', onClick: () => { window.location.href = '/parrainage'; } } : null,
-          { id: 'createur', libelle: 'Créateur', icone: 'star', onClick: () => setDemandeCreateur((n) => n + 1) },
-          ((Array.isArray(data?.recharge?.offres) && data.recharge.offres.length > 0) || data?.recharge?.eligible
-            || data?.recharge?.message || remaining <= 0)
-            ? { id: 'recharger', libelle: 'Recharger', icone: 'refresh',
-                onClick: () => {
-                  setRechargeOuvert(true);
-                  setTimeout(() => {
-                    const el = document.querySelector('[data-testid="subscriber-space-recharge"]');
-                    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  }, 0);
-                } }
-            : null,
+          // V561 : Invitation + Parrainage = UN bouton « Inviter » → Mon parrainage (onglet Inviter).
+          parrainageOn ? { id: 'inviter', libelle: 'Inviter', icone: 'send', onClick: () => { window.location.href = '/parrainage'; } } : null,
+          { id: 'createur', libelle: infoCreateur.statut === 'approved' ? 'Créateur' : 'Devenir créateur', icone: 'star',
+            onClick: () => setDemandeCreateur((n) => n + 1) },
+          rechargeDisponible ? { id: 'recharger', libelle: 'Recharger', icone: 'refresh',
+            onClick: () => { setRechargeOuvert(true); setRechargeModale(true); } } : null,
+          // V561 : le système partenaire EXISTANT (tableau de bord coach / inscription partenaire).
+          { id: 'partenaire', libelle: infoCreateur.estPartenaire ? 'Partenaire' : 'Devenir partenaire', icone: 'users',
+            onClick: () => { window.location.href = infoCreateur.estPartenaire ? '/#partner-dashboard' : '/#become-coach'; } },
         ]} />
 
         {/* 🔔 PUSH-PWA — L'ABONNEMENT DE CET APPAREIL, RÉCONCILIÉ À CHAQUE OUVERTURE.
@@ -1267,26 +1274,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             {/* V534 — une ligne discrète, jamais un bouton plein (« aucune vente
                 derrière ») : seulement si le programme est ouvert ET que ce
                 cours est éligible au Pass Duo. Rien dans les cartes ESSAI-7. */}
-            {parrainageOn && seanceConfirmee.course_id
-              && parrainageCoursIds.split(',').indexOf(String(seanceConfirmee.course_id)) >= 0 && (
-              <p
-                className="text-xs mt-3 pt-3"
-                style={{ borderTop: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}
-                data-testid="p2ux-parrainage-ligne"
-              >
-                Tu viens accompagné ? Invite un ami avec ton Pass Duo.{' '}
-                {/* PAR-2 : ouvre le MÊME tiroir que la carte ; le href reste le repli. */}
-                <a
-                  href="/parrainage"
-                  className="font-semibold"
-                  style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', alignItems: 'center', minHeight: 44 }}
-                  onClick={(e) => { e.preventDefault(); ouvrirInvitation(e.currentTarget); }}
-                  data-testid="p2ux-parrainage-ouvrir"
-                >
-                  Inviter un ami
-                </a>
-              </p>
-            )}
+            {/* V561 : « Inviter un ami » vit dans le menu rapide (« Inviter »). */}
           </section>
         )}
 
@@ -1407,9 +1395,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         {/* V334 etape 2 : « Mon cockpit » — progression de l'abonné. Replie par
             defaut et charge seulement a l'ouverture : l'espace abonne doit rester
             rapide. Il n'affiche QUE les donnees de ce code. */}
-        <Suspense fallback={null}>
-          <SubscriberCockpit accessCode={accessCode} />
-        </Suspense>
+        {/* V561 : « Ma progression » est UNE carte (ci-dessous) — le détail y est intégré. */}
 
         {/* V548 : « Partager mon expérience » (InvitationTemoignage, ESSAI-5a-2)
             ne s'affiche plus dans l'espace : demander un témoignage ici, avant
@@ -1432,6 +1418,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
           data-testid="subscriber-space-sessions"
         >
+          <p className="text-white/60 text-xs uppercase tracking-wider mb-2" data-testid="progression-titre">Ma progression</p>
           <div className="flex items-baseline justify-between mb-2">
             {/* ESSAI-5a-1D : un essai ne se compte pas, il a un ETAT. Afficher
                 « 0 / 1 » a quelqu'un qui vient de reserver lui fait croire que
@@ -1493,300 +1480,19 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               savoir combien il reste n'est pas une raison de fermer l'acces.
               C'est le serveur qui tranche a la reservation, comme avant. */}
           {(droitsAmbigus || remaining > 0) && courses.length > 0 && (
-            <button type="button" onClick={scrollToReservation}
-              className="mt-3 w-full py-2 rounded-xl text-sm font-semibold transition-transform active:scale-95"
-              style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "white" }}>
-              <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="calendar" size={14} /> Réserver une séance</span>
+            <button type="button" onClick={scrollToReservation} data-testid="progression-reserver"
+              className="mt-3 py-2 px-5 rounded-xl text-sm font-semibold transition-transform active:scale-95"
+              style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "white", minHeight: 44 }}>
+              <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="calendar" size={14} /> Réserver</span>
             </button>
           )}
+          {/* V561 : le suivi détaillé (mesures, objectifs) — replié, DANS la même carte. */}
+          <Suspense fallback={null}>
+            <SubscriberCockpit accessCode={accessCode} integre />
+          </Suspense>
         </section>
 
         {/* V204: Bouton paiement en haut supprimé — le bouton "Renouveler" en bas suffit */}
-
-        {/* ===== V560 : juste après la progression. V203f: Réserver une séance — version compacte avec boutons dates ===== */}
-        <section
-          ref={reserveSectionRef}
-          className="rounded-2xl p-5"
-          style={{
-            background: COLORS.panel, border: `1px solid ${COLORS.border}`, overflow: "hidden",
-            // ESSAI-7 : remontee juste sous l'annonce tant qu'aucune seance
-            // n'est choisie. Zero autrement — l'ordre du DOM est conserve.
-            order: essaiAReserver ? -1 : 0,
-          }}
-          data-testid="subscriber-space-reservation"
-        >
-          <h2 className="text-base font-semibold mb-3">Réserver une séance</h2>
-          {actionError && (
-            <p
-              className="text-xs mb-3 px-3 py-2 rounded-lg"
-              style={{ background: "rgba(239,68,68,0.15)", color: "#fca5a5" }}
-            >
-              {actionError}
-            </p>
-          )}
-          {noSessions && (
-            <p
-              data-testid="essai-bandeau"
-              className="text-xs mb-3 px-3 py-2 rounded-lg"
-              style={{ background: "rgba(245,158,11,0.15)", color: "#fbbf24" }}
-            >
-              {/* ESSAI-7 : `etatEssaiVu` et non `etatEssai` — juste apres une
-                  reservation, le serveur n'a pas encore rederive l'etat et ce
-                  bandeau annoncait « Plus de séances disponibles » a quelqu'un
-                  qui venait de reserver la sienne. */}
-              {estEssai && etatEssaiVu === "booked"
-                ? "Vous avez déjà réservé votre séance découverte. Annulez-la pour en choisir une autre."
-                : estEssai && etatEssaiVu === "done"
-                ? "Votre séance découverte a été utilisée."
-                : "Plus de séances disponibles"}
-            </p>
-          )}
-          {courses.length === 0 ? (
-            /* V449 — UNE LISTE VIDE DOIT DIRE POURQUOI ELLE EST VIDE.
-               Le serveur envoie DEJA `forfait_bloque` et `forfait_message`
-               exactement pour ca (voir `upcoming_courses` dans server.py, V393) :
-               un forfait expire ou epuise ne propose plus aucun creneau. L'ecran
-               les ignorait et affichait « Aucun cours disponible pour le moment »
-               — la phrase d'un planning vide, pas celle d'un forfait mort.
-               Une abonnee dont l'abonnement avait expire lisait donc qu'il n'y
-               avait PAS DE COURS, et le coach avec elle : le vrai motif etait
-               invisible des deux cotes. On affiche le motif du serveur, jamais
-               un motif recalcule ici. */
-            data?.forfait_bloque ? (
-              <p
-                className="text-sm"
-                data-testid="forfait-bloque-message"
-                style={{ color: COLORS.primary }}
-              >
-                {data?.forfait_message
-                  || "Ton abonnement n'est plus utilisable. Contacte le coach pour le renouveler."}
-              </p>
-            ) : (
-              <p className="text-white/50 text-sm">Aucun cours disponible pour le moment.</p>
-            )
-          ) : (() => {
-            // INV-3 : meme fonction que la preselection — la seance invitee n'est jamais coupee.
-            const visibleCourses = seancesVisibles(courses, inv2Seance);
-            const safeIdx = Math.min(selectedCourseIdx, visibleCourses.length - 1);
-            const occ = visibleCourses[safeIdx];
-            if (!occ) return null;
-            const key = `${occ.course_id}_${occ.datetime}`;
-            const confirmed = confirmedKeys[key];
-            const isBusy = reservingKey === key;
-            const qty = getQty(key);
-            const maxQty = Math.max(1, remaining);
-            const dec = () => adjustQty(key, -1, maxQty);
-            const inc = () => adjustQty(key, +1, maxQty);
-
-            // Formater les boutons de dates
-            const formatDateBtn = (o) => {
-              try {
-                if (o.date) {
-                  const d = new Date(o.date + "T12:00:00");
-                  const jour = d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
-                  return { date: jour, time: o.time || "" };
-                }
-                const d = new Date(o.datetime || o);
-                return {
-                  date: d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }),
-                  time: d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
-                };
-              } catch { return { date: "—", time: "" }; }
-            };
-
-            return (
-              <div>
-                {/* INV-2 : l'annonce de la seance d'invitation (ou son indisponibilite).
-                    « Seance de ton invitation » seulement tant que c'est ELLE qui est affichee. */}
-                {inv2Etat === "indisponible" && <InvitationSeanceBandeau etat="indisponible" variante="espace" />}
-                {inv2Etat === "ok" && inv2Seance && occ.course_id === inv2Seance.course
-                  && String(occ.datetime || "").slice(0, 16) === inv2Seance.occurrence && (
-                  <InvitationSeanceBandeau etat="ok" nom={occ.name} occurrence={inv2Seance.occurrence} variante="espace" />
-                )}
-                {/* Boutons de dates — scrollable horizontalement */}
-                <div className="grid pb-3 mb-3" style={{ gridTemplateColumns: `repeat(${Math.min(visibleCourses.length, 4)}, 1fr)`, gap: "8px" }}>
-                  {visibleCourses.map((c, i) => {
-                    const d = formatDateBtn(c);
-                    const isSelected = i === safeIdx;
-                    const cKey = `${c.course_id}_${c.datetime}`;
-                    const isConfirmed = confirmedKeys[cKey];
-                    // V252 FIX 4 : date UNIQUE non encore reservee -> presentee en vert
-                    // « pret a reserver » (present-selectionnee). Teinte plus douce que
-                    // le vert plein « confirme » (#22c55e) pour ne pas les confondre.
-                    const singleReady = visibleCourses.length === 1 && isSelected && !isConfirmed;
-                    return (
-                      <button key={i} type="button"
-                        data-testid={`seance-date-${i}`}
-                        aria-pressed={isSelected}
-                        onClick={() => { setSelectedCourseIdx(i); setActionError(""); }}
-                        className="flex flex-col items-center px-2 py-2 rounded-xl text-xs transition-all"
-                        style={{
-                          background: isConfirmed
-                            ? "rgba(34,197,94,0.25)"
-                            : singleReady
-                              ? "rgba(34,197,94,0.12)"
-                              : isSelected
-                                ? "rgba(255,255,255,0.10)"
-                                : "rgba(255,255,255,0.04)",
-                          border: isConfirmed
-                            ? "2px solid #22c55e"
-                            : singleReady
-                              ? "2px solid rgba(34,197,94,0.6)"
-                              : isSelected ? "2px solid rgba(255,255,255,0.5)" : "1px solid rgba(255,255,255,0.08)",
-                          color: isConfirmed ? "#86efac" : singleReady ? "#86efac" : isSelected ? "white" : "rgba(255,255,255,0.6)",
-                        }}
-                      >
-                        <span className="font-semibold" style={{ fontSize: "11px" }}>{d.date}</span>
-                        <span style={{ fontSize: "10px", opacity: 0.7 }}>{d.time}</span>
-                        {isConfirmed && <span style={{ fontSize: "10px" }}><SvgIcon name="check" size={14} /></span>}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Séance sélectionnée */}
-                <div
-                  className="p-4 rounded-xl"
-                  style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
-                >
-                  <div className="min-w-0 mb-3">
-                    <p className="text-sm font-medium">{occ.name || "Cours"}</p>
-                    <p className="text-white/50 text-xs">
-                      {formatOccurrence(occ)}
-                      {occ.locationName ? ` · ${occ.locationName}` : ""}
-                    </p>
-                  </div>
-                  {confirmed ? (() => {
-                    // V210: Trouver la réservation correspondante pour pouvoir l'annuler
-                    const matchingRes = (data?.reservations || []).find(
-                      (r) => r?.courseId === occ.course_id && r?.datetime === occ.datetime
-                    );
-                    const occTs = instantReelCours(occ.datetime);
-                    const hoursAway = (occTs - Date.now()) / 3_600_000;
-                    const tooLate = Number.isFinite(hoursAway) && hoursAway < DELAI_ANNULATION_H;
-                    const isCancelling = matchingRes && cancellingId === matchingRes.id;
-                    return (
-                      <div className="flex items-center justify-between gap-2">
-                        <span
-                          className="text-xs px-3 py-1 rounded-full inline-flex items-center gap-1.5"
-                          style={{ background: "rgba(34,197,94,0.15)", color: "#86efac" }}
-                        >
-                          <SvgIcon name="check" size={14} /> Réservé
-                        </span>
-                        {matchingRes && (
-                          <button type="button"
-                            disabled={tooLate || isCancelling}
-                            onClick={() => handleCancelReservation(matchingRes)}
-                            className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-40"
-                            title={tooLate ? "Annulation impossible moins de 2h avant" : "Annuler pour changer de séance"}
-                            style={{
-                              background: tooLate ? "rgba(255,255,255,0.06)" : "rgba(239,68,68,0.18)",
-                              color: tooLate ? "rgba(255,255,255,0.4)" : "#fca5a5",
-                              cursor: tooLate ? "not-allowed" : "pointer",
-                            }}>
-                            {isCancelling ? "…" : "Annuler"}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })() : (
-                    <>
-                      {/* V426 : une activite NON incluse dans le forfait ne doit
-                          jamais passer par « Reserver » — elle consommerait une
-                          seance pour un evenement a billet separe. Le test
-                          `=== false` est volontaire : tant que le backend V426
-                          n'est pas deploye le champ est `undefined`, et le
-                          parcours d'origine s'affiche a l'identique. */}
-                      {occ.inclus_abonnement === false ? (
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <span className="text-xs" style={{ color: "rgba(255,255,255,0.65)" }}>
-                            Événement — billet séparé
-                          </span>
-                          <a
-                            href={occ.offer_id ? `/?offre=${encodeURIComponent(occ.offer_id)}` : "/"}
-                            className="text-xs font-semibold px-4 py-2 rounded-lg"
-                            style={{
-                              background: "rgba(255,255,255,0.10)",
-                              color: "white",
-                              border: `1px solid ${COLORS.primary}`,
-                            }}
-                            data-testid={`event-${occ.course_id}`}>
-                            Voir l'événement
-                          </a>
-                        </div>
-                      ) : (
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-2" data-testid={`qty-${occ.course_id}`}>
-                          <button type="button" onClick={dec}
-                            disabled={qty <= 1 || isBusy || noSessions} aria-label="Diminuer"
-                            className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
-                            style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}>
-                            −
-                          </button>
-                          <span className="text-sm font-semibold w-6 text-center">{qty}</span>
-                          <button type="button" onClick={inc}
-                            disabled={qty >= maxQty || isBusy || noSessions} aria-label="Augmenter"
-                            className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
-                            style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}>
-                            +
-                          </button>
-                        </div>
-                        <button type="button"
-                          disabled={isBusy || noSessions
-                            || (conditionsRequises && !conditionsOk[`${occ.course_id}_${occ.datetime}`])}
-                          onClick={() => handleReserve(occ)}
-                          className="text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
-                          style={{ background: COLORS.primary, color: "white" }}
-                          data-testid={`reserve-${occ.course_id}`}>
-                          {/* ESSAI-7 : pendant l'essai, le bouton nomme ce
-                              qu'il fait — « Réserver » seul, au milieu d'une
-                              liste de dates, ne dit pas LAQUELLE. */}
-                          {isBusy ? "…"
-                            : qty > 1 ? `Réserver ${qty} places`
-                            : essaiAReserver ? "Réserver cette séance"
-                            : "Réserver"}
-                        </button>
-                      </div>
-                      )}
-
-                      {/* ESSAI-5a-1 : ce chemin porte 74 des 132 reservations
-                          reelles et n'avait jamais eu de case a cocher. */}
-                      <div className="mt-2">
-                        <ConditionsParticipation
-                          courseId={occ.course_id}
-                          accepte={!!conditionsOk[`${occ.course_id}_${occ.datetime}`]}
-                          onChange={(v) => setConditionsOk((p) => ({ ...p, [`${occ.course_id}_${occ.datetime}`]: v }))}
-                          onRequired={setConditionsRequises}
-                        />
-                      </div>
-
-                      {occ.inclus_abonnement !== false && qty > 1 && (
-                        <ol className="mt-3 space-y-1 text-xs text-white/70">
-                          <li className="flex items-center gap-2">
-                            <span className="w-4 text-white/40">1.</span>
-                            <span className="flex-1">{firstName} <span className="text-white/40">(moi)</span></span>
-                          </li>
-                          {Array.from({ length: qty - 1 }).map((_, i) => (
-                            <li key={i} className="flex items-center gap-2">
-                              <span className="w-4 text-white/40">{i + 2}.</span>
-                              <input type="text"
-                                value={(guestNames[key] || [])[i] || ""}
-                                onChange={(e) => setGuestName(key, i, e.target.value)}
-                                placeholder="Prénom" maxLength={50}
-                                data-testid={`guest-input-${occ.course_id}-${i}`}
-                                className="flex-1 px-2 py-1 rounded text-xs"
-                                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
-                            </li>
-                          ))}
-                        </ol>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
-        </section>
 
         {/* ===== V527: Abonnement mensuel Stripe — état réel + Résilier / Continuer ===== */}
         {/* Le serveur calcule l'état (`etat_abonnement`) depuis Stripe ; ici on l'affiche
@@ -1959,27 +1665,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           </div>
         )}
 
-        {/* ===== Mon QR Code ===== */}
-        <section
-          className="rounded-2xl p-5 flex flex-col items-center"
-          style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
-          data-testid="subscriber-space-qr"
-        >
-          <p className="text-white/60 text-xs uppercase tracking-wider mb-3">Mon QR Code</p>
-          <div className="bg-white p-3 rounded-xl">
-            <QRCodeSVG value={memberSlug ? `${subscriber.code || accessCode}::${memberSlug}` : (subscriber.code || accessCode)} size={160} level="M" includeMargin={false} />
-          </div>
-          <p className="text-white/40 text-xs mt-3 font-mono">{subscriber.code || accessCode}</p>
-          <button
-            type="button"
-            onClick={() => setQrFullscreen(true)}
-            className="mt-3 px-4 py-2 rounded-full text-sm font-medium"
-            style={{ background: COLORS.primary, color: "white" }}
-            data-testid="qr-fullscreen-btn"
-          >
-            <span className="inline-flex items-center gap-1.5"><SvgIcon name="search" size={14} /> Agrandir</span>
-          </button>
-        </section>
+        {/* V561 : le gros QR quitte le dashboard — menu « Mon QR » (fenêtre). */}
 
         {/* ===== V185 F3: Mes prochaines séances (avec annulation) ===== */}
         {upcomingReservations.length > 0 && (
@@ -1988,9 +1674,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
             data-testid="subscriber-space-upcoming"
           >
-            <h2 className="text-base font-semibold mb-3">Mes prochaines séances</h2>
+            <h2 className="text-base font-semibold mb-3">{upcomingReservations.length > 1 ? "Mes prochaines séances" : "Prochaine séance"}</h2>
             <ul className="space-y-2">
-              {upcomingReservations.map((r) => {
+              {/* V561 : 2 séances au plus par défaut — la liste complète sur demande. */}
+              {(toutesSeances ? upcomingReservations : upcomingReservations.slice(0, 2)).map((r) => {
                 // N2 : instant REEL du cours, fuseau compris — la meme
                 // lecture que le garde serveur. Une date illisible ne doit pas
                 // fermer l'annulation par accident : on laisse alors le
@@ -2125,54 +1812,419 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                 );
               })}
             </ul>
+            {upcomingReservations.length > 2 ? (
+              <button type="button" onClick={() => setToutesSeances((v) => !v)} data-testid="voir-toutes-seances"
+                className="mt-3 text-sm font-semibold underline" style={{ color: COLORS.primary, minHeight: 44 }}>
+                {toutesSeances ? "Afficher moins" : `Voir toutes mes séances (${upcomingReservations.length})`}
+              </button>
+            ) : null}
           </section>
         )}
 
         {/* ===== V534 / V548 : Parrainage — juste SOUS « Réserver une séance ».
             order 0 : pendant l'essai, la réservation remonte seule (order -1),
             la carte garde sa place dans l'ordre du DOM. ===== */}
-        <CarteParrainage enabled={parrainageOn} onOuvrir={ouvrirInvitation} />
+        {/* V561 : le bloc « Parrainage » quitte le dashboard — menu « Inviter ». */}
 
         {/* ===== V559 : Programme Créateur — juste à côté de « Invitation & parrainage ».
             Le libellé suit le statut serveur ; le contenu = le MÊME EspaceCreateur que le coach. ===== */}
-        <CarteCreateur entetes={enteteParrain} demandeOuverture={demandeCreateur} />
+        <CarteCreateur entetes={enteteParrain} demandeOuverture={demandeCreateur} sansCarte
+                       onInfo={(i) => setInfoCreateur((p) => {
+                         const n = { statut: i.statut || p.statut, estPartenaire: i.estPartenaire === undefined ? p.estPartenaire : i.estPartenaire };
+                         return n.statut === p.statut && n.estPartenaire === p.estPartenaire ? p : n;
+                       })} />
 
-        {/* ===== V548 : « Recharger mes séances » — la recharge SORT du
-            formulaire de réservation. Repliée par défaut ; ouverte d'office
-            quand il ne reste plus de séance. Le contenu ci-dessous (offres,
-            verdicts, Stripe, motif) est celui de LOT R / V535, inchangé. ===== */}
-        {(
-          (Array.isArray(data?.recharge?.offres) && data.recharge.offres.length > 0)
-          || data?.recharge?.eligible
-          || data?.recharge?.message
-          || remaining <= 0
-        ) && (
+        {/* ===== V212: Gérer les membres du groupe (payeur uniquement) ===== */}
+        {data?.is_payer && data?.group_members?.length > 0 && (
           <section
+            className="rounded-2xl p-4"
+            style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
+            data-testid="group-members-management"
+          >
+            <h2 className="text-base font-semibold mb-3">Membres du groupe</h2>
+            <div className="space-y-2">
+              {data.group_members.map((member) => (
+                <div
+                  key={member.slug || member.id}
+                  className="flex items-center justify-between gap-2 rounded-xl px-3 py-2"
+                  style={{
+                    background: member.blocked ? "rgba(239,68,68,0.10)" : "rgba(255,255,255,0.04)",
+                    border: member.blocked ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(255,255,255,0.08)",
+                  }}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate" style={{ color: member.blocked ? "#fca5a5" : "white" }}>
+                      {member.name || "Sans nom"}
+                    </p>
+                    <p className="text-xs truncate" style={{ color: "rgba(255,255,255,0.5)" }}>
+                      {member.email || member.whatsapp || "—"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await axios.post(`${API}/subscriber/space/${encodeURIComponent(accessCode)}/member/${encodeURIComponent(member.slug)}/block`);
+                        loadSpace();
+                      } catch (err) {
+                        console.error("[V212] Block error:", err);
+                      }
+                    }}
+                    className="flex-shrink-0 text-xs font-medium rounded-lg px-3 py-1.5 transition-colors"
+                    style={{
+                      background: member.blocked ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+                      color: member.blocked ? "#86efac" : "#fca5a5",
+                      border: member.blocked ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(239,68,68,0.3)",
+                    }}
+                  >
+                    {member.blocked ? "Débloquer" : "Bloquer"}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs mt-3" style={{ color: "rgba(255,255,255,0.4)" }}>
+              Un membre bloqué ne pourra plus réserver de séances.
+            </p>
+          </section>
+        )}
+
+        {/* ===== V187: Conditions d'utilisation = lien vers la page CGU ===== */}
+        <div className="text-center pt-2 pb-1">
+          <a
+            href="/conditions"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs underline"
+            style={{ color: "rgba(255,255,255,0.5)" }}
+            data-testid="subscriber-space-terms-link"
+          >
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="clipboard" size={14} /> Conditions d'utilisation</span>
+          </a>
+        </div>
+
+        {/* ===== SESSION PERSISTANTE : la sortie explicite =====
+            Afroboost reconnait desormais l'abonne d'une ouverture a l'autre.
+            Il faut donc un moyen clair de dire « ce n'est plus mon telephone » :
+            c'est CE bouton, et lui seul, qui remet le code d'acces en jeu. */}
+        <div className="text-center pb-2">
+          <button
+            type="button"
+            onClick={b3s1SeDeconnecter}
+            disabled={deconnexionEnCours}
+            data-testid="espace-deconnexion"
+            className="text-xs underline disabled:opacity-40"
+            style={{ color: "rgba(255,255,255,0.5)" }}
+          >
+            {deconnexionEnCours ? "Déconnexion…" : "Se déconnecter de cet appareil"}
+          </button>
+        </div>
+      </div>
+
+
+      {/* ===== V561 : RÉSERVER — la même section, dans une fenêtre (plus sur le dashboard) ===== */}
+      {reservationOuverte ? (
+        <div className="cp-root">
+          <ParrainageDrawer titre="Réserver une séance" outil="reserver" onClose={() => setReservationOuverte(false)}>
+        {/* ===== V560 : juste après la progression. V203f: Réserver une séance — version compacte avec boutons dates ===== */}
+            <section
+              ref={reserveSectionRef}
+              className="rounded-2xl p-5"
+              style={{
+                background: COLORS.panel, border: `1px solid ${COLORS.border}`, overflow: "hidden",
+                // ESSAI-7 : remontee juste sous l'annonce tant qu'aucune seance
+                // n'est choisie. Zero autrement — l'ordre du DOM est conserve.
+                order: essaiAReserver ? -1 : 0,
+              }}
+              data-testid="subscriber-space-reservation"
+            >
+              {actionError && (
+                <p
+                  className="text-xs mb-3 px-3 py-2 rounded-lg"
+                  style={{ background: "rgba(239,68,68,0.15)", color: "#fca5a5" }}
+                >
+                  {actionError}
+                </p>
+              )}
+              {noSessions && (
+                <p
+                  data-testid="essai-bandeau"
+                  className="text-xs mb-3 px-3 py-2 rounded-lg"
+                  style={{ background: "rgba(245,158,11,0.15)", color: "#fbbf24" }}
+                >
+                  {/* ESSAI-7 : `etatEssaiVu` et non `etatEssai` — juste apres une
+                      reservation, le serveur n'a pas encore rederive l'etat et ce
+                      bandeau annoncait « Plus de séances disponibles » a quelqu'un
+                      qui venait de reserver la sienne. */}
+                  {estEssai && etatEssaiVu === "booked"
+                    ? "Vous avez déjà réservé votre séance découverte. Annulez-la pour en choisir une autre."
+                    : estEssai && etatEssaiVu === "done"
+                    ? "Votre séance découverte a été utilisée."
+                    : "Plus de séances disponibles"}
+                </p>
+              )}
+              {courses.length === 0 ? (
+                /* V449 — UNE LISTE VIDE DOIT DIRE POURQUOI ELLE EST VIDE.
+                   Le serveur envoie DEJA `forfait_bloque` et `forfait_message`
+                   exactement pour ca (voir `upcoming_courses` dans server.py, V393) :
+                   un forfait expire ou epuise ne propose plus aucun creneau. L'ecran
+                   les ignorait et affichait « Aucun cours disponible pour le moment »
+                   — la phrase d'un planning vide, pas celle d'un forfait mort.
+                   Une abonnee dont l'abonnement avait expire lisait donc qu'il n'y
+                   avait PAS DE COURS, et le coach avec elle : le vrai motif etait
+                   invisible des deux cotes. On affiche le motif du serveur, jamais
+                   un motif recalcule ici. */
+                data?.forfait_bloque ? (
+                  <p
+                    className="text-sm"
+                    data-testid="forfait-bloque-message"
+                    style={{ color: COLORS.primary }}
+                  >
+                    {data?.forfait_message
+                      || "Ton abonnement n'est plus utilisable. Contacte le coach pour le renouveler."}
+                  </p>
+                ) : (
+                  <p className="text-white/50 text-sm">Aucun cours disponible pour le moment.</p>
+                )
+              ) : (() => {
+                // INV-3 : meme fonction que la preselection — la seance invitee n'est jamais coupee.
+                const visibleCourses = seancesVisibles(courses, inv2Seance);
+                const safeIdx = Math.min(selectedCourseIdx, visibleCourses.length - 1);
+                const occ = visibleCourses[safeIdx];
+                if (!occ) return null;
+                const key = `${occ.course_id}_${occ.datetime}`;
+                const confirmed = confirmedKeys[key];
+                const isBusy = reservingKey === key;
+                const qty = getQty(key);
+                const maxQty = Math.max(1, remaining);
+                const dec = () => adjustQty(key, -1, maxQty);
+                const inc = () => adjustQty(key, +1, maxQty);
+
+                // Formater les boutons de dates
+                const formatDateBtn = (o) => {
+                  try {
+                    if (o.date) {
+                      const d = new Date(o.date + "T12:00:00");
+                      const jour = d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+                      return { date: jour, time: o.time || "" };
+                    }
+                    const d = new Date(o.datetime || o);
+                    return {
+                      date: d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }),
+                      time: d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
+                    };
+                  } catch { return { date: "—", time: "" }; }
+                };
+
+                return (
+                  <div>
+                    {/* INV-2 : l'annonce de la seance d'invitation (ou son indisponibilite).
+                        « Seance de ton invitation » seulement tant que c'est ELLE qui est affichee. */}
+                    {inv2Etat === "indisponible" && <InvitationSeanceBandeau etat="indisponible" variante="espace" />}
+                    {inv2Etat === "ok" && inv2Seance && occ.course_id === inv2Seance.course
+                      && String(occ.datetime || "").slice(0, 16) === inv2Seance.occurrence && (
+                      <InvitationSeanceBandeau etat="ok" nom={occ.name} occurrence={inv2Seance.occurrence} variante="espace" />
+                    )}
+                    {/* Boutons de dates — scrollable horizontalement */}
+                    <div className="grid pb-3 mb-3" style={{ gridTemplateColumns: `repeat(${Math.min(visibleCourses.length, 4)}, 1fr)`, gap: "8px" }}>
+                      {visibleCourses.map((c, i) => {
+                        const d = formatDateBtn(c);
+                        const isSelected = i === safeIdx;
+                        const cKey = `${c.course_id}_${c.datetime}`;
+                        const isConfirmed = confirmedKeys[cKey];
+                        // V252 FIX 4 : date UNIQUE non encore reservee -> presentee en vert
+                        // « pret a reserver » (present-selectionnee). Teinte plus douce que
+                        // le vert plein « confirme » (#22c55e) pour ne pas les confondre.
+                        const singleReady = visibleCourses.length === 1 && isSelected && !isConfirmed;
+                        return (
+                          <button key={i} type="button"
+                            data-testid={`seance-date-${i}`}
+                            aria-pressed={isSelected}
+                            onClick={() => { setSelectedCourseIdx(i); setActionError(""); }}
+                            className="flex flex-col items-center px-2 py-2 rounded-xl text-xs transition-all"
+                            style={{
+                              background: isConfirmed
+                                ? "rgba(34,197,94,0.25)"
+                                : singleReady
+                                  ? "rgba(34,197,94,0.12)"
+                                  : isSelected
+                                    ? "rgba(255,255,255,0.10)"
+                                    : "rgba(255,255,255,0.04)",
+                              border: isConfirmed
+                                ? "2px solid #22c55e"
+                                : singleReady
+                                  ? "2px solid rgba(34,197,94,0.6)"
+                                  : isSelected ? "2px solid rgba(255,255,255,0.5)" : "1px solid rgba(255,255,255,0.08)",
+                              color: isConfirmed ? "#86efac" : singleReady ? "#86efac" : isSelected ? "white" : "rgba(255,255,255,0.6)",
+                            }}
+                          >
+                            <span className="font-semibold" style={{ fontSize: "11px" }}>{d.date}</span>
+                            <span style={{ fontSize: "10px", opacity: 0.7 }}>{d.time}</span>
+                            {isConfirmed && <span style={{ fontSize: "10px" }}><SvgIcon name="check" size={14} /></span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Séance sélectionnée */}
+                    <div
+                      className="p-4 rounded-xl"
+                      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
+                    >
+                      <div className="min-w-0 mb-3">
+                        <p className="text-sm font-medium">{occ.name || "Cours"}</p>
+                        <p className="text-white/50 text-xs">
+                          {formatOccurrence(occ)}
+                          {occ.locationName ? ` · ${occ.locationName}` : ""}
+                        </p>
+                      </div>
+                      {confirmed ? (() => {
+                        // V210: Trouver la réservation correspondante pour pouvoir l'annuler
+                        const matchingRes = (data?.reservations || []).find(
+                          (r) => r?.courseId === occ.course_id && r?.datetime === occ.datetime
+                        );
+                        const occTs = instantReelCours(occ.datetime);
+                        const hoursAway = (occTs - Date.now()) / 3_600_000;
+                        const tooLate = Number.isFinite(hoursAway) && hoursAway < DELAI_ANNULATION_H;
+                        const isCancelling = matchingRes && cancellingId === matchingRes.id;
+                        return (
+                          <div className="flex items-center justify-between gap-2">
+                            <span
+                              className="text-xs px-3 py-1 rounded-full inline-flex items-center gap-1.5"
+                              style={{ background: "rgba(34,197,94,0.15)", color: "#86efac" }}
+                            >
+                              <SvgIcon name="check" size={14} /> Réservé
+                            </span>
+                            {matchingRes && (
+                              <button type="button"
+                                disabled={tooLate || isCancelling}
+                                onClick={() => handleCancelReservation(matchingRes)}
+                                className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-40"
+                                title={tooLate ? "Annulation impossible moins de 2h avant" : "Annuler pour changer de séance"}
+                                style={{
+                                  background: tooLate ? "rgba(255,255,255,0.06)" : "rgba(239,68,68,0.18)",
+                                  color: tooLate ? "rgba(255,255,255,0.4)" : "#fca5a5",
+                                  cursor: tooLate ? "not-allowed" : "pointer",
+                                }}>
+                                {isCancelling ? "…" : "Annuler"}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })() : (
+                        <>
+                          {/* V426 : une activite NON incluse dans le forfait ne doit
+                              jamais passer par « Reserver » — elle consommerait une
+                              seance pour un evenement a billet separe. Le test
+                              `=== false` est volontaire : tant que le backend V426
+                              n'est pas deploye le champ est `undefined`, et le
+                              parcours d'origine s'affiche a l'identique. */}
+                          {occ.inclus_abonnement === false ? (
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="text-xs" style={{ color: "rgba(255,255,255,0.65)" }}>
+                                Événement — billet séparé
+                              </span>
+                              <a
+                                href={occ.offer_id ? `/?offre=${encodeURIComponent(occ.offer_id)}` : "/"}
+                                className="text-xs font-semibold px-4 py-2 rounded-lg"
+                                style={{
+                                  background: "rgba(255,255,255,0.10)",
+                                  color: "white",
+                                  border: `1px solid ${COLORS.primary}`,
+                                }}
+                                data-testid={`event-${occ.course_id}`}>
+                                Voir l'événement
+                              </a>
+                            </div>
+                          ) : (
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-2" data-testid={`qty-${occ.course_id}`}>
+                              <button type="button" onClick={dec}
+                                disabled={qty <= 1 || isBusy || noSessions} aria-label="Diminuer"
+                                className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
+                                style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}>
+                                −
+                              </button>
+                              <span className="text-sm font-semibold w-6 text-center">{qty}</span>
+                              <button type="button" onClick={inc}
+                                disabled={qty >= maxQty || isBusy || noSessions} aria-label="Augmenter"
+                                className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
+                                style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}>
+                                +
+                              </button>
+                            </div>
+                            <button type="button"
+                              disabled={isBusy || noSessions
+                                || (conditionsRequises && !conditionsOk[`${occ.course_id}_${occ.datetime}`])}
+                              onClick={() => handleReserve(occ)}
+                              className="text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+                              style={{ background: COLORS.primary, color: "white" }}
+                              data-testid={`reserve-${occ.course_id}`}>
+                              {/* ESSAI-7 : pendant l'essai, le bouton nomme ce
+                                  qu'il fait — « Réserver » seul, au milieu d'une
+                                  liste de dates, ne dit pas LAQUELLE. */}
+                              {isBusy ? "…"
+                                : qty > 1 ? `Réserver ${qty} places`
+                                : essaiAReserver ? "Réserver cette séance"
+                                : "Réserver"}
+                            </button>
+                          </div>
+                          )}
+
+                          {/* ESSAI-5a-1 : ce chemin porte 74 des 132 reservations
+                              reelles et n'avait jamais eu de case a cocher. */}
+                          <div className="mt-2">
+                            <ConditionsParticipation
+                              courseId={occ.course_id}
+                              accepte={!!conditionsOk[`${occ.course_id}_${occ.datetime}`]}
+                              onChange={(v) => setConditionsOk((p) => ({ ...p, [`${occ.course_id}_${occ.datetime}`]: v }))}
+                              onRequired={setConditionsRequises}
+                            />
+                          </div>
+
+                          {occ.inclus_abonnement !== false && qty > 1 && (
+                            <ol className="mt-3 space-y-1 text-xs text-white/70">
+                              <li className="flex items-center gap-2">
+                                <span className="w-4 text-white/40">1.</span>
+                                <span className="flex-1">{firstName} <span className="text-white/40">(moi)</span></span>
+                              </li>
+                              {Array.from({ length: qty - 1 }).map((_, i) => (
+                                <li key={i} className="flex items-center gap-2">
+                                  <span className="w-4 text-white/40">{i + 2}.</span>
+                                  <input type="text"
+                                    value={(guestNames[key] || [])[i] || ""}
+                                    onChange={(e) => setGuestName(key, i, e.target.value)}
+                                    placeholder="Prénom" maxLength={50}
+                                    data-testid={`guest-input-${occ.course_id}-${i}`}
+                                    className="flex-1 px-2 py-1 rounded text-xs"
+                                    style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
+                                </li>
+                              ))}
+                            </ol>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </section>
+
+
+          </ParrainageDrawer>
+        </div>
+      ) : null}
+
+      {/* ===== V561 : RECHARGER — offres réelles + renouvellement Stripe, dans une fenêtre ===== */}
+      {rechargeModale && rechargeDisponible ? (
+        <div className="cp-root">
+          <ParrainageDrawer titre="Recharger mes séances" outil="recharger" onClose={() => setRechargeModale(false)}>
+            <div className="flex flex-col gap-3" style={{ paddingTop: 8 }}>
+              <section
             className="rounded-2xl"
             style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, overflow: "hidden" }}
             data-testid="subscriber-space-recharge"
           >
-            <button
-              type="button"
-              onClick={() => setRechargeOuvert(!rechargeVisible)}
-              aria-expanded={rechargeVisible}
-              data-testid="recharge-toggle"
-              className="w-full flex items-center justify-between gap-2 text-left"
-              style={{ padding: "14px 20px", background: "none", border: "none", color: "#fff", cursor: "pointer" }}
-            >
-              <span className="inline-flex items-center gap-2 text-base font-semibold">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"
-                     style={{ color: "var(--primary-color, #D91CD2)" }}>
-                  <path d="M21 12a9 9 0 1 1-3-6.7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  <path d="M21 3v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                Recharger mes séances
-              </span>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"
-                   style={{ color: "rgba(255,255,255,0.5)", transform: rechargeVisible ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>
-                <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
+
             {rechargeVisible && (
               <div style={{ padding: "0 20px 16px", marginTop: "-8px" }}>
               {/* ═══ LOT R — LA RECHARGE DU PACK ═══════════════════════════════
@@ -2286,79 +2338,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               </div>
             )}
           </section>
-        )}
-
-        {/* ===== Guide rapide ===== */}
-        <section
-          className="rounded-2xl p-5"
-          style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
-          data-testid="subscriber-space-guide"
-        >
-          <h2 className="text-base font-semibold mb-3">Guide rapide</h2>
-          <ol className="space-y-2 text-sm text-white/80">
-            <li className="flex gap-3">
-              <span
-                className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-                style={{ background: COLORS.primary }}
-              >
-                1
-              </span>
-              <span>Choisis ton cours dans la liste</span>
-            </li>
-            <li className="flex gap-3">
-              <span
-                className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-                style={{ background: COLORS.primary }}
-              >
-                2
-              </span>
-              <span>Réserve d'un tap</span>
-            </li>
-            <li className="flex gap-3">
-              <span
-                className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-                style={{ background: COLORS.primary }}
-              >
-                3
-              </span>
-              <span>Scanne ton QR à l'entrée du cours</span>
-            </li>
-          </ol>
-          {shareUrl && (
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={handleShareCopy}
-                className="text-xs text-white/40 underline"
-                data-testid="copy-own-link"
-              >
-                {shareCopied ? (
-                  <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Lien copié</span>
-                ) : "Copier mon lien personnel"}
-              </button>
-              {/* V243: partage WhatsApp du lien d'espace. Ouvre WhatsApp (app ou
-                  web) avec le message pre-rempli ; l'abonne choisit le
-                  destinataire — lui-meme ou un proche. */}
-              <a
-                href={`https://wa.me/?text=${encodeURIComponent('Mon lien de réservation Afroboost : ' + shareUrl)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                data-testid="share-whatsapp-link"
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: '6px',
-                  background: '#25D366', color: '#fff',
-                  padding: '6px 14px', borderRadius: '8px',
-                  fontSize: '12px', fontWeight: 600, textDecoration: 'none'
-                }}
-              >
-                <SvgIcon name="phone" size={14} /> Partager via WhatsApp
-              </a>
-            </div>
-          )}
-        </section>
-
-        {/* ===== V206e: Footer — Paiement Stripe avec icônes carte + TWINT ===== */}
-        <section className="pt-2" data-testid="subscriber-space-footer">
+              <section className="pt-2" data-testid="subscriber-space-footer">
           {(() => {
             const isEmpty = remaining <= 0;
             // V206f: Individuel → toujours visible | Groupe → seulement le payeur
@@ -2406,92 +2386,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             return null;
           })()}
         </section>
-
-        {/* ===== V212: Gérer les membres du groupe (payeur uniquement) ===== */}
-        {data?.is_payer && data?.group_members?.length > 0 && (
-          <section
-            className="rounded-2xl p-4"
-            style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
-            data-testid="group-members-management"
-          >
-            <h2 className="text-base font-semibold mb-3">Membres du groupe</h2>
-            <div className="space-y-2">
-              {data.group_members.map((member) => (
-                <div
-                  key={member.slug || member.id}
-                  className="flex items-center justify-between gap-2 rounded-xl px-3 py-2"
-                  style={{
-                    background: member.blocked ? "rgba(239,68,68,0.10)" : "rgba(255,255,255,0.04)",
-                    border: member.blocked ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(255,255,255,0.08)",
-                  }}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate" style={{ color: member.blocked ? "#fca5a5" : "white" }}>
-                      {member.name || "Sans nom"}
-                    </p>
-                    <p className="text-xs truncate" style={{ color: "rgba(255,255,255,0.5)" }}>
-                      {member.email || member.whatsapp || "—"}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await axios.post(`${API}/subscriber/space/${encodeURIComponent(accessCode)}/member/${encodeURIComponent(member.slug)}/block`);
-                        loadSpace();
-                      } catch (err) {
-                        console.error("[V212] Block error:", err);
-                      }
-                    }}
-                    className="flex-shrink-0 text-xs font-medium rounded-lg px-3 py-1.5 transition-colors"
-                    style={{
-                      background: member.blocked ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
-                      color: member.blocked ? "#86efac" : "#fca5a5",
-                      border: member.blocked ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(239,68,68,0.3)",
-                    }}
-                  >
-                    {member.blocked ? "Débloquer" : "Bloquer"}
-                  </button>
-                </div>
-              ))}
             </div>
-            <p className="text-xs mt-3" style={{ color: "rgba(255,255,255,0.4)" }}>
-              Un membre bloqué ne pourra plus réserver de séances.
-            </p>
-          </section>
-        )}
-
-        {/* ===== V187: Conditions d'utilisation = lien vers la page CGU ===== */}
-        <div className="text-center pt-2 pb-1">
-          <a
-            href="/conditions"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs underline"
-            style={{ color: "rgba(255,255,255,0.5)" }}
-            data-testid="subscriber-space-terms-link"
-          >
-            <span className="inline-flex items-center gap-1.5"><SvgIcon name="clipboard" size={14} /> Conditions d'utilisation</span>
-          </a>
+          </ParrainageDrawer>
         </div>
-
-        {/* ===== SESSION PERSISTANTE : la sortie explicite =====
-            Afroboost reconnait desormais l'abonne d'une ouverture a l'autre.
-            Il faut donc un moyen clair de dire « ce n'est plus mon telephone » :
-            c'est CE bouton, et lui seul, qui remet le code d'acces en jeu. */}
-        <div className="text-center pb-2">
-          <button
-            type="button"
-            onClick={b3s1SeDeconnecter}
-            disabled={deconnexionEnCours}
-            data-testid="espace-deconnexion"
-            className="text-xs underline disabled:opacity-40"
-            style={{ color: "rgba(255,255,255,0.5)" }}
-          >
-            {deconnexionEnCours ? "Déconnexion…" : "Se déconnecter de cet appareil"}
-          </button>
-        </div>
-      </div>
+      ) : null}
 
       {/* ===== PAR-2 : « Invitation & parrainage » — le tiroir existant, le parcours existant ===== */}
       {parrainageOn && invitationOuverte ? (
@@ -2504,8 +2402,20 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           <DialogTitle className="text-center text-black text-base font-semibold">QR Code abonné</DialogTitle>
           <div className="flex flex-col items-center gap-3 py-4">
             <QRCodeSVG value={memberSlug ? `${subscriber.code || accessCode}::${memberSlug}` : (subscriber.code || accessCode)} size={280} level="H" includeMargin={false} />
-            <p className="text-black font-mono text-sm">{subscriber.code || accessCode}</p>
+            <p className="text-black font-mono text-sm" data-testid="qr-code-membre">{subscriber.code || accessCode}</p>
             <p className="text-black/60 text-xs">Présente ce code au coach à l'entrée</p>
+            {/* V561 : « Mon QR » (menu) ouvre cette fenêtre — le code se copie d'un geste. */}
+            <button type="button" data-testid="qr-copier"
+              onClick={() => {
+                const code = subscriber.code || accessCode;
+                Promise.resolve(navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(code) : Promise.reject())
+                  .then(() => setQrCopie('Code copié')).catch(() => setQrCopie('Copie impossible'));
+              }}
+              className="px-4 py-2 rounded-full text-sm font-semibold"
+              style={{ background: COLORS.primary, color: "white", minHeight: 44 }}>
+              <span className="inline-flex items-center gap-1.5"><SvgIcon name="copy" size={14} /> Copier le code</span>
+            </button>
+            {qrCopie ? <p className="text-black/70 text-xs" role="status">{qrCopie}</p> : null}
           </div>
         </DialogContent>
       </Dialog>

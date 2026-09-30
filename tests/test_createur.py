@@ -100,8 +100,11 @@ async def partie_demande_et_approbation(base):
     c, x = await appel(CR.createur_moi(req({}, {})))
     verifier("A0. /createur/me sans identité -> 401", c == 401, (c, x))
     c, m = await moi(base, lea(base))
-    verifier("A1. abonnée sans demande : statut none, pas de tableau de bord",
-             c == 200 and m["statut"] == "none" and "dashboard" not in m, (c, m))
+    verifier("A1. abonnée sans demande : statut none, pas de tableau de bord, pas partenaire",
+             c == 200 and m["statut"] == "none" and "dashboard" not in m and m.get("est_partenaire") is False, (c, m))
+    c, mc = await moi(base, coach())
+    verifier("A1b. V561 : un coach partenaire est reconnu partenaire (menu « Partenaire »)",
+             c == 200 and mc.get("est_partenaire") is True, (c, mc))
     for bad, attendu in (({"payout_method": "iban", "payout_detail": "CH00 0000 0000 0000 0000 0"}, "IBAN"),
                          ({"telephone": "12"}, "téléphone"), ({"reglement_accepte": False}, "règlement"),
                          ({"motivation": ""}, "Motivation")):

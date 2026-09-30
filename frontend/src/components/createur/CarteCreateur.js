@@ -16,17 +16,26 @@ import '../parrainage/parrainage.css';
 const PANEL = 'rgba(255,255,255,0.04)';
 const BORDER = 'rgba(255,255,255,0.08)';
 
-export default function CarteCreateur({ entetes, demandeOuverture }) {
+export default function CarteCreateur({ entetes, demandeOuverture, sansCarte, onInfo }) {
   const [statut, setStatut] = useState('');
   const [ouvert, setOuvert] = useState(false);
   const declencheur = useRef(null);
   const entetesRef = useRef(entetes);
   entetesRef.current = entetes;
+  const onInfoRef = useRef(onInfo);
+  onInfoRef.current = onInfo;
 
   useEffect(() => {
     let vivant = true;
     lireCreateur(entetesRef.current)
-      .then((d) => { if (vivant && d) setStatut(String(d.statut || 'none')); })
+      .then((d) => {
+        if (!vivant || !d) return;
+        setStatut(String(d.statut || 'none'));
+        // V561 : le menu rapide libelle « Créateur » / « Partenaire » depuis la vérité serveur.
+        if (typeof onInfoRef.current === 'function') {
+          onInfoRef.current({ statut: String(d.statut || 'none'), estPartenaire: d.est_partenaire === true });
+        }
+      })
       .catch(() => { /* carte discrète : le tiroir dira quoi faire */ });
     return () => { vivant = false; };
   }, []);
@@ -34,10 +43,14 @@ export default function CarteCreateur({ entetes, demandeOuverture }) {
   // V560 : le menu rapide ouvre le tiroir (compteur = primitive, aucun objet en dépendance).
   useEffect(() => { if (demandeOuverture > 0) setOuvert(true); }, [demandeOuverture]);
 
-  const surStatut = useCallback((s) => setStatut((prev) => (prev === s ? prev : String(s || 'none'))), []);
+  const surStatut = useCallback((s) => {
+    setStatut((prev) => (prev === s ? prev : String(s || 'none')));
+    if (typeof onInfoRef.current === 'function') onInfoRef.current({ statut: String(s || 'none') });
+  }, []);
   const libelle = libelleAccesCreateur(statut);
   return (
     <>
+      {sansCarte ? null : (
       <section className="rounded-2xl p-5 cr-acces" data-testid="carte-createur"
                style={{ background: PANEL, border: `1px solid ${BORDER}` }}>
         <p className="text-white/60 text-xs uppercase tracking-wider mb-1">Programme Créateur</p>
@@ -66,6 +79,7 @@ export default function CarteCreateur({ entetes, demandeOuverture }) {
           <SvgIcon name={statut === 'approved' ? 'barChart' : 'star'} size={16} /> {libelle}
         </button>
       </section>
+      )}
       {ouvert ? (
         <div className="cp-root">
           <ParrainageDrawer titre={libelle} outil="createur" declencheur={declencheur.current} onClose={() => setOuvert(false)}>
