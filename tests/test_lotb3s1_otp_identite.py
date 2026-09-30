@@ -157,7 +157,8 @@ def espace(db):
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in (
                 "_B3S1_COLL_OTP", "_B3S1_COLL_SESSIONS"):
             exec(compile("".join(lignes[n.lineno - 1:n.end_lineno]), "s", "exec"), ns)
-    for nom in ("_b3s1_contact_enregistre", "b3s1_demander_otp", "b3s1_verifier_otp"):
+    for nom in ("_b3s1_contact_enregistre", "_v563_masquer", "_v563_trace_otp",
+                "b3s1_demander_otp", "b3s1_verifier_otp"):
         for n in ast.walk(arbre):
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == nom:
                 exec(compile("".join(lignes[n.lineno - 1:n.end_lineno]), "s", "exec"), ns)

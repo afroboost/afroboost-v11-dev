@@ -48827,6 +48827,32 @@ async def _b3s1_contact_enregistre(code_upper: str, slug: str = "",
     return (_em or None), (_cid or DEFAULT_COACH_ID), ""
 
 
+def _v563_masquer(adresse):
+    """V563 : `ab***[domaine.ch]` — assez pour recouper, jamais l'adresse entière.
+
+    Sans `@` : l'invariant du banc B3-S1 (« aucune adresse dans le journal »)
+    reste vrai tel quel."""
+    _a = str(adresse or "")
+    if "@" not in _a:
+        return "-"
+    _l, _d = _a.split("@", 1)
+    return "%s***[%s]" % (_l[:2], _d)
+
+
+def _v563_trace_otp(request_id, resultat, **champs):
+    """V563 : UNE ligne `subscriber_otp_request` par demande, quelle que soit l'issue.
+
+    Avant V563, une demande sans envoi ne laissait AUCUNE trace : adresse non
+    reconnue, envoi désactivé ou erreur du fournisseur donnaient la même réponse
+    neutre ET le même silence dans les journaux. Jamais d'OTP, de jeton ni de
+    clé ici ; l'adresse est toujours masquée.
+    """
+    _extra = " ".join("%s=%s" % (k, v) for k, v in champs.items())
+    _log = logger.info if resultat == "send_ok" else logger.warning
+    _log("subscriber_otp_request request_id=%s result=%s %s",
+         request_id, resultat, _extra)
+
+
 @api_router.post("/subscriber/otp/request")
 async def b3s1_demander_otp(request: Request):
     """Envoie un code à 6 chiffres à l'adresse ENREGISTRÉE pour ce code.
@@ -48858,6 +48884,7 @@ async def b3s1_demander_otp(request: Request):
             {"_id": 0, "created_at": 1}, sort=[("created_at", -1)])
     except Exception as _err:
         logger.warning("[B3-S1] compteur de demandes illisible (%s)", type(_err).__name__)
+        _v563_trace_otp("-", "counter_unreadable", error=type(_err).__name__)
         return neutre
     _ok, _motif = lotb3s1_peut_demander(
         _recentes, (_dernier or {}).get("created_at"), _maintenant)
@@ -48865,6 +48892,7 @@ async def b3s1_demander_otp(request: Request):
         # 429 assumé : c'est une limite de débit, pas une information sur le
         # code. Elle se déclenche même pour un code inexistant, donc n'apprend rien.
         logger.info("[B3-S1] demande refusee (%s)", _motif)
+        _v563_trace_otp("-", "rate_limited", reason=_motif, recent=_recentes)
         raise HTTPException(status_code=429,
                             detail="Trop de demandes. Réessaie dans quelques minutes.")
 
@@ -48895,9 +48923,19 @@ async def b3s1_demander_otp(request: Request):
         await db[_B3S1_COLL_OTP].insert_one(dict(_doc))
     except Exception as _err:
         logger.warning("[B3-S1] demande non enregistree (%s)", type(_err).__name__)
+        _v563_trace_otp(_doc["id"], "store_failed", error=type(_err).__name__)
         return neutre
 
+    if not _correspond:
+        # V563 : le cas qui ne laissait AUCUNE trace. Journal serveur seulement ;
+        # la réponse au visiteur reste strictement la même (anti-énumération).
+        _v563_trace_otp(_doc["id"], "no_match", code_known=bool(_enregistre),
+                        slug=bool(slug), typed=_v563_masquer(email),
+                        registered=_v563_masquer(_enregistre))
     if _correspond:
+        if not (RESEND_AVAILABLE and RESEND_API_KEY):
+            _v563_trace_otp(_doc["id"], "send_skipped", provider="resend",
+                            lib=RESEND_AVAILABLE, key=bool(RESEND_API_KEY))
         try:
             # LES NOMS DE `server.py`, PAS CEUX DE `reservation_routes.py`.
             # `_RESEND_OK` / `_RESEND_KEY` n'existent QUE dans les modules de
@@ -48907,7 +48945,7 @@ async def b3s1_demander_otp(request: Request):
             # `resend.api_key` est deja pose au chargement (server.py:87).
             if RESEND_AVAILABLE and RESEND_API_KEY:
                 import resend as _r
-                await asyncio.to_thread(_r.Emails.send, {
+                _rep = await asyncio.to_thread(_r.Emails.send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [_enregistre],
                     "subject": "Ton code de vérification Afroboost",
@@ -48920,9 +48958,18 @@ async def b3s1_demander_otp(request: Request):
                         'cette demande, ignore cet e-mail : rien n\'a été ouvert.</p></div>'
                         % (_otp, LOTB3S1_OTP_MINUTES)),
                 })
+                _pid = (_rep or {}).get("id") if isinstance(_rep, dict) else getattr(_rep, "id", None)
+                _v563_trace_otp(_doc["id"], "send_ok" if _pid else "send_unconfirmed",
+                                provider="resend", provider_id=_pid or "-",
+                                to=_v563_masquer(_enregistre))
         except Exception as _err:
             # L'envoi qui échoue ne dit rien de plus à l'appelant : même réponse.
             logger.warning("[B3-S1] envoi impossible (%s)", type(_err).__name__)
+            # V563 : le message du fournisseur (quota, domaine, clé refusée…) —
+            # jamais la clé elle-même, qui n'est pas dans l'exception de Resend.
+            _v563_trace_otp(_doc["id"], "send_failed", provider="resend",
+                            error=type(_err).__name__,
+                            detail=repr(str(_err)[:200]), to=_v563_masquer(_enregistre))
     return neutre
 
 
