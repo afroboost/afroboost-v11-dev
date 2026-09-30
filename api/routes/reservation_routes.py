@@ -4576,9 +4576,68 @@ def v567_paiement(reservation, essai: bool) -> str:
 
 
 async def _v567_perimetre(request) -> dict:
+    return (await _v567_appelant_et_perimetre(request))[1]
+
+
+async def _v567_appelant_et_perimetre(request):
     _appelant = await mt5_coach_signe(request)           # 403 sans JWT coach signé
     from api.routes.shared import lot3c0_perimetre as _perim
-    return _perim(_appelant, is_super_admin(_appelant))
+    return _appelant, _perim(_appelant, is_super_admin(_appelant))
+
+
+# ═══ V568 — LE WHATSAPP DE CHAQUE INSCRIT, DEPUIS LA SOURCE QUI LE PORTE ═══════════
+#
+# CAUSE (mesurée en production le 30/09/2026) : les réservations faites depuis
+# l'espace abonné n'enregistrent PAS de numéro (`userWhatsapp` vide sur 3 sur 3 des
+# réservations à venir) ; le numéro existe pourtant — dans les contacts du coach
+# (`chat_participants`, 3 sur 3), dans le forfait de la réservation
+# (`subscriptions`, 3 sur 3), parfois dans `subscriber_infos`. V567 ne lisait que la
+# réservation : le front ne recevait rien, aucun bouton WhatsApp.
+#
+# ORDRE : la réservation (ce que la personne a saisi pour CE cours), puis le forfait
+# RATTACHÉ à cette réservation (`subscriptionId`), puis les contacts DU COACH
+# (même e-mail, filtrés par le périmètre du coach authentifié), puis
+# `subscriber_infos` (même filtre). Chaque participant est résolu sur SA réservation
+# et SON e-mail : jamais le numéro d'un autre (Pass Duo : deux billets, deux e-mails).
+# Rien n'est copié ni écrit : lecture seule. Normalisation : `format_phone_e164`.
+def v568_whatsapp_normalise(brut) -> str:
+    """PURE — chiffres internationaux pour wa.me (« 41791234567 »), ou "" si inexploitable."""
+    _b = str(brut or "").strip()
+    if not _b:
+        return ""
+    _b = re.sub(r"[^\d+]", "", _b)                      # espaces, tirets, points, parenthèses
+    if not _b:
+        return ""
+    try:
+        from api.server import format_phone_e164 as _e164
+        _n = _e164(_b)
+    except Exception:  # noqa: BLE001
+        _n = _b
+    _chiffres = re.sub(r"\D", "", _n or "")
+    return _chiffres if 8 <= len(_chiffres) <= 15 else ""
+
+
+async def _v568_contacts_du_coach(perimetre: dict, emails) -> dict:
+    """{email: numéro brut} — contacts puis subscriber_infos, DANS le périmètre du coach."""
+    _em = sorted({str(e or "").strip().lower() for e in emails} - {""})[:V567_LIMITE_PARTICIPANTS]
+    if not _em:
+        return {}
+    _q = {**perimetre, "$or": [{"email": {"$regex": f"^{re.escape(e)}$", "$options": "i"}} for e in _em]}
+    _out = {}
+    for _col, _champs in (("chat_participants", ("whatsapp", "phone")), ("subscriber_infos", ("whatsapp",))):
+        try:
+            _docs = await db[_col].find(_q, {"_id": 0, "email": 1, **{c: 1 for c in _champs}}).to_list(500)
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("[V568] %s illisible (%s)", _col, type(_err).__name__)
+            continue
+        for _d in _docs:
+            _e = str(_d.get("email") or "").strip().lower()
+            if _e and _e not in _out:
+                for _c in _champs:
+                    if v568_whatsapp_normalise(_d.get(_c)):
+                        _out[_e] = _d.get(_c)
+                        break
+    return _out
 
 
 def _v567_bornes(debut: str, fin: str):
@@ -4625,7 +4684,7 @@ async def v567_inscriptions_par_session(request: Request, debut: str, fin: str):
 async def v567_detail_session(request: Request, course_id: str, occurrence: str):
     """Les participants ACTIFS d'une occurrence (50 au plus), avec l'offre utilisée,
     le paiement, l'essai, et les annulations tracées pour cette occurrence."""
-    _perim = await _v567_perimetre(request)
+    _appelant, _perim = await _v567_appelant_et_perimetre(request)
     _cle = v567_cle_occurrence(course_id, occurrence)
     if not _cle:
         raise HTTPException(status_code=400, detail="Session illisible.")
@@ -4646,6 +4705,25 @@ async def v567_detail_session(request: Request, course_id: str, occurrence: str)
         _docs = await db.discount_codes.find({"code": {"$in": list(_codes)}, **_GRATUIT},
                                              {"_id": 0, "code": 1}).to_list(500)
         _essais = {str(d.get("code") or "").upper() for d in _docs}
+    # V568 : le numéro de chaque inscrit (réservation > forfait lié > contacts du coach).
+    _v568_subs = {}
+    _v568_ids = [str(r.get("subscriptionId")) for r in _resas[:V567_LIMITE_PARTICIPANTS] if r.get("subscriptionId")]
+    if _v568_ids:
+        try:
+            for _sd in await db.subscriptions.find({"id": {"$in": _v568_ids}}, {"_id": 0, "id": 1, "whatsapp": 1}).to_list(100):
+                _v568_subs[str(_sd.get("id"))] = _sd.get("whatsapp")
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("[V568] forfaits illisibles (%s)", type(_err).__name__)
+    _v568_contacts = await _v568_contacts_du_coach(_perim, [r.get("userEmail") for r in _resas[:V567_LIMITE_PARTICIPANTS]])
+
+    def _v568_numero(_r):
+        for _brut in (_r.get("userWhatsapp"), _v568_subs.get(str(_r.get("subscriptionId") or "")),
+                      _v568_contacts.get(str(_r.get("userEmail") or "").strip().lower())):
+            _n = v568_whatsapp_normalise(_brut)
+            if _n:
+                return _n
+        return ""
+
     _participants = []
     for _r in _resas[:V567_LIMITE_PARTICIPANTS]:
         _code = str(_r.get("discountCode") or _r.get("promoCode") or "").strip().upper()
@@ -4664,7 +4742,7 @@ async def v567_detail_session(request: Request, course_id: str, occurrence: str)
             "reserve_le": _ca.isoformat() if hasattr(_ca, "isoformat") else (str(_ca) if _ca else ""),
             # Coordonnées : celles que CE coach détient déjà dans SES réservations.
             "email": str(_r.get("userEmail") or ""),
-            "whatsapp": str(_r.get("userWhatsapp") or ""),
+            "whatsapp": _v568_numero(_r),               # V568 : chiffres internationaux, ou ""
         })
     # Annulations : le journal d'annulation (V567 : il porte désormais la session).
     _annul = await db.notifications.find(
@@ -4677,7 +4755,15 @@ async def v567_detail_session(request: Request, course_id: str, occurrence: str)
                                   {"_id": 0, "max_participants": 1}).to_list(100)
     _cap = v567_capacite(_liees)
     _inscrits = sum(v567_places(r) for r in _resas)
+    # V568 : le nom du coach AUTHENTIFIÉ, pour le message WhatsApp prérempli.
+    _coach_nom = ""
+    try:
+        _cd = await db.coaches.find_one({"email": str(_appelant or "").lower()}, {"_id": 0, "platform_name": 1, "name": 1})
+        _coach_nom = str((_cd or {}).get("name") or (_cd or {}).get("platform_name") or "").strip()
+    except Exception:  # noqa: BLE001
+        _coach_nom = ""
     return {
+        "coach_nom": _coach_nom,
         "session": {"course_id": str(course_id), "occurrence": _cle.split("|", 1)[1],
                     "nom": _course.get("name") or "", "lieu": _course.get("locationName") or ""},
         "inscrits": _inscrits,

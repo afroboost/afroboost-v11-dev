@@ -26,11 +26,12 @@ const COMPTEURS = { [`silent|${JOUR}T18:45`]: { inscrits: 12, capacite: 20 }, [`
 const DETAIL = {
   session: { course_id: 'silent', occurrence: `${JOUR}T18:45` }, inscrits: 12, capacite: 20, restantes: 8, complet: false,
   participants: [
-    { id: 'r1', nom: 'Léa Martin', statut: 'Confirmé', places: 1, offre: 'Pulse X10', forfait: '', essai: false, paiement: 'Inclus dans le forfait', reserve_le: '2026-09-28T10:00:00', email: 'lea@exemple.test', whatsapp: '+41790000000' },
-    { id: 'r2', nom: 'Noé', statut: 'Confirmé', places: 1, offre: 'Essai gratuit', forfait: '', essai: true, paiement: 'Essai gratuit', reserve_le: '2026-09-29T10:00:00', email: '', whatsapp: '' },
+    { id: 'r1', nom: 'Léa Martin', statut: 'Confirmé', places: 1, offre: 'Pulse X10', forfait: '', essai: false, paiement: 'Inclus dans le forfait', reserve_le: '2026-09-28T10:00:00', email: 'lea@exemple.test', whatsapp: '41791234567' },
+    { id: 'r2', nom: 'Noé', statut: 'Confirmé', places: 1, offre: 'Essai gratuit', forfait: '', essai: true, paiement: 'Essai gratuit', reserve_le: '2026-09-29T10:00:00', email: 'noe@exemple.test', whatsapp: '' },
     { id: 'r3', nom: 'Bassi', statut: 'Confirmé', places: 2, offre: 'Pass Duo', forfait: 'Pulse X10', essai: false, paiement: 'Inclus dans le forfait', reserve_le: '2026-09-29T11:00:00', email: '', whatsapp: '' },
   ],
   annulations: [{ nom: 'Marc', places: 1, le: '2026-09-29T12:00:00' }],
+  coach_nom: 'Bassi',
 };
 
 let conteneur = null; let racine = null;
@@ -95,9 +96,8 @@ describe('V567 — compteurs du coach dans Sessions', () => {
     expect(par('inscrits-annulations-toggle').textContent).toContain('Annulations (1)');
     await act(async () => { par('inscrits-annulations-toggle').click(); });
     expect(par('inscrits-annulations').textContent).toContain('Marc');
-    // contact : seulement à la demande
-    expect(par('inscrit-contact-r1')).toBeNull();
-    await act(async () => { par('inscrit-voir-contact-r1').click(); });
+    // V568 : e-mail visible d'emblée + bouton WhatsApp (plus de « Voir le contact »)
+    expect(par('inscrit-voir-contact-r1')).toBeNull();
     expect(par('inscrit-contact-r1').textContent).toContain('lea@exemple.test');
   });
 
@@ -107,5 +107,45 @@ describe('V567 — compteurs du coach dans Sessions', () => {
     await act(async () => { for (let k = 0; k < 8; k += 1) await Promise.resolve(); });
     expect(par('inscrits-liste').style.gridTemplateColumns).toBe('minmax(0, 1fr)');
     expect(par('inscrit-infos-r1').style.overflowWrap).toBe('anywhere');
+  });
+});
+
+describe('V568 — WhatsApp dans le détail des inscrits', () => {
+  const ouvrirDetail = async () => {
+    await monter({ coach: true });
+    const i = par('sessions-inscrits-0').textContent.trim() === '12 / 20 places' ? 0 : 1;
+    await act(async () => { par(`sessions-occurrence-${i}`).click(); });
+    await act(async () => { for (let k = 0; k < 8; k += 1) await Promise.resolve(); });
+  };
+
+  test('numéro connu -> bouton WhatsApp : wa.me/<numéro> + message prérempli (prénom, coach, date, heure)', async () => {
+    await ouvrirDetail();
+    const a = par('inscrit-whatsapp-r1');
+    expect(a).not.toBeNull();
+    expect(a.tagName).toBe('A');
+    const url = new URL(a.getAttribute('href'));
+    expect(url.origin + url.pathname).toBe('https://wa.me/41791234567');
+    const texte = url.searchParams.get('text');
+    expect(texte).toContain('Bonjour Léa');
+    expect(texte).toContain('Bassi d’Afroboost');
+    expect(texte).toContain('18h45');
+    const [a2, m2, j2] = [J.getFullYear(), J.getMonth(), J.getDate()];
+    expect(texte).toContain(new Date(a2, m2, j2).toLocaleDateString('fr-CH', { weekday: 'long', day: 'numeric', month: 'long' }));
+    expect(a.getAttribute('target')).toBe('_blank');            // WhatsApp s'ouvre : rien n'est envoyé d'ici
+    expect(axios.get.mock.calls.every((c) => !/whatsapp|send/i.test(String(c[0])))).toBe(true);
+  });
+
+  test('sans numéro -> « WhatsApp non renseigné », aucun lien cassé ; l’e-mail reste', async () => {
+    await ouvrirDetail();
+    expect(par('inscrit-whatsapp-r2')).toBeNull();
+    expect(par('inscrit-sans-whatsapp-r2').textContent).toBe('WhatsApp non renseigné');
+    expect(par('inscrit-contact-r2').textContent).toContain('noe@exemple.test');
+    expect(document.querySelectorAll('a[href^="https://wa.me/?"]')).toHaveLength(0);   // jamais de wa.me sans numéro
+  });
+
+  test('Pass Duo : chaque billet garde SON contact (aucun numéro emprunté)', async () => {
+    await ouvrirDetail();
+    expect(par('inscrit-whatsapp-r3')).toBeNull();            // r3 n'a pas de numéro : pas celui de r1
+    expect(par('inscrit-sans-whatsapp-r3')).not.toBeNull();
   });
 });

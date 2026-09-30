@@ -46,6 +46,9 @@ def _vaut(doc, cle, a):
                 return False
             if op == "$ne" and val == arg:
                 return False
+            if op == "$regex":
+                if val is _ABS or not re.search(arg, str(val), re.I if "i" in str(a.get("$options", "")) else 0):
+                    return False
         return True
     if isinstance(val, list):
         return a in val
@@ -110,7 +113,8 @@ def resa(i, cours, heure, coach, **x):
     return d
 
 
-RESAS = ([resa(i, "silent", "18:45", A) for i in range(1, 6)]                       # 5 actives
+RESAS = ([resa(i, "silent", "18:45", A, userWhatsapp="", **({"subscriptionId": "sub-3"} if i == 3 else {}))
+          for i in range(1, 6)]                       # 5 actives
          + [resa(10, "unite", "18:45", A, offerName="Cours à l'unité", totalPrice=30)]  # même jour/heure, autre cours
          + [resa(11, "silent", "18:45", A, source="pass_duo", offerName="Pulse X10"),
             resa(12, "silent", "18:45", A, source="pass_duo", offerName="Pulse X10")]  # Pass Duo = 2 places
@@ -125,6 +129,14 @@ db["courses"] = Coll([{"id": "silent", "name": "Afroboost Silent — Session Car
                       {"id": "unite", "name": "Cours à l'unité", "locationName": "Valangines 97"}])
 db["discount_codes"] = Coll([{"code": "ESSAI-1", "payment_method": "free", "total_paid": 0},
                             {"code": "PAYE-1", "payment_method": "stripe", "total_paid": 150}])
+db["chat_participants"] = Coll([
+    {"email": "P1@exemple.test", "whatsapp": "079 123 45 67", "coach_id": A},          # contact du coach A
+    {"email": "p1@exemple.test", "whatsapp": "+41 78 999 99 99", "coach_id": B},       # MÊME e-mail chez B
+    {"email": "p2@exemple.test", "phone": "0041 76 555 44 33", "coach_id": B},         # seulement chez B
+])
+db["subscriptions"] = Coll([{"id": "sub-3", "email": "p3@exemple.test", "whatsapp": "+33 6 12 34 56 78"}])
+db["subscriber_infos"] = Coll([{"email": "p4@exemple.test", "whatsapp": "(079) 222-33-44", "coach_id": A}])
+db["coaches"] = Coll([{"email": A, "name": "Bassi"}])
 db["notifications"] = Coll([{"type": "reservation_cancelled", "coach_id": A, "course_id": "silent",
                              "occurrence_cle": f"silent|{J}T18:45", "user_name": "Marc", "places": 1,
                              "created_at": "2026-09-29T12:00:00"}])
@@ -183,6 +195,25 @@ v("12ter. coach B sur la même session : ses participants seulement, aucune annu
   [p["nom"] for p in db_["participants"]] == ["Personne 21"] and db_["annulations"] == [], db_)
 d0 = run(R.v567_detail_session(None, "vide", f"{J}T18:45"))
 v("1bis. session sans réservation -> 0 inscrit, liste vide", d0["inscrits"] == 0 and d0["participants"] == [], d0)
+
+print("WHATSAPP (V568)")
+en_tant_que(A)
+dw = {p["id"]: p for p in run(R.v567_detail_session(None, "silent", f"{J}T18:45"))["participants"]}
+v("rouge 1. e-mail dans la résa, numéro dans les CONTACTS du coach -> whatsapp normalisé 41791234567",
+  dw["r1"].get("whatsapp") == "41791234567", dw["r1"])
+v("2. numéro du FORFAIT de la réservation (subscriptionId) -> +33 conservé : 33612345678", dw["r3"].get("whatsapp") == "33612345678", dw["r3"])
+v("3. subscriber_infos du coach, parenthèses et tirets -> 41792223344", dw["r4"].get("whatsapp") == "41792223344", dw["r4"])
+v("8. isolation : le numéro de p2 n'existe que chez B -> jamais rendu au coach A", not dw["r2"].get("whatsapp"), dw["r2"])
+v("8bis. même e-mail chez B avec un autre numéro : A reçoit le SIEN, jamais celui de B", dw["r1"].get("whatsapp") != "41789999999")
+v("réservation qui porte déjà un numéro : il reste prioritaire (Pass Duo r11 : +41790000000)",
+  dw["r11"].get("whatsapp") == "41790000000", dw["r11"])
+v("9. e-mail toujours rendu", dw["r1"].get("email") == "p1@exemple.test")
+v("message : le nom du coach authentifié est fourni (Bassi)",
+  run(R.v567_detail_session(None, "silent", f"{J}T18:45")).get("coach_nom") == "Bassi")
+en_tant_que(B)
+dwb = {p["id"]: p for p in run(R.v567_detail_session(None, "silent", f"{J}T18:45"))["participants"]}
+v("8ter. coach B : ses participants seulement, avec SES contacts", list(dwb) == ["r21"], list(dwb))
+en_tant_que(A)
 
 print("PURES")
 v("clé : UTC converti en heure de Zurich (16:45Z -> 18:45)", R.v567_cle_occurrence("c", "2026-10-07T16:45:00Z") == "c|2026-10-07T18:45")

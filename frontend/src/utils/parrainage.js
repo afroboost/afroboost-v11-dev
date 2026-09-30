@@ -175,9 +175,12 @@ export function urlEspaceCourant() {
 
 // ── Partage ─────────────────────────────────────────────────────────────────
 
-/** Lien WhatsApp « texte prêt » — le texte vient du serveur (`whatsapp_text`). */
-export function lienWhatsApp(texte) {
-  return `https://wa.me/?text=${encodeURIComponent(texte || '')}`;
+/** Lien WhatsApp « texte prêt » — le texte vient du serveur (`whatsapp_text`).
+ *  V568 : `numero` (chiffres internationaux, ex. 41791234567) ouvre la conversation
+ *  avec CETTE personne ; sans numéro, le lien est exactement celui d'avant. */
+export function lienWhatsApp(texte, numero) {
+  const n = String(numero || '').replace(/\D/g, '');
+  return `https://wa.me/${n}?text=${encodeURIComponent(texte || '')}`;
 }
 
 /** Copie robuste (API moderne puis repli execCommand). Renvoie true/false. */

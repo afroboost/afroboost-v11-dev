@@ -8,6 +8,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import SvgIcon from '../SvgIcon';
+import { lienWhatsApp } from '../../utils/parrainage'; // V568 — le helper WhatsApp existant
 
 const API = `${process.env.REACT_APP_BACKEND_URL || ''}/api`;
 const ROSE = 'var(--primary-color, #D91CD2)';
@@ -48,9 +49,19 @@ const dateCourte = (iso) => {
   return d.toLocaleString('fr-CH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
-function Participant({ p }) {
-  const [contact, setContact] = useState(false);
-  const aContact = !!(p.email || p.whatsapp);
+/** V568 — le message prérempli (le coach l'envoie LUI-MÊME depuis WhatsApp). */
+export function messageWhatsApp(nom, coachNom, occurrence) {
+  const mot = String(nom || '').trim().split(/\s+/)[0] || '';
+  const prenom = mot ? mot.charAt(0).toUpperCase() + mot.slice(1) : '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(occurrence || ''));
+  const quand = m
+    ? ` du ${new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('fr-CH', { weekday: 'long', day: 'numeric', month: 'long' })} à ${m[4]}h${m[5]}`
+    : '';
+  const qui = String(coachNom || '').trim() ? `${String(coachNom).trim()} d’Afroboost` : 'l’équipe Afroboost';
+  return `Bonjour${prenom ? ` ${prenom}` : ''} 👋\nC’est ${qui}.\nJe te contacte concernant le cours${quand}.`;
+}
+
+function Participant({ p, coachNom, occurrence }) {
   return (
     <li data-testid={`inscrit-${p.id}`}
         style={{ padding: '10px 12px', borderRadius: 12, background: 'rgba(255,255,255,0.04)',
@@ -73,21 +84,26 @@ function Participant({ p }) {
         <div style={{ marginTop: 2, fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>Avec : {p.accompagnants.join(', ')}</div>
       ) : null}
       <div style={{ marginTop: 2, fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>Réservé le {dateCourte(p.reserve_le)}</div>
-      {aContact ? (
-        contact ? (
-          <div data-testid={`inscrit-contact-${p.id}`} style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12 }}>
-            {p.email ? <a href={`mailto:${p.email}`} style={{ color: ROSE, overflowWrap: 'anywhere' }}>{p.email}</a> : null}
-            {p.whatsapp ? <a href={`https://wa.me/${String(p.whatsapp).replace(/[^\d]/g, '')}`} target="_blank" rel="noreferrer"
-                             style={{ color: ROSE }}>{p.whatsapp}</a> : null}
-          </div>
+      {/* V568 : e-mail visible d'emblée, WhatsApp quand le numéro existe (jamais inventé). */}
+      <div data-testid={`inscrit-contact-${p.id}`}
+           style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 12, minWidth: 0 }}>
+        {p.email ? (
+          <a href={`mailto:${p.email}`} style={{ color: ROSE, overflowWrap: 'anywhere', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <SvgIcon name="mail" size={13} /> {p.email}
+          </a>
+        ) : null}
+        {p.whatsapp ? (
+          <a href={lienWhatsApp(messageWhatsApp(p.nom, coachNom, occurrence), p.whatsapp)} target="_blank" rel="noreferrer"
+             data-testid={`inscrit-whatsapp-${p.id}`}
+             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 36, padding: '6px 12px', borderRadius: 999,
+               fontWeight: 700, color: '#fff', background: 'rgba(37, 211, 102, 0.18)', border: '1px solid rgba(37, 211, 102, 0.55)',
+               textDecoration: 'none' }}>
+            <SvgIcon name="messageCircle" size={14} /> WhatsApp
+          </a>
         ) : (
-          <button type="button" onClick={() => setContact(true)} data-testid={`inscrit-voir-contact-${p.id}`}
-                  style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, color: ROSE, fontSize: 12,
-                    cursor: 'pointer', minHeight: 32 }}>
-            Voir le contact
-          </button>
-        )
-      ) : null}
+          <span data-testid={`inscrit-sans-whatsapp-${p.id}`} style={{ color: 'rgba(255,255,255,0.45)' }}>WhatsApp non renseigné</span>
+        )}
+      </div>
     </li>
   );
 }
@@ -133,7 +149,8 @@ export default function InscritsSession({ courseId, quand }) {
       ) : (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}
             data-testid="inscrits-liste">
-          {participants.map((p) => <Participant key={p.id || p.nom} p={p} />)}
+          {participants.map((p) => <Participant key={p.id || p.nom} p={p} coachNom={d.coach_nom}
+                                                occurrence={(d.session && d.session.occurrence) || cle.split('|')[1]} />)}
         </ul>
       )}
       {d.tronque ? <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 6 }}>Liste limitée aux 50 premières réservations.</p> : null}
