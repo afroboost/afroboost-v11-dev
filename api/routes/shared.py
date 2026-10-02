@@ -6700,3 +6700,71 @@ def seances_confiance(used, registre, abonnements_used, fiches_vivantes=1,
     if _s == _r and _u > _r:
         return "PROBABLE", "code_non_decremente"
     return "AMBIGU", "trois_temoins_differents"
+
+
+# ===========================================================================
+# V570b — ANTI-DOUBLON WHATSAPP À L'INSCRIPTION (après choix d'une offre)
+# ===========================================================================
+# Règle (Bassi, 02/10) : un numéro WhatsApp déjà associé à un membre / contact
+# sous une AUTRE adresse e-mail bloque l'achat — aucun Stripe, aucun nouveau
+# membre, AUCUNE fusion automatique (on ne rattache jamais le nouvel e-mail).
+#   - e-mail + numéro du même membre      -> on continue (compte existant) ;
+#   - e-mail déjà connu, numéro différent -> logique « membre existant » d'avant ;
+#   - ni l'un ni l'autre connus           -> nouveau membre.
+# Le numéro est comparé sous la forme canonique d'ESSAI-6 (`essai6_normaliser_tel`,
+# plancher 8 chiffres) : `+41 79 …`, `079…` et `0041 79 …` se rejoignent.
+V570B_MESSAGE_WHATSAPP = (
+    "Ce numéro WhatsApp est déjà associé à un compte. "
+    "Utilise l’adresse e-mail liée à ce compte ou contacte-nous si tu as changé d’adresse."
+)
+# Où vit un numéro de membre / contact : (collection, champs téléphone).
+V570B_SOURCES = (("subscriptions", ("whatsapp",)),
+                 ("chat_participants", ("phone", "whatsapp")),
+                 ("users", ("whatsapp", "phone")))
+
+
+def v570b_motif_numero(canon: str) -> str:
+    """PURE — motif Mongo des 9 derniers chiffres, séparateurs tolérés (espaces,
+    tirets, points, parenthèses). Construit UNIQUEMENT à partir des chiffres de la
+    forme canonique, chacun échappé : aucune saisie brute n'entre dans la regex."""
+    _fin = "".join(ch for ch in str(canon or "") if ch.isdigit())[-9:]
+    if len(_fin) < 8:
+        return ""
+    return "[\\s().-]*".join(re.escape(ch) for ch in _fin) + "[\\s().-]*$"
+
+
+async def v570b_conflit_whatsapp(db, email, telephone) -> bool:
+    """True = ce numéro appartient déjà à quelqu'un d'AUTRE (autre e-mail) et
+    l'e-mail saisi n'est connu nulle part. Jamais d'écriture. En cas de doute
+    (numéro inexploitable, base illisible) : False — on ne refuse rien d'inventé."""
+    _mail = normaliser_email(email)
+    _canon = essai6_normaliser_tel(telephone)
+    _motif = v570b_motif_numero(_canon)
+    if not _mail or not _motif:
+        return False
+    _emails_du_numero = set()
+    try:
+        for _coll, _champs in V570B_SOURCES:
+            _q = {"$or": [{_c: {"$regex": _motif}} for _c in _champs]}
+            _proj = {"_id": 0, "email": 1, **{_c: 1 for _c in _champs}}
+            for _r in await db[_coll].find(_q, _proj).to_list(50):
+                # Confirmation EN MÉMOIRE sur la forme canonique (le motif ne voit que 9 chiffres).
+                if any(essai6_normaliser_tel(_r.get(_c)) == _canon for _c in _champs):
+                    _e = normaliser_email(_r.get("email"))
+                    if _e:
+                        _emails_du_numero.add(_e)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[V570b] lecture des numéros impossible : %s", type(_err).__name__)
+        return False
+    if not _emails_du_numero or _mail in _emails_du_numero:
+        return False                        # numéro nouveau, ou même membre (e-mail + numéro)
+    # E-mail déjà connu (membre / contact) : logique « membre existant » d'avant, aucun blocage.
+    _egal = {"$regex": "^" + re.escape(_mail) + "$", "$options": "i"}
+    try:
+        for _coll, _ in V570B_SOURCES:
+            if await db[_coll].find_one({"email": _egal}, {"_id": 1}):
+                return False
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[V570b] lecture des e-mails impossible : %s", type(_err).__name__)
+        return False
+    return True

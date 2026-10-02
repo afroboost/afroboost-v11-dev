@@ -288,14 +288,14 @@ v("V527 filet webhook : doublon -> 0 séance créditée (forfait ET code), cance
   'subscription_data["remaining_sessions"] = 0' in S and '{"$set": {"maxUses": 0, "doublon_de": _dbl.get("id")}}' in S
   and "stripe.Subscription.modify(_sid_dbl, cancel_at_period_end=True, api_key=stripe.api_key)" in S and "Refund" not in S.split("V527: FILET")[1][:3000])
 v("I. anti-double anonyme AVANT Stripe (V528) : offre récurrente -> e-mail connu, sinon étape modale (plus de window.prompt) -> customerEmail -> garde 409 serveur ; offre unique : rien",
-  "const v527Email = v527EmailPourAbonnement(offer, emailForce);" in A and "if (!v527Email.ok) {" in A and "if (v527Email.email) payload.customerEmail = v527Email.email;" in A
+  "const v527Email = v527EmailPourAbonnement(offer, v570.email);" in A and "if (!v527Email.ok) {" in A and "if (v527Email.email) payload.customerEmail = v527Email.email;" in A
   and "if (!offreEstRecurrente(offer)) return { ok: true, email: null };" in A and "export const estRecurrente = (o) => modeFacturation(o) !== 'unique';" in U
   and "window.prompt(" not in A and 'data-testid="v528-etape-email"' in A and 'data-testid="v528-email-input"' in A
   and "return { ok: false, email: null, demander: true };" in A
-  and "startProgressiveCheckout(etape.offer, etape.quantity, etape.variants, adresse);" in A
+  and "startProgressiveCheckout(etape.offer, etape.quantity, etape.variants, adresse, null, { name: nom, email: adresse, whatsapp: tel });" in A   # V570 : + nom + WhatsApp
   and "_hiver.garde_abonnement_actif(db, request.customerEmail, _hiver_offre)" in S)
 v("H/J/K. la saisie précède setCheckoutBusy et le garde-fou checkoutBusy reste le premier test (double clic = 1 checkout)",
-  A.index("if (checkoutBusy) return;\n    const v527Email") < A.index("setCheckoutBusy(true);", A.index("const v527Email")))
+  A.index("if (checkoutBusy) return;\n    // V570") < A.index("const v570 = v570IdentiteConnue(") < A.index("setCheckoutBusy(true);", A.index("const v527Email")))   # V570 : saisie AVANT tout paiement
 v("V527 espace abonné : bloc « Mon abonnement mensuel » (offre, prix/mois, séances, échéance, état) + Résilier / Continuer ; l'ancien interrupteur local n'est plus rendu pour un abonnement Stripe",
   'data-testid="subscriber-space-abonnement-mensuel"' in E and "Résilier mon abonnement" in E and "Continuer mon abonnement" in E
   and "!subscription.etat_abonnement?.recurrent && (subscription.has_payment_method || subscription.auto_renew)" in E

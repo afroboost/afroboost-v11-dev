@@ -7810,6 +7810,11 @@ class CreateCheckoutRequest(BaseModel):
     productName: str
     amount: float  # Montant en CHF (decimal, ex: 25.00)
     customerEmail: Optional[str] = None
+    # V570 : coordonnées saisies APRÈS le choix de l'offre (« Tes informations »). Recopiées dans les
+    # métadonnées DÉJÀ lues par le webhook (customer_name, customer_phone — V251) : aucune nouvelle
+    # colonne, aucun nouveau circuit. Simple affichage/contact : jamais une autorisation.
+    customerName: Optional[str] = None
+    customerPhone: Optional[str] = None
     originUrl: str  # URL d'origine du frontend pour construire success/cancel URLs
     reservationData: Optional[dict] = None  # Données de réservation pour metadata
     # V223: identifiant de l'offre. Quand il est fourni, le serveur fait
@@ -8215,6 +8220,21 @@ async def create_checkout_session(request: CreateCheckoutRequest,
     if _lotr_refus:
         raise HTTPException(status_code=403, detail=_lotr_refus)
 
+    # V570b — ANTI-DOUBLON WHATSAPP : un numéro déjà associé à un membre / contact sous
+    # une AUTRE adresse bloque l'achat ICI, avant la clé Stripe et toute écriture
+    # (aucun paiement, aucun nouveau membre, aucune fusion). Garde en lecture seule ;
+    # si elle est indisponible, l'achat suit la logique e-mail d'avant (jamais de refus inventé).
+    if request.customerPhone and request.customerEmail:
+        _v570b_bloque = False
+        try:
+            from api.routes.shared import (v570b_conflit_whatsapp as _v570b_conflit,
+                                           V570B_MESSAGE_WHATSAPP as _v570b_msg)
+            _v570b_bloque = await _v570b_conflit(db, request.customerEmail, request.customerPhone)
+        except Exception as _v570b_err:
+            logger.error(f"[V570b] garde WhatsApp indisponible, achat poursuivi: {_v570b_err}")
+        if _v570b_bloque:
+            raise HTTPException(status_code=409, detail=_v570b_msg)
+
     # HIVER — OFFRE LIMITÉE / DATE LIMITE : la 51e vente est impossible, et une
     # offre dont la date limite est passée ne s'achète plus. Les checkouts ouverts
     # depuis moins de 30 min comptent comme des places prises (dernière place).
@@ -8615,6 +8635,15 @@ async def create_checkout_session(request: CreateCheckoutRequest,
     if request.reservationData:
         metadata["reservation_id"] = request.reservationData.get("id", "")
         metadata["course_name"] = request.reservationData.get("courseName", "")
+
+    # V570 : nom + WhatsApp saisis dans « Tes informations » → métadonnées déjà lues par le webhook
+    # (customer_name, customer_phone — V251). Nettoyés et bornés (Stripe : 500 car. par valeur).
+    _v570_nom = re.sub(r"[\x00-\x1f<>]", "", str(request.customerName or "")).strip()[:100]
+    _v570_tel = re.sub(r"[^\d+]", "", str(request.customerPhone or ""))[:20]
+    if _v570_nom:
+        metadata["customer_name"] = _v570_nom
+    if len(re.sub(r"\D", "", _v570_tel)) >= 8:
+        metadata["customer_phone"] = _v570_tel
 
     # V226: chaque variante devient une cle metadata. Stripe plafonne a 50 cles
     # et 500 caracteres par valeur : on borne pour ne pas faire echouer la
@@ -10141,7 +10170,7 @@ async def stripe_webhook(request: Request):
                 # Stripe au checkout) et on rattache le contact au coach — sans
                 # ces deux champs, l'acheteur apparaissait sans numero et
                 # echappait a l'isolation coach.
-                _contact_phone = (session.get("customer_details") or {}).get("phone") or ""
+                _contact_phone = (session.get("customer_details") or {}).get("phone") or metadata.get("customer_phone", "") or ""  # V570
                 _contact_set = {
                     "email": customer_email,
                     "name": metadata.get("customer_name", customer_email.split("@")[0]),

@@ -6863,6 +6863,29 @@ function App() {
   const [v528EtapeEmail, setV528EtapeEmail] = useState(null);
   const [v528EmailSaisi, setV528EmailSaisi] = useState('');
   const [v528EmailErreur, setV528EmailErreur] = useState('');
+  // V570 — INSCRIPTION APRÈS CHOIX D'UNE OFFRE. Avant : une étape « Ton e-mail » seulement pour les
+  // offres RÉCURRENTES (V528), et AUCUNE pour les autres (Stripe ne demandait que l'e-mail) → ni nom ni
+  // WhatsApp. Désormais, tout acheteur pas encore identifié donne Nom et prénom + E-mail + WhatsApp
+  // AVANT le paiement ; l'offre choisie est rejouée telle quelle (aucun retour à la liste). Identité
+  // déjà connue (formulaire de la visite, mémorisation client af_client_info, identité de l'espace) :
+  // aucune étape. Le serveur garde ses gardes anti-double (e-mail) et reçoit nom + WhatsApp.
+  const [v570Nom, setV570Nom] = useState('');
+  const [v570Tel, setV570Tel] = useState('');
+  const v570TelValide = (t) => /^\+?\d{8,15}$/.test(String(t || '').replace(/[\s().-]/g, ''));
+  const v570IdentiteConnue = (force) => {
+    let base = { name: userName, email: userEmail, whatsapp: userWhatsapp };
+    for (const cle of ['af_client_info', 'afroboost_identity', 'af_chat_client']) {
+      try {
+        const c = JSON.parse(localStorage.getItem(cle) || 'null');
+        if (c && typeof c === 'object') base = { name: base.name || c.name, email: base.email || c.email, whatsapp: base.whatsapp || c.whatsapp };
+      } catch (e) { /* stockage illisible : ignoré */ }
+    }
+    const f = force || {};
+    const name = String(f.name || base.name || '').trim();
+    const email = String(f.email || base.email || '').trim().toLowerCase();
+    const whatsapp = String(f.whatsapp || base.whatsapp || '').trim();
+    return { name, email, whatsapp, complet: name.length >= 2 && v528EmailValide(email) && v570TelValide(whatsapp) };
+  };
   // V529: instant d'ouverture de l'étape e-mail. Un double tap sur « Choisir cette
   // formule » : le 1er tap ouvre la modale, le 2e tombe sur le FOND (modal-overlay)
   // qui vient de monter sous le doigt et la refermait. Acheter n'est jamais un
@@ -6901,14 +6924,21 @@ function App() {
     }
   };
 
-  const startProgressiveCheckout = async (offer, quantity = 1, variants = null, emailForce = null, paymentMode = null) => {
+  const startProgressiveCheckout = async (offer, quantity = 1, variants = null, emailForce = null, paymentMode = null, identiteForce = null) => {
     // V224: garde de ré-entrance — sans elle, un double-clic pendant l'appel
     // réseau (démarrage à froid Vercel possible) crée plusieurs sessions
     // Stripe et plusieurs lignes payment_transactions pour le même achat.
     // V224: la garde porte sur `checkoutBusy` et NON sur `loading` — voir la
     // declaration de checkoutBusy : un `loading` remanent s'auto-bloquait ici.
     if (checkoutBusy) return;
-    const v527Email = v527EmailPourAbonnement(offer, emailForce);
+    // V570 : coordonnées complètes AVANT tout paiement (toutes offres) ; sinon l'étape « Tes informations ».
+    const v570 = v570IdentiteConnue(identiteForce || (emailForce ? { email: emailForce } : null));
+    if (!v570.complet) {
+      setV528EmailSaisi(v570.email); setV570Nom(v570.name); setV570Tel(v570.whatsapp); setV528EmailErreur('');
+      v528Ouvrir({ offer, quantity, variants }); // V529: horodaté (anti double tap)
+      return;
+    }
+    const v527Email = v527EmailPourAbonnement(offer, v570.email);
     if (!v527Email.ok) {
       // V528: adresse inconnue → petite étape « Ton e-mail », puis rejeu du checkout.
       if (v527Email.demander) {
@@ -6920,7 +6950,7 @@ function App() {
     // V535 : l'offre laisse le choix du mode de paiement -> l'acheteur le fait
     // explicitement AVANT toute session Stripe.
     if (offreAvecChoixPaiement(offer) && !paymentMode) {
-      v535Ouvrir({ offer, quantity, variants, emailForce });
+      v535Ouvrir({ offer, quantity, variants, emailForce, identite: v570 });
       return;
     }
     try {
@@ -7021,6 +7051,12 @@ function App() {
       // demande (garde anti-double 409 côté serveur + préremplissage Stripe). Jamais
       // la chaîne vide (cf. note V224 ci-dessous) : absente sinon.
       if (v527Email.email) payload.customerEmail = v527Email.email;
+      // V570 : l'acheteur s'est identifié (toutes offres) → e-mail (préremplissage Stripe), nom et
+      // WhatsApp partent avec la demande ; le serveur les recopie dans les métadonnées déjà lues par le
+      // webhook (customer_name / customer_phone, V251). Jamais une chaîne vide (cf. V224).
+      if (!payload.customerEmail && v528EmailValide(v570.email)) payload.customerEmail = v570.email;
+      if (v570.name) payload.customerName = v570.name;
+      if (v570.whatsapp) payload.customerPhone = v570.whatsapp;
       // V535 : le mode choisi part avec la demande ; le serveur le revalide et recalcule le montant.
       if (paymentMode) payload.paymentMode = paymentMode;
       // V224: `customerEmail` est volontairement ABSENT du payload.
@@ -10391,7 +10427,7 @@ function App() {
                 onChoisir={(mode) => {
                   const etape = v535EtapeMode;
                   setV535EtapeMode(null);
-                  startProgressiveCheckout(etape.offer, etape.quantity, etape.variants, etape.emailForce, mode);
+                  startProgressiveCheckout(etape.offer, etape.quantity, etape.variants, etape.emailForce, mode, etape.identite || null);
                 }}
               />
             </div>
@@ -10405,24 +10441,47 @@ function App() {
                   <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>
                   </span>
-                  Ton e-mail
+                  Tes informations
                 </h3>
                 <button type="button" onClick={() => setV528EtapeEmail(null)} className="text-2xl text-white hover:opacity-80" aria-label="Fermer">×</button>
               </div>
-              <p className="text-white text-sm mb-4" style={{ opacity: 0.8, lineHeight: 1.5 }}>
-                Abonnement mensuel : ton adresse sert à retrouver ton espace abonné et à éviter un double abonnement.
+              <p className="text-white text-sm mb-1" style={{ opacity: 0.8, lineHeight: 1.5 }}>
+                Tu as choisi ton offre.
               </p>
-              <form onSubmit={(e) => {
+              {v528EtapeEmail.offer && v528EtapeEmail.offer.name && (
+                <p className="text-sm mb-1 font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }} data-testid="v570-offre-choisie">
+                  {v528EtapeEmail.offer.name}
+                </p>
+              )}
+              <p className="text-white text-sm mb-4" style={{ opacity: 0.8, lineHeight: 1.5 }}>
+                Renseigne maintenant tes coordonnées pour créer ton espace membre et continuer ton inscription.
+              </p>
+              <form noValidate onSubmit={(e) => {
                 e.preventDefault();
+                // V570 : nom + e-mail + WhatsApp, validés ici ; l'OFFRE choisie est rejouée telle quelle.
+                const nom = String(v570Nom || '').trim();
                 const adresse = String(v528EmailSaisi || '').trim().toLowerCase();
+                const tel = String(v570Tel || '').trim();
+                if (nom.length < 2) { setV528EmailErreur('Indique ton nom et prénom.'); return; }
                 if (!v528EmailValide(adresse)) { setV528EmailErreur('Adresse e-mail invalide.'); return; }
+                if (!v570TelValide(tel)) { setV528EmailErreur('Numéro WhatsApp invalide (ex. +41 79 123 45 67).'); return; }
+                setUserName(nom); setUserEmail(adresse); setUserWhatsapp(tel);
+                saveClientInfo(nom, adresse, tel); // mémorisation client existante (pré-remplissage au prochain passage)
                 const etape = v528EtapeEmail;
                 setV528EtapeEmail(null);
-                startProgressiveCheckout(etape.offer, etape.quantity, etape.variants, adresse);
+                startProgressiveCheckout(etape.offer, etape.quantity, etape.variants, adresse, null, { name: nom, email: adresse, whatsapp: tel });
               }}>
-                <input type="email" required autoFocus placeholder="ton@email.ch" value={v528EmailSaisi}
+                <div className="space-y-3">
+                <input type="text" required autoFocus placeholder={t('fullName')} value={v570Nom}
+                  onChange={e => { setV570Nom(e.target.value); if (v528EmailErreur) setV528EmailErreur(''); }}
+                  className="w-full p-3 rounded-lg neon-input" data-testid="v570-nom-input" autoComplete="name" />
+                <input type="email" required placeholder={t('emailRequired')} value={v528EmailSaisi}
                   onChange={e => { setV528EmailSaisi(e.target.value); if (v528EmailErreur) setV528EmailErreur(''); }}
                   className="w-full p-3 rounded-lg neon-input" data-testid="v528-email-input" autoComplete="email" inputMode="email" />
+                <input type="tel" required placeholder={t('whatsappRequired')} value={v570Tel}
+                  onChange={e => { setV570Tel(e.target.value); if (v528EmailErreur) setV528EmailErreur(''); }}
+                  className="w-full p-3 rounded-lg neon-input" data-testid="v570-whatsapp-input" autoComplete="tel" inputMode="tel" />
+                </div>
                 {v528EmailErreur && (
                   <p className="text-sm mt-2" role="alert" style={{ color: 'var(--primary-color, #D91CD2)' }}>{v528EmailErreur}</p>
                 )}
@@ -10446,7 +10505,7 @@ function App() {
                   <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9 12l2 2 4-4" /></svg>
                   </span>
-                  {v529Refus.dejaAbonne ? 'Tu as déjà cette formule' : 'Offre indisponible'}
+                  {v529Refus.dejaAbonne ? 'Tu as déjà cette formule' : /WhatsApp/.test(String(v529Refus.texte || '')) ? 'Numéro WhatsApp déjà utilisé' : 'Offre indisponible'}
                 </h3>
                 <button type="button" onClick={() => setV529Refus(null)} className="text-2xl text-white hover:opacity-80" aria-label="Fermer">×</button>
               </div>
