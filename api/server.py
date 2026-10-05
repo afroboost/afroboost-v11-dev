@@ -14519,8 +14519,13 @@ async def boosttribe_access(request: Request):
     # publique.
     _live = await _btlive_etat()
     _embed_url = f"{BOOSTTRIBE_EMBED_BASE}?bt_token={token}"
-    if _live.get("active") and _live.get("session_code"):
-        _embed_url += "&bt_session=" + urllib.parse.quote(str(_live["session_code"]))
+    _bt_session = _live.get("session_code") if _live.get("active") else None
+    # V571 : l'HÔTE qui revient (croix, onglet fermé, réseau perdu) retrouve SON live tant
+    # qu'il ne l'a pas terminé — le lien déjà envoyé aux participants reste le bon.
+    if not _bt_session and usage.get("kind") == "admin":
+        _bt_session = await _btlive_reprise_hote(usage.get("email") or "")
+    if _bt_session:
+        _embed_url += "&bt_session=" + urllib.parse.quote(str(_bt_session))
     return {"token": token, "embedUrl": _embed_url,
             "live": {"active": bool(_live.get("active")), "kind": usage.get("kind")}}
 
@@ -14613,6 +14618,23 @@ def btlive_actif(doc: Optional[dict], maintenant: datetime) -> bool:
     return True
 
 
+def btlive_reprenable(doc: Optional[dict], maintenant: datetime) -> bool:
+    """V571 — l'HÔTE peut-il retrouver ce live (même code, même lien d'invitation) ?
+
+    Séparé de `btlive_actif` (le badge public « EN DIRECT », qui suit le battement) :
+    fermer la fenêtre, recharger, quitter le site, perdre le réseau, se taire plus de
+    90 s — et V571b « Quitter le live » (`host_leave`) — n'ENTERRENT pas le live. SEUL
+    « Terminer le Live » (`host_terminate`) le rend définitif ; le garde-fou des
+    BTLIVE_MAX_H heures reste le dernier filet.
+    """
+    if not doc or not doc.get("session_code"):
+        return False
+    if doc.get("ended") and doc.get("ended_reason") in BTLIVE_FIN_DEFINITIVE:
+        return False
+    depuis = _btlive_date(doc.get("started_at"))
+    return depuis is not None and maintenant - depuis <= timedelta(hours=BTLIVE_MAX_H)
+
+
 # ═══ V553 : OBSERVABILITÉ DES FINS DE LIVE (instrumentation, aucun changement de décision) ═══
 #
 #  Incident du 28/09 12:06 : le serveur a reçu un `ended` alors que l'iframe
@@ -14649,6 +14671,9 @@ _btlive_refus_vus: dict = {}
 # Limite connue : rechargement puis fermeture en moins de 35 s -> refus, et le
 # live s'éteint par la grâce de 90 s (l'ancienne page ne bat plus).
 BTLIVE_FINS_EXPLICITES = ("host_terminate", "host_leave")
+# V571b (décision Bassi 05/10) : SEUL « Terminer le Live » enterre le live pour la reprise.
+# « Quitter » reste une fin explicite pour V555 (badge éteint aussitôt) mais le live reste reprenable.
+BTLIVE_FIN_DEFINITIVE = ("host_terminate",)
 BTLIVE_SURFACE_S = 35        # une surface est vivante si elle a battu il y a < 35 s (2 battements + marge)
 
 
@@ -14802,6 +14827,20 @@ async def _btlive_etat() -> dict:
             "started_at": d.get("started_at"), "last_seen": d.get("last_seen")}
 
 
+async def _btlive_reprise_hote(email: str) -> Optional[str]:
+    """V571 — le code du live que CET hôte peut reprendre, ou None (lecture seule)."""
+    try:
+        d = await db.boosttribe_live.find_one({"_id": "actuel"}, {"_id": 0})
+    except Exception as _err:                        # noqa: BLE001
+        logger.warning("[BT-LIVE] reprise illisible (%s)", type(_err).__name__)
+        return None
+    if not btlive_reprenable(d, datetime.now(timezone.utc)):
+        return None
+    if str((d or {}).get("host") or "").strip().lower() != str(email or "").strip().lower():
+        return None
+    return d.get("session_code")
+
+
 @api_router.get("/boosttribe/live-status")
 async def boosttribe_live_status():
     """Public, minimal : un live coach est-il en cours ? (`{active: bool}`)."""
@@ -14870,14 +14909,21 @@ async def boosttribe_live_status_set(request: Request, response: Response = None
     courant = await db.boosttribe_live.find_one(
         {"_id": "actuel"}, {"_id": 0, "session_code": 1, "host": 1, "ended": 1,
                             "started_at": 1, "last_seen": 1,    # V553 : started_at/last_seen pour ended_prev
-                            "surfaces": 1})                      # V555 : surfaces hôtes vivantes
+                            "surfaces": 1,                       # V555 : surfaces hôtes vivantes
+                            "ended_reason": 1})                  # V571 : fin explicite ou non
+
     meme_live = bool(courant) and courant.get("session_code") == code
     hote_courant = str((courant or {}).get("host") or "").strip().lower()
     # V553 : la trace de CETTE requête (jamais de jeton ni de corps complet).
     motif = btlive_motif_fin(body.get("reason")) if evenement == "ended" else None
     source = btlive_source(body.get("source"))
     ua = _btlive_user_agent(request)
-    if evenement == "started" and meme_live and not courant.get("ended") \
+    # V571 : après une fin AUTOMATIQUE (croix, démontage, réseau), le même hôte qui relance le
+    # même code REPREND son live — même début, même lien d'invitation.
+    reprise = (evenement == "started" and meme_live and bool(courant.get("ended"))
+               and hote_courant == email.strip().lower()
+               and btlive_reprenable(courant, datetime.now(timezone.utc)))
+    if evenement == "started" and meme_live and (not courant.get("ended") or reprise) \
             and hote_courant == email.strip().lower():
         # V550 : RECONNEXION, pas un nouveau live. Mesuré le 28/09 : cinq
         # `started` pour une seule session (chaque remontage de la page hôte),
@@ -14886,8 +14932,10 @@ async def boosttribe_live_status_set(request: Request, response: Response = None
         pose = {"updated_at": maintenant, "expiration_journalisee_at": None}   # V553
         if owner:
             pose[f"surfaces.{owner}"] = maintenant                           # V555 : une surface de plus
+        if reprise:                                                          # V571 : le live rouvre
+            pose.update({"ended": False, "ended_at": None, "ended_reason": None})
         await db.boosttribe_live.update_one(
-            {"_id": "actuel", "session_code": code, "ended": False},
+            {"_id": "actuel", "session_code": code, "ended": bool(reprise)},
             {"$set": pose, "$unset": {"last_seen": ""}})
         await _btlive_journaliser({"event": "started", "outcome": "ok", "reconnexion": True,
                                    "session_code": code, "by": email, "source": source,
