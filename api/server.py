@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import hashlib  # V574 : empreintes des jetons d'appareil invité
 import secrets  # P3-R1 : jetons de reponse opaques, aleatoire cryptographique
 import logging
 from pathlib import Path
@@ -15061,11 +15062,53 @@ def btlive_fusion_contact_invite(existant: dict, entree: dict, provenance: dict)
     if BTLIVE_INVITE_SOURCE not in _sources:
         _sources.append(BTLIVE_INVITE_SOURCE)
     _set["sources"] = _sources
-    _lives = [x for x in (existant.get("lives") or []) if isinstance(x, dict)]
-    if not any(x.get("session_code") == provenance["session_code"] for x in _lives):
+    _lives = [dict(x) for x in (existant.get("lives") or []) if isinstance(x, dict)]
+    meme = [x for x in _lives if x.get("session_code") == provenance["session_code"]]
+    if not meme:
         _lives.append(provenance)
+    else:
+        # V574 : l'invité a modifié son pseudo / sa photo pendant CE live → l'entrée suit.
+        for champ in ("pseudo", "photo_url"):
+            if provenance.get(champ):
+                meme[-1][champ] = provenance[champ]
     _set["lives"] = _lives[-50:]
     return _set
+
+
+async def _btlive_enregistrer_invite(code: str, coach: str, nom: str, email: str, tel: str, photo: str) -> dict:
+    """V572/V573 — la RELATION invité ↔ coach : fiche `chat_participants` dans la portée du coach
+    du live (anti-doublon e-mail / numéro, fiche existante seulement COMPLÉTÉE, source
+    live_afroboost, provenance `lives[]`, aucun consentement). Extraite telle quelle (V574) pour
+    servir aussi « Bon retour »."""
+    from api.routes.tenant_contacts import (portee_proprietaire, doublon_dans_portee, index_doublons,
+                                            chercher_doublon)
+    _coach_id, _portee = portee_proprietaire(coach)
+    _now = datetime.now(timezone.utc).isoformat()
+    # V573 : ce que l'invité a utilisé PENDANT ce live (base du futur « Bon retour [pseudo] ») —
+    # gardé dans la provenance, jamais à la place du nom / de la photo de la fiche.
+    prov = {"session_code": code, "at": _now, "pseudo": nom, "photo_url": photo, "coach": coach}
+    entree = {"name": nom, "email": email, "whatsapp": tel, "photo_url": photo}
+    ex = await doublon_dans_portee(db, _portee, email=email or None, telephone=tel or None)
+    if not ex:
+        _trouve = chercher_doublon(await index_doublons(db, _portee), email=email or None, telephone=tel or None)
+        if _trouve and _trouve.get("id"):
+            ex = await db.chat_participants.find_one({"$and": [_portee, {"id": _trouve["id"]}]}, {"_id": 0})
+    if ex:
+        await db.chat_participants.update_one({"$and": [_portee, {"id": ex.get("id")}]},
+                                              {"$set": btlive_fusion_contact_invite(ex, entree, prov)})
+        logger.info("[V572] invité du live %s rattaché à une fiche existante", code)
+        return {"cree": False, "contact_id": ex.get("id")}
+    cle = {"coach_id": _coach_id, "email": email} if email else {"coach_id": _coach_id, "whatsapp": tel}
+    await db.chat_participants.update_one(
+        cle,
+        {"$setOnInsert": {"id": str(uuid.uuid4()), "name": nom, "email": email, "whatsapp": tel,
+                          "photo_url": photo, "source": BTLIVE_INVITE_SOURCE, "sources": [BTLIVE_INVITE_SOURCE],
+                          "lives": [prov], "marketing_consent": False, "link_token": None,
+                          "created_at": _now, "last_seen_at": None},
+         "$set": {"updated_at": _now}},
+        upsert=True)
+    logger.info("[V572] invité du live %s ajouté aux contacts", code)
+    return {"cree": True, "contact_id": None}
 
 
 @api_router.post("/boosttribe/live-guest")
@@ -15111,33 +15154,267 @@ async def boosttribe_live_guest(request: Request):
     photo = str(p.get("photo_url") or "").strip()
     photo = photo if photo.startswith("https://") and len(photo) <= 500 else ""
 
-    _coach_id, _portee = portee_proprietaire(coach)
-    _now = datetime.now(timezone.utc).isoformat()
-    # V573 : ce que l'invité a utilisé PENDANT ce live (base du futur « Bon retour [pseudo] ») —
-    # gardé dans la provenance, jamais à la place du nom / de la photo de la fiche.
-    prov = {"session_code": code, "at": _now, "pseudo": nom, "photo_url": photo, "coach": coach}
-    entree = {"name": nom, "email": email, "whatsapp": tel, "photo_url": photo}
-    ex = await doublon_dans_portee(db, _portee, email=email or None, telephone=tel or None)
-    if not ex:
-        _trouve = chercher_doublon(await index_doublons(db, _portee), email=email or None, telephone=tel or None)
-        if _trouve and _trouve.get("id"):
-            ex = await db.chat_participants.find_one({"$and": [_portee, {"id": _trouve["id"]}]}, {"_id": 0})
-    if ex:
-        await db.chat_participants.update_one({"$and": [_portee, {"id": ex.get("id")}]},
-                                              {"$set": btlive_fusion_contact_invite(ex, entree, prov)})
-        logger.info("[V572] invité du live %s rattaché à une fiche existante", code)
-        return {"ok": True, "cree": False}
-    cle = {"coach_id": _coach_id, "email": email} if email else {"coach_id": _coach_id, "whatsapp": tel}
-    await db.chat_participants.update_one(
-        cle,
-        {"$setOnInsert": {"id": str(uuid.uuid4()), "name": nom, "email": email, "whatsapp": tel,
-                          "photo_url": photo, "source": BTLIVE_INVITE_SOURCE, "sources": [BTLIVE_INVITE_SOURCE],
-                          "lives": [prov], "marketing_consent": False, "link_token": None,
-                          "created_at": _now, "last_seen_at": None},
-         "$set": {"updated_at": _now}},
-        upsert=True)
-    logger.info("[V572] invité du live %s ajouté aux contacts", code)
-    return {"ok": True, "cree": True}
+    r = await _btlive_enregistrer_invite(code, coach, nom, email, tel, photo)
+    return {"ok": True, "cree": r["cree"]}
+
+
+# ═══ V574 — « BON RETOUR [pseudo] » : identité invité GLOBALE + jeton opaque (même appareil) ═══
+#  `invites_live` = l'identité de l'invité telle qu'IL l'a saisie (pseudo, photo, e-mail,
+#  WhatsApp) + les EMPREINTES SHA-256 de ses jetons d'appareil. AUCUN consentement, aucune
+#  donnée d'un coach : la relation invité ↔ coach reste la fiche `chat_participants` de chaque
+#  coach (V572/V573), écrite par `_btlive_enregistrer_invite`.
+#  Cookie `afb_live_guest` posé par afroboost.com/api (même origine que /live : premier parti ;
+#  api-live.afroboost.com a une autre IP que le site → Safari plafonnerait le cookie à 7 j).
+#  HttpOnly, Secure, SameSite=Lax, Path=/api/live-guest. Il ne donne AUCUN droit (ni crédit, ni
+#  espace abonné, ni rôle) : il ne fait que reconnaître l'invité et rattacher sa participation.
+#  Durée : 180 j glissants (renouvelés à chaque « Continuer »), plafond 395 j (≈ 13 mois) depuis
+#  la 1re reconnaissance de CET appareil. Rotation : nouveau jeton à chaque « Rejoindre » /
+#  « Continuer », l'ancien devient invalide. Révocation : « Ce n'est pas moi » / « Oublier » (cet
+#  appareil), changement d'e-mail ou de WhatsApp (tous les AUTRES appareils).
+#  Sans cookie valide, un e-mail déjà connu ne rattache JAMAIS à une identité existante : il
+#  n'est pas vérifié (la vérification par code = Phase 2).
+LIVE_GUEST_COOKIE = "afb_live_guest"
+LIVE_GUEST_CHEMIN = "/api/live-guest"
+LIVE_GUEST_DUREE_J = 180
+LIVE_GUEST_PLAFOND_J = 395
+LIVE_GUEST_DEBIT_MAX = 12
+LIVE_GUEST_DEBIT_FENETRE_S = 600
+_live_guest_debit: dict = {}
+
+
+def live_guest_empreinte(jeton: str) -> str:
+    return hashlib.sha256(str(jeton or "").encode()).hexdigest()
+
+
+def live_guest_expiration(maintenant: datetime, cree: datetime) -> datetime:
+    """PURE — 180 jours glissants, jamais au-delà de 395 jours après la création de l'appareil."""
+    return min(maintenant + timedelta(days=LIVE_GUEST_DUREE_J), cree + timedelta(days=LIVE_GUEST_PLAFOND_J))
+
+
+def live_guest_masquer_email(adresse: str) -> str:
+    a = str(adresse or "")
+    if "@" not in a:
+        return ""
+    local, domaine = a.split("@", 1)
+    return f"{local[:1]}***@{domaine}"
+
+
+def live_guest_masquer_tel(tel: str) -> str:
+    chiffres = re.sub(r"\D", "", str(tel or ""))
+    return f"+{chiffres[:2]} ** *** ** {chiffres[-2:]}" if len(chiffres) >= 8 else ""
+
+
+def live_guest_vue(ident: dict) -> dict:
+    """Ce que l'écran « Bon retour » reçoit : jamais une coordonnée en clair, jamais un champ coach."""
+    return {"pseudo": ident.get("pseudo") or "", "photo_url": ident.get("photo_url") or "",
+            "email_masque": live_guest_masquer_email(ident.get("email")),
+            "whatsapp_masque": live_guest_masquer_tel(ident.get("whatsapp"))}
+
+
+def _live_guest_ip(request: Request) -> str:
+    cf = (request.headers.get("cf-connecting-ip") or "").strip()
+    if cf:
+        return cf
+    vals = [v.strip() for v in (request.headers.get("x-forwarded-for") or "").split(",") if v.strip()]
+    return vals[-1] if vals else (request.client.host if getattr(request, "client", None) else "inconnu")
+
+
+def _live_guest_limiter(request: Request) -> None:
+    import time as _time
+    ip, maint = _live_guest_ip(request), _time.time()
+    vus = [t for t in _live_guest_debit.get(ip, []) if maint - t < LIVE_GUEST_DEBIT_FENETRE_S]
+    if len(vus) >= LIVE_GUEST_DEBIT_MAX:
+        raise HTTPException(status_code=429, detail="Trop de tentatives, réessaie dans quelques minutes")
+    vus.append(maint)
+    _live_guest_debit[ip] = vus
+
+
+def _live_guest_appareil(maintenant: datetime, cree: Optional[datetime] = None) -> tuple:
+    jeton = secrets.token_urlsafe(32)
+    cree = cree or maintenant
+    return jeton, {"h": live_guest_empreinte(jeton), "created_at": cree.isoformat(),
+                   "last_used_at": maintenant.isoformat(),
+                   "expires_at": live_guest_expiration(maintenant, cree).isoformat(), "revoked_at": None}
+
+
+def _live_guest_poser_cookie(response: Response, jeton: str, appareil: dict, maintenant: datetime) -> None:
+    fin = _btlive_date(appareil["expires_at"]) or maintenant
+    response.set_cookie(LIVE_GUEST_COOKIE, jeton, max_age=max(1, int((fin - maintenant).total_seconds())),
+                        httponly=True, secure=True, samesite="lax", path=LIVE_GUEST_CHEMIN)
+
+
+async def _live_guest_identite(request: Request) -> Optional[tuple]:
+    """(identité, appareil) pour le cookie de cette requête, ou None (absent, inconnu, révoqué, expiré)."""
+    jeton = str((getattr(request, "cookies", None) or {}).get(LIVE_GUEST_COOKIE) or "")
+    if not jeton:
+        return None
+    h = live_guest_empreinte(jeton)
+    ident = await db.invites_live.find_one({"appareils.h": h}, {"_id": 0})
+    if not ident:
+        return None
+    app = next((a for a in ident.get("appareils") or [] if a.get("h") == h), None)
+    fin = _btlive_date((app or {}).get("expires_at"))
+    if not app or app.get("revoked_at") or not fin or fin <= datetime.now(timezone.utc):
+        return None
+    return ident, app
+
+
+def _live_guest_valider(corps: dict, partiel: bool = False) -> dict:
+    """Champs saisis par l'invité, validés ; en mode partiel (modifier), seuls les champs présents."""
+    from api.routes.tenant_contacts import telephone_e164, normaliser_email as _nm
+    out = {}
+    if not partiel or "pseudo" in corps:
+        pseudo = re.sub(r"[\x00-\x1f<>]", "", str(corps.get("pseudo") or "")).strip()
+        if not 2 <= len(pseudo) <= 40:
+            raise HTTPException(status_code=400, detail="Pseudo : 2 à 40 caractères")
+        out["pseudo"] = pseudo
+    if not partiel or "photo_url" in corps:
+        photo = str(corps.get("photo_url") or "").strip()
+        out["photo_url"] = photo if photo.startswith("https://") and len(photo) <= 500 else ""
+    if not partiel or str(corps.get("email") or "").strip():
+        email = _nm(corps.get("email"))
+        if email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]{2,}", email):
+            raise HTTPException(status_code=400, detail="Adresse e-mail invalide")
+        out["email"] = email
+    if not partiel or str(corps.get("whatsapp") or "").strip():
+        brut = str(corps.get("whatsapp") or "")
+        tel = telephone_e164(brut)
+        if brut.strip() and not tel:
+            raise HTTPException(status_code=400, detail="Numéro WhatsApp invalide")
+        out["whatsapp"] = tel
+    if not partiel and not out.get("email") and not out.get("whatsapp"):
+        raise HTTPException(status_code=400, detail="E-mail ou WhatsApp requis")
+    return out
+
+
+async def _live_guest_live(corps: dict) -> tuple:
+    code = str(corps.get("session_code") or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9-]{4,40}", code):
+        raise HTTPException(status_code=400, detail="session_code invalide")
+    coach = await _btlive_coach_du_live(code)
+    if not coach:
+        raise HTTPException(status_code=404, detail="live inconnu")
+    return code, coach
+
+
+def _live_guest_tourner(appareils: list, h_actuel: str, nouveau: dict) -> list:
+    """Rotation : l'appareil courant reçoit un nouveau jeton (même date de création → même plafond)."""
+    out = []
+    for a in appareils or []:
+        if a.get("h") == h_actuel:
+            out.append({**nouveau, "created_at": a.get("created_at") or nouveau["created_at"]})
+        else:
+            out.append(a)
+    return out[-20:]
+
+
+@api_router.post("/live-guest/rejoindre")
+async def live_guest_rejoindre(request: Request, response: Response):
+    """1re participation sur cet appareil (ou nouvelle saisie) : relation coach + identité + cookie."""
+    _live_guest_limiter(request)
+    corps = await request.json() or {}
+    code, coach = await _live_guest_live(corps)
+    v = _live_guest_valider(corps)
+    await _btlive_enregistrer_invite(code, coach, v["pseudo"], v["email"], v["whatsapp"], v["photo_url"])
+    maint = datetime.now(timezone.utc)
+    courant = await _live_guest_identite(request)
+    if courant:
+        ident, app = courant
+        jeton, nouveau = _live_guest_appareil(maint, _btlive_date(app.get("created_at")))
+        appareils = _live_guest_tourner(ident.get("appareils"), app["h"], nouveau)
+        if (v["email"] and v["email"] != ident.get("email")) or (v["whatsapp"] and v["whatsapp"] != ident.get("whatsapp")):
+            appareils = [a if a.get("h") == nouveau["h"] else {**a, "revoked_at": a.get("revoked_at") or maint.isoformat()}
+                         for a in appareils]
+        maj = {"pseudo": v["pseudo"], "photo_url": v["photo_url"] or ident.get("photo_url") or "",
+               "email": v["email"] or ident.get("email") or "", "whatsapp": v["whatsapp"] or ident.get("whatsapp") or "",
+               "appareils": appareils, "updated_at": maint.isoformat()}
+        await db.invites_live.update_one({"id": ident["id"]}, {"$set": maj})
+        ident = {**ident, **maj}
+    else:
+        jeton, nouveau = _live_guest_appareil(maint)
+        ident = {"id": str(uuid.uuid4()), "pseudo": v["pseudo"], "photo_url": v["photo_url"], "email": v["email"],
+                 "whatsapp": v["whatsapp"], "email_verified_at": None, "appareils": [nouveau],
+                 "created_at": maint.isoformat(), "updated_at": maint.isoformat()}
+        await db.invites_live.insert_one(dict(ident))
+    _live_guest_poser_cookie(response, jeton, nouveau, maint)
+    logger.info("[V574] invité reconnu sur cet appareil pour le live %s", code)
+    return live_guest_vue(ident)
+
+
+@api_router.get("/live-guest/moi")
+async def live_guest_moi(request: Request):
+    """« Bon retour » : pseudo, photo et coordonnées MASQUÉES — 401 si cet appareil n'est pas reconnu."""
+    courant = await _live_guest_identite(request)
+    if not courant:
+        raise HTTPException(status_code=401, detail="Appareil non reconnu")
+    return live_guest_vue(courant[0])
+
+
+@api_router.post("/live-guest/continuer")
+async def live_guest_continuer(request: Request, response: Response):
+    """« Continuer vers le Live » : rattache cette participation au coach du live, tourne le jeton."""
+    _live_guest_limiter(request)
+    courant = await _live_guest_identite(request)
+    if not courant:
+        raise HTTPException(status_code=401, detail="Appareil non reconnu")
+    corps = await request.json() or {}
+    code, coach = await _live_guest_live(corps)
+    ident, app = courant
+    await _btlive_enregistrer_invite(code, coach, ident.get("pseudo") or "", ident.get("email") or "",
+                                     ident.get("whatsapp") or "", ident.get("photo_url") or "")
+    maint = datetime.now(timezone.utc)
+    jeton, nouveau = _live_guest_appareil(maint, _btlive_date(app.get("created_at")))
+    await db.invites_live.update_one({"id": ident["id"]}, {"$set": {
+        "appareils": _live_guest_tourner(ident.get("appareils"), app["h"], nouveau), "updated_at": maint.isoformat()}})
+    _live_guest_poser_cookie(response, jeton, nouveau, maint)
+    return live_guest_vue(ident)
+
+
+@api_router.patch("/live-guest/moi")
+async def live_guest_modifier(request: Request, response: Response):
+    """« Modifier mes informations » : identité mise à jour ; e-mail / WhatsApp changé → les AUTRES
+    appareils sont révoqués ; avec `session_code`, l'entrée du live courant suit (pseudo / photo),
+    sans jamais écraser la fiche du coach."""
+    _live_guest_limiter(request)
+    courant = await _live_guest_identite(request)
+    if not courant:
+        raise HTTPException(status_code=401, detail="Appareil non reconnu")
+    corps = await request.json() or {}
+    v = _live_guest_valider(corps, partiel=True)
+    ident, app = courant
+    maint = datetime.now(timezone.utc)
+    maj = {k: val for k, val in v.items() if k in ("pseudo", "photo_url") and val}
+    change = False
+    for k in ("email", "whatsapp"):
+        if v.get(k) and v[k] != ident.get(k):
+            maj[k] = v[k]
+            change = True
+    if change:
+        maj["appareils"] = [a if a.get("h") == app["h"] else {**a, "revoked_at": a.get("revoked_at") or maint.isoformat()}
+                            for a in ident.get("appareils") or []]
+    maj["updated_at"] = maint.isoformat()
+    await db.invites_live.update_one({"id": ident["id"]}, {"$set": maj})
+    ident = {**ident, **maj}
+    if corps.get("session_code"):
+        code, coach = await _live_guest_live(corps)
+        await _btlive_enregistrer_invite(code, coach, ident.get("pseudo") or "", ident.get("email") or "",
+                                         ident.get("whatsapp") or "", ident.get("photo_url") or "")
+    return live_guest_vue(ident)
+
+
+@api_router.post("/live-guest/oublier")
+async def live_guest_oublier(request: Request, response: Response):
+    """« Ce n'est pas moi » / « Oublier ce profil sur cet appareil » : révoque CE jeton et efface le
+    cookie. Aucune donnée serveur supprimée (contacts des coachs, identité)."""
+    courant = await _live_guest_identite(request)
+    if courant:
+        ident, app = courant
+        maint = datetime.now(timezone.utc).isoformat()
+        await db.invites_live.update_one({"id": ident["id"]}, {"$set": {
+            "appareils": [{**a, "revoked_at": maint} if a.get("h") == app["h"] else a for a in ident.get("appareils") or []],
+            "updated_at": maint}})
+    response.delete_cookie(LIVE_GUEST_COOKIE, path=LIVE_GUEST_CHEMIN, secure=True, httponly=True, samesite="lax")
+    return {"ok": True}
 
 
 @api_router.post("/boosttribe/consume")
@@ -50301,6 +50578,13 @@ async def startup_db():
         await _v307_resolve_jwt_secret()
     except Exception as e:
         logger.warning(f"[V307] résolution JWT_SECRET ignorée: {e}")
+
+    # V574 : identité invité « Bon retour » — recherche par empreinte d'appareil (jamais le jeton).
+    try:
+        await db.invites_live.create_index("appareils.h", unique=True, sparse=True)
+        await db.invites_live.create_index("id", unique=True)
+    except Exception as _e574:
+        logger.warning(f"[V574] index invites_live : {_e574}")
 
     # Index unique pour push_subscriptions (evite doublons)
     try:
