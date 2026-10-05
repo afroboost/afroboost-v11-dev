@@ -29,6 +29,7 @@ import CarteContact from './CarteContact';
 import FicheContact from './FicheContact';
 import useLargeurEcran from '../../utils/useLargeurEcran';
 import { TRIS, trierContacts, paysPresents } from '../../utils/contactsAffichage';
+import { libelleSource, sourcesAffichees } from '../../utils/sourcesContact';
 
 export default function ContactsManager({ API, coachEmail }) {
   const [contacts, setContacts] = useState([]);
@@ -1305,14 +1306,17 @@ export default function ContactsManager({ API, coachEmail }) {
                     ))}
                   </div>
                 )}
-                <span style={{
-                  padding: '2px 8px', borderRadius: '10px', fontSize: '10px',
-                  background: c.source === 'google' ? 'rgba(34,197,94,0.1)' : c.source === 'app' ? 'rgba(59,130,246,0.1)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
-                  color: c.source === 'google' ? '#22c55e' : c.source === 'app' ? '#3b82f6' : 'var(--primary-color, #D91CD2)',
-                  flexShrink: 0
-                }}>
-                  {c.source === 'google' ? 'Google' : c.source === 'app' ? 'App' : c.source === 'stripe_payment' ? 'Stripe' : c.source || 'Import'}
-                </span>
+                {/* V573 : UN badge par origine (ex. « chat_login » + « Afroboost Live ») */}
+                {sourcesAffichees(c).map((src) => (
+                  <span key={src} data-testid="contact-source-badge" style={{
+                    padding: '2px 8px', borderRadius: '10px', fontSize: '10px',
+                    background: src === 'google' ? 'rgba(34,197,94,0.1)' : src === 'app' ? 'rgba(59,130,246,0.1)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
+                    color: src === 'google' ? 'var(--contact-google-color, #22c55e)' : src === 'app' ? 'var(--contact-app-color, #3b82f6)' : 'var(--primary-color, #D91CD2)',
+                    flexShrink: 0
+                  }}>
+                    {libelleSource(src)}
+                  </span>
+                ))}
                 {/* LOT 2 : badge « Membre ». Affiche UNIQUEMENT sur une adhesion
                     ACTIVE — une adhesion expiree ou a venir ne fait pas un membre,
                     et un badge qui mentirait sur ce point vaut moins que pas de

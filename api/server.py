@@ -15113,7 +15113,9 @@ async def boosttribe_live_guest(request: Request):
 
     _coach_id, _portee = portee_proprietaire(coach)
     _now = datetime.now(timezone.utc).isoformat()
-    prov = {"session_code": code, "at": _now}
+    # V573 : ce que l'invité a utilisé PENDANT ce live (base du futur « Bon retour [pseudo] ») —
+    # gardé dans la provenance, jamais à la place du nom / de la photo de la fiche.
+    prov = {"session_code": code, "at": _now, "pseudo": nom, "photo_url": photo, "coach": coach}
     entree = {"name": nom, "email": email, "whatsapp": tel, "photo_url": photo}
     ex = await doublon_dans_portee(db, _portee, email=email or None, telephone=tel or None)
     if not ex:
@@ -21426,6 +21428,116 @@ async def deduplicate_contacts(request: Request, scope: Optional[str] = None):
         logger.error(f"[DEDUP] Erreur: {e}")
         return {"success": False, "error": str(e)}
 
+def assembler_contacts_individuels(participants, all_users, seen_ids, seen_emails, seen_phones) -> list:
+    """V573 — PURE : les fiches individuelles de `/contacts/all`, sans rien fusionner en base.
+
+    Test réel du 05/10 : une fiche enrichie par le Live (sources chat_login + live_afroboost)
+    était ÉCARTÉE parce qu'une fiche plus ancienne portait le même WhatsApp — ses sources
+    disparaissaient — puis une inscription `users` de même identifiant prenait sa place.
+    Désormais :
+      * une fiche écartée (même identifiant / e-mail / numéro — même règle qu'avant : numéro
+        écrit à l'identique, pour ne jamais cacher une AUTRE personne qui partage un numéro
+        écrit autrement) AJOUTE ses sources à la fiche retenue ; son identifiant, son e-mail et
+        son numéro sont mémorisés (aucune inscription ne la remplace ni ne réapparaît) ;
+      * chaque fiche renvoie `source` (inchangé) ET `sources` (toutes ses origines) ;
+      * une inscription sans identifiant, ni e-mail, ni téléphone (profil social) n'est pas
+        présentée comme un contact.
+    Priorités inchangées : participants d'abord, puis users.
+    """
+    contacts = []
+    par_cle = {}                                   # "m:<email>" / "t:<numéro>" / "i:<id>" -> fiche retenue
+
+    def _sources(doc, defaut):
+        out = []
+        for x in [doc.get("source") or defaut] + list(doc.get("sources") or []):
+            if isinstance(x, str) and x and x not in out:
+                out.append(x)
+        return out
+
+    def _ajouter_sources(fiche, sources):
+        for x in sources:
+            if x not in fiche["sources"]:
+                fiche["sources"].append(x)
+
+    for p in participants:
+        pid = p.get("id", "")
+        email = (p.get("email") or "").strip().lower()
+        phone = (p.get("whatsapp") or p.get("phone") or "").strip()
+        canon = phone
+        cles = ([f"i:{pid}"] if pid else []) + ([f"m:{email}"] if email else []) + ([f"t:{canon}"] if canon else [])
+        retenue = next((par_cle[k] for k in cles if k in par_cle), None)
+        if retenue is None and ((pid and pid in seen_ids) or (email and email in seen_emails) or (canon and canon in seen_phones)):
+            continue                               # déjà vu ailleurs (groupes) : comportement d'avant
+        if retenue is not None:
+            _ajouter_sources(retenue, _sources(p, "import"))
+            for k in cles:
+                par_cle.setdefault(k, retenue)
+            if pid:
+                seen_ids.add(pid)                  # une inscription de même id ne la remplacera pas
+            if email:
+                seen_emails.add(email)             # …ni une inscription de même e-mail
+            if canon:
+                seen_phones.add(canon)
+            continue
+        if pid:
+            seen_ids.add(pid)
+        if email:
+            seen_emails.add(email)
+        if canon:
+            seen_phones.add(canon)
+        fiche = {
+            "id": pid,
+            "name": p.get("name") or email or phone or "Sans nom",
+            "type": "user",
+            "category": p.get("source", "import"),
+            "phone": phone or None,
+            "email": email or None,
+            "source": p.get("source", "import"),
+            "sources": _sources(p, "import"),
+            # ESSAI-5a-2 : la classification EXPLICITE posee par le coach.
+            # `category` juste au-dessus est l'ORIGINE du contact, pas sa
+            # relation a Afroboost — les confondre reviendrait a deduire
+            # « participant » d'une source marketing.
+            "contact_type": p.get("contact_type") or None,
+            "tags": p.get("tags", []),
+        }
+        for k in cles:
+            par_cle[k] = fiche
+        contacts.append(fiche)
+
+    # 3. USERS — Utilisateurs de l'app (ceux pas déjà dans participants)
+    # v108: Dedup par ID ET email pour éviter les doublons cross-collections
+    for u in all_users:
+        uid = u.get("id", "")
+        email = (u.get("email") or "").strip().lower()
+        tel = (u.get("whatsapp") or u.get("phone") or "").strip()
+        if not email and not tel:
+            continue                               # V573 : pas d'identité exploitable (profil social)
+        if uid and uid in seen_ids:
+            continue
+        if email and email in seen_emails:
+            continue
+        if uid:
+            seen_ids.add(uid)
+        if email:
+            seen_emails.add(email)
+        contacts.append({
+            "id": uid,
+            "name": u.get("name") or email or "Sans nom",
+            "type": "user",
+            "category": "app_user",
+            "phone": None,
+            "email": email or None,
+            "source": "app",
+            "sources": ["app"],
+            # Un utilisateur de l'app n'est pas classe : `chat_participants`
+            # est la seule collection qui porte `contact_type`.
+            "contact_type": None,
+            "tags": []
+        })
+    return contacts
+
+
 @api_router.get("/contacts/all")
 async def get_all_contacts_unified(request: Request):
     """
@@ -21493,6 +21605,7 @@ async def get_all_contacts_unified(request: Request):
         _P1A_CHAMPS_CONTACT = {
             "_id": 0, "id": 1, "name": 1, "email": 1, "whatsapp": 1,
             "phone": 1, "source": 1, "contact_type": 1, "tags": 1,
+            "sources": 1,                      # V573 : toutes les origines (ex. chat_login + live_afroboost)
         }
 
         _si_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email}
@@ -21516,7 +21629,8 @@ async def get_all_contacts_unified(request: Request):
                 {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1, "updated_at": 1}
             ).sort("updated_at", -1).to_list(500),
             db.chat_participants.find(_filtre_participants, _P1A_CHAMPS_CONTACT).to_list(5000),
-            db.users.find(_filtre_users, {"_id": 0, "id": 1, "name": 1, "email": 1, "created_at": 1}).to_list(5000),
+            db.users.find(_filtre_users, {"_id": 0, "id": 1, "name": 1, "email": 1, "created_at": 1,
+                                          "whatsapp": 1, "phone": 1}).to_list(5000),   # V573 : identité exploitable ?
             db.subscriber_infos.find(
                 _si_query, {"_id": 0, "email": 1, "whatsapp": 1, "birthday": 1, "code": 1}
             ).to_list(5000),
@@ -21597,69 +21711,9 @@ async def get_all_contacts_unified(request: Request):
         # P1-A.2 : la lecture elle-meme est desormais lancee plus haut, avec les
         # cinq autres. La projection et le filtre d'isolation sont INCHANGES.
 
-        for p in participants:
-            pid = p.get("id", "")
-            email = (p.get("email") or "").strip().lower()
-            phone = (p.get("whatsapp") or p.get("phone") or "").strip()
-            # Dedup par ID d'abord, puis email/phone
-            if pid and pid in seen_ids:
-                continue
-            if email and email in seen_emails:
-                continue
-            if phone and phone in seen_phones:
-                continue
-            if pid:
-                seen_ids.add(pid)
-            if email:
-                seen_emails.add(email)
-            if phone:
-                seen_phones.add(phone)
-
-            contacts.append({
-                "id": pid,
-                "name": p.get("name") or email or phone or "Sans nom",
-                "type": "user",
-                "category": p.get("source", "import"),
-                "phone": phone or None,
-                "email": email or None,
-                "source": p.get("source", "import"),
-                # ESSAI-5a-2 : la classification EXPLICITE posee par le coach.
-                # `category` juste au-dessus est l'ORIGINE du contact, pas sa
-                # relation a Afroboost — les confondre reviendrait a deduire
-                # « participant » d'une source marketing.
-                "contact_type": p.get("contact_type") or None,
-                "tags": p.get("tags", [])
-            })
-
-        # 3. USERS — Utilisateurs de l'app (ceux pas déjà dans participants)
-        # v108: Dedup par ID ET email pour éviter les doublons cross-collections
-        # P1-A.2 : `all_users` est deja arrive (lecture lancee en tete avec les
-        # cinq autres). L'ordre de traitement, lui, est INCHANGE : les users sont
-        # fusionnes APRES les participants, qui restent la source prioritaire.
-        for u in all_users:
-            uid = u.get("id", "")
-            email = (u.get("email") or "").strip().lower()
-            if uid and uid in seen_ids:
-                continue
-            if email and email in seen_emails:
-                continue
-            if uid:
-                seen_ids.add(uid)
-            if email:
-                seen_emails.add(email)
-            contacts.append({
-                "id": uid,
-                "name": u.get("name") or email or "Sans nom",
-                "type": "user",
-                "category": "app_user",
-                "phone": None,
-                "email": email or None,
-                "source": "app",
-                # Un utilisateur de l'app n'est pas classe : `chat_participants`
-                # est la seule collection qui porte `contact_type`.
-                "contact_type": None,
-                "tags": []
-            })
+        # V573 — assemblage PUR (testable), mêmes priorités qu'avant : participants
+        # d'abord (source prioritaire), puis users. Voir `assembler_contacts_individuels`.
+        contacts.extend(assembler_contacts_individuels(participants, all_users, seen_ids, seen_emails, seen_phones))
 
         # V300 : enrichir les fiches contact (LECTURE SEULE) avec WhatsApp + date de
         # naissance + code abonné, depuis subscriber_infos (V294), joint par EMAIL.

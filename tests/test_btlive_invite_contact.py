@@ -219,3 +219,22 @@ def test_securite_live_recent_par_le_journal(base):
     base.boosttribe_live_journal.docs["j"] = {"event": "started", "session_code": CODE, "by": COACH_A,
                                               "at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()}
     assert appel(jeton())[0] == 200
+
+
+# ═══ V573 — pseudo + photo du Live conservés dans lives[] (base de « Bon retour ») ═══
+def test_F_pseudo_et_photo_du_live_dans_lives_sans_toucher_la_fiche(base):
+    base.chat_participants.docs["x"] = {"id": "x", "coach_id": S.DEFAULT_COACH_ID, "name": "Bassi",
+                                        "email": "lea@exemple.ch", "source": "chat_login",
+                                        "photo_url": "https://ancienne/photo.jpg"}
+    appel(jeton(nom="Bass"))
+    f = base.chat_participants.docs["x"]
+    assert f["name"] == "Bassi" and f["photo_url"] == "https://ancienne/photo.jpg"      # fiche principale intacte
+    v = f["lives"][-1]
+    assert v["session_code"] == CODE and v["pseudo"] == "Bass" and v["coach"] == COACH_A
+    assert v["photo_url"].endswith("/invites/LIVE1-AAAA/a.jpg") and v["at"]
+
+
+def test_F_nouveau_contact_lives_porte_aussi_pseudo_et_photo(base):
+    appel(jeton(nom="Bass"))
+    (f,) = fiches(base)
+    assert f["lives"][0]["pseudo"] == "Bass" and f["lives"][0]["photo_url"]
