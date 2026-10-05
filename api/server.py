@@ -17239,8 +17239,18 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
     # V207j: Trier par stripe_amount DESC pour prendre le document avec prix en priorité (cas doublons)
     _discount_list = await db.discount_codes.find(
         {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
-    ).sort("stripe_amount", -1).to_list(1)
+    ).sort("stripe_amount", -1).to_list(50)
     discount = _discount_list[0] if _discount_list else None
+    # V576 : une fiche `canonical: true` ENCORE VIVANTE fait foi, comme pour la
+    # réservation et le solde (`lota_resoudre_code`). Sinon un nouveau cycle sur
+    # le même code perdait face à l'ancien (prix plus élevé) et le plafond V394
+    # ci-dessous ramenait le solde à celui de l'ancien cycle : « 0 restante ».
+    # Sans fiche canonique vivante : choix V207j inchangé.
+    from api.routes.shared import (lota_resoudre_code as _v576_resoudre,
+                                   lota_droit_utilisable as _v576_vivant)
+    _v576_doc, _v576_voie = _v576_resoudre(_discount_list)
+    if _v576_voie == "canonical" and _v576_vivant(_v576_doc)[0]:
+        discount = _v576_doc
 
     # V201: Log détaillé
     logger.info(f"[V201] Code {code_upper}: subscription={'found' if subscription else 'NOT FOUND'}, discount={'found' if discount else 'NOT FOUND'}")

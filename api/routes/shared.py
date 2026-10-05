@@ -5021,7 +5021,18 @@ def lota_etat_du_code(docs, abonnements=None, porteurs=0, aujourdhui=None) -> di
     chiffre, et un chiffre faux ferme un droit payé.
     """
     docs = list(docs or [])
-    abonnements = list(abonnements or [])
+    # V576 : un abonnement clos par un successeur SUR LE MÊME CODE (son
+    # `superseded_by` désigne un autre abonnement de cette liste) appartient à un
+    # cycle TERMINÉ — historique, pas témoin du cycle en cours. Sans ce tri,
+    # l'ancien cycle (9/9) « contredisait » la fiche neuve (0/63) et l'espace
+    # affichait « Plusieurs forfaits » au lieu du compteur.
+    # ⚠️ Un successeur d'un AUTRE code (clôture V397 lors d'un nouvel achat) ne
+    # suffit PAS : l'écarter rouvrirait un essai au compteur contradictoire
+    # (fail-open). Ces abonnements restent lus, le garde-fou ci-dessous tient.
+    abonnements = [a for a in (abonnements or []) if a]
+    _ids_du_code = {a.get("id") for a in abonnements if a.get("id")}
+    abonnements = [a for a in abonnements
+                   if not (a.get("superseded_by") and a.get("superseded_by") in _ids_du_code)]
     if not docs:
         return lota_vide()
 
@@ -5151,7 +5162,8 @@ async def lota_droits_du_code(db, code) -> dict:
         docs = await db.discount_codes.find({"code": motif}, {"_id": 0}).to_list(50)
         abonnements = await db.subscriptions.find(
             {"code": motif},
-            {"_id": 0, "status": 1, "used_sessions": 1, "remaining_sessions": 1}
+            {"_id": 0, "status": 1, "used_sessions": 1, "remaining_sessions": 1,
+             "id": 1, "superseded_by": 1}            # V576 : cycles clos sur ce code écartés
         ).to_list(50)
         porteurs = await db.code_members.count_documents({"code": motif})
     except Exception as _err:
