@@ -15011,6 +15011,122 @@ async def boosttribe_live_status_set(request: Request, response: Response = None
     return {"ok": True, "live": await _btlive_etat()}
 
 
+# ═══ V572 — INVITÉ D'UN LIVE AFROBOOST → CONTACTS EXISTANTS ═══════════════════════════════
+#  BoostTribe (serveur) relaie le pseudo / e-mail / WhatsApp / photo saisis par l'invité, dans
+#  un jeton HS256 signé avec le secret partagé EXISTANT (`AFRO_BT_SHARED_SECRET`), audience
+#  RÉSERVÉE `afroboost-contacts` (un jeton d'accès BoostTribe — aud=boosttribe — est refusé),
+#  `jti` à usage unique. Écriture dans `chat_participants` (aucune nouvelle base), anti-doublon
+#  `tenant_contacts` (e-mail ; numéro sous toutes ses écritures) dans la portée du coach du live.
+#  Fiche existante : on COMPLÈTE (champs vides, sources, provenance), on n'écrase rien.
+#  Entrer au Live ≠ consentement marketing : `marketing_consent` jamais posé à vrai, registre
+#  `subscribers` (refus WhatsApp compris) jamais touché, aucun crédit débité.
+BTLIVE_INVITE_AUD = "afroboost-contacts"
+BTLIVE_INVITE_SOURCE = "live_afroboost"
+_btlive_invite_jti: dict = {}          # jti -> expiration (s) ; jetons de 5 min, un conteneur
+
+
+async def _btlive_coach_du_live(code: str) -> Optional[str]:
+    """Le coach (e-mail) qui a démarré ce live, ou None si ce n'est pas un live Afroboost connu."""
+    try:
+        d = await db.boosttribe_live.find_one({"_id": "actuel"}, {"_id": 0, "session_code": 1, "host": 1})
+        if d and d.get("session_code") == code and d.get("host"):
+            return str(d["host"])
+        j = await db.boosttribe_live_journal.find_one({"event": "started", "session_code": code}, {"_id": 0, "by": 1})
+        return str(j["by"]) if j and j.get("by") else None
+    except Exception as _err:                                   # noqa: BLE001
+        logger.warning("[V572] coach du live illisible (%s)", type(_err).__name__)
+        return None
+
+
+def btlive_fusion_contact_invite(existant: dict, entree: dict, provenance: dict) -> dict:
+    """PURE — le `$set` qui COMPLÈTE une fiche existante sans rien détruire."""
+    _set = {"updated_at": provenance["at"]}
+    for champ in ("name", "email", "whatsapp", "photo_url"):
+        if entree.get(champ) and not str(existant.get(champ) or "").strip():
+            _set[champ] = entree[champ]
+    _sources = [x for x in (existant.get("sources") or []) if isinstance(x, str)]
+    if not _sources and existant.get("source"):
+        _sources = [str(existant["source"])]
+    if BTLIVE_INVITE_SOURCE not in _sources:
+        _sources.append(BTLIVE_INVITE_SOURCE)
+    _set["sources"] = _sources
+    _lives = [x for x in (existant.get("lives") or []) if isinstance(x, dict)]
+    if not any(x.get("session_code") == provenance["session_code"] for x in _lives):
+        _lives.append(provenance)
+    _set["lives"] = _lives[-50:]
+    return _set
+
+
+@api_router.post("/boosttribe/live-guest")
+async def boosttribe_live_guest(request: Request):
+    """V572 — serveur BoostTribe -> Afroboost : l'invité d'un live rejoint les Contacts."""
+    from api.routes.tenant_contacts import (portee_proprietaire, doublon_dans_portee, index_doublons,
+                                            chercher_doublon, telephone_e164, normaliser_email as _nm)
+    secret = os.environ.get("AFRO_BT_SHARED_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="BoostTribe non configuré (secret manquant)")
+    body = await request.json()
+    token = str((body or {}).get("token") or "").strip()
+    import jwt as _pyjwt
+    try:
+        p = _pyjwt.decode(token, secret, algorithms=["HS256"], audience=BTLIVE_INVITE_AUD, issuer="boosttribe")
+    except Exception:
+        raise HTTPException(status_code=401, detail="token invalide")
+    jti = str(p.get("jti") or "")
+    if not jti:
+        raise HTTPException(status_code=400, detail="jti manquant")
+    import time as _time
+    _maint = _time.time()
+    for _k in [k for k, exp in _btlive_invite_jti.items() if exp < _maint]:
+        _btlive_invite_jti.pop(_k, None)
+    if jti in _btlive_invite_jti:
+        raise HTTPException(status_code=409, detail="jeton déjà utilisé")
+    _btlive_invite_jti[jti] = float(p.get("exp") or _maint + 300)
+
+    code = str(p.get("session_code") or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9-]{4,40}", code):
+        raise HTTPException(status_code=400, detail="session_code invalide")
+    coach = await _btlive_coach_du_live(code)
+    if not coach:
+        raise HTTPException(status_code=404, detail="live inconnu")
+
+    email = _nm(p.get("email"))
+    if email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]{2,}", email):
+        email = ""
+    tel = telephone_e164(str(p.get("whatsapp") or ""))
+    if not email and not tel:
+        raise HTTPException(status_code=400, detail="e-mail ou WhatsApp requis")
+    nom = re.sub(r"[\x00-\x1f<>]", "", str(p.get("nom") or "")).strip()[:60]
+    photo = str(p.get("photo_url") or "").strip()
+    photo = photo if photo.startswith("https://") and len(photo) <= 500 else ""
+
+    _coach_id, _portee = portee_proprietaire(coach)
+    _now = datetime.now(timezone.utc).isoformat()
+    prov = {"session_code": code, "at": _now}
+    entree = {"name": nom, "email": email, "whatsapp": tel, "photo_url": photo}
+    ex = await doublon_dans_portee(db, _portee, email=email or None, telephone=tel or None)
+    if not ex:
+        _trouve = chercher_doublon(await index_doublons(db, _portee), email=email or None, telephone=tel or None)
+        if _trouve and _trouve.get("id"):
+            ex = await db.chat_participants.find_one({"$and": [_portee, {"id": _trouve["id"]}]}, {"_id": 0})
+    if ex:
+        await db.chat_participants.update_one({"$and": [_portee, {"id": ex.get("id")}]},
+                                              {"$set": btlive_fusion_contact_invite(ex, entree, prov)})
+        logger.info("[V572] invité du live %s rattaché à une fiche existante", code)
+        return {"ok": True, "cree": False}
+    cle = {"coach_id": _coach_id, "email": email} if email else {"coach_id": _coach_id, "whatsapp": tel}
+    await db.chat_participants.update_one(
+        cle,
+        {"$setOnInsert": {"id": str(uuid.uuid4()), "name": nom, "email": email, "whatsapp": tel,
+                          "photo_url": photo, "source": BTLIVE_INVITE_SOURCE, "sources": [BTLIVE_INVITE_SOURCE],
+                          "lives": [prov], "marketing_consent": False, "link_token": None,
+                          "created_at": _now, "last_seen_at": None},
+         "$set": {"updated_at": _now}},
+        upsert=True)
+    logger.info("[V572] invité du live %s ajouté aux contacts", code)
+    return {"ok": True, "cree": True}
+
+
 @api_router.post("/boosttribe/consume")
 async def boosttribe_consume(request: Request):
     """Callback serveur->serveur de BoostTribe au DEMARRAGE d'une session.
