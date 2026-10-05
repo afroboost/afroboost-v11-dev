@@ -422,7 +422,8 @@ export default function ContactsManager({ API, coachEmail }) {
   // V146: Supprimer les contacts sélectionnés
   const deleteSelected = async () => {
     if (selectedIds.size === 0) return;
-    const confirm = window.confirm(`Supprimer ${selectedIds.size} contact(s) ? Cette action est irréversible.`);
+    // V575 : la route place les fiches en Corbeille (restaurables), elle n'efface plus rien.
+    const confirm = window.confirm(`Supprimer ${selectedIds.size} contact(s) ? Ils iront dans la Corbeille, d'où vous pourrez les restaurer.`);
     if (!confirm) return;
 
     setDeleting(true);
@@ -431,12 +432,19 @@ export default function ContactsManager({ API, coachEmail }) {
         ids: Array.from(selectedIds)
       }, { headers });
       if (res.data.success) {
-        setImportResult({ imported: 0, message: `🗑️ ${res.data.deleted} contact(s) supprimé(s)` });
+        // V575 : un contact ignoré = inscription plateforme, fiche d'un autre coach ou profil
+        // protégé. Le dire, plutôt que laisser croire que tout est parti.
+        const ignores = res.data.ignored || 0;
+        setImportResult({ imported: 0, message: `🗑️ ${res.data.deleted} contact(s) placé(s) dans la Corbeille`
+          + (ignores ? ` — ${ignores} non supprimable(s) ici (inscription plateforme ou contact protégé)` : '') });
         setSelectedIds(new Set());
         loadContacts();
       }
     } catch (err) {
-      setImportResult({ imported: 0, message: '❌ Erreur suppression: ' + (err.response?.data?.detail || err.message) });
+      const statut = err.response?.status;
+      const detail = statut === 403 ? 'session expirée — reconnectez-vous puis réessayez'
+        : (err.response?.data?.detail || err.message);
+      setImportResult({ imported: 0, message: '❌ Suppression impossible : ' + detail });
     } finally {
       setDeleting(false);
     }

@@ -36480,6 +36480,81 @@ async def delete_chat_participant(participant_id: str, request: Request):
     }
 
 
+# V575 — le bouton « Supprimer » de Contacts appelle cette route depuis V146b.
+# Elle avait été retirée par v162 (c245cd08) sans toucher l'écran : le POST ne
+# trouvait plus que le catch-all SPA (GET) -> « Method Not Allowed » (405).
+# Rétablie avec les garanties de la suppression unitaire V313 ci-dessus : JWT
+# signé, cloisonnement par coach (`filtrer_ids`, fail-closed sur les fiches sans
+# propriétaire), corbeille restaurable, messages conservés. Les inscriptions
+# `users` (comptes plateforme, non restaurables) et les données d'abonnement ne
+# sont JAMAIS effacées ; aucun appel à Google (la synchro est en lecture seule).
+V575_SUPPRESSION_MAX = 200
+
+
+@api_router.post("/contacts/bulk-delete")
+async def bulk_delete_contacts(request: Request):
+    caller = _v311_coach_email_from_jwt(request)
+    if not caller or not await _v309_is_coach_or_admin(caller):
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corps JSON invalide")
+    brut = body.get("ids") if isinstance(body, dict) else None
+    if not isinstance(brut, list) or not brut:
+        raise HTTPException(status_code=400, detail="ids (liste non vide) requis")
+    if len(brut) > V575_SUPPRESSION_MAX:
+        raise HTTPException(status_code=400,
+                            detail=f"{V575_SUPPRESSION_MAX} contacts maximum par suppression")
+    demandes = list(dict.fromkeys(i for i in brut if isinstance(i, str) and i))
+
+    from api.routes.tenant_contacts import filtrer_ids as _mt2_filtrer_ids
+    autorises = await _mt2_filtrer_ids(db, caller, "chat_participants", demandes)
+    fiches = (await db.chat_participants.find({"id": {"$in": autorises}}, {"_id": 0})
+              .to_list(V575_SUPPRESSION_MAX)) if autorises else []
+    # Profils système : la fiche de l'appelant lui-même et celles du super-admin.
+    proteges = {e.lower().strip() for e in SUPER_ADMIN_EMAILS} | {caller.lower().strip()}
+    fiches = [f for f in fiches if f.get("id")
+              and (f.get("email") or "").strip().lower() not in proteges]
+    pids = [f["id"] for f in fiches]
+
+    if pids:
+        # Lectures GROUPÉES (`$in`) : jamais une requête par contact. Sessions
+        # relevées AVANT modification, pour que la restauration les rétablisse.
+        sess_docs = await db.chat_sessions.find(
+            {"participant_ids": {"$in": pids}}, {"_id": 0, "id": 1, "participant_ids": 1}
+        ).to_list(2000)
+        maintenant = datetime.now(timezone.utc).isoformat()
+        for f in fiches:
+            await db.deleted_items.insert_one({
+                "id": str(uuid.uuid4()),
+                "original_collection": "chat_participants",
+                "original_id": f["id"],
+                "coach_id": f.get("coach_id"),
+                "deleted_at": maintenant,
+                "deleted_by": caller,
+                "payload": f,
+                "related": {"session_ids": [s.get("id") for s in sess_docs
+                                            if s.get("id") and f["id"] in (s.get("participant_ids") or [])]},
+            })
+        await db.chat_sessions.update_many(
+            {"participant_ids": {"$in": pids}},
+            {"$pull": {"participant_ids": {"$in": pids}}}
+        )
+        await db.chat_participants.delete_many({"id": {"$in": pids}})
+
+    logger.info(f"[V575] {len(pids)}/{len(demandes)} contact(s) placé(s) en corbeille par {caller}")
+    # `ignored` ne distingue pas « fiche d'un autre coach » de « inexistante » :
+    # pas d'oracle d'appartenance (même règle que le 404 de MT-2).
+    return {
+        "success": True,
+        "trashed": True,
+        "deleted": len(pids),
+        "requested": len(demandes),
+        "ignored": len(demandes) - len(pids),
+    }
+
+
 @api_router.get("/trash")
 async def list_trash(request: Request, page: int = 1, limit: int = 50):
     """V313 : contenu de la corbeille (`deleted_items`) du caller. JWT strict +
