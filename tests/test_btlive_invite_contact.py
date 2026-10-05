@@ -48,11 +48,12 @@ class _CollContacts(_Coll):
                 return False
         return True
 
-    async def find_one(self, f, proj=None):
-        for d in self.docs.values():
-            if self._ok(d, f):
-                return copy.deepcopy(d)
-        return None
+    async def find_one(self, f, proj=None, sort=None):
+        docs = [d for d in self.docs.values() if self._ok(d, f)]
+        if sort:
+            cle, sens = sort[0]
+            docs.sort(key=lambda d: str(d.get(cle) or ""), reverse=sens < 0)
+        return copy.deepcopy(docs[0]) if docs else None
 
     async def update_one(self, f, u, upsert=False):
         for d in self.docs.values():
@@ -91,12 +92,12 @@ def base(monkeypatch):
     monkeypatch.setattr(TC, "is_super_admin", lambda e: e == COACH_A, raising=False)
     fausse = type("DB", (), {})()
     fausse.boosttribe_live = _Coll()
-    fausse.boosttribe_live_journal = _Coll()
+    fausse.boosttribe_live_journal = _CollContacts()
     fausse.chat_participants = _CollContacts()
     fausse.subscribers = _CollContacts()
     fausse.users = _CollContacts()
     fausse.boosttribe_live.docs["actuel"] = {"_id": "actuel", "session_code": CODE, "host": COACH_A, "ended": False,
-                                             "started_at": "2026-10-05T10:00:00+00:00"}
+                                             "started_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()}
     monkeypatch.setattr(S, "db", fausse)
     S._btlive_invite_jti.clear()
     return fausse
@@ -201,3 +202,20 @@ def test_sans_email_ni_numero_valide_400(base):
 def test_secret_absent_503(base, monkeypatch):
     monkeypatch.delenv("AFRO_BT_SHARED_SECRET")
     assert appel(jeton())[0] == 503
+
+
+# ═══ Revue de sécurité du 05/10 : l'origine HTTP n'est pas une authentification ═══
+def test_securite_live_ancien_refuse(base):
+    """Un code de session d'un live terminé depuis longtemps ne sert plus à injecter des contacts."""
+    from datetime import datetime, timedelta, timezone
+    base.boosttribe_live.docs["actuel"]["started_at"] = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
+    assert appel(jeton())[0] == 404 and fiches(base) == []
+
+
+def test_securite_live_recent_par_le_journal(base):
+    from datetime import datetime, timedelta, timezone
+    base.boosttribe_live.docs["actuel"] = {"_id": "actuel", "session_code": "AUTRE-ZZZZ", "host": COACH_A,
+                                           "started_at": datetime.now(timezone.utc).isoformat()}
+    base.boosttribe_live_journal.docs["j"] = {"event": "started", "session_code": CODE, "by": COACH_A,
+                                              "at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()}
+    assert appel(jeton())[0] == 200

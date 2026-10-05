@@ -15025,14 +15025,25 @@ BTLIVE_INVITE_SOURCE = "live_afroboost"
 _btlive_invite_jti: dict = {}          # jti -> expiration (s) ; jetons de 5 min, un conteneur
 
 
+BTLIVE_INVITE_FENETRE_H = 24   # un contact n'est accepté que pour un live démarré il y a < 24 h
+
+
 async def _btlive_coach_du_live(code: str) -> Optional[str]:
-    """Le coach (e-mail) qui a démarré ce live, ou None si ce n'est pas un live Afroboost connu."""
+    """Le coach (e-mail) qui a démarré ce live RÉCENT (< 24 h), ou None.
+
+    Revue de sécurité (05/10) : l'origine HTTP vérifiée par BoostTribe n'est pas une
+    authentification ; un vieux code de session ne doit donc plus permettre d'injecter
+    des contacts. Seul un live démarré récemment est accepté."""
+    limite = datetime.now(timezone.utc) - timedelta(hours=BTLIVE_INVITE_FENETRE_H)
     try:
-        d = await db.boosttribe_live.find_one({"_id": "actuel"}, {"_id": 0, "session_code": 1, "host": 1})
+        d = await db.boosttribe_live.find_one({"_id": "actuel"}, {"_id": 0, "session_code": 1, "host": 1, "started_at": 1})
         if d and d.get("session_code") == code and d.get("host"):
-            return str(d["host"])
-        j = await db.boosttribe_live_journal.find_one({"event": "started", "session_code": code}, {"_id": 0, "by": 1})
-        return str(j["by"]) if j and j.get("by") else None
+            debut = _btlive_date(d.get("started_at"))
+            return str(d["host"]) if debut and debut >= limite else None
+        j = await db.boosttribe_live_journal.find_one({"event": "started", "session_code": code},
+                                                      {"_id": 0, "by": 1, "at": 1}, sort=[("at", -1)])
+        quand = _btlive_date((j or {}).get("at"))
+        return str(j["by"]) if j and j.get("by") and quand and quand >= limite else None
     except Exception as _err:                                   # noqa: BLE001
         logger.warning("[V572] coach du live illisible (%s)", type(_err).__name__)
         return None
