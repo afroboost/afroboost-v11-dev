@@ -15417,6 +15417,50 @@ async def live_guest_oublier(request: Request, response: Response):
     return {"ok": True}
 
 
+# ═══ V577 — « FAIRE LA PROMO » D'UN INVITÉ IDENTIFIÉ : la session invité EXISTANTE, rien de plus ═══
+#  L'invité du Live (pseudo + e-mail / WhatsApp à l'entrée, cookie `afb_live_guest` V574) n'a pas de
+#  compte BoostTribe : le serveur du Live (api-live.afroboost.com, autre origine, ne voit pas le cookie)
+#  lui refusait la demande de promo (« Token manquant ») et l'écran l'envoyait se CONNECTER. Ici, le
+#  cookie déjà posé est converti en un jeton COURT pour le serveur du Live — aucune 2e authentification,
+#  aucune 2e saisie. HS256 avec le secret partagé EXISTANT, audience RÉSERVÉE `boosttribe-live-guest`
+#  (ni un jeton d'accès `boosttribe`, ni un jeton `afroboost-contacts`), 10 min, lié au Live demandé.
+#  Le jeton ne porte que l'id de l'invité, son pseudo et le code du Live : JAMAIS d'e-mail ni de
+#  WhatsApp. Le corps n'est lu que pour `session_code` : l'identité vient du cookie, jamais du front.
+#  Cookie absent / expiré / révoqué → 401 (seul cas où l'écran redemande l'identité).
+LIVE_GUEST_JETON_AUD = "boosttribe-live-guest"
+LIVE_GUEST_JETON_DUREE_S = 600
+LIVE_GUEST_JETON_MAX = 30                 # par identité et par fenêtre de 10 min (relectures « Mes demandes »)
+_live_guest_jetons_emis: dict = {}
+
+
+@api_router.post("/live-guest/jeton")
+async def live_guest_jeton(request: Request):
+    """V577 — jeton court de la session invité, pour « Faire la promo » sur le serveur du Live."""
+    secret = os.environ.get("AFRO_BT_SHARED_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="Live non configuré (secret manquant)")
+    courant = await _live_guest_identite(request)
+    if not courant:
+        raise HTTPException(status_code=401, detail="Session invité expirée — identifie-toi à nouveau")
+    corps = await request.json() or {}
+    code, _coach = await _live_guest_live({"session_code": (corps or {}).get("session_code")})
+    ident = courant[0]
+    import time as _time
+    maint = _time.time()
+    vus = [t for t in _live_guest_jetons_emis.get(ident["id"], []) if maint - t < LIVE_GUEST_DEBIT_FENETRE_S]
+    if len(vus) >= LIVE_GUEST_JETON_MAX:
+        raise HTTPException(status_code=429, detail="Trop de demandes, réessaie dans quelques minutes")
+    vus.append(maint)
+    _live_guest_jetons_emis[ident["id"]] = vus
+    import jwt as _pyjwt
+    t = int(maint)
+    jeton = _pyjwt.encode({"iss": "afroboost", "aud": LIVE_GUEST_JETON_AUD, "sub": ident["id"],
+                           "pseudo": str(ident.get("pseudo") or "")[:40], "session_code": code,
+                           "iat": t, "exp": t + LIVE_GUEST_JETON_DUREE_S, "jti": uuid.uuid4().hex},
+                          secret, algorithm="HS256")
+    return {"jeton": jeton, "expire_dans": LIVE_GUEST_JETON_DUREE_S}
+
+
 @api_router.post("/boosttribe/consume")
 async def boosttribe_consume(request: Request):
     """Callback serveur->serveur de BoostTribe au DEMARRAGE d'une session.
