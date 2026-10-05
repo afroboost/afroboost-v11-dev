@@ -62,6 +62,12 @@ C'est l'erreur la plus répétée du projet. À vérifier SYSTÉMATIQUEMENT avan
 
 5. **Avant chaque commit UI** : rechercher les hex codés en dur (`#[0-9a-fA-F]{6}`) dans les fichiers modifiés et vérifier que chacun est bien une valeur de secours dans un `var()`, et non une couleur imposée.
 
+## 🎥 RÈGLE ABSOLUE — LIVE : CONTRAT DE NON-RÉGRESSION
+
+Pour toute modification du Live (afroboost.com/live = dépôt BoostTribe `~/Boosttribe-v8`, worktrees `~/bt-*`) :
+lire `docs/LIVE_CONTRACT.md` du dépôt BoostTribe, lancer `cd frontend && yarn test:live-contract` avant
+et après, ne jamais pousser ni déployer si le contrat échoue.
+
 ## 🛡️ RÈGLE ABSOLUE — TESTS DE NON-RÉGRESSION AVANT TOUTE LIVRAISON
 
 Le site est en PRODUCTION avec de vrais clients. Depuis V291, chaque version a cassé
