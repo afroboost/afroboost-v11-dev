@@ -39635,6 +39635,9 @@ async def generate_ai_strategy(request: Request):
     Utilise l'IA pour générer des questions de tunnel, un message d'accueil
     et un prompt système basés sur l'objectif du coach.
     """
+    # V586 : cette route appelait OpenAI SANS AUCUNE identité (crédits consommables par un
+    #   anonyme). Même garde que les liens intelligents (V585) : JWT coach/admin SIGNÉ.
+    await _v309_require_coach_or_admin(request)
     body = await request.json()
     objective = body.get("objective", "").strip()
     lead_type = body.get("lead_type", "participant")

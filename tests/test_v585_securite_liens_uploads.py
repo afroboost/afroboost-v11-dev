@@ -213,3 +213,56 @@ def test_upload_repli_journalise_hors_mode_strict(base):
     assert run(S._v585_identite_upload(_Req({"X-User-Email": "visiteur@ex.ch"}), "t")) == "visiteur@ex.ch"
     assert code(S._v585_identite_upload(_Req(), "t")) == 401               # comportement d'avant
     assert run(S._v585_identite_upload(_Req(), "photo", exiger_entete=False)) == ""
+
+
+# ═══════════ V586 : /chat/generate-strategy (OpenAI) sous JWT coach/admin ═══════════
+class _FauxOpenAI:
+    appels = 0
+
+    def __init__(self, api_key=None):
+        class _C:
+            @staticmethod
+            def create(**k):
+                _FauxOpenAI.appels += 1
+                msg = type("M", (), {"content": '{"welcome_message": "Salut", "custom_prompt": "p", '
+                                                '"questions": [{"text": "Q1", "type": "text", "options": []}]}'})()
+                return type("R", (), {"choices": [type("Ch", (), {"message": msg})()]})()
+        self.chat = type("Chat", (), {"completions": _C})()
+
+
+@pytest.fixture()
+def openai_faux(monkeypatch):
+    import types
+    _FauxOpenAI.appels = 0
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=_FauxOpenAI))
+    monkeypatch.setenv("OPENAI_API_KEY", "cle-de-test")
+    return _FauxOpenAI
+
+
+CORPS = {"objective": "recruter des partenaires", "lead_type": "partner"}
+
+
+def test_strategie_sans_jeton_403(base, openai_faux):
+    assert code(S.generate_ai_strategy(_Req({}, CORPS))) == 403
+    assert openai_faux.appels == 0
+
+
+def test_strategie_identite_falsifiee_403(base, openai_faux):
+    assert code(S.generate_ai_strategy(_Req({"X-User-Email": ADMIN}, CORPS))) == 403
+    faux = pyjwt.encode({"email": ADMIN}, "autre-secret-" * 4, algorithm="HS256")
+    assert code(S.generate_ai_strategy(_Req({"Authorization": "Bearer " + faux}, CORPS))) == 403
+    abonne = jeton("amina@exemple-reel.ch", type="subscriber", code="AFR-X")
+    assert code(S.generate_ai_strategy(_Req({"Authorization": "Bearer " + abonne}, CORPS))) == 403
+    assert openai_faux.appels == 0
+
+
+def test_strategie_coach_et_super_admin_200(base, openai_faux):
+    r = run(S.generate_ai_strategy(_Req(auth(COACH_A), CORPS)))
+    assert r["questions"][0]["text"] == "Q1"
+    r = run(S.generate_ai_strategy(_Req(auth(ADMIN), CORPS)))
+    assert r["welcome_message"] == "Salut"
+    assert openai_faux.appels == 2
+
+
+def test_strategie_objectif_vide_reste_400(base, openai_faux):
+    assert code(S.generate_ai_strategy(_Req(auth(COACH_A), {"objective": ""}))) == 400

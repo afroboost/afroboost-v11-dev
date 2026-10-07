@@ -180,7 +180,9 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
     try {
       const res = await fetch(`${API}/chat/generate-strategy`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail },
+        // V586 : le serveur exige désormais le JWT coach signé (l'e-mail seul ne suffit plus).
+        headers: Object.assign({ 'Content-Type': 'application/json', 'X-User-Email': coachEmail },
+          (() => { try { const t = localStorage.getItem('afroboost_jwt'); return t ? { Authorization: 'Bearer ' + t } : {}; } catch (e) { return {}; } })()),
         body: JSON.stringify({ objective: aiObjective.trim(), lead_type: linkData.lead_type }),
       });
       if (res.ok) {
