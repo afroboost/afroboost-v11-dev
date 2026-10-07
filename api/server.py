@@ -1905,6 +1905,7 @@ class FeatureFlags(BaseModel):
     P1D_TEST_CONTROLE: bool = False          # V580 : J+3 réel pour les seules plus-adresses du super-admin
     RATTRAPAGE_HIST_ENVOI_REEL: bool = False  # V583 : rattrapage historique vers la liste figée
     RATTRAPAGE_HIST_MODE_TEST: bool = False   # V583 : rattrapage historique vers la boîte du super-admin seulement
+    UPLOADS_IDENTITE_STRICTE: bool = False    # V585 : envois de fichiers sans jeton (X-User-Email seul) refusés
     # P1-e (07/10/2026) — essai accordé mais jamais réservé : relance +3 h puis J+2.
     #   ENABLED seul -> simulation (journal, personne n'est contacté) ; les deux -> e-mail réel.
     #   TEST_CONTROLE -> autorise UNIQUEMENT les plus-adresses du super-admin (test réel contrôlé).
@@ -1981,6 +1982,7 @@ class FeatureFlagsUpdate(BaseModel):
     P1D_TEST_CONTROLE: Optional[bool] = None  # V580
     RATTRAPAGE_HIST_ENVOI_REEL: Optional[bool] = None  # V583
     RATTRAPAGE_HIST_MODE_TEST: Optional[bool] = None   # V583
+    UPLOADS_IDENTITE_STRICTE: Optional[bool] = None    # V585
     P1E_ESSAI_NON_RESERVE_ENABLED: Optional[bool] = None  # P1-e
     P1E_ESSAI_NON_RESERVE_ENVOI_REEL: Optional[bool] = None  # P1-e
     P1E_TEST_CONTROLE: Optional[bool] = None  # P1-e
@@ -3709,8 +3711,38 @@ async def _v413_enregistrer_media(file_id: str, filename: str, data: bytes,
 
 
 # --- Photo de profil (MOTEUR D'UPLOAD RÉEL) ---
+async def _v585_identite_upload(request: Request, route: str, exiger_entete: bool = True) -> str:
+    """V585 — QUI envoie ce fichier ? Identité VÉRIFIÉE d'abord, jamais l'en-tête seul.
+
+    1. JWT coach/admin signé (même vérification que les routes coach) ;
+    2. jeton ABONNÉ signé (X-Subscriber-Token ou Bearer de type subscriber) ;
+    3. sinon, l'ancien repli `X-User-Email` (falsifiable) : REFUSÉ si le drapeau
+       UPLOADS_IDENTITE_STRICTE est vrai, sinon accepté et JOURNALISÉ — c'est le pont
+       qui laisse les pages déjà ouvertes (ancien bundle) et les visiteurs du chat
+       continuer à envoyer, le temps de mesurer qui l'emprunte encore (cf. V265).
+    """
+    _jwt = _v311_coach_email_from_jwt(request)
+    if _jwt and await _v309_is_coach_or_admin(_jwt):
+        return _jwt.lower().strip()
+    from api.routes.shared import subscriber_from_request as _v585_abonne
+    _sub = _v585_abonne(request)
+    if _sub and (_sub.get("email") or _sub.get("code")):
+        return (_sub.get("email") or ("abonne:%s" % _sub.get("code"))).lower().strip()
+    _entete = (request.headers.get("X-User-Email", "") or "").lower().strip()
+    try:
+        _strict = bool((await get_feature_flags() or {}).get("UPLOADS_IDENTITE_STRICTE"))
+    except Exception:  # noqa: BLE001
+        _strict = False
+    if _strict:
+        raise HTTPException(status_code=403, detail="Authentification requise pour envoyer un fichier")
+    if exiger_entete and not _entete:
+        raise HTTPException(status_code=401, detail="Email coach requis")
+    logger.warning("[V585] %s : repli sans jeton (X-User-Email %s)", route, "présent" if _entete else "absent")
+    return _entete
+
+
 @api_router.post("/users/upload-photo")
-async def upload_user_photo(file: UploadFile = File(...), participant_id: str = Form(...)):
+async def upload_user_photo(request: Request, file: UploadFile = File(...), participant_id: str = Form(...)):
     """
     v75: MOTEUR D'UPLOAD PHOTO PROFIL — Stockage MongoDB (compatible Vercel)
     1. Reçoit l'image via UploadFile
@@ -3723,6 +3755,8 @@ async def upload_user_photo(file: UploadFile = File(...), participant_id: str = 
     import io
     import uuid
     from bson.binary import Binary
+    # V585 : cette route n'avait AUCUNE identité. Identité vérifiée, repli journalisé.
+    await _v585_identite_upload(request, "users/upload-photo", exiger_entete=False)
 
     # Validation du type MIME
     if not file.content_type or not file.content_type.startswith("image/"):
@@ -3817,9 +3851,8 @@ async def upload_coach_asset(
     import uuid
     import base64
 
-    coach_email = request.headers.get('X-User-Email', '').lower().strip()
-    if not coach_email:
-        raise HTTPException(status_code=401, detail="Email coach requis")
+    # V585 : identité VÉRIFIÉE (JWT coach ou jeton abonné) ; X-User-Email seul = repli journalisé.
+    coach_email = await _v585_identite_upload(request, "coach/upload-asset")
 
     # Validation du type MIME
     allowed_types = {
@@ -3960,9 +3993,8 @@ async def upload_chunk(
     import shutil
     from bson.binary import Binary
 
-    coach_email = request.headers.get('X-User-Email', '').lower().strip()
-    if not coach_email:
-        raise HTTPException(status_code=401, detail="Email coach requis")
+    # V585 : identité VÉRIFIÉE (JWT coach ou jeton abonné) ; X-User-Email seul = repli journalisé.
+    coach_email = await _v585_identite_upload(request, "coach/upload-chunk")
 
     # `upload_id` vient du client et sert de NOM DE DOSSIER : sans ce filtre, un
     # `../` y ouvrirait le systeme de fichiers. Meme regle que pour `file_id`.
@@ -22699,6 +22731,7 @@ async def get_feature_flags():
             "P1D_TEST_CONTROLE": False,        # V580 : défaut OFF (aucun mode test)
             "RATTRAPAGE_HIST_ENVOI_REEL": False,  # V583 : défaut OFF (simulation)
             "RATTRAPAGE_HIST_MODE_TEST": False,   # V583 : défaut OFF
+            "UPLOADS_IDENTITE_STRICTE": False,    # V585 : défaut OFF (repli X-User-Email journalisé)
             "P1E_ESSAI_NON_RESERVE_ENABLED": False,     # P1-e : défaut OFF (aucune relance)
             "P1E_ESSAI_NON_RESERVE_ENVOI_REEL": False,  # P1-e : défaut OFF (simulation même si activé)
             "P1E_TEST_CONTROLE": False,                 # P1-e : défaut OFF (données TEST toujours exclues)
@@ -22740,6 +22773,7 @@ async def get_feature_flags():
                          ("P1D_TEST_CONTROLE", False),
                          ("RATTRAPAGE_HIST_ENVOI_REEL", False),
                          ("RATTRAPAGE_HIST_MODE_TEST", False),
+                         ("UPLOADS_IDENTITE_STRICTE", False),
                          ("P1E_ESSAI_NON_RESERVE_ENABLED", False),
                          ("P1E_ESSAI_NON_RESERVE_ENVOI_REEL", False),
                          ("P1E_TEST_CONTROLE", False),
@@ -39162,9 +39196,9 @@ async def v441_marquer_lu(corps: V441MarquerLu, request: Request):
 # L'ancien endpoint redirige vers le nouveau moteur /users/upload-photo
 
 @api_router.post("/upload/profile-photo")
-async def upload_profile_photo_legacy(file: UploadFile = File(...), participant_id: str = Form("guest")):
-    """Endpoint legacy - redirige vers /users/upload-photo"""
-    return await upload_user_photo(file=file, participant_id=participant_id)
+async def upload_profile_photo_legacy(request: Request, file: UploadFile = File(...), participant_id: str = Form("guest")):
+    """Endpoint legacy - redirige vers /users/upload-photo (V585 : même garde d'identité)"""
+    return await upload_user_photo(request=request, file=file, participant_id=participant_id)
 
 # === NOTIFICATIONS (SONORES ET VISUELLES) ===
 
@@ -39501,7 +39535,8 @@ async def generate_shareable_link(request: Request):
     welcome_message = body.get("welcome_message", "")
 
     # v14.7: Récupérer le coach_id pour l'étanchéité
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    # V585 : l'identité vient du JWT SIGNÉ, plus de l'en-tête X-User-Email (falsifiable).
+    coach_email = await _v309_require_coach_or_admin(request)
 
     # Créer une nouvelle session avec un token unique
     session = ChatSession(
@@ -39547,19 +39582,22 @@ async def generate_shareable_link(request: Request):
     }
 
 @api_router.get("/chat/links")
-async def get_all_chat_links():
+async def get_all_chat_links(request: Request):
     """
     Récupère uniquement les liens intelligents créés manuellement par le coach.
     v162m: Filtre par is_smart_link=true OU lead_type existant (rétrocompat anciens liens).
     Les sessions auto-créées quand un visiteur entre dans le chat ne sont PAS incluses.
     """
+    # V585 : JWT coach/admin signé ; un coach ne voit QUE ses liens (super-admin : tous).
+    _v585_appelant = await _v309_require_coach_or_admin(request)
     sessions = await db.chat_sessions.find(
         {
             "is_deleted": {"$ne": True},
             "$or": [
                 {"is_smart_link": True},
                 {"lead_type": {"$exists": True}}
-            ]
+            ],
+            **get_coach_filter(_v585_appelant),
         },
         {"_id": 0, "id": 1, "link_token": 1, "title": 1, "mode": 1, "is_ai_active": 1, "created_at": 1, "participant_ids": 1, "custom_prompt": 1, "lead_type": 1, "tunnel_questions": 1, "end_actions": 1, "welcome_message": 1}
     ).sort("created_at", -1).to_list(100)
@@ -39650,11 +39688,13 @@ Langue: français. Ton: professionnel mais chaleureux."""
         raise HTTPException(status_code=500, detail=f"Erreur IA: {str(e)}")
 
 @api_router.delete("/chat/links/{link_id}")
-async def delete_chat_link(link_id: str):
+async def delete_chat_link(link_id: str, request: Request):
     """
     Supprime un lien de chat (suppression logique).
     Le lien ne sera plus accessible et n'apparaîtra plus dans la liste.
     """
+    # V585 : propriétaire ou super-admin (JWT signé) ; le lien d'un autre coach = 404.
+    _v585_appelant = await _v309_require_coach_or_admin(request)
     logger.info(f"[DELETE] Suppression lien: {link_id}")
     
     # MT-7 : route SANS identité — elle ne doit au moins jamais atteindre une
@@ -39662,7 +39702,8 @@ async def delete_chat_link(link_id: str):
     # Les groupes se suppriment par DELETE /chat/groups/{id} (propriétaire signé).
     result = await db.chat_sessions.update_one(
         {"$or": [{"id": link_id}, {"link_token": link_id}],
-         "mode": {"$ne": "group"}, "group_id": {"$exists": False}},
+         "mode": {"$ne": "group"}, "group_id": {"$exists": False},
+         **get_coach_filter(_v585_appelant)},
         {"$set": {"is_deleted": True, "deleted_at": datetime.now(timezone.utc).isoformat()}}
     )
     
@@ -39679,6 +39720,7 @@ async def delete_chat_link(link_id: str):
 @api_router.put("/chat/links/{link_id}")
 async def update_chat_link(link_id: str, request: Request):
     """
+    V585 : propriétaire ou super-admin (JWT signé) ; le lien d'un autre coach = 404.
     Met à jour le titre et/ou le custom_prompt d'un lien de chat existant.
     Permet de modifier le prompt même après la création du lien.
 
@@ -39688,6 +39730,7 @@ async def update_chat_link(link_id: str, request: Request):
         "custom_prompt": "Nouveau prompt"    // Optionnel (null pour supprimer)
     }
     """
+    _v585_appelant = await _v309_require_coach_or_admin(request)
     body = await request.json()
     update_fields = {"updated_at": datetime.now(timezone.utc).isoformat()}
 
@@ -39716,7 +39759,8 @@ async def update_chat_link(link_id: str, request: Request):
     # autre coach réécrits sans identité) — voir PUT /chat/groups/{id}.
     result = await db.chat_sessions.update_one(
         {"$or": [{"id": link_id}, {"link_token": link_id}], "is_deleted": {"$ne": True},
-         "mode": {"$ne": "group"}, "group_id": {"$exists": False}},
+         "mode": {"$ne": "group"}, "group_id": {"$exists": False},
+         **get_coach_filter(_v585_appelant)},
         {"$set": update_fields}
     )
 

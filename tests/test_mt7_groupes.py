@@ -396,10 +396,16 @@ async def partie_publique():
 async def partie_voisines():
     base = base_de_depart()
     avant = instantane(base)
-    c, r = await appel(S.delete_chat_link(SB))
-    verifier("X1. DELETE /chat/links/<groupe> -> 404, groupe intact", c == 404 and instantane(base) == avant, (c, r))
+    # V585 : la route exige désormais un JWT. Sans identité -> refus ; même le SUPER-ADMIN
+    #   signé n'atteint jamais un groupe par cette route (404), le groupe reste intact.
+    c, r = await appel(S.delete_chat_link(SB, req()))
+    verifier("X1. DELETE /chat/links/<groupe> sans jeton -> refusé, groupe intact", c in (401, 403) and instantane(base) == avant, (c, r))
+    c, r = await appel(S.delete_chat_link(SB, req(jeton_de=ADMIN)))
+    verifier("X1b. DELETE /chat/links/<groupe> super-admin -> 404, groupe intact", c == 404 and instantane(base) == avant, (c, r))
     c, r = await appel(S.update_chat_link(SA, req(corps={"custom_prompt": "piraté", "title": "x"})))
-    verifier("X2. PUT /chat/links/<groupe> -> 404, prompt intact", c == 404 and instantane(base) == avant, (c, r))
+    verifier("X2. PUT /chat/links/<groupe> sans jeton -> refusé, prompt intact", c in (401, 403) and instantane(base) == avant, (c, r))
+    c, r = await appel(S.update_chat_link(SA, req(jeton_de=ADMIN, corps={"custom_prompt": "piraté", "title": "x"})))
+    verifier("X2b. PUT /chat/links/<groupe> super-admin -> 404, prompt intact", c == 404 and instantane(base) == avant, (c, r))
     c, r = await appel(S.get_chat_link_by_token(SA))
     verifier("X3. GET /chat/links/<id de groupe> -> 404 (jeton d'invitation non exposé)", c == 404, (c, r))
     c, r = await appel(S.get_chat_link_by_token("tokA"))

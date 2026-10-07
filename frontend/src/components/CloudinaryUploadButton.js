@@ -91,6 +91,15 @@ export function isCloudinaryConfigured() {
   return true;
 }
 
+// V585 — la VRAIE identité pour les envois de fichiers : JWT coach et/ou jeton abonné
+// (le serveur vérifie leur signature). `X-User-Email` seul n'est plus qu'un repli.
+function v585EntetesIdentite() {
+  const h = {};
+  try { const t = localStorage.getItem('afroboost_jwt'); if (t) h['Authorization'] = 'Bearer ' + t; } catch (e) { /* ignore */ }
+  try { const s = localStorage.getItem('afroboost_subscriber_token'); if (s) h['X-Subscriber-Token'] = s; } catch (e) { /* ignore */ }
+  return h;
+}
+
 /** V420 — un POST simple, avec progression. XHR : `fetch` ne remonte pas l'avancement. */
 function v420Poster(url, formData, email, onProgress, signal) {
   return new Promise((resolve, reject) => {
@@ -102,6 +111,8 @@ function v420Poster(url, formData, email, onProgress, signal) {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
     xhr.setRequestHeader('X-User-Email', email);
+    const v585H = v585EntetesIdentite();
+    Object.keys(v585H).forEach((k) => xhr.setRequestHeader(k, v585H[k]));
     if (signal) {
       signal.addEventListener('abort', () => { try { xhr.abort(); } catch (e) { /* ignore */ } }, { once: true });
       xhr.onabort = () => reject(new Error('Envoi annulé.'));

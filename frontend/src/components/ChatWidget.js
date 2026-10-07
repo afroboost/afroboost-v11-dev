@@ -3286,6 +3286,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
               const xhr = new XMLHttpRequest();
               xhr.open('POST', API + '/coach/upload-asset');
               xhr.setRequestHeader('X-User-Email', getCoachEmail());
+              // V585 : la VRAIE identité (JWT coach / jeton abonné), plus seulement l'e-mail.
+              var v585H = v349EntetesChat();
+              for (var v585K in v585H) { if (v585H.hasOwnProperty(v585K)) xhr.setRequestHeader(v585K, v585H[v585K]); }
               xhr.onload = () => {
                 if (xhr.status === 200) {
                   try { resolve(JSON.parse(xhr.responseText).url); }
@@ -6524,7 +6527,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       // supprimable — la garde anti-effacement d'un media tiers reste satisfaite.
       fd.append('asset_type', estImage ? 'image' : 'audio');
       const r = await fetch(API + '/coach/upload-asset',
-        { method: 'POST', body: fd, headers: { 'X-User-Email': getCoachEmail() } });
+        { method: 'POST', body: fd, headers: Object.assign({ 'X-User-Email': getCoachEmail() }, v349EntetesChat()) }); // V585
       const d = await r.json();
       if (!r.ok || !d.url) throw new Error((d && d.detail) || 'upload');
       setV350Piece({ url: d.url, kind: estImage ? 'image' : 'file', name: file.name });
@@ -6656,7 +6659,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       // V414 : destination = notre serveur (disque), plus Cloudinary.
       fd.append('asset_type', 'audio');
       const r = await fetch(API + '/coach/upload-asset',
-        { method: 'POST', body: fd, headers: { 'X-User-Email': getCoachEmail() } });
+        { method: 'POST', body: fd, headers: Object.assign({ 'X-User-Email': getCoachEmail() }, v349EntetesChat()) }); // V585
       const d = await r.json();
       if (!r.ok || !d.url) throw new Error((d && d.detail) || 'upload');
       setV350Piece({ url: d.url, kind: 'audio', name: 'Note vocale' });

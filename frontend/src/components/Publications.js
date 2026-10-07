@@ -89,6 +89,9 @@ function v269UploadToCloudinary(fileOrBlob, kind, onProgress) {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', url);
         xhr.setRequestHeader('X-User-Email', entete);
+        // V585 : la VRAIE identité (JWT coach / jeton abonné), vérifiée par le serveur.
+        try { const t = localStorage.getItem('afroboost_jwt'); if (t) xhr.setRequestHeader('Authorization', 'Bearer ' + t); } catch (e) { /* ignore */ }
+        try { const st = localStorage.getItem('afroboost_subscriber_token'); if (st) xhr.setRequestHeader('X-Subscriber-Token', st); } catch (e) { /* ignore */ }
         if (surAvancement) {
           xhr.upload.onprogress = (e) => { if (e.lengthComputable) surAvancement(e.loaded); };
         }
