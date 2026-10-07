@@ -41,6 +41,50 @@ def init_db(database):
     global db
     db = database
 
+
+# ═══ P1A (07/10/2026) — QUI APPELLE ? Jamais un en-tête ni un corps de requête. ═══
+# Audit marketing du 07/10 : 14 routes d'administration de ce module croyaient l'en-tête
+# `X-User-Email` — or l'adresse du super-admin est en clair dans le bundle public : un `curl`
+# suffisait pour lister, désactiver ou supprimer un coach, purger, migrer, ajouter des crédits.
+# Les routes coach (profil, crédits, Stripe Connect) croyaient l'en-tête ou l'e-mail du corps.
+# Correction MINIMALE : on réutilise les règles déjà en service ailleurs, sans les réécrire.
+#   * super-admin → V344 : drapeau SUPERADMIN_JWT_STRICT (ON en prod) = SEUL un JWT signé de
+#     super-admin fait foi ; drapeau OFF = comportement historique (interrupteur d'urgence).
+#   * coach       → V319 : drapeau REQUIRE_COACH_JWT (ON en prod) = SEUL un JWT signé ; OFF = repli.
+# Une panne de lecture du drapeau retombe sur OFF (repli ouvert, leçon V310c), comme V344/V319.
+async def _p1a_drapeau(nom: str) -> bool:
+    try:
+        flags = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
+        return bool(flags.get(nom, False))
+    except Exception:
+        return False
+
+
+async def _p1a_super_admin(request: Request) -> str:
+    """E-mail du super-admin PROUVÉ, '' sinon (le 403 reste à la route)."""
+    from api.routes.shared import super_admin_signe
+    if await _p1a_drapeau("SUPERADMIN_JWT_STRICT"):
+        signe = super_admin_signe(request)
+        if not signe:
+            revendique = (request.headers.get("X-User-Email", "") or "").lower().strip()
+            if revendique:
+                logger.warning("[P1A] REFUS super-admin revendiqué par en-tête sans jeton signé (%s)", revendique)
+        return signe
+    entete = (request.headers.get("X-User-Email", "") or "").lower().strip()
+    return entete if is_super_admin(entete) else ""
+
+
+async def _p1a_coach(request: Request) -> str:
+    """E-mail du coach connecté : JWT signé (jamais un jeton abonné) ; repli en-tête si REQUIRE_COACH_JWT OFF."""
+    from api.routes.shared import coach_jwt_email
+    signe = coach_jwt_email(request)
+    if signe:
+        return signe
+    if await _p1a_drapeau("REQUIRE_COACH_JWT"):
+        return ""
+    return (request.headers.get("X-User-Email", "") or "").lower().strip()
+
+
 # === MODÈLES ===
 class CoachPackCreate(BaseModel):
     name: str
@@ -72,8 +116,8 @@ async def get_coach_packs():
 @coach_router.get("/admin/coach-packs/all")
 async def get_all_coach_packs(request: Request):
     """Liste tous les packs coach (Super Admin)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
     packs = await db.coach_packs.find({}, {"_id": 0}).to_list(100)
     return packs
@@ -81,8 +125,8 @@ async def get_all_coach_packs(request: Request):
 @coach_router.post("/admin/coach-packs")
 async def create_coach_pack(pack: CoachPackCreate, request: Request):
     """Crée un pack coach (Super Admin)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
     pack_data = {
         "id": str(uuid.uuid4()), "name": pack.name, "price": pack.price, "credits": pack.credits,
@@ -104,8 +148,8 @@ async def create_coach_pack(pack: CoachPackCreate, request: Request):
 @coach_router.put("/admin/coach-packs/{pack_id}")
 async def update_coach_pack(pack_id: str, request: Request):
     """Modifie un pack coach (Super Admin)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
     body = await request.json()
     update_data = {"updated_at": datetime.now(timezone.utc).isoformat()}
@@ -121,8 +165,8 @@ async def update_coach_pack(pack_id: str, request: Request):
 @coach_router.delete("/admin/coach-packs/{pack_id}")
 async def delete_coach_pack(pack_id: str, request: Request):
     """Supprime un pack coach (Super Admin)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
     result = await db.coach_packs.delete_one({"id": pack_id})
     if result.deleted_count == 0:
@@ -133,8 +177,8 @@ async def delete_coach_pack(pack_id: str, request: Request):
 @coach_router.get("/admin/coaches")
 async def get_coaches(request: Request):
     """Liste tous les coachs (Super Admin)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
     coaches = await db.coaches.find({}, {"_id": 0}).to_list(100)
     return coaches
@@ -142,8 +186,8 @@ async def get_coaches(request: Request):
 @coach_router.post("/admin/coaches/{coach_id}/toggle")
 async def toggle_coach_status(coach_id: str, request: Request):
     """Active/Désactive un coach (Super Admin)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
     coach = await db.coaches.find_one({"id": coach_id})
     if not coach:
@@ -155,8 +199,8 @@ async def toggle_coach_status(coach_id: str, request: Request):
 @coach_router.delete("/admin/coaches/{coach_id}")
 async def delete_coach(coach_id: str, request: Request):
     """Supprime un coach (Super Admin)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
     result = await db.coaches.delete_one({"id": coach_id})
     if result.deleted_count == 0:
@@ -166,8 +210,8 @@ async def delete_coach(coach_id: str, request: Request):
 @coach_router.get("/admin/pending-coaches")
 async def list_pending_coaches(request: Request):
     """V311d : liste les auto-inscriptions EN ATTENTE de validation (Super Admin)."""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
     docs = await db.users_auth.find(
         {"pending_validation": True},
@@ -239,8 +283,8 @@ async def purge_test_auth(request: Request):
     `partner-cleanup` ne touchait pas `users_auth` ; ceci comble le trou et renvoie
     une PREUVE (ce qui a été supprimé + les comptes de test résiduels = doit être vide).
     Filtrage en Python (pas de regex MongoDB) -> aucune injection possible."""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
 
     MARQUEURS = ("example.com", "v311-jeton-test", "v311test", "nonregression", ".test", ".local")
@@ -276,8 +320,8 @@ async def purge_test_auth(request: Request):
 @coach_router.delete("/admin/partner-cleanup/{email}")
 async def cleanup_partner_data(email: str, request: Request):
     """Supprime TOUTES les données d'un partenaire : concept, branding, fichiers, etc. (Super Admin)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
 
     email_clean = email.lower().strip()
@@ -321,7 +365,7 @@ async def cleanup_partner_data(email: str, request: Request):
 @coach_router.get("/coach/profile")
 async def get_coach_profile(request: Request):
     """Profil du coach connecté"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    caller_email = await _p1a_coach(request)  # P1A
     if not caller_email:
         raise HTTPException(status_code=401, detail="Email requis")
     if is_super_admin(caller_email):
@@ -334,7 +378,7 @@ async def get_coach_profile(request: Request):
 @coach_router.get("/coach/check-credits")
 async def api_check_credits(request: Request):
     """Vérifie le solde de crédits"""
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    coach_email = await _p1a_coach(request)  # P1A
     if not coach_email:
         raise HTTPException(status_code=401, detail="Email requis")
     if is_super_admin(coach_email):
@@ -367,7 +411,7 @@ async def register_coach(coach_data: CoachCreate):
 async def update_coach_profile(request: Request):
     """Met à jour le profil du coach (platform_name, bio, etc.) - v9.1.4"""
     body = await request.json()
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    caller_email = await _p1a_coach(request)  # P1A : le profil modifié est TOUJOURS celui de l'appelant
     if not caller_email:
         raise HTTPException(status_code=401, detail="Email requis")
     if is_super_admin(caller_email):
@@ -388,10 +432,18 @@ async def update_coach_profile(request: Request):
 async def deduct_coach_credit(request: Request):
     """Déduit 1 crédit"""
     body = await request.json()
-    coach_email = body.get("email", "").lower().strip()
     action = body.get("action", "unknown")
-    if not coach_email:
-        raise HTTPException(status_code=400, detail="Email requis")
+    # P1A : l'e-mail du CORPS désignait le compte débité — n'importe qui débitait n'importe qui.
+    #   Désormais : jeton signé obligatoire (route sans appelant dans le front), compte = appelant ;
+    #   un e-mail différent dans le corps n'est accepté que d'un super-admin.
+    from api.routes.shared import coach_jwt_email
+    appelant = coach_jwt_email(request)
+    if not appelant:
+        raise HTTPException(status_code=401, detail="Authentification requise")
+    demande = (body.get("email", "") or "").lower().strip()
+    if demande and demande != appelant and not is_super_admin(appelant):
+        raise HTTPException(status_code=403, detail="Ce compte ne vous appartient pas")
+    coach_email = demande if (demande and is_super_admin(appelant)) else appelant
     if is_super_admin(coach_email):
         return {"success": True, "credits_remaining": -1, "message": "Super Admin illimité"}
     coach = await db.coaches.find_one({"email": coach_email})
@@ -408,8 +460,8 @@ async def deduct_coach_credit(request: Request):
 async def add_coach_credits(request: Request):
     """Ajoute des crédits (Super Admin)"""
     body = await request.json()
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
     coach_email = body.get("coach_email", "").lower().strip()
     credits_to_add = body.get("credits", 0)
@@ -692,9 +744,14 @@ async def get_coach_vitrine(username: str):
 async def create_stripe_connect_onboard(request: Request):
     """Crée un lien d'onboarding Stripe Connect"""
     body = await request.json()
-    coach_email = body.get("email", "").lower().strip()
-    if not coach_email:
-        raise HTTPException(status_code=400, detail="Email requis")
+    # P1A : l'e-mail du CORPS suffisait à rattacher un compte Stripe au profil d'un AUTRE coach.
+    #   Le front envoie toujours SON e-mail : on exige qu'il soit celui de l'identité prouvée.
+    appelant = await _p1a_coach(request)
+    if not appelant:
+        raise HTTPException(status_code=401, detail="Authentification requise")
+    coach_email = (body.get("email", "") or "").lower().strip() or appelant
+    if coach_email != appelant:
+        raise HTTPException(status_code=403, detail="Ce compte ne vous appartient pas")
     coach = await db.coaches.find_one({"email": coach_email})
     if not coach:
         raise HTTPException(status_code=404, detail="Coach non trouvé")
@@ -711,7 +768,7 @@ async def create_stripe_connect_onboard(request: Request):
 @coach_router.get("/coach/stripe-connect/status")
 async def get_stripe_connect_status(request: Request):
     """Statut du compte Stripe Connect"""
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    coach_email = await _p1a_coach(request)  # P1A
     if not coach_email:
         raise HTTPException(status_code=401, detail="Email requis")
     coach = await db.coaches.find_one({"email": coach_email})
@@ -730,8 +787,8 @@ async def get_stripe_connect_status(request: Request):
 @coach_router.post("/admin/migrate-bassi-data")
 async def migrate_bassi_data(request: Request):
     """Migre les données vers bassi_default (Super Admin)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
     results = {}
     r = await db.reservations.update_many({"coach_id": {"$exists": False}}, {"$set": {"coach_id": DEFAULT_COACH_ID}})
@@ -746,8 +803,8 @@ async def migrate_bassi_data(request: Request):
 @coach_router.post("/admin/migrate-ownership")
 async def migrate_ownership(request: Request):
     """v19: Migre les cours, offres et fichiers orphelins vers le Super Admin"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    caller_email = await _p1a_super_admin(request)  # P1A : jeton signé (V344), plus l'en-tête seul
+    if not caller_email:
         raise HTTPException(status_code=403, detail="Super Admin requis")
     results = {}
     # Cours sans coach_id → Super Admin
@@ -781,8 +838,8 @@ async def merge_artboost_to_bassi(request: Request):
     - Fusionne le concept 'concept_artboost' ou 'concept_contact.artboost@gmail.com' vers 'concept'
     """
     # Vérif auth Super Admin
-    email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(email):
+    email = await _p1a_super_admin(request)  # P1A
+    if not email:
         raise HTTPException(status_code=403, detail="Accès réservé au Super Admin")
 
     results = {"offers": 0, "courses": 0, "audio_tracks": 0, "uploaded_files": 0, "coaches_deleted": 0, "concepts_merged": 0}

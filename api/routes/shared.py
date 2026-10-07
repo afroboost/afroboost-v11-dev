@@ -1705,12 +1705,16 @@ async def essai6_offres_gratuites(db, coach_id=None) -> list:
     ne voit que les offres sans proprietaire. C'est ce qui empeche l'essai
     offert par le coach A de fermer le droit chez le coach B.
     """
-    try:
-        from api.routes.membership_routes import p1a_filtre_proprietaire as _filtre
-    except Exception as _err:  # noqa: BLE001
-        logger.warning("[ESSAI-6] regle de propriete indisponible: %s", _err)
-        return []
-    _q = dict(_filtre(coach_id))
+    # P1A (07/10/2026) — CAUSE DU J+0 MUET DEPUIS MI-SEPTEMBRE. Ce filtre venait de
+    #   `p1a_filtre_proprietaire`, qui ne reconnait « sans proprietaire » que sous None / "" /
+    #   absent. Or depuis mi-septembre les offres de production portent l'adresse du
+    #   super-admin (constat V535b, 22/09) : appelee SANS proprietaire (relance J+0, anti-double
+    #   essai du formulaire gratuit), cette fonction ne trouvait plus l'offre d'essai, le forfait
+    #   etait ecarte et `essai6_consomme` repondait None -> 0 relance sur 7 essais presents.
+    #   On reprend la regle symetrique de V535b (`lot2_proprietaire` + `lot2_filtre_offres`) :
+    #   le proprietaire de la plateforme EST « sans proprietaire » ; un partenaire reste cloisonne.
+    _proprio = lot2_proprietaire(coach_id) if isinstance(coach_id, str) else None
+    _q = dict(lot2_filtre_offres(_proprio))
     _q["price"] = {"$in": [0, 0.0]}
     try:
         _rows = await db["offers"].find(_q, {"_id": 0, "id": 1}).to_list(50)

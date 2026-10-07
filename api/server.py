@@ -4477,32 +4477,14 @@ async def check_if_partner(email: str):
     Utilisé par le frontend pour afficher le bon bouton dans le chat
     v9.5.6: Super Admin a toujours accès
     """
+    # P1A (07/10/2026) : route ANONYME — elle renvoyait nom, e-mail et crédits de n'importe quel
+    #   coach. Les deux appelants (App.js, ChatWidget) ne lisent que `is_partner` : c'est désormais
+    #   tout ce qu'elle dit. Les crédits du coach connecté passent par /coach/check-credits (jeton).
     email = email.lower().strip()
-    
-    # v9.5.6: Super Admin a toujours accès illimité
     if is_super_admin(email):
-        return {
-            "is_partner": True,
-            "email": email,
-            "name": "Super Admin",
-            "has_credits": True,
-            "credits": -1,
-            "unlimited": True,
-            "is_super_admin": True
-        }
-    
-    # Vérifier si l'email a un profil coach
-    coach = await db.coaches.find_one({"email": email}, {"_id": 0, "email": 1, "name": 1, "credits": 1})
-    
-    if coach:
-        return {
-            "is_partner": True,
-            "email": coach.get("email"),
-            "name": coach.get("name"),
-            "has_credits": (coach.get("credits", 0) or 0) > 0
-        }
-    
-    return {"is_partner": False, "email": email}
+        return {"is_partner": True}
+    coach = await db.coaches.find_one({"email": email}, {"_id": 0, "email": 1})
+    return {"is_partner": bool(coach)}
 
 
 # === V90: ENDPOINT CONVERSION SEANCE -> CREDIT SERVICE ===
@@ -4512,18 +4494,27 @@ async def convert_session_to_credit(request: Request):
     V90: Convertit 1 seance payee (15 CHF) en 1 credit service.
     Le partenaire echange ses seances achetees contre des credits utilisables pour les services.
     """
+    # P1A (07/10/2026) : AUCUNE authentification — l'e-mail du corps désignait le compte modifié
+    #   (séances -1, crédits +1, rôle forcé à « partner »). Aucun appelant dans le front : on exige
+    #   un JWT SIGNÉ (jamais un jeton abonné ni l'en-tête X-User-Email) et on agit sur l'APPELANT.
+    from api.routes.shared import coach_jwt_email as _p1a_jwt
+    appelant = _p1a_jwt(request)
+    if not appelant:
+        raise HTTPException(status_code=401, detail="Authentification requise")
     try:
         body = await request.json()
-        email = body.get("email", "").lower().strip()
-        
-        if not email:
-            return JSONResponse(status_code=400, content={"error": "Email requis"})
-        
-        # Super Admin bypass
+    except Exception:
+        body = {}
+    demande = (body.get("email", "") or "").lower().strip()
+    if demande and demande != appelant:
+        logger.warning("[P1A] REFUS session-to-credit : %s tente d'agir sur %s", appelant, demande)
+        raise HTTPException(status_code=403, detail="Ce compte ne vous appartient pas")
+    try:
+        email = appelant
+
         if is_super_admin(email):
             return {"success": True, "message": "Super Admin - credits illimites", "credits": -1}
-        
-        # Verifier que le coach/partenaire existe
+
         coach = await db.coaches.find_one({"email": email})
         if not coach:
             return JSONResponse(status_code=404, content={"error": "Partenaire non trouve"})
