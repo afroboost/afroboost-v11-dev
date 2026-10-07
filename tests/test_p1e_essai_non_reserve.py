@@ -259,8 +259,69 @@ def test_test_controle_n_ouvre_que_les_plus_adresses_du_super_admin(env):
     assert relance(plus) == "envoye_h3"
     autre = essai(4, rid="f2", code="AFR-TEST02", email="qa@example.com", nom="TEST")
     env["charger"]([autre])
-    assert relance(autre) == "donnee_test"
+    assert relance(autre) == "hors_test_controle"
     assert [e[0] for e in env["envois"]] == ["%s+testj0n@%s" % (LOCAL, DOMAINE)]
+
+
+def test_mode_test_exclusif_aucun_vrai_client(env):
+    """V579b : pendant le test contrôlé, un VRAI candidat parfaitement éligible ne reçoit RIEN."""
+    env["test_controle"] = True
+    vrai = essai(4, email="amina.client@exemple-reel.ch", nom="Amina")
+    env["charger"]([vrai])
+    assert relance(vrai) == "hors_test_controle" and env["envois"] == []
+    env["test_controle"] = False
+    assert relance(vrai) == "envoye_h3"                      # hors mode test : la règle normale
+
+
+# ═══════════ ROUTES DE TEST (super-admin signé, mode test, plus-adresse) ═══════════
+class _Req:
+    def __init__(self, jeton=None, corps=None):
+        self.headers = {"Authorization": "Bearer " + jeton} if jeton else {}
+        self._c = corps or {}
+
+    async def json(self):
+        return dict(self._c)
+
+
+def _jeton(email):
+    import jwt as pyjwt
+    return pyjwt.encode({"email": email}, os.environ["JWT_SECRET"], algorithm="HS256")
+
+
+def _code_http(coro):
+    from fastapi import HTTPException
+    try:
+        return asyncio.run(coro), None
+    except HTTPException as e:
+        return None, e.status_code
+
+
+def test_antidater_triple_verrou(env):
+    plus = essai(1, code="AFR-PLUS01", email="%s+testp1eh3@%s" % (LOCAL, DOMAINE), nom="TEST")
+    vrai = essai(1, rid="f9", code="AFR-VRAI01", email="amina.client@exemple-reel.ch")
+    base = env["charger"]([plus, vrai])
+    corps = {"code": "AFR-PLUS01", "heures": 4}
+    _r, c = _code_http(S.p1e_antidater_test(_Req(corps=corps)))
+    assert c == 403                                            # sans jeton
+    _r, c = _code_http(S.p1e_antidater_test(_Req(_jeton("coach@exemple.test"), corps)))
+    assert c == 403                                            # jeton non super-admin
+    _r, c = _code_http(S.p1e_antidater_test(_Req(_jeton(ADMIN), corps)))
+    assert c == 403                                            # mode test inactif
+    env["test_controle"] = True
+    _r, c = _code_http(S.p1e_antidater_test(_Req(_jeton(ADMIN), {"code": "AFR-VRAI01", "heures": 4})))
+    assert c == 403 and doc(base, "f9")["created_at"] == vrai["created_at"]   # jamais un vrai client
+    r, c = _code_http(S.p1e_antidater_test(_Req(_jeton(ADMIN), corps)))
+    assert c is None and r["ok"] is True and doc(base)["created_at"] != plus["created_at"]
+
+
+def test_route_passage_super_admin_seulement(env):
+    env["charger"]([])
+    _r, c = _code_http(S.p1e_passage_route(_Req()))
+    assert c == 403
+    _r, c = _code_http(S.p1e_passage_route(_Req(_jeton("coach@exemple.test"))))
+    assert c == 403
+    r, c = _code_http(S.p1e_passage_route(_Req(_jeton(ADMIN))))
+    assert c is None and "resume" in r
 
 
 def test_simulation_rien_ecrit_rien_envoye(env):

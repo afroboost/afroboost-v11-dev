@@ -47731,6 +47731,19 @@ def p1e_etape(forfait: dict, maintenant) -> tuple:
     return P1E_CANAL_H3, "h3_du"
 
 
+def p1e_plus_adresse_super_admin(email: str) -> bool:
+    """`<local du super-admin>+…@<son domaine>` — n'atteint que la boîte du propriétaire."""
+    _e = (email or "").strip().lower()
+    if "@" not in _e:
+        return False
+    _local, _dom = _e.split("@", 1)
+    for _adm in SUPER_ADMIN_EMAILS:
+        _al, _ad = _adm.lower().split("@", 1)
+        if _dom == _ad and _local.startswith(_al + "+"):
+            return True
+    return False
+
+
 def p1e_est_test(email: str, nom: str, test_controle: bool) -> bool:
     """Donnée TEST ? (règle de `reactivation.est_donnee_test`, la même que les campagnes.)
 
@@ -47849,7 +47862,12 @@ async def p1e_relance(forfait: dict, maintenant=None) -> str:
     if not _etape:
         return _motif
     _email = (forfait.get("email") or "").strip().lower()
-    if p1e_est_test(_email, forfait.get("name") or "", bool(_flags.get("P1E_TEST_CONTROLE"))):
+    _test_controle = bool(_flags.get("P1E_TEST_CONTROLE"))
+    # V579b — MODE TEST EXCLUSIF : tant que P1E_TEST_CONTROLE est vrai, AUCUN vrai client n'est
+    #   ciblable, quel que soit l'état des autres drapeaux. Seules les plus-adresses du super-admin.
+    if _test_controle and not p1e_plus_adresse_super_admin(_email):
+        return "hors_test_controle"
+    if p1e_est_test(_email, forfait.get("name") or "", _test_controle):
         return "donnee_test"
     if str(forfait.get("status") or "") != "active":
         return "inactif"
@@ -47987,6 +48005,54 @@ def p1e_mesure_pure(forfaits: list, reservations: list, maintenant) -> dict:
         if _res is None:
             _m["sans_reservation"] += 1
     return _m
+
+
+@api_router.post("/admin/p1e/passage")
+async def p1e_passage_route(request: Request):
+    """V579b — UN cycle du vrai moteur P1-e, à la demande (super-admin signé).
+
+    Mêmes drapeaux, mêmes règles, même horloge que la boucle horaire : cette route ne fait
+    qu'avancer le prochain passage. Rien de plus — aucun délai raccourci.
+    """
+    from api.routes.shared import super_admin_signe as _p1e_sa
+    if not _p1e_sa(request):
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    return {"resume": await p1e_passage()}
+
+
+@api_router.post("/admin/p1e/antidater-test")
+async def p1e_antidater_test(request: Request):
+    """V579b — Antidater UN essai TEST, pour prouver +3 h / J+2 sans attendre.
+
+    TRIPLE VERROU : super-admin signé ; drapeau P1E_TEST_CONTROLE vrai ; le forfait visé doit
+    appartenir à une plus-adresse du super-admin. Ne modifie que `created_at` de CE forfait.
+    Corps : {"code": "AFR-XXXXXX", "heures": 4}  (1 à 168).
+    """
+    from api.routes.shared import super_admin_signe as _p1e_sa
+    if not _p1e_sa(request):
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    if not (await get_feature_flags() or {}).get("P1E_TEST_CONTROLE"):
+        raise HTTPException(status_code=403, detail="Mode test contrôlé inactif")
+    try:
+        _corps = await request.json()
+    except Exception:  # noqa: BLE001
+        _corps = {}
+    _code = str((_corps or {}).get("code") or "").strip().upper()
+    try:
+        _h = float((_corps or {}).get("heures"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="heures requis")
+    if not _code or not (1 <= _h <= 168):
+        raise HTTPException(status_code=400, detail="code et heures (1 à 168) requis")
+    _f = await db.subscriptions.find_one({"code": _code}, {"_id": 0, "id": 1, "email": 1})
+    if not _f:
+        raise HTTPException(status_code=404, detail="Forfait introuvable")
+    if not p1e_plus_adresse_super_admin(_f.get("email") or ""):
+        raise HTTPException(status_code=403, detail="Seuls les essais TEST du super-admin sont antidatables")
+    _quand = (datetime.now(timezone.utc) - timedelta(hours=_h)).isoformat()
+    await db.subscriptions.update_one({"id": _f["id"]}, {"$set": {"created_at": _quand}})
+    logger.warning("%s TEST : forfait %s antidaté de %.1f h", P1E_PREFIXE, _code, _h)
+    return {"ok": True, "code": _code, "created_at": _quand}
 
 
 @api_router.get("/coach/funnel/essai-non-reserve")
