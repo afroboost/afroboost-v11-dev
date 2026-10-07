@@ -1902,6 +1902,7 @@ class FeatureFlags(BaseModel):
     #   les deux a true                -> l'e-mail part
     P1_TRIAL_J3_ENABLED: bool = False        # P1-d
     P1_TRIAL_J3_ENVOI_REEL: bool = False     # P1-d
+    P1D_TEST_CONTROLE: bool = False          # V580 : J+3 réel pour les seules plus-adresses du super-admin
     # P1-e (07/10/2026) — essai accordé mais jamais réservé : relance +3 h puis J+2.
     #   ENABLED seul -> simulation (journal, personne n'est contacté) ; les deux -> e-mail réel.
     #   TEST_CONTROLE -> autorise UNIQUEMENT les plus-adresses du super-admin (test réel contrôlé).
@@ -1975,6 +1976,7 @@ class FeatureFlagsUpdate(BaseModel):
     P1_TRIAL_J0_ENVOI_REEL: Optional[bool] = None  # P1-b
     P1_TRIAL_J3_ENABLED: Optional[bool] = None  # P1-d
     P1_TRIAL_J3_ENVOI_REEL: Optional[bool] = None  # P1-d
+    P1D_TEST_CONTROLE: Optional[bool] = None  # V580
     P1E_ESSAI_NON_RESERVE_ENABLED: Optional[bool] = None  # P1-e
     P1E_ESSAI_NON_RESERVE_ENVOI_REEL: Optional[bool] = None  # P1-e
     P1E_TEST_CONTROLE: Optional[bool] = None  # P1-e
@@ -22688,6 +22690,7 @@ async def get_feature_flags():
             "P1_TRIAL_J0_ENVOI_REEL": False,   # P1-b : défaut OFF (simulation même si activé)
             "P1_TRIAL_J3_ENABLED": False,      # P1-d : défaut OFF (aucune relance J+3)
             "P1_TRIAL_J3_ENVOI_REEL": False,   # P1-d : défaut OFF (simulation même si activé)
+            "P1D_TEST_CONTROLE": False,        # V580 : défaut OFF (aucun mode test)
             "P1E_ESSAI_NON_RESERVE_ENABLED": False,     # P1-e : défaut OFF (aucune relance)
             "P1E_ESSAI_NON_RESERVE_ENVOI_REEL": False,  # P1-e : défaut OFF (simulation même si activé)
             "P1E_TEST_CONTROLE": False,                 # P1-e : défaut OFF (données TEST toujours exclues)
@@ -22726,6 +22729,7 @@ async def get_feature_flags():
                          ("P1_TRIAL_J0_ENVOI_REEL", False),
                          ("P1_TRIAL_J3_ENABLED", False),
                          ("P1_TRIAL_J3_ENVOI_REEL", False),
+                         ("P1D_TEST_CONTROLE", False),
                          ("P1E_ESSAI_NON_RESERVE_ENABLED", False),
                          ("P1E_ESSAI_NON_RESERVE_ENVOI_REEL", False),
                          ("P1E_TEST_CONTROLE", False),
@@ -47454,6 +47458,14 @@ async def p1d_relance_j3(reservation: dict, maintenant=None) -> str:
     if not (_flags or {}).get("P1_TRIAL_J3_ENABLED"):
         return "desactive"
     _reel = bool((_flags or {}).get("P1_TRIAL_J3_ENVOI_REEL"))
+    # V580 — MODE TEST EXCLUSIF (même motif que P1-e V579b). Tant que P1D_TEST_CONTROLE est
+    #   vrai, AUCUN vrai client n'est ciblable — pas même en simulation ; seule une PLUS-ADRESSE
+    #   du super-admin passe, et pour elle l'envoi est RÉEL quel que soit P1_TRIAL_J3_ENVOI_REEL.
+    #   Toutes les autres gardes (horloge, essai, conversion, consentement, jeton) restent.
+    if (_flags or {}).get("P1D_TEST_CONTROLE"):
+        if not p1e_plus_adresse_super_admin(reservation.get("userEmail") or ""):
+            return "hors_test_controle"
+        _reel = True
 
     _id = str(reservation.get("id") or "").strip()
     if not _id:
@@ -47655,6 +47667,90 @@ async def _p1d_boucle_relance_j3():
         except Exception as _err:  # noqa: BLE001
             logger.warning("%s passage ignore : %s", P1D_PREFIXE, _err)
         await asyncio.sleep(P1D_PERIODE_S)
+
+
+async def _p1d_verrou_test(request: Request) -> dict:
+    """V580 — les deux premiers verrous des routes de test J+3 ; rend le corps JSON."""
+    from api.routes.shared import super_admin_signe as _p1d_sa
+    if not _p1d_sa(request):
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    if not (await get_feature_flags() or {}).get("P1D_TEST_CONTROLE"):
+        raise HTTPException(status_code=403, detail="Mode test contrôlé J+3 inactif")
+    try:
+        _corps = await request.json()
+    except Exception:  # noqa: BLE001
+        _corps = {}
+    return _corps if isinstance(_corps, dict) else {}
+
+
+@api_router.post("/admin/p1d/passage")
+async def p1d_passage_route(request: Request):
+    """V580 — UN cycle du vrai moteur J+3, à la demande (super-admin signé).
+
+    Mêmes drapeaux, mêmes règles, même horloge que la boucle horaire : rien n'est raccourci.
+    """
+    from api.routes.shared import super_admin_signe as _p1d_sa
+    if not _p1d_sa(request):
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    return {"resume": await p1d_passage()}
+
+
+@api_router.post("/admin/p1d/antidater-test")
+async def p1d_antidater_test(request: Request):
+    """V580 — Antidater la PRÉSENCE d'UNE réservation TEST, pour prouver le J+3 sans attendre.
+
+    TRIPLE VERROU : super-admin signé ; P1D_TEST_CONTROLE vrai ; la réservation doit être
+    VALIDÉE et appartenir à une plus-adresse du super-admin. Ne modifie que `validatedAt`.
+    Corps : {"reservation_id": "...", "heures": 74}  (1 à 240).
+    """
+    _corps = await _p1d_verrou_test(request)
+    _rid = str(_corps.get("reservation_id") or "").strip()
+    try:
+        _h = float(_corps.get("heures"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="heures requis")
+    if not _rid or not (1 <= _h <= 240):
+        raise HTTPException(status_code=400, detail="reservation_id et heures (1 à 240) requis")
+    _r = await db.reservations.find_one({"id": _rid}, {"_id": 0, "id": 1, "userEmail": 1, "validated": 1})
+    if not _r:
+        raise HTTPException(status_code=404, detail="Réservation introuvable")
+    if not p1e_plus_adresse_super_admin(_r.get("userEmail") or ""):
+        raise HTTPException(status_code=403, detail="Seules les réservations TEST du super-admin sont antidatables")
+    if _r.get("validated") is not True:
+        raise HTTPException(status_code=409, detail="Réservation non validée : aucune présence à antidater")
+    _quand = (datetime.now(timezone.utc) - timedelta(hours=_h)).isoformat()
+    await db.reservations.update_one({"id": _rid}, {"$set": {"validatedAt": _quand}})
+    logger.warning("%s TEST : présence %s antidatée de %.1f h", P1D_PREFIXE, _rid[:8], _h)
+    return {"ok": True, "reservation_id": _rid, "validatedAt": _quand}
+
+
+@api_router.post("/admin/p1d/achat-test")
+async def p1d_achat_test(request: Request):
+    """V580 — Un ACHAT TEST sans paiement : la VRAIE règle de conversion (ESSAI-2,
+    `essai2_convertir_si_achat_de_cours`), appelée comme le ferait le webhook Stripe.
+
+    TRIPLE VERROU : super-admin signé ; P1D_TEST_CONTROLE vrai ; plus-adresse du super-admin.
+    N'écrit que le marqueur de conversion du forfait d'essai TEST. Aucune transaction,
+    aucun encaissement, aucune ligne financière. Corps : {"email": "...", "offer_id": "..."}.
+    """
+    _corps = await _p1d_verrou_test(request)
+    _mail = str(_corps.get("email") or "").strip().lower()
+    _oid = str(_corps.get("offer_id") or "").strip()
+    if not _mail or not _oid:
+        raise HTTPException(status_code=400, detail="email et offer_id requis")
+    if not p1e_plus_adresse_super_admin(_mail):
+        raise HTTPException(status_code=403, detail="Seules les identités TEST du super-admin")
+    from api.routes.shared import (essai2_lire_offre as _p1d_offre,
+                                   essai2_prix_catalogue as _p1d_prix,
+                                   essai2_convertir_si_achat_de_cours as _p1d_conv)
+    _doc = await _p1d_offre(db, _oid)
+    if not _doc:
+        raise HTTPException(status_code=404, detail="Offre introuvable")
+    _prix = _p1d_prix(_doc)
+    _ok = await _p1d_conv(db, _mail, _prix, "test_controle", [_oid], "")
+    logger.warning("%s TEST : achat simulé %s offre %s -> converti=%s", P1D_PREFIXE,
+                   _mail[:40], _oid[:8], _ok)
+    return {"converti": bool(_ok), "prix_catalogue": _prix}
 
 
 # ============================================================================
