@@ -1903,6 +1903,8 @@ class FeatureFlags(BaseModel):
     P1_TRIAL_J3_ENABLED: bool = False        # P1-d
     P1_TRIAL_J3_ENVOI_REEL: bool = False     # P1-d
     P1D_TEST_CONTROLE: bool = False          # V580 : J+3 réel pour les seules plus-adresses du super-admin
+    RATTRAPAGE_HIST_ENVOI_REEL: bool = False  # V583 : rattrapage historique vers la liste figée
+    RATTRAPAGE_HIST_MODE_TEST: bool = False   # V583 : rattrapage historique vers la boîte du super-admin seulement
     # P1-e (07/10/2026) — essai accordé mais jamais réservé : relance +3 h puis J+2.
     #   ENABLED seul -> simulation (journal, personne n'est contacté) ; les deux -> e-mail réel.
     #   TEST_CONTROLE -> autorise UNIQUEMENT les plus-adresses du super-admin (test réel contrôlé).
@@ -1977,6 +1979,8 @@ class FeatureFlagsUpdate(BaseModel):
     P1_TRIAL_J3_ENABLED: Optional[bool] = None  # P1-d
     P1_TRIAL_J3_ENVOI_REEL: Optional[bool] = None  # P1-d
     P1D_TEST_CONTROLE: Optional[bool] = None  # V580
+    RATTRAPAGE_HIST_ENVOI_REEL: Optional[bool] = None  # V583
+    RATTRAPAGE_HIST_MODE_TEST: Optional[bool] = None   # V583
     P1E_ESSAI_NON_RESERVE_ENABLED: Optional[bool] = None  # P1-e
     P1E_ESSAI_NON_RESERVE_ENVOI_REEL: Optional[bool] = None  # P1-e
     P1E_TEST_CONTROLE: Optional[bool] = None  # P1-e
@@ -22691,6 +22695,8 @@ async def get_feature_flags():
             "P1_TRIAL_J3_ENABLED": False,      # P1-d : défaut OFF (aucune relance J+3)
             "P1_TRIAL_J3_ENVOI_REEL": False,   # P1-d : défaut OFF (simulation même si activé)
             "P1D_TEST_CONTROLE": False,        # V580 : défaut OFF (aucun mode test)
+            "RATTRAPAGE_HIST_ENVOI_REEL": False,  # V583 : défaut OFF (simulation)
+            "RATTRAPAGE_HIST_MODE_TEST": False,   # V583 : défaut OFF
             "P1E_ESSAI_NON_RESERVE_ENABLED": False,     # P1-e : défaut OFF (aucune relance)
             "P1E_ESSAI_NON_RESERVE_ENVOI_REEL": False,  # P1-e : défaut OFF (simulation même si activé)
             "P1E_TEST_CONTROLE": False,                 # P1-e : défaut OFF (données TEST toujours exclues)
@@ -22730,6 +22736,8 @@ async def get_feature_flags():
                          ("P1_TRIAL_J3_ENABLED", False),
                          ("P1_TRIAL_J3_ENVOI_REEL", False),
                          ("P1D_TEST_CONTROLE", False),
+                         ("RATTRAPAGE_HIST_ENVOI_REEL", False),
+                         ("RATTRAPAGE_HIST_MODE_TEST", False),
                          ("P1E_ESSAI_NON_RESERVE_ENABLED", False),
                          ("P1E_ESSAI_NON_RESERVE_ENVOI_REEL", False),
                          ("P1E_TEST_CONTROLE", False),
@@ -48315,6 +48323,258 @@ async def rattrapage_essais_audit(request: Request):
     _personnes.sort(key=lambda x: str(x.get("presence_at") or ""))
     return {"genere_at": _now.isoformat(), "presences_essai": len(_lignes),
             "presences_sans_email": _sans_mail, "personnes": _personnes}
+
+
+# ============================================================================
+# V583 — RATTRAPAGE HISTORIQUE DES ESSAIS HONORÉS (« Des nouvelles d'Afroboost »)
+# ============================================================================
+#
+# UNE LISTE FIGÉE, UN MESSAGE, UNE FOIS À VIE. Pour les essais honorés qu'aucune relance n'a
+# atteints (J+0 en panne du 03/09 au 07/10, J+3 jamais réel avant le 07/10) et qui sont désormais
+# trop anciens pour le moteur J+3. Aucune recherche dynamique : seules les personnes FIGÉES par
+# le super-admin (codes issus de l'audit V581) sont lues ; un code hors liste est refusé.
+#
+# AVANT CHAQUE ENVOI, TOUT EST REVÉRIFIÉ (rh_evaluer) : présence d'essai réelle, aucun achat,
+# aucun J+3, aucun rattrapage déjà envoyé, aucun refus e-mail, aucun STOP WhatsApp, adresse
+# valide, donnée non TEST, plage 09-20 h suisse. Une condition qui échoue = aucun envoi.
+#
+# UNE FOIS À VIE : la trace `rattrapage_essai_historique` a pour `_id` l'e-mail du destinataire
+# réel (préfixe « test: » + code en mode test). `insert_one` sur un `_id` existant échoue
+# atomiquement — double clic, double cycle, redémarrage : un seul envoi.
+#
+# DEUX DRAPEAUX, OFF PAR DÉFAUT : RATTRAPAGE_HIST_MODE_TEST (prioritaire, exclusif : seule la
+# plus-adresse « +testrattrapage » du super-admin reçoit) et RATTRAPAGE_HIST_ENVOI_REEL.
+# Aucun des deux : simulation (journal seulement, aucune trace).
+
+RH_PREFIXE = "[RATTRAPAGE-HIST]"
+RH_COLL_LISTE = "rattrapage_essai_historique_liste"
+RH_COLL_TRACE = "rattrapage_essai_historique"
+RH_LISTE_MAX = 20
+
+
+def rh_destinataire_test() -> str:
+    _l, _d = SUPER_ADMIN_EMAILS[0].lower().split("@", 1)
+    return "%s+testrattrapage@%s" % (_l, _d)
+
+
+def rh_contenu(prenom: str, lien: str, accent: str):
+    """`(sujet, html, texte)` — FONCTION PURE. Aucun prix, aucune urgence, aucun « vient de »."""
+    import html as _html
+    _p = (prenom or "").strip()
+    _salut = ("Salut %s 👋" % _p) if _p else "Salut 👋"
+    _sujet = "Des nouvelles d'Afroboost 💜"
+    _l1 = "Tu avais testé Afroboost avec nous il y a quelque temps 💜"
+    _l2 = "On voulait simplement prendre de tes nouvelles."
+    _l3 = "Si tu as envie de continuer, tu peux retrouver les possibilités disponibles ici."
+    _cta = "Continuer avec Afroboost"
+    _bouton = ('<div style="text-align:center;margin:26px 0 8px;"><a href="%s" style="display:inline-block;'
+               'background:%s;color:#fff;padding:14px 30px;text-decoration:none;border-radius:12px;'
+               'font-weight:700;font-size:15px;">%s</a></div>' % (lien, accent, _cta)) if lien else ""
+    _corps = ('<div style="padding:28px 24px;"><div style="color:#fff;font-size:18px;font-weight:700;'
+              'margin:0 0 12px;">%s</div><div style="color:#ddd;font-size:15px;line-height:1.6;">'
+              '%s<br><br>%s<br>%s</div>%s<div style="color:#777;font-size:12px;text-align:center;'
+              'margin-top:18px;">Une question ? Réponds simplement à cet e-mail.</div></div>'
+              % (_html.escape(_salut), _html.escape(_l1), _html.escape(_l2), _html.escape(_l3), _bouton))
+    _html_final = _email_wrapper("linear-gradient(135deg, %s 0%%, #7c3aed 100%%)" % accent, _corps, accent)
+    _texte = ("%s\n\n%s\n\n%s\n%s\n%s\nUne question ? Réponds simplement à cet e-mail.\n\n"
+              "Afroboost\nMove • Groove • Boost\n"
+              % (_salut, _l1, _l2, _l3, ("\n%s : %s\n" % (_cta, lien)) if lien else ""))
+    return _sujet, _html_final, _texte
+
+
+async def rh_evaluer(entree: dict):
+    """`(motif, contexte)` — motif '' = envoyable. LECTURE SEULE. Ne lève jamais."""
+    from api.routes.shared import (est_un_essai as _rh_essai, conv_etat as _rh_etat,
+                                   CONV_TERMINEE as _RH_TERMINEE)
+    _email = str((entree or {}).get("email") or "").strip().lower()
+    _code = str((entree or {}).get("code") or "").strip().upper()
+    _prenom = str((entree or {}).get("prenom") or "").strip()
+    if not _code:
+        return "sans_code", {}
+    if not _email or not rv2_email_valide(_email):
+        return "sans_email", {}
+    if p1e_est_test(_email, _prenom, False):
+        return "donnee_test", {}
+    try:
+        _pres = await db.reservations.find(
+            {"validated": True, "$or": [{"promoCode": _code}, {"discountCode": _code}]},
+            {"_id": 0, "id": 1, "userWhatsapp": 1, "validatedAt": 1}).to_list(20)
+        if not _pres:
+            return "sans_presence", {}
+        if not await _rh_essai(db, code=_code):
+            return "pas_un_essai", {}
+        _j3 = await db.reservations.find_one(
+            {"$or": [{"userEmail": _email}, {"promoCode": _code}, {"discountCode": _code}],
+             "confirmation.%s" % P1D_CANAL: {"$exists": True}}, {"_id": 1})
+        if _j3:
+            return "j3_deja_recu", {}
+        if await db[RH_COLL_TRACE].find_one({"_id": _email}, {"_id": 1}):
+            return "deja_envoye", {}
+        _, _forfait, _coach = await _conv_contexte(_code)
+        if not _forfait:
+            return "sans_forfait", {}
+        if _forfait.get("converted_at"):
+            return "deja_converti", {}
+        _etat = await _rh_etat(db, _forfait, _coach)
+        if (_etat or {}).get("state") == _RH_TERMINEE:
+            return "deja_converti", {}
+        _achat = await p1d_conversion_cours(_forfait)
+        if _achat is True:
+            return "deja_converti", {}
+        if _achat is None:
+            return "conversion_indeterminee", {}
+        if not await p1b_destinataire_autorise(_email):
+            return "refuse", {}
+        _tels = {str(x.get("userWhatsapp") or "").strip() for x in _pres} | \
+                {str(_forfait.get("whatsapp") or "").strip(), str(_forfait.get("phone") or "").strip()}
+        for _t in [t for t in _tels if t]:
+            if await c3_refus_exprime("whatsapp", _t):
+                return "stop_whatsapp", {}
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s évaluation impossible (%s) — aucun envoi", RH_PREFIXE, type(_err).__name__)
+        return "evaluation_impossible", {}
+    return "", {"forfait": _forfait, "coach": _coach}
+
+
+async def rh_envoyer(entree: dict, maintenant=None) -> str:
+    """UN rattrapage pour UNE personne de la liste figée. Rend un libellé d'issue. Ne lève jamais."""
+    from pymongo.errors import DuplicateKeyError as _RHDoublon
+    try:
+        _fl = await get_feature_flags() or {}
+    except Exception:  # noqa: BLE001
+        return "drapeaux_illisibles"
+    _test = bool(_fl.get("RATTRAPAGE_HIST_MODE_TEST"))
+    _reel = bool(_fl.get("RATTRAPAGE_HIST_ENVOI_REEL"))
+    _now = maintenant or datetime.now(timezone.utc)
+    _motif, _ctx = await rh_evaluer(entree)
+    if _motif:
+        return _motif
+    if not p1d_dans_la_fenetre(_now):
+        return "hors_fenetre"
+    _email = str(entree.get("email") or "").strip().lower()
+    _code = str(entree.get("code") or "").strip().upper()
+    _lien = p1b_lien_espace(_code)
+    if not _lien:
+        return "sans_lien"
+    _accent = await _v259_primary_color((_ctx.get("forfait") or {}).get("coach_id") or "")
+    _sujet, _html, _texte = rh_contenu(entree.get("prenom") or "", _lien, _accent)
+    if _test:
+        _dest, _cle, _mode = rh_destinataire_test(), "test:%s" % _code, "test"
+    elif _reel:
+        _dest, _cle, _mode = _email, _email, "reel"
+    else:
+        logger.info("%s SIMULATION — code=%s sujet=%r lien=%s", RH_PREFIXE, _code, _sujet, _lien)
+        return "simulation"
+    try:
+        await db[RH_COLL_TRACE].insert_one({"_id": _cle, "mode": _mode, "code": _code,
+                                            "statut": "en_cours", "at": _now.isoformat()})
+    except _RHDoublon:
+        return "deja_envoye"
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s trace impossible (%s) — aucun envoi", RH_PREFIXE, type(_err).__name__)
+        return "trace_impossible"
+    _ok = await p1b_envoyer_email(_dest, _sujet, _html, _texte)
+    try:
+        await db[RH_COLL_TRACE].update_one({"_id": _cle}, {"$set": {"statut": "envoye" if _ok else "echec",
+                                                                   "fin_at": datetime.now(timezone.utc).isoformat()}})
+    except Exception:  # noqa: BLE001
+        pass
+    logger.info("%s %s %s (code %s)", RH_PREFIXE, _mode, "envoyé" if _ok else "ÉCHEC", _code)
+    return ("envoye_%s" if _ok else "echec_%s") % _mode
+
+
+async def rh_passage(code: str = "", limite: int = 1) -> dict:
+    """Parcourt la LISTE FIGÉE (et elle seule). Un code hors liste = « hors_liste »."""
+    _code = str(code or "").strip().upper()
+    _req = {"_id": _code} if _code else {}
+    _liste = await db[RH_COLL_LISTE].find(_req).to_list(RH_LISTE_MAX)
+    if _code and not _liste:
+        return {"hors_liste": 1}
+    _liste.sort(key=lambda d: str(d.get("presence_at") or ""))
+    _resume = {}
+    _envois = 0
+    for _e in _liste:
+        if _envois >= max(1, int(limite or 1)):
+            break
+        _issue = await rh_envoyer({"email": _e.get("email"), "code": _e.get("_id"), "prenom": _e.get("prenom")})
+        _resume[_issue] = _resume.get(_issue, 0) + 1
+        if _issue.startswith("envoye_") or _issue.startswith("echec_"):
+            _envois += 1
+    return _resume
+
+
+@api_router.post("/admin/rattrapage-historique/figer")
+async def rh_figer(request: Request):
+    """Fige la liste UNE FOIS (super-admin signé). Corps : {"codes": [...]}. Chaque code doit être,
+    à l'instant du gel, un essai honoré envoyable (rh_evaluer). Liste déjà figée -> 409."""
+    from api.routes.shared import super_admin_signe as _rh_sa
+    if not _rh_sa(request):
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    try:
+        _corps = await request.json()
+    except Exception:  # noqa: BLE001
+        _corps = {}
+    _codes = [str(c or "").strip().upper() for c in ((_corps or {}).get("codes") or []) if str(c or "").strip()]
+    if not _codes or len(_codes) > RH_LISTE_MAX or len(set(_codes)) != len(_codes):
+        raise HTTPException(status_code=400, detail="codes : liste non vide, sans doublon, %d max" % RH_LISTE_MAX)
+    if await db[RH_COLL_LISTE].count_documents({}):
+        raise HTTPException(status_code=409, detail="Liste déjà figée")
+    _docs, _refus = [], {}
+    for _c in _codes:
+        _r = await db.reservations.find_one(
+            {"validated": True, "$or": [{"promoCode": _c}, {"discountCode": _c}]},
+            {"_id": 0, "userEmail": 1, "userName": 1, "validatedAt": 1})
+        _entree = {"code": _c, "email": str((_r or {}).get("userEmail") or "").strip().lower(),
+                   "prenom": (str((_r or {}).get("userName") or "").strip().split(" ") or [""])[0]}
+        _motif, _ = await rh_evaluer(_entree) if _r else ("sans_presence", {})
+        if _motif:
+            _refus[_c] = _motif
+            continue
+        _docs.append({"_id": _c, "email": _entree["email"], "prenom": _entree["prenom"],
+                      "presence_at": (_r or {}).get("validatedAt"),
+                      "fige_at": datetime.now(timezone.utc).isoformat()})
+    if _refus:
+        raise HTTPException(status_code=409, detail={"refus": _refus})
+    for _d in _docs:
+        await db[RH_COLL_LISTE].insert_one(_d)
+    return {"figes": len(_docs), "prenoms": [d["prenom"] for d in _docs]}
+
+
+@api_router.get("/admin/rattrapage-historique/etat")
+async def rh_etat_route(request: Request):
+    """La liste figée, le verdict ACTUEL de chacun et les traces. LECTURE SEULE."""
+    from api.routes.shared import super_admin_signe as _rh_sa
+    if not _rh_sa(request):
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    _liste = await db[RH_COLL_LISTE].find({}).to_list(RH_LISTE_MAX)
+    _out = []
+    for _e in sorted(_liste, key=lambda d: str(d.get("presence_at") or "")):
+        _motif, _ = await rh_evaluer({"email": _e.get("email"), "code": _e.get("_id"), "prenom": _e.get("prenom")})
+        _t = await db[RH_COLL_TRACE].find_one({"_id": str(_e.get("email") or "").lower()}) or {}
+        _tt = await db[RH_COLL_TRACE].find_one({"_id": "test:%s" % _e.get("_id")}) or {}
+        _out.append({"prenom": _e.get("prenom"), "presence_at": _e.get("presence_at"),
+                     "verdict": _motif or "envoyable", "trace_reelle": _t.get("statut") or "",
+                     "trace_test": _tt.get("statut") or ""})
+    _fl = await get_feature_flags() or {}
+    return {"liste": _out, "mode_test": bool(_fl.get("RATTRAPAGE_HIST_MODE_TEST")),
+            "envoi_reel": bool(_fl.get("RATTRAPAGE_HIST_ENVOI_REEL"))}
+
+
+@api_router.post("/admin/rattrapage-historique/passage")
+async def rh_passage_route(request: Request):
+    """Un passage sur la liste figée (super-admin signé). Corps : {"code": "AFR-…"?, "limite": 1..7}."""
+    from api.routes.shared import super_admin_signe as _rh_sa
+    if not _rh_sa(request):
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    try:
+        _corps = await request.json()
+    except Exception:  # noqa: BLE001
+        _corps = {}
+    try:
+        _lim = int((_corps or {}).get("limite") or 1)
+    except (TypeError, ValueError):
+        _lim = 1
+    return {"resume": await rh_passage((_corps or {}).get("code") or "", min(max(_lim, 1), RH_LISTE_MAX))}
 
 
 # ============================================================================
