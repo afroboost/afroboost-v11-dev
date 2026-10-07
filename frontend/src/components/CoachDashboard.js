@@ -49,6 +49,7 @@ import SvgIcon from "./SvgIcon";
 // P3-S2 : l'ecran Prospection. Il lit `partner_prospects` et cette collection
 // SEULE — jamais les contacts, les abonnes ni les reservations.
 import ProspectsSection from "./coach/ProspectsSection";
+import useCockpitProspection from "../hooks/useCockpitProspection"; // V587c
 import { alignerLieu } from "../utils/courseLocation"; // V230: jeu d'icones vectorielles inline
 // DEEPLINK PROSPECTION — la source UNIQUE de l'intention. Ce composant ne
 // touche plus jamais `sessionStorage` directement : deux endroits qui lisent
@@ -4803,24 +4804,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // il est simplement redirigé ici. Aucune donnée ne bouge, ProspectsSection est
   // monté tel quel. Dépendance = la CHAÎNE `tab` (règle anti-boucle V305).
   const [campagnesMode, setCampagnesMode] = useState('clients');
-  // V587b — sections du cockpit Prospection. PRIMITIVES uniquement (règle V305) :
-  // la vue pilotée ('' = laisser l'écran choisir) et les compteurs remontés par lui.
-  // `p3VuePilote` = la vue DEMANDÉE par un clic ('' tant que rien n'est cliqué : l'écran
-  // garde son choix par défaut, qui bascule sur les Réponses quand elles arrivent).
-  // `p3VueActive` = la vue RÉELLEMENT affichée, remontée par l'écran (surlignage seul).
-  const [p3VuePilote, setP3VuePilote] = useState('');
-  const [p3VueActive, setP3VueActive] = useState('');
-  const [p3NbConversations, setP3NbConversations] = useState(null);
-  const [p3Total, setP3Total] = useState(null);
-  const p3SurEtat = useCallback((vue, nbConv, total) => {
-    setP3VueActive(vue || '');
-    // Une vue changée par l'écran lui-même (lien profond vers une conversation) devient
-    // la nouvelle demande — sinon un clic sur la même section ne la rouvrirait pas.
-    // Tant que rien n'a été cliqué, on reste en mode « choix par défaut ».
-    setP3VuePilote(prev => (prev ? (vue || prev) : prev));
-    setP3NbConversations(typeof nbConv === 'number' ? nbConv : null);
-    setP3Total(typeof total === 'number' ? total : null);
-  }, []);
+  // V587c — état du cockpit Prospection : UNE seule source de vérité (voir le hook).
+  const p3Cockpit = useCockpitProspection();
   useEffect(() => {
     if (tab === 'prospection') {
       setCampagnesMode('prospection');
@@ -9075,21 +9060,21 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                  style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
               {[
                 { id: 'apercu', label: "Vue d'ensemble" },
-                { id: 'prospects', label: p3Total !== null ? `Prospects (${p3Total})` : 'Prospects', vue: 'prospects' },
-                { id: 'conversations', label: p3NbConversations !== null ? `Conversations partenaires (${p3NbConversations})` : 'Conversations partenaires', vue: 'reponses' },
+                { id: 'prospects', label: p3Cockpit.total !== null ? `Prospects (${p3Cockpit.total})` : 'Prospects', vue: 'prospects' },
+                { id: 'conversations', label: p3Cockpit.nbConversations !== null ? `Conversations partenaires (${p3Cockpit.nbConversations})` : 'Conversations partenaires', vue: 'reponses' },
                 { id: 'messages', label: 'Messages & relances' },
                 { id: 'medias', label: 'Médias' },
                 { id: 'liens', label: 'Liens' },
                 { id: 'resultats', label: 'Résultats' },
               ].map(sct => {
-                const actif = !!sct.vue && p3VueActive === sct.vue;
+                const actif = !!sct.vue && p3Cockpit.vueActive === sct.vue;
                 const dispo = !!sct.vue;
                 return (
                   <button key={sct.id} type="button" disabled={!dispo}
                           data-testid={`prospection-section-${sct.id}`}
                           aria-current={actif ? 'page' : undefined}
                           title={dispo ? undefined : 'Bientôt disponible'}
-                          onClick={dispo ? () => setP3VuePilote(sct.vue) : undefined}
+                          onClick={dispo ? () => p3Cockpit.choisir(sct.vue) : undefined}
                           style={{ padding: '7px 12px', borderRadius: '999px', fontSize: '12px',
                                    fontWeight: actif ? 700 : 500, cursor: dispo ? 'pointer' : 'default',
                                    color: dispo ? '#fff' : 'rgba(255,255,255,0.4)',
@@ -9101,7 +9086,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               })}
             </nav>
             <ProspectsSection API={API} inboundCible={p3Cible}
-                              ongletPilote={p3VuePilote} onEtat={p3SurEtat}
+                              ongletPilote={p3Cockpit.vuePilote} onEtat={p3Cockpit.surEtat} onDemandeOnglet={p3Cockpit.demander}
                               onCibleConsommee={() => {
                                 /* L'ecran a ouvert la bonne conversation — ou l'a
                                    declaree introuvable. C'est SEULEMENT ici que

@@ -263,13 +263,21 @@ function Etiquette({ texte, ton }) {
   );
 }
 
-export default function ProspectsSection({ API, inboundCible, onCibleConsommee, ongletPilote, onEtat }) {
+export default function ProspectsSection({ API, inboundCible, onCibleConsommee, ongletPilote, onEtat, onDemandeOnglet }) {
   /* V587b — PILOTAGE OPTIONNEL PAR LE COCKPIT CAMPAGNES. Sans ces deux props,
      l'écran se comporte EXACTEMENT comme avant (barre d'onglets interne, choix
      par défaut). Avec `ongletPilote` (chaîne), c'est la barre de sections de
      Campagnes → Prospection qui choisit la vue et la barre interne est masquée ;
      `onEtat` remonte des valeurs PRIMITIVES (onglet, nb conversations, total),
-     jamais un objet : règle anti-boucle V305. */
+     jamais un objet : règle anti-boucle V305.
+     V587c — UNE SEULE SOURCE DE VÉRITÉ. En mode piloté, la vue affichée est
+     DÉRIVÉE de `ongletPilote` : aucun état local ne la recopie, et l'écran ne
+     réécrit JAMAIS le choix du parent (V587b le faisait dans les deux sens →
+     boucle de rendu infinie au remontage). Seule exception, et ponctuelle :
+     une conversation ciblée (notification, lien profond) DEMANDE une fois au
+     parent d'afficher les réponses, via `onDemandeOnglet`. `onEtat` ne sert
+     qu'à l'AFFICHAGE du parent (surlignage, compteurs) et ne revient jamais
+     vers cet écran. */
   const pilote = typeof ongletPilote === 'string';
   const base = API || '';
 
@@ -724,7 +732,9 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
   const cibleTrouvee = conversationCible ? inboundCible : '';
   useEffect(() => {
     if (!cibleTrouvee) return;
-    setOnglet('reponses');
+    // V587c : piloté → on DEMANDE au parent (une fois) ; autonome → comme avant.
+    if (pilote) { if (onDemandeOnglet) onDemandeOnglet('reponses'); }
+    else setOnglet('reponses');
     ouvrirMessage(conversationCible, cibleTrouvee);
     if (onCibleConsommee) onCibleConsommee();
     /* Le défilement est un confort, jamais une condition : si l'ancre n'existe
@@ -789,12 +799,10 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
      V305. Ici : tant que le coach n'a rien choisi (`onglet` vide), l'écran
      ouvre la boîte de traitement s'il y a quelque chose à traiter, et la liste
      des prospects sinon. Aucun `setState`, donc aucune boucle possible. */
-  const ongletActif = onglet || (conversations.length ? 'reponses' : 'prospects');
-
-  // V587b : le cockpit impose une vue (chaîne vide = laisser le choix par défaut).
-  useEffect(() => {
-    if (pilote && ongletPilote) setOnglet(ongletPilote);
-  }, [pilote, ongletPilote]);
+  const ongletParDefaut = conversations.length ? 'reponses' : 'prospects';
+  // V587c : piloté → la vue est DÉRIVÉE du parent (aucune copie locale) ;
+  // autonome → comportement d'origine (onglet local, sinon défaut).
+  const ongletActif = pilote ? (ongletPilote || ongletParDefaut) : (onglet || ongletParDefaut);
   // V587b : le cockpit apprend la vue active et les compteurs — primitives seulement.
   const etatTotal = chargeUnFois && total !== null ? total : null;
   useEffect(() => {
