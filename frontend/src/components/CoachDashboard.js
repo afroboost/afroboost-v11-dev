@@ -4796,6 +4796,20 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [p3NonLues, setP3NonLues] = useState(0);
   const [p3ARepondre, setP3ARepondre] = useState(0);
 
+  // UI-1 (V587) — CAMPAGNES = COCKPIT. La prospection devient un MODE de la page
+  // Campagnes (Clients | Prospection), plus un écran séparé. L'ancien onglet
+  // `prospection` (bouton, lien profond ?prospection=1, notification, bandeau
+  // « nouvelles réponses », dernier onglet mémorisé) RESTE la porte d'entrée :
+  // il est simplement redirigé ici. Aucune donnée ne bouge, ProspectsSection est
+  // monté tel quel. Dépendance = la CHAÎNE `tab` (règle anti-boucle V305).
+  const [campagnesMode, setCampagnesMode] = useState('clients');
+  useEffect(() => {
+    if (tab === 'prospection') {
+      setCampagnesMode('prospection');
+      setTab('campaigns');
+    }
+  }, [tab]);
+
   const p3ChargerCompteurs = useCallback(async () => {
     try {
       // `limit=1` : on ne veut que les compteurs, pas la liste. Le serveur les
@@ -4814,8 +4828,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // La dépendance est la CHAÎNE `tab`, jamais un objet : un objet neuf à chaque
   // rendu relancerait l'effet en boucle (règle absolue, incident V305).
   useEffect(() => {
-    if (tab === 'prospection') p3ChargerCompteurs();
-  }, [tab, p3ChargerCompteurs]);
+    if (tab === 'prospection' || (tab === 'campaigns' && campagnesMode === 'prospection')) p3ChargerCompteurs();
+  }, [tab, campagnesMode, p3ChargerCompteurs]);
 
   // === V441 — compteur global des WhatsApp non lus ===
   // Il vit ICI, et pas dans l'onglet WhatsApp, parce que la pastille doit se voir
@@ -9001,9 +9015,37 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           </div>
         )}
 
-        {/* === PROSPECTION TAB (P3-S2) === */}
-        {tab === "prospection" && (
-          <div className="card-gradient rounded-xl p-4 sm:p-6">
+        {/* === CAMPAGNES : sélecteur CLIENTS | PROSPECTION (UI-1, V587) === */}
+        {tab === "campaigns" && (
+          <div role="tablist" aria-label="Type de campagnes" data-testid="campagnes-mode"
+               style={{ display: 'flex', gap: '6px', padding: '4px', marginBottom: '14px',
+                        borderRadius: '12px', background: 'rgba(255,255,255,0.05)',
+                        border: '1px solid rgba(255,255,255,0.08)', maxWidth: '520px' }}>
+            {[
+              { id: 'clients', label: 'Clients', icone: 'users' },
+              { id: 'prospection', label: p3NonLues > 0 ? `Prospection (${p3NonLues})` : 'Prospection', icone: 'compass' },
+            ].map(m => {
+              const actif = campagnesMode === m.id;
+              return (
+                <button key={m.id} type="button" role="tab" aria-selected={actif}
+                        data-testid={`campagnes-mode-${m.id}`}
+                        onClick={() => setCampagnesMode(m.id)}
+                        style={{ flex: 1, minWidth: 0, padding: '10px 12px', borderRadius: '9px',
+                                 border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
+                                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                 background: actif ? 'var(--primary-color, #D91CD2)' : 'transparent',
+                                 color: actif ? '#fff' : 'rgba(255,255,255,0.75)' }}>
+                  <SvgIcon name={m.icone} size={14} />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* === PROSPECTION (P3-S2) — désormais le mode « Prospection » de Campagnes (UI-1) === */}
+        {tab === "campaigns" && campagnesMode === "prospection" && (
+          <div className="card-gradient rounded-xl p-4 sm:p-6" data-testid="campagnes-prospection">
             <ProspectsSection API={API} inboundCible={p3Cible}
                               onCibleConsommee={() => {
                                 /* L'ecran a ouvert la bonne conversation — ou l'a
@@ -9028,13 +9070,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             <EspaceCreateur />
           </div>
         )}
-        {tab === "campaigns" && co1CampagnesMotif && (
+        {tab === "campaigns" && campagnesMode !== "prospection" && co1CampagnesMotif && (
           <div style={{ marginBottom: '12px' }}>
             <SectionErreur motif={co1CampagnesMotif} quoi="tes campagnes"
                            onReessayer={co1ChargerCampagnes} data-testid="co1-erreur-campagnes" />
           </div>
         )}
-        {tab === "campaigns" && (
+        {tab === "campaigns" && campagnesMode !== "prospection" && (
           <CampaignManager
             // V560 : module « Créateur / Affiliation » — l'onglet Créateur n'existe que pour un partenaire.
             onOuvrirCreateur={co1Ids.includes("createur") ? () => setTab("createur") : null}
