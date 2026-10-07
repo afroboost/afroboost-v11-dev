@@ -1902,6 +1902,12 @@ class FeatureFlags(BaseModel):
     #   les deux a true                -> l'e-mail part
     P1_TRIAL_J3_ENABLED: bool = False        # P1-d
     P1_TRIAL_J3_ENVOI_REEL: bool = False     # P1-d
+    # P1-e (07/10/2026) — essai accordé mais jamais réservé : relance +3 h puis J+2.
+    #   ENABLED seul -> simulation (journal, personne n'est contacté) ; les deux -> e-mail réel.
+    #   TEST_CONTROLE -> autorise UNIQUEMENT les plus-adresses du super-admin (test réel contrôlé).
+    P1E_ESSAI_NON_RESERVE_ENABLED: bool = False
+    P1E_ESSAI_NON_RESERVE_ENVOI_REEL: bool = False
+    P1E_TEST_CONTROLE: bool = False
     # AUTO-PRESENCE PHASE 1 — l'oubli du scan ne bloque plus l'essai.
     # Meme double garde que P1-b/P1-d, mais le second drapeau ne parle pas
     # d'ENVOI : ce lot n'ecrit pas a des gens, il ECRIT EN BASE. Le nommer
@@ -1969,6 +1975,9 @@ class FeatureFlagsUpdate(BaseModel):
     P1_TRIAL_J0_ENVOI_REEL: Optional[bool] = None  # P1-b
     P1_TRIAL_J3_ENABLED: Optional[bool] = None  # P1-d
     P1_TRIAL_J3_ENVOI_REEL: Optional[bool] = None  # P1-d
+    P1E_ESSAI_NON_RESERVE_ENABLED: Optional[bool] = None  # P1-e
+    P1E_ESSAI_NON_RESERVE_ENVOI_REEL: Optional[bool] = None  # P1-e
+    P1E_TEST_CONTROLE: Optional[bool] = None  # P1-e
     AUTO_PRESENCE_TRIAL_ENABLED: Optional[bool] = None  # AUTO-PRESENCE
     AUTO_PRESENCE_TRIAL_ECRITURE_REELLE: Optional[bool] = None  # AUTO-PRESENCE
     META_WEBHOOK_SIGNATURE_ENABLED: Optional[bool] = None  # V453
@@ -22679,6 +22688,9 @@ async def get_feature_flags():
             "P1_TRIAL_J0_ENVOI_REEL": False,   # P1-b : défaut OFF (simulation même si activé)
             "P1_TRIAL_J3_ENABLED": False,      # P1-d : défaut OFF (aucune relance J+3)
             "P1_TRIAL_J3_ENVOI_REEL": False,   # P1-d : défaut OFF (simulation même si activé)
+            "P1E_ESSAI_NON_RESERVE_ENABLED": False,     # P1-e : défaut OFF (aucune relance)
+            "P1E_ESSAI_NON_RESERVE_ENVOI_REEL": False,  # P1-e : défaut OFF (simulation même si activé)
+            "P1E_TEST_CONTROLE": False,                 # P1-e : défaut OFF (données TEST toujours exclues)
             "AUTO_PRESENCE_TRIAL_ENABLED": False,          # AUTO-PRESENCE : défaut OFF (aucune auto-validation)
             "AUTO_PRESENCE_TRIAL_ECRITURE_REELLE": False,  # AUTO-PRESENCE : défaut OFF (simulation même si activé)
             "META_WEBHOOK_SIGNATURE_ENABLED": False,       # V453 : défaut OFF (webhook inchangé, observation seule)
@@ -22714,6 +22726,9 @@ async def get_feature_flags():
                          ("P1_TRIAL_J0_ENVOI_REEL", False),
                          ("P1_TRIAL_J3_ENABLED", False),
                          ("P1_TRIAL_J3_ENVOI_REEL", False),
+                         ("P1E_ESSAI_NON_RESERVE_ENABLED", False),
+                         ("P1E_ESSAI_NON_RESERVE_ENVOI_REEL", False),
+                         ("P1E_TEST_CONTROLE", False),
                          ("AUTO_PRESENCE_TRIAL_ENABLED", False),
                          ("AUTO_PRESENCE_TRIAL_ECRITURE_REELLE", False),
                          ("META_WEBHOOK_SIGNATURE_ENABLED", False),
@@ -47643,6 +47658,365 @@ async def _p1d_boucle_relance_j3():
 
 
 # ============================================================================
+# P1-e (07/10/2026) — ESSAI ACCORDÉ, JAMAIS RÉSERVÉ : UNE AIDE À +3 H, UNE DERNIÈRE À J+2
+# ============================================================================
+#
+# LE CONSTAT (production, 07/10) : 24 essais gratuits accordés, 9 réservés, 15 jamais —
+# aucun n'est revenu de lui-même (4 à 49 jours). Ceux qui réservent le font TOUT DE SUITE
+# (médiane 0 h, 8 sur 9 en moins de 24 h). Une aide le jour même, puis une dernière.
+#
+# MÊME CHARPENTE QUE P1-d, à dessein : boucle horaire, drapeaux relus à chaque passage,
+# fenêtre 09:00-20:00 Europe/Zurich, borne d'activation FIXE (aucun rattrapage), mode
+# simulation qui calcule ce qui partirait sans rien écrire, jeton atomique AVANT l'envoi.
+# La trace vit sur le FORFAIT D'ESSAI (`subscriptions.relances_essai.{h3,j2}`), pas sur une
+# réservation — par définition il n'y en a pas.
+#
+# TOUT EST REVÉRIFIÉ AU DERNIER MOMENT : une réservation ou un achat survenu entre deux
+# passages arrête la séquence, sans qu'aucun état « planifié » n'ait à être annulé.
+P1E_PREFIXE = "[P1-e]"
+P1E_CANAL_H3 = "h3"
+P1E_CANAL_J2 = "j2"
+P1E_DELAI_H3_H = 3          # +3 h après l'octroi
+P1E_FIN_H3_H = 44           # passé 44 h, on n'envoie plus le +3 h (le J+2 arrive)
+P1E_DELAI_J2_H = 48         # J+2
+P1E_FIN_J2_J = 7            # passé J+7, la séquence est close pour toujours
+P1E_PERIODE_S = 3600
+P1E_LOT_MAX = 200
+# Borne FIXE : aucun essai antérieur n'est jamais candidat (les 15 essais historiques non
+# réservés ne seront PAS relancés par ce lot — une campagne manuelle reste possible).
+P1E_BORNE_DEFAUT = "2026-10-07T12:00:00+00:00"
+P1E_TYPE_PREFERENCE = P1B_TYPE_PREFERENCE   # même consentement que le suivi d'essai
+
+
+def p1e_borne_activation():
+    _brut = os.environ.get("P1E_BORNE_ACTIVATION", "") or P1E_BORNE_DEFAUT
+    _d = p1d_parse_iso(_brut)
+    if _d is None:
+        logger.error("%s borne d'activation illisible (%r) — aucun candidat", P1E_PREFIXE, _brut)
+        return datetime(2999, 1, 1, tzinfo=timezone.utc)
+    return _d
+
+
+def p1e_etape(forfait: dict, maintenant) -> tuple:
+    """`(etape, motif)` — FONCTION PURE. `etape` vaut "h3", "j2" ou None.
+
+    Ne lit que le forfait et l'horloge : réservation, achat, consentement et fenêtre horaire
+    sont vérifiés ensuite par `p1e_relance`. Ordre : le J+2 d'abord (il suppose le +3 h
+    ENVOYÉ), puis le +3 h.
+    """
+    _f = forfait if isinstance(forfait, dict) else {}
+    _cree = p1d_parse_iso(_f.get("created_at"))
+    if _cree is None:
+        return None, "sans_date"
+    if _cree < p1e_borne_activation():
+        return None, "hors_borne"
+    _age_h = (maintenant - _cree).total_seconds() / 3600.0
+    _rel = _f.get("relances_essai") if isinstance(_f.get("relances_essai"), dict) else {}
+    _h3 = _rel.get(P1E_CANAL_H3) if isinstance(_rel.get(P1E_CANAL_H3), dict) else None
+    _j2 = _rel.get(P1E_CANAL_J2) if isinstance(_rel.get(P1E_CANAL_J2), dict) else None
+    if _j2:
+        return None, "sequence_close"
+    if _age_h > P1E_FIN_J2_J * 24:
+        return None, "trop_tard"
+    if _age_h >= P1E_DELAI_J2_H:
+        if _h3 and _h3.get("statut") == "envoye":
+            return P1E_CANAL_J2, "j2_du"
+        return None, "pas_de_h3"          # pas de « dernière relance » sans première
+    if _h3:
+        return None, "h3_deja_fait"
+    if _age_h < P1E_DELAI_H3_H:
+        return None, "pas_encore"
+    if _age_h > P1E_FIN_H3_H:
+        return None, "h3_trop_tard"
+    return P1E_CANAL_H3, "h3_du"
+
+
+def p1e_est_test(email: str, nom: str, test_controle: bool) -> bool:
+    """Donnée TEST ? (règle de `reactivation.est_donnee_test`, la même que les campagnes.)
+
+    Seule exception, et seulement si `P1E_TEST_CONTROLE` est vrai : une PLUS-ADRESSE du
+    super-admin (`<local>+…@<domaine>`) — elle n'atteint que la boîte du propriétaire.
+    """
+    from api.routes.reactivation import est_donnee_test as _p1e_test
+    _e = (email or "").strip().lower()
+    if test_controle and "@" in _e:
+        _local, _dom = _e.split("@", 1)
+        for _adm in SUPER_ADMIN_EMAILS:
+            _al, _ad = _adm.lower().split("@", 1)
+            if _dom == _ad and _local.startswith(_al + "+"):
+                return False
+    return bool(_p1e_test(_e, nom or ""))
+
+
+async def p1e_a_reserve(forfait: dict):
+    """Une réservation existe-t-elle sur cet essai ? True / False / None (illisible)."""
+    _code = str(forfait.get("code") or "").strip().upper()
+    _sid = str(forfait.get("id") or "").strip()
+    _ou = []
+    if _code:
+        _ou += [{"promoCode": _code}, {"discountCode": _code}]
+    if _sid:
+        _ou.append({"subscriptionId": _sid})
+    if not _ou:
+        return None
+    try:
+        return bool(await db.reservations.find_one({"$or": _ou}, {"_id": 1}))
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s réservations illisibles (%s)", P1E_PREFIXE, type(_err).__name__)
+        return None
+
+
+def p1e_lien_espace(code: str) -> str:
+    """Le lien le plus direct vers le choix de séance : l'espace du participant."""
+    return p1b_lien_espace(code)
+
+
+def p1e_contenu(etape: str, prenom: str, lien: str, accent: str):
+    """`(sujet, html, texte)` — FONCTION PURE. Ton humain, aucune pression, aucun prix."""
+    import html as _html
+    _p = (prenom or "").strip()
+    if etape == P1E_CANAL_J2:
+        _sujet = "On te garde une place pour ton essai ?"
+        _lignes = ["Ton cours d'essai gratuit t'attend toujours.",
+                   "Si tu as envie de découvrir Afroboost, choisis simplement la séance qui te convient.",
+                   "Et si ce n'est pas le bon moment, aucun souci."]
+        _cta = "Réserver mon essai"
+    else:
+        _sujet = "Ton cours d'essai Afroboost t'attend"
+        _lignes = ["Ton cours d'essai gratuit est prêt.",
+                   "Il ne te reste plus qu'à choisir ta séance : ça prend une minute, et le casque est fourni sur place."]
+        _cta = "Choisir ma séance"
+    _entete = ('<div style="color:#fff;font-size:18px;font-weight:700;margin:0 0 12px;">%s,</div>'
+               % _html.escape(_p)) if _p else ""
+    _bouton = ('<div style="text-align:center;margin:26px 0 8px;"><a href="%s" style="display:inline-block;'
+               'background:%s;color:#fff;padding:14px 30px;text-decoration:none;border-radius:12px;'
+               'font-weight:700;font-size:15px;">%s</a></div>' % (lien, accent, _cta)) if lien else ""
+    _corps = ('<div style="padding:28px 24px;">%s<div style="color:#ddd;font-size:15px;line-height:1.6;">%s</div>'
+              '%s<div style="color:#777;font-size:12px;text-align:center;margin-top:18px;">'
+              'Une question ?<br>Réponds simplement à cet e-mail.</div></div>'
+              % (_entete, "<br><br>".join(_html.escape(l) for l in _lignes), _bouton))
+    _html_final = _email_wrapper("linear-gradient(135deg, %s 0%%, #7c3aed 100%%)" % accent, _corps, accent)
+    _texte = ("%s%s\n%s\nUne question ?\nRéponds simplement à cet e-mail.\n\nAfroboost\nMove • Groove • Boost\n"
+              % (("%s,\n\n" % _p) if _p else "", "\n\n".join(_lignes),
+                 ("\n%s : %s\n" % (_cta, lien)) if lien else ""))
+    return _sujet, _html_final, _texte
+
+
+async def _p1e_reserver_jeton(forfait_id: str, etape: str, quand: str) -> bool:
+    """Réserve le droit d'envoyer CETTE étape sur CE forfait (écriture conditionnelle atomique)."""
+    try:
+        _r = await db.subscriptions.update_one(
+            {"id": forfait_id, "relances_essai.%s" % etape: {"$exists": False}},
+            {"$set": {"relances_essai.%s" % etape: {"statut": "en_cours", "at": quand}}})
+        return bool(getattr(_r, "matched_count", 0))
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s jeton %s impossible (%s)", P1E_PREFIXE, etape, type(_err).__name__)
+        return False
+
+
+async def _p1e_cloturer_jeton(forfait_id: str, etape: str, ok: bool) -> None:
+    try:
+        await db.subscriptions.update_one(
+            {"id": forfait_id},
+            {"$set": {"relances_essai.%s.statut" % etape: "envoye" if ok else "echec"}})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def p1e_relance(forfait: dict, maintenant=None) -> str:
+    """LA RELANCE d'un essai non réservé. Rend un libellé d'issue. NE LÈVE JAMAIS.
+
+    Issues : desactive, sans_date, hors_borne, pas_encore, h3_deja_fait, h3_trop_tard,
+    pas_de_h3, sequence_close, trop_tard, donnee_test, inactif, expire, epuise,
+    pas_un_essai, deja_reserve, reservation_indeterminee, deja_achete,
+    conversion_indeterminee, sans_email, refuse, hors_fenetre, simulation_<etape>,
+    deja_traitee, envoye_<etape>, echec_<etape>.
+    """
+    if not isinstance(forfait, dict):
+        return "desactive"
+    try:
+        _flags = await get_feature_flags() or {}
+    except Exception:  # noqa: BLE001
+        return "desactive"
+    if not _flags.get("P1E_ESSAI_NON_RESERVE_ENABLED"):
+        return "desactive"
+    _reel = bool(_flags.get("P1E_ESSAI_NON_RESERVE_ENVOI_REEL"))
+    _now = maintenant or datetime.now(timezone.utc)
+    _id = str(forfait.get("id") or "").strip()
+    if not _id:
+        return "sans_date"
+    _etape, _motif = p1e_etape(forfait, _now)
+    if not _etape:
+        return _motif
+    _email = (forfait.get("email") or "").strip().lower()
+    if p1e_est_test(_email, forfait.get("name") or "", bool(_flags.get("P1E_TEST_CONTROLE"))):
+        return "donnee_test"
+    if str(forfait.get("status") or "") != "active":
+        return "inactif"
+    _exp = p1d_parse_iso(forfait.get("expires_at"))
+    if _exp is not None and _exp <= _now:
+        return "expire"
+    try:
+        if int(forfait.get("remaining_sessions") or 0) <= 0:
+            return "epuise"
+    except (TypeError, ValueError):
+        return "epuise"
+    from api.routes.shared import est_un_essai as _p1e_est_essai
+    try:
+        if not await _p1e_est_essai(db, forfait=forfait):
+            return "pas_un_essai"
+    except Exception:  # noqa: BLE001
+        return "pas_un_essai"
+    _resa = await p1e_a_reserve(forfait)
+    if _resa is True:
+        return "deja_reserve"
+    if _resa is None:
+        return "reservation_indeterminee"
+    _achat = await p1d_conversion_cours(forfait)
+    if _achat is True:
+        return "deja_achete"
+    if _achat is None:
+        return "conversion_indeterminee"
+    if not _email or not rv2_email_valide(_email):
+        return "sans_email"
+    if not await p1b_destinataire_autorise(_email):
+        return "refuse"
+    if not p1d_dans_la_fenetre(_now):
+        return "hors_fenetre"
+    _accent = await _v259_primary_color(forfait.get("coach_id") or "")
+    _prenom = (forfait.get("name") or "").strip().split(" ")[0]
+    _lien = p1e_lien_espace(forfait.get("code") or "")
+    _sujet, _html, _texte = p1e_contenu(_etape, _prenom, _lien, _accent)
+    if not _reel:
+        logger.info("%s SIMULATION %s — forfait=%s sujet=%r lien=%s", P1E_PREFIXE, _etape, _id[:8],
+                    _sujet, _lien or "(aucun)")
+        return "simulation_%s" % _etape
+    if not await _p1e_reserver_jeton(_id, _etape, _now.isoformat()):
+        return "deja_traitee"
+    _ok = await p1b_envoyer_email(_email, _sujet, _html, _texte)
+    await _p1e_cloturer_jeton(_id, _etape, _ok)
+    return ("envoye_%s" if _ok else "echec_%s") % _etape
+
+
+async def p1e_candidats(maintenant):
+    """Les forfaits récents non clos. Bornés, triés (les plus récents d'abord), jamais l'historique."""
+    _bas = max(p1e_borne_activation(), maintenant - timedelta(days=P1E_FIN_J2_J))
+    _haut = maintenant - timedelta(hours=P1E_DELAI_H3_H)
+    try:
+        return await db.subscriptions.find(
+            {"created_at": {"$gte": _bas.isoformat(), "$lte": _haut.isoformat()},
+             "status": "active", "relances_essai.%s" % P1E_CANAL_J2: {"$exists": False}},
+            {"_id": 0}).sort("created_at", -1).to_list(P1E_LOT_MAX)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s candidats illisibles (%s)", P1E_PREFIXE, type(_err).__name__)
+        return []
+
+
+async def p1e_passage(maintenant=None) -> dict:
+    """UN passage complet. Rend le décompte par issue. NE LÈVE JAMAIS."""
+    try:
+        if not (await get_feature_flags() or {}).get("P1E_ESSAI_NON_RESERVE_ENABLED"):
+            return {"desactive": 1}
+    except Exception:  # noqa: BLE001
+        return {"desactive": 1}
+    _now = maintenant or datetime.now(timezone.utc)
+    _resume = {}
+    for _f in await p1e_candidats(_now):
+        try:
+            _issue = await p1e_relance(_f, _now)
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("%s candidat ignoré (%s)", P1E_PREFIXE, type(_err).__name__)
+            _issue = "echec"
+        _resume[_issue] = _resume.get(_issue, 0) + 1
+    return _resume
+
+
+async def _p1e_boucle_essai_non_reserve():
+    await asyncio.sleep(60)
+    while True:
+        try:
+            _resume = await p1e_passage()
+            if _resume and set(_resume) != {"desactive"}:
+                logger.info("%s passage : %s", P1E_PREFIXE, _resume)
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("%s passage ignoré : %s", P1E_PREFIXE, _err)
+        await asyncio.sleep(P1E_PERIODE_S)
+
+
+def p1e_mesure_pure(forfaits: list, reservations: list, maintenant) -> dict:
+    """LE TRACKING — FONCTION PURE, sur les seuls essais postérieurs à la borne.
+
+    Ne modifie aucune statistique historique : il lit les forfaits d'essai et leurs
+    réservations, et compte. « Réservé après la relance » = première réservation postérieure
+    à l'horodatage de la relance.
+    """
+    _borne = p1e_borne_activation()
+    _premiere = {}
+    for _r in reservations or []:
+        for _k in (str(_r.get("promoCode") or "").upper(), str(_r.get("discountCode") or "").upper(),
+                   str(_r.get("subscriptionId") or "")):
+            if _k:
+                _d = p1d_parse_iso(_r.get("createdAt") or _r.get("created_at"))
+                if _d and (_k not in _premiere or _d < _premiere[_k]):
+                    _premiere[_k] = _d
+    _m = {"essais": 0, "candidats_h3": 0, "h3_envoyes": 0, "reserves_apres_h3": 0,
+          "j2_envoyes": 0, "reserves_apres_j2": 0, "sans_reservation": 0}
+    for _f in forfaits or []:
+        _cree = p1d_parse_iso(_f.get("created_at"))
+        if _cree is None or _cree < _borne:
+            continue
+        _m["essais"] += 1
+        _res = min([d for d in (_premiere.get(str(_f.get("code") or "").upper()),
+                                _premiere.get(str(_f.get("id") or ""))) if d], default=None)
+        if (maintenant - _cree) >= timedelta(hours=P1E_DELAI_H3_H) and (
+                _res is None or _res > _cree + timedelta(hours=P1E_DELAI_H3_H)):
+            _m["candidats_h3"] += 1
+        _rel = _f.get("relances_essai") or {}
+        _h3 = p1d_parse_iso((_rel.get(P1E_CANAL_H3) or {}).get("at")) \
+            if (_rel.get(P1E_CANAL_H3) or {}).get("statut") == "envoye" else None
+        _j2 = p1d_parse_iso((_rel.get(P1E_CANAL_J2) or {}).get("at")) \
+            if (_rel.get(P1E_CANAL_J2) or {}).get("statut") == "envoye" else None
+        if _h3:
+            _m["h3_envoyes"] += 1
+            if _res and _res > _h3 and not (_j2 and _res > _j2):
+                _m["reserves_apres_h3"] += 1
+        if _j2:
+            _m["j2_envoyes"] += 1
+            if _res and _res > _j2:
+                _m["reserves_apres_j2"] += 1
+        if _res is None:
+            _m["sans_reservation"] += 1
+    return _m
+
+
+@api_router.get("/coach/funnel/essai-non-reserve")
+async def p1e_mesure_route(request: Request):
+    """Tracking P1-e — super-admin signé seulement. Lecture seule, essais postérieurs à la borne."""
+    _appelant = await _v309_require_coach_or_admin(request)
+    if not is_super_admin(_appelant):
+        raise HTTPException(status_code=403, detail="Réservé au super-admin")
+    _now = datetime.now(timezone.utc)
+    _bas = p1e_borne_activation().isoformat()
+    _forfaits = await db.subscriptions.find({"created_at": {"$gte": _bas}}, {"_id": 0}).to_list(2000)
+    from api.routes.shared import est_un_essai as _p1e_essai
+    _essais = []
+    for _f in _forfaits:
+        try:
+            if await _p1e_essai(db, forfait=_f):
+                _essais.append(_f)
+        except Exception:  # noqa: BLE001
+            continue
+    _codes = [str(f.get("code") or "").upper() for f in _essais if f.get("code")]
+    _ids = [str(f.get("id") or "") for f in _essais if f.get("id")]
+    _resas = await db.reservations.find(
+        {"$or": [{"promoCode": {"$in": _codes}}, {"discountCode": {"$in": _codes}},
+                 {"subscriptionId": {"$in": _ids}}]},
+        {"_id": 0, "promoCode": 1, "discountCode": 1, "subscriptionId": 1, "createdAt": 1,
+         "created_at": 1}).to_list(5000) if (_codes or _ids) else []
+    return {"depuis": _bas, **p1e_mesure_pure(_essais, _resas, _now)}
+
+
+# ============================================================================
 # AUTO-PRESENCE PHASE 1 — L'OUBLI DU SCAN NE BLOQUE PLUS L'ESSAI
 # ============================================================================
 #
@@ -51040,6 +51414,12 @@ async def startup_db():
                     RV3B_PREFIXE, RV3B_PERIODE_S)
     except Exception as e:
         logger.warning(f"[P1-d] Demarrage de la boucle ignore: {e}")
+    # P1-e : relance « essai accordé, jamais réservé ». Même discipline que P1-d :
+    # la boucle relit ses drapeaux à chaque passage ; à false, elle ne lit rien.
+    try:
+        asyncio.create_task(_p1e_boucle_essai_non_reserve())
+    except Exception as _p1e_err:  # noqa: BLE001
+        logger.warning("[P1-e] boucle non démarrée (%s)", type(_p1e_err).__name__)
 
     logger.info("[SYSTEM] Database indexes initialized")
 
