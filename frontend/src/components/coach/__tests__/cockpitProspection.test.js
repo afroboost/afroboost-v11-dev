@@ -8,6 +8,7 @@
 import React, { useState, Profiler } from 'react';
 import { createRoot } from 'react-dom/client';
 import ProspectsSection from '../ProspectsSection';
+import MessagesRelancesSection from '../MessagesRelancesSection';
 import useCockpitProspection from '../../../hooks/useCockpitProspection';
 
 jest.mock('axios', () => ({
@@ -81,15 +82,26 @@ function Cockpit() {
       {mode === 'prospection' && (
         <div>
           <span data-testid="total-barre">{c.total === null ? '' : String(c.total)}</span>
-          <button data-testid="sec-prospects" aria-current={c.vueActive === 'prospects' ? 'page' : undefined}
+          <button data-testid="sec-prospects" aria-current={!c.messagesOuvert && c.vueActive === 'prospects' ? 'page' : undefined}
                   onClick={() => c.choisir('prospects')}>Prospects</button>
-          <button data-testid="sec-conversations" aria-current={c.vueActive === 'reponses' ? 'page' : undefined}
+          <button data-testid="sec-conversations" aria-current={!c.messagesOuvert && c.vueActive === 'reponses' ? 'page' : undefined}
                   onClick={() => c.choisir('reponses')}>Conversations partenaires</button>
+          <button data-testid="sec-messages" aria-current={c.messagesOuvert ? 'page' : undefined}
+                  onClick={() => c.choisir('messages')}>Messages & relances</button>
+          {/* V588 — même câblage que CoachDashboard : Messages monté à la 1re ouverture,
+              ProspectsSection jamais démonté (masqué). */}
+          {c.messagesMonte && (
+            <div data-testid="enveloppe-messages" style={{ display: c.messagesOuvert ? 'block' : 'none' }}>
+              <MessagesRelancesSection API="/api" />
+            </div>
+          )}
+          <div data-testid="enveloppe-prospects" style={{ display: c.messagesOuvert ? 'none' : 'block' }}>
           <Profiler id="ps" onRender={() => { rendus += 1; }}>
             <ProspectsSection API="/api" inboundCible={cible}
                               onCibleConsommee={() => { consommations += 1; setCible(''); }}
                               ongletPilote={c.vuePilote} onEtat={c.surEtat} onDemandeOnglet={c.demander} />
           </Profiler>
+          </div>
         </div>
       )}
     </div>
@@ -99,7 +111,8 @@ function Cockpit() {
 let conteneur = null;
 let racine = null;
 const par = (id) => conteneur.querySelector(`[data-testid="${id}"]`);
-const actives = () => Array.from(conteneur.querySelectorAll('[aria-current="page"]')).map((b) => b.dataset.testid);
+const actives = () => Array.from(conteneur.querySelectorAll('[aria-current="page"]'))
+  .map((b) => b.dataset.testid).filter((id) => id && id.indexOf('sec-') === 0);
 const vueAffichee = () => (par('file-conversations') || par('reponses-recues') ? 'reponses'
   : (par('tuile-Total') ? 'prospects' : '?'));
 async function cliquer(id) { await act(async () => { par(id).click(); }); }
@@ -224,4 +237,42 @@ test('V587d — la barre annonce le total de la PORTÉE (142), pas le nombre fil
   await cliquer('mode-prospection');
   await cliquer('sec-prospects');
   expect(par('total-barre').textContent).toBe('142');
+});
+
+
+test('V588 — Messages & relances : bascules avec Prospects / Conversations, aucun remontage, aucune boucle', async () => {
+  await monter(<Cockpit />);
+  await cliquer('mode-prospection');
+  await cliquer('sec-prospects');
+  const ecranProspects = par('enveloppe-prospects').firstChild;
+  rendus = 0;
+  for (let i = 0; i < 10; i += 1) {
+    await cliquer('sec-messages');
+    expect(await stable()).toBe(0);
+    expect(actives()).toEqual(['sec-messages']);
+    expect(par('enveloppe-messages').style.display).toBe('block');
+    expect(par('enveloppe-prospects').style.display).toBe('none');
+    expect(par('messages-relances')).toBeTruthy();
+    await cliquer(i % 2 ? 'sec-conversations' : 'sec-prospects');
+    expect(await stable()).toBe(0);
+    expect(actives()).toEqual([i % 2 ? 'sec-conversations' : 'sec-prospects']);
+    expect(par('enveloppe-messages').style.display).toBe('none');
+    expect(vueAffichee()).toBe(i % 2 ? 'reponses' : 'prospects');
+  }
+  // ProspectsSection n'a jamais été démonté : même nœud DOM qu'au départ.
+  expect(par('enveloppe-prospects').firstChild).toBe(ecranProspects);
+  expect(rendus).toBeLessThan(200);
+});
+
+test('V588 — une notification ciblée pendant Messages & relances ramène sur la conversation', async () => {
+  await monter(<Cockpit />);
+  await cliquer('mode-prospection');
+  await cliquer('sec-messages');
+  expect(actives()).toEqual(['sec-messages']);
+  await cliquer('notification-dynam');
+  expect(await stable()).toBe(0);
+  expect(actives()).toEqual(['sec-conversations']);
+  expect(par('enveloppe-messages').style.display).toBe('none');
+  expect(vueAffichee()).toBe('reponses');
+  expect(consommations).toBe(1);
 });

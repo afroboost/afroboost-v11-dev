@@ -50,6 +50,7 @@ import SvgIcon from "./SvgIcon";
 // SEULE — jamais les contacts, les abonnes ni les reservations.
 import ProspectsSection from "./coach/ProspectsSection";
 import useCockpitProspection from "../hooks/useCockpitProspection"; // V587c
+import MessagesRelancesSection from "./coach/MessagesRelancesSection"; // V588
 import { alignerLieu } from "../utils/courseLocation"; // V230: jeu d'icones vectorielles inline
 // DEEPLINK PROSPECTION — la source UNIQUE de l'intention. Ce composant ne
 // touche plus jamais `sessionStorage` directement : deux endroits qui lisent
@@ -9064,12 +9065,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 { id: 'apercu', label: "Vue d'ensemble" },
                 { id: 'prospects', label: p3Cockpit.total !== null ? `Prospects (${p3Cockpit.total})` : 'Prospects', vue: 'prospects' },
                 { id: 'conversations', label: p3Cockpit.nbConversations !== null ? `Conversations partenaires (${p3Cockpit.nbConversations})` : 'Conversations partenaires', vue: 'reponses' },
-                { id: 'messages', label: 'Messages & relances' },
+                { id: 'messages', label: 'Messages & relances', vue: 'messages' }, // V588 — lecture seule
                 { id: 'medias', label: 'Médias' },
                 { id: 'liens', label: 'Liens' },
                 { id: 'resultats', label: 'Résultats' },
               ].map(sct => {
-                const actif = !!sct.vue && p3Cockpit.vueActive === sct.vue;
+                /* V588 — « Messages & relances » est un écran à part : actif quand il est
+                   affiché ; les deux autres ne le sont que lorsqu'il est fermé. */
+                const actif = sct.vue === 'messages' ? p3Cockpit.messagesOuvert
+                  : (!!sct.vue && !p3Cockpit.messagesOuvert && p3Cockpit.vueActive === sct.vue);
                 const dispo = !!sct.vue;
                 return (
                   <button key={sct.id} type="button" disabled={!dispo}
@@ -9087,6 +9091,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 );
               })}
             </nav>
+            {/* V588 — ProspectsSection reste MONTÉ (masqué) pendant Messages & relances :
+                aucun remontage, aucune relecture, son état est conservé. */}
+            {p3Cockpit.messagesMonte && (
+              <div style={{ display: p3Cockpit.messagesOuvert ? 'block' : 'none' }}>
+                <MessagesRelancesSection API={API} />
+              </div>
+            )}
+            <div style={{ display: p3Cockpit.messagesOuvert ? 'none' : 'block' }}>
             <ProspectsSection API={API} inboundCible={p3Cible}
                               ongletPilote={p3Cockpit.vuePilote} onEtat={p3Cockpit.surEtat} onDemandeOnglet={p3Cockpit.demander}
                               onCibleConsommee={() => {
@@ -9097,6 +9109,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                 prospectionIntentionConsommer();
                                 setP3Cible('');
                               }} />
+            </div>
           </div>
         )}
 
