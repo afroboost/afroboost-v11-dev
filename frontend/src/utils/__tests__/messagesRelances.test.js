@@ -2,7 +2,8 @@
 import {
   ETATS, SUIVI_MANUEL_INDISPONIBLE, etapeJ0, etapeRelance, echeanceRelance, ligneRelance,
   lignesRelances, compteursRelances, filtrerRelances, trierRelances, chronologie, familleCanal,
-  organisationDe, dateCourte, nomCampagne, motifLisible,
+  organisationDe, dateCourte, nomCampagne, motifLisible, signauxConversation, texteUtile, extrait,
+  ilYa, correspondRecherche, prioriteRelance, dernierEvenement,
 } from '../messagesRelances';
 
 const MAINTENANT = Date.parse('2026-10-07T14:00:00Z');
@@ -124,7 +125,7 @@ describe('lignes, compteurs, filtres', () => {
   const lignes = lignesRelances(actions, CAMPAGNE, convs, prospects, MAINTENANT);
 
   test('compteurs exacts', () => {
-    expect(compteursRelances(lignes)).toEqual({
+    expect(compteursRelances(lignes)).toMatchObject({
       total: 9, j0Envoyes: 5 + 1, j3AVenir: 1, j3EnRetard: 2, j7AVenir: 3, reponses: 2, stoppes: 3, manuel: 2,
     });
   });
@@ -204,4 +205,84 @@ test('utilitaires', () => {
   expect(dateCourte('')).toBe('—');
   expect(nomCampagne({ id: 'x', nom: 'P3-LAUNCH-137' })).toBe('P3-LAUNCH-137');
   expect(motifLisible('reponse recue')).toBe('réponse reçue');
+});
+
+
+describe('V588b — nouveau, urgent, réponse attendue, priorité, recherche', () => {
+  const convDe = (id, sur) => conv(Object.assign({ action_id: id, reponse_apres_dernier_message: false,
+    organisation: '', from_email: `${id}@exemple.ch`,
+    dernier_message: { received_at: '2026-10-07T13:48:00Z', body_text: 'Bonjour,\n\nNous en avons parlé au comité, on revient vers vous.\n\nLe 3 sept. 2026, Afroboost a écrit :\n> ancien texte' } }, sur || {}));
+  const actions = [
+    envoyee({ id: 'nouveau', organisations: ['BDE HE-Arc'], replied_at: '2026-10-07T13:48:00Z' }),
+    envoyee({ id: 'lu', organisations: ['ACD'], replied_at: '2026-09-05T00:00:00Z' }),
+    envoyee({ id: 'urgent', organisations: ['Festival X'], replied_at: '2026-10-06T00:00:00Z' }),
+    envoyee({ id: 'attendue', organisations: ['Dynam'], replied_at: '2026-09-04T00:00:00Z' }),
+    envoyee({ id: 'repondue', organisations: ['Urban Team'], replied_at: '2026-09-04T00:00:00Z' }),
+    envoyee({ id: 'retard', organisations: ['Afrik'] }),
+    manuelle({ id: 'dm' }),
+    envoyee({ id: 'mort', organisations: ['Case à Chocs'], bounce_type: 'Permanent' }),
+  ];
+  const convs = [
+    convDe('nouveau', { non_lues: 2, statut_commercial: 'a_repondre' }),
+    convDe('lu', { non_lues: 0, statut_commercial: 'en_attente' }),
+    convDe('urgent', { non_lues: 0, statut_commercial: 'appel_a_faire' }),
+    convDe('attendue', { non_lues: 0, statut_commercial: 'a_repondre' }),
+    convDe('repondue', { non_lues: 0, statut_commercial: 'a_repondre', reponse_apres_dernier_message: true }),
+  ];
+  const prospects = [{ ref: 'COM-01', city: 'Neuchâtel', category: 'commerce', contact_name: 'Awa', public_email: 'hello@akoko.ch' }];
+  actions.forEach((a) => { a.target = `${a.id}@exemple.ch`; });
+  const L = lignesRelances(actions, CAMPAGNE, convs, prospects, MAINTENANT);
+  const par = Object.fromEntries(L.map((l) => [l.id, l]));
+
+  test('NOUVEAU vient de non_lues (lu/non-lu existant) ; URGENT est indépendant', () => {
+    expect(par.nouveau.nonLues).toBe(2);
+    expect(par.nouveau.urgent).toBe(false);
+    expect(par.lu.nonLues).toBe(0);
+    expect(par.urgent.urgent).toBe(true);
+    expect(par.urgent.nonLues).toBe(0);
+  });
+
+  test('réponse attendue seulement si Afroboost n\'a rien envoyé après et le dossier attend une action', () => {
+    expect(par.attendue.reponseAttendue).toBe(true);
+    expect(par.attendue.prochaineAction).toBe('Répondre au partenaire');
+    expect(par.repondue.reponseAttendue).toBe(false);            // Afroboost a répondu après
+    expect(par.lu.reponseAttendue).toBe(false);                  // en attente du partenaire
+    expect(signauxConversation({ nb_messages: 1, statut_commercial: 'refus' }).reponseAttendue).toBe(false);
+  });
+
+  test('« À traiter » = nouveaux + urgents + réponses attendues, JAMAIS les relances en retard', () => {
+    expect(filtrerRelances(L, 'a_traiter').map((l) => l.id).sort()).toEqual(['attendue', 'nouveau', 'urgent']);
+    expect(compteursRelances(L)).toMatchObject({ aTraiter: 3, nouveaux: 2, conversationsNonLues: 1, urgents: 1, j3EnRetard: 1 });
+  });
+
+  test('ordre : non lu → urgent → réponse attendue → retard → manuel → sans action → clos', () => {
+    expect(trierRelances(L).map((l) => l.id)).toEqual(['nouveau', 'urgent', 'attendue', 'retard', 'dm', 'lu', 'repondue', 'mort']);
+    expect(prioriteRelance({ urgent: true, nonLues: 1 })).toBe(0);
+  });
+
+  test('recherche instantanée sans accents : organisation, ville, catégorie, nom, e-mail, statut', () => {
+    const ids = (q) => filtrerRelances(L, 'tous', 'tous', q).map((l) => l.id);
+    expect(ids('bde')).toEqual(['nouveau']);
+    expect(ids('akoko')).toEqual(['dm']);
+    expect(ids('neuchatel')).toEqual(['dm']);
+    expect(ids('Commerce')).toEqual(['dm']);
+    expect(ids('awa')).toEqual(['dm']);
+    expect(ids('urgent')).toEqual(['urgent']);
+    expect(ids('rebond')).toEqual(['mort']);
+    expect(ids('dynam repondu')).toEqual(['attendue']);
+    expect(ids('')).toHaveLength(8);
+  });
+
+  test('extrait sans salutation ni citation ; ilYa', () => {
+    expect(texteUtile('Bonjour\n\nOui !\n> cité')).toBe('Bonjour\n\nOui !');
+    expect(par.nouveau.extrait).toBe('Nous en avons parlé au comité, on revient vers vous.');
+    expect(ilYa('2026-10-07T13:48:00Z', MAINTENANT)).toBe('il y a 12 min');
+    expect(ilYa('2026-10-07T12:00:00Z', MAINTENANT)).toBe('il y a 2 h');
+    expect(ilYa('2026-09-03T10:57:00Z', MAINTENANT)).toBe('le 03/09/2026');
+  });
+
+  test('dernier événement réel (jamais une échéance)', () => {
+    expect(dernierEvenement(par.retard).titre).toBe('J0 envoyé (E-mail)');
+    expect(dernierEvenement(par.dm)).toBeNull();
+  });
 });

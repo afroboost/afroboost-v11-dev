@@ -52,12 +52,15 @@ export const SUIVI_MANUEL_INDISPONIBLE = 'Suivi manuel non encore disponible';
 
 export const FILTRES = [
   { id: 'tous', libelle: 'Tous' },
-  { id: 'a_envoyer', libelle: 'À envoyer' },
+  { id: 'a_traiter', libelle: 'À traiter' },
+  { id: 'nouveaux', libelle: 'Nouveaux' },
+  { id: 'urgents', libelle: 'Urgents' },
   { id: 'en_retard', libelle: 'J+3 en retard' },
-  { id: 'envoyes', libelle: 'Envoyés' },
   { id: 'repondus', libelle: 'Répondus' },
+  { id: 'envoyes', libelle: 'Envoyés' },
   { id: 'stoppes', libelle: 'Stoppés' },
   { id: 'manuel', libelle: 'Manuel' },
+  { id: 'a_envoyer', libelle: 'À envoyer' },
 ];
 
 export const FILTRES_CANAL = [
@@ -210,6 +213,85 @@ export function etapeRelance(action, campagne, etape, conversation, maintenant) 
 
 const ETATS_STOP = [ETATS.REFUS, ETATS.REBOND, ETATS.STOPPE];
 
+/* États commerciaux du serveur (AI-P3, `p3n_statut_commercial`) : la balle est chez
+   le partenaire, le dossier est clos, ou il a refusé → aucune réponse attendue. */
+const STATUTS_SANS_REPONSE_ATTENDUE = ['en_attente', 'traite', 'refus'];
+
+/**
+ * V588b — LES SIGNAUX D'UNE CONVERSATION, LUS, JAMAIS INVENTÉS.
+ *  - NOUVEAU = `non_lues` du serveur (absence de `read_at`) : le SEUL état lu/non-lu.
+ *    L'écran ne marque rien comme lu.
+ *  - URGENT  = état commercial « appel_a_faire » : le seul signal « agir maintenant »
+ *    qui existe déjà (aucun champ « urgence » en base, aucun moteur ajouté).
+ *    Indépendant de NOUVEAU.
+ *  - RÉPONSE ATTENDUE = le partenaire a écrit, Afroboost n'a rien envoyé APRÈS son
+ *    dernier message (`reponse_apres_dernier_message` du serveur), et le dossier
+ *    n'est ni « en attente », ni clos, ni un refus.
+ */
+export function signauxConversation(conv) {
+  const c = conv || null;
+  if (!c || !(c.nb_messages > 0)) {
+    return { nonLues: 0, urgent: false, reponseAttendue: false, aTraiter: false };
+  }
+  const statut = texte(c.statut_commercial);
+  const nonLues = Number(c.non_lues) > 0 ? Number(c.non_lues) : 0;
+  const urgent = statut === 'appel_a_faire';
+  const reponseAttendue = !c.reponse_apres_dernier_message && !STATUTS_SANS_REPONSE_ATTENDUE.includes(statut);
+  return { nonLues, urgent, reponseAttendue, aTraiter: nonLues > 0 || urgent || reponseAttendue };
+}
+
+/** Le corps utile d'un e-mail reçu : sans la citation ni l'historique recopié. */
+export function texteUtile(corps) {
+  const lignes = String(corps || '').replace(/\r/g, '').split('\n');
+  const coupe = lignes.findIndex((l) => /^\s*>/.test(l)
+    || /^\s*(Le |On |Il |Am |El ).{0,120}(a écrit|wrote|scritto|schrieb|escribió)\s*:?\s*$/i.test(l)
+    || /^\s*(De|From|Von|Da)\s*:/.test(l) || /^\s*-{3,}/.test(l));
+  const garde = coupe >= 0 ? lignes.slice(0, coupe) : lignes;
+  return garde.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+export function extrait(corps, max) {
+  const t = texteUtile(corps).replace(/\s+/g, ' ').replace(/^(bonjour|hello|salut|hallo|guten tag)[ ,!.]*/i, '').trim();
+  const n = max || 120;
+  return t.length > n ? `${t.slice(0, n - 1).trim()}…` : t;
+}
+
+/** « il y a 12 min », « il y a 2 h », « il y a 3 j », sinon la date. */
+export function ilYa(iso, maintenant) {
+  const t = instant(iso);
+  if (!Number.isFinite(t)) return '';
+  const d = (Number.isFinite(maintenant) ? maintenant : Date.now()) - t;
+  if (d < 0) return `le ${dateCourte(iso)}`;
+  const min = Math.floor(d / 60000);
+  if (min < 60) return `il y a ${Math.max(1, min)} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `il y a ${h} h`;
+  const j = Math.floor(h / 24);
+  if (j < 7) return `il y a ${j} j`;
+  return `le ${dateCourte(iso)}`;
+}
+
+function sansAccents(v) {
+  return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+/** Recherche instantanée : tous les mots doivent se retrouver dans la ligne. */
+export function correspondRecherche(ligne, recherche) {
+  const mots = sansAccents(recherche).split(/\s+/).filter(Boolean);
+  if (!mots.length) return true;
+  const l = ligne || {};
+  const f = l.fiche || {};
+  const a = l.action || {};
+  const c = l.conversation || {};
+  const meule = sansAccents([
+    l.organisation, l.reference, libelleCanal(l.canal), LIBELLES_ETAT[l.etat],
+    libelleStatutProspect(l.statutProspect), l.statutProspect, f.city, f.category, f.subcategory,
+    f.contact_name, f.public_email, f.organisation_name, a.target, c.from_email,
+    l.nonLues ? 'nouveau non lu' : '', l.urgent ? 'urgent' : '', l.reponseAttendue ? 'reponse attendue' : '',
+  ].filter(Boolean).join(' '));
+  return mots.every((m) => meule.includes(m));
+}
+
 /** Une ligne de l'onglet = un destinataire (une action de campagne). */
 export function ligneRelance(action, campagne, conversation, prospectsParRef, maintenant) {
   const a = action || {};
@@ -225,6 +307,7 @@ export function ligneRelance(action, campagne, conversation, prospectsParRef, ma
   let motifArret = '';
   if (estRefus(conv)) { etat = ETATS.REFUS; motifArret = 'Refus exprimé dans la réponse'; } else if (aRepondu(a, conv)) { etat = ETATS.REPONDU; motifArret = 'Réponse reçue : relances arrêtées'; } else if (estRebondPermanent(a)) { etat = ETATS.REBOND; motifArret = 'Rebond permanent : adresse morte'; } else if (j0.etat === ETATS.STOPPE) { etat = ETATS.STOPPE; motifArret = j0.motif; } else if (a.paused_at || a.interesse_at) { etat = ETATS.STOPPE; motifArret = 'Suivi humain en cours'; } else if (j0.etat === ETATS.MANUEL) { etat = ETATS.MANUEL; } else if (j0.etat === ETATS.A_ENVOYER) { etat = ETATS.A_ENVOYER; } else if (j3.etat === ETATS.EN_RETARD || j7.etat === ETATS.EN_RETARD) { etat = ETATS.EN_RETARD; } else if (j3.etat === ETATS.PREVU || j7.etat === ETATS.PREVU) { etat = ETATS.PREVU; } else { etat = ETATS.ENVOYE; }
 
+  const sig = signauxConversation(conv);
   let prochaineAction = '—';
   let prochaineDate = null;
   if (etat === ETATS.REFUS) prochaineAction = 'Aucune relance (refus)';
@@ -243,6 +326,8 @@ export function ligneRelance(action, campagne, conversation, prospectsParRef, ma
     prochaineAction = `${e.etape === 'j3' ? 'J+3' : 'J+7'} prévu`;
     prochaineDate = e.date_prevue;
   } else prochaineAction = 'Attendre une réponse';
+  /* Ce que demande la CONVERSATION passe avant le calendrier des relances. */
+  if (sig.urgent) { prochaineAction = 'Appel à faire'; prochaineDate = null; } else if (sig.reponseAttendue) { prochaineAction = 'Répondre au partenaire'; prochaineDate = null; } else if (sig.nonLues) { prochaineAction = 'Lire le nouveau message'; prochaineDate = null; }
 
   const recus = (conv && Array.isArray(conv.messages_recus)) ? conv.messages_recus : [];
   const premiereReponse = a.replied_at
@@ -264,6 +349,14 @@ export function ligneRelance(action, campagne, conversation, prospectsParRef, ma
     prochaineDate,
     reponseLe: premiereReponse,
     statutCommercial: conv ? texte(conv.statut_commercial) : '',
+    fiche,
+    nonLues: sig.nonLues,
+    urgent: sig.urgent,
+    reponseAttendue: sig.reponseAttendue,
+    aTraiter: sig.aTraiter,
+    dernierMessageLe: conv && conv.dernier_message ? conv.dernier_message.received_at || null : null,
+    derniereReponseAfroboostLe: conv && conv.derniere_reponse_afroboost ? conv.derniere_reponse_afroboost.sent_at || null : null,
+    extrait: conv && conv.dernier_message ? extrait(conv.dernier_message.body_text) : '',
   };
 }
 
@@ -281,6 +374,11 @@ export function compteursRelances(lignes) {
   const n = (f) => L.filter(f).length;
   return {
     total: L.length,
+    aTraiter: n((l) => l.aTraiter),
+    nouveaux: L.reduce((t, l) => t + (l.nonLues || 0), 0),
+    conversationsNonLues: n((l) => l.nonLues > 0),
+    urgents: n((l) => l.urgent),
+    reponsesAttendues: n((l) => l.reponseAttendue),
     j0Envoyes: n((l) => !!l.action.sent_at),
     j3AVenir: n((l) => l.j3.etat === ETATS.PREVU),
     j3EnRetard: n((l) => l.j3.etat === ETATS.EN_RETARD),
@@ -291,12 +389,16 @@ export function compteursRelances(lignes) {
   };
 }
 
-export function filtrerRelances(lignes, filtre, canal) {
+export function filtrerRelances(lignes, filtre, canal, recherche) {
   const f = filtre || 'tous';
   const c = canal || 'tous';
   return (lignes || []).filter((l) => {
     if (c !== 'tous' && l.famille !== c) return false;
+    if (recherche && !correspondRecherche(l, recherche)) return false;
     switch (f) {
+      case 'a_traiter': return l.aTraiter;
+      case 'nouveaux': return l.nonLues > 0;
+      case 'urgents': return l.urgent;
       case 'a_envoyer': return l.etat === ETATS.A_ENVOYER;
       case 'en_retard': return l.j3.etat === ETATS.EN_RETARD;
       case 'envoyes': return !!l.action.sent_at;
@@ -308,18 +410,45 @@ export function filtrerRelances(lignes, filtre, canal) {
   });
 }
 
-/** Ordre d'affichage : ce qui demande de l'attention d'abord, puis l'organisation. */
-const RANG = { en_retard: 0, repondu: 1, refus: 2, a_envoyer: 3, prevu: 4, envoye: 5, manuel: 6, rebond: 7, stoppe: 8 };
+/**
+ * V588b — ORDRE DE PRIORITÉ : ce qui demande l'attention du coach d'abord.
+ *   0 urgent + non lu · 1 non lu · 2 urgent · 3 réponse attendue · 4 J+3/J+7 en retard ·
+ *   5 à contacter / manuel / à envoyer · 6 sans action immédiate · 7 clos (refus, rebond, stoppé).
+ * Une vraie réponse partenaire passe TOUJOURS avant une ancienne relance automatique.
+ */
+export function prioriteRelance(l) {
+  if (l.urgent && l.nonLues) return 0;
+  if (l.nonLues) return 1;
+  if (l.urgent) return 2;
+  if (l.reponseAttendue) return 3;
+  if (l.etat === ETATS.EN_RETARD) return 4;
+  if (l.etat === ETATS.MANUEL || l.etat === ETATS.A_ENVOYER) return 5;
+  if (ETATS_STOP.includes(l.etat)) return 7;
+  return 6;
+}
+
 export function trierRelances(lignes) {
   return [...(lignes || [])].sort((x, y) => {
-    const r = (RANG[x.etat] ?? 9) - (RANG[y.etat] ?? 9);
+    const r = prioriteRelance(x) - prioriteRelance(y);
     if (r) return r;
+    const mx = instant(x.dernierMessageLe);
+    const my = instant(y.dernierMessageLe);
+    if (Number.isFinite(mx) || Number.isFinite(my)) {
+      const d = (Number.isFinite(my) ? my : 0) - (Number.isFinite(mx) ? mx : 0);
+      if (d) return d;
+    }
     if (x.etat === ETATS.EN_RETARD && y.etat === ETATS.EN_RETARD) {
       const d = (y.j3.retard_jours || 0) - (x.j3.retard_jours || 0);
       if (d) return d;
     }
     return x.organisation.localeCompare(y.organisation, 'fr');
   });
+}
+
+/** Le dernier fait RÉEL (pas une échéance) : ce que la carte compacte affiche. */
+export function dernierEvenement(ligne) {
+  const reels = chronologie(ligne, []).filter((e) => !/prévu|en retard/.test(e.titre) && e.titre !== 'Accepté par Resend');
+  return reels.length ? reels[reels.length - 1] : null;
 }
 
 /* Les motifs sont écrits SANS accents en base (« reponse recue ») : on les rend lisibles. */
