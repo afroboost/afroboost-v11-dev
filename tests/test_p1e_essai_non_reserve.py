@@ -382,7 +382,7 @@ def test_mesure_du_funnel():
 
 # ═══════════ V579c : la borne ne gêne pas la preuve, et protège toujours les vrais clients ═══════════
 def test_mode_test_ignore_la_borne_pour_un_essai_test_seulement(env):
-    avant = datetime(2026, 10, 7, 8, 40, tzinfo=timezone.utc)             # avant la borne (12:00 UTC)
+    avant = datetime(2026, 10, 7, 8, 40, tzinfo=timezone.utc)             # avant la borne (09:12:13 UTC)
     plus = essai(4, email="%s+testp1eh3@%s" % (LOCAL, DOMAINE), nom="Testeur")
     plus["created_at"] = (avant - timedelta(hours=4)).isoformat()
     env["charger"]([plus])
@@ -402,3 +402,24 @@ def test_candidats_mode_test_chargent_avant_la_borne(env):
     env["charger"]([f])
     assert asyncio.run(S.p1e_candidats(avant)) == []
     assert [x["id"] for x in asyncio.run(S.p1e_candidats(avant, True))] == ["t"]
+
+
+# ═══════════ V579d : la borne = l'instant RÉEL de l'activation (09:12:13 UTC), à la seconde ═══════════
+def test_borne_activation_reelle_a_la_seconde(env):
+    assert S.p1e_borne_activation() == datetime(2026, 10, 7, 9, 12, 13, tzinfo=timezone.utc)
+    plus_tard = datetime(2026, 10, 7, 13, 0, tzinfo=timezone.utc)          # 15:00 Zurich, dans la fenêtre
+    avant = essai(4, rid="avant", code="AFR-AVANT", created_at="2026-10-07T09:12:12.999999+00:00")
+    pile = essai(4, rid="pile", code="AFR-PILE", created_at="2026-10-07T09:12:13+00:00")
+    apres = essai(4, rid="apres", code="AFR-APRES", created_at="2026-10-07T09:12:13.000001+00:00")
+    ancien = essai(4, rid="ancien", code="AFR-ANCIEN", created_at="2026-09-20T10:00:00+00:00")
+    # règle pure
+    assert S.p1e_etape(avant, plus_tard) == (None, "hors_borne")
+    assert S.p1e_etape(pile, plus_tard) == ("h3", "h3_du")
+    assert S.p1e_etape(apres, plus_tard) == ("h3", "h3_du")
+    assert S.p1e_etape(ancien, plus_tard) == (None, "hors_borne")
+    # sélection en base (comparaison de chaînes ISO) : seuls « pile » et « après » sont chargés
+    env["charger"]([avant, pile, apres, ancien])
+    assert sorted(f["id"] for f in asyncio.run(S.p1e_candidats(plus_tard))) == ["apres", "pile"]
+    # le vrai passage : 1 s avant = rien ; pile / après = +3 h
+    assert asyncio.run(S.p1e_passage(plus_tard)) == {"envoye_h3": 2}
+    assert sorted(e[0] for e in env["envois"]) == ["amina.client@exemple-reel.ch"] * 2

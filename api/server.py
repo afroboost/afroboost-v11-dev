@@ -47684,7 +47684,10 @@ P1E_PERIODE_S = 3600
 P1E_LOT_MAX = 200
 # Borne FIXE : aucun essai antérieur n'est jamais candidat (les 15 essais historiques non
 # réservés ne seront PAS relancés par ce lot — une campagne manuelle reste possible).
-P1E_BORNE_DEFAUT = "2026-10-07T12:00:00+00:00"
+# V579d : borne = instant RÉEL de l'activation (PUT /feature-flags du 07/10, updatedAt
+#   09:12:13 UTC) et non plus l'heure prévue 12:00 UTC, qui aurait exclu à jamais les
+#   essais accordés entre l'activation et midi.
+P1E_BORNE_DEFAUT = "2026-10-07T09:12:13+00:00"
 P1E_TYPE_PREFERENCE = P1B_TYPE_PREFERENCE   # même consentement que le suivi d'essai
 
 
