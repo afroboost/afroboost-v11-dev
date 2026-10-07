@@ -47697,7 +47697,7 @@ def p1e_borne_activation():
     return _d
 
 
-def p1e_etape(forfait: dict, maintenant) -> tuple:
+def p1e_etape(forfait: dict, maintenant, ignorer_borne: bool = False) -> tuple:
     """`(etape, motif)` — FONCTION PURE. `etape` vaut "h3", "j2" ou None.
 
     Ne lit que le forfait et l'horloge : réservation, achat, consentement et fenêtre horaire
@@ -47708,7 +47708,9 @@ def p1e_etape(forfait: dict, maintenant) -> tuple:
     _cree = p1d_parse_iso(_f.get("created_at"))
     if _cree is None:
         return None, "sans_date"
-    if _cree < p1e_borne_activation():
+    # V579c : `ignorer_borne` n'est vrai QUE pour un essai TEST en mode test exclusif
+    #   (p1e_relance) — un essai antidaté pour la preuve tomberait sinon avant la borne.
+    if not ignorer_borne and _cree < p1e_borne_activation():
         return None, "hors_borne"
     _age_h = (maintenant - _cree).total_seconds() / 3600.0
     _rel = _f.get("relances_essai") if isinstance(_f.get("relances_essai"), dict) else {}
@@ -47858,15 +47860,15 @@ async def p1e_relance(forfait: dict, maintenant=None) -> str:
     _id = str(forfait.get("id") or "").strip()
     if not _id:
         return "sans_date"
-    _etape, _motif = p1e_etape(forfait, _now)
-    if not _etape:
-        return _motif
     _email = (forfait.get("email") or "").strip().lower()
     _test_controle = bool(_flags.get("P1E_TEST_CONTROLE"))
     # V579b — MODE TEST EXCLUSIF : tant que P1E_TEST_CONTROLE est vrai, AUCUN vrai client n'est
     #   ciblable, quel que soit l'état des autres drapeaux. Seules les plus-adresses du super-admin.
     if _test_controle and not p1e_plus_adresse_super_admin(_email):
         return "hors_test_controle"
+    _etape, _motif = p1e_etape(forfait, _now, ignorer_borne=_test_controle)
+    if not _etape:
+        return _motif
     if p1e_est_test(_email, forfait.get("name") or "", _test_controle):
         return "donnee_test"
     if str(forfait.get("status") or "") != "active":
@@ -47916,9 +47918,15 @@ async def p1e_relance(forfait: dict, maintenant=None) -> str:
     return ("envoye_%s" if _ok else "echec_%s") % _etape
 
 
-async def p1e_candidats(maintenant):
-    """Les forfaits récents non clos. Bornés, triés (les plus récents d'abord), jamais l'historique."""
-    _bas = max(p1e_borne_activation(), maintenant - timedelta(days=P1E_FIN_J2_J))
+async def p1e_candidats(maintenant, test_controle: bool = False):
+    """Les forfaits récents non clos. Bornés, triés (les plus récents d'abord), jamais l'historique.
+
+    V579c : en mode test exclusif, la borne d'activation ne restreint pas le chargement (les
+    essais TEST antidatés lui sont antérieurs) ; `p1e_relance` écarte tout vrai client.
+    """
+    _bas = maintenant - timedelta(days=P1E_FIN_J2_J)
+    if not test_controle:
+        _bas = max(p1e_borne_activation(), _bas)
     _haut = maintenant - timedelta(hours=P1E_DELAI_H3_H)
     try:
         return await db.subscriptions.find(
@@ -47933,13 +47941,14 @@ async def p1e_candidats(maintenant):
 async def p1e_passage(maintenant=None) -> dict:
     """UN passage complet. Rend le décompte par issue. NE LÈVE JAMAIS."""
     try:
-        if not (await get_feature_flags() or {}).get("P1E_ESSAI_NON_RESERVE_ENABLED"):
+        _fl = await get_feature_flags() or {}
+        if not _fl.get("P1E_ESSAI_NON_RESERVE_ENABLED"):
             return {"desactive": 1}
     except Exception:  # noqa: BLE001
         return {"desactive": 1}
     _now = maintenant or datetime.now(timezone.utc)
     _resume = {}
-    for _f in await p1e_candidats(_now):
+    for _f in await p1e_candidats(_now, bool(_fl.get("P1E_TEST_CONTROLE"))):
         try:
             _issue = await p1e_relance(_f, _now)
         except Exception as _err:  # noqa: BLE001
@@ -47961,14 +47970,14 @@ async def _p1e_boucle_essai_non_reserve():
         await asyncio.sleep(P1E_PERIODE_S)
 
 
-def p1e_mesure_pure(forfaits: list, reservations: list, maintenant) -> dict:
+def p1e_mesure_pure(forfaits: list, reservations: list, maintenant, depuis=None) -> dict:
     """LE TRACKING — FONCTION PURE, sur les seuls essais postérieurs à la borne.
 
     Ne modifie aucune statistique historique : il lit les forfaits d'essai et leurs
     réservations, et compte. « Réservé après la relance » = première réservation postérieure
     à l'horodatage de la relance.
     """
-    _borne = p1e_borne_activation()
+    _borne = depuis or p1e_borne_activation()
     _premiere = {}
     for _r in reservations or []:
         for _k in (str(_r.get("promoCode") or "").upper(), str(_r.get("discountCode") or "").upper(),
@@ -48056,13 +48065,18 @@ async def p1e_antidater_test(request: Request):
 
 
 @api_router.get("/coach/funnel/essai-non-reserve")
-async def p1e_mesure_route(request: Request):
-    """Tracking P1-e — super-admin signé seulement. Lecture seule, essais postérieurs à la borne."""
+async def p1e_mesure_route(request: Request, depuis: str = ""):
+    """Tracking P1-e — super-admin signé seulement. Lecture seule.
+
+    Par défaut : essais postérieurs à la borne. `?depuis=<ISO>` (V579c) : autre point de départ,
+    utile pour mesurer un test contrôlé — rien n'est écrit, aucune statistique n'est modifiée.
+    """
     _appelant = await _v309_require_coach_or_admin(request)
     if not is_super_admin(_appelant):
         raise HTTPException(status_code=403, detail="Réservé au super-admin")
     _now = datetime.now(timezone.utc)
-    _bas = p1e_borne_activation().isoformat()
+    _depuis = p1d_parse_iso(depuis) if depuis else None
+    _bas = (_depuis or p1e_borne_activation()).isoformat()
     _forfaits = await db.subscriptions.find({"created_at": {"$gte": _bas}}, {"_id": 0}).to_list(2000)
     from api.routes.shared import est_un_essai as _p1e_essai
     _essais = []
@@ -48079,7 +48093,7 @@ async def p1e_mesure_route(request: Request):
                  {"subscriptionId": {"$in": _ids}}]},
         {"_id": 0, "promoCode": 1, "discountCode": 1, "subscriptionId": 1, "createdAt": 1,
          "created_at": 1}).to_list(5000) if (_codes or _ids) else []
-    return {"depuis": _bas, **p1e_mesure_pure(_essais, _resas, _now)}
+    return {"depuis": _bas, **p1e_mesure_pure(_essais, _resas, _now, _depuis)}
 
 
 # ============================================================================

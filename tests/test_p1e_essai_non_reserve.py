@@ -378,3 +378,27 @@ def test_mesure_du_funnel():
     assert m["h3_envoyes"] == 3 and m["j2_envoyes"] == 2
     assert m["reserves_apres_j2"] == 1                        # B
     assert m["sans_reservation"] == 2                         # C et D
+
+
+# ═══════════ V579c : la borne ne gêne pas la preuve, et protège toujours les vrais clients ═══════════
+def test_mode_test_ignore_la_borne_pour_un_essai_test_seulement(env):
+    avant = datetime(2026, 10, 7, 8, 40, tzinfo=timezone.utc)             # avant la borne (12:00 UTC)
+    plus = essai(4, email="%s+testp1eh3@%s" % (LOCAL, DOMAINE), nom="Testeur")
+    plus["created_at"] = (avant - timedelta(hours=4)).isoformat()
+    env["charger"]([plus])
+    assert relance(plus, avant) == "hors_borne"                           # hors mode test : borne
+    env["test_controle"] = True
+    assert relance(plus, avant) == "envoye_h3"                            # mode test : la preuve passe
+    vrai = essai(4, rid="f9", code="AFR-VRAI09")
+    vrai["created_at"] = (avant - timedelta(hours=4)).isoformat()
+    env["charger"]([vrai])
+    assert relance(vrai, avant) == "hors_test_controle"                   # et jamais un vrai client
+
+
+def test_candidats_mode_test_chargent_avant_la_borne(env):
+    avant = datetime(2026, 10, 7, 8, 40, tzinfo=timezone.utc)
+    f = essai(4, rid="t", code="AFR-T")
+    f["created_at"] = (avant - timedelta(hours=50)).isoformat()
+    env["charger"]([f])
+    assert asyncio.run(S.p1e_candidats(avant)) == []
+    assert [x["id"] for x in asyncio.run(S.p1e_candidats(avant, True))] == ["t"]
