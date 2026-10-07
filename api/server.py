@@ -30137,7 +30137,12 @@ P3R2_MOTIFS = {
     "DEJA_RESERVE": "une tentative de relance est deja en cours",
     "ENVOI_NON_AUTORISE": "les deux drapeaux de relance ne sont pas ouverts",
     "ETAPE_INCONNUE": "etape de relance inconnue",
+    "J3_NON_PARTI": "pas de J+7 sans J+3 parti, ni moins de 4 jours apres lui",
 }
+# V584 — LA CHAINE J0 -> J+3 -> J+7. Le J+7 n'avait que sa propre echeance (J0 + 7 j) : pour un
+#   J0 ancien, J+3 et J+7 etaient dus ENSEMBLE et partaient le meme jour, et un J+3 bloque
+#   n'empechait pas le J+7. Le J+7 exige desormais un J+3 PARTI depuis au moins 4 jours.
+P3R2_ECART_J3_J7_JOURS = 4
 
 
 def p3r2_envoi_autorise(flags) -> bool:
@@ -30263,6 +30268,13 @@ def p3r2_garde_relance(action: dict, campagne: dict, etape: str, refus=None,
     if not echeance or not maintenant or maintenant < echeance:
         return {"autorise": False, "code": "PAS_ENCORE_DUE",
                 "motif": P3R2_MOTIFS["PAS_ENCORE_DUE"]}
+    if etape == "j7":
+        _j3 = p1d_parse_iso(a.get(p3r2_champ("j3", "sent_at")))
+        _now_dt = p1d_parse_iso(maintenant)
+        if _j3 is None or _now_dt is None or \
+                _now_dt < _j3 + timedelta(days=P3R2_ECART_J3_J7_JOURS):
+            return {"autorise": False, "code": "J3_NON_PARTI",
+                    "motif": P3R2_MOTIFS["J3_NON_PARTI"]}
 
     # --- ce qui protege la machine ---
     if a.get("statut") == "exclu":
@@ -30384,7 +30396,8 @@ async def p3r2_appliquer_succes(action: dict, etape: str, reponse: dict,
 
 async def p3r2_executer_relances(campagne_id: str, etape: str, appelant: str,
                                  simulation: bool = True, fournisseur=None,
-                                 plafond: int = 0, maintenant: str = None) -> dict:
+                                 plafond: int = 0, maintenant: str = None,
+                                 action_ids=None) -> dict:
     """Le moteur de relance. `simulation=True` par DEFAUT, et c'est le cas sur.
 
     IL EST LE JUMEAU DE `p3s3d_executer_campagne`, PAS SA COPIE. Meme ordre
@@ -30433,7 +30446,12 @@ async def p3r2_executer_relances(campagne_id: str, etape: str, appelant: str,
 
     resultats = []
     traites = 0
+    # V584 : `action_ids` restreint le passage a ces actions (l'empreinte, elle, est toujours
+    #   verifiee sur TOUTE la campagne, ci-dessus). None = comportement d'origine.
+    _cibles = set(action_ids) if action_ids else None
     for action in actions:
+        if _cibles is not None and action.get("id") not in _cibles:
+            continue
         verdict = p3r2_garde_relance(action, campagne, etape, refus=refus,
                                      maintenant=instant,
                                      envoi_autorise=envoi_autorise,
@@ -30511,6 +30529,45 @@ async def p3r2_executer_relances(campagne_id: str, etape: str, appelant: str,
                 "SIMULE" if simulation else "REEL", traites)
     return {"simulation": simulation, "etape": etape, "arrete": False, "code": "OK",
             "envoi_autorise": envoi_autorise, "resultats": resultats, "traites": traites}
+
+
+@api_router.post("/admin/p3r2/relances")
+async def p3r2_relances_route(request: Request):
+    """V584 — UN passage du moteur de relance P3-R2 (super-admin signé).
+
+    Corps : {"campagne_id", "etape": "j3"|"j7", "action_ids": [...]?, "plafond": n?,
+    "simulation": true par défaut}. En simulation : AUCUNE écriture, aucun envoi.
+    En réel : il faut EN PLUS les deux drapeaux P3_RELANCE_* ouverts (garde inchangée),
+    et le fournisseur est l'adaptateur e-mail réel avec l'objet APPROUVÉ de l'étape.
+    """
+    from api.routes.shared import super_admin_signe as _p3r2_sa
+    _appelant = _p3r2_sa(request)
+    if not _appelant:
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    try:
+        _c = await request.json()
+    except Exception:  # noqa: BLE001
+        _c = {}
+    _c = _c if isinstance(_c, dict) else {}
+    _cid = str(_c.get("campagne_id") or "").strip()
+    _etape = str(_c.get("etape") or "").strip()
+    _sim = _c.get("simulation") is not False
+    _ids = [str(x) for x in (_c.get("action_ids") or []) if str(x or "").strip()] or None
+    try:
+        _plafond = max(0, int(_c.get("plafond") or 0))
+    except (TypeError, ValueError):
+        _plafond = 0
+    if not _cid or _etape not in P3R2_ETAPES:
+        raise HTTPException(status_code=400, detail="campagne_id et etape (j3|j7) requis")
+    _fournisseur = None
+    if not _sim:
+        _camp = await db[P3S3_CAMPAGNES].find_one({"id": _cid}, {"_id": 0}) or {}
+        _fournisseur = P3S3DFournisseurEmail(
+            objet=p3r2_objet_campagne(_camp, _etape),
+            envoi_autorise=p3r2_envoi_autorise(await get_feature_flags()))
+    return await p3r2_executer_relances(_cid, _etape, _appelant, simulation=_sim,
+                                        fournisseur=_fournisseur, plafond=_plafond,
+                                        action_ids=_ids)
 
 
 # ============================================================================

@@ -267,7 +267,10 @@ verifier("2d. SANS echeance -> rien ne part (une date absente n'est pas atteinte
 _b = base_neuve([action()], _c); empreinte_ok(_b, _c)
 verifier("2e. J+7 avant son echeance -> NON",
          codes(executer("j7", maintenant=APRES_J3)).get("PAS_ENCORE_DUE") == 1)
-verifier("2f. J+7 apres son echeance -> OUI",
+verifier("2f. V584 : J+7 apres son echeance SANS J+3 parti -> NON",
+         codes(executer("j7", maintenant=APRES_J7)).get("J3_NON_PARTI") == 1)
+_b = base_neuve([action(j3_sent_at=DUE_J3)], _c); empreinte_ok(_b, _c)
+verifier("2g. V584 : J+7 apres son echeance, J+3 parti 4 j avant -> OUI",
          codes(executer("j7", maintenant=APRES_J7)).get("SIMULATION") == 1)
 
 # ---------------------------------------------------------------------------
@@ -303,7 +306,7 @@ verifier("4c. relance ANNULEE -> elle ne part pas",
 
 # ---------------------------------------------------------------------------
 print("\n5. DEJA ENVOYE, ET LES DEUX ETAPES NE SE CONFONDENT PAS")
-_b = base_neuve([action(j3_sent_at="2026-09-06T10:00:05+00:00")], _c); empreinte_ok(_b, _c)
+_b = base_neuve([action(j3_sent_at=DUE_J3)], _c); empreinte_ok(_b, _c)
 verifier("5a. J+3 deja parti -> il ne repart pas",
          codes(executer("j3", maintenant=APRES_J3)).get("DEJA_RELANCE") == 1)
 verifier("5b. ... mais J+7 reste possible a son echeance",
@@ -329,10 +332,10 @@ verifier("6a. J+3 part (drapeaux ouverts simules par le factice)",
          _a.get("j3_sent_at") is not None or codes(_r).get("ENVOI_NON_AUTORISE") == 1,
          str(codes(_r)))
 # la porte est fermee : on simule donc l'etat « J+3 parti » puis la reponse
-_b = base_neuve([action(j3_sent_at="2026-09-06T10:00:05+00:00")], _c); empreinte_ok(_b, _c)
+_b = base_neuve([action(j3_sent_at=DUE_J3)], _c); empreinte_ok(_b, _c)
 verifier("6b. J+7 serait autorise tant que personne n'a repondu",
          codes(executer("j7", maintenant=APRES_J7)).get("SIMULATION") == 1)
-_b = base_neuve([action(j3_sent_at="2026-09-06T10:00:05+00:00",
+_b = base_neuve([action(j3_sent_at=DUE_J3,
                         replied_at="2026-09-08T09:00:00+00:00")], _c); empreinte_ok(_b, _c)
 _r = executer("j7", maintenant=APRES_J7)
 verifier("6c. UNE REPONSE ARRIVEE ENTRE LES DEUX BLOQUE J+7",
@@ -460,6 +463,37 @@ verifier("12f. aucun identifiant Mongo n'y figure", "_id" not in _i3 and "id" no
 print("\n13. AUCUN E-MAIL, AUCUNE SOCKET")
 verifier("13a. aucun envoi Resend reel", _ENVOIS_REELS == [])
 verifier("13b. aucune sortie reseau tentee", _TENTATIVES == [], str(_TENTATIVES[:3]))
+
+# ---------------------------------------------------------------------------
+print("\nV584. LA CHAINE J0 -> J+3 -> J+7, ET JAMAIS PLUS DE 3 CONTACTS")
+_TARD = "2026-10-07T10:00:00+00:00"           # J0 du 03/09 : J+3 et J+7 tous deux echus
+_b = base_neuve([action()], _c); empreinte_ok(_b, _c)
+verifier("V584a. J0 ancien : le J+3 est retenu", codes(executer("j3", maintenant=_TARD)).get("SIMULATION") == 1)
+verifier("V584b. ... mais PAS le J+7 le meme jour (J+3 non parti)",
+         codes(executer("j7", maintenant=_TARD)).get("J3_NON_PARTI") == 1)
+_b = base_neuve([action(j3_sent_at=_TARD)], _c); empreinte_ok(_b, _c)
+verifier("V584c. J+3 parti aujourd'hui : J+7 refuse 3 j 23 h apres",
+         codes(executer("j7", maintenant="2026-10-11T09:59:59+00:00")).get("J3_NON_PARTI") == 1)
+verifier("V584d. ... et retenu 4 j apres", codes(executer("j7", maintenant="2026-10-11T10:00:00+00:00")).get("SIMULATION") == 1)
+_b = base_neuve([action(j3_sent_at=_TARD, replied_at="2026-10-09T08:00:00+00:00")], _c); empreinte_ok(_b, _c)
+verifier("V584e. reponse apres J+3 -> J+7 annule", codes(executer("j7", maintenant="2026-10-12T10:00:00+00:00")).get("A_REPONDU") == 1)
+_b = base_neuve([action(replied_at="2026-09-05T08:00:00+00:00")], _c); empreinte_ok(_b, _c)
+verifier("V584f. reponse avant J+3 -> J+3 annule", codes(executer("j3", maintenant=_TARD)).get("A_REPONDU") == 1)
+_b = base_neuve([action(j3_sent_at=_TARD, j7_sent_at="2026-10-11T10:00:00+00:00")], _c); empreinte_ok(_b, _c)
+verifier("V584g. apres J+7 -> STOP (ni J+3 ni J+7 ne repartent : 3 contacts max)",
+         codes(executer("j3", maintenant="2026-11-01T10:00:00+00:00")).get("DEJA_RELANCE") == 1
+         and codes(executer("j7", maintenant="2026-11-01T10:00:00+00:00")).get("DEJA_RELANCE") == 1)
+_b = base_neuve([action(cible="stop@exemple.test", j3_sent_at=_TARD)], _c,
+                refus=[{"channel": "email", "value": "stop@exemple.test", "status": "opted_out"}])
+empreinte_ok(_b, _c)
+verifier("V584h. refus -> aucune autre relance", codes(executer("j7", maintenant="2026-10-12T10:00:00+00:00")).get("REFUS_EXPRIME") == 1)
+_b = base_neuve([action(j3_sent_at=_TARD, interesse_at="2026-10-08T08:00:00+00:00")], _c); empreinte_ok(_b, _c)
+verifier("V584i. interesse / RDV -> aucune relance automatique", codes(executer("j7", maintenant="2026-10-12T10:00:00+00:00")).get("SUIVI_HUMAIN") == 1)
+_b = base_neuve([action("A-01"), action("B-02")], _c); empreinte_ok(_b, _c)
+_r = lancer(S.p3r2_executer_relances(CAMP, "j3", COACH_A, maintenant=_TARD, action_ids=["act-a-01"]))
+verifier("V584j. action_ids : seule l'action listee est traitee",
+         len(_r["resultats"]) == 1 and _r["resultats"][0]["recipient_key"] == "A-01", str(_r["resultats"]))
+
 
 print()
 print("=" * 78)
