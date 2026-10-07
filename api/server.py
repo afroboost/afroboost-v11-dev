@@ -48235,7 +48235,8 @@ async def rattrapage_essais_audit(request: Request):
     _resas = await db.reservations.find(
         {"validated": True},
         {"_id": 0, "id": 1, "userEmail": 1, "userName": 1, "promoCode": 1, "discountCode": 1,
-         "validatedAt": 1, "auto_presence_at": 1, "confirmation": 1, "courseName": 1}).to_list(10000)
+         "validatedAt": 1, "auto_presence_at": 1, "confirmation": 1, "courseName": 1,
+         "userWhatsapp": 1}).to_list(10000)
     _cache_essai = {}
     _lignes = []
     for _r in _resas:
@@ -48284,6 +48285,18 @@ async def rattrapage_essais_audit(request: Request):
         _converti = (_etat == _RA_TERMINEE) or (_achat is True) or bool((_forfait or {}).get("converted_at"))
         _valide = rv2_email_valide(_m)
         _autorise = await p1b_destinataire_autorise(_m) if _valide else False
+        # V582 : le refus exprimé sur WhatsApp (STOP d'une campagne) compte aussi. Numéros de la
+        #   présence ET du forfait d'essai ; lecture seule du registre, même règle que les campagnes.
+        _tels = {str(x.get("userWhatsapp") or "").strip() for x in _rs} | \
+                {str((_forfait or {}).get("whatsapp") or "").strip(), str((_forfait or {}).get("phone") or "").strip()}
+        _tels = [t for t in _tels if t]
+        _stop_wa = False
+        for _t in _tels:
+            try:
+                if await c3_refus_exprime("whatsapp", _t):
+                    _stop_wa = True
+            except Exception:  # noqa: BLE001
+                pass
         _pres = p1d_parse_iso(_r.get("validatedAt"))
         _age_j = round((_now - _pres).total_seconds() / 86400.0, 1) if _pres else None
         _local, _, _dom = _m.partition("@")
@@ -48297,6 +48310,7 @@ async def rattrapage_essais_audit(request: Request):
             "j3": _j3.get("statut") or "", "j3_at": _j3.get("at") or "",
             "etat_conversion": _etat or "", "achat_cours": _achat, "converti": _converti,
             "test": _test, "email_valide": _valide, "autorise": _autorise,
+            "a_un_whatsapp": bool(_tels), "stop_whatsapp": _stop_wa,
         })
     _personnes.sort(key=lambda x: str(x.get("presence_at") or ""))
     return {"genere_at": _now.isoformat(), "presences_essai": len(_lignes),
