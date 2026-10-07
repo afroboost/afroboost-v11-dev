@@ -80,6 +80,7 @@ function Cockpit() {
       {mode === 'clients' && <div data-testid="vue-clients">Campagnes clients</div>}
       {mode === 'prospection' && (
         <div>
+          <span data-testid="total-barre">{c.total === null ? '' : String(c.total)}</span>
           <button data-testid="sec-prospects" aria-current={c.vueActive === 'prospects' ? 'page' : undefined}
                   onClick={() => c.choisir('prospects')}>Prospects</button>
           <button data-testid="sec-conversations" aria-current={c.vueActive === 'reponses' ? 'page' : undefined}
@@ -212,4 +213,15 @@ test('notification ciblée depuis Clients (remontage) : même résultat, une seu
   expect(vueAffichee()).toBe('reponses');
   expect(actives()).toEqual(['sec-conversations']);
   expect(consommations).toBe(1);
+});
+
+
+test('V587d — la barre annonce le total de la PORTÉE (142), pas le nombre filtré (7)', async () => {
+  // Liste filtrée sur « Répondu » : 7 lignes, mais 142 prospects dans la portée.
+  mockEtatParSection.prospects.donnees = { total: 7, returned: 1, limit: 25, offset: 0,
+    counts: { total: 142, a_contacter: 83, contacte: 52, repondu: 7 }, prospects: [prospect()] };
+  await monter(<Cockpit />);
+  await cliquer('mode-prospection');
+  await cliquer('sec-prospects');
+  expect(par('total-barre').textContent).toBe('142');
 });

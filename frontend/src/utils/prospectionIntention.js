@@ -112,6 +112,20 @@ export function consommer() {
 }
 
 /**
+ * V587d — PRENDRE une demande. Rend la même chose que `lire()`, MAIS une demande
+ * SANS cible (`?prospection=1` seul : « ouvre Prospection ») est consommée tout de
+ * suite. Elle n'a rien à attendre : aucune conversation à ouvrir. La laisser en
+ * `sessionStorage` la faisait rejouer à CHAQUE rechargement de l'onglet (retour
+ * forcé sur Prospection). Une demande AVEC cible (notification vers un message
+ * précis) reste posée jusqu'à l'ouverture réelle de la conversation (`consommer`).
+ */
+export function prendre() {
+  const valeur = lire();
+  if (valeur === '') consommer();
+  return valeur;
+}
+
+/**
  * LA CAPTURE, exécutée à l'import — donc avant le premier rendu.
  * Nettoie aussi l'URL : un rafraîchissement ne doit pas rejouer l'intention,
  * et l'identifiant n'a rien à faire dans la barre d'adresse.
@@ -133,5 +147,5 @@ export function capturer() {
 export const CAPTURE_AU_CHARGEMENT = capturer();
 
 export default {
-  CLE, cibleDeRecherche, poser, lire, consommer, capturer,
+  CLE, cibleDeRecherche, poser, lire, prendre, consommer, capturer,
 };

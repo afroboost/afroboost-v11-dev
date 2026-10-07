@@ -804,7 +804,11 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
   // autonome → comportement d'origine (onglet local, sinon défaut).
   const ongletActif = pilote ? (ongletPilote || ongletParDefaut) : (onglet || ongletParDefaut);
   // V587b : le cockpit apprend la vue active et les compteurs — primitives seulement.
-  const etatTotal = chargeUnFois && total !== null ? total : null;
+  // V587d : la BARRE annonce le total de la PORTÉE (`counts.total`, calculé côté serveur
+  // sans les filtres d'écran), jamais le nombre de lignes filtrées (« Prospects (7) »
+  // sous le filtre Répondu était trompeur). Repli sur `total` si le serveur ne le rend pas.
+  const etatTotal = !chargeUnFois ? null
+    : (typeof compteurs.total === 'number' ? compteurs.total : (total !== null ? total : null));
   useEffect(() => {
     if (onEtat) onEtat(ongletActif, conversations.length, etatTotal);
   }, [onEtat, ongletActif, conversations.length, etatTotal]);

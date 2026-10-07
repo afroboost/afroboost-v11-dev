@@ -234,3 +234,32 @@ describe('6. la sequence reelle du lien profond', () => {
     expect(recus).toEqual(['']);      // bascule l onglet, n ouvre rien
   });
 });
+
+
+// V587d — `prendre` : une demande SANS cible est consommée tout de suite (elle ne doit
+// pas rejouer Prospection à chaque rechargement) ; une demande CIBLÉE reste posée.
+describe('V587d — prendre()', () => {
+  beforeEach(() => { window.sessionStorage.clear(); });
+
+  test('?prospection=1 seul : rendu une fois, puis plus rien (rechargement → aucune bascule)', () => {
+    const m = require('../prospectionIntention');
+    m.poser('');
+    expect(m.prendre()).toBe('');
+    expect(m.lire()).toBeNull();
+    expect(m.prendre()).toBeNull();
+  });
+
+  test('demande ciblée (notification) : rendue SANS être consommée', () => {
+    const m = require('../prospectionIntention');
+    m.poser('msg-123');
+    expect(m.prendre()).toBe('msg-123');
+    expect(m.lire()).toBe('msg-123');           // l'écran la consommera à l'ouverture
+    m.consommer();
+    expect(m.prendre()).toBeNull();
+  });
+
+  test('aucune demande : null, rien ne bouge', () => {
+    const m = require('../prospectionIntention');
+    expect(m.prendre()).toBeNull();
+  });
+});

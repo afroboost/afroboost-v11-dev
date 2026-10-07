@@ -55,7 +55,7 @@ import { alignerLieu } from "../utils/courseLocation"; // V230: jeu d'icones vec
 // touche plus jamais `sessionStorage` directement : deux endroits qui lisent
 // et effacent la meme cle sans se coordonner, c'est exactement ce qui a
 // produit le defaut.
-import { lire as prospectionIntentionLire,
+import { prendre as prospectionIntentionPrendre,
          poser as prospectionIntentionPoser,
          consommer as prospectionIntentionConsommer,
          EVENEMENT as PROSPECTION_INTENTION_EVENEMENT } from "../utils/prospectionIntention";
@@ -4774,7 +4774,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [p3Cible, setP3Cible] = useState('');
   useEffect(() => {
     const reprendre = () => {
-      const cible = prospectionIntentionLire();
+      // V587d : `prendre` consomme aussitôt une demande SANS cible (?prospection=1 seul) ;
+      // une demande ciblée reste posée jusqu'à l'ouverture de la conversation.
+      const cible = prospectionIntentionPrendre();
       if (cible === null) return;    // aucune demande : on ne bascule rien
       setTab('prospection');
       if (cible) setP3Cible(cible);  // '' = demande sans cible : onglet seul
