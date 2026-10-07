@@ -47845,6 +47845,23 @@ def p1e_plus_adresse_super_admin(email: str) -> bool:
     return False
 
 
+def p1e_plus_adresse_test(email: str) -> bool:
+    """V581 — `<local du super-admin>+test…@<son domaine>` : un essai TEST du propriétaire.
+
+    Seules les plus-adresses du super-admin dont le suffixe COMMENCE par « test » ; toute
+    autre adresse avec un « + » reste une vraie adresse.
+    """
+    _e = (email or "").strip().lower()
+    if "@" not in _e:
+        return False
+    _local, _dom = _e.split("@", 1)
+    for _adm in SUPER_ADMIN_EMAILS:
+        _al, _ad = _adm.lower().split("@", 1)
+        if _dom == _ad and _local.startswith(_al + "+test"):
+            return True
+    return False
+
+
 def p1e_est_test(email: str, nom: str, test_controle: bool) -> bool:
     """Donnée TEST ? (règle de `reactivation.est_donnee_test`, la même que les campagnes.)
 
@@ -47859,6 +47876,9 @@ def p1e_est_test(email: str, nom: str, test_controle: bool) -> bool:
             _al, _ad = _adm.lower().split("@", 1)
             if _dom == _ad and _local.startswith(_al + "+"):
                 return False
+    # V581 : hors mode test, une plus-adresse « +test… » du super-admin EST une donnée TEST.
+    if p1e_plus_adresse_test(_e):
+        return True
     return bool(_p1e_test(_e, nom or ""))
 
 
@@ -48180,6 +48200,9 @@ async def p1e_mesure_route(request: Request, depuis: str = ""):
     from api.routes.shared import est_un_essai as _p1e_essai
     _essais = []
     for _f in _forfaits:
+        # V581 : les données TEST (plus-adresses « +test… » du super-admin comprises) ne comptent pas.
+        if p1e_est_test(_f.get("email") or "", _f.get("name") or "", False):
+            continue
         try:
             if await _p1e_essai(db, forfait=_f):
                 _essais.append(_f)
@@ -48193,6 +48216,91 @@ async def p1e_mesure_route(request: Request, depuis: str = ""):
         {"_id": 0, "promoCode": 1, "discountCode": 1, "subscriptionId": 1, "createdAt": 1,
          "created_at": 1}).to_list(5000) if (_codes or _ids) else []
     return {"depuis": _bas, **p1e_mesure_pure(_essais, _resas, _now, _depuis)}
+
+
+@api_router.get("/admin/rattrapage-essais/audit")
+async def rattrapage_essais_audit(request: Request):
+    """V581 — AUDIT DE RATTRAPAGE des essais gratuits HONORÉS. LECTURE SEULE, aucun envoi.
+
+    Super-admin signé. Toutes les présences validées d'un VRAI essai (ESSAI-6), avec les traces
+    réelles J+0 / J+3 posées par les moteurs, l'état de conversion (P1-c + règle D1 de P1-d), le
+    consentement (mêmes portes que J+0/J+3) et l'adresse. Une ligne par e-mail (la présence la plus
+    récente) ; les doublons sont comptés. Aucune écriture, aucun jeton posé.
+    """
+    from api.routes.shared import (super_admin_signe as _ra_sa, est_un_essai as _ra_essai,
+                                   conv_etat as _ra_etat, CONV_TERMINEE as _RA_TERMINEE)
+    if not _ra_sa(request):
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    _now = datetime.now(timezone.utc)
+    _resas = await db.reservations.find(
+        {"validated": True},
+        {"_id": 0, "id": 1, "userEmail": 1, "userName": 1, "promoCode": 1, "discountCode": 1,
+         "validatedAt": 1, "auto_presence_at": 1, "confirmation": 1, "courseName": 1}).to_list(10000)
+    _cache_essai = {}
+    _lignes = []
+    for _r in _resas:
+        _code = str(_r.get("promoCode") or _r.get("discountCode") or "").strip().upper()
+        if not _code:
+            continue
+        if _code not in _cache_essai:
+            try:
+                _cache_essai[_code] = bool(await _ra_essai(db, code=_code))
+            except Exception:  # noqa: BLE001
+                _cache_essai[_code] = None
+        if not _cache_essai[_code]:
+            continue
+        _lignes.append(_r)
+    _par_mail = {}
+    _sans_mail = 0
+    for _r in _lignes:
+        _m = str(_r.get("userEmail") or "").strip().lower()
+        if not _m:
+            _sans_mail += 1
+            continue
+        _par_mail.setdefault(_m, []).append(_r)
+    _personnes = []
+    for _m, _rs in _par_mail.items():
+        _rs.sort(key=lambda x: str(x.get("validatedAt") or ""))
+        _r = _rs[-1]
+        _code = str(_r.get("promoCode") or _r.get("discountCode") or "").strip().upper()
+        _conf = _r.get("confirmation") if isinstance(_r.get("confirmation"), dict) else {}
+        _j0s = [((x.get("confirmation") or {}).get(P1B_CANAL) or {}) for x in _rs]
+        _j3s = [((x.get("confirmation") or {}).get(P1D_CANAL) or {}) for x in _rs]
+        _j0 = next((t for t in _j0s if t.get("statut") == "envoye"), None) or next((t for t in _j0s if t), {})
+        _j3 = next((t for t in _j3s if t.get("statut") == "envoye"), None) or next((t for t in _j3s if t), {})
+        _test = p1e_est_test(_m, _r.get("userName") or "", False)
+        try:
+            _, _forfait, _coach = await _conv_contexte(_code)
+        except Exception:  # noqa: BLE001
+            _forfait, _coach = None, ""
+        _etat = None
+        _achat = None
+        if _forfait:
+            try:
+                _etat = ((await _ra_etat(db, _forfait, _coach)) or {}).get("state")
+            except Exception:  # noqa: BLE001
+                _etat = None
+            _achat = await p1d_conversion_cours(_forfait)
+        _converti = (_etat == _RA_TERMINEE) or (_achat is True) or bool((_forfait or {}).get("converted_at"))
+        _valide = rv2_email_valide(_m)
+        _autorise = await p1b_destinataire_autorise(_m) if _valide else False
+        _pres = p1d_parse_iso(_r.get("validatedAt"))
+        _age_j = round((_now - _pres).total_seconds() / 86400.0, 1) if _pres else None
+        _local, _, _dom = _m.partition("@")
+        _personnes.append({
+            "prenom": (str(_r.get("userName") or "").strip().split(" ") or [""])[0],
+            "email_masque": (_local[:2] + "…@" + _dom) if _dom else "",
+            "code": _code, "presence_at": _r.get("validatedAt"), "age_jours": _age_j,
+            "auto_presence": bool(_r.get("auto_presence_at")), "presences": len(_rs),
+            "cours": _r.get("courseName") or "",
+            "j0": _j0.get("statut") or "", "j0_at": _j0.get("at") or "",
+            "j3": _j3.get("statut") or "", "j3_at": _j3.get("at") or "",
+            "etat_conversion": _etat or "", "achat_cours": _achat, "converti": _converti,
+            "test": _test, "email_valide": _valide, "autorise": _autorise,
+        })
+    _personnes.sort(key=lambda x: str(x.get("presence_at") or ""))
+    return {"genere_at": _now.isoformat(), "presences_essai": len(_lignes),
+            "presences_sans_email": _sans_mail, "personnes": _personnes}
 
 
 # ============================================================================

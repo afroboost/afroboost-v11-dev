@@ -423,3 +423,31 @@ def test_borne_activation_reelle_a_la_seconde(env):
     # le vrai passage : 1 s avant = rien ; pile / après = +3 h
     assert asyncio.run(S.p1e_passage(plus_tard)) == {"envoye_h3": 2}
     assert sorted(e[0] for e in env["envois"]) == ["amina.client@exemple-reel.ch"] * 2
+
+
+# ═══════════ V581 : plus-adresses « +test… » du super-admin = données TEST (et elles seules) ═══════════
+def test_plus_adresse_test_du_super_admin_seulement():
+    assert S.p1e_plus_adresse_test("%s+testj3a@%s" % (LOCAL, DOMAINE))
+    assert S.p1e_plus_adresse_test("%s+TestP1E@%s" % (LOCAL.upper(), DOMAINE))
+    assert not S.p1e_plus_adresse_test("%s+promo@%s" % (LOCAL, DOMAINE))       # « + » non test
+    assert not S.p1e_plus_adresse_test("amina+test@exemple-reel.ch")            # pas le super-admin
+    assert not S.p1e_plus_adresse_test("%s+test@autre-domaine.ch" % LOCAL)       # autre domaine
+    assert not S.p1e_plus_adresse_test(ADMIN)                                    # l'adresse elle-même
+    assert S.p1e_est_test("%s+testj3a@%s" % (LOCAL, DOMAINE), "Amina", False)
+    assert not S.p1e_est_test("amina+sport@exemple-reel.ch", "Amina", False)
+    assert not S.p1e_est_test("%s+testj3a@%s" % (LOCAL, DOMAINE), "Amina", True)  # mode test : ciblable
+
+
+def test_tracking_ignore_les_essais_test(env, monkeypatch):
+    vrai = essai(5, rid="v", code="AFR-V")
+    t = essai(5, rid="t", code="AFR-T", email="%s+testj3a@%s" % (LOCAL, DOMAINE))
+    env["charger"]([vrai, t])
+
+    class _Req:
+        headers = {}
+
+    async def appelant(_r):
+        return ADMIN
+    monkeypatch.setattr(S, "_v309_require_coach_or_admin", appelant)
+    m = asyncio.run(S.p1e_mesure_route(_Req(), depuis="2026-10-01T00:00:00+00:00"))
+    assert m["essais"] == 1
