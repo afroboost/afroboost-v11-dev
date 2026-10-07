@@ -4803,6 +4803,24 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // il est simplement redirigé ici. Aucune donnée ne bouge, ProspectsSection est
   // monté tel quel. Dépendance = la CHAÎNE `tab` (règle anti-boucle V305).
   const [campagnesMode, setCampagnesMode] = useState('clients');
+  // V587b — sections du cockpit Prospection. PRIMITIVES uniquement (règle V305) :
+  // la vue pilotée ('' = laisser l'écran choisir) et les compteurs remontés par lui.
+  // `p3VuePilote` = la vue DEMANDÉE par un clic ('' tant que rien n'est cliqué : l'écran
+  // garde son choix par défaut, qui bascule sur les Réponses quand elles arrivent).
+  // `p3VueActive` = la vue RÉELLEMENT affichée, remontée par l'écran (surlignage seul).
+  const [p3VuePilote, setP3VuePilote] = useState('');
+  const [p3VueActive, setP3VueActive] = useState('');
+  const [p3NbConversations, setP3NbConversations] = useState(null);
+  const [p3Total, setP3Total] = useState(null);
+  const p3SurEtat = useCallback((vue, nbConv, total) => {
+    setP3VueActive(vue || '');
+    // Une vue changée par l'écran lui-même (lien profond vers une conversation) devient
+    // la nouvelle demande — sinon un clic sur la même section ne la rouvrirait pas.
+    // Tant que rien n'a été cliqué, on reste en mode « choix par défaut ».
+    setP3VuePilote(prev => (prev ? (vue || prev) : prev));
+    setP3NbConversations(typeof nbConv === 'number' ? nbConv : null);
+    setP3Total(typeof total === 'number' ? total : null);
+  }, []);
   useEffect(() => {
     if (tab === 'prospection') {
       setCampagnesMode('prospection');
@@ -6623,13 +6641,17 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     { id: "offers", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="settings" size={14} /> Gestion</span> },
     { id: "codes", label: t('promoCodes') },
     { id: "contacts", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="users" size={14} /> Contacts</span> },
-    { id: "campaigns", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="megaphone" size={14} /> Campagnes</span> },
+    // V587b : la prospection vit DANS Campagnes (Clients | Prospection). La pastille des
+    // réponses partenaires non lues passe donc sur Campagnes, visible depuis tout onglet.
+    { id: "campaigns", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="megaphone" size={14} /> {p3NonLues > 0 ? `Campagnes (${p3NonLues})` : "Campagnes"}</span> },
     // P3-S2 : voisin de Contacts et Campagnes, jamais une application a part.
     // Visible pour tous les coachs — le backend cloisonne par coach_id.
     // READ-P1 : la pastille compte les réponses partenaires JAMAIS OUVERTES.
     // Pas de pastille « 0 » — un badge n'existe que s'il y a du neuf, comme
     // pour Conversations juste en dessous.
-    { id: "prospection", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="compass" size={14} /> {p3NonLues > 0 ? `Prospection (${p3NonLues})` : "Prospection"}</span> },
+    // V587b : le bouton « Prospection » quitte la barre. L'onglet `prospection` reste
+    // VALIDE (co1OngletsCoach) : ancien onglet mémorisé, ?prospection=1, notifications et
+    // bandeau y mènent toujours, et sont redirigés vers Campagnes → Prospection.
     { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> },
     // V314 : corbeille (récupération des suppressions). Visible pour tous — le backend cloisonne.
     { id: "corbeille", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="trash" size={14} /> Corbeille</span> }
@@ -9046,7 +9068,40 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {/* === PROSPECTION (P3-S2) — désormais le mode « Prospection » de Campagnes (UI-1) === */}
         {tab === "campaigns" && campagnesMode === "prospection" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6" data-testid="campagnes-prospection">
+            {/* V587b — COCKPIT PROSPECTION : les sections prévues. Seules « Prospects » et
+                « Conversations partenaires » sont branchées (les vues EXISTANTES de
+                ProspectsSection) ; les autres sont annoncées, sans aucun branchement. */}
+            <nav aria-label="Sections de la prospection" data-testid="prospection-sections"
+                 style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
+              {[
+                { id: 'apercu', label: "Vue d'ensemble" },
+                { id: 'prospects', label: p3Total !== null ? `Prospects (${p3Total})` : 'Prospects', vue: 'prospects' },
+                { id: 'conversations', label: p3NbConversations !== null ? `Conversations partenaires (${p3NbConversations})` : 'Conversations partenaires', vue: 'reponses' },
+                { id: 'messages', label: 'Messages & relances' },
+                { id: 'medias', label: 'Médias' },
+                { id: 'liens', label: 'Liens' },
+                { id: 'resultats', label: 'Résultats' },
+              ].map(sct => {
+                const actif = !!sct.vue && p3VueActive === sct.vue;
+                const dispo = !!sct.vue;
+                return (
+                  <button key={sct.id} type="button" disabled={!dispo}
+                          data-testid={`prospection-section-${sct.id}`}
+                          aria-current={actif ? 'page' : undefined}
+                          title={dispo ? undefined : 'Bientôt disponible'}
+                          onClick={dispo ? () => setP3VuePilote(sct.vue) : undefined}
+                          style={{ padding: '7px 12px', borderRadius: '999px', fontSize: '12px',
+                                   fontWeight: actif ? 700 : 500, cursor: dispo ? 'pointer' : 'default',
+                                   color: dispo ? '#fff' : 'rgba(255,255,255,0.4)',
+                                   border: `1px solid ${actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.7)' : 'rgba(255,255,255,0.14)'}`,
+                                   background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.26)' : 'transparent' }}>
+                    {sct.label}{!dispo && <span style={{ marginLeft: '6px', fontSize: '10px', opacity: 0.8 }}>· bientôt</span>}
+                  </button>
+                );
+              })}
+            </nav>
             <ProspectsSection API={API} inboundCible={p3Cible}
+                              ongletPilote={p3VuePilote} onEtat={p3SurEtat}
                               onCibleConsommee={() => {
                                 /* L'ecran a ouvert la bonne conversation — ou l'a
                                    declaree introuvable. C'est SEULEMENT ici que

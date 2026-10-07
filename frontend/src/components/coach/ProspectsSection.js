@@ -263,7 +263,14 @@ function Etiquette({ texte, ton }) {
   );
 }
 
-export default function ProspectsSection({ API, inboundCible, onCibleConsommee }) {
+export default function ProspectsSection({ API, inboundCible, onCibleConsommee, ongletPilote, onEtat }) {
+  /* V587b — PILOTAGE OPTIONNEL PAR LE COCKPIT CAMPAGNES. Sans ces deux props,
+     l'écran se comporte EXACTEMENT comme avant (barre d'onglets interne, choix
+     par défaut). Avec `ongletPilote` (chaîne), c'est la barre de sections de
+     Campagnes → Prospection qui choisit la vue et la barre interne est masquée ;
+     `onEtat` remonte des valeurs PRIMITIVES (onglet, nb conversations, total),
+     jamais un objet : règle anti-boucle V305. */
+  const pilote = typeof ongletPilote === 'string';
   const base = API || '';
 
   const [filtres, setFiltres] = useState({
@@ -784,6 +791,16 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
      des prospects sinon. Aucun `setState`, donc aucune boucle possible. */
   const ongletActif = onglet || (conversations.length ? 'reponses' : 'prospects');
 
+  // V587b : le cockpit impose une vue (chaîne vide = laisser le choix par défaut).
+  useEffect(() => {
+    if (pilote && ongletPilote) setOnglet(ongletPilote);
+  }, [pilote, ongletPilote]);
+  // V587b : le cockpit apprend la vue active et les compteurs — primitives seulement.
+  const etatTotal = chargeUnFois && total !== null ? total : null;
+  useEffect(() => {
+    if (onEtat) onEtat(ongletActif, conversations.length, etatTotal);
+  }, [onEtat, ongletActif, conversations.length, etatTotal]);
+
   /* LA CONVERSATION OUVERTE, ET LE MESSAGE AFFICHÉ DEDANS.
      Les deux sont DÉRIVÉS d'une clé et d'un identifiant — jamais recopiés dans
      un état : une conversation recopiée deviendrait périmée dès la première
@@ -1094,6 +1111,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
            différents, et les afficher ensemble obligeait à chercher dans deux
            endroits à la fois. Chaque vue garde TOUTES ses fonctions : rien
            n'est retiré, seulement séparé. */}
+      {!pilote && (
       <div data-testid="onglets-prospection" role="tablist"
            style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
         {[['reponses', `Réponses (${conversations.length})`],
@@ -1116,6 +1134,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee }
           </button>
         ))}
       </div>
+      )}
 
       {/* ================================================================
            PROSPECTION FOCUS — LA BOÎTE DE TRAITEMENT
