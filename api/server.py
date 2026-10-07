@@ -1991,6 +1991,8 @@ class FeatureFlagsUpdate(BaseModel):
     P3_LAUNCH_ENVOI_REEL: Optional[bool] = None  # P3-S3
     P3_REPONSE_ACTIF: Optional[bool] = None      # AI-P4
     P3_REPONSE_ENVOI_REEL: Optional[bool] = None  # AI-P4
+    P3_RELANCE_ENABLED: Optional[bool] = None     # V584b : P3-R2 n'était pas pilotable par l'API
+    P3_RELANCE_ENVOI_REEL: Optional[bool] = None  # V584b
     SOCIAL_PROFILE_LINKS: Optional[bool] = None  # F3 FINAL : profils Spordateur des autres comptes liés
     SOCIAL_ACTIVATION_ENABLED: Optional[bool] = None  # F4 : activation volontaire du profil social
     REMINDERS_SUBSCRIBERS_ENABLED: Optional[bool] = None  # RV-AB : rappeler AUSSI les abonnés sans réservation
@@ -22748,6 +22750,8 @@ async def get_feature_flags():
                          ("P3_LAUNCH_ENVOI_REEL", False),
                          ("P3_REPONSE_ACTIF", False),
                          ("P3_REPONSE_ENVOI_REEL", False),
+                         ("P3_RELANCE_ENABLED", False),
+                         ("P3_RELANCE_ENVOI_REEL", False),
                          ("SOCIAL_PROFILE_LINKS", False),
                          ("SOCIAL_ACTIVATION_ENABLED", False),
                          ("REMINDERS_SUBSCRIBERS_ENABLED", False),
