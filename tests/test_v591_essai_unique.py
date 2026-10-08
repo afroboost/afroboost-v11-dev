@@ -368,6 +368,10 @@ async def principal(brute, db, G):
              "await _essai_porte_garde(email, str(offre.get(\"id\")), telephone=tel_brut)" in _rf)
     verifier("PORTE 4. approbation d'une preuve sociale",
              "_essai_porte_garde as _g2_garde" in _sv)
+    _rev = _sv[_sv.index("async def review_social_proof"):]
+    _rev = _rev[:_rev.index("\n@api_router")]
+    verifier("PORTE 4c. approbation : raison précise SEULEMENT derrière un JWT signé (jamais sur X-User-Email)",
+             'getattr(_g2_refus, "raison_interne", None) and _v311_coach_email_from_jwt(request)' in _rev)
     verifier("PORTE 4b. dépôt d'une preuve sociale : téléphone exigé dès le dépôt",
              "essai8_telephone_valide as _e8_tel_ok" in _sv)
     verifier("PORTE 5. plus aucun appel direct à _essai1_garde / _essai4_garde hors de la garde commune",

@@ -11055,9 +11055,12 @@ async def review_social_proof(proof_id: str, request: Request):
                             telephone=proof.get("client_phone", ""))
         except Exception as _g2_refus:
             await _g4_rendre_en_attente()
-            # V591 : cette route est réservée au COACH authentifié — il peut connaître la
-            # raison précise (la porte PUBLIQUE, elle, reste neutre).
-            if getattr(_g2_refus, "raison_interne", None):
+            # V591b — la raison précise n'est rendue QU'À un coach prouvé par un JWT SIGNÉ.
+            # `require_auth` accepte encore le repli `X-User-Email` (falsifiable, V265) :
+            # sans cette condition, déposer une fausse demande puis « l'approuver » sous un
+            # en-tête forgé ferait de cette route l'oracle que la porte publique vient de
+            # fermer (revue de sécurité de 3cd18dff). Sans JWT signé : réponse NEUTRE.
+            if getattr(_g2_refus, "raison_interne", None) and _v311_coach_email_from_jwt(request):
                 raise HTTPException(status_code=409,
                                     detail=getattr(_g2_refus, "detail_interne", "") or "Essai refusé",
                                     headers={"X-Refus-Raison": _g2_refus.raison_interne})

@@ -271,6 +271,8 @@ def construire(base):
            "logger": logging.getLogger("t"), "uuid": uuid,
            "DEFAULT_COACH_ID": "bassi_default", "Request": object,
            "require_auth": lambda r: "coach@test.ch",
+           # V591b : pas de JWT signé dans ce banc -> chemin du repli X-User-Email (réponse neutre)
+           "_v311_coach_email_from_jwt": lambda r: "",
            "is_super_admin": lambda e: True,
            "send_push_by_email": None,
            # dependances d'envoi : neutralisees, ce lot ne teste pas les emails
