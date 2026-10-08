@@ -147,9 +147,21 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [v594Parcours] = useState(() => {
     try { return new URLSearchParams(window.location.search).get("parcours") === "partenaire"; } catch (e) { return false; }
   });
-  const v594Etapes = v594Parcours ? (
-    <div className="cp-root" style={{ order: -5 }}>
-      <Etapes etape={3} etapes={ETAPES_PARCOURS_PARTENAIRE} className="cp-wf-etapes" testid="pp-etapes-espace" />
+  // V594 — CONFIRMATION FOCALISÉE : uniquement à la fin du parcours Partenaire, une fois la
+  // séance confirmée ici. Rien n'est supprimé : le reste de l'espace est seulement MASQUÉ (CSS)
+  // jusqu'au clic sur « Accéder à mon espace », qui rend l'espace habituel complet.
+  const [v594Quitte, setV594Quitte] = useState(false);
+  const quitterConfirmationV594 = () => {
+    setV594Quitte(true);
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.delete("parcours");
+      window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash);
+    } catch (e) { /* l'URL reste telle quelle : l'état suffit */ }
+  };
+  const v594Etapes = v594Parcours && !v594Quitte ? (
+    <div className="cp-root" style={{ order: -5 }} data-v594-garde="">
+      <Etapes etape={4} etapes={ETAPES_PARCOURS_PARTENAIRE} className="cp-wf-etapes" testid="pp-etapes-espace" />
     </div>
   ) : null;
   const accessCode = useMemo(() => {
@@ -200,6 +212,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   // Les valeurs viennent de l'occurrence REELLEMENT envoyee au serveur, jamais
   // d'un texte fabrique : si le serveur avait refuse, on ne serait pas ici.
   const [seanceConfirmee, setSeanceConfirmee] = useState(null);
+  // V594 : confirmation focalisée = fin du parcours Partenaire + séance confirmée ici.
+  const v594Focus = v594Parcours && !v594Quitte && !!seanceConfirmee;
   // V534 — Parrainage : deux PRIMITIFS (ouvert ? / cours éligibles, ids joints),
   // jamais un objet : l'effet qui les pose compare avant d'écrire.
   const [parrainageOn, setParrainageOn] = useState(false);
@@ -1173,7 +1187,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           que `space-y-5`, mais permet de remonter un bloc avec `order` sans
           rien demonter. Hors parcours d'essai, tous les `order` valent 0 et
           l'ordre du DOM est conserve au pixel pres. */}
-      <div className="max-w-md mx-auto px-4 pt-6 flex flex-col gap-5">
+      {v594Focus ? (
+        <style>{"[data-v594-focus] > :not([data-v594-garde]) { display: none !important; }"}</style>
+      ) : null}
+      <div className="max-w-md mx-auto px-4 pt-6 flex flex-col gap-5" data-v594-focus={v594Focus ? "" : undefined}>
         {v594Etapes}
         {/* V203f: Bouton retour vers la page d'inscription multi-membre */}
         {data?.multi_member && memberSlug && (
@@ -1289,6 +1306,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           <section
             className="rounded-2xl p-5"
             data-testid="p2ux-confirmation"
+            data-v594-garde=""
             style={{
               order: -2,
               background: 'rgba(34,197,94,0.10)',
@@ -1383,14 +1401,18 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             le remplace pas et ne le deplace pas. */}
         {essaiReserve && (
           <section
-            className="rounded-2xl p-5"
+            className={v594Focus ? undefined : "rounded-2xl p-5"}
             data-testid="essai7-reserve"
-            style={{
+            data-v594-garde=""
+            style={v594Focus ? { order: -1 } : {
               order: -1,
               background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.10)',
               border: `1px solid ${COLORS.primary}`,
             }}
           >
+            {/* V594 : en confirmation focalisée, la carte verte dit déjà tout — on ne garde
+                que le bouton « Voir mon QR » EXISTANT de cette carte. */}
+            {!v594Focus && (<>
             <p className="text-lg font-bold">🔥 Ta séance est réservée !</p>
             {prochaineSeance && (
               <p className="text-sm mt-2 font-semibold" style={{ color: COLORS.primary }}>
@@ -1420,6 +1442,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             <p className="text-sm mt-3 text-white/70">
               Ton QR est prêt. Présente-le au coach à ton arrivée.
             </p>
+            </>)}
             <button
               type="button"
               onClick={() => setQrFullscreen(true)}
@@ -1432,6 +1455,20 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               </span>
             </button>
           </section>
+        )}
+
+        {/* V594 — sortie de la confirmation focalisée : l'espace habituel, complet. */}
+        {v594Focus && (
+          <button
+            type="button"
+            onClick={quitterConfirmationV594}
+            data-testid="v594-acceder-espace"
+            data-v594-garde=""
+            className="w-full py-3 rounded-xl font-bold transition-transform active:scale-95"
+            style={{ order: -1, background: "transparent", color: "white", border: `1px solid ${COLORS.primary}` }}
+          >
+            Accéder à mon espace
+          </button>
         )}
 
         {/* V261 */}

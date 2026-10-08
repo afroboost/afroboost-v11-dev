@@ -477,7 +477,9 @@ describe('V566 — vitrine inchangée quand Recharger réutilise le panneau', ()
   test('sans titreToutes / notes : titre « Toutes les offres », aucune note', () => {
     const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'OffresAimants.js'), 'utf8');
     expect(src).toContain("titre={titre || 'Toutes les offres'}");
-    expect(src).toContain('const note = notes && notes[o.id];');
+    // V594 : la ligne est extraite (LigneOffre) ; la note reste optionnelle, sans défaut.
+    expect(src).toContain('note={notes && notes[o.id]}');
+    expect(src).toMatch(/note && note\.texte \?/);
     const app = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'App.js'), 'utf8');
     expect(app).not.toMatch(/titreToutes=/);   // la vitrine ne passe ni titre ni notes
     expect(app).not.toMatch(/<OffresAimants[^>]*notes=/);

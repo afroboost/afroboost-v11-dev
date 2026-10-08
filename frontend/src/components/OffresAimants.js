@@ -380,7 +380,8 @@ function LigneFiche({ icone, libelle, valeur }) {
   );
 }
 
-function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkoutBusy, estMobile, Countdown, toutesOffres }) {
+// V594 — exportée pour le parcours Partenaire (« Détail de l’offre » existant).
+export function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkoutBusy, estMobile, Countdown, toutesOffres }) {
   // `choix` = { offres: [...] } — 1 offre, ou les 2 offres de la saison.
   const offres = (choix && choix.offres) || [];
   const [selection, setSelection] = useState(offres[0] ? offres[0].id : null);
@@ -520,6 +521,62 @@ function MiniVignette({ offre, analyser }) {
   return <div style={{ ...base, display: 'flex', alignItems: 'center', justifyContent: 'center', color: COULEUR }}><SvgIcon name="gift" size={20} /></div>;
 }
 
+/** Une ligne de « Toutes les offres » (miniature, nom, badge, prix, flèche).
+ *  V594 — EXTRAITE telle quelle de `ToutesLesOffres` pour être réutilisée par le parcours
+ *  Partenaire : un seul rendu, deux usages, aucune copie. */
+export function LigneOffre({ offre: o, mensuelRef, analyser, note, onOuvrir }) {
+  const p = prixAffiche(o);
+  const badge = badgeOffre(o, mensuelRef);
+  const fam = familleOffre(o);
+  const seances = libelleSeances(o);
+  const limitee = infoCompacteLimitee(o);
+  const eco = economieOffre(o, mensuelRef);
+  const sousTitre = [seances, limitee].filter(Boolean).join(' · ') || promesseCourte(o);
+  return (
+    <button
+      type="button"
+      data-testid={`ligne-offre-${o.id}`}
+      onClick={() => onOuvrir({ offres: [o] })}
+      style={{
+        width: '100%', maxWidth: '100%', textAlign: 'left', display: 'block', overflow: 'hidden',
+        padding: '10px 12px', borderRadius: 14, cursor: 'pointer', color: '#fff',
+        background: fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.10)` : 'rgba(255,255,255,0.04)',
+        border: `1px solid ${fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.45)` : 'rgba(255,255,255,0.08)'}`,
+        transition: 'background 0.15s, border-color 0.15s',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = `rgba(${RGB}, 0.14)`; e.currentTarget.style.borderColor = `rgba(${RGB}, 0.5)`; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.10)` : 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.45)` : 'rgba(255,255,255,0.08)'; }}
+    >
+      {/* Un conteneur flex DANS le bouton : un <button> en flex ne
+          laisse pas toujours ses enfants rétrécir, le prix sortait
+          de l'écran sur mobile. */}
+      <span style={{ display: 'flex', gap: 12, alignItems: 'center', width: '100%', minWidth: 0 }}>
+        <MiniVignette offre={o} analyser={analyser} />
+        <span style={{ minWidth: 0, flex: '1 1 0%', display: 'flex', flexDirection: 'column', gap: 3, overflow: 'hidden' }}>
+          <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.2 }}>{o.name}</span>
+            {badge ? <Badge texte={badge} fort={fam === FAMILLE.LANCEMENT} /> : null}
+          </span>
+          {sousTitre ? <span style={{ display: 'block', fontSize: 12, color: 'rgba(255,255,255,0.6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sousTitre}</span> : null}
+          {eco ? <span style={{ display: 'block', fontSize: 12, color: 'var(--eco-color, #8ef0b0)', fontWeight: 600 }}>Économie : {prixFormate(eco)} CHF</span> : null}
+          {note && note.texte ? (
+            <span data-testid={`note-offre-${o.id}`} data-ton={note.ton || 'info'}
+                  style={{ display: 'block', fontSize: 12, fontWeight: 600,
+                    color: note.ton === 'refus' ? 'rgba(255,200,170,0.95)' : 'rgba(255,255,255,0.8)' }}>
+              {note.texte}
+            </span>
+          ) : null}
+        </span>
+        <span style={{ textAlign: 'right', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+          <span style={{ fontWeight: 800, fontSize: 16, color: COULEUR, whiteSpace: 'nowrap' }}>{p.montant}</span>
+          {p.unite ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>{p.unite}</span> : null}
+        </span>
+        <span style={{ color: 'rgba(255,255,255,0.35)', display: 'inline-flex', flexShrink: 0 }}><SvgIcon name="arrowRight" size={14} /></span>
+      </span>
+    </button>
+  );
+}
+
 function ToutesLesOffres({ ouvert, offres, mensuelRef, analyser, onOuvrirFiche, onFermer, estMobile, titre, notes }) {
   const groupes = GROUPES.map((g) => ({ ...g, offres: offres.filter((o) => g.familles.includes(familleOffre(o))) })).filter((g) => g.offres.length);
   return (
@@ -531,63 +588,14 @@ function ToutesLesOffres({ ouvert, offres, mensuelRef, analyser, onOuvrirFiche, 
             {/* `minmax(0, 1fr)` : sans lui, une ligne à contenu long élargit la
                 grille (min-width: auto des items) et le prix sort de l'écran. */}
             <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
-              {g.offres.map((o) => {
-                const p = prixAffiche(o);
-                const badge = badgeOffre(o, mensuelRef);
-                const fam = familleOffre(o);
-                const seances = libelleSeances(o);
-                const limitee = infoCompacteLimitee(o);
-                const eco = economieOffre(o, mensuelRef);
-                const sousTitre = [seances, limitee].filter(Boolean).join(' · ') || promesseCourte(o);
-                // V566 : note DISCRÈTE fournie par l'appelant (espace abonné : « Ton offre »,
-                // ou la vraie raison d'un refus). Absente sur la vitrine : rendu inchangé.
-                const note = notes && notes[o.id];
-                return (
-                  <li key={o.id} style={{ minWidth: 0 }}>
-                    <button
-                      type="button"
-                      data-testid={`ligne-offre-${o.id}`}
-                      onClick={() => onOuvrirFiche({ offres: [o] })}
-                      style={{
-                        width: '100%', maxWidth: '100%', textAlign: 'left', display: 'block', overflow: 'hidden',
-                        padding: '10px 12px', borderRadius: 14, cursor: 'pointer', color: '#fff',
-                        background: fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.10)` : 'rgba(255,255,255,0.04)',
-                        border: `1px solid ${fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.45)` : 'rgba(255,255,255,0.08)'}`,
-                        transition: 'background 0.15s, border-color 0.15s',
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = `rgba(${RGB}, 0.14)`; e.currentTarget.style.borderColor = `rgba(${RGB}, 0.5)`; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.10)` : 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = fam === FAMILLE.LANCEMENT ? `rgba(${RGB}, 0.45)` : 'rgba(255,255,255,0.08)'; }}
-                    >
-                      {/* Un conteneur flex DANS le bouton : un <button> en flex ne
-                          laisse pas toujours ses enfants rétrécir, le prix sortait
-                          de l'écran sur mobile. */}
-                      <span style={{ display: 'flex', gap: 12, alignItems: 'center', width: '100%', minWidth: 0 }}>
-                        <MiniVignette offre={o} analyser={analyser} />
-                        <span style={{ minWidth: 0, flex: '1 1 0%', display: 'flex', flexDirection: 'column', gap: 3, overflow: 'hidden' }}>
-                          <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                            <span style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.2 }}>{o.name}</span>
-                            {badge ? <Badge texte={badge} fort={fam === FAMILLE.LANCEMENT} /> : null}
-                          </span>
-                          {sousTitre ? <span style={{ display: 'block', fontSize: 12, color: 'rgba(255,255,255,0.6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sousTitre}</span> : null}
-                          {eco ? <span style={{ display: 'block', fontSize: 12, color: 'var(--eco-color, #8ef0b0)', fontWeight: 600 }}>Économie : {prixFormate(eco)} CHF</span> : null}
-                          {note && note.texte ? (
-                            <span data-testid={`note-offre-${o.id}`} data-ton={note.ton || 'info'}
-                                  style={{ display: 'block', fontSize: 12, fontWeight: 600,
-                                    color: note.ton === 'refus' ? 'rgba(255,200,170,0.95)' : 'rgba(255,255,255,0.8)' }}>
-                              {note.texte}
-                            </span>
-                          ) : null}
-                        </span>
-                        <span style={{ textAlign: 'right', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                          <span style={{ fontWeight: 800, fontSize: 16, color: COULEUR, whiteSpace: 'nowrap' }}>{p.montant}</span>
-                          {p.unite ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>{p.unite}</span> : null}
-                        </span>
-                        <span style={{ color: 'rgba(255,255,255,0.35)', display: 'inline-flex', flexShrink: 0 }}><SvgIcon name="arrowRight" size={14} /></span>
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
+              {g.offres.map((o) => (
+                <li key={o.id} style={{ minWidth: 0 }}>
+                  {/* V566 : note DISCRÈTE fournie par l'appelant (espace abonné : « Ton offre »,
+                      ou la vraie raison d'un refus). Absente sur la vitrine : rendu inchangé. */}
+                  <LigneOffre offre={o} mensuelRef={mensuelRef} analyser={analyser}
+                              note={notes && notes[o.id]} onOuvrir={onOuvrirFiche} />
+                </li>
+              ))}
             </ul>
           </section>
         ))}

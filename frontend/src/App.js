@@ -5120,6 +5120,11 @@ function App() {
   // Le formulaire ACTUEL n'est pas recopié : pendant le parcours, il est rendu dans
   // l'emplacement de l'étape 2 (portail). Hors parcours : à sa place, comme avant.
   const ppPortail = (el) => (ppActif && ppSlot ? createPortal(el, ppSlot) : el);
+  // V594 — le formulaire ACTUEL découpé en deux petites étapes (aucun champ recopié) :
+  // 2 « Coordonnées » = nom, e-mail, WhatsApp ; 3 « Validation » = naissance, conditions, bouton.
+  // Code promo et récapitulatif de prix : masqués dans CE parcours seulement (offre offerte).
+  // Hors parcours Partenaire, `ppZone` vaut toujours `true` : formulaire inchangé.
+  const ppZone = (zone) => !ppActif || (zone === 'coord' ? ppEtape === 2 : ppEtape === 3);
   const ppChoisirSeance = (s) => {
     setInv2Seance(s);
     try {
@@ -10136,24 +10141,30 @@ function App() {
             seance={inv2Verdict && inv2Verdict.etat === 'ok' ? inv2Seance : null}
             onSeance={ppChoisirSeance}
             onSlotFormulaire={setPpSlot}
+            offres={offers}
+            Countdown={OfferCountdown}
             onQuitter={() => setPpQuitte(true)}
           />
         )}
         {selectedOffer && ppPortail(
           <form onSubmit={handleSubmit}>
             <div id="user-info-section" className="form-section rounded-xl p-6 mb-6" data-testid="user-info-section">
-              <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>{t('yourInfo')}</h2>
+              {/* V594 : dans le parcours Partenaire, le stepper porte déjà le titre de l'étape. */}
+              {!ppActif && <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>{t('yourInfo')}</h2>}
               {/* INV-2 : la seance de l'invitation, deja retenue (ou pourquoi elle ne l'est plus). */}
-              {inv2Verdict && (
+              {inv2Verdict && !ppActif && (
                 <InvitationSeanceBandeau etat={inv2Verdict.etat} nom={inv2Verdict.cours && inv2Verdict.cours.name}
                   occurrence={inv2Verdict.occurrence} variante="formulaire" />
               )}
               <div className="space-y-4">
                 {/* Private input fields with auto-fill support */}
+                {ppZone('coord') && (<>
                 <input type="text" required placeholder={t('fullName')} value={userName} onChange={e => setUserName(e.target.value)} className="w-full p-3 rounded-lg neon-input" data-testid="user-name-input" autoComplete="name" />
                 <input type="email" required placeholder={t('emailRequired')} value={userEmail} onChange={e => handleEmailChange(e.target.value)} className="w-full p-3 rounded-lg neon-input" data-testid="user-email-input" autoComplete="email" />
                 <input type="tel" required placeholder={t('whatsappRequired')} value={userWhatsapp} onChange={e => setUserWhatsapp(e.target.value)} className="w-full p-3 rounded-lg neon-input" data-testid="user-whatsapp-input" autoComplete="tel" />
 
+                </>)}
+                {ppZone('final') && (<>
                 {/* V285: Date de naissance — obligatoire (anniversaires communautaires) */}
                 <div>
                   <input type="date" required value={userBirthday} onChange={e => setUserBirthday(e.target.value)}
@@ -10166,6 +10177,7 @@ function App() {
                   </p>
                 </div>
 
+                </>)}
                 {/* Champ Adresse - Affiché uniquement pour les produits physiques */}
                 {(selectedOffer?.isProduct || selectedOffer?.isPhysicalProduct) && (
                   <div className="border border-purple-500/30 rounded-lg p-3 bg-purple-900/20">
@@ -10259,6 +10271,7 @@ function App() {
                   </div>
                 )}
                 
+                {!ppActif && (<>
                 {/* Promo code input - Accept any case (minuscules/majuscules) */}
                 <div>
                   <input type="text" placeholder={t('promoCode')} value={discountCode} onChange={e => setDiscountCode(e.target.value)}
@@ -10272,11 +10285,13 @@ function App() {
                   )}
                 </div>
                 
+                </>)}
                 {/* Other validation messages */}
                 {validationMessage && (
                   <p className="text-red-400 text-sm font-medium" data-testid="validation-message">{validationMessage}</p>
                 )}
                 
+                {!ppActif && (<>
                 {/* Price summary with quantity selector and discount */}
                 <div className="p-4 rounded-lg card-gradient">
                   {selectedOffer && (
@@ -10420,22 +10435,28 @@ function App() {
                   </p>
                 </div>
                 
+                </>)}
                 {/* ESSAI-5a-1 : meme case pour les trois chemins de reservation. */}
+                {ppZone('final') && (<>
                 <ConditionsParticipation
                   courseId={selectedCourse?.id || ''}
                   accepte={hasAcceptedTerms}
                   onChange={setHasAcceptedTerms}
                   onRequired={setTermsRequired}
                 />
+                </>)}
               </div>
             </div>
             
+            {/* V594 : dans le parcours Partenaire, le bouton n'apparaît qu'à l'étape « Validation ». */}
+            {ppZone('final') && (<>
             {/* DYNAMISME DU BOUTON: Change selon le montant total */}
             <button type="submit" disabled={(termsRequired && !hasAcceptedTerms) || loading} 
               className={`w-full py-4 rounded-xl font-bold uppercase tracking-wide ${parseFloat(totalPrice) === 0 ? 'btn-free' : 'btn-primary'}`} 
               data-testid="submit-reservation-btn">
               {loading ? t('loading') : parseFloat(totalPrice) === 0 ? `🎁 ${t('reserveFree')}` : t('payAndReserve')}
             </button>
+            </>)}
           </form>
         )}
 
