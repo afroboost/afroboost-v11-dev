@@ -404,7 +404,9 @@ def executer():
         _semer(brute)
 
         esp = {"db": db, "HTTPException": _HTTPException, "datetime": datetime,
-               "timezone": timezone, "logger": logging.getLogger("e6"), "uuid": uuid}
+               "timezone": timezone, "timedelta": timedelta,  # V591
+               "logger": logging.getLogger("e6"), "uuid": uuid,
+               "ESSAI8_VERROU_PERIME_MINUTES": 10}
 
         async def _tracer(offer_id=""):
             return None
@@ -412,7 +414,7 @@ def executer():
         esp["_essai1_tracer_refus"] = _tracer
         for fn in ("_essai1_motif_refus", "_essai1_essai_deja_accorde",
                    "_essai1_cles", "_essai1_reclamer", "_essai1_liberer_cle",
-                   "_essai1_liberer", "_essai1_garde"):
+                   "_essai1_liberer", "_essai1_liberer_perimes", "_essai1_garde"):  # V591
             exec(compile(_extraire_ck(fn), "<ck>", "exec"), esp)
 
         asyncio.run(principal(brute, db, esp))

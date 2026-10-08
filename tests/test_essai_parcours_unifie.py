@@ -249,13 +249,15 @@ def perimetre_backend():
     _free = code_seul(extraire(CHECKOUT, "free_checkout"))
     _sess = code_seul(extraire(CHECKOUT, "create_checkout_session"))
     _g4 = code_seul(extraire(CHECKOUT, "_essai4_garde"))
+    _porte = code_seul(extraire(CHECKOUT, "_essai_porte_garde"))   # V591 : LA garde commune
 
-    verifier("B1. ESSAI-4 garde les deux portes gratuites",
-             "_essai4_garde(" in _free and "_essai4_garde(" in _sess)
+    verifier("B1. ESSAI-4 garde les deux portes gratuites (via la garde commune V591)",
+             "_essai_porte_garde(" in _free and "_essai_porte_garde(" in _sess
+             and "_essai4_garde(" in _porte)
     verifier("B2. ESSAI-4 passe AVANT ESSAI-1 (elle lit, l'autre ecrit)",
-             _free.index("_essai4_garde(") < _free.index("_essai1_garde("))
-    verifier("B2b. meme ordre sur la seconde porte",
-             _sess.index("_essai4_garde(") < _sess.index("_essai1_garde("))
+             _porte.index("_essai4_garde(") < _porte.index("_essai1_garde("))
+    verifier("B2b. meme ordre sur la seconde porte (meme garde commune)",
+             _sess.count("_essai_porte_garde(") == 1 and "_essai1_garde(" not in _sess)
     verifier("B3. ESSAI-4 n'ECRIT rien",
              not any(m in code_seul(extraire(CHECKOUT, "_essai4_abonnement_actif"))
                      for m in ("insert_one", "update_one", "delete_one")))
@@ -268,7 +270,8 @@ def perimetre_backend():
     verifier("B7. Conditions toujours exigees avant l'octroi",
              "_t1_preuve_checkout(" in _free)
     verifier("B8. ESSAI-1 et son filet intacts",
-             "_essai1_garde(" in _free and "_essai1_liberer(" in _free)
+             "_essai_porte_garde(" in _free and "_essai1_garde(" in _porte   # V591 : via LA garde commune
+             and "_essai1_liberer(" in _free)
     verifier("B9. le funnel est toujours alimente",
              "essai2_tracer_octroi" in _free)
     verifier("B10. l'e-mail garde son lien profond vers l'espace",
@@ -277,7 +280,7 @@ def perimetre_backend():
              'email=""' in extraire(CHECKOUT, "_essai4_garde"))
     verifier("B12. la preuve sociale reste INTACTE et separee",
              all(x in SERVEUR for x in ("submit_social_proof", "review_social_proof",
-                                        "social_proof_pending", "_essai1_garde as _g2_garde")))
+                                        "social_proof_pending", "_essai_porte_garde as _g2_garde")))  # V591
     verifier("B13. les temoignages restent independants",
              "contact_type" in extraire(SERVEUR, "t3_eligibilite")
              and "social_proof" not in code_seul(extraire(SERVEUR, "t3_eligibilite")))

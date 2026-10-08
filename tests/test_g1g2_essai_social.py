@@ -231,7 +231,10 @@ def construire(base):
     import datetime, logging, types
 
     esp_ck = {"db": base, "HTTPException": HTTPException, "datetime": datetime.datetime,
-              "timezone": datetime.timezone, "logger": logging.getLogger("t"), "uuid": uuid}
+              "timezone": datetime.timezone, "timedelta": datetime.timedelta,   # V591
+              "logger": logging.getLogger("t"), "uuid": uuid,
+              "ESSAI8_VERROU_PERIME_MINUTES": 10,
+              "ESSAI4_RAISON": "active_subscription", "ESSAI4_MESSAGE": "abonné actif"}
     exec(compile("ESSAI1_RAISON = 'free_trial_already_used'\n"
                  "ESSAI1_MESSAGE = \"Votre essai gratuit a déjà été utilisé.\"", "<c>", "exec"), esp_ck)
     async def _tracer(offer_id=""):
@@ -242,7 +245,9 @@ def construire(base):
     # On charge les VRAIES fonctions, comme les quatre autres.
     for fn in ("_essai1_motif_refus", "_essai1_essai_deja_accorde", "_essai1_cles",
                "_essai1_reclamer", "_essai1_liberer_cle", "_essai1_liberer",
-               "_essai1_garde"):
+               "_essai1_liberer_perimes", "_essai1_garde",
+               # V591 : l'approbation passe par LA garde commune
+               "_essai4_abonnement_actif", "_essai4_garde", "_essai_porte_garde"):
         exec(compile(extraire(CHECKOUT, fn), "<ck>", "exec"), esp_ck)
 
     faux_ck = types.ModuleType("api.routes.checkout_routes")
@@ -313,7 +318,9 @@ OFFRE = {"id": "off-1", "name": "🎁 Cours d'essai GRATUIT", "price": 0,
          "social_proof_price": 30, "coach_id": "coach@test.ch", "pack_sessions": 1}
 
 def demande(email="ana@exemple.ch"):
-    return {"offer_id": "off-1", "client_name": "Ana", "client_email": email,
+    # V591 : téléphone exigé côté serveur. Déterministe : même e-mail -> même numéro.
+    _tel = "+4179%07d" % (sum(ord(c) * (i + 1) for i, c in enumerate(email)) % 10000000)
+    return {"offer_id": "off-1", "client_name": "Ana", "client_email": email, "client_phone": _tel,
             "video_link": "https://instagram.com/p/x", "instagram_username": "@ana",
             "motivation": "Je veux essayer"}
 
@@ -373,7 +380,11 @@ async def scenario():
              [d.get("code") for d in base.discount_codes.docs])
     verifier("5b. un abonnement est cree", len(base.subscriptions.docs) == 1)
     verifier("5c. le claim est MAINTENANT pose",
-             len(base.free_trial_claims.docs) == 1,
+             # V591 : la demande porte un téléphone -> DEUX clés (e-mail + numéro, ESSAI-6),
+             # toutes deux actives, et UNE seule par clé.
+             len(base.free_trial_claims.docs) == 2
+             and sorted(d["_id"].split(":")[0] for d in base.free_trial_claims.docs) == ["trial", "trialtel"]
+             and all(d.get("actif") is True for d in base.free_trial_claims.docs),
              base.free_trial_claims.docs)
 
     # --- 6. seconde approbation, meme identite : 409 ------------------------
@@ -423,7 +434,8 @@ async def scenario():
              f"{len(base3.discount_codes.docs)} code(s)")
     verifier("8b. la seconde est refusee en 409", len(refus) == 1 and refus[0].status_code == 409,
              [getattr(r, 'status_code', r) for r in res])
-    verifier("8c. UN SEUL claim", len(base3.free_trial_claims.docs) == 1)
+    verifier("8c. UN SEUL claim par clé (e-mail + numéro, V591)",
+             sorted(d["_id"].split(":")[0] for d in base3.free_trial_claims.docs) == ["trial", "trialtel"])
 
     # --- 8d. deux approbations de LA MEME demande : la barriere d'etat -------
     #
@@ -498,8 +510,9 @@ async def scenario():
     # essai, et quand, le jour ou il faudra arbitrer un litige.
     _c11 = base11.free_trial_claims.docs
     verifier("11a. le claim a ete RENDU (verrou libere, trace conservee)",
-             len(_c11) == 1 and _c11[0].get("actif") is False
-             and _c11[0].get("libere_motif") == "octroi_echoue", _c11)
+             # V591 : deux clés (e-mail + numéro), TOUTES rendues avec le même motif.
+             len(_c11) == 2 and all(c.get("actif") is False and c.get("libere_motif") == "octroi_echoue"
+                                    for c in _c11), _c11)
     verifier("11b. la demande est revenue EN ATTENTE",
              base11.social_proofs.docs[0]["status"] == "pending",
              base11.social_proofs.docs[0]["status"])
@@ -657,7 +670,9 @@ def perimetre():
              "_essai1_garde" not in _sub and "free_trial_claims" not in _sub)
     verifier("P2. G1 ne retient que les demandes EN ATTENTE",
              '"status": "pending"' in _sub)
-    verifier("P3. G2 appelle la garde atomique", "_essai1_garde as _g2_garde" in _rev)
+    verifier("P3. G2 appelle la garde atomique (via LA garde commune V591)",
+             "_essai_porte_garde as _g2_garde" in _rev
+             and "_essai1_garde(" in extraire(CHECKOUT, "_essai_porte_garde"))
     verifier("P4. G2 libere le claim si la creation echoue", "_g2_liberer" in _rev)
     verifier("P5. les Conditions sont recueillies AU DEPOT, par t1_preuve",
              "t1_preuve(" in _sub, "absent de submit_social_proof")
@@ -687,7 +702,7 @@ def perimetre():
     verifier("14a. /checkout/free exige toujours les Conditions",
              "_t1_preuve_checkout(" in _free)
     verifier("14b. /checkout/free garde son anti-double et son filet",
-             "_essai1_garde(" in _free and "_essai1_liberer(" in _free)
+             "_essai_porte_garde(" in _free and "_essai1_liberer(" in _free)   # V591
     verifier("14c. /checkout/free mesure toujours l'octroi",
              "essai2_tracer_octroi" in _free)
     verifier("14d. les quatre fonctions ESSAI-1 sont intactes",

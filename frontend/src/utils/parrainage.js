@@ -304,6 +304,11 @@ export function messageRefus(raison) {
       return 'Indique ton numéro WhatsApp.';
     case 'abonne_actif':
       return 'Tu es déjà membre : réserve directement depuis ton espace';
+    // V591 — ESSAI-8 : déjà client payant (même expiré) ; téléphone exigé par le serveur.
+    case 'already_customer':
+      return 'Tu es déjà client·e Afroboost : le premier cours offert est réservé aux nouvelles personnes.';
+    case 'phone_required':
+      return 'Indique un numéro WhatsApp valide.';
     case 'pass_ferme':
       return "Ce Pass Duo n'est plus ouvert.";
     // V556 — la chaîne « boule de neige »

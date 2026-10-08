@@ -10653,6 +10653,13 @@ async def submit_social_proof(request: Request):
     missing = [f for f in required if not (body.get(f) or "").strip()]
     if missing:
         raise HTTPException(status_code=400, detail="Champs obligatoires manquants")
+    # ESSAI-8 (V591) : porte publique d'essai -> téléphone obligatoire CÔTÉ SERVEUR,
+    # dès le dépôt (sinon la demande serait refusée seulement à l'approbation).
+    from api.routes.shared import (essai8_telephone_valide as _e8_tel_ok,
+                                   ESSAI8_MESSAGE_TELEPHONE as _e8_m_tel)
+    if not _e8_tel_ok(body.get("client_phone") or ""):
+        raise HTTPException(status_code=400, detail=_e8_m_tel,
+                            headers={"X-Refus-Raison": "phone_required"})
 
     # ===================================================================
     # G1 — UNE SEULE DEMANDE EN ATTENTE PAR PERSONNE
@@ -11032,7 +11039,7 @@ async def review_social_proof(proof_id: str, request: Request):
         # premier essai POUR TOUJOURS. Une demande refusee ne doit jamais
         # consommer le droit — c'est l'invariant, et il impose cette position.
         from api.routes.checkout_routes import (
-            _essai1_garde as _g2_garde,
+            _essai_porte_garde as _g2_garde,   # ESSAI-8 (V591) : LA garde commune
             _essai1_liberer as _g2_liberer,
         )
         # G2 + G4 — un refus de la garde d'essai NE DOIT PAS laisser la demande

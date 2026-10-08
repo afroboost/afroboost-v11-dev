@@ -1885,6 +1885,81 @@ async def essai6_forfaits(db, email: str = "", telephone: str = "",
     return _miens
 
 
+# ============================================================================
+# ESSAI-8 (V591) — « TON PREMIER COURS EST OFFERT » : UNE RÈGLE, TOUTES LES PORTES
+# ============================================================================
+# DÉCISION DU PROPRIÉTAIRE (08/10/2026), avant d'ouvrir les QR partenaires :
+#   1. a déjà PARTICIPÉ à un essai (présence validée)  -> refus   (ESSAI-1, inchangé)
+#   2. a déjà été CLIENT PAYANT, même expiré ou épuisé  -> refus   (ESSAI-8, ici)
+#   3. a réservé un essai mais est ABSENT, jamais venu  -> peut reprendre (ESSAI-1/T1)
+#   4. le TÉLÉPHONE est obligatoire CÔTÉ SERVEUR sur toute porte publique
+#   5. l'identité = e-mail normalisé OU téléphone normalisé.
+#
+# « CLIENT PAYANT » = un forfait qui N'EST PAS un essai (`est_un_essai`, LA
+# définition), dans un des statuts qui disent « a été acheté » — les MÊMES que
+# ceux qui comptent une conversion partenaire (P2-D1 `P2D_STATUTS_ACHAT`).
+# `cancelled` / `refunded` n'en sont pas : un achat annulé ou remboursé n'a pas
+# fait de la personne une cliente. Un forfait OFFERT par le coach est un essai
+# (preuve 2 de `est_un_essai`) et ne ferme donc rien ici.
+#
+# LE TÉLÉPHONE N'EST PAS CHERCHÉ PAR UNE REGEX SUR LA SAISIE. Le motif ne contient
+# que des CHIFFRES issus de la normalisation (jamais un caractère de l'utilisateur),
+# séparés par `\D*` pour tolérer les espaces et le « + » du stockage brut ; la
+# comparaison exacte se refait ensuite en mémoire avec la normalisation officielle.
+ESSAI8_STATUTS_CLIENT = ("active", "completed", "superseded", "expired")
+ESSAI8_RAISON_DEJA_CLIENT = "already_customer"
+ESSAI8_MESSAGE_DEJA_CLIENT = ("Le premier cours offert est réservé aux personnes qui découvrent "
+                              "Afroboost : vous êtes déjà client·e. Réservez votre prochaine séance "
+                              "depuis votre espace, ou utilisez « Retrouver mes accès » dans le chat.")
+ESSAI8_RAISON_TELEPHONE = "phone_required"
+ESSAI8_MESSAGE_TELEPHONE = ("Un numéro de téléphone (WhatsApp) valide est nécessaire pour recevoir "
+                            "votre premier cours offert.")
+
+
+def essai8_telephone_valide(telephone) -> bool:
+    """Le numéro est-il exploitable comme identité (normalisation officielle, >= 8 chiffres) ?"""
+    return bool(essai6_normaliser_tel(telephone))
+
+
+async def essai8_forfaits_payes(db, email: str = "", telephone: str = "") -> list:
+    """Les forfaits PAYANTS (non-essai, statut d'achat) de cette personne, e-mail OU téléphone.
+
+    NE LÈVE JAMAIS : en cas de base muette, [] (la garde ESSAI-1, qui écrit un
+    verrou atomique, reste derrière pour l'essai lui-même)."""
+    _mail = normaliser_email(email)
+    _tel = essai6_normaliser_tel(telephone)
+    if not _mail and not _tel:
+        return []
+    _ou = []
+    if _mail:
+        _ou.append({"email": {"$regex": "^%s$" % re.escape(_mail), "$options": "i"}})
+    if _tel:
+        _suffixe = _tel[-8:]
+        _ou.append({"whatsapp": {"$regex": r"\D*".join(_suffixe) + r"\D*$"}})
+    try:
+        _rows = await db["subscriptions"].find(
+            {"$or": _ou, "status": {"$in": list(ESSAI8_STATUTS_CLIENT)}},
+            {"_id": 0}).to_list(200)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[ESSAI-8] forfaits illisibles: %s", _err)
+        return []
+    _payes = []
+    for _s in (_rows or []):
+        _meme = (_mail and normaliser_email(_s.get("email")) == _mail) or \
+                (_tel and essai6_normaliser_tel(_s.get("whatsapp")) == _tel)
+        if not _meme:
+            continue
+        if await est_un_essai(db, _s):
+            continue
+        _payes.append(_s)
+    return _payes
+
+
+async def essai8_deja_client_payant(db, email: str = "", telephone: str = "") -> bool:
+    """Vrai si cette personne a DÉJÀ acheté (même expiré ou épuisé). Lecture seule."""
+    return bool(await essai8_forfaits_payes(db, email, telephone))
+
+
 async def essai6_consomme(db, email: str = "", telephone: str = "",
                           coach_id=None):
     """La PRESENCE qui a consomme l'essai de cette personne, ou None.

@@ -853,17 +853,17 @@ async def principal():
              base["referral_passes"].docs[0]["invitee"] is None and not base["reservations"].docs[1:]
              and len(base["subscriptions"].docs) == 2)
     ordre_ast = _ordre_ast()
-    verifier("5d. AST : dans _octroyer_essai, _essai4_garde < _essai1_garde < _process_successful_payment ; "
+    verifier("5d. AST : dans _octroyer_essai, _essai_porte_garde (ESSAI-4 puis déjà-client puis ESSAI-1, V591) < _process_successful_payment ; "
              "dans referral_join, _octroyer_essai < _reserver_ami < _debloquer_ou_bloquer ; _reserver_ami appelle "
              "_reserver_seance_duo ; le changement d'offre après join passe par les MÊMES _octroyer_essai / _reserver_ami (V534b)",
-             ordre_ast["octroi"]["_essai4_garde"] < ordre_ast["octroi"]["_essai1_garde"]
-             < ordre_ast["octroi"]["_process_successful_payment"]
+             ordre_ast["octroi"]["_essai_porte_garde"] < ordre_ast["octroi"]["_process_successful_payment"]
+             and "_essai4_garde" not in ordre_ast["octroi"] and "_essai1_garde" not in ordre_ast["octroi"]
              and ordre_ast["join"]["_octroyer_essai"] < ordre_ast["join"]["_reserver_ami"]
              < ordre_ast["join"]["_debloquer_ou_bloquer"]
              and "_reserver_seance_duo" in ordre_ast["reserver_ami"]
              and ordre_ast["changement"]["_octroyer_essai"] < ordre_ast["changement"]["_reserver_ami"]
-             and not any(k in ordre_ast["join"] for k in ("_essai4_garde", "_essai1_garde", "_process_successful_payment"))
-             and not any(k in ordre_ast["changement"] for k in ("_essai4_garde", "_essai1_garde", "_process_successful_payment")),
+             and not any(k in ordre_ast["join"] for k in ("_essai_porte_garde", "_essai4_garde", "_essai1_garde", "_process_successful_payment"))
+             and not any(k in ordre_ast["changement"] for k in ("_essai_porte_garde", "_essai4_garde", "_essai1_garde", "_process_successful_payment")),
              str(ordre_ast))
     # Même numéro, autre adresse : ESSAI-6 ferme aussi sur le téléphone.
     code, rep = await appel(R.referral_join(dto["share_token"], Requete(corps_ami(email="nouvelle@exemple.test"))))
@@ -1541,7 +1541,7 @@ def _ordre_ast():
     (_reserver_ami), `changement` (_changer_offre_apres_join)."""
     src = io.open(os.path.join(RACINE, "api", "routes", "referral_routes.py"), encoding="utf-8").read()
     arbre = ast.parse(src)
-    cibles = ("_essai4_garde", "_essai1_garde", "_process_successful_payment", "_reserver_seance_duo",
+    cibles = ("_essai_porte_garde", "_essai4_garde", "_essai1_garde", "_process_successful_payment", "_reserver_seance_duo",
               "_debloquer_ou_bloquer", "_octroyer_essai", "_reserver_ami")
     hotes = {"octroi": "_octroyer_essai", "join": "referral_join", "reserver_ami": "_reserver_ami",
              "changement": "_changer_offre_apres_join"}

@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os
 import uuid
 import logging
@@ -243,14 +243,10 @@ async def create_checkout_session(req: CreateCheckoutRequest):
         # ESSAI-4 : meme garde sur la seconde porte gratuite. La poser sur une
         # seule des deux la rendrait contournable en changeant d'URL — le meme
         # raisonnement qui a place ESSAI-1 ici.
-        await _essai4_garde(req.customer_email,
-                            str((req.items[0].id if req.items else "") or ""))
-        # ESSAI-6 : le numero est le SECOND critere d'identite. `customer_phone`
-        # existe deja sur cette requete — aucun champ nouveau. Absent, la garde
-        # retombe exactement sur son comportement e-mail d'avant.
-        await _essai1_garde(req.customer_email,
-                            str((req.items[0].id if req.items else "") or ""),
-                            telephone=req.customer_phone)
+        # ESSAI-8 (V591) : LA garde commune (téléphone, client payant, ESSAI-4, ESSAI-1).
+        await _essai_porte_garde(req.customer_email,
+                                 str((req.items[0].id if req.items else "") or ""),
+                                 telephone=req.customer_phone)
         transaction_id = f"free_{uuid.uuid4().hex[:12]}"
         try:
             await _process_successful_payment(
@@ -1131,6 +1127,33 @@ async def _essai1_liberer(email: str, telephone: str = "", coach_id=None) -> Non
         await _essai1_liberer_cle(_cle, "octroi_echoue")
 
 
+# ESSAI-8 (V591) — RÈGLE 3 DU PROPRIÉTAIRE : « réservé mais absent, jamais venu
+# -> peut reprendre un essai ». Le verrou `free_trial_claims` posé au premier
+# octroi n'était relâché QU'EN CAS DE PANNE : une personne absente dont l'essai a
+# expiré (ou dont le code a été supprimé) restait refusée à vie avec « vous avez
+# déjà un essai », alors qu'elle n'en a plus — l'inverse de ce que promet
+# `_essai1_garde` (« y compris à un absent dont le crédit a été rendu puis le
+# forfait expiré »). On ne rouvre QUE quand ESSAI-1 vient de répondre « accordé »
+# (ni consommé, ni utilisable), et SEULEMENT des verrous de plus de 10 minutes :
+# un octroi concurrent en cours a un verrou tout neuf, il n'est jamais touché, et
+# l'atomicité du `find_one_and_update` reste la barrière.
+ESSAI8_VERROU_PERIME_MINUTES = 10
+
+
+async def _essai1_liberer_perimes(email: str, telephone: str = "", coach_id=None) -> None:
+    """Rend les verrous ACTIFS mais PÉRIMÉS (> 10 min) de cette identité. Ne lève jamais."""
+    _seuil = (datetime.now(timezone.utc) - timedelta(minutes=ESSAI8_VERROU_PERIME_MINUTES)).isoformat()
+    for _cle in _essai1_cles(email, telephone, coach_id):
+        try:
+            await db["free_trial_claims"].update_one(
+                {"_id": _cle, "actif": True, "created_at": {"$lt": _seuil}},
+                {"$set": {"actif": False,
+                          "libere_le": datetime.now(timezone.utc).isoformat(),
+                          "libere_motif": "droit_rouvert_jamais_venu"}})
+        except Exception as _err:  # noqa: BLE001
+            logger.warning(f"[ESSAI-8] verrou périmé non rendu ({_cle[:24]}): {_err}")
+
+
 async def _essai1_garde(email: str, offer_id: str = "", telephone: str = "",
                         coach_id=None) -> None:
     """Refuse un second essai. A appeler AVANT la moindre ecriture.
@@ -1168,6 +1191,9 @@ async def _essai1_garde(email: str, offer_id: str = "", telephone: str = "",
             headers={"X-Refus-Raison": _raison},
         )
 
+    # ESSAI-8 : ni consommé ni utilisable -> le droit est ROUVERT ; un ancien
+    # verrou (absent jamais venu, code supprimé) ne doit plus le fermer.
+    await _essai1_liberer_perimes(email, telephone, coach_id)
     if not await _essai1_reclamer(email, telephone, coach_id):
         # Perdu la course : quelqu'un vient d'obtenir l'essai de cette identite
         # a la milliseconde pres. Le message « deja detenu » est le vrai.
@@ -1281,6 +1307,39 @@ async def _essai4_garde(email: str, offer_id: str = "") -> None:
         detail=ESSAI4_MESSAGE,
         headers={"X-Refus-Raison": ESSAI4_RAISON},
     )
+
+
+async def _essai_porte_garde(email: str, offer_id: str = "", telephone: str = "",
+                             coach_id=None) -> None:
+    """ESSAI-8 (V591) — LA garde de TOUTE porte qui accorde un premier cours offert.
+
+    UNE SEULE FONCTION, APPELÉE PAR CHAQUE PORTE (`/checkout/free`, la branche à
+    0 CHF de `/create-session`, le join Pass Duo, l'approbation d'une preuve
+    sociale) : la règle ne peut plus diverger d'une porte à l'autre, et une
+    nouvelle porte n'a qu'un appel à faire.
+
+    L'ORDRE COMPTE — on LIT d'abord, on n'ÉCRIT (verrou ESSAI-1) qu'en dernier,
+    pour qu'un refus ne consomme jamais le droit de quelqu'un :
+      1. téléphone exploitable, sinon 400 `phone_required` ;
+      2. ESSAI-4 : abonnement payant ACTIF -> 409 `active_subscription` (message
+         « réservez depuis votre espace », inchangé) ;
+      3. ESSAI-8 : déjà client payant, même expiré ou épuisé -> 409 `already_customer` ;
+      4. ESSAI-1 : essai déjà consommé / déjà détenu -> 409, sinon verrou posé.
+    """
+    from api.routes.shared import (essai8_telephone_valide as _tel_ok,
+                                   essai8_deja_client_payant as _deja_client,
+                                   ESSAI8_RAISON_TELEPHONE as _R_TEL,
+                                   ESSAI8_MESSAGE_TELEPHONE as _M_TEL,
+                                   ESSAI8_RAISON_DEJA_CLIENT as _R_CLIENT,
+                                   ESSAI8_MESSAGE_DEJA_CLIENT as _M_CLIENT)
+    if not _tel_ok(telephone):
+        await _essai1_tracer_refus(offer_id)
+        raise HTTPException(status_code=400, detail=_M_TEL, headers={"X-Refus-Raison": _R_TEL})
+    await _essai4_garde(email, offer_id)
+    if await _deja_client(db, email, telephone):
+        await _essai1_tracer_refus(offer_id)
+        raise HTTPException(status_code=409, detail=_M_CLIENT, headers={"X-Refus-Raison": _R_CLIENT})
+    await _essai1_garde(email, offer_id, telephone=telephone, coach_id=coach_id)
 
 
 async def _essai1_tracer_refus(offer_id: str = "") -> None:
@@ -1460,24 +1519,19 @@ async def free_checkout(req: FreeCheckoutRequest, http_request: Request):
     if not req.customer_email or "@" not in req.customer_email:
         raise HTTPException(status_code=400, detail="Email client requis.")
 
-    # ESSAI-4 AVANT ESSAI-1 : celle-ci LIT, celle-la ECRIT. Un abonne actif ne
-    # doit pas bruler son droit a l'essai pour s'entendre refuser juste apres.
-    await _essai4_garde(req.customer_email,
-                        str((req.items[0].id if req.items else "") or ""))
-
     # LOT R : la porte GRATUITE aussi. Une offre reservee aux membres obtenue
-    # a 0 CHF serait le contournement le plus simple de tous.
+    # a 0 CHF serait le contournement le plus simple de tous. (Lecture seule :
+    # placee AVANT la garde commune, qui ecrit le verrou en dernier.)
     await _lotr_garde(req.items, req.customer_email)
 
-    # ESSAI-1 : ici, et pas ailleurs. `_process_successful_payment` cree le code
-    # AFR- et le forfait des ses premieres lignes ; toute verification posee
-    # apres arriverait devant un essai deja accorde.
-    # ESSAI-6 : meme second critere sur la seconde porte gratuite. Le poser sur
-    # une seule des deux le rendrait contournable en changeant d'URL — c'est le
-    # raisonnement qui a place ESSAI-1 et ESSAI-4 ici.
-    await _essai1_garde(req.customer_email,
-                        str((req.items[0].id if req.items else "") or ""),
-                        telephone=req.customer_phone)
+    # ESSAI-8 (V591) : LA garde commune, ici comme sur toutes les portes —
+    # telephone obligatoire, ESSAI-4 (abonne actif), deja client payant (meme
+    # expire/epuise), puis ESSAI-1 (essai consomme / detenu, verrou atomique).
+    # `_process_successful_payment` cree le code AFR- des ses premieres lignes :
+    # toute verification posee apres arriverait devant un essai deja accorde.
+    await _essai_porte_garde(req.customer_email,
+                             str((req.items[0].id if req.items else "") or ""),
+                             telephone=req.customer_phone)
 
     # ESSAI-7 : constate MAINTENANT, avant que le moteur n'ecrive. Apres lui,
     # le forfait et le code qu'il vient de creer rendraient la reponse toujours

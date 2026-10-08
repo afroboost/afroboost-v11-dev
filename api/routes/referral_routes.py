@@ -1015,7 +1015,7 @@ async def _octroyer_essai(pass_doc, offre, email, nom, tel_brut, attribution_cli
     panne de l'octroi libère le verrou et lève 500. NE TOUCHE PAS au pass :
     l'appelant gère `invitee` (rouvrir ou non)."""
     from api.routes.checkout_routes import (
-        _essai4_garde, _essai1_garde, _essai1b_exiger_gratuit, _essai1_liberer,
+        _essai_porte_garde, _essai1b_exiger_gratuit, _essai1_liberer,
         _process_successful_payment, _t1_preuve_checkout, _r2b_resoudre_vendeur,
         CheckoutItem)
     _item = CheckoutItem(type="offer", id=str(offre.get("id")), name=str(offre.get("name") or "Essai"),
@@ -1023,15 +1023,16 @@ async def _octroyer_essai(pass_doc, offre, email, nom, tel_brut, attribution_cli
     try:
         await _essai1b_exiger_gratuit([_item])
         _t1_champs = await _t1_preuve_checkout(True, [_item], "")
-        await _essai4_garde(email, str(offre.get("id")))
+        # ESSAI-8 (V591) : LA garde commune — téléphone, ESSAI-4, déjà client
+        # payant, ESSAI-1 (verrou). Même règle que /checkout/free, jamais une copie.
+        await _essai_porte_garde(email, str(offre.get("id")), telephone=tel_brut)
     except HTTPException as _e:
         _raison = (getattr(_e, "headers", None) or {}).get("X-Refus-Raison") or ""
         if _raison == "active_subscription":
             raise _refus(409, E.REFUS_ABONNE_ACTIF,
                          "Tu as déjà un abonnement actif : le Pass Duo est réservé aux nouveaux.")
         raise
-    await _essai1_garde(email, str(offre.get("id")), telephone=tel_brut)
-    # 409 `free_trial_already_used` | `free_trial_already_granted`, tel quel
+    # 409 `free_trial_already_used` | `free_trial_already_granted` | `already_customer`, tel quel
 
     _vendeur = ""
     try:
