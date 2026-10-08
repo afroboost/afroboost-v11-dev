@@ -379,6 +379,22 @@
         <!-- V121: Clean SW registration — plus de nuclear purge avec query params -->
         <script>
             if ('serviceWorker' in navigator) {
+                // V593 — LE GARDE-FOU EST LU ICI, PENDANT LA LECTURE DE LA PAGE, ET PLUS
+                // AU `load`. Le ChatWidget enregistre lui aussi le SW
+                // (`pushNotificationService.registerServiceWorker`) DES SON MONTAGE, donc
+                // AVANT `load` : à la première visite, le SW était déjà installé et aux
+                // commandes quand `avaitDejaUnSW` était calculé -> `true` à tort, et le
+                // rechargement « de mise à jour » restait armé sur une page qui venait
+                // d'arriver. Mesuré en local (B1.6) : fin du tunnel -> navigation vers
+                // `/?offre=…&reserver=1` -> un nouveau SW prend la main 32 ms plus tard ->
+                // `location.reload()` ANNULE la navigation -> retour au tunnel, essai perdu.
+                var avaitDejaUnSW = !!navigator.serviceWorker.controller;
+                // V593 — et jamais de rechargement quand la page est déjà en train de
+                // partir : la navigation en cours charge de toute façon le contenu neuf.
+                var departEnCours = false;
+                window.addEventListener('beforeunload', function() { departEnCours = true; });
+                window.addEventListener('pagehide', function() { departEnCours = true; });
+                window.addEventListener('pageshow', function() { departEnCours = false; });
                 window.addEventListener('load', function() {
                     // V121: Register SW sans query params (important pour PWA install)
                     navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
@@ -439,10 +455,10 @@
                     // et la page se rechargeait ~2 s après l'arrivée : formulaire d'essai
                     // vidé, message d'erreur effacé, clic perdu. Le rechargement n'a de sens
                     // que s'il y avait DÉJÀ un SW (mise à jour), jamais à l'installation.
-                    var avaitDejaUnSW = !!navigator.serviceWorker.controller;
+                    // V593 : `avaitDejaUnSW` est désormais lu plus haut, avant tout enregistrement.
                     navigator.serviceWorker.addEventListener('controllerchange', function() {
                         console.log('[V130] Controller changed — reload pour nouveau contenu');
-                        if (!refreshing && avaitDejaUnSW) {
+                        if (!refreshing && avaitDejaUnSW && !departEnCours) {
                             refreshing = true;
                             window.location.reload();
                         }
@@ -451,7 +467,7 @@
                     navigator.serviceWorker.addEventListener('message', function(event) {
                         if (event.data && event.data.type === 'SW_UPDATED') {
                             console.log('[V130] SW mis à jour vers', event.data.version, '— reload');
-                            if (!refreshing && avaitDejaUnSW) {
+                            if (!refreshing && avaitDejaUnSW && !departEnCours) {
                                 refreshing = true;
                                 window.location.reload();
                             }
