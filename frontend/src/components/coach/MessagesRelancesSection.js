@@ -1,6 +1,6 @@
 /**
  * V588 — CAMPAGNES → PROSPECTION → MESSAGES & RELANCES. VUE DE PILOTAGE, LECTURE SEULE.
- * V588b — lisible au quotidien : « qui vient de répondre, qu'est-ce qui est urgent,
+ * V588b — lisible au quotidien : « qui vient de répondre, qui attend un appel,
  * qu'est-ce que j'ai répondu, que dois-je faire ». Liste compacte défilante, recherche,
  * priorités, et un panneau de détail (plein écran sur mobile) où le PARTENAIRE parle à
  * GAUCHE et AFROBOOST à DROITE.
@@ -53,6 +53,7 @@ const PAGES_PROSPECTS_MAX = 10;
 const AMBRE = 'rgb(252,211,77)';
 const VERT = 'rgb(134,239,172)';
 const ROUGE = 'rgb(252,165,165)';
+const BLEU = 'rgb(147,197,253)';
 const TONS = {
   en_retard: { fond: 'rgba(245,158,11,0.18)', bord: 'rgba(245,158,11,0.5)', texte: AMBRE },
   repondu: { fond: 'rgba(34,197,94,0.18)', bord: 'rgba(34,197,94,0.45)', texte: VERT },
@@ -77,7 +78,8 @@ function Pastille({ etat, children, testid }) {
   );
 }
 
-/* NOUVEAU (couleur du coach, point plein) ≠ URGENT (rouge, triangle) ≠ RÉPONSE ATTENDUE (ambre). */
+/* NOUVEAU (couleur du coach, point plein) ≠ APPEL À FAIRE (bleu, téléphone) ≠ RÉPONSE ATTENDUE (ambre).
+   V588c — pas de badge « URGENT » : aucune donnée existante ne prouve une urgence (lot séparé). */
 function BadgeNouveau({ n }) {
   return (
     <span data-testid="mr-badge-nouveau" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '2px 8px',
@@ -88,12 +90,12 @@ function BadgeNouveau({ n }) {
     </span>
   );
 }
-function BadgeUrgent() {
+function BadgeAppel() {
   return (
-    <span data-testid="mr-badge-urgent" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px',
-      borderRadius: '6px', fontSize: '11px', fontWeight: 800, letterSpacing: '0.03em', whiteSpace: 'nowrap',
-      background: 'rgba(220,38,38,0.92)', color: '#fff' }}>
-      <SvgIcon name="warning" size={12} /> URGENT
+    <span data-testid="mr-badge-appel" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px',
+      borderRadius: '999px', fontSize: '11px', fontWeight: 700, whiteSpace: 'nowrap',
+      background: 'rgba(59,130,246,0.18)', border: '1px solid rgba(96,165,250,0.6)', color: BLEU }}>
+      <SvgIcon name="phone" size={11} /> Appel à faire
     </span>
   );
 }
@@ -110,15 +112,15 @@ function BadgeAttendue() {
 function Badges({ l }) {
   return (
     <>
-      {l.urgent && <BadgeUrgent />}
+      {l.appel && <BadgeAppel />}
       {l.nonLues > 0 && <BadgeNouveau n={l.nonLues} />}
-      {l.reponseAttendue && !l.urgent && <BadgeAttendue />}
+      {l.reponseAttendue && !l.appel && <BadgeAttendue />}
     </>
   );
 }
 
 function Tuile({ libelle, valeur, actif, onClick, ton, testid }) {
-  const couleur = ton === 'rouge' ? ROUGE : ton === 'ambre' ? AMBRE : ton === 'marque' ? PRIMAIRE_LISIBLE : TEXTE;
+  const couleur = ton === 'bleu' ? BLEU : ton === 'rouge' ? ROUGE : ton === 'ambre' ? AMBRE : ton === 'marque' ? PRIMAIRE_LISIBLE : TEXTE;
   const fort = !!ton && valeur !== '—' && Number(valeur) > 0;
   return (
     <button type="button" onClick={onClick} data-testid={testid} aria-pressed={!!actif}
@@ -163,18 +165,18 @@ function Carte({ l, maintenant, onOuvrir, active }) {
   const ev = l.dernierMessageLe ? { titre: 'Réponse reçue', quand: l.dernierMessageLe } : dernierEvenement(l);
   const evTexte = l.etat === ETATS.MANUEL ? SUIVI_MANUEL_INDISPONIBLE
     : ev ? `${ev.titre} ${ilYa(ev.quand, maintenant)}` : '—';
-  const signal = l.nonLues > 0 || l.urgent || l.reponseAttendue;
+  const signal = l.nonLues > 0 || l.appel || l.reponseAttendue;
   const date = dateOuRetard(l);
   return (
     <li data-testid="mr-ligne" data-etat={l.etat} data-nouveau={l.nonLues > 0 ? 'oui' : 'non'}
-      data-urgent={l.urgent ? 'oui' : 'non'} data-attendue={l.reponseAttendue ? 'oui' : 'non'}>
+      data-appel={l.appel ? 'oui' : 'non'} data-attendue={l.reponseAttendue ? 'oui' : 'non'}>
       <button type="button" onClick={onOuvrir} data-testid="mr-ligne-entete" aria-expanded={active}
         style={{ width: '100%', textAlign: 'left', cursor: 'pointer', color: TEXTE, padding: '9px 11px',
           borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '3px',
-          border: `1px solid ${active ? `rgba(${RGB}, 0.6)` : l.urgent ? 'rgba(239,68,68,0.5)' : l.nonLues ? `rgba(${RGB}, 0.5)` : BORD}`,
-          background: l.nonLues > 0 ? `rgba(${RGB}, 0.10)` : l.urgent ? 'rgba(239,68,68,0.07)' : 'rgba(255,255,255,0.03)' }}>
+          border: `1px solid ${active ? `rgba(${RGB}, 0.6)` : l.appel ? 'rgba(96,165,250,0.5)' : l.nonLues ? `rgba(${RGB}, 0.5)` : BORD}`,
+          background: l.nonLues > 0 ? `rgba(${RGB}, 0.10)` : l.appel ? 'rgba(59,130,246,0.07)' : 'rgba(255,255,255,0.03)' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
-          <span style={{ fontSize: '14px', fontWeight: l.nonLues > 0 || l.urgent ? 800 : 650, minWidth: 0, overflowWrap: 'anywhere' }}>
+          <span style={{ fontSize: '14px', fontWeight: l.nonLues > 0 || l.appel ? 800 : 650, minWidth: 0, overflowWrap: 'anywhere' }}>
             {l.organisation}
           </span>
           <span style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '4px', flexShrink: 0, maxWidth: '60%' }}>
@@ -561,7 +563,7 @@ export default function MessagesRelancesSection({ API, actif }) {
       <div data-testid="mr-compteurs" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
         <Tuile testid="mr-c-a-traiter" libelle="À traiter" valeur={v(compteurs.aTraiter)} ton="marque" actif={filtre === 'a_traiter'} onClick={() => basculerFiltre('a_traiter')} />
         <Tuile testid="mr-c-nouveaux" libelle="Nouveaux messages" valeur={v(compteurs.nouveaux)} ton="marque" actif={filtre === 'nouveaux'} onClick={() => basculerFiltre('nouveaux')} />
-        <Tuile testid="mr-c-urgents" libelle="Urgents" valeur={v(compteurs.urgents)} ton="rouge" actif={filtre === 'urgents'} onClick={() => basculerFiltre('urgents')} />
+        <Tuile testid="mr-c-appels" libelle="Appels à faire" valeur={v(compteurs.appels)} ton="bleu" actif={filtre === 'appels'} onClick={() => basculerFiltre('appels')} />
         <Tuile testid="mr-c-j3-retard" libelle="J+3 en retard" valeur={v(compteurs.j3EnRetard)} ton="ambre" actif={filtre === 'en_retard'} onClick={() => basculerFiltre('en_retard')} />
         <Tuile testid="mr-c-reponses" libelle="Réponses" valeur={v(compteurs.reponses)} actif={filtre === 'repondus'} onClick={() => basculerFiltre('repondus')} />
         <Tuile testid="mr-c-stoppes" libelle="Stoppés" valeur={v(compteurs.stoppes)} actif={filtre === 'stoppes'} onClick={() => basculerFiltre('stoppes')} />

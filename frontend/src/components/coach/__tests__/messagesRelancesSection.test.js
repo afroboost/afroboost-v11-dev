@@ -1,5 +1,5 @@
 // V588 / V588b — l'écran « Messages & relances » : lecture seule, textes APPROUVÉS,
-// Nouveau / Urgent / Réponse attendue, partenaire à GAUCHE / Afroboost à DROITE, aucune écriture.
+// Nouveau / Appel à faire / Réponse attendue, partenaire à GAUCHE / Afroboost à DROITE, aucune écriture.
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import axios from 'axios';
@@ -53,7 +53,7 @@ const ACTIONS = [
   envoyee('a-fen', 'FEN'),
   envoyee('a-bde', 'BDE HE-Arc', { replied_at: '2026-09-04T05:25:19Z', ...annuleReponse }),
   envoyee('a-new', 'Festival Nouveau', { replied_at: '2026-10-07T10:00:00Z', ...annuleReponse }),
-  envoyee('a-urg', 'Entreprise Urgente', { replied_at: '2026-10-06T10:00:00Z', ...annuleReponse }),
+  envoyee('a-urg', 'Entreprise Appel', { replied_at: '2026-10-06T10:00:00Z', ...annuleReponse }),
   envoyee('a-dyn', 'Dynam', { replied_at: '2026-09-10T10:00:00Z', ...annuleReponse }),
   envoyee('a-salsa', 'SalsaRica', { replied_at: '2026-09-05T10:00:00Z', ...annuleReponse }),
   envoyee('a-dead', 'Case à Chocs', { bounce_type: 'Permanent', j3_annule_le: '2026-09-03T11:00:00Z', j3_annule_motif: 'rebond permanent' }),
@@ -74,7 +74,7 @@ const CONVERSATIONS = [
   { derniere_reponse_afroboost: { sent_at: '2026-09-08T09:48:24Z', objet: 'Re: Proposition' }, reponse_apres_dernier_message: true }),
   conv('a-new', 'Festival Nouveau', [msg('m-new', '2026-10-07T13:48:00Z', 'Nous devons confirmer le programme avant vendredi.', false)],
     { statut_commercial: 'a_repondre' }),
-  conv('a-urg', 'Entreprise Urgente', [msg('m-urg', '2026-10-06T10:00:00Z', 'Pouvez-vous nous rappeler aujourd’hui ?', true)],
+  conv('a-urg', 'Entreprise Appel', [msg('m-urg', '2026-10-06T10:00:00Z', 'Pouvez-vous nous rappeler aujourd’hui ?', true)],
     { statut_commercial: 'appel_a_faire' }),
   conv('a-dyn', 'Dynam', [msg('m-dyn', '2026-09-10T10:00:00Z', 'Intéressés, quels tarifs ?', true)], { statut_commercial: 'a_repondre' }),
   conv('a-salsa', 'SalsaRica', [msg('m-salsa', '2026-09-05T10:00:00Z', 'Non merci.', true)], { statut_commercial: 'refus' }),
@@ -137,36 +137,39 @@ afterEach(async () => {
   jest.clearAllMocks();
 });
 
-test('compteurs principaux : à traiter, nouveaux, urgents, retards, réponses, stoppés', () => {
-  expect(tuile('mr-c-a-traiter')).toBe('3');     // nouveau + urgent + Dynam (réponse attendue)
+test('compteurs principaux : à traiter, nouveaux, appels à faire, retards, réponses, stoppés', () => {
+  expect(tuile('mr-c-a-traiter')).toBe('3');     // nouveau + appel à faire + Dynam (réponse attendue)
   expect(tuile('mr-c-nouveaux')).toBe('1');
-  expect(tuile('mr-c-urgents')).toBe('1');
+  expect(tuile('mr-c-appels')).toBe('1');
+  expect(par('mr-c-urgents')).toBeNull();                    // V588c : plus de compteur « Urgents »
   expect(tuile('mr-c-j3-retard')).toBe('1');     // FEN
   expect(tuile('mr-c-reponses')).toBe('5');
   expect(tuile('mr-c-stoppes')).toBe('2');       // SalsaRica (refus) + Case à Chocs (rebond)
   expect(par('mr-interrupteurs').textContent).toContain('fermées');
-  expect(par('mr-stats').textContent).toContain('3 réponses attendues');   // nouveau + urgent + Dynam
+  expect(par('mr-stats').textContent).toContain('3 réponses attendues');   // nouveau + appel + Dynam
 });
 
-test('ordre de priorité : non lu → urgent → réponse attendue → J+3 en retard → manuel → reste', () => {
+test('ordre de priorité : non lu → appel à faire → réponse attendue → J+3 en retard → manuel → reste', () => {
   const ordre = tous('mr-ligne').map((l) => l.querySelector('span').textContent);
-  expect(ordre.slice(0, 5)).toEqual(['Festival Nouveau', 'Entreprise Urgente', 'Dynam', 'FEN', 'Akoko Tresses']);
+  expect(ordre.slice(0, 5)).toEqual(['Festival Nouveau', 'Entreprise Appel', 'Dynam', 'FEN', 'Akoko Tresses']);
 });
 
-test('carte compacte : NOUVEAU (non lu), URGENT indépendant, réponse attendue, extrait sans citation', () => {
+test('carte compacte : NOUVEAU (non lu), APPEL À FAIRE indépendant, réponse attendue, extrait sans citation', () => {
   const nouveau = ligne('Festival Nouveau');
   expect(nouveau.dataset.nouveau).toBe('oui');
-  expect(nouveau.dataset.urgent).toBe('non');
+  expect(nouveau.dataset.appel).toBe('non');
   expect(nouveau.querySelector('[data-testid="mr-badge-nouveau"]')).toBeTruthy();
   expect(nouveau.querySelector('[data-testid="mr-extrait"]').textContent).toContain('Nous devons confirmer le programme avant vendredi.');
   expect(nouveau.textContent).not.toContain('J0 cité');
   expect(nouveau.textContent).toContain('Réponse reçue il y a 12 min');
 
-  const urgent = ligne('Entreprise Urgente');
-  expect(urgent.dataset.urgent).toBe('oui');
-  expect(urgent.dataset.nouveau).toBe('non');                 // déjà lu, mais toujours urgent
-  expect(urgent.querySelector('[data-testid="mr-badge-urgent"]')).toBeTruthy();
-  expect(urgent.querySelector('[data-testid="mr-badge-nouveau"]')).toBeNull();
+  const appel = ligne('Entreprise Appel');
+  expect(appel.dataset.appel).toBe('oui');
+  expect(appel.dataset.nouveau).toBe('non');                  // déjà lu, mais toujours un appel à faire
+  expect(appel.querySelector('[data-testid="mr-badge-appel"]').textContent).toContain('Appel à faire');
+  expect(appel.querySelector('[data-testid="mr-badge-nouveau"]')).toBeNull();
+  /* V588c : aucune urgence n'est affichée — même pour « confirmer avant vendredi ». */
+  expect(document.body.textContent).not.toMatch(/urgent/i);
 
   const dynam = ligne('Dynam');
   expect(dynam.dataset.attendue).toBe('oui');
@@ -177,9 +180,9 @@ test('carte compacte : NOUVEAU (non lu), URGENT indépendant, réponse attendue,
   expect(bde.dataset.attendue).toBe('non');
 });
 
-test('filtre « À traiter » : nouveaux + urgents + réponses attendues, pas les 45 relances', async () => {
+test('filtre « À traiter » : nouveaux + appels à faire + réponses attendues, pas les 45 relances', async () => {
   await cliquer(par('mr-filtre-a_traiter'));
-  expect(tous('mr-ligne').map((l) => l.querySelector('span').textContent)).toEqual(['Festival Nouveau', 'Entreprise Urgente', 'Dynam']);
+  expect(tous('mr-ligne').map((l) => l.querySelector('span').textContent)).toEqual(['Festival Nouveau', 'Entreprise Appel', 'Dynam']);
 });
 
 test('recherche instantanée : organisation, ville, catégorie, nom', async () => {
@@ -256,7 +259,7 @@ test('AUCUNE écriture : ni à l\'affichage, ni à l\'ouverture des dossiers, ni
     await ouvrir(org);
     await cliquer(dansPanneau('mr-fermer')[0]);
   }
-  for (const f of ['tous', 'a_traiter', 'nouveaux', 'urgents', 'en_retard', 'repondus', 'envoyes', 'stoppes', 'manuel']) await cliquer(par(`mr-filtre-${f}`));
+  for (const f of ['tous', 'a_traiter', 'nouveaux', 'appels', 'en_retard', 'repondus', 'envoyes', 'stoppes', 'manuel']) await cliquer(par(`mr-filtre-${f}`));
   expect(axios.post).not.toHaveBeenCalled();
   expect(axios.patch).not.toHaveBeenCalled();
   expect(axios.put).not.toHaveBeenCalled();

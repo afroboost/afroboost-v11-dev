@@ -54,7 +54,7 @@ export const FILTRES = [
   { id: 'tous', libelle: 'Tous' },
   { id: 'a_traiter', libelle: 'À traiter' },
   { id: 'nouveaux', libelle: 'Nouveaux' },
-  { id: 'urgents', libelle: 'Urgents' },
+  { id: 'appels', libelle: 'Appels à faire' },
   { id: 'en_retard', libelle: 'J+3 en retard' },
   { id: 'repondus', libelle: 'Répondus' },
   { id: 'envoyes', libelle: 'Envoyés' },
@@ -221,8 +221,11 @@ const STATUTS_SANS_REPONSE_ATTENDUE = ['en_attente', 'traite', 'refus'];
  * V588b — LES SIGNAUX D'UNE CONVERSATION, LUS, JAMAIS INVENTÉS.
  *  - NOUVEAU = `non_lues` du serveur (absence de `read_at`) : le SEUL état lu/non-lu.
  *    L'écran ne marque rien comme lu.
- *  - URGENT  = état commercial « appel_a_faire » : le seul signal « agir maintenant »
- *    qui existe déjà (aucun champ « urgence » en base, aucun moteur ajouté).
+ *  - APPEL À FAIRE = état commercial « appel_a_faire ». V588c : ce n'est PAS une
+ *    urgence et l'écran ne le présente plus comme telle. Audit du 08/10 : aucune
+ *    donnée existante ne porte d'urgence, d'échéance ni de priorité de réponse
+ *    (l'analyse IA ne rend que intention / résumé / demande / prochaine action en
+ *    texte libre, et seulement à la demande). DÉTECTION D'URGENCE RÉELLE = lot séparé.
  *    Indépendant de NOUVEAU.
  *  - RÉPONSE ATTENDUE = le partenaire a écrit, Afroboost n'a rien envoyé APRÈS son
  *    dernier message (`reponse_apres_dernier_message` du serveur), et le dossier
@@ -231,13 +234,13 @@ const STATUTS_SANS_REPONSE_ATTENDUE = ['en_attente', 'traite', 'refus'];
 export function signauxConversation(conv) {
   const c = conv || null;
   if (!c || !(c.nb_messages > 0)) {
-    return { nonLues: 0, urgent: false, reponseAttendue: false, aTraiter: false };
+    return { nonLues: 0, appel: false, reponseAttendue: false, aTraiter: false };
   }
   const statut = texte(c.statut_commercial);
   const nonLues = Number(c.non_lues) > 0 ? Number(c.non_lues) : 0;
-  const urgent = statut === 'appel_a_faire';
+  const appel = statut === 'appel_a_faire';
   const reponseAttendue = !c.reponse_apres_dernier_message && !STATUTS_SANS_REPONSE_ATTENDUE.includes(statut);
-  return { nonLues, urgent, reponseAttendue, aTraiter: nonLues > 0 || urgent || reponseAttendue };
+  return { nonLues, appel, reponseAttendue, aTraiter: nonLues > 0 || appel || reponseAttendue };
 }
 
 /** Le corps utile d'un e-mail reçu : sans la citation ni l'historique recopié. */
@@ -287,7 +290,7 @@ export function correspondRecherche(ligne, recherche) {
     l.organisation, l.reference, libelleCanal(l.canal), LIBELLES_ETAT[l.etat],
     libelleStatutProspect(l.statutProspect), l.statutProspect, f.city, f.category, f.subcategory,
     f.contact_name, f.public_email, f.organisation_name, a.target, c.from_email,
-    l.nonLues ? 'nouveau non lu' : '', l.urgent ? 'urgent' : '', l.reponseAttendue ? 'reponse attendue' : '',
+    l.nonLues ? 'nouveau non lu' : '', l.appel ? 'appel a faire' : '', l.reponseAttendue ? 'reponse attendue' : '',
   ].filter(Boolean).join(' '));
   return mots.every((m) => meule.includes(m));
 }
@@ -327,7 +330,7 @@ export function ligneRelance(action, campagne, conversation, prospectsParRef, ma
     prochaineDate = e.date_prevue;
   } else prochaineAction = 'Attendre une réponse';
   /* Ce que demande la CONVERSATION passe avant le calendrier des relances. */
-  if (sig.urgent) { prochaineAction = 'Appel à faire'; prochaineDate = null; } else if (sig.reponseAttendue) { prochaineAction = 'Répondre au partenaire'; prochaineDate = null; } else if (sig.nonLues) { prochaineAction = 'Lire le nouveau message'; prochaineDate = null; }
+  if (sig.appel) { prochaineAction = 'Appel à faire'; prochaineDate = null; } else if (sig.reponseAttendue) { prochaineAction = 'Répondre au partenaire'; prochaineDate = null; } else if (sig.nonLues) { prochaineAction = 'Lire le nouveau message'; prochaineDate = null; }
 
   const recus = (conv && Array.isArray(conv.messages_recus)) ? conv.messages_recus : [];
   const premiereReponse = a.replied_at
@@ -351,7 +354,7 @@ export function ligneRelance(action, campagne, conversation, prospectsParRef, ma
     statutCommercial: conv ? texte(conv.statut_commercial) : '',
     fiche,
     nonLues: sig.nonLues,
-    urgent: sig.urgent,
+    appel: sig.appel,
     reponseAttendue: sig.reponseAttendue,
     aTraiter: sig.aTraiter,
     dernierMessageLe: conv && conv.dernier_message ? conv.dernier_message.received_at || null : null,
@@ -377,7 +380,7 @@ export function compteursRelances(lignes) {
     aTraiter: n((l) => l.aTraiter),
     nouveaux: L.reduce((t, l) => t + (l.nonLues || 0), 0),
     conversationsNonLues: n((l) => l.nonLues > 0),
-    urgents: n((l) => l.urgent),
+    appels: n((l) => l.appel),
     reponsesAttendues: n((l) => l.reponseAttendue),
     j0Envoyes: n((l) => !!l.action.sent_at),
     j3AVenir: n((l) => l.j3.etat === ETATS.PREVU),
@@ -398,7 +401,7 @@ export function filtrerRelances(lignes, filtre, canal, recherche) {
     switch (f) {
       case 'a_traiter': return l.aTraiter;
       case 'nouveaux': return l.nonLues > 0;
-      case 'urgents': return l.urgent;
+      case 'appels': return l.appel;
       case 'a_envoyer': return l.etat === ETATS.A_ENVOYER;
       case 'en_retard': return l.j3.etat === ETATS.EN_RETARD;
       case 'envoyes': return !!l.action.sent_at;
@@ -412,14 +415,14 @@ export function filtrerRelances(lignes, filtre, canal, recherche) {
 
 /**
  * V588b — ORDRE DE PRIORITÉ : ce qui demande l'attention du coach d'abord.
- *   0 urgent + non lu · 1 non lu · 2 urgent · 3 réponse attendue · 4 J+3/J+7 en retard ·
+ *   0 appel à faire + non lu · 1 non lu · 2 appel à faire · 3 réponse attendue · 4 J+3/J+7 en retard ·
  *   5 à contacter / manuel / à envoyer · 6 sans action immédiate · 7 clos (refus, rebond, stoppé).
  * Une vraie réponse partenaire passe TOUJOURS avant une ancienne relance automatique.
  */
 export function prioriteRelance(l) {
-  if (l.urgent && l.nonLues) return 0;
+  if (l.appel && l.nonLues) return 0;
   if (l.nonLues) return 1;
-  if (l.urgent) return 2;
+  if (l.appel) return 2;
   if (l.reponseAttendue) return 3;
   if (l.etat === ETATS.EN_RETARD) return 4;
   if (l.etat === ETATS.MANUEL || l.etat === ETATS.A_ENVOYER) return 5;

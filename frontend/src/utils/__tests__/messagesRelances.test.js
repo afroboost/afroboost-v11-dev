@@ -208,14 +208,14 @@ test('utilitaires', () => {
 });
 
 
-describe('V588b — nouveau, urgent, réponse attendue, priorité, recherche', () => {
+describe('V588b/c — nouveau, appel à faire, réponse attendue, priorité, recherche', () => {
   const convDe = (id, sur) => conv(Object.assign({ action_id: id, reponse_apres_dernier_message: false,
     organisation: '', from_email: `${id}@exemple.ch`,
     dernier_message: { received_at: '2026-10-07T13:48:00Z', body_text: 'Bonjour,\n\nNous en avons parlé au comité, on revient vers vous.\n\nLe 3 sept. 2026, Afroboost a écrit :\n> ancien texte' } }, sur || {}));
   const actions = [
     envoyee({ id: 'nouveau', organisations: ['BDE HE-Arc'], replied_at: '2026-10-07T13:48:00Z' }),
     envoyee({ id: 'lu', organisations: ['ACD'], replied_at: '2026-09-05T00:00:00Z' }),
-    envoyee({ id: 'urgent', organisations: ['Festival X'], replied_at: '2026-10-06T00:00:00Z' }),
+    envoyee({ id: 'appel', organisations: ['Festival X'], replied_at: '2026-10-06T00:00:00Z' }),
     envoyee({ id: 'attendue', organisations: ['Dynam'], replied_at: '2026-09-04T00:00:00Z' }),
     envoyee({ id: 'repondue', organisations: ['Urban Team'], replied_at: '2026-09-04T00:00:00Z' }),
     envoyee({ id: 'retard', organisations: ['Afrik'] }),
@@ -225,7 +225,7 @@ describe('V588b — nouveau, urgent, réponse attendue, priorité, recherche', (
   const convs = [
     convDe('nouveau', { non_lues: 2, statut_commercial: 'a_repondre' }),
     convDe('lu', { non_lues: 0, statut_commercial: 'en_attente' }),
-    convDe('urgent', { non_lues: 0, statut_commercial: 'appel_a_faire' }),
+    convDe('appel', { non_lues: 0, statut_commercial: 'appel_a_faire' }),
     convDe('attendue', { non_lues: 0, statut_commercial: 'a_repondre' }),
     convDe('repondue', { non_lues: 0, statut_commercial: 'a_repondre', reponse_apres_dernier_message: true }),
   ];
@@ -234,12 +234,13 @@ describe('V588b — nouveau, urgent, réponse attendue, priorité, recherche', (
   const L = lignesRelances(actions, CAMPAGNE, convs, prospects, MAINTENANT);
   const par = Object.fromEntries(L.map((l) => [l.id, l]));
 
-  test('NOUVEAU vient de non_lues (lu/non-lu existant) ; URGENT est indépendant', () => {
+  test('NOUVEAU vient de non_lues (lu/non-lu existant) ; APPEL À FAIRE est indépendant', () => {
     expect(par.nouveau.nonLues).toBe(2);
-    expect(par.nouveau.urgent).toBe(false);
+    expect(par.nouveau.appel).toBe(false);
     expect(par.lu.nonLues).toBe(0);
-    expect(par.urgent.urgent).toBe(true);
-    expect(par.urgent.nonLues).toBe(0);
+    expect(par.appel.appel).toBe(true);
+    expect(par.appel.nonLues).toBe(0);
+    expect(par.appel).not.toHaveProperty('urgent');            // V588c : aucune « urgence » inventée
   });
 
   test('réponse attendue seulement si Afroboost n\'a rien envoyé après et le dossier attend une action', () => {
@@ -250,14 +251,14 @@ describe('V588b — nouveau, urgent, réponse attendue, priorité, recherche', (
     expect(signauxConversation({ nb_messages: 1, statut_commercial: 'refus' }).reponseAttendue).toBe(false);
   });
 
-  test('« À traiter » = nouveaux + urgents + réponses attendues, JAMAIS les relances en retard', () => {
-    expect(filtrerRelances(L, 'a_traiter').map((l) => l.id).sort()).toEqual(['attendue', 'nouveau', 'urgent']);
-    expect(compteursRelances(L)).toMatchObject({ aTraiter: 3, nouveaux: 2, conversationsNonLues: 1, urgents: 1, j3EnRetard: 1 });
+  test('« À traiter » = nouveaux + appels à faire + réponses attendues, JAMAIS les relances en retard', () => {
+    expect(filtrerRelances(L, 'a_traiter').map((l) => l.id).sort()).toEqual(['appel', 'attendue', 'nouveau']);
+    expect(compteursRelances(L)).toMatchObject({ aTraiter: 3, nouveaux: 2, conversationsNonLues: 1, appels: 1, j3EnRetard: 1 });
   });
 
-  test('ordre : non lu → urgent → réponse attendue → retard → manuel → sans action → clos', () => {
-    expect(trierRelances(L).map((l) => l.id)).toEqual(['nouveau', 'urgent', 'attendue', 'retard', 'dm', 'lu', 'repondue', 'mort']);
-    expect(prioriteRelance({ urgent: true, nonLues: 1 })).toBe(0);
+  test('ordre : non lu → appel à faire → réponse attendue → retard → manuel → sans action → clos', () => {
+    expect(trierRelances(L).map((l) => l.id)).toEqual(['nouveau', 'appel', 'attendue', 'retard', 'dm', 'lu', 'repondue', 'mort']);
+    expect(prioriteRelance({ appel: true, nonLues: 1 })).toBe(0);
   });
 
   test('recherche instantanée sans accents : organisation, ville, catégorie, nom, e-mail, statut', () => {
@@ -267,7 +268,8 @@ describe('V588b — nouveau, urgent, réponse attendue, priorité, recherche', (
     expect(ids('neuchatel')).toEqual(['dm']);
     expect(ids('Commerce')).toEqual(['dm']);
     expect(ids('awa')).toEqual(['dm']);
-    expect(ids('urgent')).toEqual(['urgent']);
+    expect(ids('appel a faire')).toEqual(['appel']);
+    expect(ids('urgent')).toEqual([]);                          // aucune ligne n'est « urgente »
     expect(ids('rebond')).toEqual(['mort']);
     expect(ids('dynam repondu')).toEqual(['attendue']);
     expect(ids('')).toHaveLength(8);
