@@ -52838,6 +52838,26 @@ def _m1_carte_offre(o, lien_offre, mensuel_max=None, formules=None):
                "Réserver mon 1er cours gratuit" if _prix == 0 else "Choisir cette formule"))
 
 
+async def _v594_offre_du_tunnel_essai(catalogue) -> str:
+    """V594 — l'offre d'essai vers laquelle le tunnel `_M1_TUNNEL` redirige.
+
+    Lue sur le lien lui-même (`end_actions` de type `booking`), jamais écrite en
+    dur ; retenue seulement si elle figure parmi les offres GRATUITES que la page
+    affiche. Sinon '' : l'appelant garde le tunnel.
+    """
+    _jeton = _M1_TUNNEL.split("link=", 1)[-1]
+    _lien_doc = await db.chat_sessions.find_one(
+        {"link_token": _jeton}, {"_id": 0, "end_actions": 1})
+    _cible = ""
+    for _a in ((_lien_doc or {}).get("end_actions") or []):
+        if isinstance(_a, dict) and _a.get("type") == "booking":
+            _cible = str((_a.get("config") or {}).get("offer_id") or "").strip()
+            break
+    _gratuites = {str(o.get("id")) for o in ((catalogue or {}).get("offres") or [])
+                  if float(o.get("price") or 0) == 0}
+    return _cible if _cible and _cible in _gratuites else ""
+
+
 @fastapi_app.get(_M1_CHEMIN, response_class=HTMLResponse)
 async def m1_page_essai_neuchatel(request: Request):
     """Page publique d'acquisition — lisible sans JavaScript, et sans image.
@@ -52912,6 +52932,19 @@ async def m1_page_essai_neuchatel(request: Request):
                 _lien = _M1_TUNNEL + "&amp;" + _suffixe
     except Exception as _aerr:
         logger.warning("[M2-A] origine non lue (%s)", type(_aerr).__name__)
+    # V594 — UN VISITEUR VENU D'UN PARTENAIRE VA DROIT AU PARCOURS SIMPLIFIÉ.
+    # Seule la DESTINATION du bouton change, et seulement si l'origine retenue
+    # par M2-A est `partenaire` : tout autre visiteur garde le tunnel ci-dessus.
+    # La cible est EXACTEMENT celle où le tunnel aurait mené (`end_actions.booking`
+    # du lien d'essai, `ChatWidget` -> `/?offre=<id>&reserver=1`), suivie de la
+    # même origine normalisée : l'attribution Partenaire arrive intacte.
+    try:
+        if _suffixe and (_attr or {}).get("source") == "partenaire":
+            _v594_offre = await _v594_offre_du_tunnel_essai(_catalogue)
+            if _v594_offre:
+                _lien = "/?offre=%s&amp;reserver=1&amp;%s" % (_m1_echapper(_v594_offre), _suffixe)
+    except Exception as _perr:  # noqa: BLE001 — en cas de doute : le tunnel, comme avant
+        logger.warning("[V594] parcours Partenaire non résolu (%s)", type(_perr).__name__)
     _cta = ('<a class="cta" href="%s">Réserver mon 1er cours gratuit</a>' % _lien)
     # Le lien vers une formule : la vitrine ouvre l'offre (`?offre=<id>`, R4) et
     # l'origine suit, pour qu'un achat garde sa source.

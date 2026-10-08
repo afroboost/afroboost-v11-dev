@@ -234,7 +234,8 @@ function VignetteImage({ poster, hauteur, onErreur }) {
  * la vidéo muette remplit la zone (cover, centrée) et joue l'extrait découpé.
  * Sans rien, ou média indisponible : repli sobre.
  */
-function VignetteOffre({ offre, analyser, hauteur }) {
+// V594 — exportée telle quelle pour le parcours Partenaire (rappel de l’offre) : jamais recopiée.
+export function VignetteOffre({ offre, analyser, hauteur }) {
   const [videoKo, setVideoKo] = useState(false);
   const [imageKo, setImageKo] = useState(false);
   const videoRef = useRef(null);

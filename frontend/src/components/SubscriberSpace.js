@@ -42,6 +42,9 @@ import { etatEssaiAffiche } from "../utils/essaiReservation";
 // seule source de l'affichage ET de la preselection.
 import { lireSeanceInvitation, indexSeanceInvitation, seancesVisibles } from "../utils/invitationSeance";
 import InvitationSeanceBandeau from "./InvitationSeanceBandeau";
+import { Etapes } from "./parrainage/wizardCommun"; // V594 — le stepper EXISTANT (parcours Partenaire, étape 3)
+import { ETAPES_PARCOURS_PARTENAIRE } from "./ParcoursPartenaire";
+import "./parrainage/wizardFilleul.css";
 // N2 : la MEME lecture de l'heure que le serveur (`n2_instant_reel`). Sans
 // elle, une date naive serait lue dans le fuseau du navigateur et l'ecran
 // pourrait offrir « Annuler » alors que le serveur refuse.
@@ -139,6 +142,16 @@ const b3s1EcrireJeton = ecrireSession;
 const b3s1OublierJeton = oublierSession;
 
 export default function SubscriberSpace({ accessCode: propCode }) {
+  // V594 : arrivée depuis le parcours Partenaire -> on montre où on en est (3e étape).
+  // Lu UNE fois dans l'URL ; aucun effet, aucune requête.
+  const [v594Parcours] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("parcours") === "partenaire"; } catch (e) { return false; }
+  });
+  const v594Etapes = v594Parcours ? (
+    <div className="cp-root" style={{ order: -5 }}>
+      <Etapes etape={3} etapes={ETAPES_PARCOURS_PARTENAIRE} className="cp-wf-etapes" testid="pp-etapes-espace" />
+    </div>
+  ) : null;
   const accessCode = useMemo(() => {
     if (propCode) return propCode.toUpperCase();
     const match = window.location.pathname.match(/^\/espace\/(.+?)\/?$/);
@@ -735,6 +748,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         <div className="max-w-md w-full rounded-2xl p-6"
              style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
              data-testid="espace-identification">
+          {v594Etapes}
           <h1 className="text-xl font-semibold mb-2">Accède à ton espace</h1>
           <p className="text-white/60 text-sm mb-5">
             {enOtp
@@ -1160,6 +1174,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           rien demonter. Hors parcours d'essai, tous les `order` valent 0 et
           l'ordre du DOM est conserve au pixel pres. */}
       <div className="max-w-md mx-auto px-4 pt-6 flex flex-col gap-5">
+        {v594Etapes}
         {/* V203f: Bouton retour vers la page d'inscription multi-membre */}
         {data?.multi_member && memberSlug && (
           <button

@@ -170,7 +170,12 @@ describe('INV-2 — câblage App.js (lecture unique, aucune boucle, aucun paieme
     .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
   test('séance lue UNE fois, par un initialiseur paresseux (aucun useEffect)', () => {
-    expect(code).toContain('const [inv2Seance] = useState(() => lireSeanceInvitation());');
+    // V594 : le setter existe pour le parcours Partenaire, mais la LECTURE reste unique et paresseuse.
+    expect(code).toContain('const [inv2Seance, setInv2Seance] = useState(() => lireSeanceInvitation());');
+    // Le setter n'est appelé QUE par le choix explicite du visiteur (jamais par un effet).
+    const appels = code.split('\n').filter((l) => l.includes('setInv2Seance('));
+    expect(appels).toHaveLength(1);
+    expect(code).toMatch(/const ppChoisirSeance = \(s\) => \{\s*setInv2Seance\(s\);/);
     // Aucun effet ne lit la séance : rien ne peut se rejouer ni boucler.
     expect(code).not.toMatch(/useEffect\(\(\) => \{[^}]*inv2/);
     expect(code).not.toMatch(/\[[^\]]*inv2[^\]]*\]\);/);

@@ -284,6 +284,9 @@ import { PublicationsCarousel } from "./components/Publications"; // V261
 // OFFRES AIMANTS : parcours de conversion du visiteur non connecte (3 cartes,
 // « toutes les offres », fiche detail). Les regles sont dans utils/offresAimants.
 import OffresAimants from "./components/OffresAimants";
+// V594 — parcours simplifié d'un visiteur Partenaire (assemble des composants existants)
+import ParcoursPartenaire, { lireParcoursPartenaire } from "./components/ParcoursPartenaire";
+import { createPortal } from "react-dom";
 import ChoixModePaiement from "./components/ChoixModePaiement"; // V535 — paiement intégral ou en 2 fois
 import { offreAvecChoixPaiement } from "./utils/modePaiement"; // V535
 import { visiteurEstConnecte, regrouperOffres as aimantsRegrouper, estRecurrente as offreEstRecurrente,
@@ -5101,10 +5104,31 @@ function App() {
   // Le formulaire gratuit n'a PAS de selecteur de seance (V225) : on l'ANNONCE
   // ici, puis la redirection ESSAI-7 la porte jusqu'a /espace/<CODE>, ou la
   // liste existante (`selectedCourseIdx`) la preselectionne. Rien n'est reserve.
-  const [inv2Seance] = useState(() => lireSeanceInvitation());
+  // V594 : le parcours Partenaire choisit la séance APRÈS le montage -> l'état
+  // devient modifiable ; tout le reste d'INV-2 (verdict, bandeau, redirection) est inchangé.
+  const [inv2Seance, setInv2Seance] = useState(() => lireSeanceInvitation());
   // Calcul pur a chaque rendu (aucun setState) : `null` hors invitation, ou si
   // l'offre ouverte n'est pas celle du lien ; sinon 'ok' | 'indisponible'.
   const inv2Verdict = verdictSeanceInvitation(inv2Seance, selectedOffer, courses);
+  // V594 — PARCOURS PARTENAIRE. Lu UNE fois dans l'URL (`?offre=&reserver=1&utm_source=partenaire`,
+  // posée par la page d'essai). Actif seulement quand l'offre ouverte est celle du lien.
+  const [ppParcours] = useState(() => lireParcoursPartenaire());
+  const [ppEtape, setPpEtape] = useState(1);
+  const [ppQuitte, setPpQuitte] = useState(false);
+  const [ppSlot, setPpSlot] = useState(null);
+  const ppActif = !!(ppParcours && !ppQuitte && selectedOffer && String(selectedOffer.id) === ppParcours.offre);
+  // Le formulaire ACTUEL n'est pas recopié : pendant le parcours, il est rendu dans
+  // l'emplacement de l'étape 2 (portail). Hors parcours : à sa place, comme avant.
+  const ppPortail = (el) => (ppActif && ppSlot ? createPortal(el, ppSlot) : el);
+  const ppChoisirSeance = (s) => {
+    setInv2Seance(s);
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set('course', s.course);
+      u.searchParams.set('occurrence', s.occurrence);
+      window.history.replaceState(window.history.state, '', u.pathname + u.search + u.hash);
+    } catch (e) { /* l'URL reste telle quelle : la séance vit dans l'état */ }
+  };
   const [quantity, setQuantity] = useState(1); // Quantité pour achats multiples
   const [showLegalModal, setShowLegalModal] = useState(false); // V235: Modal mentions légales (Impressum)
   const [selectedVariants, setSelectedVariants] = useState({}); // Variantes sélectionnées { size: "M", color: "Noir" }
@@ -7557,7 +7581,11 @@ function App() {
         // prouve — et dans ce cas on ne bouge pas d'un pixel.
         // INV-2 : + `?course=&occurrence=` si la seance de l'invitation est valide
         // (sinon la cible est rendue telle quelle, `null` compris).
-        const cibleEssai = cibleAvecSeance(cibleRedirectionEssai(freeRes.data), inv2Verdict);
+        const cibleEssaiBase = cibleAvecSeance(cibleRedirectionEssai(freeRes.data), inv2Verdict);
+        // V594 : l'espace affiche la 3e étape (« Confirmation ») du parcours Partenaire.
+        const cibleEssai = cibleEssaiBase && ppActif
+          ? `${cibleEssaiBase}${cibleEssaiBase.indexOf('?') === -1 ? '?' : '&'}parcours=partenaire`
+          : cibleEssaiBase;
 
         // Toast — le code d'acces AFR- existe desormais reellement.
         try {
@@ -10098,7 +10126,20 @@ function App() {
           </div>
         )}
 
-        {selectedOffer && (
+        {ppActif && (
+          <ParcoursPartenaire
+            offre={selectedOffer}
+            courses={courses}
+            analyserMedia={parseMediaUrl}
+            etape={ppEtape}
+            onEtape={setPpEtape}
+            seance={inv2Verdict && inv2Verdict.etat === 'ok' ? inv2Seance : null}
+            onSeance={ppChoisirSeance}
+            onSlotFormulaire={setPpSlot}
+            onQuitter={() => setPpQuitte(true)}
+          />
+        )}
+        {selectedOffer && ppPortail(
           <form onSubmit={handleSubmit}>
             <div id="user-info-section" className="form-section rounded-xl p-6 mb-6" data-testid="user-info-section">
               <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>{t('yourInfo')}</h2>
