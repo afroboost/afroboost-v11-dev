@@ -35,6 +35,7 @@ import axios from 'axios';
 import SvgIcon from '../SvgIcon';
 import useChargement, { SECTION } from '../../hooks/useChargement';
 import { SectionErreur } from '../ui/EtatChargement';
+import PartenaireProspect from './PartenaireProspect';
 /* PROSPECTION FOCUS — les phrases factuelles de l'écran, isolées et pures.
    Elles ne DÉDUISENT jamais qu'un e-mail est parti : elles lisent la trace. */
 import {
@@ -2725,6 +2726,19 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                   Aucune tâche ouverte.
                 </div>
               )}
+            </Bloc>
+
+            {/* V592 — Partenaire : activer depuis la fiche, puis lien + QR + résultats existants. */}
+            <Bloc titre="Partenaire">
+              <PartenaireProspect
+                key={ouvert.id}
+                API={base}
+                prospectId={ouvert.id}
+                organisation={ouvert.organisation_name}
+                onActive={(p) => setOuvert((prec) => (
+                  !prec || prec.id !== ouvert.id || prec.partner_id === p.id
+                    ? prec : { ...prec, partner_id: p.id }))}
+              />
             </Bloc>
 
             <Bloc titre="Suivi">

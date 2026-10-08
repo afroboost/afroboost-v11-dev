@@ -26138,6 +26138,30 @@ async def p2d_stats_partenaire(partner_slug: str, request: Request):
     personnes = {p2d_cle_personne(r) for r in reservations}
     presences = sum(1 for r in reservations if r.get("validated") is True)
 
+    # V592 (Partenaire B1) — LES ESSAIS OBTENUS, en PERSONNES.
+    # L'essai gratuit pose l'origine sur SON forfait (M2-A, `checkout_routes`),
+    # avant toute réservation : c'est donc là qu'on le compte, avec les MÊMES
+    # quatre critères que les réservations. Un forfait payant peut aussi porter
+    # cette origine (webhook Stripe) : seul `est_un_essai` — LA règle du dépôt —
+    # décide qu'il s'agit d'un essai. Lecture seule ; jamais de liste renvoyée.
+    essais = set()
+    try:
+        from api.routes.shared import est_un_essai as _v592_est_un_essai
+        for _s in await db.subscriptions.find(
+                {"attribution.first.source": P2D_SOURCE,
+                 "attribution.first.medium": P2D_MEDIUM,
+                 "attribution.first.campaign": P2D_CAMPAGNE,
+                 "attribution.first.content": slug},
+                {"_id": 0, "code": 1, "email": 1, "offer_id": 1, "origine_paiement": 1}
+        ).to_list(2000):
+            if await _v592_est_un_essai(db, forfait=_s):
+                _cle_essai = str(_s.get("email") or "").strip().lower() or str(_s.get("code") or "")
+                if _cle_essai:
+                    essais.add(_cle_essai)
+    except Exception as _eerr:  # noqa: BLE001
+        logger.warning("[P2-D] essais illisibles (%s)", type(_eerr).__name__)
+        essais = None
+
     # --- Les offres de PROGRAMME, lues sur leurs booléens ---
     offres_pulse, offres_membre = set(), set()
     try:
@@ -26238,6 +26262,8 @@ async def p2d_stats_partenaire(partner_slug: str, request: Request):
     return {
         "partner_slug": slug,
         "partner_status": partenaire.get("partner_status") or "",
+        # V592 : `None` si la lecture a échoué — jamais un zéro inventé.
+        "trials": (len(essais) if essais is not None else None),
         "reservations": len(reservations),
         "unique_people": len(personnes),
         "unique_people_method": "discount_code_then_normalized_email",
@@ -26864,6 +26890,183 @@ async def p3s1_modifier_prospect(prospect_id: str, request: Request):
     logger.info("%s prospect %s modifie (%s) par %s", P3S1_PREFIXE, identifiant[:8],
                 ", ".join(sorted(champs)), appelant[:24])
     return apres
+
+# ═══════════ V592 — PARTENAIRE B1 : UN PROSPECT DEVIENT PARTENAIRE ═══════════
+#
+# CE QUE CE LOT FAIT : depuis la fiche d'un prospect, créer (ou retrouver) SON
+# partenaire dans `partners` — la collection P2 existante — puis réutiliser tel
+# quel le lien, le QR et les statistiques du système Partenaire.
+#
+# CE QU'IL NE FAIT PAS, À DESSEIN :
+#   * AUCUNE candidature fabriquée. Le partenaire ne porte PAS de `lead_id` —
+#     le champ est ABSENT, ni null, ni « prospect:<id> ». `lead_id` désigne une
+#     candidature réelle (`leads.id`) et rien d'autre.
+#   * AUCUN nouveau lien, QR ou compteur : le lien est dérivé du slug par
+#     `partnerLink.js`, les chiffres viennent de `/partners/{slug}/stats`.
+#
+# LE VERROU ANTI-DOUBLON EST L'INDEX `prospect_id_unique` (unique, PARTIEL sur
+# `prospect_id` de type chaîne). Le `find_one` qui précède l'insertion n'est
+# qu'un raccourci : deux clics simultanés le passent tous les deux, et c'est
+# l'index qui refuse le second — rattrapé ici en relisant le partenaire gagnant.
+#
+# ⚠️ PRÉREQUIS DE PRODUCTION : `lead_id_unique` doit être PARTIEL (vrais
+# `lead_id` chaîne seulement). Sous l'index actuel, non partiel, un SECOND
+# partenaire sans candidature heurte l'index (« absent » = une seule valeur) :
+# la route le détecte et répond 503 plutôt que de prétendre à un slug pris.
+
+V592_PREFIXE = "[V592]"
+V592_SOURCE_PROSPECTION = "prospection"
+
+
+def v592_suggerer_slug(nom) -> str:
+    """Le jumeau serveur de `p2bSuggererSlug` (partnerLink.js), mot pour mot.
+
+    Accents dépliés (NFD), tout ce qui n'est pas [a-z0-9] devient `_`, `_`
+    fondus, bords nettoyés, 40 caractères. Le résultat passe ENSUITE par
+    `p2b_slug_propre` — la seule règle qui décide. Aucun suffixe automatique :
+    une collision est rendue au coach (409), comme en P2-B.
+    """
+    import unicodedata
+    brut = unicodedata.normalize("NFD", str(nom or ""))
+    brut = "".join(c for c in brut if not unicodedata.combining(c)).lower()
+    brut = re.sub(r"[^a-z0-9]+", "_", brut)
+    brut = re.sub(r"_+", "_", brut).strip("_")
+    return brut[:40]
+
+
+def v592_vue_partenaire(partenaire) -> dict:
+    """Ce que l'écran a besoin de savoir. Aucun e-mail ni téléphone renvoyé."""
+    p = partenaire or {}
+    return {"id": p.get("id"), "partner_slug": p.get("partner_slug"),
+            "partner_status": p.get("partner_status"),
+            "prospect_id": p.get("prospect_id"), "created_at": p.get("created_at")}
+
+
+async def _v592_prospect_du_coach(prospect_id: str, appelant: str) -> dict:
+    """Le prospect, après contrôle de propriété — mêmes règles que sa lecture."""
+    identifiant = (prospect_id or "").strip()
+    if not identifiant or len(identifiant) > 64:
+        raise HTTPException(status_code=404, detail="Prospect introuvable")
+    prospect = await db[P3S1_COLLECTION].find_one({"id": identifiant}, {"_id": 0})
+    if not prospect:
+        raise HTTPException(status_code=404, detail="Prospect introuvable")
+    if not is_super_admin(appelant) and (prospect.get("coach_id") or "") != appelant:
+        raise HTTPException(status_code=403, detail="Ce prospect ne vous appartient pas")
+    return prospect
+
+
+async def _v592_pointer(prospect_id: str, partenaire: dict) -> None:
+    """Pose `partner_id` sur la fiche. Idempotent : rejoué à chaque activation,
+    il répare un pointeur manquant si une écriture précédente a été coupée.
+    La SOURCE DE VÉRITÉ reste `partners.prospect_id`, jamais ce pointeur."""
+    pid = (partenaire or {}).get("id")
+    if not pid:
+        return
+    try:
+        await db[P3S1_COLLECTION].update_one(
+            {"id": prospect_id, "partner_id": {"$ne": pid}},
+            {"$set": {"partner_id": pid}})
+    except Exception as _perr:  # noqa: BLE001
+        logger.warning("%s pointeur partner_id non posé (%s)", V592_PREFIXE, type(_perr).__name__)
+
+
+async def _v592_gagnant(identifiant: str):
+    """La réponse « déjà partenaire » si ce prospect en a un, sinon None."""
+    gagnant = await db.partners.find_one({"prospect_id": identifiant}, {"_id": 0})
+    if not gagnant:
+        return None
+    await _v592_pointer(identifiant, gagnant)
+    return {"success": True, "already": True, "partner": v592_vue_partenaire(gagnant)}
+
+
+@api_router.get("/partner-prospects/{prospect_id}/partner")
+async def v592_partenaire_du_prospect(prospect_id: str, request: Request):
+    """Le partenaire créé depuis ce prospect, ou `{"partner": null}`. LECTURE."""
+    appelant = await _v309_require_coach_or_admin(request)
+    prospect = await _v592_prospect_du_coach(prospect_id, appelant)
+    partenaire = await db.partners.find_one({"prospect_id": prospect["id"]}, {"_id": 0})
+    return {"partner": v592_vue_partenaire(partenaire) if partenaire else None}
+
+
+@api_router.post("/partner-prospects/{prospect_id}/activate-partner")
+async def v592_activer_partenaire(prospect_id: str, request: Request):
+    """« Activer comme partenaire ». IDEMPOTENT : rejouer rend le même partenaire.
+
+    Corps facultatif : `{"partner_slug": "..."}`. Sans slug, il est suggéré
+    depuis le nom de l'organisation par la règle de `partnerLink.js`.
+    """
+    from pymongo.errors import DuplicateKeyError
+
+    appelant = await _v309_require_coach_or_admin(request)
+    prospect = await _v592_prospect_du_coach(prospect_id, appelant)
+    identifiant = prospect["id"]
+
+    # 1. DÉJÀ PARTENAIRE : on le rend, on ne crée rien.
+    existant = await _v592_gagnant(identifiant)
+    if existant:
+        return existant
+
+    try:
+        corps = await request.json()
+    except Exception:  # noqa: BLE001 — corps absent : slug suggéré
+        corps = {}
+    demande = (corps or {}).get("partner_slug") if isinstance(corps, dict) else None
+    slug = p2b_slug_propre(demande if demande else v592_suggerer_slug(prospect.get("organisation_name")))
+    if not slug:
+        raise HTTPException(
+            status_code=400,
+            detail="Identifiant partenaire invalide : 3 à 40 caractères, "
+                   "uniquement des lettres minuscules, des chiffres et « _ ».")
+    if await db.partners.find_one({"partner_slug": slug}, {"_id": 1}):
+        # Double clic : le slug peut être celui que l'AUTRE clic vient de créer
+        # pour CE prospect. On le rend avant de parler de collision (banc 10).
+        gagnant = await _v592_gagnant(identifiant)
+        if gagnant:
+            return gagnant
+        raise HTTPException(status_code=409, detail="Ce slug est déjà utilisé")
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    partenaire = {
+        "id": str(uuid.uuid4()),
+        # PAS de `lead_id` : ce partenaire n'a pas de candidature, et le dit.
+        "prospect_id": identifiant,
+        "source": V592_SOURCE_PROSPECTION,
+        # Le propriétaire est celui du PROSPECT (un super-admin qui active la
+        # fiche d'un coach ne se l'approprie pas) — c'est ce que lit la route
+        # de statistiques pour décider qui peut voir les chiffres.
+        "coach_id": (prospect.get("coach_id") or "").strip().lower(),
+        "partner_slug": slug,
+        "partner_status": "decouverte",
+        "name": prospect.get("organisation_name") or "",
+        "email": prospect.get("public_email") or "",
+        "whatsapp": prospect.get("public_phone") or "",
+        "created_at": maintenant,
+        "created_by": appelant,
+    }
+    try:
+        await db.partners.insert_one(dict(partenaire))
+    except DuplicateKeyError as err:
+        # DOUBLE CLIC / CONCURRENCE : quel que soit l'index qui a parlé (prospect_id,
+        # ou partner_slug quand les deux clics ont suggéré le même), si l'autre
+        # requête a créé le partenaire de CE prospect, on rend le sien.
+        gagnant = await _v592_gagnant(identifiant)
+        if gagnant:
+            return gagnant
+        cle = (getattr(err, "details", None) or {}).get("keyPattern") or {}
+        if "partner_slug" in cle:
+            raise HTTPException(status_code=409, detail="Ce slug est déjà utilisé")
+        if "lead_id" in cle:
+            logger.error("%s lead_id_unique NON PARTIEL — migration d'index requise", V592_PREFIXE)
+            raise HTTPException(
+                status_code=503,
+                detail="Activation momentanément indisponible (index à migrer). Rien n'a été créé.")
+        raise HTTPException(status_code=409, detail="Activation déjà en cours, réessayez.")
+
+    await _v592_pointer(identifiant, partenaire)
+    logger.info("%s prospect %s -> partenaire %s par %s", V592_PREFIXE, identifiant[:8],
+                slug, appelant[:24])
+    return {"success": True, "already": False, "partner": v592_vue_partenaire(partenaire)}
+
 
 # ============================================================================
 # P3-S3-A — SOCLE DU MOTEUR DE CAMPAGNE : LE DESTINATAIRE REEL ET SES VERROUS

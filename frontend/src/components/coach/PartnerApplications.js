@@ -131,7 +131,9 @@ const Ligne = ({ icone, valeur }) => {
  *  Meme bibliotheque (`qrcode.react`, deja installee), aucune dependance
  *  ajoutee.
  */
-const LienPartenaire = ({ slug, API }) => {
+// V592 — exporté pour la fiche Prospect (« Activer comme partenaire ») : UN seul
+// composant lien + QR + statistiques, jamais une copie.
+export const LienPartenaire = ({ slug, API }) => {
   const lien = construireLienPartenaire(slug);
   const [copie, setCopie] = useState(false);
   const [qrVisible, setQrVisible] = useState(false);
@@ -395,6 +397,9 @@ const StatsPartenaire = ({ slug, API }) => {
             gap: '8px',
           }}>
             {[
+              // V592 — « essais obtenus », compté par le serveur avec la règle
+              // `est_un_essai`. Absent d'une ancienne réponse : la tuile ne s'affiche pas.
+              ...(stats.trials !== undefined ? [['Essais obtenus', p2d2Nombre(stats.trials)]] : []),
               ['Réservations', p2d2Nombre(stats.reservations)],
               ['Personnes', p2d2Nombre(stats.unique_people)],
               ['Présences', p2d2Nombre(stats.attendances)],
