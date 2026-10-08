@@ -10,10 +10,16 @@ import { createRoot } from 'react-dom/client';
 import axios from 'axios';
 import PartenaireProspect from '../PartenaireProspect';
 import { construireLienPartenaire } from '../../../utils/partnerLink';
+import { copyToClipboard } from '../../../utils/clipboard';
 
 jest.mock('axios', () => ({
   __esModule: true,
   default: { get: jest.fn(), post: jest.fn() },
+}));
+// V594 : on observe ce que « Copier le lien » écrit, sans presse-papiers réel.
+jest.mock('../../../utils/clipboard', () => ({
+  __esModule: true,
+  copyToClipboard: jest.fn(() => Promise.resolve({ success: true })),
 }));
 jest.mock('qrcode.react', () => ({
   __esModule: true,
@@ -67,28 +73,40 @@ test('sans partenaire : bouton + slug proposé par la règle existante', async (
   expect(axios.post).not.toHaveBeenCalled();
 });
 
-test('activation : UN appel, puis PARTENAIRE ACTIF + lien, QR et résultats existants', async () => {
+test('activation : UN appel, puis PARTENAIRE ACTIF en vue épurée (V594) — lien, QR et stats au clic', async () => {
   routerGet(null);
   const p = { id: 'x', partner_slug: 'akoko_tresses_test', partner_status: 'decouverte' };
   axios.post.mockResolvedValue({ data: { success: true, already: false, partner: p } });
   const onActive = jest.fn();
+  const onCharge = jest.fn();
   const c = await monter(<PartenaireProspect API="/api" prospectId="p-1"
-                                             organisation="AKOKO TRESSES TEST" onActive={onActive} />);
+                                             organisation="AKOKO TRESSES TEST" onActive={onActive} onCharge={onCharge} />);
   await act(async () => { c.querySelector('[data-testid="activer-partenaire"]').click(); });
   expect(axios.post).toHaveBeenCalledTimes(1);
   expect(axios.post.mock.calls[0][0]).toBe('/api/partner-prospects/p-1/activate-partner');
   expect(axios.post.mock.calls[0][1]).toEqual({ partner_slug: 'akoko_tresses_test' });
   expect(onActive).toHaveBeenCalledWith(p);
+  expect(onCharge).toHaveBeenCalledWith(p);
   expect(c.textContent).toContain('PARTENAIRE ACTIF');
-  const lien = c.querySelector('[data-testid="lien-partenaire"]').textContent;
-  expect(lien).toBe(construireLienPartenaire('akoko_tresses_test'));
-  expect(lien).toContain('utm_content=akoko_tresses_test');
-  // QR existant
-  const boutonQr = Array.from(c.querySelectorAll('button')).find((b) => b.textContent.includes('QR code'));
-  await act(async () => { boutonQr.click(); });
-  expect(c.querySelector('canvas').getAttribute('data-qr-value')).toBe(lien);
+  const lienAttendu = construireLienPartenaire('akoko_tresses_test');
+  // V594 : ni identifiant, ni URL complète, ni texte d'explication par défaut.
+  expect(c.querySelector('[data-testid="lien-partenaire"]')).toBeNull();
+  expect(c.textContent).not.toContain('utm_');
+  expect(c.textContent).not.toContain('Identifiant partenaire');
+  const bouton = (t) => Array.from(c.querySelectorAll('button')).find((b) => b.textContent.includes(t));
+  // Copier le lien : le lien exact, attribution comprise.
+  await act(async () => { bouton('Copier le lien').click(); });
+  expect(copyToClipboard).toHaveBeenCalledWith(lienAttendu);
+  expect(lienAttendu).toContain('utm_content=akoko_tresses_test');
+  // QR : absent avant le clic, puis le même lien.
+  expect(c.querySelector('canvas')).toBeNull();
+  await act(async () => { bouton('QR code').click(); });
+  expect(c.querySelector('canvas').getAttribute('data-qr-value')).toBe(lienAttendu);
   expect(c.textContent).toContain('Télécharger le QR');
-  // statistiques existantes, essais compris ; ni clics ni scans
+  // Statistiques : ni affichées ni CHARGÉES avant le clic.
+  expect(c.querySelector('[data-testid="p2d2-compteurs"]')).toBeNull();
+  expect(axios.get.mock.calls.some(([u]) => u.includes('/stats'))).toBe(false);
+  await act(async () => { bouton('Voir les statistiques').click(); });
   const tuiles = c.querySelector('[data-testid="p2d2-compteurs"]').textContent;
   expect(tuiles).toContain('Essais obtenus');
   expect(tuiles).toContain('Réservations');
@@ -97,7 +115,10 @@ test('activation : UN appel, puis PARTENAIRE ACTIF + lien, QR et résultats exis
   expect(c.textContent).toContain('Taux de présence 100 %');
   expect(c.textContent).toContain('Taux de conversion 100 %');
   expect(c.textContent).not.toMatch(/clics|scans/i);
-  expect(axios.get.mock.calls.some(([u]) => u === '/api/partners/akoko_tresses_test/stats')).toBe(true);
+  expect(axios.get.mock.calls.filter(([u]) => u === '/api/partners/akoko_tresses_test/stats')).toHaveLength(1);
+  // Re-clic : on masque, sans nouvel appel.
+  await act(async () => { bouton('Masquer les statistiques').click(); });
+  expect(c.querySelector('[data-testid="p2d2-compteurs"]')).toBeNull();
 });
 
 test('déjà partenaire : PARTENAIRE ACTIF directement, aucun bouton, aucune activation', async () => {

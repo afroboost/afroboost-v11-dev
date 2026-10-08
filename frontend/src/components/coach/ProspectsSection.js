@@ -36,6 +36,7 @@ import SvgIcon from '../SvgIcon';
 import useChargement, { SECTION } from '../../hooks/useChargement';
 import { SectionErreur } from '../ui/EtatChargement';
 import PartenaireProspect from './PartenaireProspect';
+import { construireLienPartenaire } from '../../utils/partnerLink'; // V594 — lien complet dans « Plus »
 /* PROSPECTION FOCUS — les phrases factuelles de l'écran, isolées et pures.
    Elles ne DÉDUISENT jamais qu'un e-mail est parti : elles lisent la trace. */
 import {
@@ -304,6 +305,10 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
   const [filActif, setFilActif] = useState('');
   const [messageActif, setMessageActif] = useState('');
   const [ouvert, setOuvert] = useState(null); // le prospect affiché en fiche
+  // V594 — fiche ongletée : section affichée, détails techniques repliés, partenaire lu.
+  const [sectionFiche, setSectionFiche] = useState('resume');
+  const [detailsTech, setDetailsTech] = useState(false);
+  const [partenaireFiche, setPartenaireFiche] = useState(null);
   const [brouillon, setBrouillon] = useState(null);
   const [enregistrement, setEnregistrement] = useState(false);
   const [message, setMessage] = useState(null);
@@ -842,6 +847,9 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
 
   const ouvrir = (prospect) => {
     setMessage(null);
+    setSectionFiche('resume');
+    setDetailsTech(false);
+    setPartenaireFiche(null);
     setOuvert(prospect);
     setBrouillon({
       status: prospect.status || 'a_contacter',
@@ -1125,28 +1133,10 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
            endroits à la fois. Chaque vue garde TOUTES ses fonctions : rien
            n'est retiré, seulement séparé. */}
       {!pilote && (
-      <div data-testid="onglets-prospection" role="tablist"
-           style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
-        {[['reponses', `Réponses (${conversations.length})`],
-          ['prospects', `Tous les prospects (${chargeUnFois && total !== null ? total : '—'})`]
-        ].map(([cle, libelle]) => (
-          <button key={cle} type="button" role="tab"
-                  data-testid={`onglet-${cle}`}
-                  aria-selected={ongletActif === cle}
-                  onClick={() => setOnglet(cle)}
-                  style={{
-                    padding: '7px 14px', borderRadius: '999px', fontSize: '12px',
-                    cursor: 'pointer', color: TEXTE,
-                    fontWeight: ongletActif === cle ? 700 : 500,
-                    border: `1px solid ${ongletActif === cle
-                      ? `rgba(${RGB}, 0.7)` : 'rgba(255,255,255,0.18)'}`,
-                    background: ongletActif === cle
-                      ? `rgba(${RGB}, 0.26)` : 'transparent',
-                  }}>
-            {libelle}
-          </button>
-        ))}
-      </div>
+      <BarreOnglets
+        onglets={[['reponses', `Réponses (${conversations.length})`],
+                  ['prospects', `Tous les prospects (${chargeUnFois && total !== null ? total : '—'})`]]}
+        actif={ongletActif} onChoisir={setOnglet} testid="onglets-prospection" prefixe="onglet-" />
       )}
 
       {/* ================================================================
@@ -2514,6 +2504,16 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                 <div style={{ fontSize: '11px', opacity: 0.6, marginTop: '2px' }}>
                   {ouvert.ref ? `${ouvert.ref} · ` : ''}{libelleDe(CATEGORIES, ouvert.category)}
                 </div>
+                {/* V594 : statut et priorité toujours visibles (lus sur le brouillon, donc à jour). */}
+                <div data-testid="fiche-entete-etat" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
+                  <Etiquette texte={libelleDe(STATUTS, brouillon.status)} />
+                  {brouillon.priority ? <Etiquette texte={`Priorité ${brouillon.priority}`} /> : null}
+                </div>
+                {/* V594 : l'action principale OUVRE l'onglet Partenaire ; elle ne crée rien. */}
+                <button type="button" data-testid="fiche-action-principale" style={{ ...styleBouton, marginTop: '10px' }}
+                        onClick={() => setSectionFiche('partenaire')}>
+                  {ouvert.partner_id ? 'Voir le partenariat' : 'Activer comme partenaire'}
+                </button>
               </div>
               <button type="button" onClick={fermer} data-testid="fermer-fiche"
                       aria-label="Fermer" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer' }}>
@@ -2521,26 +2521,15 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
               </button>
             </div>
 
-            <Bloc titre="Identité">
-              <Champ libelle="Ville">{ou(ouvert.city)}</Champ>
-              <Champ libelle="Adresse">{ou(ouvert.address)}</Champ>
-              <Champ libelle="Site"><LienExterne href={ouvert.website} /></Champ>
-              <Champ libelle="Instagram">
-                {ouvert.instagram
-                  ? <LienExterne href={`https://instagram.com/${String(ouvert.instagram).replace(/^@/, '')}`}
-                                 children={ouvert.instagram} />
-                  : '—'}
-              </Champ>
-              <Champ libelle="Facebook"><LienExterne href={ouvert.facebook} /></Champ>
-              <Champ libelle="LinkedIn"><LienExterne href={ouvert.linkedin} /></Champ>
-              <Champ libelle="TikTok"><LienExterne href={ouvert.tiktok} /></Champ>
-              <Champ libelle="Source"><LienExterne href={ouvert.source_url} /></Champ>
-              <Champ libelle="Source secondaire"><LienExterne href={ouvert.secondary_source_url} /></Champ>
-              <Champ libelle="Vérifié le">{ou(ouvert.verified_at)}</Champ>
-              <Champ libelle="Score">{ou(ouvert.score)}</Champ>
-            </Bloc>
+            {/* V594 — UNE SECTION À LA FOIS. Rien n'est retiré : chaque bloc est DÉPLACÉ tel quel.
+                Les sections inactives restent montées (display:none) : une saisie non
+                enregistrée survit au changement d'onglet, et « Enregistrer » couvre tout. */}
+            <BarreOnglets onglets={ONGLETS_FICHE} actif={sectionFiche} onChoisir={setSectionFiche}
+                          testid="fiche-onglets" prefixe="fiche-onglet-" />
 
-            <Bloc titre="Qualification (modifiable)">
+            <div data-testid="fiche-section-resume" role="tabpanel"
+                 style={{ display: sectionFiche === 'resume' ? 'block' : 'none' }}>
+            <Bloc titre="Résumé">
               <Ligne libelle="Statut">
                 <select value={brouillon.status} data-testid="edit-status"
                         onChange={(e) => majBrouillon('status', e.target.value)} style={styleChamp}>
@@ -2554,22 +2543,12 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                   {PRIORITES.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
               </Ligne>
-              <Ligne libelle="Vague">
-                <input value={brouillon.wave} data-testid="edit-wave"
-                       onChange={(e) => majBrouillon('wave', e.target.value)} style={styleChamp} />
-              </Ligne>
-              <Ligne libelle="Canal">
-                <input value={brouillon.preferred_channel} data-testid="edit-channel"
-                       onChange={(e) => majBrouillon('preferred_channel', e.target.value)} style={styleChamp} />
-              </Ligne>
-              <Ligne libelle="Collaboration">
-                <select value={brouillon.collaboration_type} data-testid="edit-collaboration"
-                        onChange={(e) => majBrouillon('collaboration_type', e.target.value)} style={styleChamp}>
-                  {COLLABORATIONS.map((c) => <option key={c.cle} value={c.cle}>{c.libelle}</option>)}
-                </select>
-              </Ligne>
+              <Champ libelle="Prochaine action">{ou(ouvert.next_followup_at)}</Champ>
             </Bloc>
+            </div>
 
+            <div data-testid="fiche-section-contact" role="tabpanel"
+                 style={{ display: sectionFiche === 'contact' ? 'block' : 'none' }}>
             <Bloc titre="Coordonnées (modifiables)">
               <Ligne libelle="E-mail">
                 <input value={brouillon.public_email} data-testid="edit-email"
@@ -2589,6 +2568,24 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
               </Ligne>
             </Bloc>
 
+            <Bloc titre="Site et réseaux">
+              <Champ libelle="Ville">{ou(ouvert.city)}</Champ>
+              <Champ libelle="Adresse">{ou(ouvert.address)}</Champ>
+              <Champ libelle="Site"><LienExterne href={ouvert.website} /></Champ>
+              <Champ libelle="Instagram">
+                {ouvert.instagram
+                  ? <LienExterne href={`https://instagram.com/${String(ouvert.instagram).replace(/^@/, '')}`}
+                                 children={ouvert.instagram} />
+                  : '—'}
+              </Champ>
+              <Champ libelle="Facebook"><LienExterne href={ouvert.facebook} /></Champ>
+              <Champ libelle="LinkedIn"><LienExterne href={ouvert.linkedin} /></Champ>
+              <Champ libelle="TikTok"><LienExterne href={ouvert.tiktok} /></Champ>
+            </Bloc>
+            </div>
+
+            <div data-testid="fiche-section-messages" role="tabpanel"
+                 style={{ display: sectionFiche === 'messages' ? 'block' : 'none' }}>
             <Bloc titre="Approche">
               <Champ libelle="Approche">{ou(ouvert.approach)}</Champ>
             </Bloc>
@@ -2609,13 +2606,10 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                 </div>
               ))}
             </Bloc>
+            </div>
 
-            <Bloc titre="Notes">
-              <textarea value={brouillon.notes} data-testid="edit-notes" rows={6}
-                        onChange={(e) => majBrouillon('notes', e.target.value)}
-                        style={{ ...styleChamp, width: '100%', resize: 'vertical' }} />
-            </Bloc>
-
+            <div data-testid="fiche-section-rdv" role="tabpanel"
+                 style={{ display: sectionFiche === 'rdv' ? 'block' : 'none' }}>
             {/* ---------- CAL-3 : PLANIFIER ET AGENDA ----------
                 Deux blocs, et rien de plus. Une fiche prospect sert à
                 qualifier ; y déverser tout l'historique la rendrait illisible
@@ -2727,8 +2721,10 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                 </div>
               )}
             </Bloc>
+            </div>
 
-            {/* V592 — Partenaire : activer depuis la fiche, puis lien + QR + résultats existants. */}
+            <div data-testid="fiche-section-partenaire" role="tabpanel"
+                 style={{ display: sectionFiche === 'partenaire' ? 'block' : 'none' }}>
             <Bloc titre="Partenaire">
               <PartenaireProspect
                 key={ouvert.id}
@@ -2738,17 +2734,63 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                 onActive={(p) => setOuvert((prec) => (
                   !prec || prec.id !== ouvert.id || prec.partner_id === p.id
                     ? prec : { ...prec, partner_id: p.id }))}
+                onCharge={(p) => setPartenaireFiche((prec) => (
+                  (prec && prec.id) === (p && p.id) ? prec : p))}
               />
+            </Bloc>
+            </div>
+
+            <div data-testid="fiche-section-plus" role="tabpanel"
+                 style={{ display: sectionFiche === 'plus' ? 'block' : 'none' }}>
+            <Bloc titre="Notes">
+              <textarea value={brouillon.notes} data-testid="edit-notes" rows={6}
+                        onChange={(e) => majBrouillon('notes', e.target.value)}
+                        style={{ ...styleChamp, width: '100%', resize: 'vertical' }} />
             </Bloc>
 
             <Bloc titre="Suivi">
               <Champ libelle="Premier contact">{ou(ouvert.first_contact_at)}</Champ>
               <Champ libelle="Dernier contact">{ou(ouvert.last_contact_at)}</Champ>
-              <Champ libelle="Prochaine action">{ou(ouvert.next_followup_at)}</Champ>
               <Champ libelle="Réponse le">{ou(ouvert.replied_at)}</Champ>
-              <Champ libelle="Candidature liée">{ou(ouvert.partner_application_id)}</Champ>
-              <Champ libelle="Partenaire lié">{ou(ouvert.partner_id)}</Champ>
             </Bloc>
+
+            <Bloc titre="Qualification">
+              <Ligne libelle="Vague">
+                <input value={brouillon.wave} data-testid="edit-wave"
+                       onChange={(e) => majBrouillon('wave', e.target.value)} style={styleChamp} />
+              </Ligne>
+              <Ligne libelle="Canal">
+                <input value={brouillon.preferred_channel} data-testid="edit-channel"
+                       onChange={(e) => majBrouillon('preferred_channel', e.target.value)} style={styleChamp} />
+              </Ligne>
+              <Ligne libelle="Collaboration">
+                <select value={brouillon.collaboration_type} data-testid="edit-collaboration"
+                        onChange={(e) => majBrouillon('collaboration_type', e.target.value)} style={styleChamp}>
+                  {COLLABORATIONS.map((c) => <option key={c.cle} value={c.cle}>{c.libelle}</option>)}
+                </select>
+              </Ligne>
+            </Bloc>
+
+            <Bloc titre="Sources">
+              <Champ libelle="Source"><LienExterne href={ouvert.source_url} /></Champ>
+              <Champ libelle="Source secondaire"><LienExterne href={ouvert.secondary_source_url} /></Champ>
+              <Champ libelle="Vérifié le">{ou(ouvert.verified_at)}</Champ>
+              <Champ libelle="Score">{ou(ouvert.score)}</Champ>
+            </Bloc>
+
+            <Bloc titre="Détails techniques">
+              <button type="button" onClick={() => setDetailsTech((v) => !v)} aria-expanded={detailsTech}
+                      data-testid="fiche-details-tech" style={stylePetitBouton}>
+                {detailsTech ? 'Masquer les détails' : 'Afficher les détails'}
+              </button>
+              <div style={{ display: detailsTech ? 'block' : 'none', marginTop: '6px' }}>
+                <Champ libelle="Candidature liée">{ou(ouvert.partner_application_id)}</Champ>
+                <Champ libelle="Partenaire lié">{ou(ouvert.partner_id)}</Champ>
+                <Champ libelle="Identifiant partenaire">{ou(partenaireFiche && partenaireFiche.partner_slug)}</Champ>
+                <Champ libelle="Lien partenaire complet">{ou(partenaireFiche && construireLienPartenaire(partenaireFiche.partner_slug))}</Champ>
+              </div>
+            </Bloc>
+            </div>
 
             {message && (
               <div data-testid="message-fiche"
@@ -2809,6 +2851,38 @@ const stylePagination = (inactif) => ({
   cursor: inactif ? 'default' : 'pointer',
   opacity: inactif ? 0.35 : 1,
 });
+
+// V594 — LA barre d'onglets de ProspectsSection, extraite telle quelle pour servir aussi
+// à la fiche (mêmes pilules, mêmes couleurs) : un seul rendu, aucune copie.
+export const ONGLETS_FICHE = [
+  ['resume', 'Résumé'], ['contact', 'Contact'], ['messages', 'Messages'],
+  ['rdv', 'Rendez-vous'], ['partenaire', 'Partenaire'], ['plus', 'Plus'],
+];
+
+function BarreOnglets({ onglets, actif, onChoisir, testid, prefixe }) {
+  return (
+    <div data-testid={testid} role="tablist"
+         style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px', marginTop: '14px' }}>
+      {onglets.map(([cle, libelle]) => (
+        <button key={cle} type="button" role="tab"
+                data-testid={`${prefixe}${cle}`}
+                aria-selected={actif === cle}
+                onClick={() => onChoisir(cle)}
+                style={{
+                  padding: '7px 14px', borderRadius: '999px', fontSize: '12px',
+                  cursor: 'pointer', color: TEXTE,
+                  fontWeight: actif === cle ? 700 : 500,
+                  border: `1px solid ${actif === cle
+                    ? `rgba(${RGB}, 0.7)` : 'rgba(255,255,255,0.18)'}`,
+                  background: actif === cle
+                    ? `rgba(${RGB}, 0.26)` : 'transparent',
+                }}>
+          {libelle}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function Bloc({ titre, children }) {
   return (

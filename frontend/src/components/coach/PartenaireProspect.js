@@ -12,7 +12,7 @@
 //
 // AUCUNE BOUCLE : l'effet dépend de deux CHAÎNES (`API`, `prospectId`), jamais
 // d'un objet ; le parent n'est prévenu que si le pointeur change vraiment.
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { LienPartenaire } from './PartnerApplications';
 import { p2bSuggererSlug, p2bSlugValide } from '../../utils/partnerLink';
@@ -25,13 +25,17 @@ const detailErreur = (err, repli) => {
   return typeof d === 'string' && d ? d : repli;
 };
 
-export default function PartenaireProspect({ API, prospectId, organisation, onActive }) {
+export default function PartenaireProspect({ API, prospectId, organisation, onActive, onCharge }) {
   const [etat, setEtat] = useState('chargement'); // chargement | aucun | actif | erreur
   const [partenaire, setPartenaire] = useState(null);
   const [slug, setSlug] = useState(() => p2bSuggererSlug(organisation));
   const [enCours, setEnCours] = useState(false);
   const [message, setMessage] = useState('');
 
+  // V594 : la dernière version du rappel, sans en faire une dépendance de `lire`
+  // (l'effet de lecture reste lié à deux CHAÎNES : aucune boucle possible).
+  const onChargeRef = useRef(onCharge);
+  onChargeRef.current = onCharge;
   const lire = useCallback(async () => {
     setEtat('chargement');
     try {
@@ -40,6 +44,8 @@ export default function PartenaireProspect({ API, prospectId, organisation, onAc
       const p = data && data.partner;
       setPartenaire(p || null);
       setEtat(p && p.partner_slug ? 'actif' : 'aucun');
+      // V594 : la fiche affiche l'identifiant et le lien complet dans « Plus ».
+      if (onChargeRef.current) onChargeRef.current(p && p.partner_slug ? p : null);
     } catch (e) {
       setEtat('erreur');
     }
@@ -64,6 +70,7 @@ export default function PartenaireProspect({ API, prospectId, organisation, onAc
         setPartenaire(p);
         setEtat('actif');
         if (onActive) onActive(p);
+        if (onChargeRef.current) onChargeRef.current(p);
       }
     } catch (err) {
       setMessage(detailErreur(err, "L'activation n'a pas abouti. Rien n'a été créé, réessayez."));
@@ -103,7 +110,8 @@ export default function PartenaireProspect({ API, prospectId, organisation, onAc
           </svg>
           PARTENAIRE ACTIF
         </span>
-        <LienPartenaire slug={partenaire.partner_slug} API={API} />
+        {/* V594 : vue épurée — identifiant, URL complète et statistiques au clic. */}
+        <LienPartenaire slug={partenaire.partner_slug} API={API} compact />
       </div>
     );
   }

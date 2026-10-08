@@ -34,7 +34,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { QRCodeCanvas } from 'qrcode.react';
 import { X, Mail, Phone, Calendar, Clock, RefreshCw, Inbox, AlertCircle, Check, Ban,
-  Copy, ExternalLink, QrCode, Download } from 'lucide-react';
+  Copy, ExternalLink, QrCode, Download, BarChart3 } from 'lucide-react';
 import { copyToClipboard } from '../../utils/clipboard';
 import {
   construireLienPartenaire, p2cNomFichierQr,
@@ -133,10 +133,15 @@ const Ligne = ({ icone, valeur }) => {
  */
 // V592 — exporté pour la fiche Prospect (« Activer comme partenaire ») : UN seul
 // composant lien + QR + statistiques, jamais une copie.
-export const LienPartenaire = ({ slug, API }) => {
+// V594 — `compact` (fiche Prospect uniquement) : seuls « Copier le lien », « Ouvrir »,
+// « QR code » et « Voir les statistiques » restent visibles ; l'identifiant, l'URL complète
+// et le texte d'explication sont masqués (ils restent dans « Plus » de la fiche), et les
+// statistiques ne sont chargées qu'au clic. Sans `compact` : rendu STRICTEMENT inchangé.
+export const LienPartenaire = ({ slug, API, compact }) => {
   const lien = construireLienPartenaire(slug);
   const [copie, setCopie] = useState(false);
   const [qrVisible, setQrVisible] = useState(false);
+  const [statsVisibles, setStatsVisibles] = useState(false);
   const zoneQr = useRef(null);
 
   const copier = async () => {
@@ -165,6 +170,7 @@ export const LienPartenaire = ({ slug, API }) => {
       marginTop: '12px', padding: '10px', borderRadius: '10px',
       background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.18)',
     }}>
+      {!compact && (<>
       <p style={{ margin: 0, color: 'rgba(255,255,255,0.5)', fontSize: '11px' }}>
         Identifiant partenaire
       </p>
@@ -200,10 +206,11 @@ export const LienPartenaire = ({ slug, API }) => {
         Partagez votre invitation Afroboost. Votre communauté s'inscrit et
         réserve directement sa séance.
       </p>
+      </>)}
 
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
         <BoutonAction onClick={copier} couleur={copie ? '#22c55e' : '#a78bfa'}>
-          {copie ? <><Check size={13} /> Copié</> : <><Copy size={13} /> Copier</>}
+          {copie ? <><Check size={13} /> Copié</> : <><Copy size={13} /> {compact ? 'Copier le lien' : 'Copier'}</>}
         </BoutonAction>
         <a
           href={lien}
@@ -240,8 +247,19 @@ export const LienPartenaire = ({ slug, API }) => {
         </div>
       )}
 
-      {/* P2-D2 — les resultats, sous le lien et le QR. */}
-      <StatsPartenaire slug={slug} API={API} />
+      {/* P2-D2 — les resultats, sous le lien et le QR. V594 : en mode `compact`,
+          derriere « Voir les statistiques » (meme motif de bascule que le QR) ; la
+          route n'est appelee qu'au premier affichage. */}
+      {compact ? (
+        <div style={{ marginTop: '10px' }}>
+          <BoutonAction onClick={() => setStatsVisibles((v) => !v)} couleur="#a78bfa">
+            <BarChart3 size={13} /> {statsVisibles ? 'Masquer les statistiques' : 'Voir les statistiques'}
+          </BoutonAction>
+          {statsVisibles && <StatsPartenaire slug={slug} API={API} />}
+        </div>
+      ) : (
+        <StatsPartenaire slug={slug} API={API} />
+      )}
     </div>
   );
 };

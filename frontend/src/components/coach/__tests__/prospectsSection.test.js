@@ -2556,3 +2556,81 @@ describe('REPONSE-MANUELLE — écrire une réponse sans passer par l’IA', () 
     expect(route).toContain('"origine": "coach"');
   });
 });
+
+describe('V594 — la fiche ongletée (rien n\'est retiré, une section à la fois)', () => {
+  async function ouvrirFiche(sur) {
+    mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect(sur)]) };
+    await monter(<ProspectsSection API="/api" />);
+    await act(async () => { par('ligne-FES-01').click(); });
+    return par('fiche-prospect');
+  }
+  const visible = (id) => par(`fiche-section-${id}`).style.display !== 'none';
+
+  test('six onglets, « Résumé » ouvert par défaut, une seule section visible', async () => {
+    await ouvrirFiche({});
+    const libelles = Array.from(par('fiche-onglets').querySelectorAll('[role="tab"]')).map((b) => b.textContent);
+    expect(libelles).toEqual(['Résumé', 'Contact', 'Messages', 'Rendez-vous', 'Partenaire', 'Plus']);
+    const ids = ['resume', 'contact', 'messages', 'rdv', 'partenaire', 'plus'];
+    expect(ids.filter(visible)).toEqual(['resume']);
+    await act(async () => { par('fiche-onglet-contact').click(); });
+    expect(ids.filter(visible)).toEqual(['contact']);
+    expect(par('fiche-onglet-contact').getAttribute('aria-selected')).toBe('true');
+  });
+
+  test('chaque champ est rangé dans sa section, aucun n\'a disparu', async () => {
+    await ouvrirFiche({});
+    const dans = (id, testid) => par(`fiche-section-${id}`).querySelector(`[data-testid="${testid}"]`) !== null;
+    expect(dans('resume', 'edit-status') && dans('resume', 'edit-priority')).toBe(true);
+    expect(dans('contact', 'edit-email') && dans('contact', 'edit-phone')).toBe(true);
+    expect(dans('messages', 'edit-j0_message') && dans('messages', 'edit-interested_message')).toBe(true);
+    expect(dans('plus', 'edit-notes') && dans('plus', 'edit-wave') && dans('plus', 'edit-channel')
+      && dans('plus', 'edit-collaboration')).toBe(true);
+    expect(par('fiche-section-resume').textContent).toContain('Prochaine action');
+    expect(par('fiche-section-plus').textContent).toContain('Premier contact');
+  });
+
+  test('en-tête : statut, priorité et action principale « Activer comme partenaire »', async () => {
+    await ouvrirFiche({ priority: 'A', partner_id: null });
+    expect(par('fiche-entete-etat').textContent).toContain('Priorité A');
+    expect(par('fiche-action-principale').textContent).toBe('Activer comme partenaire');
+    await act(async () => { par('fiche-action-principale').click(); });
+    expect(visible('partenaire')).toBe(true);
+    expect(visible('resume')).toBe(false);
+    expect(axios.post).not.toHaveBeenCalled();        // l'action OUVRE l'onglet, elle ne crée rien
+    expect(axios.patch).not.toHaveBeenCalled();
+  });
+
+  test('partenaire actif : « Voir le partenariat » ouvre l\'onglet sans rien écrire', async () => {
+    await ouvrirFiche({ partner_id: 'ad881bb5' });
+    expect(par('fiche-action-principale').textContent).toBe('Voir le partenariat');
+    await act(async () => { par('fiche-action-principale').click(); });
+    expect(visible('partenaire')).toBe(true);
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test('détails techniques repliés par défaut (identifiants internes invisibles)', async () => {
+    await ouvrirFiche({ partner_id: 'ad881bb5', partner_application_id: 'cand-1' });
+    await act(async () => { par('fiche-onglet-plus').click(); });
+    const bouton = par('fiche-details-tech');
+    const zone = bouton.nextElementSibling;
+    expect(zone.style.display).toBe('none');
+    expect(bouton.getAttribute('aria-expanded')).toBe('false');
+    await act(async () => { bouton.click(); });
+    expect(zone.style.display).toBe('block');
+    expect(zone.textContent).toContain('ad881bb5');
+    expect(zone.textContent).toContain('cand-1');
+  });
+
+  test('une saisie survit au changement d\'onglet (sections montées)', async () => {
+    await ouvrirFiche({});
+    const notes = par('edit-notes');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(notes, 'note en cours');
+      notes.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { par('fiche-onglet-contact').click(); });
+    await act(async () => { par('fiche-onglet-plus').click(); });
+    expect(par('edit-notes').value).toBe('note en cours');
+  });
+});
