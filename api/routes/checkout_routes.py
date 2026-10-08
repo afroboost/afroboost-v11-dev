@@ -1140,8 +1140,54 @@ async def _essai1_liberer(email: str, telephone: str = "", coach_id=None) -> Non
 ESSAI8_VERROU_PERIME_MINUTES = 10
 
 
+async def _essai8_aucun_essai_utilisable_strict(email: str, telephone: str = "") -> bool:
+    """PREUVE POSITIVE, en lecture stricte, qu'aucun essai n'est encore utilisable.
+
+    POURQUOI UNE SECONDE LECTURE. Les helpers ESSAI-6 rendent « rien » quand la base
+    est muette (choix délibéré : ne pas fermer l'acquisition sur un hoquet). C'était
+    sans danger tant que le verrou `free_trial_claims` restait le dernier rempart.
+    Rouvrir ce verrou sur la foi d'une lecture qui a peut-être échoué en ferait une
+    porte à second essai (revue de sécurité du commit V591). Ici, TOUTE erreur rend
+    False : le verrou reste en place.
+    """
+    from api.routes.shared import (normaliser_email as _nm, essai6_normaliser_tel as _nt,
+                                   forfait_utilisable as _utilisable, ESSAI2_FILTRE_GRATUIT as _gratuit,
+                                   _v391_est_expire as _expire)
+    import re as _re8
+    _mail, _tel = _nm(email), _nt(telephone)
+    if not _mail and not _tel:
+        return False
+    try:
+        _ou = []
+        if _mail:
+            _ou.append({"email": {"$regex": "^%s$" % _re8.escape(_mail), "$options": "i"}})
+        if _tel:
+            _ou.append({"whatsapp": {"$regex": r"\D*".join(_tel[-8:]) + r"\D*$"}})
+        for _f in await db["subscriptions"].find({"$or": _ou}, {"_id": 0}).to_list(200):
+            _meme = (_mail and _nm(_f.get("email")) == _mail) or (_tel and _nt(_f.get("whatsapp")) == _tel)
+            if _meme and _utilisable(_f, 1)[0]:
+                return False                      # un droit vivant : on ne rouvre rien
+        if _mail:
+            _q = {"assignedEmail": _mail}
+            _q.update(_gratuit)
+            for _c in await db["discount_codes"].find(_q, {"_id": 0}).to_list(50):
+                if _c.get("active") is False:
+                    continue
+                _max, _pris = int(_c.get("maxUses") or 0), int(_c.get("used") or 0)
+                # Même lecture que `essai6_reutilisable` (expiration et usages).
+                if (not _max or _pris < _max) and not _expire(_c.get("expiresAt")):
+                    return False                  # un code d'essai encore utilisable
+    except Exception as _err:  # noqa: BLE001
+        logger.warning(f"[ESSAI-8] preuve stricte impossible, verrou conservé: {_err}")
+        return False
+    return True
+
+
 async def _essai1_liberer_perimes(email: str, telephone: str = "", coach_id=None) -> None:
-    """Rend les verrous ACTIFS mais PÉRIMÉS (> 10 min) de cette identité. Ne lève jamais."""
+    """Rend les verrous ACTIFS mais PÉRIMÉS (> 10 min) de cette identité — SEULEMENT si une
+    lecture stricte prouve qu'aucun essai n'est encore utilisable. Ne lève jamais."""
+    if not await _essai8_aucun_essai_utilisable_strict(email, telephone):
+        return
     _seuil = (datetime.now(timezone.utc) - timedelta(minutes=ESSAI8_VERROU_PERIME_MINUTES)).isoformat()
     for _cle in _essai1_cles(email, telephone, coach_id):
         try:
@@ -1332,14 +1378,30 @@ async def _essai_porte_garde(email: str, offer_id: str = "", telephone: str = ""
                                    ESSAI8_MESSAGE_TELEPHONE as _M_TEL,
                                    ESSAI8_RAISON_DEJA_CLIENT as _R_CLIENT,
                                    ESSAI8_MESSAGE_DEJA_CLIENT as _M_CLIENT)
+    from api.routes.shared import (ESSAI8_RAISONS_ELIGIBILITE as _ELIGIBILITE,
+                                   ESSAI8_RAISON_PUBLIQUE as _R_PUBLIQUE,
+                                   ESSAI8_MESSAGE_NEUTRE as _M_NEUTRE)
+    # Le téléphone manquant est une erreur de SAISIE : la dire ne révèle rien.
     if not _tel_ok(telephone):
         await _essai1_tracer_refus(offer_id)
         raise HTTPException(status_code=400, detail=_M_TEL, headers={"X-Refus-Raison": _R_TEL})
-    await _essai4_garde(email, offer_id)
-    if await _deja_client(db, email, telephone):
-        await _essai1_tracer_refus(offer_id)
-        raise HTTPException(status_code=409, detail=_M_CLIENT, headers={"X-Refus-Raison": _R_CLIENT})
-    await _essai1_garde(email, offer_id, telephone=telephone, coach_id=coach_id)
+    try:
+        await _essai4_garde(email, offer_id)
+        if await _deja_client(db, email, telephone):
+            await _essai1_tracer_refus(offer_id)
+            raise HTTPException(status_code=409, detail=_M_CLIENT, headers={"X-Refus-Raison": _R_CLIENT})
+        await _essai1_garde(email, offer_id, telephone=telephone, coach_id=coach_id)
+    except HTTPException as _e:
+        _raison = ((getattr(_e, "headers", None) or {}).get("X-Refus-Raison") or "")
+        if getattr(_e, "status_code", None) != 409 or _raison not in _ELIGIBILITE:
+            raise
+        # CONFIDENTIALITÉ : réponse publique UNIQUE ; la raison reste côté serveur.
+        logger.info(f"[ESSAI-8] refus d'éligibilité (interne={_raison}) offre={str(offer_id)[:24]}")
+        _neutre = HTTPException(status_code=409, detail=_M_NEUTRE,
+                                headers={"X-Refus-Raison": _R_PUBLIQUE})
+        _neutre.raison_interne = _raison
+        _neutre.detail_interne = getattr(_e, "detail", "")
+        raise _neutre
 
 
 async def _essai1_tracer_refus(offer_id: str = "") -> None:

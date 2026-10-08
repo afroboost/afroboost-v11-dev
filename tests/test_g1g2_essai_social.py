@@ -245,7 +245,7 @@ def construire(base):
     # On charge les VRAIES fonctions, comme les quatre autres.
     for fn in ("_essai1_motif_refus", "_essai1_essai_deja_accorde", "_essai1_cles",
                "_essai1_reclamer", "_essai1_liberer_cle", "_essai1_liberer",
-               "_essai1_liberer_perimes", "_essai1_garde",
+               "_essai8_aucun_essai_utilisable_strict", "_essai1_liberer_perimes", "_essai1_garde",
                # V591 : l'approbation passe par LA garde commune
                "_essai4_abonnement_actif", "_essai4_garde", "_essai_porte_garde"):
         exec(compile(extraire(CHECKOUT, fn), "<ck>", "exec"), esp_ck)

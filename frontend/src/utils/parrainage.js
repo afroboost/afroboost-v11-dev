@@ -309,6 +309,9 @@ export function messageRefus(raison) {
       return 'Tu es déjà client·e Afroboost : le premier cours offert est réservé aux nouvelles personnes.';
     case 'phone_required':
       return 'Indique un numéro WhatsApp valide.';
+    // V591 — refus d'éligibilité NEUTRE : ne révèle ni client ni essai déjà pris.
+    case 'not_eligible':
+      return "Ce premier cours offert n'est pas disponible avec ces coordonnées. Si tu as déjà un compte Afroboost, réserve depuis ton espace ou utilise « Retrouver mes accès ».";
     case 'pass_ferme':
       return "Ce Pass Duo n'est plus ouvert.";
     // V556 — la chaîne « boule de neige »

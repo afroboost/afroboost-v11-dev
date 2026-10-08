@@ -1026,13 +1026,11 @@ async def _octroyer_essai(pass_doc, offre, email, nom, tel_brut, attribution_cli
         # ESSAI-8 (V591) : LA garde commune — téléphone, ESSAI-4, déjà client
         # payant, ESSAI-1 (verrou). Même règle que /checkout/free, jamais une copie.
         await _essai_porte_garde(email, str(offre.get("id")), telephone=tel_brut)
-    except HTTPException as _e:
-        _raison = (getattr(_e, "headers", None) or {}).get("X-Refus-Raison") or ""
-        if _raison == "active_subscription":
-            raise _refus(409, E.REFUS_ABONNE_ACTIF,
-                         "Tu as déjà un abonnement actif : le Pass Duo est réservé aux nouveaux.")
+    except HTTPException:
+        # V591 — CONFIDENTIALITÉ : la garde commune rend déjà un refus d'éligibilité
+        # NEUTRE (`not_eligible`) ; le requalifier ici en « abonné actif » révélerait
+        # publiquement qu'une personne est cliente. On le propage tel quel.
         raise
-    # 409 `free_trial_already_used` | `free_trial_already_granted` | `already_customer`, tel quel
 
     _vendeur = ""
     try:

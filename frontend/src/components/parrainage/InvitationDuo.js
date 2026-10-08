@@ -261,7 +261,7 @@ export default function InvitationDuo({ token }) {
   };
 
   // V558 : refus « déjà client » (jamais un abus) — la chaîne de son ami continue.
-  const CLIENT_EXISTANT = ['free_trial_already_used', 'free_trial_already_granted', 'abonne_actif', 'already_customer']; // V591
+  const CLIENT_EXISTANT = ['free_trial_already_used', 'free_trial_already_granted', 'abonne_actif', 'already_customer', 'not_eligible']; // V591
   const soumettre = (e) => {
     e.preventDefault();
     if (envoi) return;

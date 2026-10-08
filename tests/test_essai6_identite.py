@@ -414,7 +414,7 @@ def executer():
         esp["_essai1_tracer_refus"] = _tracer
         for fn in ("_essai1_motif_refus", "_essai1_essai_deja_accorde",
                    "_essai1_cles", "_essai1_reclamer", "_essai1_liberer_cle",
-                   "_essai1_liberer", "_essai1_liberer_perimes", "_essai1_garde"):  # V591
+                   "_essai1_liberer", "_essai8_aucun_essai_utilisable_strict", "_essai1_liberer_perimes", "_essai1_garde"):  # V591
             exec(compile(_extraire_ck(fn), "<ck>", "exec"), esp)
 
         asyncio.run(principal(brute, db, esp))

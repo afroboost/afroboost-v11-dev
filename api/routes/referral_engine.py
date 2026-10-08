@@ -1626,13 +1626,18 @@ def partage_chaine(pass_doc) -> dict:
 # s'inscrire sur ce maillon » : la place d'enfant qu'elle a prise est libérée.
 # Jamais un refus transitoire (invitation_requise, autre appareil, pass fermé,
 # campagne complète, conflit de version, 410, 5xx).
+# V591 : `not_eligible` est le code PUBLIC neutre qui remplace désormais ces raisons
+# (confidentialité) ; `already_customer` est la nouvelle raison ESSAI-8. Tous sont des
+# refus d'IDENTITÉ définitifs : le comportement de la chaîne ne change pas.
 REFUS_IDENTITE_DEFINITIFS = (REFUS_AUTO_PARRAINAGE, REFUS_DEJA_FILLEUL, REFUS_ABONNE_ACTIF,
-                             "free_trial_already_used", "free_trial_already_granted")
+                             "free_trial_already_used", "free_trial_already_granted",
+                             "already_customer", "not_eligible")
 EVENEMENT_CHAINE_LIBEREE = "chain_released"
 # V558 — « DÉJÀ CLIENT » n'est PAS un abus : la personne ne recevra jamais de second
 # essai, mais la chaîne ne casse pas pour autant — l'invitation qu'elle a DÉJÀ
 # PARTAGÉE reste valable pour son ami (qui garde SON propre essai s'il y a droit).
-REFUS_CLIENT_EXISTANT = (REFUS_ABONNE_ACTIF, "free_trial_already_used", "free_trial_already_granted")
+REFUS_CLIENT_EXISTANT = (REFUS_ABONNE_ACTIF, "free_trial_already_used", "free_trial_already_granted",
+                         "already_customer", "not_eligible")   # V591
 
 
 def refus_identite_definitif(code_http, raison) -> bool:

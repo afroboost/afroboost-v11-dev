@@ -11053,8 +11053,14 @@ async def review_social_proof(proof_id: str, request: Request):
             # seule sans le telephone suffirait a contourner les deux autres.
             await _g2_garde(proof.get("client_email", ""), proof.get("offer_id", ""),
                             telephone=proof.get("client_phone", ""))
-        except Exception:
+        except Exception as _g2_refus:
             await _g4_rendre_en_attente()
+            # V591 : cette route est réservée au COACH authentifié — il peut connaître la
+            # raison précise (la porte PUBLIQUE, elle, reste neutre).
+            if getattr(_g2_refus, "raison_interne", None):
+                raise HTTPException(status_code=409,
+                                    detail=getattr(_g2_refus, "detail_interne", "") or "Essai refusé",
+                                    headers={"X-Refus-Raison": _g2_refus.raison_interne})
             raise
 
         granted_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"

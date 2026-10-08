@@ -220,13 +220,18 @@ def _paye(brute, code, email, tel="", statut="active", reste=5, expire=None):
 async def principal(brute, db, G):
     E = _HTTPException
 
+    PUBLIC = {}
+
     async def porte(email, tel):
-        """None si l'essai est ACCORDÉ, sinon (statut, raison)."""
+        """None si l'essai est ACCORDÉ, sinon (statut, raison INTERNE). La réponse
+        PUBLIQUE (statut, texte, en-tête) est rangée dans PUBLIC[email]."""
         try:
             await G["_essai_porte_garde"](email, OFFRE_ESSAI, telephone=tel)
             return None
         except E as e:
-            return (e.status_code, (e.headers or {}).get("X-Refus-Raison"))
+            _h = (e.headers or {}).get("X-Refus-Raison")
+            PUBLIC[email] = (e.status_code, e.detail, _h)
+            return (e.status_code, getattr(e, "raison_interne", None) or _h)
 
     R_USED, R_DETENU = S.ESSAI6_REFUS_CONSOMME, S.ESSAI6_REFUS_DEJA_DETENU
 
@@ -299,6 +304,56 @@ async def principal(brute, db, G):
     verifier("L. un verrou RÉCENT (octroi en cours) n'est jamais rouvert",
              (await porte("course@exemple.ch", "+41791000008")) == (409, R_DETENU))
 
+    # REVUE DE SÉCURITÉ V591 : une lecture en PANNE ne doit jamais rouvrir un verrou.
+    brute.free_trial_claims.insert_one({"_id": "trial:panne@exemple.ch", "actif": True, "created_at": _vieux})
+    _vraie_col = G["db"].__class__.__getitem__
+    class _Panne:
+        def __init__(self, n): self._n = n
+        def find(self, *a, **k): raise RuntimeError("base muette")
+    _orig_getitem = type(G["db"]).__getitem__
+    type(G["db"]).__getitem__ = lambda self, n: _Panne(n) if n in ("subscriptions", "discount_codes") else _orig_getitem(self, n)
+    try:
+        await G["_essai1_liberer_perimes"]("panne@exemple.ch", "+41791000009")
+    finally:
+        type(G["db"]).__getitem__ = _orig_getitem
+    verifier("N. lecture en panne -> le verrou périmé n'est PAS rouvert (pas de second essai)",
+             brute.free_trial_claims.find_one({"_id": "trial:panne@exemple.ch"})["actif"] is True)
+    _sx = _forfait(brute, "AFR-X1", "xena@exemple.ch", "+41791000010", reste=1)
+    brute.free_trial_claims.insert_one({"_id": "trial:xena@exemple.ch", "actif": True, "created_at": _vieux})
+    await G["_essai1_liberer_perimes"]("xena@exemple.ch", "+41791000010")
+    verifier("O. essai encore utilisable -> verrou périmé conservé (lecture stricte)",
+             brute.free_trial_claims.find_one({"_id": "trial:xena@exemple.ch"})["actif"] is True)
+
+    # ═══ CONFIDENTIALITÉ (décision du 08/10) : une SEULE réponse publique ═══
+    _neutre = (409, S.ESSAI8_MESSAGE_NEUTRE, S.ESSAI8_RAISON_PUBLIQUE)
+    _cas = {"A. ancien essai utilisé": "dora@exemple.ch",
+            "B. client actif": "fanny@exemple.ch",
+            "C. ancien client, forfait expiré": "gina@exemple.ch",
+            "D. ancien client, forfait épuisé": "hugo@exemple.ch",
+            "E. même téléphone déjà connu": "anna.bis@exemple.ch",
+            "F. même e-mail déjà connu": "anna@exemple.ch"}
+    for _nom, _mail in _cas.items():
+        verifier("CONF %s -> réponse publique NEUTRE identique" % _nom, PUBLIC.get(_mail) == _neutre,
+                 "obtenu : %r" % (PUBLIC.get(_mail),))
+    _publics = {PUBLIC.get(m) for m in _cas.values()}
+    verifier("CONF A–F : un SEUL et même triplet public (statut, texte, code)", len(_publics) == 1)
+    _texte = S.ESSAI8_MESSAGE_NEUTRE.lower()
+    verifier("CONF le texte ne dit ni « client », ni « abonnement », ni « déjà utilisé », ni « essai »",
+             not any(m in _texte for m in ("client", "abonnement", "déjà utilisé", "essai")))
+    verifier("CONF les raisons internes restent exactes (métier inchangé)",
+             (await porte("dora@exemple.ch", "+41791000002"))[1] == R_USED
+             and (await porte("fanny@exemple.ch", "+41791000004"))[1] == "active_subscription"
+             and (await porte("gina@exemple.ch", "+41791000005"))[1] == S.ESSAI8_RAISON_DEJA_CLIENT)
+    verifier("CONF G. nouvelle personne admissible -> parcours normal (aucun refus)",
+             (await porte("gaelle.neuve@exemple.ch", "+41791000011")) is None)
+    await porte("hector@exemple.ch", "")
+    verifier("CONF H. téléphone absent -> 400 « numéro requis » (saisie), sans rien révéler",
+             PUBLIC["hector@exemple.ch"] == (400, S.ESSAI8_MESSAGE_TELEPHONE, S.ESSAI8_RAISON_TELEPHONE)
+             and "client" not in S.ESSAI8_MESSAGE_TELEPHONE.lower())
+    await porte("dora@exemple.ch", "")   # cliente connue SANS téléphone : même 400 qu'un inconnu
+    verifier("CONF H2. sans téléphone, une personne CONNUE reçoit le même 400 qu'un inconnu",
+             PUBLIC["dora@exemple.ch"] == PUBLIC["hector@exemple.ch"])
+
     verifier("M. normalisation téléphone : formats suisses équivalents",
              S.essai6_normaliser_tel("079 100 00 06") == S.essai6_normaliser_tel("+41791000006"))
 
@@ -354,7 +409,7 @@ def executer():
                 exec(compile(ast.get_source_segment(_SRC_CK, _n), "<ck>", "exec"), esp)
         for fn in ("_essai1_motif_refus", "_essai1_essai_deja_accorde", "_essai1_cles",
                    "_essai1_reclamer", "_essai1_liberer_cle", "_essai1_liberer",
-                   "_essai1_liberer_perimes", "_essai1_garde",
+                   "_essai8_aucun_essai_utilisable_strict", "_essai1_liberer_perimes", "_essai1_garde",
                    "_essai4_abonnement_actif", "_essai4_garde", "_essai_porte_garde"):
             exec(compile(_extraire_ck(fn), "<ck>", "exec"), esp)
         asyncio.run(principal(brute, db, esp))

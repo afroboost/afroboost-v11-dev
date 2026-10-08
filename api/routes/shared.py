@@ -1911,6 +1911,17 @@ ESSAI8_RAISON_DEJA_CLIENT = "already_customer"
 ESSAI8_MESSAGE_DEJA_CLIENT = ("Le premier cours offert est réservé aux personnes qui découvrent "
                               "Afroboost : vous êtes déjà client·e. Réservez votre prochaine séance "
                               "depuis votre espace, ou utilisez « Retrouver mes accès » dans le chat.")
+# CONFIDENTIALITÉ (revue de sécurité V591, décision du propriétaire 08/10) : un refus
+# d'ÉLIGIBILITÉ ne dit JAMAIS publiquement pourquoi. Essai déjà utilisé, essai détenu,
+# abonné actif, ancien client — e-mail ou téléphone connus : la porte publique répond
+# la MÊME chose (même statut, même texte, même code), sinon elle sert d'annuaire des
+# clients. La raison précise reste interne (journal serveur + `raison_interne`).
+ESSAI8_RAISONS_ELIGIBILITE = ("free_trial_already_used", "free_trial_already_granted",
+                              "active_subscription", "already_customer")
+ESSAI8_RAISON_PUBLIQUE = "not_eligible"
+ESSAI8_MESSAGE_NEUTRE = ("Ce premier cours offert n’est pas disponible avec ces coordonnées. "
+                         "Si vous avez déjà un compte Afroboost, réservez depuis votre espace "
+                         "ou utilisez « Retrouver mes accès ».")
 ESSAI8_RAISON_TELEPHONE = "phone_required"
 ESSAI8_MESSAGE_TELEPHONE = ("Un numéro de téléphone (WhatsApp) valide est nécessaire pour recevoir "
                             "votre premier cours offert.")

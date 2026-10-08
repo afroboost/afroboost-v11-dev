@@ -846,7 +846,8 @@ async def principal():
     base["reservations"].docs.append({"id": "resa-ancienne", "promoCode": "AFR-ANCIEN", "validated": True,
                                       "userEmail": AMI_EMAIL, "validatedAt": "2026-08-01T18:30:00"})
     code, rep = await appel(R.referral_join(dto["share_token"], Requete(corps_ami())))
-    verifier("5. Second essai : 409 free_trial_already_used", code == 409 and rep["headers"].get("X-Refus-Raison") == "free_trial_already_used", str((code, rep)))
+    # V591 — CONFIDENTIALITÉ : la raison précise n'est plus publique ; le refus l'est.
+    verifier("5. Second essai : 409 neutre (not_eligible)", code == 409 and rep["headers"].get("X-Refus-Raison") == "not_eligible", str((code, rep)))
     verifier("5b. Mouchard : `_essai1_garde` appelée, `_process_successful_payment` JAMAIS",
              MOUCHARDS["ordre"] == ["_essai1_garde"], str(MOUCHARDS["ordre"]))
     verifier("5c. Le pass est rouvert (invitee None), aucune réservation, aucun forfait créé",
@@ -867,7 +868,7 @@ async def principal():
              str(ordre_ast))
     # Même numéro, autre adresse : ESSAI-6 ferme aussi sur le téléphone.
     code, rep = await appel(R.referral_join(dto["share_token"], Requete(corps_ami(email="nouvelle@exemple.test"))))
-    verifier("5e. Même téléphone sous une autre adresse : 409 aussi (ESSAI-6)", code == 409 and "free_trial" in rep["headers"].get("X-Refus-Raison", ""), str((code, rep)))
+    verifier("5e. Même téléphone sous une autre adresse : 409 neutre aussi (ESSAI-6, V591)", code == 409 and rep["headers"].get("X-Refus-Raison") == "not_eligible", str((code, rep)))
     # Un ABONNÉ ACTIF (forfait payant) ne peut pas être filleul : ESSAI-4, avant ESSAI-1.
     base, occ = base_de_depart()
     _, dto = await creer_pass(base, occ)
@@ -876,8 +877,8 @@ async def principal():
                                        "status": "active", "remaining_sessions": 5, "used_sessions": 0,
                                        "total_sessions": 5, "expires_at": dans_3_mois, "coach_id": ""})
     code, rep = await appel(R.referral_join(dto["share_token"], Requete(corps_ami(email="client@exemple.test", tel="+41 76 100 20 30"))))
-    verifier("5f. Abonné actif : 409 abonne_actif, AUCUN verrou d'essai posé (ESSAI-4 lit, ESSAI-1 n'a pas écrit)",
-             code == 409 and rep["headers"].get("X-Refus-Raison") == "abonne_actif" and not base["free_trial_claims"].docs
+    verifier("5f. Abonné actif : 409 NEUTRE (V591, ne révèle pas l'abonnement), AUCUN verrou d'essai posé (ESSAI-4 lit, ESSAI-1 n'a pas écrit)",
+             code == 409 and rep["headers"].get("X-Refus-Raison") == "not_eligible" and not base["free_trial_claims"].docs
              and MOUCHARDS["ordre"] == [], str((code, rep, MOUCHARDS["ordre"])))
 
     # ── 4. même ami une deuxième fois sur la même occurrence (autre parrain) ─
