@@ -27,8 +27,11 @@
  *   partenaire par un autre chemin (Akoko Tresses, encore « à contacter ») compte en
  *   « accepté » sans être comptée « contactée » ni « intéressée ».
  *   rendez-vous = au moins un rendez-vous réel (non annulé) dans le calendrier ;
- *   accepté  = fiche rattachée à un partenaire (`partner_id`) ;
+ *   accepté  = statut « accepte » de la fiche (V595d) — JAMAIS `partner_id` seul : un
+ *              partenaire créé pour préparer un lien / QR (niveau « Découverte ») n'est
+ *              pas un accord commercial. Ce statut n'existe pas encore : 0 aujourd'hui ;
  *   refusé   = statut « refusé » ;
+ *   RÉPONSE inclut tous ceux qui ont répondu, même refusés ensuite (une fois chacun) ;
  *   sans réponse = contacté sans réponse.
  */
 
@@ -118,13 +121,14 @@ export function canalDe(p) {
   return meilleur ? meilleur.id : 'autre';
 }
 
-const STATUTS_REPONSE = ['repondu', 'interesse', 'refuse'];
+// Toute fiche passée par une réponse, quel que soit son statut final.
+const STATUTS_REPONSE = ['repondu', 'interesse', 'refuse', 'accepte'];
 
 export function dateContact(p) { return (p && (p.first_contact_sent_at || p.first_contact_at || p.last_contact_at)) || null; }
 
 export function etapes(p, rdvParFiche) {
   const s = txt((p || {}).status);
-  const accepte = !!txt((p || {}).partner_id);
+  const accepte = s === 'accepte';
   const contacte = (s && s !== 'a_contacter') || !!dateContact(p);
   const reponse = STATUTS_REPONSE.includes(s) || !!(p && p.replied_at);
   const interesse = s === 'interesse';

@@ -26726,16 +26726,22 @@ async def p3s1_lister_prospects(request: Request):
         logger.warning("%s compteurs illisibles (%s)", P3S1_PREFIXE, type(_cerr).__name__)
 
     # CANDIDATURE ET ACCEPTE NE SONT PAS RECOPIES DE P2.
-    # Ils comptent les prospects qui PORTENT un lien vers une candidature ou un
-    # partenaire. Compter `db.partners` ici afficherait des partenaires qui ne
+    # « candidature » compte les prospects qui PORTENT un lien vers une
+    # candidature ; « accepte » suit le statut (V595d, ci-dessous). Compter `db.partners` ici afficherait des partenaires qui ne
     # viennent pas de la prospection — un compteur juste au premier coup d'oeil
     # et faux des le premier partenaire arrive par un autre chemin. Le
     # rattachement est le travail de P3-S3 : ces deux nombres valent donc 0
     # aujourd'hui, et c'est la verite.
     compteurs["candidature"] = await db[P3S1_COLLECTION].count_documents(
         dict(portee, partner_application_id={"$nin": [None, ""]}))
+    # V595d — « ACCEPTÉ » = UNE COLLABORATION COMMERCIALEMENT CONFIRMÉE, lue sur le
+    # STATUT de la fiche, jamais sur `partner_id`. Un partenaire peut être créé
+    # techniquement (lien, QR, niveau « Découverte ») avant tout contact : c'est le
+    # cas d'Akoko Tresses (COM-01, « à contacter »), qui faisait afficher
+    # « Acceptés 1 » sans le moindre accord. Aucun statut « accepte » n'existe encore
+    # dans P3S1_STATUTS : le compteur vaut donc 0, et c'est la vérité.
     compteurs["accepte"] = await db[P3S1_COLLECTION].count_documents(
-        dict(portee, partner_id={"$nin": [None, ""]}))
+        dict(portee, status="accepte"))
     compteurs["total"] = await db[P3S1_COLLECTION].count_documents(portee)
 
     return {"total": await db[P3S1_COLLECTION].count_documents(filtre),

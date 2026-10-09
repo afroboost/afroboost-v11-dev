@@ -51,8 +51,16 @@ describe('entonnoir', () => {
   ];
   test('compteurs du « Tout »', () => {
     const c = compter(fiches);
-    // la fiche 5 est rattachée à un partenaire mais jamais contactée : étapes STRICTES
-    expect(c).toMatchObject({ total: 5, a_contacter: 2, contacte: 3, reponse: 2, interesse: 0, rdv: 0, accepte: 1, refuse: 1, sans_reponse: 1 });
+    // la fiche 5 porte un partner_id technique (cas Akoko) : NI contactée NI acceptée.
+    // la fiche 4 est refusée : elle reste une RÉPONSE (refus = réponse).
+    expect(c).toMatchObject({ total: 5, a_contacter: 2, contacte: 3, reponse: 2, interesse: 0, rdv: 0, accepte: 0, refuse: 1, sans_reponse: 1 });
+  });
+  test('cas réel 09/10 : SalsaRica refusé reste une réponse, Akoko jamais accepté', () => {
+    const akoko = f({ id: 'COM-01', status: 'a_contacter', partner_id: 'ad881bb5' });
+    const salsa = f({ id: 'ZRH-D5', status: 'refuse', first_contact_sent_at: '2026-09-03T10:57:52+00:00', replied_at: '2026-09-03T11:37:15Z' });
+    expect(etapes(akoko)).toMatchObject({ a_contacter: true, contacte: false, accepte: false });
+    expect(etapes(salsa)).toMatchObject({ contacte: true, reponse: true, refuse: true, sans_reponse: false });
+    expect(etapes(f({ status: 'accepte', first_contact_sent_at: '2026-09-03T10:00:00Z' }))).toMatchObject({ accepte: true, reponse: true });
   });
   test('rendez-vous : seulement les vrais, non annulés', () => {
     const rdv = rdvParFicheDe([
