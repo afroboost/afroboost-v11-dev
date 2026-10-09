@@ -18,6 +18,9 @@ describe('déductions (champs absents en base)', () => {
     expect(paysDe(f({ city: 'Paris (France)' }))).toBe('France');
     expect(paysDe(f({ city: 'Neuchâtel' }))).toBe('Suisse');
     expect(paysDe(f({ city: 'Lyon', wave: 'GV 10-2026 — D Écoles de danse France' }))).toBe('France');
+    expect(paysDe(f({ city: 'Paris', wave: 'FESTIVALS 2027' }))).toBe('France');
+    expect(paysDe(f({ city: 'Besançon', wave: 'FESTIVALS 2027' }))).toBe('France');
+    expect(paysDe(f({ city: 'Bulle (FR)' }))).toBe('Suisse');   // (FR) = Fribourg
   });
   test('ville principale', () => {
     expect(villeDe(f({ city: 'Lyon (France) — Meyzieu / Bron' }))).toBe('Lyon');
@@ -48,7 +51,8 @@ describe('entonnoir', () => {
   ];
   test('compteurs du « Tout »', () => {
     const c = compter(fiches);
-    expect(c).toMatchObject({ total: 5, a_contacter: 1, contacte: 4, reponse: 2, interesse: 1, rdv: 0, accepte: 1, refuse: 1, sans_reponse: 2 });
+    // la fiche 5 est rattachée à un partenaire mais jamais contactée : étapes STRICTES
+    expect(c).toMatchObject({ total: 5, a_contacter: 2, contacte: 3, reponse: 2, interesse: 0, rdv: 0, accepte: 1, refuse: 1, sans_reponse: 1 });
   });
   test('rendez-vous : seulement les vrais, non annulés', () => {
     const rdv = rdvParFicheDe([
@@ -72,7 +76,7 @@ describe('entonnoir', () => {
   });
   test('taux : « — » (null) sans dénominateur, jamais un faux 0 %', () => {
     expect(tauxDe(compter([]))).toEqual({ reponse: null, interet: null, rdv: null, conversion: null });
-    expect(tauxDe(compter(fiches)).reponse).toBe(50);
+    expect(tauxDe(compter(fiches)).reponse).toBe(66.7);
   });
   test('grouper + campagne', () => {
     const g = grouper(fiches.map((x, i) => ({ ...x, city: i < 3 ? 'Neuchâtel' : 'Paris (France)' })), paysDe);

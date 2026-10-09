@@ -12,15 +12,20 @@
  *     catégorie (écoles → D, festivals/organisateurs → C, étudiants/associations → B,
  *     commerces/bars/restaurants/fitness/influenceurs → A). E et F n'existent QUE par
  *     leur vague : aucune catégorie ne permet de dire « entreprise » ou « santé ».
- *   - PAYS : « France » si la ville ou la vague le dit, sinon Suisse (toutes les autres
- *     fiches sont suisses — vérifié sur les 398 au 09/10/2026).
+ *   - PAYS : « France » si la ville ou la vague le dit, OU si la ville principale est une
+ *     ville française connue (6 festivals 2027 sont notés « Paris », « Besançon »… sans
+ *     « (France) »). Sinon Suisse — liste vérifiée sur les 398 fiches le 09/10/2026.
+ *     ⚠️ « (FR) » veut dire canton de Fribourg, jamais France.
  *   - CANAL : `preferred_channel` est du texte libre (« Visite / DM », « E-mail (…) / WhatsApp ») ;
  *     on retient le PREMIER canal cité, celui par lequel on commence.
  *
  * LES ÉTAPES DE L'ENTONNOIR sont lues sur la fiche :
  *   contacté = statut ≠ « à contacter » ou premier envoi daté ;
  *   réponse  = statut répondu / intéressé / refusé, ou `replied_at` ;
- *   intéressé = statut « intéressé » ou fiche devenue partenaire ;
+ *   intéressé = statut « intéressé » ;
+ *   CHAQUE ÉTAPE EST STRICTE, rien n'est déduit d'une autre : une fiche rattachée à un
+ *   partenaire par un autre chemin (Akoko Tresses, encore « à contacter ») compte en
+ *   « accepté » sans être comptée « contactée » ni « intéressée ».
  *   rendez-vous = au moins un rendez-vous réel (non annulé) dans le calendrier ;
  *   accepté  = fiche rattachée à un partenaire (`partner_id`) ;
  *   refusé   = statut « refusé » ;
@@ -70,8 +75,15 @@ export function nicheDe(p) {
   return CATEGORIE_NICHE[txt((p || {}).category)] || null;
 }
 
+const VILLES_FRANCE = new Set([
+  'paris', 'ivry-sur-seine', 'lyon', 'strasbourg', 'mulhouse', 'colmar', 'illzach', 'sausheim', 'wattwiller',
+  'belfort', 'besançon', 'montbéliard', 'audincourt', 'exincourt', 'bart', 'pontarlier', 'morteau', 'dijon',
+  'annecy', 'annemasse', 'thonon-les-bains', 'évian-les-bains', 'saint-louis', 'huningue',
+]);
+
 export function paysDe(p) {
-  return /france/i.test(`${txt((p || {}).city)} ${txt((p || {}).wave)}`) ? 'France' : 'Suisse';
+  if (/france/i.test(`${txt((p || {}).city)} ${txt((p || {}).wave)}`)) return 'France';
+  return VILLES_FRANCE.has(villeDe(p).toLowerCase()) ? 'France' : 'Suisse';
 }
 
 /** « Lyon (France) — Meyzieu / Bron » → « Lyon » ; « Carouge (GE) & Nyon » → « Carouge ». */
@@ -113,9 +125,9 @@ export function dateContact(p) { return (p && (p.first_contact_sent_at || p.firs
 export function etapes(p, rdvParFiche) {
   const s = txt((p || {}).status);
   const accepte = !!txt((p || {}).partner_id);
-  const contacte = (s && s !== 'a_contacter') || !!dateContact(p) || accepte;
+  const contacte = (s && s !== 'a_contacter') || !!dateContact(p);
   const reponse = STATUTS_REPONSE.includes(s) || !!(p && p.replied_at);
-  const interesse = s === 'interesse' || accepte;
+  const interesse = s === 'interesse';
   const rdv = !!(rdvParFiche && p && (rdvParFiche[p.id] || rdvParFiche[p.ref]));
   return {
     a_contacter: !contacte, contacte, reponse, interesse, rdv, accepte,
