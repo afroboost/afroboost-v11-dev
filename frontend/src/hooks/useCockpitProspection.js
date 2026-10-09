@@ -21,25 +21,37 @@
  */
 import { useCallback, useState } from 'react';
 
+/* V595 — les écrans À PART de ProspectsSection. « Messages & relances » (V588) n'est
+   plus seul : Vue d'ensemble, Médias, Liens et Résultats suivent la même règle —
+   `vuePilote` n'est pas touchée, et un écran ouvert une fois reste monté. */
+export const ECRANS_A_PART = ['apercu', 'messages', 'medias', 'liens', 'resultats'];
+
 export default function useCockpitProspection() {
   const [vuePilote, setVuePilote] = useState('');
   const [vueActive, setVueActive] = useState('');
   const [nbConversations, setNbConversations] = useState(null);
   const [total, setTotal] = useState(null);
-  const [messagesOuvert, setMessagesOuvert] = useState(false);
-  const [messagesMonte, setMessagesMonte] = useState(false);
+  const [ecran, setEcran] = useState('');
+  const [montes, setMontes] = useState({});
 
   const choisir = useCallback((vue) => {
-    if (vue === 'messages') { setMessagesOuvert(true); setMessagesMonte(true); return; }
-    if (vue) { setMessagesOuvert(false); setVuePilote(vue); }
+    if (ECRANS_A_PART.includes(vue)) {
+      setEcran(vue);
+      setMontes((prev) => (prev[vue] ? prev : { ...prev, [vue]: true }));
+      return;
+    }
+    if (vue) { setEcran(''); setVuePilote(vue); }
   }, []);
   /* Une demande de l'écran (notification ciblée) ramène TOUJOURS sur sa vue. */
-  const demander = useCallback((vue) => { if (vue) { setMessagesOuvert(false); setVuePilote(vue); } }, []);
+  const demander = useCallback((vue) => { if (vue) { setEcran(''); setVuePilote(vue); } }, []);
   const surEtat = useCallback((vue, nbConv, tot) => {
     setVueActive(vue || '');
     setNbConversations(typeof nbConv === 'number' ? nbConv : null);
     setTotal(typeof tot === 'number' ? tot : null);
   }, []);
 
-  return { vuePilote, vueActive, nbConversations, total, messagesOuvert, messagesMonte, choisir, demander, surEtat };
+  const messagesOuvert = ecran === 'messages';
+  const messagesMonte = !!montes.messages;
+  return { vuePilote, vueActive, nbConversations, total, ecran, montes, messagesOuvert, messagesMonte,
+           choisir, demander, surEtat };
 }

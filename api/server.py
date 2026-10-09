@@ -51681,6 +51681,389 @@ async def v199_generate_invoice(request: Request):
     )
 
 
+# ============================================================================
+# V595 — PROSPECTION : MÉDIAS ET LIENS (bibliothèque, sans AUCUN envoi)
+# ============================================================================
+# Deux collections NEUVES, et rien d'autre ne les lit. Ni le moteur P3-S3, ni
+# les relances P3-R2, ni une campagne : une vidéo « validée » ou un lien
+# « actif » ne part chez personne tant qu'un lot dédié, approuvé par Bassi, ne
+# l'aura pas branché. C'est voulu : ce lot range, il n'envoie pas.
+#
+# AUCUNE ROUTE DE SUPPRESSION. Remplacer une vidéo ARCHIVE l'ancienne (elle
+# reste lisible, avec un pointeur vers sa remplaçante) ; un lien qu'on ne veut
+# plus passe en « archivé ». Rien ne disparaît.
+#
+# PAS DE TÉLÉVERSEMENT ICI. Une vidéo est enregistrée par son LIEN PUBLIC
+# (YouTube non répertorié recommandé). Réutiliser `upload-asset` imposerait de
+# référencer le fichier contre la purge V425 des orphelins — lot séparé.
+V595_MEDIAS = "prospection_medias"
+V595_LIENS = "prospection_liens"
+V595_PREFIXE = "[V595]"
+V595_LISTE_MAX = 50
+
+# Les six niches de la prospection. LISTE FERMÉE (même règle que P3-S1).
+V595_NICHES = ("A", "B", "C", "D", "E", "F")
+V595_FORMATS = ("16_9", "9_16", "miniature")
+V595_STATUTS_MEDIA = ("en_cours", "a_verifier", "validee", "archivee")
+V595_CATEGORIES_LIEN = ("videos", "site", "reservation", "formulaires", "reseaux", "dossiers", "autres")
+V595_STATUTS_LIEN = ("actif", "a_verifier", "bloque", "archive")
+
+# LIENS D'ESSAI GRATUIT / QR : BLOQUÉS PAR LE SERVEUR, PAS PAR L'ÉCRAN.
+# La page d'essai partenaire et l'invitation d'essai parlent encore du casque
+# alors que les cours en studio se font sans. Tant qu'elles ne sont pas
+# corrigées, un lien qui y mène est forcé « bloqué » à l'enregistrement, et
+# toute tentative de le repasser « actif » ou « à vérifier » est refusée (409).
+# Le lever demandera une modification de CETTE liste — donc une décision.
+V595_MOTIFS_BLOQUES = (
+    ("cours-essai-gratuit", "Page d'essai gratuit : parle encore du casque"),
+    ("/api/share/invite/", "Invitation d'essai / QR : parle encore du casque"),
+    ("link=b83914b4", "Lien intelligent d'essai : parle encore du casque"),
+)
+
+
+def v595_maintenant() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def v595_url(valeur) -> str:
+    """L'URL telle qu'elle sera stockée. 400 si ce n'est pas un lien web. PURE."""
+    texte = (str(valeur).strip() if valeur is not None else "")
+    if not texte:
+        raise HTTPException(status_code=400, detail="Le lien est obligatoire")
+    if len(texte) > 500 or any(c.isspace() for c in texte):
+        raise HTTPException(status_code=400, detail="Lien invalide (500 caractères maximum, sans espace)")
+    morceaux = urllib.parse.urlsplit(texte)
+    if morceaux.scheme not in ("http", "https") or not morceaux.hostname:
+        raise HTTPException(status_code=400, detail="Le lien doit commencer par https://")
+    return texte
+
+
+def v595_motif_blocage(url: str) -> str:
+    """Le motif qui verrouille ce lien en « bloqué », ou ''. PURE."""
+    bas = (url or "").lower()
+    for morceau, motif in V595_MOTIFS_BLOQUES:
+        if morceau in bas:
+            return motif
+    return ""
+
+
+def v595_choix(valeur, permis, nom, defaut=None) -> str:
+    texte = (str(valeur).strip().lower() if valeur is not None else "")
+    if not texte:
+        if defaut is not None:
+            return defaut
+        raise HTTPException(status_code=400, detail="%s obligatoire" % nom)
+    if texte not in permis:
+        raise HTTPException(status_code=400, detail="%s inconnu(e). Valeurs acceptées : %s" % (nom, ", ".join(permis)))
+    return texte
+
+
+def v595_niche(valeur, toutes_permis=False) -> str:
+    texte = (str(valeur).strip().upper() if valeur is not None else "")
+    if toutes_permis and (not texte or texte == "TOUTES"):
+        return "toutes"
+    if texte not in V595_NICHES:
+        raise HTTPException(status_code=400, detail="Niche inconnue. Valeurs acceptées : A, B, C, D, E, F")
+    return texte
+
+
+def v595_pagination(request: Request):
+    p = request.query_params
+    try:
+        limite = min(max(int(p.get("limit") or V595_LISTE_MAX), 1), V595_LISTE_MAX)
+    except (TypeError, ValueError):
+        limite = V595_LISTE_MAX
+    try:
+        depart = max(int(p.get("offset") or 0), 0)
+    except (TypeError, ValueError):
+        depart = 0
+    return limite, depart
+
+
+# ------------------------------- MÉDIAS ------------------------------------
+
+@api_router.get("/prospection-medias")
+async def v595_lister_medias(request: Request):
+    """Les vidéos de prospection du coach. LECTURE PURE.
+
+    `defaut_par_niche` PRÉPARE la relation prospect → niche → vidéo validée,
+    sans rien en faire : c'est une information affichée. Aucune vidéo n'étant
+    validée aujourd'hui, toutes les niches y valent null.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+    limite, depart = v595_pagination(request)
+    filtre = {"coach_id": appelant}
+    documents = await db[V595_MEDIAS].find(filtre, {"_id": 0}) \
+        .sort([("created_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
+    defaut = {n: None for n in V595_NICHES}
+    async for d in db[V595_MEDIAS].find(
+            dict(filtre, statut="validee", format="16_9"), {"_id": 0, "id": 1, "niche": 1}) \
+            .sort([("updated_at", -1), ("id", 1)]).limit(len(V595_NICHES) * 4):
+        if d.get("niche") in defaut and defaut[d["niche"]] is None:
+            defaut[d["niche"]] = d.get("id")
+    return {"total": await db[V595_MEDIAS].count_documents(filtre),
+            "limit": limite, "offset": depart, "medias": documents,
+            "defaut_par_niche": defaut}
+
+
+@api_router.post("/prospection-medias")
+async def v595_ajouter_media(request: Request):
+    """AJOUTER / REMPLACER une vidéo d'une niche.
+
+    LA NOUVELLE ENTRE TOUJOURS « EN COURS » — le statut du corps est ignoré :
+    aucune vidéo n'est validée par un enregistrement. L'ancienne du même
+    emplacement (niche + format) passe « archivée », jamais supprimée.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    niche = v595_niche(corps.get("niche"))
+    fmt = v595_choix(corps.get("format"), V595_FORMATS, "Format")
+    url = v595_url(corps.get("url"))
+    instant = v595_maintenant()
+    doc = {
+        "id": str(uuid.uuid4()), "coach_id": appelant, "niche": niche, "format": fmt,
+        "url": url, "statut": "en_cours",
+        "version": p3s1_texte(corps.get("version"), 40),
+        "notes": p3s1_texte(corps.get("notes"), 1000),
+        "created_at": instant, "updated_at": instant,
+        "archived_at": None, "remplace_par": None, "remplace": None,
+    }
+    anciens = await db[V595_MEDIAS].find(
+        {"coach_id": appelant, "niche": niche, "format": fmt, "statut": {"$ne": "archivee"}},
+        {"_id": 0, "id": 1}).to_list(V595_LISTE_MAX)
+    doc["remplace"] = [a["id"] for a in anciens] or None
+    await db[V595_MEDIAS].insert_one(dict(doc))
+    if anciens:
+        await db[V595_MEDIAS].update_many(
+            {"coach_id": appelant, "id": {"$in": [a["id"] for a in anciens]}},
+            {"$set": {"statut": "archivee", "archived_at": instant,
+                      "remplace_par": doc["id"], "updated_at": instant}})
+    logger.info("%s média ajouté niche=%s format=%s (archivés : %d)", V595_PREFIXE, niche, fmt, len(anciens))
+    return {"media": doc, "archives": len(anciens)}
+
+
+@api_router.patch("/prospection-medias/{media_id}")
+async def v595_modifier_media(media_id: str, request: Request):
+    """Statut, version, notes. Décision HUMAINE, une vidéo à la fois.
+
+    Ressortir une vidéo des archives est refusé si une autre occupe déjà son
+    emplacement : deux vidéos « actives » pour la même niche et le même format
+    rendraient le choix par défaut ambigu.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+    identifiant = (media_id or "").strip()[:64]
+    media = await db[V595_MEDIAS].find_one({"coach_id": appelant, "id": identifiant}, {"_id": 0})
+    if not media:
+        raise HTTPException(status_code=404, detail="Média introuvable")
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    champs = {}
+    if "statut" in corps:
+        statut = v595_choix(corps.get("statut"), V595_STATUTS_MEDIA, "Statut")
+        if media.get("statut") == "archivee" and statut != "archivee":
+            occupe = await db[V595_MEDIAS].count_documents(
+                {"coach_id": appelant, "niche": media.get("niche"), "format": media.get("format"),
+                 "statut": {"$ne": "archivee"}, "id": {"$ne": identifiant}})
+            if occupe:
+                raise HTTPException(status_code=409, detail="Une autre vidéo occupe déjà cette niche et ce format")
+        champs["statut"] = statut
+        if statut == "archivee" and media.get("statut") != "archivee":
+            champs["archived_at"] = v595_maintenant()
+    if "version" in corps:
+        champs["version"] = p3s1_texte(corps.get("version"), 40)
+    if "notes" in corps:
+        champs["notes"] = p3s1_texte(corps.get("notes"), 1000)
+    if not champs:
+        return {"media": media, "modifie": False}
+    champs["updated_at"] = v595_maintenant()
+    await db[V595_MEDIAS].update_one({"coach_id": appelant, "id": identifiant}, {"$set": champs})
+    media.update(champs)
+    return {"media": media, "modifie": True}
+
+
+# -------------------------------- LIENS ------------------------------------
+
+def v595_lien_valide(corps: dict, creation: bool) -> dict:
+    """Le lien tel qu'il sera écrit. Le verrou « essai / casque » s'applique ici. PURE."""
+    champs = {}
+    if creation or "nom" in corps:
+        nom = p3s1_texte(corps.get("nom"), 120)
+        if not nom:
+            raise HTTPException(status_code=400, detail="Le nom du lien est obligatoire")
+        champs["nom"] = nom
+    if creation or "url" in corps:
+        champs["url"] = v595_url(corps.get("url"))
+    if creation or "categorie" in corps:
+        champs["categorie"] = v595_choix(corps.get("categorie"), V595_CATEGORIES_LIEN, "Catégorie", "autres")
+    if creation or "niche" in corps:
+        champs["niche"] = v595_niche(corps.get("niche"), toutes_permis=True)
+    if creation or "utilisation" in corps:
+        champs["utilisation"] = p3s1_texte(corps.get("utilisation"), 300)
+    if creation or "statut" in corps:
+        champs["statut"] = v595_choix(corps.get("statut"), V595_STATUTS_LIEN, "Statut", "a_verifier")
+    return champs
+
+
+def v595_appliquer_verrou(champs: dict, url: str, statut_demande_explicite: bool) -> dict:
+    """Force « bloqué » sur un lien d'essai. 409 si on demande explicitement autre chose. PURE."""
+    motif = v595_motif_blocage(url)
+    champs["verrou"] = motif or None
+    if motif:
+        if statut_demande_explicite and champs.get("statut") not in ("bloque", None):
+            raise HTTPException(status_code=409, detail="Lien verrouillé « bloqué » : " + motif)
+        champs["statut"] = "bloque"
+    return champs
+
+
+@api_router.get("/prospection-liens")
+async def v595_lister_liens(request: Request):
+    appelant = await _v309_require_coach_or_admin(request)
+    limite, depart = v595_pagination(request)
+    filtre = {"coach_id": appelant}
+    documents = await db[V595_LIENS].find(filtre, {"_id": 0}) \
+        .sort([("created_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
+    return {"total": await db[V595_LIENS].count_documents(filtre),
+            "limit": limite, "offset": depart, "liens": documents}
+
+
+@api_router.post("/prospection-liens")
+async def v595_ajouter_lien(request: Request):
+    appelant = await _v309_require_coach_or_admin(request)
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    champs = v595_lien_valide(corps, creation=True)
+    # À la création, un lien d'essai est forcé « bloqué » en silence : le coach
+    # l'enregistre pour le retrouver, le serveur l'empêche d'être utilisé.
+    v595_appliquer_verrou(champs, champs["url"], statut_demande_explicite=False)
+    instant = v595_maintenant()
+    doc = dict(champs, id=str(uuid.uuid4()), coach_id=appelant,
+               created_at=instant, updated_at=instant, verifie_le=None, dernier_test=None)
+    await db[V595_LIENS].insert_one(dict(doc))
+    return {"lien": doc}
+
+
+@api_router.patch("/prospection-liens/{lien_id}")
+async def v595_modifier_lien(lien_id: str, request: Request):
+    appelant = await _v309_require_coach_or_admin(request)
+    identifiant = (lien_id or "").strip()[:64]
+    lien = await db[V595_LIENS].find_one({"coach_id": appelant, "id": identifiant}, {"_id": 0})
+    if not lien:
+        raise HTTPException(status_code=404, detail="Lien introuvable")
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    champs = v595_lien_valide(corps, creation=False)
+    url = champs.get("url") or lien.get("url") or ""
+    if "statut" not in champs:
+        champs["statut"] = lien.get("statut")
+        explicite = False
+    else:
+        explicite = True
+    v595_appliquer_verrou(champs, url, statut_demande_explicite=explicite)
+    champs["updated_at"] = v595_maintenant()
+    await db[V595_LIENS].update_one({"coach_id": appelant, "id": identifiant}, {"$set": champs})
+    lien.update(champs)
+    return {"lien": lien}
+
+
+# TESTER LE LIEN — une requête vers la destination, rien d'autre. La garde
+# anti-SSRF est obligatoire : sans elle, ce bouton permettrait d'interroger le
+# réseau interne du serveur. Chaque saut de redirection est revérifié.
+V595_TEST_DELAI_S = 8.0
+V595_TEST_SAUTS = 4
+V595_TEST_PAR_MINUTE = 20
+_v595_tests_recents = {}
+
+
+def v595_adresse_publique(hote: str) -> bool:
+    """Vrai si TOUTES les adresses de l'hôte sont publiques. Bloquant (DNS)."""
+    import ipaddress as _ip
+    import socket as _so
+    try:
+        infos = _so.getaddrinfo(hote, None)
+    except Exception:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        try:
+            adresse = _ip.ip_address(info[4][0].split("%")[0])
+        except ValueError:
+            return False
+        if not adresse.is_global or adresse.is_multicast:
+            return False
+    return True
+
+
+async def v595_sonder(url: str) -> dict:
+    """{ok, http, motif, url_finale}. Ne lève jamais."""
+    import httpx
+    courante = url
+    try:
+        async with httpx.AsyncClient(timeout=V595_TEST_DELAI_S, follow_redirects=False,
+                                     headers={"User-Agent": "Mozilla/5.0 (Afroboost verification de lien)"}) as client:
+            for _saut in range(V595_TEST_SAUTS + 1):
+                morceaux = urllib.parse.urlsplit(courante)
+                if morceaux.scheme not in ("http", "https") or not morceaux.hostname:
+                    return {"ok": False, "http": None, "motif": "Adresse invalide", "url_finale": courante}
+                if not await asyncio.to_thread(v595_adresse_publique, morceaux.hostname):
+                    return {"ok": False, "http": None, "motif": "Destination non publique ou introuvable", "url_finale": courante}
+                reponse = await client.head(courante)
+                if reponse.status_code in (403, 405, 501):
+                    reponse = await client.get(courante)
+                if reponse.status_code in (301, 302, 303, 307, 308) and reponse.headers.get("location"):
+                    courante = urllib.parse.urljoin(courante, reponse.headers["location"])
+                    continue
+                ok = 200 <= reponse.status_code < 400
+                return {"ok": ok, "http": reponse.status_code,
+                        "motif": "La page répond" if ok else "La page répond avec une erreur",
+                        "url_finale": courante}
+            return {"ok": False, "http": None, "motif": "Trop de redirections", "url_finale": courante}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "http": None, "motif": "Pas de réponse (%s)" % type(e).__name__, "url_finale": courante}
+
+
+@api_router.post("/prospection-liens/{lien_id}/tester")
+async def v595_tester_lien(lien_id: str, request: Request):
+    """Vérifie que la destination répond. NE CHANGE PAS le statut du lien :
+    seule la date et le résultat du dernier test sont enregistrés."""
+    appelant = await _v309_require_coach_or_admin(request)
+    identifiant = (lien_id or "").strip()[:64]
+    lien = await db[V595_LIENS].find_one({"coach_id": appelant, "id": identifiant}, {"_id": 0})
+    if not lien:
+        raise HTTPException(status_code=404, detail="Lien introuvable")
+    import time as _t
+    maintenant_s = _t.time()
+    recents = [x for x in _v595_tests_recents.get(appelant, []) if maintenant_s - x < 60]
+    if len(recents) >= V595_TEST_PAR_MINUTE:
+        raise HTTPException(status_code=429, detail="Trop de tests en une minute, réessayez plus tard")
+    recents.append(maintenant_s)
+    _v595_tests_recents[appelant] = recents
+    resultat = await v595_sonder(lien.get("url") or "")
+    resultat["a"] = v595_maintenant()
+    await db[V595_LIENS].update_one(
+        {"coach_id": appelant, "id": identifiant},
+        {"$set": {"verifie_le": resultat["a"], "dernier_test": resultat}})
+    lien.update({"verifie_le": resultat["a"], "dernier_test": resultat})
+    return {"lien": lien, "test": resultat}
+
+
 # Include router
 fastapi_app.include_router(api_router)
 

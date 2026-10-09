@@ -49,8 +49,12 @@ import SvgIcon from "./SvgIcon";
 // P3-S2 : l'ecran Prospection. Il lit `partner_prospects` et cette collection
 // SEULE — jamais les contacts, les abonnes ni les reservations.
 import ProspectsSection from "./coach/ProspectsSection";
-import useCockpitProspection from "../hooks/useCockpitProspection"; // V587c
+import useCockpitProspection, { ECRANS_A_PART as P3_ECRANS_A_PART } from "../hooks/useCockpitProspection"; // V587c + V595
 import MessagesRelancesSection from "./coach/MessagesRelancesSection"; // V588
+import ProspectionApercu from "./coach/prospection/ProspectionApercu"; // V595
+import ProspectionMedias from "./coach/prospection/ProspectionMedias"; // V595
+import ProspectionLiens from "./coach/prospection/ProspectionLiens"; // V595
+import ProspectionResultats from "./coach/prospection/ProspectionResultats"; // V595
 import { alignerLieu } from "../utils/courseLocation"; // V230: jeu d'icones vectorielles inline
 // DEEPLINK PROSPECTION — la source UNIQUE de l'intention. Ce composant ne
 // touche plus jamais `sessionStorage` directement : deux endroits qui lisent
@@ -9056,49 +9060,51 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {/* === PROSPECTION (P3-S2) — désormais le mode « Prospection » de Campagnes (UI-1) === */}
         {tab === "campaigns" && campagnesMode === "prospection" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6" data-testid="campagnes-prospection">
-            {/* V587b — COCKPIT PROSPECTION : les sections prévues. Seules « Prospects » et
-                « Conversations partenaires » sont branchées (les vues EXISTANTES de
-                ProspectsSection) ; les autres sont annoncées, sans aucun branchement. */}
+            {/* V587b — COCKPIT PROSPECTION. V595 : les sept sections sont branchées.
+                « Prospects » et « Conversations partenaires » sont les vues EXISTANTES de
+                ProspectsSection ; les cinq autres sont des écrans à part (useCockpitProspection),
+                montés à la première ouverture puis conservés. Aucun n'envoie quoi que ce soit. */}
             <nav aria-label="Sections de la prospection" data-testid="prospection-sections"
                  style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
               {[
-                { id: 'apercu', label: "Vue d'ensemble" },
+                { id: 'apercu', label: "Vue d'ensemble", vue: 'apercu' },
                 { id: 'prospects', label: p3Cockpit.total !== null ? `Prospects (${p3Cockpit.total})` : 'Prospects', vue: 'prospects' },
                 { id: 'conversations', label: p3Cockpit.nbConversations !== null ? `Conversations partenaires (${p3Cockpit.nbConversations})` : 'Conversations partenaires', vue: 'reponses' },
                 { id: 'messages', label: 'Messages & relances', vue: 'messages' }, // V588 — lecture seule
-                { id: 'medias', label: 'Médias' },
-                { id: 'liens', label: 'Liens' },
-                { id: 'resultats', label: 'Résultats' },
+                { id: 'medias', label: 'Médias', vue: 'medias' },
+                { id: 'liens', label: 'Liens', vue: 'liens' },
+                { id: 'resultats', label: 'Résultats', vue: 'resultats' },
               ].map(sct => {
-                /* V588 — « Messages & relances » est un écran à part : actif quand il est
-                   affiché ; les deux autres ne le sont que lorsqu'il est fermé. */
-                const actif = sct.vue === 'messages' ? p3Cockpit.messagesOuvert
-                  : (!!sct.vue && !p3Cockpit.messagesOuvert && p3Cockpit.vueActive === sct.vue);
-                const dispo = !!sct.vue;
+                /* Un écran à part est actif quand il est affiché ; Prospects / Conversations
+                   ne le sont que lorsqu'aucun écran à part n'est ouvert. */
+                const aPart = P3_ECRANS_A_PART.includes(sct.vue);
+                const actif = aPart ? p3Cockpit.ecran === sct.vue
+                  : (!p3Cockpit.ecran && p3Cockpit.vueActive === sct.vue);
                 return (
-                  <button key={sct.id} type="button" disabled={!dispo}
+                  <button key={sct.id} type="button"
                           data-testid={`prospection-section-${sct.id}`}
                           aria-current={actif ? 'page' : undefined}
-                          title={dispo ? undefined : 'Bientôt disponible'}
-                          onClick={dispo ? () => p3Cockpit.choisir(sct.vue) : undefined}
+                          onClick={() => p3Cockpit.choisir(sct.vue)}
                           style={{ padding: '7px 12px', borderRadius: '999px', fontSize: '12px',
-                                   fontWeight: actif ? 700 : 500, cursor: dispo ? 'pointer' : 'default',
-                                   color: dispo ? '#fff' : 'rgba(255,255,255,0.4)',
+                                   fontWeight: actif ? 700 : 500, cursor: 'pointer', color: '#fff',
                                    border: `1px solid ${actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.7)' : 'rgba(255,255,255,0.14)'}`,
                                    background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.26)' : 'transparent' }}>
-                    {sct.label}{!dispo && <span style={{ marginLeft: '6px', fontSize: '10px', opacity: 0.8 }}>· bientôt</span>}
+                    {sct.label}
                   </button>
                 );
               })}
             </nav>
-            {/* V588 — ProspectsSection reste MONTÉ (masqué) pendant Messages & relances :
+            {/* ProspectsSection reste MONTÉ (masqué) pendant un écran à part :
                 aucun remontage, aucune relecture, son état est conservé. */}
-            {p3Cockpit.messagesMonte && (
-              <div style={{ display: p3Cockpit.messagesOuvert ? 'block' : 'none' }}>
-                <MessagesRelancesSection API={API} />
+            {[
+              ['apercu', ProspectionApercu], ['messages', MessagesRelancesSection], ['medias', ProspectionMedias],
+              ['liens', ProspectionLiens], ['resultats', ProspectionResultats],
+            ].map(([id, Ecran]) => (p3Cockpit.montes[id] ? (
+              <div key={id} data-testid={`prospection-ecran-${id}`} style={{ display: p3Cockpit.ecran === id ? 'block' : 'none' }}>
+                <Ecran API={API} />
               </div>
-            )}
-            <div style={{ display: p3Cockpit.messagesOuvert ? 'none' : 'block' }}>
+            ) : null))}
+            <div style={{ display: p3Cockpit.ecran ? 'none' : 'block' }}>
             <ProspectsSection API={API} inboundCible={p3Cible}
                               ongletPilote={p3Cockpit.vuePilote} onEtat={p3Cockpit.surEtat} onDemandeOnglet={p3Cockpit.demander}
                               onCibleConsommee={() => {
