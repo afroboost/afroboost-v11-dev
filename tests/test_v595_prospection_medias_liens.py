@@ -161,6 +161,7 @@ def statut_http(coroutine):
         return e.status_code
 
 
+SRC = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
 print("\n1. Sans jeton : 403 partout")
 anonyme = Requete(coach=None)
 for nom, co in [
@@ -225,8 +226,12 @@ t = lancer(S.v595_tester_lien(interne["id"], Requete()))
 verifier("test d'une adresse interne : échec sans requête", t["test"]["ok"] is False and t["test"]["http"] is None)
 verifier("le test ne change pas le statut", t["lien"]["statut"] == "a_verifier" and t["lien"]["verifie_le"])
 
+bloc_sonde = SRC[SRC.index("async def v595_sonder"):SRC.index('@api_router.post("/prospection-liens/{lien_id}/tester")')]
+verifier("anti-rebinding : connexion à l'IP vérifiée (épinglage + SNI)",
+         "v595_resoudre_publique" in bloc_sonde and "sni_hostname" in bloc_sonde and "epinglee" in bloc_sonde)
+verifier("aucun corps de réponse lu (stream fermé)", "stream=True" in bloc_sonde and ".text" not in bloc_sonde)
+
 print("\n5. Structure : aucune suppression, aucun lecteur caché")
-SRC = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
 verifier("aucune route DELETE V595", not re.search(r'@api_router\.delete\("/prospection-(medias|liens)', SRC))
 lecteurs = [m.start() for m in re.finditer(r"V595_(MEDIAS|LIENS)\]", SRC)]
 debut = SRC.index("# V595 — PROSPECTION : MÉDIAS ET LIENS")

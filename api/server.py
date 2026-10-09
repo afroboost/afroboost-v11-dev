@@ -51991,42 +51991,66 @@ V595_TEST_PAR_MINUTE = 20
 _v595_tests_recents = {}
 
 
-def v595_adresse_publique(hote: str) -> bool:
-    """Vrai si TOUTES les adresses de l'hôte sont publiques. Bloquant (DNS)."""
+def v595_resoudre_publique(hote: str) -> str:
+    """UNE adresse IP publique de l'hôte, ou '' si l'une d'elles ne l'est pas. Bloquant (DNS).
+
+    L'adresse rendue est CELLE à laquelle on se connecte ensuite (épinglage) : sans
+    cela, un DNS piégé pourrait répondre « public » à la vérification puis « interne »
+    à la connexion (rebinding).
+    """
     import ipaddress as _ip
     import socket as _so
     try:
         infos = _so.getaddrinfo(hote, None)
     except Exception:
-        return False
+        return ""
     if not infos:
-        return False
+        return ""
+    retenue = ""
     for info in infos:
         try:
             adresse = _ip.ip_address(info[4][0].split("%")[0])
         except ValueError:
-            return False
+            return ""
         if not adresse.is_global or adresse.is_multicast:
-            return False
-    return True
+            return ""
+        retenue = retenue or str(adresse)
+    return retenue
+
+
+def v595_adresse_publique(hote: str) -> bool:
+    return bool(v595_resoudre_publique(hote))
 
 
 async def v595_sonder(url: str) -> dict:
-    """{ok, http, motif, url_finale}. Ne lève jamais."""
+    """{ok, http, motif, url_finale}. Ne lève jamais.
+
+    Chaque saut : résolution, vérification, puis connexion à L'ADRESSE VÉRIFIÉE
+    (en-tête Host + SNI conservés pour le certificat). Aucun corps n'est lu.
+    """
     import httpx
     courante = url
     try:
-        async with httpx.AsyncClient(timeout=V595_TEST_DELAI_S, follow_redirects=False,
-                                     headers={"User-Agent": "Mozilla/5.0 (Afroboost verification de lien)"}) as client:
+        async with httpx.AsyncClient(timeout=V595_TEST_DELAI_S, follow_redirects=False, trust_env=False) as client:
             for _saut in range(V595_TEST_SAUTS + 1):
                 morceaux = urllib.parse.urlsplit(courante)
-                if morceaux.scheme not in ("http", "https") or not morceaux.hostname:
+                hote = morceaux.hostname
+                if morceaux.scheme not in ("http", "https") or not hote:
                     return {"ok": False, "http": None, "motif": "Adresse invalide", "url_finale": courante}
-                if not await asyncio.to_thread(v595_adresse_publique, morceaux.hostname):
+                ip = await asyncio.to_thread(v595_resoudre_publique, hote)
+                if not ip:
                     return {"ok": False, "http": None, "motif": "Destination non publique ou introuvable", "url_finale": courante}
-                reponse = await client.head(courante)
+                hote_ip = "[%s]" % ip if ":" in ip else ip
+                netloc = hote_ip + (":%d" % morceaux.port if morceaux.port else "")
+                epinglee = urllib.parse.urlunsplit((morceaux.scheme, netloc, morceaux.path or "/", morceaux.query, ""))
+                entetes = {"Host": morceaux.netloc.rsplit("@", 1)[-1],
+                           "User-Agent": "Mozilla/5.0 (Afroboost verification de lien)"}
+                extensions = {"sni_hostname": hote} if morceaux.scheme == "https" else {}
+                reponse = await client.request("HEAD", epinglee, headers=entetes, extensions=extensions)
                 if reponse.status_code in (403, 405, 501):
-                    reponse = await client.get(courante)
+                    requete = client.build_request("GET", epinglee, headers=entetes, extensions=extensions)
+                    reponse = await client.send(requete, stream=True)
+                    await reponse.aclose()
                 if reponse.status_code in (301, 302, 303, 307, 308) and reponse.headers.get("location"):
                     courante = urllib.parse.urljoin(courante, reponse.headers["location"])
                     continue
