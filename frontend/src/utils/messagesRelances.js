@@ -86,6 +86,7 @@ const LIBELLES_CANAL = {
 const LIBELLES_STATUT_PROSPECT = {
   a_contacter: 'À contacter', contacte: 'Contacté', repondu: 'Répondu', interesse: 'Intéressé',
   partenaire: 'Partenaire', refus: 'Refus', exclu: 'Exclu', pause: 'En pause',
+  refuse: 'Refusé', sans_reponse_pause: 'Sans réponse — pause', accepte: 'Accepté', // V595e
 };
 
 export function instant(iso) {

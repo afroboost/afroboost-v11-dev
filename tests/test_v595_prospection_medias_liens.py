@@ -239,6 +239,17 @@ fin = SRC.index("# Include router\nfastapi_app.include_router(api_router)")
 verifier("seules les routes V595 touchent ces collections", all(debut < x < fin for x in lecteurs))
 verifier("les routes sont enregistrées AVANT include_router", debut < fin)
 
+print("\n6. V595e — statut « accepte » : disponible, jamais automatique")
+verifier("« accepte » fait partie des statuts", "accepte" in S.P3S1_STATUTS)
+verifier("un PATCH manuel status=accepte est valide",
+         S.p3s1_champs_valides({"status": "accepte"}, creation=False) == {"status": "accepte"})
+ecritures = re.findall(r'["\']status["\']\s*:\s*["\']accepte["\']', SRC)
+lectures = re.findall(r'status="accepte"', SRC)
+verifier("aucun code n'ÉCRIT status=accepte (seul le coach le pose à la main)",
+         len(ecritures) == 0 and len(lectures) == 0, "%d / %d" % (len(ecritures), len(lectures)))
+verifier("le compteur « accepte » ne lit plus partner_id",
+         'compteurs["accepte"]' not in SRC)
+
 ok = sum(1 for _, b in RESULTATS if b)
 print("\n%d/%d vérifications" % (ok, len(RESULTATS)))
 sys.exit(0 if ok == len(RESULTATS) else 1)

@@ -26369,6 +26369,11 @@ P3S1_CATEGORIES = (
 #   interesse          decision humaine, jamais deduite
 #   sans_reponse_pause fin de sequence apres J+7, aucune relance de plus
 #   refuse             refus explicite — arret definitif
+#   accepte            V595e — collaboration REELLEMENT confirmee (date d'ecole
+#                      confirmee, festival qui programme, entreprise qui confirme).
+#                      POSE A LA MAIN UNIQUEMENT : aucun code ne l'ecrit — ni
+#                      partner_id, ni QR, ni lien, ni candidature, ni reponse
+#                      positive, ni rendez-vous propose.
 P3S1_STATUTS = (
     "a_contacter",
     "contacte",
@@ -26376,6 +26381,7 @@ P3S1_STATUTS = (
     "interesse",
     "sans_reponse_pause",
     "refuse",
+    "accepte",
 )
 P3S1_STATUT_INITIAL = "a_contacter"
 
@@ -26734,14 +26740,11 @@ async def p3s1_lister_prospects(request: Request):
     # aujourd'hui, et c'est la verite.
     compteurs["candidature"] = await db[P3S1_COLLECTION].count_documents(
         dict(portee, partner_application_id={"$nin": [None, ""]}))
-    # V595d — « ACCEPTÉ » = UNE COLLABORATION COMMERCIALEMENT CONFIRMÉE, lue sur le
-    # STATUT de la fiche, jamais sur `partner_id`. Un partenaire peut être créé
-    # techniquement (lien, QR, niveau « Découverte ») avant tout contact : c'est le
-    # cas d'Akoko Tresses (COM-01, « à contacter »), qui faisait afficher
-    # « Acceptés 1 » sans le moindre accord. Aucun statut « accepte » n'existe encore
-    # dans P3S1_STATUTS : le compteur vaut donc 0, et c'est la vérité.
-    compteurs["accepte"] = await db[P3S1_COLLECTION].count_documents(
-        dict(portee, status="accepte"))
+    # V595d/e — « ACCEPTÉ » = UNE COLLABORATION COMMERCIALEMENT CONFIRMÉE, lue sur
+    # le STATUT `accepte` de la fiche (compté par l'agrégation ci-dessus), jamais
+    # sur `partner_id`. Un partenaire peut être créé techniquement (lien, QR,
+    # niveau « Découverte ») avant tout contact : c'est le cas d'Akoko Tresses
+    # (COM-01, « à contacter »), qui faisait afficher « Acceptés 1 » sans accord.
     compteurs["total"] = await db[P3S1_COLLECTION].count_documents(portee)
 
     return {"total": await db[P3S1_COLLECTION].count_documents(filtre),

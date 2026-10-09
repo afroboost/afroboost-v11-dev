@@ -245,14 +245,17 @@ describe('P3-S2 — les compteurs', () => {
     expect(par('tuile-Intéressé').textContent).toContain('1');
   });
 
-  test('Candidatures et Acceptés viennent du serveur — aucun compteur P2 recopié', async () => {
+  test('Candidatures et Accepté viennent du serveur — aucun compteur P2 recopié', async () => {
+    // V595e — « Accepté » est un statut posé à la main ; sa tuile remplace l'ancienne « Acceptés ».
     mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect()], { candidature: 0, accepte: 0 }) };
     await monter(<ProspectsSection API="/api" />);
     expect(par('tuile-Candidatures').textContent).toContain('0');
-    expect(par('tuile-Acceptés').textContent).toContain('0');
+    expect(par('tuile-Accepté').textContent).toContain('0');
+    expect(par('tuile-Acceptés')).toBeNull();
+    expect([...par('filtre-status').options].map((o) => o.value)).toContain('accepte');
   });
 
-  test('les six statuts amont ont chacun leur tuile, et aucun statut P2', async () => {
+  test('les sept statuts amont ont chacun leur tuile, et aucun statut P2', async () => {
     mockEtatPilote = { etat: SECTION.OK, donnees: reponse([]) };
     await monter(<ProspectsSection API="/api" />);
     STATUTS.forEach((s) => expect(par(`tuile-${s.libelle}`)).not.toBeNull());

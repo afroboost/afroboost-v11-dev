@@ -401,7 +401,7 @@ verifier("E. categorie inconnue refusee (400)",
 verifier("E-bis. categorie absente refusee (400)",
          statut_http(S.p3s1_creer_prospect(RequeteFictive(
              jeton_=JETON_A, corps={"organisation_name": "X"}))) == 400)
-verifier("F. statut valide accepte (les 6 amont)",
+verifier("F. statut valide accepte (les 7 amont, dont « accepte » V595e)",
          all(creer(poser_base(), JETON_A, status=s, ref=None)["status"] == s
              for s in S.P3S1_STATUTS))
 verifier("G. statut inconnu refuse (400)",

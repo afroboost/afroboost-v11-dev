@@ -97,8 +97,10 @@ export const CATEGORIES = [
   { cle: 'fitness', libelle: 'Fitness' },
 ];
 
-/* Les six statuts AMONT. `decouverte`, `actif` et `ambassadeur` n'y sont pas :
-   ils appartiennent au partenaire (P2), pas au prospect. */
+/* Les sept statuts AMONT. `decouverte`, `actif` et `ambassadeur` n'y sont pas :
+   ils appartiennent au partenaire (P2), pas au prospect.
+   V595e — « Accepté » = collaboration réellement confirmée, posée À LA MAIN
+   (jamais déduite d'un partenaire, d'un QR, d'un lien ou d'une réponse positive). */
 export const STATUTS = [
   { cle: 'a_contacter', libelle: 'À contacter' },
   { cle: 'contacte', libelle: 'Contacté' },
@@ -106,6 +108,7 @@ export const STATUTS = [
   { cle: 'interesse', libelle: 'Intéressé' },
   { cle: 'sans_reponse_pause', libelle: 'Sans réponse — pause' },
   { cle: 'refuse', libelle: 'Refusé' },
+  { cle: 'accepte', libelle: 'Accepté' }, // V595e
 ];
 
 export const COLLABORATIONS = [
@@ -2297,7 +2300,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
           />
         ))}
         <Tuile libelle="Candidatures" valeur={nb('candidature')} />
-        <Tuile libelle="Acceptés" valeur={nb('accepte')} />
+        {/* V595e — « Acceptés » est désormais la tuile du statut « Accepté » ci-dessus. */}
       </div>
 
       {/* ---------- LES FILTRES ---------- */}
