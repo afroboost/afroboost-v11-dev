@@ -6,8 +6,9 @@
  */
 import React, { useMemo, useState } from 'react';
 import useProspectionDonnees from '../../../hooks/useProspectionDonnees';
+import useNichesProspection from '../../../hooks/useNichesProspection'; // V598 : la liste des niches vient du serveur
 import {
-  NICHES, CANAUX, compter, grouper, nicheDe, paysDe, villeDe, canalDe, rdvParFicheDe, LIBELLES_NICHE,
+  CANAUX, compter, grouper, nicheDe, paysDe, villeDe, canalDe, rdvParFicheDe, libellesNiches,
 } from '../../../utils/prospectionStats';
 import { Titre, Grille, Carte, Tableau, Bandeau, EtatLecture, Bouton, Pastille, DOUX, TEXTE, heure } from './ui';
 
@@ -15,6 +16,7 @@ const VILLES_SUIVIES = ['Paris', 'Neuchâtel', 'Lausanne', 'Genève'];
 
 export default function ProspectionApercu({ API }) {
   const { chargement, erreur, donnees, actualiser } = useProspectionDonnees(API);
+  const { niches: listeNiches } = useNichesProspection(API);
   const [autresOuvert, setAutresOuvert] = useState(false);
 
   const calc = useMemo(() => {
@@ -22,14 +24,16 @@ export default function ProspectionApercu({ API }) {
     const fiches = donnees.fiches;
     const options = { rdvParFiche: rdvParFicheDe(donnees.rdv) };
     const c = compter(fiches, options);
-    const parNiche = grouper(fiches, nicheDe, options, LIBELLES_NICHE);
-    const niches = NICHES.map((n) => parNiche.find((g) => g.cle === n.id) || { cle: n.id, libelle: LIBELLES_NICHE[n.id], n: 0, c: compter([], options) });
+    const libelles = libellesNiches(listeNiches);
+    const parNiche = grouper(fiches, nicheDe, options, libelles);
+    const niches = listeNiches.filter((n) => n.active !== false)
+      .map((n) => parNiche.find((g) => g.cle === n.cle) || { cle: n.cle, libelle: libelles[n.cle], n: 0, c: compter([], options) });
     const nonClasses = parNiche.find((g) => g.cle === '');
     const pays = grouper(fiches, paysDe, options);
     const villes = grouper(fiches, villeDe, options);
     const canaux = grouper(fiches, canalDe, options);
     return { c, niches: nonClasses ? [...niches, nonClasses] : niches, pays, villes, canaux };
-  }, [donnees]);
+  }, [donnees, listeNiches]);
 
   if (!calc) return <EtatLecture chargement={chargement} erreur={erreur} onReessayer={actualiser} />;
   const { c } = calc;

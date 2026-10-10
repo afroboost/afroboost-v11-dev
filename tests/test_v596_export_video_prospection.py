@@ -95,11 +95,13 @@ class Collection:
     async def insert_one(self, doc):
         self.docs.append(dict(doc))
 
-    async def update_one(self, filtre, maj):
+    async def update_one(self, filtre, maj, upsert=False):
         for d in self.docs:
             if _ok(d, filtre):
-                d.update(maj["$set"])
+                d.update(maj.get("$set", {}))
                 return
+        if upsert:                                   # V598 : inscription idempotente ($setOnInsert)
+            self.docs.append(dict(filtre, **maj.get("$setOnInsert", {}), **maj.get("$set", {})))
 
     async def update_many(self, filtre, maj):
         for d in self.docs:

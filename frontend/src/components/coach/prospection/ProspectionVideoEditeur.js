@@ -126,7 +126,7 @@ async function recadrerMiniature(blob, cadre) {
   } finally { if (bmp.close) bmp.close(); }
 }
 
-export default function ProspectionVideoEditeur({ API, niche, original, fichierLocal = null, editionInitiale = null, ratioInitial = null, enFenetre = false, onFermer, onEnregistre }) {
+export default function ProspectionVideoEditeur({ API, niche, original, fichierLocal = null, editionInitiale = null, ratioInitial = null, enFenetre = false, nicheLibelle = '', onFermer, onEnregistre }) {
   const support = useMemo(() => exportSupporteIci(), []);
   // L'aperçu lit le fichier LOCAL s'il vient d'être choisi (immédiat), sinon l'original enregistré.
   const urlLocale = useMemo(() => (fichierLocal ? URL.createObjectURL(fichierLocal) : ''), [fichierLocal]);
@@ -242,7 +242,7 @@ export default function ProspectionVideoEditeur({ API, niche, original, fichierL
       : { marginTop: '8px', padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: `1px solid ${BORD}`, color: TEXTE, display: 'grid', gap: '10px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center',
         ...(enFenetre ? { position: 'sticky', top: 0, zIndex: 5, background: '#0f0b15', padding: '12px 0', borderBottom: `1px solid ${BORD}` } : {}) }}>
-        <strong style={{ fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Modifier / exporter{niche ? ` — niche ${niche}` : ''}</strong>
+        <strong style={{ fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Modifier / exporter{nicheLibelle ? ` — ${nicheLibelle}` : ''}</strong>
         <Bouton discret onClick={onFermer} disabled={bloque} testid="pve-fermer">Fermer</Bouton>
       </div>
       {!support.ok && <Bandeau ton="ambre" testid="pve-mobile">{support.raison} Tu peux consulter la vidéo ici ; l'export se fait depuis un ordinateur.</Bandeau>}

@@ -9446,17 +9446,18 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     const isCode = item.original_collection === "discount_codes";
                     // V597 : un média de Prospection → Médias supprimé (restaurable comme les autres).
                     const isMedia = item.original_collection === "prospection_medias";
+                    const isNiche = item.original_collection === "prospection_niches"; // V598
                     const formatsMedia = { original: 'Original', '16_9': '16:9', '9_16': '9:16', '1_1': '1:1', miniature: 'Miniature' };
                     const titre = isCode
                       ? (p.code || "Code")
                       : isMedia
                         ? `${formatsMedia[p.format] || 'Média'} — niche ${p.niche || '?'}`
-                        : (p.name || "Contact");
+                        : isNiche ? (p.nom || 'Niche') : (p.name || "Contact");
                     const details = isCode
                       ? [p.value != null ? `${p.value} ${p.type || ''}`.trim() : null, p.expiresAt ? `expire le ${p.expiresAt}` : null].filter(Boolean).join(' · ')
                       : isMedia
                         ? [(p.fichier && p.fichier.nom) || p.version, 'Prospection → Médias'].filter(Boolean).join(' · ')
-                        : [p.email, p.whatsapp || p.phone].filter(Boolean).join(' · ');
+                        : isNiche ? 'Niche de prospection (vide)' : [p.email, p.whatsapp || p.phone].filter(Boolean).join(' · ');
                     let quand = item.deleted_at || '';
                     try { if (item.deleted_at) quand = new Date(item.deleted_at).toLocaleString('fr-FR'); } catch (e) {}
                     return (
@@ -9473,7 +9474,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
                               color: 'var(--primary-color, #D91CD2)'
                             }}>
-                              {isCode ? 'Code' : (isMedia ? 'Média' : 'Contact')}
+                              {isCode ? 'Code' : (isMedia ? 'Média' : (isNiche ? 'Niche' : 'Contact'))}
                             </span>
                             <span className="text-white font-semibold" style={{ fontSize: 15 }}>{titre}</span>
                           </div>

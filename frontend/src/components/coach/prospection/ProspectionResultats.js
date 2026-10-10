@@ -5,14 +5,15 @@
  */
 import React, { useMemo, useState } from 'react';
 import useProspectionDonnees from '../../../hooks/useProspectionDonnees';
+import useNichesProspection from '../../../hooks/useNichesProspection';
 import {
   PERIODES, compter, tauxDe, taux, grouper, nicheDe, paysDe, villeDe, canalDe, campagneDe,
-  rdvParFicheDe, LIBELLES_NICHE, LIBELLES_CANAL, NICHES,
+  rdvParFicheDe, LIBELLES_CANAL, libellesNiches,
 } from '../../../utils/prospectionStats';
 import { Titre, Grille, Carte, Tableau, Bandeau, EtatLecture, Puce, Bouton, DOUX, TEXTE, PRIMAIRE, heure, pct } from './ui';
 
 const COMPARAISONS = [
-  { id: 'niche', libelle: 'Par niche', cle: nicheDe, libelles: LIBELLES_NICHE },
+  { id: 'niche', libelle: 'Par niche', cle: nicheDe, libellesNiche: true },
   { id: 'niche_pays', libelle: 'Niche + pays', cle: (p) => `${nicheDe(p) || ''}|${paysDe(p)}` },
   { id: 'pays', libelle: 'Par pays', cle: paysDe },
   { id: 'ville', libelle: 'Par ville', cle: villeDe },
@@ -20,15 +21,15 @@ const COMPARAISONS = [
   { id: 'campagne', libelle: 'Par campagne', cle: campagneDe },
 ];
 
-const NOM_NICHE = NICHES.reduce((m, n) => ({ ...m, [n.id]: n.libelle }), {});
 
-function libelleNichePays(cle) {
+function libelleNichePays(cle, NOM_NICHE) {
   const [n, pays] = String(cle).split('|');
   return `${NOM_NICHE[n] || 'Non classé'} ${pays}`;
 }
 
 export default function ProspectionResultats({ API }) {
   const { chargement, erreur, donnees, actualiser } = useProspectionDonnees(API);
+  const { niches: listeNiches } = useNichesProspection(API);   // V598 : noms à jour (renommages)
   const [periode, setPeriode] = useState('tout');
   const [vue, setVue] = useState('niche');
 
@@ -37,10 +38,11 @@ export default function ProspectionResultats({ API }) {
     const options = { rdvParFiche: rdvParFicheDe(donnees.rdv), periode };
     const c = compter(donnees.fiches, options);
     const comp = COMPARAISONS.find((x) => x.id === vue) || COMPARAISONS[0];
-    let lignes = grouper(donnees.fiches, comp.cle, options, comp.libelles);
-    if (vue === 'niche_pays') lignes = lignes.map((l) => ({ ...l, libelle: libelleNichePays(l.cle) }));
+    const nomNiche = listeNiches.reduce((m, n) => ({ ...m, [n.cle]: n.nom }), {});
+    let lignes = grouper(donnees.fiches, comp.cle, options, comp.libellesNiche ? libellesNiches(listeNiches) : comp.libelles);
+    if (vue === 'niche_pays') lignes = lignes.map((l) => ({ ...l, libelle: libelleNichePays(l.cle, nomNiche) }));
     return { c, t: tauxDe(c), lignes };
-  }, [donnees, periode, vue]);
+  }, [donnees, periode, vue, listeNiches]);
 
   if (!calc) return <EtatLecture chargement={chargement} erreur={erreur} onReessayer={actualiser} />;
   const { c, t } = calc;

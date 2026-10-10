@@ -10,7 +10,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import SvgIcon from '../../SvgIcon';
-import { NICHES } from '../../../utils/prospectionStats';
+import { libellesNiches } from '../../../utils/prospectionStats';
+import useNichesProspection from '../../../hooks/useNichesProspection'; // V598 : niches du serveur
 import { Titre, Bandeau, EtatLecture, Pastille, Bouton, Puce, DOUX, TEXTE, BORD, champ, heure } from './ui';
 
 export const CATEGORIES_LIEN = [
@@ -28,7 +29,14 @@ export const STATUTS_LIEN = {
   bloque: { libelle: 'Bloqué', ton: 'rouge' },
   archive: { libelle: 'Archivé', ton: 'neutre' },
 };
-const NICHE_LIBELLE = NICHES.reduce((m, n) => ({ ...m, [n.id]: `${n.id} — ${n.libelle}` }), { toutes: 'Toutes les niches' });
+// V598 : { clé: « C — Festivals » } d'après la liste du serveur. `choisissables` = actives,
+// plus la niche déjà portée par le lien (même archivée) pour ne jamais la perdre à l'édition.
+function libellesDe(niches, actuelle) {
+  const tous = libellesNiches(niches);
+  const choisissables = { toutes: 'Toutes les niches' };
+  niches.forEach((n) => { if (n.active !== false || n.cle === actuelle) choisissables[n.cle] = tous[n.cle]; });
+  return { tous: { ...tous, toutes: 'Toutes les niches' }, choisissables };
+}
 const VIDE = { nom: '', url: '', categorie: 'site', niche: 'toutes', utilisation: '', statut: 'a_verifier' };
 
 function erreurLisible(e, defaut) {
@@ -36,7 +44,7 @@ function erreurLisible(e, defaut) {
   return typeof d === 'string' ? d : defaut;
 }
 
-function Formulaire({ initial, onEnregistrer, onAnnuler, enCours, verrou }) {
+function Formulaire({ initial, onEnregistrer, onAnnuler, enCours, verrou, niches }) {
   const [f, setF] = useState(initial);
   const maj = (k, v) => setF((p) => (p[k] === v ? p : { ...p, [k]: v }));
   return (
@@ -49,7 +57,7 @@ function Formulaire({ initial, onEnregistrer, onAnnuler, enCours, verrou }) {
           {CATEGORIES_LIEN.map((c) => <option key={c.id} value={c.id} style={{ color: 'black' }}>{c.libelle}</option>)}
         </select>
         <select value={f.niche} onChange={(e) => maj('niche', e.target.value)} style={champ} aria-label="Niche">
-          {Object.entries(NICHE_LIBELLE).map(([id, l]) => <option key={id} value={id} style={{ color: 'black' }}>{l}</option>)}
+          {Object.entries(libellesDe(niches, initial.niche).choisissables).map(([id, l]) => <option key={id} value={id} style={{ color: 'black' }}>{l}</option>)}
         </select>
         <select value={f.statut} onChange={(e) => maj('statut', e.target.value)} style={champ} aria-label="Statut" disabled={!!verrou}>
           {Object.entries(STATUTS_LIEN).map(([id, s]) => <option key={id} value={id} style={{ color: 'black' }}>{s.libelle}</option>)}
@@ -66,7 +74,7 @@ function Formulaire({ initial, onEnregistrer, onAnnuler, enCours, verrou }) {
   );
 }
 
-function CarteLien({ lien, onTester, onModifier, test }) {
+function CarteLien({ lien, onTester, onModifier, test, niches }) {
   const st = STATUTS_LIEN[lien.statut] || STATUTS_LIEN.a_verifier;
   const dt = lien.dernier_test;
   return (
@@ -78,7 +86,7 @@ function CarteLien({ lien, onTester, onModifier, test }) {
       <a href={lien.url} target="_blank" rel="noopener noreferrer"
         style={{ display: 'block', fontSize: '12px', color: DOUX, wordBreak: 'break-all', marginTop: '4px' }}>{lien.url}</a>
       <div style={{ fontSize: '12px', color: DOUX, marginTop: '4px', lineHeight: 1.5 }}>
-        {NICHE_LIBELLE[lien.niche] || '—'}{lien.utilisation ? ` · ${lien.utilisation}` : ''}
+        {libellesDe(niches, lien.niche).tous[lien.niche] || '—'}{lien.utilisation ? ` · ${lien.utilisation}` : ''}
         {lien.verrou && <div style={{ color: 'rgb(252,165,165)' }}>Bloqué par le serveur : {lien.verrou}</div>}
         <div>
           Vérifié : {lien.verifie_le ? heure(lien.verifie_le) : 'jamais'}
@@ -96,6 +104,7 @@ function CarteLien({ lien, onTester, onModifier, test }) {
 }
 
 export default function ProspectionLiens({ API }) {
+  const { niches } = useNichesProspection(API);
   const [liens, setLiens] = useState(null);
   const [erreur, setErreur] = useState('');
   const [filtre, setFiltre] = useState('tous');
@@ -176,7 +185,7 @@ export default function ProspectionLiens({ API }) {
         <Bouton onClick={() => setEdition('nouveau')} testid="pl-ajouter">Ajouter un lien</Bouton>
       </div>
       {edition === 'nouveau' && (
-        <Formulaire initial={{ ...VIDE, categorie: filtre !== 'tous' ? filtre : 'site' }} enCours={enCours}
+        <Formulaire niches={niches} initial={{ ...VIDE, categorie: filtre !== 'tous' ? filtre : 'site' }} enCours={enCours}
           onEnregistrer={enregistrer} onAnnuler={() => setEdition(null)} />
       )}
       {CATEGORIES_LIEN.filter((c) => filtre === 'tous' || c.id === filtre).map((c) => {
@@ -187,10 +196,10 @@ export default function ProspectionLiens({ API }) {
             <Titre>{c.libelle}</Titre>
             <div style={{ display: 'grid', gap: '8px', gridTemplateColumns: 'repeat(auto-fill, minmax(min(260px, 100%), 1fr))' }}>
               {groupe.map((l) => (edition && edition.id === l.id ? (
-                <Formulaire key={l.id} initial={{ nom: l.nom, url: l.url, categorie: l.categorie, niche: l.niche, utilisation: l.utilisation || '', statut: l.statut }}
+                <Formulaire niches={niches} key={l.id} initial={{ nom: l.nom, url: l.url, categorie: l.categorie, niche: l.niche, utilisation: l.utilisation || '', statut: l.statut }}
                   verrou={l.verrou} enCours={enCours} onEnregistrer={enregistrer} onAnnuler={() => setEdition(null)} />
               ) : (
-                <CarteLien key={l.id} lien={l} onTester={tester} onModifier={setEdition} test={test} />
+                <CarteLien key={l.id} lien={l} niches={niches} onTester={tester} onModifier={setEdition} test={test} />
               )))}
             </div>
           </div>

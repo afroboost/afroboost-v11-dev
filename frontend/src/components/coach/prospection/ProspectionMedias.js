@@ -20,7 +20,8 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
-import { NICHES } from '../../../utils/prospectionStats';
+import { lettreNiche } from '../../../utils/prospectionStats';
+import useNichesProspection from '../../../hooks/useNichesProspection'; // V598 : niches du serveur (ajout, renommage, archivage)
 import { uploadToCloudinary } from '../../CloudinaryUploadButton';
 import { validerFichierVideo, validerMetadonnees, tailleLisible, lireMetadonneesFichier } from '../../../utils/videoExport';
 import { EtatLecture, Pastille, Bouton, DOUX, TEXTE, BORD, champ, jour } from './ui';
@@ -325,6 +326,39 @@ function FormulaireOriginal({ niche, API, onFini, onOuvrirEditeur }) {
   );
 }
 
+/** V598 — petite fenêtre « Nom de la niche » (créer ou renommer). */
+function FenetreNomNiche({ titre, initial = '', libelleOk, onOk, onAnnuler }) {
+  const [nom, setNom] = useState(initial);
+  const [envoi, setEnvoi] = useState(false);
+  const [msg, setMsg] = useState('');
+  const valider = async (e) => {
+    e.preventDefault();
+    const propre = nom.trim();
+    if (propre.length < 2) { setMsg('2 caractères minimum.'); return; }
+    setEnvoi(true); setMsg('');
+    try { await onOk(propre); } catch (err) { setMsg(erreurLisible(err, 'Enregistrement refusé.')); setEnvoi(false); }
+  };
+  return createPortal(
+    <div role="dialog" aria-modal="true" aria-label={titre} data-testid="pm-fenetre-niche"
+      onMouseDown={(e) => { if (e.target === e.currentTarget && !envoi) onAnnuler(); }}
+      style={{ position: 'fixed', inset: 0, zIndex: 10100, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <form onSubmit={valider} style={{ width: 'min(400px, 100%)', background: '#14101b', border: `1px solid ${BORD}`, borderRadius: 14, padding: 18, color: TEXTE, display: 'grid', gap: 10 }}>
+        <div style={{ fontSize: 15, fontWeight: 700 }}>{titre}</div>
+        <label style={{ fontSize: 12, color: DOUX, display: 'grid', gap: 6 }}>Nom de la niche
+          <input autoFocus value={nom} maxLength={60} onChange={(e) => setNom(e.target.value)} style={champ}
+            placeholder="ex. Personnes âgées / seniors" data-testid="pm-niche-nom" />
+        </label>
+        {msg && <div style={{ fontSize: 12, color: 'rgb(252,165,165)' }} data-testid="pm-niche-erreur">{msg}</div>}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <Bouton discret onClick={onAnnuler} disabled={envoi} testid="pm-niche-annuler">Annuler</Bouton>
+          <Bouton type="submit" disabled={envoi} testid="pm-niche-ok">{envoi ? '…' : libelleOk}</Bouton>
+        </div>
+      </form>
+    </div>,
+    document.body,
+  );
+}
+
 export default function ProspectionMedias({ API }) {
   const [medias, setMedias] = useState(null);
   const [erreur, setErreur] = useState('');
@@ -335,7 +369,11 @@ export default function ProspectionMedias({ API }) {
   const [ajout, setAjout] = useState(null);                    // { niche, format, mode: 'fichier' | 'lien' }
   const [archivesOuvert, setArchivesOuvert] = useState(false);
   const [editeur, setEditeur] = useState(null);                // { niche, original, fichierLocal, edition, ratio }
-  const [aConfirmer, setAConfirmer] = useState(null);          // { type: 'supprimer' | 'valider', media }
+  const [aConfirmer, setAConfirmer] = useState(null);          // { type: 'supprimer' | 'valider', media } | { type: 'archiver_niche' | 'supprimer_niche', niche }
+  // V598 : la liste des niches vient du serveur ; création / renommage dans une petite fenêtre.
+  const { niches, recharger: rechargerNiches } = useNichesProspection(API);
+  const [fenetreNiche, setFenetreNiche] = useState(null);      // { type: 'creer' | 'renommer', niche }
+  const [nichesArchiveesOuvert, setNichesArchiveesOuvert] = useState(false);
 
   const charger = useCallback(async () => {
     setErreur('');
@@ -357,7 +395,7 @@ export default function ProspectionMedias({ API }) {
 
   const parNiche = useMemo(() => {
     const m = {};
-    NICHES.forEach((n) => { m[n.id] = { actuels: {}, archives: [] }; });
+    niches.forEach((n) => { m[n.cle] = { actuels: {}, archives: [] }; });
     (medias || []).forEach((d) => {
       const g = m[d.niche];
       if (!g) return;
@@ -365,7 +403,8 @@ export default function ProspectionMedias({ API }) {
       else if (!g.actuels[d.format]) g.actuels[d.format] = d;
     });
     return m;
-  }, [medias]);
+  }, [medias, niches]);
+  const lettreDeCle = useMemo(() => niches.reduce((m, n) => ({ ...m, [n.cle]: lettreNiche(n.ordre) }), {}), [niches]);
 
   const changerStatut = async (media, statut) => {
     if (statut === 'validee') { setAConfirmer({ type: 'valider', media }); return; }
@@ -380,9 +419,25 @@ export default function ProspectionMedias({ API }) {
 
   // V597 : la confirmation fait l'action — « Valider » (statut) ou « Supprimer » (Corbeille).
   const confirmer = async () => {
-    const { type, media } = aConfirmer;
+    const { type, media, niche } = aConfirmer;
     setEnCours(true); setInfo('');
     try {
+      if (type === 'archiver_niche' || type === 'reactiver_niche') {
+        await axios.patch(`${API}/prospection-niches/${encodeURIComponent(niche.id)}`, { active: type === 'reactiver_niche' });
+        setInfo(type === 'archiver_niche' ? `Niche « ${niche.nom} » archivée. Ses médias sont conservés.` : `Niche « ${niche.nom} » réactivée.`);
+        if (type === 'archiver_niche') setOuverte('');
+        setAConfirmer(null);
+        await rechargerNiches();
+        return;
+      }
+      if (type === 'supprimer_niche') {
+        await axios.delete(`${API}/prospection-niches/${encodeURIComponent(niche.id)}`);
+        setInfo(`Niche « ${niche.nom} » placée dans la Corbeille (restaurable).`);
+        setOuverte('');
+        setAConfirmer(null);
+        await rechargerNiches();
+        return;
+      }
       if (type === 'supprimer') {
         await axios.delete(`${API}/prospection-medias/${encodeURIComponent(media.id)}`);
         setInfo(`${COURT[media.format]} placé dans la Corbeille (restaurable). Les autres versions ne sont pas touchées.`);
@@ -392,7 +447,7 @@ export default function ProspectionMedias({ API }) {
       setAConfirmer(null);
       await charger();
     } catch (e) {
-      setInfo(erreurLisible(e, type === 'supprimer' ? 'Suppression refusée.' : 'Validation refusée.'));
+      setInfo(erreurLisible(e, type === 'valider' ? 'Validation refusée.' : (type === 'archiver_niche' || type === 'reactiver_niche' ? 'Changement refusé.' : 'Suppression refusée.')));
       setAConfirmer(null);
     } finally { setEnCours(false); }
   };
@@ -417,6 +472,22 @@ export default function ProspectionMedias({ API }) {
 
   const basculer = (id) => { setOuverte((o) => (o === id ? '' : id)); setAjout(null); setArchivesOuvert(false); };
 
+  // V598 : créer / renommer — la fenêtre attend la réponse du serveur, puis se ferme.
+  const enregistrerNiche = async (nom) => {
+    const f = fenetreNiche;
+    if (f.type === 'creer') {
+      await axios.post(`${API}/prospection-niches`, { nom });
+      setInfo(`Niche « ${nom} » ajoutée. Elle est vide : aucun prospect, message ni lien n'a été créé.`);
+    } else {
+      await axios.patch(`${API}/prospection-niches/${encodeURIComponent(f.niche.id)}`, { nom });
+      setInfo(`Niche renommée en « ${nom} ». Ses médias restent reliés.`);
+    }
+    setFenetreNiche(null);
+    await rechargerNiches();
+  };
+  const nichesActives = niches.filter((n) => n.active !== false);
+  const nichesArchivees = niches.filter((n) => n.active === false);
+
   if (!medias) return <EtatLecture chargement={!erreur} erreur={erreur} onReessayer={charger} />;
   const validees = (medias || []).filter((d) => d.statut === 'validee').length;
 
@@ -429,52 +500,64 @@ export default function ProspectionMedias({ API }) {
       {info && <div data-testid="pm-info" style={{ marginTop: 8, fontSize: 12, padding: '6px 10px', borderRadius: 8, background: 'rgba(147,197,253,0.10)', border: '1px solid rgba(147,197,253,0.35)' }}>{info}</div>}
 
       <div style={{ marginTop: 10, border: `1px solid ${BORD}`, borderRadius: 12, overflow: 'hidden' }}>
-        {NICHES.map((n, i) => {
-          const g = parNiche[n.id];
+        {nichesActives.map((n, i) => {
+          const g = parNiche[n.cle] || { actuels: {}, archives: [] };
+          const lettre = lettreNiche(n.ordre);
           const st = STATUTS_MEDIA[statutNiche(g.actuels)];
           const presents = Object.values(g.actuels);
           const aVerifier = presents.filter((m) => m.statut === 'a_verifier').length;
-          const ouvert = ouverte === n.id;
+          const ouvert = ouverte === n.cle;
+          const actionsNiche = [
+            { libelle: 'Renommer', onClick: () => setFenetreNiche({ type: 'renommer', niche: n }), testid: `pm-niche-renommer-${lettre}` },
+            { libelle: 'Archiver', onClick: () => setAConfirmer({ type: 'archiver_niche', niche: n }), testid: `pm-niche-archiver-${lettre}` },
+            // Supprimer : seulement une niche CRÉÉE et VIDE (le serveur le revérifie).
+            ...(!n.origine && presents.length === 0 && g.archives.length === 0
+              ? [{ libelle: 'Supprimer', icone: CORBEILLE, danger: true, onClick: () => setAConfirmer({ type: 'supprimer_niche', niche: n }), testid: `pm-niche-supprimer-${lettre}` }]
+              : []),
+          ];
           return (
-            <div key={n.id} data-testid={`pm-niche-${n.id}`} style={{ borderTop: i ? `1px solid ${BORD}` : 'none' }}>
-              <button type="button" onClick={() => basculer(n.id)} aria-expanded={ouvert} data-testid={`pm-niche-ligne-${n.id}`}
-                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', background: ouvert ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)' : 'transparent', border: 'none', color: TEXTE, cursor: 'pointer', textAlign: 'left' }}>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700 }}>{n.id} — {n.libelle}</span>
-                  <span style={{ display: 'block', fontSize: 11, color: DOUX, marginTop: 2 }} data-testid={`pm-resume-${n.id}`}>
-                    {presents.length ? `${presents.length} média${presents.length > 1 ? 's' : ''}${aVerifier ? ` · ${aVerifier} à vérifier` : ''}` : 'Aucun média'}
+            <div key={n.id} data-testid={`pm-niche-${lettre}`} style={{ borderTop: i ? `1px solid ${BORD}` : 'none' }}>
+              <div style={{ display: 'flex', alignItems: 'center', background: ouvert ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)' : 'transparent' }}>
+                <button type="button" onClick={() => basculer(n.cle)} aria-expanded={ouvert} data-testid={`pm-niche-ligne-${lettre}`}
+                  style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '11px 6px 11px 12px', background: 'transparent', border: 'none', color: TEXTE, cursor: 'pointer', textAlign: 'left' }}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700 }} data-testid={`pm-nom-${lettre}`}>{lettre} — {n.nom}</span>
+                    <span style={{ display: 'block', fontSize: 11, color: DOUX, marginTop: 2 }} data-testid={`pm-resume-${lettre}`}>
+                      {presents.length ? `${presents.length} média${presents.length > 1 ? 's' : ''}${aVerifier ? ` · ${aVerifier} à vérifier` : ''}` : 'Aucun média'}
+                    </span>
                   </span>
-                </span>
-                <Pastille ton={st.ton} testid={`pm-statut-niche-${n.id}`}>{st.libelle}</Pastille>
-                <span style={{ display: 'inline-flex', transition: 'transform .15s', transform: ouvert ? 'rotate(90deg)' : 'none', color: DOUX }}><Icone d={CHEVRON} /></span>
-              </button>
+                  <Pastille ton={st.ton} testid={`pm-statut-niche-${lettre}`}>{st.libelle}</Pastille>
+                  <span style={{ display: 'inline-flex', transition: 'transform .15s', transform: ouvert ? 'rotate(90deg)' : 'none', color: DOUX }}><Icone d={CHEVRON} /></span>
+                </button>
+                <div style={{ padding: '0 10px 0 2px' }}><MenuPlus actions={actionsNiche} testid={`pm-niche-menu-${lettre}`} /></div>
+              </div>
               {ouvert && (
-                <div data-testid={`pm-contenu-${n.id}`} style={{ padding: '4px 12px 12px' }}>
+                <div data-testid={`pm-contenu-${lettre}`} style={{ padding: '4px 12px 12px' }}>
                   <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fill, minmax(min(300px, 100%), 1fr))' }}>
                     {FORMATS.map((fmt) => (
                       <Emplacement key={fmt.id} format={fmt} media={g.actuels[fmt.id]} enCours={enCours}
-                        onEditer={(m) => ouvrirEditeur(m)} onAjouter={(f) => ajouter(n.id, f)} onStatut={changerStatut}
+                        onEditer={(m) => ouvrirEditeur(m)} onAjouter={(f) => ajouter(n.cle, f)} onStatut={changerStatut}
                         onValider={(m) => setAConfirmer({ type: 'valider', media: m })}
                         onSupprimer={(m) => setAConfirmer({ type: 'supprimer', media: m })} />
                     ))}
                   </div>
-                  {ajout && ajout.niche === n.id && (
+                  {ajout && ajout.niche === n.cle && (
                     <div style={{ marginTop: 8 }}>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Type d'ajout">
-                        <Bouton discret={ajout.mode !== 'fichier'} onClick={() => setAjout((a) => ({ ...a, mode: 'fichier' }))} testid={`pm-mode-fichier-${n.id}`}>Fichier original</Bouton>
-                        {ajout.format !== 'original' && <Bouton discret={ajout.mode !== 'lien'} onClick={() => setAjout((a) => ({ ...a, mode: 'lien' }))} testid={`pm-mode-lien-${n.id}`}>Lien public</Bouton>}
+                        <Bouton discret={ajout.mode !== 'fichier'} onClick={() => setAjout((a) => ({ ...a, mode: 'fichier' }))} testid={`pm-mode-fichier-${lettre}`}>Fichier original</Bouton>
+                        {ajout.format !== 'original' && <Bouton discret={ajout.mode !== 'lien'} onClick={() => setAjout((a) => ({ ...a, mode: 'lien' }))} testid={`pm-mode-lien-${lettre}`}>Lien public</Bouton>}
                       </div>
                       {ajout.mode === 'fichier'
-                        ? <FormulaireOriginal API={API} niche={n.id}
+                        ? <FormulaireOriginal API={API} niche={n.cle}
                             onFini={(m) => { setAjout(null); if (m) { setInfo(m); charger(); } }}
-                            onOuvrirEditeur={(original, fichierLocal, m) => { setAjout(null); setInfo(m); charger(); setEditeur({ niche: n.id, original, fichierLocal, edition: null, ratio: null }); }} />
-                        : <FormulaireAjout API={API} niche={n.id} formatInitial={ajout.format}
+                            onOuvrirEditeur={(original, fichierLocal, m) => { setAjout(null); setInfo(m); charger(); setEditeur({ niche: n.cle, original, fichierLocal, edition: null, ratio: null }); }} />
+                        : <FormulaireAjout API={API} niche={n.cle} formatInitial={ajout.format}
                             onFini={(m) => { setAjout(null); if (m) { setInfo(m); charger(); } }} />}
                     </div>
                   )}
                   {g.archives.length > 0 && (
                     <div style={{ marginTop: 8 }}>
-                      <button type="button" onClick={() => setArchivesOuvert((a) => !a)} data-testid={`pm-archives-${n.id}`}
+                      <button type="button" onClick={() => setArchivesOuvert((a) => !a)} data-testid={`pm-archives-${lettre}`}
                         style={{ border: 'none', background: 'transparent', color: DOUX, fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
                         {archivesOuvert ? 'Masquer les archives' : `Archives (${g.archives.length})`}
                       </button>
@@ -497,11 +580,46 @@ export default function ProspectionMedias({ API }) {
         })}
       </div>
 
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+        <button type="button" onClick={() => setFenetreNiche({ type: 'creer' })} data-testid="pm-niche-ajouter"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'transparent', color: 'var(--primary-color, #D91CD2)', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: '4px 0' }}>
+          <Icone d={PLUS} taille={14} />Ajouter une niche
+        </button>
+        {nichesArchivees.length > 0 && (
+          <button type="button" onClick={() => setNichesArchiveesOuvert((o) => !o)} data-testid="pm-niches-archivees"
+            style={{ border: 'none', background: 'transparent', color: DOUX, fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+            {nichesArchiveesOuvert ? 'Masquer les niches archivées' : `Niches archivées (${nichesArchivees.length})`}
+          </button>
+        )}
+      </div>
+      {nichesArchiveesOuvert && nichesArchivees.length > 0 && (
+        <div style={{ marginTop: 6, display: 'grid', gap: 4 }} data-testid="pm-liste-archivees">
+          {nichesArchivees.map((n) => {
+            const nb = Object.keys((parNiche[n.cle] || { actuels: {} }).actuels).length;
+            return (
+              <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: DOUX, padding: '6px 10px', border: `1px dashed ${BORD}`, borderRadius: 8 }}>
+                <span style={{ flex: 1, minWidth: 0 }}>{lettreNiche(n.ordre)} — {n.nom} · {nb ? `${nb} média${nb > 1 ? 's' : ''} conservé${nb > 1 ? 's' : ''}` : 'vide'}</span>
+                <Bouton discret onClick={() => setAConfirmer({ type: 'reactiver_niche', niche: n })} testid={`pm-niche-reactiver-${lettreNiche(n.ordre)}`}>Réactiver</Bouton>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {fenetreNiche && (
+        <FenetreNomNiche
+          titre={fenetreNiche.type === 'creer' ? 'Ajouter une niche' : 'Renommer la niche'}
+          initial={fenetreNiche.type === 'renommer' ? fenetreNiche.niche.nom : ''}
+          libelleOk={fenetreNiche.type === 'creer' ? 'Créer' : 'Renommer'}
+          onOk={enregistrerNiche} onAnnuler={() => setFenetreNiche(null)} />
+      )}
+
       {editeur && (
         <FenetreEditeur onFermer={() => setEditeur(null)}>
           <Suspense fallback={<div style={{ padding: 20, fontSize: 12, color: DOUX }} data-testid="pm-editeur-chargement">Chargement de l'éditeur vidéo…</div>}>
             <ProspectionVideoEditeur API={API} niche={editeur.niche} original={editeur.original} fichierLocal={editeur.fichierLocal}
               editionInitiale={editeur.edition} ratioInitial={editeur.ratio} enFenetre
+              nicheLibelle={(() => { const n = niches.find((x) => x.cle === editeur.niche); return n ? `${lettreNiche(n.ordre)} — ${n.nom}` : ''; })()}
               onFermer={() => setEditeur(null)}
               onEnregistre={(m) => { setInfo(m); charger(); }} />
           </Suspense>
@@ -510,11 +628,15 @@ export default function ProspectionMedias({ API }) {
 
       {aConfirmer && (
         <Confirmation
-          titre={aConfirmer.type === 'supprimer' ? 'Supprimer ce média ?' : 'Valider cette vidéo ?'}
-          texte={aConfirmer.type === 'supprimer'
-            ? `${COURT[aConfirmer.media.format]} de la niche ${aConfirmer.media.niche} part dans la Corbeille (restaurable). Les autres versions et le fichier d'origine ne sont pas touchés.`
-            : 'Elle devient la vidéo validée de ce format pour la niche. Aucun envoi ne part.'}
-          libelleOk={aConfirmer.type === 'supprimer' ? 'Supprimer' : 'Valider'}
+          titre={{ supprimer: 'Supprimer ce média ?', valider: 'Valider cette vidéo ?', archiver_niche: 'Archiver cette niche ?', reactiver_niche: 'Réactiver cette niche ?', supprimer_niche: 'Supprimer cette niche ?' }[aConfirmer.type]}
+          texte={{
+            supprimer: () => `${COURT[aConfirmer.media.format]} de la niche ${lettreDeCle[aConfirmer.media.niche] || ''} part dans la Corbeille (restaurable). Les autres versions et le fichier d'origine ne sont pas touchés.`,
+            valider: () => 'Elle devient la vidéo validée de ce format pour la niche. Aucun envoi ne part.',
+            archiver_niche: () => `« ${aConfirmer.niche.nom} » disparaît de la liste. Ses médias et liens sont conservés ; tu peux la réactiver.`,
+            reactiver_niche: () => `« ${aConfirmer.niche.nom} » revient dans la liste, avec ses médias.`,
+            supprimer_niche: () => `« ${aConfirmer.niche.nom} » est vide : elle part dans la Corbeille (restaurable).`,
+          }[aConfirmer.type]()}
+          libelleOk={{ supprimer: 'Supprimer', valider: 'Valider', archiver_niche: 'Archiver', reactiver_niche: 'Réactiver', supprimer_niche: 'Supprimer' }[aConfirmer.type]}
           enCours={enCours} onOk={confirmer} onAnnuler={() => setAConfirmer(null)} />
       )}
     </section>

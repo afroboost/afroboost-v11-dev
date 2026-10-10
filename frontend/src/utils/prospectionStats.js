@@ -35,6 +35,8 @@
  *   sans réponse = contacté sans réponse.
  */
 
+// V598 : six niches D'ORIGINE seulement — repli d'affichage et clés historiques. La liste
+// réelle (renommages, niches ajoutées) vient du serveur : hooks/useNichesProspection.
 export const NICHES = [
   { id: 'A', libelle: 'Partenaires locaux' },
   { id: 'B', libelle: 'Étudiants / associations' },
@@ -210,6 +212,19 @@ export function grouper(prospects, cleDe, options, libelles) {
 }
 
 export const LIBELLES_NICHE = NICHES.reduce((m, n) => ({ ...m, [n.id]: `${n.id} — ${n.libelle}` }), { '': 'Non classé' });
+
+/** V598 — la lettre d'une niche, déduite de son ordre : 1 → A … 26 → Z, 27 → AA. PURE. */
+export function lettreNiche(ordre) {
+  let n = Math.max(1, Math.round(Number(ordre) || 1));
+  let out = '';
+  while (n > 0) { const r = (n - 1) % 26; out = String.fromCharCode(65 + r) + out; n = Math.floor((n - 1) / 26); }
+  return out;
+}
+
+/** V598 — { clé: « G — Seniors » } à partir de la liste du serveur (repli : les six d'origine). PURE. */
+export function libellesNiches(niches) {
+  return (niches || []).reduce((m, n) => ({ ...m, [n.cle]: `${lettreNiche(n.ordre)} — ${n.nom}` }), { '': 'Non classé' });
+}
 export const LIBELLES_CANAL = CANAUX.reduce((m, n) => ({ ...m, [n.id]: n.libelle }), {});
 
 /** « Campagne » = la vague d'import, seul regroupement qui existe sur TOUTES les fiches. */

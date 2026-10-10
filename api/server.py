@@ -36981,7 +36981,7 @@ async def restore_trash(trash_id: str, request: Request):
         if not owner or owner != caller.lower().strip():
             raise HTTPException(status_code=403, detail="Cet élément ne vous appartient pas")
     coll = entry.get("original_collection")
-    if coll not in ("discount_codes", "chat_participants", "prospection_medias"):  # V597 : + médias de prospection
+    if coll not in ("discount_codes", "chat_participants", "prospection_medias", "prospection_niches"):  # V597 médias, V598 niches
         raise HTTPException(status_code=400, detail="Type non restaurable")
     payload = dict(entry.get("payload") or {})
     payload.pop("_id", None)
@@ -51724,6 +51724,10 @@ V595_LISTE_MAX = 50
 
 # Les six niches de la prospection. LISTE FERMÉE (même règle que P3-S1).
 V595_NICHES = ("A", "B", "C", "D", "E", "F")
+# V598 : ce ne sont plus que les CLÉS des six niches d'origine. La liste réelle vit
+# en base (`prospection_niches`) ; ces six y sont inscrites, avec ces clés, à la
+# première lecture — aucune migration des médias / liens qui portent déjà « A »…« F ».
+V598_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 # V596 : « original » (le fichier source, jamais réencodé) et « 1_1 » rejoignent la liste.
 V595_FORMATS = ("original", "16_9", "9_16", "1_1", "miniature")
 V595_STATUTS_MEDIA = ("en_cours", "a_verifier", "validee", "archivee")
@@ -51781,12 +51785,21 @@ def v595_choix(valeur, permis, nom, defaut=None) -> str:
 
 
 def v595_niche(valeur, toutes_permis=False) -> str:
-    texte = (str(valeur).strip().upper() if valeur is not None else "")
+    """La CLÉ de niche telle qu'elle sera stockée. PURE (forme seulement).
+
+    V598 : une clé est soit une lettre HISTORIQUE (A–F, les six niches d'origine,
+    jamais migrées), soit l'identifiant UUID d'une niche créée par le coach. Son
+    EXISTENCE est vérifiée à part (`v598_verifier_niche`, besoin de la base).
+    """
+    brut = (str(valeur).strip() if valeur is not None else "")
+    texte = brut.upper()
     if toutes_permis and (not texte or texte == "TOUTES"):
         return "toutes"
-    if texte not in V595_NICHES:
-        raise HTTPException(status_code=400, detail="Niche inconnue. Valeurs acceptées : A, B, C, D, E, F")
-    return texte
+    if texte in V595_NICHES:
+        return texte
+    if V598_UUID.match(brut.lower()):
+        return brut.lower()
+    raise HTTPException(status_code=400, detail="Niche inconnue")
 
 
 def v595_pagination(request: Request):
@@ -51800,6 +51813,165 @@ def v595_pagination(request: Request):
     except (TypeError, ValueError):
         depart = 0
     return limite, depart
+
+
+# ------------------------------- NICHES (V598) ------------------------------
+# UNE source de vérité : `prospection_niches`, par coach. Une niche a un `id`
+# stable (UUID), une `cle` — ce que les médias / liens enregistrent —, un `nom`
+# modifiable, un `ordre` (nouvelle = en dernier) et `active`. Les six niches
+# d'origine y sont inscrites avec cle = « A »…« F » (inscription idempotente,
+# `$setOnInsert` : un renommage ou un archivage n'est jamais écrasé) ; une niche
+# créée reçoit cle = son id. La LETTRE affichée se déduit de `ordre` à l'écran.
+# Créer une niche ne crée RIEN d'autre : ni prospect, ni message, ni lien, ni envoi.
+V598_NICHES = "prospection_niches"
+V598_ORIGINE = (("A", "partenaires-locaux", "Partenaires locaux"), ("B", "etudiants-associations", "Étudiants / associations"),
+                ("C", "festivals", "Festivals"), ("D", "ecoles-de-danse", "Écoles de danse"),
+                ("E", "entreprises", "Entreprises"), ("F", "sante-mamans", "Santé / mamans"))
+V598_MAX = 50
+V598_NOM_MAX = 60
+
+
+def v598_slug(nom: str) -> str:
+    """« Personnes âgées / seniors » -> « personnes-agees-seniors ». PURE."""
+    import unicodedata
+    t = unicodedata.normalize("NFD", nom or "").encode("ascii", "ignore").decode("ascii").lower()
+    t = re.sub(r"[^a-z0-9]+", "-", t).strip("-")
+    return t[:60] or "niche"
+
+
+def v598_nom(valeur) -> str:
+    nom = re.sub(r"\s+", " ", str(valeur or "")).strip()
+    if len(nom) < 2:
+        raise HTTPException(status_code=400, detail="Le nom de la niche est obligatoire (2 caractères minimum)")
+    if len(nom) > V598_NOM_MAX:
+        raise HTTPException(status_code=400, detail="Nom trop long (%d caractères maximum)" % V598_NOM_MAX)
+    return nom
+
+
+async def v598_niches(appelant: str):
+    """Les niches du coach, triées. Inscrit les six d'origine si elles manquent."""
+    instant = v595_maintenant()
+    for ordre, (cle, slug, nom) in enumerate(V598_ORIGINE, start=1):
+        await db[V598_NICHES].update_one(
+            {"coach_id": appelant, "cle": cle},
+            {"$setOnInsert": {"id": str(uuid.uuid4()), "coach_id": appelant, "cle": cle, "slug": slug, "nom": nom,
+                              "ordre": ordre, "active": True, "origine": True,
+                              "created_at": instant, "updated_at": instant, "archived_at": None}},
+            upsert=True)
+    return await db[V598_NICHES].find({"coach_id": appelant}, {"_id": 0}) \
+        .sort([("ordre", 1), ("created_at", 1)]).to_list(V598_MAX + len(V598_ORIGINE))
+
+
+async def v598_verifier_niche(cle: str, appelant: str, active_requise: bool = True) -> dict:
+    """La niche de clé `cle` existe pour ce coach (et est active). 400 sinon."""
+    if cle in V595_NICHES:
+        await v598_niches(appelant)          # garantit l'inscription des six d'origine
+    niche = await db[V598_NICHES].find_one({"coach_id": appelant, "cle": cle}, {"_id": 0})
+    if not niche:
+        raise HTTPException(status_code=400, detail="Niche inconnue")
+    if active_requise and not niche.get("active", True):
+        raise HTTPException(status_code=400, detail="Cette niche est archivée : réactive-la d'abord")
+    return niche
+
+
+async def v598_contenu(niche: dict, appelant: str) -> dict:
+    """Ce que la niche contient — décide si elle peut être supprimée."""
+    cle = niche.get("cle")
+    medias = await db[V595_MEDIAS].count_documents({"coach_id": appelant, "niche": cle})
+    liens = await db[V595_LIENS].count_documents({"coach_id": appelant, "niche": cle})
+    return {"medias": medias, "liens": liens}
+
+
+@api_router.get("/prospection-niches")
+async def v598_lister_niches(request: Request):
+    appelant = await _v309_require_coach_or_admin(request)
+    niches = await v598_niches(appelant)
+    return {"total": len(niches), "niches": niches}
+
+
+@api_router.post("/prospection-niches")
+async def v598_creer_niche(request: Request):
+    """Créer une niche : elle apparaît, vide. AUCUNE autre création (prospect, message, lien, envoi)."""
+    appelant = await _v309_require_coach_or_admin(request)
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    nom = v598_nom(corps.get("nom"))
+    niches = await v598_niches(appelant)
+    if len(niches) >= V598_MAX + len(V598_ORIGINE):
+        raise HTTPException(status_code=400, detail="Nombre maximum de niches atteint")
+    if any((n.get("nom") or "").strip().lower() == nom.lower() for n in niches):
+        raise HTTPException(status_code=409, detail="Une niche porte déjà ce nom")
+    instant = v595_maintenant()
+    identifiant = str(uuid.uuid4())
+    doc = {"id": identifiant, "coach_id": appelant, "cle": identifiant, "slug": v598_slug(nom), "nom": nom,
+           "ordre": max([int(n.get("ordre") or 0) for n in niches] + [0]) + 1, "active": True, "origine": False,
+           "created_at": instant, "updated_at": instant, "archived_at": None}
+    await db[V598_NICHES].insert_one(dict(doc))
+    logger.info("[V598] niche créée « %s » (ordre %s)", nom, doc["ordre"])
+    return {"niche": doc}
+
+
+@api_router.patch("/prospection-niches/{niche_id}")
+async def v598_modifier_niche(niche_id: str, request: Request):
+    """Renommer (l'id et la clé ne changent pas) ou archiver / réactiver."""
+    appelant = await _v309_require_coach_or_admin(request)
+    await v598_niches(appelant)
+    identifiant = (niche_id or "").strip()[:64]
+    niche = await db[V598_NICHES].find_one({"coach_id": appelant, "id": identifiant}, {"_id": 0})
+    if not niche:
+        raise HTTPException(status_code=404, detail="Niche introuvable")
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    champs = {}
+    if "nom" in corps:
+        nom = v598_nom(corps.get("nom"))
+        autres = await db[V598_NICHES].find({"coach_id": appelant, "id": {"$ne": identifiant}}, {"_id": 0, "nom": 1}).to_list(200)
+        if any((n.get("nom") or "").strip().lower() == nom.lower() for n in autres):
+            raise HTTPException(status_code=409, detail="Une niche porte déjà ce nom")
+        champs["nom"] = nom
+    if "active" in corps:
+        if not isinstance(corps.get("active"), bool):
+            raise HTTPException(status_code=400, detail="active doit valoir true ou false")
+        champs["active"] = corps["active"]
+        champs["archived_at"] = None if corps["active"] else v595_maintenant()
+    if not champs:
+        return {"niche": niche, "modifie": False}
+    champs["updated_at"] = v595_maintenant()
+    await db[V598_NICHES].update_one({"coach_id": appelant, "id": identifiant}, {"$set": champs})
+    niche.update(champs)
+    return {"niche": niche, "modifie": True}
+
+
+@api_router.delete("/prospection-niches/{niche_id}")
+async def v598_supprimer_niche(niche_id: str, request: Request):
+    """Supprimer UNIQUEMENT une niche créée ET vide (0 média, 0 lien). Sinon 409 :
+    l'archiver. Les six d'origine ne se suppriment jamais. Passe par la Corbeille."""
+    appelant = await _v309_require_coach_or_admin(request)
+    await v598_niches(appelant)
+    identifiant = (niche_id or "").strip()[:64]
+    niche = await db[V598_NICHES].find_one({"coach_id": appelant, "id": identifiant}, {"_id": 0})
+    if not niche:
+        raise HTTPException(status_code=404, detail="Niche introuvable")
+    if niche.get("origine") or niche.get("cle") in V595_NICHES:
+        raise HTTPException(status_code=409, detail="Une niche d'origine ne se supprime pas : archive-la")
+    contenu = await v598_contenu(niche, appelant)
+    if contenu["medias"] or contenu["liens"]:
+        raise HTTPException(status_code=409, detail="Cette niche contient %d média(s) et %d lien(s) : archive-la plutôt" % (contenu["medias"], contenu["liens"]))
+    await db.deleted_items.insert_one({
+        "id": str(uuid.uuid4()), "original_collection": V598_NICHES, "original_id": identifiant,
+        "coach_id": (appelant or "").lower().strip(), "deleted_at": v595_maintenant(), "deleted_by": appelant,
+        "payload": niche})
+    await db[V598_NICHES].delete_one({"coach_id": appelant, "id": identifiant})
+    logger.info("[V598] niche vide « %s » placée en corbeille", niche.get("nom"))
+    return {"supprime": True, "corbeille": True, "id": identifiant}
 
 
 # ------------------------------- MÉDIAS ------------------------------------
@@ -51817,10 +51989,10 @@ async def v595_lister_medias(request: Request):
     filtre = {"coach_id": appelant}
     documents = await db[V595_MEDIAS].find(filtre, {"_id": 0}) \
         .sort([("created_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
-    defaut = {n: None for n in V595_NICHES}
+    defaut = {n["cle"]: None for n in await v598_niches(appelant)}
     async for d in db[V595_MEDIAS].find(
             dict(filtre, statut="validee", format="16_9"), {"_id": 0, "id": 1, "niche": 1}) \
-            .sort([("updated_at", -1), ("id", 1)]).limit(len(V595_NICHES) * 4):
+            .sort([("updated_at", -1), ("id", 1)]).limit(max(len(defaut), 1) * 4):
         if d.get("niche") in defaut and defaut[d["niche"]] is None:
             defaut[d["niche"]] = d.get("id")
     return {"total": await db[V595_MEDIAS].count_documents(filtre),
@@ -51844,6 +52016,7 @@ async def v595_ajouter_media(request: Request):
     if not isinstance(corps, dict):
         raise HTTPException(status_code=400, detail="Corps JSON attendu")
     niche = v595_niche(corps.get("niche"))
+    await v598_verifier_niche(niche, appelant)
     fmt = v595_choix(corps.get("format"), V595_FORMATS, "Format")
     # V596 : un fichier DÉJÀ envoyé sur /api/files (original, export, miniature),
     # ou un lien public comme avant. Le serveur ne calcule rien : il vérifie et range.
@@ -52110,6 +52283,8 @@ async def v595_ajouter_lien(request: Request):
     if not isinstance(corps, dict):
         raise HTTPException(status_code=400, detail="Corps JSON attendu")
     champs = v595_lien_valide(corps, creation=True)
+    if champs.get("niche") != "toutes":
+        await v598_verifier_niche(champs["niche"], appelant)
     # À la création, un lien d'essai est forcé « bloqué » en silence : le coach
     # l'enregistre pour le retrouver, le serveur l'empêche d'être utilisé.
     v595_appliquer_verrou(champs, champs["url"], statut_demande_explicite=False)
@@ -52134,6 +52309,8 @@ async def v595_modifier_lien(lien_id: str, request: Request):
     if not isinstance(corps, dict):
         raise HTTPException(status_code=400, detail="Corps JSON attendu")
     champs = v595_lien_valide(corps, creation=False)
+    if "niche" in champs and champs["niche"] != "toutes":
+        await v598_verifier_niche(champs["niche"], appelant)
     url = champs.get("url") or lien.get("url") or ""
     if "statut" not in champs:
         champs["statut"] = lien.get("statut")
