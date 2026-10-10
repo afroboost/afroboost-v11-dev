@@ -65,6 +65,9 @@ export default function VideoTrimEditor({
   onTrimChange, onThumbnailCapture, onMetadata, onAutoCapture,
   hauteurMax = '320px', posterUrl = '', libelleCapture = 'Capturer cette image comme miniature',
   disposition = 'colonne', complement = null, sousApercu = null,
+  // V596 : calque FACULTATIF posé sur l'aperçu (le cadre de recadrage de Prospection → Médias).
+  // Absent partout ailleurs : « Modifier l'offre » et « Nouvelle publication » ne changent pas.
+  superposition = null,
 }) {
   // Capture AUTOMATIQUE (une fois par vidéo) : une miniature par défaut, prise
   // à ~1 s (la frame 0 est souvent noire) une fois une vraie frame décodée.
@@ -228,6 +231,7 @@ export default function VideoTrimEditor({
           }}
           onError={() => setErreur('Vidéo illisible (fichier ou lien invalide).')}
         />
+        {superposition}
       </div>
 
       {/* CONTRÔLES DE L'EXTRAIT */}

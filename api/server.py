@@ -51703,8 +51703,9 @@ async def v199_generate_invoice(request: Request):
 # plus passe en « archivé ». Rien ne disparaît.
 #
 # PAS DE TÉLÉVERSEMENT ICI. Une vidéo est enregistrée par son LIEN PUBLIC
-# (YouTube non répertorié recommandé). Réutiliser `upload-asset` imposerait de
-# référencer le fichier contre la purge V425 des orphelins — lot séparé.
+# (YouTube non répertorié recommandé). V596 : ou par un fichier DÉJÀ envoyé via
+# `upload-asset` / `upload-chunk` — cette route le référence, ce qui le protège
+# de la purge V425 des orphelins (voir « V596 » plus bas).
 V595_MEDIAS = "prospection_medias"
 V595_LIENS = "prospection_liens"
 V595_PREFIXE = "[V595]"
@@ -51712,7 +51713,8 @@ V595_LISTE_MAX = 50
 
 # Les six niches de la prospection. LISTE FERMÉE (même règle que P3-S1).
 V595_NICHES = ("A", "B", "C", "D", "E", "F")
-V595_FORMATS = ("16_9", "9_16", "miniature")
+# V596 : « original » (le fichier source, jamais réencodé) et « 1_1 » rejoignent la liste.
+V595_FORMATS = ("original", "16_9", "9_16", "1_1", "miniature")
 V595_STATUTS_MEDIA = ("en_cours", "a_verifier", "validee", "archivee")
 V595_CATEGORIES_LIEN = ("videos", "site", "reservation", "formulaires", "reseaux", "dossiers", "autres")
 V595_STATUTS_LIEN = ("actif", "a_verifier", "bloque", "archive")
@@ -51819,8 +51821,8 @@ async def v595_lister_medias(request: Request):
 async def v595_ajouter_media(request: Request):
     """AJOUTER / REMPLACER une vidéo d'une niche.
 
-    LA NOUVELLE ENTRE TOUJOURS « EN COURS » — le statut du corps est ignoré :
-    aucune vidéo n'est validée par un enregistrement. L'ancienne du même
+    LA NOUVELLE ENTRE « EN COURS » (V596 : « À VÉRIFIER » pour un export) — le
+    statut du corps est ignoré : aucune vidéo n'est validée par un enregistrement. L'ancienne du même
     emplacement (niche + format) passe « archivée », jamais supprimée.
     """
     appelant = await _v309_require_coach_or_admin(request)
@@ -51832,15 +51834,32 @@ async def v595_ajouter_media(request: Request):
         raise HTTPException(status_code=400, detail="Corps JSON attendu")
     niche = v595_niche(corps.get("niche"))
     fmt = v595_choix(corps.get("format"), V595_FORMATS, "Format")
-    url = v595_url(corps.get("url"))
+    # V596 : un fichier DÉJÀ envoyé sur /api/files (original, export, miniature),
+    # ou un lien public comme avant. Le serveur ne calcule rien : il vérifie et range.
+    url_brute = (str(corps.get("url")).strip() if corps.get("url") is not None else "")
+    if url_brute.startswith("/api/files/"):
+        url, fichier_doc = await v596_url_fichier(url_brute, appelant, fmt)
+        origine = "export" if str(corps.get("origine") or "").strip().lower() == "export" else "fichier"
+    else:
+        url, fichier_doc, origine = v595_url(corps.get("url")), None, "lien"
+    if origine == "export" and fmt in ("original", "miniature"):
+        raise HTTPException(status_code=400, detail="Un export est forcément au format 16:9, 9:16 ou 1:1")
+    source = None
+    if corps.get("source_id") is not None or origine == "export":
+        source = await v596_source(corps.get("source_id"), appelant, niche, obligatoire=(origine == "export"))
     instant = v595_maintenant()
     doc = {
         "id": str(uuid.uuid4()), "coach_id": appelant, "niche": niche, "format": fmt,
-        "url": url, "statut": "en_cours",
+        # V596 : un EXPORT entre « à vérifier » ; tout le reste « en cours ». Jamais « validée ».
+        "url": url, "statut": "a_verifier" if origine == "export" else "en_cours",
         "version": p3s1_texte(corps.get("version"), 40),
         "notes": p3s1_texte(corps.get("notes"), 1000),
         "created_at": instant, "updated_at": instant,
         "archived_at": None, "remplace_par": None, "remplace": None,
+        "origine": origine,
+        "source_id": source["id"] if source else None,
+        "fichier": v596_fichier(corps.get("fichier"), fichier_doc) if fichier_doc else None,
+        "edition": v596_edition(corps.get("edition")) if origine == "export" else None,
     }
     anciens = await db[V595_MEDIAS].find(
         {"coach_id": appelant, "niche": niche, "format": fmt, "statut": {"$ne": "archivee"}},
@@ -51854,6 +51873,98 @@ async def v595_ajouter_media(request: Request):
                       "remplace_par": doc["id"], "updated_at": instant}})
     logger.info("%s média ajouté niche=%s format=%s (archivés : %d)", V595_PREFIXE, niche, fmt, len(anciens))
     return {"media": doc, "archives": len(anciens)}
+
+
+# --- V596 : fichiers /api/files et export navigateur ---------------------------
+# L'EXPORT VIDÉO SE FAIT DANS LE NAVIGATEUR DU COACH (découpe, recadrage, H.264 +
+# AAC). Le serveur ne lance AUCUN calcul vidéo : il reçoit un MP4 déjà fini par
+# l'envoi existant (upload-asset / upload-chunk), puis cette route le RÉFÉRENCE
+# dans prospection_medias — ce qui le protège de la purge V425 des orphelins.
+# Toutes les entrées ci-dessous sont des MÉTADONNÉES bornées : aucune n'atteint
+# un chemin disque ni une commande.
+V596_URL_FICHIER = re.compile(r"^/api/files/([A-Za-z0-9_-]{1,64})/([A-Za-z0-9._-]{1,200})$")
+V596_MIME_VIDEO = ("video/mp4", "video/webm", "video/quicktime")
+V596_MIME_IMAGE = ("image/jpeg", "image/png", "image/webp")
+V596_RATIOS = ("16:9", "9:16", "1:1", "auto")
+V596_DUREE_MAX_S = 600
+V596_DIM_MAX = 4096
+V596_TAILLE_MAX = 200 * 1024 * 1024
+
+
+async def v596_url_fichier(url: str, appelant: str, fmt: str):
+    """Un fichier /api/files ENVOYÉ PAR CE COACH, du bon type. 400 sinon."""
+    m = V596_URL_FICHIER.match(url or "")
+    if not m:
+        raise HTTPException(status_code=400, detail="Adresse de fichier invalide")
+    fiche = await db.uploaded_files.find_one(
+        {"file_id": m.group(1)}, {"_id": 0, "file_id": 1, "filename": 1, "coach_email": 1,
+                                  "content_type": 1, "asset_type": 1, "size": 1, "original_name": 1})
+    if not fiche or fiche.get("filename") != m.group(2):
+        raise HTTPException(status_code=400, detail="Fichier introuvable")
+    if (fiche.get("coach_email") or "").strip().lower() != (appelant or "").strip().lower():
+        raise HTTPException(status_code=403, detail="Ce fichier ne vous appartient pas")
+    attendu = V596_MIME_IMAGE if fmt == "miniature" else V596_MIME_VIDEO
+    if (fiche.get("content_type") or "") not in attendu:
+        raise HTTPException(status_code=400, detail="Type de fichier inattendu pour ce format")
+    return url, fiche
+
+
+async def v596_source(source_id, appelant: str, niche: str, obligatoire: bool):
+    """L'ORIGINAL dont dérive un export : même coach, même niche, format « original »."""
+    identifiant = (str(source_id).strip()[:64] if source_id is not None else "")
+    if not identifiant:
+        if obligatoire:
+            raise HTTPException(status_code=400, detail="L'original de cet export est obligatoire")
+        return None
+    source = await db[V595_MEDIAS].find_one(
+        {"coach_id": appelant, "id": identifiant, "niche": niche, "format": "original"}, {"_id": 0, "id": 1})
+    if not source:
+        raise HTTPException(status_code=400, detail="Original introuvable pour cette niche")
+    return source
+
+
+def _v596_nombre(valeur, mini, maxi, nom, entier=False):
+    try:
+        x = float(valeur)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="%s invalide" % nom)
+    if x != x or x < mini or x > maxi:
+        raise HTTPException(status_code=400, detail="%s hors limites" % nom)
+    return int(round(x)) if entier else round(x, 3)
+
+
+def v596_fichier(corps, fiche: dict) -> dict:
+    """Les caractéristiques du fichier. Type et taille viennent de la FICHE serveur. PURE."""
+    c = corps if isinstance(corps, dict) else {}
+    nom = re.sub(r"[^A-Za-z0-9._ -]", "_", str(c.get("nom") or fiche.get("original_name") or ""))[:120].strip()
+    info = {"nom": nom or fiche.get("filename"), "type": fiche.get("content_type"),
+            "taille": int(fiche.get("size") or 0), "file_id": fiche.get("file_id")}
+    if c.get("duree") is not None:
+        info["duree"] = _v596_nombre(c.get("duree"), 0, V596_DUREE_MAX_S, "Durée")
+    for cle, nom_champ in (("largeur", "Largeur"), ("hauteur", "Hauteur")):
+        if c.get(cle) is not None:
+            info[cle] = _v596_nombre(c.get(cle), 1, V596_DIM_MAX, nom_champ, entier=True)
+    if info["taille"] > V596_TAILLE_MAX:
+        raise HTTPException(status_code=400, detail="Fichier trop lourd")
+    return info
+
+
+def v596_edition(corps) -> dict:
+    """Les réglages qui ont produit l'export (découpe + cadrage). Bornés. PURE."""
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Réglages d'export obligatoires")
+    debut = _v596_nombre(corps.get("debut"), 0, V596_DUREE_MAX_S, "Début")
+    fin = _v596_nombre(corps.get("fin"), 0, V596_DUREE_MAX_S, "Fin")
+    if fin - debut < 0.5:
+        raise HTTPException(status_code=400, detail="L'extrait doit durer au moins 0,5 s")
+    ratio = str(corps.get("ratio") or "").strip()
+    if ratio not in V596_RATIOS:
+        raise HTTPException(status_code=400, detail="Format d'export inconnu")
+    position = _v596_nombre(corps.get("position", 0.5), 0, 1, "Position du cadrage")
+    cadre = corps.get("cadre") if isinstance(corps.get("cadre"), dict) else {}
+    return {"debut": debut, "fin": fin, "ratio": ratio, "position": position,
+            "cadre": {k: _v596_nombre(cadre.get(k, 0), 0, V596_DIM_MAX, "Cadre", entier=True)
+                      for k in ("gauche", "haut", "largeur", "hauteur")}}
 
 
 @api_router.patch("/prospection-medias/{media_id}")
