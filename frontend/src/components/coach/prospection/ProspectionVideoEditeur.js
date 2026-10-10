@@ -23,7 +23,7 @@ import { libelleDetection, ratioDepuisDimensions } from '../../../utils/videoRat
 import { formatTemps } from '../../../utils/videoTrim';
 import {
   FORMATS_EXPORT, calculerCadrage, exporterVideo, exportEnCours, exportSupporteIci,
-  nomExport, tailleLisible, validerMetadonnees,
+  nomExport, tailleLisible, validerMetadonnees, lireMetadonneesFichier,
 } from '../../../utils/videoExport';
 import { Bandeau, Bouton, DOUX, TEXTE, BORD } from './ui';
 
@@ -192,7 +192,10 @@ export default function ProspectionVideoEditeur({ API, niche, original, fichierL
         annulation: annulation.current,
       });
       const url = garderUrl(URL.createObjectURL(r.blob));
-      setResultat({ blob: r.blob, url, duree: r.duree, largeur: 0, hauteur: 0, taille: r.blob.size });
+      // Les caractéristiques affichées sont lues DANS le fichier produit (pas déduites des réglages).
+      const m = await lireMetadonneesFichier(r.blob);
+      if (!m) throw new Error('Le fichier exporté est illisible : export refusé.');
+      setResultat({ blob: r.blob, url, duree: m.duree, largeur: m.largeur, hauteur: m.hauteur, taille: r.blob.size });
       setExp({ etat: 'fini', pct: 100, erreur: '' });
     } catch (e) {
       setExp({ etat: 'echec', pct: 0, erreur: erreurLisible(e, 'Export impossible.') });
@@ -241,7 +244,7 @@ export default function ProspectionVideoEditeur({ API, niche, original, fichierL
       {erreurMeta && <Bandeau ton="rouge" testid="pve-erreur-meta">{erreurMeta}</Bandeau>}
 
       {resultat ? (
-        <ApercuFinal resultat={resultat} setResultat={setResultat} ratio={ratio} envoi={envoi}
+        <ApercuFinal resultat={resultat} ratio={ratio} envoi={envoi}
           onEnregistrer={enregistrer} onRemodifier={remodifier} formatCible={formatCible} />
       ) : (
         <>
@@ -331,7 +334,7 @@ export default function ProspectionVideoEditeur({ API, niche, original, fichierL
   );
 }
 
-function ApercuFinal({ resultat, setResultat, ratio, envoi, onEnregistrer, onRemodifier, formatCible }) {
+function ApercuFinal({ resultat, ratio, envoi, onEnregistrer, onRemodifier, formatCible }) {
   const lu = resultat.largeur > 0;
   return (
     <div data-testid="pve-apercu-final" style={{ display: 'grid', gap: 10 }}>
@@ -340,12 +343,6 @@ function ApercuFinal({ resultat, setResultat, ratio, envoi, onEnregistrer, onRem
         <video
           src={resultat.url} controls playsInline preload="metadata" data-testid="pve-video-finale"
           style={{ maxWidth: '100%', maxHeight: '420px', display: 'block' }}
-          onLoadedMetadata={(e) => {
-            const v = e.currentTarget;
-            const duree = Number.isFinite(v.duration) ? Math.round(v.duration * 100) / 100 : resultat.duree;
-            setResultat((p) => (p && (p.largeur !== v.videoWidth || p.hauteur !== v.videoHeight || p.duree !== duree)
-              ? { ...p, largeur: v.videoWidth, hauteur: v.videoHeight, duree } : p));
-          }}
         />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '2px 12px', fontSize: 12 }} data-testid="pve-final-infos">

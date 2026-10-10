@@ -116,3 +116,11 @@ test('l’éditeur Prospection est chargé avec lazy(), jamais importé statique
 test('4 formats proposés : Auto, 16:9, 9:16, 1:1', () => {
   expect(FORMATS_EXPORT.map((f) => f.ratio)).toEqual(['auto', '16:9', '9:16', '1:1']);
 });
+
+test('la lecture des métadonnées passe par le moteur, chargé à la demande, jamais par un <video>', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'videoExport.js'), 'utf8');
+  const bloc = src.slice(src.indexOf('export async function lireMetadonneesFichier'), src.indexOf('// UN SEUL EXPORT'));
+  expect(bloc).toMatch(/await import\('mediabunny'\)/);
+  expect(bloc).not.toMatch(/createElement\('video'\)/);
+  expect(bloc).toMatch(/dispose\(\)/);
+});

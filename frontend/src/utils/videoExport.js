@@ -137,6 +137,28 @@ export function exportSupporteIci(env = (typeof window !== 'undefined' ? window 
   return { ok: true, raison: '' };
 }
 
+/**
+ * Durée et dimensions d'un fichier LOCAL, lues dans le conteneur MP4 lui-même.
+ * Pas de <video> : un lecteur vidéo est suspendu par Chrome quand l'onglet passe
+ * en arrière-plan (« stalled »), ce qui faisait échouer la lecture. Chargé à la
+ * demande, comme l'export. Renvoie null si le fichier est illisible.
+ */
+export async function lireMetadonneesFichier(fichier) {
+  let input = null;
+  try {
+    const mb = await import('mediabunny');
+    input = new mb.Input({ source: new mb.BlobSource(fichier), formats: mb.ALL_FORMATS });
+    const piste = await input.getPrimaryVideoTrack();
+    if (!piste) return null;
+    const duree = await input.computeDuration();
+    return { duree: Math.round(duree * 100) / 100, largeur: piste.displayWidth, hauteur: piste.displayHeight };
+  } catch (e) {
+    return null;
+  } finally {
+    try { if (input && input.dispose) input.dispose(); } catch (err) { /* déjà libéré */ }
+  }
+}
+
 // UN SEUL EXPORT À LA FOIS (tout l'onglet).
 let exportActif = null;
 export const exportEnCours = () => !!exportActif;

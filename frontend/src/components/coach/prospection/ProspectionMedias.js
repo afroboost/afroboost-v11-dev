@@ -16,7 +16,7 @@ import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useStat
 import axios from 'axios';
 import { NICHES } from '../../../utils/prospectionStats';
 import { uploadToCloudinary } from '../../CloudinaryUploadButton';
-import { validerFichierVideo, validerMetadonnees, tailleLisible } from '../../../utils/videoExport';
+import { validerFichierVideo, validerMetadonnees, tailleLisible, lireMetadonneesFichier } from '../../../utils/videoExport';
 import { Titre, Bandeau, EtatLecture, Pastille, Bouton, DOUX, TEXTE, BORD, champ, jour } from './ui';
 
 export const STATUTS_MEDIA = {
@@ -152,20 +152,6 @@ function FormulaireAjout({ niche, onFini, API }) {
   );
 }
 
-/** Lit durée et dimensions d'un fichier LOCAL, sans rien envoyer. */
-function lireMetadonnees(fichier) {
-  return new Promise((res) => {
-    const url = URL.createObjectURL(fichier);
-    const v = document.createElement('video');
-    const finir = (m) => { URL.revokeObjectURL(url); v.removeAttribute('src'); res(m); };
-    const minuterie = setTimeout(() => finir(null), 15000);
-    v.preload = 'metadata'; v.muted = true;
-    v.onloadedmetadata = () => { clearTimeout(minuterie); finir({ duree: Math.round(v.duration * 100) / 100, largeur: v.videoWidth, hauteur: v.videoHeight }); };
-    v.onerror = () => { clearTimeout(minuterie); finir(null); };
-    v.src = url;
-  });
-}
-
 /** V596 — ENVOYER L'ORIGINAL : vérifié, envoyé tel quel, enregistré « En cours ». */
 function FormulaireOriginal({ niche, API, onFini, onOuvrirEditeur }) {
   const [etat, setEtat] = useState({ phase: '', pct: 0, msg: '' });
@@ -177,7 +163,7 @@ function FormulaireOriginal({ niche, API, onFini, onOuvrirEditeur }) {
     const refus = validerFichierVideo(fichier);
     if (refus) { setEtat({ phase: '', pct: 0, msg: refus }); return; }
     setEtat({ phase: 'lecture', pct: 0, msg: '' });
-    const meta = await lireMetadonnees(fichier);
+    const meta = await lireMetadonneesFichier(fichier);
     const refusMeta = meta ? validerMetadonnees(meta) : 'Vidéo illisible par le navigateur.';
     if (refusMeta) { setEtat({ phase: '', pct: 0, msg: refusMeta }); return; }
     setEtat({ phase: 'envoi', pct: 0, msg: '' });
