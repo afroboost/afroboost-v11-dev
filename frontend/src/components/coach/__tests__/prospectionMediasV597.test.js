@@ -164,3 +164,14 @@ test('icônes SVG uniquement ; couleur de marque toujours via var(--primary-colo
   const hors = src.replace(/var\(--primary-color, #D91CD2\)/g, '').match(marque);
   expect(hors).toBeNull();
 });
+
+test('fenêtre et confirmation passent AU-DESSUS des boutons fixes du tableau de bord (z-index 9999)', async () => {
+  await monter();
+  await clic(q('pm-niche-ligne-C'));
+  await clic(q('pm-editer-9_16'));
+  expect(Number(q('pm-fenetre-editeur').style.zIndex)).toBeGreaterThan(9999);
+  await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+  await clic(q('pm-menu-9_16'));
+  await clic(q('pm-menu-supprimer-9_16'));
+  expect(Number(q('pm-confirmation').style.zIndex)).toBeGreaterThan(9999);
+});

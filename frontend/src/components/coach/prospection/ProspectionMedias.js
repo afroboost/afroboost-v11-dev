@@ -90,7 +90,7 @@ function Confirmation({ titre, texte, libelleOk, onOk, onAnnuler, enCours }) {
   return createPortal(
     <div role="dialog" aria-modal="true" aria-label={titre} data-testid="pm-confirmation"
       onMouseDown={(e) => { if (e.target === e.currentTarget && !enCours) onAnnuler(); }}
-      style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      style={{ position: 'fixed', inset: 0, zIndex: 10100, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div style={{ width: 'min(400px, 100%)', background: '#14101b', border: `1px solid ${BORD}`, borderRadius: 14, padding: 18, color: TEXTE }}>
         <div style={{ fontSize: 15, fontWeight: 700 }}>{titre}</div>
         {texte && <div style={{ fontSize: 12, color: DOUX, marginTop: 6, lineHeight: 1.5 }}>{texte}</div>}
@@ -220,7 +220,8 @@ function Emplacement({ format, media, enCours, onEditer, onAjouter, onStatut, on
   );
 }
 
-/** L'éditeur dans une FENÊTRE (plein écran sur téléphone) : la page Médias ne s'allonge plus. */
+/** L'éditeur dans une FENÊTRE (plein écran sur téléphone) : la page Médias ne s'allonge plus.
+ *  z-index 10050 : AU-DESSUS des boutons fixes du tableau de bord (« Vue Visiteur », « Déconnexion » = 9999). */
 function FenetreEditeur({ children, onFermer, bloque }) {
   useEffect(() => {
     const avant = document.body.style.overflow;
@@ -231,7 +232,7 @@ function FenetreEditeur({ children, onFermer, bloque }) {
   }, [onFermer, bloque]);
   return createPortal(
     <div role="dialog" aria-modal="true" aria-label="Éditeur vidéo" data-testid="pm-fenetre-editeur" className="pm-fenetre"
-      style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.78)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      style={{ position: 'fixed', inset: 0, zIndex: 10050, background: 'rgba(0,0,0,0.78)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <style>{`
         .pm-fenetre-boite{width:min(1180px,96vw);max-height:94vh;overflow:auto;border-radius:16px;background:#0f0b15;border:1px solid ${BORD}}
         @media (max-width:640px){.pm-fenetre-boite{width:100vw;height:100vh;max-height:100vh;border-radius:0;border:none}}
