@@ -62,6 +62,21 @@ C'est l'erreur la plus répétée du projet. À vérifier SYSTÉMATIQUEMENT avan
 
 5. **Avant chaque commit UI** : rechercher les hex codés en dur (`#[0-9a-fA-F]{6}`) dans les fichiers modifiés et vérifier que chacun est bien une valeur de secours dans un `var()`, et non une couleur imposée.
 
+## 🧘 RÈGLE ABSOLUE — AFROBOOST : DESIGN ÉPURÉ PAR DÉFAUT (demandée par Bassi, V597)
+
+Toujours privilégier :
+- peu d'éléments visibles simultanément ;
+- une hiérarchie visuelle claire ;
+- des informations secondaires masquées jusqu'à interaction (« Détails », menu « ⋯ ») ;
+- des sections repliables (accordéon fermé par défaut, une seule section ouverte à la fois si possible) ;
+- des actions principales évidentes — au plus 2 actions visibles par carte, le reste dans « ⋯ » ;
+- aucune répétition inutile, aucun emplacement vide transformé en grande carte (« + Ajouter » suffit) ;
+- jamais de longs écrans administratifs remplis de blocs ;
+- une modal / un drawer / un accordéon dès que cela évite d'allonger la page (un éditeur ne s'ouvre pas au milieu de la page) ;
+- desktop ET mobile simples à lire (une colonne sur téléphone, plein écran pour les éditeurs).
+
+**Avant toute nouvelle interface, vérifier si elle peut être simplifiée.** Référence : Prospection → Médias (V597).
+
 ## 🎥 RÈGLE ABSOLUE — LIVE : CONTRAT DE NON-RÉGRESSION
 
 Pour toute modification du Live (afroboost.com/live = dépôt BoostTribe `~/Boosttribe-v8`, worktrees `~/bt-*`) :

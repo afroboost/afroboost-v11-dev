@@ -4,8 +4,13 @@
  * CE QUE L'ÉCRAN NE FAIT PAS : il n'envoie rien, ne relie aucune vidéo à un prospect,
  * ne touche à aucun message. Une vidéo enregistrée entre « En cours » (forcé par le
  * serveur) ; la valider est un geste manuel, confirmé en deux temps. Remplacer une
- * vidéo l'ARCHIVE (serveur) : rien n'est jamais supprimé, et il n'existe pas de bouton
- * « Supprimer ».
+ * vidéo l'ARCHIVE (serveur).
+ *
+ * V597 — DESIGN ÉPURÉ (règle permanente, CLAUDE.md) : six lignes compactes, toutes
+ * fermées, une seule ouverte à la fois ; un emplacement vide = « + Ajouter » ; une
+ * action principale + « ⋯ » (Détails, Valider, Supprimer) ; l'éditeur s'ouvre dans
+ * une FENÊTRE (plein écran sur téléphone). « Supprimer » place UN média dans la
+ * Corbeille existante (restaurable), après confirmation.
  *
  * V596 — chaque niche porte ORIGINAL + 16:9 + 9:16 + 1:1 + MINIATURE. L'original
  * est un fichier envoyé tel quel (jamais réencodé) ; « Modifier / exporter » ouvre
@@ -13,11 +18,12 @@
  * qui fabrique, DANS LE NAVIGATEUR, un nouveau MP4 enregistré « À vérifier ».
  */
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { NICHES } from '../../../utils/prospectionStats';
 import { uploadToCloudinary } from '../../CloudinaryUploadButton';
 import { validerFichierVideo, validerMetadonnees, tailleLisible, lireMetadonneesFichier } from '../../../utils/videoExport';
-import { Titre, Bandeau, EtatLecture, Pastille, Bouton, DOUX, TEXTE, BORD, champ, jour } from './ui';
+import { EtatLecture, Pastille, Bouton, DOUX, TEXTE, BORD, champ, jour } from './ui';
 
 export const STATUTS_MEDIA = {
   en_cours: { libelle: 'En cours', ton: 'ambre' },
@@ -39,86 +45,205 @@ const FORMATS_LIEN = FORMATS.filter((f) => f.id !== 'original');
 const ProspectionVideoEditeur = lazy(() => import('./ProspectionVideoEditeur'));
 
 const estFichier = (m) => !!(m && typeof m.url === 'string' && m.url.indexOf('/api/files/') === 0);
-const dureeLisible = (s) => (s > 0 ? `${Number(s).toFixed(1)} s` : '');
-
-/** Ce que le fichier est réellement : nom, durée, résolution, taille. */
-function InfosFichier({ fichier }) {
-  if (!fichier) return null;
-  const morceaux = [
-    fichier.nom,
-    dureeLisible(fichier.duree),
-    fichier.largeur && fichier.hauteur ? `${fichier.largeur} × ${fichier.hauteur}` : '',
-    fichier.taille ? tailleLisible(fichier.taille) : '',
-  ].filter(Boolean);
-  return <div data-testid="pm-fichier-infos">Fichier : <span style={{ color: TEXTE }}>{morceaux.join(' · ')}</span></div>;
-}
+const dureeCourte = (s) => {
+  if (!(s > 0)) return '';
+  const t = Math.round(s);
+  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+};
+// Libellés COURTS des emplacements (la ligne d'un média reste lisible sur téléphone).
+const COURT = { original: 'Original', '16_9': '16:9', '9_16': '9:16', '1_1': '1:1', miniature: 'Miniature' };
+const RATIO_DU_FORMAT = { '16_9': '16:9', '9_16': '9:16', '1_1': '1:1' };
 
 function erreurLisible(e, defaut) {
   const d = e && e.response && e.response.data && e.response.data.detail;
   return typeof d === 'string' ? d : defaut;
 }
 
-/** Statut affiché d'une NICHE : sa vidéo 16:9 actuelle, sinon « En cours » (production). */
+/**
+ * Statut affiché d'une NICHE. V597 : « Validée » si sa vidéo 16:9 l'est ; sinon
+ * « À vérifier » dès qu'un de ses médias attend ta décision ; sinon « En cours ».
+ */
 export function statutNiche(actuels) {
   const v = actuels['16_9'];
-  return v ? v.statut : 'en_cours';
+  if (v && v.statut === 'validee') return 'validee';
+  if (Object.values(actuels).some((m) => m && m.statut === 'a_verifier')) return 'a_verifier';
+  return 'en_cours';
 }
 
-function Emplacement({ format, media, onStatut, enCours, onEditer }) {
-  const [confirmer, setConfirmer] = useState(false);
-  return (
-    <div data-testid={`pm-emplacement-${format.id}`} style={{ border: `1px solid ${BORD}`, borderRadius: '10px', padding: '8px 10px', minWidth: 0 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-        <strong style={{ fontSize: '12px' }}>{format.libelle}</strong>
-        {media ? <Pastille ton={STATUTS_MEDIA[media.statut].ton}>{STATUTS_MEDIA[media.statut].libelle}</Pastille>
-          : <Pastille ton="ambre">En cours</Pastille>}
-      </div>
-      {media ? (
-        <div style={{ fontSize: '12px', color: DOUX, marginTop: '6px', lineHeight: 1.5, wordBreak: 'break-word' }}>
-          <div>Version : <span style={{ color: TEXTE }}>{media.version || '—'}</span> · {jour(media.created_at)}</div>
-          {estFichier(media) ? (
-            <>
-              {format.id === 'miniature'
-                ? <img src={media.url} alt="Miniature" data-testid={`pm-image-${format.id}`} style={{ marginTop: 6, width: '100%', maxHeight: 160, objectFit: 'contain', borderRadius: 8, background: '#000' }} />
-                : <video src={media.url} controls playsInline preload="metadata" data-testid={`pm-lecteur-${format.id}`} style={{ marginTop: 6, width: '100%', maxHeight: 220, borderRadius: 8, background: '#000' }} />}
-              <InfosFichier fichier={media.fichier} />
-              {media.edition && <div>Extrait : <span style={{ color: TEXTE }}>{media.edition.debut} s → {media.edition.fin} s</span></div>}
-            </>
-          ) : (
-            <div>Lien public : <a href={media.url} target="_blank" rel="noopener noreferrer" style={{ color: TEXTE }}>{media.url}</a></div>
-          )}
-          {media.notes && <div>Notes : <span style={{ color: TEXTE }}>{media.notes}</span></div>}
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px', alignItems: 'center' }}>
-            <label style={{ fontSize: '11px' }}>Statut
-              <select value={media.statut} disabled={enCours} data-testid={`pm-statut-${format.id}`}
-                onChange={(e) => { if (e.target.value === 'validee') setConfirmer(true); else onStatut(media, e.target.value); }}
-                style={{ ...champ, width: 'auto', marginLeft: '6px', padding: '4px 8px', fontSize: '12px' }}>
-                {Object.entries(STATUTS_MEDIA).map(([id, s]) => <option key={id} value={id} style={{ color: 'black' }}>{s.libelle}</option>)}
-              </select>
-            </label>
-            {onEditer && estFichier(media) && format.id !== 'miniature' && (
-              <Bouton discret onClick={() => onEditer(media)} disabled={enCours} testid={`pm-editer-${format.id}`}>
-                {format.id === 'original' ? 'Modifier / exporter' : 'Remodifier'}
-              </Bouton>
-            )}
-          </div>
-          {confirmer && (
-            <div style={{ marginTop: '6px', display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={{ color: TEXTE }}>Valider cette vidéo pour la niche ? (aucun envoi ne part)</span>
-              <Bouton onClick={() => { setConfirmer(false); onStatut(media, 'validee'); }} testid={`pm-confirmer-${format.id}`}>Confirmer</Bouton>
-              <Bouton discret onClick={() => setConfirmer(false)}>Annuler</Bouton>
-            </div>
-          )}
+// --- Icônes SVG inline (règle du projet : jamais d'emoji comme icône) ---------
+const Icone = ({ d, taille = 16 }) => (
+  <svg width={taille} height={taille} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
+);
+const CHEVRON = <path d="M9 6l6 6-6 6" />;
+const POINTS = <><circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" /></>;
+const PLUS = <><path d="M12 5v14" /><path d="M5 12h14" /></>;
+const CORBEILLE = <><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /></>;
+
+const boutonIcone = {
+  width: 32, height: 32, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  borderRadius: 9, border: `1px solid ${BORD}`, background: 'transparent', color: TEXTE, cursor: 'pointer', flexShrink: 0,
+};
+
+/** Fenêtre de confirmation (portée sur <body>) : jamais de suppression sans « Supprimer ». */
+function Confirmation({ titre, texte, libelleOk, onOk, onAnnuler, enCours }) {
+  return createPortal(
+    <div role="dialog" aria-modal="true" aria-label={titre} data-testid="pm-confirmation"
+      onMouseDown={(e) => { if (e.target === e.currentTarget && !enCours) onAnnuler(); }}
+      style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ width: 'min(400px, 100%)', background: '#14101b', border: `1px solid ${BORD}`, borderRadius: 14, padding: 18, color: TEXTE }}>
+        <div style={{ fontSize: 15, fontWeight: 700 }}>{titre}</div>
+        {texte && <div style={{ fontSize: 12, color: DOUX, marginTop: 6, lineHeight: 1.5 }}>{texte}</div>}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <Bouton discret onClick={onAnnuler} disabled={enCours} testid="pm-confirmation-annuler">Annuler</Bouton>
+          <Bouton onClick={onOk} disabled={enCours} testid="pm-confirmation-ok">{enCours ? '…' : libelleOk}</Bouton>
         </div>
-      ) : (
-        <div style={{ fontSize: '12px', color: DOUX, marginTop: '6px' }}>Aucune vidéo enregistrée.</div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** Menu « ⋯ » : les actions secondaires, cachées jusqu'au clic. */
+function MenuPlus({ actions, testid }) {
+  const [ouvert, setOuvert] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!ouvert) return undefined;
+    const fermer = (e) => { if (ref.current && !ref.current.contains(e.target)) setOuvert(false); };
+    document.addEventListener('mousedown', fermer);
+    return () => document.removeEventListener('mousedown', fermer);
+  }, [ouvert]);
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" aria-label="Plus d'actions" aria-haspopup="menu" aria-expanded={ouvert} data-testid={testid}
+        onClick={() => setOuvert((o) => !o)} style={boutonIcone}><Icone d={POINTS} /></button>
+      {ouvert && (
+        <div role="menu" style={{ position: 'absolute', right: 0, top: 36, zIndex: 20, minWidth: 150, background: '#1b1524', border: `1px solid ${BORD}`, borderRadius: 10, padding: 4, boxShadow: '0 8px 24px rgba(0,0,0,0.45)' }}>
+          {actions.map((a) => (
+            <button key={a.libelle} type="button" role="menuitem" data-testid={a.testid}
+              onClick={() => { setOuvert(false); a.onClick(); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', border: 'none', borderRadius: 7, background: 'transparent', color: a.danger ? 'rgb(252,165,165)' : TEXTE, fontSize: 12, cursor: 'pointer', textAlign: 'left' }}>
+              {a.icone && <Icone d={a.icone} taille={14} />}{a.libelle}
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );
 }
 
-function FormulaireAjout({ niche, onFini, API }) {
-  const [f, setF] = useState({ format: '16_9', url: '', version: '', notes: '' });
+/** Aperçu minuscule : l'image elle-même, ou la 1re image de la vidéo. */
+function Vignette({ media, format }) {
+  const style = { width: 64, height: 40, objectFit: 'cover', borderRadius: 6, background: '#000', flexShrink: 0, display: 'block' };
+  if (!estFichier(media)) return <div style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: DOUX }}>Lien</div>;
+  if (format === 'miniature') return <img src={media.url} alt="" style={style} data-testid={`pm-image-${format}`} />;
+  return <video src={`${media.url}#t=1`} muted playsInline preload="metadata" style={style} data-testid={`pm-lecteur-${format}`} />;
+}
+
+/** Les détails techniques : affichés seulement à la demande (« Détails »). */
+function Details({ media, onStatut, enCours }) {
+  const f = media.fichier || {};
+  const lignes = [
+    ['Fichier', f.nom],
+    ['Résolution', f.largeur && f.hauteur ? `${f.largeur} × ${f.hauteur}` : ''],
+    ['Durée', f.duree ? `${Number(f.duree).toFixed(1)} s` : ''],
+    ['Taille', f.taille ? tailleLisible(f.taille) : ''],
+    ['Extrait', media.edition ? `${media.edition.debut} s → ${media.edition.fin} s` : ''],
+    ['Version', media.version],
+    ['Ajouté le', jour(media.created_at)],
+    ['Lien', estFichier(media) ? '' : media.url],
+    ['Notes', media.notes],
+  ].filter(([, v]) => v);
+  return (
+    <div data-testid={`pm-details-${media.format}`} style={{ marginTop: 8, padding: 10, borderRadius: 8, background: 'rgba(255,255,255,0.03)', fontSize: 11, color: DOUX, display: 'grid', gap: 3, wordBreak: 'break-word' }}>
+      {estFichier(media) && media.format !== 'miniature' && (
+        <video src={media.url} controls playsInline preload="metadata" style={{ width: '100%', maxHeight: 260, borderRadius: 8, background: '#000', marginBottom: 6 }} data-testid={`pm-lecteur-complet-${media.format}`} />
+      )}
+      {lignes.map(([k, v]) => <div key={k}>{k} : <span style={{ color: TEXTE }}>{v}</span></div>)}
+      <label style={{ marginTop: 4 }}>Statut
+        <select value={media.statut} disabled={enCours} data-testid={`pm-statut-${media.format}`}
+          onChange={(e) => onStatut(media, e.target.value)}
+          style={{ ...champ, width: 'auto', marginLeft: 6, padding: '3px 8px', fontSize: 12 }}>
+          {Object.entries(STATUTS_MEDIA).filter(([id]) => id !== 'validee' || media.statut === 'validee')
+            .map(([id, s]) => <option key={id} value={id} style={{ color: 'black' }}>{s.libelle}</option>)}
+        </select>
+      </label>
+    </div>
+  );
+}
+
+/**
+ * UN EMPLACEMENT d'une niche. Vide : « + Ajouter ». Rempli : vignette, format,
+ * durée, statut, UNE action principale + « ⋯ » (Détails, Valider, Supprimer).
+ */
+function Emplacement({ format, media, enCours, onEditer, onAjouter, onStatut, onValider, onSupprimer }) {
+  const [details, setDetails] = useState(false);
+  const ligne = { display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 };
+  const carte = { border: `1px solid ${BORD}`, borderRadius: 10, padding: '8px 10px', minWidth: 0 };
+  if (!media) {
+    return (
+      <div data-testid={`pm-emplacement-${format.id}`} style={{ ...carte, ...ligne, justifyContent: 'space-between', borderStyle: 'dashed' }}>
+        <strong style={{ fontSize: 12, color: DOUX }}>{COURT[format.id]}</strong>
+        <button type="button" onClick={() => onAjouter(format.id)} disabled={enCours} data-testid={`pm-ajouter-${format.id}`}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'transparent', color: 'var(--primary-color, #D91CD2)', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 4 }}>
+          <Icone d={PLUS} taille={14} />Ajouter
+        </button>
+      </div>
+    );
+  }
+  const st = STATUTS_MEDIA[media.statut] || STATUTS_MEDIA.en_cours;
+  const duree = dureeCourte(media.fichier && media.fichier.duree);
+  const principal = estFichier(media)
+    ? { libelle: format.id === 'original' ? 'Modifier' : (format.id === 'miniature' ? 'Changer' : 'Remodifier'), onClick: () => onEditer(media) }
+    : { libelle: 'Ouvrir', href: media.url };
+  const actions = [
+    { libelle: details ? 'Masquer les détails' : 'Détails', onClick: () => setDetails((d) => !d), testid: `pm-menu-details-${format.id}` },
+    ...(media.statut !== 'validee' && format.id !== 'original' ? [{ libelle: 'Valider', onClick: () => onValider(media), testid: `pm-menu-valider-${format.id}` }] : []),
+    { libelle: 'Supprimer', icone: CORBEILLE, danger: true, onClick: () => onSupprimer(media), testid: `pm-menu-supprimer-${format.id}` },
+  ];
+  return (
+    <div data-testid={`pm-emplacement-${format.id}`} style={carte}>
+      <div style={ligne}>
+        <Vignette media={media} format={format.id} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 700 }}>{COURT[format.id]}{duree && <span style={{ color: DOUX, fontWeight: 500 }}> · {duree}</span>}</div>
+          <div style={{ marginTop: 3 }}><Pastille ton={st.ton}>{st.libelle}</Pastille></div>
+        </div>
+        {principal.href
+          ? <a href={principal.href} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: TEXTE }}>{principal.libelle}</a>
+          : <Bouton discret onClick={principal.onClick} disabled={enCours} testid={`pm-editer-${format.id}`}>{principal.libelle}</Bouton>}
+        <MenuPlus actions={actions} testid={`pm-menu-${format.id}`} />
+      </div>
+      {details && <Details media={media} onStatut={onStatut} enCours={enCours} />}
+    </div>
+  );
+}
+
+/** L'éditeur dans une FENÊTRE (plein écran sur téléphone) : la page Médias ne s'allonge plus. */
+function FenetreEditeur({ children, onFermer, bloque }) {
+  useEffect(() => {
+    const avant = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const touche = (e) => { if (e.key === 'Escape' && !bloque) onFermer(); };
+    document.addEventListener('keydown', touche);
+    return () => { document.body.style.overflow = avant; document.removeEventListener('keydown', touche); };
+  }, [onFermer, bloque]);
+  return createPortal(
+    <div role="dialog" aria-modal="true" aria-label="Éditeur vidéo" data-testid="pm-fenetre-editeur" className="pm-fenetre"
+      style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.78)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <style>{`
+        .pm-fenetre-boite{width:min(1180px,96vw);max-height:94vh;overflow:auto;border-radius:16px;background:#0f0b15;border:1px solid ${BORD}}
+        @media (max-width:640px){.pm-fenetre-boite{width:100vw;height:100vh;max-height:100vh;border-radius:0;border:none}}
+      `}</style>
+      <div className="pm-fenetre-boite">{children}</div>
+    </div>,
+    document.body,
+  );
+}
+
+function FormulaireAjout({ niche, onFini, API, formatInitial = '16_9' }) {
+  const [f, setF] = useState({ format: formatInitial, url: '', version: '', notes: '' });
   const [envoi, setEnvoi] = useState(false);
   const [msg, setMsg] = useState('');
   const maj = (k, v) => setF((p) => (p[k] === v ? p : { ...p, [k]: v }));
@@ -202,12 +327,14 @@ function FormulaireOriginal({ niche, API, onFini, onOuvrirEditeur }) {
 export default function ProspectionMedias({ API }) {
   const [medias, setMedias] = useState(null);
   const [erreur, setErreur] = useState('');
-  const [ajout, setAjout] = useState('');
   const [info, setInfo] = useState('');
   const [enCours, setEnCours] = useState(false);
-  const [archivesOuvert, setArchivesOuvert] = useState({});
-  const [mode, setMode] = useState('fichier');                 // V596 : « fichier » (original) | « lien »
-  const [editeur, setEditeur] = useState(null);                // { niche, original, fichierLocal, edition }
+  // V597 — DESIGN ÉPURÉ : toutes les niches FERMÉES au chargement, une seule ouverte à la fois.
+  const [ouverte, setOuverte] = useState('');
+  const [ajout, setAjout] = useState(null);                    // { niche, format, mode: 'fichier' | 'lien' }
+  const [archivesOuvert, setArchivesOuvert] = useState(false);
+  const [editeur, setEditeur] = useState(null);                // { niche, original, fichierLocal, edition, ratio }
+  const [aConfirmer, setAConfirmer] = useState(null);          // { type: 'supprimer' | 'valider', media }
 
   const charger = useCallback(async () => {
     setErreur('');
@@ -240,6 +367,7 @@ export default function ProspectionMedias({ API }) {
   }, [medias]);
 
   const changerStatut = async (media, statut) => {
+    if (statut === 'validee') { setAConfirmer({ type: 'valider', media }); return; }
     setEnCours(true); setInfo('');
     try {
       await axios.patch(`${API}/prospection-medias/${encodeURIComponent(media.id)}`, { statut });
@@ -249,76 +377,145 @@ export default function ProspectionMedias({ API }) {
     } finally { setEnCours(false); }
   };
 
-  // V596 : ouvrir l'éditeur sur un ORIGINAL, ou sur l'original d'un export (« Remodifier »).
-  const ouvrirEditeur = (media) => {
-    if (media.format === 'original') { setEditeur({ niche: media.niche, original: media, fichierLocal: null, edition: null }); return; }
-    const original = (medias || []).find((d) => d.id === media.source_id);
-    if (!original) { setInfo('L’original de cette version est introuvable.'); return; }
-    setEditeur({ niche: media.niche, original, fichierLocal: null, edition: media.edition || null });
+  // V597 : la confirmation fait l'action — « Valider » (statut) ou « Supprimer » (Corbeille).
+  const confirmer = async () => {
+    const { type, media } = aConfirmer;
+    setEnCours(true); setInfo('');
+    try {
+      if (type === 'supprimer') {
+        await axios.delete(`${API}/prospection-medias/${encodeURIComponent(media.id)}`);
+        setInfo(`${COURT[media.format]} placé dans la Corbeille (restaurable). Les autres versions ne sont pas touchées.`);
+      } else {
+        await axios.patch(`${API}/prospection-medias/${encodeURIComponent(media.id)}`, { statut: 'validee' });
+      }
+      setAConfirmer(null);
+      await charger();
+    } catch (e) {
+      setInfo(erreurLisible(e, type === 'supprimer' ? 'Suppression refusée.' : 'Validation refusée.'));
+      setAConfirmer(null);
+    } finally { setEnCours(false); }
   };
+
+  // Ouvrir l'éditeur sur un ORIGINAL, ou sur l'original d'un export / d'une miniature.
+  const ouvrirEditeur = (media, ratio = null) => {
+    if (media.format === 'original') { setEditeur({ niche: media.niche, original: media, fichierLocal: null, edition: null, ratio }); return; }
+    const original = (medias || []).find((d) => d.id === media.source_id);
+    if (!original) { setInfo('L’original de cette version est introuvable (supprimé ?). Ajoute un original pour la refaire.'); return; }
+    setEditeur({ niche: media.niche, original, fichierLocal: null, edition: media.edition || null, ratio: null });
+  };
+
+  // « + Ajouter » : avec un original, on fabrique la version dans l'éditeur ; sans, on l'ajoute.
+  const ajouter = (niche, format) => {
+    const original = parNiche[niche].actuels.original;
+    if (format !== 'original' && original && estFichier(original)) {
+      ouvrirEditeur(original, RATIO_DU_FORMAT[format] || null);
+      return;
+    }
+    setAjout({ niche, format, mode: format === 'original' || !original ? 'fichier' : 'lien' });
+  };
+
+  const basculer = (id) => { setOuverte((o) => (o === id ? '' : id)); setAjout(null); setArchivesOuvert(false); };
 
   if (!medias) return <EtatLecture chargement={!erreur} erreur={erreur} onReessayer={charger} />;
   const validees = (medias || []).filter((d) => d.statut === 'validee').length;
 
   return (
     <section data-testid="prospection-medias" aria-label="Médias de prospection" style={{ color: TEXTE }}>
-      <Bandeau ton="ambre" testid="pm-bandeau">
-        Toutes les vidéos de prospection sont <strong>en cours de refonte</strong>. Aucune vidéo n'est envoyée
-        ni associée automatiquement à un prospect. Vidéos validées : <strong data-testid="pm-validees">{validees}</strong>.
-      </Bandeau>
-      {info && <div style={{ marginTop: '8px' }}><Bandeau ton="bleu">{info}</Bandeau></div>}
-      {NICHES.map((n) => {
-        const g = parNiche[n.id];
-        const st = STATUTS_MEDIA[statutNiche(g.actuels)];
-        return (
-          <div key={n.id} data-testid={`pm-niche-${n.id}`}>
-            <Titre droite={<Pastille ton={st.ton} testid={`pm-statut-niche-${n.id}`}>{st.libelle}</Pastille>}>{n.id} — {n.libelle}</Titre>
-            <div style={{ display: 'grid', gap: '8px', gridTemplateColumns: 'repeat(auto-fill, minmax(min(220px, 100%), 1fr))' }}>
-              {FORMATS.map((fmt) => <Emplacement key={fmt.id} format={fmt} media={g.actuels[fmt.id]} onStatut={changerStatut} enCours={enCours || !!editeur} onEditer={ouvrirEditeur} />)}
-            </div>
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
-              <Bouton discret onClick={() => setAjout(ajout === n.id ? '' : n.id)} testid={`pm-ajouter-${n.id}`}>Ajouter / remplacer une vidéo</Bouton>
-              {g.archives.length > 0 && (
-                <Bouton discret onClick={() => setArchivesOuvert((p) => ({ ...p, [n.id]: !p[n.id] }))}>Archives ({g.archives.length})</Bouton>
+      <div data-testid="pm-bandeau" style={{ fontSize: 12, color: DOUX, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <span style={{ width: 7, height: 7, borderRadius: 4, background: 'rgb(252,211,77)', flexShrink: 0 }} />
+        Vidéos en refonte · aucun envoi automatique · validées : <strong data-testid="pm-validees" style={{ color: TEXTE }}>{validees}</strong>
+      </div>
+      {info && <div data-testid="pm-info" style={{ marginTop: 8, fontSize: 12, padding: '6px 10px', borderRadius: 8, background: 'rgba(147,197,253,0.10)', border: '1px solid rgba(147,197,253,0.35)' }}>{info}</div>}
+
+      <div style={{ marginTop: 10, border: `1px solid ${BORD}`, borderRadius: 12, overflow: 'hidden' }}>
+        {NICHES.map((n, i) => {
+          const g = parNiche[n.id];
+          const st = STATUTS_MEDIA[statutNiche(g.actuels)];
+          const presents = Object.values(g.actuels);
+          const aVerifier = presents.filter((m) => m.statut === 'a_verifier').length;
+          const ouvert = ouverte === n.id;
+          return (
+            <div key={n.id} data-testid={`pm-niche-${n.id}`} style={{ borderTop: i ? `1px solid ${BORD}` : 'none' }}>
+              <button type="button" onClick={() => basculer(n.id)} aria-expanded={ouvert} data-testid={`pm-niche-ligne-${n.id}`}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', background: ouvert ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)' : 'transparent', border: 'none', color: TEXTE, cursor: 'pointer', textAlign: 'left' }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>{n.id} — {n.libelle}</span>
+                  <span style={{ display: 'block', fontSize: 11, color: DOUX, marginTop: 2 }} data-testid={`pm-resume-${n.id}`}>
+                    {presents.length ? `${presents.length} média${presents.length > 1 ? 's' : ''}${aVerifier ? ` · ${aVerifier} à vérifier` : ''}` : 'Aucun média'}
+                  </span>
+                </span>
+                <Pastille ton={st.ton} testid={`pm-statut-niche-${n.id}`}>{st.libelle}</Pastille>
+                <span style={{ display: 'inline-flex', transition: 'transform .15s', transform: ouvert ? 'rotate(90deg)' : 'none', color: DOUX }}><Icone d={CHEVRON} /></span>
+              </button>
+              {ouvert && (
+                <div data-testid={`pm-contenu-${n.id}`} style={{ padding: '4px 12px 12px' }}>
+                  <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fill, minmax(min(300px, 100%), 1fr))' }}>
+                    {FORMATS.map((fmt) => (
+                      <Emplacement key={fmt.id} format={fmt} media={g.actuels[fmt.id]} enCours={enCours}
+                        onEditer={(m) => ouvrirEditeur(m)} onAjouter={(f) => ajouter(n.id, f)} onStatut={changerStatut}
+                        onValider={(m) => setAConfirmer({ type: 'valider', media: m })}
+                        onSupprimer={(m) => setAConfirmer({ type: 'supprimer', media: m })} />
+                    ))}
+                  </div>
+                  {ajout && ajout.niche === n.id && (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Type d'ajout">
+                        <Bouton discret={ajout.mode !== 'fichier'} onClick={() => setAjout((a) => ({ ...a, mode: 'fichier' }))} testid={`pm-mode-fichier-${n.id}`}>Fichier original</Bouton>
+                        {ajout.format !== 'original' && <Bouton discret={ajout.mode !== 'lien'} onClick={() => setAjout((a) => ({ ...a, mode: 'lien' }))} testid={`pm-mode-lien-${n.id}`}>Lien public</Bouton>}
+                      </div>
+                      {ajout.mode === 'fichier'
+                        ? <FormulaireOriginal API={API} niche={n.id}
+                            onFini={(m) => { setAjout(null); if (m) { setInfo(m); charger(); } }}
+                            onOuvrirEditeur={(original, fichierLocal, m) => { setAjout(null); setInfo(m); charger(); setEditeur({ niche: n.id, original, fichierLocal, edition: null, ratio: null }); }} />
+                        : <FormulaireAjout API={API} niche={n.id} formatInitial={ajout.format}
+                            onFini={(m) => { setAjout(null); if (m) { setInfo(m); charger(); } }} />}
+                    </div>
+                  )}
+                  {g.archives.length > 0 && (
+                    <div style={{ marginTop: 8 }}>
+                      <button type="button" onClick={() => setArchivesOuvert((a) => !a)} data-testid={`pm-archives-${n.id}`}
+                        style={{ border: 'none', background: 'transparent', color: DOUX, fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+                        {archivesOuvert ? 'Masquer les archives' : `Archives (${g.archives.length})`}
+                      </button>
+                      {archivesOuvert && (
+                        <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 11, color: DOUX }}>
+                          {g.archives.map((a) => (
+                            <li key={a.id} style={{ wordBreak: 'break-word' }}>
+                              {COURT[a.format]} · {a.version || '—'} · {jour(a.created_at)} ·{' '}
+                              <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: TEXTE }}>ouvrir</a>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-            {ajout === n.id && (
-              <div style={{ marginTop: '8px' }}>
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }} role="group" aria-label="Type d'ajout">
-                  <Bouton discret={mode !== 'fichier'} onClick={() => setMode('fichier')} testid={`pm-mode-fichier-${n.id}`}>Fichier original</Bouton>
-                  <Bouton discret={mode !== 'lien'} onClick={() => setMode('lien')} testid={`pm-mode-lien-${n.id}`}>Lien public</Bouton>
-                </div>
-                {mode === 'fichier'
-                  ? <FormulaireOriginal API={API} niche={n.id}
-                      onFini={(m) => { setAjout(''); if (m) { setInfo(m); charger(); } }}
-                      onOuvrirEditeur={(original, fichierLocal, m) => { setAjout(''); setInfo(m); charger(); setEditeur({ niche: n.id, original, fichierLocal, edition: null }); }} />
-                  : <FormulaireAjout API={API} niche={n.id} onFini={(m) => { setAjout(''); if (m) { setInfo(m); charger(); } }} />}
-              </div>
-            )}
-            {editeur && editeur.niche === n.id && (
-              <Suspense fallback={<div style={{ marginTop: '8px', fontSize: '12px', color: DOUX }} data-testid="pm-editeur-chargement">Chargement de l'éditeur vidéo…</div>}>
-                <ProspectionVideoEditeur API={API} niche={n.id} original={editeur.original} fichierLocal={editeur.fichierLocal}
-                  editionInitiale={editeur.edition}
-                  onFermer={() => setEditeur(null)}
-                  onEnregistre={(m) => { setInfo(m); charger(); }} />
-              </Suspense>
-            )}
-            {archivesOuvert[n.id] && (
-              <ul style={{ margin: '8px 0 0', paddingLeft: '18px', fontSize: '12px', color: DOUX }}>
-                {g.archives.map((a) => (
-                  <li key={a.id} style={{ wordBreak: 'break-word' }}>
-                    {(FORMATS.find((x) => x.id === a.format) || {}).libelle} · {a.version || '—'} · {jour(a.created_at)} ·{' '}
-                    <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: TEXTE }}>{a.url}</a>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        );
-      })}
-      <div style={{ marginTop: '16px', fontSize: '11px', color: DOUX }}>
-        Plus tard : prospect → niche → vidéo validée 16:9 de la niche. Ce lien n'est pas branché : aucune vidéo ne part chez un prospect.
+          );
+        })}
       </div>
+
+      {editeur && (
+        <FenetreEditeur onFermer={() => setEditeur(null)}>
+          <Suspense fallback={<div style={{ padding: 20, fontSize: 12, color: DOUX }} data-testid="pm-editeur-chargement">Chargement de l'éditeur vidéo…</div>}>
+            <ProspectionVideoEditeur API={API} niche={editeur.niche} original={editeur.original} fichierLocal={editeur.fichierLocal}
+              editionInitiale={editeur.edition} ratioInitial={editeur.ratio} enFenetre
+              onFermer={() => setEditeur(null)}
+              onEnregistre={(m) => { setInfo(m); charger(); }} />
+          </Suspense>
+        </FenetreEditeur>
+      )}
+
+      {aConfirmer && (
+        <Confirmation
+          titre={aConfirmer.type === 'supprimer' ? 'Supprimer ce média ?' : 'Valider cette vidéo ?'}
+          texte={aConfirmer.type === 'supprimer'
+            ? `${COURT[aConfirmer.media.format]} de la niche ${aConfirmer.media.niche} part dans la Corbeille (restaurable). Les autres versions et le fichier d'origine ne sont pas touchés.`
+            : 'Elle devient la vidéo validée de ce format pour la niche. Aucun envoi ne part.'}
+          libelleOk={aConfirmer.type === 'supprimer' ? 'Supprimer' : 'Valider'}
+          enCours={enCours} onOk={confirmer} onAnnuler={() => setAConfirmer(null)} />
+      )}
     </section>
   );
 }

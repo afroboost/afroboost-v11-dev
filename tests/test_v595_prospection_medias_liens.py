@@ -232,7 +232,11 @@ verifier("anti-rebinding : connexion à l'IP vérifiée (épinglage + SNI)",
 verifier("aucun corps de réponse lu (stream fermé)", "stream=True" in bloc_sonde and ".text" not in bloc_sonde)
 
 print("\n5. Structure : aucune suppression, aucun lecteur caché")
-verifier("aucune route DELETE V595", not re.search(r'@api_router\.delete\("/prospection-(medias|liens)', SRC))
+verifier("aucune route DELETE sur les liens", not re.search(r'@api_router\.delete\("/prospection-liens', SRC))
+# V597 : UNE seule suppression de média, et elle passe par la Corbeille (deleted_items).
+verifier("médias : une seule route DELETE, vers la corbeille (V597)",
+         len(re.findall(r'@api_router\.delete\("/prospection-medias', SRC)) == 1
+         and "async def v597_supprimer_media" in SRC)
 lecteurs = [m.start() for m in re.finditer(r"V595_(MEDIAS|LIENS)\]", SRC)]
 debut = SRC.index("# V595 — PROSPECTION : MÉDIAS ET LIENS")
 fin = SRC.index("# Include router\nfastapi_app.include_router(api_router)")

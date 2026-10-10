@@ -36981,11 +36981,19 @@ async def restore_trash(trash_id: str, request: Request):
         if not owner or owner != caller.lower().strip():
             raise HTTPException(status_code=403, detail="Cet élément ne vous appartient pas")
     coll = entry.get("original_collection")
-    if coll not in ("discount_codes", "chat_participants"):
+    if coll not in ("discount_codes", "chat_participants", "prospection_medias"):  # V597 : + médias de prospection
         raise HTTPException(status_code=400, detail="Type non restaurable")
     payload = dict(entry.get("payload") or {})
     payload.pop("_id", None)
     oid = entry.get("original_id")
+    if coll == "prospection_medias" and payload.get("statut") != "archivee":
+        # V597 : si un autre média occupe déjà cet emplacement (niche + format), le
+        # restauré revient ARCHIVÉ — jamais deux médias actifs au même endroit.
+        occupe = await db[coll].count_documents({
+            "coach_id": payload.get("coach_id"), "niche": payload.get("niche"),
+            "format": payload.get("format"), "statut": {"$ne": "archivee"}, "id": {"$ne": oid}})
+        if occupe:
+            payload["statut"] = "archivee"
     # Éviter le doublon si le document a déjà été réinséré entre-temps.
     exists = await db[coll].find_one({"id": oid}, {"_id": 1})
     if not exists:
@@ -51701,6 +51709,9 @@ async def v199_generate_invoice(request: Request):
 # AUCUNE ROUTE DE SUPPRESSION. Remplacer une vidéo ARCHIVE l'ancienne (elle
 # reste lisible, avec un pointeur vers sa remplaçante) ; un lien qu'on ne veut
 # plus passe en « archivé ». Rien ne disparaît.
+# V597 : exception VOULUE par Bassi pour les MÉDIAS (pas les liens) — « Supprimer »
+# déplace UN média dans la Corbeille existante (deleted_items, restaurable), voir
+# `v597_supprimer_media`. Aucun fichier n'est effacé.
 #
 # PAS DE TÉLÉVERSEMENT ICI. Une vidéo est enregistrée par son LIEN PUBLIC
 # (YouTube non répertorié recommandé). V596 : ou par un fichier DÉJÀ envoyé via
@@ -52008,6 +52019,40 @@ async def v595_modifier_media(media_id: str, request: Request):
     await db[V595_MEDIAS].update_one({"coach_id": appelant, "id": identifiant}, {"$set": champs})
     media.update(champs)
     return {"media": media, "modifie": True}
+
+
+# V597 — SUPPRIMER UN MÉDIA = LE DÉPLACER DANS LA CORBEILLE (V313/V575)
+# ---------------------------------------------------------------------------
+# Même mécanisme que les contacts et les codes : la fiche part dans
+# `deleted_items` (payload intact), « Restaurer » la remet. Garanties :
+#  * UN SEUL document touché : supprimer un 9:16 ne touche ni l'original, ni le
+#    16:9, ni la miniature ; supprimer l'original NE supprime PAS ses exports
+#    (ils gardent leur `source_id`, simplement plus résolu à l'écran) ;
+#  * AUCUN fichier effacé : l'URL /api/files reste écrite dans `deleted_items`,
+#    donc la purge V425 (qui balaie toutes les collections) le conserve — un
+#    fichier partagé avec une autre fonctionnalité n'est jamais perdu ;
+#  * cloisonnement : uniquement un média du coach appelant (404 sinon, pas d'oracle).
+@api_router.delete("/prospection-medias/{media_id}")
+async def v597_supprimer_media(media_id: str, request: Request):
+    appelant = await _v309_require_coach_or_admin(request)
+    identifiant = (media_id or "").strip()[:64]
+    media = await db[V595_MEDIAS].find_one({"coach_id": appelant, "id": identifiant}, {"_id": 0})
+    if not media:
+        raise HTTPException(status_code=404, detail="Média introuvable")
+    maintenant = v595_maintenant()
+    await db.deleted_items.insert_one({
+        "id": str(uuid.uuid4()),
+        "original_collection": V595_MEDIAS,
+        "original_id": identifiant,
+        "coach_id": (appelant or "").lower().strip(),
+        "deleted_at": maintenant,
+        "deleted_by": appelant,
+        "payload": media,
+    })
+    await db[V595_MEDIAS].delete_one({"coach_id": appelant, "id": identifiant})
+    logger.info("%s média %s (niche=%s format=%s) placé en corbeille", V595_PREFIXE, identifiant,
+                media.get("niche"), media.get("format"))
+    return {"supprime": True, "corbeille": True, "id": identifiant}
 
 
 # -------------------------------- LIENS ------------------------------------

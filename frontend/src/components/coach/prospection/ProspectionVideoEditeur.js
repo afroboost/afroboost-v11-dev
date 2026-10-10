@@ -126,7 +126,7 @@ async function recadrerMiniature(blob, cadre) {
   } finally { if (bmp.close) bmp.close(); }
 }
 
-export default function ProspectionVideoEditeur({ API, niche, original, fichierLocal = null, editionInitiale = null, onFermer, onEnregistre }) {
+export default function ProspectionVideoEditeur({ API, niche, original, fichierLocal = null, editionInitiale = null, ratioInitial = null, enFenetre = false, onFermer, onEnregistre }) {
   const support = useMemo(() => exportSupporteIci(), []);
   // L'aperçu lit le fichier LOCAL s'il vient d'être choisi (immédiat), sinon l'original enregistré.
   const urlLocale = useMemo(() => (fichierLocal ? URL.createObjectURL(fichierLocal) : ''), [fichierLocal]);
@@ -135,7 +135,9 @@ export default function ProspectionVideoEditeur({ API, niche, original, fichierL
 
   const [meta, setMeta] = useState(null);
   const [trim, setTrim] = useState(editionInitiale ? { start: editionInitiale.debut, end: editionInitiale.fin } : null);
-  const [ratio, setRatio] = useState(editionInitiale ? editionInitiale.ratio : 'auto');
+  const [ratio, setRatio] = useState(editionInitiale ? editionInitiale.ratio : (ratioInitial || 'auto'));
+  // V597 : dans la fenêtre, sur grand écran, vidéo à gauche et réglages à droite (moins de défilement).
+  const [large] = useState(() => (typeof window !== 'undefined' ? window.innerWidth >= 900 : false));
   const [position, setPosition] = useState(editionInitiale ? editionInitiale.position : 0.5);
   const [miniature, setMiniature] = useState({ url: '', etat: '' });
   const [exp, setExp] = useState({ etat: 'pret', pct: 0, erreur: '' });
@@ -235,9 +237,12 @@ export default function ProspectionVideoEditeur({ API, niche, original, fichierL
   const bloque = enExport || envoi.etat === 'envoi';
 
   return (
-    <div data-testid="pve-editeur" style={{ marginTop: '8px', padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: `1px solid ${BORD}`, color: TEXTE, display: 'grid', gap: '10px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <strong style={{ fontSize: 13 }}>Modifier / exporter — {nomOriginal}</strong>
+    <div data-testid="pve-editeur" style={enFenetre
+      ? { padding: '0 16px 16px', color: TEXTE, display: 'grid', gap: '10px' }
+      : { marginTop: '8px', padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: `1px solid ${BORD}`, color: TEXTE, display: 'grid', gap: '10px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center',
+        ...(enFenetre ? { position: 'sticky', top: 0, zIndex: 5, background: '#0f0b15', padding: '12px 0', borderBottom: `1px solid ${BORD}` } : {}) }}>
+        <strong style={{ fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Modifier / exporter{niche ? ` — niche ${niche}` : ''}</strong>
         <Bouton discret onClick={onFermer} disabled={bloque} testid="pve-fermer">Fermer</Bouton>
       </div>
       {!support.ok && <Bandeau ton="ambre" testid="pve-mobile">{support.raison} Tu peux consulter la vidéo ici ; l'export se fait depuis un ordinateur.</Bandeau>}
@@ -257,7 +262,8 @@ export default function ProspectionVideoEditeur({ API, niche, original, fichierL
             onTrimChange={(t) => setTrim(t)}
             onThumbnailCapture={capturerMiniature}
             onMetadata={onMetadata}
-            hauteurMax="360px"
+            hauteurMax={enFenetre && large ? '60vh' : '360px'}
+            disposition={enFenetre && large ? 'colonnes' : 'colonne'}
             superposition={ratio !== 'auto' && meta ? (
               <CadrageSuperposition largeur={meta.largeur} hauteur={meta.hauteur} reglage={reglage} onPosition={setPosition} />
             ) : null}
