@@ -52843,10 +52843,10 @@ def v605_lecture(message: dict) -> dict:
 # V605c (revue securite) : AUCUNE repetition non bornee devant un echec possible.
 # Les liens/e-mails/domaines/telephones ont des quantificateurs BORNES ; les mots
 # contenant un chiffre sont reperes par un simple decoupage en jetons (lineaire).
-_V605_RE_PROTEGE = re.compile(
-    r"(?i)((?:https?://|www\.)[^\s<>\"']{1,300}|[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,4}"
+_V605_RE_PROTEGE = re.compile(   # V605d : PAS de (?i) inline — il est concatene plus bas (Python 3.11 le refuse)
+    r"((?:https?://|www\.)[^\s<>\"']{1,300}|[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,4}"
     r"|\b[\w-]{1,63}\.(?:ch|com|fr|de|org|net|io|swiss)\b(?:/[^\s<>\"']{0,200})?"
-    r"|\+?\d[\d ().\-/]{5,20}\d|Afroboost|Coach Bassi)")
+    r"|\+?\d[\d ().\-/]{5,20}\d|Afroboost|Coach Bassi)", re.IGNORECASE)
 _V605_RE_JETON = re.compile(r"[^\s,;!?()]{1,200}")
 
 
@@ -52861,7 +52861,8 @@ def v605_proteger(texte: str, noms=None):
     for nom in sorted({n for n in (noms or []) if n and len(n) >= 3}, key=len, reverse=True):
         t = re.sub(re.escape(nom), lambda mm: masquer(mm.group(0)), t)
     t = re.sub(r"⟦P\d+⟧|" + _V605_RE_PROTEGE.pattern,
-               lambda mm: mm.group(0) if mm.group(0).startswith("⟦P") else masquer(mm.group(0)), t)
+               lambda mm: mm.group(0) if mm.group(0).startswith("⟦P") else masquer(mm.group(0)), t,
+               flags=re.IGNORECASE)
     # Dates, heures, montants, codes : tout jeton portant un chiffre (decoupage lineaire).
     t = _V605_RE_JETON.sub(lambda mm: mm.group(0) if ("⟦P" in mm.group(0) or not any(c.isdigit() for c in mm.group(0)))
                            else masquer(mm.group(0)), t)
