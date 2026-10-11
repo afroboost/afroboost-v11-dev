@@ -1875,6 +1875,41 @@ describe('PROSPECTION FOCUS — les réponses reçues', () => {
     expect(par('conversation-active').textContent).not.toContain('TEXTE CORRIGÉ');
   });
 
+  test('V604 — « Insérer la vidéo » ajoute le lien de LA vidéo du prospect, sans rien envoyer', async () => {
+    avecReponses(TROIS());
+    await monter(<ProspectsSection API="/api" />);
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 2, a_repondre: 3 } });
+    axios.get.mockResolvedValue({ data: { brouillon: brouillonDe() } });
+    await act(async () => { lignes()[0].click(); });
+    await act(async () => { par('modifier-brouillon').click(); });
+    axios.post.mockClear();
+    axios.get.mockImplementation((url) => Promise.resolve(String(url).endsWith('/prospect-inbound/inb-etu04/video')
+      ? { data: { media: { nom: 'AFROBOOST_9_ETUDIANTS_16x9.mp4', lien: 'https://afroboost.com/api/files/a/v.mp4' },
+                  texte_suggere: 'Avec plaisir, voici la courte vidéo : https://afroboost.com/api/files/a/v.mp4' } }
+      : { data: {} }));
+    await act(async () => { par('inserer-video').click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(par('editeur-brouillon').value).toContain('merci pour votre intérêt');
+    expect(par('editeur-brouillon').value).toContain('https://afroboost.com/api/files/a/v.mp4');
+    expect(par('video-info').textContent).toContain('AFROBOOST_9_ETUDIANTS');
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test('V604 — sans vidéo pertinente, rien n’est inséré et la raison s’affiche', async () => {
+    avecReponses(TROIS());
+    await monter(<ProspectsSection API="/api" />);
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 2, a_repondre: 3 } });
+    axios.get.mockResolvedValue({ data: { brouillon: brouillonDe() } });
+    await act(async () => { lignes()[0].click(); });
+    await act(async () => { par('modifier-brouillon').click(); });
+    const avant = par('editeur-brouillon').value;
+    axios.get.mockImplementation(() => Promise.resolve({ data: { media: null, raison: 'ambigu : plusieurs publics correspondent' } }));
+    await act(async () => { par('inserer-video').click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(par('editeur-brouillon').value).toBe(avant);
+    expect(par('video-info').textContent).toContain('ambigu');
+  });
+
   test('enregistrer une correction passe par PATCH, jamais par un envoi', async () => {
     avecReponses(TROIS());
     await monter(<ProspectsSection API="/api" />);

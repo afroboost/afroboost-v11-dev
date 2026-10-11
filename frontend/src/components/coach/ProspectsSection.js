@@ -491,6 +491,24 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
      incident V305). */
   const [cartes, setCartes] = useState({});
 
+  // V604 — insère dans la réponse le lien de la vidéo correspondant au prospect.
+  // Aucune vidéo pertinente ou choix ambigu : rien n'est inséré, la raison s'affiche.
+  const insererVideo = async (id, texteActuel) => {
+    majCarte(id, { videoEnCours: true, videoInfo: '' });
+    try {
+      const { data } = await axios.get(`${base}/prospect-inbound/${encodeURIComponent(id)}/video`);
+      if (data && data.media && data.texte_suggere) {
+        const t = (texteActuel || '').trim();
+        majCarte(id, { videoEnCours: false, texte: (t ? `${t}\n\n` : '') + data.texte_suggere,
+                       videoInfo: `Vidéo insérée : ${data.media.nom || 'vidéo'}${data.media.public ? ` (${data.media.public})` : ''}` });
+      } else {
+        majCarte(id, { videoEnCours: false, videoInfo: `Aucune vidéo insérée : ${(data && data.raison) || 'aucune vidéo pour ce prospect'}` });
+      }
+    } catch (e) {
+      majCarte(id, { videoEnCours: false, videoInfo: 'La vidéo n’a pas pu être trouvée.' });
+    }
+  };
+
   const majCarte = useCallback((id, champs) => {
     setCartes((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), ...champs } }));
   }, []);
@@ -1630,6 +1648,15 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                       {bro ? `RÉPONSE PROPOSÉE POUR ${bro.to_email}`
                         : `RÉPONSE À ${r.from_email || 'CE PARTENAIRE'}`}
                     </div>
+                    {/* V604 — nature de la réponse : un accusé automatique ne vaut pas conversation. */}
+                    {(r.demande_video || r.nature_reponse === 'automatique' || r.nature_reponse === 'a_verifier' || r.suivi_demande_le) && (
+                      <div data-testid="badges-reponse" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', margin: '0 0 7px' }}>
+                        {r.demande_video && <span data-testid="badge-video" style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px', border: `1px solid rgba(${RGB}, 0.5)`, color: TEXTE }}>Vidéo demandée</span>}
+                        {r.nature_reponse === 'automatique' && <span data-testid="badge-auto" style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px', border: '1px solid rgba(255,255,255,0.3)', color: TEXTE, opacity: 0.8 }}>Réponse automatique — relances maintenues</span>}
+                        {r.nature_reponse === 'a_verifier' && <span data-testid="badge-verifier" style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px', border: '1px solid rgba(255,255,255,0.3)', color: TEXTE }}>À vérifier — relances suspendues</span>}
+                        {r.suivi_demande_le && <span data-testid="badge-suivi" style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px', border: `1px solid rgba(${RGB}, 0.5)`, color: TEXTE }}>Recontacter le {new Date(r.suivi_demande_le).toLocaleDateString('fr-CH')}</span>}
+                      </div>
+                    )}
 
                     {composerOuvert ? (
                       <>
@@ -1657,6 +1684,13 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                             {occupe ? 'Enregistrement…'
                               : (bro ? 'Enregistrer' : 'Enregistrer et vérifier')}
                           </button>
+                          {/* V604 — la vidéo de SON profil (routage V601), jamais au hasard. */}
+                          <button type="button" data-testid="inserer-video"
+                                  onClick={() => insererVideo(r.id, carte.texte)}
+                                  disabled={occupe || carte.videoEnCours}
+                                  style={stylePetitBouton}>
+                            {carte.videoEnCours ? 'Recherche…' : 'Insérer la vidéo'}
+                          </button>
                           <button type="button" data-testid="annuler-edition"
                                   onClick={() => majCarte(r.id, { edition: false, texte: '',
                                                                   composerFerme: true })}
@@ -1664,6 +1698,11 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                             Annuler
                           </button>
                         </div>
+                        {carte.videoInfo && (
+                          <div data-testid="video-info" style={{ fontSize: '11px', opacity: 0.8, color: TEXTE, marginTop: '6px' }}>
+                            {carte.videoInfo}
+                          </div>
+                        )}
                       </>
                     ) : bro ? (
                       <div data-testid="reponse-proposee"

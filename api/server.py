@@ -30021,6 +30021,96 @@ async def p3u2_marquer_reponse(action: dict, recu_le: str) -> dict:
             "fiches_marquees": fiches}
 
 
+# ---------------------------------------------------------------------------
+# V604 — REPONSE HUMAINE, AUTOMATIQUE OU A VERIFIER ; DEMANDE DE VIDEO ; « PLUS TARD »
+# ---------------------------------------------------------------------------
+# Logique SIMPLE et prudente, sans modele : une reponse n'est AUTOMATIQUE que sur
+# un signe fort (en-tete RFC 3834, ou objet/texte d'accuse sans aucun mot d'une
+# vraie conversation). Un signe faible seul = A VERIFIER (relances suspendues).
+# Tout le reste = HUMAINE (arret des trois relances, comportement d'avant).
+V604_HUMAINE, V604_AUTOMATIQUE, V604_A_VERIFIER = "humaine", "automatique", "a_verifier"
+V604_ENTETES_AUTO = ("Auto-Submitted", "X-Autoreply", "X-Autorespond", "X-Auto-Response-Suppress",
+                     "Precedence", "X-Precedence")
+_V604_RE_OBJET_AUTO = re.compile(
+    r"(?i)(r[ée]ponse automatique|automatic reply|auto[- ]?reply|autoreply|out of (the )?office|"
+    r"abwesenheit|automatische antwort|accus[ée] de r[ée]ception|lesebest[äa]tigung|"
+    r"thx for your (e-?)?mail|thanks? (you )?for your (e-?)?(mail|message)|"
+    r"merci pour votre (e-?mail|message|courriel)|vielen dank f[üu]r ihre (nachricht|e-?mail)|"
+    r"we (have )?received your|nous avons (bien )?re[çc]u votre|wir haben ihre)")
+_V604_RE_TEXTE_AUTO = re.compile(
+    r"(?i)(ceci est (une r[ée]ponse|un message) automatique|this is an auto(matic|mated) (reply|message|response)|"
+    r"je suis (actuellement )?absent|i am (currently )?out of (the )?office|ich bin (derzeit )?abwesend|"
+    r"ne pas r[ée]pondre [àa] ce|do not reply to this|nous (traiterons|reviendrons vers vous) (votre demande|dans les plus brefs)|"
+    r"we will (get back|respond) to you|wir werden uns (so bald wie m[öo]glich|in k[üu]rze) bei ihnen melden)")
+# Un mot qui montre qu'un HUMAIN a lu la proposition : il annule tout soupcon d'automate.
+_V604_RE_HUMAIN = re.compile(
+    r"(?i)(int[ée]ress|pas int[ée]ress|vid[ée]o|tarif|prix|co[uû]t|rendez-vous|rdv|appel|"
+    r"t[ée]l[ée]phon|disponib|date|proposition|afroboost|cours|atelier|stage|collabor|"
+    r"interesse|termin|angebot|gerne|leider|kein interesse|merci beaucoup pour (votre|ta) proposition)")
+_V604_RE_VIDEO = re.compile(r"(?i)\bvid[ée]os?\b")
+_V604_MOIS = {"janvier": 1, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6, "juillet": 7,
+              "aout": 8, "septembre": 9, "octobre": 10, "novembre": 11, "decembre": 12,
+              "januar": 1, "februar": 2, "marz": 3, "juni": 6, "juli": 7, "august": 8,
+              "oktober": 10, "dezember": 12, "january": 1, "february": 2, "march": 3,
+              "april": 4, "may": 5, "june": 6, "july": 7, "september": 9, "october": 10,
+              "november": 11, "december": 12}
+_V604_RE_PLUS_TARD = re.compile(
+    r"(?i)(revenez|recontact|reprenez contact|relancez|contactez|[ée]crivez|rappelez|reach out|"
+    r"get back|contact (me|us)|melden sie sich|kontaktieren sie|schreiben sie)[^.!?\n]{0,60}?"
+    r"(plus tard|l'ann[ée]e prochaine|next year|n[äa]chstes jahr|sp[äa]ter|later|"
+    r"(?:en|d[ée]but|fin|courant|d[èe]s|au mois d[e'] ?|à partir d[e'] ?|in|im|ab)\s*([a-zéèêûäöüA-Z]+))")
+
+
+def v604_date_suivi(texte: str, maintenant: datetime = None):
+    """« revenez vers moi en janvier » -> 1er janvier SUIVANT (ISO). PURE.
+    (date_iso | None, extrait | None). Sans mois reconnu : (None, extrait) = suivi sans date."""
+    import unicodedata
+    m = _V604_RE_PLUS_TARD.search(texte or "")
+    if not m:
+        return None, None
+    extrait = m.group(0)[:160]
+    now = maintenant or datetime.now(timezone.utc)
+    mot = unicodedata.normalize("NFD", (m.group(4) or "")).encode("ascii", "ignore").decode().lower()
+    if re.search(r"(?i)ann[ée]e prochaine|next year|n[äa]chstes jahr", extrait):
+        return datetime(now.year + 1, 1, 1, 8, tzinfo=timezone.utc).isoformat(), extrait
+    mois = _V604_MOIS.get(mot)
+    if not mois:
+        return None, extrait
+    annee = now.year if mois > now.month else now.year + 1
+    return datetime(annee, mois, 1, 8, tzinfo=timezone.utc).isoformat(), extrait
+
+
+def v604_analyser_reponse(sujet, texte, entetes=None, expediteur="") -> dict:
+    """Nature d'une reponse + demande de video + date de suivi. PURE."""
+    sujet, texte = (sujet or ""), (texte or "")
+    h = {str(k).lower(): str(v).lower() for k, v in (entetes or {}).items()}
+    # RFC 3834 : ces en-tetes sont poses par un AUTOMATE, jamais par une personne -> decisifs.
+    entete_certain = (h.get("auto-submitted", "no") not in ("", "no")) or bool(h.get("x-autoreply")) \
+        or bool(h.get("x-autorespond"))
+    entete_auto = entete_certain or h.get("precedence", "") in ("auto_reply", "bulk", "junk") \
+        or h.get("x-precedence", "") in ("auto_reply", "bulk")
+    humain = bool(_V604_RE_HUMAIN.search(texte))
+    if entete_certain:
+        return {"nature_reponse": V604_AUTOMATIQUE, "demande_video": False,
+                "suivi_demande_le": None, "suivi_demande_texte": None}
+    objet_auto = bool(_V604_RE_OBJET_AUTO.search(sujet))
+    texte_auto = bool(_V604_RE_TEXTE_AUTO.search(texte))
+    if entete_auto and not humain:
+        nature = V604_AUTOMATIQUE
+    elif (objet_auto or texte_auto) and not humain and len(texte.strip()) < 600:
+        nature = V604_AUTOMATIQUE if (objet_auto and (texte_auto or not texte.strip())) else V604_A_VERIFIER
+        if objet_auto and not texte_auto and texte.strip():
+            nature = V604_A_VERIFIER
+    elif entete_auto or objet_auto or texte_auto or re.search(r"(?i)no-?reply|mailer-daemon", expediteur or ""):
+        nature = V604_A_VERIFIER if not humain else V604_HUMAINE
+    else:
+        nature = V604_HUMAINE
+    date_suivi, extrait = v604_date_suivi(texte) if nature == V604_HUMAINE else (None, None)
+    return {"nature_reponse": nature,
+            "demande_video": nature == V604_HUMAINE and bool(_V604_RE_VIDEO.search(texte)),
+            "suivi_demande_le": date_suivi, "suivi_demande_texte": extrait}
+
+
 async def p3u2_recevoir(brut: dict, coach_id: str) -> dict:
     """LE MOTEUR. Un message entrant deja normalise entre, un verdict sort.
 
@@ -30153,10 +30243,37 @@ async def p3u2_recevoir(brut: dict, coach_id: str) -> dict:
         logger.warning("%s signalement impossible pour %s : %s", P3N2_PREFIXE,
                        (document["id"] or "")[:8], type(e).__name__)
         issue["signalement"] = {"signale": False, "motif": type(e).__name__, "push": False}
-    if document["statut"] == P3U2_STATUT_RATTACHE and document["action_id"]:
+    # V604 — NATURE DE LA REPONSE. Seule une reponse AUTOMATIQUE CERTAINE laisse
+    # les relances armees ; un doute suspend tout (« a verifier »), une reponse
+    # humaine arrete J+3, J+7 et J+14 comme avant.
+    _nat = v604_analyser_reponse(document.get("subject"), document.get("body_text"),
+                                 (brut or {}).get("entetes_auto"), document.get("from_email"))
+    await db[P3U2_COLLECTION].update_one({"id": document["id"]}, {"$set": _nat})
+    issue.update({k: _nat[k] for k in ("nature_reponse", "demande_video", "suivi_demande_le")})
+    if document["statut"] == P3U2_STATUT_RATTACHE and document["action_id"] \
+            and _nat["nature_reponse"] == V604_AUTOMATIQUE:
+        await db[P3U2_COLLECTION].update_one(
+            {"id": document["id"]}, {"$set": {"processed_at": maintenant}})
+        logger.info("[V604] reponse automatique %s : relances maintenues",
+                    (document["id"] or "")[:8])
+    elif document["statut"] == P3U2_STATUT_RATTACHE and document["action_id"] \
+            and _nat["nature_reponse"] == V604_A_VERIFIER:
+        await db[P3S3_ACTIONS].update_one(
+            {"id": action.get("id"), "paused_at": {"$exists": False}},
+            {"$set": {"paused_at": maintenant, "pause_motif": "reponse a verifier (V604)",
+                      "updated_at": maintenant}})
+        await db[P3U2_COLLECTION].update_one(
+            {"id": document["id"]}, {"$set": {"processed_at": maintenant}})
+    elif document["statut"] == P3U2_STATUT_RATTACHE and document["action_id"]:
         marque = await p3u2_marquer_reponse(action, document["received_at"])
         issue["premiere_reponse"] = marque["premiere_reponse"]
         issue["fiches_marquees"] = marque["fiches_marquees"]
+        if _nat.get("suivi_demande_le") or _nat.get("suivi_demande_texte"):
+            await db[P3S3_ACTIONS].update_one(
+                {"id": action.get("id")},
+                {"$set": {"suivi_demande_le": _nat["suivi_demande_le"],
+                          "suivi_demande_texte": _nat.get("suivi_demande_texte"),
+                          "updated_at": maintenant}})
         await db[P3U2_COLLECTION].update_one(
             {"id": document["id"]}, {"$set": {"processed_at": maintenant}})
     logger.info("[P3-U2] message %s -> %s (%s, confiance %d) action=%s",
@@ -31106,6 +31223,9 @@ def p3u3_adapter_recu(evenement: dict) -> dict:
         "subject": donnees.get("subject"),
         "body_text": texte,
         "received_at": donnees.get("created_at") or e.get("created_at"),
+        # V604 : les en-tetes qui signent une reponse AUTOMATIQUE (RFC 3834 & usages).
+        "entetes_auto": {k: p3u3_entete(donnees, k) for k in V604_ENTETES_AUTO
+                         if p3u3_entete(donnees, k)},
     }
 
 
@@ -45568,6 +45688,54 @@ async def _rv3b_boucle_rappels():
         await asyncio.sleep(RV3B_PERIODE_S)
 
 
+# V604 — L'HORLOGE DES RELANCES PROSPECTION (J+3, J+7, J+14). Meme motif que RV3-B :
+# un simple REVEIL horaire qui appelle le moteur existant `p3r2_executer_relances`.
+# TROIS VERROUS : (1) P3_RELANCE_ENABLED, sinon le passage sort sans rien lire ;
+# (2) la campagne porte `relances_validees: True` (textes valides par le coach) ;
+# (3) l'empreinte scellee (le moteur la verifie). L'envoi REEL exige EN PLUS
+# P3_RELANCE_ENVOI_REEL ; sinon le passage est une SIMULATION journalisee.
+# Envois reels seulement du lundi au vendredi, 08:00-18:00 heure de Zurich.
+V604_PERIODE_S = 3600
+V604_PLAFOND_PASSAGE = 60
+
+
+def v604_heure_ouvree(maintenant: datetime = None) -> bool:
+    from zoneinfo import ZoneInfo
+    z = (maintenant or datetime.now(timezone.utc)).astimezone(ZoneInfo("Europe/Zurich"))
+    return z.weekday() < 5 and 8 <= z.hour < 18
+
+
+async def v604_passage_relances(maintenant: datetime = None) -> dict:
+    flags = await get_feature_flags()
+    if not (isinstance(flags, dict) and flags.get(P3R2_DRAPEAU_ACTIF)):
+        return {"actif": False}
+    reel = p3r2_envoi_autorise(flags) and v604_heure_ouvree(maintenant)
+    bilan = {"actif": True, "reel": reel, "campagnes": 0, "traites": 0}
+    for camp in await db[P3S3_CAMPAGNES].find(
+            {"etat": "approuvee", "relances_validees": True}, {"_id": 0}).to_list(50):
+        bilan["campagnes"] += 1
+        for etape in P3R2_ETAPES:
+            fournisseur = P3S3DFournisseurEmail(objet=p3r2_objet_campagne(camp, etape),
+                                                envoi_autorise=p3r2_envoi_autorise(flags)) if reel else None
+            r = await p3r2_executer_relances(camp["id"], etape, SUPER_ADMIN_EMAILS[0],
+                                             simulation=not reel, fournisseur=fournisseur,
+                                             plafond=V604_PLAFOND_PASSAGE)
+            bilan["traites"] += int(r.get("traites") or 0)
+    return bilan
+
+
+async def _v604_boucle_relances():
+    await asyncio.sleep(RV3B_DEMARRAGE_S + 30)
+    while True:
+        try:
+            _r = await v604_passage_relances()
+            if _r.get("actif"):
+                logger.info("[V604] passage relances : %s", _r)
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("[V604] passage relances ignore (%s)", type(_err).__name__)
+        await asyncio.sleep(V604_PERIODE_S)
+
+
 async def send_backup_email(participant_id: str, message_preview: str):
     """Envoie un email de backup si la notification push echoue."""
     participant = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0})
@@ -52512,7 +52680,8 @@ def v601_choisir_media(prospect: dict, cle_niche: str, medias: list) -> dict:
 async def v601_media_pour_prospect(prospect_id: str, request: Request):
     """LECTURE PURE : la vidéo qui serait proposée à ce prospect s'il la demande."""
     appelant = await _v309_require_coach_or_admin(request)
-    prospect = await db[P3S1_COLLECTION].find_one({"id": (prospect_id or "").strip()[:64]}, {"_id": 0})
+    _pid = (prospect_id or "").strip()[:64]
+    prospect = await db[P3S1_COLLECTION].find_one({"$or": [{"id": _pid}, {"ref": _pid}]}, {"_id": 0})  # V604 : ref aussi
     if not prospect or (not is_super_admin(appelant) and (prospect.get("coach_id") or "") != appelant):
         raise HTTPException(status_code=404, detail="Prospect introuvable")
     coach = prospect.get("coach_id") or appelant
@@ -52530,6 +52699,30 @@ async def v601_media_pour_prospect(prospect_id: str, request: Request):
             "media": ({"id": m["id"], "format": m["format"], "url": m["url"], "nom": (m.get("fichier") or {}).get("nom"),
                        "statut": m["statut"], "public": (m.get("cible") or {}).get("nom")} if m else None),
             "raison": choix["raison"]}
+
+
+# V604 — LA BONNE VIDEO POUR UNE REPONSE ENTRANTE. Lecture pure : rend le lien
+# ABSOLU a inserer dans la reponse, ou aucun (sans video pertinente / ambigu).
+V604_SITE = (os.environ.get("FRONTEND_URL") or "https://afroboost.com").rstrip("/")
+
+
+@api_router.get("/prospect-inbound/{message_id}/video")
+async def v604_video_pour_reponse(message_id: str, request: Request):
+    appelant = await _v309_require_coach_or_admin(request)
+    msg = await db[P3U2_COLLECTION].find_one({"id": (message_id or "").strip()[:64]}, {"_id": 0})
+    if not msg or (not is_super_admin(appelant) and (msg.get("coach_id") or "") != appelant):
+        raise HTTPException(status_code=404, detail="Message introuvable")
+    action = await db[P3S3_ACTIONS].find_one({"id": msg.get("action_id")}, {"_id": 0}) if msg.get("action_id") else None
+    refs = (action or {}).get("prospect_ids") or []
+    if not refs:
+        return {"media": None, "raison": "reponse non rattachee a un prospect", "demande_video": bool(msg.get("demande_video"))}
+    r = await v601_media_pour_prospect(refs[0], request)
+    m = r.get("media")
+    if m:
+        m = dict(m, lien=V604_SITE + m["url"] if str(m.get("url") or "").startswith("/") else m.get("url"))
+    return {"media": m, "raison": r.get("raison"), "niche": r.get("niche"),
+            "demande_video": bool(msg.get("demande_video")),
+            "texte_suggere": ("Avec plaisir, voici la courte vidéo : " + m["lien"]) if m else None}
 
 
 # V597 — SUPPRIMER UN MÉDIA = LE DÉPLACER DANS LA CORBEILLE (V313/V575)
@@ -53384,6 +53577,8 @@ async def startup_db():
         # `vercel.json`, qui ne s'execute pas sur Coolify. Meme motif, meme
         # cadence que le cron d'origine (1 h = la largeur de sa fenetre).
         asyncio.create_task(_rv3b_boucle_rappels())
+        # V604 : horloge des relances prospection — dormante (3 verrous).
+        asyncio.create_task(_v604_boucle_relances())
         logger.info("[P1-d] Boucle de relance J+3 demarree (1 h) — drapeau relu a chaque passage")
         logger.info("%s Boucle des rappels avant cours demarree (%d s)",
                     RV3B_PREFIXE, RV3B_PERIODE_S)
