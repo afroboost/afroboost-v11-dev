@@ -301,6 +301,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
   const [filtres, setFiltres] = useState({
     status: '', category: '', priority: '', wave: '', city: '',
     niche_id: '',            // V599 : l'id stable d'une niche, ou « sans »
+    adresse_a_corriger: '',  // V606 : '1' = seulement les fiches à adresse partagée
   });
   /* V599 — LES NICHES VIENNENT DU SERVEUR. Une niche ajoutée dans Médias apparaît ici
      (filtre, fiche, création) sans modifier le code. Une archivée n'est plus
@@ -389,6 +390,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
      chaque rendu et relancerait l'effet en boucle (règle absolue, incident V305). */
   const signature = [
     filtres.status, filtres.category, filtres.priority, filtres.wave, filtres.city, filtres.niche_id,
+    filtres.adresse_a_corriger,   // V606 : sinon la pastille ne rechargeait pas la liste
     String(taille), String(page),
     /* Le filtre commercial entre dans la signature : sans lui, changer de
        filtre ne relancerait aucune lecture et l'écran mentirait. */

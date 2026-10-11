@@ -996,6 +996,15 @@ describe('P3-S3-C — réouverture et approbation', () => {
     expect(SOURCE_C).toContain('`${base}/prospect-campaigns`');
   });
 
+  test('V606 — la pastille « Adresse à corriger » recharge la liste avec CE filtre', async () => {
+    const vu = { ...reponse([prospect()]), counts: { ...reponse([prospect()]).counts, adresse_a_corriger: 10 } };
+    mockEtatPilote = { etat: SECTION.OK, donnees: vu };
+    await monter(<ProspectsSection API="/api" />);
+    const tuile = [...document.querySelectorAll('button')].find((b) => /^Adresse à corriger/.test(b.textContent));
+    expect(tuile.textContent).toContain('10');
+    expect(SOURCE_C).toContain('filtres.adresse_a_corriger,');
+  });
+
   test('V606 — la carte affiche les VRAIS envois de la campagne (G : 19 e-mails, 6 manuels, 1 sans canal)', async () => {
     mockEtatParSection = {
       prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
