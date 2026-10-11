@@ -35,6 +35,10 @@ def verifier(intitule, condition, detail=""):
 
 def _ok(doc, filtre):
     for k, v in filtre.items():
+        if k == "$or":   # V604 : la route lit le prospect par id OU par ref
+            if not any(_ok(doc, f) for f in v):
+                return False
+            continue
         val = doc.get(k)
         if isinstance(v, dict):
             if "$ne" in v and val == v["$ne"]:
