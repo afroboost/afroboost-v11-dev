@@ -28711,6 +28711,29 @@ def _p3s3d2_echapper(texte: str) -> str:
             .replace(">", "&gt;"))
 
 
+_V602_RE_OBJET = re.compile(r"^\s*objet\s*:\s*(.+?)\s*$", re.IGNORECASE)
+
+
+def v602_objet_et_corps(message: str, objet_campagne: str = ""):
+    """(objet, corps) d'un J0. PURE. Si la PREMIERE ligne non vide est
+    « Objet : X », X devient l'objet et la ligne (avec les lignes vides qui la
+    suivent) sort du corps. Le texte du message n'est jamais modifie autrement.
+    Sans cette ligne : l'objet approuve de la campagne, corps intact."""
+    texte = message or ""
+    lignes = texte.split("\n")
+    i = 0
+    while i < len(lignes) and not lignes[i].strip():
+        i += 1
+    if i < len(lignes):
+        m = _V602_RE_OBJET.match(lignes[i])
+        if m and m.group(1).strip():
+            reste = lignes[i + 1:]
+            while reste and not reste[0].strip():
+                reste = reste[1:]
+            return m.group(1).strip()[:P3S3D2_OBJET_MAX], "\n".join(reste)
+    return (objet_campagne or "").strip(), texte
+
+
 class P3S3DFournisseurEmail:
     """L'adaptateur Resend. Il ne sort de la machine QUE si les deux drapeaux
     sont ouverts — et le moteur ignore tout de son fonctionnement.
@@ -28746,12 +28769,14 @@ class P3S3DFournisseurEmail:
 
     def charge_utile(self, instantane: dict, cle_idempotence: str) -> dict:
         """Ce qui serait transmis a Resend. Fonction pure, sans effet."""
-        message = (instantane or {}).get("message") or ""
+        # V602 : un J0 qui commence par « Objet : … » porte SON objet ; la ligne
+        # sort du corps. Sinon, l'objet approuve de la campagne.
+        objet, message = v602_objet_et_corps((instantane or {}).get("message") or "", self.objet)
         return {
             "params": {
                 "from": self.expediteur,
                 "to": [(instantane or {}).get("destinataire")],
-                "subject": self.objet,
+                "subject": objet,
                 # P3-R1 — L'ADRESSE DE L'ACTION D'ABORD, LA GENERIQUE ENSUITE.
                 # Meme porte que partout ailleurs : `_reply_to_vivant` filtre
                 # les adresses mortes et retombe sur le defaut si l'instantane
@@ -28776,9 +28801,9 @@ class P3S3DFournisseurEmail:
                    "accepted_at": None}
 
         # --- refus AVANT tout appel : rien a envoyer, rien a qui envoyer ---
-        message = (instantane or {}).get("message") or ""
+        objet, message = v602_objet_et_corps((instantane or {}).get("message") or "", self.objet)
         destinataire = ((instantane or {}).get("destinataire") or "").strip()
-        if not self.objet:
+        if not objet:
             return dict(reponse, verdict=P3S3D_PERMANENT, error_code="OBJET_ABSENT",
                         error_message="aucun objet d'e-mail approuve pour cette campagne")
         if not message.strip():
