@@ -26683,8 +26683,8 @@ async def p3s1_lister_prospects(request: Request):
     if ville:
         filtre["city_key"] = p3s1_normaliser(ville)
     # V599 : filtre par niche — l'id stable de `prospection_niches`, ou « sans ».
-    if str(parametres.get("adresse_a_corriger") or "").strip().lower() in ("1", "true", "oui"):
-        filtre["adresse_a_corriger"] = True   # V606
+    if not statut and str(parametres.get("adresse_a_corriger") or "").strip().lower() in ("1", "true", "oui"):
+        filtre["adresse_a_corriger"] = True   # V606 (un filtre de statut l'emporte)
     niche_filtre = (parametres.get("niche_id") or "").strip().lower()
     if niche_filtre:
         if niche_filtre == "sans":

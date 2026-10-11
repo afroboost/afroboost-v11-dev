@@ -2490,15 +2490,15 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
 
       {/* ---------- LES COMPTEURS ---------- */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
-        <Tuile libelle="Total" valeur={nb('total')} actif={!filtres.status}
-               onClick={() => majFiltre('status', '')} />
+        <Tuile libelle="Total" valeur={nb('total')} actif={!filtres.status && filtres.adresse_a_corriger !== '1'}
+               onClick={() => { majFiltre('adresse_a_corriger', ''); majFiltre('status', ''); }} />
         {STATUTS.map((s) => (
           <Tuile
             key={s.cle}
             libelle={s.libelle}
             valeur={nb(s.cle)}
             actif={filtres.status === s.cle}
-            onClick={() => majFiltre('status', filtres.status === s.cle ? '' : s.cle)}
+            onClick={() => { majFiltre('adresse_a_corriger', ''); majFiltre('status', filtres.status === s.cle ? '' : s.cle); }}
           />
         ))}
         <Tuile libelle="Candidatures" valeur={nb('candidature')} />
@@ -2507,7 +2507,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
         {nb('adresse_a_corriger') > 0 && (
           <Tuile libelle="Adresse à corriger" valeur={nb('adresse_a_corriger')}
                  actif={filtres.adresse_a_corriger === '1'}
-                 onClick={() => majFiltre('adresse_a_corriger', filtres.adresse_a_corriger === '1' ? '' : '1')} />
+                 onClick={() => { majFiltre('status', ''); majFiltre('adresse_a_corriger', filtres.adresse_a_corriger === '1' ? '' : '1'); }} />
         )}
         {/* V595e — « Acceptés » est désormais la tuile du statut « Accepté » ci-dessus. */}
       </div>
