@@ -273,6 +273,7 @@ import SubscriberSpace from "./components/SubscriberSpace";
 const CentreParrainage = lazy(() => import("./components/parrainage/CentreParrainage"));
 const InvitationDuo = lazy(() => import("./components/parrainage/InvitationDuo"));
 const EntreeCampagne = lazy(() => import("./components/parrainage/EntreeCampagne")); // PAR-3 : /duo/c/<token>
+const RendezVousPublic = lazy(() => import("./components/RendezVousPublic")); // V605 : /rdv/<token>
 // Calendrier des sessions, en fenetre par-dessus la vitrine (jamais une page)
 import SessionsModal from "./components/SessionsModal";
 import ConditionsParticipation from './components/ConditionsParticipation'; // ESSAI-5a-1
@@ -4852,6 +4853,11 @@ function App() {
   const [showSubscriberSpace, setShowSubscriberSpace] = useState(null); // V184: Code abonné pour espace d'accès rapide
   const [parrainagePage, setParrainagePage] = useState(''); // V534: '' | 'centre' | 'duo'
   const [duoToken, setDuoToken] = useState(''); // V534: jeton de /duo/<token>
+  // V605 : /rdv/<token> — prise de rendez-vous publique (lu une fois, chaîne primitive).
+  const [rdvToken] = useState(() => {
+    const m = typeof window !== 'undefined' && window.location.pathname.match(/^\/rdv\/([A-Za-z0-9_-]{16,64})\/?$/);
+    return m ? m[1] : '';
+  });
   const [coachVitrineLoaded, setCoachVitrineLoaded] = useState(false); // v160: flag data coach chargee
   const [currentCoachVitrineEmail, setCurrentCoachVitrineEmail] = useState(null); // v160.5: Email du coach dont on affiche la vitrine (pour isolation commentaires/likes et Reserve button)
   const [currentCoachVitrineName, setCurrentCoachVitrineName] = useState(null); // v160.7: Nom du coach de la vitrine (pour ChatWidget header)
@@ -7997,6 +8003,13 @@ function App() {
   // V534: Centre Parrainage (/parrainage) et invitation publique (/duo/<token>) —
   // AVANT l'espace abonné, comme lui en retour anticipé. Le repli Suspense est
   // un fond noir muet : la page pose elle-même son écran de chargement.
+  if (rdvToken) {
+    return (
+      <Suspense fallback={<div style={{ minHeight: '100vh', background: 'rgb(0,0,0)' }} />}>
+        <RendezVousPublic token={rdvToken} />
+      </Suspense>
+    );
+  }
   if (parrainagePage === 'centre') {
     return (
       <Suspense fallback={<div style={{ minHeight: '100vh', background: 'rgb(0,0,0)' }} />}>

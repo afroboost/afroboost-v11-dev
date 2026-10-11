@@ -855,6 +855,12 @@ describe('P3-S3-B — préparation de campagne', () => {
          un aperçu et une confirmation explicite, et le serveur refuse tant que
          les deux drapeaux `P3_REPONSE_*` ne sont pas ouverts. */
       '/prospect-inbound/${encodeURIComponent(id)}/envoyer-reponse',
+      /* V605 : TRADUIRE et PRÉPARER UN LIEN DE RENDEZ-VOUS — aucun n'envoie rien.
+         `/traduire` garde la traduction À CÔTÉ de l'original (jamais à sa place),
+         `/traduire-reponse` rend un texte au champ, `/lien-rdv` rend un lien. */
+      '/prospect-inbound/${encodeURIComponent(id)}/traduire',
+      '/prospect-inbound/${encodeURIComponent(id)}/traduire-reponse',
+      '/prospect-inbound/${encodeURIComponent(id)}/lien-rdv',
     ]));
   });
 
@@ -1908,6 +1914,81 @@ describe('PROSPECTION FOCUS — les réponses reçues', () => {
     await act(async () => { await Promise.resolve(); });
     expect(par('editeur-brouillon').value).toBe(avant);
     expect(par('video-info').textContent).toContain('ambigu');
+  });
+
+  const AVEC_V605 = () => [
+    reponseFictive({ id: 'inb-de', action_id: 'act-de', recipient_key: 'C-DE', from_email: 'info@stadtfest.ch',
+                     received_at: '2026-10-11T09:00:00+00:00', langue: 'de', rdv_souhaite: true, agenda_externe: '',
+                     body_text: 'Guten Tag, gerne können wir einen Termin vereinbaren.' }),
+    reponseFictive({ id: 'inb-troodi', action_id: 'act-troodi', recipient_key: 'E-01', from_email: 'denis@troodi.ch',
+                     received_at: '2026-10-11T08:23:00+00:00', langue: 'fr', rdv_souhaite: true,
+                     agenda_externe: 'https://www.troodi.ch/agenda',
+                     body_text: 'Super ! Je vous laisse insérer un créneau pour une visio. www.troodi.ch/agenda' }),
+    reponseFictive({ id: 'inb-refus', action_id: 'act-refus', recipient_key: 'D-9', from_email: 'x@ecole.ch',
+                     received_at: '2026-10-11T07:00:00+00:00', langue: 'fr', rdv_souhaite: false, agenda_externe: '',
+                     body_text: 'Merci mais nous ne sommes pas intéressés.' }),
+  ];
+  const ouvrirComposer = async (i) => {
+    axios.post.mockResolvedValue({ data: { ok: true, non_lues: 2, a_repondre: 3 } });
+    axios.get.mockResolvedValue({ data: { brouillon: brouillonDe() } });
+    await act(async () => { lignes()[i].click(); });
+    await act(async () => { par('modifier-brouillon').click(); });
+  };
+
+  test('V605 — message allemand : « Traduire en français » au clic, original conservé, « Voir l’original »', async () => {
+    avecReponses(AVEC_V605());
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirComposer(0);
+    expect(par('langue-message').textContent).toBe('ALLEMAND');
+    axios.post.mockClear();
+    axios.post.mockResolvedValue({ data: { traduction: 'Bonjour, volontiers, nous pouvons fixer un rendez-vous.' } });
+    await act(async () => { par('traduire-message').click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(axios.post).toHaveBeenCalledWith('/api/prospect-inbound/inb-de/traduire', {});
+    expect(par('corps-original').textContent).toContain('nous pouvons fixer un rendez-vous');
+    expect(par('langue-message').textContent).toBe('TRADUCTION FR');
+    await act(async () => { par('voir-original').click(); });
+    expect(par('corps-original').textContent).toContain('Guten Tag');
+  });
+
+  test('V605 — « Traduire la réponse en allemand » remplit le champ, sans aucun envoi', async () => {
+    avecReponses(AVEC_V605());
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirComposer(0);
+    axios.post.mockClear();
+    axios.post.mockResolvedValue({ data: { traduction: 'Vielen Dank für Ihr Interesse!', envoye: false } });
+    await act(async () => { par('traduire-reponse').click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(par('editeur-brouillon').value).toBe('Vielen Dank für Ihr Interesse!');
+    const urls = axios.post.mock.calls.map((c) => String(c[0]));
+    expect(urls).toEqual(['/api/prospect-inbound/inb-de/traduire-reponse']);
+    expect(urls.some((u) => u.includes('envoyer'))).toBe(false);
+  });
+
+  test('V605 — demande de Termin : « Proposer un rendez-vous » insère le lien Afroboost, rien n’est envoyé', async () => {
+    avecReponses(AVEC_V605());
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirComposer(0);
+    axios.post.mockClear();
+    axios.post.mockResolvedValue({ data: { lien: 'https://afroboost.com/rdv/abcdefghijklmnopqr',
+      texte_suggere: 'Avec plaisir ! Vous pouvez choisir directement le créneau qui vous convient ici : https://afroboost.com/rdv/abcdefghijklmnopqr' } });
+    await act(async () => { par('proposer-rdv').click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(par('editeur-brouillon').value).toContain('https://afroboost.com/rdv/abcdefghijklmnopqr');
+    expect(axios.post.mock.calls.map((c) => String(c[0]))).toEqual(['/api/prospect-inbound/inb-de/lien-rdv']);
+  });
+
+  test('V605 — Troodi : « Ouvrir l’agenda du partenaire », PAS notre agenda ; refus : aucun rendez-vous', async () => {
+    avecReponses(AVEC_V605());
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirComposer(1);
+    expect(par('agenda-partenaire').getAttribute('href')).toBe('https://www.troodi.ch/agenda');
+    expect(par('agenda-partenaire').getAttribute('target')).toBe('_blank');
+    expect(par('proposer-rdv')).toBeNull();
+    expect(par('traduire-message')).toBeNull();
+    await ouvrirComposer(2);
+    expect(par('proposer-rdv')).toBeNull();
+    expect(par('agenda-partenaire')).toBeNull();
   });
 
   test('enregistrer une correction passe par PATCH, jamais par un envoi', async () => {

@@ -47,6 +47,16 @@ import {
 
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
 const RGB = 'var(--primary-rgb, 217, 28, 210)';
+// V605 — icônes SVG inline (jamais d'emoji) et libellés de langue.
+const LANGUES_V605 = { fr: 'Français', de: 'Allemand', en: 'Anglais' };
+const ICONE_GLOBE = 'M12 2a10 10 0 100 20 10 10 0 000-20zM2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20';
+const ICONE_CALENDRIER = 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z';
+const IconeV605 = ({ d }) => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+       strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ marginRight: '5px', verticalAlign: '-2px' }}>
+    <path d={d} />
+  </svg>
+);
 /* LE TEXTE EST POSÉ ICI, PAS HÉRITÉ — la leçon de P3-S2.
    Le tableau de bord est sombre par dessin (`.section-gradient` et
    `.card-gradient` sont des dégradés noirs), mais le jeu de jetons shadcn
@@ -490,6 +500,38 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
      l'objet entier relancerait les effets qui en dépendent (règle absolue,
      incident V305). */
   const [cartes, setCartes] = useState({});
+
+  // V605 — traductions et lien de rendez-vous : AUCUN envoi, le texte revient dans le champ.
+  const traduireMessage = async (id) => {
+    majCarte(id, { tradEnCours: true, tradErreur: '' });
+    try {
+      const { data } = await axios.post(`${base}/prospect-inbound/${encodeURIComponent(id)}/traduire`, {});
+      majCarte(id, { tradEnCours: false, traduction: (data && data.traduction) || '', voirTraduction: true });
+    } catch (e) {
+      majCarte(id, { tradEnCours: false, tradErreur: (e.response && e.response.data && e.response.data.detail) || 'Traduction impossible.' });
+    }
+  };
+  const traduireReponse = async (id, texte, langue) => {
+    majCarte(id, { tradEnCours: true, videoInfo: '' });
+    try {
+      const { data } = await axios.post(`${base}/prospect-inbound/${encodeURIComponent(id)}/traduire-reponse`, { texte, langue });
+      majCarte(id, { tradEnCours: false, texte: (data && data.traduction) || texte,
+                     videoInfo: 'Réponse traduite — relisez-la avant de l’envoyer.' });
+    } catch (e) {
+      majCarte(id, { tradEnCours: false, videoInfo: (e.response && e.response.data && e.response.data.detail) || 'Traduction impossible.' });
+    }
+  };
+  const proposerRdv = async (id, texteActuel) => {
+    majCarte(id, { rdvEnCours: true, videoInfo: '' });
+    try {
+      const { data } = await axios.post(`${base}/prospect-inbound/${encodeURIComponent(id)}/lien-rdv`, {});
+      const t = (texteActuel || '').trim();
+      majCarte(id, { rdvEnCours: false, texte: (t ? `${t}\n\n` : '') + data.texte_suggere,
+                     videoInfo: 'Lien de rendez-vous inséré — rien n’est envoyé.' });
+    } catch (e) {
+      majCarte(id, { rdvEnCours: false, videoInfo: 'Le lien de rendez-vous n’a pas pu être préparé.' });
+    }
+  };
 
   // V604 — insère dans la réponse le lien de la vidéo correspondant au prospect.
   // Aucune vidéo pertinente ou choix ambigu : rien n'est inséré, la raison s'affiche.
@@ -1546,11 +1588,64 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                   </div>
                   {/* Du TEXTE, jamais du HTML : on n'injecte pas le contenu
                       d'un inconnu dans la page. */}
-                  <div data-testid="corps-original"
-                       style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
-                                lineHeight: 1.5, marginTop: '4px' }}>
-                    {r.body_text || '(aucun contenu lisible pour cette réponse)'}
-                  </div>
+                  {/* V605 — langue détectée + traduction AU CLIC (l'original n'est jamais remplacé). */}
+                  {(() => {
+                    const trad = carte.traduction || r.traduction_fr || '';
+                    const voirTrad = !!carte.voirTraduction && !!trad;
+                    const etrangere = r.langue && r.langue !== 'fr';
+                    return (
+                      <>
+                        <div data-testid="corps-original"
+                             style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: TEXTE,
+                                      lineHeight: 1.5, marginTop: '4px', overflowWrap: 'anywhere' }}>
+                          {voirTrad ? trad : (r.body_text || '(aucun contenu lisible pour cette réponse)')}
+                        </div>
+                        {(r.langue || etrangere) && (
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '6px' }}>
+                            {r.langue && (
+                              <span data-testid="langue-message" style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em', opacity: 0.7, color: TEXTE }}>
+                                {voirTrad ? 'TRADUCTION FR' : (LANGUES_V605[r.langue] || r.langue).toUpperCase()}
+                              </span>
+                            )}
+                            {etrangere && !voirTrad && (
+                              <button type="button" data-testid="traduire-message"
+                                      onClick={() => (trad ? majCarte(r.id, { voirTraduction: true }) : traduireMessage(r.id))}
+                                      disabled={!!carte.tradEnCours} style={stylePetitBouton}>
+                                <IconeV605 d={ICONE_GLOBE} />{carte.tradEnCours ? 'Traduction…' : 'Traduire en français'}
+                              </button>
+                            )}
+                            {voirTrad && (
+                              <button type="button" data-testid="voir-original"
+                                      onClick={() => majCarte(r.id, { voirTraduction: false })} style={stylePetitBouton}>
+                                Voir l'original
+                              </button>
+                            )}
+                            {carte.tradErreur && <span data-testid="trad-erreur" style={{ fontSize: '11px', color: TEXTE, opacity: 0.8 }}>{carte.tradErreur}</span>}
+                          </div>
+                        )}
+                        {(r.agenda_externe || convActive.rendez_vous || convActive.prochaine_tache) && (
+                          <div data-testid="bloc-agenda" style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '8px' }}>
+                            {r.agenda_externe && (
+                              <a data-testid="agenda-partenaire" href={r.agenda_externe} target="_blank" rel="noopener noreferrer"
+                                 style={{ ...stylePetitBouton, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+                                <IconeV605 d={ICONE_CALENDRIER} />Ouvrir l'agenda du partenaire
+                              </a>
+                            )}
+                            {convActive.rendez_vous && (
+                              <span data-testid="rdv-planifie" style={{ fontSize: '11px', color: TEXTE }}>
+                                Rendez-vous {convActive.rendez_vous.type_libelle.toLowerCase()} le {new Date(convActive.rendez_vous.starts_at).toLocaleString('fr-CH', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                            {convActive.prochaine_tache && (
+                              <span data-testid="tache-suivi" style={{ fontSize: '11px', color: TEXTE, opacity: 0.85 }}>
+                                {convActive.prochaine_tache.titre} — {new Date(convActive.prochaine_tache.quand).toLocaleDateString('fr-CH')}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
 
                 {/* ---- L'ANALYSE, quand elle existe et qu'elle sert ---- */}
@@ -1684,6 +1779,23 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                             {occupe ? 'Enregistrement…'
                               : (bro ? 'Enregistrer' : 'Enregistrer et vérifier')}
                           </button>
+                          {/* V605 — traduire MON brouillon dans la langue du partenaire : aucun envoi. */}
+                          {(r.langue === 'de' || r.langue === 'en') && (
+                            <button type="button" data-testid="traduire-reponse"
+                                    onClick={() => traduireReponse(r.id, carte.texte, r.langue)}
+                                    disabled={occupe || carte.tradEnCours || !(carte.texte || '').trim()}
+                                    style={stylePetitBouton}>
+                              <IconeV605 d={ICONE_GLOBE} />{carte.tradEnCours ? 'Traduction…' : `Traduire la réponse en ${r.langue === 'de' ? 'allemand' : 'anglais'}`}
+                            </button>
+                          )}
+                          {/* V605 — un lien Afroboost où le partenaire choisit SON créneau (pas si il a son propre agenda). */}
+                          {r.rdv_souhaite && !r.agenda_externe && (
+                            <button type="button" data-testid="proposer-rdv"
+                                    onClick={() => proposerRdv(r.id, carte.texte)}
+                                    disabled={occupe || carte.rdvEnCours} style={stylePetitBouton}>
+                              <IconeV605 d={ICONE_CALENDRIER} />{carte.rdvEnCours ? 'Préparation…' : 'Proposer un rendez-vous'}
+                            </button>
+                          )}
                           {/* V604 — la vidéo de SON profil (routage V601), jamais au hasard. */}
                           <button type="button" data-testid="inserer-video"
                                   onClick={() => insererVideo(r.id, carte.texte)}

@@ -30062,6 +30062,32 @@ _V604_RE_PLUS_TARD = re.compile(
 
 
 def v604_date_suivi(texte: str, maintenant: datetime = None):
+    """V605 : ajoute « le 15 novembre » et « le mois prochain » (FR/DE/EN)."""
+    now = maintenant or datetime.now(timezone.utc)
+    t = texte or ""
+    m = re.search(r"(?i)(revenez|recontact|reprenez contact|relancez|contactez|[ée]crivez|rappelez|reach out|get back|"
+                  r"contact (?:me|us)|melden sie sich|kontaktieren sie|schreiben sie)[^.!?\n]{0,60}?"
+                  r"(le mois prochain|mois prochain|next month|n[äa]chsten monat|"
+                  r"(?:le |am |on )?(\d{1,2})\.?\s*(?:er\s)?([a-zéèêûäöüA-Z]+))", t)
+    if m:
+        import unicodedata
+        if m.group(3):
+            mot = unicodedata.normalize("NFD", m.group(4) or "").encode("ascii", "ignore").decode().lower()
+            mois = _V604_MOIS.get(mot)
+            if mois:
+                jour = int(m.group(3))
+                annee = now.year if (mois, jour) > (now.month, now.day) else now.year + 1
+                try:
+                    return datetime(annee, mois, jour, 8, tzinfo=timezone.utc).isoformat(), m.group(0)[:160]
+                except ValueError:
+                    pass
+        else:
+            mois, annee = (1, now.year + 1) if now.month == 12 else (now.month + 1, now.year)
+            return datetime(annee, mois, 1, 8, tzinfo=timezone.utc).isoformat(), m.group(0)[:160]
+    return v604_date_suivi_mois(t, now)
+
+
+def v604_date_suivi_mois(texte: str, maintenant: datetime = None):
     """« revenez vers moi en janvier » -> 1er janvier SUIVANT (ISO). PURE.
     (date_iso | None, extrait | None). Sans mois reconnu : (None, extrait) = suivi sans date."""
     import unicodedata
@@ -30274,6 +30300,9 @@ async def p3u2_recevoir(brut: dict, coach_id: str) -> dict:
                 {"$set": {"suivi_demande_le": _nat["suivi_demande_le"],
                           "suivi_demande_texte": _nat.get("suivi_demande_texte"),
                           "updated_at": maintenant}})
+            if _nat.get("suivi_demande_le"):   # V605 : UNE tache CAL-2, rien n'est envoye
+                await v605_creer_tache_suivi(action, _nat["suivi_demande_le"],
+                                             _nat.get("suivi_demande_texte"), document["id"])
         await db[P3U2_COLLECTION].update_one(
             {"id": document["id"]}, {"$set": {"processed_at": maintenant}})
     logger.info("[P3-U2] message %s -> %s (%s, confiance %d) action=%s",
@@ -33765,6 +33794,7 @@ def pf_conversation(cle: str, messages, action, envoi, statuts, intentions) -> d
     """
     ordonnes = sorted(messages or [],
                       key=lambda m: (pf_instant(m.get("received_at")), str(m.get("id") or "")))
+    ordonnes = [dict(m, **v605_lecture(m)) for m in ordonnes]   # V605 : langue, RDV, agenda externe
     dernier = ordonnes[-1] if ordonnes else {}
     identifiant = dernier.get("id") or ""
     statut = statuts.get(identifiant) or P3N_STATUT_A_REPONDRE
@@ -33898,6 +33928,10 @@ async def pf_charger(email: str, statuts: dict, filtre_statut: str = "") -> dict
         intentions[brouillon["inbound_id"]] = brouillon.get("intention")
 
     conversations = pf_conversations(messages, actions, envois, statuts, intentions)
+    try:
+        await v605_agenda_des_conversations(conversations)   # V605 : RDV + rappel visibles
+    except Exception as _e605:  # noqa: BLE001
+        logger.warning("[V605] agenda des conversations ignore : %s", type(_e605).__name__)
     compteurs = pf_compteurs(conversations)
     if filtre_statut:
         conversations = [c for c in conversations
@@ -52725,6 +52759,406 @@ async def v604_video_pour_reponse(message_id: str, request: Request):
             "texte_suggere": ("Avec plaisir, voici la courte vidéo : " + m["lien"]) if m else None}
 
 
+# ===========================================================================
+# V605 — CONVERSATIONS PARTENAIRES : LANGUE, TRADUCTION, RENDEZ-VOUS, RAPPEL
+# ===========================================================================
+# AUCUN NOUVEL AGENDA. Un rendez-vous pris par un partenaire est un evenement
+# `calendar_events` de type `appointment` (CAL-1/CAL-3), un rappel « plus tard »
+# une tache (CAL-2). La seule nouveaute est une COUCHE PUBLIQUE minimale :
+# un jeton aleatoire pose sur l'action de campagne, qui ne donne acces qu'aux
+# creneaux libres et a la confirmation. Rien n'est jamais ENVOYE au partenaire :
+# traduire, inserer un lien ou une video remplit seulement le champ de reponse.
+V605_ZONE = "Europe/Zurich"
+V605_JOURS = 14                 # horizon des creneaux proposes
+V605_HEURE_DEBUT, V605_HEURE_FIN = 9, 18
+V605_PAS_MIN = 30               # creneaux de 30 min
+V605_DELAI_MIN_H = 12           # jamais un creneau dans moins de 12 h
+V605_TYPES = {"visio": "visio", "appel": "appel", "telephone": "appel", "rencontre": "rencontre"}
+V605_LIBELLES_TYPES = {"visio": "Visio", "appel": "Téléphone", "rencontre": "Rencontre"}
+V605_MOTIF_RDV = "RENDEZ_VOUS_PLANIFIE"
+V605_LANGUES = {"fr": "français", "de": "allemand", "en": "anglais"}
+_V605_MOTS = {
+    "fr": set("le la les des une un et est pour vous nous avec dans pas merci bonjour votre notre sur que qui être serait".split()),
+    "de": set("der die das und ist nicht mit für sie wir ich ein eine zu den dem bitte danke vielen gerne grüsse grüße ihre unser auf".split()),
+    "en": set("the and is for you we with not thanks thank please your our this that would be can hello hi regards".split()),
+}
+_V605_RE_RDV = re.compile(
+    r"(?i)(appel|appeler|t[ée]l[ée]phon|visio|rendez-vous|\brdv\b|rencontr|cr[ée]neau|disponibilit|"
+    r"disponible pour|[ée]changer|discuter|en parler|un call|\bmeet|termin|telefon|anruf|video-?call|"
+    r"besprechung|gespr[äa]ch|treffen|\bzoom\b|\bteams\b|\bcall\b|meeting|schedule|book a|time slot|"
+    r"choose a time|agenda|calendly)")
+_V605_RE_NEGATIF = re.compile(
+    r"(?i)(pas int[ée]ress|ne sommes pas|ne souhaitons pas|non merci|pas pour le moment|pas le moment|"
+    r"kein interesse|leider nicht|leider keine|nicht interessiert|not interested|no thanks|no, thank|"
+    r"\bstop\b|d[ée]sinscri|unsubscribe|retirez|ne plus nous|ne plus me)")
+_V605_RE_POSITIF = re.compile(
+    r"(?i)(super|avec plaisir|volontiers|int[ée]ress|\boui\b|ravi|bonne id[ée]e|gerne|interessiert|"
+    r"spannend|\bgreat\b|interested|sounds good|happy to|\byes\b|merci pour votre message)")
+_V605_RE_URL = re.compile(r"(?i)\b((?:https?://|www\.)[^\s<>\"'\])]+)")
+_V605_RE_AGENDA = re.compile(
+    r"(?i)(calendly|cal\.com|/agenda|booking|/book|termin|zcal|youcanbook|meetings\.hubspot|bookings|"
+    r"doodle|acuity|setmore|simplybook|tidycal|savvycal|appointlet|/rdv|rendez-vous|reservation|reservierung)")
+
+
+def v605_langue(texte: str) -> str:
+    """fr / de / en (ou '' si trop court / indecidable). PURE, sans cout."""
+    mots = re.findall(r"[a-zA-Zàâäçéèêëîïôöùûüß]+", (texte or "").lower())
+    if len(mots) < 3:
+        return ""
+    scores = {l: sum(1 for m in mots if m in s) for l, s in _V605_MOTS.items()}
+    if re.search(r"[äöüß]", (texte or "").lower()):
+        scores["de"] += 2
+    langue, score = max(scores.items(), key=lambda kv: kv[1])
+    return langue if score >= 2 else ""
+
+
+def v605_agenda_externe(texte: str) -> str:
+    """Le premier lien clairement destine a prendre rendez-vous, ou ''. PURE."""
+    for url in _V605_RE_URL.findall(texte or ""):
+        url = url.rstrip(".,;:!?")
+        if _V605_RE_AGENDA.search(url):
+            return url if url.lower().startswith("http") else "https://" + url
+    return ""
+
+
+def v605_lecture(message: dict) -> dict:
+    """Ce que l'ecran doit savoir d'un message recu. PURE (aucun appel IA).
+    Une reponse AUTOMATIQUE ou A VERIFIER (V604) n'est jamais une demande de
+    rendez-vous ; une reponse negative non plus."""
+    m = message or {}
+    texte = m.get("body_text") or ""
+    nature = m.get("nature_reponse") or V604_HUMAINE
+    tonalite = "negative" if _V605_RE_NEGATIF.search(texte) else (
+        "positive" if _V605_RE_POSITIF.search(texte) else "neutre")
+    agenda = v605_agenda_externe(texte) if nature == V604_HUMAINE else ""
+    rdv = nature == V604_HUMAINE and tonalite != "negative" and bool(agenda or _V605_RE_RDV.search(texte))
+    return {"langue": v605_langue(texte), "tonalite": tonalite if nature == V604_HUMAINE else "neutre",
+            "rdv_souhaite": rdv, "agenda_externe": agenda}
+
+
+# --- Traduction : les elements exacts sont MASQUES avant l'IA, puis restaures ---
+_V605_RE_PROTEGE = re.compile(
+    r"(?i)((?:https?://|www\.)[^\s<>\"']+|[\w.+-]+@[\w-]+\.[\w.-]+|\b[\w-]+\.(?:ch|com|fr|de|org|net|io|swiss)\b(?:/[^\s<>\"']*)?"
+    r"|\+?\d[\d\s().\-/]{5,}\d|[^\s,;!?()]*\d[^\s,;!?()]*|Afroboost|Coach Bassi)")
+
+
+def v605_proteger(texte: str, noms=None):
+    """(texte masque, table). URL, e-mails, telephones, dates, heures, montants,
+    codes, noms d'organisation et « Afroboost » deviennent ⟦Pn⟧. PURE."""
+    table = []
+    def masquer(valeur):
+        table.append(valeur)
+        return "⟦P%d⟧" % len(table)
+    t = texte or ""
+    for nom in sorted({n for n in (noms or []) if n and len(n) >= 3}, key=len, reverse=True):
+        t = re.sub(re.escape(nom), lambda mm: masquer(mm.group(0)), t)
+    t = re.sub(r"⟦P\d+⟧|" + _V605_RE_PROTEGE.pattern,
+               lambda mm: mm.group(0) if mm.group(0).startswith("⟦P") else masquer(mm.group(0)), t)
+    return t, table
+
+
+def v605_restaurer(texte: str, table) -> str:
+    """Remet chaque element protege a sa place. LEVE si l'un d'eux a disparu
+    ou a ete duplique : une traduction qui perd un lien n'est pas rendue."""
+    t = texte or ""
+    for i, valeur in enumerate(table, 1):
+        balise = "⟦P%d⟧" % i
+        if t.count(balise) != 1:
+            raise ValueError("element protege %d perdu" % i)
+        t = t.replace(balise, valeur)
+    if re.search(r"⟦P\d+⟧", t):
+        raise ValueError("balise inconnue")
+    return t
+
+
+async def v605_traduire(texte: str, cible: str, sortant: bool, noms=None) -> str:
+    cible_nom = {"fr": "français", "de": "allemand (Suisse : « ss » au lieu de « ß », vouvoiement « Sie »)",
+                 "en": "anglais"}.get(cible)
+    if not cible_nom:
+        raise HTTPException(status_code=400, detail="Langue cible non prise en charge (fr, de, en)")
+    cle = os.environ.get("OPENAI_API_KEY")
+    if not cle:
+        raise HTTPException(status_code=503, detail="Traduction indisponible")
+    masque, table = v605_proteger((texte or "")[:6000], noms)
+    consignes = (
+        "Tu es un traducteur professionnel. Traduis le texte en %s.\n"
+        "REGLES : 1) Les balises ⟦P1⟧, ⟦P2⟧… sont des elements exacts (liens, e-mails, numeros, dates, noms) : "
+        "recopie CHAQUE balise telle quelle, une seule fois, a la place qui convient. 2) N'ajoute, n'invente et "
+        "ne retire aucune information. 3) %s 4) Reponds UNIQUEMENT avec la traduction." % (
+            cible_nom,
+            "Style professionnel et naturel, meme niveau de politesse et meme intention que l'auteur, pas de mot-a-mot."
+            if sortant else "Traduction fidele et naturelle du message recu."))
+    from openai import OpenAI
+    client = OpenAI(api_key=cle, timeout=20.0, max_retries=0)
+    reponse = await asyncio.wait_for(asyncio.to_thread(
+        client.chat.completions.create, model="gpt-4o-mini", temperature=0.2, max_tokens=1600,
+        messages=[{"role": "system", "content": consignes}, {"role": "user", "content": masque}]), timeout=25.0)
+    brut = (reponse.choices[0].message.content or "").strip()
+    try:
+        return v605_restaurer(brut, table)
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Traduction refusée : un lien, un nom ou un nombre aurait été modifié. Réessayez.")
+
+
+async def v605_message_et_action(message_id: str, request: Request):
+    appelant = await _v309_require_coach_or_admin(request)
+    msg = await db[P3U2_COLLECTION].find_one({"id": (message_id or "").strip()[:64]}, {"_id": 0})
+    if not msg or (not is_super_admin(appelant) and (msg.get("coach_id") or "") != appelant):
+        raise HTTPException(status_code=404, detail="Message introuvable")
+    action = await db[P3S3_ACTIONS].find_one({"id": msg.get("action_id")}, {"_id": 0}) if msg.get("action_id") else None
+    return appelant, msg, action or {}
+
+
+@api_router.post("/prospect-inbound/{message_id}/traduire")
+async def v605_traduire_message(message_id: str, request: Request):
+    """Traduit le message RECU en francais. L'original n'est jamais modifie ;
+    la traduction est gardee a cote (`traduction_fr`) pour ne pas repayer."""
+    _a, msg, action = await v605_message_et_action(message_id, request)
+    if msg.get("traduction_fr"):
+        return {"traduction": msg["traduction_fr"], "langue": msg.get("langue_detectee") or v605_langue(msg.get("body_text")), "cache": True}
+    texte = msg.get("body_text") or ""
+    if not texte.strip():
+        raise HTTPException(status_code=400, detail="Aucun texte à traduire")
+    trad = await v605_traduire(texte, "fr", sortant=False, noms=action.get("organisations"))
+    langue = v605_langue(texte)
+    await db[P3U2_COLLECTION].update_one({"id": msg["id"]}, {"$set": {
+        "traduction_fr": trad, "traduction_fr_le": datetime.now(timezone.utc).isoformat(), "langue_detectee": langue}})
+    return {"traduction": trad, "langue": langue, "cache": False}
+
+
+@api_router.post("/prospect-inbound/{message_id}/traduire-reponse")
+async def v605_traduire_reponse(message_id: str, request: Request):
+    """Traduit le BROUILLON du coach dans la langue du partenaire. N'ECRIT RIEN,
+    N'ENVOIE RIEN : le texte revient dans le champ, a relire et modifier."""
+    _a, msg, action = await v605_message_et_action(message_id, request)
+    corps = await request.json()
+    texte = str((corps or {}).get("texte") or "")
+    cible = str((corps or {}).get("langue") or v605_langue(msg.get("body_text")) or "").lower()
+    if not texte.strip():
+        raise HTTPException(status_code=400, detail="Aucun texte à traduire")
+    return {"traduction": await v605_traduire(texte, cible, sortant=True, noms=action.get("organisations")),
+            "langue": cible, "envoye": False}
+
+
+def v605_lien_public(jeton: str) -> str:
+    return "%s/rdv/%s" % (V604_SITE, jeton)
+
+
+@api_router.post("/prospect-inbound/{message_id}/lien-rdv")
+async def v605_lien_rdv(message_id: str, request: Request):
+    """Le lien Afroboost ou le partenaire choisira SON creneau. UN jeton par
+    dossier (action), reutilise ensuite. Rien n'est envoye."""
+    _a, msg, action = await v605_message_et_action(message_id, request)
+    if not action.get("id"):
+        raise HTTPException(status_code=400, detail="Réponse non rattachée à un prospect")
+    jeton = action.get("rdv_token")
+    if not jeton:
+        import secrets
+        jeton = secrets.token_urlsafe(18)
+        await db[P3S3_ACTIONS].update_one({"id": action["id"], "rdv_token": {"$exists": False}},
+            {"$set": {"rdv_token": jeton, "rdv_token_cree_le": datetime.now(timezone.utc).isoformat(), "rdv_inbound_id": msg["id"]}})
+        action = await db[P3S3_ACTIONS].find_one({"id": action["id"]}, {"_id": 0}) or action
+        jeton = action.get("rdv_token") or jeton
+    lien = v605_lien_public(jeton)
+    return {"lien": lien, "texte_suggere": "Avec plaisir ! Vous pouvez choisir directement le créneau qui vous convient ici : " + lien,
+            "envoye": False}
+
+
+# --- Disponibilites : calculees depuis l'agenda EXISTANT, jamais stockees ---
+def v605_parse(valeur, zone):
+    try:
+        d = datetime.fromisoformat(str(valeur or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=zone)
+
+
+def v605_creneaux(occupes, maintenant: datetime = None) -> list:
+    """Les creneaux LIBRES (debut ISO UTC). PURE. `occupes` = [(debut, fin)] aware."""
+    from zoneinfo import ZoneInfo
+    z = ZoneInfo(V605_ZONE)
+    now = (maintenant or datetime.now(timezone.utc)).astimezone(z)
+    limite = now + timedelta(hours=V605_DELAI_MIN_H)
+    sortie = []
+    for j in range(V605_JOURS + 1):
+        jour = (now + timedelta(days=j)).date()
+        if jour.weekday() >= 5:
+            continue
+        t = datetime(jour.year, jour.month, jour.day, V605_HEURE_DEBUT, 0, tzinfo=z)
+        fin_jour = datetime(jour.year, jour.month, jour.day, V605_HEURE_FIN, 0, tzinfo=z)
+        while t + timedelta(minutes=V605_PAS_MIN) <= fin_jour:
+            f = t + timedelta(minutes=V605_PAS_MIN)
+            if t >= limite and not any(d < f and t < e for d, e in occupes):
+                sortie.append(t.astimezone(timezone.utc).isoformat())
+            t = f
+    return sortie
+
+
+async def v605_occupations(coach: str) -> list:
+    from zoneinfo import ZoneInfo
+    z = ZoneInfo(V605_ZONE)
+    debut = datetime.now(timezone.utc) - timedelta(days=1)
+    fin = debut + timedelta(days=V605_JOURS + 3)
+    occupes = []
+    for ev in await db[CAL1_COLLECTION].find(
+            {"coach_id": coach, "is_deleted": {"$ne": True}, "status": {"$ne": "annule"},
+             "event_type": {"$in": ["appointment", "event"]}}, {"_id": 0}).to_list(CAL1_LISTE_MAX):
+        d = v605_parse(ev.get("starts_at"), z)
+        if not d or d > fin or d < debut - timedelta(days=1):
+            continue
+        if ev.get("all_day"):
+            j = d.astimezone(z)
+            d = datetime(j.year, j.month, j.day, 0, 0, tzinfo=z)
+            e = d + timedelta(days=1)
+        else:
+            e = v605_parse(ev.get("ends_at"), z) or d + timedelta(minutes=30)
+        occupes.append((d, e))
+    for cours in await db.courses.find({"coach_id": coach}, {"_id": 0}).to_list(200):
+        for occ in cal1_occurrences_cours(cours, debut, fin):
+            d = v605_parse(occ.get("starts_at"), z)
+            if d:
+                occupes.append((d - timedelta(minutes=60), d + timedelta(minutes=120)))
+    return occupes
+
+
+async def v605_action_par_jeton(jeton: str) -> dict:
+    j = (jeton or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{16,64}", j):
+        raise HTTPException(status_code=404, detail="Lien invalide")
+    action = await db[P3S3_ACTIONS].find_one({"rdv_token": j}, {"_id": 0})
+    if not action:
+        raise HTTPException(status_code=404, detail="Lien invalide ou expiré")
+    return action
+
+
+def v605_vue_rdv(ev: dict) -> dict:
+    from zoneinfo import ZoneInfo
+    d = v605_parse(ev.get("starts_at"), ZoneInfo(V605_ZONE))
+    return {"starts_at": ev.get("starts_at"), "type": ev.get("meeting_type"),
+            "type_libelle": V605_LIBELLES_TYPES.get(ev.get("meeting_type"), "Rendez-vous"),
+            "duree_min": ev.get("duration_minutes") or V605_PAS_MIN,
+            "heure_locale": d.astimezone(ZoneInfo(V605_ZONE)).strftime("%Y-%m-%dT%H:%M") if d else ""}
+
+
+_V605_COMPTEURS = {}
+
+
+def v605_limite(request: Request, max_par_min: int = 30):
+    ip = (request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "") or "?")[:64]
+    minute = int(datetime.now(timezone.utc).timestamp() // 60)
+    cle = (ip, minute)
+    _V605_COMPTEURS[cle] = _V605_COMPTEURS.get(cle, 0) + 1
+    if len(_V605_COMPTEURS) > 5000:
+        for k in [k for k in _V605_COMPTEURS if k[1] < minute]:
+            _V605_COMPTEURS.pop(k, None)
+    if _V605_COMPTEURS[cle] > max_par_min:
+        raise HTTPException(status_code=429, detail="Trop de requêtes, réessayez dans une minute")
+
+
+@api_router.get("/public/rdv/{jeton}")
+async def v605_public_creneaux(jeton: str, request: Request):
+    """PUBLIC (aucun compte) : les creneaux libres de Coach Bassi, et rien d'autre."""
+    v605_limite(request)
+    action = await v605_action_par_jeton(jeton)
+    deja = await db[CAL1_COLLECTION].find_one(
+        {"rdv_token": action["rdv_token"], "is_deleted": {"$ne": True}, "status": {"$ne": "annule"}}, {"_id": 0})
+    org = ((action.get("organisations") or [""])[0] or "").split(" — ")[0].strip()
+    if deja:
+        return {"organisation": org, "deja_reserve": v605_vue_rdv(deja), "creneaux": [], "types": []}
+    creneaux = v605_creneaux(await v605_occupations(action.get("coach_id")))
+    return {"organisation": org, "deja_reserve": None, "creneaux": creneaux, "duree_min": V605_PAS_MIN,
+            "fuseau": V605_ZONE,
+            "types": [{"id": k, "libelle": v} for k, v in V605_LIBELLES_TYPES.items()]}
+
+
+@api_router.post("/public/rdv/{jeton}")
+async def v605_public_confirmer(jeton: str, request: Request):
+    """PUBLIC : confirme UN creneau. La disponibilite est RECALCULEE ici, et un
+    index unique (coach, creneau) refuse le second de deux clics simultanes."""
+    from pymongo.errors import DuplicateKeyError
+    v605_limite(request, 10)
+    action = await v605_action_par_jeton(jeton)
+    corps = await request.json()
+    debut = str((corps or {}).get("starts_at") or "")
+    type_rdv = V605_TYPES.get(str((corps or {}).get("type") or "visio").lower(), "visio")
+    deja = await db[CAL1_COLLECTION].find_one(
+        {"rdv_token": action["rdv_token"], "is_deleted": {"$ne": True}, "status": {"$ne": "annule"}}, {"_id": 0})
+    if deja:
+        return {"confirme": True, "deja": True, "rendez_vous": v605_vue_rdv(deja)}
+    coach = action.get("coach_id")
+    if debut not in v605_creneaux(await v605_occupations(coach)):
+        raise HTTPException(status_code=409, detail="Ce créneau n'est plus disponible. Choisissez-en un autre.")
+    maintenant = datetime.now(timezone.utc).isoformat()
+    org = ((action.get("organisations") or [""])[0] or "").split(" — ")[0].strip()
+    document = {
+        "id": str(uuid.uuid4()), "coach_id": coach,
+        "title": "RDV %s — %s" % (V605_LIBELLES_TYPES[type_rdv], org or "partenaire"),
+        "description": "Rendez-vous choisi par le partenaire via le lien Afroboost (prospection partenaire).",
+        "location": "", "starts_at": debut, "ends_at": cal3_fin(debut, V605_PAS_MIN), "all_day": False,
+        "event_type": "appointment", "status": "confirme", "priority": None, "completed_at": None,
+        "meeting_type": type_rdv, "duration_minutes": V605_PAS_MIN,
+        "prospect_id": (action.get("prospect_ids") or [None])[0],
+        "recipient_key": action.get("recipient_key"), "campaign_id": action.get("campaign_id"),
+        "campaign_action_id": action.get("id"), "inbound_id": action.get("rdv_inbound_id"),
+        "origine": "prospection_partenaire", "rdv_token": action["rdv_token"],
+        "creneau_cle": "%s|%s" % (coach, debut),
+        "is_deleted": False, "created_at": maintenant, "updated_at": maintenant,
+    }
+    try:
+        await db[CAL1_COLLECTION].insert_one(dict(document))
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="Ce créneau vient d'être réservé. Choisissez-en un autre.")
+    # Les relances restantes tombent, avec le motif metier (celles deja parties restent).
+    for e in P3R2_ETAPES:
+        await db[P3S3_ACTIONS].update_one(
+            {"id": action["id"], e + "_annule_le": {"$exists": False}, e + "_sent_at": {"$exists": False}},
+            {"$set": {e + "_annule_le": maintenant, e + "_annule_motif": V605_MOTIF_RDV}})
+    await db[P3S3_ACTIONS].update_one({"id": action["id"]}, {"$set": {"rdv_planifie_le": maintenant, "updated_at": maintenant}})
+    logger.info("[V605] rendez-vous %s confirme par le partenaire (action %s)", document["id"][:8], action["id"][:8])
+    return {"confirme": True, "deja": False, "rendez_vous": v605_vue_rdv(document)}
+
+
+async def v605_creer_tache_suivi(action: dict, date_iso: str, texte: str, inbound_id: str = None) -> bool:
+    """UNE tache CAL-2 « Recontacter » pour une date demandee par le partenaire.
+    Idempotente (meme action + meme date). N'envoie rien."""
+    if not action or not date_iso:
+        return False
+    existe = await db[CAL1_COLLECTION].find_one(
+        {"campaign_action_id": action.get("id"), "event_type": "task", "origine": "suivi_demande",
+         "starts_at": date_iso, "is_deleted": {"$ne": True}}, {"_id": 1})
+    if existe:
+        return False
+    maintenant = datetime.now(timezone.utc).isoformat()
+    org = ((action.get("organisations") or [""])[0] or "").split(" — ")[0].strip()
+    await db[CAL1_COLLECTION].insert_one({
+        "id": str(uuid.uuid4()), "coach_id": action.get("coach_id"),
+        "title": "Recontacter %s" % (org or "le partenaire"),
+        "description": ("Demande du partenaire : « %s »" % texte) if texte else "Suivi demandé par le partenaire.",
+        "location": "", "starts_at": date_iso, "ends_at": "", "all_day": False,
+        "event_type": "task", "status": CAL1_STATUT_INITIAL, "priority": "haute", "completed_at": None,
+        "prospect_id": (action.get("prospect_ids") or [None])[0], "recipient_key": action.get("recipient_key"),
+        "campaign_id": action.get("campaign_id"), "campaign_action_id": action.get("id"),
+        "inbound_id": inbound_id, "origine": "suivi_demande",
+        "is_deleted": False, "created_at": maintenant, "updated_at": maintenant})
+    return True
+
+
+async def v605_agenda_des_conversations(conversations) -> None:
+    """Attache a chaque conversation son prochain rendez-vous et sa prochaine tache."""
+    ids = [c.get("action_id") for c in conversations or [] if c.get("action_id")]
+    if not ids:
+        return
+    evs = await db[CAL1_COLLECTION].find(
+        {"campaign_action_id": {"$in": ids}, "is_deleted": {"$ne": True}, "status": {"$nin": ["annule", "fait"]},
+         "event_type": {"$in": ["appointment", "task"]}}, {"_id": 0}).sort([("starts_at", 1)]).to_list(1000)
+    for c in conversations:
+        mine = [e for e in evs if e.get("campaign_action_id") == c.get("action_id")]
+        rdv = next((e for e in mine if e["event_type"] == "appointment"), None)
+        tache = next((e for e in mine if e["event_type"] == "task"), None)
+        c["rendez_vous"] = v605_vue_rdv(rdv) if rdv else None
+        c["prochaine_tache"] = ({"titre": tache.get("title"), "quand": tache.get("starts_at")} if tache else None)
+
+
 # V597 — SUPPRIMER UN MÉDIA = LE DÉPLACER DANS LA CORBEILLE (V313/V575)
 # ---------------------------------------------------------------------------
 # Même mécanisme que les contacts et les codes : la fiche part dans
@@ -53469,6 +53903,12 @@ async def startup_db():
         await db[CAL1_COLLECTION].create_index(
             [("coach_id", 1), ("starts_at", 1), ("id", 1)])
         await db[CAL1_COLLECTION].create_index([("coach_id", 1), ("event_type", 1)])
+        # V605 : un creneau public ne se reserve qu'UNE fois (deux clics simultanes -> un seul)
+        await db[CAL1_COLLECTION].create_index(
+            [("coach_id", 1), ("creneau_cle", 1)], unique=True,
+            partialFilterExpression={"creneau_cle": {"$type": "string"}})
+        await db[P3S3_ACTIONS].create_index(
+            "rdv_token", unique=True, partialFilterExpression={"rdv_token": {"$type": "string"}})
         # CAL-2 — LA REQUETE DU PLANIFICATEUR, toutes les 60 secondes. Sans cet
         # index, chaque passage balaierait la collection entiere pour trouver
         # les rares taches echues.
@@ -54557,7 +54997,7 @@ if _os.path.isdir(_STATIC_DIR):
     # ici, à la source, pour les chemins privés — et on ne touche à rien
     # d'autre : même fichier, même application, même comportement pour le
     # visiteur. La page d'accueil et la page locale ne sont pas concernées.
-    _SEO_PRIVE = ("/espace", "/duo", "/parrainage", "/checkout", "/login",
+    _SEO_PRIVE = ("/espace", "/duo", "/parrainage", "/checkout", "/login", "/rdv",
                   "/admin", "/reset.html", "/pwa-diag.html")
     _SEO_META_PRIVEE = '<meta name="robots" content="noindex, nofollow"/>'
 
