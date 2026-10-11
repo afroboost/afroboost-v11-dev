@@ -52413,9 +52413,16 @@ def v601_cible(valeur):
         m = v601_norm(m)[:30]
         if len(m) >= 3 and m not in mots:
             mots.append(m)
-    if not mots:
-        raise HTTPException(status_code=400, detail="Le public visé doit avoir au moins un mot-clé de repérage")
-    return {"id": v598_slug(nom), "nom": nom, "mots_cles": mots}
+    # V601b : un public peut aussi viser des CATÉGORIES exactes de fiche (ex. « association »
+    # mais pas « communaute_etudiante ») — le nom ne suffit pas à les distinguer.
+    cats = []
+    for c in (valeur.get("categories") or [])[:20]:
+        c = re.sub(r"[^a-z0-9_]", "", str(c or "").strip().lower())[:40]
+        if c and c not in cats:
+            cats.append(c)
+    if not mots and not cats:
+        raise HTTPException(status_code=400, detail="Le public visé doit avoir au moins un mot-clé ou une catégorie")
+    return {"id": v598_slug(nom), "nom": nom, "mots_cles": mots, "categories": cats}
 
 
 def v601_choisir_media(prospect: dict, cle_niche: str, medias: list) -> dict:
@@ -52437,7 +52444,10 @@ def v601_choisir_media(prospect: dict, cle_niche: str, medias: list) -> dict:
     for cle, m in par_public.items():
         if not cle:
             continue
-        mots = [w for w in ((m.get("cible") or {}).get("mots_cles") or []) if (" " + w) in texte]
+        cib = m.get("cible") or {}
+        mots = [w for w in (cib.get("mots_cles") or []) if (" " + w) in texte]
+        if (prospect.get("category") or "") in (cib.get("categories") or []):
+            mots = mots + ["catégorie " + prospect["category"]]
         if mots:
             scores.append((max(len(w) for w in mots), cle, mots))
     if scores:

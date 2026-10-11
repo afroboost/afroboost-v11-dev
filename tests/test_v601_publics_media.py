@@ -238,6 +238,13 @@ verifier("deux publics qui correspondent → aucune (ambigu)", choix("mixte")["m
 verifier("prospect d'un autre coach → 404", statut_http(S.v601_media_pour_prospect("salon", Requete(coach="autre@x.test"))) == 404)
 verifier("sans jeton → 403", statut_http(S.v601_media_pour_prospect("salon", Requete(coach=None))) == 403)
 
+print("\n3b. V601b : public par catégorie exacte (associations ≠ communautés étudiantes)")
+mb2 = lancer(S.v595_modifier_media(mb["id"], Requete({"cible": {"nom": "Associations", "categories": ["association"]}})))["media"]
+verifier("public par catégorie accepté sans mot-clé", mb2.get("cible", {}).get("categories") == ["association"], mb2.get("cible"))
+prospect("etu", "B", "AGE — Association générale des étudiant·es", "", "communaute_etudiante")
+verifier("association → ASSOCIATION", (choix("asso")["media"] or {}).get("id") == mb["id"], choix("asso"))
+verifier("groupe étudiant nommé « Association… » → AUCUNE (pas de vidéo générique)", choix("etu")["media"] is None, choix("etu"))
+
 print("\n4. Régler le public d'un média existant (PATCH, aucun nouvel envoi)")
 ug = fichier("g1", "gen.mp4", "video/mp4")
 mg = lancer(S.v595_ajouter_media(Requete({"niche": "F", "format": "original", "url": ug})))["media"]
