@@ -27805,6 +27805,15 @@ async def p3s3_preparer_campagne(request: Request):
 
     fiches = await db[P3S1_COLLECTION].find(filtre, {"_id": 0}) \
         .sort([("created_at", -1), ("id", 1)]).to_list(2000)
+    # V600 — UNE NICHE SUPPRIMÉE OU ARCHIVÉE N'ENTRE DANS AUCUNE CAMPAGNE. Ses fiches
+    # restent en base, intactes ; elles sont seulement écartées de la sélection.
+    hors_prospection = set()
+    for _f in ({"supprimee": True}, {"active": False}):
+        for _n in await db[V598_NICHES].find(_f, {"_id": 0, "id": 1}).to_list(500):
+            if _n.get("id"):
+                hors_prospection.add(_n["id"])
+    if hors_prospection:
+        fiches = [f for f in fiches if f.get("niche_id") not in hors_prospection]
     if not fiches:
         raise HTTPException(status_code=400, detail="Aucun prospect ne correspond a cette selection")
 
@@ -37003,6 +37012,19 @@ async def restore_trash(trash_id: str, request: Request):
     payload = dict(entry.get("payload") or {})
     payload.pop("_id", None)
     oid = entry.get("original_id")
+    if coll == "prospection_niches":
+        # V600 : la niche est restée en base, marquée `supprimee` — on retire la marque.
+        # Nom, ordre, id et toutes les relations (prospects, médias, liens) reviennent tels quels.
+        payload.pop("contenu", None)
+        if await db[coll].find_one({"id": oid}, {"_id": 1}):
+            await db[coll].update_one({"id": oid}, {"$set": {"supprimee": False, "supprimee_at": None,
+                                                              "updated_at": datetime.now(timezone.utc).isoformat()}})
+        else:
+            payload["supprimee"] = False
+            await db[coll].insert_one(payload)
+        await db.deleted_items.delete_one({"id": trash_id})
+        logger.info(f"[V600] Restauration niche {oid} par {caller}")
+        return {"success": True, "restored": True, "collection": coll, "id": oid}
     if coll == "prospection_medias" and payload.get("statut") != "archivee":
         # V597 : si un autre média occupe déjà cet emplacement (niche + format), le
         # restauré revient ARCHIVÉ — jamais deux médias actifs au même endroit.
@@ -51886,6 +51908,8 @@ async def v598_verifier_niche(cle: str, appelant: str, active_requise: bool = Tr
     niche = await db[V598_NICHES].find_one({"coach_id": appelant, "cle": cle}, {"_id": 0})
     if not niche:
         raise HTTPException(status_code=400, detail="Niche inconnue")
+    if active_requise and niche.get("supprimee"):
+        raise HTTPException(status_code=400, detail="Cette niche est dans la Corbeille : restaure-la d'abord")
     if active_requise and not niche.get("active", True):
         raise HTTPException(status_code=400, detail="Cette niche est archivée : réactive-la d'abord")
     return niche
@@ -51922,7 +51946,7 @@ async def v598_creer_niche(request: Request):
     niches = await v598_niches(appelant)
     if len(niches) >= V598_MAX + len(V598_ORIGINE):
         raise HTTPException(status_code=400, detail="Nombre maximum de niches atteint")
-    if any((n.get("nom") or "").strip().lower() == nom.lower() for n in niches):
+    if any((n.get("nom") or "").strip().lower() == nom.lower() and not n.get("supprimee") for n in niches):
         raise HTTPException(status_code=409, detail="Une niche porte déjà ce nom")
     instant = v595_maintenant()
     identifiant = str(uuid.uuid4())
@@ -51943,6 +51967,8 @@ async def v598_modifier_niche(niche_id: str, request: Request):
     niche = await db[V598_NICHES].find_one({"coach_id": appelant, "id": identifiant}, {"_id": 0})
     if not niche:
         raise HTTPException(status_code=404, detail="Niche introuvable")
+    if niche.get("supprimee"):
+        raise HTTPException(status_code=409, detail="Cette niche est dans la Corbeille : restaure-la d'abord")
     try:
         corps = await request.json()
     except Exception:
@@ -51952,8 +51978,8 @@ async def v598_modifier_niche(niche_id: str, request: Request):
     champs = {}
     if "nom" in corps:
         nom = v598_nom(corps.get("nom"))
-        autres = await db[V598_NICHES].find({"coach_id": appelant, "id": {"$ne": identifiant}}, {"_id": 0, "nom": 1}).to_list(200)
-        if any((n.get("nom") or "").strip().lower() == nom.lower() for n in autres):
+        autres = await db[V598_NICHES].find({"coach_id": appelant, "id": {"$ne": identifiant}}, {"_id": 0, "nom": 1, "supprimee": 1}).to_list(200)
+        if any((n.get("nom") or "").strip().lower() == nom.lower() and not n.get("supprimee") for n in autres):
             raise HTTPException(status_code=409, detail="Une niche porte déjà ce nom")
         champs["nom"] = nom
     if "active" in corps:
@@ -51969,29 +51995,45 @@ async def v598_modifier_niche(niche_id: str, request: Request):
     return {"niche": niche, "modifie": True}
 
 
+@api_router.get("/prospection-niches/{niche_id}/contenu")
+async def v600_contenu_niche(niche_id: str, request: Request):
+    """V600 — les VRAIS comptes d'une niche (pour la confirmation de suppression). Lecture pure."""
+    appelant = await _v309_require_coach_or_admin(request)
+    niche = await db[V598_NICHES].find_one({"coach_id": appelant, "id": (niche_id or "").strip()[:64]}, {"_id": 0})
+    if not niche:
+        raise HTTPException(status_code=404, detail="Niche introuvable")
+    return {"niche": niche, "contenu": await v598_contenu(niche, appelant)}
+
+
 @api_router.delete("/prospection-niches/{niche_id}")
 async def v598_supprimer_niche(niche_id: str, request: Request):
-    """Supprimer UNIQUEMENT une niche créée ET vide (0 média, 0 lien). Sinon 409 :
-    l'archiver. Les six d'origine ne se suppriment jamais. Passe par la Corbeille."""
+    """V600 — SUPPRIMER = PLACER DANS LA CORBEILLE, quelle que soit la niche (d'origine
+    ou créée, vide ou non). RIEN N'EST SUPPRIMÉ EN CASCADE : prospects, médias, liens,
+    conversations, statuts gardent tous leurs références (`niche_id`, `niche`).
+
+    La fiche de la niche n'est PAS effacée : elle est marquée `supprimee` (sinon
+    l'inscription automatique des six d'origine recréerait une « C » neuve, et la
+    restauration fabriquerait un doublon). Une niche supprimée n'est plus proposée,
+    ne reçoit plus rien et n'entre dans aucune campagne. « Restaurer » (Corbeille)
+    retire la marque : nom, ordre et toutes les relations reviennent tels quels."""
     appelant = await _v309_require_coach_or_admin(request)
     await v598_niches(appelant)
     identifiant = (niche_id or "").strip()[:64]
     niche = await db[V598_NICHES].find_one({"coach_id": appelant, "id": identifiant}, {"_id": 0})
     if not niche:
         raise HTTPException(status_code=404, detail="Niche introuvable")
-    if niche.get("origine") or niche.get("cle") in V595_NICHES:
-        raise HTTPException(status_code=409, detail="Une niche d'origine ne se supprime pas : archive-la")
+    if niche.get("supprimee"):
+        raise HTTPException(status_code=409, detail="Cette niche est déjà dans la Corbeille")
     contenu = await v598_contenu(niche, appelant)
-    if contenu["medias"] or contenu["liens"] or contenu["prospects"]:
-        raise HTTPException(status_code=409, detail="Cette niche contient %d prospect(s), %d média(s) et %d lien(s) : archive-la plutôt"
-                            % (contenu["prospects"], contenu["medias"], contenu["liens"]))
+    instant = v595_maintenant()
     await db.deleted_items.insert_one({
         "id": str(uuid.uuid4()), "original_collection": V598_NICHES, "original_id": identifiant,
-        "coach_id": (appelant or "").lower().strip(), "deleted_at": v595_maintenant(), "deleted_by": appelant,
-        "payload": niche})
-    await db[V598_NICHES].delete_one({"coach_id": appelant, "id": identifiant})
-    logger.info("[V598] niche vide « %s » placée en corbeille", niche.get("nom"))
-    return {"supprime": True, "corbeille": True, "id": identifiant}
+        "coach_id": (appelant or "").lower().strip(), "deleted_at": instant, "deleted_by": appelant,
+        "payload": dict(niche, contenu=contenu)})
+    await db[V598_NICHES].update_one({"coach_id": appelant, "id": identifiant},
+                                     {"$set": {"supprimee": True, "supprimee_at": instant, "updated_at": instant}})
+    logger.info("[V600] niche « %s » placée en corbeille (contenu conservé : %s)", niche.get("nom"), contenu)
+    return {"supprime": True, "corbeille": True, "id": identifiant, "contenu_conserve": contenu}
 
 
 # ------------------- PROSPECTS ↔ NICHES (V599) -----------------------------
@@ -52007,8 +52049,11 @@ async def v599_niche_id(valeur, coach: str, actuelle=None) -> str:
     niche = await db[V598_NICHES].find_one({"coach_id": coach, "id": identifiant}, {"_id": 0})
     if not niche:
         raise HTTPException(status_code=400, detail="Niche inconnue")
-    if not niche.get("active", True) and identifiant != (actuelle or ""):
-        raise HTTPException(status_code=400, detail="Cette niche est archivée : réactive-la d'abord")
+    if identifiant != (actuelle or ""):
+        if niche.get("supprimee"):
+            raise HTTPException(status_code=400, detail="Cette niche est dans la Corbeille : restaure-la d'abord")
+        if not niche.get("active", True):
+            raise HTTPException(status_code=400, detail="Cette niche est archivée : réactive-la d'abord")
     return identifiant
 
 

@@ -218,12 +218,12 @@ verifier("active non booléen -> 400", statut_http(S.v598_modifier_niche(c["id"]
 lancer(S.v598_modifier_niche(c["id"], Requete({"active": True})))
 
 print("\n5. Suppression sécurisée")
-verifier("niche d'origine -> 409", statut_http(S.v598_supprimer_niche(fest["id"], Requete())) == 409)
-verifier("niche avec média / lien -> 409", statut_http(S.v598_supprimer_niche(c["id"], Requete())) == 409)
+# V600 : supprimer = Corbeille, quelle que soit la niche ; la fiche reste, marquée « supprimee ».
 vide = lancer(S.v598_creer_niche(Requete({"nom": "TEST — vide"})))["niche"]
 verifier("nouvelle niche suivante : ordre 8", vide["ordre"] == 8)
 r = lancer(S.v598_supprimer_niche(vide["id"], Requete()))
-verifier("niche vide : supprimée vers la corbeille", r["corbeille"] and not [n for n in N.docs if n["id"] == vide["id"]]
+verifier("niche vide : supprimée vers la corbeille (marquée, pas effacée)", r["corbeille"]
+         and [n for n in N.docs if n["id"] == vide["id"]][0].get("supprimee") is True
          and [x for x in BASE.deleted_items.docs if x["original_id"] == vide["id"]])
 S._v311_coach_email_from_jwt = lambda req: getattr(req, "coach", None)
 async def _est_coach(_e):
@@ -232,7 +232,7 @@ S._v309_is_coach_or_admin = _est_coach
 S.is_super_admin = lambda e: False
 entree = [x for x in BASE.deleted_items.docs if x["original_id"] == vide["id"]][0]
 lancer(S.restore_trash(entree["id"], Requete()))
-verifier("la corbeille la restaure", [n for n in N.docs if n["id"] == vide["id"]])
+verifier("la corbeille la restaure", [n for n in N.docs if n["id"] == vide["id"]][0].get("supprimee") is False)
 
 print("\n6. Cloisonnement et authentification")
 verifier("un autre coach ne voit que ses 6 niches", len(lancer(S.v598_lister_niches(Requete(coach="autre@exemple.test")))["niches"]) == 6)

@@ -28,7 +28,7 @@ export default function ProspectionApercu({ API }) {
     const parNiche = grouper(fiches, cleNicheProspect(listeNiches), options, libelles);
     // V599 : toutes les niches ACTIVES (même à 0 prospect), plus une archivée qui garde des prospects.
     const niches = listeNiches
-      .filter((n) => n.active !== false || parNiche.some((g) => g.cle === n.cle))
+      .filter((n) => (n.active !== false && !n.supprimee) || parNiche.some((g) => g.cle === n.cle))
       .map((n) => parNiche.find((g) => g.cle === n.cle) || { cle: n.cle, libelle: libelles[n.cle], n: 0, c: compter([], options) });
     const nonClasses = parNiche.find((g) => g.cle === '');
     const pays = grouper(fiches, paysDe, options);

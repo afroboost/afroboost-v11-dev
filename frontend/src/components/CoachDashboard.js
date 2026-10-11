@@ -9457,7 +9457,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       ? [p.value != null ? `${p.value} ${p.type || ''}`.trim() : null, p.expiresAt ? `expire le ${p.expiresAt}` : null].filter(Boolean).join(' · ')
                       : isMedia
                         ? [(p.fichier && p.fichier.nom) || p.version, 'Prospection → Médias'].filter(Boolean).join(' · ')
-                        : isNiche ? 'Niche de prospection (vide)' : [p.email, p.whatsapp || p.phone].filter(Boolean).join(' · ');
+                        : isNiche
+                          ? `Niche de prospection · contenu conservé : ${(p.contenu && p.contenu.prospects) || 0} prospect(s), ${(p.contenu && p.contenu.medias) || 0} média(s), ${(p.contenu && p.contenu.liens) || 0} lien(s)`
+                          : [p.email, p.whatsapp || p.phone].filter(Boolean).join(' · ');
                     let quand = item.deleted_at || '';
                     try { if (item.deleted_at) quand = new Date(item.deleted_at).toLocaleString('fr-FR'); } catch (e) {}
                     return (

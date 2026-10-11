@@ -238,7 +238,8 @@ export function cleNicheProspect(niches) {
 
 /** V598 — { clé: « G — Seniors » } à partir de la liste du serveur (repli : les six d'origine). PURE. */
 export function libellesNiches(niches) {
-  return (niches || []).reduce((m, n) => ({ ...m, [n.cle]: `${lettreNiche(n.ordre)} — ${n.nom}` }), { '': 'Non classé' });
+  // V600 : une niche dans la Corbeille reste NOMMÉE (fiches historiques), avec la mention.
+  return (niches || []).reduce((m, n) => ({ ...m, [n.cle]: `${lettreNiche(n.ordre)} — ${n.nom}${n.supprimee ? ' (supprimée)' : ''}` }), { '': 'Non classé' });
 }
 export const LIBELLES_CANAL = CANAUX.reduce((m, n) => ({ ...m, [n.id]: n.libelle }), {});
 

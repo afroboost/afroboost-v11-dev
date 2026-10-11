@@ -432,7 +432,7 @@ export default function ProspectionMedias({ API }) {
       }
       if (type === 'supprimer_niche') {
         await axios.delete(`${API}/prospection-niches/${encodeURIComponent(niche.id)}`);
-        setInfo(`Niche « ${niche.nom} » placée dans la Corbeille (restaurable).`);
+        setInfo(`Niche « ${niche.nom} » placée dans la Corbeille (restaurable). Ses prospects, médias et liens sont conservés.`);
         setOuverte('');
         setAConfirmer(null);
         await rechargerNiches();
@@ -485,8 +485,19 @@ export default function ProspectionMedias({ API }) {
     setFenetreNiche(null);
     await rechargerNiches();
   };
-  const nichesActives = niches.filter((n) => n.active !== false);
-  const nichesArchivees = niches.filter((n) => n.active === false);
+  // V600 : une niche dans la Corbeille n'apparaît ni dans les actives, ni dans les archivées.
+  const nichesActives = niches.filter((n) => n.active !== false && !n.supprimee);
+  const nichesArchivees = niches.filter((n) => n.active === false && !n.supprimee);
+  /* V600 — avant de supprimer, les VRAIS comptes (prospects, médias, liens) viennent du serveur. */
+  const demanderSuppressionNiche = async (n) => {
+    setInfo('');
+    try {
+      const r = await axios.get(`${API}/prospection-niches/${encodeURIComponent(n.id)}/contenu`);
+      setAConfirmer({ type: 'supprimer_niche', niche: n, contenu: (r.data && r.data.contenu) || { prospects: 0, medias: 0, liens: 0 } });
+    } catch (e) {
+      setInfo(erreurLisible(e, 'Impossible de lire le contenu de la niche.'));
+    }
+  };
 
   if (!medias) return <EtatLecture chargement={!erreur} erreur={erreur} onReessayer={charger} />;
   const validees = (medias || []).filter((d) => d.statut === 'validee').length;
@@ -510,10 +521,8 @@ export default function ProspectionMedias({ API }) {
           const actionsNiche = [
             { libelle: 'Renommer', onClick: () => setFenetreNiche({ type: 'renommer', niche: n }), testid: `pm-niche-renommer-${lettre}` },
             { libelle: 'Archiver', onClick: () => setAConfirmer({ type: 'archiver_niche', niche: n }), testid: `pm-niche-archiver-${lettre}` },
-            // Supprimer : seulement une niche CRÉÉE et VIDE (le serveur le revérifie).
-            ...(!n.origine && presents.length === 0 && g.archives.length === 0
-              ? [{ libelle: 'Supprimer', icone: CORBEILLE, danger: true, onClick: () => setAConfirmer({ type: 'supprimer_niche', niche: n }), testid: `pm-niche-supprimer-${lettre}` }]
-              : []),
+            // V600 : Supprimer = Corbeille, pour TOUTE niche ; son contenu n'est jamais supprimé.
+            { libelle: 'Supprimer', icone: CORBEILLE, danger: true, onClick: () => demanderSuppressionNiche(n), testid: `pm-niche-supprimer-${lettre}` },
           ];
           return (
             <div key={n.id} data-testid={`pm-niche-${lettre}`} style={{ borderTop: i ? `1px solid ${BORD}` : 'none' }}>
@@ -628,15 +637,22 @@ export default function ProspectionMedias({ API }) {
 
       {aConfirmer && (
         <Confirmation
-          titre={{ supprimer: 'Supprimer ce média ?', valider: 'Valider cette vidéo ?', archiver_niche: 'Archiver cette niche ?', reactiver_niche: 'Réactiver cette niche ?', supprimer_niche: 'Supprimer cette niche ?' }[aConfirmer.type]}
+          titre={aConfirmer.type === 'supprimer_niche' ? `Supprimer « ${aConfirmer.niche.nom} » ?`
+            : { supprimer: 'Supprimer ce média ?', valider: 'Valider cette vidéo ?', archiver_niche: 'Archiver cette niche ?', reactiver_niche: 'Réactiver cette niche ?' }[aConfirmer.type]}
           texte={{
             supprimer: () => `${COURT[aConfirmer.media.format]} de la niche ${lettreDeCle[aConfirmer.media.niche] || ''} part dans la Corbeille (restaurable). Les autres versions et le fichier d'origine ne sont pas touchés.`,
             valider: () => 'Elle devient la vidéo validée de ce format pour la niche. Aucun envoi ne part.',
             archiver_niche: () => `« ${aConfirmer.niche.nom} » disparaît de la liste. Ses médias et liens sont conservés ; tu peux la réactiver.`,
             reactiver_niche: () => `« ${aConfirmer.niche.nom} » revient dans la liste, avec ses médias.`,
-            supprimer_niche: () => `« ${aConfirmer.niche.nom} » est vide : elle part dans la Corbeille (restaurable).`,
+            supprimer_niche: () => {
+              const c = aConfirmer.contenu || {};
+              const pl = (n, mot) => `${n} ${mot}${n > 1 ? 's' : ''}`;
+              return `Cette niche contient : ${pl(c.prospects || 0, 'prospect')}, ${pl(c.medias || 0, 'média')}, ${pl(c.liens || 0, 'lien')}. `
+                + 'Elle sera retirée de la prospection active et placée dans la Corbeille. '
+                + 'Les prospects, médias et historiques ne seront pas supprimés.';
+            },
           }[aConfirmer.type]()}
-          libelleOk={{ supprimer: 'Supprimer', valider: 'Valider', archiver_niche: 'Archiver', reactiver_niche: 'Réactiver', supprimer_niche: 'Supprimer' }[aConfirmer.type]}
+          libelleOk={{ supprimer: 'Supprimer', valider: 'Valider', archiver_niche: 'Archiver', reactiver_niche: 'Réactiver', supprimer_niche: 'Supprimer la niche' }[aConfirmer.type]}
           enCours={enCours} onOk={confirmer} onAnnuler={() => setAConfirmer(null)} />
       )}
     </section>

@@ -34,7 +34,7 @@ export const STATUTS_LIEN = {
 function libellesDe(niches, actuelle) {
   const tous = libellesNiches(niches);
   const choisissables = { toutes: 'Toutes les niches' };
-  niches.forEach((n) => { if (n.active !== false || n.cle === actuelle) choisissables[n.cle] = tous[n.cle]; });
+  niches.forEach((n) => { if ((n.active !== false && !n.supprimee) || n.cle === actuelle) choisissables[n.cle] = tous[n.cle]; });
   return { tous: { ...tous, toutes: 'Toutes les niches' }, choisissables };
 }
 const VIDE = { nom: '', url: '', categorie: 'site', niche: 'toutes', utilisation: '', statut: 'a_verifier' };

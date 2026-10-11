@@ -235,3 +235,19 @@ test('Vue d’ensemble compte par niche_id : nouvelle niche à 3 → 3 ; nouvell
   expect(lignes).toContain('C — Festivals = 1');
   expect(lignes).toContain('I — TEST — Vide = 0');
 });
+
+test('V600 — niche dans la Corbeille : la fiche affiche « Niche supprimée », plus aucun choix ne la propose', async () => {
+  const SUPPR = { ...SENIORS, supprimee: true };
+  axios.get.mockImplementation((url) => Promise.resolve(url.endsWith('/prospection-niches')
+    ? { data: { niches: [...NICHES, SUPPR] } } : { data: {} }));
+  mockEtatPilote = { etat: SECTION.OK, donnees: rep([fiche({ niche_id: SUPPR.id })]) };
+  await monter(<ProspectsSection API="/api" />);
+  await attendre();
+  expect([...par('filtre-niche').options].map((o) => o.textContent).join('|')).not.toMatch(/Seniors/);
+  await act(async () => { par('ligne-TST-01').click(); });
+  expect(par('fiche-entete-etat').textContent).toMatch(/Niche supprimée — TEST — Seniors/);
+  expect([...par('edit-niche').options].map((o) => o.textContent)).toContain('Niche supprimée — TEST — Seniors');
+  await act(async () => { par('fermer-fiche').click(); });
+  await act(async () => { par('prospect-ajouter').click(); });
+  expect([...par('creation-niche').options].map((o) => o.textContent).join('|')).not.toMatch(/Seniors/);
+});

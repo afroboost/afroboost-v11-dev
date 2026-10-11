@@ -260,9 +260,10 @@ verifier("filtre par niche : 1 prospect (le TEST)", r["total"] == 1 and r["prosp
 r = lancer(S.p3s1_lister_prospects(Rq({"niche_id": "sans"})))
 verifier("filtre « sans » : le seul sans règle", r["total"] == 1)
 verifier("filtre niche invalide -> 400", statut_http(S.p3s1_lister_prospects(Rq({"niche_id": "C"}))) == 400)
-verifier("supprimer une niche qui contient 1 prospect -> 409", statut_http(S.v598_supprimer_niche(g["id"], Requete())) == 409)
-lancer(S.p3s1_modifier_prospect(p["id"], Requete({"niche_id": d["id"]})))
-verifier("vidée de son prospect : la niche TEST se supprime", lancer(S.v598_supprimer_niche(g["id"], Requete()))["corbeille"])
+# V600 : supprimer une niche qui contient un prospect = Corbeille, le prospect garde sa niche_id.
+r = lancer(S.v598_supprimer_niche(g["id"], Requete()))
+verifier("supprimer une niche avec 1 prospect : Corbeille, contenu compté", r["corbeille"] and r["contenu_conserve"]["prospects"] == 1)
+verifier("le prospect garde sa niche_id", [x for x in P.docs if x["id"] == p["id"]][0]["niche_id"] == g["id"])
 verifier("rattachement sans jeton -> 403", statut_http(S.v599_rattacher_prospects(Requete({}, coach=None))) == 403)
 
 ok = sum(1 for _, c2 in RESULTATS if c2)

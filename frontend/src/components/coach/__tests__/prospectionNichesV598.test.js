@@ -116,20 +116,34 @@ test('Archiver : confirmation, puis active=false ; Réactiver depuis la liste de
   expect(axios.patch).toHaveBeenCalledWith(`/api/prospection-niches/${ARCHIVEE.id}`, { active: true });
 });
 
-test('Supprimer : proposé seulement pour une niche créée ET vide', async () => {
+test('V600 — Supprimer : proposé pour TOUTE niche ; confirmation avec les vrais comptes ; Annuler ne supprime rien', async () => {
+  axios.get.mockImplementation((url) => Promise.resolve(url.endsWith('/prospection-niches')
+    ? { data: { niches: NICHES_SRV } }
+    : url.endsWith('/contenu') ? { data: { contenu: { prospects: 95, medias: 3, liens: 1 } } }
+      : { data: { total: MEDIAS.length, medias: MEDIAS } }));
   await monter();
-  await clic(q('pm-niche-menu-C'));                   // d'origine + un média
-  expect(q('pm-niche-supprimer-C')).toBeNull();
-  await clic(q('pm-niche-menu-C'));
-  await clic(q('pm-niche-menu-A'));                   // d'origine, vide : jamais supprimable
-  expect(q('pm-niche-supprimer-A')).toBeNull();
-  await clic(q('pm-niche-menu-A'));
-  await clic(q('pm-niche-menu-G'));                   // créée, vide
+  await clic(q('pm-niche-menu-C'));                   // d'origine, avec un média : supprimable (Corbeille)
+  await clic(q('pm-niche-supprimer-C'));
+  const conf = q('pm-confirmation').textContent;
+  expect(conf).toMatch(/Supprimer « Festivals » \?/);
+  expect(conf).toMatch(/95 prospects, 3 médias, 1 lien/);
+  expect(conf).toMatch(/ne seront pas supprimés/);
+  expect(q('pm-confirmation-ok').textContent).toBe('Supprimer la niche');
+  await clic(q('pm-confirmation-annuler'));
+  expect(axios.delete).not.toHaveBeenCalled();
+  await clic(q('pm-niche-menu-G'));
   await clic(q('pm-niche-supprimer-G'));
-  expect(q('pm-confirmation').textContent).toMatch(/Supprimer cette niche \?/);
   await clic(q('pm-confirmation-ok'));
   expect(axios.delete).toHaveBeenCalledTimes(1);
   expect(axios.delete).toHaveBeenCalledWith(`/api/prospection-niches/${SENIORS.id}`);
+});
+
+test('V600 — une niche dans la Corbeille n’apparaît ni dans les actives, ni dans les archivées', async () => {
+  NICHES_SRV = [...ORIGINE, { ...SENIORS, supprimee: true }, ARCHIVEE];
+  await monter();
+  expect(q('pm-niche-ligne-G')).toBeNull();
+  expect(document.querySelectorAll('[data-testid^="pm-niche-ligne-"]').length).toBe(6);
+  expect(q('pm-niches-archivees').textContent).toBe('Niches archivées (1)');
 });
 
 test('serveur muet : les six niches d’origine restent affichées (repli)', async () => {

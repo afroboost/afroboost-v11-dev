@@ -296,7 +296,8 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
      (filtre, fiche, création) sans modifier le code. Une archivée n'est plus
      proposée, sauf pour la fiche qui la porte déjà. */
   const { niches } = useNichesProspection(base);
-  const libelleNiche = (n) => `${lettreNiche(n.ordre)} — ${n.nom}${n.active === false ? ' (archivée)' : ''}`;
+  // V600 : une niche dans la Corbeille n'est plus proposée ; une fiche qui la porte l'affiche « Niche supprimée ».
+  const libelleNiche = (n) => (n.supprimee ? `Niche supprimée — ${n.nom}` : `${lettreNiche(n.ordre)} — ${n.nom}${n.active === false ? ' (archivée)' : ''}`);
   const nicheDeFiche = (id) => niches.find((n) => n.id === id) || null;
   const [creation, setCreation] = useState(null);           // { nom, categorie, ville, niche_id, doublons }
   const [creationEnCours, setCreationEnCours] = useState(false);
@@ -2351,7 +2352,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
         <select value={filtres.niche_id} onChange={(e) => majFiltre('niche_id', e.target.value)}
                 aria-label="Niche" data-testid="filtre-niche" style={styleChamp}>
           <option value="">Toutes les niches</option>
-          {niches.map((n) => <option key={n.id} value={n.id}>{libelleNiche(n)}</option>)}
+          {niches.filter((n) => !n.supprimee).map((n) => <option key={n.id} value={n.id}>{libelleNiche(n)}</option>)}
           <option value="sans">Sans niche</option>
         </select>
         <select value={filtres.status} onChange={(e) => majFiltre('status', e.target.value)}
@@ -2552,7 +2553,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
             <select value={creation.niche_id} aria-label="Niche" data-testid="creation-niche"
                     onChange={(e) => { const v = e.target.value; setCreation((c) => ({ ...c, niche_id: v })); }} style={styleChamp}>
               <option value="">Niche…</option>
-              {niches.filter((n) => n.active !== false).map((n) => <option key={n.id} value={n.id}>{libelleNiche(n)}</option>)}
+              {niches.filter((n) => n.active !== false && !n.supprimee).map((n) => <option key={n.id} value={n.id}>{libelleNiche(n)}</option>)}
             </select>
             {creation.doublons ? (
               <div data-testid="creation-doublons" style={{ fontSize: '12px', color: 'rgb(252,211,77)' }}>
@@ -2647,7 +2648,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                 <select value={brouillon.niche_id} data-testid="edit-niche"
                         onChange={(e) => majBrouillon('niche_id', e.target.value)} style={styleChamp}>
                   <option value="">— Sans niche —</option>
-                  {niches.filter((n) => n.active !== false || n.id === brouillon.niche_id)
+                  {niches.filter((n) => (n.active !== false && !n.supprimee) || n.id === brouillon.niche_id)
                     .map((n) => <option key={n.id} value={n.id}>{libelleNiche(n)}</option>)}
                 </select>
               </Ligne>
