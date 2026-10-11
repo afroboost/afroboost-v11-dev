@@ -37,6 +37,8 @@ import useChargement, { SECTION } from '../../hooks/useChargement';
 import { SectionErreur } from '../ui/EtatChargement';
 import PartenaireProspect from './PartenaireProspect';
 import { construireLienPartenaire } from '../../utils/partnerLink'; // V594 — lien complet dans « Plus »
+import useNichesProspection from '../../hooks/useNichesProspection'; // V599 : niches du serveur (prospection_niches)
+import { lettreNiche } from '../../utils/prospectionStats';
 /* PROSPECTION FOCUS — les phrases factuelles de l'écran, isolées et pures.
    Elles ne DÉDUISENT jamais qu'un e-mail est parti : elles lisent la trace. */
 import {
@@ -288,7 +290,16 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
 
   const [filtres, setFiltres] = useState({
     status: '', category: '', priority: '', wave: '', city: '',
+    niche_id: '',            // V599 : l'id stable d'une niche, ou « sans »
   });
+  /* V599 — LES NICHES VIENNENT DU SERVEUR. Une niche ajoutée dans Médias apparaît ici
+     (filtre, fiche, création) sans modifier le code. Une archivée n'est plus
+     proposée, sauf pour la fiche qui la porte déjà. */
+  const { niches } = useNichesProspection(base);
+  const libelleNiche = (n) => `${lettreNiche(n.ordre)} — ${n.nom}${n.active === false ? ' (archivée)' : ''}`;
+  const nicheDeFiche = (id) => niches.find((n) => n.id === id) || null;
+  const [creation, setCreation] = useState(null);           // { nom, categorie, ville, niche_id, doublons }
+  const [creationEnCours, setCreationEnCours] = useState(false);
   const [taille, setTaille] = useState(25);
   const [page, setPage] = useState(0);
   /* PROSPECTION FOCUS — LES TROIS SEULS ÉTATS QU'AJOUTE CE LOT.
@@ -366,7 +377,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
   /* Les dépendances sont des CHAÎNES, jamais l'objet `filtres` — qui est neuf à
      chaque rendu et relancerait l'effet en boucle (règle absolue, incident V305). */
   const signature = [
-    filtres.status, filtres.category, filtres.priority, filtres.wave, filtres.city,
+    filtres.status, filtres.category, filtres.priority, filtres.wave, filtres.city, filtres.niche_id,
     String(taille), String(page),
     /* Le filtre commercial entre dans la signature : sans lui, changer de
        filtre ne relancerait aucune lecture et l'écran mentirait. */
@@ -858,6 +869,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
       status: prospect.status || 'a_contacter',
       priority: prospect.priority || '',
       wave: prospect.wave || '',
+      niche_id: prospect.niche_id || '',          // V599
       preferred_channel: prospect.preferred_channel || '',
       collaboration_type: prospect.collaboration_type || '',
       public_email: prospect.public_email || '',
@@ -872,6 +884,32 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
       j7_message: prospect.j7_message || '',
       interested_message: prospect.interested_message || '',
     });
+  };
+
+  /* V599 — créer UN prospect (POST existant). Un doublon possible (409) est montré,
+     jamais tranché : « Créer quand même » renvoie avec allow_duplicate. */
+  const creerProspect = async (forcer) => {
+    if (!creation || !creation.nom.trim() || !creation.categorie) return;
+    setCreationEnCours(true); setMessage(null);
+    try {
+      const corps = { organisation_name: creation.nom.trim(), category: creation.categorie };
+      if (creation.ville.trim()) corps.city = creation.ville.trim();
+      if (creation.niche_id) corps.niche_id = creation.niche_id;
+      if (forcer) corps.allow_duplicate = true;
+      await axios.post(`${base}/partner-prospects`, corps);
+      setCreation(null);
+      setMessage({ type: 'ok', texte: `Prospect « ${corps.organisation_name} » ajouté.` });
+      recharger();
+    } catch (err) {
+      const d = err && err.response && err.response.data && err.response.data.detail;
+      if (err && err.response && err.response.status === 409 && d && d.possible_duplicates) {
+        setCreation((c) => ({ ...c, doublons: d.possible_duplicates }));
+      } else {
+        setMessage({ type: 'erreur', texte: erreurLisible(err, 'Création refusée par le serveur.') });
+      }
+    } finally {
+      setCreationEnCours(false);
+    }
   };
 
   const fermer = () => {
@@ -2310,6 +2348,12 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
           <option value="">Toutes les catégories</option>
           {CATEGORIES.map((c) => <option key={c.cle} value={c.cle}>{c.libelle}</option>)}
         </select>
+        <select value={filtres.niche_id} onChange={(e) => majFiltre('niche_id', e.target.value)}
+                aria-label="Niche" data-testid="filtre-niche" style={styleChamp}>
+          <option value="">Toutes les niches</option>
+          {niches.map((n) => <option key={n.id} value={n.id}>{libelleNiche(n)}</option>)}
+          <option value="sans">Sans niche</option>
+        </select>
         <select value={filtres.status} onChange={(e) => majFiltre('status', e.target.value)}
                 aria-label="Statut" data-testid="filtre-status" style={styleChamp}>
           <option value="">Tous les statuts</option>
@@ -2332,6 +2376,10 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                 aria-label="Par page" data-testid="filtre-taille" style={styleChamp}>
           {TAILLES.map((n) => <option key={n} value={n}>{n} par page</option>)}
         </select>
+        <button type="button" data-testid="prospect-ajouter" style={stylePetitBouton}
+                onClick={() => { setMessage(null); setCreation({ nom: '', categorie: '', ville: '', niche_id: '', doublons: null }); }}>
+          + Ajouter un prospect
+        </button>
       </div>
 
       {etat === SECTION.ERREUR || etat === SECTION.SESSION ? (
@@ -2483,6 +2531,53 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
 
 
       {/* ---------- LA FICHE ---------- */}
+      {/* V599 — AJOUTER UN PROSPECT : une petite fenêtre. Crée SEULEMENT la fiche :
+          aucun message, aucun lien, aucun envoi, aucune campagne. */}
+      {creation && (
+        <div role="dialog" aria-modal="true" aria-label="Ajouter un prospect" data-testid="prospect-creation"
+             onMouseDown={(e) => { if (e.target === e.currentTarget && !creationEnCours) setCreation(null); }}
+             style={{ position: 'fixed', inset: 0, zIndex: 10100, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <form onSubmit={(e) => { e.preventDefault(); creerProspect(false); }}
+                style={{ width: 'min(420px, 100%)', background: '#15121a', border: '1px solid rgba(255,255,255,0.14)', borderRadius: '14px', padding: '18px', color: TEXTE, display: 'grid', gap: '10px' }}>
+            <div style={{ fontSize: '15px', fontWeight: 700 }}>Ajouter un prospect</div>
+            <input required value={creation.nom} placeholder="Nom de l'organisation" aria-label="Nom" data-testid="creation-nom"
+                   onChange={(e) => { const v = e.target.value; setCreation((c) => ({ ...c, nom: v, doublons: null })); }} style={styleChamp} />
+            <select required value={creation.categorie} aria-label="Catégorie" data-testid="creation-categorie"
+                    onChange={(e) => { const v = e.target.value; setCreation((c) => ({ ...c, categorie: v })); }} style={styleChamp}>
+              <option value="">Catégorie…</option>
+              {CATEGORIES.map((c) => <option key={c.cle} value={c.cle}>{c.libelle}</option>)}
+            </select>
+            <input value={creation.ville} placeholder="Ville (facultatif)" aria-label="Ville" data-testid="creation-ville"
+                   onChange={(e) => { const v = e.target.value; setCreation((c) => ({ ...c, ville: v, doublons: null })); }} style={styleChamp} />
+            <select value={creation.niche_id} aria-label="Niche" data-testid="creation-niche"
+                    onChange={(e) => { const v = e.target.value; setCreation((c) => ({ ...c, niche_id: v })); }} style={styleChamp}>
+              <option value="">Niche…</option>
+              {niches.filter((n) => n.active !== false).map((n) => <option key={n.id} value={n.id}>{libelleNiche(n)}</option>)}
+            </select>
+            {creation.doublons ? (
+              <div data-testid="creation-doublons" style={{ fontSize: '12px', color: 'rgb(252,211,77)' }}>
+                Un prospect existant lui ressemble : {creation.doublons.map((d) => d.organisation_name).filter(Boolean).slice(0, 3).join(', ')}.
+                Vérifie, puis « Créer quand même » si ce sont deux organisations différentes.
+              </div>
+            ) : null}
+            {message && message.type === 'erreur' ? <div style={{ fontSize: '12px', color: 'rgb(252,165,165)' }}>{message.texte}</div> : null}
+            <div style={{ fontSize: '11px', opacity: 0.6 }}>Crée seulement la fiche : aucun message, aucun envoi.</div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button type="button" style={stylePetitBouton} disabled={creationEnCours} data-testid="creation-annuler"
+                      onClick={() => setCreation(null)}>Annuler</button>
+              {creation.doublons ? (
+                <button type="button" style={styleBouton} disabled={creationEnCours} data-testid="creation-forcer"
+                        onClick={() => creerProspect(true)}>Créer quand même</button>
+              ) : (
+                <button type="submit" style={styleBouton} disabled={creationEnCours} data-testid="creation-ok">
+                  {creationEnCours ? '…' : 'Créer'}
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
+      )}
+
       {ouvert && brouillon && (
         <div
           data-testid="fiche-prospect"
@@ -2511,6 +2606,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                 <div data-testid="fiche-entete-etat" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
                   <Etiquette texte={libelleDe(STATUTS, brouillon.status)} />
                   {brouillon.priority ? <Etiquette texte={`Priorité ${brouillon.priority}`} /> : null}
+                  {nicheDeFiche(brouillon.niche_id) ? <Etiquette texte={libelleNiche(nicheDeFiche(brouillon.niche_id))} /> : null}
                 </div>
                 {/* V594 : l'action principale OUVRE l'onglet Partenaire ; elle ne crée rien. */}
                 <button type="button" data-testid="fiche-action-principale" style={{ ...styleBouton, marginTop: '10px' }}
@@ -2544,6 +2640,15 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                         onChange={(e) => majBrouillon('priority', e.target.value)} style={styleChamp}>
                   <option value="">—</option>
                   {PRIORITES.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </Ligne>
+              {/* V599 — LA NICHE : seul `niche_id` change ; statut, historique et coordonnées restent. */}
+              <Ligne libelle="Niche">
+                <select value={brouillon.niche_id} data-testid="edit-niche"
+                        onChange={(e) => majBrouillon('niche_id', e.target.value)} style={styleChamp}>
+                  <option value="">— Sans niche —</option>
+                  {niches.filter((n) => n.active !== false || n.id === brouillon.niche_id)
+                    .map((n) => <option key={n.id} value={n.id}>{libelleNiche(n)}</option>)}
                 </select>
               </Ligne>
               <Champ libelle="Prochaine action">{ou(ouvert.next_followup_at)}</Champ>

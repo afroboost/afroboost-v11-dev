@@ -8,7 +8,7 @@ import React, { useMemo, useState } from 'react';
 import useProspectionDonnees from '../../../hooks/useProspectionDonnees';
 import useNichesProspection from '../../../hooks/useNichesProspection'; // V598 : la liste des niches vient du serveur
 import {
-  CANAUX, compter, grouper, nicheDe, paysDe, villeDe, canalDe, rdvParFicheDe, libellesNiches,
+  CANAUX, compter, grouper, paysDe, villeDe, canalDe, rdvParFicheDe, libellesNiches, cleNicheProspect,
 } from '../../../utils/prospectionStats';
 import { Titre, Grille, Carte, Tableau, Bandeau, EtatLecture, Bouton, Pastille, DOUX, TEXTE, heure } from './ui';
 
@@ -25,8 +25,10 @@ export default function ProspectionApercu({ API }) {
     const options = { rdvParFiche: rdvParFicheDe(donnees.rdv) };
     const c = compter(fiches, options);
     const libelles = libellesNiches(listeNiches);
-    const parNiche = grouper(fiches, nicheDe, options, libelles);
-    const niches = listeNiches.filter((n) => n.active !== false)
+    const parNiche = grouper(fiches, cleNicheProspect(listeNiches), options, libelles);
+    // V599 : toutes les niches ACTIVES (même à 0 prospect), plus une archivée qui garde des prospects.
+    const niches = listeNiches
+      .filter((n) => n.active !== false || parNiche.some((g) => g.cle === n.cle))
       .map((n) => parNiche.find((g) => g.cle === n.cle) || { cle: n.cle, libelle: libelles[n.cle], n: 0, c: compter([], options) });
     const nonClasses = parNiche.find((g) => g.cle === '');
     const pays = grouper(fiches, paysDe, options);

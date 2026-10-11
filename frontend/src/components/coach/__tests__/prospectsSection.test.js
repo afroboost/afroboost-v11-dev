@@ -621,7 +621,8 @@ describe('P3-S2 — ce que l’écran ne fait pas', () => {
     // qui commande l'affichage de la case « Synchroniser ». On le NOMME plutot
     // que d'assouplir l'assertion — toute autre route reste interdite.
     axios.get.mock.calls.forEach(([url]) => {
-      expect(['/api/partner-prospects', '/api/google/status']).toContain(url);
+      // V599 ajoute la LECTURE des niches (prospection_niches) : filtre et fiche.
+      expect(['/api/partner-prospects', '/api/google/status', '/api/prospection-niches']).toContain(url);
     });
     const routes = axios.get.mock.calls.map(([u]) => u);
     expect(routes).toContain('/api/partner-prospects');
@@ -836,7 +837,10 @@ describe('P3-S3-B — préparation de campagne', () => {
        réponse, `/traite` qu'il a agi dessus, `/analyser` range un brouillon
        sans rien expédier. Ils écrivent tous sur la réponse REÇUE — jamais sur
        une fiche prospect, jamais vers Resend. */
+    /* V599 ajoute UN POST, nommé : « + Ajouter un prospect » crée LA FICHE
+       (route P3-S1 existante). Aucun message, aucun envoi, aucune campagne. */
     expect(new Set(posts)).toEqual(new Set([
+      '/partner-prospects',
       '/prospect-campaigns/prepare',
       '/prospect-campaigns/${campagne.id}/approve',
       '/prospect-agenda/${encodeURIComponent(refOuverte)}/appointment',

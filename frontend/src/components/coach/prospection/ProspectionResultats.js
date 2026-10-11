@@ -7,14 +7,14 @@ import React, { useMemo, useState } from 'react';
 import useProspectionDonnees from '../../../hooks/useProspectionDonnees';
 import useNichesProspection from '../../../hooks/useNichesProspection';
 import {
-  PERIODES, compter, tauxDe, taux, grouper, nicheDe, paysDe, villeDe, canalDe, campagneDe,
+  PERIODES, compter, tauxDe, taux, grouper, paysDe, villeDe, canalDe, campagneDe, cleNicheProspect,
   rdvParFicheDe, LIBELLES_CANAL, libellesNiches,
 } from '../../../utils/prospectionStats';
 import { Titre, Grille, Carte, Tableau, Bandeau, EtatLecture, Puce, Bouton, DOUX, TEXTE, PRIMAIRE, heure, pct } from './ui';
 
 const COMPARAISONS = [
-  { id: 'niche', libelle: 'Par niche', cle: nicheDe, libellesNiche: true },
-  { id: 'niche_pays', libelle: 'Niche + pays', cle: (p) => `${nicheDe(p) || ''}|${paysDe(p)}` },
+  { id: 'niche', libelle: 'Par niche', cleNiche: true, libellesNiche: true },
+  { id: 'niche_pays', libelle: 'Niche + pays', cleNichePays: true },
   { id: 'pays', libelle: 'Par pays', cle: paysDe },
   { id: 'ville', libelle: 'Par ville', cle: villeDe },
   { id: 'canal', libelle: 'Par canal', cle: canalDe, libelles: LIBELLES_CANAL },
@@ -39,7 +39,10 @@ export default function ProspectionResultats({ API }) {
     const c = compter(donnees.fiches, options);
     const comp = COMPARAISONS.find((x) => x.id === vue) || COMPARAISONS[0];
     const nomNiche = listeNiches.reduce((m, n) => ({ ...m, [n.cle]: n.nom }), {});
-    let lignes = grouper(donnees.fiches, comp.cle, options, comp.libellesNiche ? libellesNiches(listeNiches) : comp.libelles);
+    // V599 : la niche d'un prospect se lit sur son niche_id (repli : règle historique).
+    const cleNiche = cleNicheProspect(listeNiches);
+    const cle = comp.cleNiche ? cleNiche : (comp.cleNichePays ? (p) => `${cleNiche(p) || ''}|${paysDe(p)}` : comp.cle);
+    let lignes = grouper(donnees.fiches, cle, options, comp.libellesNiche ? libellesNiches(listeNiches) : comp.libelles);
     if (vue === 'niche_pays') lignes = lignes.map((l) => ({ ...l, libelle: libelleNichePays(l.cle, nomNiche) }));
     return { c, t: tauxDe(c), lignes };
   }, [donnees, periode, vue, listeNiches]);

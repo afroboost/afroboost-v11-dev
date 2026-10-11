@@ -221,6 +221,21 @@ export function lettreNiche(ordre) {
   return out;
 }
 
+/**
+ * V599 — LA NICHE D'UN PROSPECT, lue sur son `niche_id` (l'id stable d'une niche de
+ * `prospection_niches`) et rendue comme sa CLÉ (« A »…« F », ou l'id d'une niche
+ * créée) — la même clé que les médias, les liens et les libellés. Une fiche pas
+ * encore rattachée retombe sur la règle historique (nicheDe). PURE.
+ */
+export function cleNicheProspect(niches) {
+  const parId = (niches || []).reduce((m, n) => ({ ...m, [n.id]: n.cle }), {});
+  return (p) => {
+    const id = p && p.niche_id;
+    if (id) return parId[id] || '';
+    return nicheDe(p);
+  };
+}
+
 /** V598 — { clé: « G — Seniors » } à partir de la liste du serveur (repli : les six d'origine). PURE. */
 export function libellesNiches(niches) {
   return (niches || []).reduce((m, n) => ({ ...m, [n.cle]: `${lettreNiche(n.ordre)} — ${n.nom}` }), { '': 'Non classé' });

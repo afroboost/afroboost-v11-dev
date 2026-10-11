@@ -26679,6 +26679,15 @@ async def p3s1_lister_prospects(request: Request):
     ville = p3s1_texte(parametres.get("city"), 80)
     if ville:
         filtre["city_key"] = p3s1_normaliser(ville)
+    # V599 : filtre par niche — l'id stable de `prospection_niches`, ou « sans ».
+    niche_filtre = (parametres.get("niche_id") or "").strip().lower()
+    if niche_filtre:
+        if niche_filtre == "sans":
+            filtre["niche_id"] = None            # Mongo : null OU champ absent
+        elif V598_UUID.match(niche_filtre):
+            filtre["niche_id"] = niche_filtre
+        else:
+            raise HTTPException(status_code=400, detail="Niche de filtre inconnue")
 
     try:
         limite = min(max(int(parametres.get("limit") or P3S1_LISTE_MAX), 1), P3S1_LISTE_MAX)
@@ -26805,6 +26814,9 @@ async def p3s1_creer_prospect(request: Request):
         raise HTTPException(status_code=400, detail="Corps de requete invalide")
 
     champs = p3s1_champs_valides(corps, creation=True)
+    # V599 : la niche (facultative) est l'id d'une niche ACTIVE du coach.
+    if corps.get("niche_id") not in (None, ""):
+        champs["niche_id"] = await v599_niche_id(corps.get("niche_id"), appelant, actuelle=None)
     maintenant = datetime.now(timezone.utc).isoformat()
 
     prospect = dict(champs)
@@ -26876,6 +26888,11 @@ async def p3s1_modifier_prospect(prospect_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Corps de requete invalide")
 
     champs = p3s1_champs_valides(corps, creation=False)
+    # V599 : changer de niche ne touche que `niche_id` — statut, historique,
+    # coordonnées et conversations restent tels quels. `null` la retire.
+    if "niche_id" in corps:
+        champs["niche_id"] = None if corps.get("niche_id") in (None, "") else await v599_niche_id(
+            corps.get("niche_id"), existant.get("coach_id") or appelant, actuelle=existant.get("niche_id"))
     if not champs:
         raise HTTPException(status_code=400, detail="Aucun champ modifiable fourni")
 
@@ -51879,7 +51896,9 @@ async def v598_contenu(niche: dict, appelant: str) -> dict:
     cle = niche.get("cle")
     medias = await db[V595_MEDIAS].count_documents({"coach_id": appelant, "niche": cle})
     liens = await db[V595_LIENS].count_documents({"coach_id": appelant, "niche": cle})
-    return {"medias": medias, "liens": liens}
+    # V599 : un seul prospect qui la référence suffit à interdire la suppression.
+    prospects = await db[P3S1_COLLECTION].count_documents({"niche_id": niche.get("id")})
+    return {"medias": medias, "liens": liens, "prospects": prospects}
 
 
 @api_router.get("/prospection-niches")
@@ -51963,8 +51982,9 @@ async def v598_supprimer_niche(niche_id: str, request: Request):
     if niche.get("origine") or niche.get("cle") in V595_NICHES:
         raise HTTPException(status_code=409, detail="Une niche d'origine ne se supprime pas : archive-la")
     contenu = await v598_contenu(niche, appelant)
-    if contenu["medias"] or contenu["liens"]:
-        raise HTTPException(status_code=409, detail="Cette niche contient %d média(s) et %d lien(s) : archive-la plutôt" % (contenu["medias"], contenu["liens"]))
+    if contenu["medias"] or contenu["liens"] or contenu["prospects"]:
+        raise HTTPException(status_code=409, detail="Cette niche contient %d prospect(s), %d média(s) et %d lien(s) : archive-la plutôt"
+                            % (contenu["prospects"], contenu["medias"], contenu["liens"]))
     await db.deleted_items.insert_one({
         "id": str(uuid.uuid4()), "original_collection": V598_NICHES, "original_id": identifiant,
         "coach_id": (appelant or "").lower().strip(), "deleted_at": v595_maintenant(), "deleted_by": appelant,
@@ -51972,6 +51992,104 @@ async def v598_supprimer_niche(niche_id: str, request: Request):
     await db[V598_NICHES].delete_one({"coach_id": appelant, "id": identifiant})
     logger.info("[V598] niche vide « %s » placée en corbeille", niche.get("nom"))
     return {"supprime": True, "corbeille": True, "id": identifiant}
+
+
+# ------------------- PROSPECTS ↔ NICHES (V599) -----------------------------
+# Un prospect porte `niche_id` = l'id STABLE (UUID) d'une niche de
+# `prospection_niches`. Rien d'autre n'est recopié (ni nom, ni lettre) : renommer
+# une niche ne touche aucune fiche. `wave` et `category` restent en place.
+async def v599_niche_id(valeur, coach: str, actuelle=None) -> str:
+    """L'id d'une niche du coach. ACTIVE exigée, sauf si c'est celle déjà portée."""
+    identifiant = str(valeur or "").strip().lower()
+    if not V598_UUID.match(identifiant):
+        raise HTTPException(status_code=400, detail="Niche inconnue")
+    await v598_niches(coach)                      # inscrit les six d'origine si besoin
+    niche = await db[V598_NICHES].find_one({"coach_id": coach, "id": identifiant}, {"_id": 0})
+    if not niche:
+        raise HTTPException(status_code=400, detail="Niche inconnue")
+    if not niche.get("active", True) and identifiant != (actuelle or ""):
+        raise HTTPException(status_code=400, detail="Cette niche est archivée : réactive-la d'abord")
+    return identifiant
+
+
+# LA RÈGLE HISTORIQUE, MOT POUR MOT (utils/prospectionStats.js → nicheDe). Elle
+# sert UNE fois : rattacher les fiches existantes. `re.ASCII` reproduit le `\b`
+# de JavaScript (une lettre accentuée n'y est pas un caractère de mot).
+V599_VAGUE_GV = re.compile(r"^GV\b.*?—\s*([A-F])\b", re.ASCII)
+V599_CATEGORIE_NICHE = {
+    "ecole_danse": "D", "festival": "C", "organisateur_evenement": "C",
+    "communaute_etudiante": "B", "association": "B",
+    "restaurant": "A", "bar": "A", "commerce": "A", "fitness": "A", "influenceur": "A",
+}
+
+
+def v599_cle_historique(prospect: dict):
+    """(clé A–F, source) selon la règle historique, ou (None, "aucune"). PURE."""
+    vague = prospect.get("wave") if isinstance(prospect.get("wave"), str) else ""
+    vague = vague.strip()
+    m = V599_VAGUE_GV.match(vague)
+    if m:
+        return m.group(1), "vague GV"
+    if re.search(r"festival", vague, re.IGNORECASE):
+        return "C", "vague festival"
+    categorie = prospect.get("category") if isinstance(prospect.get("category"), str) else ""
+    cle = V599_CATEGORIE_NICHE.get(categorie.strip())
+    return (cle, "categorie") if cle else (None, "aucune")
+
+
+@api_router.post("/prospection-niches/rattacher-prospects")
+async def v599_rattacher_prospects(request: Request):
+    """Rattache les prospects SANS `niche_id` à leur niche historique A–F.
+
+    À BLANC PAR DÉFAUT : sans `{"confirmer": true}`, rien n'est écrit — la
+    réponse donne les comptes qui SERAIENT appliqués. Écriture : UNIQUEMENT
+    `niche_id` (+ `niche_source`), jamais `updated_at`, jamais un autre champ ;
+    une fiche qui a déjà une niche n'est jamais réécrite (idempotent) ; une
+    fiche sans règle applicable reste SANS niche et est listée. Super-admin seul.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+    if not is_super_admin(appelant):
+        raise HTTPException(status_code=403, detail="Réservé au super-admin")
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    confirmer = isinstance(corps, dict) and corps.get("confirmer") is True
+    total = await db[P3S1_COLLECTION].count_documents({})
+    a_traiter = await db[P3S1_COLLECTION].find(
+        {"niche_id": None}, {"_id": 0, "id": 1, "coach_id": 1, "wave": 1, "category": 1, "ref": 1,
+                             "organisation_name": 1}).to_list(5000)
+    deja = total - len(a_traiter)
+    plan, par_cle, par_source, sans = {}, {}, {}, []
+    ids_par_coach = {}
+    for p in a_traiter:
+        cle, source = v599_cle_historique(p)
+        par_source[source] = par_source.get(source, 0) + 1
+        if not cle:
+            sans.append({"id": p.get("id"), "ref": p.get("ref"), "organisation_name": p.get("organisation_name")})
+            continue
+        coach = p.get("coach_id") or ""
+        if coach not in ids_par_coach:
+            ids_par_coach[coach] = {n["cle"]: n["id"] for n in await v598_niches(coach)}
+        niche_id = ids_par_coach[coach].get(cle)
+        if not niche_id:
+            sans.append({"id": p.get("id"), "ref": p.get("ref"), "organisation_name": p.get("organisation_name")})
+            continue
+        par_cle[cle] = par_cle.get(cle, 0) + 1
+        plan.setdefault(niche_id, []).append(p["id"])
+    ecrits = 0
+    if confirmer:
+        for niche_id, ids in plan.items():
+            r = await db[P3S1_COLLECTION].update_many(
+                {"id": {"$in": ids}, "niche_id": None},
+                {"$set": {"niche_id": niche_id, "niche_source": "historique-v599"}})
+            ecrits += getattr(r, "modified_count", 0) or 0
+        logger.info("[V599] %d prospect(s) rattaché(s) à leur niche historique", ecrits)
+    return {"a_blanc": not confirmer, "total": total, "deja_rattaches": deja,
+            "a_rattacher": sum(par_cle.values()), "par_niche": dict(sorted(par_cle.items())),
+            "par_source": par_source, "sans_niche": len(sans), "sans_niche_liste": sans[:50],
+            "ecrits": ecrits,
+            "controle": total == deja + sum(par_cle.values()) + len(sans)}
 
 
 # ------------------------------- MÉDIAS ------------------------------------
