@@ -168,6 +168,8 @@ _ins = Collection.insert_one
 async def _insert_unique(self, doc):
     if doc.get("creneau_cle") and any(d.get("creneau_cle") == doc["creneau_cle"] and d.get("coach_id") == doc.get("coach_id") for d in self.docs):
         raise DuplicateKeyError("E11000 creneau")
+    if doc.get("rdv_token_unique") and any(d.get("rdv_token_unique") == doc["rdv_token_unique"] for d in self.docs):
+        raise DuplicateKeyError("E11000 jeton")
     await _ins(self, doc)
 Collection.insert_one = _insert_unique
 S.is_super_admin = lambda e: False
@@ -289,6 +291,20 @@ verifier("2e confirmation avec le même lien → le RDV existant (aucun doublon)
 verifier("page publique ensuite : « déjà réservé »", lancer(S.v605_public_creneaux(jeton, Pub()))["deja_reserve"])
 conv = [{"action_id": "act1"}]; lancer(S.v605_agenda_des_conversations(conv))
 verifier("RDV visible dans la conversation", conv[0]["rendez_vous"] and conv[0]["rendez_vous"]["type"] == "visio")
+
+A.docs.append({"id": "act4", "coach_id": COACH, "organisations": ["CVCI"], "prospect_ids": ["E-04"], "rdv_token": "jetonQuatriemePartenaire1",
+               "sent_at": "2026-10-11T08:09:00+00:00"})
+libres = lancer(S.v605_public_creneaux("jetonQuatriemePartenaire1", Pub()))["creneaux"]
+async def meme_lien_deux_creneaux():
+    return await asyncio.gather(S.v605_public_confirmer("jetonQuatriemePartenaire1", Pub({"starts_at": libres[-1], "type": "visio"})),
+                                S.v605_public_confirmer("jetonQuatriemePartenaire1", Pub({"starts_at": libres[-2], "type": "visio"})),
+                                return_exceptions=True)
+asyncio.run(meme_lien_deux_creneaux())
+verifier("même lien, deux clics simultanés sur deux créneaux → UN seul RDV",
+         len([d for d in C.docs if d.get("rdv_token") == "jetonQuatriemePartenaire1"]) == 1)
+import time as _t
+_t0 = _t.time(); S.v605_proteger("a" * 6000 + " " + "1 " * 3000 + "x@" * 2000)
+verifier("texte piégé de 14 000 caractères masqué en < 0,5 s (pas de ReDoS)", _t.time() - _t0 < 0.5)
 
 print("\n6. « Recontactez-moi le mois prochain » → UNE tâche agenda")
 ref = datetime(2026, 10, 11, tzinfo=timezone.utc)

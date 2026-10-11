@@ -52840,9 +52840,14 @@ def v605_lecture(message: dict) -> dict:
 
 
 # --- Traduction : les elements exacts sont MASQUES avant l'IA, puis restaures ---
+# V605c (revue securite) : AUCUNE repetition non bornee devant un echec possible.
+# Les liens/e-mails/domaines/telephones ont des quantificateurs BORNES ; les mots
+# contenant un chiffre sont reperes par un simple decoupage en jetons (lineaire).
 _V605_RE_PROTEGE = re.compile(
-    r"(?i)((?:https?://|www\.)[^\s<>\"']+|[\w.+-]+@[\w-]+\.[\w.-]+|\b[\w-]+\.(?:ch|com|fr|de|org|net|io|swiss)\b(?:/[^\s<>\"']*)?"
-    r"|\+?\d[\d\s().\-/]{5,}\d|[^\s,;!?()]*\d[^\s,;!?()]*|Afroboost|Coach Bassi)")
+    r"(?i)((?:https?://|www\.)[^\s<>\"']{1,300}|[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,4}"
+    r"|\b[\w-]{1,63}\.(?:ch|com|fr|de|org|net|io|swiss)\b(?:/[^\s<>\"']{0,200})?"
+    r"|\+?\d[\d ().\-/]{5,20}\d|Afroboost|Coach Bassi)")
+_V605_RE_JETON = re.compile(r"[^\s,;!?()]{1,200}")
 
 
 def v605_proteger(texte: str, noms=None):
@@ -52857,6 +52862,9 @@ def v605_proteger(texte: str, noms=None):
         t = re.sub(re.escape(nom), lambda mm: masquer(mm.group(0)), t)
     t = re.sub(r"⟦P\d+⟧|" + _V605_RE_PROTEGE.pattern,
                lambda mm: mm.group(0) if mm.group(0).startswith("⟦P") else masquer(mm.group(0)), t)
+    # Dates, heures, montants, codes : tout jeton portant un chiffre (decoupage lineaire).
+    t = _V605_RE_JETON.sub(lambda mm: mm.group(0) if ("⟦P" in mm.group(0) or not any(c.isdigit() for c in mm.group(0)))
+                           else masquer(mm.group(0)), t)
     return t, table
 
 
@@ -53105,11 +53113,17 @@ async def v605_public_confirmer(jeton: str, request: Request):
         "campaign_action_id": action.get("id"), "inbound_id": action.get("rdv_inbound_id"),
         "origine": "prospection_partenaire", "rdv_token": action["rdv_token"],
         "creneau_cle": "%s|%s" % (coach, debut),
+        # V605c : UN rendez-vous par lien, meme sur deux clics simultanes (index unique).
+        "rdv_token_unique": action["rdv_token"],
         "is_deleted": False, "created_at": maintenant, "updated_at": maintenant,
     }
     try:
         await db[CAL1_COLLECTION].insert_one(dict(document))
     except DuplicateKeyError:
+        deja = await db[CAL1_COLLECTION].find_one(
+            {"rdv_token_unique": action["rdv_token"], "is_deleted": {"$ne": True}}, {"_id": 0})
+        if deja:
+            return {"confirme": True, "deja": True, "rendez_vous": v605_vue_rdv(deja)}
         raise HTTPException(status_code=409, detail="Ce créneau vient d'être réservé. Choisissez-en un autre.")
     # Les relances restantes tombent, avec le motif metier (celles deja parties restent).
     for e in P3R2_ETAPES:
@@ -53912,6 +53926,8 @@ async def startup_db():
             partialFilterExpression={"creneau_cle": {"$type": "string"}})
         await db[P3S3_ACTIONS].create_index(
             "rdv_token", unique=True, partialFilterExpression={"rdv_token": {"$type": "string"}})
+        await db[CAL1_COLLECTION].create_index(
+            "rdv_token_unique", unique=True, partialFilterExpression={"rdv_token_unique": {"$type": "string"}})
         # CAL-2 — LA REQUETE DU PLANIFICATEUR, toutes les 60 secondes. Sans cet
         # index, chaque passage balaierait la collection entiere pour trouver
         # les rares taches echues.
