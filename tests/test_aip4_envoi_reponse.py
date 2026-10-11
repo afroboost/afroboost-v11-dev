@@ -22,6 +22,13 @@ CE QU'IL PROUVE
   * threading : `In-Reply-To` et `References` seulement s'ils existent ;
   * T. AUCUN e-mail reel, aucune sortie reseau.
 """
+try:   # V608 : le point d'envoi Resend unique, visible aussi des fonctions EXTRAITES du serveur
+    import builtins as _b608, os as _o608, sys as _s608
+    _s608.path.insert(0, _o608.path.dirname(_o608.path.dirname(_o608.path.abspath(__file__))))
+    import api.resend_central as _rc608
+    _b608._rc = _rc608
+except Exception:  # noqa: BLE001
+    pass
 import ast
 import asyncio
 import io
@@ -571,12 +578,15 @@ _b = base_aip4(OUVERT)
 _r = envoyer()
 verifier("7a. une note d'envoi est ecrite", len(_b[S.P3N_COLLECTION].documents) == 1)
 _note = _b[S.P3N_COLLECTION].documents[0]
-verifier("7b. elle declare EN ATTENTE, jamais TRAITE",
-         _note["status_after"] == S.P3N_STATUT_ATTENTE, _note["status_after"])
-verifier("7c. le dossier passe donc EN ATTENTE",
-         _r["statut_commercial"] == S.P3N_STATUT_ATTENTE, _r["statut_commercial"])
+# V608 : ACCEPTE par Resend n'est pas REMIS. La note d'envoi ne declare AUCUN etat ;
+# l'etat avance a la remise confirmee (webhook `delivered`, banc test_v608).
+verifier("7b. a l'acceptation, elle ne declare AUCUN etat (ni attente, ni traite)",
+         _note["status_after"] is None, _note["status_after"])
+verifier("7c. le dossier reste donc A REPONDRE tant que la remise n'est pas confirmee",
+         _r["statut_commercial"] != S.P3N_STATUT_TRAITE and _r["statut_commercial"] != S.P3N_STATUT_ATTENTE,
+         _r["statut_commercial"])
 verifier("7d. elle est lisible par un humain, sans identifiant technique",
-         "Réponse Afroboost envoyée" in _note["texte"]
+         "Réponse soumise à Resend" in _note["texte"]
          and "act-etu" not in _note["texte"] and "inb-etu" not in _note["texte"])
 verifier("7e. un REFUS reste un refus apres un mot de courtoisie",
          S.p3ai4_statut_apres("refus") == S.P3N_STATUT_REFUS

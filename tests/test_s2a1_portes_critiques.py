@@ -52,6 +52,13 @@ non-coach sont refuses » — et pourquoi une garde qui se contenterait de
 
     python3 tests/test_s2a1_portes_critiques.py
 """
+try:   # V608 : le point d'envoi Resend unique, visible aussi des fonctions EXTRAITES du serveur
+    import builtins as _b608, os as _o608, sys as _s608
+    _s608.path.insert(0, _o608.path.dirname(_o608.path.dirname(_o608.path.abspath(__file__))))
+    import api.resend_central as _rc608
+    _b608._rc = _rc608
+except Exception:  # noqa: BLE001
+    pass
 import ast
 import asyncio
 import os
@@ -641,7 +648,8 @@ verifier("7e. la signature de whatsapp-config recoit bien `Request`",
          "async def update_whatsapp_config(config: WhatsAppConfigUpdate, request: Request)" in SRC)
 
 verifier("7f. notify-coach envoie desormais l'e-mail lui-meme",
-         "resend.Emails.send" in CORPS_NOTIFY and '"emailSent"' in CORPS_NOTIFY)
+         ("resend.Emails.send" in CORPS_NOTIFY or "_rc.emails(" in CORPS_NOTIFY)   # V608 : point unique
+         and '"emailSent"' in CORPS_NOTIFY)
 
 verifier("7g. notify-coach echappe le message avant de l'inserer dans du HTML",
          "_v468_html.escape(notification_message)" in CORPS_NOTIFY)

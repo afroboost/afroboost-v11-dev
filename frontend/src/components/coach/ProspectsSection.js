@@ -1540,6 +1540,15 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                   <span style={{ flex: '1 1 160px', minWidth: '160px' }}>
                     {etatEnvoi.texte}
                   </span>
+                  {/* V608 — « Réessayer » repasse par l'aperçu serveur PUIS la confirmation :
+                      quota, anti-doublon, destinataire et registre STOP sont revérifiés. Jamais automatique. */}
+                  {etatEnvoi.reessai && bro && (
+                    <button type="button" data-testid="reessayer-envoi"
+                            onClick={() => preparerEnvoi(r.id)} disabled={occupe}
+                            style={stylePetitBouton}>
+                      Réessayer
+                    </button>
+                  )}
                 </div>
 
                 {/* ---- §6 : LE DERNIER ÉCHANGE, EN DATES ---- */}
@@ -1979,7 +1988,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                                     background: 'rgba(34,197,94,0.20)' }}>
                         <SvgIcon name="check" size={13} />
                         <span style={{ flex: '1 1 150px', minWidth: '150px' }}>
-                          Réponse envoyée.
+                          Réponse soumise à Resend — remise à confirmer.
                         </span>
                         {suivante && (
                           <button type="button" data-testid="conversation-suivante"

@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 import os
+import api.resend_central as _rc  # V608 : point d'envoi Resend unique
 import uuid
 import logging
 from api.routes.shared import (
@@ -2516,7 +2517,7 @@ async def _process_successful_payment(
 
             # Email au client
             try:
-                resend.Emails.send({
+                _rc.emails("checkout_routes:_process_successful_payment", critique=True, sdk=resend).send({
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [customer_email],
                     "subject": f"✅ Confirmation de votre achat - {access_code}",
@@ -2559,7 +2560,7 @@ async def _process_successful_payment(
                 if coach and coach.get("notification_email"):
                     vendor_email = coach["notification_email"]
 
-                resend.Emails.send({
+                _rc.emails("checkout_routes:_process_successful_payment", critique=True, sdk=resend).send({
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [vendor_email],
                     "subject": f"💰 Nouvelle vente ! {total} {currency} - {customer_name}",

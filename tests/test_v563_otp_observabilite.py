@@ -12,6 +12,13 @@ qui reconstruit la fonction peut fournir lui-même un nom absent de la
 production — cf. B3-S1.2D). Base et Resend simulés, aucun réseau, aucun e-mail.
     python3 tests/test_v563_otp_observabilite.py
 """
+try:   # V608 : le point d'envoi Resend unique, visible aussi des fonctions EXTRAITES du serveur
+    import builtins as _b608, os as _o608, sys as _s608
+    _s608.path.insert(0, _o608.path.dirname(_o608.path.dirname(_o608.path.abspath(__file__))))
+    import api.resend_central as _rc608
+    _b608._rc = _rc608
+except Exception:  # noqa: BLE001
+    pass
 import asyncio, logging, os, re, sys, types
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

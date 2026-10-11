@@ -1743,7 +1743,8 @@ describe('PROSPECTION FOCUS — les réponses reçues', () => {
     axios.post.mockResolvedValue({ data: { deja_envoye: false,
       envoi: { send_status: 'envoye' } } });
     await act(async () => { par('confirmer-envoi').click(); });
-    expect(par('envoi-reussi').textContent).toContain('Réponse envoyée');
+    // V608 : accepté par Resend n'est pas « envoyé/remis » — la remise sera confirmée par le webhook.
+    expect(par('envoi-reussi').textContent).toContain('Réponse soumise à Resend — remise à confirmer');
     // Elle est PROPOSÉE, pas ouverte : aucun second envoi, aucun clic implicite.
     expect(par('conversation-suivante').textContent).toContain('ACD Lausanne');
     expect(par('conversation-active').getAttribute('data-inbound')).toBe('inb-etu04b');

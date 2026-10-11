@@ -21,6 +21,7 @@ client », l'original utilise `primary_color` sans l'avoir défini dans cette br
 n'est jamais parti. Ici la couleur est relue au début de la branche.
 """
 import os
+import api.resend_central as _rc  # V608 : point d'envoi Resend unique
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -155,7 +156,7 @@ async def activate_after_payment(
             primary_rgb = hex_to_rgb_triplet(primary_color)
 
             # Email au Super Admin
-            await asyncio.to_thread(resend.Emails.send, {
+            await asyncio.to_thread(_rc.emails("payment_activation:activate_after_payment", critique=True, sdk=resend).send, {
                 "from": "Afroboost <notifications@afroboost.com>",
                 "to": ["contact.artboost@gmail.com"],
                 "subject": f"🎉 Nouveau Partenaire ! {customer_name} ({coach_email})",
@@ -175,7 +176,7 @@ async def activate_after_payment(
             })
 
             # Email au nouveau partenaire
-            await asyncio.to_thread(resend.Emails.send, {
+            await asyncio.to_thread(_rc.emails("payment_activation:activate_after_payment", critique=True, sdk=resend).send, {
                 "from": "Afroboost <notifications@afroboost.com>",
                 "to": [coach_email],
                 "subject": "🎊 Bienvenue Partenaire Afroboost !",
@@ -338,7 +339,7 @@ async def activate_after_payment(
 
                 qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://afroboost.com/?qr={access_code}"
 
-                await asyncio.to_thread(resend.Emails.send, {
+                await asyncio.to_thread(_rc.emails("payment_activation:activate_after_payment", critique=True, sdk=resend).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [customer_email],
                     "subject": f"Votre accès Afroboost - {access_code}",
@@ -363,7 +364,7 @@ async def activate_after_payment(
                 })
 
                 # Notifier le Super Admin
-                await asyncio.to_thread(resend.Emails.send, {
+                await asyncio.to_thread(_rc.emails("payment_activation:activate_after_payment", critique=True, sdk=resend).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": ["contact.artboost@gmail.com"],
                     "subject": f"💰 Nouvelle vente ! {local_tx.get('customer_name', '')} - {amount} {currency}",

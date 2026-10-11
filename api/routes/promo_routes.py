@@ -4,6 +4,7 @@
 # v96: Email bienvenue + renforcement unicité
 
 import re  # V310 : disponible au niveau module pour re.escape (anti-injection regex)
+import api.resend_central as _rc  # V608 : point d'envoi Resend unique
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
@@ -73,7 +74,7 @@ async def _send_welcome_email(user_email: str, user_name: str, code_str: str, of
     </div>"""
 
     try:
-        await asyncio.to_thread(resend.Emails.send, {
+        await asyncio.to_thread(_rc.emails("promo_routes:_send_welcome_email", critique=True, sdk=resend).send, {
             "from": "Afroboost <notifications@afroboost.com>",
             "to": [user_email],
             "subject": f"Ton code Afroboost — {code_str}",
@@ -106,7 +107,7 @@ async def _send_coach_sale_email(coach_email, customer_email, customer_name, cod
         </div>
     </div>"""
     try:
-        await asyncio.to_thread(resend.Emails.send, {
+        await asyncio.to_thread(_rc.emails("promo_routes:_send_coach_sale_email", critique=False, sdk=resend).send, {
             "from": "Afroboost <notifications@afroboost.com>",
             "to": [coach_email],
             "subject": f"Souscription - {customer_name} - {offer_name}",
