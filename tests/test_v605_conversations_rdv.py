@@ -188,6 +188,12 @@ for nom, (m, lang, rdv, agenda) in cas.items():
     r = L(m)
     verifier("%-14s langue=%s rdv=%s agenda=%s" % (nom, lang, rdv, agenda or "-"),
              r["langue"] == lang and r["rdv_souhaite"] == rdv and r["agenda_externe"] == agenda, str(r))
+verifier("réel SalsaRica « nicht interssiert » (faute) → négatif, aucun RDV",
+         L({"body_text": "Hola Bassi\n\nDanke für deine Anfrage, aber wir sind nicht interssiert\n\nFreundliche Grüsse", "nature_reponse": H})["tonalite"] == "negative")
+verifier("réel BDE « on en parlera au sein du comité » → PAS une demande de RDV",
+         not L({"body_text": "Bonjour, merci pour les infos, on en parlera au sein du comité, on vous tiendra au courant !", "nature_reponse": H})["rdv_souhaite"])
+verifier("réel FAANG « convenir d'un moment d'échange » → RDV souhaité",
+         L({"body_text": "Nous prendrons volontiers le temps de discuter. Je reviendrai vers vous pour convenir d'un moment d'échange.", "nature_reponse": H})["rdv_souhaite"])
 verifier("Troodi : réponse positive", L(cas["5 Troodi"][0])["tonalite"] == "positive")
 verifier("refus : tonalité négative", L(cas["6 refus"][0])["tonalite"] == "negative")
 verifier("message trop court : langue indécidable ''", S.v605_langue("Merci") == "")

@@ -52783,13 +52783,16 @@ _V605_MOTS = {
     "en": set("the and is for you we with not thanks thank please your our this that would be can hello hi regards".split()),
 }
 _V605_RE_RDV = re.compile(
-    r"(?i)(appel|appeler|t[ée]l[ée]phon|visio|rendez-vous|\brdv\b|rencontr|cr[ée]neau|disponibilit|"
-    r"disponible pour|[ée]changer|discuter|en parler|un call|\bmeet|termin|telefon|anruf|video-?call|"
+    r"(?i)(\bvisio|rendez-vous|\brdv\b|cr[ée]neau|(?:un|une|d'un|d'une)\s+(?:appel|rencontre|call|meet)|"
+    r"(?:nous|vous|se|s')\s*(?:appeler|t[ée]l[ée]phoner|rencontrer|voir)\b|"
+    r"(?:fixer|convenir|planifier|organiser|prendre)\s+(?:d'un |d'une |d'|un |une |le |la )?\s*(?:moment|date|appel|rendez|[ée]change|r[ée]union)|"
+    r"disponible pour (?:un|une|[ée]changer|discuter|en parler)|termin|telefonieren|anrufen|video-?call|"
     r"besprechung|gespr[äa]ch|treffen|\bzoom\b|\bteams\b|\bcall\b|meeting|schedule|book a|time slot|"
-    r"choose a time|agenda|calendly)")
+    r"choose a time|calendly)")
 _V605_RE_NEGATIF = re.compile(
     r"(?i)(pas int[ée]ress|ne sommes pas|ne souhaitons pas|non merci|pas pour le moment|pas le moment|"
-    r"kein interesse|leider nicht|leider keine|nicht interessiert|not interested|no thanks|no, thank|"
+    r"kein interesse|leider nicht|leider keine|nicht int\w*ss|nicht ganz zu|passt nicht|kein bedarf|pas besoin|"
+    r"not interested|no thanks|no, thank|"
     r"\bstop\b|d[ée]sinscri|unsubscribe|retirez|ne plus nous|ne plus me)")
 _V605_RE_POSITIF = re.compile(
     r"(?i)(super|avec plaisir|volontiers|int[ée]ress|\boui\b|ravi|bonne id[ée]e|gerne|interessiert|"
