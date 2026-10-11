@@ -996,6 +996,18 @@ describe('P3-S3-C — réouverture et approbation', () => {
     expect(SOURCE_C).toContain('`${base}/prospect-campaigns`');
   });
 
+  test('V606 — la carte affiche les VRAIS envois de la campagne (G : 19 e-mails, 6 manuels, 1 sans canal)', async () => {
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect()]) },
+      campagnes: { etat: SECTION.OK, donnees: { total: 1, campaigns: [{ ...campagneOuverteFictive(), nom: 'GV-10-2026 J0 — G Étudiants',
+        etat: 'approuvee', nb_destinataires: 26,
+        stats: { destinataires: 26, emails_envoyes: 19, manuels: 6, sans_canal: 1, rejets_definitifs: 0, rejets_temporaires: 0, reponses: 0 } }] } },
+    };
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('campagne-ouverte').textContent).toContain('26 destinataires');
+    expect(par('campagne-stats').textContent).toBe('19 e-mails envoyés · 6 manuels · 1 sans canal');
+  });
+
   test('sans campagne ouverte, le bouton reste « Préparer la campagne »', async () => {
     mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect()]) };
     await monter(<ProspectsSection API="/api" />);
@@ -1015,7 +1027,9 @@ describe('P3-S3-C — réouverture et approbation', () => {
     expect(banniere.textContent).toContain('137 destinataires');
     expect(banniere.textContent).toContain('Campagne préparée');
     expect(banniere.textContent).toContain('2026-09-01');
-    expect(banniere.textContent).toContain('0 envoyé');
+    // V606 : plus de « 0 envoyé » figé — sans compteurs serveur, la carte n'invente rien.
+    expect(banniere.textContent).not.toContain('0 envoyé');
+    expect(par('campagne-stats')).toBeNull();
     expect(par('ouvrir-campagne')).not.toBeNull();
     // « Préparer » devient secondaire, et le dit.
     expect(par('preparer-campagne').textContent).toContain('Préparer une autre campagne');

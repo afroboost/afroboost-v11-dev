@@ -26659,6 +26659,9 @@ async def p3s1_lister_prospects(request: Request):
         if statut not in P3S1_STATUTS:
             raise HTTPException(status_code=400, detail="Statut de filtre inconnu")
         filtre["status"] = statut
+        # V606 : une fiche « adresse a corriger » n'est comptee dans AUCUN statut (son
+        # statut a ete pose par erreur via une adresse partagee) — tuile et filtre identiques.
+        filtre["adresse_a_corriger"] = {"$ne": True}
 
     categorie = (parametres.get("category") or "").strip().lower()
     if categorie:
@@ -26680,6 +26683,8 @@ async def p3s1_lister_prospects(request: Request):
     if ville:
         filtre["city_key"] = p3s1_normaliser(ville)
     # V599 : filtre par niche — l'id stable de `prospection_niches`, ou « sans ».
+    if str(parametres.get("adresse_a_corriger") or "").strip().lower() in ("1", "true", "oui"):
+        filtre["adresse_a_corriger"] = True   # V606
     niche_filtre = (parametres.get("niche_id") or "").strip().lower()
     if niche_filtre:
         if niche_filtre == "sans":
@@ -26732,7 +26737,7 @@ async def p3s1_lister_prospects(request: Request):
     compteurs = {statut: 0 for statut in P3S1_STATUTS}
     try:
         async for _groupe in db[P3S1_COLLECTION].aggregate([
-                {"$match": portee},
+                {"$match": dict(portee, adresse_a_corriger={"$ne": True})},   # V606
                 {"$group": {"_id": "$status", "n": {"$sum": 1}}}]):
             if _groupe.get("_id") in compteurs:
                 compteurs[_groupe["_id"]] = _groupe.get("n") or 0
@@ -26749,6 +26754,8 @@ async def p3s1_lister_prospects(request: Request):
     # aujourd'hui, et c'est la verite.
     compteurs["candidature"] = await db[P3S1_COLLECTION].count_documents(
         dict(portee, partner_application_id={"$nin": [None, ""]}))
+    compteurs["adresse_a_corriger"] = await db[P3S1_COLLECTION].count_documents(
+        dict(portee, adresse_a_corriger=True))   # V606
     # V595d/e — « ACCEPTÉ » = UNE COLLABORATION COMMERCIALEMENT CONFIRMÉE, lue sur
     # le STATUT `accepte` de la fiche (compté par l'agrégation ci-dessus), jamais
     # sur `partner_id`. Un partenaire peut être créé techniquement (lien, QR,
@@ -27892,6 +27899,32 @@ async def p3s3_preparer_campagne(request: Request):
             "summary": resume, "actions_creees": ecrites, "actions_refusees": refusees}
 
 
+def v606_stats_vides() -> dict:
+    return {"destinataires": 0, "emails_envoyes": 0, "rejets_definitifs": 0,
+            "rejets_temporaires": 0, "manuels": 0, "sans_canal": 0, "reponses": 0,
+            "relances_envoyees": 0}
+
+
+def v606_compter_action(st: dict, a: dict) -> None:
+    """Une action -> ses compteurs. PURE. `exclu` ne compte nulle part."""
+    if (a.get("statut") or "") == "exclu":
+        return
+    st["destinataires"] += 1
+    if a.get("sent_at"):
+        st["emails_envoyes"] += 1
+        if (a.get("bounce_type") or "") == "Permanent":
+            st["rejets_definitifs"] += 1
+        elif a.get("bounce_type"):
+            st["rejets_temporaires"] += 1
+    elif (a.get("execution_type") or "") == "BLOQUE":
+        st["sans_canal"] += 1
+    elif (a.get("execution_type") or "") != "AUTO":
+        st["manuels"] += 1
+    if a.get("replied_at"):
+        st["reponses"] += 1
+    st["relances_envoyees"] += sum(1 for e in ("j3", "j7", "j14") if a.get(e + "_sent_at"))
+
+
 @api_router.get("/prospect-campaigns")
 async def p3s3_lister_campagnes(request: Request):
     """Les campagnes du coach. LECTURE PURE, ordre TOTAL."""
@@ -27916,6 +27949,17 @@ async def p3s3_lister_campagnes(request: Request):
         portee["etat"] = {"$in": list(P3S3_ETATS_OUVERTS)}
     documents = await db[P3S3_CAMPAGNES].find(portee, {"_id": 0}) \
         .sort([("created_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
+    # V606 : les VRAIS envois de chaque campagne, lus sur ses actions (jamais un texte fige).
+    stats = {d["id"]: v606_stats_vides() for d in documents}
+    if stats:
+        for a in await db[P3S3_ACTIONS].find(
+                {"campaign_id": {"$in": list(stats)}},
+                {"_id": 0, "campaign_id": 1, "statut": 1, "sent_at": 1, "execution_type": 1,
+                 "bounce_type": 1, "replied_at": 1, "j3_sent_at": 1, "j7_sent_at": 1,
+                 "j14_sent_at": 1}).to_list(5000):
+            v606_compter_action(stats[a["campaign_id"]], a)
+    for d in documents:
+        d["stats"] = stats.get(d["id"])
     return {"total": await db[P3S3_CAMPAGNES].count_documents(portee),
             "returned": len(documents), "limit": limite, "offset": depart,
             "campaigns": documents}
@@ -33873,7 +33917,19 @@ def pf_compteurs(conversations) -> dict:
             compteurs["non_lues"] += 1
         if conversation.get("rang", PF_RANG_CLOS) <= PF_RANG_A_QUALIFIER:
             compteurs["a_traiter"] += 1
+        if v606_conversation_positive(conversation):
+            compteurs["reponses_positives"] = compteurs.get("reponses_positives", 0) + 1
+    compteurs.setdefault("reponses_positives", 0)
     return compteurs
+
+
+def v606_conversation_positive(conversation) -> bool:
+    """V606 — KPI CALCULE « Réponse positive » (jamais un statut) : au moins un message
+    HUMAIN lu positif par V605, et aucun message humain negatif. PURE, sans IA."""
+    humains = [m for m in (conversation or {}).get("messages_recus") or []
+               if (m.get("nature_reponse") or V604_HUMAINE) == V604_HUMAINE]
+    tons = [m.get("tonalite") for m in humains]
+    return "positive" in tons and "negative" not in tons
 
 
 async def pf_charger(email: str, statuts: dict, filtre_statut: str = "") -> dict:

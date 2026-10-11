@@ -129,6 +129,12 @@ const STATUTS_REPONSE = ['repondu', 'interesse', 'refuse', 'accepte'];
 export function dateContact(p) { return (p && (p.first_contact_sent_at || p.first_contact_at || p.last_contact_at)) || null; }
 
 export function etapes(p, rdvParFiche) {
+  // V606 — « adresse à corriger » : le statut a été posé via l'adresse d'une AUTRE fiche ;
+  // cette fiche n'a jamais reçu de contact. Elle ne compte dans aucune étape (comme les tuiles Prospects).
+  if (p && p.adresse_a_corriger) {
+    return { a_contacter: false, contacte: false, reponse: false, interesse: false, rdv: false,
+             accepte: false, refuse: false, sans_reponse: false, adresse_a_corriger: true };
+  }
   const s = txt((p || {}).status);
   const accepte = s === 'accepte';
   const contacte = (s && s !== 'a_contacter') || !!dateContact(p);
@@ -156,7 +162,7 @@ function dansPeriode(iso, depuis) {
 
 export const COMPTEURS_VIDES = {
   total: 0, a_contacter: 0, contacte: 0, reponse: 0, interesse: 0, rdv: 0,
-  accepte: 0, refuse: 0, sans_reponse: 0,
+  accepte: 0, refuse: 0, sans_reponse: 0, adresse_a_corriger: 0,
 };
 
 /**
@@ -179,6 +185,7 @@ export function compter(prospects, { rdvParFiche = {}, periode = 'tout', mainten
     if (e.accepte && depuis === null) c.accepte += 1;
     if (e.refuse && depuis === null) c.refuse += 1;
     if (e.sans_reponse && dansPeriode(dateContact(p), depuis)) c.sans_reponse += 1;
+    if (e.adresse_a_corriger && depuis === null) c.adresse_a_corriger += 1;
   });
   return c;
 }

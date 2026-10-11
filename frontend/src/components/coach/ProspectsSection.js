@@ -2279,8 +2279,18 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
             <div style={{ fontSize: '12px', opacity: 0.8 }}>
               {campagneOuverte.nb_destinataires} destinataires ·{' '}
               {LIBELLE_ETAT[campagneOuverte.etat] || campagneOuverte.etat} ·{' '}
-              créée le {(campagneOuverte.created_at || '').slice(0, 10)} · 0 envoyé
+              créée le {(campagneOuverte.created_at || '').slice(0, 10)}
             </div>
+            {/* V606 — les VRAIS envois, lus sur les actions de la campagne (plus de « 0 envoyé » figé). */}
+            {campagneOuverte.stats && (
+              <div data-testid="campagne-stats" style={{ fontSize: '12px', opacity: 0.85, marginTop: '2px' }}>
+                {campagneOuverte.stats.emails_envoyes} e-mail{campagneOuverte.stats.emails_envoyes > 1 ? 's' : ''} envoyé{campagneOuverte.stats.emails_envoyes > 1 ? 's' : ''}
+                {campagneOuverte.stats.manuels > 0 && <> · {campagneOuverte.stats.manuels} manuel{campagneOuverte.stats.manuels > 1 ? 's' : ''}</>}
+                {campagneOuverte.stats.sans_canal > 0 && <> · {campagneOuverte.stats.sans_canal} sans canal</>}
+                {(campagneOuverte.stats.rejets_definitifs + campagneOuverte.stats.rejets_temporaires) > 0 && <> · {campagneOuverte.stats.rejets_definitifs + campagneOuverte.stats.rejets_temporaires} rejeté{(campagneOuverte.stats.rejets_definitifs + campagneOuverte.stats.rejets_temporaires) > 1 ? 's' : ''}</>}
+                {campagneOuverte.stats.reponses > 0 && <> · {campagneOuverte.stats.reponses} réponse{campagneOuverte.stats.reponses > 1 ? 's' : ''}</>}
+              </div>
+            )}
           </div>
           <button type="button" onClick={() => ouvrirCampagne(campagneOuverte.id)}
                   disabled={prepEnCours} data-testid="ouvrir-campagne"
@@ -2490,6 +2500,13 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
           />
         ))}
         <Tuile libelle="Candidatures" valeur={nb('candidature')} />
+        {/* V606 — fiches dont le statut vient d'une adresse PARTAGÉE (jamais contactées elles-mêmes) :
+            comptées à part, hors de tout statut, et le filtre montre exactement ces fiches. */}
+        {nb('adresse_a_corriger') > 0 && (
+          <Tuile libelle="Adresse à corriger" valeur={nb('adresse_a_corriger')}
+                 actif={filtres.adresse_a_corriger === '1'}
+                 onClick={() => majFiltre('adresse_a_corriger', filtres.adresse_a_corriger === '1' ? '' : '1')} />
+        )}
         {/* V595e — « Acceptés » est désormais la tuile du statut « Accepté » ci-dessus. */}
       </div>
 

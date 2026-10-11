@@ -58,11 +58,19 @@ export default function ProspectionApercu({ API }) {
         <Carte libelle="À contacter" valeur={c.a_contacter} />
         <Carte libelle="Contactés" valeur={c.contacte} ton="marque" />
         <Carte libelle="Réponses" valeur={c.reponse} ton="bleu" />
-        <Carte libelle="Intéressés" valeur={c.interesse} ton="vert" />
+        <Carte libelle="Intéressés" valeur={c.interesse} ton="vert" aide="statut posé par le coach" />
+        {/* V606 — KPI CALCULÉ (lecture V605 des réponses), distinct du statut manuel « Intéressé ». */}
+        {conv && conv.compteurs && conv.compteurs.reponses_positives !== undefined && (
+          <Carte libelle="Réponses positives" valeur={Number(conv.compteurs.reponses_positives) || 0} ton="vert"
+                 aide="lecture automatique des réponses" testid="pp-reponses-positives" />
+        )}
         <Carte libelle="Rendez-vous" valeur={c.rdv} aide={donnees.rdv === null ? 'calendrier illisible' : undefined} />
         <Carte libelle="Acceptés" valeur={c.accepte} ton="vert" />
         <Carte libelle="Refusés" valeur={c.refuse} ton={c.refuse ? 'rouge' : undefined} />
         <Carte libelle="Sans réponse" valeur={c.sans_reponse} ton={c.sans_reponse ? 'ambre' : undefined} />
+        {c.adresse_a_corriger > 0 && (
+          <Carte libelle="Adresse à corriger" valeur={c.adresse_a_corriger} ton="ambre" aide="jamais contactées elles-mêmes" testid="pp-adresse-a-corriger" />
+        )}
       </Grille>
       {conv && (
         <div style={{ marginTop: '8px', fontSize: '12px', color: DOUX }} data-testid="pp-conversations">
