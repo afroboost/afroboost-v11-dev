@@ -71,6 +71,14 @@ export function statutNiche(actuels) {
   return 'en_cours';
 }
 
+// V601 : statut d'une niche à plusieurs publics — validée si TOUS le sont.
+export function statutPublics(liste) {
+  const st = (liste || []).map((pub) => statutNiche(pub.actuels));
+  if (st.length && st.every((x) => x === 'validee')) return 'validee';
+  if (st.includes('a_verifier')) return 'a_verifier';
+  return 'en_cours';
+}
+
 // --- Icônes SVG inline (règle du projet : jamais d'emoji comme icône) ---------
 const Icone = ({ d, taille = 16 }) => (
   <svg width={taille} height={taille} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -244,7 +252,7 @@ function FenetreEditeur({ children, onFermer, bloque }) {
   );
 }
 
-function FormulaireAjout({ niche, onFini, API, formatInitial = '16_9' }) {
+function FormulaireAjout({ niche, cible, onFini, API, formatInitial = '16_9' }) {
   const [f, setF] = useState({ format: formatInitial, url: '', version: '', notes: '' });
   const [envoi, setEnvoi] = useState(false);
   const [msg, setMsg] = useState('');
@@ -253,7 +261,7 @@ function FormulaireAjout({ niche, onFini, API, formatInitial = '16_9' }) {
     e.preventDefault();
     setEnvoi(true); setMsg('');
     try {
-      const r = await axios.post(`${API}/prospection-medias`, { niche, ...f });
+      const r = await axios.post(`${API}/prospection-medias`, { niche, ...f, ...(cible ? { cible } : {}) });
       onFini(r.data && r.data.archives ? `Enregistrée « En cours ». L'ancienne vidéo est archivée.` : 'Enregistrée « En cours ».');
     } catch (err) {
       setMsg(erreurLisible(err, 'Enregistrement refusé.'));
@@ -280,7 +288,7 @@ function FormulaireAjout({ niche, onFini, API, formatInitial = '16_9' }) {
 }
 
 /** V596 — ENVOYER L'ORIGINAL : vérifié, envoyé tel quel, enregistré « En cours ». */
-function FormulaireOriginal({ niche, API, onFini, onOuvrirEditeur }) {
+function FormulaireOriginal({ niche, cible, API, onFini, onOuvrirEditeur }) {
   const [etat, setEtat] = useState({ phase: '', pct: 0, msg: '' });
   const champRef = useRef(null);
   const choisir = async (e) => {
@@ -297,7 +305,7 @@ function FormulaireOriginal({ niche, API, onFini, onOuvrirEditeur }) {
     try {
       const r = await uploadToCloudinary(fichier, { folder: 'prospection', onProgress: (pct) => setEtat((p) => ({ ...p, pct: Math.round(pct) })) });
       const rep = await axios.post(`${API}/prospection-medias`, {
-        niche, format: 'original', url: r.url, version: 'Original',
+        niche, format: 'original', url: r.url, version: 'Original', ...(cible ? { cible } : {}),
         fichier: { nom: fichier.name, duree: meta.duree, largeur: meta.largeur, hauteur: meta.hauteur },
       });
       setEtat({ phase: '', pct: 0, msg: '' });
@@ -393,14 +401,23 @@ export default function ProspectionMedias({ API }) {
   }, [API]);
   useEffect(() => { charger(); }, [charger]);
 
+  // V601 : une niche peut porter plusieurs vidéos, une par PUBLIC visé (cible_id).
+  // Le public '' = toute la niche. Chaque public a ses propres emplacements.
   const parNiche = useMemo(() => {
     const m = {};
-    niches.forEach((n) => { m[n.cle] = { actuels: {}, archives: [] }; });
+    niches.forEach((n) => { m[n.cle] = { publics: {}, archives: [] }; });
     (medias || []).forEach((d) => {
       const g = m[d.niche];
       if (!g) return;
-      if (d.statut === 'archivee') g.archives.push(d);
-      else if (!g.actuels[d.format]) g.actuels[d.format] = d;
+      if (d.statut === 'archivee') { g.archives.push(d); return; }
+      const cid = d.cible_id || '';
+      const pub = g.publics[cid] || (g.publics[cid] = { id: cid, cible: d.cible || null, actuels: {} });
+      if (!pub.actuels[d.format]) pub.actuels[d.format] = d;
+    });
+    Object.values(m).forEach((g) => {
+      const autres = Object.keys(g.publics).filter((k) => k).sort((a, b) => a.localeCompare(b));
+      if (!g.publics[''] && !autres.length) g.publics[''] = { id: '', cible: null, actuels: {} };
+      g.liste = (g.publics[''] ? [g.publics['']] : []).concat(autres.map((k) => g.publics[k]));
     });
     return m;
   }, [medias, niches]);
@@ -461,13 +478,13 @@ export default function ProspectionMedias({ API }) {
   };
 
   // « + Ajouter » : avec un original, on fabrique la version dans l'éditeur ; sans, on l'ajoute.
-  const ajouter = (niche, format) => {
-    const original = parNiche[niche].actuels.original;
+  const ajouter = (niche, format, pub) => {
+    const original = ((pub || {}).actuels || {}).original;
     if (format !== 'original' && original && estFichier(original)) {
       ouvrirEditeur(original, RATIO_DU_FORMAT[format] || null);
       return;
     }
-    setAjout({ niche, format, mode: format === 'original' || !original ? 'fichier' : 'lien' });
+    setAjout({ niche, format, cible: (pub && pub.cible) || null, mode: format === 'original' || !original ? 'fichier' : 'lien' });
   };
 
   const basculer = (id) => { setOuverte((o) => (o === id ? '' : id)); setAjout(null); setArchivesOuvert(false); };
@@ -512,10 +529,10 @@ export default function ProspectionMedias({ API }) {
 
       <div style={{ marginTop: 10, border: `1px solid ${BORD}`, borderRadius: 12, overflow: 'hidden' }}>
         {nichesActives.map((n, i) => {
-          const g = parNiche[n.cle] || { actuels: {}, archives: [] };
+          const g = parNiche[n.cle] || { liste: [{ id: '', cible: null, actuels: {} }], archives: [] };
           const lettre = lettreNiche(n.ordre);
-          const st = STATUTS_MEDIA[statutNiche(g.actuels)];
-          const presents = Object.values(g.actuels);
+          const st = STATUTS_MEDIA[statutPublics(g.liste)];
+          const presents = g.liste.flatMap((pub) => Object.values(pub.actuels));
           const aVerifier = presents.filter((m) => m.statut === 'a_verifier').length;
           const ouvert = ouverte === n.cle;
           const actionsNiche = [
@@ -542,14 +559,23 @@ export default function ProspectionMedias({ API }) {
               </div>
               {ouvert && (
                 <div data-testid={`pm-contenu-${lettre}`} style={{ padding: '4px 12px 12px' }}>
-                  <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fill, minmax(min(300px, 100%), 1fr))' }}>
-                    {FORMATS.map((fmt) => (
-                      <Emplacement key={fmt.id} format={fmt} media={g.actuels[fmt.id]} enCours={enCours}
-                        onEditer={(m) => ouvrirEditeur(m)} onAjouter={(f) => ajouter(n.cle, f)} onStatut={changerStatut}
-                        onValider={(m) => setAConfirmer({ type: 'valider', media: m })}
-                        onSupprimer={(m) => setAConfirmer({ type: 'supprimer', media: m })} />
-                    ))}
-                  </div>
+                  {g.liste.map((pub) => (
+                    <div key={pub.id || 'general'} style={{ marginTop: 6 }} data-testid={`pm-public-${lettre}-${pub.id || 'general'}`}>
+                      {(g.liste.length > 1 || pub.cible) && (
+                        <div style={{ fontSize: 12, fontWeight: 700, color: TEXTE, margin: '6px 0' }} data-testid={`pm-public-nom-${lettre}-${pub.id || 'general'}`}>
+                          {pub.cible ? `Public : ${pub.cible.nom}` : 'Toute la niche'}
+                        </div>
+                      )}
+                      <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fill, minmax(min(300px, 100%), 1fr))' }}>
+                        {FORMATS.map((fmt) => (
+                          <Emplacement key={fmt.id} format={fmt} media={pub.actuels[fmt.id]} enCours={enCours}
+                            onEditer={(m) => ouvrirEditeur(m)} onAjouter={(f) => ajouter(n.cle, f, pub)} onStatut={changerStatut}
+                            onValider={(m) => setAConfirmer({ type: 'valider', media: m })}
+                            onSupprimer={(m) => setAConfirmer({ type: 'supprimer', media: m })} />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                   {ajout && ajout.niche === n.cle && (
                     <div style={{ marginTop: 8 }}>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Type d'ajout">
@@ -557,10 +583,10 @@ export default function ProspectionMedias({ API }) {
                         {ajout.format !== 'original' && <Bouton discret={ajout.mode !== 'lien'} onClick={() => setAjout((a) => ({ ...a, mode: 'lien' }))} testid={`pm-mode-lien-${lettre}`}>Lien public</Bouton>}
                       </div>
                       {ajout.mode === 'fichier'
-                        ? <FormulaireOriginal API={API} niche={n.cle}
+                        ? <FormulaireOriginal API={API} niche={n.cle} cible={ajout.cible}
                             onFini={(m) => { setAjout(null); if (m) { setInfo(m); charger(); } }}
                             onOuvrirEditeur={(original, fichierLocal, m) => { setAjout(null); setInfo(m); charger(); setEditeur({ niche: n.cle, original, fichierLocal, edition: null, ratio: null }); }} />
-                        : <FormulaireAjout API={API} niche={n.cle} formatInitial={ajout.format}
+                        : <FormulaireAjout API={API} niche={n.cle} cible={ajout.cible} formatInitial={ajout.format}
                             onFini={(m) => { setAjout(null); if (m) { setInfo(m); charger(); } }} />}
                     </div>
                   )}
@@ -604,7 +630,7 @@ export default function ProspectionMedias({ API }) {
       {nichesArchiveesOuvert && nichesArchivees.length > 0 && (
         <div style={{ marginTop: 6, display: 'grid', gap: 4 }} data-testid="pm-liste-archivees">
           {nichesArchivees.map((n) => {
-            const nb = Object.keys((parNiche[n.cle] || { actuels: {} }).actuels).length;
+            const nb = ((parNiche[n.cle] || {}).liste || []).reduce((t, pub) => t + Object.keys(pub.actuels).length, 0);
             return (
               <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: DOUX, padding: '6px 10px', border: `1px dashed ${BORD}`, borderRadius: 8 }}>
                 <span style={{ flex: 1, minWidth: 0 }}>{lettreNiche(n.ordre)} — {n.nom} · {nb ? `${nb} média${nb > 1 ? 's' : ''} conservé${nb > 1 ? 's' : ''}` : 'vide'}</span>

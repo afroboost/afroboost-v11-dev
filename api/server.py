@@ -37030,7 +37030,8 @@ async def restore_trash(trash_id: str, request: Request):
         # restauré revient ARCHIVÉ — jamais deux médias actifs au même endroit.
         occupe = await db[coll].count_documents({
             "coach_id": payload.get("coach_id"), "niche": payload.get("niche"),
-            "format": payload.get("format"), "statut": {"$ne": "archivee"}, "id": {"$ne": oid}})
+            "format": payload.get("format"), "cible_id": payload.get("cible_id"),
+            "statut": {"$ne": "archivee"}, "id": {"$ne": oid}})
         if occupe:
             payload["statut"] = "archivee"
     # Éviter le doublon si le document a déjà été réinséré entre-temps.
@@ -52208,8 +52209,16 @@ async def v595_ajouter_media(request: Request):
         "fichier": v596_fichier(corps.get("fichier"), fichier_doc) if fichier_doc else None,
         "edition": v596_edition(corps.get("edition")) if origine == "export" else None,
     }
+    # V601 — PUBLIC VISÉ : une niche peut porter PLUSIEURS vidéos (une par public).
+    # Un export ou une miniature hérite du public de son original.
+    cible = v601_cible(corps.get("cible")) if corps.get("cible") else None
+    if cible is None and source:
+        orig = await db[V595_MEDIAS].find_one({"coach_id": appelant, "id": source["id"]}, {"_id": 0, "cible": 1})
+        cible = (orig or {}).get("cible")
+    doc["cible"] = cible
+    doc["cible_id"] = cible["id"] if cible else None
     anciens = await db[V595_MEDIAS].find(
-        {"coach_id": appelant, "niche": niche, "format": fmt, "statut": {"$ne": "archivee"}},
+        {"coach_id": appelant, "niche": niche, "format": fmt, "cible_id": doc["cible_id"], "statut": {"$ne": "archivee"}},
         {"_id": 0, "id": 1}).to_list(V595_LISTE_MAX)
     doc["remplace"] = [a["id"] for a in anciens] or None
     await db[V595_MEDIAS].insert_one(dict(doc))
@@ -52339,6 +52348,7 @@ async def v595_modifier_media(media_id: str, request: Request):
         if media.get("statut") == "archivee" and statut != "archivee":
             occupe = await db[V595_MEDIAS].count_documents(
                 {"coach_id": appelant, "niche": media.get("niche"), "format": media.get("format"),
+                 "cible_id": media.get("cible_id"),
                  "statut": {"$ne": "archivee"}, "id": {"$ne": identifiant}})
             if occupe:
                 raise HTTPException(status_code=409, detail="Une autre vidéo occupe déjà cette niche et ce format")
@@ -52349,12 +52359,120 @@ async def v595_modifier_media(media_id: str, request: Request):
         champs["version"] = p3s1_texte(corps.get("version"), 40)
     if "notes" in corps:
         champs["notes"] = p3s1_texte(corps.get("notes"), 1000)
+    if "cible" in corps:
+        # V601 : le public visé se règle sur un média existant (aucun nouvel envoi de fichier).
+        cible = v601_cible(corps.get("cible")) if corps.get("cible") else None
+        cid = cible["id"] if cible else None
+        if media.get("statut") != "archivee" and cid != media.get("cible_id"):
+            occupe = await db[V595_MEDIAS].count_documents(
+                {"coach_id": appelant, "niche": media.get("niche"), "format": media.get("format"),
+                 "cible_id": cid, "statut": {"$ne": "archivee"}, "id": {"$ne": identifiant}})
+            if occupe:
+                raise HTTPException(status_code=409, detail="Ce public a déjà une vidéo dans ce format pour cette niche")
+        champs["cible"], champs["cible_id"] = cible, cid
     if not champs:
         return {"media": media, "modifie": False}
     champs["updated_at"] = v595_maintenant()
     await db[V595_MEDIAS].update_one({"coach_id": appelant, "id": identifiant}, {"$set": champs})
     media.update(champs)
     return {"media": media, "modifie": True}
+
+
+# V601 — PLUSIEURS VIDÉOS PAR NICHE, ET LA BONNE VIDÉO POUR CHAQUE PROSPECT
+# ---------------------------------------------------------------------------
+# Un média peut porter un `cible` = {id, nom, mots_cles} : le public qu'il vise
+# DANS sa niche (ex. A : « Salons / coiffure / beauté » et « Physio / ostéo »).
+# L'emplacement devient (niche, format, public) : deux vidéos de la même niche ne
+# s'archivent plus l'une l'autre. Sans public, un média vaut pour toute la niche.
+#
+# LE CHOIX POUR UN PROSPECT réutilise des données EXISTANTES et fiables : sa
+# sous-catégorie (« coiffure afro / tresses », « physiothérapie »…), son nom et sa
+# catégorie, comparés aux mots-clés du public. Rien n'est envoyé : la route rend
+# seulement le média qui SERAIT proposé, ou aucun — jamais une vidéo au hasard.
+V601_MOTS_MAX = 30
+
+
+def v601_norm(texte) -> str:
+    import unicodedata
+    t = unicodedata.normalize("NFD", str(texte or "")).encode("ascii", "ignore").decode("ascii").lower()
+    return re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+
+def v601_cible(valeur):
+    """{id, nom, mots_cles} validé, ou None. PURE."""
+    if not isinstance(valeur, dict):
+        raise HTTPException(status_code=400, detail="Public visé invalide")
+    nom = re.sub(r"\s+", " ", str(valeur.get("nom") or "")).strip()[:60]
+    if len(nom) < 2:
+        raise HTTPException(status_code=400, detail="Le public visé doit avoir un nom")
+    brut = valeur.get("mots_cles") or []
+    if isinstance(brut, str):
+        brut = brut.split(",")
+    mots = []
+    for m in brut[:V601_MOTS_MAX]:
+        m = v601_norm(m)[:30]
+        if len(m) >= 3 and m not in mots:
+            mots.append(m)
+    if not mots:
+        raise HTTPException(status_code=400, detail="Le public visé doit avoir au moins un mot-clé de repérage")
+    return {"id": v598_slug(nom), "nom": nom, "mots_cles": mots}
+
+
+def v601_choisir_media(prospect: dict, cle_niche: str, medias: list) -> dict:
+    """Le média à proposer à CE prospect, ou aucun — avec la raison. PURE.
+
+    Candidats : vidéos non archivées de SA niche (16:9 de préférence, sinon
+    l'original). Un public dont un mot-clé apparaît dans la sous-catégorie, le nom
+    ou la catégorie du prospect l'emporte. Deux publics qui correspondent = ambigu = aucun.
+    Sans correspondance : la vidéo générale de la niche (sans public), sinon aucune."""
+    texte = " " + v601_norm(" ".join(str(prospect.get(k) or "") for k in ("subcategory", "organisation_name", "category"))) + " "
+    videos = [m for m in medias if m.get("niche") == cle_niche and m.get("statut") != "archivee"
+              and m.get("format") in ("16_9", "original")]
+    par_public = {}
+    for m in videos:
+        cle = m.get("cible_id") or ""
+        if cle not in par_public or (m.get("format") == "16_9" and par_public[cle].get("format") != "16_9"):
+            par_public[cle] = m
+    scores = []
+    for cle, m in par_public.items():
+        if not cle:
+            continue
+        mots = [w for w in ((m.get("cible") or {}).get("mots_cles") or []) if (" " + w) in texte]
+        if mots:
+            scores.append((max(len(w) for w in mots), cle, mots))
+    if scores:
+        scores.sort(reverse=True)
+        if len(scores) > 1:
+            return {"media": None, "raison": "ambigu : plusieurs publics correspondent (%s)" % ", ".join(s[1] for s in scores)}
+        m = par_public[scores[0][1]]
+        return {"media": m, "raison": "public « %s » (mot-clé : %s)" % ((m.get("cible") or {}).get("nom"), scores[0][2][0])}
+    if "" in par_public:
+        return {"media": par_public[""], "raison": "vidéo générale de la niche"}
+    return {"media": None, "raison": "aucune vidéo pour ce prospect dans sa niche"}
+
+
+@api_router.get("/prospection-medias/pour-prospect/{prospect_id}")
+async def v601_media_pour_prospect(prospect_id: str, request: Request):
+    """LECTURE PURE : la vidéo qui serait proposée à ce prospect s'il la demande."""
+    appelant = await _v309_require_coach_or_admin(request)
+    prospect = await db[P3S1_COLLECTION].find_one({"id": (prospect_id or "").strip()[:64]}, {"_id": 0})
+    if not prospect or (not is_super_admin(appelant) and (prospect.get("coach_id") or "") != appelant):
+        raise HTTPException(status_code=404, detail="Prospect introuvable")
+    coach = prospect.get("coach_id") or appelant
+    niche = await db[V598_NICHES].find_one({"coach_id": coach, "id": prospect.get("niche_id")}, {"_id": 0}) \
+        if prospect.get("niche_id") else None
+    if not niche:
+        return {"prospect_id": prospect["id"], "niche": None, "media": None, "raison": "prospect sans niche"}
+    medias = await db[V595_MEDIAS].find({"coach_id": coach, "niche": niche["cle"], "statut": {"$ne": "archivee"}},
+                                        {"_id": 0}).to_list(V595_LISTE_MAX)
+    choix = v601_choisir_media(prospect, niche["cle"], medias)
+    if niche.get("supprimee") or niche.get("active") is False:
+        choix = {"media": None, "raison": "niche hors prospection active"}
+    m = choix["media"]
+    return {"prospect_id": prospect["id"], "niche": {"cle": niche["cle"], "nom": niche["nom"]},
+            "media": ({"id": m["id"], "format": m["format"], "url": m["url"], "nom": (m.get("fichier") or {}).get("nom"),
+                       "statut": m["statut"], "public": (m.get("cible") or {}).get("nom")} if m else None),
+            "raison": choix["raison"]}
 
 
 # V597 — SUPPRIMER UN MÉDIA = LE DÉPLACER DANS LA CORBEILLE (V313/V575)
