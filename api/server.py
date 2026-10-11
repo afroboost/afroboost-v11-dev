@@ -27697,15 +27697,19 @@ def p3s3_empreinte(actions, campagne=None) -> str:
     # exactement le defaut « approuver A, envoyer B » que cette empreinte
     # existe pour empecher, simplement decale d'une etape. Les trois messages
     # et les trois objets sont donc dans le condense.
+    # V603 : la J+14 entre dans l'empreinte DES QU'ELLE EXISTE ; sans elle, le
+    # condense reste celui d'avant (aucune campagne existante n'est invalidee).
+    _o14 = p3r2_objet_campagne(campagne, "j14")
     lignes = ["campagne|" + "|".join([
         p3s3d2_objet_campagne(campagne) or "",
         p3r2_objet_campagne(campagne, "j3"),
-        p3r2_objet_campagne(campagne, "j7")])]
+        p3r2_objet_campagne(campagne, "j7")] + ([_o14] if _o14 else []))]
     lignes += sorted(
         "|".join([(a.get("recipient_key") or ""), (a.get("channel") or ""),
                   (a.get("language") or ""), (a.get("target") or ""),
                   (a.get("message_j0") or ""),
-                  (a.get("message_j3") or ""), (a.get("message_j7") or "")])
+                  (a.get("message_j3") or ""), (a.get("message_j7") or "")]
+                 + ([a.get("message_j14")] if a.get("message_j14") else []))
         for a in (actions or []) if (a or {}).get("statut") != "exclu")
     return hashlib.sha256("\n".join(lignes).encode("utf-8")).hexdigest()
 
@@ -28997,7 +29001,9 @@ async def p3s3d_appliquer_succes(action: dict, reponse: dict, maintenant: str) -
                      # jour de preparation ni d'approbation : une relance calculee
                      # sur l'approbation partirait avant le contact lui-meme.
                      "j3_due_at": p3s3d_echeance(maintenant, 3),
-                     "j7_due_at": p3s3d_echeance(maintenant, 7)}
+                     "j7_due_at": p3s3d_echeance(maintenant, 7),
+                     # V603 : derniere relance, courte, puis STOP.
+                     "j14_due_at": p3s3d_echeance(maintenant, 14)}
     if _rfc:
         _champs_envoi[P3U2_CHAMP_RFC] = _rfc
     await db[P3S3_ACTIONS].update_one(
@@ -30000,6 +30006,7 @@ async def p3u2_marquer_reponse(action: dict, recu_le: str) -> dict:
                   # Les deux relances tombent DANS LA MEME operation.
                   "j3_annule_le": maintenant, "j7_annule_le": maintenant,
                   "j3_annule_motif": "reponse recue", "j7_annule_motif": "reponse recue",
+                  "j14_annule_le": maintenant, "j14_annule_motif": "reponse recue",  # V603
                   "updated_at": maintenant}})
     premiere = bool(getattr(pose, "matched_count", 0))
     fiches = 0
@@ -30393,6 +30400,11 @@ async def p3b1_traiter_rebond(evenement: dict) -> dict:
             {"$set": {"j7_annule_le": maintenant,
                       "j7_annule_motif": P3B1_MOTIF_ANNULATION,
                       "updated_at": maintenant}})
+        await db[P3S3_ACTIONS].update_one(   # V603 : la J+14 tombe aussi
+            {"id": action.get("id"), "j14_annule_le": {"$exists": False}},
+            {"$set": {"j14_annule_le": maintenant,
+                      "j14_annule_motif": P3B1_MOTIF_ANNULATION,
+                      "updated_at": maintenant}})
         # LE REGISTRE STOP EST LE MEME QUE CELUI DU DESABONNEMENT, et c'est
         # voulu : la garde `REFUS_EXPRIME` le consulte deja avant chaque
         # envoi. Aucun mecanisme nouveau, donc aucun chemin a re-eprouver.
@@ -30437,7 +30449,7 @@ async def p3b1_traiter_rebond(evenement: dict) -> dict:
 # que celle des relances. Deux etapes differentes, deux portes differentes —
 # et l'absence reste le cas sur.
 P3R2_PREFIXE = "[P3-R2]"
-P3R2_ETAPES = ("j3", "j7")
+P3R2_ETAPES = ("j3", "j7", "j14")   # V603 : J+14 = derniere relance, puis STOP
 P3R2_DRAPEAU_ACTIF = "P3_RELANCE_ENABLED"
 P3R2_DRAPEAU_REEL = "P3_RELANCE_ENVOI_REEL"
 P3R2_MOTIFS = {
@@ -30455,11 +30467,13 @@ P3R2_MOTIFS = {
     "ENVOI_NON_AUTORISE": "les deux drapeaux de relance ne sont pas ouverts",
     "ETAPE_INCONNUE": "etape de relance inconnue",
     "J3_NON_PARTI": "pas de J+7 sans J+3 parti, ni moins de 4 jours apres lui",
+    "J7_NON_PARTI": "pas de J+14 sans J+7 parti, ni moins de 5 jours apres lui",  # V603
 }
 # V584 — LA CHAINE J0 -> J+3 -> J+7. Le J+7 n'avait que sa propre echeance (J0 + 7 j) : pour un
 #   J0 ancien, J+3 et J+7 etaient dus ENSEMBLE et partaient le meme jour, et un J+3 bloque
 #   n'empechait pas le J+7. Le J+7 exige desormais un J+3 PARTI depuis au moins 4 jours.
 P3R2_ECART_J3_J7_JOURS = 4
+P3R2_ECART_J7_J14_JOURS = 5   # V603
 
 
 def p3r2_envoi_autorise(flags) -> bool:
@@ -30592,6 +30606,13 @@ def p3r2_garde_relance(action: dict, campagne: dict, etape: str, refus=None,
                 _now_dt < _j3 + timedelta(days=P3R2_ECART_J3_J7_JOURS):
             return {"autorise": False, "code": "J3_NON_PARTI",
                     "motif": P3R2_MOTIFS["J3_NON_PARTI"]}
+    if etape == "j14":   # V603 : la chaine reste J0 -> J+3 -> J+7 -> J+14 -> STOP
+        _j7 = p1d_parse_iso(a.get(p3r2_champ("j7", "sent_at")))
+        _now14 = p1d_parse_iso(maintenant)
+        if _j7 is None or _now14 is None or \
+                _now14 < _j7 + timedelta(days=P3R2_ECART_J7_J14_JOURS):
+            return {"autorise": False, "code": "J7_NON_PARTI",
+                    "motif": P3R2_MOTIFS["J7_NON_PARTI"]}
 
     # --- ce qui protege la machine ---
     if a.get("statut") == "exclu":
@@ -32686,7 +32707,8 @@ def p3n_timeline(action: dict, message: dict, notes, statut: str,
     if a.get("sent_at"):
         evenements.append({"quand": a["sent_at"], "genre": "envoi",
                            "titre": "Proposition Afroboost envoyée", "texte": ""})
-    for etape, libelle in (("j3", "Relance J+3 envoyée"), ("j7", "Relance J+7 envoyée")):
+    for etape, libelle in (("j3", "Relance J+3 envoyée"), ("j7", "Relance J+7 envoyée"),
+                           ("j14", "Relance J+14 envoyée")):
         if a.get("%s_sent_at" % etape):
             evenements.append({"quand": a["%s_sent_at" % etape], "genre": "envoi",
                                "titre": libelle, "texte": ""})
