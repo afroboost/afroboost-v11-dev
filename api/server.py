@@ -2301,8 +2301,9 @@ async def get_courses(request: Request, scope: str = ""):
         # ces cours amorces seraient invisibles a tout coach.
         _seed_owner_c = SUPER_ADMIN_EMAILS[0]
         default_courses = [
-            {"id": str(uuid.uuid4()), "name": "Afroboost Silent – Session Cardio", "weekday": 3, "time": "18:30", "locationName": "Rue des Vallangines 97, Neuchâtel", "mapsUrl": "", "coach_id": _seed_owner_c},
-            {"id": str(uuid.uuid4()), "name": "Afroboost Silent – Sunday Vibes", "weekday": 0, "time": "18:30", "locationName": "Rue des Vallangines 97, Neuchâtel", "mapsUrl": "", "coach_id": _seed_owner_c}
+            # V615 : adresse et horaires officiels (cours d'hiver)
+            {"id": str(uuid.uuid4()), "name": "Cours Afroboost – mercredi", "weekday": 3, "time": "18:45", "locationName": V615_ADRESSE_COURS, "mapsUrl": "", "coach_id": _seed_owner_c},
+            {"id": str(uuid.uuid4()), "name": "Cours Afroboost – dimanche", "weekday": 0, "time": "18:30", "locationName": V615_ADRESSE_COURS, "mapsUrl": "", "coach_id": _seed_owner_c}
         ]
         await db.courses.insert_many(default_courses)
         courses_raw = default_courses
@@ -2815,6 +2816,38 @@ from api.routes import hiver as _hiver
 # TRACKING 2B : attribution jusqu'au paiement + héritage par personne (shared.py).
 from api.routes.shared import (m2a_bloc_propre, m2a_vers_metadata, m2a_depuis_metadata,
                                m2a_attribution_heritee, m2a_resoudre)
+
+
+# V615 — LIEU OFFICIEL DES COURS D'HIVER + BASCULE SAISONNIÈRE AUTOMATIQUE.
+# Une offre peut porter `lieux_saison` = {"hiver": {champs de lieu}, "ete": {…}} ; un cours peut
+# porter `saison` = "hiver" | "ete". Au changement de saison (Super Admin), on applique le lieu de la
+# saison aux offres et on montre / masque les cours étiquetés — rien n'est supprimé, tout est réversible.
+# Les offres et cours SANS ces champs ne sont jamais touchés.
+V615_ADRESSE_COURS = "Chemin des Valangines 97, 2000 Neuchâtel"
+V615_CHAMPS_LIEU = ("location", "location_address", "location_city", "location_lat", "location_lng")
+
+
+async def v615_appliquer_saison(saison: str, base=None) -> dict:
+    """Applique la saison aux offres (`lieux_saison`) et aux cours étiquetés (`saison`)."""
+    b = base if base is not None else db
+    s = (saison or "").strip().lower()
+    bilan = {"saison": s, "offres": 0, "cours_affiches": 0, "cours_masques": 0}
+    if s not in ("hiver", "ete", "toutes"):
+        return bilan
+    if s in ("hiver", "ete"):
+        for o in await b.offers.find({"lieux_saison." + s: {"$exists": True}}, {"_id": 0, "id": 1, "lieux_saison": 1}).to_list(500):
+            lieu = (o.get("lieux_saison") or {}).get(s) or {}
+            maj = {k: lieu.get(k) for k in V615_CHAMPS_LIEU if k in lieu}
+            if maj and o.get("id"):
+                r = await b.offers.update_one({"id": o["id"]}, {"$set": maj})
+                bilan["offres"] += getattr(r, "modified_count", 0)
+    for c in await b.courses.find({"saison": {"$in": ["hiver", "ete"]}, "archived": {"$ne": True}},
+                                  {"_id": 0, "id": 1, "saison": 1, "visible": 1}).to_list(500):
+        voir = s == "toutes" or c.get("saison") == s
+        if bool(c.get("visible", True)) != voir and c.get("id"):
+            await b.courses.update_one({"id": c["id"]}, {"$set": {"visible": voir, "visible_par_saison": s}})
+            bilan["cours_affiches" if voir else "cours_masques"] += 1
+    return bilan
 
 
 async def _saison_active() -> str:
@@ -32568,6 +32601,550 @@ def p3ai_contexte(message: dict, action: dict, fiches=None, notes=None,
     }
 
 
+# --- V611 — RÈGLE COMMERCIALE « PREMIÈRE SÉANCE DÉCOUVERTE » (générateur IA) -----------------
+# Règle de Bassi (12/10/2026) : un NOUVEAU partenaire HORS de Neuchâtel qui montre de
+# l'intérêt, demande un prix, hésite à cause de la distance ou veut faire venir Afroboost
+# PEUT se voir proposer la première séance découverte offerte, seuls les frais de
+# déplacement aller-retour étant à sa charge. Jamais mécaniquement : le CODE établit le
+# contexte (ville, fil, prix déjà donnés, gros événement, refus), l'IA juge le ton, et un
+# contrôle APRÈS génération renvoie en validation tout ce qui sortirait de la règle.
+# Le bouton ne fait que GÉNÉRER un brouillon : aucun envoi n'est touché ici.
+V611_LOCALITES_NE = (
+    "neuchatel", "neuenburg", "la chaux-de-fonds", "chaux-de-fonds", "le locle", "peseux", "colombier",
+    "boudry", "cortaillod", "bevaix", "auvernier", "corcelles", "marin", "saint-blaise", "hauterive",
+    "le landeron", "cressier", "val-de-travers", "fleurier", "couvet", "val-de-ruz", "cernier",
+    "fontainemelon", "les ponts-de-martel", "la neuveville")
+V611_MOTS_GROS = ("festival", "manifestation", "open air", "open-air", "plusieurs heures", "toute la journee",
+                  "plusieurs coachs", "scene", "sono", "materiel", "milliers", "grand public", "messe",
+                  "fest", "mehrere stunden", "ganzen tag", "buhne", "several hours", "stage", "thousands")
+V611_MOTS_REFUS = ("pas interesse", "pas interessee", "pas interesses", "ne sommes pas interess",
+                   "pas pour le moment", "pas de suite", "nous ne pouvons pas", "nous devons faire un tri",
+                   "faire un tri", "nicht interessiert", "kein interesse", "leider nicht", "not interested",
+                   "no thank", "non merci", "decliner", "ne donnerons pas suite")
+V611_MOTS_INTERET = ("interess", "volontiers", "avec plaisir", "combien", "prix", "tarif", "cout", "budget",
+                     "venir", "chez nous", "dans notre ville", "distance", "loin", "deplacement",
+                     "gerne", "kosten", "preis", "vorschlag", "kommen", "interested", "price", "cost",
+                     "how much", "proposition", "proposal", "oui", "ja ", "yes")
+V611_MOTS_EN_LIGNE = ("en ligne", "a distance", "distance", "loin", "region", "regions", "online", "zoom",
+                      "visio", "fern", "remote", "membres", "reseau", "national", "suisse romande")
+_V611_RE_MONTANT = re.compile(r"(?i)(\bchf\b|\bfr\.|€|\beur\b|\beuros?\b|\bfranken\b|\d+\s*(?:chf|fr|€|euros?))")
+
+
+def v611_est_neuchatel(ville) -> bool:
+    v = p3ai_sans_accents(ville or "").lower().strip()
+    return bool(v) and any(l in v for l in V611_LOCALITES_NE)
+
+
+def v611_contexte_commercial(contexte: dict, fiches=None) -> dict:
+    """Ce que le CODE sait du dossier, avant toute génération. PURE.
+
+    `contexte["fil"]` = les échanges précédents (partenaire et Afroboost) ; les notes
+    humaines comptent aussi. Aucune décision commerciale n'est prise ici : on établit
+    les faits, et la pertinence de la séance découverte en découle."""
+    c = contexte or {}
+    fiches = fiches or []
+    ville = next((f.get("city") for f in fiches if (f.get("city") or "").strip()), "") or ""
+    categories = {(f.get("category") or "") for f in fiches}
+    recu = p3ai_sans_accents(c.get("body_text") or "").lower()
+    nos_envois = [x.get("texte") or "" for x in (c.get("fil") or []) if x.get("de") == "afroboost"]
+    leurs_msgs = [x.get("texte") or "" for x in (c.get("fil") or []) if x.get("de") == "partenaire"]
+    notes = [n.get("texte") or "" for n in (c.get("notes") or [])]
+    histoire = p3ai_sans_accents(" ".join(nos_envois + notes)).lower()
+    tout_partenaire = p3ai_sans_accents(" ".join(leurs_msgs + [c.get("body_text") or ""])).lower()
+
+    hors_ne = None if not ville else (not v611_est_neuchatel(ville))
+    partenaire_actif = any(f.get("partner_id") for f in fiches) or any(
+        (f.get("status") or "") == "accepte" for f in fiches)
+    prix_deja = bool(_V611_RE_MONTANT.search(" ".join(nos_envois + notes))) or any(
+        m in histoire for m in ("gratuit", "offert", "offerte", "kostenlos", "gratis", "free of charge", "devis", "tarif"))
+    proposition_deja = bool(nos_envois) or any(m in histoire for m in ("proposition", "devis", "offre", "angebot"))
+    gros = bool(categories & {"festival", "organisateur_evenement"}) or any(m in tout_partenaire for m in V611_MOTS_GROS)
+    refus = any(m in recu for m in V611_MOTS_REFUS)
+    interet = any(m in recu for m in V611_MOTS_INTERET)
+    premiere = not partenaire_actif and not prix_deja
+    decouverte = bool(hors_ne) and premiere and not refus and interet
+    en_ligne = (not refus or "tri" in recu) and (
+        any(m in recu for m in V611_MOTS_EN_LIGNE) or "en ligne" in p3ai_sans_accents(c.get("notre_message_j0") or "").lower())
+    if gros and not any(m in recu for m in ("en ligne", "online", "a distance")):
+        en_ligne = False      # un événement physique ne se transforme pas en visio
+    return {
+        "ville_partenaire": ville or "(inconnue)",
+        "hors_neuchatel": hors_ne,
+        "premiere_collaboration": premiere,
+        "proposition_existante": proposition_deja,
+        "prix_deja_donne": prix_deja,
+        "gros_evenement": gros,
+        "refus": refus,
+        "interet": interet,
+        "seance_decouverte_pertinente": decouverte,
+        "frais_deplacement_pertinents": decouverte,
+        "format_en_ligne_pertinent": en_ligne,
+        "collaboration_future_a_discuter": not refus,
+        "agenda": v612_agenda(c, fiches, ville),      # V612
+        "situation": v614_situation(c, fiches, local=(hors_ne is False)),     # V614
+    }
+
+
+def v611_bloc_invite(cc: dict) -> str:
+    """Le passage d'invite qui porte la règle. PURE. Vide si rien n'est pertinent."""
+    if not cc:
+        return ""
+    oui = lambda v: "OUI" if v else ("NON" if v is not None else "INCONNU")
+    lignes = ["CONTEXTE COMMERCIAL (etabli par le systeme, fiable) :",
+              "- ville du partenaire : %s ; hors Neuchatel : %s" % (cc["ville_partenaire"], oui(cc["hors_neuchatel"])),
+              "- premiere collaboration : %s ; proposition deja faite dans le fil : %s ; prix ou gratuite deja annonces : %s"
+              % (oui(cc["premiere_collaboration"]), oui(cc["proposition_existante"]), oui(cc["prix_deja_donne"])),
+              "- gros evenement / festival : %s ; refus ou tri exprime : %s"
+              % (oui(cc["gros_evenement"]), oui(cc["refus"])),
+              "",
+              "REGLES COMMERCIALES (absolues) :",
+              "- N'invente AUCUN prix, AUCUN montant (ni de prestation ni de deplacement), AUCUN accord.",
+              "- Ne contredis JAMAIS une proposition ou un prix deja donne dans le fil ou les notes.",
+              "- N'ecris jamais « essence » : on parle de « prise en charge des frais de deplacement ».",
+              "- N'offre jamais un festival entier, plusieurs heures, plusieurs coachs ou du gros materiel."]
+    if cc["refus"]:
+        lignes += ["- Le partenaire refuse ou filtre : remercie, respecte sa decision, n'ajoute AUCUNE offre commerciale."]
+    elif cc["seance_decouverte_pertinente"] and not cc["gros_evenement"]:
+        lignes += ["- SEANCE DECOUVERTE : si le partenaire montre de l'interet, demande un prix, hesite a cause de",
+                   "  la distance ou veut faire venir Afroboost, tu PEUX proposer, en l'adaptant a son ton et a sa langue :",
+                   "  une premiere seance decouverte offerte dans sa ville, avec seulement la prise en charge des frais",
+                   "  de deplacement aller-retour (sans montant), pour decouvrir le concept avec son public, sans",
+                   "  engagement important ; ensuite, reflechir ensemble a un prochain evenement ou une collaboration",
+                   "  et definir ensemble le format et le budget. Ne fixe AUCUN tarif pour la suite."]
+    elif cc["seance_decouverte_pertinente"] and cc["gros_evenement"]:
+        lignes += ["- GROS EVENEMENT : n'offre pas la prestation. Propose de preparer une vraie proposition (demande",
+                   "  dates, duree, public attendu, lieu) ; tu peux evoquer, separement, une seance decouverte offerte",
+                   "  avec prise en charge des frais de deplacement, sans aucun montant."]
+    else:
+        lignes += ["- Pas de seance decouverte gratuite ni de frais de deplacement a proposer dans ce dossier."]
+    lignes += ["", v612_bloc_invite(cc.get("agenda") or {}), ""]      # V612
+    lignes += [v614_bloc_invite(cc.get("situation") or {}, cc.get("refus")), ""]      # V614
+    if cc["format_en_ligne_pertinent"]:
+        lignes += ["- Le format Afroboost EN LIGNE peut etre mentionne : la distance n'est plus un obstacle, aucun",
+                   "  deplacement, participation depuis differentes regions. Aucune promesse de sante ou medicale."]
+    else:
+        lignes += ["- Ne propose pas de format en ligne dans ce dossier."]
+    return "\n".join(lignes)
+
+
+def v611_controle_brouillon(texte, contexte: dict, cc: dict) -> list:
+    """Ce qui, dans le brouillon GÉNÉRÉ, sort de la règle → motifs de validation humaine. PURE."""
+    t = p3ai_sans_accents(texte or "").lower()
+    fil = p3ai_sans_accents(" ".join([(contexte or {}).get("body_text") or ""]
+                                     + [x.get("texte") or "" for x in (contexte or {}).get("fil") or []]
+                                     + [n.get("texte") or "" for n in (contexte or {}).get("notes") or []])).lower()
+    motifs = []
+    if any(m in t for m in ("essence", "benzin", "petrol", "gasoline", "carburant")):
+        motifs.append("formulation déplacement")
+    montants = set(m.group(0).lower() for m in _V611_RE_MONTANT.finditer(t))
+    if montants and not all(m in fil for m in montants):
+        motifs.append("montant inventé")
+    offre = any(m in t for m in ("gratuit", "offert", "offerte", "kostenlos", "gratis", "free of charge", "offeriert"))
+    if offre and not (cc or {}).get("seance_decouverte_pertinente"):
+        motifs.append("gratuité hors règle")
+    if offre and (cc or {}).get("gros_evenement") and any(m in t for m in ("festival", "toute la", "ganze", "entire")):
+        motifs.append("gros événement offert")
+    return motifs
+
+
+# --- V612 — CONTRAINTES D'AGENDA DE COACH BASSI (générateur IA) --------------------------------
+# Cours récurrents à Neuchâtel : mercredi 18h45 et dimanche 18h30 — PRIORITAIRES. Une intervention
+# extérieure physique le mercredi ou le dimanche n'est possible que LE MATIN, séance TERMINÉE AVANT
+# MIDI, et à 2 h de trajet ALLER maximum depuis Neuchâtel. Jamais l'après-midi ni le soir ces jours-là.
+# Le trajet n'est JAMAIS deviné : canton de Neuchâtel = local ; sinon seule une durée fiable posée
+# sur la fiche (`trajet_depuis_neuchatel_min`) compte, faute de quoi c'est « À VÉRIFIER ».
+# Les autres jours : aucune restriction inventée. Les cours sont une contrainte INTERNE : jamais cités.
+V612_DUREE_SEANCE_MIN = 60
+V612_TRAJET_MAX_MIN = 120
+V612_JOURS = {
+    "lundi": "lundi", "montag": "lundi", "monday": "lundi",
+    "mardi": "mardi", "dienstag": "mardi", "tuesday": "mardi",
+    "mercredi": "mercredi", "mittwoch": "mercredi", "wednesday": "mercredi",
+    "jeudi": "jeudi", "donnerstag": "jeudi", "thursday": "jeudi",
+    "vendredi": "vendredi", "freitag": "vendredi", "friday": "vendredi",
+    "samedi": "samedi", "samstag": "samedi", "saturday": "samedi",
+    "dimanche": "dimanche", "sonntag": "dimanche", "sunday": "dimanche"}
+V612_JOURS_CONTRAINTS = ("mercredi", "dimanche")
+_V612_RE_JOUR = re.compile(r"\b(" + "|".join(V612_JOURS) + r")s?\b")
+_V612_RE_HEURE = re.compile(r"\b([01]?\d|2[0-3])\s*(?:h|:|uhr|heures?)\s*([0-5]\d)?\b|\b(1[0-2]|0?[1-9])\s*(am|pm)\b")
+_V612_MATIN = ("matin", "matinee", "vormittag", "morgen", "morning", "avant midi")
+_V612_APRES = ("apres-midi", "apres midi", "aprem", "soir", "soiree", "nachmittag", "abend", "afternoon", "evening", "night")
+
+
+def v612_trajet(fiches=None, ville="", auto=None) -> dict:
+    """Temps de trajet ALLER depuis Neuchâtel, seulement s'il est FIABLE. PURE ; jamais deviné.
+    Ordre : canton NE (local) > durée posée sur la fiche > calcul routier automatique V613 (`auto`)."""
+    if v611_est_neuchatel(ville):
+        return {"connu": True, "minutes": 0, "source": "canton de Neuchatel"}
+    for f in fiches or []:
+        try:
+            m = int(f.get("trajet_depuis_neuchatel_min"))
+        except (TypeError, ValueError):
+            continue
+        if m >= 0:
+            return {"connu": True, "minutes": m, "source": "fiche"}
+    a = auto or {}
+    if a.get("statut") == "ok" and isinstance(a.get("minutes"), (int, float)):
+        return {"connu": True, "minutes": int(round(a["minutes"])), "source": a.get("source") or "OSRM",
+                "incertain": bool(a.get("incertain"))}
+    return {"connu": False, "minutes": None, "source": ""}
+
+
+def v612_creneaux(texte) -> list:
+    """Les créneaux (jour + heure / moment) cités dans un texte. PURE, FR/DE/EN, par phrase."""
+    t = p3ai_sans_accents(texte or "").lower()
+    sortie = []
+    for phrase in re.split(r"[.!?\n;]+", t):
+        jours = [V612_JOURS[m.group(1)] for m in _V612_RE_JOUR.finditer(phrase)]
+        if not jours:
+            continue
+        heure = None
+        m = _V612_RE_HEURE.search(phrase)
+        if m:
+            if m.group(1) is not None:
+                heure = int(m.group(1)) * 60 + int(m.group(2) or 0)
+            else:
+                h = int(m.group(3)) % 12 + (12 if m.group(4) == "pm" else 0)
+                heure = h * 60
+        moment = "matin" if any(x in phrase for x in _V612_MATIN) else (
+            "apres-midi/soir" if any(x in phrase for x in _V612_APRES) else "")
+        for j in dict.fromkeys(jours):
+            sortie.append({"jour": j, "heure_min": heure, "moment": moment})
+    return sortie
+
+
+def v612_verdict(creneau: dict, trajet: dict, physique: bool = True) -> dict:
+    """CE CRÉNEAU EST-IL COMPATIBLE ? PURE. OUI / NON / A VERIFIER, avec le détail demandé."""
+    j, h, mo = creneau.get("jour"), creneau.get("heure_min"), creneau.get("moment") or ""
+    contraint = j in V612_JOURS_CONTRAINTS and physique
+    if not contraint:
+        return dict(creneau, mercredi=j == "mercredi", dimanche=j == "dimanche", avant_midi=None,
+                    trajet_ok=None, compatible="OUI")
+    if h is not None:
+        avant_midi = "OUI" if h + V612_DUREE_SEANCE_MIN <= 12 * 60 else "NON"
+    elif mo == "matin":
+        avant_midi = "OUI"
+    elif mo:
+        avant_midi = "NON"
+    else:
+        avant_midi = "A VERIFIER"
+    if not trajet.get("connu") or trajet.get("incertain"):
+        trajet_ok = "A VERIFIER"
+    else:
+        trajet_ok = "OUI" if trajet["minutes"] <= V612_TRAJET_MAX_MIN else "NON"
+    if "NON" in (avant_midi, trajet_ok):
+        compatible = "NON"
+    elif "A VERIFIER" in (avant_midi, trajet_ok):
+        compatible = "A VERIFIER"
+    else:
+        compatible = "OUI"
+    return dict(creneau, mercredi=j == "mercredi", dimanche=j == "dimanche", avant_midi=avant_midi,
+                trajet_ok=trajet_ok, compatible=compatible)
+
+
+def v612_agenda(contexte: dict, fiches=None, ville="") -> dict:
+    """Le rapport d'agenda du dossier : créneaux proposés par le partenaire, trajet, verdicts. PURE."""
+    c = contexte or {}
+    trajet = v612_trajet(fiches, ville, c.get("trajet_auto"))
+    en_ligne_demande = any(x in p3ai_sans_accents(c.get("body_text") or "").lower()
+                           for x in ("en ligne", "online", "a distance", "visio", "zoom"))
+    creneaux = [v612_verdict(x, trajet, physique=not en_ligne_demande) for x in v612_creneaux(c.get("body_text"))]
+    pire = "OUI"
+    for x in creneaux:
+        if x["compatible"] == "NON":
+            pire = "NON"
+        elif x["compatible"] == "A VERIFIER" and pire != "NON":
+            pire = "A VERIFIER"
+    return {"ville": ville or "(inconnue)", "trajet_connu": trajet["connu"], "trajet_min": trajet["minutes"],
+            "trajet_ok": ("A VERIFIER" if (not trajet["connu"] or trajet.get("incertain")) else
+                          ("OUI" if trajet["minutes"] <= V612_TRAJET_MAX_MIN else "NON")),
+            "trajet_source": trajet.get("source") or "",
+            "creneaux": creneaux, "creneau_compatible": pire if creneaux else None}
+
+
+def v612_bloc_invite(ag: dict) -> str:
+    """Le passage d'invite « disponibilités ». PURE. La contrainte est INTERNE : jamais citée."""
+    ag = ag or {}
+    lignes = ["DISPONIBILITES DE COACH BASSI (contrainte INTERNE, ne l'explique jamais, ne cite jamais ses cours "
+              "comme raison d'une indisponibilite ; inviter a DECOUVRIR un cours regulier reste permis) :",
+              "- Mercredi et dimanche : une intervention sur place n'est possible que LE MATIN, seance terminee",
+              "  AVANT MIDI, et seulement a 2 h de trajet maximum depuis Neuchatel. Jamais l'apres-midi ni le soir.",
+              "  Formule simplement : « Le mercredi, je peux me deplacer le matin. » / « Le dimanche matin pourrait",
+              "  etre possible. »",
+              "- Autres jours : aucune restriction horaire, la disponibilite est a discuter.",
+              "- Ne propose jamais une seance (meme offerte) sur un creneau incompatible."]
+    if ag.get("trajet_ok") == "A VERIFIER":
+        lignes += ["- Temps de trajet depuis Neuchatel NON CONNU : ne propose pas fermement un mercredi ou un dimanche ;",
+                   "  presente-le comme a confirmer."]
+    elif ag.get("trajet_ok") == "NON":
+        lignes += ["- Le lieu est a plus de 2 h de Neuchatel : ne propose ni mercredi ni dimanche."]
+    for x in ag.get("creneaux") or []:
+        if x["compatible"] == "NON":
+            lignes += ["- Le partenaire evoque un %s%s : ce creneau n'est PAS possible. Dis : « Cette plage horaire ne"
+                       " sera malheureusement pas possible pour moi, mais nous pouvons regarder une autre date"
+                       " ensemble. »" % (x["jour"], (" a %dh%02d" % divmod(x["heure_min"], 60)) if x["heure_min"] is not None else "")]
+        elif x["compatible"] == "A VERIFIER":
+            lignes += ["- Le partenaire evoque un %s : NE LE CONFIRME PAS, presente-le comme a verifier." % x["jour"]]
+    return "\n".join(lignes)
+
+
+def v612_controle_brouillon(texte, agenda: dict) -> list:
+    """Ce qui, dans le brouillon, sort des contraintes d'agenda → validation humaine. PURE."""
+    t = p3ai_sans_accents(texte or "").lower()
+    motifs = []
+    if any(x in t for x in ("mon cours", "mes cours", "autre cours", "je dois rentrer", "etre de retour",
+                            "rentrer pour", "meinen kurs", "anderen kurs", "my class", "zuruck sein")):
+        motifs.append("contrainte interne citée")
+    trajet = {"connu": (agenda or {}).get("trajet_connu"), "minutes": (agenda or {}).get("trajet_min"),
+              "incertain": (agenda or {}).get("trajet_ok") == "A VERIFIER"}
+    for x in v612_creneaux(texte):
+        if x["jour"] not in V612_JOURS_CONTRAINTS:
+            continue
+        if x["heure_min"] in (18 * 60 + 45, 18 * 60 + 30):      # V614 : invitation au cours régulier
+            continue
+        v = v612_verdict(x, trajet)
+        if v["compatible"] == "NON":
+            motifs.append("créneau incompatible")
+        elif v["compatible"] == "A VERIFIER" and "a verifier" not in t and "a confirmer" not in t \
+                and "zu bestatigen" not in t and "to be confirmed" not in t:
+            motifs.append("date non vérifiée présentée comme ferme")
+    return sorted(set(motifs))
+
+
+# --- V614 — PARTENAIRES LOCAUX, AUTRES DATES, SAISONS (générateur IA) ----------------------------
+# Local (canton NE) : d'abord INVITER à découvrir un cours régulier (mercredi 18h45, dimanche 18h30) ;
+# une séance chez le partenaire / une autre date reste possible SELON L'AGENDA (jamais de dispo inventée ;
+# les prochains mois sont en cours de planification). Hiver : chez le partenaire s'il a une SALLE (jamais
+# supposée, sauf école de danse / fitness) ; été : extérieur possible, sans affirmer qu'un lieu est autorisé.
+# Saison lue UNIQUEMENT dans le fil (mois, « cet été »…) ; sinon neutre.
+V614_MOIS = {
+    "janvier": 1, "januar": 1, "january": 1, "fevrier": 2, "februar": 2, "february": 2, "mars": 3, "marz": 3,
+    "march": 3, "avril": 4, "april": 4, "mai": 5, "may": 5, "juin": 6, "juni": 6, "june": 6, "juillet": 7,
+    "juli": 7, "july": 7, "aout": 8, "august": 8, "septembre": 9, "september": 9, "octobre": 10,
+    "oktober": 10, "october": 10, "novembre": 11, "november": 11, "decembre": 12, "dezember": 12, "december": 12}
+V614_ETE = (6, 7, 8)
+V614_HIVER = (12, 1, 2)
+_V614_RE_MOIS = re.compile(r"\b(" + "|".join(V614_MOIS) + r")\b")
+_V614_RE_DATE = re.compile(r"\b([0-3]?\d)[./]([01]?\d)(?:[./](?:20)?\d\d)?\b")
+V614_CHEZ_LUI = ("chez nous", "dans nos locaux", "dans notre salle", "dans notre structure", "pour notre equipe",
+                 "pour nos membres", "pour nos eleves", "pour notre public", "venir chez", "venir a ", "nous accueillir",
+                 "bei uns", "in unseren raumen", "unser team", "fur unsere", "at our", "for our team", "come to us")
+V614_SALLE_OUI = ("salle", "gymnase", "local ", "nos locaux", "studio", "halle", "saal", "turnhalle", "raum", "room", "gym")
+V614_SALLE_NON = ("pas de salle", "sans salle", "pas de local", "keine halle", "keinen raum", "no room", "no hall")
+_V614_RE_DATE_BROUILLON = re.compile(r"\b(?:le |am |on )?(?:" + "|".join(V612_JOURS) + r")?\s*([0-3]?\d)(?:er)?\s+(" +
+                                     "|".join(V614_MOIS) + r")\b")
+
+
+def v614_saison(texte) -> str:
+    """« ete » / « hiver » / « » (neutre). PURE ; uniquement ce que dit le texte."""
+    t = p3ai_sans_accents(texte or "").lower()
+    if any(x in t for x in ("cet ete", "en ete", "l'ete", "sommer", "summer")):
+        return "ete"
+    if any(x in t for x in ("cet hiver", "en hiver", "l'hiver", "winter")):
+        return "hiver"
+    mois = [V614_MOIS[m.group(1)] for m in _V614_RE_MOIS.finditer(t)]
+    mois += [int(m.group(2)) for m in _V614_RE_DATE.finditer(t) if 1 <= int(m.group(2)) <= 12 and 1 <= int(m.group(1)) <= 31]
+    if mois and all(m in V614_ETE for m in mois):
+        return "ete"
+    if mois and all(m in V614_HIVER for m in mois):
+        return "hiver"
+    return ""
+
+
+def v614_situation(contexte: dict, fiches=None, local: bool = None) -> dict:
+    """Le rapport interne V614 (local, chez lui, autre date, saison, salle, extérieur). PURE."""
+    c = contexte or {}
+    recu = p3ai_sans_accents(c.get("body_text") or "").lower()
+    fil = p3ai_sans_accents(" ".join([c.get("body_text") or ""] + [x.get("texte") or "" for x in c.get("fil") or []])).lower()
+    categories = {(f.get("category") or "") for f in fiches or []}
+    chez_lui = any(x in recu for x in V614_CHEZ_LUI)
+    if any(x in recu for x in V614_SALLE_NON):
+        salle = "NON"
+    elif any(x in recu for x in V614_SALLE_OUI) or categories & {"ecole_danse", "fitness"}:
+        salle = "OUI"
+    else:
+        salle = "INCONNU"
+    saison = v614_saison(fil)
+    creneaux = v612_creneaux(c.get("body_text"))
+    date_proposee = bool(creneaux) or bool(_V614_RE_MOIS.search(recu)) or bool(_V614_RE_DATE.search(recu))
+    autre_date = date_proposee and not all(
+        x["jour"] in V612_JOURS_CONTRAINTS and x["heure_min"] in (18 * 60 + 45, 18 * 60 + 30) for x in creneaux or [{}]) \
+        if creneaux else date_proposee
+    return {
+        "local_neuchatel": bool(local),
+        "veut_seance_chez_lui": chez_lui,
+        "date_proposee": date_proposee,
+        "saison": saison or "inconnue",
+        "salle_disponible": salle,
+        "exterieur_possible": "OUI" if saison == "ete" else ("NON" if saison == "hiver" else "A VERIFIER"),
+        "cours_regulier_a_proposer": bool(local),
+        "autre_date_a_discuter": bool(chez_lui or autre_date),
+    }
+
+
+def v614_bloc_invite(sit: dict, refus: bool = False) -> str:
+    """Passage d'invite V614. PURE. Aucune disponibilité ni autorisation inventée."""
+    if not sit or refus:
+        return ""
+    L = ["LIEU, DATES ET SAISON :"]
+    if sit.get("local_neuchatel"):
+        L += ["- Partenaire LOCAL (region de Neuchatel) : ne propose PAS de venir gratuitement chez lui en premier.",
+              "  Propose D'ABORD de venir decouvrir Afroboost pendant un cours regulier, le mercredi a 18h45 ou",
+              "  le dimanche a 18h30, a Neuchatel, pour voir le concept, l'ambiance et la reaction du public.",
+              "  Ne donne aucune date precise."]
+    if sit.get("autre_date_a_discuter") or sit.get("veut_seance_chez_lui"):
+        L += ["- Une seance chez le partenaire ou a une autre date est POSSIBLE SI L'AGENDA LE PERMET : ne dis jamais",
+              "  que c'est impossible, n'invente aucune disponibilite. Tu peux dire : « Nous sommes actuellement en",
+              "  train de planifier nos prochaines disponibilites pour les mois a venir, donc nous pouvons aussi",
+              "  regarder ensemble un creneau adapte. »"]
+    if sit.get("saison") == "hiver":
+        L += (["- Hiver : une seance dans sa structure est possible (le partenaire dispose d'une salle)."]
+              if sit.get("salle_disponible") == "OUI" else
+              ["- Hiver : une seance dans sa structure est possible SEULEMENT avec une salle adaptee ; on ne sait pas",
+               "  s'il en a une : demande-le, ne le suppose pas."])
+    elif sit.get("saison") == "ete":
+        L += ["- Ete : la seance peut aussi se faire en EXTERIEUR (parc, cour, terrain, espace adapte), sans salle.",
+              "  N'affirme JAMAIS qu'un lieu public est disponible ou autorise."]
+    else:
+        L += ["- Saison non precisee : reste neutre sur le lieu (salle ou exterieur selon la periode)."]
+    return "\n".join(L)
+
+
+def v614_controle_brouillon(texte, contexte: dict, sit: dict) -> list:
+    """Brouillon hors V614 → validation. PURE."""
+    t = p3ai_sans_accents(texte or "").lower()
+    recu = p3ai_sans_accents(" ".join([(contexte or {}).get("body_text") or ""]
+                                      + [x.get("texte") or "" for x in (contexte or {}).get("fil") or []])).lower()
+    motifs = []
+    if any(x in t for x in ("autorisation obtenue", "est autorise", "sont autorises", "avons l'autorisation",
+                            "le parc est disponible", "lieu est reserve", "j'ai reserve", "bewilligung erhalten")):
+        motifs.append("lieu ou autorisation non vérifiés")
+    for m in _V614_RE_DATE_BROUILLON.finditer(t):
+        if m.group(0).strip() not in recu and ("%s %s" % (m.group(1), m.group(2))) not in recu:
+            motifs.append("date inventée")
+            break
+    if (sit or {}).get("saison") == "hiver" and (sit or {}).get("salle_disponible") != "OUI" and \
+            any(x in t for x in ("dans votre salle", "dans vos locaux", "in ihrer halle", "in your hall")) and \
+            not any(x in t for x in ("si vous disposez", "disposez-vous", "avez-vous", "haben sie", "do you have")):
+        motifs.append("salle supposée")
+    return sorted(set(motifs))
+
+
+# --- V613 — TEMPS DE TRAJET ROUTIER AUTOMATIQUE (OpenStreetMap, gratuit, sans clé) ---------------
+# Géocodage : Nominatim (déjà utilisé par le champ d'adresse des offres). Itinéraire voiture : OSRM
+# (instance FOSSGIS routing.openstreetmap.de, secours router.project-osrm.org). Aucune clé, aucun
+# abonnement. Politique d'usage respectée : 1 requête/s vers Nominatim, User-Agent identifiant,
+# appels SEULEMENT quand un mercredi/dimanche hors canton NE est en jeu, et CACHE par ville.
+# Jamais de durée inventée : panne, ville introuvable ou réponse illisible → « À VÉRIFIER ».
+# OSRM ne connaît pas le trafic : entre 108 et 132 min (±10 % autour de 2 h) → « À VÉRIFIER ».
+V613_CACHE = "trajets_cache"
+V613_NEUCHATEL = (46.9895828, 6.9292641)      # Neuchâtel, coordonnées OpenStreetMap (Nominatim)
+V613_UA = {"User-Agent": "Afroboost/1.0 (afroboost.com; prospection)"}
+V613_NOMINATIM = "https://nominatim.openstreetmap.org/search"
+V613_OSRM = ("https://routing.openstreetmap.de/routed-car/route/v1/driving/",
+             "https://router.project-osrm.org/route/v1/driving/")
+V613_ZONE_GRISE = (108, 132)
+V613_TTL_OK_J = 180
+V613_TTL_INTROUVABLE_J = 30
+_V613_VERROU = None
+_V613_DERNIER = [0.0]
+
+
+def v613_cle_ville(ville) -> str:
+    return re.sub(r"\s+", " ", p3ai_sans_accents(ville or "").lower().strip())[:120]
+
+
+def v613_resultat(minutes, km=None, source="OpenStreetMap / OSRM") -> dict:
+    """Une durée MESURÉE → résultat. PURE. La zone grise reste à vérifier."""
+    m = int(round(float(minutes)))
+    return {"statut": "ok", "minutes": m, "km": (round(float(km)) if km is not None else None), "source": source,
+            "incertain": V613_ZONE_GRISE[0] <= m <= V613_ZONE_GRISE[1]}
+
+
+async def _v613_get_json(url: str):
+    import httpx
+    async with httpx.AsyncClient(timeout=8.0, headers=V613_UA) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        return r.json()
+
+
+async def v613_calculer(ville: str, get_json=None) -> dict:
+    """Géocode puis calcule l'itinéraire voiture depuis Neuchâtel. Ne lève jamais."""
+    import asyncio as _aio
+    global _V613_VERROU
+    lire = get_json or _v613_get_json
+    if _V613_VERROU is None:
+        _V613_VERROU = _aio.Lock()
+    try:
+        async with _V613_VERROU:     # 1 requête/s vers Nominatim, tous dossiers confondus
+            import time as _t613
+            attente = 1.1 - (_t613.monotonic() - _V613_DERNIER[0])
+            if attente > 0 and get_json is None:
+                await _aio.sleep(attente)
+            _V613_DERNIER[0] = _t613.monotonic()
+            geo = await lire(V613_NOMINATIM + "?" + urllib.parse.urlencode({"q": ville, "format": "json", "limit": 1,
+                                                               "countrycodes": "ch,fr,de,it,at"}))
+    except Exception as e:  # noqa: BLE001
+        return {"statut": "indisponible", "minutes": None, "raison": "geocodage : " + type(e).__name__}
+    if not isinstance(geo, list) or not geo:
+        return {"statut": "introuvable", "minutes": None, "raison": "ville introuvable"}
+    try:
+        lat, lon = float(geo[0]["lat"]), float(geo[0]["lon"])
+    except (KeyError, TypeError, ValueError):
+        return {"statut": "indisponible", "minutes": None, "raison": "geocodage illisible"}
+    for base in V613_OSRM:
+        try:
+            d = await lire(base + "%f,%f;%f,%f?overview=false" % (V613_NEUCHATEL[1], V613_NEUCHATEL[0], lon, lat))
+            route = (d or {}).get("routes") or []
+            if (d or {}).get("code") not in (None, "Ok") or not route:
+                continue
+            duree = float(route[0]["duration"])
+            if duree <= 0:
+                continue
+            return dict(v613_resultat(duree / 60, float(route[0].get("distance") or 0) / 1000),
+                        lieu=str(geo[0].get("display_name") or "")[:120], lat=lat, lon=lon)
+        except Exception:  # noqa: BLE001
+            continue
+    return {"statut": "indisponible", "minutes": None, "raison": "itineraire indisponible"}
+
+
+async def v613_trajet_auto(ville: str, get_json=None, base=None, forcer: bool = False, maintenant=None) -> dict:
+    """Trajet routier ALLER Neuchâtel → ville, avec CACHE. Ne lève jamais ; jamais de durée inventée."""
+    cle = v613_cle_ville(ville)
+    if not cle:
+        return {"statut": "inconnu", "minutes": None, "raison": "ville inconnue"}
+    if v611_est_neuchatel(ville):
+        return {"statut": "ok", "minutes": 0, "source": "canton de Neuchatel", "incertain": False}
+    b = base if base is not None else db
+    now = maintenant or datetime.now(timezone.utc)
+    try:
+        cache = None if forcer else await b[V613_CACHE].find_one({"_id": cle})
+    except Exception:  # noqa: BLE001
+        cache = None
+    if cache and (cache.get("expire_le") or "") > now.isoformat():
+        return dict({k: v for k, v in cache.items() if k not in ("_id",)}, depuis_cache=True)
+    r = await v613_calculer(ville, get_json)
+    if r["statut"] in ("ok", "introuvable"):
+        ttl = V613_TTL_OK_J if r["statut"] == "ok" else V613_TTL_INTROUVABLE_J
+        doc = dict(r, ville=ville, calcule_le=now.isoformat(), expire_le=(now + timedelta(days=ttl)).isoformat())
+        try:
+            await b[V613_CACHE].update_one({"_id": cle}, {"$set": doc}, upsert=True)
+        except Exception:  # noqa: BLE001
+            pass
+    return dict(r, depuis_cache=False)
+
+
+def v613_trajet_utile(contexte: dict, fiches=None, ville="") -> bool:
+    """Faut-il calculer un trajet ? Seulement si un mercredi/dimanche est évoqué, hors canton NE,
+    et sans durée déjà posée sur la fiche. PURE — c'est ce qui limite les appels externes."""
+    if not ville or v611_est_neuchatel(ville):
+        return False
+    if v612_trajet(fiches, ville)["connu"]:
+        return False
+    return any(x["jour"] in V612_JOURS_CONTRAINTS for x in v612_creneaux((contexte or {}).get("body_text")))
+
+
 def p3ai_invite(contexte: dict) -> str:
     """L'invite envoyee au modele. PURE, et volontairement etroite.
 
@@ -32582,8 +33159,8 @@ def p3ai_invite(contexte: dict) -> str:
                               if n.get("status_after") else "")
         for n in c.get("notes") or [])
     return "\n".join([
-        "Tu assistes Bassi, fondateur d'Afroboost (cardio-danse afro avec casques",
-        "audio silencieux, base en Suisse). Il demarche des partenaires par e-mail.",
+        "Tu assistes Coach Bassi, d'Afroboost (cardio-danse afro, aussi en version",
+        "Silent avec casques audio, base a Neuchatel en Suisse). Il demarche des partenaires par e-mail.",
         "",
         "UN partenaire vient de repondre. Analyse SA reponse, et rien d'autre.",
         "",
@@ -32591,10 +33168,19 @@ def p3ai_invite(contexte: dict) -> str:
         "ADRESSE : %s" % (c.get("from_email") or ""),
         "OBJET : %s" % (c.get("subject") or ""),
         "",
-        "MESSAGE RECU (c'est le seul texte du partenaire) :",
+        # V611 — LE FIL COMPLET : ce qu'Afroboost a deja ecrit, ce que le partenaire a deja dit.
+        ("FIL PRECEDENT (du plus ancien au plus recent) :\n" + "\n".join(
+            "- %s, %s : %s" % ((x.get("quand") or "")[:10],
+                               "AFROBOOST" if x.get("de") == "afroboost" else "PARTENAIRE",
+                               " ".join((x.get("texte") or "").split())[:700])
+            for x in (c.get("fil") or []))) if c.get("fil") else "FIL PRECEDENT : (premier echange apres notre premier message)",
+        "",
+        "MESSAGE RECU (le dernier message du partenaire, auquel tu reponds) :",
         "\"\"\"",
         c.get("body_text") or "",
         "\"\"\"",
+        "",
+        v611_bloc_invite(c.get("contexte_commercial") or {}),
         "",
         # AI-P3 — LA HIERARCHIE DES SOURCES EST DITE, PAS SUPPOSEE.
         # Les notes decrivent ce que Bassi a REELLEMENT fait ; le message recu
@@ -32620,7 +33206,7 @@ def p3ai_invite(contexte: dict) -> str:
         "3. Si une information manque, propose un echange plutot que de la deviner.",
         "4. Reste court : 120 mots maximum, ton professionnel et chaleureux.",
         "5. Ne repete pas tout le concept si le partenaire le connait deja.",
-        "6. Signe « Bassi » puis « Afroboost », sans coordonnees inventees.",
+        "6. Signe « Coach Bassi » puis « Afroboost », sans coordonnees inventees.",
         "7. Si une action figure deja dans « ce que Bassi a fait », NE LA",
         "   REPROPOSE JAMAIS, ni a la premiere personne (« je vais appeler »),",
         "   ni comme conseil. Elle est FAITE. Enchaine sur la suite.",
@@ -32677,7 +33263,10 @@ def p3ai_brouillon_depuis(contexte: dict, sortie: dict, viewer: str,
     s = sortie or {}
     reponse = str(s.get("reponse_proposee") or "")[:P3AI_REPONSE_MAX]
     sensibles = sorted(set(p3ai_sujets_sensibles(c.get("body_text"))
-                           + p3ai_sujets_sensibles(reponse)))
+                           + p3ai_sujets_sensibles(reponse)
+                           + v611_controle_brouillon(reponse, c, c.get("contexte_commercial") or {})
+                           + v612_controle_brouillon(reponse, (c.get("contexte_commercial") or {}).get("agenda") or {})
+                           + v614_controle_brouillon(reponse, c, (c.get("contexte_commercial") or {}).get("situation") or {})))
     return {
         "id": str(uuid.uuid4()),
         "inbound_id": c.get("inbound_id") or "",
@@ -32701,6 +33290,7 @@ def p3ai_brouillon_depuis(contexte: dict, sortie: dict, viewer: str,
         # ne bouge pas. Un envoi est irreversible : on doit pouvoir relire plus
         # tard qui a ecrit quoi, sans avoir a le deviner.
         "texte_modele": reponse,
+        "contexte_commercial": c.get("contexte_commercial") or {},   # V611 : rapport interne
         "validation_requise": bool(sensibles),
         "motifs_validation": sensibles,
         "ton": ton if ton in P3AI_TONS else "",
@@ -32769,6 +33359,33 @@ async def p3ai_notes_de(action_id: str, plafond: int = 50) -> list:
         return []
 
 
+async def v611_fil(message: dict, action: dict, plafond: int = 20) -> list:
+    """V611 — les échanges PRÉCÉDENTS de CE dossier (même action) : messages du partenaire
+    et réponses Afroboost envoyées. Lecture seule ; une panne rend une liste vide."""
+    aid = (action or {}).get("id") or (message or {}).get("action_id")
+    if not aid:
+        return []
+    fil = []
+    try:
+        anciens = await db[P3U2_COLLECTION].find(
+            {"action_id": aid, "id": {"$ne": message.get("id")}},
+            {"_id": 0, "id": 1, "body_text": 1, "received_at": 1}).to_list(plafond)
+        for m in anciens:
+            if (m.get("received_at") or "") <= (message.get("received_at") or "9999"):
+                fil.append({"de": "partenaire", "quand": m.get("received_at") or "",
+                            "texte": (m.get("body_text") or "")[:1500]})
+        envois = await db[P3AI4_COLLECTION].find(
+            {"action_id": aid, "send_status": P3AI4_ENVOYE},
+            {"_id": 0, "approved_text": 1, "sent_at": 1, "created_at": 1}).to_list(plafond)
+        for e in envois:
+            fil.append({"de": "afroboost", "quand": e.get("sent_at") or e.get("created_at") or "",
+                        "texte": (e.get("approved_text") or "")[:1500]})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s fil illisible (%s)", P3AI_PREFIXE, type(e).__name__)
+        return []
+    return sorted(fil, key=lambda x: x.get("quand") or "")
+
+
 async def p3ai_dossier(inbound_id: str, email: str) -> dict:
     """Le message, son action et ses fiches — pour CE message uniquement.
 
@@ -32832,6 +33449,14 @@ async def p3ai_analyser(inbound_id: str, request: Request):
         (await db[P3AI_BROUILLONS].find_one({"inbound_id": message["id"]},
                                             {"_id": 0, "intention": 1}) or {}).get("intention"))
     contexte = p3ai_contexte(message, action, dossier["fiches"], notes, _statut)
+    contexte["fil"] = await v611_fil(message, action)
+    _ville = next((f.get("city") for f in dossier["fiches"] if (f.get("city") or "").strip()), "") or ""
+    if v613_trajet_utile(contexte, dossier["fiches"], _ville):        # V613
+        try:
+            contexte["trajet_auto"] = await asyncio.wait_for(v613_trajet_auto(_ville), timeout=15)
+        except Exception:  # noqa: BLE001
+            contexte["trajet_auto"] = {"statut": "indisponible", "minutes": None}
+    contexte["contexte_commercial"] = v611_contexte_commercial(contexte, dossier["fiches"])
 
     precedent = await db[P3AI_BROUILLONS].find_one(
         {"inbound_id": message["id"]}, {"_id": 0}) or {}
@@ -32857,6 +33482,21 @@ async def p3ai_analyser(inbound_id: str, request: Request):
                 (message["id"] or "")[:8], brouillon["intention"], email[:24])
     return {"brouillon": brouillon, "contexte_organisation": contexte["organisation"],
             "lu": bool(message.get(P3AI_CHAMP_LU))}
+
+
+@api_router.get("/admin/trajet")
+async def v613_route_trajet(request: Request, ville: str = "", rafraichir: int = 0):
+    """V613 — Super-admin : trajet routier Neuchâtel → ville (cache, ou recalcul avec `rafraichir=1`)."""
+    from api.routes.shared import super_admin_signe as _v613_sa
+    if not _v613_sa(request):
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    if not (ville or "").strip() or len(ville) > 120:
+        raise HTTPException(status_code=400, detail="Paramètre `ville` requis (120 caractères max)")
+    r = await v613_trajet_auto(ville.strip(), forcer=bool(rafraichir))
+    t = v612_trajet([], ville, r)
+    r["trajet_ok_2h"] = ("A VERIFIER" if (not t["connu"] or t.get("incertain")) else
+                         ("OUI" if t["minutes"] <= V612_TRAJET_MAX_MIN else "NON"))
+    return r
 
 
 @api_router.get("/prospect-inbound/{inbound_id}/brouillon")
@@ -51214,6 +51854,11 @@ async def update_platform_settings(request: Request):
         {"$set": update_fields},
         upsert=True
     )
+    if "saison_active" in update_fields:      # V615 : lieux et cours suivent la saison
+        try:
+            logger.info("[SAISON] V615 bascule : %s", await v615_appliquer_saison(update_fields["saison_active"]))
+        except Exception as _e615:  # noqa: BLE001
+            logger.warning("[SAISON] V615 bascule impossible (%s)", type(_e615).__name__)
     
     # Récupérer les settings mis à jour
     settings = await db.platform_settings.find_one({"_id": "global"})
@@ -52256,13 +52901,14 @@ V197B_DEFAULT_QUICK_REPLIES = [
         "emoji": "📅",
         "label": "Cours & horaires",
         "response": (
+            # V615 : adresse et horaires officiels
             "Voici nos cours actuels :\n\n"
-            "🔥 **Afroboost Silent – Sunday Vibes**\n"
+            "🔥 **Afroboost – mercredi**\n"
+            "Mercredi à 18h45\n"
+            "Chemin des Valangines 97, 2000 Neuchâtel\n\n"
+            "🌅 **Afroboost – dimanche**\n"
             "Dimanche à 18h30\n"
-            "Rue des Vallangines 97, Neuchâtel\n\n"
-            "🌅 **Afroboost Silent – Session Cardio**\n"
-            "Mercredi à 18h30\n"
-            "Rue des Vallangines 97, Neuchâtel\n\n"
+            "Chemin des Valangines 97, 2000 Neuchâtel\n\n"
             "Les séances durent environ 1h. Ambiance garantie ! 💃🎧\n\n"
             "Tu veux réserver une séance ?"
         ),
@@ -52304,7 +52950,7 @@ V197B_DEFAULT_QUICK_REPLIES = [
             "Tu peux nous joindre de plusieurs façons :\n\n"
             "📱 **WhatsApp** : +41 76 520 33 63\n"
             "📧 **Email** : contact.artboost@gmail.com\n"
-            "📍 **Cours** : Rue des Vallangines 97, 2000 Neuchâtel\n"
+            "📍 **Cours** : Chemin des Valangines 97, 2000 Neuchâtel\n"
             "📸 **Instagram** : @afroboost\n\n"
             "Ou clique sur le bouton ci-dessous pour parler directement à Coach Bassi !"
         ),

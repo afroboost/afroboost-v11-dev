@@ -1692,7 +1692,7 @@ const VISITOR_QUICK_REPLIES = [
     emoji: '📅',
     icon: 'calendar', // V299
     label: 'Cours & horaires',
-    response: "Voici nos cours actuels :\n\n🔥 **Afroboost Silent – Sunday Vibes**\nDimanche à 18h30\nRue des Vallangines 97, Neuchâtel\n\n🌅 **Afroboost Silent – Session Cardio**\nMercredi à 18h30\nRue des Vallangines 97, Neuchâtel\n\nLes séances durent environ 1h. Ambiance garantie ! 💃🎧\n\nTu veux réserver une séance ?"
+    response: "Voici nos cours actuels :\n\n🔥 **Afroboost – mercredi**\nMercredi à 18h45\nChemin des Valangines 97, 2000 Neuchâtel\n\n🌅 **Afroboost – dimanche**\nDimanche à 18h30\nChemin des Valangines 97, 2000 Neuchâtel\n\nLes séances durent environ 1h. Ambiance garantie ! 💃🎧\n\nTu veux réserver une séance ?"
   },
   {
     id: 'prix_abonnements',
@@ -1713,7 +1713,7 @@ const VISITOR_QUICK_REPLIES = [
     emoji: '📞',
     icon: 'phone', // V299
     label: 'Contact',
-    response: "Tu peux nous joindre de plusieurs façons :\n\n📱 **WhatsApp** : +41 76 520 33 63\n📧 **Email** : contact.artboost@gmail.com\n📍 **Cours** : Rue des Vallangines 97, 2000 Neuchâtel\n📸 **Instagram** : @afroboost\n\nOu clique sur le bouton ci-dessous pour parler directement à Coach Bassi !"
+    response: "Tu peux nous joindre de plusieurs façons :\n\n📱 **WhatsApp** : +41 76 520 33 63\n📧 **Email** : contact.artboost@gmail.com\n📍 **Cours** : Chemin des Valangines 97, 2000 Neuchâtel\n📸 **Instagram** : @afroboost\n\nOu clique sur le bouton ci-dessous pour parler directement à Coach Bassi !"
   },
   {
     id: 'devenir_coach',

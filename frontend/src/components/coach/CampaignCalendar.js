@@ -122,7 +122,10 @@ export default function CampaignCalendar({
      fourni (le gestionnaire y propose le choix Campagne / Invitation) ; sinon,
      comportement strictement inchangé : `onDayClick(aujourd'hui)`. Le clic sur
      un JOUR, lui, ne passe jamais par ici. */
-  onCreer
+  onCreer,
+  /* V616 — le gestionnaire de campagnes porte désormais « + Créer » dans son
+     propre en-tête ; seul le calendrier autonome garde ici son bouton. */
+  boutonCreer = true
 }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [vue, setVue] = useState('mois');
@@ -130,6 +133,7 @@ export default function CampaignCalendar({
   const [dragge, setDragge] = useState(null);
   const [dragOverDay, setDragOverDay] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [filtresOuverts, setFiltresOuverts] = useState(false);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -216,6 +220,8 @@ export default function CampaignCalendar({
     setDragge(null); setDragOverDay(null);
   };
 
+  const cible = { minHeight: '44px', minWidth: '44px', padding: 0,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
   const boutonBase = {
     background: `rgba(${RGB}, 0.2)`, border: `1px solid rgba(${RGB}, 0.35)`,
     color: '#fff', borderRadius: '8px', padding: '6px 10px', fontSize: '13px',
@@ -229,56 +235,90 @@ export default function CampaignCalendar({
                boxSizing: 'border-box', width: '100%', maxWidth: '100%', overflow: 'hidden' }}
       onClick={() => setContextMenu(null)}>
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px',
-                      flex: '1 1 auto', minWidth: 0, justifyContent: 'center' }}>
-          <button type="button" aria-label="Période précédente" onClick={() => decaler(-1)}
-                  style={boutonBase}><SvgIcon name="arrowLeft" size={14} /></button>
-          <div style={{ textAlign: 'center', minWidth: 0 }}>
-            <div data-testid="periode"
-                 style={{ color: '#fff', fontWeight: 600, fontSize: '14px', whiteSpace: 'nowrap',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
-              <SvgIcon name="calendar" size={14} />{titrePeriode}
-            </div>
-            {stats.total > 0 && (
-              <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginTop: '2px' }}>
-                {stats.total} élément{stats.total > 1 ? 's' : ''}
-              </div>
-            )}
+      {/* V616 — EN-TÊTE COMPACT : « Octobre 2026 [<] [Aujourd'hui] [>] », puis
+          Jour / Semaine / Mois en segment. Les catégories se replient derrière
+          « Filtrer » sur téléphone ; sur ordinateur elles restent visibles. */}
+      <style>{`
+        .v616-cal-filtres::-webkit-scrollbar { display: none; }
+        @media (max-width: 639px) {
+          .v616-cal-filtres:not(.ouvert) { display: none !important; }
+        }
+        @media (min-width: 640px) {
+          .v616-cal-filtrer { display: none !important; }
+        }
+      `}</style>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '8px', padding: '4px 4px 0' }}>
+        <div style={{ minWidth: 0, flex: '1 1 auto' }}>
+          <div data-testid="periode"
+               style={{ color: '#fff', fontWeight: 700, fontSize: '15px', whiteSpace: 'nowrap',
+                        overflow: 'hidden', textOverflow: 'ellipsis',
+                        display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <SvgIcon name="calendar" size={15} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{titrePeriode}</span>
           </div>
-          <button type="button" onClick={() => setCurrentDate(new Date())}
-                  style={{ ...boutonBase, padding: '5px 8px', fontSize: '11px',
-                           background: `rgba(${RGB}, 0.15)`, color: PRIMAIRE }}>Auj.</button>
+          {stats.total > 0 && (
+            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', marginTop: '1px' }}>
+              {stats.total} élément{stats.total > 1 ? 's' : ''}
+            </div>
+          )}
+        </div>
+        <button type="button" aria-label="Période précédente" onClick={() => decaler(-1)}
+                style={{ ...boutonBase, ...cible }}><SvgIcon name="arrowLeft" size={15} /></button>
+        <button type="button" data-testid="aujourdhui" onClick={() => setCurrentDate(new Date())}
+                style={{ ...boutonBase, minHeight: '44px', padding: '0 8px', fontSize: '12px',
+                         background: 'transparent', color: '#fff' }}>Aujourd’hui</button>
+        <button type="button" aria-label="Période suivante" onClick={() => decaler(1)}
+                style={{ ...boutonBase, ...cible }}><SvgIcon name="arrowRight" size={15} /></button>
+        {boutonCreer && (
           <button type="button" data-testid="creer"
                   onClick={() => (onCreer ? onCreer(iso(new Date())) : onDayClick?.(iso(new Date())))}
-                  style={{ ...boutonBase, background: PRIMAIRE, border: 'none',
-                           fontSize: '11px', padding: '5px 10px', fontWeight: 600,
+                  style={{ ...boutonBase, minHeight: '44px', background: PRIMAIRE, border: 'none',
+                           fontSize: '12px', padding: '0 12px', fontWeight: 600,
                            whiteSpace: 'nowrap' }}>+ Créer</button>
-          <button type="button" aria-label="Période suivante" onClick={() => decaler(1)}
-                  style={boutonBase}><SvgIcon name="arrowRight" size={14} /></button>
-        </div>
+        )}
       </div>
 
-      {/* Vues et filtres — une seule page, plusieurs lectures. */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px',
-                    alignItems: 'center' }}>
-        {VUES.map((v) => (
-          <button key={v.cle} type="button" data-testid={`vue-${v.cle}`}
-                  onClick={() => setVue(v.cle)}
-                  style={{ ...boutonBase, padding: '4px 10px', fontSize: '11px',
-                           background: vue === v.cle ? PRIMAIRE : `rgba(${RGB}, 0.12)`,
-                           fontWeight: vue === v.cle ? 700 : 400 }}>{v.libelle}</button>
-        ))}
+      <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', alignItems: 'center', padding: '0 4px' }}>
+        <div role="group" aria-label="Affichage" data-testid="vues"
+             style={{ display: 'inline-flex', padding: '3px', gap: '2px', borderRadius: '10px',
+                      background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}>
+          {VUES.map((v) => (
+            <button key={v.cle} type="button" data-testid={`vue-${v.cle}`}
+                    aria-pressed={vue === v.cle}
+                    onClick={() => setVue(v.cle)}
+                    style={{ border: 'none', cursor: 'pointer', borderRadius: '8px', minHeight: '38px',
+                             padding: '0 12px', fontSize: '12px', color: '#fff',
+                             background: vue === v.cle ? PRIMAIRE : 'transparent',
+                             fontWeight: vue === v.cle ? 700 : 500 }}>{v.libelle}</button>
+          ))}
+        </div>
         <span style={{ flex: '1 1 auto' }} />
+        <button type="button" className="v616-cal-filtrer" data-testid="calendrier-filtrer"
+                aria-expanded={filtresOuverts} aria-label="Filtrer le calendrier"
+                onClick={() => setFiltresOuverts((o) => !o)}
+                style={{ ...boutonBase, minHeight: '44px', padding: '0 12px', fontSize: '12px',
+                         display: 'inline-flex', alignItems: 'center', gap: '6px',
+                         background: filtre ? `rgba(${RGB}, 0.35)` : 'transparent' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+               strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 5h18M6 12h12M10 19h4" /></svg>
+          {filtre ? (TYPES[filtre] || TYPE_DEFAUT).libelle : 'Filtrer'}
+        </button>
+      </div>
+
+      <div className={`v616-cal-filtres${filtresOuverts ? ' ouvert' : ''}`} data-testid="calendrier-filtres"
+           style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px', padding: '0 4px' }}>
         <button type="button" data-testid="filtre-tout" onClick={() => setFiltre('')}
-                style={{ ...boutonBase, padding: '4px 10px', fontSize: '11px',
+                aria-pressed={filtre === ''}
+                style={{ ...boutonBase, padding: '4px 10px', fontSize: '11px', minHeight: '34px',
                          background: filtre === '' ? PRIMAIRE : `rgba(${RGB}, 0.12)` }}>Tout</button>
         {Object.entries(TYPES).map(([cle, val]) => (
           <button key={cle} type="button" data-testid={`filtre-${cle}`}
+                  aria-pressed={filtre === cle}
                   onClick={() => setFiltre(cle)}
-                  style={{ ...boutonBase, padding: '4px 10px', fontSize: '11px',
+                  style={{ ...boutonBase, padding: '4px 10px', fontSize: '11px', minHeight: '34px',
+                           display: 'inline-flex', alignItems: 'center', gap: '6px',
                            background: filtre === cle ? val.teinte : `rgba(${RGB}, 0.12)` }}>
+            <span aria-hidden="true" style={{ width: '7px', height: '7px', borderRadius: '50%', background: val.teinte }} />
             {val.libelle}
           </button>
         ))}

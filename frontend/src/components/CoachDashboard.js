@@ -34,6 +34,7 @@ import MesInvitations from "./coach/MesInvitations"; // V610e : modifier ses inv
 import ModerationTemoignages from "./coach/ModerationTemoignages"; // ESSAI-5a-2
 import MessagesWhatsApp from "./coach/MessagesWhatsApp"; // V411
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
+import InvitationModal from "./coach/InvitationModal"; // V616 : onglet « Invitation & Parrainage » (même modale, aucun changement métier)
 import EspaceCreateur from './createur/EspaceCreateur'; // V559 — Programme Créateur (même écran que l'abonné)
 import CRMSection from "./coach/CRMSection"; // v9.2.0 Import CRM Section
 import SmartLinksSection from "./coach/SmartLinksSection"; // v98: Liens Intelligents
@@ -4812,6 +4813,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // il est simplement redirigé ici. Aucune donnée ne bouge, ProspectsSection est
   // monté tel quel. Dépendance = la CHAÎNE `tab` (règle anti-boucle V305).
   const [campagnesMode, setCampagnesMode] = useState('clients');
+  // V616 : le 3e onglet de Campagnes ouvre la MÊME modale Invitation & Parrainage (V607/V610 inchangés).
+  const [v616Invitation, setV616Invitation] = useState(false);
   // V587c — état du cockpit Prospection : UNE seule source de vérité (voir le hook).
   const p3Cockpit = useCockpitProspection();
   useEffect(() => {
@@ -7179,13 +7182,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               : `${coachVitrineUrl || window.location.origin}?t=${Date.now()}`;
             window.open(finalUrl, '_blank');
           }}
-          className="flex items-center gap-1 px-3 py-2 rounded-lg text-white text-xs font-medium shadow-lg"
+          className="flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-white text-xs font-medium shadow-lg min-w-[44px] min-h-[44px]"
           style={{
             background: 'rgba(139, 92, 246, 0.85)',
             border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.6)',
             backdropFilter: 'blur(8px)'
           }}
           title="Voir ma vitrine publique"
+          aria-label="Vue Visiteur"
           data-testid="coach-visitor-preview-fixed"
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -7193,26 +7197,29 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             <polyline points="15 3 21 3 21 9"></polyline>
             <line x1="10" y1="14" x2="21" y2="3"></line>
           </svg>
-          Vue Visiteur
+          <span className="hidden sm:inline">Vue Visiteur</span>
         </button>
         <button
           onClick={handleSecureLogout}
-          className="flex items-center gap-1 px-3 py-2 rounded-lg text-white text-xs font-medium shadow-lg"
+          className="flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-white text-xs font-medium shadow-lg min-w-[44px] min-h-[44px]"
           style={{
             background: 'rgba(239, 68, 68, 0.9)',
             border: '1px solid rgba(239, 68, 68, 0.8)',
             backdropFilter: 'blur(8px)'
           }}
+          aria-label="Déconnexion"
+          title="Déconnexion"
           data-testid="coach-logout-fixed"
         >
-          <SvgIcon name="logout" size={14} /> Déconnexion
+          <SvgIcon name="logout" size={14} /> <span className="hidden sm:inline">Déconnexion</span>
         </button>
       </div>
       
       {/* v10.6: BOUTON RETOUR - Icône flèche en haut à gauche */}
       <button 
         onClick={onBack}
-        className="flex items-center justify-center w-10 h-10 rounded-full transition-all hover:scale-110"
+        className="flex items-center justify-center w-11 h-11 rounded-full transition-all hover:scale-110"
+        aria-label="Retour"
         style={{ 
           position: 'fixed',
           top: '12px',
@@ -7232,10 +7239,22 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
       {/* V145: Container principal — mobile width fix */}
       <div className="max-w-6xl mx-auto" style={{ paddingTop: '60px', paddingBottom: '100px', paddingLeft: '4px', paddingRight: '4px', overflowX: 'hidden', minHeight: '100vh', width: '100%', boxSizing: 'border-box' }}>
-        <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
+        {/* V616 — en-tête compact sur téléphone (mêmes fonctions, moins de hauteur) */}
+        <style>{`
+          .v616-onglets::-webkit-scrollbar { display: none; }
+          @media (max-width: 639px) {
+            /* trois onglets égaux, libellé sur deux lignes si besoin : rien n'est coupé */
+            .v616-onglets > button { flex: 1 1 0 !important; padding: 4px 6px !important; font-size: 13px !important;
+                                     white-space: normal !important; line-height: 1.15; text-align: center; }
+            .v616-onglets > button > svg { display: none; }
+            [data-testid="coach-nav"] { margin-bottom: 10px !important; }
+            [data-testid="c17j-notifications"] { margin-bottom: 12px !important; }
+          }
+        `}</style>
+        <div className="flex justify-between items-start mb-3 sm:mb-6 flex-wrap gap-2 sm:gap-4">
           <div className="flex-1 min-w-0">
             {/* v9.1.3: Marque blanche - Affiche platform_name ou "Mon Espace Afroboost" */}
-            <h1 className="font-bold text-white text-2xl" data-testid="dashboard-title">
+            <h1 className="font-bold text-white text-xl sm:text-2xl" data-testid="dashboard-title">
               {dashboardTitle}
             </h1>
             {/* Affichage de l'utilisateur connecté via Google OAuth */}
@@ -7269,8 +7288,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     </svg>
                   </button>
                 )}
-                <span className="text-white/60 text-sm">
-                  Connecté en tant que <span className="text-purple-400">{coachUser.email}</span>
+                <span className="text-white/60 text-sm" style={{ minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span className="hidden sm:inline">Connecté en tant que </span><span className="text-purple-400">{coachUser.email}</span>
                 </span>
                 {/* V311g : preuve visible que la session possède un vrai jeton signé */}
                 <SessionSecureBadge />
@@ -7636,14 +7655,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             coach, jamais de dashboard casse. */}
         {!c17jIndisponible && (
           <div style={{ marginBottom: '20px' }} data-testid="c17j-notifications">
+            {/* V616 — une seule ligne : « Notifications » + (si besoin) « Activer ». */}
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'stretch' }}>
             <button
               type="button"
               onClick={() => { const o = !c17jOuvert; setC17jOuvert(o); if (o) c17jCharger(); }}
               aria-expanded={c17jOuvert}
               data-testid="c17j-toggle"
               style={{
-                width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
-                padding: '10px 14px', borderRadius: '10px',
+                flex: '1 1 auto', minWidth: 0, minHeight: '44px', display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '8px 14px', borderRadius: '10px',
                 background: c17jNonLues > 0
                   ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)'
                   : 'rgba(255,255,255,0.04)',
@@ -7676,6 +7697,27 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 <polyline points="6 9 12 15 18 9" />
               </svg>
             </button>
+            {p1EtatPush === 'default' && (
+              <button
+                type="button"
+                onClick={p1Activer}
+                disabled={p1Occupe}
+                data-testid="p1-push-activer"
+                title="Soyez prévenu dès qu'une place est réservée."
+                aria-label="Activer les notifications — soyez prévenu dès qu'une place est réservée"
+                style={{
+                  flexShrink: 0, minHeight: '44px',
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  background: 'var(--primary-color, #D91CD2)', color: '#fff',
+                  border: 'none', borderRadius: '10px', padding: '0 14px',
+                  fontSize: '13px', fontWeight: 700,
+                  cursor: p1Occupe ? 'wait' : 'pointer', opacity: p1Occupe ? 0.6 : 1
+                }}>
+                <SvgIcon name="bell" size={14} />
+                {p1Occupe ? 'Activation…' : 'Activer'}
+              </button>
+            )}
+            </div>
 
             {/* P1-d — L'ETAT DU PUSH, DIT PLUTOT QUE SUBI.
                 Avant, un navigateur qui bloquait les notifications produisait un
@@ -7700,34 +7742,6 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 </span>
               </div>
             )}
-            {p1EtatPush === 'default' && (
-              <div data-testid="p1-push-a-activer" style={{
-                marginTop: '6px', padding: '12px 14px', borderRadius: '12px',
-                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)',
-                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.28)',
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap'
-              }}>
-                <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: '12.5px', lineHeight: 1.45 }}>
-                  Soyez prévenu dès qu'une place est réservée.
-                </span>
-                <button
-                  type="button"
-                  onClick={p1Activer}
-                  disabled={p1Occupe}
-                  data-testid="p1-push-activer"
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: '6px',
-                    background: 'var(--primary-color, #D91CD2)', color: '#fff',
-                    border: 'none', borderRadius: '10px', padding: '8px 14px',
-                    fontSize: '12.5px', fontWeight: 700,
-                    cursor: p1Occupe ? 'wait' : 'pointer', opacity: p1Occupe ? 0.6 : 1
-                  }}>
-                  <SvgIcon name="bell" size={14} />
-                  {p1Occupe ? 'Activation…' : 'Activer les notifications'}
-                </button>
-              </div>
-            )}
-
             {c17jOuvert && (
               <div style={{
                 marginTop: '6px', background: 'rgba(255,255,255,0.03)',
@@ -9032,32 +9046,43 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           </div>
         )}
 
-        {/* === CAMPAGNES : sélecteur CLIENTS | PROSPECTION (UI-1, V587) === */}
+        {/* === CAMPAGNES : CLIENTS | PROSPECTION | INVITATION & PARRAINAGE (UI-1 V587, V616) ===
+            V616 — une seule navigation. Le 3e onglet ouvre la modale Invitation & Parrainage
+            existante (plus de gros bloc séparé). Mobile : rangée compacte défilante. */}
         {tab === "campaigns" && (
           <div role="tablist" aria-label="Type de campagnes" data-testid="campagnes-mode"
-               style={{ display: 'flex', gap: '6px', padding: '4px', marginBottom: '14px',
-                        borderRadius: '12px', background: 'rgba(255,255,255,0.05)',
-                        border: '1px solid rgba(255,255,255,0.08)', maxWidth: '520px' }}>
+               className="v616-onglets"
+               style={{ display: 'flex', gap: '4px', padding: '4px', marginBottom: '12px',
+                        borderRadius: '14px', background: 'rgba(255,255,255,0.05)',
+                        border: '1px solid rgba(255,255,255,0.08)', maxWidth: '720px',
+                        overflowX: 'auto', scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
             {[
               { id: 'clients', label: 'Clients', icone: 'users' },
               { id: 'prospection', label: p3NonLues > 0 ? `Prospection (${p3NonLues})` : 'Prospection', icone: 'compass' },
+              { id: 'invitation', label: 'Invitation & Parrainage', icone: 'gift' },
             ].map(m => {
-              const actif = campagnesMode === m.id;
+              const actif = m.id === 'invitation' ? v616Invitation : (!v616Invitation && campagnesMode === m.id);
               return (
                 <button key={m.id} type="button" role="tab" aria-selected={actif}
                         data-testid={`campagnes-mode-${m.id}`}
-                        onClick={() => setCampagnesMode(m.id)}
-                        style={{ flex: 1, minWidth: 0, padding: '10px 12px', borderRadius: '9px',
+                        aria-haspopup={m.id === 'invitation' ? 'dialog' : undefined}
+                        onClick={() => (m.id === 'invitation' ? setV616Invitation(true) : setCampagnesMode(m.id))}
+                        style={{ flex: '1 0 auto', minHeight: '44px', padding: '0 14px', borderRadius: '10px',
                                  border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                 whiteSpace: 'nowrap',
                                  background: actif ? 'var(--primary-color, #D91CD2)' : 'transparent',
                                  color: actif ? '#fff' : 'rgba(255,255,255,0.75)' }}>
-                  <SvgIcon name={m.icone} size={14} />
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
+                  <SvgIcon name={m.icone} size={15} />
+                  <span>{m.label}</span>
                 </button>
               );
             })}
           </div>
+        )}
+        {tab === "campaigns" && (
+          <InvitationModal isOpen={v616Invitation} onClose={() => setV616Invitation(false)}
+                           API={API} dateInitiale={null} />
         )}
 
         {/* === PROSPECTION (P3-S2) — désormais le mode « Prospection » de Campagnes (UI-1) === */}
@@ -9142,6 +9167,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         )}
         {tab === "campaigns" && campagnesMode !== "prospection" && (
           <CampaignManager
+            // V616 : Invitation & Parrainage est un onglet ; le gros bloc module disparaît ici.
+            invitationViaOnglet
             // V560 : module « Créateur / Affiliation » — l'onglet Créateur n'existe que pour un partenaire.
             onOuvrirCreateur={co1Ids.includes("createur") ? () => setTab("createur") : null}
             // === ÉTATS PRINCIPAUX ===
