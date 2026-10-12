@@ -65,6 +65,10 @@ export default function TasksPanel({ API = '', taches = [], compteurs = {},
   const [priorite, setPriorite] = useState('normale');
   const [enCours, setEnCours] = useState(false);
   const [message, setMessage] = useState(null);
+  /* V616 — DIVULGATION PROGRESSIVE : 3 tâches d'abord, le reste sur demande ;
+     sur téléphone, les filtres se replient derrière « Filtrer ». */
+  const [toutes, setToutes] = useState(false);
+  const [filtresOuverts, setFiltresOuverts] = useState(false);
 
   const base = `${API}/api`;
 
@@ -116,6 +120,10 @@ export default function TasksPanel({ API = '', taches = [], compteurs = {},
     color: '#fff', borderRadius: '8px', padding: '4px 10px', fontSize: '11px',
     cursor: 'pointer', flexShrink: 0,
   };
+  const cible = { minHeight: '44px', minWidth: '44px' };
+  const aVenir = compteurs.a_venir != null ? compteurs.a_venir
+    : taches.filter((t) => t.status !== 'fait' && t.status !== 'annule').length;
+  const visibles = toutes ? taches : taches.slice(0, 3);
   const champ = {
     background: 'rgba(255,255,255,0.06)', border: `1px solid rgba(${RGB}, 0.3)`,
     color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '12px',
@@ -130,31 +138,56 @@ export default function TasksPanel({ API = '', taches = [], compteurs = {},
                   boxSizing: 'border-box', width: '100%', maxWidth: '100%',
                   overflow: 'hidden' }}>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px',
-                    flexWrap: 'wrap', marginBottom: '8px' }}>
-        <span style={{ fontSize: '13px', fontWeight: 700, color: '#fff',
-                       display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-          <SvgIcon name="clipboard" size={14} /> Tâches
+      <style>{`
+        .v616-taches-filtres::-webkit-scrollbar { display: none; }
+        @media (max-width: 639px) {
+          .v616-taches-filtres:not(.ouvert) { display: none !important; }
+        }
+        @media (min-width: 640px) {
+          .v616-taches-filtrer { display: none !important; }
+        }
+      `}</style>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: '#fff',
+                       display: 'inline-flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+          <SvgIcon name="clipboard" size={15} /> Tâches
+        </span>
+        <span data-testid="taches-a-venir"
+              style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', whiteSpace: 'nowrap',
+                       overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+          · {aVenir} à venir
         </span>
         {(compteurs.en_retard || 0) > 0 && (
           <span data-testid="compteur-retard"
-                style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
+                style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px', whiteSpace: 'nowrap',
                          background: TEINTE_PILE.en_retard, fontWeight: 600, color: '#fff' }}>
             {compteurs.en_retard} en retard
           </span>
         )}
         <span style={{ flex: '1 1 auto' }} />
+        <button type="button" className="v616-taches-filtrer" data-testid="taches-filtrer"
+                aria-expanded={filtresOuverts} onClick={() => setFiltresOuverts((o) => !o)}
+                aria-label="Filtrer les tâches"
+                style={{ ...bouton, ...cible, padding: '0 10px', display: 'inline-flex', alignItems: 'center', gap: '5px',
+                         background: pile ? `rgba(${RGB}, 0.35)` : 'transparent' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+               strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 5h18M6 12h12M10 19h4" /></svg>
+          {pile ? (PILES.find((x) => x.cle === pile) || {}).libelle : 'Filtrer'}
+        </button>
         <button type="button" data-testid="nouvelle-tache" onClick={ouvrir}
-                style={{ ...bouton, background: PRIMAIRE, border: 'none', fontWeight: 600 }}>
-          + Tâche
+                style={{ ...bouton, ...cible, padding: '0 12px', background: PRIMAIRE, border: 'none', fontWeight: 600 }}>
+          + Ajouter
         </button>
       </div>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+      <div className={`v616-taches-filtres${filtresOuverts ? ' ouvert' : ''}`}
+           style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', scrollbarWidth: 'none',
+                    gap: '6px', marginBottom: '8px' }}>
         {PILES.map((p) => (
           <button key={p.cle || 'toutes'} type="button" data-testid={`pile-${p.cle || 'toutes'}`}
-                  onClick={() => onChangerPile?.(p.cle)}
-                  style={{ ...bouton,
+                  onClick={() => { onChangerPile?.(p.cle); setToutes(false); }}
+                  aria-pressed={pile === p.cle}
+                  style={{ ...bouton, minHeight: '36px', whiteSpace: 'nowrap',
                            background: pile === p.cle ? PRIMAIRE : `rgba(${RGB}, 0.12)`,
                            fontWeight: pile === p.cle ? 700 : 400 }}>
             {p.libelle}{p.cle && compteurs[p.cle] ? ` (${compteurs[p.cle]})` : ''}
@@ -201,26 +234,37 @@ export default function TasksPanel({ API = '', taches = [], compteurs = {},
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-          {taches.map((t) => {
+          {visibles.map((t) => {
             const close = t.status === 'fait' || t.status === 'annule';
             return (
               <div key={t.id} data-testid="tache-ligne"
                    style={{ display: 'flex', alignItems: 'center', gap: '8px',
-                            padding: '6px 8px', borderRadius: '8px',
+                            minHeight: '44px', boxSizing: 'border-box',
+                            padding: '4px 10px 4px 4px', borderRadius: '10px',
                             background: 'rgba(255,255,255,0.05)',
-                            borderLeft: `3px solid ${TEINTE_PILE[t.bucket] || PRIMAIRE}`,
+                            /* V616 : bordure fine ; seule la couleur sémantique (retard, terminé) ressort */
+                            border: `1px solid ${TEINTE_PILE[t.bucket] || 'rgba(255,255,255,0.06)'}`,
                             opacity: close ? 0.6 : 1 }}>
                 <button type="button" data-testid="basculer-tache"
                         aria-label={close ? 'Rouvrir la tâche' : 'Terminer la tâche'}
                         onClick={() => changerStatut(t, close ? 'prevu' : 'fait')}
                         disabled={enCours}
-                        style={{ ...bouton, padding: '2px 7px' }}>
-                  {close ? '↺' : '✓'}
+                        style={{ ...bouton, ...cible, padding: 0, background: 'transparent', border: 'none',
+                                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {/* V616 : icônes SVG (règle du projet), cible tactile 44 px */}
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                       strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+                       style={{ color: close ? 'rgba(255,255,255,0.7)' : PRIMAIRE }}>
+                    {close
+                      ? <path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" />
+                      : <><rect x="3.5" y="3.5" width="17" height="17" rx="5" /><path d="M8 12.5l2.7 2.7L16 9.5" /></>}
+                  </svg>
                 </button>
-                <span style={{ fontSize: '12px', color: '#fff', flex: '1 1 auto',
+                <span style={{ fontSize: '13px', color: '#fff', flex: '1 1 auto',
                                minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
                                whiteSpace: 'nowrap',
-                               textDecoration: t.status === 'fait' ? 'line-through' : 'none' }}>
+                               textDecoration: t.status === 'fait' ? 'line-through' : 'none' }}
+                      title={t.title}>
                   {t.title}
                 </span>
                 {t.priority === 'haute' && (
@@ -233,6 +277,13 @@ export default function TasksPanel({ API = '', taches = [], compteurs = {},
               </div>
             );
           })}
+          {taches.length > 3 && (
+            <button type="button" data-testid="taches-voir-toutes" onClick={() => setToutes((v) => !v)}
+                    style={{ ...bouton, ...cible, alignSelf: 'flex-start', background: 'transparent', border: 'none',
+                             color: PRIMAIRE, fontWeight: 600, fontSize: '13px', padding: '0 6px' }}>
+              {toutes ? 'Réduire' : `Voir toutes les tâches (${taches.length})`}
+            </button>
+          )}
         </div>
       )}
     </div>

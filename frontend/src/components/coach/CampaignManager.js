@@ -147,6 +147,9 @@ const CampaignManager = ({
   campaignCreditCost = 1,
   // V560 : module « Créateur / Affiliation » (partenaires) — ouvre l'onglet Créateur.
   onOuvrirCreateur = null,
+  // V616 : dans le dashboard, « Invitation & Parrainage » est un ONGLET de Campagnes ;
+  // le gros bloc de modules n'est alors plus affiché (le composant autonome le garde).
+  invitationViaOnglet = false,
   // v16.3: Chat links pour CTA "Lier à une Conversation"
   chatLinks = [],
   // v18: Coach email for contacts sync
@@ -154,6 +157,13 @@ const CampaignManager = ({
 }) => {
   // v12: Modal state
   const [showModal, setShowModal] = useState(false);
+  // V616 — divulgation progressive : réglages dans « ⋯ », historique replié sur téléphone.
+  const [menuPlus, setMenuPlus] = useState(false);
+  const [historiqueOuvert, setHistoriqueOuvert] = useState(() => {
+    try { return !(window.matchMedia && window.matchMedia('(max-width: 639px)').matches); } catch (e) { return true; }
+  });
+  const [historiqueTout, setHistoriqueTout] = useState(false);
+  const [menuCarte, setMenuCarte] = useState(null);
   const [preSelectedDate, setPreSelectedDate] = useState(null);
 
   /* CAL-1 — LES AUTRES ÉVÉNEMENTS DU CALENDRIER.
@@ -507,6 +517,7 @@ const CampaignManager = ({
 
       {/* V560 — MODULES : le MÊME moteur Invitation & parrainage (et, pour un partenaire,
           le Programme Créateur). La page Campagnes elle-même ne change pas. */}
+      {!invitationViaOnglet && (
       <div data-testid="campagnes-modules" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '8px', marginBottom: '12px' }}>
         <button type="button" onClick={() => { setDateInvitation(null); setInvitationOuverte(true); }} data-testid="module-invitation"
                 style={{ minHeight: '44px', padding: '10px 12px', borderRadius: '10px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
@@ -521,39 +532,94 @@ const CampaignManager = ({
           </button>
         ) : null}
       </div>
+      )}
 
-      {/* V146: Header simplifié — responsive */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-        <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, margin: 0 }}><SvgIcon name="megaphone" size={16} /> Campagnes</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {/* Scheduler health badge */}
-          {(() => {
-            const isActive = schedulerHealth?.status === "active" && schedulerHealth?.last_run;
-            const lastRunDate = schedulerHealth?.last_run ? new Date(schedulerHealth.last_run) : null;
-            const diffSeconds = lastRunDate ? Math.floor((new Date() - lastRunDate) / 1000) : 999;
-            const isHealthy = isActive && diffSeconds < 60;
-            return (
-              <span style={{
-                display: 'inline-flex', alignItems: 'center', gap: '6px',
-                padding: '4px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 500,
-                background: isHealthy ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
-                border: `1px solid ${isHealthy ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
-                color: isHealthy ? '#4ade80' : '#f87171'
-              }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isHealthy ? '#22c55e' : '#ef4444' }} />
-                {isHealthy ? 'Automate actif' : 'Automate arrêté'}
-              </span>
-            );
-          })()}
+      {/* V616 — EN-TÊTE COMPACT : « Campagnes » + état de l'automate + « + Créer » + « ⋯ ».
+          Google Calendar, WhatsApp et Créateur vivent dans « ⋯ » (mêmes actions). */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '4px 4px 12px' }}>
+        <div style={{ minWidth: 0, flex: '1 1 auto', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+        <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 700, margin: 0, whiteSpace: 'nowrap',
+                     display: 'inline-flex', alignItems: 'center', gap: '8px' }}>Campagnes</h2>
+        {(() => {
+          const isActive = schedulerHealth?.status === "active" && schedulerHealth?.last_run;
+          const lastRunDate = schedulerHealth?.last_run ? new Date(schedulerHealth.last_run) : null;
+          const diffSeconds = lastRunDate ? Math.floor((new Date() - lastRunDate) / 1000) : 999;
+          const isHealthy = isActive && diffSeconds < 60;
+          return (
+            <span data-testid="automate-etat" title={isHealthy ? 'Automate actif' : 'Automate arrêté'}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', minWidth: 0,
+                           fontSize: '12px', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden',
+                           color: isHealthy ? '#4ade80' : '#f87171' }}>
+              <span style={{ width: '7px', height: '7px', borderRadius: '50%', flexShrink: 0,
+                             background: isHealthy ? '#22c55e' : '#ef4444' }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{isHealthy ? 'Automate actif' : 'Automate arrêté'}</span>
+            </span>
+          );
+        })()}
         </div>
+        <button type="button" data-testid="creer"
+                onClick={() => { const d = new Date(); setChoixCreer(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); }}
+                style={{ minHeight: '44px', padding: '0 14px', borderRadius: '12px', border: 'none', cursor: 'pointer',
+                         background: 'var(--primary-color, #D91CD2)', color: '#fff', fontSize: '14px', fontWeight: 700,
+                         whiteSpace: 'nowrap', flexShrink: 0 }}>+ Créer</button>
+        <button type="button" data-testid="campagnes-plus" aria-label="Plus d'options" aria-haspopup="dialog"
+                aria-expanded={menuPlus} onClick={() => setMenuPlus(true)}
+                style={{ width: '44px', height: '44px', borderRadius: '12px', cursor: 'pointer', flexShrink: 0,
+                         background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff',
+                         display: 'inline-flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" />
+          </svg>
+          {googleStatut && googleStatut.reconnect_required && (
+            <span aria-hidden="true" style={{ position: 'absolute', top: '8px', right: '8px', width: '8px', height: '8px',
+                                              borderRadius: '50%', background: '#f59e0b' }} />
+          )}
+        </button>
       </div>
 
+      {/* Une alerte Google qui demande une action reste visible (le reste est dans « ⋯ »). */}
+      {googleStatut && googleStatut.reconnect_required && !menuPlus && (
+        <button type="button" data-testid="google-alerte" onClick={() => setMenuPlus(true)}
+                style={{ display: 'block', width: 'calc(100% - 8px)', margin: '0 4px 10px', minHeight: '40px', textAlign: 'left',
+                         padding: '0 12px', borderRadius: '10px', cursor: 'pointer', fontSize: '12px', color: '#fff',
+                         background: 'rgba(245,158,11,0.16)', border: '1px solid rgba(245,158,11,0.4)' }}>
+          Google Calendar : reconnexion nécessaire
+        </button>
+      )}
+
+      {menuPlus && (
+        <div data-testid="campagnes-plus-fond" onClick={() => setMenuPlus(false)} className="creer-choix-fond"
+             style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(0,0,0,0.55)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <style>{`
+            @media (max-width: 479px) {
+              .creer-choix-fond { align-items: flex-end !important; padding: 0 !important; }
+              .creer-choix-carte { max-width: 100% !important; border-radius: 16px 16px 0 0 !important;
+                                   padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important; }
+            }
+          `}</style>
+          <div data-testid="campagnes-plus-menu" role="dialog" aria-modal="true" aria-label="Réglages des campagnes"
+               className="creer-choix-carte" onClick={(e) => e.stopPropagation()}
+               style={{ background: '#0b0b10', borderRadius: '16px', padding: '16px', width: '100%', maxWidth: '420px',
+                        boxSizing: 'border-box', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+                        color: '#fff', maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: '12px' }}>
+              <span style={{ fontWeight: 700, fontSize: '16px', flex: 1 }}>Réglages</span>
+              <button type="button" aria-label="Fermer" onClick={() => setMenuPlus(false)}
+                      style={{ width: '44px', height: '44px', background: 'transparent', border: 'none', color: '#fff',
+                               cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                <SvgIcon name="close" size={18} />
+              </button>
+            </div>
+            <div style={{ padding: '12px 0', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+              <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <SvgIcon name="calendar" size={15} /> Google Calendar
+              </div>
       {/* === GOOGLE-1 : la connexion Google, une ligne discrète === */}
-      <div data-testid="bandeau-google"
-           style={{ display: 'flex', alignItems: 'center', gap: '10px',
-                    flexWrap: 'wrap', marginBottom: '10px', fontSize: '12px',
+              <div data-testid="bandeau-google"
+           style={{ display: 'flex', alignItems: 'center', gap: '8px',
+                    flexWrap: 'wrap', fontSize: '12px',
                     color: 'rgba(255,255,255,0.75)' }}>
-        <span>Google Calendar :</span>
         {googleStatut && googleStatut.connected && googleStatut.calendar_granted ? (
           <>
             <span data-testid="google-connecte" style={{ color: 'rgba(34,197,94,0.95)' }}>
@@ -571,14 +637,14 @@ const CampaignManager = ({
             ) : (
               <button type="button" data-testid="google-activer-sync" onClick={connecterGoogle}
                       style={{ background: 'rgba(245,158,11,0.25)', border: 'none', color: '#fff',
-                               borderRadius: '8px', padding: '3px 9px', fontSize: '11px',
+                               borderRadius: '8px', padding: '0 12px', minHeight: '40px', fontSize: '11px',
                                cursor: 'pointer' }}>
                 Reconnecter Google pour activer la synchronisation
               </button>
             )}
             <button type="button" data-testid="google-deconnecter" onClick={deconnecterGoogle}
                     style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.2)',
-                             color: 'inherit', borderRadius: '8px', padding: '3px 9px',
+                             color: 'inherit', borderRadius: '8px', padding: '0 12px', minHeight: '40px',
                              fontSize: '11px', cursor: 'pointer' }}>
               Déconnecter
             </button>
@@ -586,19 +652,42 @@ const CampaignManager = ({
         ) : googleStatut && googleStatut.reconnect_required ? (
           <button type="button" data-testid="google-reconnecter" onClick={connecterGoogle}
                   style={{ background: 'rgba(245,158,11,0.25)', border: 'none', color: '#fff',
-                           borderRadius: '8px', padding: '3px 9px', fontSize: '11px',
+                           borderRadius: '8px', padding: '0 12px', minHeight: '40px', fontSize: '11px',
                            cursor: 'pointer' }}>
             Reconnecter Google (accès calendrier requis)
           </button>
         ) : (
           <button type="button" data-testid="google-connecter" onClick={connecterGoogle}
                   style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)',
-                           color: 'inherit', borderRadius: '8px', padding: '3px 9px',
+                           color: 'inherit', borderRadius: '8px', padding: '0 12px', minHeight: '40px',
                            fontSize: '11px', cursor: 'pointer' }}>
             Connecter Google Calendar
           </button>
         )}
       </div>
+
+            </div>
+            {isSuperAdmin && waMode && (
+              <button type="button" data-testid="menu-whatsapp" onClick={() => { setShowMetaConfig(true); setMenuPlus(false); }}
+                      style={{ width: '100%', minHeight: '48px', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left',
+                               padding: '0 4px', background: 'transparent', border: 'none', borderTop: '1px solid rgba(255,255,255,0.08)',
+                               color: '#fff', cursor: 'pointer', fontSize: '14px' }}>
+                <SvgIcon name="phone" size={15} />
+                <span style={{ flex: 1 }}>WhatsApp — configuration</span>
+                <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)' }}>{waMode.mode === 'meta' ? 'Meta Cloud API' : waMode.mode === 'sandbox' ? 'mode test' : 'Twilio'}</span>
+              </button>
+            )}
+            {invitationViaOnglet && typeof onOuvrirCreateur === 'function' && (
+              <button type="button" data-testid="module-createur" onClick={() => { setMenuPlus(false); onOuvrirCreateur(); }}
+                      style={{ width: '100%', minHeight: '48px', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left',
+                               padding: '0 4px', background: 'transparent', border: 'none', borderTop: '1px solid rgba(255,255,255,0.08)',
+                               color: '#fff', cursor: 'pointer', fontSize: '14px' }}>
+                <SvgIcon name="star" size={15} /> Créateur / Affiliation
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* === CAL-2 : LES TÂCHES, au-dessus de la grille === */}
       <TasksPanel
@@ -615,6 +704,7 @@ const CampaignManager = ({
         evenements={evenementsCalendrier}
         onDayClick={openNewCampaign}
         onCreer={(d) => setChoixCreer(d)}
+        boutonCreer={false}
         onEvenementClick={(e) => { const c = campagneDe(e); if (c) openEditCampaign(c); }}
         onMoveEvenement={(e, d) => { const c = campagneDe(e); if (c) handleMoveCampaign(c.id, d); }}
         onDuplicateEvenement={(e) => { const c = campagneDe(e); if (c) handleDuplicateCampaign(c); }}
@@ -767,8 +857,8 @@ const CampaignManager = ({
       />
 
       {/* V118: Panneau WhatsApp — indicateur mode + config Meta Cloud API */}
-      {isSuperAdmin && waMode && (
-        <div style={{ marginBottom: '16px' }}>
+      {isSuperAdmin && waMode && (showMetaConfig || waMode.mode === 'sandbox') && (
+        <div style={{ marginBottom: '16px' }} data-testid="panneau-whatsapp">
           {/* Indicateur de mode actuel */}
           <div style={{
             padding: '10px 16px', borderRadius: showMetaConfig ? '10px 10px 0 0' : '10px',
@@ -868,8 +958,28 @@ const CampaignManager = ({
 
       {/* === HISTORIQUE DES CAMPAGNES === */}
       <div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-          <h3 style={{ color: '#fff', fontWeight: 600, fontSize: '14px', margin: 0 }}><SvgIcon name="barChart" size={14} /> Historique</h3>
+        {/* V616 — HISTORIQUE REPLIABLE (fermé par défaut sur téléphone) ;
+            tableau sur ordinateur, cartes sur téléphone. Aucune action retirée. */}
+        <style>{`
+          @media (max-width: 639px) { .v616-histo-table { display: none !important; } }
+          @media (min-width: 640px) { .v616-histo-cartes { display: none !important; } }
+        `}</style>
+        <button type="button" data-testid="historique-toggle" aria-expanded={historiqueOuvert}
+                onClick={() => setHistoriqueOuvert((o) => !o)}
+                style={{ width: '100%', minHeight: '48px', display: 'flex', alignItems: 'center', gap: '8px',
+                         padding: '0 12px', marginBottom: historiqueOuvert ? '10px' : 0, borderRadius: '12px', cursor: 'pointer',
+                         background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+                         color: '#fff', fontSize: '15px', fontWeight: 700, textAlign: 'left' }}>
+          <SvgIcon name="barChart" size={15} />
+          <span style={{ flex: 1 }}>Historique</span>
+          <span style={{ fontSize: '12px', fontWeight: 500, color: 'rgba(255,255,255,0.6)' }}>{campaigns.length} campagne{campaigns.length > 1 ? 's' : ''}</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2" aria-hidden="true"
+               style={{ transform: historiqueOuvert ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease', flexShrink: 0 }}>
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        {historiqueOuvert && (<>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '10px', gap: '8px', overflowX: 'auto', scrollbarWidth: 'none' }}>
           <div style={{ display: 'flex', gap: '4px' }}>
             {[
               { key: 'all', label: `Tout (${campaigns.length})` },
@@ -877,10 +987,12 @@ const CampaignManager = ({
               { key: 'individuals', label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="user" size={14} /> Individuels</span> }
             ].map(f => (
               <button key={f.key} type="button" onClick={() => setCampaignHistoryFilter(f.key)}
+                aria-pressed={campaignHistoryFilter === f.key}
                 style={{
-                  padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 500, cursor: 'pointer', border: 'none',
-                  background: campaignHistoryFilter === f.key ? '#7c3aed' : 'rgba(255,255,255,0.08)',
-                  color: campaignHistoryFilter === f.key ? '#fff' : 'rgba(255,255,255,0.5)'
+                  minHeight: '36px', padding: '0 12px', borderRadius: '10px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', border: 'none',
+                  whiteSpace: 'nowrap',
+                  background: campaignHistoryFilter === f.key ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.08)',
+                  color: campaignHistoryFilter === f.key ? '#fff' : 'rgba(255,255,255,0.7)'
                 }}>{f.label}</button>
             ))}
           </div>
@@ -901,8 +1013,116 @@ const CampaignManager = ({
           </div>
         )}
 
+        {/* V616 — CARTES (téléphone) : nom + statut, contacts · canaux · date,
+            2 actions visibles (Modifier, Lancer/Relancer), le reste dans « ⋯ ». */}
+        {(() => {
+          const liste = campaigns.filter(campaign => {
+            if (campaignHistoryFilter === 'all') return true;
+            const convType = activeConversations.find(ac => ac.conversation_id === campaign.targetConversationId)?.type;
+            if (campaignHistoryFilter === 'groups') return campaign.channels?.group || convType === 'group';
+            if (campaignHistoryFilter === 'individuals') return convType === 'user';
+            return true;
+          });
+          const montrees = historiqueTout ? liste : liste.slice(0, 5);
+          const pastille = (txt, fond, coul) => (
+            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 8px', borderRadius: '999px', fontSize: '11px',
+                           fontWeight: 600, background: fond, color: coul, whiteSpace: 'nowrap', flexShrink: 0 }}>{txt}</span>);
+          const actionCarte = { minHeight: '40px', padding: '0 12px', borderRadius: '10px', fontSize: '13px', fontWeight: 600,
+                                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', color: '#fff',
+                                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)' };
+          const itemMenu = { width: '100%', minHeight: '44px', display: 'flex', alignItems: 'center', gap: '10px', padding: '0 12px',
+                             background: 'transparent', border: 'none', color: '#fff', fontSize: '14px', cursor: 'pointer', textAlign: 'left' };
+          return (
+            <div className="v616-histo-cartes" data-testid="historique-cartes" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {liste.length === 0 && (
+                <div style={{ padding: '24px 8px', textAlign: 'center', color: 'rgba(255,255,255,0.55)', fontSize: '13px' }}>
+                  Aucune campagne. « + Créer » pour commencer.
+                </div>
+              )}
+              {montrees.map(campaign => {
+                const failedCount = campaign.results?.filter(r => r.status === 'failed').length || 0;
+                const hasErrors = failedCount > 0;
+                const convType = activeConversations.find(ac => ac.conversation_id === campaign.targetConversationId)?.type;
+                const envoyee = campaign.status === 'sent' || campaign.status === 'completed' || campaign.status === 'failed' || campaign.status === 'partial';
+                const statut = campaign.status === 'draft' ? pastille('Brouillon', 'rgba(148,163,184,0.2)', '#cbd5e1')
+                  : campaign.status === 'scheduled' ? pastille('Programmé', 'rgba(234,179,8,0.18)', '#fbbf24')
+                  : campaign.status === 'sending' ? pastille('En cours', 'rgba(59,130,246,0.22)', '#93c5fd')
+                  : campaign.status === 'failed' ? pastille(`Échoué (${failedCount})`, 'rgba(239,68,68,0.2)', '#fca5a5')
+                  : (campaign.status === 'partial' || hasErrors) ? pastille(`Partiel (${failedCount})`, 'rgba(249,115,22,0.2)', '#fdba74')
+                  : envoyee ? pastille('Envoyé', 'rgba(34,197,94,0.18)', '#86efac') : null;
+                const contacts = campaign.channels?.internal ? (campaign.targetConversationName || 'Chat').slice(0, 20)
+                  : campaign.targetType === 'all' ? `Tous (${campaign.results?.length || 0})` : `${campaign.selectedContacts?.length || 0} contact${(campaign.selectedContacts?.length || 0) > 1 ? 's' : ''}`;
+                return (
+                  <div key={campaign.id} data-testid="historique-carte"
+                       style={{ padding: '12px', borderRadius: '14px', background: 'rgba(255,255,255,0.04)',
+                                border: '1px solid rgba(255,255,255,0.08)', position: 'relative' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                      <span style={{ flex: 1, minWidth: 0, color: '#fff', fontWeight: 600, fontSize: '14px', lineHeight: 1.35 }}>{campaign.name}</span>
+                      {statut}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', fontSize: '12px', color: 'rgba(255,255,255,0.6)', flexWrap: 'wrap' }}>
+                      <span className="inline-flex items-center gap-1.5">{campaign.channels?.internal ? (convType === 'group' ? <SvgIcon name="users" size={13} /> : <SvgIcon name="user" size={13} />) : null}{contacts}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        {campaign.channels?.whatsapp && <SvgIcon name="phone" size={13} />}
+                        {campaign.channels?.email && <SvgIcon name="mail" size={13} />}
+                        {campaign.channels?.group && <SvgIcon name="messageCircle" size={13} />}
+                        {campaign.channels?.internal && <SvgIcon name="messageSquare" size={13} />}
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span>{campaign.scheduledAt ? new Date(campaign.scheduledAt).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Immédiat'}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '10px', alignItems: 'center' }}>
+                      <button type="button" onClick={() => openEditCampaign(campaign)} style={actionCarte}>
+                        <SvgIcon name="edit" size={14} /> Modifier
+                      </button>
+                      {campaign.status !== 'sending' && (
+                        <button type="button" onClick={(e) => launchCampaignWithSend(e, campaign.id)} style={actionCarte}>
+                          <SvgIcon name={envoyee ? 'refresh' : 'rocket'} size={14} /> {envoyee ? 'Relancer' : 'Lancer'}
+                        </button>
+                      )}
+                      <span style={{ flex: 1 }} />
+                      <button type="button" aria-label="Plus d'actions" aria-expanded={menuCarte === campaign.id}
+                              onClick={() => setMenuCarte(menuCarte === campaign.id ? null : campaign.id)}
+                              style={{ ...actionCarte, width: '44px', minHeight: '44px', padding: 0, justifyContent: 'center' }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                          <circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" />
+                        </svg>
+                      </button>
+                    </div>
+                    {menuCarte === campaign.id && (
+                      <div role="menu" style={{ marginTop: '8px', borderRadius: '12px', background: '#0b0b10',
+                                                border: '1px solid rgba(255,255,255,0.12)', overflow: 'hidden' }}>
+                        <button type="button" role="menuitem" style={itemMenu}
+                                onClick={() => { setMenuCarte(null); handleDuplicateCampaign(campaign); }}>
+                          <SvgIcon name="clipboard" size={15} /> Dupliquer
+                        </button>
+                        <button type="button" role="menuitem" style={itemMenu}
+                                onClick={() => { setMenuCarte(null); setDateCible({ id: campaign.id, nom: campaign.name, creee: false }); }}>
+                          <SvgIcon name="calendar" size={15} /> Choisir la date d'envoi
+                        </button>
+                        <button type="button" role="menuitem" style={{ ...itemMenu, color: '#fca5a5' }}
+                                onClick={() => { setMenuCarte(null); deleteCampaign(campaign.id); }}>
+                          <SvgIcon name="trash" size={15} /> Supprimer
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {liste.length > 5 && (
+                <button type="button" onClick={() => setHistoriqueTout((v) => !v)}
+                        style={{ minHeight: '44px', background: 'transparent', border: 'none', cursor: 'pointer',
+                                 color: 'var(--primary-color, #D91CD2)', fontWeight: 600, fontSize: '13px' }}>
+                  {historiqueTout ? 'Réduire' : `Voir tout l’historique (${liste.length})`}
+                </button>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Campaign table */}
-        <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '400px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.15)' }}>
+        <div className="v616-histo-table" style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '400px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.15)' }}>
           <table style={{ width: '100%', minWidth: '600px', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ textAlign: 'left', fontSize: '12px', color: 'rgba(255,255,255,0.5)', borderBottom: '1px solid rgba(139,92,246,0.2)' }}>
@@ -1010,6 +1230,7 @@ const CampaignManager = ({
             </tbody>
           </table>
         </div>
+        </>)}
 
         {/* Expanded sending details */}
         {campaigns.filter(c => c.status === 'sending').map(campaign => {
