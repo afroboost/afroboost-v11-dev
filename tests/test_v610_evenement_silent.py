@@ -68,6 +68,9 @@ verifier("C4 plus AUCUNE vente au début de l'événement (28/10 18:45 + 1 min)"
          hiver.offre_expiree(OFFRE, datetime(2026, 10, 28, 18, 46)), _lim)
 
 # ── Pas de capacité ──────────────────────────────────────────────────────
+_o60 = dict(OFFRE, stock=-1, max_participants=None)
+verifier("Z0 aucune capacité : réservable avec 50, 51, 60 billets déjà vendus (stock -1 = illimité)",
+         all(hiver.offre_reservable(_o60, n)[0] for n in (0, 49, 50, 51, 60, 500)), [hiver.offre_reservable(_o60, n) for n in (50, 51)])
 _src = open(os.path.join(RACINE, "scripts", "v610_evenement_silent.py"), encoding="utf-8").read()
 verifier("Z1 offre préparée SANS plafond (stock -1, aucun max_participants)",
          '"stock": -1, "max_participants": None' in _src and "50 places" not in _src)

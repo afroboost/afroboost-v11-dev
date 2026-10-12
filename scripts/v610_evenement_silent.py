@@ -49,6 +49,7 @@ OFFRES_8_MOIS = [
     "7b96a431-26ce-4a98-bd66-ebffffd7c35c",   # Saison hiver — 2 paiements (2 × 299 CHF, saison_2x)
     "ba530ae4-934c-46b1-8bc5-4999448f1e86",   # Membres — 8 mois (2 × 199.99 CHF, saison_2x, duree_mois 8)
 ]
+VIDEO_URL = None
 DESCRIPTION = """Afroboost Silent 🔥🎧
 
 1 heure de cardio-danse afro, accessible à tous les niveaux, avec ton propre casque audio.
@@ -123,7 +124,12 @@ async def preparer(db, appliquer):
     from api.routes import referral_campaigns_engine as IC
     camp = await db.referral_campaigns.find_one({"offer_id": offre["id"], "status": {"$ne": "archived"}}, {"_id": 0})
     if camp:
-        print("INVITATION déjà présente :", camp["id"], camp.get("status"))
+        print("INVITATION déjà présente :", camp["id"], camp.get("status"), "| vidéo :", camp.get("video_url") or "VIDE")
+        if VIDEO_URL and camp.get("video_url") != VIDEO_URL:
+            print("  -> vidéo à rattacher :", VIDEO_URL)
+            if appliquer:
+                await db.referral_campaigns.update_one({"id": camp["id"]}, {"$set": {
+                    "video_url": VIDEO_URL, "updated_at": _iso()}, "$inc": {"version": 1}})
         return
     champs = IC.valider_entree({"type": "event_paid", "status": "draft", "title": TITRE, "subtitle": ACCROCHE,
                                 "cta_label": "Je réserve ma place", "offer_id": offre["id"], "course_id": cours["id"],
@@ -137,7 +143,10 @@ async def preparer(db, appliquer):
                 "inviter_display": IC.identite_coach(profil), "created_at": _iso(), "updated_at": _iso(),
                 "video_url": None, "audio_url": None, "image_url": None})
     doc = {k: doc.get(k) for k in IC.CHAMPS_DOCUMENT}
-    print("INVITATION brouillon à créer :", doc["id"], "| médias : vidéo/voix-off/miniature VIDES")
+    if VIDEO_URL:
+        doc["video_url"] = IC.valider_media_url(VIDEO_URL, "video_url")
+    print("INVITATION brouillon à créer :", doc["id"], "| vidéo :", doc.get("video_url") or "VIDE",
+          "| voix-off : VIDE | miniature : VIDE")
     if appliquer:
         await db.referral_campaigns.insert_one(dict(doc))
 
@@ -148,8 +157,12 @@ async def publier(db, appliquer):
     if not cours or not offre:
         raise SystemExit("STOP : préparer d'abord.")
     camp = await db.referral_campaigns.find_one({"offer_id": offre["id"], "status": {"$ne": "archived"}}, {"_id": 0})
-    if not camp or not camp.get("video_url") or not camp.get("audio_url") or not camp.get("image_url"):
-        raise SystemExit("STOP : médias (vidéo, voix-off, miniature) non rattachés à l'invitation — pas de publication.")
+    # Vidéo finale OBLIGATOIRE (elle porte son propre son). Voix-off séparée : facultative
+    # (décision du 12/10). Miniature : facultative — sans elle, la carte générée sert d'aperçu.
+    if not camp or not camp.get("video_url"):
+        raise SystemExit("STOP : vidéo finale non rattachée à l'invitation — pas de publication.")
+    if not camp.get("image_url"):
+        print("ATTENTION : aucune miniature finale — l'aperçu WhatsApp utilisera la carte générée.")
     deja = await db.reservations.count_documents({"courseId": COURS_MERCREDI, "datetime": {"$regex": "^%s" % DATE}})
     if deja:
         raise SystemExit("STOP : %d réservation(s) existent sur le cours régulier du %s — à traiter avant." % (deja, DATE))
@@ -168,7 +181,10 @@ async def principal():
     ap.add_argument("--db", required=True)
     ap.add_argument("etape", choices=("preparer", "publier"))
     ap.add_argument("--appliquer", action="store_true")
+    ap.add_argument("--video-url", default=None, help="/api/files/... de la vidéo finale (préparer)")
     a = ap.parse_args()
+    global VIDEO_URL
+    VIDEO_URL = a.video_url if (a.video_url or "").startswith("/api/files/") else None
     from motor.motor_asyncio import AsyncIOMotorClient
     db = AsyncIOMotorClient(a.mongo_url, serverSelectionTimeoutMS=15000)[a.db]
     print("== V610 %s — %s" % (a.etape, "ÉCRITURE" if a.appliquer else "ESSAI À BLANC (rien n'est écrit)"))
