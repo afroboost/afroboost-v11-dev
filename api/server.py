@@ -32425,6 +32425,7 @@ def v611_contexte_commercial(contexte: dict, fiches=None) -> dict:
         "frais_deplacement_pertinents": decouverte,
         "format_en_ligne_pertinent": en_ligne,
         "collaboration_future_a_discuter": not refus,
+        "agenda": v612_agenda(c, fiches, ville),      # V612
     }
 
 
@@ -32460,6 +32461,7 @@ def v611_bloc_invite(cc: dict) -> str:
                    "  avec prise en charge des frais de deplacement, sans aucun montant."]
     else:
         lignes += ["- Pas de seance decouverte gratuite ni de frais de deplacement a proposer dans ce dossier."]
+    lignes += ["", v612_bloc_invite(cc.get("agenda") or {}), ""]      # V612
     if cc["format_en_ligne_pertinent"]:
         lignes += ["- Le format Afroboost EN LIGNE peut etre mentionne : la distance n'est plus un obstacle, aucun",
                    "  deplacement, participation depuis differentes regions. Aucune promesse de sante ou medicale."]
@@ -32486,6 +32488,160 @@ def v611_controle_brouillon(texte, contexte: dict, cc: dict) -> list:
     if offre and (cc or {}).get("gros_evenement") and any(m in t for m in ("festival", "toute la", "ganze", "entire")):
         motifs.append("gros événement offert")
     return motifs
+
+
+# --- V612 — CONTRAINTES D'AGENDA DE COACH BASSI (générateur IA) --------------------------------
+# Cours récurrents à Neuchâtel : mercredi 18h45 et dimanche 18h30 — PRIORITAIRES. Une intervention
+# extérieure physique le mercredi ou le dimanche n'est possible que LE MATIN, séance TERMINÉE AVANT
+# MIDI, et à 2 h de trajet ALLER maximum depuis Neuchâtel. Jamais l'après-midi ni le soir ces jours-là.
+# Le trajet n'est JAMAIS deviné : canton de Neuchâtel = local ; sinon seule une durée fiable posée
+# sur la fiche (`trajet_depuis_neuchatel_min`) compte, faute de quoi c'est « À VÉRIFIER ».
+# Les autres jours : aucune restriction inventée. Les cours sont une contrainte INTERNE : jamais cités.
+V612_DUREE_SEANCE_MIN = 60
+V612_TRAJET_MAX_MIN = 120
+V612_JOURS = {
+    "lundi": "lundi", "montag": "lundi", "monday": "lundi",
+    "mardi": "mardi", "dienstag": "mardi", "tuesday": "mardi",
+    "mercredi": "mercredi", "mittwoch": "mercredi", "wednesday": "mercredi",
+    "jeudi": "jeudi", "donnerstag": "jeudi", "thursday": "jeudi",
+    "vendredi": "vendredi", "freitag": "vendredi", "friday": "vendredi",
+    "samedi": "samedi", "samstag": "samedi", "saturday": "samedi",
+    "dimanche": "dimanche", "sonntag": "dimanche", "sunday": "dimanche"}
+V612_JOURS_CONTRAINTS = ("mercredi", "dimanche")
+_V612_RE_JOUR = re.compile(r"\b(" + "|".join(V612_JOURS) + r")s?\b")
+_V612_RE_HEURE = re.compile(r"\b([01]?\d|2[0-3])\s*(?:h|:|uhr|heures?)\s*([0-5]\d)?\b|\b(1[0-2]|0?[1-9])\s*(am|pm)\b")
+_V612_MATIN = ("matin", "matinee", "vormittag", "morgen", "morning", "avant midi")
+_V612_APRES = ("apres-midi", "apres midi", "aprem", "soir", "soiree", "nachmittag", "abend", "afternoon", "evening", "night")
+
+
+def v612_trajet(fiches=None, ville="") -> dict:
+    """Temps de trajet ALLER depuis Neuchâtel, seulement s'il est FIABLE. PURE ; jamais deviné."""
+    if v611_est_neuchatel(ville):
+        return {"connu": True, "minutes": 0, "source": "canton de Neuchatel"}
+    for f in fiches or []:
+        try:
+            m = int(f.get("trajet_depuis_neuchatel_min"))
+        except (TypeError, ValueError):
+            continue
+        if m >= 0:
+            return {"connu": True, "minutes": m, "source": "fiche"}
+    return {"connu": False, "minutes": None, "source": ""}
+
+
+def v612_creneaux(texte) -> list:
+    """Les créneaux (jour + heure / moment) cités dans un texte. PURE, FR/DE/EN, par phrase."""
+    t = p3ai_sans_accents(texte or "").lower()
+    sortie = []
+    for phrase in re.split(r"[.!?\n;]+", t):
+        jours = [V612_JOURS[m.group(1)] for m in _V612_RE_JOUR.finditer(phrase)]
+        if not jours:
+            continue
+        heure = None
+        m = _V612_RE_HEURE.search(phrase)
+        if m:
+            if m.group(1) is not None:
+                heure = int(m.group(1)) * 60 + int(m.group(2) or 0)
+            else:
+                h = int(m.group(3)) % 12 + (12 if m.group(4) == "pm" else 0)
+                heure = h * 60
+        moment = "matin" if any(x in phrase for x in _V612_MATIN) else (
+            "apres-midi/soir" if any(x in phrase for x in _V612_APRES) else "")
+        for j in dict.fromkeys(jours):
+            sortie.append({"jour": j, "heure_min": heure, "moment": moment})
+    return sortie
+
+
+def v612_verdict(creneau: dict, trajet: dict, physique: bool = True) -> dict:
+    """CE CRÉNEAU EST-IL COMPATIBLE ? PURE. OUI / NON / A VERIFIER, avec le détail demandé."""
+    j, h, mo = creneau.get("jour"), creneau.get("heure_min"), creneau.get("moment") or ""
+    contraint = j in V612_JOURS_CONTRAINTS and physique
+    if not contraint:
+        return dict(creneau, mercredi=j == "mercredi", dimanche=j == "dimanche", avant_midi=None,
+                    trajet_ok=None, compatible="OUI")
+    if h is not None:
+        avant_midi = "OUI" if h + V612_DUREE_SEANCE_MIN <= 12 * 60 else "NON"
+    elif mo == "matin":
+        avant_midi = "OUI"
+    elif mo:
+        avant_midi = "NON"
+    else:
+        avant_midi = "A VERIFIER"
+    if not trajet.get("connu"):
+        trajet_ok = "A VERIFIER"
+    else:
+        trajet_ok = "OUI" if trajet["minutes"] <= V612_TRAJET_MAX_MIN else "NON"
+    if "NON" in (avant_midi, trajet_ok):
+        compatible = "NON"
+    elif "A VERIFIER" in (avant_midi, trajet_ok):
+        compatible = "A VERIFIER"
+    else:
+        compatible = "OUI"
+    return dict(creneau, mercredi=j == "mercredi", dimanche=j == "dimanche", avant_midi=avant_midi,
+                trajet_ok=trajet_ok, compatible=compatible)
+
+
+def v612_agenda(contexte: dict, fiches=None, ville="") -> dict:
+    """Le rapport d'agenda du dossier : créneaux proposés par le partenaire, trajet, verdicts. PURE."""
+    c = contexte or {}
+    trajet = v612_trajet(fiches, ville)
+    en_ligne_demande = any(x in p3ai_sans_accents(c.get("body_text") or "").lower()
+                           for x in ("en ligne", "online", "a distance", "visio", "zoom"))
+    creneaux = [v612_verdict(x, trajet, physique=not en_ligne_demande) for x in v612_creneaux(c.get("body_text"))]
+    pire = "OUI"
+    for x in creneaux:
+        if x["compatible"] == "NON":
+            pire = "NON"
+        elif x["compatible"] == "A VERIFIER" and pire != "NON":
+            pire = "A VERIFIER"
+    return {"ville": ville or "(inconnue)", "trajet_connu": trajet["connu"], "trajet_min": trajet["minutes"],
+            "trajet_ok": ("A VERIFIER" if not trajet["connu"] else
+                          ("OUI" if trajet["minutes"] <= V612_TRAJET_MAX_MIN else "NON")),
+            "creneaux": creneaux, "creneau_compatible": pire if creneaux else None}
+
+
+def v612_bloc_invite(ag: dict) -> str:
+    """Le passage d'invite « disponibilités ». PURE. La contrainte est INTERNE : jamais citée."""
+    ag = ag or {}
+    lignes = ["DISPONIBILITES DE COACH BASSI (contrainte INTERNE, ne l'explique jamais, ne cite jamais ses cours) :",
+              "- Mercredi et dimanche : une intervention sur place n'est possible que LE MATIN, seance terminee",
+              "  AVANT MIDI, et seulement a 2 h de trajet maximum depuis Neuchatel. Jamais l'apres-midi ni le soir.",
+              "  Formule simplement : « Le mercredi, je peux me deplacer le matin. » / « Le dimanche matin pourrait",
+              "  etre possible. »",
+              "- Autres jours : aucune restriction horaire, la disponibilite est a discuter.",
+              "- Ne propose jamais une seance (meme offerte) sur un creneau incompatible."]
+    if ag.get("trajet_ok") == "A VERIFIER":
+        lignes += ["- Temps de trajet depuis Neuchatel NON CONNU : ne propose pas fermement un mercredi ou un dimanche ;",
+                   "  presente-le comme a confirmer."]
+    elif ag.get("trajet_ok") == "NON":
+        lignes += ["- Le lieu est a plus de 2 h de Neuchatel : ne propose ni mercredi ni dimanche."]
+    for x in ag.get("creneaux") or []:
+        if x["compatible"] == "NON":
+            lignes += ["- Le partenaire evoque un %s%s : ce creneau n'est PAS possible. Dis : « Cette plage horaire ne"
+                       " sera malheureusement pas possible pour moi, mais nous pouvons regarder une autre date"
+                       " ensemble. »" % (x["jour"], (" a %dh%02d" % divmod(x["heure_min"], 60)) if x["heure_min"] is not None else "")]
+        elif x["compatible"] == "A VERIFIER":
+            lignes += ["- Le partenaire evoque un %s : NE LE CONFIRME PAS, presente-le comme a verifier." % x["jour"]]
+    return "\n".join(lignes)
+
+
+def v612_controle_brouillon(texte, agenda: dict) -> list:
+    """Ce qui, dans le brouillon, sort des contraintes d'agenda → validation humaine. PURE."""
+    t = p3ai_sans_accents(texte or "").lower()
+    motifs = []
+    if any(x in t for x in ("18h45", "18h30", "18:45", "18:30", "mon cours", "mes cours", "autre cours",
+                            "meinen kurs", "anderen kurs", "my class")):
+        motifs.append("contrainte interne citée")
+    trajet = {"connu": (agenda or {}).get("trajet_connu"), "minutes": (agenda or {}).get("trajet_min")}
+    for x in v612_creneaux(texte):
+        if x["jour"] not in V612_JOURS_CONTRAINTS:
+            continue
+        v = v612_verdict(x, trajet)
+        if v["compatible"] == "NON":
+            motifs.append("créneau incompatible")
+        elif v["compatible"] == "A VERIFIER" and "a verifier" not in t and "a confirmer" not in t \
+                and "zu bestatigen" not in t and "to be confirmed" not in t:
+            motifs.append("date non vérifiée présentée comme ferme")
+    return sorted(set(motifs))
 
 
 def p3ai_invite(contexte: dict) -> str:
@@ -32607,7 +32763,8 @@ def p3ai_brouillon_depuis(contexte: dict, sortie: dict, viewer: str,
     reponse = str(s.get("reponse_proposee") or "")[:P3AI_REPONSE_MAX]
     sensibles = sorted(set(p3ai_sujets_sensibles(c.get("body_text"))
                            + p3ai_sujets_sensibles(reponse)
-                           + v611_controle_brouillon(reponse, c, c.get("contexte_commercial") or {})))
+                           + v611_controle_brouillon(reponse, c, c.get("contexte_commercial") or {})
+                           + v612_controle_brouillon(reponse, (c.get("contexte_commercial") or {}).get("agenda") or {})))
     return {
         "id": str(uuid.uuid4()),
         "inbound_id": c.get("inbound_id") or "",
