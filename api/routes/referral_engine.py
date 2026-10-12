@@ -1824,3 +1824,58 @@ def parcours_essai(pass_doc) -> bool:
     campagne Essai gratuit dont le type affiché est bien « trial » ; jamais pour
     un Pass Duo ni pour un maillon Parrainage / Affiliation."""
     return bool(campagne_du_pass(pass_doc)) and type_invitation(pass_doc) == "trial"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V607g — « INVITER ENCORE » : plusieurs invitations ENFANT par maillon d'essai
+# ═══════════════════════════════════════════════════════════════════════════
+# La 1re invitation (rang absent = 1) reste l'OBLIGATOIRE de V556 : inchangée,
+# c'est elle que lisent la porte du join, la libération A1, la descendance. Les
+# suivantes (rang 2, 3…) sont FACULTATIVES : créées seulement après le join de
+# leur parrain (preuve serveur), avec la clé de son appareil, une à la fois
+# (une nouvelle seulement quand la précédente a été partagée), plafonnées.
+# Chacune est un pass ORDINAIRE : même parent, même racine, même profondeur
+# (même génération), même campagne ; jeton neuf, jamais réutilisé.
+ENFANTS_OUVERTS_MAX = 10        # invitations d'un parrain non encore rejointes
+REFUS_INVITATIONS_MAX = "invitations_ouvertes_max"
+REFUS_SUIVANTE_INDISPONIBLE = "invitation_suivante_indisponible"
+REFUS_ESSAI_NON_CONFIRME = "essai_non_confirme"
+ETATS_PARRAIN_CONFIRME = (FRIEND_REGISTERED, UNLOCKED, "used")
+
+
+def rang_enfant(pass_doc) -> int:
+    """1 pour l'invitation obligatoire (et tout ancien enfant), sinon son rang."""
+    try:
+        _r = int(chaine_du_pass(pass_doc).get("rang") or 1)
+    except (TypeError, ValueError):
+        _r = 1
+    return _r if _r >= 1 else 1
+
+
+def prochain_rang(enfants) -> int:
+    return max([rang_enfant(e) for e in (enfants or [])] + [1]) + 1
+
+
+def peut_inviter_encore(parent) -> tuple:
+    """(ok, raison) — le parrain peut-il générer une invitation SUPPLÉMENTAIRE ?
+    Essai gratuit seulement (le Pass Duo ne change pas), invité inscrit et son
+    essai confirmé côté serveur, 1re invitation déjà partagée."""
+    _p = parent or {}
+    if not parcours_essai(_p):
+        return False, REFUS_PASS_NON_MODIFIABLE
+    if not _p.get("invitee") or not _p.get("invitee_access_code") \
+            or _p.get("status") not in ETATS_PARRAIN_CONFIRME:
+        return False, REFUS_ESSAI_NON_CONFIRME
+    if not chaine_partagee(_p):
+        return False, REFUS_INVITATION_REQUISE
+    return True, ""
+
+
+def sponsor_lie(parent, maintenant_iso) -> dict:
+    """Le parrain d'une invitation supplémentaire = l'invité INSCRIT du parent
+    (déjà lié : jamais « en attente »)."""
+    _inv = (parent or {}).get("invitee") or {}
+    return {"email_norm": normaliser_email(_inv.get("email_norm")), "name": str(_inv.get("name") or "")[:80],
+            "whatsapp_norm": _inv.get("whatsapp_norm") or None,
+            "subscription_code": (parent or {}).get("invitee_access_code"),
+            "terms_accepted": True, "pending": False, "bound_at": maintenant_iso}

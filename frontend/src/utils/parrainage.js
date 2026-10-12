@@ -851,10 +851,23 @@ export function numeroWhatsAppChaine(indicatif, numero) {
 }
 
 /** `POST /pass/{token}/chain/share {channel}` — whatsapp | share | share_image | copy. */
-export function enregistrerPartageChaine({ token, channel }) {
+export function enregistrerPartageChaine({ token, channel, childToken }) {
   // V556 : la clé de l'appareil qui a préparé l'invitation (exigée par le serveur).
+  // V607g : `childToken` = une invitation SUPPLÉMENTAIRE (« Inviter encore ») ; sans
+  // lui, l'invitation obligatoire, exactement comme avant.
+  const corps = childToken ? { channel, child_token: childToken } : { channel };
   return axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(token || '')}/chain/share`,
-    { channel }, { headers: { 'X-Chain-Key': lireCleChaine(token) }, timeout: 15000 });
+    corps, { headers: { 'X-Chain-Key': lireCleChaine(token) }, timeout: 15000 });
+}
+
+/**
+ * V607g — « Inviter encore » : `POST /pass/{token}/chain/next` (clé de l'appareil).
+ * 201 = une NOUVELLE invitation (jeton neuf) ; 200 = la dernière, jamais partagée
+ * (double clic). Seulement après l'inscription confirmée (sinon 409).
+ */
+export function creerInvitationSuivante({ token }) {
+  return axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(token || '')}/chain/next`,
+    {}, { headers: { 'X-Chain-Key': lireCleChaine(token) }, timeout: 20000 });
 }
 
 /** `GET /pass/{token}/chain/preview` — `{child, shared, preview}`. */

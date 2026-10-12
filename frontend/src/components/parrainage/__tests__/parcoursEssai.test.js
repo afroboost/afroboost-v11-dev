@@ -97,6 +97,10 @@ function routeur({ join, chainPost } = {}) {
   axios.post.mockImplementation((url) => {
     const u = String(url);
     if (u.endsWith('/chain')) return chainPost ? chainPost() : Promise.resolve({ status: 201, data: { child: CHILD(), edit_key: 'K1', shared: false } });
+    if (u.endsWith('/chain/next')) {
+      const n = axios.post.mock.calls.filter((c) => String(c[0]).endsWith('/chain/next')).length;
+      return Promise.resolve({ status: 201, data: { child: CHILD({ share_token: `T${n + 1}`, share_url: `https://afroboost.com/api/share/duo/T${n + 1}?v=0` }) } });
+    }
     if (u.endsWith('/chain/share')) return Promise.resolve({ data: { shared: true, child: CHILD({ shared: true, share_url: 'https://afroboost.com/api/share/duo/T1?v=2' }) } });
     if (u.endsWith('/join')) return join ? join() : Promise.resolve({ data: { status: 'unlocked', occurrence: O_DIM,
       course: { name: 'Cours à l’unité', locationName: 'Bord du Lac, Auvernier' },
@@ -221,10 +225,61 @@ describe('V607 — Essai gratuit : moi d’abord, puis mon ami', () => {
     expect(document.querySelectorAll('[data-testid="qr-svg"]')).toHaveLength(1);
     expect(ok.textContent).toContain('Tu peux inviter d’autres amis si tu veux.');
     expect(conteneur.textContent).not.toContain('Pass Duo');
-    window.open.mockClear();
-    await cliquer('wf-inviter-encore');
+  });
+
+  test('V607g — « Inviter encore » : un NOUVEAU lien par ami (jamais le lien déjà utilisé), un seul appel par clic', async () => {
+    routeur();
+    await jusquAuPartage();
+    await cliquer('wf-inviter-whatsapp');
+    await cliquer('wf-finaliser');
+    await saisir('invitation-prenom', 'Sophie');
+    await saisir('invitation-email', 'sophie@example.com');
+    await saisir('invitation-whatsapp', '+41 79 000 00 01');
+    await act(async () => { par('invitation-consent').click(); });
+    await cliquer('invitation-rejoindre');
+    const fen = { location: { href: '' }, opener: {}, close: jest.fn() };
+    window.open = jest.fn(() => fen);
+    // double clic : un seul POST /chain/next
+    await act(async () => { par('wf-inviter-encore').click(); par('wf-inviter-encore').click(); });
+    await vider();
+    const suivantes = () => axios.post.mock.calls.filter((c) => String(c[0]).endsWith('/chain/next'));
+    expect(suivantes()).toHaveLength(1);
+    expect(suivantes()[0][2].headers).toEqual({ 'X-Chain-Key': 'K1' });
     expect(window.open).toHaveBeenCalledTimes(1);
-    expect(decodeURIComponent(String(window.open.mock.calls[0][0]))).toContain('https://afroboost.com/api/share/duo/T1?v=2');
+    expect(window.open.mock.calls[0][0]).toBe('');             // fenêtre ouverte DANS le geste
+    expect(decodeURIComponent(fen.location.href)).toContain('https://afroboost.com/api/share/duo/T2?v=0');
+    expect(decodeURIComponent(fen.location.href)).not.toContain('/duo/T1');
+    const partage = axios.post.mock.calls.filter((c) => String(c[0]).endsWith('/chain/share')).pop();
+    expect(partage[1]).toEqual({ channel: 'whatsapp', child_token: 'T2' });
+    expect(par('wf-encore-compte').textContent).toBe('1 nouvelle invitation partagée');
+    // l'ami suivant : encore un lien neuf (T3)
+    fen.location.href = '';
+    await cliquer('wf-inviter-encore');
+    expect(suivantes()).toHaveLength(2);
+    expect(decodeURIComponent(fen.location.href)).toContain('/duo/T3?v=0');
+    expect(par('wf-encore-compte').textContent).toBe('2 nouvelles invitations partagées');
+    expect(conteneur.textContent).not.toMatch(/envoy[ée]/i);
+  });
+
+  test('V607g — plafond serveur : message clair, rien n’est ouvert', async () => {
+    routeur();
+    await jusquAuPartage();
+    await cliquer('wf-inviter-whatsapp');
+    await cliquer('wf-finaliser');
+    await saisir('invitation-prenom', 'Sophie');
+    await saisir('invitation-email', 'sophie@example.com');
+    await saisir('invitation-whatsapp', '+41 79 000 00 01');
+    await act(async () => { par('invitation-consent').click(); });
+    await cliquer('invitation-rejoindre');
+    const base = axios.post.getMockImplementation();
+    axios.post.mockImplementation((url, ...rest) => (String(url).endsWith('/chain/next')
+      ? Promise.reject({ response: { status: 409, headers: { 'x-refus-raison': 'invitations_ouvertes_max' }, data: {} } })
+      : base(url, ...rest)));
+    const fen = { location: { href: '' }, opener: {}, close: jest.fn() };
+    window.open = jest.fn(() => fen);
+    await cliquer('wf-inviter-encore');
+    expect(fen.close).toHaveBeenCalled();
+    expect(par('wf-info').textContent).toContain('attends qu’un ami s’inscrive');
   });
 
   test('le serveur garde l’obligation : 409 invitation_requise au join → retour à « Essai prêt », « Finaliser » rebloqué', async () => {

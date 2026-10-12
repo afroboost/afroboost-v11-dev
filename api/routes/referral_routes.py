@@ -2387,10 +2387,13 @@ CHAINE_REMONTEE_MAX = 12        # garde-fou de boucle sur `chain.parent_pass_id`
 
 
 async def _enfant_de(pass_doc):
-    """L'invitation enfant d'un pass (au plus UNE : index unique), ou None."""
+    """L'invitation enfant OBLIGATOIRE d'un pass (V556 : la seule qui débloque le
+    join), ou None. V607g : les invitations supplémentaires (« Inviter encore »)
+    portent `chain.rang` ≥ 2 et ne sont JAMAIS rendues ici ; un ancien enfant
+    (sans rang) reste lu tel quel — aucune migration."""
     try:
         return await db[COLL_PASSES].find_one(
-            {"chain.parent_pass_id": (pass_doc or {}).get("id")}, {"_id": 0})
+            {"chain.parent_pass_id": (pass_doc or {}).get("id"), "chain.rang": {"$exists": False}}, {"_id": 0})
     except Exception as _err:  # noqa: BLE001
         logger.warning("%s invitation enfant illisible (%s)", PREFIXE, type(_err).__name__)
         return None
@@ -3258,6 +3261,18 @@ async def referral_chaine_partager(share_token: str, request: Request):
     if not _cle_chaine_valide(request, _enf):
         raise _refus(403, E.REFUS_AUTRE_APPAREIL,
                      "Partage ton invitation depuis l'appareil qui l'a préparée.")
+    # V607g : `child_token` = une invitation SUPPLÉMENTAIRE de ce parent (même clé
+    # d'appareil). Sans lui : l'invitation obligatoire, exactement comme avant.
+    _tok_enf = str(_b.get("child_token") or "").strip()[:64]
+    if _tok_enf and _tok_enf != _enf.get("share_token"):
+        _sup = await db[COLL_PASSES].find_one(
+            {"share_token": _tok_enf, "chain.parent_pass_id": _p["id"]}, {"_id": 0})
+        if not _sup:
+            raise HTTPException(status_code=404, detail="Invitation introuvable")
+        if not _cle_chaine_valide(request, _sup):
+            raise _refus(403, E.REFUS_AUTRE_APPAREIL,
+                         "Partage ton invitation depuis l'appareil qui l'a préparée.")
+        _enf = _sup
     _se = await _statut_reel(_enf)
     if _se in (E.EXPIRED, E.CANCELLED):
         raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
@@ -3290,6 +3305,128 @@ async def referral_chaine_partager(share_token: str, request: Request):
             # la PROCHAINE carte est rendue maintenant (cache chaud pour le robot)
             "preview": await _bilan_apercu(_enf)}
     return JSONResponse(status_code=200, content=_rep)
+
+
+async def _enfants_de(parent) -> list:
+    """V607g — TOUTES les invitations enfant d'un pass (obligatoire + suivantes)."""
+    try:
+        return await db[COLL_PASSES].find(
+            {"chain.parent_pass_id": (parent or {}).get("id")}, {"_id": 0}).to_list(ENFANTS_LECTURE_MAX)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s invitations enfant illisibles (%s)", PREFIXE, type(_err).__name__)
+        return []
+
+
+ENFANTS_LECTURE_MAX = 200
+
+
+@router.post("/pass/{share_token}/chain/next")
+async def referral_chaine_suivante(share_token: str, request: Request):
+    """V607g — « Inviter encore » : une invitation enfant SUPPLÉMENTAIRE (facultative)
+    du pass `share_token`, pour un AUTRE ami. -> 201 `{child, shared, preview}`
+    (neuve) | 200 (la dernière, encore jamais partagée : un double clic ne crée
+    jamais deux invitations).
+
+    Conditions (toutes) : Essai gratuit (Pass Duo : 409, inchangé) ; l'invité du
+    pass est INSCRIT et son essai confirmé (409 `essai_non_confirme`) ; sa 1re
+    invitation est partagée ; `X-Chain-Key` = la clé de SON appareil (403) ; au
+    plus ENFANTS_OUVERTS_MAX invitations non rejointes (409
+    `invitations_ouvertes_max`). Même parent, même racine, même profondeur, même
+    campagne ; jeton neuf. Index non migré (doublon E11000) : 409
+    `invitation_suivante_indisponible`, rien d'écrit."""
+    await _exiger_actif()
+    _exiger_debit(request, DEBIT_PREFIXE_CHAINE)
+    _p = await _pass_par_token(share_token)
+    await _exiger_campagne_vivante(_p)
+    _ok, _raison = E.peut_inviter_encore(_p)
+    if not _ok:
+        raise _refus(409, _raison, "Tu pourras inviter d'autres amis une fois ton essai confirmé.")
+    _prem = await _enfant_de(_p)
+    if not _prem or not _cle_chaine_valide(request, _prem):
+        raise _refus(403, E.REFUS_AUTRE_APPAREIL,
+                     "Invite d'autres amis depuis l'appareil qui a partagé ton invitation.")
+    _tous = await _enfants_de(_p)
+    _vivants = [e for e in _tous if e.get("status") != E.CANCELLED]
+    # Idempotence : la DERNIÈRE invitation, tant qu'elle n'a jamais été partagée
+    # ni rejointe, est rendue telle quelle (double clic, retour arrière).
+    _dernier = max(_vivants, key=E.rang_enfant) if _vivants else None
+    if _dernier and E.rang_enfant(_dernier) >= 2 and not _dernier.get("invitee") \
+            and not E.partage_chaine(_dernier)["shared"] and await _statut_reel(_dernier) in E.ETATS_OUVERTS_AU_JOIN:
+        return await _reponse_chaine(_p, _dernier, 200)
+    _ouverts = [e for e in _vivants if not e.get("invitee")
+                and await _statut_reel(e) in E.ETATS_OUVERTS_AU_JOIN]
+    if len(_ouverts) >= E.ENFANTS_OUVERTS_MAX:
+        raise _refus(409, E.REFUS_INVITATIONS_MAX,
+                     "Tu as déjà %d invitations en attente : attends qu'un ami s'inscrive." % E.ENFANTS_OUVERTS_MAX)
+    _now = _maintenant()
+    _ch = E.chaine_du_pass(_p)
+    _ch_prem = E.chaine_du_pass(_prem)
+    _inv_prem = E.invitation_du_pass(_prem)
+    _rang = E.prochain_rang(_tous)
+    _doc = {
+        "id": str(uuid.uuid4()),
+        "coach_id": _p.get("coach_id") or "",
+        "course_id": _p.get("course_id"),
+        "occurrence": _p.get("occurrence"),
+        "course_snapshot": dict(_p.get("course_snapshot") or {}),
+        "sponsor": E.sponsor_lie(_p, _iso(_now)),
+        "invitee": None,
+        "status": E.LOCKED,
+        "share_token": secrets.token_urlsafe(24),
+        "opened_at": None,
+        "reservations": {"sponsor_id": None, "sponsor_code": None, "invitee_id": None, "invitee_code": None},
+        "invitee_access_code": None,
+        "blocked_reason": None,
+        "attribution": None,
+        "spordate_reward": {"status": "none"},
+        "offer_id": _p.get("offer_id"),
+        "offer_snapshot": dict(_p.get("offer_snapshot") or {}),
+        "offer_history": [],
+        "version": 1,
+        "invitation": {"display_name": _inv_prem["display_name"], "photo_url": _inv_prem["photo_url"],
+                       "message": _inv_prem["message"] or E.MESSAGE_CHAINE_DEFAUT, "updated_at": _iso(_now)},
+        "invitation_version": 1,
+        "preview_version": 0,
+        "chain": {"parent_pass_id": _p["id"], "root_pass_id": _ch.get("root_pass_id") or _p["id"],
+                  "depth": _ch_prem.get("depth") if _ch_prem.get("depth") is not None
+                  else int(_ch.get("depth") or 0) + 1,
+                  "edit_key_hash": _ch_prem.get("edit_key_hash"), "rang": _rang, "created_at": _iso(_now)},
+        "created_at": _iso(_now),
+        "updated_at": _iso(_now),
+        "unlocked_at": None,
+        "expires_at": _p.get("occurrence"),
+        "events": [{"at": _iso(_now), "type": E.EVENEMENT_CHAINE_CREEE, "detail": "suivante:%d" % _rang}],
+    }
+    if _ch_prem.get("kind"):
+        _doc["chain"]["kind"] = _ch_prem.get("kind")
+    if _prem.get("origin"):
+        _doc["origin"] = dict(_prem.get("origin"))
+    if _prem.get("inviter_profile_photo"):
+        _doc["inviter_profile_photo"] = _prem.get("inviter_profile_photo")
+    _doc["inviter_display"] = E.identite_invitant(_doc, _doc.get("inviter_profile_photo"))
+    try:
+        await db[COLL_PASSES].insert_one(dict(_doc))
+    except Exception as _err:  # noqa: BLE001
+        if _est_doublon(_err):
+            # Deux clics simultanés (même rang) -> la sœur créée par l'autre ; sinon
+            # l'index historique (un seul enfant par parent) n'est pas encore migré.
+            for _e in await _enfants_de(_p):
+                if E.rang_enfant(_e) == _rang and _e.get("id") != _doc["id"]:
+                    return await _reponse_chaine(_p, _e, 200)
+            logger.warning("%s invitation suivante refusée par un index (migration V607g requise)", PREFIXE)
+            raise _refus(409, E.REFUS_SUIVANTE_INDISPONIBLE,
+                         "Impossible de créer une nouvelle invitation pour le moment.")
+        logger.error("%s invitation suivante non créée (%s)", PREFIXE, type(_err).__name__)
+        raise HTTPException(status_code=503, detail="Invitation non préparée, réessaie dans un instant.")
+    await _journal_parent(_p["id"], E.EVENEMENT_CHAINE_CREEE, "suivante:%d" % _rang,
+                          {"chain.last_child_pass_id": _doc["id"]})
+    try:
+        await db[COLL_PASSES].update_one({"id": _p["id"]}, {"$addToSet": {"chain.children": _doc["id"]}})
+    except Exception:  # noqa: BLE001
+        pass
+    await _suivre_invitation("nouvelle_invitation_generee", _doc["share_token"], _doc["id"])
+    logger.info("%s invitation suivante %s (rang %d) créée sous %s", PREFIXE, _doc["id"][:8], _rang, _p["id"][:8])
+    return await _reponse_chaine(_p, _doc, 201)
 
 
 @router.get("/pass/{share_token}/chain/preview")

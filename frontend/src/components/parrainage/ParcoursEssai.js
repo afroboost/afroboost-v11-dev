@@ -12,7 +12,7 @@
  *      tant que le partage n'est pas DÉCLENCHÉ (POST /chain/share) ;
  *   3. INSCRIPTION — le formulaire existant (InvitationDuo garde le POST /join) ;
  *   4. CONFIRMÉ (wf-essai-confirme) — date, heure, lieu, billet, et, facultatif,
- *      [Inviter encore].
+ *      [Inviter encore] : V607g, une NOUVELLE invitation (jeton neuf) par ami.
  *
  * L'OBLIGATION RESTE CELLE DU SERVEUR : /join répond 409 `invitation_requise`
  * tant qu'aucun partage n'est enregistré (InvitationDuo ramène alors ici).
@@ -34,6 +34,7 @@ import {
   creerInvitationChaine, modifierInvitationChaine, enregistrerPartageChaine, ecrireCleChaine, lireCleChaine,
   lireOptionsChaine, seancesPourCalendrier, changerSeance, lireRefus, messageRefus, messageRefusSeance,
   lienWhatsApp, copier, profilConnu, texteWhatsAppEssai, PITCH_AFROBOOST, urlEspaceCourant,
+  creerInvitationSuivante, // V607g : « Inviter encore » = une NOUVELLE invitation
 } from '../../utils/parrainage';
 import { suivreInvitation } from '../../utils/invitationSuivi';
 import './invitationWizard.css';
@@ -286,6 +287,55 @@ export default function ParcoursEssai({
       .catch(() => setInfo('Ton prénom n’a pas pu être enregistré. Vérifie-le ou efface-le, puis réessaie.'));
   };
 
+  // ── V607g — « INVITER ENCORE » : chaque ami reçoit SON lien (jamais le même) ──
+  // Facultatif, après la confirmation. Le serveur crée une invitation neuve
+  // (POST /chain/next) — ou rend la dernière jamais partagée (double clic).
+  const [encore, setEncore] = useState(null);
+  const [encoreEnCours, setEncoreEnCours] = useState(false);
+  const [nbEncore, setNbEncore] = useState(0);
+  const encoreVol = useRef(false);
+  const partagerEncore = (c) => enregistrerPartageChaine({ token, channel: 'whatsapp', childToken: c.share_token })
+    .then((r) => {
+      const d = (r && r.data) || {};
+      setEncore(Object.assign({}, c, d.child || {}, { shared: true }));
+      setNbEncore((n) => n + 1);
+      setInfo('Nouvelle invitation partagée : ton ami a son propre lien.');
+    })
+    .catch(() => setInfo('Ton partage n’a pas pu être enregistré. Réessaie.'));
+  const surEncore = () => {
+    if (encoreVol.current || !editKey) return;
+    setInfo('');
+    if (encore && !encore.shared && encore.share_url) {
+      window.open(lienWhatsApp(texteDe(encore)), '_blank', 'noopener');
+      suivreInvitation(token, 'partage_whatsapp_declenche');
+      partagerEncore(encore);
+      return;
+    }
+    encoreVol.current = true;
+    setEncoreEnCours(true);
+    let fen = null;
+    try { fen = window.open('', '_blank'); } catch (e) { fen = null; }
+    if (fen) { try { fen.opener = null; } catch (e) { /* ignore */ } }
+    creerInvitationSuivante({ token })
+      .then((r) => {
+        const c = ((r && r.data) || {}).child;
+        if (!c || !c.share_url) throw new Error('sans_lien');
+        setEncore(c);
+        if (!fen) { setInfo('Ta nouvelle invitation est prête. Touche encore « Inviter encore ».'); return undefined; }
+        try { fen.location.href = lienWhatsApp(texteDe(c)); } catch (e) { /* ignore */ }
+        suivreInvitation(token, 'partage_whatsapp_declenche');
+        return partagerEncore(c);
+      })
+      .catch((e) => {
+        if (fen) { try { fen.close(); } catch (x) { /* ignore */ } }
+        const refus = lireRefus(e);
+        setInfo(refus.raison === 'invitations_ouvertes_max'
+          ? 'Tu as déjà plusieurs invitations en attente : attends qu’un ami s’inscrive.'
+          : 'Impossible de créer une nouvelle invitation pour le moment. Réessaie plus tard.');
+      })
+      .finally(() => { encoreVol.current = false; setEncoreEnCours(false); });
+  };
+
   const maSeance = seanceDuPass(pass);
 
   // ── 4. CONFIRMÉ ─────────────────────────────────────────────────────────
@@ -318,14 +368,15 @@ export default function ParcoursEssai({
         </div>
         <BilletsDuo tickets={(resultat && resultat.tickets) || []} vue="ami" />
         <p className="cp-center cp-fine">Tu recevras aussi ton billet par e-mail.</p>
-        {child && child.share_url && editKey ? (
+        {editKey ? (
           <div className="cp-wf-encore-bloc">
             <p className="cp-wf-aide" style={{ marginTop: 12 }}>Tu peux inviter d’autres amis si tu veux.</p>
-            <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={surWhatsApp}
-                    disabled={inactif} data-testid="wf-inviter-encore">
-              <SvgIcon name="messageCircle" size={20} /> Inviter encore
+            <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={surEncore}
+                    disabled={encoreEnCours} data-testid="wf-inviter-encore">
+              <SvgIcon name="messageCircle" size={20} /> {encoreEnCours ? 'Un instant…' : 'Inviter encore'}
             </button>
-            {info ? <p className="cp-mini" role="status">{info}</p> : null}
+            {nbEncore ? <p className="cp-fine" data-testid="wf-encore-compte">{nbEncore > 1 ? `${nbEncore} nouvelles invitations partagées` : '1 nouvelle invitation partagée'}</p> : null}
+            {info ? <p className="cp-mini" role="status" data-testid="wf-info">{info}</p> : null}
           </div>
         ) : null}
         <a className="cp-b cp-b--ghost" href={espace || '/'} data-testid="invitation-retour-espace" style={{ marginTop: 12 }}>

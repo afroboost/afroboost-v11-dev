@@ -52,6 +52,33 @@ def _reference_datetime(offer: dict) -> Optional[datetime]:
         return None
 
 
+def tier_boundaries(offer: dict) -> Optional[dict]:
+    """V607e — les DEUX bascules de palier, en UTC : {"reference", "early_bird_end",
+    "standard_end"}, ou None sans date de référence.
+
+    RÈGLE MÉTIER (Bassi, 12/10) — le calendrier SUISSE fait foi :
+      - « N jours avant » = la MÊME HEURE LOCALE (Europe/Zurich), N dates
+        calendaires avant — et non N × 24 h absolues. Un événement le dimanche à
+        20:00 bascule le dimanche précédent à 20:00, même si le passage CET <-> CEST
+        tombe entre les deux (avant : 21:00 ou 19:00 ce jour-là) ;
+      - « N heures avant » = N heures RÉELLES (sémantique d'une durée).
+    Les comparaisons restent en UTC (robustes) ; seul le recul en jours passe par
+    l'heure locale.
+    """
+    reference = _reference_datetime(offer)
+    if reference is None:
+        return None
+    _days = offer.get("early_bird_days_before")
+    _hours = offer.get("standard_hours_before")
+    days_before = int(_days) if _days is not None else 7
+    hours_before = int(_hours) if _hours is not None else 24
+    _local = reference.astimezone(_ZURICH).replace(tzinfo=None)   # heure murale suisse
+    _early_local = (_local - timedelta(days=days_before)).replace(tzinfo=_ZURICH)
+    return {"reference": reference,
+            "early_bird_end": _early_local.astimezone(timezone.utc),
+            "standard_end": reference - timedelta(hours=hours_before)}
+
+
 def compute_active_price(offer: dict, now: Optional[datetime] = None) -> dict:
     """Renvoie le prix et le palier actifs d'une offre.
 
@@ -66,26 +93,21 @@ def compute_active_price(offer: dict, now: Optional[datetime] = None) -> dict:
     if not offer.get("progressive_pricing"):
         return regular()
 
-    reference = _reference_datetime(offer)
-    if reference is None:
+    bornes = tier_boundaries(offer)
+    if bornes is None:
         # Aucune date de référence : on ne peut pas situer l'acheteur dans le
         # temps. On retombe sur le prix normal — surtout pas sur Early Bird,
         # qui ferait vendre au tarif le plus bas toute offre mal configurée.
         return regular()
 
     now = now or datetime.now(timezone.utc)
-    remaining = reference - now
 
-    # V223: un 0 explicite est une valeur valide (« aucune fenêtre »), il ne
-    # doit pas être confondu avec un champ absent.
-    _days = offer.get("early_bird_days_before")
-    _hours = offer.get("standard_hours_before")
-    days_before = int(_days) if _days is not None else 7
-    hours_before = int(_hours) if _hours is not None else 24
-
-    if remaining > timedelta(days=days_before):
+    # V223: un 0 explicite est une valeur valide (« aucune fenêtre ») : il est
+    # lu tel quel par `tier_boundaries`, jamais confondu avec un champ absent.
+    # V607e : bornes STRICTES comme avant (`remaining > fenêtre` <=> `now < borne`).
+    if now < bornes["early_bird_end"]:
         tier, tier_price = "early_bird", offer.get("price_early_bird")
-    elif remaining > timedelta(hours=hours_before):
+    elif now < bornes["standard_end"]:
         tier, tier_price = "standard", offer.get("price_standard")
     else:
         # Inclut le cas « date dépassée » (remaining négatif).

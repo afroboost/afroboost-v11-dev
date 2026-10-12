@@ -1369,7 +1369,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               border: `1px solid ${COLORS.primary}`,
             }}
           >
-            <p className="text-lg font-bold">🎁 Ton cours d'essai est activé !</p>
+            {/* V607f : un ÉVÉNEMENT gratuit n'est pas un « cours d'essai » (texte de l'essai inchangé). */}
+            <p className="text-lg font-bold" data-testid="essai7-titre">
+              {essai && essai.nature === "evenement" ? "🎉 Ton inscription est confirmée !" : "🎁 Ton cours d'essai est activé !"}
+            </p>
             {courses.length > 0 ? (
               <>
                 <p className="text-white/60 text-xs uppercase tracking-wider mt-3">

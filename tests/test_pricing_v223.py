@@ -136,3 +136,63 @@ def test_fenetre_early_bird_a_zero_est_respectee():
     res2 = compute_active_price(_offer(early_bird_days_before=0, price_early_bird=None),
                                 now=REF - timedelta(days=3))
     assert res2["price"] == 30.0
+
+
+# ═══ V607e — « N jours avant » = MÊME HEURE SUISSE, N dates calendaires avant ═══
+from api.pricing import tier_boundaries  # noqa: E402
+
+_ZH = ZoneInfo("Europe/Zurich")
+
+
+def _evt(date, heure="20:00"):
+    return _offer(countdown_date=date, countdown_time=heure, early_bird_days_before=7, standard_hours_before=24)
+
+
+def _bascule_locale(offre):
+    return tier_boundaries(offre)["early_bird_end"].astimezone(_ZH)
+
+
+def test_v607e_A_ete_normal():
+    o = _evt("2026-08-16")                        # dimanche 20:00 CEST
+    b = _bascule_locale(o)
+    assert (b.date().isoformat(), b.strftime("%H:%M")) == ("2026-08-09", "20:00")
+    assert compute_active_price(o, now=datetime(2026, 8, 9, 17, 59, 59, tzinfo=timezone.utc))["tier"] == "early_bird"
+    assert compute_active_price(o, now=datetime(2026, 8, 9, 18, 0, 0, tzinfo=timezone.utc))["tier"] == "standard"
+
+
+def test_v607e_B_hiver_normal():
+    o = _evt("2026-12-13")                        # dimanche 20:00 CET
+    b = _bascule_locale(o)
+    assert (b.date().isoformat(), b.strftime("%H:%M")) == ("2026-12-06", "20:00")
+    assert compute_active_price(o, now=datetime(2026, 12, 6, 18, 59, 59, tzinfo=timezone.utc))["tier"] == "early_bird"
+    assert compute_active_price(o, now=datetime(2026, 12, 6, 19, 0, 0, tzinfo=timezone.utc))["tier"] == "standard"
+
+
+def test_v607e_C_passage_heure_ete():
+    """Événement mercredi 1er avril 20:00 CEST ; 7 jours avant = mercredi 25 mars 20:00 CET
+    (passage à l'heure d'été le 29 mars entre les deux). 168 h auraient donné 19:00 CET."""
+    o = _evt("2026-04-01")
+    b = _bascule_locale(o)
+    assert (b.date().isoformat(), b.strftime("%H:%M")) == ("2026-03-25", "20:00")
+    assert tier_boundaries(o)["early_bird_end"] == datetime(2026, 3, 25, 19, 0, tzinfo=timezone.utc)
+    assert compute_active_price(o, now=datetime(2026, 3, 25, 18, 30, tzinfo=timezone.utc))["tier"] == "early_bird"
+
+
+def test_v607e_D_passage_heure_hiver():
+    """Événement dimanche 25 octobre 20:00 CET ; 7 jours avant = dimanche 18 octobre 20:00 CEST
+    (passage à l'heure d'hiver le 25 à 03:00). 168 h auraient donné 21:00 CEST."""
+    o = _evt("2026-10-25")
+    b = _bascule_locale(o)
+    assert (b.date().isoformat(), b.strftime("%H:%M")) == ("2026-10-18", "20:00")
+    assert tier_boundaries(o)["early_bird_end"] == datetime(2026, 10, 18, 18, 0, tzinfo=timezone.utc)
+    assert compute_active_price(o, now=datetime(2026, 10, 18, 18, 30, tzinfo=timezone.utc))["tier"] == "standard"
+    # « 24 h avant » reste une DURÉE réelle : 24 h avant 19:00 UTC = 19:00 UTC la veille (21:00 CEST).
+    assert tier_boundaries(o)["standard_end"] == datetime(2026, 10, 24, 19, 0, tzinfo=timezone.utc)
+
+
+def test_v607e_E_sept_jours_calendaires_meme_heure_zurich():
+    for date in ("2026-01-18", "2026-03-29", "2026-04-02", "2026-06-21", "2026-10-25", "2026-10-29", "2026-11-01"):
+        o = _evt(date, "18:45")
+        b = _bascule_locale(o)
+        attendu = (datetime.fromisoformat(date) - timedelta(days=7)).date()
+        assert b.date() == attendu and b.strftime("%H:%M") == "18:45", (date, b)

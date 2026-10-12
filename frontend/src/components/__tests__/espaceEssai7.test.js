@@ -117,6 +117,20 @@ afterEach(async () => {
 });
 
 // ==========================================================================
+// V607f — un ÉVÉNEMENT gratuit (nature « evenement ») n'est pas un « cours d'essai ».
+describe('événement gratuit accordé, aucune séance choisie', () => {
+  beforeEach(async () => {
+    await monter(espace({ trial: { is_trial: true, state: 'available', nature: 'evenement' } }));
+  });
+  test("le titre dit l'inscription, jamais « cours d'essai »", () => {
+    const texte = parTestId('essai7-priorite').textContent;
+    expect(texte).toContain('Ton inscription est confirmée');
+    expect(texte).not.toContain("cours d'essai");
+    expect(texte).toContain('Choisis maintenant ta séance');
+  });
+});
+
+// ==========================================================================
 describe('essai accorde, aucune seance choisie', () => {
   beforeEach(async () => {
     await monter(espace({ trial: { is_trial: true, state: 'available' } }));

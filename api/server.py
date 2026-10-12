@@ -18026,7 +18026,9 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
         "evenement": await v565_affiche_evenement((offer or {}).get("coach_id") or coach_id_hint_early),
         # ESSAI-5a-1D : la lecture qui donne son sens au compteur. Absente pour
         # un forfait payant, ou l'ecran garde exactement son comportement.
-        "trial": await t2_etat_essai(code_upper, reservations_raw, remaining_sessions),
+        # V607f : `nature` — une offre gratuite de type ÉVÉNEMENT n'est pas un « cours
+        # d'essai » à l'écran (la règle d'octroi, elle, ne change pas).
+        "trial": t2_nature_essai(await t2_etat_essai(code_upper, reservations_raw, remaining_sessions), offer),
         # ESSAI-5a-2 : l'invitation a temoigner. Calculee ici, sur des donnees
         # deja chargees, et JAMAIS montree a quelqu'un dont l'unique trace est
         # l'essai qu'il vient d'obtenir.
@@ -44520,6 +44522,16 @@ T2_ESSAI_RESERVE = "booked"
 T2_ESSAI_EFFECTUE = "done"
 
 
+def t2_nature_essai(etat, offre) -> dict:
+    """V607f — ajoute `nature` (« evenement » | « essai ») à l'état d'essai. PURE.
+    Un événement gratuit (`offer_type == "event"`) reste un octroi gratuit (mêmes
+    règles serveur), mais l'espace ne lui dit pas « Ton cours d'essai est activé »."""
+    _e = dict(etat or {})
+    if _e.get("is_trial"):
+        _e["nature"] = "evenement" if (offre or {}).get("offer_type") == "event" else "essai"
+    return _e
+
+
 async def t2_etat_essai(code: str, reservations: list, remaining) -> dict:
     """L'etat d'un essai gratuit, ou `{"is_trial": False}` pour tout le reste.
 
@@ -53860,18 +53872,15 @@ async def startup_db():
     try:
         await db["referral_passes"].create_index("id", unique=True)
         await db["referral_passes"].create_index("share_token", unique=True)
-        await db["referral_passes"].create_index(
-            [("sponsor.email_norm", 1), ("course_id", 1), ("occurrence", 1)], unique=True,
-            partialFilterExpression={"status": {"$in": ["locked", "waiting", "friend_registered", "unlocked"]}})
+        # V607g : l'unicité (parrain, cours, occurrence) porte désormais aussi le RANG
+        # de l'invitation (« Inviter encore ») — index posé plus bas, migration dédiée.
         await db["referral_passes"].create_index(
             [("invitee.email_norm", 1), ("course_id", 1), ("occurrence", 1)], unique=True,
             partialFilterExpression={"invitee.email_norm": {"$type": "string"}})
         await db["referral_passes"].create_index([("coach_id", 1), ("status", 1), ("created_at", -1)])
-        # V556 : UNE invitation enfant par pass (la chaîne ne se ramifie pas
-        # sous un même lien) ; filtre partiel : les pass sans parent n'y entrent pas.
-        await db["referral_passes"].create_index(
-            "chain.parent_pass_id", unique=True,
-            partialFilterExpression={"chain.parent_pass_id": {"$type": "string"}})
+        # V556 -> V607g : « une invitation enfant par pass » devient « une par RANG »
+        # (l'obligatoire sans rang = null, puis 2, 3… avec « Inviter encore ») — voir
+        # la migration V607g ci-dessous.
         # PAR-1 : racines de campagne (plafond des P0 ouverts ; X-Entry-Key) —
         # index NON uniques, ajoutés : aucun index existant n'est modifié.
         await db["referral_passes"].create_index([("origin.campaign_id", 1), ("status", 1)])
@@ -53881,6 +53890,29 @@ async def startup_db():
         logger.info("[V534] index referral_passes / referral_invitations OK")
     except Exception as _e534:
         logger.warning("[V534] index parrainage non posés (%s)", type(_e534).__name__)
+    # V607g — « INVITER ENCORE » (essai gratuit) : plusieurs invitations par parent,
+    # une par RANG. MIGRATION SÛRE, idempotente, dans cet ordre :
+    #   1. créer les deux index élargis (un `chain.rang` absent vaut null : les pass
+    #      existants gardent EXACTEMENT l'unicité d'avant, aucun conflit possible) ;
+    #   2. SEULEMENT si les deux existent, retirer les deux anciens (plus étroits).
+    # Un échec en 1 ne retire rien : « Inviter encore » répond 409 et n'écrit rien.
+    try:
+        await db["referral_passes"].create_index(
+            [("chain.parent_pass_id", 1), ("chain.rang", 1)], unique=True, name="v607g_parent_rang",
+            partialFilterExpression={"chain.parent_pass_id": {"$type": "string"}})
+        await db["referral_passes"].create_index(
+            [("sponsor.email_norm", 1), ("course_id", 1), ("occurrence", 1), ("chain.rang", 1)], unique=True,
+            name="v607g_parrain_seance_rang",
+            partialFilterExpression={"status": {"$in": ["locked", "waiting", "friend_registered", "unlocked"]}})
+        for _v607g_ancien in ("chain.parent_pass_id_1", "sponsor.email_norm_1_course_id_1_occurrence_1"):
+            try:
+                await db["referral_passes"].drop_index(_v607g_ancien)
+                logger.info("[V607g] ancien index %s retiré", _v607g_ancien)
+            except Exception:  # noqa: BLE001  (déjà retiré : idempotent)
+                pass
+        logger.info("[V607g] index referral_passes (rang) OK")
+    except Exception as _e607g:
+        logger.warning("[V607g] index par rang non posés (%s) — anciens index conservés", type(_e607g).__name__)
     # INV-1 : index des invitations (id + share_token uniques, liste par coach).
     try:
         await inv1_assurer_index(db)

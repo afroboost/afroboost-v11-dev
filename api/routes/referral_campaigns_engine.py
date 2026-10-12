@@ -358,8 +358,8 @@ def prix_actif(offre, maintenant=None):
     suivante. None si l'offre n'a pas de prix positif. Pur (`maintenant` injectable)."""
     if not isinstance(offre, dict):
         return None
-    from datetime import timedelta, timezone as _tz
-    from api.pricing import compute_active_price, _reference_datetime
+    from datetime import timezone as _tz
+    from api.pricing import compute_active_price, tier_boundaries
     try:
         _r = compute_active_price(offre, now=maintenant)
     except Exception:  # noqa: BLE001
@@ -373,11 +373,9 @@ def prix_actif(offre, maintenant=None):
                or LIBELLES_PALIER.get(_palier, "Tarif"),
                "devise": "CHF", "paliers": [], "prochain": None}
     if offre.get("progressive_pricing") is True and _palier != "regular":
-        _ref = _reference_datetime(offre)
-        _jours = offre.get("early_bird_days_before")
-        _heures = offre.get("standard_hours_before")
-        _fin = {"early_bird": _ref - timedelta(days=int(_jours if _jours is not None else 7)),
-                "standard": _ref - timedelta(hours=int(_heures if _heures is not None else 24))} if _ref else {}
+        # V607e : les MÊMES bornes que le checkout (jours = calendrier suisse).
+        _b = tier_boundaries(offre)
+        _fin = {"early_bird": _b["early_bird_end"], "standard": _b["standard_end"]} if _b else {}
         _ordre = ("early_bird", "standard", "last_minute")
         for _k in _ordre:
             _p = _nombre(offre.get("price_" + _k))

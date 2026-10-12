@@ -7616,8 +7616,12 @@ function App() {
           // Le message dit ce qui se passe VRAIMENT : soit on emmene la
           // personne choisir sa seance, soit — a defaut de code — l'e-mail
           // reste le seul chemin, et on le lui dit comme avant.
+          // V607f : un ÉVÉNEMENT gratuit n'est pas un « cours d'essai ».
+          const v607Evenement = selectedOffer && selectedOffer.offer_type === 'event';
           toast.innerHTML = cibleEssai
-            ? '🎁&nbsp; <strong>Ton cours d\'essai est activé !</strong><br/><span style="font-size:13px;opacity:0.95;">On t\'emmène choisir ta séance…</span>'
+            ? (v607Evenement
+              ? '🎉&nbsp; <strong>Ton inscription est confirmée !</strong><br/><span style="font-size:13px;opacity:0.95;">On t\'emmène choisir ta séance…</span>'
+              : '🎁&nbsp; <strong>Ton cours d\'essai est activé !</strong><br/><span style="font-size:13px;opacity:0.95;">On t\'emmène choisir ta séance…</span>')
             : '✅&nbsp; <strong>Réservation confirmée !</strong><br/><span style="font-size:13px;opacity:0.95;">📧 Consultez votre email pour recevoir votre QR code et code d\'accès AFR</span>';
           toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#10b981,var(--primary-color, #D91CD2));color:white;padding:16px 28px;border-radius:14px;font-size:15px;box-shadow:0 10px 40px rgba(var(--primary-rgb, 217, 28, 210), 0.5);max-width:90%;text-align:center;animation:fadeInScale 0.4s ease;';
           document.body.appendChild(toast);

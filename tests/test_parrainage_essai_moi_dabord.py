@@ -216,10 +216,146 @@ async def partie_pass_duo_inchange():
              not evenements(base, "essai_debloque"))
 
 
+async def suivante(tok, cle=V3._DEF):
+    return await appel(R.referral_chaine_suivante(tok, req({}, V3._entete_cle(tok, cle))))
+
+
+async def partager_enfant(tok_parent, tok_enfant, canal="whatsapp"):
+    return await appel(R.referral_chaine_partager(
+        tok_parent, req({"channel": canal, "child_token": tok_enfant}, V3._entete_cle(tok_parent, V3._DEF))))
+
+
+def enfants(base, parent_id):
+    return [d for d in base["referral_passes"].docs if (d.get("chain") or {}).get("parent_pass_id") == parent_id]
+
+
+async def partie_inviter_encore():
+    """V607g — Sophie (P0, génération 1, invitée par la campagne) -> Nadine (A),
+    puis « Inviter encore » -> Julie (B), puis C… ; Nadine -> génération 3."""
+    base, occ = depart()
+    c, r = await entree(base)
+    t0 = r["share_token"]
+    p0 = doc_par_tok(base, t0)
+    c, x = await suivante(t0)
+    verifier("E0. « Inviter encore » AVANT tout (rien de partagé, pas inscrite) -> 409, rien créé",
+             c == 409 and not enfants(base, p0["id"]), (c, x))
+    c, ra = await chaine(t0)
+    tA = ra["child"]["share_token"]
+    await partager(t0)
+    c, x = await suivante(t0)
+    verifier("E1. partagé mais Sophie PAS encore inscrite -> 409 essai_non_confirme (preuve serveur exigée)",
+             c == 409 and raison(x) == "essai_non_confirme" and len(enfants(base, p0["id"])) == 1, (c, x))
+    c, x = await rejoindre(t0, 1, nom="Sophie")
+    verifier("E2. Sophie rejoint son essai (1re invitation obligatoire, inchangée)", c == 200, (c, str(x)[:200]))
+    c, x = await suivante(t0, cle="cle-d-un-autre-appareil")
+    verifier("E3. « Inviter encore » depuis un AUTRE appareil -> 403, rien créé",
+             c == 403 and len(enfants(base, p0["id"])) == 1, (c, x))
+    c, rb = await suivante(t0)
+    tB = rb.get("child", {}).get("share_token")
+    dA, dB = doc_par_tok(base, tA), doc_par_tok(base, tB) or {}
+    verifier("E4. « Inviter encore » -> 201, NOUVEAU lien (jeton distinct de celui de Nadine)",
+             c == 201 and tB and tB != tA and tB != t0, (c, str(rb)[:300]))
+    verifier("E5. même parent, même racine, même profondeur (même génération), même campagne, rang 2",
+             dB.get("chain", {}).get("parent_pass_id") == p0["id"]
+             and dB["chain"].get("root_pass_id") == dA["chain"].get("root_pass_id")
+             and dB["chain"].get("depth") == dA["chain"].get("depth") == 1
+             and (dB.get("origin") or {}).get("campaign_id") == CC.CAMP_ID and dB["chain"].get("rang") == 2,
+             dB.get("chain"))
+    verifier("E6. son parrain est Sophie, déjà LIÉE (jamais « en attente »), même séance que la sienne",
+             dB["sponsor"]["email_norm"] == ident(1)[0] and dB["sponsor"]["pending"] is False
+             and dB["occurrence"] == doc_par_tok(base, t0)["occurrence"], dB.get("sponsor"))
+    verifier("E6b. réponse sans donnée personnelle", not CC.fuite(rb, base), str(rb)[:300])
+    c, rb2 = await suivante(t0)
+    verifier("E7. double clic : la même invitation est rendue (200), jamais deux",
+             c == 200 and rb2["child"]["share_token"] == tB and len(enfants(base, p0["id"])) == 2, (c, len(enfants(base, p0["id"]))))
+    gen = [d for d in evenements(base, "nouvelle_invitation_generee")]
+    verifier("E8. funnel : nouvelle_invitation_generee pour A et B (génération 2), une ligne par invitation",
+             len(gen) == 2 and all(g["generation"] == 2 and g["type_invitation"] == "trial" for g in gen), gen)
+
+    # Nadine (A) : son essai, puis SA propre invitation obligatoire -> génération 3.
+    c, rn = await chaine(tA)
+    tA1 = rn["child"]["share_token"]
+    await partager(tA)
+    c, x = await rejoindre(tA, 2, nom="Nadine")
+    verifier("E9. Nadine réserve sur le lien A", c == 200 and len(resas_de(base, ident(2)[0])) == 1, (c, str(x)[:200]))
+    await chaine(tA1)
+    await partager(tA1)
+    c, x = await rejoindre(tA1, 4, nom="David")
+    g3 = [g for g in evenements(base, "nouvelle_invitation_generee") if g["generation"] == 3]
+    verifier("E10. Nadine -> personne suivante : inscrite (génération 3 au funnel)",
+             c == 200 and len(resas_de(base, ident(4)[0])) == 1 and len(g3) >= 1, (c, g3))
+
+    # Julie (B) : partage déclenché par Sophie, puis Julie réserve indépendamment.
+    c, x = await partager_enfant(t0, tB)
+    verifier("E11. partage de l'invitation B (même appareil) enregistré sur B", c == 200
+             and x["child"]["share_token"] == tB and E.partage_chaine(doc_par_tok(base, tB))["shared"], (c, x))
+    await chaine(tB)
+    await partager(tB)
+    c, x = await rejoindre(tB, 3, nom="Julie")
+    dB = doc_par_tok(base, tB)
+    verifier("E12. Julie réserve sur le lien B ; B débloqué ; Sophie garde UNE seule place (aucun 2e débit)",
+             c == 200 and len(resas_de(base, ident(3)[0])) == 1 and dB.get("status") == "unlocked"
+             and len(resas_de(base, ident(1)[0])) == 1, (c, dB.get("status"), dB.get("blocked_reason")))
+    c, x = await rejoindre(tB, 5, nom="Emma")
+    verifier("E13. jeton fermé (B rejoint) : jamais réutilisé -> 409 pass_ferme", c == 409 and raison(x) == "pass_ferme", (c, x))
+
+    c, rc = await suivante(t0)
+    tC = rc.get("child", {}).get("share_token")
+    verifier("E14. « Inviter encore » -> C, rang 3, jeton jamais vu",
+             c == 201 and tC not in (t0, tA, tB, tA1) and doc_par_tok(base, tC)["chain"]["rang"] == 3
+             and len({d["share_token"] for d in base["referral_passes"].docs}) == len(base["referral_passes"].docs), (c, tC))
+    await partager_enfant(t0, tC)
+    await chaine(tC)
+    await partager(tC)
+    c, x = await rejoindre(tC, 3, email="julie.autre@exemple.test", nom="Julie")
+    verifier("E15. essai unique : Julie (déjà essai, même numéro) sur C -> refus habituel 409",
+             c == 409 and raison(x) in E.REFUS_IDENTITE_DEFINITIFS, (c, x))
+
+    # Plafond : invitations ouvertes non rejointes.
+    _orig = E.ENFANTS_OUVERTS_MAX
+    try:
+        E.ENFANTS_OUVERTS_MAX = len([d for d in enfants(base, p0["id"]) if not d.get("invitee")])
+        c, x = await suivante(t0)
+        verifier("E16. plafond d'invitations ouvertes atteint -> 409 invitations_ouvertes_max, rien créé",
+                 c == 409 and raison(x) == "invitations_ouvertes_max", (c, x))
+    finally:
+        E.ENFANTS_OUVERTS_MAX = _orig
+    verifier("E17. l'obligatoire reste LA référence (porte du join, A1) : _enfant_de rend A",
+             (await R._enfant_de(doc_par_tok(base, t0)))["share_token"] == tA)
+
+    # Pass Duo : aucun changement.
+    base2, occ2 = H.base_de_depart(chaine=True)
+    c, p = await H.creer_pass(base2, occ2)
+    tp = p["share_token"]
+    await chaine(tp)
+    await partager(tp)
+    await rejoindre(tp, 6, nom="Farid")
+    n_avant = len(base2["referral_passes"].docs)
+    c, x = await suivante(tp)
+    verifier("E18. Pass Duo : « Inviter encore » -> 409, aucune invitation créée (comportement inchangé)",
+             c == 409 and len(base2["referral_passes"].docs) == n_avant, (c, x))
+
+    # Production sans migration d'index : refus propre, rien d'écrit.
+    base3, occ3 = depart()
+    base3["referral_passes"].uniques = [u for u in base3["referral_passes"].uniques
+                                        if u[0] != ("chain.parent_pass_id", "chain.rang?")] + [
+        (("chain.parent_pass_id",), {"chain.parent_pass_id": {"$type": "string"}})]
+    c, r = await entree(base3)
+    t3 = r["share_token"]
+    await chaine(t3)
+    await partager(t3)
+    await rejoindre(t3, 7, nom="Gaelle")
+    n_avant = len(base3["referral_passes"].docs)
+    c, x = await suivante(t3)
+    verifier("E19. index historique non migré -> 409 invitation_suivante_indisponible, rien d'écrit",
+             c == 409 and raison(x) == "invitation_suivante_indisponible" and len(base3["referral_passes"].docs) == n_avant, (c, x))
+
+
 async def principal():
     await partie_dimanche()
     await partie_moi_dabord()
     await partie_pass_duo_inchange()
+    await partie_inviter_encore()
 
 
 def main():

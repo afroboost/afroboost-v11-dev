@@ -215,6 +215,15 @@ async def principal():
     verifier("G8 aucune donnée de participant dans le journal (ni e-mail, ni nom, ni jeton en clair)",
              not any(x in _j for x in ("a@test.example", "b@test.example", "Alice", "Bob", tok)), _j[:300])
 
+    # ── I. V607f : l'espace d'un événement gratuit ne dit pas « cours d'essai »
+    import api.server as _S2
+    verifier("I1 offre gratuite de type Événement -> nature « evenement »",
+             _S2.t2_nature_essai({"is_trial": True, "state": "available"}, {"offer_type": "event"}).get("nature") == "evenement")
+    verifier("I2 essai ordinaire -> nature « essai » (texte de l'essai inchangé)",
+             _S2.t2_nature_essai({"is_trial": True}, {"offer_type": "single_class"}).get("nature") == "essai")
+    verifier("I3 forfait payant -> état inchangé (aucune nature ajoutée)",
+             _S2.t2_nature_essai({"is_trial": False}, {"offer_type": "event"}) == {"is_trial": False})
+
     # ── H. Pass Duo / essai : intouchés par les relais ──────────────────────
     verifier("H1 aucun relais pour un Pass Duo / essai", await RL.resoudre_parent(base, (await T.creer(
         T.COACH_A, {"type": "trial"}))[1]["share_token"]) == (None, None))

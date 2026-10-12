@@ -76,6 +76,15 @@ def _lire(doc, cle):
     return cur
 
 
+def _lire_cle_index(doc, cle):
+    """Une clé d'index unique. Suffixe « ? » = comme MongoDB, un champ ABSENT
+    vaut null (V607g : `chain.rang` absent des anciens enfants)."""
+    if str(cle).endswith("?"):
+        v = _lire(doc, str(cle)[:-1])
+        return None if v is _ABSENT else v
+    return _lire(doc, cle)
+
+
 def _ecrire(doc, cle, valeur):
     parts = str(cle).split(".")
     cur = doc
@@ -232,7 +241,7 @@ class _Coll:
         for cles, partiel in self.uniques:
             if partiel and not _match(doc, partiel):
                 continue
-            tuple_doc = tuple(_lire(doc, c) for c in cles)
+            tuple_doc = tuple(_lire_cle_index(doc, c) for c in cles)
             if any(v is _ABSENT for v in tuple_doc):
                 continue
             for autre in self.docs:
@@ -240,7 +249,7 @@ class _Coll:
                     continue
                 if partiel and not _match(autre, partiel):
                     continue
-                if tuple(_lire(autre, c) for c in cles) == tuple_doc:
+                if tuple(_lire_cle_index(autre, c) for c in cles) == tuple_doc:
                     raise DuplicateKeyError("+".join(cles))
 
     def find(self, q=None, proj=None, **k):
@@ -365,12 +374,14 @@ class _Base:
         self._c["referral_passes"] = _Coll("referral_passes", uniques=[
             (("id",), None),
             (("share_token",), None),
-            (("sponsor.email_norm", "course_id", "occurrence"),
+            # V607g : + `chain.rang` (absent = null) — index à migrer en production.
+            (("sponsor.email_norm", "course_id", "occurrence", "chain.rang?"),
              {"status": {"$in": list(E.ETATS_ACTIFS)}}),
             (("invitee.email_norm", "course_id", "occurrence"),
              {"invitee.email_norm": {"$type": "string"}}),
             # V556 : une invitation enfant par pass (chaîne boule de neige)
-            (("chain.parent_pass_id",), {"chain.parent_pass_id": {"$type": "string"}}),
+            # V607g : (parent, rang) — l'obligatoire (rang absent) reste UNIQUE par parent.
+            (("chain.parent_pass_id", "chain.rang?"), {"chain.parent_pass_id": {"$type": "string"}}),
         ])
 
     def __getitem__(self, nom):
