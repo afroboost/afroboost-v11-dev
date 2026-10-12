@@ -32514,8 +32514,9 @@ _V612_MATIN = ("matin", "matinee", "vormittag", "morgen", "morning", "avant midi
 _V612_APRES = ("apres-midi", "apres midi", "aprem", "soir", "soiree", "nachmittag", "abend", "afternoon", "evening", "night")
 
 
-def v612_trajet(fiches=None, ville="") -> dict:
-    """Temps de trajet ALLER depuis Neuchâtel, seulement s'il est FIABLE. PURE ; jamais deviné."""
+def v612_trajet(fiches=None, ville="", auto=None) -> dict:
+    """Temps de trajet ALLER depuis Neuchâtel, seulement s'il est FIABLE. PURE ; jamais deviné.
+    Ordre : canton NE (local) > durée posée sur la fiche > calcul routier automatique V613 (`auto`)."""
     if v611_est_neuchatel(ville):
         return {"connu": True, "minutes": 0, "source": "canton de Neuchatel"}
     for f in fiches or []:
@@ -32525,6 +32526,10 @@ def v612_trajet(fiches=None, ville="") -> dict:
             continue
         if m >= 0:
             return {"connu": True, "minutes": m, "source": "fiche"}
+    a = auto or {}
+    if a.get("statut") == "ok" and isinstance(a.get("minutes"), (int, float)):
+        return {"connu": True, "minutes": int(round(a["minutes"])), "source": a.get("source") or "OSRM",
+                "incertain": bool(a.get("incertain"))}
     return {"connu": False, "minutes": None, "source": ""}
 
 
@@ -32566,7 +32571,7 @@ def v612_verdict(creneau: dict, trajet: dict, physique: bool = True) -> dict:
         avant_midi = "NON"
     else:
         avant_midi = "A VERIFIER"
-    if not trajet.get("connu"):
+    if not trajet.get("connu") or trajet.get("incertain"):
         trajet_ok = "A VERIFIER"
     else:
         trajet_ok = "OUI" if trajet["minutes"] <= V612_TRAJET_MAX_MIN else "NON"
@@ -32583,7 +32588,7 @@ def v612_verdict(creneau: dict, trajet: dict, physique: bool = True) -> dict:
 def v612_agenda(contexte: dict, fiches=None, ville="") -> dict:
     """Le rapport d'agenda du dossier : créneaux proposés par le partenaire, trajet, verdicts. PURE."""
     c = contexte or {}
-    trajet = v612_trajet(fiches, ville)
+    trajet = v612_trajet(fiches, ville, c.get("trajet_auto"))
     en_ligne_demande = any(x in p3ai_sans_accents(c.get("body_text") or "").lower()
                            for x in ("en ligne", "online", "a distance", "visio", "zoom"))
     creneaux = [v612_verdict(x, trajet, physique=not en_ligne_demande) for x in v612_creneaux(c.get("body_text"))]
@@ -32594,8 +32599,9 @@ def v612_agenda(contexte: dict, fiches=None, ville="") -> dict:
         elif x["compatible"] == "A VERIFIER" and pire != "NON":
             pire = "A VERIFIER"
     return {"ville": ville or "(inconnue)", "trajet_connu": trajet["connu"], "trajet_min": trajet["minutes"],
-            "trajet_ok": ("A VERIFIER" if not trajet["connu"] else
+            "trajet_ok": ("A VERIFIER" if (not trajet["connu"] or trajet.get("incertain")) else
                           ("OUI" if trajet["minutes"] <= V612_TRAJET_MAX_MIN else "NON")),
+            "trajet_source": trajet.get("source") or "",
             "creneaux": creneaux, "creneau_compatible": pire if creneaux else None}
 
 
@@ -32631,7 +32637,8 @@ def v612_controle_brouillon(texte, agenda: dict) -> list:
     if any(x in t for x in ("18h45", "18h30", "18:45", "18:30", "mon cours", "mes cours", "autre cours",
                             "meinen kurs", "anderen kurs", "my class")):
         motifs.append("contrainte interne citée")
-    trajet = {"connu": (agenda or {}).get("trajet_connu"), "minutes": (agenda or {}).get("trajet_min")}
+    trajet = {"connu": (agenda or {}).get("trajet_connu"), "minutes": (agenda or {}).get("trajet_min"),
+              "incertain": (agenda or {}).get("trajet_ok") == "A VERIFIER"}
     for x in v612_creneaux(texte):
         if x["jour"] not in V612_JOURS_CONTRAINTS:
             continue
@@ -32642,6 +32649,121 @@ def v612_controle_brouillon(texte, agenda: dict) -> list:
                 and "zu bestatigen" not in t and "to be confirmed" not in t:
             motifs.append("date non vérifiée présentée comme ferme")
     return sorted(set(motifs))
+
+
+# --- V613 — TEMPS DE TRAJET ROUTIER AUTOMATIQUE (OpenStreetMap, gratuit, sans clé) ---------------
+# Géocodage : Nominatim (déjà utilisé par le champ d'adresse des offres). Itinéraire voiture : OSRM
+# (instance FOSSGIS routing.openstreetmap.de, secours router.project-osrm.org). Aucune clé, aucun
+# abonnement. Politique d'usage respectée : 1 requête/s vers Nominatim, User-Agent identifiant,
+# appels SEULEMENT quand un mercredi/dimanche hors canton NE est en jeu, et CACHE par ville.
+# Jamais de durée inventée : panne, ville introuvable ou réponse illisible → « À VÉRIFIER ».
+# OSRM ne connaît pas le trafic : entre 108 et 132 min (±10 % autour de 2 h) → « À VÉRIFIER ».
+V613_CACHE = "trajets_cache"
+V613_NEUCHATEL = (46.9895828, 6.9292641)      # Neuchâtel, coordonnées OpenStreetMap (Nominatim)
+V613_UA = {"User-Agent": "Afroboost/1.0 (afroboost.com; prospection)"}
+V613_NOMINATIM = "https://nominatim.openstreetmap.org/search"
+V613_OSRM = ("https://routing.openstreetmap.de/routed-car/route/v1/driving/",
+             "https://router.project-osrm.org/route/v1/driving/")
+V613_ZONE_GRISE = (108, 132)
+V613_TTL_OK_J = 180
+V613_TTL_INTROUVABLE_J = 30
+_V613_VERROU = None
+_V613_DERNIER = [0.0]
+
+
+def v613_cle_ville(ville) -> str:
+    return re.sub(r"\s+", " ", p3ai_sans_accents(ville or "").lower().strip())[:120]
+
+
+def v613_resultat(minutes, km=None, source="OpenStreetMap / OSRM") -> dict:
+    """Une durée MESURÉE → résultat. PURE. La zone grise reste à vérifier."""
+    m = int(round(float(minutes)))
+    return {"statut": "ok", "minutes": m, "km": (round(float(km)) if km is not None else None), "source": source,
+            "incertain": V613_ZONE_GRISE[0] <= m <= V613_ZONE_GRISE[1]}
+
+
+async def _v613_get_json(url: str):
+    import httpx
+    async with httpx.AsyncClient(timeout=8.0, headers=V613_UA) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        return r.json()
+
+
+async def v613_calculer(ville: str, get_json=None) -> dict:
+    """Géocode puis calcule l'itinéraire voiture depuis Neuchâtel. Ne lève jamais."""
+    import asyncio as _aio
+    global _V613_VERROU
+    lire = get_json or _v613_get_json
+    if _V613_VERROU is None:
+        _V613_VERROU = _aio.Lock()
+    try:
+        async with _V613_VERROU:     # 1 requête/s vers Nominatim, tous dossiers confondus
+            import time as _t613
+            attente = 1.1 - (_t613.monotonic() - _V613_DERNIER[0])
+            if attente > 0 and get_json is None:
+                await _aio.sleep(attente)
+            _V613_DERNIER[0] = _t613.monotonic()
+            geo = await lire(V613_NOMINATIM + "?" + urllib.parse.urlencode({"q": ville, "format": "json", "limit": 1,
+                                                               "countrycodes": "ch,fr,de,it,at"}))
+    except Exception as e:  # noqa: BLE001
+        return {"statut": "indisponible", "minutes": None, "raison": "geocodage : " + type(e).__name__}
+    if not isinstance(geo, list) or not geo:
+        return {"statut": "introuvable", "minutes": None, "raison": "ville introuvable"}
+    try:
+        lat, lon = float(geo[0]["lat"]), float(geo[0]["lon"])
+    except (KeyError, TypeError, ValueError):
+        return {"statut": "indisponible", "minutes": None, "raison": "geocodage illisible"}
+    for base in V613_OSRM:
+        try:
+            d = await lire(base + "%f,%f;%f,%f?overview=false" % (V613_NEUCHATEL[1], V613_NEUCHATEL[0], lon, lat))
+            route = (d or {}).get("routes") or []
+            if (d or {}).get("code") not in (None, "Ok") or not route:
+                continue
+            duree = float(route[0]["duration"])
+            if duree <= 0:
+                continue
+            return dict(v613_resultat(duree / 60, float(route[0].get("distance") or 0) / 1000),
+                        lieu=str(geo[0].get("display_name") or "")[:120], lat=lat, lon=lon)
+        except Exception:  # noqa: BLE001
+            continue
+    return {"statut": "indisponible", "minutes": None, "raison": "itineraire indisponible"}
+
+
+async def v613_trajet_auto(ville: str, get_json=None, base=None, forcer: bool = False, maintenant=None) -> dict:
+    """Trajet routier ALLER Neuchâtel → ville, avec CACHE. Ne lève jamais ; jamais de durée inventée."""
+    cle = v613_cle_ville(ville)
+    if not cle:
+        return {"statut": "inconnu", "minutes": None, "raison": "ville inconnue"}
+    if v611_est_neuchatel(ville):
+        return {"statut": "ok", "minutes": 0, "source": "canton de Neuchatel", "incertain": False}
+    b = base if base is not None else db
+    now = maintenant or datetime.now(timezone.utc)
+    try:
+        cache = None if forcer else await b[V613_CACHE].find_one({"_id": cle})
+    except Exception:  # noqa: BLE001
+        cache = None
+    if cache and (cache.get("expire_le") or "") > now.isoformat():
+        return dict({k: v for k, v in cache.items() if k not in ("_id",)}, depuis_cache=True)
+    r = await v613_calculer(ville, get_json)
+    if r["statut"] in ("ok", "introuvable"):
+        ttl = V613_TTL_OK_J if r["statut"] == "ok" else V613_TTL_INTROUVABLE_J
+        doc = dict(r, ville=ville, calcule_le=now.isoformat(), expire_le=(now + timedelta(days=ttl)).isoformat())
+        try:
+            await b[V613_CACHE].update_one({"_id": cle}, {"$set": doc}, upsert=True)
+        except Exception:  # noqa: BLE001
+            pass
+    return dict(r, depuis_cache=False)
+
+
+def v613_trajet_utile(contexte: dict, fiches=None, ville="") -> bool:
+    """Faut-il calculer un trajet ? Seulement si un mercredi/dimanche est évoqué, hors canton NE,
+    et sans durée déjà posée sur la fiche. PURE — c'est ce qui limite les appels externes."""
+    if not ville or v611_est_neuchatel(ville):
+        return False
+    if v612_trajet(fiches, ville)["connu"]:
+        return False
+    return any(x["jour"] in V612_JOURS_CONTRAINTS for x in v612_creneaux((contexte or {}).get("body_text")))
 
 
 def p3ai_invite(contexte: dict) -> str:
@@ -32948,6 +33070,12 @@ async def p3ai_analyser(inbound_id: str, request: Request):
                                             {"_id": 0, "intention": 1}) or {}).get("intention"))
     contexte = p3ai_contexte(message, action, dossier["fiches"], notes, _statut)
     contexte["fil"] = await v611_fil(message, action)
+    _ville = next((f.get("city") for f in dossier["fiches"] if (f.get("city") or "").strip()), "") or ""
+    if v613_trajet_utile(contexte, dossier["fiches"], _ville):        # V613
+        try:
+            contexte["trajet_auto"] = await asyncio.wait_for(v613_trajet_auto(_ville), timeout=15)
+        except Exception:  # noqa: BLE001
+            contexte["trajet_auto"] = {"statut": "indisponible", "minutes": None}
     contexte["contexte_commercial"] = v611_contexte_commercial(contexte, dossier["fiches"])
 
     precedent = await db[P3AI_BROUILLONS].find_one(
@@ -32974,6 +33102,21 @@ async def p3ai_analyser(inbound_id: str, request: Request):
                 (message["id"] or "")[:8], brouillon["intention"], email[:24])
     return {"brouillon": brouillon, "contexte_organisation": contexte["organisation"],
             "lu": bool(message.get(P3AI_CHAMP_LU))}
+
+
+@api_router.get("/admin/trajet")
+async def v613_route_trajet(request: Request, ville: str = "", rafraichir: int = 0):
+    """V613 — Super-admin : trajet routier Neuchâtel → ville (cache, ou recalcul avec `rafraichir=1`)."""
+    from api.routes.shared import super_admin_signe as _v613_sa
+    if not _v613_sa(request):
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    if not (ville or "").strip() or len(ville) > 120:
+        raise HTTPException(status_code=400, detail="Paramètre `ville` requis (120 caractères max)")
+    r = await v613_trajet_auto(ville.strip(), forcer=bool(rafraichir))
+    t = v612_trajet([], ville, r)
+    r["trajet_ok_2h"] = ("A VERIFIER" if (not t["connu"] or t.get("incertain")) else
+                         ("OUI" if t["minutes"] <= V612_TRAJET_MAX_MIN else "NON"))
+    return r
 
 
 @api_router.get("/prospect-inbound/{inbound_id}/brouillon")
