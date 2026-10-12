@@ -171,6 +171,25 @@ async def principal():
     verifier("F7 deviner des codes : 404 puis 429 au-delà du débit (pas d'oracle illimité)",
              _codes[:RL.DEBIT_MAX] == [404] * RL.DEBIT_MAX and _codes[-1] == 429, _codes)
     RL._DEBITS.clear()
+    class _RqIp(_Rq):
+        def __init__(self, corps, ip):
+            super().__init__(corps)
+            self.headers = _Ent({"user-agent": "", "cf-connecting-ip": ip, "x-forwarded-for": ip})
+            self.client = type("C", (), {"host": ip})()
+    _codes = []
+    for i in range(RL.DEBIT_MAX_JETON + 1):
+        c, _ = await appel(RL.relais_par_reservation(_RqIp({"jeton": ef["share_token"], "reservation_code": "AFR-IP%02d" % i},
+                                                           "10.9.%d.%d" % (i // 200, i % 200 + 1))))
+        _codes.append(c)
+    verifier("F8 IP changée à chaque essai (en-têtes falsifiés) : 429 au-delà du plafond PAR JETON",
+             _codes[-1] == 429 and _codes.count(404) == RL.DEBIT_MAX_JETON, _codes)
+    for _ in range(5001):
+        RL._DEBITS["ip:x:%d" % _] = [0.0]
+    RL._DEBITS["jeton:reservation:VISE"] = [__import__("time").time()] * RL.DEBIT_MAX_JETON
+    RL._purger(__import__("time").time())
+    verifier("F9 la purge ne retire que l'expiré : un plafond actif survit", "jeton:reservation:VISE" in RL._DEBITS
+             and not any(k.startswith("ip:x:") for k in RL._DEBITS))
+    RL._DEBITS.clear()
 
     # ── G. Suivi honnête ─────────────────────────────────────────────────────
     _ev = [d["evenement"] for d in base["invitation_events"].docs]

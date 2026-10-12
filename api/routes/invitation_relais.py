@@ -45,11 +45,19 @@ FENETRE_RESERVATION = timedelta(hours=48)
 router = APIRouter(tags=["invitation-relais"])
 db = None
 
-# Débit par IP des routes PUBLIQUES de relais : elles répondent 200 / 404 selon qu'une
+# Débit des routes PUBLIQUES de relais : elles répondent 200 / 404 selon qu'une
 # preuve (session, réservation, accès) existe — sans plafond, ce serait un oracle pour
-# deviner des codes. 20 essais / 10 min / IP, puis 429.
+# deviner des codes. TROIS compteurs, car l'IP seule se falsifie (`CF-Connecting-IP` /
+# `X-Forwarded-For` crus sans contrôle de l'origine — dette infra P1-A) :
+#   - par IP : 20 essais / 10 min ;
+#   - par JETON d'invitation : 30 / 10 min (un attaquant doit viser UNE invitation
+#     réelle : changer d'IP ne lui rend pas d'essais) ;
+#   - par ROUTE, toutes IP confondues : 300 / 10 min (plafond absolu).
+# Les entrées expirées sont retirées une à une ; jamais de remise à zéro globale.
 DEBIT_FENETRE_S = 600
 DEBIT_MAX = 20
+DEBIT_MAX_JETON = 30
+DEBIT_MAX_ROUTE = 300
 _DEBITS = {}
 
 
@@ -61,18 +69,34 @@ def _ip(request) -> str:
         return "?"
 
 
-def exiger_debit(request) -> None:
+def _consommer(cle, maximum, maintenant) -> bool:
+    _l = [x for x in _DEBITS.get(cle, []) if maintenant - x < DEBIT_FENETRE_S]
+    if len(_l) >= maximum:
+        _DEBITS[cle] = _l
+        return False
+    _l.append(maintenant)
+    _DEBITS[cle] = _l
+    return True
+
+
+def _purger(maintenant) -> None:
+    if len(_DEBITS) <= 5000:
+        return
+    for _k in [k for k, v in _DEBITS.items() if not v or maintenant - v[-1] >= DEBIT_FENETRE_S]:
+        _DEBITS.pop(_k, None)
+
+
+def exiger_debit(request, route="relais", jeton=None) -> None:
+    """429 dès qu'UN des trois plafonds (IP, jeton, route) est atteint."""
     import time as _t
-    _cle = _ip(request)
     _now = _t.time()
-    _l = [x for x in _DEBITS.get(_cle, []) if _now - x < DEBIT_FENETRE_S]
-    if len(_l) >= DEBIT_MAX:
-        _DEBITS[_cle] = _l
+    _purger(_now)
+    _ok = _consommer("route:" + route, DEBIT_MAX_ROUTE, _now)
+    _ok = _consommer("ip:%s:%s" % (route, _ip(request)), DEBIT_MAX, _now) and _ok
+    if jeton:
+        _ok = _consommer("jeton:%s:%s" % (route, jeton), DEBIT_MAX_JETON, _now) and _ok
+    if not _ok:
         raise HTTPException(status_code=429, detail="Trop de tentatives. Réessaie plus tard.")
-    _l.append(_now)
-    _DEBITS[_cle] = _l
-    if len(_DEBITS) > 5000:
-        _DEBITS.clear()
 
 
 def init_db(database):
@@ -263,7 +287,7 @@ async def relais_par_session(session_id: str, request: Request = None):
     Stripe (non devinable) est la seule clé ; 404 tant que le webhook n'est pas passé.
     Débit large (le navigateur réessaie quelques fois pendant le webhook)."""
     if request is not None:
-        exiger_debit(request)
+        exiger_debit(request, route="session")
     _s = str(session_id or "").strip()
     if not re.match(r"^cs_[A-Za-z0-9_]{6,200}$", _s):
         raise HTTPException(status_code=404, detail="Introuvable")
@@ -278,13 +302,13 @@ async def relais_par_session(session_id: str, request: Request = None):
 async def relais_par_reservation(request: Request):
     """ÉVÉNEMENT GRATUIT : `{jeton, reservation_code}` après l'inscription. La
     réservation doit exister, être RÉCENTE (48 h) et porter l'offre de l'invitation."""
-    exiger_debit(request)
     try:
         _b = await request.json()
     except Exception:  # noqa: BLE001
         _b = {}
     _b = _b if isinstance(_b, dict) else {}
     _jeton = jeton_valide(_b.get("jeton"))
+    exiger_debit(request, route="reservation", jeton=_jeton or "?")
     _code = str(_b.get("reservation_code") or "").strip()
     if not _jeton or not re.match(r"^[A-Za-z0-9_-]{4,40}$", _code):
         raise HTTPException(status_code=404, detail="Introuvable")
@@ -327,13 +351,13 @@ async def relais_par_inscription(request: Request):
     """ÉVÉNEMENT GRATUIT, parcours de la vitrine : l'inscription gratuite ouvre un
     accès (code AFR) puis l'espace. `{jeton, code}` : l'accès doit exister, être
     RÉCENT (48 h) et porter l'offre de l'invitation. Le lien est facultatif."""
-    exiger_debit(request)
     try:
         _b = await request.json()
     except Exception:  # noqa: BLE001
         _b = {}
     _b = _b if isinstance(_b, dict) else {}
     _jeton = jeton_valide(_b.get("jeton"))
+    exiger_debit(request, route="inscription", jeton=_jeton or "?")
     _code = str(_b.get("code") or "").strip().upper()
     if not _jeton or not re.match(r"^[A-Z0-9-]{4,40}$", _code):
         raise HTTPException(status_code=404, detail="Introuvable")
