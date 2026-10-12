@@ -54160,6 +54160,10 @@ init_invitation_suivi_db(db)
 from api.routes.invitation_relais import router as invitation_relais_router, init_db as init_invitation_relais_db, assurer_index as v607_relais_index  # noqa: E402
 fastapi_app.include_router(invitation_relais_router)
 init_invitation_relais_db(db)
+# V610e : l'éditeur complet d'invitation du coach (événement, tarifs, règle membres, médias).
+from api.routes.invitation_edition import router as invitation_edition_router, init_db as init_invitation_edition_db  # noqa: E402
+fastapi_app.include_router(invitation_edition_router)
+init_invitation_edition_db(db)
 
 # v15.0: Include multi-vendor payment routes
 fastapi_app.include_router(payment_config_router)

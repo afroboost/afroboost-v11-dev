@@ -56,12 +56,17 @@ async function lienParInscription(jeton, code, jetonEspace, slug) {
   } catch (e) { return null; }
 }
 
-export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug, relaisInitial, evenement }) {
+export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug, relaisInitial, evenement, apercuDetails }) {
+  // V610e : `apercuDetails` (éditeur coach) — le bloc tel que l'invité le verra après sa
+  // réservation, SANS appel réseau, sans partage ni suivi (boutons inertes).
+  const enApercu = !!apercuDetails;
   // V610 : `relaisInitial` = lien déjà rendu par le serveur (place offerte d'un membre) ;
   // `evenement` = billet d'un événement à réservation automatique : son lien existe
   // même sans invitation d'origine (rattaché à l'invitation du coach).
-  const [relais, setRelais] = useState(relaisInitial && relaisInitial.jeton ? relaisInitial : null);
-  const [details, setDetails] = useState(null);
+  const [relaisEtat, setRelais] = useState(relaisInitial && relaisInitial.jeton ? relaisInitial : null);
+  const relais = enApercu ? { jeton: 'apercu', share_url: 'https://afroboost.com/i/ton-lien-personnel' } : relaisEtat;
+  const [detailsEtat, setDetails] = useState(null);
+  const details = enApercu ? apercuDetails : detailsEtat;
   const [retour, setRetour] = useState('');
   const inv = invitationActuelle();
   const jetonInv = inv ? inv.t : '';
@@ -72,6 +77,7 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
 
   const jetonInitial = relaisInitial && relaisInitial.jeton ? String(relaisInitial.jeton) : '';
   useEffect(() => {
+    if (enApercu) return undefined;
     if (jetonInitial) {
       let vivant = true;
       fetch(`${BACKEND_URL}/api/invitation/publique/${encodeURIComponent(jetonInitial)}`)
@@ -89,7 +95,7 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
         .then((x) => (x.ok ? x.json() : null)).then((d) => { if (vivant && d) setDetails(d); }).catch(() => {});
     });
     return () => { vivant = false; };
-  }, [jetonInitial, jetonInv, cs, acces, espace, membre, evenement]);
+  }, [jetonInitial, jetonInv, cs, acces, espace, membre, evenement, enApercu]);
 
   // V610d — « DEVIENS AFROBOOSTEUR » : l'audio d'APRÈS réservation (événement payant
   // seulement). Lecture UNIQUEMENT au clic (preload none, jamais d'autoplay) ; pause et
@@ -115,10 +121,12 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
   const dto = Object.assign({}, details || {}, { share_url: relais.share_url, message: '' });
   const texte = texteWhatsAppCampagne(dto);
   const surWhatsApp = () => {
+    if (enApercu) return;
     window.open(lienWhatsApp(texte), '_blank', 'noopener');
     suivreInvitation(relais.jeton, 'partage_whatsapp_declenche');
   };
   const surCopier = () => {
+    if (enApercu) return;
     copier(relais.share_url).then((ok) => setRetour(ok ? 'Lien copié' : 'Copie impossible'));
     suivreInvitation(relais.jeton, 'partage_autre_declenche');
   };

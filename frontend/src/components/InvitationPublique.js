@@ -102,28 +102,55 @@ function MotAudio({ url, prenom }) {
   );
 }
 
-export default function InvitationPublique({ token }) {
-  const [etat, setEtat] = useState({ charge: true, d: null, erreur: false });
+/** V610e — « Détails » : la description longue, REPLIÉE par défaut (design épuré). */
+function Details({ texte }) {
+  const [ouvert, setOuvert] = useState(false);
+  return (
+    <div style={{ margin: '0 0 16px', borderRadius: '14px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}>
+      <button type="button" data-testid="inv-pub-details-bouton" aria-expanded={ouvert} onClick={() => setOuvert((v) => !v)}
+              style={{ width: '100%', minHeight: '44px', padding: '10px 14px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.92)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '15px', fontWeight: 700, cursor: 'pointer' }}>
+        Détails <SvgIcon name={ouvert ? 'arrowUp' : 'arrowDown'} size={16} />
+      </button>
+      {ouvert ? (
+        <p data-testid="inv-pub-description" style={{ margin: 0, padding: '0 14px 14px', color: 'rgba(255,255,255,0.85)', fontSize: '14.5px', whiteSpace: 'pre-line', lineHeight: 1.5 }}>
+          {texte}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * `apercu` (V610e, éditeur coach) : les données sont FOURNIES (rien n'est lu, aucun
+ * suivi n'est écrit) et le bouton ne mène nulle part — c'est exactement l'écran de
+ * l'invité, sans effet de bord.
+ */
+export default function InvitationPublique({ token, apercu }) {
+  const [etat, setEtat] = useState(() => (apercu ? { charge: false, d: apercu, erreur: false } : { charge: true, d: null, erreur: false }));
   const suiviRef = useRef(false);
+  const enApercu = !!apercu;
+  const d0 = apercu || etat.d;
 
   useEffect(() => {
+    if (enApercu) return undefined;
     let vivant = true;
     fetch(`${BACKEND_URL}/api/invitation/publique/${encodeURIComponent(token)}`, { headers: { Accept: 'application/json' } })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d) => { if (vivant) setEtat({ charge: false, d, erreur: false }); })
       .catch(() => { if (vivant) setEtat({ charge: false, d: null, erreur: true }); });
     return () => { vivant = false; };
-  }, [token]);
+  }, [token, enApercu]);
 
   useEffect(() => {
-    if (!etat.d || suiviRef.current) return;
+    if (enApercu || !etat.d || suiviRef.current) return;
     suiviRef.current = true;
     suivreInvitation(token, 'lien_ouvert');
-  }, [etat.d, token]);
+  }, [etat.d, token, enApercu]);
 
-  const cadre = { minHeight: '100vh', background: 'rgb(8,4,12)', color: 'rgba(255,255,255,0.96)', fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif' };
-  if (etat.charge) return <div style={cadre} data-testid="inv-pub-chargement" />;
-  if (etat.erreur || !etat.d) {
+  const cadre = { minHeight: enApercu ? '100%' : '100vh', background: 'rgb(8,4,12)', color: 'rgba(255,255,255,0.96)', fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif' };
+  if (!enApercu && etat.charge) return <div style={cadre} data-testid="inv-pub-chargement" />;
+  if (!d0 || (!enApercu && etat.erreur)) {
     return (
       <div style={Object.assign({}, cadre, { display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', boxSizing: 'border-box' })}>
         <div style={{ maxWidth: '420px', textAlign: 'center' }} data-testid="inv-pub-indisponible">
@@ -135,7 +162,7 @@ export default function InvitationPublique({ token }) {
     );
   }
 
-  const d = etat.d;
+  const d = d0;
   const inv = d.inviter_display || {};
   const prenom = String(inv.prenom || '').trim();
   const photo = urlSure(inv.photo_url);
@@ -147,6 +174,7 @@ export default function InvitationPublique({ token }) {
   const titre = type === 'trial' ? (prenom ? `${prenom} t'invite à découvrir Afroboost` : 'Découvre Afroboost')
     : (String(d.title || d.offre_nom || '').trim() || 'Invitation Afroboost');
   const surCta = () => {
+    if (enApercu) return;                       // aperçu : aucun départ, aucun suivi
     suivreInvitation(token, 'reservation_commencee');
     window.location.href = cibleSure(d.cible);
   };
@@ -224,10 +252,12 @@ export default function InvitationPublique({ token }) {
             {d.gratuit_membres ? (
               /* V610b : bloc IDENTIQUE pour tous — aucune recherche d'e-mail, la gratuité se
                  prend dans l'espace membre authentifié. */
-              <div data-testid="inv-pub-gratuit-membres"><AccesMembreEvenement /></div>
+              <div data-testid="inv-pub-gratuit-membres"><AccesMembreEvenement inerte={enApercu} /></div>
             ) : null}
           </div>
         ) : null}
+
+        {d.description ? <Details texte={d.description} /> : null}
 
         {d.message ? (
           <p data-testid="inv-pub-message" style={{ margin: '0 0 16px', padding: '12px 14px', borderRadius: '14px', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.88)', fontSize: '15px', whiteSpace: 'pre-line' }}>
@@ -237,7 +267,7 @@ export default function InvitationPublique({ token }) {
         {audio ? <div style={{ margin: '0 0 16px' }}><MotAudio url={audio} prenom={prenom} /></div> : null}
       </main>
 
-      <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 16px calc(12px + env(safe-area-inset-bottom, 0px))', background: 'linear-gradient(180deg, rgba(8,4,12,0) 0%, rgba(8,4,12,0.95) 40%)' }}>
+      <div style={{ position: enApercu ? 'sticky' : 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 16px calc(12px + env(safe-area-inset-bottom, 0px))', background: 'linear-gradient(180deg, rgba(8,4,12,0) 0%, rgba(8,4,12,0.95) 40%)' }}>
         <button type="button" onClick={surCta} data-testid="inv-pub-cta"
                 style={{ display: 'block', width: '100%', maxWidth: '560px', margin: '0 auto', minHeight: '52px', borderRadius: '999px', border: 'none',
                   background: PRIMAIRE, color: 'rgba(255,255,255,1)', fontSize: '17px', fontWeight: 800, cursor: 'pointer' }}>

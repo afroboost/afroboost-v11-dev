@@ -21,12 +21,13 @@ const rgbaP = (a) => `rgba(var(--primary-rgb, 217, 28, 210), ${a})`;
 export const TEXTE_NEUTRE = "Si cette adresse correspond à un espace membre, un lien d'accès vient d'y être envoyé.";
 const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
-export default function AccesMembreEvenement({ libelle = 'Accéder à mon espace membre', compact = false }) {
+export default function AccesMembreEvenement({ libelle = 'Accéder à mon espace membre', compact = false, inerte = false }) {
   const [formulaire, setFormulaire] = useState(false);
   const [email, setEmail] = useState('');
   const [etat, setEtat] = useState('');        // '' | 'envoi' | 'fait' | 'erreur:<texte>'
 
   const ouvrir = () => {
+    if (inerte) return;                          // V610e : aperçu de l'éditeur coach
     const cible = urlDeLaSession(lireSession());
     if (cible) { window.location.href = cible; return; }
     setFormulaire(true);

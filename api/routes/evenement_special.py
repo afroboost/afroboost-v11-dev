@@ -74,8 +74,18 @@ def reservation_auto(offre) -> bool:
 
 
 def offres_gratuite(offre) -> list:
+    """Les offres d'abonnement qui ouvrent la place offerte — [] si la règle n'est pas
+    configurée OU si le coach l'a suspendue (`gratuit_membres_actif: false`, V610e)."""
+    if (offre or {}).get("gratuit_membres_actif") is False:
+        return []
     _v = (offre or {}).get("gratuit_abonnements_offer_ids")
     return [str(x) for x in _v if str(x or "").strip()] if isinstance(_v, list) else []
+
+
+def regle_membres_configuree(offre) -> bool:
+    """La règle « offert aux membres » existe-t-elle pour cette offre (active ou suspendue) ?"""
+    _v = (offre or {}).get("gratuit_abonnements_offer_ids")
+    return isinstance(_v, list) and any(str(x or "").strip() for x in _v)
 
 
 async def cours_de_l_evenement(db, offre):
@@ -311,7 +321,7 @@ async def evenements_offerts(db, email, coach_id=None, maintenant=None):
         return []
     # Une offre MASQUÉE (brouillon, pas encore publiée) n'apparaît dans aucun espace.
     _q = {"offer_type": "event", "gratuit_abonnements_offer_ids.0": {"$exists": True}, "archived": {"$ne": True},
-          "visible": {"$ne": False}}
+          "visible": {"$ne": False}, "gratuit_membres_actif": {"$ne": False}}
     _sortie = []
     for _o in await db.offers.find(_q, {"_id": 0}).to_list(20):
         if coach_id and _o.get("coach_id") and str(_o.get("coach_id")).lower() != str(coach_id).lower():

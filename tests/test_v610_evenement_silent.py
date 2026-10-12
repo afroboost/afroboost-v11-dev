@@ -154,6 +154,38 @@ verifier("AF5 dto public d'un autre type : jamais d'audio après réservation",
 _pub = open(os.path.join(RACINE, "frontend", "src", "components", "InvitationPublique.js"), encoding="utf-8").read()
 verifier("AF6 page AVANT achat : n'affiche pas l'audio Afroboosteur", "audio_partage_url" not in _pub)
 
+# ── V610e : éditeur — bascules choisies par le coach, règle membres suspendable, description ──
+_o2 = dict(OFFRE, palier_fin_prevente="2026-10-22T20:00", palier_fin_standard="2026-10-27T12:00")
+verifier("ED1 bascule libre prévente : 22/10 19:59 -> 25, 20:00 -> 30",
+         compute_active_price(_o2, now=zurich(2026, 10, 22, 19, 59))["price"] == 25
+         and compute_active_price(_o2, now=zurich(2026, 10, 22, 20, 0))["price"] == 30)
+verifier("ED2 bascule libre standard : 27/10 11:59 -> 30, 12:00 -> 40",
+         compute_active_price(_o2, now=zurich(2026, 10, 27, 11, 59))["price"] == 30
+         and compute_active_price(_o2, now=zurich(2026, 10, 27, 12, 0))["price"] == 40)
+verifier("ED3 bascule illisible -> règle d'origine (21/10 18:45) intacte",
+         compute_active_price(dict(OFFRE, palier_fin_prevente="n/a"), now=zurich(2026, 10, 21, 18, 45))["price"] == 30)
+_o3 = dict(OFFRE, countdown_date="2026-10-15", countdown_time="12:00",
+           palier_fin_prevente="2026-10-21T18:45", palier_fin_standard="2026-10-27T18:45")
+verifier("ED3b bascules APRÈS le début (événement avancé ailleurs) -> ignorées, règle d'origine (J-7 / H-24)",
+         compute_active_price(_o3, now=zurich(2026, 10, 14, 13, 0))["price"] == 40
+         and compute_active_price(_o3, now=zurich(2026, 10, 8, 11, 59))["price"] == 25)
+verifier("ED4 règle membres suspendue -> plus personne n'est offert ; configurée quand même",
+         E.offres_gratuite(dict(OFFRE, gratuit_membres_actif=False)) == [] and E.regle_membres_configuree(dict(OFFRE, gratuit_membres_actif=False))
+         and E.offres_gratuite(OFFRE) == IDS)
+_dd = IC.valider_entree({"type": "event_paid", "status": "draft", "title": "S", "description": "<b>Ligne 1</b>\nLigne 2"}, None)
+verifier("ED5 description : HTML retiré, retours à la ligne gardés", _dd["description"] == "Ligne 1\nLigne 2", _dd.get("description"))
+try:
+    IC.valider_entree({"type": "event_paid", "status": "draft", "title": "S", "description": "x" * 1501}, None)
+    verifier("ED6 description > 1500 refusée", False)
+except IC.InvitationCampagneInvalide:
+    verifier("ED6 description > 1500 refusée", True)
+_src_ed = open(os.path.join(RACINE, "api", "routes", "invitation_edition.py"), encoding="utf-8").read()
+verifier("ED7 l'éditeur n'écrit jamais transactions / réservations passées ni la capacité",
+         "payment_transactions\"].update" not in _src_ed and "reservations\"].update" not in _src_ed
+         and "\"stock\"" not in _src_ed and "max_participants" not in _src_ed)
+verifier("ED8 l'éditeur ne change jamais le share_token (aucune écriture, aucun jeton généré)",
+         "\"share_token\":" not in _src_ed and "token_urlsafe" not in _src_ed and "_set_camp[\"share_token\"]" not in _src_ed)
+
 # ── V610b : confidentialité — le paiement public ne lit JAMAIS le statut membre ──
 _srv = open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
 _i = _srv.index("async def create_checkout_session(")

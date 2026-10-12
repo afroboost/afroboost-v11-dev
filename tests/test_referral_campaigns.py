@@ -104,7 +104,8 @@ async def partie_moteur_pur():
     verifier("INV-M2 CHAMPS_VISUELS exacts", set(IC.CHAMPS_VISUELS) == {
         "title", "subtitle", "message", "cta_label", "image_url", "image_source", "course_id",
         "occurrence", "offer_id", "type", "lieu", "video_url", "audio_url",  # V607 : lieu + médias
-        "audio_partage_url"})  # V610d : audio d'après réservation (événement payant)
+        "audio_partage_url",  # V610d : audio d'après réservation (événement payant)
+        "description"})  # V610e : description longue (bloc « Détails »)
     d = {"type": "trial", "offer_id": "o 1/é", "share_token": "t"}
     verifier("INV-M3 cible trial", IC.cible_front(d) == "/?offre=o%201%2F%C3%A9&reserver=1", IC.cible_front(d))
     verifier("INV-M3b cible event_free", IC.cible_front(dict(d, type="event_free")).endswith("&reserver=1"))
@@ -202,7 +203,8 @@ async def partie_moteur_pur():
         # V610 : un BOOLÉEN « offert aux membres 8 mois » (la liste des offres reste interne)
         "gratuit_membres",
         # V610d : l'audio d'APRÈS réservation (« Deviens Afroboosteur »), événement payant seulement
-        "audio_partage_url"}, sorted(dp))
+        "audio_partage_url",
+        "description"}, sorted(dp))  # V610e
     dc = IC.dto_coach({"type": "trial", "share_token": "tok", "version": 2, "id": "i1"}, base_url="https://x.test/")
     verifier("INV-M13 dto_coach : share_url / card_url versionnées",
              dc["share_url"] == "https://x.test/i/tok?v=2"           # V607 : lien court

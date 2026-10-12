@@ -1267,3 +1267,10 @@ ne doit jamais être présentée comme l'état courant.
 - **Durcissement** : `POST /subscriber/space/{code}/reserve/{course}` exige la session d'espace + une séance réellement proposée.
 - **Script** : `scripts/v610_evenement_silent.py preparer|publier` (essai à blanc par défaut). PUBLIER = seulement après médias Cowork
   (vidéo, voix-off, miniature) rattachés à l'invitation ; il pose aussi `dates_annulees` sur le cours régulier.
+- **V610e (éditeur coach)** : onglet « Invitation & partage » -> « Mes invitations » (Modifier / copier / ⋯ voir,
+  statistiques, archiver). Textes + description + médias via `PUT /api/referral/campaigns/{id}` ; événement, tarifs
+  (prix + bascules `palier_fin_prevente` / `palier_fin_standard`, heure suisse, sur l'OFFRE) et interrupteur
+  `gratuit_membres_actif` via `PUT /api/referral/campaigns-edition/{id}/evenement` (simuler ; 409 `confirmation_requise`
+  si inscrits). Bascules incohérentes : refusées par l'éditeur, ignorées par le calcul des prix. Médias :
+  `GET /api/referral/campaigns-medias`, import `/api/coach/upload-chunk` + `POST …/campaigns-medias/enregistrer`
+  (SHA-256 serveur, doublon réutilisé). share_token jamais changé ; version +1.

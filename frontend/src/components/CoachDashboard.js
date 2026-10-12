@@ -30,6 +30,7 @@ import CourseRemindersCard from "./coach/CourseRemindersCard"; // RAPPELS V2 : r
 import SuiviAbonnes from "./coach/SuiviAbonnes"; // V334 etape 3
 import FunnelEssaiCard from "./coach/FunnelEssaiCard"; // ESSAI-3
 import InvitationPartageCard from "./coach/InvitationPartageCard"; // V551 : Parrainage V2
+import MesInvitations from "./coach/MesInvitations"; // V610e : modifier ses invitations sans Claude Code
 import ModerationTemoignages from "./coach/ModerationTemoignages"; // ESSAI-5a-2
 import MessagesWhatsApp from "./coach/MessagesWhatsApp"; // V411
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
@@ -8800,6 +8801,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             {/* V551 : Parrainage V2 — « Invitation & partage ». Identite = jeton. */}
             {offersSubTab === 'parrainage' && (
               <div style={{ marginTop: 12 }}>
+                {/* V610e : la liste des invitations + l'éditeur complet (le coach est autonome). */}
+                <MesInvitations API={API} />
                 <InvitationPartageCard API={API} />
               </div>
             )}

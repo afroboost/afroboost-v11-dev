@@ -74,9 +74,32 @@ def tier_boundaries(offer: dict) -> Optional[dict]:
     hours_before = int(_hours) if _hours is not None else 24
     _local = reference.astimezone(_ZURICH).replace(tzinfo=None)   # heure murale suisse
     _early_local = (_local - timedelta(days=days_before)).replace(tzinfo=_ZURICH)
-    return {"reference": reference,
-            "early_bird_end": _early_local.astimezone(timezone.utc),
-            "standard_end": reference - timedelta(hours=hours_before)}
+    _early = _early_local.astimezone(timezone.utc)
+    _standard = reference - timedelta(hours=hours_before)
+    # V610e — BASCULES CHOISIES PAR LE COACH (éditeur d'invitation) : une date et une
+    # heure SUISSES exactes (« AAAA-MM-JJTHH:MM »). Posées, elles PRIMENT sur les
+    # durées ci-dessus ; absentes ou illisibles, rien ne change (offres existantes).
+    _fp = _bascule_locale(offer.get("palier_fin_prevente"))
+    _fs = _bascule_locale(offer.get("palier_fin_standard"))
+    _e2 = _fp if _fp is not None else _early
+    _s2 = _fs if _fs is not None else _standard
+    # Bascules INCOHÉRENTES (après le début de l'événement, ou prévente après standard —
+    # p. ex. la date de l'événement avancée ailleurs que dans l'éditeur) : ignorées, la
+    # règle d'origine reprend la main. Jamais une prévente qui courrait jusqu'au début.
+    if _e2 <= _s2 <= reference:
+        _early, _standard = _e2, _s2
+    return {"reference": reference, "early_bird_end": _early, "standard_end": _standard}
+
+
+def _bascule_locale(valeur) -> Optional[datetime]:
+    """« AAAA-MM-JJTHH:MM » (heure de Zurich) -> datetime UTC, sinon None."""
+    try:
+        _v = str(valeur or "").strip()[:16]
+        if len(_v) != 16:
+            return None
+        return datetime.strptime(_v, "%Y-%m-%dT%H:%M").replace(tzinfo=_ZURICH).astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        return None
 
 
 def compute_active_price(offer: dict, now: Optional[datetime] = None) -> dict:

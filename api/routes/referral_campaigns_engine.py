@@ -36,7 +36,9 @@ CHAMPS_VISUELS = ("title", "subtitle", "message", "cta_label", "image_url", "ima
                   # V607 : le lieu saisi (événements), la vidéo / le mot audio (facultatifs).
                   "lieu", "video_url", "audio_url",
                   # V610d : l'audio APRÈS réservation (boule de neige « Deviens Afroboosteur »)
-                  "audio_partage_url")
+                  "audio_partage_url",
+                  # V610e : la description longue (bloc « Détails » de la page publique)
+                  "description")
 
 # LISTE BLANCHE des champs acceptés en entrée. Tout le reste est ignoré —
 # en particulier `coach_id`, `share_token`, `version`, `inviter_display`, `id`
@@ -48,11 +50,12 @@ CHAMPS_ENTREE = ("type", "status") + tuple(c for c in CHAMPS_VISUELS if c != "ty
 CHAMPS_DOCUMENT = ("id", "coach_id", "type", "status", "share_token", "version", "title",
                    "subtitle", "message", "cta_label", "image_url", "image_source", "course_id",
                    "occurrence", "offer_id", "inviter_display", "created_at", "updated_at",
-                   "lieu", "video_url", "audio_url", "audio_partage_url")
+                   "lieu", "video_url", "audio_url", "audio_partage_url", "description")
 
 TITRE_MAX = 80
 SOUS_TITRE_MAX = 120
 MESSAGE_MAX = E.MESSAGE_MAX                   # 280, la même borne que le Pass Duo
+DESCRIPTION_MAX = 1500                         # V610e : la description longue (« Détails »)
 CTA_MAX = 30
 ID_MAX = 64
 LIEU_MAX = 160
@@ -223,6 +226,8 @@ def valider_entree(corps, existant=None) -> dict:
             _s["message"] = E.valider_message(_m, "message")
         except E.InvitationInvalide as _err:
             raise InvitationCampagneInvalide(str(_err))
+    if "description" in _b:
+        _s["description"] = _nettoyer(_b["description"], "description", DESCRIPTION_MAX, multiligne=True)
     if "cta_label" in _b:
         _s["cta_label"] = _nettoyer(_b["cta_label"], "cta_label", CTA_MAX)
     if "course_id" in _b:
@@ -613,6 +618,11 @@ def _version(doc) -> int:
         return 1
 
 
+def _offres_gratuite(offre) -> list:
+    from api.routes.evenement_special import offres_gratuite as _og
+    return _og(offre)
+
+
 def dto_public(doc, cours=None, offre=None, chaine=False) -> dict:
     """SANS AUCUNE PII : jamais coach_id, e-mail, téléphone, ni id interne."""
     _d = doc or {}
@@ -649,11 +659,11 @@ def dto_public(doc, cours=None, offre=None, chaine=False) -> dict:
         "audio_url": _d.get("audio_url") or None,
         # V610d : écouté APRÈS la réservation (bloc « Deviens Afroboosteur »), jamais avant.
         "audio_partage_url": (_d.get("audio_partage_url") or None) if _d.get("type") == "event_paid" else None,
+        "description": _d.get("description") or None,      # V610e
         "cours_nom": (str(_c.get("name") or "").strip()[:120] or None) if _c else None,
         # V610 : gratuité accordée à certains abonnements actifs (liste d'offres
         # configurée sur l'offre-événement). AUCUNE capacité : pas de plafond de places.
-        "gratuit_membres": bool(_o and isinstance(_o.get("gratuit_abonnements_offer_ids"), list)
-                                and any(_o.get("gratuit_abonnements_offer_ids"))),
+        "gratuit_membres": bool(_o and _offres_gratuite(_o)),   # V610e : règle suspendue = False
     }
 
 
