@@ -1251,3 +1251,19 @@ ne doit jamais être présentée comme l'état courant.
   réelle locale). Paliers : « N jours avant » = même heure Zurich N dates avant (`tier_boundaries`).
   Événement gratuit : `trial.nature = "evenement"` -> « Ton inscription est confirmée ! ».
 
+
+## T. ÉVÉNEMENT AFROBOOST SILENT 28/10/2026 — V610 (branche `feat/evenement-silent-28-10`, NON déployé, 12/10)
+- **Événement** : mercredi 28/10/2026 18:45, lieu = celui du cours régulier du mercredi (`62fcac27…`, lu en base).
+  Offre billet 25 / 30 / 40 CHF (bascules 21/10 18:45 et 27/10 18:45 Zurich), fin des ventes au début (compte à rebours).
+  **AUCUNE capacité** (stock -1, pas de max) — décision du 12/10.
+- **Champs d'offre (posés par script, absents d'`OfferCreate` -> jamais effacés par l'éditeur)** :
+  `evenement_reservation_auto: true` (paiement -> réservation automatique, quantité 1, clé `evenement_places._id = stripe:<cs>`) ;
+  `gratuit_abonnements_offer_ids` = `9fa5ac00…` (Saison hiver 8 mois), `7b96a431…` (2 paiements), `ba530ae4…` (Membres — 8 mois).
+  Gratuité = abonnement de ces offres, `status: active`, `expires_at` ≥ début de l'événement, e-mail de la SESSION d'espace.
+- **Routes** : `POST /api/subscriber/space/{code}/evenement/{offre}/offert` (0 CHF, `source: member_free_event`, idempotent
+  `membre:<offre>:<e-mail>`) ; `GET /subscriber/space` -> `evenements_offerts`. Checkout d'un membre éligible -> 409 « espace abonné ».
+- **Cours** : `dates_annulees: ["AAAA-MM-JJ"]` (générateurs `_v184`, `cal1`, `_a1_a_lieu_aujourdhui`, `seance_du_cours` + front).
+  Un cours d'événement à billet ne se réserve jamais contre une séance (espace, `POST /reservations`).
+- **Durcissement** : `POST /subscriber/space/{code}/reserve/{course}` exige la session d'espace + une séance réellement proposée.
+- **Script** : `scripts/v610_evenement_silent.py preparer|publier` (essai à blanc par défaut). PUBLIER = seulement après médias Cowork
+  (vidéo, voix-off, miniature) rattachés à l'invitation ; il pose aussi `dates_annulees` sur le cours régulier.

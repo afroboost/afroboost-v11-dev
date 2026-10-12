@@ -5679,6 +5679,10 @@ def lotb3_montant_debite(reservation) -> int:
         _q = 1
     if _q < 1:
         _q = 1
+    # V610 : une place OFFERTE d'événement (`member_free_event`) n'a débité AUCUNE
+    # séance — l'annuler ne doit rien rendre (sinon on fabrique un droit).
+    if str(_r.get("source") or "").strip() == "member_free_event":
+        return 0
     # Seul l'espace abonné débite une séance PAR PLACE, et lui seul écrit cette
     # valeur côté serveur. Partout ailleurs, une réservation vaut une séance,
     # quel que soit le nombre de places.

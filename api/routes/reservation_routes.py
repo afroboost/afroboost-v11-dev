@@ -1199,7 +1199,8 @@ async def lot1_verifier_seance(donnees: dict, source: str = "") -> dict:
         _raison = "occurrence_illisible" if str(_brut_occ or "").strip() else "occurrence_absente"
     else:
         _cours = await db.courses.find_one(
-            {"id": _id}, {"_id": 0, "id": 1, "date": 1, "weekday": 1, "archived": 1})
+            {"id": _id}, {"_id": 0, "id": 1, "date": 1, "weekday": 1, "archived": 1,
+                          "dates_annulees": 1})   # V610 : jour annulé
         if not _cours:
             _raison = "cours_introuvable"
         elif _cours.get("archived") is True:
@@ -1265,6 +1266,11 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     # Une seule valeur, lue au meme endroit par tout le monde.
     reservation.courseId = _lot1["courseId"]
     reservation.datetime = _lot1["datetime"]
+    # V610 : un cours d'événement à BILLET se réserve par le paiement (réservation
+    # automatique) ou la place offerte — jamais par cette route (code / séance).
+    from api.routes.evenement_special import cours_a_billet as _v610_billet, MSG_BILLET_REQUIS as _v610_msg
+    if await _v610_billet(db, reservation.courseId):
+        raise HTTPException(status_code=400, detail=_v610_msg)
 
     # === V430 : un code assigné n'appartient qu'à son propriétaire ===
     #
@@ -2942,7 +2948,7 @@ async def _a1b_occurrences_reelles(reservations: list) -> list:
     try:
         _docs = await db.courses.find(
             {"id": {"$in": _ids}},
-            {"_id": 0, "id": 1, "name": 1, "weekday": 1, "date": 1, "archived": 1},
+            {"_id": 0, "id": 1, "name": 1, "weekday": 1, "date": 1, "archived": 1, "dates_annulees": 1},  # V610
         ).to_list(200)
     except Exception as _err:
         # Cours illisibles : on ne durcit pas sur une panne de lecture. Le
@@ -3185,6 +3191,10 @@ def _a1_a_lieu_aujourdhui(cours: dict, jour_iso: str, jour_js: int) -> bool:
     _date = cours.get("date")
     if isinstance(_date, str) and _date.strip():
         return _date.strip()[:10] == jour_iso
+    # V610 : un jour ANNULÉ du cours récurrent (remplacé par un événement) n'a pas lieu.
+    _v610_annules = cours.get("dates_annulees")
+    if isinstance(_v610_annules, list) and str(jour_iso)[:10] in {str(x).strip()[:10] for x in _v610_annules if x}:
+        return False
     try:
         _w = int(cours.get("weekday"))
     except (TypeError, ValueError):

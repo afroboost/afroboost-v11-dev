@@ -1,0 +1,127 @@
+/**
+ * V610 — place OFFERTE (membres 8 mois) dans l'espace, lien personnel après un
+ * billet d'événement à réservation automatique, mention « offert » sur la page
+ * d'invitation. Le DROIT est décidé par le serveur : ici, on vérifie l'écran.
+ */
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+
+jest.mock('axios', () => ({ get: jest.fn(), post: jest.fn(), put: jest.fn(), create: jest.fn(), interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } } }));
+// eslint-disable-next-line import/first
+import axios from 'axios';
+// eslint-disable-next-line import/first
+import EvenementsOfferts, { quandEvenement } from '../EvenementsOfferts';
+// eslint-disable-next-line import/first
+import InviterMesAmis from '../InviterMesAmis';
+// eslint-disable-next-line import/first
+import InvitationPublique from '../InvitationPublique';
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+let conteneur = null;
+let racine = null;
+function render(el) {
+  conteneur = document.createElement('div');
+  document.body.appendChild(conteneur);
+  racine = createRoot(conteneur);
+  racine.render(el);
+  return { container: conteneur };
+}
+afterEach(() => {
+  if (racine) act(() => racine.unmount());
+  if (conteneur) conteneur.remove();
+  racine = null; conteneur = null;
+  delete global.fetch;
+  window.localStorage.clear();
+  jest.clearAllMocks();
+});
+const q = (id) => document.querySelector(`[data-testid="${id}"]`);
+async function attendre(fn) {
+  let derniere;
+  for (let i = 0; i < 40; i += 1) {
+    try { fn(); return; } catch (e) { derniere = e; }
+    // eslint-disable-next-line no-await-in-loop
+    await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
+  }
+  throw derniere;
+}
+const reponse = (corps, ok = true) => Promise.resolve({ ok, status: ok ? 200 : 404, json: () => Promise.resolve(corps) });
+const EVT = { offer_id: 'OFF1', titre: 'AFROBOOST SILENT — ÉDITION SPÉCIALE', datetime: '2026-10-28T18:45:00',
+  lieu: 'Chem. des Valangines 97, 2000 Neuchâtel', deja_reserve: false };
+
+describe('V610 — EvenementsOfferts (espace)', () => {
+  test('date lisible « mercredi 28 octobre · 18h45 »', () => {
+    expect(quandEvenement('2026-10-28T18:45:00')).toBe('mercredi 28 octobre · 18h45');
+    expect(quandEvenement('n/a')).toBe('');
+  });
+
+  test('rien sans événement offert (liste vide ou absente)', async () => {
+    let r;
+    await act(async () => { r = render(<EvenementsOfferts evenements={[]} accessCode="AFR-1" />); });
+    expect(r.container.innerHTML).toBe('');
+  });
+
+  test('« Ton tarif membre : OFFERT » -> réserve à 0 CHF (route offerte, aucun paiement) -> lien perso', async () => {
+    window.localStorage.setItem('af_invitation', JSON.stringify({ t: 'JetonInvitation1234', offre: 'OFF1', at: Date.now() }));
+    axios.post.mockResolvedValue({ data: { success: true, prix: 0, deja_reserve: false,
+      reservation: { id: 'R1' }, relais: { jeton: 'JetonSophie123456', share_url: 'https://afroboost.com/i/JetonSophie123456', prenom: 'Sophie', generation: 2 } } });
+    global.fetch = jest.fn(() => reponse({ type: 'event_paid', title: 'AFROBOOST SILENT', inviter_display: { prenom: 'Sophie' } }));
+    await act(async () => { render(<EvenementsOfferts evenements={[EVT]} accessCode="AFR-M1" memberSlug="" />); });
+    expect(q('evt-offert-tarif').textContent).toBe('Ton tarif membre : OFFERT');
+    expect(document.body.textContent).toMatch(/mercredi 28 octobre · 18h45 · Chem\. des Valangines 97/);
+    await act(async () => { q('evt-offert-reserver').click(); });
+    await attendre(() => expect(q('evt-offert-reservee')).toBeTruthy());
+    const [url, corps] = axios.post.mock.calls[0];
+    expect(url).toMatch(/\/api\/subscriber\/space\/AFR-M1\/evenement\/OFF1\/offert$/);
+    expect(corps.jeton_invitation).toBe('JetonInvitation1234');
+    expect(corps).not.toHaveProperty('email');            // l'e-mail vient de la SESSION, jamais du corps
+    await attendre(() => expect(q('inviter-lien').textContent).toMatch(/afroboost\.com\/i\/JetonSophie123456/));
+    expect(document.body.textContent).not.toMatch(/CHF|Stripe|TWINT/);
+  });
+
+  test('refus serveur (abonnement non éligible) : message affiché, bouton toujours là', async () => {
+    axios.post.mockRejectedValue({ response: { status: 403, data: { detail: "La place offerte est réservée aux membres dont l'abonnement 8 mois est actif à la date de l'événement." } } });
+    await act(async () => { render(<EvenementsOfferts evenements={[EVT]} accessCode="AFR-M2" />); });
+    await act(async () => { q('evt-offert-reserver').click(); });
+    await attendre(() => expect(q('evt-offert-erreur').textContent).toMatch(/abonnement 8 mois est actif/));
+    expect(q('evt-offert-reserver')).toBeTruthy();
+  });
+
+  test('déjà réservée : « Ta place est réservée » + « Inviter mes amis »', async () => {
+    await act(async () => { render(<EvenementsOfferts evenements={[{ ...EVT, deja_reserve: true }]} accessCode="AFR-M1" />); });
+    expect(q('evt-offert-reservee')).toBeTruthy();
+    expect(q('evt-offert-lien')).toBeTruthy();
+  });
+});
+
+describe('V610 — InviterMesAmis', () => {
+  test('billet d\'événement acheté SANS invitation : le lien est demandé par la session Stripe', async () => {
+    global.fetch = jest.fn((url) => (String(url).includes('/relais/session/')
+      ? reponse({ jeton: 'JetonSam1234567890', share_url: 'https://afroboost.com/i/JetonSam1234567890', prenom: 'Sam', generation: 1 })
+      : reponse({ type: 'event_paid', title: 'Silent' })));
+    await act(async () => { render(<InviterMesAmis sessionId="cs_test_abc123" evenement />); });
+    await attendre(() => expect(q('inviter-lien').textContent).toMatch(/JetonSam1234567890/));
+  });
+
+  test('achat ordinaire (pas un événement), sans invitation : rien n\'est demandé', async () => {
+    global.fetch = jest.fn();
+    let r;
+    await act(async () => { r = render(<InviterMesAmis sessionId="cs_test_abc123" />); });
+    expect(r.container.innerHTML).toBe('');
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('V610 — page d\'invitation', () => {
+  test('mention « Offert si tu as un abonnement Afroboost 8 mois actif », sans plafond de places', async () => {
+    global.fetch = jest.fn((url) => (String(url).includes('/api/invitation/publique/')
+      ? reponse({ type: 'event_paid', title: 'AFROBOOST SILENT', date_label: 'mercredi 28 octobre', time_label: '18:45',
+        lieu: 'Valangines', inviter_display: { prenom: 'Sophie' }, cible: '/?offre=o&inv=T', gratuit_membres: true,
+        prix_actif: { prix: 25, palier: 'early_bird', libelle: 'Prévente', paliers: [],
+          prochain: { palier: 'standard', prix: 30, a_partir_de: '2026-10-21T16:45:00+00:00' } } })
+      : reponse({})));
+    await act(async () => { render(<InvitationPublique token="T123456789012345678" />); });
+    await attendre(() => expect(q('inv-pub-gratuit-membres').textContent).toMatch(/abonnement Afroboost 8 mois actif/));
+    expect(q('inv-pub-prix-actif').textContent).toBe('25 CHF');
+    expect(document.body.textContent).not.toMatch(/50 places|places maximum/);
+  });
+});

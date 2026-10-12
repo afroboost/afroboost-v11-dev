@@ -30,6 +30,17 @@ import { stylesLecteur, normaliserRatio, ratioDepuisDimensions } from '../utils/
 import { mediaPrincipal } from '../utils/mediaOffre';
 import { trimDeLOffre, useTrimVideo } from '../utils/videoTrim';
 
+// V610 : « mercredi 28 octobre · 18h45 » — la date de l'événement (compte à rebours de l'offre).
+function v610QuandOffre(o) {
+  const d = String((o && o.countdown_date) || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return '';
+  const jours = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+  const mois = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  const x = new Date(`${d}T12:00:00`);
+  const h = /^(\d{1,2}):(\d{2})/.exec(String(o.countdown_time || ''));
+  return `${jours[x.getDay()]} ${x.getDate()} ${mois[x.getMonth()]}${h ? ` · ${Number(h[1])}h${h[2]}` : ''}`;
+}
+
 const COULEUR = 'var(--primary-color, #D91CD2)';
 const RGB = 'var(--primary-rgb, 217, 28, 210)';
 const FOND_CARTE = 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(5,0,15,0.99) 100%)';
@@ -450,12 +461,20 @@ export function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, c
         ) : null}
 
         <div style={{ marginTop: 6 }}>
-          <LigneFiche icone="calendar" libelle="Durée" valeur={fiche.duree} />
+          {/* V610 : un événement à réservation automatique a UNE date, pas une « durée » de code. */}
+          {offre && offre.evenement_reservation_auto
+            ? <LigneFiche icone="calendar" libelle="Date" valeur={v610QuandOffre(offre)} />
+            : <LigneFiche icone="calendar" libelle="Durée" valeur={fiche.duree} />}
           <LigneFiche icone="creditCard" libelle="Paiement" valeur={groupeSaison ? libellePaiement(offre) : fiche.paiement} />
           <LigneFiche icone="lock" libelle="Engagement" valeur={fiche.engagement} />
           <LigneFiche icone="info" libelle="Conditions" valeur={fiche.conditions.length ? fiche.conditions.join(' · ') : ''} />
           <LigneFiche icone="users" libelle="Pour qui" valeur={fiche.pourQui} />
         </div>
+        {offre && offre.gratuit_membres ? (
+          <p data-testid="fiche-gratuit-membres" style={{ margin: '10px 0 0', fontSize: 14, fontWeight: 700, color: COULEUR }}>
+            Offert aux membres avec abonnement 8 mois actif
+          </p>
+        ) : null}
         {!groupeSaison && fiche.economie ? <p style={{ margin: '10px 0 0', fontSize: 14, fontWeight: 700, color: 'var(--eco-color, #8ef0b0)' }} data-testid="fiche-economie">{fiche.economie}</p> : null}
 
         {/* V526: sur mobile le bouton d'achat était ~340 px sous la ligne de flottaison

@@ -197,7 +197,9 @@ async def partie_moteur_pur():
         "type", "title", "subtitle", "message", "cta_label", "image_url", "version", "share_token",
         "occurrence", "date_label", "time_label", "lieu", "inviter_display", "target_url", "prix",
         # V607 : prix encaissé maintenant, mention de prix, médias, noms (toujours aucune PII)
-        "prix_actif", "gratuit", "mention_prix", "offre_nom", "video_url", "audio_url", "cours_nom"}, sorted(dp))
+        "prix_actif", "gratuit", "mention_prix", "offre_nom", "video_url", "audio_url", "cours_nom",
+        # V610 : un BOOLÉEN « offert aux membres 8 mois » (la liste des offres reste interne)
+        "gratuit_membres"}, sorted(dp))
     dc = IC.dto_coach({"type": "trial", "share_token": "tok", "version": 2, "id": "i1"}, base_url="https://x.test/")
     verifier("INV-M13 dto_coach : share_url / card_url versionnées",
              dc["share_url"] == "https://x.test/i/tok?v=2"           # V607 : lien court

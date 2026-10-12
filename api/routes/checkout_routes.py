@@ -204,6 +204,11 @@ async def create_checkout_session(req: CreateCheckoutRequest):
     # seule des portes la rendrait contournable en changeant d'URL : c'est
     # exactement le raisonnement qui a place ESSAI-1 et ESSAI-4 ici.
     await _lotr_garde(req.items, req.customer_email)
+    # V610 : un événement à réservation automatique ne passe jamais par le panier.
+    from api.routes.evenement_special import article_hors_panier as _v610_hors, MSG_PANIER as _v610_msg
+    for _v610_it in (req.items or []):
+        if await _v610_hors(db, getattr(_v610_it, "id", "")):
+            raise HTTPException(status_code=409, detail=_v610_msg)
 
     # HIVER — offre limitée (places réelles) / date limite : 409, même règle que
     # la caisse principale. Fail-open si la lecture échoue.
@@ -1586,6 +1591,11 @@ async def free_checkout(req: FreeCheckoutRequest, http_request: Request):
     # a 0 CHF serait le contournement le plus simple de tous. (Lecture seule :
     # placee AVANT la garde commune, qui ecrit le verrou en dernier.)
     await _lotr_garde(req.items, req.customer_email)
+    # V610 : un événement à réservation automatique ne passe jamais par le panier.
+    from api.routes.evenement_special import article_hors_panier as _v610_hors, MSG_PANIER as _v610_msg
+    for _v610_it in (req.items or []):
+        if await _v610_hors(db, getattr(_v610_it, "id", "")):
+            raise HTTPException(status_code=409, detail=_v610_msg)
 
     # ESSAI-8 (V591) : LA garde commune, ici comme sur toutes les portes —
     # telephone obligatoire, ESSAI-4 (abonne actif), deja client payant (meme

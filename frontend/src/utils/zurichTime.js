@@ -66,7 +66,15 @@ export function courseOccurrenceDate(course) {
       return new Date(parseInt(dp[0], 10), parseInt(dp[1], 10) - 1, parseInt(dp[2], 10), h, m, 0, 0);
     }
   }
-  return nextCourseDate(course ? course.time : null, course ? course.weekday : null);
+  const d = nextCourseDate(course ? course.time : null, course ? course.weekday : null);
+  // V610 : un jour annulé (`dates_annulees`) est sauté — semaine suivante.
+  const annulees = course && Array.isArray(course.dates_annulees) ? course.dates_annulees.map((x) => String(x).slice(0, 10)) : [];
+  for (let i = 0; i < 8 && annulees.length; i += 1) {
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (!annulees.includes(iso)) break;
+    d.setDate(d.getDate() + 7);
+  }
+  return d;
 }
 
 // Un cours est « passé » UNIQUEMENT s'il est ponctuel et daté avant maintenant

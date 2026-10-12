@@ -88,8 +88,12 @@ export function occurrencesDesCours(cours, jours = 56, maintenant = new Date()) 
     let ecart = jsWeekday - depart.getDay();
     if (ecart < 0) ecart += 7;
     const premier = new Date(depart.getFullYear(), depart.getMonth(), depart.getDate() + ecart, heure, minute);
+    // V610 : jours annulés (`dates_annulees`) jamais proposés.
+    const annulees = Array.isArray(c.dates_annulees) ? c.dates_annulees.map((x) => String(x).slice(0, 10)) : [];
     for (let d = new Date(premier); d <= limite; d.setDate(d.getDate() + 7)) {
       if (d.getTime() < maintenant.getTime()) continue;
+      const jourIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (annulees.includes(jourIso)) continue;
       out.push({ cours: c, quand: new Date(d), ponctuel: false });
     }
   });

@@ -328,7 +328,7 @@ async def _cours_eligibles() -> list:
     try:
         return await db["courses"].find(
             {"duo_enabled": True, "visible": {"$ne": False}, "archived": {"$ne": True}},
-            {"_id": 0, "id": 1, "name": 1, "weekday": 1, "date": 1, "time": 1,
+            {"_id": 0, "id": 1, "name": 1, "weekday": 1, "date": 1, "time": 1, "dates_annulees": 1,  # V610
              "locationName": 1, "location": 1, "mapsUrl": 1, "coach_id": 1,
              "duo_offer_ids": 1, "duo_default_offer_id": 1},
         ).to_list(LISTE_MAX)

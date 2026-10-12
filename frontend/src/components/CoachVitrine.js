@@ -596,7 +596,12 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       if (isNaN(d.getTime())) return [];
       return d >= new Date(new Date().setHours(0, 0, 0, 0)) ? [d] : [];
     }
-    if (course && Number.isInteger(course.weekday)) return getNextOccurrences(course.weekday, 4);
+    if (course && Number.isInteger(course.weekday)) {
+      // V610 : jours annulés (`dates_annulees`) jamais proposés.
+      const sauter = Array.isArray(course.dates_annulees) ? course.dates_annulees.map((x) => String(x).slice(0, 10)) : [];
+      const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return getNextOccurrences(course.weekday, 4 + sauter.length).filter((d) => !sauter.includes(iso(d))).slice(0, 4);
+    }
     return [];
   };
 

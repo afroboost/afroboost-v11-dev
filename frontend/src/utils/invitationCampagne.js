@@ -244,6 +244,8 @@ export function ecartSeanceCours(cours, date, heure) {
     const w = Number(cours.weekday);
     if (Number.isInteger(w) && w >= 0 && w <= 6 && new Date(`${date}T12:00:00`).getDay() !== w) {
       e.date = "Ce cours n'a pas lieu ce jour-là.";
+    } else if (Array.isArray(cours.dates_annulees) && cours.dates_annulees.some((x) => String(x).slice(0, 10) === date)) {
+      e.date = "Ce cours n'a pas lieu ce jour-là (séance annulée)."; // V610
     }
   }
   return e;
@@ -429,14 +431,19 @@ export function texteWhatsAppCampagne(dto) {
     ].filter((l, i, a) => l !== '' || (a[i - 1] !== '' && i > 0)).join('\n').trim();
   }
   if (d.type === 'event_paid') {
+    // V610 : accroche personnalisée par le SYSTÈME (prénom de l'invitant : coach ou
+    // participant de la boule de neige) ; l'argument de l'événement vient du
+    // sous-titre (repris dans chaque relais), jamais d'un média ni d'un prénom figé.
     const nom = String(d.title || d.offre_nom || 'un événement Afroboost').trim();
+    const pitch = String(d.subtitle || '').trim();
     const pa = d.prix_actif || null;
     return [
-      prenom ? `🔥 ${prenom} participe à ${nom} avec Afroboost !` : `🔥 ${nom} avec Afroboost !`,
-      'Ça te dit de venir aussi ? 💜', perso, '', ...quand, '',
+      prenom ? `${prenom} t'invite à Afroboost 🔥🎧` : 'Afroboost t’invite 🔥🎧', '',
+      `Viens vivre ${nom}${pitch ? ' :' : ' !'}`, pitch, perso, '', ...quand, '',
       pa ? `🎟️ Tarif actuel : ${libellePrix(pa.prix)}${pa.libelle && pa.palier !== 'regular' ? ` (${pa.libelle})` : ''}` : '',
+      d.gratuit_membres ? '💜 Gratuit si tu as un abonnement Afroboost 8 mois actif.' : '',
       pa && pa.prochain ? 'Plus tu réserves tôt, moins c’est cher.' : '', '',
-      'Réserve ici :', lien,
+      'Réserve ta place 👇', lien,
     ].filter((l, i, a) => l !== '' || (a[i - 1] !== '' && i > 0)).join('\n').trim();
   }
   if (d.type === 'event_free') {

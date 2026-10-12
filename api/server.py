@@ -744,6 +744,9 @@ class Course(BaseModel):
     # `/courses` a un `response_model` en `extra="ignore"`.
     duo_offer_ids: Optional[List[str]] = None
     duo_default_offer_id: Optional[str] = None
+    # V610 : jours où ce cours récurrent N'A PAS LIEU (« AAAA-MM-JJ »), ex. remplacé
+    # par un événement. Absent = aucun. Lu par tous les générateurs d'occurrences.
+    dates_annulees: Optional[List[str]] = None
 
 class CourseCreate(BaseModel):
     name: str
@@ -1206,6 +1209,11 @@ class Offer(BaseModel):
     # V537 : offre privée — retirée des listes, atteignable par son lien.
     # Absent/false = comportement historique. MÊME SYMÉTRIE Offer/OfferCreate.
     link_only: bool = False
+    # V610 : événement spécial. Déclarés en SORTIE seulement, ABSENTS d'OfferCreate
+    # (comme owner_type) : la sauvegarde d'une offre par l'éditeur ne les efface pas.
+    evenement_reservation_auto: Optional[bool] = None
+    gratuit_abonnements_offer_ids: Optional[List[str]] = None
+    gratuit_membres: Optional[bool] = None   # calculé par r2b_offre_publique (sortie publique)
     # R2c — DE QUI, ET QUOI. Les deux questions posees en tete de fichier.
     #
     # `owner_type` / `owner_id` sont ecrits par le SERVEUR seul : ils sont
@@ -2737,6 +2745,9 @@ R2B_CLES_OFFRE_PUBLIQUE = (
     # tableau de bord ; ce n'est pas une donnée personnelle.
     "link_only",
     "video_aspect_ratio", "mobile_money_enabled", "video_trim_start", "video_trim_end",
+    # V610 : événement à réservation automatique + « gratuit pour les membres 8 mois »
+    # (un BOOLÉEN calculé : la liste des offres ouvrant le droit reste interne).
+    "evenement_reservation_auto", "gratuit_membres",
 )
 
 # Les seules cles qu'un coach PUBLIC peut porter. `email` en est absent.
@@ -2756,6 +2767,9 @@ def r2b_offre_publique(offre) -> dict:
     pas a etre pense pour rester prive, il le sera par defaut.
     """
     d = dict(offre or {})
+    from api.routes import evenement_special as _v610_evt  # V610 (import local : fonction relue par les bancs)
+    if _v610_evt.offres_gratuite(d):
+        d["gratuit_membres"] = True
     return {c: d[c] for c in R2B_CLES_OFFRE_PUBLIQUE if c in d}
 
 
@@ -2785,6 +2799,7 @@ R2B_CLES_COURS_PUBLIC = (
     "location", "locationName", "mapsUrl", "region", "visible", "archived",
     "audio_tracks", "playlist", "agenda_abonne", "likes", "maxCapacity",
     "duration_minutes", "max_participants",
+    "dates_annulees",   # V610 : jours annulés (publics : la vitrine ne les propose pas)
 )
 
 
@@ -8394,6 +8409,23 @@ async def create_checkout_session(request: CreateCheckoutRequest,
                 f"sans crédits de pack"
             )
 
+    # V610 — ÉVÉNEMENT À RÉSERVATION AUTOMATIQUE : UN billet = UNE place à la date de
+    # l'événement. Quantité forcée à 1 et AUCUNE date venue du navigateur : le prix
+    # passe par la branche serveur (palier actif × 1, jamais le montant client) et la
+    # réservation naît du webhook. Un membre dont la place est OFFERTE ne paie pas :
+    # 409 qui le renvoie vers son espace (le message déclenche l'accès V529).
+    from api.routes import evenement_special as _v610_evt
+    if _offer and _v610_evt.reservation_auto(_offer):
+        request.quantity = 1
+        request.reservationData = None
+        _v610_ce = str(request.customerEmail or "").strip().lower()
+        if _v610_ce and _v610_evt.offres_gratuite(_offer):
+            _v610_c = await _v610_evt.cours_de_l_evenement(db, _offer)
+            _v610_o = _v610_evt.occurrence(_v610_c)
+            if _v610_o and await _v610_evt.abonnement_gratuit(db, _v610_ce, _offer, _v610_evt.debut_utc(_v610_o)):
+                logger.info("[V610] checkout refusé : place offerte (membre) — offre %s", str(request.offerId)[:8])
+                raise HTTPException(status_code=409, detail=_v610_evt.MSG_MEMBRE_DOIT_RESERVER)
+
     # Montant en centimes (Stripe utilise les plus petites unités).
     # round() et non int() : int(0.29 * 100) vaut 28 en virgule flottante.
     #
@@ -9929,6 +9961,50 @@ async def stripe_webhook(request: Request):
                     )
                 except Exception as _lot2e:
                     logger.error(f"[LOT2] adhesion ignoree (chemin Stripe): {_lot2e}")
+
+                # V610 — ÉVÉNEMENT À RÉSERVATION AUTOMATIQUE : le billet payé EST la place.
+                # Placé ici (après V384 : un rejeu Stripe ressort avant) ; la réclamation
+                # `stripe:<session>` double la garde. La séance unique du billet est
+                # consommée par LA règle (`seances_consommer`, clé = la réservation) :
+                # l'espace ne la propose plus une seconde fois. FAIL-OPEN : un paiement
+                # encaissé ne dépend jamais de ceci (la réservation se rattrape à la main).
+                try:
+                    from api.routes import evenement_special as _v610_evt
+                    _v610_resa, _v610_creee = await _v610_evt.apres_paiement(
+                        db, session_id=session.id, offre_id=(metadata or {}).get("offer_id"),
+                        email=customer_email, nom=subscription_data.get("name") or "",
+                        code=new_code, subscription_id=subscription_data.get("id"),
+                        montant=amount_chf or _montant_paye,
+                        whatsapp=(metadata or {}).get("customer_phone") or "")
+                    if _v610_resa and _v610_creee:
+                        from api.routes.shared import seances_consommer as _v610_consommer
+                        await _v610_consommer(db, new_code, 1, reservation_id=_v610_resa["id"],
+                                              source=_v610_evt.SOURCE_PAYANT)
+                        await db.subscriptions.update_one(
+                            {"id": subscription_data.get("id"), "remaining_sessions": {"$gte": 1}},
+                            {"$inc": {"remaining_sessions": -1, "used_sessions": 1},
+                             "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}})
+                        await db.subscriptions.update_one(
+                            {"id": subscription_data.get("id"), "remaining_sessions": {"$lte": 0}},
+                            {"$set": {"status": "completed"}})
+                        try:
+                            from api.routes.shared import notifier_reservation_creee as _v610_notif
+                            from api.routes.reservation_routes import _send_reservation_email as _v610_mail
+                            from api.routes.reservation_routes import _send_coach_reservation_email as _v610_mail_coach
+
+                            async def _v610_mail_client(_r):
+                                return bool(await _v610_mail(customer_email, _r.get("userName") or "", _r,
+                                                             subscription_data, user_lang=None,
+                                                             user_whatsapp=_r.get("userWhatsapp") or ""))
+
+                            asyncio.create_task(_v610_notif(db, _v610_resa, envoyer_email_client=_v610_mail_client,
+                                                            envoyer_push_coach=send_push_by_email,
+                                                            envoyer_email_coach=_v610_mail_coach))
+                        except Exception as _v610_n:  # noqa: BLE001
+                            logger.warning("[V610] notification non partie (%s)", type(_v610_n).__name__)
+                except Exception as _v610e:  # noqa: BLE001
+                    logger.error("[V610] réservation automatique NON créée (session %s) : %s",
+                                 str(getattr(session, "id", ""))[:20], type(_v610e).__name__)
 
                 # C9-A : `pulse_purchased` — la SEULE preuve d'achat acceptable.
                 # Placé ici, donc APRÈS la garde d'idempotence V384 (server.py:6090,
@@ -15750,9 +15826,17 @@ def _v184_next_occurrences(course, days_ahead=14):
         # Fallback approximatif si zoneinfo indispo : CEST en mai (UTC+2)
         now_naive = datetime.utcnow() + timedelta(hours=2)
     today = now_naive.date()
+    # V610 : jours où ce cours N'A PAS LIEU (`dates_annulees`, « AAAA-MM-JJ »). Écrit
+    # ici sans import : cette fonction est relue telle quelle par plusieurs bancs.
+    _v610_annules = ({str(x).strip()[:10] for x in course.get("dates_annulees") if x}
+                     if isinstance(course.get("dates_annulees"), list) else set())
     for offset in range(days_ahead + 1):
         candidate_date = today + timedelta(days=offset)
         if candidate_date.weekday() != py_weekday:
+            continue
+        # V610 : un jour ANNULÉ (`dates_annulees`, ex. remplacé par un événement)
+        # n'est jamais proposé — vitrine, espace, agenda, bot, invitations, rappels.
+        if candidate_date.isoformat() in _v610_annules:
             continue
         occurrence_dt = datetime(
             candidate_date.year, candidate_date.month, candidate_date.day,
@@ -17727,12 +17811,21 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
         ).to_list(200):
             for _cid in (_oe.get("linked_course_ids") or []):
                 _v426_offres_evt.setdefault(_cid, _oe.get("id"))
+    # V610 : un cours d'événement à BILLET n'est jamais « inclus » dans un forfait,
+    # même un forfait « tous les cours » (offre ancienne sans liste) : billet ou place offerte.
+    try:
+        from api.routes import evenement_special as _v610_evt
+        _v610_billets = await _v610_evt.offres_billet_par_cours(db)
+    except Exception as _e610b:  # noqa: BLE001
+        logger.warning("[V610] cours à billet illisibles (%s)", type(_e610b).__name__)
+        _v610_billets = {}
     for occ in occurrences:
-        _inclus = (not linked_ids) or (occ.get("course_id") in linked_ids)
+        _inclus = ((not linked_ids) or (occ.get("course_id") in linked_ids)) \
+            and occ.get("course_id") not in _v610_billets
         occ["inclus_abonnement"] = _inclus
         occ["type_acces"] = "INCLUDED" if _inclus else "EVENT_SEPARATE"
         if not _inclus:
-            occ["offer_id"] = _v426_offres_evt.get(occ.get("course_id"))
+            occ["offer_id"] = _v610_billets.get(occ.get("course_id")) or _v426_offres_evt.get(occ.get("course_id"))
 
     # V208c: Historique de réservations — par member_slug pour les groupes, par email sinon
     import re as _re_mod
@@ -17957,10 +18050,20 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
         logger.warning("[V534] drapeau parrainage illisible pour l'espace (%s)", type(_e534).__name__)
         _v534_parrainage = {"enabled": False}
 
+    # V610 : les événements dont CETTE personne (e-mail de la session) a la place
+    # OFFERTE. Additif, jamais bloquant : vide sur panne.
+    try:
+        from api.routes import evenement_special as _v610_evt
+        _v610_offerts = await _v610_evt.evenements_offerts(db, _b3s13_charge.get("email"))
+    except Exception as _e610:  # noqa: BLE001
+        logger.warning("[V610] événements offerts illisibles (%s)", type(_e610).__name__)
+        _v610_offerts = []
+
     return {
         **_espace_renouv,
         "success": True,
         "parrainage": _v534_parrainage,
+        "evenements_offerts": _v610_offerts,
         "multi_member": is_multi,
         "member": {"slug": member.get("slug"), "name": member.get("name")} if member else None,
         "subscriber": {
@@ -18879,6 +18982,17 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
 
     # V202: Récupérer le membre si spécifié
     member_slug = body.get("member_slug") if isinstance(body, dict) else None
+
+    # V610 — LA MÊME PORTE QUE L'ESPACE LUI-MÊME. Cette route écrit (réservation +
+    # débit d'une séance) et n'exigeait que le code d'accès, alors que la lecture de
+    # l'espace exige la session prouvée par code e-mail (B3-S1.3). Le navigateur
+    # envoie déjà `X-Espace-Token` sur chaque requête (intercepteur global) : l'écran
+    # de réservation n'existe qu'avec cette session. Même refus neutre (404).
+    _v610_charge, _v610_motif = await _b3s13_porteur_autorise(request, code_upper, member_slug)
+    if not _v610_charge:
+        logger.warning("[V610] réservation espace refusée (motif=%s)", _v610_motif)
+        raise _b3s13_refus()
+
     member = None
     if member_slug:
         member = await db.code_members.find_one(
@@ -18944,6 +19058,10 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
     )
     shared_mode = (discount_for_mode or {}).get("shared_sessions", True)
+    # V610 : le jeton doit appartenir à un propriétaire connu de CE code (même règle que l'espace).
+    if not _b3s13_tenant_accepte(_v610_charge, subscription, discount_for_mode):
+        logger.warning("[V610] réservation espace refusée (motif=autre_proprietaire)")
+        raise _b3s13_refus()
 
     # ESSAI-5a-1 — LES CONDITIONS, AVANT TOUTE ECRITURE.
     # C'est ce chemin qui porte 74 des 132 reservations reelles, et il n'avait
@@ -19048,6 +19166,27 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     course = await db.courses.find_one({"id": course_id}, {"_id": 0})
     if not course:
         raise HTTPException(status_code=404, detail="Cours introuvable")
+
+    # V610 — un cours d'événement à BILLET ne se prend jamais contre une séance de forfait.
+    from api.routes import evenement_special as _v610_evt
+    if await _v610_evt.cours_a_billet(db, course_id):
+        logger.info("[V610] réservation espace refusée : cours à billet (%s)", str(course_id)[:12])
+        raise HTTPException(status_code=400, detail=_v610_evt.MSG_BILLET_REQUIS)
+
+    # V610 — LA DATE DEMANDÉE DOIT ÊTRE UNE SÉANCE RÉELLEMENT PROPOSÉE. `datetime`
+    # était recopié tel quel : un appel direct réservait n'importe quel jour, y
+    # compris un jour ANNULÉ (`dates_annulees`). Même générateur que l'espace
+    # (14 j) et l'invitation INV-3 (J+15..J+30) : 45 jours couvrent les deux.
+    _v610_occ = str(occurrence_iso or "").strip()[:16]
+    _v610_permises = {str((o or {}).get("datetime") or "")[:16]: (o or {}).get("datetime")
+                      for o in (_v184_next_occurrences(course, days_ahead=45) or [])}
+    if not _v610_occ or _v610_occ not in _v610_permises:
+        logger.info("[V610] réservation espace refusée : séance non proposée (cours %s, %r)",
+                    str(course_id)[:12], _v610_occ)
+        raise HTTPException(status_code=400, detail="Cette séance n'est pas (ou plus) proposée à la réservation.")
+    # La valeur ENREGISTRÉE est celle du générateur (« …T18:45:00 »), jamais la chaîne
+    # du client : sinon « …:00.000 » contournerait l'anti-doublon ci-dessous.
+    occurrence_iso = _v610_permises[_v610_occ]
 
     # V426 — ELIGIBILITE. Deux controles, dans cet ordre :
     #
@@ -20315,6 +20454,87 @@ async def cron_check_subscription_renewal(request: Request):
 
 
 # === V185 F3: Annulation d'une réservation depuis l'espace abonné (2h min) ===
+@api_router.post("/subscriber/space/{access_code}/evenement/{offer_id}/offert")
+async def v610_reserver_evenement_offert(access_code: str, offer_id: str, request: Request):
+    """V610 — PLACE OFFERTE d'un événement (ex. AFROBOOST SILENT) pour un membre dont
+    l'abonnement désigné par l'offre (`gratuit_abonnements_offer_ids`) est ACTIF au
+    début de l'événement. 0 CHF : aucun Stripe, aucun faux paiement, aucun code AFR.
+
+    IDENTITÉ : la SESSION D'ESPACE (code e-mail prouvé, `X-Espace-Token`) — l'e-mail
+    vient du JETON, jamais du corps. Le droit est personnel : un ami invité paie son
+    propre palier. IDEMPOTENT : une réclamation `membre:<offre>:<e-mail>` -> une seule
+    place ; un double clic rend la même réservation."""
+    from api.routes import evenement_special as _v610_evt
+    code_upper = (access_code or "").strip().upper()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    member_slug = body.get("member_slug") or None
+    _charge, _motif = await _b3s13_porteur_autorise(request, code_upper, member_slug)
+    if not _charge:
+        logger.warning("[V610] place offerte refusée (motif=%s)", _motif)
+        raise _b3s13_refus()
+    _email = str(_charge.get("email") or "").strip().lower()
+    _offre = await db.offers.find_one({"id": str(offer_id or "")[:64]}, {"_id": 0})
+    if not _offre or _offre.get("archived") is True or _offre.get("visible") is False \
+            or str(_offre.get("offer_type") or "") != "event" or not _v610_evt.offres_gratuite(_offre):
+        raise HTTPException(status_code=404, detail="Événement introuvable")
+    _cours = await _v610_evt.cours_de_l_evenement(db, _offre)
+    _occ = _v610_evt.occurrence(_cours)
+    if not _occ:
+        raise HTTPException(status_code=404, detail="Événement introuvable")
+    if _v610_evt.evenement_commence(_occ):
+        raise HTTPException(status_code=409, detail="L'événement a déjà commencé.")
+    _droit = await _v610_evt.abonnement_gratuit(db, _email, _offre, _v610_evt.debut_utc(_occ))
+    if not _droit:
+        raise HTTPException(status_code=403, detail=("La place offerte est réservée aux membres dont "
+                                                     "l'abonnement 8 mois est actif à la date de l'événement."))
+    _nom = _droit.get("name") or ""
+    _resa, _creee = await _v610_evt.reserver(
+        db, cle="membre:%s:%s" % (_offre.get("id"), _email), offre=_offre, cours=_cours, occ=_occ,
+        email=_email, nom=_nom, prix=0, source=_v610_evt.SOURCE_MEMBRE, code=code_upper,
+        whatsapp=_droit.get("whatsapp") or "",
+        extra={"member_slug": member_slug, "paiement": "aucun",
+               "droit_subscription_id": _droit.get("id"), "droit_offer_id": _droit.get("offer_id"),
+               "droit_code": _droit.get("code")})
+    if not _resa:
+        raise HTTPException(status_code=409, detail="Ta réservation est en cours. Réessaie dans un instant.")
+    if _creee:
+        try:
+            from api.routes.shared import notifier_reservation_creee as _rc_notifier
+            from api.routes.reservation_routes import _send_reservation_email as _v610_mail_cl
+            from api.routes.reservation_routes import _send_coach_reservation_email as _v610_mail_co
+
+            async def _v610_mail_client_offert(_r):      # le verdict de l'envoi remonte (F1)
+                return bool(await _v610_mail_cl(_email, _nom, _r, _droit, user_lang=None,
+                                                user_whatsapp=_droit.get("whatsapp") or ""))
+
+            asyncio.create_task(_rc_notifier(db, _resa, envoyer_email_client=_v610_mail_client_offert,
+                                             envoyer_push_coach=send_push_by_email,
+                                             envoyer_email_coach=_v610_mail_co))
+        except Exception as _n_err:  # noqa: BLE001 — la place est prise, la notification suit ou non
+            logger.warning("[V610] notification non partie (%s)", type(_n_err).__name__)
+    # La boule de neige : SON lien personnel (facultatif à partager).
+    _relais = None
+    try:
+        from api.routes import invitation_relais as _ir
+        _parent = await _ir.jeton_parent_evenement(db, _offre.get("id"), body.get("jeton_invitation"))
+        if _parent:
+            _r = await _ir.creer_relais(db, jeton_parent=_parent, email=_email, nom=_nom, preuve_nature="membre",
+                                        preuve_cle=_resa.get("id"), reservation_id=_resa.get("id"))
+            if _r:
+                _camp = await db.referral_campaigns.find_one({"id": _r.get("campagne_id")}, {"_id": 0, "title": 1})
+                _relais = _ir.dto_relais(_r, _camp, _ir._front())
+    except Exception as _r_err:  # noqa: BLE001
+        logger.warning("[V610] relais non créé (%s)", type(_r_err).__name__)
+    return {"success": True, "deja_reserve": not _creee, "prix": 0,
+            "reservation": {k: _resa.get(k) for k in ("id", "reservationCode", "courseId", "courseName", "datetime",
+                                                      "offerId", "offerName", "price", "source")},
+            "relais": _relais}
+
+
 @api_router.delete("/subscriber/space/{access_code}/cancel/{reservation_id}")
 async def cancel_reservation_from_space(access_code: str, reservation_id: str):
     """V185: Annule une réservation de l'abonné — recrédit 1 séance si > 2h avant le cours."""
@@ -20419,6 +20639,13 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
     # par la regle existante — on ne redemande rien, on ne recalcule rien.
     await t1_tracer_annulation(reservation, "abonné", _t1_essai)
     await db.reservations.delete_one({"id": reservation_id})
+
+    # V610 : une place OFFERTE d'événement n'a débité aucune séance -> rien à rendre.
+    # (La réclamation est libérée à la prochaine demande : `evenement_special._deja`.)
+    if str(reservation.get("source") or "") == "member_free_event":   # = evenement_special.SOURCE_MEMBRE
+        logger.info("[V610] place offerte annulée (%s) — aucune séance à restituer", reservation_id[:8])
+        return {"success": True, "remaining_sessions": subscription.get("remaining_sessions"),
+                "refunded_quantity": 0, "cancelled_reservation_id": reservation_id}
 
     new_remaining = (subscription.get("remaining_sessions") or 0) + qty_to_refund
     new_used = max(0, (subscription.get("used_sessions") or 0) - qty_to_refund)
@@ -34558,11 +34785,15 @@ def cal1_occurrences_cours(cours: dict, debut: datetime, fin: datetime) -> list:
     jour = debut.replace(tzinfo=None).replace(hour=hm[0], minute=hm[1],
                                               second=0, microsecond=0)
     borne = fin.replace(tzinfo=None)
+    # V610 : jours annulés (`dates_annulees`) — sans import, fonction PURE relue par les bancs.
+    _v610_annules = ({str(x).strip()[:10] for x in c.get("dates_annulees") if x}
+                     if isinstance(c.get("dates_annulees"), list) else set())
     # Bornee par la fenetre elle-meme, deja plafonnee : pas de boucle infinie.
     for _ in range(CAL1_FENETRE_MAX_JOURS + 7):
         if jour > borne:
             break
-        if jour.weekday() == py and jour >= debut.replace(tzinfo=None):
+        if jour.weekday() == py and jour >= debut.replace(tzinfo=None) \
+                and jour.date().isoformat() not in _v610_annules:      # V610 : jour annulé
             sorties.append(jour)
         jour = jour + timedelta(days=1)
     return [cal1_forme({
@@ -45810,7 +46041,8 @@ async def cron_reservation_reminders():
                     {"_id": 0, "id": 1, "name": 1, "archived": 1,
                      "reminders_enabled": 1, "reminder_rules": 1,
                      "locationName": 1, "mapsUrl": 1,
-                     "weekday": 1, "date": 1, "time": 1, "agenda_abonne": 1})
+                     "weekday": 1, "date": 1, "time": 1, "agenda_abonne": 1,
+                     "dates_annulees": 1})   # V610
             except Exception as _e:
                 logger.warning("[RV3] cours %s illisible : %s", _cid, _e)
             _cache_cours[_cid] = _c

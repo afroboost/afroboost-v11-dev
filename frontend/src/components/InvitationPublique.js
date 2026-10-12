@@ -220,6 +220,12 @@ export default function InvitationPublique({ token }) {
                 Plus tu réserves tôt, moins c'est cher : {prixTexte(pa.prochain.prix)} à partir du {dateBascule(pa.prochain.a_partir_de)}.
               </p>
             ) : null}
+            {d.gratuit_membres ? (
+              /* V610 : la gratuité est décidée par le serveur (abonnement 8 mois actif), jamais ici. */
+              <p data-testid="inv-pub-gratuit-membres" style={{ margin: '8px 0 0', fontSize: '13.5px', fontWeight: 600, color: 'var(--primary-color, #D91CD2)' }}>
+                Offert si tu as un abonnement Afroboost 8 mois actif.
+              </p>
+            ) : null}
           </div>
         ) : null}
 

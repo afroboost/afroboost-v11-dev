@@ -204,6 +204,25 @@ async def creer_relais(database, *, jeton_parent, email, nom, preuve_nature, pre
     return _doc
 
 
+async def jeton_parent_evenement(database, offre_id, jeton=None):
+    """V610 — Le parent d'un participant d'ÉVÉNEMENT : l'invitation par laquelle il
+    est arrivé (si elle porte BIEN cette offre), sinon l'invitation ACTIVE du coach
+    pour cette offre (génération 1). Ainsi chaque participant reçoit son lien, même
+    venu sans `?inv=`. None si l'offre n'a aucune invitation active."""
+    _offre = str(offre_id or "")
+    if not _offre:
+        return None
+    _t = jeton_valide(jeton)
+    if _t:
+        _camp, _ = await resoudre_parent(database, _t)
+        if _camp and str(_camp.get("offer_id") or "") == _offre:
+            return _t
+    _camp = await database["referral_campaigns"].find_one(
+        {"offer_id": _offre, "status": "active", "type": {"$in": list(TYPES_RELAIS)}},
+        {"_id": 0, "share_token": 1}, sort=[("created_at", -1)])
+    return jeton_valide((_camp or {}).get("share_token")) or None
+
+
 def _lire(obj, cle, defaut=None):
     try:
         _v = obj.get(cle)
@@ -218,6 +237,14 @@ async def relais_depuis_paiement_stripe(database, session, metadata=None):
     try:
         _meta = metadata if isinstance(metadata, dict) else dict(_lire(session, "metadata", {}) or {})
         _jeton = jeton_valide(_meta.get("invitation_token"))
+        if not _jeton and _meta.get("offer_id"):
+            # V610 : événement à réservation automatique acheté SANS invitation -> son
+            # lien quand même, rattaché à l'invitation active du coach (génération 1).
+            _o = await database["offers"].find_one({"id": str(_meta.get("offer_id"))},
+                                                   {"_id": 0, "offer_type": 1, "evenement_reservation_auto": 1})
+            from api.routes.evenement_special import reservation_auto as _v610_auto
+            if _v610_auto(_o):
+                _jeton = await jeton_parent_evenement(database, _meta.get("offer_id"))
         if not _jeton or str(_lire(session, "payment_status", "") or "") != "paid":
             return None
         _details = _lire(session, "customer_details", {}) or {}

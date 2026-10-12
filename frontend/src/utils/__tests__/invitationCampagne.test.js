@@ -147,10 +147,32 @@ describe('validerInvitation', () => {
     expect(t).toMatch(/https:\/\/a\.ch\/i\/x/);
     const p = texteWhatsAppCampagne({ type: 'event_paid', title: 'Gala', share_url: 'L', inviter_display: { prenom: 'Bassi' },
       prix_actif: { prix: 25, palier: 'early_bird', libelle: 'Tarif lancement', prochain: { prix: 35 } } });
-    expect(p).toMatch(/Bassi participe à Gala/);
+    // V610 : accroche personnalisée par le système, puis l'événement.
+    expect(p).toMatch(/^Bassi t'invite à Afroboost 🔥🎧/);
+    expect(p).toMatch(/Viens vivre Gala !/);
     expect(p).toMatch(/Tarif actuel : 25 CHF \(Tarif lancement\)/);
     expect(p).toMatch(/Plus tu réserves tôt/);
     expect(texteWhatsAppCampagne({ type: 'pass_duo', message: 'Viens', share_url: 'L' })).toMatch(/Viens/);
+  });
+  test('V610 WhatsApp Afroboost Silent : prénom de l\'invitant, date, heure, lieu, prix ACTIF, gratuité membres, lien perso', () => {
+    const dto = { type: 'event_paid', title: 'AFROBOOST SILENT — ÉDITION SPÉCIALE',
+      subtitle: '1 heure de cardio-danse afro au casque, accessible à tous les niveaux.',
+      date_label: 'mercredi 28 octobre', time_label: '18:45', lieu: 'Chem. des Valangines 97, 2000 Neuchâtel',
+      share_url: 'https://afroboost.com/i/JetonSophie', inviter_display: { prenom: 'Sophie' }, gratuit_membres: true,
+      prix_actif: { prix: 30, palier: 'standard', libelle: 'Standard', prochain: { prix: 40 } } };
+    const t = texteWhatsAppCampagne(dto);
+    expect(t.split('\n')[0]).toBe("Sophie t'invite à Afroboost 🔥🎧");
+    expect(t).toMatch(/Viens vivre AFROBOOST SILENT — ÉDITION SPÉCIALE :\n1 heure de cardio-danse afro au casque/);
+    expect(t).toMatch(/📅 Mercredi 28 octobre\n⏰ 18:45\n📍 Chem\. des Valangines 97, 2000 Neuchâtel/);
+    expect(t).toMatch(/🎟️ Tarif actuel : 30 CHF \(Standard\)/);
+    expect(t).toMatch(/💜 Gratuit si tu as un abonnement Afroboost 8 mois actif\./);
+    expect(t).toMatch(/Plus tu réserves tôt, moins c’est cher\./);
+    expect(t).toMatch(/Réserve ta place 👇\nhttps:\/\/afroboost\.com\/i\/JetonSophie$/);
+    expect(t).not.toMatch(/50 places|places maximum|envoyé/i);
+    // Dernière minute : plus de palier suivant -> plus de « moins cher » ; sans liste membres -> pas de ligne gratuite.
+    const d = texteWhatsAppCampagne({ ...dto, gratuit_membres: false, prix_actif: { prix: 40, palier: 'last_minute', libelle: 'Dernière minute', prochain: null } });
+    expect(d).toMatch(/Tarif actuel : 40 CHF \(Dernière minute\)/);
+    expect(d).not.toMatch(/moins c’est cher|Gratuit si/);
   });
   test('CTA > 30 caractères refusé (aligné sur le serveur)', () => {
     const base = { ...formulaireInitial('event_free'), offer_id: 'free1' };

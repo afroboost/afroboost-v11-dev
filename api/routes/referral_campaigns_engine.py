@@ -459,6 +459,9 @@ def seance_du_cours(cours, occurrence) -> bool:
     _fixe = cours.get("date").strip()[:10] if isinstance(cours.get("date"), str) else ""
     if _fixe:
         return _fixe == _d.strftime("%Y-%m-%d")
+    _v610_annules = cours.get("dates_annulees")      # V610 : jour annulé du cours récurrent
+    if isinstance(_v610_annules, list) and _d.strftime("%Y-%m-%d") in {str(x).strip()[:10] for x in _v610_annules if x}:
+        return False
     try:
         _wd = int(cours.get("weekday"))
     except (TypeError, ValueError):
@@ -638,6 +641,10 @@ def dto_public(doc, cours=None, offre=None, chaine=False) -> dict:
         "video_url": _d.get("video_url") or None,
         "audio_url": _d.get("audio_url") or None,
         "cours_nom": (str(_c.get("name") or "").strip()[:120] or None) if _c else None,
+        # V610 : gratuité accordée à certains abonnements actifs (liste d'offres
+        # configurée sur l'offre-événement). AUCUNE capacité : pas de plafond de places.
+        "gratuit_membres": bool(_o and isinstance(_o.get("gratuit_abonnements_offer_ids"), list)
+                                and any(_o.get("gratuit_abonnements_offer_ids"))),
     }
 
 

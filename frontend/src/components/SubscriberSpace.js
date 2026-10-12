@@ -46,6 +46,7 @@ import { Etapes } from "./parrainage/wizardCommun"; // V594 — le stepper EXIST
 import { ETAPES_PARCOURS_PARTENAIRE } from "./ParcoursPartenaire";
 import "./parrainage/wizardFilleul.css";
 import InviterMesAmis from "./InviterMesAmis"; // V607
+import EvenementsOfferts from "./EvenementsOfferts"; // V610 : place offerte (membres 8 mois)
 // N2 : la MEME lecture de l'heure que le serveur (`n2_instant_reel`). Sans
 // elle, une date naive serait lue dans le fuseau du navigateur et l'ecran
 // pourrait offrir « Annuler » alors que le serveur refuse.
@@ -1269,6 +1270,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             Rien sans invitation : le bloc ne s'affiche pas. */}
         <InviterMesAmis codeAcces={accessCode} jetonEspace={jetonEspace && jetonEspace.token} slug={memberSlug} />
 
+        {/* V610 : événements dont la place est OFFERTE à cette personne (décidé par le serveur). */}
+        <EvenementsOfferts evenements={data && data.evenements_offerts} accessCode={accessCode} memberSlug={memberSlug} />
+
         {/* ===== V560 : MENU RAPIDE — Bienvenue + profil, puis ces raccourcis, puis
             la progression et « Réserver une séance ». Le reste se rejoint d'ici. ===== */}
         <MenuRapide entrees={[
@@ -1725,7 +1729,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                       {occ.inclus_abonnement === false ? (
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <span className="text-xs" style={{ color: "rgba(255,255,255,0.65)" }}>
-                            Événement — billet séparé
+                            {/* V610 : place offerte à ce membre -> elle se réserve dans la carte dédiée. */}
+                            {((data && data.evenements_offerts) || []).some((e) => e && e.offer_id === occ.offer_id)
+                              ? "Événement — offert pour toi (voir plus haut)"
+                              : "Événement — billet séparé"}
                           </span>
                           <a
                             href={occ.offer_id ? `/?offre=${encodeURIComponent(occ.offer_id)}` : "/"}

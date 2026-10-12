@@ -334,6 +334,17 @@ const API = `${BACKEND_URL}/api`;
 // l'espace Partenaire ».
 const V224_PROGRESSIVE_KEY = 'v224_progressive_checkout';
 
+// V610 : « mercredi 28 octobre · 18h45 » depuis la date/heure de l'événement de l'offre.
+function v610QuandEvenement(offer) {
+  const d = String((offer && offer.countdown_date) || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return '';
+  const jours = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+  const mois = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  const x = new Date(`${d}T12:00:00`);
+  const h = /^(\d{1,2}):(\d{2})/.exec(String(offer.countdown_time || ''));
+  return `${jours[x.getDay()]} ${x.getDate()} ${mois[x.getMonth()]}${h ? ` · ${Number(h[1])}h${h[2]}` : ''}`;
+}
+
 // Configuration Admin - Vercel Compatible
 // v9.5.6: Liste des Super Admins autorisés
 // SA-1 : UN SEUL super-admin (décision définitive du propriétaire, 29/09/2026).
@@ -937,15 +948,21 @@ const WEEKDAYS_MAP = {
 };
 
 // Helper functions
-function getNextOccurrences(weekday, count = 4) {
+// V610 : `annulees` = `course.dates_annulees` (« AAAA-MM-JJ ») — ces jours-là le cours
+// n'a pas lieu (remplacé par un événement) : ils sont sautés, jamais proposés.
+function v610JourIso(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function getNextOccurrences(weekday, count = 4, annulees = null) {
   const now = new Date();
   const results = [];
+  const sauter = Array.isArray(annulees) ? annulees.map((x) => String(x).slice(0, 10)) : [];
   const day = now.getDay();
   let diff = weekday - day;
   if (diff < 0) diff += 7;
   let current = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
-  for (let i = 0; i < count; i++) {
-    results.push(new Date(current));
+  for (let i = 0; results.length < count && i < count + 8; i++) {
+    if (!sauter.includes(v610JourIso(current))) results.push(new Date(current));
     current.setDate(current.getDate() + 7);
   }
   return results;
@@ -1986,7 +2003,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
       return;
     }
     if (typeof startProgressiveCheckout !== 'function') return;
-    startProgressiveCheckout(offer, v225Qty, v226VariantDims.length > 0 ? v226Variants : null);
+    startProgressiveCheckout(offer, offer.evenement_reservation_auto ? 1 : v225Qty,   // V610 : 1 billet = 1 place
+                             v226VariantDims.length > 0 ? v226Variants : null);
   };
 
   // V224: ratio MESURE sur les metadonnees reelles (videoWidth/videoHeight),
@@ -2202,7 +2220,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
         dt = v255CourseDateTime(course);
         if (dt && dt <= now) dt = null;
       } else if (course.weekday != null) {
-        const occ = getNextOccurrences(course.weekday, 1)[0];
+        const occ = getNextOccurrences(course.weekday, 1, course.dates_annulees)[0];
         if (occ) {
           dt = new Date(occ);
           if (typeof course.time === 'string' && /^\d{1,2}:\d{2}/.test(course.time)) {
@@ -2577,6 +2595,13 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             {offer.isProduct && offer.shippingCost > 0 && (
               <p className="text-xs text-white opacity-50 mb-1">+ CHF {offer.shippingCost} frais de port</p>
             )}
+            {/* V610 : la place est offerte aux membres (abonnement 8 mois actif) — décidé par le serveur. */}
+            {offer.gratuit_membres && (
+              <p className="text-xs mb-1" data-testid={`v610-gratuit-membres-${offer.id}`}
+                 style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 600 }}>
+                Offert aux membres avec abonnement 8 mois actif
+              </p>
+            )}
 
             {!showDescription && (
               <div className="mb-2">
@@ -2799,7 +2824,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 largeur entiere et ses chips s'affichent DESSOUS, sans comprimer
                 les autres liens ni les pousser hors de la carte. Sur une carte
                 etroite, `flexWrap` les repartit naturellement sur deux lignes. */}
-            {v225IsDirectCheckout(offer) && (
+            {/* V610 : un billet d'événement à réservation automatique = UNE place (pas de quantité). */}
+            {v225IsDirectCheckout(offer) && !offer.evenement_reservation_auto && (
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '2px 14px', margin: '8px 0' }}>
               <div
                 style={{ flex: v230IsOpen('qty') ? '1 1 100%' : '0 0 auto' }}
@@ -6134,6 +6160,7 @@ function App() {
       setProgressiveConfirm({
         offerName: progressiveInfo.offerName || null,
         amount: progressiveInfo.amount != null ? progressiveInfo.amount : null,
+        evenementAuto: progressiveInfo.evenementAuto || null,   // V610
         sessionId
       });
       setTimeout(cleanUrl, 100);
@@ -7042,9 +7069,12 @@ function App() {
       // reutilisee par le marqueur de confirmation et par le payload Stripe.
       // Les deux doivent parler de la meme quantite, sinon l'ecran de
       // confirmation annonce un montant que Stripe n'a pas preleve.
-      const v225SafeQty = Math.max(1, Math.min(5, parseInt(quantity, 10) || 1));
+      const v225SafeQty = offer.evenement_reservation_auto ? 1   // V610 : 1 billet = 1 place
+        : Math.max(1, Math.min(5, parseInt(quantity, 10) || 1));
       localStorage.setItem(V224_PROGRESSIVE_KEY, JSON.stringify({
         offerName: offer.name,
+        // V610 : la place est réservée par le webhook — l'écran le dit (date de l'événement).
+        evenementAuto: offer.evenement_reservation_auto ? v610QuandEvenement(offer) || true : undefined,
         // V225 REVUE FINALE: montant TOTAL reellement debite (unitaire x qte), et
         // non le prix unitaire. Cette valeur n'alimente QUE l'ecran « Paiement
         // confirme » (lu ~l.3749, affiche ~l.5645) : un client achetant
@@ -7819,7 +7849,7 @@ function App() {
   };
 
   const renderDates = (course) => {
-    const dates = getNextOccurrences(course.weekday);
+    const dates = getNextOccurrences(course.weekday, 4, course.dates_annulees);
     return (
       <div className="grid grid-cols-2 gap-2 mt-3">
         {dates.map((date, idx) => {
@@ -8792,15 +8822,27 @@ function App() {
                 CHF {v225FormatAmount(progressiveConfirm.amount)}.-
               </p>
             ) : null}
-            <p className="text-sm mb-2" style={{ color: 'rgba(255,255,255,0.85)' }}>
-              📧 Votre <strong>code d'accès</strong> vous est envoyé par email dans quelques instants.
-            </p>
-            <p className="text-sm mb-5" style={{ color: 'rgba(255,255,255,0.6)' }}>
-              Ouvrez ensuite votre espace avec ce code pour choisir la date de votre séance.
-            </p>
+            {progressiveConfirm.evenementAuto ? (
+              /* V610 : événement à réservation automatique — la place EST réservée. */
+              <p className="text-sm mb-5" data-testid="v610-place-reservee" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                Ta place est réservée
+                {typeof progressiveConfirm.evenementAuto === 'string' ? <> : <strong>{progressiveConfirm.evenementAuto}</strong></> : null}.
+                {' '}Ta confirmation arrive par e-mail.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm mb-2" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                  📧 Votre <strong>code d'accès</strong> vous est envoyé par email dans quelques instants.
+                </p>
+                <p className="text-sm mb-5" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                  Ouvrez ensuite votre espace avec ce code pour choisir la date de votre séance.
+                </p>
+              </>
+            )}
             {/* V607 : invitation d'événement payant -> lien personnel (facultatif). */}
             <Suspense fallback={null}>
-              <div className="mb-4"><InviterMesAmis sessionId={progressiveConfirm.sessionId} /></div>
+              <div className="mb-4"><InviterMesAmis sessionId={progressiveConfirm.sessionId}
+                                                     evenement={!!progressiveConfirm.evenementAuto} /></div>
             </Suspense>
             <button
               type="button"

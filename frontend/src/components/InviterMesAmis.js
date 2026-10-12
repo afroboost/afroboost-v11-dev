@@ -48,8 +48,11 @@ async function lienParInscription(jeton, code, jetonEspace, slug) {
   } catch (e) { return null; }
 }
 
-export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug }) {
-  const [relais, setRelais] = useState(null);
+export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug, relaisInitial, evenement }) {
+  // V610 : `relaisInitial` = lien déjà rendu par le serveur (place offerte d'un membre) ;
+  // `evenement` = billet d'un événement à réservation automatique : son lien existe
+  // même sans invitation d'origine (rattaché à l'invitation du coach).
+  const [relais, setRelais] = useState(relaisInitial && relaisInitial.jeton ? relaisInitial : null);
   const [details, setDetails] = useState(null);
   const [retour, setRetour] = useState('');
   const inv = invitationActuelle();
@@ -59,10 +62,18 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
   const espace = String(jetonEspace || '');
   const membre = String(slug || '');
 
+  const jetonInitial = relaisInitial && relaisInitial.jeton ? String(relaisInitial.jeton) : '';
   useEffect(() => {
-    if (!jetonInv || (!cs && !acces)) return undefined;
+    if (jetonInitial) {
+      let vivant = true;
+      fetch(`${BACKEND_URL}/api/invitation/publique/${encodeURIComponent(jetonInitial)}`)
+        .then((x) => (x.ok ? x.json() : null)).then((d) => { if (vivant && d) setDetails(d); }).catch(() => {});
+      return () => { vivant = false; };
+    }
+    const parSession = !!cs && (!!jetonInv || !!evenement);
+    if (!parSession && !(jetonInv && acces)) return undefined;
     let vivant = true;
-    const demande = cs ? lienParSession(cs) : lienParInscription(jetonInv, acces, espace, membre);
+    const demande = parSession ? lienParSession(cs) : lienParInscription(jetonInv, acces, espace, membre);
     demande.then((r) => {
       if (!vivant || !r || !r.jeton) return;
       setRelais(r);
@@ -70,7 +81,7 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
         .then((x) => (x.ok ? x.json() : null)).then((d) => { if (vivant && d) setDetails(d); }).catch(() => {});
     });
     return () => { vivant = false; };
-  }, [jetonInv, cs, acces, espace, membre]);
+  }, [jetonInitial, jetonInv, cs, acces, espace, membre, evenement]);
 
   if (!relais) return null;
   // Le mot personnel de l'invitation est celui du coach : jamais repris au nom du participant.
