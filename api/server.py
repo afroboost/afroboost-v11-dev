@@ -30675,6 +30675,7 @@ P3R2_ETAPES = ("j3", "j7", "j14")   # V603 : J+14 = derniere relance, puis STOP
 P3R2_DRAPEAU_ACTIF = "P3_RELANCE_ENABLED"
 P3R2_DRAPEAU_REEL = "P3_RELANCE_ENVOI_REEL"
 P3R2_MOTIFS = {
+    "J0_NON_REMIS": "le premier message n'a pas ete remis (rebond, echec ou remise non confirmee)",
     "CAMPAGNE_NON_APPROUVEE": "la campagne n'est pas approuvee",
     "EMPREINTE_ALTEREE": "le contenu a change depuis l'approbation",
     "JAMAIS_ENVOYE": "aucune relance sans premier contact",
@@ -30807,6 +30808,14 @@ def p3r2_garde_relance(action: dict, campagne: dict, etape: str, refus=None,
     if p3b1_est_permanent(a.get("bounce_type")):
         return {"autorise": False, "code": "REBOND_PERMANENT",
                 "motif": P3R2_MOTIFS["REBOND_PERMANENT"]}
+    # V609 — PAS DE RELANCE SANS J0 REMIS. Pour un J0 suivi par V608 (`suivi_livraison`),
+    # seule la remise confirmee (`delivered`) ouvre la sequence : un rebond temporaire,
+    # un echec ou une remise encore en attente ne doivent pas recevoir un deuxieme message
+    # dans une boite en erreur. Les J0 anterieurs a V608 (Grande Vague) n'ont pas ce champ :
+    # leur regle est inchangee.
+    if a.get("suivi_livraison") and (a.get("provider_status") or "") != "delivered":
+        return {"autorise": False, "code": "J0_NON_REMIS",
+                "motif": P3R2_MOTIFS["J0_NON_REMIS"]}
 
     # --- ce qui est propre a l'etape ---
     if a.get(p3r2_champ(etape, "annule_le")):
