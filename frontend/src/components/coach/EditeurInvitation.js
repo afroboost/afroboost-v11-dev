@@ -16,15 +16,19 @@
  * RÉSEAU : lecture UNE fois à l'ouverture ; simulation des tarifs sur une clé
  * PRIMITIVE (jamais un objet) ; aucun setState d'objet identique (pas de boucle).
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import SvgIcon from '../SvgIcon';
 import InvitationMiniature from './InvitationMiniature';
 import ChoixMedia from './ChoixMedia';
 import InvitationPublique from '../InvitationPublique';
 import InviterMesAmis from '../InviterMesAmis';
 import useLargeurEcran from '../../utils/useLargeurEcran';
+import { uploadToCloudinary } from '../CloudinaryUploadButton';
+// V610g : L'OUTIL VIDÉO EXISTANT (Prospection → Médias « Modifier / exporter ») — découpe, formats
+// Auto / 16:9 / 9:16 / 1:1, export, « Capturer cette image comme miniature ». Chargé à la demande.
+const OutilVideo = lazy(() => import('./prospection/ProspectionVideoEditeur'));
 import {
-  lireEdition, enregistrerInvitation, enregistrerEvenement, archiverInvitation,
+  lireEdition, enregistrerInvitation, enregistrerEvenement, archiverInvitation, importerMedia, lireMediasCoach,
   changementsEvenement, estSensible, erreurTarifs, quandLisible, LIBELLES_TYPE, LIBELLES_STATUT,
 } from '../../utils/invitationEdition';
 
@@ -164,6 +168,8 @@ export default function EditeurInvitation({ invitationId, onClose, onEnregistre 
   const [message, setMessage] = useState(null);         // { ton: 'ok'|'erreur', texte }
   const [confirmation, setConfirmation] = useState(null); // { texte, relancer }
   const [miniatureOccupee, setMiniatureOccupee] = useState(false);
+  const [outilVideo, setOutilVideo] = useState('');          // V610g : adresse de la vidéo ouverte dans l'outil
+  const [biblioImages, setBiblioImages] = useState(null);     // null = fermée
   const panneauApercu = useRef(null);
 
   useEffect(() => {
@@ -259,6 +265,35 @@ export default function EditeurInvitation({ invitationId, onClose, onEnregistre 
   const prixActif = (simulation && simulation.prix_actif) != null ? simulation.prix_actif : (tarifs && tarifs.prix_actif);
   const largeurApercu = mobile ? Math.min(largeur - 48, 420) : 360;
 
+  // V610g — miniature / vidéo produites par l'outil : enregistrées TOUT DE SUITE sur l'invitation
+  // (route existante, version +1 -> aperçus rafraîchis, liens intacts), sans perdre les autres
+  // modifications en cours du formulaire.
+  const appliquerMedia = async (corps, texte) => {
+    const dto = await enregistrerInvitation(invitationId, corps);
+    setEd((p) => Object.assign({}, p, { invitation: Object.assign({}, p.invitation, dto || {}, corps) }));
+    setForm((p) => Object.assign({}, p, corps));
+    setMessage({ ton: 'ok', texte });
+    if (onEnregistre) onEnregistre();
+  };
+  const enregistrerMiniatureCapturee = async (fichier) => {
+    const r = await uploadToCloudinary(fichier, { folder: 'invitations' });
+    if (!r || !r.url) throw new Error("La miniature n'a pas pu être envoyée.");
+    await appliquerMedia({ image_url: r.url, image_source: 'upload' }, 'Miniature capturée et enregistrée pour cette invitation.');
+  };
+  const enregistrerVersionExportee = async (fichier, meta, surProgression) => {
+    const r = await importerMedia(fichier, 'video', surProgression);
+    await appliquerMedia({ video_url: r.url }, 'Nouvelle version de la vidéo enregistrée pour cette invitation.');
+    return "Version enregistrée : elle remplace la vidéo de l'invitation.";
+  };
+  const ouvrirBiblioImages = () => {
+    if (biblioImages) { setBiblioImages(null); return; }
+    lireMediasCoach('image').then(setBiblioImages).catch(() => setBiblioImages([]));
+  };
+  const choisirMiniature = (url) => {
+    setForm((p) => Object.assign({}, p, { image_url: url, image_source: 'upload' }));
+    setBiblioImages(null);
+  };
+
   const contenu = (
     <>
       <Section id="contenu" titre="Contenu" icone="edit" resume={form.title || 'Titre, accroche, description, bouton'} ouverte={section === 'contenu'} onBasculer={() => bascule('contenu')}>
@@ -317,12 +352,36 @@ export default function EditeurInvitation({ invitationId, onClose, onEnregistre 
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>Miniature / aperçu de partage</div>
           <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', marginBottom: 8 }}>Image de la page, affiche de la vidéo et aperçu WhatsApp.</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+            {form.video_url ? (
+              <button type="button" style={Object.assign(btn('contour'), { minHeight: 40, fontSize: 13.5 })} onClick={() => setOutilVideo(form.video_url)}
+                      data-testid="ed-miniature-capturer">
+                <SvgIcon name="camera" size={15} /> Capturer depuis la vidéo
+              </button>
+            ) : null}
+            <button type="button" style={Object.assign(btn('contour'), { minHeight: 40, fontSize: 13.5 })} onClick={ouvrirBiblioImages}
+                    data-testid="ed-miniature-biblio" aria-expanded={!!biblioImages}>
+              <SvgIcon name="layers" size={15} /> {biblioImages ? 'Fermer la bibliothèque' : 'Choisir dans la bibliothèque'}
+            </button>
+          </div>
+          {biblioImages ? (
+            <div data-testid="ed-miniature-liste" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8, marginBottom: 10 }}>
+              {biblioImages.length === 0 ? <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>Aucune image pour le moment.</div> : null}
+              {biblioImages.map((m) => (
+                <button key={m.url} type="button" onClick={() => choisirMiniature(m.url)} data-testid="ed-miniature-choisir" title={m.nom || ''}
+                        style={{ padding: 0, borderRadius: 10, overflow: 'hidden', cursor: 'pointer', aspectRatio: '1200 / 630', background: rgbaP(0.12),
+                          border: m.url === form.image_url ? `2px solid ${PRIMAIRE}` : '1px solid rgba(255,255,255,0.12)' }}>
+                  <img src={m.url} alt={m.nom || ''} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                </button>
+              ))}
+            </div>
+          ) : null}
           <InvitationMiniature value={form.image_url} source={form.image_source} defaultUrl={inv.card_url}
                                onChange={({ image_url: u, image_source: s }) => setForm((p) => Object.assign({}, p, { image_url: u, image_source: s }))}
                                onBusyChange={setMiniatureOccupee} />
         </div>
-        <ChoixMedia type="video" testid="ed-video" libelle="Vidéo de l'invitation" aide="Jamais lancée automatiquement : l'invité la démarre."
-                    valeur={form.video_url} onChange={(u) => maj('video_url', u)} />
+        <ChoixMedia type="video" testid="ed-video" libelle="Vidéo de l'invitation" aide="Jamais lancée automatiquement : l'invité la démarre. Tout format : 9:16, 16:9, carré…"
+                    valeur={form.video_url} onChange={(u) => maj('video_url', u)} onOuvrirOutil={setOutilVideo} />
         <ChoixMedia type="audio" testid="ed-audio-avant" libelle="Message audio avant réservation (facultatif)" aide="Écoutable sur la page de l'invitation, au clic."
                     valeur={form.audio_url} onChange={(u) => maj('audio_url', u)} />
         {type === 'event_paid' ? (
@@ -431,6 +490,20 @@ export default function EditeurInvitation({ invitationId, onClose, onEnregistre 
           </div>
           <Apercu dto={apercu} mode={modeApercu} setMode={setModeApercu} largeurDispo={largeurApercu}
                   afficherApres={type === 'event_paid' && !!form.audio_partage_url} />
+        </div>
+      ) : null}
+      {outilVideo ? (
+        <div role="dialog" aria-modal="true" aria-label="Modifier / exporter la vidéo" data-testid="ed-outil-video"
+             style={{ position: 'fixed', inset: 0, zIndex: 10004, background: 'rgba(0,0,0,0.85)', overflowY: 'auto', padding: mobile ? 8 : 20, boxSizing: 'border-box' }}>
+          <div style={{ maxWidth: 1000, margin: '0 auto', background: 'rgb(14,6,18)', borderRadius: 16, padding: 12, border: `1px solid ${rgbaP(0.35)}` }}>
+            <Suspense fallback={<p style={{ color: 'rgba(255,255,255,0.7)' }}>Chargement de l'outil vidéo…</p>}>
+              <OutilVideo API={`${process.env.REACT_APP_BACKEND_URL || ''}/api`} niche="invitation" enFenetre
+                          titre="Modifier / exporter — vidéo de l'invitation"
+                          original={{ id: invitationId, url: outilVideo, fichier: { nom: (String(outilVideo).split('/').pop() || 'video.mp4') } }}
+                          enregistrerMiniature={enregistrerMiniatureCapturee} enregistrerVersion={enregistrerVersionExportee}
+                          onFermer={() => setOutilVideo('')} onEnregistre={() => setOutilVideo('')} />
+            </Suspense>
+          </div>
         </div>
       ) : null}
       {confirmation ? (

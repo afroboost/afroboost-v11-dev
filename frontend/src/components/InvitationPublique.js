@@ -20,6 +20,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import SvgIcon from './SvgIcon';
 import { suivreInvitation } from '../utils/invitationSuivi';
 import AccesMembreEvenement from './AccesMembreEvenement'; // V610b
+import AfroboostAudioPlayer from './AfroboostAudioPlayer'; // V610g
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
@@ -74,32 +75,9 @@ function Ligne({ icone, children, testid }) {
   );
 }
 
-function MotAudio({ url, prenom }) {
-  const ref = useRef(null);
-  const [lecture, setLecture] = useState(false);
-  const basculer = () => {
-    const a = ref.current;
-    if (!a) return;
-    if (a.paused) { const p = a.play(); if (p && p.catch) p.catch(() => setLecture(false)); setLecture(true); } else { a.pause(); setLecture(false); }
-  };
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px', borderRadius: '14px', background: rgbaP(0.1), border: `1px solid ${rgbaP(0.3)}` }}>
-      <button type="button" onClick={basculer} data-testid="inv-pub-audio" aria-label={lecture ? 'Mettre en pause' : 'Écouter'}
-              style={{ width: '44px', height: '44px', borderRadius: '999px', border: 'none', background: PRIMAIRE, color: 'rgba(255,255,255,1)',
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flex: 'none' }}>
-        {lecture ? (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-            <rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" />
-          </svg>
-        ) : <SvgIcon name="play" size={18} />}
-      </button>
-      <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.9)' }}>
-        <div style={{ fontWeight: 700 }}>{prenom ? `Un mot de ${prenom}` : 'Un mot pour toi'}</div>
-        <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '12.5px' }}>{lecture ? 'En lecture' : 'Écouter'}</div>
-      </div>
-      <audio ref={ref} src={url} preload="none" onEnded={() => setLecture(false)} onPause={() => setLecture(false)} />
-    </div>
-  );
+/** V610g — le « mot » avant réservation, dans le lecteur Afroboost (au clic, jamais d'autoplay). */
+function MotAudio({ url, prenom, inerte }) {
+  return <AfroboostAudioPlayer src={url} titre={prenom ? `Un mot de ${prenom}` : 'Un mot pour toi'} testidBouton="inv-pub-audio" inerte={inerte} />;
 }
 
 /** V610e — « Détails » : la description longue, REPLIÉE par défaut (design épuré). */
@@ -192,8 +170,11 @@ export default function InvitationPublique({ token, apercu }) {
         <div style={{ borderRadius: '16px', overflow: 'hidden', background: rgbaP(0.08), border: `1px solid ${rgbaP(0.25)}`, marginBottom: '16px' }}>
           {video ? (
             // Jamais de lecture automatique : poster + contrôles (lecture, pause, son).
+            // V610g : lecture, pause, avance, plein écran, son — mais aucun bouton « Télécharger »
+            // proposé (controlsList) ni menu contextuel. Pas une protection DRM : un frein d'interface.
             <video data-testid="inv-pub-video" src={video} poster={image || undefined} controls playsInline preload="none"
-                   style={{ display: 'block', width: '100%', maxHeight: '70vh', background: 'rgb(0,0,0)' }} />
+                   controlsList="nodownload noremoteplayback" disableRemotePlayback onContextMenu={(e) => e.preventDefault()}
+                   style={{ display: 'block', width: '100%', maxHeight: '70vh', objectFit: 'contain', background: 'rgb(0,0,0)' }} />
           ) : (image ? (
             <img data-testid="inv-pub-image" src={image} alt={titre} loading="lazy" width="1200" height="630"
                  style={{ display: 'block', width: '100%', height: 'auto', aspectRatio: '1200 / 630', objectFit: 'cover' }} />
@@ -264,7 +245,7 @@ export default function InvitationPublique({ token, apercu }) {
             {d.message}
           </p>
         ) : null}
-        {audio ? <div style={{ margin: '0 0 16px' }}><MotAudio url={audio} prenom={prenom} /></div> : null}
+        {audio ? <div style={{ margin: '0 0 16px' }}><MotAudio url={audio} prenom={prenom} inerte={enApercu} /></div> : null}
       </main>
 
       <div style={{ position: enApercu ? 'sticky' : 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 16px calc(12px + env(safe-area-inset-bottom, 0px))', background: 'linear-gradient(180deg, rgba(8,4,12,0) 0%, rgba(8,4,12,0.95) 40%)' }}>

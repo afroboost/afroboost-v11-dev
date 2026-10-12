@@ -112,7 +112,14 @@ export default function VideoTrimEditor({
   }, [videoUrl]);
 
   // Nouvelle vidéo : on repart de zéro (durée inconnue, pas d'erreur).
-  useEffect(() => { setDuree(0); setPosition(0); setErreur(''); setEnLecture(false); }, [videoUrl]);
+  useEffect(() => {
+    setDuree(0); setPosition(0); setErreur(''); setEnLecture(false);
+    // V610g : vidéo déjà en cache -> ses métadonnées arrivent AVANT cette remise à zéro, qui
+    // les effaçait : durée 00:00 et boutons (dont « Capturer ») grisés pour toujours.
+    // Mesuré : readyState 4, durée 21,2 s, mais `duree` = 0. On les relit APRÈS la remise à zéro.
+    const v = videoRef.current;
+    if (v && v.readyState >= 1) v.dispatchEvent(new Event('loadedmetadata'));
+  }, [videoUrl]);
 
   const aller = (t) => {
     const v = videoRef.current;

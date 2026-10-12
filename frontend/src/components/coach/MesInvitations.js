@@ -20,11 +20,34 @@ const btn = (plein) => ({ minHeight: 40, padding: '8px 14px', borderRadius: 10, 
   display: 'inline-flex', alignItems: 'center', gap: 6, color: 'rgba(255,255,255,0.97)',
   background: plein ? PRIMAIRE : 'rgba(255,255,255,0.07)', border: plein ? 'none' : `1px solid ${rgbaP(0.35)}` });
 
+/**
+ * V610g — LA miniature de l'invitation, dans la ligne : 1) celle choisie / capturée
+ * (`image_url`), 2) la carte générée si elle s'affiche, 3) sinon seulement le fond violet.
+ * Une image qui ne charge pas passe à la suivante (jamais un cadre cassé).
+ */
+export function sourcesVignette(inv) {
+  const l = [];
+  if (inv && inv.image_url && inv.image_source !== 'default') l.push(inv.image_url);
+  if (inv && inv.card_url) l.push(inv.card_url);
+  return l;
+}
+function Vignette({ inv }) {
+  const sources = sourcesVignette(inv);
+  const [i, setI] = useState(0);
+  const src = sources[i];
+  return (
+    <div data-testid={`mes-inv-vignette-${inv.id}`} style={{ width: 96, height: 54, borderRadius: 8, overflow: 'hidden', flex: '0 0 auto',
+      background: `linear-gradient(135deg, ${rgbaP(0.35)}, ${rgbaP(0.08)})` }}>
+      {src ? <img key={src} src={src} alt="" width="96" height="54" loading="lazy" onError={() => setI((x) => x + 1)}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : null}
+    </div>
+  );
+}
+
 function Carte({ inv, onModifier, onRafraichir }) {
   const [menu, setMenu] = useState(false);
   const [retour, setRetour] = useState('');
   const [stats, setStats] = useState(null);
-  const vignette = inv.image_url || inv.card_url;
   const quand = [inv.date_label, inv.time_label].filter(Boolean).join(' · ');
   const actif = inv.status === 'active';
   const copierLien = () => copier(inv.share_url).then((ok) => setRetour(ok ? 'Lien copié' : 'Copie impossible'));
@@ -44,9 +67,7 @@ function Carte({ inv, onModifier, onRafraichir }) {
   return (
     <div data-testid={`mes-inv-${inv.id}`} style={{ display: 'flex', gap: 12, padding: 12, borderRadius: 14, background: 'rgba(255,255,255,0.04)',
       border: '1px solid rgba(255,255,255,0.09)', position: 'relative', flexWrap: 'wrap' }}>
-      <div style={{ width: 96, height: 50, borderRadius: 8, overflow: 'hidden', background: rgbaP(0.15), flex: '0 0 auto' }}>
-        {vignette ? <img src={vignette} alt="" width="96" height="50" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
-      </div>
+      <Vignette key={`${inv.image_url || ""}|${inv.version || 0}`} inv={inv} />
       <div style={{ flex: '1 1 180px', minWidth: 0 }}>
         <div style={{ fontWeight: 800, fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.title || LIBELLES_TYPE[inv.type]}</div>
         <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)' }}>

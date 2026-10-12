@@ -318,6 +318,7 @@ async def medias_lister(request: Request, type: str = "video"):
     _c = await RC._coach(request)
     _genre = type if type in _GENRES else "video"
     _email = str(_c.get("email") or "").strip().lower()
+    _cle = _c.get("cle")
     _items, _vus = [], set()
     _fichiers = await _db()["uploaded_files"].find(
         {"coach_email": _email, "doublon_de": {"$exists": False},
@@ -341,6 +342,26 @@ async def medias_lister(request: Request, type: str = "video"):
             _items.append({"url": _url, "nom": (_m.get("fichier") or {}).get("nom") if isinstance(_m.get("fichier"), dict)
                            else (_m.get("version") or "Vidéo de la bibliothèque"), "type": "video",
                            "taille": None, "date": str(_m.get("updated_at") or "")[:19], "source": "bibliotheque"})
+    if _genre == "image":
+        # V610g : les miniatures déjà utilisées par CE coach (bibliothèque Médias « miniature »,
+        # et images de ses invitations) — choisir sans réimporter.
+        for _m in await _db()["prospection_medias"].find(
+                {"coach_id": _email, "format": "miniature", "statut": {"$ne": "archivee"}}, {"_id": 0, "url": 1, "updated_at": 1, "fichier": 1}) \
+                .sort("updated_at", -1).limit(MEDIAS_MAX).to_list(MEDIAS_MAX):
+            _url = str(_m.get("url") or "")
+            if _url and _url not in _vus:
+                _vus.add(_url)
+                _items.append({"url": _url, "nom": ((_m.get("fichier") or {}).get("nom") if isinstance(_m.get("fichier"), dict) else None)
+                               or "Miniature", "type": "image", "taille": None, "date": str(_m.get("updated_at") or "")[:19],
+                               "source": "bibliotheque"})
+        for _inv in await _db()["referral_campaigns"].find(
+                {"coach_id": _cle, "image_source": "upload", "image_url": {"$type": "string"}},
+                {"_id": 0, "image_url": 1, "title": 1, "updated_at": 1}).sort("updated_at", -1).limit(MEDIAS_MAX).to_list(MEDIAS_MAX):
+            _url = str(_inv.get("image_url") or "")
+            if _url and _url not in _vus:
+                _vus.add(_url)
+                _items.append({"url": _url, "nom": "Miniature — %s" % (_inv.get("title") or "invitation"), "type": "image",
+                               "taille": None, "date": str(_inv.get("updated_at") or "")[:19], "source": "invitation"})
     return {"type": _genre, "items": _items[:MEDIAS_MAX]}
 
 

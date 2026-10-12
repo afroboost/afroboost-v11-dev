@@ -11,7 +11,8 @@
  * Honnêteté : le clic WhatsApp OUVRE WhatsApp avec le message prérempli ; on
  * enregistre « partage déclenché », jamais « envoyé ». Aucun envoi automatique.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import AfroboostAudioPlayer from './AfroboostAudioPlayer'; // V610g
 import SvgIcon from './SvgIcon';
 import { invitationActuelle } from '../utils/attribution';
 import { suivreInvitation } from '../utils/invitationSuivi';
@@ -97,24 +98,9 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
     return () => { vivant = false; };
   }, [jetonInitial, jetonInv, cs, acces, espace, membre, evenement, enApercu]);
 
-  // V610d — « DEVIENS AFROBOOSTEUR » : l'audio d'APRÈS réservation (événement payant
-  // seulement). Lecture UNIQUEMENT au clic (preload none, jamais d'autoplay) ; pause et
-  // reprise par le même bouton. Hooks posés AVANT tout retour anticipé.
-  const audioRef = useRef(null);
-  const [lecture, setLecture] = useState('arret');      // 'arret' | 'lecture' | 'pause'
+  // V610d / V610g — « DEVIENS AFROBOOSTEUR » : l'audio d'APRÈS réservation (événement payant
+  // seulement), joué par le lecteur Afroboost (au clic, jamais d'autoplay).
   const audioPartage = details && details.type === 'event_paid' ? urlAudioSure(details.audio_partage_url) : '';
-  const basculerAudio = () => {
-    const a = audioRef.current;
-    if (!a) return;
-    if (a.paused) {
-      const p = a.play();
-      if (p && typeof p.then === 'function') p.then(() => setLecture('lecture')).catch(() => setLecture('arret'));
-      else setLecture('lecture');
-    } else {
-      a.pause();
-      setLecture('pause');
-    }
-  };
 
   if (!relais) return null;
   // Le mot personnel de l'invitation est celui du coach : jamais repris au nom du participant.
@@ -140,15 +126,7 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
         <p style={{ margin: '4px 0 12px', fontSize: '13.5px', color: 'rgba(255,255,255,0.8)' }}>
           Partage l’énergie. Invite tes amis.
         </p>
-        <audio ref={audioRef} src={audioPartage} preload="none" data-testid="afroboosteur-audio"
-               onEnded={() => setLecture('arret')} onPause={() => setLecture((l) => (l === 'lecture' ? 'pause' : l))} />
-        <button type="button" data-testid="afroboosteur-ecouter" onClick={basculerAudio} aria-pressed={lecture === 'lecture'}
-                style={{ width: '100%', minHeight: '44px', borderRadius: '12px', background: 'rgba(255,255,255,0.06)',
-                  border: `1px solid ${rgbaP(0.45)}`, color: 'rgba(255,255,255,0.95)', fontWeight: 700, fontSize: '14px',
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer' }}>
-          <SvgIcon name={lecture === 'lecture' ? 'pause' : 'play'} size={16} />
-          {lecture === 'lecture' ? 'Pause' : lecture === 'pause' ? 'Reprendre le message' : 'Écouter le message'}
-        </button>
+        <AfroboostAudioPlayer src={audioPartage} testidAudio="afroboosteur-audio" testidBouton="afroboosteur-ecouter" inerte={enApercu} />
         <button type="button" data-testid="inviter-whatsapp" onClick={surWhatsApp}
                 style={{ width: '100%', minHeight: '46px', marginTop: '8px', borderRadius: '12px', border: 'none', background: PRIMAIRE,
                   color: 'rgba(255,255,255,1)', fontWeight: 700, fontSize: '15px', display: 'inline-flex', alignItems: 'center',

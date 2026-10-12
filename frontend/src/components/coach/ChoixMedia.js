@@ -10,6 +10,7 @@
 import React, { useRef, useState } from 'react';
 import SvgIcon from '../SvgIcon';
 import { lireMediasCoach, importerMedia } from '../../utils/invitationEdition';
+import AfroboostAudioPlayer from '../AfroboostAudioPlayer'; // V610g : plus de lecteur audio natif
 
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
 const rgbaP = (a) => `rgba(var(--primary-rgb, 217, 28, 210), ${a})`;
@@ -31,9 +32,9 @@ function Lecteur({ type, url, testid }) {
   const sur = urlMediaSure(url);
   if (!sur) return null;
   return type === 'video'
-    ? <video data-testid={testid} src={sur} controls playsInline preload="none"
-             style={{ display: 'block', width: '100%', maxHeight: 260, borderRadius: 10, background: 'rgb(0,0,0)' }} />
-    : <audio data-testid={testid} src={sur} controls preload="none" style={{ width: '100%' }} />;
+    ? <video data-testid={testid} src={sur} controls playsInline preload="none" controlsList="nodownload noremoteplayback"
+             style={{ display: 'block', width: '100%', maxHeight: 260, objectFit: 'contain', borderRadius: 10, background: 'rgb(0,0,0)' }} />
+    : <AfroboostAudioPlayer src={sur} testidAudio={testid} compact />;
 }
 
 function taille(o) {
@@ -42,7 +43,7 @@ function taille(o) {
   return n >= 1048576 ? `${(n / 1048576).toFixed(1)} Mo` : `${Math.round(n / 1024)} Ko`;
 }
 
-export default function ChoixMedia({ type, valeur, onChange, libelle, aide, testid }) {
+export default function ChoixMedia({ type, valeur, onChange, libelle, aide, testid, onOuvrirOutil = null }) {
   const [biblio, setBiblio] = useState(null);       // null = fermée ; [] = ouverte
   const [chargement, setChargement] = useState(false);
   const [progres, setProgres] = useState(null);
@@ -87,6 +88,11 @@ export default function ChoixMedia({ type, valeur, onChange, libelle, aide, test
         <button type="button" style={bouton(false)} onClick={() => entree.current && entree.current.click()} data-testid={`${id}-importer`} disabled={progres !== null}>
           <SvgIcon name="upload" size={15} /> {actuel ? 'Remplacer' : 'Importer'}
         </button>
+        {actuel && type === 'video' && onOuvrirOutil ? (
+          <button type="button" style={bouton(false)} onClick={() => onOuvrirOutil(actuel)} data-testid={`${id}-outil`}>
+            <SvgIcon name="edit" size={15} /> Découper / Modifier / exporter
+          </button>
+        ) : null}
         {actuel ? (
           <button type="button" style={bouton(false)} onClick={() => onChange(null)} data-testid={`${id}-retirer`}>
             <SvgIcon name="trash" size={15} /> Retirer

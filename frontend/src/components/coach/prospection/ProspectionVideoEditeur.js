@@ -126,7 +126,10 @@ async function recadrerMiniature(blob, cadre) {
   } finally { if (bmp.close) bmp.close(); }
 }
 
-export default function ProspectionVideoEditeur({ API, niche, original, fichierLocal = null, editionInitiale = null, ratioInitial = null, enFenetre = false, nicheLibelle = '', onFermer, onEnregistre }) {
+export default function ProspectionVideoEditeur({ API, niche, original, fichierLocal = null, editionInitiale = null, ratioInitial = null, enFenetre = false, nicheLibelle = '', onFermer, onEnregistre,
+  // V610g — LE MÊME OUTIL réutilisé ailleurs (Invitation & Parrainage) : où ranger la miniature
+  // capturée et la version exportée. ABSENTS (Prospection) : comportement d'origine inchangé.
+  enregistrerMiniature = null, enregistrerVersion = null, titre = '' }) {
   const support = useMemo(() => exportSupporteIci(), []);
   // L'aperçu lit le fichier LOCAL s'il vient d'être choisi (immédiat), sinon l'original enregistré.
   const urlLocale = useMemo(() => (fichierLocal ? URL.createObjectURL(fichierLocal) : ''), [fichierLocal]);
@@ -173,11 +176,15 @@ export default function ProspectionVideoEditeur({ API, niche, original, fichierL
       const apercu = garderUrl(URL.createObjectURL(recadree));
       setMiniature({ url: apercu, etat: 'envoi' });
       const fichier = new File([recadree], nomExport(nomOriginal, 'miniature').replace('.mp4', '.jpg'), { type: 'image/jpeg' });
-      const r = await uploadToCloudinary(fichier, { folder: 'prospection' });
-      await axios.post(`${API}/prospection-medias`, {
-        niche, format: 'miniature', url: r.url, source_id: original.id,
-        fichier: { nom: fichier.name }, version: 'Miniature',
-      });
+      if (enregistrerMiniature) {
+        await enregistrerMiniature(fichier);
+      } else {
+        const r = await uploadToCloudinary(fichier, { folder: 'prospection' });
+        await axios.post(`${API}/prospection-medias`, {
+          niche, format: 'miniature', url: r.url, source_id: original.id,
+          fichier: { nom: fichier.name }, version: 'Miniature',
+        });
+      }
       setMiniature({ url: apercu, etat: 'ok' });
     } catch (e) {
       setMiniature((p) => ({ ...p, etat: erreurLisible(e, 'Miniature non enregistrée.') }));
@@ -216,6 +223,13 @@ export default function ProspectionVideoEditeur({ API, niche, original, fichierL
     try {
       const nom = nomExport(nomOriginal, ratio === 'auto' ? ratioDepuisDimensions(resultat.largeur, resultat.hauteur) : ratio);
       const fichier = new File([resultat.blob], nom, { type: 'video/mp4' });
+      if (enregistrerVersion) {
+        const msg = await enregistrerVersion(fichier, { ratio, duree: resultat.duree, largeur: resultat.largeur, hauteur: resultat.hauteur },
+          (pct) => setEnvoi((p) => ({ ...p, pct: Math.round(pct) })));
+        setEnvoi({ etat: 'ok', pct: 100, erreur: '' });
+        onEnregistre(msg || 'Version enregistrée.');
+        return;
+      }
       const r = await uploadToCloudinary(fichier, { folder: 'prospection', onProgress: (pct) => setEnvoi((p) => ({ ...p, pct: Math.round(pct) })) });
       const c = reglage.cadre;
       const rep = await axios.post(`${API}/prospection-medias`, {
@@ -242,7 +256,7 @@ export default function ProspectionVideoEditeur({ API, niche, original, fichierL
       : { marginTop: '8px', padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: `1px solid ${BORD}`, color: TEXTE, display: 'grid', gap: '10px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center',
         ...(enFenetre ? { position: 'sticky', top: 0, zIndex: 5, background: '#0f0b15', padding: '12px 0', borderBottom: `1px solid ${BORD}` } : {}) }}>
-        <strong style={{ fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Modifier / exporter{nicheLibelle ? ` — ${nicheLibelle}` : ''}</strong>
+        <strong style={{ fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{titre || `Modifier / exporter${nicheLibelle ? ` — ${nicheLibelle}` : ''}`}</strong>
         <Bouton discret onClick={onFermer} disabled={bloque} testid="pve-fermer">Fermer</Bouton>
       </div>
       {!support.ok && <Bandeau ton="ambre" testid="pve-mobile">{support.raison} Tu peux consulter la vidéo ici ; l'export se fait depuis un ordinateur.</Bandeau>}
@@ -250,7 +264,8 @@ export default function ProspectionVideoEditeur({ API, niche, original, fichierL
 
       {resultat ? (
         <ApercuFinal resultat={resultat} ratio={ratio} envoi={envoi}
-          onEnregistrer={enregistrer} onRemodifier={remodifier} formatCible={formatCible} />
+          onEnregistrer={enregistrer} onRemodifier={remodifier} formatCible={formatCible}
+                     note={enregistrerVersion ? "La version exportée remplace la vidéo de l'invitation après enregistrement." : null} />
       ) : (
         <>
           <VideoTrimEditor
@@ -340,7 +355,7 @@ export default function ProspectionVideoEditeur({ API, niche, original, fichierL
   );
 }
 
-function ApercuFinal({ resultat, ratio, envoi, onEnregistrer, onRemodifier, formatCible }) {
+function ApercuFinal({ resultat, ratio, envoi, onEnregistrer, onRemodifier, formatCible, note = null }) {
   const lu = resultat.largeur > 0;
   return (
     <div data-testid="pve-apercu-final" style={{ display: 'grid', gap: 10 }}>
@@ -363,7 +378,7 @@ function ApercuFinal({ resultat, ratio, envoi, onEnregistrer, onRemodifier, form
         <Bouton onClick={onEnregistrer} disabled={!lu || !formatCible || envoi.etat === 'envoi' || envoi.etat === 'ok'} testid="pve-enregistrer">Enregistrer cette version</Bouton>
         <Bouton discret onClick={onRemodifier} disabled={envoi.etat === 'envoi'} testid="pve-remodifier">Remodifier</Bouton>
       </div>
-      <div style={{ fontSize: 11, color: DOUX }}>Une version enregistrée entre « À vérifier ». Tu la valides ensuite toi-même.</div>
+      <div style={{ fontSize: 11, color: DOUX }}>{note || 'Une version enregistrée entre « À vérifier ». Tu la valides ensuite toi-même.'}</div>
     </div>
   );
 }

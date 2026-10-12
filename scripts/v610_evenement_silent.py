@@ -140,8 +140,12 @@ async def preparer(db, appliquer):
         return
     champs = IC.valider_entree({"type": "event_paid", "status": "draft", "title": TITRE, "subtitle": ACCROCHE,
                                 "cta_label": "Je réserve ma place", "offer_id": offre["id"], "course_id": cours["id"],
-                                "occurrence": "%sT%s" % (DATE, HEURE)}, None)
-    profil = await db.coaches.find_one({"email": COACH}, {"_id": 0}) or {}
+                                "occurrence": "%sT%s" % (DATE, HEURE),
+                                "description": DESCRIPTION}, None)          # V610e : bloc « Détails »
+    # Même identité affichée (prénom + photo) que les invitations créées depuis l'écran.
+    from api.routes import referral_campaigns_routes as RC
+    RC.init_db(db)
+    profil = await RC._profil_coach(COACH)
     import secrets
     doc = dict(champs)
     # Une invitation du super-admin est rangée sous la clé PLATEFORME "" (`_coach_strict`) :
