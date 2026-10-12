@@ -32346,6 +32346,148 @@ def p3ai_contexte(message: dict, action: dict, fiches=None, notes=None,
     }
 
 
+# --- V611 — RÈGLE COMMERCIALE « PREMIÈRE SÉANCE DÉCOUVERTE » (générateur IA) -----------------
+# Règle de Bassi (12/10/2026) : un NOUVEAU partenaire HORS de Neuchâtel qui montre de
+# l'intérêt, demande un prix, hésite à cause de la distance ou veut faire venir Afroboost
+# PEUT se voir proposer la première séance découverte offerte, seuls les frais de
+# déplacement aller-retour étant à sa charge. Jamais mécaniquement : le CODE établit le
+# contexte (ville, fil, prix déjà donnés, gros événement, refus), l'IA juge le ton, et un
+# contrôle APRÈS génération renvoie en validation tout ce qui sortirait de la règle.
+# Le bouton ne fait que GÉNÉRER un brouillon : aucun envoi n'est touché ici.
+V611_LOCALITES_NE = (
+    "neuchatel", "neuenburg", "la chaux-de-fonds", "chaux-de-fonds", "le locle", "peseux", "colombier",
+    "boudry", "cortaillod", "bevaix", "auvernier", "corcelles", "marin", "saint-blaise", "hauterive",
+    "le landeron", "cressier", "val-de-travers", "fleurier", "couvet", "val-de-ruz", "cernier",
+    "fontainemelon", "les ponts-de-martel", "la neuveville")
+V611_MOTS_GROS = ("festival", "manifestation", "open air", "open-air", "plusieurs heures", "toute la journee",
+                  "plusieurs coachs", "scene", "sono", "materiel", "milliers", "grand public", "messe",
+                  "fest", "mehrere stunden", "ganzen tag", "buhne", "several hours", "stage", "thousands")
+V611_MOTS_REFUS = ("pas interesse", "pas interessee", "pas interesses", "ne sommes pas interess",
+                   "pas pour le moment", "pas de suite", "nous ne pouvons pas", "nous devons faire un tri",
+                   "faire un tri", "nicht interessiert", "kein interesse", "leider nicht", "not interested",
+                   "no thank", "non merci", "decliner", "ne donnerons pas suite")
+V611_MOTS_INTERET = ("interess", "volontiers", "avec plaisir", "combien", "prix", "tarif", "cout", "budget",
+                     "venir", "chez nous", "dans notre ville", "distance", "loin", "deplacement",
+                     "gerne", "kosten", "preis", "vorschlag", "kommen", "interested", "price", "cost",
+                     "how much", "proposition", "proposal", "oui", "ja ", "yes")
+V611_MOTS_EN_LIGNE = ("en ligne", "a distance", "distance", "loin", "region", "regions", "online", "zoom",
+                      "visio", "fern", "remote", "membres", "reseau", "national", "suisse romande")
+_V611_RE_MONTANT = re.compile(r"(?i)(\bchf\b|\bfr\.|€|\beur\b|\beuros?\b|\bfranken\b|\d+\s*(?:chf|fr|€|euros?))")
+
+
+def v611_est_neuchatel(ville) -> bool:
+    v = p3ai_sans_accents(ville or "").lower().strip()
+    return bool(v) and any(l in v for l in V611_LOCALITES_NE)
+
+
+def v611_contexte_commercial(contexte: dict, fiches=None) -> dict:
+    """Ce que le CODE sait du dossier, avant toute génération. PURE.
+
+    `contexte["fil"]` = les échanges précédents (partenaire et Afroboost) ; les notes
+    humaines comptent aussi. Aucune décision commerciale n'est prise ici : on établit
+    les faits, et la pertinence de la séance découverte en découle."""
+    c = contexte or {}
+    fiches = fiches or []
+    ville = next((f.get("city") for f in fiches if (f.get("city") or "").strip()), "") or ""
+    categories = {(f.get("category") or "") for f in fiches}
+    recu = p3ai_sans_accents(c.get("body_text") or "").lower()
+    nos_envois = [x.get("texte") or "" for x in (c.get("fil") or []) if x.get("de") == "afroboost"]
+    leurs_msgs = [x.get("texte") or "" for x in (c.get("fil") or []) if x.get("de") == "partenaire"]
+    notes = [n.get("texte") or "" for n in (c.get("notes") or [])]
+    histoire = p3ai_sans_accents(" ".join(nos_envois + notes)).lower()
+    tout_partenaire = p3ai_sans_accents(" ".join(leurs_msgs + [c.get("body_text") or ""])).lower()
+
+    hors_ne = None if not ville else (not v611_est_neuchatel(ville))
+    partenaire_actif = any(f.get("partner_id") for f in fiches) or any(
+        (f.get("status") or "") == "accepte" for f in fiches)
+    prix_deja = bool(_V611_RE_MONTANT.search(" ".join(nos_envois + notes))) or any(
+        m in histoire for m in ("gratuit", "offert", "offerte", "kostenlos", "gratis", "free of charge", "devis", "tarif"))
+    proposition_deja = bool(nos_envois) or any(m in histoire for m in ("proposition", "devis", "offre", "angebot"))
+    gros = bool(categories & {"festival", "organisateur_evenement"}) or any(m in tout_partenaire for m in V611_MOTS_GROS)
+    refus = any(m in recu for m in V611_MOTS_REFUS)
+    interet = any(m in recu for m in V611_MOTS_INTERET)
+    premiere = not partenaire_actif and not prix_deja
+    decouverte = bool(hors_ne) and premiere and not refus and interet
+    en_ligne = (not refus or "tri" in recu) and (
+        any(m in recu for m in V611_MOTS_EN_LIGNE) or "en ligne" in p3ai_sans_accents(c.get("notre_message_j0") or "").lower())
+    if gros and not any(m in recu for m in ("en ligne", "online", "a distance")):
+        en_ligne = False      # un événement physique ne se transforme pas en visio
+    return {
+        "ville_partenaire": ville or "(inconnue)",
+        "hors_neuchatel": hors_ne,
+        "premiere_collaboration": premiere,
+        "proposition_existante": proposition_deja,
+        "prix_deja_donne": prix_deja,
+        "gros_evenement": gros,
+        "refus": refus,
+        "interet": interet,
+        "seance_decouverte_pertinente": decouverte,
+        "frais_deplacement_pertinents": decouverte,
+        "format_en_ligne_pertinent": en_ligne,
+        "collaboration_future_a_discuter": not refus,
+    }
+
+
+def v611_bloc_invite(cc: dict) -> str:
+    """Le passage d'invite qui porte la règle. PURE. Vide si rien n'est pertinent."""
+    if not cc:
+        return ""
+    oui = lambda v: "OUI" if v else ("NON" if v is not None else "INCONNU")
+    lignes = ["CONTEXTE COMMERCIAL (etabli par le systeme, fiable) :",
+              "- ville du partenaire : %s ; hors Neuchatel : %s" % (cc["ville_partenaire"], oui(cc["hors_neuchatel"])),
+              "- premiere collaboration : %s ; proposition deja faite dans le fil : %s ; prix ou gratuite deja annonces : %s"
+              % (oui(cc["premiere_collaboration"]), oui(cc["proposition_existante"]), oui(cc["prix_deja_donne"])),
+              "- gros evenement / festival : %s ; refus ou tri exprime : %s"
+              % (oui(cc["gros_evenement"]), oui(cc["refus"])),
+              "",
+              "REGLES COMMERCIALES (absolues) :",
+              "- N'invente AUCUN prix, AUCUN montant (ni de prestation ni de deplacement), AUCUN accord.",
+              "- Ne contredis JAMAIS une proposition ou un prix deja donne dans le fil ou les notes.",
+              "- N'ecris jamais « essence » : on parle de « prise en charge des frais de deplacement ».",
+              "- N'offre jamais un festival entier, plusieurs heures, plusieurs coachs ou du gros materiel."]
+    if cc["refus"]:
+        lignes += ["- Le partenaire refuse ou filtre : remercie, respecte sa decision, n'ajoute AUCUNE offre commerciale."]
+    elif cc["seance_decouverte_pertinente"] and not cc["gros_evenement"]:
+        lignes += ["- SEANCE DECOUVERTE : si le partenaire montre de l'interet, demande un prix, hesite a cause de",
+                   "  la distance ou veut faire venir Afroboost, tu PEUX proposer, en l'adaptant a son ton et a sa langue :",
+                   "  une premiere seance decouverte offerte dans sa ville, avec seulement la prise en charge des frais",
+                   "  de deplacement aller-retour (sans montant), pour decouvrir le concept avec son public, sans",
+                   "  engagement important ; ensuite, reflechir ensemble a un prochain evenement ou une collaboration",
+                   "  et definir ensemble le format et le budget. Ne fixe AUCUN tarif pour la suite."]
+    elif cc["seance_decouverte_pertinente"] and cc["gros_evenement"]:
+        lignes += ["- GROS EVENEMENT : n'offre pas la prestation. Propose de preparer une vraie proposition (demande",
+                   "  dates, duree, public attendu, lieu) ; tu peux evoquer, separement, une seance decouverte offerte",
+                   "  avec prise en charge des frais de deplacement, sans aucun montant."]
+    else:
+        lignes += ["- Pas de seance decouverte gratuite ni de frais de deplacement a proposer dans ce dossier."]
+    if cc["format_en_ligne_pertinent"]:
+        lignes += ["- Le format Afroboost EN LIGNE peut etre mentionne : la distance n'est plus un obstacle, aucun",
+                   "  deplacement, participation depuis differentes regions. Aucune promesse de sante ou medicale."]
+    else:
+        lignes += ["- Ne propose pas de format en ligne dans ce dossier."]
+    return "\n".join(lignes)
+
+
+def v611_controle_brouillon(texte, contexte: dict, cc: dict) -> list:
+    """Ce qui, dans le brouillon GÉNÉRÉ, sort de la règle → motifs de validation humaine. PURE."""
+    t = p3ai_sans_accents(texte or "").lower()
+    fil = p3ai_sans_accents(" ".join([(contexte or {}).get("body_text") or ""]
+                                     + [x.get("texte") or "" for x in (contexte or {}).get("fil") or []]
+                                     + [n.get("texte") or "" for n in (contexte or {}).get("notes") or []])).lower()
+    motifs = []
+    if any(m in t for m in ("essence", "benzin", "petrol", "gasoline", "carburant")):
+        motifs.append("formulation déplacement")
+    montants = set(m.group(0).lower() for m in _V611_RE_MONTANT.finditer(t))
+    if montants and not all(m in fil for m in montants):
+        motifs.append("montant inventé")
+    offre = any(m in t for m in ("gratuit", "offert", "offerte", "kostenlos", "gratis", "free of charge", "offeriert"))
+    if offre and not (cc or {}).get("seance_decouverte_pertinente"):
+        motifs.append("gratuité hors règle")
+    if offre and (cc or {}).get("gros_evenement") and any(m in t for m in ("festival", "toute la", "ganze", "entire")):
+        motifs.append("gros événement offert")
+    return motifs
+
+
 def p3ai_invite(contexte: dict) -> str:
     """L'invite envoyee au modele. PURE, et volontairement etroite.
 
@@ -32360,8 +32502,8 @@ def p3ai_invite(contexte: dict) -> str:
                               if n.get("status_after") else "")
         for n in c.get("notes") or [])
     return "\n".join([
-        "Tu assistes Bassi, fondateur d'Afroboost (cardio-danse afro avec casques",
-        "audio silencieux, base en Suisse). Il demarche des partenaires par e-mail.",
+        "Tu assistes Coach Bassi, d'Afroboost (cardio-danse afro, aussi en version",
+        "Silent avec casques audio, base a Neuchatel en Suisse). Il demarche des partenaires par e-mail.",
         "",
         "UN partenaire vient de repondre. Analyse SA reponse, et rien d'autre.",
         "",
@@ -32369,10 +32511,19 @@ def p3ai_invite(contexte: dict) -> str:
         "ADRESSE : %s" % (c.get("from_email") or ""),
         "OBJET : %s" % (c.get("subject") or ""),
         "",
-        "MESSAGE RECU (c'est le seul texte du partenaire) :",
+        # V611 — LE FIL COMPLET : ce qu'Afroboost a deja ecrit, ce que le partenaire a deja dit.
+        ("FIL PRECEDENT (du plus ancien au plus recent) :\n" + "\n".join(
+            "- %s, %s : %s" % ((x.get("quand") or "")[:10],
+                               "AFROBOOST" if x.get("de") == "afroboost" else "PARTENAIRE",
+                               " ".join((x.get("texte") or "").split())[:700])
+            for x in (c.get("fil") or []))) if c.get("fil") else "FIL PRECEDENT : (premier echange apres notre premier message)",
+        "",
+        "MESSAGE RECU (le dernier message du partenaire, auquel tu reponds) :",
         "\"\"\"",
         c.get("body_text") or "",
         "\"\"\"",
+        "",
+        v611_bloc_invite(c.get("contexte_commercial") or {}),
         "",
         # AI-P3 — LA HIERARCHIE DES SOURCES EST DITE, PAS SUPPOSEE.
         # Les notes decrivent ce que Bassi a REELLEMENT fait ; le message recu
@@ -32398,7 +32549,7 @@ def p3ai_invite(contexte: dict) -> str:
         "3. Si une information manque, propose un echange plutot que de la deviner.",
         "4. Reste court : 120 mots maximum, ton professionnel et chaleureux.",
         "5. Ne repete pas tout le concept si le partenaire le connait deja.",
-        "6. Signe « Bassi » puis « Afroboost », sans coordonnees inventees.",
+        "6. Signe « Coach Bassi » puis « Afroboost », sans coordonnees inventees.",
         "7. Si une action figure deja dans « ce que Bassi a fait », NE LA",
         "   REPROPOSE JAMAIS, ni a la premiere personne (« je vais appeler »),",
         "   ni comme conseil. Elle est FAITE. Enchaine sur la suite.",
@@ -32455,7 +32606,8 @@ def p3ai_brouillon_depuis(contexte: dict, sortie: dict, viewer: str,
     s = sortie or {}
     reponse = str(s.get("reponse_proposee") or "")[:P3AI_REPONSE_MAX]
     sensibles = sorted(set(p3ai_sujets_sensibles(c.get("body_text"))
-                           + p3ai_sujets_sensibles(reponse)))
+                           + p3ai_sujets_sensibles(reponse)
+                           + v611_controle_brouillon(reponse, c, c.get("contexte_commercial") or {})))
     return {
         "id": str(uuid.uuid4()),
         "inbound_id": c.get("inbound_id") or "",
@@ -32479,6 +32631,7 @@ def p3ai_brouillon_depuis(contexte: dict, sortie: dict, viewer: str,
         # ne bouge pas. Un envoi est irreversible : on doit pouvoir relire plus
         # tard qui a ecrit quoi, sans avoir a le deviner.
         "texte_modele": reponse,
+        "contexte_commercial": c.get("contexte_commercial") or {},   # V611 : rapport interne
         "validation_requise": bool(sensibles),
         "motifs_validation": sensibles,
         "ton": ton if ton in P3AI_TONS else "",
@@ -32547,6 +32700,33 @@ async def p3ai_notes_de(action_id: str, plafond: int = 50) -> list:
         return []
 
 
+async def v611_fil(message: dict, action: dict, plafond: int = 20) -> list:
+    """V611 — les échanges PRÉCÉDENTS de CE dossier (même action) : messages du partenaire
+    et réponses Afroboost envoyées. Lecture seule ; une panne rend une liste vide."""
+    aid = (action or {}).get("id") or (message or {}).get("action_id")
+    if not aid:
+        return []
+    fil = []
+    try:
+        anciens = await db[P3U2_COLLECTION].find(
+            {"action_id": aid, "id": {"$ne": message.get("id")}},
+            {"_id": 0, "id": 1, "body_text": 1, "received_at": 1}).to_list(plafond)
+        for m in anciens:
+            if (m.get("received_at") or "") <= (message.get("received_at") or "9999"):
+                fil.append({"de": "partenaire", "quand": m.get("received_at") or "",
+                            "texte": (m.get("body_text") or "")[:1500]})
+        envois = await db[P3AI4_COLLECTION].find(
+            {"action_id": aid, "send_status": P3AI4_ENVOYE},
+            {"_id": 0, "approved_text": 1, "sent_at": 1, "created_at": 1}).to_list(plafond)
+        for e in envois:
+            fil.append({"de": "afroboost", "quand": e.get("sent_at") or e.get("created_at") or "",
+                        "texte": (e.get("approved_text") or "")[:1500]})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s fil illisible (%s)", P3AI_PREFIXE, type(e).__name__)
+        return []
+    return sorted(fil, key=lambda x: x.get("quand") or "")
+
+
 async def p3ai_dossier(inbound_id: str, email: str) -> dict:
     """Le message, son action et ses fiches — pour CE message uniquement.
 
@@ -32610,6 +32790,8 @@ async def p3ai_analyser(inbound_id: str, request: Request):
         (await db[P3AI_BROUILLONS].find_one({"inbound_id": message["id"]},
                                             {"_id": 0, "intention": 1}) or {}).get("intention"))
     contexte = p3ai_contexte(message, action, dossier["fiches"], notes, _statut)
+    contexte["fil"] = await v611_fil(message, action)
+    contexte["contexte_commercial"] = v611_contexte_commercial(contexte, dossier["fiches"])
 
     precedent = await db[P3AI_BROUILLONS].find_one(
         {"inbound_id": message["id"]}, {"_id": 0}) or {}
