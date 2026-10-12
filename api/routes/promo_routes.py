@@ -374,7 +374,7 @@ async def get_discount_codes(request: Request):
     codes = await _v532(_db, codes)
     # V617 : l'abonnement ACTUEL de chaque code + son suivi de paiement (coach).
     from api.routes.shared import v617_enrichir_codes as _v617
-    codes = await _v617(_db, codes)
+    codes = await _v617(_db, codes, user_email, is_super_admin)
     return codes
 
 
@@ -397,8 +397,8 @@ async def get_echeances_paiement(request: Request):
         raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
     query = {} if _admin else {"$or": [
         {"coach_id": user_email}, {"coach_id": None}, {"coach_id": {"$exists": False}}]}
-    codes = await _db.discount_codes.find(query, {"_id": 0, "code": 1, "assignedEmail": 1}).to_list(1000)
-    return {"rappels": await v617_echeances(_db, codes)}
+    codes = await _db.discount_codes.find(query, {"_id": 0, "code": 1, "assignedEmail": 1, "coach_id": 1}).to_list(1000)
+    return {"rappels": await v617_echeances(_db, codes, appelant=user_email, admin=_admin)}
 
 
 @promo_router.post("")
@@ -512,16 +512,23 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
             {"code": {"$regex": f"^{re.escape(_v617_nom)}$", "$options": "i"}}, {"_id": 1}):
         raise HTTPException(status_code=409, detail={
             "type": "nom_deja_utilise",
-            "message": ("Le code %s a déjà servi à un abonnement (historique). "
-                        "Choisissez un nouveau nom : l'historique n'est jamais réutilisé." % _v617_nom),
+            "message": "Ce nom de code n'est pas disponible. Choisissez un autre nom.",
         })
     # DROITS ENCORE VALIDES : on n'y touche JAMAIS automatiquement — on prévient le
     # coach, qui décide. Rien n'est écrit tant qu'il n'a pas confirmé.
     if _v617_beneficiaire and not _v617_confirme:
         _v617_valides = []
-        async for _s in _db.subscriptions.find(
-                {"email": {"$regex": f"^{re.escape(_v617_beneficiaire)}$", "$options": "i"},
-                 "status": "active"}, {"_id": 0}):
+        _v617_filtre = {"email": {"$regex": f"^{re.escape(_v617_beneficiaire)}$", "$options": "i"},
+                        "status": "active"}
+        # Cloisonnement : un partenaire ne découvre jamais les abonnements d'un autre
+        # coach — seuls comptent ceux ouverts par SES codes (propriété de la fiche).
+        _v617_mes_codes = None
+        if not is_super_admin(caller):
+            _v617_mes_codes = {str(_d.get("code") or "").strip().upper() async for _d in
+                               _db.discount_codes.find({"coach_id": caller}, {"_id": 0, "code": 1})}
+        async for _s in _db.subscriptions.find(_v617_filtre, {"_id": 0}):
+            if _v617_mes_codes is not None and str(_s.get("code") or "").strip().upper() not in _v617_mes_codes:
+                continue
             if _v617_utilisable(_s, 1)[0]:
                 _v617_valides.append({"code": _s.get("code"),
                                       "restantes": _s.get("remaining_sessions"),

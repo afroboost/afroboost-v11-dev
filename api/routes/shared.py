@@ -701,7 +701,22 @@ def suivi_rappel(sub, maintenant=None, jours=SUIVI_RAPPEL_JOURS):
     }
 
 
-async def v617_enrichir_codes(db, codes: list) -> list:
+def v617_visible_par(code_doc, appelant: str = "", admin: bool = False) -> bool:
+    """PUR. Ce coach peut-il voir le suivi (montants, note interne) de CE code ?
+
+    La propriété se lit sur la FICHE DU CODE (`coach_id`, posée à la création et
+    jamais modifiable) : la souscription, elle, n'en porte pas toujours.
+    Super-admin : tout. Partenaire : seulement ses propres codes. Un code sans
+    propriétaire (legacy) n'est visible que du super-admin — même refus par
+    défaut que LOT 3c-0.
+    """
+    if admin:
+        return True
+    _a = str(appelant or "").strip().lower()
+    return bool(_a) and str((code_doc or {}).get("coach_id") or "").strip().lower() == _a
+
+
+async def v617_enrichir_codes(db, codes: list, appelant: str = "", admin: bool = False) -> list:
     """Pose `v617_abonnement` sur chaque fiche de `GET /discount-codes` (route COACH).
 
     {id, statut, motif, suivi} — l'abonnement ACTUEL du code et son suivi de
@@ -721,19 +736,22 @@ async def v617_enrichir_codes(db, codes: list) -> list:
             if not _subs:
                 continue
             _abo, _motif = abo_actuel_du_code(_subs, _c.get("assignedEmail"))
+            # Cloisonnement : le suivi (montants, note interne) d'une souscription
+            # d'un AUTRE coach n'est jamais exposé ; seul l'état reste indiqué.
+            _visible = _abo is not None and v617_visible_par(_c, appelant, admin)
             _c["v617_abonnement"] = {
                 "id": (_abo or {}).get("id"),
                 "statut": (_abo or {}).get("status"),
                 "motif": _motif,
                 "historiques": sum(1 for _s in _subs if _s is not _abo),
-                "suivi": suivi_paiement_lire(_abo) if _abo else {},
+                "suivi": suivi_paiement_lire(_abo) if _visible else {},
             }
     except Exception as _err:  # noqa: BLE001
         logger.warning("[V617] enrichissement abonnement actuel impossible : %s", type(_err).__name__)
     return codes
 
 
-async def v617_echeances(db, codes: list, maintenant=None) -> list:
+async def v617_echeances(db, codes: list, maintenant=None, appelant: str = "", admin: bool = False) -> list:
     """Les rappels de paiement à afficher au COACH (aucun envoi, aucun débit).
 
     Uniquement les abonnements ACTUELS des codes visibles par ce coach.
@@ -751,7 +769,7 @@ async def v617_echeances(db, codes: list, maintenant=None) -> list:
         _tous = await db.subscriptions.find(
             {"code": {"$regex": f"^{re.escape(_k)}$", "$options": "i"}}, {"_id": 0}).to_list(50)
         _abo, _motif = abo_actuel_du_code(_tous, _noms[_k].get("assignedEmail"))
-        if _abo is None:
+        if _abo is None or not v617_visible_par(_noms[_k], appelant, admin):
             continue
         _r = suivi_rappel(_abo, maintenant)
         if _r:

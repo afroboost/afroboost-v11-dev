@@ -304,6 +304,36 @@ async def partie2(db):
         rappels = (await PR.get_echeances_paiement(req))["rappels"]
     verifier("L. échéance du 07/11 vue le 02/11 -> rappels « paiement 2/2, 200 CHF »",
              len(rappels) == 2 and all(r["reste_a_payer"] == 200 and r["paiement_suivant"] == "2/2" for r in rappels), rappels)
+    print("\nCloisonnement entre coachs (revue de sécurité)")
+    reqp = Req(COACH)
+    rp = (await PR.get_echeances_paiement(reqp))["rappels"]
+    verifier("un coach partenaire ne voit AUCUN rappel d'abonnement d'un autre coach", rp == [], rp)
+    lp = await PR.get_discount_codes(reqp)
+    xp = [c for c in lp if c["code"] == "CLIENT-X"]
+    verifier("partenaire : ni montant ni note interne d'un abonnement qui n'est pas le sien",
+             xp and xp[0]["v617_abonnement"]["suivi"] == {}, xp and xp[0].get("v617_abonnement"))
+    nb = await db.subscriptions.count_documents({})
+    await PR.create_discount_code(DCC(code="PART-1", type="100%", value=100, assignedEmail="x@exemple.test",
+                                      maxUses=4, montant_encaisse=50, origine_paiement="especes"), reqp)
+    verifier("partenaire : l'avertissement « droits existants » ignore les abonnements des autres coachs",
+             await db.subscriptions.count_documents({}) == nb + 1)
+    await PR.update_discount_code((await db.discount_codes.find_one({"code": "PART-1"}))["id"],
+                                  {"suivi_paiement": {"montant_total": 100, "prochaine_echeance": "2026-11-05",
+                                                      "note_interne": "note du partenaire"}}, reqp)
+    lp = await PR.get_discount_codes(reqp)
+    mien = [c for c in lp if c["code"] == "PART-1"][0]
+    verifier("partenaire : il voit bien le suivi de SES propres clients (reste 50, note)",
+             mien["v617_abonnement"]["suivi"].get("reste_a_payer") == 50 and mien["v617_abonnement"]["suivi"].get("note_interne") == "note du partenaire",
+             mien.get("v617_abonnement"))
+    with mock.patch.object(SH, "v617_jour_local", lambda m=None: "2026-11-02"):
+        rp = (await PR.get_echeances_paiement(reqp))["rappels"]
+    verifier("partenaire : son propre rappel, et uniquement le sien", [r["code"] for r in rp] == ["PART-1"], rp)
+    try:
+        await PR.create_discount_code(DCC(code="ANCIEN", type="100%", value=100, maxUses=1), reqp)
+        verifier("nom indisponible -> refusé", False)
+    except Exception as e:  # noqa: BLE001
+        verifier("nom indisponible -> message neutre (ne révèle pas l'historique d'un autre coach)",
+                 e.status_code == 409 and "historique" not in e.detail["message"].lower(), e.detail)
     try:
         await PR.get_echeances_paiement(Req(""))
         verifier("L. sans identité coach -> 403", False)
