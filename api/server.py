@@ -7906,6 +7906,9 @@ class CreateCheckoutRequest(BaseModel):
     customerName: Optional[str] = None
     customerPhone: Optional[str] = None
     originUrl: str  # URL d'origine du frontend pour construire success/cancel URLs
+    # V610i : réservation lancée depuis la page `/i/<jeton>` d'un événement à réservation
+    # automatique -> le retour se fait sur CETTE page (adresses construites par le SERVEUR).
+    retourInvitation: Optional[bool] = None
     reservationData: Optional[dict] = None  # Données de réservation pour metadata
     # V223: identifiant de l'offre. Quand il est fourni, le serveur fait
     # AUTORITÉ : il relit le prix et le nombre de crédits depuis la base.
@@ -8784,6 +8787,11 @@ async def create_checkout_session(request: CreateCheckoutRequest,
             'allowed_countries': ['CH', 'FR', 'DE', 'IT', 'AT', 'BE']
         }
     } if request.collectShipping else {}
+    # V610i : billet d'événement réservé directement depuis l'invitation (sans fenêtre de
+    # coordonnées) -> Stripe demande le numéro (WhatsApp du participant, lu par le webhook
+    # dans `customer_details.phone`, V251). Aucun autre parcours ne change.
+    _v610i_tel = {'phone_number_collection': {'enabled': True}} \
+        if (_offer and _v610_evt.reservation_auto(_offer) and not request.customerPhone) else {}
 
     # Méthodes de paiement: card + twint (devise CHF obligatoire pour TWINT)
     payment_methods = ['card', 'twint']
@@ -8817,6 +8825,15 @@ async def create_checkout_session(request: CreateCheckoutRequest,
             metadata["invitation_token"] = _v607_jeton
             if getattr(request, "offerId", None) and "offer_id" not in metadata:
                 metadata["offer_id"] = str(request.offerId)
+            # V610i — retour sur la page de l'invitation : `paiement=ok&cs=` (jamais `status=` /
+            # `session_id=`, que la vitrine interprète). Adresses bâties ici, sur FRONTEND_URL :
+            # le navigateur ne choisit ni l'hôte ni le chemin. La page attend le WEBHOOK.
+            if getattr(request, "retourInvitation", None) is True and _offer and _v610_evt.reservation_auto(_offer):
+                from urllib.parse import quote as _v610i_q
+                _v610i_page = "%s/i/%s" % ((os.environ.get("FRONTEND_URL") or "https://afroboost.com").rstrip("/"),
+                                           _v610i_q(_v607_jeton, safe=""))
+                success_url = _v610i_page + "?paiement=ok&cs={CHECKOUT_SESSION_ID}"
+                cancel_url = _v610i_page + "?paiement=annule"
     except Exception as _v607e:
         logger.warning("[V607] jeton d'invitation non joint au checkout (%s)", type(_v607e).__name__)
     _hiver_mode = _hiver.billing_mode_valide((_hiver_offre or {}).get("billing_mode"))
@@ -8886,6 +8903,7 @@ async def create_checkout_session(request: CreateCheckoutRequest,
             metadata=metadata,
             api_key=active_stripe_key,
             **v226_shipping,  # V226: vide si collectShipping est False
+            **_v610i_tel,     # V610i : WhatsApp du participant demandé par Stripe (billet d'événement)
           )
 
         # V237: rattachement du paiement a son coach, via l'offre achetee.
@@ -9019,6 +9037,7 @@ async def create_checkout_session(request: CreateCheckoutRequest,
                 # nominal, sinon elle disparaitrait pour tout compte sans TWINT
                 # active — donc des commandes non expediables.
                 **v226_shipping,
+                **_v610i_tel,     # V610i : identique au chemin nominal
             )
 
             # Créer l'entrée dans payment_transactions
@@ -9801,7 +9820,8 @@ async def stripe_webhook(request: Request):
                 subscription_data = {
                     "id": str(uuid.uuid4()),
                     "email": customer_email.lower().strip(),
-                    "name": metadata.get("customer_name", customer_email.split("@")[0]),
+                    # V610i : nom saisi chez Stripe quand la page n'a rien demandé (réservation directe).
+                    "name": metadata.get("customer_name") or (session.get("customer_details") or {}).get("name") or customer_email.split("@")[0],
                     # V251: WhatsApp collecte par Stripe (customer_details.phone) ou
                     # passe en metadata — evite de le redemander dans l'espace abonne.
                     "whatsapp": (session.get("customer_details") or {}).get("phone") or metadata.get("customer_phone", "") or "",
@@ -10007,7 +10027,8 @@ async def stripe_webhook(request: Request):
                         email=customer_email, nom=subscription_data.get("name") or "",
                         code=new_code, subscription_id=subscription_data.get("id"),
                         montant=amount_chf or _montant_paye,
-                        whatsapp=(metadata or {}).get("customer_phone") or "")
+                        whatsapp=(metadata or {}).get("customer_phone")
+                        or (session.get("customer_details") or {}).get("phone") or "")  # V610i : numéro saisi chez Stripe
                     if _v610_resa and _v610_creee:
                         from api.routes.shared import seances_consommer as _v610_consommer
                         await _v610_consommer(db, new_code, 1, reservation_id=_v610_resa["id"],

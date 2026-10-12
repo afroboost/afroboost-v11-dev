@@ -125,7 +125,7 @@ describe('V610e — aperçu et « Détails »', () => {
     expect(global.fetch).not.toHaveBeenCalled();
     expect(q('inv-pub-titre').textContent).toBe('AFROBOOST SILENT');
     expect(q('inv-pub-description')).toBeNull();
-    await act(async () => { q('inv-pub-details-bouton').click(); });
+    await act(async () => { q('inv-pub-lire-plus').click(); });
     expect(q('inv-pub-description').textContent).toBe('Ligne 1\nLigne 2');
     const avant = window.location.href;
     await act(async () => { q('inv-pub-cta').click(); });

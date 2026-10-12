@@ -21,6 +21,9 @@ import SvgIcon from './SvgIcon';
 import { suivreInvitation } from '../utils/invitationSuivi';
 import AccesMembreEvenement from './AccesMembreEvenement'; // V610b
 import AfroboostAudioPlayer from './AfroboostAudioPlayer'; // V610g
+import InviterMesAmis from './InviterMesAmis'; // V610i : après réservation confirmée
+import { attributionActuelle, invitationEnregistrer } from '../utils/attribution';
+import { lireSession, urlDeLaSession } from '../utils/espaceSession';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
@@ -58,11 +61,19 @@ function prixTexte(n) {
   return `${Number.isInteger(v) ? v : v.toFixed(2)} CHF`;
 }
 
-/** « jusqu'au samedi 24 octobre, 20:00 » (heure suisse). */
-function dateBascule(iso) {
+/** V610i — « mercredi 21 octobre » (sans l'heure : la page n'affiche l'heure qu'une fois). */
+function jourBascule(iso) {
   try {
-    return new Intl.DateTimeFormat('fr-CH', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Zurich' })
-      .format(new Date(iso));
+    return new Intl.DateTimeFormat('fr-CH', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Zurich' }).format(new Date(iso));
+  } catch (e) { return ''; }
+}
+
+/** « 21 octobre à 18h45 » — les conditions de prix, dans « Lire plus ». */
+function finPalier(iso) {
+  try {
+    const p = new Intl.DateTimeFormat('fr-CH', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Zurich' })
+      .formatToParts(new Date(iso)).reduce((a, x) => Object.assign(a, { [x.type]: x.value }), {});
+    return `${p.day} ${p.month} à ${p.hour}h${p.minute}`;
   } catch (e) { return ''; }
 }
 
@@ -80,23 +91,162 @@ function MotAudio({ url, prenom, inerte }) {
   return <AfroboostAudioPlayer src={url} titre={prenom ? `Un mot de ${prenom}` : 'Un mot pour toi'} testidBouton="inv-pub-audio" inerte={inerte} />;
 }
 
-/** V610e — « Détails » : la description longue, REPLIÉE par défaut (design épuré). */
-function Details({ texte }) {
-  const [ouvert, setOuvert] = useState(false);
+/** V610i — le ratio RÉEL du média, en libellé lisible (« 9:16 », « 16:9 », « 1:1 », sinon « l:h »). */
+export function libelleRatio(l, h) {
+  const w = Number(l); const t = Number(h);
+  if (!(w > 0) || !(t > 0)) return '';
+  const r = w / t;
+  if (Math.abs(r - 9 / 16) < 0.02) return '9:16';
+  if (Math.abs(r - 16 / 9) < 0.02) return '16:9';
+  if (Math.abs(r - 1) < 0.02) return '1:1';
+  if (Math.abs(r - 4 / 5) < 0.02) return '4:5';
+  if (Math.abs(r - 4 / 3) < 0.02) return '4:3';
+  return `${Math.round(w)}:${Math.round(t)}`;
+}
+
+/**
+ * V610i — LE LECTEUR S'ADAPTE À LA VIDÉO (et non l'inverse). Le cadre prend le ratio
+ * lu dans les métadonnées (`preload="metadata"` : quelques Ko, jamais la vidéo) ;
+ * avant elles, celui de l'affiche (même image que la miniature). L'affiche et la vidéo
+ * occupent EXACTEMENT le même cadre : aucun saut au moment de « Lecture ».
+ * Largeur = min(colonne, 78 % de la hauteur d'écran × ratio) : un 9:16 reste un « Reel »
+ * centré sur ordinateur, prend presque toute la largeur sur téléphone ; un 16:9 occupe la
+ * largeur. Jamais de recadrage forcé (contain sur un cadre du MÊME ratio = aucune bande).
+ * Pas d'autoplay ; aucun « Télécharger » proposé (frein d'interface, pas un DRM).
+ */
+export function VideoAdaptative({ src, poster, titre }) {
+  const [dim, setDim] = useState(null);          // {l, h} de la VIDÉO
+  const [dimAffiche, setDimAffiche] = useState(null);
+  useEffect(() => {
+    if (!poster || dim) return undefined;
+    let vivant = true;
+    const img = new Image();
+    img.onload = () => { if (vivant && img.naturalWidth && img.naturalHeight) setDimAffiche({ l: img.naturalWidth, h: img.naturalHeight }); };
+    img.src = poster;
+    return () => { vivant = false; };
+  }, [poster, dim]);
+  const d = dim || dimAffiche || { l: 9, h: 16 };
+  const ratio = d.l / d.h;
   return (
-    <div style={{ margin: '0 0 16px', borderRadius: '14px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}>
-      <button type="button" data-testid="inv-pub-details-bouton" aria-expanded={ouvert} onClick={() => setOuvert((v) => !v)}
-              style={{ width: '100%', minHeight: '44px', padding: '10px 14px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.92)',
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '15px', fontWeight: 700, cursor: 'pointer' }}>
-        Détails <SvgIcon name={ouvert ? 'arrowUp' : 'arrowDown'} size={16} />
-      </button>
-      {ouvert ? (
-        <p data-testid="inv-pub-description" style={{ margin: 0, padding: '0 14px 14px', color: 'rgba(255,255,255,0.85)', fontSize: '14.5px', whiteSpace: 'pre-line', lineHeight: 1.5 }}>
-          {texte}
-        </p>
-      ) : null}
+    <div data-testid="inv-pub-video-cadre" data-ratio={libelleRatio(d.l, d.h)} data-source-ratio={dim ? 'video' : (dimAffiche ? 'affiche' : 'defaut')}
+         style={{ width: `min(100%, calc(78vh * ${ratio.toFixed(4)}))`, aspectRatio: `${d.l} / ${d.h}`, margin: '0 auto 14px',
+           borderRadius: '16px', overflow: 'hidden', background: 'rgb(0,0,0)', border: `1px solid ${rgbaP(0.25)}` }}>
+      <video data-testid="inv-pub-video" src={src} poster={poster || undefined} controls playsInline preload="metadata"
+             aria-label={titre || 'Vidéo de l’invitation'}
+             controlsList="nodownload noremoteplayback" disableRemotePlayback onContextMenu={(e) => e.preventDefault()}
+             onLoadedMetadata={(e) => {
+               const v = e.currentTarget;
+               if (v.videoWidth && v.videoHeight) setDim({ l: v.videoWidth, h: v.videoHeight });
+             }}
+             style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain', background: 'rgb(0,0,0)' }} />
     </div>
   );
+}
+
+/** V610i — « Lire plus » : SEULEMENT le complément (rien de ce qui est déjà affiché au-dessus). */
+function LirePlus({ ouvert, setOuvert, children }) {
+  return (
+    <div style={{ margin: '0 0 14px', borderTop: '1px solid rgba(255,255,255,0.1)', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+      <button type="button" data-testid="inv-pub-lire-plus" aria-expanded={ouvert} onClick={() => setOuvert((v) => !v)}
+              style={{ width: '100%', minHeight: '46px', padding: '10px 2px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.92)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '15px', fontWeight: 700, cursor: 'pointer' }}>
+        {ouvert ? 'Lire moins' : 'Lire plus'} <SvgIcon name={ouvert ? 'arrowUp' : 'arrowDown'} size={16} />
+      </button>
+      {ouvert ? <div data-testid="inv-pub-lire-plus-contenu" style={{ padding: '0 2px 14px', display: 'grid', gap: '14px' }}>{children}</div> : null}
+    </div>
+  );
+}
+
+function Rubrique({ titre, children, testid }) {
+  return (
+    <section data-testid={testid}>
+      <h2 style={{ margin: '0 0 4px', fontSize: '13px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)' }}>{titre}</h2>
+      <div style={{ fontSize: '14.5px', color: 'rgba(255,255,255,0.86)', lineHeight: 1.5 }}>{children}</div>
+    </section>
+  );
+}
+
+const ESSAIS_CONFIRMATION = 20;      // ~45 s au total, puis un message clair (jamais une boucle)
+const PAUSE_CONFIRMATION = (i) => 1500 + Math.min(i, 6) * 250;
+
+/**
+ * V610i — RETOUR DE STRIPE (`/i/<jeton>?paiement=ok&cs=<session>`). Le retour du navigateur
+ * ne prouve RIEN : la page attend que le WEBHOOK ait créé la place (`place_confirmee`) et le
+ * lien personnel, puis seulement annonce « Ta place est réservée » et lance la boule de neige.
+ */
+export function ConfirmationReservation({ cs, d, attente = PAUSE_CONFIRMATION, essais = ESSAIS_CONFIRMATION }) {
+  const [etat, setEtat] = useState({ statut: 'attente', relais: null });
+  useEffect(() => {
+    let vivant = true;
+    (async () => {
+      let relais = null;
+      for (let i = 0; i < essais && vivant; i += 1) {
+        try {
+          const r = await fetch(`${BACKEND_URL}/api/invitation/relais/session/${encodeURIComponent(cs)}`, { headers: { Accept: 'application/json' } });
+          if (r.ok) {
+            relais = await r.json();
+            if (relais && relais.place_confirmee) { if (vivant) setEtat({ statut: 'confirmee', relais }); return; }
+          }
+        } catch (e) { /* réseau : on retente */ }
+        await new Promise((ok) => setTimeout(ok, attente(i)));
+      }
+      if (vivant) setEtat({ statut: 'delai', relais });
+    })();
+    return () => { vivant = false; };
+  }, [cs, attente, essais]);
+
+  const quand = [d && d.date_label ? maj(d.date_label) : '', d && d.time_label ? d.time_label : ''].filter(Boolean).join(' · ');
+  const titre = (d && (d.title || d.offre_nom)) || (etat.relais && etat.relais.titre) || 'Ton événement Afroboost';
+  return (
+    <div data-testid="inv-pub-confirmation" data-etat={etat.statut} style={{ textAlign: 'center' }}>
+      {etat.statut === 'attente' ? (
+        <div role="status" style={{ padding: '40px 8px' }}>
+          <div style={{ width: 44, height: 44, margin: '0 auto 14px', borderRadius: 999, border: `3px solid ${rgbaP(0.25)}`, borderTopColor: PRIMAIRE, animation: 'invRot 0.9s linear infinite' }} />
+          <style>{'@keyframes invRot{to{transform:rotate(360deg)}}'}</style>
+          <p data-testid="inv-pub-confirmation-attente" style={{ margin: 0, fontSize: '17px', fontWeight: 700 }}>Confirmation de ta réservation…</p>
+          <p style={{ margin: '6px 0 0', fontSize: '13.5px', color: 'rgba(255,255,255,0.65)' }}>Quelques secondes, le temps que le paiement soit validé.</p>
+        </div>
+      ) : etat.statut === 'confirmee' ? (
+        <div>
+          <span style={{ display: 'inline-flex', width: 56, height: 56, borderRadius: 999, alignItems: 'center', justifyContent: 'center', background: rgbaP(0.2), color: PRIMAIRE, marginBottom: 10 }}>
+            <SvgIcon name="check" size={28} />
+          </span>
+          <h1 data-testid="inv-pub-place-reservee" style={{ margin: '0 0 6px', fontSize: '26px' }}>Ta place est réservée</h1>
+          <p style={{ margin: '0 0 2px', fontWeight: 700 }}>{titre}</p>
+          {quand || (d && d.lieu) ? (
+            <p data-testid="inv-pub-confirmation-quand" style={{ margin: '0 0 6px', color: 'rgba(255,255,255,0.78)', fontSize: '14.5px' }}>
+              {[quand, d && d.lieu].filter(Boolean).join(' · ')}
+            </p>
+          ) : null}
+          <p style={{ margin: '0 0 6px', color: 'rgba(255,255,255,0.65)', fontSize: '13.5px' }}>Ton e-mail de confirmation arrive.</p>
+          <InviterMesAmis relaisInitial={etat.relais} />
+        </div>
+      ) : (
+        <div data-testid="inv-pub-confirmation-delai" role="alert" style={{ padding: '30px 8px' }}>
+          <p style={{ margin: '0 0 8px', fontSize: '17px', fontWeight: 700 }}>La confirmation prend plus de temps que prévu</p>
+          <p style={{ margin: '0 0 14px', fontSize: '14px', color: 'rgba(255,255,255,0.8)' }}>
+            Si ton paiement a été accepté, ta place est enregistrée et l'e-mail de confirmation va arriver. Rien n'est débité deux fois.
+            Sans nouvelles d'ici 15 minutes, écris-nous.
+          </p>
+          <button type="button" onClick={() => window.location.reload()} data-testid="inv-pub-confirmation-reessayer"
+                  style={{ minHeight: 44, padding: '0 20px', borderRadius: 999, border: `1px solid ${rgbaP(0.5)}`, background: 'none', color: 'rgba(255,255,255,0.95)', fontWeight: 700, cursor: 'pointer' }}>
+            Vérifier à nouveau
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Les paramètres de retour posés par le SERVEUR dans `success_url` / `cancel_url`. */
+export function retourPaiement(recherche) {
+  try {
+    const q = new URLSearchParams(recherche || '');
+    const cs = String(q.get('cs') || '');
+    if (q.get('paiement') === 'ok' && /^cs_[A-Za-z0-9_]{6,200}$/.test(cs)) return { ok: true, cs };
+    if (q.get('paiement') === 'annule') return { annule: true };
+  } catch (e) { /* ignore */ }
+  return null;
 }
 
 /**
@@ -109,9 +259,16 @@ export default function InvitationPublique({ token, apercu }) {
   const suiviRef = useRef(false);
   const enApercu = !!apercu;
   const d0 = apercu || etat.d;
+  const [lirePlus, setLirePlus] = useState(false);
+  const [envoi, setEnvoi] = useState({ cours: false, erreur: '' });
+  const membreRef = useRef(null);
+  const retour = enApercu ? null : retourPaiement(typeof window !== 'undefined' ? window.location.search : '');
 
   useEffect(() => {
     if (enApercu) return undefined;
+    // V610i : le jeton du lien (racine ou lien personnel) est MÉMORISÉ dès l'ouverture — un
+    // membre qui file vers son espace garde son inviteur direct (jamais la gratuité).
+    try { invitationEnregistrer(`?inv=${encodeURIComponent(token || '')}`); } catch (e) { /* ignore */ }
     let vivant = true;
     fetch(`${BACKEND_URL}/api/invitation/publique/${encodeURIComponent(token)}`, { headers: { Accept: 'application/json' } })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
@@ -121,12 +278,23 @@ export default function InvitationPublique({ token, apercu }) {
   }, [token, enApercu]);
 
   useEffect(() => {
-    if (enApercu || !etat.d || suiviRef.current) return;
+    if (enApercu || !etat.d || suiviRef.current || (retour && retour.ok)) return;
     suiviRef.current = true;
     suivreInvitation(token, 'lien_ouvert');
-  }, [etat.d, token, enApercu]);
+  }, [etat.d, token, enApercu, retour]);
 
   const cadre = { minHeight: enApercu ? '100%' : '100vh', background: 'rgb(8,4,12)', color: 'rgba(255,255,255,0.96)', fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif' };
+  // V610i : retour de Stripe — l'écran de confirmation, même si la page de l'invitation
+  // n'est plus lisible entre-temps (masquée) : la PLACE, elle, est vérifiée côté serveur.
+  if (retour && retour.ok && !etat.charge) {
+    return (
+      <div style={cadre} data-testid="inv-pub">
+        <main style={{ maxWidth: '560px', margin: '0 auto', padding: '28px 16px 40px', boxSizing: 'border-box' }}>
+          <ConfirmationReservation cs={retour.cs} d={etat.d} />
+        </main>
+      </div>
+    );
+  }
   if (!enApercu && etat.charge) return <div style={cadre} data-testid="inv-pub-chargement" />;
   if (!d0 || (!enApercu && etat.erreur)) {
     return (
@@ -149,110 +317,169 @@ export default function InvitationPublique({ token, apercu }) {
   const image = urlSure(d.image_url) || urlSure(d.card_url);
   const pa = d.prix_actif || null;
   const type = d.type;
+  const directe = !enApercu && d.reservation_directe && d.reservation_directe.offer_id ? d.reservation_directe : null;
   const titre = type === 'trial' ? (prenom ? `${prenom} t'invite à découvrir Afroboost` : 'Découvre Afroboost')
     : (String(d.title || d.offre_nom || '').trim() || 'Invitation Afroboost');
+
+  // V610i — « Je réserve ma place » : UN billet, UNE offre -> Stripe DIRECTEMENT. Le serveur
+  // fixe le prix (palier actif), la quantité (1) et l'adresse de retour (cette page) ; le
+  // montant envoyé ici n'est qu'indicatif. Le jeton voyage pour la boule de neige.
+  const reserverDirect = async () => {
+    if (envoi.cours) return;
+    setEnvoi({ cours: true, erreur: '' });
+    try {
+      const attribution = Object.assign({}, attributionActuelle() || { first: null, last: null }, { invitation: token });
+      const r = await fetch(`${BACKEND_URL}/api/create-checkout-session`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productName: titre.slice(0, 120), amount: pa ? Number(pa.prix) || 0 : 0, offerId: directe.offer_id,
+          quantity: 1, originUrl: window.location.origin, attribution, retourInvitation: true }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j && typeof j.url === 'string' && /^https?:\/\//.test(j.url)) { window.location.href = j.url; return; }
+      setEnvoi({ cours: false, erreur: (j && typeof j.detail === 'string') ? j.detail : 'Le paiement ne peut pas s’ouvrir pour le moment. Réessaie.' });
+    } catch (e) {
+      setEnvoi({ cours: false, erreur: 'Connexion impossible. Vérifie ton réseau et réessaie.' });
+    }
+  };
   const surCta = () => {
     if (enApercu) return;                       // aperçu : aucun départ, aucun suivi
     suivreInvitation(token, 'reservation_commencee');
+    if (directe) { reserverDirect(); return; }
     window.location.href = cibleSure(d.cible);
   };
+  // V610i : « Membre Afroboost 8 mois ? Réserve gratuitement » — session déjà ouverte -> l'espace ;
+  // sinon le bloc complet (e-mail -> lien d'accès, réponse NEUTRE) dans « Lire plus ».
+  const surMembre = () => {
+    if (enApercu) return;
+    const cible = urlDeLaSession(lireSession());
+    if (cible) { window.location.href = cible; return; }
+    setLirePlus(true);
+    setTimeout(() => { try { membreRef.current && membreRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { /* ignore */ } }, 60);
+  };
+  const paliers = pa && pa.paliers && pa.paliers.length > 1 ? pa.paliers : null;
+  // V610i : les conditions de prix (fin de chaque palier) — une information NOUVELLE, pas une répétition.
+  const lignePaiement = paliers
+    ? paliers.map((p) => `${p.libelle} ${prixTexte(p.prix)}${p.jusqu_a ? ` jusqu'au ${finPalier(p.jusqu_a)}` : ''}`).join(' · ')
+    : (pa ? prixTexte(pa.prix) : '');
 
   return (
     <div style={cadre} data-testid="inv-pub">
-      <main style={{ maxWidth: '560px', margin: '0 auto', padding: '20px 16px 120px', boxSizing: 'border-box' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-          {photo ? <img src={photo} alt="" width="44" height="44" style={{ width: '44px', height: '44px', borderRadius: '999px', objectFit: 'cover', border: `2px solid ${PRIMAIRE}` }} />
-            : <span style={{ width: '44px', height: '44px', borderRadius: '999px', background: rgbaP(0.25), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: PRIMAIRE }}><SvgIcon name="user" size={20} /></span>}
+      <main style={{ maxWidth: '560px', margin: '0 auto', padding: '16px 16px 120px', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+          {photo ? <img src={photo} alt="" width="40" height="40" style={{ width: '40px', height: '40px', borderRadius: '999px', objectFit: 'cover', border: `2px solid ${PRIMAIRE}` }} />
+            : <span style={{ width: '40px', height: '40px', borderRadius: '999px', background: rgbaP(0.25), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: PRIMAIRE }}><SvgIcon name="user" size={18} /></span>}
           <div data-testid="inv-pub-inviteur" style={{ fontSize: '15px', fontWeight: 700 }}>{prenom ? `${prenom} t'invite` : "On t'invite"}</div>
         </div>
 
-        {(video || image) ? (
-        <div style={{ borderRadius: '16px', overflow: 'hidden', background: rgbaP(0.08), border: `1px solid ${rgbaP(0.25)}`, marginBottom: '16px' }}>
-          {video ? (
-            // Jamais de lecture automatique : poster + contrôles (lecture, pause, son).
-            // V610g : lecture, pause, avance, plein écran, son — mais aucun bouton « Télécharger »
-            // proposé (controlsList) ni menu contextuel. Pas une protection DRM : un frein d'interface.
-            <video data-testid="inv-pub-video" src={video} poster={image || undefined} controls playsInline preload="none"
-                   controlsList="nodownload noremoteplayback" disableRemotePlayback onContextMenu={(e) => e.preventDefault()}
-                   style={{ display: 'block', width: '100%', maxHeight: '70vh', objectFit: 'contain', background: 'rgb(0,0,0)' }} />
-          ) : (image ? (
-            <img data-testid="inv-pub-image" src={image} alt={titre} loading="lazy" width="1200" height="630"
-                 style={{ display: 'block', width: '100%', height: 'auto', aspectRatio: '1200 / 630', objectFit: 'cover' }} />
-          ) : null)}
-        </div>
+        {retour && retour.annule ? (
+          <p data-testid="inv-pub-paiement-annule" role="status" style={{ margin: '0 0 12px', padding: '10px 12px', borderRadius: 12, background: 'rgba(255,255,255,0.06)', fontSize: '14px' }}>
+            Paiement annulé : rien n'a été débité. Tu peux réserver quand tu veux.
+          </p>
         ) : null}
 
-        <h1 data-testid="inv-pub-titre" style={{ fontSize: '26px', lineHeight: 1.2, margin: '0 0 8px' }}>{titre}</h1>
-        {d.subtitle ? <p style={{ color: 'rgba(255,255,255,0.78)', margin: '0 0 12px', fontSize: '15px' }}>{d.subtitle}</p> : null}
+        {video ? <VideoAdaptative src={video} poster={image} titre={titre} /> : (image ? (
+          <div style={{ borderRadius: '16px', overflow: 'hidden', marginBottom: '14px' }}>
+            <img data-testid="inv-pub-image" src={image} alt={titre} loading="lazy" width="1200" height="630"
+                 style={{ display: 'block', width: '100%', height: 'auto', aspectRatio: '1200 / 630', objectFit: 'cover' }} />
+          </div>
+        ) : null)}
+
+        <h1 data-testid="inv-pub-titre" style={{ fontSize: '25px', lineHeight: 1.2, margin: '0 0 6px' }}>{titre}</h1>
+        {d.subtitle ? <p data-testid="inv-pub-accroche" style={{ color: 'rgba(255,255,255,0.78)', margin: '0 0 12px', fontSize: '15px' }}>{d.subtitle}</p> : null}
         {type === 'trial' ? (
-          <p data-testid="inv-pub-pitch" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'rgba(255,255,255,0.85)', margin: '0 0 14px', fontSize: '15px' }}>
+          <p data-testid="inv-pub-pitch" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'rgba(255,255,255,0.85)', margin: '0 0 12px', fontSize: '15px' }}>
             <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="headphones" size={18} /></span>
             Cardio + danse afro + casques immersifs, cours d'1 h.
           </p>
         ) : null}
 
-        <div style={{ display: 'grid', gap: '8px', margin: '0 0 16px' }}>
+        <div style={{ display: 'grid', gap: '6px', margin: '0 0 14px' }}>
           {d.date_label ? <Ligne icone="calendar" testid="inv-pub-date">{maj(d.date_label)}</Ligne> : null}
           {d.time_label ? <Ligne icone="clock" testid="inv-pub-heure">{d.time_label}</Ligne> : null}
           {d.lieu ? <Ligne icone="mapPin" testid="inv-pub-lieu">{d.lieu}</Ligne> : null}
         </div>
 
         {type === 'trial' ? (
-          <div data-testid="inv-pub-offert" style={{ padding: '12px 14px', borderRadius: '14px', background: rgbaP(0.14), border: `1px solid ${rgbaP(0.4)}`, margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 700 }}>
+          <div data-testid="inv-pub-offert" style={{ padding: '12px 14px', borderRadius: '14px', background: rgbaP(0.14), border: `1px solid ${rgbaP(0.4)}`, margin: '0 0 14px', display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 700 }}>
             <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="gift" size={20} /></span> Ton premier cours est offert
           </div>
         ) : null}
         {type === 'event_free' ? (
-          <div data-testid="inv-pub-gratuit" style={{ padding: '12px 14px', borderRadius: '14px', background: rgbaP(0.14), border: `1px solid ${rgbaP(0.4)}`, margin: '0 0 16px', fontWeight: 700 }}>
+          <div data-testid="inv-pub-gratuit" style={{ padding: '12px 14px', borderRadius: '14px', background: rgbaP(0.14), border: `1px solid ${rgbaP(0.4)}`, margin: '0 0 14px', fontWeight: 700 }}>
             Gratuit — inscription libre
           </div>
         ) : null}
         {type === 'event_paid' && pa ? (
-          <div data-testid="inv-pub-prix" style={{ padding: '14px', borderRadius: '14px', background: rgbaP(0.12), border: `1px solid ${rgbaP(0.4)}`, margin: '0 0 16px' }}>
+          <div data-testid="inv-pub-prix" style={{ margin: '0 0 12px' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
               <span data-testid="inv-pub-prix-actif" style={{ fontSize: '28px', fontWeight: 800 }}>{prixTexte(pa.prix)}</span>
-              {pa.palier !== 'regular' ? <span style={{ fontSize: '14px', color: 'rgba(255,255,255,0.8)' }}>{pa.libelle}</span> : null}
+              {pa.palier !== 'regular' ? <span style={{ fontSize: '14px', color: PRIMAIRE, fontWeight: 700 }}>{pa.libelle}</span> : null}
             </div>
-            {pa.paliers && pa.paliers.length > 1 ? (
-              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${pa.paliers.length}, 1fr)`, gap: '6px', marginTop: '10px' }}>
-                {pa.paliers.map((p) => (
-                  <div key={p.palier} data-testid={`inv-pub-palier-${p.palier}`} data-actif={p.actif ? '1' : '0'}
-                       style={{ padding: '6px 4px', borderRadius: '10px', textAlign: 'center', opacity: p.actif ? 1 : 0.55,
-                         background: p.actif ? rgbaP(0.25) : 'rgba(255,255,255,0.05)', border: p.actif ? `1px solid ${PRIMAIRE}` : '1px solid transparent' }}>
-                    <div style={{ fontSize: '11.5px', color: 'rgba(255,255,255,0.8)' }}>{p.libelle}</div>
-                    <div style={{ fontSize: '15px', fontWeight: 700 }}>{prixTexte(p.prix)}</div>
-                  </div>
+            {paliers ? (
+              <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
+                {paliers.map((p) => (
+                  <span key={p.palier} data-testid={`inv-pub-palier-${p.palier}`} data-actif={p.actif ? '1' : '0'}
+                        style={{ padding: '4px 10px', borderRadius: 999, fontSize: '12.5px', opacity: p.actif ? 1 : 0.6,
+                          background: p.actif ? rgbaP(0.22) : 'rgba(255,255,255,0.06)', border: p.actif ? `1px solid ${PRIMAIRE}` : '1px solid transparent' }}>
+                    {p.libelle} {prixTexte(p.prix)}
+                  </span>
                 ))}
               </div>
             ) : null}
             {pa.prochain ? (
-              <p data-testid="inv-pub-urgence" style={{ margin: '10px 0 0', fontSize: '13.5px', color: 'rgba(255,255,255,0.85)' }}>
-                Plus tu réserves tôt, moins c'est cher : {prixTexte(pa.prochain.prix)} à partir du {dateBascule(pa.prochain.a_partir_de)}.
+              <p data-testid="inv-pub-urgence" style={{ margin: '8px 0 0', fontSize: '13px', color: 'rgba(255,255,255,0.75)' }}>
+                {prixTexte(pa.prochain.prix)} dès le {jourBascule(pa.prochain.a_partir_de)}.
               </p>
-            ) : null}
-            {d.gratuit_membres ? (
-              /* V610b : bloc IDENTIQUE pour tous — aucune recherche d'e-mail, la gratuité se
-                 prend dans l'espace membre authentifié. */
-              <div data-testid="inv-pub-gratuit-membres"><AccesMembreEvenement inerte={enApercu} /></div>
             ) : null}
           </div>
         ) : null}
 
-        {d.description ? <Details texte={d.description} /> : null}
+        {type === 'event_paid' && d.gratuit_membres ? (
+          <button type="button" data-testid="inv-pub-membre-compact" onClick={surMembre}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '10px 0', margin: '0 0 6px', background: 'none', border: 'none',
+                    color: 'rgba(255,255,255,0.9)', fontSize: '14px', cursor: 'pointer', textAlign: 'left' }}>
+            <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="heart" size={16} /></span>
+            <span>Membre Afroboost 8 mois ? <strong style={{ color: PRIMAIRE }}>Réserve gratuitement</strong></span>
+          </button>
+        ) : null}
+
+        {(d.description || (type === 'event_paid' && (pa || d.gratuit_membres))) ? (
+          <LirePlus ouvert={lirePlus} setOuvert={setLirePlus}>
+            {d.description ? (
+              <Rubrique titre="À propos" testid="inv-pub-a-propos">
+                <p data-testid="inv-pub-description" style={{ margin: 0, whiteSpace: 'pre-line' }}>{d.description}</p>
+              </Rubrique>
+            ) : null}
+            {type === 'event_paid' && pa ? (
+              <Rubrique titre="Paiement" testid="inv-pub-paiement">
+                Paiement sécurisé par carte ou TWINT. Le tarif est celui du moment de ta réservation
+                {lignePaiement ? ` (${lignePaiement})` : ''}. Les ventes ferment au début de l'événement.
+              </Rubrique>
+            ) : null}
+            {type === 'event_paid' && d.gratuit_membres ? (
+              /* V610b : bloc IDENTIQUE pour tous — aucune recherche d'e-mail ; la gratuité se
+                 prend dans l'espace membre authentifié et ne se transmet jamais par un lien. */
+              <div ref={membreRef} data-testid="inv-pub-gratuit-membres"><AccesMembreEvenement inerte={enApercu} libelle="Je suis membre" /></div>
+            ) : null}
+          </LirePlus>
+        ) : null}
 
         {d.message ? (
-          <p data-testid="inv-pub-message" style={{ margin: '0 0 16px', padding: '12px 14px', borderRadius: '14px', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.88)', fontSize: '15px', whiteSpace: 'pre-line' }}>
+          <p data-testid="inv-pub-message" style={{ margin: '0 0 14px', padding: '12px 14px', borderRadius: '14px', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.88)', fontSize: '15px', whiteSpace: 'pre-line' }}>
             {d.message}
           </p>
         ) : null}
-        {audio ? <div style={{ margin: '0 0 16px' }}><MotAudio url={audio} prenom={prenom} inerte={enApercu} /></div> : null}
+        {audio ? <div style={{ margin: '0 0 14px' }}><MotAudio url={audio} prenom={prenom} inerte={enApercu} /></div> : null}
       </main>
 
       <div style={{ position: enApercu ? 'sticky' : 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 16px calc(12px + env(safe-area-inset-bottom, 0px))', background: 'linear-gradient(180deg, rgba(8,4,12,0) 0%, rgba(8,4,12,0.95) 40%)' }}>
-        <button type="button" onClick={surCta} data-testid="inv-pub-cta"
+        {envoi.erreur ? (
+          <p data-testid="inv-pub-cta-erreur" role="alert" style={{ maxWidth: '560px', margin: '0 auto 8px', fontSize: '13.5px', color: 'rgba(255,190,180,1)', textAlign: 'center' }}>{envoi.erreur}</p>
+        ) : null}
+        <button type="button" onClick={surCta} data-testid="inv-pub-cta" disabled={envoi.cours}
                 style={{ display: 'block', width: '100%', maxWidth: '560px', margin: '0 auto', minHeight: '52px', borderRadius: '999px', border: 'none',
-                  background: PRIMAIRE, color: 'rgba(255,255,255,1)', fontSize: '17px', fontWeight: 800, cursor: 'pointer' }}>
-          {String(d.cta_label || '').trim() || (type === 'event_paid' ? 'Je réserve ma place' : 'Continuer')}
+                  background: PRIMAIRE, color: 'rgba(255,255,255,1)', fontSize: '17px', fontWeight: 800, cursor: 'pointer', opacity: envoi.cours ? 0.75 : 1 }}>
+          {envoi.cours ? 'Ouverture du paiement…' : (String(d.cta_label || '').trim() || (type === 'event_paid' ? 'Je réserve ma place' : 'Continuer'))}
         </button>
       </div>
     </div>

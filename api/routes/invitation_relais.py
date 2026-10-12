@@ -301,7 +301,14 @@ async def relais_par_session(session_id: str, request: Request = None):
     if not _r:
         raise HTTPException(status_code=404, detail="Introuvable")
     _c = await db["referral_campaigns"].find_one({"id": _r.get("campagne_id")}, {"_id": 0, "title": 1})
-    return dto_relais(_r, _c, _front())
+    _sortie = dto_relais(_r, _c, _front())
+    # V610i : la PLACE elle-même (réclamation `stripe:<session>` posée par le webhook avec la
+    # réservation) — la page de retour n'annonce « Ta place est réservée » qu'à ce moment.
+    try:
+        _sortie["place_confirmee"] = bool(await db["evenement_places"].find_one({"_id": "stripe:" + _s}, {"_id": 1}))
+    except Exception:  # noqa: BLE001
+        _sortie["place_confirmee"] = False
+    return _sortie
 
 
 def _recent(valeur) -> bool:

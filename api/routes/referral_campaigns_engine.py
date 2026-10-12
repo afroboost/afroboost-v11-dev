@@ -423,7 +423,9 @@ def prix_actif(offre, maintenant=None):
             if _p is None:
                 continue
             _sortie["paliers"].append({"palier": _k, "libelle": offre.get("label_" + _k) or LIBELLES_PALIER[_k],
-                                       "prix": _p, "actif": _k == _palier})
+                                       "prix": _p, "actif": _k == _palier,
+                                       # V610i : fin de CE palier (mêmes bornes que le checkout), pour « Lire plus »
+                                       "jusqu_a": _fin[_k].astimezone(_tz.utc).isoformat() if _k in _fin else None})
         _i = _ordre.index(_palier) if _palier in _ordre else -1
         if 0 <= _i < 2 and _palier in _fin:
             _suiv = _ordre[_i + 1]

@@ -55,7 +55,7 @@ describe('InvitationPublique — utilitaires', () => {
 });
 
 describe('InvitationPublique — rendu par type', () => {
-  afterEach(() => { delete global.fetch; });
+  afterEach(() => { delete global.fetch; window.localStorage.clear(); });  // V610i : la page mémorise le jeton
 
   test('événement payant : prix actif, paliers, urgence ; vidéo SANS lecture automatique', async () => {
     global.fetch = jest.fn((url) => (String(url).includes('/api/invitation/publique/')
@@ -69,10 +69,10 @@ describe('InvitationPublique — rendu par type', () => {
     await act(async () => { render(<InvitationPublique token="T123456789012345678" />); });
     await waitFor(() => expect(screen.getByTestId('inv-pub-prix-actif').textContent).toBe('25 CHF'));
     expect(screen.getByTestId('inv-pub-palier-early_bird').getAttribute('data-actif')).toBe('1');
-    expect(screen.getByTestId('inv-pub-urgence').textContent).toMatch(/Plus tu réserves tôt/);
+    expect(screen.getByTestId('inv-pub-urgence').textContent).toMatch(/^35 CHF dès le /);  // V610i : bascule sans répéter la date de l'événement
     const v = screen.getByTestId('inv-pub-video');
     expect(v.autoplay).toBe(false);
-    expect(v.getAttribute('preload')).toBe('none');
+    expect(v.getAttribute('preload')).toBe('metadata');   // V610i : métadonnées seules -> le cadre prend le ratio réel
     expect(screen.getByTestId('inv-pub-audio')).toBeTruthy();
     expect(document.querySelector('audio').autoplay).toBe(false);
     // suivi : lien ouvert (honnête, jamais « envoyé »)

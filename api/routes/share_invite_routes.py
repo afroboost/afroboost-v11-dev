@@ -494,6 +494,18 @@ async def invitation_publique(token: str):
     _sortie.update({"cible": _cible(_doc, _chaine), "relais": bool(_doc.get("_relais")),
                     "card_url": "%s/api/share/invite/%s/carte.jpg?v=%d" % (_front(), quote(str(_doc.get("share_token")), safe=""), _version(_doc)),
                     "og_titre": titre_og(_dto_pub), "og_description": description_og(_dto_pub)})
+    # V610i : événement payant à réservation AUTOMATIQUE, en vente -> « Je réserve ma place »
+    # ouvre Stripe directement (prix décidé par le serveur au checkout). Sinon : la vitrine.
+    _sortie["reservation_directe"] = None
+    try:
+        if _doc.get("type") == "event_paid" and _doc.get("offer_id"):
+            _o = await _base()["offers"].find_one({"id": str(_doc["offer_id"])}, {"_id": 0})
+            from api.routes import evenement_special as _v610_evt
+            if _o and _v610_evt.reservation_auto(_o) and _o.get("visible") is not False and _o.get("archived") is not True \
+                    and not _v610_evt.evenement_commence(_doc.get("occurrence")):
+                _sortie["reservation_directe"] = {"offer_id": _o.get("id")}
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("%s réservation directe non évaluée (%s)", PREFIXE, type(_e).__name__)
     return _sortie
 
 

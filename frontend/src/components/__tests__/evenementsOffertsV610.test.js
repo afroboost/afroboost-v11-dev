@@ -122,7 +122,11 @@ describe('V610 — page d\'invitation', () => {
           prochain: { palier: 'standard', prix: 30, a_partir_de: '2026-10-21T16:45:00+00:00' } } })
       : reponse({})));
     await act(async () => { render(<InvitationPublique token="T123456789012345678" />); });
-    await attendre(() => expect(q('inv-pub-gratuit-membres').textContent).toMatch(/abonnement Afroboost 8 mois actif/));
+    // V610i : une ligne COMPACTE sur la page ; le bloc complet est dans « Lire plus ».
+    await attendre(() => expect(q('inv-pub-membre-compact').textContent).toBe('Membre Afroboost 8 mois ? Réserve gratuitement'));
+    expect(q('inv-pub-gratuit-membres')).toBeNull();
+    await act(async () => { q('inv-pub-lire-plus').click(); });
+    expect(q('inv-pub-gratuit-membres').textContent).toMatch(/abonnement Afroboost 8 mois actif/);
     expect(q('inv-pub-prix-actif').textContent).toBe('25 CHF');
     expect(document.body.textContent).not.toMatch(/50 places|places maximum/);
   });
