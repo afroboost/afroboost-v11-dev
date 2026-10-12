@@ -2110,7 +2110,7 @@ export default function OfferWizard({
                 <ChampAdresse
                   value={course.locationName || course.location || ''}
                   onChange={(v) => setCourseLocation(course.id, v)}
-                  placeholder="Lieu (ex: Rue des Vallangines 97, Neuchâtel)"
+                  placeholder="Lieu (ex: Chemin des Valangines 97, 2000 Neuchâtel)"
                   ariaLabel="Lieu de l'horaire"
                   style={INPUT_STYLE}
                   className="text-sm v224-input"

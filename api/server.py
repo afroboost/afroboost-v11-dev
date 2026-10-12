@@ -2293,8 +2293,9 @@ async def get_courses(request: Request, scope: str = ""):
         # ces cours amorces seraient invisibles a tout coach.
         _seed_owner_c = SUPER_ADMIN_EMAILS[0]
         default_courses = [
-            {"id": str(uuid.uuid4()), "name": "Afroboost Silent – Session Cardio", "weekday": 3, "time": "18:30", "locationName": "Rue des Vallangines 97, Neuchâtel", "mapsUrl": "", "coach_id": _seed_owner_c},
-            {"id": str(uuid.uuid4()), "name": "Afroboost Silent – Sunday Vibes", "weekday": 0, "time": "18:30", "locationName": "Rue des Vallangines 97, Neuchâtel", "mapsUrl": "", "coach_id": _seed_owner_c}
+            # V615 : adresse et horaires officiels (cours d'hiver)
+            {"id": str(uuid.uuid4()), "name": "Cours Afroboost – mercredi", "weekday": 3, "time": "18:45", "locationName": V615_ADRESSE_COURS, "mapsUrl": "", "coach_id": _seed_owner_c},
+            {"id": str(uuid.uuid4()), "name": "Cours Afroboost – dimanche", "weekday": 0, "time": "18:30", "locationName": V615_ADRESSE_COURS, "mapsUrl": "", "coach_id": _seed_owner_c}
         ]
         await db.courses.insert_many(default_courses)
         courses_raw = default_courses
@@ -2800,6 +2801,38 @@ from api.routes import hiver as _hiver
 # TRACKING 2B : attribution jusqu'au paiement + héritage par personne (shared.py).
 from api.routes.shared import (m2a_bloc_propre, m2a_vers_metadata, m2a_depuis_metadata,
                                m2a_attribution_heritee, m2a_resoudre)
+
+
+# V615 — LIEU OFFICIEL DES COURS D'HIVER + BASCULE SAISONNIÈRE AUTOMATIQUE.
+# Une offre peut porter `lieux_saison` = {"hiver": {champs de lieu}, "ete": {…}} ; un cours peut
+# porter `saison` = "hiver" | "ete". Au changement de saison (Super Admin), on applique le lieu de la
+# saison aux offres et on montre / masque les cours étiquetés — rien n'est supprimé, tout est réversible.
+# Les offres et cours SANS ces champs ne sont jamais touchés.
+V615_ADRESSE_COURS = "Chemin des Valangines 97, 2000 Neuchâtel"
+V615_CHAMPS_LIEU = ("location", "location_address", "location_city", "location_lat", "location_lng")
+
+
+async def v615_appliquer_saison(saison: str, base=None) -> dict:
+    """Applique la saison aux offres (`lieux_saison`) et aux cours étiquetés (`saison`)."""
+    b = base if base is not None else db
+    s = (saison or "").strip().lower()
+    bilan = {"saison": s, "offres": 0, "cours_affiches": 0, "cours_masques": 0}
+    if s not in ("hiver", "ete", "toutes"):
+        return bilan
+    if s in ("hiver", "ete"):
+        for o in await b.offers.find({"lieux_saison." + s: {"$exists": True}}, {"_id": 0, "id": 1, "lieux_saison": 1}).to_list(500):
+            lieu = (o.get("lieux_saison") or {}).get(s) or {}
+            maj = {k: lieu.get(k) for k in V615_CHAMPS_LIEU if k in lieu}
+            if maj and o.get("id"):
+                r = await b.offers.update_one({"id": o["id"]}, {"$set": maj})
+                bilan["offres"] += getattr(r, "modified_count", 0)
+    for c in await b.courses.find({"saison": {"$in": ["hiver", "ete"]}, "archived": {"$ne": True}},
+                                  {"_id": 0, "id": 1, "saison": 1, "visible": 1}).to_list(500):
+        voir = s == "toutes" or c.get("saison") == s
+        if bool(c.get("visible", True)) != voir and c.get("id"):
+            await b.courses.update_one({"id": c["id"]}, {"$set": {"visible": voir, "visible_par_saison": s}})
+            bilan["cours_affiches" if voir else "cours_masques"] += 1
+    return bilan
 
 
 async def _saison_active() -> str:
@@ -51594,6 +51627,11 @@ async def update_platform_settings(request: Request):
         {"$set": update_fields},
         upsert=True
     )
+    if "saison_active" in update_fields:      # V615 : lieux et cours suivent la saison
+        try:
+            logger.info("[SAISON] V615 bascule : %s", await v615_appliquer_saison(update_fields["saison_active"]))
+        except Exception as _e615:  # noqa: BLE001
+            logger.warning("[SAISON] V615 bascule impossible (%s)", type(_e615).__name__)
     
     # Récupérer les settings mis à jour
     settings = await db.platform_settings.find_one({"_id": "global"})
@@ -52636,13 +52674,14 @@ V197B_DEFAULT_QUICK_REPLIES = [
         "emoji": "📅",
         "label": "Cours & horaires",
         "response": (
+            # V615 : adresse et horaires officiels
             "Voici nos cours actuels :\n\n"
-            "🔥 **Afroboost Silent – Sunday Vibes**\n"
+            "🔥 **Afroboost – mercredi**\n"
+            "Mercredi à 18h45\n"
+            "Chemin des Valangines 97, 2000 Neuchâtel\n\n"
+            "🌅 **Afroboost – dimanche**\n"
             "Dimanche à 18h30\n"
-            "Rue des Vallangines 97, Neuchâtel\n\n"
-            "🌅 **Afroboost Silent – Session Cardio**\n"
-            "Mercredi à 18h30\n"
-            "Rue des Vallangines 97, Neuchâtel\n\n"
+            "Chemin des Valangines 97, 2000 Neuchâtel\n\n"
             "Les séances durent environ 1h. Ambiance garantie ! 💃🎧\n\n"
             "Tu veux réserver une séance ?"
         ),
@@ -52684,7 +52723,7 @@ V197B_DEFAULT_QUICK_REPLIES = [
             "Tu peux nous joindre de plusieurs façons :\n\n"
             "📱 **WhatsApp** : +41 76 520 33 63\n"
             "📧 **Email** : contact.artboost@gmail.com\n"
-            "📍 **Cours** : Rue des Vallangines 97, 2000 Neuchâtel\n"
+            "📍 **Cours** : Chemin des Valangines 97, 2000 Neuchâtel\n"
             "📸 **Instagram** : @afroboost\n\n"
             "Ou clique sur le bouton ci-dessous pour parler directement à Coach Bassi !"
         ),
