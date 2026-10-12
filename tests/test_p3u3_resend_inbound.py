@@ -26,6 +26,13 @@ CE QUE CE FICHIER PROUVE
 
     python3 tests/test_p3u3_resend_inbound.py
 """
+try:   # V608 : le point d'envoi Resend unique, visible aussi des fonctions EXTRAITES du serveur
+    import builtins as _b608, os as _o608, sys as _s608
+    _s608.path.insert(0, _o608.path.dirname(_o608.path.dirname(_o608.path.abspath(__file__))))
+    import api.resend_central as _rc608
+    _b608._rc = _rc608
+except Exception:  # noqa: BLE001
+    pass
 import ast
 import asyncio
 import io
@@ -594,13 +601,18 @@ print("\n9. LES AUTRES EVENEMENTS SONT ACQUITTES, PAS TRAITES")
 # systeme ne traite PAS doit etre acquitte sans rien faire — seule la liste des
 # types non traites a maigri d'une ligne.
 _b = base_neuve([ACT_A])
-for _type in ("email.delivered", "email.complained",
-              "email.opened", "contact.created", ""):
+# V608 : `email.delivered` et `email.complained` sont desormais SUIVIS (remise / plainte),
+# donc retires de cette liste ; voir le controle « 9z » ci-dessous.
+for _type in ("email.opened", "contact.created", ""):
     _r = appeler({"type": _type, "id": "evt_x", "data": {}})
     verifier("9. evenement %-20s acquitte sans effet" % (_type or "(vide)"),
              _r["recu"] is True and _r.get("ignore") is True, str(_r))
 # Le rebond, lui, est acquitte ET traite — mais sans action correspondante il
 # ne touche rien, et surtout il n'entre JAMAIS dans les messages recus.
+for _type in ("email.delivered", "email.complained"):
+    _r = appeler({"type": _type, "id": "evt_v608", "data": {}})
+    verifier("9z. %s est SUIVI (V608) : acquitte, sans identifiant rien n'est touche" % _type,
+             _r["recu"] is True and "suivi" in _r and not _r.get("ignore"), str(_r))
 _r = appeler({"type": "email.bounced", "id": "evt_x", "data": {}})
 verifier("9y. `email.bounced` est desormais TRAITE (P3-B1), pas ignore",
          _r["recu"] is True and _r.get("ignore") is None and "traite" in _r, str(_r))

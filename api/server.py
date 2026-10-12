@@ -1,5 +1,6 @@
 # VERSION 7.0 - PRODUCTION READY - NE PAS MODIFIER login/tri/sync
 import re  # V310 : disponible au niveau module pour re.escape (anti-injection regex)
+import api.resend_central as _rc  # V608 : point d'envoi Resend unique
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import JSONResponse, HTMLResponse  # V324 : HTMLResponse pour /confidentialite
 from dotenv import load_dotenv
@@ -5712,7 +5713,7 @@ Notification automatique Afroboost"""
                     'line-height:1.6;">' + _corps + "</div></body></html>"
                 )
                 await asyncio.to_thread(
-                    resend.Emails.send,
+                    _rc.emails("server:notify_coach", critique=False, sdk=resend).send,
                     {
                         "from": "Afroboost <notifications@afroboost.com>",
                         "to": [coach_email],
@@ -7602,7 +7603,7 @@ async def launch_campaign(campaign_id: str):
                     if _r3_token:
                         params["headers"] = r3_entetes_desinscription(_r3_token)
                     
-                    email_response = await asyncio.to_thread(resend.Emails.send, params)
+                    email_response = await asyncio.to_thread(_rc.emails("server:launch_campaign", critique=False, sdk=resend).send, params)
                     email_result["status"] = "sent"
                     email_result["sentAt"] = datetime.now(timezone.utc).isoformat()
                     email_result["email_id"] = email_response.get("id")
@@ -9165,7 +9166,7 @@ def _p0_html_email_acces(new_code: str, sessions_count, primary_color: str, ment
 
 async def _p0_envoyer_email_acces(destinataire: str, new_code: str, sessions_count, primary_color: str, mention: str = "") -> None:
     """Envoie l'e-mail d'acces. Leve si Resend echoue — l'appelant decide."""
-    await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboost.com>", "to": [destinataire], "subject": f"Bienvenue chez Afroboost - Ton code {new_code}", "html": _p0_html_email_acces(new_code, sessions_count, primary_color, mention)})
+    await asyncio.to_thread(_rc.emails("server:_p0_envoyer_email_acces", critique=True, sdk=resend).send, {"from": "Afroboost <notifications@afroboost.com>", "to": [destinataire], "subject": f"Bienvenue chez Afroboost - Ton code {new_code}", "html": _p0_html_email_acces(new_code, sessions_count, primary_color, mention)})
 
 
 async def _p0_marquer_email_envoye(session_id: str, cle: str) -> None:
@@ -9371,7 +9372,7 @@ async def stripe_webhook(request: Request):
                             </div>
                             <p style="color:#888;font-size:12px;">Utilisez vos crédits pour les campagnes, conversations IA et codes promo.</p>
                             </div></div>"""
-                            await asyncio.to_thread(resend.Emails.send, {
+                            await asyncio.to_thread(_rc.emails("server:stripe_webhook", critique=True, sdk=resend).send, {
                                 "from": "Afroboost <notifications@afroboost.com>",
                                 "to": [coach_email],
                                 "subject": f"✅ +{credits} crédits ajoutés à votre compte",
@@ -9391,7 +9392,7 @@ async def stripe_webhook(request: Request):
                             <p style="margin:8px 0 0;color:#22c55e;"><strong>Montant:</strong> {price_chf} CHF</p>
                             <p style="margin:8px 0 0;color:{primary_color};"><strong>Crédits:</strong> +{credits}</p>
                             </div></div>"""
-                            await asyncio.to_thread(resend.Emails.send, {
+                            await asyncio.to_thread(_rc.emails("server:stripe_webhook", critique=True, sdk=resend).send, {
                                 "from": "Afroboost System <notifications@afroboost.com>",
                                 "to": [SUPER_ADMIN_EMAIL],
                                 "subject": f"💰 Vente: {pack_name} à {metadata.get('customer_name', coach_email)}",
@@ -9442,7 +9443,7 @@ async def stripe_webhook(request: Request):
                         </div>
                         <p style="color:#888;font-size:12px;">Accédez au Panel Admin pour gérer ce coach.</p>
                         </div>"""
-                        await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost System <notifications@afroboost.com>", "to": [SUPER_ADMIN_EMAIL], "subject": f"🔔 Nouveau Coach: {coach_name}", "html": bassi_html})
+                        await asyncio.to_thread(_rc.emails("server:stripe_webhook", critique=True, sdk=resend).send, {"from": "Afroboost System <notifications@afroboost.com>", "to": [SUPER_ADMIN_EMAIL], "subject": f"🔔 Nouveau Coach: {coach_name}", "html": bassi_html})
                         logger.info(f"[WEBHOOK] Notification Bassi envoyée pour {coach_email}")
                     except Exception as notify_err:
                         logger.warning(f"[WEBHOOK] Notification Bassi error: {notify_err}")
@@ -9458,7 +9459,7 @@ async def stripe_webhook(request: Request):
                         <p>Ton compte Coach Afroboost est maintenant actif avec <strong>{credits} crédits</strong>.</p>
                         <p style="color:#a855f7;">Connecte-toi via le bouton "S'identifier" sur afroboost.com pour accéder à ton Dashboard personnel.</p>
                         </div></div>"""
-                        await asyncio.to_thread(resend.Emails.send, {
+                        await asyncio.to_thread(_rc.emails("server:stripe_webhook", critique=True, sdk=resend).send, {
                             "from": "Afroboost <notifications@afroboost.com>",
                             "to": [coach_email],
                             "subject": "Bienvenue Coach Afroboost !",
@@ -10283,7 +10284,7 @@ async def stripe_webhook(request: Request):
                                 <a href="https://afroboost.com" style="display:inline-block;background:#22c55e;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:bold;">Voir le Dashboard</a>
                             </div>
                         </div></div>"""
-                        await asyncio.to_thread(resend.Emails.send, {
+                        await asyncio.to_thread(_rc.emails("server:stripe_webhook", critique=True, sdk=resend).send, {
                             "from": "Afroboost <notifications@afroboost.com>",
                             "to": [SUPER_ADMIN_EMAIL],
                             "subject": f"⭐ Nouvelle souscription — {customer_name} ({product_name})",
@@ -10381,7 +10382,7 @@ async def stripe_webhook(request: Request):
                     _montant = f"{_prix:.2f}".rstrip("0").rstrip(".") or "0"
                     _prenom = ((_sub or {}).get("name") or _email.split("@")[0]).split(" ")[0]
                     _code = (_sub or {}).get("code") or ""
-                    await asyncio.to_thread(resend.Emails.send, {
+                    await asyncio.to_thread(_rc.emails("server:stripe_webhook", critique=True, sdk=resend).send, {
                         "from": "Afroboost <notifications@afroboost.com>",
                         "to": [_email],
                         "subject": V398_SUJET,
@@ -10541,7 +10542,7 @@ async def admin_create_code(request: Request):
                 </div>
             </div>"""
             try:
-                await asyncio.to_thread(resend.Emails.send, {
+                await asyncio.to_thread(_rc.emails("server:admin_create_code", critique=True, sdk=resend).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [customer_email],
                     "subject": f"Bienvenue chez Afroboost - Ton code {new_code}",
@@ -10859,7 +10860,7 @@ async def submit_social_proof(request: Request):
                     </p>
                 </div>
                 """
-                await asyncio.to_thread(resend.Emails.send, {
+                await asyncio.to_thread(_rc.emails("server:submit_social_proof", critique=False, sdk=resend).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [coach_email],
                     "subject": f"Nouvelle preuve sociale — {_e_name}",
@@ -11198,7 +11199,7 @@ async def review_social_proof(proof_id: str, request: Request):
                 </div>
                 """
                 subject = "Votre demande d'essai gratuit"
-            await asyncio.to_thread(resend.Emails.send, {
+            await asyncio.to_thread(_rc.emails("server:_g4_rendre_en_attente", critique=False, sdk=resend).send, {
                 "from": "Afroboost <notifications@afroboost.com>",
                 "to": [proof["client_email"]],
                 "subject": subject,
@@ -14020,7 +14021,7 @@ async def v332_optin(request: Request):
             lien_confirm = f"{base}/api/subscribers/confirm?token={jeton_confirmation}"
             lien_desinscription = f"{base}/api/subscribers/unsubscribe?token={jeton_desinscription}"
             couleur = await _v259_primary_color()   # helper de CE fichier (V259)
-            await asyncio.to_thread(resend.Emails.send, {
+            await asyncio.to_thread(_rc.emails("server:v332_optin", critique=False, sdk=resend).send, {
                 "from": "Afroboost <notifications@afroboost.com>",
                 "to": [valeur],
                 # V336 : sujet clair, SANS emoji en tête — un sujet qui commence par
@@ -19806,7 +19807,7 @@ async def _v195_send_renewal_notification(sub: dict, message: str, subject: str 
                 <p style="font-size:14px;line-height:1.6;color:#e2e8f0;">{message}</p>
                 <p style="font-size:11px;color:#888;margin-top:24px;">Pour gérer votre abonnement : <a style="color:#a855f7;" href="https://afroboost.com/espace/{sub.get('code','')}">afroboost.com/espace/{sub.get('code','')}</a></p>
             </div>"""
-            await asyncio.to_thread(resend.Emails.send, {
+            await asyncio.to_thread(_rc.emails("server:_v195_send_renewal_notification", critique=False, sdk=resend).send, {
                 "from": "Afroboost <notifications@afroboost.com>",
                 "to": [email],
                 "subject": subject or "Afroboost — Renouvellement abonnement",
@@ -20109,7 +20110,7 @@ async def v398_rappel_renouvellement(request: Request, apercu: bool = True):
     envoyes = 0
     for lettre in lettres:
         try:
-            await asyncio.to_thread(resend.Emails.send, {
+            await asyncio.to_thread(_rc.emails("server:v398_rappel_renouvellement", critique=False, sdk=resend).send, {
                 "from": "Afroboost <notifications@afroboost.com>",
                 "to": [lettre["destinataire"]],
                 "subject": lettre["sujet"],
@@ -20573,7 +20574,7 @@ async def recover_subscriber_access(request: Request):
                 </div>
                 """
 
-                await asyncio.to_thread(resend.Emails.send, {
+                await asyncio.to_thread(_rc.emails("server:recover_subscriber_access", critique=True, sdk=resend).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [found_email],
                     "subject": f"Votre code d'accès Afroboost - {code}",
@@ -27922,7 +27923,7 @@ async def p3s3_preparer_campagne(request: Request):
 def v606_stats_vides() -> dict:
     return {"destinataires": 0, "emails_envoyes": 0, "rejets_definitifs": 0,
             "rejets_temporaires": 0, "manuels": 0, "sans_canal": 0, "reponses": 0,
-            "relances_envoyees": 0}
+            "relances_envoyees": 0, "remis": 0, "echecs_envoi": 0}
 
 
 def v606_compter_action(st: dict, a: dict) -> None:
@@ -27932,6 +27933,10 @@ def v606_compter_action(st: dict, a: dict) -> None:
     st["destinataires"] += 1
     if a.get("sent_at"):
         st["emails_envoyes"] += 1
+        if (a.get("provider_status") or "") == "delivered":   # V608 : remise CONFIRMÉE
+            st["remis"] += 1
+        elif (a.get("provider_status") or "") == "failed":
+            st["echecs_envoi"] += 1
         if (a.get("bounce_type") or "") == "Permanent":
             st["rejets_definitifs"] += 1
         elif a.get("bounce_type"):
@@ -27976,6 +27981,7 @@ async def p3s3_lister_campagnes(request: Request):
                 {"campaign_id": {"$in": list(stats)}},
                 {"_id": 0, "campaign_id": 1, "statut": 1, "sent_at": 1, "execution_type": 1,
                  "bounce_type": 1, "replied_at": 1, "j3_sent_at": 1, "j7_sent_at": 1,
+                 "provider_status": 1,
                  "j14_sent_at": 1}).to_list(5000):
             v606_compter_action(stats[a["campaign_id"]], a)
     for d in documents:
@@ -28898,7 +28904,7 @@ class P3S3DFournisseurEmail:
                 # drapeaux ne sont pas ouverts.
                 import resend
                 brut = await asyncio.to_thread(
-                    resend.Emails.send, charge["params"], charge["options"])
+                    _rc.emails("prospection:j0_relances", critique=False, sdk=resend).send, charge["params"], charge["options"])
         except Exception as e:  # noqa: BLE001
             return dict(reponse, **p3s3d2_verdict_erreur(e))
 
@@ -28933,6 +28939,11 @@ def p3s3d2_verdict_erreur(erreur) -> dict:
     est en cause. Le verdict est permanent — reessayer ne servirait a rien —
     mais le code d'erreur le dit, pour qu'on ne conclue pas « adresse morte ».
     """
+    # V608 : quota Resend du COMPTE atteint, bloque AVANT l'appel — rien n'est parti,
+    # rien n'est consomme. Le destinataire reste disponible (aucune adresse fautive).
+    if isinstance(erreur, _rc.QuotaResendAtteint):
+        return {"verdict": P3S3D_RATE_LIMIT, "error_code": "QUOTA_RESEND",
+                "error_message": erreur.message, "retry_after": 3600}
     code = getattr(erreur, "code", None)
     genre = getattr(erreur, "error_type", None) or type(erreur).__name__
     message = (getattr(erreur, "message", None) or str(erreur))[:300]
@@ -29060,6 +29071,7 @@ async def p3s3d_appliquer_succes(action: dict, reponse: dict, maintenant: str) -
                      "provider": (reponse or {}).get("provider"),
                      "provider_message_id": identifiant,
                      "provider_status": "accepted",
+                     "suivi_livraison": True,   # V608 : accepte != remis (le webhook dira delivered)
                      "verrou_actif": True, "updated_at": maintenant,
                      # Les echeances partent du VRAI premier contact, jamais du
                      # jour de preparation ni d'approbation : une relance calculee
@@ -30929,6 +30941,7 @@ async def p3r2_appliquer_succes(action: dict, etape: str, reponse: dict,
         return {"statut": "echec_indetermine"}
     champs = {p3r2_champ(etape, "sent_at"): maintenant,
               p3r2_champ(etape, "provider_message_id"): identifiant,
+              p3r2_champ(etape, "provider_status"): "accepted",   # V608 : accepte != remis
               p3r2_champ(etape, "verrou"): True,
               "updated_at": maintenant}
     _rfc = p3u2_normaliser_identifiant((reponse or {}).get("rfc_message_id"))
@@ -31428,6 +31441,19 @@ async def p3u3_webhook_resend(request: Request):
                           "results.$.provider_at": datetime.now(timezone.utc).isoformat()}})
     except Exception as _r3e:
         logger.warning("[R3] journal Resend non mis à jour (%s)", type(_r3e).__name__)
+
+    # V608 — SUIVI DE REMISE de TOUS les envois (journal central + J0 + relances +
+    # reponses partenaires). Un evenement n'a d'effet qu'UNE fois (identifiant svix).
+    _v608 = {}
+    if type_evenement in V608_TYPES:
+        try:
+            _v608 = await v608_evenement_livraison(evenement, (request.headers.get(P3U3_ENTETE_ID) or "").strip())
+        except Exception as _e608:  # noqa: BLE001
+            logger.warning("[V608] suivi de remise ignore (%s)", type(_e608).__name__)
+        if type_evenement not in (P3U3_EVENEMENT_ENVOYE, P3B1_EVENEMENT_REBOND):
+            return {"recu": True, "type": type_evenement, "suivi": _v608}
+        if _v608.get("doublon"):
+            return {"recu": True, "type": type_evenement, "doublon": True}
 
     if type_evenement == P3U3_EVENEMENT_ENVOYE:
         issue = await p3u3_traiter_envoi(evenement)
@@ -33001,6 +33027,9 @@ async def p3n_messages_du_fil(message: dict) -> list:
     ).sort([("received_at", 1), ("id", 1)]).to_list(P3N_NOTES_MAX)
 
 
+P3N_ORIGINES_TECHNIQUES = frozenset({"envoi", "remise", "correction_envoi"})
+
+
 def p3n_contexte_obsolete(brouillon, notes) -> bool:
     """Le brouillon a-t-il ete ecrit AVANT la derniere note ? PURE.
 
@@ -33024,8 +33053,12 @@ def p3n_contexte_obsolete(brouillon, notes) -> bool:
     # envoye ». Or cette note ne dit RIEN de neuf sur le prospect : elle
     # documente ce qu'on vient de faire. Seule une information NOUVELLE sur le
     # partenaire rend un brouillon caduc.
+    # V608c — même raison pour les notes qui documentent NOTRE ENVOI et son suivi :
+    # la remise confirmée (« remise ») et la correction d'un envoi non remis
+    # (« correction_envoi »). Elles ne disent rien de neuf sur le partenaire ; sans
+    # cela, un envoi échoué (quota) ne pouvait plus être réessayé avec le texte validé.
     return any(str(n.get("created_at") or "") > ecrit_le
-               and (n.get("origine") or "") != "envoi"
+               and (n.get("origine") or "") not in P3N_ORIGINES_TECHNIQUES
                for n in notes or [])
 
 
@@ -33470,8 +33503,11 @@ class P3AI4FournisseurReponse:
                 # LE SEUL APPEL SORTANT DU LOT, inatteignable drapeaux fermes.
                 import resend
                 brut = await asyncio.to_thread(
-                    resend.Emails.send, charge["params"], charge["options"])
+                    _rc.emails("prospection:reponse_partenaire", critique=False, sdk=resend).send, charge["params"], charge["options"])
         except Exception as e:  # noqa: BLE001
+            if isinstance(e, _rc.QuotaResendAtteint):   # V608 : bloque AVANT Resend
+                return dict(reponse, verdict=P3AI4_ECHEC, error_code="QUOTA_RESEND",
+                            error_message=e.message)
             _v = p3s3d2_verdict_erreur(e)
             # UNE PANNE AMBIGUE N'EST PAS UN ECHEC. Le SDK enveloppe toute
             # panne HTTP sans distinguer « jamais parti » de « parti, reponse
@@ -33513,6 +33549,165 @@ async def p3ai4_refuse_par_stop(destinataire: str) -> bool:
         logger.warning("%s registre STOP illisible pour %s : %s", P3AI4_PREFIXE,
                        valeur[:24], type(e).__name__)
         return True
+
+
+V608_TYPES = {"email.sent": "sent", "email.delivered": "delivered",
+              "email.delivery_delayed": "delivery_delayed", "email.failed": "failed",
+              "email.bounced": "bounced", "email.complained": "complained"}
+V608_RANG = {"prepare": 0, "accepted": 1, "sent": 2, "delivery_delayed": 3,
+             "delivered": 4, "failed": 4, "bounced": 4, "complained": 5}
+V608_EVENEMENTS = "resend_evenements"
+
+
+def v608_plus_bas(statut: str) -> list:
+    """Les statuts qu'un evenement `statut` a le droit de remplacer (jamais de recul). PURE."""
+    r = V608_RANG.get(statut, 0)
+    return [k for k, v in V608_RANG.items() if v < r] + [None]
+
+
+def v608_raison(donnees: dict) -> str:
+    """La raison BRUTE donnee par Resend, si elle existe. PURE."""
+    d = donnees or {}
+    for chemin in (("failed", "reason"), ("bounce", "message"), ("bounce", "subType"),
+                   ("complaint", "type"), ("reason",), ("error",), ("message",)):
+        v = d
+        for k in chemin:
+            v = v.get(k) if isinstance(v, dict) else None
+        if v:
+            return str(v)[:300]
+    return ""
+
+
+async def v608_evenement_livraison(evenement: dict, event_id: str = "") -> dict:
+    """Un evenement Resend -> toutes les traces qui portent CET identifiant d'e-mail.
+    Correspondance par identifiant Resend EXACT, jamais par adresse."""
+    from pymongo.errors import DuplicateKeyError
+    type_ev = (evenement.get("type") or "").strip()
+    statut = V608_TYPES.get(type_ev)
+    donnees = evenement.get("data") or {}
+    rid = str(donnees.get("email_id") or donnees.get("id") or "").strip()
+    if not statut or not rid:
+        return {"suivi": False, "motif": "evenement sans identifiant d'e-mail"}
+    eid = (event_id or "").strip() or "%s:%s" % (type_ev, rid)
+    maintenant = datetime.now(timezone.utc).isoformat()
+    try:   # IDEMPOTENCE : un identifiant d'evenement, un seul effet
+        await db[V608_EVENEMENTS].insert_one({"_id": eid, "type": type_ev, "resend_id": rid, "recu_at": maintenant})
+    except DuplicateKeyError:
+        return {"suivi": False, "doublon": True}
+    raison = v608_raison(donnees)
+    plus_bas = v608_plus_bas(statut)
+    effets = []
+    jset = {"provider_status": statut, statut + "_at": maintenant}
+    if raison:
+        jset["raison"] = raison
+    r = await db[_rc.COL_JOURNAL].update_one({"resend_id": rid, "provider_status": {"$in": plus_bas}}, {"$set": jset})
+    if getattr(r, "matched_count", 0):
+        effets.append("journal")
+    # J0 (le rebond J0 reste traite par P3-B1, inchange)
+    if statut != "bounced":
+        aset = {"provider_status": statut, "provider_%s_at" % statut: maintenant}
+        if raison:
+            aset["provider_raison"] = raison
+        r = await db[P3S3_ACTIONS].update_one({"provider_message_id": rid, "provider_status": {"$in": plus_bas}}, {"$set": aset})
+        if getattr(r, "matched_count", 0):
+            effets.append("j0")
+    # Relances J+3 / J+7 / J+14
+    for etape in P3R2_ETAPES:
+        action = await db[P3S3_ACTIONS].find_one({p3r2_champ(etape, "provider_message_id"): rid}, {"_id": 0})
+        if not action:
+            continue
+        rset = {p3r2_champ(etape, "provider_status"): statut, "%s_%s_at" % (etape, statut): maintenant}
+        if raison:
+            rset[p3r2_champ(etape, "provider_raison")] = raison
+        await db[P3S3_ACTIONS].update_one(
+            {"id": action["id"], p3r2_champ(etape, "provider_status"): {"$in": plus_bas}}, {"$set": rset})
+        effets.append(etape)
+        cible = (action.get("target") or "").strip()
+        lu = p3b1_rebond_depuis(evenement) if statut == "bounced" else {}
+        if (statut == "bounced" and p3b1_est_permanent(lu.get("type"))) or statut == "complained":
+            for e2 in P3R2_ETAPES:   # plus aucune relance automatique vers cette adresse
+                await db[P3S3_ACTIONS].update_one(
+                    {"id": action["id"], e2 + "_annule_le": {"$exists": False}, e2 + "_sent_at": {"$exists": False}},
+                    {"$set": {e2 + "_annule_le": maintenant,
+                              e2 + "_annule_motif": "plainte" if statut == "complained" else P3B1_MOTIF_ANNULATION}})
+            if cible:
+                await p3u1_enregistrer_refus("email", cible)
+    # Plainte sur un J0 : plus aucun envoi automatique vers cette adresse
+    if statut == "complained":
+        action = await db[P3S3_ACTIONS].find_one({"provider_message_id": rid}, {"_id": 0})
+        if action:
+            for e2 in P3R2_ETAPES:
+                await db[P3S3_ACTIONS].update_one(
+                    {"id": action["id"], e2 + "_annule_le": {"$exists": False}, e2 + "_sent_at": {"$exists": False}},
+                    {"$set": {e2 + "_annule_le": maintenant, e2 + "_annule_motif": "plainte"}})
+            if (action.get("target") or "").strip():
+                await p3u1_enregistrer_refus("email", action["target"].strip())
+    # Reponses partenaires
+    trace = await db[P3AI4_COLLECTION].find_one({"provider_message_id": rid}, {"_id": 0})
+    if trace:
+        tset = {"provider_status": statut, "%s_at" % statut: maintenant}
+        if raison:
+            tset["provider_raison"] = raison
+        r = await db[P3AI4_COLLECTION].update_one(
+            {"id": trace["id"], "provider_status": {"$in": plus_bas}}, {"$set": tset})
+        if getattr(r, "matched_count", 0):
+            effets.append("reponse")
+            if statut == "delivered" and trace.get("suivi_livraison"):
+                # La reponse est REMISE : l'etat commercial avance, par la regle unique (note).
+                await db[P3N_COLLECTION].insert_one({
+                    "id": str(uuid.uuid4()), "coach_id": trace.get("coach_id"),
+                    "inbound_id": trace.get("inbound_id"), "action_id": trace.get("action_id"),
+                    "prospect_uuids": [], "prospect_uuid": trace.get("prospect_uuid"),
+                    "recipient_key": trace.get("recipient_key"), "type": "information",
+                    "texte": "Réponse Afroboost remise à %s." % (trace.get("organisation") or trace.get("to_email")),
+                    "status_after": p3ai4_statut_apres(trace.get("intention")),
+                    "occurred_at": maintenant, "created_at": maintenant, "created_by": "resend",
+                    "corrige_note_id": None, "origine": "remise"})
+        lu = p3b1_rebond_depuis(evenement) if statut == "bounced" else {}
+        if ((statut == "bounced" and p3b1_est_permanent(lu.get("type"))) or statut == "complained") \
+                and (trace.get("to_email") or "").strip():
+            await p3u1_enregistrer_refus("email", trace["to_email"].strip())
+    if not effets:
+        logger.info("[V608] %s pour un e-mail inconnu (%s) — rien touche", type_ev, rid[:12])
+    return {"suivi": True, "statut": statut, "effets": effets, "quota": v608_est_quota(raison)}
+
+
+def v608_est_quota(texte) -> bool:
+    """« Reached the daily sending quota » / blocage Afroboost : probleme de COMPTE. PURE."""
+    t = str(texte or "").lower()
+    return "quota" in t
+
+
+def v608_etat_envoi(trace: dict) -> str:
+    """L'etat AFFICHABLE d'un envoi suivi. PURE.
+    en_preparation | envoi_en_cours | remis | echec | quota | rebond | plainte | indetermine."""
+    t = trace or {}
+    ps = t.get("provider_status") or ""
+    if ps == "bloque_quota" or t.get("error_code") == "QUOTA_RESEND" \
+            or (ps == "failed" and v608_est_quota(t.get("provider_raison"))):
+        return "quota"
+    if ps == "delivered":
+        return "remis"
+    if ps == "complained":
+        return "plainte"
+    if ps == "bounced":
+        return "rebond"
+    if ps == "failed" or t.get("send_status") == P3AI4_ECHEC:
+        return "echec"
+    if t.get("send_status") == P3AI4_INDETERMINE:
+        return "indetermine"
+    if t.get("send_status") == P3AI4_RESERVE:
+        return "en_preparation"
+    return "envoi_en_cours"
+
+
+def v608_reessai_permis(trace: dict) -> bool:
+    """Une reponse peut etre retentee SEULEMENT si rien n'a ete remis. PURE.
+    `indetermine` reste bloque : un e-mail peut etre parti, un reessai doublerait."""
+    t = trace or {}
+    if t.get("send_status") == P3AI4_ECHEC:
+        return True
+    return t.get("send_status") == P3AI4_ENVOYE and t.get("provider_status") == "failed"
 
 
 @api_router.post("/prospect-inbound/{inbound_id}/envoyer-reponse")
@@ -33574,6 +33769,17 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
     # PASSE, pas ce qui empeche de recommencer.
     cle = p3ai4_cle_envoi(message["id"], empreinte)
     deja = await db[P3AI4_COLLECTION].find_one({"id": cle}, {"_id": 0})
+    tentative = 1
+    reprise_de = None
+    if deja and v608_reessai_permis(deja):
+        # V608 — « Réessayer » : SEULEMENT si rien n'a ete remis (echec avant Resend,
+        # quota, ou `failed` rapporte par Resend). La reprise de la trace est faite PLUS
+        # BAS, au moment de la reservation : V608c — elle etait posee ICI, avant les
+        # controles qui peuvent refuser (contexte, adresse, STOP), et un refus laissait
+        # la trace bloquee en `reserve` (constate sur Dynam le 12/10, aucun envoi parti).
+        tentative = int(deja.get("tentative") or 1) + 1
+        reprise_de = deja
+        deja = None
     if deja:
         logger.info("%s envoi deja engage pour %s (%s)", P3AI4_PREFIXE,
                     message.get("recipient_key") or "-", deja.get("send_status"))
@@ -33628,7 +33834,22 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
     # LA RESERVATION EST UNE INSERTION UNIQUE, donc atomique : deux requetes
     # concurrentes ne peuvent pas la gagner toutes les deux.
     try:
-        await db[P3AI4_COLLECTION].insert_one(dict(trace))
+        if tentative == 1:
+            await db[P3AI4_COLLECTION].insert_one(dict(trace))
+        else:   # V608 : reprise CONDITIONNELLE de la meme trace (un seul gagnant si double clic)
+            repris = await db[P3AI4_COLLECTION].update_one(
+                {"id": cle, "send_status": reprise_de.get("send_status"),
+                 "tentative": reprise_de.get("tentative"), "provider_status": reprise_de.get("provider_status")},
+                {"$set": dict({k: trace[k] for k in ("approved_text", "approved_at", "approved_by", "to_email",
+                                                     "subject", "intention")},
+                              send_status=P3AI4_RESERVE, tentative=tentative, provider_status=None,
+                              provider_message_id=None, error_code=None, sent_at=None, updated_at=maintenant),
+                 "$push": {"tentatives_precedentes": {
+                     k: reprise_de.get(k) for k in ("send_status", "provider_status", "provider_message_id",
+                                                    "error_code", "provider_raison", "sent_at", "tentative")}}})
+            if not getattr(repris, "matched_count", 0):
+                return {"deja_envoye": True, "envoi": await db[P3AI4_COLLECTION].find_one({"id": cle}, {"_id": 0}),
+                        "statut_commercial": await p3n_statut_courant(message)}
     except Exception as e:  # noqa: BLE001
         if "E11000" in str(e) or "duplicate" in str(e).lower():
             deja = await db[P3AI4_COLLECTION].find_one({"id": cle}, {"_id": 0})
@@ -33650,7 +33871,7 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
         "texte": texte,
         "reply_to": p3r1_adresse_reponse(jeton) if jeton else None,
         "entetes": p3ai4_entetes(message, action),
-        "cle": cle,
+        "cle": cle if tentative == 1 else "%s-t%d" % (cle, tentative),
     }
     fournisseur = P3AI4FournisseurReponse(envoi_autorise=autorise)
     resultat = await fournisseur.envoyer(envoi)
@@ -33661,6 +33882,13 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
               "updated_at": datetime.now(timezone.utc).isoformat()}
     if resultat["verdict"] == P3AI4_ENVOYE:
         champs["sent_at"] = champs["updated_at"]
+        # V608 : `envoye` reste le statut INTERNE (anti-doublon) ; la REMISE se lit dans
+        # `provider_status` (accepted -> delivered / failed / bounced, par le webhook).
+        champs["provider_status"] = "accepted"
+        champs["suivi_livraison"] = True
+    if resultat.get("error_code") == "QUOTA_RESEND":
+        champs["provider_status"] = "bloque_quota"
+        champs["provider_raison"] = resultat.get("error_message")
     await db[P3AI4_COLLECTION].update_one({"id": cle}, {"$set": champs})
 
     # L'ETAT COMMERCIAL NE BOUGE QUE SUR UN SUCCES PROUVE, et il passe par la
@@ -33675,8 +33903,10 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
             "prospect_uuid": trace["prospect_uuid"],
             "recipient_key": message.get("recipient_key"),
             "type": "information",
-            "texte": "Réponse Afroboost envoyée à %s." % (trace["organisation"] or destinataire),
-            "status_after": p3ai4_statut_apres(brouillon.get("intention")),
+            # V608 : ACCEPTEE par Resend n'est pas REMISE. Le statut commercial ne
+            # change qu'a la remise confirmee (note posee par le webhook `delivered`).
+            "texte": "Réponse soumise à Resend pour %s — en attente de remise." % (trace["organisation"] or destinataire),
+            "status_after": None,
             "occurred_at": champs["updated_at"], "created_at": champs["updated_at"],
             "created_by": email, "corrige_note_id": None,
             # Elle raconte NOTRE geste, pas une information nouvelle sur le
@@ -33720,7 +33950,8 @@ async def p3ai4_apercu(inbound_id: str, request: Request):
     flags = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
     deja = await db[P3AI4_COLLECTION].find_one(
         {"id": p3ai4_cle_envoi(message["id"], p3ai4_empreinte(texte))},
-        {"_id": 0, "send_status": 1, "sent_at": 1})
+        {"_id": 0, "send_status": 1, "sent_at": 1, "provider_status": 1, "error_code": 1,
+         "provider_raison": 1, "tentative": 1})
     return {
         "organisation": p3ai_organisation(action),
         "destinataire": destinataire,
@@ -33734,7 +33965,11 @@ async def p3ai4_apercu(inbound_id: str, request: Request):
         "statut_commercial": await p3n_statut_courant(message),
         "contexte_obsolete": p3n_contexte_obsolete(brouillon, notes),
         "envoi_possible": p3ai4_envoi_autorise(flags),
-        "deja_envoye": bool(deja and deja.get("send_status") == P3AI4_ENVOYE),
+        # V608 : un envoi « failed » (ou bloque avant Resend) n'est PAS un envoi fait.
+        "deja_envoye": bool(deja and deja.get("send_status") == P3AI4_ENVOYE
+                            and not v608_reessai_permis(deja)),
+        "reessai": bool(deja and v608_reessai_permis(deja)),
+        "dernier_etat": v608_etat_envoi(deja) if deja else None,
         "fil_rattache": bool(p3ai4_entetes(message, action)),
     }
 
@@ -33986,15 +34221,27 @@ async def pf_charger(email: str, statuts: dict, filtre_statut: str = "") -> dict
     # LA TRACE D'ENVOI LA PLUS RECENTE PAR FIL. On garde le dernier envoi
     # REUSSI : un envoi reserve puis refuse par le fournisseur n'est pas une
     # reponse partie, et l'annoncer comme telle serait le pire des mensonges.
-    envois = {}
+    envois, suivis = {}, {}
     for trace in await db[P3AI4_COLLECTION].find(
-            {**portee, "send_status": P3AI4_ENVOYE},
-            {"_id": 0, "action_id": 1, "inbound_id": 1, "sent_at": 1,
-             "to_email": 1, "subject": 1}).to_list(PF_PORTEE_MAX):
+            {**portee},
+            {"_id": 0, "action_id": 1, "inbound_id": 1, "sent_at": 1, "updated_at": 1,
+             "created_at": 1, "to_email": 1, "subject": 1, "send_status": 1,
+             "provider_status": 1, "provider_raison": 1, "error_code": 1,
+             "suivi_livraison": 1, "delivered_at": 1}).to_list(PF_PORTEE_MAX):
         cle = str(trace.get("action_id") or "").strip() \
             or ("inbound:%s" % str(trace.get("inbound_id") or ""))
-        if pf_instant(trace.get("sent_at")) >= pf_instant((envois.get(cle) or {}).get("sent_at")):
+        # V608 : une reponse ne compte comme PARTIE que si elle est REMISE (suivie)
+        # ou historique (avant le suivi : `envoye` seul, comportement inchange).
+        partie = trace.get("send_status") == P3AI4_ENVOYE and (
+            not trace.get("suivi_livraison") or trace.get("provider_status") == "delivered")
+        if partie and pf_instant(trace.get("sent_at")) >= pf_instant((envois.get(cle) or {}).get("sent_at")):
             envois[cle] = trace
+        if trace.get("suivi_livraison") or trace.get("send_status") in (P3AI4_ECHEC, P3AI4_RESERVE, P3AI4_INDETERMINE):
+            quand = trace.get("updated_at") or trace.get("sent_at") or trace.get("created_at")
+            if pf_instant(quand) >= pf_instant((suivis.get(cle) or {}).get("quand")):
+                suivis[cle] = {"quand": quand, "etat": v608_etat_envoi(trace),
+                               "raison": trace.get("provider_raison") or trace.get("error_code"),
+                               "sent_at": trace.get("sent_at")}
 
     identifiants = [m["id"] for m in messages if m.get("id")]
     intentions = {}
@@ -34004,6 +34251,8 @@ async def pf_charger(email: str, statuts: dict, filtre_statut: str = "") -> dict
         intentions[brouillon["inbound_id"]] = brouillon.get("intention")
 
     conversations = pf_conversations(messages, actions, envois, statuts, intentions)
+    for _c in conversations:   # V608 : le dernier envoi SUIVI (en cours, remis, echec, quota, rebond)
+        _c["envoi_suivi"] = suivis.get(_c.get("cle"))
     try:
         await v605_agenda_des_conversations(conversations)   # V605 : RDV + rappel visibles
     except Exception as _e605:  # noqa: BLE001
@@ -43307,7 +43556,7 @@ async def rv2_envoyer_email_rappel(destinataire: str, prenom: str, course_name: 
     _sujet, _html, _texte = _rendu(prenom, course_name, date_lisible,
                                    heure, accent, lieu, lieu_maps, lien_espace)
     try:
-        await asyncio.to_thread(resend.Emails.send, {
+        await asyncio.to_thread(_rc.emails("server:rv2_envoyer_email_rappel", critique=False, sdk=resend).send, {
             "from": "Afroboost <notifications@afroboost.com>",
             "to": [destinataire],
             "reply_to": RV2_REPLY_TO,
@@ -45844,6 +46093,63 @@ async def v604_passage_relances(maintenant: datetime = None) -> dict:
     return bilan
 
 
+# V608 — RÉCONCILIATION DU QUOTA AVEC LE COMPTE RESEND (tous services confondus).
+# Toutes les 10 min : le nombre d'e-mails du COMPTE sur 24 h devient un PLANCHER du
+# compteur Afroboost (il ne peut que le relever). Lecture seule chez Resend.
+V608_RECONCILIATION_S = 600
+
+
+async def _v608_boucle_reconciliation():
+    await asyncio.sleep(RV3B_DEMARRAGE_S)
+    while True:
+        try:
+            if os.environ.get("RESEND_API_KEY"):
+                await asyncio.to_thread(_rc.reconcilier_avec_resend)
+                _etat = await asyncio.to_thread(_rc.etat)
+                if _etat.get("plan_insuffisant"):
+                    logger.warning("[V608] PLAN RESEND INSUFFISANT : demande %s sur 24 h pour %s autorisés",
+                                   _etat.get("demande_24h"), _etat.get("limite"))
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("[V608] réconciliation Resend ignorée (%s)", type(_err).__name__)
+        await asyncio.sleep(V608_RECONCILIATION_S)
+
+
+@api_router.get("/admin/resend/etat")
+async def v608_etat_resend(request: Request):
+    """Super-admin signé : quota (24 h glissantes), plancher du compte Resend, blocages,
+    diagnostic « plan insuffisant ». Lecture seule ; aucune clé n'est exposée."""
+    from api.routes.shared import super_admin_signe as _v608_sa
+    if not _v608_sa(request):
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    return await asyncio.to_thread(_rc.etat)
+
+
+@api_router.put("/admin/resend/reglages")
+async def v608_reglages_resend(request: Request):
+    """Super-admin signé UNIQUEMENT : « Limiter les envois Resend » ON/OFF, limite, seuil.
+    Persistant en base ; effet immédiat (relu à chaque envoi), sans code ni redéploiement.
+    OFF ne coupe QUE le garde-fou Afroboost : le suivi de remise continue, et les limites
+    du compte Resend restent applicables."""
+    from api.routes.shared import super_admin_signe as _v608_sa
+    appelant = _v608_sa(request)
+    if not appelant:
+        raise HTTPException(status_code=403, detail="Super-admin signé requis")
+    try:
+        corps = await request.json()
+    except Exception:  # noqa: BLE001
+        corps = None
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requête invalide")
+    try:
+        reg = await asyncio.to_thread(_rc.enregistrer_reglages, corps.get("actif"), corps.get("limite"),
+                                      corps.get("seuil"), appelant)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.warning("[V608] réglage Resend modifié par %s : limitation=%s limite=%s seuil=%s",
+                   appelant[:24], reg["actif"], reg["limite"], reg["seuil"])
+    return {"reglages": reg, "etat": await asyncio.to_thread(_rc.etat)}
+
+
 async def _v604_boucle_relances():
     await asyncio.sleep(RV3B_DEMARRAGE_S + 30)
     while True:
@@ -45908,7 +46214,7 @@ async def send_backup_email(participant_id: str, message_preview: str):
         }
         
         # Appel non-bloquant
-        email_result = await asyncio.to_thread(resend.Emails.send, params)
+        email_result = await asyncio.to_thread(_rc.emails("server:send_backup_email", critique=False, sdk=resend).send, params)
         logger.info(f"Backup email sent to {email}: {email_result}")
         return True
     except Exception as e:
@@ -46206,7 +46512,7 @@ async def notify_coach_new_message(participant_name: str, message_preview: str, 
             "html": html_content
         }
         
-        email_result = await asyncio.to_thread(resend.Emails.send, params)
+        email_result = await asyncio.to_thread(_rc.emails("server:notify_coach_new_message", critique=False, sdk=resend).send, params)
         logger.info(f"Coach notification email sent: {email_result}")
         return True
     except Exception as e:
@@ -46468,7 +46774,7 @@ Clique sur le bouton ci-dessous pour la découvrir.
             "html": html_content
         }
         
-        email_result = await asyncio.to_thread(resend.Emails.send, params)
+        email_result = await asyncio.to_thread(_rc.emails("server:send_campaign_email", critique=False, sdk=resend).send, params)
         logger.info(f"Campaign email sent to {to_email}: {email_result}")
         return {"success": True, "email_id": email_result.get("id"), "to": to_email}
     except Exception as e:
@@ -46594,7 +46900,7 @@ async def send_bulk_campaign_email(request: Request, background_tasks: Backgroun
                     "html": html_content
                 }
                 
-                await asyncio.to_thread(resend.Emails.send, params)
+                await asyncio.to_thread(_rc.emails("server:send_emails_background", critique=False, sdk=resend).send, params)
                 results["sent"] += 1
                 
                 # Déduire le crédit
@@ -47653,7 +47959,7 @@ async def p1b_envoyer_email(destinataire: str, sujet: str, html: str, texte: str
         logger.info("%s Resend non configure — aucune relance envoyee", P1B_PREFIXE)
         return False
     try:
-        await asyncio.to_thread(resend.Emails.send, {
+        await asyncio.to_thread(_rc.emails("server:p1b_envoyer_email", critique=False, sdk=resend).send, {
             "from": "Afroboost <notifications@afroboost.com>",
             "to": [destinataire],
             "reply_to": RV2_REPLY_TO,
@@ -49710,7 +50016,7 @@ async def send_expiry_reminder_email(coach_email: str, offer_name: str, days_rem
     try:
         import resend as resend_lib
         resend_lib.api_key = RESEND_API_KEY
-        resend_lib.Emails.send({"from": "Afroboost <notifications@afroboost.com>", "to": coach_email, "subject": subject, "html": html})
+        _rc.emails("server:send_expiry_reminder_email", critique=False, sdk=resend_lib).send({"from": "Afroboost <notifications@afroboost.com>", "to": coach_email, "subject": subject, "html": html})
         logger.info(f"[EXPIRY] ✅ Rappel J-{days_remaining} envoyé à {coach_email}")
     except Exception as e:
         logger.error(f"[EXPIRY] ❌ Email J-{days_remaining} échoué: {e}")
@@ -49743,7 +50049,7 @@ async def send_prolongation_email(coach_email: str, offer_name: str):
     try:
         import resend as resend_lib
         resend_lib.api_key = RESEND_API_KEY
-        resend_lib.Emails.send({"from": "Afroboost <notifications@afroboost.com>", "to": coach_email, "subject": subject, "html": html})
+        _rc.emails("server:send_prolongation_email", critique=False, sdk=resend_lib).send({"from": "Afroboost <notifications@afroboost.com>", "to": coach_email, "subject": subject, "html": html})
         logger.info(f"[EXPIRY] ✅ Email prolongation envoyé à {coach_email}")
     except Exception as e:
         logger.error(f"[EXPIRY] ❌ Email prolongation échoué: {e}")
@@ -49770,7 +50076,7 @@ async def send_expired_no_credits_email(coach_email: str, offer_name: str):
     try:
         import resend as resend_lib
         resend_lib.api_key = RESEND_API_KEY
-        resend_lib.Emails.send({"from": "Afroboost <notifications@afroboost.com>", "to": coach_email, "subject": subject, "html": html})
+        _rc.emails("server:send_expired_no_credits_email", critique=False, sdk=resend_lib).send({"from": "Afroboost <notifications@afroboost.com>", "to": coach_email, "subject": subject, "html": html})
         logger.info(f"[EXPIRY] ✅ Email offre expirée (pas de crédits) envoyé à {coach_email}")
     except Exception as e:
         logger.error(f"[EXPIRY] ❌ Email expirée échoué: {e}")
@@ -51435,7 +51741,7 @@ async def b3s1_demander_otp(request: Request):
             # `resend.api_key` est deja pose au chargement (server.py:87).
             if RESEND_AVAILABLE and RESEND_API_KEY:
                 import resend as _r
-                _rep = await asyncio.to_thread(_r.Emails.send, {
+                _rep = await asyncio.to_thread(_rc.emails("server:b3s1_demander_otp", critique=True, sdk=_r).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [_enregistre],
                     "subject": "Ton code de vérification Afroboost",
@@ -51633,7 +51939,7 @@ async def forgot_staff_code(request: Request):
     </div>
     """
     try:
-        await asyncio.to_thread(resend.Emails.send, {
+        await asyncio.to_thread(_rc.emails("server:forgot_staff_code", critique=True, sdk=resend).send, {
             "from": "Afroboost <notifications@afroboost.com>",
             "to": [email],
             "subject": "Votre code Staff Afroboost",
@@ -53779,6 +54085,7 @@ async def _v307_resolve_jwt_secret():
 @fastapi_app.on_event("startup")
 async def startup_db():
     """Initialize database indexes on startup (APScheduler disabled in Vercel Serverless)."""
+    _rc.activer()   # V608 : quota + journal Resend actifs AVANT tout envoi servi
     logger.info("[SYSTEM] Starting Afroboost API...")
 
     # V307 : résoudre le secret d'auth AVANT toute requête (Coolify ne l'injecte pas).
@@ -54155,6 +54462,8 @@ async def startup_db():
         asyncio.create_task(_rv3b_boucle_rappels())
         # V604 : horloge des relances prospection — dormante (3 verrous).
         asyncio.create_task(_v604_boucle_relances())
+        # V608 : plancher de quota tiré du compte Resend (lecture seule, 10 min).
+        asyncio.create_task(_v608_boucle_reconciliation())
         logger.info("[P1-d] Boucle de relance J+3 demarree (1 h) — drapeau relu a chaque passage")
         logger.info("%s Boucle des rappels avant cours demarree (%d s)",
                     RV3B_PREFIXE, RV3B_PERIODE_S)

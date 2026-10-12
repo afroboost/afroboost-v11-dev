@@ -69,10 +69,28 @@ export function attendUneAction(conversation) {
 export function etatReponse(conversation) {
   const c = conversation || {};
   const envoi = c.derniere_reponse_afroboost || null;
+  // V608 — le DERNIER envoi suivi, s'il est plus récent que la dernière réponse REMISE :
+  // accepté ≠ remis ; un échec, un quota ou un rebond laissent la conversation « à répondre ».
+  const suivi = c.envoi_suivi || null;
+  if (suivi && suivi.etat !== 'remis' && (!envoi || String(suivi.quand || '') > String(envoi.sent_at || ''))) {
+    const raison = suivi.raison && suivi.etat === 'echec' ? ` (${String(suivi.raison).slice(0, 80)})` : '';
+    const TEXTES = {
+      envoi_en_cours: { code: 'en_cours', texte: 'Envoi en cours — remise pas encore confirmée' },
+      en_preparation: { code: 'en_cours', texte: 'Envoi en préparation' },
+      indetermine: { code: 'a_repondre', texte: 'Envoi incertain — vérifier avant de réessayer' },
+      echec: { code: 'a_repondre', texte: `Échec d\u2019envoi${raison} — la réponse n\u2019est pas partie`, reessai: true },
+      quota: { code: 'a_repondre', texte: 'Non envoyé — quota Resend atteint', reessai: true },
+      rebond: { code: 'a_repondre', texte: 'Rebond — l\u2019adresse n\u2019a pas reçu la réponse' },
+      plainte: { code: 'a_repondre', texte: 'Plainte / spam signalée par le destinataire' },
+    };
+    if (TEXTES[suivi.etat]) return TEXTES[suivi.etat];
+  }
   if (c.reponse_apres_dernier_message && envoi && envoi.sent_at) {
     return {
       code: 'envoyee',
-      texte: `Réponse Afroboost envoyée le ${jourHeure(envoi.sent_at)}`,
+      texte: suivi && suivi.etat === 'remis'
+        ? `Réponse Afroboost remise le ${jourHeure(envoi.sent_at)}`
+        : `Réponse Afroboost envoyée le ${jourHeure(envoi.sent_at)}`,
     };
   }
   if (attendUneAction(c)) {

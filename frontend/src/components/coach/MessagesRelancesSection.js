@@ -62,6 +62,9 @@ const TONS = {
   stoppe: { fond: 'rgba(255,255,255,0.07)', bord: 'rgba(255,255,255,0.2)', texte: 'rgba(255,255,255,0.7)' },
   manuel: { fond: 'rgba(255,255,255,0.06)', bord: 'rgba(255,255,255,0.26)', texte: 'rgba(255,255,255,0.85)' },
   envoye: { fond: `rgba(${RGB}, 0.14)`, bord: `rgba(${RGB}, 0.45)`, texte: PRIMAIRE_LISIBLE },
+  remis: { fond: 'rgba(34,197,94,0.18)', bord: 'rgba(34,197,94,0.45)', texte: VERT },   // V608
+  en_cours: { fond: 'rgba(255,255,255,0.06)', bord: `rgba(${RGB}, 0.4)`, texte: TEXTE },
+  echec: { fond: 'rgba(239,68,68,0.18)', bord: 'rgba(239,68,68,0.45)', texte: ROUGE },
   prevu: { fond: 'rgba(255,255,255,0.06)', bord: `rgba(${RGB}, 0.4)`, texte: TEXTE },
   a_envoyer: { fond: 'rgba(255,255,255,0.06)', bord: `rgba(${RGB}, 0.4)`, texte: TEXTE },
   sans_objet: { fond: 'transparent', bord: 'rgba(255,255,255,0.10)', texte: 'rgba(255,255,255,0.45)' },
@@ -292,14 +295,17 @@ function DetailEtape({ e }) {
       <summary style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', listStyle: 'none' }}>
         <strong style={{ fontSize: '13px' }}>{nom}</strong>
         <span style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '11px', color: DOUX }}>
-          {e.date_envoi ? `envoyé ${dateCourte(e.date_envoi)}` : e.date_prevue ? `prévu ${dateCourte(e.date_prevue)}` : ''}
-          <Pastille etat={e.etat}>{e.etat === ETATS.EN_RETARD ? `En retard · ${e.retard_jours} j` : undefined}</Pastille>
+          {e.date_envoi ? `soumis ${dateCourte(e.date_envoi)}` : e.date_prevue ? `prévu ${dateCourte(e.date_prevue)}` : ''}
+          {/* V608 : un envoi suivi affiche sa REMISE (Remis / Envoi en cours / Échec), jamais « remis » à l'acceptation. */}
+          <Pastille etat={e.livraison ? e.livraison.code : e.etat} testid={e.livraison ? `mr-livraison-${e.etape}` : undefined}>
+            {e.livraison ? e.livraison.libelle : (e.etat === ETATS.EN_RETARD ? `En retard · ${e.retard_jours} j` : undefined)}
+          </Pastille>
         </span>
       </summary>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px', fontSize: '12.5px' }}>
         <div style={{ color: DOUX }}>Canal : <span style={{ color: TEXTE }}>{libelleCanal(e.canal)}</span>
           {' · '}Prévu : <span style={{ color: TEXTE }}>{dateCourte(e.date_prevue)}</span>
-          {' · '}Envoyé : <span style={{ color: TEXTE }}>{dateCourte(e.date_envoi)}</span>
+          {' · '}Soumis : <span style={{ color: TEXTE }}>{dateCourte(e.date_envoi)}</span>
           {e.date_annulation ? <> · Annulé : <span style={{ color: TEXTE }}>{dateCourte(e.date_annulation)}</span></> : null}</div>
         {e.motif && <div style={{ color: DOUX }}>{e.motif}</div>}
         {e.objet && <div style={{ color: DOUX }}>Objet : <span style={{ color: TEXTE }}>{e.objet}</span></div>}

@@ -5,6 +5,7 @@ Supporte: MTN Money, Orange Money, Moov Money, Airtel Money
 Couverture: 10 pays francophones d'Afrique
 """
 import os
+import api.resend_central as _rc  # V608 : point d'envoi Resend unique
 import httpx
 import logging
 import uuid
@@ -572,7 +573,7 @@ async def register_free_pack(request: RegisterFreePackRequest, response: Respons
 
                 # Email au Super Admin
                 admin_email = "contact.artboost@gmail.com"
-                await asyncio.to_thread(resend.Emails.send, {
+                await asyncio.to_thread(_rc.emails("cinetpay_routes:register_free_pack", critique=True, sdk=resend).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [admin_email],
                     "subject": f"🎉 Nouveau Partenaire Gratuit ! {name} ({email})",
@@ -591,7 +592,7 @@ async def register_free_pack(request: RegisterFreePackRequest, response: Respons
                 })
 
                 # Email au nouveau partenaire
-                await asyncio.to_thread(resend.Emails.send, {
+                await asyncio.to_thread(_rc.emails("cinetpay_routes:register_free_pack", critique=True, sdk=resend).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [email],
                     "subject": "🎊 Bienvenue Partenaire Afroboost !",
@@ -779,7 +780,7 @@ async def cinetpay_webhook(request: Request):
                 primary_rgb = hex_to_rgb_triplet(primary_color)
 
                 # Email au Super Admin
-                await asyncio.to_thread(resend.Emails.send, {
+                await asyncio.to_thread(_rc.emails("cinetpay_routes:cinetpay_webhook", critique=True, sdk=resend).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": ["contact.artboost@gmail.com"],
                     "subject": f"🎉 Nouveau Partenaire ! {customer_name} ({coach_email})",
@@ -799,7 +800,7 @@ async def cinetpay_webhook(request: Request):
                 })
 
                 # Email au nouveau partenaire
-                await asyncio.to_thread(resend.Emails.send, {
+                await asyncio.to_thread(_rc.emails("cinetpay_routes:cinetpay_webhook", critique=True, sdk=resend).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [coach_email],
                     "subject": "🎊 Bienvenue Partenaire Afroboost !",
@@ -879,7 +880,7 @@ async def cinetpay_webhook(request: Request):
 
                     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://afroboost.com/?qr={access_code}"
 
-                    await asyncio.to_thread(resend.Emails.send, {
+                    await asyncio.to_thread(_rc.emails("cinetpay_routes:cinetpay_webhook", critique=True, sdk=resend).send, {
                         "from": "Afroboost <notifications@afroboost.com>",
                         "to": [customer_email],
                         "subject": f"Votre accès Afroboost - {access_code}",
@@ -904,7 +905,7 @@ async def cinetpay_webhook(request: Request):
                     })
 
                     # Notifier le Super Admin
-                    await asyncio.to_thread(resend.Emails.send, {
+                    await asyncio.to_thread(_rc.emails("cinetpay_routes:cinetpay_webhook", critique=True, sdk=resend).send, {
                         "from": "Afroboost <notifications@afroboost.com>",
                         "to": ["contact.artboost@gmail.com"],
                         "subject": f"💰 Nouvelle vente ! {local_tx.get('customer_name', '')} - {amount} {currency}",

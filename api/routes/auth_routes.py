@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 import uuid
+import api.resend_central as _rc  # V608 : point d'envoi Resend unique
 import logging
 import httpx
 import hashlib
@@ -689,7 +690,7 @@ async def super_admin_setup(request: Request):
                 <p style="margin:0;color:#9ca3af;font-size:12px;">Si vous n'êtes pas à l'origine de cette demande, ignorez cet email : personne d'autre ne peut l'utiliser.</p>
             </div>
             """
-            await asyncio.to_thread(resend.Emails.send, {
+            await asyncio.to_thread(_rc.emails("auth_routes:super_admin_setup", critique=True, sdk=resend).send, {
                 "from": "Afroboost <notifications@afroboost.com>",
                 "to": [email],
                 "subject": "Définir votre mot de passe administrateur Afroboost",
@@ -786,7 +787,7 @@ async def forgot_password(user_data: ForgotPasswordRequest):
                 </div>
                 """
 
-                await asyncio.to_thread(resend.Emails.send, {
+                await asyncio.to_thread(_rc.emails("auth_routes:forgot_password", critique=True, sdk=resend).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [email],
                     "subject": "Réinitialiser votre mot de passe Afroboost",

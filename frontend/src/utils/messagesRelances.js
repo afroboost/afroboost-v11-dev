@@ -39,7 +39,7 @@ export const LIBELLES_ETAT = {
   a_envoyer: 'À envoyer',
   prevu: 'Prévu',
   en_retard: 'En retard',
-  envoye: 'Envoyé',
+  envoye: 'Soumis',   // V608 : accepté par Resend ≠ remis (la remise s'affiche à part)
   repondu: 'Répondu',
   stoppe: 'Stoppé',
   rebond: 'Rebond',
@@ -124,6 +124,18 @@ export function organisationDe(action, conversation) {
   return texte((conversation || {}).organisation) || texte(a.recipient_key) || '—';
 }
 
+/** V608 — la REMISE d'un envoi suivi (accepté ≠ remis). `null` = envoi historique non suivi. */
+export function livraisonDe(statut, suivi, raison) {
+  if (!suivi) return null;
+  const s = texte(statut).toLowerCase();
+  if (s === 'delivered') return { code: 'remis', libelle: 'Remis' };
+  if (s === 'bloque_quota' || (s === 'failed' && /quota/i.test(texte(raison)))) return { code: 'echec', libelle: 'Non envoyé — quota Resend atteint' };
+  if (s === 'failed') return { code: 'echec', libelle: 'Échec d\u2019envoi' };
+  if (s === 'complained') return { code: 'echec', libelle: 'Plainte / spam' };
+  if (s === 'bounced') return { code: 'rebond', libelle: 'Rebond' };
+  return { code: 'en_cours', libelle: 'Envoi en cours' };
+}
+
 function estRebondPermanent(a) { return texte(a.bounce_type).toLowerCase() === 'permanent'; }
 function estRefus(conv) { return !!conv && texte(conv.statut_commercial) === 'refus'; }
 function aRepondu(a, conv) { return !!a.replied_at || !!(conv && (conv.nb_messages || 0) > 0); }
@@ -148,7 +160,7 @@ export function etapeJ0(action, campagne) {
           : `Rebond temporaire (${texte(a.bounce_type)}) : non bloquant`,
       };
     }
-    return { ...base, etat: ETATS.ENVOYE };
+    return { ...base, etat: ETATS.ENVOYE, livraison: livraisonDe(a.provider_status, a.suivi_livraison, a.provider_raison) };
   }
   if (texte(a.statut) === 'exclu') return { ...base, etat: ETATS.STOPPE, motif: 'Exclu de la campagne' };
   if (texte(a.statut) === 'bloque' || texte(a.execution_type) === 'BLOQUE') {
@@ -181,7 +193,10 @@ export function etapeRelance(action, campagne, etape, conversation, maintenant) 
     return { ...base, etat: ETATS.SANS_OBJET,
       motif: estAutomatique(a) ? 'Après le J0' : 'Aucune relance automatique sur ce canal' };
   }
-  if (a[`${etape}_sent_at`]) return { ...base, etat: ETATS.ENVOYE };
+  if (a[`${etape}_sent_at`]) {
+    return { ...base, etat: ETATS.ENVOYE,
+      livraison: livraisonDe(a[`${etape}_provider_status`], !!a[`${etape}_provider_status`], a[`${etape}_provider_raison`]) };
+  }
 
   const annule = a[`${etape}_annule_le`];
   if (annule) {

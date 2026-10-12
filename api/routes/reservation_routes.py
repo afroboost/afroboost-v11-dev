@@ -1,5 +1,6 @@
 # reservation_routes.py - Routes réservations v9.5.8 → v96: Email confirmation → v158: AFRO-XXXX + WhatsApp + i18n
 import re  # V310 : disponible au niveau module pour re.escape (anti-injection regex)
+import api.resend_central as _rc  # V608 : point d'envoi Resend unique
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -482,7 +483,7 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
     </div>"""
 
     try:
-        await asyncio.to_thread(resend.Emails.send, {
+        await asyncio.to_thread(_rc.emails("reservation_routes:_send_reservation_email", critique=True, sdk=resend).send, {
             "from": "Afroboost <notifications@afroboost.com>",
             "to": [user_email],
             "subject": f"{t['subject']} — {res_code}",
@@ -588,7 +589,7 @@ async def _send_coach_reservation_email(coach_email: str, reservation: dict) -> 
 
     _url = (os.environ.get("FRONTEND_URL") or "https://afroboost.com").rstrip("/")
     try:
-        await asyncio.to_thread(resend.Emails.send, {
+        await asyncio.to_thread(_rc.emails("reservation_routes:_send_coach_reservation_email", critique=False, sdk=resend).send, {
             "from": "Afroboost <notifications@afroboost.com>",
             "to": [_dest],
             "subject": f"Nouvelle réservation Afroboost — {reservation.get('courseName') or reservation.get('offerName') or 'séance'}",
@@ -2072,7 +2073,7 @@ async def delete_reservation(reservation_id: str, request: Request):
         if _RESEND_OK and _RESEND_KEY:
             import resend as _resend_lib
             _resend_lib.api_key = _RESEND_KEY
-            await asyncio.to_thread(_resend_lib.Emails.send, {
+            await asyncio.to_thread(_rc.emails("reservation_routes:delete_reservation", critique=True, sdk=_resend_lib).send, {
                 "from": "Afroboost <notifications@afroboost.com>",
                 "to": [SUPER_ADMIN_EMAIL],
                 "subject": f"❌ Annulation: {user_name} - {course_name}",

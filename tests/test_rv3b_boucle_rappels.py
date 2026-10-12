@@ -29,6 +29,13 @@ même à 07:00 » ne serait testable qu'entre 06:30 et 07:30, une fois par jour.
 Aucun réseau. Aucun e-mail. Aucun push. Aucune base réelle.
     python3 tests/test_rv3b_boucle_rappels.py
 """
+try:   # V608 : le point d'envoi Resend unique, visible aussi des fonctions EXTRAITES du serveur
+    import builtins as _b608, os as _o608, sys as _s608
+    _s608.path.insert(0, _o608.path.dirname(_o608.path.dirname(_o608.path.abspath(__file__))))
+    import api.resend_central as _rc608
+    _b608._rc = _rc608
+except Exception:  # noqa: BLE001
+    pass
 import asyncio
 import io
 import os

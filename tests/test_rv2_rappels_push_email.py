@@ -13,6 +13,13 @@ compteur participe au verdict final.
 Lancement :  python3 tests/test_rv2_rappels_push_email.py
 """
 
+try:   # V608 : le point d'envoi Resend unique, visible aussi des fonctions EXTRAITES du serveur
+    import builtins as _b608, os as _o608, sys as _s608
+    _s608.path.insert(0, _o608.path.dirname(_o608.path.dirname(_o608.path.abspath(__file__))))
+    import api.resend_central as _rc608
+    _b608._rc = _rc608
+except Exception:  # noqa: BLE001
+    pass
 import ast
 import asyncio
 import io
@@ -1186,7 +1193,8 @@ def structure():
              "reply_to" in nu_envoi and "'html'" in nu_envoi.replace('"', "'")
              and "'text'" in nu_envoi.replace('"', "'"), nu_envoi[:200])
     verifier("S6b. il reutilise le transport existant, sans nouveau moteur",
-             "resend.Emails.send" in nu_envoi and "asyncio.to_thread" in nu_envoi)
+             ("resend.Emails.send" in nu_envoi or "_rc.emails(" in nu_envoi)   # V608 : point unique
+             and "asyncio.to_thread" in nu_envoi)
     verifier("S6c. sans cle Resend, il ne tente rien",
              "RESEND_API_KEY" in nu_envoi and "RESEND_AVAILABLE" in nu_envoi)
 
@@ -1248,8 +1256,9 @@ def structure():
         elif isinstance(n, ast.ImportFrom) and n.module:
             mods.add(n.module.split(".")[0])
     verifier("S11. ce test n'importe que la bibliotheque standard hors reseau",
+             # V608 : `builtins` + `api.resend_central` (point d'envoi, aucun reseau a l'import)
              mods <= {"ast", "asyncio", "io", "os", "re", "subprocess", "sys",
-                      "datetime", "zoneinfo", "copy"}, str(sorted(mods)))
+                      "datetime", "zoneinfo", "copy", "builtins", "api"}, str(sorted(mods)))
     verifier("S11b. ni resend, ni pywebpush, ni pymongo, ni client HTTP",
              not (mods & {"resend", "pywebpush", "pymongo", "requests",
                           "httpx", "socket", "urllib"}), str(sorted(mods)))

@@ -9,6 +9,7 @@ import CockpitGlobal from "./CockpitGlobal"; // V334 etape 4
 import AnalyticsCockpit from "./analytics/AnalyticsCockpit"; // ANALYTICS phase 1
 import BilanAssociation from "./analytics/BilanAssociation"; // ANALYTICS phase 3 : bilan Association + exports
 import AdminCreateurs from "./createur/AdminCreateurs"; // V559 : Créateurs / Affiliation
+import ResendSecurite from "./ResendSecurite"; // V608 : limitation des envois Resend (ON/OFF, limite, seuil)
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -408,6 +409,8 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
             {chaineError ? (
               <p style={{ color: '#ef4444', fontSize: '11px', margin: '6px 0 0' }}>{chaineError}</p>
             ) : null}
+            {/* V608 : Resend — Sécurité des envois (super-admin) */}
+            <ResendSecurite API={API} />
           </div>
 
           {/* Tabs - v12.1: Ajout onglet Tarifs */}

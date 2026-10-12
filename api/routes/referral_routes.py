@@ -30,6 +30,7 @@ join sans présence neutralise l'ancien octroi puis re-octroie par le MÊME
 chemin que le join (`_octroyer_essai` -> `_reserver_ami`).
 """
 import asyncio
+import api.resend_central as _rc  # V608 : point d'envoi Resend unique
 import logging
 import os
 import re
@@ -833,7 +834,7 @@ async def _email_parrain_debloque(pass_doc) -> bool:
                (" (%s)" % _lieu) if _lieu else "", _lien, _esc(_couleur, quote=True))
         )
         resend.api_key = _key
-        await asyncio.to_thread(resend.Emails.send, {
+        await asyncio.to_thread(_rc.emails("referral_routes:_email_parrain_debloque", critique=False, sdk=resend).send, {
             "from": "Afroboost <notifications@afroboost.com>",
             "to": [_sp.get("email_norm")],
             "subject": "Pass Duo débloqué : vos deux places sont réservées",
