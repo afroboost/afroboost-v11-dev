@@ -29,6 +29,7 @@ import {
 import { stylesLecteur, normaliserRatio, ratioDepuisDimensions } from '../utils/videoRatio';
 import { mediaPrincipal } from '../utils/mediaOffre';
 import { trimDeLOffre, useTrimVideo } from '../utils/videoTrim';
+import AccesMembreEvenement from './AccesMembreEvenement'; // V610b
 
 // V610 : « mercredi 28 octobre · 18h45 » — la date de l'événement (compte à rebours de l'offre).
 function v610QuandOffre(o) {
@@ -471,9 +472,8 @@ export function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, c
           <LigneFiche icone="users" libelle="Pour qui" valeur={fiche.pourQui} />
         </div>
         {offre && offre.gratuit_membres ? (
-          <p data-testid="fiche-gratuit-membres" style={{ margin: '10px 0 0', fontSize: 14, fontWeight: 700, color: COULEUR }}>
-            Offert aux membres avec abonnement 8 mois actif
-          </p>
+          /* V610b : même bloc pour tous, AVANT le bouton de paiement ; « Je suis membre » -> espace. */
+          <div data-testid="fiche-gratuit-membres"><AccesMembreEvenement libelle="Je suis membre" compact /></div>
         ) : null}
         {!groupeSaison && fiche.economie ? <p style={{ margin: '10px 0 0', fontSize: 14, fontWeight: 700, color: 'var(--eco-color, #8ef0b0)' }} data-testid="fiche-economie">{fiche.economie}</p> : null}
 

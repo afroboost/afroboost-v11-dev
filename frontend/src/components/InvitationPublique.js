@@ -19,6 +19,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import SvgIcon from './SvgIcon';
 import { suivreInvitation } from '../utils/invitationSuivi';
+import AccesMembreEvenement from './AccesMembreEvenement'; // V610b
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
@@ -221,10 +222,9 @@ export default function InvitationPublique({ token }) {
               </p>
             ) : null}
             {d.gratuit_membres ? (
-              /* V610 : la gratuité est décidée par le serveur (abonnement 8 mois actif), jamais ici. */
-              <p data-testid="inv-pub-gratuit-membres" style={{ margin: '8px 0 0', fontSize: '13.5px', fontWeight: 600, color: 'var(--primary-color, #D91CD2)' }}>
-                Offert si tu as un abonnement Afroboost 8 mois actif.
-              </p>
+              /* V610b : bloc IDENTIQUE pour tous — aucune recherche d'e-mail, la gratuité se
+                 prend dans l'espace membre authentifié. */
+              <div data-testid="inv-pub-gratuit-membres"><AccesMembreEvenement /></div>
             ) : null}
           </div>
         ) : null}

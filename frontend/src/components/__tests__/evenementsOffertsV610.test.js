@@ -15,6 +15,8 @@ import EvenementsOfferts, { quandEvenement } from '../EvenementsOfferts';
 import InviterMesAmis from '../InviterMesAmis';
 // eslint-disable-next-line import/first
 import InvitationPublique from '../InvitationPublique';
+// eslint-disable-next-line import/first
+import AccesMembreEvenement, { TEXTE_NEUTRE } from '../AccesMembreEvenement';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 let conteneur = null;
@@ -123,5 +125,55 @@ describe('V610 — page d\'invitation', () => {
     await attendre(() => expect(q('inv-pub-gratuit-membres').textContent).toMatch(/abonnement Afroboost 8 mois actif/));
     expect(q('inv-pub-prix-actif').textContent).toBe('25 CHF');
     expect(document.body.textContent).not.toMatch(/50 places|places maximum/);
+  });
+});
+
+describe('V610b — AccesMembreEvenement : même bloc pour tous, rien ne fuit', () => {
+  test("affiché sans AUCUN appel réseau (pas de recherche d'e-mail)", async () => {
+    global.fetch = jest.fn();
+    await act(async () => { render(<AccesMembreEvenement />); });
+    expect(document.body.textContent).toMatch(/Tu as un abonnement Afroboost 8 mois actif \?/);
+    expect(document.body.textContent).toMatch(/Ta place est offerte\. Réserve-la depuis ton espace membre\./);
+    expect(q('acces-membre-bouton').textContent).toBe('Accéder à mon espace membre');
+    expect(axios.post).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  async function envoyerAvec(reponseServeur) {
+    global.fetch = jest.fn(() => Promise.resolve({ ok: reponseServeur === 200, status: reponseServeur,
+      json: () => Promise.resolve(reponseServeur === 200 ? { success: true, email_masked: 'm***@x.ch' } : { detail: 'Aucun code abonné actif trouvé' }) }));
+    await act(async () => { render(<AccesMembreEvenement libelle="Je suis membre" />); });
+    await act(async () => { q('acces-membre-bouton').click(); });
+    const champ = q('acces-membre-email');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(champ, 'quelquun@example.com');
+      champ.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { q('acces-membre-envoyer').click(); });
+    await attendre(() => expect(q('acces-membre-neutre')).toBeTruthy());
+    const texte = q('acces-membre-evenement').textContent;
+    act(() => racine.unmount()); conteneur.remove(); racine = null; conteneur = null;
+    return texte;
+  }
+
+  test("sans session : e-mail d'un membre (200) ou d'un inconnu (404) -> écran IDENTIQUE, neutre", async () => {
+    const avecCompte = await envoyerAvec(200);
+    const sansCompte = await envoyerAvec(404);
+    expect(avecCompte).toBe(sansCompte);
+    expect(avecCompte).toMatch(new RegExp(TEXTE_NEUTRE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    expect(avecCompte).not.toMatch(/m\*\*\*@|Aucun code|actif trouvé|membre confirmé/);
+    expect(global.fetch.mock.calls[0][0]).toMatch(/\/api\/subscriber\/recover$/);
+  });
+
+  test('session déjà ouverte sur cet appareil : direction son espace, aucun appel', async () => {
+    global.fetch = jest.fn();
+    window.localStorage.setItem('afroboost_espace_token', JSON.stringify({ token: 'tok', code: 'AFR-M1', slug: '', expires_at: '2099-01-01T00:00:00Z' }));
+    const avant = window.location.href;
+    delete window.location; window.location = { href: avant };
+    await act(async () => { render(<AccesMembreEvenement />); });
+    await act(async () => { q('acces-membre-bouton').click(); });
+    expect(window.location.href).toMatch(/\/espace\/AFR-M1/);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

@@ -275,6 +275,7 @@ const InvitationDuo = lazy(() => import("./components/parrainage/InvitationDuo")
 const EntreeCampagne = lazy(() => import("./components/parrainage/EntreeCampagne")); // PAR-3 : /duo/c/<token>
 const InvitationPublique = lazy(() => import("./components/InvitationPublique")); // V607 : /i/<jeton> (lien court)
 const InviterMesAmis = lazy(() => import("./components/InviterMesAmis")); // V607 : lien perso après un événement
+const AccesMembreEvenement = lazy(() => import("./components/AccesMembreEvenement")); // V610b : gratuité = espace membre
 const RendezVousPublic = lazy(() => import("./components/RendezVousPublic")); // V605 : /rdv/<token>
 // Calendrier des sessions, en fenetre par-dessus la vitrine (jamais une page)
 import SessionsModal from "./components/SessionsModal";
@@ -10598,6 +10599,10 @@ function App() {
               <p className="text-white text-sm mb-4" style={{ opacity: 0.8, lineHeight: 1.5 }}>
                 Renseigne maintenant tes coordonnées pour créer ton espace membre et continuer ton inscription.
               </p>
+              {/* V610b : AVANT le paiement, pour TOUS (aucune déduction depuis l'e-mail saisi). */}
+              {v528EtapeEmail.offer && v528EtapeEmail.offer.gratuit_membres && (
+                <div className="mb-4"><Suspense fallback={null}><AccesMembreEvenement libelle="Je suis membre" compact /></Suspense></div>
+              )}
               <form noValidate onSubmit={(e) => {
                 e.preventDefault();
                 // V570 : nom + e-mail + WhatsApp, validés ici ; l'OFFRE choisie est rejouée telle quelle.

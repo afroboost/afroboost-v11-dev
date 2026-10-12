@@ -8412,19 +8412,14 @@ async def create_checkout_session(request: CreateCheckoutRequest,
     # V610 — ÉVÉNEMENT À RÉSERVATION AUTOMATIQUE : UN billet = UNE place à la date de
     # l'événement. Quantité forcée à 1 et AUCUNE date venue du navigateur : le prix
     # passe par la branche serveur (palier actif × 1, jamais le montant client) et la
-    # réservation naît du webhook. Un membre dont la place est OFFERTE ne paie pas :
-    # 409 qui le renvoie vers son espace (le message déclenche l'accès V529).
+    # réservation naît du webhook.
+    # V610b — CONFIDENTIALITÉ : AUCUN test d'éligibilité « membre 8 mois » ici. L'e-mail
+    # saisi ne prouve pas l'identité ; le lire révélerait à n'importe qui le statut d'une
+    # autre personne. La place offerte ne s'obtient que dans l'espace, authentifié.
     from api.routes import evenement_special as _v610_evt
     if _offer and _v610_evt.reservation_auto(_offer):
         request.quantity = 1
         request.reservationData = None
-        _v610_ce = str(request.customerEmail or "").strip().lower()
-        if _v610_ce and _v610_evt.offres_gratuite(_offer):
-            _v610_c = await _v610_evt.cours_de_l_evenement(db, _offer)
-            _v610_o = _v610_evt.occurrence(_v610_c)
-            if _v610_o and await _v610_evt.abonnement_gratuit(db, _v610_ce, _offer, _v610_evt.debut_utc(_v610_o)):
-                logger.info("[V610] checkout refusé : place offerte (membre) — offre %s", str(request.offerId)[:8])
-                raise HTTPException(status_code=409, detail=_v610_evt.MSG_MEMBRE_DOIT_RESERVER)
 
     # Montant en centimes (Stripe utilise les plus petites unités).
     # round() et non int() : int(0.29 * 100) vaut 28 en virgule flottante.

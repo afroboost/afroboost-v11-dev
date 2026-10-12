@@ -45,8 +45,6 @@ try:
 except Exception:  # noqa: BLE001
     _ZURICH = timezone.utc
 
-MSG_MEMBRE_DOIT_RESERVER = ("Tu es membre avec un abonnement 8 mois actif : ta place est OFFERTE. "
-                            "Réserve-la gratuitement depuis ton espace abonné.")
 
 
 # ── 3. DATES ANNULÉES (cours récurrent remplacé ce jour-là) ─────────────────────

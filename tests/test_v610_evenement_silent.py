@@ -130,5 +130,17 @@ verifier("I1 place offerte annulée : 0 séance à restituer", lotb3_montant_deb
 verifier("I2 réservation d'espace ordinaire : inchangé (1 par place)",
          lotb3_montant_debite({"source": "subscriber_space", "quantity": 2}) == 2 and lotb3_montant_debite({}) == 1)
 
+# ── V610b : confidentialité — le paiement public ne lit JAMAIS le statut membre ──
+_srv = open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
+_i = _srv.index("async def create_checkout_session(")
+_corps = _srv[_i:_srv.index("\n@api_router.", _i)]
+verifier("SEC-1 checkout public : aucun appel à abonnement_gratuit / evenements_offerts (pas d'oracle e-mail)",
+         "abonnement_gratuit" not in _corps and "evenements_offerts" not in _corps and "gratuit_abonnements_offer_ids" not in _corps)
+_appels = [m.start() for m in __import__("re").finditer(r"abonnement_gratuit\(", _srv)]
+verifier("SEC-2 la gratuité n'est évaluée que derrière la session d'espace (1 seul appel, dans la route offerte)",
+         len(_appels) == 1 and "_b3s13_porteur_autorise" in _srv[max(0, _appels[0] - 2500):_appels[0]], len(_appels))
+verifier("SEC-3 l'ancien message révélateur a disparu", "MSG_MEMBRE_DOIT_RESERVER" not in _srv
+         and "MSG_MEMBRE_DOIT_RESERVER" not in open(os.path.join(RACINE, "api", "routes", "evenement_special.py"), encoding="utf-8").read())
+
 print("\n%d/%d PASS" % (sum(RES), len(RES)))
 sys.exit(0 if all(RES) else 1)
