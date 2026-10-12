@@ -819,8 +819,16 @@ async def update_discount_code(code_id: str, updates: dict, request: Request):
         _v617_subs = await _db.subscriptions.find(
             {"code": {"$regex": f"^{re.escape(_v617_code_str)}$", "$options": "i"}},
             {"_id": 0}).to_list(500)
-    _v617_abo, _v617_motif = _v617_actuel(
-        _v617_subs, updates.get("assignedEmail") or existing.get("assignedEmail"))
+    # Le bénéficiaire d'AVANT la modification désigne l'abonnement : une
+    # réaffectation envoyée dans la même requête ne peut pas rediriger l'écriture.
+    _v617_abo, _v617_motif = _v617_actuel(_v617_subs, existing.get("assignedEmail"))
+    # Cloisonnement : un partenaire n'écrit jamais sur un abonnement marqué comme
+    # appartenant à un autre coach (collision de nom de code héritée).
+    _v617_proprio_abo = str((_v617_abo or {}).get("coach_id") or "").strip().lower()
+    if _v617_abo is not None and not is_super_admin(caller) and _v617_proprio_abo \
+            and _v617_proprio_abo != caller:
+        logger.warning("[V617] %s : abonnement d'un autre coach — modification refusee", _v617_code_str)
+        raise HTTPException(status_code=403, detail="Cet abonnement ne vous appartient pas")
     if _v617_subs and _v617_motif == "plusieurs":
         logger.warning("[V617] %s : plusieurs abonnements actuels — modification refusee",
                        _v617_code_str)

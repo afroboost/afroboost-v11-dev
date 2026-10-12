@@ -311,7 +311,7 @@ async def partie2(db):
     lp = await PR.get_discount_codes(reqp)
     xp = [c for c in lp if c["code"] == "CLIENT-X"]
     verifier("partenaire : ni montant ni note interne d'un abonnement qui n'est pas le sien",
-             xp and xp[0]["v617_abonnement"]["suivi"] == {}, xp and xp[0].get("v617_abonnement"))
+             xp and xp[0]["v617_abonnement"].get("suivi", {}) == {}, xp and xp[0].get("v617_abonnement"))
     nb = await db.subscriptions.count_documents({})
     await PR.create_discount_code(DCC(code="PART-1", type="100%", value=100, assignedEmail="x@exemple.test",
                                       maxUses=4, montant_encaisse=50, origine_paiement="especes"), reqp)
@@ -328,6 +328,29 @@ async def partie2(db):
     with mock.patch.object(SH, "v617_jour_local", lambda m=None: "2026-11-02"):
         rp = (await PR.get_echeances_paiement(reqp))["rappels"]
     verifier("partenaire : son propre rappel, et uniquement le sien", [r["code"] for r in rp] == ["PART-1"], rp)
+    xp2 = [c for c in await PR.get_discount_codes(reqp) if c["code"] == "CLIENT-X"][0]
+    verifier("partenaire : sur un code qui n'est pas le sien, seul l'état est indiqué (ni id, ni historique)",
+             xp2["v617_abonnement"] == {"motif": "unique"}, xp2.get("v617_abonnement"))
+    # Réaffectation dans la même requête : l'abonnement visé reste celui de l'ANCIEN bénéficiaire.
+    await db.discount_codes.insert_one({"id": "dc-r", "code": "REAFF", "type": "100%", "value": 100,
+                                        "assignedEmail": "r1@exemple.test", "maxUses": 10, "used": 1, "active": True})
+    await db.subscriptions.insert_many([{"id": "r1", "code": "REAFF", "email": "r1@exemple.test", "status": "active", "total_sessions": 10, "used_sessions": 1, "remaining_sessions": 9},
+                                        {"id": "r2", "code": "REAFF", "email": "r2@exemple.test", "status": "active", "total_sessions": 10, "used_sessions": 0, "remaining_sessions": 10}])
+    rep = await PR.update_discount_code("dc-r", {"assignedEmail": "r2@exemple.test", "maxUses": 12}, req)
+    verifier("réaffectation dans la même requête : l'écriture vise l'abonnement de l'ANCIEN bénéficiaire, pas un autre",
+             rep["v617"]["abonnement_modifie"] == "r1" and (await db.subscriptions.find_one({"id": "r2"}))["total_sessions"] == 10, rep.get("v617"))
+    # Collision de nom : un partenaire ne modifie jamais l'abonnement d'un autre coach.
+    await db.discount_codes.insert_one({"id": "dc-c", "code": "COLLI", "type": "100%", "value": 100, "coach_id": COACH,
+                                        "assignedEmail": "c@exemple.test", "maxUses": 5, "used": 0, "active": True})
+    await db.subscriptions.insert_one({"id": "c1", "code": "COLLI", "email": "c@exemple.test", "status": "active",
+                                       "coach_id": ADMIN, "total_sessions": 5, "used_sessions": 0, "remaining_sessions": 5})
+    try:
+        await PR.update_discount_code("dc-c", {"maxUses": 50}, reqp)
+        verifier("abonnement d'un autre coach -> refusé", False, "accepté")
+    except Exception as e:  # noqa: BLE001
+        verifier("abonnement d'un autre coach -> refusé (403), rien écrit",
+                 e.status_code == 403 and (await db.subscriptions.find_one({"id": "c1"}))["total_sessions"] == 5
+                 and (await db.discount_codes.find_one({"id": "dc-c"}))["maxUses"] == 5, getattr(e, "detail", e))
     try:
         await PR.create_discount_code(DCC(code="ANCIEN", type="100%", value=100, maxUses=1), reqp)
         verifier("nom indisponible -> refusé", False)

@@ -738,7 +738,13 @@ async def v617_enrichir_codes(db, codes: list, appelant: str = "", admin: bool =
             _abo, _motif = abo_actuel_du_code(_subs, _c.get("assignedEmail"))
             # Cloisonnement : le suivi (montants, note interne) d'une souscription
             # d'un AUTRE coach n'est jamais exposé ; seul l'état reste indiqué.
-            _visible = _abo is not None and v617_visible_par(_c, appelant, admin)
+            if not v617_visible_par(_c, appelant, admin):
+                # Code d'un autre coach (ou legacy) : on ne dit que l'état, rien d'autre.
+                _c["v617_abonnement"] = {"motif": _motif}
+                continue
+            _proprio_abo = str((_abo or {}).get("coach_id") or "").strip().lower()
+            _visible = _abo is not None and (admin or not _proprio_abo
+                                             or _proprio_abo == str(appelant or "").strip().lower())
             _c["v617_abonnement"] = {
                 "id": (_abo or {}).get("id"),
                 "statut": (_abo or {}).get("status"),
