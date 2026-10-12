@@ -658,10 +658,12 @@ def suivi_paiement_lire(sub) -> dict:
         return {}
     _vue = {k: _s.get(k) for k in SUIVI_PAIEMENT_CLES if _s.get(k) not in (None, "")}
     _total = _s.get("montant_total")
-    if _total is not None:
+    # V617d : reste = total − encaissé SEULEMENT si les deux sont connus. Un ancien
+    # abonnement sans montant encaissé n'a pas de reste « = total » inventé.
+    _enc_brut = (sub or {}).get("montant_encaisse")
+    if _total is not None and _enc_brut not in (None, ""):
         try:
-            _enc = float((sub or {}).get("montant_encaisse") or 0)
-            _vue["reste_a_payer"] = round(max(0.0, float(_total) - _enc), 2)
+            _vue["reste_a_payer"] = round(max(0.0, float(_total) - float(_enc_brut)), 2)
         except (TypeError, ValueError):
             pass
     return _vue

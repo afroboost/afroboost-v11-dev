@@ -8,7 +8,7 @@ import React, { useRef, useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { CreditsGate } from './index';
 import SvgIcon from '../SvgIcon';
-import { classerArticles, resteAPayer, SUIVI_VIDE } from "../../utils/abonnementsManuels"; // V617
+import { classerArticles, resteAPayer, SUIVI_VIDE, etatSuiviPaiement } from "../../utils/abonnementsManuels"; // V617 / V617d
 import EcheancesPaiement from "./EcheancesPaiement"; // V617
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -1053,19 +1053,33 @@ const PromoCodesTab = ({
             espèces, virement) ne donne aucun mandat : aucun prélèvement, aucun
             message au client. Seulement un reste à payer, une échéance et un
             rappel dans ce tableau de bord. */}
-        {!isBatchMode && (selectedBeneficiaries?.length > 0) && (() => {
+        {(() => {
+          // V617d — visible sur TOUT abonnement éditable (ancien comme nouveau), même sans
+          // suivi enregistré ; verrouillé si le serveur ne sait pas quel abonnement modifier.
+          const etat = etatSuiviPaiement({
+            isBatchMode, editingCode, beneficiaires: selectedBeneficiaries,
+            fiche: editingCode ? ((discountCodes || []).find(c => c.id === editingCode) || {}) : null,
+          });
+          if (!etat.visible) return null;
+          const bloque = !etat.editable;
           const s = newCode.suivi_paiement || SUIVI_VIDE;
-          const maj = (champ, v) => setNewCode({ ...newCode, suivi_paiement: { ...s, [champ]: v } });
+          const maj = (champ, v) => { if (!bloque) setNewCode({ ...newCode, suivi_paiement: { ...s, [champ]: v } }); };
           const encaisse = newCode.origine_paiement === 'offert' ? 0 : (newCode.montant_encaisse ?? newCode.stripe_amount ?? '');
           const reste = resteAPayer(s.montant_total, encaisse);
           return (
             <div className="mb-4 p-3 rounded-lg" data-testid="v617-suivi-paiement"
                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-              <p className="text-white text-xs font-semibold mb-2 inline-flex items-center gap-1.5">
+              <p className="text-white text-xs font-semibold mb-2 inline-flex flex-wrap items-center gap-1.5">
                 <SvgIcon name="creditCard" size={14} /> Suivi du paiement <span className="font-normal text-white/40">(interne — jamais visible du client)</span>
               </p>
+              {etat.message && (
+                <p className="text-xs mb-2" data-testid="v617-suivi-bloque" style={{ color: 'var(--primary-color, #D91CD2)' }}>
+                  <SvgIcon name="warning" size={14} className="mr-1.5" />{etat.message}
+                </p>
+              )}
+              <fieldset disabled={bloque} className="min-w-0" style={bloque ? { opacity: 0.55 } : undefined}>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <label className="text-xs text-white/60">Montant total (CHF)
+                <label className="text-xs text-white/60 min-w-0">Montant total (CHF)
                   <input type="number" step="0.01" min="0" value={s.montant_total} onChange={e => maj('montant_total', e.target.value)}
                     className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v617-montant-total" placeholder="Ex. 400" />
                 </label>
@@ -1076,7 +1090,7 @@ const PromoCodesTab = ({
                   <p className="mt-1 text-sm font-semibold" style={{ color: reste > 0 ? 'var(--primary-color, #D91CD2)' : '#22c55e' }}
                      data-testid="v617-reste">{reste === null ? '—' : `${reste.toFixed(2)} CHF`}</p>
                 </div>
-                <label className="text-xs text-white/60">Prochaine échéance
+                <label className="text-xs text-white/60 min-w-0">Prochaine échéance
                   <input type="date" value={s.prochaine_echeance} onChange={e => maj('prochaine_echeance', e.target.value)}
                     className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v617-echeance" />
                 </label>
@@ -1102,6 +1116,7 @@ const PromoCodesTab = ({
                   className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v617-note-interne"
                   placeholder="Ex. 2e paiement de 200 CHF à encaisser le mois prochain" />
               </label>
+              </fieldset>
               <p className="text-white/40 text-[11px] mt-2">Mode du paiement : le « Moyen de paiement » ci-dessus. Aucun prélèvement automatique.</p>
             </div>
           );

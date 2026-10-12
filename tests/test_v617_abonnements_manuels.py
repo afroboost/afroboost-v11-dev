@@ -364,13 +364,72 @@ async def partie2(db):
         verifier("L. sans identité coach -> 403 (jamais visible du client)", e.status_code == 403)
 
 
+async def partie2_v617d(db):
+    """V617d — le suivi sur les ANCIENS abonnements (fiche sans bénéficiaire, comme CHRISTOUX10)."""
+    req = Req(ADMIN)
+    print("\nV617d. Ancien code sans bénéficiaire sur la fiche, 1 abonnement actuel")
+    await db.discount_codes.insert_one({"id": "dc-v617d-l", "code": "Legacy10", "type": "CHF", "value": 250,
+                                        "assignedEmail": None, "maxUses": 67, "used": 11, "active": True,
+                                        "expiresAt": "2027-05-25", "montant_encaisse": 400.0, "origine_paiement": "twint"})
+    await db.subscriptions.insert_one({"id": "l-1", "code": "LEGACY10", "email": "l@exemple.test", "status": "active",
+                                       "total_sessions": 67, "used_sessions": 11, "remaining_sessions": 56,
+                                       "expires_at": "2027-05-25T23:59:59+00:00", "montant_encaisse": 400.0,
+                                       "origine_paiement": "twint"})
+    await db.subscriptions.insert_one({"id": "n-1", "code": "SANSMONTANT", "email": "n@exemple.test", "status": "active",
+                                       "total_sessions": 10, "used_sessions": 0, "remaining_sessions": 10,
+                                       "suivi_paiement": {"montant_total": 300}})
+    await db.discount_codes.insert_one({"id": "dc-v617d-n", "code": "SANSMONTANT", "type": "100%", "value": 100,
+                                        "assignedEmail": "n@exemple.test", "maxUses": 10, "used": 0, "active": True})
+
+    async def etat():
+        return (sans_id(await db.discount_codes.find({}).sort("id", 1).to_list(500)),
+                sans_id(await db.subscriptions.find({}).sort("id", 1).to_list(500)))
+
+    avant = await etat()
+    liste = await PR.get_discount_codes(req)
+    verifier("H. ouvrir la liste des codes (et donc une fiche) -> 0 écriture", await etat() == avant)
+    l = [c for c in liste if c["code"] == "Legacy10"][0]["v617_abonnement"]
+    verifier("B / E. ancien code sans bénéficiaire -> abonnement actuel désigné (éditable), suivi vide",
+             l["motif"] == "unique" and l["id"] == "l-1" and l["suivi"] == {}, l)
+    n = [c for c in liste if c["code"] == "SANSMONTANT"][0]["v617_abonnement"]["suivi"]
+    verifier("reste NON calculé quand l'encaissé est inconnu (pas de « reste = total » inventé)",
+             n.get("montant_total") == 300 and "reste_a_payer" not in n, n)
+    verifier("aucun rappel coach sur un reste inconnu", SH.suivi_rappel({"suivi_paiement": {"montant_total": 300,
+             "prochaine_echeance": "2026-10-01"}}, utc(2026, 10, 12)) is None)
+
+    rep = await PR.update_discount_code("dc-v617d-l", {"suivi_paiement": {"montant_total": 500, "note_interne": "solde à voir"}}, req)
+    s = await db.subscriptions.find_one({"id": "l-1"}, {"_id": 0})
+    verifier("C. enregistrement explicite -> suivi posé sur l'abonnement actuel, encaissé 400 conservé",
+             rep["v617"]["abonnement_modifie"] == "l-1" and s["suivi_paiement"]["montant_total"] == 500
+             and s["montant_encaisse"] == 400.0 and s["total_sessions"] == 67 and s["expires_at"].startswith("2027-05-25"), s)
+    verifier("D. reste recalculé 500 − 400 = 100", SH.suivi_paiement_lire(s).get("reste_a_payer") == 100)
+
+    print("\nV617d. F. Doublon d'abonnements actuels (cas CHRISTOUX10) -> suivi refusé, RIEN écrit")
+    await db.discount_codes.insert_one({"id": "dc-v617d-c", "code": "Christoux-V617d", "type": "CHF", "value": 250,
+                                        "assignedEmail": None, "maxUses": 67, "used": 11, "active": True})
+    await db.subscriptions.insert_many([
+        {"id": "c-1", "code": "CHRISTOUX-V617D", "email": "c@exemple.test", "status": "active", "total_sessions": 67, "used_sessions": 5, "remaining_sessions": 62},
+        {"id": "c-2", "code": "CHRISTOUX-V617D", "email": "c@exemple.test", "status": "active", "total_sessions": 67, "used_sessions": 11, "remaining_sessions": 56}])
+    avant = await etat()
+    try:
+        _r = await PR.update_discount_code("dc-v617d-c", {"suivi_paiement": {"montant_total": 400}}, req)
+        verifier("F. suivi refusé (409)", False, ("accepté !", _r.get("v617")))
+    except Exception as e:  # noqa: BLE001
+        verifier("F. suivi refusé (409 « erreur d'intégrité »)",
+                 getattr(e, "status_code", 0) == 409 and e.detail["type"] == "integrite_plusieurs_actuels", getattr(e, "detail", e))
+    verifier("F. aucune subscription ni fiche modifiée", await etat() == avant)
+
+
 p, port, dossier = mongod_jetable()
 if p is None:
     print("\n  SAUTE  partie 2 : `mongod` absent de cette machine")
 else:
     try:
         from motor.motor_asyncio import AsyncIOMotorClient
-        asyncio.run(partie2(AsyncIOMotorClient("mongodb://127.0.0.1:%d" % port).v617))
+        async def _tout(db):
+            await partie2(db)
+            await partie2_v617d(db)
+        asyncio.run(_tout(AsyncIOMotorClient("mongodb://127.0.0.1:%d" % port).v617))
     finally:
         p.terminate(); p.wait(timeout=30); shutil.rmtree(dossier, ignore_errors=True)
         print("\n  mongod jetable arrêté, dossier détruit. Données de production touchées : 0")
