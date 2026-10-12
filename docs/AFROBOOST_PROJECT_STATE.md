@@ -1223,3 +1223,24 @@ ne doit jamais être présentée comme l'état courant.
   session d'espace existe sur l'appareil — sur un appareil neuf, un abonné existant n'a aucun bouton vers son espace ; (2) un double tap sur
   « Choisir cette formule » ouvre l'étape e-mail puis la referme (le 2e tap tombe sur le fond) ; (3) `checkout.session.expired` non relayé :
   les checkouts abandonnés restent `pending` à vie (dette connue).
+
+## W. V607 — OUTIL INVITATION : 4 TYPES PROTÉGÉS, ÉVÉNEMENT PAYANT DÉBLOQUÉ, BOULE DE NEIGE (2026-10-12, branche `feat/invitation-improvements`) — ⚠️ COMMIT LOCAL, NON DÉPLOYÉ
+
+- **Types internes** : `trial` (Essai gratuit), `pass_duo`, `event_free`, `event_paid` (`referral_campaigns.type`).
+- **Bug fuseau des paliers (cause réelle)** : `api/pricing.py` lisait `countdown_date/time` en UTC (heure SUISSE saisie) ⇒ bascules
+  1-2 h trop tard côté checkout ; et heure absente = `00:00` serveur contre `23:59` vitrine (≈ 24 h d'écart). Corrigé (Zurich, 23:59).
+  Touche TOUTE offre à prix progressif (vitrine, checkout, bot) — voulu. Le 409 « fuseau » de l'activation est retiré (drapeau
+  `invitation_event_paid_enabled` plus lu). Une offre à paliers SANS date d'événement est refusée (prix encaissable 0).
+- **Événement payant** : offres « billet » seulement (ni abonnement/saison/carte membre/privée/masquée/produit) ; date + heure + lieu
+  obligatoires ; date = celle de l'événement de l'offre ; prix ACTIF = `compute_active_price` partout (carte, page, WhatsApp, checkout).
+- **Lien court** `/i/<jeton>` (OG propre au type) ; `/api/share/invite/<jeton>` reste servi. Page publique React (vidéo/audio sans autoplay).
+- **Boule de neige événements** : collection `invitation_relais` (jeton, parent, racine, génération, preuve stripe/reservation/inscription,
+  unique par paiement, une personne = un relais par invitation, inviteur figé). Jeton voyage en `?inv=` (JAMAIS `ref=`) → metadata Stripe
+  `invitation_token` → webhook. Chaîne coach : `GET /api/referral/campaigns-relais/<id>/chaine`.
+- **Essai gratuit** : parcours invité « moi d'abord » (`ParcoursEssai`) ; partage obligatoire APRÈS le choix de sa séance ; serveur inchangé
+  (409 `invitation_requise`). **Dimanche absent** = `_cours_offrables` comparait `coach_id` brut (campagne super-admin `""` vs cours
+  `contact.artboost@gmail.com`) ⇒ seul le cours du pass restait ; `E.proprietaire_canonique`.
+- **Suivi** : `invitation_events` + `GET /api/referral/campaigns-suivi/funnel?type=` (« partage déclenché », jamais « envoyé »).
+- **Prod touchée** : seulement les 2 objets TEST de l'audit (invitation `f3cd2c39…` archivée, pass `b149ed7d…` cancelled, champ
+  `corbeille.statut_avant` ; sauvegarde `~/afroboost-sauvegardes/invitation-audit-corbeille-2026-10-11T121143.json`).
+- **Au déploiement** : bumper `sw.js` CACHE_NAME ; nonregression #148-#151 ajoutés ; prouver un dimanche dans le calendrier invité réel.

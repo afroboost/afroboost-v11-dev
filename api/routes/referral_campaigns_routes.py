@@ -85,6 +85,17 @@ def _iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+async def _suivre(doc, evenement) -> None:
+    """V607 — journal honnête (invitation_events), génération 0 = le coach. FAIL-OPEN."""
+    try:
+        from api.routes import invitation_suivi as SV
+        await SV.enregistrer(_db(), evenement, type_invitation=doc.get("type"), campagne_id=doc.get("id"),
+                             coach_id=doc.get("coach_id") or "", jeton=doc.get("share_token"), generation=0,
+                             cle="%s|%s" % (doc.get("id"), evenement))
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s suivi non écrit (%s)", PREFIXE, type(_err).__name__)
+
+
 async def event_payant_actif() -> bool:
     """`invitation_event_paid_enabled` vaut-il `true` ? Absent / illisible = NON."""
     try:
@@ -195,6 +206,39 @@ def _verifier_lien_ouvrable(champs, cours, offre, ouvrables) -> None:
         raise HTTPException(status_code=422, detail=MSG_SEANCE_HORS_COURS)
 
 
+MSG_LIEU_REQUIS = "Pour activer, il manque : le lieu. Indique où a lieu l'événement."
+
+
+def _verifier_billet_evenement(champs, cours, offre) -> None:
+    """V607 — ÉVÉNEMENT PAYANT seulement : un BILLET (pas un abonnement, ni une
+    offre privée / masquée), un LIEU connu, et — si l'offre a des paliers — la
+    date de l'invitation = la date de l'événement de l'offre (les paliers se
+    calculent sur elle : sinon la carte et le checkout ne diraient pas le même prix)."""
+    _raison = IC.raison_offre_non_billet(offre)
+    if _raison:
+        raise HTTPException(status_code=422, detail=(
+            "Cette offre ne peut pas servir de billet d'événement (%s). "
+            "Choisis une offre « Événement » ou « Cours à l'unité » publiée." % _raison))
+    _lieu = (champs.get("lieu") or (cours or {}).get("locationName") or (cours or {}).get("location")
+             or (offre or {}).get("location") or "")
+    if not str(_lieu).strip():
+        raise HTTPException(status_code=422, detail=MSG_LIEU_REQUIS)
+    if IC.prix_actif(offre) is None:
+        # Offre à paliers SANS date d'événement : `compute_active_price` retombe sur
+        # `price` (sentinelle 0) — le billet serait vendu 0 CHF. Refusé.
+        raise HTTPException(status_code=422, detail=(
+            "Cette offre n'a pas de prix encaissable maintenant : renseigne la date de l'événement "
+            "(compte à rebours) dans l'offre, ses 3 paliers en dépendent."))
+    _cd = str((offre or {}).get("countdown_date") or "").strip()
+    if (offre or {}).get("progressive_pricing") is True and _cd and champs.get("occurrence"):
+        _occ = str(champs["occurrence"])
+        _ct = str((offre or {}).get("countdown_time") or "").strip()
+        if _occ[:10] != _cd or (_ct and _occ[11:16] != _ct[:5]):
+            raise HTTPException(status_code=422, detail=(
+                "La date et l'heure doivent être celles de l'événement de l'offre (%s%s) : "
+                "les 3 paliers de prix se calculent sur elles." % (_cd, (" à " + _ct[:5]) if _ct else "")))
+
+
 async def _controler(coach, champs) -> tuple:
     """Propriété (toujours) + règles d'activation (en `active`). Rend (cours, offre)."""
     _cours = _offre = None
@@ -210,17 +254,21 @@ async def _controler(coach, champs) -> tuple:
         return _cours, _offre
 
     _type = champs.get("type")
-    if _type == "event_paid" and not await event_payant_actif():
-        raise HTTPException(status_code=409, detail=IC.MESSAGE_EVENT_PAYANT_BLOQUE)
+    # V607 : plus de 409 « fuseau horaire des paliers » — la cause est corrigée dans
+    # api/pricing.py (heure suisse). Le drapeau `invitation_event_paid_enabled` n'est
+    # plus lu pour l'activation.
     _manque = IC.champs_manquants(champs)
     if _manque:
-        raise HTTPException(status_code=422, detail="Pour activer : %s requis." % ", ".join(_manque))
+        raise HTTPException(status_code=422, detail="Pour activer, il manque : %s." % ", ".join(
+            IC.LIBELLES_CHAMPS.get(c, c) for c in _manque))
     if champs.get("occurrence") and E.est_passee(champs["occurrence"], datetime.now(timezone.utc)):
         raise HTTPException(status_code=422, detail="Cette séance est déjà passée : choisis une date à venir.")
     if _type in ("trial", "event_free") and not IC.offre_gratuite(_offre):
         raise HTTPException(status_code=422, detail="Choisis une offre gratuite (0 CHF).")
     if _type == "event_paid" and not IC.offre_payante(_offre):
         raise HTTPException(status_code=422, detail="Choisis une offre payante.")
+    if _type == "event_paid":
+        _verifier_billet_evenement(champs, _cours, _offre)
     if _type in ("trial", "event_free"):
         _verifier_lien_ouvrable(champs, _cours, _offre, await _ouvrables([_offre]))
     if _type == "pass_duo" and (_cours or {}).get("duo_enabled") is not True:
@@ -331,6 +379,14 @@ async def invitations_options(request: Request):
             "price_early_bird": _pal["early_bird"] if _o.get("progressive_pricing") is True else None,
             "price_standard": _pal["standard"] if _o.get("progressive_pricing") is True else None,
             "price_last_minute": _pal["last_minute"] if _o.get("progressive_pricing") is True else None,
+            # V607 — événement payant : billet ? prix encaissé maintenant ? date / lieu de l'événement.
+            "billet": IC.offre_billet_evenement(_o),
+            "raison_non_billet": IC.raison_offre_non_billet(_o),
+            "prix_actif": IC.prix_actif(_o),
+            "location": str(_o.get("location") or "").strip()[:160] or None,
+            "countdown_date": _o.get("countdown_date") or None,
+            "countdown_time": _o.get("countdown_time") or None,
+            "offer_type": _o.get("offer_type") or None,
         })
     # INV-1 : la miniature par défaut = l'image de partage du coach (V551), sinon celle
     # de la plateforme — la même que la carte utilise quand l'invitation n'en a pas.
@@ -339,7 +395,8 @@ async def invitations_options(request: Request):
     except Exception:  # noqa: BLE001
         _defaut = None
     return {"courses": _sortie_cours, "offers": _sortie_offres,
-            "event_paid_enabled": await event_payant_actif(),
+            "event_paid_enabled": True,   # V607 : blocage du fuseau levé
+            "inviter_display": await _identite(_c),   # V607 : l'aperçu en direct montre qui invite
             "default_image_url": _defaut or "/logo512.png"}
 
 
@@ -379,6 +436,9 @@ async def invitations_creer(request: Request):
             logger.error("%s création impossible (%s)", PREFIXE, type(_err).__name__)
             raise HTTPException(status_code=503, detail="Invitation non créée, réessaie dans un instant.")
     logger.info("%s invitation %s créée (%s, %s)", PREFIXE, _doc["id"][:8], _doc["type"], _doc["status"])
+    await _suivre(_ecrit, "invitation_creee")
+    if _ecrit.get("status") == "active":
+        await _suivre(_ecrit, "lien_active")
     return JSONResponse(status_code=201, content=await _dto(_ecrit, _cours, _offre, charger=False))
 
 
@@ -397,6 +457,11 @@ async def invitations_modifier(inv_id: str, request: Request):
     if _avant.get("status") == "archived":
         raise HTTPException(status_code=409, detail="Invitation archivée : elle n'est plus modifiable.")
     _b = await R._corps(request)
+    # V607 : le TYPE se change tant que l'invitation est un BROUILLON (rien n'a été
+    # partagé : aucun lien public n'existe). Activée = type figé (409).
+    if isinstance(_b, dict) and "type" in _b and _b.get("type") != _avant.get("type") \
+            and _avant.get("status") != "draft":
+        raise HTTPException(status_code=409, detail="Le type ne change plus une fois le lien activé.")
     _champs = _valider(_b, _avant)
     _cours, _offre = await _controler(_c, _champs)
     _now = _iso()
@@ -412,6 +477,8 @@ async def invitations_modifier(inv_id: str, request: Request):
     if not getattr(_ecrit, "matched_count", 1):
         raise HTTPException(status_code=409, detail="Invitation archivée entre-temps : elle n'est plus modifiable.")
     _apres = await _invitation(_c, _avant["id"])
+    if _avant.get("status") != "active" and _apres.get("status") == "active":
+        await _suivre(_apres, "lien_active")
     return await _dto(_apres, _cours, _offre, charger=False)
 
 

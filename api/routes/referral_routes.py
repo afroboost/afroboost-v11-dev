@@ -510,6 +510,11 @@ async def _proprietaires_campagne(pass_doc) -> list:
     _cle = str(_c.get("coach_id") or "").strip().lower()
     if _cle:
         return [_cle]
+    return _super_admins()
+
+
+def _super_admins() -> list:
+    """Les adresses du super-admin (SA-1 : une seule), normalisées."""
     try:
         from api.routes.shared import SUPER_ADMIN_EMAILS as _SA
     except Exception:  # noqa: BLE001
@@ -1690,6 +1695,80 @@ async def _changer_seance(pass_doc, occurrence, version, changed_by) -> dict:
     return _apres
 
 
+async def _dto_public_complet(pass_doc) -> dict:
+    """V607 — la MÊME forme que `GET /pass/{token}` (sans l'effet `opened_at`)."""
+    _now = _maintenant()
+    _s = await _statut_reel(pass_doc, _now)
+    _dto = E.dto_public(pass_doc, _s, _now, await _catalogue_du_pass(pass_doc, {}))
+    _dto["occurrences"] = [] if (E.chaine_du_pass(pass_doc).get("parent_pass_id")
+                                 or E.campagne_du_pass(pass_doc)) else await _occurrences_du_pass(pass_doc)
+    _dto["chain_required"] = E.chaine_requise(pass_doc, _s, await _chaine_active())
+    _dto["chain"] = E.dto_chaine_public(pass_doc)
+    _dto["invitation_type"] = E.type_invitation(pass_doc)
+    return _dto
+
+
+async def _choisir_ma_seance_essai(pass_doc, course_id, occurrence, version) -> dict:
+    """V607 — l'invité d'une chaîne d'essai gratuit choisit SA séance avant son join.
+
+    Liste = `_seances_offrables` (la même que pour l'ami : cours de l'offre de la
+    campagne, du même propriétaire, publics, dates futures du serveur) ; cours et
+    date relus côté serveur (400 `seance_non_autorisee` / `seance_indisponible`).
+    Verrou optimiste par `version` (409 `conflit_version`). L'invitation enfant
+    qui SUIT ce pass (séance non choisie, pas encore partagée, sans invité) suit
+    le nouveau cours / la nouvelle date ; si elle a DÉJÀ été partagée avec
+    l'ancienne séance -> 409 `invitation_deja_partagee` (jamais un changement
+    silencieux de ce qui a été envoyé) ; si son ami s'y est inscrit -> 409.
+    Un maillon (parent_pass_id) qui choisit sa séance la marque `seance_choisie` :
+    la place de son parrain reste celle qu'il a déjà (`_place_du_parrain_chaine`)."""
+    _cid = str(course_id or "").strip() or str(pass_doc.get("course_id") or "")
+    _cours, _cible = await _valider_seance_enfant(pass_doc, _cid, occurrence)
+    if _cours.get("id") == pass_doc.get("course_id") and _cible == str(pass_doc.get("occurrence") or ""):
+        return pass_doc                                   # idempotent, aucune écriture
+    if int(version) != E.version_pass(pass_doc):
+        raise _refus(409, E.REFUS_CONFLIT_VERSION,
+                     "Cette invitation a été modifiée entre-temps : recharge la page et réessaie.")
+    _enf = await _enfant_de(pass_doc)
+    _suit = bool(_enf) and not E.seance_choisie(_enf)
+    if _suit and _enf.get("invitee"):
+        raise _refus(409, E.REFUS_PASS_NON_MODIFIABLE,
+                     "Ton ami s'est déjà inscrit à cette séance : elle ne peut plus changer.")
+    if _suit and E.partage_chaine(_enf)["shared"]:
+        raise _refus(409, E.REFUS_INVITATION_DEJA_PARTAGEE,
+                     "Ton invitation a déjà été envoyée avec cette séance : elle ne peut plus changer.")
+    _instant = _instantane_cours(_cours)
+    _entree = E.entree_historique_seance(pass_doc.get("occurrence"), _cible, "invitee", _iso())
+    _entree["from_course_id"] = pass_doc.get("course_id")
+    _entree["to_course_id"] = _cours.get("id")
+    _set = {"course_id": _cours.get("id"), "occurrence": _cible, "expires_at": _cible,
+            "course_snapshot": _instant, "updated_at": _iso()}
+    if E.chaine_du_pass(pass_doc).get("parent_pass_id"):
+        _set["chain.seance_choisie"] = True
+    from pymongo import ReturnDocument
+    _apres = await db[COLL_PASSES].find_one_and_update(
+        dict(_filtre_version(pass_doc["id"], version), invitee=None),
+        {"$set": _set,
+         "$push": {"occurrence_history": _entree,
+                   "events": {"at": _iso(), "type": E.EVENEMENT_SEANCE, "detail": dict(_entree)}},
+         "$inc": {"version": 1}},
+        projection={"_id": 0}, return_document=ReturnDocument.AFTER)
+    if not _apres:
+        raise _refus(409, E.REFUS_CONFLIT_VERSION,
+                     "Cette invitation a été modifiée entre-temps : recharge la page et réessaie.")
+    if _suit:
+        try:
+            await db[COLL_PASSES].update_one(
+                {"id": _enf["id"], "invitee": None},
+                {"$set": {"course_id": _cours.get("id"), "occurrence": _cible, "expires_at": _cible,
+                          "course_snapshot": dict(_instant), "updated_at": _iso()},
+                 "$push": {"events": {"at": _iso(), "type": E.EVENEMENT_SEANCE, "detail": dict(_entree)}},
+                 "$inc": {"version": 1, "invitation_version": 1}})
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("%s séance de l'invitation enfant non suivie (%s)", PREFIXE, type(_err).__name__)
+    logger.info("%s V607 séance choisie par l'invité du pass %s", PREFIXE, pass_doc["id"][:8])
+    return _apres
+
+
 @router.patch("/pass/{identifiant}/occurrence")
 async def referral_changer_seance(identifiant: str, request: Request):
     """V539 — `{occurrence, version}` -> 200 PassDTO (parrain) ou PassPublicDTO.
@@ -1721,6 +1800,14 @@ async def referral_changer_seance(identifiant: str, request: Request):
                 raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
             raise _refus(409, E.REFUS_PASS_DEJA_REJOINT,
                          "Tu es déjà inscrit : seul le parrain peut encore changer la séance.")
+        if E.parcours_essai(_p):
+            # V607 — ESSAI GRATUIT « MOI D'ABORD » : l'invité choisit SA séance
+            # (parmi celles du serveur : cours de l'offre de la campagne, même
+            # propriétaire, futures) AVANT d'inviter son ami. Le Pass Duo, lui,
+            # ne passe jamais ici (règles V539 / V556 / PAR-1 inchangées).
+            _p = await _choisir_ma_seance_essai(_p, _b.get("course_id"), _b.get("occurrence"),
+                                                _version_du_corps(_b))
+            return await _dto_public_complet(_p)
         if E.chaine_du_pass(_p).get("parent_pass_id"):
             # V556 : une invitation de la chaîne vaut pour LA séance de son
             # parrain (sa place y est déjà) — la déplacer séparerait le duo.
@@ -2249,7 +2336,27 @@ async def referral_join(share_token: str, request: Request):
                             "%s a rejoint ton Pass Duo. Recharge ton abonnement pour confirmer ta place."
                             % (E.prenom(_nom) or "Ton ami"),
                             {"type": "pass_duo_friend_registered", "pass_id": _p["id"], "url": "/parrainage"})
+    if E.chaine_partagee(_p):
+        # V607 — funnel honnête : la porte « boule de neige » est franchie et la
+        # réservation est écrite (preuve en base). Clé = id du pass : un rejeu
+        # n'écrit rien. FAIL-OPEN : le suivi ne fait jamais échouer le join.
+        await _suivre_invitation("essai_debloque", share_token, _p["id"])
+        await _suivre_invitation("reservation_confirmee", share_token, _p["id"])
     return await _reponse_join(_p, _now)
+
+
+async def _suivre_invitation(evenement, share_token, cle) -> None:
+    """V607 — une ligne du funnel (`invitation_suivi`), rattachée au jeton RÉEL.
+    Aucune donnée personnelle ; jamais bloquant (toute erreur est avalée)."""
+    try:
+        from api.routes import invitation_suivi as S
+        _r = await S.resoudre_jeton(db, share_token)
+        if _r.get("type_invitation"):
+            await S.enregistrer(db, evenement, type_invitation=_r["type_invitation"],
+                                campagne_id=_r.get("campagne_id"), coach_id=_r.get("coach_id"),
+                                jeton=share_token, generation=_r.get("generation"), cle=cle)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s suivi %s non écrit (%s)", PREFIXE, evenement, type(_err).__name__)
 
 
 async def _reponse_join(pass_doc, now) -> dict:
@@ -2617,11 +2724,17 @@ async def _cours_offrables(pass_doc) -> list:
         logger.warning("%s cours offrables illisibles (%s)", PREFIXE, type(_err).__name__)
         return []
     _sortie = []
+    # V607 — DIMANCHE : la comparaison se fait sur la clé CANONIQUE. Une campagne
+    # du super-admin a la clé "" (plateforme) tandis que ses cours portent son
+    # e-mail : la comparaison brute ne gardait que le cours du pass (mercredi).
+    _sa = _super_admins()
+    _proprio_c = E.proprietaire_canonique(_proprio, _sa)
     for _co in _rows:
         # Coach A ne propose JAMAIS une séance du coach B (propriété du cours).
         # Le cours du pass lui-même reste offrable : c'est déjà celui de la chaîne.
         _sien = _co.get("id") == _p.get("course_id")
-        if not IC.cours_public(_co) or (not _sien and E._proprietaire(_co.get("coach_id")) != _proprio):
+        if not IC.cours_public(_co) or (
+                not _sien and E.proprietaire_canonique(_co.get("coach_id"), _sa) != _proprio_c):
             continue
         if not _cid and _oid not in [str(i).strip() for i in (_co.get("duo_offer_ids") or [])]:
             continue
@@ -2828,6 +2941,7 @@ async def referral_chaine_creer(share_token: str, request: Request):
         raise HTTPException(status_code=503, detail="Invitation non préparée, réessaie dans un instant.")
     await _journal_parent(_p["id"], E.EVENEMENT_CHAINE_CREEE, None,
                           {"chain.child_pass_id": _doc["id"], "chain.child_created_at": _iso(_now)})
+    await _suivre_invitation("nouvelle_invitation_generee", _doc["share_token"], _doc["id"])   # V607
     logger.info("%s invitation enfant %s créée sous %s (profondeur %s)", PREFIXE, _doc["id"][:8],
                 _p["id"][:8], _prof)
     return await _reponse_chaine(_p, _doc, 201, edit_key=_cle)

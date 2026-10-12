@@ -16,6 +16,11 @@
 //   - toutes les fonctions de ce module, hors appels réseau, sont pures.
 import axios from 'axios';
 import { texteChaine } from './parrainage';
+// V607 : les médias de la bibliothèque existante (aucun nouvel envoi de fichier).
+export function lireMedias(API) {
+  return axios.get(`${racineApi(API)}/api/prospection-medias`, { timeout: 15000, params: { limit: 50 } })
+    .then((r) => ((r && r.data && Array.isArray(r.data.medias)) ? r.data.medias : []).filter((m) => m && m.url && m.statut !== 'archivee'));
+}
 
 /** Les quatre types d'invitation, dans l'ordre d'affichage. */
 export const TYPES_INVITATION = [
@@ -46,8 +51,10 @@ export const SOUS_TITRE_MAX = 120;
 export const MESSAGE_MAX = 280;
 export const CTA_MAX = 30; // le serveur refuse au-delà (422)
 
-/** Texte affiché pour un événement payant tant que l'activation répond 409. */
+/** V607 : le blocage « fuseau horaire des paliers » est levé (api/pricing.py lit
+ *  l'heure suisse). Constante conservée pour les appelants anciens, plus affichée. */
 export const TEXTE_FUSEAU_PALIERS = 'Les événements payants pourront être partagés dès la correction du fuseau horaire des paliers.';
+export const LIEU_MAX = 160;
 /** Message d'une session expirée / sans jeton (401 / 403). */
 export const TEXTE_RECONNEXION = 'Reconnecte-toi pour créer une invitation';
 
@@ -55,7 +62,24 @@ export const TEXTE_RECONNEXION = 'Reconnecte-toi pour créer une invitation';
 export const CHAMPS_CONTENU = [
   'type', 'title', 'subtitle', 'message', 'cta_label', 'image_url', 'image_source',
   'course_id', 'occurrence', 'offer_id',
+  'lieu', 'video_url', 'audio_url', // V607
 ];
+
+/** V607 — le nom FR de chaque champ, pour dire QUEL champ manque. */
+export const LIBELLES_CHAMPS = {
+  type: "le type d'invitation", offer_id: "l'offre", course_id: 'la séance', date: 'la date',
+  heure: "l'heure", lieu: 'le lieu', title: 'le titre', subtitle: 'le sous-titre', message: 'le message',
+  cta_label: 'le texte du bouton', video_url: 'la vidéo', audio_url: "l'audio",
+};
+
+/** V607 — « Il manque : la date, l'heure et le lieu. » (vide si rien ne manque). */
+export function resumeErreurs(erreurs, champs) {
+  const cles = Object.keys(erreurs || {}).filter((k) => !champs || champs.indexOf(k) >= 0);
+  if (!cles.length) return '';
+  const noms = cles.map((k) => LIBELLES_CHAMPS[k] || k);
+  const liste = noms.length > 1 ? `${noms.slice(0, -1).join(', ')} et ${noms[noms.length - 1]}` : noms[0];
+  return `À compléter : ${liste}.`;
+}
 
 /**
  * Racine des URL : accepte `''`, `https://x.ch`, ou une base qui finit déjà
@@ -72,6 +96,11 @@ export function racineApi(API) {
 export function offreGratuite(o) {
   if (!o) return false;
   if (typeof o.is_free === 'boolean') return o.is_free;
+  // V607 : prix progressif — `price` n'est qu'une sentinelle à 0 ; un palier ou un
+  // prix actif positif dit « payant ».
+  if (o.prix_actif && Number(o.prix_actif.prix) > 0) return false;
+  if (o.has_progressive_pricing && ['price_early_bird', 'price_standard', 'price_last_minute']
+    .some((k) => Number(o[k]) > 0)) return false;
   const p = Number(o.price);
   return !Number.isFinite(p) || p <= 0;
 }
@@ -119,8 +148,22 @@ export function offresPourType(type, offers, courses) {
     if (type !== 'trial' || !Array.isArray(courses)) return ouvrables;
     return ouvrables.filter((o) => coursPourInvitation(type, o, courses).length > 0);
   }
-  if (type === 'event_paid') return liste.filter((o) => !offreGratuite(o));
+  // V607 : un BILLET d'événement — jamais un abonnement, une carte membre, une offre
+  // privée ou masquée (annotation serveur `billet`). Filtre PROPRE à l'événement
+  // payant : les autres types et le catalogue ne sont pas touchés.
+  if (type === 'event_paid') return liste.filter((o) => !offreGratuite(o) && offreBillet(o));
   return [];
+}
+
+/** V607 — l'offre peut-elle servir de billet ? (`billet` du serveur ; absent = oui). */
+export function offreBillet(o) {
+  return !!o && o.billet !== false;
+}
+
+/** V607 — le lieu affiché : saisi > celui du cours > celui de l'offre. */
+export function lieuInvitation(f, cours, offre) {
+  const x = f || {};
+  return String(x.lieu || (cours && cours.location) || (offre && offre.location) || '').trim();
 }
 
 function _prix(v) {
@@ -230,6 +273,9 @@ export function formulaireInitial(type, dateInitiale) {
     date: /^\d{4}-\d{2}-\d{2}$/.test(String(dateInitiale || '')) ? String(dateInitiale) : '',
     heure: '',
     offer_id: '',
+    lieu: '', // V607 : événements seulement
+    video_url: '',
+    audio_url: '',
   };
 }
 
@@ -259,6 +305,10 @@ export function construireCorps(f) {
     course_id: avecCours && x.course_id ? String(x.course_id) : null,
     occurrence: occurrence || null,
     offer_id: avecOffre && x.offer_id ? String(x.offer_id) : null,
+    // V607 : le lieu n'a de sens que pour un événement ; médias facultatifs.
+    lieu: (type === 'event_free' || type === 'event_paid') ? (_texte(x.lieu, LIEU_MAX) || null) : null,
+    video_url: _texte(x.video_url) || null,
+    audio_url: _texte(x.audio_url) || null,
   };
   // Défense : rien d'autre que la liste blanche ne sort d'ici.
   const propre = {};
@@ -324,7 +374,25 @@ export function validerInvitation(f, offers, aujourdhui, courses) {
   } else if (type === 'event_paid') {
     if (!x.offer_id) e.offer_id = "Choisis l'offre payante de l'événement.";
     else if (offre && offreGratuite(offre)) e.offer_id = 'Cette offre est gratuite : choisis une offre payante.';
+    else if (offre && !offreBillet(offre)) e.offer_id = `Cette offre ne peut pas servir de billet (${offre.raison_non_billet || 'abonnement ou offre privée'}).`;
+    else if (offre && offre.has_progressive_pricing && !offre.prix_actif) {
+      e.offer_id = "Cette offre n'a pas de date d'événement : ses 3 paliers ne peuvent pas se calculer. Renseigne-la dans l'offre.";
+    }
+    // V607 : un billet se vend pour une date, une heure et un lieu précis.
+    if (!date && !e.date) e.date = "Choisis la date de l'événement.";
+    if (!heure && !e.heure) e.heure = "Indique l'heure de l'événement.";
+    const cours = x.course_id && Array.isArray(courses) ? courses.find((c) => String(c.id) === String(x.course_id)) : null;
+    if (!lieuInvitation(x, cours, offre)) e.lieu = "Indique le lieu de l'événement.";
+    // Les paliers se calculent sur la date de l'événement DE L'OFFRE : la même, sinon
+    // la carte et le paiement ne diraient pas le même prix.
+    if (offre && offre.has_progressive_pricing && offre.countdown_date && date && !e.date) {
+      if (date !== offre.countdown_date) e.date = `L'événement de cette offre a lieu le ${offre.countdown_date} : les paliers en dépendent.`;
+      else if (offre.countdown_time && heure && heureDuCours(heure) !== heureDuCours(offre.countdown_time) && !e.heure) {
+        e.heure = `L'événement de cette offre commence à ${heureDuCours(offre.countdown_time)}.`;
+      }
+    }
   }
+  if (String(x.lieu || '').length > LIEU_MAX) e.lieu = `${LIEU_MAX} caractères au plus.`;
   return e;
 }
 
@@ -335,16 +403,93 @@ export function lienPartage(dto) {
   return (dto && typeof dto.share_url === 'string') ? dto.share_url.trim() : '';
 }
 
-/** Le texte WhatsApp : message (sinon titre) + saut de ligne + lien courant. */
-export function texteWhatsAppCampagne(dto) {
-  const d = dto || {};
-  const m = String(d.message || '').trim() || String(d.title || '').trim();
-  return texteChaine(m, lienPartage(d));
+function _maj(t) {
+  const s = String(t || '').trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 }
 
-/** L'invitation peut-elle être partagée ? (active, lien présent, pas un événement payant) */
+/**
+ * V607 — LE MESSAGE WHATSAPP, PROPRE AU TYPE (court, humain ; lignes vides omises).
+ * Emojis autorisés DANS le texte du message (jamais comme icônes d'interface).
+ * Pass Duo : le texte d'avant (message, sinon titre, + lien), inchangé.
+ */
+export function texteWhatsAppCampagne(dto) {
+  const d = dto || {};
+  const lien = lienPartage(d);
+  const prenom = String((d.inviter_display && d.inviter_display.prenom) || '').trim();
+  const perso = String(d.message || '').trim();
+  const quand = [d.date_label ? `📅 ${_maj(d.date_label)}` : '', d.time_label ? `⏰ ${d.time_label}` : '',
+    d.lieu ? `📍 ${d.lieu}` : ''].filter(Boolean);
+  if (d.type === 'trial') {
+    return [
+      prenom ? `🔥 ${prenom} t'invite à découvrir Afroboost !` : '🔥 Viens découvrir Afroboost !',
+      '🎧 Cardio + danse afro + casques immersifs',
+      perso, '', ...quand, '', '🎁 Ton premier cours est offert.', '',
+      'Réserve ton essai ici :', lien, '', 'Et à ton tour, tu pourras inviter quelqu’un 💜',
+    ].filter((l, i, a) => l !== '' || (a[i - 1] !== '' && i > 0)).join('\n').trim();
+  }
+  if (d.type === 'event_paid') {
+    const nom = String(d.title || d.offre_nom || 'un événement Afroboost').trim();
+    const pa = d.prix_actif || null;
+    return [
+      prenom ? `🔥 ${prenom} participe à ${nom} avec Afroboost !` : `🔥 ${nom} avec Afroboost !`,
+      'Ça te dit de venir aussi ? 💜', perso, '', ...quand, '',
+      pa ? `🎟️ Tarif actuel : ${libellePrix(pa.prix)}${pa.libelle && pa.palier !== 'regular' ? ` (${pa.libelle})` : ''}` : '',
+      pa && pa.prochain ? 'Plus tu réserves tôt, moins c’est cher.' : '', '',
+      'Réserve ici :', lien,
+    ].filter((l, i, a) => l !== '' || (a[i - 1] !== '' && i > 0)).join('\n').trim();
+  }
+  if (d.type === 'event_free') {
+    const nom = String(d.title || d.offre_nom || 'un événement Afroboost').trim();
+    return [
+      prenom ? `🔥 ${prenom} t'invite : ${nom}` : `🔥 ${nom}`, perso, '', ...quand, '',
+      '🎉 Entrée gratuite.', '', 'Inscris-toi ici :', lien,
+    ].filter((l, i, a) => l !== '' || (a[i - 1] !== '' && i > 0)).join('\n').trim();
+  }
+  const m = perso || String(d.title || '').trim();
+  return texteChaine(m, lien);
+}
+
+/** L'invitation peut-elle être partagée ? (active, lien présent) — V607 : l'événement
+ *  payant aussi, depuis la correction du fuseau des paliers. */
 export function partageable(dto) {
-  return !!(dto && dto.status === 'active' && lienPartage(dto) && dto.type !== 'event_paid');
+  return !!(dto && dto.status === 'active' && lienPartage(dto));
+}
+
+/**
+ * V607 — L'APERÇU EN DIRECT (pur) : ce que la carte montrera, depuis le FORMULAIRE
+ * (avant tout enregistrement). Jamais « 0 CHF » : « Offert » (essai), « Gratuit »
+ * (événement gratuit), le prix ACTIF du serveur (événement payant), rien (Pass Duo).
+ */
+export function apercuDepuisFormulaire(f, offre, cours, inviteur) {
+  const x = f || {};
+  const type = x.type || '';
+  let mention = null;
+  if (type === 'trial') mention = 'Offert';
+  else if (type === 'event_free') mention = 'Gratuit';
+  else if (type === 'event_paid' && offre && offre.prix_actif) {
+    const pa = offre.prix_actif;
+    mention = `${libellePrix(pa.prix)}${pa.palier !== 'regular' && pa.libelle ? ` · ${pa.libelle}` : ''}`;
+  }
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(x.date || '')) ? new Date(`${x.date}T12:00:00`) : null;
+  const jours = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+  const mois = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  return {
+    type,
+    prenom: String((inviteur && inviteur.prenom) || '').trim(),
+    titre: String(x.title || '').trim() || TITRE_DEFAUT[type] || '',
+    sous_titre: String(x.subtitle || '').trim(),
+    message: String(x.message || '').trim(),
+    cta: String(x.cta_label || '').trim() || CTA_DEFAUT[type] || '',
+    date_label: date ? `${jours[date.getDay()]} ${date.getDate()} ${mois[date.getMonth()]}` : '',
+    time_label: heureDuCours(x.heure),
+    lieu: (type === 'event_free' || type === 'event_paid' || type === 'trial' || type === 'pass_duo') ? lieuInvitation(x, cours, offre) : '',
+    mention_prix: mention,
+    paliers: type === 'event_paid' && offre && offre.prix_actif ? (offre.prix_actif.paliers || []) : [],
+    image_url: String(x.image_url || '').trim(),
+    video_url: String(x.video_url || '').trim(),
+    audio_url: String(x.audio_url || '').trim(),
+  };
 }
 
 /** Message FR d'une erreur axios de la modale. */
@@ -352,7 +497,6 @@ export function messageErreur(err, contexte) {
   const rep = (err && err.response) || {};
   const s = rep.status || 0;
   if (s === 401 || s === 403) return TEXTE_RECONNEXION;
-  if (s === 409 && contexte === 'activation') return TEXTE_FUSEAU_PALIERS;
   if (s === 404) return 'Cette invitation est introuvable.';
   if (s === 429) return 'Trop de tentatives. Réessaie dans un instant.';
   const d = rep.data && rep.data.detail;
@@ -372,6 +516,9 @@ export function lireOptions(API) {
       return {
         courses: Array.isArray(d.courses) ? d.courses.filter((c) => c && c.id) : [],
         offers: Array.isArray(d.offers) ? d.offers.filter((o) => o && o.id) : [],
+        // V607 : qui invite (aperçu en direct, avant tout enregistrement).
+        inviter_display: d.inviter_display && typeof d.inviter_display === 'object' ? d.inviter_display : null,
+        default_image_url: d.default_image_url || null,
       };
     });
 }
@@ -384,11 +531,12 @@ export function creerInvitation(API, corps) {
   return axios.post(`${racineApi(API)}/api/referral/campaigns`, c, { timeout: 20000 }).then((r) => (r && r.data) || {});
 }
 
-/** PUT — champs partiels (le type ne change plus après la création). */
-export function modifierInvitation(API, id, champs) {
+/** PUT — champs partiels. V607 : le TYPE part aussi tant que l'invitation est un
+ *  brouillon (`avecType`) ; le serveur refuse (409) un changement après activation. */
+export function modifierInvitation(API, id, champs, avecType) {
   const c = {};
   Object.keys(champs || {}).forEach((k) => {
-    if (k === 'status' || (CHAMPS_CONTENU.indexOf(k) >= 0 && k !== 'type')) c[k] = champs[k];
+    if (k === 'status' || (CHAMPS_CONTENU.indexOf(k) >= 0 && (k !== 'type' || avecType))) c[k] = champs[k];
   });
   return axios.put(`${racineApi(API)}/api/referral/campaigns/${encodeURIComponent(id)}`, c, { timeout: 20000 })
     .then((r) => (r && r.data) || {});

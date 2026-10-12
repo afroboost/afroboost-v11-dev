@@ -220,14 +220,57 @@ export function createurActuel() {
   } catch (e) { return ''; }
 }
 
+// ═══ V607 — LE JETON D'INVITATION D'UN ÉVÉNEMENT (`?inv=<jeton>`) ════════════
+// Posé par la page `/i/<jeton>` sur le lien de la vitrine (`/?offre=<id>&inv=`).
+// JAMAIS `ref=` (réservé aux partenaires). Mémorisé 7 jours avec l'offre visée :
+// il voyage avec le paiement (metadata Stripe `invitation_token`) et permet au
+// participant de recevoir SON lien après l'achat / l'inscription. Le serveur
+// relit tout (invitation active ? même offre ?) : ce n'est qu'un jeton opaque.
+export const CLE_INVITATION = 'af_invitation';
+const MOTIF_JETON_INVITATION = /^[A-Za-z0-9_-]{16,64}$/;
+const DUREE_INVITATION_MS = 7 * 24 * 3600 * 1000;
+
+/** `{t, offre}` lus dans l'URL, ou null. */
+export function invitationDepuisUrl(recherche) {
+  try {
+    const q = new URLSearchParams(recherche || '');
+    const t = String(q.get('inv') || '').trim();
+    return MOTIF_JETON_INVITATION.test(t) ? { t, offre: String(q.get('offre') || '').slice(0, 80) } : null;
+  } catch (e) { return null; }
+}
+
+/** Mémorise le jeton de l'URL (dernier clic). Ne lève jamais. */
+export function invitationEnregistrer(recherche) {
+  const i = invitationDepuisUrl(recherche);
+  if (!i) return;
+  try { window.localStorage.setItem(CLE_INVITATION, JSON.stringify({ t: i.t, offre: i.offre, at: Date.now() })); } catch (e) { /* ignore */ }
+}
+
+/** `{t, offre}` mémorisé (7 jours), sinon null. */
+export function invitationActuelle() {
+  try {
+    const o = JSON.parse(window.localStorage.getItem(CLE_INVITATION) || 'null');
+    if (!o || !MOTIF_JETON_INVITATION.test(o.t || '') || (Date.now() - Number(o.at || 0)) > DUREE_INVITATION_MS) return null;
+    return { t: o.t, offre: o.offre || '' };
+  } catch (e) { return null; }
+}
+
 /** L'attribution memorisee, ou `null`. Ne leve jamais. V559 : `createur` s'y
  *  ajoute s'il existe — il voyage ainsi avec CHAQUE paiement, sans nouveau champ. */
 export function attributionActuelle() {
   const objet = lireBrut();
   const createur = createurActuel();
-  if (!objet || (!objet.first && !objet.last)) return createur ? { first: null, last: null, createur } : null;
+  const inv = invitationActuelle(); // V607
+  if (!objet || (!objet.first && !objet.last)) {
+    if (!createur && !inv) return null;
+    const v = { first: null, last: null };
+    if (createur) v.createur = createur;
+    if (inv) v.invitation = inv.t;
+    return v;
+  }
   const a = { first: objet.first || null, last: objet.last || null };
   if (createur) a.createur = createur;
+  if (inv) a.invitation = inv.t;
   return a;
 }
 
@@ -239,6 +282,7 @@ export function attributionActuelle() {
  */
 export function attributionEnregistrer(recherche, referrer, chemin) {
   createurEnregistrer(recherche); // V559 : le lien créateur, à part
+  invitationEnregistrer(recherche); // V607 : le jeton d'invitation d'un événement, à part
   try {
     const neuf = attributionDepuisUrl(recherche, referrer, chemin);
     const ancien = attributionActuelle();

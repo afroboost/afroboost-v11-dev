@@ -103,6 +103,10 @@ def _cible(doc, chaine=False) -> str:
         _c = "/"
     if not _c.startswith("/") or _c.startswith("//") or "\\" in _c:
         _c = "/"
+    # V607 : un ÉVÉNEMENT emporte son jeton (`inv=`, JAMAIS `ref=` — réservé aux
+    # partenaires) : le paiement / l'inscription donnera au participant SON lien.
+    if (doc or {}).get("type") in ("event_paid", "event_free") and _c.startswith("/?"):
+        _c += "&inv=" + quote(str((doc or {}).get("share_token") or ""), safe="")
     return _front() + _c
 
 
@@ -112,6 +116,17 @@ async def _invitation_active(token):
         return None
     try:
         _d = await _base()[COLL].find_one({"share_token": _t}, {"_id": 0})
+        if not _d:
+            # V607 : le jeton d'un RELAIS (participant d'un événement) — même page, même
+            # carte que l'invitation du coach, mais c'est LE PARTICIPANT qui invite.
+            _r = await _base()["invitation_relais"].find_one({"jeton": _t}, {"_id": 0})
+            if _r:
+                _c = await _base()[COLL].find_one({"id": _r.get("campagne_id")}, {"_id": 0})
+                if _c and _c.get("status") == STATUT_PUBLIC:
+                    # Le mot personnel est celui du COACH : il ne parle pas au nom du participant.
+                    _d = dict(_c, share_token=_r.get("jeton"), _relais=True, message=None,
+                              inviter_display={"prenom": _r.get("inviteur_prenom") or "", "photo_url": None,
+                                               "source": "member"})
     except Exception as _e:  # noqa: BLE001
         logger.warning("%s invitation illisible (%s)", PREFIXE, type(_e).__name__)
         raise
@@ -172,7 +187,7 @@ def _empreinte(doc, dto, fond_url, photo_url) -> str:
     _i = _inviteur(dto)
     _cle = [RC.GABARIT_INVITATION, _version(doc), fond_url or "", photo_url or "", _i.get("prenom") or ""]
     _cle += [str((dto or {}).get(k) or "") for k in ("title", "subtitle", "cta_label", "date_label",
-                                                     "time_label", "lieu", "occurrence")]
+                                                     "time_label", "lieu", "occurrence", "mention_prix")]
     return hashlib.sha256(json.dumps(_cle, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
 
 
@@ -253,6 +268,42 @@ async def share_invite_carte(token: str, v: str = ""):
 
 
 # ─── Page Open Graph ────────────────────────────────────────────────────────
+def _majuscule(t) -> str:
+    _t = str(t or "").strip()
+    return (_t[:1].upper() + _t[1:]) if _t else ""
+
+
+def titre_og(dto) -> str:
+    """V607 — le titre d'aperçu PROPRE au type (jamais celui de l'accueil)."""
+    _d = dto or {}
+    _p = str(_inviteur(_d).get("prenom") or "").strip()
+    _p = "" if "@" in _p else _p
+    _t = str(_d.get("title") or "").strip()
+    _type = _d.get("type")
+    if _type == "trial":
+        return ("%s t'invite à découvrir Afroboost 🔥" % _p) if _p else "Ton premier cours Afroboost est offert 🔥"
+    if _type == "pass_duo":
+        return ("%s t'invite à venir à deux avec le Pass Duo" % _p) if _p else (_t or "Viens à deux avec le Pass Duo")
+    _nom = _t or str(_d.get("offre_nom") or "").strip() or RC.TITRE_INVITATION_DEFAUT
+    return (("%s t'invite : %s" % (_p, _nom)) if _p and _p.lower() not in _nom.lower() else _nom)[:120]
+
+
+def description_og(dto) -> str:
+    """V607 — « Mercredi 14 octobre · 18:45 · Auvernier · Premier cours offert »."""
+    _d = dto or {}
+    _parts = [_majuscule(_d.get("date_label")), str(_d.get("time_label") or "").strip(),
+              str(_d.get("lieu") or "").strip()]
+    _type = _d.get("type")
+    if _type == "trial":
+        _parts.append("Premier cours offert")
+    elif _type == "event_free":
+        _parts.append("Gratuit")
+    elif _type == "event_paid" and _d.get("mention_prix"):
+        _parts.append(str(_d.get("mention_prix")))
+    _texte = " · ".join(p for p in _parts if p)
+    return (_texte or _description(_d))[:200]
+
+
 def _description(dto) -> str:
     _d = dto or {}
     _quand = " · ".join(str(_d.get(k) or "").strip() for k in ("date_label", "time_label") if _d.get(k))
@@ -345,10 +396,105 @@ async def share_invite_page(token: str, request: Request = None, v: str = ""):
     except Exception as _e:  # noqa: BLE001
         logger.warning("%s drapeaux de chaîne illisibles (%s) — cible d'avant", PREFIXE, type(_e).__name__)
         _chaine = False
-    _page = page_invitation_html(_titre(_dto_pub), _description(_dto_pub), _image_url, _url,
+    # V607 : mêmes titres / descriptions que le lien court (propres au type).
+    _page = page_invitation_html(titre_og(_dto_pub), description_og(_dto_pub), _image_url, _url,
                                  _cible(_doc, _chaine), await _couleur(_doc), robot=E.est_robot_apercu(_ua))
     return HTMLResponse(_page, headers={"Cache-Control": "public, max-age=300", "Vary": "User-Agent",
                                         "X-Content-Type-Options": "nosniff"})
+
+
+# ─── V607 : LE LIEN COURT PUBLIC `/i/<jeton>` ─────────────────────────────────
+def _index_spa() -> str:
+    """Le index.html du build (servi par `_serve_spa`), ou "" si absent."""
+    try:
+        from api import server as _S
+        _chemin = os.path.join(_S._STATIC_DIR, "index.html")
+        with open(_chemin, encoding="utf-8") as _f:
+            return _f.read()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+
+def index_avec_og(index_html, titre, description, image, url) -> str:
+    """Le index.html de l'app, ses balises og/twitter/description REMPLACÉES par
+    celles de l'invitation (tout échappé). La page React `/i/<jeton>` s'affiche
+    ensuite ; un robot qui lit le HTML voit l'aperçu de l'invitation."""
+    import re as _re
+    e = lambda s: html.escape(str(s or ""), quote=True)  # noqa: E731
+    _h = _re.sub(r'\s*<meta\s+(?:property="og:[^"]*"|name="twitter:[^"]*"|name="description")[^>]*>', "", index_html)
+    _h = _re.sub(r"<title>.*?</title>", "<title>%s</title>" % e(titre), _h, count=1, flags=_re.S)
+    _meta = ('<meta name="description" content="{d}"/><meta property="og:type" content="website"/>'
+             '<meta property="og:title" content="{t}"/><meta property="og:description" content="{d}"/>'
+             '<meta property="og:image" content="{i}"/><meta property="og:image:secure_url" content="{i}"/>'
+             '<meta property="og:image:type" content="image/jpeg"/><meta property="og:image:width" content="1200"/>'
+             '<meta property="og:image:height" content="630"/><meta property="og:url" content="{u}"/>'
+             '<meta property="og:site_name" content="Afroboost"/><meta property="og:locale" content="fr_FR"/>'
+             '<meta name="robots" content="noindex, nofollow"/><meta name="twitter:card" content="summary_large_image"/>'
+             '<meta name="twitter:title" content="{t}"/><meta name="twitter:description" content="{d}"/>'
+             '<meta name="twitter:image" content="{i}"/>').format(t=e(titre), d=e(description), i=e(image), u=e(url))
+    return _h.replace("<head>", "<head>" + _meta, 1) if "<head>" in _h else _meta + _h
+
+
+@router.head("/i/{token}")
+@router.get("/i/{token}")
+async def lien_court(token: str, request: Request = None, v: str = ""):
+    """V607 — `afroboost.com/i/<jeton>` : la façade COURTE des invitations (coach ou
+    relais). Robot d'aperçu -> balises OG de l'invitation ; navigateur -> la page
+    d'invitation (React) avec les mêmes balises. Les anciens liens
+    `/api/share/invite/<jeton>` restent servis à l'identique. 404 neutre sinon."""
+    try:
+        _doc = await _invitation_active(token)
+    except Exception:  # noqa: BLE001
+        _doc = None
+    if not _doc:
+        return _non_trouve()
+    _tok = str(_doc.get("share_token"))
+    _dto_pub = await _dto(_doc)
+    _tq = quote(_tok, safe="")
+    _front_url = _front()
+    _image_url = "%s/api/share/invite/%s/carte.jpg?v=%d" % (_front_url, _tq, _version(_doc))
+    _vr = E.version_depuis_requete(v)
+    _url = "%s/i/%s%s" % (_front_url, _tq, ("?v=%d" % _vr) if _vr else "")
+    try:
+        _ua = request.headers.get("user-agent", "") if request is not None else ""
+    except Exception:  # noqa: BLE001
+        _ua = ""
+    _titre, _desc = titre_og(_dto_pub), description_og(_dto_pub)
+    _entetes = {"Cache-Control": "public, max-age=300", "Vary": "User-Agent", "X-Content-Type-Options": "nosniff"}
+    _index = "" if E.est_robot_apercu(_ua) else _index_spa()
+    if not _index:
+        try:
+            from api.routes.referral_routes import invitation_chaine_campagne_active
+            _chaine = await invitation_chaine_campagne_active(_base())
+        except Exception:  # noqa: BLE001
+            _chaine = False
+        return HTMLResponse(page_invitation_html(_titre, _desc, _image_url, _url, _cible(_doc, _chaine),
+                                                 await _couleur(_doc), robot=E.est_robot_apercu(_ua)), headers=_entetes)
+    return HTMLResponse(index_avec_og(_index, _titre, _desc, _image_url, _url), headers=_entetes)
+
+
+@router.get("/api/invitation/publique/{token}")
+async def invitation_publique(token: str):
+    """V607 — ce que la page `/i/<jeton>` affiche : le `dto_public` (aucune PII) +
+    la cible RÉELLE du bouton (chaîne de l'essai, vitrine, Pass Duo). 404 neutre."""
+    try:
+        _doc = await _invitation_active(token)
+    except Exception:  # noqa: BLE001
+        _doc = None
+    if not _doc:
+        return _non_trouve()
+    _dto_pub = await _dto(_doc)
+    try:
+        from api.routes.referral_routes import invitation_chaine_campagne_active
+        _chaine = await invitation_chaine_campagne_active(_base())
+    except Exception:  # noqa: BLE001
+        _chaine = False
+    _sortie = dict(_dto_pub)
+    _sortie.update({"cible": _cible(_doc, _chaine), "relais": bool(_doc.get("_relais")),
+                    "card_url": "%s/api/share/invite/%s/carte.jpg?v=%d" % (_front(), quote(str(_doc.get("share_token")), safe=""), _version(_doc)),
+                    "og_titre": titre_og(_dto_pub), "og_description": description_og(_dto_pub)})
+    return _sortie
 
 
 # ─── Aperçu coach (brouillon compris) ───────────────────────────────────────

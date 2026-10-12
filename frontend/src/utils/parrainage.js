@@ -430,11 +430,15 @@ export function changerOffre({ passId, token, offerId, version, headers }) {
  * en-têtes, ami par `share_token` sans jeton). L'occurrence envoyée vient
  * TOUJOURS de la liste rendue par le serveur : le serveur la revérifie.
  */
-export function changerSeance({ passId, token, occurrence, version, headers }) {
+export function changerSeance({ passId, token, occurrence, version, headers, course_id }) {
   const cible = encodeURIComponent(passId || token || '');
+  const corps = { occurrence: String(occurrence || ''), version: Number(version) || 1 };
+  // V607 — essai gratuit « moi d'abord » : l'invité peut choisir un AUTRE cours de
+  // la liste du serveur (dimanche / mercredi) ; le serveur revalide tout.
+  if (course_id) corps.course_id = String(course_id);
   return axios.patch(
     `${API_PARRAINAGE}/pass/${cible}/occurrence`,
-    { occurrence: String(occurrence || ''), version: Number(version) || 1 },
+    corps,
     { headers: headers || {}, timeout: 15000 },
   );
 }
@@ -779,7 +783,7 @@ export function seancesPourCalendrier(seances) {
 export function messageRefusSeance(refus) {
   const r = refus || {};
   if (r.raison === 'seance_indisponible' || r.raison === 'seance_non_autorisee') return 'Cette séance n’est plus disponible.';
-  if (r.raison === 'invitation_deja_partagee') return 'Ton invitation a déjà été envoyée : sa séance ne peut plus changer.';
+  if (r.raison === 'invitation_deja_partagee') return 'Ton invitation a déjà été partagée : sa séance ne peut plus changer.';
   if (r.raison === 'type_non_autorise') return 'Cette offre n’est plus proposée. Choisis-en une autre.';
   if (r.status === 403) return 'Cette invitation ne peut être modifiée que depuis l’appareil qui l’a créée.';
   if (r.status === 429) return 'Trop de tentatives. Réessaie dans un instant.';
@@ -952,4 +956,37 @@ export function profilConnu() {
     whatsapp: (tel.match(/\d/g) || []).length >= 8 ? tel : '',
     photo: photoAutorisee(p.photoUrl || p.photo_url || '') || '',
   };
+}
+
+// ── V607 — ESSAI GRATUIT « MOI D'ABORD → PUIS MON AMI » ─────────────────────
+
+/** Ce qu'est Afroboost, en une ligne (écran d'accueil de l'invité). */
+export const PITCH_AFROBOOST = 'Cardio + danse afro + casques immersifs · cours d’1 h';
+
+/** Le pass reçu suit-il le parcours « moi d'abord » ? (chaîne requise + Essai gratuit) */
+export function estParcoursEssai(pass) {
+  return !!(pass && pass.chain_required === true && pass.invitation_type === 'trial');
+}
+
+/**
+ * V607 — le message WhatsApp de l'invité (court, humain). Les emojis sont DANS le
+ * texte du message (jamais des icônes d'interface). Champ absent → ligne omise.
+ * @param {{prenom?:string, occurrence?:string, lieu?:string, url:string}} p
+ */
+export function texteWhatsAppEssai({ prenom, occurrence, lieu, url } = {}) {
+  const n = nomAffichable(prenom);
+  const jour = occurrence ? libelleJour(occurrence) : '';
+  const heure = occurrence ? libelleHeure(occurrence) : '';
+  const lignes = [
+    n ? `🔥 ${n} t’invite à découvrir Afroboost !` : '🔥 Je t’invite à découvrir Afroboost !',
+    '🎧 Cardio + danse afro + casques immersifs',
+    jour ? `📅 ${jour}` : '',
+    heure ? `⏰ ${heure}` : '',
+    lieu ? `📍 ${String(lieu).trim()}` : '',
+    '🎁 Ton premier cours est offert.',
+    'Réserve ton essai ici :',
+    String(url || '').trim(),
+    'Et à ton tour, tu pourras inviter quelqu’un 💜',
+  ];
+  return lignes.filter((l) => l && String(l).trim()).join('\n');
 }

@@ -62,10 +62,12 @@ const O2B = `${apres.getFullYear()}-${pad(apres.getMonth() + 1)}-${pad(apres.get
 const COURSE = { id: 'c1', name: 'Afroboost Dimanche', time: '18:30', locationName: 'Bord du Lac, Auvernier' };
 const OCC = '2026-09-27T18:30:00';
 const PUB = { status: 'waiting', sponsor_first_name: 'Henri', course: COURSE, occurrence: OCC, expired: false, version: 1,
-  chain_required: true, chain: { exists: false, shared: false }, invitation_type: 'trial' };
+  // V607 : l'Essai gratuit suit désormais « moi d'abord » (parcoursEssai.test.js) ; le
+  // Wizard 4 étapes reste celui des chaînes Pass Duo — c'est lui que ce banc prouve.
+  chain_required: true, chain: { exists: false, shared: false }, invitation_type: 'pass_duo' };
 const OPTS = {
   types: [
-    { id: 'trial', libelle: 'Essai gratuit', texte: 'Offre à ton ami son premier cours Afroboost.', nature: 'premier_essai', recompense: null },
+    { id: 'pass_duo', libelle: 'Pass Duo', texte: 'Offre à ton ami une place à tes côtés.', nature: 'pass_duo', recompense: null },
     { id: 'parrainage', libelle: 'Parrainage', texte: 'Invite un ami et profite de l’avantage prévu par ton programme.',
       nature: 'recompense_parrainage', recompense: 'Tu gagnes 1 séance offerte de parrainage quand les conditions sont remplies.' },
   ],
@@ -111,7 +113,7 @@ describe('V558 — Wizard 4 étapes', () => {
     await monter(<InvitationDuo token="T0" />);
     expect(par('wf-etapes').textContent.replace(/\s+/g, '')).toBe('1Offre2Séance3Tacarte4Partage');
     expect(par('wf-offre-titre').textContent).toBe('Que veux-tu partager ?');
-    expect(par('wf-offre-trial').getAttribute('aria-checked')).toBe('true');       // premier type par défaut
+    expect(par('wf-offre-pass_duo').getAttribute('aria-checked')).toBe('true');       // premier type par défaut
     expect(par('wf-offre-parrainage').getAttribute('aria-checked')).toBe('false');
     expect(par('wf-offre-affiliation')).toBeNull();                                  // aucun programme : masquée
     expect(par('wf-recompense-parrainage').textContent).toContain('séance offerte de parrainage');
@@ -192,7 +194,7 @@ describe('V558 — Wizard 4 étapes', () => {
     routerPost();
     await monter(<InvitationDuo token="T0" />);
     // V562 : un seul type (repli) et aucune séance offrable → Offre ET Séance sautées
-    expect(par('wf-offre-trial')).toBeNull();
+    expect(par('wf-offre-pass_duo')).toBeNull();
     expect(par('wf-etape-carte')).not.toBeNull();
     expect(par('wf-etapes').textContent.replace(/\s+/g, '')).toBe('1Tacarte2Partage');
     const creation = axios.post.mock.calls.find((c) => String(c[0]).endsWith('/chain'));

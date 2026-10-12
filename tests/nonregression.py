@@ -2961,6 +2961,54 @@ def t147_v559_partage_jeton_inconnu():
         record(147, "V559 : partage créateur jeton inconnu", False, str(e))
 
 
+def t148_v607_lien_court_jeton_inconnu():
+    """V607 : la façade courte /i/<jeton> ne révèle rien d'un jeton inconnu."""
+    try:
+        r = requests.get(_url("/i/jetonInconnuNR607abcdef"), timeout=TIMEOUT, allow_redirects=False)
+        r2 = requests.get(_url("/api/invitation/publique/jetonInconnuNR607abcdef"), timeout=TIMEOUT, allow_redirects=False)
+        record(148, "V607 : /i/<jeton inconnu> et /api/invitation/publique/<jeton inconnu> -> 404",
+               r.status_code == 404 and r2.status_code == 404, f"i {r.status_code} | publique {r2.status_code}")
+    except Exception as e:
+        record(148, "V607 : lien court jeton inconnu", False, str(e))
+
+
+def t149_v607_suivi_public_neutre():
+    """V607 : le suivi public répond 204 sans rien écrire pour un jeton inconnu / un événement interdit."""
+    try:
+        r = requests.post(_url("/api/invitation/suivi"), json={"jeton": "jetonInconnuNR607abcdef",
+                          "evenement": "whatsapp_envoye", "visiteur": "nr607"}, timeout=TIMEOUT)
+        record(149, "V607 : /api/invitation/suivi (jeton inconnu, « whatsapp_envoye ») -> 204 neutre",
+               r.status_code == 204, f"{r.status_code}")
+    except Exception as e:
+        record(149, "V607 : suivi public", False, str(e))
+
+
+def t150_v607_funnel_chaine_sans_auth():
+    """V607 : le funnel et la chaîne reconstruite sont réservés au coach (JWT)."""
+    try:
+        r = requests.get(_url("/api/referral/campaigns-suivi/funnel"), timeout=TIMEOUT)
+        r2 = requests.get(_url("/api/referral/campaigns-relais/inconnue/chaine"), timeout=TIMEOUT)
+        record(150, "V607 : funnel + chaîne des invitations refusés sans jeton (401/403)",
+               r.status_code in (401, 403) and r2.status_code in (401, 403), f"funnel {r.status_code} | chaine {r2.status_code}")
+    except Exception as e:
+        record(150, "V607 : funnel / chaîne sans auth", False, str(e))
+
+
+def t151_v607_relais_preuves_inconnues():
+    """V607 : aucun lien personnel sans preuve réelle (session, réservation, accès inconnus)."""
+    try:
+        a = requests.get(_url("/api/invitation/relais/session/cs_inconnu_nr607"), timeout=TIMEOUT)
+        b = requests.post(_url("/api/invitation/relais/reservation"), json={"jeton": "jetonInconnuNR607abcdef",
+                          "reservation_code": "AFR-NR607"}, timeout=TIMEOUT)
+        c = requests.post(_url("/api/invitation/relais/inscription"), json={"jeton": "jetonInconnuNR607abcdef",
+                          "code": "AFR-NR607"}, timeout=TIMEOUT)
+        record(151, "V607 : relais sans preuve -> 404 (session / réservation / accès)",
+               a.status_code == 404 and b.status_code == 404 and c.status_code == 404,
+               f"session {a.status_code} | reservation {b.status_code} | inscription {c.status_code}")
+    except Exception as e:
+        record(151, "V607 : relais sans preuve", False, str(e))
+
+
 def t131_co1_ai_logs_sans_auth():
     """CO-1 : le journal IA (numéros WhatsApp + messages entrants de TOUTE la
     plateforme) n'est lisible que par le super-admin SIGNÉ. LECTURE SEULE.
@@ -3079,6 +3127,8 @@ def main():
                    t144_v558_options_chaine_jeton_inconnu,
                    t145_v559_createur_sans_auth, t146_v559_admin_createur_sans_auth,
                    t147_v559_partage_jeton_inconnu,
+                   t148_v607_lien_court_jeton_inconnu, t149_v607_suivi_public_neutre,
+                   t150_v607_funnel_chaine_sans_auth, t151_v607_relais_preuves_inconnues,
                    t131_co1_ai_logs_sans_auth, t132_co1_ai_config_ecriture_sans_auth,
                    t133_co1_ai_config_lecture_publique, t134_co1_ia_acces_legitime,
                    t39_redos_input, t40_nosql_injection):

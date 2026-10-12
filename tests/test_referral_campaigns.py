@@ -103,7 +103,7 @@ async def partie_moteur_pur():
              and IC.STATUTS == ("draft", "active", "archived"))
     verifier("INV-M2 CHAMPS_VISUELS exacts", set(IC.CHAMPS_VISUELS) == {
         "title", "subtitle", "message", "cta_label", "image_url", "image_source", "course_id",
-        "occurrence", "offer_id", "type"})
+        "occurrence", "offer_id", "type", "lieu", "video_url", "audio_url"})  # V607 : lieu + médias
     d = {"type": "trial", "offer_id": "o 1/é", "share_token": "t"}
     verifier("INV-M3 cible trial", IC.cible_front(d) == "/?offre=o%201%2F%C3%A9&reserver=1", IC.cible_front(d))
     verifier("INV-M3b cible event_free", IC.cible_front(dict(d, type="event_free")).endswith("&reserver=1"))
@@ -195,10 +195,13 @@ async def partie_moteur_pur():
                                                                          "last_minute": 20.0}, dp["prix"])
     verifier("INV-M12c dto_public : clés exactes", set(dp) == {
         "type", "title", "subtitle", "message", "cta_label", "image_url", "version", "share_token",
-        "occurrence", "date_label", "time_label", "lieu", "inviter_display", "target_url", "prix"}, sorted(dp))
+        "occurrence", "date_label", "time_label", "lieu", "inviter_display", "target_url", "prix",
+        # V607 : prix encaissé maintenant, mention de prix, médias, noms (toujours aucune PII)
+        "prix_actif", "gratuit", "mention_prix", "offre_nom", "video_url", "audio_url", "cours_nom"}, sorted(dp))
     dc = IC.dto_coach({"type": "trial", "share_token": "tok", "version": 2, "id": "i1"}, base_url="https://x.test/")
     verifier("INV-M13 dto_coach : share_url / card_url versionnées",
-             dc["share_url"] == "https://x.test/api/share/invite/tok?v=2"
+             dc["share_url"] == "https://x.test/i/tok?v=2"           # V607 : lien court
+             and dc["share_url_api"] == "https://x.test/api/share/invite/tok?v=2"
              and dc["card_url"] == "https://x.test/api/share/invite/tok/carte.jpg?v=2" and "coach_id" not in dc, dc)
 
 
@@ -278,20 +281,46 @@ async def partie_types():
     verifier("INV-G1 event_paid draft -> 201", c == 201 and g.get("status") == "draft"
              and g.get("target_url") == "/?offre=" + OFFRE_A_PROG
              and g.get("prix") == {"early_bird": 10.0, "standard": 15.0, "last_minute": 20.0}, (c, g))
+    # V607 — le blocage « fuseau des paliers » est levé ; les règles du BILLET s'appliquent.
     c, r = await modifier(COACH_A, g["id"], {"status": "active"})
-    verifier("INV-G2 event_paid activation -> 409 (drapeau absent)", c == 409
-             and r.get("detail") == IC.MESSAGE_EVENT_PAYANT_BLOQUE, (c, r))
-    c, r = await creer(COACH_A, {"type": "event_paid", "status": "active", "offer_id": OFFRE_A_PAYANTE})
-    verifier("INV-G3 event_paid créé actif -> 409, rien écrit", c == 409 and len(
-        [x for x in base["referral_campaigns"].docs if x.get("type") == "event_paid"]) == 1, (c, r))
-    base["feature_flags"].docs[0]["invitation_event_paid_enabled"] = "true"
-    c, r = await modifier(COACH_A, g["id"], {"status": "active"})
-    verifier("INV-G4 drapeau non booléen (\"true\") -> toujours 409", c == 409, (c, r))
-    verifier("INV-G5 event_paid toujours draft en base", doc(base, g["id"])["status"] == "draft")
-    base["feature_flags"].docs[0]["invitation_event_paid_enabled"] = True
-    c, r = await modifier(COACH_A, g["id"], {"status": "active"})
-    verifier("INV-G6 drapeau true -> activation possible", c == 200 and r.get("status") == "active", (c, r))
-    base["feature_flags"].docs[0].pop("invitation_event_paid_enabled", None)
+    verifier("INV-G2 event_paid activé sans date -> 422 qui NOMME le champ", c == 422
+             and "la date et l'heure" in str(r.get("detail")), (c, r))
+    c, r = await modifier(COACH_A, g["id"], {"status": "active", "occurrence": occ})
+    verifier("INV-G3 event_paid sans lieu (ni cours, ni offre, ni saisi) -> 422 lieu", c == 422
+             and "le lieu" in str(r.get("detail")) and doc(base, g["id"])["status"] == "draft", (c, r))
+    c, r = await modifier(COACH_A, g["id"], {"status": "active", "occurrence": occ, "lieu": "Salle des fêtes"})
+    verifier("INV-G4 paliers SANS date d'événement (prix encaissable 0) -> 422", c == 422
+             and "date de l'événement" in str(r.get("detail")) and doc(base, g["id"])["status"] == "draft", (c, r))
+    _o = [o for o in base["offers"].docs if o["id"] == OFFRE_A_PROG][0]
+    _o.update({"countdown_date": occ[:10], "countdown_time": occ[11:16]})
+    c, r = await modifier(COACH_A, g["id"], {"status": "active", "occurrence": occ, "lieu": "Salle des fêtes"})
+    verifier("INV-G4b paliers + date de l'événement -> actif (drapeau NON lu), prix actif = un palier", c == 200
+             and r.get("status") == "active" and r.get("lieu") == "Salle des fêtes"
+             and (r.get("prix_actif") or {}).get("prix") in (10.0, 15.0, 20.0)
+             and (r.get("prix_actif") or {}).get("libelle") in ("Tarif lancement", "Tarif standard", "Dernière minute"), (c, r))
+    c, r = await creer(COACH_A, {"type": "event_paid", "status": "active", "offer_id": OFFRE_A_PAYANTE,
+                                 "occurrence": occ})
+    verifier("INV-G5 billet simple : lieu de l'offre, prix 25 CHF, mention « 25 CHF · Tarif »", c == 201
+             and r.get("lieu") == "Salle Événement" and (r.get("prix_actif") or {}).get("prix") == 25.0
+             and r.get("mention_prix") == "25 CHF · Tarif", (c, r))
+    base["offers"].docs.append({"id": "o-abo-a", "name": "Abo A", "price": 89.0, "visible": True, "coach_id": COACH_A,
+                                "billing_mode": "mensuel_auto", "location": "Salle"})
+    c, r = await creer(COACH_A, {"type": "event_paid", "status": "active", "offer_id": "o-abo-a", "occurrence": occ})
+    verifier("INV-G6 abonnement mensuel refusé comme billet -> 422", c == 422 and "billet" in str(r.get("detail")), (c, r))
+    c, r = await modifier(COACH_A, g["id"], {"type": "trial"})
+    verifier("INV-G6b type figé une fois le lien activé -> 409", c == 409, (c, r))
+    c, d2 = await creer(COACH_A, {"type": "event_paid", "offer_id": OFFRE_A_PAYANTE, "lieu": "Ici"})
+    c, r = await modifier(COACH_A, d2["id"], {"type": "trial", "offer_id": OFFRE_A_ESSAI})
+    verifier("INV-G6c brouillon : type changé, lieu d'événement vidé", c == 200 and r.get("type") == "trial"
+             and doc(base, d2["id"]).get("lieu") is None, (c, r))
+    _jour = occ[:10]
+    base["offers"].docs.append({"id": "o-prog-date", "name": "Gala", "price": 0.0, "visible": True, "coach_id": COACH_A,
+                                "progressive_pricing": True, "price_early_bird": 10.0, "price_standard": 15.0,
+                                "price_last_minute": 20.0, "countdown_date": "2099-01-01", "countdown_time": "20:00",
+                                "location": "Gala"})
+    c, r = await creer(COACH_A, {"type": "event_paid", "status": "active", "offer_id": "o-prog-date", "occurrence": occ})
+    verifier("INV-G6d paliers : la date doit être celle de l'événement de l'offre -> 422", c == 422
+             and "2099-01-01" in str(r.get("detail")), (c, r))
 
     # Jamais dans `campaigns`
     verifier("INV-G7 aucune écriture dans `campaigns`", not base["campaigns"].docs)
@@ -376,7 +405,7 @@ async def partie_jeton_version_pii():
     verifier("INV-K2 statut seul -> version inchangée", c == 200 and r["version"] == 1 and r["status"] == "active", (c, r))
     c, r = await modifier(COACH_A, d["id"], {"title": "Nouveau titre"})
     verifier("INV-K3 changement visuel -> version 2, même jeton", c == 200 and r["version"] == 2
-             and r["share_token"] == tok and r["share_url"].endswith("/api/share/invite/%s?v=2" % tok), (c, r))
+             and r["share_token"] == tok and r["share_url"].endswith("/i/%s?v=2" % tok), (c, r))
     c, r = await modifier(COACH_A, d["id"], {"image_url": PHOTO_A})
     verifier("INV-K4 image -> version 3, source upload", c == 200 and r["version"] == 3
              and r["image_source"] == "upload", (c, r))

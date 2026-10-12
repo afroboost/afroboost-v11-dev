@@ -8742,6 +8742,18 @@ async def create_checkout_session(request: CreateCheckoutRequest,
             metadata["creator_token"] = _v559_jeton
     except Exception as _v559e:
         logger.warning("[CREATEUR] jeton non joint au checkout (%s)", type(_v559e).__name__)
+    # V607 — INVITATION ÉVÉNEMENT : le jeton du lien `/i/<jeton>` voyage jusqu'au webhook,
+    # qui donne à l'acheteur SON lien personnel (boule de neige facultative). Seul le
+    # FORMAT est vérifié ici ; le webhook relit l'invitation (active ? même offre ?).
+    try:
+        from api.routes.invitation_relais import jeton_valide as _v607_jeton_ok
+        _v607_jeton = _v607_jeton_ok((getattr(request, "attribution", None) or {}).get("invitation"))
+        if _v607_jeton:
+            metadata["invitation_token"] = _v607_jeton
+            if getattr(request, "offerId", None) and "offer_id" not in metadata:
+                metadata["offer_id"] = str(request.offerId)
+    except Exception as _v607e:
+        logger.warning("[V607] jeton d'invitation non joint au checkout (%s)", type(_v607e).__name__)
     _hiver_mode = _hiver.billing_mode_valide((_hiver_offre or {}).get("billing_mode"))
     # V535 — choix « en une fois » / « 2 fois » : validé côté serveur, montant recalculé.
     _v535_mode, _v535_refus = _hiver.mode_paiement_valide(_hiver_offre, getattr(request, "paymentMode", None))
@@ -9466,6 +9478,12 @@ async def stripe_webhook(request: Request):
                     await _v559_conv(db, session, dict(metadata or {}))
                 except Exception as _v559e:
                     logger.warning("[CREATEUR] conversion non enregistrée (%s)", type(_v559e).__name__)
+                # V607 — invitation ÉVÉNEMENT : lien personnel de l'acheteur (idempotent par session).
+                try:
+                    from api.routes.invitation_relais import relais_depuis_paiement_stripe as _v607_relais
+                    await _v607_relais(db, session, dict(metadata or {}))
+                except Exception as _v607e:
+                    logger.warning("[V607] relais non créé (%s)", type(_v607e).__name__)
 
                 # V204: Si c'est un paiement subscriber_space, juste logger (le code existe déjà)
                 if metadata.get("source") == "subscriber_space":
@@ -53522,6 +53540,14 @@ init_referral_campaigns_db(db)
 from api.routes.share_invite_routes import router as share_invite_router, init_db as init_share_invite_db  # noqa: E402
 fastapi_app.include_router(share_invite_router)
 init_share_invite_db(db)
+# V607 : suivi honnête des invitations (funnel par type ; « déclenché », jamais « envoyé »).
+from api.routes.invitation_suivi import router as invitation_suivi_router, init_db as init_invitation_suivi_db, assurer_index as v607_suivi_index  # noqa: E402
+fastapi_app.include_router(invitation_suivi_router)
+init_invitation_suivi_db(db)
+# V607 : boule de neige des ÉVÉNEMENTS (lien personnel après paiement / inscription).
+from api.routes.invitation_relais import router as invitation_relais_router, init_db as init_invitation_relais_db, assurer_index as v607_relais_index  # noqa: E402
+fastapi_app.include_router(invitation_relais_router)
+init_invitation_relais_db(db)
 
 # v15.0: Include multi-vendor payment routes
 fastapi_app.include_router(payment_config_router)
@@ -53859,6 +53885,8 @@ async def startup_db():
     try:
         await inv1_assurer_index(db)
         logger.info("[INV-1] index referral_campaigns OK")
+        await v607_suivi_index(db)
+        await v607_relais_index(db)
     except Exception as _einv1:
         logger.warning("[INV-1] index referral_campaigns non posés (%s)", type(_einv1).__name__)
     # V559 : index du programme Créateur (unicité d'une commission par paiement) — AVANT toute donnée.

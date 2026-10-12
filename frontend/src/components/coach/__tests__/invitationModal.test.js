@@ -47,7 +47,13 @@ const OPTIONS = {
   offers: [
     { id: 'free1', name: 'Essai offert', price: 0, is_free: true },
     { id: 'pay1', name: 'Soirée spéciale', price: 30, is_free: false, has_progressive_pricing: true,
-      price_early_bird: 20, price_standard: 30, price_last_minute: 40 },
+      price_early_bird: 20, price_standard: 30, price_last_minute: 40,
+      // V607 : annotations serveur (billet, prix encaissé maintenant, date de l'événement)
+      billet: true, countdown_date: '2099-10-25', countdown_time: '20:00',
+      prix_actif: { prix: 20, palier: 'early_bird', libelle: 'Tarif lancement', paliers: [
+        { palier: 'early_bird', libelle: 'Prévente', prix: 20, actif: true },
+        { palier: 'standard', libelle: 'Standard', prix: 30, actif: false },
+        { palier: 'last_minute', libelle: 'Dernière minute', prix: 40, actif: false }] } },
   ],
 };
 const DATE = '2030-10-06';
@@ -169,7 +175,8 @@ describe('InvitationModal — création par type (D, E, F)', () => {
     await cliquer('inv-suivant');
     await cliquer('inv-suivant');
     const corps = axios.post.mock.calls[0][1];
-    expect(corps).toMatchObject({ type: 'pass_duo', course_id: 'c2', occurrence: `${DATE}T19:15`, offer_id: null, cta_label: 'Créer mon Pass Duo' });
+    // V607 : la date proposée est une VRAIE séance du cours (mercredi 9), plus le dimanche du calendrier.
+    expect(corps).toMatchObject({ type: 'pass_duo', course_id: 'c2', occurrence: '2030-10-09T19:15', offer_id: null, cta_label: 'Créer mon Pass Duo' });
     INTERDITS.forEach((k) => expect(corps).not.toHaveProperty(k));
   });
 
@@ -190,7 +197,7 @@ describe('InvitationModal — création par type (D, E, F)', () => {
 });
 
 describe('InvitationModal — event_paid (G), PUT, partage', () => {
-  test('G event_paid : brouillon, paliers en lecture seule, pas d\'Activer, texte fuseau, partage coupé ; 2e enregistrement → PUT', async () => {
+  test('G (V607) event_paid : paliers, date/heure/lieu obligatoires et NOMMÉS, Activer présent, type modifiable en brouillon', async () => {
     axios.post.mockResolvedValue({ data: dto({ type: 'event_paid' }) });
     axios.put.mockResolvedValue({ data: dto({ type: 'event_paid', version: 2 }) });
     await monter();
@@ -198,29 +205,27 @@ describe('InvitationModal — event_paid (G), PUT, partage', () => {
     await saisir('inv-offre', 'pay1');
     const txt = par('inv-modal').textContent;
     expect(txt).toContain('Prévente');
-    expect(txt).toContain('Standard');
     expect(txt).toContain('Dernière minute');
+    expect(txt).not.toContain(TEXTE_FUSEAU_PALIERS);
+    // sans date / heure / lieu : on reste sur « Séance » et le message nomme les champs
     await cliquer('inv-suivant');
+    expect(par('inv-resume-erreurs').textContent).toMatch(/la date/);
+    expect(par('inv-resume-erreurs').textContent).toMatch(/le lieu/);
+    expect(axios.post).not.toHaveBeenCalled();
+    await saisir('inv-date', '2099-10-25');
+    await saisir('inv-heure', '20:00');
+    await saisir('inv-lieu-saisi', 'Salle des fêtes');
     await cliquer('inv-suivant');
-    expect(axios.post.mock.calls[0][1]).toMatchObject({ type: 'event_paid', offer_id: 'pay1', status: 'draft', occurrence: null, course_id: null });
-    expect(par('inv-activer')).toBeNull();
-    expect(par('inv-modal').textContent).toContain(TEXTE_FUSEAU_PALIERS);
-    ['inv-whatsapp', 'inv-partager-carte', 'inv-partager', 'inv-copier', 'inv-qr'].forEach((id) => {
-      expect(par(id)).not.toBeNull();
-      expect(par(id).disabled).toBe(true);
-    });
-    await cliquer('inv-enregistrer');
-    expect(axios.post).toHaveBeenCalledTimes(1);
-    expect(axios.put).toHaveBeenCalledTimes(1);
-    expect(axios.put.mock.calls[0][0]).toBe('/api/referral/campaigns/inv-1');
-    expect(axios.put.mock.calls[0][1]).not.toHaveProperty('type');
-    // retour à « Ta carte », modification, Suivant → PUT encore, jamais un 2e POST
+    expect(par('inv-apercu-direct')).not.toBeNull();
+    expect(par('inv-apercu-lieu').textContent).toBe('Salle des fêtes');
+    await cliquer('inv-suivant');
+    expect(axios.post.mock.calls[0][1]).toMatchObject({ type: 'event_paid', offer_id: 'pay1', status: 'draft', lieu: 'Salle des fêtes' });
+    expect(par('inv-activer')).not.toBeNull();
+    // brouillon : retour à « Offre », le type change, le PUT emporte le type
     await cliquer('inv-precedent');
-    await saisir('inv-titre', 'Grande soirée');
-    await cliquer('inv-suivant');
-    expect(axios.post).toHaveBeenCalledTimes(1);
-    expect(axios.put).toHaveBeenCalledTimes(2);
-    expect(axios.put.mock.calls[1][1].title).toBe('Grande soirée');
+    await cliquer('inv-precedent');
+    await cliquer('inv-precedent');
+    expect(par('inv-type-trial').disabled).toBe(false);
   });
 
   test('aperçu brouillon chargé en blob (JWT via axios), puis Activer → partage sur share_url', async () => {

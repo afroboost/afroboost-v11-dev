@@ -16,8 +16,11 @@
  *                  t'invite… », « Activer le lien », puis le partage.
  * Le coach / partenaire crée ici la RACINE de la chaîne.
  *
- * Événement payant : l'activation répond 409 tant que le fuseau horaire des
- * paliers n'est pas corrigé → brouillon seulement, partage désactivé.
+ * V607 — Événement payant : le blocage « fuseau des paliers » est levé (prix actif
+ * = celui du paiement, heure suisse) ; date, heure et lieu obligatoires ; seules
+ * les offres « billet » sont proposées. Le TYPE se change tant que l'invitation est
+ * un brouillon (champs devenus sans objet vidés). « Ta carte » montre l'aperçu EN
+ * DIRECT ; vidéo de la bibliothèque Médias et « mot audio » facultatifs.
  *
  * RÉSEAU : les options (cours, offres) sont lues UNE fois à l'ouverture ; tout
  * le reste part sur un geste. Aucun useEffect ne dépend d'un objet ; les
@@ -31,6 +34,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import SvgIcon from '../SvgIcon';
 import InvitationMiniature from './InvitationMiniature';
+import ApercuInvitation from './ApercuInvitation'; // V607 : aperçu en direct
 import BandeauInvitant from '../parrainage/BandeauInvitant';
 import SessionsModal from '../SessionsModal'; // V558 — le calendrier EXISTANT
 import { ETAPES_WIZARD, ResumeSeance } from '../parrainage/wizardCommun'; // V558 — le MÊME Wizard
@@ -41,18 +45,20 @@ import '../parrainage/wizardFilleul.css'; // V558 : résumé de séance (cp-wf-s
 import { lienWhatsApp, copier, partager, verifierApercuNavigateur, seancesPourCalendrier } from '../../utils/parrainage';
 import {
   TYPES_INVITATION, CTA_DEFAUT, TITRE_DEFAUT, TITRE_MAX, SOUS_TITRE_MAX, MESSAGE_MAX, CTA_MAX,
-  TEXTE_FUSEAU_PALIERS, offresPourType, paliersOffre, libellePrix, heureDuCours, prochaineDate,
+  offresPourType, paliersOffre, libellePrix, heureDuCours, prochaineDate,
   dateIso, formulaireInitial, construireCorps, validerInvitation, texteWhatsAppCampagne,
   lienPartage, partageable, messageErreur, lireOptions, creerInvitation, modifierInvitation,
   lireApercuBrouillon, coursPourInvitation, ecartSeanceCours,
+  LIEU_MAX, resumeErreurs, lieuInvitation, apercuDepuisFormulaire, lireMedias,
 } from '../../utils/invitationCampagne';
+import { suivreInvitation } from '../../utils/invitationSuivi';
 
 // V558 : les libellés du stepper COMMUN (Offre · Séance · Ta carte · Partage).
 const ICONES_ETAPES = ['layers', 'calendar', 'edit', 'share'];
 const STEPS = ETAPES_WIZARD.map((label, i) => ({ id: i + 1, label, icon: ICONES_ETAPES[i] }));
 const DERNIERE = STEPS.length;
 // Les champs de l'étape « Séance » (les autres appartiennent à « Ta carte »).
-const CHAMPS_SEANCE = ['type', 'course_id', 'date', 'heure', 'offer_id'];
+const CHAMPS_SEANCE = ['type', 'course_id', 'date', 'heure', 'offer_id', 'lieu'];
 
 const SEUIL_BOTTOM_SHEET = 480;
 
@@ -139,6 +145,8 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
   const [feedback, setFeedback] = useState('');
   const [confirmFermeture, setConfirmFermeture] = useState(false);
   const [calendrier, setCalendrier] = useState(false); // V558 : le calendrier existant
+  const [medias, setMedias] = useState(null);           // V607 : bibliothèque Médias (lue une fois)
+  const [mediasOuverts, setMediasOuverts] = useState(false);
   const enVolRef = useRef(false); // un seul enregistrement à la fois
   const idRef = useRef('');       // l'id reçu au 1er POST : ensuite, PUT seulement
   const defilementRef = useRef(null); // le conteneur défilant (remis en haut à chaque étape)
@@ -165,6 +173,15 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
     return () => { vivant = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // V607 : la bibliothèque Médias, lue UNE fois, à la première ouverture de la section.
+  useEffect(() => {
+    if (!mediasOuverts || medias !== null) return undefined;
+    let vivant = true;
+    lireMedias(API).then((m) => { if (vivant) setMedias(m); }).catch(() => { if (vivant) setMedias([]); });
+    return () => { vivant = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediasOuverts]);
 
   useEffect(() => {
     if (!feedback) return undefined;
@@ -205,8 +222,10 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
   }, []);
   const surMiniatureOccupee = useCallback((b) => setMiniatureOccupee(!!b), []);
 
+  // V607 : le type est figé seulement une fois le lien ACTIVÉ (brouillon = modifiable).
+  const typeFige = !!(dto && dto.status && dto.status !== 'draft');
   const choisirType = (t) => {
-    if (idRef.current && t !== type) return; // type figé après la création
+    if (typeFige && t !== type) return;
     setErreur('');
     setMontrerErreurs(false);
     if (t !== type) {
@@ -216,6 +235,10 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
         if (!prev.title || prev.title === TITRE_DEFAUT[prev.type]) suivant.title = TITRE_DEFAUT[t] || '';
         if (!prev.cta_label || prev.cta_label === CTA_DEFAUT[prev.type]) suivant.cta_label = CTA_DEFAUT[t] || '';
         const evenement = t === 'event_free' || t === 'event_paid';
+        // V607 : un champ SANS OBJET pour le nouveau type est vidé (le brouillon ne
+        // garde ni lieu d'événement ni billet en devenant un essai ou un Pass Duo).
+        if (!evenement) suivant.lieu = '';
+        if (prev.type === 'event_paid' && t !== 'event_paid') { suivant.date = ''; suivant.heure = ''; }
         if (evenement && !prev.course_id && dateCalendrier && prev.date === dateCalendrier) suivant.date = '';
         if (!evenement && !prev.date && dateCalendrier) suivant.date = dateCalendrier;
         const liste = offresPourType(t, offers, courses);
@@ -246,7 +269,9 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
         // INV-5 : essai / événement gratuit — la date doit être une séance du cours
         // (sinon la vitrine l'annoncerait « plus disponible »). On la cale sur la date
         // fixe du cours, ou sur le prochain jour du cours à partir de la date choisie.
-        if ((prev.type === 'trial' || prev.type === 'event_free')
+        // V607 : le Pass Duo aussi — la date PROPOSÉE est une vraie séance du cours
+        // (baseline : « lundi 10:00 » pour un cours du samedi). Préremplissage seulement.
+        if ((prev.type === 'trial' || prev.type === 'event_free' || prev.type === 'pass_duo')
           && ecartSeanceCours(c, suivant.date, suivant.heure).date) {
           const fixe = typeof c.date === 'string' ? c.date.trim().slice(0, 10) : '';
           const base = suivant.date && suivant.date >= aujourdhui ? suivant.date : aujourdhui;
@@ -280,6 +305,13 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
       if (prev.course_id && !coursPourInvitation(prev.type, o, courses).some((c) => String(c.id) === String(prev.course_id))) {
         suivant.course_id = '';
       }
+      // V607 : événement payant — la date / l'heure de l'événement DE L'OFFRE (les
+      // paliers en dépendent) et son lieu préremplissent l'invitation (modifiable).
+      if (prev.type === 'event_paid' && o) {
+        if (o.countdown_date) suivant.date = o.countdown_date;
+        if (o.countdown_time && heureDuCours(o.countdown_time)) suivant.heure = heureDuCours(o.countdown_time);
+        if (!prev.lieu && o.location) suivant.lieu = o.location;
+      }
       return suivant;
     });
   };
@@ -302,7 +334,7 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
     enVolRef.current = true;
     setOccupe(true); setErreur('');
     const envoi = idRef.current
-      ? modifierInvitation(API, idRef.current, corps)
+      ? modifierInvitation(API, idRef.current, corps, !typeFige)
       : creerInvitation(API, corps);
     envoi
       .then((d) => {
@@ -317,12 +349,12 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
   };
 
   const activer = () => {
-    if (enVolRef.current || !idRef.current || eventPaid) return;
+    if (enVolRef.current || !idRef.current) return;
     if (!valide) { setMontrerErreurs(true); return; }
     enVolRef.current = true;
     setOccupe(true); setErreur('');
     const champs = cleCorps !== dernierCorps ? Object.assign({}, corps, { status: 'active' }) : { status: 'active' };
-    modifierInvitation(API, idRef.current, champs)
+    modifierInvitation(API, idRef.current, champs, !typeFige)
       .then((d) => {
         appliquerDto(d);
         setDernierCorps(cleCorps);
@@ -388,6 +420,8 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
   const surWhatsApp = () => {
     if (!peutPartager) return;
     window.open(lienWhatsApp(texte), '_blank', 'noopener'); // synchrone : geste utilisateur
+    // V607 : « partage déclenché » (WhatsApp ouvert) — jamais « envoyé ».
+    suivreInvitation(dto && dto.share_token, 'partage_whatsapp_declenche');
   };
   const surPartagerCarte = () => {
     if (!peutPartager || !peutCarte) return;
@@ -449,7 +483,7 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
       <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : '1fr 1fr', gap: '10px' }}>
         {TYPES_INVITATION.map((t) => {
           const choisi = t.id === type;
-          const bloque = !!idRef.current && !choisi;
+          const bloque = typeFige && !choisi;
           return (
             <button key={t.id} type="button" onClick={() => choisirType(t.id)} disabled={bloque}
                     aria-pressed={choisi} data-testid={`inv-type-${t.id}`}
@@ -471,12 +505,18 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
           );
         })}
       </div>
-      {idRef.current ? <p style={styleAide}>Le type ne change plus une fois l'invitation enregistrée.</p> : null}
+      {typeFige ? <p style={styleAide}>Le type ne change plus une fois le lien activé.</p>
+        : (idRef.current ? <p style={styleAide}>Brouillon : tu peux encore changer de type.</p> : null)}
     </div>
   );
 
   const avecCours = !!type; // les quatre types ; facultatif pour les événements
   const coursFacultatif = type === 'event_free' || type === 'event_paid';
+  // V607 : date / heure facultatives pour l'événement GRATUIT seulement ; le billet
+  // d'un événement payant se vend pour une date, une heure et un lieu précis.
+  const dateFacultative = type === 'event_free';
+  const evenementType = type === 'event_free' || type === 'event_paid';
+  const lieuDeduit = lieuInvitation({ lieu: '' }, coursChoisi, offreChoisie);
   const avecOffre = type === 'trial' || type === 'event_free' || type === 'event_paid';
   const paliers = eventPaid ? paliersOffre(offreChoisie) : [];
 
@@ -498,16 +538,24 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
         </select>
       </Champ>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-        <Champ id="inv-date" label={coursFacultatif ? 'Date (facultatif)' : 'Date'} erreur={err('date')}>
+        <Champ id="inv-date" label={dateFacultative ? 'Date (facultatif)' : 'Date'} erreur={err('date')}>
           <input id="inv-date" data-testid="inv-date" type="date" style={styleChamp} min={aujourdhui}
                  value={form.date} onChange={(e) => maj('date', e.target.value)} />
         </Champ>
-        <Champ id="inv-heure" label={coursFacultatif ? 'Heure (facultatif)' : 'Heure'} erreur={err('heure')}>
+        <Champ id="inv-heure" label={dateFacultative ? 'Heure (facultatif)' : 'Heure'} erreur={err('heure')}>
           <input id="inv-heure" data-testid="inv-heure" type="time" style={styleChamp}
                  value={form.heure} onChange={(e) => maj('heure', e.target.value)} />
         </Champ>
       </div>
-      {coursChoisi && coursChoisi.location ? (
+      {evenementType ? (
+        <Champ id="inv-lieu-saisi" label={type === 'event_paid' ? 'Lieu' : 'Lieu (facultatif)'} erreur={err('lieu')}
+               aide={!form.lieu && lieuDeduit ? `Par défaut : ${lieuDeduit}` : ''}>
+          <input id="inv-lieu-saisi" data-testid="inv-lieu-saisi" style={styleChamp} maxLength={LIEU_MAX}
+                 placeholder={lieuDeduit || 'Ex. : Salle des fêtes, Genève'} value={form.lieu}
+                 onChange={(e) => maj('lieu', e.target.value)} autoComplete="off" />
+        </Champ>
+      ) : null}
+      {!evenementType && coursChoisi && coursChoisi.location ? (
         <div style={{ marginBottom: '14px' }}>
           <span style={styleLabel}>Lieu</span>
           <p data-testid="inv-lieu" style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0, color: 'rgba(255,255,255,0.85)', fontSize: '14px' }}>
@@ -528,7 +576,8 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
               onChange={(e) => choisirOffre(e.target.value)}>
         <option value="">Choisis une offre</option>
         {offresType.map((o) => (
-          <option key={o.id} value={o.id}>{o.name}{eventPaid && Number(o.price) > 0 ? ` · ${libellePrix(o.price)}` : ''}</option>
+          <option key={o.id} value={o.id}>{o.name}{eventPaid && o.prix_actif ? ` · ${libellePrix(o.prix_actif.prix)}`
+            : (eventPaid && Number(o.price) > 0 ? ` · ${libellePrix(o.price)}` : '')}</option>
         ))}
       </select>
     </Champ>
@@ -572,7 +621,21 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
       {eventPaid && offreChoisie ? (
         <div data-testid="inv-paliers" style={{ marginBottom: '14px', padding: '12px', borderRadius: '10px', background: rgbaP(0.08), border: `1px solid ${rgbaP(0.25)}` }}>
           <span style={styleLabel}>Tarifs de l'offre (lecture seule)</span>
-          {paliers.length ? (
+          {(offreChoisie.prix_actif && offreChoisie.prix_actif.paliers && offreChoisie.prix_actif.paliers.length) ? (
+            // V607 : les 3 paliers, le palier ACTIF (celui du paiement) mis en avant.
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${offreChoisie.prix_actif.paliers.length}, 1fr)`, gap: '8px' }}>
+              {offreChoisie.prix_actif.paliers.map((p) => (
+                <div key={p.palier} data-testid={`inv-palier-${p.palier}`} data-actif={p.actif ? '1' : '0'}
+                     style={{ padding: '8px', borderRadius: '8px', textAlign: 'center',
+                              background: p.actif ? rgbaP(0.22) : 'rgba(255,255,255,0.05)',
+                              border: p.actif ? `1px solid ${PRIMAIRE}` : '1px solid transparent' }}>
+                  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.75)' }}>{p.libelle}</div>
+                  <div style={{ fontSize: '15px', fontWeight: 700, color: 'rgba(255,255,255,0.96)' }}>{libellePrix(p.prix)}</div>
+                  {p.actif ? <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.85)' }}>Actif maintenant</div> : null}
+                </div>
+              ))}
+            </div>
+          ) : paliers.length ? (
             <div style={{ display: 'grid', gridTemplateColumns: `repeat(${paliers.length}, 1fr)`, gap: '8px' }}>
               {paliers.map((p) => (
                 <div key={p.cle} style={{ padding: '8px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', textAlign: 'center' }}>
@@ -588,10 +651,43 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
     </div>
   );
 
+  // V607 — l'aperçu EN DIRECT (suit la frappe ; aucun appel réseau).
+  const inviteurApercu = (dto && dto.inviter_display) || (options && options.inviter_display) || {};
+  const apercuDirect = apercuDepuisFormulaire(form, offreChoisie, coursChoisi, inviteurApercu);
+  const videos = (medias || []).filter((m) => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(m.url) || /video/i.test(String(m.url)) || m.format);
+  const blocMedias = (
+    <div style={{ marginBottom: '14px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.12)' }}>
+      <button type="button" data-testid="inv-medias-ouvrir" onClick={() => setMediasOuverts((v) => !v)} aria-expanded={mediasOuverts}
+              style={Object.assign(styleBouton('neutre', true), { width: '100%', justifyContent: 'space-between', border: 'none' })}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}><SvgIcon name="video" size={16} /> Vidéo et mot audio (facultatif)</span>
+        <SvgIcon name={mediasOuverts ? 'arrowUp' : 'arrowDown'} size={16} />
+      </button>
+      {mediasOuverts ? (
+        <div style={{ padding: '10px 12px 4px' }}>
+          <Champ id="inv-video" label="Vidéo d'ambiance (bibliothèque Médias)" erreur={err('video_url')}
+                 aide={medias === null ? 'Chargement de tes médias…' : (videos.length ? 'Lecture au clic, sans son au départ.' : 'Aucune vidéo dans tes Médias pour le moment.')}>
+            <select id="inv-video" data-testid="inv-video" style={styleChamp} value={form.video_url} onChange={(e) => maj('video_url', e.target.value)}>
+              <option value="">Aucune vidéo</option>
+              {videos.map((m) => (
+                <option key={m.id || m.url} value={m.url}>{m.titre || m.nom || m.niche || 'Vidéo'}{m.format ? ` · ${String(m.format).replace('_', ':')}` : ''}</option>
+              ))}
+            </select>
+          </Champ>
+          <Champ id="inv-audio" label="Un mot audio (lien d'un fichier, facultatif)" erreur={err('audio_url')}
+                 aide="Ex. : un court message vocal. Jamais lu automatiquement.">
+            <input id="inv-audio" data-testid="inv-audio" style={styleChamp} value={form.audio_url} placeholder="https://… ou /api/files/…"
+                   onChange={(e) => maj('audio_url', e.target.value.trim())} autoComplete="off" />
+          </Champ>
+        </div>
+      ) : null}
+    </div>
+  );
+
   // V558 — étape « Ta carte » : ce que l'invité verra.
   const etape2 = (
     <div>
       {bandeType}
+      <ApercuInvitation apercu={apercuDirect} />
 
       <Champ id="inv-titre" label="Titre" erreur={err('title')}>
         <input id="inv-titre" data-testid="inv-titre" style={styleChamp} maxLength={TITRE_MAX}
@@ -614,6 +710,8 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
                              defaultUrl={urlHttps(offreChoisie && (offreChoisie.image_url || offreChoisie.image)) || urlHttps(options && options.default_image_url)}
                              onChange={surMiniature} onBusyChange={surMiniatureOccupee} />
       </div>
+
+      {blocMedias}
 
       <Champ id="inv-cta" label="Texte du bouton" erreur={err('cta_label')}>
         <input id="inv-cta" data-testid="inv-cta" style={styleChamp} maxLength={CTA_MAX}
@@ -656,12 +754,6 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
         {dto && dto.status === 'active' ? 'Lien actif : tu peux partager ton invitation.' : 'Brouillon : le lien n\'est pas encore actif.'}
       </p>
 
-      {eventPaid ? (
-        <p data-testid="inv-fuseau" style={{ fontSize: '13px', margin: '0 0 12px', padding: '10px 12px', borderRadius: '10px', background: rgbaP(0.1), border: `1px solid ${rgbaP(0.35)}`, color: 'rgba(255,255,255,0.9)' }}>
-          {TEXTE_FUSEAU_PALIERS}
-        </p>
-      ) : null}
-
       <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : '1fr 1fr', gap: '8px' }}>
         {boutonPartage('inv-whatsapp', 'send', 'WhatsApp', surWhatsApp, peutPartager)}
         {boutonPartage('inv-partager-carte', 'image', 'Partager avec la carte', surPartagerCarte, peutPartager && peutCarte)}
@@ -672,7 +764,7 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
       {peutPartager && !peutCarte ? (
         <p style={styleAide}>Le partage avec la carte dépend de ton téléphone ; le lien affiche la carte de toute façon.</p>
       ) : null}
-      {!peutPartager && !eventPaid ? (
+      {!peutPartager ? (
         <p style={styleAide}>Active le lien pour pouvoir le partager.</p>
       ) : null}
       {qrVisible && peutPartager ? (
@@ -750,7 +842,9 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
         <div style={{ padding: '12px 20px', paddingBottom: mobile ? 'calc(12px + env(safe-area-inset-bottom, 0px))' : '12px', borderTop: `1px solid ${rgbaP(0.2)}` }}>
           {erreur ? <p role="alert" data-testid="inv-erreur" style={Object.assign({}, styleErreur, { fontSize: '13px', margin: '0 0 10px' })}>{erreur}</p> : null}
           {montrerErreurs && !valide && (etape === 2 || etape === 3) ? (
-            <p role="alert" style={Object.assign({}, styleErreur, { margin: '0 0 10px' })}>Corrige les champs signalés pour continuer.</p>
+            <p role="alert" data-testid="inv-resume-erreurs" style={Object.assign({}, styleErreur, { margin: '0 0 10px' })}>
+              {resumeErreurs(erreurs, etape === 2 ? CHAMPS_SEANCE : null) || 'Corrige les champs signalés pour continuer.'}
+            </p>
           ) : null}
           {feedback ? <p role="status" data-testid="inv-feedback" style={{ color: 'rgba(255,255,255,0.85)', fontSize: '13px', margin: '0 0 10px' }}>{feedback}</p> : null}
           {/* Mobile : UNE ligne à 360 px — Précédent en icône 44×44, libellés courts, l'action principale prend le reste. */}
@@ -778,7 +872,7 @@ function ContenuInvitation({ onClose, API, dateInitiale }) {
                 Suivant <SvgIcon name="arrowRight" size={16} />
               </button>
             ) : null}
-            {etape === DERNIERE && brouillon && !eventPaid && dto ? (
+            {etape === DERNIERE && brouillon && dto ? (
               <button type="button" data-testid="inv-activer" onClick={activer} disabled={occupe}
                       style={Object.assign(styleBouton('plein', !occupe), mobile ? { flex: 1, minWidth: 0 } : {})}>
                 <SvgIcon name="zap" size={16} /> Activer le lien

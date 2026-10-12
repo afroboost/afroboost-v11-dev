@@ -366,6 +366,9 @@ def donnees_carte_invitation(dto, couleur=None, fond=None, photo=None) -> dict:
         "quand": _quand,
         "lieu": _nettoyer(_d.get("lieu"), 80),
         "cta": _nettoyer(_d.get("cta_label"), 40),
+        # V607 : « 25 CHF · Tarif lancement » (événement payant), « Offert » (essai),
+        # « Gratuit » (événement gratuit) ; rien pour le Pass Duo.
+        "prix": _nettoyer(_d.get("mention_prix"), 60),
         "prenom": _prenom,
         "couleur": couleur,
         "fond": fond,
@@ -477,6 +480,7 @@ def rendre_carte_invitation(donnees=None) -> bytes:
         _dessin.text((80, _y), _tronquer(_dessin, _texte, _pl, _largeur), font=_pl, fill=_coul)
         _y += 48
 
+    _prix = _nettoyer(_d.get("prix"), 60)
     # CTA : pilule couleur de marque, en bas à droite.
     _pc = _police(True, 32)
     _cta = _tronquer(_dessin, _nettoyer(_d.get("cta"), 40) or CTA_INVITATION_DEFAUT, _pc, 560)
@@ -485,8 +489,17 @@ def rendre_carte_invitation(donnees=None) -> bytes:
     _dessin.rounded_rectangle((_x0, _y0, _x0 + _lc, _y0 + 68), radius=34, fill=_marque)
     _dessin.text((_x0 + 36, _y0 + 16), _cta, font=_pc, fill=_blanc)
 
+    # V607 : la mention de prix, en pastille claire à gauche du CTA (jamais par-dessus).
+    if _prix:
+        _pp = _police(True, 30)
+        _txt = _tronquer(_dessin, _prix, _pp, max(120, _x0 - 80 - 24 - 48))
+        _lp = int(_dessin.textlength(_txt, font=_pp)) + 48
+        _dessin.rounded_rectangle((80, 520, 80 + _lp, 520 + 60), radius=30, fill=(255, 255, 255))
+        _dessin.text((104, 534), _txt, font=_pp, fill=tuple(int(c * 0.55) for c in _marque))
+
     _dessin.rectangle((0, HAUTEUR - 12, LARGEUR, HAUTEUR), fill=_marque)
-    _dessin.text((80, HAUTEUR - 74), "afroboost.com", font=_police(False, 28), fill=_gris)
+    if not _prix:
+        _dessin.text((80, HAUTEUR - 74), "afroboost.com", font=_police(False, 28), fill=_gris)
 
     _sortie = io.BytesIO()
     _fond.save(_sortie, "JPEG", quality=QUALITE_JPEG, optimize=True, progressive=True)

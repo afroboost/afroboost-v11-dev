@@ -273,6 +273,8 @@ import SubscriberSpace from "./components/SubscriberSpace";
 const CentreParrainage = lazy(() => import("./components/parrainage/CentreParrainage"));
 const InvitationDuo = lazy(() => import("./components/parrainage/InvitationDuo"));
 const EntreeCampagne = lazy(() => import("./components/parrainage/EntreeCampagne")); // PAR-3 : /duo/c/<token>
+const InvitationPublique = lazy(() => import("./components/InvitationPublique")); // V607 : /i/<jeton> (lien court)
+const InviterMesAmis = lazy(() => import("./components/InviterMesAmis")); // V607 : lien perso après un événement
 const RendezVousPublic = lazy(() => import("./components/RendezVousPublic")); // V605 : /rdv/<token>
 // Calendrier des sessions, en fenetre par-dessus la vitrine (jamais une page)
 import SessionsModal from "./components/SessionsModal";
@@ -4646,6 +4648,10 @@ const SuccessOverlay = ({ t, data, onClose, onClearTicket }) => {
               </a>
             </p>
           )}
+          {/* V607 : arrivé par une invitation d'ÉVÉNEMENT ? son lien perso (facultatif). Rien sinon. */}
+          <Suspense fallback={null}>
+            <InviterMesAmis sessionId={data.stripeSessionId} reservationCode={data.stripeSessionId ? '' : data.reservationCode} />
+          </Suspense>
         </div>
       </div>
     </div>
@@ -5801,6 +5807,9 @@ function App() {
     const checkParrainage = () => {
       const path = window.location.pathname;
       if (/^\/parrainage\/?$/.test(path)) { setParrainagePage('centre'); setDuoToken(''); return; }
+      // V607 : /i/<jeton> — le lien COURT d'une invitation (page publique).
+      const lienCourt = path.match(/^\/i\/([A-Za-z0-9_-]+)\/?$/);
+      if (lienCourt) { setParrainagePage('invitation'); setDuoToken(lienCourt[1]); return; }
       // PAR-3 : /duo/c/<token> (entrée de campagne) testé AVANT /duo/<token>.
       const campagne = path.match(/^\/duo\/c\/([A-Za-z0-9_-]+)\/?$/);
       if (campagne) { setParrainagePage('campagne'); setDuoToken(campagne[1]); return; }
@@ -8017,6 +8026,14 @@ function App() {
       </Suspense>
     );
   }
+  // V607 : la page publique d'une invitation (lien court /i/<jeton>).
+  if (parrainagePage === 'invitation' && duoToken) {
+    return (
+      <Suspense fallback={<div style={{ minHeight: '100vh', background: 'rgb(8,4,12)' }} />}>
+        <InvitationPublique token={duoToken} />
+      </Suspense>
+    );
+  }
   // PAR-3 : entrée d'une invitation de campagne — un seul appel, puis /duo/<share_token>.
   if (parrainagePage === 'campagne' && duoToken) {
     return (
@@ -8777,6 +8794,10 @@ function App() {
             <p className="text-sm mb-5" style={{ color: 'rgba(255,255,255,0.6)' }}>
               Ouvrez ensuite votre espace avec ce code pour choisir la date de votre séance.
             </p>
+            {/* V607 : invitation d'événement payant -> lien personnel (facultatif). */}
+            <Suspense fallback={null}>
+              <div className="mb-4"><InviterMesAmis sessionId={progressiveConfirm.sessionId} /></div>
+            </Suspense>
             <button
               type="button"
               onClick={() => setProgressiveConfirm(null)}

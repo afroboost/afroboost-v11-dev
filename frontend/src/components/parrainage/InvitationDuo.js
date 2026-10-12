@@ -44,7 +44,11 @@ import {
   changerSeance, occurrencesPourCalendrier, // V539
   nomAffichable, photoAutorisee, // V551
   urlEspaceCourant, // V562 : « Retour à mon espace »
+  estParcoursEssai, // V607 : essai gratuit « moi d'abord → puis mon ami »
 } from '../../utils/parrainage';
+import { suivreInvitation } from '../../utils/invitationSuivi'; // V607 : funnel honnête
+import ParcoursEssai from './ParcoursEssai'; // V607
+import { libelleTypeInvitation } from './wizardCommun'; // V607 : le badge suit le type réel
 import SessionsModal from '../SessionsModal'; // V539 — le calendrier de la page d'accueil, réutilisé
 import WizardFilleul from './WizardFilleul'; // V556
 import { AvatarInvitant } from './BandeauInvitant'; // L0
@@ -56,13 +60,15 @@ export function messageInvitationDepuisReponse(status, detail) {
   return messageErreurInvitation(status);
 }
 
-function Cadre({ children }) {
+// V607 : la pastille suit le type RÉEL (un Essai gratuit n'affiche jamais « Pass Duo ») ;
+// sans type (serveur ancien) : « Pass Duo », comme avant.
+function Cadre({ children, type }) {
   return (
     <div className="cp-root cp-page" data-testid="invitation-duo">
       <main className="cp-app">
         <header className="cp-header">
           <a className="cp-logo" href="/" aria-label="Afroboost">Afro<span>boost</span></a>
-          <div className="cp-pill">Pass Duo</div>
+          <div className="cp-pill" data-testid="invitation-pill">{type ? libelleTypeInvitation(type) : 'Pass Duo'}</div>
         </header>
         {children}
         <footer className="cp-footer">Danse · Fitness · Good vibes</footer>
@@ -166,7 +172,10 @@ export default function InvitationDuo({ token }) {
         const d = (r && r.data) || {};
         if (d.enabled === false) { setMessage('Invitation indisponible'); setEtat('message'); return; }
         if (d.expired || d.status === 'expired') { setMessage('Cette invitation a expiré'); setEtat('message'); return; }
-        if (d.status === 'cancelled') { setMessage("Ce Pass Duo n'est plus ouvert."); setEtat('message'); return; }
+        if (d.status === 'cancelled') {
+          setMessage(d.invitation_type === 'trial' ? "Cette invitation n'est plus ouverte." : "Ce Pass Duo n'est plus ouvert.");
+          setEtat('message'); return;
+        }
         setPass(d);
         setEtat('ok');
       })
@@ -273,6 +282,7 @@ export default function InvitationDuo({ token }) {
     if (!whatsapp) { setErreur('Indique ton numéro WhatsApp.'); return; }
     if (!form.consent) { setErreur('Coche la case liée à la réservation pour continuer.'); return; }
     setErreur(''); setEnvoi(true);
+    if (estParcoursEssai(pass)) suivreInvitation(token, 'reservation_commencee'); // V607
     let attribution = null;
     try { attribution = attributionActuelle(); } catch (x) { attribution = null; }
     const corps = {
@@ -310,7 +320,7 @@ export default function InvitationDuo({ token }) {
 
   if (etat === 'chargement') {
     return (
-      <Cadre>
+      <Cadre type="invitation">
         <div className="cp-state" data-testid="invitation-chargement">
           <div className="cp-spinner" aria-hidden="true" />
           <p className="cp-lead">On ouvre ton invitation…</p>
@@ -320,7 +330,7 @@ export default function InvitationDuo({ token }) {
   }
   if (etat === 'message') {
     return (
-      <Cadre>
+      <Cadre type="invitation">
         <div data-testid="invitation-message"><EcranMessage titre={message} icone={message.indexOf('expir') >= 0 ? 'clock' : 'warning'} /></div>
       </Cadre>
     );
@@ -335,8 +345,13 @@ export default function InvitationDuo({ token }) {
     || nomAffichable(pass.sponsor_first_name) || 'ton ami';
   const photoParrain = photoAutorisee(inviteur.photo_url) || photoAutorisee(pass.sponsor_photo_url);
 
+  // V607 — l'Essai gratuit d'une chaîne suit SON parcours, confirmation comprise.
+  const dejaRejointPass = pass.status === 'friend_registered' || pass.status === 'unlocked' || pass.status === 'used';
+  const parcoursEssai = estParcoursEssai(pass) && !dejaRejointPass;
+  const estEssai = pass.invitation_type === 'trial';
+
   // ── Succès ────────────────────────────────────────────────────────────────
-  if (resultat) {
+  if (resultat && !parcoursEssai) {
     const attente = resultat.status === 'friend_registered';
     // PAR-3 : pass racine d'une campagne — pas de place parrain, le serveur ne
     // renvoie que le billet de l'invité. Un pass ordinaire débloqué porte
@@ -344,13 +359,13 @@ export default function InvitationDuo({ token }) {
     const billets = Array.isArray(resultat.tickets) ? resultat.tickets.filter(Boolean) : [];
     const billetSeul = !attente && billets.length > 0 && !billets.some((t) => t.role === 'sponsor');
     return (
-      <Cadre>
+      <Cadre type={pass.invitation_type}>
         <div className="cp-state" style={{ paddingTop: 10 }} data-testid={attente ? 'invitation-succes-attente' : 'invitation-succes'}>
           <div className={`cp-roundic${attente ? '' : ' cp-roundic--ok'}`}>
             <SvgIcon name={attente ? 'hourglass' : 'check'} size={38} strokeWidth="2.5" />
           </div>
           <h1 className="cp-h1 cp-center">
-            {attente ? <>Inscription <em className="cp-em">confirmée</em></> : billetSeul ? <>Ta place est <em className="cp-em">réservée</em></> : <>Pass Duo <em className="cp-em">confirmé</em></>}
+            {attente ? <>Inscription <em className="cp-em">confirmée</em></> : billetSeul ? <>Ta place est <em className="cp-em">réservée</em></> : estEssai ? <>Essai <em className="cp-em">confirmé</em></> : <>Pass Duo <em className="cp-em">confirmé</em></>}
           </h1>
           <div className="cp-avatars" aria-hidden="true">
             {/* L0 : la photo du parrain, sinon l'avatar Afroboost (plus d'initiale). */}
@@ -434,6 +449,32 @@ export default function InvitationDuo({ token }) {
     </>
   );
 
+  if (parcoursEssai) {
+    // V607 — « MOI D'ABORD → PUIS MON AMI » : même arbre avant et après le join
+    // (l'état du parcours — l'invitation de l'ami — survit pour « Inviter encore »).
+    return (
+      <Cadre type={pass.invitation_type}>
+        {monLien ? (
+          <div className="cp-notice" data-testid="invitation-mon-lien">
+            C'est ton lien : partage-le à un ami. <a className="cp-link" href="/parrainage">Voir mon Parrainage <SvgIcon name="arrowRight" size={14} /></a>
+          </div>
+        ) : null}
+        <ParcoursEssai
+          token={token}
+          pass={pass}
+          prenom={prenom}
+          photo={photoParrain}
+          formulaire={formulaire("M'inscrire à mon essai gratuit")}
+          resultat={resultat}
+          onPass={(d) => setPass((prev) => Object.assign({}, prev || {}, d || {}))}
+          onPrenom={(n) => setForm((prev) => (prev.name.trim() ? prev : Object.assign({}, prev, { name: n })))}
+          retourPartage={retourEtape2}
+          messagePartage={messageEtape2}
+        />
+      </Cadre>
+    );
+  }
+
   if (chaine) {
     const ouvrirOffres = () => { setOffreMessage(''); setOffreErreur(''); setSheetOffre(true); };
     // V560 : la séance, le lieu et le type sont DANS la carte d'invitation (WizardFilleul) ;
@@ -458,7 +499,7 @@ export default function InvitationDuo({ token }) {
       </div>
     ) : null;
     return (
-      <Cadre>
+      <Cadre type={pass.invitation_type}>
         {monLien ? (
           <div className="cp-notice" data-testid="invitation-mon-lien">
             C'est ton lien : partage-le à un ami. <a className="cp-link" href="/parrainage">Voir mon Parrainage <SvgIcon name="arrowRight" size={14} /></a>
@@ -484,12 +525,14 @@ export default function InvitationDuo({ token }) {
   }
 
   return (
-    <Cadre>
+    <Cadre type={pass.invitation_type}>
       {/* L0 : toujours un visage — la photo de l'invitant, sinon l'avatar Afroboost. */}
       <AvatarInvitant photoUrl={photoParrain} className="cp-invitation-photo"
                       testidPhoto="invitation-photo" testidAvatar="invitation-avatar-afroboost" />
       <div className="cp-eyebrow" data-testid="invitation-de">Invitation de {prenom}</div>
-      <h1 className="cp-h1">Rejoins son <em className="cp-em">Pass Duo</em></h1>
+      {estEssai
+        ? <h1 className="cp-h1">Profite de ton <em className="cp-em">essai gratuit</em></h1>
+        : <h1 className="cp-h1">Rejoins son <em className="cp-em">Pass Duo</em></h1>}
       <p className="cp-lead">{offre ? 'Ton offre est débloquée dès ton inscription.' : 'Ton essai gratuit est débloqué dès ton inscription.'}</p>
 
       {monLien ? (
@@ -537,11 +580,11 @@ export default function InvitationDuo({ token }) {
 
       {dejaRejoint ? (
         <div className="cp-notice" data-testid="invitation-deja-rejoint">
-          Un ami a déjà rejoint ce Pass Duo. Si c'est toi, saisis les mêmes coordonnées pour retrouver ton billet.
+          {estEssai ? "Quelqu'un a déjà utilisé cette invitation." : 'Un ami a déjà rejoint ce Pass Duo.'} Si c'est toi, saisis les mêmes coordonnées pour retrouver ton billet.
         </div>
       ) : null}
 
-      {formulaireVisible ? formulaire("M'inscrire et débloquer le duo") : null}
+      {formulaireVisible ? formulaire(estEssai ? "M'inscrire à mon essai gratuit" : "M'inscrire et débloquer le duo") : null}
       <p className="cp-fine cp-center" style={{ marginTop: 14 }}>
         Une seule invitation par personne et par séance. L'essai gratuit Afroboost est unique : si tu l'as déjà utilisé, on te le dira ici.
       </p>

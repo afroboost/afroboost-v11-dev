@@ -1767,7 +1767,8 @@ def partie_v539():
     verifier("V539-23. après inscription, la carte reste en lecture (aucun changement possible)",
              "!dejaRejoint && seancesProposables.length > 1" in SRC_INV)
     verifier("V539-24. le client envoie l'occurrence ET la version, sur la route dédiée",
-             "export function changerSeance({ passId, token, occurrence, version, headers })" in SRC_UTIL
+             # V607 : + `course_id` facultatif (essai gratuit « moi d'abord »), sans rien changer d'autre
+             "export function changerSeance({ passId, token, occurrence, version, headers, course_id })" in SRC_UTIL
              and "/occurrence`," in SRC_UTIL and "version: Number(version) || 1" in SRC_UTIL)
     verifier("V539-25. les dates illisibles sont écartées avant d'atteindre le calendrier",
              "if (!d || Number.isNaN(d.getTime())) return null;" in SRC_UTIL)

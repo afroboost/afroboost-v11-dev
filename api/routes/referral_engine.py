@@ -1791,3 +1791,36 @@ def dto_seance_offrable(course, occurrences) -> dict:
     return {"course_id": _c.get("id"), "name": _c.get("name") or "",
             "location": _c.get("locationName") or _c.get("location") or "",
             "time": _c.get("time") or "", "occurrences": list(occurrences or [])}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V607 — ESSAI GRATUIT « MOI D'ABORD → PUIS MON AMI »
+# ═══════════════════════════════════════════════════════════════════════════
+# L'invité d'une chaîne d'essai gratuit choisit D'ABORD sa propre séance, puis
+# invite un ami (obligatoire, inchangé : /join refuse tant que le partage n'est
+# pas déclenché). Le Pass Duo (« venir avec un ami ») ne change pas.
+PROPRIETAIRES_HERITES = ("bassi_default",)   # ancienne sentinelle = la plateforme (V244)
+
+
+def proprietaire_canonique(coach_id, super_admins=()) -> str:
+    """La clé de propriétaire COMPARABLE : "" pour la plateforme.
+
+    POURQUOI : une campagne du super-admin est rangée sous la clé "" (plateforme,
+    `_coach_strict`), alors que SES cours portent `coach_id = <son e-mail>` (le
+    POST /courses pose l'e-mail de l'auteur). Comparer les deux clés brutes
+    excluait TOUS les cours de la plateforme sauf celui du pass — d'où un
+    calendrier réduit au seul mercredi. La plateforme = "" OU un super-admin OU
+    l'ancienne sentinelle ; un partenaire reste lui-même (cloisonnement intact)."""
+    _c = _proprietaire(coach_id)
+    if not _c or _c in PROPRIETAIRES_HERITES:
+        return ""
+    if _c in {normaliser_email(x) for x in (super_admins or ())}:
+        return ""
+    return _c
+
+
+def parcours_essai(pass_doc) -> bool:
+    """V607 — ce pass suit-il le parcours « moi d'abord » ? Oui pour une chaîne de
+    campagne Essai gratuit dont le type affiché est bien « trial » ; jamais pour
+    un Pass Duo ni pour un maillon Parrainage / Affiliation."""
+    return bool(campagne_du_pass(pass_doc)) and type_invitation(pass_doc) == "trial"

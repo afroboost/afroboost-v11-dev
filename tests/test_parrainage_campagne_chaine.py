@@ -194,7 +194,11 @@ async def partie_entree():
     c, x = await appel(R.referral_changer_offre(r["share_token"], req({"offer_id": H.OFFRE_B, "version": g["version"]})))
     verifier("N5. PATCH /offer public sur P0 -> 409 pass_non_modifiable", c == 409 and raison(x) == "pass_non_modifiable", (c, x))
     c, x = await appel(R.referral_changer_seance(r["share_token"], req({"occurrence": occ, "version": g["version"]})))
-    verifier("N5b. PATCH /occurrence public sur P0 -> 409 pass_non_modifiable", c == 409 and raison(x) == "pass_non_modifiable", (c, x))
+    # V607 — « MOI D'ABORD » : l'invité d'un essai gratuit choisit SA séance (liste du
+    # serveur) ; la même date renvoyée est idempotente (aucune écriture). Banc dédié :
+    # tests/test_parrainage_essai_moi_dabord.py (refus, version, partage, Pass Duo).
+    verifier("N5b. V607 : PATCH /occurrence public sur P0 (sa propre date) -> 200 idempotent, version inchangée",
+             c == 200 and x.get("occurrence") == occ and x.get("version") == g["version"], (c, x))
 
     # refus
     base, occ = depart()

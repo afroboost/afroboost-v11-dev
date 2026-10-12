@@ -83,7 +83,7 @@ import {
  * WhatsApp) — l'attaque exacte que la clé empêche. Seule action proposée : copier le
  * lien de cette page pour l'ouvrir sur le bon appareil (inoffensif, rien n'est écrit).
  */
-function AutreAppareil() {
+export function AutreAppareil() {
   const [copie, setCopie] = useState('');
   const url = typeof window !== 'undefined' && window.location ? window.location.href : '';
   return (
@@ -745,7 +745,7 @@ export default function WizardFilleul({
         {dejaEnvoyee ? (
           <>
             <ResumeSeance seance={seanceAmi} />
-            <p className="cp-fine" data-testid="wf-seance-figee">Ton invitation a déjà été envoyée : sa séance ne change plus.</p>
+            <p className="cp-fine" data-testid="wf-seance-figee">Ton invitation a déjà été partagée : sa séance ne change plus.</p>
           </>
         ) : null}
         {!dejaEnvoyee && sansChoix ? (
@@ -792,7 +792,7 @@ export default function WizardFilleul({
         <div className="cp-wf-ok" role="status">
           <span className="cp-wf-ok-ic"><SvgIcon name="check" size={22} strokeWidth="2.5" /></span>
           <div>
-            <b>Invitation envoyée</b>
+            <b>Invitation partagée</b>
             {/* PAR-3 (A2) : rien n'est promis avant la réponse du serveur (l'essai peut être refusé au join). */}
             <p>Termine ton inscription pour réserver ta place.</p>
           </div>

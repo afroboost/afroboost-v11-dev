@@ -156,7 +156,7 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     const share = axios.post.mock.calls.find((c) => String(c[0]).endsWith('/chain/share'));
     expect(share[1]).toEqual({ channel: 'whatsapp' });
     expect(par('wf-etape-3')).not.toBeNull();
-    expect(conteneur.textContent).toContain('Invitation envoyée');
+    expect(conteneur.textContent).toContain('Invitation partagée');
     expect(conteneur.textContent).toContain('Termine ton inscription pour réserver ta place.');
     expect(conteneur.textContent).not.toContain('essai gratuit est maintenant débloqué');
     expect(par('invitation-form')).not.toBeNull();

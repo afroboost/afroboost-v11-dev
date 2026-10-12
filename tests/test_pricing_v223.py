@@ -6,7 +6,9 @@ from datetime import datetime, timezone, timedelta
 
 from api.pricing import compute_active_price
 
-REF = datetime(2026, 9, 1, 19, 0, tzinfo=timezone.utc)
+# V607 : « 2026-09-01 19:00 » saisi par le coach = 19:00 HEURE SUISSE (17:00 UTC en été).
+from zoneinfo import ZoneInfo
+REF = datetime(2026, 9, 1, 19, 0, tzinfo=ZoneInfo("Europe/Zurich"))
 
 
 def _offer(**kw):
@@ -76,12 +78,29 @@ def test_palier_non_defini_retombe_sur_prix_de_base():
     assert res["price"] == 30.0
 
 
-def test_countdown_time_absent_utilise_minuit():
-    """Référence = 2026-09-01 00:00. À 12h avant, on est en last_minute.
-    Si le défaut était 19:00 au lieu de minuit, l'écart serait de 31h → standard."""
+def test_countdown_time_absent_utilise_23h59_comme_la_vitrine():
+    """V607 : heure absente = 23:59 SUISSE (ce que l'éditeur affiche et que la vitrine
+    lit), plus minuit. Référence = 2026-09-01 23:59 Zurich = 21:59 UTC. À 2026-08-31
+    12:00 UTC il reste ~34 h -> standard (l'ancien minuit aurait donné last_minute)."""
     res = compute_active_price(_offer(countdown_time=None),
                                now=datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc))
-    assert res["tier"] == "last_minute"
+    assert res["tier"] == "standard"
+
+
+def test_v607_reference_heure_suisse_et_non_utc():
+    """Le bug du fuseau : 19:00 saisi = 19:00 à Zurich (17:00 UTC en été). À 18:30 UTC
+    (= 20:30 Zurich, APRÈS l'événement) on est en dernière minute ; et 24 h + 30 min
+    avant 19:00 SUISSE, on est encore en standard (l'ancienne lecture UTC décalait de 2 h)."""
+    o = _offer(early_bird_days_before=7, standard_hours_before=24)
+    # 2026-08-31 16:30 UTC = 18:30 Zurich, soit 24 h 30 avant -> standard
+    assert compute_active_price(o, now=datetime(2026, 8, 31, 16, 30, tzinfo=timezone.utc))["tier"] == "standard"
+    # 2026-08-31 17:30 UTC = 19:30 Zurich, soit 23 h 30 avant -> dernière minute
+    # (l'ancienne lecture UTC voyait encore 25 h 30 -> standard : le bug)
+    assert compute_active_price(o, now=datetime(2026, 8, 31, 17, 30, tzinfo=timezone.utc))["tier"] == "last_minute"
+    # Hiver (UTC+1) : 2026-12-12 20:00 Zurich = 19:00 UTC ; 7 j + 30 min avant -> prévente
+    h = _offer(countdown_date="2026-12-12", countdown_time="20:00")
+    assert compute_active_price(h, now=datetime(2026, 12, 5, 18, 30, tzinfo=timezone.utc))["tier"] == "early_bird"
+    assert compute_active_price(h, now=datetime(2026, 12, 5, 19, 30, tzinfo=timezone.utc))["tier"] == "standard"
 
 
 def test_countdown_date_malformee_retombe_sur_regular():

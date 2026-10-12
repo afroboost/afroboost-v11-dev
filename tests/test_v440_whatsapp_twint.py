@@ -112,13 +112,16 @@ GRATUITE = {"id": "11111111-1111-1111-1111-111111111111", "name": "Portes ouvert
 # Bornes de palier de l'offre du festival : reference = 21/08 18:30 UTC,
 # early_bird_days_before = 7 -> bascule le 14/08 a 18:30 ; standard_hours_before
 # = 24 -> bascule le 20/08 a 18:30.
-T_EARLY = datetime(2026, 8, 14, 10, 0, tzinfo=timezone.utc)          # avant
-T_LIMITE_MOINS = datetime(2026, 8, 14, 18, 29, 59, tzinfo=timezone.utc)
-T_LIMITE_PILE = datetime(2026, 8, 14, 18, 30, 0, tzinfo=timezone.utc)  # la limite
-T_STANDARD = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)       # apres
-T_LM_MOINS = datetime(2026, 8, 20, 18, 29, 59, tzinfo=timezone.utc)
-T_LM_PILE = datetime(2026, 8, 20, 18, 30, 0, tzinfo=timezone.utc)
-T_APRES = datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc)          # evenement passe
+# V607 : les bornes des paliers sont des heures SUISSES (countdown saisi à Zurich).
+from zoneinfo import ZoneInfo
+_ZH = ZoneInfo("Europe/Zurich")
+T_EARLY = datetime(2026, 8, 14, 10, 0, tzinfo=_ZH)          # avant
+T_LIMITE_MOINS = datetime(2026, 8, 14, 18, 29, 59, tzinfo=_ZH)
+T_LIMITE_PILE = datetime(2026, 8, 14, 18, 30, 0, tzinfo=_ZH)  # la limite
+T_STANDARD = datetime(2026, 8, 17, 12, 0, tzinfo=_ZH)       # apres
+T_LM_MOINS = datetime(2026, 8, 20, 18, 29, 59, tzinfo=_ZH)
+T_LM_PILE = datetime(2026, 8, 20, 18, 30, 0, tzinfo=_ZH)
+T_APRES = datetime(2026, 8, 25, 12, 0, tzinfo=_ZH)          # evenement passe
 
 resultats = []
 

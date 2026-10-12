@@ -1930,6 +1930,12 @@ async def checkout_stripe_webhook(request: Request):
             await _v559_conv(db, session, dict(metadata or {}))
         except Exception as _v559e:
             logger.warning("[CREATEUR] conversion vitrine non enregistrée (%s)", type(_v559e).__name__)
+        # V607 — invitation ÉVÉNEMENT : même porte (lien personnel, idempotent). FAIL-OPEN.
+        try:
+            from api.routes.invitation_relais import relais_depuis_paiement_stripe as _v607_relais
+            await _v607_relais(db, session, dict(metadata or {}))
+        except Exception as _v607e:
+            logger.warning("[V607] relais vitrine non créé (%s)", type(_v607e).__name__)
 
     return {"status": "ok"}
 

@@ -45,6 +45,7 @@ import InvitationSeanceBandeau from "./InvitationSeanceBandeau";
 import { Etapes } from "./parrainage/wizardCommun"; // V594 — le stepper EXISTANT (parcours Partenaire, étape 3)
 import { ETAPES_PARCOURS_PARTENAIRE } from "./ParcoursPartenaire";
 import "./parrainage/wizardFilleul.css";
+import InviterMesAmis from "./InviterMesAmis"; // V607
 // N2 : la MEME lecture de l'heure que le serveur (`n2_instant_reel`). Sans
 // elle, une date naive serait lue dans le fuseau du navigateur et l'ecran
 // pourrait offrir « Annuler » alors que le serveur refuse.
@@ -1263,6 +1264,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             Non relié → « Profil social non encore activé ». Aucun `order` :
             suit l'ordre du DOM, jamais dans le parcours d'essai. */}
         <CarteProfilSpordateur />
+
+        {/* V607 : arrivé par l'invitation d'un ÉVÉNEMENT GRATUIT ? son lien perso (facultatif).
+            Rien sans invitation : le bloc ne s'affiche pas. */}
+        <InviterMesAmis codeAcces={accessCode} />
 
         {/* ===== V560 : MENU RAPIDE — Bienvenue + profil, puis ces raccourcis, puis
             la progression et « Réserver une séance ». Le reste se rejoint d'ici. ===== */}

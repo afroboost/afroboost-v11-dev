@@ -11,6 +11,7 @@ autorisé ne doit JAMAIS l'appeler. Seul disque touché : un dossier temporaire.
 
 Lancement :  python3 tests/test_share_invite.py
 """
+import html
 import asyncio
 import io
 import os
@@ -223,7 +224,9 @@ async def partie_routes():
              and _og(h, "twitter:image") == _attendu)
     verifier("O4. og:url = adresse exacte partagée (?v nettoyé) ; og:title/description présents",
              _og(h, "og:url") == "%s/api/share/invite/%s?v=3" % (FRONT, TOK)
-             and "Cours découverte" in (_og(h, "og:title") or "") and bool(_og(h, "og:description")),
+             # V607 : essai -> « <Prénom> t'invite à découvrir Afroboost » (titre propre au type)
+             and "t'invite à découvrir Afroboost" in html.unescape(_og(h, "og:title") or "")
+             and "Premier cours offert" in html.unescape(_og(h, "og:description") or ""),
              (_og(h, "og:url"), _og(h, "og:title")))
     verifier("O5. robot : aucune redirection (pas de meta refresh), aucun <script>",
              'http-equiv="refresh"' not in h and "<script" not in h.lower())
@@ -273,12 +276,13 @@ async def partie_routes():
              c == 200 and "max-age=300" in entv.get("cache-control", ""))
 
     # XSS
+    doc["type"] = "event_free"   # V607 : le titre saisi n'apparaît dans l'aperçu que pour un événement
     doc["title"] = 'Soirée <script>alert("x")</script> "guillemets" & \'apos\''
     doc["subtitle"] = '<img src=x onerror=alert(1)>'
     c, hx, _ = await page(TOK, "", UA_NAV)
     verifier("X1. titre avec <script> et guillemets : échappé dans le HTML (aucune balise injectée)",
              c == 200 and "<script" not in hx.lower() and "&lt;script&gt;" in hx and "&quot;guillemets&quot;" in hx
-             and "<img src=x" not in hx and "&lt;img src=x" in hx, hx[:600])
+             and "<img src=x" not in hx, hx[:600])   # V607 : le sous-titre n'entre plus dans la description
     cx, corpsx, _ = await carte(TOK)
     verifier("X2. la carte d'un titre hostile reste une image valide", cx == 200 and _image(corpsx) is not None)
 

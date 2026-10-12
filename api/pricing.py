@@ -1,5 +1,8 @@
 """V223 — Calcul du prix progressif à 3 paliers.
 
+V607 : la date de référence (`countdown_date` + `countdown_time`) est une heure
+SUISSE (Europe/Zurich), plus de l'UTC.
+
 Module volontairement pur : aucun accès base de données, aucun import de
 server.py (qui ouvre une connexion MongoDB dès l'import). C'est ce qui rend
 cette logique — la seule à porter un risque financier direct — testable
@@ -10,6 +13,12 @@ from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+try:
+    from zoneinfo import ZoneInfo
+    _ZURICH = ZoneInfo("Europe/Zurich")
+except Exception:  # pragma: no cover — sans base de fuseaux : repli UTC (comportement d'avant)
+    _ZURICH = timezone.utc
 
 CURRENCY = "CHF"
 
@@ -23,10 +32,21 @@ def _reference_datetime(offer: dict) -> Optional[datetime]:
     raw_date = offer.get("countdown_date")
     if not raw_date:
         return None
-    raw_time = offer.get("countdown_time") or "00:00"
+    # V607 : heure absente = 23:59, la valeur que l'éditeur d'offre AFFICHE et que la
+    # vitrine LIT (App.js `countdown_time || '23:59'`). L'ancien « 00:00 » serveur
+    # faisait basculer le palier ~24 h plus tôt que ce que le client voyait.
+    raw_time = offer.get("countdown_time") or "23:59"
     try:
         parsed = datetime.strptime(f"{raw_date} {raw_time}", "%Y-%m-%d %H:%M")
-        return parsed.replace(tzinfo=timezone.utc)
+        # V607 — LE BUG DU FUSEAU DES PALIERS. Le coach saisit la date et l'heure de
+        # son événement à l'heure SUISSE (OfferWizard : <input type="date"/"time">,
+        # relues par la vitrine avec `new Date('AAAA-MM-JJTHH:MM')`, donc en heure
+        # locale). Ce module les lisait comme de l'UTC : chaque bascule de palier
+        # (prévente -> standard -> dernière minute) arrivait 1 h (hiver) ou 2 h (été)
+        # trop TARD côté serveur, donc côté Stripe, et le compte à rebours de la
+        # vitrine ne tombait plus au même instant que le prix encaissé. La référence
+        # est désormais l'heure de Zurich, convertie en UTC pour la comparaison.
+        return parsed.replace(tzinfo=_ZURICH).astimezone(timezone.utc)
     except (ValueError, TypeError):
         logger.warning(f"[V223] countdown_date invalide: {raw_date!r} {raw_time!r}")
         return None

@@ -32,7 +32,9 @@ SOURCES_IMAGE = ("default", "upload")
 # Un changement RÉEL de l'un de ces champs incrémente `version` (-> `?v=N`,
 # WhatsApp refait l'aperçu). `share_token` n'en fait JAMAIS partie.
 CHAMPS_VISUELS = ("title", "subtitle", "message", "cta_label", "image_url", "image_source",
-                  "course_id", "occurrence", "offer_id", "type")
+                  "course_id", "occurrence", "offer_id", "type",
+                  # V607 : le lieu saisi (événements), la vidéo / le mot audio (facultatifs).
+                  "lieu", "video_url", "audio_url")
 
 # LISTE BLANCHE des champs acceptés en entrée. Tout le reste est ignoré —
 # en particulier `coach_id`, `share_token`, `version`, `inviter_display`, `id`
@@ -43,23 +45,35 @@ CHAMPS_ENTREE = ("type", "status") + tuple(c for c in CHAMPS_VISUELS if c != "ty
 # Le document complet stocké (schéma fermé).
 CHAMPS_DOCUMENT = ("id", "coach_id", "type", "status", "share_token", "version", "title",
                    "subtitle", "message", "cta_label", "image_url", "image_source", "course_id",
-                   "occurrence", "offer_id", "inviter_display", "created_at", "updated_at")
+                   "occurrence", "offer_id", "inviter_display", "created_at", "updated_at",
+                   "lieu", "video_url", "audio_url")
 
 TITRE_MAX = 80
 SOUS_TITRE_MAX = 120
 MESSAGE_MAX = E.MESSAGE_MAX                   # 280, la même borne que le Pass Duo
 CTA_MAX = 30
 ID_MAX = 64
+LIEU_MAX = 160
+MEDIA_URL_MAX = 600
 
 # Ce que chaque type exige au passage en `active` (en draft : incomplet accepté).
 EXIGENCES_ACTIVATION = {
     "trial": ("course_id", "occurrence", "offer_id"),
     "pass_duo": ("course_id", "occurrence"),
     "event_free": ("offer_id",),
-    "event_paid": ("offer_id",),
+    # V607 : un billet se vend pour une DATE et une HEURE précises (les paliers en dépendent).
+    "event_paid": ("offer_id", "occurrence"),
 }
 
+# V607 : le blocage « fuseau horaire des paliers » est levé (api/pricing.py lit
+# désormais l'heure suisse). Le message reste exporté pour les appelants anciens.
 MESSAGE_EVENT_PAYANT_BLOQUE = "Événement payant : activation après correction du fuseau horaire des paliers"
+
+# V607 — le libellé FR de chaque champ, pour dire QUEL champ manque.
+LIBELLES_CHAMPS = {
+    "course_id": "la séance (cours)", "occurrence": "la date et l'heure", "offer_id": "l'offre",
+    "lieu": "le lieu", "title": "le titre", "cta_label": "le texte du bouton",
+}
 
 
 class InvitationCampagneInvalide(ValueError):
@@ -132,6 +146,26 @@ def normaliser_occurrence(valeur):
     return _d.replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def valider_media_url(valeur, champ):
+    """V607 — vidéo / audio : un fichier Afroboost (`/api/files/...`) ou une
+    adresse https (la bibliothèque Médias rend l'un ou l'autre). Jamais `//hôte`,
+    jamais d'espace ni de guillemet (l'URL finit dans un attribut HTML)."""
+    if valeur is None:
+        return None
+    if not isinstance(valeur, str):
+        raise InvitationCampagneInvalide("%s : adresse texte attendue" % champ)
+    _v = valeur.strip()
+    if not _v:
+        return None
+    if len(_v) > MEDIA_URL_MAX or any(c in _v for c in ' \t\n\r"\'<>\\'):
+        raise InvitationCampagneInvalide("%s : adresse refusée" % champ)
+    if _v.startswith("/api/files/") and not _v.startswith("//"):
+        return _v
+    if _re.match(r"^https://[A-Za-z0-9.-]+(:\d+)?/", _v):
+        return _v
+    raise InvitationCampagneInvalide("%s : adresse refusée (https ou fichier Afroboost)" % champ)
+
+
 def valider_image(url, source):
     """(image_url, image_source). `default` -> URL None. `upload` -> URL
     obligatoire, https d'un hôte admis ou `/api/files/...` (règle
@@ -195,6 +229,12 @@ def valider_entree(corps, existant=None) -> dict:
         _s["offer_id"] = _identifiant(_b["offer_id"], "offer_id")
     if "occurrence" in _b:
         _s["occurrence"] = normaliser_occurrence(_b["occurrence"])
+    if "lieu" in _b:
+        _s["lieu"] = _nettoyer(_b["lieu"], "lieu", LIEU_MAX)
+    if "video_url" in _b:
+        _s["video_url"] = valider_media_url(_b["video_url"], "video_url")
+    if "audio_url" in _b:
+        _s["audio_url"] = valider_media_url(_b["audio_url"], "audio_url")
 
     if "image_url" in _b or "image_source" in _b:
         _url = _b["image_url"] if "image_url" in _b else _s.get("image_url")
@@ -206,6 +246,12 @@ def valider_entree(corps, existant=None) -> dict:
         _s["image_source"] = "upload" if _s.get("image_url") else "default"
     if _s["image_source"] == "default":
         _s["image_url"] = None
+    # V607 — un champ SANS OBJET pour le type est vidé (changement de type d'un
+    # brouillon : Événement payant -> Essai ne garde ni lieu saisi ni billet).
+    if _s.get("type") not in ("event_free", "event_paid"):
+        _s["lieu"] = None
+    if _s.get("type") == "pass_duo":
+        _s["offer_id"] = None
     return _s
 
 
@@ -262,6 +308,99 @@ def offre_gratuite(offre) -> bool:
     if offre.get("progressive_pricing") is True:
         return all(v is not None and v == 0 for v in _vals)
     return _vals[1] is not None and _vals[1] == 0
+
+
+# ─── V607 : le billet d'un ÉVÉNEMENT PAYANT ─────────────────────────────────
+# Ce que le menu « Offre payante de l'événement » propose : un BILLET, pas un
+# abonnement. Filtre PROPRE à l'événement payant : les autres types gardent
+# leur propre règle (`offre_gratuite`), le catalogue n'est pas touché.
+TYPES_OFFRE_NON_BILLET = ("subscription", "pack", "membership", "product")
+MODES_PAIEMENT_BILLET = (None, "", "unique")
+
+
+def raison_offre_non_billet(offre):
+    """None si l'offre peut servir de billet d'événement, sinon la raison (FR)."""
+    if not isinstance(offre, dict):
+        return "offre introuvable"
+    if not offre_payante(offre):
+        return "offre gratuite"
+    if offre.get("archived") is True:
+        return "offre archivée"
+    if offre.get("visible") is False:
+        return "offre masquée"
+    if offre.get("link_only") is True:
+        return "offre privée"
+    if offre.get("isProduct") is True:
+        return "produit"
+    if offre.get("offer_type") in TYPES_OFFRE_NON_BILLET:
+        return "abonnement, pack ou carte membre"
+    if offre.get("billing_mode") not in MODES_PAIEMENT_BILLET:
+        return "abonnement (paiement récurrent ou échelonné)"
+    if offre.get("creates_membership") is True or offre.get("requires_active_membership") is True:
+        return "offre membres"
+    if offre.get("duree_mois"):
+        return "abonnement (durée en mois)"
+    return None
+
+
+def offre_billet_evenement(offre) -> bool:
+    return raison_offre_non_billet(offre) is None
+
+
+# Les noms des 3 paliers, tels que Bassi les veut sur l'invitation.
+LIBELLES_PALIER = {"early_bird": "Tarif lancement", "standard": "Tarif standard",
+                   "last_minute": "Dernière minute", "regular": "Tarif"}
+
+
+def prix_actif(offre, maintenant=None):
+    """V607 — LE prix encaissé MAINTENANT (le même calcul que le checkout :
+    `api.pricing.compute_active_price`, heure suisse) + les paliers + la bascule
+    suivante. None si l'offre n'a pas de prix positif. Pur (`maintenant` injectable)."""
+    if not isinstance(offre, dict):
+        return None
+    from datetime import timedelta, timezone as _tz
+    from api.pricing import compute_active_price, _reference_datetime
+    try:
+        _r = compute_active_price(offre, now=maintenant)
+    except Exception:  # noqa: BLE001
+        return None
+    _prix = _nombre(_r.get("price"))
+    if _prix is None or _prix <= 0:
+        return None
+    _palier = _r.get("tier") or "regular"
+    _sortie = {"prix": _prix, "palier": _palier,
+               "libelle": (offre.get("label_" + _palier) if _palier != "regular" else None)
+               or LIBELLES_PALIER.get(_palier, "Tarif"),
+               "devise": "CHF", "paliers": [], "prochain": None}
+    if offre.get("progressive_pricing") is True and _palier != "regular":
+        _ref = _reference_datetime(offre)
+        _jours = offre.get("early_bird_days_before")
+        _heures = offre.get("standard_hours_before")
+        _fin = {"early_bird": _ref - timedelta(days=int(_jours if _jours is not None else 7)),
+                "standard": _ref - timedelta(hours=int(_heures if _heures is not None else 24))} if _ref else {}
+        _ordre = ("early_bird", "standard", "last_minute")
+        for _k in _ordre:
+            _p = _nombre(offre.get("price_" + _k))
+            if _p is None:
+                continue
+            _sortie["paliers"].append({"palier": _k, "libelle": offre.get("label_" + _k) or LIBELLES_PALIER[_k],
+                                       "prix": _p, "actif": _k == _palier})
+        _i = _ordre.index(_palier) if _palier in _ordre else -1
+        if 0 <= _i < 2 and _palier in _fin:
+            _suiv = _ordre[_i + 1]
+            _ps = _nombre(offre.get("price_" + _suiv))
+            if _ps is not None and _ps > _prix:
+                _sortie["prochain"] = {"palier": _suiv, "prix": _ps,
+                                       "a_partir_de": _fin[_palier].astimezone(_tz.utc).isoformat()}
+    return _sortie
+
+
+def libelle_prix(prix) -> str:
+    """« 25 CHF » / « 12.50 CHF »."""
+    _p = _nombre(prix)
+    if _p is None:
+        return ""
+    return "%s CHF" % (int(_p) if float(_p).is_integer() else ("%.2f" % _p))
 
 
 def offre_payante(offre) -> bool:
@@ -472,7 +611,10 @@ def dto_public(doc, cours=None, offre=None, chaine=False) -> dict:
     _c = cours if isinstance(cours, dict) else {}
     _o = offre if isinstance(offre, dict) else {}
     _occ = _d.get("occurrence") or None
-    _lieu = str(_c.get("locationName") or _c.get("location") or _o.get("location") or "").strip()[:160]
+    # V607 : le lieu SAISI sur l'invitation (événement) passe avant celui du cours / de l'offre.
+    _lieu = str(_d.get("lieu") or _c.get("locationName") or _c.get("location") or _o.get("location") or "").strip()[:160]
+    _type = _d.get("type")
+    _pa = prix_actif(_o) if (_type == "event_paid" and _o) else None
     return {
         "type": _d.get("type"),
         "title": _d.get("title") or None,
@@ -489,6 +631,15 @@ def dto_public(doc, cours=None, offre=None, chaine=False) -> dict:
         "inviter_display": _inviter_public(_d),
         "target_url": cible_front(_d, chaine),       # PAR-1 : `chaine` lu par l'appelant
         "prix": paliers_offre(_o) if (_d.get("type") == "event_paid" and _o) else None,
+        # V607 — ce que la carte, la page, WhatsApp et le checkout disent du prix.
+        "prix_actif": _pa,
+        "gratuit": _type in ("trial", "event_free"),
+        "mention_prix": (("%s · %s" % (libelle_prix(_pa["prix"]), _pa["libelle"])) if _pa
+                         else ("Offert" if _type == "trial" else ("Gratuit" if _type == "event_free" else None))),
+        "offre_nom": (str(_o.get("name") or "").strip()[:120] or None) if _o else None,
+        "video_url": _d.get("video_url") or None,
+        "audio_url": _d.get("audio_url") or None,
+        "cours_nom": (str(_c.get("name") or "").strip()[:120] or None) if _c else None,
     }
 
 
@@ -507,7 +658,10 @@ def dto_coach(doc, cours=None, offre=None, base_url="https://afroboost.com", cha
         "offer_id": _d.get("offer_id") or None,
         "created_at": _d.get("created_at"),
         "updated_at": _d.get("updated_at"),
-        "share_url": "%s/api/share/invite/%s?v=%d" % (_base, _tok, _v),
+        # V607 : le lien COURT public (`/i/<jeton>`) ; l'ancien reste servi (`share_url_api`).
+        "share_url": "%s/i/%s?v=%d" % (_base, _tok, _v),
+        "share_url_api": "%s/api/share/invite/%s?v=%d" % (_base, _tok, _v),
+        "lieu_saisi": _d.get("lieu") or None,
         "card_url": "%s/api/share/invite/%s/carte.jpg?v=%d" % (_base, _tok, _v),
     })
     return _sortie
