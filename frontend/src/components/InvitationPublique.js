@@ -24,6 +24,7 @@ import AfroboostAudioPlayer from './AfroboostAudioPlayer'; // V610g
 import InviterMesAmis from './InviterMesAmis'; // V610i : après réservation confirmée
 import { attributionActuelle, invitationEnregistrer } from '../utils/attribution';
 import { lireSession, urlDeLaSession } from '../utils/espaceSession';
+import { memoriserParticipation, lireParticipation, retenirIntentionMembre, offreDeLInvitation } from '../utils/participationEvenement'; // V610m
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
@@ -185,16 +186,67 @@ function Rubrique({ titre, children, testid }) {
   );
 }
 
+/** V610m — l'événement confirmé : titre, puis date / heure / lieu (icônes SVG), centré. */
+function PlaceEvenement({ titre, d }) {
+  const x = d || {};
+  return (
+    <div data-testid="inv-pub-confirmation-evenement" style={{ margin: '0 0 8px' }}>
+      <p style={{ margin: '0 0 6px', fontWeight: 800, fontSize: '16px' }}>{titre}</p>
+      <div data-testid="inv-pub-confirmation-quand" style={{ display: 'grid', gap: '4px', justifyContent: 'center', fontSize: '14.5px', color: 'rgba(255,255,255,0.85)' }}>
+        {x.date_label ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><SvgIcon name="calendar" size={15} /> {maj(x.date_label)}</span> : null}
+        {x.time_label ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><SvgIcon name="clock" size={15} /> {x.time_label}</span> : null}
+        {x.lieu ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><SvgIcon name="mapPin" size={15} /> {x.lieu}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+/** V610m — revenir à la page de l'invitation (ex. réserver pour quelqu'un d'autre). */
+function LienInvitation({ onClick }) {
+  return (
+    <button type="button" data-testid="inv-pub-voir-invitation" onClick={onClick}
+            style={{ marginTop: 14, background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', fontSize: '13.5px', textDecoration: 'underline', cursor: 'pointer', minHeight: 44 }}>
+      Voir l’invitation
+    </button>
+  );
+}
+
+/** V610m — place OFFERTE déjà mémorisée sur cet appareil (membre) : son lien, sans paiement. */
+export function DejaParticipant({ d, relais, onIgnorer }) {
+  const titre = (d && (d.title || d.offre_nom)) || 'Ton événement Afroboost';
+  return (
+    <div data-testid="inv-pub-confirmation" data-etat="participe" style={{ textAlign: 'center' }}>
+      <span style={{ display: 'inline-flex', width: 56, height: 56, borderRadius: 999, alignItems: 'center', justifyContent: 'center', background: rgbaP(0.2), color: PRIMAIRE, marginBottom: 10 }}>
+        <SvgIcon name="check" size={28} />
+      </span>
+      <h1 data-testid="inv-pub-place-reservee" style={{ margin: '0 0 8px', fontSize: '26px' }}>Tu participes à cet événement</h1>
+      <PlaceEvenement titre={titre} d={d} />
+      <InviterMesAmis relaisInitial={relais} />
+      <LienInvitation onClick={onIgnorer} />
+    </div>
+  );
+}
+
 const ESSAIS_CONFIRMATION = 20;      // ~45 s au total, puis un message clair (jamais une boucle)
 const PAUSE_CONFIRMATION = (i) => 1500 + Math.min(i, 6) * 250;
+const PAUSE_VERIFICATION = () => 500;   // V610m : lien rouvert — la place est déjà là, ou non
 
 /**
  * V610i — RETOUR DE STRIPE (`/i/<jeton>?paiement=ok&cs=<session>`). Le retour du navigateur
  * ne prouve RIEN : la page attend que le WEBHOOK ait créé la place (`place_confirmee`) et le
  * lien personnel, puis seulement annonce « Ta place est réservée » et lance la boule de neige.
  */
-export function ConfirmationReservation({ cs, d, attente = PAUSE_CONFIRMATION, essais = ESSAIS_CONFIRMATION }) {
+export function ConfirmationReservation({ cs, d, jeton, participe = false, onIgnorer, attente = PAUSE_CONFIRMATION, essais = ESSAIS_CONFIRMATION }) {
   const [etat, setEtat] = useState({ statut: 'attente', relais: null });
+  // V610m : place CONFIRMÉE par le serveur -> mémorisée sur cet appareil (rouvrir le lien
+  // montre « Tu participes », jamais un nouveau paiement). Rien d'autre n'est gardé.
+  useEffect(() => {
+    if (etat.statut === 'confirmee' && jeton && !participe) memoriserParticipation(jeton, { cs });
+  }, [etat.statut, jeton, cs, participe]);
+  // V610m : participation mémorisée mais NON confirmée par le serveur -> la page normale.
+  useEffect(() => {
+    if (participe && etat.statut === 'delai' && typeof onIgnorer === 'function') onIgnorer();
+  }, [participe, etat.statut, onIgnorer]);
   useEffect(() => {
     let vivant = true;
     (async () => {
@@ -222,7 +274,7 @@ export function ConfirmationReservation({ cs, d, attente = PAUSE_CONFIRMATION, e
         <div role="status" style={{ padding: '40px 8px' }}>
           <div style={{ width: 44, height: 44, margin: '0 auto 14px', borderRadius: 999, border: `3px solid ${rgbaP(0.25)}`, borderTopColor: PRIMAIRE, animation: 'invRot 0.9s linear infinite' }} />
           <style>{'@keyframes invRot{to{transform:rotate(360deg)}}'}</style>
-          <p data-testid="inv-pub-confirmation-attente" style={{ margin: 0, fontSize: '17px', fontWeight: 700 }}>Confirmation de ta réservation…</p>
+          <p data-testid="inv-pub-confirmation-attente" style={{ margin: 0, fontSize: '17px', fontWeight: 700 }}>{participe ? 'Vérification de ta place…' : 'Confirmation de ton paiement…'}</p>
           <p style={{ margin: '6px 0 0', fontSize: '13.5px', color: 'rgba(255,255,255,0.65)' }}>Quelques secondes, le temps que le paiement soit validé.</p>
         </div>
       ) : etat.statut === 'confirmee' ? (
@@ -230,15 +282,11 @@ export function ConfirmationReservation({ cs, d, attente = PAUSE_CONFIRMATION, e
           <span style={{ display: 'inline-flex', width: 56, height: 56, borderRadius: 999, alignItems: 'center', justifyContent: 'center', background: rgbaP(0.2), color: PRIMAIRE, marginBottom: 10 }}>
             <SvgIcon name="check" size={28} />
           </span>
-          <h1 data-testid="inv-pub-place-reservee" style={{ margin: '0 0 6px', fontSize: '26px' }}>Ta place est réservée</h1>
-          <p style={{ margin: '0 0 2px', fontWeight: 700 }}>{titre}</p>
-          {quand || (d && d.lieu) ? (
-            <p data-testid="inv-pub-confirmation-quand" style={{ margin: '0 0 6px', color: 'rgba(255,255,255,0.78)', fontSize: '14.5px' }}>
-              {[quand, d && d.lieu].filter(Boolean).join(' · ')}
-            </p>
-          ) : null}
-          <p style={{ margin: '0 0 6px', color: 'rgba(255,255,255,0.65)', fontSize: '13.5px' }}>Ton e-mail de confirmation arrive.</p>
-          <InviterMesAmis relaisInitial={etat.relais} />
+          <h1 data-testid="inv-pub-place-reservee" style={{ margin: '0 0 8px', fontSize: '26px' }}>{participe ? 'Tu participes à cet événement' : 'Ta place est réservée !'}</h1>
+          <PlaceEvenement titre={titre} d={d} />
+          {participe ? null : <p style={{ margin: '0 0 6px', color: 'rgba(255,255,255,0.65)', fontSize: '13.5px' }}>Ton e-mail de confirmation arrive.</p>}
+          <InviterMesAmis relaisInitial={etat.relais} autoLecture={!participe} />
+          {participe && typeof onIgnorer === 'function' ? <LienInvitation onClick={onIgnorer} /> : null}
         </div>
       ) : (
         <div data-testid="inv-pub-confirmation-delai" role="alert" style={{ padding: '30px 8px' }}>
@@ -282,6 +330,10 @@ export default function InvitationPublique({ token, apercu }) {
   const [envoi, setEnvoi] = useState({ cours: false, erreur: '' });
   const membreRef = useRef(null);
   const retour = enApercu ? null : retourPaiement(typeof window !== 'undefined' ? window.location.search : '');
+  // V610m : participation déjà connue SUR CET APPAREIL (jamais pendant un retour de paiement).
+  const [participation] = useState(() => (enApercu || retour ? null : lireParticipation(token)));
+  const [ignorerParticipation, setIgnorerParticipation] = useState(false);
+  const ignorer = React.useCallback(() => setIgnorerParticipation(true), []);
 
   useEffect(() => {
     if (enApercu) return undefined;
@@ -309,7 +361,20 @@ export default function InvitationPublique({ token, apercu }) {
     return (
       <div style={cadre} data-testid="inv-pub">
         <main style={{ maxWidth: COLONNE, margin: '0 auto', padding: '28px 16px 40px', boxSizing: 'border-box' }}>
-          <ConfirmationReservation cs={retour.cs} d={etat.d} />
+          <ConfirmationReservation cs={retour.cs} d={etat.d} jeton={token} />
+        </main>
+      </div>
+    );
+  }
+  // V610m — lien ROUVERT sur l'appareil qui a déjà sa place : « Tu participes » (vérifié par
+  // le serveur pour un paiement), jamais un second paiement proposé d'emblée.
+  if (participation && !ignorerParticipation && !etat.charge && etat.d && !enApercu) {
+    return (
+      <div style={cadre} data-testid="inv-pub">
+        <main style={{ maxWidth: COLONNE, margin: '0 auto', padding: '28px 16px 40px', boxSizing: 'border-box' }}>
+          {participation.cs
+            ? <ConfirmationReservation cs={participation.cs} d={etat.d} jeton={token} participe onIgnorer={ignorer} essais={2} attente={PAUSE_VERIFICATION} />
+            : <DejaParticipant d={etat.d} relais={participation.relais} onIgnorer={ignorer} />}
         </main>
       </div>
     );
@@ -370,6 +435,8 @@ export default function InvitationPublique({ token, apercu }) {
   // sinon le bloc complet (e-mail -> lien d'accès, réponse NEUTRE) dans « Lire plus ».
   const surMembre = () => {
     if (enApercu) return;
+    // V610m : l'espace s'ouvrira DIRECTEMENT sur CET événement (même après le lien e-mail).
+    retenirIntentionMembre(offreDeLInvitation(d), token);
     const cible = urlDeLaSession(lireSession());
     if (cible) { window.location.href = cible; return; }
     setLirePlus(true);
@@ -478,7 +545,7 @@ export default function InvitationPublique({ token, apercu }) {
             {type === 'event_paid' && d.gratuit_membres ? (
               /* V610b : bloc IDENTIQUE pour tous — aucune recherche d'e-mail ; la gratuité se
                  prend dans l'espace membre authentifié et ne se transmet jamais par un lien. */
-              <div ref={membreRef} data-testid="inv-pub-gratuit-membres"><AccesMembreEvenement inerte={enApercu} libelle="Je suis membre" /></div>
+              <div ref={membreRef} data-testid="inv-pub-gratuit-membres"><AccesMembreEvenement inerte={enApercu} libelle="Je suis membre" avantOuverture={() => retenirIntentionMembre(offreDeLInvitation(d), token)} /></div>
             ) : null}
           </LirePlus>
         ) : null}
@@ -488,7 +555,9 @@ export default function InvitationPublique({ token, apercu }) {
             {d.message}
           </p>
         ) : null}
-        {audio ? <div style={{ margin: '0 0 14px' }}><MotAudio url={audio} prenom={prenom} inerte={enApercu} /></div> : null}
+        {/* V610m : l'ESSAI GRATUIT fait entendre son message APRÈS « Valider ma séance »
+            (« Ton essai est prêt »), jamais sur cette première page. */}
+        {audio && type !== 'trial' ? <div style={{ margin: '0 0 14px' }}><MotAudio url={audio} prenom={prenom} inerte={enApercu} /></div> : null}
       </main>
 
       <div style={{ position: enApercu ? 'sticky' : 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 16px calc(12px + env(safe-area-inset-bottom, 0px))', background: 'linear-gradient(180deg, rgba(8,4,12,0) 0%, rgba(8,4,12,0.95) 40%)' }}>

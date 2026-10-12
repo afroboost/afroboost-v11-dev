@@ -11,7 +11,7 @@
  * Honnêteté : le clic WhatsApp OUVRE WhatsApp avec le message prérempli ; on
  * enregistre « partage déclenché », jamais « envoyé ». Aucun envoi automatique.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import AfroboostAudioPlayer from './AfroboostAudioPlayer'; // V610g
 import SvgIcon from './SvgIcon';
 import { invitationActuelle } from '../utils/attribution';
@@ -57,7 +57,7 @@ async function lienParInscription(jeton, code, jetonEspace, slug) {
   } catch (e) { return null; }
 }
 
-export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug, relaisInitial, evenement, apercuDetails }) {
+export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug, relaisInitial, evenement, apercuDetails, autoLecture }) {
   // V610e : `apercuDetails` (éditeur coach) — le bloc tel que l'invité le verra après sa
   // réservation, SANS appel réseau, sans partage ni suivi (boutons inertes).
   const enApercu = !!apercuDetails;
@@ -99,8 +99,23 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
   }, [jetonInitial, jetonInv, cs, acces, espace, membre, evenement, enApercu]);
 
   // V610d / V610g — « DEVIENS AFROBOOSTEUR » : l'audio d'APRÈS réservation (événement payant
-  // seulement), joué par le lecteur Afroboost (au clic, jamais d'autoplay).
+  // seulement), joué par le lecteur Afroboost.
   const audioPartage = details && details.type === 'event_paid' ? urlAudioSure(details.audio_partage_url) : '';
+  // V610m — sur l'écran de confirmation (`autoLecture`) : UNE tentative de lecture dès que
+  // le message est là ; refus du navigateur -> le lecteur visible (« Écouter le message »).
+  // Jamais en boucle, jamais relancé.
+  const audioRef = useRef(null);
+  const audioTente = useRef(false);
+  const pret = !!(relais && audioPartage);
+  useEffect(() => {
+    if (enApercu || !autoLecture || !pret || audioTente.current) return undefined;
+    const t = setTimeout(() => {
+      if (audioTente.current || !audioRef.current) return;
+      audioTente.current = true;
+      try { audioRef.current.lire().catch(() => { /* bloqué : le lecteur visible prend le relais */ }); } catch (e) { /* ignore */ }
+    }, 0);
+    return () => clearTimeout(t);
+  }, [enApercu, autoLecture, pret]);
 
   if (!relais) return null;
   // Le mot personnel de l'invitation est celui du coach : jamais repris au nom du participant.
@@ -116,22 +131,26 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
     copier(relais.share_url).then((ok) => setRetour(ok ? 'Lien copié' : 'Copie impossible'));
     suivreInvitation(relais.jeton, 'partage_autre_declenche');
   };
-  if (audioPartage) {
+  // V610m — ÉVÉNEMENT PAYANT (paiement ou place offerte confirmés) : le bloc « Deviens
+  // Afroboosteur » est TOUJOURS celui-ci — audio s'il est configuré, et le gros bouton.
+  if (audioPartage || (details && details.type === 'event_paid')) {
     return (
-      <div data-testid="inviter-mes-amis" style={{ marginTop: '14px', padding: '14px', borderRadius: '14px', textAlign: 'left',
+      <div data-testid="inviter-mes-amis" data-variante="afroboosteur" style={{ marginTop: '14px', padding: '16px 14px', borderRadius: '16px', textAlign: 'left',
         background: rgbaP(0.12), border: `1px solid ${rgbaP(0.4)}` }}>
-        <div data-testid="afroboosteur-titre" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: 'rgba(255,255,255,0.97)', fontSize: '16px' }}>
-          <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="fire" size={20} /></span> Deviens Afroboosteur
+        <div data-testid="afroboosteur-titre" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: 'rgba(255,255,255,0.97)', fontSize: '18px' }}>
+          <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="fire" size={22} /></span> Deviens Afroboosteur
         </div>
-        <p style={{ margin: '4px 0 12px', fontSize: '13.5px', color: 'rgba(255,255,255,0.8)' }}>
-          Partage l’énergie. Invite tes amis.
+        <p data-testid="afroboosteur-texte" style={{ margin: '4px 0 12px', fontSize: '14px', color: 'rgba(255,255,255,0.85)', lineHeight: 1.45 }}>
+          Fais circuler l’énergie. Invite tes amis à vivre Afroboost avec toi.
         </p>
-        <AfroboostAudioPlayer src={audioPartage} testidAudio="afroboosteur-audio" testidBouton="afroboosteur-ecouter" inerte={enApercu} />
+        {audioPartage ? (
+          <AfroboostAudioPlayer ref={audioRef} src={audioPartage} testidAudio="afroboosteur-audio" testidBouton="afroboosteur-ecouter" inerte={enApercu} />
+        ) : null}
         <button type="button" data-testid="inviter-whatsapp" onClick={surWhatsApp}
-                style={{ width: '100%', minHeight: '46px', marginTop: '8px', borderRadius: '12px', border: 'none', background: PRIMAIRE,
-                  color: 'rgba(255,255,255,1)', fontWeight: 700, fontSize: '15px', display: 'inline-flex', alignItems: 'center',
-                  justifyContent: 'center', gap: '8px', cursor: 'pointer' }}>
-          <SvgIcon name="send" size={18} /> Inviter mes amis
+                style={{ width: '100%', minHeight: '54px', marginTop: '10px', borderRadius: '14px', border: 'none', background: PRIMAIRE,
+                  color: 'rgba(255,255,255,1)', fontWeight: 800, fontSize: '17px', display: 'inline-flex', alignItems: 'center',
+                  justifyContent: 'center', gap: '10px', cursor: 'pointer', boxShadow: `0 8px 24px ${rgbaP(0.35)}` }}>
+          <SvgIcon name="send" size={20} /> Inviter mes amis
         </button>
         <button type="button" data-testid="inviter-copier" onClick={surCopier}
                 style={{ width: '100%', minHeight: '44px', marginTop: '8px', borderRadius: '12px', background: 'rgba(255,255,255,0.06)',

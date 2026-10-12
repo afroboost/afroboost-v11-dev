@@ -161,13 +161,25 @@ describe('V610i — retour de Stripe : le webhook fait foi', () => {
       if (u.includes('/api/invitation/publique/')) return json(SILENT);
       return json({});
     });
-    await act(async () => { rendre(<ConfirmationReservation cs="cs_test_ABCDEF123" d={SILENT} attente={() => 5} />); });
-    expect(q('inv-pub-confirmation-attente').textContent).toBe('Confirmation de ta réservation…');
+    const play = jest.spyOn(window.HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    await act(async () => { rendre(<ConfirmationReservation cs="cs_test_ABCDEF123" d={SILENT} jeton="JetonDeBassi1234567" attente={() => 5} />); });
+    expect(q('inv-pub-confirmation-attente').textContent).toBe('Confirmation de ton paiement…');
     expect(q('inv-pub-place-reservee')).toBeNull();
-    await attendre(() => expect(q('inv-pub-place-reservee').textContent).toBe('Ta place est réservée'));
+    expect(play).not.toHaveBeenCalled();                              // rien avant la preuve du webhook
+    await attendre(() => expect(q('inv-pub-place-reservee').textContent).toBe('Ta place est réservée !'));
     expect(n).toBe(3);
+    // V610m : hiérarchie — confirmation, événement (date / heure / lieu), Deviens Afroboosteur, audio, gros bouton
+    expect(q('inv-pub-confirmation-evenement').textContent).toContain('AFROBOOST SILENT');
+    expect(q('inv-pub-confirmation-quand').textContent).toContain('Mercredi 28 octobre');
+    expect(q('inv-pub-confirmation-quand').textContent).toContain('18:45');
+    expect(q('inv-pub-confirmation-quand').textContent).toContain('Valangines');
     await attendre(() => expect(q('afroboosteur-titre').textContent).toMatch(/Deviens Afroboosteur/));
     expect(q('afroboosteur-audio').autoplay).toBe(false);
+    expect(q('afroboosteur-audio').loop).toBe(false);
+    await attendre(() => expect(play).toHaveBeenCalledTimes(1));     // UNE tentative après confirmation
+    // la place confirmée est retenue sur CET appareil (rouvrir le lien -> « Tu participes »)
+    expect(JSON.parse(window.localStorage.getItem('af_evt_participe_JetonDeBassi1234567'))).toEqual({ cs: 'cs_test_ABCDEF123' });
+    play.mockRestore();
     expect(q('inviter-whatsapp').textContent).toMatch(/Inviter mes amis/);
     expect(document.body.textContent).toMatch(/Copier mon lien/);
   });

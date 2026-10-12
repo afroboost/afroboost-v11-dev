@@ -360,6 +360,73 @@ async def relais_par_inscription(request: Request):
     return dto_relais(_r, _camp, _front())
 
 
+async def _porteur_espace(request, code, slug):
+    """La charge de la session d'ESPACE (code e-mail prouvé) qui ouvre CE code, sinon None."""
+    try:
+        from api.server import _b3s13_porteur_autorise
+        _charge, _ = await _b3s13_porteur_autorise(request, code, slug)
+        return _charge
+    except Exception:  # noqa: BLE001
+        return None
+
+
+MES_EVENEMENTS_MAX = 20
+
+
+def _a_venir(occurrence, maintenant=None) -> bool:
+    """L'événement (heure de Zurich, sans fuseau) n'est pas encore passé — marge de 6 h :
+    le soir même, le lien reste à portée."""
+    _o = str(occurrence or "")[:19]
+    if not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", _o):
+        return False
+    if maintenant is None:
+        try:
+            from zoneinfo import ZoneInfo
+            maintenant = datetime.now(ZoneInfo("Europe/Zurich")).replace(tzinfo=None)
+        except Exception:  # noqa: BLE001
+            maintenant = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1)
+    return _o >= (maintenant - timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%S")[:len(_o)]
+
+
+@router.post("/api/invitation/relais/mes-evenements")
+async def relais_mes_evenements(request: Request):
+    """V610m — ESPACE : les événements À VENIR de la personne CONNECTÉE (session d'espace,
+    code e-mail prouvé) et SON lien personnel pour chacun — pour retrouver « Inviter mes
+    amis » sur sa réservation. `{code, slug?}` + en-tête `x-espace-token`. 403 sans session.
+    Rendu : titre, date, lieu, offre, lien personnel — aucune donnée d'un tiers.
+    Un relais n'existe qu'après un paiement CONFIRMÉ (webhook), une place offerte ou une
+    inscription confirmée : il vaut preuve de participation."""
+    try:
+        _b = await request.json()
+    except Exception:  # noqa: BLE001
+        _b = {}
+    _b = _b if isinstance(_b, dict) else {}
+    exiger_debit(request)
+    _code = str(_b.get("code") or "").strip().upper()
+    _charge = await _porteur_espace(request, _code, str(_b.get("slug") or "")) \
+        if re.match(r"^[A-Z0-9-]{4,40}$", _code) else None
+    if not _charge:
+        raise HTTPException(status_code=403, detail="Ouvre ton espace pour retrouver tes événements.")
+    _emp = empreinte_email(_charge.get("email"))
+    if not _emp:
+        return {"evenements": []}
+    _rels = await db[COLL].find({"email_empreinte": _emp, "type_invitation": {"$in": list(TYPES_RELAIS)}},
+                                {"_id": 0}).sort("created_at", -1).limit(MES_EVENEMENTS_MAX).to_list(MES_EVENEMENTS_MAX)
+    _sortie, _vues = [], set()
+    for _r in _rels:
+        _cid = _r.get("campagne_id")
+        if not _cid or _cid in _vues:
+            continue
+        _vues.add(_cid)
+        _camp = await db["referral_campaigns"].find_one({"id": _cid}, {"_id": 0})
+        if not _camp or _camp.get("status") != "active" or not _a_venir(_camp.get("occurrence")):
+            continue
+        _sortie.append({"offer_id": _camp.get("offer_id"), "titre": _camp.get("title") or "Événement Afroboost",
+                        "occurrence": _camp.get("occurrence"), "lieu": _camp.get("lieu") or "",
+                        "relais": dto_relais(_r, _camp, _front())})
+    return {"evenements": _sortie}
+
+
 @router.get("/api/referral/campaigns-relais/{campagne_id}/chaine")
 async def chaine_campagne(campagne_id: str, request: Request):
     """Coach (JWT strict, ses invitations seulement) : la chaîne RECONSTRUITE —

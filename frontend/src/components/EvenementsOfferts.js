@@ -7,11 +7,12 @@
  * 0 CHF (POST …/evenement/<offre>/offert, idempotent), puis le lien personnel pour
  * inviter (facultatif). Aucun paiement, aucun Stripe.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import SvgIcon from './SvgIcon';
 import InviterMesAmis from './InviterMesAmis';
 import { invitationActuelle } from '../utils/attribution';
+import { lireIntentionMembre, oublierIntentionMembre, memoriserParticipation } from '../utils/participationEvenement'; // V610m
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
@@ -27,10 +28,17 @@ export function quandEvenement(iso) {
   return `${JOURS[d.getDay()]} ${d.getDate()} ${MOIS[d.getMonth()]} · ${Number(m[4])}h${m[5]}`;
 }
 
-function CarteEvenement({ evt, accessCode, memberSlug }) {
+function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jetonVise = '' }) {
   const [etat, setEtat] = useState(evt.deja_reserve ? 'reservee' : 'libre');
   const [relais, setRelais] = useState(null);
   const [erreur, setErreur] = useState('');
+  const [vientDeReserver, setVientDeReserver] = useState(false);
+  const carteRef = useRef(null);
+  // V610m : venu de « Réserve gratuitement » sur l'invitation -> CETTE carte, à l'écran.
+  useEffect(() => {
+    if (!vise || !carteRef.current) return;
+    try { carteRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* ignore */ }
+  }, [vise]);
 
   const reserver = async () => {
     if (etat === 'envoi') return;
@@ -42,8 +50,15 @@ function CarteEvenement({ evt, accessCode, memberSlug }) {
       const r = await axios.post(
         `${BACKEND_URL}/api/subscriber/space/${encodeURIComponent(accessCode)}/evenement/${encodeURIComponent(evt.offer_id)}/offert`,
         { member_slug: memberSlug || undefined, jeton_invitation: inv ? inv.t : undefined });
-      setRelais((r && r.data && r.data.relais) || null);
+      const rel = (r && r.data && r.data.relais) || null;
+      setRelais(rel);
       setEtat('reservee');
+      setVientDeReserver(avant === 'libre');
+      // V610m : la place est prise -> l'intention est servie ; rouvrir l'invitation sur cet
+      // appareil montrera « Tu participes » + le lien (jamais un paiement).
+      if (vise) oublierIntentionMembre();
+      const t = (inv && inv.t) || jetonVise;
+      if (rel && t) memoriserParticipation(t, { relais: rel });
     } catch (e) {
       const detail = e && e.response && e.response.data && e.response.data.detail;
       setErreur(typeof detail === 'string' ? detail : 'Réservation impossible pour le moment. Réessaie.');
@@ -52,8 +67,16 @@ function CarteEvenement({ evt, accessCode, memberSlug }) {
   };
 
   return (
-    <div data-testid={`evt-offert-${evt.offer_id}`} style={{ marginTop: '14px', padding: '14px', borderRadius: '14px',
-      background: rgbaP(0.1), border: `1px solid ${rgbaP(0.35)}`, textAlign: 'left' }}>
+    <div ref={carteRef} data-testid={`evt-offert-${evt.offer_id}`} data-vise={vise ? '1' : '0'} style={{ marginTop: '14px', padding: vise ? '16px 14px' : '14px', borderRadius: '16px',
+      background: rgbaP(vise ? 0.16 : 0.1), border: `${vise ? 2 : 1}px solid ${vise ? PRIMAIRE : rgbaP(0.35)}`, textAlign: 'left', scrollMarginTop: '12px' }}>
+      {etat === 'reservee' && (vientDeReserver || vise) ? (
+        <div data-testid="evt-offert-confirme" style={{ textAlign: 'center', marginBottom: '10px' }}>
+          <span style={{ display: 'inline-flex', width: 48, height: 48, borderRadius: 999, alignItems: 'center', justifyContent: 'center', background: rgbaP(0.22), color: PRIMAIRE, marginBottom: 6 }}>
+            <SvgIcon name="check" size={24} />
+          </span>
+          <div style={{ fontSize: '22px', fontWeight: 800, color: 'rgba(255,255,255,0.97)' }}>Ta place est réservée !</div>
+        </div>
+      ) : null}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'rgba(255,255,255,0.96)', fontSize: '15px' }}>
         <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="gift" size={18} /></span>
         {evt.titre}
@@ -70,7 +93,7 @@ function CarteEvenement({ evt, accessCode, memberSlug }) {
             Ta place est réservée.
           </p>
           {relais ? (
-            <InviterMesAmis relaisInitial={relais} />
+            <InviterMesAmis relaisInitial={relais} autoLecture={vientDeReserver} />
           ) : (
             <button type="button" data-testid="evt-offert-lien" onClick={reserver}
                     style={{ width: '100%', minHeight: '44px', borderRadius: '12px', background: 'rgba(255,255,255,0.06)',
@@ -93,10 +116,24 @@ function CarteEvenement({ evt, accessCode, memberSlug }) {
 
 export default function EvenementsOfferts({ evenements, accessCode, memberSlug }) {
   const liste = Array.isArray(evenements) ? evenements.filter((e) => e && e.offer_id) : [];
-  if (!liste.length || !accessCode) return null;
+  // V610m : l'événement VISÉ depuis l'invitation passe en tête, mis en évidence.
+  const [intention] = useState(() => lireIntentionMembre());
+  if (!accessCode) return null;
+  const vise = intention ? liste.find((e) => String(e.offer_id) === intention.offre) : null;
+  if (!liste.length && !intention) return null;
+  const ordre = vise ? [vise].concat(liste.filter((e) => e !== vise)) : liste;
   return (
     <div data-testid="evenements-offerts">
-      {liste.map((e) => <CarteEvenement key={e.offer_id} evt={e} accessCode={accessCode} memberSlug={memberSlug} />)}
+      {intention && !vise ? (
+        // Le serveur n'offre pas cet événement à CE compte : rien n'est inventé, on le dit.
+        <p data-testid="evt-offert-non-eligible" role="status" style={{ margin: '14px 0 0', padding: '12px 14px', borderRadius: '14px',
+          background: 'rgba(255,255,255,0.06)', fontSize: '14px', color: 'rgba(255,255,255,0.88)' }}>
+          Cet événement n’est pas offert avec l’abonnement de ce compte. Tu peux réserver ta place depuis l’invitation
+          {intention.jeton ? <> : <a href={`/i/${encodeURIComponent(intention.jeton)}`} onClick={() => oublierIntentionMembre()} style={{ color: PRIMAIRE, fontWeight: 700 }}>revenir à l’invitation</a></> : '.'}
+        </p>
+      ) : null}
+      {ordre.map((e) => <CarteEvenement key={e.offer_id} evt={e} accessCode={accessCode} memberSlug={memberSlug}
+                                        vise={e === vise} jetonVise={intention ? intention.jeton : ''} />)}
     </div>
   );
 }

@@ -196,11 +196,12 @@ describe('V610d — « Deviens Afroboosteur » : audio APRÈS réservation, év�
   });
   afterEach(() => { play.mockRestore(); pause.mockRestore(); });
 
-  test('bloc affiché, AUCUNE lecture automatique, écouter / pause / reprendre', async () => {
+  test('bloc affiché HORS confirmation (espace) : AUCUNE lecture automatique, écouter / pause / reprendre', async () => {
     global.fetch = jest.fn((url) => (String(url).includes('/api/invitation/suivi') ? reponse({}) : reponse(DETAILS)));
     await act(async () => { render(<InviterMesAmis relaisInitial={RELAIS} />); });
     await attendre(() => expect(q('afroboosteur-titre').textContent).toMatch(/Deviens Afroboosteur/));
-    expect(document.body.textContent).toMatch(/Partage l’énergie\. Invite tes amis\./);
+    // V610m : le texte de la boule de neige
+    expect(q('afroboosteur-texte').textContent).toBe('Fais circuler l’énergie. Invite tes amis à vivre Afroboost avec toi.');
     const a = q('afroboosteur-audio');
     expect(a.autoplay).toBe(false);
     expect(a.getAttribute('preload')).toBe('none');
@@ -234,7 +235,30 @@ describe('V610d — « Deviens Afroboosteur » : audio APRÈS réservation, év�
     ouvert.mockRestore();
   });
 
-  test('événement GRATUIT (ou payant sans audio) : bloc d\'invitation habituel, aucun audio', async () => {
+  test('V610m — confirmation (`autoLecture`) : UNE tentative de lecture, jamais en boucle ; refus -> « Écouter le message »', async () => {
+    global.fetch = jest.fn((url) => (String(url).includes('/api/invitation/suivi') ? reponse({}) : reponse(DETAILS)));
+    play.mockImplementation(() => Promise.reject(new Error('NotAllowedError')));
+    await act(async () => { render(<InviterMesAmis relaisInitial={RELAIS} autoLecture />); });
+    await attendre(() => expect(play).toHaveBeenCalledTimes(1));
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+    expect(play).toHaveBeenCalledTimes(1);                       // une seule tentative
+    const a = q('afroboosteur-audio');
+    expect(a.loop).toBe(false);
+    expect(a.autoplay).toBe(false);
+    expect(q('afroboosteur-ecouter').textContent).toMatch(/Écouter le message/);
+    expect(q('inviter-whatsapp').textContent).toMatch(/Inviter mes amis/);
+  });
+
+  test('V610m — événement PAYANT sans audio configuré : même bloc « Deviens Afroboosteur » (gros bouton), aucun lecteur', async () => {
+    global.fetch = jest.fn(() => reponse({ ...DETAILS, audio_partage_url: null }));
+    await act(async () => { render(<InviterMesAmis relaisInitial={RELAIS} autoLecture />); });
+    await attendre(() => expect(q('afroboosteur-titre')).toBeTruthy());
+    expect(document.querySelector('audio')).toBeNull();
+    expect(q('inviter-whatsapp').textContent).toMatch(/Inviter mes amis/);
+    expect(document.body.textContent).toMatch(/Copier mon lien/);
+  });
+
+  test('événement GRATUIT : bloc d\'invitation habituel, aucun audio', async () => {
     global.fetch = jest.fn(() => reponse({ ...DETAILS, type: 'event_free' }));
     await act(async () => { render(<InviterMesAmis relaisInitial={RELAIS} />); });
     await attendre(() => expect(q('inviter-mes-amis')).toBeTruthy());
