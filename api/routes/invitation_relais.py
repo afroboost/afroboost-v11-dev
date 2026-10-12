@@ -45,6 +45,35 @@ FENETRE_RESERVATION = timedelta(hours=48)
 router = APIRouter(tags=["invitation-relais"])
 db = None
 
+# Débit par IP des routes PUBLIQUES de relais : elles répondent 200 / 404 selon qu'une
+# preuve (session, réservation, accès) existe — sans plafond, ce serait un oracle pour
+# deviner des codes. 20 essais / 10 min / IP, puis 429.
+DEBIT_FENETRE_S = 600
+DEBIT_MAX = 20
+_DEBITS = {}
+
+
+def _ip(request) -> str:
+    try:
+        from api.routes.referral_routes import _ip as _ip_r
+        return _ip_r(request)
+    except Exception:  # noqa: BLE001
+        return "?"
+
+
+def exiger_debit(request) -> None:
+    import time as _t
+    _cle = _ip(request)
+    _now = _t.time()
+    _l = [x for x in _DEBITS.get(_cle, []) if _now - x < DEBIT_FENETRE_S]
+    if len(_l) >= DEBIT_MAX:
+        _DEBITS[_cle] = _l
+        raise HTTPException(status_code=429, detail="Trop de tentatives. Réessaie plus tard.")
+    _l.append(_now)
+    _DEBITS[_cle] = _l
+    if len(_DEBITS) > 5000:
+        _DEBITS.clear()
+
 
 def init_db(database):
     global db
@@ -198,8 +227,9 @@ async def relais_depuis_paiement_stripe(database, session, metadata=None):
         _nom = _meta.get("customer_name") or _nom or ""
         # L'offre payée doit être CELLE de l'invitation (un jeton ne s'achète pas ailleurs).
         _camp, _ = await resoudre_parent(database, _jeton)
-        _offre = _meta.get("offer_id") or ""
-        if not _camp or (_camp.get("offer_id") and _offre and _offre != _camp.get("offer_id")):
+        _offre = str(_meta.get("offer_id") or "")
+        # FAIL-CLOSED : l'offre payée doit être PRÉSENTE et identique à celle de l'invitation.
+        if not _camp or not _camp.get("offer_id") or _offre != str(_camp.get("offer_id")):
             return None
         return await creer_relais(database, jeton_parent=_jeton, email=_email, nom=_nom, preuve_nature="stripe",
                                   preuve_cle=str(_lire(session, "id") or ""),
@@ -228,9 +258,12 @@ def _front():
 
 
 @router.get("/api/invitation/relais/session/{session_id}")
-async def relais_par_session(session_id: str):
+async def relais_par_session(session_id: str, request: Request = None):
     """Après le paiement : le lien personnel de l'acheteur. L'identifiant de session
-    Stripe (non devinable) est la seule clé ; 404 tant que le webhook n'est pas passé."""
+    Stripe (non devinable) est la seule clé ; 404 tant que le webhook n'est pas passé.
+    Débit large (le navigateur réessaie quelques fois pendant le webhook)."""
+    if request is not None:
+        exiger_debit(request)
     _s = str(session_id or "").strip()
     if not re.match(r"^cs_[A-Za-z0-9_]{6,200}$", _s):
         raise HTTPException(status_code=404, detail="Introuvable")
@@ -245,6 +278,7 @@ async def relais_par_session(session_id: str):
 async def relais_par_reservation(request: Request):
     """ÉVÉNEMENT GRATUIT : `{jeton, reservation_code}` après l'inscription. La
     réservation doit exister, être RÉCENTE (48 h) et porter l'offre de l'invitation."""
+    exiger_debit(request)
     try:
         _b = await request.json()
     except Exception:  # noqa: BLE001
@@ -258,7 +292,7 @@ async def relais_par_reservation(request: Request):
     if not _camp or _camp.get("type") != "event_free":
         raise HTTPException(status_code=404, detail="Introuvable")
     _res = await db["reservations"].find_one({"reservationCode": _code}, {"_id": 0})
-    if not _res or (_camp.get("offer_id") and str(_res.get("offerId") or "") != str(_camp.get("offer_id"))):
+    if not _res or not _camp.get("offer_id") or str(_res.get("offerId") or "") != str(_camp.get("offer_id")):
         raise HTTPException(status_code=404, detail="Introuvable")
     try:
         _cree = datetime.fromisoformat(str(_res.get("createdAt") or _res.get("created_at") or "").replace("Z", "+00:00"))
@@ -293,6 +327,7 @@ async def relais_par_inscription(request: Request):
     """ÉVÉNEMENT GRATUIT, parcours de la vitrine : l'inscription gratuite ouvre un
     accès (code AFR) puis l'espace. `{jeton, code}` : l'accès doit exister, être
     RÉCENT (48 h) et porter l'offre de l'invitation. Le lien est facultatif."""
+    exiger_debit(request)
     try:
         _b = await request.json()
     except Exception:  # noqa: BLE001
@@ -308,7 +343,7 @@ async def relais_par_inscription(request: Request):
     _sub = await db["subscriptions"].find_one({"code": _code}, {"_id": 0, "code": 1, "offer_id": 1, "created_at": 1,
                                                                 "email": 1, "name": 1})
     if not _sub or not _recent(_sub.get("created_at")) \
-            or (_camp.get("offer_id") and str(_sub.get("offer_id") or "") != str(_camp.get("offer_id"))):
+            or not _camp.get("offer_id") or str(_sub.get("offer_id") or "") != str(_camp.get("offer_id")):
         raise HTTPException(status_code=404, detail="Introuvable")
     _r = await creer_relais(db, jeton_parent=_jeton, email=_sub.get("email"), nom=_sub.get("name"),
                             preuve_nature="inscription", preuve_cle=_code)

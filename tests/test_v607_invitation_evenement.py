@@ -116,6 +116,10 @@ async def principal():
     verifier("C4 jeton inventé -> aucun relais", faux is None and len(base["invitation_relais"].docs) == 3)
     autre_offre = await RL.relais_depuis_paiement_stripe(base, session("cs_test_F1", tok, "f@test.example", "Fred", offre="autre"))
     verifier("C5 paiement d'une AUTRE offre avec le jeton -> aucun relais", autre_offre is None)
+    sans_offre = session("cs_test_H1", tok, "h@test.example", "Hugo")
+    sans_offre["metadata"].pop("offer_id")
+    verifier("C5b paiement SANS offer_id en metadata -> aucun relais (fail-closed)",
+             await RL.relais_depuis_paiement_stripe(base, sans_offre) is None)
     impaye = _Session(session("cs_test_G1", tok, "g@test.example", "Gil"), payment_status="unpaid")
     verifier("C6 session non payée -> aucun relais", await RL.relais_depuis_paiement_stripe(base, impaye) is None)
 
@@ -158,6 +162,15 @@ async def principal():
     verifier("F6 accès ancien (> 48 h) -> 404", c == 404)
     pubf = await SI.invitation_publique(ef["share_token"])
     verifier("F4 event_free : « Gratuit », aucun prix", pubf.get("mention_prix") == "Gratuit" and pubf.get("prix_actif") is None)
+
+    RL._DEBITS.clear()
+    _codes = []
+    for i in range(RL.DEBIT_MAX + 1):
+        c, _ = await appel(RL.relais_par_reservation(_Rq({"jeton": ef["share_token"], "reservation_code": "AFR-DEV%02d" % i})))
+        _codes.append(c)
+    verifier("F7 deviner des codes : 404 puis 429 au-delà du débit (pas d'oracle illimité)",
+             _codes[:RL.DEBIT_MAX] == [404] * RL.DEBIT_MAX and _codes[-1] == 429, _codes)
+    RL._DEBITS.clear()
 
     # ── G. Suivi honnête ─────────────────────────────────────────────────────
     _ev = [d["evenement"] for d in base["invitation_events"].docs]
