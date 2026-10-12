@@ -1244,3 +1244,10 @@ ne doit jamais être présentée comme l'état courant.
 - **Prod touchée** : seulement les 2 objets TEST de l'audit (invitation `f3cd2c39…` archivée, pass `b149ed7d…` cancelled, champ
   `corbeille.statut_avant` ; sauvegarde `~/afroboost-sauvegardes/invitation-audit-corbeille-2026-10-11T121143.json`).
 - **Au déploiement** : bumper `sw.js` CACHE_NAME ; nonregression #148-#151 ajoutés ; prouver un dimanche dans le calendrier invité réel.
+- **V607e/f/g (12/10, `daadcac3`)** : « Inviter encore » (essai) = un NOUVEL enfant par clic
+  (`POST /api/referral/pass/{t}/chain/next`, `chain.rang` 2,3… ; même parent/racine/génération) ;
+  ⚠️ migration d'index au démarrage : `v607g_parent_rang` + `v607g_parrain_seance_rang` créés, puis
+  `chain.parent_pass_id_1` et `sponsor.email_norm_1_course_id_1_occurrence_1` retirés (prouvé sur base
+  réelle locale). Paliers : « N jours avant » = même heure Zurich N dates avant (`tier_boundaries`).
+  Événement gratuit : `trial.nature = "evenement"` -> « Ton inscription est confirmée ! ».
+

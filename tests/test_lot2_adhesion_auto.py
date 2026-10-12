@@ -1085,9 +1085,12 @@ def test_15_19_non_regression():
     # Le perimetre TOTAL du lot cote serveur : trois fichiers, pas un de plus.
     porteurs = sorted(os.path.relpath(c, RACINE) for c in _fichiers_api()
                       if re.search(r"lot2|LOT2|creates_membership", io.open(c, encoding="utf-8").read()))
-    verifier("15-19. cote serveur, LOT 2 ne vit que dans trois fichiers",
-             porteurs == ["api/routes/checkout_routes.py", "api/routes/shared.py",
-                          "api/server.py"], str(porteurs))
+    # V607 : `referral_campaigns_engine.py` LIT `creates_membership` pour EXCLURE les
+    # cartes membres du menu « Offre payante de l'événement » (filtre billet) — une
+    # lecture seule, qui n'ouvre ni ne modifie aucune adhésion.
+    verifier("15-19. cote serveur, LOT 2 ne vit que dans trois fichiers (+ 1 lecture V607)",
+             porteurs == ["api/routes/checkout_routes.py", "api/routes/referral_campaigns_engine.py",
+                          "api/routes/shared.py", "api/server.py"], str(porteurs))
 
     # 15. LOT A — l'apres-essai. Ses fonctions decident sans rien savoir du lot 2.
     _corps_sans_lot2(SHARED_SRC,
