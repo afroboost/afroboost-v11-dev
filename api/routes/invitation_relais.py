@@ -5,7 +5,7 @@
 L'essai gratuit et le Pass Duo ont DÉJÀ leur chaîne (`referral_passes`, V556 :
 parent / racine / profondeur). Ce module ne les touche PAS. Il donne aux
 événements la même capacité, sans obligation : après un paiement confirmé
-(événement payant) ou une inscription confirmée (événement gratuit), le
+(événement payant) ou une inscription confirmée dans l'espace (événement gratuit), le
 participant reçoit un lien PERSONNEL (`/i/<jeton>`) qu'il peut partager s'il le
 veut. Rien n'est bloqué s'il ne partage pas.
 
@@ -14,7 +14,7 @@ COLLECTION `invitation_relais` — un document = un participant d'un événement
   type_invitation, parent_jeton + parent_relais_id (qui l'a invité ; None =
   l'invitation du coach), generation (1 = invité du coach, 2 = invité de
   l'invité…), inviteur_prenom (SON prénom, affiché à ceux qu'il invite),
-  email_empreinte (jamais l'adresse), preuve {nature: stripe|reservation, cle},
+  email_empreinte (jamais l'adresse), preuve {nature: stripe|inscription, cle},
   reservation_id, paiement {montant, devise, payment_intent}, created_at.
 
 ANTI-FRAUDE :
@@ -45,19 +45,14 @@ FENETRE_RESERVATION = timedelta(hours=48)
 router = APIRouter(tags=["invitation-relais"])
 db = None
 
-# Débit des routes PUBLIQUES de relais : elles répondent 200 / 404 selon qu'une
-# preuve (session, réservation, accès) existe — sans plafond, ce serait un oracle pour
-# deviner des codes. TROIS compteurs, car l'IP seule se falsifie (`CF-Connecting-IP` /
-# `X-Forwarded-For` crus sans contrôle de l'origine — dette infra P1-A) :
-#   - par IP : 20 essais / 10 min ;
-#   - par JETON d'invitation : 30 / 10 min (un attaquant doit viser UNE invitation
-#     réelle : changer d'IP ne lui rend pas d'essais) ;
-#   - par ROUTE, toutes IP confondues : 300 / 10 min (plafond absolu).
-# Les entrées expirées sont retirées une à une ; jamais de remise à zéro globale.
+# Débit des routes publiques de relais. AUCUNE n'est un oracle : la session Stripe
+# n'est pas devinable et l'inscription exige la session d'espace (code e-mail prouvé).
+# Ce débit ne protège donc que la charge : par IP seulement (jamais par invitation ni
+# global, ce qui permettrait de BLOQUER les vrais participants), mémoire BORNÉE
+# (au-delà de DEBIT_CLES_MAX clés, les plus anciennes sont évincées).
 DEBIT_FENETRE_S = 600
-DEBIT_MAX = 20
-DEBIT_MAX_JETON = 30
-DEBIT_MAX_ROUTE = 300
+DEBIT_MAX = 60
+DEBIT_CLES_MAX = 5000
 _DEBITS = {}
 
 
@@ -69,34 +64,18 @@ def _ip(request) -> str:
         return "?"
 
 
-def _consommer(cle, maximum, maintenant) -> bool:
-    _l = [x for x in _DEBITS.get(cle, []) if maintenant - x < DEBIT_FENETRE_S]
-    if len(_l) >= maximum:
-        _DEBITS[cle] = _l
-        return False
-    _l.append(maintenant)
-    _DEBITS[cle] = _l
-    return True
-
-
-def _purger(maintenant) -> None:
-    if len(_DEBITS) <= 5000:
-        return
-    for _k in [k for k, v in _DEBITS.items() if not v or maintenant - v[-1] >= DEBIT_FENETRE_S]:
-        _DEBITS.pop(_k, None)
-
-
-def exiger_debit(request, route="relais", jeton=None) -> None:
-    """429 dès qu'UN des trois plafonds (IP, jeton, route) est atteint."""
+def exiger_debit(request) -> None:
     import time as _t
     _now = _t.time()
-    _purger(_now)
-    _ok = _consommer("route:" + route, DEBIT_MAX_ROUTE, _now)
-    _ok = _consommer("ip:%s:%s" % (route, _ip(request)), DEBIT_MAX, _now) and _ok
-    if jeton:
-        _ok = _consommer("jeton:%s:%s" % (route, jeton), DEBIT_MAX_JETON, _now) and _ok
-    if not _ok:
+    _cle = str(_ip(request))[:64]
+    _l = [x for x in _DEBITS.pop(_cle, []) if _now - x < DEBIT_FENETRE_S]
+    if len(_l) >= DEBIT_MAX:
+        _DEBITS[_cle] = _l
         raise HTTPException(status_code=429, detail="Trop de tentatives. Réessaie plus tard.")
+    _l.append(_now)
+    _DEBITS[_cle] = _l[-DEBIT_MAX:]                 # réinsérée = la plus récente
+    while len(_DEBITS) > DEBIT_CLES_MAX:            # mémoire bornée : on évince la plus ancienne
+        _DEBITS.pop(next(iter(_DEBITS)), None)
 
 
 def init_db(database):
@@ -287,7 +266,7 @@ async def relais_par_session(session_id: str, request: Request = None):
     Stripe (non devinable) est la seule clé ; 404 tant que le webhook n'est pas passé.
     Débit large (le navigateur réessaie quelques fois pendant le webhook)."""
     if request is not None:
-        exiger_debit(request, route="session")
+        exiger_debit(request)
     _s = str(session_id or "").strip()
     if not re.match(r"^cs_[A-Za-z0-9_]{6,200}$", _s):
         raise HTTPException(status_code=404, detail="Introuvable")
@@ -296,44 +275,6 @@ async def relais_par_session(session_id: str, request: Request = None):
         raise HTTPException(status_code=404, detail="Introuvable")
     _c = await db["referral_campaigns"].find_one({"id": _r.get("campagne_id")}, {"_id": 0, "title": 1})
     return dto_relais(_r, _c, _front())
-
-
-@router.post("/api/invitation/relais/reservation")
-async def relais_par_reservation(request: Request):
-    """ÉVÉNEMENT GRATUIT : `{jeton, reservation_code}` après l'inscription. La
-    réservation doit exister, être RÉCENTE (48 h) et porter l'offre de l'invitation."""
-    try:
-        _b = await request.json()
-    except Exception:  # noqa: BLE001
-        _b = {}
-    _b = _b if isinstance(_b, dict) else {}
-    _jeton = jeton_valide(_b.get("jeton"))
-    exiger_debit(request, route="reservation", jeton=_jeton or "?")
-    _code = str(_b.get("reservation_code") or "").strip()
-    if not _jeton or not re.match(r"^[A-Za-z0-9_-]{4,40}$", _code):
-        raise HTTPException(status_code=404, detail="Introuvable")
-    _camp, _ = await resoudre_parent(db, _jeton)
-    if not _camp or _camp.get("type") != "event_free":
-        raise HTTPException(status_code=404, detail="Introuvable")
-    _res = await db["reservations"].find_one({"reservationCode": _code}, {"_id": 0})
-    if not _res or not _camp.get("offer_id") or str(_res.get("offerId") or "") != str(_camp.get("offer_id")):
-        raise HTTPException(status_code=404, detail="Introuvable")
-    try:
-        _cree = datetime.fromisoformat(str(_res.get("createdAt") or _res.get("created_at") or "").replace("Z", "+00:00"))
-        if _cree.tzinfo is None:
-            _cree = _cree.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) - _cree > FENETRE_RESERVATION:
-            raise HTTPException(status_code=404, detail="Introuvable")
-    except HTTPException:
-        raise
-    except Exception:  # noqa: BLE001
-        raise HTTPException(status_code=404, detail="Introuvable")
-    _r = await creer_relais(db, jeton_parent=_jeton, email=_res.get("userEmail"), nom=_res.get("userName"),
-                            preuve_nature="reservation", preuve_cle=str(_res.get("id") or _code),
-                            reservation_id=_res.get("id"))
-    if not _r:
-        raise HTTPException(status_code=404, detail="Introuvable")
-    return dto_relais(_r, _camp, _front())
 
 
 def _recent(valeur) -> bool:
@@ -356,11 +297,20 @@ async def relais_par_inscription(request: Request):
     except Exception:  # noqa: BLE001
         _b = {}
     _b = _b if isinstance(_b, dict) else {}
+    exiger_debit(request)
     _jeton = jeton_valide(_b.get("jeton"))
-    exiger_debit(request, route="inscription", jeton=_jeton or "?")
     _code = str(_b.get("code") or "").strip().upper()
     if not _jeton or not re.match(r"^[A-Z0-9-]{4,40}$", _code):
         raise HTTPException(status_code=404, detail="Introuvable")
+    # Pas d'oracle sur les codes d'accès : il faut la SESSION D'ESPACE de ce code
+    # (en-tête `x-espace-token`, délivré après le code e-mail — même porte que l'espace).
+    try:
+        from api.server import _b3s13_porteur_autorise
+        _charge, _ = await _b3s13_porteur_autorise(request, _code, str(_b.get("slug") or ""))
+    except Exception:  # noqa: BLE001
+        _charge = None
+    if not _charge:
+        raise HTTPException(status_code=403, detail="Ouvre ton espace pour obtenir ton lien.")
     _camp, _ = await resoudre_parent(db, _jeton)
     if not _camp or _camp.get("type") != "event_free":
         raise HTTPException(status_code=404, detail="Introuvable")

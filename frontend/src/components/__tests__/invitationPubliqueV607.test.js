@@ -107,13 +107,24 @@ describe('InviterMesAmis — facultatif, jamais sans invitation', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  test("code d'accès SANS session d'espace : rien n'est demandé (pas d'oracle)", async () => {
+    window.localStorage.setItem('af_invitation', JSON.stringify({ t: 'JetonInvitation1234', offre: 'o', at: Date.now() }));
+    global.fetch = jest.fn();
+    let r;
+    await act(async () => { r = render(<InviterMesAmis codeAcces="AFR-ABC123" />); });
+    expect(r.container.innerHTML).toBe('');
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   test('avec invitation + accès : le lien personnel est proposé', async () => {
     window.localStorage.setItem('af_invitation', JSON.stringify({ t: 'JetonInvitation1234', offre: 'o', at: Date.now() }));
     global.fetch = jest.fn((url) => (String(url).includes('/relais/inscription')
       ? reponse({ jeton: 'JetonPerso12345678', share_url: 'https://afroboost.com/i/JetonPerso12345678', prenom: 'Paul', generation: 1 })
       : reponse({ type: 'event_free', title: 'Fête' })));
-    await act(async () => { render(<InviterMesAmis codeAcces="AFR-ABC123" />); });
+    await act(async () => { render(<InviterMesAmis codeAcces="AFR-ABC123" jetonEspace="jeton-espace-test" />); });
     await waitFor(() => expect(screen.getByTestId('inviter-mes-amis')).toBeTruthy());
+    const appel = global.fetch.mock.calls.find((c) => String(c[0]).includes('/relais/inscription'));
+    expect(appel[1].headers['x-espace-token']).toBe('jeton-espace-test');
     expect(screen.getByTestId('inviter-lien').textContent).toMatch(/afroboost\.com\/i\/JetonPerso12345678/);
   });
 });

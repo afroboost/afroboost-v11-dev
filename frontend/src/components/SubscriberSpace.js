@@ -1267,7 +1267,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
         {/* V607 : arrivé par l'invitation d'un ÉVÉNEMENT GRATUIT ? son lien perso (facultatif).
             Rien sans invitation : le bloc ne s'affiche pas. */}
-        <InviterMesAmis codeAcces={accessCode} />
+        <InviterMesAmis codeAcces={accessCode} jetonEspace={jetonEspace && jetonEspace.token} slug={memberSlug} />
 
         {/* ===== V560 : MENU RAPIDE — Bienvenue + profil, puis ces raccourcis, puis
             la progression et « Réserver une séance ». Le reste se rejoint d'ici. ===== */}

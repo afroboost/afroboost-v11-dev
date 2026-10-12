@@ -4,8 +4,8 @@
  * Affiché dans la confirmation de paiement (événement payant) ou d'inscription
  * (événement gratuit), SEULEMENT si la personne est arrivée par une invitation
  * (`af_invitation`, posé par `?inv=`). Le serveur lui donne SON lien personnel
- * (`/i/<jeton>`, génération suivante) : par la session Stripe payée, ou par sa
- * réservation récente. Sans invitation, ou si le serveur ne répond pas : RIEN
+ * (`/i/<jeton>`, génération suivante) : par la session Stripe payée, ou par son
+ * accès récent DANS SON ESPACE (session d'espace prouvée par le code e-mail). Sans invitation, ou si le serveur ne répond pas : RIEN
  * n'est affiché (aucune autre confirmation n'est modifiée).
  *
  * Honnêteté : le clic WhatsApp OUVRE WhatsApp avec le message prérempli ; on
@@ -37,38 +37,32 @@ async function lienParSession(sessionId) {
   return null;
 }
 
-async function lienParInscription(jeton, code) {
+async function lienParInscription(jeton, code, jetonEspace, slug) {
   try {
+    // La session d'ESPACE (code e-mail prouvé) est exigée : un code d'accès seul ne suffit pas.
     const r = await fetch(`${BACKEND_URL}/api/invitation/relais/inscription`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jeton, code }),
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-espace-token': jetonEspace },
+      body: JSON.stringify({ jeton, code, slug: slug || '' }),
     });
     return r.ok ? r.json() : null;
   } catch (e) { return null; }
 }
 
-async function lienParReservation(jeton, code) {
-  try {
-    const r = await fetch(`${BACKEND_URL}/api/invitation/relais/reservation`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jeton, reservation_code: code }),
-    });
-    return r.ok ? r.json() : null;
-  } catch (e) { return null; }
-}
-
-export default function InviterMesAmis({ sessionId, reservationCode, codeAcces }) {
+export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug }) {
   const [relais, setRelais] = useState(null);
   const [details, setDetails] = useState(null);
   const [retour, setRetour] = useState('');
   const inv = invitationActuelle();
   const jetonInv = inv ? inv.t : '';
   const cs = /^cs_[A-Za-z0-9_]+$/.test(String(sessionId || '')) ? String(sessionId) : '';
-  const code = String(reservationCode || '');
-  const acces = /^[A-Za-z0-9-]{4,40}$/.test(String(codeAcces || '')) ? String(codeAcces) : '';
+  const acces = /^[A-Za-z0-9-]{4,40}$/.test(String(codeAcces || '')) && jetonEspace ? String(codeAcces) : '';
+  const espace = String(jetonEspace || '');
+  const membre = String(slug || '');
 
   useEffect(() => {
-    if (!jetonInv || (!cs && !code && !acces)) return undefined;
+    if (!jetonInv || (!cs && !acces)) return undefined;
     let vivant = true;
-    const demande = cs ? lienParSession(cs) : (code ? lienParReservation(jetonInv, code) : lienParInscription(jetonInv, acces));
+    const demande = cs ? lienParSession(cs) : lienParInscription(jetonInv, acces, espace, membre);
     demande.then((r) => {
       if (!vivant || !r || !r.jeton) return;
       setRelais(r);
@@ -76,7 +70,7 @@ export default function InviterMesAmis({ sessionId, reservationCode, codeAcces }
         .then((x) => (x.ok ? x.json() : null)).then((d) => { if (vivant && d) setDetails(d); }).catch(() => {});
     });
     return () => { vivant = false; };
-  }, [jetonInv, cs, code, acces]);
+  }, [jetonInv, cs, acces, espace, membre]);
 
   if (!relais) return null;
   // Le mot personnel de l'invitation est celui du coach : jamais repris au nom du participant.

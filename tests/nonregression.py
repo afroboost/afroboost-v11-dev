@@ -2998,13 +2998,11 @@ def t151_v607_relais_preuves_inconnues():
     """V607 : aucun lien personnel sans preuve réelle (session, réservation, accès inconnus)."""
     try:
         a = requests.get(_url("/api/invitation/relais/session/cs_inconnu_nr607"), timeout=TIMEOUT)
-        b = requests.post(_url("/api/invitation/relais/reservation"), json={"jeton": "jetonInconnuNR607abcdef",
-                          "reservation_code": "AFR-NR607"}, timeout=TIMEOUT)
         c = requests.post(_url("/api/invitation/relais/inscription"), json={"jeton": "jetonInconnuNR607abcdef",
                           "code": "AFR-NR607"}, timeout=TIMEOUT)
-        record(151, "V607 : relais sans preuve -> 404 (session / réservation / accès)",
-               a.status_code == 404 and b.status_code == 404 and c.status_code == 404,
-               f"session {a.status_code} | reservation {b.status_code} | inscription {c.status_code}")
+        record(151, "V607 : relais sans preuve -> refusé (session inconnue 404 / inscription sans espace)",
+               a.status_code == 404 and c.status_code in (403, 404),
+               f"session {a.status_code} | inscription {c.status_code}")
     except Exception as e:
         record(151, "V607 : relais sans preuve", False, str(e))
 

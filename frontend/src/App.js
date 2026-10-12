@@ -4650,7 +4650,7 @@ const SuccessOverlay = ({ t, data, onClose, onClearTicket }) => {
           )}
           {/* V607 : arrivé par une invitation d'ÉVÉNEMENT ? son lien perso (facultatif). Rien sinon. */}
           <Suspense fallback={null}>
-            <InviterMesAmis sessionId={data.stripeSessionId} reservationCode={data.stripeSessionId ? '' : data.reservationCode} />
+            <InviterMesAmis sessionId={data.stripeSessionId} />
           </Suspense>
         </div>
       </div>

@@ -140,55 +140,54 @@ async def principal():
     c, _ = await appel(RL.chaine_campagne(ev["id"], T.rq(None)))
     verifier("E3 sans jeton -> 401", c == 401)
 
-    # ── F. Événement gratuit : inscription -> relais facultatif ─────────────
+    # ── F. Événement gratuit : inscription (espace) -> relais facultatif ────
     c, ef = await T.creer(T.COACH_A, {"type": "event_free", "status": "active", "offer_id": T.OFFRE_A_ESSAI})
-    base["reservations"].docs.append({"id": "res-1", "reservationCode": "AFR-TEST1", "offerId": T.OFFRE_A_ESSAI,
-                                      "userName": "Nadia Test", "userEmail": "n@test.example",
-                                      "createdAt": datetime.now(timezone.utc)})
-    c, rf = await appel(RL.relais_par_reservation(_Rq({"jeton": ef["share_token"], "reservation_code": "AFR-TEST1"})))
-    verifier("F1 event_free : réservation récente -> lien personnel g1", c == 200 and rf.get("generation") == 1, (c, rf))
-    c, _ = await appel(RL.relais_par_reservation(_Rq({"jeton": ef["share_token"], "reservation_code": "AFR-INCONNU"})))
-    verifier("F2 code de réservation inconnu -> 404", c == 404)
-    c, _ = await appel(RL.relais_par_reservation(_Rq({"jeton": tok, "reservation_code": "AFR-TEST1"})))
-    verifier("F3 jeton d'un événement PAYANT par réservation -> 404 (le paiement fait foi)", c == 404)
-    base["subscriptions"].docs.append({"code": "AFR-INSCR1", "offer_id": T.OFFRE_A_ESSAI, "email": "p@test.example",
-                                       "name": "Paul Test", "created_at": datetime.now(timezone.utc).isoformat()})
-    c, ri = await appel(RL.relais_par_inscription(_Rq({"jeton": ef["share_token"], "code": "AFR-INSCR1"})))
-    verifier("F5 event_free (parcours vitrine -> espace) : accès récent -> lien personnel g1", c == 200
-             and ri.get("prenom") == "Paul" and ri.get("generation") == 1, (c, ri))
-    base["subscriptions"].docs.append({"code": "AFR-VIEUX1", "offer_id": T.OFFRE_A_ESSAI, "email": "v@test.example",
-                                       "name": "Vieux", "created_at": "2020-01-01T00:00:00+00:00"})
-    c, _ = await appel(RL.relais_par_inscription(_Rq({"jeton": ef["share_token"], "code": "AFR-VIEUX1"})))
-    verifier("F6 accès ancien (> 48 h) -> 404", c == 404)
-    pubf = await SI.invitation_publique(ef["share_token"])
-    verifier("F4 event_free : « Gratuit », aucun prix", pubf.get("mention_prix") == "Gratuit" and pubf.get("prix_actif") is None)
+    import api.server as _S
+    _porte_vraie = _S._b3s13_porteur_autorise
 
+    async def _porte_banc(request, code, slug):      # la VRAIE porte a ses bancs (B3-S1)
+        return ({"code": code}, "ok") if request.headers.get("x-espace-token") == "espace-" + code else (None, "absent")
+    _S._b3s13_porteur_autorise = _porte_banc
+
+    class _RqE(_Rq):
+        def __init__(self, corps, espace="", ip="10.0.0.1"):
+            super().__init__(corps)
+            self.headers = _Ent({"user-agent": "", "x-espace-token": espace, "cf-connecting-ip": ip})
+            self.client = type("C", (), {"host": ip})()
+    try:
+        base["subscriptions"].docs.append({"code": "AFR-INSCR1", "offer_id": T.OFFRE_A_ESSAI, "email": "p@test.example",
+                                           "name": "Paul Test", "created_at": datetime.now(timezone.utc).isoformat()})
+        c, _ = await appel(RL.relais_par_inscription(_RqE({"jeton": ef["share_token"], "code": "AFR-INSCR1"})))
+        verifier("F1 code d'accès SEUL (sans session d'espace) -> 403 : plus d'oracle sur les codes", c == 403, c)
+        c, ri = await appel(RL.relais_par_inscription(_RqE({"jeton": ef["share_token"], "code": "AFR-INSCR1"}, "espace-AFR-INSCR1")))
+        verifier("F2 session d'espace du code -> lien personnel g1", c == 200 and ri.get("prenom") == "Paul"
+                 and ri.get("generation") == 1, (c, ri))
+        c, _ = await appel(RL.relais_par_inscription(_RqE({"jeton": ef["share_token"], "code": "AFR-INSCR1"}, "espace-AFR-AUTRE")))
+        verifier("F3 session d'un AUTRE code -> 403", c == 403, c)
+        base["subscriptions"].docs.append({"code": "AFR-VIEUX1", "offer_id": T.OFFRE_A_ESSAI, "email": "v@test.example",
+                                           "name": "Vieux", "created_at": "2020-01-01T00:00:00+00:00"})
+        c, _ = await appel(RL.relais_par_inscription(_RqE({"jeton": ef["share_token"], "code": "AFR-VIEUX1"}, "espace-AFR-VIEUX1")))
+        verifier("F4 accès ancien (> 48 h) -> 404", c == 404, c)
+        c, _ = await appel(RL.relais_par_inscription(_RqE({"jeton": tok, "code": "AFR-INSCR1"}, "espace-AFR-INSCR1")))
+        verifier("F5 jeton d'un événement PAYANT par inscription -> 404 (le paiement fait foi)", c == 404, c)
+    finally:
+        _S._b3s13_porteur_autorise = _porte_vraie
+    pubf = await SI.invitation_publique(ef["share_token"])
+    verifier("F6 event_free : « Gratuit », aucun prix", pubf.get("mention_prix") == "Gratuit" and pubf.get("prix_actif") is None)
+    verifier("F7 la route « relais par réservation » n'existe plus (surface réduite)", not hasattr(RL, "relais_par_reservation"))
+    # Débit : par IP seulement (jamais par invitation : on ne bloque pas les vrais participants)
     RL._DEBITS.clear()
     _codes = []
     for i in range(RL.DEBIT_MAX + 1):
-        c, _ = await appel(RL.relais_par_reservation(_Rq({"jeton": ef["share_token"], "reservation_code": "AFR-DEV%02d" % i})))
+        c, _ = await appel(RL.relais_par_session("cs_inconnu_%06d" % i, _RqE({}, ip="10.7.7.7")))
         _codes.append(c)
-    verifier("F7 deviner des codes : 404 puis 429 au-delà du débit (pas d'oracle illimité)",
-             _codes[:RL.DEBIT_MAX] == [404] * RL.DEBIT_MAX and _codes[-1] == 429, _codes)
+    c_autre, _ = await appel(RL.relais_par_session("cs_inconnu_zzzzzz", _RqE({}, ip="10.8.8.8")))
+    verifier("F8 une IP abusive est freinée (429) ; une AUTRE IP n'est pas bloquée pour autant",
+             _codes[-1] == 429 and c_autre == 404, (_codes[-3:], c_autre))
     RL._DEBITS.clear()
-    class _RqIp(_Rq):
-        def __init__(self, corps, ip):
-            super().__init__(corps)
-            self.headers = _Ent({"user-agent": "", "cf-connecting-ip": ip, "x-forwarded-for": ip})
-            self.client = type("C", (), {"host": ip})()
-    _codes = []
-    for i in range(RL.DEBIT_MAX_JETON + 1):
-        c, _ = await appel(RL.relais_par_reservation(_RqIp({"jeton": ef["share_token"], "reservation_code": "AFR-IP%02d" % i},
-                                                           "10.9.%d.%d" % (i // 200, i % 200 + 1))))
-        _codes.append(c)
-    verifier("F8 IP changée à chaque essai (en-têtes falsifiés) : 429 au-delà du plafond PAR JETON",
-             _codes[-1] == 429 and _codes.count(404) == RL.DEBIT_MAX_JETON, _codes)
-    for _ in range(5001):
-        RL._DEBITS["ip:x:%d" % _] = [0.0]
-    RL._DEBITS["jeton:reservation:VISE"] = [__import__("time").time()] * RL.DEBIT_MAX_JETON
-    RL._purger(__import__("time").time())
-    verifier("F9 la purge ne retire que l'expiré : un plafond actif survit", "jeton:reservation:VISE" in RL._DEBITS
-             and not any(k.startswith("ip:x:") for k in RL._DEBITS))
+    for k in range(RL.DEBIT_CLES_MAX + 50):
+        await appel(RL.relais_par_session("cs_inconnu_%06d" % k, _RqE({}, ip="10.%d.%d.1" % (k // 250, k % 250))))
+    verifier("F9 mémoire du débit BORNÉE (%d clés au plus)" % RL.DEBIT_CLES_MAX, len(RL._DEBITS) <= RL.DEBIT_CLES_MAX, len(RL._DEBITS))
     RL._DEBITS.clear()
 
     # ── G. Suivi honnête ─────────────────────────────────────────────────────
