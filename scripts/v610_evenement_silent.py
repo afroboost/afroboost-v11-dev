@@ -18,11 +18,9 @@ PRÉPARER (brouillon, invisible) — idempotent (marque `v610_evenement`) :
   * l'INVITATION (boule de neige) en BROUILLON : titre, accroche, offre, cours,
     date — emplacements vidéo / voix-off / miniature VIDES (médias Cowork à venir).
 
-PUBLIER (seulement quand les médias sont validés) :
-  * offre + cours visibles ;
-  * le cours régulier du mercredi n'a pas lieu le 28/10 (`dates_annulees`) —
-    refusé s'il porte déjà des réservations ce jour-là ;
-  * l'invitation passe ACTIVE par les règles du serveur (mêmes contrôles que l'écran).
+PUBLIER — V610h : se fait par le bouton « Publier » de l'éditeur, qui publie ENSEMBLE
+  l'offre, le cours, l'exclusion du 28/10 sur le cours régulier (`remplace_cours_id`)
+  et l'invitation, avec retour arrière en cas d'échec. Ici : contrôle à blanc seulement.
 
 Aucun paiement, aucun e-mail, aucun WhatsApp n'est déclenché par ce script.
 """
@@ -91,12 +89,18 @@ async def preparer(db, appliquer):
         cours = {"id": str(uuid.uuid4()), "name": TITRE, "date": DATE, "weekday": None, "time": HEURE,
                  "location": lieu, "locationName": lieu, "mapsUrl": reg.get("mapsUrl") or "",
                  "duration_minutes": 60, "coach_id": COACH, "visible": False, "archived": False,
-                 "v610_evenement": MARQUE, "created_at": _iso()}
+                 "v610_evenement": MARQUE, "remplace_cours_id": COURS_MERCREDI, "created_at": _iso()}
         print("COURS à créer :", cours["id"], cours["date"], cours["time"], "visible=False")
         if appliquer:
             await db.courses.insert_one(dict(cours))
     else:
         print("COURS déjà présent :", cours["id"])
+        if cours.get("remplace_cours_id") != COURS_MERCREDI:
+            # V610h : le bouton Publier exclut ce jour-là le cours qu'il remplace.
+            print("COURS : remplace_cours_id ->", COURS_MERCREDI)
+            if appliquer:
+                await db.courses.update_one({"id": cours["id"], "v610_evenement": MARQUE},
+                                            {"$set": {"remplace_cours_id": COURS_MERCREDI}})
 
     offre = await db.offers.find_one({"v610_evenement": MARQUE}, {"_id": 0})
     if not offre:
@@ -179,13 +183,9 @@ async def publier(db, appliquer):
     deja = await db.reservations.count_documents({"courseId": COURS_MERCREDI, "datetime": {"$regex": "^%s" % DATE}})
     if deja:
         raise SystemExit("STOP : %d réservation(s) existent sur le cours régulier du %s — à traiter avant." % (deja, DATE))
-    print("Publier : offre + cours visibles, %s annulé pour le cours régulier, invitation active." % DATE)
-    if not appliquer:
-        return
-    await db.offers.update_one({"id": offre["id"]}, {"$set": {"visible": True}})
-    await db.courses.update_one({"id": cours["id"]}, {"$set": {"visible": True}})
-    await db.courses.update_one({"id": COURS_MERCREDI}, {"$addToSet": {"dates_annulees": DATE}})
-    print("Activer l'invitation depuis l'écran « Mes invitations » (mêmes contrôles serveur).")
+    print("Prêt : le bouton « Publier » de l'éditeur publie offre + cours + exclusion du %s + invitation." % DATE)
+    if cours.get("remplace_cours_id") != COURS_MERCREDI:
+        print("ATTENTION : lancer d'abord `preparer --appliquer` (remplace_cours_id manquant).")
 
 
 async def principal():

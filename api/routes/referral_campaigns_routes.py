@@ -239,8 +239,10 @@ def _verifier_billet_evenement(champs, cours, offre) -> None:
                 "les 3 paliers de prix se calculent sur elles." % (_cd, (" à " + _ct[:5]) if _ct else "")))
 
 
-async def _controler(coach, champs) -> tuple:
-    """Propriété (toujours) + règles d'activation (en `active`). Rend (cours, offre)."""
+async def _controler(coach, champs, publication_dediee=False) -> tuple:
+    """Propriété (toujours) + règles d'activation (en `active`). Rend (cours, offre).
+    V610h : `publication_dediee` = l'offre DÉDIÉE est contrôlée telle qu'elle sera une
+    fois publiée (visible) — toutes les autres règles du billet restent appliquées."""
     _cours = _offre = None
     if champs.get("course_id"):
         _cours = await _objet_du_coach(coach, "courses", champs["course_id"])
@@ -268,7 +270,7 @@ async def _controler(coach, champs) -> tuple:
     if _type == "event_paid" and not IC.offre_payante(_offre):
         raise HTTPException(status_code=422, detail="Choisis une offre payante.")
     if _type == "event_paid":
-        _verifier_billet_evenement(champs, _cours, _offre)
+        _verifier_billet_evenement(champs, _cours, dict(_offre, visible=True) if (publication_dediee and _offre) else _offre)
     if _type in ("trial", "event_free"):
         _verifier_lien_ouvrable(champs, _cours, _offre, await _ouvrables([_offre]))
     if _type == "pass_duo" and (_cours or {}).get("duo_enabled") is not True:
@@ -290,6 +292,69 @@ async def _dto(doc, cours=None, offre=None, charger=True) -> dict:
     # PAR-1 : `target_url` = la cible RÉELLE du lien (chaîne si les drapeaux sont allumés).
     return IC.dto_coach(doc, cours, offre, R._frontend_url(),
                         chaine=await R.invitation_chaine_campagne_active(_db()))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V610h — PUBLIER un événement créé avec son offre + son cours DÉDIÉS (masqués)
+# ═══════════════════════════════════════════════════════════════════════════
+MSG_RESERVATIONS_REGULIER = ("Le cours régulier « %s » a déjà %d réservation(s) le %s : l'événement ne peut pas "
+                             "le remplacer ce jour-là sans les traiter d'abord. Rien n'a été publié.")
+STATUTS_RESA_ANNULEE = ("cancelled", "canceled", "annulee", "annulée", "refunded")
+
+
+async def _plan_publication_dediee(coach, avant, champs):
+    """None si la règle générale s'applique ; sinon le plan de publication (rien n'est
+    écrit ici). Conditions CUMULATIVES : brouillon -> actif, événement payant, l'offre et
+    le cours de l'invitation forment une paire dédiée DU coach (IC.paire_evenement_dediee),
+    et au moins l'un des deux est encore masqué."""
+    if avant.get("status") == "active" or champs.get("status") != "active" or champs.get("type") != "event_paid":
+        return None
+    _offre = await _objet_du_coach(coach, "offers", champs.get("offer_id"))
+    _cours = await _objet_du_coach(coach, "courses", champs.get("course_id"))
+    if not IC.paire_evenement_dediee(_offre, _cours, coach["email"]):
+        return None
+    if _offre.get("visible") is not False and _cours.get("visible") is not False:
+        return None
+    _plan = {"offre": _offre, "cours": _cours, "regulier": None}
+    _reg_id, _jour = _cours.get("remplace_cours_id"), str(_cours.get("date") or "")[:10]
+    if _reg_id and _jour:
+        _reg = await _objet_du_coach(coach, "courses", _reg_id)
+        if not _reg or E.normaliser_email(_reg.get("coach_id")) != E.normaliser_email(coach["email"]):
+            raise HTTPException(status_code=422, detail="Le cours remplacé par l'événement est introuvable dans votre espace.")
+        _q = {"$and": [{"$or": [{"courseId": _reg_id}, {"course_id": _reg_id}]},
+                       {"$or": [{"datetime": {"$regex": "^" + _jour}}, {"date": {"$regex": "^" + _jour}}]},
+                       {"status": {"$nin": list(STATUTS_RESA_ANNULEE)}}]}
+        _n = await _db()["reservations"].count_documents(_q)
+        if _n:
+            raise HTTPException(status_code=409, detail=MSG_RESERVATIONS_REGULIER % (_reg.get("name") or "", _n, _jour))
+        _plan["regulier"] = {"id": _reg_id, "jour": _jour,
+                             "deja_exclu": _jour in (_reg.get("dates_annulees") or [])}
+    return _plan
+
+
+async def _appliquer_plan(plan) -> list:
+    """Écrit offre + cours visibles et l'exclusion du jour sur le cours régulier.
+    Rend les annulations à rejouer en cas d'échec (ordre inverse)."""
+    _defaire = []
+    _o, _c, _r = plan["offre"], plan["cours"], plan["regulier"]
+    if _o.get("visible") is False:
+        await _db()["offers"].update_one({"id": _o["id"]}, {"$set": {"visible": True}})
+        _defaire.append(("offers", {"id": _o["id"]}, {"$set": {"visible": False}}))
+    if _c.get("visible") is False:
+        await _db()["courses"].update_one({"id": _c["id"]}, {"$set": {"visible": True}})
+        _defaire.append(("courses", {"id": _c["id"]}, {"$set": {"visible": False}}))
+    if _r and not _r["deja_exclu"]:
+        await _db()["courses"].update_one({"id": _r["id"]}, {"$addToSet": {"dates_annulees": _r["jour"]}})
+        _defaire.append(("courses", {"id": _r["id"]}, {"$pull": {"dates_annulees": _r["jour"]}}))
+    return _defaire
+
+
+async def _defaire_plan(defaire) -> None:
+    for _coll, _filtre, _maj in reversed(defaire or []):
+        try:
+            await _db()[_coll].update_one(_filtre, _maj)
+        except Exception as _e:  # noqa: BLE001
+            logger.error("%s V610h retour arrière incomplet (%s %s) : %s", PREFIXE, _coll, _filtre, type(_e).__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -456,30 +521,113 @@ async def invitations_modifier(inv_id: str, request: Request):
     _avant = await _invitation(_c, inv_id)
     if _avant.get("status") == "archived":
         raise HTTPException(status_code=409, detail="Invitation archivée : elle n'est plus modifiable.")
-    _b = await R._corps(request)
+    return await _modifier_invitation(_c, _avant, await R._corps(request))
+
+
+async def _modifier_invitation(_c, _avant, _b):
+    """Le cœur du PUT (V610h : partagé avec « Réactiver »)."""
     # V607 : le TYPE se change tant que l'invitation est un BROUILLON (rien n'a été
     # partagé : aucun lien public n'existe). Activée = type figé (409).
     if isinstance(_b, dict) and "type" in _b and _b.get("type") != _avant.get("type") \
             and _avant.get("status") != "draft":
         raise HTTPException(status_code=409, detail="Le type ne change plus une fois le lien activé.")
     _champs = _valider(_b, _avant)
-    _cours, _offre = await _controler(_c, _champs)
+    # V610h : brouillon -> actif d'un événement à offre + cours DÉDIÉS encore masqués :
+    # TOUT est validé d'abord (billet contrôlé tel que publié), puis publié ensemble ;
+    # le moindre échec défait ce qui a été écrit (jamais un état à moitié publié).
+    _plan = await _plan_publication_dediee(_c, _avant, _champs)
+    _cours, _offre = await _controler(_c, _champs, publication_dediee=_plan is not None)
     _now = _iso()
     _set = dict(_champs, inviter_display=await _identite(_c), updated_at=_now)
     _maj = {"$set": _set}
     if IC.version_incrementee(_avant, _champs):
         _maj["$inc"] = {"version": 1}
-    # INV-1 (audit P2) : `status != archived` DANS le filtre — un archivage survenu entre
-    # la lecture et l'écriture n'est jamais annulé par ce PUT (course PUT / archive).
-    _ecrit = await _db()[COLL].update_one(
-        {"id": _avant["id"], "coach_id": _c["cle"], "share_token": _avant.get("share_token"),
-         "status": {"$ne": "archived"}}, _maj)
-    if not getattr(_ecrit, "matched_count", 1):
-        raise HTTPException(status_code=409, detail="Invitation archivée entre-temps : elle n'est plus modifiable.")
+    _defaire = []
+    try:
+        if _plan:
+            _defaire = await _appliquer_plan(_plan)
+        # INV-1 (audit P2) : `status != archived` DANS le filtre — un archivage survenu entre
+        # la lecture et l'écriture n'est jamais annulé par ce PUT (course PUT / archive).
+        _ecrit = await _db()[COLL].update_one(
+            {"id": _avant["id"], "coach_id": _c["cle"], "share_token": _avant.get("share_token"),
+             "status": {"$ne": "archived"}}, _maj)
+        if not getattr(_ecrit, "matched_count", 1):
+            raise HTTPException(status_code=409, detail="Invitation archivée entre-temps : elle n'est plus modifiable.")
+    except Exception:
+        await _defaire_plan(_defaire)
+        raise
+    if _plan:
+        logger.info("%s V610h événement publié : offre %s, cours %s, jour exclu %s", PREFIXE,
+                    _plan["offre"]["id"], _plan["cours"]["id"], (_plan["regulier"] or {}).get("jour"))
+        _offre = dict(_offre or {}, visible=True)
+        _cours = dict(_cours or {}, visible=True)
     _apres = await _invitation(_c, _avant["id"])
     if _avant.get("status") != "active" and _apres.get("status") == "active":
         await _suivre(_apres, "lien_active")
     return await _dto(_apres, _cours, _offre, charger=False)
+
+
+async def _paire_dediee_de(coach, doc):
+    """(offre, cours) si l'invitation porte la paire DÉDIÉE du coach, sinon (None, None)."""
+    _o = await _objet_du_coach(coach, "offers", doc.get("offer_id"))
+    _k = await _objet_du_coach(coach, "courses", doc.get("course_id"))
+    return (_o, _k) if IC.paire_evenement_dediee(_o, _k, coach["email"]) else (None, None)
+
+
+async def _hors_ligne(coach, doc, statut) -> dict:
+    """V610h — met l'invitation hors ligne (`hidden` ou `archived`) et, si elle porte
+    la paire DÉDIÉE, masque son offre et son cours (plus de vente, plus de place offerte).
+    Rien n'est supprimé : réservations, paiements, liens personnels, chaîne, médias,
+    tarifs restent. Le cours régulier remplacé N'EST PAS touché (son jour reste exclu :
+    jamais deux séances au même horaire, jamais de réactivation implicite).
+    Échec de l'écriture de l'invitation -> offre et cours remis comme avant."""
+    _o, _k = await _paire_dediee_de(coach, doc)
+    _defaire = []
+    try:
+        for _coll, _obj in (("offers", _o), ("courses", _k)):
+            if _obj and _obj.get("visible") is not False:
+                await _db()[_coll].update_one({"id": _obj["id"]}, {"$set": {"visible": False}})
+                _defaire.append((_coll, {"id": _obj["id"]}, {"$set": {"visible": _obj.get("visible", True)}}))
+        _ecrit = await _db()[COLL].update_one(
+            {"id": doc["id"], "coach_id": coach["cle"], "status": doc.get("status")},
+            {"$set": {"status": statut, "updated_at": _iso(), ("masquee_le" if statut == "hidden" else "archivee_le"): _iso()}})
+        if not getattr(_ecrit, "matched_count", 1):
+            raise HTTPException(status_code=409, detail="L'invitation a changé entre-temps : recharge la page.")
+    except Exception:
+        await _defaire_plan(_defaire)
+        raise
+    return await _invitation(coach, doc["id"])
+
+
+@router.post("/{inv_id}/masquer")
+async def invitations_masquer(inv_id: str, request: Request):
+    """V610h — ACTIVE -> MASQUÉE (hors ligne, réactivable, aucune suppression)."""
+    _c = await _coach(request)
+    _d = await _invitation(_c, inv_id)
+    if _d.get("status") == "hidden":
+        return await _dto(_d)
+    if _d.get("status") != "active":
+        raise HTTPException(status_code=409, detail="Seule une invitation publiée peut être masquée.")
+    return await _dto(await _hors_ligne(_c, _d, "hidden"))
+
+
+@router.post("/{inv_id}/reactiver")
+async def invitations_reactiver(inv_id: str, request: Request):
+    """V610h — MASQUÉE -> ACTIVE : exactement la publication (mêmes contrôles, mêmes
+    ids, même jeton, aucun doublon). Événement passé : refus, jamais de réactivation aveugle."""
+    _c = await _coach(request)
+    _d = await _invitation(_c, inv_id)
+    if _d.get("status") == "active":
+        return await _dto(_d)
+    if _d.get("status") != "hidden":
+        raise HTTPException(status_code=409, detail="Seule une invitation masquée peut être réactivée.")
+    if _d.get("occurrence") and E.est_passee(_d["occurrence"], datetime.now(timezone.utc)):
+        raise HTTPException(status_code=409, detail=MSG_EVENEMENT_PASSE)
+    return await _modifier_invitation(_c, _d, {"status": "active"})
+
+
+MSG_EVENEMENT_PASSE = ("Cet événement est déjà passé : il ne peut pas être réactivé tel quel. "
+                       "Modifie sa date ou crée une nouvelle invitation.")
 
 
 @router.post("/{inv_id}/archive")
@@ -487,7 +635,6 @@ async def invitations_archiver(inv_id: str, request: Request):
     _c = await _coach(request)
     _d = await _invitation(_c, inv_id)
     if _d.get("status") != "archived":
-        await _db()[COLL].update_one({"id": _d["id"], "coach_id": _c["cle"]},
-                                     {"$set": {"status": "archived", "updated_at": _iso()}})
-        _d = await _invitation(_c, _d["id"])
+        # V610h : une invitation archivée ne laisse pas son offre / son cours DÉDIÉS en vente.
+        _d = await _hors_ligne(_c, _d, "archived")
     return await _dto(_d)

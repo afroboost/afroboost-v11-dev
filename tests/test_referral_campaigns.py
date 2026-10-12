@@ -100,7 +100,7 @@ def fuite(objet, base):
 # ═══════════════════════════════════════════════════════════════════════════
 async def partie_moteur_pur():
     verifier("INV-M1 TYPES / STATUTS du contrat", IC.TYPES == ("trial", "pass_duo", "event_free", "event_paid")
-             and IC.STATUTS == ("draft", "active", "archived"))
+             and IC.STATUTS == ("draft", "active", "hidden", "archived"))  # V610h : masquée
     verifier("INV-M2 CHAMPS_VISUELS exacts", set(IC.CHAMPS_VISUELS) == {
         "title", "subtitle", "message", "cta_label", "image_url", "image_source", "course_id",
         "occurrence", "offer_id", "type", "lieu", "video_url", "audio_url",  # V607 : lieu + médias

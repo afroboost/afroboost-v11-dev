@@ -25,8 +25,8 @@ from api.routes import referral_engine as E
 
 # ─── Le schéma (validé par le propriétaire — rien d'autre) ──────────────────
 TYPES = ("trial", "pass_duo", "event_free", "event_paid")
-STATUTS = ("draft", "active", "archived")
-STATUTS_ENTREE = ("draft", "active")          # `archived` : seulement par POST /archive
+STATUTS = ("draft", "active", "hidden", "archived")   # V610h : `hidden` = masquée (hors ligne, rien supprimé)
+STATUTS_ENTREE = ("draft", "active")          # `archived` / `hidden` : seulement par POST /archive et /masquer
 SOURCES_IMAGE = ("default", "upload")
 
 # Un changement RÉEL de l'un de ces champs incrémente `version` (-> `?v=N`,
@@ -357,6 +357,35 @@ def raison_offre_non_billet(offre):
 
 def offre_billet_evenement(offre) -> bool:
     return raison_offre_non_billet(offre) is None
+
+
+# ─── V610h : l'offre + le cours DÉDIÉS d'un événement, publiés avec l'invitation ──
+# Le système crée l'offre billet et le cours d'un événement MASQUÉS tant que
+# l'invitation est un brouillon (scripts/v610_evenement_silent.py). « Offre masquée »
+# reste un refus pour toute autre offre ; l'exception ne vaut que pour CETTE paire.
+MARQUE_EVENEMENT = "v610_evenement"
+
+
+def _email_norm(v) -> str:
+    return str(v or "").strip().lower()
+
+
+def paire_evenement_dediee(offre, cours, email) -> bool:
+    """Vrai seulement si l'offre ET le cours ont été créés ENSEMBLE pour le même
+    événement (même marque, cours rattaché à l'offre), appartiennent TOUS DEUX au
+    coach connecté (égalité stricte, même pour le super-admin : jamais l'offre
+    cachée d'un autre coach) et ne sont pas archivés."""
+    if not isinstance(offre, dict) or not isinstance(cours, dict):
+        return False
+    _m = offre.get(MARQUE_EVENEMENT)
+    if not isinstance(_m, str) or not _m.strip() or cours.get(MARQUE_EVENEMENT) != _m:
+        return False
+    if cours.get("id") not in (offre.get("linked_course_ids") or []):
+        return False
+    _e = _email_norm(email)
+    if not _e or _email_norm(offre.get("coach_id")) != _e or _email_norm(cours.get("coach_id")) != _e:
+        return False
+    return offre.get("archived") is not True and cours.get("archived") is not True
 
 
 # Les noms des 3 paliers, tels que Bassi les veut sur l'invitation.

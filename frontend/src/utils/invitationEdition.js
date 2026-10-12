@@ -16,7 +16,7 @@ export const TAILLE_MORCEAU = 4 * 1024 * 1024;
 export const MEDIA_MAX_OCTETS = { video: 200 * 1024 * 1024, audio: 30 * 1024 * 1024 };
 
 export const LIBELLES_TYPE = { trial: 'Essai gratuit', pass_duo: 'Pass Duo', event_free: 'Événement gratuit', event_paid: 'Événement payant' };
-export const LIBELLES_STATUT = { draft: 'Brouillon', active: 'Active', archived: 'Archivée' };
+export const LIBELLES_STATUT = { draft: 'Brouillon', active: 'Active', hidden: 'Masquée', archived: 'Archivée' }; // V610h : masquée
 
 export function listerInvitations(archivees = false) {
   return axios.get(`${API}/referral/campaigns`, { params: archivees ? { include_archived: 1 } : {}, timeout: 20000 })
@@ -33,6 +33,13 @@ export function enregistrerEvenement(id, corps) {
 }
 export function archiverInvitation(id) {
   return axios.post(`${API}/referral/campaigns/${encodeURIComponent(id)}/archive`, {}, { timeout: 20000 }).then((r) => r.data);
+}
+// V610h — hors ligne SANS rien supprimer / remise en ligne (mêmes ids, même lien).
+export function masquerInvitation(id) {
+  return axios.post(`${API}/referral/campaigns/${encodeURIComponent(id)}/masquer`, {}, { timeout: 20000 }).then((r) => r.data);
+}
+export function reactiverInvitation(id) {
+  return axios.post(`${API}/referral/campaigns/${encodeURIComponent(id)}/reactiver`, {}, { timeout: 20000 }).then((r) => r.data);
 }
 export function lireChaine(id) {
   return axios.get(`${API}/referral/campaigns-relais/${encodeURIComponent(id)}/chaine`, { timeout: 20000 }).then((r) => r.data);

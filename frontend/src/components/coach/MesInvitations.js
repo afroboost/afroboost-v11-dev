@@ -12,7 +12,7 @@ import SvgIcon from '../SvgIcon';
 import EditeurInvitation from './EditeurInvitation';
 import InvitationModal from './InvitationModal';
 import { copier } from '../../utils/parrainage';
-import { listerInvitations, archiverInvitation, lireChaine, LIBELLES_TYPE, LIBELLES_STATUT } from '../../utils/invitationEdition';
+import { listerInvitations, archiverInvitation, masquerInvitation, reactiverInvitation, lireChaine, LIBELLES_TYPE, LIBELLES_STATUT } from '../../utils/invitationEdition';
 
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
 const rgbaP = (a) => `rgba(var(--primary-rgb, 217, 28, 210), ${a})`;
@@ -60,6 +60,22 @@ function Carte({ inv, onModifier, onRafraichir }) {
     }).catch(() => setStats({ total: null, gens: {} }));
   };
   const [confirmerArchive, setConfirmerArchive] = useState(false);
+  // V610h — Masquer (hors ligne, rien supprimé) / Réactiver (mêmes ids, même lien).
+  const [confirmerMasque, setConfirmerMasque] = useState(false);
+  const [occupe, setOccupe] = useState(false);
+  const masquee = inv.status === 'hidden';
+  const detailErreur = (e, defaut) => {
+    const d = e && e.response && e.response.data && e.response.data.detail;
+    return typeof d === 'string' ? d : defaut;
+  };
+  const masquer = () => {
+    setConfirmerMasque(false); setOccupe(true); setRetour('');
+    masquerInvitation(inv.id).then(onRafraichir).catch((e) => setRetour(detailErreur(e, 'Masquage impossible.'))).finally(() => setOccupe(false));
+  };
+  const reactiver = () => {
+    setMenu(false); setOccupe(true); setRetour('');
+    reactiverInvitation(inv.id).then(onRafraichir).catch((e) => setRetour(detailErreur(e, 'Réactivation impossible.'))).finally(() => setOccupe(false));
+  };
   const archiver = () => {
     setConfirmerArchive(false);
     archiverInvitation(inv.id).then(onRafraichir).catch(() => setRetour('Archivage impossible.'));
@@ -81,6 +97,16 @@ function Carte({ inv, onModifier, onRafraichir }) {
           </div>
         ) : null}
         {retour ? <div role="status" style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.75)', marginTop: 4 }}>{retour}</div> : null}
+        {confirmerMasque ? (
+          <div role="alertdialog" data-testid={`mes-inv-masquer-confirmation-${inv.id}`} style={{ marginTop: 8, padding: 10, borderRadius: 10, background: rgbaP(0.1), border: `1px solid ${rgbaP(0.3)}`, fontSize: 13 }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>Masquer cet événement ?</div>
+            <div style={{ color: 'rgba(255,255,255,0.8)', marginBottom: 8 }}>Il ne sera plus visible ni réservable, mais les réservations, paiements, statistiques et liens existants seront conservés.</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button type="button" style={btn(false)} onClick={() => setConfirmerMasque(false)}>Annuler</button>
+              <button type="button" style={btn(true)} onClick={masquer} disabled={occupe} data-testid={`mes-inv-masquer-ok-${inv.id}`}>Masquer</button>
+            </div>
+          </div>
+        ) : null}
         {confirmerArchive ? (
           <div role="alertdialog" style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
             <span>Archiver ? Son lien ne s'ouvrira plus.</span>
@@ -90,7 +116,11 @@ function Carte({ inv, onModifier, onRafraichir }) {
         ) : null}
       </div>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 'auto' }}>
-        <button type="button" style={btn(true)} onClick={() => onModifier(inv.id)} data-testid={`mes-inv-modifier-${inv.id}`}><SvgIcon name="edit" size={15} /> Modifier</button>
+        {masquee ? (
+          <button type="button" style={btn(true)} onClick={reactiver} disabled={occupe} data-testid={`mes-inv-reactiver-${inv.id}`}><SvgIcon name="eye" size={15} /> Réactiver</button>
+        ) : (
+          <button type="button" style={btn(true)} onClick={() => onModifier(inv.id)} data-testid={`mes-inv-modifier-${inv.id}`}><SvgIcon name="edit" size={15} /> Modifier</button>
+        )}
         {actif && inv.share_url ? <button type="button" style={btn(false)} onClick={copierLien} aria-label="Copier le lien"><SvgIcon name="link" size={15} /></button> : null}
         <button type="button" style={btn(false)} onClick={() => setMenu((m) => !m)} aria-expanded={menu} aria-label="Plus d'actions" data-testid={`mes-inv-plus-${inv.id}`}>
           <SvgIcon name="moreHorizontal" size={16} />
@@ -104,6 +134,18 @@ function Carte({ inv, onModifier, onRafraichir }) {
                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', color: 'rgba(255,255,255,0.92)', textDecoration: 'none', fontSize: 14 }}>
               <SvgIcon name="externalLink" size={15} /> Voir la page
             </a>
+          ) : null}
+          {masquee ? (
+            <button type="button" role="menuitem" onClick={() => { setMenu(false); onModifier(inv.id); }} data-testid={`mes-inv-modifier-menu-${inv.id}`}
+                    style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.92)', fontSize: 14, cursor: 'pointer' }}>
+              <SvgIcon name="edit" size={15} /> Modifier
+            </button>
+          ) : null}
+          {actif ? (
+            <button type="button" role="menuitem" onClick={() => { setMenu(false); setConfirmerMasque(true); }} data-testid={`mes-inv-masquer-${inv.id}`}
+                    style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.92)', fontSize: 14, cursor: 'pointer' }}>
+              <SvgIcon name="eyeOff" size={15} /> Masquer
+            </button>
           ) : null}
           <button type="button" role="menuitem" onClick={voirStats} data-testid={`mes-inv-stats-bouton-${inv.id}`}
                   style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.92)', fontSize: 14, cursor: 'pointer' }}>

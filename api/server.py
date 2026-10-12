@@ -8451,6 +8451,10 @@ async def create_checkout_session(request: CreateCheckoutRequest,
     # autre personne. La place offerte ne s'obtient que dans l'espace, authentifié.
     from api.routes import evenement_special as _v610_evt
     if _offer and _v610_evt.reservation_auto(_offer):
+        # V610h : un événement en BROUILLON ou MASQUÉ par le coach ne se vend pas (même
+        # depuis une page restée ouverte). Un paiement déjà engagé reste honoré par le webhook.
+        if _offer.get("visible") is False or _offer.get("archived") is True:
+            raise HTTPException(status_code=409, detail="Cet événement n'est pas disponible à la réservation pour le moment.")
         request.quantity = 1
         request.reservationData = None
 

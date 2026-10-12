@@ -290,6 +290,16 @@ class _Coll:
             lst = list(cur) if isinstance(cur, list) else []
             lst.append(json.loads(json.dumps(v, default=str)))
             _ecrire(d, cle, lst)
+        for cle, v in (maj.get("$addToSet") or {}).items():   # V610h
+            cur = _lire(d, cle)
+            lst = list(cur) if isinstance(cur, list) else []
+            if v not in lst:
+                lst.append(v)
+            _ecrire(d, cle, lst)
+        for cle, v in (maj.get("$pull") or {}).items():       # V610h
+            cur = _lire(d, cle)
+            if isinstance(cur, list):
+                _ecrire(d, cle, [x for x in cur if x != v])
 
     async def update_one(self, q, maj, upsert=False, **k):
         await asyncio.sleep(0)
