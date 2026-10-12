@@ -474,6 +474,25 @@ except HTTPException as e:
 verifier("3e. un brouillon PERIME par une note -> 409", _ok)
 verifier("3f. et rien n'est parti", len(APPELS) == 0)
 
+# V608c : un REESSAI refuse (contexte perime) ne touche PAS a la trace en echec.
+_b = base_aip4(OUVERT, notes=[{"id": "n2", "action_id": "act-etu", "type": "appel", "origine": "coach",
+                               "texte": "Appele.", "created_at": "2026-09-05T13:00:00+00:00"}])
+_cle = S.p3ai4_cle_envoi("inb-etu", EMPREINTE)
+_b[S.P3AI4_COLLECTION].documents.append({"id": _cle, "send_status": S.P3AI4_ECHEC, "provider_status": "failed",
+                                         "tentative": 1, "inbound_id": "inb-etu"})
+try:
+    envoyer(); _ok = False
+except HTTPException as e:
+    _ok = e.status_code == 409
+_t = _b[S.P3AI4_COLLECTION].documents[0]
+verifier("3e-bis. reessai refuse -> 409, la trace reste « echec » tentative 1 (aucun verrou fantome)",
+         _ok and _t["send_status"] == S.P3AI4_ECHEC and _t["tentative"] == 1 and len(APPELS) == 0, str(_t))
+_b[S.P3N_COLLECTION].documents.clear()
+_r = envoyer()
+_t = _b[S.P3AI4_COLLECTION].documents[0]
+verifier("3e-ter. sans la note, le reessai part UNE fois sur la meme trace (tentative 2)",
+         len(APPELS) == 1 and _t["tentative"] == 2 and len(_b[S.P3AI4_COLLECTION].documents) == 1, str(_t)[:300])
+
 # STOP
 _b = base_aip4(OUVERT, refus=[{"channel": "email",
                                "value": "personne@bde-hearc.exemple.test",

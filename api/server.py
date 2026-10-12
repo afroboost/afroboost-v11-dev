@@ -33750,25 +33750,15 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
     cle = p3ai4_cle_envoi(message["id"], empreinte)
     deja = await db[P3AI4_COLLECTION].find_one({"id": cle}, {"_id": 0})
     tentative = 1
+    reprise_de = None
     if deja and v608_reessai_permis(deja):
         # V608 — « Réessayer » : SEULEMENT si rien n'a ete remis (echec avant Resend,
-        # quota, ou `failed` rapporte par Resend). Reprise CONDITIONNELLE de la meme
-        # trace (un seul gagnant en cas de double clic) ; nouvelle cle d'idempotence,
-        # sinon Resend rendrait l'ancien e-mail echoue sans rien envoyer.
+        # quota, ou `failed` rapporte par Resend). La reprise de la trace est faite PLUS
+        # BAS, au moment de la reservation : V608c — elle etait posee ICI, avant les
+        # controles qui peuvent refuser (contexte, adresse, STOP), et un refus laissait
+        # la trace bloquee en `reserve` (constate sur Dynam le 12/10, aucun envoi parti).
         tentative = int(deja.get("tentative") or 1) + 1
-        repris = await db[P3AI4_COLLECTION].update_one(
-            {"id": cle, "send_status": deja.get("send_status"),
-             "tentative": deja.get("tentative"), "provider_status": deja.get("provider_status")},
-            {"$set": {"send_status": P3AI4_RESERVE, "tentative": tentative,
-                      "provider_status": None, "provider_message_id": None,
-                      "error_code": None, "sent_at": None,
-                      "updated_at": datetime.now(timezone.utc).isoformat()},
-             "$push": {"tentatives_precedentes": {
-                 k: deja.get(k) for k in ("send_status", "provider_status", "provider_message_id",
-                                          "error_code", "provider_raison", "sent_at", "tentative")}}})
-        if not getattr(repris, "matched_count", 0):
-            return {"deja_envoye": True, "envoi": await db[P3AI4_COLLECTION].find_one({"id": cle}, {"_id": 0}),
-                    "statut_commercial": await p3n_statut_courant(message)}
+        reprise_de = deja
         deja = None
     if deja:
         logger.info("%s envoi deja engage pour %s (%s)", P3AI4_PREFIXE,
@@ -33826,10 +33816,20 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
     try:
         if tentative == 1:
             await db[P3AI4_COLLECTION].insert_one(dict(trace))
-        else:   # V608 : reprise — la trace existe, on y reporte le texte approuve
-            await db[P3AI4_COLLECTION].update_one({"id": cle}, {"$set": {
-                k: trace[k] for k in ("approved_text", "approved_at", "approved_by", "to_email",
-                                      "subject", "intention")}})
+        else:   # V608 : reprise CONDITIONNELLE de la meme trace (un seul gagnant si double clic)
+            repris = await db[P3AI4_COLLECTION].update_one(
+                {"id": cle, "send_status": reprise_de.get("send_status"),
+                 "tentative": reprise_de.get("tentative"), "provider_status": reprise_de.get("provider_status")},
+                {"$set": dict({k: trace[k] for k in ("approved_text", "approved_at", "approved_by", "to_email",
+                                                     "subject", "intention")},
+                              send_status=P3AI4_RESERVE, tentative=tentative, provider_status=None,
+                              provider_message_id=None, error_code=None, sent_at=None, updated_at=maintenant),
+                 "$push": {"tentatives_precedentes": {
+                     k: reprise_de.get(k) for k in ("send_status", "provider_status", "provider_message_id",
+                                                    "error_code", "provider_raison", "sent_at", "tentative")}}})
+            if not getattr(repris, "matched_count", 0):
+                return {"deja_envoye": True, "envoi": await db[P3AI4_COLLECTION].find_one({"id": cle}, {"_id": 0}),
+                        "statut_commercial": await p3n_statut_courant(message)}
     except Exception as e:  # noqa: BLE001
         if "E11000" in str(e) or "duplicate" in str(e).lower():
             deja = await db[P3AI4_COLLECTION].find_one({"id": cle}, {"_id": 0})
