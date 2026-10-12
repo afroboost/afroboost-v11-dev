@@ -80,10 +80,10 @@ const CHILD = (extra) => Object.assign({
   course: { name: 'Cours à l’unité', time: '18:00', locationName: 'Bord du Lac, Auvernier' },
 }, extra || {});
 
-function routeur({ join, chainPost } = {}) {
+function routeur({ join, chainPost, audio } = {}) {
   axios.get.mockImplementation((url) => {
     if (String(url).endsWith('/chain/options')) return Promise.resolve({ data: OPTS });
-    return Promise.resolve({ data: PUB });
+    return Promise.resolve({ data: audio ? Object.assign({}, PUB, { audio_url: audio }) : PUB });
   });
   axios.patch.mockImplementation((url, corps) => {
     const u = String(url);
@@ -123,8 +123,7 @@ async function choisirDimanche() {
 
 async function jusquAuPartage() {
   await monter(<InvitationDuo token="T0" />);
-  await choisirDimanche();
-  await cliquer('wf-valider-seance');
+  await choisirDimanche();               // V610k : choisir dans le calendrier VALIDE directement
 }
 
 describe('V607 — Essai gratuit : moi d’abord, puis mon ami', () => {
@@ -150,9 +149,9 @@ describe('V607 — Essai gratuit : moi d’abord, puis mon ami', () => {
     routeur();
     await monter(<InvitationDuo token="T0" />);
     await choisirDimanche();
-    expect(par('wf-invitation-recue').textContent).toContain('Bord du Lac, Auvernier');   // aperçu local avant validation
-    expect(axios.patch).not.toHaveBeenCalled();
-    await cliquer('wf-valider-seance');
+    // V610k : « Valider ma séance » dans le calendrier -> directement « Ton essai est prêt »
+    // (plus de retour à l'accueil pour revalider).
+    expect(par('wf-essai-accueil')).toBeNull();
     const patch = axios.patch.mock.calls[0];
     expect(String(patch[0])).toMatch(/\/pass\/T0\/occurrence$/);
     expect(patch[1]).toEqual({ occurrence: O_DIM, version: 1, course_id: 'c-dim' });
@@ -301,8 +300,7 @@ describe('V607 — Essai gratuit : moi d’abord, puis mon ami', () => {
     routeur();
     axios.patch.mockImplementation(() => Promise.reject({ response: { status: 400, headers: { 'x-refus-raison': 'seance_indisponible' }, data: {} } }));
     await monter(<InvitationDuo token="T0" />);
-    await choisirDimanche();
-    await cliquer('wf-valider-seance');
+    await choisirDimanche();                // V610k : le choix vaut validation
     expect(par('wf-essai-accueil')).not.toBeNull();
     expect(par('wf-seance-erreur').textContent).toBe('Cette séance n’est plus disponible.');
     expect(axios.post).not.toHaveBeenCalled();
@@ -343,5 +341,54 @@ describe('V607 — moteur pur', () => {
     expect(estParcoursEssai({ chain_required: true, invitation_type: 'pass_duo' })).toBe(false);
     expect(estParcoursEssai({ chain_required: false, invitation_type: 'trial' })).toBe(false);
     expect(estParcoursEssai(null)).toBe(false);
+  });
+});
+
+describe('V610k — le mot audio de l\'invitation sur « Ton essai est prêt »', () => {
+  let play; let pause;
+  beforeEach(() => {
+    pause = jest.spyOn(window.HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  });
+  afterEach(() => { if (play) play.mockRestore(); pause.mockRestore(); play = null; });
+
+  test('audio configuré : lecteur monté caché dès l\'accueil, lancé PENDANT le clic « Valider ma séance », une seule fois, jamais en boucle', async () => {
+    let appelsAuClic = null;
+    play = jest.spyOn(window.HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    routeur({ audio: '/api/files/a1/mot.mp3' });
+    await monter(<InvitationDuo token="T0" />);
+    const bloc = par('wf-audio-essai');
+    expect(bloc).not.toBeNull();
+    expect(bloc.style.display).toBe('none');                     // caché sur l'accueil
+    expect(play).not.toHaveBeenCalled();                          // rien sans geste
+    await act(async () => { par('wf-valider-seance').click(); appelsAuClic = play.mock.calls.length; });
+    await vider();
+    expect(appelsAuClic).toBe(1);                                 // lancé DANS le geste (Safari)
+    expect(par('wf-essai-pret')).not.toBeNull();
+    expect(par('wf-audio-essai')).toBe(bloc);                     // MÊME élément : la lecture continue
+    expect(par('wf-audio-essai').style.display).toBe('block');
+    const audio = par('wf-audio-essai-audio');
+    expect(audio.getAttribute('src')).toBe('/api/files/a1/mot.mp3');
+    expect(audio.loop).toBe(false);
+    expect(play).toHaveBeenCalledTimes(1);                        // une seule tentative
+  });
+
+  test('navigateur qui refuse : parcours intact, lecteur visible « Écouter le message » (fallback)', async () => {
+    play = jest.spyOn(window.HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.reject(new Error('NotAllowedError')));
+    routeur({ audio: '/api/files/a1/mot.mp3' });
+    await monter(<InvitationDuo token="T0" />);
+    await cliquer('wf-valider-seance');
+    expect(par('wf-essai-pret')).not.toBeNull();
+    expect(par('wf-audio-essai-bouton').textContent).toMatch(/Écouter le message/);
+    expect(par('wf-inviter-whatsapp')).not.toBeNull();
+  });
+
+  test('aucun audio configuré : rien n\'est affiché ni inventé', async () => {
+    play = jest.spyOn(window.HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    routeur();
+    await monter(<InvitationDuo token="T0" />);
+    await cliquer('wf-valider-seance');
+    expect(par('wf-essai-pret')).not.toBeNull();
+    expect(par('wf-audio-essai')).toBeNull();
+    expect(play).not.toHaveBeenCalled();
   });
 });

@@ -72,6 +72,28 @@ def _front() -> str:
     return (os.environ.get("FRONTEND_URL") or "https://afroboost.com").rstrip("/")
 
 
+PAGE_INDISPONIBLE = (
+    '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+    '<meta name="robots" content="noindex"><title>Invitation indisponible — Afroboost</title></head>'
+    '<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:rgb(8,4,12);'
+    'color:rgba(255,255,255,0.96);font-family:system-ui,-apple-system,sans-serif;padding:24px;box-sizing:border-box">'
+    '<div style="max-width:420px;text-align:center"><h1 style="font-size:22px;margin:0 0 10px">Cette invitation n\'est plus disponible</h1>'
+    '<p style="color:rgba(255,255,255,0.7);margin:0 0 18px">Tu peux découvrir Afroboost directement.</p>'
+    '<a href="/" style="display:inline-block;padding:12px 22px;border-radius:999px;background:rgb(217,28,210);color:rgba(255,255,255,1);'
+    'text-decoration:none;font-weight:700">Découvrir Afroboost</a></div></body></html>')
+
+
+def _page_indisponible():
+    """V610k — `/i/<jeton>` inconnu, brouillon, masqué ou supprimé : 404, corps IDENTIQUE pour
+    tous (aucun oracle). Pour un navigateur : l'application, qui affiche « Cette invitation
+    n'est plus disponible » — ou l'écran de retour de Stripe (paiement déjà engagé) ; sans
+    build : une page HTML autonome. Jamais une erreur technique."""
+    _index = _index_spa()
+    _corps = _index if _index else PAGE_INDISPONIBLE
+    return HTMLResponse(_corps, status_code=404, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                                                          "X-Robots-Tag": "noindex"})
+
+
 def _non_trouve():
     # INV-3 : 404 NEUTRE — même corps quel que soit le motif (inconnu, brouillon, archivée).
     return Response(content=b"Not Found", status_code=404, media_type="text/plain",
@@ -448,7 +470,7 @@ async def lien_court(token: str, request: Request = None, v: str = ""):
     except Exception:  # noqa: BLE001
         _doc = None
     if not _doc:
-        return _non_trouve()
+        return _page_indisponible()
     _tok = str(_doc.get("share_token"))
     _dto_pub = await _dto(_doc)
     _tq = quote(_tok, safe="")

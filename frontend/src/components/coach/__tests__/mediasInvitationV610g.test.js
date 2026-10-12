@@ -27,7 +27,7 @@ import { uploadToCloudinary } from '../../CloudinaryUploadButton';
 // eslint-disable-next-line import/first
 import AfroboostAudioPlayer, { ondeDepuis, temps, VITESSES } from '../../AfroboostAudioPlayer';
 // eslint-disable-next-line import/first
-import ChoixMedia from '../ChoixMedia';
+import ChoixMedia, { instantApercu } from '../ChoixMedia';
 // eslint-disable-next-line import/first
 import { sourcesVignette } from '../MesInvitations';
 // eslint-disable-next-line import/first
@@ -129,5 +129,25 @@ describe('V610g — vidéo publique', () => {
     const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
     v.dispatchEvent(ev);
     expect(ev.defaultPrevented).toBe(true);
+  });
+});
+
+describe('V610k — aperçu « Voir » : plus jamais un cadre noir', () => {
+  test('instant d\'aperçu : une vraie image (15 %, entre 1,5 s et la fin)', () => {
+    expect(instantApercu(21.2)).toBeCloseTo(3.18, 2);
+    expect(instantApercu(6)).toBe(1.5);
+    expect(instantApercu(1)).toBeCloseTo(0.9, 5);
+    expect(instantApercu(NaN)).toBe(0);
+  });
+  test('métadonnées chargées, placé sur une vraie image, la lecture repart du DÉBUT, cadre au ratio réel', async () => {
+    await act(async () => { render(<ChoixMedia type="video" testid="v" valeur="/api/files/v1/x.mp4" onChange={() => {}} />); });
+    const v = q('v-actuel');
+    expect(v.getAttribute('preload')).toBe('metadata');           // avant : « none » -> rien chargé, cadre noir
+    expect(v.style.width).toBe('auto'); expect(v.style.height).toBe('auto');
+    Object.defineProperty(v, 'duration', { configurable: true, get: () => 20 });
+    await act(async () => { v.dispatchEvent(new Event('loadedmetadata')); });
+    expect(v.currentTime).toBe(3);                                // 15 % de 20 s : une vraie image (pas le fondu noir)
+    await act(async () => { v.dispatchEvent(new Event('play')); });
+    expect(v.currentTime).toBe(0);                                // la lecture repart du début
   });
 });

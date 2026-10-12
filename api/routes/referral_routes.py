@@ -2109,6 +2109,18 @@ async def referral_pass_public(share_token: str):
     _dto["chain_required"] = E.chaine_requise(_p, _s, await _chaine_active())
     _dto["chain"] = E.dto_chaine_public(_p)
     _dto["invitation_type"] = E.type_invitation(_p)   # UX-P4 : badge « Essai gratuit » / « Pass Duo »
+    # V610k — le mot AUDIO de l'invitation « Essai gratuit » d'origine (P0 et descendants :
+    # `origin.campaign_id`). Seulement s'il est réellement configuré ; jamais inventé.
+    _dto["audio_url"] = None
+    _cid = E.campagne_du_pass(_p)
+    if _cid:
+        try:
+            _camp = await db["referral_campaigns"].find_one({"id": _cid}, {"_id": 0, "type": 1, "audio_url": 1})
+            _a = str((_camp or {}).get("audio_url") or "").strip()
+            if (_camp or {}).get("type") == "trial" and (_a.startswith("/api/files/") or _a.startswith("https://")):
+                _dto["audio_url"] = _a
+        except Exception as _e:  # noqa: BLE001  (l'audio est facultatif : le parcours continue)
+            logger.warning("%s audio de l'invitation non lu (%s)", PREFIXE, type(_e).__name__)
     return _dto
 
 

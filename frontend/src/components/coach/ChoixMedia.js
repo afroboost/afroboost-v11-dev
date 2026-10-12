@@ -28,12 +28,33 @@ export function urlMediaSure(u) {
   return '';
 }
 
+/** V610k — l'image montrée par l'aperçu : une VRAIE image (15 % de la durée, entre 1,5 s et
+ *  la fin) — beaucoup de vidéos s'ouvrent par un fondu depuis le noir (mesuré : luminosité
+ *  3/255 à 0 s). Rien n'est enregistré, le fichier n'est pas touché. */
+export function instantApercu(duree) {
+  const d = Number(duree);
+  if (!Number.isFinite(d) || d <= 0) return 0;
+  return Math.min(Math.max(1.5, d * 0.15), Math.max(0, d - 0.1));
+}
+
 function Lecteur({ type, url, testid }) {
   const sur = urlMediaSure(url);
   if (!sur) return null;
+  // V610k — APERÇU « Voir » / média actuel : avant, `preload="none"` sans affiche = rien n'était
+  // chargé, cadre noir. Désormais les métadonnées sont lues, l'aperçu se place sur une vraie
+  // image ; la lecture repart du DÉBUT. Le cadre suit le ratio réel (largeur / hauteur auto).
   return type === 'video'
-    ? <video data-testid={testid} src={sur} controls playsInline preload="none" controlsList="nodownload noremoteplayback"
-             style={{ display: 'block', width: '100%', maxHeight: 260, objectFit: 'contain', borderRadius: 10, background: 'rgb(0,0,0)' }} />
+    ? <video data-testid={testid} src={sur} controls playsInline preload="metadata" controlsList="nodownload noremoteplayback"
+             data-apercu="1"
+             onLoadedMetadata={(e) => {
+               const v = e.currentTarget;
+               if (v.dataset.apercu === '1' && v.currentTime === 0) { try { v.currentTime = instantApercu(v.duration); } catch (x) { /* ignore */ } }
+             }}
+             onPlay={(e) => {
+               const v = e.currentTarget;
+               if (v.dataset.apercu === '1') { v.dataset.apercu = '0'; try { v.currentTime = 0; } catch (x) { /* ignore */ } }
+             }}
+             style={{ display: 'block', width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: 300, margin: '0 auto', borderRadius: 10, background: 'rgb(0,0,0)' }} />
     : <AfroboostAudioPlayer src={sur} testidAudio={testid} compact />;
 }
 

@@ -80,7 +80,8 @@ describe('V610e — EditeurInvitation', () => {
     expect(document.body.textContent).toMatch(/Message audio après réservation \/ partage/);
     expect(document.body.textContent).toMatch(/Deviens Afroboosteur/);
     expect(document.body.textContent).not.toMatch(/Audio 1|Audio 2|Afrobooster\b/);
-    expect(q('ed-video-actuel').getAttribute('preload')).toBe('none');
+    expect(q('ed-video-actuel').getAttribute('preload')).toBe('metadata');   // V610k : « none » = cadre noir (cause du bug « Voir »)
+    expect(q('ed-video-actuel').autoplay).toBe(false);
     await act(async () => { q('edit-section-tarifs-titre').click(); });
     expect(q('ed-membres').textContent).toMatch(/Offert aux membres 8 mois actifs/);
     expect(q('ed-tarif-actif').textContent).toMatch(/25 CHF/);

@@ -630,6 +630,143 @@ MSG_EVENEMENT_PASSE = ("Cet événement est déjà passé : il ne peut pas être
                        "Modifie sa date ou crée une nouvelle invitation.")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# V610k — DUPLIQUER / SUPPRIMER (logique, réversible) / RESTAURER
+# ═══════════════════════════════════════════════════════════════════════════
+SUFFIXE_COPIE = " — Copie"
+# Une offre / un cours DÉDIÉS sont recopiés SANS ce qui appartient à l'événement d'origine.
+CHAMPS_OFFRE_NON_COPIES = ("_id", "id", "created_at", "updated_at", "visible", "linked_course_ids", IC.MARQUE_EVENEMENT,
+                           "sold", "sold_count", "ventes", "participants_count", "stripe_product_id", "stripe_price_id")
+CHAMPS_COURS_NON_COPIES = ("_id", "id", "created_at", "updated_at", "visible", "dates_annulees", IC.MARQUE_EVENEMENT,
+                           "participants", "inscrits", "reservations_count")
+
+
+def titre_copie(titre, maxi=IC.TITRE_MAX) -> str:
+    _t = str(titre or "").strip() or "Invitation"
+    if _t.endswith(SUFFIXE_COPIE.strip()):
+        return _t[:maxi]
+    return (_t[:max(1, maxi - len(SUFFIXE_COPIE))].rstrip() + SUFFIXE_COPIE)[:maxi]
+
+
+async def _copier_paire_dediee(coach, offre, cours, titre):
+    """Événement payant à paire DÉDIÉE : une NOUVELLE paire, masquée (brouillon), avec sa
+    propre marque — jamais l'offre / le cours réels de l'événement d'origine (ni leurs ventes,
+    ni leurs jours exclus). Elle ne devient vendable qu'à la publication (V610h)."""
+    _marque = "copie-%s" % uuid.uuid4().hex[:12]
+    _now = _iso()
+    _c = {k: v for k, v in cours.items() if k not in CHAMPS_COURS_NON_COPIES}
+    _c.update({"id": str(uuid.uuid4()), "visible": False, "archived": False, IC.MARQUE_EVENEMENT: _marque,
+               "name": titre, "created_at": _now, "copie_de": cours.get("id")})
+    _o = {k: v for k, v in offre.items() if k not in CHAMPS_OFFRE_NON_COPIES}
+    _o.update({"id": str(uuid.uuid4()), "visible": False, "archived": False, IC.MARQUE_EVENEMENT: _marque,
+               "linked_course_ids": [_c["id"]], "name": titre, "created_at": _now, "copie_de": offre.get("id")})
+    await _db()["courses"].insert_one(dict(_c))
+    try:
+        await _db()["offers"].insert_one(dict(_o))
+    except Exception:
+        await _db()["courses"].delete_one({"id": _c["id"], IC.MARQUE_EVENEMENT: _marque})   # rien d'orphelin
+        raise
+    return _o, _c
+
+
+@router.post("/{inv_id}/dupliquer")
+async def invitations_dupliquer(inv_id: str, request: Request):
+    """V610k — une NOUVELLE invitation en BROUILLON : nouvel id, nouveau jeton, version 1.
+    Copiés : type, textes, médias (mêmes fichiers, simplement référencés), lieu, date.
+    JAMAIS copiés : liens personnels, réservations, paiements, statistiques, chaîne, statut."""
+    _c = await _coach(request)
+    _src = await _invitation(_c, inv_id)
+    if await _db()[COLL].count_documents({"coach_id": _c["cle"], "status": {"$ne": "archived"}}) >= PLAFOND_PAR_COACH:
+        raise HTTPException(status_code=409, detail=(
+            "Limite atteinte : %d invitations en cours au maximum. Supprime celles qui ne servent plus." % PLAFOND_PAR_COACH))
+    _titre = titre_copie(_src.get("title"))
+    _doc = {k: _src.get(k) for k in IC.CHAMPS_DOCUMENT
+            if k not in ("id", "share_token", "version", "status", "created_at", "updated_at", "inviter_display")}
+    _doc["title"] = _titre
+    _paire = (None, None)
+    if _src.get("type") == "event_paid":
+        _o, _k = await _paire_dediee_de(_c, _src)
+        if _o and _k:
+            _paire = await _copier_paire_dediee(_c, _o, _k, _titre)
+            _doc["offer_id"], _doc["course_id"] = _paire[0]["id"], _paire[1]["id"]
+    _now = _iso()
+    _doc.update({"id": str(uuid.uuid4()), "coach_id": _c["cle"], "status": "draft", "version": 1,
+                 "inviter_display": await _identite(_c), "created_at": _now, "updated_at": _now})
+    for _essai in range(ESSAIS_JETON):
+        _doc["share_token"] = secrets.token_urlsafe(24)
+        _ecrit = {k: _doc.get(k) for k in IC.CHAMPS_DOCUMENT}    # schéma fermé
+        _ecrit["copie_de"] = _src["id"]
+        try:
+            await _db()[COLL].insert_one(dict(_ecrit))
+            break
+        except Exception as _err:  # noqa: BLE001
+            if R._est_doublon(_err) and _essai < ESSAIS_JETON - 1:
+                continue
+            if _paire[0]:
+                await _db()["offers"].delete_one({"id": _paire[0]["id"], "copie_de": {"$exists": True}, "visible": False})
+                await _db()["courses"].delete_one({"id": _paire[1]["id"], "copie_de": {"$exists": True}, "visible": False})
+            logger.error("%s duplication impossible (%s)", PREFIXE, type(_err).__name__)
+            raise HTTPException(status_code=503, detail="Copie non créée, réessaie dans un instant.")
+    logger.info("%s invitation %s dupliquée -> %s (%s, paire dédiée copiée : %s)", PREFIXE, _src["id"][:8],
+                _ecrit["id"][:8], _ecrit.get("type"), bool(_paire[0]))
+    await _suivre(_ecrit, "invitation_creee")
+    return JSONResponse(status_code=201, content=await _dto(_ecrit))
+
+
+async def _donnees_liees(doc) -> dict:
+    """Ce qui rattache une invitation à de l'historique RÉEL (rien n'est modifié)."""
+    _id = doc.get("id")
+    _n = {"liens_personnels": 0, "statistiques": 0, "reservations": 0}
+    try:
+        _n["liens_personnels"] = await _db()["invitation_relais"].count_documents({"campagne_id": _id})
+        _n["statistiques"] = await _db()["invitation_events"].count_documents(
+            {"campagne_id": _id, "evenement": {"$nin": ["invitation_creee", "lien_active"]}})   # gestes du coach exclus
+        if doc.get("course_id"):
+            _n["reservations"] = await _db()["reservations"].count_documents(
+                {"$or": [{"courseId": doc["course_id"]}, {"course_id": doc["course_id"]}],
+                 "source": {"$in": ["paid_event_auto", "member_free_event"]}}) if doc.get("type") == "event_paid" else 0
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("%s données liées illisibles (%s)", PREFIXE, type(_e).__name__)
+    _n["a_des_donnees"] = any(_n[k] for k in ("liens_personnels", "statistiques", "reservations")) or doc.get("status") != "draft"
+    return _n
+
+
+@router.get("/{inv_id}/donnees-liees")
+async def invitations_donnees_liees(inv_id: str, request: Request):
+    _c = await _coach(request)
+    return await _donnees_liees(await _invitation(_c, inv_id))
+
+
+@router.post("/{inv_id}/supprimer")
+async def invitations_supprimer(inv_id: str, request: Request):
+    """V610k — SUPPRESSION LOGIQUE, toujours (jamais d'effacement) : l'invitation est
+    archivée (hors de la liste, lien public « plus disponible », offre / cours dédiés
+    masqués) et marquée `supprimee_le` ; réservations, paiements, liens personnels, chaîne
+    et statistiques restent intacts. Restaurable (en brouillon) depuis la corbeille."""
+    _c = await _coach(request)
+    _d = await _invitation(_c, inv_id)
+    _donnees = await _donnees_liees(_d)
+    if _d.get("status") != "archived":
+        _d = await _hors_ligne(_c, _d, "archived")
+    await _db()[COLL].update_one({"id": _d["id"], "coach_id": _c["cle"]}, {"$set": {"supprimee_le": _iso()}})
+    logger.info("%s invitation %s supprimée (logique) — données conservées : %s", PREFIXE, _d["id"][:8], _donnees)
+    return {"supprimee": True, "definitive": False, "donnees_conservees": _donnees}
+
+
+@router.post("/{inv_id}/restaurer")
+async def invitations_restaurer(inv_id: str, request: Request):
+    """V610k — corbeille -> BROUILLON (jamais republiée automatiquement)."""
+    _c = await _coach(request)
+    _d = await _invitation(_c, inv_id)
+    if _d.get("status") != "archived":
+        return await _dto(_d)
+    if await _db()[COLL].count_documents({"coach_id": _c["cle"], "status": {"$ne": "archived"}}) >= PLAFOND_PAR_COACH:
+        raise HTTPException(status_code=409, detail="Limite atteinte : supprime d'abord une invitation en cours.")
+    await _db()[COLL].update_one({"id": _d["id"], "coach_id": _c["cle"], "status": "archived"},
+                                 {"$set": {"status": "draft", "updated_at": _iso()}, "$unset": {"supprimee_le": ""}})
+    return await _dto(await _invitation(_c, _d["id"]))
+
+
 @router.post("/{inv_id}/archive")
 async def invitations_archiver(inv_id: str, request: Request):
     _c = await _coach(request)

@@ -9,7 +9,7 @@
  * `testidAudio` / `testidBouton` : identifiants stables (bancs existants).
  * Libellés du bouton : « Écouter le message » -> « Pause » -> « Reprendre le message ».
  */
-import React, { useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import SvgIcon from './SvgIcon';
 
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
@@ -35,7 +35,12 @@ export function temps(s) {
   return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
 }
 
-export default function AfroboostAudioPlayer({ src, titre = '', testidAudio, testidBouton, compact = false, inerte = false }) {
+/**
+ * V610k — `ref.lire()` / `ref.pause()` : un parcours peut lancer le message PENDANT un geste
+ * de l'utilisateur (seule façon d'avoir le son sur Safari). `lire()` rend la promesse de
+ * play() : refusée -> le lecteur reste tel quel, « Écouter le message » (jamais bloquant).
+ */
+function AfroboostAudioPlayer({ src, titre = '', testidAudio, testidBouton, compact = false, inerte = false, preload = 'none' }, refExterne) {
   const ref = useRef(null);
   const [etat, setEtat] = useState('arret');     // 'arret' | 'lecture' | 'pause'
   const [pos, setPos] = useState(0);
@@ -64,6 +69,17 @@ export default function AfroboostAudioPlayer({ src, titre = '', testidAudio, tes
     a.currentTime = f * duree;
     setPos(a.currentTime);
   };
+  useImperativeHandle(refExterne, () => ({
+    lire: () => {
+      const a = ref.current;
+      if (!a || inerte) return Promise.reject(new Error('indisponible'));
+      const p = a.play();
+      if (p && typeof p.then === 'function') return p.then(() => { setEtat('lecture'); }).catch((e) => { setEtat('arret'); throw e; });
+      setEtat('lecture'); return Promise.resolve();
+    },
+    pause: () => { const a = ref.current; if (a && !a.paused) a.pause(); },
+  }), [inerte]);
+
   const changerVitesse = () => {
     const i = (VITESSES.indexOf(vitesse) + 1) % VITESSES.length;
     setVitesse(VITESSES[i]);
@@ -100,7 +116,7 @@ export default function AfroboostAudioPlayer({ src, titre = '', testidAudio, tes
                 color: 'rgba(255,255,255,1)', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>
         {`${vitesse}x`}
       </button>
-      <audio ref={ref} src={src} preload="none" data-testid={testidAudio}
+      <audio ref={ref} src={src} preload={preload} data-testid={testidAudio}
              onLoadedMetadata={(e) => setDuree(e.currentTarget.duration || 0)} onDurationChange={(e) => setDuree(e.currentTarget.duration || 0)}
              onTimeUpdate={(e) => setPos(e.currentTarget.currentTime || 0)}
              onEnded={() => { setEtat('arret'); setPos(0); }}
@@ -108,3 +124,5 @@ export default function AfroboostAudioPlayer({ src, titre = '', testidAudio, tes
     </div>
   );
 }
+
+export default forwardRef(AfroboostAudioPlayer);

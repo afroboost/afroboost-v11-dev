@@ -41,6 +41,19 @@ export function masquerInvitation(id) {
 export function reactiverInvitation(id) {
   return axios.post(`${API}/referral/campaigns/${encodeURIComponent(id)}/reactiver`, {}, { timeout: 20000 }).then((r) => r.data);
 }
+// V610k — dupliquer (nouveau brouillon indépendant), supprimer (logique), restaurer (brouillon).
+export function dupliquerInvitation(id) {
+  return axios.post(`${API}/referral/campaigns/${encodeURIComponent(id)}/dupliquer`, {}, { timeout: 20000 }).then((r) => r.data);
+}
+export function donneesLiees(id) {
+  return axios.get(`${API}/referral/campaigns/${encodeURIComponent(id)}/donnees-liees`, { timeout: 20000 }).then((r) => r.data);
+}
+export function supprimerInvitation(id) {
+  return axios.post(`${API}/referral/campaigns/${encodeURIComponent(id)}/supprimer`, {}, { timeout: 20000 }).then((r) => r.data);
+}
+export function restaurerInvitation(id) {
+  return axios.post(`${API}/referral/campaigns/${encodeURIComponent(id)}/restaurer`, {}, { timeout: 20000 }).then((r) => r.data);
+}
 export function lireChaine(id) {
   return axios.get(`${API}/referral/campaigns-relais/${encodeURIComponent(id)}/chaine`, { timeout: 20000 }).then((r) => r.data);
 }

@@ -37,6 +37,7 @@ import {
   creerInvitationSuivante, // V607g : « Inviter encore » = une NOUVELLE invitation
 } from '../../utils/parrainage';
 import { suivreInvitation } from '../../utils/invitationSuivi';
+import AfroboostAudioPlayer from '../AfroboostAudioPlayer'; // V610k : le mot audio de l'invitation
 import './invitationWizard.css';
 import './wizardFilleul.css';
 
@@ -101,6 +102,18 @@ export default function ParcoursEssai({
   const [info, setInfo] = useState('');
   const [avis, setAvis] = useState('');
   const enVol = useRef(false);
+  // V610k — le MOT AUDIO de l'invitation (s'il existe) : UN lecteur, monté dès l'accueil (caché),
+  // lancé PENDANT le clic « Valider ma séance » (geste utilisateur : condition du son sur
+  // Safari / Chrome). Une seule tentative automatique par arrivée ; jamais en boucle ;
+  // refus du navigateur -> le lecteur reste visible avec « Écouter le message ».
+  const audioUrl = (pass && typeof pass.audio_url === 'string' && /^(\/api\/files\/|https:\/\/)/.test(pass.audio_url)) ? pass.audio_url : '';
+  const audioRef = useRef(null);
+  const audioTente = useRef(false);
+  const lancerAudio = () => {
+    if (!audioUrl || audioTente.current || !audioRef.current) return;
+    audioTente.current = true;
+    audioRef.current.lire().catch(() => { /* bloqué : le lecteur visible prend le relais */ });
+  };
   const childRef = useRef(null);
   childRef.current = child;
 
@@ -156,22 +169,44 @@ export default function ParcoursEssai({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surPret, aUnChild, token]);
 
+  // V610k : arrivée DIRECTE sur « Ton essai est prêt » (page rechargée, lien rouvert) : une
+  // tentative sans geste — souvent refusée par le navigateur, le lecteur visible suffit alors.
+  useEffect(() => {
+    if (surPret && audioUrl && !audioTente.current) {
+      const t = setTimeout(lancerAudio, 0);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [surPret, audioUrl]);
+  // UN SEUL lecteur, en PREMIER enfant (même clé) de l'accueil ET de « Ton essai est prêt » :
+  // React garde le même élément audio d'un écran à l'autre (la lecture lancée au clic continue).
+  const blocAudio = audioUrl && !confirme ? (
+    <div key="wf-audio-essai" data-testid="wf-audio-essai" style={{ display: surPret ? 'block' : 'none', margin: '0 0 12px' }}>
+      <AfroboostAudioPlayer ref={audioRef} src={audioUrl} preload="auto" compact
+                            titre={prenom ? `Un mot de ${prenom}` : 'Un mot pour toi'}
+                            testidAudio="wf-audio-essai-audio" testidBouton="wf-audio-essai-bouton" />
+    </div>
+  ) : null;
+
   // ── 1. Valider MA séance ──
   const seancesCal = seancesPourCalendrier(opts);
   const plusieurs = seancesCal.length > 1;
-  const valider = () => {
+  const valider = (choixForce) => {
     if (validation) return;
     setErreurSeance('');
+    lancerAudio();                                   // V610k : DANS le geste de l'utilisateur
+    const c = (choixForce && choixForce.occurrence) ? choixForce : choix;
     const actuelle = seanceDuPass(pass);
-    const change = choix.occurrence && (choix.occurrence !== actuelle.occurrence
-      || (choix.course_id && choix.course_id !== actuelle.course_id));
+    const change = c.occurrence && (c.occurrence !== actuelle.occurrence
+      || (c.course_id && c.course_id !== actuelle.course_id));
     if (!change) {
       suivreInvitation(token, 'seance_choisie');
       setEcran('pret');
       return;
     }
     setValidation(true);
-    changerSeance({ token, occurrence: choix.occurrence, course_id: choix.course_id, version: pass && pass.version })
+    changerSeance({ token, occurrence: c.occurrence, course_id: c.course_id, version: pass && pass.version })
       .then((r) => {
         const d = (r && r.data) || {};
         if (typeof onPass === 'function' && d.occurrence) onPass(d);
@@ -180,6 +215,10 @@ export default function ParcoursEssai({
       })
       .catch((e) => {
         const refus = lireRefus(e);
+        // V610k : on reste sur l'accueil -> le message ne joue pas en coulisse ; il repartira
+        // au prochain « Valider ma séance ».
+        if (audioRef.current) audioRef.current.pause();
+        audioTente.current = false;
         setErreurSeance(messageRefusMaSeance(refus));
         if (refus.raison === 'conflit_version') {
           // UNE relecture du pass (version à jour), jamais en boucle.
@@ -404,6 +443,7 @@ export default function ParcoursEssai({
   if (ecran === 'pret' || ecran === 'inscription') {
     return (
       <div className="cp-wf" data-testid="wf-essai-pret">
+        {blocAudio}
         <h2 className="cp-wf-titre">Ton essai est prêt !</h2>
         <LigneSeance seance={maSeance} />
         <p className="cp-wf-aide" data-testid="wf-essai-pret-texte">
@@ -473,6 +513,7 @@ export default function ParcoursEssai({
   // ── 1. ACCUEIL : qui m'invite, Afroboost, MA séance ─────────────────────
   return (
     <div className="cp-wf" data-testid="wf-essai-accueil">
+      {blocAudio}
       <CarteInvitation testid="wf-invitation-recue" prenom={prenom} photo={photo} type="trial"
                        occurrence={choix.occurrence} cours={choix.nom} lieu={choix.lieu} />
       <p className="cp-wf-rappel" data-testid="wf-pitch">
@@ -493,16 +534,19 @@ export default function ParcoursEssai({
           open
           onClose={() => setCalendrier(false)}
           occurrencesFournies={seancesCal}
-          libelleAction="Choisir cette séance"
-          noteAction="C’est ta séance d’essai : tu la valides à l’étape suivante."
+          libelleAction="Valider ma séance"
+          noteAction="C’est ta séance d’essai : tu passes directement à ton essai."
           onReserve={(occ) => {
             if (!occ || !occ.iso) return;
-            setChoix({ course_id: occ.id, occurrence: occ.iso, nom: occ.nom || '', lieu: occ.lieu || '' });
+            // V610k : choisir ICI vaut validation — plus de retour à l'accueil pour revalider.
+            const nouveau = { course_id: occ.id, occurrence: occ.iso, nom: occ.nom || '', lieu: occ.lieu || '' };
+            setChoix(nouveau);
             setErreurSeance(''); setCalendrier(false);
+            valider(nouveau);
           }}
         />
       ) : null}
-      <button type="button" className="cp-b cp-wz-cible cp-wf-cta" onClick={valider} disabled={validation || !choix.occurrence}
+      <button type="button" className="cp-b cp-wz-cible cp-wf-cta" onClick={() => valider()} disabled={validation || !choix.occurrence}
               data-testid="wf-valider-seance">
         {validation ? 'Un instant…' : 'Valider ma séance'} <SvgIcon name="arrowRight" size={20} />
       </button>
