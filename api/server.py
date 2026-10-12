@@ -32426,6 +32426,7 @@ def v611_contexte_commercial(contexte: dict, fiches=None) -> dict:
         "format_en_ligne_pertinent": en_ligne,
         "collaboration_future_a_discuter": not refus,
         "agenda": v612_agenda(c, fiches, ville),      # V612
+        "situation": v614_situation(c, fiches, local=(hors_ne is False)),     # V614
     }
 
 
@@ -32462,6 +32463,7 @@ def v611_bloc_invite(cc: dict) -> str:
     else:
         lignes += ["- Pas de seance decouverte gratuite ni de frais de deplacement a proposer dans ce dossier."]
     lignes += ["", v612_bloc_invite(cc.get("agenda") or {}), ""]      # V612
+    lignes += [v614_bloc_invite(cc.get("situation") or {}, cc.get("refus")), ""]      # V614
     if cc["format_en_ligne_pertinent"]:
         lignes += ["- Le format Afroboost EN LIGNE peut etre mentionne : la distance n'est plus un obstacle, aucun",
                    "  deplacement, participation depuis differentes regions. Aucune promesse de sante ou medicale."]
@@ -32608,7 +32610,8 @@ def v612_agenda(contexte: dict, fiches=None, ville="") -> dict:
 def v612_bloc_invite(ag: dict) -> str:
     """Le passage d'invite « disponibilités ». PURE. La contrainte est INTERNE : jamais citée."""
     ag = ag or {}
-    lignes = ["DISPONIBILITES DE COACH BASSI (contrainte INTERNE, ne l'explique jamais, ne cite jamais ses cours) :",
+    lignes = ["DISPONIBILITES DE COACH BASSI (contrainte INTERNE, ne l'explique jamais, ne cite jamais ses cours "
+              "comme raison d'une indisponibilite ; inviter a DECOUVRIR un cours regulier reste permis) :",
               "- Mercredi et dimanche : une intervention sur place n'est possible que LE MATIN, seance terminee",
               "  AVANT MIDI, et seulement a 2 h de trajet maximum depuis Neuchatel. Jamais l'apres-midi ni le soir.",
               "  Formule simplement : « Le mercredi, je peux me deplacer le matin. » / « Le dimanche matin pourrait",
@@ -32634,13 +32637,15 @@ def v612_controle_brouillon(texte, agenda: dict) -> list:
     """Ce qui, dans le brouillon, sort des contraintes d'agenda → validation humaine. PURE."""
     t = p3ai_sans_accents(texte or "").lower()
     motifs = []
-    if any(x in t for x in ("18h45", "18h30", "18:45", "18:30", "mon cours", "mes cours", "autre cours",
-                            "meinen kurs", "anderen kurs", "my class")):
+    if any(x in t for x in ("mon cours", "mes cours", "autre cours", "je dois rentrer", "etre de retour",
+                            "rentrer pour", "meinen kurs", "anderen kurs", "my class", "zuruck sein")):
         motifs.append("contrainte interne citée")
     trajet = {"connu": (agenda or {}).get("trajet_connu"), "minutes": (agenda or {}).get("trajet_min"),
               "incertain": (agenda or {}).get("trajet_ok") == "A VERIFIER"}
     for x in v612_creneaux(texte):
         if x["jour"] not in V612_JOURS_CONTRAINTS:
+            continue
+        if x["heure_min"] in (18 * 60 + 45, 18 * 60 + 30):      # V614 : invitation au cours régulier
             continue
         v = v612_verdict(x, trajet)
         if v["compatible"] == "NON":
@@ -32648,6 +32653,125 @@ def v612_controle_brouillon(texte, agenda: dict) -> list:
         elif v["compatible"] == "A VERIFIER" and "a verifier" not in t and "a confirmer" not in t \
                 and "zu bestatigen" not in t and "to be confirmed" not in t:
             motifs.append("date non vérifiée présentée comme ferme")
+    return sorted(set(motifs))
+
+
+# --- V614 — PARTENAIRES LOCAUX, AUTRES DATES, SAISONS (générateur IA) ----------------------------
+# Local (canton NE) : d'abord INVITER à découvrir un cours régulier (mercredi 18h45, dimanche 18h30) ;
+# une séance chez le partenaire / une autre date reste possible SELON L'AGENDA (jamais de dispo inventée ;
+# les prochains mois sont en cours de planification). Hiver : chez le partenaire s'il a une SALLE (jamais
+# supposée, sauf école de danse / fitness) ; été : extérieur possible, sans affirmer qu'un lieu est autorisé.
+# Saison lue UNIQUEMENT dans le fil (mois, « cet été »…) ; sinon neutre.
+V614_MOIS = {
+    "janvier": 1, "januar": 1, "january": 1, "fevrier": 2, "februar": 2, "february": 2, "mars": 3, "marz": 3,
+    "march": 3, "avril": 4, "april": 4, "mai": 5, "may": 5, "juin": 6, "juni": 6, "june": 6, "juillet": 7,
+    "juli": 7, "july": 7, "aout": 8, "august": 8, "septembre": 9, "september": 9, "octobre": 10,
+    "oktober": 10, "october": 10, "novembre": 11, "november": 11, "decembre": 12, "dezember": 12, "december": 12}
+V614_ETE = (6, 7, 8)
+V614_HIVER = (12, 1, 2)
+_V614_RE_MOIS = re.compile(r"\b(" + "|".join(V614_MOIS) + r")\b")
+_V614_RE_DATE = re.compile(r"\b([0-3]?\d)[./]([01]?\d)(?:[./](?:20)?\d\d)?\b")
+V614_CHEZ_LUI = ("chez nous", "dans nos locaux", "dans notre salle", "dans notre structure", "pour notre equipe",
+                 "pour nos membres", "pour nos eleves", "pour notre public", "venir chez", "venir a ", "nous accueillir",
+                 "bei uns", "in unseren raumen", "unser team", "fur unsere", "at our", "for our team", "come to us")
+V614_SALLE_OUI = ("salle", "gymnase", "local ", "nos locaux", "studio", "halle", "saal", "turnhalle", "raum", "room", "gym")
+V614_SALLE_NON = ("pas de salle", "sans salle", "pas de local", "keine halle", "keinen raum", "no room", "no hall")
+_V614_RE_DATE_BROUILLON = re.compile(r"\b(?:le |am |on )?(?:" + "|".join(V612_JOURS) + r")?\s*([0-3]?\d)(?:er)?\s+(" +
+                                     "|".join(V614_MOIS) + r")\b")
+
+
+def v614_saison(texte) -> str:
+    """« ete » / « hiver » / « » (neutre). PURE ; uniquement ce que dit le texte."""
+    t = p3ai_sans_accents(texte or "").lower()
+    if any(x in t for x in ("cet ete", "en ete", "l'ete", "sommer", "summer")):
+        return "ete"
+    if any(x in t for x in ("cet hiver", "en hiver", "l'hiver", "winter")):
+        return "hiver"
+    mois = [V614_MOIS[m.group(1)] for m in _V614_RE_MOIS.finditer(t)]
+    mois += [int(m.group(2)) for m in _V614_RE_DATE.finditer(t) if 1 <= int(m.group(2)) <= 12 and 1 <= int(m.group(1)) <= 31]
+    if mois and all(m in V614_ETE for m in mois):
+        return "ete"
+    if mois and all(m in V614_HIVER for m in mois):
+        return "hiver"
+    return ""
+
+
+def v614_situation(contexte: dict, fiches=None, local: bool = None) -> dict:
+    """Le rapport interne V614 (local, chez lui, autre date, saison, salle, extérieur). PURE."""
+    c = contexte or {}
+    recu = p3ai_sans_accents(c.get("body_text") or "").lower()
+    fil = p3ai_sans_accents(" ".join([c.get("body_text") or ""] + [x.get("texte") or "" for x in c.get("fil") or []])).lower()
+    categories = {(f.get("category") or "") for f in fiches or []}
+    chez_lui = any(x in recu for x in V614_CHEZ_LUI)
+    if any(x in recu for x in V614_SALLE_NON):
+        salle = "NON"
+    elif any(x in recu for x in V614_SALLE_OUI) or categories & {"ecole_danse", "fitness"}:
+        salle = "OUI"
+    else:
+        salle = "INCONNU"
+    saison = v614_saison(fil)
+    creneaux = v612_creneaux(c.get("body_text"))
+    date_proposee = bool(creneaux) or bool(_V614_RE_MOIS.search(recu)) or bool(_V614_RE_DATE.search(recu))
+    autre_date = date_proposee and not all(
+        x["jour"] in V612_JOURS_CONTRAINTS and x["heure_min"] in (18 * 60 + 45, 18 * 60 + 30) for x in creneaux or [{}]) \
+        if creneaux else date_proposee
+    return {
+        "local_neuchatel": bool(local),
+        "veut_seance_chez_lui": chez_lui,
+        "date_proposee": date_proposee,
+        "saison": saison or "inconnue",
+        "salle_disponible": salle,
+        "exterieur_possible": "OUI" if saison == "ete" else ("NON" if saison == "hiver" else "A VERIFIER"),
+        "cours_regulier_a_proposer": bool(local),
+        "autre_date_a_discuter": bool(chez_lui or autre_date),
+    }
+
+
+def v614_bloc_invite(sit: dict, refus: bool = False) -> str:
+    """Passage d'invite V614. PURE. Aucune disponibilité ni autorisation inventée."""
+    if not sit or refus:
+        return ""
+    L = ["LIEU, DATES ET SAISON :"]
+    if sit.get("local_neuchatel"):
+        L += ["- Partenaire LOCAL (region de Neuchatel) : ne propose PAS de venir gratuitement chez lui en premier.",
+              "  Propose D'ABORD de venir decouvrir Afroboost pendant un cours regulier, le mercredi a 18h45 ou",
+              "  le dimanche a 18h30, a Neuchatel, pour voir le concept, l'ambiance et la reaction du public.",
+              "  Ne donne aucune date precise."]
+    if sit.get("autre_date_a_discuter") or sit.get("veut_seance_chez_lui"):
+        L += ["- Une seance chez le partenaire ou a une autre date est POSSIBLE SI L'AGENDA LE PERMET : ne dis jamais",
+              "  que c'est impossible, n'invente aucune disponibilite. Tu peux dire : « Nous sommes actuellement en",
+              "  train de planifier nos prochaines disponibilites pour les mois a venir, donc nous pouvons aussi",
+              "  regarder ensemble un creneau adapte. »"]
+    if sit.get("saison") == "hiver":
+        L += (["- Hiver : une seance dans sa structure est possible (le partenaire dispose d'une salle)."]
+              if sit.get("salle_disponible") == "OUI" else
+              ["- Hiver : une seance dans sa structure est possible SEULEMENT avec une salle adaptee ; on ne sait pas",
+               "  s'il en a une : demande-le, ne le suppose pas."])
+    elif sit.get("saison") == "ete":
+        L += ["- Ete : la seance peut aussi se faire en EXTERIEUR (parc, cour, terrain, espace adapte), sans salle.",
+              "  N'affirme JAMAIS qu'un lieu public est disponible ou autorise."]
+    else:
+        L += ["- Saison non precisee : reste neutre sur le lieu (salle ou exterieur selon la periode)."]
+    return "\n".join(L)
+
+
+def v614_controle_brouillon(texte, contexte: dict, sit: dict) -> list:
+    """Brouillon hors V614 → validation. PURE."""
+    t = p3ai_sans_accents(texte or "").lower()
+    recu = p3ai_sans_accents(" ".join([(contexte or {}).get("body_text") or ""]
+                                      + [x.get("texte") or "" for x in (contexte or {}).get("fil") or []])).lower()
+    motifs = []
+    if any(x in t for x in ("autorisation obtenue", "est autorise", "sont autorises", "avons l'autorisation",
+                            "le parc est disponible", "lieu est reserve", "j'ai reserve", "bewilligung erhalten")):
+        motifs.append("lieu ou autorisation non vérifiés")
+    for m in _V614_RE_DATE_BROUILLON.finditer(t):
+        if m.group(0).strip() not in recu and ("%s %s" % (m.group(1), m.group(2))) not in recu:
+            motifs.append("date inventée")
+            break
+    if (sit or {}).get("saison") == "hiver" and (sit or {}).get("salle_disponible") != "OUI" and \
+            any(x in t for x in ("dans votre salle", "dans vos locaux", "in ihrer halle", "in your hall")) and \
+            not any(x in t for x in ("si vous disposez", "disposez-vous", "avez-vous", "haben sie", "do you have")):
+        motifs.append("salle supposée")
     return sorted(set(motifs))
 
 
@@ -32886,7 +33010,8 @@ def p3ai_brouillon_depuis(contexte: dict, sortie: dict, viewer: str,
     sensibles = sorted(set(p3ai_sujets_sensibles(c.get("body_text"))
                            + p3ai_sujets_sensibles(reponse)
                            + v611_controle_brouillon(reponse, c, c.get("contexte_commercial") or {})
-                           + v612_controle_brouillon(reponse, (c.get("contexte_commercial") or {}).get("agenda") or {})))
+                           + v612_controle_brouillon(reponse, (c.get("contexte_commercial") or {}).get("agenda") or {})
+                           + v614_controle_brouillon(reponse, c, (c.get("contexte_commercial") or {}).get("situation") or {})))
     return {
         "id": str(uuid.uuid4()),
         "inbound_id": c.get("inbound_id") or "",
