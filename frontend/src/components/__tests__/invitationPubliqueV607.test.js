@@ -71,8 +71,9 @@ describe('InvitationPublique — rendu par type', () => {
     expect(screen.getByTestId('inv-pub-palier-early_bird').getAttribute('data-actif')).toBe('1');
     expect(screen.getByTestId('inv-pub-urgence').textContent).toMatch(/^35 CHF dès le /);  // V610i : bascule sans répéter la date de l'événement
     const v = screen.getByTestId('inv-pub-video');
-    expect(v.autoplay).toBe(false);
-    expect(v.getAttribute('preload')).toBe('metadata');   // V610i : métadonnées seules -> le cadre prend le ratio réel
+    expect(v.autoplay).toBe(true);                         // V610j : lecture automatique MUETTE, en boucle
+    expect(v.muted).toBe(true);
+    expect(v.loop).toBe(true);
     expect(screen.getByTestId('inv-pub-audio')).toBeTruthy();
     expect(document.querySelector('audio').autoplay).toBe(false);
     // suivi : lien ouvert (honnête, jamais « envoyé »)

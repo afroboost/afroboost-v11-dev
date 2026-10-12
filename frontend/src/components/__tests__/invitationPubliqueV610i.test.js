@@ -50,10 +50,28 @@ describe('V610i — lecteur vidéo adaptatif', () => {
     expect(cadre.style.aspectRatio.replace(/\s/g, '')).toBe(`${l}/${h}`);
     expect(v.getAttribute('poster')).toBe('/p.jpg');                 // l'affiche occupe le même cadre que la vidéo
     expect(v.style.width).toBe('100%'); expect(v.style.height).toBe('100%');
-    expect(v.style.objectFit).toBe('contain');                        // jamais de recadrage forcé
-    expect(v.autoplay).toBe(false);
+    expect(v.style.objectFit).toBe('cover');                          // V610j : cadre = ratio vidéo -> rien de recadré, l'affiche remplit le cadre
+    expect(v.autoplay).toBe(false);                                   // hors page publique (aperçu) : pas d'autoplay
     expect(v.getAttribute('controlslist')).toBe('nodownload noremoteplayback');
     expect(v.hasAttribute('controls')).toBe(true);
+  });
+});
+
+describe('V610j — lecture automatique en boucle (page publique)', () => {
+  test('autoplay MUET + loop + playsInline, contrôles (son activable), un seul lecteur', async () => {
+    const play = jest.spyOn(window.HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    try {
+      await act(async () => { rendre(<VideoAdaptative src="/v.mp4" poster="/p.jpg" titre="T" auto />); });
+      const v = q('inv-pub-video');
+      expect(v.autoplay).toBe(true);
+      expect(v.muted).toBe(true);
+      expect(v.loop).toBe(true);
+      expect(v.hasAttribute('playsinline')).toBe(true);
+      expect(v.hasAttribute('controls')).toBe(true);
+      expect(v.getAttribute('controlslist')).toBe('nodownload noremoteplayback');
+      expect(play).toHaveBeenCalledTimes(1);
+      expect(document.querySelectorAll('video')).toHaveLength(1);
+    } finally { play.mockRestore(); }
   });
 });
 

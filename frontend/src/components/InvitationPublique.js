@@ -28,6 +28,10 @@ import { lireSession, urlDeLaSession } from '../utils/espaceSession';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
 const rgbaP = (a) => `rgba(var(--primary-rgb, 217, 28, 210), ${a})`;
+// V610j — UNE colonne pour tout (vidéo, contenu, bouton) : compacte et centrée sur ordinateur,
+// presque pleine largeur sur téléphone ; le bouton s'aligne sur le contenu (marges de 16 px).
+const COLONNE = '440px';
+const COLONNE_INTERIEURE = '408px';   // COLONNE − 2 × 16 px de marge
 
 function maj(t) {
   const s = String(t || '').trim();
@@ -114,8 +118,20 @@ export function libelleRatio(l, h) {
  * largeur. Jamais de recadrage forcé (contain sur un cadre du MÊME ratio = aucune bande).
  * Pas d'autoplay ; aucun « Télécharger » proposé (frein d'interface, pas un DRM).
  */
-export function VideoAdaptative({ src, poster, titre }) {
+export function VideoAdaptative({ src, poster, titre, auto = false }) {
   const [dim, setDim] = useState(null);          // {l, h} de la VIDÉO
+  const videoRef = useRef(null);
+  // V610j — LECTURE AUTOMATIQUE EN BOUCLE (page publique) : muette au départ (seul autoplay
+  // que les navigateurs autorisent), `playsInline` (iOS), `loop` ; le son s'active par les
+  // contrôles. React ne pose pas toujours l'attribut `muted` : il est forcé ici, puis play().
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!auto || !v) return;
+    v.muted = true;
+    v.defaultMuted = true;
+    const p = v.play();
+    if (p && typeof p.catch === 'function') p.catch(() => { /* bloqué : l'affiche reste, Lecture au clic */ });
+  }, [auto, src]);
   const [dimAffiche, setDimAffiche] = useState(null);
   useEffect(() => {
     if (!poster || dim) return undefined;
@@ -131,14 +147,17 @@ export function VideoAdaptative({ src, poster, titre }) {
     <div data-testid="inv-pub-video-cadre" data-ratio={libelleRatio(d.l, d.h)} data-source-ratio={dim ? 'video' : (dimAffiche ? 'affiche' : 'defaut')}
          style={{ width: `min(100%, calc(78vh * ${ratio.toFixed(4)}))`, aspectRatio: `${d.l} / ${d.h}`, margin: '0 auto 14px',
            borderRadius: '16px', overflow: 'hidden', background: 'rgb(0,0,0)', border: `1px solid ${rgbaP(0.25)}` }}>
-      <video data-testid="inv-pub-video" src={src} poster={poster || undefined} controls playsInline preload="metadata"
+      <video ref={videoRef} data-testid="inv-pub-video" src={src} poster={poster || undefined} controls playsInline
+             preload={auto ? 'auto' : 'metadata'} autoPlay={auto} muted={auto} loop={auto}
              aria-label={titre || 'Vidéo de l’invitation'}
              controlsList="nodownload noremoteplayback" disableRemotePlayback onContextMenu={(e) => e.preventDefault()}
              onLoadedMetadata={(e) => {
                const v = e.currentTarget;
                if (v.videoWidth && v.videoHeight) setDim({ l: v.videoWidth, h: v.videoHeight });
              }}
-             style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain', background: 'rgb(0,0,0)' }} />
+             // V610j : `cover` sur un cadre AU RATIO DE LA VIDÉO = la vidéo n'est pas recadrée, et
+             // l'affiche remplit EXACTEMENT le même cadre (jamais étirée, jamais de bandes).
+             style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover', background: 'rgb(0,0,0)' }} />
     </div>
   );
 }
@@ -289,7 +308,7 @@ export default function InvitationPublique({ token, apercu }) {
   if (retour && retour.ok && !etat.charge) {
     return (
       <div style={cadre} data-testid="inv-pub">
-        <main style={{ maxWidth: '560px', margin: '0 auto', padding: '28px 16px 40px', boxSizing: 'border-box' }}>
+        <main style={{ maxWidth: COLONNE, margin: '0 auto', padding: '28px 16px 40px', boxSizing: 'border-box' }}>
           <ConfirmationReservation cs={retour.cs} d={etat.d} />
         </main>
       </div>
@@ -364,7 +383,7 @@ export default function InvitationPublique({ token, apercu }) {
 
   return (
     <div style={cadre} data-testid="inv-pub">
-      <main style={{ maxWidth: '560px', margin: '0 auto', padding: '16px 16px 120px', boxSizing: 'border-box' }}>
+      <main style={{ maxWidth: COLONNE, margin: '0 auto', padding: '16px 16px 120px', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
           {photo ? <img src={photo} alt="" width="40" height="40" style={{ width: '40px', height: '40px', borderRadius: '999px', objectFit: 'cover', border: `2px solid ${PRIMAIRE}` }} />
             : <span style={{ width: '40px', height: '40px', borderRadius: '999px', background: rgbaP(0.25), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: PRIMAIRE }}><SvgIcon name="user" size={18} /></span>}
@@ -377,7 +396,7 @@ export default function InvitationPublique({ token, apercu }) {
           </p>
         ) : null}
 
-        {video ? <VideoAdaptative src={video} poster={image} titre={titre} /> : (image ? (
+        {video ? <VideoAdaptative src={video} poster={image} titre={titre} auto={!enApercu} /> : (image ? (
           <div style={{ borderRadius: '16px', overflow: 'hidden', marginBottom: '14px' }}>
             <img data-testid="inv-pub-image" src={image} alt={titre} loading="lazy" width="1200" height="630"
                  style={{ display: 'block', width: '100%', height: 'auto', aspectRatio: '1200 / 630', objectFit: 'cover' }} />
@@ -474,10 +493,10 @@ export default function InvitationPublique({ token, apercu }) {
 
       <div style={{ position: enApercu ? 'sticky' : 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 16px calc(12px + env(safe-area-inset-bottom, 0px))', background: 'linear-gradient(180deg, rgba(8,4,12,0) 0%, rgba(8,4,12,0.95) 40%)' }}>
         {envoi.erreur ? (
-          <p data-testid="inv-pub-cta-erreur" role="alert" style={{ maxWidth: '560px', margin: '0 auto 8px', fontSize: '13.5px', color: 'rgba(255,190,180,1)', textAlign: 'center' }}>{envoi.erreur}</p>
+          <p data-testid="inv-pub-cta-erreur" role="alert" style={{ maxWidth: COLONNE_INTERIEURE, margin: '0 auto 8px', fontSize: '13.5px', color: 'rgba(255,190,180,1)', textAlign: 'center' }}>{envoi.erreur}</p>
         ) : null}
         <button type="button" onClick={surCta} data-testid="inv-pub-cta" disabled={envoi.cours}
-                style={{ display: 'block', width: '100%', maxWidth: '560px', margin: '0 auto', minHeight: '52px', borderRadius: '999px', border: 'none',
+                style={{ display: 'block', width: '100%', maxWidth: COLONNE_INTERIEURE, margin: '0 auto', minHeight: '52px', borderRadius: '999px', border: 'none',
                   background: PRIMAIRE, color: 'rgba(255,255,255,1)', fontSize: '17px', fontWeight: 800, cursor: 'pointer', opacity: envoi.cours ? 0.75 : 1 }}>
           {envoi.cours ? 'Ouverture du paiement…' : (String(d.cta_label || '').trim() || (type === 'event_paid' ? 'Je réserve ma place' : 'Continuer'))}
         </button>
