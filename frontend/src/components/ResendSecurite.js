@@ -108,7 +108,7 @@ export default function ResendSecurite({ API }) {
         <div data-testid="resend-etat" style={{ marginTop: '8px', fontSize: '11.5px', color: TEXTE, lineHeight: 1.6 }}>
           {reg.actif ? (
             <>
-              {etat.compte_effectif} envois comptabilisés (24 h glissantes)
+              {etat.compte_effectif} envois comptabilisés aujourd’hui (remise à zéro à minuit UTC)
               {' · '}{etat.restants_avant_seuil} restants avant seuil
               {' · '}{etat.restants_avant_limite} restants avant limite
             </>
@@ -116,7 +116,7 @@ export default function ResendSecurite({ API }) {
             <span data-testid="resend-off">Limitation Afroboost désactivée — les limites du compte Resend restent applicables.</span>
           )}
           {etat.plan_insuffisant && (
-            <div style={{ color: ROUGE, marginTop: '2px' }}>Plan Resend insuffisant : la demande des dernières 24 h dépasse la limite.</div>
+            <div style={{ color: ROUGE, marginTop: '2px' }}>Plan Resend insuffisant : la demande du jour dépasse la limite.</div>
           )}
         </div>
       )}

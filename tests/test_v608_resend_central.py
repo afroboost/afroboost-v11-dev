@@ -213,6 +213,27 @@ async def scenario():
              S.v608_reessai_permis(t) and not S.v608_reessai_permis({"send_status": "indetermine"})
              and not S.v608_reessai_permis({"send_status": "envoye", "provider_status": "accepted"}))
 
+    print("\nV608b — fenêtre = JOUR UTC (Resend remet sa limite à zéro chaque jour civil)")
+    minuit = datetime(2026, 10, 12, 0, 0, tzinfo=timezone.utc)
+    hier_soir = minuit - timedelta(minutes=10)
+    SYNC[RC.COL_QUOTA].delete_many({"_id": RC.DOC_QUOTA})
+    SYNC[RC.COL_QUOTA].insert_one({"_id": RC.DOC_QUOTA, "tentatives": [(hier_soir - timedelta(hours=2)).isoformat()] * 174,
+                                   "plancher": 0, "plancher_expire_at": ""})
+    hier = [{"id": "h%d" % i, "created_at": (hier_soir - timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M:%S.000000+00")} for i in range(174)]
+    RC.reconcilier_avec_resend(maintenant=hier_soir, lister=lambda apres: {"data": hier, "has_more": False})
+    verifier("la veille au soir : 174 comptés, tout bloqué", RC.etat(maintenant=hier_soir)["compte_effectif"] >= 174)
+    matin = minuit + timedelta(hours=5, minutes=23)
+    e = RC.etat(maintenant=matin)
+    verifier("le lendemain 05:23 UTC : compteur 0 (comme « Daily 0 / 100 » chez Resend)", e["compte_effectif"] == 0, e)
+    r = RC.reserver(False, maintenant=matin)
+    verifier("un envoi du matin passe (1/95), il n'attend pas la sortie des 24 h", r["compte"] == 1, r)
+    RC.reconcilier_avec_resend(maintenant=matin, lister=lambda apres: {"data": [{"id": "m1", "created_at": matin.strftime("%Y-%m-%d %H:%M:%S.000000+00")}] + hier, "has_more": False})
+    verifier("réconciliation du matin : seuls les e-mails du JOUR forment le plancher (1, pas 175)", RC.etat(maintenant=matin)["plancher_resend"] == 1)
+    RC.reconcilier_avec_resend(maintenant=minuit - timedelta(minutes=5), lister=lambda apres: {"data": hier, "has_more": False})
+    verifier("un plancher lu à 23:55 expire à minuit (pas à 00:25)",
+             SYNC[RC.COL_QUOTA].find_one({"_id": RC.DOC_QUOTA})["plancher_expire_at"] == minuit.isoformat()
+             and RC.etat(maintenant=minuit + timedelta(minutes=1))["plancher_resend"] == 0)
+
     print("\nRÉGLAGE « Limiter les envois Resend » (persistant, super-admin)")
     SYNC[RC.COL_QUOTA].delete_many({"_id": RC.DOC_REGLAGES})
     verifier("valeurs initiales : ON, 100 / 95", RC.reglages()["actif"] is True and RC.limites()["limite"] == 100 and RC.limites()["seuil"] == 95)

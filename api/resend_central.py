@@ -11,8 +11,8 @@ Resend : destinataires, objets, gabarits, pièces jointes, Reply-To et clés
 d'idempotence passent tels quels. Ce module n'ajoute que trois choses :
 
 1. QUOTA DU COMPTE RESEND (global, tous modules), réservé ATOMIQUEMENT AVANT l'appel :
-   - fenêtre de sécurité Afroboost = 24 h GLISSANTES (la fenêtre réelle de Resend n'est
-     pas prouvée ; celle-ci est volontairement prudente) ;
+   - fenêtre = JOUR UTC en cours (V608b : Resend remet sa limite journalière à zéro
+     chaque jour civil, constaté le 12/10) ;
    - non critique : bloqué à RESEND_DAILY_SAFETY_LIMIT (95 par défaut) ;
    - critique (OTP, accès, paiement, réservation) : réserve jusqu'à RESEND_DAILY_LIMIT
      (100) ; au-delà, TOUT est bloqué ;
@@ -41,8 +41,19 @@ logger = logging.getLogger("api.resend_central")
 COL_QUOTA = "resend_quota"
 COL_JOURNAL = "resend_envois"
 DOC_QUOTA = "compte"
-FENETRE = timedelta(hours=24)
 PLANCHER_VALIDITE = timedelta(minutes=30)
+
+
+def debut_fenetre(now: datetime) -> datetime:
+    """V608b : la limite journalière Resend se remet à ZÉRO chaque jour civil (constaté au
+    tableau de bord le 12/10 : « Daily 0 / 100 » à 05:23 UTC après 174 envois la veille).
+    La fenêtre est donc le jour UTC en cours, PAS 24 h glissantes."""
+    return now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _expiration_plancher(now: datetime) -> datetime:
+    """Un plancher lu avant minuit ne survit jamais au changement de jour."""
+    return min(now + PLANCHER_VALIDITE, debut_fenetre(now) + timedelta(days=1))
 
 
 DOC_REGLAGES = "reglages"
@@ -108,7 +119,7 @@ class QuotaResendAtteint(Exception):
 
     def __init__(self, compte: int, plafond: int, critique: bool):
         self.compte, self.plafond, self.critique = compte, plafond, critique
-        self.message = "Non envoyé — quota Resend atteint (%d/%d sur 24 h)" % (compte, plafond)
+        self.message = "Non envoyé — quota Resend atteint (%d/%d aujourd'hui)" % (compte, plafond)
         super().__init__(self.message)
 
 
@@ -178,7 +189,7 @@ def reserver(critique: bool, maintenant: datetime = None) -> dict:
     if not lim["actif"]:
         # GARDE-FOU AFROBOOST = OFF : on COMPTE (affichage, diagnostic), on ne bloque RIEN.
         # Les limites du compte Resend restent applicables : une erreur Resend reste une erreur.
-        col.update_one({"_id": DOC_QUOTA}, {"$pull": {"tentatives": {"$lt": (now - FENETRE).isoformat()}}})
+        col.update_one({"_id": DOC_QUOTA}, {"$pull": {"tentatives": {"$lt": debut_fenetre(now).isoformat()}}})
         doc = col.find_one_and_update({"_id": DOC_QUOTA}, {"$push": {"tentatives": now.isoformat()},
                                                           "$setOnInsert": {"plancher": 0}},
                                       upsert=True, return_document=ReturnDocument.AFTER)
@@ -190,7 +201,7 @@ def reserver(critique: bool, maintenant: datetime = None) -> dict:
     except DuplicateKeyError:
         pass
     # Ménage (idempotent) : les tentatives sorties de la fenêtre, le plancher périmé.
-    col.update_one({"_id": DOC_QUOTA}, {"$pull": {"tentatives": {"$lt": (now - FENETRE).isoformat()}}})
+    col.update_one({"_id": DOC_QUOTA}, {"$pull": {"tentatives": {"$lt": debut_fenetre(now).isoformat()}}})
     col.update_one({"_id": DOC_QUOTA, "plancher_expire_at": {"$lt": now.isoformat()}},
                    {"$set": {"plancher": 0, "plancher_lu_at": None}})
     doc = col.find_one_and_update(
@@ -207,7 +218,7 @@ def etat(maintenant: datetime = None) -> dict:
     now = maintenant or _maintenant()
     base = _db()
     doc = base[COL_QUOTA].find_one({"_id": DOC_QUOTA}) or {}
-    debut = (now - FENETRE).isoformat()
+    debut = debut_fenetre(now).isoformat()
     fen = [t for t in (doc.get("tentatives") or []) if t >= debut]
     valide = (doc.get("plancher_expire_at") or "") >= now.isoformat()
     plancher = int(doc.get("plancher") or 0) if valide else 0
@@ -219,19 +230,19 @@ def etat(maintenant: datetime = None) -> dict:
     reg = reglages()
     return {"reglages": reg, "restants_avant_seuil": max(0, lim["seuil"] - effectif),
             "restants_avant_limite": max(0, lim["limite"] - effectif),
-            "fenetre": "24h glissantes", "local_24h": len(fen), "plancher_resend": plancher,
+            "fenetre": "jour UTC (remise à zéro à minuit UTC)", "local_24h": len(fen), "plancher_resend": plancher,
             "plancher_lu_at": doc.get("plancher_lu_at"), "compte_effectif": effectif,
             "bloques_24h": bloques, "demande_24h": demande, **lim,
             "plan_insuffisant": demande > lim["limite"]}
 
 
 def reconcilier_avec_resend(maintenant: datetime = None, lister=None) -> dict:
-    """Pose le PLANCHER = e-mails du COMPTE Resend sur les 24 dernières heures (tous
+    """Pose le PLANCHER = e-mails du COMPTE Resend depuis minuit UTC (tous
     services). Ne fait que relever le compteur effectif. `lister(after)` pour les tests."""
     import json
     import urllib.request
     now = maintenant or _maintenant()
-    debut = (now - FENETRE)
+    debut = debut_fenetre(now)
 
     def _lister(apres):
         url = "https://api.resend.com/emails?limit=100" + (("&after=" + apres) if apres else "")
@@ -266,7 +277,7 @@ def reconcilier_avec_resend(maintenant: datetime = None, lister=None) -> dict:
     _db()[COL_QUOTA].update_one(
         {"_id": DOC_QUOTA},
         {"$set": {"plancher": total, "plancher_lu_at": now.isoformat(),
-                  "plancher_expire_at": (now + PLANCHER_VALIDITE).isoformat()},
+                  "plancher_expire_at": _expiration_plancher(now).isoformat()},
          "$setOnInsert": {"tentatives": []}}, upsert=True)
     return {"plancher": total, "lu_at": now.isoformat()}
 
