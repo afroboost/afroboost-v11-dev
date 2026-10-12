@@ -157,143 +157,217 @@ describe('V607 — Essai gratuit : moi d’abord, puis mon ami', () => {
     expect(patch[1]).toEqual({ occurrence: O_DIM, version: 1, course_id: 'c-dim' });
     expect(par('wf-essai-pret')).not.toBeNull();
     expect(par('wf-essai-pret').textContent).toContain('Ton essai est prêt !');
-    expect(par('wf-essai-pret-texte').textContent).toBe('Pour le débloquer, invite à ton tour une personne à découvrir Afroboost.');
+    expect(par('wf-essai-pret-texte').textContent).toBe('Pour confirmer ton essai gratuit, invite 1 ami à découvrir Afroboost.');
+    expect(par('wf-inviter-whatsapp').textContent).toContain('Inviter 1 ami et confirmer ma place');
     expect(par('wf-texte-lien').textContent).toBe('Ton ami recevra son propre lien d’invitation.');
     expect(par('wf-rappel-seance').textContent).toContain('Bord du Lac, Auvernier');
     const creation = axios.post.mock.calls.find((c) => String(c[0]).endsWith('/chain'));
     expect(creation[1].course_id).toBeUndefined();          // pas de séance de l'ami demandée
     expect(creation[1].occurrence).toBeUndefined();
     expect(window.localStorage.getItem(cleChaine('T0'))).toBe('K1');
-    expect(par('wf-finaliser').disabled).toBe(true);       // bloqué tant que rien n'est partagé
+    expect(par('wf-finaliser')).toBeNull();                // V610l : plus de « Finaliser mon inscription »
+    expect(conteneur.textContent).not.toContain('Finaliser');
+    expect(axios.post.mock.calls.find((c) => String(c[0]).endsWith('/join'))).toBeUndefined();
     expect(evenementsSuivis()).toEqual(['lien_ouvert', 'seance_choisie', 'etape_invitation_atteinte']);
   });
 
-  test('« Inviter 1 ami sur WhatsApp » ouvre WhatsApp (message + lien) DANS le geste, enregistre le partage, débloque « Finaliser »', async () => {
-    routeur();
+  // ── V610l : un clic = prénom → partage → place confirmée → WhatsApp ──────
+  const fenetre = () => ({ location: { href: '' }, opener: {}, close: jest.fn() });
+  async function coordonnees(prenom) {
+    await saisir('wf-nom', prenom || 'Aminata');
+    await saisir('wf-email', 'aminata@example.com');
+    await saisir('wf-whatsapp', '+41 79 000 00 00');
+    await act(async () => { par('wf-consent').click(); });
+  }
+  const appels = (fin) => axios.post.mock.calls.filter((c) => String(c[0]).endsWith(fin));
+  async function confirmerPlace(prenom) {
+    const fen = fenetre();
+    window.open = jest.fn(() => fen);
     await jusquAuPartage();
+    await coordonnees(prenom);
     await cliquer('wf-inviter-whatsapp');
+    return fen;
+  }
+
+  test('E/F/G/H — « Inviter 1 ami et confirmer ma place » : partage enregistré PUIS place confirmée PUIS WhatsApp ; aucun retour nécessaire', async () => {
+    routeur();
+    const fen = await confirmerPlace('Aminata');
     expect(window.open).toHaveBeenCalledTimes(1);
-    const lien = decodeURIComponent(String(window.open.mock.calls[0][0]).split('?text=')[1]);
-    expect(lien).toContain('t’invite à découvrir Afroboost !');
-    expect(lien).toContain('🎧 Cardio + danse afro + casques immersifs');
-    expect(lien).toContain('📍 Bord du Lac, Auvernier');
+    expect(window.open.mock.calls[0][0]).toBe('');               // fenêtre ouverte DANS le geste
+    expect(fen.opener).toBeNull();
+    // ordre serveur : prénom (PATCH /chain) → POST /chain/share → POST /join
+    const ordre = axios.post.mock.calls.map((c) => String(c[0]).split('/T0/')[1]);
+    expect(ordre.indexOf('chain/share')).toBeLessThan(ordre.indexOf('join'));
+    expect(axios.patch.mock.calls.find((c) => String(c[0]).endsWith('/chain'))[1]).toEqual(expect.objectContaining({ display_name: 'Aminata' }));
+    expect(appels('/chain/share')[0][1]).toEqual({ channel: 'whatsapp' });
+    expect(appels('/chain/share')[0][2].headers).toEqual({ 'X-Chain-Key': 'K1' });
+    const join = appels('/join')[0];
+    expect(join[1]).toEqual(expect.objectContaining({ name: 'Aminata', email: 'aminata@example.com', whatsapp: '+41 79 000 00 00',
+      consent_reservation: true, terms_accepted: true, marketing_consent: false }));
+    expect(join[2].headers).toEqual({ 'X-Chain-Key': 'K1' });
+    // WhatsApp : message + lien PERSONNEL de l'ami, posé APRÈS la confirmation
+    const lien = decodeURIComponent(fen.location.href);
+    expect(lien).toContain('🔥 Aminata t’invite à découvrir Afroboost !');
     expect(lien).toContain('🎁 Ton premier cours est offert.');
-    expect(lien).toContain('https://afroboost.com/api/share/duo/T1?v=1');
-    const share = axios.post.mock.calls.find((c) => String(c[0]).endsWith('/chain/share'));
-    expect(share[1]).toEqual({ channel: 'whatsapp' });
-    expect(share[2].headers).toEqual({ 'X-Chain-Key': 'K1' });
-    expect(par('wf-partage-ok').textContent).toContain('Invitation partagée');
-    expect(conteneur.textContent).not.toMatch(/envoy[ée]/i);
-    expect(par('wf-finaliser').disabled).toBe(false);
-    expect(evenementsSuivis()).toContain('partage_whatsapp_declenche');
+    expect(lien).toContain('https://afroboost.com/api/share/duo/T1?v=2');
+    // la place est réservée, sans aucun autre geste
+    const ok = par('wf-essai-confirme');
+    expect(ok).not.toBeNull();
+    expect(ok.textContent).toContain('Ta place est réservée');
+    expect(par('wf-confirme-texte').textContent).toBe('Ton invitation personnelle est prête. Partage-la maintenant avec ton ami.');
+    expect(par('wf-essai-confirme-seance').textContent).toContain('Bord du Lac, Auvernier');
+    expect(document.querySelectorAll('[data-testid="qr-svg"]')).toHaveLength(1);
+    expect(par('wf-finaliser')).toBeNull();
+    expect(conteneur.textContent).not.toMatch(/envoy[ée]/i);       // jamais « envoyé »
+    expect(evenementsSuivis()).toEqual(expect.arrayContaining(['reservation_commencee', 'partage_whatsapp_declenche']));
+    expect(par('wf-whatsapp-bloque')).toBeNull();
   });
 
-  test('prénom saisi : enregistré sur la carte de l’ami AVANT le partage (fenêtre ouverte dans le geste, adresse posée après)', async () => {
+  test('coordonnées incomplètes : rien n’est ouvert, rien n’est envoyé', async () => {
     routeur();
-    const fen = { location: { href: '' }, opener: {}, close: jest.fn() };
-    window.open = jest.fn(() => fen);
     await jusquAuPartage();
     await saisir('wf-nom', 'Aminata');
     await cliquer('wf-inviter-whatsapp');
-    expect(window.open.mock.calls[0][0]).toBe('');
-    const patch = axios.patch.mock.calls.find((c) => String(c[0]).endsWith('/chain'));
-    expect(patch[1]).toEqual(expect.objectContaining({ display_name: 'Aminata' }));
-    expect(decodeURIComponent(fen.location.href)).toContain('🔥 Aminata t’invite à découvrir Afroboost !');
-    expect(fen.opener).toBeNull();
-    expect(par('wf-finaliser').disabled).toBe(false);
+    expect(par('wf-erreur-form').textContent).toBe('Indique une adresse e-mail valide.');
+    expect(window.open).not.toHaveBeenCalled();
+    expect(appels('/chain/share')).toHaveLength(0);
+    expect(appels('/join')).toHaveLength(0);
+    await saisir('wf-email', 'aminata@example.com');
+    await saisir('wf-whatsapp', '+41 79 000 00 00');
+    await cliquer('wf-inviter-whatsapp');
+    expect(par('wf-erreur-form').textContent).toBe('Coche la case liée à la réservation pour continuer.');
+    expect(appels('/join')).toHaveLength(0);
   });
 
-  test('après le partage : formulaire existant → « Ton essai est confirmé ! » (date, lieu, billet) + « Inviter encore » facultatif', async () => {
+  test('K — double clic : UN partage, UNE réservation', async () => {
     routeur();
-    await jusquAuPartage();
-    await cliquer('wf-inviter-whatsapp');
-    await cliquer('wf-finaliser');
-    expect(par('wf-inscription')).not.toBeNull();
-    await saisir('invitation-prenom', 'Aminata');
-    await saisir('invitation-email', 'aminata@example.com');
-    await saisir('invitation-whatsapp', '+41 79 000 00 00');
-    await act(async () => { par('invitation-consent').click(); });
-    await cliquer('invitation-rejoindre');
-    expect(axios.post.mock.calls.find((c) => String(c[0]).endsWith('/join'))[2].headers).toEqual({ 'X-Chain-Key': 'K1' });
-    expect(evenementsSuivis()).toContain('reservation_commencee');
-    const ok = par('wf-essai-confirme');
-    expect(ok).not.toBeNull();
-    expect(ok.textContent).toContain('Ton essai est confirmé');
-    expect(par('wf-essai-confirme-seance').textContent).toContain('Bord du Lac, Auvernier');
-    expect(par('wf-essai-confirme-seance').textContent).toContain('18:00');
-    expect(document.querySelectorAll('[data-testid="qr-svg"]')).toHaveLength(1);
-    expect(ok.textContent).toContain('Tu peux inviter d’autres amis si tu veux.');
-    expect(conteneur.textContent).not.toContain('Pass Duo');
-  });
-
-  test('V607g — « Inviter encore » : un NOUVEAU lien par ami (jamais le lien déjà utilisé), un seul appel par clic', async () => {
-    routeur();
-    await jusquAuPartage();
-    await cliquer('wf-inviter-whatsapp');
-    await cliquer('wf-finaliser');
-    await saisir('invitation-prenom', 'Sophie');
-    await saisir('invitation-email', 'sophie@example.com');
-    await saisir('invitation-whatsapp', '+41 79 000 00 01');
-    await act(async () => { par('invitation-consent').click(); });
-    await cliquer('invitation-rejoindre');
-    const fen = { location: { href: '' }, opener: {}, close: jest.fn() };
+    const fen = fenetre();
     window.open = jest.fn(() => fen);
+    await jusquAuPartage();
+    await coordonnees();
+    await act(async () => { par('wf-inviter-whatsapp').click(); par('wf-inviter-whatsapp').click(); par('wf-inviter-whatsapp').click(); });
+    await vider();
+    expect(window.open).toHaveBeenCalledTimes(1);
+    expect(appels('/chain/share')).toHaveLength(1);
+    expect(appels('/join')).toHaveLength(1);
+    expect(par('wf-essai-confirme')).not.toBeNull();
+  });
+
+  test('L — fenêtre WhatsApp refusée : place réservée quand même + Ouvrir WhatsApp / Copier mon lien / Partager autrement', async () => {
+    routeur();
+    window.open = jest.fn(() => null);
+    await jusquAuPartage();
+    await coordonnees();
+    await cliquer('wf-inviter-whatsapp');
+    expect(appels('/join')).toHaveLength(1);
+    expect(par('wf-essai-confirme').textContent).toContain('Ta place est réservée');
+    expect(par('wf-whatsapp-bloque').textContent).toContain('Tu peux copier ton lien pour inviter ton ami.');
+    expect(decodeURIComponent(par('wf-ouvrir-whatsapp').getAttribute('href'))).toContain('https://afroboost.com/api/share/duo/T1?v=2');
+    expect(par('wf-copier-lien')).not.toBeNull();
+    expect(par('wf-partager-lien')).not.toBeNull();
+    expect(evenementsSuivis()).not.toContain('partage_whatsapp_declenche');   // rien n'a été ouvert
+  });
+
+  test('refus du serveur au join : fenêtre refermée, message clair, on reste sur « Essai prêt »', async () => {
+    routeur({ join: () => Promise.reject({ response: { status: 409, headers: { 'x-refus-raison': 'invitation_requise' }, data: {} } }) });
+    const fen = await confirmerPlace();
+    expect(fen.close).toHaveBeenCalled();
+    expect(fen.location.href).toBe('');
+    expect(par('wf-essai-pret')).not.toBeNull();
+    expect(par('wf-erreur-form').textContent).toBe("Invite d'abord un ami pour débloquer ton essai gratuit.");
+    expect(evenementsSuivis()).not.toContain('partage_whatsapp_declenche');
+  });
+
+  test('déjà client : la place n’est pas confirmée, l’invitation de l’ami reste valable', async () => {
+    routeur({ join: () => Promise.reject({ response: { status: 409, headers: { 'x-refus-raison': 'free_trial_already_used' }, data: {} } }) });
+    const fen = await confirmerPlace();
+    expect(fen.close).toHaveBeenCalled();
+    expect(par('wf-essai-confirme')).toBeNull();
+    expect(par('wf-erreur-form').textContent).toContain('L’invitation de ton ami reste valable');
+  });
+
+  test('« Partager autrement » : partage natif ABOUTI → partage « share » enregistré + place confirmée ; annulé → rien', async () => {
+    routeur();
+    navigator.share = jest.fn(() => Promise.reject(Object.assign(new Error('x'), { name: 'AbortError' })));
+    try {
+      await jusquAuPartage();
+      await coordonnees();
+      await cliquer('wf-partager-autrement');
+      expect(appels('/chain/share')).toHaveLength(0);
+      expect(appels('/join')).toHaveLength(0);
+      expect(par('wf-essai-pret')).not.toBeNull();
+      navigator.share = jest.fn(() => Promise.resolve());
+      await cliquer('wf-partager-autrement');
+      expect(appels('/chain/share')[0][1]).toEqual({ channel: 'share' });
+      expect(appels('/join')).toHaveLength(1);
+      expect(par('wf-essai-confirme')).not.toBeNull();
+      expect(evenementsSuivis()).toContain('partage_autre_declenche');
+    } finally { delete navigator.share; }
+  });
+
+  test('I/J — retour après WhatsApp / rechargement sur CET appareil : « Ta place est réservée » directement', async () => {
+    window.localStorage.setItem(cleChaine('T0'), 'K1');
+    const confirmePub = Object.assign({}, PUB, { status: 'unlocked', chain_required: false, chain: { exists: true, shared: true } });
+    axios.get.mockImplementation((url) => (String(url).endsWith('/chain/options')
+      ? Promise.resolve({ data: OPTS }) : Promise.resolve({ data: confirmePub })));
+    await monter(<InvitationDuo token="T0" />);
+    expect(par('wf-essai-confirme')).not.toBeNull();
+    expect(par('wf-essai-confirme').textContent).toContain('Ta place est réservée');
+    expect(par('wf-essai-confirme-seance').textContent).toContain('Valangines, Neuchâtel');
+    expect(par('wf-inviter-encore').textContent).toContain('Inviter un autre ami');
+    expect(par('wf-essai-accueil')).toBeNull();
+    expect(par('wf-nom')).toBeNull();
+    expect(par('invitation-form')).toBeNull();
+    expect(conteneur.textContent).not.toContain('Finaliser');
+    expect(conteneur.textContent).not.toContain('déjà utilisé cette invitation');
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test('autre appareil (sans clé) sur un essai confirmé : l’écran neutre existant, rien de personnel', async () => {
+    const confirmePub = Object.assign({}, PUB, { status: 'unlocked', chain_required: false, chain: { exists: true, shared: true } });
+    axios.get.mockImplementation((url) => (String(url).endsWith('/chain/options')
+      ? Promise.resolve({ data: OPTS }) : Promise.resolve({ data: confirmePub })));
+    await monter(<InvitationDuo token="T0" />);
+    expect(par('wf-essai-confirme')).toBeNull();
+    expect(par('invitation-deja-rejoint')).not.toBeNull();
+  });
+
+  test('V607g — « Inviter un autre ami » : un NOUVEAU lien par ami (jamais le lien déjà utilisé), un seul appel par clic', async () => {
+    routeur();
+    const fen = await confirmerPlace('Sophie');
+    fen.location.href = '';
     // double clic : un seul POST /chain/next
     await act(async () => { par('wf-inviter-encore').click(); par('wf-inviter-encore').click(); });
     await vider();
-    const suivantes = () => axios.post.mock.calls.filter((c) => String(c[0]).endsWith('/chain/next'));
+    const suivantes = () => appels('/chain/next');
     expect(suivantes()).toHaveLength(1);
     expect(suivantes()[0][2].headers).toEqual({ 'X-Chain-Key': 'K1' });
-    expect(window.open).toHaveBeenCalledTimes(1);
-    expect(window.open.mock.calls[0][0]).toBe('');             // fenêtre ouverte DANS le geste
     expect(decodeURIComponent(fen.location.href)).toContain('https://afroboost.com/api/share/duo/T2?v=0');
     expect(decodeURIComponent(fen.location.href)).not.toContain('/duo/T1');
-    const partage = axios.post.mock.calls.filter((c) => String(c[0]).endsWith('/chain/share')).pop();
+    const partage = appels('/chain/share').pop();
     expect(partage[1]).toEqual({ channel: 'whatsapp', child_token: 'T2' });
     expect(par('wf-encore-compte').textContent).toBe('1 nouvelle invitation partagée');
-    // l'ami suivant : encore un lien neuf (T3)
     fen.location.href = '';
     await cliquer('wf-inviter-encore');
     expect(suivantes()).toHaveLength(2);
     expect(decodeURIComponent(fen.location.href)).toContain('/duo/T3?v=0');
     expect(par('wf-encore-compte').textContent).toBe('2 nouvelles invitations partagées');
+    expect(appels('/join')).toHaveLength(1);                       // jamais une 2e réservation
     expect(conteneur.textContent).not.toMatch(/envoy[ée]/i);
   });
 
   test('V607g — plafond serveur : message clair, rien n’est ouvert', async () => {
     routeur();
-    await jusquAuPartage();
-    await cliquer('wf-inviter-whatsapp');
-    await cliquer('wf-finaliser');
-    await saisir('invitation-prenom', 'Sophie');
-    await saisir('invitation-email', 'sophie@example.com');
-    await saisir('invitation-whatsapp', '+41 79 000 00 01');
-    await act(async () => { par('invitation-consent').click(); });
-    await cliquer('invitation-rejoindre');
+    await confirmerPlace('Sophie');
     const base = axios.post.getMockImplementation();
     axios.post.mockImplementation((url, ...rest) => (String(url).endsWith('/chain/next')
       ? Promise.reject({ response: { status: 409, headers: { 'x-refus-raison': 'invitations_ouvertes_max' }, data: {} } })
       : base(url, ...rest)));
-    const fen = { location: { href: '' }, opener: {}, close: jest.fn() };
+    const fen = fenetre();
     window.open = jest.fn(() => fen);
     await cliquer('wf-inviter-encore');
     expect(fen.close).toHaveBeenCalled();
     expect(par('wf-info').textContent).toContain('attends qu’un ami s’inscrive');
-  });
-
-  test('le serveur garde l’obligation : 409 invitation_requise au join → retour à « Essai prêt », « Finaliser » rebloqué', async () => {
-    routeur({ join: () => Promise.reject({ response: { status: 409, headers: { 'x-refus-raison': 'invitation_requise' }, data: {} } }) });
-    await jusquAuPartage();
-    await cliquer('wf-inviter-whatsapp');
-    await cliquer('wf-finaliser');
-    await saisir('invitation-prenom', 'Aminata');
-    await saisir('invitation-email', 'aminata@example.com');
-    await saisir('invitation-whatsapp', '+41 79 000 00 00');
-    await act(async () => { par('invitation-consent').click(); });
-    await cliquer('invitation-rejoindre');
-    expect(par('wf-essai-pret')).not.toBeNull();
-    expect(par('wf-avis').textContent).toBe("Invite d'abord un ami pour débloquer ton essai gratuit.");
-    expect(par('wf-finaliser').disabled).toBe(true);
   });
 
   test('séance refusée par le serveur → message clair, on reste sur l’accueil (aucune bascule silencieuse)', async () => {
@@ -370,6 +444,12 @@ describe('V610k — le mot audio de l\'invitation sur « Ton essai est prêt »'
     expect(audio.getAttribute('src')).toBe('/api/files/a1/mot.mp3');
     expect(audio.loop).toBe(false);
     expect(play).toHaveBeenCalledTimes(1);                        // une seule tentative
+    expect(par('wf-afroboosteur').textContent).toContain('Deviens Afroboosteur');
+    // ordre : titre, séance, « Deviens Afroboosteur », lecteur, consigne
+    const ordre = [...par('wf-essai-pret').querySelectorAll('[data-testid]')].map((e) => e.dataset.testid);
+    expect(ordre.indexOf('wf-rappel-seance')).toBeLessThan(ordre.indexOf('wf-afroboosteur'));
+    expect(ordre.indexOf('wf-afroboosteur')).toBeLessThan(ordre.indexOf('wf-audio-essai'));
+    expect(ordre.indexOf('wf-audio-essai')).toBeLessThan(ordre.indexOf('wf-essai-pret-texte'));
   });
 
   test('navigateur qui refuse : parcours intact, lecteur visible « Écouter le message » (fallback)', async () => {
@@ -389,6 +469,7 @@ describe('V610k — le mot audio de l\'invitation sur « Ton essai est prêt »'
     await cliquer('wf-valider-seance');
     expect(par('wf-essai-pret')).not.toBeNull();
     expect(par('wf-audio-essai')).toBeNull();
+    expect(par('wf-afroboosteur')).toBeNull();
     expect(play).not.toHaveBeenCalled();
   });
 });

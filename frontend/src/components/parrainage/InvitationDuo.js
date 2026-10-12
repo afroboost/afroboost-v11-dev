@@ -271,6 +271,47 @@ export default function InvitationDuo({ token }) {
 
   // V558 : refus « déjà client » (jamais un abus) — la chaîne de son ami continue.
   const CLIENT_EXISTANT = ['free_trial_already_used', 'free_trial_already_granted', 'abonne_actif', 'already_customer', 'not_eligible']; // V591
+  // V610l — LE join (inchangé) : partagé par le formulaire et par le parcours Essai gratuit.
+  const posterJoin = ({ name, email, whatsapp, marketing }) => {
+    let attribution = null;
+    try { attribution = attributionActuelle(); } catch (x) { attribution = null; }
+    const corps = {
+      name, email, whatsapp,
+      consent_reservation: true, terms_accepted: true, marketing_consent: !!marketing,
+    };
+    if (attribution) corps.attribution = attribution;
+    const cleChaine = lireCleChaine(token);
+    return axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(token)}/join`, corps,
+      { timeout: 20000, headers: cleChaine ? { 'X-Chain-Key': cleChaine } : {} });
+  };
+  // V610l — ESSAI GRATUIT : la place est confirmée PAR le clic « Inviter 1 ami et confirmer ma
+  // place » (ParcoursEssai), juste après l'enregistrement du partage et AVANT l'ouverture de
+  // WhatsApp. Plus de retour obligatoire sur la page. Idempotent côté serveur (même e-mail).
+  // Rejet : `{ texte }` lisible, jamais une exception brute.
+  const rejoindreEssai = ({ name, email, whatsapp, marketing }) => {
+    suivreInvitation(token, 'reservation_commencee');
+    setForm((prev) => Object.assign({}, prev, { name, email, whatsapp, consent: true, marketing: !!marketing }));
+    return posterJoin({ name, email, whatsapp, marketing })
+      .then((r) => {
+        const d = (r && r.data) || { status: 'unlocked', tickets: [] };
+        setResultat(d);
+        return d;
+      })
+      .catch((err) => {
+        const s = err && err.response && err.response.status;
+        const h = (err && err.response && err.response.headers) || {};
+        const raison = h['x-refus-raison'] || h['X-Refus-Raison'];
+        let texte = 'Ta place n’a pas pu être confirmée pour le moment. Réessaie dans un instant.';
+        if (s === 409 && CLIENT_EXISTANT.indexOf(raison) >= 0) {
+          texte = `${messageRefus(raison)} L’invitation de ton ami reste valable : il pourra profiter de son propre essai s’il n’en a jamais bénéficié.`;
+        } else if (s === 409 || (s === 403 && raison) || (s === 400 && raison === 'whatsapp_requis')) texte = messageRefus(raison);
+        else if (s === 410) texte = 'Cette invitation a expiré';
+        else if (s === 404) texte = messageInvitationDepuisReponse(404, err.response.data && err.response.data.detail);
+        else if (s === 429) texte = 'Trop de tentatives. Réessaie dans un instant.';
+        else if (s === 400 || s === 422) texte = 'Vérifie ton prénom, ton e-mail et ton numéro WhatsApp.';
+        return Promise.reject({ texte, raison: raison || '', status: s || 0 });
+      });
+  };
   const soumettre = (e) => {
     e.preventDefault();
     if (envoi) return;
@@ -283,16 +324,7 @@ export default function InvitationDuo({ token }) {
     if (!form.consent) { setErreur('Coche la case liée à la réservation pour continuer.'); return; }
     setErreur(''); setEnvoi(true);
     if (estParcoursEssai(pass)) suivreInvitation(token, 'reservation_commencee'); // V607
-    let attribution = null;
-    try { attribution = attributionActuelle(); } catch (x) { attribution = null; }
-    const corps = {
-      name, email, whatsapp,
-      consent_reservation: true, terms_accepted: true, marketing_consent: !!form.marketing,
-    };
-    if (attribution) corps.attribution = attribution;
-    const cleChaine = lireCleChaine(token);
-    axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(token)}/join`, corps,
-      { timeout: 20000, headers: cleChaine ? { 'X-Chain-Key': cleChaine } : {} })
+    posterJoin({ name, email, whatsapp, marketing: form.marketing })
       .then((r) => { setResultat((r && r.data) || { status: 'unlocked', tickets: [] }); })
       .catch((err) => {
         const s = err && err.response && err.response.status;
@@ -347,7 +379,12 @@ export default function InvitationDuo({ token }) {
 
   // V607 — l'Essai gratuit d'une chaîne suit SON parcours, confirmation comprise.
   const dejaRejointPass = pass.status === 'friend_registered' || pass.status === 'unlocked' || pass.status === 'used';
-  const parcoursEssai = estParcoursEssai(pass) && !dejaRejointPass;
+  // V610l — RETOUR APRÈS WHATSAPP / RECHARGEMENT : l'essai est déjà confirmé (serveur) ET cet
+  // appareil est celui qui l'a confirmé (sa clé de chaîne, exigée au join) -> « Ta place est
+  // réservée », jamais l'ancien écran ni « quelqu'un a déjà utilisé cette invitation ».
+  const essaiConfirmeIci = pass.invitation_type === 'trial' && dejaRejointPass
+    && !!(pass.chain && pass.chain.exists) && !!lireCleChaine(token);
+  const parcoursEssai = (estParcoursEssai(pass) && !dejaRejointPass) || essaiConfirmeIci;
   const estEssai = pass.invitation_type === 'trial';
 
   // ── Succès ────────────────────────────────────────────────────────────────
@@ -464,12 +501,10 @@ export default function InvitationDuo({ token }) {
           pass={pass}
           prenom={prenom}
           photo={photoParrain}
-          formulaire={formulaire("M'inscrire à mon essai gratuit")}
           resultat={resultat}
+          dejaConfirme={essaiConfirmeIci}
           onPass={(d) => setPass((prev) => Object.assign({}, prev || {}, d || {}))}
-          onPrenom={(n) => setForm((prev) => (prev.name.trim() ? prev : Object.assign({}, prev, { name: n })))}
-          retourPartage={retourEtape2}
-          messagePartage={messageEtape2}
+          onRejoindre={rejoindreEssai}
         />
       </Cadre>
     );

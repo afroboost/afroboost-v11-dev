@@ -320,10 +320,16 @@ async def medias_lister(request: Request, type: str = "video"):
     _email = str(_c.get("email") or "").strip().lower()
     _cle = _c.get("cle")
     _items, _vus = [], set()
-    _fichiers = await _db()["uploaded_files"].find(
-        {"coach_email": _email, "doublon_de": {"$exists": False},
-         "content_type": {"$regex": "^%s" % _GENRES[_genre][0]}},
-        {"_id": 0, "data": 0}).sort("created_at", -1).limit(MEDIAS_MAX).to_list(MEDIAS_MAX)
+    # V610l — les audios sont stockés AVEC leur contenu (`data`) : un find().sort() triait
+    # les documents ENTIERS en mémoire -> « Sort exceeded memory limit » (32 Mo) -> 500,
+    # bibliothèque audio inutilisable. Le contenu est retiré AVANT le tri.
+    _fichiers = await _db()["uploaded_files"].aggregate([
+        {"$match": {"coach_email": _email, "doublon_de": {"$exists": False},
+                    "content_type": {"$regex": "^%s" % _GENRES[_genre][0]}}},
+        {"$project": {"_id": 0, "data": 0}},
+        {"$sort": {"created_at": -1}},
+        {"$limit": MEDIAS_MAX},
+    ]).to_list(MEDIAS_MAX)
     for _f in _fichiers:
         _url = "/api/files/%s/%s" % (_f.get("file_id"), _f.get("filename"))
         if _url in _vus:

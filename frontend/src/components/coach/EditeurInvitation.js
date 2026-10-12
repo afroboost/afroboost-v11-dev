@@ -382,7 +382,10 @@ export default function EditeurInvitation({ invitationId, onClose, onEnregistre 
         </div>
         <ChoixMedia type="video" testid="ed-video" libelle="Vidéo de l'invitation" aide="Jamais lancée automatiquement : l'invité la démarre. Tout format : 9:16, 16:9, carré…"
                     valeur={form.video_url} onChange={(u) => maj('video_url', u)} onOuvrirOutil={setOutilVideo} />
-        <ChoixMedia type="audio" testid="ed-audio-avant" libelle="Message audio avant réservation (facultatif)" aide="Écoutable sur la page de l'invitation, au clic."
+        {/* V610l : pour l'Essai gratuit, c'est LE message joué sur « Ton essai est prêt ». */}
+        <ChoixMedia type="audio" testid="ed-audio-avant"
+                    libelle={type === 'trial' ? 'Message audio « Ton essai est prêt » (facultatif)' : 'Message audio avant réservation (facultatif)'}
+                    aide={type === 'trial' ? 'Bloc « Deviens Afroboosteur » : lancé après « Valider ma séance », une seule fois (bouton Écouter si le navigateur le bloque).' : "Écoutable sur la page de l'invitation, au clic."}
                     valeur={form.audio_url} onChange={(u) => maj('audio_url', u)} />
         {type === 'event_paid' ? (
           <ChoixMedia type="audio" testid="ed-audio-apres" libelle="Message audio après réservation / partage"

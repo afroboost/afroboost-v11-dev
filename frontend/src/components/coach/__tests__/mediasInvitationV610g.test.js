@@ -150,4 +150,15 @@ describe('V610k — aperçu « Voir » : plus jamais un cadre noir', () => {
     await act(async () => { v.dispatchEvent(new Event('play')); });
     expect(v.currentTime).toBe(0);                                // la lecture repart du début
   });
+
+  test('V610l — bibliothèque : une colonne bornée (`minmax(0, 1fr)`) — « Voir » ne fait plus glisser la liste ; audio listé', async () => {
+    axios.get.mockResolvedValue({ data: { type: 'audio', items: [
+      { url: '/api/files/a2/audio_a2.mp3', nom: 'deviens_afroboosteur.mp3', type: 'audio', taille: 231593 }] } });
+    await act(async () => { render(<ChoixMedia type="audio" testid="a" valeur={null} onChange={() => {}} />); });
+    await act(async () => { q('a-biblio').click(); });
+    await attendre(() => expect(q('a-liste')).toBeTruthy());
+    expect(q('a-liste').style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+    expect(String(axios.get.mock.calls[0][0])).toContain('/api/referral/campaigns-medias');
+    await attendre(() => expect(q('a-liste').textContent).toContain('deviens_afroboosteur.mp3'));
+  });
 });

@@ -129,8 +129,10 @@ export default function ChoixMedia({ type, valeur, onChange, libelle, aide, test
       ) : null}
       {chargement ? <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginTop: 8 }}>Chargement…</div> : null}
       {erreur ? <div role="status" data-testid={`${id}-message`} style={{ fontSize: 13, color: 'rgba(255,200,190,0.95)', marginTop: 8 }}>{erreur}</div> : null}
+      {/* V610l : `minmax(0, 1fr)` — sans lui, l'aperçu « Voir » élargissait la colonne à la
+          taille native de la vidéo (1 390 px dans 612) et la liste glissait de côté. */}
       {biblio ? (
-        <div data-testid={`${id}-liste`} style={{ marginTop: 10, display: 'grid', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
+        <div data-testid={`${id}-liste`} style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
           {biblio.length === 0 ? <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>Aucun média de ce type pour le moment : importe-en un.</div> : null}
           {biblio.map((m) => (
             <div key={m.url} style={{ padding: 10, borderRadius: 10, background: m.url === actuel ? rgbaP(0.16) : 'rgba(255,255,255,0.05)',

@@ -5,17 +5,21 @@
  *   1. ACCUEIL (wf-essai-accueil) — qui m'invite, ce qu'est Afroboost, la séance
  *      proposée, « Ton premier cours est offert » → je garde ou je change MA
  *      séance (calendrier EXISTANT, séances du serveur) → [Valider ma séance] ;
- *   2. ESSAI PRÊT (wf-essai-pret) — « Pour le débloquer, invite à ton tour une
- *      personne » → [Inviter 1 ami sur WhatsApp]. L'invitation de l'ami est créée
- *      ICI (POST /chain, sans séance : elle hérite de la mienne ; l'ami pourra
- *      changer la sienne de son côté). [Finaliser mon inscription] reste bloqué
- *      tant que le partage n'est pas DÉCLENCHÉ (POST /chain/share) ;
- *   3. INSCRIPTION — le formulaire existant (InvitationDuo garde le POST /join) ;
- *   4. CONFIRMÉ (wf-essai-confirme) — date, heure, lieu, billet, et, facultatif,
- *      [Inviter encore] : V607g, une NOUVELLE invitation (jeton neuf) par ami.
+ *   2. ESSAI PRÊT (wf-essai-pret) — séance, « Deviens Afroboosteur » (audio du
+ *      coach), « Pour confirmer ton essai gratuit, invite 1 ami », prénom + e-mail +
+ *      WhatsApp → [Inviter 1 ami et confirmer ma place]. L'invitation de l'ami est
+ *      créée ICI (POST /chain, sans séance : elle hérite de la mienne).
+ *      V610l — CE CLIC FAIT TOUT, dans cet ordre : fenêtre ouverte dans le geste →
+ *      prénom enregistré → partage enregistré (POST /chain/share) → place CONFIRMÉE
+ *      (POST /join, idempotent) → WhatsApp s'ouvre avec le lien de l'ami. Plus de
+ *      [Finaliser mon inscription] : rien ne dépend d'un retour depuis WhatsApp ;
+ *   3. CONFIRMÉ (wf-essai-confirme) — « Ta place est réservée », date, heure, lieu,
+ *      billet ; fenêtre bloquée → [Ouvrir WhatsApp] [Copier mon lien] [Partager
+ *      autrement] ; facultatif : [Inviter un autre ami] (V607g, jeton neuf par ami).
+ *      Lien rouvert / page rechargée sur CET appareil → directement cet écran.
  *
  * L'OBLIGATION RESTE CELLE DU SERVEUR : /join répond 409 `invitation_requise`
- * tant qu'aucun partage n'est enregistré (InvitationDuo ramène alors ici).
+ * tant qu'aucun partage n'est enregistré — d'où l'ordre partage → join.
  *
  * HONNÊTETÉ : « partage déclenché » (WhatsApp ouvert avec le message prérempli),
  * jamais « envoyé ». AUCUNE BOUCLE : effets sur des primitives, création de
@@ -73,19 +77,16 @@ function LigneSeance({ seance, testid }) {
  * @param {string}   token          le jeton du pass reçu
  * @param {object}   pass           le PassPublicDTO (course, occurrence, version, chain…)
  * @param {string}   prenom / photo l'invitant (affichables)
- * @param {node}     formulaire     le formulaire d'inscription (InvitationDuo)
  * @param {object}   resultat       la réponse du join (succès) ou null
+ * @param {boolean}  dejaConfirme   V610l : essai déjà confirmé par CET appareil (retour / rechargement)
  * @param {function} onPass         (dto) → InvitationDuo remplace sa copie du pass
- * @param {function} onPrenom       (prénom saisi) → préremplit l'inscription
- * @param {number}   retourPartage  compteur : chaque incrément ramène à « Essai prêt » (409 invitation_requise)
- * @param {string}   messagePartage le message affiché après ce retour
+ * @param {function} onRejoindre    V610l : ({name,email,whatsapp,marketing}) → Promise (join) ; rejet `{texte, raison}`
  */
 export default function ParcoursEssai({
-  token, pass, prenom, photo, formulaire, resultat, onPass, onPrenom, retourPartage, messagePartage,
+  token, pass, prenom, photo, resultat, dejaConfirme, onPass, onRejoindre,
 }) {
   const chainePub = (pass && pass.chain) || {};
   const [ecran, setEcran] = useState(() => (chainePub.exists || chainePub.shared ? 'pret' : 'accueil'));
-  const [partage, setPartage] = useState(!!chainePub.shared);
   const [choix, setChoix] = useState(() => seanceDuPass(pass));
   const [opts, setOpts] = useState(null);
   const [calendrier, setCalendrier] = useState(false);
@@ -97,11 +98,17 @@ export default function ParcoursEssai({
   const [erreurCreation, setErreurCreation] = useState('');
   const [profil] = useState(() => profilConnu());
   const [nom, setNom] = useState(() => profil.prenom || '');
-  const [enregistrement, setEnregistrement] = useState(false);
-  const [aReessayer, setAReessayer] = useState('');
+  // V610l : les coordonnées de la réservation (exigées par le serveur : billet + un essai par personne)
+  const [email, setEmail] = useState(() => profil.email || '');
+  const [whatsapp, setWhatsapp] = useState(() => profil.whatsapp || '');
+  const [consent, setConsent] = useState(false);
+  const [marketing, setMarketing] = useState(false);
+  const [confirmation, setConfirmation] = useState(false);   // partage + join en cours
+  const [erreurForm, setErreurForm] = useState('');
+  const [whatsappBloque, setWhatsappBloque] = useState(false); // fenêtre refusée : place réservée quand même
   const [info, setInfo] = useState('');
-  const [avis, setAvis] = useState('');
   const enVol = useRef(false);
+  const confirmationVol = useRef(false);                       // double clic : UN seul envoi
   // V610k — le MOT AUDIO de l'invitation (s'il existe) : UN lecteur, monté dès l'accueil (caché),
   // lancé PENDANT le clic « Valider ma séance » (geste utilisateur : condition du son sur
   // Safari / Chrome). Une seule tentative automatique par arrivée ; jamais en boucle ;
@@ -129,14 +136,6 @@ export default function ParcoursEssai({
     return () => { vivant = false; };
   }, [token]);
 
-  // 409 invitation_requise au join → retour à « Essai prêt » (vérité serveur).
-  useEffect(() => {
-    if (!retourPartage) return;
-    setEcran('pret');
-    setPartage(false);
-    setAvis(messagePartage || messageRefus('invitation_requise'));
-  }, [retourPartage, messagePartage]);
-
   // ── Création (ou relecture idempotente) de l'invitation de mon ami ──
   const creer = () => {
     if (enVol.current) return;
@@ -159,7 +158,7 @@ export default function ParcoursEssai({
       .finally(() => { enVol.current = false; setCreation(false); });
   };
   const aUnChild = !!child;
-  const confirme = !!resultat;
+  const confirme = !!resultat || !!dejaConfirme;
   const surPret = ecran === 'pret' && !confirme;
   useEffect(() => {
     if (surPret) suivreInvitation(token, 'etape_invitation_atteinte');
@@ -230,22 +229,7 @@ export default function ParcoursEssai({
       .finally(() => setValidation(false));
   };
 
-  // ── 2. Partage ──
-  const enregistrer = (channel) => {
-    setEnregistrement(true); setAReessayer('');
-    return enregistrerPartageChaine({ token, channel })
-      .then((r) => {
-        const d = (r && r.data) || {};
-        if (d.child && d.child.share_url) setChild((prev) => Object.assign({}, prev || {}, d.child));
-        setAvis('');
-        const n = nomAffichable(nom);
-        if (typeof onPrenom === 'function' && n) onPrenom(n);
-        setPartage(true);
-      })
-      .catch(() => { setAReessayer(channel); })
-      .finally(() => setEnregistrement(false));
-  };
-
+  // ── 2. Partager = CONFIRMER MA PLACE (V610l) ──
   const texteDe = (c) => texteWhatsAppEssai({
     prenom: nomAffichable(nom) || (c && c.display_name) || '',
     occurrence: c && c.occurrence,
@@ -268,62 +252,123 @@ export default function ParcoursEssai({
         return suivant;
       });
   };
-  const inactif = creation || enregistrement || !child || !editKey;
+  const inactif = creation || confirmation || !child || !editKey;
+
+  /** Les coordonnées de la réservation, vérifiées AVANT tout envoi (rien n'est ouvert sinon). */
+  const coordonnees = () => {
+    const name = String(nom || '').trim();
+    const mail = String(email || '').trim().toLowerCase();
+    const tel = String(whatsapp || '').trim();
+    if (!name) return { erreur: 'Indique ton prénom.' };
+    if (!mail || mail.indexOf('@') < 1) return { erreur: 'Indique une adresse e-mail valide.' };
+    if (!tel) return { erreur: 'Indique ton numéro WhatsApp.' };
+    if (!consent) return { erreur: 'Coche la case liée à la réservation pour continuer.' };
+    return { name, email: mail, whatsapp: tel, marketing };
+  };
 
   /**
-   * WhatsApp s'ouvre DANS le geste (sinon le navigateur bloque la fenêtre) :
-   * lien prêt → ouverture directe ; prénom à enregistrer → fenêtre vide ouverte
-   * tout de suite, adresse posée après l'enregistrement (fermée s'il échoue).
+   * prénom → partage ENREGISTRÉ (POST /chain/share, canal réel) → place CONFIRMÉE
+   * (POST /join, idempotent). Résout avec la carte de l'ami (son lien personnel).
+   * Rejet : `{ texte }` à afficher. Rien ne dépend d'un retour sur la page ensuite.
+   */
+  const confirmer = (canal, coord) => preparerEnfant()
+    .catch(() => Promise.reject({ texte: 'Ton prénom n’a pas pu être enregistré. Vérifie-le, puis réessaie.' }))
+    .then(() => enregistrerPartageChaine({ token, channel: canal })
+      .catch(() => Promise.reject({ texte: 'Ton invitation n’a pas pu être enregistrée. Réessaie dans un instant.' })))
+    .then((r) => {
+      const d = (r && r.data) || {};
+      const c = Object.assign({}, childRef.current || {}, d.child || {});
+      childRef.current = c;
+      setChild(c);
+      return onRejoindre(coord).then(() => c);
+    });
+
+  /**
+   * WhatsApp : la fenêtre s'ouvre DANS le geste (sinon le navigateur la bloque), vide ;
+   * son adresse est posée une fois la place confirmée. Fenêtre refusée → la place est
+   * réservée quand même, et l'écran propose d'ouvrir WhatsApp / copier le lien.
    */
   const surWhatsApp = () => {
-    if (inactif || !child.share_url) return;
-    setInfo('');
-    if (!nomAEnregistrer()) {
-      window.open(lienWhatsApp(texteDe(child)), '_blank', 'noopener');
-      suivreInvitation(token, 'partage_whatsapp_declenche');
-      enregistrer('whatsapp');
-      return;
-    }
+    if (inactif || !child.share_url || confirmationVol.current) return;
+    setInfo(''); setErreurForm('');
+    const coord = coordonnees();
+    if (coord.erreur) { setErreurForm(coord.erreur); return; }
+    confirmationVol.current = true;
+    setConfirmation(true);
     let fen = null;
     try { fen = window.open('', '_blank'); } catch (e) { fen = null; }
     if (fen) { try { fen.opener = null; } catch (e) { /* ignore */ } }
-    preparerEnfant()
+    confirmer('whatsapp', coord)
       .then((c) => {
-        if (!fen) { setInfo('Ton prénom est enregistré. Touche encore « Inviter 1 ami sur WhatsApp ».'); return; }
+        if (!fen) { setWhatsappBloque(true); return; }
         try { fen.location.href = lienWhatsApp(texteDe(c)); } catch (e) { /* ignore */ }
-        suivreInvitation(token, 'partage_whatsapp_declenche');
-        enregistrer('whatsapp');
+        suivreInvitation(token, 'partage_whatsapp_declenche');   // déclenché — jamais « envoyé »
       })
-      .catch(() => {
+      .catch((refus) => {
         if (fen) { try { fen.close(); } catch (e) { /* ignore */ } }
-        setInfo('Ton prénom n’a pas pu être enregistré. Vérifie-le ou efface-le, puis réessaie.');
-      });
+        setErreurForm((refus && refus.texte) || 'Ta place n’a pas pu être confirmée. Réessaie dans un instant.');
+      })
+      .finally(() => { confirmationVol.current = false; setConfirmation(false); });
   };
   const nav = typeof navigator !== 'undefined' ? navigator : null;
   const peutPartager = !!(nav && typeof nav.share === 'function');
+  /**
+   * « Partager autrement » : MÊME règle — seul un partage réellement abouti (feuille de
+   * partage validée, ou message copié) enregistre le partage et confirme la place.
+   * Annuler la feuille de partage ne confirme rien.
+   */
   const surAutrement = () => {
-    if (inactif || !child.share_url) return;
-    setInfo('');
+    if (inactif || !child.share_url || confirmationVol.current) return;
+    setInfo(''); setErreurForm('');
+    const coord = coordonnees();
+    if (coord.erreur) { setErreurForm(coord.erreur); return; }
+    confirmationVol.current = true;
+    setConfirmation(true);
+    const fin = () => { confirmationVol.current = false; setConfirmation(false); };
+    const echec = (refus) => setErreurForm((refus && refus.texte) || 'Ta place n’a pas pu être confirmée. Réessaie dans un instant.');
     preparerEnfant()
       .then((c) => {
         const texte = texteDe(c);
         if (peutPartager) {
           return nav.share({ title: 'Afroboost', text: texte })
-            .then(() => { suivreInvitation(token, 'partage_autre_declenche'); return enregistrer('share'); })
+            .then(() => { suivreInvitation(token, 'partage_autre_declenche'); return confirmer('share', coord); })
             .catch((e) => {
-              if (e && e.name === 'AbortError') return;
-              if (e && e.name === 'NotAllowedError') { setInfo('Touche encore « Partager autrement ».'); return; }
+              if (e && e.name === 'AbortError') return undefined;
+              if (e && e.name === 'NotAllowedError') { setInfo('Touche encore « Partager autrement ».'); return undefined; }
+              if (e && e.texte) { echec(e); return undefined; }
               setInfo('Le partage n’a pas abouti. Essaie WhatsApp.');
+              return undefined;
             });
         }
         return copier(texte).then((ok) => {
           if (!ok) { setInfo('Copie impossible : essaie WhatsApp.'); return undefined; }
-          setInfo('Message et lien copiés : colle-les à ton ami.');
           suivreInvitation(token, 'partage_autre_declenche');
-          return enregistrer('copy');
+          return confirmer('copy', coord)
+            .then(() => setInfo('Message et lien copiés : colle-les à ton ami.'))
+            .catch(echec);
         });
       })
-      .catch(() => setInfo('Ton prénom n’a pas pu être enregistré. Vérifie-le ou efface-le, puis réessaie.'));
+      .catch(() => setErreurForm('Ton prénom n’a pas pu être enregistré. Vérifie-le, puis réessaie.'))
+      .finally(fin);
+  };
+
+  // Après confirmation, fenêtre WhatsApp refusée : la place est réservée ; le lien de l'ami
+  // reste à portée (un vrai lien = un vrai geste, jamais bloqué). Rien n'est ré-enregistré.
+  const copierMonLien = () => {
+    const c = childRef.current;
+    if (!c || !c.share_url) return;
+    copier(texteDe(c)).then((ok) => setInfo(ok ? 'Message et lien copiés : colle-les à ton ami.' : 'Copie impossible pour le moment.'));
+  };
+  const partagerMonLien = () => {
+    const c = childRef.current;
+    if (!c || !c.share_url) return;
+    if (peutPartager) {
+      nav.share({ title: 'Afroboost', text: texteDe(c) })
+        .then(() => suivreInvitation(token, 'partage_autre_declenche'))
+        .catch(() => { /* annulé : rien à faire */ });
+      return;
+    }
+    copierMonLien();
   };
 
   // ── V607g — « INVITER ENCORE » : chaque ami reçoit SON lien (jamais le même) ──
@@ -377,17 +422,26 @@ export default function ParcoursEssai({
 
   const maSeance = seanceDuPass(pass);
 
-  // ── 4. CONFIRMÉ ─────────────────────────────────────────────────────────
+  // ── 3. CONFIRMÉ : « Ta place est réservée » (V610l) ─────────────────────
+  // Atteint PAR le clic de partage (join déjà fait), ou au retour / rechargement sur cet
+  // appareil (`dejaConfirme`). Aucune action obligatoire ici.
   if (confirme) {
     const c = (resultat && resultat.course) || (pass && pass.course) || {};
     const occ = (resultat && resultat.occurrence) || (pass && pass.occurrence);
     const heure = libelleHeure(occ);
     const espace = urlEspaceCourant();
+    const lienAmi = !!(child && child.share_url);
+    const justeConfirme = !!resultat;
     return (
       <div className="cp-wf" data-testid="wf-essai-confirme">
         <div className="cp-state" style={{ paddingTop: 10 }}>
           <div className="cp-roundic cp-roundic--ok"><SvgIcon name="check" size={38} strokeWidth="2.5" /></div>
-          <h1 className="cp-h1 cp-center">Ton essai est <em className="cp-em">confirmé</em> !</h1>
+          <h1 className="cp-h1 cp-center">Ta place est <em className="cp-em">réservée</em> !</h1>
+          {justeConfirme && !whatsappBloque ? (
+            <p className="cp-center" data-testid="wf-confirme-texte">
+              Ton invitation personnelle est prête. Partage-la maintenant avec ton ami.
+            </p>
+          ) : null}
         </div>
         <div className="cp-card" data-testid="wf-essai-confirme-seance">
           {c.name ? <div className="cp-eyebrow" style={{ marginTop: 0 }}>{c.name}</div> : null}
@@ -405,19 +459,34 @@ export default function ParcoursEssai({
             </p>
           ) : null}
         </div>
-        <BilletsDuo tickets={(resultat && resultat.tickets) || []} vue="ami" />
+        {whatsappBloque && lienAmi ? (
+          <div data-testid="wf-whatsapp-bloque">
+            <p className="cp-wf-aide" style={{ marginTop: 12 }}>Tu peux copier ton lien pour inviter ton ami.</p>
+            <a className="cp-b cp-b--whatsapp cp-wz-cible" href={lienWhatsApp(texteDe(child))} target="_blank" rel="noopener noreferrer"
+               onClick={() => suivreInvitation(token, 'partage_whatsapp_declenche')} data-testid="wf-ouvrir-whatsapp">
+              <SvgIcon name="messageCircle" size={20} /> Ouvrir WhatsApp
+            </a>
+            <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={copierMonLien} data-testid="wf-copier-lien">
+              <SvgIcon name="copy" size={20} /> Copier mon lien
+            </button>
+            <button type="button" className="cp-link cp-wz-tap" onClick={partagerMonLien} data-testid="wf-partager-lien">
+              <SvgIcon name="share" size={14} /> Partager autrement
+            </button>
+          </div>
+        ) : null}
+        {justeConfirme ? <BilletsDuo tickets={(resultat && resultat.tickets) || []} vue="ami" /> : null}
         <p className="cp-center cp-fine">Tu recevras aussi ton billet par e-mail.</p>
         {editKey ? (
           <div className="cp-wf-encore-bloc">
             <p className="cp-wf-aide" style={{ marginTop: 12 }}>Tu peux inviter d’autres amis si tu veux.</p>
             <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={surEncore}
                     disabled={encoreEnCours} data-testid="wf-inviter-encore">
-              <SvgIcon name="messageCircle" size={20} /> {encoreEnCours ? 'Un instant…' : 'Inviter encore'}
+              <SvgIcon name="messageCircle" size={20} /> {encoreEnCours ? 'Un instant…' : 'Inviter un autre ami'}
             </button>
             {nbEncore ? <p className="cp-fine" data-testid="wf-encore-compte">{nbEncore > 1 ? `${nbEncore} nouvelles invitations partagées` : '1 nouvelle invitation partagée'}</p> : null}
-            {info ? <p className="cp-mini" role="status" data-testid="wf-info">{info}</p> : null}
           </div>
         ) : null}
+        {info ? <p className="cp-mini" role="status" data-testid="wf-info">{info}</p> : null}
         <a className="cp-b cp-b--ghost" href={espace || '/'} data-testid="invitation-retour-espace" style={{ marginTop: 12 }}>
           <SvgIcon name="arrowLeft" size={18} /> {espace ? 'Retour à mon espace' : 'Retour à l’accueil'}
         </a>
@@ -425,31 +494,21 @@ export default function ParcoursEssai({
     );
   }
 
-  // ── 3. INSCRIPTION ──────────────────────────────────────────────────────
-  if (ecran === 'inscription' && partage) {
-    return (
-      <div className="cp-wf" data-testid="wf-inscription">
-        <h2 className="cp-wf-titre">Finalise ton inscription</h2>
-        <LigneSeance seance={maSeance} />
-        {editKey ? formulaire : <AutreAppareil />}
-        <button type="button" className="cp-link cp-wz-tap cp-wz-retour" onClick={() => setEcran('pret')} data-testid="wf-retour">
-          <SvgIcon name="arrowLeft" size={14} /> Retour
-        </button>
-      </div>
-    );
-  }
-
-  // ── 2. ESSAI PRÊT : inviter 1 ami ───────────────────────────────────────
-  if (ecran === 'pret' || ecran === 'inscription') {
+  // ── 2. ESSAI PRÊT : inviter 1 ami = confirmer ma place (V610l) ──────────
+  if (ecran === 'pret') {
     return (
       <div className="cp-wf" data-testid="wf-essai-pret">
-        {blocAudio}
         <h2 className="cp-wf-titre">Ton essai est prêt !</h2>
         <LigneSeance seance={maSeance} />
+        {blocAudio ? (
+          <p className="cp-wf-rappel" data-testid="wf-afroboosteur" style={{ fontWeight: 800 }}>
+            <SvgIcon name="fire" size={16} /> <span>Deviens Afroboosteur</span>
+          </p>
+        ) : null}
+        {blocAudio}
         <p className="cp-wf-aide" data-testid="wf-essai-pret-texte">
-          Pour le débloquer, invite à ton tour une personne à découvrir Afroboost.
+          Pour confirmer ton essai gratuit, invite 1 ami à découvrir Afroboost.
         </p>
-        {avis ? <p className="cp-notice" role="alert" data-testid="wf-avis">{avis}</p> : null}
         {erreurCreation ? (
           <div data-testid="wf-erreur-creation">
             <p className="cp-error" role="alert">{erreurCreation}</p>
@@ -470,9 +529,23 @@ export default function ParcoursEssai({
             <input id="wf-nom" className="cp-input" value={nom} maxLength={NOM_MAX} placeholder="Ex. : Henri"
                    onChange={(e) => setNom(e.target.value.slice(0, NOM_MAX))} autoComplete="given-name" data-testid="wf-nom" />
             <p className="cp-fine">Ton ami verra que l’invitation vient de toi.</p>
+            <label className="cp-label" htmlFor="wf-email">Pour recevoir ton billet</label>
+            <input id="wf-email" className="cp-input" type="email" value={email} placeholder="E-mail"
+                   onChange={(e) => setEmail(e.target.value)} autoComplete="email" data-testid="wf-email" />
+            <input className="cp-input" type="tel" value={whatsapp} placeholder="Numéro WhatsApp"
+                   onChange={(e) => setWhatsapp(e.target.value)} autoComplete="tel" data-testid="wf-whatsapp" />
+            <label className="cp-chk">
+              <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} data-testid="wf-consent" />
+              <span>J'accepte de recevoir les informations liées à cette réservation (obligatoire).</span>
+            </label>
+            <label className="cp-chk">
+              <input type="checkbox" checked={marketing} onChange={(e) => setMarketing(e.target.checked)} data-testid="wf-marketing" />
+              <span>Je souhaite recevoir les prochaines offres Afroboost (facultatif).</span>
+            </label>
+            {erreurForm ? <p className="cp-error" role="alert" data-testid="wf-erreur-form">{erreurForm}</p> : null}
             <button type="button" className="cp-b cp-b--whatsapp cp-wz-cible" onClick={surWhatsApp} disabled={inactif}
                     data-testid="wf-inviter-whatsapp" style={{ marginTop: 12 }}>
-              <SvgIcon name="messageCircle" size={20} /> Inviter 1 ami sur WhatsApp
+              <SvgIcon name="messageCircle" size={20} /> {confirmation ? 'Confirmation…' : 'Inviter 1 ami et confirmer ma place'}
             </button>
             <p className="cp-fine" data-testid="wf-texte-lien">Ton ami recevra son propre lien d’invitation.</p>
             <button type="button" className="cp-link cp-wz-tap" onClick={surAutrement} disabled={inactif}
@@ -481,27 +554,8 @@ export default function ParcoursEssai({
             </button>
           </>
         ) : null}
-        {enregistrement ? <p className="cp-mini" role="status">Un instant…</p> : null}
         {info ? <p className="cp-mini" role="status" data-testid="wf-info">{info}</p> : null}
-        {aReessayer ? (
-          <div data-testid="wf-erreur-partage">
-            <p className="cp-error" role="alert">Ton partage n’a pas pu être enregistré. Réessaie pour débloquer ton essai.</p>
-            <button type="button" className="cp-b cp-b--secondary cp-wz-cible" onClick={() => enregistrer(aReessayer)}
-                    disabled={enregistrement} data-testid="wf-reessayer-partage">
-              <SvgIcon name="refresh" size={20} /> Réessayer
-            </button>
-          </div>
-        ) : null}
-        {partage ? (
-          <p className="cp-ok-text" role="status" data-testid="wf-partage-ok">
-            Invitation partagée. Tu peux finaliser ton inscription.
-          </p>
-        ) : null}
-        <button type="button" className="cp-b cp-wz-cible cp-wf-cta" onClick={() => { setInfo(''); setEcran('inscription'); }}
-                disabled={!partage} aria-disabled={!partage} data-testid="wf-finaliser">
-          Finaliser mon inscription <SvgIcon name="arrowRight" size={20} />
-        </button>
-        {!chainePub.exists && !partage ? (
+        {!chainePub.exists && !confirmation ? (
           <button type="button" className="cp-link cp-wz-tap cp-wz-retour" onClick={() => setEcran('accueil')} data-testid="wf-retour">
             <SvgIcon name="arrowLeft" size={14} /> Changer ma séance
           </button>
