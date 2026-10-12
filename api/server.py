@@ -30676,6 +30676,7 @@ P3R2_DRAPEAU_ACTIF = "P3_RELANCE_ENABLED"
 P3R2_DRAPEAU_REEL = "P3_RELANCE_ENVOI_REEL"
 P3R2_MOTIFS = {
     "J0_NON_REMIS": "le premier message n'a pas ete remis (rebond, echec ou remise non confirmee)",
+    "RELATION_HUMAINE": "un humain suit ce prospect (rendez-vous, interet, partenaire, suivi manuel)",
     "CAMPAGNE_NON_APPROUVEE": "la campagne n'est pas approuvee",
     "EMPREINTE_ALTEREE": "le contenu a change depuis l'approbation",
     "JAMAIS_ENVOYE": "aucune relance sans premier contact",
@@ -30808,6 +30809,12 @@ def p3r2_garde_relance(action: dict, campagne: dict, etape: str, refus=None,
     if p3b1_est_permanent(a.get("bounce_type")):
         return {"autorise": False, "code": "REBOND_PERMANENT",
                 "motif": P3R2_MOTIFS["REBOND_PERMANENT"]}
+    # V609b — UNE RELATION HUMAINE ARRETE LA SEQUENCE. `suivi_humain` pose sur l'action, ou
+    # `_relation_humaine` injecte par le moteur depuis la fiche et l'agenda (rendez-vous pris,
+    # interesse / accepte / partenaire, adresse a corriger) : ces faits ne vivent pas sur l'action.
+    if a.get("suivi_humain") or a.get("_relation_humaine"):
+        return {"autorise": False, "code": "RELATION_HUMAINE",
+                "motif": P3R2_MOTIFS["RELATION_HUMAINE"]}
     # V609 — PAS DE RELANCE SANS J0 REMIS. Pour un J0 suivi par V608 (`suivi_livraison`),
     # seule la remise confirmee (`delivered`) ouvre la sequence : un rebond temporaire,
     # un echec ou une remise encore en attente ne doivent pas recevoir un deuxieme message
@@ -31013,6 +31020,7 @@ async def p3r2_executer_relances(campagne_id: str, etape: str, appelant: str,
 
     envoi_autorise = p3r2_envoi_autorise(await get_feature_flags())
     instant = (maintenant or datetime.now(timezone.utc).isoformat())
+    _humains = await p3r2_relations_humaines(actions)
 
     resultats = []
     traites = 0
@@ -31022,6 +31030,8 @@ async def p3r2_executer_relances(campagne_id: str, etape: str, appelant: str,
     for action in actions:
         if _cibles is not None and action.get("id") not in _cibles:
             continue
+        if action.get("id") in _humains:
+            action = dict(action, _relation_humaine=_humains[action["id"]])
         verdict = p3r2_garde_relance(action, campagne, etape, refus=refus,
                                      maintenant=instant,
                                      envoi_autorise=envoi_autorise,
@@ -33679,6 +33689,54 @@ async def v608_evenement_livraison(evenement: dict, event_id: str = "") -> dict:
     if not effets:
         logger.info("[V608] %s pour un e-mail inconnu (%s) — rien touche", type_ev, rid[:12])
     return {"suivi": True, "statut": statut, "effets": effets, "quota": v608_est_quota(raison)}
+
+
+P3R2_STATUTS_HUMAINS = ("repondu", "interesse", "accepte", "refuse", "sans_reponse_pause")
+
+
+# V609b — lu par le moteur P3-R2 ; défini ici, hors de sa section (lecture seule).
+async def p3r2_relations_humaines(actions) -> dict:
+    """V609b — {action_id: motif} pour les actions dont le prospect est suivi par un humain.
+    Lit la FICHE (statut, partenaire, adresse a corriger) et l'AGENDA (rendez-vous pris via le
+    lien de prospection). Lecture seule ; en cas d'erreur de lecture, on ARRETE (prudence)."""
+    ids = [a.get("id") for a in actions or [] if a.get("id")]
+    if not ids:
+        return {}
+    refs, uuids = {}, {}
+    for a in actions:
+        for r in a.get("prospect_ids") or []:
+            refs.setdefault(r, []).append(a["id"])
+        for u in a.get("prospect_uuids") or []:
+            if u:
+                uuids.setdefault(u, []).append(a["id"])
+    sortie = {}
+    try:
+        fiches = await db[P3S1_COLLECTION].find(
+                {"$or": [{"ref": {"$in": list(refs)}}, {"id": {"$in": list(uuids)}}]},
+                {"_id": 0, "ref": 1, "id": 1, "status": 1, "partner_id": 1, "adresse_a_corriger": 1,
+                 "relance_bloquee": 1}).to_list(P3S3_LISTE_MAX * 4)
+        for f in fiches:
+            motif = None
+            if f.get("partner_id"):
+                motif = "partenaire"
+            elif (f.get("status") or "") in P3R2_STATUTS_HUMAINS:
+                motif = "fiche " + f["status"]
+            elif f.get("adresse_a_corriger") or f.get("relance_bloquee"):
+                motif = "adresse a corriger / relance bloquee"
+            if motif:
+                for aid in refs.get(f.get("ref"), []) + uuids.get(f.get("id"), []):
+                    sortie.setdefault(aid, motif)
+        rdv = await db[CAL1_COLLECTION].find(
+                {"campaign_action_id": {"$in": ids}, "event_type": "appointment",
+                 "status": {"$ne": "annule"}},
+                {"_id": 0, "campaign_action_id": 1}).to_list(P3S3_LISTE_MAX * 4)
+        for ev in rdv:
+            sortie.setdefault(ev["campaign_action_id"], "rendez-vous pris")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s relations humaines illisibles (%s) : aucune relance ce passage",
+                       P3R2_PREFIXE, type(e).__name__)
+        return {aid: "lecture impossible" for aid in ids}
+    return sortie
 
 
 def v608_est_quota(texte) -> bool:

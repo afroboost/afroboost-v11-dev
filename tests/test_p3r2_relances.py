@@ -213,6 +213,7 @@ def base_neuve(actions=None, camp=None, fiches=None, refus=None):
     b["subscribers"] = CollectionRelance(
         "subscribers", [dict(r) for r in (refus or [])], uniques=[(("channel", "value"), None)])
     b["feature_flags"] = CollectionRelance("feature_flags", [])
+    b[S.CAL1_COLLECTION] = CollectionRelance(S.CAL1_COLLECTION, [])   # V609b : agenda lu (rendez-vous)
     S.db = b
     return b
 

@@ -48,6 +48,54 @@ verifier("adresse invalide → CIBLE_INVALIDE", garde(action(target="pas-une-adr
 verifier("pas de texte J+3 → MESSAGE_VIDE (rien ne part tant que Bassi n'a pas validé)", garde(action(message_j3=""))["code"] == "MESSAGE_VIDE")
 verifier("action exclue → ACTION_EXCLUE", garde(action(statut="exclu"))["code"] == "ACTION_EXCLUE")
 
+print("\n3b. V609b — relation humaine (vit hors de l'action)")
+verifier("suivi_humain sur l'action → RELATION_HUMAINE", garde(action(suivi_humain=True))["code"] == "RELATION_HUMAINE")
+verifier("rendez-vous / partenaire injecté par le moteur → RELATION_HUMAINE", garde(action(_relation_humaine="rendez-vous pris"))["code"] == "RELATION_HUMAINE")
+verifier("la réponse reste prioritaire dans le motif", garde(action(replied_at="x", suivi_humain=True))["code"] == "A_REPONDU")
+
+import asyncio
+class _Col:
+    def __init__(self, docs): self.docs = docs
+    def find(self, q, proj=None):
+        docs = [d for d in self.docs if _match(d, q)]
+        class _C:
+            def __init__(s, d): s.d = d
+            def __aiter__(s): s.i = iter(s.d); return s
+            async def __anext__(s):
+                try: return next(s.i)
+                except StopIteration: raise StopAsyncIteration
+        c = _C(docs)
+        async def to_list(n): return list(docs)
+        c.to_list = to_list
+        return c
+def _match(d, q):
+    for k, v in q.items():
+        if k == "$or": 
+            if not any(_match(d, x) for x in v): return False
+        elif isinstance(v, dict) and "$in" in v:
+            if d.get(k) not in v["$in"]: return False
+        elif isinstance(v, dict) and "$ne" in v:
+            if d.get(k) == v["$ne"]: return False
+        elif d.get(k) != v: return False
+    return True
+_FICHES = [{"ref": "R1", "id": "u1", "status": "contacte"}, {"ref": "R2", "id": "u2", "status": "interesse"},
+           {"ref": "R3", "id": "u3", "status": "contacte", "partner_id": "p"}, {"ref": "R4", "id": "u4", "status": "contacte"},
+           {"ref": "R5", "id": "u5", "status": "contacte", "adresse_a_corriger": True}, {"ref": "R6", "id": "u6", "status": "contacte"}]
+_EVTS = [{"campaign_action_id": "a4", "event_type": "appointment", "status": "confirme"},
+         {"campaign_action_id": "a6", "event_type": "appointment", "status": "annule"},
+         {"campaign_action_id": "a1", "event_type": "task", "status": "a_faire"}]
+_ancien = S.db
+S.db = {S.P3S1_COLLECTION: _Col(_FICHES), S.CAL1_COLLECTION: _Col(_EVTS)}
+_acts = [{"id": "a%d" % i, "prospect_ids": ["R%d" % i], "prospect_uuids": ["u%d" % i]} for i in range(1, 7)]
+_h = asyncio.run(S.p3r2_relations_humaines(_acts))
+S.db = _ancien
+verifier("fiche ordinaire + simple tâche → aucune relation humaine", "a1" not in _h, _h)
+verifier("fiche « interesse » → arrêt", _h.get("a2") == "fiche interesse", _h)
+verifier("partenaire activé → arrêt", _h.get("a3") == "partenaire", _h)
+verifier("rendez-vous confirmé → arrêt", _h.get("a4") == "rendez-vous pris", _h)
+verifier("adresse à corriger → arrêt", "a5" in _h, _h)
+verifier("rendez-vous ANNULÉ → la séquence peut reprendre", "a6" not in _h, _h)
+
 print("\n4. La chaîne s'arrête après J+14")
 verifier("J+7 sans J+3 parti → J3_NON_PARTI", garde(action(j7_due_at="2026-10-15T00:00:00+00:00", message_j7="x"), "j7")["code"] == "J3_NON_PARTI")
 verifier("J+14 sans J+7 parti → J7_NON_PARTI", garde(action(j14_due_at="2026-10-15T00:00:00+00:00", message_j14="x"), "j14")["code"] == "J7_NON_PARTI")
