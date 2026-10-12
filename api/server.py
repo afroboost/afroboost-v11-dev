@@ -17992,7 +17992,10 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
     # ne puissent pas dire deux choses différentes.
     from api.routes.shared import forfait_utilisable as _v393_ok
     _v393_valide, _v393_message = _v393_ok(
-        {"expires_at": expires_at, "remaining_sessions": remaining_sessions}, 1
+        {"expires_at": expires_at, "remaining_sessions": remaining_sessions,
+         # V617 : le statut voyage aussi — un abonnement historique (remplacé,
+         # annulé, expiré, archivé) n'ouvre jamais de droits.
+         "status": (subscription or {}).get("status")}, 1
     )
     _v393_bloque = not _v393_valide
 
@@ -18063,7 +18066,8 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
             total_sessions = _v531_canon["total_sessions"]
             _v531_valide, _v531_message = _v393_ok(
                 {"expires_at": _v531_canon.get("expires_at") or expires_at,
-                 "remaining_sessions": remaining_sessions}, 1)
+                 "remaining_sessions": remaining_sessions,
+                 "status": (subscription or {}).get("status")}, 1)   # V617
             _v393_bloque = not _v531_valide
             _v393_message = _v531_message
     except Exception as _v531_err:

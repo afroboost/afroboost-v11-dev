@@ -360,16 +360,66 @@ def date_expiration_code(depuis=None) -> str:
 #   4. n'importe quel statut                     -> le plus récent   (dernier repli)
 
 
+# =====================================================================
+# V617 — UNE DATE D'EXPIRATION SANS HEURE VAUT JUSQU'À LA FIN DU JOUR, EN SUISSE
+# =====================================================================
+# Constat du 12/10/2026 (Aurélie, AFR-2287CA, expiresAt « 2026-10-11 ») : trois
+# lectures différentes de la MÊME date coexistaient —
+#   * `_v391_est_expire` la lisait comme le 11/10 à 00:00 UTC : l'espace se
+#     fermait dès 02:00 le matin du dernier jour, avec 3 séances restantes ;
+#   * `lota_droit_utilisable` comparait au jour UTC : le code restait vivant
+#     jusqu'à 02:00 (été) le lendemain ;
+#   * `_v200_parse_expiry` (promo_routes) posait 23:59:59 UTC, soit 01:59 en Suisse.
+# Une seule règle désormais : « expire le 11/10 » = utilisable tout le 11/10 en
+# heure de Zurich, expiré dès 00:00 le 12/10 en heure de Zurich. Le fuseau nommé
+# gère seul le passage été/hiver. AUCUNE donnée n'est réécrite : seule la LECTURE
+# d'une date sans heure change ; une valeur avec heure garde son instant exact.
+EXPIRATION_FUSEAU = "Europe/Zurich"
+_V617_DATE_SEULE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def v617_jour_local(maintenant=None) -> str:
+    """Le jour CALENDAIRE suisse (« AAAA-MM-JJ ») de `maintenant` (UTC par défaut)."""
+    from zoneinfo import ZoneInfo as _ZI
+    _m = maintenant or datetime.now(timezone.utc)
+    if _m.tzinfo is None:
+        _m = _m.replace(tzinfo=timezone.utc)
+    return _m.astimezone(_ZI(EXPIRATION_FUSEAU)).strftime("%Y-%m-%d")
+
+
+def v617_fin_du_jour(jour: str):
+    """Premier instant APRÈS le jour `jour` en heure suisse, en UTC (borne exclusive).
+
+    `None` si `jour` n'est pas une date « AAAA-MM-JJ » valide.
+    """
+    if not isinstance(jour, str) or not _V617_DATE_SEULE.match(jour.strip()):
+        return None
+    from zoneinfo import ZoneInfo as _ZI
+    try:
+        _d = datetime.strptime(jour.strip(), "%Y-%m-%d") + timedelta(days=1)
+    except ValueError:
+        return None
+    return _d.replace(tzinfo=_ZI(EXPIRATION_FUSEAU)).astimezone(timezone.utc)
+
+
 def _v391_est_expire(valeur, maintenant=None) -> bool:
     """`expires_at` est-il dépassé ? Absent/illisible -> JAMAIS expiré.
 
     Volontairement indulgent : une date au format inattendu ne doit pas couper
     l'accès d'un abonné qui a payé. On préfère servir un forfait douteux que
     d'en refuser un valide (même parti pris que `_v200_parse_expiry`).
+
+    V617 : une date SANS heure (« 2026-10-11 ») est valable jusqu'à la fin de ce
+    jour en heure suisse — voir `v617_fin_du_jour`.
     """
     if not valeur:
         return False
     maintenant = maintenant or datetime.now(timezone.utc)
+    if maintenant.tzinfo is None:
+        maintenant = maintenant.replace(tzinfo=timezone.utc)
+    if isinstance(valeur, str) and _V617_DATE_SEULE.match(valeur.strip()):
+        _borne = v617_fin_du_jour(valeur.strip())
+        return _borne is not None and maintenant >= _borne
     try:
         if isinstance(valeur, datetime):
             dt = valeur
@@ -494,6 +544,222 @@ async def lire_abonnement_par_code(db, code, email=None, filtre_supplementaire=N
 # Le garde vit ICI, en un seul endroit, pour que les trois chemins ne puissent
 # plus diverger : espace abonné, vitrine, et scan du QR à l'entrée du cours.
 
+# =====================================================================
+# V617 — UN SEUL ABONNEMENT ACTUEL ; L'HISTORIQUE NE RESSURGIT JAMAIS
+# =====================================================================
+# Constat du 12/10/2026 : `PUT /discount-codes/{id}` recopiait plafond,
+# expiration, compteur et encaissement sur TOUTES les souscriptions portant le
+# code (mise à jour EN MASSE), anciennes comprises — une souscription remplacée pouvait
+# redevenir `active` (banc BASSBOOSTX-11 : l'ancienne fiche réactivée rendait le
+# code AMBIGU). Désormais une modification vise UNE souscription, par son `id` :
+# l'abonnement ACTUEL du code. Un statut historique n'est jamais modifié.
+ABO_STATUTS_HISTORIQUES = ("superseded", "expired", "cancelled", "archived")
+
+
+def abo_actuel_du_code(subs, email=None):
+    """PUR. (souscription | None, motif) — l'abonnement ACTUEL d'un code.
+
+    Actuel = statut `active`, et rien d'autre : une souscription remplacée,
+    expirée, annulée, archivée ou épuisée (`completed`) est de l'HISTORIQUE.
+    `email` (bénéficiaire du code) restreint aux souscriptions de cette personne
+    quand au moins une lui appartient.
+
+    motifs : `unique` | `aucun` | `plusieurs` (erreur d'intégrité — on ne
+    choisit JAMAIS arbitrairement).
+    """
+    actifs = [s for s in (subs or []) if isinstance(s, dict)
+              and str(s.get("status") or "").strip().lower() == "active"]
+    _e = str(email or "").strip().lower()
+    if _e:
+        _miens = [s for s in actifs if str(s.get("email") or "").strip().lower() == _e]
+        if _miens:
+            actifs = _miens
+    if not actifs:
+        return None, "aucun"
+    if len(actifs) > 1:
+        return None, "plusieurs"
+    return actifs[0], "unique"
+
+
+# =====================================================================
+# V617 — SUIVI DE PAIEMENT MANUEL (en plusieurs fois) + NOTE INTERNE
+# =====================================================================
+# Un paiement manuel (TWINT, espèces, virement…) ne donne AUCUN mandat de
+# prélèvement : ce suivi n'est qu'un AIDE-MÉMOIRE pour le coach — échéance et
+# rappel interne. Il ne déclenche ni débit, ni e-mail, ni WhatsApp, ni Stripe.
+# Il vit UNIQUEMENT sur la souscription (jamais sur la fiche du code, que la
+# validation publique `/discount-codes/validate` renvoie telle quelle) et n'est
+# lu que par des routes coach. Le montant encaissé reste `montant_encaisse`
+# (lot B) : on ne crée pas une seconde vérité de l'argent reçu.
+SUIVI_PAIEMENT_CLES = ("montant_total", "plusieurs_fois", "nb_paiements",
+                       "paiement_actuel", "prochaine_echeance", "note_interne")
+SUIVI_NOTE_MAX = 1000
+SUIVI_RAPPEL_JOURS = 7
+
+
+def suivi_paiement_valider(brut, montant_encaisse=None) -> dict:
+    """PUR. Valide le suivi saisi par le coach -> dict à stocker, ou {} si vide.
+
+    Lève `HTTPException(400)` sur toute incohérence — jamais de correction
+    silencieuse. Le reste à payer n'est PAS stocké : il se recalcule toujours
+    (`suivi_paiement_lire`), pour ne jamais diverger du montant encaissé.
+    """
+    from fastapi import HTTPException
+    if not isinstance(brut, dict):
+        return {}
+    _sortie = {}
+    _total = brut.get("montant_total")
+    if _total is not None and str(_total).strip() != "":
+        try:
+            _total = round(float(_total), 2)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Montant total illisible.")
+        if _total < 0:
+            raise HTTPException(status_code=400, detail="Le montant total ne peut pas être négatif.")
+        _sortie["montant_total"] = _total
+        try:
+            _enc = float(montant_encaisse) if montant_encaisse not in (None, "") else None
+        except (TypeError, ValueError):
+            _enc = None
+        if _enc is not None and _enc - _total > 0.005:
+            raise HTTPException(status_code=400,
+                                detail="Le montant encaissé dépasse le montant total.")
+    _plusieurs = bool(brut.get("plusieurs_fois"))
+    if _plusieurs:
+        try:
+            _nb = int(brut.get("nb_paiements") or 0)
+            _act = int(brut.get("paiement_actuel") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Nombre de paiements illisible.")
+        if not 2 <= _nb <= 12:
+            raise HTTPException(status_code=400,
+                                detail="Paiement en plusieurs fois : entre 2 et 12 paiements.")
+        if not 1 <= _act <= _nb:
+            raise HTTPException(status_code=400,
+                                detail="Le paiement actuel doit être compris entre 1 et %d." % _nb)
+        _sortie.update(plusieurs_fois=True, nb_paiements=_nb, paiement_actuel=_act)
+    _ech = str(brut.get("prochaine_echeance") or "").strip()[:10]
+    if _ech:
+        if not v617_fin_du_jour(_ech):
+            raise HTTPException(status_code=400, detail="Date d'échéance illisible (AAAA-MM-JJ).")
+        _sortie["prochaine_echeance"] = _ech
+    _note = str(brut.get("note_interne") or "").strip()
+    if _note:
+        _sortie["note_interne"] = _note[:SUIVI_NOTE_MAX]
+    if _sortie:
+        _sortie["maj_le"] = datetime.now(timezone.utc).isoformat()
+    return _sortie
+
+
+def suivi_paiement_lire(sub) -> dict:
+    """PUR. Le suivi d'une souscription, reste à payer RECALCULÉ. {} si aucun suivi."""
+    _s = (sub or {}).get("suivi_paiement")
+    if not isinstance(_s, dict) or not _s:
+        return {}
+    _vue = {k: _s.get(k) for k in SUIVI_PAIEMENT_CLES if _s.get(k) not in (None, "")}
+    _total = _s.get("montant_total")
+    if _total is not None:
+        try:
+            _enc = float((sub or {}).get("montant_encaisse") or 0)
+            _vue["reste_a_payer"] = round(max(0.0, float(_total) - _enc), 2)
+        except (TypeError, ValueError):
+            pass
+    return _vue
+
+
+def suivi_rappel(sub, maintenant=None, jours=SUIVI_RAPPEL_JOURS):
+    """PUR. Le rappel COACH à afficher pour cette souscription, ou None.
+
+    Rappel = reste à payer > 0 ET une échéance qui tombe dans `jours` jours ou est
+    dépassée. Jamais d'envoi : c'est une ligne dans le tableau de bord du coach.
+    """
+    _v = suivi_paiement_lire(sub)
+    _reste = _v.get("reste_a_payer") or 0
+    _ech = _v.get("prochaine_echeance")
+    if not _ech or _reste <= 0:
+        return None
+    _auj = v617_jour_local(maintenant)
+    try:
+        _ecart = (datetime.strptime(_ech, "%Y-%m-%d") - datetime.strptime(_auj, "%Y-%m-%d")).days
+    except ValueError:
+        return None
+    if _ecart > jours:
+        return None
+    _nb, _act = _v.get("nb_paiements"), _v.get("paiement_actuel")
+    return {
+        "subscription_id": (sub or {}).get("id"),
+        "code": (sub or {}).get("code"),
+        "email": (sub or {}).get("email"),
+        "nom": (sub or {}).get("name") or str((sub or {}).get("email") or "").split("@")[0],
+        "reste_a_payer": _reste,
+        "devise": (sub or {}).get("devise") or "CHF",
+        "prochaine_echeance": _ech,
+        "jours_restants": _ecart,
+        "en_retard": _ecart < 0,
+        "paiement_suivant": ("%d/%d" % (_act + 1, _nb)) if _nb and _act and _act < _nb else None,
+        "note_interne": _v.get("note_interne") or "",
+    }
+
+
+async def v617_enrichir_codes(db, codes: list) -> list:
+    """Pose `v617_abonnement` sur chaque fiche de `GET /discount-codes` (route COACH).
+
+    {id, statut, motif, suivi} — l'abonnement ACTUEL du code et son suivi de
+    paiement (reste recalculé). Une lecture, ZÉRO écriture. Toute erreur laisse la
+    liste intacte. La note interne ne quitte jamais les routes coach.
+    """
+    try:
+        _noms = {str(c.get("code") or "").strip().upper() for c in codes if c.get("code")}
+        _par_code = {}
+        async for _s in db.subscriptions.find({}, {"_id": 0}):
+            _k = str(_s.get("code") or "").strip().upper()
+            if _k in _noms:
+                _par_code.setdefault(_k, []).append(_s)
+        for _c in codes:
+            _k = str(_c.get("code") or "").strip().upper()
+            _subs = _par_code.get(_k) or []
+            if not _subs:
+                continue
+            _abo, _motif = abo_actuel_du_code(_subs, _c.get("assignedEmail"))
+            _c["v617_abonnement"] = {
+                "id": (_abo or {}).get("id"),
+                "statut": (_abo or {}).get("status"),
+                "motif": _motif,
+                "historiques": sum(1 for _s in _subs if _s is not _abo),
+                "suivi": suivi_paiement_lire(_abo) if _abo else {},
+            }
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[V617] enrichissement abonnement actuel impossible : %s", type(_err).__name__)
+    return codes
+
+
+async def v617_echeances(db, codes: list, maintenant=None) -> list:
+    """Les rappels de paiement à afficher au COACH (aucun envoi, aucun débit).
+
+    Uniquement les abonnements ACTUELS des codes visibles par ce coach.
+    """
+    _rappels = []
+    _noms = {str(c.get("code") or "").strip().upper(): c for c in codes if c.get("code")}
+    if not _noms:
+        return []
+    _par_code = {}
+    async for _s in db.subscriptions.find({"suivi_paiement": {"$type": "object"}}, {"_id": 0}):
+        _k = str(_s.get("code") or "").strip().upper()
+        if _k in _noms:
+            _par_code.setdefault(_k, []).append(_s)
+    for _k, _subs in _par_code.items():
+        _tous = await db.subscriptions.find(
+            {"code": {"$regex": f"^{re.escape(_k)}$", "$options": "i"}}, {"_id": 0}).to_list(50)
+        _abo, _motif = abo_actuel_du_code(_tous, _noms[_k].get("assignedEmail"))
+        if _abo is None:
+            continue
+        _r = suivi_rappel(_abo, maintenant)
+        if _r:
+            _rappels.append(_r)
+    _rappels.sort(key=lambda r: r.get("prochaine_echeance") or "")
+    return _rappels
+
+
 def forfait_utilisable(sub, quantite=1):
     """(ok, message) — ce forfait autorise-t-il `quantite` réservation(s) ?
 
@@ -516,6 +782,17 @@ def forfait_utilisable(sub, quantite=1):
             f"Ton abonnement a expiré le {lisible}. "
             "Contacte le coach pour le renouveler."
         )
+
+    # V617 — UN ABONNEMENT HISTORIQUE NE DONNE JAMAIS DE DROITS. `choisir_abonnement`
+    # peut, en dernier repli, rendre un document remplacé/annulé (pour EXPLIQUER le
+    # refus) : sans ce garde, un ancien abonnement non expiré avec des séances au
+    # compteur redevenait réservable. Mesure du 12/10/2026 : 0 code dans ce cas —
+    # le garde ne ferme donc aucun droit actuel, il interdit qu'il en ressurgisse.
+    # `completed` (épuisé) n'en fait PAS partie : une annulation le rouvre légitimement.
+    if str(sub.get("status") or "").strip().lower() in ABO_STATUTS_HISTORIQUES:
+        return False, (
+            "Cet abonnement a été remplacé ou clôturé. "
+            "Contacte le coach pour connaître ton abonnement actuel.")
 
     restant = _v391_seances_restantes(sub)
     if restant <= 0:
@@ -722,7 +999,7 @@ def code_encore_utilisable(doc: dict, aujourdhui: str = "") -> bool:
         # uniquement AAAA-MM-JJ : une comparaison de chaînes sur « 11.10.2026 »
         # conclurait « expiré » à tort.
         if len(_exp) == 10 and _exp[4] == "-" and _exp[7] == "-" and _exp[:4].isdigit():
-            _auj = aujourdhui or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            _auj = aujourdhui or v617_jour_local()   # V617 : jour suisse
             if _exp < _auj:
                 return False
     try:
@@ -5042,7 +5319,7 @@ def lota_droit_utilisable(doc, aujourdhui=None):
         return False, "aucun_document"
     if not doc.get("active"):
         return False, "inactif"
-    jour = aujourdhui or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    jour = aujourdhui or v617_jour_local()   # V617 : jour suisse
     expire_le = str(doc.get("expiresAt") or "")[:10]
     if expire_le and expire_le < jour:
         return False, "expire"
@@ -5738,7 +6015,7 @@ def lotb3_code_decrementable(docs, aujourdhui=None):
     if not docs:
         return None, "aucune_fiche"
     vivants = []
-    jour = aujourdhui or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    jour = aujourdhui or v617_jour_local()   # V617 : jour suisse
     for d in docs:
         if not d.get("active"):
             continue

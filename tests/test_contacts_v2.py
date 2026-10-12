@@ -57,9 +57,17 @@ _A = ast.parse(io.open(_PARTAGE, encoding="utf-8").read())
 _SRC_UTIL = None
 for _n in _A.body:
     if isinstance(_n, ast.FunctionDef) and _n.name in (
-            "forfait_utilisable", "_v391_est_expire", "_v391_seances_restantes"):
+            "forfait_utilisable", "_v391_est_expire", "_v391_seances_restantes",
+            "v617_fin_du_jour"):  # V617 : fin de journee suisse
         _SRC_UTIL = (_SRC_UTIL or "") + "\n" + ast.unparse(_n)
-_g_util = {"datetime": datetime, "timezone": timezone}
+    # V617 : les constantes dont dependent ces fonctions (statuts historiques, date seule)
+    if isinstance(_n, ast.Assign) and any(isinstance(_c, ast.Name) and _c.id in (
+            "ABO_STATUTS_HISTORIQUES", "_V617_DATE_SEULE", "EXPIRATION_FUSEAU") for _c in _n.targets):
+        _SRC_UTIL = (_SRC_UTIL or "") + "\n" + ast.unparse(_n)
+_g_util = {"datetime": datetime, "timezone": timezone,
+           # V617 : dependances des fonctions extraites (sans import supplementaire)
+           "re": sys.modules["re"] if "re" in sys.modules else __import__("re"),
+           "timedelta": __import__("datetime").timedelta}
 exec(compile(_SRC_UTIL, "<util>", "exec"), _g_util)
 for _nom in ("api", "api.routes", "api.routes.shared"):
     sys.modules.setdefault(_nom, types.ModuleType(_nom))

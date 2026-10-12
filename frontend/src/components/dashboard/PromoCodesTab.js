@@ -8,6 +8,8 @@ import React, { useRef, useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { CreditsGate } from './index';
 import SvgIcon from '../SvgIcon';
+import { classerArticles, resteAPayer, SUIVI_VIDE } from "../../utils/abonnementsManuels"; // V617
+import EcheancesPaiement from "./EcheancesPaiement"; // V617
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -70,6 +72,8 @@ const PromoCodesTab = ({
   toggleCode,
   duplicateCode,
   editCode,
+  nouvelAbonnementPour,   // V617
+  isSuperAdmin,           // V617
   addManualContact,
   handleImportCSV,
   exportPromoCodesCSV,
@@ -103,6 +107,9 @@ const PromoCodesTab = ({
 
   // v95: Charger les subscriptions par code pour afficher séances restantes
   const [codeSubscriptions, setCodeSubscriptions] = useState({});
+  // V617 : offres réservées / internes affichées à la demande ; historique déverrouillé (admin)
+  const [afficherInternes, setAfficherInternes] = useState(false);
+  const [deverrouilles, setDeverrouilles] = useState({});
   useEffect(() => {
     const loadSubscriptions = async () => {
       const subsMap = {};
@@ -322,7 +329,11 @@ const PromoCodesTab = ({
   // V532: la LIGNE d'un code, extraite telle quelle de l'ancien `.map` pour être
   // rendue deux fois (bloc « Abonnement actuel » et « Historique ») sans dupliquer
   // le moindre bouton (copier, activer, modifier, partager, dupliquer, supprimer).
-  const renderCodeRow = (code) => {
+  const renderCodeRow = (code, options = {}) => {
+          // V617 : une ligne d'HISTORIQUE est en lecture seule — aucune action ne peut
+          // la réactiver par erreur. Seul un super-admin peut la déverrouiller,
+          // après avoir retapé le nom du code (confirmation forte).
+          const lectureSeule = !!options.lectureSeule && !deverrouilles[code.id];
           // V200: Distinguer 3 états: actif, inactif (toggle), expiré (date passée)
           const codeExpired = isDateExpired(code.expiresAt);
           const cardClass = codeExpired
@@ -450,6 +461,21 @@ const PromoCodesTab = ({
               </div>
               
               {/* BOUTONS D'ACTION */}
+              {lectureSeule ? (
+              <div className="flex items-center gap-2 flex-wrap" data-testid={`v617-lecture-seule-${code.id}`}>
+                <span className="px-3 py-1.5 rounded text-xs font-medium bg-white/10 text-white/60">Historique · lecture seule</span>
+                {isSuperAdmin && (
+                  <button type="button" data-testid={`v617-deverrouiller-${code.id}`}
+                    className="px-3 py-1.5 rounded text-xs bg-white/5 text-white/50 hover:text-white"
+                    onClick={() => {
+                      const s = window.prompt(`Opération admin sur un ancien abonnement.\nPour déverrouiller, tapez le nom du code : ${code.code}`);
+                      if (s && s.trim().toUpperCase() === String(code.code || '').toUpperCase()) {
+                        setDeverrouilles((d) => ({ ...d, [code.id]: true }));
+                      }
+                    }}>Déverrouiller (admin)</button>
+                )}
+              </div>
+              ) : (
               <div className="flex items-center gap-2 flex-wrap">
                 {/* V200: 3 états — Expiré (date passée), Actif, Inactif. Le toggle reste cliquable même si expiré */}
                 {codeExpired ? (
@@ -522,6 +548,7 @@ const PromoCodesTab = ({
                   <SvgIcon name="trash" size={14} />
                 </button>
               </div>
+              )}
             </div>
           </div>
     );
@@ -581,8 +608,9 @@ const PromoCodesTab = ({
     if (c === 'a_verifier') return 'À VÉRIFIER';
     const m = (code.v532 && code.v532.motif) || '';
     if (m === 'expire' || isDateExpired(code.expiresAt)) return 'EXPIRÉ';
-    if (m === 'epuise') return 'TERMINÉ';
-    if (m === 'inactif' || !code.active) return 'INACTIF';
+    if (m === 'epuise') return 'ÉPUISÉ';
+    if (m === 'remplace') return 'REMPLACÉ';   // V617
+    if (m === 'inactif' || !code.active) return 'ARCHIVÉ';
     return 'HISTORIQUE';
   };
   const v532Resume = (code) => {
@@ -699,6 +727,9 @@ const PromoCodesTab = ({
         </form>
       )}
       
+      {/* V617 : rappels internes de paiement (coach uniquement, aucun envoi) */}
+      <EcheancesPaiement rafraichir={(discountCodes || []).length} />
+
       {/* Formulaire de création de code - COMPLET */}
       <form onSubmit={function(e) {
         // V154: Add targetCategories to form submission
@@ -713,6 +744,27 @@ const PromoCodesTab = ({
           <div className="mb-4 p-3 rounded-lg flex items-center gap-3 flex-wrap" style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
             <span className="text-blue-400 text-sm font-bold inline-flex items-center gap-1.5"><SvgIcon name="edit" size={14} /> Mode Édition</span>
             <span className="text-white/60 text-xs">Code: <span className="text-white font-mono">{newCode.code}</span></span>
+            {(() => {
+              // V617 — ce que « Modifier » touchera réellement : l'abonnement ACTUEL, et lui seul.
+              const fiche = (discountCodes || []).find(c => c.id === editingCode) || {};
+              const abo = fiche.v617_abonnement;
+              if (!abo) return null;
+              return (
+                <span className="w-full text-xs" data-testid="v617-bandeau-edition" style={{ color: abo.motif === 'unique' ? 'rgba(255,255,255,0.7)' : 'var(--primary-color, #D91CD2)' }}>
+                  {abo.motif === 'unique'
+                    ? `Seul l'abonnement actuel sera modifié.${abo.historiques ? ` ${abo.historiques} ancien(s) abonnement(s) restent dans l'historique, jamais touchés.` : ''}`
+                    : abo.motif === 'plusieurs'
+                      ? "Erreur d'intégrité : plusieurs abonnements actuels sur ce code — aucune modification de séances, d'expiration ou de paiement ne sera faite."
+                      : "Aucun abonnement actuel sur ce code : les anciens restent dans l'historique. Créez un nouvel abonnement."}
+                  {nouvelAbonnementPour && (
+                    <button type="button" data-testid="v617-nouvel-abonnement-edition" onClick={() => nouvelAbonnementPour(fiche)}
+                      className="ml-2 underline" style={{ color: 'var(--primary-color, #D91CD2)' }}>
+                      Nouvel abonnement pour ce client
+                    </button>
+                  )}
+                </span>
+              );
+            })()}
             {(newCode.assignedEmails?.length > 0 || selectedBeneficiaries?.length > 0) && (
               <span className="text-xs px-2 py-1 rounded-full" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)', color: 'var(--primary-color, #D91CD2)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}>
                 <SvgIcon name="mail" size={14} /> Bénéficiaire: {(selectedBeneficiaries?.length > 0 ? selectedBeneficiaries : newCode.assignedEmails)?.join(', ')}
@@ -997,6 +1049,64 @@ const PromoCodesTab = ({
           </div>
         </div>
 
+        {/* V617 — SUIVI DU PAIEMENT (interne coach). Un paiement manuel (TWINT,
+            espèces, virement) ne donne aucun mandat : aucun prélèvement, aucun
+            message au client. Seulement un reste à payer, une échéance et un
+            rappel dans ce tableau de bord. */}
+        {!isBatchMode && (selectedBeneficiaries?.length > 0) && (() => {
+          const s = newCode.suivi_paiement || SUIVI_VIDE;
+          const maj = (champ, v) => setNewCode({ ...newCode, suivi_paiement: { ...s, [champ]: v } });
+          const encaisse = newCode.origine_paiement === 'offert' ? 0 : (newCode.montant_encaisse ?? newCode.stripe_amount ?? '');
+          const reste = resteAPayer(s.montant_total, encaisse);
+          return (
+            <div className="mb-4 p-3 rounded-lg" data-testid="v617-suivi-paiement"
+                 style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <p className="text-white text-xs font-semibold mb-2 inline-flex items-center gap-1.5">
+                <SvgIcon name="creditCard" size={14} /> Suivi du paiement <span className="font-normal text-white/40">(interne — jamais visible du client)</span>
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <label className="text-xs text-white/60">Montant total (CHF)
+                  <input type="number" step="0.01" min="0" value={s.montant_total} onChange={e => maj('montant_total', e.target.value)}
+                    className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v617-montant-total" placeholder="Ex. 400" />
+                </label>
+                <div className="text-xs text-white/60">Encaissé
+                  <p className="mt-1 text-sm text-white" data-testid="v617-encaisse">{encaisse === '' ? '—' : `${encaisse} CHF`}</p>
+                </div>
+                <div className="text-xs text-white/60">Reste à payer
+                  <p className="mt-1 text-sm font-semibold" style={{ color: reste > 0 ? 'var(--primary-color, #D91CD2)' : '#22c55e' }}
+                     data-testid="v617-reste">{reste === null ? '—' : `${reste.toFixed(2)} CHF`}</p>
+                </div>
+                <label className="text-xs text-white/60">Prochaine échéance
+                  <input type="date" value={s.prochaine_echeance} onChange={e => maj('prochaine_echeance', e.target.value)}
+                    className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v617-echeance" />
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center gap-4 mt-3">
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-white">
+                  <input type="checkbox" checked={!!s.plusieurs_fois} onChange={e => maj('plusieurs_fois', e.target.checked)}
+                    className="w-4 h-4 rounded" data-testid="v617-plusieurs-fois" /> Paiement en plusieurs fois
+                </label>
+                {s.plusieurs_fois && (
+                  <span className="flex items-center gap-2 text-xs text-white/70">
+                    Paiement
+                    <input type="number" min="1" max={s.nb_paiements || 2} value={s.paiement_actuel} onChange={e => maj('paiement_actuel', e.target.value)}
+                      className="w-14 px-2 py-1 rounded neon-input text-sm" data-testid="v617-paiement-actuel" />
+                    sur
+                    <input type="number" min="2" max="12" value={s.nb_paiements} onChange={e => maj('nb_paiements', e.target.value)}
+                      className="w-14 px-2 py-1 rounded neon-input text-sm" data-testid="v617-nb-paiements" />
+                  </span>
+                )}
+              </div>
+              <label className="block text-xs text-white/60 mt-3">Note interne
+                <textarea rows={2} maxLength={1000} value={s.note_interne} onChange={e => maj('note_interne', e.target.value)}
+                  className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v617-note-interne"
+                  placeholder="Ex. 2e paiement de 200 CHF à encaisser le mois prochain" />
+              </label>
+              <p className="text-white/40 text-[11px] mt-2">Mode du paiement : le « Moyen de paiement » ci-dessus. Aucun prélèvement automatique.</p>
+            </div>
+          );
+        })()}
+
         {bRequisB && !bCompletB && (
           <p className="text-xs mb-4" data-testid="b-encaissement-hint"
              style={{ color: 'var(--primary-color, #D91CD2)' }}>
@@ -1035,37 +1145,47 @@ const PromoCodesTab = ({
           {/* Articles autorisés */}
           <div>
             <label className="block text-white text-xs mb-1 opacity-70"><span className="inline-flex items-center gap-1.5"><SvgIcon name="package" size={14} /> Articles autorisés</span></label>
-            <div className="courses-scroll-container" style={{ maxHeight: '120px', overflowY: 'auto', padding: '4px' }} data-testid="articles-scroll-container">
-              {/* Section Cours */}
-              {courses && courses.length > 0 && (
-                <div className="mb-2">
-                  <p className="text-white text-xs opacity-40 mb-1"><span className="inline-flex items-center gap-1.5"><SvgIcon name="calendar" size={14} /> Cours</span></p>
-                  <div className="flex flex-wrap gap-1">
-                    {courses.map(c => (
-                      <button key={c.id} type="button" onClick={() => toggleCourseSelection && toggleCourseSelection(c.id)}
-                        className={`px-2 py-1 rounded text-xs transition-all ${newCode.courses?.includes(c.id) ? 'bg-purple-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                        style={{ color: 'white' }} data-testid={`course-select-${c.id}`}>{c.name ? c.name.split(' – ')[0] : 'Cours'}</button>
-                    ))}
-                  </div>
+            {/* V617 — LES ARTICLES PAR NATURE. Cours, événements, offres et articles ne
+                donnent pas les mêmes droits : ils ne se mélangent plus. Par défaut,
+                seul l'utilisable est proposé (pas d'archivé, de masqué ni d'événement
+                terminé). Un élément DÉJÀ choisi reste affiché avec son badge. Les
+                offres masquées volontairement (réservées aux membres) restent
+                accessibles par l'option dédiée — rien n'est supprimé. */}
+            {(() => {
+              const r = classerArticles({ courses, offers, selection: newCode.courses || [], afficherInternes });
+              const puce = (item, couleur, prefixe) => (
+                <button key={item.id} type="button" onClick={() => toggleCourseSelection && toggleCourseSelection(item.id)}
+                  className={`px-2 py-1 rounded text-xs transition-all ${item.selectionne ? couleur : 'bg-gray-700 hover:bg-gray-600'}`}
+                  style={{ color: 'white' }} data-testid={`${prefixe}-select-${item.id}`}>
+                  {String(item.nom).split(' – ')[0]}
+                  {item.badge && <span className="ml-1 opacity-70" data-testid={`v617-badge-article-${item.id}`}>· {item.badge}</span>}
+                </button>
+              );
+              const rubrique = (titre, icone, liste, couleur, testid, prefixe) => liste.length > 0 && (
+                <div className="mb-2" data-testid={testid}>
+                  <p className="text-white text-xs opacity-40 mb-1"><span className="inline-flex items-center gap-1.5"><SvgIcon name={icone} size={14} /> {titre}</span></p>
+                  <div className="flex flex-wrap gap-1">{liste.map(i => puce(i, couleur, prefixe))}</div>
                 </div>
-              )}
-              {/* Section Offres */}
-              {offers && offers.length > 0 && (
-                <div className="mt-2">
-                  <p className="text-white text-xs opacity-40 mb-1"><span className="inline-flex items-center gap-1.5"><SvgIcon name="ticket" size={14} /> Offres</span></p>
-                  <div className="flex flex-wrap gap-1">
-                    {offers.map(o => (
-                      <button key={o.id} type="button" onClick={() => toggleCourseSelection && toggleCourseSelection(o.id)}
-                        className={`px-2 py-1 rounded text-xs transition-all ${newCode.courses?.includes(o.id) ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                        style={{ color: 'white' }} data-testid={`offer-select-${o.id}`}>{o.name}</button>
-                    ))}
+              );
+              const vide = !r.cours.length && !r.evenements.length && !r.offres.length && !r.articles.length;
+              return (
+                <>
+                  <div className="courses-scroll-container" style={{ maxHeight: '180px', overflowY: 'auto', padding: '4px' }} data-testid="articles-scroll-container">
+                    {rubrique('Cours', 'calendar', r.cours, 'bg-purple-600', 'v617-rubrique-cours', 'course')}
+                    {rubrique('Événements', 'star', r.evenements, 'bg-blue-600', 'v617-rubrique-evenements', 'event')}
+                    {rubrique('Offres', 'ticket', r.offres, 'bg-blue-600', 'v617-rubrique-offres', 'offer')}
+                    {rubrique('Articles', 'package', r.articles, 'bg-blue-600', 'v617-rubrique-articles', 'offer')}
+                    {vide && <span className="text-white text-xs opacity-50">Tous les articles</span>}
                   </div>
-                </div>
-              )}
-              {(!courses || courses.length === 0) && (!offers || offers.length === 0) && (
-                <span className="text-white text-xs opacity-50">Tous les articles</span>
-              )}
-            </div>
+                  <label className="flex items-center gap-2 mt-1 cursor-pointer text-xs text-white/60">
+                    <input type="checkbox" checked={afficherInternes} onChange={e => setAfficherInternes(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded" data-testid="v617-afficher-internes" />
+                    Afficher les offres réservées / internes
+                    {r.masques > 0 && !afficherInternes && <span className="text-white/40">({r.masques} non proposé{r.masques > 1 ? 's' : ''})</span>}
+                  </label>
+                </>
+              );
+            })()}
             {/* Articles sélectionnés */}
             {newCode.courses && newCode.courses.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
@@ -1128,7 +1248,10 @@ const PromoCodesTab = ({
           {batchLoading ? (
             <><SvgIcon name="loader" size={14} className="animate-spin" /> Création en cours...</>
           ) : editingCode ? (
-            <><SvgIcon name="edit" size={14} /> Mettre à jour le code</>
+            <><SvgIcon name="edit" size={14} /> {((discountCodes || []).find(c => c.id === editingCode) || {}).v617_abonnement
+              ? "Modifier l'abonnement actuel" : 'Mettre à jour le code'}</>
+          ) : (!isBatchMode && selectedBeneficiaries?.length > 0) ? (
+            <><SvgIcon name="plus" size={14} /> Créer le nouvel abonnement</>
           ) : isBatchMode ? (
             <>{t('generateBatch')} ({newCode.batchCount || 1} codes)</>
           ) : (
@@ -1146,11 +1269,21 @@ const PromoCodesTab = ({
                style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.22)' }}>
             <p className="text-white text-sm font-semibold mb-2" style={{ wordBreak: 'break-all' }}>{g.cle}</p>
             {g.actuels.length === 0 && g.aVerifier.length === 0 && (
-              <p className="text-white/50 text-xs mb-2" data-testid={`v532-aucun-actuel-${g.cle}`}>Aucun abonnement actuel — historique uniquement</p>
+              <div className="flex items-center gap-3 flex-wrap mb-2">
+                <p className="text-white/50 text-xs" data-testid={`v532-aucun-actuel-${g.cle}`}>Aucun abonnement actuel — historique uniquement</p>
+                {nouvelAbonnementPour && g.historique[0] && (
+                  <button type="button" data-testid={`v617-nouvel-abonnement-${g.cle}`}
+                    onClick={() => nouvelAbonnementPour(g.historique[0])}
+                    className="px-3 py-1.5 rounded text-xs font-medium"
+                    style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)', color: 'var(--primary-color, #D91CD2)' }}>
+                    + Créer un nouvel abonnement
+                  </button>
+                )}
+              </div>
             )}
             {g.actuels.length > 1 && (
               <p className="text-xs mb-2" data-testid={`v532-plusieurs-${g.cle}`}
-                 style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 600 }}>Plusieurs droits actifs — affichés séparément, rien n'est fusionné</p>
+                 style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 600 }}>Plusieurs droits actifs — à vérifier : aucun n'est choisi ni fusionné automatiquement</p>
             )}
             {g.actuels.map((code) => (
               <div key={code.id} data-testid={`v532-actuel-${code.id}`} className="mb-2">
@@ -1180,7 +1313,7 @@ const PromoCodesTab = ({
                   {g.historique.map((code) => (
                     <div key={code.id} data-testid={`v532-historique-${code.id}`}>
                       <p className="text-white/50 text-xs mb-1">{v532Resume(code)}</p>
-                      {renderCodeRow(code)}
+                      {renderCodeRow(code, { lectureSeule: true })}
                     </div>
                   ))}
                 </div>

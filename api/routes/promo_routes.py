@@ -8,7 +8,7 @@ import api.resend_central as _rc  # V608 : point d'envoi Resend unique
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import uuid
 import logging
 import asyncio
@@ -185,6 +185,11 @@ class DiscountCodeCreate(BaseModel):
     montant_encaisse: Optional[float] = None
     devise: Optional[str] = None
     origine_paiement: Optional[str] = None
+    # V617 — suivi de paiement manuel (en plusieurs fois) + note interne : stocké
+    # sur la SOUSCRIPTION créée, jamais sur la fiche du code.
+    suivi_paiement: Optional[dict] = None
+    # V617 — le coach a vu l'avertissement « droits encore valides » et confirme.
+    confirmer_droits_existants: bool = False
 
 
 # === v104: HELPER — Résoudre les détails de l'offre liée à un code ===
@@ -282,8 +287,12 @@ def _v200_parse_expiry(raw, code_str: str = ""):
         if m:
             try:
                 day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
-                # Fin de journée pour rester valide tout le jour J
-                return datetime(year, month, day, 23, 59, 59, tzinfo=timezone.utc)
+                # V617 : fin de journée EN HEURE SUISSE (et non 23:59:59 UTC)
+                from api.routes.shared import v617_fin_du_jour as _v617_fin
+                _borne = _v617_fin("%04d-%02d-%02d" % (year, month, day))
+                if _borne is None:
+                    raise ValueError("date invalide")
+                return _borne - timedelta(microseconds=1)
             except (ValueError, OverflowError) as e:
                 logger.warning(f"[V200] Code {code_str}: DMY invalide {s!r}: {e}")
                 return None
@@ -292,6 +301,11 @@ def _v200_parse_expiry(raw, code_str: str = ""):
         try:
             iso = s.replace('Z', '+00:00')
             if 'T' not in iso:
+                # V617 : une date sans heure vaut jusqu'à la fin du jour EN SUISSE
+                from api.routes.shared import v617_fin_du_jour as _v617_fin
+                _borne = _v617_fin(iso[:10])
+                if _borne is not None:
+                    return _borne - timedelta(microseconds=1)
                 iso = iso + "T23:59:59+00:00"
             dt = datetime.fromisoformat(iso)
             return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
@@ -358,7 +372,33 @@ async def get_discount_codes(request: Request):
     # de l'historique sans qu'aucune fiche ne soit touchée.
     from api.routes.shared import v532_enrichir_codes as _v532
     codes = await _v532(_db, codes)
+    # V617 : l'abonnement ACTUEL de chaque code + son suivi de paiement (coach).
+    from api.routes.shared import v617_enrichir_codes as _v617
+    codes = await _v617(_db, codes)
     return codes
+
+
+@promo_router.get("/echeances")
+async def get_echeances_paiement(request: Request):
+    """V617 — rappels internes « paiement restant à encaisser » (J-7 et retards).
+
+    COACH UNIQUEMENT, même porte et même périmètre que `GET /discount-codes`.
+    Lecture seule : aucun débit, aucun e-mail, aucun WhatsApp, aucun Stripe.
+    """
+    from api.routes.shared import coach_jwt_email, v617_echeances
+    user_email = (coach_jwt_email(request) or "").lower().strip()
+    _admin = user_email == SUPER_ADMIN_EMAIL.lower()
+    _ok = _admin
+    if not _ok and user_email:
+        if await _db.coaches.find_one({"email": user_email}, {"_id": 1}) or \
+           await _db.coach_auth.find_one({"email": user_email}, {"_id": 1}):
+            _ok = True
+    if not _ok:
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
+    query = {} if _admin else {"$or": [
+        {"coach_id": user_email}, {"coach_id": None}, {"coach_id": {"$exists": False}}]}
+    codes = await _db.discount_codes.find(query, {"_id": 0, "code": 1, "assignedEmail": 1}).to_list(1000)
+    return {"rappels": await v617_echeances(_db, codes)}
 
 
 @promo_router.post("")
@@ -449,6 +489,50 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
         exiger=_b_exiger,
     )
     code_data.update(_b_champs)
+
+    # ═══ V617 — UN NOUVEL ABONNEMENT EST TOUJOURS NEUF ═══════════════════
+    # Ni le suivi ni la confirmation ne sont des champs du code.
+    _v617_suivi_brut = code_data.pop("suivi_paiement", None)
+    _v617_confirme = bool(code_data.pop("confirmer_droits_existants", False))
+    _v617_beneficiaire = (code.assignedEmail or "").lower().strip()
+    _v617_nom = (code.code or "").upper().strip()
+    from api.routes.shared import (suivi_paiement_valider as _v617_suivi_ok,
+                                   forfait_utilisable as _v617_utilisable)
+    _v617_suivi = {}
+    if _v617_suivi_brut:
+        if not _v617_beneficiaire:
+            raise HTTPException(status_code=400, detail=(
+                "Le suivi de paiement concerne un abonnement : choisissez d'abord le bénéficiaire."))
+        _v617_suivi = _v617_suivi_ok(_v617_suivi_brut, _b_champs.get("montant_encaisse"))
+    # UN NOM DE CODE NE SERT QU'UNE FOIS. Si des souscriptions portent déjà ce nom
+    # (code mort, historique), la création réutilisait SILENCIEUSEMENT l'ancienne
+    # souscription « active » au lieu d'en ouvrir une neuve : l'historique
+    # ressurgissait sous un code tout neuf. On refuse, sans rien écrire.
+    if _v617_nom and await _db.subscriptions.find_one(
+            {"code": {"$regex": f"^{re.escape(_v617_nom)}$", "$options": "i"}}, {"_id": 1}):
+        raise HTTPException(status_code=409, detail={
+            "type": "nom_deja_utilise",
+            "message": ("Le code %s a déjà servi à un abonnement (historique). "
+                        "Choisissez un nouveau nom : l'historique n'est jamais réutilisé." % _v617_nom),
+        })
+    # DROITS ENCORE VALIDES : on n'y touche JAMAIS automatiquement — on prévient le
+    # coach, qui décide. Rien n'est écrit tant qu'il n'a pas confirmé.
+    if _v617_beneficiaire and not _v617_confirme:
+        _v617_valides = []
+        async for _s in _db.subscriptions.find(
+                {"email": {"$regex": f"^{re.escape(_v617_beneficiaire)}$", "$options": "i"},
+                 "status": "active"}, {"_id": 0}):
+            if _v617_utilisable(_s, 1)[0]:
+                _v617_valides.append({"code": _s.get("code"),
+                                      "restantes": _s.get("remaining_sessions"),
+                                      "expire_le": str(_s.get("expires_at") or "")[:10] or None})
+        if _v617_valides:
+            raise HTTPException(status_code=409, detail={
+                "type": "droits_existants",
+                "message": ("Ce client a encore un abonnement avec des droits valides. "
+                            "Il ne sera ni supprimé ni modifié. Créer quand même le nouvel abonnement ?"),
+                "abonnements": _v617_valides,
+            })
     # `stripe_amount` reste ecrit EXACTEMENT comme avant. Deux ecrans le lisent
     # deja (l'espace abonne V207h, le badge de la liste des codes) ; le laisser
     # vide les ferait regresser. Il n'est plus la source de verite, il en est le
@@ -517,6 +601,8 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
             # moment ou l'argent a change de main.
             from api.routes.shared import b_champs_depuis_code as _b_copie
             sub_data.update(_b_copie(_code_stocke, seances=total_sessions))
+            if _v617_suivi:
+                sub_data["suivi_paiement"] = _v617_suivi   # V617 : interne coach
             await _db.subscriptions.insert_one(sub_data)
             logger.info(f"[PROMO] Subscription auto-créée: {assigned_email} - {code_str} ({total_sessions} séances)")
             # Envoyer email de bienvenue
@@ -682,117 +768,122 @@ async def update_discount_code(code_id: str, updates: dict, request: Request):
                        "Dupliquez le code pour en créer un autre.")
         updates.pop("code", None)
 
+    # V617 : deux entrées qui ne sont PAS des champs du code — extraites avant la
+    # liste blanche. `suivi_paiement` vit sur la souscription (jamais sur la fiche
+    # du code, renvoyée telle quelle par la validation publique) ;
+    # `operation_historique_confirmee` est la confirmation forte d'une opération
+    # admin explicite sur un code sans abonnement actuel.
+    _v617_suivi_brut = updates.pop("suivi_paiement", None) if isinstance(updates, dict) else None
+    _v617_confirme = bool(updates.pop("operation_historique_confirmee", False)) if isinstance(updates, dict) else False
+
     _l3c0_refuses = sorted(set(updates) - _L3C0_CHAMPS_MODIFIABLES)
     if _l3c0_refuses:
         logger.warning("[LOT3c-0] champs non modifiables ignores sur %s : %s",
                        code_id, _l3c0_refuses)
     updates = {k: v for k, v in updates.items() if k in _L3C0_CHAMPS_MODIFIABLES}
-    if not updates:
+    if not updates and _v617_suivi_brut is None:
         raise HTTPException(status_code=400, detail="Aucun champ modifiable fourni")
 
-    await _db.discount_codes.update_one({"_id": existing["_id"]}, {"$set": updates})
+    # ═══ V617 — MODIFIER L'ABONNEMENT ACTUEL, ET LUI SEUL ══════════════════
+    #
+    # AVANT : plafond (V194), compteur (V206), expiration (V200) et encaissement
+    # (B) étaient recopiés par `update_many` sur TOUTES les souscriptions portant
+    # ce code — remplacées, expirées, annulées comprises. V194 et V206 pouvaient
+    # même rendre `active` une souscription historique : le banc BASSBOOSTX-11
+    # (12/10/2026) l'a montré, l'ancienne fiche réactivée rendait le code AMBIGU.
+    #
+    # MAINTENANT : la cible est UNE souscription, désignée par son `id` — l'abonnement
+    # ACTUEL du code (`abo_actuel_du_code` : statut `active`, et lui seul). Tout
+    # est vérifié AVANT la moindre écriture :
+    #   * plusieurs abonnements actuels -> 409 « erreur d'intégrité », rien écrit ;
+    #   * aucun abonnement actuel alors que le code en a eu -> 409 « créez un nouvel
+    #     abonnement », rien écrit — sauf opération admin explicite (super-admin +
+    #     confirmation forte), qui ne touche alors QUE la fiche du code, jamais une
+    #     souscription historique ;
+    #   * un code sans aucune souscription (code promo simple) : inchangé.
+    from api.routes.shared import (abo_actuel_du_code as _v617_actuel,
+                                   suivi_paiement_valider as _v617_suivi_ok)
+    _V617_DROITS = ("used", "maxUses", "expiresAt")
+    _v617_code_str = (existing.get("code") or "").strip()
+    _v617_touche_abo = (any(k in updates for k in _V617_DROITS) or bool(_b_champs_maj)
+                        or _v617_suivi_brut is not None)
+    _v617_subs = []
+    if _v617_code_str and _v617_touche_abo:
+        _v617_subs = await _db.subscriptions.find(
+            {"code": {"$regex": f"^{re.escape(_v617_code_str)}$", "$options": "i"}},
+            {"_id": 0}).to_list(500)
+    _v617_abo, _v617_motif = _v617_actuel(
+        _v617_subs, updates.get("assignedEmail") or existing.get("assignedEmail"))
+    if _v617_subs and _v617_motif == "plusieurs":
+        logger.warning("[V617] %s : plusieurs abonnements actuels — modification refusee",
+                       _v617_code_str)
+        raise HTTPException(status_code=409, detail={
+            "type": "integrite_plusieurs_actuels",
+            "message": ("Erreur d'intégrité : ce code porte plusieurs abonnements actuels. "
+                        "Rien n'a été modifié. Vérifiez la fiche avant toute correction."),
+            "abonnements": [s.get("id") for s in _v617_subs
+                            if str(s.get("status") or "").lower() == "active"],
+        })
+    if _v617_subs and _v617_motif == "aucun":
+        _v617_admin = _v617_confirme and is_super_admin(caller)
+        if _v617_suivi_brut is not None or not _v617_admin:
+            raise HTTPException(status_code=409, detail={
+                "type": "aucun_abonnement_actuel",
+                "message": ("Ce code n'a plus d'abonnement actuel : ses anciens abonnements "
+                            "restent dans l'historique et ne sont jamais réactivés. "
+                            "Créez un nouvel abonnement pour ce client."),
+            })
+        logger.warning("[V617] %s : operation admin confirmee sur un code sans abonnement "
+                       "actuel — fiche du code seule, aucune souscription touchee", _v617_code_str)
+
+    _v617_suivi = None
+    if _v617_suivi_brut is not None:
+        _v617_enc = _b_champs_maj.get("montant_encaisse",
+                                      (_v617_abo or {}).get("montant_encaisse"))
+        _v617_suivi = _v617_suivi_ok(_v617_suivi_brut, _v617_enc)
+
+    if updates:
+        await _db.discount_codes.update_one({"_id": existing["_id"]}, {"$set": updates})
     updated = await _db.discount_codes.find_one({"_id": existing["_id"]}, {"_id": 0})
     logger.info(f"[V200c] PUT /discount-codes/{code_id}: Updated OK — expiresAt is now '{updated.get('expiresAt')}'")
 
+    _v617_maj = {}
+    if _v617_abo is not None:
+        # B : la déclaration corrigée suit l'abonnement ACTUEL (et lui seul).
+        if _b_champs_maj:
+            _v617_maj.update(_b_champs_maj)
+        # V206 / V194 : compteurs alignés sur la fiche du code (LOT A : elle fait foi).
+        if "used" in updates or "maxUses" in updates:
+            try:
+                _v617_total = int(updated.get("maxUses") or 0)
+                _v617_used = int(updated.get("used") or 0)
+            except (TypeError, ValueError):
+                _v617_total = 0
+            if _v617_total > 0:
+                _v617_reste = max(0, _v617_total - _v617_used)
+                _v617_maj.update(total_sessions=_v617_total, used_sessions=_v617_used,
+                                 remaining_sessions=_v617_reste)
+                if _v617_reste <= 0:
+                    _v617_maj["status"] = "completed"
+        # V200 : expiration (même format qu'à la création de la souscription).
+        if "expiresAt" in updates:
+            _v617_exp = updates.get("expiresAt")
+            _v617_maj["expires_at"] = (None if not _v617_exp else
+                                       (str(_v617_exp) + "T23:59:59+00:00"
+                                        if "T" not in str(_v617_exp) else str(_v617_exp)))
+        if _v617_suivi is not None:
+            _v617_maj["suivi_paiement"] = _v617_suivi or None
+        if _v617_maj:
+            _v617_maj["updated_at"] = datetime.now(timezone.utc).isoformat()
+            _v617_res = await _db.subscriptions.update_one(
+                {"id": _v617_abo.get("id"), "status": "active"}, {"$set": _v617_maj})
+            logger.info("[V617] %s : abonnement actuel %s modifie (%d) — champs %s",
+                        _v617_code_str, _v617_abo.get("id"), _v617_res.modified_count,
+                        sorted(_v617_maj))
 
-    # B : la declaration corrigee suit les souscriptions deja ouvertes par ce
-    # code. Sans cette propagation, le code dirait « 150 CHF, TWINT » et la
-    # souscription resterait muette — deux verites pour un seul achat.
-    if _b_champs_maj:
-        _b_code_str = (existing.get("code") or updated.get("code") or "").strip()
-        if _b_code_str:
-            _b_res = await _db.subscriptions.update_many(
-                {"code": {"$regex": f"^{re.escape(_b_code_str)}$", "$options": "i"}},
-                {"$set": dict(_b_champs_maj,
-                              updated_at=datetime.now(timezone.utc).isoformat())},
-            )
-            logger.info("[B] %s : encaissement propage a %d souscription(s)",
-                        _b_code_str, _b_res.modified_count)
-
-    # V206: Propagation used → subscriptions liées (synchroniser le compteur)
-    if isinstance(updates, dict) and "used" in updates:
-        new_used = int(updates.get("used", 0))
-        code_str = (existing.get("code") or updated.get("code") or "").strip()
-        if code_str:
-            total = int(updated.get("maxUses") or 0)
-            new_remaining = max(0, total - new_used)
-            new_status = "active" if new_remaining > 0 else "completed"
-            result = await _db.subscriptions.update_many(
-                {"code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}},
-                {"$set": {
-                    "used_sessions": new_used,
-                    "remaining_sessions": new_remaining,
-                    "status": new_status,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }}
-            )
-            if result.modified_count:
-                logger.info(f"[V206] {code_str} used→{new_used}, {result.modified_count} subscriptions synchronisées")
-
-    # V194: Propagation maxUses → subscriptions liées
-    if isinstance(updates, dict) and "maxUses" in updates:
-        new_max = updates.get("maxUses")
-        try:
-            new_max_int = int(new_max) if new_max is not None else None
-        except (TypeError, ValueError):
-            new_max_int = None
-        if new_max_int is not None and new_max_int >= 0:
-            code_str = (existing.get("code") or updated.get("code") or "").strip()
-            if code_str:
-                subs = await _db.subscriptions.find(
-                    {"code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}},
-                    {"_id": 0, "id": 1, "used_sessions": 1, "remaining_sessions": 1, "status": 1}
-                ).to_list(500)
-                propagated = 0
-                for sub in subs:
-                    used = int(sub.get("used_sessions") or 0)
-                    new_remaining = max(0, new_max_int - used)
-                    new_status = sub.get("status") or "active"
-                    if new_status == "completed" and new_remaining > 0:
-                        new_status = "active"  # ré-ouverture si on remonte le plafond
-                    elif new_remaining <= 0 and used >= new_max_int:
-                        new_status = "completed"
-                    await _db.subscriptions.update_one(
-                        {"id": sub.get("id")},
-                        {"$set": {
-                            "total_sessions": new_max_int,
-                            "remaining_sessions": new_remaining,
-                            "status": new_status,
-                            "updated_at": datetime.now(timezone.utc).isoformat(),
-                        }}
-                    )
-                    propagated += 1
-                if propagated:
-                    logger.info(f"[V194 UPDATE_CODE] {code_str} maxUses→{new_max_int}, {propagated} subscriptions resynchronisées")
-
-    # V200: Propagation expiresAt → subscriptions liées
-    # Quand le coach change la date d'expiration d'un code, TOUTES les subscriptions
-    # liées à ce code doivent aussi être mises à jour
-    if isinstance(updates, dict) and "expiresAt" in updates:
-        new_expires = updates.get("expiresAt")
-        code_str = (existing.get("code") or updated.get("code") or "").strip()
-        if code_str:
-            # V200: Formater la date pour les subscriptions
-            expiry_for_sub = None
-            if new_expires:
-                try:
-                    if 'T' not in str(new_expires):
-                        expiry_for_sub = str(new_expires) + "T23:59:59+00:00"
-                    else:
-                        expiry_for_sub = str(new_expires)
-                except Exception:
-                    expiry_for_sub = str(new_expires)
-
-            result = await _db.subscriptions.update_many(
-                {"code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}},
-                {"$set": {
-                    "expires_at": expiry_for_sub,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }}
-            )
-            if result.modified_count:
-                logger.info(f"[V200 UPDATE_CODE] {code_str} expiresAt→{new_expires}, {result.modified_count} subscriptions mises à jour")
-
+    updated = dict(updated or {})
+    updated["v617"] = {"abonnement_modifie": (_v617_abo or {}).get("id") if _v617_maj else None,
+                       "motif": _v617_motif if _v617_subs else "sans_abonnement"}
     return updated
 
 

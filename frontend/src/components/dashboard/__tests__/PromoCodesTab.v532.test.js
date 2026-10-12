@@ -53,9 +53,12 @@ test('E. Amanda : AmandaBoost-26 = Abonnement actuel, BASSBOOSTX-09 (2 fiches) =
   expect(hist.querySelector('summary').textContent).toMatch(/Historique \(2\)/);
   expect(m.q('[data-testid="v532-historique-8f4fb225"]')).toBeTruthy();
   expect(m.q('[data-testid="v532-historique-d5737a11"]')).toBeTruthy();
-  // aucune fiche perdue : les 3 lignes (avec leurs boutons) sont rendues
+  // aucune fiche perdue : les 3 lignes sont rendues
   expect(m.qa('[data-testid^="promo-code-"]').length).toBe(3);
-  expect(m.qa('[data-testid^="delete-code-"]').length).toBe(3);
+  // V617 (demande de Bassi, 12/10) : l'historique est en LECTURE SEULE — seul
+  // l'abonnement actuel garde ses boutons ; les 2 anciens n'en ont plus.
+  expect(m.qa('[data-testid^="delete-code-"]').length).toBe(1);
+  expect(m.qa('[data-testid^="v617-lecture-seule-"]').length).toBe(2);
   m.unmount();
 });
 

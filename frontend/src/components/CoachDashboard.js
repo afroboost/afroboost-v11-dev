@@ -56,6 +56,7 @@ import ProspectionApercu from "./coach/prospection/ProspectionApercu"; // V595
 import ProspectionMedias from "./coach/prospection/ProspectionMedias"; // V595
 import ProspectionLiens from "./coach/prospection/ProspectionLiens"; // V595
 import ProspectionResultats from "./coach/prospection/ProspectionResultats"; // V595
+import { champsModifies, suiviPourEnvoi, suiviVersFormulaire, messageServeur, typeRefus } from "../utils/abonnementsManuels"; // V617
 import { alignerLieu } from "../utils/courseLocation"; // V230: jeu d'icones vectorielles inline
 // DEEPLINK PROSPECTION — la source UNIQUE de l'intention. Ce composant ne
 // touche plus jamais `sessionStorage` directement : deux endroits qui lisent
@@ -2666,8 +2667,46 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         if (newCode.resetUsed) {
           updates.used = newCode.customUsed !== undefined ? newCode.customUsed : 0;
         }
+        // V617 — ON N'ENVOIE QUE CE QUI A CHANGÉ. Le serveur ne modifie plus que
+        // l'abonnement ACTUEL ; n'envoyer que les champs touchés évite en plus de
+        // réécrire une date ou un montant que le coach n'a pas voulu changer.
+        // Montant et moyen de paiement restent envoyés ENSEMBLE (lot B).
+        const originalCode = discountCodes.find(c => c.id === editingCode) || {};
+        let aEnvoyer = champsModifies(updates, originalCode);
+        if ('montant_encaisse' in aEnvoyer || 'origine_paiement' in aEnvoyer) {
+          aEnvoyer = { ...aEnvoyer, montant_encaisse: updates.montant_encaisse, origine_paiement: updates.origine_paiement };
+        }
+        const suiviAvant = JSON.stringify(suiviPourEnvoi(suiviVersFormulaire(originalCode.v617_abonnement?.suivi)));
+        const suiviApres = suiviPourEnvoi(newCode.suivi_paiement);
+        if (JSON.stringify(suiviApres) !== suiviAvant) aEnvoyer.suivi_paiement = suiviApres || {};
+        if (Object.keys(aEnvoyer).length === 0) {
+          setValidationMessage('Aucune modification à enregistrer.');
+          setTimeout(() => setValidationMessage(''), 3000);
+          return;
+        }
         // V200c: Vérifier que le PUT a vraiment réussi
-        const putRes = await axios.put(`${API}/discount-codes/${editingCode}`, updates);
+        let putRes;
+        try {
+          putRes = await axios.put(`${API}/discount-codes/${editingCode}`, aEnvoyer);
+        } catch (putErr) {
+          // V617 — un code sans abonnement actuel : opération admin EXPLICITE,
+          // avec confirmation forte (retaper le nom du code). Ne touche que la
+          // fiche du code, jamais un abonnement historique.
+          if (typeRefus(putErr) === 'aucun_abonnement_actuel' && isSuperAdmin && !('suivi_paiement' in aEnvoyer)) {
+            const saisie = window.prompt(
+              `${messageServeur(putErr)}\n\nOpération ADMIN (fiche du code seulement, aucun abonnement historique modifié).\n`
+              + `Pour confirmer, tapez le nom du code : ${originalCode.code}`);
+            if (saisie && saisie.trim().toUpperCase() === String(originalCode.code || '').toUpperCase()) {
+              putRes = await axios.put(`${API}/discount-codes/${editingCode}`, { ...aEnvoyer, operation_historique_confirmee: true });
+            } else {
+              setValidationMessage('Opération annulée — rien n\'a été modifié.');
+              setTimeout(() => setValidationMessage(''), 5000);
+              return;
+            }
+          } else {
+            throw putErr;
+          }
+        }
         if (putRes.data?.error) {
           setValidationMessage(`❌ Erreur: ${putRes.data.error}`);
           setTimeout(() => setValidationMessage(''), 6000);
@@ -2706,7 +2745,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // Mode normal - un seul code
       const beneficiaryEmail = selectedBeneficiaries.length > 0 ? selectedBeneficiaries[0] : null;
 
-      const response = await axios.post(`${API}/discount-codes`, {
+      const corpsCreation = {
         code: newCode.code || `CODE-${Date.now().toString().slice(-4)}`,
         type: newCode.type, value: parseFloat(newCode.value),
         assignedEmail: beneficiaryEmail,
@@ -2728,13 +2767,32 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               ? parseFloat(newCode.montant_encaisse)
               : (newCode.stripe_amount ? parseFloat(newCode.stripe_amount) : null)),
         origine_paiement: newCode.origine_paiement || null,
-      });
+      };
+      // V617 — suivi de paiement manuel (interne coach, sur la NOUVELLE souscription).
+      const suiviCreation = beneficiaryEmail ? suiviPourEnvoi(newCode.suivi_paiement) : null;
+      if (suiviCreation) corpsCreation.suivi_paiement = suiviCreation;
+      let response;
+      try {
+        response = await axios.post(`${API}/discount-codes`, corpsCreation);
+      } catch (postErr) {
+        // V617 — le client a encore des droits valides : on ne touche à RIEN de
+        // l'existant, mais le coach décide en connaissance de cause.
+        if (typeRefus(postErr) !== 'droits_existants') throw postErr;
+        const liste = (postErr.response.data.detail.abonnements || [])
+          .map(a => `• ${a.code} — ${a.restantes ?? '?'} séance(s), expire le ${a.expire_le || '—'}`).join('\n');
+        if (!window.confirm(`${messageServeur(postErr)}\n\n${liste}`)) {
+          setValidationMessage('Création annulée — rien n\'a été créé.');
+          setTimeout(() => setValidationMessage(''), 4000);
+          return;
+        }
+        response = await axios.post(`${API}/discount-codes`, { ...corpsCreation, confirmer_droits_existants: true });
+      }
       setDiscountCodes([...discountCodes, response.data]);
       setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "", montant_encaisse: "", origine_paiement: "" });
       setSelectedBeneficiaries([]);
     } catch (error) {
       console.error('[PROMO] Erreur création/édition code:', error);
-      const msg = error?.response?.data?.detail || error?.message || 'Erreur inconnue';
+      const msg = messageServeur(error);   // V617 : détail objet rendu lisible
       setValidationMessage(`❌ Erreur: ${msg}`);
       setTimeout(() => setValidationMessage(''), 6000);
     }
@@ -2902,6 +2960,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       currentUsed: code.usedCount || code.used || 0,
       customUsed: undefined,
       resetUsed: false,
+      // V617 : le suivi de paiement de l'abonnement ACTUEL (jamais d'un ancien)
+      suivi_paiement: suiviVersFormulaire(code.v617_abonnement?.suivi),
     });
     setSelectedBeneficiaries(emails);
     setEditingCode(code.id); // Marque le code en cours d'édition
@@ -2911,6 +2971,24 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   };
 
   // v13.8: Dupliquer un code promo - Copie les données avec un nouveau nom
+  // V617 — « Nouvel abonnement » pour un client existant : formulaire de CRÉATION
+  // pré-rempli (bénéficiaire, type, articles), nom vide, compteurs neufs, aucun
+  // montant repris. L'ancien abonnement n'est ni modifié ni réutilisé.
+  const nouvelAbonnementPour = (code) => {
+    const email = (code?.assignedEmails?.length > 0 ? code.assignedEmails[0] : code?.assignedEmail) || '';
+    setEditingCode(null);
+    setIsBatchMode(false);
+    setNewCode({
+      code: "", type: code?.type || "100%", value: code?.value || 100,
+      assignedEmails: email ? [email] : [], courses: code?.courses || [],
+      maxUses: "", expiresAt: "", batchCount: 1, prefix: "",
+      multi_member: false, shared_sessions: true, stripe_amount: "",
+      montant_encaisse: "", origine_paiement: "", suivi_paiement: suiviVersFormulaire(null),
+    });
+    setSelectedBeneficiaries(email ? [email] : []);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const duplicateCode = (code) => {
     setNewCode({
       code: `${code.code}_COPY`,
@@ -3123,7 +3201,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           if (value && type) {
             const response = await axios.post(`${API}/discount-codes`, {
               code: name || `CODE-${Date.now() + i}`.slice(-6), type, value: parseFloat(value),
-              assignedEmail: email || null, expiresAt: expiration || null, courses: [], maxUses: null
+              assignedEmail: email || null, expiresAt: expiration || null, courses: [], maxUses: null,
+              confirmer_droits_existants: true   // V617 : l'import est une décision explicite du coach
             });
             setDiscountCodes(prev => [...prev, response.data]);
           }
@@ -9023,6 +9102,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             deleteCode={deleteCode}
             toggleCode={toggleCode}
             duplicateCode={duplicateCode}
+            nouvelAbonnementPour={nouvelAbonnementPour}
+            isSuperAdmin={isSuperAdmin}
             editCode={editCode}
             addManualContact={addManualContact}
             handleImportCSV={handleImportCSV}
