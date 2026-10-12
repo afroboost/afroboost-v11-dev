@@ -61,12 +61,44 @@ export function suiviPourEnvoi(form) {
   return sortie;
 }
 
-/** Reste à payer affiché (le serveur le recalcule de son côté, jamais stocké). */
+/** Reste à payer affiché (le serveur le recalcule de son côté, jamais stocké).
+ *  V617d : seulement si le total ET l'encaissé sont connus — sinon `null` (« — »),
+ *  jamais un 0 ni un « total = encaissé » inventés. */
 export function resteAPayer(total, encaisse) {
   const t = parseFloat(total);
-  if (Number.isNaN(t)) return null;
   const e = parseFloat(encaisse);
-  return Math.max(0, Math.round((t - (Number.isNaN(e) ? 0 : e)) * 100) / 100);
+  if (Number.isNaN(t) || Number.isNaN(e)) return null;
+  return Math.max(0, Math.round((t - e) * 100) / 100);
+}
+
+/**
+ * V617d — le bloc « Suivi du paiement » : visible pour TOUT abonnement éditable,
+ * ancien ou nouveau, qu'un suivi existe déjà ou non.
+ *  - création avec bénéficiaire -> visible, éditable ;
+ *  - édition d'un code qui porte au moins un abonnement (`v617_abonnement`) -> visible ;
+ *    éditable seulement si le serveur a désigné UN abonnement actuel (motif `unique`) ;
+ *  - code promo simple (aucun abonnement, aucun bénéficiaire) -> pas de bloc.
+ * Ne lit que ce qui est déjà chargé : ouvrir une fiche n'écrit rien.
+ */
+export function etatSuiviPaiement({ isBatchMode, editingCode, fiche, beneficiaires } = {}) {
+  if (isBatchMode) return { visible: false };
+  if (!editingCode) {
+    return (beneficiaires || []).length > 0 ? { visible: true, editable: true, message: '' } : { visible: false };
+  }
+  const abo = (fiche || {}).v617_abonnement;
+  if (!abo) {
+    return (beneficiaires || []).length > 0 ? { visible: true, editable: true, message: '' } : { visible: false };
+  }
+  if (abo.motif === 'unique' && abo.id) return { visible: true, editable: true, message: '' };
+  if (abo.motif === 'plusieurs') {
+    return { visible: true, editable: false, message: 'Plusieurs abonnements actuels détectés. '
+      + "Aucune modification ne sera enregistrée tant que ce doublon n'aura pas été résolu." };
+  }
+  if (abo.motif === 'aucun') {
+    return { visible: true, editable: false, message: "Aucun abonnement actuel : l'historique reste en lecture seule. "
+      + 'Créez un nouvel abonnement pour ce client.' };
+  }
+  return { visible: true, editable: false, message: "Cet abonnement appartient à un autre coach : suivi non modifiable." };
 }
 
 const _jour = (d) => {

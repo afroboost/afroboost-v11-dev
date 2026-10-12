@@ -204,3 +204,101 @@ describe('J / C. Règles pures', () => {
     expect(messageServeur({ response: { data: { detail: 'texte' } } })).toBe('texte');
   });
 });
+
+// ═══ V617d — « Suivi du paiement » sur TOUS les abonnements éditables ═══════════
+describe('V617d. Suivi du paiement visible partout, rien d\'inventé', () => {
+  const { etatSuiviPaiement } = require('../../../utils/abonnementsManuels');
+  const CH = 'christelle@exemple.test';
+  // Ancien code sans bénéficiaire sur la fiche (comme CHRISTOUX10) : le lien au client
+  // ne passe que par la souscription.
+  const ancien = (motif, extra = {}) => fiche('c10', 'Christoux10', null, 11, 67, '2027-05-25', true, { classement: 'actuel' },
+    { montant_encaisse: 400, origine_paiement: 'twint',
+      v617_abonnement: { id: motif === 'unique' ? 's-c10' : null, motif, historiques: 0, suivi: {} }, ...extra });
+  const editer = (c, newCode = {}) => monter({ discountCodes: [c], editingCode: c.id, selectedBeneficiaries: [],
+    newCode: { code: c.code, courses: [], assignedEmails: [], montant_encaisse: 400, origine_paiement: 'twint',
+      suivi_paiement: suiviVersFormulaire(c.v617_abonnement && c.v617_abonnement.suivi), ...newCode } });
+
+  test('A. abonnement V617 récent avec suivi -> données intactes', () => {
+    const suivi = { montant_total: 400, plusieurs_fois: true, nb_paiements: 2, paiement_actuel: 1, prochaine_echeance: '2026-11-07', note_interne: 'Deuxième versement' };
+    const c = fiche('a8', 'AURELIE-8M', AU, 0, 64, '2027-06-07', true, { classement: 'actuel' },
+      { v617_abonnement: { id: 's-a8', motif: 'unique', historiques: 0, suivi } });
+    const m = monter({ discountCodes: [c], editingCode: 'a8', selectedBeneficiaries: [AU],
+      newCode: { code: 'AURELIE-8M', courses: [], assignedEmails: [AU], montant_encaisse: 200, origine_paiement: 'twint', suivi_paiement: suiviVersFormulaire(suivi) } });
+    expect(m.q('[data-testid="v617-montant-total"]').value).toBe('400');
+    expect(m.q('[data-testid="v617-reste"]').textContent).toBe('200.00 CHF');
+    expect(m.q('[data-testid="v617-echeance"]').value).toBe('2026-11-07');
+    expect(m.q('[data-testid="v617-note-interne"]').value).toBe('Deuxième versement');
+    expect(m.q('[data-testid="v617-suivi-bloque"]')).toBeNull();
+    m.unmount();
+  });
+
+  test('B / E. ancien abonnement sans suivi ni bénéficiaire sur la fiche -> bloc visible, champs inconnus vides', () => {
+    const m = editer(ancien('unique'));
+    expect(m.q('[data-testid="v617-suivi-paiement"]')).toBeTruthy();
+    expect(m.q('[data-testid="v617-montant-total"]').value).toBe('');
+    expect(m.q('[data-testid="v617-echeance"]').value).toBe('');
+    expect(m.q('[data-testid="v617-note-interne"]').value).toBe('');
+    expect(m.q('[data-testid="v617-plusieurs-fois"]').checked).toBe(false);
+    expect(m.q('[data-testid="v617-montant-total"]').disabled).toBe(false);
+    m.unmount();
+  });
+
+  test('C. encaissé prérempli depuis la donnée réelle, total NON inventé, reste « — »', () => {
+    const m = editer(ancien('unique'));
+    expect(m.q('[data-testid="v617-encaisse"]').textContent).toBe('400 CHF');
+    expect(m.q('[data-testid="v617-reste"]').textContent).toBe('—');
+    m.unmount();
+  });
+
+  test('D. total 400 / encaissé 200 -> reste 200 ; total sans encaissé -> non calculé', () => {
+    expect(resteAPayer(400, 200)).toBe(200);
+    expect(resteAPayer(400, '')).toBeNull();
+    expect(resteAPayer(400, undefined)).toBeNull();
+    expect(resteAPayer('', '')).toBeNull();
+    expect(resteAPayer(100, 0)).toBe(100);         // offert / 0 connu : calculable
+  });
+
+  test('F. plusieurs abonnements actuels -> bloc visible, verrouillé, message clair', () => {
+    const m = editer(ancien('plusieurs'));
+    expect(m.q('[data-testid="v617-suivi-paiement"]')).toBeTruthy();
+    expect(m.q('[data-testid="v617-suivi-bloque"]').textContent)
+      .toMatch(/Plusieurs abonnements actuels détectés\. Aucune modification ne sera enregistrée tant que ce doublon n'aura pas été résolu\./);
+    expect(m.q('[data-testid="v617-suivi-paiement"] fieldset').disabled).toBe(true);
+    m.unmount();
+  });
+
+  test('G. aucun abonnement actuel (historique) -> lecture seule', () => {
+    const e = etatSuiviPaiement({ editingCode: 'x', fiche: { v617_abonnement: { motif: 'aucun' } }, beneficiaires: [] });
+    expect(e).toMatchObject({ visible: true, editable: false });
+    const m = editer(ancien('aucun'));
+    expect(m.q('[data-testid="v617-suivi-paiement"] fieldset').disabled).toBe(true);
+    m.unmount();
+  });
+
+  test('paiement unique ou en plusieurs fois : la case et la note sont toujours là', () => {
+    const m = editer(ancien('unique'));
+    expect(m.q('[data-testid="v617-plusieurs-fois"]')).toBeTruthy();
+    expect(m.q('[data-testid="v617-note-interne"]')).toBeTruthy();
+    expect(m.q('[data-testid="v617-paiement-actuel"]')).toBeNull();     // décoché : ni nombre ni paiement actuel
+    m.unmount();
+    const m2 = editer(ancien('unique'), { suivi_paiement: { ...suiviVersFormulaire(null), plusieurs_fois: true } });
+    expect(m2.q('[data-testid="v617-paiement-actuel"]')).toBeTruthy();
+    expect(m2.q('[data-testid="v617-nb-paiements"]')).toBeTruthy();
+    m2.unmount();
+  });
+
+  test('code promo simple (aucun abonnement) en édition -> pas de bloc ; mode série -> pas de bloc', () => {
+    expect(etatSuiviPaiement({ editingCode: 'p', fiche: {}, beneficiaires: [] }).visible).toBe(false);
+    expect(etatSuiviPaiement({ isBatchMode: true, beneficiaires: [CH] }).visible).toBe(false);
+    expect(etatSuiviPaiement({ editingCode: null, beneficiaires: [CH] })).toMatchObject({ visible: true, editable: true });
+  });
+
+  test('H. ouvrir une fiche n\'envoie AUCUNE requête d\'écriture', () => {
+    const axios = require('axios');
+    axios.put.mockClear(); axios.post.mockClear();
+    const m = editer(ancien('unique'));
+    expect(axios.put).not.toHaveBeenCalled();
+    expect(axios.post).not.toHaveBeenCalled();
+    m.unmount();
+  });
+});
