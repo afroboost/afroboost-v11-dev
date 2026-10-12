@@ -50,6 +50,7 @@ OFFRES_8_MOIS = [
     "ba530ae4-934c-46b1-8bc5-4999448f1e86",   # Membres — 8 mois (2 × 199.99 CHF, saison_2x, duree_mois 8)
 ]
 VIDEO_URL = None
+AUDIO_PARTAGE_URL = None   # V610d : « Deviens Afroboosteur », écouté APRÈS la réservation
 DESCRIPTION = """Afroboost Silent 🔥🎧
 
 1 heure de cardio-danse afro, accessible à tous les niveaux, avec ton propre casque audio.
@@ -125,11 +126,17 @@ async def preparer(db, appliquer):
     camp = await db.referral_campaigns.find_one({"offer_id": offre["id"], "status": {"$ne": "archived"}}, {"_id": 0})
     if camp:
         print("INVITATION déjà présente :", camp["id"], camp.get("status"), "| vidéo :", camp.get("video_url") or "VIDE")
+        print("  audio après réservation :", camp.get("audio_partage_url") or "VIDE")
+        _maj = {}
         if VIDEO_URL and camp.get("video_url") != VIDEO_URL:
-            print("  -> vidéo à rattacher :", VIDEO_URL)
+            _maj["video_url"] = VIDEO_URL
+        if AUDIO_PARTAGE_URL and camp.get("audio_partage_url") != AUDIO_PARTAGE_URL:
+            _maj["audio_partage_url"] = AUDIO_PARTAGE_URL
+        if _maj:
+            print("  -> à rattacher :", _maj)
             if appliquer:
-                await db.referral_campaigns.update_one({"id": camp["id"]}, {"$set": {
-                    "video_url": VIDEO_URL, "updated_at": _iso()}, "$inc": {"version": 1}})
+                _maj["updated_at"] = _iso()
+                await db.referral_campaigns.update_one({"id": camp["id"]}, {"$set": _maj, "$inc": {"version": 1}})
         return
     champs = IC.valider_entree({"type": "event_paid", "status": "draft", "title": TITRE, "subtitle": ACCROCHE,
                                 "cta_label": "Je réserve ma place", "offer_id": offre["id"], "course_id": cours["id"],
@@ -145,8 +152,10 @@ async def preparer(db, appliquer):
     doc = {k: doc.get(k) for k in IC.CHAMPS_DOCUMENT}
     if VIDEO_URL:
         doc["video_url"] = IC.valider_media_url(VIDEO_URL, "video_url")
+    if AUDIO_PARTAGE_URL:
+        doc["audio_partage_url"] = IC.valider_media_url(AUDIO_PARTAGE_URL, "audio_partage_url")
     print("INVITATION brouillon à créer :", doc["id"], "| vidéo :", doc.get("video_url") or "VIDE",
-          "| voix-off : VIDE | miniature : VIDE")
+          "| audio après réservation :", doc.get("audio_partage_url") or "VIDE", "| miniature : VIDE")
     if appliquer:
         await db.referral_campaigns.insert_one(dict(doc))
 
@@ -182,9 +191,11 @@ async def principal():
     ap.add_argument("etape", choices=("preparer", "publier"))
     ap.add_argument("--appliquer", action="store_true")
     ap.add_argument("--video-url", default=None, help="/api/files/... de la vidéo finale (préparer)")
+    ap.add_argument("--audio-partage-url", default=None, help="/api/files/... de l'audio « Deviens Afroboosteur » (préparer)")
     a = ap.parse_args()
-    global VIDEO_URL
+    global VIDEO_URL, AUDIO_PARTAGE_URL
     VIDEO_URL = a.video_url if (a.video_url or "").startswith("/api/files/") else None
+    AUDIO_PARTAGE_URL = a.audio_partage_url if (a.audio_partage_url or "").startswith("/api/files/") else None
     from motor.motor_asyncio import AsyncIOMotorClient
     db = AsyncIOMotorClient(a.mongo_url, serverSelectionTimeoutMS=15000)[a.db]
     print("== V610 %s — %s" % (a.etape, "ÉCRITURE" if a.appliquer else "ESSAI À BLANC (rien n'est écrit)"))

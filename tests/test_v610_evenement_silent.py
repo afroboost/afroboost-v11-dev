@@ -133,6 +133,27 @@ verifier("I1 place offerte annulée : 0 séance à restituer", lotb3_montant_deb
 verifier("I2 réservation d'espace ordinaire : inchangé (1 par place)",
          lotb3_montant_debite({"source": "subscriber_space", "quantity": 2}) == 2 and lotb3_montant_debite({}) == 1)
 
+# ── V610d : audio « Deviens Afroboosteur » — après réservation, événement payant seulement ──
+from api.routes import referral_campaigns_engine as IC  # noqa: E402
+_mp3 = "/api/files/abc123/afroboosteur.mp3"
+_e = IC.valider_entree({"type": "event_paid", "status": "draft", "title": "Silent", "audio_partage_url": _mp3}, None)
+verifier("AF1 événement payant : audio après réservation accepté (/api/files/...)", _e.get("audio_partage_url") == _mp3, _e)
+for _t in ("trial", "pass_duo", "event_free"):
+    _x = IC.valider_entree({"type": _t, "status": "draft", "title": "X", "audio_partage_url": _mp3}, None)
+    verifier("AF2 %s : champ vidé (comportement inchangé)" % _t, _x.get("audio_partage_url") is None, _x)
+try:
+    IC.valider_entree({"type": "event_paid", "status": "draft", "title": "S", "audio_partage_url": "javascript:alert(1)"}, None)
+    verifier("AF3 adresse dangereuse refusée", False)
+except IC.InvitationCampagneInvalide:
+    verifier("AF3 adresse dangereuse refusée", True)
+_dp = IC.dto_public({"type": "event_paid", "share_token": "t", "audio_partage_url": _mp3, "audio_url": None})
+verifier("AF4 dto public : audio après réservation SÉPARÉ de l'audio d'avant achat (audio_url vide)",
+         _dp.get("audio_partage_url") == _mp3 and _dp.get("audio_url") is None, _dp)
+verifier("AF5 dto public d'un autre type : jamais d'audio après réservation",
+         IC.dto_public({"type": "event_free", "share_token": "t", "audio_partage_url": _mp3}).get("audio_partage_url") is None)
+_pub = open(os.path.join(RACINE, "frontend", "src", "components", "InvitationPublique.js"), encoding="utf-8").read()
+verifier("AF6 page AVANT achat : n'affiche pas l'audio Afroboosteur", "audio_partage_url" not in _pub)
+
 # ── V610b : confidentialité — le paiement public ne lit JAMAIS le statut membre ──
 _srv = open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
 _i = _srv.index("async def create_checkout_session(")

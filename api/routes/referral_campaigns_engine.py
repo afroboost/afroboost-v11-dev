@@ -34,7 +34,9 @@ SOURCES_IMAGE = ("default", "upload")
 CHAMPS_VISUELS = ("title", "subtitle", "message", "cta_label", "image_url", "image_source",
                   "course_id", "occurrence", "offer_id", "type",
                   # V607 : le lieu saisi (événements), la vidéo / le mot audio (facultatifs).
-                  "lieu", "video_url", "audio_url")
+                  "lieu", "video_url", "audio_url",
+                  # V610d : l'audio APRÈS réservation (boule de neige « Deviens Afroboosteur »)
+                  "audio_partage_url")
 
 # LISTE BLANCHE des champs acceptés en entrée. Tout le reste est ignoré —
 # en particulier `coach_id`, `share_token`, `version`, `inviter_display`, `id`
@@ -46,7 +48,7 @@ CHAMPS_ENTREE = ("type", "status") + tuple(c for c in CHAMPS_VISUELS if c != "ty
 CHAMPS_DOCUMENT = ("id", "coach_id", "type", "status", "share_token", "version", "title",
                    "subtitle", "message", "cta_label", "image_url", "image_source", "course_id",
                    "occurrence", "offer_id", "inviter_display", "created_at", "updated_at",
-                   "lieu", "video_url", "audio_url")
+                   "lieu", "video_url", "audio_url", "audio_partage_url")
 
 TITRE_MAX = 80
 SOUS_TITRE_MAX = 120
@@ -235,6 +237,8 @@ def valider_entree(corps, existant=None) -> dict:
         _s["video_url"] = valider_media_url(_b["video_url"], "video_url")
     if "audio_url" in _b:
         _s["audio_url"] = valider_media_url(_b["audio_url"], "audio_url")
+    if "audio_partage_url" in _b:
+        _s["audio_partage_url"] = valider_media_url(_b["audio_partage_url"], "audio_partage_url")
 
     if "image_url" in _b or "image_source" in _b:
         _url = _b["image_url"] if "image_url" in _b else _s.get("image_url")
@@ -252,6 +256,9 @@ def valider_entree(corps, existant=None) -> dict:
         _s["lieu"] = None
     if _s.get("type") == "pass_duo":
         _s["offer_id"] = None
+    # V610d : l'audio d'APRÈS réservation n'existe que pour l'événement payant.
+    if _s.get("type") != "event_paid":
+        _s["audio_partage_url"] = None
     return _s
 
 
@@ -640,6 +647,8 @@ def dto_public(doc, cours=None, offre=None, chaine=False) -> dict:
         "offre_nom": (str(_o.get("name") or "").strip()[:120] or None) if _o else None,
         "video_url": _d.get("video_url") or None,
         "audio_url": _d.get("audio_url") or None,
+        # V610d : écouté APRÈS la réservation (bloc « Deviens Afroboosteur »), jamais avant.
+        "audio_partage_url": (_d.get("audio_partage_url") or None) if _d.get("type") == "event_paid" else None,
         "cours_nom": (str(_c.get("name") or "").strip()[:120] or None) if _c else None,
         # V610 : gratuité accordée à certains abonnements actifs (liste d'offres
         # configurée sur l'offre-événement). AUCUNE capacité : pas de plafond de places.

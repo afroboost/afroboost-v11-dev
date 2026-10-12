@@ -177,3 +177,73 @@ describe('V610b — AccesMembreEvenement : même bloc pour tous, rien ne fuit', 
     expect(global.fetch).not.toHaveBeenCalled();
   });
 });
+
+describe('V610d — « Deviens Afroboosteur » : audio APRÈS réservation, événement payant seulement', () => {
+  const RELAIS = { jeton: 'JetonSophie123456', share_url: 'https://afroboost.com/i/JetonSophie123456', prenom: 'Sophie', generation: 1 };
+  const DETAILS = { type: 'event_paid', title: 'AFROBOOST SILENT — ÉDITION SPÉCIALE', inviter_display: { prenom: 'Sophie' },
+    date_label: 'mercredi 28 octobre', time_label: '18:45', lieu: 'Valangines',
+    audio_partage_url: '/api/files/a1/afroboosteur.mp3', audio_url: null, prix_actif: { prix: 25, palier: 'early_bird', libelle: 'Prévente' } };
+  let play; let pause;
+  beforeEach(() => {
+    play = jest.spyOn(window.HTMLMediaElement.prototype, 'play').mockImplementation(function () {
+      Object.defineProperty(this, 'paused', { configurable: true, get: () => false }); return Promise.resolve(); });
+    pause = jest.spyOn(window.HTMLMediaElement.prototype, 'pause').mockImplementation(function () {
+      Object.defineProperty(this, 'paused', { configurable: true, get: () => true }); });
+  });
+  afterEach(() => { play.mockRestore(); pause.mockRestore(); });
+
+  test('bloc affiché, AUCUNE lecture automatique, écouter / pause / reprendre', async () => {
+    global.fetch = jest.fn((url) => (String(url).includes('/api/invitation/suivi') ? reponse({}) : reponse(DETAILS)));
+    await act(async () => { render(<InviterMesAmis relaisInitial={RELAIS} />); });
+    await attendre(() => expect(q('afroboosteur-titre').textContent).toMatch(/Deviens Afroboosteur/));
+    expect(document.body.textContent).toMatch(/Partage l’énergie\. Invite tes amis\./);
+    const a = q('afroboosteur-audio');
+    expect(a.autoplay).toBe(false);
+    expect(a.getAttribute('preload')).toBe('none');
+    expect(a.getAttribute('src')).toBe('/api/files/a1/afroboosteur.mp3');
+    expect(play).not.toHaveBeenCalled();
+    expect(q('afroboosteur-ecouter').textContent).toMatch(/Écouter le message/);
+    await act(async () => { q('afroboosteur-ecouter').click(); });
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(q('afroboosteur-ecouter').textContent).toMatch(/Pause/);
+    await act(async () => { q('afroboosteur-ecouter').click(); });
+    expect(pause).toHaveBeenCalledTimes(1);
+    expect(q('afroboosteur-ecouter').textContent).toMatch(/Reprendre le message/);
+    await act(async () => { q('afroboosteur-ecouter').click(); });
+    expect(play).toHaveBeenCalledTimes(2);
+  });
+
+  test('« Inviter mes amis » : WhatsApp avec le lien PERSONNEL, suivi « partage déclenché » (jamais « envoyé »)', async () => {
+    global.fetch = jest.fn((url) => (String(url).includes('/api/invitation/suivi') ? reponse({}) : reponse(DETAILS)));
+    const ouvert = jest.spyOn(window, 'open').mockImplementation(() => null);
+    await act(async () => { render(<InviterMesAmis relaisInitial={RELAIS} />); });
+    await attendre(() => expect(q('afroboosteur-titre')).toBeTruthy());
+    expect(q('inviter-whatsapp').textContent).toMatch(/Inviter mes amis/);
+    await act(async () => { q('inviter-whatsapp').click(); });
+    const url = decodeURIComponent(ouvert.mock.calls[0][0]);
+    expect(url).toMatch(/wa\.me|whatsapp/);
+    expect(url).toMatch(/afroboost\.com\/i\/JetonSophie123456/);
+    expect(url).toMatch(/^.*Sophie t'invite à Afroboost/);
+    const suivi = global.fetch.mock.calls.filter((c) => String(c[0]).includes('/api/invitation/suivi'));
+    expect(JSON.parse(suivi[suivi.length - 1][1].body).evenement).toBe('partage_whatsapp_declenche');
+    expect(document.body.textContent).not.toMatch(/envoyé/i);
+    ouvert.mockRestore();
+  });
+
+  test('événement GRATUIT (ou payant sans audio) : bloc d\'invitation habituel, aucun audio', async () => {
+    global.fetch = jest.fn(() => reponse({ ...DETAILS, type: 'event_free' }));
+    await act(async () => { render(<InviterMesAmis relaisInitial={RELAIS} />); });
+    await attendre(() => expect(q('inviter-mes-amis')).toBeTruthy());
+    expect(q('afroboosteur-titre')).toBeNull();
+    expect(document.querySelector('audio')).toBeNull();
+  });
+
+  test('page AVANT achat (/i/) : la vidéo, jamais l\'audio Afroboosteur', async () => {
+    global.fetch = jest.fn((url) => (String(url).includes('/api/invitation/publique/')
+      ? reponse({ ...DETAILS, video_url: '/api/files/v1/silent.mp4', cible: '/?offre=o&inv=T' }) : reponse({})));
+    await act(async () => { render(<InvitationPublique token="T123456789012345678" />); });
+    await attendre(() => expect(q('inv-pub-video')).toBeTruthy());
+    expect(document.querySelector('audio')).toBeNull();
+    expect(document.body.innerHTML).not.toMatch(/afroboosteur/i);
+  });
+});

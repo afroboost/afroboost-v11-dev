@@ -117,6 +117,7 @@ const V228_PATHS = {
     </>
   ),
   play: <polygon points="5 3 19 12 5 21 5 3" />,
+  pause: (<><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></>), // V610d
   // `stop` = carre plein d'un lecteur, trace en carre arrondi (feather square).
   stop: <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />,
   volumeX: (
