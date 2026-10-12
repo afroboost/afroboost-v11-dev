@@ -288,6 +288,13 @@ async def scenario():
         verifier("%s sans super-admin signé → 403" % route.__name__, code == 403, code)
     verifier("le refus n'a rien modifié", RC.reglages()["actif"] is True)
 
+    br = {"genere_le": "2026-10-11T10:00:00+00:00"}
+    verifier("V608c : une note « correction_envoi » ou « remise » ne périme pas le texte validé",
+             not S.p3n_contexte_obsolete(br, [{"created_at": "2026-10-11T10:05:00+00:00", "origine": "correction_envoi"},
+                                              {"created_at": "2026-10-11T10:06:00+00:00", "origine": "remise"}]))
+    verifier("V608c : une vraie note du coach postérieure le périme toujours",
+             S.p3n_contexte_obsolete(br, [{"created_at": "2026-10-11T10:05:00+00:00", "origine": "coach"}]))
+
     print("\nM. 49 points d'appel → tous par le point unique")
     sortie = subprocess.run(["grep", "-rnE", "--include=*.py", r"\b(resend|_r|resend_lib|_resend_lib)\.Emails\.send\b", os.path.join(RACINE, "api")],
                             capture_output=True, text=True).stdout.strip().split("\n")

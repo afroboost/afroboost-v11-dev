@@ -33007,6 +33007,9 @@ async def p3n_messages_du_fil(message: dict) -> list:
     ).sort([("received_at", 1), ("id", 1)]).to_list(P3N_NOTES_MAX)
 
 
+P3N_ORIGINES_TECHNIQUES = frozenset({"envoi", "remise", "correction_envoi"})
+
+
 def p3n_contexte_obsolete(brouillon, notes) -> bool:
     """Le brouillon a-t-il ete ecrit AVANT la derniere note ? PURE.
 
@@ -33030,8 +33033,12 @@ def p3n_contexte_obsolete(brouillon, notes) -> bool:
     # envoye ». Or cette note ne dit RIEN de neuf sur le prospect : elle
     # documente ce qu'on vient de faire. Seule une information NOUVELLE sur le
     # partenaire rend un brouillon caduc.
+    # V608c — même raison pour les notes qui documentent NOTRE ENVOI et son suivi :
+    # la remise confirmée (« remise ») et la correction d'un envoi non remis
+    # (« correction_envoi »). Elles ne disent rien de neuf sur le partenaire ; sans
+    # cela, un envoi échoué (quota) ne pouvait plus être réessayé avec le texte validé.
     return any(str(n.get("created_at") or "") > ecrit_le
-               and (n.get("origine") or "") != "envoi"
+               and (n.get("origine") or "") not in P3N_ORIGINES_TECHNIQUES
                for n in notes or [])
 
 
