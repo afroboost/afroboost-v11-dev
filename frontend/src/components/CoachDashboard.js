@@ -34,7 +34,6 @@ import MesInvitations from "./coach/MesInvitations"; // V610e : modifier ses inv
 import ModerationTemoignages from "./coach/ModerationTemoignages"; // ESSAI-5a-2
 import MessagesWhatsApp from "./coach/MessagesWhatsApp"; // V411
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
-import InvitationModal from "./coach/InvitationModal"; // V616 : onglet « Invitation & Parrainage » (même modale, aucun changement métier)
 import EspaceCreateur from './createur/EspaceCreateur'; // V559 — Programme Créateur (même écran que l'abonné)
 import CRMSection from "./coach/CRMSection"; // v9.2.0 Import CRM Section
 import SmartLinksSection from "./coach/SmartLinksSection"; // v98: Liens Intelligents
@@ -4813,8 +4812,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // il est simplement redirigé ici. Aucune donnée ne bouge, ProspectsSection est
   // monté tel quel. Dépendance = la CHAÎNE `tab` (règle anti-boucle V305).
   const [campagnesMode, setCampagnesMode] = useState('clients');
-  // V616 : le 3e onglet de Campagnes ouvre la MÊME modale Invitation & Parrainage (V607/V610 inchangés).
-  const [v616Invitation, setV616Invitation] = useState(false);
+  // V616 / V610e : le 3e onglet de Campagnes (« invitation ») affiche « Mes invitations » ;
+  // son bouton « Nouvelle invitation » ouvre la MÊME modale de création.
   // V587c — état du cockpit Prospection : UNE seule source de vérité (voir le hook).
   const p3Cockpit = useCockpitProspection();
   useEffect(() => {
@@ -8815,8 +8814,6 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             {/* V551 : Parrainage V2 — « Invitation & partage ». Identite = jeton. */}
             {offersSubTab === 'parrainage' && (
               <div style={{ marginTop: 12 }}>
-                {/* V610e : la liste des invitations + l'éditeur complet (le coach est autonome). */}
-                <MesInvitations API={API} />
                 <InvitationPartageCard API={API} />
               </div>
             )}
@@ -9061,12 +9058,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               { id: 'prospection', label: p3NonLues > 0 ? `Prospection (${p3NonLues})` : 'Prospection', icone: 'compass' },
               { id: 'invitation', label: 'Invitation & Parrainage', icone: 'gift' },
             ].map(m => {
-              const actif = m.id === 'invitation' ? v616Invitation : (!v616Invitation && campagnesMode === m.id);
+              // V610e : « Invitation & Parrainage » devient un VRAI onglet (« Mes invitations » :
+              // liste, Modifier, + Nouvelle invitation -> la même modale de création).
+              const actif = campagnesMode === m.id;
               return (
                 <button key={m.id} type="button" role="tab" aria-selected={actif}
                         data-testid={`campagnes-mode-${m.id}`}
-                        aria-haspopup={m.id === 'invitation' ? 'dialog' : undefined}
-                        onClick={() => (m.id === 'invitation' ? setV616Invitation(true) : setCampagnesMode(m.id))}
+                        onClick={() => setCampagnesMode(m.id)}
                         style={{ flex: '1 0 auto', minHeight: '44px', padding: '0 14px', borderRadius: '10px',
                                  border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
@@ -9080,9 +9078,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             })}
           </div>
         )}
-        {tab === "campaigns" && (
-          <InvitationModal isOpen={v616Invitation} onClose={() => setV616Invitation(false)}
-                           API={API} dateInitiale={null} />
+        {tab === "campaigns" && campagnesMode === "invitation" && (
+          <div className="card-gradient rounded-xl p-4 sm:p-6" data-testid="campagnes-invitation">
+            <MesInvitations API={API} />
+          </div>
         )}
 
         {/* === PROSPECTION (P3-S2) — désormais le mode « Prospection » de Campagnes (UI-1) === */}
@@ -9159,13 +9158,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             <EspaceCreateur />
           </div>
         )}
-        {tab === "campaigns" && campagnesMode !== "prospection" && co1CampagnesMotif && (
+        {tab === "campaigns" && campagnesMode === "clients" && co1CampagnesMotif && (
           <div style={{ marginBottom: '12px' }}>
             <SectionErreur motif={co1CampagnesMotif} quoi="tes campagnes"
                            onReessayer={co1ChargerCampagnes} data-testid="co1-erreur-campagnes" />
           </div>
         )}
-        {tab === "campaigns" && campagnesMode !== "prospection" && (
+        {tab === "campaigns" && campagnesMode === "clients" && (
           <CampaignManager
             // V616 : Invitation & Parrainage est un onglet ; le gros bloc module disparaît ici.
             invitationViaOnglet

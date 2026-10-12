@@ -111,7 +111,7 @@ export default function MesInvitations({ API }) {
   useEffect(() => { charger(); }, [charger]);
 
   return (
-    <div data-testid="mes-invitations" style={{ marginBottom: 16 }}>
+    <div data-testid="mes-invitations" style={{ marginBottom: 16, color: 'rgba(255,255,255,0.96)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontWeight: 800, fontSize: 17 }}>Mes invitations</div>
