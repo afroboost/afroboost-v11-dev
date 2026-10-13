@@ -69,8 +69,9 @@ def _cle_tri(sub):
 
 
 def choisir(subs, maintenant=None) -> dict:
-    """PUR. {etat, abonnement, candidats, dernier} à partir des abonnements d'UNE personne."""
-    _l = [s for s in (subs or []) if isinstance(s, dict)]
+    """PUR. {etat, abonnement, candidats, dernier} à partir des abonnements d'UNE personne.
+    V618i : un abonnement supprimé n'existe pas — ni actuel, ni « dernier »."""
+    _l = [s for s in (subs or []) if isinstance(s, dict) and not est_supprime(s)]
     _c = [s for s in _l if est_courant(s, maintenant)]
     _dernier = sorted(_l, key=_cle_tri, reverse=True)[0] if _l else None
     if len(_c) == 1:
@@ -85,6 +86,11 @@ def _empreinte(email) -> str:
 
 
 SOURCE_AUTO_SERVICE = "promo_validate"
+
+
+def est_supprime(sub) -> bool:
+    """V618i : abonnement supprimé par le coach (pierre tombale)."""
+    return str((sub or {}).get("status") or "").strip().lower() == "deleted"
 
 
 def de_confiance(sub) -> bool:
@@ -116,7 +122,8 @@ async def abonnements_de(database, email) -> list:
                 _coach_fiche.setdefault(_k, _f.get("coach_id"))
     for x in _l:
         x["_locataire"] = locataire(x.get("coach_id") or _coach_fiche.get(str(x.get("code") or "").upper()))
-    return [x for x in _l if de_confiance(x)]
+    # V618i : un abonnement SUPPRIMÉ n'existe plus pour le résolveur (ni actuel, ni conflit, ni historique).
+    return [x for x in _l if de_confiance(x) and not est_supprime(x)]
 
 
 async def resoudre_abonnement_actuel(database, email, maintenant=None, notifier=True, perimetre=None) -> dict:
@@ -327,7 +334,8 @@ async def code_cible_espace(database, email, code_url, coach_session=None):
 
 
 # ── V618 PHASE 2 : RESTITUTION D'UNE SÉANCE (annulation) ───────────────────────
-STATUTS_HISTORIQUES = ("superseded", "expired", "cancelled", "archived")
+STATUT_SUPPRIME = "deleted"      # V618i : supprimé par le coach — jamais courant, jamais réactivé
+STATUTS_HISTORIQUES = ("superseded", "expired", "cancelled", "archived", STATUT_SUPPRIME)
 
 
 def cible_restitution(reservation, subs_du_code, maintenant=None):
@@ -445,7 +453,8 @@ def contact_otp(fiches, subs, email_demande="", maintenant=None):
         _cid = (_f or {}).get("coach_id")
         if _em:
             return _em, _cid
-    _s = [s for s in (subs or []) if isinstance(s, dict) and de_confiance(s) and _norm(s.get("email"))]
+    _s = [s for s in (subs or []) if isinstance(s, dict) and de_confiance(s) and not est_supprime(s)
+          and _norm(s.get("email"))]
     if _cid is not None and str(_cid).strip():
         _s = [s for s in _s if locataire(s.get("coach_id") or _cid) == locataire(_cid)]
     _adresses = {_norm(s.get("email")) for s in _s}
@@ -520,7 +529,7 @@ def classer_codes(codes, subs, coach_par_code=None, maintenant=None):
     _cpc = {str(k).upper(): v for k, v in (coach_par_code or {}).items()}
     _par = {}
     for s in subs or []:
-        if not isinstance(s, dict) or not de_confiance(s) or not _norm(s.get("email")):
+        if not isinstance(s, dict) or not de_confiance(s) or est_supprime(s) or not _norm(s.get("email")):
             continue
         _loc = locataire(s.get("coach_id") or _cpc.get(str(s.get("code") or "").upper()))
         _par.setdefault((_norm(s.get("email")), _loc), []).append(s)
@@ -611,3 +620,177 @@ async def enrichir_codes(database, codes, appelant=None, admin=True):
     except Exception as _err:  # noqa: BLE001
         logger.warning("%s classement des codes impossible (%s)", PREFIXE, type(_err).__name__)
         return codes
+
+
+# ═══════════════ V618i — SUPPRESSION FIABLE D'UN ABONNEMENT ═══════════════
+#
+# Avant : « Supprimer » ne déplaçait que la FICHE du code dans la corbeille ; ses abonnements
+# restaient `active` (mesure du 13/10 : 8 abonnements « supprimés » encore courants). Désormais un
+# abonnement supprimé devient une PIERRE TOMBALE `status: "deleted"` : conservé pour l'historique
+# (paiements, réservations passées, mouvements de séances gardent leur référence), mais exclu à
+# jamais du résolveur, de l'espace, du scan, des réservations, de l'événement, du ChatWidget, des
+# e-mails d'accès et de l'OTP. Aucune route ne le réactive (seul le super-admin peut restaurer).
+
+COLL_SESSIONS = "subscriber_sessions"
+
+
+def _rx(code):
+    return {"$regex": "^%s$" % re.escape(str(code or "").strip()), "$options": "i"}
+
+
+async def supprimer_abonnements(database, subs, par, motif):
+    """Pierre tombale, PAR id, conditionnelle (le statut lu doit être encore le même) : un abonnement
+    modifié entre la lecture et l'écriture n'est pas touché. Compteurs, paiements, dates : intacts."""
+    _maintenant = datetime.now(timezone.utc).isoformat()
+    _faits = []
+    for s in subs or []:
+        if not isinstance(s, dict) or not s.get("id") or est_supprime(s):
+            continue
+        _r = await database.subscriptions.update_one(
+            {"id": s.get("id"), "status": s.get("status")},
+            {"$set": {"status": STATUT_SUPPRIME, "statut_avant_suppression": s.get("status"),
+                      "deleted_at": _maintenant, "deleted_by": par, "deleted_reason": motif}})
+        if getattr(_r, "modified_count", 0) == 1:
+            _faits.append(s.get("id"))
+    if _faits:
+        logger.info("%s %d abonnement(s) supprimé(s) (%s)", PREFIXE, len(_faits), motif)
+    return _faits
+
+
+async def revoquer_sessions_du_code(database, code, motif):
+    """Les sessions d'espace ouvertes sur ce code sont fermées : un ancien jeton ne rouvre rien."""
+    _n = 0
+    async for _s in database[COLL_SESSIONS].find({"code": _rx(code), "revoked": {"$ne": True}}, {"_id": 0, "jti": 1}):
+        if not _s.get("jti"):
+            continue
+        _r = await database[COLL_SESSIONS].update_one(
+            {"jti": _s.get("jti"), "revoked": {"$ne": True}},
+            {"$set": {"revoked": True, "revoked_at": datetime.now(timezone.utc).isoformat(), "revoked_reason": motif}})
+        _n += getattr(_r, "modified_count", 0)
+    return _n
+
+
+async def apercu_suppression(database, fiche, maintenant=None):
+    """Ce que « Supprimer » va faire pour CETTE fiche — lu, jamais écrit. Les abonnements du code sont
+    supprimés SEULEMENT s'il ne reste aucune autre fiche VIVANTE du même code (un doublon expiré
+    qu'on retire ne touche jamais l'abonnement porté par la fiche vivante)."""
+    from api.routes.shared import _v391_est_expire
+    _f = fiche or {}
+    _code = str(_f.get("code") or "").strip()
+    _now = (maintenant or datetime.now(timezone.utc)).isoformat()
+    _autres = [x for x in await database.discount_codes.find({"code": _rx(_code)}, {"_id": 0}).to_list(50)
+               if x.get("id") != _f.get("id")]
+    _autres_vivantes = [x for x in _autres if x.get("active") and not _v391_est_expire(x.get("expiresAt"))]
+    _subs = [x for x in await database.subscriptions.find({"code": _rx(_code)}, {"_id": 0}).to_list(100)
+             if not est_supprime(x)]
+    _touches = [] if _autres_vivantes else _subs
+    _r = choisir(_touches) if _touches else {"abonnement": None, "dernier": None}
+    _ref = _r.get("abonnement") or _r.get("dernier") or {}
+    try:
+        _restantes = (int(float(_ref.get("remaining_sessions"))) if _ref.get("remaining_sessions") is not None
+                      else max(0, int(float(_f.get("maxUses") or 0)) - int(float(_f.get("used") or 0))))
+    except (TypeError, ValueError):
+        _restantes = None
+    _resas = await database.reservations.find({"$or": [{"discountCode": _rx(_code)}, {"promoCode": _rx(_code)}]},
+                                              {"_id": 0, "datetime": 1}).to_list(1000)
+    _passees = sum(1 for r in _resas if str(r.get("datetime") or "") < _now[:16])
+    _futures = len(_resas) - _passees
+    _mouv = await database["seance_mouvements"].count_documents({"code": _rx(_code)})
+    _encaisse = 0.0
+    for _x in [_f] + _touches:
+        try:
+            _encaisse = max(_encaisse, float(_x.get("montant_encaisse") or 0))
+        except (TypeError, ValueError):
+            pass
+    _hist = bool(_passees or _mouv or _encaisse)
+    return {
+        "code": _code, "client": _f.get("assignedEmail") or _ref.get("email") or "",
+        "abonnement": _ref.get("offer_name") or _f.get("offerName") or _code,
+        "seances_restantes": _restantes,
+        "expiration": str(_ref.get("expires_at") or _f.get("expiresAt") or "")[:10] or None,
+        "abonnements_supprimes": len(_touches),
+        "abonnement_conserve_par_autre_fiche": bool(_autres_vivantes and _subs),
+        "historique": {"paiement_encaisse": _encaisse, "reservations_passees": _passees,
+                       "reservations_futures": _futures, "mouvements_seances": _mouv, "conserve": _hist},
+        "_subs": _touches,
+    }
+
+
+async def _proprietaire_sub(sub, cle):
+    """Périmètre d'un abonnement pour le coach `cle` (vide = super-admin)."""
+    if cle == "":
+        return True
+    _c = locataire(cle)
+    return bool(_c) and locataire((sub or {}).get("coach_id")) == _c
+
+
+@router.get("/api/abonnements/orphelins")
+async def abonnements_orphelins(request: Request):
+    """V618i — abonnements encore actifs dont le code n'a PLUS AUCUNE fiche (fiche supprimée avant
+    V618i, ou jamais créée) : invisibles dans « Codes », ils restaient pourtant utilisables. Liste
+    pour que le coach les supprime LUI-MÊME. JWT strict, SON périmètre, lecture seule."""
+    from api.routes import referral_routes as R
+    _c = await R._coach_strict(request)
+    _codes = {str(x.get("code") or "").strip().upper()
+              for x in await db.discount_codes.find({}, {"_id": 0, "code": 1}).to_list(10000)}
+    _sortie = []
+    for s in await db.subscriptions.find({"status": "active"}, {"_id": 0}).to_list(5000):
+        if str(s.get("code") or "").strip().upper() in _codes or not await _proprietaire_sub(s, _c["cle"]):
+            continue
+        _sortie.append({"id": s.get("id"), "code": s.get("code"), "email": s.get("email"),
+                        "abonnement": s.get("offer_name") or s.get("code"),
+                        "seances_restantes": s.get("remaining_sessions"),
+                        "expiration": str(s.get("expires_at") or "")[:10] or None,
+                        "courant": est_courant(s)})
+    _sortie.sort(key=lambda x: (not x["courant"], str(x.get("code") or "")))
+    return {"orphelins": _sortie[:200], "total": len(_sortie)}
+
+
+@router.delete("/api/abonnements/{subscription_id}")
+async def supprimer_abonnement_orphelin(subscription_id: str, request: Request):
+    """V618i — supprime UN abonnement dont le code n'a plus de fiche vivante (les autres se suppriment
+    depuis la carte du code, qui retire la fiche ET l'abonnement ensemble). JWT strict + propriétaire :
+    un coach ne supprime jamais l'abonnement d'un autre coach (403)."""
+    from api.routes import referral_routes as R
+    from api.routes.shared import _v391_est_expire
+    _c = await R._coach_strict(request)
+    _s = await db.subscriptions.find_one({"id": str(subscription_id or "")[:64]}, {"_id": 0})
+    if not _s or est_supprime(_s):
+        raise HTTPException(status_code=404, detail="Abonnement introuvable")
+    if not await _proprietaire_sub(_s, _c["cle"]):
+        raise HTTPException(status_code=403, detail="Cet abonnement ne vous appartient pas")
+    _vivantes = [x for x in await db.discount_codes.find({"code": _rx(_s.get("code"))}, {"_id": 0}).to_list(20)
+                 if x.get("active") and not _v391_est_expire(x.get("expiresAt"))]
+    if _vivantes:
+        raise HTTPException(status_code=409, detail="Ce code existe encore : supprimez-le depuis sa carte (code + abonnement).")
+    _faits = await supprimer_abonnements(db, [_s], _c["email"], "suppression_coach")
+    if not _faits:
+        raise HTTPException(status_code=409, detail="L'abonnement vient d'être modifié. Rechargez et réessayez.")
+    _reste = [x for x in await db.subscriptions.find({"code": _rx(_s.get("code"))}, {"_id": 0, "status": 1}).to_list(50)
+              if not est_supprime(x)]
+    _sessions = 0 if _reste else await revoquer_sessions_du_code(db, _s.get("code"), "abonnement_supprime")
+    _apres = await resoudre_abonnement_actuel(db, _s.get("email"), notifier=False,
+                                              perimetre=locataire(_s.get("coach_id")))
+    return {"success": True, "supprime": _faits[0], "sessions_revoquees": _sessions,
+            "abonnement_actuel_apres": (_apres.get("abonnement") or {}).get("code") if _apres["etat"] == ETAT_COURANT else None,
+            "etat_apres": _apres["etat"]}
+
+
+async def peut_gerer_abonnement(database, sub, appelant, admin=False) -> bool:
+    """V618i — UNE règle de propriété pour modifier / ajuster / supprimer un abonnement : le
+    super-admin gère tout ; un coach partenaire, SEULEMENT son périmètre effectif (coach de
+    l'abonnement, sinon celui de la fiche de son code). Un abonnement de la plateforme (sans coach)
+    n'appartient à aucun partenaire."""
+    if admin:
+        return True
+    _moi = locataire(appelant)
+    if not _moi:
+        return False
+    _eff = (sub or {}).get("coach_id")
+    if not str(_eff or "").strip():
+        _f = await _fiche(database, (sub or {}).get("code"))
+        _eff = (_f or {}).get("coach_id")
+    return locataire(_eff) == _moi
+
+
+MSG_SUPPRIME = "Cet abonnement a été supprimé : il ne peut plus être modifié ni réactivé."

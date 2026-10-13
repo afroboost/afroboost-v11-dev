@@ -11,6 +11,7 @@ import SvgIcon from '../SvgIcon';
 import { classerArticles, resteAPayer, SUIVI_VIDE, etatSuiviPaiement } from "../../utils/abonnementsManuels"; // V617 / V617d
 import EcheancesPaiement from "./EcheancesPaiement"; // V617
 import IntegriteAbonnements from "./IntegriteAbonnements"; // V618 : plusieurs abonnements actifs = à vérifier
+import AbonnementsOrphelins from "./AbonnementsOrphelins"; // V618i : abonnements dont le code a été supprimé
 import { etatMetierCode, finAfficheeCode, lienEspaceProposable, ETAT_ACTIF, ETAT_CONFLIT } from "../../utils/etatCodeV618"; // V618f
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -738,6 +739,7 @@ const PromoCodesTab = ({
       
       {/* V617 : rappels internes de paiement (coach uniquement, aucun envoi) */}
       <IntegriteAbonnements rafraichir={(discountCodes || []).length} />
+      <AbonnementsOrphelins rafraichir={(discountCodes || []).length} />
       <EcheancesPaiement rafraichir={(discountCodes || []).length} />
 
       {/* Formulaire de création de code - COMPLET */}

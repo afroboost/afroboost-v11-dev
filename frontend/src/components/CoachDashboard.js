@@ -52,6 +52,7 @@ import SvgIcon from "./SvgIcon";
 // SEULE — jamais les contacts, les abonnes ni les reservations.
 import ProspectsSection from "./coach/ProspectsSection";
 import { etatMetierCode, finAfficheeCode } from "../utils/etatCodeV618"; // V618f : état métier des codes
+import { useDialogueAbonnement, formaterJour } from "./dashboard/DialogueAbonnement"; // V618i
 import useCockpitProspection, { ECRANS_A_PART as P3_ECRANS_A_PART } from "../hooks/useCockpitProspection"; // V587c + V595
 import MessagesRelancesSection from "./coach/MessagesRelancesSection"; // V588
 import ProspectionApercu from "./coach/prospection/ProspectionApercu"; // V595
@@ -998,6 +999,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [loadError, setLoadError] = useState(null);
   // V205: État pour les messages de validation (manquait → ReferenceError)
   const [validationMessage, setValidationMessage] = useState('');
+  // V618i : confirmation lisible (suppression / abonnement déjà actif) + annonce visible ; clé
+  // d'idempotence d'UNE tentative de création (un double clic réutilise la même -> un seul abonnement).
+  const [dialogueAbonnementUi, demanderDialogue, annoncer] = useDialogueAbonnement();
+  const creationCleRef = useRef(null);
+  const creationEnCoursRef = useRef(false);
 
   // Email Super Admin
   // v9.5.6: Liste des Super Admins autorisés
@@ -2773,29 +2779,65 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // V617 — suivi de paiement manuel (interne coach, sur la NOUVELLE souscription).
       const suiviCreation = beneficiaryEmail ? suiviPourEnvoi(newCode.suivi_paiement) : null;
       if (suiviCreation) corpsCreation.suivi_paiement = suiviCreation;
+      // V618i — UNE tentative = UNE clé : un double clic (ou un réseau qui rejoue) ne crée qu'un
+      // abonnement, le serveur fait foi (le bouton bloqué n'est qu'un confort).
+      if (creationEnCoursRef.current) return;
+      creationEnCoursRef.current = true;
+      if (!creationCleRef.current) {
+        creationCleRef.current = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      }
+      corpsCreation.idempotency_key = creationCleRef.current;
       let response;
       try {
-        response = await axios.post(`${API}/discount-codes`, corpsCreation);
-      } catch (postErr) {
-        // V617 — le client a encore des droits valides : on ne touche à RIEN de
-        // l'existant, mais le coach décide en connaissance de cause.
-        if (typeRefus(postErr) !== 'droits_existants') throw postErr;
-        const liste = (postErr.response.data.detail.abonnements || [])
-          .map(a => `• ${a.code} — ${a.restantes ?? '?'} séance(s), expire le ${a.expire_le || '—'}`).join('\n');
-        if (!window.confirm(`${messageServeur(postErr)}\n\n${liste}`)) {
-          setValidationMessage('Création annulée — rien n\'a été créé.');
-          setTimeout(() => setValidationMessage(''), 4000);
-          return;
+        try {
+          response = await axios.post(`${API}/discount-codes`, corpsCreation);
+        } catch (postErr) {
+          // V618i — le client a déjà un abonnement actif : jamais un second abonnement actuel en
+          // silence. Le coach choisit : modifier l'actuel, ou le remplacer / renouveler.
+          if (typeRefus(postErr) !== 'droits_existants') throw postErr;
+          const abos = (postErr.response.data.detail.abonnements || []);
+          const choix = await demanderDialogue({
+            titre: 'Ce client possède déjà un abonnement actif.',
+            lignes: abos.map(a => [a.code, `${a.restantes ?? '?'} séance(s) · fin ${a.expire_le ? formaterJour(a.expire_le) : '—'}`]),
+            note: "« Remplacer / renouveler » passe l'abonnement actuel en historique (séances et paiements restent visibles) et crée le nouveau : un seul abonnement actuel.",
+            boutons: [
+              { id: 'annuler', label: 'Annuler' },
+              { id: 'modifier', label: "Modifier l'abonnement actuel" },
+              { id: 'remplacer', label: 'Remplacer / renouveler', primaire: true },
+            ],
+          });
+          if (choix === 'modifier') {
+            const cible = discountCodes.find(c => abos.some(a => String(a.code || '').toUpperCase() === String(c.code || '').toUpperCase()));
+            creationCleRef.current = null;
+            if (cible) editCode(cible);
+            return;
+          }
+          if (choix !== 'remplacer') {
+            creationCleRef.current = null;
+            annoncer("Création annulée — rien n'a été créé.");
+            return;
+          }
+          response = await axios.post(`${API}/discount-codes`, { ...corpsCreation, remplacer_abonnement_actuel: true });
         }
-        response = await axios.post(`${API}/discount-codes`, { ...corpsCreation, confirmer_droits_existants: true });
+      } finally {
+        creationEnCoursRef.current = false;
       }
-      setDiscountCodes([...discountCodes, response.data]);
+      creationCleRef.current = null;
+      // V618i : l'état vient du SERVEUR (l'ancien abonnement a pu passer en historique).
+      try {
+        const frais = await axios.get(`${API}/discount-codes`);
+        if (Array.isArray(frais.data)) setDiscountCodes(frais.data);
+        else setDiscountCodes([...discountCodes, response.data]);
+      } catch (e) {
+        setDiscountCodes([...discountCodes, response.data]);
+      }
       setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "", montant_encaisse: "", origine_paiement: "" });
       setSelectedBeneficiaries([]);
     } catch (error) {
       console.error('[PROMO] Erreur création/édition code:', error);
       const msg = messageServeur(error);   // V617 : détail objet rendu lisible
       setValidationMessage(`❌ Erreur: ${msg}`);
+      annoncer(`Erreur : ${msg}`);   // V618i : visible (le message ci-dessus n'est rendu nulle part)
       setTimeout(() => setValidationMessage(''), 6000);
     }
   };
@@ -3010,20 +3052,51 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Delete discount code - SUPPRESSION DÉFINITIVE EN BASE + VÉRIFICATION
+  // V618i — SUPPRIMER UN ABONNEMENT : aperçu serveur -> confirmation lisible -> suppression ->
+  // RECHARGEMENT depuis le serveur (jamais un simple masquage de la carte) -> annonce + vérification.
   const deleteCode = async (codeId) => {
-    if (window.confirm("⚠️ SUPPRESSION DÉFINITIVE\n\nCe code promo sera supprimé de la base de données.\nCette action est irréversible.\n\nConfirmer la suppression ?")) {
-      try {
-        await axios.delete(`${API}/discount-codes/${codeId}`);
-        setDiscountCodes(prev => prev.filter(c => c.id !== codeId));
-        console.log(`✅ Code ${codeId} supprimé définitivement`);
-      } catch (error) {
-        console.error("Erreur suppression code:", error);
-        alert("❌ Erreur lors de la suppression");
-      }
+    let apercu;
+    try {
+      apercu = (await axios.get(`${API}/discount-codes/${encodeURIComponent(codeId)}/suppression`)).data || {};
+    } catch (error) {
+      annoncer(`Suppression impossible : ${messageServeur(error)}`);
+      return;
+    }
+    const avecAbonnement = Number(apercu.abonnements_supprimes || 0) > 0;
+    const historique = apercu.historique || {};
+    const notes = [];
+    if (historique.conserve) notes.push("Les paiements et réservations passés seront conservés pour l'historique, mais cet abonnement ne sera plus utilisable.");
+    if (apercu.abonnement_conserve_par_autre_fiche) notes.push("Une autre fiche valide porte ce code : l'abonnement reste actif, seule cette fiche est retirée.");
+    if (Number(historique.reservations_futures || 0) > 0) notes.push(`${historique.reservations_futures} réservation(s) à venir restent dans l'agenda.`);
+    const choix = await demanderDialogue({
+      titre: avecAbonnement ? 'Supprimer cet abonnement ?' : 'Supprimer ce code ?',
+      lignes: [
+        ['Client', apercu.client || '—'],
+        ['Abonnement', apercu.abonnement || apercu.code || '—'],
+        ['Séances restantes', apercu.seances_restantes == null ? '—' : String(apercu.seances_restantes)],
+        ['Expiration', apercu.expiration ? formaterJour(apercu.expiration) : '—'],
+      ],
+      note: notes.join(' ') || null,
+      boutons: [
+        { id: 'annuler', label: 'Annuler' },
+        { id: 'supprimer', label: avecAbonnement ? "Supprimer définitivement l'abonnement" : 'Supprimer le code', danger: true },
+      ],
+    });
+    if (choix !== 'supprimer') return;
+    try {
+      const r = await axios.delete(`${API}/discount-codes/${encodeURIComponent(codeId)}`);
+      const frais = await axios.get(`${API}/discount-codes`);
+      if (Array.isArray(frais.data)) setDiscountCodes(frais.data);
+      const d = r.data || {};
+      const suite = d.abonnement_actuel_apres
+        ? ` Abonnement actuel du client : ${d.abonnement_actuel_apres}.`
+        : (d.abonnements_supprimes ? " Le client n'a plus d'abonnement actuel." : '');
+      annoncer(`Abonnement supprimé.${suite}`);
+    } catch (error) {
+      annoncer(`Suppression impossible : ${messageServeur(error)}`);
     }
   };
-  
+
   // Delete reservation - SUPPRESSION DÉFINITIVE EN BASE
   // V191: Cycle du statut casque (Silent Disco) — null → taken → returned → null
   // guestIndex = null pour l'abonné principal, sinon index 0-based dans guest_headphones.
@@ -9070,6 +9143,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             Le chargement est declenche a l'ouverture de l'onglet plutot qu'au
             montage du dashboard : inutile d'appeler l'API pour un coach qui ne
             propose aucune offre a preuve sociale. */}
+        {tab === "codes" && dialogueAbonnementUi}
         {tab === "codes" && (
           <PromoCodesTab
             // === Credits Gate ===

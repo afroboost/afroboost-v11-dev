@@ -374,6 +374,11 @@ async def traiter_facture_payee(db, invoice) -> dict:
     _doc = await db.subscriptions.find_one({"stripe_subscription_id": _sid}, {"_id": 0})
     if not _doc:
         return {"credite": False, "motif": "abonnement_inconnu"}
+    if str(_doc.get("status") or "").lower() == "deleted":
+        # V618i : un abonnement SUPPRIMÉ par le coach n'est jamais réactivé par une facture Stripe
+        # (le paiement reste tracé par Stripe ; le coach décide).
+        logger.warning("[V618i] facture %s sur un abonnement supprimé : aucun crédit, aucune réactivation", _iid[:12])
+        return {"credite": False, "motif": "abonnement_supprime"}
     # `renewal_sessions` = les séances d'UN paiement, déjà calculées à l'achat
     # (pack, ou pack × 4 pour saison_2x) : une seule source, pas de second calcul.
     try:
@@ -418,7 +423,7 @@ async def traiter_facture_payee(db, invoice) -> dict:
     if _remise_a_zero:
         _maj_sub["$set"]["remaining_sessions"] = _seances
     _r = await db.subscriptions.update_one(
-        {"stripe_subscription_id": _sid, "stripe_invoices": {"$ne": _iid}}, _maj_sub)
+        {"stripe_subscription_id": _sid, "stripe_invoices": {"$ne": _iid}, "status": {"$ne": "deleted"}}, _maj_sub)
     if not getattr(_r, "modified_count", 0):
         return {"credite": False, "motif": "facture_deja_creditee"}
     # Le code d'accès suit : même séances, même échéance. Idempotent par construction

@@ -463,7 +463,9 @@ def choisir_abonnement(candidats):
     Version SYNCHRONE, pour les appelants qui ont déjà la liste en main.
     Renvoie `None` seulement si `candidats` est vide.
     """
-    docs = [d for d in (candidats or []) if d]
+    # V618i : un abonnement SUPPRIMÉ par le coach n'existe plus pour aucun écran (espace, scan,
+    # réservation, recharge) — même pas en dernier repli « historique ».
+    docs = [d for d in (candidats or []) if d and str(d.get("status") or "").lower() != "deleted"]
     if not docs:
         return None
     maintenant = datetime.now(timezone.utc)
@@ -553,7 +555,9 @@ async def lire_abonnement_par_code(db, code, email=None, filtre_supplementaire=N
 # redevenir `active` (banc BASSBOOSTX-11 : l'ancienne fiche réactivée rendait le
 # code AMBIGU). Désormais une modification vise UNE souscription, par son `id` :
 # l'abonnement ACTUEL du code. Un statut historique n'est jamais modifié.
-ABO_STATUTS_HISTORIQUES = ("superseded", "expired", "cancelled", "archived")
+# V618i : `deleted` = supprimé par le coach (pierre tombale) — historique pour toujours, jamais courant.
+STATUT_SUPPRIME = "deleted"
+ABO_STATUTS_HISTORIQUES = ("superseded", "expired", "cancelled", "archived", STATUT_SUPPRIME)
 
 
 def abo_actuel_du_code(subs, email=None):
@@ -777,11 +781,18 @@ async def v617_echeances(db, codes: list, maintenant=None, appelant: str = "", a
         _tous = await db.subscriptions.find(
             {"code": {"$regex": f"^{re.escape(_k)}$", "$options": "i"}}, {"_id": 0}).to_list(50)
         _abo, _motif = abo_actuel_du_code(_tous, _noms[_k].get("assignedEmail"))
-        if _abo is None or not v617_visible_par(_noms[_k], appelant, admin):
+        if not v617_visible_par(_noms[_k], appelant, admin):
             continue
-        _r = suivi_rappel(_abo, maintenant)
-        if _r:
-            _rappels.append(_r)
+        # V618i : un abonnement REMPLACÉ par le coach (« Remplacer / renouveler ») garde son rappel tant
+        # qu'il reste un versement dû — l'argent reste dû même si l'abonnement n'est plus l'actuel.
+        # Jamais pour un abonnement supprimé.
+        _cibles = ([_abo] if _abo is not None else []) + [
+            x for x in _subs if x is not _abo and x.get("status") == "superseded"
+            and x.get("superseded_reason") == "remplacement_coach"]
+        for _cible in _cibles:
+            _r = suivi_rappel(_cible, maintenant)
+            if _r:
+                _rappels.append(_r)
     _rappels.sort(key=lambda r: r.get("prochaine_echeance") or "")
     return _rappels
 
@@ -5558,7 +5569,7 @@ async def lota_droits_du_code(db, code) -> dict:
     try:
         docs = await db.discount_codes.find({"code": motif}, {"_id": 0}).to_list(50)
         abonnements = await db.subscriptions.find(
-            {"code": motif},
+            {"code": motif, "status": {"$ne": "deleted"}},   # V618i : un abonnement supprimé ne compte plus
             {"_id": 0, "status": 1, "used_sessions": 1, "remaining_sessions": 1,
              "id": 1, "superseded_by": 1}            # V576 : cycles clos sur ce code écartés
         ).to_list(50)

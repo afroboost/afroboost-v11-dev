@@ -19795,6 +19795,10 @@ async def toggle_subscription_auto_renew(subscription_id: str, request: Request)
         raise HTTPException(status_code=403, detail="Abonnement non rattachable — action refusee.")
     _code_fourni = (body.get("code") or "") if isinstance(body, dict) else ""
     await _v334_autoriser(request, _code_abonnement, _code_fourni)
+    # V618i : un abonnement supprimé ne se reconduit jamais.
+    from api.routes import abonnement_actuel as _v618i
+    if _v618i.est_supprime(sub):
+        raise HTTPException(status_code=409, detail=_v618i.MSG_SUPPRIME)
 
     # Garde-fou : on ne peut activer la reconduction que si on a une carte enregistrée
     if desired and (not sub.get("stripe_customer_id") or not sub.get("stripe_payment_method")):
@@ -19881,8 +19885,13 @@ async def adjust_subscription_sessions(subscription_id: str, request: Request):
     # Une souscription sans `coach_id` (anterieure a V237, pas encore migree)
     # reste modifiable : la refuser bloquerait le coach sur son propre
     # historique tant que la migration n'a pas tourne.
+    # V618i : périmètre EFFECTIF (coach de l'abonnement, sinon de sa fiche) — un abonnement de la
+    # plateforme n'est plus ajustable par un coach partenaire ; un abonnement supprimé, par personne.
+    from api.routes import abonnement_actuel as _v618i
+    if _v618i.est_supprime(sub):
+        raise HTTPException(status_code=409, detail=_v618i.MSG_SUPPRIME)
     _sub_owner = (sub.get("coach_id") or "").strip().lower()
-    if not is_super_admin(coach_email) and _sub_owner and _sub_owner != coach_email:
+    if not await _v618i.peut_gerer_abonnement(db, sub, coach_email, is_super_admin(coach_email)):
         logger.warning(
             f"[V237] Ajustement refuse: {coach_email} a tente de modifier "
             f"la souscription {subscription_id} appartenant a {_sub_owner}"
@@ -38622,6 +38631,22 @@ async def restore_trash(trash_id: str, request: Request):
     coll = entry.get("original_collection")
     if coll not in ("discount_codes", "chat_participants", "prospection_medias", "prospection_niches"):  # V597 médias, V598 niches
         raise HTTPException(status_code=400, detail="Type non restaurable")
+    # V618i — un code dont les ABONNEMENTS ont été supprimés ne revient jamais par le parcours normal :
+    # restauration réservée au super-admin, avec confirmation explicite ; les abonnements retrouvent
+    # alors exactement leur statut d'avant la suppression.
+    _v618i_subs = list((entry.get("related") or {}).get("abonnements_supprimes") or [])
+    if coll == "discount_codes" and _v618i_subs:
+        if not is_super_admin(caller):
+            raise HTTPException(status_code=403, detail=(
+                "Cet abonnement a été supprimé : seul le super-admin peut le restaurer."))
+        try:
+            _v618i_corps = await request.json()
+        except Exception:
+            _v618i_corps = {}
+        if not (isinstance(_v618i_corps, dict) and _v618i_corps.get("confirmer_restauration_abonnement") is True):
+            raise HTTPException(status_code=409, detail={
+                "type": "confirmation_requise",
+                "message": "Restaurer cet abonnement supprimé ? Il redeviendra utilisable par le client."})
     payload = dict(entry.get("payload") or {})
     payload.pop("_id", None)
     oid = entry.get("original_id")
@@ -38651,6 +38676,16 @@ async def restore_trash(trash_id: str, request: Request):
     exists = await db[coll].find_one({"id": oid}, {"_id": 1})
     if not exists:
         await db[coll].insert_one(payload)
+    if coll == "discount_codes" and _v618i_subs:
+        for _sid in _v618i_subs:
+            _d = await db.subscriptions.find_one({"id": _sid, "status": "deleted"}, {"_id": 0, "statut_avant_suppression": 1})
+            if _d:
+                await db.subscriptions.update_one(
+                    {"id": _sid, "status": "deleted"},
+                    {"$set": {"status": _d.get("statut_avant_suppression") or "expired",
+                              "restored_at": datetime.now(timezone.utc).isoformat(), "restored_by": caller},
+                     "$unset": {"deleted_at": "", "deleted_by": "", "deleted_reason": "", "statut_avant_suppression": ""}})
+        logger.info("[V618i] restauration super-admin de %d abonnement(s) supprimé(s)", len(_v618i_subs))
     # Participant : ré-ajouter son id aux sessions d'origine.
     if coll == "chat_participants":
         for sid in (entry.get("related") or {}).get("session_ids", []) or []:
@@ -45801,8 +45836,9 @@ async def t1_restituer_essais_non_honores(code: str) -> int:
             if not getattr(_pris, "matched_count", 0):
                 continue      # un autre appel l'a deja rendu
             _q = max(1, int(_r.get("quantity") or 1))
+            # V618i : jamais sur un abonnement historique ou SUPPRIMÉ (il ne redevient pas actif).
             await db.subscriptions.update_one(
-                {"code": _code},
+                {"code": _code, "status": {"$nin": ["superseded", "expired", "cancelled", "archived", "deleted"]}},
                 {"$inc": {"remaining_sessions": _q, "used_sessions": -_q},
                  "$set": {"status": "active",
                           "updated_at": _maintenant}},

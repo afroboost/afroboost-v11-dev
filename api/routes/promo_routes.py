@@ -190,6 +190,10 @@ class DiscountCodeCreate(BaseModel):
     suivi_paiement: Optional[dict] = None
     # V617 — le coach a vu l'avertissement « droits encore valides » et confirme.
     confirmer_droits_existants: bool = False
+    # V618i — clé d'idempotence (une par tentative de création, réutilisée par un double clic) et
+    # remplacement EXPLICITE de l'abonnement actuel (« Remplacer / renouveler »).
+    idempotency_key: Optional[str] = None
+    remplacer_abonnement_actuel: bool = False
 
 
 # === v104: HELPER — Résoudre les détails de l'offre liée à un code ===
@@ -360,11 +364,10 @@ async def get_discount_codes(request: Request):
         raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
 
     # Super Admin voit tous les codes, coach voit seulement les siens
-    query = {} if is_super_admin else {"$or": [
-        {"coach_id": user_email},
-        {"coach_id": None},  # Codes sans coach_id (legacy)
-        {"coach_id": {"$exists": False}}
-    ]}
+    # V618i — ANTI-FUITE COACH A -> COACH B : un code sans coach_id appartient à la PLATEFORME (super-
+    # admin). Un coach partenaire ne voit plus que SES codes (avant : les fiches de la plateforme, avec
+    # adresses et séances de ses clients, lui étaient servies).
+    query = {} if is_super_admin else {"coach_id": user_email}
 
     codes = await _db.discount_codes.find(query, {"_id": 0}).to_list(1000)
     # V532: étiquette calculée « actuel / historique / à vérifier » (lecture seule,
@@ -399,14 +402,71 @@ async def get_echeances_paiement(request: Request):
             _ok = True
     if not _ok:
         raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
-    query = {} if _admin else {"$or": [
-        {"coach_id": user_email}, {"coach_id": None}, {"coach_id": {"$exists": False}}]}
+    query = {} if _admin else {"coach_id": user_email}      # V618i : SES codes seulement (anti-fuite)
     codes = await _db.discount_codes.find(query, {"_id": 0, "code": 1, "assignedEmail": 1, "coach_id": 1}).to_list(1000)
     return {"rappels": await v617_echeances(_db, codes, appelant=user_email, admin=_admin)}
 
 
 @promo_router.post("")
 async def create_discount_code(code: DiscountCodeCreate, request: Request):
+    """V618i — ENVELOPPE DE LA CRÉATION : les protections SERVEUR, pas seulement un bouton grisé.
+      * idempotence : la même `idempotency_key` (double clic, réseau qui rejoue) ne crée jamais deux
+        fois — la seconde reçoit le code déjà créé ;
+      * un verrou par CLIENT : deux créations simultanées pour la même personne -> une seule passe,
+        l'autre reçoit 409 « création déjà en cours » (verrou à durée limitée, jamais bloquant à vie).
+    Verrous dans `abonnement_verrous` (clé = `_id`, unique par nature : aucun index à créer)."""
+    from pymongo.errors import DuplicateKeyError
+    _appelant = (coach_jwt_email(request) or "").lower().strip()
+    _cle = str(getattr(code, "idempotency_key", "") or "").strip()[:80]
+    _id_creation = "creation:%s|%s" % (_appelant, _cle) if _cle and _appelant else None
+    _maintenant = datetime.now(timezone.utc)
+    if _id_creation:
+        try:
+            await _db.abonnement_verrous.insert_one({"_id": _id_creation, "statut": "en_cours",
+                                                     "cree_le": _maintenant.isoformat()})
+        except DuplicateKeyError:
+            _v = await _db.abonnement_verrous.find_one({"_id": _id_creation})
+            if _v and _v.get("statut") == "fait" and _v.get("code_id"):
+                _deja = await _db.discount_codes.find_one({"id": _v.get("code_id")}, {"_id": 0})
+                if _deja:
+                    logger.info("[V618i] création rejouée (même clé) -> code déjà créé renvoyé")
+                    return _deja
+            raise HTTPException(status_code=409, detail={
+                "type": "creation_en_cours",
+                "message": "Cette création est déjà en cours — un seul abonnement sera créé."})
+    _client = str(getattr(code, "assignedEmail", "") or "").strip().lower()
+    _id_personne, _jeton = None, str(uuid.uuid4())
+    try:
+        if _client:
+            _id_personne = "personne:%s" % _client
+            _fin = (_maintenant + timedelta(seconds=60)).isoformat()
+            try:
+                await _db.abonnement_verrous.insert_one({"_id": _id_personne, "jeton": _jeton, "expire": _fin})
+            except DuplicateKeyError:
+                # Un verrou PÉRIMÉ (création interrompue) est repris ; un verrou vivant refuse.
+                _repris = await _db.abonnement_verrous.find_one_and_update(
+                    {"_id": _id_personne, "expire": {"$lt": _maintenant.isoformat()}},
+                    {"$set": {"jeton": _jeton, "expire": _fin}})
+                if not _repris:
+                    _id_personne = None
+                    raise HTTPException(status_code=409, detail={
+                        "type": "creation_en_cours",
+                        "message": "Une création est déjà en cours pour ce client. Réessayez dans un instant."})
+        _cree = await _v618i_creer_code(code, request)
+        if _id_creation:
+            await _db.abonnement_verrous.update_one({"_id": _id_creation},
+                                                    {"$set": {"statut": "fait", "code_id": getattr(_cree, "id", None)}})
+        return _cree
+    except BaseException:
+        if _id_creation:
+            await _db.abonnement_verrous.delete_one({"_id": _id_creation, "statut": "en_cours"})
+        raise
+    finally:
+        if _id_personne:
+            await _db.abonnement_verrous.delete_one({"_id": _id_personne, "jeton": _jeton})
+
+
+async def _v618i_creer_code(code: DiscountCodeCreate, request: Request):
     """Crée un nouveau code promo avec coach_id — v96: auto-crée la subscription si bénéficiaire assigné
 
     LOT 3c-0b — CETTE ROUTE ETAIT OUVERTE AUX ANONYMES.
@@ -497,7 +557,10 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
     # ═══ V617 — UN NOUVEL ABONNEMENT EST TOUJOURS NEUF ═══════════════════
     # Ni le suivi ni la confirmation ne sont des champs du code.
     _v617_suivi_brut = code_data.pop("suivi_paiement", None)
-    _v617_confirme = bool(code_data.pop("confirmer_droits_existants", False))
+    code_data.pop("idempotency_key", None)                       # V618i : jamais stocké sur la fiche
+    _v618i_remplacer = bool(code_data.pop("remplacer_abonnement_actuel", False))
+    # V618i : « confirmer » = REMPLACER l'abonnement actuel (jamais deux abonnements actuels côte à côte).
+    _v617_confirme = bool(code_data.pop("confirmer_droits_existants", False)) or _v618i_remplacer
     _v617_beneficiaire = (code.assignedEmail or "").lower().strip()
     _v617_nom = (code.code or "").upper().strip()
     from api.routes.shared import (suivi_paiement_valider as _v617_suivi_ok,
@@ -537,11 +600,19 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
                 _v617_valides.append({"code": _s.get("code"),
                                       "restantes": _s.get("remaining_sessions"),
                                       "expire_le": str(_s.get("expires_at") or "")[:10] or None})
+        # V618i : la règle canonique d'abord — l'abonnement ACTUEL du client chez CE coach (résolveur),
+        # même s'il ne lui reste aucune séance utilisable.
+        from api.routes import abonnement_actuel as _v618i_aa
+        _v618i_r = await _v618i_aa.resoudre_abonnement_actuel(
+            _db, _v617_beneficiaire, notifier=False, perimetre=_v618i_aa.locataire(code_data.get("coach_id")))
+        for _x in ([_v618i_r["abonnement"]] if _v618i_r["etat"] == _v618i_aa.ETAT_COURANT else _v618i_r.get("candidats") or []):
+            if all(str(v.get("code")).upper() != str(_x.get("code")).upper() for v in _v617_valides):
+                _v617_valides.append({"code": _x.get("code"), "restantes": _x.get("remaining_sessions"),
+                                      "expire_le": str(_x.get("expires_at") or "")[:10] or None})
         if _v617_valides:
             raise HTTPException(status_code=409, detail={
                 "type": "droits_existants",
-                "message": ("Ce client a encore un abonnement avec des droits valides. "
-                            "Il ne sera ni supprimé ni modifié. Créer quand même le nouvel abonnement ?"),
+                "message": "Ce client possède déjà un abonnement actif.",
                 "abonnements": _v617_valides,
             })
     # `stripe_amount` reste ecrit EXACTEMENT comme avant. Deux ecrans le lisent
@@ -564,7 +635,38 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
             f"Le code {_code_stocke.get('code')} existe déjà et est encore valide "
             "(jusqu'au " + str(_v531_doublon.get("expiresAt") or "sans date")[:10] +
             "). Modifie la fiche existante ou choisis un autre code."))
-    await _db.discount_codes.insert_one(_code_stocke)
+
+    # V618i — REMPLACER / RENOUVELER, SANS FENÊTRE À DEUX ABONNEMENTS ACTUELS. L'abonnement actuel
+    # (chez CE coach) passe en historique AVANT que le nouveau n'existe (écriture conditionnelle par
+    # id) ; si l'enregistrement du nouveau échoue, l'ancien est remis exactement comme avant.
+    _v618i_nouvel_id = str(uuid.uuid4())
+    _v618i_remplaces = []
+    if (code.assignedEmail or "").strip() and _v617_confirme:
+        from api.routes import abonnement_actuel as _v618i_aa
+        _v618i_r2 = await _v618i_aa.resoudre_abonnement_actuel(
+            _db, (code.assignedEmail or "").strip().lower(), notifier=False,
+            perimetre=_v618i_aa.locataire(code_data.get("coach_id")))
+        for _x in ([_v618i_r2["abonnement"]] if _v618i_r2["etat"] == _v618i_aa.ETAT_COURANT
+                   else _v618i_r2.get("candidats") or []):
+            _ok = await _db.subscriptions.update_one(
+                {"id": _x.get("id"), "status": "active"},
+                {"$set": {"status": "superseded", "superseded_at": datetime.now(timezone.utc).isoformat(),
+                          "superseded_by": _v618i_nouvel_id, "superseded_reason": "remplacement_coach"}})
+            if getattr(_ok, "modified_count", 0) == 1:
+                _v618i_remplaces.append(_x.get("id"))
+
+    async def _v618i_annuler_remplacement():
+        for _rid in _v618i_remplaces:
+            await _db.subscriptions.update_one(
+                {"id": _rid, "status": "superseded", "superseded_by": _v618i_nouvel_id},
+                {"$set": {"status": "active"},
+                 "$unset": {"superseded_at": "", "superseded_by": "", "superseded_reason": ""}})
+
+    try:
+        await _db.discount_codes.insert_one(_code_stocke)
+    except BaseException:
+        await _v618i_annuler_remplacement()
+        raise
 
     # v96: Auto-créer la subscription si un bénéficiaire est assigné
     # v104: Résolution dynamique des séances via l'article lié
@@ -591,7 +693,7 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
                     expiry = code.expiresAt
 
             sub_data = {
-                "id": str(uuid.uuid4()),
+                "id": _v618i_nouvel_id,
                 "email": assigned_email,
                 "name": assigned_email.split("@")[0],
                 "code": code_str,
@@ -616,7 +718,13 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
             sub_data.update(_b_copie(_code_stocke, seances=total_sessions))
             if _v617_suivi:
                 sub_data["suivi_paiement"] = _v617_suivi   # V617 : interne coach
-            await _db.subscriptions.insert_one(sub_data)
+            try:
+                await _db.subscriptions.insert_one(sub_data)
+            except BaseException:
+                # V618i : rien de partiel — la fiche créée repart, l'ancien abonnement redevient actuel.
+                await _db.discount_codes.delete_one({"id": _code_stocke.get("id")})
+                await _v618i_annuler_remplacement()
+                raise
             logger.info(f"[PROMO] Subscription auto-créée: {assigned_email} - {code_str} ({total_sessions} séances)")
             # V618 — LE NOUVEL ABONNEMENT DEVIENT L'ACTUEL DÈS SA CRÉATION : ses prédécesseurs
             # déjà sans valeur (EXPIRÉS ou ÉPUISÉS) passent en historique (`superseded`), comme
@@ -923,14 +1031,9 @@ async def update_discount_code(code_id: str, updates: dict, request: Request):
     return updated
 
 
-@promo_router.delete("/{code_id}")
-async def delete_discount_code(code_id: str, request: Request):
-    """V313 : la suppression d'un code devient un DÉPLACEMENT en CORBEILLE
-    (collection `deleted_items`), JAMAIS un effacement physique — règle absolue
-    « ne jamais supprimer les codes clients ». Avant, cette route n'avait AUCUNE
-    authentification : n'importe qui pouvait effacer un code payant.
-    JWT signé obligatoire (coach_jwt_email, non falsifiable) + cloisonnement :
-    super-admin gère tout (y compris legacy sans coach_id), un coach uniquement ses codes."""
+async def _v618i_fiche_du_coach(code_id: str, request: Request):
+    """(appelant, fiche) — la MÊME porte pour l'aperçu et la suppression : JWT signé, coach/admin,
+    et un coach ne touche QUE ses codes (un code sans coach_id = plateforme = super-admin seul)."""
     caller = (coach_jwt_email(request) or "").lower().strip()
     _authorized = is_super_admin(caller)
     if not _authorized and caller:
@@ -939,33 +1042,78 @@ async def delete_discount_code(code_id: str, request: Request):
             _authorized = True
     if not _authorized:
         raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
-
     doc = await _db.discount_codes.find_one({"id": code_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Code introuvable")
-    # Cloisonnement : un coach ne supprime que SES codes (super-admin = tout).
     if not is_super_admin(caller):
-        # V313b : REFUS PAR DÉFAUT sur le legacy. Un code sans coach_id (donnée
-        # partagée/héritée) n'appartient à aucun coach -> seul le super-admin (déjà
-        # court-circuité ci-dessus) peut le supprimer. Sans ce « not owner », un coach
-        # ordinaire aurait pu corbeiller les codes legacy (fail-open).
+        # V313b : REFUS PAR DÉFAUT sur le legacy (code sans coach_id = plateforme).
         owner = (doc.get("coach_id") or "").lower().strip()
         if not owner or owner != caller:
             raise HTTPException(status_code=403, detail="Ce code ne vous appartient pas")
+    return caller, doc
 
-    # Déplacement en corbeille (restaurable) — PAS d'effacement physique.
+
+@promo_router.get("/{code_id}/suppression")
+async def apercu_suppression_code(code_id: str, request: Request):
+    """V618i — ce que « Supprimer » va faire (client, abonnement, séances, expiration, historique).
+    Lecture seule, même porte que la suppression."""
+    from api.routes import abonnement_actuel as _v618i
+    _caller, doc = await _v618i_fiche_du_coach(code_id, request)
+    _a = await _v618i.apercu_suppression(_db, doc)
+    _a.pop("_subs", None)
+    return _a
+
+
+@promo_router.delete("/{code_id}")
+async def delete_discount_code(code_id: str, request: Request):
+    """V313 : la suppression d'un code devient un DÉPLACEMENT en CORBEILLE
+    (collection `deleted_items`), JAMAIS un effacement physique — règle absolue
+    « ne jamais supprimer les codes clients ». Avant, cette route n'avait AUCUNE
+    authentification : n'importe qui pouvait effacer un code payant.
+    JWT signé obligatoire (coach_jwt_email, non falsifiable) + cloisonnement :
+    super-admin gère tout (y compris legacy sans coach_id), un coach uniquement ses codes.
+
+    V618i — SUPPRIMER = PLUS JAMAIS COURANT. Avant, seule la fiche partait à la corbeille : ses
+    abonnements restaient `active` et revenaient (résolveur, espace, scan, événement). Désormais,
+    s'il ne reste aucune autre fiche VIVANTE de ce code, ses abonnements deviennent des pierres
+    tombales `deleted` (historique conservé : paiements, réservations passées, mouvements), et les
+    sessions d'espace ouvertes sur ce code sont fermées. Rien n'est effacé physiquement."""
+    from api.routes import abonnement_actuel as _v618i
+    caller, doc = await _v618i_fiche_du_coach(code_id, request)
+    _apercu = await _v618i.apercu_suppression(_db, doc)
+    _subs = _apercu.pop("_subs", [])
+
+    # Déplacement en corbeille (restaurable par le super-admin) — PAS d'effacement physique.
+    _corbeille_id = str(uuid.uuid4())
     await _db.deleted_items.insert_one({
-        "id": str(uuid.uuid4()),
+        "id": _corbeille_id,
         "original_collection": "discount_codes",
         "original_id": code_id,
         "coach_id": doc.get("coach_id"),
         "deleted_at": datetime.now(timezone.utc).isoformat(),
         "deleted_by": caller,
         "payload": doc,
-        "related": {},
+        "related": {"abonnements_supprimes": [x.get("id") for x in _subs if x.get("id")]},
     })
     await _db.discount_codes.delete_one({"id": code_id})
-    return {"success": True, "trashed": True, "message": "Code placé dans la corbeille (récupérable)"}
+    _faits = await _v618i.supprimer_abonnements(_db, _subs, caller, "suppression_coach")
+    _sessions = (await _v618i.revoquer_sessions_du_code(_db, doc.get("code"), "abonnement_supprime")
+                 if not _apercu.get("abonnement_conserve_par_autre_fiche") else 0)
+    if [x.get("id") for x in _subs if x.get("id")] != _faits:
+        await _db.deleted_items.update_one({"id": _corbeille_id},
+                                           {"$set": {"related.abonnements_supprimes": _faits}})
+    # Vérification SERVEUR : l'abonnement actuel du client après suppression (aucun, ou un autre légitime).
+    _apres = {"etat": _v618i.ETAT_AUCUN, "abonnement": None}
+    _client = (doc.get("assignedEmail") or (_subs[0].get("email") if _subs else "") or "").strip()
+    if _client:
+        _apres = await _v618i.resoudre_abonnement_actuel(_db, _client, notifier=False,
+                                                         perimetre=_v618i.locataire(doc.get("coach_id")))
+    return {"success": True, "trashed": True, "message": "Abonnement supprimé.",
+            "abonnements_supprimes": len(_faits), "sessions_revoquees": _sessions,
+            "historique_conserve": _apercu["historique"]["conserve"],
+            "etat_apres": _apres["etat"],
+            "abonnement_actuel_apres": ((_apres.get("abonnement") or {}).get("code")
+                                        if _apres["etat"] == _v618i.ETAT_COURANT else None)}
 
 
 @promo_router.post("/validate")
@@ -1336,6 +1484,10 @@ async def get_subscription_status(request: Request, email: str = "", code: str =
             # V296 : code masqué -> inutilisable pour usurper (publier/réserver).
             out["code"] = None
             out["code_masked"] = _mask_code(raw_code)
+            # V618i — ANTI-FUITE CLIENT A -> CLIENT B : sans preuve d'identité, ni le NOM du titulaire
+            # ni son adresse ne sont renvoyés à qui connaît seulement une adresse e-mail.
+            out.pop("name", None)
+            out.pop("email", None)
         return out
 
     # V618 PHASE 2 : `subscription` = L'ABONNEMENT ACTUEL résolu par le serveur (plus « le premier
@@ -1349,7 +1501,8 @@ async def get_subscription_status(request: Request, email: str = "", code: str =
         "current_subscription": _v618_actuel,
         "integrity_conflict": _v618_conflit,
         "subscriptions": [format_sub(s) for s in verified_subs],
-        "history": [format_sub(s) for s in _v618_historique[:10]],
+        # V618i : l'historique n'est rendu qu'à un appelant qui a PROUVÉ son droit (jeton, code, coach).
+        "history": [format_sub(s) for s in _v618_historique[:10]] if full_access else [],
     }
 
 
@@ -1616,11 +1769,18 @@ async def update_subscription(sub_id: str, updates: dict, request: Request):
     # proprietaire bloquerait le coach sur son PROPRE historique. Sur les codes
     # promo, l'inverse est vrai (100 % sont sans proprietaire, et seul le
     # super-admin les gere) : d'ou deux reglages differents, chacun justifie.
-    _proprio = str(existing.get("coach_id") or "").strip().lower()
-    if not is_super_admin(caller) and _proprio and _proprio != caller:
+    # V618i — périmètre EFFECTIF (coach de l'abonnement, sinon de sa fiche) : un abonnement de la
+    # plateforme (sans coach) n'est plus modifiable par un coach partenaire (fuite coach A -> B).
+    from api.routes import abonnement_actuel as _v618i
+    if not await _v618i.peut_gerer_abonnement(_db, existing, caller, is_super_admin(caller)):
         logger.warning("[LOT3c-0b] %s refuse : souscription d'un autre coach", caller)
         raise HTTPException(status_code=403,
                             detail="Cette souscription appartient à un autre coach")
+    # V618i : un abonnement SUPPRIMÉ ne se modifie plus, et « deleted » ne s'écrit que par la suppression.
+    if _v618i.est_supprime(existing):
+        raise HTTPException(status_code=409, detail=_v618i.MSG_SUPPRIME)
+    if str(updates.get("status") or "").strip().lower() == _v618i.STATUT_SUPPRIME:
+        raise HTTPException(status_code=400, detail="Pour supprimer un abonnement, utilisez « Supprimer ».")
 
     allowed = {"remaining_sessions", "used_sessions", "status", "updated_at", "offer_name", "offer_price"}
     safe_updates = {k: v for k, v in updates.items() if k in allowed}

@@ -214,10 +214,15 @@ async def principal():
 
     # ── F : /subscriptions/status — le serveur désigne l'abonnement actuel ───────────
     PR._db = base
-    r = await PR.get_subscription_status(_Req(), email=Q)
+    _coach = _Req()
+    _coach.headers = {"Authorization": "Bearer " + H.jeton_admin()}      # V618i : l'historique exige une preuve
+    r = await PR.get_subscription_status(_coach, email=Q)
     verifier("F-1 status : current_subscription = l'actuel (Q-NEW), ancien en history",
              r["success"] and r["current_subscription"]["id"] == "q-new" and r["subscription"]["id"] == "q-new"
              and r["integrity_conflict"] is False and [h["id"] for h in r["history"]] == ["q-old"], r)
+    _anon = await PR.get_subscription_status(_Req(), email=Q)
+    verifier("F-1b sans preuve d'identité : ni historique ni nom (V618i anti-fuite)",
+             _anon.get("history") == [] and all("name" not in x for x in _anon.get("subscriptions") or []), _anon)
     r = await PR.get_subscription_status(_Req(), email=K)
     verifier("F-2 status en conflit : integrity_conflict, AUCUN current_subscription",
              r["integrity_conflict"] is True and r.get("current_subscription") is None and r.get("subscription") is None, r)

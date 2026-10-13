@@ -293,9 +293,14 @@ async def partie2(db):
              and neuf["total_sessions"] == 31 and neuf["used_sessions"] == 0, neuf)
     verifier("F. suivi 400 / 200 / 1-2 sur la NOUVELLE souscription ; rien sur la fiche du code",
              neuf["suivi_paiement"]["montant_total"] == 400 and "suivi_paiement" not in (await db.discount_codes.find_one({"code": "CLIENT-X-8M"})))
-    verifier("G. historique intact (les 4 anciens et l'ex-actuel ne bougent pas)",
+    # V618i : « confirmer » = REMPLACER — jamais deux abonnements actuels. L'ex-actuel passe en historique
+    # (superseded, compteurs et suivi de paiement intacts) ; les 4 anciens ne bougent pas.
+    _ex = await db.subscriptions.find_one({"id": "x-actuel"}, {"_id": 0})
+    verifier("G. historique intact (les 4 anciens ne bougent pas ; l'ex-actuel passe en historique, compteurs intacts)",
              sans_id(await db.subscriptions.find({"code": "CLIENT-X", "id": {"$ne": "x-actuel"}}).sort("id", 1).to_list(50)) == avant_anciens
-             and (await db.subscriptions.find_one({"id": "x-actuel"}, {"_id": 0})) == act)
+             and _ex["status"] == "superseded" and _ex["superseded_by"] == neuf["id"]
+             and {k: v for k, v in _ex.items() if not k.startswith("superseded") and k != "status"}
+             == {k: v for k, v in act.items() if not k.startswith("superseded") and k != "status"})
     verifier("la création garde ses 2 e-mails existants (bienvenue + coach) — comportement inchangé", len(ENVOIS) == 2)
 
     print("\nL. Rappel coach (route coach, lecture seule)")
@@ -310,8 +315,9 @@ async def partie2(db):
     verifier("un coach partenaire ne voit AUCUN rappel d'abonnement d'un autre coach", rp == [], rp)
     lp = await PR.get_discount_codes(reqp)
     xp = [c for c in lp if c["code"] == "CLIENT-X"]
+    # V618i (anti-fuite) : un code de la plateforme n'est même plus LISTÉ chez un partenaire.
     verifier("partenaire : ni montant ni note interne d'un abonnement qui n'est pas le sien",
-             xp and xp[0]["v617_abonnement"].get("suivi", {}) == {}, xp and xp[0].get("v617_abonnement"))
+             xp == [] or xp[0]["v617_abonnement"].get("suivi", {}) == {}, xp and xp[0].get("v617_abonnement"))
     nb = await db.subscriptions.count_documents({})
     await PR.create_discount_code(DCC(code="PART-1", type="100%", value=100, assignedEmail="x@exemple.test",
                                       maxUses=4, montant_encaisse=50, origine_paiement="especes"), reqp)
@@ -328,9 +334,10 @@ async def partie2(db):
     with mock.patch.object(SH, "v617_jour_local", lambda m=None: "2026-11-02"):
         rp = (await PR.get_echeances_paiement(reqp))["rappels"]
     verifier("partenaire : son propre rappel, et uniquement le sien", [r["code"] for r in rp] == ["PART-1"], rp)
-    xp2 = [c for c in await PR.get_discount_codes(reqp) if c["code"] == "CLIENT-X"][0]
+    # V618i (anti-fuite) : le code d'un autre coach / de la plateforme n'est même plus listé.
+    xp2 = [c for c in await PR.get_discount_codes(reqp) if c["code"] == "CLIENT-X"]
     verifier("partenaire : sur un code qui n'est pas le sien, seul l'état est indiqué (ni id, ni historique)",
-             xp2["v617_abonnement"] == {"motif": "unique"}, xp2.get("v617_abonnement"))
+             xp2 == [] or xp2[0]["v617_abonnement"] == {"motif": "unique"}, xp2 and xp2[0].get("v617_abonnement"))
     # Réaffectation dans la même requête : l'abonnement visé reste celui de l'ANCIEN bénéficiaire.
     await db.discount_codes.insert_one({"id": "dc-r", "code": "REAFF", "type": "100%", "value": 100,
                                         "assignedEmail": "r1@exemple.test", "maxUses": 10, "used": 1, "active": True})
