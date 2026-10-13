@@ -41106,7 +41106,8 @@ C17J_PROJECTION = {
 # precedents : le message ne porte QUE le nom d'une organisation et la phrase
 # « a repondu a votre proposition » — ni adresse, ni telephone, ni corps
 # d'e-mail. C'est la meme discipline que `task_due`, qui ne porte qu'un titre.
-C17J_TYPES = ("new_lead", "new_reservation", "task_due", "prospect_reply")
+C17J_TYPES = ("new_lead", "new_reservation", "task_due", "prospect_reply",
+              "ambassadeur_palier")   # V610o : palier ambassadeur débloqué / cas à vérifier (prénom seul)
 
 
 @api_router.get("/coach/notifications")
@@ -54839,6 +54840,10 @@ init_invitation_relais_db(db)
 from api.routes.invitation_edition import router as invitation_edition_router, init_db as init_invitation_edition_db  # noqa: E402
 fastapi_app.include_router(invitation_edition_router)
 init_invitation_edition_db(db)
+# V610o : PROGRAMME AMBASSADEUR — Boosts / paliers / récompenses, lus sur la chaîne V607.
+from api.routes.ambassadeur_routes import router as ambassadeur_router, init_db as init_ambassadeur_db, assurer_index as v610o_ambassadeur_index  # noqa: E402
+fastapi_app.include_router(ambassadeur_router)
+init_ambassadeur_db(db)
 
 # v15.0: Include multi-vendor payment routes
 fastapi_app.include_router(payment_config_router)
@@ -55199,6 +55204,7 @@ async def startup_db():
         logger.info("[INV-1] index referral_campaigns OK")
         await v607_suivi_index(db)
         await v607_relais_index(db)
+        await v610o_ambassadeur_index(db)
     except Exception as _einv1:
         logger.warning("[INV-1] index referral_campaigns non posés (%s)", type(_einv1).__name__)
     # V559 : index du programme Créateur (unicité d'une commission par paiement) — AVANT toute donnée.

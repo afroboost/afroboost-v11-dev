@@ -201,6 +201,13 @@ async def creer_relais(database, *, jeton_parent, email, nom, preuve_nature, pre
                              generation=_doc["generation"], cle=_doc["id"])
     except Exception as _err:  # noqa: BLE001
         logger.warning("%s suivi non écrit (%s)", PREFIXE, type(_err).__name__)
+    # V610o — PROGRAMME AMBASSADEUR : la place de ce filleul est confirmée (ce relais n'existe
+    # qu'après) -> +1 Boost au parrain DIRECT, une seule fois (clé `boost:<relais>`). FAIL-OPEN.
+    try:
+        from api.routes import ambassadeur_routes as AMB
+        await AMB.accorder_boost(_base, _doc)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s Boost non accordé (%s)", PREFIXE, type(_err).__name__)
     return _doc
 
 
@@ -276,7 +283,10 @@ def dto_relais(rel, camp=None, base_url="https://afroboost.com") -> dict:
     _b = str(base_url or "https://afroboost.com").rstrip("/")
     return {"jeton": rel.get("jeton"), "share_url": "%s/i/%s" % (_b, rel.get("jeton")),
             "prenom": rel.get("inviteur_prenom") or "", "generation": rel.get("generation"),
-            "type": rel.get("type_invitation"), "titre": (camp or {}).get("title") or None}
+            "type": rel.get("type_invitation"), "titre": (camp or {}).get("title") or None,
+            # V610o : « membre » (place offerte) / « stripe » (billet payé) / « inscription » —
+            # choisit le message de partage (« ma place est offerte » = la SIENNE, jamais l'ami).
+            "nature": rel.get("preuve_nature") or None}
 
 
 def _front():

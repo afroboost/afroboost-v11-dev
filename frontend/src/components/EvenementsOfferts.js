@@ -28,7 +28,7 @@ export function quandEvenement(iso) {
   return `${JOURS[d.getDay()]} ${d.getDate()} ${MOIS[d.getMonth()]} · ${Number(m[4])}h${m[5]}`;
 }
 
-function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jetonVise = '' }) {
+function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jetonVise = '', jetonEspace = '' }) {
   const [etat, setEtat] = useState(evt.deja_reserve ? 'reservee' : 'libre');
   const [relais, setRelais] = useState(null);
   const [erreur, setErreur] = useState('');
@@ -93,7 +93,8 @@ function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jetonVise =
             Ta place est réservée.
           </p>
           {relais ? (
-            <InviterMesAmis relaisInitial={relais} autoLecture={vientDeReserver} />
+            <InviterMesAmis relaisInitial={relais} autoLecture={vientDeReserver}
+                            impactEspace={jetonEspace ? { code: accessCode, token: jetonEspace, slug: memberSlug || '' } : null} />
           ) : (
             <button type="button" data-testid="evt-offert-lien" onClick={reserver}
                     style={{ width: '100%', minHeight: '44px', borderRadius: '12px', background: 'rgba(255,255,255,0.06)',
@@ -114,7 +115,7 @@ function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jetonVise =
   );
 }
 
-export default function EvenementsOfferts({ evenements, accessCode, memberSlug }) {
+export default function EvenementsOfferts({ evenements, accessCode, memberSlug, jetonEspace }) {
   const liste = Array.isArray(evenements) ? evenements.filter((e) => e && e.offer_id) : [];
   // V610m : l'événement VISÉ depuis l'invitation passe en tête, mis en évidence.
   const [intention] = useState(() => lireIntentionMembre());
@@ -126,14 +127,21 @@ export default function EvenementsOfferts({ evenements, accessCode, memberSlug }
     <div data-testid="evenements-offerts">
       {intention && !vise ? (
         // Le serveur n'offre pas cet événement à CE compte : rien n'est inventé, on le dit.
-        <p data-testid="evt-offert-non-eligible" role="status" style={{ margin: '14px 0 0', padding: '12px 14px', borderRadius: '14px',
-          background: 'rgba(255,255,255,0.06)', fontSize: '14px', color: 'rgba(255,255,255,0.88)' }}>
-          Cet événement n’est pas offert avec l’abonnement de ce compte. Tu peux réserver ta place depuis l’invitation
-          {intention.jeton ? <> : <a href={`/i/${encodeURIComponent(intention.jeton)}`} onClick={() => oublierIntentionMembre()} style={{ color: PRIMAIRE, fontWeight: 700 }}>revenir à l’invitation</a></> : '.'}
-        </p>
+        // V610o : on RESTE sur cet événement — la phrase, puis la réservation au tarif du moment.
+        <div data-testid="evt-offert-non-eligible" role="status" style={{ margin: '14px 0 0', padding: '14px', borderRadius: '16px',
+          background: 'rgba(255,255,255,0.06)', border: `1px solid ${rgbaP(0.3)}`, fontSize: '14.5px', color: 'rgba(255,255,255,0.92)' }}>
+          <p style={{ margin: '0 0 10px' }}>Cet événement n’est pas inclus dans ton abonnement actuel.</p>
+          {intention.jeton ? (
+            <a href={`/i/${encodeURIComponent(intention.jeton)}`} data-testid="evt-offert-tarif-actuel" onClick={() => oublierIntentionMembre()}
+               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 48, borderRadius: 12, background: PRIMAIRE,
+                 color: 'rgba(255,255,255,1)', fontWeight: 800, textDecoration: 'none' }}>
+              Réserver au tarif actuel
+            </a>
+          ) : null}
+        </div>
       ) : null}
       {ordre.map((e) => <CarteEvenement key={e.offer_id} evt={e} accessCode={accessCode} memberSlug={memberSlug}
-                                        vise={e === vise} jetonVise={intention ? intention.jeton : ''} />)}
+                                        vise={e === vise} jetonVise={intention ? intention.jeton : ''} jetonEspace={jetonEspace || ''} />)}
     </div>
   );
 }

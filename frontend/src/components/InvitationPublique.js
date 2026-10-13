@@ -25,6 +25,7 @@ import InviterMesAmis from './InviterMesAmis'; // V610i : après réservation co
 import { attributionActuelle, invitationEnregistrer } from '../utils/attribution';
 import { lireSession, urlDeLaSession } from '../utils/espaceSession';
 import { memoriserParticipation, lireParticipation, retenirIntentionMembre, offreDeLInvitation } from '../utils/participationEvenement'; // V610m
+import { titreLisible } from '../utils/invitationCampagne'; // V610o
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
@@ -285,7 +286,7 @@ export function ConfirmationReservation({ cs, d, jeton, participe = false, onIgn
           <h1 data-testid="inv-pub-place-reservee" style={{ margin: '0 0 8px', fontSize: '26px' }}>{participe ? 'Tu participes à cet événement' : 'Ta place est réservée !'}</h1>
           <PlaceEvenement titre={titre} d={d} />
           {participe ? null : <p style={{ margin: '0 0 6px', color: 'rgba(255,255,255,0.65)', fontSize: '13.5px' }}>Ton e-mail de confirmation arrive.</p>}
-          <InviterMesAmis relaisInitial={etat.relais} autoLecture={!participe} />
+          <InviterMesAmis relaisInitial={etat.relais} autoLecture={!participe} impactCs={cs} />
           {participe && typeof onIgnorer === 'function' ? <LienInvitation onClick={onIgnorer} /> : null}
         </div>
       ) : (
@@ -404,6 +405,8 @@ export default function InvitationPublique({ token, apercu }) {
   const directe = !enApercu && d.reservation_directe && d.reservation_directe.offer_id ? d.reservation_directe : null;
   const titre = type === 'trial' ? (prenom ? `${prenom} t'invite à découvrir Afroboost` : 'Découvre Afroboost')
     : (String(d.title || d.offre_nom || '').trim() || 'Invitation Afroboost');
+  // V610o : « Bassi t'invite à Afroboost Silent » — le nom court et lisible de l'événement.
+  const titreCourt = (titreLisible(titre).split(/\s+—\s+/)[0] || titre);
 
   // V610i — « Je réserve ma place » : UN billet, UNE offre -> Stripe DIRECTEMENT. Le serveur
   // fixe le prix (palier actif), la quantité (1) et l'adresse de retour (cette page) ; le
@@ -454,7 +457,14 @@ export default function InvitationPublique({ token, apercu }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
           {photo ? <img src={photo} alt="" width="40" height="40" style={{ width: '40px', height: '40px', borderRadius: '999px', objectFit: 'cover', border: `2px solid ${PRIMAIRE}` }} />
             : <span style={{ width: '40px', height: '40px', borderRadius: '999px', background: rgbaP(0.25), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: PRIMAIRE }}><SvgIcon name="user" size={18} /></span>}
-          <div data-testid="inv-pub-inviteur" style={{ fontSize: '15px', fontWeight: 700 }}>{prenom ? `${prenom} t'invite` : "On t'invite"}</div>
+          {/* V610o : le prénom de l'INVITEUR DIRECT (coach ou participant de la boule de neige). */}
+          <div data-testid="inv-pub-inviteur" style={{ fontSize: '15px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {type === 'event_paid' || type === 'event_free'
+              ? <>{prenom ? `${prenom} t'invite à ${titreCourt}` : `Invitation à ${titreCourt}`}
+                  <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="fire" size={16} /></span>
+                  <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="headphones" size={16} /></span></>
+              : (prenom ? `${prenom} t'invite` : "On t'invite")}
+          </div>
         </div>
 
         {retour && retour.annule ? (
@@ -550,6 +560,11 @@ export default function InvitationPublique({ token, apercu }) {
           </LirePlus>
         ) : null}
 
+        {type === 'event_paid' || type === 'event_free' ? (
+          <p data-testid="inv-pub-groupe" style={{ margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, color: 'rgba(255,255,255,0.92)' }}>
+            <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="users" size={18} /></span> Viens avec tes amis
+          </p>
+        ) : null}
         {d.message ? (
           <p data-testid="inv-pub-message" style={{ margin: '0 0 14px', padding: '12px 14px', borderRadius: '14px', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.88)', fontSize: '15px', whiteSpace: 'pre-line' }}>
             {d.message}

@@ -1854,6 +1854,16 @@ async def checkout_stripe_webhook(request: Request):
             logger.info("[CREATEUR] remboursement Stripe répercuté sur %s commission(s)", _n)
         except Exception as _v559e:
             logger.warning("[CREATEUR] remboursement non répercuté (%s)", type(_v559e).__name__)
+        # V610o — AMBASSADEUR : le Boost né de ce paiement est révoqué (historique conservé).
+        try:
+            _charge = (event_data.get("data") or {}).get("object") or {}
+            _complet = bool(_charge.get("refunded")) or (
+                int(_charge.get("amount_refunded") or 0) >= int(_charge.get("amount") or 0) > 0)
+            from api.routes.ambassadeur_routes import revoquer_par_paiement as _v610o_revoquer
+            _nb = await _v610o_revoquer(db, _charge.get("payment_intent"), _complet)
+            logger.info("[V610o-AMBASSADEUR] remboursement : %s Boost(s) révoqué(s)", _nb)
+        except Exception as _v610oe:
+            logger.warning("[V610o-AMBASSADEUR] remboursement non répercuté (%s)", type(_v610oe).__name__)
         return {"status": "ok"}
 
     if event_data.get("type") == "checkout.session.completed":

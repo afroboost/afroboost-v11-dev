@@ -93,8 +93,8 @@ describe('V610m — événement payant : confirmation puis boule de neige', () =
     expect(ordre.indexOf('inv-pub-place-reservee')).toBeLessThan(ordre.indexOf('inv-pub-confirmation-evenement'));
     expect(ordre.indexOf('inv-pub-confirmation-evenement')).toBeLessThan(ordre.indexOf('afroboosteur-titre'));
     expect(ordre.indexOf('afroboosteur-titre')).toBeLessThan(ordre.indexOf('afroboosteur-audio'));
-    expect(ordre.indexOf('afroboosteur-audio')).toBeLessThan(ordre.indexOf('inviter-whatsapp'));
-    expect(ordre.indexOf('inviter-whatsapp')).toBeLessThan(ordre.indexOf('inviter-copier'));
+    expect(ordre.indexOf('afroboosteur-audio')).toBeLessThan(ordre.indexOf('inviter-partager'));
+    expect(ordre.indexOf('inviter-partager')).toBeLessThan(ordre.indexOf('inviter-copier-direct'));
     expect(q('inviter-lien').textContent).toContain('afroboost.com/i/JetonSophie1234567890');   // SON lien, pas celui de Bassi
     expect(q('inv-pub-cta')).toBeNull();                                      // aucun bouton de paiement
     expect(lireParticipation(JETON)).toEqual({ cs: 'cs_test_ABC123456' });
@@ -108,6 +108,7 @@ describe('V610m — événement payant : confirmation puis boule de neige', () =
     await act(async () => { rendre(<InvitationPublique token={JETON} />); });
     await attendre(() => expect(q('afroboosteur-titre')).toBeTruthy());
     const avant = global.fetch.mock.calls.filter((c) => /relais\/session/.test(String(c[0]))).length;
+    await act(async () => { q('inviter-partager').click(); });
     await act(async () => { q('inviter-whatsapp').click(); q('inviter-whatsapp').click(); });
     expect(ouvrir).toHaveBeenCalledTimes(2);
     expect(global.fetch.mock.calls.filter((c) => /relais\/session/.test(String(c[0]))).length).toBe(avant);
@@ -124,7 +125,7 @@ describe('V610m — événement payant : confirmation puis boule de neige', () =
     await act(async () => { rendre(<InvitationPublique token={JETON} />); });
     await attendre(() => expect(q('inv-pub-place-reservee').textContent).toBe('Tu participes à cet événement'));
     expect(q('inv-pub-cta')).toBeNull();
-    await attendre(() => expect(q('inviter-whatsapp')).toBeTruthy());
+    await attendre(() => expect(q('inviter-partager')).toBeTruthy());
     expect(play).not.toHaveBeenCalled();                                     // pas de relecture automatique au retour
     expect(global.fetch.mock.calls.some((c) => /create-checkout-session/.test(String(c[0])))).toBe(false);
     // « Voir l'invitation » -> la page normale (ex. réserver pour quelqu'un d'autre)
@@ -177,7 +178,7 @@ describe('V610m — membre 8 mois : directement sur CET événement', () => {
     await attendre(() => expect(q('evt-offert-confirme').textContent).toContain('Ta place est réservée !'));
     expect(String(axios.post.mock.calls[0][0])).toMatch(/\/evenement\/OFF-1\/offert$/);   // 0 CHF, pas de Stripe
     await attendre(() => expect(q('afroboosteur-titre')).toBeTruthy());
-    expect(q('inviter-whatsapp').textContent).toMatch(/Inviter mes amis/);
+    expect(q('inviter-partager').textContent).toMatch(/Partager et inviter/);
     await attendre(() => expect(play).toHaveBeenCalledTimes(1));
     expect(lireIntentionMembre()).toBeNull();                                  // intention servie
     expect(lireParticipation(JETON)).toEqual({ relais: { jeton: RELAIS_SOPHIE.jeton, share_url: RELAIS_SOPHIE.share_url } });
@@ -187,8 +188,9 @@ describe('V610m — membre 8 mois : directement sur CET événement', () => {
   test('événement visé NON offert à ce compte : on le dit, rien n’est réservé', async () => {
     retenirIntentionMembre('OFF-9', JETON);
     await act(async () => { rendre(<EvenementsOfferts evenements={[]} accessCode="AFR-M1" memberSlug="" />); });
-    expect(q('evt-offert-non-eligible').textContent).toContain('pas offert avec l’abonnement de ce compte');
-    expect(q('evt-offert-non-eligible').querySelector('a').getAttribute('href')).toBe(`/i/${JETON}`);
+    expect(q('evt-offert-non-eligible').textContent).toContain('Cet événement n’est pas inclus dans ton abonnement actuel.');
+    expect(q('evt-offert-tarif-actuel').textContent).toBe('Réserver au tarif actuel');
+    expect(q('evt-offert-tarif-actuel').getAttribute('href')).toBe(`/i/${JETON}`);
     expect(axios.post).not.toHaveBeenCalled();
   });
 

@@ -31,6 +31,7 @@ import SuiviAbonnes from "./coach/SuiviAbonnes"; // V334 etape 3
 import FunnelEssaiCard from "./coach/FunnelEssaiCard"; // ESSAI-3
 import InvitationPartageCard from "./coach/InvitationPartageCard"; // V551 : Parrainage V2
 import MesInvitations from "./coach/MesInvitations"; // V610e : modifier ses invitations sans Claude Code
+import AmbassadeursCoach from "./coach/AmbassadeursCoach"; // V610o : programme Ambassadeur (Boosts, paliers, récompenses)
 import ModerationTemoignages from "./coach/ModerationTemoignages"; // ESSAI-5a-2
 import MessagesWhatsApp from "./coach/MessagesWhatsApp"; // V411
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
@@ -7849,7 +7850,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         {/* F2 : l'icone suit le type. Une reservation n'est pas
                             un prospect — la cible visait juste. */}
                         <SvgIcon name={n.type === 'new_reservation' ? 'calendar'
-                          : n.type === 'prospect_reply' ? 'compass' : 'target'} size={16} />
+                          : n.type === 'prospect_reply' ? 'compass'
+                          : n.type === 'ambassadeur_palier' ? 'fire' : 'target'} size={16} />
                       </span>
                       <span style={{ flex: 1, minWidth: 0 }}>
                         {/* F2 — LE LIBELLE VIENT DE LA DONNEE, PLUS DU CLIENT.
@@ -9162,6 +9164,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {tab === "campaigns" && campagnesMode === "invitation" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6" data-testid="campagnes-invitation">
             <MesInvitations API={API} />
+            <AmbassadeursCoach />
           </div>
         )}
 

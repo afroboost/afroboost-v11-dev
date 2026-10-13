@@ -16,7 +16,9 @@ import AfroboostAudioPlayer from './AfroboostAudioPlayer'; // V610g
 import SvgIcon from './SvgIcon';
 import { invitationActuelle } from '../utils/attribution';
 import { suivreInvitation } from '../utils/invitationSuivi';
-import { texteWhatsAppCampagne } from '../utils/invitationCampagne';
+import { texteWhatsAppCampagne, texteAmbassadeur } from '../utils/invitationCampagne';
+import PartagerInviter from './PartagerInviter'; // V610o
+import ImpactAfroboost from './ImpactAfroboost'; // V610o
 import { lienWhatsApp, copier } from '../utils/parrainage';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -57,7 +59,8 @@ async function lienParInscription(jeton, code, jetonEspace, slug) {
   } catch (e) { return null; }
 }
 
-export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug, relaisInitial, evenement, apercuDetails, autoLecture }) {
+export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug, relaisInitial, evenement, apercuDetails, autoLecture,
+  impactCs, impactEspace }) {
   // V610e : `apercuDetails` (éditeur coach) — le bloc tel que l'invité le verra après sa
   // réservation, SANS appel réseau, sans partage ni suivi (boutons inertes).
   const enApercu = !!apercuDetails;
@@ -117,6 +120,26 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
     return () => clearTimeout(t);
   }, [enApercu, autoLecture, pret]);
 
+  // V610o — « TON IMPACT AFROBOOST » sous le bouton : par la session Stripe PAYÉE (`impactCs`)
+  // ou par la session d'ESPACE (`impactEspace`). Sans l'une ou l'autre : rien (jamais par le
+  // lien public, que l'ami voit aussi).
+  const [impact, setImpact] = useState(null);
+  const csImpact = /^cs_[A-Za-z0-9_]{6,200}$/.test(String(impactCs || '')) ? String(impactCs) : '';
+  const esp = impactEspace && impactEspace.code && impactEspace.token ? impactEspace : null;
+  const espCode = esp ? String(esp.code) : '';
+  const espJeton = esp ? String(esp.token) : '';
+  const espSlug = esp ? String(esp.slug || '') : '';
+  useEffect(() => {
+    if (enApercu || (!csImpact && !espCode)) return undefined;
+    let vivant = true;
+    const req = csImpact
+      ? fetch(`${BACKEND_URL}/api/ambassadeur/impact/session/${encodeURIComponent(csImpact)}`)
+      : fetch(`${BACKEND_URL}/api/ambassadeur/mon-impact`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-espace-token': espJeton },
+        body: JSON.stringify({ code: espCode, slug: espSlug }) });
+    req.then((r) => (r.ok ? r.json() : null)).then((d) => { if (vivant && d && d.progression) setImpact(d); }).catch(() => {});
+    return () => { vivant = false; };
+  }, [enApercu, csImpact, espCode, espJeton, espSlug]);
+
   if (!relais) return null;
   // Le mot personnel de l'invitation est celui du coach : jamais repris au nom du participant.
   const dto = Object.assign({}, details || {}, { share_url: relais.share_url, message: '' });
@@ -146,21 +169,10 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
         {audioPartage ? (
           <AfroboostAudioPlayer ref={audioRef} src={audioPartage} testidAudio="afroboosteur-audio" testidBouton="afroboosteur-ecouter" inerte={enApercu} />
         ) : null}
-        <button type="button" data-testid="inviter-whatsapp" onClick={surWhatsApp}
-                style={{ width: '100%', minHeight: '54px', marginTop: '10px', borderRadius: '14px', border: 'none', background: PRIMAIRE,
-                  color: 'rgba(255,255,255,1)', fontWeight: 800, fontSize: '17px', display: 'inline-flex', alignItems: 'center',
-                  justifyContent: 'center', gap: '10px', cursor: 'pointer', boxShadow: `0 8px 24px ${rgbaP(0.35)}` }}>
-          <SvgIcon name="send" size={20} /> Inviter mes amis
-        </button>
-        <button type="button" data-testid="inviter-copier" onClick={surCopier}
-                style={{ width: '100%', minHeight: '44px', marginTop: '8px', borderRadius: '12px', background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.14)', color: 'rgba(255,255,255,0.92)', fontWeight: 600, fontSize: '14px',
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer' }}>
-          <SvgIcon name="copy" size={16} /> Copier mon lien
-        </button>
-        <p data-testid="inviter-lien" style={{ margin: '8px 0 0', fontSize: '12px', color: 'rgba(255,255,255,0.55)', wordBreak: 'break-all' }}>
-          {String(relais.share_url).replace(/^https?:\/\//, '')}{retour ? ` · ${retour}` : ''}
-        </p>
+        {/* V610o : UN bouton principal « Partager et inviter » -> WhatsApp, SMS, Copier, Autrement. */}
+        <PartagerInviter jeton={relais.jeton} lien={relais.share_url} inerte={enApercu}
+                         texte={texteAmbassadeur(dto, { nature: relais.nature, messagePlaces: impact ? impact.message_places : undefined })} />
+        {impact ? <ImpactAfroboost impact={impact} compact testid="impact-afroboost-confirmation" /> : null}
       </div>
     );
   }

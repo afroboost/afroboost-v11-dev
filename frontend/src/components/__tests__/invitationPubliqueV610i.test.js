@@ -180,7 +180,7 @@ describe('V610i — retour de Stripe : le webhook fait foi', () => {
     // la place confirmée est retenue sur CET appareil (rouvrir le lien -> « Tu participes »)
     expect(JSON.parse(window.localStorage.getItem('af_evt_participe_JetonDeBassi1234567'))).toEqual({ cs: 'cs_test_ABCDEF123' });
     play.mockRestore();
-    expect(q('inviter-whatsapp').textContent).toMatch(/Inviter mes amis/);
+    expect(q('inviter-partager').textContent).toMatch(/Partager et inviter/);
     expect(document.body.textContent).toMatch(/Copier mon lien/);
   });
 

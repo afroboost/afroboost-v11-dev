@@ -48,6 +48,7 @@ import "./parrainage/wizardFilleul.css";
 import InviterMesAmis from "./InviterMesAmis"; // V607
 import EvenementsOfferts from "./EvenementsOfferts"; // V610 : place offerte (membres 8 mois)
 import MesEvenementsInvitation from "./MesEvenementsInvitation"; // V610m : ma réservation + Inviter mes amis
+import MonImpactAfroboost from "./MonImpactAfroboost"; // V610o : Boosts + paliers + Partager et inviter
 // N2 : la MEME lecture de l'heure que le serveur (`n2_instant_reel`). Sans
 // elle, une date naive serait lue dans le fuseau du navigateur et l'ecran
 // pourrait offrir « Annuler » alors que le serveur refuse.
@@ -1272,11 +1273,15 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         <InviterMesAmis codeAcces={accessCode} jetonEspace={jetonEspace && jetonEspace.token} slug={memberSlug} />
 
         {/* V610 : événements dont la place est OFFERTE à cette personne (décidé par le serveur). */}
-        <EvenementsOfferts evenements={data && data.evenements_offerts} accessCode={accessCode} memberSlug={memberSlug} />
+        <EvenementsOfferts evenements={data && data.evenements_offerts} accessCode={accessCode} memberSlug={memberSlug}
+                           jetonEspace={jetonEspace && jetonEspace.token} />
 
         {/* V610m : mes événements réservés (payés / inscrits) avec « Inviter mes amis ». */}
         <MesEvenementsInvitation accessCode={accessCode} jetonEspace={jetonEspace && jetonEspace.token} slug={memberSlug}
                                  offresDejaAffichees={data && data.evenements_offerts} />
+
+        {/* V610o : programme Ambassadeur — mes Boosts, mon prochain palier, Partager et inviter. */}
+        <MonImpactAfroboost accessCode={accessCode} jetonEspace={jetonEspace && jetonEspace.token} slug={memberSlug} />
 
         {/* ===== V560 : MENU RAPIDE — Bienvenue + profil, puis ces raccourcis, puis
             la progression et « Réserver une séance ». Le reste se rejoint d'ici. ===== */}

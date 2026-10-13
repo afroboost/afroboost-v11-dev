@@ -223,12 +223,18 @@ describe('V610d — « Deviens Afroboosteur » : audio APRÈS réservation, év�
     const ouvert = jest.spyOn(window, 'open').mockImplementation(() => null);
     await act(async () => { render(<InviterMesAmis relaisInitial={RELAIS} />); });
     await attendre(() => expect(q('afroboosteur-titre')).toBeTruthy());
-    expect(q('inviter-whatsapp').textContent).toMatch(/Inviter mes amis/);
+    expect(q('inviter-partager').textContent).toMatch(/Partager et inviter/);       // V610o
+    await act(async () => { q('inviter-partager').click(); });
+    expect(q('inviter-whatsapp').textContent).toMatch(/WhatsApp/);
     await act(async () => { q('inviter-whatsapp').click(); });
     const url = decodeURIComponent(ouvert.mock.calls[0][0]);
     expect(url).toMatch(/wa\.me|whatsapp/);
     expect(url).toMatch(/afroboost\.com\/i\/JetonSophie123456/);
-    expect(url).toMatch(/^.*Sophie t'invite à Afroboost/);
+    // V610o : message de l'AFROBOOSTEUR (billet payé) — « 50 PLACES » marketing, son lien perso
+    expect(url).toMatch(/🔥 Je deviens Afroboosteur !/);
+    expect(url).toMatch(/Je vais à Afroboost Silent — Édition Spéciale 🎧/);
+    expect(url).toMatch(/🔥 50 PLACES/);
+    expect(url).not.toMatch(/gratuit/i);
     const suivi = global.fetch.mock.calls.filter((c) => String(c[0]).includes('/api/invitation/suivi'));
     expect(JSON.parse(suivi[suivi.length - 1][1].body).evenement).toBe('partage_whatsapp_declenche');
     expect(document.body.textContent).not.toMatch(/envoyé/i);
@@ -246,7 +252,7 @@ describe('V610d — « Deviens Afroboosteur » : audio APRÈS réservation, év�
     expect(a.loop).toBe(false);
     expect(a.autoplay).toBe(false);
     expect(q('afroboosteur-ecouter').textContent).toMatch(/Écouter le message/);
-    expect(q('inviter-whatsapp').textContent).toMatch(/Inviter mes amis/);
+    expect(q('inviter-partager').textContent).toMatch(/Partager et inviter/);
   });
 
   test('V610m — événement PAYANT sans audio configuré : même bloc « Deviens Afroboosteur » (gros bouton), aucun lecteur', async () => {
@@ -254,7 +260,7 @@ describe('V610d — « Deviens Afroboosteur » : audio APRÈS réservation, év�
     await act(async () => { render(<InviterMesAmis relaisInitial={RELAIS} autoLecture />); });
     await attendre(() => expect(q('afroboosteur-titre')).toBeTruthy());
     expect(document.querySelector('audio')).toBeNull();
-    expect(q('inviter-whatsapp').textContent).toMatch(/Inviter mes amis/);
+    expect(q('inviter-partager').textContent).toMatch(/Partager et inviter/);
     expect(document.body.textContent).toMatch(/Copier mon lien/);
   });
 

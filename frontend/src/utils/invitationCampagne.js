@@ -554,3 +554,45 @@ export function lireApercuBrouillon(API, id) {
   return axios.get(`${racineApi(API)}/api/share/invite-preview/${encodeURIComponent(id)}.jpg`,
     { responseType: 'blob', timeout: 20000 }).then((r) => r && r.data);
 }
+
+// ── V610o — PROGRAMME AMBASSADEUR : le message de l'Afroboosteur ────────────────
+/** « AFROBOOST SILENT — ÉDITION SPÉCIALE » -> « Afroboost Silent — Édition Spéciale ». */
+export function titreLisible(t) {
+  const s = String(t || '').trim();
+  if (!s || s !== s.toUpperCase()) return s;
+  return s.toLowerCase().replace(/(^|[\s—\-'’(])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+}
+
+/** « Chemin des Valangines 97, 2000 Neuchâtel » -> « Neuchâtel » (sinon le lieu). */
+export function villeDuLieu(lieu) {
+  const l = String(lieu || '').trim();
+  const m = /\b\d{4}\s+([^,\d][^,]*)$/.exec(l);
+  return m ? m[1].trim() : l;
+}
+
+/**
+ * Le message d'un PARTICIPANT confirmé (événement payant) : membre (« Ma place est offerte »
+ * = SA place, jamais celle de l'ami) ou billet payé. « 50 PLACES » vient de la configuration
+ * du coach (un MESSAGE, jamais une capacité) ; « plus tu réserves tôt » seulement si un palier
+ * de prix plus cher suit réellement. Champ absent -> ligne omise.
+ */
+export function texteAmbassadeur(dto, { nature, messagePlaces } = {}) {
+  const d = dto || {};
+  const lien = String(d.share_url || '');
+  const complet = titreLisible(d.title || d.offre_nom || 'un événement Afroboost');
+  const court = complet.split(/\s+—\s+/)[0] || complet;
+  const heure = String(d.time_label || '').replace(/^(\d{1,2}):(\d{2})$/, '$1h$2');
+  const quand = [d.date_label ? _maj(d.date_label) : '', heure].filter(Boolean).join(' · ');
+  const ville = villeDuLieu(d.lieu);
+  const places = String(messagePlaces === undefined || messagePlaces === null ? '50 PLACES' : messagePlaces).trim();
+  const pa = d.prix_actif || null;
+  const plusTot = pa && pa.prochain ? 'Plus tu réserves tôt, moins c’est cher.' : '';
+  const infos = [quand ? `📅 ${quand}` : '', ville ? `📍 ${ville}` : ''].filter(Boolean);
+  const lignes = nature === 'membre'
+    ? [`🔥 Je vais à ${court} !`, '',
+      'Ma place est offerte grâce à mon abonnement Afroboost et j’aimerais que tu viennes vivre l’expérience avec moi 🎧💜', '',
+      ...infos, '', places ? `🔥 ${places}` : '', '', plusTot, '', 'Viens vivre l’expérience avec moi 👇', lien]
+    : ['🔥 Je deviens Afroboosteur !', '', `Je vais à ${complet} 🎧`, '', ...infos, '',
+      places ? `🔥 ${places}` : '', '', plusTot, '', 'Viens vivre l’expérience avec moi 💜👇', lien];
+  return lignes.filter((l, i, a) => l !== '' || (i > 0 && a[i - 1] !== '')).join('\n').trim();
+}
