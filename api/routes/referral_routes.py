@@ -2584,10 +2584,11 @@ async def _exiger_campagne_vivante(pass_doc) -> None:
         raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
 
 
-# V618j — CROSS-DEVICE : avant confirmation, chaque appareil qui ouvre le LIEN PERSONNEL reçoit sa
-# propre clé (empreintes dans `chain.edit_key_hashes_supp`, plafonnées). Le lien reste la seule
-# capacité, exactement comme à la création : un tiers qui l'aurait n'obtient rien de plus que s'il
-# l'avait ouvert le premier. Après confirmation (pass rejoint), plus aucune clé n'est émise.
+# V618j — CROSS-DEVICE : tant que l'invitation de l'ami n'est NI partagée NI confirmée, chaque appareil
+# qui ouvre le LIEN PERSONNEL reçoit sa propre clé (empreintes dans `chain.edit_key_hashes_supp`,
+# plafonnées). Le lien reste la seule capacité, exactement comme à la création : un tiers qui l'aurait
+# n'obtient rien de plus que s'il l'avait ouvert le premier. Dès le PARTAGE (V618j-b) ou la
+# confirmation, plus aucune clé n'est émise.
 CLES_APPAREIL_MAX = 5
 
 
@@ -2880,8 +2881,11 @@ async def referral_chaine_creer(share_token: str, request: Request):
             _choix = await _choix_enfant(_p, _b)
             if _choix:
                 _enf = await _appliquer_choix_enfant(_enf, _choix)
-        elif E.chaine_requise(_p, _s, True) and \
+        elif E.chaine_requise(_p, _s, True) and not E.chaine_partagee(_p) and \
                 len(E.chaine_du_pass(_enf).get("edit_key_hashes_supp") or []) < CLES_APPAREIL_MAX:
+            # V618j-b (revue de sécurité) : SEULEMENT tant que l'invitation n'a pas été PARTAGÉE.
+            # Une fois partagée, c'est l'appareil qui l'a partagée qui confirme (protection V556) :
+            # un tiers du même groupe WhatsApp ne prend jamais une place déjà engagée.
             # V618j — AUTRE APPAREIL, AVANT CONFIRMATION (PC -> mobile, lien rouvert depuis WhatsApp,
             # navigateur vidé) : ce titulaire du lien personnel reçoit SA clé pour terminer ici.
             # Écriture conditionnelle (plafond atomique) ; au-delà, l'écran d'avant s'affiche.

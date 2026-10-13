@@ -74,6 +74,20 @@ async def principal():
     verifier("8 double clic / retour : la confirmation est idempotente (aucune seconde réservation)",
              len(V3.resas_de(base, "essai.j@exemple.test")) == 1, (c, j3))
 
+    # V618j-b (revue de sécurité) : invitation PARTAGÉE mais pas confirmée -> plus aucune clé.
+    _, r3 = await M.entree(base)
+    t2 = r3["share_token"]
+    c, a2 = await creer(t2)
+    c, _ = await partager(t2, a2.get("edit_key"))
+    c, x2 = await creer(t2)
+    verifier("13 invitation déjà PARTAGÉE (non confirmée) : un autre appareil ne reçoit AUCUNE clé",
+             c == 200 and not x2.get("edit_key"), (c, x2))
+    c, _ = await rejoindre(t2, None, email="tiers@exemple.test", tel="+41793330000", nom="Tiers")
+    verifier("14 … et un tiers du même groupe ne prend pas la place engagée (403)",
+             c == 403 and len(V3.resas_de(base, "tiers@exemple.test")) == 0, c)
+    c, j = await rejoindre(t2, a2.get("edit_key"), email="titulaire@exemple.test", tel="+41794440000", nom="Titu")
+    verifier("15 le titulaire (appareil qui a partagé) confirme normalement", c in (200, 201), (c, j))
+
     # Plafond : au-delà de CLES_APPAREIL_MAX appareils, plus de nouvelle clé (écran de protection).
     _, r2 = await M.entree(base)
     t1 = r2["share_token"]
