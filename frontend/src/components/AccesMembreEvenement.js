@@ -21,7 +21,8 @@ const rgbaP = (a) => `rgba(var(--primary-rgb, 217, 28, 210), ${a})`;
 export const TEXTE_NEUTRE = "Si cette adresse correspond à un espace membre, un lien d'accès vient d'y être envoyé.";
 const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
-export default function AccesMembreEvenement({ libelle = 'Accéder à mon espace membre', compact = false, inerte = false, avantOuverture = null }) {
+export default function AccesMembreEvenement({ libelle = 'Accéder à mon espace membre', compact = false, inerte = false, avantOuverture = null,
+  offreVisee = '', jetonInvitation = '' }) {
   const [formulaire, setFormulaire] = useState(false);
   const [email, setEmail] = useState('');
   const [etat, setEtat] = useState('');        // '' | 'envoi' | 'fait' | 'erreur:<texte>'
@@ -39,10 +40,14 @@ export default function AccesMembreEvenement({ libelle = 'Accéder à mon espace
     e.preventDefault();
     const adresse = String(email || '').trim().toLowerCase();
     if (!RE_EMAIL.test(adresse)) { setEtat('erreur:Adresse e-mail invalide.'); return; }
+    if (typeof avantOuverture === 'function') { try { avantOuverture(); } catch (x) { /* ignore */ } }   // V610p
     setEtat('envoi');
     try {
       const r = await fetch(`${BACKEND_URL}/api/subscriber/recover`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: adresse }) });
+        // V610p : l'événement d'où vient la demande voyage jusqu'au lien de l'e-mail (vérifié
+        // par le serveur) -> le lien rouvre l'espace sur CET événement, même dans un autre navigateur.
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({ email: adresse }, offreVisee && jetonInvitation ? { offre: offreVisee, jeton: jetonInvitation } : {})) });
       // 200 et 404 (aucun accès) s'affichent PAREIL : l'écran ne révèle rien.
       if (r.status === 429) setEtat('erreur:Trop de tentatives. Réessaie dans quelques minutes.');
       else if (r.status < 500) setEtat('fait');

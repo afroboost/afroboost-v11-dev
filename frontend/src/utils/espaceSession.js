@@ -86,3 +86,13 @@ export function urlDeLaSession(session) {
     ? `/espace/${encodeURIComponent(s.code)}?m=${encodeURIComponent(s.slug)}`
     : `/espace/${encodeURIComponent(s.code)}`;
 }
+
+/**
+ * V610p — l'espace d'un ancien lien d'e-mail `/?qr=AFR-…` (le code vient du SERVEUR, dans
+ * l'e-mail envoyé à l'adresse du titulaire). L'espace exige toujours le code e-mail (B3-S1) :
+ * connaître un code n'ouvre rien. Code mal formé -> "".
+ */
+export function urlEspaceDuLienQr(code) {
+  const c = String(code || "").trim().toUpperCase();
+  return /^AFR-[A-Z0-9-]{2,40}$/.test(c) ? `/espace/${encodeURIComponent(c)}` : "";
+}

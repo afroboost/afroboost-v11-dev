@@ -25,7 +25,7 @@ const bouton = (principal) => ({
   boxShadow: principal ? `0 8px 24px ${rgbaP(0.35)}` : 'none',
 });
 
-export default function PartagerInviter({ jeton, lien, texte, inerte = false, ouvertInitial = false }) {
+export default function PartagerInviter({ jeton, lien, texte, inerte = false, ouvertInitial = false, contexte = null }) {
   const [ouvert, setOuvert] = useState(!!ouvertInitial);
   const [retour, setRetour] = useState('');
   const nav = typeof navigator !== 'undefined' ? navigator : null;
@@ -64,6 +64,27 @@ export default function PartagerInviter({ jeton, lien, texte, inerte = false, ou
       <button type="button" data-testid="inviter-partager" onClick={() => setOuvert((v) => !v)} aria-expanded={ouvert} style={Object.assign(bouton(true), { marginTop: '10px' })}>
         <SvgIcon name="share" size={20} /> Partager et inviter
       </button>
+      {ouvert && contexte ? (
+        // V610p — PARRAINAGE CONTEXTUEL : CET événement, déjà choisi (jamais une séance à
+        // choisir, jamais « essai gratuit »). Prix = celui du SERVEUR au moment présent.
+        <div data-testid="partager-contexte" style={{ marginTop: '12px', padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.05)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 800, fontSize: '15px' }}>
+            Invite un ami à {contexte.titre}
+            <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="fire" size={15} /></span>
+            <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="headphones" size={15} /></span>
+          </div>
+          {contexte.quand || contexte.ville ? (
+            <p style={{ margin: '4px 0 0', fontSize: '13.5px', color: 'rgba(255,255,255,0.82)' }}>{[contexte.quand, contexte.ville].filter(Boolean).join(' · ')}</p>
+          ) : null}
+          {contexte.prix ? <p data-testid="partager-contexte-prix" style={{ margin: '4px 0 0', fontSize: '13.5px' }}>Tarif actuel de l’événement : <strong>{contexte.prix}</strong></p> : null}
+          {contexte.places ? (
+            <p style={{ margin: '6px 0 0', fontSize: '13.5px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="fire" size={14} /></span> {contexte.places}
+            </p>
+          ) : null}
+          {contexte.plusTot ? <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'rgba(255,255,255,0.8)' }}>Plus tu réserves tôt, moins c’est cher.</p> : null}
+        </div>
+      ) : null}
       {ouvert ? (
         <div data-testid="partager-canaux" style={{ display: 'grid', gap: '8px', marginTop: '10px' }}>
           <button type="button" data-testid="inviter-whatsapp" onClick={surWhatsApp} style={bouton(false)}>

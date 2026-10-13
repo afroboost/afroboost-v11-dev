@@ -24,7 +24,7 @@ import { cibleRedirectionEssai, DELAI_REDIRECTION_ESSAI_MS } from "./utils/essai
 // INV-2 : la seance d'une invitation (`&course=&occurrence=`) voyage jusqu'a l'espace participant.
 import { lireSeanceInvitation, verdictSeanceInvitation, cibleAvecSeance } from "./utils/invitationSeance";
 import InvitationSeanceBandeau from "./components/InvitationSeanceBandeau";
-import { lireSession as lireSessionEspace, urlDeLaSession, ESPACE_CLE_RETOUR } from "./utils/espaceSession"; // session abonnee persistante
+import { lireSession as lireSessionEspace, urlDeLaSession, ESPACE_CLE_RETOUR, urlEspaceDuLienQr } from "./utils/espaceSession"; // session abonnee persistante ; V610p : lien /?qr= -> espace
 // V534: Centre Parrainage / Pass Duo — lectures SYNCHRONES du cache (zéro réseau dans App.js).
 import { parrainageActifCache, coursDuoEnCache } from "./utils/parrainage";
 import BarreHaute from "./components/accueil/BarreHaute"; // V554 : barre haute unique (compte à rebours + retour)
@@ -445,6 +445,13 @@ const detectQRSubscriber = () => {
   const urlParams = new URLSearchParams(window.location.search);
   const qrCode = urlParams.get('qr');
   if (qrCode && qrCode.startsWith('AFR-')) {
+    // V610p — l'abonné va dans SON ESPACE (/espace/<CODE>), plus dans le ChatWidget : les
+    // e-mails d'accès d'avant V610p portent encore `/?qr=`. L'espace demande le code e-mail
+    // (B3-S1) s'il n'y a pas de session : un code seul n'ouvre rien.
+    const versEspace = urlEspaceDuLienQr(qrCode);
+    if (versEspace) {
+      try { window.location.replace(versEspace); return null; } catch (e) { /* repli : ancien chemin */ }
+    }
     console.log('[APP] 📱 QR Code détecté:', qrCode);
     localStorage.setItem('afroboost_qr_subscriber', qrCode);
     // Nettoyer l'URL

@@ -516,6 +516,15 @@ async def invitation_publique(token: str):
     _sortie.update({"cible": _cible(_doc, _chaine), "relais": bool(_doc.get("_relais")),
                     "card_url": "%s/api/share/invite/%s/carte.jpg?v=%d" % (_front(), quote(str(_doc.get("share_token")), safe=""), _version(_doc)),
                     "og_titre": titre_og(_dto_pub), "og_description": description_og(_dto_pub)})
+    # V610p : le message « 50 PLACES » réglé par le coach (programme Ambassadeur) — un MESSAGE,
+    # jamais une capacité : aucune place restante n'est calculée ni affichée.
+    _sortie["message_places"] = None
+    if _doc.get("type") in ("event_paid", "event_free"):
+        try:
+            from api.routes import ambassadeur_routes as _v610p_amb
+            _sortie["message_places"] = (await _v610p_amb.config_du_coach(_base(), _doc.get("coach_id")))["message_places"] or None
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("%s message places non lu (%s)", PREFIXE, type(_e).__name__)
     # V610i : événement payant à réservation AUTOMATIQUE, en vente -> « Je réserve ma place »
     # ouvre Stripe directement (prix décidé par le serveur au checkout). Sinon : la vitrine.
     _sortie["reservation_directe"] = None

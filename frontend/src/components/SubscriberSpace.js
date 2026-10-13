@@ -10,6 +10,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { copyToClipboard } from "../utils/clipboard";
 import { sessionPourEspace, ecrireSession, oublierSession } from "../utils/espaceSession";
+import { retenirIntentionMembre } from "../utils/participationEvenement"; // V610p
 import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 import CarteProfilSpordateur from './CarteProfilSpordateur'; // F3 SUITE — carte compacte vers la VRAIE page profil Spordateur
 import CarteNotifications from './CarteNotifications'; // PUSH-PWA — état des notifications + réactivation automatique
@@ -358,6 +359,43 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       setLoading(false);
     }
   }, [loadSpace, jetonEspace]);
+
+  // V610p — ARRIVÉE PAR LE LIEN DE L'E-MAIL D'ACCÈS : `?acces=` ouvre la session (même
+  // jeton que le code à 6 chiffres), `?evt=&inv=` retient l'ÉVÉNEMENT d'où venait la demande
+  // (l'espace s'ouvre sur sa carte, même dans un autre navigateur que la demande). Les
+  // paramètres sont retirés de l'adresse aussitôt. UNE fois par affichage (garde) : aucune boucle.
+  const [lienEtat, setLienEtat] = useState("");          // "" | "ouverture" | "expire"
+  const lienFait = useRef(false);
+  useEffect(() => {
+    if (lienFait.current || !accessCode) return;
+    lienFait.current = true;
+    let q;
+    try { q = new URLSearchParams(window.location.search); } catch (e) { return; }
+    const acces = q.get("acces") || "";
+    const evt = q.get("evt") || "";
+    const inv = q.get("inv") || "";
+    if (!acces && !evt) return;
+    if (/^[A-Za-z0-9_-]{4,80}$/.test(evt) && /^[A-Za-z0-9_-]{16,64}$/.test(inv)) retenirIntentionMembre(evt, inv);
+    try {
+      ["acces", "evt", "inv"].forEach((k) => q.delete(k));
+      const reste = q.toString();
+      window.history.replaceState(window.history.state, "", window.location.pathname + (reste ? `?${reste}` : "") + window.location.hash);
+    } catch (e) { /* l'adresse garde ses paramètres : sans effet */ }
+    if (!acces || b3s1LireJeton(accessCode, memberSlug)) return;
+    setLienEtat("ouverture");
+    axios.post(`${API}/subscriber/acces/lien`, { code: accessCode, acces })
+      .then((res) => {
+        const tok = res?.data?.token;
+        if (!tok) throw new Error("sans jeton");
+        const slugRendu = res?.data?.member_slug || memberSlug || "";
+        b3s1EcrireJeton(accessCode, slugRendu, tok, res?.data?.expires_at);
+        if (slugRendu && slugRendu !== memberSlug) setMemberSlug(slugRendu);
+        setJetonEspace({ token: tok, code: accessCode, slug: slugRendu });
+        setLienEtat("");
+      })
+      .catch(() => setLienEtat("expire"));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessCode]);
 
   // V534 — UNE lecture de la configuration Parrainage, quand l'espace est chargé.
   // Si le serveur renvoie déjà `parrainage.enabled` (contrat §5), c'est lui qui
@@ -768,6 +806,14 @@ export default function SubscriberSpace({ accessCode: propCode }) {
              data-testid="espace-identification">
           {v594Etapes}
           <h1 className="text-xl font-semibold mb-2">Accède à ton espace</h1>
+          {lienEtat === "ouverture" ? (
+            <p className="text-white/80 text-sm mb-5" role="status" data-testid="espace-lien-ouverture">Ouverture de ton espace…</p>
+          ) : null}
+          {lienEtat === "expire" ? (
+            <p className="text-sm mb-3" role="status" data-testid="espace-lien-expire" style={{ color: "rgba(255,210,170,0.95)" }}>
+              Ce lien n’est plus valable. Confirme ton adresse e-mail pour recevoir un code.
+            </p>
+          ) : null}
           <p className="text-white/60 text-sm mb-5">
             {enOtp
               ? "Saisis le code à 6 chiffres reçu par e-mail."

@@ -20823,45 +20823,30 @@ async def recover_subscriber_access(request: Request):
         remaining = max(0, max_uses - used)
         name = discount.get("name", found_email.split("@")[0] if found_email else "Abonné")
 
-        # QR Code URL
-        qr_data = f"https://afroboost.com/?qr={code}"
-        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={qr_data}"
+        # V610p — LE LIEN OUVRE L'ESPACE ABONNÉ, plus le ChatWidget (`/?qr=` y menait).
+        # Jeton d'accès aléatoire (haché en base, 24 h, 5 ouvertures) lié au code ET à
+        # l'adresse de destination ; + l'événement d'où vient la demande, VÉRIFIÉ.
+        from api.routes import espace_lien_acces as _v610p
+        _front = (os.environ.get("FRONTEND_URL") or "https://afroboost.com").rstrip("/")
+        _evt, _inv = await _v610p.contexte_evenement(db, body.get("offre"), body.get("jeton"))
+        _jeton_acces = await _v610p.creer_lien(db, code=code, email=found_email,
+                                               coach_id=discount.get("coach_id") or DEFAULT_COACH_ID)
+        acces_url = _v610p.url_acces(_front, code, _jeton_acces, _evt, _inv)
+        # QR SECONDAIRE (ordinateur -> téléphone) : fabriqué par un service externe, il ne
+        # porte donc JAMAIS le jeton d'accès — l'espace (et l'événement), puis le code e-mail.
+        qr_data = _v610p.url_espace(_front, code, _evt, _inv)
+        from urllib.parse import quote as _v610p_quote
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={_v610p_quote(qr_data, safe='')}"
 
         # Envoyer l'email avec code et QR code
         if RESEND_AVAILABLE and RESEND_API_KEY:
             try:
-                html_content = f"""
-                <div style="background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); padding: 40px 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; border-radius: 12px 12px 0 0;">
-                    <h1 style="color: #fff; margin: 0; font-size: 24px;">Vos accès Afroboost</h1>
-                </div>
-                <div style="background: #1f2937; padding: 40px 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #fff;">
-                    <p style="margin: 0 0 24px 0;">Bonjour {name},</p>
-                    <p style="margin: 0 0 24px 0; color: #d1d5db;">Voici votre code d'accès Afroboost et vos informations d'abonnement.</p>
-
-                    <div style="background: #111827; border-radius: 8px; padding: 24px; margin: 24px 0; border-left: 4px solid #a855f7;">
-                        <p style="margin: 0 0 12px 0; color: #9ca3af; font-size: 12px;">Votre code:</p>
-                        <p style="margin: 0; font-size: 28px; font-weight: bold; color: #60a5fa; font-family: 'Courier New', monospace;">{code}</p>
-                        <p style="margin: 16px 0 0 0; color: #9ca3af; font-size: 13px;">Séances restantes: <span style="color: #22c55e; font-weight: bold;">{remaining}/{max_uses}</span></p>
-                    </div>
-
-                    <p style="margin: 24px 0 16px 0; color: #9ca3af; font-size: 13px;">Scannez ce code QR pour accéder:</p>
-                    <div style="text-align: center; margin: 24px 0;">
-                        <img src="{qr_url}" alt="QR Code {code}" style="max-width: 200px; height: auto; border-radius: 8px; background: #fff; padding: 8px;">
-                    </div>
-
-                    <p style="margin: 24px 0 8px 0; color: #9ca3af; font-size: 12px;">Ou accédez directement en utilisant le lien:</p>
-                    <p style="margin: 0 0 24px 0; word-break: break-all; color: #60a5fa; font-size: 12px;">https://afroboost.com/?qr={code}</p>
-
-                    <div style="border-top: 1px solid #374151; padding-top: 16px; margin-top: 24px;">
-                        <p style="margin: 0; color: #9ca3af; font-size: 11px;">Questions? Contactez-nous sur WhatsApp ou par email.</p>
-                    </div>
-                </div>
-                """
-
+                html_content = _v610p.html_email(nom=name, code=code, restantes=remaining, total=max_uses,
+                                                 url=acces_url, qr_url=qr_url)
                 await asyncio.to_thread(_rc.emails("server:recover_subscriber_access", critique=True, sdk=resend).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [found_email],
-                    "subject": f"Votre code d'accès Afroboost - {code}",
+                    "subject": "Accède à ton espace Afroboost",
                     "html": html_content
                 })
                 logger.info(f"[SUBSCRIBER-RECOVER] Recovery email sent to {found_email}")
@@ -52828,6 +52813,43 @@ async def b3s1_verifier_otp(request: Request):
     # `?m=` et se ferait refuser (« autre_membre ») par sa propre session.
     return {"success": True, "token": _jeton, "expires_at": _fin.isoformat(),
             "member_slug": slug or None}
+
+
+# V610p — LE LIEN DE L'E-MAIL D'ACCÈS ouvre la MÊME session d'espace que le code à 6
+# chiffres (jeton B3-S1 révocable, même collection de sessions). Un seul refus pour tout
+# (inconnu, autre code, expiré, ouvertures épuisées) : la route ne dit rien de ce qui existe.
+@api_router.post("/subscriber/acces/lien")
+async def v610p_ouvrir_par_lien(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    from api.routes import espace_lien_acces as _v610p
+    from api.routes.shared import lotb3s1_make_token, LOTB3S1_JETON_JOURS
+    _refus = HTTPException(status_code=400, detail="Lien invalide ou expiré. Demande un code ci-dessous.")
+    code = str((body or {}).get("code") or "").strip().upper()
+    try:
+        _doc = await _v610p.consommer(db, code, (body or {}).get("acces"))
+    except Exception as _err:
+        logger.warning("[V610p] lien illisible (%s)", type(_err).__name__)
+        raise _refus
+    if not _doc:
+        raise _refus
+    _email, _coach, _slug = _doc.get("email") or "", _doc.get("coach_id") or DEFAULT_COACH_ID, _doc.get("slug") or ""
+    _jeton, _jti = lotb3s1_make_token(code, _email, _coach, _slug or None)
+    if not _jeton:
+        raise HTTPException(status_code=503, detail="Accès momentanément indisponible. Réessaie plus tard.")
+    _fin = datetime.now(timezone.utc) + timedelta(days=LOTB3S1_JETON_JOURS)
+    try:
+        await db[_B3S1_COLL_SESSIONS].insert_one({
+            "jti": _jti, "code": code, "email": _email, "coach_id": _coach, "slug": _slug,
+            "created_at": datetime.now(timezone.utc).isoformat(), "expires_at": _fin.isoformat(),
+            "revoked": False, "origine": "lien_email"})
+    except Exception as _err:
+        logger.warning("[V610p] session non enregistree (%s)", type(_err).__name__)
+        raise HTTPException(status_code=503, detail="Accès momentanément indisponible. Réessaie plus tard.")
+    logger.info("[V610p] session ouverte par le lien e-mail (jti=%s)", str(_jti)[:8])
+    return {"success": True, "token": _jeton, "expires_at": _fin.isoformat(), "member_slug": _slug or None}
 
 
 # === STAFF ACCESS: Code d'accès pour scanner uniquement ===

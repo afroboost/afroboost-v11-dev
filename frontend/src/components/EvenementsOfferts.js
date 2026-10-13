@@ -39,6 +39,15 @@ function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jetonVise =
     if (!vise || !carteRef.current) return;
     try { carteRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* ignore */ }
   }, [vise]);
+  // V610p : événement visé DÉJÀ réservé -> son lien personnel tout de suite (la route est
+  // idempotente : elle rend la réservation et le lien existants, rien n'est recréé).
+  const dejaVu = useRef(false);
+  useEffect(() => {
+    if (!vise || !evt.deja_reserve || dejaVu.current) return;
+    dejaVu.current = true;
+    reserver();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vise, evt.deja_reserve]);
 
   const reserver = async () => {
     if (etat === 'envoi') return;
@@ -74,7 +83,9 @@ function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jetonVise =
           <span style={{ display: 'inline-flex', width: 48, height: 48, borderRadius: 999, alignItems: 'center', justifyContent: 'center', background: rgbaP(0.22), color: PRIMAIRE, marginBottom: 6 }}>
             <SvgIcon name="check" size={24} />
           </span>
-          <div style={{ fontSize: '22px', fontWeight: 800, color: 'rgba(255,255,255,0.97)' }}>Ta place est réservée !</div>
+          <div style={{ fontSize: '22px', fontWeight: 800, color: 'rgba(255,255,255,0.97)' }}>
+            {vientDeReserver ? 'Ta place est réservée !' : 'Tu participes à cet événement'}
+          </div>
         </div>
       ) : null}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'rgba(255,255,255,0.96)', fontSize: '15px' }}>

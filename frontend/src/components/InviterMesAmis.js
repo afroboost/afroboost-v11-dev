@@ -16,7 +16,7 @@ import AfroboostAudioPlayer from './AfroboostAudioPlayer'; // V610g
 import SvgIcon from './SvgIcon';
 import { invitationActuelle } from '../utils/attribution';
 import { suivreInvitation } from '../utils/invitationSuivi';
-import { texteWhatsAppCampagne, texteAmbassadeur } from '../utils/invitationCampagne';
+import { texteWhatsAppCampagne, texteAmbassadeur, titreLisible, villeDuLieu, libellePrix } from '../utils/invitationCampagne';
 import PartagerInviter from './PartagerInviter'; // V610o
 import ImpactAfroboost from './ImpactAfroboost'; // V610o
 import { lienWhatsApp, copier } from '../utils/parrainage';
@@ -171,7 +171,16 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
         ) : null}
         {/* V610o : UN bouton principal « Partager et inviter » -> WhatsApp, SMS, Copier, Autrement. */}
         <PartagerInviter jeton={relais.jeton} lien={relais.share_url} inerte={enApercu}
-                         texte={texteAmbassadeur(dto, { nature: relais.nature, messagePlaces: impact ? impact.message_places : undefined })} />
+                         texte={texteAmbassadeur(dto, { nature: relais.nature, messagePlaces: impact ? impact.message_places : (details && details.message_places) })}
+                         contexte={details && details.type === 'event_paid' ? {
+                           titre: (titreLisible(details.title || details.offre_nom || '').split(/\s+—\s+/)[0]) || 'cet événement',
+                           quand: [details.date_label ? details.date_label.charAt(0).toUpperCase() + details.date_label.slice(1) : '',
+                             String(details.time_label || '').replace(/^(\d{1,2}):(\d{2})$/, '$1h$2')].filter(Boolean).join(' · '),
+                           ville: villeDuLieu(details.lieu),
+                           prix: details.prix_actif && Number.isFinite(Number(details.prix_actif.prix)) ? libellePrix(details.prix_actif.prix) : '',
+                           places: impact && impact.message_places !== undefined ? impact.message_places : (details.message_places !== undefined ? details.message_places : '50 PLACES'),
+                           plusTot: !!(details.prix_actif && details.prix_actif.prochain),
+                         } : null} />
         {impact ? <ImpactAfroboost impact={impact} compact testid="impact-afroboost-confirmation" /> : null}
       </div>
     );

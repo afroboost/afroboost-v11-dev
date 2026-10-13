@@ -522,6 +522,11 @@ export default function InvitationPublique({ token, apercu }) {
                 ))}
               </div>
             ) : null}
+            {d.message_places ? (
+              <p data-testid="inv-pub-places" style={{ margin: '8px 0 0', fontSize: '14px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="fire" size={16} /></span> {d.message_places}
+              </p>
+            ) : null}
             {pa.prochain ? (
               <p data-testid="inv-pub-urgence" style={{ margin: '8px 0 0', fontSize: '13px', color: 'rgba(255,255,255,0.75)' }}>
                 {prixTexte(pa.prochain.prix)} dès le {jourBascule(pa.prochain.a_partir_de)}.
@@ -555,7 +560,8 @@ export default function InvitationPublique({ token, apercu }) {
             {type === 'event_paid' && d.gratuit_membres ? (
               /* V610b : bloc IDENTIQUE pour tous — aucune recherche d'e-mail ; la gratuité se
                  prend dans l'espace membre authentifié et ne se transmet jamais par un lien. */
-              <div ref={membreRef} data-testid="inv-pub-gratuit-membres"><AccesMembreEvenement inerte={enApercu} libelle="Je suis membre" avantOuverture={() => retenirIntentionMembre(offreDeLInvitation(d), token)} /></div>
+              <div ref={membreRef} data-testid="inv-pub-gratuit-membres"><AccesMembreEvenement inerte={enApercu} libelle="Je suis membre" avantOuverture={() => retenirIntentionMembre(offreDeLInvitation(d), token)}
+                                    offreVisee={offreDeLInvitation(d)} jetonInvitation={enApercu ? '' : token} /></div>
             ) : null}
           </LirePlus>
         ) : null}
