@@ -94,10 +94,14 @@ describe('V610 — EvenementsOfferts (espace)', () => {
     expect(q('evt-offert-reserver')).toBeTruthy();
   });
 
-  test('déjà réservée : « Ta place est réservée » + « Inviter mes amis »', async () => {
+  test('déjà réservée : titre « Ta place est déjà réservée » + son lien relu tout seul (V618N : retour plus tard, invitation encore là)', async () => {
+    axios.post.mockResolvedValue({ data: { success: true, deja_reserve: true, relais: { jeton: 'JetonSophie123456', share_url: 'https://afroboost.com/i/JetonSophie123456' } } });
+    global.fetch = jest.fn(() => reponse({ type: 'event_paid', title: 'AFROBOOST SILENT' }));
     await act(async () => { render(<EvenementsOfferts evenements={[{ ...EVT, deja_reserve: true }]} accessCode="AFR-M1" />); });
-    expect(q('evt-offert-reservee')).toBeTruthy();
-    expect(q('evt-offert-lien')).toBeTruthy();
+    await attendre(() => expect(q('evt-offert-confirme-titre').textContent).toBe('Ta place est déjà réservée'));
+    expect(String(axios.post.mock.calls[0][0])).toMatch(/\/evenement\/OFF1\/offert$/);   // route idempotente : rien n'est recréé
+    await attendre(() => expect(q('inviter-partager').textContent).toMatch(/Inviter mes amis/));
+    expect(q('inviter-copier-direct').textContent).toMatch(/Copier mon lien/);
   });
 });
 

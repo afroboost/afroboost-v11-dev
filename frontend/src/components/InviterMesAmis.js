@@ -72,6 +72,7 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
   const [detailsEtat, setDetails] = useState(null);
   const details = enApercu ? apercuDetails : detailsEtat;
   const [retour, setRetour] = useState('');
+  const [replie, setReplie] = useState(false);   // V618N : « Plus tard » replie, n'efface jamais
   const inv = invitationActuelle();
   const jetonInv = inv ? inv.t : '';
   const cs = /^cs_[A-Za-z0-9_]+$/.test(String(sessionId || '')) ? String(sessionId) : '';
@@ -157,6 +158,25 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
   // V610m — ÉVÉNEMENT PAYANT (paiement ou place offerte confirmés) : le bloc « Deviens
   // Afroboosteur » est TOUJOURS celui-ci — audio s'il est configuré, et le gros bouton.
   if (audioPartage || (details && details.type === 'event_paid')) {
+    // V618N — « PLUS TARD » : l'invitation est facultative ; elle reste à portée d'un bouton.
+    if (replie) {
+      return (
+        <div data-testid="inviter-mes-amis" data-variante="replie" style={{ marginTop: '12px', textAlign: 'center' }}>
+          <p style={{ margin: '0 0 8px', fontSize: '13.5px', color: 'rgba(255,255,255,0.75)' }}>Tu pourras inviter tes amis quand tu veux.</p>
+          <button type="button" data-testid="inviter-rouvrir" onClick={() => setReplie(false)}
+                  style={{ width: '100%', minHeight: '44px', borderRadius: '12px', background: 'rgba(255,255,255,0.06)', border: `1px solid ${rgbaP(0.4)}`,
+                    color: 'rgba(255,255,255,0.95)', fontWeight: 700, fontSize: '14px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer' }}>
+            <SvgIcon name="users" size={16} /> Inviter mes amis
+          </button>
+          {typeof voirReservation === 'function' ? (
+            <button type="button" data-testid="voir-ma-reservation" onClick={enApercu ? undefined : voirReservation}
+                    style={{ width: '100%', minHeight: '44px', marginTop: '8px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.75)', fontSize: '13.5px', textDecoration: 'underline', cursor: 'pointer' }}>
+              Voir ma réservation
+            </button>
+          ) : null}
+        </div>
+      );
+    }
     return (
       <div data-testid="inviter-mes-amis" data-variante="afroboosteur" style={{ marginTop: '14px', padding: '16px 14px', borderRadius: '16px', textAlign: 'left',
         background: rgbaP(0.12), border: `1px solid ${rgbaP(0.4)}` }}>
@@ -169,6 +189,9 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
         {audioPartage ? (
           <AfroboostAudioPlayer ref={audioRef} src={audioPartage} testidAudio="afroboosteur-audio" testidBouton="afroboosteur-ecouter" inerte={enApercu} />
         ) : null}
+        <p data-testid="afroboosteur-viens" style={{ margin: '12px 0 0', fontSize: '15px', fontWeight: 700, color: 'rgba(255,255,255,0.95)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          Viens avec tes amis <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="arrowDown" size={16} /></span>
+        </p>
         {/* V610o : UN bouton principal « Partager et inviter » -> WhatsApp, SMS, Copier, Autrement. */}
         <PartagerInviter jeton={relais.jeton} lien={relais.share_url} inerte={enApercu}
                          texte={texteAmbassadeur(dto, { nature: relais.nature, messagePlaces: details ? details.message_places : null })}
@@ -184,6 +207,12 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
                            plusTot: !!(details.prix_actif && details.prix_actif.prochain),
                          } : null} />
         {impact ? <ImpactAfroboost impact={impact} compact testid="impact-afroboost-confirmation" /> : null}
+        {!enApercu ? (
+          <button type="button" data-testid="inviter-plus-tard" onClick={() => setReplie(true)}
+                  style={{ width: '100%', minHeight: '44px', marginTop: '6px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', fontSize: '13.5px', textDecoration: 'underline', cursor: 'pointer' }}>
+            Plus tard
+          </button>
+        ) : null}
         {typeof voirReservation === 'function' ? (
           <button type="button" data-testid="voir-ma-reservation" onClick={enApercu ? undefined : voirReservation}
                   style={{ width: '100%', minHeight: '44px', marginTop: '10px', borderRadius: '12px', background: 'rgba(255,255,255,0.06)',

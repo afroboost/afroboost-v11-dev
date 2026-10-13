@@ -50,14 +50,14 @@ const EVT_RESERVE = 'af-evt-reserve';   // V618M : la carte du haut et celle de 
 
 /** V618M — la carte de l'AGENDA depuis une date « événement » : l'avantage personnel (serveur)
  *  si la personne en a un, sinon le tarif public du moment (serveur). */
-export function evtDeLOccurrence(occ, data) {
+export function evtDeLOccurrence(occ, data, confirme = false) {
   const o = occ || {};
   const offert = ((data && data.evenements_offerts) || []).find((e) => e && e.offer_id === o.offer_id);
-  if (offert) return offert;
+  if (offert) return confirme && !offert.deja_reserve ? Object.assign({}, offert, { deja_reserve: true }) : offert;
   const m = /^\/i\/([A-Za-z0-9_-]{8,80})$/.exec(String(o.lien_evenement || ''));
   const pub = Number(o.prix_public);
   return { offer_id: o.offer_id, titre: o.name || o.course_name || 'Événement', datetime: o.datetime, lieu: o.locationName || o.location || '',
-    deja_reserve: false, complet: !!o.complet, jeton_invitation: m ? m[1] : '',
+    deja_reserve: !!confirme, complet: !!o.complet, jeton_invitation: m ? m[1] : '',
     avantage: Number.isFinite(pub) ? { type: 'aucun', valeur: null, prix_public: pub, prix_membre: pub } : null };
 }
 
@@ -101,11 +101,12 @@ export function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jeto
   useEffect(() => {
     // V618M : seule une place OFFERTE se relit par la route « offert » ; un billet payé au tarif
     // membre a son lien dans « Mes événements » (plus bas dans l'espace).
-    if (!vise || !evt.deja_reserve || dejaVu.current || (evt.avantage && evt.avantage.type !== 'gratuit')) return;
+    // V618N : visée OU NON (agenda, retour plus tard) — le membre retrouve « Inviter mes amis ».
+    if (!evt.deja_reserve || dejaVu.current || (evt.avantage && evt.avantage.type !== 'gratuit')) return;
     dejaVu.current = true;
     reserver();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vise, evt.deja_reserve]);
+  }, [evt.deja_reserve]);
 
   // V618M — l'avantage RÉEL de cette personne (décidé par le serveur) : gratuit -> réservation
   // à 0 CHF ici ; réduction / prix fixe -> paiement Stripe au prix MEMBRE calculé par le serveur.
@@ -181,7 +182,8 @@ export function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jeto
   return (
     <div ref={carteRef} id={`evt-offert-${evt.offer_id}`} data-testid={`evt-offert-${evt.offer_id}`} data-vise={vise ? '1' : '0'} style={{ marginTop: '14px', padding: vise ? '16px 14px' : '14px', borderRadius: '16px',
       background: rgbaP(vise ? 0.16 : 0.1), border: `${vise ? 2 : 1}px solid ${vise ? PRIMAIRE : rgbaP(0.35)}`, textAlign: 'left', scrollMarginTop: '12px' }}>
-      {etat === 'reservee' && (vientDeReserver || vise) ? (
+      {/* V618N : toute place prise s'annonce en TITRE (réservée à l'instant, ou déjà réservée). */}
+      {etat === 'reservee' ? (
         <div data-testid="evt-offert-confirme" style={{ textAlign: 'center', marginBottom: '10px' }}>
           <span style={{ display: 'inline-flex', width: 48, height: 48, borderRadius: 999, alignItems: 'center', justifyContent: 'center', background: rgbaP(0.22), color: PRIMAIRE, marginBottom: 6 }}>
             <SvgIcon name="check" size={24} />
@@ -192,7 +194,7 @@ export function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jeto
         </div>
       ) : null}
       {/* V618M : dans l'agenda, la date choisie affiche DÉJÀ titre, date et lieu — jamais deux fois. */}
-      {sansEntete ? null : (
+      {sansEntete && etat !== 'reservee' ? null : (
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'rgba(255,255,255,0.96)', fontSize: '15px' }}>
             <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="gift" size={18} /></span>
@@ -222,11 +224,6 @@ export function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jeto
         <>
           {/* V618L : jamais « Ta place est réservée » deux fois — le titre du haut suffit ; une
               place prise HORS de ce parcours (carte non visée) le dit en une ligne. */}
-          {!(vientDeReserver || vise) ? (
-            <p data-testid="evt-offert-reservee" style={{ margin: '0 0 8px', fontSize: '14px', color: 'rgba(255,255,255,0.92)', fontWeight: 600 }}>
-              Ta place est déjà réservée.
-            </p>
-          ) : null}
           {relais ? (
             <InviterMesAmis relaisInitial={relais} autoLecture={vientDeReserver} voirReservation={voirMaReservation}
                             impactEspace={jetonEspace ? { code: accessCode, token: jetonEspace, slug: memberSlug || '' } : null} />

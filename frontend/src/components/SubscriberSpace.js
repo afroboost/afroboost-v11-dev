@@ -1801,7 +1801,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                       {occ.locationName ? ` · ${occ.locationName}` : ""}
                     </p>
                   </div>
-                  {confirmed ? (() => {
+                  {/* V618N : une date d'ÉVÉNEMENT garde SA carte même réservée (« Ta place est déjà
+                      réservée » + inviter) — jamais la vue « séance » et son annulation qui rend une séance. */}
+                  {confirmed && occ.inclus_abonnement !== false ? (() => {
                     // V210: Trouver la réservation correspondante pour pouvoir l'annuler
                     const matchingRes = (data?.reservations || []).find(
                       (r) => r?.courseId === occ.course_id && r?.datetime === occ.datetime
@@ -1848,7 +1850,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         // détails dépliés sur place. Plus de détour par la page publique (le retour
                         // perdait la date choisie et la case des conditions).
                         <div data-testid={`event-${occ.course_id}`}>
-                          <CarteEvenement key={`${occ.offer_id}_${occ.datetime}`} evt={evtDeLOccurrence(occ, data)} accessCode={accessCode}
+                          <CarteEvenement key={`${occ.offer_id}_${occ.datetime}`} evt={evtDeLOccurrence(occ, data, !!confirmed)} accessCode={accessCode}
                                           memberSlug={memberSlug} jetonEspace={jetonEspace && jetonEspace.token} courseId={occ.course_id} sansEntete
                                           conditionsAcceptees={!!conditionsOk[`${occ.course_id}_${occ.datetime}`]}
                                           onConditions={(v) => setConditionsOk((p) => ({ ...p, [`${occ.course_id}_${occ.datetime}`]: v }))} />

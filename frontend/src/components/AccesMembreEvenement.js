@@ -142,6 +142,10 @@ export function DemandeLienMembre({ inerte = false, avantEnvoi = null, offreVise
           <p style={{ margin: '6px 0 12px', fontSize: 14, color: 'rgba(255,255,255,0.85)', lineHeight: 1.45 }}>
             Ouvre l'e-mail Afroboost que nous venons de t'envoyer et touche « Accéder à mon espace ».
           </p>
+          {/* V618N : l'adresse TAPÉE (jamais une donnée du serveur) — une erreur d'adresse se voit tout de suite. */}
+          <p data-testid="membre-lien-adresse" style={{ margin: '-6px 0 12px', fontSize: 13, color: 'rgba(255,255,255,0.7)', wordBreak: 'break-all' }}>
+            Adresse utilisée : <strong style={{ color: 'rgba(255,255,255,0.95)' }}>{String(email || '').trim().toLowerCase()}</strong>
+          </p>
           {etat.startsWith('erreur:') ? <p role="alert" data-testid="membre-lien-erreur" style={{ margin: '0 0 10px', fontSize: 13, color: 'rgba(255,170,170,1)' }}>{etat.slice(7)}</p> : null}
           {etat === 'renvoye' ? <p data-testid="membre-lien-renvoye" style={{ margin: '0 0 10px', fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>Un nouveau lien est parti. Pense à regarder tes courriers indésirables.</p> : null}
           <div style={{ display: 'grid', gap: 8 }}>

@@ -263,3 +263,21 @@ describe('V618L — InviterMesAmis', () => {
     expect(q('voir-ma-reservation')).toBeNull();
   });
 });
+
+describe('V618N — écran après réservation', () => {
+  test('« Viens avec tes amis » + Inviter + Copier + « Plus tard » qui replie SANS retirer l’invitation', async () => {
+    global.fetch = jest.fn(() => json(Object.assign({}, SILENT, { audio_partage_url: '/api/files/a1/afroboosteur.mp3' })));
+    const RELAIS = { jeton: 'JetonMembre12345678', share_url: 'https://afroboost.com/i/JetonMembre12345678' };
+    await act(async () => { rendre(<InviterMesAmis relaisInitial={RELAIS} />); });
+    await attendre(() => expect(q('afroboosteur-titre')).toBeTruthy());
+    expect(q('afroboosteur-audio')).toBeTruthy();
+    expect(q('afroboosteur-viens').textContent).toMatch(/Viens avec tes amis/);
+    expect(q('inviter-partager').textContent).toMatch(/Inviter mes amis/);
+    expect(q('inviter-copier-direct').textContent).toMatch(/Copier mon lien/);
+    await act(async () => { q('inviter-plus-tard').click(); });
+    expect(q('inviter-mes-amis').dataset.variante).toBe('replie');
+    expect(q('afroboosteur-viens')).toBeNull();
+    await act(async () => { q('inviter-rouvrir').click(); });
+    expect(q('inviter-partager').textContent).toMatch(/Inviter mes amis/);
+  });
+});
