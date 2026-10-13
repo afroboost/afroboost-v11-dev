@@ -144,8 +144,23 @@ async def accorder_boost(database, relais_filleul) -> bool:
         return False
     if _parent.get("email_empreinte") == relais_filleul.get("email_empreinte"):
         return False                                     # auto-parrainage : jamais de Boost
+    # V610o-b — AUTO-PARRAINAGE PAR ALIAS (`moi+2@…`, `m.oi@gmail.com`) : même boîte = même
+    # personne. Le parent d'avant V610o-b n'a pas d'empreinte canonique : elle est reprise de
+    # l'adresse de SA réservation.
+    _canon_f = relais_filleul.get("email_canon") or ""
+    _canon_p = _parent.get("email_canon") or await _canon_du_relais(_b, _parent)
+    if _canon_f and _canon_p and _canon_f == _canon_p:
+        logger.info("%s Boost refusé : auto-parrainage par alias (%s)", PREFIXE, str(relais_filleul.get("id"))[:8])
+        return False
     _coach = str(relais_filleul.get("coach_id") or _parent.get("coach_id") or "")
     _emp = _parent["email_empreinte"]
+    # V610o-b — UN filleul (même boîte) = UN Boost par invitation pour ce parrain, même s'il
+    # revient avec un alias (le relais d'un alias est un AUTRE relais : on le refuse ici).
+    if _canon_f and await _b[COLL_BOOSTS].find_one({"coach_id": _coach, "parrain_empreinte": _emp,
+                                                    "campagne_id": relais_filleul.get("campagne_id"),
+                                                    "filleul_canon": _canon_f}):
+        logger.info("%s Boost refusé : filleul déjà compté (alias) (%s)", PREFIXE, str(relais_filleul.get("id"))[:8])
+        return False
     _avant = await nombre_boosts(_b, _coach, _emp)
     _paiement = relais_filleul.get("paiement") if isinstance(relais_filleul.get("paiement"), dict) else {}
     _doc = {
@@ -154,6 +169,7 @@ async def accorder_boost(database, relais_filleul) -> bool:
         "parrain_relais_id": _parent.get("id"), "parrain_jeton": _parent.get("jeton"),
         "parrain_prenom": _parent.get("inviteur_prenom") or "", "parrain_empreinte": _emp,
         "filleul_relais_id": relais_filleul["id"], "filleul_prenom": relais_filleul.get("inviteur_prenom") or "",
+        "filleul_canon": _canon_f or None,
         "filleul_generation": relais_filleul.get("generation"),
         "preuve_nature": relais_filleul.get("preuve_nature"), "preuve_cle": relais_filleul.get("preuve_cle"),
         "reservation_id": relais_filleul.get("reservation_id"),
@@ -170,6 +186,16 @@ async def accorder_boost(database, relais_filleul) -> bool:
     logger.info("%s +1 Boost (%s -> parrain %s)", PREFIXE, _doc["_id"][:20], str(_parent.get("id"))[:8])
     await _appliquer_paliers(_b, _coach, _emp, _doc["parrain_prenom"], _avant, _avant + 1)
     return True
+
+
+async def _canon_du_relais(database, rel) -> str:
+    """L'empreinte canonique d'un participant créé avant V610o-b : depuis SA réservation."""
+    try:
+        from api.routes import invitation_relais as IR
+        _resa = await _reservation_du_relais(database, rel)
+        return IR.empreinte_canonique((_resa or {}).get("userEmail")) if _resa else ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 async def revoquer_boost(database, cle, raison) -> bool:

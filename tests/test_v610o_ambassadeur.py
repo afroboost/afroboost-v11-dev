@@ -91,6 +91,21 @@ async def principal():
     await payer(base, "cs_test_BASSI01", bassi["jeton"], "bassi@test.example", "Bassi Test")
     verifier("O-3 auto-parrainage -> aucun Boost", compte(base, emp("bassi@test.example")) == 1)
 
+    # ── V610o-b : alias de la même boîte -> ni auto-parrainage, ni filleul compté deux fois ──
+    base["reservations"].docs.append({"id": "R-ZOE", "userName": "Zoé Test", "userEmail": "zoe.test@gmail.com", "coach_id": T.COACH_A})
+    zoe = await RL.creer_relais(base, jeton_parent=racine, email="zoe.test@gmail.com", nom="Zoé Test",
+                                preuve_nature="membre", preuve_cle="R-ZOE", reservation_id="R-ZOE")
+    await payer(base, "cs_test_ALIAS01", zoe["jeton"], "zoetest+2@gmail.com", "Zoé Bis")
+    await payer(base, "cs_test_ALIAS02", zoe["jeton"], "z.o.e.test@googlemail.com", "Zoé Ter")
+    verifier("A-1 alias de la MÊME boîte (+2, points Gmail, googlemail) -> aucun Boost pour soi-même",
+             compte(base, emp("zoe.test@gmail.com")) == 0)
+    await payer(base, "cs_test_LEA0001", zoe["jeton"], "lea@test.example", "Léa Test")
+    await payer(base, "cs_test_LEA0002", zoe["jeton"], "lea+promo@test.example", "Léa Alias")
+    verifier("A-2 une amie + son alias -> UN seul Boost", compte(base, emp("zoe.test@gmail.com")) == 1)
+    verifier("A-3 empreinte canonique : +suffixe et points Gmail retirés",
+             RL.empreinte_canonique("Sophie+2@GMAIL.com") == RL.empreinte_canonique("s.ophie@googlemail.com")
+             == RL.empreinte_canonique("sophie@gmail.com") and RL.empreinte_canonique("a.b@test.example") != RL.empreinte_canonique("ab@test.example"))
+
     # ── N : Nadine via Sophie, Julie via Nadine -> chaque Boost au parrain DIRECT ──
     nadine = await payer(base, "cs_test_NADINE1", sophie["jeton"], "nadine@test.example", "Nadine Test")
     julie = await payer(base, "cs_test_JULIE01", nadine["jeton"], "julie@test.example", "Julie Test")
@@ -107,7 +122,7 @@ async def principal():
     verifier("J-1 remboursement -> Boost révoqué une seule fois", n1 == 1 and n2 == 0 and compte(base, emp("bassi@test.example")) == 0)
     verifier("J-2 historique conservé : GRANTED puis REVOKED (remboursement_stripe), rien d'effacé",
              [h["evenement"] for h in b0["historique"]] == ["BOOST_GRANTED", "BOOST_REVOKED"]
-             and b0["raison_revocation"] == "remboursement_stripe" and len(base[AMB.COLL_BOOSTS].docs) == 3)
+             and b0["raison_revocation"] == "remboursement_stripe" and len(base[AMB.COLL_BOOSTS].docs) == 4)   # Bassi, Léa (A-2), Sophie, Nadine
 
     # ── annulation : la réservation de Nadine supprimée -> Boost de Sophie révoqué à la lecture ──
     base["evenement_places"].docs.append({"_id": "stripe:cs_test_NADINE1", "reservation_id": "R-NADINE-SUPPRIMEE"})
@@ -224,7 +239,7 @@ async def principal():
 
 def main():
     asyncio.run(principal())
-    _res = [r for r in H.RESULTATS if r[0][:2] in ("O-", "G-", "H-", "F-", "I-", "N-", "J-", "K-", "L-", "M-", "R-", "S-", "C-")]
+    _res = [r for r in H.RESULTATS if r[0][:2] in ("A-", "O-", "G-", "H-", "F-", "I-", "N-", "J-", "K-", "L-", "M-", "R-", "S-", "C-")]
     _ok = 0
     for nom, ok, detail in _res:
         print(("  OK     " if ok else "  ECHEC  ") + nom)

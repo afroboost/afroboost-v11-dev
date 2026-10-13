@@ -107,6 +107,23 @@ def empreinte_email(email) -> str:
     return hashlib.sha256(("relais|" + _e).encode("utf-8")).hexdigest()[:24] if _e else ""
 
 
+def empreinte_canonique(email) -> str:
+    """V610o-b — la BOÎTE réelle derrière une adresse : `+suffixe` retiré (tous domaines),
+    points retirés chez Gmail (gmail.com = googlemail.com). `sophie+2@gmail.com` et
+    `s.ophie@gmail.com` = `sophie@gmail.com`. Sert UNIQUEMENT aux décisions de Boost
+    (anti auto-parrainage par alias) ; l'attribution V607 reste sur l'adresse exacte."""
+    _e = str(email or "").strip().lower()
+    if "@" not in _e:
+        return ""
+    _local, _dom = _e.rsplit("@", 1)
+    _local = _local.split("+", 1)[0]
+    if _dom in ("gmail.com", "googlemail.com"):
+        _local, _dom = _local.replace(".", ""), "gmail.com"
+    if not _local or not _dom:
+        return ""
+    return hashlib.sha256(("canon|%s@%s" % (_local, _dom)).encode("utf-8")).hexdigest()[:24]
+
+
 def prenom(nom) -> str:
     """Le prénom affichable : 1er mot, jamais une adresse."""
     _n = str(nom or "").strip()
@@ -152,6 +169,7 @@ def _doc_relais(camp, parent, email, nom, preuve_nature, preuve_cle, auto_invita
         "generation": (int((parent or {}).get("generation") or 1) + 1) if _attribue else 1,
         "inviteur_prenom": prenom(nom),
         "email_empreinte": empreinte_email(email),
+        "email_canon": empreinte_canonique(email),          # V610o-b : anti-alias (Boosts seulement)
         "auto_invitation": bool(auto_invitation),
         "preuve_nature": preuve_nature,
         "preuve_cle": "%s:%s" % (preuve_nature, preuve_cle),
