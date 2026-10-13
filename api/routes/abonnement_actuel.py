@@ -42,6 +42,18 @@ def init_db(database):
     db = database
 
 
+PLATEFORME = ""
+_SANS_LOCATAIRE = ("", "none", "null", "bassi_default", "contact.artboost@gmail.com")
+
+
+def locataire(coach_id) -> str:
+    """PUR. Le PÉRIMÈTRE (coach) d'un document : la plateforme (super-admin, valeurs historiques
+    vides / `bassi_default`) = "" ; un coach partenaire = son e-mail. Deux périmètres ne se mélangent
+    JAMAIS (V618-b, revue de sécurité) : ni résolution, ni conflit, ni notification croisés."""
+    _c = str(coach_id or "").strip().lower()
+    return PLATEFORME if _c in _SANS_LOCATAIRE else _c
+
+
 def _expire(sub, maintenant=None) -> bool:
     from api.routes.shared import _v391_est_expire
     return _v391_est_expire((sub or {}).get("expires_at") or (sub or {}).get("end_date"), maintenant)
@@ -83,10 +95,15 @@ async def abonnements_de(database, email) -> list:
          "coach_id": 1, "member_slug": 1}).to_list(LECTURE_MAX)
 
 
-async def resoudre_abonnement_actuel(database, email, maintenant=None, notifier=True) -> dict:
-    """LA résolution. Journal sans donnée privée : empreinte de l'e-mail, id choisi, raison."""
+async def resoudre_abonnement_actuel(database, email, maintenant=None, notifier=True, perimetre=None) -> dict:
+    """LA résolution. `perimetre` (V618-b) : le coach dans lequel on résout (`locataire()`), ou None
+    pour toutes ses inscriptions (e-mail d'accès : chaque code proposé reste celui de SON titulaire).
+    Journal sans donnée privée : empreinte de l'e-mail, id choisi, raison."""
     _base = database if database is not None else db
-    _r = choisir(await abonnements_de(_base, email), maintenant)
+    _subs = await abonnements_de(_base, email)
+    if perimetre is not None:
+        _subs = [x for x in _subs if locataire(x.get("coach_id")) == perimetre]
+    _r = choisir(_subs, maintenant)
     if _r["etat"] == ETAT_COURANT:
         logger.info("%s subscription_resolution membre=%s chosen_subscription_id=%s reason=current_active",
                     PREFIXE, _empreinte(email), str(_r["abonnement"].get("id"))[:8])
@@ -100,12 +117,20 @@ async def resoudre_abonnement_actuel(database, email, maintenant=None, notifier=
 
 
 async def notifier_conflit(database, candidats):
-    """Notification INTERNE du coach (une par jeu de codes), idempotente. Codes seulement."""
-    if not candidats:
-        return
+    """Notification INTERNE, idempotente, PAR COACH : chaque coach ne voit QUE les codes de son
+    périmètre, et seulement s'il y a conflit CHEZ LUI (deux coachs différents = pas un conflit)."""
+    _par = {}
+    for c in candidats or []:
+        _par.setdefault(locataire(c.get("coach_id")), []).append(c)
+    for _loc, _l in _par.items():
+        if len(_l) >= 2:
+            await _notifier_un(database, _loc, _l)
+
+
+async def _notifier_un(database, coach, candidats):
     _codes = sorted({str(c.get("code") or "") for c in candidats if c.get("code")})
-    _coach = next((str(c.get("coach_id")) for c in candidats if c.get("coach_id")), "")
-    _cle = "integrite_" + hashlib.sha256("|".join(_codes).encode("utf-8")).hexdigest()[:16]
+    _coach = coach
+    _cle = "integrite_" + hashlib.sha256(("%s|" % coach + "|".join(_codes)).encode("utf-8")).hexdigest()[:16]
     try:
         await database["notifications"].update_one(
             {"id": _cle}, {"$setOnInsert": {
@@ -117,9 +142,9 @@ async def notifier_conflit(database, candidats):
         logger.warning("%s notification non écrite (%s)", PREFIXE, type(_err).__name__)
 
 
-async def code_actuel(database, email):
+async def code_actuel(database, email, perimetre=None):
     """(code | None, resolution) — le CODE de l'abonnement actuel, s'il y en a UN."""
-    _r = await resoudre_abonnement_actuel(database, email)
+    _r = await resoudre_abonnement_actuel(database, email, perimetre=perimetre)
     if _r["etat"] == ETAT_COURANT:
         return str(_r["abonnement"].get("code") or "").strip().upper() or None, _r
     return None, _r
@@ -133,9 +158,10 @@ def simuler(subs, codes, maintenant=None) -> dict:
     for s in subs or []:
         _e = str(s.get("email") or "").strip().lower()
         if _e:
-            _par.setdefault(_e, []).append(s)
+            # V618-b : un client = une adresse DANS un périmètre (coach) ; deux coachs ≠ conflit.
+            _par.setdefault((_e, locataire(s.get("coach_id"))), []).append(s)
     _conflits, _perimes_clients = [], set()
-    for _e, _l in _par.items():
+    for (_e, _loc), _l in _par.items():
         _r = choisir(_l, maintenant)
         if _r["etat"] == ETAT_CONFLIT:
             _conflits.append({"membre": _empreinte(_e), "codes": [c.get("code") for c in _r["candidats"]]})
@@ -171,7 +197,7 @@ async def abonnements_integrite(request: Request):
     _c = await R._coach_strict(request)
     _f = {} if _c["cle"] == "" else {"coach_id": _c["cle"]}
     _subs = await db.subscriptions.find(_f, {"_id": 0, "email": 1, "code": 1, "status": 1, "expires_at": 1,
-                                             "end_date": 1, "created_at": 1}).to_list(5000)
+                                             "end_date": 1, "created_at": 1, "coach_id": 1}).to_list(5000)
     _codes = await db.discount_codes.find(_f, {"_id": 0, "code": 1, "assignedEmail": 1, "active": 1, "expiresAt": 1}).to_list(5000)
     return dict(simuler(_subs, _codes), lecture_seule=True)
 
@@ -206,12 +232,18 @@ async def fiches_pour_acces(database, email, maintenant=None) -> dict:
     VALIDE d'abord (jamais une fiche expirée devant une fiche valide)."""
     from api.routes.shared import _v391_est_expire
     _r = await resoudre_abonnement_actuel(database, email, maintenant)
+    _e_norm = str(email or "").strip().lower()
     _sortie = []
     if _r["etat"] in (ETAT_COURANT, ETAT_CONFLIT):
         _subs = [_r["abonnement"]] if _r["etat"] == ETAT_COURANT else _r["candidats"]
         for _s in _subs[:3]:
             _f = await _fiche(database, _s.get("code"))
-            if _f and all(str(x.get("code")).upper() != str(_f.get("code")).upper() for x in _sortie):
+            # V618-b (revue de sécurité) : un lien d'accès n'ouvre QUE le code dont CETTE adresse
+            # est le TITULAIRE — jamais le code d'une autre personne (11 abonnements en base ont un
+            # e-mail différent du titulaire de leur code : club, famille, saisie).
+            if not _f or str(_f.get("assignedEmail") or "").strip().lower() != _e_norm:
+                continue
+            if all(str(x.get("code")).upper() != str(_f.get("code")).upper() for x in _sortie):
                 _sortie.append(_f)
     if not _sortie:
         _e = str(email or "").strip().lower()
@@ -230,10 +262,16 @@ async def code_cible_espace(database, email, code_url):
     _e = str(email or "").strip().lower()
     if not _e:
         return None
-    _code, _r = await code_actuel(database, _e)
+    # V618-b : on résout DANS le périmètre (coach) du code de l'adresse — jamais vers l'espace d'un
+    # autre coach — et la fiche cible doit avoir CETTE adresse pour titulaire (même preuve que l'OTP).
+    _f_url = await _fiche(database, code_url)
+    if not _f_url or str(_f_url.get("assignedEmail") or "").strip().lower() != _e:
+        return None
+    _per = locataire(_f_url.get("coach_id"))
+    _code, _r = await code_actuel(database, _e, perimetre=_per)
     if not _code or _code == str(code_url or "").strip().upper():
         return None
     _f = await _fiche(database, _code)
-    if not _f or str(_f.get("assignedEmail") or "").strip().lower() != _e:
+    if not _f or str(_f.get("assignedEmail") or "").strip().lower() != _e or locataire(_f.get("coach_id")) != _per:
         return None
     return {"code": _code, "coach_id": _f.get("coach_id") or (_r.get("abonnement") or {}).get("coach_id") or ""}

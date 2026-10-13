@@ -160,8 +160,10 @@ async def abonnement_gratuit(db, email, offre, debut):
     _ids = offres_gratuite(offre)
     if not _e or "@" not in _e or not _ids:
         return None
-    from api.routes.abonnement_actuel import resoudre_abonnement_actuel, ETAT_COURANT
-    _r = await resoudre_abonnement_actuel(db, _e)
+    from api.routes.abonnement_actuel import resoudre_abonnement_actuel, ETAT_COURANT, locataire
+    # V618-b : résolu CHEZ le coach de l'événement (un abonnement chez un autre coach ne compte
+    # ni pour accorder, ni pour créer un faux conflit).
+    _r = await resoudre_abonnement_actuel(db, _e, perimetre=locataire((offre or {}).get("coach_id")))
     if _r["etat"] != ETAT_COURANT:
         return None
     _actuel = await db.subscriptions.find_one({"id": _r["abonnement"].get("id")}, {"_id": 0}) or _r["abonnement"]

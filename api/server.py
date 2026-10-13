@@ -19670,7 +19670,10 @@ async def get_space_link_by_email(email: str, request: Request):
     code = None
     try:
         from api.routes import abonnement_actuel as _v618
-        _v618_r = await _v618.resoudre_abonnement_actuel(db, email_clean)
+        # V618-b : résolu DANS le périmètre du coach appelant (super-admin : tout) — un 409 ne
+        # révèle jamais l'existence d'un abonnement chez un autre coach.
+        _v618_r = await _v618.resoudre_abonnement_actuel(
+            db, email_clean, perimetre=None if not _mt2_portee else _v618.locataire(_mt2_appelant))
         if _v618_r["etat"] == _v618.ETAT_COURANT:
             _v618_s = await db.subscriptions.find_one({"id": _v618_r["abonnement"].get("id"), **_mt2_portee},
                                                       {"_id": 0, "code": 1})

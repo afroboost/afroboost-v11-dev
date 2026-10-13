@@ -113,6 +113,36 @@ async def principal():
     acc = await AA.fiches_pour_acces(base, C, MAINTENANT)
     verifier("E5 e-mail d'accès en conflit : rien choisi à sa place (aucune fiche de code -> repli neutre)", acc["etat"] == "conflit")
 
+    # ── V618-b : sécurité (titulaire, périmètre coach) ───────────────────────
+    X = "membre.club@test.example"
+    base["subscriptions"].docs += [sub("x1", "CLUB-1", email=X)]
+    base["discount_codes"].docs += [{"code": "CLUB-1", "assignedEmail": "titulaire@test.example", "active": True, "expiresAt": "2027-01-01"}]
+    acc = await AA.fiches_pour_acces(base, X, MAINTENANT)
+    verifier("K-1 abonnement sur un code dont l'adresse n'est PAS titulaire -> aucun lien d'accès vers ce code",
+             all(f["code"] != "CLUB-1" for f in acc["fiches"]))
+    verifier("K-2 jamais de redirection vers un code dont l'adresse n'est pas titulaire",
+             await AA.code_cible_espace(base, X, "CLUB-1") is None)
+    P2 = "partenaire@coach.example"
+    Y = "deux.coachs@test.example"
+    base["subscriptions"].docs += [dict(sub("y1", "PLAT-1", email=Y), coach_id=""),
+                                   dict(sub("y2", "PART-1", email=Y), coach_id=P2)]
+    base["discount_codes"].docs += [{"code": "PLAT-1", "assignedEmail": Y, "active": True, "expiresAt": "2027-01-01"},
+                                    {"code": "PART-1", "assignedEmail": Y, "active": True, "expiresAt": "2027-01-01", "coach_id": P2}]
+    _n0 = len([x for x in base["notifications"].docs if x.get("type") == "abonnement_integrite"])
+    r_plat = await AA.resoudre_abonnement_actuel(base, Y, MAINTENANT, perimetre=AA.locataire(""))
+    verifier("K-3 deux coachs différents : chez chacun, UN abonnement actuel (pas un conflit)",
+             r_plat["etat"] == "courant" and r_plat["abonnement"]["code"] == "PLAT-1")
+    await AA.resoudre_abonnement_actuel(base, Y, MAINTENANT)         # vue globale (e-mail d'accès)
+    verifier("K-4 aucune notification de conflit pour deux coachs différents",
+             len([x for x in base["notifications"].docs if x.get("type") == "abonnement_integrite"]) == _n0)
+    verifier("K-5 espace d'un code de la plateforme : jamais redirigé vers l'espace du coach partenaire",
+             await AA.code_cible_espace(base, Y, "PLAT-1") is None)
+    verifier("K-6 périmètre : plateforme = vide / bassi_default / super-admin ; partenaire = son e-mail",
+             AA.locataire(None) == AA.locataire("bassi_default") == AA.locataire("contact.artboost@gmail.com") == ""
+             and AA.locataire("Partenaire@Coach.example") == P2)
+    verifier("K-7 lien d'espace coach : résolu dans le périmètre de l'appelant (aucune fuite par le 409)",
+             "perimetre=None if not _mt2_portee else _v618.locataire(_mt2_appelant)" in SERVEUR)
+
     # ── G / renouvellement : création manuelle -> le nouveau devient l'actuel ──
     N = "renouv@test.example"
     base["subscriptions"].docs += [sub("ancien", "AFR-A1", email=N, exp="2026-10-01T23:59:59+00:00")]
@@ -130,7 +160,7 @@ async def principal():
     # ── simulation (lecture seule) ─────────────────────────────────────────────
     sim = AA.simuler(base["subscriptions"].docs, base["discount_codes"].docs, MAINTENANT)
     verifier("S-1 simulation : conflits, statuts périmés, codes actifs expirés comptés, sans e-mail en clair",
-             sim["clients_conflit_multi_actifs"] == 1 and sim["subscriptions_statut_active_mais_expirees"] >= 2
+             sim["clients_conflit_multi_actifs"] == 1 and sim["subscriptions_statut_active_mais_expirees"] >= 2   # PLAT/PART = 2 coachs, pas un conflit
              and sim["codes_active_mais_expires"] == 1 and "@" not in str(sim["conflits"]), sim)
 
     # ── câblage : toutes les portes passent par le résolveur ──────────────────
@@ -143,14 +173,14 @@ async def principal():
     verifier("W-2 espace : APRÈS la preuve de session, un ancien code renvoie vers l'espace actuel",
              esp.index("_b3s13_porteur_autorise") < esp.index("code_cible_espace") and '"redirection_espace"' in esp)
     verifier("W-3 lien d'espace coach + rappel Stripe : résolveur ; conflit -> aucun choix",
-             SERVEUR.count("resoudre_abonnement_actuel(db, email_clean)") == 1 and SERVEUR.count("resoudre_abonnement_actuel(db, _email)") == 1
+             SERVEUR.count("db, email_clean, perimetre=") == 1 and SERVEUR.count("resoudre_abonnement_actuel(db, _email)") == 1
              and "Plusieurs abonnements actifs pour ce client — à vérifier." in SERVEUR)
     verifier("W-4 notification coach visible (type ajouté aux notifications du tableau de bord)", '"abonnement_integrite")' in SERVEUR)
 
 
 def main():
     asyncio.run(principal())
-    _res = [r for r in H.RESULTATS if re.match(r"^([A-J]\d?|[BEGSW]-?\d|règle|statuts|B\d)", r[0])]
+    _res = [r for r in H.RESULTATS if re.match(r"^([A-J]\d?|[BEGKSW]-?\d|règle|statuts|B\d)", r[0])]
     _ok = 0
     for nom, ok, detail in _res:
         print(("  OK     " if ok else "  ECHEC  ") + nom)
