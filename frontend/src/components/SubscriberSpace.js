@@ -321,6 +321,17 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       const url = `${API}/subscriber/space/${encodeURIComponent(accessCode)}`
         + (params.length ? `?${params.join("&")}` : "");
       const res = await axios.get(url);
+      // V618 — L'ANCIEN CODE N'OUVRE PAS L'ANCIEN ABONNEMENT : le serveur a résolu l'abonnement
+      // ACTUEL de cette personne (même adresse prouvée) et rend son espace, avec une session pour
+      // lui. On la range, puis on y va (remplacement d'adresse : pas d'entrée d'historique).
+      // Le navigateur ne décide rien : il suit la réponse du serveur, une seule fois.
+      const redir = res && res.data && res.data.redirection_espace;
+      if (redir && redir.code && redir.token && String(redir.code).toUpperCase() !== accessCode) {
+        const cible = String(redir.code).toUpperCase();
+        ecrireSession(cible, "", redir.token, redir.expires_at);
+        window.location.replace(`/espace/${encodeURIComponent(cible)}`);
+        return;
+      }
       // SESSION PERSISTANTE : quand le serveur prolonge la session (il ne le
       // fait qu'a l'approche de l'echeance), il renvoie un jeton neuf. On le
       // range a la place de l'ancien, sinon la prolongation ne servirait a rien.

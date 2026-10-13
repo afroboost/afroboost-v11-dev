@@ -612,6 +612,15 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
                 sub_data["suivi_paiement"] = _v617_suivi   # V617 : interne coach
             await _db.subscriptions.insert_one(sub_data)
             logger.info(f"[PROMO] Subscription auto-créée: {assigned_email} - {code_str} ({total_sessions} séances)")
+            # V618 — LE NOUVEL ABONNEMENT DEVIENT L'ACTUEL DÈS SA CRÉATION : ses prédécesseurs
+            # déjà sans valeur (EXPIRÉS ou ÉPUISÉS) passent en historique (`superseded`), comme
+            # après un paiement Stripe. Un abonnement encore valide n'est JAMAIS touché (le
+            # résolveur le signalera alors en conflit au coach). Aucun compteur n'est fusionné.
+            try:
+                from api.routes.shared import cloturer_anciens_forfaits as _v618_cloturer
+                await _v618_cloturer(_db, assigned_email, sub_data.get("id"), log_prefix="V618")
+            except Exception as _v618e:
+                logger.warning(f"[V618] anciens abonnements non clôturés ({type(_v618e).__name__})")
             # Envoyer email de bienvenue
             asyncio.create_task(_send_welcome_email(
                 assigned_email, assigned_email.split("@")[0],

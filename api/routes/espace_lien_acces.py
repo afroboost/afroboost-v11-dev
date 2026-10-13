@@ -108,7 +108,7 @@ async def consommer(db, code, jeton, maintenant=None):
     return _doc
 
 
-def html_email(*, nom, code, restantes, total, url, qr_url) -> str:
+def html_email(*, nom, code, restantes, total, url, qr_url, autres=None) -> str:
     """« Accède à ton espace Afroboost » — mobile d'abord : le GROS bouton, le code, puis le QR
     (secondaire : ordinateur -> téléphone). Couleurs en dur : un e-mail ne lit pas les variables CSS."""
     _rose = "#D91CD2"
@@ -116,6 +116,14 @@ def html_email(*, nom, code, restantes, total, url, qr_url) -> str:
     nom, code = _esc(str(nom or "")), _esc(str(code or ""))
     url, qr_url = _esc(str(url or ""), quote=True), _esc(str(qr_url or ""), quote=True)
     restantes, total = _esc(str(restantes)), _esc(str(total))
+    # V618 : plusieurs abonnements VALIDES en même temps -> un bouton par abonnement (aucun
+    # choisi à la place de la personne) ; le coach est prévenu et tranchera.
+    _autres = "".join(
+        f'<a href="{_esc(str(u), quote=True)}" style="display:block;margin-top:10px;background:#17111d;color:#ffffff;'
+        f'text-decoration:none;font-weight:700;font-size:15px;padding:14px 16px;border-radius:14px;border:1px solid {_rose}">'
+        f'Ouvrir l’espace {_esc(str(c))}</a>' for c, u in (autres or [])[:2])
+    _note = ('<p style="margin:10px 0 0;color:#fbbf24;font-size:12px">Plusieurs abonnements actifs sont enregistrés à ton nom : '
+             'ton coach vérifie lequel est l’actuel.</p>') if _autres else ""
     return f"""
 <div style="max-width:560px;margin:0 auto;background:#0b0710;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#ffffff;border-radius:16px;overflow:hidden">
   <div style="padding:28px 20px 8px">
@@ -124,6 +132,7 @@ def html_email(*, nom, code, restantes, total, url, qr_url) -> str:
   </div>
   <div style="padding:16px 20px 8px;text-align:center">
     <a href="{url}" style="display:block;background:{_rose};color:#ffffff;text-decoration:none;font-weight:800;font-size:17px;padding:18px 16px;border-radius:14px">ACCÉDER À MON ESPACE AFROBOOST</a>
+    {_autres}{_note}
     <p style="margin:10px 0 0;color:#a1a1aa;font-size:12px">Lien personnel, valable 24 h. Ne le transfère pas.</p>
   </div>
   <div style="margin:16px 20px;padding:16px;border-radius:12px;background:#17111d;border-left:4px solid {_rose}">

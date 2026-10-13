@@ -10500,9 +10500,22 @@ async def stripe_webhook(request: Request):
                 elif not (RESEND_AVAILABLE and RESEND_API_KEY):
                     logger.warning("[V400] Resend indisponible — rappel non envoye")
                 else:
-                    _sub = await db.subscriptions.find_one(
-                        {"email": _email, "status": "active"}, {"_id": 0}
-                    )
+                    # V618 : l'abonnement ACTUEL (résolveur canonique) ; avant, un `find_one` sans
+                    # tri pouvait mettre l'ANCIEN code dans le lien /espace/ du rappel.
+                    _sub = None
+                    _v618_etat = None
+                    try:
+                        from api.routes import abonnement_actuel as _v618
+                        _v618_r = await _v618.resoudre_abonnement_actuel(db, _email)
+                        _v618_etat = _v618_r["etat"]
+                        if _v618_etat == _v618.ETAT_COURANT:
+                            _sub = await db.subscriptions.find_one({"id": _v618_r["abonnement"].get("id")}, {"_id": 0})
+                    except Exception as _v618e:
+                        logger.warning("[V618] abonnement actuel non résolu (%s)", type(_v618e).__name__)
+                    if _sub is None and _v618_etat != "conflit":   # conflit : aucun code choisi au hasard
+                        _sub = await db.subscriptions.find_one(
+                            {"email": _email, "status": "active"}, {"_id": 0}
+                        )
                     _ts = facture.get("next_payment_attempt") or facture.get("period_end")
                     _dt = (datetime.fromtimestamp(int(_ts), tz=timezone.utc)
                            if _ts else datetime.now(timezone.utc) + timedelta(days=V398_DELAI_JOURS))
@@ -17472,6 +17485,33 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
     # reponse est EXACTEMENT celle d'avant.
     _espace_renouv = await _b3s1_renouveler_si_proche(_b3s13_charge)
 
+    # V618 — UN ANCIEN CODE N'IMPOSE JAMAIS SON ANCIEN ABONNEMENT. La session prouve la
+    # PERSONNE (code e-mail / lien) ; si son abonnement ACTUEL vit sur un autre code attribué à
+    # la MÊME adresse, on ne sert rien de l'ancien : on rend l'espace actuel (et une session pour
+    # lui, même preuve). Conflit / aucun actuel / membre de club (?m=) -> comportement d'avant.
+    if not m:
+        try:
+            from api.routes import abonnement_actuel as _v618
+            _v618_cible = await _v618.code_cible_espace(db, _b3s13_charge.get("email"), code_upper)
+        except Exception as _v618e:
+            logger.warning("[V618] résolution de l'espace actuel impossible (%s)", type(_v618e).__name__)
+            _v618_cible = None
+        if _v618_cible:
+            from api.routes.shared import lotb3s1_make_token, LOTB3S1_JETON_JOURS
+            _v618_mail = str(_b3s13_charge.get("email") or "").strip().lower()
+            _v618_coach = _v618_cible.get("coach_id") or DEFAULT_COACH_ID
+            _v618_jeton, _v618_jti = lotb3s1_make_token(_v618_cible["code"], _v618_mail, _v618_coach, None)
+            if _v618_jeton:
+                _v618_fin = datetime.now(timezone.utc) + timedelta(days=LOTB3S1_JETON_JOURS)
+                await db[_B3S1_COLL_SESSIONS].insert_one({
+                    "jti": _v618_jti, "code": _v618_cible["code"], "email": _v618_mail, "coach_id": _v618_coach,
+                    "slug": "", "created_at": datetime.now(timezone.utc).isoformat(),
+                    "expires_at": _v618_fin.isoformat(), "revoked": False, "origine": "v618_abonnement_actuel"})
+                logger.info("[V618] espace d'un ancien code -> espace actuel (jti=%s)", str(_v618_jti)[:8])
+                return {"redirection_espace": {"code": _v618_cible["code"], "token": _v618_jeton,
+                                               "expires_at": _v618_fin.isoformat()},
+                        "raison": "abonnement_actuel"}
+
     # V201: Log pour diagnostic
     logger.info(f"[V202] subscriber/space code={code_upper}, member_slug={m}")
 
@@ -19625,10 +19665,29 @@ async def get_space_link_by_email(email: str, request: Request):
     # et ContactsManager continue d'afficher « Pas abonné ».
     _mt2_portee = {} if is_super_admin(_mt2_appelant) else {"coach_id": _mt2_appelant}
 
-    subscription = await db.subscriptions.find_one(
-        {"email": email_clean, "status": "active", **_mt2_portee}, {"_id": 0, "code": 1}
-    )
-    code = (subscription or {}).get("code")
+    # V618 — l'espace ACTUEL du client (résolveur canonique), toujours dans la portée du coach.
+    # Avant : `find_one({email, status: active})` SANS tri -> parfois un ancien code.
+    code = None
+    try:
+        from api.routes import abonnement_actuel as _v618
+        _v618_r = await _v618.resoudre_abonnement_actuel(db, email_clean)
+        if _v618_r["etat"] == _v618.ETAT_COURANT:
+            _v618_s = await db.subscriptions.find_one({"id": _v618_r["abonnement"].get("id"), **_mt2_portee},
+                                                      {"_id": 0, "code": 1})
+            code = (_v618_s or {}).get("code")
+        elif _v618_r["etat"] == _v618.ETAT_CONFLIT:
+            # Plusieurs abonnements actifs : aucun choix arbitraire (fail closed), on le dit.
+            raise HTTPException(status_code=409, detail="Plusieurs abonnements actifs pour ce client — à vérifier.")
+    except HTTPException:
+        raise
+    except Exception as _v618e:
+        logger.warning("[V618] espace actuel non résolu (%s)", type(_v618e).__name__)
+        _v618_r = None
+    if not code and not (_v618_r and _v618_r.get("etat") == "conflit"):
+        subscription = await db.subscriptions.find_one(
+            {"email": email_clean, "status": "active", **_mt2_portee}, {"_id": 0, "code": 1}
+        )
+        code = (subscription or {}).get("code")
     if not code:
         # Fallback : code assigné dans discount_codes
         discount = await db.discount_codes.find_one(
@@ -20785,18 +20844,17 @@ async def recover_subscriber_access(request: Request):
             "created_at": datetime.now(timezone.utc).isoformat()
         })
 
-        # Chercher le code abonné
+        # V618 — LA PERSONNE, PUIS SON ABONNEMENT ACTUEL, PUIS SON CODE. Avant :
+        # `find_one({assignedEmail, active})` SANS tri ni contrôle d'expiration renvoyait
+        # n'importe quel code (souvent un ANCIEN, expiré mais resté « active »).
+        from api.routes import abonnement_actuel as _v618
         discount = None
         found_email = None
+        _v618_fiches = []
+        _v618_etat = None
 
         if email:
-            # Recherche directe par assignedEmail
-            discount = await db.discount_codes.find_one(
-                {"assignedEmail": email, "active": True},
-                {"_id": 0}
-            )
-            if discount:
-                found_email = email
+            found_email = email
         else:
             # Recherche par WhatsApp: trouver d'abord le participant chat
             participant = await db.chat_participants.find_one(
@@ -20805,12 +20863,10 @@ async def recover_subscriber_access(request: Request):
             )
             if participant:
                 found_email = participant.get("email")
-                if found_email:
-                    # Chercher le code avec cet email
-                    discount = await db.discount_codes.find_one(
-                        {"assignedEmail": found_email, "active": True},
-                        {"_id": 0}
-                    )
+        if found_email:
+            _v618_acces = await _v618.fiches_pour_acces(db, found_email)
+            _v618_fiches, _v618_etat = _v618_acces["fiches"], _v618_acces["etat"]
+            discount = _v618_fiches[0] if _v618_fiches else None
 
         if not discount or not found_email:
             logger.info(f"[SUBSCRIBER-RECOVER] No active code found for email={email}, whatsapp={whatsapp}")
@@ -20841,8 +20897,17 @@ async def recover_subscriber_access(request: Request):
         # Envoyer l'email avec code et QR code
         if RESEND_AVAILABLE and RESEND_API_KEY:
             try:
+                # V618 : PLUSIEURS abonnements valides (conflit) -> un bouton par abonnement,
+                # aucun choisi à la place de la personne ; le coach est prévenu par le résolveur.
+                _v618_autres = []
+                if _v618_etat == "conflit":
+                    for _f in _v618_fiches[1:]:
+                        _c2 = str(_f.get("code") or "").upper()
+                        _j2 = await _v610p.creer_lien(db, code=_c2, email=found_email,
+                                                      coach_id=_f.get("coach_id") or DEFAULT_COACH_ID)
+                        _v618_autres.append((_c2, _v610p.url_acces(_front, _c2, _j2, _evt, _inv)))
                 html_content = _v610p.html_email(nom=name, code=code, restantes=remaining, total=max_uses,
-                                                 url=acces_url, qr_url=qr_url)
+                                                 url=acces_url, qr_url=qr_url, autres=_v618_autres)
                 await asyncio.to_thread(_rc.emails("server:recover_subscriber_access", critique=True, sdk=resend).send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [found_email],
@@ -41092,7 +41157,8 @@ C17J_PROJECTION = {
 # « a repondu a votre proposition » — ni adresse, ni telephone, ni corps
 # d'e-mail. C'est la meme discipline que `task_due`, qui ne porte qu'un titre.
 C17J_TYPES = ("new_lead", "new_reservation", "task_due", "prospect_reply",
-              "ambassadeur_palier")   # V610o : palier ambassadeur débloqué / cas à vérifier (prénom seul)
+              "ambassadeur_palier",    # V610o
+              "abonnement_integrite")  # V618 : plusieurs abonnements actifs pour un client (codes seuls)   # V610o : palier ambassadeur débloqué / cas à vérifier (prénom seul)
 
 
 @api_router.get("/coach/notifications")
@@ -54862,6 +54928,10 @@ init_invitation_relais_db(db)
 from api.routes.invitation_edition import router as invitation_edition_router, init_db as init_invitation_edition_db  # noqa: E402
 fastapi_app.include_router(invitation_edition_router)
 init_invitation_edition_db(db)
+# V618 : L'ABONNEMENT ACTUEL D'UNE PERSONNE — une seule règle + simulation d'intégrité (lecture seule).
+from api.routes.abonnement_actuel import router as abonnement_actuel_router, init_db as init_abonnement_actuel_db  # noqa: E402
+fastapi_app.include_router(abonnement_actuel_router)
+init_abonnement_actuel_db(db)
 # V610o : PROGRAMME AMBASSADEUR — Boosts / paliers / récompenses, lus sur la chaîne V607.
 from api.routes.ambassadeur_routes import router as ambassadeur_router, init_db as init_ambassadeur_db, assurer_index as v610o_ambassadeur_index  # noqa: E402
 fastapi_app.include_router(ambassadeur_router)

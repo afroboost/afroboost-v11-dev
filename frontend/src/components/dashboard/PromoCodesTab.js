@@ -10,6 +10,7 @@ import { CreditsGate } from './index';
 import SvgIcon from '../SvgIcon';
 import { classerArticles, resteAPayer, SUIVI_VIDE, etatSuiviPaiement } from "../../utils/abonnementsManuels"; // V617 / V617d
 import EcheancesPaiement from "./EcheancesPaiement"; // V617
+import IntegriteAbonnements from "./IntegriteAbonnements"; // V618 : plusieurs abonnements actifs = à vérifier
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -728,6 +729,7 @@ const PromoCodesTab = ({
       )}
       
       {/* V617 : rappels internes de paiement (coach uniquement, aucun envoi) */}
+      <IntegriteAbonnements rafraichir={(discountCodes || []).length} />
       <EcheancesPaiement rafraichir={(discountCodes || []).length} />
 
       {/* Formulaire de création de code - COMPLET */}

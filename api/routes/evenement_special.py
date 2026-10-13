@@ -151,17 +151,21 @@ def abonnement_donne_droit(sub, ids_autorises, debut):
 
 
 async def abonnement_gratuit(db, email, offre, debut):
-    """L'abonnement (de CETTE personne) qui lui donne la place offerte, ou None."""
+    """L'abonnement (de CETTE personne) qui lui donne la place offerte, ou None.
+
+    V618 — SEUL l'abonnement ACTUEL (résolveur canonique) compte : jamais un ancien abonnement
+    resté « active », jamais un autre abonnement de l'historique. Plusieurs abonnements actuels
+    (conflit) -> aucune gratuité tant que le coach n'a pas tranché (fail closed, coach prévenu)."""
     _e = str(email or "").strip().lower()
     _ids = offres_gratuite(offre)
     if not _e or "@" not in _e or not _ids:
         return None
-    _subs = await db.subscriptions.find(
-        {"email": {"$regex": "^%s$" % re.escape(_e), "$options": "i"}, "offer_id": {"$in": _ids}},
-        {"_id": 0}).to_list(50)
-    _bons = [s for s in _subs if abonnement_donne_droit(s, _ids, debut)[0]]
-    _bons.sort(key=lambda s: str(s.get("expires_at") or ""), reverse=True)
-    return _bons[0] if _bons else None
+    from api.routes.abonnement_actuel import resoudre_abonnement_actuel, ETAT_COURANT
+    _r = await resoudre_abonnement_actuel(db, _e)
+    if _r["etat"] != ETAT_COURANT:
+        return None
+    _actuel = await db.subscriptions.find_one({"id": _r["abonnement"].get("id")}, {"_id": 0}) or _r["abonnement"]
+    return _actuel if abonnement_donne_droit(_actuel, _ids, debut)[0] else None
 
 
 # ── 1 + 2. LA RÉSERVATION (une seule par réclamation) ──────────────────────────
