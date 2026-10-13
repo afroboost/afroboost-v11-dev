@@ -278,12 +278,23 @@ describe('V607 — Essai gratuit : moi d’abord, puis mon ami', () => {
     expect(evenementsSuivis()).not.toContain('partage_whatsapp_declenche');
   });
 
-  test('déjà client : la place n’est pas confirmée, l’invitation de l’ami reste valable', async () => {
+  test('V618j — déjà client / essai déjà pris : place non confirmée, encart doux + « Accéder à mon espace membre », plus de bouton vert', async () => {
     routeur({ join: () => Promise.reject({ response: { status: 409, headers: { 'x-refus-raison': 'free_trial_already_used' }, data: {} } }) });
     const fen = await confirmerPlace();
     expect(fen.close).toHaveBeenCalled();
     expect(par('wf-essai-confirme')).toBeNull();
-    expect(par('wf-erreur-form').textContent).toContain('L’invitation de ton ami reste valable');
+    expect(par('wf-erreur-form')).toBeNull();                       // plus de long message rouge
+    expect(par('wf-refus-membre')).not.toBeNull();
+    expect(par('bouton-espace-membre').textContent).toMatch(/espace membre/i);
+    expect(par('wf-inviter-whatsapp')).toBeNull();                  // l'action ne se présente plus comme réussissable
+  });
+
+  test('V618j — refus NEUTRE « not_eligible » (membre actif) : même encart, aucune révélation de l’adresse', async () => {
+    routeur({ join: () => Promise.reject({ response: { status: 409, headers: { 'x-refus-raison': 'not_eligible' }, data: {} } }) });
+    await confirmerPlace();
+    expect(par('wf-refus-membre').textContent).toMatch(/réservé aux nouvelles personnes/);
+    expect(par('wf-refus-membre').textContent).toMatch(/Tu es déjà membre Afroboost \?/);
+    expect(par('wf-inviter-whatsapp')).toBeNull();
   });
 
   test('« Partager autrement » : partage natif ABOUTI → partage « share » enregistré + place confirmée ; annulé → rien', async () => {
@@ -323,13 +334,19 @@ describe('V607 — Essai gratuit : moi d’abord, puis mon ami', () => {
     expect(axios.post).not.toHaveBeenCalled();
   });
 
-  test('autre appareil (sans clé) sur un essai confirmé : l’écran neutre existant, rien de personnel', async () => {
+  test('V618j — autre appareil (sans clé) sur un essai confirmé : « Ta place est déjà réservée », aucun formulaire, rien de personnel', async () => {
     const confirmePub = Object.assign({}, PUB, { status: 'unlocked', chain_required: false, chain: { exists: true, shared: true } });
     axios.get.mockImplementation((url) => (String(url).endsWith('/chain/options')
       ? Promise.resolve({ data: OPTS }) : Promise.resolve({ data: confirmePub })));
     await monter(<InvitationDuo token="T0" />);
     expect(par('wf-essai-confirme')).toBeNull();
-    expect(par('invitation-deja-rejoint')).not.toBeNull();
+    expect(par('invitation-deja-rejoint')).toBeNull();
+    expect(par('essai-deja-reserve')).not.toBeNull();
+    expect(par('essai-deja-reserve').textContent).toMatch(/déjà réservée/);
+    expect(par('essai-voir-reservation')).not.toBeNull();
+    expect(par('essai-partager-invitation')).not.toBeNull();
+    expect(par('wf-email')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/@/);
   });
 
   test('V607g — « Inviter un autre ami » : un NOUVEAU lien par ami (jamais le lien déjà utilisé), un seul appel par clic', async () => {

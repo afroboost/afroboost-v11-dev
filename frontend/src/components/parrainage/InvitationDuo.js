@@ -48,6 +48,8 @@ import {
 } from '../../utils/parrainage';
 import { suivreInvitation } from '../../utils/invitationSuivi'; // V607 : funnel honnête
 import ParcoursEssai from './ParcoursEssai'; // V607
+import AccesEspaceMembre from './AccesEspaceMembre'; // V618j : « Voir ma réservation »
+import { creerInvitationChaine, lienWhatsApp, texteWhatsAppEssai } from '../../utils/parrainage'; // V618j
 import { libelleTypeInvitation } from './wizardCommun'; // V607 : le badge suit le type réel
 import SessionsModal from '../SessionsModal'; // V539 — le calendrier de la page d'accueil, réutilisé
 import WizardFilleul from './WizardFilleul'; // V556
@@ -506,6 +508,42 @@ export default function InvitationDuo({ token }) {
           onPass={(d) => setPass((prev) => Object.assign({}, prev || {}, d || {}))}
           onRejoindre={rejoindreEssai}
         />
+      </Cadre>
+    );
+  }
+
+  // V618j — ESSAI DÉJÀ CONFIRMÉ, lien rouvert sur un AUTRE appareil (ou navigateur vidé) : jamais
+  // le formulaire vierge ni « quelqu'un a déjà utilisé cette invitation ». Aucune donnée
+  // personnelle n'est affichée (le lien peut circuler) : la réservation se voit dans l'espace.
+  if (estEssai && dejaRejointPass && !essaiConfirmeIci && pass.chain && pass.chain.exists) {
+    const partagerMonInvitation = () => {
+      let fen = null;
+      try { fen = window.open('', '_blank'); } catch (e) { fen = null; }
+      creerInvitationChaine({ token })
+        .then((r) => {
+          const c = ((r && r.data) || {}).child || {};
+          if (!c.share_url) throw new Error('lien');
+          const texte = texteWhatsAppEssai({ prenom: nomAffichable(c.display_name) || '', occurrence: c.occurrence,
+            lieu: c.course && c.course.locationName, url: c.share_url });
+          if (fen) fen.location.href = lienWhatsApp(texte); else window.location.href = lienWhatsApp(texte);
+        })
+        .catch(() => { if (fen) { try { fen.close(); } catch (e) { /* ignore */ } } });
+    };
+    return (
+      <Cadre type={pass.invitation_type}>
+        <div className="cp-state" style={{ paddingTop: 10 }} data-testid="essai-deja-reserve">
+          <div className="cp-roundic cp-roundic--ok"><SvgIcon name="check" size={38} strokeWidth="2.5" /></div>
+          <h1 className="cp-h1 cp-center">Ta place est déjà <em className="cp-em">réservée</em></h1>
+          <p className="cp-center">Cette invitation a déjà été confirmée. Ton billet et ta réservation sont dans ton espace Afroboost.</p>
+        </div>
+        <CarteSeance course={pass.course} occurrence={pass.occurrence} />
+        <div style={{ marginTop: 14 }}>
+          <AccesEspaceMembre libelle="Voir ma réservation" demanderEmail testid="essai-voir-reservation" />
+        </div>
+        <button type="button" className="cp-b cp-b--secondary cp-wz-cible" style={{ marginTop: 10, width: '100%' }}
+                onClick={partagerMonInvitation} data-testid="essai-partager-invitation">
+          <SvgIcon name="share" size={20} /> Partager mon invitation
+        </button>
       </Cadre>
     );
   }

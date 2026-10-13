@@ -710,7 +710,9 @@ export function texteWhatsAppInvitation(pass, message) {
 
 /** Message par défaut de la carte du filleul (texte du message, pas une icône). */
 /** V556 — le visiteur revient d'un AUTRE appareil que celui qui a partagé. */
-export const TEXTE_AUTRE_APPAREIL = "Pour protéger ton invitation, termine l'inscription sur l'appareil avec lequel tu as partagé ton invitation.";
+// V618j : n'apparaît plus dans le parcours normal (chaque appareil qui ouvre le lien personnel
+// reçoit sa clé avant confirmation) — seulement au-delà de 5 appareils, ou en cas de panne.
+export const TEXTE_AUTRE_APPAREIL = "Cette invitation a déjà été ouverte sur plusieurs appareils. Pour la protéger, termine ton inscription sur l'un d'eux, ou demande un nouveau lien à la personne qui t'a invité·e.";
 
 export const MESSAGE_CHAINE_DEFAUT = "Je t'invite à venir découvrir Afroboost avec moi 👇";
 

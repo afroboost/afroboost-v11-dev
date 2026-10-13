@@ -298,9 +298,12 @@ async def partie_drapeau_porte_routes():
     verifier("3c. réponse de création : shared:false, preview présent",
              r.get("shared") is False and isinstance(r.get("preview"), dict), {k: r.get(k) for k in ("shared", "preview")})
     n_passes = len(base["referral_passes"].docs)
+    _cle_premier = CLES.get(t0)
     c2, r2 = await chaine(t0, {"display_name": "Autre"})
-    verifier("3d. 2e POST /chain -> 200, MÊME share_token, SANS edit_key, aucun pass en plus",
-             c2 == 200 and r2["child"]["share_token"] == t1 and "edit_key" not in r2
+    # V618j : un AUTRE appareil, AVANT confirmation, reçoit SA propre clé (cross-device) — même
+    # invitation, aucun pass en plus, et rien n'est modifié par lui à la création (prénom intact).
+    verifier("3d. 2e POST /chain (autre appareil) -> 200, MÊME share_token, SA clé (≠ la 1re), aucun pass en plus",
+             c2 == 200 and r2["child"]["share_token"] == t1 and r2.get("edit_key") and r2.get("edit_key") != _cle_premier
              and len(base["referral_passes"].docs) == n_passes and r2["child"]["display_name"] == "Henri",
              (c2, str(r2)[:200]))
     d0, d1 = doc_par_tok(base, t0), doc_par_tok(base, t1)

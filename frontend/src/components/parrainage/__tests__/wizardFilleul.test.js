@@ -230,7 +230,8 @@ describe('V556 — WizardFilleul (parcours boule de neige)', () => {
     await monter(<InvitationDuo token="T0" />);
     await allerALaCarte();
     expect(par('wf-autre-appareil')).not.toBeNull();
-    expect(conteneur.textContent).toContain("Pour protéger ton invitation, termine l'inscription sur l'appareil avec lequel tu as partagé ton invitation.");
+    // V618j : texte rendu compréhensible (cet écran ne survient plus qu'au-delà de 5 appareils).
+    expect(conteneur.textContent).toContain("Cette invitation a déjà été ouverte sur plusieurs appareils.");
     expect(par('wf-whatsapp')).toBeNull();
     expect(par('wf-nom')).toBeNull();
     expect(par('wf-copier-page')).not.toBeNull();

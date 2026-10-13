@@ -42,6 +42,7 @@ import {
 } from '../../utils/parrainage';
 import { suivreInvitation } from '../../utils/invitationSuivi';
 import AfroboostAudioPlayer from '../AfroboostAudioPlayer'; // V610k : le mot audio de l'invitation
+import AccesEspaceMembre from './AccesEspaceMembre'; // V618j : refus « déjà membre / déjà client » -> son espace
 import './invitationWizard.css';
 import './wizardFilleul.css';
 
@@ -50,6 +51,10 @@ function seanceDuPass(pass) {
   const c = (pass && pass.course) || {};
   return { course_id: c.id || '', occurrence: (pass && pass.occurrence) || '', nom: c.name || '', lieu: c.locationName || '' };
 }
+
+/** V618j — refus d'ÉLIGIBILITÉ à l'essai (réponse neutre du serveur) : on oriente vers l'espace. */
+export const REFUS_ESSAI_CLIENT = ['not_eligible', 'abonne_actif', 'already_customer',
+  'free_trial_already_used', 'free_trial_already_granted'];
 
 /** Le message d'un refus du choix de MA séance. */
 export function messageRefusMaSeance(refus) {
@@ -107,6 +112,9 @@ export default function ParcoursEssai({
   const [erreurForm, setErreurForm] = useState('');
   const [whatsappBloque, setWhatsappBloque] = useState(false); // fenêtre refusée : place réservée quand même
   const [info, setInfo] = useState('');
+  // V618j : le serveur a refusé l'essai à CES coordonnées (déjà membre / déjà client / essai déjà
+  // pris — réponse NEUTRE, V591) : le bouton vert ne se présente plus comme s'il allait réussir.
+  const [refusEssai, setRefusEssai] = useState('');
   const enVol = useRef(false);
   const confirmationVol = useRef(false);                       // double clic : UN seul envoi
   // V610k — le MOT AUDIO de l'invitation (s'il existe) : UN lecteur, monté dès l'accueil (caché),
@@ -306,6 +314,7 @@ export default function ParcoursEssai({
       })
       .catch((refus) => {
         if (fen) { try { fen.close(); } catch (e) { /* ignore */ } }
+        if (refus && REFUS_ESSAI_CLIENT.indexOf(refus.raison) >= 0) { setRefusEssai(refus.raison); return; }
         setErreurForm((refus && refus.texte) || 'Ta place n’a pas pu être confirmée. Réessaie dans un instant.');
       })
       .finally(() => { confirmationVol.current = false; setConfirmation(false); });
@@ -325,7 +334,10 @@ export default function ParcoursEssai({
     confirmationVol.current = true;
     setConfirmation(true);
     const fin = () => { confirmationVol.current = false; setConfirmation(false); };
-    const echec = (refus) => setErreurForm((refus && refus.texte) || 'Ta place n’a pas pu être confirmée. Réessaie dans un instant.');
+    const echec = (refus) => {
+      if (refus && REFUS_ESSAI_CLIENT.indexOf(refus.raison) >= 0) { setRefusEssai(refus.raison); return; }   // V618j
+      setErreurForm((refus && refus.texte) || 'Ta place n’a pas pu être confirmée. Réessaie dans un instant.');
+    };
     preparerEnfant()
       .then((c) => {
         const texte = texteDe(c);
@@ -531,9 +543,9 @@ export default function ParcoursEssai({
             <p className="cp-fine">Ton ami verra que l’invitation vient de toi.</p>
             <label className="cp-label" htmlFor="wf-email">Pour recevoir ton billet</label>
             <input id="wf-email" className="cp-input" type="email" value={email} placeholder="E-mail"
-                   onChange={(e) => setEmail(e.target.value)} autoComplete="email" data-testid="wf-email" />
+                   onChange={(e) => { setEmail(e.target.value); setRefusEssai(''); }} autoComplete="email" data-testid="wf-email" />
             <input className="cp-input" type="tel" value={whatsapp} placeholder="Numéro WhatsApp"
-                   onChange={(e) => setWhatsapp(e.target.value)} autoComplete="tel" data-testid="wf-whatsapp" />
+                   onChange={(e) => { setWhatsapp(e.target.value); setRefusEssai(''); }} autoComplete="tel" data-testid="wf-whatsapp" />
             <label className="cp-chk">
               <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} data-testid="wf-consent" />
               <span>J'accepte de recevoir les informations liées à cette réservation (obligatoire).</span>
@@ -543,15 +555,31 @@ export default function ParcoursEssai({
               <span>Je souhaite recevoir les prochaines offres Afroboost (facultatif).</span>
             </label>
             {erreurForm ? <p className="cp-error" role="alert" data-testid="wf-erreur-form">{erreurForm}</p> : null}
-            <button type="button" className="cp-b cp-b--whatsapp cp-wz-cible" onClick={surWhatsApp} disabled={inactif}
-                    data-testid="wf-inviter-whatsapp" style={{ marginTop: 12 }}>
-              <SvgIcon name="messageCircle" size={20} /> {confirmation ? 'Confirmation…' : 'Inviter 1 ami et confirmer ma place'}
-            </button>
-            <p className="cp-fine" data-testid="wf-texte-lien">Ton ami recevra son propre lien d’invitation.</p>
-            <button type="button" className="cp-link cp-wz-tap" onClick={surAutrement} disabled={inactif}
-                    data-testid="wf-partager-autrement">
-              <SvgIcon name={peutPartager ? 'share' : 'link'} size={14} /> {peutPartager ? 'Partager autrement' : 'Copier le message'}
-            </button>
+            {refusEssai ? (
+              <div className="cp-notice" role="status" data-testid="wf-refus-membre" style={{ marginTop: 12 }}>
+                <p style={{ margin: '0 0 6px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <SvgIcon name="heart" size={18} /> Ce premier cours offert est réservé aux nouvelles personnes.
+                </p>
+                <p style={{ margin: '0 0 12px' }}>
+                  {refusEssai === 'free_trial_already_used' || refusEssai === 'free_trial_already_granted'
+                    ? 'Tu as déjà profité de ton essai gratuit. Réserve tes prochaines séances depuis ton espace.'
+                    : 'Tu es déjà membre Afroboost ? Réserve directement depuis ton espace membre.'}
+                </p>
+                <AccesEspaceMembre email={email} testid="wf-acces-espace" />
+              </div>
+            ) : (
+              <>
+                <button type="button" className="cp-b cp-b--whatsapp cp-wz-cible" onClick={surWhatsApp} disabled={inactif}
+                        data-testid="wf-inviter-whatsapp" style={{ marginTop: 12 }}>
+                  <SvgIcon name="messageCircle" size={20} /> {confirmation ? 'Confirmation…' : 'Inviter 1 ami et confirmer ma place'}
+                </button>
+                <p className="cp-fine" data-testid="wf-texte-lien">Ton ami recevra son propre lien d’invitation.</p>
+                <button type="button" className="cp-link cp-wz-tap" onClick={surAutrement} disabled={inactif}
+                        data-testid="wf-partager-autrement">
+                  <SvgIcon name={peutPartager ? 'share' : 'link'} size={14} /> {peutPartager ? 'Partager autrement' : 'Copier le message'}
+                </button>
+              </>
+            )}
           </>
         ) : null}
         {info ? <p className="cp-mini" role="status" data-testid="wf-info">{info}</p> : null}

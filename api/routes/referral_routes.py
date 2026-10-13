@@ -2584,16 +2584,32 @@ async def _exiger_campagne_vivante(pass_doc) -> None:
         raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
 
 
+# V618j — CROSS-DEVICE : avant confirmation, chaque appareil qui ouvre le LIEN PERSONNEL reçoit sa
+# propre clé (empreintes dans `chain.edit_key_hashes_supp`, plafonnées). Le lien reste la seule
+# capacité, exactement comme à la création : un tiers qui l'aurait n'obtient rien de plus que s'il
+# l'avait ouvert le premier. Après confirmation (pass rejoint), plus aucune clé n'est émise.
+CLES_APPAREIL_MAX = 5
+
+
 def _cle_chaine_valide(request, enfant) -> bool:
-    """`X-Chain-Key` == la clé rendue à la création de l'invitation enfant
-    (comparaison à temps constant sur l'empreinte ; jamais stockée en clair)."""
+    """`X-Chain-Key` == une clé rendue pour l'invitation enfant (celle de la création, ou celle
+    d'un autre appareil avant confirmation — V618j) ; comparaison à temps constant sur l'empreinte,
+    jamais stockée en clair."""
     import hmac
     try:
         _cle = (request.headers.get("x-chain-key", "") or "").strip()
     except Exception:  # noqa: BLE001
         _cle = ""
-    _attendu = str(E.chaine_du_pass(enfant).get("edit_key_hash") or "")
-    return bool(_cle and _attendu and hmac.compare_digest(_hache_cle(_cle), _attendu))
+    if not _cle:
+        return False
+    _ch = E.chaine_du_pass(enfant)
+    _attendues = [str(_ch.get("edit_key_hash") or "")] + [str(x or "") for x in (_ch.get("edit_key_hashes_supp") or [])]
+    _h = _hache_cle(_cle)
+    _ok = False
+    for _a in _attendues:
+        if _a and hmac.compare_digest(_h, _a):
+            _ok = True
+    return _ok
 
 
 async def _journal_parent(pass_id, type_, detail, maj) -> None:
@@ -2864,6 +2880,19 @@ async def referral_chaine_creer(share_token: str, request: Request):
             _choix = await _choix_enfant(_p, _b)
             if _choix:
                 _enf = await _appliquer_choix_enfant(_enf, _choix)
+        elif E.chaine_requise(_p, _s, True) and \
+                len(E.chaine_du_pass(_enf).get("edit_key_hashes_supp") or []) < CLES_APPAREIL_MAX:
+            # V618j — AUTRE APPAREIL, AVANT CONFIRMATION (PC -> mobile, lien rouvert depuis WhatsApp,
+            # navigateur vidé) : ce titulaire du lien personnel reçoit SA clé pour terminer ici.
+            # Écriture conditionnelle (plafond atomique) ; au-delà, l'écran d'avant s'affiche.
+            _nouvelle = secrets.token_urlsafe(18)
+            _r = await db[COLL_PASSES].update_one(
+                {"id": _enf["id"], "chain.edit_key_hashes_supp.%d" % (CLES_APPAREIL_MAX - 1): {"$exists": False}},
+                {"$push": {"chain.edit_key_hashes_supp": _hache_cle(_nouvelle)}})
+            if getattr(_r, "modified_count", 0) == 1:
+                await _journal_parent(_p["id"], "cle_appareil_supplementaire", None, {})
+                logger.info("%s clé d'un autre appareil émise pour %s (avant confirmation)", PREFIXE, _enf["id"][:8])
+                return await _reponse_chaine(_p, await _apprendre_photo_profil(request, _enf), 200, edit_key=_nouvelle)
         return await _reponse_chaine(_p, await _apprendre_photo_profil(request, _enf), 200)
     if not await _chaine_active():
         raise HTTPException(status_code=404, detail="parrainage_chaine_desactive")
@@ -3403,7 +3432,10 @@ async def referral_chaine_suivante(share_token: str, request: Request):
         "chain": {"parent_pass_id": _p["id"], "root_pass_id": _ch.get("root_pass_id") or _p["id"],
                   "depth": _ch_prem.get("depth") if _ch_prem.get("depth") is not None
                   else int(_ch.get("depth") or 0) + 1,
-                  "edit_key_hash": _ch_prem.get("edit_key_hash"), "rang": _rang, "created_at": _iso(_now)},
+                  "edit_key_hash": _ch_prem.get("edit_key_hash"),
+                  # V618j : les clés des autres appareils valent aussi pour les invitations suivantes.
+                  "edit_key_hashes_supp": list(_ch_prem.get("edit_key_hashes_supp") or []),
+                  "rang": _rang, "created_at": _iso(_now)},
         "created_at": _iso(_now),
         "updated_at": _iso(_now),
         "unlocked_at": None,
