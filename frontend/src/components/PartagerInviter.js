@@ -62,7 +62,8 @@ export default function PartagerInviter({ jeton, lien, texte, inerte = false, ou
   return (
     <div data-testid="partager-inviter">
       <button type="button" data-testid="inviter-partager" onClick={() => setOuvert((v) => !v)} aria-expanded={ouvert} style={Object.assign(bouton(true), { marginTop: '10px' })}>
-        <SvgIcon name="share" size={20} /> Partager et inviter
+        {/* V618L : le libellé que Bassi a demandé — « Inviter mes amis » (le partage reste facultatif). */}
+        <SvgIcon name="share" size={20} /> Inviter mes amis
       </button>
       {ouvert && contexte ? (
         // V610p — PARRAINAGE CONTEXTUEL : CET événement, déjà choisi (jamais une séance à

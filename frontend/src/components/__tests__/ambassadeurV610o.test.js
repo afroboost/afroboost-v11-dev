@@ -207,12 +207,12 @@ describe('V610o — coach : Ambassadeurs', () => {
 });
 
 describe('V610o — page de l’ami', () => {
-  test('20/27 — « Bassi t’invite à Afroboost Silent » + « Viens avec tes amis » ; aucun compteur de places', async () => {
+  test('20/27 — « Bassi t’invite à Afroboost Silent » ; aucun compteur de places (V618L : plus de « Viens avec tes amis », répétition)', async () => {
     global.fetch = jest.fn(() => json(SILENT));
     await act(async () => { rendre(<InvitationPublique token="JetonBassi1234567890" />); });
     await attendre(() => expect(q('inv-pub-inviteur')).toBeTruthy());
     expect(q('inv-pub-inviteur').textContent).toBe('Bassi t\'invite à Afroboost Silent');
-    expect(q('inv-pub-groupe').textContent).toContain('Viens avec tes amis');
+    expect(q('inv-pub-groupe')).toBeNull();
     expect(document.body.textContent).not.toMatch(/places restantes|plus que \d+ places|50 places/i);
   });
   test('essai : en-tête inchangé', async () => {

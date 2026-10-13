@@ -19,13 +19,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import SvgIcon from './SvgIcon';
 import { suivreInvitation } from '../utils/invitationSuivi';
-import AccesMembreEvenement from './AccesMembreEvenement'; // V610b
+import { DemandeLienMembre } from './AccesMembreEvenement'; // V610b / V618L : une seule étape
 import AfroboostAudioPlayer from './AfroboostAudioPlayer'; // V610g
 import InviterMesAmis from './InviterMesAmis'; // V610i : après réservation confirmée
 import { attributionActuelle, invitationEnregistrer } from '../utils/attribution';
 import { lireSession, urlDeLaSession } from '../utils/espaceSession';
 import { memoriserParticipation, lireParticipation, retenirIntentionMembre, offreDeLInvitation } from '../utils/participationEvenement'; // V610m
-import { titreLisible } from '../utils/invitationCampagne'; // V610o
+import { titreLisible, villeDuLieu } from '../utils/invitationCampagne'; // V610o / V618L
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
@@ -67,12 +67,26 @@ function prixTexte(n) {
   return `${Number.isInteger(v) ? v : v.toFixed(2)} CHF`;
 }
 
-/** V610i — « mercredi 21 octobre » (sans l'heure : la page n'affiche l'heure qu'une fois). */
-function jourBascule(iso) {
+/** V618L — « mercredi 21 octobre à 18h45 » : le jour ET l'heure exacte de la bascule (heure
+ *  de Zurich, donnée par le serveur). Sans l'heure, « dès le 21 » laissait croire à minuit. */
+export function jourBascule(iso) {
   try {
-    return new Intl.DateTimeFormat('fr-CH', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Zurich' }).format(new Date(iso));
+    const p = new Intl.DateTimeFormat('fr-CH', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Zurich' })
+      .formatToParts(new Date(iso)).reduce((a, x) => Object.assign(a, { [x.type]: x.value }), {});
+    if (!p.day) return '';
+    return `${p.weekday} ${p.day} ${p.month} à ${p.hour}h${p.minute}`;
   } catch (e) { return ''; }
 }
+
+/** V618L — « Je réserve ma place — 25 CHF » : le prix ACTUEL (serveur) dans le bouton. */
+export function libelleCta(d, pa) {
+  const base = String((d && d.cta_label) || '').trim() || 'Je réserve ma place';
+  const prix = pa && Number.isFinite(Number(pa.prix)) && Number(pa.prix) > 0 ? prixTexte(pa.prix) : '';
+  return prix && base.indexOf('CHF') < 0 ? `${base} — ${prix}` : base;
+}
+
+/** V618L — la promesse en une phrase, quand l'invitation n'a pas d'accroche à elle. */
+export const PROMESSE_EVENEMENT = '1 heure de cardio-danse afro au casque, accessible à tous.';
 
 /** « 21 octobre à 18h45 » — les conditions de prix, dans « Lire plus ». */
 function finPalier(iso) {
@@ -193,13 +207,24 @@ function PlaceEvenement({ titre, d }) {
   return (
     <div data-testid="inv-pub-confirmation-evenement" style={{ margin: '0 0 8px' }}>
       <p style={{ margin: '0 0 6px', fontWeight: 800, fontSize: '16px' }}>{titre}</p>
+      {/* V618L : « Mercredi 28 octobre · 18h45 », puis la ville — deux lignes, rien de plus. */}
       <div data-testid="inv-pub-confirmation-quand" style={{ display: 'grid', gap: '4px', justifyContent: 'center', fontSize: '14.5px', color: 'rgba(255,255,255,0.85)' }}>
-        {x.date_label ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><SvgIcon name="calendar" size={15} /> {maj(x.date_label)}</span> : null}
-        {x.time_label ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><SvgIcon name="clock" size={15} /> {x.time_label}</span> : null}
-        {x.lieu ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><SvgIcon name="mapPin" size={15} /> {x.lieu}</span> : null}
+        {x.date_label || x.time_label ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><SvgIcon name="calendar" size={15} />
+            {[x.date_label ? maj(x.date_label) : '', String(x.time_label || '').replace(/^(\d{1,2}):(\d{2})$/, '$1h$2')].filter(Boolean).join(' · ')}</span>
+        ) : null}
+        {x.lieu ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><SvgIcon name="mapPin" size={15} /> {villeDuLieu(x.lieu) || x.lieu}</span> : null}
       </div>
     </div>
   );
+}
+
+/** V618L — « Voir ma réservation » : l'espace de CET appareil (session ouverte), sur « Mes
+ *  prochaines séances ». Sans session : pas de bouton (l'e-mail de confirmation fait foi). */
+export function voirReservationEspace() {
+  const cible = urlDeLaSession(lireSession());
+  if (!cible) return undefined;
+  return () => { window.location.href = `${cible.split('#')[0]}#mes-seances`; };
 }
 
 /** V610m — revenir à la page de l'invitation (ex. réserver pour quelqu'un d'autre). */
@@ -220,9 +245,9 @@ export function DejaParticipant({ d, relais, onIgnorer }) {
       <span style={{ display: 'inline-flex', width: 56, height: 56, borderRadius: 999, alignItems: 'center', justifyContent: 'center', background: rgbaP(0.2), color: PRIMAIRE, marginBottom: 10 }}>
         <SvgIcon name="check" size={28} />
       </span>
-      <h1 data-testid="inv-pub-place-reservee" style={{ margin: '0 0 8px', fontSize: '26px' }}>Tu participes à cet événement</h1>
+      <h1 data-testid="inv-pub-place-reservee" style={{ margin: '0 0 8px', fontSize: '26px' }}>Ta place est déjà réservée</h1>
       <PlaceEvenement titre={titre} d={d} />
-      <InviterMesAmis relaisInitial={relais} />
+      <InviterMesAmis relaisInitial={relais} voirReservation={voirReservationEspace()} />
       <LienInvitation onClick={onIgnorer} />
     </div>
   );
@@ -283,10 +308,10 @@ export function ConfirmationReservation({ cs, d, jeton, participe = false, onIgn
           <span style={{ display: 'inline-flex', width: 56, height: 56, borderRadius: 999, alignItems: 'center', justifyContent: 'center', background: rgbaP(0.2), color: PRIMAIRE, marginBottom: 10 }}>
             <SvgIcon name="check" size={28} />
           </span>
-          <h1 data-testid="inv-pub-place-reservee" style={{ margin: '0 0 8px', fontSize: '26px' }}>{participe ? 'Tu participes à cet événement' : 'Ta place est réservée !'}</h1>
+          <h1 data-testid="inv-pub-place-reservee" style={{ margin: '0 0 8px', fontSize: '26px' }}>{participe ? 'Ta place est déjà réservée' : 'Ta place est réservée !'}</h1>
           <PlaceEvenement titre={titre} d={d} />
           {participe ? null : <p style={{ margin: '0 0 6px', color: 'rgba(255,255,255,0.65)', fontSize: '13.5px' }}>Ton e-mail de confirmation arrive.</p>}
-          <InviterMesAmis relaisInitial={etat.relais} autoLecture={!participe} impactCs={cs} />
+          <InviterMesAmis relaisInitial={etat.relais} autoLecture={!participe} impactCs={cs} voirReservation={voirReservationEspace()} />
           {participe && typeof onIgnorer === 'function' ? <LienInvitation onClick={onIgnorer} /> : null}
         </div>
       ) : (
@@ -330,6 +355,7 @@ export default function InvitationPublique({ token, apercu }) {
   const [lirePlus, setLirePlus] = useState(false);
   const [envoi, setEnvoi] = useState({ cours: false, erreur: '' });
   const membreRef = useRef(null);
+  const [membreOuvert, setMembreOuvert] = useState(false);   // V618L : l'étape e-mail, sous le bouton
   const retour = enApercu ? null : retourPaiement(typeof window !== 'undefined' ? window.location.search : '');
   // V610m : participation déjà connue SUR CET APPAREIL (jamais pendant un retour de paiement).
   const [participation] = useState(() => (enApercu || retour ? null : lireParticipation(token)));
@@ -442,7 +468,7 @@ export default function InvitationPublique({ token, apercu }) {
     retenirIntentionMembre(offreDeLInvitation(d), token);
     const cible = urlDeLaSession(lireSession());
     if (cible) { window.location.href = cible; return; }
-    setLirePlus(true);
+    setMembreOuvert(true);
     setTimeout(() => { try { membreRef.current && membreRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { /* ignore */ } }, 60);
   };
   const paliers = pa && pa.paliers && pa.paliers.length > 1 ? pa.paliers : null;
@@ -453,7 +479,7 @@ export default function InvitationPublique({ token, apercu }) {
 
   return (
     <div style={cadre} data-testid="inv-pub">
-      <main style={{ maxWidth: COLONNE, margin: '0 auto', padding: '16px 16px 120px', boxSizing: 'border-box' }}>
+      <main style={{ maxWidth: COLONNE, margin: '0 auto', padding: type === 'event_paid' ? '16px 16px 40px' : '16px 16px 120px', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
           {photo ? <img src={photo} alt="" width="40" height="40" style={{ width: '40px', height: '40px', borderRadius: '999px', objectFit: 'cover', border: `2px solid ${PRIMAIRE}` }} />
             : <span style={{ width: '40px', height: '40px', borderRadius: '999px', background: rgbaP(0.25), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: PRIMAIRE }}><SvgIcon name="user" size={18} /></span>}
@@ -481,7 +507,9 @@ export default function InvitationPublique({ token, apercu }) {
         ) : null)}
 
         <h1 data-testid="inv-pub-titre" style={{ fontSize: '25px', lineHeight: 1.2, margin: '0 0 6px' }}>{titre}</h1>
-        {d.subtitle ? <p data-testid="inv-pub-accroche" style={{ color: 'rgba(255,255,255,0.78)', margin: '0 0 12px', fontSize: '15px' }}>{d.subtitle}</p> : null}
+        {d.subtitle || type === 'event_paid' || type === 'event_free' ? (
+          <p data-testid="inv-pub-accroche" style={{ color: 'rgba(255,255,255,0.82)', margin: '0 0 12px', fontSize: '15px' }}>{d.subtitle || PROMESSE_EVENEMENT}</p>
+        ) : null}
         {type === 'trial' ? (
           <p data-testid="inv-pub-pitch" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'rgba(255,255,255,0.85)', margin: '0 0 12px', fontSize: '15px' }}>
             <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="headphones" size={18} /></span>
@@ -511,17 +539,8 @@ export default function InvitationPublique({ token, apercu }) {
               <span data-testid="inv-pub-prix-actif" style={{ fontSize: '28px', fontWeight: 800 }}>{prixTexte(pa.prix)}</span>
               {pa.palier !== 'regular' ? <span style={{ fontSize: '14px', color: PRIMAIRE, fontWeight: 700 }}>{pa.libelle}</span> : null}
             </div>
-            {paliers ? (
-              <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
-                {paliers.map((p) => (
-                  <span key={p.palier} data-testid={`inv-pub-palier-${p.palier}`} data-actif={p.actif ? '1' : '0'}
-                        style={{ padding: '4px 10px', borderRadius: 999, fontSize: '12.5px', opacity: p.actif ? 1 : 0.6,
-                          background: p.actif ? rgbaP(0.22) : 'rgba(255,255,255,0.06)', border: p.actif ? `1px solid ${PRIMAIRE}` : '1px solid transparent' }}>
-                    {p.libelle} {prixTexte(p.prix)}
-                  </span>
-                ))}
-              </div>
-            ) : null}
+            {/* V618L : UN prix — l'actuel. Les trois paliers et leurs dates sont dans « Lire plus » ;
+                « 50 PLACES » n'apparaît que pour une capacité RÉELLE (le serveur décide). */}
             {d.message_places ? (
               <p data-testid="inv-pub-places" style={{ margin: '8px 0 0', fontSize: '14px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="fire" size={16} /></span> {d.message_places}
@@ -535,16 +554,39 @@ export default function InvitationPublique({ token, apercu }) {
           </div>
         ) : null}
 
-        {type === 'event_paid' && d.gratuit_membres ? (
-          <button type="button" data-testid="inv-pub-membre-compact" onClick={surMembre}
-                  style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '10px 0', margin: '0 0 6px', background: 'none', border: 'none',
-                    color: 'rgba(255,255,255,0.9)', fontSize: '14px', cursor: 'pointer', textAlign: 'left' }}>
-            <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="heart" size={16} /></span>
-            <span>Membre Afroboost 8 mois ? <strong style={{ color: PRIMAIRE }}>Réserve gratuitement</strong></span>
-          </button>
+        {type === 'event_paid' ? (
+          // V618L : le bouton de réservation À SA PLACE (après le prix), avec le prix dedans.
+          <div style={{ margin: '4px 0 14px' }}>
+            {envoi.erreur ? (
+              <p data-testid="inv-pub-cta-erreur" role="alert" style={{ margin: '0 0 8px', fontSize: '13.5px', color: 'rgba(255,190,180,1)', textAlign: 'center' }}>{envoi.erreur}</p>
+            ) : null}
+            <button type="button" onClick={surCta} data-testid="inv-pub-cta" disabled={envoi.cours}
+                    style={{ display: 'block', width: '100%', minHeight: '54px', borderRadius: '999px', border: 'none',
+                      background: PRIMAIRE, color: 'rgba(255,255,255,1)', fontSize: '17px', fontWeight: 800, cursor: 'pointer', opacity: envoi.cours ? 0.75 : 1 }}>
+              {envoi.cours ? 'Ouverture du paiement…' : libelleCta(d, pa)}
+            </button>
+          </div>
         ) : null}
 
-        {(d.description || (type === 'event_paid' && (pa || d.gratuit_membres))) ? (
+        {type === 'event_paid' && d.gratuit_membres ? (
+          <div ref={membreRef} data-testid="inv-pub-gratuit-membres" style={{ margin: '0 0 10px' }}>
+            <button type="button" data-testid="inv-pub-membre-compact" onClick={surMembre} aria-expanded={membreOuvert}
+                    style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '12px 14px', borderRadius: 14, background: rgbaP(0.08),
+                      border: `1px solid ${rgbaP(0.35)}`, color: 'rgba(255,255,255,0.92)', fontSize: '14.5px', cursor: 'pointer', textAlign: 'left', flexWrap: 'wrap' }}>
+              <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="heart" size={16} /></span>
+              <span>Membre Afroboost 8 mois ?</span>
+              <strong style={{ color: PRIMAIRE }}>Réserver ma place offerte</strong>
+            </button>
+            {membreOuvert ? (
+              <div style={{ marginTop: 8 }}>
+                <DemandeLienMembre inerte={enApercu} avantEnvoi={() => retenirIntentionMembre(offreDeLInvitation(d), token)}
+                                   offreVisee={offreDeLInvitation(d)} jetonInvitation={enApercu ? '' : token} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {(d.description || (type === 'event_paid' && (pa || d.message || audio))) ? (
           <LirePlus ouvert={lirePlus} setOuvert={setLirePlus}>
             {d.description ? (
               <Rubrique titre="À propos" testid="inv-pub-a-propos">
@@ -557,40 +599,35 @@ export default function InvitationPublique({ token, apercu }) {
                 {lignePaiement ? ` (${lignePaiement})` : ''}. Les ventes ferment au début de l'événement.
               </Rubrique>
             ) : null}
-            {type === 'event_paid' && d.gratuit_membres ? (
-              /* V610b : bloc IDENTIQUE pour tous — aucune recherche d'e-mail ; la gratuité se
-                 prend dans l'espace membre authentifié et ne se transmet jamais par un lien. */
-              <div ref={membreRef} data-testid="inv-pub-gratuit-membres"><AccesMembreEvenement inerte={enApercu} libelle="Je suis membre" avantOuverture={() => retenirIntentionMembre(offreDeLInvitation(d), token)}
-                                    offreVisee={offreDeLInvitation(d)} jetonInvitation={enApercu ? '' : token} /></div>
+            {type === 'event_paid' && d.message ? (
+              <Rubrique titre="Le mot du coach" testid="inv-pub-mot">
+                <span data-testid="inv-pub-message" style={{ whiteSpace: 'pre-line' }}>{d.message}</span>
+              </Rubrique>
             ) : null}
+            {type === 'event_paid' && audio ? <div style={{ margin: '0 0 14px' }}><MotAudio url={audio} prenom={prenom} inerte={enApercu} /></div> : null}
           </LirePlus>
         ) : null}
 
-        {type === 'event_paid' || type === 'event_free' ? (
-          <p data-testid="inv-pub-groupe" style={{ margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, color: 'rgba(255,255,255,0.92)' }}>
-            <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="users" size={18} /></span> Viens avec tes amis
-          </p>
-        ) : null}
-        {d.message ? (
+        {d.message && type !== 'event_paid' ? (
           <p data-testid="inv-pub-message" style={{ margin: '0 0 14px', padding: '12px 14px', borderRadius: '14px', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.88)', fontSize: '15px', whiteSpace: 'pre-line' }}>
             {d.message}
           </p>
         ) : null}
         {/* V610m : l'ESSAI GRATUIT fait entendre son message APRÈS « Valider ma séance »
             (« Ton essai est prêt »), jamais sur cette première page. */}
-        {audio && type !== 'trial' ? <div style={{ margin: '0 0 14px' }}><MotAudio url={audio} prenom={prenom} inerte={enApercu} /></div> : null}
+        {audio && type !== 'trial' && type !== 'event_paid' ? <div style={{ margin: '0 0 14px' }}><MotAudio url={audio} prenom={prenom} inerte={enApercu} /></div> : null}
       </main>
 
-      <div style={{ position: enApercu ? 'sticky' : 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 16px calc(12px + env(safe-area-inset-bottom, 0px))', background: 'linear-gradient(180deg, rgba(8,4,12,0) 0%, rgba(8,4,12,0.95) 40%)' }}>
+      {type === 'event_paid' ? null : <div style={{ position: enApercu ? 'sticky' : 'fixed', left: 0, right: 0, bottom: 0, padding: '12px 16px calc(12px + env(safe-area-inset-bottom, 0px))', background: 'linear-gradient(180deg, rgba(8,4,12,0) 0%, rgba(8,4,12,0.95) 40%)' }}>
         {envoi.erreur ? (
           <p data-testid="inv-pub-cta-erreur" role="alert" style={{ maxWidth: COLONNE_INTERIEURE, margin: '0 auto 8px', fontSize: '13.5px', color: 'rgba(255,190,180,1)', textAlign: 'center' }}>{envoi.erreur}</p>
         ) : null}
         <button type="button" onClick={surCta} data-testid="inv-pub-cta" disabled={envoi.cours}
                 style={{ display: 'block', width: '100%', maxWidth: COLONNE_INTERIEURE, margin: '0 auto', minHeight: '52px', borderRadius: '999px', border: 'none',
                   background: PRIMAIRE, color: 'rgba(255,255,255,1)', fontSize: '17px', fontWeight: 800, cursor: 'pointer', opacity: envoi.cours ? 0.75 : 1 }}>
-          {envoi.cours ? 'Ouverture du paiement…' : (String(d.cta_label || '').trim() || (type === 'event_paid' ? 'Je réserve ma place' : 'Continuer'))}
+          {envoi.cours ? 'Ouverture du paiement…' : (String(d.cta_label || '').trim() || 'Continuer')}
         </button>
-      </div>
+      </div>}
     </div>
   );
 }

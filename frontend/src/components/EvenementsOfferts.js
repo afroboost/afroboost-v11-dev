@@ -13,6 +13,7 @@ import SvgIcon from './SvgIcon';
 import InviterMesAmis from './InviterMesAmis';
 import { invitationActuelle } from '../utils/attribution';
 import { lireIntentionMembre, oublierIntentionMembre, memoriserParticipation } from '../utils/participationEvenement'; // V610m
+import { villeDuLieu } from '../utils/invitationCampagne'; // V618L
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
@@ -28,6 +29,21 @@ export function quandEvenement(iso) {
   return `${JOURS[d.getDay()]} ${d.getDate()} ${MOIS[d.getMonth()]} · ${Number(m[4])}h${m[5]}`;
 }
 
+/** V618L — « Mercredi 28 octobre · 18h45 » (majuscule : c'est une ligne à part entière). */
+export function quandEvenementLigne(iso) {
+  const q = quandEvenement(iso);
+  return q ? q.charAt(0).toUpperCase() + q.slice(1) : '';
+}
+
+/** V618L — « Voir ma réservation » : l'espace rechargé, ouvert sur « Mes prochaines séances ». */
+export function voirMaReservation() {
+  try {
+    window.history.scrollRestoration = 'manual';   // pas de retour à l'ancienne position
+    window.location.hash = 'mes-seances';
+    window.location.reload();
+  } catch (e) { /* ignore */ }
+}
+
 function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jetonVise = '', jetonEspace = '' }) {
   const [etat, setEtat] = useState(evt.deja_reserve ? 'reservee' : 'libre');
   const [relais, setRelais] = useState(null);
@@ -35,9 +51,19 @@ function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jetonVise =
   const [vientDeReserver, setVientDeReserver] = useState(false);
   const carteRef = useRef(null);
   // V610m : venu de « Réserve gratuitement » sur l'invitation -> CETTE carte, à l'écran.
+  // V618L (Playwright, mobile 390) : un défilement animé unique finissait AU-DELÀ de la carte
+  // (la page se met encore en page au-dessus pendant l'animation). On place la carte sans
+  // animation, puis on corrige deux fois si elle a glissé — jamais en boucle.
   useEffect(() => {
-    if (!vise || !carteRef.current) return;
-    try { carteRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* ignore */ }
+    if (!vise) return undefined;
+    const placer = () => {
+      const el = carteRef.current;
+      if (!el) return;
+      const h = el.getBoundingClientRect().top;
+      if (h < 0 || h > window.innerHeight * 0.5) { try { el.scrollIntoView({ behavior: 'auto', block: 'start' }); } catch (e) { /* ignore */ } }
+    };
+    const t = [setTimeout(placer, 50), setTimeout(placer, 600), setTimeout(placer, 1500)];
+    return () => t.forEach(clearTimeout);
   }, [vise]);
   // V610p : événement visé DÉJÀ réservé -> son lien personnel tout de suite (la route est
   // idempotente : elle rend la réservation et le lien existants, rien n'est recréé).
@@ -76,15 +102,15 @@ function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jetonVise =
   };
 
   return (
-    <div ref={carteRef} data-testid={`evt-offert-${evt.offer_id}`} data-vise={vise ? '1' : '0'} style={{ marginTop: '14px', padding: vise ? '16px 14px' : '14px', borderRadius: '16px',
+    <div ref={carteRef} id={`evt-offert-${evt.offer_id}`} data-testid={`evt-offert-${evt.offer_id}`} data-vise={vise ? '1' : '0'} style={{ marginTop: '14px', padding: vise ? '16px 14px' : '14px', borderRadius: '16px',
       background: rgbaP(vise ? 0.16 : 0.1), border: `${vise ? 2 : 1}px solid ${vise ? PRIMAIRE : rgbaP(0.35)}`, textAlign: 'left', scrollMarginTop: '12px' }}>
       {etat === 'reservee' && (vientDeReserver || vise) ? (
         <div data-testid="evt-offert-confirme" style={{ textAlign: 'center', marginBottom: '10px' }}>
           <span style={{ display: 'inline-flex', width: 48, height: 48, borderRadius: 999, alignItems: 'center', justifyContent: 'center', background: rgbaP(0.22), color: PRIMAIRE, marginBottom: 6 }}>
             <SvgIcon name="check" size={24} />
           </span>
-          <div style={{ fontSize: '22px', fontWeight: 800, color: 'rgba(255,255,255,0.97)' }}>
-            {vientDeReserver ? 'Ta place est réservée !' : 'Tu participes à cet événement'}
+          <div data-testid="evt-offert-confirme-titre" style={{ fontSize: '22px', fontWeight: 800, color: 'rgba(255,255,255,0.97)' }}>
+            {vientDeReserver ? 'Ta place est réservée !' : 'Ta place est déjà réservée'}
           </div>
         </div>
       ) : null}
@@ -92,19 +118,25 @@ function CarteEvenement({ evt, accessCode, memberSlug, vise = false, jetonVise =
         <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="gift" size={18} /></span>
         {evt.titre}
       </div>
-      <p style={{ margin: '6px 0 2px', fontSize: '13.5px', color: 'rgba(255,255,255,0.8)' }}>
-        {quandEvenement(evt.datetime)}{evt.lieu ? ` · ${evt.lieu}` : ''}
-      </p>
-      <p data-testid="evt-offert-tarif" style={{ margin: '0 0 12px', fontSize: '14px', fontWeight: 700, color: PRIMAIRE }}>
-        Ton tarif membre : OFFERT
-      </p>
+      {/* V618L : deux lignes courtes — la date, puis la ville (l'adresse complète est sur la page). */}
+      <p data-testid="evt-offert-quand" style={{ margin: '6px 0 0', fontSize: '14px', color: 'rgba(255,255,255,0.88)' }}>{quandEvenementLigne(evt.datetime)}</p>
+      {evt.lieu ? <p data-testid="evt-offert-ville" style={{ margin: '2px 0 0', fontSize: '14px', color: 'rgba(255,255,255,0.75)' }}>{villeDuLieu(evt.lieu) || evt.lieu}</p> : null}
+      {etat !== 'reservee' ? (
+        <p data-testid="evt-offert-tarif" style={{ margin: '10px 0 12px', fontSize: '14.5px', fontWeight: 700, color: PRIMAIRE }}>
+          Ta place est offerte avec ton abonnement
+        </p>
+      ) : <div style={{ height: 6 }} />}
       {etat === 'reservee' ? (
         <>
-          <p data-testid="evt-offert-reservee" style={{ margin: '0 0 8px', fontSize: '14px', color: 'rgba(255,255,255,0.92)', fontWeight: 600 }}>
-            Ta place est réservée.
-          </p>
+          {/* V618L : jamais « Ta place est réservée » deux fois — le titre du haut suffit ; une
+              place prise HORS de ce parcours (carte non visée) le dit en une ligne. */}
+          {!(vientDeReserver || vise) ? (
+            <p data-testid="evt-offert-reservee" style={{ margin: '0 0 8px', fontSize: '14px', color: 'rgba(255,255,255,0.92)', fontWeight: 600 }}>
+              Ta place est déjà réservée.
+            </p>
+          ) : null}
           {relais ? (
-            <InviterMesAmis relaisInitial={relais} autoLecture={vientDeReserver}
+            <InviterMesAmis relaisInitial={relais} autoLecture={vientDeReserver} voirReservation={voirMaReservation}
                             impactEspace={jetonEspace ? { code: accessCode, token: jetonEspace, slug: memberSlug || '' } : null} />
           ) : (
             <button type="button" data-testid="evt-offert-lien" onClick={reserver}

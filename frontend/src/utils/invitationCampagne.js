@@ -584,7 +584,9 @@ export function texteAmbassadeur(dto, { nature, messagePlaces } = {}) {
   const heure = String(d.time_label || '').replace(/^(\d{1,2}):(\d{2})$/, '$1h$2');
   const quand = [d.date_label ? _maj(d.date_label) : '', heure].filter(Boolean).join(' · ');
   const ville = villeDuLieu(d.lieu);
-  const places = String(messagePlaces === undefined || messagePlaces === null ? '50 PLACES' : messagePlaces).trim();
+  // V618L : plus de « 50 PLACES » par défaut — la ligne n'existe que si le serveur l'envoie
+  // (événement à capacité RÉELLE). Un faux compteur ne part plus dans WhatsApp.
+  const places = String(messagePlaces === undefined || messagePlaces === null ? '' : messagePlaces).trim();
   const pa = d.prix_actif || null;
   const plusTot = pa && pa.prochain ? 'Plus tu réserves tôt, moins c’est cher.' : '';
   const infos = [quand ? `📅 ${quand}` : '', ville ? `📍 ${ville}` : ''].filter(Boolean);

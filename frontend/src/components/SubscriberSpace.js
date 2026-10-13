@@ -48,6 +48,7 @@ import { ETAPES_PARCOURS_PARTENAIRE } from "./ParcoursPartenaire";
 import "./parrainage/wizardFilleul.css";
 import InviterMesAmis from "./InviterMesAmis"; // V607
 import EvenementsOfferts from "./EvenementsOfferts"; // V610 : place offerte (membres 8 mois)
+import { lienVoirEvenement } from "../utils/voirEvenement"; // V618L
 import MesEvenementsInvitation from "./MesEvenementsInvitation"; // V610m : ma réservation + Inviter mes amis
 import MonImpactAfroboost from "./MonImpactAfroboost"; // V610o : Boosts + paliers + Partager et inviter
 // N2 : la MEME lecture de l'heure que le serveur (`n2_instant_reel`). Sans
@@ -145,6 +146,7 @@ function formatOccurrence(input) {
 const b3s1LireJeton = sessionPourEspace;
 const b3s1EcrireJeton = ecrireSession;
 const b3s1OublierJeton = oublierSession;
+
 
 export default function SubscriberSpace({ accessCode: propCode }) {
   // V594 : arrivée depuis le parcours Partenaire -> on montre où on en est (3e étape).
@@ -298,6 +300,28 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
   // V202: Ref pour scroll fluide vers la section réservation
   const reserveSectionRef = useRef(null);
+
+  // V618L — « Voir ma réservation » recharge l'espace sur `#mes-seances` : on y descend dès que
+  // la section existe. Effet de MONTAGE (aucune dépendance) : un second chargement des données
+  // ne l'interrompt pas (mesuré : un effet lié à `loading` était annulé au 2e chargement).
+  // Le navigateur peut remettre l'ancienne position (mobile 390) : on place puis on VÉRIFIE
+  // ~3 s. Borné à 40 essais (~16 s) — jamais de boucle d'appels, aucun appel réseau.
+  useEffect(() => {
+    if (typeof window === "undefined" || window.location.hash !== "#mes-seances") return undefined;
+    try { window.history.scrollRestoration = "manual"; } catch (e) { /* ignore */ }
+    let essais = 0, bien = 0;
+    const t = setInterval(() => {
+      essais += 1;
+      const el = document.getElementById("mes-seances");
+      if (el) {
+        const h = el.getBoundingClientRect().top;
+        if (h < 0 || h > window.innerHeight * 0.5) { bien = 0; try { el.scrollIntoView({ behavior: "auto", block: "start" }); } catch (e) { /* ignore */ } }
+        else bien += 1;
+      }
+      if (bien >= 6 || essais >= 40) clearInterval(t);
+    }, 400);
+    return () => clearInterval(t);
+  }, []);
 
   const loadSpace = useCallback(async () => {
     if (!accessCode) {
@@ -1802,7 +1826,12 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                               : "Événement — billet séparé"}
                           </span>
                           <a
-                            href={occ.offer_id ? `/?offre=${encodeURIComponent(occ.offer_id)}` : "/"}
+                            href={lienVoirEvenement(occ, data)}
+                            onClick={(e) => {
+                              // V618L : place offerte -> SA carte, ici même (jamais l'accueil).
+                              const carte = occ.offer_id ? document.querySelector(`[data-testid="evt-offert-${occ.offer_id}"]`) : null;
+                              if (carte) { e.preventDefault(); try { carte.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (x) { /* ignore */ } }
+                            }}
                             className="text-xs font-semibold px-4 py-2 rounded-lg"
                             style={{
                               background: "rgba(255,255,255,0.10)",
@@ -2068,6 +2097,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             className="rounded-2xl p-5"
             style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
             data-testid="subscriber-space-upcoming"
+            id="mes-seances"
           >
             <h2 className="text-base font-semibold mb-3">{upcomingReservations.length > 1 ? "Mes prochaines séances" : "Prochaine séance"}</h2>
             <ul className="space-y-2">

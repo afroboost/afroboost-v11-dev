@@ -60,7 +60,7 @@ async function lienParInscription(jeton, code, jetonEspace, slug) {
 }
 
 export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug, relaisInitial, evenement, apercuDetails, autoLecture,
-  impactCs, impactEspace }) {
+  impactCs, impactEspace, voirReservation }) {
   // V610e : `apercuDetails` (éditeur coach) — le bloc tel que l'invité le verra après sa
   // réservation, SANS appel réseau, sans partage ni suivi (boutons inertes).
   const enApercu = !!apercuDetails;
@@ -171,17 +171,27 @@ export default function InviterMesAmis({ sessionId, codeAcces, jetonEspace, slug
         ) : null}
         {/* V610o : UN bouton principal « Partager et inviter » -> WhatsApp, SMS, Copier, Autrement. */}
         <PartagerInviter jeton={relais.jeton} lien={relais.share_url} inerte={enApercu}
-                         texte={texteAmbassadeur(dto, { nature: relais.nature, messagePlaces: impact ? impact.message_places : (details && details.message_places) })}
+                         texte={texteAmbassadeur(dto, { nature: relais.nature, messagePlaces: details ? details.message_places : null })}
                          contexte={details && details.type === 'event_paid' ? {
                            titre: (titreLisible(details.title || details.offre_nom || '').split(/\s+—\s+/)[0]) || 'cet événement',
                            quand: [details.date_label ? details.date_label.charAt(0).toUpperCase() + details.date_label.slice(1) : '',
                              String(details.time_label || '').replace(/^(\d{1,2}):(\d{2})$/, '$1h$2')].filter(Boolean).join(' · '),
                            ville: villeDuLieu(details.lieu),
                            prix: details.prix_actif && Number.isFinite(Number(details.prix_actif.prix)) ? libellePrix(details.prix_actif.prix) : '',
-                           places: impact && impact.message_places !== undefined ? impact.message_places : (details.message_places !== undefined ? details.message_places : '50 PLACES'),
+                           // V618L : « 50 PLACES » seulement si l'événement a une VRAIE capacité (le
+                           // serveur n'envoie le message que dans ce cas) — jamais un faux compteur.
+                           places: details.message_places || '',
                            plusTot: !!(details.prix_actif && details.prix_actif.prochain),
                          } : null} />
         {impact ? <ImpactAfroboost impact={impact} compact testid="impact-afroboost-confirmation" /> : null}
+        {typeof voirReservation === 'function' ? (
+          <button type="button" data-testid="voir-ma-reservation" onClick={enApercu ? undefined : voirReservation}
+                  style={{ width: '100%', minHeight: '44px', marginTop: '10px', borderRadius: '12px', background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.14)', color: 'rgba(255,255,255,0.92)', fontWeight: 600, fontSize: '14px', cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+            <SvgIcon name="calendar" size={16} /> Voir ma réservation
+          </button>
+        ) : null}
       </div>
     );
   }

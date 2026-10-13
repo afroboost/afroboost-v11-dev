@@ -74,6 +74,7 @@ from api.routes.bot_whatsapp_routes import bot_router, init_bot_db, _lien_offre 
 from api.routes.membership_routes import membership_router, init_membership_db
 # V223: Calcul prix progressif (module pur, sans accès DB)
 from api.pricing import compute_active_price  # V223
+from api.routes import reference_evenement as _v618l_ref  # V618L
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -2432,6 +2433,12 @@ async def update_course(course_id: str, course_update: dict, request: Request):
 
     await db.courses.update_one({"id": course_id}, {"$set": update_data})
     updated = await db.courses.find_one({"id": course_id}, {"_id": 0})
+    # V618L : la date de l'événement a bougé -> les paliers de son offre suivent.
+    if "date" in update_data or "time" in update_data:
+        try:
+            await _v618l_ref.suivre_le_cours(db, updated)
+        except Exception as _e618l:  # noqa: BLE001
+            logger.warning("[V618L] paliers non réalignés (%s)", type(_e618l).__name__)
     return updated
 
 @api_router.put("/courses/{course_id}/archive")
@@ -3137,6 +3144,8 @@ async def create_offer(offer: OfferCreate, request: Request):
         offer_data["linked_course_ids"] = [cid for cid in linked_ids if cid in valid_ids]
         if len(offer_data["linked_course_ids"]) != len(linked_ids):
             logger.warning(f"[OFFER] v159: Filtré {len(linked_ids) - len(offer_data['linked_course_ids'])} cours non-autorisés (isolation coach_id)")
+    # V618L : offre ÉVÉNEMENT à un seul cours daté -> ses paliers suivent la date du cours.
+    offer_data.update(await _v618l_ref.champs_alignes(db, offer_data))
     offer_obj = Offer(**offer_data)
     await db.offers.insert_one(offer_obj.model_dump())
     return offer_obj
@@ -3274,6 +3283,9 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
         update_data["linked_course_ids"] = existing_linked
         logger.info(f"[V254] linked_course_ids preserve (body vide) offre {offer_id}: {existing_linked}")
     # else: aucun lien entrant ni existant -> reste []
+    # V618L : offre ÉVÉNEMENT à un seul cours daté -> la date des paliers = la date du cours
+    # (jamais une seconde date saisie à la main — incident du 28 novembre au lieu du 28 octobre).
+    update_data.update(await _v618l_ref.champs_alignes(db, update_data))
     await db.offers.update_one({"id": offer_id}, {"$set": update_data})
     updated = await db.offers.find_one({"id": offer_id}, {"_id": 0})
     return updated
@@ -17942,6 +17954,23 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
         occ["type_acces"] = "INCLUDED" if _inclus else "EVENT_SEPARATE"
         if not _inclus:
             occ["offer_id"] = _v610_billets.get(occ.get("course_id")) or _v426_offres_evt.get(occ.get("course_id"))
+    # V618L — « Voir l'événement » ouvrait `/?offre=<id>` : la vitrine n'a pas de carte pour
+    # une offre événement -> l'accueil. Le serveur donne la VRAIE page de l'événement :
+    # l'invitation active du coach pour cette offre (`/i/<jeton>`).
+    try:
+        _v618l_ids = sorted({o.get("offer_id") for o in occurrences if o.get("offer_id") and not o.get("inclus_abonnement")})
+        if _v618l_ids:
+            _v618l_liens = {}
+            async for _cp in db.referral_campaigns.find(
+                    {"offer_id": {"$in": _v618l_ids}, "status": "active", "type": {"$in": ["event_paid", "event_free"]},
+                     "share_token": {"$type": "string"}},
+                    {"_id": 0, "offer_id": 1, "share_token": 1}).limit(50):
+                _v618l_liens.setdefault(_cp["offer_id"], "/i/" + _cp["share_token"])
+            for occ in occurrences:
+                if occ.get("offer_id") in _v618l_liens and not occ.get("inclus_abonnement"):
+                    occ["lien_evenement"] = _v618l_liens[occ["offer_id"]]
+    except Exception as _e618l:  # noqa: BLE001
+        logger.warning("[V618L] lien d'événement illisible (%s)", type(_e618l).__name__)
 
     # V208c: Historique de réservations — par member_slug pour les groupes, par email sinon
     import re as _re_mod

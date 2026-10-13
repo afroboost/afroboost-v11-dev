@@ -123,7 +123,7 @@ describe('V610m — événement payant : confirmation puis boule de neige', () =
     global.fetch = jest.fn((url) => (String(url).includes('/relais/session/') ? json({ ...RELAIS_SOPHIE, place_confirmee: true })
       : String(url).includes('/api/invitation/publique/') ? json(SILENT) : json({})));
     await act(async () => { rendre(<InvitationPublique token={JETON} />); });
-    await attendre(() => expect(q('inv-pub-place-reservee').textContent).toBe('Tu participes à cet événement'));
+    await attendre(() => expect(q('inv-pub-place-reservee').textContent).toBe('Ta place est déjà réservée'));   // V618L
     expect(q('inv-pub-cta')).toBeNull();
     await attendre(() => expect(q('inviter-partager')).toBeTruthy());
     expect(play).not.toHaveBeenCalled();                                     // pas de relecture automatique au retour
@@ -146,7 +146,7 @@ describe('V610m — événement payant : confirmation puis boule de neige', () =
     memoriserParticipation(JETON, { relais: RELAIS_SOPHIE });
     global.fetch = jest.fn((url) => (String(url).includes('/api/invitation/publique/') ? json(SILENT) : json({})));
     await act(async () => { rendre(<InvitationPublique token={JETON} />); });
-    await attendre(() => expect(q('inv-pub-place-reservee').textContent).toBe('Tu participes à cet événement'));
+    await attendre(() => expect(q('inv-pub-place-reservee').textContent).toBe('Ta place est déjà réservée'));   // V618L
     await attendre(() => expect(q('inviter-lien').textContent).toContain('JetonSophie1234567890'));
     expect(q('inv-pub-cta')).toBeNull();
   });
@@ -173,12 +173,12 @@ describe('V610m — membre 8 mois : directement sur CET événement', () => {
     const cartes = [...document.querySelectorAll('[data-testid^="evt-offert-OFF"]')];
     expect(cartes[0].dataset.testid).toBe('evt-offert-OFF-1');
     expect(cartes[0].dataset.vise).toBe('1');
-    expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+    // V618L : la carte n'est replacée que si elle est HORS de l'écran (jsdom : déjà en haut).
     await act(async () => { cartes[0].querySelector('[data-testid="evt-offert-reserver"]').click(); });
     await attendre(() => expect(q('evt-offert-confirme').textContent).toContain('Ta place est réservée !'));
     expect(String(axios.post.mock.calls[0][0])).toMatch(/\/evenement\/OFF-1\/offert$/);   // 0 CHF, pas de Stripe
     await attendre(() => expect(q('afroboosteur-titre')).toBeTruthy());
-    expect(q('inviter-partager').textContent).toMatch(/Partager et inviter/);
+    expect(q('inviter-partager').textContent).toMatch(/Inviter mes amis/);   // V618L
     await attendre(() => expect(play).toHaveBeenCalledTimes(1));
     expect(lireIntentionMembre()).toBeNull();                                  // intention servie
     expect(lireParticipation(JETON)).toEqual({ relais: { jeton: RELAIS_SOPHIE.jeton, share_url: RELAIS_SOPHIE.share_url } });

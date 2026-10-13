@@ -99,10 +99,20 @@ async def principal():
              "lotb3s1_make_token(" in lien and "_B3S1_COLL_SESSIONS" in lien and '"revoked": False' in lien
              and "_v610p.consommer(" in lien and "status_code=400" in lien)
 
-    # ── page publique : « 50 PLACES » = message ─────────────────────────────
+    # ── page publique : « 50 PLACES » ───────────────────────────────────────
+    # V618L (Bassi, 13/10) : plus de faux compteur. Le message n'apparaît QUE si l'offre a une
+    # capacité RÉELLE (stock ou max_participants > 0) ; sans capacité, aucune ligne de places.
+    _offre = next(d for d in SI._base()["offers"].docs if d.get("id") == T.OFFRE_A_PAYANTE)
+    _avant = (_offre.get("stock"), _offre.get("max_participants"))
+    _offre.update(stock=-1, max_participants=None)
     pub = await SI.invitation_publique(tok)
-    verifier("W-1 événement : message « 50 PLACES » (configuration du coach), aucune capacité",
+    verifier("W-1 événement SANS capacité réelle : aucun « 50 PLACES » (V618L), aucune capacité inventée",
+             not pub.get("message_places") and "places_restantes" not in pub, pub.get("message_places"))
+    _offre.update(max_participants=50)
+    pub = await SI.invitation_publique(tok)
+    verifier("W-1b événement AVEC capacité réelle : le message du coach s'affiche",
              pub.get("message_places") == "50 PLACES" and "places_restantes" not in pub, pub.get("message_places"))
+    _offre.update(stock=_avant[0], max_participants=_avant[1])
     pe = await SI.invitation_publique(essai["share_token"]) if essai.get("status") == "active" else {"message_places": None}
     verifier("W-2 essai gratuit : aucun message de places", not (pe or {}).get("message_places"))
 

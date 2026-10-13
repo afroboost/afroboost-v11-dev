@@ -84,8 +84,9 @@ describe('V610i — page courte, réservation directe', () => {
     expect(texte.match(/28 octobre/g)).toHaveLength(1);
     expect(texte.match(/18:45/g)).toHaveLength(1);
     expect(texte.match(/Valangines/g)).toHaveLength(1);
-    expect(q('inv-pub-membre-compact').textContent).toBe('Membre Afroboost 8 mois ? Réserve gratuitement');
-    expect(q('inv-pub-gratuit-membres')).toBeNull();                   // pas de gros bloc sur la page
+    // V618L : « Membre Afroboost 8 mois ? Réserver ma place offerte » ; l'étape e-mail n'apparaît qu'au clic
+    expect(q('inv-pub-membre-compact').textContent).toMatch(/^Membre Afroboost 8 mois \?\s*Réserver ma place offerte$/);
+    expect(q('membre-lien')).toBeNull();                               // pas de formulaire avant le clic
     expect(q('afroboosteur-titre')).toBeNull();                        // l'audio d'après réservation n'est pas ici
     expect(q('afroboosteur-audio')).toBeNull();
     expect(q('inv-pub-lire-plus').textContent).toMatch(/Lire plus/);
@@ -95,8 +96,8 @@ describe('V610i — page courte, réservation directe', () => {
     expect(plus).toMatch(/Casque fourni/);
     expect(plus).toMatch(/carte ou TWINT/);
     expect(plus).toMatch(/Prévente 25 CHF jusqu'au 21 octobre à 18h45 · Standard 30 CHF jusqu'au 27 octobre à 18h45 · Dernière minute 40 CHF/);
-    expect(q('inv-pub-urgence').textContent).toBe('30 CHF dès le mercredi 21 octobre.');
-    expect(q('inv-pub-gratuit-membres').textContent).toMatch(/Ta place est offerte/);
+    expect(q('inv-pub-urgence').textContent).toBe('30 CHF dès le mercredi 21 octobre à 18h45.');   // V618L : l'heure exacte
+    expect(plus).not.toMatch(/8 mois|Réserver ma place offerte/);       // V618L : le membre n'est PAS répété dans « Lire plus »
     expect(plus).not.toMatch(/28 octobre|18:45|Valangines/);           // rien de ce qui est déjà affiché
     // jeton mémorisé : le membre qui file vers son espace garde son inviteur direct
     expect(JSON.parse(window.localStorage.getItem('af_invitation')).t).toBe('TOKENSILENT12345678');
@@ -115,7 +116,7 @@ describe('V610i — page courte, réservation directe', () => {
     try {
       await act(async () => { rendre(<InvitationPublique token="TOKENSILENT12345678" />); });
       await attendre(() => expect(q('inv-pub-cta')).toBeTruthy());
-      expect(q('inv-pub-cta').textContent).toBe('Je réserve ma place');
+      expect(q('inv-pub-cta').textContent).toBe('Je réserve ma place — 25 CHF');   // V618L : le prix actuel dans le bouton
       await act(async () => { q('inv-pub-cta').click(); });
       await attendre(() => expect(window.location.href).toBe('https://checkout.stripe.com/c/pay/cs_test_abc'));
       const [, opt] = appels.find(([u]) => u.includes('/api/create-checkout-session'));
@@ -171,8 +172,8 @@ describe('V610i — retour de Stripe : le webhook fait foi', () => {
     // V610m : hiérarchie — confirmation, événement (date / heure / lieu), Deviens Afroboosteur, audio, gros bouton
     expect(q('inv-pub-confirmation-evenement').textContent).toContain('AFROBOOST SILENT');
     expect(q('inv-pub-confirmation-quand').textContent).toContain('Mercredi 28 octobre');
-    expect(q('inv-pub-confirmation-quand').textContent).toContain('18:45');
-    expect(q('inv-pub-confirmation-quand').textContent).toContain('Valangines');
+    expect(q('inv-pub-confirmation-quand').textContent).toContain('Mercredi 28 octobre · 18h45');   // V618L : une ligne
+    expect(q('inv-pub-confirmation-quand').textContent).toContain('Neuchâtel');                     // V618L : la ville
     await attendre(() => expect(q('afroboosteur-titre').textContent).toMatch(/Deviens Afroboosteur/));
     expect(q('afroboosteur-audio').autoplay).toBe(false);
     expect(q('afroboosteur-audio').loop).toBe(false);
@@ -180,7 +181,7 @@ describe('V610i — retour de Stripe : le webhook fait foi', () => {
     // la place confirmée est retenue sur CET appareil (rouvrir le lien -> « Tu participes »)
     expect(JSON.parse(window.localStorage.getItem('af_evt_participe_JetonDeBassi1234567'))).toEqual({ cs: 'cs_test_ABCDEF123' });
     play.mockRestore();
-    expect(q('inviter-partager').textContent).toMatch(/Partager et inviter/);
+    expect(q('inviter-partager').textContent).toMatch(/Inviter mes amis/);   // V618L
     expect(document.body.textContent).toMatch(/Copier mon lien/);
   });
 

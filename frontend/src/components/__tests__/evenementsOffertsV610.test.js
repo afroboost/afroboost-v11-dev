@@ -62,16 +62,20 @@ describe('V610 — EvenementsOfferts (espace)', () => {
     expect(r.container.innerHTML).toBe('');
   });
 
-  test('« Ton tarif membre : OFFERT » -> réserve à 0 CHF (route offerte, aucun paiement) -> lien perso', async () => {
+  test('« Ta place est offerte avec ton abonnement » -> réserve à 0 CHF (route offerte, aucun paiement) -> lien perso', async () => {
     window.localStorage.setItem('af_invitation', JSON.stringify({ t: 'JetonInvitation1234', offre: 'OFF1', at: Date.now() }));
     axios.post.mockResolvedValue({ data: { success: true, prix: 0, deja_reserve: false,
       reservation: { id: 'R1' }, relais: { jeton: 'JetonSophie123456', share_url: 'https://afroboost.com/i/JetonSophie123456', prenom: 'Sophie', generation: 2 } } });
     global.fetch = jest.fn(() => reponse({ type: 'event_paid', title: 'AFROBOOST SILENT', inviter_display: { prenom: 'Sophie' } }));
     await act(async () => { render(<EvenementsOfferts evenements={[EVT]} accessCode="AFR-M1" memberSlug="" />); });
-    expect(q('evt-offert-tarif').textContent).toBe('Ton tarif membre : OFFERT');
-    expect(document.body.textContent).toMatch(/mercredi 28 octobre · 18h45 · Chem\. des Valangines 97/);
+    expect(q('evt-offert-tarif').textContent).toBe('Ta place est offerte avec ton abonnement');   // V618L
+    // V618L : la date sur une ligne, la VILLE sur la suivante (l'adresse complète est sur la page de l'événement)
+    expect(q('evt-offert-quand').textContent).toBe('Mercredi 28 octobre · 18h45');
+    expect(q('evt-offert-ville').textContent).toBe('Neuchâtel');
     await act(async () => { q('evt-offert-reserver').click(); });
-    await attendre(() => expect(q('evt-offert-reservee')).toBeTruthy());
+    // V618L : la confirmation est le TITRE du haut (« Ta place est réservée ! »), jamais répétée dessous
+    await attendre(() => expect(q('evt-offert-confirme-titre').textContent).toBe('Ta place est réservée !'));
+    expect(q('evt-offert-reservee')).toBeNull();
     const [url, corps] = axios.post.mock.calls[0];
     expect(url).toMatch(/\/api\/subscriber\/space\/AFR-M1\/evenement\/OFF1\/offert$/);
     expect(corps.jeton_invitation).toBe('JetonInvitation1234');
@@ -122,11 +126,12 @@ describe('V610 — page d\'invitation', () => {
           prochain: { palier: 'standard', prix: 30, a_partir_de: '2026-10-21T16:45:00+00:00' } } })
       : reponse({})));
     await act(async () => { render(<InvitationPublique token="T123456789012345678" />); });
-    // V610i : une ligne COMPACTE sur la page ; le bloc complet est dans « Lire plus ».
-    await attendre(() => expect(q('inv-pub-membre-compact').textContent).toBe('Membre Afroboost 8 mois ? Réserve gratuitement'));
-    expect(q('inv-pub-gratuit-membres')).toBeNull();
-    await act(async () => { q('inv-pub-lire-plus').click(); });
-    expect(q('inv-pub-gratuit-membres').textContent).toMatch(/abonnement Afroboost 8 mois actif/);
+    // V618L : une ligne sous le bouton de réservation ; au clic, l'étape e-mail SUR PLACE (pas dans « Lire plus »).
+    await attendre(() => expect(q('inv-pub-membre-compact').textContent).toMatch(/^Membre Afroboost 8 mois \?\s*Réserver ma place offerte$/));
+    expect(q('membre-lien')).toBeNull();
+    await act(async () => { q('inv-pub-membre-compact').click(); });
+    expect(q('membre-lien').textContent).toMatch(/Entre l'adresse e-mail liée à ton abonnement Afroboost\./);
+    expect(q('membre-lien-envoyer').textContent).toBe("Recevoir mon lien d'accès");
     expect(q('inv-pub-prix-actif').textContent).toBe('25 CHF');
     expect(document.body.textContent).not.toMatch(/50 places|places maximum/);
   });
@@ -223,17 +228,18 @@ describe('V610d — « Deviens Afroboosteur » : audio APRÈS réservation, év�
     const ouvert = jest.spyOn(window, 'open').mockImplementation(() => null);
     await act(async () => { render(<InviterMesAmis relaisInitial={RELAIS} />); });
     await attendre(() => expect(q('afroboosteur-titre')).toBeTruthy());
-    expect(q('inviter-partager').textContent).toMatch(/Partager et inviter/);       // V610o
+    expect(q('inviter-partager').textContent).toMatch(/Inviter mes amis/);       // V610o
     await act(async () => { q('inviter-partager').click(); });
     expect(q('inviter-whatsapp').textContent).toMatch(/WhatsApp/);
     await act(async () => { q('inviter-whatsapp').click(); });
     const url = decodeURIComponent(ouvert.mock.calls[0][0]);
     expect(url).toMatch(/wa\.me|whatsapp/);
     expect(url).toMatch(/afroboost\.com\/i\/JetonSophie123456/);
-    // V610o : message de l'AFROBOOSTEUR (billet payé) — « 50 PLACES » marketing, son lien perso
+    // V610o : message de l'AFROBOOSTEUR (billet payé), son lien perso.
+    // V618L : plus de « 50 PLACES » inventé — la ligne n'existe que si le serveur l'envoie (capacité réelle).
     expect(url).toMatch(/🔥 Je deviens Afroboosteur !/);
     expect(url).toMatch(/Je vais à Afroboost Silent — Édition Spéciale 🎧/);
-    expect(url).toMatch(/🔥 50 PLACES/);
+    expect(url).not.toMatch(/50 PLACES/);
     expect(url).not.toMatch(/gratuit/i);
     const suivi = global.fetch.mock.calls.filter((c) => String(c[0]).includes('/api/invitation/suivi'));
     expect(JSON.parse(suivi[suivi.length - 1][1].body).evenement).toBe('partage_whatsapp_declenche');
@@ -252,7 +258,7 @@ describe('V610d — « Deviens Afroboosteur » : audio APRÈS réservation, év�
     expect(a.loop).toBe(false);
     expect(a.autoplay).toBe(false);
     expect(q('afroboosteur-ecouter').textContent).toMatch(/Écouter le message/);
-    expect(q('inviter-partager').textContent).toMatch(/Partager et inviter/);
+    expect(q('inviter-partager').textContent).toMatch(/Inviter mes amis/);
   });
 
   test('V610m — événement PAYANT sans audio configuré : même bloc « Deviens Afroboosteur » (gros bouton), aucun lecteur', async () => {
@@ -260,7 +266,7 @@ describe('V610d — « Deviens Afroboosteur » : audio APRÈS réservation, év�
     await act(async () => { render(<InviterMesAmis relaisInitial={RELAIS} autoLecture />); });
     await attendre(() => expect(q('afroboosteur-titre')).toBeTruthy());
     expect(document.querySelector('audio')).toBeNull();
-    expect(q('inviter-partager').textContent).toMatch(/Partager et inviter/);
+    expect(q('inviter-partager').textContent).toMatch(/Inviter mes amis/);
     expect(document.body.textContent).toMatch(/Copier mon lien/);
   });
 

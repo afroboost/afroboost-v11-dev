@@ -68,12 +68,17 @@ describe('InvitationPublique — rendu par type', () => {
       : reponse({}, true)));
     await act(async () => { render(<InvitationPublique token="T123456789012345678" />); });
     await waitFor(() => expect(screen.getByTestId('inv-pub-prix-actif').textContent).toBe('25 CHF'));
-    expect(screen.getByTestId('inv-pub-palier-early_bird').getAttribute('data-actif')).toBe('1');
+    // V618L : UN prix à l'écran (l'actuel) ; les paliers et leurs dates sont dans « Lire plus »
+    expect(document.querySelector('[data-testid="inv-pub-palier-early_bird"]')).toBeNull();
     expect(screen.getByTestId('inv-pub-urgence').textContent).toMatch(/^35 CHF dès le /);  // V610i : bascule sans répéter la date de l'événement
     const v = screen.getByTestId('inv-pub-video');
     expect(v.autoplay).toBe(true);                         // V610j : lecture automatique MUETTE, en boucle
     expect(v.muted).toBe(true);
     expect(v.loop).toBe(true);
+    // V618L : le mot audio du coach vit dans « Lire plus » (ordre vidéo -> promesse -> date -> prix -> CTA -> membre -> Lire plus)
+    expect(document.querySelector('[data-testid="inv-pub-audio"]')).toBeNull();
+    await act(async () => { screen.getByTestId('inv-pub-lire-plus').click(); });
+    expect(screen.getByTestId('inv-pub-lire-plus-contenu').textContent).toMatch(/Tarif lancement 25 CHF · Tarif standard 35 CHF/);
     expect(screen.getByTestId('inv-pub-audio')).toBeTruthy();
     expect(document.querySelector('audio').autoplay).toBe(false);
     // suivi : lien ouvert (honnête, jamais « envoyé »)

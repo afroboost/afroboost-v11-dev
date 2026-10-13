@@ -157,6 +157,23 @@ async def _invitation_active(token):
     return _d
 
 
+async def _capacite_reelle(doc) -> bool:
+    """V618L — l'offre de l'invitation a-t-elle une capacité RÉELLE (limite appliquée) ?"""
+    try:
+        _o = await _base()["offers"].find_one({"id": str(doc.get("offer_id") or "")},
+                                               {"_id": 0, "stock": 1, "max_participants": 1}) if doc.get("offer_id") else None
+    except Exception:  # noqa: BLE001
+        return False
+    _o = _o or {}
+    for _k in ("stock", "max_participants"):
+        try:
+            if int(_o.get(_k) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+    return False
+
+
 async def _dto(doc) -> dict:
     """Le DTO PUBLIC du moteur (cours et offre chargés par identifiant)."""
     _b = _base()
@@ -519,7 +536,10 @@ async def invitation_publique(token: str):
     # V610p : le message « 50 PLACES » réglé par le coach (programme Ambassadeur) — un MESSAGE,
     # jamais une capacité : aucune place restante n'est calculée ni affichée.
     _sortie["message_places"] = None
-    if _doc.get("type") in ("event_paid", "event_free"):
+    # V618L : « 50 PLACES » n'est affiché QUE si l'offre a une vraie capacité (stock ou
+    # max_participants > 0). Sans capacité, c'était un faux compteur : la 51e réservation
+    # passe (aucune limite n'existe) — on ne l'annonce donc plus.
+    if _doc.get("type") in ("event_paid", "event_free") and await _capacite_reelle(_doc):
         try:
             from api.routes import ambassadeur_routes as _v610p_amb
             _sortie["message_places"] = (await _v610p_amb.config_du_coach(_base(), _doc.get("coach_id")))["message_places"] or None
