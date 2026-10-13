@@ -1021,16 +1021,18 @@ async def validate_discount_code(data: dict):
                 if assigned.lower() != user_email.lower():
                     return {"valid": False, "message": "Code réservé à un autre compte"}
 
-        # v96: Si le code n'est assigné à personne, le verrouiller au premier utilisateur
-        if (not assigned or (isinstance(assigned, str) and not assigned.strip())) and user_email:
-            await _db.discount_codes.update_one(
-                {"code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}},
-                {"$set": {"assignedEmail": user_email}}
-            )
-            logger.info(f"[PROMO] Code {code_str} verrouillé pour {user_email} (premier utilisateur)")
+        # V618c — ROUTE PUBLIQUE = VALIDATION SEULE. Le verrouillage « premier utilisateur » (v96)
+        # est SUPPRIMÉ : n'importe qui pouvait attacher une adresse ARBITRAIRE à un code (la vitrine
+        # l'appelait même à chaque frappe, avec une adresse à moitié tapée). Une adresse ne s'attache
+        # à un code que par le coach (JWT, POST /discount-codes) ou par le titulaire prouvé.
+        # Un abonnement n'est créé ici QUE pour le TITULAIRE désigné par le coach (`assignedEmail`
+        # identique à l'adresse saisie) et seulement si le code n'en a encore AUCUN : rien n'est
+        # attaché à une adresse que le coach n'a pas choisie, aucun faux conflit n'est possible.
+        _v618c_titulaire = bool(assigned) and isinstance(assigned, str) and bool(user_email) \
+            and assigned.strip().lower() == user_email
 
         # === v104: CRÉER/METTRE À JOUR L'ABONNEMENT — résolution dynamique via article ===
-        if user_email:
+        if _v618c_titulaire:
             # v104: Résolution dynamique — plus de défaut 10 séances
             courses_list = code.get("courses") or []
             raw_max = code.get("maxUses") or code.get("sessions") or None
@@ -1051,6 +1053,11 @@ async def validate_discount_code(data: dict):
                 if _v618_cur["etat"] != _v618.ETAT_AUCUN:
                     return {"valid": False, "message": _v618.MSG_ANCIEN_CODE}
             existing_sub = _v618_subs_code[0] if _v618_subs_code else None
+            if not existing_sub:
+                # V618c : le code a déjà un abonnement (une autre adresse, un autre cycle) -> on n'en
+                # crée pas un second ; c'est au coach de le réattribuer.
+                existing_sub = await _db.subscriptions.find_one(
+                    {"code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}}, {"_id": 0, "id": 1})
 
             if not existing_sub:
                 # Créer un nouvel abonnement
@@ -1069,9 +1076,9 @@ async def validate_discount_code(data: dict):
                     "status": "active",
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
-                    # V618 PHASE 2 (sécurité F3/F1) : créé par une route PUBLIQUE (sans preuve
-                    # d'identité) -> jamais « abonnement actuel » d'office ; périmètre = le code.
-                    "source": "promo_validate",
+                    # V618c : créé pour le TITULAIRE désigné par le coach (assignedEmail) qui
+                    # présente son code — plus jamais pour une adresse arbitraire. Périmètre = le code.
+                    "source": "promo_validate_titulaire",
                     "coach_id": code.get("coach_id") or "",
                 }
                 # B : meme recopie depuis le code. Un code anterieur au lot n'en

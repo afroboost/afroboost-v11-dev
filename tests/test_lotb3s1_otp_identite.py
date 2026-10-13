@@ -67,6 +67,10 @@ def _corr(doc, filtre):
     return True
 
 
+async def _a(v):
+    return v
+
+
 class Coll:
     def __init__(self):
         self.docs = []
@@ -84,6 +88,11 @@ class Coll:
 
     async def count_documents(self, filtre):
         return len([d for d in self.docs if _corr(d, filtre)])
+
+    # V618c : la garde OTP lit TOUTES les fiches du code (règle canonique) -> `find`.
+    def find(self, filtre, projection=None):
+        _l = [dict(d) for d in self.docs if _corr(d, filtre)]
+        return types.SimpleNamespace(to_list=lambda n=None: _a(_l))
 
     async def update_one(self, filtre, maj):
         for d in self.docs:

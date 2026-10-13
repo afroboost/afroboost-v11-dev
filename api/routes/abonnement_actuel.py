@@ -406,3 +406,90 @@ async def garde_abonnement_actuel(database, sub, email=None):
     if _r["etat"] == ETAT_CONFLIT and str(_s.get("id")) not in {str(c.get("id")) for c in _r["candidats"]}:
         return False, MSG_ANCIEN_CODE
     return True, ""
+
+
+# ═══════════════ V618c — SÉCURITÉ : OTP, ANNULATION DEPUIS L'ESPACE ═══════════════
+
+def _norm(adresse) -> str:
+    return str(adresse or "").strip().lower()
+
+
+def contact_otp(fiches, subs, email_demande="", maintenant=None):
+    """PUR. (adresse, coach_id) à qui l'OTP d'un code peut être envoyé, ou (None, None).
+
+    Même règle de fiche que V618 (canonique vivante > vivante > plus récente) :
+      * une fiche HISTORIQUE n'est jamais retenue quand une fiche vivante existe ;
+      * plusieurs fiches candidates avec des TITULAIRES ou des COACHS différents -> l'adresse
+        demandée doit désigner exactement l'un d'eux, sinon AUCUN (fail closed) ;
+      * fiche sans titulaire -> l'adresse d'un abonnement DE CONFIANCE du code (jamais un
+        abonnement créé par la route publique /validate) ; plusieurs adresses -> seule
+        l'adresse demandée, si elle en fait partie.
+    """
+    from api.routes.shared import _v391_est_expire
+    _dem = _norm(email_demande)
+    _l = [f for f in (fiches or []) if isinstance(f, dict)]
+    _viv = [f for f in _l if f.get("active") and not _v391_est_expire(f.get("expiresAt"), maintenant)]
+    _cands = _viv or _l
+    _cid = None
+    if _cands:
+        _avec = [f for f in _cands if _norm(f.get("assignedEmail"))]
+        _titulaires = {(_norm(f.get("assignedEmail")), locataire(f.get("coach_id"))) for f in _avec}
+        if len(_titulaires) > 1:
+            _miens = [f for f in _avec if _norm(f.get("assignedEmail")) == _dem]
+            if not _miens or len({locataire(f.get("coach_id")) for f in _miens}) > 1:
+                return None, None
+            _f = _fiche_du_code(_miens, maintenant)
+        else:
+            _f = _fiche_du_code(_avec or _cands, maintenant)
+        _em = _norm((_f or {}).get("assignedEmail"))
+        _cid = (_f or {}).get("coach_id")
+        if _em:
+            return _em, _cid
+    _s = [s for s in (subs or []) if isinstance(s, dict) and de_confiance(s) and _norm(s.get("email"))]
+    if _cid is not None and str(_cid).strip():
+        _s = [s for s in _s if locataire(s.get("coach_id") or _cid) == locataire(_cid)]
+    _adresses = {_norm(s.get("email")) for s in _s}
+    if _dem and _dem in _adresses:
+        _em = _dem
+    elif len(_adresses) == 1:
+        _em = next(iter(_adresses))
+    else:
+        return None, None
+    _sien = choisir([s for s in _s if _norm(s.get("email")) == _em], maintenant)
+    _ref = _sien["abonnement"] or _sien["dernier"] or {}
+    return _em, (_cid or _ref.get("coach_id"))
+
+
+async def reservation_de_la_session(database, reservation, charge) -> bool:
+    """V618c — la réservation appartient-elle à la SESSION d'espace qui demande l'annulation ?
+
+    Même définition que la liste « Mes séances » de l'espace :
+      * membre de club (slug) : `member_slug` de la réservation = celui de la session, ou
+        ancienne réservation sans slug, à SON adresse, sur CE code ;
+      * titulaire : réservation à SON adresse (prouvée par OTP), et dont le code est celui de la
+        session OU un code dont il est aussi TITULAIRE, chez le MÊME coach (ancien code d'une
+        même personne) — jamais le code d'un autre titulaire ni d'un autre coach.
+    Une réservation sans code (achat à l'unité) n'est annulable que par son adresse."""
+    _r, _c = reservation or {}, charge or {}
+    _code = str(_c.get("code") or "").strip().upper()
+    _mail = _norm(_c.get("email"))
+    _slug = str(_c.get("slug") or "").strip()
+    if not _code or not _mail:
+        return False
+    _rcode = str(_r.get("discountCode") or _r.get("promoCode") or "").strip().upper()
+    _rmail = _norm(_r.get("userEmail"))
+    _rslug = str(_r.get("member_slug") or "").strip()
+    if _slug:
+        if _rslug:
+            return _rslug == _slug and _rcode == _code
+        return _rmail == _mail and _rcode == _code
+    if _rmail != _mail:          # même règle que la liste du titulaire : par SON adresse
+        return False
+    if not _rcode or _rcode == _code:
+        return True
+    _f_session = await _fiche(database, _code)
+    _f_resa = await _fiche(database, _rcode)
+    if not _f_session or not _f_resa:
+        return False
+    return (_norm(_f_resa.get("assignedEmail")) == _mail
+            and locataire(_f_resa.get("coach_id")) == locataire(_f_session.get("coach_id")))

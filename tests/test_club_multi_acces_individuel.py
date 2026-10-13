@@ -68,6 +68,16 @@ class Coll:
                 return dict(d)
         return None
 
+    # V618c : la garde OTP lit TOUTES les fiches du code (règle canonique) -> `find`.
+    def find(self, filtre, projection=None):
+        self.filtres.append(dict(filtre or {}))
+        _l = [dict(d) for d in self.docs if _corr(d, filtre)]
+
+        class _Curseur:
+            async def to_list(self, n=None):
+                return _l
+        return _Curseur()
+
 
 class Base:
     def __init__(self):
@@ -90,6 +100,7 @@ def _source(nom):
     raise AssertionError("fonction introuvable : " + nom)
 
 
+sys.path.insert(0, RACINE)   # V618c : la fonction importe api.routes.abonnement_actuel
 BASE = Base()
 _env = {"re": re, "db": BASE, "DEFAULT_COACH_ID": "bassi_default"}
 exec(compile(_source("_b3s1_contact_enregistre"), "<prod>", "exec"), _env)

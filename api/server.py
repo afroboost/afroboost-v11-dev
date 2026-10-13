@@ -20695,13 +20695,36 @@ async def v610_reserver_evenement_offert(access_code: str, offer_id: str, reques
 
 
 @api_router.delete("/subscriber/space/{access_code}/cancel/{reservation_id}")
-async def cancel_reservation_from_space(access_code: str, reservation_id: str):
-    """V185: Annule une réservation de l'abonné — recrédit 1 séance si > 2h avant le cours."""
+async def cancel_reservation_from_space(access_code: str, reservation_id: str, request: Request):
+    """V185: Annule une réservation de l'abonné — recrédit 1 séance si > 2h avant le cours.
+
+    V618c — PLUS AUCUNE ANNULATION ANONYME. La même porte que la lecture de l'espace et que la
+    réservation (session d'espace prouvée par code e-mail, `X-Espace-Token` : type, signature,
+    code, membre, session vivante en base), puis le coach de la session, puis l'APPARTENANCE de
+    la réservation à CETTE session (`abonnement_actuel.reservation_de_la_session`). Tous les
+    refus rendent la même réponse neutre (404)."""
     code_upper = (access_code or "").strip().upper()
     if not code_upper:
         raise HTTPException(status_code=400, detail="Code d'accès requis")
     if not reservation_id:
         raise HTTPException(status_code=400, detail="Réservation requise")
+    from api.routes.shared import lotb3s1_lire_token as _v618c_lire
+    from api.routes import abonnement_actuel as _v618c
+    try:
+        _v618c_brut = (request.headers.get("x-espace-token", "") or "").strip()
+    except Exception:
+        _v618c_brut = ""
+    # Le membre est celui du JETON (jamais un paramètre) ; la porte vérifie le reste.
+    _v618c_slug = str((_v618c_lire(_v618c_brut) or {}).get("slug") or "")
+    _v618c_charge, _v618c_motif = await _b3s13_porteur_autorise(request, code_upper, _v618c_slug)
+    if not _v618c_charge:
+        logger.warning("[V618c] annulation espace refusée (motif=%s)", _v618c_motif)
+        raise _b3s13_refus()
+    from api.routes.shared import lire_abonnement_par_code as _v618c_sub_du_code
+    _v618c_fiche = await _v618c._fiche(db, code_upper)
+    if not _b3s13_tenant_accepte(_v618c_charge, await _v618c_sub_du_code(db, code_upper), _v618c_fiche):
+        logger.warning("[V618c] annulation espace refusée (motif=autre_coach)")
+        raise _b3s13_refus()
 
     # V618 PHASE 2 — L'ABONNEMENT CRÉDITÉ EST CELUI DE LA RÉSERVATION. Avant : le premier abonnement
     # « active » du code, puis N'IMPORTE QUEL statut, était re-crédité ET forcé en `active` — un
@@ -20709,27 +20732,27 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
     # `reservation.subscriptionId`, sinon l'UNIQUE abonnement actuel du code, sinon aucun ;
     # et un statut historique n'est jamais modifié (abonnement_actuel.statut_apres_restitution).
     from api.routes.abonnement_actuel import cible_restitution as _v618_cible, statut_apres_restitution as _v618_statut
-    _v618_subs = await db.subscriptions.find(
-        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}).to_list(50)
-    dc = None
-    if not _v618_subs:
-        dc = await db.discount_codes.find_one(
-            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
-        )
-        if not dc:
-            raise HTTPException(status_code=404, detail="Abonnement introuvable")
-
     reservation = await db.reservations.find_one({"id": reservation_id}, {"_id": 0})
-    if not reservation:
-        raise HTTPException(status_code=404, detail="Réservation introuvable")
+    if not reservation or not await _v618c.reservation_de_la_session(db, reservation, _v618c_charge):
+        # V618c : réservation inconnue OU d'un autre membre -> la même réponse neutre.
+        logger.warning("[V618c] annulation espace refusée (motif=reservation_hors_session)")
+        raise _b3s13_refus()
+    # V618c : les compteurs re-crédités sont ceux du CODE DE LA RÉSERVATION (celui qui a été
+    # débité), plus ceux du code de l'URL. Réservation sans code : rien n'avait été débité.
+    _v618c_code_resa = str(reservation.get("discountCode") or reservation.get("promoCode") or "").strip().upper()
+    _v618_subs = (await db.subscriptions.find(
+        {"code": {"$regex": f"^{re.escape(_v618c_code_resa)}$", "$options": "i"}}, {"_id": 0}).to_list(50)
+        if _v618c_code_resa else [])
+    dc = None
+    if not _v618_subs and _v618c_code_resa:
+        dc = await _v618c._fiche(db, _v618c_code_resa)
     subscription = _v618_cible(reservation, _v618_subs)
     if not subscription:
         # Aucun abonnement désigné sans ambiguïté : rien n'est re-crédité côté abonnement ;
         # la fiche du code est restituée plus bas par la règle unique (mouvement `debit:<id>`).
-        _dc = dc or await db.discount_codes.find_one(
-            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}) or {}
+        _dc = dc or (await _v618c._fiche(db, _v618c_code_resa) if _v618c_code_resa else None) or {}
         subscription = {
-            "code": code_upper,
+            "code": _v618c_code_resa,
             "email": (_dc.get("assignedEmail") or (_v618_subs[0].get("email") if _v618_subs else "") or ""),
             "remaining_sessions": max(0, (_dc.get("maxUses") or 0) - (_dc.get("used") or 0)),
             "used_sessions": _dc.get("used") or 0,
@@ -20737,11 +20760,7 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
         }
     user_email = (subscription.get("email") or "").lower().strip()
 
-    # Vérifier l'appartenance (par email ou par discountCode)
-    res_email = (reservation.get("userEmail") or "").lower().strip()
-    res_code = (reservation.get("discountCode") or reservation.get("promoCode") or "").upper().strip()
-    if user_email and res_email and res_email != user_email and res_code != code_upper:
-        raise HTTPException(status_code=403, detail="Cette réservation ne t'appartient pas")
+    # V618c : l'appartenance est vérifiée plus haut, contre la SESSION (plus contre le seul code).
 
     # ESSAI-5a-1 — DEUX REGLES, PARCE QUE CE NE SONT PAS LES MEMES DROITS.
     #
@@ -20804,7 +20823,10 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
     # document a lire aurait disparu. `_t1_essai` a deja ete calcule plus haut
     # par la regle existante — on ne redemande rien, on ne recalcule rien.
     await t1_tracer_annulation(reservation, "abonné", _t1_essai)
-    await db.reservations.delete_one({"id": reservation_id})
+    _v618c_suppr = await db.reservations.delete_one({"id": reservation_id})
+    if getattr(_v618c_suppr, "deleted_count", 1) == 0:
+        # V618c : déjà annulée par une requête simultanée -> rien n'est re-crédité deux fois.
+        raise HTTPException(status_code=404, detail="Réservation introuvable")
 
     # V610 : une place OFFERTE d'événement n'a débité aucune séance -> rien à rendre.
     # (La réclamation est libérée à la prochaine demande : `evenement_special._deja`.)
@@ -20835,19 +20857,18 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
     # quantité que le débit de CETTE réservation (mouvement `debit:<id>`),
     # une seule fois : deux annulations simultanées ne rendent qu'une séance.
     from api.routes.shared import seances_restituer as _seances_restituer
-    await _seances_restituer(db, code_upper, qty_to_refund,
-                             reservation_id=reservation_id,
-                             source="subscriber_space_cancel")
+    if _v618c_code_resa:
+        await _seances_restituer(db, _v618c_code_resa, qty_to_refund,
+                                 reservation_id=reservation_id,
+                                 source="subscriber_space_cancel")
 
     # V208c: Recrédit du membre individuel (groupe avec séances non-partagées)
     res_member_slug = reservation.get("member_slug")
     if res_member_slug:
-        discount = await db.discount_codes.find_one(
-            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0, "shared_sessions": 1}
-        )
+        discount = await _v618c._fiche(db, _v618c_code_resa or code_upper)
         if discount and not discount.get("shared_sessions", True):
             await db.code_members.update_one(
-                {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "slug": res_member_slug},
+                {"code": {"$regex": f"^{re.escape(_v618c_code_resa or code_upper)}$", "$options": "i"}, "slug": res_member_slug},
                 {"$inc": {"used_sessions": -qty_to_refund, "remaining_sessions": qty_to_refund}}
             )
             logger.info(f"[V208c CANCEL] Member {res_member_slug} recredited +{qty_to_refund}")
@@ -52675,7 +52696,17 @@ async def _b3s1_contact_enregistre(code_upper: str, slug: str = "",
     Le `slug` rendu est celui du membre reconnu : c'est lui qui liera la session
     au BON espace, et non au premier de la liste.
     """
+    # V618c — LA FICHE SE CHOISIT PAR LA RÈGLE CANONIQUE (abonnement_actuel.contact_otp), plus par
+    # `find_one` sans tri : jamais une fiche historique quand une fiche vivante existe, jamais la
+    # fiche d'un autre titulaire ni d'un autre coach (doublons d'un même code -> l'adresse
+    # demandée doit désigner exactement l'un d'eux, sinon rien), jamais l'adresse d'un
+    # abonnement créé par la route publique /validate.
+    from api.routes import abonnement_actuel as _v618c
     _m = {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}
+    _fiches = await db.discount_codes.find(
+        _m, {"_id": 0, "code": 1, "assignedEmail": 1, "coach_id": 1, "multi_member": 1, "active": 1,
+             "expiresAt": 1, "canonical": 1, "created_at": 1}).to_list(20)
+    _dc = _v618c._fiche_du_code(_fiches)
     if slug:
         # Groupe : c'est le MEMBRE désigné par le slug qui est authentifié, pas
         # le titulaire — et la liste des autres membres n'est jamais lue ici.
@@ -52683,25 +52714,23 @@ async def _b3s1_contact_enregistre(code_upper: str, slug: str = "",
         if not membre:
             return None, None, ""
         _em = (membre.get("email") or "").strip().lower()
-        _dc = await db.discount_codes.find_one(_m, {"_id": 0, "coach_id": 1})
         return (_em or None), ((_dc or {}).get("coach_id") or DEFAULT_COACH_ID), slug
-    _dc = await db.discount_codes.find_one(
-        _m, {"_id": 0, "assignedEmail": 1, "coach_id": 1, "multi_member": 1})
-    _em = ((_dc or {}).get("assignedEmail") or "").strip().lower()
-    _cid = (_dc or {}).get("coach_id")
     # Club sans slug : l'adresse saisie est-elle celle d'un MEMBRE enregistré ?
     # Recherche par égalité exacte sur une valeur normalisée — jamais de regex
     # construite avec une saisie utilisateur.
     _demande = (email_demande or "").strip().lower()
-    if _demande and _demande != _em and (_dc or {}).get("multi_member"):
+    _titulaire = ((_dc or {}).get("assignedEmail") or "").strip().lower()
+    if _demande and _demande != _titulaire and (_dc or {}).get("multi_member"):
         _membre = await db.code_members.find_one(
             dict(_m, email=_demande), {"_id": 0, "email": 1, "slug": 1})
         if _membre and (_membre.get("slug") or ""):
-            return (_demande, (_cid or DEFAULT_COACH_ID), str(_membre.get("slug")))
-    if not _em:
-        _sub = await db.subscriptions.find_one(_m, {"_id": 0, "email": 1, "coach_id": 1})
-        _em = ((_sub or {}).get("email") or "").strip().lower()
-        _cid = _cid or (_sub or {}).get("coach_id")
+            return (_demande, ((_dc or {}).get("coach_id") or DEFAULT_COACH_ID), str(_membre.get("slug")))
+    _subs = []
+    if not _titulaire:
+        _subs = await db.subscriptions.find(
+            _m, {"_id": 0, "id": 1, "email": 1, "coach_id": 1, "status": 1, "expires_at": 1, "end_date": 1,
+                 "created_at": 1, "source": 1}).to_list(50)
+    _em, _cid = _v618c.contact_otp(_fiches, _subs, _demande)
     return (_em or None), (_cid or DEFAULT_COACH_ID), ""
 
 

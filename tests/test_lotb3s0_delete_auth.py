@@ -393,8 +393,10 @@ for _n in ast.walk(_arbre_srv):
     if isinstance(_n, (ast.FunctionDef, ast.AsyncFunctionDef)) and _n.name == "cancel_reservation_from_space":
         _corps_abonne = "".join(_lignes_srv[_n.lineno - 1:_n.end_lineno])
 verifier("9. le chemin abonne existe toujours", bool(_corps_abonne), "")
+# V618c : le controle « par le code » est remplace par la SESSION d'espace + l'appartenance
+# de la reservation a CETTE session (abonnement_actuel.reservation_de_la_session).
 verifier("9. il garde son controle de propriete",
-         "ne t'appartient pas" in _corps_abonne, "")
+         "reservation_de_la_session" in _corps_abonne and "_b3s13_porteur_autorise" in _corps_abonne, "")
 verifier("9. il garde son delai d'annulation",
          "T1_DELAI_ANNULATION_H" in _corps_abonne, "")
 verifier("9. il garde son decrement discount_codes (V186, via la regle unique SEANCES)",

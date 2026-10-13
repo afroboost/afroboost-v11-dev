@@ -170,8 +170,8 @@ async def principal():
     ok, _ = await AA.garde_abonnement_actuel(base, S[-1])
     verifier("F3-2 il reste utilisable sur son propre code (garde neutre)", ok)
     val = bloc(PROMO, "async def validate_discount_code(", "\n@promo_router")
-    verifier("F3-3 /validate : nouveaux abonnements marqués promo_validate + coach_id ; ancien code refusé",
-             '"source": "promo_validate"' in val and "MSG_ANCIEN_CODE" in val)
+    verifier("F3-3 /validate : abonnement seulement pour le titulaire désigné (marqué) ; ancien code refusé",
+             '"source": "promo_validate_titulaire"' in val and "MSG_ANCIEN_CODE" in val)
 
     # ── F1 : périmètre via la fiche quand l'abonnement n'a pas de coach_id ────────────
     Y = "manuel@t.example"
