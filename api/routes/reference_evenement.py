@@ -55,9 +55,15 @@ async def suivre_le_cours(db, cours):
     if not cours or not cours.get("id"):
         return 0
     _n = 0
+    # V618L-b (revue de sécurité) : seules les offres du MÊME coach que le cours suivent. La route
+    # de modification d'un cours ne vérifie pas son propriétaire (dette antérieure) : sans ce
+    # cloisonnement, modifier un cours aurait aussi réécrit les paliers de l'offre d'un AUTRE coach.
+    _proprio = str(cours.get("coach_id") or "").strip().lower()
     async for _o in db.offers.find({"offer_type": "event", "linked_course_ids": cours["id"]},
                                    {"_id": 0, "id": 1, "offer_type": 1, "linked_course_ids": 1,
-                                    "countdown_date": 1, "countdown_time": 1}):
+                                    "countdown_date": 1, "countdown_time": 1, "coach_id": 1}):
+        if str(_o.get("coach_id") or "").strip().lower() != _proprio:
+            continue
         _ref = reference_du_cours(_o, cours)
         if not _ref or (str(_o.get("countdown_date") or "")[:10], str(_o.get("countdown_time") or "")[:5]) == _ref:
             continue

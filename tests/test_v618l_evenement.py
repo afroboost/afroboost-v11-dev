@@ -189,6 +189,18 @@ async def partie_alignement():
              next(x for x in b2.offers.docs if x["id"] == "o-pack")["countdown_date"] == "2026-12-31")
 
 
+async def partie_cloisonnement():
+    # 10) Un cours modifié ne réécrit JAMAIS l'offre d'un autre coach liée à ce cours.
+    b = nouvelle_base("2026-10-28")
+    b.offers.docs.append(dict(OFFRE, id="o-autre", coach_id="autre.coach@exemple.test", countdown_date="2026-10-28"))
+    S.db = b
+    await _route(S.update_course(COURS_ID, {"date": "2026-11-11"}, B._Requete(B.ADMIN)))
+    verifier("10 cours modifié : l'offre du MÊME coach suit",
+             next(x for x in b.offers.docs if x["id"] == "o-silent")["countdown_date"] == "2026-11-11")
+    verifier("10b … l'offre d'un AUTRE coach liée au même cours n'est JAMAIS réécrite",
+             next(x for x in b.offers.docs if x["id"] == "o-autre")["countdown_date"] == "2026-10-28")
+
+
 async def partie_places():
     # 9) « 50 PLACES » : seulement pour une capacité RÉELLE.
     b = nouvelle_base("2026-10-28")
@@ -216,6 +228,7 @@ async def _route(coro):
 def main():
     partie_paliers()
     asyncio.run(partie_alignement())
+    asyncio.run(partie_cloisonnement())
     asyncio.run(partie_places())
     _ok = 0
     for nom, ok, detail in RESULTATS:
