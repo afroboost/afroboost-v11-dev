@@ -51,6 +51,7 @@ import SvgIcon from "./SvgIcon";
 // P3-S2 : l'ecran Prospection. Il lit `partner_prospects` et cette collection
 // SEULE — jamais les contacts, les abonnes ni les reservations.
 import ProspectsSection from "./coach/ProspectsSection";
+import { etatMetierCode, finAfficheeCode } from "../utils/etatCodeV618"; // V618f : état métier des codes
 import useCockpitProspection, { ECRANS_A_PART as P3_ECRANS_A_PART } from "../hooks/useCockpitProspection"; // V587c + V595
 import MessagesRelancesSection from "./coach/MessagesRelancesSection"; // V588
 import ProspectionApercu from "./coach/prospection/ProspectionApercu"; // V595
@@ -3221,7 +3222,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
     
     // CSV headers
-    const headers = ["Code", "Type", "Valeur", "Bénéficiaire", "Utilisations Max", "Utilisé", "Date Expiration", "Actif", "Cours Autorisés"];
+    // V618f : la colonne « État » dit l'état MÉTIER (ACTIF / EXPIRÉ / HISTORIQUE / CONFLIT, règle
+    // canonique tranchée par le serveur) — plus « Actif : Oui » sur un code expiré.
+    const headers = ["Code", "Type", "Valeur", "Bénéficiaire", "Utilisations Max", "Utilisé", "Date Expiration", "État", "Cours Autorisés"];
     
     // CSV rows
     const rows = discountCodes.map(code => {
@@ -3236,8 +3239,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         code.assignedEmail || "",
         code.maxUses || "",
         code.used || 0,
-        code.expiresAt ? new Date(code.expiresAt).toLocaleDateString() : "",
-        code.active ? "Oui" : "Non",
+        finAfficheeCode(code) ? new Date(finAfficheeCode(code)).toLocaleDateString() : "",
+        etatMetierCode(code),
         coursesNames
       ];
     });

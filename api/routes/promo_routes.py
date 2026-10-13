@@ -375,6 +375,10 @@ async def get_discount_codes(request: Request):
     # V617 : l'abonnement ACTUEL de chaque code + son suivi de paiement (coach).
     from api.routes.shared import v617_enrichir_codes as _v617
     codes = await _v617(_db, codes, user_email, is_super_admin)
+    # V618f : « Abonnement actuel / Historique » suit le résolveur canonique (l'abonnement actuel de
+    # la personne), plus seulement la date de la fiche. Lecture seule.
+    from api.routes import abonnement_actuel as _v618f
+    codes = await _v618f.enrichir_codes(_db, codes)
     return codes
 
 

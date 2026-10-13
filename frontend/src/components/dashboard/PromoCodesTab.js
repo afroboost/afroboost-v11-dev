@@ -11,6 +11,7 @@ import SvgIcon from '../SvgIcon';
 import { classerArticles, resteAPayer, SUIVI_VIDE, etatSuiviPaiement } from "../../utils/abonnementsManuels"; // V617 / V617d
 import EcheancesPaiement from "./EcheancesPaiement"; // V617
 import IntegriteAbonnements from "./IntegriteAbonnements"; // V618 : plusieurs abonnements actifs = à vérifier
+import { etatMetierCode, finAfficheeCode, lienEspaceProposable, ETAT_ACTIF, ETAT_CONFLIT } from "../../utils/etatCodeV618"; // V618f
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -336,7 +337,11 @@ const PromoCodesTab = ({
           // après avoir retapé le nom du code (confirmation forte).
           const lectureSeule = !!options.lectureSeule && !deverrouilles[code.id];
           // V200: Distinguer 3 états: actif, inactif (toggle), expiré (date passée)
-          const codeExpired = isDateExpired(code.expiresAt);
+          // V618f : un code qui porte l'abonnement ACTUEL (tranché par le serveur) n'est jamais
+          // présenté comme expiré ; la fin affichée est celle de cet abonnement.
+          const etatV618 = etatMetierCode(code);
+          const finCode = finAfficheeCode(code);
+          const codeExpired = etatV618 !== ETAT_ACTIF && etatV618 !== ETAT_CONFLIT && isDateExpired(finCode);
           const cardClass = codeExpired
             ? 'opacity-40 border border-red-500/40'  // V200: expiré = très grisé + bord rouge
             : (!code.active ? 'opacity-50' : '');     // inactif = grisé, actif = normal
@@ -405,13 +410,13 @@ const PromoCodesTab = ({
                 <p className="text-white/30 text-xs mt-1">
                   Utilisé: {code.usedCount || code.used || 0}/{code.maxUses || '∞'}
                   {/* V200: Indicateur explicite « Expiré le » (rouge) vs « Expire le » (vert) */}
-                  {code.expiresAt && (
+                  {finCode && (
                     <span style={{ color: codeExpired ? '#ef4444' : '#22c55e', marginLeft: '4px' }}>
                       {' • '}{codeExpired ? (
                         <><SvgIcon name="warning" size={14} /> Expiré le </>
                       ) : (
                         <><SvgIcon name="check" size={14} /> Expire le </>
-                      )}{formatDate(code.expiresAt)}
+                      )}{formatDate(finCode)}
                     </span>
                   )}
                 </p>
@@ -512,8 +517,9 @@ const PromoCodesTab = ({
                   </button>
                 )}
                 
-                {/* V185 F2: Bouton Lien d'accès rapide (uniquement codes actifs) */}
-                {code.active && (
+                {/* V185 F2: Bouton Lien d'accès rapide (uniquement codes actifs)
+                    V618f : seulement pour un accès ACTUEL — jamais sur un code expiré / historique. */}
+                {lienEspaceProposable(code) && (
                   <button
                     onClick={() => copySpaceLinkToClipboard(code)}
                     className={`px-3 py-1.5 rounded text-xs font-medium ${copiedSpaceLinkId === code.id ? 'bg-green-500/20 text-green-400' : 'bg-pink-500/20 text-pink-400 hover:bg-pink-500/40'}`}
@@ -604,6 +610,7 @@ const PromoCodesTab = ({
     }}>{label}</span>
   );
   const v532EtatTexte = (code) => {
+    if (etatMetierCode(code) === ETAT_CONFLIT && code.v618 && code.v618.etat === 'conflit') return 'CONFLIT';   // V618f
     const c = v532Classement(code);
     if (c === 'actuel') return 'ACTIF';
     if (c === 'a_verifier') return 'À VÉRIFIER';
@@ -618,7 +625,8 @@ const PromoCodesTab = ({
     const { used, total, restant } = v532Compteur(code);
     const parts = [v532EtatTexte(code), `${used} / ${total || '∞'} utilisées`];
     if (restant != null) parts.push(`${restant} restante${restant > 1 ? 's' : ''}`);
-    if (code.expiresAt) parts.push(`${isDateExpired(code.expiresAt) ? 'Expiré le' : 'Expire le'} ${formatDate(code.expiresAt)}`);
+    const fin = finAfficheeCode(code);   // V618f : la fin de l'abonnement actuel quand le serveur l'a désigné
+    if (fin) parts.push(`${isDateExpired(fin) && v532Classement(code) !== 'actuel' ? 'Expiré le' : 'Expire le'} ${formatDate(fin)}`);
     if (code.offerName) parts.push(code.offerName);
     return parts.join(' · ');
   };

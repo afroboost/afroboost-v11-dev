@@ -493,3 +493,101 @@ async def reservation_de_la_session(database, reservation, charge) -> bool:
         return False
     return (_norm(_f_resa.get("assignedEmail")) == _mail
             and locataire(_f_resa.get("coach_id")) == locataire(_f_session.get("coach_id")))
+
+
+# ═══════════════ V618f — TABLEAU DE BORD « CODES » : CLASSEMENT PAR LA RÈGLE CANONIQUE ═══════════════
+
+ETAT_HISTORIQUE = "historique"
+
+
+def classer_codes(codes, subs, coach_par_code=None, maintenant=None):
+    """PUR. Pose `v618` sur chaque fiche de `codes` et corrige l'étiquette `v532` quand le code porte
+    des abonnements : c'est l'ABONNEMENT ACTUEL (résolveur, par personne et par coach) qui décide,
+    plus la seule date de la fiche.
+      * un abonnement du code est l'actuel de son titulaire -> la fiche canonique du code est
+        `actuel`, avec la fin et les séances de CET abonnement (ex. fiche à 6/7 au 30/09 mais
+        abonnement à 1/32 au 05/06/2027) ; les autres fiches du même code restent historiques ;
+      * un abonnement du code est en conflit (plusieurs actuels) -> `conflit` (rien n'est choisi) ;
+      * des abonnements, aucun actuel -> `historique` (jamais « actuel » sur la foi de la fiche) ;
+      * aucun abonnement (code promo, club…) -> la règle LOT A d'avant, inchangée.
+    Lecture seule : ne modifie que les dictionnaires de réponse."""
+    _cpc = {str(k).upper(): v for k, v in (coach_par_code or {}).items()}
+    _par = {}
+    for s in subs or []:
+        if not isinstance(s, dict) or not de_confiance(s) or not _norm(s.get("email")):
+            continue
+        _loc = locataire(s.get("coach_id") or _cpc.get(str(s.get("code") or "").upper()))
+        _par.setdefault((_norm(s.get("email")), _loc), []).append(s)
+    _etat_sub = {}
+    for _l in _par.values():
+        _r = choisir(_l, maintenant)
+        for s in _l:
+            _etat_sub[id(s)] = ("actuel" if _r["etat"] == ETAT_COURANT and s is _r["abonnement"]
+                                else "conflit" if _r["etat"] == ETAT_CONFLIT and any(s is c for c in _r["candidats"])
+                                else ETAT_HISTORIQUE)
+    _subs_code = {}
+    for _l in _par.values():
+        for s in _l:
+            _subs_code.setdefault(str(s.get("code") or "").strip().upper(), []).append(s)
+    _fiches_code = {}
+    for c in codes or []:
+        if isinstance(c, dict) and c.get("code"):
+            _fiches_code.setdefault(str(c["code"]).strip().upper(), []).append(c)
+    for _k, _fiches in _fiches_code.items():
+        _ss = _subs_code.get(_k) or []
+        if not _ss:
+            continue
+        _actuels = [s for s in _ss if _etat_sub.get(id(s)) == "actuel"]
+        _conflits = [s for s in _ss if _etat_sub.get(id(s)) == "conflit"]
+        if _actuels and any((f.get("v532") or {}).get("classement") == "a_verifier" for f in _fiches):
+            # Doublons VIVANTS d'un même code (LOT A : À VÉRIFIER) : on ne choisit pas entre eux ;
+            # l'information « porte l'abonnement actuel » est ajoutée, l'étiquette reste.
+            for f in _fiches:
+                f["v618"] = {"etat": "actuel"}
+        elif _actuels:
+            _sub = _actuels[0]
+            _choisie = _fiche_du_code(_fiches, maintenant)
+            for f in _fiches:
+                f["v618"] = {"etat": "actuel" if f is _choisie else ETAT_HISTORIQUE}
+                _e = dict(f.get("v532") or {})
+                if f is _choisie:
+                    try:
+                        _tot = int(float(_sub.get("total_sessions") or 0))
+                        _ut = int(float(_sub.get("used_sessions") or 0))
+                    except (TypeError, ValueError):
+                        _tot, _ut = None, None
+                    _e.update(classement="actuel", motif="abonnement_actuel", utilise=_ut, total=_tot,
+                              restant=(max(0, _tot - _ut) if _tot else None),
+                              expire_le=_sub.get("expires_at") or _sub.get("end_date"))
+                elif _e.get("classement") == "actuel":
+                    _e.update(classement=ETAT_HISTORIQUE, motif="remplace")
+                f["v532"] = _e
+        elif _conflits:
+            for f in _fiches:
+                f["v618"] = {"etat": "conflit"}
+        else:
+            for f in _fiches:
+                f["v618"] = {"etat": ETAT_HISTORIQUE}
+                _e = dict(f.get("v532") or {})
+                if _e.get("classement") == "actuel":
+                    _e.update(classement=ETAT_HISTORIQUE, motif="abonnement_historique")
+                    f["v532"] = _e
+    return codes
+
+
+async def enrichir_codes(database, codes):
+    """V618f — `classer_codes` sur la liste de GET /discount-codes. Deux lectures, ZÉRO écriture ;
+    une erreur laisse la liste telle quelle (l'écran d'hier reste l'écran d'hier)."""
+    try:
+        _subs = await database.subscriptions.find(
+            {}, {"_id": 0, "id": 1, "code": 1, "email": 1, "status": 1, "expires_at": 1, "end_date": 1,
+                 "created_at": 1, "coach_id": 1, "source": 1, "used_sessions": 1, "total_sessions": 1,
+                 "remaining_sessions": 1}).to_list(5000)
+        _cpc = {}
+        for f in await database.discount_codes.find({}, {"_id": 0, "code": 1, "coach_id": 1}).to_list(5000):
+            if str(f.get("coach_id") or "").strip():
+                _cpc.setdefault(str(f.get("code") or "").upper(), f.get("coach_id"))
+        return classer_codes(codes, _subs, _cpc)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s classement des codes impossible (%s)", PREFIXE, type(_err).__name__)
+        return codes
