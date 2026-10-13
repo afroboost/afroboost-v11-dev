@@ -1386,6 +1386,15 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
             if not _ok:
                 logger.warning(f"[V393] Reservation refusee pour {user_email} : {_pourquoi}")
                 raise HTTPException(status_code=400, detail=_pourquoi)
+            # V618 PHASE 2 : un ANCIEN code ne réserve plus quand la personne a un abonnement
+            # actuel différent (résolveur canonique, même coach).
+            from api.routes.abonnement_actuel import garde_abonnement_actuel as _v618_garde
+            # Résolu sur le TITULAIRE de l'abonnement (subscription.email), jamais sur l'adresse
+            # saisie : un membre de club qui a son propre forfait garde l'accès au code du club.
+            _v618_ok, _v618_msg = await _v618_garde(db, subscription)
+            if not _v618_ok:
+                logger.warning("[V618] reservation refusee : ancien abonnement presente")
+                raise HTTPException(status_code=400, detail=_v618_msg)
 
             # LOT B2 : la meme garde que dans l'espace abonne. L'oublier ici
             # laisserait la vitrine et le chat ouverts sur un code mort —
@@ -1886,30 +1895,18 @@ async def delete_reservation(reservation_id: str, request: Request):
     # un `NameError`. Déclaration hissée, aucune règle changée.
     sub = None
     if user_email:
-        # V216: Recherche par subscriptionId d'abord (plus fiable)
-        if subscription_id:
-            sub = await db.subscriptions.find_one(
-                {"id": subscription_id, "status": {"$in": ["active", "completed"]}},
-                {"_id": 0}
-            )
-            logger.info(f"[CANCEL] Recherche par subscriptionId={subscription_id}: {'trouvé' if sub else 'non trouvé'}")
-
-        # Fallback: recherche par email + code promo
-        if not sub and promo_code and promo_code != "N/A":
-            sub = await db.subscriptions.find_one(
-                {"email": user_email, "code": promo_code, "status": {"$in": ["active", "completed"]}},
-                {"_id": 0}
-            )
-            logger.info(f"[CANCEL] Recherche par email+code: {'trouvé' if sub else 'non trouvé'}")
-
-        # V216: Fallback ultime — chercher par email seul (un seul abonnement actif)
-        if not sub and promo_code and promo_code != "N/A":
-            sub = await db.subscriptions.find_one(
-                {"email": user_email, "status": {"$in": ["active", "completed"]}},
-                {"_id": 0}
-            )
-            if sub:
-                logger.info(f"[CANCEL] Trouvé par email seul: code={sub.get('code')} remaining={sub.get('remaining_sessions')}")
+        # V618 PHASE 2 — L'ABONNEMENT DE CETTE RÉSERVATION, rien d'autre : `subscriptionId`, sinon
+        # l'UNIQUE abonnement actuel de CE code pour CETTE adresse, sinon aucun. Le repli « par
+        # e-mail seul » (V216) est supprimé : il pouvait re-créditer un AUTRE code (l'ancien).
+        from api.routes.abonnement_actuel import cible_restitution as _v618_cible
+        _v618_q = {"id": subscription_id} if subscription_id else (
+            {"email": {"$regex": f"^{re.escape(user_email)}$", "$options": "i"},
+             "code": {"$regex": f"^{re.escape(str(promo_code))}$", "$options": "i"}}
+            if promo_code and promo_code != "N/A" else None)
+        if _v618_q is not None:
+            _v618_subs = await db.subscriptions.find(_v618_q, {"_id": 0}).to_list(50)
+            sub = _v618_cible({"subscriptionId": subscription_id} if subscription_id else {}, _v618_subs)
+            logger.info(f"[CANCEL] abonnement de la réservation : {'trouvé' if sub else 'aucun (fiche du code seule)'}")
 
     # ═══ LOT B3 — TOUT OU RIEN, DANS UNE SEULE TRANSACTION ════════════════
     #
@@ -2008,8 +2005,12 @@ async def delete_reservation(reservation_id: str, request: Request):
             if _b3_sub is not None and _b3_rendu > 0:
                 _b3_maj = {"$inc": {"used_sessions": -_b3_rendu, "remaining_sessions": _b3_rendu},
                            "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
-                if _b3_sub.get("status") == "completed":
-                    _b3_maj["$set"]["status"] = "active"
+                # V618 PHASE 2 : seul un `completed` encore dans ses dates se rouvre ; jamais un
+                # abonnement historique ou expiré.
+                from api.routes.abonnement_actuel import statut_apres_restitution as _v618_statut
+                _v618_st = _v618_statut(dict(sub or {}, status=_b3_sub.get("status")))
+                if _v618_st:
+                    _b3_maj["$set"]["status"] = _v618_st
                 await db.subscriptions.update_one(
                     {"id": sub.get("id"), "used_sessions": {"$gte": _b3_rendu}},
                     _b3_maj, session=_b3_ses)
@@ -2398,11 +2399,16 @@ async def _validate_user_access_code(code: str, user: dict, forced_course_id: st
                                 "reservationCode": reservation.get("reservationCode", code),
                                 "courseName": reservation.get("courseName", "")}}
 
-    # Pas de réservation — chercher un abonnement actif pour déduire une séance
-    sub = await db.subscriptions.find_one(mt5_borner(   # MT-5 : pas le forfait d'un autre coach
-        {"email": {"$regex": f"^{re.escape(user_email)}$", "$options": "i"}, "status": "active"}, scanneur),
-        {"_id": 0}
-    )
+    # Pas de réservation — V618 PHASE 2 : l'abonnement ACTUEL de la personne (résolveur canonique),
+    # dans le périmètre du scanneur (MT-5). Avant : `find_one({email, active})` sans tri ni date.
+    sub = None
+    from api.routes.abonnement_actuel import resoudre_abonnement_actuel as _v618_res, ETAT_COURANT as _V618_C
+    _v618_sc = str(scanneur or "").strip().lower()
+    from api.routes.abonnement_actuel import locataire as _v618_loc
+    _v618_r = await _v618_res(db, user_email, perimetre=(
+        None if (not _v618_sc or is_super_admin(_v618_sc)) else _v618_loc(_v618_sc)))
+    if _v618_r["etat"] == _V618_C:
+        sub = await db.subscriptions.find_one(mt5_borner({"id": _v618_r["abonnement"].get("id")}, scanneur), {"_id": 0})
     if sub:
         # Rediriger vers le flux CAS B en passant le code subscription
         # Pour éviter la duplication de code, on retourne l'info pour relancer
@@ -3419,10 +3425,10 @@ async def _scan_enrichir(request: Request, reponse):
                     pass
             return reponse
 
-        _sub = await db.subscriptions.find_one(
-            {"code": {"$regex": f"^{re.escape(_code)}$", "$options": "i"}},
-            {"_id": 0, "offer_name": 1},
-        )
+        # V618 PHASE 2 : le libellé de l'abonnement RETENU pour ce code (règle V391), plus le
+        # premier document trouvé (un ancien cycle du même code affichait une autre offre).
+        from api.routes.shared import lire_abonnement_par_code as _v618_lire
+        _sub = await _v618_lire(db, _code)
         reponse["acces"] = {"libelle": ((_sub or {}).get("offer_name") or "").strip(),
                             "essai": False}
     except Exception as _err:
@@ -3560,6 +3566,19 @@ async def _qr_scan_validate_inner(request: Request):
     # périmé) et refusait l'entrée d'un abonné à jour.
     from api.routes.shared import lire_abonnement_par_code as _v391_lire
     subscription = await _v391_lire(db, code)
+    # V618 PHASE 2 — UN ANCIEN QR IDENTIFIE LA PERSONNE, PAS SES DROITS : si l'abonnement du code
+    # scanné n'est pas l'actuel, on valide sur l'abonnement ACTUEL de son titulaire (même coach,
+    # titulaire du code actuel aussi). Membre de club (CODE::SLUG) et conflit : rien ne bascule.
+    if subscription and not member_slug_from_qr:
+        try:
+            from api.routes.abonnement_actuel import bascule_scan as _v618_bascule
+            _v618_b = await _v618_bascule(db, subscription)
+        except Exception as _v618e:
+            logger.warning(f"[V618] scan : abonnement actuel non résolu ({type(_v618e).__name__})")
+            _v618_b = None
+        if _v618_b:
+            logger.info(f"[V618] scan d'un ancien code -> abonnement actuel ({_v618_b[0]})")
+            code, subscription = _v618_b
     if subscription:
         # MT-5 : un forfait DECLARE a un autre coach n'existe pas pour ce
         # scanneur — 404 neutre, avant tout message d'etat (solde, expiration,

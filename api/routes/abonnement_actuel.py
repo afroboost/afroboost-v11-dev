@@ -84,15 +84,39 @@ def _empreinte(email) -> str:
     return hashlib.sha256(("abo|" + str(email or "").strip().lower()).encode("utf-8")).hexdigest()[:12]
 
 
+SOURCE_AUTO_SERVICE = "promo_validate"
+
+
+def de_confiance(sub) -> bool:
+    """V618 PHASE 2 (sécurité F3) : un abonnement créé par la route PUBLIQUE /discount-codes/validate
+    (aucune preuve d'identité) ne peut ni désigner l'abonnement actuel, ni créer un conflit, ni
+    servir de cible de redirection / lien d'accès. Il reste utilisable sur son propre code."""
+    return str((sub or {}).get("source") or "") != SOURCE_AUTO_SERVICE
+
+
 async def abonnements_de(database, email) -> list:
+    """Les abonnements d'une adresse, avec leur PÉRIMÈTRE EFFECTIF (`_locataire`) : `coach_id` de
+    l'abonnement, sinon celui de la FICHE de son code (V618 phase 2, sécurité F1 : les abonnements
+    manuels n'avaient pas de `coach_id` et tombaient tous dans la plateforme)."""
     _e = str(email or "").strip().lower()
     if not _e or "@" not in _e:
         return []
-    return await database.subscriptions.find(
+    _l = await database.subscriptions.find(
         {"email": {"$regex": "^%s$" % re.escape(_e), "$options": "i"}},
         {"_id": 0, "id": 1, "code": 1, "email": 1, "status": 1, "expires_at": 1, "end_date": 1, "offer_id": 1,
          "offer_name": 1, "total_sessions": 1, "used_sessions": 1, "remaining_sessions": 1, "created_at": 1,
-         "coach_id": 1, "member_slug": 1}).to_list(LECTURE_MAX)
+         "coach_id": 1, "member_slug": 1, "source": 1}).to_list(LECTURE_MAX)
+    _sans = sorted({str(x.get("code") or "") for x in _l if not str(x.get("coach_id") or "").strip() and x.get("code")})
+    _coach_fiche = {}
+    if _sans:
+        _vars = sorted(set(_sans) | {c.upper() for c in _sans})
+        for _f in await database.discount_codes.find({"code": {"$in": _vars}}, {"_id": 0, "code": 1, "coach_id": 1}).to_list(200):
+            _k = str(_f.get("code") or "").upper()
+            if str(_f.get("coach_id") or "").strip():
+                _coach_fiche.setdefault(_k, _f.get("coach_id"))
+    for x in _l:
+        x["_locataire"] = locataire(x.get("coach_id") or _coach_fiche.get(str(x.get("code") or "").upper()))
+    return [x for x in _l if de_confiance(x)]
 
 
 async def resoudre_abonnement_actuel(database, email, maintenant=None, notifier=True, perimetre=None) -> dict:
@@ -102,7 +126,7 @@ async def resoudre_abonnement_actuel(database, email, maintenant=None, notifier=
     _base = database if database is not None else db
     _subs = await abonnements_de(_base, email)
     if perimetre is not None:
-        _subs = [x for x in _subs if locataire(x.get("coach_id")) == perimetre]
+        _subs = [x for x in _subs if x.get("_locataire", locataire(x.get("coach_id"))) == perimetre]
     _r = choisir(_subs, maintenant)
     if _r["etat"] == ETAT_COURANT:
         logger.info("%s subscription_resolution membre=%s chosen_subscription_id=%s reason=current_active",
@@ -121,7 +145,7 @@ async def notifier_conflit(database, candidats):
     périmètre, et seulement s'il y a conflit CHEZ LUI (deux coachs différents = pas un conflit)."""
     _par = {}
     for c in candidats or []:
-        _par.setdefault(locataire(c.get("coach_id")), []).append(c)
+        _par.setdefault(c.get("_locataire", locataire(c.get("coach_id"))), []).append(c)
     for _loc, _l in _par.items():
         if len(_l) >= 2:
             await _notifier_un(database, _loc, _l)
@@ -157,9 +181,9 @@ def simuler(subs, codes, maintenant=None) -> dict:
     _par = {}
     for s in subs or []:
         _e = str(s.get("email") or "").strip().lower()
-        if _e:
+        if _e and de_confiance(s):
             # V618-b : un client = une adresse DANS un périmètre (coach) ; deux coachs ≠ conflit.
-            _par.setdefault((_e, locataire(s.get("coach_id"))), []).append(s)
+            _par.setdefault((_e, s.get("_locataire", locataire(s.get("coach_id")))), []).append(s)
     _conflits, _perimes_clients = [], set()
     for (_e, _loc), _l in _par.items():
         _r = choisir(_l, maintenant)
@@ -196,9 +220,21 @@ async def abonnements_integrite(request: Request):
     from api.routes import referral_routes as R
     _c = await R._coach_strict(request)
     _f = {} if _c["cle"] == "" else {"coach_id": _c["cle"]}
-    _subs = await db.subscriptions.find(_f, {"_id": 0, "email": 1, "code": 1, "status": 1, "expires_at": 1,
-                                             "end_date": 1, "created_at": 1, "coach_id": 1}).to_list(5000)
-    _codes = await db.discount_codes.find(_f, {"_id": 0, "code": 1, "assignedEmail": 1, "active": 1, "expiresAt": 1}).to_list(5000)
+    _subs = await db.subscriptions.find({}, {"_id": 0, "email": 1, "code": 1, "status": 1, "expires_at": 1,
+                                             "end_date": 1, "created_at": 1, "coach_id": 1, "source": 1}).to_list(5000)
+    _codes = await db.discount_codes.find({}, {"_id": 0, "code": 1, "assignedEmail": 1, "active": 1, "expiresAt": 1,
+                                               "coach_id": 1}).to_list(5000)
+    # Périmètre EFFECTIF (sécurité F1) : coach de l'abonnement, sinon celui de la fiche de son code ;
+    # un coach partenaire ne voit QUE son périmètre.
+    _coach_code = {}
+    for _x in _codes:
+        if str(_x.get("coach_id") or "").strip():
+            _coach_code.setdefault(str(_x.get("code") or "").upper(), _x.get("coach_id"))
+    for _x in _subs:
+        _x["_locataire"] = locataire(_x.get("coach_id") or _coach_code.get(str(_x.get("code") or "").upper()))
+    if _c["cle"] != "":
+        _subs = [x for x in _subs if x["_locataire"] == locataire(_c["cle"])]
+        _codes = [x for x in _codes if locataire(x.get("coach_id")) == locataire(_c["cle"])]
     return dict(simuler(_subs, _codes), lecture_seule=True)
 
 
@@ -219,9 +255,13 @@ def _fiche_du_code(fiches, maintenant=None):
     return sorted(_l, key=lambda f: (str(f.get("expiresAt") or ""), str(f.get("created_at") or "")), reverse=True)[0]
 
 
-async def _fiche(database, code):
+async def _fiche(database, code, perimetre=None):
+    """La fiche d'un code ; avec `perimetre`, SEULEMENT parmi celles de ce coach (sécurité F8 :
+    une chaîne de code recréée par un autre coach ne mélange jamais les deux)."""
     _f = await database.discount_codes.find({"code": {"$regex": "^%s$" % re.escape(str(code or "")), "$options": "i"}},
                                             {"_id": 0}).to_list(20)
+    if perimetre is not None:
+        _f = [x for x in _f if locataire(x.get("coach_id")) == perimetre]
     return _fiche_du_code(_f)
 
 
@@ -250,11 +290,17 @@ async def fiches_pour_acces(database, email, maintenant=None) -> dict:
         _l = await database.discount_codes.find({"assignedEmail": {"$regex": "^%s$" % re.escape(_e), "$options": "i"},
                                                  "active": True}, {"_id": 0}).to_list(50) if _e else []
         _l.sort(key=lambda f: (not _v391_est_expire(f.get("expiresAt"), maintenant), str(f.get("expiresAt") or "")), reverse=True)
-        _sortie = _l[:1]
+        # Sécurité F5 : la fiche RETENUE pour ce code (`_fiche`) doit, elle aussi, avoir cette adresse
+        # pour titulaire — jamais une vieille fiche restée active d'un code repris par quelqu'un d'autre.
+        for _f in _l:
+            _ref = await _fiche(database, _f.get("code"))
+            if _ref and str(_ref.get("assignedEmail") or "").strip().lower() == _e:
+                _sortie = [_ref]
+                break
     return {"etat": _r["etat"], "fiches": _sortie}
 
 
-async def code_cible_espace(database, email, code_url):
+async def code_cible_espace(database, email, code_url, coach_session=None):
     """V618 — l'espace d'un ANCIEN code est ouvert par une personne PROUVÉE (session d'espace) :
     {code, coach_id} de son espace ACTUEL s'il est différent ; sinon None.
     Garde : le code actuel doit être attribué à la MÊME adresse (celle que la session a prouvée).
@@ -268,10 +314,95 @@ async def code_cible_espace(database, email, code_url):
     if not _f_url or str(_f_url.get("assignedEmail") or "").strip().lower() != _e:
         return None
     _per = locataire(_f_url.get("coach_id"))
+    # Sécurité F7 : la session doit appartenir au MÊME coach que le code de l'adresse.
+    if coach_session is not None and locataire(coach_session) != _per:
+        return None
     _code, _r = await code_actuel(database, _e, perimetre=_per)
     if not _code or _code == str(code_url or "").strip().upper():
         return None
-    _f = await _fiche(database, _code)
+    _f = await _fiche(database, _code, perimetre=_per)
     if not _f or str(_f.get("assignedEmail") or "").strip().lower() != _e or locataire(_f.get("coach_id")) != _per:
         return None
     return {"code": _code, "coach_id": _f.get("coach_id") or (_r.get("abonnement") or {}).get("coach_id") or ""}
+
+
+# ── V618 PHASE 2 : RESTITUTION D'UNE SÉANCE (annulation) ───────────────────────
+STATUTS_HISTORIQUES = ("superseded", "expired", "cancelled", "archived")
+
+
+def cible_restitution(reservation, subs_du_code, maintenant=None):
+    """PUR. L'abonnement à re-créditer quand CETTE réservation est annulée :
+      1. `reservation.subscriptionId` (ou `subscription_id`) s'il existe parmi les abonnements
+         du code — exactement lui, même s'il est historique (ses compteurs, pas son statut) ;
+      2. sinon l'UNIQUE abonnement actuel du code ;
+      3. sinon AUCUN (jamais « le premier trouvé ») : seule la fiche du code est restituée.
+    `subscriptionId` présent mais introuvable -> AUCUN (on ne crédite pas un autre abonnement)."""
+    _r = reservation or {}
+    _l = [s for s in (subs_du_code or []) if isinstance(s, dict)]
+    _sid = str(_r.get("subscriptionId") or _r.get("subscription_id") or "").strip()
+    if _sid:
+        return next((s for s in _l if str(s.get("id") or "") == _sid), None)
+    _c = [s for s in _l if est_courant(s, maintenant)]
+    return _c[0] if len(_c) == 1 else None
+
+
+def statut_apres_restitution(sub, maintenant=None):
+    """PUR. Le statut à écrire après une restitution, ou None (ne PAS toucher au statut).
+    Seul un `completed` (épuisé) encore dans ses dates se rouvre en `active` ; un abonnement
+    historique (superseded / expired / cancelled / archived) ou expiré n'est JAMAIS réactivé."""
+    _s = sub or {}
+    if _s.get("status") == "completed" and not _expire(_s, maintenant):
+        return STATUT_COURANT
+    return None
+
+
+async def bascule_scan(database, sub_scanne):
+    """V618 PHASE 2 — SCAN À LA PORTE d'un ANCIEN QR. Le code scanné IDENTIFIE la personne ;
+    ses droits viennent de son abonnement ACTUEL. (code, abonnement actuel complet) si :
+    l'abonnement scanné n'est PAS actuel, la personne est TITULAIRE du code scanné, et elle a UN
+    abonnement actuel (même périmètre coach) sur un code dont elle est aussi titulaire.
+    Sinon None -> le scan garde le code scanné (et ses refus habituels)."""
+    _s = sub_scanne or {}
+    if est_courant(_s):
+        return None
+    _e = str(_s.get("email") or "").strip().lower()
+    if not _e:
+        return None
+    _f = await _fiche(database, _s.get("code"))
+    if not _f or str(_f.get("assignedEmail") or "").strip().lower() != _e:
+        return None
+    _per = locataire(_f.get("coach_id") if _f.get("coach_id") is not None else _s.get("coach_id"))
+    _r = await resoudre_abonnement_actuel(database, _e, perimetre=_per)
+    if _r["etat"] != ETAT_COURANT:
+        return None
+    _code = str(_r["abonnement"].get("code") or "").strip().upper()
+    if not _code or _code == str(_s.get("code") or "").strip().upper():
+        return None
+    _f2 = await _fiche(database, _code, perimetre=_per)
+    if not _f2 or str(_f2.get("assignedEmail") or "").strip().lower() != _e:
+        return None
+    _complet = await database.subscriptions.find_one({"id": _r["abonnement"].get("id")}, {"_id": 0})
+    return (_code, _complet) if _complet else None
+
+
+MSG_ANCIEN_CODE = "Ce code n'est plus ton abonnement actuel : utilise le code de ton abonnement en cours."
+
+
+async def garde_abonnement_actuel(database, sub, email=None):
+    """V618 PHASE 2 — GARDE COMMUNE avant d'UTILISER un abonnement (réserver, débiter, valider).
+    (ok, motif). Refuse seulement ce qui est prouvé : la personne a un abonnement ACTUEL différent
+    (ancien code) ou, en conflit, l'abonnement présenté n'est pas l'un des abonnements actuels.
+    Aucun abonnement actuel -> la règle existante (forfait_utilisable) décide seule.
+    En conflit, le code présenté par la personne elle-même est accepté s'il est actuel : ce n'est
+    pas un choix arbitraire du système."""
+    _s = sub or {}
+    _e = str(email or _s.get("email") or "").strip().lower()
+    if not _e or not _s.get("id") or not de_confiance(_s):
+        return True, ""
+    _f = await _fiche(database, _s.get("code"))
+    _r = await resoudre_abonnement_actuel(database, _e, perimetre=locataire(_s.get("coach_id") or (_f or {}).get("coach_id")))
+    if _r["etat"] == ETAT_COURANT and str(_r["abonnement"].get("id")) != str(_s.get("id")):
+        return False, MSG_ANCIEN_CODE
+    if _r["etat"] == ETAT_CONFLIT and str(_s.get("id")) not in {str(c.get("id")) for c in _r["candidats"]}:
+        return False, MSG_ANCIEN_CODE
+    return True, ""

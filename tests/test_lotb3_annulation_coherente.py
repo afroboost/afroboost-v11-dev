@@ -292,6 +292,9 @@ def espace(db, appelant=COACH):
     for _n in ("lotb3_actif", "lotb3_montant_debite", "lotb3_montant_restitue",
                "lotb3_code_decrementable", "seances_restituer"):
         setattr(_stub, _n, getattr(S, _n))
+    # V618 PHASE 2 : le VRAI module du resolveur (delete_reservation l'importe).
+    import tests._v618_module as _V618M
+    _V618M.brancher(S)
     ns = construire(db)
     ns["is_super_admin"] = lambda e: (e or "").lower().strip() == ADMIN
     ns["_RESEND_OK"] = False

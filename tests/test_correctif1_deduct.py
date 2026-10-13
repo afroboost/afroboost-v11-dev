@@ -52,6 +52,9 @@ _spec.loader.exec_module(SHARED)
 sys.modules["api"] = types.ModuleType("api")
 sys.modules["api.routes"] = types.ModuleType("api.routes")
 sys.modules["api.routes.shared"] = SHARED
+# V618 PHASE 2 : le VRAI module du resolveur (deduct_session l'importe).
+import tests._v618_module as _V618M  # noqa: E402
+_V618M.brancher(SHARED)
 
 SRC_PROMO = io.open(os.path.join(RACINE, "api", "routes", "promo_routes.py"),
                     encoding="utf-8").read()

@@ -3614,7 +3614,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           // rien n'a changé — sinon tous les effets dépendant de `afroboostProfile`
           // se relancent en boucle et saturent le serveur (502 en production).
           setAfroboostProfile(prev => {
-            const next = { ...prev, subscription: allSubs[0] || null, allSubscriptions: allSubs };
+            // V618 PHASE 2 : l'abonnement ACTUEL vient du SERVEUR (résolveur canonique) — plus
+            // « le premier de la liste ». Conflit -> aucun (null), jamais un choix du navigateur.
+            const next = { ...prev, subscription: res.data.current_subscription || null, allSubscriptions: allSubs };
             if (JSON.stringify(prev && prev.subscription) === JSON.stringify(next.subscription) &&
                 JSON.stringify(prev && prev.allSubscriptions) === JSON.stringify(next.allSubscriptions)) {
               return prev; // référence INCHANGÉE -> aucun re-render, pas de boucle
@@ -11240,21 +11242,25 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                                 if (!k || seen[k]) return;
                                 seen[k] = true; actives.push(s);
                               });
-                              var resolved = (actives[0] && actives[0].code) || '';
+                              // V618 PHASE 2 : le code de l'abonnement ACTUEL désigné par le serveur.
+                              var resolved = (r.data && r.data.current_subscription && r.data.current_subscription.code) || '';
                               if (!resolved) {
                                 // V296 : codes masqués (jeton d'appareil pas encore présent) ->
                                 // message clair au lieu du « aucun abonnement » trompeur.
                                 if (r.data && r.data.codes_masked) {
                                   alert('Pour publier, reconnecte-toi une fois avec ton code (formulaire Abonné). Ensuite ce sera automatique.');
+                                } else if (r.data && r.data.integrity_conflict) {
+                                  // V618 PHASE 2 : plusieurs abonnements actifs -> aucun choix, on le dit.
+                                  alert('Plusieurs abonnements actifs : ton coach vérifie lequel est l\'actuel.');
                                 } else {
                                   alert('Aucun abonnement actif trouvé pour votre email.');
                                 }
                                 return;
                               }
                               // Mémoriser (merge) -> les prochains clics sont instantanés.
-                              v294MergeProfile({ code: resolved, subscription: actives[0], allSubscriptions: actives });
+                              v294MergeProfile({ code: resolved, subscription: r.data.current_subscription, allSubscriptions: actives });
                               setAfroboostProfile(function(prev) {
-                                return Object.assign({}, prev, { code: resolved, subscription: actives[0], allSubscriptions: actives });
+                                return Object.assign({}, prev, { code: resolved, subscription: r.data.current_subscription, allSubscriptions: actives });
                               });
                               setV263PublishCode(resolved);
                               setV263ShowPublish(true);

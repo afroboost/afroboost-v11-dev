@@ -155,7 +155,7 @@ async def principal():
     r = await AA.resoudre_abonnement_actuel(base, N)
     verifier("G2 dès la création, le NOUVEAU est l'abonnement actuel", r["etat"] == "courant" and r["abonnement"]["id"] == "neuf")
     verifier("G3 la création manuelle (POST /discount-codes) appelle cette clôture",
-             "_v618_cloturer(_db, assigned_email, sub_data.get(\"id\"), log_prefix=\"V618\")" in PROMO)
+             "_v618_cloturer(_db, assigned_email, sub_data.get(\"id\"), log_prefix=\"V618\"," in PROMO)
 
     # ── simulation (lecture seule) ─────────────────────────────────────────────
     sim = AA.simuler(base["subscriptions"].docs, base["discount_codes"].docs, MAINTENANT)
@@ -173,7 +173,7 @@ async def principal():
     verifier("W-2 espace : APRÈS la preuve de session, un ancien code renvoie vers l'espace actuel",
              esp.index("_b3s13_porteur_autorise") < esp.index("code_cible_espace") and '"redirection_espace"' in esp)
     verifier("W-3 lien d'espace coach + rappel Stripe : résolveur ; conflit -> aucun choix",
-             SERVEUR.count("db, email_clean, perimetre=") == 1 and SERVEUR.count("resoudre_abonnement_actuel(db, _email)") == 1
+             SERVEUR.count("db, email_clean, perimetre=") == 1 and SERVEUR.count("resoudre_abonnement_actuel(db, _email, perimetre=_v618.PLATEFORME)") == 1
              and "Plusieurs abonnements actifs pour ce client — à vérifier." in SERVEUR)
     verifier("W-4 notification coach visible (type ajouté aux notifications du tableau de bord)", '"abonnement_integrite")' in SERVEUR)
 

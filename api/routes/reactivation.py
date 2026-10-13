@@ -81,10 +81,12 @@ def est_droit_actif(sub, maintenant=None) -> bool:
     séances restantes (ou un cycle récurrent : mensuel / saison 2×)."""
     s = sub or {}
     maintenant = maintenant or datetime.now(timezone.utc)
-    if _texte(s.get("status")).lower() != "active" or est_essai(s):
+    if est_essai(s):
         return False
-    exp = _dt(s.get("expires_at"))
-    if exp is not None and exp < maintenant:
+    # V618 PHASE 2 : « actif » = la règle canonique (statut active ET non expiré, fin de journée
+    # suisse) — plus une lecture de date propre aux campagnes (minuit UTC).
+    from api.routes.abonnement_actuel import est_courant as _v618_courant
+    if not _v618_courant(dict(s, status=_texte(s.get("status")).lower()), maintenant):
         return False
     if s.get("billing_mode") in ("mensuel_auto", "saison_2x"):
         return True

@@ -601,7 +601,9 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
                 "status": "active",
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
-                "source": "admin_manual"
+                "source": "admin_manual",
+                # V618 PHASE 2 (sécurité F1) : le PÉRIMÈTRE de l'abonnement = celui du code.
+                "coach_id": code_data.get("coach_id") or "",
             }
             # B : la declaration faite sur le code suit le droit qu'il ouvre.
             # RECOPIE, pas recalcul — elle a ete etablie une seule fois, au
@@ -618,7 +620,13 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
             # résolveur le signalera alors en conflit au coach). Aucun compteur n'est fusionné.
             try:
                 from api.routes.shared import cloturer_anciens_forfaits as _v618_cloturer
-                await _v618_cloturer(_db, assigned_email, sub_data.get("id"), log_prefix="V618")
+                from api.routes import abonnement_actuel as _v618_aa
+                # Sécurité F2 : ne clôture QUE les abonnements du MÊME coach (jamais ceux d'un autre).
+                _v618_per = _v618_aa.locataire(code_data.get("coach_id"))
+                _v618_ids = {str(x.get("id")) for x in await _v618_aa.abonnements_de(_db, assigned_email)
+                             if x.get("_locataire") == _v618_per}
+                await _v618_cloturer(_db, assigned_email, sub_data.get("id"), log_prefix="V618",
+                                     ids_autorises=_v618_ids)
             except Exception as _v618e:
                 logger.warning(f"[V618] anciens abonnements non clôturés ({type(_v618e).__name__})")
             # Envoyer email de bienvenue
@@ -966,10 +974,13 @@ async def validate_discount_code(data: dict):
         course_id = data.get("courseId", "").strip() if data.get("courseId") else ""
 
         # Case-insensitive search using regex
-        code = await _db.discount_codes.find_one({
+        # V618 PHASE 2 : la fiche se choisit par la règle canonique (canonique vivante > vivante >
+        # plus récente), plus par un `find_one` sans tri parmi les doublons d'un même code.
+        from api.routes import abonnement_actuel as _v618
+        code = _v618._fiche_du_code(await _db.discount_codes.find({
             "code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"},  # Case insensitive match
             "active": True
-        }, {"_id": 0})
+        }, {"_id": 0}).to_list(20))
 
         if not code:
             return {"valid": False, "message": "Code inconnu ou invalide"}
@@ -1028,12 +1039,18 @@ async def validate_discount_code(data: dict):
             if offer_name == "Abonnement":
                 offer_name = code.get("name") or code.get("code") or "Abonnement"
 
-            # Vérifier si l'abonné a déjà un abonnement actif avec CE code
-            existing_sub = await _db.subscriptions.find_one({
-                "email": user_email,
-                "code": code_str,
-                "status": "active"
-            }, {"_id": 0})
+            # V618 PHASE 2 — un abonnement existe-t-il déjà pour CE code et CETTE personne, QUEL QUE
+            # SOIT son statut ? Alors on n'en crée pas un neuf : sinon un ancien code (superseded,
+            # completed…) renaissait « active » avec un compteur remis à zéro.
+            _v618_subs_code = await _db.subscriptions.find({
+                "email": {"$regex": f"^{re.escape(user_email)}$", "$options": "i"},
+                "code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"},
+            }, {"_id": 0}).to_list(20)
+            if _v618_subs_code and not any(_v618.est_courant(x) for x in _v618_subs_code):
+                _v618_cur = await _v618.resoudre_abonnement_actuel(_db, user_email)
+                if _v618_cur["etat"] != _v618.ETAT_AUCUN:
+                    return {"valid": False, "message": _v618.MSG_ANCIEN_CODE}
+            existing_sub = _v618_subs_code[0] if _v618_subs_code else None
 
             if not existing_sub:
                 # Créer un nouvel abonnement
@@ -1051,7 +1068,11 @@ async def validate_discount_code(data: dict):
                     "expires_at": expiry_date.isoformat() if expiry_date else None,
                     "status": "active",
                     "created_at": datetime.now(timezone.utc).isoformat(),
-                    "updated_at": datetime.now(timezone.utc).isoformat()
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    # V618 PHASE 2 (sécurité F3/F1) : créé par une route PUBLIQUE (sans preuve
+                    # d'identité) -> jamais « abonnement actuel » d'office ; périmètre = le code.
+                    "source": "promo_validate",
+                    "coach_id": code.get("coach_id") or "",
                 }
                 # B : meme recopie depuis le code. Un code anterieur au lot n'en
                 # porte aucune -> {} -> la souscription reste sans montant, ce
@@ -1097,7 +1118,12 @@ async def validate_discount_code(data: dict):
         # Enrichir la réponse avec les infos d'abonnement
         subscription_info = None
         if user_email:
-            sub = await _db.subscriptions.find_one({"email": user_email, "code": code_str, "status": "active"}, {"_id": 0})
+            # V618 PHASE 2 : l'abonnement ACTUEL de ce code pour cette personne (jamais un ancien).
+            _v618_l = await _db.subscriptions.find({
+                "email": {"$regex": f"^{re.escape(user_email)}$", "$options": "i"},
+                "code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}}, {"_id": 0}).to_list(20)
+            _v618_ch = _v618.choisir(_v618_l)
+            sub = _v618_ch["abonnement"] if _v618_ch["etat"] == _v618.ETAT_COURANT else None
             if sub:
                 sub = _sanitize_mongo_doc(sub)
                 subscription_info = {
@@ -1216,11 +1242,38 @@ async def get_subscription_status(request: Request, email: str = "", code: str =
         seen_codes.add(code_key)
         verified_subs.append(sub)
 
+    # V618 PHASE 2 — L'ABONNEMENT ACTUEL EST DÉCIDÉ ICI, PAS DANS LE NAVIGATEUR. Avant, la liste
+    # n'était pas ordonnée et le ChatWidget prenait `[0]` (souvent un ancien abonnement resté
+    # « active »). Désormais : seuls les abonnements ACTUELS (résolveur canonique) sont rendus,
+    # l'actuel en tête ; conflit -> `integrity_conflict` et AUCUN `subscription` (fail closed).
+    from api.routes import abonnement_actuel as _v618
+    _v618_mail = user_email or str((verified_subs[0] if verified_subs else all_subs[0]).get("email") or "").strip().lower()
+    # Requête PAR CODE : résolue dans le périmètre (coach) de ce code — deux coachs = deux abonnements
+    # actuels possibles, ce n'est pas un conflit. Requête par e-mail : toutes ses inscriptions.
+    _v618_per = None
+    if code:
+        _v618_ref = next((s for s in all_subs if (s.get("email") or "").strip().lower() == _v618_mail), None) or {}
+        _v618_f = await _v618._fiche(_db, code.upper().strip())
+        _v618_per = _v618.locataire(_v618_ref.get("coach_id") or (_v618_f or {}).get("coach_id"))
+    _v618_r = (await _v618.resoudre_abonnement_actuel(_db, _v618_mail, perimetre=_v618_per) if _v618_mail
+               else {"etat": _v618.ETAT_AUCUN, "candidats": [], "abonnement": None})
+    _v618_ids = ([str(_v618_r["abonnement"].get("id"))] if _v618_r["etat"] == _v618.ETAT_COURANT
+                 else [str(c.get("id")) for c in _v618_r.get("candidats") or []])
+    # Sécurité : l'historique ne contient QUE les abonnements de CETTE adresse (une requête par code
+    # ne révèle jamais les abonnements d'un autre membre du même code).
+    _v618_historique = [s for s in all_subs if str(s.get("id")) not in _v618_ids
+                        and (s.get("email") or "").strip().lower() == _v618_mail]
+    verified_subs = sorted([s for s in verified_subs if str(s.get("id")) in _v618_ids],
+                           key=lambda s: _v618_ids.index(str(s.get("id"))))
+    _v618_conflit = _v618_r["etat"] == _v618.ETAT_CONFLIT
+
     if not verified_subs:
         return {
             "success": False,
             "hasSubscription": False,
-            "message": "Aucun abonnement actif"
+            "integrity_conflict": _v618_conflit,
+            "message": ("Plusieurs abonnements actifs — ton coach vérifie lequel est l'actuel."
+                        if _v618_conflit else "Aucun abonnement actif")
         }
 
     # === V296 : décider si on montre les CODES en clair ===
@@ -1274,13 +1327,18 @@ async def get_subscription_status(request: Request, email: str = "", code: str =
             out["code_masked"] = _mask_code(raw_code)
         return out
 
-    # Rétro-compatible : "subscription" = premier résultat
+    # V618 PHASE 2 : `subscription` = L'ABONNEMENT ACTUEL résolu par le serveur (plus « le premier
+    # trouvé ») ; en conflit, aucun n'est désigné. `history` = les autres, en lecture seule.
+    _v618_actuel = format_sub(verified_subs[0]) if not _v618_conflit else None
     return {
         "success": True,
         "hasSubscription": True,
         "codes_masked": (not full_access),  # indice pour le frontend (ne pas écraser un vrai code)
-        "subscription": format_sub(verified_subs[0]),
-        "subscriptions": [format_sub(s) for s in verified_subs]
+        "subscription": _v618_actuel,
+        "current_subscription": _v618_actuel,
+        "integrity_conflict": _v618_conflit,
+        "subscriptions": [format_sub(s) for s in verified_subs],
+        "history": [format_sub(s) for s in _v618_historique[:10]],
     }
 
 
@@ -1336,12 +1394,21 @@ async def deduct_session(data: dict, request: Request):
     if not email:
         return {"success": False, "message": "Email requis"}
 
-    # Chercher l'abonnement actif
-    query = {"email": email, "status": "active"}
+    # V618 PHASE 2 — L'ABONNEMENT ACTUEL (résolveur canonique), plus un `find_one` sans tri.
+    # Sans code : l'actuel, sinon rien (conflit -> refus explicite). Avec code : l'abonnement de
+    # ce code n'est débité QUE s'il est l'actuel (ou l'un des actuels en conflit, désigné).
+    from api.routes import abonnement_actuel as _v618
+    # Isolation coach : la garde de PROPRIÉTÉ existante (403, abonnements anciens sans coach_id
+    # inclus) s'applique plus bas à l'abonnement retenu — elle reste la seule à trancher.
+    _v618_r = await _v618.resoudre_abonnement_actuel(_db, email)
+    _v618_cands = ([_v618_r["abonnement"]] if _v618_r["etat"] == _v618.ETAT_COURANT else _v618_r.get("candidats") or [])
     if code:
-        query["code"] = code
-
-    subscription = await _db.subscriptions.find_one(query, {"_id": 0})
+        _v618_cands = [c for c in _v618_cands if str(c.get("code") or "").upper() == code]
+    elif _v618_r["etat"] == _v618.ETAT_CONFLIT:
+        return {"success": False, "message": "Plusieurs abonnements actifs — précise le code (à vérifier).",
+                "integrity_conflict": True, "remaining": 0}
+    subscription = (await _db.subscriptions.find_one({"id": _v618_cands[0].get("id")}, {"_id": 0})
+                    if len(_v618_cands) == 1 else None)
 
     if not subscription:
         return {"success": False, "message": "Aucun abonnement actif", "remaining": 0}
@@ -1439,12 +1506,18 @@ async def sync_subscriptions_for_email(data: dict, request: Request):
 
     created = []
     skipped = []
+    from api.routes.shared import _v391_est_expire as _v618_expire
     for code in codes:
         code_str = code.get("code", "").upper().strip()
-        # Vérifier si une subscription existe déjà
+        # V618 PHASE 2 — jamais un abonnement « active » pour un code EXPIRÉ, et jamais un second
+        # abonnement pour un code qui en a déjà un, QUEL QUE SOIT son statut : sinon un abonnement
+        # passé en historique (superseded / completed / cancelled) renaîtrait neuf et « actuel ».
+        if _v618_expire(code.get("expiresAt")):
+            skipped.append(code_str)
+            continue
         existing = await _db.subscriptions.find_one(
-            {"email": email, "code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}, "status": "active"},
-            {"_id": 0}
+            {"code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}},
+            {"_id": 0, "id": 1}
         )
         if existing:
             skipped.append(code_str)

@@ -840,7 +840,7 @@ def forfait_utilisable(sub, quantite=1):
 # la source même des doublons qui ont fait afficher un forfait mort à une cliente
 # alors que son forfait valide existait juste à côté.
 
-async def cloturer_anciens_forfaits(db, email, id_nouveau, log_prefix="V397"):
+async def cloturer_anciens_forfaits(db, email, id_nouveau, log_prefix="V397", ids_autorises=None):
     """Ferme (`superseded`) les forfaits ACTIFS antérieurs de ce client.
 
     PORTÉE VOLONTAIREMENT ÉTROITE — on ne ferme QUE ce qui est déjà sans valeur :
@@ -870,6 +870,10 @@ async def cloturer_anciens_forfaits(db, email, id_nouveau, log_prefix="V397"):
     for anc in candidats:
         if anc.get("id") == id_nouveau:
             continue  # jamais le forfait qu'on vient de créer
+        # V618 PHASE 2 (sécurité F2) : un appelant limité à un PÉRIMÈTRE (coach) ne clôture que ses
+        # propres abonnements. None (Stripe, défaut) = comportement d'avant, inchangé.
+        if ids_autorises is not None and str(anc.get("id")) not in {str(x) for x in ids_autorises}:
+            continue
         perime = _v391_est_expire(anc.get("expires_at"))
         epuise = _v391_seances_restantes(anc) <= 0
         if not (perime or epuise):

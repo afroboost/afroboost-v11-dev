@@ -249,6 +249,9 @@ def espace(db, appelant=COACH, admins=(ADMIN,)):
     for _n in ("lotb3_actif", "lotb3_montant_debite", "lotb3_montant_restitue",
                "lotb3_code_decrementable", "seances_restituer"):
         setattr(sys.modules["api.routes.shared"], _n, getattr(_S_REEL, _n))
+    # V618 PHASE 2 : le VRAI module du resolveur (delete_reservation l'importe).
+    import tests._v618_module as _V618M
+    _V618M.brancher(_S_REEL)
     os.environ["LOTB3_ANNULATION_CANONIQUE_ENABLED"] = "true"
     ns = construire(db)
     ns["is_super_admin"] = lambda e: (e or "").lower().strip() in [a.lower() for a in admins]

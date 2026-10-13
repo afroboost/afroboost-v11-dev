@@ -10506,16 +10506,16 @@ async def stripe_webhook(request: Request):
                     _v618_etat = None
                     try:
                         from api.routes import abonnement_actuel as _v618
-                        _v618_r = await _v618.resoudre_abonnement_actuel(db, _email)
+                        # Sécurité F6 : la facturation Stripe est celle de la PLATEFORME ; le code
+                        # n'entre dans le lien que si l'adresse en est le TITULAIRE ; aucun repli.
+                        _v618_r = await _v618.resoudre_abonnement_actuel(db, _email, perimetre=_v618.PLATEFORME)
                         _v618_etat = _v618_r["etat"]
                         if _v618_etat == _v618.ETAT_COURANT:
-                            _sub = await db.subscriptions.find_one({"id": _v618_r["abonnement"].get("id")}, {"_id": 0})
+                            _v618_f = await _v618._fiche(db, _v618_r["abonnement"].get("code"), perimetre=_v618.PLATEFORME)
+                            if _v618_f and str(_v618_f.get("assignedEmail") or "").strip().lower() == str(_email).strip().lower():
+                                _sub = await db.subscriptions.find_one({"id": _v618_r["abonnement"].get("id")}, {"_id": 0})
                     except Exception as _v618e:
                         logger.warning("[V618] abonnement actuel non résolu (%s)", type(_v618e).__name__)
-                    if _sub is None and _v618_etat != "conflit":   # conflit : aucun code choisi au hasard
-                        _sub = await db.subscriptions.find_one(
-                            {"email": _email, "status": "active"}, {"_id": 0}
-                        )
                     _ts = facture.get("next_payment_attempt") or facture.get("period_end")
                     _dt = (datetime.fromtimestamp(int(_ts), tz=timezone.utc)
                            if _ts else datetime.now(timezone.utc) + timedelta(days=V398_DELAI_JOURS))
@@ -10736,12 +10736,12 @@ async def check_subscriber_exists(email: str = ""):
         if not email:
             return {"found": False}
 
-        # Recherche directe par assignedEmail (même logique que /subscriber/recover)
-        discount = await db.discount_codes.find_one(
-            {"assignedEmail": email, "active": True},
-            {"_id": 0}
-        )
-        if not discount:
+        # V618 PHASE 2 : la MÊME règle que l'e-mail d'accès (résolveur canonique) — une fiche de code
+        # expirée ou un ancien abonnement ne fait plus d'une personne un abonné.
+        from api.routes import abonnement_actuel as _v618
+        from api.routes.shared import _v391_est_expire as _v618_exp
+        _v618_acc = await _v618.fiches_pour_acces(db, email)
+        if _v618_acc["etat"] == _v618.ETAT_AUCUN and not [f for f in _v618_acc["fiches"] if not _v618_exp(f.get("expiresAt"))]:
             return {"found": False}
 
         # V389 : EXISTENCE SEULE. Ne jamais rajouter `code` ni `name` ici.
@@ -11452,14 +11452,25 @@ async def _v261_resolve_subscriber(code: str):
     # V391 : même sélection que partout ailleurs (le plus récent utilisable).
     from api.routes.shared import lire_abonnement_par_code as _v391_lire3
     sub = await _v391_lire3(db, code)
+    # V618 PHASE 2 — `lire_abonnement_par_code` peut rendre un abonnement HISTORIQUE (dernier repli
+    # de `choisir_abonnement`) : un code mort donnait encore ok=True (jeton d'appareil, publier,
+    # infos abonné). Un abonnement HISTORIQUE (superseded / expired / cancelled / archived) ou expiré
+    # n'ouvre plus ces droits. Un forfait seulement épuisé (`completed`, dans ses dates) reste
+    # reconnu comme avant : profil, abonnements sociaux et rechargement en dépendent.
+    from api.routes.abonnement_actuel import STATUTS_HISTORIQUES as _v618_hist, _expire as _v618_expire
     if sub:
+        if str(sub.get("status") or "").lower() in _v618_hist or _v618_expire(sub):
+            return False, "", None
         name = sub.get("name") or (sub.get("email") or "").split("@")[0] or "Abonné"
         return True, name, (sub.get("coach_id") or DEFAULT_COACH_ID)
     dc = await db.discount_codes.find_one(
         {"code": code, "active": True},
-        {"_id": 0, "name": 1, "assignedEmail": 1, "maxUses": 1, "used": 1, "coach_id": 1}
+        {"_id": 0, "name": 1, "assignedEmail": 1, "maxUses": 1, "used": 1, "coach_id": 1, "expiresAt": 1}
     )
     if dc:
+        from api.routes.shared import _v391_est_expire as _v618_exp
+        if _v618_exp(dc.get("expiresAt")):
+            return False, "", None        # V618 PHASE 2 : un code expiré n'ouvre plus de droits
         # Un code epuise n'est plus un abonnement actif.
         try:
             if int(dc.get("maxUses") or 0) - int(dc.get("used") or 0) <= 0:
@@ -15760,7 +15771,9 @@ async def get_subscriber_by_code(code: str):
         used = discount.get("used", 0)
         remaining = max(0, max_uses - used)
         email = discount.get("assignedEmail", "")
-        is_active = discount.get("active", False) and remaining > 0
+        # V618 PHASE 2 : « actif » suit aussi l'EXPIRATION (fin de journée suisse), plus seulement le solde.
+        from api.routes.shared import _v391_est_expire as _v618_exp
+        is_active = discount.get("active", False) and remaining > 0 and not _v618_exp(discount.get("expiresAt"))
 
         # QR Code URL
         qr_data = f"https://afroboost.com/?qr={code_upper}"
@@ -17492,7 +17505,8 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
     if not m:
         try:
             from api.routes import abonnement_actuel as _v618
-            _v618_cible = await _v618.code_cible_espace(db, _b3s13_charge.get("email"), code_upper)
+            _v618_cible = await _v618.code_cible_espace(db, _b3s13_charge.get("email"), code_upper,
+                                                         coach_session=_b3s13_charge.get("coach_id") or "")
         except Exception as _v618e:
             logger.warning("[V618] résolution de l'espace actuel impossible (%s)", type(_v618e).__name__)
             _v618_cible = None
@@ -17507,6 +17521,15 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
                     "jti": _v618_jti, "code": _v618_cible["code"], "email": _v618_mail, "coach_id": _v618_coach,
                     "slug": "", "created_at": datetime.now(timezone.utc).isoformat(),
                     "expires_at": _v618_fin.isoformat(), "revoked": False, "origine": "v618_abonnement_actuel"})
+                # Sécurité F4 : la session de l'ANCIEN code est fermée — elle ne peut plus fabriquer de
+                # nouvelles sessions, et « Se déconnecter » dans l'espace actuel ferme vraiment tout.
+                try:
+                    await db[_B3S1_COLL_SESSIONS].update_one(
+                        {"jti": _b3s13_charge.get("jti"), "revoked": False},
+                        {"$set": {"revoked": True, "revoked_at": datetime.now(timezone.utc).isoformat(),
+                                  "revoked_reason": "v618_remplacee_par_espace_actuel"}})
+                except Exception as _v618re:
+                    logger.warning("[V618] ancienne session non fermée (%s)", type(_v618re).__name__)
                 logger.info("[V618] espace d'un ancien code -> espace actuel (jti=%s)", str(_v618_jti)[:8])
                 return {"redirection_espace": {"code": _v618_cible["code"], "token": _v618_jeton,
                                                "expires_at": _v618_fin.isoformat()},
@@ -18640,9 +18663,15 @@ async def subscriber_stripe_checkout(access_code: str, request: Request):
     # du tout, ce qui serait un recul.
     _lotr_offre = None
     try:
-        _lotr_sub = await db.subscriptions.find_one(
+        # V618 PHASE 2 : l'offre de l'abonnement ACTUEL du code (sinon du plus récent), plus un
+        # `find_one` sans statut ni tri qui pouvait lire un ANCIEN cycle (autre offre, autre prix).
+        from api.routes.abonnement_actuel import choisir as _v618_choisir
+        _v618_l = await db.subscriptions.find(
             {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}},
-            {"_id": 0, "offer_name": 1, "offer_id": 1})
+            {"_id": 0, "offer_name": 1, "offer_id": 1, "status": 1, "expires_at": 1, "end_date": 1,
+             "created_at": 1, "id": 1}).to_list(50)
+        _v618_c = _v618_choisir(_v618_l)
+        _lotr_sub = _v618_c["abonnement"] if _v618_c["etat"] == "courant" else _v618_c["dernier"]
         _lotr_offre = await _v426_offre_de_labonnement(
             (_lotr_sub or {}).get("offer_name") or "", code_upper,
             (_lotr_sub or {}).get("offer_id") or "")
@@ -19259,6 +19288,13 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     _b2_refus, _b2_msg = await _lotb2_refus(db, code_upper, quantity)
     if _b2_refus:
         raise HTTPException(status_code=400, detail=_b2_msg)
+    # V618 PHASE 2 : la même garde canonique que la vitrine — un ancien code ne réserve plus
+    # quand son titulaire a un abonnement actuel différent (l'espace est d'ailleurs redirigé).
+    if not subscription.get("_is_virtual"):
+        from api.routes.abonnement_actuel import garde_abonnement_actuel as _v618_garde
+        _v618_ok, _v618_msg = await _v618_garde(db, subscription)
+        if not _v618_ok:
+            raise HTTPException(status_code=400, detail=_v618_msg)
 
     course = await db.courses.find_one({"id": course_id}, {"_id": 0})
     if not course:
@@ -19687,16 +19723,20 @@ async def get_space_link_by_email(email: str, request: Request):
         logger.warning("[V618] espace actuel non résolu (%s)", type(_v618e).__name__)
         _v618_r = None
     if not code and not (_v618_r and _v618_r.get("etat") == "conflit"):
-        subscription = await db.subscriptions.find_one(
-            {"email": email_clean, "status": "active", **_mt2_portee}, {"_id": 0, "code": 1}
-        )
-        code = (subscription or {}).get("code")
+        # V618 PHASE 2 : aucun abonnement actuel -> le PLUS RÉCENT (même règle de tri que le
+        # résolveur), plus un `find_one({status: active})` sans tri qui rendait un code périmé.
+        from api.routes import abonnement_actuel as _v618p
+        _v618_l = await db.subscriptions.find({"email": email_clean, **_mt2_portee},
+                                              {"_id": 0, "code": 1, "status": 1, "expires_at": 1, "end_date": 1,
+                                               "created_at": 1, "id": 1}).to_list(50)
+        code = ((_v618p.choisir(_v618_l).get("dernier")) or {}).get("code")
     if not code:
-        # Fallback : code assigné dans discount_codes
-        discount = await db.discount_codes.find_one(
-            {"assignedEmail": email_clean, "active": True, **_mt2_portee}, {"_id": 0, "code": 1}
-        )
-        code = (discount or {}).get("code")
+        # Fallback : code assigné dans discount_codes — la fiche vivante la plus récente (V618 PHASE 2)
+        from api.routes import abonnement_actuel as _v618p
+        _v618_f = await db.discount_codes.find({"assignedEmail": email_clean, "active": True, **_mt2_portee},
+                                               {"_id": 0, "code": 1, "active": 1, "expiresAt": 1, "canonical": 1,
+                                                "created_at": 1}).to_list(50)
+        code = ((_v618p._fiche_du_code(_v618_f)) or {}).get("code")
     if not code:
         raise HTTPException(status_code=404, detail="Aucun code abonné pour cet email")
 
@@ -20663,32 +20703,39 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
     if not reservation_id:
         raise HTTPException(status_code=400, detail="Réservation requise")
 
-    # V215b: Aligner sur /reserve — case-insensitive + fallback statuts + fallback discount_codes
-    subscription = await db.subscriptions.find_one(
-        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "status": "active"}, {"_id": 0}
-    )
-    if not subscription:
-        subscription = await db.subscriptions.find_one(
-            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
-        )
-    if not subscription:
+    # V618 PHASE 2 — L'ABONNEMENT CRÉDITÉ EST CELUI DE LA RÉSERVATION. Avant : le premier abonnement
+    # « active » du code, puis N'IMPORTE QUEL statut, était re-crédité ET forcé en `active` — un
+    # ancien abonnement (superseded / expired) pouvait redevenir actuel. Désormais :
+    # `reservation.subscriptionId`, sinon l'UNIQUE abonnement actuel du code, sinon aucun ;
+    # et un statut historique n'est jamais modifié (abonnement_actuel.statut_apres_restitution).
+    from api.routes.abonnement_actuel import cible_restitution as _v618_cible, statut_apres_restitution as _v618_statut
+    _v618_subs = await db.subscriptions.find(
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}).to_list(50)
+    dc = None
+    if not _v618_subs:
         dc = await db.discount_codes.find_one(
             {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
         )
         if not dc:
             raise HTTPException(status_code=404, detail="Abonnement introuvable")
-        subscription = {
-            "code": dc.get("code"),
-            "email": dc.get("assignedEmail") or "",
-            "remaining_sessions": max(0, (dc.get("maxUses") or 0) - (dc.get("used") or 0)),
-            "used_sessions": dc.get("used") or 0,
-            "_is_virtual": True,
-        }
 
-    user_email = (subscription.get("email") or "").lower().strip()
     reservation = await db.reservations.find_one({"id": reservation_id}, {"_id": 0})
     if not reservation:
         raise HTTPException(status_code=404, detail="Réservation introuvable")
+    subscription = _v618_cible(reservation, _v618_subs)
+    if not subscription:
+        # Aucun abonnement désigné sans ambiguïté : rien n'est re-crédité côté abonnement ;
+        # la fiche du code est restituée plus bas par la règle unique (mouvement `debit:<id>`).
+        _dc = dc or await db.discount_codes.find_one(
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}) or {}
+        subscription = {
+            "code": code_upper,
+            "email": (_dc.get("assignedEmail") or (_v618_subs[0].get("email") if _v618_subs else "") or ""),
+            "remaining_sessions": max(0, (_dc.get("maxUses") or 0) - (_dc.get("used") or 0)),
+            "used_sessions": _dc.get("used") or 0,
+            "_is_virtual": True,
+        }
+    user_email = (subscription.get("email") or "").lower().strip()
 
     # Vérifier l'appartenance (par email ou par discountCode)
     res_email = (reservation.get("userEmail") or "").lower().strip()
@@ -20772,8 +20819,12 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
         "remaining_sessions": new_remaining,
         "used_sessions": new_used,
         "updated_at": datetime.now(timezone.utc).isoformat(),
-        "status": "active",  # Re-réactive si l'abonnement avait été marqué "completed"
     }
+    # V618 PHASE 2 : seul un `completed` encore dans ses dates se rouvre ; un abonnement historique
+    # ou expiré n'est JAMAIS remis en `active`.
+    _v618_nouveau_statut = _v618_statut(subscription)
+    if _v618_nouveau_statut:
+        update_data["status"] = _v618_nouveau_statut
     # V215b: Skip si subscription virtuelle (cas discount_code seul)
     if not subscription.get("_is_virtual") and subscription.get("id"):
         await db.subscriptions.update_one(
@@ -38925,16 +38976,21 @@ async def _v346_emails_abonnes() -> set:
     """
     emails = set()
     try:
-        async for sub in db.subscriptions.find({"status": "active"}, {"_id": 0, "email": 1}):
+        # V618 PHASE 2 : un abonné = un abonnement ACTUEL (statut active ET non expiré, règle
+        # canonique) — un vieil abonnement resté « active » ne fait plus d'une personne un abonné.
+        from api.routes.abonnement_actuel import est_courant as _v618_courant
+        async for sub in db.subscriptions.find({"status": "active"}, {"_id": 0, "email": 1, "status": 1,
+                                                                      "expires_at": 1, "end_date": 1}):
             em = (sub.get("email") or "").lower().strip()
-            if em:
+            if em and _v618_courant(sub):
                 emails.add(em)
     except Exception as e:
         logger.warning(f"[V346] Lecture de subscriptions impossible : {e}")
     try:
-        async for dc in db.discount_codes.find({"active": True}, {"_id": 0, "assignedEmail": 1}):
+        from api.routes.shared import _v391_est_expire as _v618_exp
+        async for dc in db.discount_codes.find({"active": True}, {"_id": 0, "assignedEmail": 1, "expiresAt": 1}):
             em = (dc.get("assignedEmail") or "").lower().strip()
-            if em:
+            if em and not _v618_exp(dc.get("expiresAt")):   # V618 PHASE 2 : un code expiré ne fait plus un abonné
                 emails.add(em)
     except Exception as e:
         logger.warning(f"[V346] Lecture de discount_codes impossible : {e}")
@@ -47333,9 +47389,12 @@ async def _rvab_passage(now, zurich, demi, horizon, instant_du_cours, lire_cours
     _cache_offres: dict = {}
     _entrees = []
     _echecs = 0
+    from api.routes.abonnement_actuel import est_courant as _v618_courant
     for _a in _abos:
         if not rvab_abonnement_actif(_a, now):
             continue                      # expire / solde epuise : deja couvert
+        if not _v618_courant(_a, now):
+            continue                      # V618 PHASE 2 : la règle canonique (fin de journée suisse)
         _mail = rvab_normaliser_email(_a.get("email"))
         if not _mail:
             continue
