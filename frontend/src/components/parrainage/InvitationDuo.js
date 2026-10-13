@@ -274,7 +274,7 @@ export default function InvitationDuo({ token }) {
   // V558 : refus « déjà client » (jamais un abus) — la chaîne de son ami continue.
   const CLIENT_EXISTANT = ['free_trial_already_used', 'free_trial_already_granted', 'abonne_actif', 'already_customer', 'not_eligible']; // V591
   // V610l — LE join (inchangé) : partagé par le formulaire et par le parcours Essai gratuit.
-  const posterJoin = ({ name, email, whatsapp, marketing }) => {
+  const posterJoin = ({ name, email, whatsapp, marketing, partage_canal }) => {
     let attribution = null;
     try { attribution = attributionActuelle(); } catch (x) { attribution = null; }
     const corps = {
@@ -282,6 +282,7 @@ export default function InvitationDuo({ token }) {
       consent_reservation: true, terms_accepted: true, marketing_consent: !!marketing,
     };
     if (attribution) corps.attribution = attribution;
+    if (partage_canal) corps.partage_canal = partage_canal;   // V618k : partage écrit APRÈS l'octroi
     const cleChaine = lireCleChaine(token);
     return axios.post(`${API_PARRAINAGE}/pass/${encodeURIComponent(token)}/join`, corps,
       { timeout: 20000, headers: cleChaine ? { 'X-Chain-Key': cleChaine } : {} });
@@ -290,10 +291,10 @@ export default function InvitationDuo({ token }) {
   // place » (ParcoursEssai), juste après l'enregistrement du partage et AVANT l'ouverture de
   // WhatsApp. Plus de retour obligatoire sur la page. Idempotent côté serveur (même e-mail).
   // Rejet : `{ texte }` lisible, jamais une exception brute.
-  const rejoindreEssai = ({ name, email, whatsapp, marketing }) => {
+  const rejoindreEssai = ({ name, email, whatsapp, marketing, partage_canal }) => {
     suivreInvitation(token, 'reservation_commencee');
     setForm((prev) => Object.assign({}, prev, { name, email, whatsapp, consent: true, marketing: !!marketing }));
-    return posterJoin({ name, email, whatsapp, marketing })
+    return posterJoin({ name, email, whatsapp, marketing, partage_canal })
       .then((r) => {
         const d = (r && r.data) || { status: 'unlocked', tickets: [] };
         setResultat(d);

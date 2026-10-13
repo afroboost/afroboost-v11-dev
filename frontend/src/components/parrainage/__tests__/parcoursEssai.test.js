@@ -195,21 +195,19 @@ describe('V607 — Essai gratuit : moi d’abord, puis mon ami', () => {
     expect(window.open).toHaveBeenCalledTimes(1);
     expect(window.open.mock.calls[0][0]).toBe('');               // fenêtre ouverte DANS le geste
     expect(fen.opener).toBeNull();
-    // ordre serveur : prénom (PATCH /chain) → POST /chain/share → POST /join
-    const ordre = axios.post.mock.calls.map((c) => String(c[0]).split('/T0/')[1]);
-    expect(ordre.indexOf('chain/share')).toBeLessThan(ordre.indexOf('join'));
+    // V618k — ordre serveur : prénom (PATCH /chain) → POST /join portant le canal ; le serveur
+    // n'écrit le partage qu'APRÈS avoir accordé l'essai (plus de POST /chain/share avant).
     expect(axios.patch.mock.calls.find((c) => String(c[0]).endsWith('/chain'))[1]).toEqual(expect.objectContaining({ display_name: 'Aminata' }));
-    expect(appels('/chain/share')[0][1]).toEqual({ channel: 'whatsapp' });
-    expect(appels('/chain/share')[0][2].headers).toEqual({ 'X-Chain-Key': 'K1' });
+    expect(appels('/chain/share')).toHaveLength(0);
     const join = appels('/join')[0];
     expect(join[1]).toEqual(expect.objectContaining({ name: 'Aminata', email: 'aminata@example.com', whatsapp: '+41 79 000 00 00',
-      consent_reservation: true, terms_accepted: true, marketing_consent: false }));
+      consent_reservation: true, terms_accepted: true, marketing_consent: false, partage_canal: 'whatsapp' }));
     expect(join[2].headers).toEqual({ 'X-Chain-Key': 'K1' });
     // WhatsApp : message + lien PERSONNEL de l'ami, posé APRÈS la confirmation
     const lien = decodeURIComponent(fen.location.href);
     expect(lien).toContain('🔥 Aminata t’invite à découvrir Afroboost !');
     expect(lien).toContain('🎁 Ton premier cours est offert.');
-    expect(lien).toContain('https://afroboost.com/api/share/duo/T1?v=2');
+    expect(lien).toContain('https://afroboost.com/api/share/duo/T1');
     // la place est réservée, sans aucun autre geste
     const ok = par('wf-essai-confirme');
     expect(ok).not.toBeNull();
@@ -248,8 +246,9 @@ describe('V607 — Essai gratuit : moi d’abord, puis mon ami', () => {
     await act(async () => { par('wf-inviter-whatsapp').click(); par('wf-inviter-whatsapp').click(); par('wf-inviter-whatsapp').click(); });
     await vider();
     expect(window.open).toHaveBeenCalledTimes(1);
-    expect(appels('/chain/share')).toHaveLength(1);
+    expect(appels('/chain/share')).toHaveLength(0);          // V618k : partage écrit par le join
     expect(appels('/join')).toHaveLength(1);
+    expect(appels('/join')[0][1].partage_canal).toBe('whatsapp');
     expect(par('wf-essai-confirme')).not.toBeNull();
   });
 
@@ -262,7 +261,7 @@ describe('V607 — Essai gratuit : moi d’abord, puis mon ami', () => {
     expect(appels('/join')).toHaveLength(1);
     expect(par('wf-essai-confirme').textContent).toContain('Ta place est réservée');
     expect(par('wf-whatsapp-bloque').textContent).toContain('Tu peux copier ton lien pour inviter ton ami.');
-    expect(decodeURIComponent(par('wf-ouvrir-whatsapp').getAttribute('href'))).toContain('https://afroboost.com/api/share/duo/T1?v=2');
+    expect(decodeURIComponent(par('wf-ouvrir-whatsapp').getAttribute('href'))).toContain('https://afroboost.com/api/share/duo/T1');
     expect(par('wf-copier-lien')).not.toBeNull();
     expect(par('wf-partager-lien')).not.toBeNull();
     expect(evenementsSuivis()).not.toContain('partage_whatsapp_declenche');   // rien n'a été ouvert
@@ -292,9 +291,28 @@ describe('V607 — Essai gratuit : moi d’abord, puis mon ami', () => {
   test('V618j — refus NEUTRE « not_eligible » (membre actif) : même encart, aucune révélation de l’adresse', async () => {
     routeur({ join: () => Promise.reject({ response: { status: 409, headers: { 'x-refus-raison': 'not_eligible' }, data: {} } }) });
     await confirmerPlace();
-    expect(par('wf-refus-membre').textContent).toMatch(/réservé aux nouvelles personnes/);
-    expect(par('wf-refus-membre').textContent).toMatch(/Tu es déjà membre Afroboost \?/);
+    // V618k : uniquement le titre (en question : aucune révélation) + le bouton.
+    expect(par('wf-refus-membre-titre').textContent).toMatch(/Tu es déjà membre Afroboost \?/);
+    expect(par('bouton-espace-membre')).not.toBeNull();
     expect(par('wf-inviter-whatsapp')).toBeNull();
+    expect(par('wf-retour')).toBeNull();                               // plus de « Changer ma séance »
+    expect(appels('/chain/share')).toHaveLength(0);                    // aucun faux partage
+    expect(evenementsSuivis()).not.toContain('partage_whatsapp_declenche');
+  });
+
+  test('V618k — après un refus, corriger son e-mail prépare une NOUVELLE invitation de l’ami (l’ancienne est libérée)', async () => {
+    let refus = true;
+    routeur({ join: () => (refus
+      ? Promise.reject({ response: { status: 409, headers: { 'x-refus-raison': 'not_eligible' }, data: {} } })
+      : Promise.resolve({ data: { status: 'unlocked', tickets: [] } })) });
+    await confirmerPlace();
+    const avant = appels('/chain').length;
+    refus = false;
+    await saisir('wf-email', 'autre@example.com');
+    await vider();
+    expect(par('wf-refus-membre')).toBeNull();
+    expect(appels('/chain').length).toBe(avant + 1);                  // nouvelle création
+    expect(par('wf-inviter-whatsapp')).not.toBeNull();
   });
 
   test('« Partager autrement » : partage natif ABOUTI → partage « share » enregistré + place confirmée ; annulé → rien', async () => {
@@ -309,8 +327,9 @@ describe('V607 — Essai gratuit : moi d’abord, puis mon ami', () => {
       expect(par('wf-essai-pret')).not.toBeNull();
       navigator.share = jest.fn(() => Promise.resolve());
       await cliquer('wf-partager-autrement');
-      expect(appels('/chain/share')[0][1]).toEqual({ channel: 'share' });
+      expect(appels('/chain/share')).toHaveLength(0);                    // V618k : écrit par le join
       expect(appels('/join')).toHaveLength(1);
+      expect(appels('/join')[0][1].partage_canal).toBe('share');
       expect(par('wf-essai-confirme')).not.toBeNull();
       expect(evenementsSuivis()).toContain('partage_autre_declenche');
     } finally { delete navigator.share; }

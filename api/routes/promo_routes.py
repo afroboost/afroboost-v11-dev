@@ -1025,9 +1025,41 @@ async def update_discount_code(code_id: str, updates: dict, request: Request):
                         _v617_code_str, _v617_abo.get("id"), _v617_res.modified_count,
                         sorted(_v617_maj))
 
+    # V618k — L'OFFRE RÉELLE SUIT LES « ARTICLES AUTORISÉS ». Un abonnement manuel « 8 mois » converti
+    # en modifiant sa fiche (articles, séances, fin) gardait `offer_id` VIDE : aucun droit lié à
+    # l'offre (place offerte d'événement…). Désormais, si les articles désignent une offre RÉELLE et
+    # que l'abonnement ACTUEL n'a pas encore d'offre, son `offer_id` est complété (l'ID, jamais le
+    # titre). Une offre déjà présente et différente n'est JAMAIS remplacée (ce serait un nouvel
+    # abonnement). Compteurs, dates, paiement : intacts. Erreur -> la fiche reste modifiée, rien d'autre.
+    _v618k_offre = None
+    if "courses" in updates and _v617_code_str:
+        try:
+            _k_tot, _k_nom, _k_prix, _k_oid = await _resolve_offer_details(updates.get("courses") or [], 0, None)
+            if _k_oid:
+                _k_subs = await _db.subscriptions.find(
+                    {"code": {"$regex": f"^{re.escape(_v617_code_str)}$", "$options": "i"}}, {"_id": 0}).to_list(500)
+                _k_abo, _k_motif = _v617_actuel(_k_subs, existing.get("assignedEmail"))
+                from api.routes import abonnement_actuel as _v618k
+                if _k_abo is not None and not str(_k_abo.get("offer_id") or "").strip() \
+                        and await _v618k.peut_gerer_abonnement(_db, _k_abo, caller, is_super_admin(caller)):
+                    _k_res = await _db.subscriptions.update_one(
+                        {"id": _k_abo.get("id"), "status": "active",
+                         "$or": [{"offer_id": None}, {"offer_id": ""}, {"offer_id": {"$exists": False}}]},
+                        {"$set": {"offer_id": _k_oid, "offer_name": _k_nom,
+                                  "offer_rattachee_le": datetime.now(timezone.utc).isoformat(),
+                                  "offer_rattachee_par": caller}})
+                    if getattr(_k_res, "modified_count", 0) == 1:
+                        _v618k_offre = _k_oid
+                        logger.info("[V618k] %s : offre %s rattachée à l'abonnement actuel %s",
+                                    _v617_code_str, _k_oid[:8], str(_k_abo.get("id"))[:8])
+        except Exception as _k_err:  # noqa: BLE001
+            logger.warning("[V618k] offre non rattachée (%s)", type(_k_err).__name__)
+
     updated = dict(updated or {})
     updated["v617"] = {"abonnement_modifie": (_v617_abo or {}).get("id") if _v617_maj else None,
                        "motif": _v617_motif if _v617_subs else "sans_abonnement"}
+    if _v618k_offre:
+        updated["v618k_offre_rattachee"] = _v618k_offre
     return updated
 
 

@@ -115,6 +115,14 @@ export default function ParcoursEssai({
   // V618j : le serveur a refusé l'essai à CES coordonnées (déjà membre / déjà client / essai déjà
   // pris — réponse NEUTRE, V591) : le bouton vert ne se présente plus comme s'il allait réussir.
   const [refusEssai, setRefusEssai] = useState('');
+  // V618k : un refus LIBÈRE l'invitation de l'ami côté serveur ; si la personne corrige ses
+  // coordonnées, la page en prépare une nouvelle (création idempotente, nouvelle clé).
+  const leverRefus = () => {
+    if (!refusEssai) return;
+    setRefusEssai('');
+    childRef.current = null;
+    setChild(null);
+  };
   const enVol = useRef(false);
   const confirmationVol = useRef(false);                       // double clic : UN seul envoi
   // V610k — le MOT AUDIO de l'invitation (s'il existe) : UN lecteur, monté dès l'accueil (caché),
@@ -279,17 +287,13 @@ export default function ParcoursEssai({
    * (POST /join, idempotent). Résout avec la carte de l'ami (son lien personnel).
    * Rejet : `{ texte }` à afficher. Rien ne dépend d'un retour sur la page ensuite.
    */
+  // V618k — UN SEUL appel serveur après le prénom : le join reçoit le canal (`partage_canal`) et
+  // n'ENREGISTRE le partage qu'APRÈS avoir accordé l'essai. Un refus (déjà membre / client) ne
+  // laisse aucun faux partage — avant, le partage était écrit AVANT de savoir si l'essai passait.
   const confirmer = (canal, coord) => preparerEnfant()
     .catch(() => Promise.reject({ texte: 'Ton prénom n’a pas pu être enregistré. Vérifie-le, puis réessaie.' }))
-    .then(() => enregistrerPartageChaine({ token, channel: canal })
-      .catch(() => Promise.reject({ texte: 'Ton invitation n’a pas pu être enregistrée. Réessaie dans un instant.' })))
-    .then((r) => {
-      const d = (r && r.data) || {};
-      const c = Object.assign({}, childRef.current || {}, d.child || {});
-      childRef.current = c;
-      setChild(c);
-      return onRejoindre(coord).then(() => c);
-    });
+    .then(() => onRejoindre(Object.assign({}, coord, { partage_canal: canal })))
+    .then(() => childRef.current || {});
 
   /**
    * WhatsApp : la fenêtre s'ouvre DANS le geste (sinon le navigateur la bloque), vide ;
@@ -543,9 +547,9 @@ export default function ParcoursEssai({
             <p className="cp-fine">Ton ami verra que l’invitation vient de toi.</p>
             <label className="cp-label" htmlFor="wf-email">Pour recevoir ton billet</label>
             <input id="wf-email" className="cp-input" type="email" value={email} placeholder="E-mail"
-                   onChange={(e) => { setEmail(e.target.value); setRefusEssai(''); }} autoComplete="email" data-testid="wf-email" />
+                   onChange={(e) => { setEmail(e.target.value); leverRefus(); }} autoComplete="email" data-testid="wf-email" />
             <input className="cp-input" type="tel" value={whatsapp} placeholder="Numéro WhatsApp"
-                   onChange={(e) => { setWhatsapp(e.target.value); setRefusEssai(''); }} autoComplete="tel" data-testid="wf-whatsapp" />
+                   onChange={(e) => { setWhatsapp(e.target.value); leverRefus(); }} autoComplete="tel" data-testid="wf-whatsapp" />
             <label className="cp-chk">
               <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} data-testid="wf-consent" />
               <span>J'accepte de recevoir les informations liées à cette réservation (obligatoire).</span>
@@ -557,13 +561,14 @@ export default function ParcoursEssai({
             {erreurForm ? <p className="cp-error" role="alert" data-testid="wf-erreur-form">{erreurForm}</p> : null}
             {refusEssai ? (
               <div className="cp-notice" role="status" data-testid="wf-refus-membre" style={{ marginTop: 12 }}>
-                <p style={{ margin: '0 0 6px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <SvgIcon name="heart" size={18} /> Ce premier cours offert est réservé aux nouvelles personnes.
-                </p>
-                <p style={{ margin: '0 0 12px' }}>
+                {/* V618k : uniquement le titre + le bouton. Formulé en QUESTION : le serveur ne révèle
+                    jamais qu'une adresse est cliente (refus neutre V591). */}
+                <p style={{ margin: '0 0 12px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}
+                   data-testid="wf-refus-membre-titre">
+                  <SvgIcon name="heart" size={18} />
                   {refusEssai === 'free_trial_already_used' || refusEssai === 'free_trial_already_granted'
-                    ? 'Tu as déjà profité de ton essai gratuit. Réserve tes prochaines séances depuis ton espace.'
-                    : 'Tu es déjà membre Afroboost ? Réserve directement depuis ton espace membre.'}
+                    ? 'Tu as déjà profité de ton essai gratuit'
+                    : 'Tu es déjà membre Afroboost ?'}
                 </p>
                 <AccesEspaceMembre email={email} testid="wf-acces-espace" />
               </div>
@@ -583,7 +588,7 @@ export default function ParcoursEssai({
           </>
         ) : null}
         {info ? <p className="cp-mini" role="status" data-testid="wf-info">{info}</p> : null}
-        {!chainePub.exists && !confirmation ? (
+        {!chainePub.exists && !confirmation && !refusEssai ? (   /* V618k : rien à changer sur un refus */
           <button type="button" className="cp-link cp-wz-tap cp-wz-retour" onClick={() => setEcran('accueil')} data-testid="wf-retour">
             <SvgIcon name="arrowLeft" size={14} /> Changer ma séance
           </button>

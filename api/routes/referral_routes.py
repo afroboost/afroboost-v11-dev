@@ -2242,10 +2242,19 @@ async def referral_join(share_token: str, request: Request):
     # V556 — LA RÈGLE BOULE DE NEIGE : pas d'inscription tant que l'invitation
     # enfant n'a pas été partagée (action déclenchée ; jamais « WhatsApp a
     # confirmé l'envoi », ce qu'un navigateur ne peut pas savoir).
+    # V618k — PARTAGE DIFFÉRÉ : le clic « Inviter 1 ami et confirmer ma place » envoie le canal ICI
+    # (`partage_canal`, clé de l'appareil exigée). Le partage n'est ÉCRIT qu'APRÈS l'octroi de l'essai :
+    # un essai refusé (déjà membre / client) ne compte jamais un faux partage.
+    _partage_differe = None
     if await _chaine_active():
         if not E.chaine_partagee(_p):
-            raise _refus(409, E.REFUS_INVITATION_REQUISE,
-                         "Invite d'abord un ami pour débloquer ton essai gratuit.")
+            _canal_j = str(_b.get("partage_canal") or "").strip().lower()
+            _enf_j = await _enfant_de(_p) if _canal_j in E.CANAUX else None
+            if _enf_j and _cle_chaine_valide(request, _enf_j):
+                _partage_differe = (_canal_j, _enf_j)
+            else:
+                raise _refus(409, E.REFUS_INVITATION_REQUISE,
+                             "Invite d'abord un ami pour débloquer ton essai gratuit.")
         # V556 : c'est CELUI qui a partagé qui s'inscrit (clé de l'appareil) —
         # un tiers qui a le même lien ne franchit pas la porte à sa place.
         if not _cle_chaine_valide(request, await _enfant_de(_p)):
@@ -2333,6 +2342,12 @@ async def referral_join(share_token: str, request: Request):
         raise HTTPException(status_code=500,
                             detail="L'inscription a échoué, rien n'a été enregistré. Réessaie dans un instant.")
     _p = await db[COLL_PASSES].find_one({"id": _p["id"]}, {"_id": 0}) or _p
+    # V618k : l'essai est accordé et la place écrite -> le partage DÉCLENCHÉ est enregistré maintenant.
+    if _partage_differe:
+        try:
+            _p, _ = await _enregistrer_partage(_p, _partage_differe[1], _partage_differe[0])
+        except Exception as _err_p:  # noqa: BLE001 — la place est prise ; le journal suit ou non
+            logger.warning("%s partage différé non journalisé (%s)", PREFIXE, type(_err_p).__name__)
     _sub_ami = await db["subscriptions"].find_one({"code": _access_code}, {"_id": 0})
     await _notifier_reservation(_resa_ami, _sub_ami)
 
@@ -3319,6 +3334,19 @@ async def referral_chaine_partager(share_token: str, request: Request):
             raise _refus(403, E.REFUS_AUTRE_APPAREIL,
                          "Partage ton invitation depuis l'appareil qui l'a préparée.")
         _enf = _sup
+    _p, _enf = await _enregistrer_partage(_p, _enf, _canal)
+    _rep = {"shared": True, "shared_at": E.chaine_du_pass(_p).get("shared_at") or _iso(),
+            "child": E.dto_enfant(_enf, _frontend_url()),
+            # la PROCHAINE carte est rendue maintenant (cache chaud pour le robot)
+            "preview": await _bilan_apercu(_enf)}
+    return JSONResponse(status_code=200, content=_rep)
+
+
+async def _enregistrer_partage(_p, _enf, _canal):
+    """Le partage DÉCLENCHÉ, écrit : journal des partages, `invitation_sent` de l'ami, `shared_at` du
+    parent (une fois), nouvelle version d'aperçu. Rend (parent, enfant) relus.
+    V618k : appelé par POST /chain/share ET par le join de l'essai APRÈS l'octroi — un essai refusé
+    (déjà membre, déjà client) ne laisse donc AUCUN faux partage."""
     _se = await _statut_reel(_enf)
     if _se in (E.EXPIRED, E.CANCELLED):
         raise HTTPException(status_code=410, detail="Cette invitation n'est plus valable.")
@@ -3346,11 +3374,7 @@ async def referral_chaine_partager(share_token: str, request: Request):
         _p = await db[COLL_PASSES].find_one({"id": _p["id"]}, {"_id": 0}) or _p
     if not _plafond:
         _enf = await _nouvelle_version_apercu(_enf["id"]) or _enf
-    _rep = {"shared": True, "shared_at": E.chaine_du_pass(_p).get("shared_at") or _now,
-            "child": E.dto_enfant(_enf, _frontend_url()),
-            # la PROCHAINE carte est rendue maintenant (cache chaud pour le robot)
-            "preview": await _bilan_apercu(_enf)}
-    return JSONResponse(status_code=200, content=_rep)
+    return _p, _enf
 
 
 async def _enfants_de(parent) -> list:
