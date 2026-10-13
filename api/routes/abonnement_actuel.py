@@ -487,12 +487,18 @@ async def reservation_de_la_session(database, reservation, charge) -> bool:
         return False
     if not _rcode or _rcode == _code:
         return True
-    _f_session = await _fiche(database, _code)
-    _f_resa = await _fiche(database, _rcode)
-    if not _f_session or not _f_resa:
-        return False
-    return (_norm(_f_resa.get("assignedEmail")) == _mail
-            and locataire(_f_resa.get("coach_id")) == locataire(_f_session.get("coach_id")))
+    # PARITÉ AVEC LA PORTE D'ENTRÉE (revue de sécurité) : la réservation d'un AUTRE code n'est
+    # annulable que si l'OTP de CE code-là reviendrait à la même adresse, chez le MÊME coach que la
+    # session — exactement `contact_otp`, la règle qui ouvre l'espace de ce code.
+    _rx = {"$regex": "^%s$" % re.escape(_rcode), "$options": "i"}
+    _fiches = await database.discount_codes.find(
+        {"code": _rx}, {"_id": 0, "code": 1, "assignedEmail": 1, "coach_id": 1, "active": 1, "expiresAt": 1,
+                        "canonical": 1, "created_at": 1}).to_list(20)
+    _subs = await database.subscriptions.find(
+        {"code": _rx}, {"_id": 0, "id": 1, "email": 1, "coach_id": 1, "status": 1, "expires_at": 1, "end_date": 1,
+                        "created_at": 1, "source": 1}).to_list(50)
+    _em, _cid = contact_otp(_fiches, _subs, _mail)
+    return _em == _mail and locataire(_cid) == locataire(_c.get("coach_id"))
 
 
 # ═══════════════ V618f — TABLEAU DE BORD « CODES » : CLASSEMENT PAR LA RÈGLE CANONIQUE ═══════════════
@@ -526,15 +532,17 @@ def classer_codes(codes, subs, coach_par_code=None, maintenant=None):
                                 else "conflit" if _r["etat"] == ETAT_CONFLIT and any(s is c for c in _r["candidats"])
                                 else ETAT_HISTORIQUE)
     _subs_code = {}
-    for _l in _par.values():
+    for (_m, _loc), _l in _par.items():
         for s in _l:
-            _subs_code.setdefault(str(s.get("code") or "").strip().upper(), []).append(s)
+            _subs_code.setdefault((str(s.get("code") or "").strip().upper(), _loc), []).append(s)
     _fiches_code = {}
     for c in codes or []:
         if isinstance(c, dict) and c.get("code"):
             _fiches_code.setdefault(str(c["code"]).strip().upper(), []).append(c)
     for _k, _fiches in _fiches_code.items():
-        _ss = _subs_code.get(_k) or []
+        # Cloisonnement : les abonnements du MÊME périmètre que les fiches (jamais ceux d'un autre coach).
+        _locs = {locataire(f.get("coach_id") or _cpc.get(_k)) for f in _fiches}
+        _ss = [s for _l in _locs for s in (_subs_code.get((_k, _l)) or [])]
         if not _ss:
             continue
         _actuels = [s for s in _ss if _etat_sub.get(id(s)) == "actuel"]
@@ -575,10 +583,21 @@ def classer_codes(codes, subs, coach_par_code=None, maintenant=None):
     return codes
 
 
-async def enrichir_codes(database, codes):
+async def enrichir_codes(database, codes, appelant=None, admin=True):
     """V618f — `classer_codes` sur la liste de GET /discount-codes. Deux lectures, ZÉRO écriture ;
-    une erreur laisse la liste telle quelle (l'écran d'hier reste l'écran d'hier)."""
+    une erreur laisse la liste telle quelle (l'écran d'hier reste l'écran d'hier).
+
+    CLOISONNEMENT (revue de sécurité) : un coach partenaire voit aussi les anciennes fiches sans
+    `coach_id` (règle historique de la liste) ; il ne reçoit l'état V618 (dates, séances, conflit
+    d'un abonnement) QUE pour les fiches de SON périmètre. Les autres restent exactement telles que
+    la liste les rendait avant V618f."""
     try:
+        _cible = codes
+        if not admin:
+            _moi = locataire(appelant)
+            _cible = [c for c in codes or [] if isinstance(c, dict) and _moi and locataire(c.get("coach_id")) == _moi]
+            if not _cible:
+                return codes
         _subs = await database.subscriptions.find(
             {}, {"_id": 0, "id": 1, "code": 1, "email": 1, "status": 1, "expires_at": 1, "end_date": 1,
                  "created_at": 1, "coach_id": 1, "source": 1, "used_sessions": 1, "total_sessions": 1,
@@ -587,7 +606,8 @@ async def enrichir_codes(database, codes):
         for f in await database.discount_codes.find({}, {"_id": 0, "code": 1, "coach_id": 1}).to_list(5000):
             if str(f.get("coach_id") or "").strip():
                 _cpc.setdefault(str(f.get("code") or "").upper(), f.get("coach_id"))
-        return classer_codes(codes, _subs, _cpc)
+        classer_codes(_cible, _subs, _cpc)      # modifie les fiches ciblées sur place
+        return codes
     except Exception as _err:  # noqa: BLE001
         logger.warning("%s classement des codes impossible (%s)", PREFIXE, type(_err).__name__)
         return codes

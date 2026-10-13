@@ -106,17 +106,24 @@ verifier("8 abonnement /validate non prouvé : aucune influence sur le classemen
          and r["v"]["v532"]["classement"] == "historique")
 
 # 9. Deux coachs, même adresse : chacun garde son abonnement actuel (pas un conflit)
-r = par_id(classer([fiche("p", "PLAT", "2027-01-01", 0, 10, "actuel"), fiche("b", "PART", "2027-01-01", 0, 10, "actuel")],
+r = par_id(classer([fiche("p", "PLAT", "2027-01-01", 0, 10, "actuel"),
+                    fiche("b", "PART", "2027-01-01", 0, 10, "actuel", coach_id="coach.b@t.example")],
                    [sub("sp", "PLAT", "deux@t.example"), sub("sb", "PART", "deux@t.example", coach_id="coach.b@t.example")]))
 verifier("9 deux coachs, même adresse : deux abonnements actuels, aucun conflit",
          r["p"]["v618"]["etat"] == r["b"]["v618"]["etat"] == "actuel")
+
+# 9b. Cloisonnement : une fiche ne lit jamais l'abonnement d'un AUTRE périmètre (revue de sécurité)
+r = par_id(classer([fiche("x", "MIXTE", "2026-01-01", 0, 10, "historique", coach_id="coach.b@t.example")],
+                   [sub("sx", "MIXTE", "client@t.example", coach_id="contact.artboost@gmail.com", used=3, total=64)]))
+verifier("9b fiche du coach B, abonnement de la plateforme : aucune date ni séance d'un autre coach exposée",
+         "v618" not in r["x"] and r["x"]["v532"] == {"classement": "historique", "motif": "x"}, r["x"])
 
 # 10. Câblage + lecture seule
 PROMO = open(os.path.join(RACINE, "api", "routes", "promo_routes.py"), encoding="utf-8").read()
 liste = PROMO[PROMO.index("async def get_discount_codes("):]
 liste = liste[:liste.index("\n@promo_router")]
 verifier("10 GET /discount-codes : classement canonique appliqué après LOT A / V617",
-         liste.index("_v617(") < liste.index("enrichir_codes(_db, codes)"))
+         liste.index("_v617(") < liste.index("enrichir_codes(_db, codes,"))
 
 
 class _Curseur:
@@ -153,6 +160,14 @@ _out = asyncio.run(AA.enrichir_codes(_b, [fiche("f", "OLD-DATE", "2026-09-30", 6
 verifier("11 enrichissement réel : lecture seule (aucune écriture) et classement appliqué",
          _b.subscriptions.ecritures == 0 and _b.discount_codes.ecritures == 0
          and _out[0]["v532"]["classement"] == "actuel")
+
+_b = _Base()
+_legacy = fiche("lg", "OLD-DATE", "2026-09-30", 6, 7, "historique")          # ancienne fiche sans coach_id
+_out = asyncio.run(AA.enrichir_codes(_b, [_legacy], appelant="coach.b@t.example", admin=False))
+verifier("12 coach partenaire : une ancienne fiche plateforme (visible dans sa liste) ne reçoit AUCUN état V618",
+         "v618" not in _out[0] and _out[0]["v532"]["classement"] == "historique")
+verifier("13 GET /discount-codes passe l'appelant et son rôle (cloisonnement)",
+         "enrichir_codes(_db, codes, appelant=user_email, admin=is_super_admin)" in liste)
 
 
 def main():

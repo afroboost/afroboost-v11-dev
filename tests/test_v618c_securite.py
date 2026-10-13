@@ -144,6 +144,20 @@ async def principal():
              c == 200 and le_sub(base, "sh")["status"] == "superseded" and le_sub(base, "sh")["used_sessions"] == 4
              and le_sub(base, "sa")["used_sessions"] == 2, (c, r, le_sub(base, "sh")))
 
+    # parité avec l'OTP : réservation portée par un AUTRE code du même titulaire
+    base["discount_codes"].docs += [fiche("ANC-A0", A, exp="2026-05-05"), fiche("AUTRE-P", A, coach=COACH_P),
+                                    fiche("TIERS-1", "tiers@t.example")]
+    base["subscriptions"].docs += [sub("s-a0", "ANC-A0", A, status="expired", exp=PASSE)]
+    base["reservations"].docs += [resa("r-a0", "ANC-A0", A, sid="s-a0"), resa("r-p", "AUTRE-P", A),
+                                  resa("r-t", "TIERS-1", A)]
+    c, r = await annuler(base, "AFR-A1", "r-a0", tok_a)
+    verifier("P1 ancien code du MÊME titulaire, même coach -> annulable depuis l'espace actuel (parité OTP)",
+             c == 200 and not existe(base, "r-a0") and le_sub(base, "s-a0")["status"] == "expired", (c, r))
+    c, _ = await annuler(base, "AFR-A1", "r-p", tok_a)
+    verifier("P2 code du même titulaire chez un AUTRE coach -> refus", c == 404 and existe(base, "r-p"))
+    c, _ = await annuler(base, "AFR-A1", "r-t", tok_a)
+    verifier("P3 code d'un AUTRE titulaire (même si la réservation porte son adresse) -> refus", c == 404 and existe(base, "r-t"))
+
     # club / multi-membres
     tok_m1 = jeton(base, "CLUB-9", M1, slug="m1")
     c, _ = await annuler(base, "CLUB-9", "rm2", tok_m1)

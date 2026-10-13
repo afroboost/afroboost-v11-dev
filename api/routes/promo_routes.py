@@ -378,7 +378,7 @@ async def get_discount_codes(request: Request):
     # V618f : « Abonnement actuel / Historique » suit le résolveur canonique (l'abonnement actuel de
     # la personne), plus seulement la date de la fiche. Lecture seule.
     from api.routes import abonnement_actuel as _v618f
-    codes = await _v618f.enrichir_codes(_db, codes)
+    codes = await _v618f.enrichir_codes(_db, codes, appelant=user_email, admin=is_super_admin)
     return codes
 
 
