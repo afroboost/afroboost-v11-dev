@@ -2603,11 +2603,12 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             {offer.isProduct && offer.shippingCost > 0 && (
               <p className="text-xs text-white opacity-50 mb-1">+ CHF {offer.shippingCost} frais de port</p>
             )}
-            {/* V610 : la place est offerte aux membres (abonnement 8 mois actif) — décidé par le serveur. */}
+            {/* V610 / V618M : un avantage membre existe (réglé par le coach, offre par offre) — le détail
+                 n'est connu qu'une fois la personne identifiée dans son espace. */}
             {offer.gratuit_membres && (
               <p className="text-xs mb-1" data-testid={`v610-gratuit-membres-${offer.id}`}
                  style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 600 }}>
-                Offert aux membres avec abonnement 8 mois actif
+                Avantage pour les membres Afroboost
               </p>
             )}
 

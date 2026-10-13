@@ -73,19 +73,137 @@ def reservation_auto(offre) -> bool:
     return str(_o.get("offer_type") or "") == "event" and _o.get("evenement_reservation_auto") is True
 
 
-def offres_gratuite(offre) -> list:
-    """Les offres d'abonnement qui ouvrent la place offerte — [] si la règle n'est pas
-    configurée OU si le coach l'a suspendue (`gratuit_membres_actif: false`, V610e)."""
+# ── V618M — AVANTAGES MEMBRES PAR OFFRE (réglés par le coach, jamais codés en dur) ──
+# `avantages_membres` sur l'offre-événement : [{"offer_id": <id d'offre d'abonnement>,
+#   "type": "gratuit" | "reduction" | "prix_fixe" | "aucun", "valeur": <% ou CHF>}].
+# Ancienne forme (V610) : `gratuit_abonnements_offer_ids: [ids]` = « gratuit » pour chacune.
+# Tant qu'un événement n'a pas `avantages_membres`, l'ancienne forme est LUE à l'identique :
+# l'éligibilité d'avant la migration est conservée exactement.
+TYPES_AVANTAGE = ("gratuit", "reduction", "prix_fixe", "aucun")
+PRIX_FIXE_MAX = 10000.0
+
+
+def _regle_valide(r):
+    """{"type", "valeur"} propre, ou None (entrée illisible ignorée)."""
+    if not isinstance(r, dict):
+        return None
+    _t = str(r.get("type") or "").strip()
+    if _t not in TYPES_AVANTAGE:
+        return None
+    if _t == "reduction":
+        try:
+            _v = int(float(r.get("valeur")))
+        except (TypeError, ValueError):
+            return None
+        if not 1 <= _v <= 100:
+            return None
+        return {"type": "gratuit", "valeur": None} if _v == 100 else {"type": "reduction", "valeur": _v}
+    if _t == "prix_fixe":
+        try:
+            _v = round(float(r.get("valeur")), 2)
+        except (TypeError, ValueError):
+            return None
+        if not 0 <= _v <= PRIX_FIXE_MAX:
+            return None
+        return {"type": "gratuit", "valeur": None} if _v == 0 else {"type": "prix_fixe", "valeur": _v}
+    return {"type": _t, "valeur": None}
+
+
+def avantages_configures(offre) -> list:
+    """La configuration telle que le coach la voit (y compris « aucun »), forme normalisée."""
+    _o = offre or {}
+    _v = _o.get("avantages_membres")
+    _sortie, _vus = [], set()
+    if isinstance(_v, list):
+        for _e in _v:
+            _id = str((_e or {}).get("offer_id") or "").strip() if isinstance(_e, dict) else ""
+            _r = _regle_valide(_e)
+            if _id and _r and _id not in _vus:
+                _vus.add(_id)
+                _sortie.append(dict(_r, offer_id=_id))
+        return _sortie
+    _ids = _o.get("gratuit_abonnements_offer_ids")
+    for _i in (_ids if isinstance(_ids, list) else []):
+        _id = str(_i or "").strip()
+        if _id and _id not in _vus:
+            _vus.add(_id)
+            _sortie.append({"offer_id": _id, "type": "gratuit", "valeur": None})
+    return _sortie
+
+
+def regles_avantages(offre) -> dict:
+    """{offer_id: {"type", "valeur"}} des avantages EFFECTIFS ({} si suspendus par le coach,
+    `gratuit_membres_actif: false`). « aucun » n'y figure pas."""
     if (offre or {}).get("gratuit_membres_actif") is False:
-        return []
-    _v = (offre or {}).get("gratuit_abonnements_offer_ids")
-    return [str(x) for x in _v if str(x or "").strip()] if isinstance(_v, list) else []
+        return {}
+    return {_e["offer_id"]: {"type": _e["type"], "valeur": _e["valeur"]}
+            for _e in avantages_configures(offre) if _e["type"] != "aucun"}
+
+
+def a_des_avantages(offre) -> bool:
+    return bool(regles_avantages(offre))
+
+
+def offres_gratuite(offre) -> list:
+    """Les offres d'abonnement qui ouvrent la place OFFERTE (0 CHF) — [] si aucune, ou si le
+    coach a suspendu les avantages (`gratuit_membres_actif: false`, V610e)."""
+    return [_i for _i, _r in regles_avantages(offre).items() if _r["type"] == "gratuit"]
 
 
 def regle_membres_configuree(offre) -> bool:
-    """La règle « offert aux membres » existe-t-elle pour cette offre (active ou suspendue) ?"""
-    _v = (offre or {}).get("gratuit_abonnements_offer_ids")
-    return isinstance(_v, list) and any(str(x or "").strip() for x in _v)
+    """Une configuration d'avantages existe-t-elle (active ou suspendue) ?"""
+    return any(_e["type"] != "aucun" for _e in avantages_configures(offre))
+
+
+def prix_membre(regle, prix_public):
+    """Le prix du MEMBRE (CHF, au centime, arrondi commercial) — jamais au-dessus du prix
+    public : un « avantage » qui majore n'en est pas un (le prix public s'applique)."""
+    from decimal import Decimal, ROUND_HALF_UP
+    try:
+        _pub = Decimal(str(float(prix_public or 0)))
+    except (TypeError, ValueError):
+        _pub = Decimal("0")
+    _t = (regle or {}).get("type")
+    if _t == "gratuit":
+        _m = Decimal("0")
+    elif _t == "reduction":
+        _m = _pub * (Decimal(100) - Decimal(int((regle or {}).get("valeur") or 0))) / Decimal(100)
+    elif _t == "prix_fixe":
+        _m = Decimal(str(float((regle or {}).get("valeur") or 0)))
+    else:
+        _m = _pub
+    _m = min(_m, _pub).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return float(max(_m, Decimal("0")))
+
+
+# ── V618M — CAPACITÉ RÉELLE (optionnelle, séparée du texte marketing) ─────────────
+CAPACITE_MAX = 10000
+
+
+def capacite(offre):
+    """Le nombre maximum de places si le coach a ACTIVÉ la limite, sinon None (aucune
+    limite). Jamais déduite d'un texte (« 50 PLACES » n'est qu'un message)."""
+    _o = offre or {}
+    if _o.get("capacite_limitee") is not True:
+        return None
+    try:
+        _c = int(_o.get("capacite_max"))
+    except (TypeError, ValueError):
+        return None
+    return _c if 1 <= _c <= CAPACITE_MAX else None
+
+
+async def places_prises(db, offre) -> int:
+    """Places RÉELLEMENT réservées pour cet événement (billets payés + places membres)."""
+    return int(await db[COLL_PLACES].count_documents({"offer_id": (offre or {}).get("id"), "statut": "reservee"}))
+
+
+async def complet(db, offre) -> bool:
+    _c = capacite(offre)
+    return _c is not None and await places_prises(db, offre) >= _c
+
+
+MSG_COMPLET = "Cet événement est complet."
 
 
 async def cours_de_l_evenement(db, offre):
@@ -148,6 +266,36 @@ def abonnement_donne_droit(sub, ids_autorises, debut):
     if debut is None or _fin < debut:
         return False, "expire_avant_evenement"
     return True, "ok"
+
+
+async def avantage_du_membre(db, email, offre, debut):
+    """V618M — (abonnement ACTUEL, règle) de CETTE personne pour cet événement, ou (None, None).
+    L'avantage suit l'offre RÉELLE (`offer_id`) de son abonnement actuel (résolveur canonique) :
+    jamais un titre, jamais un ancien abonnement, jamais celui d'un autre (l'ami ne l'hérite pas)."""
+    _e = str(email or "").strip().lower()
+    _regles = regles_avantages(offre)
+    if not _e or "@" not in _e or not _regles:
+        return None, None
+    from api.routes.abonnement_actuel import resoudre_abonnement_actuel, ETAT_COURANT, locataire
+    _r = await resoudre_abonnement_actuel(db, _e, perimetre=locataire((offre or {}).get("coach_id")))
+    if _r["etat"] != ETAT_COURANT:
+        return None, None
+    _actuel = await db.subscriptions.find_one({"id": _r["abonnement"].get("id")}, {"_id": 0}) or _r["abonnement"]
+    if not abonnement_donne_droit(_actuel, list(_regles), debut)[0]:
+        return None, None
+    return _actuel, _regles.get(str(_actuel.get("offer_id") or ""))
+
+
+async def tarif_membre(db, email, offre, prix_public):
+    """V618M — LA décision tarifaire d'un membre PROUVÉ pour cet événement :
+    {"prix", "regle", "abonnement"}. `regle` None = aucun avantage (prix public). Une règle
+    « gratuit » se réserve dans l'espace, jamais par Stripe : l'appelant la refuse au paiement."""
+    _cours = await cours_de_l_evenement(db, offre)
+    _sub, _regle = await avantage_du_membre(db, email, offre, debut_utc(occurrence(_cours)))
+    _pub = float(prix_public or 0)
+    if not _regle:
+        return {"prix": _pub, "regle": None, "abonnement": None}
+    return {"prix": prix_membre(_regle, _pub), "regle": _regle, "abonnement": _sub}
 
 
 async def abonnement_gratuit(db, email, offre, debut):
@@ -279,8 +427,8 @@ async def apres_paiement(db, *, session_id, offre_id, email, nom, code, subscrip
 
 
 # ── GARDE : un cours d'événement à billet ne se réserve JAMAIS avec une séance ──
-MSG_BILLET_REQUIS = ("Cet événement se réserve avec son billet — ou avec ta place offerte "
-                     "si tu as un abonnement 8 mois actif.")
+MSG_BILLET_REQUIS = ("Cet événement se réserve avec son billet — ou avec ton avantage membre "
+                     "depuis ton espace, si ton abonnement en donne un.")
 
 
 async def offres_billet_par_cours(db) -> dict:
@@ -326,8 +474,10 @@ async def evenements_offerts(db, email, coach_id=None, maintenant=None):
     if not _e:
         return []
     # Une offre MASQUÉE (brouillon, pas encore publiée) n'apparaît dans aucun espace.
-    _q = {"offer_type": "event", "gratuit_abonnements_offer_ids.0": {"$exists": True}, "archived": {"$ne": True},
-          "visible": {"$ne": False}, "gratuit_membres_actif": {"$ne": False}}
+    _q = {"offer_type": "event", "archived": {"$ne": True}, "visible": {"$ne": False},
+          "gratuit_membres_actif": {"$ne": False},
+          "$or": [{"gratuit_abonnements_offer_ids": {"$exists": True, "$ne": []}},
+                  {"avantages_membres": {"$exists": True, "$ne": []}}]}
     _sortie = []
     for _o in await db.offers.find(_q, {"_id": 0}).to_list(20):
         if coach_id and _o.get("coach_id") and str(_o.get("coach_id")).lower() != str(coach_id).lower():
@@ -336,12 +486,25 @@ async def evenements_offerts(db, email, coach_id=None, maintenant=None):
         _occ = occurrence(_c)
         if not _occ or evenement_commence(_occ, maintenant):
             continue
-        _sub = await abonnement_gratuit(db, _e, _o, debut_utc(_occ))
-        if not _sub:
+        _sub, _regle = await avantage_du_membre(db, _e, _o, debut_utc(_occ))
+        if not _sub or not _regle:
             continue
+        # V618M : le prix PUBLIC du moment (serveur) et le prix du MEMBRE qui en découle.
+        from api.pricing import compute_active_price
+        _pub = float(compute_active_price(_o).get("price") or 0)
         _resa, _ = await _deja(db, "membre:%s:%s" % (_o.get("id"), _e))
+        if not _resa:
+            _resa = await db.reservations.find_one(
+                {"offerId": _o.get("id"), "userEmail": _e, "source": SOURCE_PAYANT}, {"_id": 0})
+        _jeton = await db.referral_campaigns.find_one(
+            {"offer_id": _o.get("id"), "status": "active", "type": "event_paid", "share_token": {"$type": "string"}},
+            {"_id": 0, "share_token": 1})
         _sortie.append({"offer_id": _o.get("id"), "titre": _o.get("name"), "datetime": _occ,
                         "lieu": (_c or {}).get("locationName") or (_c or {}).get("location") or _o.get("location") or "",
                         "course_id": (_c or {}).get("id"), "deja_reserve": bool(_resa),
-                        "reservation_code": (_resa or {}).get("reservationCode")})
+                        "reservation_code": (_resa or {}).get("reservationCode"),
+                        "avantage": {"type": _regle["type"], "valeur": _regle["valeur"],
+                                     "prix_public": _pub, "prix_membre": prix_membre(_regle, _pub)},
+                        "complet": await complet(db, _o),
+                        "jeton_invitation": (_jeton or {}).get("share_token") or ""})
     return _sortie

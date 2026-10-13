@@ -100,19 +100,30 @@ async def principal():
              and "_v610p.consommer(" in lien and "status_code=400" in lien)
 
     # ── page publique : « 50 PLACES » ───────────────────────────────────────
-    # V618L (Bassi, 13/10) : plus de faux compteur. Le message n'apparaît QUE si l'offre a une
-    # capacité RÉELLE (stock ou max_participants > 0) ; sans capacité, aucune ligne de places.
+    # V618M : texte marketing (`texte_urgence` + `texte_urgence_visible`) et capacité réelle
+    # (`capacite_limitee` + `capacite_max`) sont deux réglages SÉPARÉS de l'événement.
     _offre = next(d for d in SI._base()["offers"].docs if d.get("id") == T.OFFRE_A_PAYANTE)
-    _avant = (_offre.get("stock"), _offre.get("max_participants"))
-    _offre.update(stock=-1, max_participants=None)
+    _avant = {k: _offre.get(k) for k in ("texte_urgence", "texte_urgence_visible", "capacite_limitee", "capacite_max")}
+    _offre.update(texte_urgence="", texte_urgence_visible=False, capacite_limitee=False, capacite_max=None)
     pub = await SI.invitation_publique(tok)
-    verifier("W-1 événement SANS capacité réelle : aucun « 50 PLACES » (V618L), aucune capacité inventée",
-             not pub.get("message_places") and "places_restantes" not in pub, pub.get("message_places"))
-    _offre.update(max_participants=50)
+    verifier("W-1 aucun texte : aucun badge, aucune capacité, jamais « complet »",
+             not pub.get("message_places") and pub.get("places_restantes") is None and pub.get("complet") is False, pub.get("message_places"))
+    _offre.update(texte_urgence="50 PLACES", texte_urgence_visible=True)
     pub = await SI.invitation_publique(tok)
-    verifier("W-1b événement AVEC capacité réelle : le message du coach s'affiche",
-             pub.get("message_places") == "50 PLACES" and "places_restantes" not in pub, pub.get("message_places"))
-    _offre.update(stock=_avant[0], max_participants=_avant[1])
+    verifier("W-1b texte « 50 PLACES » affiché, SANS capacité (aucun compteur, jamais complet)",
+             pub.get("message_places") == "50 PLACES" and pub.get("places_restantes") is None and pub.get("complet") is False, pub)
+    _offre.update(texte_urgence_visible=False)
+    pub = await SI.invitation_publique(tok)
+    verifier("W-1c texte masqué par le coach : aucun badge", not pub.get("message_places"))
+    _offre.update(capacite_limitee=True, capacite_max=50)
+    pub = await SI.invitation_publique(tok)
+    verifier("W-1d capacité RÉELLE activée : compteur réel (50 restantes), pas complet",
+             pub.get("places_restantes") == 50 and pub.get("complet") is False, pub.get("places_restantes"))
+    for _k, _v in _avant.items():
+        if _v is None:
+            _offre.pop(_k, None)
+        else:
+            _offre[_k] = _v
     pe = await SI.invitation_publique(essai["share_token"]) if essai.get("status") == "active" else {"message_places": None}
     verifier("W-2 essai gratuit : aucun message de places", not (pe or {}).get("message_places"))
 

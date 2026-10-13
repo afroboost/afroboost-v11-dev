@@ -19,6 +19,8 @@ import InvitationPublique from '../InvitationPublique';
 import AccesMembreEvenement, { TEXTE_NEUTRE } from '../AccesMembreEvenement';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+// V618M : la carte événement lit les conditions publiées AU MOMENT de réserver (aucune ici).
+beforeEach(() => { axios.get.mockResolvedValue({ data: { required: false } }); });
 let conteneur = null;
 let racine = null;
 function render(el) {
@@ -68,7 +70,7 @@ describe('V610 — EvenementsOfferts (espace)', () => {
       reservation: { id: 'R1' }, relais: { jeton: 'JetonSophie123456', share_url: 'https://afroboost.com/i/JetonSophie123456', prenom: 'Sophie', generation: 2 } } });
     global.fetch = jest.fn(() => reponse({ type: 'event_paid', title: 'AFROBOOST SILENT', inviter_display: { prenom: 'Sophie' } }));
     await act(async () => { render(<EvenementsOfferts evenements={[EVT]} accessCode="AFR-M1" memberSlug="" />); });
-    expect(q('evt-offert-tarif').textContent).toBe('Ta place est offerte avec ton abonnement');   // V618L
+    expect(q('evt-offert-avantage').textContent).toBe('PLACE OFFERTE');   // V618M : l'avantage réel, dit simplement
     // V618L : la date sur une ligne, la VILLE sur la suivante (l'adresse complète est sur la page de l'événement)
     expect(q('evt-offert-quand').textContent).toBe('Mercredi 28 octobre · 18h45');
     expect(q('evt-offert-ville').textContent).toBe('Neuchâtel');
@@ -127,7 +129,7 @@ describe('V610 — page d\'invitation', () => {
       : reponse({})));
     await act(async () => { render(<InvitationPublique token="T123456789012345678" />); });
     // V618L : une ligne sous le bouton de réservation ; au clic, l'étape e-mail SUR PLACE (pas dans « Lire plus »).
-    await attendre(() => expect(q('inv-pub-membre-compact').textContent).toMatch(/^Membre Afroboost 8 mois \?\s*Réserver ma place offerte$/));
+    await attendre(() => expect(q('inv-pub-membre-compact').textContent).toMatch(/^Déjà membre Afroboost \?\s*Voir mon tarif membre$/));
     expect(q('membre-lien')).toBeNull();
     await act(async () => { q('inv-pub-membre-compact').click(); });
     expect(q('membre-lien').textContent).toMatch(/Entre l'adresse e-mail liée à ton abonnement Afroboost\./);
@@ -141,8 +143,8 @@ describe('V610b — AccesMembreEvenement : même bloc pour tous, rien ne fuit', 
   test("affiché sans AUCUN appel réseau (pas de recherche d'e-mail)", async () => {
     global.fetch = jest.fn();
     await act(async () => { render(<AccesMembreEvenement />); });
-    expect(document.body.textContent).toMatch(/Tu as un abonnement Afroboost 8 mois actif \?/);
-    expect(document.body.textContent).toMatch(/Ta place est offerte\. Réserve-la depuis ton espace membre\./);
+    expect(document.body.textContent).toMatch(/Déjà membre Afroboost \?/);
+    expect(document.body.textContent).toMatch(/Ton abonnement peut te donner droit à un tarif spécial\. Découvre-le dans ton espace membre\./);
     expect(q('acces-membre-bouton').textContent).toBe('Accéder à mon espace membre');
     expect(axios.post).not.toHaveBeenCalled();
     expect(global.fetch).not.toHaveBeenCalled();

@@ -24,6 +24,8 @@ import InvitationPublique from '../InvitationPublique';
 import InviterMesAmis from '../InviterMesAmis';
 import useLargeurEcran from '../../utils/useLargeurEcran';
 import { uploadToCloudinary } from '../CloudinaryUploadButton';
+import { SectionAvantages, SectionUrgence } from './AvantagesMembresEditeur'; // V618M
+import { formAvantages, changementsAvantages, erreurAvantages } from '../../utils/avantagesMembres'; // V618M
 // V610g : L'OUTIL VIDÉO EXISTANT (Prospection → Médias « Modifier / exporter ») — découpe, formats
 // Auto / 16:9 / 9:16 / 1:1, export, « Capturer cette image comme miniature ». Chargé à la demande.
 const OutilVideo = lazy(() => import('./prospection/ProspectionVideoEditeur'));
@@ -93,6 +95,7 @@ function formDepuis(ed) {
     derniere_minute: t.derniere_minute != null ? String(t.derniere_minute) : '',
     fin_prevente: t.fin_prevente || '', fin_standard: t.fin_standard || '',
     membres_actif: e.membres ? !!e.membres.actif : null,
+    ...formAvantages(e),   // V618M : avantages par offre + urgence / places
   };
 }
 
@@ -122,6 +125,9 @@ function dtoApercu(ed, form, simulation) {
     audio_partage_url: form.audio_partage_url,
     date_label: (e && form.date) ? libelleDate(form.date) : i.date_label, time_label: form.heure || i.time_label,
     lieu: form.lieu || i.lieu, prix_actif: pa, cible: '#',
+    // V618M : l'aperçu suit immédiatement le badge et la présence d'avantages membres.
+    message_places: form.urgence && form.urgence.visible && String(form.urgence.texte || '').trim() ? String(form.urgence.texte).trim() : null,
+    gratuit_membres: form.avantages ? (form.membres_actif !== false && form.avantages.some((r) => r.type !== 'aucun')) : i.gratuit_membres,
   });
 }
 
@@ -211,8 +217,8 @@ export default function EditeurInvitation({ invitationId, onClose, onEnregistre 
   const maj = (k, v) => setForm((p) => (p[k] === v ? p : Object.assign({}, p, { [k]: v })));
   const bascule = (s) => setSection((x) => (x === s ? '' : s));
   const statut = inv.status;
-  const errTarifs = erreurTarifs(form, evt);
-  const chgEvt = changementsEvenement(form, evt);
+  const errTarifs = erreurTarifs(form, evt) || erreurAvantages(form);   // V618M
+  const chgEvt = Object.assign(changementsEvenement(form, evt), changementsAvantages(form, evt));
   const chgInv = {};
   CHAMPS_INVITATION.forEach((k) => {
     const avant = k === 'image_source' ? (inv.image_source || 'default') : (inv[k] || null);
@@ -230,7 +236,12 @@ export default function EditeurInvitation({ invitationId, onClose, onEnregistre 
   };
 
   const enregistrer = async (statutCible, confirmer) => {
-    if (errTarifs) { setMessage({ ton: 'erreur', texte: errTarifs }); setSection('tarifs'); return; }
+    if (errTarifs) {
+      const av = erreurAvantages(form);   // V618M : ouvrir la section fautive
+      setMessage({ ton: 'erreur', texte: errTarifs });
+      setSection(!av ? 'tarifs' : (/capacit|urgence/i.test(av) ? 'urgence' : 'avantages'));
+      return;
+    }
     setOccupe(true); setMessage(null);
     try {
       if (Object.keys(chgEvt).length) {
@@ -424,16 +435,22 @@ export default function EditeurInvitation({ invitationId, onClose, onEnregistre 
           <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.55)', marginTop: 8 }}>
             Le prix est recalculé par le serveur à chaque paiement. Les paiements déjà faits ne changent jamais. Plus aucune vente après le début.
           </div>
-          {evt.membres ? (
-            <label data-testid="ed-membres" style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, padding: 12, borderRadius: 12, background: 'rgba(255,255,255,0.04)', cursor: archivee ? 'default' : 'pointer' }}>
-              <input type="checkbox" checked={!!form.membres_actif} onChange={(e) => maj('membres_actif', e.target.checked)} disabled={archivee}
-                     data-testid="ed-membres-case" style={{ width: 22, height: 22, accentColor: 'var(--primary-color, #D91CD2)' }} />
-              <span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700 }}><span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="heart" size={15} /></span> {evt.membres.libelle}</span>
-                <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.55)' }}>Place gratuite, réservée depuis l'espace membre (identité vérifiée).</span>
-              </span>
-            </label>
-          ) : null}
+        </Section>
+      ) : null}
+
+      {type === 'event_paid' && evt && evt.avantages ? (
+        <Section id="avantages" titre="Avantages membres" icone="heart" ouverte={section === 'avantages'} onBasculer={() => bascule('avantages')}
+                 resume={(form.avantages || []).filter((r) => r.type !== 'aucun').length
+                   ? `${(form.avantages || []).filter((r) => r.type !== 'aucun').length} offre(s) avec avantage` : 'Aucun avantage'}>
+          <SectionAvantages evt={evt} form={form} setForm={setForm} prixPublic={prixActif} archivee={archivee} />
+        </Section>
+      ) : null}
+
+      {evenement && evt && evt.urgence ? (
+        <Section id="urgence" titre="Urgence / places" icone="fire" ouverte={section === 'urgence'} onBasculer={() => bascule('urgence')}
+                 resume={[form.urgence && form.urgence.visible && form.urgence.texte ? form.urgence.texte : 'Aucun badge',
+                   form.urgence && form.urgence.capacite_limitee ? `max ${form.urgence.capacite_max} places` : 'aucune limite'].join(' · ')}>
+          <SectionUrgence evt={evt} form={form} setForm={setForm} archivee={archivee} />
         </Section>
       ) : null}
 

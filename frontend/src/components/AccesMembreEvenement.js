@@ -62,10 +62,11 @@ export default function AccesMembreEvenement({ libelle = 'Accéder à mon espace
       borderRadius: 14, background: rgbaP(0.08), border: `1px solid ${rgbaP(0.3)}`, textAlign: 'left' }}>
       <p style={{ margin: 0, display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.95)' }}>
         <span style={{ color: PRIMAIRE, display: 'inline-flex', marginTop: 1 }}><SvgIcon name="heart" size={16} /></span>
-        <span>Tu as un abonnement Afroboost 8 mois actif ?</span>
+        <span>Déjà membre Afroboost ?</span>
       </p>
       <p style={{ margin: '4px 0 10px 24px', fontSize: 13.5, color: 'rgba(255,255,255,0.8)' }}>
-        Ta place est offerte. Réserve-la depuis ton espace membre.
+        {/* V618M : l'avantage (gratuit, réduction, prix membre) est réglé par le coach, offre par offre. */}
+        Ton abonnement peut te donner droit à un tarif spécial. Découvre-le dans ton espace membre.
       </p>
       {!formulaire ? (
         <button type="button" data-testid="acces-membre-bouton" onClick={ouvrir}

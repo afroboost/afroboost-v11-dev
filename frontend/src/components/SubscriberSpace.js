@@ -47,8 +47,7 @@ import { Etapes } from "./parrainage/wizardCommun"; // V594 — le stepper EXIST
 import { ETAPES_PARCOURS_PARTENAIRE } from "./ParcoursPartenaire";
 import "./parrainage/wizardFilleul.css";
 import InviterMesAmis from "./InviterMesAmis"; // V607
-import EvenementsOfferts from "./EvenementsOfferts"; // V610 : place offerte (membres 8 mois)
-import { lienVoirEvenement } from "../utils/voirEvenement"; // V618L
+import EvenementsOfferts, { CarteEvenement, evtDeLOccurrence } from "./EvenementsOfferts"; // V610 / V618M : carte événement aussi dans l'agenda
 import MesEvenementsInvitation from "./MesEvenementsInvitation"; // V610m : ma réservation + Inviter mes amis
 import MonImpactAfroboost from "./MonImpactAfroboost"; // V610o : Boosts + paliers + Partager et inviter
 // N2 : la MEME lecture de l'heure que le serveur (`n2_instant_reel`). Sans
@@ -280,6 +279,32 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inv2DonneesPretes]);
+
+  // V618M — LA DATE CHOISIE NE SE PERD PLUS (bug vécu : 28/10 choisi -> retour -> 14/10).
+  // Mémorisée pour CETTE session d'onglet (clé « cours_date », jamais un index qui bouge),
+  // relue une seule fois quand les séances sont là. Valeurs primitives : aucune boucle.
+  const cleSeanceMemo = `af_espace_seance_${accessCode || ""}`;
+  const seanceRestauree = useRef(false);
+  useEffect(() => {
+    if (seanceRestauree.current || !inv2DonneesPretes || inv2Seance) return;
+    seanceRestauree.current = true;
+    let memo = "";
+    try { memo = window.sessionStorage.getItem(cleSeanceMemo) || ""; } catch (e) { memo = ""; }
+    if (!memo) return;
+    const visibles = seancesVisibles(data?.upcoming_courses, inv2Seance);
+    const i = visibles.findIndex((c) => c && `${c.course_id}_${c.datetime}` === memo);
+    if (i >= 0) setSelectedCourseIdx(i);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inv2DonneesPretes]);
+  const seanceChoisieCle = (() => {
+    const visibles = seancesVisibles(data?.upcoming_courses, inv2Seance);
+    const c = visibles[selectedCourseIdx];
+    return c ? `${c.course_id}_${c.datetime}` : "";
+  })();
+  useEffect(() => {
+    if (!seanceChoisieCle || !seanceRestauree.current) return;
+    try { window.sessionStorage.setItem(cleSeanceMemo, seanceChoisieCle); } catch (e) { /* ignore */ }
+  }, [seanceChoisieCle, cleSeanceMemo]);
 
   // V202: États pour le formulaire d'inscription multi-membre
   const [joinForm, setJoinForm] = useState({ name: "", email: "", whatsapp: "" });
@@ -1818,29 +1843,15 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                           n'est pas deploye le champ est `undefined`, et le
                           parcours d'origine s'affiche a l'identique. */}
                       {occ.inclus_abonnement === false ? (
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <span className="text-xs" style={{ color: "rgba(255,255,255,0.65)" }}>
-                            {/* V610 : place offerte à ce membre -> elle se réserve dans la carte dédiée. */}
-                            {((data && data.evenements_offerts) || []).some((e) => e && e.offer_id === occ.offer_id)
-                              ? "Événement — offert pour toi (voir plus haut)"
-                              : "Événement — billet séparé"}
-                          </span>
-                          <a
-                            href={lienVoirEvenement(occ, data)}
-                            onClick={(e) => {
-                              // V618L : place offerte -> SA carte, ici même (jamais l'accueil).
-                              const carte = occ.offer_id ? document.querySelector(`[data-testid="evt-offert-${occ.offer_id}"]`) : null;
-                              if (carte) { e.preventDefault(); try { carte.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (x) { /* ignore */ } }
-                            }}
-                            className="text-xs font-semibold px-4 py-2 rounded-lg"
-                            style={{
-                              background: "rgba(255,255,255,0.10)",
-                              color: "white",
-                              border: `1px solid ${COLORS.primary}`,
-                            }}
-                            data-testid={`event-${occ.course_id}`}>
-                            Voir l'événement
-                          </a>
+                        // V618M — la date d'un ÉVÉNEMENT se réserve ICI : l'avantage de CET abonnement
+                        // (serveur) ou le tarif public, les conditions au moment de réserver, les
+                        // détails dépliés sur place. Plus de détour par la page publique (le retour
+                        // perdait la date choisie et la case des conditions).
+                        <div data-testid={`event-${occ.course_id}`}>
+                          <CarteEvenement key={`${occ.offer_id}_${occ.datetime}`} evt={evtDeLOccurrence(occ, data)} accessCode={accessCode}
+                                          memberSlug={memberSlug} jetonEspace={jetonEspace && jetonEspace.token} courseId={occ.course_id} sansEntete
+                                          conditionsAcceptees={!!conditionsOk[`${occ.course_id}_${occ.datetime}`]}
+                                          onConditions={(v) => setConditionsOk((p) => ({ ...p, [`${occ.course_id}_${occ.datetime}`]: v }))} />
                         </div>
                       ) : (
                       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -1879,6 +1890,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
                       {/* ESSAI-5a-1 : ce chemin porte 74 des 132 reservations
                           reelles et n'avait jamais eu de case a cocher. */}
+                      {occ.inclus_abonnement !== false ? (
                       <div className="mt-2">
                         <ConditionsParticipation
                           courseId={occ.course_id}
@@ -1887,6 +1899,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                           onRequired={setConditionsRequises}
                         />
                       </div>
+                      ) : null}
 
                       {occ.inclus_abonnement !== false && qty > 1 && (
                         <ol className="mt-3 space-y-1 text-xs text-white/70">

@@ -85,7 +85,7 @@ describe('V610i — page courte, réservation directe', () => {
     expect(texte.match(/18:45/g)).toHaveLength(1);
     expect(texte.match(/Valangines/g)).toHaveLength(1);
     // V618L : « Membre Afroboost 8 mois ? Réserver ma place offerte » ; l'étape e-mail n'apparaît qu'au clic
-    expect(q('inv-pub-membre-compact').textContent).toMatch(/^Membre Afroboost 8 mois \?\s*Réserver ma place offerte$/);
+    expect(q('inv-pub-membre-compact').textContent).toMatch(/^Déjà membre Afroboost \?\s*Voir mon tarif membre$/);
     expect(q('membre-lien')).toBeNull();                               // pas de formulaire avant le clic
     expect(q('afroboosteur-titre')).toBeNull();                        // l'audio d'après réservation n'est pas ici
     expect(q('afroboosteur-audio')).toBeNull();

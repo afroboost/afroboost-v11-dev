@@ -649,6 +649,11 @@ def _version(doc) -> int:
         return 1
 
 
+def _avantages_membres(offre) -> bool:
+    from api.routes.evenement_special import a_des_avantages as _a
+    return _a(offre)
+
+
 def _offres_gratuite(offre) -> list:
     from api.routes.evenement_special import offres_gratuite as _og
     return _og(offre)
@@ -694,7 +699,8 @@ def dto_public(doc, cours=None, offre=None, chaine=False) -> dict:
         "cours_nom": (str(_c.get("name") or "").strip()[:120] or None) if _c else None,
         # V610 : gratuité accordée à certains abonnements actifs (liste d'offres
         # configurée sur l'offre-événement). AUCUNE capacité : pas de plafond de places.
-        "gratuit_membres": bool(_o and _offres_gratuite(_o)),   # V610e : règle suspendue = False
+        # V618M : un AVANTAGE membre existe (gratuit, réduction ou prix fixe), quel qu'il soit.
+        "gratuit_membres": bool(_o and _avantages_membres(_o)),   # V610e : règle suspendue = False
     }
 
 

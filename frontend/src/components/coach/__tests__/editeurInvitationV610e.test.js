@@ -31,7 +31,11 @@ function saisir(el, valeur) {
 const EVT = { date: '2026-10-28', heure: '18:45', lieu: 'Chem. des Valangines 97, 2000 Neuchâtel', date_modifiable: true,
   tarifs: { prevente: 25, standard: 30, derniere_minute: 40, libelles: { prevente: 'Prévente', standard: 'Standard', derniere_minute: 'Dernière minute' },
     fin_prevente: '2026-10-21T18:45', fin_standard: '2026-10-27T18:45', debut_evenement: '2026-10-28T18:45', prix_actif: 25, palier_actif: 'early_bird' },
-  membres: { configuree: true, actif: true, libelle: 'Offert aux membres 8 mois actifs' }, participants: { reservations: 2, paiements: 2 },
+  membres: { configuree: true, actif: true, libelle: 'Avantages membres' }, participants: { reservations: 2, paiements: 2 },
+  // V618M : avantages par offre (identifiants réels) + urgence / capacité séparées
+  avantages: { actif: true, regles: [{ offer_id: 'ba530ae4', nom: 'Membres — 8 mois', type: 'gratuit', valeur: null, active: true }],
+    offres: [{ id: 'ba530ae4', nom: 'Membres — 8 mois' }, { id: '7764d100', nom: 'Étudiant' }], autres: [{ id: 'a687ce86', nom: 'PULSE x10 cours' }] },
+  urgence: { texte: '50 PLACES', visible: false, capacite_limitee: false, capacite_max: null, places_prises: 2 },
   description_offre: 'Afroboost Silent…' };
 const INV = { id: 'C1', type: 'event_paid', status: 'active', title: 'AFROBOOST SILENT', subtitle: 'Accroche', description: null, message: null,
   cta_label: 'Je réserve ma place', image_url: null, image_source: 'default', video_url: '/api/files/v1/silent.mp4', audio_url: null,
@@ -83,8 +87,11 @@ describe('V610e — EditeurInvitation', () => {
     expect(q('ed-video-actuel').getAttribute('preload')).toBe('metadata');   // V610k : « none » = cadre noir (cause du bug « Voir »)
     expect(q('ed-video-actuel').autoplay).toBe(false);
     await act(async () => { q('edit-section-tarifs-titre').click(); });
-    expect(q('ed-membres').textContent).toMatch(/Offert aux membres 8 mois actifs/);
     expect(q('ed-tarif-actif').textContent).toMatch(/25 CHF/);
+    // V618M : les avantages membres ont leur section (plus de « 8 mois » écrit en dur)
+    await act(async () => { q('edit-section-avantages-titre').click(); });
+    expect(q('ed-membres').textContent).toMatch(/Avantages membres actifs/);
+    expect(document.body.textContent).not.toMatch(/8 mois actifs/);
     expect(document.body.textContent).not.toMatch(/\/api\/files\/|9fa5ac00|ba530ae4|50 places|places maximum/i);
   });
 

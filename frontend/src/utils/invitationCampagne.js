@@ -441,7 +441,7 @@ export function texteWhatsAppCampagne(dto) {
       prenom ? `${prenom} t'invite à Afroboost 🔥🎧` : 'Afroboost t’invite 🔥🎧', '',
       `Viens vivre ${nom}${pitch ? ' :' : ' !'}`, pitch, perso, '', ...quand, '',
       pa ? `🎟️ Tarif actuel : ${libellePrix(pa.prix)}${pa.libelle && pa.palier !== 'regular' ? ` (${pa.libelle})` : ''}` : '',
-      d.gratuit_membres ? '💜 Gratuit si tu as un abonnement Afroboost 8 mois actif.' : '',
+      d.gratuit_membres ? '💜 Membre Afroboost ? Ton abonnement peut te donner un tarif spécial.' : '',   // V618M : jamais « 8 mois » en dur
       pa && pa.prochain ? 'Plus tu réserves tôt, moins c’est cher.' : '', '',
       'Réserve ta place 👇', lien,
     ].filter((l, i, a) => l !== '' || (a[i - 1] !== '' && i > 0)).join('\n').trim();

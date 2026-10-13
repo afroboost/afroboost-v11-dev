@@ -2776,7 +2776,9 @@ def r2b_offre_publique(offre) -> dict:
     """
     d = dict(offre or {})
     from api.routes import evenement_special as _v610_evt  # V610 (import local : fonction relue par les bancs)
-    if _v610_evt.offres_gratuite(d):
+    # V618M : « un avantage membre existe » (gratuit, réduction ou prix fixe) — le détail
+    # (quelle offre, quel tarif) ne sort JAMAIS sur la vitrine publique.
+    if _v610_evt.a_des_avantages(d):
         d["gratuit_membres"] = True
     return {c: d[c] for c in R2B_CLES_OFFRE_PUBLIQUE if c in d}
 
@@ -7921,6 +7923,9 @@ class CreateCheckoutRequest(BaseModel):
     # V610i : réservation lancée depuis la page `/i/<jeton>` d'un événement à réservation
     # automatique -> le retour se fait sur CETTE page (adresses construites par le SERVEUR).
     retourInvitation: Optional[bool] = None
+    # V618M : tarif MEMBRE — {code, slug} de la session d'espace ; l'identité vient du jeton
+    # `X-Espace-Token` (jamais du corps), le prix du serveur (jamais du navigateur).
+    espace: Optional[dict] = None
     reservationData: Optional[dict] = None  # Données de réservation pour metadata
     # V223: identifiant de l'offre. Quand il est fourni, le serveur fait
     # AUTORITÉ : il relit le prix et le nombre de crédits depuis la base.
@@ -8470,8 +8475,13 @@ async def create_checkout_session(request: CreateCheckoutRequest,
         # depuis une page restée ouverte). Un paiement déjà engagé reste honoré par le webhook.
         if _offer.get("visible") is False or _offer.get("archived") is True:
             raise HTTPException(status_code=409, detail="Cet événement n'est pas disponible à la réservation pour le moment.")
+        # V618M : capacité RÉELLE activée par le coach -> plus de nouveau billet quand c'est complet.
+        # Sans limite activée (cas par défaut), rien ne change : la 51e place se vend.
+        if await _v610_evt.complet(db, _offer):
+            raise HTTPException(status_code=409, detail=_v610_evt.MSG_COMPLET)
         request.quantity = 1
         request.reservationData = None
+    _v618m_avantage = None   # V618M : décision « tarif membre » (branche prix serveur, plus bas)
 
     # Montant en centimes (Stripe utilise les plus petites unités).
     # round() et non int() : int(0.29 * 100) vaut 28 en virgule flottante.
@@ -8723,6 +8733,31 @@ async def create_checkout_session(request: CreateCheckoutRequest,
         _v428c_price_source = "offer"
     elif _offer is not None and request.quantity is not None:
         _v428c_prix_serveur = float(compute_active_price(_offer)["price"])
+        # V618M — TARIF MEMBRE d'un événement (réduction % ou prix fixe réglés par le coach) :
+        # seulement pour la personne PROUVÉE par sa session d'espace, sur SON abonnement actuel.
+        _v618m_espace = getattr(request, "espace", None)
+        if isinstance(_v618m_espace, dict) and _v618m_espace.get("code") and _v610_evt.a_des_avantages(_offer):
+            _v618m_charge, _v618m_motif = await _b3s13_porteur_autorise(
+                http_request, str(_v618m_espace.get("code") or "").strip().upper(), _v618m_espace.get("slug") or None)
+            if not _v618m_charge:
+                logger.warning("[V618M] tarif membre refusé (motif=%s)", _v618m_motif)
+                raise _b3s13_refus()
+            _v618m_email = str(_v618m_charge.get("email") or "").strip().lower()
+            _v618m_t = await _v610_evt.tarif_membre(db, _v618m_email, _offer, _v428c_prix_serveur)
+            _v618m_sub, _v618m_regle = _v618m_t["abonnement"], _v618m_t["regle"]
+            if _v618m_regle and _v618m_regle["type"] == "gratuit":
+                raise HTTPException(status_code=409, detail="Ta place est offerte : réserve-la gratuitement depuis ton espace.")
+            if _v618m_regle:
+                _v618m_prix = _v618m_t["prix"]
+                if 0 < _v618m_prix < _v428c_prix_serveur:
+                    logger.info("[V618M] tarif membre %s -> %s CHF (offre %s, règle %s)", _v428c_prix_serveur,
+                                _v618m_prix, request.offerId, _v618m_regle["type"])
+                    _v428c_prix_serveur = _v618m_prix
+                    _v618m_avantage = {"type": _v618m_regle["type"], "valeur": _v618m_regle["valeur"],
+                                       "subscription_id": _v618m_sub.get("id"), "offer_id": _v618m_sub.get("offer_id")}
+            # Le billet est à SON nom : l'avantage est personnel (aucun billet « membre » pour un tiers).
+            request.customerEmail = _v618m_email
+            request.quantity = 1
         if abs(float(request.amount or 0) - _v428c_prix_serveur) > 0.01:
             logger.warning(
                 f"[V428C-A1] montant client ignore : {request.amount} -> "
@@ -8736,6 +8771,13 @@ async def create_checkout_session(request: CreateCheckoutRequest,
 
     # V225: 1..5. Un client peut poster ce qu'il veut ; le plafond est ici.
     safe_quantity = max(1, min(5, int(request.quantity or 1)))
+    if _v618m_avantage:
+        metadata_v618m = {"tarif_membre": "1", "avantage_type": _v618m_avantage["type"],
+                          "avantage_valeur": str(_v618m_avantage["valeur"] or ""),
+                          "droit_subscription_id": str(_v618m_avantage["subscription_id"] or ""),
+                          "droit_offer_id": str(_v618m_avantage["offer_id"] or "")}
+    else:
+        metadata_v618m = {}
 
     # Préparer les metadata
     metadata = {
@@ -8753,6 +8795,7 @@ async def create_checkout_session(request: CreateCheckoutRequest,
         # relecture via l'API Stripe echouerait alors silencieusement.
         "quantity": str(safe_quantity),
     }
+    metadata.update(metadata_v618m)   # V618M : la décision tarifaire membre, figée au paiement
     if request.reservationData:
         metadata["reservation_id"] = request.reservationData.get("id", "")
         metadata["course_name"] = request.reservationData.get("courseName", "")
@@ -17969,6 +18012,19 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
             for occ in occurrences:
                 if occ.get("offer_id") in _v618l_liens and not occ.get("inclus_abonnement"):
                     occ["lien_evenement"] = _v618l_liens[occ["offer_id"]]
+            # V618M — la carte de l'AGENDA réserve sur place : le prix PUBLIC du moment (serveur)
+            # et la capacité réelle (complet) de chaque événement à billet. L'avantage personnel,
+            # lui, vient de `evenements_offerts` (session d'espace prouvée).
+            from api.routes import evenement_special as _v618m_evt
+            _v618m_tarifs = {}
+            for _o618 in await db.offers.find({"id": {"$in": _v618l_ids}, "offer_type": "event"}, {"_id": 0}).to_list(50):
+                _v618m_tarifs[_o618["id"]] = {"prix_public": float(compute_active_price(_o618).get("price") or 0),
+                                             "complet": await _v618m_evt.complet(db, _o618),
+                                             "reservation_auto": _v618m_evt.reservation_auto(_o618)}
+            for occ in occurrences:
+                _t618 = _v618m_tarifs.get(occ.get("offer_id")) if not occ.get("inclus_abonnement") else None
+                if _t618:
+                    occ.update(_t618)
     except Exception as _e618l:  # noqa: BLE001
         logger.warning("[V618L] lien d'événement illisible (%s)", type(_e618l).__name__)
 
@@ -19749,7 +19805,9 @@ async def get_space_link_by_email(email: str, request: Request):
     except HTTPException:
         raise
     except Exception as _v618e:
-        logger.warning("[V618] espace actuel non résolu (%s)", type(_v618e).__name__)
+        # V618M : panne TECHNIQUE (pas un refus) -> niveau erreur. Les refus de cette route sont
+        # journalisés par la seule garde `v20_exiger_coach_signe` (contrat V20b).
+        logger.error("[V618] espace actuel non résolu (%s)", type(_v618e).__name__)
         _v618_r = None
     if not code and not (_v618_r and _v618_r.get("etat") == "conflit"):
         # V618 PHASE 2 : aucun abonnement actuel -> le PLUS RÉCENT (même règle de tri que le
@@ -20678,6 +20736,8 @@ async def v610_reserver_evenement_offert(access_code: str, offer_id: str, reques
     if not _offre or _offre.get("archived") is True or _offre.get("visible") is False \
             or str(_offre.get("offer_type") or "") != "event" or not _v610_evt.offres_gratuite(_offre):
         raise HTTPException(status_code=404, detail="Événement introuvable")
+    # V618M : capacité RÉELLE (si le coach l'a activée) — une place déjà prise reste rendue
+    # (idempotence plus bas) ; seule une NOUVELLE place est refusée quand c'est complet.
     _cours = await _v610_evt.cours_de_l_evenement(db, _offre)
     _occ = _v610_evt.occurrence(_cours)
     if not _occ:
@@ -20686,8 +20746,12 @@ async def v610_reserver_evenement_offert(access_code: str, offer_id: str, reques
         raise HTTPException(status_code=409, detail="L'événement a déjà commencé.")
     _droit = await _v610_evt.abonnement_gratuit(db, _email, _offre, _v610_evt.debut_utc(_occ))
     if not _droit:
-        raise HTTPException(status_code=403, detail=("La place offerte est réservée aux membres dont "
-                                                     "l'abonnement 8 mois est actif à la date de l'événement."))
+        # V618M : plus de « 8 mois » écrit en dur — la règle est celle que le coach a réglée.
+        raise HTTPException(status_code=403, detail=("Ton abonnement actuel ne donne pas de place offerte "
+                                                     "pour cet événement."))
+    _v618m_deja, _ = await _v610_evt._deja(db, "membre:%s:%s" % (_offre.get("id"), _email))
+    if not _v618m_deja and await _v610_evt.complet(db, _offre):
+        raise HTTPException(status_code=409, detail=_v610_evt.MSG_COMPLET)
     _nom = _droit.get("name") or ""
     _resa, _creee = await _v610_evt.reserver(
         db, cle="membre:%s:%s" % (_offre.get("id"), _email), offre=_offre, cours=_cours, occ=_occ,

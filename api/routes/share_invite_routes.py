@@ -157,23 +157,6 @@ async def _invitation_active(token):
     return _d
 
 
-async def _capacite_reelle(doc) -> bool:
-    """V618L — l'offre de l'invitation a-t-elle une capacité RÉELLE (limite appliquée) ?"""
-    try:
-        _o = await _base()["offers"].find_one({"id": str(doc.get("offer_id") or "")},
-                                               {"_id": 0, "stock": 1, "max_participants": 1}) if doc.get("offer_id") else None
-    except Exception:  # noqa: BLE001
-        return False
-    _o = _o or {}
-    for _k in ("stock", "max_participants"):
-        try:
-            if int(_o.get(_k) or 0) > 0:
-                return True
-        except (TypeError, ValueError):
-            pass
-    return False
-
-
 async def _dto(doc) -> dict:
     """Le DTO PUBLIC du moteur (cours et offre chargés par identifiant)."""
     _b = _base()
@@ -535,16 +518,28 @@ async def invitation_publique(token: str):
                     "og_titre": titre_og(_dto_pub), "og_description": description_og(_dto_pub)})
     # V610p : le message « 50 PLACES » réglé par le coach (programme Ambassadeur) — un MESSAGE,
     # jamais une capacité : aucune place restante n'est calculée ni affichée.
+    # V618M — « URGENCE / PLACES » : deux notions SÉPARÉES, réglées par le coach sur l'événement.
+    #   * texte marketing (`texte_urgence`, affiché si `texte_urgence_visible`) : un MESSAGE,
+    #     il ne crée aucune limite ;
+    #   * capacité réelle (`capacite_limitee` + `capacite_max`) : seule elle peut rendre complet.
     _sortie["message_places"] = None
-    # V618L : « 50 PLACES » n'est affiché QUE si l'offre a une vraie capacité (stock ou
-    # max_participants > 0). Sans capacité, c'était un faux compteur : la 51e réservation
-    # passe (aucune limite n'existe) — on ne l'annonce donc plus.
-    if _doc.get("type") in ("event_paid", "event_free") and await _capacite_reelle(_doc):
+    _sortie["complet"] = False
+    _sortie["places_restantes"] = None
+    if _doc.get("type") in ("event_paid", "event_free") and _doc.get("offer_id"):
         try:
-            from api.routes import ambassadeur_routes as _v610p_amb
-            _sortie["message_places"] = (await _v610p_amb.config_du_coach(_base(), _doc.get("coach_id")))["message_places"] or None
+            from api.routes import evenement_special as _v618m_evt
+            _o618 = await _base()["offers"].find_one({"id": str(_doc.get("offer_id"))}, {"_id": 0})
+            _o618 = _o618 or {}
+            _txt = " ".join(str(_o618.get("texte_urgence") or "").split())[:40]
+            if _txt and _o618.get("texte_urgence_visible") is True:
+                _sortie["message_places"] = _txt
+            _cap = _v618m_evt.capacite(_o618)
+            if _cap is not None:
+                _pris = await _v618m_evt.places_prises(_base(), _o618)
+                _sortie["places_restantes"] = max(0, _cap - _pris)
+                _sortie["complet"] = _pris >= _cap
         except Exception as _e:  # noqa: BLE001
-            logger.warning("%s message places non lu (%s)", PREFIXE, type(_e).__name__)
+            logger.warning("%s urgence / places non lues (%s)", PREFIXE, type(_e).__name__)
     # V610i : événement payant à réservation AUTOMATIQUE, en vente -> « Je réserve ma place »
     # ouvre Stripe directement (prix décidé par le serveur au checkout). Sinon : la vitrine.
     _sortie["reservation_directe"] = None

@@ -134,6 +134,106 @@ def _tarifs(offre):
     }
 
 
+# ── V618M — AVANTAGES MEMBRES + URGENCE / PLACES ─────────────────────────────
+TEXTE_URGENCE_MAX = 40
+
+
+def _expiree(o, maintenant=None) -> bool:
+    _v = str((o or {}).get("expiration_date") or "").strip()
+    if not _v:
+        return False
+    try:
+        _d = datetime.fromisoformat(_v.replace("Z", "+00:00"))
+        _d = _d if _d.tzinfo else _d.replace(tzinfo=timezone.utc)
+        return _d < (maintenant or datetime.now(timezone.utc))
+    except ValueError:
+        return False
+
+
+def offres_choisissables(offres, maintenant=None):
+    """PURE — (actives, autres) pour le sélecteur coach. Actives : visibles, non archivées, non
+    expirées, ni événement ni produit, sans doublon de nom (la plus récente gardée). « Autres » :
+    masquées ou expirées (jamais archivées) — proposées à part, jamais dans la liste principale."""
+    _act, _aut, _noms = [], [], {}
+    for _o in sorted(offres or [], key=lambda x: str((x or {}).get("created_at") or ""), reverse=True):
+        if not _o or not _o.get("id") or _o.get("archived") is True:
+            continue
+        if str(_o.get("offer_type") or "") == "event" or _o.get("isProduct") is True or str(_o.get("offer_type") or "") == "product":
+            continue
+        _e = {"id": _o["id"], "nom": str(_o.get("name") or "").strip() or "Offre sans nom"}
+        if _o.get("visible") is False or _expiree(_o, maintenant):
+            _aut.append(_e)
+            continue
+        _cle = " ".join(_e["nom"].lower().split())
+        if _cle in _noms:
+            continue
+        _noms[_cle] = True
+        _act.append(_e)
+    import unicodedata
+    _par_nom = lambda e: unicodedata.normalize("NFD", e["nom"].lower()).encode("ascii", "ignore")  # noqa: E731  (É trié comme E)
+    return sorted(_act, key=_par_nom), sorted(_aut, key=_par_nom)
+
+
+async def _offres_du_coach(offre):
+    _coach = str((offre or {}).get("coach_id") or "").strip()
+    _q = {"coach_id": _coach} if _coach else {"coach_id": {"$in": [None, ""]}}
+    return await _db()["offers"].find(_q, {"_id": 0, "id": 1, "name": 1, "offer_type": 1, "visible": 1, "archived": 1,
+                                           "expiration_date": 1, "isProduct": 1, "created_at": 1}).to_list(300)
+
+
+async def _avantages_edition(offre) -> dict:
+    from api.routes import evenement_special as EVT
+    _toutes = await _offres_du_coach(offre)
+    _act, _aut = offres_choisissables(_toutes)
+    _noms = {o["id"]: str(o.get("name") or "").strip() for o in _toutes}
+    _actives = {o["id"] for o in _act}
+    return {
+        "actif": (offre or {}).get("gratuit_membres_actif") is not False,
+        "regles": [dict(_r, nom=_noms.get(_r["offer_id"]) or "Offre retirée", active=_r["offer_id"] in _actives)
+                   for _r in EVT.avantages_configures(offre)],
+        "offres": _act, "autres": _aut,
+    }
+
+
+async def _urgence_edition(offre) -> dict:
+    from api.routes import evenement_special as EVT
+    _o = offre or {}
+    return {"texte": str(_o.get("texte_urgence") or ""), "visible": _o.get("texte_urgence_visible") is True,
+            "capacite_limitee": EVT.capacite(_o) is not None,
+            "capacite_max": EVT.capacite(_o) or (int(_o["capacite_max"]) if isinstance(_o.get("capacite_max"), int) else None),
+            "places_prises": await EVT.places_prises(_db(), _o) if _o.get("id") else 0}
+
+
+def valider_avantages(brut, offres_coach):
+    """PURE — la liste enregistrable (sans « aucun »), ou HTTPException 422. Une offre n'est
+    acceptée que si elle appartient au coach (ids réels, jamais un titre) et n'est ni un
+    événement ni un produit."""
+    from api.routes import evenement_special as EVT
+    if not isinstance(brut, list) or len(brut) > 50:
+        raise HTTPException(status_code=422, detail="Liste d'avantages illisible.")
+    _permis = {o["id"]: o for o in offres_coach or [] if o.get("id") and str(o.get("offer_type") or "") != "event"
+               and o.get("isProduct") is not True and o.get("archived") is not True}
+    _sortie, _vus = [], set()
+    for _e in brut:
+        _id = str((_e or {}).get("offer_id") or "").strip() if isinstance(_e, dict) else ""
+        if not _id or _id not in _permis:
+            raise HTTPException(status_code=422, detail="Une offre choisie n'existe pas (ou n'est pas à toi).")
+        if _id in _vus:
+            raise HTTPException(status_code=422, detail="La même offre apparaît deux fois.")
+        _vus.add(_id)
+        _t = str((_e or {}).get("type") or "")
+        if _t == "reduction" and not (isinstance(_e.get("valeur"), (int, float)) and 1 <= _e["valeur"] <= 100):
+            raise HTTPException(status_code=422, detail="La réduction doit être entre 1 et 100 %.")
+        if _t == "prix_fixe" and not (isinstance(_e.get("valeur"), (int, float)) and 0 <= _e["valeur"] <= EVT.PRIX_FIXE_MAX):
+            raise HTTPException(status_code=422, detail="Le prix membre doit être un montant entre 0 et 10000 CHF.")
+        _r = EVT._regle_valide(_e)
+        if not _r:
+            raise HTTPException(status_code=422, detail="Choisis : Aucun avantage, Gratuit, Réduction % ou Prix fixe.")
+        if _r["type"] != "aucun":
+            _sortie.append({"offer_id": _id, "type": _r["type"], "valeur": _r["valeur"]})
+    return _sortie
+
+
 async def _edition(_c, camp, offre, cours) -> dict:
     from api.routes import referral_campaigns_routes as RC
     from api.routes import evenement_special as EVT
@@ -147,9 +247,13 @@ async def _edition(_c, camp, offre, cours) -> dict:
             or (offre or {}).get("location") or "",
             "date_modifiable": await _cours_dedie(cours, offre),
             "tarifs": _tarifs(offre) if camp.get("type") == "event_paid" else None,
-            "membres": ({"configuree": True, "actif": bool(EVT.offres_gratuite(offre)),
-                         "libelle": "Offert aux membres 8 mois actifs"}
+            "membres": ({"configuree": True, "actif": (offre or {}).get("gratuit_membres_actif") is not False,
+                         "libelle": "Avantages membres"}
                         if EVT.regle_membres_configuree(offre) else None),
+            # V618M : la configuration par OFFRE (gratuit / réduction / prix fixe / aucun) et les
+            # offres que le coach peut choisir ; l'urgence (texte) et la capacité réelle, séparées.
+            "avantages": (await _avantages_edition(offre)) if camp.get("type") == "event_paid" else None,
+            "urgence": await _urgence_edition(offre),
             "offre_nom": (offre or {}).get("name"),
             "description_offre": ((offre or {}).get("description") or "")[:1500],
             "participants": await _participants(offre),
@@ -276,6 +380,49 @@ async def edition_evenement(inv_id: str, request: Request):
             _o["gratuit_membres_actif"] = _actif
             _set_offre["gratuit_membres_actif"] = _actif
             _sensible = True          # des membres comptaient peut-être sur leur place offerte
+
+    # ── V618M : avantages membres par offre (n'agit que sur les NOUVELLES réservations) ──
+    if "avantages_membres" in _b:
+        if _camp.get("type") != "event_paid":
+            raise HTTPException(status_code=409, detail="Les avantages membres concernent un événement payant.")
+        from api.routes import evenement_special as EVT
+        _liste = valider_avantages(_b.get("avantages_membres"), await _offres_du_coach(_offre))
+        if _liste != [e for e in EVT.avantages_configures(_offre) if e["type"] != "aucun"] \
+                or not isinstance(_offre.get("avantages_membres"), list):
+            _o["avantages_membres"] = _liste
+            _set_offre["avantages_membres"] = _liste
+            # Compatibilité (retour arrière possible) : l'ancienne liste « gratuit » suit.
+            _set_offre["gratuit_abonnements_offer_ids"] = [e["offer_id"] for e in _liste if e["type"] == "gratuit"]
+        # Les paiements et réservations PASSÉS ne sont jamais recalculés : pas de confirmation.
+
+    # ── V618M : urgence (texte marketing) et capacité réelle — deux réglages séparés ──
+    if "urgence" in _b:
+        from api.routes import evenement_special as EVT
+        _u = _b.get("urgence") if isinstance(_b.get("urgence"), dict) else {}
+        if "texte" in _u:
+            _txt = " ".join(str(_u.get("texte") or "").replace("<", "").replace(">", "").split())
+            if len(_txt) > TEXTE_URGENCE_MAX:
+                raise HTTPException(status_code=422, detail="Le texte d'urgence fait 40 caractères au plus.")
+            _set_offre["texte_urgence"] = _o["texte_urgence"] = _txt
+        if "visible" in _u:
+            _set_offre["texte_urgence_visible"] = _o["texte_urgence_visible"] = bool(_u.get("visible"))
+        if "capacite_limitee" in _u:
+            _lim = bool(_u.get("capacite_limitee"))
+            if _lim:
+                try:
+                    _max = int(_u.get("capacite_max"))
+                except (TypeError, ValueError):
+                    _max = 0
+                if not 1 <= _max <= EVT.CAPACITE_MAX:
+                    raise HTTPException(status_code=422, detail="Indique une capacité maximum entre 1 et 10000.")
+                _pris = await EVT.places_prises(_db(), _offre)
+                if _max < _pris:
+                    raise HTTPException(status_code=422, detail="%d places sont déjà réservées : la capacité ne peut pas être plus petite." % _pris)
+                _set_offre["capacite_max"] = _o["capacite_max"] = _max
+            _set_offre["capacite_limitee"] = _o["capacite_limitee"] = _lim
+        for _k in ("texte_urgence", "texte_urgence_visible", "capacite_limitee", "capacite_max"):
+            if _k in _set_offre and _set_offre[_k] == _offre.get(_k):
+                del _set_offre[_k]
 
     if _b.get("simuler") is True:
         _pa = IC.prix_actif(_o) if _camp.get("type") == "event_paid" else None

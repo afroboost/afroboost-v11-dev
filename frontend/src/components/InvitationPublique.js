@@ -546,6 +546,12 @@ export default function InvitationPublique({ token, apercu }) {
                 <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="fire" size={16} /></span> {d.message_places}
               </p>
             ) : null}
+            {/* V618M : compteur RÉEL, seulement si le coach a activé une capacité. */}
+            {d.places_restantes != null && !d.complet ? (
+              <p data-testid="inv-pub-places-restantes" style={{ margin: '6px 0 0', fontSize: '13.5px', fontWeight: 700 }}>
+                {d.places_restantes} place{d.places_restantes > 1 ? 's' : ''} restante{d.places_restantes > 1 ? 's' : ''}
+              </p>
+            ) : null}
             {pa.prochain ? (
               <p data-testid="inv-pub-urgence" style={{ margin: '8px 0 0', fontSize: '13px', color: 'rgba(255,255,255,0.75)' }}>
                 {prixTexte(pa.prochain.prix)} dès le {jourBascule(pa.prochain.a_partir_de)}.
@@ -560,10 +566,12 @@ export default function InvitationPublique({ token, apercu }) {
             {envoi.erreur ? (
               <p data-testid="inv-pub-cta-erreur" role="alert" style={{ margin: '0 0 8px', fontSize: '13.5px', color: 'rgba(255,190,180,1)', textAlign: 'center' }}>{envoi.erreur}</p>
             ) : null}
-            <button type="button" onClick={surCta} data-testid="inv-pub-cta" disabled={envoi.cours}
+            {/* V618M : « Complet » SEULEMENT si le coach a activé une capacité réelle et qu'elle est atteinte. */}
+            <button type="button" onClick={d.complet ? undefined : surCta} data-testid="inv-pub-cta" disabled={envoi.cours || !!d.complet}
                     style={{ display: 'block', width: '100%', minHeight: '54px', borderRadius: '999px', border: 'none',
-                      background: PRIMAIRE, color: 'rgba(255,255,255,1)', fontSize: '17px', fontWeight: 800, cursor: 'pointer', opacity: envoi.cours ? 0.75 : 1 }}>
-              {envoi.cours ? 'Ouverture du paiement…' : libelleCta(d, pa)}
+                      background: d.complet ? 'rgba(255,255,255,0.12)' : PRIMAIRE, color: 'rgba(255,255,255,1)', fontSize: '17px', fontWeight: 800,
+                      cursor: d.complet ? 'default' : 'pointer', opacity: envoi.cours ? 0.75 : 1 }}>
+              {d.complet ? 'Complet' : (envoi.cours ? 'Ouverture du paiement…' : libelleCta(d, pa))}
             </button>
           </div>
         ) : null}
@@ -574,8 +582,9 @@ export default function InvitationPublique({ token, apercu }) {
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '12px 14px', borderRadius: 14, background: rgbaP(0.08),
                       border: `1px solid ${rgbaP(0.35)}`, color: 'rgba(255,255,255,0.92)', fontSize: '14.5px', cursor: 'pointer', textAlign: 'left', flexWrap: 'wrap' }}>
               <span style={{ color: PRIMAIRE, display: 'inline-flex' }}><SvgIcon name="heart" size={16} /></span>
-              <span>Membre Afroboost 8 mois ?</span>
-              <strong style={{ color: PRIMAIRE }}>Réserver ma place offerte</strong>
+              {/* V618M : jamais « 8 mois » en dur — l'avantage dépend de l'abonnement de la personne. */}
+              <span>Déjà membre Afroboost ?</span>
+              <strong style={{ color: PRIMAIRE }}>Voir mon tarif membre</strong>
             </button>
             {membreOuvert ? (
               <div style={{ marginTop: 8 }}>

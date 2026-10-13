@@ -165,7 +165,7 @@ describe('validerInvitation', () => {
     expect(t).toMatch(/Viens vivre AFROBOOST SILENT — ÉDITION SPÉCIALE :\n1 heure de cardio-danse afro au casque/);
     expect(t).toMatch(/📅 Mercredi 28 octobre\n⏰ 18:45\n📍 Chem\. des Valangines 97, 2000 Neuchâtel/);
     expect(t).toMatch(/🎟️ Tarif actuel : 30 CHF \(Standard\)/);
-    expect(t).toMatch(/💜 Gratuit si tu as un abonnement Afroboost 8 mois actif\./);
+    expect(t).toMatch(/💜 Membre Afroboost \? Ton abonnement peut te donner un tarif spécial\./);
     expect(t).toMatch(/Plus tu réserves tôt, moins c’est cher\./);
     expect(t).toMatch(/Réserve ta place 👇\nhttps:\/\/afroboost\.com\/i\/JetonSophie$/);
     expect(t).not.toMatch(/50 places|places maximum|envoyé/i);

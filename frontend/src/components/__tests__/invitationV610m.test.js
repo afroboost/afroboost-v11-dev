@@ -25,6 +25,8 @@ import MesEvenementsInvitation from '../MesEvenementsInvitation';
 import { lireIntentionMembre, lireParticipation, memoriserParticipation, retenirIntentionMembre, offreDeLInvitation } from '../../utils/participationEvenement';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+// V618M : la carte événement lit les conditions publiées AU MOMENT de réserver (aucune ici).
+beforeEach(() => { axios.get.mockResolvedValue({ data: { required: false } }); });
 let conteneur = null; let racine = null;
 function rendre(el) { conteneur = document.createElement('div'); document.body.appendChild(conteneur); racine = createRoot(conteneur); racine.render(el); }
 let play;
@@ -188,7 +190,7 @@ describe('V610m — membre 8 mois : directement sur CET événement', () => {
   test('événement visé NON offert à ce compte : on le dit, rien n’est réservé', async () => {
     retenirIntentionMembre('OFF-9', JETON);
     await act(async () => { rendre(<EvenementsOfferts evenements={[]} accessCode="AFR-M1" memberSlug="" />); });
-    expect(q('evt-offert-non-eligible').textContent).toContain('Cet événement n’est pas inclus dans ton abonnement actuel.');
+    expect(q('evt-offert-non-eligible').textContent).toContain('Ton abonnement ne comprend pas d’avantage pour cet événement.');
     expect(q('evt-offert-tarif-actuel').textContent).toBe('Réserver au tarif actuel');
     expect(q('evt-offert-tarif-actuel').getAttribute('href')).toBe(`/i/${JETON}`);
     expect(axios.post).not.toHaveBeenCalled();

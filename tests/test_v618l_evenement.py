@@ -202,20 +202,15 @@ async def partie_cloisonnement():
 
 
 async def partie_places():
-    # 9) « 50 PLACES » : seulement pour une capacité RÉELLE.
-    b = nouvelle_base("2026-10-28")
-    ancien = SI._base
-    SI._base = lambda: b
-    try:
-        verifier("9 stock -1 / max_participants vide : AUCUNE capacité -> pas de « 50 PLACES »",
-                 await SI._capacite_reelle({"offer_id": "o-silent"}) is False)
-        b.offers.docs[0]["max_participants"] = 50
-        verifier("9b max_participants 50 : capacité réelle -> message autorisé", await SI._capacite_reelle({"offer_id": "o-silent"}) is True)
-        b.offers.docs[0].update(max_participants=None, stock=30)
-        verifier("9c stock 30 : capacité réelle", await SI._capacite_reelle({"offer_id": "o-silent"}) is True)
-        verifier("9d invitation sans offre : pas de capacité", await SI._capacite_reelle({}) is False)
-    finally:
-        SI._base = ancien
+    # 9) « 50 PLACES » : V618M — le texte est un réglage SÉPARÉ ; seule une capacité ACTIVÉE limite.
+    from api.routes import evenement_special as EVS
+    verifier("9 stock -1 / max_participants vide / aucun réglage : AUCUNE capacité",
+             EVS.capacite(OFFRE) is None)
+    verifier("9b ancienne heuristique abandonnée : max_participants 50 SANS la case -> aucune capacité",
+             EVS.capacite(dict(OFFRE, max_participants=50, stock=30)) is None)
+    verifier("9c capacité ACTIVÉE par le coach (50) : capacité réelle", EVS.capacite(dict(OFFRE, capacite_limitee=True, capacite_max=50)) == 50)
+    verifier("9d texte « 50 PLACES » visible : jamais une capacité",
+             EVS.capacite(dict(OFFRE, texte_urgence="50 PLACES", texte_urgence_visible=True)) is None)
 
 
 async def _route(coro):

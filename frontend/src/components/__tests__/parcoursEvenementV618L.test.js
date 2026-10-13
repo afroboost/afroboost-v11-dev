@@ -10,6 +10,8 @@ import { createRoot } from 'react-dom/client';
 
 jest.mock('axios', () => ({ get: jest.fn(), post: jest.fn(), put: jest.fn(), create: jest.fn(), interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } } }));
 // eslint-disable-next-line import/first
+import axios from 'axios';
+// eslint-disable-next-line import/first
 import InvitationPublique, { libelleCta, jourBascule, PROMESSE_EVENEMENT } from '../InvitationPublique';
 // eslint-disable-next-line import/first
 import { DemandeLienMembre } from '../AccesMembreEvenement';
@@ -25,6 +27,8 @@ import { texteAmbassadeur } from '../../utils/invitationCampagne';
 import { retenirIntentionMembre } from '../../utils/participationEvenement';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+// V618M : la carte événement lit les conditions publiées AU MOMENT de réserver (aucune ici).
+beforeEach(() => { axios.get.mockResolvedValue({ data: { required: false } }); });
 let conteneur = null;
 let racine = null;
 function rendre(el) {
@@ -187,7 +191,7 @@ describe('V618L — espace membre', () => {
     global.fetch = jest.fn((url) => (String(url).includes('/api/invitation/publique/') ? json(SILENT) : json({})));
     const EVT = { offer_id: 'OFF-1', titre: 'AFROBOOST SILENT — ÉDITION SPÉCIALE', datetime: '2026-10-28T18:45:00', lieu: 'Chemin des Valangines 97, 2000 Neuchâtel', deja_reserve: false };
     await act(async () => { rendre(<EvenementsOfferts evenements={[EVT]} accessCode="AFR-M1" memberSlug="" />); });
-    expect(q('evt-offert-tarif').textContent).toBe('Ta place est offerte avec ton abonnement');
+    expect(q('evt-offert-avantage').textContent).toBe('PLACE OFFERTE');   // V618M : « Ton avantage membre · PLACE OFFERTE »
     expect(document.getElementById('evt-offert-OFF-1')).toBeTruthy();   // l'ancre de « Voir l'événement »
     await act(async () => { q('evt-offert-reserver').click(); });
     await attendre(() => expect(q('evt-offert-confirme-titre').textContent).toBe('Ta place est réservée !'));
