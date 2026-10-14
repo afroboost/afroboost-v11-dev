@@ -29540,7 +29540,8 @@ def p3s3d_verdict_reprise(action: dict) -> str:
     return "RIEN"
 
 
-async def p3s3d_appliquer_succes(action: dict, reponse: dict, maintenant: str) -> dict:
+async def p3s3d_appliquer_succes(action: dict, reponse: dict, maintenant: str,
+                                 contenu: dict = None) -> dict:
     """Le seul chemin qui fait passer un prospect a `contacte`.
 
     L'ORDRE COMPTE. L'action est marquee `envoye` AVANT les fiches : si le
@@ -29593,6 +29594,12 @@ async def p3s3d_appliquer_succes(action: dict, reponse: dict, maintenant: str) -
                      "j14_due_at": p3s3d_echeance(maintenant, 14)}
     if _rfc:
         _champs_envoi[P3U2_CHAMP_RFC] = _rfc
+    # V619 : L'INSTANTANE DE CE QUI EST PARTI, dans la MEME ecriture que `sent_at`.
+    # Ecrit une seule fois (condition `sent_at` absent), jamais relu pour envoyer,
+    # aucune route ne le modifie : c'est la preuve historique, pas un brouillon.
+    if isinstance(contenu, dict):
+        _champs_envoi["j0_sent_subject"] = str(contenu.get("subject") or "")
+        _champs_envoi["j0_sent_text"] = str(contenu.get("text") or "")
     await db[P3S3_ACTIONS].update_one(
         {"id": action["id"], "sent_at": {"$exists": False}},
         {"$set": _champs_envoi})
@@ -29764,7 +29771,9 @@ async def p3s3d_executer_campagne(campagne_id: str, appelant: str,
 
         v = reponse.get("verdict")
         if v == P3S3D_SUCCESS:
-            issue = await p3s3d_appliquer_succes(action, reponse, maintenant)
+            issue = await p3s3d_appliquer_succes(
+                action, reponse, maintenant,
+                contenu=v619_contenu_envoye(fournisseur, instantane, cle))   # V619
             resultats.append({"recipient_key": action.get("recipient_key"),
                               "verdict": v, "code": issue["statut"],
                               "fiches_marquees": issue["fiches_marquees"],
@@ -31450,7 +31459,7 @@ async def p3r2_marquer_indetermine(action_id: str, etape: str, maintenant: str,
 
 
 async def p3r2_appliquer_succes(action: dict, etape: str, reponse: dict,
-                                maintenant: str) -> dict:
+                                maintenant: str, contenu: dict = None) -> dict:
     """`<etape>_sent_at`, et SEULEMENT si le fournisseur a rendu un identifiant.
 
     L'ECRITURE EST CONDITIONNELLE SUR L'ABSENCE de la date : deux passages ne
@@ -31474,6 +31483,9 @@ async def p3r2_appliquer_succes(action: dict, etape: str, reponse: dict,
     _rfc = p3u2_normaliser_identifiant((reponse or {}).get("rfc_message_id"))
     if _rfc:
         champs[p3r2_champ(etape, "rfc_message_id")] = _rfc
+    if isinstance(contenu, dict):   # V619 : instantane immuable, meme ecriture que la date
+        champs[p3r2_champ(etape, "sent_subject")] = str(contenu.get("subject") or "")
+        champs[p3r2_champ(etape, "sent_text")] = str(contenu.get("text") or "")
     await db[P3S3_ACTIONS].update_one(
         {"id": action["id"], p3r2_champ(etape, "sent_at"): {"$exists": False}},
         {"$set": champs})
@@ -31598,7 +31610,9 @@ async def p3r2_executer_relances(campagne_id: str, etape: str, appelant: str,
 
         v = reponse.get("verdict")
         if v == P3S3D_SUCCESS:
-            issue = await p3r2_appliquer_succes(action, etape, reponse, horodatage)
+            issue = await p3r2_appliquer_succes(
+                action, etape, reponse, horodatage,
+                contenu=v619_contenu_envoye(fournisseur, instantane, cle))   # V619
             resultats.append({"recipient_key": action.get("recipient_key"),
                               "verdict": v, "code": issue["statut"],
                               "provider_message_id": reponse.get("provider_message_id")})
@@ -35372,6 +35386,195 @@ def v606_conversation_positive(conversation) -> bool:
     return "positive" in tons and "negative" not in tons
 
 
+# ---------------------------------------------------------------------------
+# V619 — LE FIL COMPLET D'UNE CONVERSATION PARTENAIRE (dans le bloc PF : lecture seule)
+# ---------------------------------------------------------------------------
+# CE N'EST PAS UNE NOUVELLE SOURCE DE VERITE : `messages_fil` est une PROJECTION
+# d'affichage, recalculee a chaque lecture depuis les collections existantes :
+#   - recus      : `prospect_inbound_messages.body_text` (+ `body_quoted` a part) ;
+#   - J0 / J+3 / J+7 / J+14 : l'action (`prospect_campaign_actions`) ;
+#   - reponses   : `prospect_reply_sends.approved_text` — LE texte parti
+#                  (P3AI4FournisseurReponse envoie `approved_text` tel quel ;
+#                  l'HTML n'en est qu'un habillage). Jamais le brouillon courant,
+#                  ni `generated_text`, ni `edited_text`.
+#
+# LES TEXTES J0 / RELANCES : `message_jX` est le texte APPROUVE, pas une trace
+# d'envoi. Il n'est plus modifiable apres approbation (PATCH limite a l'etat
+# « preparee »), mais une campagne peut etre ROUVERTE, modifiee et re-approuvee.
+# Un texte historique n'est donc affiche comme envoye QUE s'il est PROUVE :
+#   1. un instantane `jX_sent_text` ecrit au moment exact de l'envoi (V619,
+#      envois futurs) ; ou
+#   2. l'empreinte d'approbation de la campagne est INTACTE (recalculee) ET
+#      l'approbation est ANTERIEURE a cet envoi — le moteur refuse de faire
+#      partir un message si l'empreinte a bouge : l'approuve est ce qui est parti.
+# Sinon : AUCUN texte, et l'ecran dit « Texte historique non garanti ».
+# On ne reconstruit jamais un texte depuis un modele, une fiche ou un brouillon.
+V619_ETAPES = ("j0", "j3", "j7", "j14")
+V619_TYPES = {"j0": "j0", "j3": "j3", "j7": "j7", "j14": "j14"}
+V619_PREUVE_TTL_S = 300
+_v619_preuves_cache: dict = {}
+
+
+def v619_champ_envoi(etape: str, suffixe: str) -> str:
+    """Le J0 vit sans prefixe (`sent_at`, `provider_status`), les relances avec
+    (`j3_sent_at`…). L'instantane, lui, est toujours prefixe (`j0_sent_text`). PURE."""
+    if etape == "j0" and suffixe in ("sent_at", "provider_status", "provider_message_id",
+                                     "provider_raison"):
+        return suffixe
+    return "%s_%s" % (etape, suffixe)
+
+
+def v619_contenu_envoye(fournisseur, instantane: dict, cle: str = "") -> dict:
+    """L'objet et le texte EXACTS remis au fournisseur pour un J0 / une relance. PURE.
+
+    On relit la charge utile du fournisseur reel (`charge_utile`), pas le message
+    brut : un J0 qui commence par « Objet : … » perd cette ligne (V602). Un
+    fournisseur sans charge utile (factice) retombe sur la meme regle V602."""
+    try:
+        if hasattr(fournisseur, "charge_utile"):
+            params = (fournisseur.charge_utile(instantane, cle) or {}).get("params") or {}
+            return {"subject": str(params.get("subject") or ""), "text": str(params.get("text") or "")}
+    except Exception:  # noqa: BLE001
+        pass
+    objet, corps = v602_objet_et_corps((instantane or {}).get("message") or "",
+                                       getattr(fournisseur, "objet", "") or "")
+    return {"subject": objet, "text": corps}
+
+
+def v619_remise(provider_status, send_status: str = "", suivi=None) -> str:
+    """en_attente | remis | echec | rebond | inconnu. PURE.
+
+    `inconnu` = envoi ancien, d'avant le suivi de remise (V608) : `accepted` sans
+    `suivi_livraison` n'a jamais recu d'evenement Resend (mesure du 14/10 : 215 J0
+    du 03/09 et du 11/10). On ne sait pas — on ne dit ni « remis » ni « en attente »."""
+    ps = str(provider_status or "")
+    if ps == "delivered":
+        return "remis"
+    if ps in ("bounced", "complained"):
+        return "rebond"
+    if ps in ("failed", "bloque_quota") or send_status == P3AI4_ECHEC:
+        return "echec"
+    if ps == "delivery_delayed" or send_status == P3AI4_INDETERMINE:
+        return "en_attente"
+    if suivi and ps in ("", "accepted", "sent"):
+        return "en_attente"
+    return "inconnu"
+
+
+def v619_preuve_campagne(campagne: dict, actions_campagne) -> dict:
+    """{conforme, approved_at} : l'empreinte approuvee est-elle intacte ? PURE."""
+    c = campagne or {}
+    return {"conforme": bool(c.get("snapshot_hash")) and p3s3d_empreinte_conforme(c, actions_campagne),
+            "approved_at": c.get("approved_at") or ""}
+
+
+def v619_etape_du_fil(action: dict, campagne: dict, preuve: dict, etape: str):
+    """L'element de fil d'UNE etape envoyee, ou None si elle n'est pas partie. PURE."""
+    a = action or {}
+    envoye_le = a.get(v619_champ_envoi(etape, "sent_at"))
+    if not envoye_le:
+        return None
+    instantane = a.get("%s_sent_text" % etape)
+    texte, objet, garanti, source = None, "", False, "non_garanti"
+    if isinstance(instantane, str):
+        texte, objet = instantane, a.get("%s_sent_subject" % etape) or ""
+        garanti, source = True, "instantane_envoi"
+    else:
+        p = preuve or {}
+        approuve = pf_instant(p.get("approved_at"))
+        if p.get("conforme") and approuve and approuve <= pf_instant(envoye_le):
+            sujet_campagne = (p3s3d2_objet_campagne(campagne) if etape == "j0"
+                              else p3r2_objet_campagne(campagne, etape))
+            objet, texte = v602_objet_et_corps(a.get("message_%s" % etape) or "", sujet_campagne)
+            garanti, source = True, "approbation_verifiee"
+    statut = a.get(v619_champ_envoi(etape, "provider_status"))
+    return {
+        "id": "%s:%s" % (a.get("id") or "", etape),
+        "direction": "outgoing", "type": V619_TYPES[etape],
+        "date": envoye_le, "subject": objet, "text": texte,
+        "texte_garanti": garanti, "texte_source": source,
+        "provider_message_id": a.get(v619_champ_envoi(etape, "provider_message_id")),
+        "provider_status": statut,
+        # Le J0 porte `suivi_livraison` depuis V608 ; les relances ne sont parties
+        # qu'apres V608 (premier J+3 le 14/10), donc toujours suivies.
+        "remise": v619_remise(statut, suivi=a.get("suivi_livraison") if etape == "j0" else True),
+    }
+
+
+def v619_fil(messages_recus, action, campagne, preuve, traces) -> list:
+    """Le fil chronologique d'UNE conversation. PURE — aucune base.
+
+    Rien n'est fusionne ni remplace : chaque message recu reste un element, chaque
+    envoi aussi. Tri par instant normalise (`pf_instant`), puis sortant avant
+    entrant a instant egal, puis identifiant — un ordre stable d'une lecture a
+    l'autre."""
+    fil = []
+    for m in messages_recus or []:
+        if not m:
+            continue
+        fil.append({
+            "id": m.get("id"), "direction": "incoming", "type": "partner_reply",
+            "date": m.get("received_at"), "subject": m.get("subject") or "",
+            "text": m.get("body_text") or "", "quoted": m.get("body_quoted") or "",
+            "from_email": m.get("from_email") or "",
+            "contenu_recupere": m.get("contenu_recupere"),
+            "texte_garanti": True, "texte_source": "body_text",
+            "provider_message_id": m.get("provider_email_id"), "provider_status": None,
+            "remise": None,
+        })
+    if action:
+        for etape in V619_ETAPES:
+            element = v619_etape_du_fil(action, campagne, preuve, etape)
+            if element:
+                fil.append(element)
+    for t in traces or []:
+        if not t or t.get("send_status") not in (P3AI4_ENVOYE, P3AI4_ECHEC, P3AI4_INDETERMINE):
+            continue   # une RESERVATION n'est pas un message parti
+        fil.append({
+            "id": t.get("id"), "direction": "outgoing", "type": "manual_reply",
+            "date": t.get("sent_at") or t.get("updated_at") or t.get("created_at"),
+            "subject": t.get("subject") or "",
+            "text": t.get("approved_text") or "",
+            "texte_garanti": True, "texte_source": "approved_text",
+            "provider_message_id": t.get("provider_message_id"),
+            "provider_status": t.get("provider_status"),
+            "remise": v619_remise(t.get("provider_status"), t.get("send_status"),
+                                  t.get("suivi_livraison")),
+        })
+    ordre = {"outgoing": 0, "incoming": 1}
+    fil.sort(key=lambda e: (pf_instant(e.get("date")), ordre.get(e.get("direction"), 2),
+                            str(e.get("id") or "")))
+    return fil
+
+
+async def v619_preuves(campagne_ids) -> tuple:
+    """({id: campagne}, {id: preuve}) pour les campagnes du fil. Lecture seule.
+
+    La preuve demande de relire TOUTES les actions d'une campagne (l'empreinte
+    les couvre toutes) : elle est memorisee `V619_PREUVE_TTL_S` secondes, par
+    campagne ET par `snapshot_hash` — une re-approbation change la cle."""
+    ids = sorted({str(i or "").strip() for i in campagne_ids if str(i or "").strip()})
+    if not ids:
+        return {}, {}
+    campagnes = {c["id"]: c for c in await db[P3S3_CAMPAGNES].find(
+        {"id": {"$in": ids}}, {"_id": 0}).to_list(len(ids))}
+    preuves, maintenant = {}, datetime.now(timezone.utc).timestamp()
+    for cid, camp in campagnes.items():
+        cle = (cid, camp.get("snapshot_hash") or "")
+        memo = _v619_preuves_cache.get(cle)
+        if memo and maintenant - memo[0] < V619_PREUVE_TTL_S:
+            preuves[cid] = memo[1]
+            continue
+        actions_campagne = await db[P3S3_ACTIONS].find(
+            {"campaign_id": cid},
+            {"_id": 0, "recipient_key": 1, "channel": 1, "language": 1, "target": 1, "statut": 1,
+             "message_j0": 1, "message_j3": 1, "message_j7": 1, "message_j14": 1}).to_list(5000)
+        preuve = v619_preuve_campagne(camp, actions_campagne)
+        _v619_preuves_cache[cle] = (maintenant, preuve)
+        preuves[cid] = preuve
+    return campagnes, preuves
+
+
 async def pf_charger(email: str, statuts: dict, filtre_statut: str = "") -> dict:
     """Les conversations du coach. LECTURE SEULE, sur SA portee seulement.
 
@@ -35407,14 +35610,18 @@ async def pf_charger(email: str, statuts: dict, filtre_statut: str = "") -> dict
     # REUSSI : un envoi reserve puis refuse par le fournisseur n'est pas une
     # reponse partie, et l'annoncer comme telle serait le pire des mensonges.
     envois, suivis = {}, {}
+    traces_par_cle = {}   # V619 : TOUTES les reponses d'un fil, pas seulement la derniere
     for trace in await db[P3AI4_COLLECTION].find(
             {**portee},
-            {"_id": 0, "action_id": 1, "inbound_id": 1, "sent_at": 1, "updated_at": 1,
+            {"_id": 0, "id": 1, "action_id": 1, "inbound_id": 1, "sent_at": 1, "updated_at": 1,
              "created_at": 1, "to_email": 1, "subject": 1, "send_status": 1,
              "provider_status": 1, "provider_raison": 1, "error_code": 1,
-             "suivi_livraison": 1, "delivered_at": 1}).to_list(PF_PORTEE_MAX):
+             "suivi_livraison": 1, "delivered_at": 1,
+             # V619 : LE texte parti (jamais le brouillon), et son identifiant Resend.
+             "approved_text": 1, "provider_message_id": 1}).to_list(PF_PORTEE_MAX):
         cle = str(trace.get("action_id") or "").strip() \
             or ("inbound:%s" % str(trace.get("inbound_id") or ""))
+        traces_par_cle.setdefault(cle, []).append(trace)
         # V608 : une reponse ne compte comme PARTIE que si elle est REMISE (suivie)
         # ou historique (avant le suivi : `envoye` seul, comportement inchange).
         partie = trace.get("send_status") == P3AI4_ENVOYE and (
@@ -35438,6 +35645,19 @@ async def pf_charger(email: str, statuts: dict, filtre_statut: str = "") -> dict
     conversations = pf_conversations(messages, actions, envois, statuts, intentions)
     for _c in conversations:   # V608 : le dernier envoi SUIVI (en cours, remis, echec, quota, rebond)
         _c["envoi_suivi"] = suivis.get(_c.get("cle"))
+    # V619 : LE FIL COMPLET (projection d'affichage, rien n'est ecrit). Une panne de
+    # preuve ou de projection ne doit jamais vider l'ecran : le fil manque, le reste vit.
+    try:
+        campagnes, preuves = await v619_preuves(
+            [a.get("campaign_id") for a in actions.values()])
+        for _c in conversations:
+            _a = actions.get(_c.get("cle")) or {}
+            _cid = _a.get("campaign_id")
+            _c["messages_fil"] = v619_fil(_c.get("messages_recus"), _a,
+                                          campagnes.get(_cid) or {}, preuves.get(_cid) or {},
+                                          traces_par_cle.get(_c.get("cle")) or [])
+    except Exception as _e619:  # noqa: BLE001
+        logger.warning("[V619] fil des conversations ignore : %s", type(_e619).__name__)
     try:
         await v605_agenda_des_conversations(conversations)   # V605 : RDV + rappel visibles
     except Exception as _e605:  # noqa: BLE001

@@ -75,6 +75,7 @@ export const FILTRES_CANAL = [
 const CANAL_AUTO = 'email';
 /* `P3R2_ECART_J3_J7_JOURS` — le J+7 attend 4 jours après un J+3 PARTI. */
 const ECART_J3_J7_JOURS = 4;
+const ECART_J7_J14_JOURS = 5;   // V619 : miroir de P3R2_ECART_J7_J14_JOURS (V603)
 const JOUR_MS = 86400000;
 
 const LIBELLES_CANAL = {
@@ -174,6 +175,13 @@ export function etapeJ0(action, campagne) {
 export function echeanceRelance(action, etape) {
   const a = action || {};
   if (etape === 'j3') return a.j3_due_at || null;
+  if (etape === 'j14') {   // V619 : même règle que le moteur (V603) — J+7 parti depuis 5 jours
+    const j7 = instant(a.j7_sent_at);
+    if (!Number.isFinite(j7)) return null;
+    const apresJ7 = j7 + ECART_J7_J14_JOURS * JOUR_MS;
+    const nominale14 = instant(a.j14_due_at);
+    return new Date(Number.isFinite(nominale14) ? Math.max(nominale14, apresJ7) : apresJ7).toISOString();
+  }
   const j3 = instant(a.j3_sent_at);
   if (!Number.isFinite(j3)) return null;
   const apresJ3 = j3 + ECART_J3_J7_JOURS * JOUR_MS;
@@ -216,7 +224,8 @@ export function etapeRelance(action, campagne, etape, conversation, maintenant) 
 
   const echeance = echeanceRelance(a, etape);
   if (!echeance) {
-    return { ...base, etat: ETATS.PREVU, motif: `${ECART_J3_J7_JOURS} jours après l'envoi du J+3` };
+    return { ...base, etat: ETATS.PREVU, motif: etape === 'j14'
+      ? `${ECART_J7_J14_JOURS} jours après l'envoi du J+7` : `${ECART_J3_J7_JOURS} jours après l'envoi du J+3` };
   }
   const t = instant(echeance);
   if (Number.isFinite(t) && Number.isFinite(maintenant) && t <= maintenant) {
@@ -318,6 +327,9 @@ export function ligneRelance(action, campagne, conversation, prospectsParRef, ma
   const j0 = etapeJ0(a, campagne);
   const j3 = etapeRelance(a, campagne, 'j3', conv, maintenant);
   const j7 = etapeRelance(a, campagne, 'j7', conv, maintenant);
+  // V619 : J+14 est AFFICHÉ (détail + fil). Il n'entre pas dans l'état de la ligne,
+  // qui reste calculé comme avant sur J0 / J+3 / J+7 (aucun changement de statut).
+  const j14 = etapeRelance(a, campagne, 'j14', conv, maintenant);
 
   const refs = Array.isArray(a.prospect_ids) ? a.prospect_ids : [];
   const fiche = refs.map((r) => (prospectsParRef || {})[r]).find(Boolean) || null;
@@ -361,7 +373,7 @@ export function ligneRelance(action, campagne, conversation, prospectsParRef, ma
     canal: a.channel || '',
     famille: familleCanal(a.channel),
     statutProspect: fiche ? fiche.status : '',
-    j0, j3, j7,
+    j0, j3, j7, j14,
     etat,
     motifArret,
     prochaineAction,
@@ -483,7 +495,7 @@ export function nomCampagne(campagne) {
   return texte(c.name) || texte(c.nom) || texte(c.label) || texte(c.id) || '—';
 }
 
-function libEtape(etape) { return etape === 'j3' ? 'J+3' : etape === 'j7' ? 'J+7' : 'J0'; }
+function libEtape(etape) { return etape === 'j3' ? 'J+3' : etape === 'j7' ? 'J+7' : etape === 'j14' ? 'J+14' : 'J0'; }
 
 /**
  * La chronologie d'UN destinataire, à partir des seules données existantes.
@@ -504,7 +516,7 @@ export function chronologie(ligne, notes) {
     ajouter(a.bounced_at || a.updated_at, `Rebond ${texte(a.bounce_type) || ''}`.trim(),
       estRebondPermanent(a) ? 'Adresse morte : relances annulées' : 'Temporaire : non bloquant', 'stop');
   }
-  ['j3', 'j7'].forEach((etape) => {
+  ['j3', 'j7', 'j14'].forEach((etape) => {   // V619 : + J+14
     const e = l[etape] || {};
     if (e.date_prevue) ajouter(e.date_prevue, `${libEtape(etape)} prévu`, '', 'info');
     if (e.etat === ETATS.EN_RETARD) {

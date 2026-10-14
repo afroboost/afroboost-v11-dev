@@ -1297,6 +1297,43 @@ describe('PROSPECTION FOCUS — les réponses reçues', () => {
     SOURCE_C.indexOf('data-testid="reponses-recues"'),
     SOURCE_C.indexOf('/* FIN BLOC RÉPONSES */'));
 
+  // ------------------------------------------------------------------ V619
+  /* V619 — LE FIL COMPLET : la projection serveur `messages_fil` s'affiche dans la
+     conversation ouverte ; tout le reste (dernier message, traité, note, historique)
+     reste en place. */
+  test('V619. la conversation ouverte montre le fil complet, sans rien retirer', async () => {
+    avecReponses([reponseFictive()]);
+    mockEtatParSection.reponses.donnees.conversations[0].messages_fil = [
+      { id: 'act-1:j0', direction: 'outgoing', type: 'j0', date: '2026-09-01T08:00:00+00:00',
+        subject: 'Proposition', text: 'Bonjour, je suis Coach Bassi.', texte_garanti: true, remise: 'remis' },
+      { id: 'msg-1', direction: 'incoming', type: 'partner_reply', date: '2026-09-02T11:00:00+00:00',
+        subject: 'Re: Proposition', text: 'Bonjour, cela nous intéresse beaucoup.', quoted: '', texte_garanti: true },
+      { id: 'rep-1', direction: 'outgoing', type: 'manual_reply', date: '2026-09-02T14:27:00+00:00',
+        subject: 'Re: Proposition', text: 'TEXTE APPROUVÉ RÉELLEMENT PARTI', texte_garanti: true, remise: 'remis' },
+    ];
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    const fil = par('fil-complet');
+    expect(fil).toBeTruthy();
+    expect(fil.open).toBe(true);
+    expect(fil.textContent).toContain('FIL DE LA CONVERSATION · 3 MESSAGES');
+    expect(Array.from(fil.querySelectorAll('[data-testid="fil-message"]')).map((e) => e.dataset.type))
+      .toEqual(['j0', 'partner_reply', 'manual_reply']);
+    expect(fil.textContent).toContain('TEXTE APPROUVÉ RÉELLEMENT PARTI');
+    expect(par('dernier-message')).toBeTruthy();
+    expect(par('basculer-traite')).toBeTruthy();
+    expect(par('ouvrir-note')).toBeTruthy();
+    expect(par('historique')).toBeTruthy();
+  });
+
+  test('V619. sans fil serveur, l’écran reste celui d’avant (aucun bloc vide)', async () => {
+    avecReponses([reponseFictive()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirCarte();
+    expect(par('fil-complet')).toBeNull();
+    expect(par('dernier-message')).toBeTruthy();
+  });
+
   // ------------------------------------------------------------------ §1
   test('l’écran DEMANDE les réponses au chargement', async () => {
     avecReponses([]);

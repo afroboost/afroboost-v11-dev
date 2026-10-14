@@ -30,11 +30,12 @@ import axios from 'axios';
 import SvgIcon from '../SvgIcon';
 import useChargement, { SECTION } from '../../hooks/useChargement';
 import { SectionErreur } from '../ui/EtatChargement';
+import { ElementFil } from './FilConversation'; // V619 — même rendu que Conversations partenaires
 import { poser as ouvrirConversation } from '../../utils/prospectionIntention';
 import {
   ETATS, LIBELLES_ETAT, FILTRES, FILTRES_CANAL, SUIVI_MANUEL_INDISPONIBLE,
   lignesRelances, compteursRelances, filtrerRelances, trierRelances, chronologie,
-  dateCourte, libelleCanal, libelleStatutProspect, nomCampagne, ilYa, texteUtile,
+  dateCourte, libelleCanal, libelleStatutProspect, nomCampagne, ilYa,
   dernierEvenement, instant,
 } from '../../utils/messagesRelances';
 
@@ -249,15 +250,29 @@ function filDe(l, notes, brouillon) {
   const a = l.action || {};
   const conv = l.conversation;
   const items = [];
+  /* V619 — LA PROJECTION DU SERVEUR D'ABORD (`messages_fil`) : textes réellement partis
+     (`approved_text`), J0 → J+14, messages reçus sans seconde découpe. Le journal
+     (événements système) s'y ajoute, comme avant. */
+  if (conv && Array.isArray(conv.messages_fil)) {
+    conv.messages_fil.forEach((e, i) => {
+      if (!e) return;
+      items.push({ t: instant(e.date), rendu: () => <ElementFil key={e.id || `f${i}`} e={e} /> });
+    });
+    chronologie(l, notes || [])
+      .filter((ev) => !/^J0 envoyé|^J\+(3|7|14) envoyé|^Réponse reçue|^Réponse envoyée/.test(ev.titre))
+      .forEach((ev, i) => items.push({ t: instant(ev.quand), rendu: () => <EvenementSysteme key={`s${i}`} ev={ev} /> }));
+    return items.filter((x) => Number.isFinite(x.t)).sort((x, y) => x.t - y.t);
+  }
   if (a.sent_at) {
     items.push({ t: instant(a.sent_at), rendu: () => (
       <Bulle key="j0" testid="mr-bulle-afroboost" cote="afroboost" titre="Message J0" quand={a.sent_at}
         objet={l.j0.objet} corps={l.j0.message} />) });
   }
-  ['j3', 'j7'].forEach((e) => {
-    if (a[`${e}_sent_at`]) {
+  ['j3', 'j7', 'j14'].forEach((e) => {   // V619 : + J+14
+    if (a[`${e}_sent_at`] && l[e]) {
       items.push({ t: instant(a[`${e}_sent_at`]), rendu: () => (
-        <Bulle key={e} testid="mr-bulle-afroboost" cote="afroboost" titre={e === 'j3' ? 'Relance J+3' : 'Relance J+7'}
+        <Bulle key={e} testid="mr-bulle-afroboost" cote="afroboost"
+          titre={e === 'j3' ? 'Relance J+3' : e === 'j7' ? 'Relance J+7' : 'Relance J+14'}
           quand={a[`${e}_sent_at`]} objet={l[e].objet} corps={l[e].message} />) });
     }
   });
@@ -265,7 +280,7 @@ function filDe(l, notes, brouillon) {
     if (!m) return;
     items.push({ t: instant(m.received_at), rendu: () => (
       <Bulle key={`p${i}`} testid="mr-bulle-partenaire" cote="partenaire" titre={m.read_at ? '' : 'non lu'} quand={m.received_at}
-        objet={m.subject} corps={texteUtile(m.body_text) || '(message sans texte)'}
+        objet={m.subject} corps={m.body_text || '(aucun contenu lisible pour ce message)'}
         pied={m.from_email ? <div style={{ fontSize: '11px', color: DOUX, marginTop: '5px' }}>{m.from_email}</div> : null} />) });
   });
   const rep = conv && conv.derniere_reponse_afroboost;
@@ -283,13 +298,14 @@ function filDe(l, notes, brouillon) {
         </div>} />) });
   }
   chronologie(l, notes || [])
-    .filter((ev) => !/^J0 envoyé|^J\+[37] envoyé|^Réponse reçue|^Réponse envoyée/.test(ev.titre))
+    .filter((ev) => !/^J0 envoyé|^J\+(3|7|14) envoyé|^Réponse reçue|^Réponse envoyée/.test(ev.titre))
     .forEach((ev, i) => items.push({ t: instant(ev.quand), rendu: () => <EvenementSysteme key={`s${i}`} ev={ev} /> }));
   return items.filter((x) => Number.isFinite(x.t)).sort((x, y) => x.t - y.t);
 }
 
 function DetailEtape({ e }) {
-  const nom = e.etape === 'j3' ? 'Relance J+3' : e.etape === 'j7' ? 'Relance J+7' : 'Message initial J0';
+  const nom = e.etape === 'j3' ? 'Relance J+3' : e.etape === 'j7' ? 'Relance J+7'
+    : e.etape === 'j14' ? 'Relance J+14' : 'Message initial J0';
   return (
     <details data-testid={`mr-etape-${e.etape}`} style={{ border: `1px solid ${BORD}`, borderRadius: '10px', padding: '8px 10px', background: 'rgba(0,0,0,0.22)' }}>
       <summary style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', listStyle: 'none' }}>
@@ -421,6 +437,7 @@ function Panneau({ l, maintenant, notes, notesEnCours, brouillon, onFermer }) {
             <DetailEtape e={l.j0} />
             <DetailEtape e={l.j3} />
             <DetailEtape e={l.j7} />
+            {l.j14 && (l.j14.date_envoi || (l.j14.message || '').trim()) ? <DetailEtape e={l.j14} /> : null}
           </section>
         </div>
       </aside>

@@ -288,3 +288,32 @@ describe('V588b/c — nouveau, appel à faire, réponse attendue, priorité, rec
     expect(dernierEvenement(par.dm)).toBeNull();
   });
 });
+
+// V619 — J+14 affiché (détail + fil) avec la règle du moteur (V603) : J+7 parti + 5 jours.
+describe('V619 — J+14', () => {
+  const { echeanceRelance: ech, etapeRelance: etape, ligneRelance: ligne } = require('../messagesRelances');
+  test('échéance J+14 = max(j14_due_at, J+7 parti + 5 j) ; rien sans J+7 parti', () => {
+    expect(ech({ j14_due_at: '2026-10-25T08:00:00Z' }, 'j14')).toBeNull();
+    expect(ech({ j7_sent_at: '2026-10-18T08:00:00Z', j14_due_at: '2026-10-20T08:00:00Z' }, 'j14'))
+      .toBe('2026-10-23T08:00:00.000Z');
+    expect(ech({ j7_sent_at: '2026-10-18T08:00:00Z', j14_due_at: '2026-10-25T08:00:00Z' }, 'j14'))
+      .toBe('2026-10-25T08:00:00.000Z');
+  });
+  test('J+14 envoyé : objet et texte de l’étape, remise suivie', () => {
+    const a = { sent_at: '2026-10-11T08:00:00Z', channel: 'email', execution_type: 'AUTO', message_j14: 'Je clos.',
+      j14_sent_at: '2026-10-25T08:00:00Z', j14_provider_status: 'delivered' };
+    const e = etape(a, { subject_j14: 'Fin de suivi' }, 'j14', null, Date.parse('2026-10-26T08:00:00Z'));
+    expect(e.objet).toBe('Fin de suivi');
+    expect(e.message).toBe('Je clos.');
+    expect(e.date_envoi).toBe('2026-10-25T08:00:00Z');
+  });
+  test('la ligne porte j14, et son état global ne dépend pas de J+14', () => {
+    const a = { id: 'x', sent_at: '2026-10-11T08:00:00Z', channel: 'email', execution_type: 'AUTO', statut: 'envoye',
+      message_j3: 'r3', message_j7: 'r7', j3_sent_at: '2026-10-14T08:00:00Z', j7_sent_at: '2026-10-18T08:00:00Z' };
+    const sans = ligne(a, {}, null, {}, Date.parse('2026-10-26T08:00:00Z'));
+    const avec = ligne({ ...a, message_j14: 'r14' }, {}, null, {}, Date.parse('2026-10-26T08:00:00Z'));
+    expect(avec.j14).toBeTruthy();
+    expect(avec.etat).toBe(sans.etat);
+    expect(avec.prochaineAction).toBe(sans.prochaineAction);
+  });
+});

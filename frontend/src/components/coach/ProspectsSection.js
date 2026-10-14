@@ -36,6 +36,7 @@ import SvgIcon from '../SvgIcon';
 import useChargement, { SECTION } from '../../hooks/useChargement';
 import { SectionErreur } from '../ui/EtatChargement';
 import PartenaireProspect from './PartenaireProspect';
+import FilConversation from './FilConversation'; // V619 — fil complet (projection serveur)
 import { construireLienPartenaire } from '../../utils/partnerLink'; // V594 — lien complet dans « Plus »
 import useNichesProspection from '../../hooks/useNichesProspection'; // V599 : niches du serveur (prospection_niches)
 import { lettreNiche } from '../../utils/prospectionStats';
@@ -1658,6 +1659,20 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                     );
                   })()}
                 </div>
+
+                {/* ---- V619 : LE FIL COMPLET, dans l'ordre chronologique ----
+                     Projection serveur (`messages_fil`) : J0, relances, messages
+                     reçus, réponses envoyées (`approved_text`, jamais le brouillon).
+                     Ouvert par défaut, repliable. Le journal technique reste au §8. */}
+                {Array.isArray(convActive.messages_fil) && convActive.messages_fil.length > 0 ? (
+                  <details data-testid="fil-complet" open style={{ marginTop: '12px' }}>
+                    <summary style={{ fontSize: '10px', fontWeight: 700, opacity: 0.75, color: TEXTE,
+                                      letterSpacing: '0.05em', cursor: 'pointer', marginBottom: '6px' }}>
+                      FIL DE LA CONVERSATION · {convActive.messages_fil.length} MESSAGE{convActive.messages_fil.length > 1 ? 'S' : ''}
+                    </summary>
+                    <FilConversation fil={convActive.messages_fil} />
+                  </details>
+                ) : null}
 
                 {/* ---- L'ANALYSE, quand elle existe et qu'elle sert ---- */}
                 {montrerReponse && bro ? (
