@@ -37,6 +37,7 @@ import useChargement, { SECTION } from '../../hooks/useChargement';
 import { SectionErreur } from '../ui/EtatChargement';
 import PartenaireProspect from './PartenaireProspect';
 import FilConversation from './FilConversation'; // V619 — fil complet (projection serveur)
+import MediaReponse, { CarteMedia, referenceMedia } from './prospection/MediaReponse'; // V620 — 1 média par réponse
 import { construireLienPartenaire } from '../../utils/partnerLink'; // V594 — lien complet dans « Plus »
 import useNichesProspection from '../../hooks/useNichesProspection'; // V599 : niches du serveur (prospection_niches)
 import { lettreNiche } from '../../utils/prospectionStats';
@@ -695,11 +696,14 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
     if (!id || !texte || carte.chargement) return;
     majCarte(id, { chargement: true, erreur: '' });
     try {
+      // V620 : le média voyage AVEC le texte. Clé absente = inchangé ; null = retiré.
+      const corps = { reponse_proposee: texte };
+      if (carte.mediaModifie) corps.media = referenceMedia(carte.media);
       const r = await axios.patch(
-        `${base}/prospect-inbound/${encodeURIComponent(id)}/brouillon`,
-        { reponse_proposee: texte });
+        `${base}/prospect-inbound/${encodeURIComponent(id)}/brouillon`, corps);
       majCarte(id, { brouillon: (r && r.data && r.data.brouillon) || carte.brouillon,
-                     chargement: false, edition: false, composerFerme: true, texte: '' });
+                     chargement: false, edition: false, composerFerme: true, texte: '',
+                     media: null, mediaModifie: false });
       // §6 — « Enregistrer et verifier » enchaine sur l'apercu SERVEUR. Il
       // n'envoie toujours rien : l'ecran de confirmation reste le seul endroit
       // d'ou un e-mail peut partir.
@@ -1766,7 +1770,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
 
                     <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.65,
                                   color: TEXTE, letterSpacing: '0.05em', marginBottom: '5px' }}>
-                      {bro ? `RÉPONSE PROPOSÉE POUR ${bro.to_email}`
+                      {bro ? `RÉPONSE PROPOSÉE POUR ${bro.to_email || r.from_email || 'CE PARTENAIRE'}` /* V620 : brouillon manuel = sans to_email */
                         : `RÉPONSE À ${r.from_email || 'CE PARTENAIRE'}`}
                     </div>
                     {/* V604 — nature de la réponse : un accusé automatique ne vaut pas conversation. */}
@@ -1793,6 +1797,11 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                             border: `1px solid rgba(${RGB}, 0.45)`, resize: 'vertical',
                             fontFamily: 'inherit',
                           }} />
+                        {/* V620 — UN média (bibliothèque Médias ou import existant), enregistré
+                            AVEC le texte ; retirer ne touche jamais au texte. */}
+                        <MediaReponse API={base} desactive={occupe}
+                                      valeur={carte.mediaModifie ? carte.media : ((bro && bro.media) || null)}
+                                      onChange={(m) => majCarte(r.id, { media: m, mediaModifie: true })} />
                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
                                       marginTop: '7px' }}>
                           {/* §7-D/E — VIDE : desactive. EN COURS : desactive aussi,
@@ -1831,7 +1840,8 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                           </button>
                           <button type="button" data-testid="annuler-edition"
                                   onClick={() => majCarte(r.id, { edition: false, texte: '',
-                                                                  composerFerme: true })}
+                                                                  composerFerme: true,
+                                                                  media: null, mediaModifie: false })}
                                   style={stylePetitBouton}>
                             Annuler
                           </button>
@@ -1850,7 +1860,11 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                                     border: `1px solid rgba(${RGB}, 0.35)` }}>
                         {bro.reponse_proposee}
                       </div>
-                    ) : (
+                    ) : null}
+                    {!composerOuvert && bro && bro.media ? (
+                      <CarteMedia media={bro.media} testid="media-brouillon" />
+                    ) : null}
+                    {composerOuvert || bro ? null : (
                       <div data-testid="composer-replie"
                            style={{ fontSize: '12px', opacity: 0.75, color: TEXTE,
                                     display: 'flex', gap: '8px', alignItems: 'center',
@@ -1893,7 +1907,8 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                         {bro && !occupe && (
                           <button type="button" data-testid="modifier-brouillon"
                                   onClick={() => majCarte(r.id, {
-                                    edition: true, texte: bro.reponse_proposee || '' })}
+                                    edition: true, texte: bro.reponse_proposee || '',
+                                    media: null, mediaModifie: false })}
                                   style={stylePetitBouton}>
                             Modifier
                           </button>
@@ -1945,6 +1960,21 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                                       borderRadius: '7px', background: 'rgba(0,0,0,0.30)' }}>
                           {carte.apercu.texte}
                         </div>
+                        {/* V620 — le média qui partira, et l'e-mail EXACT (HTML du serveur) sur demande. */}
+                        {carte.apercu.media ? (
+                          <>
+                            <CarteMedia media={carte.apercu.media} testid="apercu-media" />
+                            <details data-testid="apercu-email" style={{ marginTop: '7px' }}>
+                              <summary style={{ fontSize: '11px', cursor: 'pointer', color: TEXTE, opacity: 0.8 }}>
+                                Voir l’e-mail tel qu’il partira
+                              </summary>
+                              <iframe title="Aperçu de l’e-mail" sandbox="" srcDoc={carte.apercu.html_email || ''}
+                                      data-testid="apercu-email-cadre"
+                                      style={{ width: '100%', height: '420px', border: 'none', borderRadius: '7px',
+                                               background: 'rgb(255,255,255)', marginTop: '6px' }} />
+                            </details>
+                          </>
+                        ) : null}
                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
                                       marginTop: '9px', alignItems: 'center' }}>
                           <button type="button" data-testid="confirmer-envoi"

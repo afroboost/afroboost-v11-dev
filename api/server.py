@@ -33825,6 +33825,13 @@ async def p3ai_modifier_brouillon(inbound_id: str, request: Request):
     if not texte:
         raise HTTPException(status_code=400, detail="Un brouillon vide ne se garde pas")
 
+    # V620 : LE MEDIA JOINT voyage AVEC le texte (meme ecriture). Cle absente =
+    # inchange ; null = retire ; sinon une reference RESOLUE ICI, en base, sur
+    # les medias / fichiers du coach appelant — jamais une adresse du navigateur.
+    champ_media = {}
+    if "media" in corps:
+        champ_media["media"] = await v620_resoudre_media(corps.get("media"), email)
+
     maintenant = datetime.now(timezone.utc).isoformat()
     # ─────────── REPONSE-MANUELLE : CETTE ROUTE CREE AUSSI, DESORMAIS ────────
     #
@@ -33861,7 +33868,7 @@ async def p3ai_modifier_brouillon(inbound_id: str, request: Request):
                   "motifs_validation": p3ai_sujets_sensibles(texte),
                   "validation_requise": bool(p3ai_sujets_sensibles(texte)),
                   "edite_le": maintenant, "edite_par": email,
-                  "updated_at": maintenant},
+                  "updated_at": maintenant, **champ_media},
          "$setOnInsert": {"inbound_id": message["id"],
                           "origine": "coach",
                           "created_at": maintenant}},
@@ -34622,8 +34629,9 @@ class P3AI4FournisseurReponse:
                 # repondant.
                 "reply_to": _reply_to_vivant((envoi or {}).get("reply_to"), V336_REPLY_TO),
                 "headers": (envoi or {}).get("entetes") or {},
-                "text": message,
-                "html": p3s3d2_corps_html(message),
+                # V620 : sans media, texte et HTML strictement identiques a avant.
+                "text": v620_texte(message, (envoi or {}).get("media")),
+                "html": v620_corps_html(message, (envoi or {}).get("media")),
             },
             "options": {"idempotency_key": (envoi or {}).get("cle") or ""},
         }
@@ -34951,7 +34959,8 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
     # L'EMPREINTE DE CE QUE LE COACH A LU. Sans elle, l'ecran pourrait afficher
     # un texte et le serveur en expedier un autre — un ecart invisible et
     # irrattrapable une fois l'e-mail parti.
-    empreinte = p3ai4_empreinte(texte)
+    media_joint = brouillon.get("media") or None          # V620
+    empreinte = v620_empreinte(texte, media_joint)
     attendue = str(corps.get("draft_hash") or "").strip()
     if not attendue:
         raise HTTPException(status_code=400, detail="Empreinte du brouillon requise")
@@ -35026,6 +35035,9 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
         "generated_text": brouillon.get("texte_modele") or brouillon.get("reponse_proposee"),
         "edited_text": brouillon.get("reponse_proposee") if brouillon.get("edite_le") else None,
         "approved_text": texte,
+        # V620 : LE MEDIA EXACT QUI PART (instantane), independant du brouillon et
+        # de la bibliotheque : changer ou supprimer le media plus tard ne le touche pas.
+        "media": v620_instantane_envoi(media_joint, maintenant),
         "approved_at": maintenant, "approved_by": email,
         "send_status": P3AI4_RESERVE, "provider": None, "provider_message_id": None,
         "sent_at": None, "error_code": None, "created_at": maintenant,
@@ -35040,7 +35052,7 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
                 {"id": cle, "send_status": reprise_de.get("send_status"),
                  "tentative": reprise_de.get("tentative"), "provider_status": reprise_de.get("provider_status")},
                 {"$set": dict({k: trace[k] for k in ("approved_text", "approved_at", "approved_by", "to_email",
-                                                     "subject", "intention")},
+                                                     "subject", "intention", "media")},
                               send_status=P3AI4_RESERVE, tentative=tentative, provider_status=None,
                               provider_message_id=None, error_code=None, sent_at=None, updated_at=maintenant),
                  "$push": {"tentatives_precedentes": {
@@ -35071,6 +35083,7 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
         "reply_to": p3r1_adresse_reponse(jeton) if jeton else None,
         "entetes": p3ai4_entetes(message, action),
         "cle": cle if tentative == 1 else "%s-t%d" % (cle, tentative),
+        "media": trace["media"],                            # V620
     }
     fournisseur = P3AI4FournisseurReponse(envoi_autorise=autorise)
     resultat = await fournisseur.envoyer(envoi)
@@ -35147,16 +35160,21 @@ async def p3ai4_apercu(inbound_id: str, request: Request):
     notes = await p3n_notes_du_dossier(message.get("action_id") or "")
     destinataire = p3ai4_destinataire(message, action)
     flags = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
+    media_joint = (brouillon or {}).get("media") or None     # V620
     deja = await db[P3AI4_COLLECTION].find_one(
-        {"id": p3ai4_cle_envoi(message["id"], p3ai4_empreinte(texte))},
+        {"id": p3ai4_cle_envoi(message["id"], v620_empreinte(texte, media_joint))},
         {"_id": 0, "send_status": 1, "sent_at": 1, "provider_status": 1, "error_code": 1,
          "provider_raison": 1, "tentative": 1})
+    _apercu_media = v620_instantane_envoi(media_joint, "")
     return {
         "organisation": p3ai_organisation(action),
         "destinataire": destinataire,
         "objet": p3ai4_objet(message.get("subject")),
         "texte": texte,
-        "draft_hash": p3ai4_empreinte(texte) if texte else "",
+        # V620 : le media qui partirait, et l'e-mail HTML EXACT (meme fonction que l'envoi).
+        "media": _apercu_media,
+        "html_email": v620_corps_html(texte, _apercu_media) if texte else "",
+        "draft_hash": v620_empreinte(texte, media_joint) if texte else "",
         "langue": (brouillon or {}).get("langue"),
         "intention": (brouillon or {}).get("intention"),
         "validation_requise": bool((brouillon or {}).get("validation_requise")),
@@ -35535,6 +35553,7 @@ def v619_fil(messages_recus, action, campagne, preuve, traces) -> list:
             "date": t.get("sent_at") or t.get("updated_at") or t.get("created_at"),
             "subject": t.get("subject") or "",
             "text": t.get("approved_text") or "",
+            "media": v620_media_du_fil(t.get("media")),   # V620 : le media EXACT parti
             "texte_garanti": True, "texte_source": "approved_text",
             "provider_message_id": t.get("provider_message_id"),
             "provider_status": t.get("provider_status"),
@@ -35618,7 +35637,8 @@ async def pf_charger(email: str, statuts: dict, filtre_statut: str = "") -> dict
              "provider_status": 1, "provider_raison": 1, "error_code": 1,
              "suivi_livraison": 1, "delivered_at": 1,
              # V619 : LE texte parti (jamais le brouillon), et son identifiant Resend.
-             "approved_text": 1, "provider_message_id": 1}).to_list(PF_PORTEE_MAX):
+             "approved_text": 1, "provider_message_id": 1,
+             "media": 1}).to_list(PF_PORTEE_MAX):   # V620 : instantane du media envoye
         cle = str(trace.get("action_id") or "").strip() \
             or ("inbound:%s" % str(trace.get("inbound_id") or ""))
         traces_par_cle.setdefault(cle, []).append(trace)
@@ -54647,6 +54667,218 @@ async def v604_video_pour_reponse(message_id: str, request: Request):
     return {"media": m, "raison": r.get("raison"), "niche": r.get("niche"),
             "demande_video": bool(msg.get("demande_video")),
             "texte_suggere": ("Avec plaisir, voici la courte vidéo : " + m["lien"]) if m else None}
+
+
+# ===========================================================================
+# V620 — UN MEDIA (VIDEO OU IMAGE) JOINT A UNE REPONSE PARTENAIRE
+# ===========================================================================
+# AUCUNE NOUVELLE BIBLIOTHEQUE, AUCUN NOUVEAU STOCKAGE. Le media vient :
+#   - de `prospection_medias` (onglet Prospection -> Medias, V595-V601), par son id ;
+#   - ou d'un fichier DEJA envoye par l'envoi existant (`/api/files`, V418), qui
+#     appartient au coach appelant (`uploaded_files.coach_email`).
+# Le navigateur ne fournit qu'une REFERENCE ; tout le reste (adresse, miniature,
+# type, titre) est resolu ICI, en base. UN media au plus par reponse.
+#
+# TROIS ENDROITS, TROIS ROLES :
+#   - `prospect_reply_drafts.media` : ce qui est joint au brouillon (modifiable) ;
+#   - l'empreinte (`draft_hash`) le couvre : changer le media apres l'apercu
+#     fait refuser l'envoi (409), exactement comme un texte modifie ;
+#   - `prospect_reply_sends.media` : l'INSTANTANE de ce qui est parti, ecrit dans
+#     la reservation — c'est lui que le fil V619 affiche, jamais le brouillon.
+#
+# DANS L'E-MAIL : une carte cliquable (miniature + « ▶ Voir la vidéo Afroboost »),
+# jamais d'autoplay, jamais l'adresse technique en clair dans le HTML. Le texte
+# brut (version de secours exigee par les filtres) porte, lui, le lien en fin.
+V620_TYPES = ("video", "image")
+V620_TITRE_MAX = 120
+V620_LIBELLE_VIDEO = "Voir la vidéo Afroboost"
+V620_LEGENDE_VIDEO = "Découvrir Afroboost en vidéo"
+V620_LIBELLE_IMAGE = "Voir l'image Afroboost"
+_V620_RE_HTTPS = re.compile(r"^https://[A-Za-z0-9.-]+(:\d+)?/[^\s\"'<>]*$")
+
+
+def v620_url_sure(url) -> str:
+    """Une adresse servie par Afroboost (/api/files) ou en https, sinon ''. PURE."""
+    v = str(url or "").strip()
+    if V596_URL_FICHIER.match(v) or _V620_RE_HTTPS.match(v):
+        return v
+    return ""
+
+
+def v620_absolue(url) -> str:
+    """L'adresse cliquable depuis une boite mail (domaine public). PURE."""
+    v = v620_url_sure(url)
+    return (V604_SITE + v) if v.startswith("/") else v
+
+
+def v620_titre(nom) -> str:
+    """« AFROBOOST_9_ETUDIANTS_16x9.mp4 » -> « AFROBOOST 9 ETUDIANTS 16x9 ». PURE."""
+    t = re.sub(r"\.[A-Za-z0-9]{2,4}$", "", str(nom or "").strip())
+    t = re.sub(r"[_\s]+", " ", t).strip()
+    return t[:V620_TITRE_MAX] or "Afroboost"
+
+
+async def v620_miniature_de(media: dict, coach: str):
+    """La miniature (format « miniature », non archivee) rattachee au meme ORIGINAL."""
+    if not media or media.get("format") == "miniature":
+        return None
+    source = media.get("source_id") if media.get("format") != "original" else media.get("id")
+    if not source:
+        return None
+    mini = await db[V595_MEDIAS].find_one(
+        {"coach_id": coach, "format": "miniature", "source_id": source, "statut": {"$ne": "archivee"}},
+        {"_id": 0, "url": 1}, sort=[("updated_at", -1)])
+    return v620_url_sure((mini or {}).get("url")) or None
+
+
+async def v620_fichier_du_coach(url, appelant: str, types_mime) -> dict:
+    """Un fichier /api/files ENVOYE PAR CE COACH, d'un type permis. 400 / 403 sinon."""
+    m = V596_URL_FICHIER.match(str(url or "").strip())
+    if not m:
+        raise HTTPException(status_code=400, detail="Adresse de fichier invalide")
+    fiche = await db.uploaded_files.find_one(
+        {"file_id": m.group(1)}, {"_id": 0, "filename": 1, "coach_email": 1, "content_type": 1,
+                                  "original_name": 1})
+    if not fiche or fiche.get("filename") != m.group(2):
+        raise HTTPException(status_code=400, detail="Fichier introuvable")
+    if (fiche.get("coach_email") or "").strip().lower() != (appelant or "").strip().lower():
+        raise HTTPException(status_code=403, detail="Ce fichier ne vous appartient pas")
+    if (fiche.get("content_type") or "") not in types_mime:
+        raise HTTPException(status_code=400, detail="Type de fichier non pris en charge")
+    return fiche
+
+
+async def v620_resoudre_media(valeur, appelant: str):
+    """Reference du navigateur -> instantane complet du media, ou None (retirer)."""
+    if valeur is None:
+        return None
+    if not isinstance(valeur, dict):
+        raise HTTPException(status_code=400, detail="Média invalide")
+    instant = datetime.now(timezone.utc).isoformat()
+    media_id = str(valeur.get("media_id") or "").strip()[:64]
+    if media_id:
+        m = await db[V595_MEDIAS].find_one({"coach_id": appelant, "id": media_id}, {"_id": 0})
+        if not m or m.get("statut") == "archivee":
+            raise HTTPException(status_code=400, detail="Média introuvable dans votre bibliothèque")
+        url = v620_url_sure(m.get("url"))
+        if not url:
+            raise HTTPException(status_code=400, detail="Ce média n'a pas d'adresse utilisable")
+        niche = await db[V598_NICHES].find_one({"coach_id": appelant, "cle": m.get("niche")},
+                                               {"_id": 0, "nom": 1})
+        fichier = m.get("fichier") or {}
+        est_image = m.get("format") == "miniature"
+        return {"media_id": m["id"], "origine": "bibliotheque",
+                "type": "image" if est_image else "video", "url": url,
+                "miniature_url": url if est_image else await v620_miniature_de(m, appelant),
+                "titre": v620_titre(fichier.get("nom") or m.get("version")),
+                "format": m.get("format"), "duree": fichier.get("duree"),
+                "niche_nom": (niche or {}).get("nom"), "public": (m.get("cible") or {}).get("nom"),
+                "choisi_at": instant}
+    url = str(valeur.get("fichier_url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Média invalide")
+    fiche = await v620_fichier_du_coach(url, appelant, V596_MIME_VIDEO + V596_MIME_IMAGE)
+    est_image = (fiche.get("content_type") or "") in V596_MIME_IMAGE
+    miniature = url if est_image else None
+    if not est_image and valeur.get("miniature_url"):
+        await v620_fichier_du_coach(valeur.get("miniature_url"), appelant, V596_MIME_IMAGE)
+        miniature = str(valeur.get("miniature_url")).strip()
+    duree = None
+    if not est_image and valeur.get("duree") is not None:
+        duree = _v596_nombre(valeur.get("duree"), 0, V596_DUREE_MAX_S, "Durée")
+    return {"media_id": None, "origine": "import", "type": "image" if est_image else "video",
+            "url": url, "miniature_url": miniature,
+            "titre": v620_titre(valeur.get("nom") or fiche.get("original_name") or fiche.get("filename")),
+            "format": None, "duree": duree, "niche_nom": None, "public": None, "choisi_at": instant}
+
+
+def v620_instantane_envoi(media, maintenant: str):
+    """Ce qui est fige dans la trace d'envoi (et montre dans l'apercu). PURE."""
+    if not isinstance(media, dict) or media.get("type") not in V620_TYPES or not v620_url_sure(media.get("url")):
+        return None
+    mini = v620_url_sure(media.get("miniature_url")) or None
+    return {"media_id": media.get("media_id"), "origine": media.get("origine"),
+            "type": media["type"], "titre": media.get("titre") or "Afroboost",
+            "url": media["url"], "url_absolue": v620_absolue(media["url"]),
+            "miniature_url": mini, "miniature_absolue": v620_absolue(mini) if mini else None,
+            "format": media.get("format"), "duree": media.get("duree"),
+            "niche_nom": media.get("niche_nom"), "public": media.get("public"),
+            "date": maintenant or None}
+
+
+def v620_empreinte(texte, media) -> str:
+    """L'empreinte de CE QUI PART : le texte, et le media s'il y en a un. PURE.
+
+    Sans media : EXACTEMENT `p3ai4_empreinte(texte)` — les traces et cles
+    d'idempotence existantes restent valables."""
+    if not isinstance(media, dict) or not media.get("url"):
+        return p3ai4_empreinte(texte)
+    return p3ai4_empreinte("%s\n\x1fV620|%s|%s|%s" % (
+        str(texte or ""), media.get("type") or "", media.get("url") or "", media.get("miniature_url") or ""))
+
+
+def v620_texte(message: str, media) -> str:
+    """La version TEXTE de l'e-mail. Sans media : le message, inchange. PURE."""
+    m = v620_instantane_envoi(media, "")
+    if not m:
+        return message
+    libelle = V620_LIBELLE_VIDEO if m["type"] == "video" else V620_LIBELLE_IMAGE
+    return "%s\n\n%s : %s" % (message or "", libelle, m["url_absolue"])
+
+
+def v620_carte_html(media) -> str:
+    """La carte cliquable du media. Tables + styles en ligne (clients mail). PURE."""
+    import html as _h
+    m = v620_instantane_envoi(media, "")
+    if not m:
+        return ""
+    lien = _h.escape(m["url_absolue"], quote=True)
+    image = _h.escape(m["miniature_absolue"] or "", quote=True)
+    if m["type"] == "image":
+        return ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+                'style="margin:16px 0 4px;border-collapse:collapse;max-width:480px;width:100%;"><tr><td>'
+                '<a href="' + lien + '" target="_blank" rel="noopener" style="text-decoration:none;">'
+                '<img src="' + lien + '" alt="Afroboost" width="480" style="display:block;width:100%;'
+                'max-width:480px;height:auto;border:0;border-radius:10px;"></a></td></tr></table>')
+    vignette = ('<tr><td style="padding:0;"><a href="' + lien + '" target="_blank" rel="noopener" '
+                'style="text-decoration:none;display:block;"><img src="' + image + '" alt="'
+                + _h.escape(V620_LIBELLE_VIDEO, quote=True) + '" width="480" style="display:block;'
+                'width:100%;max-width:480px;height:auto;border:0;border-radius:10px;"></a></td></tr>'
+                ) if image else ""
+    return ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+            'style="margin:16px 0 4px;border-collapse:collapse;max-width:480px;width:100%;">'
+            + vignette +
+            '<tr><td style="padding:10px 0 0;"><a href="' + lien + '" target="_blank" rel="noopener" '
+            'style="display:inline-block;background:#111;color:#fff;text-decoration:none;'
+            'font-weight:600;font-size:15px;line-height:1.2;padding:11px 20px;border-radius:999px;">'
+            '&#9654;&nbsp; ' + _h.escape(V620_LIBELLE_VIDEO) + '</a></td></tr>'
+            '<tr><td style="padding:7px 0 0;font-size:13px;color:#555;">'
+            + _h.escape(V620_LEGENDE_VIDEO) + '</td></tr></table>')
+
+
+def v620_corps_html(message: str, media) -> str:
+    """Le corps HTML : le texte (inchange) PUIS la carte du media. PURE.
+
+    Sans media : EXACTEMENT `p3s3d2_corps_html(message)`."""
+    base = p3s3d2_corps_html(message)
+    carte = v620_carte_html(media)
+    if not carte:
+        return base
+    fin = "</div></body></html>"
+    return base[:-len(fin)] + carte + fin if base.endswith(fin) else base + carte
+
+
+def v620_media_du_fil(media):
+    """Ce que le fil V619 montre d'un media envoye (lecture). PURE."""
+    if not isinstance(media, dict) or media.get("type") not in V620_TYPES:
+        return None
+    url = v620_url_sure(media.get("url"))
+    if not url:
+        return None
+    return {"type": media["type"], "titre": media.get("titre") or "Afroboost", "url": url,
+            "miniature_url": v620_url_sure(media.get("miniature_url")) or None,
+            "media_id": media.get("media_id"), "origine": media.get("origine"),
+            "format": media.get("format"), "duree": media.get("duree"), "date": media.get("date")}
 
 
 # ===========================================================================
