@@ -32685,6 +32685,10 @@ P3AI_PREFIXE = "[AI-P1]"
 # la facon dont Afroboost repond a ses partenaires commerciaux. Deux usages,
 # deux reglages.
 P3AI_MODELE = "gpt-4o-mini"
+# V621 : le generateur et sa relecture passent a gpt-4.1. Mesure du 15/10 sur 5 conversations reelles :
+# gpt-4o-mini ignorait les problemes CERTAINS signales par le code (formules, disponibilites inventees)
+# et melangeait les langues du champ a completer. Meme API (chat.completions, json_object, temperature).
+V621_MODELE = "gpt-4.1"
 P3AI_TIMEOUT_S = 30.0
 
 # Les intentions, LISTE FERMEE. Une valeur hors liste devient `autre` : le
@@ -33137,6 +33141,7 @@ def v612_bloc_invite(ag: dict) -> str:
     ag = ag or {}
     lignes = ["DISPONIBILITES DE COACH BASSI (contrainte INTERNE, ne l'explique jamais, ne cite jamais ses cours "
               "comme raison d'une indisponibilite ; inviter a DECOUVRIR un cours regulier reste permis) :",
+              "- (Ces contraintes concernent une INTERVENTION SUR PLACE, jamais un appel ou une visio.)",
               "- Mercredi et dimanche : une intervention sur place n'est possible que LE MATIN, seance terminee",
               "  AVANT MIDI, et seulement a 2 h de trajet maximum depuis Neuchatel. Jamais l'apres-midi ni le soir.",
               "  Formule simplement : « Le mercredi, je peux me deplacer le matin. » / « Le dimanche matin pourrait",
@@ -33258,9 +33263,11 @@ def v614_bloc_invite(sit: dict, refus: bool = False) -> str:
         return ""
     L = ["LIEU, DATES ET SAISON :"]
     if sit.get("local_neuchatel"):
+        # V621 : garde-fou, plus consigne — Cool-Ness proposait un local, le modele repondait « cours regulier ».
         L += ["- Partenaire LOCAL (region de Neuchatel) : ne propose PAS de venir gratuitement chez lui en premier.",
-              "  Propose D'ABORD de venir decouvrir Afroboost pendant un cours regulier, le mercredi a 18h45 ou",
-              "  le dimanche a 18h30, a Neuchatel, pour voir le concept, l'ambiance et la reaction du public.",
+              "  SEULEMENT s'il veut voir ou decouvrir Afroboost avant d'aller plus loin, propose de venir decouvrir",
+              "  Afroboost pendant un cours regulier, le mercredi a 18h45 ou le dimanche a 18h30, a Neuchatel, pour",
+              "  voir le concept, l'ambiance et la reaction du public. Sinon, n'en parle pas.",
               "  Ne donne aucune date precise."]
     if sit.get("autre_date_a_discuter") or sit.get("veut_seance_chez_lui"):
         L += ["- Une seance chez le partenaire ou a une autre date est POSSIBLE SI L'AGENDA LE PERMET : ne dis jamais",
@@ -33415,6 +33422,451 @@ def v613_trajet_utile(contexte: dict, fiches=None, ville="") -> bool:
     return any(x["jour"] in V612_JOURS_CONTRAINTS for x in v612_creneaux((contexte or {}).get("body_text")))
 
 
+# ===========================================================================
+# V621 — GENERATEUR DE REPONSES PARTENAIRES : REPONDRE AVANT DE VENDRE
+# ===========================================================================
+# Constat (Cool-Ness, 15/10/2026) : le partenaire propose de LOUER son local a
+# Noiraigue ; le brouillon l'ignore et pousse les cours reguliers de Neuchatel.
+# Trois causes : (1) le modele ne voyait NI le J0 NI les relances (il ignorait ce
+# qu'Afroboost avait deja dit, et le repetait) ; (2) les garde-fous V611-V614 etaient
+# ecrits comme des consignes a appliquer, pas comme des limites ; (3) aucune relecture.
+# V621 : fil COMPLET (projection V619, rien de nouveau en base), faits extraits par le
+# CODE (questions explicites, deja dit), methode A-E, puis AI_REPLY_CHECK (controles
+# deterministes + relecture du modele, une reecriture au plus). Rien n'est envoye.
+V621_FIL_TEXTE_MAX = 1200
+V621_PHRASES_MAX = 8
+V621_MOTS_MAX = 160
+V621_LIBELLES = {"j0": "AFROBOOST, premier message (J0)", "j3": "AFROBOOST, relance J+3",
+                 "j7": "AFROBOOST, relance J+7", "j14": "AFROBOOST, relance J+14",
+                 "manual_reply": "AFROBOOST, reponse de Bassi", "partner_reply": "PARTENAIRE"}
+V621_ACTIONS = ("repondre", "confirmer", "demander_precision", "proposer_etape", "remercier_attendre")
+V621_INTENTIONS = ("interesse", "demande_information", "proposition", "demande_prix", "demande_date",
+                   "contrainte_distance", "refus", "pas_maintenant", "rappel_souhaite", "demande_documentation",
+                   "autre")
+V621_FORMULES = ("je suis ravi", "je suis ravie", "ravi de", "avec grand plaisir", "excellente opportunite",
+                 "j'attends avec impatience", "c'est avec plaisir que", "das freut mich sehr", "i'm thrilled",
+                 "belle opportunite", "excellente idee", "je serais ravi", "je serais ravie", "ravi d'en",
+                 "ich wurde mich sehr freuen")
+# Ce que Bassi doit completer lui-meme (creneau, date) : le modele ne l'invente jamais.
+V621_A_COMPLETER = {"fr": "[À COMPLÉTER : %s]", "de": "[ZU ERGÄNZEN: %s]", "en": "[TO COMPLETE: %s]"}
+_V621_RE_A_COMPLETER = re.compile(r"(?i)\[\s*(?:à|a)\s+compl[ée]ter|\[\s*zu\s+erg[äa]nzen|\[\s*to\s+complete")
+_V621_JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche", "montag", "dienstag",
+               "mittwoch", "donnerstag", "freitag", "samstag", "sonntag", "monday", "tuesday", "wednesday",
+               "thursday", "friday", "saturday", "sunday")
+_V621_DISPO = re.compile(r"je (?:peux|pourrai|pourrais) (?:me liberer|venir|me deplacer)|je (?:suis|serai|serais) disponible"
+                         r"|ich (?:kann|konnte) .{0,40}(?:kommen|vorbeikommen)|ich (?:kann|konnte) am |ich habe .{0,12}zeit"
+                         r"|passt mir|i am available|i can come|ich bin .{0,30}flexibel|je suis (?:flexible|libre)"
+                         r"|je peux me rendre disponible")
+# Le partenaire demande a BASSI de proposer un moment : sans champ a completer, la question reste sans reponse.
+_V621_RE_DEMANDE_CRENEAU = re.compile(
+    r"wann hatt?(?:est|en) (?:du|sie) zeit|wann (?:hast du|haben sie) zeit|proposer un creneau|me proposer un|"
+    r"nous proposer un|quand (?:etes|seriez)-vous disponible|vos disponibilites|quelles? (?:dates?|disponibilites)|"
+    r"when (?:are|would) you (?:be )?available|propose a (?:time|date|slot)")
+
+
+def v621_champ(contexte: dict) -> str:
+    """LE champ a completer, dans la langue du message recu (jamais un melange). PURE."""
+    langue = v605_langue(v621_sans_citation((contexte or {}).get("body_text"))) or "fr"
+    quoi = {"fr": "jour et heure", "de": "Tag und Uhrzeit", "en": "day and time"}.get(langue, "jour et heure")
+    return V621_A_COMPLETER.get(langue, V621_A_COMPLETER["fr"]) % quoi
+
+
+def v621_a_completer(texte) -> bool:
+    """Le texte contient-il encore un champ que Bassi doit completer ? PURE."""
+    return bool(_V621_RE_A_COMPLETER.search(str(texte or "")))
+_V621_RE_CITATION = re.compile(
+    r"(?is)\n[ \t>]*(?:le |on |am |el |il )[^\n]{0,240}(?:\n[^\n]{0,240})?"
+    r"(?:a [ée]crit|wrote|schrieb|escribi[óo]|ha scritto)\s*:?\s*$")
+_V621_RE_HEURE = re.compile(r"(?i)\b(\d{1,2})\s?(?:h|:)\s?(\d{2})?\b(?!\s*(?:min|minutes))")
+_V621_RE_DATE = re.compile(r"\b\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?\b")
+_V621_MOIS = ("janvier", "fevrier", "mars", "avril", "mai ", "juin", "juillet", "aout", "septembre", "octobre",
+              "novembre", "decembre", "januar", "februar", "marz", "april", "juni", "juli", "august",
+              "oktober", "dezember", "january", "february", "march", "june", "july", "october", "december")
+
+
+def v621_sans_citation(texte) -> str:
+    """Le message SANS l'en-tete de citation laisse en fin de corps (« Le … a écrit : »). PURE."""
+    t = str(texte or "").replace("￼", "").rstrip()
+    m = _V621_RE_CITATION.search(t)
+    return (t[:m.start()] if m else t).rstrip()
+
+
+def v621_phrases(texte) -> list:
+    """Les phrases d'un texte (coupure sur . ! ? et retours a la ligne). PURE."""
+    morceaux = re.split(r"(?<=[.!?])\s+|\n+", str(texte or ""))
+    return [p.strip() for p in morceaux if len(p.strip()) > 1]
+
+
+def v621_questions(texte) -> list:
+    """Les questions EXPLICITES du message (point d'interrogation ou formule de demande). PURE."""
+    sorties = []
+    for p in v621_phrases(v621_sans_citation(texte)):
+        plat = p3ai_sans_accents(p)
+        if "?" in p or any(m in plat for m in P3AI_MARQUEURS_QUESTION) or plat.startswith("merci de nous envoyer"):
+            if p[:300] not in sorties:
+                sorties.append(p[:300])
+    return sorties[:8]
+
+
+def v621_fil_depuis(elements, message: dict, action: dict) -> list:
+    """Projection V619 -> fil du generateur (hors message auquel on repond). PURE.
+
+    J0 / relances : le texte PROUVE par V619 ; a defaut, le texte approuve de l'action,
+    marque « non garanti ». Reponses de Bassi : `approved_text` + media envoye (V620)."""
+    a = action or {}
+    mid = (message or {}).get("id")
+    instant_msg = pf_instant((message or {}).get("received_at"))
+    fil = []
+    for e in elements or []:
+        typ = e.get("type")
+        if typ == "partner_reply":
+            if e.get("id") == mid:
+                continue
+            texte, garanti = v621_sans_citation(e.get("text")), True
+        elif typ in ("j0", "j3", "j7", "j14"):
+            texte, garanti = e.get("text"), bool(e.get("texte_garanti"))
+            if not texte:
+                texte = v602_objet_et_corps(a.get("message_%s" % typ) or "", "")[1]
+        else:
+            texte, garanti = e.get("text"), True
+        if not str(texte or "").strip():
+            continue
+        media = e.get("media") or None
+        fil.append({"de": "partenaire" if typ == "partner_reply" else "afroboost", "type": typ,
+                    "quand": e.get("date") or "", "texte": str(texte)[:V621_FIL_TEXTE_MAX],
+                    "garanti": garanti,
+                    "media": ({"type": media.get("type"), "titre": media.get("titre")} if media else None),
+                    "apres_message": bool(instant_msg) and pf_instant(e.get("date")) > instant_msg})
+    return fil
+
+
+async def v621_fil_generateur(message: dict, action: dict, plafond: int = 30) -> list:
+    """Le fil COMPLET d'un dossier pour le generateur. Lecture seule ; une panne retombe sur V611."""
+    a = action or {}
+    aid = a.get("id") or (message or {}).get("action_id")
+    if not aid:
+        return []
+    try:
+        recus = await db[P3U2_COLLECTION].find(
+            {"action_id": aid}, {"_id": 0, "id": 1, "body_text": 1, "received_at": 1}).to_list(plafond)
+        traces = [t for t in await db[P3AI4_COLLECTION].find(
+            {"action_id": aid}, {"_id": 0, "id": 1, "approved_text": 1, "sent_at": 1, "created_at": 1,
+                                 "updated_at": 1, "send_status": 1, "provider_status": 1, "media": 1,
+                                 "suivi_livraison": 1}).to_list(plafond)
+                  if t.get("send_status") == P3AI4_ENVOYE
+                  and t.get("provider_status") not in ("failed", "bounced", "complained")]
+        cid = a.get("campaign_id")
+        campagnes, preuves = await v619_preuves([cid]) if cid else ({}, {})
+        elements = v619_fil(recus, a, campagnes.get(cid) or {}, preuves.get(cid) or {}, traces)
+        return v621_fil_depuis(elements, message, a)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s fil V621 indisponible (%s) : repli V611", P3AI_PREFIXE, type(e).__name__)
+        return await v611_fil(message, action)
+
+
+def v621_deja_dit(fil, notes=None) -> dict:
+    """Ce qu'Afroboost a DEJA dit / propose / envoye dans ce dossier. PURE."""
+    nos = [x for x in (fil or []) if x.get("de") == "afroboost"]
+    plat = p3ai_sans_accents(" ".join(x.get("texte") or "" for x in nos)).lower()
+    video_envoyee = any((x.get("media") or {}).get("type") == "video" for x in nos) or bool(
+        re.search(r"/api/files/\S+|youtu\.?be|vimeo\.com|\.mp4\b", plat))
+    derniere = next((x.get("texte") or "" for x in reversed(nos)), "")
+    return {
+        "concept_presente": bool(nos),
+        "video_envoyee": video_envoyee,
+        "video_proposee": "video" in plat,
+        "echange_propose": any(m in plat for m in ("10 minutes", "echanger", "en parler", "un appel", "appeler",
+                                                   "telephon", "gesprach", "vorstellen", "call", "discuter")),
+        "cours_reguliers_proposes": any(m in plat for m in ("18h45", "18h30", "cours regulier")),
+        "prix_ou_gratuite": bool(_V611_RE_MONTANT.search(plat)) or any(
+            m in plat for m in ("gratuit", "offert", "kostenlos", "gratis", "tarif")),
+        "questions_deja_posees": [p for p in v621_phrases(derniere) if "?" in p][:4],
+        "nb_messages_afroboost": len(nos),
+        # Bassi a DEJA repondu a ce message (envoi posterieur) : une 2e reponse identique serait une repetition.
+        "deja_repondu_le": [(x.get("quand") or "")[:10] for x in nos
+                            if x.get("apres_message") and x.get("type") == "manual_reply"][:3],
+    }
+
+
+def v621_bloc_deja_dit(d: dict) -> str:
+    """Passage d'invite « deja dit ». PURE."""
+    if not d or not d.get("nb_messages_afroboost"):
+        return "DEJA DIT PAR AFROBOOST : rien (aucun message Afroboost dans le fil)."
+    L = ["DEJA DIT PAR AFROBOOST (etabli par le systeme ; ne le REPETE PAS) :"]
+    if d.get("deja_repondu_le"):
+        L.append("- ATTENTION : Bassi a DEJA REPONDU a ce message le %s (texte dans le fil, marque [APRES ...])."
+                 " Ne reecris pas cette reponse : ne reprends ni ce qu'il a dit ni ce qu'il a promis. S'il n'y a"
+                 " rien de nouveau a dire, une reponse tres courte suffit (action « remercier_attendre ») : ne"
+                 " repete ni l'heure, ni l'appel, ni la video deja annonces, et ne suppose pas qu'un appel a eu lieu."
+                 % ", ".join(d["deja_repondu_le"]))
+    if d.get("concept_presente"):
+        L.append("- Le concept Afroboost a deja ete presente : ne refais pas sa presentation.")
+    if d.get("video_envoyee"):
+        L.append("- Une VIDEO a deja ete ENVOYEE : n'en renvoie pas, n'ecris pas « voici une video ».")
+    elif d.get("video_proposee"):
+        L.append("- L'envoi d'une video a deja ete PROPOSE : ne le repropose pas, sauf si le partenaire en demande une.")
+    if d.get("echange_propose"):
+        L.append("- Un echange / appel a deja ete propose : ne le repropose pas, sauf si le message recu en parle.")
+    if d.get("cours_reguliers_proposes"):
+        L.append("- Les cours reguliers de Neuchatel ont deja ete proposes : ne les repropose pas.")
+    if d.get("prix_ou_gratuite"):
+        L.append("- Un prix ou une gratuite a deja ete annonce : ne le contredis pas, ne le repete pas sans raison.")
+    for q in d.get("questions_deja_posees") or []:
+        L.append("- Question deja posee par Afroboost : « %s » — ne la repose pas, sauf incomprehension." % q[:200])
+    return "\n".join(L)
+
+
+def v621_contexte_texte(contexte: dict) -> str:
+    """Tout ce que le partenaire et Bassi ont ecrit (base de la detection d'invention). PURE."""
+    c = contexte or {}
+    return p3ai_sans_accents(" ".join(
+        [c.get("body_text") or "", c.get("notre_message_j0") or ""]
+        + [x.get("texte") or "" for x in c.get("fil") or []]
+        + [n.get("texte") or "" for n in c.get("notes") or []])).lower()
+
+
+def v621_controle_deterministe(texte, contexte: dict) -> list:
+    """AI_REPLY_CHECK, partie CODE : ce qui se verifie sans modele. PURE.
+
+    Rend des codes stables : video_repetee, presentation_repetee, echange_repete,
+    cours_reguliers_non_demandes, formule_convenue, trop_long, heure_inventee,
+    date_inventee."""
+    c = contexte or {}
+    t = p3ai_sans_accents(texte or "").lower()
+    recu = p3ai_sans_accents(v621_sans_citation(c.get("body_text"))).lower()
+    deja = c.get("deja_dit") or v621_deja_dit(c.get("fil"), c.get("notes"))
+    connu = v621_contexte_texte(c)
+    pb = []
+    offre_video = bool(re.search(r"(voici|ci-dessous|je vous (envoie|joins|transmets)|je peux vous (envoyer|transmettre)"
+                                 r"|hier (ein|das)|here is)[^.\n]{0,60}vid", t)) or "/api/files/" in t
+    if offre_video and (deja.get("video_envoyee") or (deja.get("video_proposee") and "vid" not in recu)):
+        pb.append("video_repetee")
+    demande_info = any(m in recu for m in ("en quoi", "consiste", "c'est quoi", "plus d'info", "plus de detail",
+                                           "liens", "documentation", "was ist", "mehr info", "what is", "details"))
+    if deja.get("concept_presente") and not demande_info and any(
+            m in t for m in ("cardio-danse afro", "cardio danse afro", "afro-dance-cardio", "sans niveau requis",
+                             "ohne vorkenntnisse", "un coach en direct")):
+        pb.append("presentation_repetee")
+    parle_echange = any(m in recu for m in ("appel", "telephon", "echanger", "rencontr", "rendez", "creneau",
+                                            "vive voix", "gesprach", "treffen", "anruf", "call", "meet", "zoom", "visio"))
+    if deja.get("echange_propose") and not parle_echange and any(
+            m in t for m in ("10 minutes", "un appel", "vous appeler", "echanger de vive voix", "un echange",
+                             "telefonieren", "gesprach", "a call")):
+        pb.append("echange_repete")
+    veut_voir = any(m in recu for m in ("decouvrir", "assister", "voir un cours", "essayer", "tester", "venir voir",
+                                        "participer a un cours", "schnupper", "probetraining"))
+    if any(m in t for m in ("18h45", "18h30", "cours regulier", "cours reguliers")) and not veut_voir:
+        pb.append("cours_reguliers_non_demandes")
+    if any(f in t for f in V621_FORMULES):
+        pb.append("formule_convenue")
+    if deja.get("deja_repondu_le"):
+        pb.append("deja_repondu")
+        envoye = p3ai_sans_accents(" ".join(x.get("texte") or "" for x in c.get("fil") or []
+                                            if x.get("de") == "afroboost" and x.get("apres_message"))).lower()
+        reprises = [m.group(0) for m in _V621_RE_HEURE.finditer(t)] + re.findall(r"\d[\d .]{7,}\d|/api/files/\S+", t)
+        if any(r in envoye for r in reprises) or any(k in t and k in envoye for k in (
+                "je vous appelle", "je vous appellerai", "voici une courte video", "courte video")):
+            pb.append("reponse_reprise")
+    if _V621_RE_DEMANDE_CRENEAU.search(recu) and not v621_a_completer(texte):
+        pb.append("creneau_non_fourni")
+    if v621_a_completer(texte) and not _V621_RE_DEMANDE_CRENEAU.search(recu) \
+            and not any(m in recu for m in ("quand", "wann", "when", "date", "termin", "creneau", "disponib")):
+        pb.append("a_completer_inutile")
+    if (any(j in t and j not in connu for j in _V621_JOURS) or _V621_DISPO.search(t)) \
+            and not v621_a_completer(texte):
+        pb.append("disponibilite_inventee")
+    corps = [p for p in v621_phrases(texte)
+             if not re.match(r"(?i)^(bonjour|hallo|guten tag|hello|cher|chere|liebe|coach bassi|afroboost|bassi|"
+                             r"belle journee|bien a vous|cordialement|liebe grusse|beste grusse|a bientot)", p3ai_sans_accents(p))
+             and "afroboost.com" not in p.lower()]
+    if (len(corps) > V621_PHRASES_MAX or len((texte or "").split()) > V621_MOTS_MAX) \
+            and len(v621_questions(c.get("body_text"))) < 3:
+        pb.append("trop_long")
+    permis = {"18h45", "18h30"}
+    for m in _V621_RE_HEURE.finditer(t):
+        brut = re.sub(r"\s", "", m.group(0))
+        variantes = {brut, brut.replace(":", "h"), brut.replace("h", ":")}
+        if brut not in permis and not any(v in connu.replace(" ", "") for v in variantes):
+            pb.append("heure_inventee")
+            break
+    if any(d not in connu for d in _V621_RE_DATE.findall(t)) or any(
+            mois in t and mois not in connu for mois in _V621_MOIS):
+        pb.append("date_inventee")
+    return pb
+
+
+V621_LIBELLES_CONTROLE = {
+    "video_repetee": "vidéo déjà envoyée ou proposée — ne pas la répéter",
+    "presentation_repetee": "présentation d'Afroboost répétée",
+    "echange_repete": "appel / échange reproposé sans que le partenaire en parle",
+    "cours_reguliers_non_demandes": "cours réguliers proposés sans demande",
+    "formule_convenue": "formule convenue (« ravi », « grand plaisir »…)",
+    "trop_long": "réponse trop longue (plus de 8 phrases)",
+    "heure_inventee": "heure absente de la conversation",
+    "date_inventee": "date ou mois absent de la conversation",
+    "deja_repondu": "Bassi a déjà répondu à ce message — pas de seconde réponse identique",
+    "disponibilite_inventee": "disponibilité de Bassi affirmée sans être connue",
+    "creneau_non_fourni": "le partenaire demande un créneau : champ « [À COMPLÉTER : jour et heure] » attendu",
+    "reponse_reprise": "reprend ce que la réponse déjà envoyée disait (heure, appel, vidéo)",
+    "a_completer_inutile": "champ « à compléter » sans que le partenaire demande un créneau",
+}
+# Ce qui reste APRES relecture et touche aux faits : affiche comme motif de validation.
+V621_MOTIFS_VALIDATION = {"heure_inventee": "heure inventée", "date_inventee": "date inventée",
+                          "disponibilite_inventee": "disponibilité à confirmer par Bassi",
+                          "deja_repondu": "déjà répondu à ce message — vérifier qu'une 2e réponse est utile",
+                          "creneau_non_fourni": "créneau demandé par le partenaire — à proposer par Bassi"}
+
+
+def v621_bloc_fil(c: dict) -> str:
+    """Le fil chronologique, lisible par le modele. PURE (garde l'en-tete historique V611)."""
+    fil = c.get("fil") or []
+    if not fil:
+        return "FIL PRECEDENT : (aucun autre echange connu)"
+    lignes = []
+    for x in fil:
+        libelle = V621_LIBELLES.get(x.get("type")) or ("AFROBOOST" if x.get("de") == "afroboost" else "PARTENAIRE")
+        if x.get("garanti") is False:
+            libelle += " (texte approuve, envoi exact non garanti)"
+        if x.get("apres_message"):
+            libelle += " [APRES le message auquel tu reponds]"
+        media = ("  [+ %s envoyee : %s]" % ("video" if (x["media"].get("type") == "video") else "image",
+                                           x["media"].get("titre") or "Afroboost")) if x.get("media") else ""
+        lignes.append("- %s, %s : %s%s" % ((x.get("quand") or "")[:10], libelle,
+                                           " ".join((x.get("texte") or "").split())[:V621_FIL_TEXTE_MAX], media))
+    return "FIL PRECEDENT (du plus ancien au plus recent, tout ce qui a ete reellement echange) :\n" + "\n".join(lignes)
+
+
+def v621_analyse_propre(valeur) -> dict:
+    """L'analyse A-E du modele, bornee (listes fermees, longueurs). PURE."""
+    a = valeur if isinstance(valeur, dict) else {}
+    liste = lambda k, n=8: [str(x)[:300] for x in (a.get(k) or []) if str(x or "").strip()][:n] \
+        if isinstance(a.get(k), list) else []
+    intentions = [i for i in (p3ai_sans_accents(x).strip().replace(" ", "_") for x in liste("intentions"))
+                  if i in V621_INTENTIONS] or ["autre"]
+    action = p3ai_sans_accents(a.get("action") or "").strip().replace(" ", "_")
+    return {"intentions": intentions, "questions": liste("questions"), "infos_nouvelles": liste("infos_nouvelles"),
+            "deja_dit": liste("deja_dit"), "ne_pas_repeter": liste("ne_pas_repeter"),
+            "action": action if action in V621_ACTIONS else "repondre"}
+
+
+def v621_invite_controle(contexte: dict, brouillon: str, problemes: list) -> str:
+    """L'invite de RELECTURE (AI_REPLY_CHECK). PURE."""
+    c = contexte or {}
+    qs = v621_questions(c.get("body_text"))
+    return "\n".join([
+        "Tu relis le brouillon de reponse de Coach Bassi (Afroboost) a un partenaire. Tu ne vends rien.",
+        "",
+        v621_bloc_fil(c),
+        "",
+        "DERNIER MESSAGE DU PARTENAIRE (celui auquel le brouillon repond) :",
+        '"""', v621_sans_citation(c.get("body_text")), '"""',
+        "",
+        "QUESTIONS EXPLICITES : " + (" | ".join(qs) if qs else "aucune"),
+        "",
+        v621_bloc_deja_dit(c.get("deja_dit") or {}),
+        "",
+        v611_bloc_invite(c.get("contexte_commercial") or {}),
+        "",
+        "BROUILLON A VERIFIER :", '"""', brouillon or "", '"""',
+        "",
+        ("PROBLEMES DETECTES PAR LE SYSTEME (CERTAINS : tu DOIS les corriger en reecrivant) :\n" + "\n".join(
+            "- " + V621_LIBELLES_CONTROLE.get(p, p) for p in problemes)) if problemes else
+        "PROBLEMES DETECTES PAR LE SYSTEME : aucun.",
+        "",
+        "VERIFIE, dans cet ordre :",
+        "1. Le brouillon repond-il a TOUTES les questions explicites et reagit-il a ce que le partenaire",
+        "   propose ou dit precisement (lieu, date, contact, contrainte) ?",
+        "2. Invente-t-il quelque chose (interet, participants, date, heure, budget, decision, lieu,",
+        "   disponibilite, prix, trajet, accord) absent du fil, du message et des regles ?",
+        "3. Repete-t-il quelque chose deja dit ou envoye par Afroboost (presentation, video, appel, question) ?",
+        "4. Propose-t-il quelque chose que le partenaire n'a pas demande (seance, appel, tarif, video, date,",
+        "   cours reguliers) sans que cela decoule naturellement du message ?",
+        "5. La prochaine etape est-elle logique (une seule) ?",
+        "6. Peut-il etre plus court (cible 3 a 8 phrases, sans formules du type « je suis ravi »,",
+        "   « avec grand plaisir », « excellente opportunite ») ?",
+        "",
+        "Un champ entre crochets « [À COMPLÉTER : ...] » / « [ZU ERGÄNZEN: ...] » est VOULU : garde-le.",
+        "Une disponibilite de Bassi (jour, heure, « je peux venir ») qui n'est ni dans le fil ni dans les regles",
+        "est une invention : remplace-la par ce champ a completer.",
+        "Si TOUT est bon : recopie le brouillon A L'IDENTIQUE dans « reponse_finale ».",
+        "Sinon : reecris-le, dans la MEME langue, en gardant la salutation et la signature « Coach Bassi »",
+        "puis « Afroboost », sans rien inventer, en corrigeant uniquement les problemes trouves. Garde la mise",
+        "en forme : salutation seule sur sa ligne, paragraphes courts, signature sur deux lignes.",
+        "Si le partenaire demande quand Bassi est disponible ou de proposer un creneau, la reponse DOIT contenir",
+        "le champ %s tel quel ; ne renvoie pas la question. Sinon, AUCUN champ entre crochets." % v621_champ(c),
+        "",
+        "Rends UNIQUEMENT un objet JSON :",
+        '{"verifications": {"questions_toutes_traitees": true, "rien_invente": true, "aucune_repetition": true,',
+        '  "rien_de_non_demande": true, "etape_logique": true, "longueur_ok": true},',
+        ' "problemes": ["..."], "reponse_finale": "..."}',
+    ])
+
+
+async def v621_appeler_controle(invite: str) -> str:
+    """La relecture par le modele. Sans cle OpenAI : rien (la partie CODE du controle reste)."""
+    cle = os.environ.get("OPENAI_API_KEY")
+    if not cle:
+        return ""
+    from openai import OpenAI
+
+    def _appel():
+        client = OpenAI(api_key=cle, timeout=P3AI_TIMEOUT_S, max_retries=1)
+        r = client.chat.completions.create(
+            model=V621_MODELE, messages=[{"role": "user", "content": invite}],
+            response_format={"type": "json_object"}, temperature=0.2, max_tokens=900)
+        return r.choices[0].message.content or ""
+    return await asyncio.to_thread(_appel)
+
+
+async def v621_ai_reply_check(contexte: dict, reponse: str):
+    """AI_REPLY_CHECK : controles CODE, relecture du modele, UNE reecriture au plus.
+
+    Une reecriture n'est retenue que si elle n'ajoute aucun probleme detectable par le
+    code. Une panne de relecture ne bloque jamais le brouillon : il est rendu tel quel,
+    avec ses problemes nommes."""
+    avant = v621_controle_deterministe(reponse, contexte)
+    verdict, appel_ok = {}, False
+    try:
+        brut = await asyncio.wait_for(v621_appeler_controle(v621_invite_controle(contexte, reponse, avant)),
+                                      timeout=P3AI_TIMEOUT_S + 5)
+        verdict, appel_ok = p3ai_lire_json(brut), bool(brut)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("%s AI_REPLY_CHECK indisponible (%s)", P3AI_PREFIXE, type(e).__name__)
+    finale = str(verdict.get("reponse_finale") or "").strip()[:P3AI_REPONSE_MAX]
+    if avant and appel_ok and (not finale or finale == (reponse or "").strip()):
+        # Des problemes CERTAINS et une relecture qui n'a rien change : une seconde relecture, pas plus.
+        try:
+            brut = await asyncio.wait_for(v621_appeler_controle(
+                v621_invite_controle(contexte, reponse, avant)
+                + "\n\nATTENTION : ta relecture precedente a recopie le brouillon alors que les problemes du"
+                  " systeme sont certains. Reecris-le maintenant."), timeout=P3AI_TIMEOUT_S + 5)
+            v2 = p3ai_lire_json(brut)
+            if str(v2.get("reponse_finale") or "").strip():
+                verdict, finale = v2, str(v2.get("reponse_finale")).strip()[:P3AI_REPONSE_MAX]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("%s AI_REPLY_CHECK 2e passe indisponible (%s)", P3AI_PREFIXE, type(e).__name__)
+    reecrit = False
+    if finale and finale != (reponse or "").strip():
+        apres_finale = v621_controle_deterministe(finale, contexte)
+        # Une reecriture n'est retenue que si elle n'AJOUTE aucun probleme et garde le champ a completer.
+        if not (set(apres_finale) - set(avant)) and len(apres_finale) <= len(avant) \
+                and (v621_a_completer(finale) or not v621_a_completer(reponse)):
+            reponse, reecrit = finale, True
+    verifs = verdict.get("verifications") if isinstance(verdict.get("verifications"), dict) else {}
+    rapport = {
+        "relecture_modele": appel_ok,
+        "verifications": {k: bool(v) for k, v in verifs.items()
+                          if k in ("questions_toutes_traitees", "rien_invente", "aucune_repetition",
+                                   "rien_de_non_demande", "etape_logique", "longueur_ok")},
+        "problemes_releves": [str(p)[:200] for p in (verdict.get("problemes") or [])
+                              if isinstance(verdict.get("problemes"), list) and str(p or "").strip()][:8],
+        "controle_avant": avant,
+        "reecrit": reecrit,
+        "controle_apres": v621_controle_deterministe(reponse, contexte),
+    }
+    return reponse, rapport
+
+
 def p3ai_invite(contexte: dict) -> str:
     """L'invite envoyee au modele. PURE, et volontairement etroite.
 
@@ -33428,28 +33880,38 @@ def p3ai_invite(contexte: dict) -> str:
                               (" [etat declare : %s]" % n["status_after"])
                               if n.get("status_after") else "")
         for n in c.get("notes") or [])
+    questions = v621_questions(c.get("body_text"))
     return "\n".join([
         "Tu assistes Coach Bassi, d'Afroboost (cardio-danse afro, aussi en version",
         "Silent avec casques audio, base a Neuchatel en Suisse). Il demarche des partenaires par e-mail.",
         "",
-        "UN partenaire vient de repondre. Analyse SA reponse, et rien d'autre.",
+        "UN partenaire vient de repondre. Ton travail : REPONDRE A SON DERNIER MESSAGE, pas vendre.",
         "",
         "ORGANISATION : %s" % (c.get("organisation") or "(inconnue)"),
         "ADRESSE : %s" % (c.get("from_email") or ""),
         "OBJET : %s" % (c.get("subject") or ""),
         "",
-        # V611 — LE FIL COMPLET : ce qu'Afroboost a deja ecrit, ce que le partenaire a deja dit.
-        ("FIL PRECEDENT (du plus ancien au plus recent) :\n" + "\n".join(
-            "- %s, %s : %s" % ((x.get("quand") or "")[:10],
-                               "AFROBOOST" if x.get("de") == "afroboost" else "PARTENAIRE",
-                               " ".join((x.get("texte") or "").split())[:700])
-            for x in (c.get("fil") or []))) if c.get("fil") else "FIL PRECEDENT : (premier echange apres notre premier message)",
+        # V611 -> V621 — LE FIL COMPLET : J0, relances, reponses de Bassi (+ media), messages recus.
+        v621_bloc_fil(c),
         "",
-        "MESSAGE RECU (le dernier message du partenaire, auquel tu reponds) :",
+        "DERNIER MESSAGE DU PARTENAIRE (lis-le EN ENTIER : c'est a LUI que tu reponds) :",
         "\"\"\"",
-        c.get("body_text") or "",
+        v621_sans_citation(c.get("body_text")),
         "\"\"\"",
         "",
+        # V621 — FAITS ETABLIS PAR LE CODE, pas par le modele.
+        ("QUESTIONS EXPLICITES DE CE MESSAGE (reperees par le systeme ; reponds a CHACUNE) :\n"
+         + "\n".join("- %s" % q for q in questions)) if questions else
+        "QUESTIONS EXPLICITES DE CE MESSAGE : aucune (n'en invente pas ; reagis a ce qu'il dit ou propose).",
+        ("-> IL TE DEMANDE TES DISPONIBILITES : reponds-y avec le champ a completer (regle 5b), "
+         "ne lui renvoie pas la question.") if _V621_RE_DEMANDE_CRENEAU.search(
+            p3ai_sans_accents(v621_sans_citation(c.get("body_text"))).lower()) else "",
+        "",
+        v621_bloc_deja_dit(c.get("deja_dit") or v621_deja_dit(c.get("fil"), c.get("notes"))),
+        "",
+        "GARDE-FOUS COMMERCIAUX : ils LIMITENT ce que tu peux dire, ils ne t'obligent a RIEN. N'aborde un de",
+        "ces sujets (seance decouverte, frais de deplacement, disponibilites, cours reguliers, lieu, saison,",
+        "format en ligne) QUE si le dernier message l'appelle directement.",
         v611_bloc_invite(c.get("contexte_commercial") or {}),
         "",
         # AI-P3 — LA HIERARCHIE DES SOURCES EST DITE, PAS SUPPOSEE.
@@ -33464,6 +33926,14 @@ def p3ai_invite(contexte: dict) -> str:
         ("ETAT COMMERCIAL ACTUEL DU DOSSIER : %s" % c["statut_commercial"])
         if c.get("statut_commercial") else "",
         "",
+        "METHODE (fais-la AVANT d'ecrire, et rends-la dans « analyse ») :",
+        "A. intentions du partenaire (une ou plusieurs) parmi : %s." % ", ".join(V621_INTENTIONS),
+        "B. ses questions explicites (toutes).",
+        "C. les informations NOUVELLES qu'il donne (lieu, date, budget, nombre de personnes, public,",
+        "   disponibilite, contrainte, format souhaite...).",
+        "D. ce qu'Afroboost a deja explique, propose, demande, chiffre, promis (lis le fil).",
+        "E. UNE seule action : %s." % ", ".join(V621_ACTIONS),
+        "",
         "REGLES ABSOLUES :",
         "0. INTENTION = LA DISPOSITION DU PARTENAIRE, pas la forme de son",
         "   message. Quatre valeurs seulement : « positif » (il accepte ou se",
@@ -33472,19 +33942,34 @@ def p3ai_invite(contexte: dict) -> str:
         "   NE RENDS JAMAIS « question » : reperer une demande n'est pas ton",
         "   role ici, c'est fait ailleurs et verifie sur le texte.",
         "1. Reponds dans la LANGUE DU MESSAGE RECU, pas dans une autre.",
-        "2. N'invente RIEN : ni prix, ni date, ni chiffre, ni engagement, ni nom.",
-        "3. Si une information manque, propose un echange plutot que de la deviner.",
-        "4. Reste court : 120 mots maximum, ton professionnel et chaleureux.",
-        "5. Ne repete pas tout le concept si le partenaire le connait deja.",
-        "6. Signe « Coach Bassi » puis « Afroboost », sans coordonnees inventees.",
-        "7. Si une action figure deja dans « ce que Bassi a fait », NE LA",
+        "2. REPONDRE AVANT DE VENDRE : ta premiere phrase utile repond a ce que le partenaire vient de dire",
+        "   ou de proposer, precisement. Ne reexplique pas Afroboost ; ne propose ni seance, ni appel, ni",
+        "   tarif, ni video, ni date, ni cours reguliers, SAUF si cela decoule directement de son message.",
+        "3. AUCUNE REPETITION : ce qui figure dans « deja dit » ou dans le fil ne se redit pas.",
+        "4. N'invente RIEN : ni interet, ni nombre de participants, ni date, ni heure, ni budget, ni",
+        "   decision, ni lieu, ni disponibilite, ni prix, ni duree de trajet, ni accord, ni nom.",
+        "5. Si une information manque : n'en parle pas, ou pose UNE seule question claire si elle est",
+        "   indispensable pour avancer. Une question CONCRETE (ex. capacite, conditions, date visee), jamais",
+        "   un vague « pourrions-nous discuter des details ».",
+        "5b. DISPONIBILITES DE BASSI : tu ne les connais pas. Si le partenaire demande un creneau, une date ou",
+        "   « quand avez-vous le temps », n'invente ni jour ni heure : ecris, tel quel et une seule fois, le",
+        "   champ %s, que Bassi remplira avant l'envoi. Ne repousse pas la question" % v621_champ(c),
+        "   vers le partenaire. Sans demande de creneau, n'ecris AUCUN champ entre crochets.",
+        "6. COURT : 3 a 8 phrases (hors salutation et signature), 120 mots maximum ; plus long seulement",
+        "   si plusieurs questions doivent vraiment etre traitees.",
+        "7. TON : professionnel, chaleureux, naturel, direct ; ni robotique, ni enthousiaste a l'exces, ni",
+        "   insistant. Pas de « Je suis ravi », « Ce serait avec grand plaisir », « Excellente opportunite ».",
+        "8. Signe « Coach Bassi » puis « Afroboost », sans coordonnees inventees.",
+        "9. Si une action figure deja dans « ce que Bassi a fait », NE LA",
         "   REPROPOSE JAMAIS, ni a la premiere personne (« je vais appeler »),",
         "   ni comme conseil. Elle est FAITE. Enchaine sur la suite.",
-        "8. Si l'etat du dossier est « en_attente », Bassi attend quelque chose",
+        "10. Si l'etat du dossier est « en_attente », Bassi attend quelque chose",
         "   du partenaire : la reponse doit en tenir compte, sans le relancer.",
         "",
-        "Rends UNIQUEMENT un objet JSON, sans texte autour :",
+        "Rends UNIQUEMENT un objet JSON, sans texte autour, dans cet ordre :",
         "{",
+        '  "analyse": {"intentions": ["..."], "questions": ["..."], "infos_nouvelles": ["..."],',
+        '              "deja_dit": ["..."], "ne_pas_repeter": ["..."], "action": "une des actions E"},',
         '  "intention": "positif|refus|absence|autre",',
         '  "langue": "code ISO 2 lettres du message recu",',
         '  "resume": "une phrase, en francais",',
@@ -33536,7 +34021,11 @@ def p3ai_brouillon_depuis(contexte: dict, sortie: dict, viewer: str,
                            + p3ai_sujets_sensibles(reponse)
                            + v611_controle_brouillon(reponse, c, c.get("contexte_commercial") or {})
                            + v612_controle_brouillon(reponse, (c.get("contexte_commercial") or {}).get("agenda") or {})
-                           + v614_controle_brouillon(reponse, c, (c.get("contexte_commercial") or {}).get("situation") or {})))
+                           + v614_controle_brouillon(reponse, c, (c.get("contexte_commercial") or {}).get("situation") or {})
+                           # V621 : ce qui touche aux FAITS et reste apres relecture -> validation humaine.
+                           + [V621_MOTIFS_VALIDATION[p] for p in v621_controle_deterministe(reponse, c)
+                              if p in V621_MOTIFS_VALIDATION]
+                           + (["créneau à compléter"] if v621_a_completer(reponse) else [])))
     return {
         "id": str(uuid.uuid4()),
         "inbound_id": c.get("inbound_id") or "",
@@ -33561,10 +34050,14 @@ def p3ai_brouillon_depuis(contexte: dict, sortie: dict, viewer: str,
         # tard qui a ecrit quoi, sans avoir a le deviner.
         "texte_modele": reponse,
         "contexte_commercial": c.get("contexte_commercial") or {},   # V611 : rapport interne
+        # V621 : la methode A-E du modele et le rapport AI_REPLY_CHECK (lecture coach / audit).
+        "analyse": v621_analyse_propre(s.get("analyse")),
+        "questions_explicites": v621_questions(c.get("body_text")),
+        "controle_ia": s.get("controle_ia") if isinstance(s.get("controle_ia"), dict) else None,
         "validation_requise": bool(sensibles),
         "motifs_validation": sensibles,
         "ton": ton if ton in P3AI_TONS else "",
-        "modele": P3AI_MODELE,
+        "modele": V621_MODELE,
         "version": version,
         "genere_le": maintenant,
         "genere_par": viewer,
@@ -33598,7 +34091,7 @@ async def p3ai_appeler_modele(invite: str, ton: str = "") -> str:
     def _appel():
         client = OpenAI(api_key=cle, timeout=P3AI_TIMEOUT_S, max_retries=1)
         reponse = client.chat.completions.create(
-            model=P3AI_MODELE,
+            model=V621_MODELE,
             messages=[{"role": "user", "content": invite_finale}],
             response_format={"type": "json_object"},
             temperature=0.4,
@@ -33719,7 +34212,8 @@ async def p3ai_analyser(inbound_id: str, request: Request):
         (await db[P3AI_BROUILLONS].find_one({"inbound_id": message["id"]},
                                             {"_id": 0, "intention": 1}) or {}).get("intention"))
     contexte = p3ai_contexte(message, action, dossier["fiches"], notes, _statut)
-    contexte["fil"] = await v611_fil(message, action)
+    contexte["fil"] = await v621_fil_generateur(message, action)      # V621 : J0 + relances + reponses + recus
+    contexte["deja_dit"] = v621_deja_dit(contexte["fil"], notes)
     _ville = next((f.get("city") for f in dossier["fiches"] if (f.get("city") or "").strip()), "") or ""
     if v613_trajet_utile(contexte, dossier["fiches"], _ville):        # V613
         try:
@@ -33736,6 +34230,9 @@ async def p3ai_analyser(inbound_id: str, request: Request):
     if not str(sortie.get("reponse_proposee") or "").strip():
         raise HTTPException(status_code=502,
                             detail="Le modele n'a rendu aucun brouillon exploitable.")
+    # V621 — AI_REPLY_CHECK avant affichage (une reecriture au plus ; aucun envoi).
+    sortie["reponse_proposee"], sortie["controle_ia"] = await v621_ai_reply_check(
+        contexte, str(sortie.get("reponse_proposee") or ""))
 
     maintenant = datetime.now(timezone.utc).isoformat()
     brouillon = p3ai_brouillon_depuis(contexte, sortie, email, maintenant, ton, version)
@@ -34955,6 +35452,9 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
     texte = str(brouillon.get("reponse_proposee") or "").strip()
     if not texte:
         raise HTTPException(status_code=409, detail="Le brouillon est vide")
+    if v621_a_completer(texte):   # V621 : un champ « [À COMPLÉTER : …] » ne part jamais chez un partenaire
+        raise HTTPException(status_code=409,
+                            detail="Complétez le champ « [À COMPLÉTER : …] » (créneau, date) avant l'envoi.")
 
     # L'EMPREINTE DE CE QUE LE COACH A LU. Sans elle, l'ecran pourrait afficher
     # un texte et le serveur en expedier un autre — un ecart invisible et
