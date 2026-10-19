@@ -104,7 +104,7 @@ CODES = {
     "OK5": "28BOOSTHETAÏRA-05", "OK6": "28BOOSTHETAÏRA-06",
     "TOUS": "TEST-TOUS-ARTICLES", "EXP": "TEST-EXPIRE", "USE": "TEST-UTILISE", "P50": "TEST-50POURCENT",
     "OFF": "TEST-INACTIF", "AUTRE": "TEST-AUTRE-EVT", "ASSIGNE": "TEST-ASSIGNE", "NORMAL": "TEST-NORMAL-COURS",
-    "DUO1": "TEST-DUO-A", "DUO2": "TEST-DUO-B", "SCAN": "TEST-SCAN-ENTREE",
+    "DUO1": "TEST-DUO-A", "DUO2": "TEST-DUO-B", "SCAN": "TEST-SCAN-ENTREE", "PART": "TEST-CODE-PARTENAIRE",
 }
 
 
@@ -148,7 +148,7 @@ async def semer():
         _code("AUTRE", [AUTRE_EVT, C_AUTRE]),
         _code("ASSIGNE", _evt, assignedEmail="titulaire@test.local"),
         _code("NORMAL", [UNITE, C_REG], maxUses=5),
-        _code("DUO1", _evt), _code("DUO2", _evt), _code("SCAN", _evt, used=1),
+        _code("DUO1", _evt), _code("DUO2", _evt), _code("SCAN", _evt, used=1), _code("PART", _evt, coach_id="partenaire@test.local"),
     ])
 
 
@@ -204,7 +204,7 @@ async def principal():
 
         # 3. Refus
         for nom, cle, attendu in (("3a code inconnu", None, 400), ("3b code expiré", "EXP", 400),
-                                  ("3c code déjà utilisé", "USE", 409), ("3d code 50 % (pas 100 %)", "P50", 400),
+                                  ("3c code déjà utilisé (refus neutre)", "USE", 400), ("3d code 50 % (pas 100 %)", "P50", 400),
                                   ("3e code inactif", "OFF", 400)):
             r = await poster(cl, CODES[cle] if cle else "HETAIRA-INVENTE", "refus-%s@test.local" % (cle or "x"))
             verifier("%s -> %d" % (nom, attendu), r.status_code == attendu, (r.status_code, r.text))
@@ -215,6 +215,10 @@ async def principal():
         verifier("3g code d'un AUTRE événement -> refusé", r.status_code == 400, r.text)
         r = await poster(cl, CODES["AUTRE"], "autre@test.local", offre=UNITE)
         verifier("3h la route ne vend pas une offre qui n'est pas un événement (404)", r.status_code == 404, r.text)
+        r = await poster(cl, CODES["PART"], "partenaire-invite@test.local")
+        verifier("3l code créé par un AUTRE coach visant cet événement -> refusé (400 neutre)",
+                 r.status_code == 400 and r.json().get("detail") == E.MSG_CODE_INVALIDE
+                 and (await fiche("PART")).get("used") == 0, r.text)
         r = await poster(cl, CODES["ASSIGNE"], "intrus@test.local")
         verifier("3i code attribué à une autre adresse -> refus neutre (400, même message qu'un code inconnu)",
                  r.status_code == 400 and r.json().get("detail") == E.MSG_CODE_INVALIDE, r.text)
@@ -343,6 +347,13 @@ async def principal():
         for _i in range(22):
             codes_429.append((await poster(cl, "INCONNU-%d" % _i, "brute@test.local", ip="10.7.7.7")).status_code)
         verifier("11 essais en rafale depuis une même connexion -> 429", 429 in codes_429, codes_429)
+
+        # 11b. Plafond GLOBAL d'échecs par événement : changer d'IP à chaque essai ne suffit plus
+        statuts = []
+        for _i in range(70):
+            statuts.append((await poster(cl, "ENUM-%d" % _i, "enum%d@test.local" % _i)).status_code)
+        verifier("11b 70 essais faux, une IP différente à chaque fois -> 429 global", 429 in statuts, statuts[-5:])
+        S._V628_ECHECS.clear()
 
         # 12. E-mails : confirmations parties vers le faux Resend uniquement
         await asyncio.sleep(0.5)

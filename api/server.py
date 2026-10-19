@@ -20813,6 +20813,26 @@ async def v610_reserver_evenement_offert(access_code: str, offer_id: str, reques
 
 
 # === V628 : PLACE D'ÉVÉNEMENT PAR CODE PROMO (invités, 0 CHF, sans Stripe) ===
+_V628_ECHECS = {}
+_V628_ECHECS_MAX = 60          # codes refusés par événement et par heure, toutes connexions confondues
+_V628_ECHECS_FENETRE = 3600.0
+
+
+def _v628_echecs_ok(offre_id: str) -> bool:
+    import time as _t
+    _now = _t.monotonic()
+    _h = [x for x in _V628_ECHECS.get(offre_id, []) if _now - x < _V628_ECHECS_FENETRE]
+    _V628_ECHECS[offre_id] = _h
+    return len(_h) < _V628_ECHECS_MAX
+
+
+def _v628_echec(offre_id) -> None:
+    import time as _t
+    _V628_ECHECS.setdefault(str(offre_id or ""), []).append(_t.monotonic())
+    if len(_V628_ECHECS) > 500:
+        for _k in list(_V628_ECHECS.keys())[:100]:
+            _V628_ECHECS.pop(_k, None)
+
 @api_router.post("/evenements/{offer_id}/place-code")
 async def v628_place_evenement_par_code(offer_id: str, request: Request):
     """V628 — un code promo EXISTANT, réglé pour CET événement seul (100 %, quota, expiration),
@@ -20855,6 +20875,10 @@ async def v628_place_evenement_par_code(offer_id: str, request: Request):
     if not _saisie:
         raise HTTPException(status_code=400, detail="Code promo requis.")
 
+    if not _v628_echecs_ok(str(offer_id or "")[:64]):
+        # Plafond GLOBAL d'échecs par événement : l'IP (en-têtes fournis par le client) peut se
+        # falsifier, ce plafond non. Il ne compte que les codes refusés.
+        raise HTTPException(status_code=429, detail="Trop de tentatives. Réessaie dans un moment.")
     _offre = await db.offers.find_one({"id": str(offer_id or "")[:64]}, {"_id": 0})
     if not _offre or _offre.get("archived") is True or _offre.get("visible") is False \
             or not _evt.reservation_auto(_offre):
@@ -20873,6 +20897,7 @@ async def v628_place_evenement_par_code(offer_id: str, request: Request):
     _fiche, _motif = await _evt.fiche_code_evenement(db, _saisie, _offre)
     if not _fiche:
         logger.info("[V628] code refusé (%s) — offre %s", _motif, str(_offre.get("id"))[:8])
+        _v628_echec(_offre.get("id"))
         raise HTTPException(status_code=400, detail=_evt.MSG_CODE_INVALIDE)
     _cle = "code:%s:%s" % (_offre.get("id"), _email)
 
@@ -20884,19 +20909,22 @@ async def v628_place_evenement_par_code(offer_id: str, request: Request):
         return {k: (_r or {}).get(k) for k in ("id", "reservationCode", "courseId", "courseName", "datetime",
                                                 "offerId", "offerName", "price", "source")}
 
-    _refus = _evt.verifier_code_evenement(_fiche, _offre)
+    _refus = _evt.verifier_code_evenement(_fiche, _offre, cours=_cours)
     if _refus == _evt.MSG_CODE_UTILISE:
         # La personne dont CE code a déjà donné la place le retape : on lui redit qu'elle est inscrite.
         _deja_c, _ = await _evt._deja(db, _cle)
         if _deja_c and str(_deja_c.get("promoCode") or "").upper() == str(_fiche.get("code") or "").upper():
             return {"success": True, "deja_reserve": True, "prix": 0, "reservation": _dto(_deja_c, True)}
     if _refus:
+        # Refus NEUTRE : « épuisé » et « inconnu » se ressemblent (pas d'oracle sur les codes).
         logger.info("[V628] code %s refusé : %s", str(_fiche.get("code"))[:24], _refus)
-        raise HTTPException(status_code=400 if _refus != _evt.MSG_CODE_UTILISE else 409, detail=_refus)
+        _v628_echec(_offre.get("id"))
+        raise HTTPException(status_code=400, detail=_evt.MSG_CODE_INVALIDE)
     from api.routes.shared import email_autorise_pour_code as _v628_autorise
     _ok, _pourquoi = await _v628_autorise(db, _fiche, _email)
     if not _ok:
         logger.info("[V628] code %s : adresse refusée (%s)", str(_fiche.get("code"))[:24], _pourquoi)
+        _v628_echec(_offre.get("id"))
         raise HTTPException(status_code=400, detail=_evt.MSG_CODE_INVALIDE)   # même refus qu'un code inconnu
     _code = str(_fiche.get("code") or "").strip().upper()
 

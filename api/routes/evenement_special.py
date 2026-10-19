@@ -622,7 +622,24 @@ async def fiche_code_evenement(db, saisie, offre):
     return next((f for f in _fiches if f.get("id") == _id), None), "ok"
 
 
-def verifier_code_evenement(fiche, offre, jour=None):
+def proprietaire_evenement(offre, cours=None) -> str:
+    """Le coach de l'événement (offre, sinon cours) ; vide = plateforme (le super-admin)."""
+    return str((offre or {}).get("coach_id") or (cours or {}).get("coach_id") or "").strip().lower()
+
+
+def code_du_proprietaire(fiche, offre, cours=None) -> bool:
+    """V628 — un code ne vaut que pour un événement de SON coach. Événement de la plateforme
+    (aucun coach) : seuls les codes du super-admin, ou sans coach (anciens), y donnent accès.
+    Sans cette règle, un partenaire pourrait créer un code visant l'événement d'un autre."""
+    from api.routes.shared import is_super_admin, DEFAULT_COACH_ID
+    _code_coach = str((fiche or {}).get("coach_id") or "").strip().lower()
+    _proprio = proprietaire_evenement(offre, cours)
+    if _proprio and not is_super_admin(_proprio) and _proprio != str(DEFAULT_COACH_ID).lower():
+        return _code_coach == _proprio
+    return (not _code_coach) or is_super_admin(_code_coach) or _code_coach in ("bassi_default", str(DEFAULT_COACH_ID).lower())
+
+
+def verifier_code_evenement(fiche, offre, jour=None, cours=None):
     """None si le code donne une place GRATUITE à cet événement, sinon le message de refus.
     `jour` : jour calendaire suisse (AAAA-MM-JJ) ; l'expiration court jusqu'au soir inclus."""
     _f = fiche or {}
@@ -635,7 +652,7 @@ def verifier_code_evenement(fiche, offre, jour=None):
         return MSG_CODE_INVALIDE
     if not code_gratuit_total(_f):
         return MSG_CODE_INVALIDE
-    if not code_reserve_a(_f, ids_evenement(offre)):
+    if not code_reserve_a(_f, ids_evenement(offre)) or not code_du_proprietaire(_f, offre, cours):
         # Même message qu'un code inconnu : la route publique ne confirme pas l'existence
         # d'un code (AFR-, code d'un autre cours) qui ne la concerne pas.
         return MSG_CODE_INVALIDE
@@ -644,5 +661,5 @@ def verifier_code_evenement(fiche, offre, jour=None):
     except (TypeError, ValueError):
         return MSG_CODE_INVALIDE
     if _max <= 0 or _used >= _max:
-        return MSG_CODE_UTILISE
+        return MSG_CODE_UTILISE   # la route le transforme en refus neutre (sauf pour sa titulaire)
     return None
