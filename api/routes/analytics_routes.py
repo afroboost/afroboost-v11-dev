@@ -479,16 +479,14 @@ STATS_ENV_FINANCES = "AFROBOOST_STATS_KEY_FINANCES"
 STATS_CACHE_TTL = 600.0
 STATS_DEBIT_MAX = 30           # appels
 STATS_DEBIT_FENETRE = 60.0     # secondes
-# Compteur GLOBAL des clés refusées, indépendant de l'adresse : l'IP vient
-# d'en-têtes que le client peut falsifier (CF-Connecting-IP, X-Forwarded-For),
-# donc le compteur par IP seul ne borne pas une recherche de clé. Au-delà,
-# la route répond 429 à TOUT LE MONDE jusqu'à la fin de la fenêtre.
-STATS_ECHECS_MAX = 30
-STATS_ECHECS_FENETRE = 600.0   # secondes
+# PAS de verrou global des échecs (retiré, décision de coordination) : il
+# laissait n'importe qui couper la route en continu avec 30 clés fausses.
+# La défense est l'ENTROPIE de la clé (≥ 32 caractères exigés, 64 hexa
+# recommandés : `openssl rand -hex 32`) ; le débit par adresse n'est qu'un
+# frein, l'adresse venant d'en-têtes falsifiables.
 STATS_CLE_LONGUEUR_MIN = 32    # une clé plus courte est traitée comme ABSENTE
 _STATS_CACHE = {}
 _STATS_DEBIT = {}
-_STATS_ECHECS = []
 _RE_MOIS = _re.compile(r"^(\d{4})-(\d{2})$")
 _RE_ANNEE = _re.compile(r"^(\d{4})$")
 
@@ -502,7 +500,7 @@ def _stats_erreur(statut, code, message, entetes=None):
 def _stats_ip(request) -> str:
     """L'adresse, lue comme `_live_guest_ip` (server.py) : CF-Connecting-IP, sinon le
     DERNIER saut de X-Forwarded-For (celui posé par le proxy), sinon la socket.
-    ⚠️ Falsifiable : ce compteur n'est qu'un COMPLÉMENT du compteur global."""
+    ⚠️ Falsifiable : ce débit est un simple frein ; la défense est l'entropie de la clé."""
     _h = getattr(request, "headers", {}) or {}
     _ip = (_h.get("cf-connecting-ip") or _h.get("CF-Connecting-IP") or "").strip()
     if not _ip:
@@ -512,19 +510,6 @@ def _stats_ip(request) -> str:
         _c = getattr(request, "client", None)
         _ip = getattr(_c, "host", "") or "inconnu"
     return _ip[:64]
-
-
-def _stats_echecs_recents() -> int:
-    _now = _time.monotonic()
-    _STATS_ECHECS[:] = [t for t in _STATS_ECHECS if _now - t < STATS_ECHECS_FENETRE]
-    return len(_STATS_ECHECS)
-
-
-def _stats_noter_echec() -> None:
-    _stats_echecs_recents()
-    _STATS_ECHECS.append(_time.monotonic())
-    if len(_STATS_ECHECS) > 10 * STATS_ECHECS_MAX:     # borne mémoire
-        del _STATS_ECHECS[:-STATS_ECHECS_MAX]
 
 
 def _stats_cle_configuree(nom: str) -> str:
@@ -569,7 +554,6 @@ def _stats_portee(request):
         return PORTEE_FINANCES, None
     if _ok_freq:
         return PORTEE_FREQUENTATION, None
-    _stats_noter_echec()
     logger.warning("[STATS] accès refusé à /stats/association (clé %s)", "absente" if not _fournie else "invalide")
     return None, _stats_erreur(401, "cle_invalide", "Clé de statistiques absente ou invalide.")
 
@@ -605,13 +589,7 @@ async def stats_association(request: Request, mois: str = "", annee: str = "", g
     from api.routes.reservation_routes import lot1_occurrence_iso
     from api.routes import analytics_shared as _A
 
-    # 1. Le verrou GLOBAL : trop de clés refusées, toutes adresses confondues
-    #    -> 429 pour tout le monde (une IP falsifiée ne le contourne pas).
-    if _stats_echecs_recents() >= STATS_ECHECS_MAX:
-        logger.warning("[STATS] verrou global : %d clés refusées en %ds", STATS_ECHECS_MAX, int(STATS_ECHECS_FENETRE))
-        return _stats_erreur(429, "trop_d_echecs", "Trop de clés refusées : route verrouillée quelques minutes.",
-                             {"Retry-After": str(int(STATS_ECHECS_FENETRE))})
-    # 2. En complément, le débit par adresse.
+    # Le débit par adresse : un FREIN (adresse falsifiable), pas une défense.
     if not _stats_debit_ok("ip:" + _stats_ip(request)):
         return _stats_erreur(429, "debit_depasse", "Trop de requêtes : réessayez dans une minute.",
                              {"Retry-After": str(int(STATS_DEBIT_FENETRE))})

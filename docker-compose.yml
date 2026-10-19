@@ -60,6 +60,8 @@ services:
       # STATS-1 : clés de GET /api/stats/association (Cockpit de l'association).
       # Deux niveaux : FREQUENTATION (fréquentation, essais, abonnements) et
       # FINANCES (le même + les revenus). Vides -> la route répond 503 (inerte).
+      # Valeurs : 64 caractères hexadécimaux (`openssl rand -hex 32`), DIFFÉRENTES
+      # l'une de l'autre ; une clé de moins de 32 caractères est refusée (503).
       # Comme CRON_SECRET : sans CES lignes, une valeur posée dans Coolify
       # n'atteint jamais le conteneur.
       - AFROBOOST_STATS_KEY_FREQUENTATION=${AFROBOOST_STATS_KEY_FREQUENTATION:-}

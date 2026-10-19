@@ -57,7 +57,6 @@ def _env(freq=CLE_FREQ, fin=CLE_FIN):
 def _reinit():
     R._STATS_CACHE.clear()
     R._STATS_DEBIT.clear()
-    del R._STATS_ECHECS[:]
 
 
 def appel(cle=None, jeu=None, base=None, ip="203.0.113.7", entetes=None, **params):
@@ -237,26 +236,19 @@ verifier("IP : sans CF, le DERNIER saut de X-Forwarded-For (comme _live_guest_ip
          R._stats_ip(F.Req({"x-forwarded-for": "1.2.3.4, 203.0.113.50"}, "10.0.0.1")) == "203.0.113.50")
 verifier("IP : ni CF ni XFF -> la socket", R._stats_ip(F.Req({}, "10.0.0.9")) == "10.0.0.9")
 
-# FALSIFICATION D'IP : un attaquant change CF-Connecting-IP à CHAQUE essai de clé.
+# FALSIFICATION D'IP : le débit par adresse n'est qu'un FREIN — et il n'y a
+# PAS de verrou global (il permettait à n'importe qui de couper la route).
 _reinit()
 codes = [appel("devinette-%03d" % i, ip="10.0.0.1", entetes={"CF-Connecting-IP": "198.51.100.%d" % i}, mois="2026-09")[0].status_code
-         for i in range(R.STATS_ECHECS_MAX)]
-verifier("falsification : %d clés fausses depuis %d « adresses » différentes -> 401 chacune (aucune adresse ne dépasse son débit)"
-         % (R.STATS_ECHECS_MAX, R.STATS_ECHECS_MAX), set(codes) == {401}, set(codes))
-r, cc, _ = appel("devinette-suivante", ip="10.0.0.1", entetes={"CF-Connecting-IP": "198.51.100.250"}, mois="2026-09")
-verifier("falsification : l'essai suivant, nouvelle « adresse », -> 429 (verrou GLOBAL)",
-         r.status_code == 429 and cc.get("error") == "trop_d_echecs" and r.headers.get("retry-after") == "600", (r.status_code, cc))
+         for i in range(40)]
+verifier("falsification : 40 clés fausses depuis 40 « adresses » -> 401 chacune (le frein par adresse est contourné, c'est assumé)",
+         set(codes) == {401}, set(codes))
 r, cc, _ = appel(CLE_FREQ, ip="192.0.2.77", mois="2026-09")
-verifier("verrou global : 429 pour TOUT LE MONDE, même la bonne clé, pendant la fenêtre", r.status_code == 429, r.status_code)
-verifier("verrou global : 30 échecs / 10 min", R.STATS_ECHECS_MAX == 30 and R.STATS_ECHECS_FENETRE == 600.0)
-_reinit()
-r, cc, _ = appel(CLE_FREQ, mois="2026-09")
-verifier("fenêtre écoulée (compteur vidé) : la bonne clé repasse", r.status_code == 200)
-_reinit()
-for _ in range(R.STATS_ECHECS_MAX - 1):
-    appel("x" * 40, ip="10.0.0.2", entetes={"CF-Connecting-IP": "198.51.100.1"}, mois="2026-09")
-r, cc, _ = appel(CLE_FREQ, mois="2026-09")
-verifier("sous le seuil (29 échecs) : la bonne clé passe toujours", r.status_code == 200, r.status_code)
+verifier("PAS de déni de service : après 40 clés fausses, la BONNE clé est toujours servie (aucun verrou global)",
+         r.status_code == 200, r.status_code)
+verifier("aucun compteur global d'échecs dans le module", not hasattr(R, "_STATS_ECHECS") and not hasattr(R, "STATS_ECHECS_MAX"))
+_dc = open(os.path.join(F.RACINE, "docker-compose.yml"), encoding="utf-8").read()
+verifier("docker-compose recommande 64 caractères hexadécimaux", "64 caractères hexadécimaux" in _dc)
 
 # CLÉ TROP COURTE = ABSENTE
 _reinit(); _env("courte-0123456789", None)
