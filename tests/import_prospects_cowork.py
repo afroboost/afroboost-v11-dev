@@ -707,7 +707,10 @@ CHAMPS_REQUALIFIABLES = (
 # JAMAIS réécrits par un import : l'état vivant appartient au terrain.
 CHAMPS_INTOUCHABLES = ("status", "notes", "wave", "collaboration_type",
                        "partner_application_id", "partner_id", "coach_id",
-                       "id", "created_at", "created_by")
+                       "id", "created_at", "created_by",
+                       # V627 : la corbeille et le refus durable appartiennent au coach.
+                       "corbeille", "corbeille_at", "corbeille_par", "corbeille_motif",
+                       "corbeille_precision", "corbeille_trash_id", "ne_plus_contacter")
 
 
 async def planifier(db, documents, coach_id):
@@ -715,13 +718,23 @@ async def planifier(db, documents, coach_id):
     import api.server as S
 
     par_ref = {}
+    tous = []
     async for existant in db[S.P3S1_COLLECTION].find(
             {"coach_id": coach_id}, {"_id": 0}):
+        tous.append(existant)
         if existant.get("ref"):
             par_ref[existant["ref"]] = existant
     par_cle = {}
-    for existant in par_ref.values():
+    # V627 : TOUTES les fiches (avec ou sans `ref`, corbeille comprise) comptent comme connues.
+    for existant in tous:
         par_cle.setdefault(existant.get("dedupe_key") or "", []).append(existant)
+    # V627 — qui a REFUSÉ tout contact (fiche ou registre STOP) n'est jamais réimporté.
+    refus = set()
+    for existant in tous:
+        if existant.get("ne_plus_contacter"):
+            for champ in ("public_email", "public_phone", "dedupe_key"):
+                if existant.get(champ):
+                    refus.add((champ, str(existant[champ]).strip().lower()))
 
     plan = {"nouveaux": [], "identiques": [], "mises_a_jour": [],
             "conflits": [], "invalides": []}
@@ -750,6 +763,24 @@ async def planifier(db, documents, coach_id):
 
         doc["dedupe_key"] = S.p3s1_cle_doublon(doc["organisation_name"], doc["city"])
         existant = par_ref.get(doc["ref"])
+
+        # V627 : refus durable connu -> jamais créé ni requalifié, et on le DIT.
+        if any((champ, str(doc.get(champ) or "").strip().lower()) in refus
+               for champ in ("public_email", "public_phone", "dedupe_key") if doc.get(champ)):
+            plan["conflits"].append((doc, ["a demandé à ne plus être contacté — jamais réimporté"]))
+            continue
+        stop = []
+        for canal, champ in (("email", "public_email"), ("whatsapp", "public_phone")):
+            if doc.get(champ) and await S.c3_refus_exprimes(canal, [doc[champ]]):
+                stop.append(canal)
+        if stop:
+            plan["conflits"].append((doc, ["refus enregistré au registre STOP (%s) — jamais réimporté"
+                                           % ", ".join(stop)]))
+            continue
+        if existant is not None and existant.get("corbeille"):
+            plan["conflits"].append((doc, ["fiche « %s » dans la corbeille — la restaurer avant tout import"
+                                           % existant.get("organisation_name")]))
+            continue
 
         if existant is None:
             # Pas de `ref` connue — mais peut-être la même organisation sous une

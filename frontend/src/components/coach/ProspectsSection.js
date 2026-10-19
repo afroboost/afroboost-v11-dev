@@ -300,6 +300,95 @@ const TONS_IA = [
   { cle: 'direct', libelle: 'Plus direct' },
 ];
 
+/* V627 — CORBEILLE DES PROSPECTS. La corbeille est celle du tableau de bord (onglet
+   Corbeille, « Restaurer ») ; rien n'est effacé. Le motif est FACULTATIF. « Ne souhaite
+   plus être contacté » pose en plus un refus DURABLE qui survit à la restauration. */
+export const MOTIFS_CORBEILLE = [
+  { cle: 'pas_interesse', libelle: 'Pas intéressé' },
+  { cle: 'ne_plus_contacter', libelle: 'Ne souhaite plus être contacté' },
+  { cle: 'doublon', libelle: 'Doublon' },
+  { cle: 'contact_incorrect', libelle: 'Contact incorrect' },
+  { cle: 'autre', libelle: 'Autre' },
+];
+
+/** La confirmation (jamais une boîte native du navigateur). `cible` = { id, nom }. */
+export function ModaleCorbeille({ cible, enCours, erreur, onConfirmer, onAnnuler }) {
+  const [motif, setMotif] = useState('');
+  const [precision, setPrecision] = useState('');
+  useEffect(() => {
+    const echap = (e) => { if (e.key === 'Escape' && !enCours) onAnnuler(); };
+    window.addEventListener('keydown', echap);
+    return () => window.removeEventListener('keydown', echap);
+  }, [enCours, onAnnuler]);
+  if (!cible) return null;
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Mettre à la corbeille" data-testid="modale-corbeille"
+         onClick={(e) => { if (e.target === e.currentTarget && !enCours) onAnnuler(); }}
+         style={{ position: 'fixed', inset: 0, zIndex: 10060, background: 'rgba(0,0,0,0.72)', display: 'flex',
+                  alignItems: 'center', justifyContent: 'center', padding: 'min(16px, 4vw)' }}>
+      <div style={{ width: '100%', maxWidth: '420px', maxHeight: '100%', overflowY: 'auto', boxSizing: 'border-box',
+                    background: 'rgb(21,18,26)', border: `1px solid rgba(${RGB}, 0.5)`, borderRadius: '14px',
+                    padding: '16px', color: TEXTE }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, fontSize: '15px' }}>
+          <SvgIcon name="trash" size={17} /> Mettre à la corbeille ?
+        </div>
+        <div data-testid="corbeille-nom" style={{ fontSize: '13px', marginTop: '6px', overflowWrap: 'anywhere' }}>
+          {cible.nom || 'Ce prospect'}
+        </div>
+        <div style={{ fontSize: '12px', opacity: 0.75, marginTop: '6px', lineHeight: 1.45 }}>
+          Il disparaît des listes et ne recevra plus aucun message ni relance. Son historique
+          est conservé ; il reste restaurable depuis la Corbeille.
+        </div>
+        <fieldset style={{ border: 'none', padding: 0, margin: '12px 0 0' }}>
+          <legend style={{ fontSize: '12px', fontWeight: 600, marginBottom: '6px' }}>Motif (facultatif)</legend>
+          {MOTIFS_CORBEILLE.map((m) => (
+            <label key={m.cle} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px',
+                                        padding: '5px 0', cursor: 'pointer' }}>
+              <input type="radio" name="motif-corbeille" value={m.cle} checked={motif === m.cle}
+                     data-testid={`motif-${m.cle}`} onChange={() => setMotif(m.cle)}
+                     style={{ accentColor: PRIMAIRE }} />
+              {m.libelle}
+            </label>
+          ))}
+        </fieldset>
+        {motif === 'autre' ? (
+          <input type="text" value={precision} maxLength={300} placeholder="Précision (facultatif)"
+                 data-testid="corbeille-precision" onChange={(e) => setPrecision(e.target.value)}
+                 style={{ ...styleChamp, width: '100%', boxSizing: 'border-box', marginTop: '4px' }} />
+        ) : null}
+        {motif === 'ne_plus_contacter' ? (
+          <div data-testid="corbeille-avertissement-refus"
+               style={{ fontSize: '12px', marginTop: '8px', padding: '8px 10px', borderRadius: '8px', lineHeight: 1.45,
+                        background: `rgba(${RGB}, 0.14)`, border: `1px solid rgba(${RGB}, 0.4)` }}>
+            Refus durable : même restauré, ce prospect ne recevra plus de message de prospection.
+          </div>
+        ) : null}
+        {erreur ? <div role="alert" data-testid="corbeille-erreur" style={{ fontSize: '12px', marginTop: '8px', color: 'rgb(252,165,165)' }}>{erreur}</div> : null}
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', flexWrap: 'wrap', marginTop: '14px' }}>
+          <button type="button" data-testid="corbeille-annuler" disabled={enCours} onClick={onAnnuler}
+                  style={{ ...stylePetitBouton, minHeight: '36px' }}>Annuler</button>
+          <button type="button" data-testid="corbeille-confirmer" disabled={enCours}
+                  onClick={() => onConfirmer({ motif: motif || null, precision: motif === 'autre' ? (precision.trim() || null) : null })}
+                  style={{ ...styleBouton, minHeight: '36px', opacity: enCours ? 0.6 : 1 }}>
+            {enCours ? 'Déplacement…' : 'Mettre à la corbeille'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BoutonCorbeille({ onClick, testid, desactive }) {
+  return (
+    <button type="button" data-testid={testid} onClick={onClick} disabled={desactive}
+            aria-label="Mettre à la corbeille" title="Mettre à la corbeille"
+            style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '4px',
+                     opacity: desactive ? 0.4 : 0.8, display: 'inline-flex' }}>
+      <SvgIcon name="trash" size={17} />
+    </button>
+  );
+}
+
 function Etiquette({ texte, ton }) {
   const fonds = {
     neutre: 'rgba(255,255,255,0.08)',
@@ -427,7 +516,14 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
      objet : la règle V305 interdit de reposer un objet neuf quand rien n'a
      changé, et une chaîne se compare sans risque. */
   const [filtreStatut, setFiltreStatut] = useState('');
-  const [filtreCategorie, setFiltreCategorie] = useState('');   // V625 : filtre d'écran, aucun appel serveur
+  const [filtreCategorie, setFiltreCategorie] = useState('');
+  const [corbeille, setCorbeille] = useState(null);   // V627 : { id, nom, enCours, erreur }
+  const [annonce, setAnnonce] = useState('');          // V627 : « Prospect déplacé dans la corbeille »
+  useEffect(() => {
+    if (!annonce) return undefined;
+    const t = setTimeout(() => setAnnonce(''), 4000);
+    return () => clearTimeout(t);
+  }, [annonce]);   // V625 : filtre d'écran, aucun appel serveur
 
   /* Les dépendances sont des CHAÎNES, jamais l'objet `filtres` — qui est neuf à
      chaque rendu et relancerait l'effet en boucle (règle absolue, incident V305). */
@@ -1033,6 +1129,24 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
     }
   };
 
+  /* V627 — METTRE À LA CORBEILLE (route serveur dédiée ; rien n'est effacé). */
+  const ouvrirCorbeille = (id, nom) => { if (id) setCorbeille({ id, nom, enCours: false, erreur: '' }); };
+  const confirmerCorbeille = async ({ motif, precision }) => {
+    if (!corbeille || corbeille.enCours) return;
+    setCorbeille((c) => ({ ...c, enCours: true, erreur: '' }));
+    try {
+      await axios.post(`${base}/partner-prospects/${encodeURIComponent(corbeille.id)}/corbeille`, { motif, precision });
+      if (ouvert && ouvert.id === corbeille.id) fermer();
+      setCorbeille(null);
+      setFilActif('');
+      setAnnonce('Prospect déplacé dans la corbeille');
+      recharger();
+      chargement.reessayer('reponses');
+    } catch (err) {
+      setCorbeille((c) => (c ? { ...c, enCours: false, erreur: erreurLisible(err, 'Déplacement refusé par le serveur.') } : c));
+    }
+  };
+
   /* V599 — créer UN prospect (POST existant). Un doublon possible (409) est montré,
      jamais tranché : « Créer quand même » renvoie avec allow_duplicate. */
   const creerProspect = async (forcer) => {
@@ -1049,7 +1163,9 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
       recharger();
     } catch (err) {
       const d = err && err.response && err.response.data && err.response.data.detail;
-      if (err && err.response && err.response.status === 409 && d && d.possible_duplicates) {
+      if (err && err.response && err.response.status === 409 && d && d.code === 'NE_PLUS_CONTACTER') {
+        setMessage({ type: 'erreur', texte: d.message || 'Cette organisation a demandé à ne plus être contactée.' });   // V627
+      } else if (err && err.response && err.response.status === 409 && d && d.possible_duplicates) {
         setCreation((c) => ({ ...c, doublons: d.possible_duplicates }));
       } else {
         setMessage({ type: 'erreur', texte: erreurLisible(err, 'Création refusée par le serveur.') });
@@ -1516,6 +1632,11 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                         </span>
                       ) : null}
                     </span>
+                    {conv.corbeille ? (
+                      <span data-testid="conversation-dans-corbeille"
+                            style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px',
+                                     flex: '0 0 auto', background: 'rgba(255,255,255,0.12)' }}>Corbeille</span>
+                    ) : null}
                     <BadgeCategorie cle={cleCategorie(conv)} testid="conversation-categorie" />
                     <span data-testid={`ligne-statut-${conv.statut_commercial}`}
                           style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
@@ -1619,6 +1740,12 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                                      color: `color-mix(in srgb, ${PRIMAIRE} 80%, white)` }}>
                       Voir la fiche
                     </button>
+                  ) : null}
+                  {convActive.prospect_id && !convActive.corbeille ? (
+                    <span style={{ marginLeft: 'auto' }}>
+                      <BoutonCorbeille testid="conversation-corbeille"
+                                       onClick={() => ouvrirCorbeille(convActive.prospect_id, convActive.organisation)} />
+                    </span>
                   ) : null}
                 </div>
                 <div title={r.from_email}
@@ -2128,9 +2255,9 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                             Annuler
                           </button>
                           {!carte.apercu.envoi_possible && (
-                            <span data-testid="envoi-non-active"
+                            <span data-testid={carte.apercu.blocage_prospect ? 'envoi-bloque-prospect' : 'envoi-non-active'}
                                   style={{ fontSize: '11px', opacity: 0.7, color: TEXTE }}>
-                              Envoi non activé
+                              {carte.apercu.blocage_prospect || 'Envoi non activé'}
                             </span>
                           )}
                           {carte.apercu.deja_envoye && (
@@ -2914,7 +3041,8 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
             </select>
             {creation.doublons ? (
               <div data-testid="creation-doublons" style={{ fontSize: '12px', color: 'rgb(252,211,77)' }}>
-                Un prospect existant lui ressemble : {creation.doublons.map((d) => d.organisation_name).filter(Boolean).slice(0, 3).join(', ')}.
+                Un prospect existant lui ressemble : {creation.doublons.map((d) => (d.organisation_name
+                  ? `${d.organisation_name}${d.corbeille ? ' (dans la corbeille)' : ''}` : '')).filter(Boolean).slice(0, 3).join(', ')}.
                 Vérifie, puis « Créer quand même » si ce sont deux organisations différentes.
               </div>
             ) : null}
@@ -2935,6 +3063,20 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
           </form>
         </div>
       )}
+
+      {annonce ? (
+        <div role="status" data-testid="annonce-corbeille"
+             style={{ position: 'fixed', left: '50%', bottom: '18px', transform: 'translateX(-50%)', zIndex: 10070,
+                      maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box', padding: '10px 16px', borderRadius: '10px',
+                      background: 'rgb(21,18,26)', border: `1px solid rgba(${RGB}, 0.6)`, color: TEXTE, fontSize: '13px',
+                      display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 6px 24px rgba(0,0,0,0.5)' }}>
+          <SvgIcon name="trash" size={15} /> {annonce}
+        </div>
+      ) : null}
+      {corbeille ? (
+        <ModaleCorbeille cible={corbeille} enCours={corbeille.enCours} erreur={corbeille.erreur}
+                         onConfirmer={confirmerCorbeille} onAnnuler={() => setCorbeille(null)} />
+      ) : null}
 
       {ouvert && brouillon && (
         <div
@@ -2972,10 +3114,13 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                   {ouvert.partner_id ? 'Voir le partenariat' : 'Activer comme partenaire'}
                 </button>
               </div>
-              <button type="button" onClick={fermer} data-testid="fermer-fiche"
-                      aria-label="Fermer" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer' }}>
-                <SvgIcon name="close" size={18} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: '0 0 auto' }}>
+                <BoutonCorbeille testid="fiche-corbeille" onClick={() => ouvrirCorbeille(ouvert.id, ouvert.organisation_name)} />
+                <button type="button" onClick={fermer} data-testid="fermer-fiche"
+                        aria-label="Fermer" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer' }}>
+                  <SvgIcon name="close" size={18} />
+                </button>
+              </div>
             </div>
 
             {/* V594 — UNE SECTION À LA FOIS. Rien n'est retiré : chaque bloc est DÉPLACÉ tel quel.

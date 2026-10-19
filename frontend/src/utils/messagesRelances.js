@@ -331,12 +331,14 @@ export function ligneRelance(action, campagne, conversation, prospectsParRef, ma
   // qui reste calculé comme avant sur J0 / J+3 / J+7 (aucun changement de statut).
   const j14 = etapeRelance(a, campagne, 'j14', conv, maintenant);
 
-  const refs = Array.isArray(a.prospect_ids) ? a.prospect_ids : [];
+  // V627 : la fiche se retrouve aussi par son `id` (les fiches créées à l'écran n'ont pas de `ref`).
+  const refs = (Array.isArray(a.prospect_ids) ? a.prospect_ids : [])
+    .concat(Array.isArray(a.prospect_uuids) ? a.prospect_uuids : []);
   const fiche = refs.map((r) => (prospectsParRef || {})[r]).find(Boolean) || null;
 
   let etat;
   let motifArret = '';
-  if (estRefus(conv)) { etat = ETATS.REFUS; motifArret = 'Refus exprimé dans la réponse'; } else if (aRepondu(a, conv)) { etat = ETATS.REPONDU; motifArret = 'Réponse reçue : relances arrêtées'; } else if (estRebondPermanent(a)) { etat = ETATS.REBOND; motifArret = 'Rebond permanent : adresse morte'; } else if (j0.etat === ETATS.STOPPE) { etat = ETATS.STOPPE; motifArret = j0.motif; } else if (a.paused_at || a.interesse_at) { etat = ETATS.STOPPE; motifArret = 'Suivi humain en cours'; } else if (j0.etat === ETATS.MANUEL) { etat = ETATS.MANUEL; } else if (j0.etat === ETATS.A_ENVOYER) { etat = ETATS.A_ENVOYER; } else if (j3.etat === ETATS.EN_RETARD || j7.etat === ETATS.EN_RETARD) { etat = ETATS.EN_RETARD; } else if (j3.etat === ETATS.PREVU || j7.etat === ETATS.PREVU) { etat = ETATS.PREVU; } else { etat = ETATS.ENVOYE; }
+  if (fiche && fiche.ne_plus_contacter) { etat = ETATS.STOPPE; motifArret = 'Ne souhaite plus être contacté'; } else if (fiche && fiche.corbeille) { etat = ETATS.STOPPE; motifArret = 'Prospect dans la corbeille'; } else if (estRefus(conv)) { etat = ETATS.REFUS; motifArret = 'Refus exprimé dans la réponse'; } else if (aRepondu(a, conv)) { etat = ETATS.REPONDU; motifArret = 'Réponse reçue : relances arrêtées'; } else if (estRebondPermanent(a)) { etat = ETATS.REBOND; motifArret = 'Rebond permanent : adresse morte'; } else if (j0.etat === ETATS.STOPPE) { etat = ETATS.STOPPE; motifArret = j0.motif; } else if (a.paused_at || a.interesse_at) { etat = ETATS.STOPPE; motifArret = 'Suivi humain en cours'; } else if (j0.etat === ETATS.MANUEL) { etat = ETATS.MANUEL; } else if (j0.etat === ETATS.A_ENVOYER) { etat = ETATS.A_ENVOYER; } else if (j3.etat === ETATS.EN_RETARD || j7.etat === ETATS.EN_RETARD) { etat = ETATS.EN_RETARD; } else if (j3.etat === ETATS.PREVU || j7.etat === ETATS.PREVU) { etat = ETATS.PREVU; } else { etat = ETATS.ENVOYE; }
 
   const sig = signauxConversation(conv);
   let prochaineAction = '—';
@@ -396,7 +398,7 @@ export function lignesRelances(actions, campagne, conversations, prospects, main
   const parAction = {};
   (conversations || []).forEach((c) => { if (c && c.action_id) parAction[c.action_id] = c; });
   const parRef = {};
-  (prospects || []).forEach((p) => { if (p && p.ref) parRef[p.ref] = p; });
+  (prospects || []).forEach((p) => { if (p && p.ref) parRef[p.ref] = p; if (p && p.id && !parRef[p.id]) parRef[p.id] = p; });   // V627
   return (actions || []).map((a) => ligneRelance(a, campagne, parAction[a.id], parRef, maintenant));
 }
 

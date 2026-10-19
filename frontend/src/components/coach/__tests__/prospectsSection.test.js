@@ -841,6 +841,9 @@ describe('P3-S3-B — préparation de campagne', () => {
        (route P3-S1 existante). Aucun message, aucun envoi, aucune campagne. */
     expect(new Set(posts)).toEqual(new Set([
       '/partner-prospects',
+      /* V627 : METTRE À LA CORBEILLE. Range la fiche (restaurable), n'envoie rien, n'efface
+         rien ; après une confirmation explicite dans l'écran. */
+      '/partner-prospects/${encodeURIComponent(corbeille.id)}/corbeille',
       '/prospect-campaigns/prepare',
       '/prospect-campaigns/${campagne.id}/approve',
       '/prospect-agenda/${encodeURIComponent(refOuverte)}/appointment',

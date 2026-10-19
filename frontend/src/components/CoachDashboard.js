@@ -9637,19 +9637,23 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     // V597 : un média de Prospection → Médias supprimé (restaurable comme les autres).
                     const isMedia = item.original_collection === "prospection_medias";
                     const isNiche = item.original_collection === "prospection_niches"; // V598
+                    const isProspect = item.original_collection === "partner_prospects"; // V627
                     const formatsMedia = { original: 'Original', '16_9': '16:9', '9_16': '9:16', '1_1': '1:1', miniature: 'Miniature' };
                     const titre = isCode
                       ? (p.code || "Code")
                       : isMedia
                         ? `${formatsMedia[p.format] || 'Média'} — niche ${p.niche || '?'}`
-                        : isNiche ? (p.nom || 'Niche') : (p.name || "Contact");
+                        : isNiche ? (p.nom || 'Niche') : isProspect ? (p.organisation_name || 'Prospect') : (p.name || "Contact");
                     const details = isCode
                       ? [p.value != null ? `${p.value} ${p.type || ''}`.trim() : null, p.expiresAt ? `expire le ${p.expiresAt}` : null].filter(Boolean).join(' · ')
                       : isMedia
                         ? [(p.fichier && p.fichier.nom) || p.version, 'Prospection → Médias'].filter(Boolean).join(' · ')
                         : isNiche
                           ? `Niche de prospection · contenu conservé : ${(p.contenu && p.contenu.prospects) || 0} prospect(s), ${(p.contenu && p.contenu.medias) || 0} média(s), ${(p.contenu && p.contenu.liens) || 0} lien(s)`
-                          : [p.email, p.whatsapp || p.phone].filter(Boolean).join(' · ');
+                          : isProspect
+                            ? [p.city, item.motif_libelle ? `Motif : ${item.motif_libelle}` : null, 'Historique conservé',
+                               item.motif === 'ne_plus_contacter' ? 'Refus de contact conservé après restauration' : null].filter(Boolean).join(' · ')
+                            : [p.email, p.whatsapp || p.phone].filter(Boolean).join(' · ');
                     let quand = item.deleted_at || '';
                     try { if (item.deleted_at) quand = new Date(item.deleted_at).toLocaleString('fr-FR'); } catch (e) {}
                     return (
@@ -9666,7 +9670,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
                               color: 'var(--primary-color, #D91CD2)'
                             }}>
-                              {isCode ? 'Code' : (isMedia ? 'Média' : (isNiche ? 'Niche' : 'Contact'))}
+                              {isCode ? 'Code' : (isMedia ? 'Média' : (isNiche ? 'Niche' : (isProspect ? 'Prospect' : 'Contact')))}
                             </span>
                             <span className="text-white font-semibold" style={{ fontSize: 15 }}>{titre}</span>
                           </div>

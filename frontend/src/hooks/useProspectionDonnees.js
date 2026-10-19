@@ -26,7 +26,8 @@ async function toutesLesFiches(API) {
   const fiches = [];
   let total = null;
   for (let page = 0; page < PAGES_MAX; page += 1) {
-    const r = await axios.get(`${API}/partner-prospects`, { params: { limit: PAGE, offset: page * PAGE } });
+    // V627 : les statistiques comptent AUSSI les fiches en corbeille (les envois passés restent justes).
+    const r = await axios.get(`${API}/partner-prospects`, { params: { limit: PAGE, offset: page * PAGE, inclure_corbeille: 1 } });
     const d = (r && r.data) || {};
     const lot = Array.isArray(d.prospects) ? d.prospects : [];
     if (total === null && typeof d.total === 'number') total = d.total;

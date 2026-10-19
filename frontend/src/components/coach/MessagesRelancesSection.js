@@ -449,7 +449,8 @@ function Panneau({ l, maintenant, notes, notesEnCours, brouillon, onFermer }) {
 async function lireProspects(base) {
   const tous = [];
   for (let page = 0; page < PAGES_PROSPECTS_MAX; page += 1) {
-    const rep = await axios.get(`${base}/partner-prospects`, { params: { limit: 50, offset: page * 50 } });
+    // V627 : l'historique des relances garde les fiches en corbeille (affichées « stoppées »).
+    const rep = await axios.get(`${base}/partner-prospects`, { params: { limit: 50, offset: page * 50, inclure_corbeille: 1 } });
     const d = (rep && rep.data) || {};
     const lot = Array.isArray(d.prospects) ? d.prospects : [];
     tous.push(...lot);

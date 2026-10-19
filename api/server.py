@@ -27060,7 +27060,8 @@ async def p3s1_signaux_doublon(coach: str, prospect: dict, exclure_id=None) -> l
         async for autre in db[P3S1_COLLECTION].find(
                 filtre,
                 {"_id": 0, "id": 1, "ref": 1, "organisation_name": 1,
-                 "city": 1, "dedupe_key": 1, "public_email": 1, "public_phone": 1}):
+                 "city": 1, "dedupe_key": 1, "public_email": 1, "public_phone": 1,
+                 "corbeille": 1, "ne_plus_contacter": 1}):   # V627 : la corbeille compte aussi
             if exclure_id and autre.get("id") == exclure_id:
                 continue
             motifs = []
@@ -27072,7 +27073,9 @@ async def p3s1_signaux_doublon(coach: str, prospect: dict, exclure_id=None) -> l
                 motifs.append("telephone")
             trouves.append({"id": autre.get("id"), "ref": autre.get("ref"),
                             "organisation_name": autre.get("organisation_name"),
-                            "city": autre.get("city"), "matched_on": motifs})
+                            "city": autre.get("city"), "matched_on": motifs,
+                            "corbeille": bool(autre.get("corbeille")),                 # V627
+                            "ne_plus_contacter": bool(autre.get("ne_plus_contacter"))})
     except Exception as _err:  # noqa: BLE001
         # Un signal illisible ne doit jamais empecher d'enregistrer un prospect.
         logger.warning("%s signaux de doublon ignores (%s)", P3S1_PREFIXE, type(_err).__name__)
@@ -27198,8 +27201,14 @@ async def p3s1_lister_prospects(request: Request):
     # RESTREINTE par les filtres d'ecran. Les deux sont distincts parce que les
     # compteurs se lisent sur la portee et la liste sur le filtre.
     portee = {} if is_super_admin(appelant) else {"coach_id": appelant}
-    filtre = dict(portee)
     parametres = request.query_params
+    # V627 : une fiche EN CORBEILLE sort des listes et tuiles ACTIVES. Les écrans de
+    # statistiques et d'historique demandent `inclure_corbeille=1` : les envois passés
+    # restent comptés. `portee_totale` sert au compteur de la corbeille.
+    portee_totale = dict(portee)
+    if (parametres.get("inclure_corbeille") or "").strip() != "1":
+        portee = dict(portee, corbeille={"$ne": True})
+    filtre = dict(portee)
 
     statut = (parametres.get("status") or "").strip().lower()
     if statut:
@@ -27309,6 +27318,8 @@ async def p3s1_lister_prospects(request: Request):
     # niveau « Découverte ») avant tout contact : c'est le cas d'Akoko Tresses
     # (COM-01, « à contacter »), qui faisait afficher « Acceptés 1 » sans accord.
     compteurs["total"] = await db[P3S1_COLLECTION].count_documents(portee)
+    compteurs["corbeille"] = await db[P3S1_COLLECTION].count_documents(
+        dict(portee_totale, corbeille=True))   # V627
 
     return {"total": await db[P3S1_COLLECTION].count_documents(filtre),
             "returned": len(documents),
@@ -27383,8 +27394,21 @@ async def p3s1_creer_prospect(request: Request):
     prospect["updated_at"] = maintenant
     prospect["created_by"] = appelant
 
+    # V627 — UNE PERSONNE QUI A REFUSÉ TOUT CONTACT N'EST JAMAIS RECRÉÉE, même avec
+    # `allow_duplicate` : ni par une fiche connue du coach (corbeille comprise), ni — pour le
+    # super-admin, propriétaire du registre — par le registre STOP. Un autre coach n'interroge
+    # PAS ce registre commun : la réponse révélerait qui s'y trouve (revue sécurité : oracle).
+    signaux = await p3s1_signaux_doublon(appelant, prospect)
+    _refus = [d for d in signaux if d.get("ne_plus_contacter")]
+    if not _refus and is_super_admin(appelant):
+        for _c627, _v627 in (("email", prospect.get("public_email")), ("whatsapp", prospect.get("public_phone"))):
+            if _v627 and await c3_refus_exprimes(_c627, [_v627]):
+                _refus.append({"registre_stop": _c627})
+    if _refus:
+        raise HTTPException(status_code=409, detail={
+            "message": "Cette organisation a demandé à ne plus être contactée : elle n'est pas recréée.",
+            "code": "NE_PLUS_CONTACTER", "possible_duplicates": [d for d in _refus if d.get("id")]})
     if not bool(corps.get("allow_duplicate")):
-        signaux = await p3s1_signaux_doublon(appelant, prospect)
         if signaux:
             raise HTTPException(
                 status_code=409,
@@ -27520,6 +27544,131 @@ def v592_vue_partenaire(partenaire) -> dict:
     return {"id": p.get("id"), "partner_slug": p.get("partner_slug"),
             "partner_status": p.get("partner_status"),
             "prospect_id": p.get("prospect_id"), "created_at": p.get("created_at")}
+
+
+# ===========================================================================
+# V627 — CORBEILLE DES PROSPECTS (non intéressés, doublons, contacts faux…)
+# ===========================================================================
+# LA CORBEILLE EXISTANTE, PAS UNE SECONDE. Comme une niche (V600), la fiche RESTE
+# dans `partner_prospects`, marquée `corbeille` ; une entrée `deleted_items` la
+# rend visible dans l'onglet Corbeille, et « Restaurer » (POST /trash/{id}/restore)
+# retire la marque. Rien n'est effacé : conversations, réponses, actions de
+# campagne, statistiques d'envoi et anti-doublon gardent leurs références.
+#
+# DEUX NOTIONS DISTINCTES :
+#   - `corbeille` : la fiche est rangée (réversible). Elle sort des listes actives,
+#     n'entre plus dans une campagne et ne reçoit plus rien (J0, relances, réponse) ;
+#   - `ne_plus_contacter` : un REFUS DURABLE (motif « Ne souhaite plus être
+#     contacté »). Posé sur la fiche ET dans le registre STOP (`subscribers`,
+#     opted_out). Restaurer la fiche NE le retire PAS : seule une nouvelle
+#     autorisation légitime pourra le lever (aucune route ne le fait dans ce lot).
+V627_MOTIFS = {
+    "pas_interesse": "Pas intéressé",
+    "ne_plus_contacter": "Ne souhaite plus être contacté",
+    "doublon": "Doublon",
+    "contact_incorrect": "Contact incorrect",
+    "autre": "Autre",
+}
+V627_CHAMPS_CORBEILLE = ("corbeille", "corbeille_at", "corbeille_par", "corbeille_motif",
+                         "corbeille_precision", "corbeille_trash_id")
+V627_MSG_CORBEILLE = "Ce prospect est dans la corbeille : restaurez-le avant de le contacter."
+V627_MSG_REFUS = "Ce prospect a demandé à ne plus être contacté."
+
+
+def v627_blocage(fiches) -> str:
+    """'NE_PLUS_CONTACTER' / 'CORBEILLE' / '' pour les fiches d'un destinataire. PURE.
+    Le refus durable passe avant la corbeille : c'est lui qui parle de la personne."""
+    liste = [f for f in (fiches or []) if isinstance(f, dict)]
+    if any(f.get("ne_plus_contacter") for f in liste):
+        return "NE_PLUS_CONTACTER"
+    if any(f.get("corbeille") for f in liste):
+        return "CORBEILLE"
+    return ""
+
+
+def v627_conversations_actives(conversations) -> list:
+    """Les conversations ACTIVES : sans les prospects en corbeille, SAUF si un message non
+    lu est arrivé depuis (une réponse n'est jamais perdue). PURE."""
+    return [c for c in (conversations or []) if not c.get("corbeille") or (c.get("non_lues") or 0) > 0]
+
+
+def v627_message(code: str) -> str:
+    return {"NE_PLUS_CONTACTER": V627_MSG_REFUS, "CORBEILLE": V627_MSG_CORBEILLE}.get(code or "", "")
+
+
+@api_router.post("/partner-prospects/{prospect_id}/corbeille")
+async def v627_mettre_en_corbeille(prospect_id: str, request: Request):
+    """METTRE UN PROSPECT À LA CORBEILLE. Rien n'est effacé, tout est restaurable.
+
+    JWT signé + propriété (même règle que la lecture de la fiche). Le motif est
+    facultatif ; « ne_plus_contacter » pose en plus le refus DURABLE (fiche +
+    registre STOP), qui survit à la restauration. Un double clic ne crée qu'une
+    entrée : la marque est posée sous condition (`corbeille != True`)."""
+    appelant = await _v309_require_coach_or_admin(request)
+    fiche = await _v592_prospect_du_coach(prospect_id, appelant)
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        corps = {}
+    motif = (str(corps.get("motif") or "").strip().lower() or None)
+    if motif is not None and motif not in V627_MOTIFS:
+        raise HTTPException(status_code=400, detail="Motif inconnu")
+    precision = p3s1_texte(corps.get("precision"), 300) or None
+    if fiche.get("corbeille"):
+        raise HTTPException(status_code=409, detail="Ce prospect est déjà dans la corbeille")
+    instant = datetime.now(timezone.utc).isoformat()
+    trash_id = str(uuid.uuid4())
+    champs = {"corbeille": True, "corbeille_at": instant, "corbeille_par": appelant,
+              "corbeille_motif": motif, "corbeille_precision": precision,
+              "corbeille_trash_id": trash_id, "updated_at": instant}
+    refus = motif == "ne_plus_contacter"
+    if refus and not fiche.get("ne_plus_contacter"):
+        champs["ne_plus_contacter"] = {"at": instant, "par": appelant, "source": "corbeille"}
+    pose = await db[P3S1_COLLECTION].update_one(
+        {"id": fiche["id"], "corbeille": {"$ne": True}}, {"$set": champs})
+    if not getattr(pose, "matched_count", 0):
+        raise HTTPException(status_code=409, detail="Ce prospect est déjà dans la corbeille")
+    try:
+        await db.deleted_items.insert_one({
+            "id": trash_id, "original_collection": P3S1_COLLECTION, "original_id": fiche["id"],
+            "coach_id": (fiche.get("coach_id") or appelant or "").lower().strip(),
+            "deleted_at": instant, "deleted_by": appelant,
+            "motif": motif, "motif_libelle": V627_MOTIFS.get(motif) if motif else None,
+            "payload": dict(fiche)})
+    except Exception:
+        # Sans entrée de corbeille, la fiche serait introuvable à restaurer : on défait la marque.
+        await db[P3S1_COLLECTION].update_one({"id": fiche["id"], "corbeille_trash_id": trash_id},
+                                             {"$unset": {k: "" for k in V627_CHAMPS_CORBEILLE}})
+        raise
+    stop = []
+    if refus:
+        # LE REGISTRE STOP CANONIQUE (`subscribers`) est COMMUN à toute la plateforme : il
+        # bloque aussi les campagnes clients. Un coach ne peut donc y inscrire QUE ce qu'il a
+        # réellement contacté (une action de SES campagnes vers cette adresse) ; le super-admin,
+        # propriétaire du registre, toujours. Sinon le refus reste sur la fiche — qui suffit à
+        # bloquer J0, relances et réponses de ce coach. (Revue sécurité : pas d'empoisonnement.)
+        proprietaire = (fiche.get("coach_id") or appelant or "").lower().strip()
+        for canal, valeur in (("email", fiche.get("public_email")), ("whatsapp", fiche.get("public_phone"))):
+            if valeur and not is_super_admin(appelant):
+                _cibles = list({str(valeur).strip(), str(valeur).strip().lower()})
+                if not await db[P3S3_ACTIONS].count_documents(
+                        {"coach_id": proprietaire, "target": {"$in": _cibles}, "sent_at": {"$ne": None}}):
+                    continue
+            if valeur:
+                try:
+                    r = await p3u1_enregistrer_refus(canal, valeur)
+                    if r.get("ok"):
+                        stop.append(canal)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[V627] refus %s non inscrit au registre (%s) — la fiche le porte", canal,
+                                   type(e).__name__)
+    logger.info("[V627] prospect %s placé en corbeille par %s (motif=%s, ne_plus_contacter=%s)",
+                fiche["id"][:8], appelant[:24], motif, refus)
+    return {"corbeille": True, "trash_id": trash_id, "motif": motif,
+            "ne_plus_contacter": bool(refus or fiche.get("ne_plus_contacter")), "registre_stop": stop,
+            "message": "Prospect déplacé dans la corbeille"}
 
 
 async def _v592_prospect_du_coach(prospect_id: str, appelant: str) -> dict:
@@ -28384,6 +28533,8 @@ async def p3s3_preparer_campagne(request: Request):
                 hors_prospection.add(_n["id"])
     if hors_prospection:
         fiches = [f for f in fiches if f.get("niche_id") not in hors_prospection]
+    # V627 — UNE FICHE EN CORBEILLE OU QUI REFUSE TOUT CONTACT N'ENTRE DANS AUCUNE CAMPAGNE.
+    fiches = [f for f in fiches if not v627_blocage([f])]
     if not fiches:
         raise HTTPException(status_code=400, detail="Aucun prospect ne correspond a cette selection")
 
@@ -28892,6 +29043,8 @@ P3S3D_MOTIFS = {
     "MESSAGE_VIDE": "aucun message J0 : il n'y a rien a envoyer",
     "CIBLE_INVALIDE": "adresse absente ou illisible",
     "REFUS_EXPRIME": "ce destinataire a exprime un refus",
+    "CORBEILLE": "ce prospect est dans la corbeille",               # V627
+    "NE_PLUS_CONTACTER": "ce prospect a demande a ne plus etre contacte",  # V627
     "DEJA_CONTACTE": "un premier contact a deja ete confirme",
     "DEJA_RESERVE": "une tentative est deja en cours ou indeterminee",
     "STATUT_INCOMPATIBLE": "l'action n'est pas dans un etat envoyable",
@@ -29029,6 +29182,11 @@ def p3s3d_garde_action(action: dict, campagne: dict, fiches=None,
                 "motif": P3S3D_MOTIFS["REFUS_EXPRIME"]}
     # Un premier contact deja confirme sur UNE SEULE des fiches suffit a
     # interdire le J0 : les fiches d'un meme destinataire partagent un decideur.
+    # V627 : une fiche en corbeille ou qui refuse tout contact arrête le J0, même
+    # dans une campagne préparée ou approuvée AVANT (l'action ne relit pas la fiche).
+    _v627 = v627_blocage(fiches)
+    if _v627:
+        return {"autorise": False, "code": _v627, "motif": P3S3D_MOTIFS[_v627]}
     for f in (fiches or []):
         if (f or {}).get("first_contact_sent_at"):
             return {"autorise": False, "code": "DEJA_CONTACTE",
@@ -29127,7 +29285,8 @@ def p3s3d_resume_execution(campagne: dict, actions, fiches_par_ref=None,
     for a in actions:
         if (a.get("execution_type") or "") == "AUTO":
             resume["auto_declares"] += 1
-        fiches = [table[r] for r in (a.get("prospect_ids") or []) if r in table]
+        fiches = list({id(table[r]): table[r] for r in (a.get("prospect_ids") or [])
+                       + (a.get("prospect_uuids") or []) if r in table}.values())   # V627
         verdict = p3s3d_garde_action(a, campagne, fiches=fiches, refus=refus,
                                      envoi_autorise=envoi_autorise, simulation=True)
         if verdict["autorise"]:
@@ -29703,10 +29862,15 @@ async def p3s3d_executer_campagne(campagne_id: str, appelant: str,
                 "resume": None, "resultats": []}
 
     references = [r for a in actions for r in (a.get("prospect_ids") or [])]
+    # V627 : relue aussi par `prospect_uuids` — une fiche SANS `ref` (créée à l'écran)
+    # échappait jusqu'ici à toute garde de fiche. Les clés `id` s'ajoutent à la table.
+    _uuids = [u for a in actions for u in (a.get("prospect_uuids") or []) if u]
     fiches = await db[P3S1_COLLECTION].find(
-        {"ref": {"$in": references}}, {"_id": 0}).to_list(len(references) + 1) \
-        if references else []
-    table = {f.get("ref"): f for f in fiches}
+        {"$or": [{"ref": {"$in": references}}, {"id": {"$in": _uuids}}]}, {"_id": 0}).to_list(
+        len(references) + len(_uuids) + 1) if (references or _uuids) else []
+    table = {f.get("ref"): f for f in fiches if f.get("ref")}
+    for f in fiches:
+        table.setdefault(f.get("id"), f)
     # LE REGISTRE STOP EST INTERROGE PAR CANAL, ET LE MOTEUR N'EN NOMME AUCUN.
     # Ecrire `c3_refus_exprimes("email", ...)` ici aurait grave le canal dans le
     # moteur — le premier `if email` d'une longue serie. On regroupe donc les
@@ -29731,7 +29895,8 @@ async def p3s3d_executer_campagne(campagne_id: str, appelant: str,
     resultats = []
     traites = 0
     for action in actions:
-        associees = [table[r] for r in (action.get("prospect_ids") or []) if r in table]
+        associees = list({id(table[r]): table[r] for r in (action.get("prospect_ids") or [])
+                          + (action.get("prospect_uuids") or []) if r in table}.values())   # V627
         verdict = p3s3d_garde_action(action, campagne, fiches=associees, refus=refus,
                                      envoi_autorise=envoi_autorise, simulation=simulation)
         if not verdict["autorise"]:
@@ -35392,10 +35557,14 @@ async def p3r2_relations_humaines(actions) -> dict:
         fiches = await db[P3S1_COLLECTION].find(
                 {"$or": [{"ref": {"$in": list(refs)}}, {"id": {"$in": list(uuids)}}]},
                 {"_id": 0, "ref": 1, "id": 1, "status": 1, "partner_id": 1, "adresse_a_corriger": 1,
-                 "relance_bloquee": 1}).to_list(P3S3_LISTE_MAX * 4)
+                 "relance_bloquee": 1, "corbeille": 1, "ne_plus_contacter": 1}).to_list(P3S3_LISTE_MAX * 4)
         for f in fiches:
             motif = None
-            if f.get("partner_id"):
+            if f.get("ne_plus_contacter"):   # V627 : refus durable, avant tout le reste
+                motif = "ne souhaite plus etre contacte"
+            elif f.get("corbeille"):         # V627
+                motif = "prospect dans la corbeille"
+            elif f.get("partner_id"):
                 motif = "partenaire"
             elif (f.get("status") or "") in P3R2_STATUTS_HUMAINS:
                 motif = "fiche " + f["status"]
@@ -35552,6 +35721,9 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
     if await p3ai4_refuse_par_stop(destinataire):
         raise HTTPException(status_code=409,
                             detail="Ce destinataire ne peut pas etre contacte")
+    _v627 = v627_blocage(dossier.get("fiches"))   # V627 : corbeille / refus durable
+    if _v627:
+        raise HTTPException(status_code=409, detail=v627_message(_v627))
 
     maintenant = datetime.now(timezone.utc).isoformat()
     trace = {
@@ -35727,7 +35899,10 @@ async def p3ai4_apercu(inbound_id: str, request: Request):
         "motifs_validation": (brouillon or {}).get("motifs_validation") or [],
         "statut_commercial": await p3n_statut_courant(message),
         "contexte_obsolete": p3n_contexte_obsolete(brouillon, notes),
-        "envoi_possible": p3ai4_envoi_autorise(flags),
+        # V627 : un prospect en corbeille / qui refuse tout contact -> l'envoi est refusé ;
+        # l'écran le DIT avant « Confirmer l'envoi » au lieu de laisser croire le contraire.
+        "envoi_possible": p3ai4_envoi_autorise(flags) and not v627_blocage(dossier.get("fiches")),
+        "blocage_prospect": v627_message(v627_blocage(dossier.get("fiches"))) or None,
         # V608 : un envoi « failed » (ou bloque avant Resend) n'est PAS un envoi fait.
         "deja_envoye": bool(deja and deja.get("send_status") == P3AI4_ENVOYE
                             and not v608_reessai_permis(deja)),
@@ -35919,9 +36094,12 @@ async def v625_categories_des_conversations(conversations, actions: dict, email:
     filtre = {"$or": [{"id": {"$in": sorted(par_id)}}, {"ref": {"$in": sorted(par_ref)}}]}
     if not is_super_admin(email):
         filtre["coach_id"] = email
-    async for f in db[P3S1_COLLECTION].find(filtre, {"_id": 0, "id": 1, "ref": 1, "category": 1}):
+    async for f in db[P3S1_COLLECTION].find(filtre, {"_id": 0, "id": 1, "ref": 1, "category": 1,
+                                                     "corbeille": 1, "ne_plus_contacter": 1}):
         for c in (par_id.get(f.get("id")) or []) + (par_ref.get(f.get("ref")) or []):
             c["prospect_id"], c["categorie"] = f.get("id"), (f.get("category") or None)
+            c["corbeille"] = bool(f.get("corbeille"))                    # V627
+            c["ne_plus_contacter"] = bool(f.get("ne_plus_contacter"))    # V627
 
 
 def pf_conversations(messages, actions, envois, statuts, intentions) -> list:
@@ -36260,6 +36438,10 @@ async def pf_charger(email: str, statuts: dict, filtre_statut: str = "") -> dict
         await v625_categories_des_conversations(conversations, actions, email)
     except Exception as _e624:  # noqa: BLE001
         logger.warning("[V625] categories des conversations ignorees : %s", type(_e624).__name__)
+    # V627 — LA CORBEILLE SORT DES CONVERSATIONS ACTIVES… sauf si le partenaire a ÉCRIT
+    # depuis (message non lu) : une réponse n'est jamais perdue, elle reste visible avec
+    # son badge « Corbeille ». Les messages eux-mêmes ne sont ni lus ni modifiés.
+    conversations = v627_conversations_actives(conversations)
     compteurs = pf_compteurs(conversations)
     if filtre_statut:
         conversations = [c for c in conversations
@@ -39540,7 +39722,8 @@ async def restore_trash(trash_id: str, request: Request):
         if not owner or owner != caller.lower().strip():
             raise HTTPException(status_code=403, detail="Cet élément ne vous appartient pas")
     coll = entry.get("original_collection")
-    if coll not in ("discount_codes", "chat_participants", "prospection_medias", "prospection_niches"):  # V597 médias, V598 niches
+    if coll not in ("discount_codes", "chat_participants", "prospection_medias", "prospection_niches",
+                    "partner_prospects"):  # V597 médias, V598 niches, V627 prospects
         raise HTTPException(status_code=400, detail="Type non restaurable")
     # V618i — un code dont les ABONNEMENTS ont été supprimés ne revient jamais par le parcours normal :
     # restauration réservée au super-admin, avec confirmation explicite ; les abonnements retrouvent
@@ -39561,6 +39744,24 @@ async def restore_trash(trash_id: str, request: Request):
     payload = dict(entry.get("payload") or {})
     payload.pop("_id", None)
     oid = entry.get("original_id")
+    if coll == "partner_prospects":
+        # V627 : la fiche est restée en base, marquée `corbeille` — on retire la marque.
+        # Le refus DURABLE (`ne_plus_contacter` + registre STOP) est CONSERVÉ.
+        instant = datetime.now(timezone.utc).isoformat()
+        if await db[coll].find_one({"id": oid}, {"_id": 1}):
+            await db[coll].update_one({"id": oid}, {
+                "$unset": {k: "" for k in V627_CHAMPS_CORBEILLE},
+                "$set": {"restaure_at": instant, "restaure_par": caller, "updated_at": instant}})
+        else:
+            for k in V627_CHAMPS_CORBEILLE:
+                payload.pop(k, None)
+            await db[coll].insert_one(dict(payload, restaure_at=instant, restaure_par=caller))
+        await db.deleted_items.delete_one({"id": trash_id})
+        _npc = bool((await db[coll].find_one({"id": oid}, {"_id": 0, "ne_plus_contacter": 1}) or {})
+                    .get("ne_plus_contacter"))
+        logger.info(f"[V627] Restauration prospect {oid} par {caller} (ne_plus_contacter conservé={_npc})")
+        return {"success": True, "restored": True, "collection": coll, "id": oid,
+                "ne_plus_contacter": _npc}
     if coll == "prospection_niches":
         # V600 : la niche est restée en base, marquée `supprimee` — on retire la marque.
         # Nom, ordre, id et toutes les relations (prospects, médias, liens) reviennent tels quels.
