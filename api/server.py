@@ -56703,6 +56703,9 @@ fastapi_app.include_router(membership_router, prefix="/api")
 # `analytics_shared.py`, route dans `analytics_routes.py`. Rien ici.
 from api.routes.analytics_routes import analytics_router
 fastapi_app.include_router(analytics_router, prefix="/api")
+# STATS-1 : GET /api/stats/association — lecture machine du Cockpit de l'association.
+from api.routes.analytics_routes import stats_router
+fastapi_app.include_router(stats_router, prefix="/api")
 init_membership_db(db)
 
 # V433 : réponses de VENTE sur WhatsApp (lien de paiement réel) + assainissement

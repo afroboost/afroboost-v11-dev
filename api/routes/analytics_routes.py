@@ -40,14 +40,21 @@ from api.routes.analytics_association import (
 )
 from api.routes.analytics_cloture import (
     CLOTURE_COLLECTION, RAISON_DEJA_CLOTURE, assoc_depuis_snapshot, cle_cloture, construire_snapshot,
-    est_cloturable, meta_snapshot,
+    est_cloturable, meta_snapshot, verifier_integrite,
+)
+from api.routes.analytics_stats import (
+    AVERT_CLOTURE_ALTEREE, PORTEE_FINANCES, PORTEE_FREQUENTATION, RAISON_ERREUR, construire_reponse,
+    genere_le as genere_le_stats, reponse_base_indisponible,
 )
 from api.routes.shared import is_super_admin
 from datetime import datetime, timezone
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 logger = logging.getLogger(__name__)
 analytics_router = APIRouter(prefix="/analytics", tags=["analytics"])
+# STATS-1 : la route MACHINE du Cockpit de l'association, dans ce même fichier
+# (mêmes lectures, même cœur). Son propre préfixe : `/api/stats/...`.
+stats_router = APIRouter(prefix="/stats", tags=["stats"])
 
 
 async def _coach_analytics(request: Request) -> str:
@@ -444,3 +451,192 @@ async def analytics_cloture_export(request: Request, id: str, format: str = "csv
     _nom = "bilan-officiel-afroboost-%04d-%02d-v%s.%s" % (doc["annee"], doc["mois"], doc.get("version", 1), _ext)
     return Response(content=contenu, media_type=_type,
                     headers={"Content-Disposition": 'attachment; filename="%s"' % _nom, "Cache-Control": "no-store"})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STATS-1 — `GET /api/stats/association` : la lecture MACHINE du Cockpit de
+# l'association (afroboosteur.com), de serveur à serveur. LECTURE SEULE.
+#
+# * Périmètre FORCÉ « ensemble » (tout le site, comme le bilan Association du
+#   super-admin) : aucun paramètre ne permet de viser un coach ou un cours.
+# * Deux clés dédiées, comparées en TEMPS CONSTANT (patron V332) :
+#   `AFROBOOST_STATS_KEY_FREQUENTATION` (fréquentation, essais, abonnements)
+#   et `AFROBOOST_STATS_KEY_FINANCES` (le même + les revenus). Aucune clé
+#   posée -> 503 JSON (inerte) ; clé fausse -> 401 JSON.
+# * Débit limité par adresse AVANT tout contrôle de clé : 429 JSON.
+# * Cache serveur ~10 min par (portée, période, granularité). Aucune écriture.
+# ═══════════════════════════════════════════════════════════════════════════
+import os as _os
+import re as _re
+import time as _time
+
+STATS_ENV_FREQUENTATION = "AFROBOOST_STATS_KEY_FREQUENTATION"
+STATS_ENV_FINANCES = "AFROBOOST_STATS_KEY_FINANCES"
+STATS_CACHE_TTL = 600.0
+STATS_DEBIT_MAX = 30           # appels
+STATS_DEBIT_FENETRE = 60.0     # secondes
+_STATS_CACHE = {}
+_STATS_DEBIT = {}
+_RE_MOIS = _re.compile(r"^(\d{4})-(\d{2})$")
+_RE_ANNEE = _re.compile(r"^(\d{4})$")
+
+
+def _stats_erreur(statut, code, message, entetes=None):
+    _h = {"Cache-Control": "no-store"}
+    _h.update(entetes or {})
+    return JSONResponse(status_code=statut, content={"ok": False, "error": code, "message": message}, headers=_h)
+
+
+def _stats_ip(request) -> str:
+    _h = getattr(request, "headers", {}) or {}
+    _ip = (_h.get("cf-connecting-ip") or _h.get("CF-Connecting-IP") or "").strip()
+    if not _ip:
+        _ip = ((_h.get("x-forwarded-for") or _h.get("X-Forwarded-For") or "").split(",")[0]).strip()
+    if not _ip:
+        _c = getattr(request, "client", None)
+        _ip = getattr(_c, "host", "") or "?"
+    return _ip[:64]
+
+
+def _stats_debit_ok(cle: str) -> bool:
+    """Fenêtre glissante en mémoire (même forme que `_lot3b_debit_ok`)."""
+    _now = _time.monotonic()
+    _hist = [h for h in _STATS_DEBIT.get(cle, []) if _now - h < STATS_DEBIT_FENETRE]
+    if len(_hist) >= STATS_DEBIT_MAX:
+        _STATS_DEBIT[cle] = _hist
+        return False
+    _hist.append(_now)
+    _STATS_DEBIT[cle] = _hist
+    if len(_STATS_DEBIT) > 5000:      # borne mémoire
+        for _k in list(_STATS_DEBIT.keys())[:1000]:
+            _STATS_DEBIT.pop(_k, None)
+    return True
+
+
+def _stats_portee(request):
+    """(portée, None) si la clé est bonne ; (None, réponse JSON 503/401) sinon."""
+    import hmac
+    _freq = (_os.environ.get(STATS_ENV_FREQUENTATION, "") or "").strip()
+    _fin = (_os.environ.get(STATS_ENV_FINANCES, "") or "").strip()
+    if not _freq and not _fin:
+        return None, _stats_erreur(503, "stats_non_configurees", "Aucune clé de statistiques n'est posée sur ce serveur.")
+    _auth = ((getattr(request, "headers", {}) or {}).get("Authorization")
+             or (getattr(request, "headers", {}) or {}).get("authorization") or "").strip()
+    _fournie = _auth.split(" ", 1)[1].strip() if _auth.lower().startswith("bearer ") else ""
+    # Les DEUX comparaisons ont toujours lieu : le temps de réponse ne dit pas
+    # laquelle des clés existe.
+    _ok_fin = bool(_fin) and bool(_fournie) and hmac.compare_digest(_fournie.encode("utf-8"), _fin.encode("utf-8"))
+    _ok_freq = bool(_freq) and bool(_fournie) and hmac.compare_digest(_fournie.encode("utf-8"), _freq.encode("utf-8"))
+    if _ok_fin:
+        return PORTEE_FINANCES, None
+    if _ok_freq:
+        return PORTEE_FREQUENTATION, None
+    logger.warning("[STATS] accès refusé à /stats/association (clé %s)", "absente" if not _fournie else "invalide")
+    return None, _stats_erreur(401, "cle_invalide", "Clé de statistiques absente ou invalide.")
+
+
+def _stats_periode(mois: str, annee: str, granularite: str, maintenant):
+    """(type, debut, fin, granularite, None) ou (None, …, réponse 400)."""
+    _m, _a = str(mois or "").strip(), str(annee or "").strip()
+    if _m and _a:
+        return None, None, None, None, _stats_erreur(400, "parametres", "mois=YYYY-MM OU annee=YYYY, pas les deux.")
+    if _a:
+        _r = _RE_ANNEE.match(_a)
+        if not _r or not (2020 <= int(_a) <= 2100):
+            return None, None, None, None, _stats_erreur(400, "parametres", "annee attendue : YYYY.")
+        _type, (_d, _f) = "annee", bornes_periode("annee", maintenant, "", "", "%s-01" % _a)
+    else:
+        if _m:
+            _r = _RE_MOIS.match(_m)
+            if not _r or not (1 <= int(_r.group(2)) <= 12) or not (2020 <= int(_r.group(1)) <= 2100):
+                return None, None, None, None, _stats_erreur(400, "parametres", "mois attendu : YYYY-MM.")
+        _type, (_d, _f) = "mois", bornes_periode("mois", maintenant, "", "", _m)
+    _g = str(granularite or "").strip().lower() or ("mois" if _type == "annee" else "semaine")
+    if _g not in ("jour", "semaine", "mois"):
+        return None, None, None, None, _stats_erreur(400, "parametres", "granularite attendue : jour|semaine|mois.")
+    return _type, _d, _f, _g, None
+
+
+@stats_router.get("/association")
+async def stats_association(request: Request, mois: str = "", annee: str = "", granularite: str = ""):
+    """Les statistiques AGRÉGÉES de l'ensemble Afroboost, pour le Cockpit de
+    l'association. Schéma `stats-association/1`. Lecture seule, aucune donnée
+    personnelle (`verifier_anonymat` sur la réponse entière)."""
+    from api.server import db
+    from api.routes.reservation_routes import lot1_occurrence_iso
+    from api.routes import analytics_shared as _A
+
+    if not _stats_debit_ok("ip:" + _stats_ip(request)):
+        return _stats_erreur(429, "debit_depasse", "Trop de requêtes : réessayez dans une minute.",
+                             {"Retry-After": str(int(STATS_DEBIT_FENETRE))})
+    portee, refus = _stats_portee(request)
+    if refus is not None:
+        return refus
+    _instant = datetime.now(timezone.utc)
+    maintenant = vers_local(_instant)
+    _type, debut, fin, _g, refus = _stats_periode(mois, annee, granularite, maintenant)
+    if refus is not None:
+        return refus
+    _fuseau_ok = _A.fuseau_zurich_disponible()
+
+    _cle_cache = (portee, _type, debut.strftime("%Y-%m-%d"), _g)
+    _c = _STATS_CACHE.get(_cle_cache)
+    if _c and _time.monotonic() - _c[0] < STATS_CACHE_TTL:
+        return JSONResponse(content=_c[1], headers={"Cache-Control": "no-store", "X-Stats-Cache": "hit"})
+
+    _genere = genere_le_stats(_instant, _A._ZURICH)
+    try:
+        sources = await _lire_sources(db, "")
+    except Exception as _err:  # noqa: BLE001 — la base muette ne devient jamais un zéro
+        logger.error("[STATS] base illisible (%s)", type(_err).__name__)
+        return JSONResponse(content=reponse_base_indisponible(debut, fin, _type, _g, portee, _genere, _fuseau_ok),
+                            headers={"Cache-Control": "no-store"})
+
+    avert = []
+    try:
+        kpi, ctx = _coeur_kpi(sources, "", debut, fin, _g, "", maintenant, normaliser_occurrence=lot1_occurrence_iso)
+        assoc = _projection_association(kpi, ctx, debut, fin, PERIMETRE_ENSEMBLE, maintenant)
+    except Exception as _err:  # noqa: BLE001
+        logger.error("[STATS] calcul impossible (%s)", type(_err).__name__)
+        _r = reponse_base_indisponible(debut, fin, _type, _g, portee, _genere, _fuseau_ok)
+        for _b in ("frequentation", "essais", "abonnements", "evolution"):
+            _r[_b] = {"disponible": False, "raison": RAISON_ERREUR}
+        if portee == PORTEE_FINANCES:
+            _r["revenus"] = {"disponible": False, "raison": RAISON_ERREUR}
+        _r["qualite"]["avertissements"] = [a for a in _r["qualite"]["avertissements"] if "base" not in a] + \
+            ["Le calcul a échoué : aucun chiffre n'est servi."]
+        return JSONResponse(content=_r, headers={"Cache-Control": "no-store"})
+
+    # ── les bilans officiels : UNE lecture, jamais une écriture ──
+    cloture, clotures_mois = None, {}
+    try:
+        if _type == "mois" and fin <= maintenant:
+            _doc = await db[CLOTURE_COLLECTION].find_one({"cle": cle_cloture(debut.year, debut.month, "")}, {"_id": 0})
+            if _doc and verifier_integrite(_doc):
+                cloture = assoc_depuis_snapshot(_doc)
+            elif _doc:
+                avert.append(AVERT_CLOTURE_ALTEREE)
+        elif _type == "annee" and _g == "mois":
+            _cles = [cle_cloture(debut.year, _mo, "") for _mo in range(1, 13)]
+            for _doc in await db[CLOTURE_COLLECTION].find({"cle": {"$in": _cles}}, {"_id": 0}).to_list(12):
+                if verifier_integrite(_doc):
+                    clotures_mois[(int(_doc.get("annee")), int(_doc.get("mois")))] = _doc.get("bilan") or {}
+                else:
+                    avert.append(AVERT_CLOTURE_ALTEREE)
+    except Exception as _err:  # noqa: BLE001 — sans clôture lisible, on sert le dynamique et on le dit
+        avert.append("Bilans clôturés illisibles (%s) : chiffres recalculés." % type(_err).__name__)
+        cloture, clotures_mois = None, {}
+
+    reponse = construire_reponse(kpi, ctx, assoc, debut, fin, _type, _g, portee, maintenant, _genere,
+                                 cloture=cloture, clotures_mois=clotures_mois, fuseau_ok=_fuseau_ok,
+                                 avertissements_amont=avert)
+    _fuites = verifier_anonymat(reponse)
+    if _fuites:
+        logger.error("[STATS] réponse refusée : donnée personnelle détectée %s", _fuites[:3])
+        return _stats_erreur(500, "donnee_personnelle_detectee",
+                             "Statistiques indisponibles : une donnée personnelle a été détectée et rien n'a été servi.")
+    _STATS_CACHE[_cle_cache] = (_time.monotonic(), reponse)
+    if len(_STATS_CACHE) > 200:
+        for _k in list(_STATS_CACHE.keys())[:50]:
+            _STATS_CACHE.pop(_k, None)
+    return JSONResponse(content=reponse, headers={"Cache-Control": "no-store", "X-Stats-Cache": "miss"})

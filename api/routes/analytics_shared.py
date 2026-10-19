@@ -198,6 +198,20 @@ def est_produit(reservation) -> bool:
     return False
 
 
+def places_de(reservation) -> int:
+    """Les places qu'occupe UNE réservation : `quantity`, au moins 1 (= `v567_places`)."""
+    try:
+        return max(1, int(float((reservation or {}).get("quantity") or 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def fuseau_zurich_disponible() -> bool:
+    """STATS-1 : la base de fuseaux est-elle là ? Sans elle, `vers_local` reste
+    en UTC (décalage d'1 à 2 h) — la route machine le DIT au lieu de le taire."""
+    return _ZURICH is not None
+
+
 def presence_de(reservation) -> str:
     """Une présence CONSTATÉE, une absence DÉCLARÉE, sinon on ne sait pas.
 
@@ -331,6 +345,9 @@ def construire_faits(reservations, cours_par_id=None, forfaits_par_id=None,
             "essai": bool(_essai),
             "presence": presence_de(r),
             "prix": r.get("price") if r.get("price") is not None else r.get("totalPrice"),
+            # STATS-1 : les PLACES occupées (`quantity`, au moins 1 — la règle
+            # `v567_places` de reservation_routes). Une réservation ≠ une place.
+            "places": places_de(r),
             "valeur": _val.get("valeur"),
             "valeur_statut": _val.get("statut_valeur"),
             "type_offre": _offre_nom,
