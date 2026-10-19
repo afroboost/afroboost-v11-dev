@@ -1990,6 +1990,9 @@ async def delete_reservation(reservation_id: str, request: Request):
             if _b3_supprimee is None:
                 await _b3_ses.abort_transaction()
                 raise HTTPException(status_code=404, detail="Réservation introuvable")
+            # V628 : une place d'événement annulée libère aussi sa réclamation (même transaction).
+            from api.routes.evenement_special import liberer_place as _v628_liberer
+            await _v628_liberer(db, _b3_supprimee, session=_b3_ses)
 
             # Les compteurs sont RELUS DANS la transaction : le plafond porte
             # sur l'état réellement engagé, pas sur une lecture d'avant.

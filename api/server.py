@@ -20976,6 +20976,37 @@ async def v628_place_evenement_par_code(offer_id: str, request: Request):
     return {"success": True, "deja_reserve": False, "prix": 0, "reservation": _dto(_resa)}
 
 
+@api_router.get("/evenements/{offer_id}/codes-diagnostic")
+async def v628_codes_diagnostic(offer_id: str, request: Request):
+    """V628 — VÉRIFIER LES CODES SANS RÉSERVER : pour chaque code promo qui vise cet événement
+    (au moins un de ses articles), dit s'il donnerait une place et pourquoi sinon. Lecture seule,
+    aucun débit, aucune réservation. Réservé au coach de l'événement (JWT signé) ou au super-admin."""
+    from api.routes import evenement_special as _evt
+    _coach = await _v309_require_coach_or_admin(request)
+    _offre = await db.offers.find_one({"id": str(offer_id or "")[:64]}, {"_id": 0})
+    if not _offre or not _evt.reservation_auto(_offre):
+        raise HTTPException(status_code=404, detail="Événement introuvable")
+    _cours = await _evt.cours_de_l_evenement(db, _offre)
+    _proprio = _evt.proprietaire_evenement(_offre, _cours)
+    if not is_super_admin(_coach) and _coach != _proprio:
+        raise HTTPException(status_code=403, detail="Accès réservé au coach de l'événement")
+    _ids = list(_evt.ids_evenement(_offre))
+    _fiches = await db.discount_codes.find({"courses": {"$in": _ids}}, {"_id": 0}).sort("code", 1).to_list(200)
+    _par_code = {}
+    for _f in _fiches:
+        _par_code.setdefault(str(_f.get("code") or "").upper(), []).append(_f)
+    _sortie = []
+    for _code, _liste in sorted(_par_code.items()):
+        _d = _evt.diagnostic_code(_liste[0], _offre, _cours)
+        if len(_liste) > 1:
+            _d["utilisable"] = False
+            _d["motifs"] = _d["motifs"] + ["plusieurs fiches pour ce code"]
+        _sortie.append(_d)
+    _places = await _evt.places_prises(db, _offre)
+    return {"evenement": _offre.get("name"), "date": _evt.occurrence(_cours), "places_reservees": _places,
+            "codes": _sortie, "utilisables": sum(1 for x in _sortie if x["utilisable"])}
+
+
 @api_router.delete("/subscriber/space/{access_code}/cancel/{reservation_id}")
 async def cancel_reservation_from_space(access_code: str, reservation_id: str, request: Request):
     """V185: Annule une réservation de l'abonné — recrédit 1 séance si > 2h avant le cours.
@@ -21109,6 +21140,12 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str, r
     if getattr(_v618c_suppr, "deleted_count", 1) == 0:
         # V618c : déjà annulée par une requête simultanée -> rien n'est re-crédité deux fois.
         raise HTTPException(status_code=404, detail="Réservation introuvable")
+    # V628 : une place d'événement annulée libère aussi sa réclamation.
+    try:
+        from api.routes.evenement_special import liberer_place as _v628_liberer
+        await _v628_liberer(db, reservation)
+    except Exception as _v628_err:  # noqa: BLE001 — la réservation est annulée ; `_deja` nettoie au besoin
+        logger.warning("[V628] réclamation de place non libérée (%s)", type(_v628_err).__name__)
 
     # V610 : une place OFFERTE d'événement n'a débité aucune séance -> rien à rendre.
     # (La réclamation est libérée à la prochaine demande : `evenement_special._deja`.)

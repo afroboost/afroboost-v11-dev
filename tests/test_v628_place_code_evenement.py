@@ -31,6 +31,7 @@ os.environ["JWT_SECRET"] = "v628-banc-secret-local"
 os.environ["STRIPE_SECRET_KEY"] = "sk_test_faux_banc_v628"
 os.environ["RESEND_API_KEY"] = "re_faux_banc_v628"
 os.environ["FRONTEND_URL"] = "http://127.0.0.1:8001"
+os.environ["LOTB3_ANNULATION_CANONIQUE_ENABLED"] = "true"   # actif en production (LOT B3, 27/08)
 for _k in ("META_WHATSAPP_TOKEN", "META_WHATSAPP_PHONE_ID", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
            "VAPID_PRIVATE_KEY", "VAPID_PUBLIC_KEY", "OPENAI_API_KEY", "STRIPE_WEBHOOK_SECRET",
            "STRIPE_WEBHOOK_SECRET_CHECKOUT", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET", "PAWAPAY_API_TOKEN"):
@@ -105,6 +106,7 @@ CODES = {
     "TOUS": "TEST-TOUS-ARTICLES", "EXP": "TEST-EXPIRE", "USE": "TEST-UTILISE", "P50": "TEST-50POURCENT",
     "OFF": "TEST-INACTIF", "AUTRE": "TEST-AUTRE-EVT", "ASSIGNE": "TEST-ASSIGNE", "NORMAL": "TEST-NORMAL-COURS",
     "DUO1": "TEST-DUO-A", "DUO2": "TEST-DUO-B", "SCAN": "TEST-SCAN-ENTREE", "PART": "TEST-CODE-PARTENAIRE",
+    "ANNUL": "TEST-ANNULATION",
 }
 
 
@@ -149,6 +151,7 @@ async def semer():
         _code("ASSIGNE", _evt, assignedEmail="titulaire@test.local"),
         _code("NORMAL", [UNITE, C_REG], maxUses=5),
         _code("DUO1", _evt), _code("DUO2", _evt), _code("SCAN", _evt, used=1), _code("PART", _evt, coach_id="partenaire@test.local"),
+        _code("ANNUL", _evt),
     ])
 
 
@@ -320,6 +323,24 @@ async def principal():
         verifier("10b places réservées par code = 4 (OK1, OK2, OK5, DUO) — aucune place fantôme",
                  n == 4, n)
 
+        # 10b2. Diagnostic coach : vérifier les codes SANS réserver
+        avant_used = {c: (await fiche(c)).get("used") for c in ("OK3", "TOUS", "NORMAL")}
+        n_resa = await db.reservations.count_documents({})
+        r = await cl.get("/api/evenements/%s/codes-diagnostic" % EVT, headers={"Authorization": "Bearer " + jeton})
+        d = {x["code"]: x for x in (r.json().get("codes") or [])} if r.status_code == 200 else {}
+        verifier("10b2 diagnostic coach : OK3 utilisable, OK1 « déjà utilisé », TOUS « pas uniquement cet événement »",
+                 d.get(CODES["OK3"], {}).get("utilisable") is True
+                 and "déjà utilisé" in d.get(CODES["OK1"], {}).get("motifs", [])
+                 and any("pas uniquement" in m for m in d.get(CODES["TOUS"], {}).get("motifs", []))
+                 and any("autre coach" in m for m in d.get(CODES["PART"], {}).get("motifs", [])), (r.status_code, r.text[:400]))
+        verifier("10b3 le diagnostic n'écrit rien (aucun débit, aucune réservation)",
+                 avant_used == {c: (await fiche(c)).get("used") for c in ("OK3", "TOUS", "NORMAL")}
+                 and n_resa == await db.reservations.count_documents({}))
+        verifier("10b4 aucun code « cours normal » dans la liste (il ne vise pas l'événement)", CODES["NORMAL"] not in d)
+        verifier("10b5 aucune adresse e-mail dans le diagnostic", "titulaire@test.local" not in r.text)
+        r = await cl.get("/api/evenements/%s/codes-diagnostic" % EVT)
+        verifier("10b6 diagnostic sans jeton -> 403", r.status_code == 403, r.status_code)
+
         # 10c. Le code d'événement ne se « valide » pas ailleurs (connexion abonné, remise vitrine)
         r = await cl.post("/api/discount-codes/validate", json={"code": CODES["OK3"], "email": ""})
         verifier("10c /discount-codes/validate refuse un code d'événement", r.json().get("valid") is False, r.text)
@@ -341,6 +362,47 @@ async def principal():
         verifier("10e scan du code promo à l'entrée -> présence validée (pas « code désactivé »)",
                  r.status_code == 200 and "valid" in r.text.lower(), (r.status_code, r.text[:200]))
         verifier("10f ... sans redébiter le code", (await fiche("SCAN")).get("used") == 1)
+
+        # 10f2. Doublon de fiche pour un même code -> refus (jamais deviner laquelle débiter)
+        await db.discount_codes.insert_one(_code("OK3", [EVT, C_EVT], id="dc-ok3-doublon"))
+        r = await poster(cl, CODES["OK3"], "doublon@test.local")
+        verifier("10f2 deux fiches vivantes pour un même code -> refus, rien n'est débité",
+                 r.status_code == 400 and (await fiche("OK3")).get("used") == 0, r.text)
+        await db.discount_codes.delete_one({"id": "dc-ok3-doublon"})
+
+        # 10g. Le code TEST (-06) est indépendant : l'utiliser ne touche AUCUNE invitation
+        avant = {c: (await fiche(c)).get("used") for c in ("OK1", "OK2", "OK3", "OK5")}
+        r = await poster(cl, "28boosthetaira-06", "coach-essai@test.local")
+        apres = {c: (await fiche(c)).get("used") for c in ("OK1", "OK2", "OK3", "OK5")}
+        verifier("10g code test -06 : place prise, AUCUNE des invitations n'est consommée",
+                 r.status_code == 200 and avant == apres and (await fiche("OK6")).get("used") == 1, (r.text, avant, apres))
+
+        # 10h. Annulation par le coach : code rendu UNE fois, place libérée, ré-inscription possible
+        _tx = False
+        try:
+            _tx = bool((await S.client.admin.command("hello")).get("setName"))
+        except Exception:  # noqa: BLE001
+            _tx = False
+        if not _tx:
+            print("INFO 10h ignoré : MongoDB locale sans replica set (transactions LOT B3 indisponibles).")
+        else:
+            r = await poster(cl, CODES["ANNUL"], "annule@test.local")
+            _ra = await db.reservations.find_one({"userEmail": "annule@test.local"}, {"_id": 0})
+            _cle = "code:%s:annule@test.local" % EVT
+            n0 = await db[E.COLL_PLACES].count_documents({"offer_id": EVT, "statut": "reservee"})
+            r = await cl.delete("/api/reservations/%s" % _ra["id"], headers={"Authorization": "Bearer " + jeton})
+            verifier("10h annulation coach -> 200", r.status_code == 200, (r.status_code, r.text[:200]))
+            verifier("10h2 le code est rendu (used 1 -> 0)", (await fiche("ANNUL")).get("used") == 0, await fiche("ANNUL"))
+            verifier("10h3 la réclamation de place est supprimée",
+                     await db[E.COLL_PLACES].find_one({"_id": _cle}) is None)
+            n1 = await db[E.COLL_PLACES].count_documents({"offer_id": EVT, "statut": "reservee"})
+            verifier("10h4 le compteur de places baisse d'une unité", n1 == n0 - 1, (n0, n1))
+            r = await cl.delete("/api/reservations/%s" % _ra["id"], headers={"Authorization": "Bearer " + jeton})
+            verifier("10h5 seconde annulation -> 404, aucune double restitution",
+                     r.status_code == 404 and (await fiche("ANNUL")).get("used") == 0, (r.status_code, await fiche("ANNUL")))
+            r = await poster(cl, CODES["ANNUL"], "annule@test.local")
+            verifier("10h6 la même personne peut se réinscrire avec son code rendu",
+                     r.status_code == 200 and r.json().get("deja_reserve") is False and (await fiche("ANNUL")).get("used") == 1, r.text)
 
         # 11. Limite de débit par connexion
         codes_429 = []

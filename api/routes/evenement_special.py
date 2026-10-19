@@ -407,6 +407,19 @@ async def reserver(db, *, cle, offre, cours, occ, email, nom, prix, source, code
     return _doc, True
 
 
+async def liberer_place(db, reservation, session=None) -> bool:
+    """V628 — la réservation d'événement vient d'être SUPPRIMÉE : sa réclamation de place l'est
+    aussi (sinon la place resterait comptée et la même personne ne pourrait pas se réinscrire
+    sans repasser par `_deja`). Seule la réclamation de CETTE réservation est visée."""
+    _r = reservation or {}
+    _cle, _rid = _r.get("evenement_place_cle"), _r.get("id")
+    if not _cle or not _rid:
+        return False
+    _k = {"session": session} if session is not None else {}
+    _res = await db[COLL_PLACES].delete_one({"_id": _cle, "reservation_id": _rid}, **_k)
+    return bool(getattr(_res, "deleted_count", 0))
+
+
 # ── 1. APRÈS PAIEMENT (webhook) ─────────────────────────────────────────────────
 async def apres_paiement(db, *, session_id, offre_id, email, nom, code, subscription_id, montant, whatsapp=""):
     """Billet payé -> réservation de l'événement. Rend (reservation, creee) ou (None, False)
@@ -663,3 +676,32 @@ def verifier_code_evenement(fiche, offre, jour=None, cours=None):
     if _max <= 0 or _used >= _max:
         return MSG_CODE_UTILISE   # la route le transforme en refus neutre (sauf pour sa titulaire)
     return None
+
+
+def diagnostic_code(fiche, offre, cours=None, jour=None) -> dict:
+    """V628 — pour le COACH : ce code donnerait-il une place à cet événement, et sinon pourquoi.
+    Lecture pure, aucune écriture ; jamais l'adresse attribuée (seulement « attribué : oui/non »)."""
+    _f = fiche or {}
+    from api.routes.shared import v617_jour_local
+    _jour = jour or v617_jour_local()
+    _motifs = []
+    if _f.get("active") is not True:
+        _motifs.append("inactif")
+    _exp = str(_f.get("expiresAt") or "")[:10]
+    if _exp and _exp < _jour:
+        _motifs.append("expiré")
+    if not code_gratuit_total(_f):
+        _motifs.append("réduction inférieure à 100 %")
+    if not code_reserve_a(_f, ids_evenement(offre)):
+        _motifs.append("articles autorisés : pas uniquement cet événement")
+    if not code_du_proprietaire(_f, offre, cours):
+        _motifs.append("code d'un autre coach")
+    try:
+        _max, _used = int(float(_f.get("maxUses") or 0)), int(float(_f.get("used") or 0))
+    except (TypeError, ValueError):
+        _max, _used = 0, 0
+    if _max <= 0 or _used >= _max:
+        _motifs.append("déjà utilisé")
+    return {"code": _f.get("code"), "utilisable": not _motifs, "motifs": _motifs,
+            "utilisations": _used, "maximum": _max, "expiration": _exp or None,
+            "nb_articles": len(_f.get("courses") or []), "adresse_attribuee": bool(_f.get("assignedEmail"))}
