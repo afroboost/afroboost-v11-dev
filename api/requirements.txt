@@ -54,9 +54,6 @@ requests==2.32.5
 python-dotenv==1.2.1
 python-dateutil==2.9.0.post0
 pytz==2025.2
-# STATS-1 : base de fuseaux pour zoneinfo (Europe/Zurich) — l'image slim peut ne pas l'avoir ;
-# sans elle, analytics retombe en UTC (décalage d'1 à 2 h).
-tzdata==2025.2
 typing_extensions==4.15.0
 annotated-types==0.7.0
 anyio==4.12.0

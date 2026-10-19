@@ -358,7 +358,12 @@ verifier("sans base de fuseaux : la réponse l'AVOUE (avertissement + qualite.fu
          S.AVERT_FUSEAU in cc["qualite"]["avertissements"] and cc["qualite"]["fuseau"].startswith("UTC")
          and cc["genere_le"].endswith("+00:00"), (cc["qualite"]["fuseau"], cc["genere_le"]))
 _req = open(os.path.join(F.RACINE, "api", "requirements.txt"), encoding="utf-8").read()
-verifier("tzdata figure dans api/requirements.txt", any(l.strip().startswith("tzdata==") for l in _req.splitlines()))
+# DÉCISION 19/10 : `tzdata` n'est PAS ajouté par ce chantier. Il changerait le
+# fuseau de TOUT le serveur (paliers de prix, rappels, fenêtres d'essai) si
+# l'image n'en a pas : hors périmètre « statistiques ». Sans base de fuseaux,
+# la route l'AVOUE (vérifié ci-dessus) au lieu d'inventer une heure locale.
+verifier("tzdata NON ajouté à api/requirements.txt (dépendances serveur inchangées)",
+         not any(l.strip().startswith("tzdata==") for l in _req.splitlines()))
 
 # ═══ 14. câblage ═══
 _srv = open(os.path.join(F.RACINE, "api", "server.py"), encoding="utf-8").read()
