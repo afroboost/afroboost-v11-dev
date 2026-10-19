@@ -71,27 +71,14 @@ def _perimetre(email: str, coach_id: str) -> str:
     return email.lower()
 
 
-async def _calculer_cockpit(request: Request, periode: str = "mois", du: str = "", au: str = "",
-                            coach_id: str = "", course_id: str = "", granularite: str = "jour",
-                            mois: str = "", vue: str = ""):
-    """LE calcul, partagé par le cockpit et les exports : mêmes lectures, mêmes règles."""
-    from api.server import db
-    from api.routes.reservation_routes import lot1_occurrence_iso
+async def _lire_sources(db, perimetre: str) -> dict:
+    """Les SEPT lectures du moteur, et rien d'autre. Lecture seule.
 
-    email = await _coach_analytics(request)
-    perimetre = _perimetre(email, coach_id)
-    _p = str(periode or "mois").strip().lower()
-    if _p not in PERIODES:
-        raise HTTPException(status_code=400, detail="periode attendue : " + "|".join(PERIODES))
-    _g = str(granularite or "jour").strip().lower()
-    if _g not in ("jour", "semaine", "mois"):
-        raise HTTPException(status_code=400, detail="granularite attendue : jour|semaine|mois")
-    maintenant = vers_local(datetime.now(timezone.utc))
-    debut, fin = bornes_periode(_p, maintenant, du, au, mois)
-    if debut is None:
-        raise HTTPException(status_code=400, detail="perso : du et au (YYYY-MM-DD, du <= au) requis ; mois : YYYY-MM")
-    _vue = str(vue or "").strip().lower()
-
+    Extraites telles quelles de `_calculer_cockpit` (STATS-1) pour que la route
+    machine `/api/stats/association` lise EXACTEMENT les mêmes documents que
+    l'écran coach : mêmes requêtes, mêmes projections, mêmes bornes. Un banc
+    compare la sortie du cockpit avant / après cette extraction.
+    """
     # ── 1. les réservations de cours du périmètre (historique complet) ──────
     _q = {"isProduct": {"$ne": True}}
     if perimetre:
@@ -109,8 +96,6 @@ async def _calculer_cockpit(request: Request, periode: str = "mois", du: str = "
     sids.discard("")
     cids = {str(r.get("courseId") or "").strip() for r in reservations}
     cids.discard("")
-    emails = {cle_participant(r.get("userEmail")) for r in reservations}
-    emails.discard("")
 
     # ── 2..7. les documents liés — le PÉRIMÈTRE entier pour la finance ──────
     # Souscriptions : celles du coach (ou toutes pour l'admin) PLUS celles que
@@ -142,6 +127,23 @@ async def _calculer_cockpit(request: Request, periode: str = "mois", du: str = "
                                                             "product_name": 1, "customer_email": 1, "metadata": 1,
                                                             "payment_status": 1, "payment_method": 1, "created_at": 1,
                                                             "coach_id": 1}).to_list(20000)
+    return {"reservations": reservations, "cours": cours, "forfaits": forfaits, "fiches": fiches,
+            "offres": offres, "cartes": cartes, "paiements": paiements}
+
+
+def _coeur_kpi(sources: dict, perimetre: str, debut, fin, granularite: str, course_id: str,
+               maintenant, normaliser_occurrence=None):
+    """LE calcul en mémoire, PUR : sources lues -> (kpi, contexte).
+
+    Aucune base, aucun jeton. Le cockpit coach et la route machine
+    `/api/stats/association` passent par ici : une seule règle, partout.
+    Le contexte (faits filtrés, achats, cartes) sert à la projection
+    Association sans aucune lecture de plus.
+    """
+    reservations = sources["reservations"]
+    cours, forfaits, fiches = sources["cours"], sources["forfaits"], sources["fiches"]
+    offres, cartes, paiements = sources["offres"], sources["cartes"], sources["paiements"]
+    _g = granularite
 
     cours_par_id = {c["id"]: c for c in cours if c.get("id")}
     forfaits_par_id = {f["id"]: f for f in forfaits if f.get("id")}
@@ -163,7 +165,7 @@ async def _calculer_cockpit(request: Request, periode: str = "mois", du: str = "
 
     table = construire_faits(reservations, cours_par_id, forfaits_par_id, forfaits_par_code,
                              codes_par_code, offres_par_id, memberships_par_email,
-                             normaliser_occurrence=lot1_occurrence_iso)
+                             normaliser_occurrence=normaliser_occurrence)
     _cid = str(course_id or "").strip()
     _par_cours = {}
     for f in table["faits"]:
@@ -200,31 +202,69 @@ async def _calculer_cockpit(request: Request, periode: str = "mois", du: str = "
         logger.warning("[ANALYTICS] acquisition par source indisponible (%s)", type(_src_e).__name__)
         kpi["sources"] = {"convention": "", "lignes": [], "couverture": {}, "erreur": type(_src_e).__name__}
     kpi["requetes"] = 7
+    ctx = {"faits": faits, "achats": _achats, "cartes": cartes, "cours_filtre": _cid}
+    return kpi, ctx
+
+
+def _projection_association(kpi: dict, ctx: dict, debut, fin, libelle: str, maintenant) -> dict:
+    """PHASE 3 — la projection Association, en mémoire, depuis le contexte du cœur.
+
+    La période précédente et les douze mois de l'année se calculent EN MÉMOIRE
+    sur les faits et les achats déjà chargés (tout l'historique) : le bilan
+    coûte 13 passes de plus sur quelques centaines de lignes, pas une requête.
+    """
+    faits, _achats, cartes, _cid = ctx["faits"], ctx["achats"], ctx["cartes"], ctx["cours_filtre"]
+
+    def _kpi_de(_d, _f):
+        _k = calculer_kpi(faits, _d, _f, "mois")
+        _k.update(calculer_kpi_finance(_achats["achats"], _achats["en_attente"], cartes, faits, _d, _f,
+                                       "mois", maintenant, cours_filtre=_cid))
+        return _k
+    _pd, _pf = periode_precedente(debut, fin)
+    _prec = _kpi_de(_pd, _pf)
+    _annee = []
+    _m = debut.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    for _i in range(12):
+        _annee.append((_m, _kpi_de(_m, mois_suivant(_m))))
+        _m = mois_suivant(_m)
+    return projeter_association(kpi, _prec, _annee, debut, fin, libelle, _cid, maintenant)
+
+
+async def _calculer_cockpit(request: Request, periode: str = "mois", du: str = "", au: str = "",
+                            coach_id: str = "", course_id: str = "", granularite: str = "jour",
+                            mois: str = "", vue: str = ""):
+    """LE calcul, partagé par le cockpit et les exports : mêmes lectures, mêmes règles."""
+    from api.server import db
+    from api.routes.reservation_routes import lot1_occurrence_iso
+
+    email = await _coach_analytics(request)
+    perimetre = _perimetre(email, coach_id)
+    _p = str(periode or "mois").strip().lower()
+    if _p not in PERIODES:
+        raise HTTPException(status_code=400, detail="periode attendue : " + "|".join(PERIODES))
+    _g = str(granularite or "jour").strip().lower()
+    if _g not in ("jour", "semaine", "mois"):
+        raise HTTPException(status_code=400, detail="granularite attendue : jour|semaine|mois")
+    maintenant = vers_local(datetime.now(timezone.utc))
+    debut, fin = bornes_periode(_p, maintenant, du, au, mois)
+    if debut is None:
+        raise HTTPException(status_code=400, detail="perso : du et au (YYYY-MM-DD, du <= au) requis ; mois : YYYY-MM")
+    _vue = str(vue or "").strip().lower()
+
+    sources = await _lire_sources(db, perimetre)
+    kpi, ctx = _coeur_kpi(sources, perimetre, debut, fin, _g, course_id, maintenant,
+                          normaliser_occurrence=lot1_occurrence_iso)
+    _cid = ctx["cours_filtre"]
 
     # ── PHASE 3 : la projection Association — mêmes tables, AUCUNE lecture de plus ──
-    # La période précédente et les douze mois de l'année se calculent EN MÉMOIRE
-    # sur les faits et les achats déjà chargés (tout l'historique) : le bilan
-    # coûte 13 passes de plus sur quelques centaines de lignes, pas une requête.
     if _vue == "association":
-        def _kpi_de(_d, _f):
-            _k = calculer_kpi(faits, _d, _f, "mois")
-            _k.update(calculer_kpi_finance(_achats["achats"], _achats["en_attente"], cartes, faits, _d, _f,
-                                           "mois", maintenant, cours_filtre=_cid))
-            return _k
-        _pd, _pf = periode_precedente(debut, fin)
-        _prec = _kpi_de(_pd, _pf)
-        _annee = []
-        _m = debut.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-        for _i in range(12):
-            _annee.append((_m, _kpi_de(_m, mois_suivant(_m))))
-            _m = mois_suivant(_m)
         _libelle = PERIMETRE_ENSEMBLE
         if perimetre:
             # Le nom public du coach (concept.appName), jamais son adresse.
             _concept = await db.concept.find_one({"coach_id": perimetre}, {"_id": 0, "appName": 1})
             _nom = str((_concept or {}).get("appName") or "").strip()
             _libelle = "Coach " + (_nom or "(identité masquée)")
-        assoc = projeter_association(kpi, _prec, _annee, debut, fin, _libelle, _cid, maintenant)
+        assoc = _projection_association(kpi, ctx, debut, fin, _libelle, maintenant)
         _fuites = verifier_anonymat(assoc)
         if _fuites:
             logger.error("[ANALYTICS] bilan association refusé : donnée personnelle détectée %s", _fuites[:3])
