@@ -146,12 +146,37 @@ verifier("mercredi 9/09 Silent : 4 réservations, 5 places (une réservation à 
 _m16 = ps.get(("2026-09-16", "Silent")) or {}
 verifier("16/09 : 2 réservations, 4 places (une réservation à 3)", _m16.get("reservations") == 2 and _m16.get("places") == 4, _m16)
 verifier("places ≠ réservations au total (11 places pour 8 réservations)", fq["places"] == 11 and fq["reservations"] == 8, (fq["places"], fq["reservations"]))
-verifier("aucun nom de personne dans le détail par séance",
-         all(set(x) <= {"occurrence", "date", "heure", "jour", "cours", "lieu", "reservations", "places", "presences_confirmees"}
-             for x in fq["par_seance"]))
+verifier("par séance : UNIQUEMENT date, heure, jour, libellé et nombres (ni lieu, ni occurrence, ni texte libre)",
+         all(set(x) == {"date", "heure", "jour", "cours", "reservations", "places", "presences_confirmees"}
+             for x in fq["par_seance"]), [sorted(x) for x in fq["par_seance"]][:1])
 pts = c["evolution"]["points"]
 verifier("évolution hebdomadaire : clés = lundis", pts and all(datetime.strptime(p["periode"], "%Y-%m-%d").weekday() == 0 for p in pts), pts)
 verifier("évolution : somme des réservations = total du mois", sum(p["reservations"] for p in pts) == fq["reservations"])
+
+# ═══ 4b. libellé de séance : seulement le catalogue PUBLIC des cours ═══
+jeu = F.jeu_de_base()
+jeu["courses"][0]["locationName"] = "Chez Jean Martin, Rue du Lac 12, 1200 Genève"
+for x in jeu["reservations"]:
+    if x["courseId"] == "c-mer":
+        x["courseName"] = "Cours privé de Marie Dupont"       # texte libre de la réservation
+jeu["courses"][1]["archived"] = True                           # Sunday n'est plus au catalogue public
+jeu["reservations"].append(resa_libre := dict(F.resa("r-hors", "kim@mail.invalid", "2026-09-20T10:00:00",
+                                                       "2026-09-18T08:00:00+00:00", "c-inconnu", "Coaching de Paul Durand")))
+_reinit()
+r, cc, _ = appel(CLE_FREQ, jeu=jeu, mois="2026-09")
+_t = json.dumps(cc, ensure_ascii=False)
+_lib = {(x["date"], x["cours"]) for x in cc["frequentation"]["par_seance"]}
+verifier("libellé = nom du CATALOGUE (Silent), jamais le texte de la réservation (Marie Dupont)",
+         ("2026-09-09", "Silent") in _lib and "Marie Dupont" not in _t, _lib)
+verifier("le lieu n'est jamais servi (ni adresse ni nom dans le lieu)", "Jean Martin" not in _t and "Rue du Lac" not in _t and "lieu" not in json.dumps(cc["frequentation"]["par_seance"]))
+verifier("cours archivé (hors catalogue public) -> « Séance »", ("2026-09-13", "Séance") in _lib and "Sunday" not in json.dumps(cc["frequentation"]["par_seance"]), _lib)
+verifier("cours inconnu du catalogue, nommé seulement sur la réservation -> « Séance »",
+         ("2026-09-20", "Séance") in _lib and "Paul Durand" not in _t, _lib)
+_b = F.Base(F.jeu_de_base())
+_reinit()
+r, cc, _ = appel(CLE_FREQ, base=_b, mois="2026-09")
+verifier("le catalogue est lu avec le filtre public (archived != True)",
+         any(n == "courses" for n in _b.lectures) and cc["frequentation"]["par_seance"][0]["cours"] in ("Silent", "Sunday"))
 
 # ═══ 5. portée finances : les revenus de l'écran coach ═══
 _reinit()
@@ -213,11 +238,11 @@ verifier("… et la panne est avouée dans les avertissements", any("fréquentat
 # ═══ 9. anonymat : une fuite bloque TOUTE la réponse ═══
 jeu = F.jeu_de_base()
 jeu["courses"] = [dict(x) for x in jeu["courses"]]
-for x in jeu["reservations"]:
-    if x["id"] == "r1":
-        x["courseName"] = "Silent avec anna@mail.invalid"
+jeu["courses"][0]["name"] = "Silent avec anna@mail.invalid"      # e-mail dans le CATALOGUE public lui-même
 _reinit()
 r, cc, _ = appel(CLE_FREQ, jeu=jeu, mois="2026-09")
+verifier("un e-mail glissé dans un nom de cours du catalogue -> 500 JSON, rien servi, rien en cache",
+         r.status_code == 500 and not R._STATS_CACHE and cc.get("error") == "donnee_personnelle_detectee", (r.status_code, cc.get("error")))
 verifier("un e-mail glissé dans un nom de cours -> 500 JSON, rien servi",
          r.status_code == 500 and cc.get("error") == "donnee_personnelle_detectee" and "anna" not in json.dumps(cc), (r.status_code, cc))
 

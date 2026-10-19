@@ -71,20 +71,30 @@ def _faits_periode(faits, debut, fin):
     return [f for f in (faits or []) if f.get("occurrence_dt") is not None and _dans(f, debut, fin)]
 
 
-def par_seance(faits, debut, fin):
-    """Une ligne par séance (cours × occurrence) : réservations ET places. Aucun nom de personne."""
+LIBELLE_SEANCE_GENERIQUE = "Séance"
+
+
+def par_seance(faits, debut, fin, cours_publics=None):
+    """Une ligne par séance (cours × occurrence) : date, heure, jour, libellé, NOMBRES.
+
+    Jamais le lieu, jamais un texte saisi : le libellé vient du CATALOGUE PUBLIC
+    des cours (`cours_publics` = {id: nom}, ce que `GET /api/courses` montre à
+    tout visiteur), par identifiant. Un cours absent de ce catalogue (archivé,
+    privé, ou nommé seulement sur la réservation) devient « Séance »."""
+    publics = cours_publics or {}
     seances = {}
     for f in _faits_periode(faits, debut, fin):
         k = (f["course_id"] or f["course_name"], f["occurrence"])
-        e = seances.setdefault(k, {"occurrence": f["occurrence"], "date": f["occurrence"][:10],
-                                   "heure": f["occurrence"][11:16], "jour": NOMS_JOURS_JS[f["weekday_js"]],
-                                   "cours": f["course_name"] or "", "lieu": f["lieu"] or "",
+        _lib = str(publics.get(f["course_id"]) or "").strip() if f["course_id"] else ""
+        e = seances.setdefault(k, {"date": f["occurrence"][:10], "heure": f["occurrence"][11:16],
+                                   "jour": NOMS_JOURS_JS[f["weekday_js"]],
+                                   "cours": _lib or LIBELLE_SEANCE_GENERIQUE,
                                    "reservations": 0, "places": 0, "presences_confirmees": 0})
         e["reservations"] += 1
         e["places"] += int(f.get("places") or 1)
         if f.get("presence") == "confirmee":
             e["presences_confirmees"] += 1
-    return sorted(seances.values(), key=lambda s: (s["occurrence"], s["cours"]))
+    return sorted(seances.values(), key=lambda s: (s["date"], s["heure"], s["cours"]))
 
 
 def evolution(faits, debut, fin, granularite):
@@ -109,7 +119,7 @@ def evolution(faits, debut, fin, granularite):
 
 def construire_reponse(kpi, ctx, assoc, debut, fin, type_periode, granularite, portee, maintenant_local,
                        genere_le_iso, cloture=None, clotures_mois=None, fuseau_ok=True,
-                       avertissements_amont=None):
+                       avertissements_amont=None, cours_publics=None):
     """La réponse `stats-association/1`, depuis des calculs DÉJÀ faits.
 
     `assoc` : la projection Association de la période (dynamique).
@@ -148,7 +158,7 @@ def construire_reponse(kpi, ctx, assoc, debut, fin, type_periode, granularite, p
             "dimanche": dict(_a["dimanche"]),
             "presence": {"confirmee": _p["confirmee"], "absente": _p["absente"], "inconnue": _p["inconnue"],
                          "couverture_pct": _p["couverture_pct"]},
-            "par_seance": par_seance(faits, debut, fin),
+            "par_seance": par_seance(faits, debut, fin, cours_publics),
             "par_seance_source": SOURCE_DYNAMIQUE,
         }
 

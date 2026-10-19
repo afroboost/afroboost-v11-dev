@@ -651,9 +651,19 @@ async def stats_association(request: Request, mois: str = "", annee: str = "", g
         avert.append("Bilans clôturés illisibles (%s) : chiffres recalculés." % type(_err).__name__)
         cloture, clotures_mois = None, {}
 
+    # ── le catalogue PUBLIC des cours (le filtre de `GET /api/courses`) : seul
+    #    endroit d'où vient un libellé de séance ──
+    cours_publics = {}
+    try:
+        for _c in await db.courses.find({"archived": {"$ne": True}}, {"_id": 0, "id": 1, "name": 1}).to_list(500):
+            if _c.get("id") and str(_c.get("name") or "").strip():
+                cours_publics[str(_c["id"])] = str(_c["name"]).strip()
+    except Exception as _err:  # noqa: BLE001 — sans catalogue, toutes les séances s'appellent « Séance »
+        avert.append("Catalogue des cours illisible (%s) : séances non nommées." % type(_err).__name__)
+        cours_publics = {}
     reponse = construire_reponse(kpi, ctx, assoc, debut, fin, _type, _g, portee, maintenant, _genere,
                                  cloture=cloture, clotures_mois=clotures_mois, fuseau_ok=_fuseau_ok,
-                                 avertissements_amont=avert)
+                                 avertissements_amont=avert, cours_publics=cours_publics)
     _fuites = verifier_anonymat(reponse)
     if _fuites:
         logger.error("[STATS] réponse refusée : donnée personnelle détectée %s", _fuites[:3])
