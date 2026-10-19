@@ -130,13 +130,17 @@ def base():
         {"id": "m-b2", "session_id": "s2", "sender_id": BOB, "sender_type": "user"},
         {"id": "m-ga", "session_id": "g1", "sender_id": ALICE, "sender_type": "user"},
         {"id": "m-gb", "session_id": "g1", "sender_id": BOB, "sender_type": "user"},
+        {"id": "m-pa", "session_id": "p1", "sender_id": ALICE, "sender_type": "user"},
+        {"id": "m-da", "session_id": "d1", "sender_id": ALICE, "sender_type": "user"},
     ]
     for nom, docs in {
         "coaches": [{"email": COACH_B, "is_active": True}, {"email": COACH_C, "is_active": True}],
         "coach_auth": [{"id": "coach_auth", "email": SA}],
         "chat_sessions": [{"id": "s1", "coach_id": COACH_B, "participant_ids": [ALICE], "mode": "ai"},
                           {"id": "s2", "coach_id": COACH_C, "participant_ids": [BOB], "mode": "ai"},
-                          {"id": "g1", "coach_id": COACH_B, "participant_ids": [ALICE, BOB], "mode": "group"}],
+                          {"id": "g1", "coach_id": COACH_B, "participant_ids": [ALICE, BOB], "mode": "group"},
+                          {"id": "p1", "coach_id": COACH_B, "participant_ids": [ALICE, BOB], "mode": "user"},
+                          {"id": "d1", "coach_id": COACH_B, "participant_ids": [ALICE, BOB], "mode": "ai"}],
         "chat_participants": [{"id": ALICE, "email": "alice@exemple.test"}, {"id": BOB, "email": "bob@exemple.test"}],
         "chat_messages": msgs, "campaigns": [{"id": "c1", "results": [{"sid": "SMfaux", "status": "sent"}]}],
         "feature_flags": [{"id": "feature_flags"}],
@@ -181,6 +185,10 @@ b = base()
 r = suppr("m-b2", J_SA)
 verifier("A5 super-admin (JWT) → 200", r.status_code == 200 and msg(b, "m-b2").get("is_deleted"), r.text)
 
+b = base()
+r = suppr("m-pa", T_ALICE)
+verifier("A6 chat privé : auteur avec jeton abonné → 200", r.status_code == 200 and msg(b, "m-pa").get("is_deleted"), r.text)
+
 print("\nB. message d'autrui / id deviné → refus")
 b = base()
 for nom, args in [("B1 anonyme sans preuve", ("m-a1",)),
@@ -193,7 +201,10 @@ for nom, args in [("B1 anonyme sans preuve", ("m-a1",)),
                   ("B8 e-mail super-admin DÉCLARÉ", ("m-a1", H_SA)),
                   ("B9 e-mail du coach DÉCLARÉ", ("m-a1", {"X-User-Email": COACH_B})),
                   ("B10 id deviné inexistant", ("m-zzz", None, ALICE)),
-                  ("B11 participant_id d'une autre conversation", ("m-b2", None, ALICE))]:
+                  ("B11 participant_id d'une autre conversation", ("m-b2", None, ALICE)),
+                  ("B13 chat privé : Bob présente l'id d'Alice (qu'il voit)", ("m-pa", None, ALICE)),
+                  ("B14 conversation à 2 participants : id d'Alice usurpé", ("m-da", None, ALICE)),
+                  ("B15 chat privé : jeton de Bob sur le message d'Alice", ("m-pa", T_BOB))]:
     r = suppr(*args)
     verifier(nom + " → 404", r.status_code == 404, "%s %s" % (r.status_code, r.text))
 verifier("B12 AUCUN message supprimé", not any(d.get("is_deleted") for d in b["chat_messages"].documents))
@@ -248,7 +259,7 @@ r = faire_q("PUT", "/api/notifications/mark-read", J_B, corps={"message_ids": ["
 verifier("G8 liste démesurée → 400", r.status_code == 400, r.text)
 b = base()
 r = faire_q("PUT", "/api/notifications/mark-read", J_SA, corps={"all_for_target": "coach"})
-verifier("F4 super-admin → toutes", r.status_code == 200 and r.json().get("marked_count") == 4, r.text)
+verifier("F4 super-admin → toutes", r.status_code == 200 and r.json().get("marked_count") == 6, r.text)
 
 print("\nH/I. déclencheur des rappels (moteur SIMULÉ : aucun rappel réel)")
 import inspect  # noqa: E402

@@ -56407,8 +56407,12 @@ async def p0b2_peut_supprimer_message(request: Request, msg: dict, session: dict
     membres = session.get("participant_ids") or []
     if not auteur or auteur not in membres:
         return False
+    # Le `participant_id` ne prouve rien dès qu'un AUTRE membre voit les messages : il y lit
+    # le `sender_id` de l'auteur (groupes, mais aussi chats privés et conversations à 2+).
+    # Il ne vaut donc preuve que si l'auteur est le SEUL participant.
+    seul = list(membres) == [auteur]
     groupe = (session.get("mode") in P0B2_MODES_GROUPE) or bool(session.get("group_id"))
-    if not groupe and (participant_id or "").strip() == auteur:
+    if seul and not groupe and (participant_id or "").strip() == auteur:
         return True
     try:
         from api.routes.shared import subscriber_from_request
