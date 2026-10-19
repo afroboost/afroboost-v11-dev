@@ -2011,6 +2011,7 @@ class FeatureFlagsUpdate(BaseModel):
     REMINDERS_SUBSCRIBERS_DRY_RUN: Optional[bool] = None  # RV-AB : recenser sans envoyer (défaut : oui)
     parrainage_chaine_enabled: Optional[bool] = None  # V556 : Parrainage V3 « invite avant de t'inscrire » (absent = éteint)
     invitation_chaine_campagne_enabled: Optional[bool] = None  # PAR-1 : une campagne trial devient racine de chaîne (absent = éteint)
+    P0A_REPLI_ENTETE_SUPERADMIN: Optional[bool] = None  # P0-A : true = RETOUR ARRIÈRE (réaccepte l'en-tête super-admin non signé)
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -10646,8 +10647,11 @@ async def admin_create_code(request: Request):
     """Créer un code d'accès manuellement (admin uniquement)."""
     try:
         body = await request.json()
-        admin_email = (body.get("admin_email") or "").lower().strip()
-        if not is_super_admin(admin_email):
+        # P0-A : l'identité vient d'un JWT super-admin SIGNÉ, jamais du corps (`admin_email`
+        # se déclarait librement : n'importe qui créait des codes gratuits).
+        from api.routes.shared import super_admin_signe as _p0a_sa
+        admin_email = _p0a_sa(request)
+        if not admin_email:
             raise HTTPException(status_code=403, detail="Non autorisé")
 
         customer_email = (body.get("customer_email") or "").lower().strip()
@@ -41232,11 +41236,13 @@ async def admin_delete_history(request: Request):
     """
     body = await request.json()
     session_id = body.get("session_id")
-    caller_email = body.get("email", "").lower().strip()
+    # P0-A : super-admin prouvé par JWT signé (le champ `email` du corps se déclarait librement).
+    from api.routes.shared import super_admin_signe as _p0a_sa
+    caller_email = _p0a_sa(request)
     
-    # ===== VÉRIFICATION SÉCURITÉ : EMAIL COACH OBLIGATOIRE =====
-    if caller_email != COACH_EMAIL:
-        logger.warning(f"[SECURITY] Tentative non autorisée de suppression d'historique par: {caller_email}")
+    # ===== VÉRIFICATION SÉCURITÉ : SUPER-ADMIN SIGNÉ OBLIGATOIRE =====
+    if not caller_email:
+        logger.warning("[SECURITY] Tentative non autorisée de suppression d'historique (sans JWT super-admin)")
         raise HTTPException(
             status_code=403, 
             detail="Accès refusé. Seul le coach peut supprimer l'historique."
@@ -41271,11 +41277,13 @@ async def admin_change_identity(request: Request):
     """
     body = await request.json()
     participant_id = body.get("participant_id")
-    caller_email = body.get("email", "").lower().strip()
+    # P0-A : super-admin prouvé par JWT signé (le champ `email` du corps se déclarait librement).
+    from api.routes.shared import super_admin_signe as _p0a_sa
+    caller_email = _p0a_sa(request)
     
-    # ===== VÉRIFICATION SÉCURITÉ : EMAIL COACH OBLIGATOIRE =====
-    if caller_email != COACH_EMAIL:
-        logger.warning(f"[SECURITY] Tentative non autorisée de changement d'identité par: {caller_email}")
+    # ===== VÉRIFICATION SÉCURITÉ : SUPER-ADMIN SIGNÉ OBLIGATOIRE =====
+    if not caller_email:
+        logger.warning("[SECURITY] Tentative non autorisée de changement d'identité (sans JWT super-admin)")
         raise HTTPException(
             status_code=403, 
             detail="Accès refusé. Seul le coach peut changer l'identité."
@@ -56201,6 +56209,63 @@ async def _v309_security_headers(request: Request, call_next):
     # reste privé de micro, exactement comme `camera=(self)` juste à côté.
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(self), camera=(self)"
     return response
+
+
+# ============================================================================
+# P0-A (19/10/2026) — UNE ADRESSE SUPER-ADMIN DÉCLARÉE NE PROUVE RIEN
+# ============================================================================
+# `require_auth`, `_v263_authenticated_coach`, `_v319_coach_identity` et 26 routes
+# lisant directement `X-User-Email` acceptaient encore l'en-tête quand aucun JWT
+# valide n'accompagnait la requête (repli « transitoire » V265). Or l'adresse du
+# super-admin est publique (bundle) : `X-User-Email: <super-admin>` suffisait à
+# régler la plateforme, ouvrir le Live gratuitement, réconcilier Stripe…
+#
+# UN SEUL POINT DE CONTRÔLE, AVANT TOUTE ROUTE : si l'en-tête désigne un
+# super-admin SANS un JWT coach signé portant LE MÊME e-mail, l'en-tête est retiré
+# de la requête. Les routes voient alors un appelant anonyme (401/403) ou,
+# avec un JWT, l'identité du JWT — jamais un super-admin déclaré.
+# Le JWT valide du propriétaire n'est pas touché (même e-mail → en-tête conservé).
+# Les autres coachs ne sont PAS concernés ici (lot P0-4 du plan).
+#
+# RETOUR ARRIÈRE SANS REDÉPLOIEMENT : `feature_flags.P0A_REPLI_ENTETE_SUPERADMIN = true`
+# (PUT /feature-flags, super-admin signé) rétablit l'ancien comportement en ≤ 30 s.
+# Une base illisible n'ouvre rien (repli fermé).
+P0A_FLAG_REPLI = "P0A_REPLI_ENTETE_SUPERADMIN"
+P0A_CACHE_S = 30.0
+_p0a_cache = {"t": -1e9, "repli": False}
+
+
+def p0a_entete_super_admin_non_prouve(entete_email: str, jwt_email: str) -> bool:
+    """L'en-tête désigne un super-admin que le JWT signé ne prouve pas. PURE."""
+    e = (entete_email or "").strip().lower()
+    return bool(e) and bool(is_super_admin(e)) and (jwt_email or "").strip().lower() != e
+
+
+async def _p0a_repli_autorise() -> bool:
+    """Le retour arrière est-il demandé ? Lu en base, mémorisé 30 s ; panne = non."""
+    import time as _t
+    maintenant = _t.monotonic()
+    if maintenant - _p0a_cache["t"] < P0A_CACHE_S:
+        return _p0a_cache["repli"]
+    try:
+        flags = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0, P0A_FLAG_REPLI: 1}) or {}
+        repli = flags.get(P0A_FLAG_REPLI) is True
+    except Exception:  # noqa: BLE001
+        repli = False
+    _p0a_cache.update(t=maintenant, repli=repli)
+    return repli
+
+
+@fastapi_app.middleware("http")
+async def _p0a_garde_entete_super_admin(request: Request, call_next):
+    entete = request.headers.get("x-user-email", "")
+    if entete and is_super_admin(entete.strip().lower()):
+        from api.routes.shared import coach_jwt_email as _p0a_jwt
+        if p0a_entete_super_admin_non_prouve(entete, _p0a_jwt(request)) and not await _p0a_repli_autorise():
+            request.scope["headers"] = [(k, v) for (k, v) in request.scope["headers"] if k.lower() != b"x-user-email"]
+            logger.warning("[P0-A] en-tête super-admin non prouvé par un JWT signé, ignoré : %s %s",
+                           request.method, request.url.path)
+    return await call_next(request)
 
 # Dynamic manifest.json endpoint for PWA
 @fastapi_app.get("/api/manifest.json")
