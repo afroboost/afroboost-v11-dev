@@ -43,7 +43,7 @@ F.poser_admin()
 F.horloge_figee(R)
 
 CLE_FREQ = "cle-frequentation-de-test-0123456789"
-CLE_FIN = "cle-finances-de-test-9876543210"
+CLE_FIN = "cle-finances-de-test-9876543210-abcdef"
 
 
 def _env(freq=CLE_FREQ, fin=CLE_FIN):
@@ -57,6 +57,7 @@ def _env(freq=CLE_FREQ, fin=CLE_FIN):
 def _reinit():
     R._STATS_CACHE.clear()
     R._STATS_DEBIT.clear()
+    del R._STATS_ECHECS[:]
 
 
 def appel(cle=None, jeu=None, base=None, ip="203.0.113.7", entetes=None, **params):
@@ -221,16 +222,53 @@ r, cc, _ = appel(CLE_FREQ, jeu=jeu, mois="2026-09")
 verifier("un e-mail glissé dans un nom de cours -> 500 JSON, rien servi",
          r.status_code == 500 and cc.get("error") == "donnee_personnelle_detectee" and "anna" not in json.dumps(cc), (r.status_code, cc))
 
-# ═══ 10. débit ═══
+# ═══ 10. débit : par adresse (complément) et verrou GLOBAL des échecs ═══
 _reinit()
-codes = [appel("mauvaise-cle", ip="198.51.100.9", mois="2026-09")[0].status_code for _ in range(R.STATS_DEBIT_MAX)]
+codes = [appel(CLE_FREQ, ip="198.51.100.9", mois="2026-09")[0].status_code for _ in range(R.STATS_DEBIT_MAX)]
 r, cc, _ = appel(CLE_FREQ, ip="198.51.100.9", mois="2026-09")
-verifier("débit : au-delà de %d appels/min -> 429 JSON, même avec la bonne clé" % R.STATS_DEBIT_MAX,
-         set(codes) == {401} and r.status_code == 429 and cc["error"] == "debit_depasse" and r.headers.get("retry-after") == "60", (codes[-1], r.status_code))
+verifier("débit par adresse : au-delà de %d appels/min -> 429 JSON, Retry-After 60" % R.STATS_DEBIT_MAX,
+         set(codes) == {200} and r.status_code == 429 and cc["error"] == "debit_depasse" and r.headers.get("retry-after") == "60", (codes[-1], r.status_code))
 r, cc, _ = appel(CLE_FREQ, ip="198.51.100.10", mois="2026-09")
-verifier("débit : une autre adresse n'est pas pénalisée", r.status_code == 200)
+verifier("débit par adresse : une autre adresse n'est pas pénalisée", r.status_code == 200)
 r, cc, _ = appel(CLE_FREQ, ip="10.0.0.1", entetes={"CF-Connecting-IP": "198.51.100.9"}, mois="2026-09")
-verifier("débit : l'adresse réelle vient de CF-Connecting-IP", r.status_code == 429, r.status_code)
+verifier("débit par adresse : l'adresse vient de CF-Connecting-IP", r.status_code == 429, r.status_code)
+_reinit()
+verifier("IP : sans CF, le DERNIER saut de X-Forwarded-For (comme _live_guest_ip)",
+         R._stats_ip(F.Req({"x-forwarded-for": "1.2.3.4, 203.0.113.50"}, "10.0.0.1")) == "203.0.113.50")
+verifier("IP : ni CF ni XFF -> la socket", R._stats_ip(F.Req({}, "10.0.0.9")) == "10.0.0.9")
+
+# FALSIFICATION D'IP : un attaquant change CF-Connecting-IP à CHAQUE essai de clé.
+_reinit()
+codes = [appel("devinette-%03d" % i, ip="10.0.0.1", entetes={"CF-Connecting-IP": "198.51.100.%d" % i}, mois="2026-09")[0].status_code
+         for i in range(R.STATS_ECHECS_MAX)]
+verifier("falsification : %d clés fausses depuis %d « adresses » différentes -> 401 chacune (aucune adresse ne dépasse son débit)"
+         % (R.STATS_ECHECS_MAX, R.STATS_ECHECS_MAX), set(codes) == {401}, set(codes))
+r, cc, _ = appel("devinette-suivante", ip="10.0.0.1", entetes={"CF-Connecting-IP": "198.51.100.250"}, mois="2026-09")
+verifier("falsification : l'essai suivant, nouvelle « adresse », -> 429 (verrou GLOBAL)",
+         r.status_code == 429 and cc.get("error") == "trop_d_echecs" and r.headers.get("retry-after") == "600", (r.status_code, cc))
+r, cc, _ = appel(CLE_FREQ, ip="192.0.2.77", mois="2026-09")
+verifier("verrou global : 429 pour TOUT LE MONDE, même la bonne clé, pendant la fenêtre", r.status_code == 429, r.status_code)
+verifier("verrou global : 30 échecs / 10 min", R.STATS_ECHECS_MAX == 30 and R.STATS_ECHECS_FENETRE == 600.0)
+_reinit()
+r, cc, _ = appel(CLE_FREQ, mois="2026-09")
+verifier("fenêtre écoulée (compteur vidé) : la bonne clé repasse", r.status_code == 200)
+_reinit()
+for _ in range(R.STATS_ECHECS_MAX - 1):
+    appel("x" * 40, ip="10.0.0.2", entetes={"CF-Connecting-IP": "198.51.100.1"}, mois="2026-09")
+r, cc, _ = appel(CLE_FREQ, mois="2026-09")
+verifier("sous le seuil (29 échecs) : la bonne clé passe toujours", r.status_code == 200, r.status_code)
+
+# CLÉ TROP COURTE = ABSENTE
+_reinit(); _env("courte-0123456789", None)
+r, cc, _ = appel("courte-0123456789", mois="2026-09")
+verifier("clé configurée < 32 caractères -> traitée comme absente : 503", r.status_code == 503 and cc["error"] == "stats_non_configurees", (r.status_code, cc))
+_reinit(); _env("courte-0123456789", CLE_FIN)
+r, cc, _ = appel("courte-0123456789", mois="2026-09")
+verifier("clé courte à côté d'une clé valide : la courte est refusée (401), jamais acceptée", r.status_code == 401, r.status_code)
+r, cc, _ = appel(CLE_FIN, mois="2026-09")
+verifier("… la clé valide (≥ 32) fonctionne", r.status_code == 200 and cc["portee"] == "finances")
+verifier("clés de ce banc ≥ 32 caractères", len(CLE_FREQ) >= 32 and len(CLE_FIN) >= 32)
+_env()
 
 # ═══ 11. cache ~10 min ═══
 _reinit()
