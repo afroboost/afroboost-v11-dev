@@ -311,9 +311,11 @@ async def principal():
              "trouves=%d" % len(re.findall(r"<h1[ >]", corps)))
     verifier("9. Le concept est decrit en clair (afro, cardio, casque, debutant)",
              all(m in corps.lower() for m in ("afro", "cardio", "casque", "débutant")))
-    verifier("10. La formulation metier EXACTE est presente",
-             "Ton premier cours d'essai Afroboost est offert." in corps
-             or "Ton premier cours d’essai Afroboost est offert." in corps)
+    # V623 (page courte) : l'offre se dit « Ton premier cours est offert », et la
+    # condition reste écrite juste sous le bouton.
+    verifier("10. La formulation metier : premier cours offert + condition écrite",
+             "Ton premier cours est offert" in corps
+             and "L’essai concerne la première séance, une seule fois par personne." in corps)
     verifier("11. Aucune promesse que TOUS les cours sont gratuits",
              not re.search(r"(tous|toutes) les (cours|s[ée]ances) (sont )?(gratuit|offert)", corps, re.I))
 
@@ -411,8 +413,8 @@ async def principal():
              all(_valide(b) for b in blocs_jsonld(corps2)))
 
     # ---- 9. LE CTA ---------------------------------------------------------
-    verifier("39. Le CTA porte le libelle demande (HIVER : « 1er »)",
-             "Réserver mon 1er cours gratuit" in corps)
+    verifier("39. Le CTA porte le libelle demande (V623 : « Réserver mon essai »)",
+             ">Réserver mon essai</a>" in corps)
     verifier("40. Le CTA mene au tunnel d'essai EXISTANT",
              "?link=b83914b4-c5a" in corps)
     verifier("41. Aucun nouveau tunnel n'est cree",
@@ -435,7 +437,7 @@ async def principal():
     verifier("44. Sans seance a venir : message neutre, aucune date inventee",
              "Aucune séance" in corps3 or "aucune séance" in corps3)
     verifier("45. Le CTA reste present meme sans seance",
-             "Réserver mon 1er cours gratuit" in corps3 and "?link=b83914b4-c5a" in corps3)
+             ">Réserver mon essai</a>" in corps3 and "?link=b83914b4-c5a" in corps3)
     verifier("46. Aucun `Event` n'est declare sans occurrence reelle",
              not [o for b in blocs_jsonld(corps3) for o in _plat(b) if o.get("@type") == "Event"])
 
@@ -502,25 +504,24 @@ async def principal():
              "en groupe. Pas besoin de savoir danser. Ton premier cours est offert." in page)
     # SEO-GEO (19/10/2026) : la ligne descriptive devient le H1 ; le slogan reste,
     # en grand, juste en dessous (l'élément visuel fort ne change pas).
-    verifier("59. H1 exact et UNIQUE : la ligne descriptive, slogan conservé dessous",
-             page.count("<h1") == 1
-             and "<h1>Cardio-danse Afrobeat à Neuchâtel — 1er cours offert</h1>\n"
-                 '<p class="slogan">DANSE. TRANSPIRE. LÂCHE PRISE.</p>' in page)
-    for h2 in ("C’est quoi Afroboost ?", "Prochaines séances à Neuchâtel",
-               "Ton premier cours est offert"):
-        verifier("60. H2 « %s » present" % h2, ">%s</h2>" % h2 in page)
-    verifier("61. La promesse du hero (SEO-GEO) : Neuchâtel, cardio-danse, débutants, 1er cours offert — sans casque",
-             "cardio-danse africaine et fitness, avec un coach" in page and "fitness au casque" not in page
-             and "Pas besoin de savoir danser." in page
-             and "<b>Ton premier cours est offert.</b>" in page)
-    verifier("62. La formulation metier EXACTE est conservee",
-             "Ton premier cours d’essai Afroboost est offert." in page)
+    # V623 — PAGE ULTRA-SIMPLE : H1 SEO inchangé (grand titre), une phrase, les
+    # repères à icônes, le bloc offre, UN bouton ; le reste dans « En savoir plus ».
+    verifier("59. H1 exact et UNIQUE (inchangé depuis SEO-GEO)",
+             page.count("<h1") == 1 and "<h1>Cardio-danse Afrobeat à Neuchâtel — 1er cours offert</h1>" in page)
+    for h2 in ("C’est quoi Afroboost ?", "Pour qui ?", "Questions fréquentes", "Horaires et adresse", "Formules"):
+        verifier("60. H2 « %s » présent dans « En savoir plus »" % h2,
+                 ">%s</h2>" % h2 in page.split('<details class="ess-plus">')[1])
+    verifier("61. L'essentiel AVANT « En savoir plus » : une phrase, durée, adresse, offre, bouton — sans casque",
+             all(x in page.split('<details class="ess-plus">')[0] for x in (
+                 "Pas besoin de savoir danser.", "Environ 1 heure", "Chemin des Valangines 97, 2000 Neuchâtel",
+                 "Ton premier cours est offert", ">Réserver mon essai</a>")) and "casque" not in page.split("</h1>")[1].split('<details class="ess-plus">')[0].lower())
+    verifier("62. « En savoir plus » est FERMÉ par défaut", '<details class="ess-plus">' in page and '<details class="ess-plus" open' not in page)
     verifier("63. Le texte concept valide est present",
              "Ce n’est pas un cours de danse traditionnelle" in page
              and "inspiré des danses africaines et de l’Afrobeat" in page)
 
     # --- la photo ---
-    img = re.search(r'<img[^>]*class="hero-photo"[^>]*>', page)
+    img = re.search(r'<div class="ess-media"><img[^>]*>', page)
     verifier("64. Le hero porte une vraie photo", img is not None)
     src = re.search(r'src="([^"]+)"', img.group(0)) if img else None
     verifier("65. Elle pointe sur le fichier optimise",
@@ -564,13 +565,13 @@ async def principal():
                                              "hero-afroboost.webp")))
     verifier("68f. La page ne reference plus le WebP", "hero-afroboost.webp" not in page)
     verifier("69. La page reste lisible SANS image (texte hors de l'image)",
-             "<h1" in page.split("</picture>")[-1] or 'class="hero-texte"' in page)
+             page.index('<div class="ess-media">') < page.index("<h1"))
 
     # --- le CTA ---
     ctas = re.findall(r'<a class="cta"[^>]*href="([^"]+)"[^>]*>([^<]*)</a>', page)
-    verifier("70. Quatre CTA identiques : hero, apres les seances, fin, barre mobile", len(ctas) == 4, len(ctas))
+    verifier("70. Deux CTA identiques (V623) : sous l'offre, barre mobile", len(ctas) == 2, len(ctas))
     verifier("71. Meme libelle valide",
-             all("Réserver mon 1er cours gratuit" in t for _, t in ctas), ctas)
+             all(t == "Réserver mon essai" for _, t in ctas), ctas)
     # M2-A : le lien peut desormais porter l'origine normalisee en suffixe.
     # Ce qui est verifie reste le meme : la destination est le tunnel EXISTANT.
     verifier("72. Meme destination : le tunnel EXISTANT",
@@ -603,7 +604,7 @@ async def principal():
     # bloc été sont RETIRÉS DE CETTE PAGE seulement : ils vivent dans « Toutes
     # les offres » (la fenêtre existante de la vitrine) et dans la base. La page
     # n'affiche plus aucun prix : elle ne peut donc plus en afficher de faux.
-    _main = page.split("<main>")[1].split("</main>")[0]
+    _main = page.split('<main class="ess">')[1].split("</main>")[0]
     verifier("V622-1. Tarifs, comparatif, carte membre, « Pourquoi » et été : retirés de CETTE page",
              all(x not in page for x in ("<h3>Fondateurs</h3>", 'class="t-prix"', "Comparer les formules", "Pourquoi Afroboost, et pas",
                                          "Carte membre de l’association", "l’été, Afroboost Silent", 'class="ete"', 'class="membre"')))
@@ -621,12 +622,15 @@ async def principal():
              bool(_saison_seule) and _ns87["_m1_est_meilleur_prix"](_saison_seule[0], [o for o in _offres87 if "Fondateurs" not in str(o.get("name", ""))]) is True
              and _ns87["_m1_est_meilleur_prix"](_saison_seule[0], _offres87) is False)
     verifier("88. Aucun horaire/jour/lieu en dur : les jours cités viennent du planning",
-             "mercredi" not in page.lower().split("<main>")[0] and ("Les cours ont lieu le" in page))
+             "mercredi" not in page.lower().split("<main")[0] and ("Les cours ont lieu le" in page))
     verifier("89. Barre CTA sticky mobile présente, masquée dès 641 px",
              '<div class="sticky">' in page and "@media(min-width:641px){.sticky{display:none}}" in page)
-    verifier("90. Sections dans l'ordre (page courte V622)", all(0 <= page.find(a) < page.find(b) for a, b in zip(
-        ("<h1>", "C’est quoi Afroboost", "Comment fonctionne", "Pour qui", "Tes questions", "Prochaines séances", "Les formules et les prix", 'class="fin"', "<h2>Contact</h2>"),
-        ("C’est quoi Afroboost", "Comment fonctionne", "Pour qui", "Tes questions", "Prochaines séances", "Les formules et les prix", 'class="fin"', "<h2>Contact</h2>", '<div class="sticky">'))))
+    _ordre90 = ('<div class="ess-media">', "<h1>", '<p class="ess-accroche">Pas besoin de savoir danser.', 'class="ess-offert"', ">Réserver mon essai</a>",
+                "<summary>En savoir plus</summary>", "C’est quoi Afroboost", "Pour qui", "Questions fréquentes",
+                "Horaires et adresse", ">Formules</h2>", "<h2>Contact</h2>", '<div class="sticky">')
+    verifier("90. Sections dans l'ordre (page ultra-simple V623)",
+             all(0 <= page.find(a) < page.find(b) for a, b in zip(_ordre90, _ordre90[1:])),
+             [page.find(x) for x in _ordre90])
     verifier("91. Aucun faux témoignage : section absente tant qu'aucun témoignage approuvé n'existe",
              'class="temoignages"' not in page)
     verifier("92. FAQ dans le HTML ET en JSON-LD FAQPage, un seul parcours",
@@ -662,8 +666,8 @@ async def principal():
              _lignes_seances[:2])
 
     # --- les quatre reperes ---
-    # SEO-GEO (19/10/2026) : « Casque fourni » -> « Aucun matériel à apporter ».
-    for repere in ("Débutants bienvenus", "Environ 1 heure", "Aucun matériel à apporter", "Neuchâtel"):
+    # V623 : les repères de la page courte (lignes à icônes) — durée et lieu.
+    for repere in ("Environ 1 heure", "Chemin des Valangines 97, 2000 Neuchâtel", "Neuchâtel"):
         verifier("81. Repere « %s »" % repere, repere in page)
 
 

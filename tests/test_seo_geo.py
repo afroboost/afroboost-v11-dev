@@ -196,16 +196,17 @@ async def main():
     db, j = M1.monde()
     _, page = await M1.rendre(db, j)
     v("H1 = ligne descriptive", "<h1>Cardio-danse Afrobeat à Neuchâtel — 1er cours offert</h1>" in page)
-    v("slogan conservé en grand, juste dessous",
-      '</h1>\n<p class="slogan">DANSE. TRANSPIRE. LÂCHE PRISE.</p>' in page and ".slogan{font-size:clamp(1.9rem" in page)
+    # V623 (page ultra-simple, décision de Bassi) : le slogan n'est plus affiché ;
+    # le H1, lui, est strictement inchangé.
+    v("V623 : H1 suivi de la phrase courte (slogan retiré de l'affichage)",
+      '</h1>\n<p class="ess-accroche">Pas besoin de savoir danser.</p>' in page)
     v("description exacte",
       'content="Afroboost Neuchâtel : cardio-danse africaine et fitness, avec un coach, en groupe. '
       'Pas besoin de savoir danser. Ton premier cours est offert."' in page)
-    v("badges : « Aucun matériel à apporter »",
-      "<li>Débutants bienvenus</li><li>Environ 1 heure</li><li>Aucun matériel à apporter</li><li>Neuchâtel</li>" in page)
-    v("bloc musique remplacé",
-      "<b>La musique, à fond.</b> Afrobeat, énergie de groupe et un coach qui te guide à chaque mouvement. "
-      "On arrive seul, on repart avec le sourire." in page)
+    v("V623 : repères à icônes (durée, adresse du lieu des cours), sans casque",
+      "Environ 1 heure</li>" in page and "Chemin des Valangines 97, 2000 Neuchâtel</li>" in page
+      and "Casque fourni" not in page)
+    v("plus aucun « dans ton casque » (bloc musique)", "dans ton casque" not in page)
     # Le casque n'a plus droit de cité QUE dans : le bloc Silent (été), la FAQ
     # « Et le casque audio ? » (qui dit justement « sans casque en salle »), et
     # le texte alternatif de la photo d'été (description, pas promesse).
@@ -264,8 +265,8 @@ async def main():
     v("lien « Qui est Coach Bassi ? » vers /a-propos", '<a href="/a-propos">Qui est Coach Bassi ?</a>' in page)
     v("le script de la carte est en fin de body (après </main>)",
       page.index(".carte[data-carte-src]") > page.index("</main>"))
-    v("les boutons de réservation mènent TOUJOURS au tunnel d'essai",
-      page.count('<a class="cta" href="/?link=b83914b4-c5a">Réserver mon 1er cours gratuit</a>') >= 3)
+    v("les boutons de réservation mènent TOUJOURS au même endroit (repli tunnel dans ce banc)",
+      page.count('<a class="cta" href="/?link=b83914b4-c5a">Réserver mon essai</a>') == 2)
 
     print("\n== 6. Page /a-propos ==")
     nsa = {"_m1_echapper": None}

@@ -104,7 +104,8 @@ async def principal():
     verifier("plus de détour par le tunnel Chat", "link=" not in cta, cta)
     verifier("la carte « offert » suit le même lien que le bouton",
              html.count('href="%s"' % cta.replace("&", "&amp;")) >= 2)
-    verifier("le texte du bouton est inchangé", ">Réserver mon 1er cours gratuit</a>" in html)
+    # V623 : nouveau libellé pour TOUS les visiteurs ; la destination Partenaire est inchangée.
+    verifier("le texte du bouton (V623)", ">Réserver mon essai</a>" in html)
 
     # V622 (décision de Bassi, 19/10/2026) : les autres visiteurs ne passent plus
     # par le chat. Ils vont au MÊME parcours (`parcours=essai`), même offre lue sur

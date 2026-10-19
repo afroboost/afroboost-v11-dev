@@ -57696,10 +57696,22 @@ async def m1_page_essai_neuchatel(request: Request):
             if _j and _j not in _jours:
                 _jours.append(_j)
         _jours_txt = " et ".join(_jours[:2]) if _jours else ""
+        # V623 — « Mercredi 18h45 · Dimanche 18h30 », LU sur le planning (jamais écrit en dur).
+        _creneaux = []
+        for _titre_mois, _x in _toutes:
+            _c = "%s %s" % (str(_x["jour"]).split(" ")[0].capitalize(), str(_x["heure"]).replace(":", "h"))
+            if _c not in _creneaux:
+                _creneaux.append(_c)
+        _creneaux_txt = " · ".join(_creneaux[:3])
+        # V623 — la liste existante, en entier et repliée dans « En savoir plus » : elle
+        # reste consultable (les `Event` JSON-LD décrivent un contenu réellement visible).
+        _planning_complet = '<div class="grille">%s</div>' % "".join(_carte(_x) for _titre_mois, _x in _toutes)
     else:
         _planning = ('<p class="vide">Aucune séance n’est publiée pour le moment. '
                      'Réserve ton essai : nous te proposons la prochaine date.</p>')
         _jours_txt = ""
+        _creneaux_txt = ""
+        _planning_complet = _planning
 
     _titre = "Cours de danse africaine et cardio à Neuchâtel — 1er cours offert | Afroboost"
     # SEO-GEO : « fitness au casque » -> « fitness » (en salle, pas de casque).
@@ -57757,7 +57769,8 @@ async def m1_page_essai_neuchatel(request: Request):
                     _m1_echapper(_v622_offre), ("&amp;" + _suffixe) if _suffixe else "")
     except Exception as _perr:  # noqa: BLE001 — en cas de doute : le tunnel, comme avant
         logger.warning("[V594] parcours Partenaire non résolu (%s)", type(_perr).__name__)
-    _cta = ('<a class="cta" href="%s">Réserver mon 1er cours gratuit</a>' % _lien)
+    # V623 : libellé de la page courte ; la DESTINATION est inchangée (V594 / V622).
+    _cta = ('<a class="cta" href="%s">Réserver mon essai</a>' % _lien)
     # Le lien vers une formule : la vitrine ouvre l'offre (`?offre=<id>`, R4) et
     # l'origine suit, pour qu'un achat garde sa source.
     def _lien_offre(o):
@@ -57957,71 +57970,71 @@ tbody th{font-weight:700;color:#fff}
 .sticky{position:fixed;left:0;right:0;bottom:0;z-index:50;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:rgba(10,10,18,.92);backdrop-filter:blur(8px);border-top:1px solid rgba(var(--prgb),.35)}
 .sticky .cta{max-width:none;padding:14px 18px;box-shadow:none}
 @media(min-width:641px){.sticky{display:none}}
+/* V623 — PAGE D'ESSAI ULTRA-SIMPLE (référence UX : « Bassi t'invite », styles recopiés, aucune logique). */
+.ess{max-width:440px;margin:0 auto;padding:16px 16px 120px}
+.ess .kicker{margin:0 0 12px;text-shadow:none}
+.ess-media{border-radius:16px;overflow:hidden;margin:0 0 14px;background:rgba(255,255,255,.04)}
+.ess-media img{display:block;width:100%%;height:auto;aspect-ratio:16/10;object-fit:cover;object-position:50%% 30%%}
+.ess h1{font-size:25px;line-height:1.2;margin:0 0 6px;font-weight:800;letter-spacing:0;text-shadow:none}
+.ess-accroche{color:rgba(255,255,255,.82);margin:0 0 12px;font-size:15px}
+.ess-lignes{display:grid;gap:6px;margin:0 0 14px;padding:0;list-style:none}
+.ess-lignes li{display:flex;align-items:center;gap:10px;font-size:15px;color:rgba(255,255,255,.92)}
+.ess-lignes svg,.ess-offert svg{color:var(--p);flex:none}
+.ess-offert{padding:12px 14px;border-radius:14px;background:rgba(var(--prgb),.14);border:1px solid rgba(var(--prgb),.4);margin:0 0 14px;display:flex;align-items:center;gap:10px;font-weight:700;color:#fff}
+.ess .cta{max-width:none;min-height:54px;font-size:17px;display:flex;align-items:center;justify-content:center}
+.ess-note{margin:10px 0 0;text-align:center;font-size:.85rem}
+.ess-plus{margin:18px 0 0;border:0;border-top:1px solid rgba(255,255,255,.1);border-bottom:1px solid rgba(255,255,255,.1);border-radius:0;background:none}
+.ess-plus>summary{min-height:46px;padding:10px 2px;font-size:15px;border-radius:0}
+.ess-plus>summary::after{content:"";width:9px;height:9px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg);margin:-4px 4px 0}
+.ess-plus[open]>summary::after{transform:rotate(-135deg);margin-top:4px}
+.ess-plus section{margin:0;padding:0 2px 16px}
+.ess-plus h2{margin:6px 0 8px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.6);font-weight:700}
+.ess-plus p,.ess-plus li{font-size:14.5px}
+.ess-plus .grille{padding:0}
+.ess-plus .contact h2{margin-top:6px}
 </style>
 </head><body>
-<header class="hero" id="haut">
-<img class="hero-photo" src="%(photo)s" alt="%(alt)s" width="1024" height="1024" fetchpriority="high"/>
-<div class="hero-voile"></div>
-<div class="hero-texte">
+<main class="ess">
 <p class="kicker">Afroboost · Neuchâtel</p>
+<div class="ess-media"><img src="%(photo)s" alt="%(alt)s" width="1024" height="1024" fetchpriority="high"/></div>
 <h1>Cardio-danse Afrobeat à Neuchâtel — 1er cours offert</h1>
-<p class="slogan">DANSE. TRANSPIRE. LÂCHE PRISE.</p>
-<p class="promesse">Afroboost Neuchâtel : cardio-danse africaine et fitness, avec un coach, en groupe.<br/>Pas besoin de savoir danser. <b>Ton premier cours est offert.</b></p>
+<p class="ess-accroche">Pas besoin de savoir danser.</p>
+<ul class="ess-lignes">
+%(ligne_creneaux)s<li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Environ 1 heure</li>
+<li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>%(adresse)s</li>
+</ul>
+<p class="ess-offert"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7M7.5 8a2.5 2.5 0 0 1 0-5C11 3 12 8 12 8s1-5 4.5-5a2.5 2.5 0 0 1 0 5"/></svg>Ton premier cours est offert</p>
 %(cta)s
-<ul class="reperes"><li>Débutants bienvenus</li><li>Environ 1 heure</li><li>Aucun matériel à apporter</li><li>Neuchâtel</li></ul>
-</div>
-</header>
-<main>
+<p class="note ess-note">L’essai concerne la première séance, une seule fois par personne. Les autres formules restent payantes.</p>
+<details class="ess-plus">
+<summary>En savoir plus</summary>
 <section class="promesse-s">
 <h2>C’est quoi Afroboost ?</h2>
 <p>Afroboost est un concept inspiré des danses africaines et de l’Afrobeat, qui
 mélange danse, cardio et fitness. Ce n’est pas un cours de danse traditionnelle :
 tu suis le rythme, tu transpires et tu avances à ton niveau.</p>
-<ul class="benef">
-<li><b>Tu transpires sans t’en rendre compte.</b> Le cardio est caché dans la danse : tu suis la musique, le corps fait le reste.</li>
-<li><b>La musique, à fond.</b> Afrobeat, énergie de groupe et un coach qui te guide à chaque mouvement. On arrive seul, on repart avec le sourire.</li>
-<li><b>Un coach, un groupe, une énergie.</b> Personne ne te juge, tout le monde regarde le coach — et tout le monde ressort avec le sourire.</li>
-</ul>
 <p class="lien-apropos"><a href="/a-propos">Qui est Coach Bassi ?</a></p>
-</section>
-<section>
-<h2>Comment fonctionne Afroboost</h2>
-<ol class="etapes">
-<li><b>Réserve ton premier cours offert.</b> Deux minutes, en ligne. Tu choisis ensuite la séance qui t’arrange.</li>
-<li><b>Viens comme tu es.</b> Une tenue confortable, une bouteille d’eau.</li>
-<li><b>Suis le coach, à ton rythme.</b> Chaque mouvement est montré face au groupe ; tu le reprends, tu accélères quand tu veux.</li>
-</ol>
-<p class="note">Après ton essai, tu décides — ou pas — de continuer avec une formule. Aucune obligation.</p>
 </section>
 <section>
 <h2>Pour qui ?</h2>
 <ul class="pourqui"><li>Débutant·e complet·e</li><li>Jamais dansé</li><li>Pas sportif·ve</li><li>Tu viens seul·e</li><li>Tu veux transpirer en t’amusant</li><li>Tu aimes la musique afro</li><li>Tu en as marre des salles impersonnelles</li></ul>
-<p class="intro">Les mêmes mouvements pour tout le monde, à des intensités différentes : tu règles ton effort, pas le groupe.</p>
 </section>
 <section class="faq">
-<h2>Tes questions, nos réponses</h2>
+<h2>Questions fréquentes</h2>
 %(faq)s
 </section>
 %(temoignages)s
 <section class="seances">
-<h2>Prochaines séances à Neuchâtel</h2>
-<p class="intro">%(jours)sInscris-toi gratuitement, puis choisis la séance qui te convient.</p>
-%(planning)s
-<p class="note">Dates, horaires et lieux viennent directement du planning Afroboost. Le lieu exact est indiqué avec chaque séance.</p>
-%(cta)s
+<h2>Horaires et adresse</h2>
+<p>%(jours)s%(adresse)s.</p>
+%(planning_complet)s
 </section>
 <section class="tarifs-s" id="tarifs">
-<h2>Les formules et les prix</h2>
-<p class="intro">Ton premier cours est offert. Ensuite, tu choisis la formule qui te ressemble.</p>
+<h2>Formules</h2>
 <a class="cta cta-s" href="/?offres=toutes">Voir toutes les formules et les prix</a>
 </section>
-<section class="fin">
-<h2>Ton premier cours est offert</h2>
-<p>Ton premier cours d’essai Afroboost est offert. Réserve-le maintenant, viens une fois, et vois par toi-même.</p>
-%(cta)s
-<p class="note">L’essai concerne la première séance, une seule fois par personne. Les autres formules restent payantes.</p>
-</section>
 %(contact)s
+</details>
 </main>
 <div class="sticky">%(cta)s</div>
 <script>
@@ -58039,6 +58052,12 @@ tick();setInterval(tick,1000);})();
         # SEO-GEO : bloc Contact + carte au clic, styles partagés, photo principale.
         "contact": _seo_geo_contact_html(), "geo_css": SEO_GEO_CSS, "photo": _M1_PHOTO_HERO,
         "carte_js": SEO_GEO_CARTE_JS, "note_tarifs": _note_tarifs,
+        # V623 : page courte — créneaux lus sur le planning, adresse du lieu des cours (SEO-GEO).
+        "planning_complet": _planning_complet, "adresse": _m1_echapper(SEO_GEO_ADRESSE),
+        "ligne_creneaux": ('<li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                           'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+                           '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg>'
+                           '%s</li>\n' % _creneaux_txt) if _creneaux_txt else "",
         "comparaison_section": ('<section><h2>Comparer les formules</h2>%s</section>' % _comparaison) if _comparaison else "",
         "carte_membre": _cm_html, "ete": _ete_html, "temoignages": _temo_html,
         "jours": ("Les cours ont lieu le %s. " % _m1_echapper(_jours_txt.lower())) if _jours_txt else "",
