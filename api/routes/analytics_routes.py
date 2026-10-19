@@ -487,8 +487,12 @@ STATS_DEBIT_FENETRE = 60.0     # secondes
 STATS_CLE_LONGUEUR_MIN = 32    # une clé plus courte est traitée comme ABSENTE
 _STATS_CACHE = {}
 _STATS_DEBIT = {}
-_RE_MOIS = _re.compile(r"^(\d{4})-(\d{2})$")
-_RE_ANNEE = _re.compile(r"^(\d{4})$")
+# ASCII STRICT : `\d` accepterait les chiffres arabes-indiens (« ٢٠٢٦ »), que
+# `strptime` refuse ensuite -> 500. `fullmatch` refuse aussi le saut de ligne
+# final que `$` tolère.
+_RE_MOIS = _re.compile(r"([0-9]{4})-([0-9]{2})", _re.ASCII)
+_RE_ANNEE = _re.compile(r"([0-9]{4})", _re.ASCII)
+_RE_GRANULARITE = _re.compile(r"[a-z]{1,10}", _re.ASCII)
 
 
 def _stats_erreur(statut, code, message, entetes=None):
@@ -560,22 +564,25 @@ def _stats_portee(request):
 
 def _stats_periode(mois: str, annee: str, granularite: str, maintenant):
     """(type, debut, fin, granularite, None) ou (None, …, réponse 400)."""
-    _m, _a = str(mois or "").strip(), str(annee or "").strip()
+    # Aucun `.strip()` : un paramètre est en ASCII strict ou il est refusé.
+    _m, _a = str(mois or ""), str(annee or "")
     if _m and _a:
         return None, None, None, None, _stats_erreur(400, "parametres", "mois=YYYY-MM OU annee=YYYY, pas les deux.")
     if _a:
-        _r = _RE_ANNEE.match(_a)
+        _r = _RE_ANNEE.fullmatch(_a)
         if not _r or not (2020 <= int(_a) <= 2100):
             return None, None, None, None, _stats_erreur(400, "parametres", "annee attendue : YYYY.")
         _type, (_d, _f) = "annee", bornes_periode("annee", maintenant, "", "", "%s-01" % _a)
     else:
         if _m:
-            _r = _RE_MOIS.match(_m)
+            _r = _RE_MOIS.fullmatch(_m)
             if not _r or not (1 <= int(_r.group(2)) <= 12) or not (2020 <= int(_r.group(1)) <= 2100):
                 return None, None, None, None, _stats_erreur(400, "parametres", "mois attendu : YYYY-MM.")
         _type, (_d, _f) = "mois", bornes_periode("mois", maintenant, "", "", _m)
-    _g = str(granularite or "").strip().lower() or ("mois" if _type == "annee" else "semaine")
-    if _g not in ("jour", "semaine", "mois"):
+    if _d is None or _f is None:
+        return None, None, None, None, _stats_erreur(400, "parametres", "période illisible.")
+    _g = str(granularite or "") or ("mois" if _type == "annee" else "semaine")
+    if not _RE_GRANULARITE.fullmatch(_g) or _g not in ("jour", "semaine", "mois"):
         return None, None, None, None, _stats_erreur(400, "parametres", "granularite attendue : jour|semaine|mois.")
     return _type, _d, _f, _g, None
 
@@ -598,7 +605,10 @@ async def stats_association(request: Request, mois: str = "", annee: str = "", g
         return refus
     _instant = datetime.now(timezone.utc)
     maintenant = vers_local(_instant)
-    _type, debut, fin, _g, refus = _stats_periode(mois, annee, granularite, maintenant)
+    try:
+        _type, debut, fin, _g, refus = _stats_periode(mois, annee, granularite, maintenant)
+    except Exception:  # noqa: BLE001 — un paramètre hostile donne 400 JSON, jamais 500
+        refus = _stats_erreur(400, "parametres", "paramètres illisibles.")
     if refus is not None:
         return refus
     _fuseau_ok = _A.fuseau_zurich_disponible()

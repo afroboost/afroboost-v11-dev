@@ -192,7 +192,11 @@ verifier("anonymat en portée finances", verifier_anonymat(c2) == [] and "cs_tes
 # ═══ 6. paramètres ═══
 for p, nom in ((dict(mois="2026-09", annee="2026"), "mois ET annee"), (dict(mois="2026-13"), "mois 13"),
                (dict(mois="26-09"), "mois mal formé"), (dict(annee="20x6"), "année mal formée"),
-               (dict(mois="2026-09", granularite="heure"), "granularité inconnue")):
+               (dict(mois="2026-09", granularite="heure"), "granularité inconnue"),
+               (dict(mois="٢٠٢٦-٠٩"), "mois en chiffres arabes-indiens"), (dict(annee="٢٠٢٦"), "année en chiffres arabes-indiens"),
+               (dict(mois="２０２６-０９"), "chiffres pleine largeur"), (dict(mois="2026-09\n"), "saut de ligne final"),
+               (dict(annee="2026\n"), "année + saut de ligne"), (dict(mois="2026-00"), "mois 00"), (dict(annee="1999"), "année hors bornes"),
+               (dict(mois="2026-09'; --"), "injection"), (dict(mois="2026-09", granularite="ＪＯＵＲ"), "granularité non ASCII")):
     _reinit()
     r, cc, _ = appel(CLE_FREQ, **p)
     verifier("400 JSON — %s" % nom, r.status_code == 400 and cc.get("error") == "parametres", (r.status_code, cc))
