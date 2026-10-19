@@ -20821,8 +20821,10 @@ _V628_ECHECS_FENETRE = 3600.0
 async def _v628_echec(offre_id) -> None:
     """Enregistre un code REFUSÉ pour une offre-événement RÉELLE (lue en base : le nombre de clés
     est borné par le catalogue, jamais par ce que le client invente). Au-delà du plafond, chaque
-    nouveau refus est RALENTI (pas bloqué) : un code valable passe toujours, sans attendre —
-    personne ne peut fermer le formulaire aux invitées en enchaînant des faux codes."""
+    nouveau refus devient un 429 immédiat ; un code valable, lui, passe toujours — personne ne
+    peut fermer le formulaire aux invitées en enchaînant des faux codes. LIMITE ASSUMÉE : tant qu'un
+    code valable doit passer, aucun plafond n'empêche de DEVINER ; la vraie défense est un code
+    non devinable (suffixe aléatoire) ou attribué à une adresse (`assignedEmail`)."""
     import time as _t
     _k = str(offre_id or "")
     _now = _t.monotonic()
@@ -20830,7 +20832,7 @@ async def _v628_echec(offre_id) -> None:
     _h.append(_now)
     _V628_ECHECS[_k] = _h[-(_V628_ECHECS_MAX * 2):]
     if len(_h) > _V628_ECHECS_MAX:
-        await asyncio.sleep(2.0)
+        raise HTTPException(status_code=429, detail="Trop de tentatives. Réessaie dans un moment.")
 
 
 @api_router.post("/evenements/{offer_id}/place-code")
