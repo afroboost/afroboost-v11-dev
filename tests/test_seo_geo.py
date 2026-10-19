@@ -250,21 +250,21 @@ async def main():
       all(t in _types for t in ("Organization", "SportsActivityLocation", "FAQPage", "WebPage")), _types)
     v("JSON-LD page d'essai : organisation = celle de l'accueil",
       next((o for o in _objets if o.get("@type") == "Organization"), None) == ns["SEO_GEO_ORGANISATION"])
-    v("contact : texte exact",
-      all(m in page for m in ("<h2>Contact</h2>", "<b>Afroboost — Association Afroboosteur</b>",
-                              "Cours : Chemin des Valangines 97, 2000 Neuchâtel",
-                              'E-mail : <a href="mailto:contact@afroboosteur.com">contact@afroboosteur.com</a>',
-                              'Instagram : <a href="https://www.instagram.com/afroboosteur" target="_blank" rel="noopener">@afroboosteur</a>',
-                              "Facebook : <a href=\"https://www.facebook.com/profile.php?id=61574448227600\"")))
+    # V624 — PAGE ÉPURÉE : le contact devient 4 icônes SVG (liens EXISTANTS), sans aucune URL en
+    # texte brut ; la carte intégrée reste sur « À propos » (la localisation ouvre l'itinéraire).
+    _contact = page.split("<h2>Contact</h2>")[1].split("</section>")[0] if "<h2>Contact</h2>" in page else ""
+    v("contact : 4 icônes cliquables (mail, Instagram, Facebook, itinéraire) avec les vrais liens",
+      all(m in _contact for m in ('href="mailto:contact@afroboosteur.com"', 'href="https://www.instagram.com/afroboosteur"',
+                                  'href="https://www.facebook.com/profile.php?id=61574448227600"',
+                                  'href="https://www.google.com/maps/dir/?api=1&amp;destination=')) and _contact.count('class="ess-icone"') == 4)
+    v("contact : chaque icône a un aria-label et un title", _contact.count("aria-label=") == 4 and _contact.count(' title="') == 4)
+    v("contact : aucune URL ni adresse e-mail affichée en texte brut",
+      not re.search(r"https?://|@afroboosteur|contact@", re.sub(r"<[^>]+>", " ", _contact)))
     v("contact : aucun numéro de téléphone", "tel:" not in page and "telephone" not in page.lower())
-    v("carte : bouton « Afficher la carte » + lien « Itinéraire »",
-      '<button type="button" class="carte-btn">Afficher la carte</button>' in page
-      and "https://www.google.com/maps/dir/?api=1&amp;destination=" in page and "Itinéraire</a>" in page)
     v("carte : AUCUNE ressource Google avant le clic", sans_google_avant_clic(page))
-    v("icônes en SVG (aucun emoji 📍)", "📍" not in page and 'class="itineraire"' in page)
-    v("lien « Qui est Coach Bassi ? » vers /a-propos", '<a href="/a-propos">Qui est Coach Bassi ?</a>' in page)
-    v("le script de la carte est en fin de body (après </main>)",
-      page.index(".carte[data-carte-src]") > page.index("</main>"))
+    v("icônes en SVG (aucun emoji 📍)", "📍" not in page and _contact.count("<svg") == 4)
+    v("« Qui est Coach Bassi ? » : une ligne qui ouvre /a-propos",
+      re.search(r'<a class="ess-carte" href="/a-propos">.*?Qui est Coach Bassi \?', page) is not None)
     v("les boutons de réservation mènent TOUJOURS au même endroit (repli tunnel dans ce banc)",
       page.count('<a class="cta" href="/?link=b83914b4-c5a">Réserver mon essai</a>') == 2)
 
@@ -315,7 +315,7 @@ async def main():
     v("bouton « Réserver mon cours d'essai gratuit » -> même tunnel que la page d'essai",
       '<a class="cta" href="/?link=b83914b4-c5a">Réserver mon cours d\'essai gratuit</a>' in ap)
     v("bouton placé AVANT le bloc Contact", ap.index('class="cta"') < ap.index("<h2>Contact</h2>"))
-    v("bloc Contact identique à la page d'essai", nsa["_seo_geo_contact_html"]() in ap and nsa["_seo_geo_contact_html"]() in page)
+    v("bloc Contact complet (texte + carte au clic) sur « À propos »", nsa["_seo_geo_contact_html"]() in ap)
     v("carte : AUCUNE ressource Google avant le clic", sans_google_avant_clic(ap))
     _ld = [json.loads(x) for x in re.findall(r'application/ld\+json">(.*?)</script>', ap, re.S)]
     _t = [o.get("@type") for o in (_ld[0] if _ld else [])]

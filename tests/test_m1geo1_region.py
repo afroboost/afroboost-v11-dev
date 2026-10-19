@@ -174,19 +174,20 @@ async def principal():
 
     db, j = monde([NE, LA])
     _, corps = await M1.rendre(db, j)
+    # V624 : la page ne liste plus les séances ; seul le résumé des créneaux en dérive.
     verifier("24. HTML de la page Neuchatel : la seance lausannoise n'y est pas",
-             "Séance 0" in corps and "Séance 1" not in corps)
+             "Séance 1" not in corps and "18h30" in corps)
     verifier("25. HTML : le lieu lausannois n'apparait nulle part", LIEU_LA not in corps)
     plats = [o for b in M1.blocs_jsonld(corps) for o in M1._plat(b)]
     evs = [o for o in plats if o.get("@type") == "Event"]
-    verifier("26. JSON-LD : un seul `Event`, le neuchatelois", len(evs) == 1, [e.get("name") for e in evs])
+    verifier("26. JSON-LD : aucun `Event` sur la page (V624, option A)", len(evs) == 0, [e.get("name") for e in evs])
     verifier("27. JSON-LD : aucun lieu lausannois",
              all((e.get("location") or {}).get("name") != LIEU_LA for e in evs))
 
     db, j = monde([None, None])
     _, corps = await M1.rendre(db, j)
     verifier("28. Aucun cours classe -> page honnete, aucune seance inventee",
-             "Aucune séance" in corps and "Séance 0" not in corps)
+             "Dates et horaires dans le calendrier" in corps and "Séance 0" not in corps)
 
     # ---- 7. LE DASHBOARD : UN SELECTEUR, PAS UNE SAISIE LIBRE --------------
     cm = io.open(os.path.join(RACINE, "frontend", "src", "components", "dashboard",

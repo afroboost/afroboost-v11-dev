@@ -5297,6 +5297,13 @@ function App() {
   }, []);
   // « Sessions » ouvre une fenetre : la page de fond ne change pas d'un pixel.
   const [showSessionsModal, setShowSessionsModal] = useState(false);
+  // V624 — `/?sessions=1` (« Voir le calendrier » de la page d'essai) ouvre CETTE fenêtre,
+  // exactement comme le bouton « Sessions » de la navigation (même action, même composant).
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get('sessions') === '1') setShowSessionsModal(true);
+    } catch (e) { /* lien illisible : l'accueil s'affiche normalement */ }
+  }, []);
 
   // ═══════════ LIVE RAPIDE — bouton « Live » de la barre (porte unique) ═══════
   //

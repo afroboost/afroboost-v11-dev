@@ -159,7 +159,9 @@ NOMS = ("m1geo1_region_normalisee", "_m1_echapper", "_m1_jsonld", "_v184_parse_t
         # V537 : `_m1_offres` écarte les offres privées (sur lien)
         "v537_lien_seul",
         # SEO-GEO (19/10/2026) : bloc Contact + carte au clic, partagé avec « À propos »
-        "_seo_geo_contact_html")
+        "_seo_geo_contact_html",
+        # V624 : contact en icônes SVG (liens existants)
+        "_v624_contact_icones")
 CONSTANTES = ("CHAMP_LIEN_SEUL",      # V537 : lue par `v537_lien_seul`
               "_N456_CHAMPS_PUBLICS", "_V184_WEEKDAY_LABELS_FR", "RV2_JOURS",
               "RV2_MOIS", "COACH_EMAIL", "_M1_SITE", "_M1_CHEMIN", "_M1_TUNNEL",
@@ -170,7 +172,9 @@ CONSTANTES = ("CHAMP_LIEN_SEUL",      # V537 : lue par `v537_lien_seul`
               # SEO-GEO (19/10/2026) : organisation, lieu des cours, contact, photo principale
               "_M1_PHOTO_HERO", "SEO_GEO_EMAIL", "SEO_GEO_INSTAGRAM", "SEO_GEO_FACEBOOK",
               "SEO_GEO_ADRESSE", "SEO_GEO_ORGANISATION", "SEO_GEO_LIEU", "SEO_GEO_CARTE_EMBED",
-              "SEO_GEO_ITINERAIRE", "SEO_GEO_CSS", "_SEO_GEO_PICTO_LIEU", "SEO_GEO_CARTE_JS")
+              "SEO_GEO_ITINERAIRE", "SEO_GEO_CSS", "_SEO_GEO_PICTO_LIEU", "SEO_GEO_CARTE_JS",
+              # V624 : pictos SVG de la page épurée
+              "_V624_SVG", "_V624_PICTO", "_V624_CHEVRON")
 
 
 def monter(db, journal):
@@ -357,8 +361,9 @@ async def principal():
              not any(k in json.dumps(plats) for k in
                      ("aggregateRating", "reviewCount", "ratingValue", "review")))
     ev = [o for o in plats if o.get("@type") == "Event"]
-    verifier("21. Un `Event` par occurrence FUTURE, et seulement elles",
-             len(ev) == 2, "events=%d (attendu 2)" % len(ev))
+    # V624 (option A, décision de Bassi) : la liste des séances a quitté la page, ses `Event` aussi.
+    verifier("21. V624 : aucun `Event` JSON-LD sur la page d'essai (séances dans « Sessions »)",
+             len(ev) == 0, "events=%d (attendu 0)" % len(ev))
     verifier("22. Aucun `price: 0` ni `isAccessibleForFree` (l'essai n'est pas pour tous)",
              not any(k in json.dumps(plats) for k in ("isAccessibleForFree", '"price"')))
     verifier("23. Chaque `Event` porte une date de debut reelle",
@@ -390,25 +395,25 @@ async def principal():
              not any(m.lower() in src_route.lower() for m in
                      ("Auvernier", "Vallangines", "Montbenon", "Vidy", "St-Blaise")),
              "une adresse en dur reproduirait le defaut qu'on corrige")
-    verifier("31. Les deux lieux REELS apparaissent dans la page rendue",
-             LIEU_A in corps and LIEU_B in corps)
+    verifier("31. V624 : les séances se consultent dans la fenêtre « Sessions » existante (/?sessions=1)",
+             'href="/?sessions=1"' in corps and LIEU_A not in corps and LIEU_B not in corps)
 
     # ---- 7. FUTUR ET PUBLIC UNIQUEMENT -------------------------------------
     verifier("32. Le cours PASSE n'apparait pas", "Ancien cours" not in corps)
     verifier("33. Le cours MASQUE n'apparait pas", "Cours masque" not in corps)
     verifier("34. Le cours ARCHIVE n'apparait pas", "Cours archive" not in corps)
-    verifier("35. Les deux seances futures apparaissent",
-             "Afroboost Silent" in corps and "Session Cardio" in corps)
+    verifier("35. V624 : le résumé des créneaux vient du planning (18:30 et 19:45 -> 18h30, 19h45)",
+             "18h30" in corps and "19h45" in corps)
 
     # ---- 8. ECHAPPEMENT (GARDE 3) ------------------------------------------
     db2, j2 = monde()
     db2.courses.docs[0]["name"] = '<script>alert(1)</script>"onload="x'
     db2.courses.docs[0]["locationName"] = "Lieu & <b>gras</b>"
     _, corps2 = await rendre(db2, j2)
-    verifier("36. Une valeur hostile est ECHAPPEE, jamais injectee",
-             "<script>alert(1)</script>" not in corps2 and "&lt;script&gt;" in corps2)
-    verifier("37. L'esperluette et les chevrons du lieu sont echappes",
-             "Lieu &amp; &lt;b&gt;gras&lt;/b&gt;" in corps2)
+    verifier("36. Une valeur hostile n'est JAMAIS injectée (ni affichée : plus de liste)",
+             "<script>alert(1)</script>" not in corps2)
+    verifier("37. Le lieu hostile n'est jamais injecté",
+             "<b>gras</b>" not in corps2)
     verifier("38. Le JSON-LD reste valide malgre la valeur hostile",
              all(_valide(b) for b in blocs_jsonld(corps2)))
 
@@ -434,8 +439,8 @@ async def principal():
     db3, j3 = monde()
     db3.courses.docs = []
     _, corps3 = await rendre(db3, j3)
-    verifier("44. Sans seance a venir : message neutre, aucune date inventee",
-             "Aucune séance" in corps3 or "aucune séance" in corps3)
+    verifier("44. Sans seance a venir : renvoi au calendrier, aucune date inventee",
+             "Dates et horaires dans le calendrier" in corps3 and not re.search(r"\d{2}h\d{2}", re.sub(r"<[^>]+>", " ", corps3.split("<main")[1])))
     verifier("45. Le CTA reste present meme sans seance",
              ">Réserver mon essai</a>" in corps3 and "?link=b83914b4-c5a" in corps3)
     verifier("46. Aucun `Event` n'est declare sans occurrence reelle",
@@ -451,7 +456,7 @@ async def principal():
     verifier("47. Source EN PANNE : la page repond quand meme 200",
              getattr(rep4, "status_code", None) == 200)
     verifier("48. Source EN PANNE : aucune date ni lieu invente",
-             "Aucune séance" in corps4 or "aucune séance" in corps4)
+             "Dates et horaires dans le calendrier" in corps4 and not re.search(r"\d{2}h\d{2}", re.sub(r"<[^>]+>", " ", corps4.split("<main")[1])))
 
     # ---- 12. LE SITEMAP ----------------------------------------------------
     chemin_sm = os.path.join(RACINE, "frontend", "public", "sitemap.xml")
@@ -508,7 +513,7 @@ async def principal():
     # repères à icônes, le bloc offre, UN bouton ; le reste dans « En savoir plus ».
     verifier("59. H1 exact et UNIQUE (inchangé depuis SEO-GEO)",
              page.count("<h1") == 1 and "<h1>Cardio-danse Afrobeat à Neuchâtel — 1er cours offert</h1>" in page)
-    for h2 in ("C’est quoi Afroboost ?", "Pour qui ?", "Questions fréquentes", "Horaires et adresse", "Formules"):
+    for h2 in ("Pour qui ?", "Questions fréquentes", "Contact"):
         verifier("60. H2 « %s » présent dans « En savoir plus »" % h2,
                  ">%s</h2>" % h2 in page.split('<details class="ess-plus">')[1])
     verifier("61. L'essentiel AVANT « En savoir plus » : une phrase, durée, adresse, offre, bouton — sans casque",
@@ -516,9 +521,8 @@ async def principal():
                  "Pas besoin de savoir danser.", "Environ 1 heure", "Chemin des Valangines 97, 2000 Neuchâtel",
                  "Ton premier cours est offert", ">Réserver mon essai</a>")) and "casque" not in page.split("</h1>")[1].split('<details class="ess-plus">')[0].lower())
     verifier("62. « En savoir plus » est FERMÉ par défaut", '<details class="ess-plus">' in page and '<details class="ess-plus" open' not in page)
-    verifier("63. Le texte concept valide est present",
-             "Ce n’est pas un cours de danse traditionnelle" in page
-             and "inspiré des danses africaines et de l’Afrobeat" in page)
+    verifier("63. V624 : « Qui est Coach Bassi ? » = une ligne qui ouvre /a-propos",
+             re.search(r'<a class="ess-carte" href="/a-propos">.*?Qui est Coach Bassi \?', page) is not None)
 
     # --- la photo ---
     img = re.search(r'<div class="ess-media"><img[^>]*>', page)
@@ -578,8 +582,9 @@ async def principal():
              all(h.startswith("/?link=b83914b4-c5a") for h, _ in ctas), ctas)
 
     # --- les seances, groupees par mois, en HTML natif ---
-    verifier("73. Les seances : au moins 2 cartes visibles, HTML natif",
-             page.count('<article class="seance">') >= 2)
+    verifier("73. V624 : plus AUCUNE liste de séances ; une carte ouvre le calendrier existant",
+             page.count('<article class="seance">') == 0
+             and re.search(r'<a class="ess-carte" href="/\?sessions=1">.*?Prochaines séances.*?Voir le calendrier', page) is not None)
     verifier("74. Chaque `<details>` a son `<summary>` (focusable au clavier)",
              page.count("<summary") == page.count("<details"))
     verifier("75. Aucun `<details open>` : FAQ et planning replies, un clic les ouvre",
@@ -591,11 +596,11 @@ async def principal():
              page.split('class="seances"')[-1].split("</main>")[0] if 'class="seances"' in page else True)
 
     # --- rien n'a disparu du HTML ---
-    for attendu in ("18:30", "19:45", LIEU_A, LIEU_B, "Afroboost Silent", "Session Cardio"):
-        verifier("77. « %s » toujours dans le HTML servi" % attendu[:28], attendu in page)
+    for absent in (LIEU_A, LIEU_B, "Session Cardio"):
+        verifier("77. V624 : « %s » n'est plus listé sur la page" % absent[:28], absent not in page)
     plats = [o for b in blocs_jsonld(page) for o in _plat(b)]
-    verifier("78. JSON-LD toujours valide, 1 `Event` par occurrence",
-             len([o for o in plats if o.get("@type") == "Event"]) == 2)
+    verifier("78. JSON-LD valide, sans `Event` (option A)",
+             len([o for o in plats if o.get("@type") == "Event"]) == 0)
     verifier("79. `canonical` inchangee",
              '<link rel="canonical" href="%s%s"/>' % (URL, CHEMIN) in page)
 
@@ -611,7 +616,7 @@ async def principal():
     verifier("V622-2. Aucun prix recopié sur la page (les prix restent dans la fenêtre existante)",
              "CHF" not in _main and "data-deadline=" not in page)
     verifier("V622-3. « Voir toutes les formules et les prix » ouvre la fenêtre EXISTANTE (/?offres=toutes)",
-             '<a class="cta cta-s" href="/?offres=toutes">Voir toutes les formules et les prix</a>' in page)
+             re.search(r'<a class="ess-carte" href="/\?offres=toutes">.*?Voir toutes les formules et les prix', page) is not None)
     verifier("82. Offre cachée, produit et événement : jamais sur la page",
              "Offre cachée" not in page and "<h3>T-shirt</h3>" not in page and "<h3>Silent Lakeside</h3>" not in page)
     # La logique tarifaire reste dans le code (calcul pur, inchangé) : on la garde sous banc.
@@ -622,12 +627,12 @@ async def principal():
              bool(_saison_seule) and _ns87["_m1_est_meilleur_prix"](_saison_seule[0], [o for o in _offres87 if "Fondateurs" not in str(o.get("name", ""))]) is True
              and _ns87["_m1_est_meilleur_prix"](_saison_seule[0], _offres87) is False)
     verifier("88. Aucun horaire/jour/lieu en dur : les jours cités viennent du planning",
-             "mercredi" not in page.lower().split("<main")[0] and ("Les cours ont lieu le" in page))
+             "mercredi" not in page.lower().split("<main")[0] and "18h30" in page and "19h45" in page)
     verifier("89. Barre CTA sticky mobile présente, masquée dès 641 px",
              '<div class="sticky">' in page and "@media(min-width:641px){.sticky{display:none}}" in page)
     _ordre90 = ('<div class="ess-media">', "<h1>", '<p class="ess-accroche">Pas besoin de savoir danser.', 'class="ess-offert"', ">Réserver mon essai</a>",
-                "<summary>En savoir plus</summary>", "C’est quoi Afroboost", "Pour qui", "Questions fréquentes",
-                "Horaires et adresse", ">Formules</h2>", "<h2>Contact</h2>", '<div class="sticky">')
+                "<summary>En savoir plus</summary>", 'href="/a-propos"', "Pour qui", "Questions fréquentes",
+                'href="/?sessions=1"', 'href="/?offres=toutes"', "<h2>Contact</h2>", '<div class="sticky">')
     verifier("90. Sections dans l'ordre (page ultra-simple V623)",
              all(0 <= page.find(a) < page.find(b) for a, b in zip(_ordre90, _ordre90[1:])),
              [page.find(x) for x in _ordre90])
@@ -658,7 +663,7 @@ async def principal():
     # melanger affichait « Août 2026 » en en-tete et « 30 aout » dans la ligne.
     _lignes_seances = re.findall(r'<p class="s-quand">([^<]*)<', page)
     verifier("80b. Aucun nom de mois dans la ligne de seance (une seule source)",
-             _lignes_seances and not any(
+             not any(  # V624 : plus de ligne de séance sur la page (vide = conforme)
                  m in l.lower() for l in _lignes_seances
                  for m in ("janvier", "fevrier", "février", "mars", "avril", "mai",
                            "juin", "juillet", "aout", "août", "septembre",

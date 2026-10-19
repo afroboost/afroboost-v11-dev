@@ -57611,6 +57611,40 @@ SEO_GEO_CARTE_JS = (
     'el.innerHTML="";el.appendChild(f);});})(c[i]);}})();</script>')
 
 
+# V624 — PICTOS SVG FINS de la page d'essai épurée (stroke=currentColor, jamais d'emoji).
+_V624_SVG = ('<svg width="%d" height="%d" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" '
+             'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">%s</svg>')
+_V624_PICTO = {
+    "profil": _V624_SVG % (22, 22, '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>'),
+    "calendrier": _V624_SVG % (22, 22, '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>'),
+    "ticket": _V624_SVG % (22, 22, '<path d="M3 9a3 3 0 0 0 0 6v3h18v-3a3 3 0 0 0 0-6V6H3z"/><path d="M13 6v12" stroke-dasharray="2 2"/>'),
+    "question": _V624_SVG % (20, 20, '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 0 1 5 .5c0 1.7-2.5 2-2.5 3.5"/><path d="M12 17h.01"/>'),
+    "mail": _V624_SVG % (22, 22, '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>'),
+    "instagram": _V624_SVG % (22, 22, '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h.01"/>'),
+    "facebook": _V624_SVG % (22, 22, '<path d="M15 3h-2.5A3.5 3.5 0 0 0 9 6.5V10H6.5v3.5H9V21h3.5v-7.5H15l.5-3.5h-3V7a1 1 0 0 1 1-1H15z"/>'),
+    "lieu": _V624_SVG % (22, 22, '<path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/>'),
+}
+_V624_CHEVRON = ('<svg class="ess-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>')
+
+
+def _v624_contact_icones() -> str:
+    """Contact en 4 icônes, avec les liens EXISTANTS (SEO-GEO) : aucune URL en texte brut.
+    La localisation ouvre l'itinéraire existant : aucune requête Google avant le clic."""
+    _lien = ('<a class="ess-icone" href="%s"%s aria-label="%s" title="%s">%s</a>')
+    _ext = ' target="_blank" rel="noopener"'
+    return "".join((
+        _lien % (_m1_echapper("mailto:" + SEO_GEO_EMAIL), "", "E-mail : " + SEO_GEO_EMAIL,
+                 "E-mail : " + SEO_GEO_EMAIL, _V624_PICTO["mail"]),
+        _lien % (_m1_echapper(SEO_GEO_INSTAGRAM), _ext, "Instagram @afroboosteur", "Instagram @afroboosteur",
+                 _V624_PICTO["instagram"]),
+        _lien % (_m1_echapper(SEO_GEO_FACEBOOK), _ext, "Facebook Afroboost", "Facebook Afroboost",
+                 _V624_PICTO["facebook"]),
+        _lien % (_m1_echapper(SEO_GEO_ITINERAIRE), _ext, "Itinéraire : " + SEO_GEO_ADRESSE,
+                 "Itinéraire : " + SEO_GEO_ADRESSE, _V624_PICTO["lieu"]),
+    ))
+
+
 def _seo_geo_contact_html() -> str:
     """Le bloc Contact + carte au clic, identique sur la page d'essai et « À propos ». PURE.
 
@@ -57780,10 +57814,21 @@ async def m1_page_essai_neuchatel(request: Request):
     # P3-FAQ — un seul parcours de `_M1_FAQ` alimente l'affichage ET les
     # donnees structurees. `_m1_echapper` protege le HTML ; le JSON-LD porte
     # le texte brut, `_m1_jsonld` se chargeant deja de neutraliser `<`.
-    _faq_html = "".join(
-        '<details class="q"><summary>%s</summary><div class="r"><p>%s</p></div></details>'
-        % (_m1_echapper(_q), _m1_echapper(_r))
-        for _q, _r in _M1_FAQ)
+    _faq_q = (lambda _q, _r: '<details class="q"><summary>%s</summary><div class="r"><p>%s</p></div></details>'
+              % (_m1_echapper(_q), _m1_echapper(_r)))
+    # V624 — PAGE ÉPURÉE : 3 questions visibles, les 9 autres derrière « Voir toutes les
+    # questions ». TOUTES restent dans le HTML (accessibles au clic) et dans le FAQPage JSON-LD.
+    _v624_principales = ("Je ne sais pas danser, est-ce que je peux venir ?",
+                         "Je viens seul(e), est-ce que c'est gênant ?",
+                         "Comment se passe le cours d'essai offert ?")
+    _faq_tete = [(_q, _r) for _p in _v624_principales for _q, _r in _M1_FAQ if _q == _p]
+    _faq_reste = [(_q, _r) for _q, _r in _M1_FAQ if _q not in _v624_principales]
+    if _faq_tete:
+        _faq_html = ("".join(_faq_q(_q, _r) for _q, _r in _faq_tete)
+                     + '<details class="ess-toutes"><summary>%sVoir toutes les questions%s</summary>%s</details>'
+                     % (_V624_PICTO["question"], _V624_CHEVRON, "".join(_faq_q(_q, _r) for _q, _r in _faq_reste)))
+    else:
+        _faq_html = "".join(_faq_q(_q, _r) for _q, _r in _M1_FAQ)
     _faq_ld = {
         "@context": "https://schema.org", "@type": "FAQPage",
         "mainEntity": [
@@ -57867,7 +57912,10 @@ async def m1_page_essai_neuchatel(request: Request):
         # SEO-GEO : l'organisation complète + le lieu des cours (mêmes objets que l'accueil).
         SEO_GEO_ORGANISATION, SEO_GEO_LIEU,
         _faq_ld,
-    ] + _evenements)
+    ])
+    # V624 (option A, décision de Bassi) : la liste visible des séances a quitté cette page —
+    # ses `Event` JSON-LD la suivent (des données structurées décrivent un contenu VISIBLE).
+    # Les séances se consultent dans la fenêtre « Sessions » existante (`/?sessions=1`).
 
     _html = """<!doctype html><html lang="fr"><head>
 <meta charset="utf-8"/>
@@ -57992,6 +58040,31 @@ tbody th{font-weight:700;color:#fff}
 .ess-plus p,.ess-plus li{font-size:14.5px}
 .ess-plus .grille{padding:0}
 .ess-plus .contact h2{margin-top:6px}
+/* V624 — « En savoir plus » épuré : cartes sobres, une action par ligne, icônes SVG. */
+.ess-plus>summary~*{margin-left:0;margin-right:0}
+.ess-carte{display:flex;align-items:center;gap:14px;margin:14px 0;padding:16px;border-radius:16px;background:rgba(255,255,255,.025);border:1px solid rgba(var(--prgb),.22);color:#fff;text-decoration:none;min-height:56px}
+.ess-carte:hover,.ess-carte:focus-visible{border-color:rgba(var(--prgb),.5)}
+.ess-carte>svg:first-child{color:var(--p);flex:none}
+.ess-carte-t{flex:1;font-weight:700;font-size:15px;display:flex;flex-direction:column;gap:2px}
+.ess-carte-t small{font-weight:500;color:rgba(255,255,255,.72);font-size:14px}
+.ess-carte-t em{font-style:normal;font-weight:700;color:var(--p);font-size:13.5px;margin-top:2px}
+.ess-chevron{color:rgba(255,255,255,.45);flex:none}
+.ess-rub{padding:18px 2px 4px}
+.ess-rub .pourqui{gap:8px}
+.ess-rub .pourqui li{padding:6px 12px;font-size:.88rem;background:rgba(var(--prgb),.08);border-color:rgba(var(--prgb),.28)}
+.ess-voirplus,.ess-toutes{border:0;background:none;margin:8px 0 0;border-radius:0}
+.ess-voirplus>summary{display:inline-flex;padding:6px 0;font-size:14px;font-weight:700;color:var(--p)}
+.ess-voirplus>ul{margin-top:8px}
+.ess-plus details.q{background:none;border:0;border-bottom:1px solid rgba(255,255,255,.08);border-radius:0;margin:0}
+.ess-plus details.q>summary{padding:14px 2px;font-size:14.5px;font-weight:600}
+.ess-plus details.q .r{padding:0 2px 14px}
+.ess-toutes>summary{justify-content:flex-start;gap:12px;padding:14px 2px;font-size:14.5px;font-weight:700;color:#fff}
+.ess-toutes>summary>svg:first-child{color:var(--p)}
+.ess-toutes>summary .ess-chevron{margin-left:auto}
+.ess-toutes[open]>summary .ess-chevron{transform:rotate(90deg)}
+.ess-icones{display:flex;gap:14px;margin:4px 0 18px}
+.ess-icone{display:inline-flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:999px;border:1px solid rgba(var(--prgb),.3);background:rgba(255,255,255,.025);color:var(--p)}
+.ess-icone:hover,.ess-icone:focus-visible{border-color:var(--p)}
 </style>
 </head><body>
 <main class="ess">
@@ -58008,32 +58081,23 @@ tbody th{font-weight:700;color:#fff}
 <p class="note ess-note">L’essai concerne la première séance, une seule fois par personne. Les autres formules restent payantes.</p>
 <details class="ess-plus">
 <summary>En savoir plus</summary>
-<section class="promesse-s">
-<h2>C’est quoi Afroboost ?</h2>
-<p>Afroboost est un concept inspiré des danses africaines et de l’Afrobeat, qui
-mélange danse, cardio et fitness. Ce n’est pas un cours de danse traditionnelle :
-tu suis le rythme, tu transpires et tu avances à ton niveau.</p>
-<p class="lien-apropos"><a href="/a-propos">Qui est Coach Bassi ?</a></p>
-</section>
-<section>
+<a class="ess-carte" href="/a-propos">%(picto_profil)s<span class="ess-carte-t">Qui est Coach Bassi ?</span>%(chevron)s</a>
+<section class="ess-rub">
 <h2>Pour qui ?</h2>
-<ul class="pourqui"><li>Débutant·e complet·e</li><li>Jamais dansé</li><li>Pas sportif·ve</li><li>Tu viens seul·e</li><li>Tu veux transpirer en t’amusant</li><li>Tu aimes la musique afro</li><li>Tu en as marre des salles impersonnelles</li></ul>
+<ul class="pourqui"><li>Débutant·e complet·e</li><li>Jamais dansé</li><li>Pas sportif·ve</li><li>Tu viens seul·e</li></ul>
+<details class="ess-voirplus"><summary>Voir plus</summary><ul class="pourqui"><li>Tu veux transpirer en t’amusant</li><li>Tu aimes la musique afro</li><li>Tu en as marre des salles impersonnelles</li></ul></details>
 </section>
-<section class="faq">
+<section class="ess-rub faq">
 <h2>Questions fréquentes</h2>
 %(faq)s
 </section>
 %(temoignages)s
-<section class="seances">
-<h2>Horaires et adresse</h2>
-<p>%(jours)s%(adresse)s.</p>
-%(planning_complet)s
+<a class="ess-carte" href="/?sessions=1">%(picto_calendrier)s<span class="ess-carte-t">Prochaines séances<small>%(creneaux)s</small><em>Voir le calendrier</em></span>%(chevron)s</a>
+<a class="ess-carte" href="/?offres=toutes">%(picto_ticket)s<span class="ess-carte-t">Voir toutes les formules et les prix</span>%(chevron)s</a>
+<section class="ess-rub ess-contact">
+<h2>Contact</h2>
+<p class="ess-icones">%(contact_icones)s</p>
 </section>
-<section class="tarifs-s" id="tarifs">
-<h2>Formules</h2>
-<a class="cta cta-s" href="/?offres=toutes">Voir toutes les formules et les prix</a>
-</section>
-%(contact)s
 </details>
 </main>
 <div class="sticky">%(cta)s</div>
@@ -58054,6 +58118,11 @@ tick();setInterval(tick,1000);})();
         "carte_js": SEO_GEO_CARTE_JS, "note_tarifs": _note_tarifs,
         # V623 : page courte — créneaux lus sur le planning, adresse du lieu des cours (SEO-GEO).
         "planning_complet": _planning_complet, "adresse": _m1_echapper(SEO_GEO_ADRESSE),
+        # V624 : pictos SVG fins, créneaux lus sur le planning, contact en icônes (liens EXISTANTS).
+        "picto_profil": _V624_PICTO["profil"], "picto_calendrier": _V624_PICTO["calendrier"],
+        "picto_ticket": _V624_PICTO["ticket"], "chevron": _V624_CHEVRON,
+        "creneaux": _creneaux_txt or "Dates et horaires dans le calendrier",
+        "contact_icones": _v624_contact_icones(),
         "ligne_creneaux": ('<li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
                            'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
                            '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg>'
