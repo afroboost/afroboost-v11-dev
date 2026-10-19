@@ -32,12 +32,15 @@
         <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
         <meta http-equiv="Pragma" content="no-cache" />
         <meta http-equiv="Expires" content="0" />
-        <meta name="description" content="Vivez une expérience fitness unique : cardio, danse afrobeat et casques audio immersifs. Des entraînements fun et énergétiques accessibles à tous en Suisse." />
+        <!-- SEO-GEO (19/10/2026) : textes validés par Bassi. Plus aucune promesse de casque :
+             en salle (hiver, Valangines) le cours se fait SANS casque ; le casque est réservé
+             à l'été au bord du lac (Afroboost Silent) et aux événements spéciaux. -->
+        <meta name="description" content="Cardio-danse Afrobeat en groupe à Neuchâtel, avec un coach. Pas besoin de savoir danser. Ton premier cours est offert." />
         
         <!-- Open Graph Meta Tags for WhatsApp & Social Sharing -->
         <meta property="og:type" content="website" />
-        <meta property="og:title" content="Afroboost - Fitness Immersif 🎧" />
-        <meta property="og:description" content="Le concept Afroboost : cardio + danse afrobeat + casques audio immersifs. Un entraînement fun, énergétique et accessible à tous. Réservez votre session !" />
+        <meta property="og:title" content="Afroboost | Cardio-danse Afrobeat à Neuchâtel" />
+        <meta property="og:description" content="Cardio-danse Afrobeat en groupe à Neuchâtel, avec un coach. Pas besoin de savoir danser. Ton premier cours est offert." />
         <meta property="og:image" content="https://afroboost.com/og-image.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
@@ -47,12 +50,12 @@
         
         <!-- Twitter Card Meta Tags -->
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="Afroboost - Fitness Immersif 🎧" />
-        <meta name="twitter:description" content="Cardio + danse afrobeat + casques audio immersifs. Réservez votre session maintenant !" />
+        <meta name="twitter:title" content="Afroboost | Cardio-danse Afrobeat à Neuchâtel" />
+        <meta name="twitter:description" content="Cardio-danse Afrobeat en groupe à Neuchâtel, avec un coach. Pas besoin de savoir danser. Ton premier cours est offert." />
         <meta name="twitter:image" content="https://afroboost.com/og-image.png" />
         
         <!-- Additional SEO -->
-        <meta name="keywords" content="afroboost, fitness, casque audio, danse, afrobeat, cardio, réservation, cours" />
+        <meta name="keywords" content="afroboost, fitness, cardio-danse, danse, afrobeat, cardio, Neuchâtel, cours d'essai gratuit, réservation, cours" />
         <meta name="author" content="Afroboost" />
         <meta name="version" content="162" />
         <!-- V148: Preload API endpoint for instant hero display -->
@@ -138,7 +141,7 @@
         work correctly both with client-side routing and a non-root public URL.
         Learn how to configure a non-root public URL by running `npm run build`.
         -->
-        <title>Afroboost | Cardio &amp; Danse Afrobeat avec Casques</title>
+        <title>Afroboost | Cardio-danse Afrobeat à Neuchâtel</title>
         <!--
           SEO-3 (22/09/2026) — DONNEES STRUCTUREES DE L'ACCUEIL.
           Constat : la page locale en declarait (WebPage, Organization, FAQPage,
@@ -155,10 +158,20 @@
           compte plusieurs lieux et il n'y a pas d'adresse permanente ; aucune
           note, aucun avis, aucun effectif, aucun prix — rien qui ne soit prouve.
         -->
+        <!--
+          SEO-GEO (19/10/2026) — L'ORGANISATION EST COMPLÉTÉE (décision de Bassi) :
+          e-mail, réseaux (sameAs), fondateur, année de fondation, et le LIEU DES
+          COURS en hiver (SportsActivityLocation, Valangines). Cette adresse est
+          celle de la salle, PAS l'adresse officielle de l'association : elle est
+          donc portée par le lieu (`location`), jamais par l'organisation.
+          Mêmes valeurs, au caractère près, que `SEO_GEO_ORGANISATION` /
+          `SEO_GEO_LIEU` dans api/server.py (verrouillé par tests/test_seo_geo.py).
+        -->
         <script type="application/ld+json">
-        {"@context":"https://schema.org","@type":"Organization","name":"Afroboost",
-         "url":"https://afroboost.com/","logo":"https://afroboost.com/logo512.png",
-         "areaServed":"Neuchâtel, Suisse"}
+        {"@context":"https://schema.org","@type":"Organization","@id":"https://afroboost.com/#organisation","name":"Afroboost","url":"https://afroboost.com/","logo":"https://afroboost.com/logo512.png","areaServed":"Neuchâtel, Suisse","email":"contact@afroboosteur.com","sameAs":["https://www.instagram.com/afroboosteur","https://www.facebook.com/profile.php?id=61574448227600"],"founder":{"@type":"Person","name":"Henri Bassi","alternateName":"Coach Bassi"},"foundingDate":"2023","location":{"@id":"https://afroboost.com/#lieu-valangines"}}
+        </script>
+        <script type="application/ld+json">
+        {"@context":"https://schema.org","@type":"SportsActivityLocation","@id":"https://afroboost.com/#lieu-valangines","name":"Afroboost — lieu des cours à Neuchâtel","description":"Lieu des cours Afroboost en salle (hiver).","url":"https://afroboost.com/cours-essai-gratuit-neuchatel","address":{"@type":"PostalAddress","streetAddress":"Chemin des Valangines 97","postalCode":"2000","addressLocality":"Neuchâtel","addressCountry":"CH"},"parentOrganization":{"@id":"https://afroboost.com/#organisation"}}
         </script>
         <script type="application/ld+json">
         {"@context":"https://schema.org","@type":"WebSite","name":"Afroboost",

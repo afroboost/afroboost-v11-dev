@@ -198,8 +198,11 @@ v("SEO-4 : il annonce toujours l'accueil et les vitrines de coachs",
 # `_SEO_PRIVE` et les fiches publiques sont les seules exceptions connues du
 # catch-all, la seule adresse fixe légitime est l'accueil.
 _locs_api = re.findall(r"\{base_url\}(/[^<]*)</loc>", _sm_code)
+# SEO-GEO (19/10/2026) : les deux pages ÉCRITES PAR LE SERVEUR (lisibles sans
+# JavaScript, avec leur propre titre et leur propre canonical) rejoignent la
+# liste — ce sont des adresses qui « se présentent elles-mêmes ».
 v("SEO-4 : aucune adresse fixe du sitemap de l'API n'est privée ni inventée",
-  set(_locs_api) <= {"/", "/coach/{slug}"}, _locs_api)
+  set(_locs_api) <= {"/", "/coach/{slug}", "/cours-essai-gratuit-neuchatel", "/a-propos"}, _locs_api)
 # Les ancres historiques ne sont PAS touchées : ce sont des liens vers
 # l'accueil, pas des adresses indexables.
 v("SEO-4 : les liens legacy `/#devenir-coach` restent en place (rien n'est cassé côté produit)",
@@ -214,9 +217,17 @@ for _b in _ld:
     _types.append(_d.get("@type"))
 v("JSON-LD valide, et du bon type (Organization + WebSite)",
   "Organization" in _types and "WebSite" in _types, _types)
-v("aucune donnée inventée : ni note, ni avis, ni effectif, ni prix, ni adresse postale",
+v("aucune donnée inventée : ni note, ni avis, ni effectif, ni prix",
   not any(_m in " ".join(_ld) for _m in ("aggregateRating", "review", "ratingValue",
-                                         "priceCurrency", "streetAddress", "postalCode")))
+                                         "priceCurrency")))
+# SEO-GEO (19/10/2026) — DÉCISION DE BASSI : l'adresse des Valangines est
+# publiée, mais comme LIEU DES COURS (SportsActivityLocation), jamais comme
+# adresse de l'organisation (qui n'est pas celle de l'association).
+_par_type = {json.loads(_b).get("@type"): json.loads(_b) for _b in _ld}
+v("l'adresse postale n'est portée QUE par le lieu des cours (pas par l'organisation)",
+  "address" not in _par_type.get("Organization", {})
+  and (_par_type.get("SportsActivityLocation", {}).get("address") or {}).get("streetAddress")
+      == "Chemin des Valangines 97", sorted(_par_type))
 v("le nom, l'URL et le logo sont ceux du site (une seule description d'Afroboost)",
   all(_m in " ".join(_ld) for _m in ('"name":"Afroboost"', "https://afroboost.com/",
                                      "logo512.png", "Neuchâtel")))

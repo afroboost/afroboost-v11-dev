@@ -157,14 +157,20 @@ NOMS = ("m1geo1_region_normalisee", "_m1_echapper", "_m1_jsonld", "_v184_parse_t
         "_m1_famille", "_m1_badge", "_m1_cout_par_seance", "_m1_est_meilleur_prix", "_m1_paiement", "_m1_engagement", "_m1_seances_txt",  # V527: _m1_est_meilleur_prix (V526) manquait au banc
         "_m1_economie", "_m1_pour_qui", "_m1_deadline_html",
         # V537 : `_m1_offres` écarte les offres privées (sur lien)
-        "v537_lien_seul")
+        "v537_lien_seul",
+        # SEO-GEO (19/10/2026) : bloc Contact + carte au clic, partagé avec « À propos »
+        "_seo_geo_contact_html")
 CONSTANTES = ("CHAMP_LIEN_SEUL",      # V537 : lue par `v537_lien_seul`
               "_N456_CHAMPS_PUBLICS", "_V184_WEEKDAY_LABELS_FR", "RV2_JOURS",
               "RV2_MOIS", "COACH_EMAIL", "_M1_SITE", "_M1_CHEMIN", "_M1_TUNNEL",
               "_M1_HORIZON_JOURS", "_M1_MAX_SEANCES", "M1GEO1_REGIONS", "_M1_REGION",
               "_M1_SEANCES_VISIBLES", "_M1_FAQ", "_HIVER_SEANCES_PAR_MOIS_ESTIMEES",
               "T3_MARQUEUR", "T3_APPROVED",
-              "_M1_MOIS", "_V184_WEEKDAY_LABELS_FR", "_M1_BADGES")
+              "_M1_MOIS", "_V184_WEEKDAY_LABELS_FR", "_M1_BADGES",
+              # SEO-GEO (19/10/2026) : organisation, lieu des cours, contact, photo principale
+              "_M1_PHOTO_HERO", "SEO_GEO_EMAIL", "SEO_GEO_INSTAGRAM", "SEO_GEO_FACEBOOK",
+              "SEO_GEO_ADRESSE", "SEO_GEO_ORGANISATION", "SEO_GEO_LIEU", "SEO_GEO_CARTE_EMBED",
+              "SEO_GEO_ITINERAIRE", "SEO_GEO_CSS", "_SEO_GEO_PICTO_LIEU", "SEO_GEO_CARTE_JS")
 
 
 def monter(db, journal):
@@ -415,8 +421,12 @@ async def principal():
     # ---- 10. AUCUNE DONNEE PERSONNELLE -------------------------------------
     verifier("42. Aucune donnee personnelle du cours ne fuit",
              "prive@exemple.invalid" not in corps and "ne doit pas sortir" not in corps)
-    verifier("43. Aucune adresse e-mail dans la page",
-             not re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", corps))
+    # SEO-GEO (19/10/2026) : le bloc Contact validé par Bassi publie l'adresse
+    # PUBLIQUE de l'association. C'est la SEULE adresse admise : aucune adresse
+    # venant d'un cours, d'un coach ou d'un participant.
+    verifier("43. Aucune adresse e-mail dans la page, hors contact public de l'association",
+             set(re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", corps)) <= {"contact@afroboosteur.com"},
+             sorted(set(re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", corps))))
 
     # ---- 11. LA SOURCE ECHOUE : LA PAGE RESTE SURE -------------------------
     db3, j3 = monde()
@@ -471,9 +481,14 @@ async def principal():
     i2 = re.search(r'<meta property="og:image" content="([^"]+)"', idx)
     verifier("55. og:image de l'accueil ABSOLU",
              i2 is not None and i2.group(1).startswith(URL + "/"), i2.group(1) if i2 else "absent")
-    verifier("56. Le titre et la description de l'accueil sont INCHANGES",
-             "Afroboost | Cardio &amp; Danse Afrobeat avec Casques" in idx
-             and "cardio, danse afrobeat et casques audio immersifs" in idx)
+    # SEO-GEO (19/10/2026) : titre et description de l'accueil remplacés par les
+    # textes validés par Bassi — plus aucune promesse de casque.
+    verifier("56. Le titre et la description de l'accueil sont les textes VALIDÉS (SEO-GEO)",
+             "<title>Afroboost | Cardio-danse Afrobeat à Neuchâtel</title>" in idx
+             and "Cardio-danse Afrobeat en groupe à Neuchâtel, avec un coach. Pas besoin de savoir "
+                 "danser. Ton premier cours est offert." in idx
+             # les commentaires HTML (retirés par le build) ne sont pas du texte servi
+             and "casque" not in re.sub(r"<!--.*?-->", "", idx, flags=re.S).lower().split("</head>")[0])
 
     # ═══════════ M1-SEO-UX1 — LA PAGE DEVIENT UNE PAGE D'ACQUISITION ═════════
     db, j = monde()
@@ -483,15 +498,20 @@ async def principal():
     verifier("57. TITLE exact (HIVER)",
              "<title>Cours de danse africaine et cardio à Neuchâtel — 1er cours offert | Afroboost</title>" in page)
     verifier("58. META DESCRIPTION exacte (HIVER)",
-             "Afroboost Neuchâtel : cardio-danse africaine et fitness au casque, avec un coach, "
+             "Afroboost Neuchâtel : cardio-danse africaine et fitness, avec un coach, "
              "en groupe. Pas besoin de savoir danser. Ton premier cours est offert." in page)
-    verifier("59. H1 exact et UNIQUE : l'accroche",
-             page.count("<h1") == 1 and "<h1>DANSE. TRANSPIRE. LÂCHE PRISE.</h1>" in page)
+    # SEO-GEO (19/10/2026) : la ligne descriptive devient le H1 ; le slogan reste,
+    # en grand, juste en dessous (l'élément visuel fort ne change pas).
+    verifier("59. H1 exact et UNIQUE : la ligne descriptive, slogan conservé dessous",
+             page.count("<h1") == 1
+             and "<h1>Cardio-danse Afrobeat à Neuchâtel — 1er cours offert</h1>\n"
+                 '<p class="slogan">DANSE. TRANSPIRE. LÂCHE PRISE.</p>' in page)
     for h2 in ("C’est quoi Afroboost ?", "Prochaines séances à Neuchâtel",
                "Ton premier cours est offert"):
         verifier("60. H2 « %s » present" % h2, ">%s</h2>" % h2 in page)
-    verifier("61. La promesse du hero (HIVER) : Neuchâtel, cardio-danse, casque, débutants, 1er cours offert",
-             "cardio-danse africaine et fitness au casque" in page and "Pas besoin de savoir danser." in page
+    verifier("61. La promesse du hero (SEO-GEO) : Neuchâtel, cardio-danse, débutants, 1er cours offert — sans casque",
+             "cardio-danse africaine et fitness, avec un coach" in page and "fitness au casque" not in page
+             and "Pas besoin de savoir danser." in page
              and "<b>Ton premier cours est offert.</b>" in page)
     verifier("62. La formulation metier EXACTE est conservee",
              "Ton premier cours d’essai Afroboost est offert." in page)
@@ -703,7 +723,8 @@ async def principal():
              _lignes_seances[:2])
 
     # --- les quatre reperes ---
-    for repere in ("Débutants bienvenus", "Environ 1 heure", "Casque fourni", "Neuchâtel"):
+    # SEO-GEO (19/10/2026) : « Casque fourni » -> « Aucun matériel à apporter ».
+    for repere in ("Débutants bienvenus", "Environ 1 heure", "Aucun matériel à apporter", "Neuchâtel"):
         verifier("81. Repere « %s »" % repere, repere in page)
 
 

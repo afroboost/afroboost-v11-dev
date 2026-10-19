@@ -22018,8 +22018,15 @@ async def get_sitemap():
     # Le jour où une VRAIE page « Devenir coach partenaire » existera dans le
     # frontend, c'est ce jour-là qu'elle reviendra ici — pas avant. Un sitemap
     # ne liste que des adresses qui se présentent elles-mêmes.
+    # SEO-GEO (19/10/2026) — LES DEUX SITEMAPS DISENT LA MÊME CHOSE.
+    # `frontend/public/sitemap.xml` (celui que déclare robots.txt) liste la page
+    # d'essai et la page « À propos » ; celui-ci ne listait que l'accueil. Les
+    # deux pages écrites par le serveur, lisibles sans JavaScript, y sont donc
+    # ajoutées, dans le même ordre (verrouillé par tests/test_seo_geo.py).
     urls = [
-        f'  <url><loc>{base_url}/</loc><lastmod>{now}</lastmod><priority>1.0</priority></url>'
+        f'  <url><loc>{base_url}/</loc><lastmod>{now}</lastmod><priority>1.0</priority></url>',
+        f'  <url><loc>{base_url}/cours-essai-gratuit-neuchatel</loc><lastmod>{now}</lastmod><priority>0.9</priority></url>',
+        f'  <url><loc>{base_url}/a-propos</loc><lastmod>{now}</lastmod><priority>0.8</priority></url>',
     ]
 
     # Ajouter toutes les vitrines de coachs actifs
@@ -57009,6 +57016,11 @@ _M1_MAX_SEANCES = 12
 # autres restent dans le document (SEO, `Event` JSON-LD, navigation sans
 # JavaScript) — elles sont seulement repliees.
 _M1_SEANCES_VISIBLES = 3
+# SEO-GEO (19/10/2026) — LA PHOTO PRINCIPALE DE LA PAGE D'ESSAI. Aujourd'hui une
+# photo d'ÉTÉ (extérieur, casque) : elle reste en place tant que Bassi n'a pas
+# fourni la photo EN SALLE. Pour la remplacer : déposer le fichier dans
+# `frontend/public/` et changer ce chemin (et `_alt` dans la page).
+_M1_PHOTO_HERO = "/hero-afroboost.jpg"
 # P3-FAQ — LES QUESTIONS QU'ON NOUS POSE VRAIMENT, ECRITES UNE SEULE FOIS.
 #
 # POURQUOI ELLE EXISTE. La page prouvait qu'il y a des cours et ou les
@@ -57027,52 +57039,59 @@ _M1_SEANCES_VISIBLES = 3
 #
 # Chaque entree est (question, reponse). Le HTML et le `FAQPage` JSON-LD
 # derivent TOUS LES DEUX de cette liste : ils ne peuvent pas diverger.
+# SEO-GEO (19/10/2026) — TEXTES VALIDÉS PAR BASSI, ACCENTS REMIS.
+# Règle métier : EN SALLE (hiver, Valangines), le cours se fait SANS casque,
+# essai compris. Le casque est réservé à l'été au bord du lac (Afroboost Silent)
+# et aux événements spéciaux. L'ancienne question « C'est quoi exactement, le
+# cours au casque ? » devient « Et le casque audio ? » ; la phrase sur le casque
+# disparaît de « J'ai peur du regard des autres. » et de « porter et apporter ».
+# Les réponses étaient écrites sans accents (« majorite », « prealable ») : la
+# FAQ VISIBLE et le `FAQPage` JSON-LD dérivent tous deux de cette liste, les
+# accents sont donc remis aux deux endroits d'un seul coup.
 _M1_FAQ = (
     ("Je ne sais pas danser, est-ce que je peux venir ?",
-     "Oui. La majorite des personnes qui viennent n'ont jamais pris de cours "
+     "Oui. La majorité des personnes qui viennent n'ont jamais pris de cours "
      "de danse. Le coach montre chaque mouvement face au groupe et tu le "
-     "reprends a ton rythme : personne ne te corrige devant les autres."),
+     "reprends à ton rythme : personne ne te corrige devant les autres."),
     ("J'ai peur du regard des autres.",
-     "Tout le monde regarde le coach, pas ses voisins. Avec le casque sur les "
-     "oreilles, chacun est dans sa musique et dans son effort, ce qui rend le "
-     "premier cours beaucoup moins intimidant qu'une salle classique."),
-    ("C'est quoi exactement, le cours au casque ?",
-     "Chaque participant recoit un casque audio qui diffuse la musique et la "
-     "voix du coach. Le son est net pour toi, sans sono qui hurle, et la "
-     "seance peut avoir lieu dehors comme en salle sans deranger personne. "
-     "Le casque est fourni, tu n'as rien a apporter."),
-    ("Je viens seul(e), est-ce que c'est genant ?",
+     "Tout le monde regarde le coach, pas ses voisins. Chacun est dans sa "
+     "musique et dans son effort."),
+    ("Et le casque audio ?",
+     "En salle, le cours se fait sans casque, sur la musique de la salle. Les "
+     "casques audio sont réservés aux séances d'été au bord du lac (Afroboost "
+     "Silent) et aux événements spéciaux."),
+    ("Je viens seul(e), est-ce que c'est gênant ?",
      "Non, la plupart des gens arrivent seuls. Le cours est collectif et se "
      "fait face au coach : tu n'as pas besoin de partenaire, et tu repars "
-     "generalement en ayant parle a quelqu'un."),
+     "généralement en ayant parlé à quelqu'un."),
     ("Quel niveau de forme faut-il ?",
-     "Aucun niveau prealable n'est demande. Tu regles ton intensite toi-meme : "
-     "on peut suivre la choregraphie en douceur ou pousser le cardio. Si tu "
-     "as une blessure ou un doute medical, parles-en a ton medecin avant."),
+     "Aucun niveau préalable n'est demandé. Tu règles ton intensité toi-même : "
+     "on peut suivre la chorégraphie en douceur ou pousser le cardio. Si tu "
+     "as une blessure ou un doute médical, parles-en à ton médecin avant."),
     ("Comment se passe le cours d'essai offert ?",
-     "Tu reserves ta place depuis cette page, tu recois la confirmation, et "
-     "tu viens. L'essai concerne la premiere seance, une seule fois par "
-     "personne. Tu decides ensuite si tu continues : il n'y a rien a signer "
-     "le jour meme."),
+     "Tu réserves ta place depuis cette page, tu reçois la confirmation, et "
+     "tu viens. L'essai concerne la première séance, une seule fois par "
+     "personne. Tu décides ensuite si tu continues : il n'y a rien à signer "
+     "le jour même."),
     ("Quand ont lieu les cours ?",
-     "Les dates, horaires et lieux des prochaines seances sont affiches plus "
+     "Les dates, horaires et lieux des prochaines séances sont affichés plus "
      "haut sur cette page : ils viennent directement du planning et changent "
-     "selon la saison. Des seances ont lieu en semaine comme le week-end."),
-    ("Combien de temps dure une seance ?",
-     "Environ une heure, echauffement et retour au calme compris."),
+     "selon la saison. Des séances ont lieu en semaine comme le week-end."),
+    ("Combien de temps dure une séance ?",
+     "Environ une heure, échauffement et retour au calme compris."),
     ("Qu'est-ce que je dois porter et apporter ?",
-     "Une tenue de sport dans laquelle tu es a l'aise, des baskets propres et "
-     "une bouteille d'eau. Le casque est fourni."),
-    ("Y a-t-il un age limite ?",
-     "Les cours sont concus pour les adultes, sans limite d'age haute. "
-     "L'intensite se regle individuellement."),
+     "Une tenue de sport dans laquelle tu es à l'aise, des baskets propres et "
+     "une bouteille d'eau."),
+    ("Y a-t-il un âge limite ?",
+     "Les cours sont conçus pour les adultes, sans limite d'âge haute. "
+     "L'intensité se règle individuellement."),
     ("Faut-il s'abonner pour venir ?",
      "Non. Le premier cours est offert, et il existe ensuite plusieurs "
-     "formules, a la seance comme par abonnement. Le detail et les tarifs a "
-     "jour s'affichent au moment de la reservation."),
-    ("Est-ce que ca se passe en francais ?",
-     "Oui, le cours est anime en francais. Les mouvements sont montres, ce "
-     "qui permet de suivre meme si le francais n'est pas ta langue "
+     "formules, à la séance comme par abonnement. Le détail et les tarifs à "
+     "jour s'affichent au moment de la réservation."),
+    ("Est-ce que ça se passe en français ?",
+     "Oui, le cours est animé en français. Les mouvements sont montrés, ce "
+     "qui permet de suivre même si le français n'est pas ta langue "
      "principale."),
 )
 
@@ -57513,6 +57532,128 @@ async def _v594_offre_du_tunnel_essai(catalogue) -> str:
     return _cible if _cible and _cible in _gratuites else ""
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# SEO-GEO (19/10/2026) — CE QUE GOOGLE ET LES IA DOIVENT SAVOIR D'AFROBOOST,
+# ÉCRIT UNE SEULE FOIS.
+#
+# Décisions de Bassi : l'organisation porte l'e-mail, les réseaux, le
+# fondateur et l'année de fondation ; l'adresse des Valangines est celle du
+# LIEU DES COURS en hiver, PAS l'adresse officielle de l'association. Elle est
+# donc portée par un `SportsActivityLocation` relié à l'organisation
+# (`location` / `parentOrganization`), jamais par l'organisation elle-même.
+# L'accueil (`frontend/public/index.html`) porte les MÊMES objets, au caractère
+# près — `tests/test_seo_geo.py` le vérifie.
+# ═══════════════════════════════════════════════════════════════════════
+SEO_GEO_EMAIL = "contact@afroboosteur.com"
+SEO_GEO_INSTAGRAM = "https://www.instagram.com/afroboosteur"
+SEO_GEO_FACEBOOK = "https://www.facebook.com/profile.php?id=61574448227600"
+SEO_GEO_ADRESSE = "Chemin des Valangines 97, 2000 Neuchâtel"
+SEO_GEO_ORGANISATION = {
+    "@context": "https://schema.org", "@type": "Organization",
+    "@id": "https://afroboost.com/#organisation",
+    "name": "Afroboost", "url": "https://afroboost.com/",
+    "logo": "https://afroboost.com/logo512.png",
+    "areaServed": "Neuchâtel, Suisse",
+    "email": SEO_GEO_EMAIL,
+    "sameAs": [SEO_GEO_INSTAGRAM, SEO_GEO_FACEBOOK],
+    "founder": {"@type": "Person", "name": "Henri Bassi", "alternateName": "Coach Bassi"},
+    "foundingDate": "2023",
+    "location": {"@id": "https://afroboost.com/#lieu-valangines"},
+}
+SEO_GEO_LIEU = {
+    "@context": "https://schema.org", "@type": "SportsActivityLocation",
+    "@id": "https://afroboost.com/#lieu-valangines",
+    "name": "Afroboost — lieu des cours à Neuchâtel",
+    "description": "Lieu des cours Afroboost en salle (hiver).",
+    "url": "https://afroboost.com/cours-essai-gratuit-neuchatel",
+    "address": {"@type": "PostalAddress", "streetAddress": "Chemin des Valangines 97",
+                "postalCode": "2000", "addressLocality": "Neuchâtel", "addressCountry": "CH"},
+    "parentOrganization": {"@id": "https://afroboost.com/#organisation"},
+}
+# LA CARTE NE CONTACTE GOOGLE QU'APRÈS UN CLIC. Avant : un cadre local (aucune
+# ressource externe) avec l'adresse et un bouton. L'adresse de la carte dort
+# dans un attribut `data-` : tant que l'`<iframe>` n'est pas créée par le clic,
+# le navigateur n'émet aucune requête vers Google (respect de la vie privée,
+# et page plus rapide). Sans JavaScript, le lien « Itinéraire » reste utilisable.
+SEO_GEO_CARTE_EMBED = ("https://www.google.com/maps?q=Chemin%20des%20Valangines%2097%2C%202000%20Neuch%C3%A2tel"
+                       "&output=embed")
+SEO_GEO_ITINERAIRE = ("https://www.google.com/maps/dir/?api=1&destination="
+                      "Chemin%20des%20Valangines%2097%2C%202000%20Neuch%C3%A2tel")
+# Styles du bloc Contact + carte, partagés par la page d'essai et « À propos ».
+# Insérés par un champ `%(...)s` : aucun `%` à doubler ici.
+SEO_GEO_CSS = """
+.contact p{margin:0 0 10px}
+.contact a{color:var(--p);text-decoration:underline;text-underline-offset:3px;word-break:break-word}
+.carte{position:relative;margin:16px 0 12px;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,.12);background:linear-gradient(135deg,rgba(20,20,30,.95),rgba(30,10,28,.85));aspect-ratio:16/10;min-height:220px}
+.carte iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.carte-avant{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:20px;text-align:center}
+.carte-avant svg{color:var(--p)}
+.carte-avant p{margin:0;color:#e8e8f0}
+.carte-btn{font:inherit;font-weight:800;color:#fff;background:var(--p);border:0;border-radius:999px;padding:12px 22px;cursor:pointer;min-height:44px}
+.carte-btn:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.itineraire{display:inline-flex;align-items:center;gap:8px;font-weight:700;padding:10px 0;min-height:44px}
+.itineraire svg{flex:none}
+.lien-apropos a{color:var(--p);font-weight:700;text-decoration:underline;text-underline-offset:3px}
+"""
+_SEO_GEO_PICTO_LIEU = ('<svg width="%d" height="%d" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                       'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+                       '<path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>')
+
+
+# Le script de la carte, posé en FIN de `<body>` (comme le décompte de la page
+# d'essai) : tout le contenu se lit sans JavaScript, seul le clic en a besoin.
+SEO_GEO_CARTE_JS = (
+    '<script>(function(){var c=document.querySelectorAll(".carte[data-carte-src]");'
+    'for(var i=0;i<c.length;i++){(function(el){var b=el.querySelector(".carte-btn");if(!b)return;'
+    'b.addEventListener("click",function(){var f=document.createElement("iframe");'
+    'f.src=el.getAttribute("data-carte-src");f.title="Carte : Chemin des Valangines 97, 2000 Neuchâtel";'
+    'f.setAttribute("allowfullscreen","");f.setAttribute("referrerpolicy","no-referrer-when-downgrade");'
+    'el.innerHTML="";el.appendChild(f);});})(c[i]);}})();</script>')
+
+
+def _seo_geo_contact_html() -> str:
+    """Le bloc Contact + carte au clic, identique sur la page d'essai et « À propos ». PURE.
+
+    Textes exacts validés par Bassi ; aucun numéro de téléphone."""
+    _adr = _m1_echapper(SEO_GEO_ADRESSE)
+    return (
+        '<section class="contact" id="contact"><h2>Contact</h2>'
+        '<p><b>Afroboost — Association Afroboosteur</b></p>'
+        '<p>Cours : %(adr)s</p>'
+        '<p>E-mail : <a href="mailto:%(mail)s">%(mail)s</a></p>'
+        '<p>Instagram : <a href="%(insta)s" target="_blank" rel="noopener">@afroboosteur</a></p>'
+        '<p>Facebook : <a href="%(fb)s" target="_blank" rel="noopener">%(fb)s</a></p>'
+        '<div class="carte" data-carte-src="%(embed)s">'
+        '<div class="carte-avant">%(picto_grand)s<p>Chemin des Valangines 97<br/>2000 Neuchâtel</p>'
+        '<button type="button" class="carte-btn">Afficher la carte</button></div></div>'
+        '<p><a class="itineraire" href="%(iti)s" target="_blank" rel="noopener">%(picto)sItinéraire</a></p>'
+        '</section>'
+    ) % {"adr": _adr, "mail": _m1_echapper(SEO_GEO_EMAIL), "insta": _m1_echapper(SEO_GEO_INSTAGRAM),
+         "fb": _m1_echapper(SEO_GEO_FACEBOOK), "embed": _m1_echapper(SEO_GEO_CARTE_EMBED),
+         "iti": _m1_echapper(SEO_GEO_ITINERAIRE),
+         "picto_grand": _SEO_GEO_PICTO_LIEU % (36, 36), "picto": _SEO_GEO_PICTO_LIEU % (20, 20)}
+
+
+def _seo_geo_lien_essai(request, chemin: str) -> str:
+    """Le bouton « Réserver » : le MÊME tunnel d'essai que la page d'essai
+    (`_M1_TUNNEL`), suivi de l'origine normalisée (M2-A) pour qu'un visiteur
+    venu de Google ou d'Instagram garde sa source après le clic."""
+    _lien = _M1_TUNNEL
+    try:
+        from api.routes.shared import m2a_attribution_entrante
+        _attr = m2a_attribution_entrante(
+            request.query_params if request else None,
+            (request.headers.get("referer", "") if request else ""), chemin)
+        _bouts = ["%s=%s" % (_utm, _attr.get(_cle)) for _cle, _utm in (
+            ("source", "utm_source"), ("medium", "utm_medium"), ("campaign", "utm_campaign"),
+            ("content", "utm_content"), ("term", "utm_term")) if (_attr or {}).get(_cle)]
+        if _bouts:
+            _lien = _M1_TUNNEL + "&amp;" + "&amp;".join(_bouts)
+    except Exception as _aerr:  # noqa: BLE001 — en cas de doute : le tunnel nu
+        logger.warning("[SEO-GEO] origine non lue (%s)", type(_aerr).__name__)
+    return _lien
+
+
 @fastapi_app.get(_M1_CHEMIN, response_class=HTMLResponse)
 async def m1_page_essai_neuchatel(request: Request):
     """Page publique d'acquisition — lisible sans JavaScript, et sans image.
@@ -57561,8 +57702,14 @@ async def m1_page_essai_neuchatel(request: Request):
         _jours_txt = ""
 
     _titre = "Cours de danse africaine et cardio à Neuchâtel — 1er cours offert | Afroboost"
-    _desc = ("Afroboost Neuchâtel : cardio-danse africaine et fitness au casque, avec un coach, "
+    # SEO-GEO : « fitness au casque » -> « fitness » (en salle, pas de casque).
+    _desc = ("Afroboost Neuchâtel : cardio-danse africaine et fitness, avec un coach, "
              "en groupe. Pas besoin de savoir danser. Ton premier cours est offert.")
+    # SEO-GEO : cette photo (été, extérieur, casque) reste la photo principale
+    # TANT QUE Bassi n'a pas fourni la photo en salle — on n'en invente aucune.
+    # Le texte alternatif DÉCRIT la photo telle qu'elle est ; ce n'est pas une
+    # promesse. Remplacement prêt : déposer la photo en salle, puis changer
+    # `_M1_PHOTO_HERO` et ce texte.
     _alt = ("Femme en débardeur Afroboost, casque audio sur les oreilles, "
             "en pleine séance en extérieur au coucher du soleil")
     # M2-A : le tunnel EXISTANT, eventuellement suivi de l'origine normalisee.
@@ -57694,10 +57841,8 @@ async def m1_page_essai_neuchatel(request: Request):
         {"@context": "https://schema.org", "@type": "WebPage",
          "name": _titre, "description": _desc, "url": _M1_SITE + _M1_CHEMIN,
          "inLanguage": "fr-CH"},
-        {"@context": "https://schema.org", "@type": "Organization",
-         "name": "Afroboost", "url": _M1_SITE,
-         "logo": _M1_SITE + "/logo512.png",
-         "areaServed": "Neuchâtel, Suisse"},
+        # SEO-GEO : l'organisation complète + le lieu des cours (mêmes objets que l'accueil).
+        SEO_GEO_ORGANISATION, SEO_GEO_LIEU,
         _faq_ld,
     ] + _evenements)
 
@@ -57734,7 +57879,8 @@ a{color:inherit}
 .hero-voile{position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,10,18,.72) 0%%,rgba(10,10,18,.42) 38%%,rgba(10,10,18,.80) 78%%,var(--fond) 100%%)}
 .hero-texte{position:relative;z-index:2;max-width:680px;padding:32px 20px 40px;text-align:center;width:100%%}
 .kicker{margin:0 0 10px;font-size:.8rem;letter-spacing:.16em;text-transform:uppercase;color:var(--p);font-weight:700;text-shadow:0 2px 10px rgba(0,0,0,.8)}
-h1{font-size:clamp(1.9rem,7.5vw,3.4rem);line-height:1.05;margin:0 0 14px;font-weight:900;letter-spacing:.02em;text-shadow:0 2px 18px rgba(0,0,0,.85)}
+h1{font-size:clamp(1rem,4vw,1.25rem);line-height:1.3;margin:0 0 10px;font-weight:800;text-shadow:0 2px 12px rgba(0,0,0,.9)}
+.slogan{font-size:clamp(1.9rem,7.5vw,3.4rem);line-height:1.05;margin:0 0 14px;font-weight:900;letter-spacing:.02em;text-shadow:0 2px 18px rgba(0,0,0,.85);color:#fff}
 .promesse{margin:0 0 22px;font-size:clamp(1rem,3.8vw,1.18rem);text-shadow:0 2px 12px rgba(0,0,0,.9);color:#f2f2f8}
 .promesse b{color:#fff}
 .cta{display:block;width:100%%;max-width:340px;margin:0 auto;padding:16px 22px;background:var(--p);color:#fff;text-align:center;text-decoration:none;font-weight:800;border-radius:999px;box-shadow:0 8px 28px rgba(var(--prgb),.45)}
@@ -57796,7 +57942,7 @@ tbody th{font-weight:700;color:#fff}
 .temo{margin:0;border-left:3px solid var(--p);padding:10px 14px;background:rgba(255,255,255,.04);border-radius:10px}
 .temo p{margin:0 0 6px}
 .temo footer{color:#a9a9b8;font-size:.86rem}
-.fin{text-align:center;border-top:1px solid rgba(255,255,255,.12);padding-top:32px}
+%(geo_css)s.fin{text-align:center;border-top:1px solid rgba(255,255,255,.12);padding-top:32px}
 .fin .cta{margin-top:18px}
 .sticky{position:fixed;left:0;right:0;bottom:0;z-index:50;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:rgba(10,10,18,.92);backdrop-filter:blur(8px);border-top:1px solid rgba(var(--prgb),.35)}
 .sticky .cta{max-width:none;padding:14px 18px;box-shadow:none}
@@ -57804,14 +57950,15 @@ tbody th{font-weight:700;color:#fff}
 </style>
 </head><body>
 <header class="hero" id="haut">
-<img class="hero-photo" src="/hero-afroboost.jpg" alt="%(alt)s" width="1024" height="1024" fetchpriority="high"/>
+<img class="hero-photo" src="%(photo)s" alt="%(alt)s" width="1024" height="1024" fetchpriority="high"/>
 <div class="hero-voile"></div>
 <div class="hero-texte">
 <p class="kicker">Afroboost · Neuchâtel</p>
-<h1>DANSE. TRANSPIRE. LÂCHE PRISE.</h1>
-<p class="promesse">Afroboost Neuchâtel : cardio-danse africaine et fitness au casque, avec un coach, en groupe.<br/>Pas besoin de savoir danser. <b>Ton premier cours est offert.</b></p>
+<h1>Cardio-danse Afrobeat à Neuchâtel — 1er cours offert</h1>
+<p class="slogan">DANSE. TRANSPIRE. LÂCHE PRISE.</p>
+<p class="promesse">Afroboost Neuchâtel : cardio-danse africaine et fitness, avec un coach, en groupe.<br/>Pas besoin de savoir danser. <b>Ton premier cours est offert.</b></p>
 %(cta)s
-<ul class="reperes"><li>Débutants bienvenus</li><li>Environ 1 heure</li><li>Casque fourni</li><li>Neuchâtel</li></ul>
+<ul class="reperes"><li>Débutants bienvenus</li><li>Environ 1 heure</li><li>Aucun matériel à apporter</li><li>Neuchâtel</li></ul>
 </div>
 </header>
 <main>
@@ -57819,19 +57966,19 @@ tbody th{font-weight:700;color:#fff}
 <h2>C’est quoi Afroboost ?</h2>
 <p>Afroboost est un concept inspiré des danses africaines et de l’Afrobeat, qui
 mélange danse, cardio et fitness. Ce n’est pas un cours de danse traditionnelle :
-tu suis le rythme, tu transpires et tu avances à ton niveau, avec la musique dans
-ton casque.</p>
+tu suis le rythme, tu transpires et tu avances à ton niveau.</p>
 <ul class="benef">
 <li><b>Tu transpires sans t’en rendre compte.</b> Le cardio est caché dans la danse : tu suis la musique, le corps fait le reste.</li>
-<li><b>Ta musique, dans ton casque.</b> Le son est net, la voix du coach aussi : tu es dans ta bulle, et dans le groupe en même temps.</li>
+<li><b>La musique, à fond.</b> Afrobeat, énergie de groupe et un coach qui te guide à chaque mouvement. On arrive seul, on repart avec le sourire.</li>
 <li><b>Un coach, un groupe, une énergie.</b> Personne ne te juge, tout le monde regarde le coach — et tout le monde ressort avec le sourire.</li>
 </ul>
+<p class="lien-apropos"><a href="/a-propos">Qui est Coach Bassi ?</a></p>
 </section>
 <section>
 <h2>Comment fonctionne Afroboost</h2>
 <ol class="etapes">
 <li><b>Réserve ton premier cours offert.</b> Deux minutes, en ligne. Tu choisis ensuite la séance qui t’arrange.</li>
-<li><b>Viens comme tu es.</b> Une tenue confortable, une bouteille d’eau. Le casque est fourni sur place.</li>
+<li><b>Viens comme tu es.</b> Une tenue confortable, une bouteille d’eau.</li>
 <li><b>Suis le coach, à ton rythme.</b> Chaque mouvement est montré face au groupe ; tu le reprends, tu accélères quand tu veux.</li>
 </ol>
 <p class="note">Après ton essai, tu décides — ou pas — de continuer avec une formule. Aucune obligation.</p>
@@ -57862,7 +58009,7 @@ ton casque.</p>
 %(comparaison_section)s
 <section>
 <h2>Pourquoi Afroboost, et pas une salle de fitness ?</h2>
-<p>Ce n’est pas la même chose. Une salle te donne des machines. Afroboost te donne <b>un coach, du cardio, de la danse afro, de la musique, un casque, un groupe et une communauté</b> — une heure vivante, guidée, où tu ne t’ennuies jamais. Ce n’est pas moins cher qu’un fitness : c’est différent.</p>
+<p>Ce n’est pas la même chose. Une salle te donne des machines. Afroboost te donne <b>un coach, du cardio, de la danse afro, de la musique, un groupe et une communauté</b> — une heure vivante, guidée, où tu ne t’ennuies jamais. Ce n’est pas moins cher qu’un fitness : c’est différent.</p>
 </section>
 <section class="membre">
 <h2>Carte membre de l’association</h2>
@@ -57878,6 +58025,7 @@ ton casque.</p>
 %(cta)s
 <p class="note">L’essai concerne la première séance, une seule fois par personne. Les autres formules restent payantes.</p>
 </section>
+%(contact)s
 </main>
 <div class="sticky">%(cta)s</div>
 <script>
@@ -57887,13 +58035,139 @@ if(r<=0){s.textContent='offre terminée';continue;}var d=Math.floor(r/86400),h=M
 s.textContent=(d?d+'j ':'')+(h<10?'0':'')+h+'h '+(m<10?'0':'')+m+'m '+(x<10?'0':'')+x+'s restants';}}
 tick();setInterval(tick,1000);})();
 </script>
+%(carte_js)s
 </body></html>""" % {
         "titre": _titre, "desc": _desc, "site": _M1_SITE, "chemin": _M1_CHEMIN,
         "structure": _structure, "cta": _cta, "planning": _planning, "alt": _alt,
-        "faq": _faq_html, "tarifs": _tarifs, "note_tarifs": _note_tarifs,
+        "faq": _faq_html, "tarifs": _tarifs,
+        # SEO-GEO : bloc Contact + carte au clic, styles partagés, photo principale.
+        "contact": _seo_geo_contact_html(), "geo_css": SEO_GEO_CSS, "photo": _M1_PHOTO_HERO,
+        "carte_js": SEO_GEO_CARTE_JS, "note_tarifs": _note_tarifs,
         "comparaison_section": ('<section><h2>Comparer les formules</h2>%s</section>' % _comparaison) if _comparaison else "",
         "carte_membre": _cm_html, "ete": _ete_html, "temoignages": _temo_html,
         "jours": ("Les cours ont lieu le %s. " % _m1_echapper(_jours_txt.lower())) if _jours_txt else "",
+    }
+    return HTMLResponse(content=_html, status_code=200)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SEO-GEO (19/10/2026) — PAGE « À PROPOS » : COACH BASSI ET AFROBOOST.
+#
+# Même principe que la page d'essai : HTML complet écrit par le serveur,
+# lisible sans JavaScript, indexable. Textes EXACTS validés par Bassi — aucune
+# réécriture. La photo n'apparaît QUE si le fichier validé a été déposé
+# (`frontend/public/a-propos/coach-bassi.webp`, repli `.jpg`) : aucune image
+# au hasard, aucun espace réservé en production.
+# ═══════════════════════════════════════════════════════════════════════
+SEO_GEO_APROPOS_CHEMIN = "/a-propos"
+SEO_GEO_APROPOS_TITRE = "Coach Bassi et Afroboost — cardio-danse Afrobeat à Neuchâtel"
+SEO_GEO_APROPOS_DESC = ("Ex-basketteur professionnel, Coach Bassi a créé Afroboost en 2023 : un mélange "
+                        "de sport, de danse et de musique pour booster chacun vers son plein potentiel.")
+SEO_GEO_APROPOS_PHOTO_ALT = "Coach Bassi guide un cours Afroboost en salle à Neuchâtel"
+# Les fichiers cherchés, par ordre de préférence, sous le dossier du build.
+SEO_GEO_APROPOS_PHOTOS = ("a-propos/coach-bassi.webp", "a-propos/coach-bassi.jpg")
+SEO_GEO_APROPOS_TEXTE = """<section>
+<h2>Coach Bassi, le fondateur</h2>
+<p>Avant Afroboost, il y a eu le basket. Henri Bassi, dit Coach Bassi, a d'abord été <b>basketteur professionnel</b>. Après sa carrière, il s'est formé en <b>fitness et wellness à l'Université de Lausanne</b>, puis il est parti en Afrique pour se former aux <b>danses traditionnelles et urbaines africaines</b>.</p>
+<p>De ce parcours est né <b>Afroboost, en 2023</b> : un concept qui mélange les mouvements de plusieurs sports, des gestes du quotidien, la danse, la musique et le chant. Ce sont toutes ses passions réunies dans un seul cours.</p>
+</section>
+<section>
+<h2>Plus qu'un cours : une philosophie</h2>
+<p>Depuis tout jeune, Coach Bassi a une conviction : <b>il est fait pour booster les autres</b>, pour les aider à briller et à atteindre leur plein potentiel. C'est le cœur d'Afroboost : <i>l'art de booster son prochain.</i></p>
+<p>L'Afrique, berceau de l'humanité, est notre racine commune. Afroboost réunit des personnes de tous horizons, dans leur diversité : <b>un univers uni et divers.</b></p>
+</section>
+<section>
+<h2>L'association Afroboosteur</h2>
+<p>Afroboost est porté par l'association Afroboosteur, dont la mission est de promouvoir la culture afrobeat et le bien-être à Neuchâtel à travers des activités sportives et artistiques innovantes.</p>
+</section>"""
+
+
+def _seo_geo_apropos_photo_html(dossier_static: str) -> str:
+    """La photo validée si elle a été déposée, sinon RIEN (jamais d'image au hasard)."""
+    import os as _os_ap
+    _trouvees = [f for f in SEO_GEO_APROPOS_PHOTOS
+                 if dossier_static and _os_ap.path.isfile(_os_ap.path.join(dossier_static, f))]
+    if not _trouvees:
+        return ""
+    _sources = "".join('<source srcset="/%s" type="image/webp"/>' % f
+                       for f in _trouvees if f.endswith(".webp"))
+    return ('<picture class="photo">%s<img src="/%s" alt="%s" loading="eager" decoding="async"/></picture>'
+            % (_sources, _trouvees[-1], _m1_echapper(SEO_GEO_APROPOS_PHOTO_ALT)))
+
+
+@fastapi_app.get(SEO_GEO_APROPOS_CHEMIN, response_class=HTMLResponse)
+async def seo_geo_page_a_propos(request: Request):
+    """Page publique « À propos » — lisible sans JavaScript, sans base de données."""
+    import os as _os_ap
+    _static = _os_ap.path.join(_os_ap.path.dirname(_os_ap.path.dirname(__file__)), "static")
+    _structure = _m1_jsonld([
+        {"@context": "https://schema.org", "@type": "AboutPage",
+         "name": SEO_GEO_APROPOS_TITRE, "description": SEO_GEO_APROPOS_DESC,
+         "url": _M1_SITE + SEO_GEO_APROPOS_CHEMIN, "inLanguage": "fr-CH",
+         "about": {"@id": "https://afroboost.com/#organisation"}},
+        SEO_GEO_ORGANISATION, SEO_GEO_LIEU,
+    ])
+    _html = """<!doctype html><html lang="fr"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>%(titre)s</title>
+<meta name="description" content="%(desc)s"/>
+<meta name="robots" content="index, follow"/>
+<link rel="canonical" href="%(site)s%(chemin)s"/>
+<meta property="og:type" content="website"/>
+<meta property="og:site_name" content="Afroboost"/>
+<meta property="og:locale" content="fr_FR"/>
+<meta property="og:title" content="%(titre)s"/>
+<meta property="og:description" content="%(desc)s"/>
+<meta property="og:url" content="%(site)s%(chemin)s"/>
+<meta property="og:image" content="%(site)s/og-image.png"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="%(titre)s"/>
+<meta name="twitter:description" content="%(desc)s"/>
+<meta name="twitter:image" content="%(site)s/og-image.png"/>
+%(structure)s
+<style>
+:root{--p:#D91CD2;--prgb:217,28,210;--fond:#0a0a12}
+*{box-sizing:border-box}
+body{margin:0;background:var(--fond);color:#fff;line-height:1.6;
+ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+a{color:inherit}
+header{max-width:760px;margin:0 auto;padding:40px 20px 8px}
+.kicker{margin:0 0 10px;font-size:.8rem;letter-spacing:.16em;text-transform:uppercase;color:var(--p);font-weight:700}
+.kicker a{text-decoration:none}
+h1{font-size:clamp(1.6rem,6vw,2.4rem);line-height:1.15;margin:0;font-weight:900}
+main{max-width:760px;margin:0 auto;padding:8px 20px 56px}
+section{margin-top:40px}
+h2{font-size:clamp(1.25rem,4.8vw,1.6rem);margin:0 0 14px;font-weight:800}
+p{margin:0 0 14px;color:#e8e8f0}
+b{color:#fff}
+.photo{display:block;margin:28px 0 0}
+.photo img{display:block;width:100%%;height:auto;border-radius:16px;border:1px solid rgba(var(--prgb),.35)}
+.fin{text-align:center;border-top:1px solid rgba(255,255,255,.12);padding-top:32px}
+.cta{display:block;width:100%%;max-width:360px;margin:0 auto;padding:16px 22px;background:var(--p);color:#fff;text-align:center;text-decoration:none;font-weight:800;border-radius:999px;box-shadow:0 8px 28px rgba(var(--prgb),.45)}
+.cta:hover,.cta:focus{filter:brightness(1.08)}
+%(geo_css)s
+</style>
+</head><body>
+<header>
+<p class="kicker"><a href="/">Afroboost</a> · Neuchâtel</p>
+<h1>%(titre)s</h1>
+</header>
+<main>
+%(photo)s
+%(texte)s
+<section class="fin">
+<a class="cta" href="%(lien)s">Réserver mon cours d'essai gratuit</a>
+</section>
+%(contact)s
+</main>
+%(carte_js)s
+</body></html>""" % {
+        "titre": _m1_echapper(SEO_GEO_APROPOS_TITRE), "desc": _m1_echapper(SEO_GEO_APROPOS_DESC),
+        "site": _M1_SITE, "chemin": SEO_GEO_APROPOS_CHEMIN, "structure": _structure,
+        "geo_css": SEO_GEO_CSS, "photo": _seo_geo_apropos_photo_html(_static),
+        "texte": SEO_GEO_APROPOS_TEXTE, "lien": _seo_geo_lien_essai(request, SEO_GEO_APROPOS_CHEMIN),
+        "contact": _seo_geo_contact_html(), "carte_js": SEO_GEO_CARTE_JS,
     }
     return HTMLResponse(content=_html, status_code=200)
 
@@ -57958,9 +58232,57 @@ if _os.path.isdir(_STATIC_DIR):
         return _re.sub(r'\s*<link\s+rel=["\']canonical["\'][^>]*>', "", _html,
                        count=1, flags=_re.I)
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # SEO-GEO (19/10/2026) — L'ACCUEIL N'EST PLUS VIDE POUR LES ROBOTS.
+    #
+    # CONSTAT (19/10/2026) : le HTML brut de `/` ne contenait que « You need to
+    # enable JavaScript » et AUCUN lien — les robots des IA, qui n'exécutent
+    # pas JavaScript, voyaient une page vide.
+    #
+    # LA SOLUTION RETENUE PAR BASSI (option A de l'audit) : un bloc de texte
+    # VISIBLE (pas de texte caché : le visiteur le lit en bas de l'accueil),
+    # ajouté par le serveur JUSTE APRÈS `<div id="root"></div>` — HORS de la
+    # zone de React, qui effacerait tout ce qu'on y mettrait, et sans fausser la
+    # sécurité anti-écran-blanc d'index.html (elle teste `root.firstChild`).
+    #
+    # UNIQUEMENT SUR `/` EXACT, SANS `?`. Les liens `/?link=`, `/?offre=`,
+    # `/espace`, `/duo`, `/parrainage`, `/checkout`, l'admin et les vitrines
+    # des coachs reçoivent la page d'avant, À L'OCTET PRÈS (verrouillé par
+    # tests/test_seo_geo.py). Si l'ancre est introuvable, on sert la page
+    # telle quelle : l'application passe avant le SEO.
+    # ═══════════════════════════════════════════════════════════════════════
+    _SEO_GEO_ANCRE_ROOT = '<div id="root"></div>'
+    _SEO_GEO_BLOC_ACCUEIL = (
+        '<section id="af-presentation" aria-labelledby="af-presentation-titre" '
+        'style="max-width:760px;margin:0 auto;padding:32px 20px 120px;color:#fff;text-align:center;'
+        'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;line-height:1.6">'
+        '<h2 id="af-presentation-titre" style="font-size:1.25rem;font-weight:800;margin:0 0 10px">'
+        'Afroboost — Cardio-danse Afrobeat à Neuchâtel</h2>'
+        '<p style="margin:0 0 18px;color:rgba(255,255,255,.78);font-size:.95rem">'
+        'Cours collectifs avec un coach, accessibles aux débutants : pas besoin de savoir danser. '
+        'Le mercredi à 18h45 et le dimanche à 18h30, au Chemin des Valangines 97, à Neuchâtel. '
+        'Ton premier cours est offert.</p>'
+        '<p style="margin:0;display:flex;flex-wrap:wrap;gap:10px;justify-content:center">'
+        '<a href="/cours-essai-gratuit-neuchatel" style="display:inline-block;padding:12px 20px;border-radius:999px;'
+        'background:var(--primary-color, #D91CD2);color:#fff;font-weight:800;text-decoration:none">'
+        'Réserver mon cours d\'essai gratuit</a>'
+        '<a href="/a-propos" style="display:inline-block;padding:12px 20px;border-radius:999px;'
+        'border:1px solid rgba(var(--primary-rgb, 217, 28, 210), .6);color:#fff;font-weight:700;text-decoration:none">'
+        'Qui est Coach Bassi ?</a></p>'
+        '</section>')
+
+    def _seo_geo_accueil(fichier: str):
+        """`index.html` avec le bloc de présentation juste après la zone React,
+        ou `None` si l'ancre n'existe pas (on sert alors le fichier tel quel)."""
+        with open(fichier, "r", encoding="utf-8") as _f:
+            _html = _f.read()
+        if _html.count(_SEO_GEO_ANCRE_ROOT) != 1:
+            return None
+        return _html.replace(_SEO_GEO_ANCRE_ROOT, _SEO_GEO_ANCRE_ROOT + _SEO_GEO_BLOC_ACCUEIL, 1)
+
     # Catch-all: serve index.html for any non-API route (SPA routing)
     @fastapi_app.get("/{full_path:path}")
-    async def _serve_spa(full_path: str):
+    async def _serve_spa(full_path: str, request: Request):
         """Serve React SPA — returns index.html for all non-API, non-static paths."""
         # V283 : sw.js et index.html ne doivent JAMAIS etre caches (ni par le
         # navigateur ni par Cloudflare). Sinon un nouveau deploiement met des
@@ -57984,6 +58306,15 @@ if _os.path.isdir(_STATIC_DIR):
                 # on sert la page telle quelle plutôt que de casser une route.
                 logger.warning("[SEO-1] noindex non posé sur %s (%s)",
                                str(full_path)[:40], type(_seo_err).__name__)
+        # SEO-GEO : `/` exact, sans paramètre -> le bloc de présentation visible.
+        if not str(full_path or "").strip("/") and not request.url.query:
+            try:
+                _accueil = _seo_geo_accueil(_index)
+                if _accueil is not None:
+                    from starlette.responses import HTMLResponse as _HTMLResponse
+                    return _HTMLResponse(_accueil, headers=_no_cache)
+            except Exception as _geo_err:  # noqa: BLE001
+                logger.warning("[SEO-GEO] bloc d'accueil non posé (%s)", type(_geo_err).__name__)
         return _FileResponse(_index, headers=_no_cache)
 
 # Export for Vercel Serverless
